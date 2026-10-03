@@ -1,0 +1,187 @@
+{
+  "title": "Orbit planner output",
+  "description": "Structured result of the planner role (spec section 9). The planner reads the goal, the policy summary and repository evidence, edits nothing, and proposes criteria and a plan. The controller assigns criterion ids, fixes the policy hash and baseline, intersects allowed_paths with the policy scope and drops unknown check ids before anything here becomes part of a contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "objective",
+    "current_behavior",
+    "criteria",
+    "expected_changed_files",
+    "allowed_paths",
+    "required_check_ids",
+    "non_goals",
+    "risks",
+    "assumptions",
+    "unresolved_decisions",
+    "material_topics"
+  ],
+  "properties": {
+    "objective": {
+      "type": "string",
+      "description": "The goal restated as one normalized, testable objective. At most a few sentences."
+    },
+    "current_behavior": {
+      "type": "array",
+      "maxItems": 20,
+      "description": "How the relevant code behaves today, each statement backed by evidence.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["statement", "evidence"],
+        "properties": {
+          "statement": { "type": "string" },
+          "evidence": {
+            "type": "array",
+            "maxItems": 10,
+            "description": "References such as path:line or a test name. No quoted secrets.",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "criteria": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "description": "Proposed acceptance criteria, each with its proof plan and the changes expected to satisfy it.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "statement", "mandatory", "ui", "proof", "check_ids", "changes"],
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,32}$",
+            "description": "Planner-local key used to refer to this criterion elsewhere in this output. The controller assigns the contract id."
+          },
+          "statement": { "type": "string", "description": "Observable behaviour that must hold." },
+          "mandatory": { "type": "boolean" },
+          "ui": { "type": "boolean", "description": "True when the criterion is about user-visible UI behaviour and needs browser evidence." },
+          "proof": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "description": "Proof plan: the tests, journeys or artifacts that will demonstrate the criterion.",
+            "items": { "type": "string" }
+          },
+          "check_ids": {
+            "type": "array",
+            "maxItems": 20,
+            "description": "Ids of checks defined in the policy whose passing result counts as evidence. Never commands.",
+            "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" }
+          },
+          "changes": {
+            "type": "array",
+            "maxItems": 30,
+            "description": "Criterion-to-change mapping: where the implementation will change to satisfy this criterion.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "summary"],
+              "properties": {
+                "path": { "type": "string", "description": "Repository-relative path or glob." },
+                "summary": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected_changed_files": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "change", "reason"],
+        "properties": {
+          "path": { "type": "string", "description": "Repository-relative file path." },
+          "change": { "type": "string", "enum": ["add", "modify", "delete", "rename"] },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "allowed_paths": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "description": "Proposed edit scope as repository-relative globs. The controller keeps only what the policy scope already allows.",
+      "items": { "type": "string" }
+    },
+    "required_check_ids": {
+      "type": "array",
+      "maxItems": 50,
+      "description": "Ids of policy-defined checks that must pass. Unknown ids are dropped by the controller.",
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" }
+    },
+    "non_goals": {
+      "type": "array",
+      "maxItems": 30,
+      "items": { "type": "string" }
+    },
+    "risks": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["risk", "impact", "mitigation"],
+        "properties": {
+          "risk": { "type": "string" },
+          "impact": { "type": "string", "enum": ["low", "medium", "high"] },
+          "mitigation": { "type": "string" }
+        }
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["statement", "basis", "status"],
+        "properties": {
+          "statement": { "type": "string" },
+          "basis": { "type": "string", "description": "Evidence or convention the assumption rests on." },
+          "status": { "type": "string", "enum": ["unverified", "supported", "needs-decision"] }
+        }
+      }
+    },
+    "unresolved_decisions": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "options", "recommendation", "material", "affected_criteria"],
+        "properties": {
+          "question": { "type": "string" },
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 6,
+            "items": { "type": "string" }
+          },
+          "recommendation": { "type": ["string", "null"] },
+          "material": {
+            "type": "boolean",
+            "description": "True when the answer changes product semantics, security, financial or irreversible data behaviour."
+          },
+          "affected_criteria": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Keys of the criteria this decision affects.",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "material_topics": {
+      "type": "array",
+      "maxItems": 20,
+      "description": "Topics on which Orbit must ask or block instead of guessing.",
+      "items": { "type": "string" }
+    }
+  }
+}

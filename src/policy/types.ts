@@ -5,7 +5,7 @@
  * re-verifies; workers can neither read the live config's authority nor change
  * the snapshot.
  */
-import type { RunMode } from '../controller/run-store.ts';
+export type RunMode = 'supervised' | 'autonomous' | 'autonomous-delivery' | 'release';
 
 export interface CheckDefinition {
   id: string;
@@ -157,6 +157,25 @@ export interface OrbitConfig {
     overrides: Record<string, string>;
   };
   retention: { keep_runs_days: number; redact_patterns: string[] };
+  /** Learning layer (ADR 0002). Nothing here can widen authority. */
+  knowledge: {
+    enabled: boolean;
+    /** Off by default: only repositories the user marks shareable feed the global graph. */
+    share_globally: boolean;
+    max_advisory_tokens: number;
+    /** Spend ceiling for end-of-run curation; skipped when the run's reserve needs it. */
+    curator_budget_usd: number;
+    /** Spend ceiling for one replay evaluation of a candidate overlay; 0 disables evaluations. */
+    eval_budget_usd: number;
+    /** ADR 0002: adopt overlays automatically when replay evals improve with no regression. */
+    auto_adopt_overlays: boolean;
+  };
+  /** Publication guard (architecture "Publication guard"). */
+  guard: {
+    /** Private terms file; null means ~/.config/publish-guard/terms.txt. */
+    terms_file: string | null;
+    allowed_emails: string[];
+  };
 }
 
 /** The frozen, hashed form stored at .orbit/runs/<id>/policy.json. */

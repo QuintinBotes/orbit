@@ -1,0 +1,376 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { chmodSync, mkdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { isOrbitError } from '../../../src/core/errors.ts';
+import {
+  CLAUDE_CONFIG_READ_ONLY,
+  CODEX_HOME_READ_ONLY,
+  HOME_DENY_READ,
+  PROVIDER_HOSTS,
+  WORKER_DIR_READ_ONLY,
+  orbitTmpRoot,
+  prepareWorkerTmpDir,
+  profileForCheck,
+  profileForWorker,
+  providerDirs,
+  repoParentDenial,
+  workerTmpDir,
+} from '../../../src/isolation/profiles.ts';
+import { buildSrtSettings } from '../../../src/isolation/sandbox-runtime.ts';
+import { canonicalPath, isWithin } from '../../../src/isolation/util.ts';
+import { checkFor, snapshotFor, tempRoot } from './fixtures.ts';
+
+const cleanups: (() => void)[] = [];
+afterEach(() => {
+  while (cleanups.length) cleanups.pop()!();
+});
+
+/**
+ * The layout Orbit uses: projects side by side, worktrees under ~/.orbit,
+ * worker directories under the repository's .orbit. The worktree is a real
+ * linked-worktree shape so the git directory is discovered.
+ */
+function layout() {
+  const t = tempRoot();
+  cleanups.push(t.remove);
+  const r = t.root;
+  const home = join(r, 'home');
+  const repo = join(r, 'projects', 'acme');
+  const gitdir = join(repo, '.git', 'worktrees', 'w1');
+  mkdirSync(gitdir, { recursive: true });
+  writeFileSync(join(gitdir, 'commondir'), '../..\n');
+  const worktree = join(home, '.orbit', 'worktrees', 'h', 'orb-1', 'w1');
+  mkdirSync(worktree, { recursive: true });
+  writeFileSync(join(worktree, '.git'), `gitdir: ${gitdir}\n`);
+  const workerDir = join(repo, '.orbit', 'runs', 'orb-1', 'workers', 'w1');
+  mkdirSync(workerDir, { recursive: true });
+  return { r, home, repo, worktree, workerDir, claudeDir: join(home, '.claude-alt') };
+}
+
+describe('profileForWorker', () => {
+  it('lets a Claude worker write only its worktree, worker dir, private tmp and Claude config dir', () => {
+    const l = layout();
+    const p = profileForWorker({
+      worktree: l.worktree,
+      workerDir: l.workerDir,
+      snapshot: snapshotFor({ repoRoot: l.repo, allowedHosts: ['registry.npmjs.org', 'api.anthropic.com'], wallMinutes: 30 }),
+      provider: 'claude',
+      claudeConfigDir: l.claudeDir,
+      homeDir: l.home,
+      env: {},
+    });
+    // ~/.claude.json belongs to the default login, not to this config dir: neither writable nor readable.
+    expect(p.writablePaths).toEqual([l.worktree, l.workerDir, workerTmpDir(l.workerDir), l.claudeDir]);
+    expect(p.allowedHosts).toEqual(['api.anthropic.com', 'claude.ai', 'platform.claude.com', 'registry.npmjs.org']);
+    expect(p.limits).toEqual({ timeoutMs: 30 * 60_000, memoryMb: null, cpus: null, pids: null });
+    expect(p.readablePaths).toContain(join(l.repo, '.git'));
+
+    for (const rel of ['.ssh', '.aws', '.config/gh', '.gnupg', '.netrc', '.npmrc', '.docker', '.orbit', '.config/publish-guard']) {
+      expect(p.denyReadPaths, rel).toContain(join(l.home, rel));
+    }
+    expect(p.denyReadPaths).toContain(join(l.repo, '.orbit'));
+    // Other workers' temp directories; this worker's own is re-allowed by being writable.
+    expect(p.denyReadPaths).toContain(orbitTmpRoot());
+    expect(buildSrtSettings(p).filesystem.allowRead).toContain(workerTmpDir(l.workerDir));
+    // Other projects next to the repository, the Codex login and the default Claude login are denied.
+    expect(p.denyReadPaths).toContain(join(l.r, 'projects'));
+    expect(p.denyReadPaths).toContain(join(l.home, '.codex'));
+    expect(p.denyReadPaths).toContain(join(l.home, '.claude'));
+    expect(p.denyReadPaths).toContain(join(l.home, '.claude.json'));
+    expect(p.denyReadPaths).not.toContain(l.claudeDir);
+  });
+
+  it('keeps the config dir surfaces that run code on the host read-only', () => {
+    const l = layout();
+    const p = profileForWorker({
+      worktree: l.worktree,
+      workerDir: l.workerDir,
+      snapshot: snapshotFor({ repoRoot: l.repo }),
+      provider: 'claude',
+      claudeConfigDir: l.claudeDir,
+      homeDir: l.home,
+      env: {},
+    });
+    const denyWrite = buildSrtSettings(p).filesystem.denyWrite;
+    // Hooks, plugins (Orbit itself when installed as a plugin), settings and the global config with its MCP server commands.
+    for (const rel of CLAUDE_CONFIG_READ_ONLY) expect(denyWrite, rel).toContain(join(l.claudeDir, rel));
+    // Files the controller and the CLI trust in the worker directory.
+    for (const rel of WORKER_DIR_READ_ONLY) expect(denyWrite, rel).toContain(join(l.workerDir, rel));
+    // Transcripts and the rest of the config dir stay writable.
+    expect(buildSrtSettings(p).filesystem.allowWrite).toContain(l.claudeDir);
+    expect(denyWrite).not.toContain(join(l.claudeDir, 'projects'));
+  });
+
+  it('treats ~/.claude.json as the global config of the default dir: readable, never writable', () => {
+    const l = layout();
+    const p = profileForWorker({
+      worktree: l.worktree,
+      workerDir: l.workerDir,
+      snapshot: snapshotFor({ repoRoot: l.repo }),
+      provider: 'claude',
+      claudeConfigDir: join(l.home, '.claude'),
+      homeDir: l.home,
+      env: {},
+    });
+    expect(p.writablePaths).not.toContain(join(l.home, '.claude.json'));
+    expect(p.denyReadPaths).not.toContain(join(l.home, '.claude.json'));
+    expect(p.readablePaths).toContain(join(l.home, '.claude.json'));
+  });
+
+  it('denies the user\'s own login when the worker runs with a private config dir', () => {
+    const l = layout();
+    const userDir = join(l.home, '.claude-acme');
+    const userCodex = join(l.home, '.codex-acme');
+    const privateDir = join(l.workerDir, 'claude-config');
+    const p = profileForWorker({
+      worktree: l.worktree,
+      workerDir: l.workerDir,
+      snapshot: snapshotFor({ repoRoot: l.repo }),
+      provider: 'claude',
+      claudeConfigDir: privateDir,
+      homeDir: l.home,
+      env: { CLAUDE_CONFIG_DIR: userDir, CODEX_HOME: userCodex },
+    });
+    expect(p.writablePaths).toContain(privateDir);
+    expect(p.denyReadPaths).toEqual(expect.arrayContaining([userDir, join(l.home, '.claude'), join(l.home, '.claude.json'), userCodex, join(l.home, '.codex')]));
+    expect(p.denyReadPaths).not.toContain(privateDir);
+  });
+
+  it('lets the guard hook read the frozen policy without letting the worker change it', () => {
+    const l = layout();
+    const policy = join(l.repo, '.orbit', 'runs', 'orb-1', 'policy.json');
+    const p = profileForWorker({
+      worktree: l.worktree,
+      workerDir: l.workerDir,
+      snapshot: snapshotFor({ repoRoot: l.repo }),
+      provider: 'claude',
+      claudeConfigDir: l.claudeDir,
+      homeDir: l.home,
+      policyPath: policy,
+      env: {},
+    });
+    const s = buildSrtSettings(p);
+    expect(s.filesystem.allowRead).toContain(policy);
+    expect(s.filesystem.allowWrite.some((w) => isWithin(policy, w))).toBe(false);
+  });
+
+  it('refuses a provider config dir that is the home directory or above it', () => {
+    const l = layout();
+    for (const dir of [l.home, l.r]) {
+      let caught: unknown;
+      try {
+        profileForWorker({ worktree: l.worktree, workerDir: l.workerDir, snapshot: snapshotFor({ repoRoot: l.repo }), provider: 'codex', claudeConfigDir: l.claudeDir, homeDir: l.home, codexHome: dir, env: {} });
+      } catch (err) {
+        caught = err;
+      }
+      expect(isOrbitError(caught, 'ISOLATION_UNAVAILABLE'), dir).toBe(true);
+    }
+  });
+
+  it('denies container-engine state and keychains, which hold root-equivalent sockets and keys', () => {
+    const l = layout();
+    const p = profileForWorker({ worktree: l.worktree, workerDir: l.workerDir, snapshot: snapshotFor({ repoRoot: l.repo }), provider: 'claude', claudeConfigDir: l.claudeDir, homeDir: l.home, env: {} });
+    for (const rel of ['.orbstack', '.colima', '.lima', 'Library/Keychains', '.config/op', '.gemini']) expect(p.denyReadPaths, rel).toContain(join(l.home, rel));
+    expect(p.denyReadPaths).toContain(canonicalPath('/var/run/docker.sock'));
+  });
+
+  it('lets a Codex worker write CODEX_HOME and denies every Claude login', () => {
+    const l = layout();
+    const codexHome = join(l.r, 'codex-home');
+    const p = profileForWorker({
+      worktree: l.worktree,
+      workerDir: l.workerDir,
+      snapshot: snapshotFor({ repoRoot: l.repo, container: { image: 'x', memory_mb: 512, cpus: 1, pids: 128 } }),
+      provider: 'codex',
+      claudeConfigDir: l.claudeDir,
+      homeDir: l.home,
+      env: { CODEX_HOME: codexHome },
+      timeoutMs: 5_000,
+    });
+    expect(p.writablePaths).toEqual([l.worktree, l.workerDir, workerTmpDir(l.workerDir), codexHome]);
+    expect(p.allowedHosts).toEqual(['api.openai.com', 'chatgpt.com']);
+    expect(p.denyReadPaths).toEqual(expect.arrayContaining([l.claudeDir, join(l.claudeDir, '.claude.json'), join(l.home, '.claude'), join(l.home, '.claude.json'), join(l.home, '.codex')]));
+    expect(p.denyReadPaths).not.toContain(codexHome);
+    const denyWrite = buildSrtSettings(p).filesystem.denyWrite;
+    for (const rel of CODEX_HOME_READ_ONLY) expect(denyWrite, rel).toContain(join(codexHome, rel));
+    expect(p.limits).toEqual({ timeoutMs: 5_000, memoryMb: 512, cpus: 1, pids: 128 });
+  });
+
+  it('does not deny the default Claude dir when it is the configured one', () => {
+    const l = layout();
+    const p = profileForWorker({
+      worktree: l.worktree,
+      workerDir: l.workerDir,
+      snapshot: snapshotFor({ repoRoot: l.repo }),
+      provider: 'claude',
+      claudeConfigDir: join(l.home, '.claude'),
+      homeDir: l.home,
+      env: {},
+    });
+    expect(p.writablePaths).toContain(join(l.home, '.claude'));
+    expect(p.denyReadPaths).not.toContain(join(l.home, '.claude'));
+  });
+
+  it('translates into srt rules that re-open exactly the worker’s own paths', () => {
+    const l = layout();
+    const install = join(l.r, 'projects', 'orbit');
+    const p = profileForWorker({
+      worktree: l.worktree,
+      workerDir: l.workerDir,
+      snapshot: snapshotFor({ repoRoot: l.repo }),
+      provider: 'claude',
+      claudeConfigDir: l.claudeDir,
+      homeDir: l.home,
+      readablePaths: [install],
+      env: {},
+    });
+    const s = buildSrtSettings(p);
+    // Worktree under ~/.orbit, worker dir under <repo>/.orbit, git dir and Orbit's install dir under the denied projects dir.
+    expect(s.filesystem.allowRead).toEqual(expect.arrayContaining([l.worktree, l.workerDir, join(l.repo, '.git'), install]));
+    expect(s.filesystem.allowRead).not.toContain(join(l.repo, '.orbit'));
+    expect(s.filesystem.allowRead).not.toContain(l.repo);
+    expect(s.network.allowedDomains).toEqual(PROVIDER_HOSTS.claude);
+  });
+
+  it('refuses a snapshot without a repository root', () => {
+    const l = layout();
+    let caught: unknown;
+    try {
+      profileForWorker({ worktree: l.worktree, workerDir: l.workerDir, snapshot: snapshotFor({ repoRoot: '' }), provider: 'claude', claudeConfigDir: l.claudeDir, homeDir: l.home });
+    } catch (err) {
+      caught = err;
+    }
+    expect(isOrbitError(caught, 'INTERNAL')).toBe(true);
+  });
+});
+
+describe('profileForCheck', () => {
+  it('gives a check its worktree, extra outputs and declared hosts, and no provider credentials', () => {
+    const l = layout();
+    const out = join(l.r, 'evidence');
+    const p = profileForCheck({
+      worktree: l.worktree,
+      check: checkFor({ timeout_seconds: 90, network_hosts: ['registry.npmjs.org'] }),
+      snapshot: snapshotFor({ repoRoot: l.repo, allowedHosts: ['github.com'] }),
+      extraWritable: [out],
+      homeDir: l.home,
+      env: { CLAUDE_CONFIG_DIR: l.claudeDir },
+    });
+    expect(p.writablePaths).toEqual([l.worktree, out]);
+    // Only the check's own hosts; the policy-wide list is not inherited.
+    expect(p.allowedHosts).toEqual(['registry.npmjs.org']);
+    expect(p.limits.timeoutMs).toBe(90_000);
+    expect(p.denyReadPaths).toEqual(
+      expect.arrayContaining([l.claudeDir, join(l.home, '.claude'), join(l.home, '.claude.json'), join(l.home, '.codex'), join(l.repo, '.orbit'), join(l.r, 'projects')]),
+    );
+    expect(p.denyReadPaths).toEqual(expect.arrayContaining(HOME_DENY_READ.map((rel) => join(l.home, rel))));
+  });
+
+  it('means no network for a check that names no hosts', () => {
+    const l = layout();
+    const p = profileForCheck({ worktree: l.worktree, check: checkFor(), snapshot: snapshotFor({ repoRoot: l.repo, allowedHosts: ['github.com'] }), homeDir: l.home, env: {} });
+    expect(p.allowedHosts).toEqual([]);
+  });
+});
+
+describe('repoParentDenial', () => {
+  it('denies the projects directory when that is safe', () => {
+    const l = layout();
+    expect(repoParentDenial(l.repo, l.home).path).toBe(join(l.r, 'projects'));
+  });
+
+  it('never denies the home directory, its ancestors, the root or a shared temp root', () => {
+    const l = layout();
+    expect(repoParentDenial(join(l.home, 'acme'), l.home)).toMatchObject({ path: null, reason: expect.stringMatching(/contains the home directory/) });
+    expect(repoParentDenial('/acme', l.home).path).toBeNull();
+    // A home outside the temp roots, so the temp rule is what decides.
+    const home = '/nonexistent-orbit-home/acme';
+    expect(repoParentDenial(join(tmpdir(), 'acme'), home)).toMatchObject({ path: null, reason: expect.stringMatching(/shared temp directory/) });
+    expect(repoParentDenial('/tmp/acme', home)).toMatchObject({ path: null, reason: expect.stringMatching(/shared temp directory/) });
+    expect(repoParentDenial(join(tmpdir(), 'projects', 'acme'), home).path).toBe(join(canonicalPath(tmpdir()), 'projects'));
+  });
+});
+
+describe('the main checkout', () => {
+  it('is denied even when its parent cannot be, with the git directory re-allowed', () => {
+    const l = layout();
+    // A repository directly in the home directory: the parent (home) cannot be denied.
+    const repo = join(l.home, 'acme');
+    const gitdir = join(repo, '.git', 'worktrees', 'w1');
+    mkdirSync(gitdir, { recursive: true });
+    writeFileSync(join(gitdir, 'commondir'), '../..\n');
+    writeFileSync(join(repo, '.env'), 'TOKEN=acme');
+    const worktree = join(l.home, '.orbit', 'worktrees', 'h2', 'orb-1', 'w1');
+    mkdirSync(worktree, { recursive: true });
+    writeFileSync(join(worktree, '.git'), `gitdir: ${gitdir}\n`);
+    const p = profileForCheck({ worktree, check: checkFor(), snapshot: snapshotFor({ repoRoot: repo }), homeDir: l.home, env: {} });
+    expect(p.denyReadPaths).toContain(repo);
+    expect(p.denyReadPaths).not.toContain(l.home);
+    const s = buildSrtSettings(p);
+    expect(s.filesystem.allowRead).toEqual(expect.arrayContaining([worktree, join(repo, '.git')]));
+    expect(s.filesystem.allowRead).not.toContain(repo);
+  });
+
+  it('is not denied when the checks run in the checkout itself', () => {
+    const l = layout();
+    const p = profileForCheck({ worktree: l.repo, check: checkFor(), snapshot: snapshotFor({ repoRoot: l.repo }), homeDir: l.home, env: {} });
+    expect(p.denyReadPaths).not.toContain(l.repo);
+    const s = buildSrtSettings(p);
+    expect(s.filesystem.allowWrite).toEqual([l.repo]);
+    // .orbit inside it stays unreadable and unwritable.
+    expect(s.filesystem.denyWrite).toContain(join(l.repo, '.orbit'));
+  });
+});
+
+describe('provider directories and the worker tmp dir', () => {
+  it('follows CLAUDE_CONFIG_DIR and CODEX_HOME, ignoring blank values', () => {
+    const l = layout();
+    expect(providerDirs({ homeDir: l.home, env: {} })).toEqual({ claudeConfigDir: join(l.home, '.claude'), codexHome: join(l.home, '.codex') });
+    expect(providerDirs({ homeDir: l.home, env: { CLAUDE_CONFIG_DIR: l.claudeDir, CODEX_HOME: ' ' } })).toEqual({ claudeConfigDir: l.claudeDir, codexHome: join(l.home, '.codex') });
+    expect(providerDirs({ homeDir: l.home, claudeConfigDir: '/opt/c', codexHome: '/opt/x', env: { CLAUDE_CONFIG_DIR: l.claudeDir } })).toEqual({
+      claudeConfigDir: canonicalPath('/opt/c'),
+      codexHome: canonicalPath('/opt/x'),
+    });
+  });
+
+  it('keeps worker temp directories short, stable and under a per-user root', () => {
+    const l = layout();
+    const uid = process.getuid!();
+    expect(orbitTmpRoot(uid)).toBe(canonicalPath(`/tmp/orbit-${uid}`));
+    const dir = workerTmpDir(l.workerDir);
+    expect(dir).toMatch(new RegExp(`^${orbitTmpRoot(uid)}/[0-9a-f]{12}$`));
+    expect(workerTmpDir(l.workerDir)).toBe(dir);
+    expect(workerTmpDir(join(l.workerDir, '..', 'w2'))).not.toBe(dir);
+    // Unix socket paths must stay under 104 bytes on macOS.
+    expect(dir.length).toBeLessThan(60);
+  });
+
+  it('creates the private tmp dir owner-only', () => {
+    const l = layout();
+    const root = join(l.r, 'tmp-root');
+    const dir = prepareWorkerTmpDir(l.workerDir, root);
+    expect(dir).toBe(workerTmpDir(l.workerDir, root));
+    expect(statSync(root).mode & 0o777).toBe(0o700);
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    expect(prepareWorkerTmpDir(l.workerDir, root)).toBe(dir);
+  });
+
+  it('refuses a temp root that someone else could read or replace', () => {
+    const l = layout();
+    const open = join(l.r, 'open-root');
+    mkdirSync(open, { mode: 0o755 });
+    chmodSync(open, 0o755);
+    expect(() => prepareWorkerTmpDir(l.workerDir, open)).toThrow(/not a private directory/);
+    const target = join(l.r, 'elsewhere');
+    mkdirSync(target, { mode: 0o700 });
+    symlinkSync(target, join(l.r, 'link-root'));
+    let caught: unknown;
+    try {
+      prepareWorkerTmpDir(l.workerDir, join(l.r, 'link-root'));
+    } catch (err) {
+      caught = err;
+    }
+    expect(isOrbitError(caught, 'ISOLATION_UNAVAILABLE')).toBe(true);
+  });
+});

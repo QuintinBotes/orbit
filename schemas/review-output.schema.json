@@ -1,0 +1,33 @@
+{
+  "title": "Orbit review output",
+  "description": "Independent review findings (spec section 12), adapted for strict structured output: nullable fields are listed as required and typed with a null union. The reviewer edits nothing; findings are claims to be converted into testable checks, never decided by vote.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "candidate_revision", "findings"],
+  "properties": {
+    "verdict": { "type": "string", "enum": ["APPROVE", "REPAIR_REQUIRED", "BLOCK"] },
+    "candidate_revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,64}$",
+      "description": "The exact candidate revision reviewed, as given in the review packet."
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "severity", "category", "location", "claim", "evidence", "suggested_validation"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*-[0-9]+$", "description": "Category prefix and number, for example SEC-1." },
+          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] },
+          "category": { "type": "string", "description": "For example authorization, correctness, test-adequacy, scope, performance." },
+          "location": { "type": ["string", "null"], "description": "path:line, or null for a finding about the change as a whole." },
+          "claim": { "type": "string" },
+          "evidence": { "type": "string" },
+          "suggested_validation": { "type": ["string", "null"], "description": "A test or check that would confirm or refute the claim." }
+        }
+      }
+    }
+  }
+}

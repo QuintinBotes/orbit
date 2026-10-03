@@ -10,7 +10,10 @@ export const systemClock: Clock = {
 };
 
 export class ManualClock implements Clock {
-  constructor(private t = 1_700_000_000_000) {}
+  private t: number;
+  constructor(start = 1_700_000_000_000) {
+    this.t = start;
+  }
   now(): number {
     return this.t;
   }

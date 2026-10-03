@@ -1,0 +1,377 @@
+{
+  "title": "Orbit inquisitor output",
+  "description": "Structured result of an Orbit Inquisition (spec section 10). Facts, assumptions and unknowns are kept apart; interpretations are ranked by impact and reversibility; reversible choices may be decided autonomously with evidence; material uncertainty becomes a question that meets the question-quality rules. Amendments are proposals: the controller applies them only within spec section 6 and the frozen policy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mode", "trigger", "facts", "assumptions", "unknowns", "ledger", "interpretations", "chosen_experiment", "autonomous_decisions", "questions", "amendments"],
+  "properties": {
+    "mode": { "type": "string", "enum": ["clarify", "challenge", "reconcile", "diagnose", "risk-review", "decision-record"] },
+    "trigger": { "type": "string", "description": "What prompted this inquisition." },
+    "facts": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["statement", "source"],
+        "properties": {
+          "statement": { "type": "string" },
+          "source": { "type": "string", "description": "Where the fact was observed: path:line, log, check id." }
+        }
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["statement", "basis"],
+        "properties": {
+          "statement": { "type": "string" },
+          "basis": { "type": "string" }
+        }
+      }
+    },
+    "unknowns": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["statement", "material", "blocks"],
+        "properties": {
+          "statement": { "type": "string" },
+          "material": { "type": "boolean" },
+          "blocks": {
+            "type": "array",
+            "maxItems": 50,
+            "description": "Criterion ids or work items that cannot proceed until this is known.",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "ledger": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim", "source", "confidence", "consequence_if_wrong", "reversibility", "validation_experiment", "status"],
+        "properties": {
+          "claim": { "type": "string" },
+          "source": { "type": "string" },
+          "confidence": { "type": "string", "enum": ["low", "medium", "high"], "description": "Qualitative only." },
+          "consequence_if_wrong": { "type": "string" },
+          "reversibility": { "type": "string", "enum": ["reversible", "costly-to-reverse", "irreversible"] },
+          "validation_experiment": { "type": ["string", "null"] },
+          "status": { "type": "string", "enum": ["unverified", "supported", "rejected", "needs-decision"] }
+        }
+      }
+    },
+    "interpretations": {
+      "type": "array",
+      "maxItems": 12,
+      "description": "Plausible readings of the uncertainty, ranked: rank 1 has the highest impact and lowest reversibility.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "statement", "impact", "reversibility", "rank", "evidence"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^I[0-9]+$" },
+          "statement": { "type": "string" },
+          "impact": { "type": "string", "enum": ["low", "medium", "high"] },
+          "reversibility": { "type": "string", "enum": ["reversible", "costly-to-reverse", "irreversible"] },
+          "rank": { "type": "integer", "minimum": 1 },
+          "evidence": { "type": "array", "maxItems": 20, "items": { "type": "string" } }
+        }
+      }
+    },
+    "chosen_experiment": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["description", "discriminates", "expected_observations", "authorization", "cost"],
+          "properties": {
+            "description": { "type": "string" },
+            "discriminates": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 12,
+              "description": "Interpretation ids this experiment tells apart.",
+              "items": { "type": "string", "pattern": "^I[0-9]+$" }
+            },
+            "expected_observations": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 12,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["interpretation_id", "observation"],
+                "properties": {
+                  "interpretation_id": { "type": "string", "pattern": "^I[0-9]+$" },
+                  "observation": { "type": "string" }
+                }
+              }
+            },
+            "authorization": { "type": "string", "description": "Policy check id or action that authorizes the experiment." },
+            "cost": { "type": "string", "enum": ["low", "medium", "high"] }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "autonomous_decisions": {
+      "type": "array",
+      "maxItems": 20,
+      "description": "Choices resolved without asking. Allowed only for conventions, reversible implementation details and technical hypotheses, never for material product, security, financial or irreversible data behaviour.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision", "category", "rationale", "evidence", "reversibility"],
+        "properties": {
+          "decision": { "type": "string" },
+          "category": { "type": "string", "enum": ["convention", "implementation-detail", "technical-hypothesis"] },
+          "rationale": { "type": "string" },
+          "evidence": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string" } },
+          "reversibility": { "type": "string", "enum": ["reversible", "costly-to-reverse", "irreversible"] }
+        }
+      }
+    },
+    "questions": {
+      "type": "array",
+      "maxItems": 10,
+      "description": "Only questions that change implementation, proof, authority or scope and that responsible inspection could not answer.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "changes", "evidence", "options", "recommendation", "recommendation_reason", "safe_default", "material", "affected_work", "unblocked_work"],
+        "properties": {
+          "question": { "type": "string" },
+          "changes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "description": "What the answer changes.",
+            "items": { "type": "string", "enum": ["implementation", "proof", "authority", "scope"] }
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "description": "What was inspected and why it does not answer the question.",
+            "items": { "type": "string" }
+          },
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 6,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["label", "description", "consequences"],
+              "properties": {
+                "label": { "type": "string", "pattern": "^[A-Z]$" },
+                "description": { "type": "string" },
+                "consequences": { "type": "string" }
+              }
+            }
+          },
+          "recommendation": { "type": "string", "pattern": "^[A-Z]$", "description": "Label of the recommended option." },
+          "recommendation_reason": { "type": "string" },
+          "safe_default": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["exists", "option", "reason"],
+            "properties": {
+              "exists": { "type": "boolean" },
+              "option": { "type": ["string", "null"], "pattern": "^[A-Z]$" },
+              "reason": { "type": "string" }
+            }
+          },
+          "material": { "type": "boolean" },
+          "affected_work": { "type": "array", "minItems": 1, "maxItems": 30, "items": { "type": "string" } },
+          "unblocked_work": { "type": "array", "maxItems": 30, "description": "Work that can continue while the question is open.", "items": { "type": "string" } }
+        }
+      }
+    },
+    "amendments": {
+      "type": "array",
+      "maxItems": 10,
+      "description": "Proposed contract amendments. Added criteria, proof or checks may apply directly. A reworded mandatory criterion, objective or proof entry applies directly only when it keeps every word and adds only emphasis; to add detail without a human decision, add a derived criterion or proof entry instead. Removing or weakening criteria or proof, widening scope, adding or removing non-goals, removing escalation topics, resolving a needs-decision assumption and delivery changes need a human decision.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["change", "evidence", "reason"],
+        "properties": {
+          "evidence": { "type": "string" },
+          "reason": { "type": "string" },
+          "change": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "objective"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["clarify_objective"] },
+                  "objective": { "type": "string" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "criterion_id", "statement"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["clarify_criterion"] },
+                  "criterion_id": { "type": "string", "pattern": "^AC-[0-9]+$" },
+                  "statement": { "type": "string" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "statement", "proof", "mandatory", "ui", "check_ids"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["add_criterion"] },
+                  "statement": { "type": "string" },
+                  "proof": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "type": "string" } },
+                  "mandatory": { "type": "boolean" },
+                  "ui": { "type": "boolean" },
+                  "check_ids": { "type": "array", "maxItems": 20, "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" } }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "criterion_id", "proof"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["add_proof"] },
+                  "criterion_id": { "type": "string", "pattern": "^AC-[0-9]+$" },
+                  "proof": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "type": "string" } }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "criterion_id", "proof"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["replace_proof"] },
+                  "criterion_id": { "type": "string", "pattern": "^AC-[0-9]+$" },
+                  "proof": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "type": "string" } }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "criterion_id", "mandatory"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["set_mandatory"] },
+                  "criterion_id": { "type": "string", "pattern": "^AC-[0-9]+$" },
+                  "mandatory": { "type": "boolean" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "criterion_id"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["remove_criterion"] },
+                  "criterion_id": { "type": "string", "pattern": "^AC-[0-9]+$" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "criterion_id", "check_ids"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["add_required_checks"] },
+                  "criterion_id": { "type": ["string", "null"], "pattern": "^AC-[0-9]+$" },
+                  "check_ids": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" } }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "criterion_id", "check_ids"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["remove_required_checks"] },
+                  "criterion_id": { "type": ["string", "null"], "pattern": "^AC-[0-9]+$" },
+                  "check_ids": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" } }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "allowed_paths"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["set_allowed_paths"] },
+                  "allowed_paths": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "string" } }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "non_goal"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["add_non_goal"] },
+                  "non_goal": { "type": "string" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "non_goal"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["remove_non_goal"] },
+                  "non_goal": { "type": "string" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "assumption_id", "statement", "status"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["set_assumption"] },
+                  "assumption_id": { "type": ["string", "null"], "pattern": "^AS-[0-9]+$", "description": "null adds a new assumption." },
+                  "statement": { "type": "string" },
+                  "status": { "type": "string", "enum": ["unverified", "supported", "rejected", "needs-decision"] }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "topic"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["add_escalation_topic"] },
+                  "topic": { "type": "string" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "topic"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["remove_escalation_topic"] },
+                  "topic": { "type": "string" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["op", "draft_pr", "merge"],
+                "properties": {
+                  "op": { "type": "string", "enum": ["set_delivery"] },
+                  "draft_pr": { "type": "boolean" },
+                  "merge": { "type": "boolean" }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

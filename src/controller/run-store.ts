@@ -3,8 +3,12 @@ import type { Clock } from '../core/clock.ts';
 import { OrbitError } from '../core/errors.ts';
 import { faultPoint } from '../core/faults.ts';
 import { canTransition, isRunState, isTerminal, type RunState } from './states.ts';
+import { appendEvent } from '../storage/events.ts';
+import type { RunMode } from '../policy/types.ts';
 
-export type RunMode = 'supervised' | 'autonomous' | 'autonomous-delivery' | 'release';
+export { appendEvent };
+export type { RunMode };
+
 
 export interface RunRecord {
   id: string;
@@ -146,27 +150,6 @@ export function listRuns(db: OrbitDb, opts: { states?: RunState[]; limit?: numbe
   return db.all<RunRow>('SELECT * FROM runs ORDER BY created_at DESC LIMIT ?', limit).map(toRecord);
 }
 
-export function appendEvent(
-  db: OrbitDb,
-  runId: string,
-  type: string,
-  actor: string,
-  data: unknown,
-  ts: number,
-  fromState: RunState | null = null,
-  toState: RunState | null = null,
-): void {
-  db.run(
-    'INSERT INTO events (run_id, ts, type, from_state, to_state, actor, data_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    runId,
-    ts,
-    type,
-    fromState,
-    toState,
-    actor,
-    data === undefined ? null : JSON.stringify(data),
-  );
-}
 
 export interface TransitionRequest {
   runId: string;

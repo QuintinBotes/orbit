@@ -1,0 +1,550 @@
+{
+  "description": "Seed lessons for the engineering best practices in spec section 5. Loaded by src/knowledge/seed.ts. Each entry is a complete orbit.lesson/1 document; ids are derived from kind and normalized statement, so edit the statement and the id together (the unit tests check both).",
+  "lessons": [
+    {
+      "schema": "orbit.lesson/1",
+      "id": "les-af5e1eb62503",
+      "kind": "practice",
+      "statement": "Cover each changed behaviour with positive, negative, boundary and error-path tests.",
+      "rationale": "Happy-path tests alone miss most regressions. Negative cases show that invalid input is refused, boundary cases catch off-by-one mistakes and empty or maximum values, and error-path cases prove that failures are reported rather than swallowed.",
+      "applicability": {
+        "languages": [],
+        "frameworks": [],
+        "paths": [],
+        "check_ids": [],
+        "fingerprints": [],
+        "roles": [
+          "planner",
+          "implementer",
+          "verifier",
+          "reviewer"
+        ],
+        "keywords": [
+          "tests",
+          "negative tests",
+          "boundary",
+          "error path",
+          "edge cases",
+          "coverage"
+        ]
+      },
+      "verification": "For each acceptance criterion the change includes tests that exercise valid input, invalid input, a boundary value and a failing dependency, and each of those tests fails when the behaviour it covers is taken away.",
+      "evidence": [],
+      "provenance": {
+        "source": "seed",
+        "uri": null,
+        "derived_from": [
+          "orbit-spec:engineering-best-practices"
+        ],
+        "generated_by": "deterministic",
+        "generated_at": "2026-10-03T00:00:00.000Z"
+      },
+      "confidence": "medium",
+      "status": "validated",
+      "scope": "global",
+      "code_free": true,
+      "supersedes": null
+    },
+    {
+      "schema": "orbit.lesson/1",
+      "id": "les-1dba12056b50",
+      "kind": "practice",
+      "statement": "Write a regression test that fails before the fix and passes after it.",
+      "rationale": "A test that passes either way proves nothing about the fix. Seeing it fail first shows that it really exercises the defect.",
+      "applicability": {
+        "languages": [],
+        "frameworks": [],
+        "paths": [],
+        "check_ids": [],
+        "fingerprints": [],
+        "roles": [
+          "implementer",
+          "verifier",
+          "reviewer"
+        ],
+        "keywords": [
+          "regression test",
+          "bug fix",
+          "reproduce",
+          "tests"
+        ]
+      },
+      "verification": "The new test fails against the unfixed revision and passes against the candidate, and the evidence for both outcomes is recorded.",
+      "evidence": [],
+      "provenance": {
+        "source": "seed",
+        "uri": null,
+        "derived_from": [
+          "orbit-spec:engineering-best-practices"
+        ],
+        "generated_by": "deterministic",
+        "generated_at": "2026-10-03T00:00:00.000Z"
+      },
+      "confidence": "medium",
+      "status": "validated",
+      "scope": "global",
+      "code_free": true,
+      "supersedes": null
+    },
+    {
+      "schema": "orbit.lesson/1",
+      "id": "les-c3ebef52d3b2",
+      "kind": "practice",
+      "statement": "Fix the cause of a failing check rather than weakening its assertions or skipping it.",
+      "rationale": "A weakened test hides the defect it was written to catch, and the run then reports a pass it has not earned.",
+      "applicability": {
+        "languages": [],
+        "frameworks": [],
+        "paths": [],
+        "check_ids": [],
+        "fingerprints": [],
+        "roles": [
+          "implementer",
+          "verifier",
+          "reviewer"
+        ],
+        "keywords": [
+          "failing test",
+          "assertions",
+          "flaky",
+          "test integrity"
+        ]
+      },
+      "verification": "The diff keeps every existing assertion and test active and leaves timeouts and thresholds as they were, unless the contract explicitly allows a change.",
+      "evidence": [],
+      "provenance": {
+        "source": "seed",
+        "uri": null,
+        "derived_from": [
+          "orbit-spec:engineering-best-practices"
+        ],
+        "generated_by": "deterministic",
+        "generated_at": "2026-10-03T00:00:00.000Z"
+      },
+      "confidence": "medium",
+      "status": "validated",
+      "scope": "global",
+      "code_free": true,
+      "supersedes": null
+    },
+    {
+      "schema": "orbit.lesson/1",
+      "id": "les-c6ef786557bc",
+      "kind": "practice",
+      "statement": "Handle empty, loading and error states in every view that shows remote or asynchronous data.",
+      "rationale": "Users meet these states on slow networks, on first use and during outages. Left unhandled they render blank screens, stale data or misleading zeros.",
+      "applicability": {
+        "languages": [],
+        "frameworks": [],
+        "paths": [],
+        "check_ids": [],
+        "fingerprints": [],
+        "roles": [
+          "planner",
+          "implementer",
+          "verifier",
+          "reviewer"
+        ],
+        "keywords": [
+          "empty state",
+          "loading state",
+          "error state",
+          "user interface",
+          "async"
+        ]
+      },
+      "verification": "Each affected view has a test or journey for no data, data still loading and a failed request, and each state shows a clear message and a way to recover.",
+      "evidence": [],
+      "provenance": {
+        "source": "seed",
+        "uri": null,
+        "derived_from": [
+          "orbit-spec:engineering-best-practices"
+        ],
+        "generated_by": "deterministic",
+        "generated_at": "2026-10-03T00:00:00.000Z"
+      },
+      "confidence": "medium",
+      "status": "validated",
+      "scope": "global",
+      "code_free": true,
+      "supersedes": null
+    },
+    {
+      "schema": "orbit.lesson/1",
+      "id": "les-da8aba42ef9c",
+      "kind": "practice",
+      "statement": "Validate untrusted input where it enters the system and reject it with a clear error.",
+      "rationale": "Input from users, files, networks and other services can be malformed or hostile. Checking it once at the boundary keeps the rest of the code simple and prevents injection and data corruption.",
+      "applicability": {
+        "languages": [],
+        "frameworks": [],
+        "paths": [],
+        "check_ids": [],
+        "fingerprints": [],
+        "roles": [
+          "implementer",
+          "verifier",
+          "reviewer"
+        ],
+        "keywords": [
+          "input validation",
+          "untrusted input",
+          "injection",
+          "boundary",
+          "security"
+        ]
+      },
+      "verification": "Malformed, oversized, missing and wrongly typed inputs are refused at the entry point with a specific error, and tests cover each rejection.",
+      "evidence": [],
+      "provenance": {
+        "source": "seed",
+        "uri": null,
+        "derived_from": [
+          "orbit-spec:engineering-best-practices"
+        ],
+        "generated_by": "deterministic",
+        "generated_at": "2026-10-03T00:00:00.000Z"
+      },
+      "confidence": "medium",
+      "status": "validated",
+      "scope": "global",
+      "code_free": true,
+      "supersedes": null
+    },
+    {
+      "schema": "orbit.lesson/1",
+      "id": "les-b09f25874e8f",
+      "kind": "practice",
+      "statement": "Enforce authorization on the server for every operation that reads or changes protected data.",
+      "rationale": "Checks made only in the interface are skipped by anyone calling the server directly. Every read and write needs its own check against the caller identity and tenant.",
+      "applicability": {
+        "languages": [],
+        "frameworks": [],
+        "paths": [],
+        "check_ids": [],
+        "fingerprints": [],
+        "roles": [
+          "planner",
+          "implementer",
+          "verifier",
+          "reviewer"
+        ],
+        "keywords": [
+          "authorization",
+          "access control",
+          "tenant isolation",
+          "security",
+          "permissions"
+        ]
+      },
+      "verification": "Tests show that a caller without permission, and a caller from another tenant, is refused for each new or changed operation, including list and bulk endpoints.",
+      "evidence": [],
+      "provenance": {
+        "source": "seed",
+        "uri": null,
+        "derived_from": [
+          "orbit-spec:engineering-best-practices"
+        ],
+        "generated_by": "deterministic",
+        "generated_at": "2026-10-03T00:00:00.000Z"
+      },
+      "confidence": "medium",
+      "status": "validated",
+      "scope": "global",
+      "code_free": true,
+      "supersedes": null
+    },
+    {
+      "schema": "orbit.lesson/1",
+      "id": "les-f840b2463780",
+      "kind": "practice",
+      "statement": "Keep secrets and personal data out of logs, error messages, test fixtures and analytics.",
+      "rationale": "Logs and fixtures are copied widely and kept for a long time. Credentials or personal data that reach them are hard to recall and may breach privacy obligations.",
+      "applicability": {
+        "languages": [],
+        "frameworks": [],
+        "paths": [],
+        "check_ids": [],
+        "fingerprints": [],
+        "roles": [
+          "implementer",
+          "verifier",
+          "reviewer"
+        ],
+        "keywords": [
+          "secrets",
+          "personal data",
+          "privacy",
+          "logging",
+          "redaction",
+          "security"
+        ]
+      },
+      "verification": "New log lines, errors and fixtures contain no credentials or personal data, and fields that may hold them are redacted or replaced with synthetic values.",
+      "evidence": [],
+      "provenance": {
+        "source": "seed",
+        "uri": null,
+        "derived_from": [
+          "orbit-spec:engineering-best-practices"
+        ],
+        "generated_by": "deterministic",
+        "generated_at": "2026-10-03T00:00:00.000Z"
+      },
+      "confidence": "medium",
+      "status": "validated",
+      "scope": "global",
+      "code_free": true,
+      "supersedes": null
+    },
+    {
+      "schema": "orbit.lesson/1",
+      "id": "les-fece08a8db92",
+      "kind": "practice",
+      "statement": "Preserve the behaviour of public interfaces unless the goal explicitly asks to change it.",
+      "rationale": "Callers depend on existing behaviour in ways the code does not show. An unplanned difference in a public function, endpoint, file format or command breaks them silently.",
+      "applicability": {
+        "languages": [],
+        "frameworks": [],
+        "paths": [],
+        "check_ids": [],
+        "fingerprints": [],
+        "roles": [
+          "planner",
+          "implementer",
+          "reviewer"
+        ],
+        "keywords": [
+          "compatibility",
+          "public interface",
+          "breaking change",
+          "api"
+        ]
+      },
+      "verification": "Existing tests for the public surface still pass as they are, and any intended difference is listed in the contract with a compatibility note or migration path.",
+      "evidence": [],
+      "provenance": {
+        "source": "seed",
+        "uri": null,
+        "derived_from": [
+          "orbit-spec:engineering-best-practices"
+        ],
+        "generated_by": "deterministic",
+        "generated_at": "2026-10-03T00:00:00.000Z"
+      },
+      "confidence": "medium",
+      "status": "validated",
+      "scope": "global",
+      "code_free": true,
+      "supersedes": null
+    },
+    {
+      "schema": "orbit.lesson/1",
+      "id": "les-bd6c443311b5",
+      "kind": "practice",
+      "statement": "Measure performance before and after touching a known hotspot, using the same workload.",
+      "rationale": "Intuition about speed is often wrong. A before-and-after measurement on a fixed workload shows whether the work helped and guards against regressions in material paths.",
+      "applicability": {
+        "languages": [],
+        "frameworks": [],
+        "paths": [],
+        "check_ids": [],
+        "fingerprints": [],
+        "roles": [
+          "planner",
+          "implementer",
+          "verifier"
+        ],
+        "keywords": [
+          "performance",
+          "hotspot",
+          "benchmark",
+          "latency",
+          "regression"
+        ]
+      },
+      "verification": "The evidence includes comparable timings or resource figures for the hotspot on the baseline and on the candidate, taken with the same input and environment.",
+      "evidence": [],
+      "provenance": {
+        "source": "seed",
+        "uri": null,
+        "derived_from": [
+          "orbit-spec:engineering-best-practices"
+        ],
+        "generated_by": "deterministic",
+        "generated_at": "2026-10-03T00:00:00.000Z"
+      },
+      "confidence": "medium",
+      "status": "validated",
+      "scope": "global",
+      "code_free": true,
+      "supersedes": null
+    },
+    {
+      "schema": "orbit.lesson/1",
+      "id": "les-e81c2dae946b",
+      "kind": "practice",
+      "statement": "Give every interactive element an accessible name, keyboard access and a visible focus state.",
+      "rationale": "Keyboard and screen reader users cannot operate controls that lack these. Automated scans catch many such problems but not all of them.",
+      "applicability": {
+        "languages": [],
+        "frameworks": [],
+        "paths": [],
+        "check_ids": [],
+        "fingerprints": [],
+        "roles": [
+          "implementer",
+          "verifier",
+          "reviewer"
+        ],
+        "keywords": [
+          "accessibility",
+          "a11y",
+          "keyboard",
+          "focus",
+          "screen reader",
+          "user interface"
+        ]
+      },
+      "verification": "An automated accessibility scan reports no new serious or critical issues, and each new control can be reached, operated and identified with the keyboard and a screen reader.",
+      "evidence": [],
+      "provenance": {
+        "source": "seed",
+        "uri": null,
+        "derived_from": [
+          "orbit-spec:engineering-best-practices"
+        ],
+        "generated_by": "deterministic",
+        "generated_at": "2026-10-03T00:00:00.000Z"
+      },
+      "confidence": "medium",
+      "status": "validated",
+      "scope": "global",
+      "code_free": true,
+      "supersedes": null
+    },
+    {
+      "schema": "orbit.lesson/1",
+      "id": "les-cdf0a3f36451",
+      "kind": "practice",
+      "statement": "Document public behaviour in the same change that introduces or alters it.",
+      "rationale": "Documentation that lags behind behaviour misleads users and reviewers. Writing it alongside the code lets both be reviewed together.",
+      "applicability": {
+        "languages": [],
+        "frameworks": [],
+        "paths": [],
+        "check_ids": [],
+        "fingerprints": [],
+        "roles": [
+          "implementer",
+          "reviewer"
+        ],
+        "keywords": [
+          "documentation",
+          "changelog",
+          "public behaviour"
+        ]
+      },
+      "verification": "Every public behaviour difference in the diff has a matching documentation or changelog entry, or the report states why none is needed.",
+      "evidence": [],
+      "provenance": {
+        "source": "seed",
+        "uri": null,
+        "derived_from": [
+          "orbit-spec:engineering-best-practices"
+        ],
+        "generated_by": "deterministic",
+        "generated_at": "2026-10-03T00:00:00.000Z"
+      },
+      "confidence": "medium",
+      "status": "validated",
+      "scope": "global",
+      "code_free": true,
+      "supersedes": null
+    },
+    {
+      "schema": "orbit.lesson/1",
+      "id": "les-d3c6bfaaea9e",
+      "kind": "practice",
+      "statement": "Write an explicit rollback or migration plan before making a change that is hard to reverse.",
+      "rationale": "Schema migrations, data rewrites and release steps can fail halfway. A plan written in advance says how to detect failure and how to return to a known-good state.",
+      "applicability": {
+        "languages": [],
+        "frameworks": [],
+        "paths": [],
+        "check_ids": [],
+        "fingerprints": [],
+        "roles": [
+          "planner",
+          "implementer",
+          "reviewer"
+        ],
+        "keywords": [
+          "rollback",
+          "migration",
+          "schema",
+          "data",
+          "irreversible"
+        ]
+      },
+      "verification": "The plan names the forward steps, how success is checked, how to undo each step and what data could be lost, and it is reviewed before the work is applied.",
+      "evidence": [],
+      "provenance": {
+        "source": "seed",
+        "uri": null,
+        "derived_from": [
+          "orbit-spec:engineering-best-practices"
+        ],
+        "generated_by": "deterministic",
+        "generated_at": "2026-10-03T00:00:00.000Z"
+      },
+      "confidence": "medium",
+      "status": "validated",
+      "scope": "global",
+      "code_free": true,
+      "supersedes": null
+    },
+    {
+      "schema": "orbit.lesson/1",
+      "id": "les-787e7e649002",
+      "kind": "practice",
+      "statement": "Report failures with a specific, actionable error instead of failing silently or returning a default.",
+      "rationale": "Swallowed errors turn a clear failure into wrong data that surfaces far from its cause, where it is much harder to diagnose.",
+      "applicability": {
+        "languages": [],
+        "frameworks": [],
+        "paths": [],
+        "check_ids": [],
+        "fingerprints": [],
+        "roles": [
+          "implementer",
+          "verifier",
+          "reviewer"
+        ],
+        "keywords": [
+          "error handling",
+          "failure",
+          "diagnostics",
+          "error path"
+        ]
+      },
+      "verification": "Tests force each new failure path and assert on the specific error or status returned, not just that something failed.",
+      "evidence": [],
+      "provenance": {
+        "source": "seed",
+        "uri": null,
+        "derived_from": [
+          "orbit-spec:engineering-best-practices"
+        ],
+        "generated_by": "deterministic",
+        "generated_at": "2026-10-03T00:00:00.000Z"
+      },
+      "confidence": "medium",
+      "status": "validated",
+      "scope": "global",
+      "code_free": true,
+      "supersedes": null
+    }
+  ]
+}

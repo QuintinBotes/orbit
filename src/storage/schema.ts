@@ -363,4 +363,8 @@ export const MIGRATIONS: readonly string[] = [
     ts          INTEGER NOT NULL
   ) STRICT;
   `,
+  /* 2: worker session ids (resume after a crash) */ `
+  ALTER TABLE workers ADD COLUMN session_id TEXT;
+  ALTER TABLE workers ADD COLUMN isolation_tier TEXT;
+  `,
 ];

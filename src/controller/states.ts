@@ -7,30 +7,9 @@
  * separate state so that a restarted controller knows whether the push and PR
  * already happened (reconcile receipts) or only CI is left to observe.
  */
-export const RUN_STATES = [
-  'CREATED',
-  'PREFLIGHT',
-  'CONTRACTING',
-  'PLANNING',
-  'IMPLEMENTING',
-  'VERIFYING',
-  'REVIEWING',
-  'DELIVERING',
-  'AWAITING_CI',
-  'INQUISITION',
-  'DIAGNOSING',
-  'REPAIRING',
-  'RECOVERING',
-  'SUCCEEDED',
-  'BLOCKED',
-  'EXHAUSTED',
-  'IMPOSSIBLE',
-  'CANCELLED',
-] as const;
+import { RUN_STATES, TERMINAL_STATES, isRunState, type RunState } from '../core/run-states.ts';
 
-export type RunState = (typeof RUN_STATES)[number];
-
-export const TERMINAL_STATES: ReadonlySet<RunState> = new Set(['SUCCEEDED', 'BLOCKED', 'EXHAUSTED', 'IMPOSSIBLE', 'CANCELLED']);
+export { RUN_STATES, TERMINAL_STATES, isRunState, type RunState };
 
 /** BLOCKED is terminal for the controller loop but resumable by an authorized decision. */
 export const RESUMABLE_STATES: ReadonlySet<RunState> = new Set(['BLOCKED']);
@@ -77,6 +56,3 @@ export function isTerminal(state: RunState): boolean {
   return TERMINAL_STATES.has(state);
 }
 
-export function isRunState(value: string): value is RunState {
-  return (RUN_STATES as readonly string[]).includes(value);
-}

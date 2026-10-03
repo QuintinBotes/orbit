@@ -1,0 +1,478 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/QuintinBotes/orbit/schemas/config.schema.json",
+  "title": "Orbit configuration (resolved)",
+  "description": "The trusted .orbit/config.yaml after defaults are applied and check definitions are normalized. Mirrors OrbitConfig in src/policy/types.ts. User files may omit any key that has a documented default; loadConfig merges defaults first and then validates the result against this schema, so an unknown key anywhere is an error.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "mode",
+    "repository",
+    "scope",
+    "actions",
+    "dependencies",
+    "network",
+    "ambiguity",
+    "scheduler",
+    "agents",
+    "review",
+    "delivery",
+    "checks",
+    "ui",
+    "isolation",
+    "providers",
+    "routing",
+    "retention",
+    "knowledge",
+    "guard"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "mode": { "enum": ["supervised", "autonomous", "autonomous-delivery", "release"] },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_branch", "branch_prefix", "allow_dirty_start", "remote"],
+      "properties": {
+        "base_branch": { "$ref": "#/$defs/refName" },
+        "branch_prefix": { "$ref": "#/$defs/refName" },
+        "allow_dirty_start": { "type": "boolean" },
+        "remote": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_paths", "protected_paths"],
+      "properties": {
+        "allowed_paths": { "$ref": "#/$defs/globList" },
+        "protected_paths": { "$ref": "#/$defs/globList" }
+      }
+    },
+    "actions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "edit",
+        "test",
+        "commit",
+        "push_task_branch",
+        "open_pull_request",
+        "read_ci_logs",
+        "repair_ci",
+        "merge",
+        "deploy_production",
+        "change_secrets",
+        "change_permissions"
+      ],
+      "properties": {
+        "edit": { "type": "boolean" },
+        "test": { "type": "boolean" },
+        "commit": { "type": "boolean" },
+        "push_task_branch": { "type": "boolean" },
+        "open_pull_request": { "type": "boolean" },
+        "read_ci_logs": { "type": "boolean" },
+        "repair_ci": { "type": "boolean" },
+        "merge": { "type": "boolean" },
+        "deploy_production": { "type": "boolean" },
+        "change_secrets": { "type": "boolean" },
+        "change_permissions": { "type": "boolean" }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "install_existing_lockfile",
+        "install_command",
+        "add_packages",
+        "change_lockfile",
+        "install_scripts",
+        "install_script_allowlist"
+      ],
+      "properties": {
+        "install_existing_lockfile": { "type": "boolean" },
+        "install_command": { "oneOf": [{ "$ref": "#/$defs/argv" }, { "type": "null" }] },
+        "add_packages": { "type": "boolean" },
+        "change_lockfile": { "type": "boolean" },
+        "install_scripts": { "enum": ["deny", "deny-unless-allowlisted", "allow"] },
+        "install_script_allowlist": {
+          "type": "array",
+          "maxItems": 200,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*$", "maxLength": 214 }
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_hosts"],
+      "properties": {
+        "allowed_hosts": { "$ref": "#/$defs/hostList" }
+      }
+    },
+    "ambiguity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resolve_reversible_choices", "require_evidence_for_behavior_changes", "block_security_or_data_semantics"],
+      "properties": {
+        "resolve_reversible_choices": { "type": "boolean" },
+        "require_evidence_for_behavior_changes": { "type": "boolean" },
+        "block_security_or_data_semantics": { "type": "boolean" }
+      }
+    },
+    "scheduler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hard_limits", "initial_allowances", "extension", "repeated_failure_threshold", "final_reserve_fraction"],
+      "properties": {
+        "hard_limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "implementation_attempts",
+            "diagnostic_experiments",
+            "review_rounds",
+            "ci_repair_cycles",
+            "worker_turns_per_session",
+            "wall_minutes",
+            "model_cost_usd",
+            "parallel_workers",
+            "changed_files",
+            "changed_lines",
+            "infrastructure_retries",
+            "recovery_attempts"
+          ],
+          "properties": {
+            "implementation_attempts": { "type": "integer", "minimum": 1, "maximum": 1000 },
+            "diagnostic_experiments": { "type": "integer", "minimum": 0, "maximum": 1000 },
+            "review_rounds": { "type": "integer", "minimum": 1, "maximum": 100 },
+            "ci_repair_cycles": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "worker_turns_per_session": { "type": "integer", "minimum": 1, "maximum": 10000 },
+            "wall_minutes": { "type": "integer", "minimum": 1, "maximum": 100000 },
+            "model_cost_usd": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000000 },
+            "parallel_workers": { "type": "integer", "minimum": 1, "maximum": 64 },
+            "changed_files": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+            "changed_lines": { "type": "integer", "minimum": 1, "maximum": 100000000 },
+            "infrastructure_retries": { "type": "integer", "minimum": 0, "maximum": 1000 },
+            "recovery_attempts": { "type": "integer", "minimum": 0, "maximum": 1000 }
+          }
+        },
+        "initial_allowances": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["simple_attempts", "medium_attempts", "complex_attempts"],
+          "properties": {
+            "simple_attempts": { "type": "integer", "minimum": 1, "maximum": 1000 },
+            "medium_attempts": { "type": "integer", "minimum": 1, "maximum": 1000 },
+            "complex_attempts": { "type": "integer", "minimum": 1, "maximum": 1000 }
+          }
+        },
+        "extension": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "attempts_per_extension",
+            "require_measurable_progress",
+            "require_new_hypothesis",
+            "preserve_final_verification_reserve"
+          ],
+          "properties": {
+            "attempts_per_extension": { "type": "integer", "minimum": 1, "maximum": 100 },
+            "require_measurable_progress": { "type": "boolean" },
+            "require_new_hypothesis": { "type": "boolean" },
+            "preserve_final_verification_reserve": { "type": "boolean" }
+          }
+        },
+        "repeated_failure_threshold": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "final_reserve_fraction": { "type": "number", "minimum": 0, "maximum": 0.9 }
+      }
+    },
+    "agents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "default_parallelism",
+        "require_independent_work_units",
+        "isolate_writers",
+        "prohibit_shared_worktree_writes",
+        "cancel_obsolete_workers"
+      ],
+      "properties": {
+        "default_parallelism": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "require_independent_work_units": { "type": "boolean" },
+        "isolate_writers": { "const": true },
+        "prohibit_shared_worktree_writes": { "const": true },
+        "cancel_obsolete_workers": { "type": "boolean" }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "independent_provider_required",
+        "preferred_provider",
+        "fallback_same_provider_allowed",
+        "block_unresolved_high_impact_findings"
+      ],
+      "properties": {
+        "independent_provider_required": { "type": "boolean" },
+        "preferred_provider": { "$ref": "#/$defs/providerId" },
+        "fallback_same_provider_allowed": { "type": "boolean" },
+        "block_unresolved_high_impact_findings": { "type": "boolean" }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "pull_request", "max_ci_repair_cycles", "ci_timeout_minutes"],
+      "properties": {
+        "provider": { "enum": ["github", "fake"] },
+        "pull_request": { "enum": ["draft", "ready", "none"] },
+        "max_ci_repair_cycles": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "ci_timeout_minutes": { "type": "integer", "minimum": 1, "maximum": 10080 }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "maxProperties": 200,
+      "propertyNames": { "$ref": "#/$defs/checkId" },
+      "additionalProperties": { "$ref": "#/$defs/check" }
+    },
+    "ui": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/ui" }]
+    },
+    "isolation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "allow_unisolated", "container"],
+      "properties": {
+        "provider": { "enum": ["sandbox-runtime", "container", "none"] },
+        "allow_unisolated": { "type": "boolean" },
+        "container": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image", "memory_mb", "cpus", "pids"],
+              "properties": {
+                "image": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[A-Za-z0-9][A-Za-z0-9._/:@+-]*$" },
+                "memory_mb": { "type": "integer", "minimum": 64, "maximum": 1048576 },
+                "cpus": { "type": "number", "exclusiveMinimum": 0, "maximum": 1024 },
+                "pids": { "type": "integer", "minimum": 16, "maximum": 1000000 }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "providers": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": { "$ref": "#/$defs/providerId" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "data_policy_eligible", "model", "reasoning_effort", "extra_args"],
+        "properties": {
+          "command": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "data_policy_eligible": { "type": "boolean" },
+          "model": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/\\[\\]-]*$" }] },
+          "reasoning_effort": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[a-z]{1,20}$" }] },
+          "extra_args": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 4096 } }
+        }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_models", "overrides"],
+      "properties": {
+        "allowed_models": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/modelId" }
+        },
+        "overrides": {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" },
+          "additionalProperties": { "$ref": "#/$defs/modelId" }
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keep_runs_days", "redact_patterns"],
+      "properties": {
+        "keep_runs_days": { "type": "integer", "minimum": 1, "maximum": 3650 },
+        "redact_patterns": { "type": "array", "maxItems": 200, "items": { "type": "string", "minLength": 1, "maxLength": 1000 } }
+      }
+    },
+    "knowledge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "share_globally", "max_advisory_tokens", "curator_budget_usd", "eval_budget_usd", "auto_adopt_overlays"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "share_globally": { "type": "boolean" },
+        "max_advisory_tokens": { "type": "integer", "minimum": 0, "maximum": 8000 },
+        "curator_budget_usd": { "type": "number", "minimum": 0, "maximum": 100 },
+        "eval_budget_usd": { "type": "number", "minimum": 0, "maximum": 1000 },
+        "auto_adopt_overlays": { "type": "boolean" }
+      }
+    },
+    "guard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["terms_file", "allowed_emails"],
+      "properties": {
+        "terms_file": { "type": ["string", "null"], "minLength": 1, "maxLength": 1024 },
+        "allowed_emails": { "type": "array", "maxItems": 50, "items": { "type": "string", "minLength": 3, "maxLength": 320 } }
+      }
+    }
+  },
+  "$defs": {
+    "refName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^(?!-)(?!.*\\.\\.)(?!.*//)(?!.*@\\{)(?!.*\\.lock(/|$))[A-Za-z0-9._/-]+$"
+    },
+    "glob": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Repository-relative POSIX glob (picomatch syntax, dotfiles included). No leading '/', '!', './' or '~', and no '..' segment."
+    },
+    "globList": {
+      "type": "array",
+      "maxItems": 500,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/glob" }
+    },
+    "hostList": {
+      "type": "array",
+      "maxItems": 500,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "description": "An exact host name or IPv4 address, or '*.example.com' for any subdomain at any depth (not example.com itself). No scheme, port or path.",
+        "minLength": 1,
+        "maxLength": 253
+      }
+    },
+    "argv": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": { "type": "string", "maxLength": 32768 }
+    },
+    "checkId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+    "providerId": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$" },
+    "modelId": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[a-z0-9][a-z0-9._:\\[\\]-]*$" },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "command", "shell", "cwd", "timeout_seconds", "network_hosts", "env", "mandatory", "flaky_reruns", "kind"],
+      "properties": {
+        "id": { "$ref": "#/$defs/checkId" },
+        "command": {
+          "$ref": "#/$defs/argv",
+          "description": "argv, executed without a shell. When shell is true this holds exactly one element: the script text the runner passes to /bin/sh -c."
+        },
+        "shell": { "type": "boolean" },
+        "cwd": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "network_hosts": { "$ref": "#/$defs/hostList" },
+        "env": {
+          "type": "object",
+          "maxProperties": 100,
+          "propertyNames": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$" },
+          "additionalProperties": { "type": "string", "maxLength": 32768 }
+        },
+        "mandatory": { "type": "boolean" },
+        "flaky_reruns": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "kind": { "enum": ["command", "playwright"] }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_when_ui_changes",
+        "ui_paths",
+        "browsers",
+        "viewports",
+        "environment",
+        "journey_check_ids",
+        "accessibility",
+        "visual",
+        "visual_baseline_auto_accept"
+      ],
+      "properties": {
+        "required_when_ui_changes": { "type": "boolean" },
+        "ui_paths": { "$ref": "#/$defs/globList" },
+        "browsers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["chromium", "firefox", "webkit"] }
+        },
+        "viewports": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["width", "height"],
+            "properties": {
+              "width": { "type": "integer", "minimum": 200, "maximum": 10000 },
+              "height": { "type": "integer", "minimum": 200, "maximum": 10000 }
+            }
+          }
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["base_url", "start_command", "ready_timeout_seconds", "isolated_test_data", "production_accounts"],
+          "properties": {
+            "base_url": { "type": "string", "pattern": "^https?://[^\\s/?#]+(/[^\\s]*)?$", "maxLength": 2048 },
+            "start_command": { "oneOf": [{ "$ref": "#/$defs/argv" }, { "type": "null" }] },
+            "ready_timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
+            "isolated_test_data": { "type": "boolean" },
+            "production_accounts": { "const": false }
+          }
+        },
+        "journey_check_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/checkId" } },
+        "accessibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "fail_on_new_serious_or_critical"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "fail_on_new_serious_or_critical": { "type": "boolean" }
+          }
+        },
+        "visual": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "baseline_changes_require_review", "baseline_globs"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "baseline_changes_require_review": { "type": "boolean" },
+            "baseline_globs": { "$ref": "#/$defs/globList" }
+          }
+        },
+        "visual_baseline_auto_accept": { "const": false }
+      }
+    }
+  }
+}

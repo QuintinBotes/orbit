@@ -1,0 +1,104 @@
+{
+  "title": "Orbit implementer output",
+  "description": "Structured report of the implementer role (spec section 9). Everything here is a claim for the controller to verify: the controller snapshots the candidate tree, inspects the diff and reruns trusted checks itself. There is deliberately no field for declaring the goal complete; completion is decided by independent gates.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "changed_paths", "tests_added", "checks_run", "evidence_refs", "remaining_issues", "next_action"],
+  "properties": {
+    "summary": { "type": "string", "description": "What was changed and why, in a few sentences." },
+    "changed_paths": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "change", "purpose"],
+        "properties": {
+          "path": { "type": "string", "description": "Repository-relative path." },
+          "change": { "type": "string", "enum": ["add", "modify", "delete", "rename"] },
+          "purpose": { "type": "string" }
+        }
+      }
+    },
+    "tests_added": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "name", "kind", "criterion_ids"],
+        "properties": {
+          "path": { "type": "string" },
+          "name": { "type": "string", "description": "Test name or describe/it title." },
+          "kind": { "type": "string", "enum": ["unit", "integration", "e2e", "ui", "other"] },
+          "criterion_ids": {
+            "type": "array",
+            "maxItems": 20,
+            "items": { "type": "string", "pattern": "^AC-[0-9]+$" }
+          }
+        }
+      }
+    },
+    "checks_run": {
+      "type": "array",
+      "maxItems": 50,
+      "description": "Checks the implementer ran while working. Results are claims; the controller never executes a command named here and reruns trusted checks itself.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check_id", "command", "claimed_result", "note"],
+        "properties": {
+          "check_id": {
+            "type": ["string", "null"],
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "description": "Policy check id, when the run used one."
+          },
+          "command": { "type": ["string", "null"], "description": "Command as typed, for the record only." },
+          "claimed_result": { "type": "string", "enum": ["passed", "failed", "error", "not-run"] },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterion_id", "ref", "note"],
+        "properties": {
+          "criterion_id": { "type": ["string", "null"], "pattern": "^AC-[0-9]+$" },
+          "ref": { "type": "string", "description": "path:line, test name or log path." },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "remaining_issues": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["description", "blocking", "criterion_id"],
+        "properties": {
+          "description": { "type": "string" },
+          "blocking": { "type": "boolean" },
+          "criterion_id": { "type": ["string", "null"], "pattern": "^AC-[0-9]+$" }
+        }
+      }
+    },
+    "next_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "detail"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["request-verification", "continue-implementation", "diagnose-failure", "needs-decision", "blocked"],
+          "description": "request-verification hands the candidate to the controller's trusted checks; it is not a claim of success."
+        },
+        "detail": { "type": "string" }
+      }
+    }
+  }
+}

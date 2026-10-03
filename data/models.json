@@ -1,0 +1,223 @@
+{
+  "schema": "orbit.models/1",
+  "refreshed_at": "2026-09-25",
+  "source": {
+    "document": "docs/interfaces/claude-headless-and-sandbox.md section 5",
+    "upstream": "claude-api skill model table cached 2026-09-25, plus the Claude Code model-config documentation",
+    "verified_cli": "2.1.288",
+    "note": "Seed values only. The registry replaces limits and cost with runtime observations from each result's modelUsage, and availability is unknown until a model is validated on a surface."
+  },
+  "provenance_legend": {
+    "stated": "Given explicitly in the source document.",
+    "derived": "Computed in the source from documented multipliers: cache write 1.25x base input (5 minute TTL) and 2x (1 hour TTL), cache read about 0.1x base input. Marked with a dagger in the source.",
+    "unverified": "Not established by the source document. A working assumption that runtime observation or a capability probe must confirm.",
+    "runtime": "Resolved at runtime from the provider's own catalog. Never hardcoded here."
+  },
+  "pricing_unit": "USD per million tokens",
+  "models": [
+    {
+      "model_id": "claude-fable-5-1",
+      "provider": "claude",
+      "family": "fable",
+      "display_name": "Claude Fable 5.1",
+      "aliases": [],
+      "cli_alias": "fable",
+      "min_cli_version": "2.1.257",
+      "surfaces": ["claude-cli"],
+      "capabilities": {
+        "tools": true,
+        "structured_output": true,
+        "vision": true,
+        "effort_levels": ["low", "medium", "high", "xhigh", "max"],
+        "default_effort": "high"
+      },
+      "limits": { "context_tokens": 1000000, "max_output_tokens": 128000 },
+      "pricing": { "input": 10.0, "output": 50.0, "cache_write_5m": 12.5, "cache_write_1h": 20.0, "cache_read": 0.25 },
+      "requires_explicit_policy": true,
+      "provenance": {
+        "model_id": "stated",
+        "cli_alias": "stated",
+        "min_cli_version": "stated",
+        "limits.context_tokens": "stated",
+        "limits.max_output_tokens": "stated",
+        "pricing.input": "stated",
+        "pricing.output": "stated",
+        "pricing.cache_write_5m": "derived",
+        "pricing.cache_write_1h": "derived",
+        "pricing.cache_read": "stated",
+        "capabilities.effort_levels": "stated",
+        "capabilities.default_effort": "stated",
+        "capabilities.structured_output": "stated",
+        "capabilities.tools": "stated",
+        "capabilities.vision": "unverified"
+      },
+      "notes": [
+        "Headless Claude Code on a subscription bills Fable usage credits without a consent prompt, so Fable routes only when routing.allowed_models names it explicitly (decision 0003).",
+        "Content fallback moves a session to another model mid-run (bio to Opus 5, cyber to Opus 4.8); read the model actually used from modelUsage keys.",
+        "structured_output reflects the claude-cli surface flag --json-schema (section 1.1)."
+      ]
+    },
+    {
+      "model_id": "claude-opus-5-5",
+      "provider": "claude",
+      "family": "opus",
+      "display_name": "Claude Opus 5.5",
+      "aliases": [],
+      "cli_alias": "opus",
+      "min_cli_version": "2.1.280",
+      "surfaces": ["claude-cli"],
+      "capabilities": {
+        "tools": true,
+        "structured_output": true,
+        "vision": true,
+        "effort_levels": ["low", "medium", "high", "xhigh", "max"],
+        "default_effort": "medium"
+      },
+      "limits": { "context_tokens": 1000000, "max_output_tokens": 128000 },
+      "pricing": { "input": 4.0, "output": 20.0, "cache_write_5m": 5.0, "cache_write_1h": 8.0, "cache_read": 0.2 },
+      "requires_explicit_policy": false,
+      "provenance": {
+        "model_id": "stated",
+        "cli_alias": "stated",
+        "min_cli_version": "stated",
+        "limits.context_tokens": "stated",
+        "limits.max_output_tokens": "stated",
+        "pricing.input": "stated",
+        "pricing.output": "stated",
+        "pricing.cache_write_5m": "derived",
+        "pricing.cache_write_1h": "derived",
+        "pricing.cache_read": "stated",
+        "capabilities.effort_levels": "stated",
+        "capabilities.default_effort": "stated",
+        "capabilities.structured_output": "stated",
+        "capabilities.tools": "stated",
+        "capabilities.vision": "unverified"
+      },
+      "notes": [
+        "Content fallback moves a session to Opus 5 (bio) or Opus 4.8 (cyber); read the model actually used from modelUsage keys.",
+        "Fast mode pricing ($8/$40) applies on the Claude API only and is not used by Orbit."
+      ]
+    },
+    {
+      "model_id": "claude-sonnet-5-5",
+      "provider": "claude",
+      "family": "sonnet",
+      "display_name": "Claude Sonnet 5.5",
+      "aliases": [],
+      "cli_alias": "sonnet",
+      "min_cli_version": "2.1.284",
+      "surfaces": ["claude-cli"],
+      "capabilities": {
+        "tools": true,
+        "structured_output": true,
+        "vision": true,
+        "effort_levels": ["low", "medium", "high", "xhigh", "max"],
+        "default_effort": "medium"
+      },
+      "limits": { "context_tokens": 1000000, "max_output_tokens": 128000 },
+      "pricing": { "input": 2.0, "output": 10.0, "cache_write_5m": 2.5, "cache_write_1h": 4.0, "cache_read": 0.2 },
+      "requires_explicit_policy": false,
+      "provenance": {
+        "model_id": "stated",
+        "cli_alias": "stated",
+        "min_cli_version": "stated",
+        "limits.context_tokens": "stated",
+        "limits.max_output_tokens": "stated",
+        "pricing.input": "stated",
+        "pricing.output": "stated",
+        "pricing.cache_write_5m": "derived",
+        "pricing.cache_write_1h": "derived",
+        "pricing.cache_read": "stated",
+        "capabilities.effort_levels": "stated",
+        "capabilities.default_effort": "stated",
+        "capabilities.structured_output": "stated",
+        "capabilities.tools": "stated",
+        "capabilities.vision": "unverified"
+      },
+      "notes": [
+        "The sonnet alias resolves to Sonnet 5.5 on the Anthropic API only; Bedrock and Vertex resolve it to Sonnet 4.5, so Orbit pins the full id.",
+        "Content fallback moves a session to Sonnet 5 (cyber)."
+      ]
+    },
+    {
+      "model_id": "claude-haiku-4-5-20251001",
+      "provider": "claude",
+      "family": "haiku",
+      "display_name": "Claude Haiku 4.5",
+      "aliases": ["claude-haiku-4-5"],
+      "cli_alias": "haiku",
+      "min_cli_version": null,
+      "surfaces": ["claude-cli"],
+      "capabilities": {
+        "tools": true,
+        "structured_output": true,
+        "vision": true,
+        "effort_levels": [],
+        "default_effort": null
+      },
+      "limits": { "context_tokens": 200000, "max_output_tokens": 64000 },
+      "pricing": { "input": 1.0, "output": 5.0, "cache_write_5m": 1.25, "cache_write_1h": 2.0, "cache_read": 0.1 },
+      "requires_explicit_policy": false,
+      "provenance": {
+        "model_id": "stated",
+        "cli_alias": "stated",
+        "min_cli_version": "unverified",
+        "limits.context_tokens": "stated",
+        "limits.max_output_tokens": "stated",
+        "pricing.input": "stated",
+        "pricing.output": "stated",
+        "pricing.cache_write_5m": "derived",
+        "pricing.cache_write_1h": "derived",
+        "pricing.cache_read": "derived",
+        "capabilities.effort_levels": "stated",
+        "capabilities.default_effort": "stated",
+        "capabilities.structured_output": "stated",
+        "capabilities.tools": "stated",
+        "capabilities.vision": "unverified"
+      },
+      "notes": [
+        "The haiku alias resolved to this dated snapshot against the mock API with an API key; subscription resolution was not checked.",
+        "Haiku 4.5 has no effort support, so no --effort is passed.",
+        "Auto permission mode does not support Haiku; Orbit runs workers in dontAsk mode, which is unaffected.",
+        "No minimum CLI version is given in the source."
+      ]
+    }
+  ],
+  "runtime_providers": [
+    {
+      "provider": "codex",
+      "family": "codex",
+      "surface": "codex-cli",
+      "source": "docs/interfaces/codex-cli.md sections 3, 6 and 10",
+      "model_resolution": {
+        "provenance": "runtime",
+        "command": ["codex", "debug", "models"],
+        "fields": ["slug", "display_name", "default_reasoning_level", "supported_reasoning_levels[].effort", "visibility", "supported_in_api", "priority"],
+        "eligible_when": "visibility is \"list\"",
+        "provider_default": "the listed model with the lowest priority value (inferred; UNVERIFIED in codex-cli.md section 11)",
+        "bundled_catalog_note": "codex debug models --bundled shows only the catalog shipped in the binary and does not show what the server accepts"
+      },
+      "capabilities": {
+        "tools": true,
+        "structured_output": true,
+        "vision": null,
+        "excluded_efforts": ["ultra"]
+      },
+      "pricing": null,
+      "provenance": {
+        "capabilities.structured_output": "stated",
+        "capabilities.tools": "stated",
+        "capabilities.vision": "unverified",
+        "pricing": "unverified",
+        "usage.cached_input_tokens_within_input_tokens": "unverified"
+      },
+      "notes": [
+        "The model is always passed with -m and taken from the live catalog for the installed CLI; a user's configured default may be rejected by the server.",
+        "The ultra effort uses subagents, so it is never chosen for an isolated reviewer.",
+        "turn.completed.usage carries tokens only. Cost depends on the auth mode (API billing or plan credits), so no pricing is seeded and cost is unavailable unless reported.",
+        "Usage is unknown after turn.failed or an interrupt; it is recorded as unavailable, never as zero.",
+        "Sending a review packet requires providers.codex.data_policy_eligible in trusted configuration."
+      ]
+    }
+  ]
+}

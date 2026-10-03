@@ -178,3 +178,34 @@ the publication guard finds no private term or identity in it.
 to write any matching text into the global knowledge graph, overlays, demo or
 documentation artifacts, or any repository other than the run's own. It never
 prints a matched term.
+
+## Token efficiency
+
+Orbit optimizes expected cost per verified accepted task (spec §8), so the
+cheapest adequate route is the default and escalation needs recorded evidence.
+
+| Role / work | Default route | Escalates to | Output budget |
+|---|---|---|---|
+| log classification, fingerprint triage, extraction | deterministic code first, then Haiku | Sonnet on ambiguity or security relevance | 1k tokens |
+| curator (learning layer) | Haiku | Sonnet when lessons fail validation | 2k |
+| planner | Sonnet | Opus for coupled or architectural goals | 4k |
+| implementer | Sonnet | Opus after repeated equivalent failures with evidence | per-session turn cap |
+| verifier (diagnosis) | Sonnet | Opus for hard causal failures; back to Sonnet once the cause is localized | 3k |
+| inquisitor | Sonnet | Opus for material or security-sensitive ambiguity | 3k |
+| reviewer | Codex (other provider) | never below the quality floor (Opus-class or qualified other provider) | 4k |
+| Fable | never by default | only when policy allows it and evaluation justifies the cost | |
+
+Mechanics that keep tokens down:
+
+- Deterministic parsing, policy and scoring in code; a model is called only
+  when judgement is needed.
+- Full logs stay in artifacts; workers receive bounded, redacted excerpts and
+  references with hashes.
+- Contracts, repair briefs, decisions and handoff packets are compact
+  structured objects, never transcripts.
+- Repository context is retrieved on demand by the worker, not preloaded.
+- Stable prompt prefixes (role prompt, policy summary) come first so provider
+  prompt caching applies; volatile content comes last.
+- Learned advisory blocks have a hard token cap.
+- Usage (input, output, cache read/write, cost and its source) is recorded per
+  worker and summarized per accepted run.

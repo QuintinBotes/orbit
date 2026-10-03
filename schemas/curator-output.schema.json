@@ -1,0 +1,87 @@
+{
+  "title": "Orbit curator output",
+  "description": "Lessons proposed by the curator role, in the orbit.lesson/1 shape (schemas/lesson.schema.json) minus the fields the controller fills: id, status, scope and each evidence entry's sha256. Every lesson must rest on verified run evidence named in its evidence list. Lessons are advisory and can never grant authority, change policy or alter checks. The complete lesson is validated against lesson.schema.json after the controller fills its fields.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["lessons", "discarded"],
+  "properties": {
+    "lessons": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schema", "kind", "statement", "rationale", "applicability", "verification", "evidence", "provenance", "confidence", "code_free", "supersedes"],
+        "properties": {
+          "schema": { "type": "string", "enum": ["orbit.lesson/1"] },
+          "kind": { "type": "string", "enum": ["practice", "failure-pattern", "repair-recipe", "convention", "hazard"] },
+          "statement": { "type": "string", "description": "One imperative sentence, 8 to 300 characters." },
+          "rationale": { "type": "string", "description": "Why the lesson holds, at most 1500 characters." },
+          "applicability": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["languages", "frameworks", "paths", "check_ids", "fingerprints", "roles", "keywords"],
+            "properties": {
+              "languages": { "type": "array", "maxItems": 10, "items": { "type": "string" } },
+              "frameworks": { "type": "array", "maxItems": 10, "items": { "type": "string" } },
+              "paths": { "type": "array", "maxItems": 20, "description": "Repository path globs; leave empty for a code-free lesson.", "items": { "type": "string" } },
+              "check_ids": { "type": "array", "maxItems": 20, "items": { "type": "string" } },
+              "fingerprints": { "type": "array", "maxItems": 20, "items": { "type": "string" } },
+              "roles": {
+                "type": "array",
+                "maxItems": 5,
+                "items": { "type": "string", "enum": ["planner", "implementer", "verifier", "reviewer", "inquisitor"] }
+              },
+              "keywords": { "type": "array", "maxItems": 20, "items": { "type": "string" } }
+            }
+          },
+          "verification": { "type": "string", "description": "How to check that the lesson holds. A description, never an executable command." },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["run_id", "artifact", "relation"],
+              "properties": {
+                "run_id": { "type": "string" },
+                "artifact": { "type": "string", "description": "Path relative to the run directory, or an artifact id, exactly as given in the curation packet." },
+                "relation": { "type": "string", "enum": ["supports", "contradicts"] }
+              }
+            }
+          },
+          "provenance": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "uri", "derived_from", "generated_by", "generated_at"],
+            "properties": {
+              "source": { "type": "string", "enum": ["run", "ingest", "seed", "user"] },
+              "uri": { "type": ["string", "null"] },
+              "derived_from": { "type": "array", "maxItems": 50, "items": { "type": "string" } },
+              "generated_by": { "type": "string", "description": "The curator model id given in the packet." },
+              "generated_at": { "type": "string", "format": "date-time", "description": "The timestamp given in the packet." }
+            }
+          },
+          "confidence": { "type": "string", "enum": ["low", "medium", "high"] },
+          "code_free": { "type": "boolean", "description": "True only when the lesson contains no repository code, identifiers, paths or names." },
+          "supersedes": { "type": ["string", "null"], "pattern": "^les-[0-9a-f]{12}$" }
+        }
+      }
+    },
+    "discarded": {
+      "type": "array",
+      "maxItems": 50,
+      "description": "Observations deliberately not turned into lessons, with the reason.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "reason"],
+        "properties": {
+          "source": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  }
+}

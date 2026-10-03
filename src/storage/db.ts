@@ -25,7 +25,7 @@ export interface OrbitDb {
   close(): void;
 }
 
-export function openDb(path: string, options: { busyTimeoutMs?: number } = {}): OrbitDb {
+export function openDb(path: string, options: { busyTimeoutMs?: number; migrations?: readonly string[] } = {}): OrbitDb {
   suppressSqliteExperimentalWarning();
   const { DatabaseSync: Database } = require('node:sqlite') as typeof import('node:sqlite');
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
@@ -34,7 +34,7 @@ export function openDb(path: string, options: { busyTimeoutMs?: number } = {}): 
   if (path !== ':memory:') db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA synchronous = FULL');
-  migrate(db);
+  migrate(db, options.migrations ?? MIGRATIONS);
 
   let depth = 0;
   let savepoint = 0;
@@ -96,15 +96,15 @@ export function openDb(path: string, options: { busyTimeoutMs?: number } = {}): 
   return api;
 }
 
-function migrate(db: DatabaseSync): void {
+function migrate(db: DatabaseSync, migrations: readonly string[]): void {
   const current = Number((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version);
-  if (current > MIGRATIONS.length) {
-    throw new Error(`state.sqlite is at schema version ${current}, newer than this Orbit (${MIGRATIONS.length}). Upgrade Orbit.`);
+  if (current > migrations.length) {
+    throw new Error(`database is at schema version ${current}, newer than this Orbit (${migrations.length}). Upgrade Orbit.`);
   }
-  for (let v = current; v < MIGRATIONS.length; v++) {
+  for (let v = current; v < migrations.length; v++) {
     db.exec('BEGIN IMMEDIATE');
     try {
-      db.exec(MIGRATIONS[v]!);
+      db.exec(migrations[v]!);
       db.exec(`PRAGMA user_version = ${v + 1}`);
       db.exec('COMMIT');
     } catch (err) {
