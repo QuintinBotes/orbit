@@ -1,0 +1,35 @@
+// Extended mock Anthropic Messages API. MODE per request read from file MODE_FILE (so one server serves many probes).
+const http = require('http'); const fs = require('fs');
+const LOG = process.env.MOCK_LOG; const port = +process.env.PORT; const MODE_FILE = process.env.MODE_FILE;
+let n = 0;
+function mode() { try { return fs.readFileSync(MODE_FILE, 'utf8').trim(); } catch { return 'echo'; } }
+function log(o) { fs.appendFileSync(LOG, JSON.stringify(o) + '\n'); }
+function sse(res, events) { res.writeHead(200, { 'content-type': 'text/event-stream', 'request-id': 'req_mock' }); for (const e of events) res.write(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`); res.end(); }
+function build(step, model, usage) {
+  const ev = [{ type: 'message_start', message: { id: 'msg_' + (++n), type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: usage.in, output_tokens: 1 } } }];
+  let stop;
+  if (step.tool) { ev.push({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_m' + n, name: step.tool, input: {} } }); ev.push({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify(step.input) } }); stop = 'tool_use'; }
+  else { ev.push({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }); ev.push({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: step.text } }); stop = 'end_turn'; }
+  ev.push({ type: 'content_block_stop', index: 0 }); ev.push({ type: 'message_delta', delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: usage.out } }); ev.push({ type: 'message_stop' });
+  return ev;
+}
+http.createServer((req, res) => {
+  let body = ''; req.on('data', c => body += c); req.on('end', () => {
+    let j = {}; try { j = JSON.parse(body || '{}'); } catch {}
+    const m = mode();
+    if (req.url.startsWith('/v1/messages/count_tokens')) { res.writeHead(200, {'content-type':'application/json'}); return res.end('{"input_tokens":10}'); }
+    if (!req.url.startsWith('/v1/messages')) { log({ t: Date.now(), url: req.url, method: req.method, unhandled: true }); res.writeHead(404); return res.end('{}'); }
+    const hasTools = Array.isArray(j.tools) && j.tools.length > 0;
+    log({ t: Date.now(), mode: m, url: req.url, model: j.model, hasTools, tools: hasTools ? j.tools.map(t => t.name) : undefined, nMsgs: (j.messages||[]).length, max_tokens: j.max_tokens, apiKeyHdr: req.headers['x-api-key'] ? 'set' : 'unset', auth: req.headers['authorization'] ? 'set' : 'unset' });
+    if (m === '401') { res.writeHead(401, { 'content-type': 'application/json', 'request-id': 'req_mock401' }); return res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } })); }
+    let step, usage = { in: 10, out: 5 };
+    if (m === 'loop' && hasTools) step = { tool: 'Bash', input: { command: 'echo loop', description: 'loop' } };
+    else if (m === 'bigloop' && hasTools) { step = { tool: 'Bash', input: { command: 'echo loop', description: 'loop' } }; usage = { in: 200000, out: 20000 }; }
+    else if (m === 'slow') { return setTimeout(() => { if (j.stream) sse(res, build({ text: 'slow done' }, j.model, usage)); else { res.writeHead(200, {'content-type':'application/json'}); res.end(JSON.stringify({ id:'x', type:'message', role:'assistant', model:j.model, content:[{type:'text',text:'slow done'}], stop_reason:'end_turn', stop_sequence:null, usage:{input_tokens:10,output_tokens:5}})); } }, 30000); }
+    else step = { text: hasTools ? 'echo reply' : '{"ok": true, "reason": "side"}' };
+    if (j.stream) return sse(res, build(step, j.model || 'mock', usage));
+    const content = step.tool ? [{ type: 'tool_use', id: 'toolu_m' + (++n), name: step.tool, input: step.input }] : [{ type: 'text', text: step.text }];
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ id: 'msg_x', type: 'message', role: 'assistant', model: j.model, content, stop_reason: step.tool ? 'tool_use' : 'end_turn', stop_sequence: null, usage: { input_tokens: usage.in, output_tokens: usage.out } }));
+  });
+}).listen(port, '127.0.0.1', () => console.log('mock2 listening ' + port));

@@ -1,0 +1,25 @@
+// Minimal mock of the OpenAI Responses API (SSE) for codex exec probing. No real model calls.
+const http = require('http'); const fs = require('fs');
+const LOG = process.env.MOCK_LOG; const port = +process.env.PORT; const TEXT_FILE = process.env.TEXT_FILE;
+let n = 0;
+function log(o) { fs.appendFileSync(LOG, JSON.stringify(o) + '\n'); }
+http.createServer((req, res) => {
+  let body = ''; req.on('data', c => body += c); req.on('end', () => {
+    let j = {}; try { j = JSON.parse(body || '{}'); } catch {}
+    log({ t: Date.now(), method: req.method, url: req.url, auth: req.headers['authorization'] ? 'set' : 'unset', model: j.model, store: j.store, stream: j.stream, text: j.text, tools: Array.isArray(j.tools) ? j.tools.map(t => t.name || t.type) : undefined, reasoning: j.reasoning, nInput: Array.isArray(j.input) ? j.input.length : undefined, instructionsLen: (j.instructions||'').length });
+    if (!(req.method === 'POST' && req.url.endsWith('/responses'))) { res.writeHead(404, {'content-type':'application/json'}); return res.end('{"error":{"message":"not found"}}'); }
+    const text = fs.readFileSync(TEXT_FILE, 'utf8');
+    const id = 'resp_' + (++n);
+    const msg = { type: 'message', id: 'msg_' + n, role: 'assistant', status: 'completed', content: [{ type: 'output_text', text, annotations: [] }] };
+    const evs = [
+      { type: 'response.created', response: { id, status: 'in_progress' } },
+      { type: 'response.output_item.added', output_index: 0, item: { ...msg, status: 'in_progress', content: [] } },
+      { type: 'response.output_text.delta', output_index: 0, content_index: 0, item_id: msg.id, delta: text },
+      { type: 'response.output_item.done', output_index: 0, item: msg },
+      { type: 'response.completed', response: { id, status: 'completed', usage: { input_tokens: 1234, input_tokens_details: { cached_tokens: 1000 }, output_tokens: 56, output_tokens_details: { reasoning_tokens: 7 }, total_tokens: 1290 } } },
+    ];
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    for (const e of evs) res.write(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
+    res.end();
+  });
+}).listen(port, '127.0.0.1', () => console.log('respmock listening ' + port));

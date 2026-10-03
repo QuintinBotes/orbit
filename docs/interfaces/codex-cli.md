@@ -37,6 +37,7 @@ codex exec \
   -m <model-from-catalog> \
   -c model_reasoning_effort='"high"' \
   -c web_search='"disabled"' \
+  --disable multi_agent \            # verified: removes the multi_agent_v1 (subagent) tool from the request
   -C /abs/worktree \
   -  < /abs/run/<id>/review-packet.md
 ```
@@ -199,7 +200,20 @@ Result: exit 1, 3.0 s. `last.json` was **not created**. stderr: `Reading additio
 {"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized: Incorrect API key provided: sk-inval**************-000. ..., url: https://api.openai.com/v1/responses, cf-ray: ..., request id: req_..., auth error: 401, auth error code: invalid_api_key"}}
 ```
 
-**D. Success-path shape.** This was **not captured live**: the one permitted call failed (A). The doc sample [DOC NI] and [SRC] agree:
+**D′. Success path captured against a local mock Responses API** (gaps V6; no OpenAI call). Command, with a temp `CODEX_HOME`:
+
+`codex exec --ephemeral --ignore-user-config --sandbox read-only --json --output-schema review.schema.json -o last.json -m mock-model -c model_provider='"mock"' -c 'model_providers.mock={name="mock",base_url="http://127.0.0.1:47812/v1",env_key="MOCK_KEY",wire_api="responses",supports_websockets=false}' -c web_search='"disabled"' - < packet.md`
+
+It exited 0 in about 1 s and wrote `-o` with the agent text. The captured request body had `POST /v1/responses`, `store:false`, `stream:true` and `text.format={"type":"json_schema","strict":true,"schema":<file>,"name":"codex_output_schema"}`, which confirms the [SRC] claim. Tools offered: `exec_command, write_stdin, request_user_input, view_image, multi_agent_v1`, plus `web_search` unless it is disabled.
+```jsonl
+{"type":"thread.started","thread_id":"01a10135-b266-7493-be87-a577cbd9146b"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `mock-model` not found. Defaulting to fallback metadata; ..."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"{\"verdict\":\"PASS\",\"findings\":[]}\n"}}
+{"type":"turn.completed","usage":{"input_tokens":1234,"cached_input_tokens":1000,"cache_write_input_tokens":0,"output_tokens":56,"reasoning_output_tokens":7}}
+```
+
+**D. Success-path shape from the docs.** The one permitted live call failed (A). The doc sample [DOC NI] and [SRC] agree:
 
 ```jsonl
 {"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-bbab2a035a53"}
@@ -236,7 +250,7 @@ Result: exit 1, 3.0 s. `last.json` was **not created**. stderr: `Reading additio
     - At most 1000 enum values in total. When a single string enum has more than 250 values, those values may total at most 15,000 chars.
   - Keys are produced in schema order.
   - An unsupported schema under `strict: true` makes the API "return an error". The exact Codex surfacing is **UNVERIFIED**; it is presumably `turn.failed` with a 400 message, as in sample A.
-- **How the result arrives.** The result is the `agent_message.text` **JSON string**. Codex does **not** validate it locally (UNVERIFIED that it never does; no local validator was found in exec). Orbit must `JSON.parse` it and validate it with its own schema validator (e.g. ajv).
+- **How the result arrives.** The result is the `agent_message.text` **JSON string**. **Verified (mock, gaps V6): Codex does not validate it locally.** A mock reply of `not json at all`, and one of `{"verdict":"MAYBE","extra":1}`, each produced `turn.completed`, **exit 0**, and an `-o` file containing that text. Orbit must `JSON.parse` the result and validate it with its own schema validator (e.g. ajv).
 - **`-o FILE` behaviour** [SRC event_processor.rs, jsonl processor:520-628; LIVE]:
   - Written **only after `turn.completed`**.
   - Not written on `turn.failed` or on interrupt [LIVE A, C, SIGINT test]. A stale file from an earlier run stays, so delete it before each run.
@@ -425,7 +439,9 @@ How these reach the exec JSONL (presumably a `turn.failed` message) is **UNVERIF
 
 ## 11. UNVERIFIED / open items
 
-- **Success-path live capture.** No live `turn.completed`, `agent_message` JSON or `-o` content was captured. The one permitted call failed with a 400 on model selection. Re-run once with `-m gpt-6-astra` (or after `codex update`) to capture it.
+- **Success-path live capture against OpenAI.** The protocol shape is now verified against a local mock provider (§3 D′, gaps V6), but no real OpenAI success was captured. Re-run once with `-m gpt-6-astra` (or after `codex update`) to confirm real-model behaviour.
+- **`request_user_input` is offered to the model in exec** (mock request body). If the reviewer model calls it, exec presumably rejects it and exits 1 (§2). That consequence is UNVERIFIED; no mock function call was attempted.
+- **`--disable hooks`.** Whether it skips `$CODEX_HOME/hooks.json` is UNVERIFIED. (`--disable multi_agent` was verified to remove the `multi_agent_v1` tool.)
 - **Strict-schema rejection.** How an invalid or non-strict schema surfaces in JSONL (expected: `turn.failed` with a 400 message).
 - **Expired ChatGPT refresh token.** How it surfaces in exec JSONL; only the message strings are verified from source.
 - **Default model when none is configured.** Inferred as the catalog's priority-1 listed model.
@@ -434,5 +450,5 @@ How these reach the exec JSONL (presumably a `turn.failed` message) is **UNVERIF
 - **Sandbox on resume.** Whether `exec resume` restores the original sandbox mode.
 - **SIGTERM cleanup.** Whether SIGTERM orphans sandboxed child commands.
 - **Read scope of `read-only` on macOS Seatbelt.** The exact readable roots were not confirmed.
-- **Local validation.** Whether Codex ever validates the final message against the schema locally (none found in exec).
+- ~~**Local validation.**~~ Resolved: Codex does **not** validate output against the schema locally (gaps V6).
 - **Personal-plan training default.** ChatGPT Plus/Pro training opt-out defaults for Codex usage.

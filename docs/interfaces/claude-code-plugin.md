@@ -73,7 +73,7 @@ The manifest is optional. Without it, the plugin name comes from the directory n
 | Var | Value | Where it resolves | Exported to |
 |---|---|---|---|
 | `CLAUDE_PLUGIN_ROOT` | Install dir of the current version. It changes on update, so never write state there. | Hook `command`/`args`; skill, agent and command bodies; MCP/LSP config | hook, MCP, LSP processes |
-| `CLAUDE_PLUGIN_DATA` | `~/.claude/plugins/data/<id>/`, where every char of `<id>` outside `[A-Za-z0-9_-]` becomes `-`. It survives updates. | same | hook, MCP (stdio), LSP |
+| `CLAUDE_PLUGIN_DATA` | `~/.claude/plugins/data/<id>/` per the docs. **In practice it is `$CLAUDE_CONFIG_DIR/plugins/data/<id>/`** (probe below; this machine uses `$CLAUDE_CONFIG_DIR`). Every char of `<id>` outside `[A-Za-z0-9_-]` becomes `-`. It survives updates. | same | hook, MCP (stdio), LSP |
 | `CLAUDE_PROJECT_DIR` | The project root where the session started. It does not follow `cd` or worktrees; hook input `cwd` does. | same | hook, LSP |
 
 [probe] For a `--plugin-dir` plugin, the id is `orbit@inline`, so `CLAUDE_PLUGIN_DATA=$CLAUDE_CONFIG_DIR/plugins/data/orbit-inline`.
@@ -470,7 +470,8 @@ Do not list `skills: [run]` on this agent. It validates, but `run` has `disable-
    - Respect `stop_hook_active` and expect the 8-block cap (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`).
    - **Completion authority stays in the controller and evidence runner**, not in hook loops and not in `/goal`.
 8. **Headless worker launches (Claude adapter):**
-   - Launch with `claude -p --plugin-dir <orbit> --settings <run-policy.json> --permission-mode <explicit> --output-format stream-json --verbose`.
+   - Launch with `claude -p --setting-sources "" --strict-mcp-config --plugin-dir <orbit> --settings <run-policy.json> --permission-mode <explicit> --output-format stream-json --verbose`.
+   - **Added (gaps V4):** without `--setting-sources ""`, the user's enabled plugins load into every worker. On this machine that is `codex@openai-codex`, with a Stop hook that has a 900 s timeout. The repo's own `.claude/settings.json` hooks and `.mcp.json` servers load too. With `""`, `--settings` and `--plugin-dir` hooks were verified to still fire.
    - Put Orbit's policy hooks and permission rules in the per-run `--settings` file, in addition to the plugin hooks, so that enforcement doesn't depend on plugin enablement.
    - **Do not use `--bare` for workers that need hooks.**
    - Use `--permission-prompts none` for unattended runs.

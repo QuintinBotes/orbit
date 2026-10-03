@@ -77,7 +77,7 @@ Exit codes [LAB]:
 | No tests matched (without `--pass-with-no-tests`) | 1 |
 | Config error (unknown project) | 1 |
 | webServer failure (e.g. port already used and `reuseExistingServer:false`) | 1. The JSON report has `suites: []`, all-zero `stats`, and the error in top-level `errors[]` |
-| SIGINT/interrupted | **UNVERIFIED** |
+| SIGINT/interrupted | **130**, verified (gaps V8), both for SIGINT to the process group and to the npx process alone. The JSON report **is still written**: the interrupted test has `results[].status:'interrupted'`, `test.status:'skipped'`, `stats.skipped:1`, `stats.unexpected:0` and `errors:[]`. That looks clean apart from `expected:0`. The webServer port was freed |
 
 ### A3. JSON reporter
 
@@ -131,7 +131,7 @@ With `retain-on-failure`, passing tests' trace and video are deleted. Their dir 
 ### A4. Config options [DOC: https://playwright.dev/docs/api/class-testconfig, https://playwright.dev/docs/test-use-options] [LAB]
 
 - `use.trace`: `'off'|'on'|'retain-on-failure'|'retain-on-first-failure'|'retain-on-failure-and-retries'|'on-first-retry'|'on-all-retries'`.
-- `use.screenshot`: `'off'|'on'|'only-on-failure'`. **Spec mismatch:** spec 13 says `screenshots: on-failure`. Map that to `'only-on-failure'`. The value `on-failure` does not exist.
+- `use.screenshot`: `'off'|'on'|'only-on-failure'|'on-first-failure'`, or `{mode, fullPage?, omitBackground?}` [TYPES: `ScreenshotMode` in `types/test.d.ts` 1.63.0]. *Corrected: the earlier list omitted `on-first-failure`.* **Spec mismatch:** spec 13 says `screenshots: on-failure`. Map that to `'only-on-failure'`. The value `on-failure` does not exist.
 - `use.video`: the same set as `trace`.
 - `use.viewport`: `{ width, height }`. For projects: `projects: [{ name:'desktop', use:{ ...devices['Desktop Chrome'], viewport:{width:1440,height:900} } }, { name:'mobile', use:{ browserName:'chromium', viewport:{width:390,height:844}, isMobile:true, hasTouch:true } }]` [LAB ran both].
 - `updateSnapshots`: `'all'|'changed'|'missing'|'none'`, default `'missing'` [DOC].
@@ -246,7 +246,8 @@ await download.failure();                                  // null on success
   - `GET …/actions/runs`, `…/actions/jobs/{id}/logs`: Actions read
   - `GET …/commits/{ref}/status`: Commit statuses read
   - `GET …/git/ref/{ref}`: Contents read
-  - **UNVERIFIED:** that git-over-HTTPS push needs exactly Contents write (expected, but not quoted from the docs); which permission `…/commits/{ref}/check-runs` needs; whether `gh pr checks` (GraphQL `statusCheckRollup`) works with a fine-grained PAT.
+  - **Push needs Contents write: doc-confirmed** (gaps V8). docs.github.com "Managing your personal access tokens" lists the pre-filled link "Push access to repositories" as `contents=write`. Editing workflow files additionally needs `workflows=write`, so a token **without** it also blocks pushes that touch `.github/workflows`.
+  - **Check runs.** The fine-grained permission table (`permissions-required-for-fine-grained-personal-access-tokens`) has **no "Checks" permission section**, and the REST check-runs page says only GitHub Apps can write checks. Whether a fine-grained PAT can *read* `…/commits/{ref}/check-runs` or `gh pr checks` (`statusCheckRollup`) is still **UNVERIFIED**. Fallback with documented permissions: `gh run list --commit` + `gh run view --json jobs` (Actions read) plus commit statuses (Commit statuses read).
   - `gh run watch` "does not support authenticating via fine grained PATs as it is not currently possible to create a PAT with the `checks:read` permission" [CLI: `gh run watch --help`]. Orbit should poll instead.
 - Git push with a scoped token, without touching user config [LAB]:
   - `printf 'protocol=https\nhost=github.com\n\n' | GH_TOKEN=… gh auth git-credential get` prints `username=x-access-token` and `password=<GH_TOKEN>`. The helper honors `GH_TOKEN`. The command is hidden but present.
@@ -411,6 +412,7 @@ git ls-remote --exit-code origin refs/heads/orbit/<id>    # "<sha>\trefs/heads/o
    - Run it in its own process group with a wall timeout. Kill the group, then assert the port is free.
 2. **Verdict from JSON, not the exit code alone.**
    - PASS requires all of: exit 0, `errors.length === 0`, `stats.unexpected === 0`, `stats.flaky === 0` (flaky is disclosed, never clean), and `stats.expected > 0`. The `stats.expected > 0` check guards against all-skipped runs.
+   - Also reject any `results[].status === 'interrupted'`. A SIGINT run exits 130 but still writes a report in which the interrupted test counts as `skipped` (verified, gaps V8).
    - Every required journey's spec (`file:line:title`) must be present with `status:'expected'` in every required project, and with no `skip`/`fixme` annotations.
    - Treat `config.updateSnapshots !== 'none'` as tampering.
 3. **Baseline protection:**
@@ -451,7 +453,7 @@ git ls-remote --exit-code origin refs/heads/orbit/<id>    # "<sha>\trefs/heads/o
    - Validate with `gh auth status --json hosts`, because that form always exits 0: check that the active entry has `state=="success"` and `tokenSource=="GH_TOKEN"`.
    - Avoid `gh run watch` (it does not support fine-grained PATs).
 10. **Open UNVERIFIED items to close before v1 delivery:**
-    - Playwright exit code on SIGINT.
+    - ~~Playwright exit code on SIGINT~~: resolved, 130 (gaps V8).
     - The full `ConsoleMessage.type()` value list.
-    - The fine-grained PAT permission for git push and for check-runs or `gh pr checks`.
+    - ~~The fine-grained PAT permission for git push~~: resolved, Contents write (doc). Check-runs and `gh pr checks` with a fine-grained PAT are still open.
     - A live run of the `gh pr create` "already exists" path and of `gh pr checks` exit 8. Both are confirmed by help and source only; neither was executed. Test them against a private sandbox repo.

@@ -101,7 +101,7 @@ function tx<T>(fn: () => T): T {
 | `KeepAlive` | bool or dict | Default false. The dict form `{SuccessfulExit:false}` restarts only after a non-zero exit, and implies RunAtLoad. `Crashed:true/false`, `PathState` and `OtherJobEnabled` also exist. When several dict keys are present, launchd ORs them |
 | `ThrottleInterval` | int (s) | Default: no respawn more often than every 10 s |
 | `ExitTimeOut` | int (s) | Time from SIGTERM to SIGKILL on stop. 0 means infinite and must not be used |
-| `StandardOutPath` / `StandardErrorPath` | string | The file is created if missing. Whether launchd creates parent directories is **UNVERIFIED**, so create them before bootstrap |
+| `StandardOutPath` / `StandardErrorPath` | string | The file is created if missing. **Verified (gaps V7): launchd also creates missing parent directories.** `…/newdir/sub/out.log` was created with mode `drwxr--r--`. Pre-create the dirs anyway if you want 0700 |
 | `EnvironmentVariables` | dict of strings | Non-string values are ignored |
 | `WorkingDirectory` | string | chdir before exec |
 | `ProcessType` | string | `Background`, `Standard` (same as unset), `Adaptive` or `Interactive`. Unset means light CPU and I/O throttling |
@@ -125,7 +125,13 @@ launchctl error <code>                   # e.g. 5 = "Input/output error", 37 = "
 ```
 - `load` and `unload` are legacy; the man page recommends `bootstrap` | `bootout` | `enable` | `disable` instead.
 - `launchctl print gui/$UID/<missing>` exits **113** with `Could not find service "<label>" in domain for user gui: 501` [local]. **A non-zero exit from `print` is a reliable "not loaded" probe. Do not parse the output.**
-- Bootstrapping an already loaded label is commonly reported to fail with `Bootstrap failed: 5: Input/output error`. This is **UNVERIFIED** because nothing was installed. The install routine should be `bootout` (ignore failure), then `bootstrap`.
+- **Verified (gaps V7)**, using an ephemeral agent bootstrapped from a temp plist (not from `~/Library/LaunchAgents`) and booted out afterwards:
+  - The first `bootstrap` exited 0.
+  - Bootstrapping the same label again printed `Bootstrap failed: 5: Input/output error` and exited **5**.
+  - `print` exited 0 while the job was loaded and **113** after `bootout`.
+  - `bootout` of a label that is not loaded printed `Boot-out failed: 3: No such process` and exited **3**.
+  
+  The install routine should be `bootout` (accept exit 3), then `bootstrap`.
 - Login-item or "Background Items Added" user notifications on macOS 13+: **UNVERIFIED**.
 
 ### Sample plist (linted, not installed)
@@ -349,7 +355,9 @@ Behaviour checks [local: `t.mts`]:
    - Use an explicit `PATH`, absolute log paths with pre-created directories, `KeepAlive={SuccessfulExit:false}` or `Restart=on-failure`, `ThrottleInterval` or `RestartSec` ≥ 5, and `ExitTimeOut` or `TimeoutStopSec` = 30.
    - Install by `bootout` (ignore errors), then `bootstrap`. Probe with the exit code of `launchctl print gui/$UID/<label>` (0 means loaded, 113 means missing). Never parse the output.
    - On Linux, `doctor` must warn when linger is off.
-5. **Worker processes vs the service manager.** launchd kills the job's process group, and systemd `KillMode=control-group` kills the cgroup, whenever the controller dies or stops. Workers spawned `detached:true` get a new pgid, so they escape the launchd group kill, but they **remain in the systemd cgroup**. Two consistent options:
+5. **Worker processes vs the service manager.** launchd kills the job's process group, and systemd `KillMode=control-group` kills the cgroup, whenever the controller dies or stops. Workers spawned `detached:true` get a new pgid, so they escape the launchd group kill, but they **remain in the systemd cgroup**.
+   - **Verified on launchd (gaps V7).** After `launchctl kill SIGKILL gui/$UID/<label>` on a Node job, the job's ordinary child (same pgid) was gone. Its `detached:true` child (own pgid) **survived**, reparented to PID 1.
+   - So on macOS, detached workers outlive a controller crash by default. Option (a) below is not automatic on macOS; it must be enforced by reconciliation. Two consistent options:
    - (a) Accept that workers die with the controller and reconcile from durable state on restart. This is simpler and recommended.
    - (b) Use `AbandonProcessGroup=true` with `KillMode=process`, which is discouraged by the docs.
    With (a), reconciliation still needs fingerprints for the crash window.
@@ -371,8 +379,8 @@ Behaviour checks [local: `t.mts`]:
     - Bundle with esbuild using the `createRequire` banner, or alias yaml to its ESM build as review-voice does. Add a CI smoke test that executes `dist/orbit.mjs --help` so a broken bundle fails the build.
 
 ## UNVERIFIED items (summary)
-- Whether launchd creates missing parent directories for `StandardOutPath`/`StandardErrorPath`.
-- The exact `launchctl bootstrap` error when a label is already loaded (`5: Input/output error` is commonly reported).
+- ~~Whether launchd creates missing parent directories~~: resolved, it does (gaps V7).
+- ~~The exact `launchctl bootstrap` error when a label is already loaded~~: resolved, `Bootstrap failed: 5: Input/output error`, exit 5 (gaps V7).
 - macOS 13+ "Background Items" login notifications for user agents.
 - `env -S` shebang support on Linux distributions (busybox).
 - `systemctl` exit-code semantics.

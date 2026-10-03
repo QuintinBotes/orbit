@@ -9,7 +9,7 @@
     "node": ">=22.13"
   },
   "bin": {
-    "orbit": "bin/orbit"
+    "orbit": "dist/orbit.mjs"
   },
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -24,6 +24,7 @@
     "verify": "npm run typecheck && npm run check:dist && npm test && npm run validate:plugin"
   },
   "devDependencies": {
+    "@anthropic-ai/sandbox-runtime": "^0.0.78",
     "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.63.0",
     "@types/node": "^22.10.0",
