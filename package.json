@@ -1,0 +1,39 @@
+{
+  "name": "orbit-dev",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Build and test tooling for Orbit, an autonomous, evidence-driven engineering loop for Claude Code. The shipped CLI is a single bundle with no runtime dependencies beyond Node.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "bin": {
+    "orbit": "bin/orbit"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check:dist": "node scripts/build.mjs --check",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:fault": "vitest run tests/fault-injection",
+    "test:acceptance": "vitest run tests/acceptance",
+    "validate:plugin": "claude plugin validate . --strict",
+    "verify": "npm run typecheck && npm run check:dist && npm test && npm run validate:plugin"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^22.10.0",
+    "@types/picomatch": "^4.0.3",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "esbuild": "^0.28.2",
+    "picomatch": "^4.0.7",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3",
+    "yaml": "^2.9.1"
+  }
+}

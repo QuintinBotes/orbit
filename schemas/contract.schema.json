@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/QuintinBotes/orbit/schemas/contract.schema.json",
+  "title": "Orbit goal contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "task_id",
+    "original_goal",
+    "objective",
+    "acceptance_criteria",
+    "non_goals",
+    "allowed_paths",
+    "required_check_ids",
+    "assumptions",
+    "delivery",
+    "policy_hash",
+    "baseline_revision",
+    "escalation"
+  ],
+  "properties": {
+    "version": { "const": "1.0" },
+    "task_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+    "original_goal": { "type": "string", "minLength": 1, "maxLength": 20000 },
+    "objective": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "acceptance_criteria": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "statement", "proof", "mandatory"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^AC-[0-9]+$" },
+          "statement": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "proof": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1, "maxLength": 1000 } },
+          "mandatory": { "type": "boolean" },
+          "ui": { "type": "boolean" },
+          "check_ids": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" } }
+        }
+      }
+    },
+    "non_goals": { "type": "array", "items": { "type": "string", "maxLength": 1000 } },
+    "allowed_paths": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1, "maxLength": 512 } },
+    "required_check_ids": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" } },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "statement", "status"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^AS-[0-9]+$" },
+          "statement": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "status": { "enum": ["unverified", "supported", "rejected", "needs-decision"] }
+        }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["draft_pr", "merge"],
+      "properties": {
+        "draft_pr": { "type": "boolean" },
+        "merge": { "type": "boolean" }
+      }
+    },
+    "policy_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "baseline_revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "escalation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["material_topics"],
+      "properties": {
+        "material_topics": { "type": "array", "items": { "type": "string", "maxLength": 200 } }
+      }
+    }
+  }
+}

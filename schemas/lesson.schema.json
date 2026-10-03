@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/QuintinBotes/orbit/schemas/lesson.schema.json",
+  "title": "Orbit lesson (orbit.lesson/1)",
+  "description": "One unit of learned engineering knowledge. Advisory only: a lesson can never grant authority, change policy, or alter checks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "kind", "statement", "rationale", "applicability", "verification", "evidence", "provenance", "confidence", "status", "scope", "code_free", "supersedes"],
+  "properties": {
+    "schema": { "const": "orbit.lesson/1" },
+    "id": { "type": "string", "pattern": "^les-[0-9a-f]{12}$" },
+    "kind": { "enum": ["practice", "failure-pattern", "repair-recipe", "convention", "hazard"] },
+    "statement": { "type": "string", "minLength": 8, "maxLength": 300 },
+    "rationale": { "type": "string", "maxLength": 1500 },
+    "applicability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["languages", "frameworks", "paths", "check_ids", "fingerprints", "roles", "keywords"],
+      "properties": {
+        "languages": { "type": "array", "maxItems": 10, "items": { "type": "string", "maxLength": 40 } },
+        "frameworks": { "type": "array", "maxItems": 10, "items": { "type": "string", "maxLength": 60 } },
+        "paths": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 200 } },
+        "check_ids": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 80 } },
+        "fingerprints": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 80 } },
+        "roles": { "type": "array", "maxItems": 5, "items": { "enum": ["planner", "implementer", "verifier", "reviewer", "inquisitor"] } },
+        "keywords": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 40 } }
+      }
+    },
+    "verification": { "type": "string", "maxLength": 600 },
+    "evidence": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["run_id", "artifact", "sha256", "relation"],
+        "properties": {
+          "run_id": { "type": "string", "maxLength": 64 },
+          "artifact": { "type": "string", "maxLength": 300 },
+          "sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+          "relation": { "enum": ["supports", "contradicts"] }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "uri", "derived_from", "generated_by", "generated_at"],
+      "properties": {
+        "source": { "enum": ["run", "ingest", "seed", "user"] },
+        "uri": { "type": ["string", "null"], "maxLength": 500 },
+        "derived_from": { "type": "array", "maxItems": 50, "items": { "type": "string", "maxLength": 80 } },
+        "generated_by": { "type": "string", "maxLength": 80 },
+        "generated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "confidence": { "enum": ["low", "medium", "high"] },
+    "status": { "enum": ["candidate", "validated", "deprecated", "rejected"] },
+    "scope": { "enum": ["repo", "global"] },
+    "code_free": { "type": "boolean" },
+    "supersedes": { "type": ["string", "null"], "pattern": "^les-[0-9a-f]{12}$" }
+  }
+}
