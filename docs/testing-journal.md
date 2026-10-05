@@ -50,6 +50,13 @@ Closed in 30e6e5c: G1 to G3, G5 to G13, G16 to G23, G26, G28, G29, G31 to G36, G
 
 ---
 
+### 2026-10-05: security re-reviews: all eight findings closed
+- Tested: two further Codex (gpt-6.1-sol) re-reviews of the fix diffs, each judging every finding and whether its test would fail if the fix were reverted.
+- Went well: the first re-review confirmed five fixes and showed exactly why three were partial (built-in credential globs only, line-wise redaction missing multi-line keys, scan completeness tied to blocking severity) plus a new CI bypass (only the first page of commit statuses read, aggregate failure discarded); the second confirmed all four closed.
+- Went wrong: the second re-review found a defect in my own follow-up (`scope.credential_paths` skipped glob validation, so an absolute path protected nothing). I also committed 2fbc86a while the full gate had one failing test, because the command chain did not stop on the test exit code.
+- Root cause: a new config key was added without routing it through the existing validator; the flaky test sent SIGINT before the fake provider installed its handler; my commit step was not conditional on the gate.
+- Change: fixed in 2d0710b, 2fbc86a and 895355a (credential paths validated; the test waits for readiness). Commits now run only when `npm run test:coverage` exits 0.
+
 ### 2026-10-05: independent security review by Codex (gpt-6.1-sol)
 - Tested: an adversarial review of the policy, isolation, adapter, delivery and controller modules on a read-only checkout of 7f7d0d7, by a different provider than the one that wrote the code.
 - Went well: eight concrete defects with failure scenarios and demonstrating tests; it confirmed no further defect in publication guarding, policy hash verification, candidate/evidence/review tree matching and UNKNOWN-deploy reconciliation. Running it through the Codex CLI cost no Claude tokens.
