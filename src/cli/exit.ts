@@ -28,6 +28,10 @@ export const EXIT = {
   EXHAUSTED: 11,
   IMPOSSIBLE: 12,
   CANCELLED: 13,
+  /** `orbit verify`: the evidence for the candidate says FAIL (a check failed or the scope was violated). */
+  VERIFY_FAILED: 14,
+  /** `orbit verify`: nothing failed, but a mandatory criterion is not proven (evidence missing or not run). */
+  VERIFY_INCOMPLETE: 15,
   /** `run --foreground` interrupted with Ctrl-C: the run is paused, not cancelled. */
   PAUSED: 20,
 } as const;
@@ -44,6 +48,8 @@ export const EXIT_CODE_DOCS: readonly { code: number; name: string; meaning: str
   { code: EXIT.EXHAUSTED, name: 'EXHAUSTED', meaning: 'a foreground run ended EXHAUSTED (a hard budget cap was reached)' },
   { code: EXIT.IMPOSSIBLE, name: 'IMPOSSIBLE', meaning: 'a foreground run ended IMPOSSIBLE (the goal cannot be met under the policy)' },
   { code: EXIT.CANCELLED, name: 'CANCELLED', meaning: 'a foreground run ended CANCELLED' },
+  { code: EXIT.VERIFY_FAILED, name: 'VERIFY_FAILED', meaning: 'orbit verify: the evidence verdict is FAIL; orbit repair hands the failure to a repair' },
+  { code: EXIT.VERIFY_INCOMPLETE, name: 'VERIFY_INCOMPLETE', meaning: 'orbit verify: the verdict is INCOMPLETE, so a mandatory criterion is unproven (treat as not done)' },
   { code: EXIT.PAUSED, name: 'PAUSED', meaning: 'a foreground run was interrupted (Ctrl-C) and is paused; orbit resume continues it' },
 ];
 

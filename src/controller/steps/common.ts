@@ -5,6 +5,7 @@
  * written report, and decisions recorded through storage/decisions.ts.
  */
 import { OrbitError, isOrbitError } from '../../core/errors.ts';
+import { classifyFailure, decideRetry } from '../../recovery/backoff.ts';
 import { appendEvent } from '../../storage/events.ts';
 import { recordDecision, type DecisionRecord } from '../../storage/decisions.ts';
 import { heartbeatController } from '../../storage/controllers.ts';
@@ -14,6 +15,7 @@ import { isTerminal, type RunState } from '../states.ts';
 import { markProgress, transition, type TransitionRequest } from '../run-store.ts';
 import { stopActiveWorkers } from '../workers.ts';
 import { finalizeRun } from '../report.ts';
+import { blockingQuestions } from '../gates.ts';
 
 export interface StepResult {
   /** The run changed state or recorded progress. */
@@ -135,6 +137,19 @@ export async function outcomeForError(ctx: RunContext, err: unknown): Promise<St
   }
 }
 
+/**
+ * Criteria an open material question blocks keep the run from delivery and success (spec section 10): the
+ * independent work was verified, the rest waits for a person. BLOCKED, naming the questions, or null.
+ */
+export async function blockOnOpenQuestions(ctx: RunContext, stage: string): Promise<StepResult | null> {
+  const { criteria, questions } = blockingQuestions(ctx.db, ctx.run.id);
+  if (criteria.length === 0) return null;
+  const listed = questions.slice(0, 5).map((q) => `${q.id}: ${q.question}`).join(' | ');
+  return finishRun(ctx, 'BLOCKED', `${criteria.join(', ')} ${criteria.length === 1 ? 'waits' : 'wait'} for a decision before ${stage}; open questions: ${listed}. Answer with orbit decide, then orbit resume ${ctx.run.id}`, {
+    outcome: { blocked_criteria: criteria, questions: questions.map((q) => q.id) },
+  });
+}
+
 export function assertContract(ctx: RunContext): NonNullable<RunContext['contract']> {
   if (!ctx.contract) throw new OrbitError('CONTRACT_INVALID', `run ${ctx.run.id} reached ${ctx.run.state} without a contract`);
   return ctx.contract;
@@ -158,17 +173,102 @@ export function policySummary(ctx: RunContext, opts: { readOnly: boolean }): str
 
 export type FailureHandling = { retry: true } | { retry: false; result: StepResult };
 
+export const WORKER_RETRY_EVENT = 'worker.retry';
+
+export interface RetryRecord {
+  what: string;
+  /** The work unit family (`plan`, `implement:3`); waits are per family. */
+  base: string;
+  /** The purpose of the worker that failed; one record per failed worker. */
+  purpose: string;
+  status: string;
+  retry: number;
+  delay_ms: number;
+  ceiling_ms: number;
+  retry_after_ms: number | null;
+  not_before: number;
+}
+
+function retryRecords(ctx: RunContext, base: string): RetryRecord[] {
+  return ctx.db
+    .all<{ data_json: string | null }>("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.base') = ? ORDER BY id", ctx.run.id, WORKER_RETRY_EVENT, base)
+    .map((r) => (r.data_json ? (JSON.parse(r.data_json) as RetryRecord) : null))
+    .filter((r): r is RetryRecord => r !== null && typeof r.not_before === 'number');
+}
+
+/**
+ * The backoff wait before the next worker of `base` may start (spec section 14: bounded backoff with jitter).
+ * WAIT while the newest retry's not_before is in the future; null once it has passed.
+ */
+export function retryWait(ctx: RunContext, base: string): StepResult | null {
+  const last = retryRecords(ctx, base).at(-1);
+  if (!last) return null;
+  const left = last.not_before - ctx.clock.now();
+  return left > 0 ? WAIT(`${last.what}: backing off ${left} ms after a transient failure (retry ${last.retry})`) : null;
+}
+
+/** A provider's retry-after, when its error text names one ("retry after 30s", "retry-after: 1500 ms"). */
+export function retryAfterHintMs(text: string | null): number | null {
+  if (!text) return null;
+  const m = /retry[- ]after[:= ]+(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?)?/i.exec(text);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return /^m/i.test(m[2] ?? 's') ? Math.round(n) : Math.round(n * 1000);
+}
+
+/**
+ * A transient provider failure of one worker: spend one infrastructure retry and record when the next worker
+ * of the same unit may start (full-jitter exponential backoff, a provider retry-after honoured), once per failed
+ * worker, so a step that observes the same failure again after waiting neither charges nor waits twice.
+ * Returns a terminal result when no retry is left.
+ */
+export async function scheduleTransientRetry(ctx: RunContext, failed: { base: string; purpose: string; what: string; status: string; error: string | null }): Promise<StepResult | null> {
+  const prior = retryRecords(ctx, failed.base);
+  if (prior.some((r) => r.purpose === failed.purpose)) return null;
+  // The caller saw a transient failure; the classification adds the provider's retry-after when it named one.
+  const classification = { ...classifyFailure({ status: 'transient_error', retryAfterMs: retryAfterHintMs(failed.error) }), kind: 'transient' as const };
+  let wallRemainingMs: number | null = null;
+  if (ctx.ledger) {
+    const wall = ctx.ledger.state('wall_ms');
+    wallRemainingMs = Math.max(0, wall.hard_cap - wall.used);
+  }
+  const decision = decideRetry({ classification, attempt: prior.length + 1, infrastructureRetriesRemaining: ctx.ledger ? ctx.ledger.state('infrastructure_retries').remaining : Number.POSITIVE_INFINITY, wallRemainingMs, costRemainingUsd: null, ...(ctx.deps.random ? { random: ctx.deps.random } : {}) });
+  if (decision.action !== 'retry') {
+    if (decision.action === 'stop' && (decision.limit === 'infrastructure_retries' || decision.limit === 'wall')) {
+      return finishRun(ctx, 'EXHAUSTED', `${failed.what}: the provider kept failing transiently and ${decision.reason} (last: ${failed.error?.slice(0, 200) ?? failed.status})`, { data: { counter: decision.limit === 'wall' ? 'wall_ms' : 'infrastructure_retries' } });
+    }
+    return finishRun(ctx, 'BLOCKED', `${failed.what}: the provider kept failing transiently (${decision.reason}; last: ${failed.error?.slice(0, 200) ?? failed.status})`);
+  }
+  const record: RetryRecord = { what: failed.what, base: failed.base, purpose: failed.purpose, status: failed.status, retry: prior.length + 1, delay_ms: decision.delayMs, ceiling_ms: decision.ceilingMs, retry_after_ms: classification.retryAfterMs, not_before: ctx.clock.now() + decision.delayMs };
+  // The retry is charged with its record: a crash between the two can neither charge it twice nor lose the wait.
+  const refusal = ctx.db.tx((): OrbitError | null => {
+    if (ctx.ledger) {
+      try {
+        ctx.ledger.consume('infrastructure_retries', 1);
+      } catch (err) {
+        if (isOrbitError(err, 'BUDGET_EXHAUSTED')) return err;
+        throw err;
+      }
+    }
+    appendEvent(ctx.db, ctx.run.id, WORKER_RETRY_EVENT, ctx.ownerId, record, ctx.clock.now());
+    return null;
+  });
+  if (refusal) return finishRun(ctx, 'EXHAUSTED', `${failed.what}: ${refusal.message}`, { data: { ...(refusal.details ?? {}) } });
+  return null;
+}
+
 /**
  * What to do after a worker ended without a usable result. Authentication
  * failures block at once (never retried); transient provider failures spend
- * an infrastructure retry; malformed or failed output is regenerated within
- * `maxAttempts` (spec section 14); beyond that the caller's `exhausted`
- * outcome applies.
+ * an infrastructure retry and back off; malformed or failed output is
+ * regenerated within `maxAttempts` (spec section 14); beyond that the
+ * caller's `exhausted` outcome applies.
  */
 export async function handleWorkerFailure(
   ctx: RunContext,
   failed: { provider: string; status: string; error: string | null },
-  opts: { attemptsUsed: number; maxAttempts: number; what: string; exhausted?: () => Promise<StepResult> },
+  opts: { attemptsUsed: number; maxAttempts: number; what: string; base?: string; purpose?: string; exhausted?: () => Promise<StepResult> },
 ): Promise<FailureHandling> {
   if (failed.status === 'auth_failed') return { retry: false, result: await blockOnAuth(ctx, failed.provider, 'auth_failed', failed.error) };
   if (failed.status === 'cancelled') {
@@ -176,9 +276,9 @@ export async function handleWorkerFailure(
     if (stop) return { retry: false, result: stop };
   }
   if (failed.status === 'transient_error') {
-    if (ctx.ledger) ctx.ledger.consume('infrastructure_retries', 1);
-    else if (opts.attemptsUsed >= opts.maxAttempts + 2) return { retry: false, result: await finishRun(ctx, 'BLOCKED', `${opts.what}: the provider kept failing transiently (${failed.error ?? 'no detail'})`) };
-    note(ctx, 'worker.retry', { what: opts.what, status: failed.status, attempts: opts.attemptsUsed });
+    const base = opts.base ?? opts.what;
+    const stop = await scheduleTransientRetry(ctx, { base, purpose: opts.purpose ?? `${base}#${opts.attemptsUsed}`, what: opts.what, status: failed.status, error: failed.error });
+    if (stop) return { retry: false, result: stop };
     return { retry: true };
   }
   if (opts.attemptsUsed < opts.maxAttempts) {

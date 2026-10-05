@@ -23,6 +23,7 @@ import {
   parseBrowserInfo,
   parseDiagnostics,
   parseErrorContext,
+  parseKeyboard,
   parsePlaywrightReport,
   relativeTo,
   summarizeSteps,
@@ -40,6 +41,7 @@ import type {
   UiEvidenceEntry,
   UiJourneyResult,
   UiJourneyStatus,
+  UiKeyboardScan,
   UiReproduction,
   UiRunResult,
   UiRunVerdict,
@@ -220,6 +222,10 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
     if (coverage.missingBrowsers.length) unverified.push(`configured browsers never exercised: ${coverage.missingBrowsers.join(', ')}`);
     if (uiConfig.accessibility.enabled && !journeys.some((j) => j.a11y.length > 0)) unverified.push('accessibility is enabled but no journey ran an accessibility scan');
   }
+  const advisoryCount = journeys.reduce((n, j) => n + j.a11y.filter((s) => s.advisory).reduce((m, s) => m + s.newViolations.length, 0), 0);
+  if (advisoryCount > 0) {
+    unverified.push(`${advisoryCount} new serious or critical accessibility violation(s) were recorded as advisory because ui.accessibility.fail_on_new_serious_or_critical is false; they did not fail any journey`);
+  }
   for (const j of journeys) {
     if (j.annotations.includes('test.fail')) unverified.push(`journey ${j.id} is annotated test.fail(): a "pass" there means the failure still happens`);
   }
@@ -254,6 +260,8 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
       browsers,
       viewports,
       baseUrl,
+      keyboard: { scans: journeys.reduce((n, j) => n + j.keyboard.length, 0), failed: journeys.reduce((n, j) => n + j.keyboard.filter((k) => !k.passed).length, 0) },
+      accessibilityFailOn: a11yFailOn(uiConfig),
     },
     journeys,
     checks: checkRuns,
@@ -261,6 +269,7 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
     flaky: journeys.some((j) => j.status === 'FLAKY'),
     visualBaselineChanges,
     a11yBaselineChanges,
+    a11yAdvisory: journeys.flatMap((j) => j.a11y.filter((s) => s.advisory).flatMap((s) => s.newViolations)),
     consoleErrorCount: journeys.reduce((n, j) => n + (j.diagnostics?.consoleErrors.length ?? 0) + (j.diagnostics?.pageErrors.length ?? 0), 0),
     coverage,
     unverified,
@@ -307,6 +316,10 @@ function resolveChecks(snapshot: PolicySnapshot, ids: string[]): CheckDefinition
     if (check.kind !== 'playwright') throw new OrbitError('CONFIG_INVALID', `ui journey check ${JSON.stringify(id)} must have kind: playwright`, { id, kind: check.kind });
     return check;
   });
+}
+
+export function a11yFailOn(ui: Pick<UiConfig, 'accessibility'>): 'serious,critical' | 'none' {
+  return ui.accessibility.fail_on_new_serious_or_critical ? 'serious,critical' : 'none';
 }
 
 /** Rejects configured arguments that would defeat the enforced ones (see FORBIDDEN_ARG). */
@@ -382,6 +395,8 @@ async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
     ORBIT_UI_BASE_URL: ctx.baseUrl,
     ORBIT_UI_VIEWPORTS: JSON.stringify(input.uiConfig.viewports),
     ORBIT_UI_BROWSERS: JSON.stringify(input.uiConfig.browsers),
+    // The fixture reads this: `none` records new serious or critical violations as advisory instead of failing the journey.
+    ORBIT_A11Y_FAIL_ON: a11yFailOn(input.uiConfig),
     PLAYWRIGHT_JSON_OUTPUT_FILE: reportPath,
   };
   const profile: SandboxProfile = {
@@ -494,7 +509,7 @@ function buildJourney(test: RawTest, ctx: CheckContext, checkDir: string, cwd: s
 
   const slug = `${sha256(id).slice(0, 8)}-${title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)}`;
   const artifactDir = join(checkDir, 'artifacts', slug);
-  const collected = focus ? collectAttachments(focus.attachments, { checkoutDir, outputDir: join(checkDir, 'test-results'), artifactDir }) : { artifacts: [], diagnostics: null, browser: null, a11y: [], errorContext: null };
+  const collected = focus ? collectAttachments(focus.attachments, { checkoutDir, outputDir: join(checkDir, 'test-results'), artifactDir }) : { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
 
   const firstError = (failing[0] ?? focus)?.error ?? null;
   const rootDir = checkoutDir;
@@ -531,6 +546,7 @@ function buildJourney(test: RawTest, ctx: CheckContext, checkDir: string, cwd: s
     artifacts: collected.artifacts,
     diagnostics: collected.diagnostics,
     a11y: collected.a11y,
+    keyboard: collected.keyboard,
     errorContext: collected.errorContext,
     reproduction,
     annotations: [...test.annotations, ...(test.expectedStatus === 'failed' ? ['test.fail'] : [])],
@@ -575,6 +591,7 @@ export interface Collected {
   diagnostics: UiDiagnostics | null;
   browser: { name: string; version: string; viewport: Viewport | null } | null;
   a11y: UiA11yScan[];
+  keyboard: UiKeyboardScan[];
   errorContext: { errorDetails: string | null; pageSnapshot: string | null } | null;
 }
 
@@ -586,6 +603,7 @@ function kindOf(a: RawAttachment): UiArtifactKind {
   if (n === 'error-context') return 'error-context';
   if (n === 'orbit-diagnostics') return 'diagnostics';
   if (n === 'orbit-a11y') return 'accessibility';
+  if (n === 'orbit-keyboard') return 'keyboard';
   if (/-expected\.png$/.test(n)) return 'visual-expected';
   if (/-actual\.png$/.test(n)) return 'visual-actual';
   if (/-diff\.png$/.test(n)) return 'visual-diff';
@@ -596,7 +614,7 @@ const EXTENSIONS: Record<string, string> = { 'application/json': '.json', 'text/
 const TEXTUAL = /^(?:text\/|application\/json)/;
 
 export function collectAttachments(attachments: RawAttachment[], dirs: { checkoutDir: string; outputDir: string; artifactDir: string }): Collected {
-  const out: Collected = { artifacts: [], diagnostics: null, browser: null, a11y: [], errorContext: null };
+  const out: Collected = { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
   const outputReal = safeReal(dirs.outputDir);
   const checkoutReal = safeReal(dirs.checkoutDir);
   const seen = new Set<string>();
@@ -641,6 +659,9 @@ export function collectAttachments(attachments: RawAttachment[], dirs: { checkou
     } else if (kind === 'accessibility') {
       const scan = parseA11y(bytes);
       if (scan) out.a11y.push(scan);
+    } else if (kind === 'keyboard') {
+      const scan = parseKeyboard(bytes);
+      if (scan) out.keyboard.push(scan);
     } else if (kind === 'error-context') {
       out.errorContext ??= parseErrorContext(bytes.toString('utf8'));
     }
@@ -710,7 +731,7 @@ async function git(cwd: string, args: string[]): Promise<string> {
   return r.stdout;
 }
 
-async function assertCheckoutMatchesCandidate(checkoutDir: string, candidate: Candidate, outDir: string): Promise<void> {
+export async function assertCheckoutMatchesCandidate(checkoutDir: string, candidate: Candidate, outDir: string): Promise<void> {
   const tree = (await git(checkoutDir, ['rev-parse', `${candidate.commitSha}^{tree}`])).trim();
   if (tree !== candidate.treeHash) {
     throw new OrbitError('STALE_EVIDENCE', `candidate ${candidate.id} names tree ${candidate.treeHash} but its commit has tree ${tree}`, { candidate: candidate.id });

@@ -1,0 +1,206 @@
+/**
+ * `orbit verify [run-id]`: run the independent verification for a run's latest
+ * candidate and print a verdict per contract criterion with the artifacts it
+ * rests on. It uses the same trusted pieces as the controller's VERIFYING step
+ * (a clean checkout of the exact candidate tree, the frozen policy's checks,
+ * the scope inspection, the evidence evaluation), takes a short CLI lease so
+ * it never runs beside a live controller, and never moves the run's state.
+ *
+ * Check results are durable and bound to the candidate and the check
+ * configuration, so a check that already ran for this candidate is reported
+ * from its record rather than run a second time.
+ */
+import { join, relative } from 'node:path';
+import { OrbitError } from '../../core/errors.ts';
+import { compileGlobs } from '../../policy/globs.ts';
+import { inspectScope } from '../../policy/scope.ts';
+import { cleanupCandidateCheckout, materializeCandidate } from '../../evidence/candidate.ts';
+import { installDependencies } from '../../evidence/baseline.ts';
+import { git } from '../../evidence/git.ts';
+import { candidateEvidenceDir, runChecks, type RunnerContext } from '../../evidence/runner.ts';
+import { evaluateEvidence, type UiResultInput } from '../../evidence/report.ts';
+import type { CheckResult, EvidenceReport } from '../../evidence/types.ts';
+import { runUiChecks, toEvidenceUi } from '../../ui/runner.ts';
+import type { UiRunResult } from '../../ui/types.ts';
+import { loadRunContext, homeOf, runWorktreeRoot, type RunContext } from '../../controller/context.ts';
+import { listRuns, renewLease, type RunRecord } from '../../controller/run-store.ts';
+import { sastCheckIds, scanCandidateSecrets } from '../../controller/security.ts';
+import { staticSecurityGate, uiGate } from '../../controller/gates.ts';
+import type { GoalContract } from '../../contract/types.ts';
+import type { Args } from '../args.ts';
+import { findRunByPrefix, openState, resolveRepo, withCliLease, type CliContext } from '../context.ts';
+import { EXIT } from '../exit.ts';
+import { json, line, oneLine } from '../io.ts';
+import { cliLeaseDeps } from './control.ts';
+
+const LEASE_TTL_MS = 10 * 60_000;
+const LEASE_RENEW_MS = 20_000;
+
+export interface VerifyOutcome {
+  run: RunRecord;
+  candidateSeq: number;
+  candidateId: string;
+  treeHash: string;
+  report: EvidenceReport;
+  failReasons: string[];
+  incompleteReasons: string[];
+}
+
+export function exitCodeForVerdict(verdict: EvidenceReport['verdict']): number {
+  return verdict === 'PASS' ? EXIT.OK : verdict === 'FAIL' ? EXIT.VERIFY_FAILED : EXIT.VERIFY_INCOMPLETE;
+}
+
+/** The newest run, or a NOT_FOUND error naming what to do. */
+function newestRun(db: Parameters<typeof listRuns>[0]): RunRecord {
+  const [run] = listRuns(db, { limit: 1 });
+  if (!run) throw new OrbitError('NOT_FOUND', 'there are no runs to verify; start one with "orbit run --goal ..."');
+  return run;
+}
+
+export async function verifyCommand(args: Args, ctx: CliContext): Promise<number> {
+  const [ref] = args.expect(0, 1);
+  const repo = await resolveRepo(ctx, args.str('repo'));
+  const db = openState(repo);
+  try {
+    const run = ref ? findRunByPrefix(db, ref) : newestRun(db);
+    if (!run.contractJson) throw new OrbitError('TRANSITION_INVALID', `run ${run.id} has no contract yet (it is ${run.state}); there is nothing to verify`);
+    const outcome = await withCliLease(
+      ctx,
+      db,
+      run.id,
+      async (ownerId) => {
+        const renew = setInterval(() => {
+          try {
+            renewLease(db, run.id, ownerId, LEASE_TTL_MS, ctx.clock);
+          } catch {
+            /* the next renewal tries again; the lease simply expires if the database stays busy */
+          }
+        }, LEASE_RENEW_MS);
+        renew.unref();
+        const abort = new AbortController();
+        try {
+          const rc = loadRunContext(cliLeaseDeps(ctx, repo, db, ownerId), run.id, abort.signal);
+          return await verifyCandidate(rc);
+        } finally {
+          clearInterval(renew);
+        }
+      },
+      LEASE_TTL_MS,
+    );
+    return print(ctx, repo, args.bool('json'), outcome, run.contractJson);
+  } finally {
+    db.close();
+  }
+}
+
+/** Evidence for the run's current candidate, produced the way VERIFYING produces it, without changing the run. */
+export async function verifyCandidate(rc: RunContext): Promise<VerifyOutcome> {
+  const contract = rc.contract;
+  const cand = rc.candidate;
+  if (!contract) throw new OrbitError('TRANSITION_INVALID', `run ${rc.run.id} has no contract yet; there is nothing to verify`);
+  if (!cand) throw new OrbitError('TRANSITION_INVALID', `run ${rc.run.id} has no candidate yet (it is ${rc.run.state}); verification needs a change to check`);
+  if (!rc.run.baseRevision) throw new OrbitError('TRANSITION_INVALID', `run ${rc.run.id} has no base revision; preflight did not finish`);
+  const snapshot = rc.snapshot;
+
+  const scope = cand.scope ?? (await inspectScope({ repoRoot: rc.run.repoRoot, baseRev: rc.run.baseRevision, candidateRev: cand.commitSha, snapshot, contractAllowedPaths: contract.allowed_paths }));
+
+  const checkoutDir = join(runWorktreeRoot(rc), `verify-${cand.seq}`);
+  await cleanupCandidateCheckout(rc.run.repoRoot, checkoutDir).catch(() => {});
+  await materializeCandidate(rc.run.repoRoot, cand.commitSha, checkoutDir, { readOnly: false });
+  try {
+    const runner: RunnerContext = {
+      db: rc.db,
+      run: { id: rc.run.id, policyHash: rc.run.policyHash },
+      snapshot,
+      isolation: rc.isolation(),
+      checkoutDir,
+      runDir: rc.runDir,
+      clock: rc.clock,
+      detachSignal: rc.signal,
+      pollMs: rc.timing.checkPollMs,
+      killGraceMs: rc.timing.killGraceMs,
+      homeDir: homeOf(rc.deps),
+    };
+    const install = await installDependencies({ ...runner, candidate: cand });
+    const commandChecks = contract.required_check_ids.filter((id) => snapshot.config.checks[id]?.kind === 'command');
+    const results: CheckResult[] = [...install.results];
+    if (install.skipped || install.ok) results.push(...(await runChecks({ ...runner, candidate: cand, checkIds: commandChecks })));
+
+    const changed = await changedPaths(rc.run.repoRoot, rc.run.baseRevision, cand.commitSha);
+    const ui = snapshot.config.ui;
+    const uiRequired = contract.acceptance_criteria.some((c) => c.ui === true) || (ui !== null && ui.required_when_ui_changes && changed.some(compileGlobs(ui.ui_paths, { nocase: false })));
+    let uiResult: UiRunResult | null = null;
+    if (uiRequired && ui && ui.journey_check_ids.length > 0) {
+      uiResult = await runUiChecks({ checkoutDir, snapshot, candidate: cand, uiConfig: ui, journeyCheckIds: ui.journey_check_ids, isolation: rc.isolation(), outDir: join(candidateEvidenceDir(rc.runDir, cand.seq), 'ui'), clock: rc.clock, abortSignal: rc.signal, homeDir: homeOf(rc.deps), hostEnv: rc.deps.hostEnv ?? process.env });
+    }
+    const uiG = uiGate({ required: uiRequired, configured: ui !== null && ui.journey_check_ids.length > 0, result: uiResult });
+
+    const scan = await scanCandidateSecrets({ repoRoot: rc.run.repoRoot, baseRev: rc.run.baseRevision, commit: cand.commitSha, outDir: join(candidateEvidenceDir(rc.runDir, cand.seq), 'security'), ...(rc.deps.gitleaksPath === undefined ? {} : { gitleaksPath: rc.deps.gitleaksPath }), hostPath: (rc.deps.hostEnv ?? process.env).PATH });
+    const sast = sastCheckIds(snapshot).map((id) => ({ checkId: id, status: results.find((r) => r.checkId === id)?.status ?? null }));
+    const security = staticSecurityGate({ scan, sast });
+
+    const uiResults: UiResultInput[] = uiResult ? toEvidenceUi(uiResult) : [];
+    const evaluation = evaluateEvidence({ contract, candidate: cand, checkResults: results, uiResults, scope, snapshot, uiRequired });
+    const report = evaluation.report;
+    const failReasons = [...evaluation.failReasons];
+    report.unverified.push(...security.notes, ...uiG.notes.filter((n) => !report.unverified.includes(n)));
+    if (security.status === 'fail') {
+      report.verdict = 'FAIL';
+      failReasons.push(...security.reasons);
+    }
+    if (uiG.status === 'fail' && report.verdict === 'PASS') {
+      report.verdict = 'FAIL';
+      failReasons.push(...uiG.reasons);
+    }
+    return { run: rc.run, candidateSeq: cand.seq, candidateId: cand.id, treeHash: cand.treeHash, report, failReasons, incompleteReasons: evaluation.incompleteReasons };
+  } finally {
+    await cleanupCandidateCheckout(rc.run.repoRoot, checkoutDir).catch(() => {});
+  }
+}
+
+async function changedPaths(repoRoot: string, baseRev: string, commit: string): Promise<string[]> {
+  const out = await git(repoRoot, ['diff', '--name-only', '-z', '--no-renames', baseRev, commit, '--']);
+  return out.split('\0').filter((p) => p.length > 0);
+}
+
+function print(ctx: CliContext, repo: string, asJson: boolean, o: VerifyOutcome, contractJson: string): number {
+  const contract = JSON.parse(contractJson) as GoalContract;
+  const statements = new Map(contract.acceptance_criteria.map((c) => [c.id, c] as const));
+  const rel = (p: string): string => {
+    const r = relative(repo, p);
+    return r.startsWith('..') || r === '' ? p : r;
+  };
+  const code = exitCodeForVerdict(o.report.verdict);
+  if (asJson) {
+    json(ctx.io, {
+      run_id: o.run.id,
+      candidate_id: o.candidateId,
+      candidate_seq: o.candidateSeq,
+      tree_hash: o.treeHash,
+      verdict: o.report.verdict,
+      exit_code: code,
+      criteria: o.report.acceptance_evidence.map((e) => ({ id: e.criterion_id, status: e.status, mandatory: statements.get(e.criterion_id)?.mandatory ?? null, statement: statements.get(e.criterion_id)?.statement ?? null, artifacts: e.artifacts.map(rel), note: e.note ?? null })),
+      checks: o.report.checks.map((c) => ({ id: c.id, status: c.status, exit_code: c.exit_code, flaky: c.flaky, log: rel(c.log) })),
+      fail_reasons: o.failReasons,
+      incomplete_reasons: o.incompleteReasons,
+      unverified: o.report.unverified,
+    });
+    return code;
+  }
+  line(ctx.io, `run ${o.run.id}  candidate ${o.candidateSeq}  tree ${o.treeHash.slice(0, 12)}  verdict ${o.report.verdict}`);
+  for (const e of o.report.acceptance_evidence) {
+    const c = statements.get(e.criterion_id);
+    line(ctx.io, `  ${e.criterion_id}  ${e.status.padEnd(11)}${c?.mandatory === false ? ' (optional) ' : ' '}${oneLine(c?.statement ?? '', 100)}`);
+    for (const a of e.artifacts) line(ctx.io, `      evidence: ${rel(a)}`);
+    if (e.note) line(ctx.io, `      note: ${oneLine(e.note, 200)}`);
+  }
+  if (o.report.checks.length > 0) {
+    line(ctx.io, 'checks:');
+    for (const c of o.report.checks) line(ctx.io, `  ${c.id}  ${c.status}${c.exit_code === null ? '' : ` (exit ${c.exit_code})`}${c.flaky ? ' flaky' : ''}  ${rel(c.log)}`);
+  }
+  for (const r of o.failReasons) line(ctx.io, `failed: ${oneLine(r, 240)}`);
+  for (const r of o.incompleteReasons) line(ctx.io, `incomplete: ${oneLine(r, 240)}`);
+  for (const u of o.report.unverified) line(ctx.io, `unverified: ${oneLine(u, 240)}`);
+  if (o.report.verdict === 'FAIL') line(ctx.io, `hand the failure to a repair with: orbit repair ${o.run.id}`);
+  return code;
+}

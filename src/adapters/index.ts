@@ -32,8 +32,8 @@ export { runShim, shimMain, parseShimArgs, shimArgs, readPidRecord, readExitReco
 export type { ShimOptions, PidRecord, ExitRecord, AbortPattern } from './shim.ts';
 export { launchShim, reattachLaunch, handleFromWorkerDir, taskState, cancelShim, archiveAttempt, archivedAttempts, ATTEMPT_FILES, nextSessionId, sessionIdFor, readLogLines, readNewLines, LAUNCH_FILE, CANCEL_FILE } from './supervise.ts';
 export type { TaskState, LaunchRecord } from './supervise.ts';
-export { buildWorkerEnv, claudeEnvCredential, passThrough, CLAUDE_WORKER_ENV, PROVIDER_ENV_KEYS } from './env.ts';
-export { renderWorkerPrompt, renderSystemPrompt, readRolePrompt, stripFrontmatter, fence, ROLE_OUTPUT_KIND, AGENT_ROLES } from './prompt.ts';
+export { buildWorkerEnv, claudeEnvCredential, passThrough, CLAUDE_WORKER_ENV, PROVIDER_ENV_KEYS, ENV_MAX_OUTPUT_TOKENS } from './env.ts';
+export { renderWorkerPrompt, renderSystemPrompt, readRolePrompt, stripFrontmatter, fence, ROLE_OUTPUT_KIND, ROLE_OUTPUT_TOKENS, AGENT_ROLES, outputBudgetFor, outputBudgetInstruction } from './prompt.ts';
 export type { AgentRole, WorkerPromptInput, EvidenceRef, PromptBrief } from './prompt.ts';
 export { defaultOrbitCommands, orbitCommands, sourceCommands } from './commands.ts';
 

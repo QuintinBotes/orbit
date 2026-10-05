@@ -32,6 +32,12 @@ node "${CLAUDE_PLUGIN_ROOT}/dist/orbit.mjs" run $ARGUMENTS
 
 If the person gave a bare goal without `--goal`, run `node "${CLAUDE_PLUGIN_ROOT}/dist/orbit.mjs" run --goal "<goal text>"` with the agreed goal instead.
 
+## Keeping the session on the goal (optional)
+
+After a supervised submit, if the native `/goal` command is available in this session, offer to set it to the run's objective plus the evidence line `evidence: orbit status <run-id> reports SUCCEEDED`. That keeps this conversation pointed at the outcome while the run works.
+
+`/goal` is only a continuation aid. The controller's completion gate stays the authority on whether the goal is met: never report the goal as done because `/goal` is satisfied, only because `/orbit:status <run-id>` shows SUCCEEDED with its evidence. If `/goal` is not available, skip this step; nothing else depends on it.
+
 ## Unattended use
 
 For `--mode autonomous` the run must never wait on the keyboard. Orbit persists

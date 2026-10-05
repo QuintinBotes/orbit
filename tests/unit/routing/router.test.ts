@@ -138,6 +138,42 @@ describe('scenario 14: difficult work escalates only with recorded justification
     expect(noEvidence.model).toBe(SONNET);
   });
 
+  it('G11: a single failed implementer attempt with evidence stays on the routine tier and records why', () => {
+    const { registry } = setup();
+    const prev = { provider: 'claude', model: SONNET, effort: 'medium', outcome: 'failed' as const, evidence: ['evidence:report-1'] };
+    for (const workKind of ['routine-code', 'focused-tests'] as const) {
+      const d = route({
+        workKind,
+        signals: signals({ attempt: 2, repeatedFingerprints: 1, evidence: ['failure:fp-1'], previousRoute: prev }),
+        registry,
+        policy: policy(),
+      });
+      expect(d.model).toBe(SONNET);
+      expect(d.escalated_from).toBeUndefined();
+      expect(d.justification.signals).toEqual([]);
+      expect(d.justification.ignored.join(' ')).toMatch(/single failed attempt .* does not escalate .*repair brief on the same tier/);
+    }
+    // Once the same fingerprint has repeated up to the threshold, it escalates.
+    const repeated = route({
+      workKind: 'routine-code',
+      signals: signals({ attempt: 3, repeatedFingerprints: 2, evidence: ['failure:fp-1'], previousRoute: prev }),
+      registry,
+      policy: policy(),
+    });
+    expect(repeated.model).toBe(OPUS);
+    // The threshold is configurable.
+    const three = policy({ scheduler: { repeated_failure_threshold: 3 } });
+    expect(route({ workKind: 'routine-code', signals: signals({ attempt: 3, repeatedFingerprints: 2, evidence: ['failure:fp-1'], previousRoute: prev }), registry, policy: three }).model).toBe(SONNET);
+    // A difficult causal diagnosis still escalates on one strong failed attempt.
+    const diag = route({
+      workKind: 'complex-diagnosis',
+      signals: signals({ attempt: 2, evidence: ['failure:fp-1'], previousRoute: { provider: 'claude', model: SONNET, outcome: 'failed' } }),
+      registry,
+      policy: policy(),
+    });
+    expect(diag.model).toBe(OPUS);
+  });
+
   it('escalates repeated equivalent failures one tier and records the signal and evidence', () => {
     const { registry } = setup();
     const d = route({

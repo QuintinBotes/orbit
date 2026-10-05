@@ -23,6 +23,8 @@ import type { GoalContract } from '../contract/types.ts';
 import { validateContract } from '../contract/validate.ts';
 import { listCandidates, type CandidateRecord } from '../evidence/store.ts';
 import { BudgetLedger } from '../scheduling/budget.ts';
+import { AgentScheduler, type SystemProbe } from '../scheduling/scheduler.ts';
+import type { WorkUnit } from '../scheduling/types.ts';
 import type { ModelRegistry } from '../routing/registry.ts';
 import type { GitHubClient } from '../delivery/github.ts';
 import { getRun, type RunRecord } from './run-store.ts';
@@ -72,6 +74,10 @@ export interface ControllerDeps {
   /** Path of gitleaks; null forces the built-in secret patterns; undefined searches PATH. */
   gitleaksPath?: string | null;
   timing?: Partial<ControllerTiming>;
+  /** Jitter source for worker retry backoff (uniform in [0, 1)); tests pin it. Defaults to Math.random. */
+  random?: () => number;
+  /** The machine probe the scheduler reads (cores, free memory); defaults to node:os. */
+  schedulerProbe?: SystemProbe;
 }
 
 export interface RunContext {
@@ -216,6 +222,30 @@ export function lenientContext(deps: ControllerDeps, runId: string, signal: Abor
 
 export function homeOf(deps: ControllerDeps): string {
   return deps.homeDir ?? homedir();
+}
+
+/** The agent scheduler for a run's admission decisions, on the controller's machine probe. */
+export function schedulerFor(ctx: Pick<RunContext, 'snapshot' | 'clock' | 'deps'>): AgentScheduler {
+  const config = ctx.snapshot.config;
+  return new AgentScheduler({ agents: config.agents, scheduler: config.scheduler }, { clock: ctx.clock, ...(ctx.deps.schedulerProbe ? { system: ctx.deps.schedulerProbe } : {}) });
+}
+
+const UNBOUNDED = 1_000_000;
+
+/**
+ * The machine's share of admission: every live unit of the repository (all runs) against what the CPU and
+ * memory probe allow, with the per-run limits (parallel_workers, default parallelism) left to the run's own
+ * plan. Returns the units of `pending` that fit, and why the others wait.
+ */
+export function machineAdmission(ctx: Pick<RunContext, 'snapshot' | 'clock' | 'deps'>, running: readonly WorkUnit[], pending: readonly WorkUnit[]): { start: Set<string>; deferred: Map<string, string> } {
+  const machine = new AgentScheduler(
+    { agents: { default_parallelism: UNBOUNDED, cancel_obsolete_workers: ctx.snapshot.config.agents.cancel_obsolete_workers }, scheduler: { hard_limits: { parallel_workers: UNBOUNDED } } },
+    { clock: ctx.clock, ...(ctx.deps.schedulerProbe ? { system: ctx.deps.schedulerProbe } : {}) },
+  );
+  // Ownership and worktrees were the run's plan to check; here only capacity counts.
+  const strip = (u: WorkUnit): WorkUnit => ({ ...u, writer: false, worktree: null, ownedPaths: [] });
+  const plan = machine.plan([...running.map(strip), ...pending.map(strip)], { parallelism: UNBOUNDED, contextDuplication: 0 });
+  return { start: new Set(plan.start.map((u) => u.id)), deferred: new Map(plan.deferred.map((d) => [d.id, `machine ${d.reason}`])) };
 }
 
 /** Short stable id of a repository, for paths under ~/.orbit. */

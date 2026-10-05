@@ -21,7 +21,7 @@ export type UiJourneyStatus = (typeof UI_JOURNEY_STATUSES)[number];
 export const UI_RUN_VERDICTS = ['PASS', 'FAIL', 'BLOCKED', 'ERROR', 'TIMEOUT', 'CANCELLED'] as const;
 export type UiRunVerdict = (typeof UI_RUN_VERDICTS)[number];
 
-export const UI_ARTIFACT_KINDS = ['screenshot', 'trace', 'video', 'console', 'diagnostics', 'accessibility', 'error-context', 'visual-expected', 'visual-actual', 'visual-diff', 'report', 'log', 'other'] as const;
+export const UI_ARTIFACT_KINDS = ['screenshot', 'trace', 'video', 'console', 'diagnostics', 'accessibility', 'keyboard', 'error-context', 'visual-expected', 'visual-actual', 'visual-diff', 'report', 'log', 'other'] as const;
 export type UiArtifactKind = (typeof UI_ARTIFACT_KINDS)[number];
 
 export interface UiArtifact {
@@ -83,6 +83,29 @@ export interface UiA11yScan {
   seriousOrCritical: number;
   newViolations: UiA11yEntry[];
   baselinedCount: number;
+  /**
+   * The scan ran with ui.accessibility.fail_on_new_serious_or_critical false (ORBIT_A11Y_FAIL_ON=none): its
+   * newViolations are advisory and did not fail the journey.
+   */
+  advisory: boolean;
+}
+
+/** One expectKeyboardReachable call (the orbit-keyboard attachment). Untrusted. */
+export interface UiKeyboardEntry {
+  selector: string;
+  reachedAtTab: number | null;
+  focusVisible: boolean | null;
+}
+export interface UiKeyboardScan {
+  url: string;
+  viewport: string;
+  tabsPressed: number;
+  ordered: boolean;
+  entries: UiKeyboardEntry[];
+  unreachable: string[];
+  outOfOrder: string[];
+  missingFocusRing: string[];
+  passed: boolean;
 }
 
 export interface UiJourneyError {
@@ -126,6 +149,7 @@ export interface UiJourneyResult {
   artifacts: UiArtifact[];
   diagnostics: UiDiagnostics | null;
   a11y: UiA11yScan[];
+  keyboard: UiKeyboardScan[];
   /** Playwright's error-context sections; DOM evidence is the page snapshot. Untrusted. */
   errorContext: { errorDetails: string | null; pageSnapshot: string | null } | null;
   /** The command that reruns just this journey. */
@@ -163,6 +187,10 @@ export interface UiBinding extends EvidenceBinding {
   browsers: { name: string; version: string }[];
   viewports: Viewport[];
   baseUrl: string;
+  /** Keyboard navigation scans the journeys ran, and how many found a problem (spec section 13). */
+  keyboard: { scans: number; failed: number };
+  /** Whether new serious or critical accessibility violations fail a journey (ORBIT_A11Y_FAIL_ON). */
+  accessibilityFailOn: 'serious,critical' | 'none';
 }
 
 export interface UiRunResult {
@@ -180,6 +208,8 @@ export interface UiRunResult {
   visualBaselineChanges: string[];
   /** Accessibility baseline files named by journeys that the candidate changed. */
   a11yBaselineChanges: string[];
+  /** New serious or critical violations recorded as advisory because ui.accessibility.fail_on_new_serious_or_critical is false. */
+  a11yAdvisory: UiA11yEntry[];
   consoleErrorCount: number;
   coverage: {
     configuredViewports: Viewport[];

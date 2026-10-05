@@ -619,7 +619,7 @@ function exhaust(ctx: Ctx, run: RunRecord, why: string): void {
 }
 
 /** Stop the process a worker row records, when its recorded start time proves it is that process. */
-async function stopRowProcess(graceMs: number, w: WorkerRecord): Promise<'gone' | 'stopped' | 'unknown'> {
+export async function stopRowProcess(graceMs: number, w: WorkerRecord): Promise<'gone' | 'stopped' | 'unknown'> {
   const state = (): 'alive' | 'gone' | 'unknown' => {
     if (w.pid === null) return 'gone';
     try {

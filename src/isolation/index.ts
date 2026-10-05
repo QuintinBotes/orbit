@@ -10,6 +10,8 @@ export type { SandboxRuntimeOptions, SrtSettings, SrtSource } from './sandbox-ru
 export { ContainerIsolation, DEFAULT_CONTAINER_IMAGE, DEFAULT_CONTAINER_LIMITS, CONTAINER_LIMITATIONS, containerEnvFor, planMounts } from './container.ts';
 export type { ContainerOptions, ContainerWrappedCommand } from './container.ts';
 export { NoIsolation, noIsolationLimitations } from './none.ts';
+export type { NoIsolationOptions } from './none.ts';
+export { withResourceLimits, dockerUlimitArgs, limitScript, hasLimits, describeLimits, findLimitShell, LIMIT_SHELLS, LIMIT_WRAPPER_NAME } from './limits.ts';
 export {
   profileForWorker,
   profileForCheck,
@@ -59,13 +61,14 @@ export function isUnattended(mode: RunMode | undefined): boolean {
 export function getIsolation(cfg: OrbitConfig['isolation'], opts: GetIsolationOptions): IsolationProvider {
   switch (cfg.provider) {
     case 'sandbox-runtime':
-      return new SandboxRuntimeIsolation({ srtPath: opts.srtPath, orbitInstallDir: opts.orbitInstallDir });
+      return new SandboxRuntimeIsolation({ srtPath: opts.srtPath, orbitInstallDir: opts.orbitInstallDir, limits: cfg.limits ?? null });
     case 'container': {
       const c = cfg.container;
       return new ContainerIsolation({
         ...opts.container,
         ...(c ? { image: c.image, defaults: { memoryMb: c.memory_mb, cpus: c.cpus, pids: c.pids } } : {}),
         labels: opts.labels,
+        ulimits: cfg.limits ?? null,
       });
     }
     case 'none':
@@ -76,7 +79,7 @@ export function getIsolation(cfg: OrbitConfig['isolation'], opts: GetIsolationOp
           { rule: 'isolation.allow_unisolated', mode: opts.mode ?? null },
         );
       }
-      return new NoIsolation();
+      return new NoIsolation({ limits: cfg.limits ?? null });
     default: {
       const unknown: never = cfg.provider;
       throw new OrbitError('CONFIG_INVALID', `unknown isolation provider ${String(unknown)}`);

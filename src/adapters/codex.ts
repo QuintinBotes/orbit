@@ -32,7 +32,8 @@ import { readOnlyProfile, snapshotFileHash } from './claude.ts';
 import { CODEX_END_REASONS, classifyCodexTranscript, codexEvents, codexUsage, type CodexTaskResult } from './codex-events.ts';
 import { defaultOrbitCommands } from './commands.ts';
 import { buildWorkerEnv, passThrough } from './env.ts';
-import { LAUNCH_FILE, cancelShim, handleFromWorkerDir, launchShim, reattachLaunch, readLogLines, readNewLines, taskState, type LaunchRecord } from './supervise.ts';
+import { outputBudgetFor, outputBudgetInstruction } from './prompt.ts';
+import { LAUNCH_FILE, cancelShim, handleFromWorkerDir, launchShim, reattachLaunch, readLogLines, readNewLines, taskState, withWorkerTelemetry, type LaunchRecord } from './supervise.ts';
 import type { CredentialStatus, ProviderAdapter, ProviderCapabilities, ProviderEvent, TaskHandle, TaskSpec, UsageReport } from './types.ts';
 
 export { CODEX_END_REASONS };
@@ -182,12 +183,14 @@ export class CodexAdapter implements ProviderAdapter {
     }
 
     const policyHash = spec.policyHash ?? snapshotFileHash(spec.policyPath);
-    verifySnapshot(spec.policyPath, policyHash);
+    const snapshot = verifySnapshot(spec.policyPath, policyHash);
+    // Codex has no verified output cap (no documented flag or config key limits a turn's output tokens), so the budget is an instruction, and overruns are measured and recorded.
+    const outputTokens = outputBudgetFor(spec.role, { explicit: spec.outputTokens, configured: snapshot.config.routing.output_budgets });
     const checkout = canonicalPath(spec.cwd);
     const workerDir = spec.workerDir;
     const tmpDir = prepareWorkerTmpDir(workerDir);
     const env = buildWorkerEnv({ provider: 'codex', base: this.baseEnv(), policyPath: spec.policyPath, policyHash, worktree: checkout, tmpDir, extra: { ...passThrough(this.baseEnv(), this.opts.passEnv), ...spec.env } });
-    writeFileSync(join(workerDir, CODEX_PROMPT_FILE), `${spec.systemPrompt.trim()}\n\n${spec.prompt}`, { mode: 0o600 });
+    writeFileSync(join(workerDir, CODEX_PROMPT_FILE), `${spec.systemPrompt.trim()}\n\n${spec.prompt}${outputTokens === null ? '' : `\n${outputBudgetInstruction(outputTokens)}\n`}`, { mode: 0o600 });
     atomicWriteJson(join(workerDir, CODEX_SCHEMA_FILE), spec.outputSchema, 0o600);
     // -o is written only after turn.completed; a stale file from an earlier
     // attempt must not be mistaken for this one's answer.
@@ -198,6 +201,7 @@ export class CodexAdapter implements ProviderAdapter {
     let launchEnv = env;
     let tier: CodexTier = 'codex-sandbox';
     const limitations = [...CODEX_LIMITATIONS];
+    if (outputTokens !== null) limitations.push(`Output budget of ${outputTokens} tokens is an instruction only: Codex has no verified output cap, so overruns are measured and recorded.`);
     const cleanupPaths: string[] = [];
     const isolation = this.opts.isolation ?? null;
     if (isolation && isolation.kind !== 'none') {
@@ -223,7 +227,7 @@ export class CodexAdapter implements ProviderAdapter {
       graceMs: this.opts.graceMs,
       stdinPath: join(workerDir, CODEX_PROMPT_FILE),
       cleanupPaths: [...new Set(cleanupPaths)],
-      meta: { tier, limitations, model: spec.model },
+      meta: { tier, limitations, model: spec.model, outputBudgetTokens: outputTokens },
       clock: this.clock,
     });
     return { ...handle, tier, limitations };
@@ -261,12 +265,13 @@ export class CodexAdapter implements ProviderAdapter {
     } else {
       result = classifyCodexTranscript({ events: log.events, malformedTail: log.malformedTail, exit: st.exit, outputSchema: spec.outputSchema, model });
     }
+    result = { ...result, usage: withWorkerTelemetry(result.usage, handle.workerDir) };
     atomicWriteJson(join(handle.workerDir, CODEX_RESULT_FILE), result, 0o600);
     return result;
   }
 
   async reportUsage(handle: TaskHandle): Promise<UsageReport> {
-    return codexUsage(existsSync(handle.logPath) ? readLogLines(handle.logPath).events : [], launchModel(handle.workerDir));
+    return withWorkerTelemetry(codexUsage(existsSync(handle.logPath) ? readLogLines(handle.logPath).events : [], launchModel(handle.workerDir)), handle.workerDir);
   }
 
   reattach(workerDir: string): TaskHandle | null {

@@ -2,6 +2,7 @@ import type { OrbitDb } from '../storage/db.ts';
 import type { Clock } from '../core/clock.ts';
 import { OrbitError } from '../core/errors.ts';
 import type { UsageReport } from '../adapters/types.ts';
+import { appendEvent } from '../storage/events.ts';
 import { ModelRegistry } from './registry.ts';
 import { estimateCost, inputIncludesCacheRead, roundUsd } from './pricing.ts';
 import { ROUTE_OUTCOMES, WORK_KINDS, type ModelPricing, type RouteOutcome, type RouteStat, type WorkKind } from './types.ts';
@@ -28,6 +29,20 @@ export interface RecordUsageInput {
   durationMs: number | null;
   /** Pricing to estimate with; looked up in the registry when omitted, null to forbid estimation. */
   pricing?: ModelPricing | null;
+  /**
+   * Time from spawn to the first line of provider output, from the worker
+   * log. Defaults to usage.timeToFirstEventMs. Fed into the model's rolling
+   * median latency (model_registry.latency_ms).
+   */
+  timeToFirstEventMs?: number | null;
+  /**
+   * Output token budget the worker ran under (routing.output_budgets). When
+   * the reported output exceeds it, the overrun is recorded as a
+   * usage.output-budget-exceeded event and listed in `notes`.
+   */
+  outputBudgetTokens?: number | null;
+  /** The worker's role, recorded with an overrun. */
+  role?: string | null;
 }
 
 export interface RecordedUsage {
@@ -38,6 +53,8 @@ export interface RecordedUsage {
   costSource: 'reported' | 'estimated' | 'unavailable';
   /** Why an estimate is partial or impossible. */
   notes: string[];
+  /** The reported output exceeded the role's output budget. */
+  outputBudgetExceeded: boolean;
 }
 
 export function recordUsage(db: OrbitDb, input: RecordUsageInput, clock: Clock): RecordedUsage {
@@ -96,7 +113,20 @@ export function recordUsage(db: OrbitDb, input: RecordUsageInput, clock: Clock):
         ts,
       ).lastInsertRowid,
   );
-  return { id, provider, model, costUsd, costSource, notes };
+
+  const budget = count(input.outputBudgetTokens !== undefined ? input.outputBudgetTokens : u?.outputBudgetTokens);
+  const role = input.role ?? (input.workerId ? (db.get<{ role: string }>('SELECT role FROM workers WHERE id = ?', input.workerId)?.role ?? null) : null);
+  const outputTokens = tokens.outputTokens;
+  let overrun = false;
+  if (budget !== null && budget > 0 && outputTokens !== null && outputTokens > budget) {
+    overrun = true;
+    notes.push(`output ${outputTokens} tokens exceeded the ${budget} token budget${role ? ` for ${role}` : ''}`);
+    appendEvent(db, input.runId, 'usage.output-budget-exceeded', 'usage', { worker_id: input.workerId, role, provider, model, output_tokens: outputTokens, budget_tokens: budget, over_by: outputTokens - budget }, ts);
+  }
+
+  const latency = input.timeToFirstEventMs !== undefined ? input.timeToFirstEventMs : (u?.timeToFirstEventMs ?? null);
+  if (model && latency !== null && latency !== undefined) new ModelRegistry(db, clock).recordLatency(model, latency);
+  return { id, provider, model, costUsd, costSource, notes, outputBudgetExceeded: overrun };
 }
 
 export interface UsageTotals {

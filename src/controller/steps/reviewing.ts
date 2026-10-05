@@ -15,7 +15,7 @@ import { getDecision } from '../../storage/decisions.ts';
 import { listWorkers } from '../../storage/workers.ts';
 import { renderWorkerPrompt } from '../../adapters/prompt.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../../evidence/candidate.ts';
-import { currentEvidenceReport, type CandidateRecord } from '../../evidence/store.ts';
+import { currentEvidenceReport, listCandidates, type CandidateRecord } from '../../evidence/store.ts';
 import { isFresh } from '../../evidence/freshness.ts';
 import { buildReviewPacket } from '../../review/packet.ts';
 import { ingestFindings, resolveFindings, type ClaimEvidence, type Disposition, type Resolution } from '../../review/resolve.ts';
@@ -35,9 +35,16 @@ import { listReviews, loadResolverState, persistResolution, recordReview } from 
 import type { IngestedReview } from '../../review/types.ts';
 import { listLedger, listQuestions } from '../../inquisition/store.ts';
 import type { Trigger } from '../../inquisition/types.ts';
-import { runWorktreeRoot, type RunContext } from '../context.ts';
+import { machineAdmission, runWorktreeRoot, schedulerFor, type RunContext } from '../context.ts';
 import { independentReviewGate } from '../gates.ts';
-import { assertContract, blockOnAuth, decide, finishRun, MAX_REGENERATIONS, move, policySummary, progress, safePoint, type StepResult } from './common.ts';
+import { assertContract, blockOnAuth, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, move, note, policySummary, progress, safePoint, WAIT, type StepResult } from './common.ts';
+import { compileGlobs } from '../../policy/globs.ts';
+import { budgetAdmission, DEFAULT_CONTEXT_DUPLICATION } from '../../scheduling/scheduler.ts';
+import type { WorkUnit } from '../../scheduling/types.ts';
+import { stopWorker } from '../../recovery/reconcile.ts';
+import { listActiveWorkers } from '../../storage/workers.ts';
+import { recordSpendCap, sessionSpendCap, workersFor } from '../workers.ts';
+import { runningUnits } from './implementing.ts';
 import { obtain } from './obtain.ts';
 import { checkEnvironment, IMPLEMENTER_PROVIDER, recordGate } from './preflight.ts';
 import { briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
@@ -54,8 +61,11 @@ export async function reviewingStep(ctx: RunContext): Promise<StepResult> {
     throw new OrbitError('STALE_EVIDENCE', `candidate ${cand.seq} has no fresh PASS evidence; review authorizes nothing without it`);
   }
 
-  // A review of this tree already recorded (a restart after recording): resolve and decide.
-  if (listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).length > 0) return resolveAndDecide(ctx, cand);
+  // Reviews of an older revision still running are obsolete (spec section 8: cancel work a new revision made worthless).
+  await cancelObsoleteWork(ctx, cand.treeHash);
+  const focuses = reviewFocuses(ctx, cand);
+  // Every review unit of this tree already recorded (a restart after recording): resolve and decide.
+  if (listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).length >= focuses.length) return resolveAndDecide(ctx, cand);
 
   const sel = await reviewerSelection(ctx, cand);
   if (sel.decision === 'BLOCK') {
@@ -66,6 +76,7 @@ export async function reviewingStep(ctx: RunContext): Promise<StepResult> {
     return finishRun(ctx, 'BLOCKED', `independent review unavailable: ${sel.reason}`, { outcome: { reviewer: sel } });
   }
 
+  if (focuses.length > 1) return parallelReview(ctx, cand, sel, focuses);
   const round = listReviews(ctx.db, ctx.run.id, { includeInvalidated: true }).length + 1;
   const { reviewDir, checkout } = await prepareReview(ctx, cand, sel.provider);
   const got = await obtain<{ review: IngestedReview; packetSha: string }>(ctx, {
@@ -125,6 +136,170 @@ export async function reviewingStep(ctx: RunContext): Promise<StepResult> {
   return resolveAndDecide(ctx, cand);
 }
 
+// ---------------------------------------------------------------------------
+// Parallel review units (spec section 8: independent read-only work runs at once)
+
+export type ReviewFocus = 'general' | 'security' | 'ui';
+
+const FOCUS_TEXT: Record<Exclude<ReviewFocus, 'general'>, string> = {
+  security: 'Focus: security. Authorization and tenancy, input validation, injection, secrets and sensitive data, unsafe defaults. Report any other defect you see as well.',
+  ui: 'Focus: the user interface. User-visible states (empty, loading, error), accessibility, layout and interaction regressions on the changed screens. Report any other defect you see as well.',
+};
+
+/**
+ * One general review, or, when the change is both security-sensitive (the planning assessment) and touches UI
+ * paths, a security review and a UI review as separate read-only units that run at the same time.
+ */
+export function reviewFocuses(ctx: RunContext, cand: CandidateRecord): ReviewFocus[] {
+  const ui = ctx.snapshot.config.ui;
+  const changed = cand.diffStat?.paths ?? [];
+  const uiChanged = ui !== null && (assertContract(ctx).acceptance_criteria.some((c) => c.ui === true) || changed.some(compileGlobs(ui.ui_paths, { nocase: false })));
+  return securitySensitive(ctx) && uiChanged ? ['security', 'ui'] : ['general'];
+}
+
+function securitySensitive(ctx: RunContext): boolean {
+  if (!ctx.run.difficultyJson) return false;
+  try {
+    return (JSON.parse(ctx.run.difficultyJson) as { factors?: { factor: string; value: unknown }[] }).factors?.some((f) => f.factor === 'security_impact' && f.value === true) ?? false;
+  } catch {
+    return false;
+  }
+}
+
+function focusBase(cand: CandidateRecord, focus: ReviewFocus): string {
+  return focus === 'general' ? `review:${cand.id}` : `review-${focus}:${cand.id}`;
+}
+
+/**
+ * Start every review unit the scheduler admits in this step (each one read-only, bound to the candidate tree and
+ * cancelled when it changes, budgeted from the route and the session spend cap), record each review as it
+ * finishes, and resolve once all of them are in.
+ */
+async function parallelReview(ctx: RunContext, cand: CandidateRecord, sel: Extract<ReviewerSelection, { decision: 'SELECT' }>, focuses: ReviewFocus[]): Promise<StepResult> {
+  const ledger = ctx.ledger!;
+  const { reviewDir, checkout } = await prepareReview(ctx, cand, sel.provider);
+  const recorded = new Set(listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).map((r) => r.workerId));
+  const config = ctx.snapshot.config;
+  const scheduler = schedulerFor(ctx);
+  const running = runningUnits(ctx);
+  const own = new Set(running.filter((u) => u.runId === ctx.run.id).map((u) => u.unit.id));
+  const pending: WorkUnit[] = [];
+  const caps = new Map<string, { capUsd: number | null; worstCaseUsd: number }>();
+  const toStart = focuses.filter((f) => workersFor(ctx, `${focusBase(cand, f)}#1`).length === 0);
+  // Units starting together split what is left: each may overshoot its cap by one worst-case request, and every
+  // unit after the first also pays for re-reading the shared context (the scheduler's duplication charge).
+  const whole = sessionSpendCap(ctx, sel.model, 'reviewer', 'final');
+  const n = Math.max(1, toStart.length);
+  const share = whole.capUsd === null ? null : Math.max(0, Math.floor(((whole.capUsd + whole.worstCaseUsd - n * whole.worstCaseUsd) / (n + (n - 1) * DEFAULT_CONTEXT_DUPLICATION)) * 100) / 100);
+  for (const focus of focuses) {
+    const base = focusBase(cand, focus);
+    if (!toStart.includes(focus)) continue;
+    const cap = { capUsd: share, worstCaseUsd: whole.worstCaseUsd };
+    caps.set(base, cap);
+    pending.push({ id: base, role: 'reviewer', writer: false, ownedPaths: [], dependsOn: [], revision: cand.treeHash, cancelWhen: ['revision-changed'], budget: { costUsd: cap.capUsd, wallMs: null, maxTurns: ledger.maxTurnsPerSession() }, provider: sel.provider, worktree: checkout, status: 'pending' });
+  }
+  // The run's own limits and budget over its own units, then the machine's capacity over every run's.
+  const plan = scheduler.plan([...running.filter((r) => own.has(r.unit.id)).map((r) => r.unit), ...pending], { parallelism: Math.max(focuses.length, config.agents.default_parallelism), admit: budgetAdmission(ledger, 'final') });
+  const machine = machineAdmission(ctx, running.map((r) => r.unit), plan.start);
+  const admitted = new Set(plan.start.map((u) => u.id).filter((id) => machine.start.has(id)));
+  for (const [id, why] of machine.deferred) plan.deferred.push({ id, reason: why });
+  if (plan.context_duplication.length > 0) note(ctx, 'scheduler.context-duplication', { candidate_id: cand.id, units: plan.context_duplication });
+  for (const u of plan.start.filter((x) => admitted.has(x.id))) {
+    const cap = caps.get(u.id);
+    if (cap && cap.capUsd !== null) {
+      if (cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `the ${u.id} unit cannot start: no model budget left for review under the hard cap`);
+      recordSpendCap(ctx, `${u.id}#1`, cap.capUsd, cap.worstCaseUsd);
+    }
+  }
+  const waiting: string[] = [];
+  let finished = 0;
+  for (const focus of focuses) {
+    const base = focusBase(cand, focus);
+    const started = workersFor(ctx, `${base}#1`).length > 0;
+    if (!started && !admitted.has(base)) {
+      waiting.push(`${focus} review deferred: ${plan.deferred.find((d) => d.id === base)?.reason ?? 'not admitted'}`);
+      continue;
+    }
+    const got = await obtain<{ review: IngestedReview; packetSha: string }>(ctx, {
+      base,
+      maxAttempts: MAX_REGENERATIONS,
+      what: `the ${sel.provider} ${focus} reviewer`,
+      beforeStart: () => ctx.ledger!.consume('review_rounds', 1),
+      request: (purpose) => ({
+        role: 'reviewer',
+        purpose,
+        candidateId: cand.id,
+        provider: sel.provider,
+        model: sel.model,
+        effort: sel.effort,
+        cwd: checkout,
+        readOnly: true,
+        phase: 'final',
+        ...(typeof caps.get(base)?.capUsd === 'number' ? { maxBudgetUsd: caps.get(base)!.capUsd } : {}),
+        prompt: () => reviewerPrompt(ctx, cand, reviewDir, focus),
+      }),
+      accept: (r) => {
+        try {
+          return { review: ingestFindings({ output: r.structured, candidate: cand }), packetSha: packetShaOf(reviewDir) };
+        } catch (err) {
+          if (isOrbitError(err, 'STALE_EVIDENCE')) throw new OrbitError('MALFORMED_OUTPUT', err.message);
+          throw err;
+        }
+      },
+    });
+    if (!got.ok) {
+      if (got.step.done) {
+        await cleanupCandidateCheckout(ctx.run.repoRoot, checkout).catch(() => {});
+        return got.step;
+      }
+      waiting.push(got.step.waiting ?? `${focus} review running`);
+      continue;
+    }
+    finished++;
+    if (recorded.has(got.worker.id)) continue;
+    recordReview(
+      ctx.db,
+      {
+        id: `rev-${got.worker.id}`,
+        runId: ctx.run.id,
+        candidateId: cand.id,
+        treeHash: cand.treeHash,
+        round: listReviews(ctx.db, ctx.run.id, { includeInvalidated: true }).length + 1,
+        provider: got.worker.provider,
+        model: got.worker.model,
+        workerId: got.worker.id,
+        verdict: got.value.review.verdict,
+        packetSha256: got.value.packetSha,
+        findings: got.value.review.findings,
+      },
+      ctx.clock,
+    );
+    recorded.add(got.worker.id);
+  }
+  if (finished < focuses.length) return WAIT(waiting.join('; ') || 'review units running');
+  await cleanupCandidateCheckout(ctx.run.repoRoot, checkout).catch(() => {});
+  return resolveAndDecide(ctx, cand);
+}
+
+/**
+ * Stop read-only work bound to a revision that is no longer current (spec section 8): reviewers, verifiers and
+ * explorers of another tree, through the scheduler's obsolescence rule. Returns the stopped worker ids.
+ */
+export async function cancelObsoleteWork(ctx: RunContext, currentTree: string): Promise<string[]> {
+  const scheduler = schedulerFor(ctx);
+  const trees = new Map(listCandidates(ctx.db, ctx.run.id).map((c) => [c.id, c.treeHash]));
+  const active = listActiveWorkers(ctx.db, ctx.run.id).filter((w) => (w.role === 'reviewer' || w.role === 'verifier' || w.role === 'explorer') && w.candidateId !== null);
+  const units: WorkUnit[] = active.map((w) => ({ id: w.id, role: w.role, writer: false, ownedPaths: [], dependsOn: [], revision: trees.get(w.candidateId!) ?? null, cancelWhen: ['revision-changed'], budget: {}, provider: w.provider, status: 'running' }));
+  const stopped: string[] = [];
+  for (const o of scheduler.obsolete(units, currentTree)) {
+    const w = active.find((x) => x.id === o.unit.id)!;
+    await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, `obsolete: ${o.reason}`);
+    stopped.push(w.id);
+  }
+  if (stopped.length > 0) note(ctx, 'workers.obsolete-cancelled', { current_tree: currentTree, workers: stopped });
+  return stopped;
+}
+
 async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise<StepResult> {
   const state = loadResolverState(ctx.db, ctx.run.id, cand.treeHash);
   const repairs = reviewRepairs(ctx);
@@ -138,6 +313,8 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
   recordGate(ctx, gate);
   if (gate.passed && gate.details.approved) {
     progress(ctx, 'review.approved', { candidate_id: cand.id, tree_hash: cand.treeHash });
+    const waiting = await blockOnOpenQuestions(ctx, 'delivery');
+    if (waiting) return waiting;
     return move(ctx, 'DELIVERING', `independent review cleared tree ${cand.treeHash}`);
   }
 
@@ -453,12 +630,13 @@ function readText(p: string): string {
   return readFileSync(p, 'utf8');
 }
 
-function reviewerPrompt(ctx: RunContext, cand: CandidateRecord, reviewDir: string): string {
+function reviewerPrompt(ctx: RunContext, cand: CandidateRecord, reviewDir: string, focus: ReviewFocus = 'general'): string {
   const text = readText(join(reviewDir, 'packet.md'));
   const contract = assertContract(ctx);
   const task = [
     'Review the exact candidate in this read-only checkout against the contract and the bound evidence in the packet. Do not edit anything and do not ask questions.',
     'Reject weak proof, test weakening, scope leakage, regressions, unsafe defaults and unresolved material assumptions. Each finding must be a specific, testable claim with a location.',
+    ...(focus === 'general' ? [] : [FOCUS_TEXT[focus]]),
     `Echo the candidate revision ${cand.commitSha} in candidate_revision.`,
   ].join('\n');
   return renderWorkerPrompt({

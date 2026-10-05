@@ -12,6 +12,7 @@ import { ORBIT_VERSION } from './version.ts';
 import { cancelCommand, CANCEL_OPTIONS, pauseCommand, resumeCommand, RESUME_OPTIONS } from './commands/control.ts';
 import { DECIDE_OPTIONS, decideCommand, QUESTIONS_OPTIONS, questionsCommand } from './commands/decide.ts';
 import { DOCTOR_OPTIONS, doctorCommand } from './commands/doctor.ts';
+import { GC_OPTIONS, GC_USAGE, gcCommand } from './commands/gc.ts';
 import { initCommand } from './commands/init.ts';
 import { checkRunnerCommand, shimCommand } from './commands/internal.ts';
 import {
@@ -34,7 +35,10 @@ import { policyShowCommand } from './commands/policy.ts';
 import { REPORT_OPTIONS, reportCommand } from './commands/report.ts';
 import { RUN_OPTIONS, runCommand } from './commands/run.ts';
 import { SERVICE_INSTALL_OPTIONS, serviceInstallCommand, serviceRunCommand, serviceStatusCommand, serviceUninstallCommand } from './commands/service.ts';
+import { REPAIR_OPTIONS, repairCommand } from './commands/repair.ts';
+import { STATS_OPTIONS, STATS_USAGE, statsCommand } from './commands/stats.ts';
 import { STATUS_OPTIONS, statusCommand } from './commands/status.ts';
+import { verifyCommand } from './commands/verify.ts';
 
 export interface CommandDef {
   /** One word, or two for a subcommand ("models list"). */
@@ -69,6 +73,10 @@ export const COMMANDS: readonly CommandDef[] = [
   { name: 'service uninstall', summary: 'remove the background service; runs and state are untouched', usage: 'orbit service uninstall', run: serviceUninstallCommand },
   { name: 'service status', summary: 'is the service installed and loaded, and is its controller alive (exit 0 only when loaded)', usage: 'orbit service status [--json]', run: serviceStatusCommand },
   { name: 'service run', summary: 'run the persistent controller in this process (what the service definition starts)', usage: 'orbit service run', run: serviceRunCommand },
+  { name: 'verify', summary: 'independent verification of a run\'s latest candidate: a verdict per criterion with its evidence (exit 14 FAIL, 15 INCOMPLETE)', usage: 'orbit verify [run-id] [--json]', run: verifyCommand },
+  { name: 'repair', summary: 'repair a failed run (BLOCKED or paused with FAIL evidence) or start a run to repair a described failure', usage: 'orbit repair <run-id | failure description> [--foreground] [--policy <path>]', options: REPAIR_OPTIONS, run: repairCommand },
+  { name: 'stats', summary: 'the spec section 16 metrics for this repository\'s runs (success, cost, repair loops, time to green), optionally in a time window', usage: STATS_USAGE, options: STATS_OPTIONS, run: statsCommand },
+  { name: 'gc', summary: 'apply artifact retention: delete the run directories and worktrees of finished runs older than retention.keep_runs_days', usage: GC_USAGE, options: GC_OPTIONS, run: gcCommand },
   { name: 'policy show', summary: 'the frozen policy a run acts under, verified against its hash', usage: 'orbit policy show <run-id> [--json]', run: policyShowCommand },
 ];
 
@@ -100,7 +108,7 @@ export function commandHelp(def: CommandDef): string {
 }
 
 export function exitCodesText(): string {
-  return ['Exit codes:', ...EXIT_CODE_DOCS.map((e) => `  ${String(e.code).padStart(2)}  ${e.name.padEnd(12)}${e.meaning}`), '', '"orbit hook pre-tool-use" is the exception: it follows Claude Code\'s hook protocol and exits 0 (allow, or a deny decision on stdout) or 2 (block).', ''].join('\n');
+  return ['Exit codes:', ...EXIT_CODE_DOCS.map((e) => `  ${String(e.code).padStart(2)}  ${e.name.padEnd(19)}${e.meaning}`), '', '"orbit hook pre-tool-use" is the exception: it follows Claude Code\'s hook protocol and exits 0 (allow, or a deny decision on stdout) or 2 (block).', ''].join('\n');
 }
 
 /**
@@ -110,7 +118,7 @@ export function exitCodesText(): string {
  * could run `orbit decide`, `resume --force` or `learn eval` from its shell
  * would be authorizing its own decisions.
  */
-const WORKER_SAFE = new Set(['status', 'logs', 'report', 'questions', 'policy show', 'models list', 'learn list', 'learn show']);
+const WORKER_SAFE = new Set(['status', 'logs', 'report', 'questions', 'policy show', 'models list', 'learn list', 'learn show', 'stats']);
 
 function inWorker(env: Readonly<Record<string, string | undefined>>): boolean {
   return env.ORBIT_WORKER === '1' || Boolean(env.ORBIT_POLICY_HASH) || Boolean(env.ORBIT_POLICY_PATH);

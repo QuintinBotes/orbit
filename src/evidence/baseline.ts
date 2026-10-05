@@ -1,17 +1,21 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { OrbitError } from '../core/errors.ts';
 import { atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
 import { sha256 } from '../core/hash.ts';
+import { redact } from '../core/redact.ts';
 import type { IsolationProvider } from '../isolation/types.ts';
 import { prepareWorkerTmpDir } from '../isolation/profiles.ts';
-import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
+import { dependencyAuditPolicy } from '../policy/config.ts';
+import type { AuditSeverity, CheckDefinition, DependencyAuditConfig, PolicySnapshot } from '../policy/types.ts';
+import { exceptionExpiryMs } from '../review/resolve.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { appendEvent } from '../storage/events.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from './candidate.ts';
 import { resolveCommit, treeOf } from './git.ts';
 import { assertRunPolicy, baselineSubject, candidateSubject, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, runCheckSet, type CheckSubject, type RunnerContext } from './runner.ts';
+import { recordFailure } from './store.ts';
 import type { Candidate, CheckResult, CheckStatus } from './types.ts';
 
 /**
@@ -21,6 +25,16 @@ import type { Candidate, CheckResult, CheckStatus } from './types.ts';
  * blamed on the candidate. Dependencies come from the existing lockfile only,
  * with install scripts denied unless policy allows or allowlists them, and the
  * only network the install gets is the package registry.
+ *
+ * Vulnerability and license policy (`dependencies.audit`, spec section 5
+ * baseline gate): when enabled, `npm audit` runs on the base revision and its
+ * findings, with the licenses the lockfile records, are part of the
+ * baseline. A candidate that changes package.json or the lockfile is audited
+ * again, and its install is refused (with a recorded failure per finding,
+ * which drives the repair brief) when it introduces a vulnerability at or
+ * above `fail_on`, or a package whose license is not on `license_allowlist`,
+ * that no unexpired `exceptions` entry accepts. Findings already on the base
+ * are recorded, never blamed on the candidate.
  */
 
 export const BASELINE_FILE = 'baseline.json';
@@ -83,9 +97,11 @@ export function planInstall(snapshot: PolicySnapshot, checkoutDir: string, opts:
 export interface InstallOutcome {
   skipped: boolean;
   reason: string | null;
-  /** True when the install ran and every step passed (flaky passes included, the install is not evidence). */
+  /** True when the install ran and every step passed (flaky passes included, the install is not evidence), and the dependency audit found nothing new that blocks. */
   ok: boolean;
   results: CheckResult[];
+  /** The candidate's dependency audit against the baseline, when `dependencies.audit` is enabled. */
+  audit?: AuditGateOutcome | null;
 }
 
 /**
@@ -95,7 +111,12 @@ export interface InstallOutcome {
  */
 export async function installDependencies(ctx: RunnerContext & { baseTree?: string; candidate?: Candidate; registryHosts?: readonly string[] }): Promise<InstallOutcome> {
   const plan = planInstall(ctx.snapshot, ctx.checkoutDir, { registryHosts: ctx.registryHosts });
-  if (plan.skip) return { skipped: true, reason: plan.reason, ok: false, results: [] };
+  if (plan.skip) {
+    // Nothing to install, but a candidate's lockfile can still bring in what the audit policy forbids.
+    const audit = ctx.candidate ? await auditCandidate({ ...ctx, candidate: ctx.candidate }) : null;
+    if (audit && audit.blocking.length > 0) return { skipped: false, reason: audit.summary, ok: false, results: [], audit };
+    return { skipped: true, reason: plan.reason, ok: false, results: [], audit };
+  }
   const definitions = { ...ctx.definitions, ...Object.fromEntries(plan.definitions.map((d) => [d.id, d])) };
   let subject: CheckSubject;
   if (ctx.candidate) subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: 'install' };
@@ -108,7 +129,266 @@ export async function installDependencies(ctx: RunnerContext & { baseTree?: stri
     results.push(r);
     if (r.status !== 'PASSED') break; // the allowlisted rebuild is pointless after a failed install
   }
-  return { skipped: false, reason: null, ok: results.length === plan.definitions.length && results.every((r) => r.status === 'PASSED'), results };
+  const ok = results.length === plan.definitions.length && results.every((r) => r.status === 'PASSED');
+  if (!ok || !ctx.candidate) return { skipped: false, reason: null, ok, results };
+  const audit = await auditCandidate({ ...ctx, candidate: ctx.candidate });
+  if (audit && audit.blocking.length > 0) return { skipped: false, reason: audit.summary, ok: false, results, audit };
+  return { skipped: false, reason: null, ok, results, audit };
+}
+
+// ---------------------------------------------------------------------------
+// dependency audit
+
+/** Check id of the generated npm audit step. */
+export const AUDIT_CHECK_ID = 'orbit-dependency-audit';
+const AUDIT_TIMEOUT_SECONDS = 300;
+const AUDIT_REPORT = 'npm-audit.json';
+const MANIFEST_FILES = ['package.json', 'package-lock.json', 'npm-shrinkwrap.json'];
+const SEVERITY_RANK: Record<AuditSeverity, number> = { critical: 4, high: 3, moderate: 2, low: 1 };
+
+export interface AuditFinding {
+  /** GHSA-... (or npm:<source>) for a vulnerability; license:<package>@<version> for a license. */
+  id: string;
+  kind: 'vulnerability' | 'license';
+  package: string;
+  /** Vulnerabilities only. */
+  severity: AuditSeverity | null;
+  /** Advisory title or the license expression, redacted and bounded. */
+  detail: string;
+}
+
+/** What one audit of one tree found. */
+export interface DependencyAudit {
+  ran: boolean;
+  /** Why it did not run, or what was partial. */
+  reason: string | null;
+  /** sha256 of package.json and the lockfile, so a candidate that leaves them alone is not audited again. */
+  manifestHash: string | null;
+  vulnerabilities: AuditFinding[];
+  /** Packages whose license is not on the allowlist (empty when there is no license policy). */
+  licenses: AuditFinding[];
+  logPath: string | null;
+}
+
+export interface AuditGateOutcome {
+  /** False when the candidate's manifests equal the base's, so there was nothing new to audit. */
+  audited: boolean;
+  candidate: DependencyAudit | null;
+  /** New findings at or above fail_on, and new disallowed licenses, not excepted. */
+  blocking: AuditFinding[];
+  /** New vulnerabilities below fail_on: disclosed, not blocking. */
+  advisory: AuditFinding[];
+  excepted: { finding: AuditFinding; reason: string; expires: string | null }[];
+  /** Exceptions that matched but had expired. */
+  expired: { id: string; expires: string }[];
+  /** Findings the base revision already had. */
+  preexisting: AuditFinding[];
+  summary: string | null;
+}
+
+export function manifestHash(dir: string): string | null {
+  const parts: string[] = [];
+  for (const f of MANIFEST_FILES) {
+    const p = join(dir, f);
+    if (existsSync(p)) parts.push(`${f}\0${sha256(readFileSync(p))}`);
+  }
+  return parts.length > 0 ? sha256(parts.join('\n')) : null;
+}
+
+/**
+ * Findings from `npm audit --json` (report version 2, npm 7 and later). Each
+ * advisory a vulnerable package carries directly becomes one finding; the
+ * string entries of `via` only point at another package's advisory, which is
+ * listed under that package. A report npm wrote for an error is refused.
+ */
+export function parseNpmAudit(text: string): AuditFinding[] {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    throw new Error('npm audit did not write a JSON report');
+  }
+  const d = doc as { error?: { summary?: unknown; code?: unknown }; vulnerabilities?: unknown };
+  if (d.error) throw new Error(`npm audit failed: ${redact(String(d.error.summary ?? d.error.code ?? 'error')).slice(0, 200)}`);
+  if (!d.vulnerabilities || typeof d.vulnerabilities !== 'object') throw new Error('the npm audit report has no vulnerabilities section (npm 7 or later is needed)');
+  const out = new Map<string, AuditFinding>();
+  for (const [name, v] of Object.entries(d.vulnerabilities as Record<string, { via?: unknown }>)) {
+    if (!Array.isArray(v?.via)) continue;
+    for (const via of v.via as unknown[]) {
+      if (!via || typeof via !== 'object') continue;
+      const a = via as { source?: unknown; url?: unknown; severity?: unknown; title?: unknown; name?: unknown };
+      const ghsa = typeof a.url === 'string' ? /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/.exec(a.url)?.[0] : undefined;
+      const id = ghsa ?? (typeof a.source === 'number' || typeof a.source === 'string' ? `npm:${a.source}` : null);
+      const severity = typeof a.severity === 'string' && Object.hasOwn(SEVERITY_RANK, a.severity) ? (a.severity as AuditSeverity) : null;
+      if (!id || !severity) continue;
+      const pkg = typeof a.name === 'string' ? a.name : name;
+      out.set(`${id}\0${pkg}`, { id, kind: 'vulnerability', package: pkg, severity, detail: redact(typeof a.title === 'string' ? a.title : '').slice(0, 200) });
+    }
+  }
+  return [...out.values()].sort((x, y) => x.id.localeCompare(y.id) || x.package.localeCompare(y.package));
+}
+
+/**
+ * Packages in an npm lockfile (v2 and v3 record each package's license)
+ * whose license is not allowed. An SPDX `OR` is allowed when one side is,
+ * an `AND` only when every part is; a package with no license field is not
+ * allowed. The root project itself is not judged.
+ */
+export function disallowedLicenses(lockText: string, allowlist: readonly string[]): AuditFinding[] {
+  let lock: { packages?: Record<string, { name?: unknown; version?: unknown; license?: unknown; link?: unknown }> };
+  try {
+    lock = JSON.parse(lockText) as typeof lock;
+  } catch {
+    throw new Error('the lockfile is not valid JSON');
+  }
+  if (!lock.packages || typeof lock.packages !== 'object') throw new Error('the lockfile has no packages section (lockfileVersion 2 or later records licenses)');
+  const allowed = new Set(allowlist.map((l) => l.toLowerCase()));
+  const out = new Map<string, AuditFinding>();
+  for (const [key, entry] of Object.entries(lock.packages)) {
+    if (key === '' || !entry || typeof entry !== 'object' || entry.link === true) continue;
+    const name = typeof entry.name === 'string' ? entry.name : key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length);
+    const version = typeof entry.version === 'string' ? entry.version : '0.0.0';
+    const license = typeof entry.license === 'string' ? entry.license : null;
+    if (license !== null && licenseAllowed(license, allowed)) continue;
+    const id = `license:${name}@${version}`;
+    out.set(id, { id, kind: 'license', package: name, severity: null, detail: license ?? 'no license recorded' });
+  }
+  return [...out.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function licenseAllowed(expr: string, allowed: ReadonlySet<string>): boolean {
+  const e = expr.replace(/[()]/g, ' ').trim().toLowerCase();
+  return e.split(/\s+or\s+/).some((alt) => alt.split(/\s+and\s+/).every((part) => allowed.has(part.trim())));
+}
+
+function lockfileIn(dir: string): string | null {
+  for (const f of ['npm-shrinkwrap.json', 'package-lock.json']) if (existsSync(join(dir, f))) return join(dir, f);
+  return null;
+}
+
+/**
+ * Audit the checkout in `ctx.checkoutDir` for `subject`: npm audit inside
+ * isolation with registry-only network (no scripts run; the lockfile is all
+ * it reads), and the license policy from the lockfile. Null when the policy
+ * has the audit off.
+ */
+export async function runDependencyAudit(ctx: RunnerContext & { registryHosts?: readonly string[] }, subject: CheckSubject): Promise<DependencyAudit | null> {
+  const policy = dependencyAuditPolicy(ctx.snapshot.config);
+  if (!policy.enabled) return null;
+  const hash = manifestHash(ctx.checkoutDir);
+  const lock = lockfileIn(ctx.checkoutDir);
+  if (!lock) return { ran: false, reason: 'no npm lockfile (package-lock.json or npm-shrinkwrap.json); the dependency audit supports npm lockfiles only', manifestHash: hash, vulnerabilities: [], licenses: [], logPath: null };
+  const problems: string[] = [];
+  let licenses: AuditFinding[] = [];
+  if (policy.license_allowlist !== null) {
+    try {
+      licenses = disallowedLicenses(readFileSync(lock, 'utf8'), policy.license_allowlist);
+    } catch (err) {
+      problems.push(`license policy not checked: ${(err as Error).message}`);
+    }
+  }
+  const def: CheckDefinition = {
+    id: AUDIT_CHECK_ID,
+    // The report goes to a file, so warnings on stderr cannot corrupt it; a written report is success even when it lists vulnerabilities.
+    command: [`npm audit --json --package-lock-only > "$ORBIT_ARTIFACTS_DIR/${AUDIT_REPORT}"; s=$?; if [ -s "$ORBIT_ARTIFACTS_DIR/${AUDIT_REPORT}" ]; then exit 0; fi; exit $s`],
+    shell: true,
+    cwd: '.',
+    timeout_seconds: AUDIT_TIMEOUT_SECONDS,
+    network_hosts: [...(ctx.registryHosts ?? NPM_REGISTRY_HOSTS)],
+    env: { npm_config_fund: 'false', npm_config_progress: 'false', npm_config_update_notifier: 'false' },
+    mandatory: false,
+    flaky_reruns: 0,
+    kind: 'command',
+  };
+  const [r] = await runCheckSet({ ...ctx, definitions: { ...ctx.definitions, [AUDIT_CHECK_ID]: def } }, subject, [def]);
+  let vulnerabilities: AuditFinding[] = [];
+  let ran = false;
+  if (!r) problems.push('npm audit did not start (cancelled)');
+  else if (r.status !== 'PASSED') problems.push(`npm audit ${r.status === 'TIMEOUT' ? 'timed out' : `could not produce a report (${r.status})`}`);
+  else {
+    const report = r.artifacts.find((a) => a.path.endsWith(`/${AUDIT_REPORT}`));
+    try {
+      if (!report) throw new Error('npm audit wrote no report');
+      vulnerabilities = parseNpmAudit(readFileSync(report.path, 'utf8'));
+      ran = true;
+    } catch (err) {
+      problems.push((err as Error).message);
+    }
+  }
+  return { ran, reason: problems.length ? problems.join('; ') : null, manifestHash: hash, vulnerabilities, licenses, logPath: r?.logPath ?? null };
+}
+
+/**
+ * Judge a candidate's audit against the base's. A finding is new when the
+ * base audit did not have it; when the base could not be audited every
+ * finding counts as new, since nothing shows it was already there.
+ */
+export function evaluateDependencyAudit(base: DependencyAudit | null | undefined, candidate: DependencyAudit, policy: DependencyAuditConfig, now: number | undefined): Omit<AuditGateOutcome, 'audited' | 'candidate' | 'summary'> {
+  const known = new Set(base?.ran ? [...base.vulnerabilities, ...base.licenses].map(key) : base ? base.licenses.map(key) : []);
+  const out: Omit<AuditGateOutcome, 'audited' | 'candidate' | 'summary'> = { blocking: [], advisory: [], excepted: [], expired: [], preexisting: [] };
+  for (const f of [...candidate.vulnerabilities, ...candidate.licenses]) {
+    if (known.has(key(f))) {
+      out.preexisting.push(f);
+      continue;
+    }
+    const exception = policy.exceptions.find((e) => e.id === f.id || (f.kind === 'license' && e.id === `license:${f.package}`));
+    if (exception) {
+      if (exception.expires !== null && (now === undefined || now > exceptionExpiryMs(exception.expires))) {
+        if (!out.expired.some((x) => x.id === exception.id)) out.expired.push({ id: exception.id, expires: exception.expires });
+      } else {
+        out.excepted.push({ finding: f, reason: exception.reason, expires: exception.expires });
+        continue;
+      }
+    }
+    if (f.kind === 'license' || SEVERITY_RANK[f.severity!] >= SEVERITY_RANK[policy.fail_on]) out.blocking.push(f);
+    else out.advisory.push(f);
+  }
+  return out;
+}
+
+function key(f: AuditFinding): string {
+  return `${f.id}\0${f.package}`;
+}
+
+function describeFinding(f: AuditFinding): string {
+  return f.kind === 'license' ? `${f.package} is licensed ${f.detail}, which is not on the license allowlist` : `${f.package}: ${f.id} (${f.severity})${f.detail ? ` ${f.detail}` : ''}`;
+}
+
+/** The candidate side of the dependency gate, called from installDependencies after a successful candidate install. */
+async function auditCandidate(ctx: RunnerContext & { candidate: Candidate; registryHosts?: readonly string[] }): Promise<AuditGateOutcome | null> {
+  const policy = dependencyAuditPolicy(ctx.snapshot.config);
+  if (!policy.enabled) return null;
+  const baseline = readJsonIfExists<BaselineReport>(join(ctx.runDir, BASELINE_FILE));
+  const baseAudit = baseline?.audit ?? null;
+  const empty = { blocking: [], advisory: [], excepted: [], expired: [], preexisting: [] };
+  if (baseAudit && baseAudit.manifestHash !== null && baseAudit.manifestHash === manifestHash(ctx.checkoutDir)) {
+    return { audited: false, candidate: null, ...empty, summary: null };
+  }
+  const subject: CheckSubject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: 'install' };
+  const audit = await runDependencyAudit(ctx, subject);
+  if (!audit) return null;
+  const judged = evaluateDependencyAudit(baseAudit, audit, policy, ctx.clock.now());
+  const summary = judged.blocking.length
+    ? `dependency audit: the candidate introduces ${judged.blocking.length} finding(s) the policy blocks: ${judged.blocking.slice(0, 5).map(describeFinding).join('; ')}`
+    : audit.ran
+      ? null
+      : `dependency audit unverified: ${audit.reason ?? 'npm audit did not run'}`;
+  for (const f of judged.blocking) {
+    recordFailure(ctx.db, { runId: ctx.run.id, candidateId: ctx.candidate.id, source: 'install', sourceId: `dependency-audit:${ctx.candidate.id}:${f.id}:${f.package}`, fingerprint: `dependency-audit:${f.id}`, excerpt: describeFinding(f) }, ctx.clock);
+  }
+  ctx.db.tx(() =>
+    appendEvent(ctx.db, ctx.run.id, 'dependency.audit', 'controller', {
+      candidate_id: ctx.candidate.id,
+      ran: audit.ran,
+      reason: audit.reason,
+      blocking: judged.blocking.map((f) => f.id),
+      advisory: judged.advisory.map((f) => f.id),
+      excepted: judged.excepted.map((e) => ({ id: e.finding.id, reason: e.reason })),
+      expired: judged.expired,
+      preexisting: judged.preexisting.length,
+    }, ctx.clock.now()),
+  );
+  return { audited: true, candidate: audit, ...judged, summary };
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +414,8 @@ export interface BaselineReport {
   policyHash: string;
   checkIds: string[];
   install: { skipped: boolean; reason: string | null; ok: boolean };
+  /** The base revision's dependency audit; absent when `dependencies.audit` is off (or in baselines recorded before it existed). */
+  audit?: DependencyAudit | null;
   checks: BaselineCheckEntry[];
   /** Mandatory checks that already fail (or time out) on the base revision. */
   failures: { checkId: string; fingerprint: string | null; excerpt: string | null }[];
@@ -218,6 +500,7 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
     };
     const install = await installDependencies({ ...ctx, baseTree, registryHosts: input.registryHosts });
     const results = install.skipped || install.ok ? await runCheckSet(ctx, baselineSubject(runDir, baseTree), defs) : [];
+    const audit = await runDependencyAudit({ ...ctx, registryHosts: input.registryHosts }, baselineSubject(runDir, baseTree, 'install'));
 
     const entries: BaselineCheckEntry[] = results.map((r) => ({
       checkId: r.checkId,
@@ -237,6 +520,7 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
       policyHash: run.policyHash,
       checkIds,
       install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
+      ...(audit ? { audit } : {}),
       checks: entries,
       failures: entries.filter((e) => e.mandatory && (e.status === 'FAILED' || e.status === 'TIMEOUT')).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
       // Every requested check produced a decisive result (no ERROR, no CANCELLED, none skipped).
@@ -244,7 +528,8 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
       recordedAt: clock.now(),
     };
     atomicWriteJson(file, report);
-    db.tx(() => appendEvent(db, run.id, 'baseline.recorded', 'controller', { base_revision: baseRevision, base_tree: baseTree, failures: report.failures.map((f) => f.checkId), complete: report.complete }, clock.now()));
+    const auditSummary = audit ? { ran: audit.ran, reason: audit.reason, vulnerabilities: audit.vulnerabilities.length, disallowed_licenses: audit.licenses.length } : null;
+    db.tx(() => appendEvent(db, run.id, 'baseline.recorded', 'controller', { base_revision: baseRevision, base_tree: baseTree, failures: report.failures.map((f) => f.checkId), complete: report.complete, audit: auditSummary }, clock.now()));
     return { report, results, reused: false };
   } finally {
     await cleanupCandidateCheckout(input.repoRoot, checkoutDir);

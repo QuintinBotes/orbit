@@ -151,8 +151,7 @@ describe.skipIf(!READY)('acceptance: credentials and routing', () => {
     assertRunInvariants(l, run.id);
   }, 240_000);
 
-  // DEFECT: a Claude session that fails authentication (401, total_cost_usd 0, empty modelUsage) is charged the full session-cap ceiling, and the BUDGET_EXHAUSTED this raises preempts the credentials blocker: the run ends EXHAUSTED "cost_usd exhausted" with nothing spent.
-  it.fails('scenario 12: an implementer whose credentials expire mid-run (401) blocks on credentials, not on budget', async () => {
+  it('scenario 12: an implementer whose credentials expire mid-run (401) blocks on credentials, not on budget', async () => {
     const l = lab();
     writeScenario(l, scenario({ implementer: [{ ...GOOD_IMPLEMENTATION(), outcome: 'auth_failure' }] }));
     const run = startLabRun(l, GOAL);
@@ -204,8 +203,10 @@ describe.skipIf(!READY)('acceptance: credentials and routing', () => {
     assertRunInvariants(l, run.id);
   }, 180_000);
 
-  async function escalationRun(): Promise<{ l: Lab; runId: string }> {
-    const l = lab();
+  // threshold: scheduler.repeated_failure_threshold. At 1, a single failure is already the repeated equivalent
+  // failure the architecture requires before the implementer escalates; at the default it is not.
+  async function escalationRun(threshold?: number): Promise<{ l: Lab; runId: string }> {
+    const l = lab(threshold === undefined ? {} : { tweak: (c) => void (c.scheduler.repeated_failure_threshold = threshold) });
     writeScenario(
       l,
       scenario({
@@ -220,7 +221,7 @@ describe.skipIf(!READY)('acceptance: credentials and routing', () => {
   }
 
   it('scenario 14: difficult work escalates only with recorded justification that names the failure records it rests on', async () => {
-    const { l, runId } = await escalationRun();
+    const { l, runId } = await escalationRun(1);
     const db = l.db();
     expect(l.db().get<{ state: string }>('SELECT state FROM runs WHERE id = ?', runId)!.state).toBe('SUCCEEDED');
     const all = routes(l, runId);
@@ -246,8 +247,7 @@ describe.skipIf(!READY)('acceptance: credentials and routing', () => {
     assertRunInvariants(l, runId);
   }, 180_000);
 
-  // DEFECT: the router escalates the implementer from Sonnet to Opus after one failed attempt (signal strong-attempt-failed), although docs/architecture.md ("Token efficiency") allows it only after repeated equivalent failures.
-  it.fails('scenario 14: the implementer is not escalated on a single localized failure (architecture: only after repeated equivalent failures)', async () => {
+  it('scenario 14: the implementer is not escalated on a single localized failure (architecture: only after repeated equivalent failures)', async () => {
     const { l, runId } = await escalationRun();
     const second = routes(l, runId).find((r) => r.purpose === 'implement:2')!;
     const threshold = l.config.scheduler.repeated_failure_threshold;

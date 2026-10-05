@@ -23,6 +23,7 @@ import type { ExecResult } from '../core/exec.ts';
 import { execCapture } from '../core/exec.ts';
 import { OrbitError } from '../core/errors.ts';
 import { atomicWriteJson } from '../core/fsx.ts';
+import { sha256 } from '../core/hash.ts';
 import { redact } from '../core/redact.ts';
 
 // ---------------------------------------------------------------------------
@@ -102,11 +103,41 @@ export interface CreatePullRequestInput {
   draft: boolean;
 }
 
+export const MERGE_METHODS = ['squash', 'merge', 'rebase'] as const;
+export type MergeMethod = (typeof MERGE_METHODS)[number];
+
+export interface MergePullRequestInput {
+  number: number;
+  /** The exact commit that was reviewed and checked; the host refuses the merge when the head is anything else. */
+  headSha: string;
+  method: MergeMethod;
+  deleteBranch: boolean;
+}
+
+/** A pull request's merge-related state, read back after a merge (or to reconcile a lost merge response). */
+export interface MergeState {
+  number: number;
+  state: PullRequestState;
+  headRefOid: string;
+  baseRefName: string;
+  /** The commit the merge produced on the base branch; null until merged. */
+  mergeCommitSha: string | null;
+  mergedAt: string | null;
+}
+
 export interface GitHubClient {
   /** The run's PR by head branch, in any state; an OPEN one wins. null when none exists. */
   findPullRequest(head: string): Promise<PullRequestInfo | null>;
   createPullRequest(input: CreatePullRequestInput): Promise<PullRequestInfo>;
   updatePullRequest(number: number, changes: { title?: string; body?: string }): Promise<PullRequestInfo>;
+  /**
+   * Merge only when the PR head is still `headSha` (`gh pr merge --match-head-commit`).
+   * Like a create, it may take effect remotely and still throw, so callers
+   * reconcile with `getMergeState`. A refusal by the host (head moved, not
+   * mergeable, branch protection) throws a definitive error.
+   */
+  mergePullRequest(input: MergePullRequestInput): Promise<MergeState>;
+  getMergeState(number: number): Promise<MergeState>;
   listChecks(query: ChecksQuery): Promise<ChecksResult>;
   failedLogs(runId: string): Promise<FailedLogs>;
   authStatus(): Promise<AuthStatus>;
@@ -162,6 +193,24 @@ export function parsePullRequestList(text: string): PullRequestInfo[] {
   const v = parseJson('pr list', text);
   if (!Array.isArray(v)) throw malformed('pr list', 'expected an array');
   return v.map(parsePullRequest);
+}
+
+export function parseMergeState(value: unknown): MergeState {
+  const o = obj('pr view', value);
+  const state = str('pr view', o, 'state').toUpperCase();
+  if (state !== 'OPEN' && state !== 'CLOSED' && state !== 'MERGED') throw malformed('pr view', `unknown state ${JSON.stringify(state)}`);
+  const number = o.number;
+  if (typeof number !== 'number' || !Number.isInteger(number) || number <= 0) throw malformed('pr view', 'field number is missing or not a positive integer');
+  const mc = o.mergeCommit;
+  const oid = mc && typeof mc === 'object' && typeof (mc as Record<string, unknown>).oid === 'string' ? ((mc as Record<string, unknown>).oid as string) : null;
+  return {
+    number,
+    state,
+    headRefOid: str('pr view', o, 'headRefOid'),
+    baseRefName: str('pr view', o, 'baseRefName'),
+    mergeCommitSha: state === 'MERGED' && oid ? oid : null,
+    mergedAt: typeof o.mergedAt === 'string' && o.mergedAt !== '' ? o.mergedAt : null,
+  };
 }
 
 const RUN_LINK = /\/actions\/runs\/(\d+)(?:\/job\/(\d+))?/;
@@ -318,6 +367,9 @@ export interface GhCliOptions {
 }
 
 const PR_FIELDS = 'number,url,headRefName,headRefOid,baseRefName,isDraft,state,title,body';
+const MERGE_FIELDS = 'number,state,headRefOid,baseRefName,mergeCommit,mergedAt';
+/** gh pr merge refusals that mean nothing happened and repeating cannot help. */
+const MERGE_REFUSED = /Head branch was modified|not mergeable|merge conflict|required status check|review is required|reviews? required|base branch policy|protected branch|Merge method .* not allowed|not allowed on this repository|HTTP 405|HTTP 409|HTTP 422/i;
 const CHECK_FIELDS = 'name,state,bucket,link,workflow,event,startedAt,completedAt,description';
 const RUN_FIELDS = 'databaseId,status,conclusion,headSha,headBranch,event,workflowName,name,attempt,url,startedAt,updatedAt';
 
@@ -422,6 +474,33 @@ export class GhCliClient implements GitHubClient {
     return parsePullRequest(parseJson('pr view', out));
   }
 
+  async mergePullRequest(input: MergePullRequestInput): Promise<MergeState> {
+    assertMergeInput(input);
+    this.assertToken();
+    // -R makes gh skip every local-branch step of --delete-branch: only the remote head branch is deleted.
+    const argv = ['pr', 'merge', String(input.number), '-R', this.opts.repo, `--${input.method}`, '--match-head-commit', input.headSha];
+    if (input.deleteBranch) argv.push('--delete-branch');
+    const res = await this.exec(argv);
+    if (res.timedOut) throw new OrbitError('PROVIDER_TRANSIENT', 'gh pr merge timed out');
+    if (res.exitCode !== 0) {
+      const text = `${res.stderr}\n${res.stdout}`;
+      if (/already (?:been )?merged/i.test(text)) return this.getMergeState(input.number);
+      const err = classifyGhFailure('pr merge', res.exitCode, text);
+      if (err.code === 'DELIVERY_FAILED' && MERGE_REFUSED.test(text)) throw new OrbitError('DELIVERY_FAILED', err.message, { definitive: true, refused: true });
+      throw err;
+    }
+    const state = await this.getMergeState(input.number);
+    // Exit 0 without a merge: the host queued it (merge queue or auto-merge). Orbit does not wait on a queue it cannot see.
+    if (state.state !== 'MERGED') throw new OrbitError('DELIVERY_FAILED', `gh pr merge exited 0 but pull request #${input.number} is ${state.state}; a merge queue or auto-merge is not supported`, { definitive: true, state: state.state });
+    return state;
+  }
+
+  async getMergeState(number: number): Promise<MergeState> {
+    if (!Number.isInteger(number) || number <= 0) throw new OrbitError('INTERNAL', 'pull request number must be a positive integer');
+    const out = await this.ok('pr view', ['pr', 'view', String(number), '-R', this.opts.repo, '--json', MERGE_FIELDS]);
+    return parseMergeState(parseJson('pr view', out));
+  }
+
   async listChecks(query: ChecksQuery): Promise<ChecksResult> {
     this.assertToken();
     if ('pr' in query) {
@@ -488,6 +567,12 @@ export class GhCliClient implements GitHubClient {
   }
 }
 
+function assertMergeInput(input: MergePullRequestInput): void {
+  if (!Number.isInteger(input.number) || input.number <= 0) throw new OrbitError('INTERNAL', 'pull request number must be a positive integer');
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(input.headSha)) throw new OrbitError('INTERNAL', `not a full commit sha: ${JSON.stringify(input.headSha)}`);
+  if (!(MERGE_METHODS as readonly string[]).includes(input.method)) throw new OrbitError('CONFIG_INVALID', `unknown merge method ${JSON.stringify(input.method)}`, { definitive: true });
+}
+
 function assertHead(head: string): void {
   if (typeof head !== 'string' || head === '' || head.startsWith('-') || /[\s\0]/.test(head)) {
     throw new OrbitError('INTERNAL', `not a usable head branch: ${JSON.stringify(head)}`);
@@ -504,8 +589,10 @@ export interface FakeCheckSpec {
 }
 
 interface FakePr extends PullRequestInfo {
-  /** Set when the PR's head cannot be resolved from a remote. */
+  /** Set when the PR's head cannot be resolved from a remote, and frozen when the PR is merged. */
   fixedHeadOid?: string;
+  mergeCommitOid?: string;
+  mergedAt?: string;
 }
 
 interface FakeFaults {
@@ -516,6 +603,8 @@ interface FakeFaults {
   rateLimitRetryAfterMs: number;
   /** Every call fails with AUTH_EXPIRED, and authStatus reports not ok. */
   authExpired: boolean;
+  /** Number of upcoming mergePullRequest calls that merge and then fail with a lost response. */
+  loseMergeResponse: number;
 }
 
 interface FakeState {
@@ -529,6 +618,7 @@ interface FakeState {
   calls: string[];
   creates: number;
   updates: number;
+  merges: number;
 }
 
 export interface FakeGitHubOptions {
@@ -639,6 +729,56 @@ export class FakeGitHub implements GitHubClient {
     return out!;
   }
 
+  /**
+   * Like the real service: refused unless the PR is open, not a draft and its
+   * head is still `headSha`. With a remote attached, the base branch really
+   * moves (a squash or rebase onto an unmoved base, or a two-parent merge
+   * commit); a base that moved since the head was cut is refused as not
+   * mergeable, since the fake does not do three-way merges.
+   */
+  async mergePullRequest(input: MergePullRequestInput): Promise<MergeState> {
+    this.enter('mergePullRequest');
+    assertMergeInput(input);
+    let out: MergeState | null = null;
+    let lose = false;
+    this.mutate((s) => {
+      const pr = s.prs.find((p) => p.number === input.number);
+      if (!pr) throw new OrbitError('NOT_FOUND', `no pull request #${input.number}`, { definitive: true });
+      if (pr.state === 'MERGED') {
+        out = this.mergeView(s, pr);
+        return;
+      }
+      if (pr.state !== 'OPEN') throw new OrbitError('DELIVERY_FAILED', `gh pr merge failed: pull request #${pr.number} is closed`, { definitive: true, refused: true });
+      if (pr.isDraft) throw new OrbitError('DELIVERY_FAILED', `gh pr merge failed: pull request #${pr.number} is still a draft`, { definitive: true, refused: true });
+      const head = this.headOid(s, pr) ?? pr.fixedHeadOid ?? '';
+      if (head !== input.headSha) {
+        throw new OrbitError('DELIVERY_FAILED', 'gh pr merge failed: Head branch was modified. Review and try the merge again.', { definitive: true, refused: true, head });
+      }
+      const mergeCommit = this.mergeOnRemote(pr, head, input.method, s.nextNumber);
+      pr.state = 'MERGED';
+      pr.fixedHeadOid = head;
+      pr.mergeCommitOid = mergeCommit;
+      pr.mergedAt = new Date(0).toISOString();
+      if (input.deleteBranch && this.opts.remoteGitDir) this.git(['update-ref', '-d', `refs/heads/${pr.headRefName}`, head]);
+      s.merges = (s.merges ?? 0) + 1;
+      out = this.mergeView(s, pr);
+      if (s.faults.loseMergeResponse > 0) {
+        s.faults.loseMergeResponse--;
+        lose = true;
+      }
+    });
+    if (lose) throw new OrbitError('PROVIDER_TRANSIENT', 'connection reset while waiting for the merge response');
+    return out!;
+  }
+
+  async getMergeState(number: number): Promise<MergeState> {
+    this.enter('getMergeState');
+    const s = this.load();
+    const pr = s.prs.find((p) => p.number === number);
+    if (!pr) throw new OrbitError('NOT_FOUND', `no pull request #${number}`, { definitive: true });
+    return this.mergeView(s, pr);
+  }
+
   async listChecks(query: ChecksQuery): Promise<ChecksResult> {
     this.enter('listChecks');
     let sha: string | undefined = query.sha;
@@ -704,8 +844,48 @@ export class FakeGitHub implements GitHubClient {
   }
 
   private view(state: FakeState, pr: FakePr): PullRequestInfo {
-    const { fixedHeadOid, ...info } = pr;
-    return { ...info, headRefOid: this.headOid(state, pr) ?? fixedHeadOid ?? '' };
+    const { fixedHeadOid, mergeCommitOid: _m, mergedAt: _a, ...info } = pr;
+    // A merged PR keeps the head it was merged at, even after its branch is deleted.
+    const head = pr.state === 'MERGED' && fixedHeadOid ? fixedHeadOid : (this.headOid(state, pr) ?? fixedHeadOid ?? '');
+    return { ...info, headRefOid: head };
+  }
+
+  private mergeView(state: FakeState, pr: FakePr): MergeState {
+    const v = this.view(state, pr);
+    return { number: v.number, state: v.state, headRefOid: v.headRefOid, baseRefName: v.baseRefName, mergeCommitSha: pr.state === 'MERGED' ? (pr.mergeCommitOid ?? null) : null, mergedAt: pr.state === 'MERGED' ? (pr.mergedAt ?? null) : null };
+  }
+
+  /** Move the base branch on the attached remote; without one, a stable synthetic merge commit id. */
+  private mergeOnRemote(pr: FakePr, head: string, method: MergeMethod, salt: number): string {
+    if (!this.opts.remoteGitDir) return sha256(`fake-merge:${pr.number}:${head}:${method}:${salt}`).slice(-40);
+    const baseRef = `refs/heads/${pr.baseRefName}`;
+    const base = this.git(['rev-parse', '--verify', '--quiet', baseRef]);
+    if (!base) throw new OrbitError('DELIVERY_FAILED', `gh pr merge failed: base branch ${pr.baseRefName} does not exist`, { definitive: true, refused: true });
+    if (this.git(['merge-base', base, head]) !== base) {
+      throw new OrbitError('DELIVERY_FAILED', `gh pr merge failed: Pull Request is not mergeable (base ${pr.baseRefName} moved)`, { definitive: true, refused: true });
+    }
+    let commit: string;
+    if (method === 'rebase') commit = head;
+    else {
+      const tree = this.git(['rev-parse', `${head}^{tree}`]);
+      const parents = method === 'merge' ? ['-p', base, '-p', head] : ['-p', base];
+      commit = this.git(['commit-tree', tree, ...parents, '-m', `${pr.title} (#${pr.number})`]);
+    }
+    this.git(['update-ref', baseRef, commit, base]);
+    return commit;
+  }
+
+  private git(args: string[]): string {
+    try {
+      return execFileSync('git', ['--git-dir', this.opts.remoteGitDir!, ...args], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { PATH: process.env.PATH ?? '/usr/bin:/bin', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'Fake GitHub', GIT_AUTHOR_EMAIL: 'noreply@example.com', GIT_COMMITTER_NAME: 'Fake GitHub', GIT_COMMITTER_EMAIL: 'noreply@example.com', GIT_AUTHOR_DATE: '1700000000 +0000', GIT_COMMITTER_DATE: '1700000000 +0000' },
+      }).trim();
+    } catch (err) {
+      if (args[0] === 'rev-parse') return '';
+      throw new OrbitError('DELIVERY_FAILED', `fake remote: git ${args[0]} failed: ${(err as Error).message}`);
+    }
   }
 
   private headOid(state: FakeState, pr: FakePr): string | null {
@@ -737,9 +917,10 @@ function emptyState(): FakeState {
     ci: {},
     logs: {},
     heads: {},
-    faults: { loseCreateResponse: 0, rateLimit: 0, rateLimitRetryAfterMs: 1000, authExpired: false },
+    faults: { loseCreateResponse: 0, rateLimit: 0, rateLimitRetryAfterMs: 1000, authExpired: false, loseMergeResponse: 0 },
     calls: [],
     creates: 0,
     updates: 0,
+    merges: 0,
   };
 }

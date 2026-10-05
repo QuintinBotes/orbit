@@ -25,8 +25,8 @@ describe('journeys against the fixture application', () => {
     expect(r.reasons).toEqual([]);
     expect(r.verdict).toBe('PASS');
     expect(r.passed).toBe(true);
-    expect(r.stats).toMatchObject({ passed: 8, failed: 0, skipped: 0 });
-    expect(r.journeys.map((j) => j.project).sort()).toEqual(['desktop', 'desktop', 'desktop', 'desktop', 'mobile', 'mobile', 'mobile', 'mobile']);
+    expect(r.stats).toMatchObject({ passed: 10, failed: 0, skipped: 0 });
+    expect(r.journeys.map((j) => j.project).sort()).toEqual(['desktop', 'desktop', 'desktop', 'desktop', 'desktop', 'mobile', 'mobile', 'mobile', 'mobile', 'mobile']);
     // Evidence is bound to the candidate, the browser actually used, both viewports and the configuration.
     expect(r.binding).toMatchObject({ candidateId: cand.id, treeHash: cand.treeHash, commitSha: cand.commitSha, baseUrl: h.baseUrl, playwrightVersion: '1.63.0' });
     expect(r.binding.checkConfigHash).toMatch(/^sha256:/);
@@ -34,6 +34,9 @@ describe('journeys against the fixture application', () => {
     expect(r.binding.browsers[0]).toMatchObject({ name: 'chromium' });
     expect(r.binding.browsers[0]?.version).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
     expect(r.binding.viewports).toEqual(expect.arrayContaining([{ width: 1440, height: 900 }, { width: 390, height: 844 }]));
+    // The keyboard journey ran once per viewport and found nothing wrong.
+    expect(r.binding.keyboard).toEqual({ scans: 2, failed: 0 });
+    expect(r.binding.accessibilityFailOn).toBe('serious,critical');
     expect(r.coverage.missingViewports).toEqual([]);
     expect(r.coverage.missingBrowsers).toEqual([]);
     expect(r.unverified).toEqual([]);

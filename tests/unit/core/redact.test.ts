@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import {
+  applyRedactPatterns,
   createRedactor,
   envSecretValues,
   isSecretEnvName,
@@ -8,6 +9,7 @@ import {
   redact,
   redactForProvider,
   redactValue,
+  registeredRedactPatterns,
 } from '../../../src/core/redact.ts';
 
 // An empty environment keeps these tests independent of whatever secrets the
@@ -366,4 +368,36 @@ describe('redact: adversarial review', () => {
       expect(performance.now() - t0).toBeLessThan(1_500);
     });
   }
+});
+
+// Registration is process-wide and only ever adds, so these use patterns no other test in this file meets.
+describe('applyRedactPatterns (retention.redact_patterns in force for the process)', () => {
+  it('is honoured by redact, redactForProvider, redactValue and every redactor, including ones made earlier', () => {
+    const early = createRedactor({ env: {} });
+    const text = 'ticket ZQX-404-ALPHA filed';
+    expect(redact(text)).toBe(text);
+    applyRedactPatterns(['ZQX-[0-9]{3}-[A-Z]+']);
+    expect(redact(text)).toBe('ticket [REDACTED:custom] filed');
+    expect(redactForProvider(text)).toBe('ticket [REDACTED:custom] filed');
+    expect(early.redact(text)).toBe('ticket [REDACTED:custom] filed');
+    expect(redactValue({ note: text })).toEqual({ note: 'ticket [REDACTED:custom] filed' });
+  });
+
+  it('adds each pattern once, skips patterns that match the empty string or do not compile, and applies them with the u flag', () => {
+    const before = registeredRedactPatterns().length;
+    applyRedactPatterns(['ZQX-[0-9]{3}-[A-Z]+', 'x*', '(', null as unknown as string]);
+    applyRedactPatterns(undefined);
+    expect(registeredRedactPatterns().length).toBe(before);
+    applyRedactPatterns(['\\p{Lu}{3}9{4}']);
+    expect(redact('code ÄÖÜ9999 here')).toBe('code [REDACTED:custom] here');
+    // Callers cannot change the registered expressions through the copies.
+    registeredRedactPatterns()[0]!.lastIndex = 99;
+    expect(redact('ticket ZQX-111-B')).toBe('ticket [REDACTED:custom]');
+  });
+
+  it('stacks explicit createRedactor patterns on top of the registered ones', () => {
+    const red = createRedactor({ env: {}, patterns: ['WVB[0-9]{5}', ''] });
+    expect(red.redact('WVB12345 and ZQX-222-C and plain')).toBe('[REDACTED:custom] and [REDACTED:custom] and plain');
+    expect(redact('WVB12345')).toBe('WVB12345');
+  });
 });

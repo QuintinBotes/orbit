@@ -77,6 +77,37 @@ actions:
 `commit`, `push_task_branch`, `open_pull_request` and `repair_ci` need mode
 `autonomous-delivery` or `release`. `merge` and `deploy_production` need `release`.
 
+`change_secrets` is reserved: workers never hold or change secrets, so only
+`false` is accepted. `change_permissions` is read by the authorization layer:
+while it is `false`, commands that change file modes, owners, ACLs or flags
+(`chmod`, `chown`, `chgrp`, `chflags`, `chattr`, `setfacl`) are denied. Setting
+it to `true` allows them inside the worktree; protected paths and setuid bits
+stay denied.
+
+## release
+
+```yaml
+release:
+  merge:
+    method: squash            # squash | merge | rebase
+    require_checks: [build]   # CI checks that must be green before merging
+    delete_branch: true
+  environments:
+    production:
+      deploy_command: [npm, run, deploy]   # argv, never run through a shell
+      allowed_branches: [main]             # default: the base branch
+      require_ci_green: true
+      network_hosts: []                    # must be covered by network.allowed_hosts
+      timeout_seconds: 1800
+```
+
+Default `null`. Mode `release` requires it (not null) and needs
+`actions.merge` or `actions.deploy_production` to be true; without either, use
+`autonomous-delivery`. `actions.deploy_production: true` needs at least one
+environment, and an environment with no `allowed_branches` is an error, since
+nothing could ever be deployed to it. Left-out merge settings and environment
+fields take the defaults shown; `deploy_command` has none.
+
 ## dependencies and network
 
 ```yaml
@@ -87,6 +118,11 @@ dependencies:
   change_lockfile: false
   install_scripts: deny-unless-allowlisted   # deny | deny-unless-allowlisted | allow
   install_script_allowlist: []
+  audit:
+    enabled: false
+    fail_on: high                    # critical | high | moderate | low
+    license_allowlist: null          # SPDX ids, or null for no license policy
+    exceptions: []                   # {id, reason, expires}
 
 network:
   allowed_hosts: [github.com, api.github.com, registry.npmjs.org]
@@ -95,6 +131,26 @@ network:
 Hosts are exact names, IPv4 addresses, or `*.example.com` (subdomains only).
 No ports, schemes or bare `*`. Everything else is blocked by the sandbox.
 `add_packages` also needs `change_lockfile`.
+
+`dependencies.audit` is the vulnerability and license policy of the baseline
+and dependency gates (npm lockfiles). When enabled, `npm audit --json
+--package-lock-only` runs inside isolation (registry network only, no
+scripts) on the base revision, and the result is recorded in `baseline.json`
+together with the packages whose lockfile license is not on
+`license_allowlist`. A candidate that changes `package.json` or the lockfile
+is audited again; its install is refused, with one recorded failure per
+finding for the repair brief, when it introduces a vulnerability at or above
+`fail_on` or a package with a license not on the allowlist. Vulnerabilities
+below `fail_on` are reported as advisory, and findings the base already had
+are never blamed on the candidate. A license expression `A OR B` is allowed
+when either side is, `A AND B` only when both are, and a package with no
+license is not allowed.
+
+An exception names an advisory (`GHSA-xxxx-xxxx-xxxx`, or `npm:<source id>`
+when the advisory has no GHSA id) or a license finding (`license:<package>`
+or `license:<package>@<version>`), with a `reason` of at least ten
+characters and an optional `expires` date. An expired exception is reported
+and not applied.
 
 ## ambiguity
 
@@ -144,7 +200,7 @@ the plan.
 ```yaml
 agents:
   default_parallelism: 1
-  require_independent_work_units: true
+  require_independent_work_units: true  # cannot be turned off
   isolate_writers: true                 # cannot be turned off
   prohibit_shared_worktree_writes: true # cannot be turned off
   cancel_obsolete_workers: true
@@ -159,6 +215,31 @@ review:
 If the reviewer provider is unavailable or not `data_policy_eligible`, a run
 that requires independent review stops as `BLOCKED` instead of reviewing with the
 implementer's provider.
+
+## static_security
+
+```yaml
+static_security:
+  block_severities: [critical, high]   # critical | high | medium | low
+  exceptions:
+    - {rule_id: generic-api-key, path_glob: "tests/fixtures/**", reason: "revoked sample keys for parser tests", expires: 2026-12-31}
+```
+
+Severity and exception rules for the static security gate. Every secret-scan
+finding has a severity: credentials for an account, a cloud or a signing
+identity (private keys, cloud keys, GitHub, GitLab, model provider and
+payment tokens) are `critical`, any other detected secret is `high`. SAST
+checks (`category: sast`) that write SARIF (`*.sarif` or `*.sarif.json`) to
+`$ORBIT_ARTIFACTS_DIR` are judged by finding: severity comes from the
+`security-severity` score when the tool writes one (9.0 and up critical, 7.0
+high, 4.0 medium), otherwise from the level (error high, warning medium, note
+low). Findings at a listed severity block; the rest are reported as advisory.
+
+An exception waives the findings of one rule (`rule_id` is the gitleaks rule
+id, the built-in scanner's kind such as `github-token`, or the SARIF rule id),
+under one path glob when `path_glob` is set, until `expires`. The waiver and
+its reason are recorded with the evidence; an expired exception is reported
+and not applied.
 
 ## delivery
 
@@ -235,9 +316,12 @@ ui:
     baseline_changes_require_review: true
     baseline_globs: ["**/*-snapshots/**"]
   visual_baseline_auto_accept: false
+  exploration: {enabled: false, max_minutes: 15, budget_usd: 2}
 ```
 
-`ui: null` turns UI verification off. Accessibility scans and visual checks have
+`ui: null` turns UI verification off. `exploration` (off by default) lets an
+explorer look for UI defects beyond the journeys, within the time and spend
+ceilings; its findings are unproven until reproduced as a failing test. Accessibility scans and visual checks have
 limited coverage; Orbit reports that rather than claiming complete accessibility.
 
 ## isolation and providers
@@ -247,6 +331,10 @@ isolation:
   provider: sandbox-runtime    # sandbox-runtime | container | none
   allow_unisolated: false
   container: {image: "node:22-bookworm", memory_mb: 4096, cpus: 2, pids: 512}  # required for container
+  limits:
+    cpu_seconds: null          # CPU time per process
+    max_processes: null        # processes of the user id (RLIMIT_NPROC)
+    max_file_mb: null          # largest file a process may write
 
 providers:
   claude:
@@ -263,17 +351,56 @@ providers:
     extra_args: []
 ```
 
+`isolation.limits` sets hard per-process limits on every worker shell
+command and check. With `sandbox-runtime` and `none` they are applied by
+`bash` with `ulimit` right before the command starts (inside the sandbox, so
+srt itself is not limited); with `container` they become `docker --ulimit`
+flags next to the container's own memory, CPU and pids limits. A wrapped
+command cannot raise them again. `max_processes` is the kernel's per-user
+limit: it counts every process of your user id, not only the command's, so
+set it well above what the account already runs. Memory is limited only by
+the container provider. When limits are set and no `bash` is found, the
+command is refused rather than run without them.
+
 ## routing and retention
 
 ```yaml
 routing:
   allowed_models: [opus, sonnet, haiku]   # fable is excluded on purpose
   overrides: {}                           # work kind -> family or exact id, within allowed_models
+  output_budgets:                         # output tokens per role, 100 to 200000
+    planner: 4000
+    implementer: 8000
+    verifier: 3000
+    reviewer: 4000
+    inquisitor: 3000
+    curator: 2000
+    explorer: 2000
 
 retention:
   keep_runs_days: 30
   redact_patterns: []                     # extra regular expressions redacted from logs and artifacts
 ```
+
+`output_budgets` defaults follow the token-efficiency table in
+[the architecture](architecture.md); a partial map overrides only the roles it
+names.
+
+`redact_patterns` are JavaScript regular expressions (compiled with the `u`
+flag). From the moment a run's policy is frozen or verified, every redaction
+in that process applies them as well as the built-in secret shapes: the
+controller log, worker prompts, check and CI logs, review packets and
+`final.md`. A match becomes `[REDACTED:custom]`. A pattern that can match the
+empty string is refused when the configuration is loaded, because it could
+never be applied.
+
+`keep_runs_days` is the artifact retention period. The retention pass
+(`pruneExpiredRuns` in `src/storage/retention.ts`) removes `.orbit/runs/<id>/`
+and the run's worktrees under `$ORBIT_HOME/worktrees/` for runs that ended
+(`SUCCEEDED`, `EXHAUSTED`, `IMPOSSIBLE` or `CANCELLED`) more than that many days
+ago. The database rows stay and are marked with a `run.artifacts_pruned`
+event. A `BLOCKED` run is never pruned, and neither is a run whose controller
+still holds its lease.
 
 ## knowledge and guard
 

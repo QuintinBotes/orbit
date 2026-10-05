@@ -41,6 +41,44 @@ export const ROLE_OUTPUT_KIND: Readonly<Record<AgentRole, ModelOutputKind>> = {
   explorer: 'explorer',
 };
 
+/**
+ * Output token budget per role: the token-efficiency table in
+ * docs/architecture.md (curator 2k, planner 4k, verifier 3k, inquisitor 3k,
+ * reviewer 4k, implementer 8k per request). The explorer is not in that table;
+ * its findings are short structured records, so it gets the curator's 2k, the
+ * same as DEFAULT_OUTPUT_BUDGETS in policy/config.ts. These are the fallback; routing.output_budgets in the policy overrides them.
+ */
+export const ROLE_OUTPUT_TOKENS: Readonly<Record<AgentRole, number>> = {
+  planner: 4_000,
+  implementer: 8_000,
+  verifier: 3_000,
+  reviewer: 4_000,
+  inquisitor: 3_000,
+  curator: 2_000,
+  explorer: 2_000,
+};
+
+/**
+ * The output budget for a role: an explicit value (null means none), else the
+ * policy's routing.output_budgets entry when it is a positive integer, else
+ * ROLE_OUTPUT_TOKENS.
+ */
+export function outputBudgetFor(role: AgentRole, opts: { explicit?: number | null; configured?: Readonly<Record<string, unknown>> | null } = {}): number | null {
+  if (opts.explicit !== undefined) {
+    if (opts.explicit === null) return null;
+    if (!Number.isSafeInteger(opts.explicit) || opts.explicit < 1) throw new OrbitError('CONFIG_INVALID', `output token budget must be a positive integer, got ${String(opts.explicit)}`);
+    return opts.explicit;
+  }
+  const c = opts.configured?.[role];
+  if (typeof c === 'number' && Number.isSafeInteger(c) && c >= 1) return c;
+  return ROLE_OUTPUT_TOKENS[role];
+}
+
+/** One line telling a worker its budget; the only enforcement where the provider has no verified cap. */
+export function outputBudgetInstruction(tokens: number): string {
+  return `Output budget: keep your final structured output within ${tokens} output tokens. Cite evidence by id instead of quoting it, and omit anything the schema does not require.`;
+}
+
 /** Spec section 21, verbatim. */
 export const OPERATING_PROMPT = `You are an Orbit worker, not the authorization authority.
 

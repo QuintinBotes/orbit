@@ -4,6 +4,9 @@
 //   APP_DEFECT_EXPORT=1  the CSV export ignores the selected filter
 //   APP_DEFECT_A11Y=1    the status filter loses its label
 //   APP_DEFECT_VISUAL=1  the page background and heading change colour
+//   APP_DEFECT_TABORDER=1  the export button gets a positive tabindex, so Tab reaches it before the filter
+//   APP_DEFECT_FOCUSRING=1 the filter and the button lose their focus indicator
+//   APP_FLAKY=1          /api/flaky answers 500 to its first request and 200 afterwards (an intermittent defect)
 //   APP_NOISE=1          the page logs a console error and requests a missing URL
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -40,9 +43,13 @@ function page() {
   html = html.replace('<!--LABEL-->', label);
   const config = { noise: flag('APP_NOISE') };
   html = html.replace('<!--CONFIG-->', `<script>window.__APP__=${JSON.stringify(config)}</script>`);
-  const css = flag('APP_DEFECT_VISUAL') ? '<style>body{background:#ffd54f}h1{color:#b00020;font-size:2.4rem}</style>' : '';
+  let css = flag('APP_DEFECT_VISUAL') ? '<style>body{background:#ffd54f}h1{color:#b00020;font-size:2.4rem}</style>' : '';
+  if (flag('APP_DEFECT_FOCUSRING')) css += '<style>select:focus,button:focus,select:focus-visible,button:focus-visible{outline:none;box-shadow:none}</style>';
+  if (flag('APP_DEFECT_TABORDER')) html = html.replace('<button id="export" type="button">', '<button id="export" type="button" tabindex="1">');
   return html.replace('<!--EXTRA-->', css);
 }
+
+let flakyCalls = 0;
 
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
@@ -55,6 +62,10 @@ const server = createServer((req, res) => {
   if (url.pathname === '/app.js') return send(200, 'text/javascript; charset=utf-8', readFileSync(join(here, 'public', 'app.js')));
   if (url.pathname === '/styles.css') return send(200, 'text/css; charset=utf-8', readFileSync(join(here, 'public', 'styles.css')));
   if (url.pathname === '/api/reports') return send(200, 'application/json', JSON.stringify(rows(selected(url))));
+  if (url.pathname === '/api/flaky') {
+    flakyCalls += 1;
+    return flag('APP_FLAKY') && flakyCalls === 1 ? send(500, 'application/json', '{"error":"warming up"}') : send(200, 'application/json', JSON.stringify({ calls: flakyCalls }));
+  }
   if (url.pathname === '/export.csv') {
     const status = selected(url);
     // The injected defect: the filter is dropped on the server, so the file

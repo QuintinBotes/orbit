@@ -3,6 +3,8 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { COMMANDS } from '../../../src/cli/cli.ts';
+import { RUN_STATES } from '../../../src/core/run-states.ts';
 
 const root = resolve(import.meta.dirname, '../../..');
 const hasEntry = existsSync(join(root, 'src/cli/main.ts'));
@@ -42,6 +44,84 @@ describe('plugin manifest and components', () => {
       expect(text).toContain('$ARGUMENTS');
       expect(text).toContain(`/orbit:${s}`);
     }
+  });
+});
+
+/** Every `node ".../dist/orbit.mjs" <words>` invocation a skill tells the model to run, with the skill it came from. */
+function skillInvocations(): { skill: string; words: string[]; text: string }[] {
+  const out: { skill: string; words: string[]; text: string }[] = [];
+  for (const skill of ['run', 'inquisition', 'verify', 'repair', 'status', 'resume']) {
+    const body = readFileSync(join(root, 'skills', skill, 'SKILL.md'), 'utf8');
+    for (const m of body.matchAll(/dist\/orbit\.mjs"\s+([^\n`]+)/g)) {
+      out.push({ skill, words: m[1]!.trim().split(/\s+/), text: m[1]!.trim() });
+    }
+  }
+  return out;
+}
+
+describe('skills call commands that exist', () => {
+  const names = COMMANDS.map((c) => c.name);
+
+  it('resolves every orbit command a skill names to a registered command', () => {
+    const calls = skillInvocations();
+    expect(calls.length).toBeGreaterThanOrEqual(6);
+    for (const { skill, words } of calls) {
+      const [a, b] = words;
+      const resolved = names.includes(`${a} ${b}`) || names.includes(a!);
+      expect(resolved, `skills/${skill}/SKILL.md runs "orbit ${words.join(' ')}", which is not in COMMANDS`).toBe(true);
+    }
+    // The commands the six skills exist for.
+    const used = new Set(calls.map((c) => c.words[0]));
+    for (const c of ['run', 'verify', 'repair', 'status', 'resume', 'decide', 'questions']) expect(used.has(c), c).toBe(true);
+  });
+
+  it('never invents an inquisition command', () => {
+    for (const s of ['inquisition', 'run', 'repair', 'verify']) {
+      expect(readFileSync(join(root, 'skills', s, 'SKILL.md'), 'utf8')).not.toMatch(/orbit\.mjs"\s+inquisition/);
+    }
+    expect(names).not.toContain('inquisition');
+  });
+
+  it('records decisions with the run id first, then the question id, as orbit decide takes them', () => {
+    const decide = COMMANDS.find((c) => c.name === 'decide')!;
+    expect(decide.usage).toMatch(/^orbit decide <run-id> <question-id> <answer\.\.\.>/);
+    const line = skillInvocations().find((c) => c.skill === 'inquisition' && c.words[0] === 'decide');
+    expect(line?.text).toMatch(/^decide <run-id> <question-id> "/);
+    expect(skillInvocations().some((c) => c.skill === 'inquisition' && c.text === 'questions <run-id>')).toBe(true);
+  });
+
+  it('names only real run states in the status skill', () => {
+    const body = readFileSync(join(root, 'skills/status/SKILL.md'), 'utf8').split('---').slice(2).join('---');
+    expect(body).not.toMatch(/\b(RUNNING|DONE|FAILED)\b/);
+    const states = (body.match(/\b[A-Z]{5,}(?:_[A-Z]+)?\b/g) ?? []).filter((w) => w !== 'ARGUMENTS');
+    expect(states.length).toBeGreaterThan(3);
+    for (const st of new Set(states)) expect(RUN_STATES as readonly string[], st).toContain(st);
+    for (const st of ['VERIFYING', 'BLOCKED', 'SUCCEEDED', 'EXHAUSTED']) expect(body).toContain(st);
+  });
+
+  it('documents the verify exit codes and the repair hand-off', () => {
+    const verify = readFileSync(join(root, 'skills/verify/SKILL.md'), 'utf8');
+    expect(verify).toMatch(/14 means FAIL/);
+    expect(verify).toMatch(/15 means INCOMPLETE/);
+    const repair = readFileSync(join(root, 'skills/repair/SKILL.md'), 'utf8');
+    expect(repair).toMatch(/Repair: <your text>/);
+    expect(repair).toMatch(/DIAGNOSING/);
+  });
+
+  it('offers native /goal as an optional aid while keeping the controller as the completion authority', () => {
+    const run = readFileSync(join(root, 'skills/run/SKILL.md'), 'utf8');
+    expect(run).toMatch(/\/goal/);
+    expect(run).toMatch(/evidence: orbit status <run-id> reports SUCCEEDED/);
+    expect(run).toMatch(/completion gate stays the authority|stays the authority/);
+    expect(run).toMatch(/If `\/goal` is not available, skip this step/);
+  });
+});
+
+describe('manifest', () => {
+  it('carries the keywords of the spec example', () => {
+    const manifest = JSON.parse(readFileSync(join(root, '.claude-plugin/plugin.json'), 'utf8')) as { name: string; keywords: string[] };
+    expect(manifest.name).toBe('orbit');
+    for (const k of ['claude-code', 'autonomous', 'verification', 'self-healing', 'engineering']) expect(manifest.keywords).toContain(k);
   });
 });
 

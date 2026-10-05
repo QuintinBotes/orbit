@@ -13,6 +13,7 @@
 import { OrbitError } from '../core/errors.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import type { AcceptanceCriterion, ContractAssumption, GoalContract } from './types.ts';
+import { reconcileAuthority } from './authority.ts';
 import { intersectWithScope, literalGlob, normalizeGlob } from './globs.ts';
 import { validateModelOutput, type PlannerOutput } from './model-outputs.ts';
 import { policyHashOf, validateContract } from './validate.ts';
@@ -30,7 +31,7 @@ export interface DraftContractInput {
   policyHash?: string;
 }
 
-export type DraftAdjustmentKind = 'check-dropped' | 'check-added' | 'path-dropped' | 'path-narrowed' | 'path-added' | 'topic-added' | 'decision-recorded';
+export type DraftAdjustmentKind = 'check-dropped' | 'check-added' | 'path-dropped' | 'path-narrowed' | 'path-added' | 'topic-added' | 'decision-recorded' | 'authority-mismatch';
 
 /** A change the controller made to the planner's proposal, with its reason. */
 export interface DraftAdjustment {
@@ -152,6 +153,18 @@ export function draftContract(input: DraftContractInput): DraftResult {
     if (same) same.status = 'needs-decision';
     else assumptions.push(target);
     adjustments.push({ kind: 'decision-recorded', subject: target.id, reason: 'the planner left a material decision unresolved' });
+  }
+
+  // Authority written in the goal never grants anything. Where the prose and the frozen policy disagree it is
+  // recorded, and a request for more than the policy allows becomes a needs-decision assumption, which sends
+  // the run to a clarify inquiry (a human confirms that the policy governs) instead of leaving the gap unseen.
+  for (const m of reconcileAuthority(input.goal, config)) {
+    adjustments.push({ kind: 'authority-mismatch', subject: m.subject, reason: `${m.detail} (goal text: "${m.phrase}")` });
+    if (m.kind !== 'exceeds-policy') continue;
+    const statement = `The goal asks for more authority than the policy grants (${m.subject}: "${m.phrase}"). Confirm that the policy governs, or change the policy and start a new run.`;
+    if (!assumptions.some((a) => normalizeEntry(a.statement) === normalizeEntry(statement))) {
+      assumptions.push({ id: `AS-${assumptions.length + 1}`, statement, status: 'needs-decision' });
+    }
   }
 
   const topics = uniqueText(plan.material_topics);

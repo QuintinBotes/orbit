@@ -107,7 +107,7 @@ export interface Harness {
 }
 
 /** Policy with one Playwright check; `filter` narrows it to some spec files, as a repository's check command may. */
-export function harness(repo: UiRepo, port: number, opts: { filter?: string[]; baseUrl?: string; startCommand?: boolean; checkExtra?: string[] } = {}): Harness {
+export function harness(repo: UiRepo, port: number, opts: { filter?: string[]; baseUrl?: string; startCommand?: boolean; checkExtra?: string[]; a11yFailOn?: boolean } = {}): Harness {
   const baseUrl = opts.baseUrl ?? `http://127.0.0.1:${port}`;
   const command = ['npx', '--no-install', 'playwright', 'test', ...(opts.filter ?? []), ...(opts.checkExtra ?? [])];
   const yaml = `
@@ -132,7 +132,7 @@ ui:
     isolated_test_data: true
     production_accounts: false
   journey_check_ids: [ui-journeys]
-  accessibility: {enabled: true, fail_on_new_serious_or_critical: true}
+  accessibility: {enabled: true, fail_on_new_serious_or_critical: ${opts.a11yFailOn ?? true}}
   visual: {enabled: true, baseline_changes_require_review: true, baseline_globs: ["**/__screenshots__/**"]}
 `;
   const runDir = join(repo.home, `run-${port}-${++harnessCount}`);

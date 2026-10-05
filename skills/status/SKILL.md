@@ -14,7 +14,7 @@ node "${CLAUDE_PLUGIN_ROOT}/dist/orbit.mjs" status $ARGUMENTS
 
 ## Reading the result
 
-Lead with the state (for example RUNNING, BLOCKED, VERIFYING, DONE, FAILED),
+Lead with the state exactly as printed (for example VERIFYING, REVIEWING, BLOCKED, SUCCEEDED, EXHAUSTED, IMPOSSIBLE or CANCELLED; SUCCEEDED, EXHAUSTED, IMPOSSIBLE and CANCELLED are final),
 then last-progress time, spend against budget, and any pending questions with
 their ids. BLOCKED means a decision or credential is needed: say which, and
 point to `/orbit:inquisition --run <run-id>` for questions or `/orbit:resume

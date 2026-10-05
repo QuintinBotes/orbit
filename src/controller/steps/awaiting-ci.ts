@@ -12,10 +12,12 @@ import { OrbitError } from '../../core/errors.ts';
 import { appendEvent } from '../../storage/events.ts';
 import { recordFailure } from '../../evidence/store.ts';
 import { authorize } from '../../policy/authorize.ts';
+import { execCapture } from '../../core/exec.ts';
+import { fetchBranchContaining, gitEnv, lsRemoteBranch, remoteHost, resolveRemoteUrl } from '../../delivery/git.ts';
 import { ciRepairBrief, ciRepairDecision, observeCi } from '../../delivery/ci.ts';
 import type { RunContext } from '../context.ts';
 import { decide, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
-import { complete, DELIVERY_FILE, githubClient } from './delivering.ts';
+import { complete, DELIVERY_FILE, githubClient, releaseDelivered } from './delivering.ts';
 import { briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
 
 interface DeliveryFile {
@@ -40,7 +42,13 @@ export async function awaitingCiStep(ctx: RunContext): Promise<StepResult> {
   const elapsed = ctx.clock.now() - d.delivered_at;
   const base = { branch: d.branch, commit: d.commit, pr: d.pr?.number ?? null };
 
-  if (obs.state === 'passed') return complete(ctx, d.tree, { ...base, ci: 'passed' });
+  if (obs.state === 'passed') {
+    const conflict = await blockOnBaseConflict(ctx, d, base);
+    if (conflict) return conflict;
+    // Release mode merges and deploys the reviewed commit once its CI is green; other modes complete here.
+    if (ctx.run.mode === 'release') return releaseDelivered(ctx, d, { ...base, ci: 'passed' });
+    return complete(ctx, d.tree, { ...base, ci: 'passed' });
+  }
   if (obs.state === 'cancelled') return finishRun(ctx, 'BLOCKED', `CI was cancelled on ${d.commit.slice(0, 12)}; re-run it and resume the run`, { outcome: base });
   if (obs.state === 'failed') {
     const brief = ciRepairBrief(obs.failures, { sha: d.commit, ...(d.pr ? { pr: d.pr.number } : {}) });
@@ -72,8 +80,71 @@ export async function awaitingCiStep(ctx: RunContext): Promise<StepResult> {
       if (elapsed >= timeoutMs) return finishRun(ctx, 'BLOCKED', `no CI checks were reported for ${d.commit.slice(0, 12)} within ${config.delivery.ci_timeout_minutes} minutes and delivery.require_ci is true`, { outcome: base });
       return WAIT('no CI checks reported yet');
     }
+    const conflict = await blockOnBaseConflict(ctx, d, base);
+    if (conflict) return conflict;
+    if (ctx.run.mode === 'release') return releaseDelivered(ctx, d, { ...base, ci: 'none reported' }, ['no CI checks were reported for the delivered commit; CI is unverified']);
     return complete(ctx, d.tree, { ...base, ci: 'none reported' }, ['no CI checks were reported for the delivered commit; CI is unverified']);
   }
   if (elapsed >= timeoutMs) return finishRun(ctx, 'BLOCKED', `CI did not finish within ${config.delivery.ci_timeout_minutes} minutes (pending: ${obs.pending.join(', ') || 'unknown'})`, { outcome: base });
   return WAIT(`CI pending on ${d.commit.slice(0, 12)}${obs.pending.length ? ` (${obs.pending.join(', ')})` : ''}`);
+}
+
+// ---------------------------------------------------------------------------
+// A moved base branch (spec section 14: conflicts and rebases)
+
+export interface BaseConflict {
+  baseBranch: string;
+  /** The base revision the run started from. */
+  from: string;
+  /** Where the base branch is now. */
+  to: string;
+  /** Paths that no longer merge cleanly. */
+  files: string[];
+}
+
+/**
+ * Whether the delivered commit still merges cleanly into the base branch as it is now on the remote. The base
+ * tip is read with ls-remote; when it moved, it is fetched into a private ref and a three-way merge is computed
+ * without touching any worktree (git merge-tree). Null when the base did not move, the merge is clean, or the
+ * remote cannot be read (an unreadable remote is not a conflict; CI and review still stand).
+ */
+export async function baseConflict(ctx: RunContext, d: { commit: string }): Promise<BaseConflict | null> {
+  const config = ctx.snapshot.config;
+  const remote = config.repository.remote;
+  const baseBranch = config.repository.base_branch;
+  const from = ctx.run.baseRevision;
+  if (!from) return null;
+  const env = ctx.deps.hostEnv ?? process.env;
+  try {
+    const url = await resolveRemoteUrl(ctx.run.repoRoot, remote);
+    const host = remoteHost(url);
+    if (host !== null && !authorize(ctx.snapshot, { kind: 'network', host }).allowed) return null;
+    const tip = await lsRemoteBranch({ repoRoot: ctx.run.repoRoot, remote, branch: baseBranch, env: gitEnv({}, env) });
+    if (!tip || tip === from) return null;
+    const ref = `refs/orbit/${ctx.run.id}/base`;
+    await fetchBranchContaining({ repoRoot: ctx.run.repoRoot, remote, branch: baseBranch, commit: from, ref, env: gitEnv({}, env) });
+    const merged = await execCapture(['git', 'merge-tree', '--write-tree', '--name-only', '--no-messages', tip, d.commit], { cwd: ctx.run.repoRoot, env: gitEnv({}, env), timeoutMs: 60_000 });
+    if (merged.exitCode === 0) return null;
+    if (merged.exitCode !== 1) {
+      ctx.log.warn('could not compute the merge with the moved base branch', { exit: merged.exitCode, stderr: merged.stderr.slice(0, 300) });
+      return null;
+    }
+    const files = merged.stdout.split('\n').slice(1).map((l) => l.trim()).filter((l) => l.length > 0);
+    return { baseBranch, from, to: tip, files };
+  } catch (err) {
+    ctx.log.warn('could not read the base branch on the remote', { error: err instanceof Error ? err.message.slice(0, 300) : String(err) });
+    return null;
+  }
+}
+
+/**
+ * A delivered commit that no longer merges into the moved base branch is not done. Rebasing the task branch is
+ * not an action the policy can authorize (the actions table has no such entry), so the run blocks with the
+ * conflict for a person to rebase or close the pull request, and records it.
+ */
+async function blockOnBaseConflict(ctx: RunContext, d: DeliveryFile, base: Record<string, unknown>): Promise<StepResult | null> {
+  const c = await baseConflict(ctx, d);
+  if (!c) return null;
+  decide(ctx, { id: `dec-${ctx.run.id}-base-conflict-${d.commit}-${c.to}`, kind: 'delivery.base-conflict', summary: `${c.baseBranch} moved from ${c.from.slice(0, 12)} to ${c.to.slice(0, 12)}; the delivered ${d.commit.slice(0, 12)} conflicts in ${c.files.join(', ') || 'unknown paths'}`, data: { ...c, commit: d.commit } });
+  return finishRun(ctx, 'BLOCKED', `the base branch ${c.baseBranch} moved (${c.from.slice(0, 12)} to ${c.to.slice(0, 12)}) and the delivered commit ${d.commit.slice(0, 12)} no longer merges cleanly: conflicts in ${c.files.slice(0, 10).join(', ') || 'unknown paths'}. Rebasing the task branch is not an authorized action; rebase it or close the pull request, then start a new run`, { outcome: { ...base, base_conflict: c } });
 }

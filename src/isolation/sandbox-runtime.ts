@@ -2,6 +2,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir, userInfo } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
+import type { IsolationLimits } from '../policy/types.ts';
+import { describeLimits, hasLimits, withResourceLimits } from './limits.ts';
 import type { IsolationProvider, SandboxProfile, WrappedCommand } from './types.ts';
 import {
   assertArgv,
@@ -147,6 +149,10 @@ export interface SandboxRuntimeOptions {
   arch?: string;
   pathEnv?: string;
   probeTimeoutMs?: number;
+  /** `isolation.limits`: CPU time, process count and file size, applied with ulimit inside the sandbox (isolation/limits.ts). */
+  limits?: IsolationLimits | null;
+  /** bash used to apply the limits; undefined searches the usual locations, null means there is none (tests). */
+  limitShell?: string | null;
 }
 
 export type SrtSource = 'configured' | 'PATH' | 'install';
@@ -279,17 +285,19 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
       const reach = sandboxReach(settings, opts.env.HOME);
       assertLauncherOutOfReach(srt.path, reach);
       const launch = launcherEnv(sandboxEnv(opts.env, settings.filesystem.allowWrite), reach);
-      if (launch.restore.length && argv[0]!.includes('=')) {
-        throw new OrbitError('INTERNAL', `command name ${JSON.stringify(argv[0])} contains "=", which /usr/bin/env would read as an assignment`);
+      // Inside the sandbox, so the limits bind the command and its children but not srt or its proxy.
+      const command = withResourceLimits(argv, this.opts.limits, { shell: this.opts.limitShell });
+      if (launch.restore.length && command[0]!.includes('=')) {
+        throw new OrbitError('INTERNAL', `command name ${JSON.stringify(command[0])} contains "=", which /usr/bin/env would read as an assignment`);
       }
       const file = join(dir, 'settings.json');
       writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
       chmodSync(file, 0o600);
       return {
-        argv: [srt.path, '--settings', file, '--', ...(launch.restore.length ? ['/usr/bin/env', '--', ...launch.restore] : []), ...argv],
+        argv: [srt.path, '--settings', file, '--', ...(launch.restore.length ? ['/usr/bin/env', '--', ...launch.restore] : []), ...command],
         env: launch.env,
         cleanup,
-        limitations: limitationsFor(profile, this.platform),
+        limitations: limitationsFor(profile, this.platform, this.opts.limits),
       };
     } catch (err) {
       cleanup();
@@ -456,8 +464,11 @@ function launcherPathEntryIsSafe(entry: string, reach: SandboxReach): boolean {
   return !reach.denied.some((d) => isWithin(real, d));
 }
 
-function limitationsFor(profile: SandboxProfile, platform: NodeJS.Platform): string[] {
+function limitationsFor(profile: SandboxProfile, platform: NodeJS.Platform, limits?: IsolationLimits | null): string[] {
   const out = [...SRT_LIMITATIONS];
+  if (hasLimits(limits)) {
+    out[0] = `sandbox-runtime confines filesystem access and network egress; isolation.limits adds ulimit hard limits inside the sandbox (${describeLimits(limits).join(', ')}). Memory is not limited, and the process limit counts every process of the user id.`;
+  }
   if (platform === 'linux') out.push(LINUX_LIMITATION);
   const { memoryMb, cpus, pids } = profile.limits;
   const requested = [memoryMb !== null ? `memory ${memoryMb} MB` : null, cpus !== null ? `${cpus} CPUs` : null, pids !== null ? `${pids} processes` : null].filter(Boolean);

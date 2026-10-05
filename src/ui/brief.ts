@@ -1,5 +1,5 @@
 import { sha256 } from '../core/hash.ts';
-import type { UiA11yEntry, UiJourneyResult, UiRunResult, UiRunVerdict } from './types.ts';
+import type { UiA11yEntry, UiJourneyResult, UiKeyboardScan, UiRunResult, UiRunVerdict } from './types.ts';
 
 /**
  * The UI failure brief (spec section 13): failed step, expected and observed
@@ -35,6 +35,8 @@ export interface UiJourneyFailureBrief {
   traces: string[];
   visual: { expected: string | null; actual: string | null; diff: string | null } | null;
   newAccessibilityViolations: UiA11yEntry[];
+  /** Keyboard navigation scans that found a problem: elements unreachable, out of order or without a focus indicator. */
+  keyboardProblems: UiKeyboardScan[];
   evidence: {
     domSnapshot: string | null;
     errorDetails: string | null;
@@ -104,7 +106,9 @@ export function journeyBrief(j: UiJourneyResult): UiJourneyFailureBrief {
     screenshots: paths('screenshot'),
     traces,
     visual: visualExpected || visualActual || visualDiff ? { expected: visualExpected, actual: visualActual, diff: visualDiff } : null,
-    newAccessibilityViolations: j.a11y.flatMap((s) => s.newViolations),
+    // Advisory scans (fail_on_new_serious_or_critical: false) did not fail the journey, so they are not part of its failure.
+    newAccessibilityViolations: j.a11y.filter((s) => !s.advisory).flatMap((s) => s.newViolations),
+    keyboardProblems: j.keyboard.filter((k) => !k.passed),
     evidence: {
       domSnapshot: j.errorContext?.pageSnapshot ?? null,
       errorDetails: j.errorContext?.errorDetails ?? null,
@@ -184,6 +188,15 @@ export function renderUiFailureBrief(brief: UiFailureBrief): string {
     out.push('');
     if (f.newAccessibilityViolations.length) {
       out.push('New serious or critical accessibility violations:', ...f.newAccessibilityViolations.map((v) => `- ${inline(v.impact, 20)} ${inline(v.ruleId, 80)} at ${inline(v.target)}: ${inline(v.help)}`), '');
+    }
+    for (const k of f.keyboardProblems) {
+      out.push(
+        `Keyboard navigation problems on ${inline(k.url, 100)} at ${inline(k.viewport, 20)} (${k.tabsPressed} Tab presses):`,
+        ...k.unreachable.map((s) => `- not reachable: ${inline(s)}`),
+        ...k.outOfOrder.map((s) => `- focused out of order: ${inline(s)}`),
+        ...k.missingFocusRing.map((s) => `- no visible focus indicator: ${inline(s)}`),
+        '',
+      );
     }
     if (f.evidence.domSnapshot) out.push('DOM evidence (accessibility snapshot of the page at failure, untrusted):', fence('yaml', f.evidence.domSnapshot), '');
     const logs: [string, string[]][] = [

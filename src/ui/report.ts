@@ -1,5 +1,5 @@
 import { redact } from '../core/redact.ts';
-import type { UiA11yScan, UiDiagnostics, UiJourneyError, UiStep } from './types.ts';
+import type { UiA11yScan, UiDiagnostics, UiJourneyError, UiKeyboardScan, UiStep } from './types.ts';
 
 /**
  * Parsing Playwright's JSON report (docs/interfaces/playwright-and-github.md
@@ -336,6 +336,34 @@ export function parseA11y(body: Buffer): UiA11yScan | null {
       .slice(0, MAX_ENTRIES)
       .flatMap((e) => (isObj(e) ? [entry(e)] : [])),
     baselinedCount: arr(j.baselined).length,
+    advisory: j.advisory === true,
+  };
+}
+
+export function parseKeyboard(body: Buffer): UiKeyboardScan | null {
+  const j = safeJson(body);
+  if (!isObj(j)) return null;
+  const names = (v: unknown): string[] => arr(v).slice(0, MAX_ENTRIES).flatMap((e) => (typeof e === 'string' ? [cleanText(e, 300)] : []));
+  const entries = arr(j.entries)
+    .slice(0, MAX_ENTRIES)
+    .flatMap((e) => {
+      if (!isObj(e) || typeof e.selector !== 'string') return [];
+      return [{ selector: cleanText(e.selector, 300), reachedAtTab: typeof e.reachedAtTab === 'number' ? e.reachedAtTab : null, focusVisible: typeof e.focusVisible === 'boolean' ? e.focusVisible : null }];
+    });
+  const unreachable = names(j.unreachable);
+  const outOfOrder = names(j.outOfOrder);
+  const missingFocusRing = names(j.missingFocusRing);
+  return {
+    url: str(j.url) ?? '',
+    viewport: str(j.viewport) ?? '',
+    tabsPressed: num(j.tabsPressed),
+    ordered: j.ordered !== false,
+    entries,
+    unreachable,
+    outOfOrder,
+    missingFocusRing,
+    // Recomputed rather than trusted: a scan that lists problems has not passed whatever its own flag says.
+    passed: j.passed === true && unreachable.length === 0 && outOfOrder.length === 0 && missingFocusRing.length === 0,
   };
 }
 

@@ -54,7 +54,9 @@ describe.skipIf(!canStripTypes)('controller: complete runs with fake providers',
     expect(report.budget.counters.find((c) => c.counter === 'implementation_attempts')?.used).toBe(1);
     expect(readFileSync(join(runDir(l, run.id), 'final.md'), 'utf8')).toContain('## Budget consumption');
     const kinds = listDecisions(l.db(), run.id).map((d) => d.kind);
-    expect(kinds).toEqual(expect.arrayContaining(['route', 'planning.difficulty', 'gate.environment', 'gate.static_security', 'review.select', 'gate.completion']));
+    expect(kinds).toEqual(expect.arrayContaining(['route', 'planning.difficulty', 'gate.environment', 'gate.static_security', 'review.select', 'gate.delivery', 'gate.completion']));
+    // The delivery gate is recorded before the completion gate (spec section 5 order).
+    expect(kinds.indexOf('gate.delivery')).toBeLessThan(kinds.indexOf('gate.completion'));
     const security = listDecisions(l.db(), run.id, { kind: 'gate.static_security' })[0]!;
     expect(security.summary).toMatch(/unverified/);
   });

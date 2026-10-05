@@ -243,3 +243,45 @@ describe('glob overlap', () => {
     expect(pathsOverlap(['src/a/**', 'src/b/**'], ['src/c/**', 'src/b/x.ts'])).toBe(true);
   });
 });
+
+describe('browser capacity and context duplication (spec section 8; docs/gaps.md G14)', () => {
+  it('allows one Playwright run per core pair, whatever the other slots allow', () => {
+    const s = scheduler({ parallel: 8, defaultParallelism: 8 }, system(4, 64_000));
+    expect(s.capacity().browser_slots).toBe(2);
+    const plan = s.plan([unit('ui-1', { browser: true }), unit('ui-2', { browser: true }), unit('ui-3', { browser: true }), unit('plain')]);
+    expect(plan.start.map((u) => u.id)).toEqual(['ui-1', 'ui-2', 'plain']);
+    expect(plan.deferred).toEqual([{ id: 'ui-3', reason: 'browser capacity: 2 Playwright run(s) active of 2 (one per core pair)' }]);
+    // A one-core machine still gets one browser.
+    expect(scheduler({}, system(1, 64_000)).capacity().browser_slots).toBe(1);
+  });
+
+  it('charges a unit started beside another on the same revision for re-reading the shared context, and admits by it', () => {
+    const s = scheduler({ parallel: 4, defaultParallelism: 4 });
+    const seen: { id: string; committed: { id: string; cost: number | null | undefined }[] }[] = [];
+    const admit = (u: WorkUnit, c: { committed: WorkUnit[] }) => {
+      seen.push({ id: u.id, committed: c.committed.map((x) => ({ id: x.id, cost: x.budget.costUsd })) });
+      const total = c.committed.reduce((n, x) => n + (x.budget.costUsd ?? 0), 0) + (u.budget.costUsd ?? 0);
+      return { admitted: total <= 9, reasons: [`total ${total}`] };
+    };
+    const reviewers = [
+      unit('review-security', { role: 'reviewer', revision: 'tree-1', cancelWhen: ['revision-changed'], budget: { costUsd: 4 } }),
+      unit('review-ui', { role: 'reviewer', revision: 'tree-1', cancelWhen: ['revision-changed'], budget: { costUsd: 4 } }),
+      unit('review-other', { role: 'reviewer', revision: 'tree-2', budget: { costUsd: 0.5 } }),
+    ];
+    const plan = s.plan(reviewers, { admit });
+    expect(plan.start.map((u) => u.id)).toEqual(['review-security', 'review-ui']);
+    expect(plan.context_duplication).toEqual([{ id: 'review-ui', shared_with: 'review-security', usd: 1 }]);
+    expect(seen[1]!.committed).toEqual([{ id: 'review-security', cost: 4 }, { id: 'review-ui#context-duplication', cost: 1 }]);
+    // 4 + 4 + 1 duplication + 0.5 = 9.5 > 9: the third unit no longer fits.
+    expect(plan.deferred).toEqual([{ id: 'review-other', reason: 'not admitted by budget: total 9.5' }]);
+    // Off: no duplication is charged.
+    expect(s.plan(reviewers, { admit: () => ({ admitted: true }), contextDuplication: 0 }).context_duplication).toEqual([]);
+  });
+
+  it('a new revision makes both parallel reviewers obsolete', () => {
+    const s = scheduler({ parallel: 4, defaultParallelism: 4 });
+    const running = [unit('review-security', { role: 'reviewer', revision: 'tree-1', cancelWhen: ['revision-changed'], status: 'running' }), unit('review-ui', { role: 'reviewer', revision: 'tree-1', cancelWhen: ['revision-changed'], status: 'running' })];
+    expect(s.obsolete(running, 'tree-2').map((o) => o.unit.id)).toEqual(['review-security', 'review-ui']);
+    expect(s.obsolete(running, 'tree-1')).toEqual([]);
+  });
+});

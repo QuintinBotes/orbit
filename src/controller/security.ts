@@ -10,27 +10,65 @@
  * Without gitleaks, the built-in secret patterns of core/redact run over the
  * added lines and the result says which scanner ran. Findings are recorded
  * redacted: a secret value never reaches a log, an artifact or a model.
+ *
+ * Severity and exceptions (spec section 5, "explicit scanner severity and
+ * exception rules"): every secret finding gets a severity from its rule, and
+ * SAST output written as SARIF gets one from the result's level or its
+ * security-severity score. `static_security.block_severities` decides which
+ * findings block; the rest are reported as advisory. An entry of
+ * `static_security.exceptions` waives findings of one rule (optionally under
+ * one path glob) until it expires, and the waiver and its reason are
+ * recorded with the result. `findings` holds only the blocking ones, which is
+ * what the static security gate fails on.
  */
-import { accessSync, constants, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { delimiter, dirname, join, normalize, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { atomicWrite, atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
 import { execCapture } from '../core/exec.ts';
+import picomatch from 'picomatch';
 import { redact } from '../core/redact.ts';
 import { git } from '../evidence/git.ts';
-import type { PolicySnapshot } from '../policy/types.ts';
+import { defaultStaticSecurity } from '../policy/config.ts';
+import type { PolicySnapshot, StaticSecurityConfig, StaticSeverity } from '../policy/types.ts';
+import { exceptionExpiryMs } from '../review/resolve.ts';
 
 export interface SecretFinding {
   file: string;
   line: number | null;
   rule: string;
+  /** From the rule (secretSeverity); absent only in results recorded before severities existed. */
+  severity?: StaticSeverity;
+}
+
+/** A finding a policy exception waived, with the exception's reason. */
+export interface ExceptedFinding<F> {
+  finding: F;
+  rule_id: string;
+  reason: string;
+  expires: string | null;
+}
+
+export interface StaticClassification<F> {
+  /** At or above a blocking severity and not excepted. */
+  blocking: F[];
+  /** Below every blocking severity: reported, not blocking. */
+  advisory: F[];
+  excepted: ExceptedFinding<F>[];
+  /** Exceptions that matched a finding but had expired, so did not waive it. */
+  expired: { rule_id: string; expires: string }[];
 }
 
 export interface SecretScanResult {
   scanner: 'gitleaks' | 'builtin';
   /** True when the scan ran to completion; false means nothing can be concluded. */
   completed: boolean;
+  /** Findings that block under the static security policy. */
   findings: SecretFinding[];
+  /** Findings below the blocking severities. */
+  advisory?: SecretFinding[];
+  /** Findings a policy exception waived, with its reason. */
+  excepted?: ExceptedFinding<SecretFinding>[];
   files: number;
   /** Plain words for the evidence report: which scanner, and why not gitleaks when it did not run. */
   note: string;
@@ -47,6 +85,10 @@ export interface SecretScanInput {
   gitleaksPath?: string | null;
   hostPath?: string;
   timeoutMs?: number;
+  /** `static_security` from the run's policy snapshot. Default: block critical and high, no exceptions. */
+  policy?: StaticSecurityConfig;
+  /** Clock reading for exception expiry. Without it a dated exception cannot be shown to be current and does not apply. */
+  now?: number;
 }
 
 /** Orbit's trusted gitleaks configuration: the default rules, no allowlist the repository could widen. */
@@ -76,9 +118,13 @@ async function changedFiles(repoRoot: string, base: string, commit: string): Pro
 
 export async function scanCandidateSecrets(input: SecretScanInput): Promise<SecretScanResult> {
   const reportPath = join(input.outDir, 'secret-scan.json');
-  const prior = readJsonIfExists<SecretScanResult & { commit?: string }>(reportPath);
-  // Bound to the commit: the same candidate is never scanned twice, a different one always is.
-  if (prior && prior.completed && prior.commit === input.commit) return prior;
+  const prior = readJsonIfExists<SecretScanResult & { commit?: string; raw?: SecretFinding[] }>(reportPath);
+  // Bound to the commit: the same candidate is never scanned twice, a different one always is. The policy is applied
+  // to the recorded raw findings again, so a reused scan is judged by the policy in force now.
+  if (prior && prior.completed && prior.commit === input.commit) {
+    const { raw, commit: _commit, ...rest } = prior;
+    return withPolicy({ ...rest, findings: raw ?? prior.findings }, input);
+  }
 
   const files = await changedFiles(input.repoRoot, input.baseRev, input.commit);
   const gitleaks = input.gitleaksPath === null ? null : (input.gitleaksPath ?? findOnPath('gitleaks', input.hostPath));
@@ -94,8 +140,179 @@ export async function scanCandidateSecrets(input: SecretScanInput): Promise<Secr
     result = { scanner: 'gitleaks', completed: true, findings: [], files: 0, note: 'gitleaks: the candidate adds or modifies no files', reportPath };
   }
   result ??= await builtinScan(input, files, reportPath, why);
-  atomicWriteJson(reportPath, { ...result, commit: input.commit });
-  return result;
+  const raw = result.findings.map((f) => ({ ...f, severity: f.severity ?? secretSeverity(f.rule) }));
+  const judged = withPolicy({ ...result, findings: raw }, input);
+  atomicWriteJson(reportPath, { ...judged, raw, commit: input.commit });
+  return judged;
+}
+
+function withPolicy(result: SecretScanResult, input: Pick<SecretScanInput, 'policy' | 'now'>): SecretScanResult {
+  const all = result.findings.map((f) => ({ ...f, severity: f.severity ?? secretSeverity(f.rule) }));
+  const c = classifyStaticFindings(all, input.policy ?? defaultStaticSecurity(), input.now);
+  const parts = [baseNote(result.note)];
+  if (c.excepted.length > 0) parts.push(`${c.excepted.length} finding(s) waived by static_security.exceptions: ${c.excepted.slice(0, 10).map((e) => `${e.finding.rule} at ${e.finding.file}${e.finding.line ? `:${e.finding.line}` : ''} (${e.reason})`).join('; ')}`);
+  if (c.advisory.length > 0) parts.push(`${c.advisory.length} advisory finding(s) below the blocking severities: ${c.advisory.slice(0, 10).map((f) => `${f.rule} [${f.severity}] at ${f.file}${f.line ? `:${f.line}` : ''}`).join('; ')}`);
+  if (c.expired.length > 0) parts.push(`expired exception(s) not applied: ${c.expired.map((e) => `${e.rule_id} (expired ${e.expires})`).join(', ')}`);
+  return { ...result, findings: c.blocking, advisory: c.advisory, excepted: c.excepted, note: parts.join('; ') };
+}
+
+/** The scanner's own note, without the policy summary a previous judgement appended. */
+function baseNote(note: string): string {
+  const i = note.search(/; (?:\d+ finding\(s\) waived|\d+ advisory finding|expired exception)/);
+  return i === -1 ? note : note.slice(0, i);
+}
+
+// ---------------------------------------------------------------------------
+// Severity and exceptions
+
+/**
+ * Credentials that grant access to an account, a cloud or a signing identity
+ * are critical; any other detected secret is high. Both block under the
+ * default policy, so only an explicit policy can make a secret advisory.
+ */
+const CRITICAL_SECRET_RULE = /(?:^|[:_-])(?:private-key|aws|gcp|azure|github|gitlab|anthropic|openai|stripe|slack-(?:bot|user|app|legacy)|npm-access|pypi|twilio|sendgrid|heroku|digitalocean|doppler|hashicorp|vault|age-secret|jwt-base64)(?:[:_-]|$)/i;
+
+export function secretSeverity(rule: string): StaticSeverity {
+  return CRITICAL_SECRET_RULE.test(rule) ? 'critical' : 'high';
+}
+
+/**
+ * Split findings by the policy: an exception for the finding's rule (and
+ * path, when it names a glob) that has not expired waives it; otherwise it
+ * blocks when its severity is listed in `block_severities` and is advisory
+ * when it is not. An exception's `rule_id` matches the rule exactly, or the
+ * built-in scanner's `builtin:<kind>` by its kind.
+ */
+export function classifyStaticFindings<F extends { file: string | null; rule: string; severity?: StaticSeverity }>(findings: readonly F[], policy: StaticSecurityConfig, now: number | undefined): StaticClassification<F> {
+  const out: StaticClassification<F> = { blocking: [], advisory: [], excepted: [], expired: [] };
+  const matchers = policy.exceptions.map((e) => (e.path_glob === null ? () => true : picomatch(e.path_glob, { dot: true })));
+  for (const f of findings) {
+    const severity = f.severity ?? secretSeverity(f.rule);
+    let waived = false;
+    for (let i = 0; i < policy.exceptions.length; i++) {
+      const e = policy.exceptions[i]!;
+      if (e.rule_id !== f.rule && `builtin:${e.rule_id}` !== f.rule) continue;
+      if (!matchers[i]!(f.file ?? '')) continue;
+      if (e.expires !== null && (now === undefined || now > exceptionExpiryMs(e.expires))) {
+        if (!out.expired.some((x) => x.rule_id === e.rule_id && x.expires === e.expires)) out.expired.push({ rule_id: e.rule_id, expires: e.expires });
+        continue;
+      }
+      out.excepted.push({ finding: f, rule_id: e.rule_id, reason: e.reason, expires: e.expires });
+      waived = true;
+      break;
+    }
+    if (waived) continue;
+    if (policy.block_severities.includes(severity)) out.blocking.push(f);
+    else out.advisory.push(f);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// SAST output (SARIF)
+
+export interface SastFinding {
+  file: string | null;
+  line: number | null;
+  rule: string;
+  severity: StaticSeverity;
+  message: string;
+}
+
+/**
+ * Findings from a SARIF 2.1 log. Severity comes from the rule's or result's
+ * `security-severity` property (a CVSS score, as CodeQL and Semgrep write
+ * it) when present, otherwise from the result level: error is high, warning
+ * medium, note and none low. Messages are redacted and bounded.
+ */
+export function parseSarif(text: string): SastFinding[] {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    throw new Error('the SARIF file is not valid JSON');
+  }
+  const runs = (doc as { runs?: unknown }).runs;
+  if (!Array.isArray(runs)) throw new Error('the SARIF file has no runs array');
+  const out: SastFinding[] = [];
+  for (const run of runs as { results?: unknown; tool?: { driver?: { rules?: unknown } } }[]) {
+    const rules = new Map<string, Record<string, unknown>>();
+    const ruleList = run?.tool?.driver?.rules;
+    if (Array.isArray(ruleList)) for (const r of ruleList as Record<string, unknown>[]) if (typeof r?.id === 'string') rules.set(r.id, r);
+    if (!Array.isArray(run?.results)) continue;
+    for (const res of run.results as Record<string, unknown>[]) {
+      const ruleId = typeof res.ruleId === 'string' ? res.ruleId : typeof (res.rule as { id?: unknown })?.id === 'string' ? String((res.rule as { id: string }).id) : 'sast';
+      const rule = rules.get(ruleId);
+      const score = securitySeverity(res.properties) ?? securitySeverity(rule?.properties);
+      const level = typeof res.level === 'string' ? res.level : typeof (rule?.defaultConfiguration as { level?: unknown })?.level === 'string' ? String((rule!.defaultConfiguration as { level: string }).level) : 'warning';
+      const loc = Array.isArray(res.locations) ? (res.locations[0] as { physicalLocation?: { artifactLocation?: { uri?: unknown }; region?: { startLine?: unknown } } }) : undefined;
+      const uri = loc?.physicalLocation?.artifactLocation?.uri;
+      const line = loc?.physicalLocation?.region?.startLine;
+      const message = typeof (res.message as { text?: unknown })?.text === 'string' ? String((res.message as { text: string }).text) : '';
+      out.push({
+        file: typeof uri === 'string' ? uri.replace(/^file:\/\//, '').replace(/^\.\//, '') : null,
+        line: typeof line === 'number' ? line : null,
+        rule: ruleId,
+        severity: score !== null ? severityFromScore(score) : level === 'error' ? 'high' : level === 'warning' ? 'medium' : 'low',
+        message: redact(message).slice(0, 300),
+      });
+    }
+  }
+  return out;
+}
+
+function securitySeverity(props: unknown): number | null {
+  const v = (props as Record<string, unknown> | undefined)?.['security-severity'];
+  const n = typeof v === 'string' ? Number(v) : typeof v === 'number' ? v : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+function severityFromScore(score: number): StaticSeverity {
+  if (score >= 9) return 'critical';
+  if (score >= 7) return 'high';
+  if (score >= 4) return 'medium';
+  return 'low';
+}
+
+export interface SastVerdict {
+  checkId: string;
+  /**
+   * The status the static security gate should judge. A failed check whose
+   * SARIF holds only advisory or waived findings counts as PASSED; a check
+   * that passed but reports blocking findings counts as FAILED. Without
+   * SARIF the check's own status stands.
+   */
+  status: string | null;
+  sarif: boolean;
+  classification: StaticClassification<SastFinding> | null;
+  note: string | null;
+}
+
+/**
+ * Judge one SAST check's result under the policy, from the SARIF files
+ * (`*.sarif`, `*.sarif.json`) it wrote to its artifacts directory
+ * ($ORBIT_ARTIFACTS_DIR). Unreadable SARIF leaves the status as it was.
+ */
+export function judgeSastResult(
+  result: { checkId: string; status: string | null; artifacts?: readonly { path: string; kind?: string }[] } | null | undefined,
+  checkId: string,
+  policy: StaticSecurityConfig,
+  now: number | undefined,
+): SastVerdict {
+  if (!result) return { checkId, status: null, sarif: false, classification: null, note: null };
+  const files = (result.artifacts ?? []).map((a) => a.path).filter((p) => /\.sarif(?:\.json)?$/i.test(p));
+  if (files.length === 0 || (result.status !== 'PASSED' && result.status !== 'FAILED')) return { checkId, status: result.status, sarif: false, classification: null, note: null };
+  const findings: SastFinding[] = [];
+  try {
+    for (const f of files) findings.push(...parseSarif(readFileSync(f, 'utf8')));
+  } catch (err) {
+    return { checkId, status: result.status, sarif: false, classification: null, note: `SAST check ${checkId}: SARIF output unreadable (${(err as Error).message}); its exit status stands` };
+  }
+  const c = classifyStaticFindings(findings, policy, now);
+  const status = c.blocking.length > 0 ? 'FAILED' : 'PASSED';
+  const bits = [`${c.blocking.length} blocking`, `${c.advisory.length} advisory`, `${c.excepted.length} waived`];
+  const waived = c.excepted.slice(0, 10).map((e) => `${e.finding.rule} at ${e.finding.file ?? '?'} (${e.reason})`);
+  return { checkId, status, sarif: true, classification: c, note: `SAST check ${checkId}: ${bits.join(', ')} finding(s) under static_security${waived.length ? `; waived: ${waived.join('; ')}` : ''}` };
 }
 
 async function runGitleaks(bin: string, input: SecretScanInput, files: string[], reportPath: string): Promise<SecretScanResult> {

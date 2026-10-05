@@ -9,3 +9,4 @@ export * from './ledger.ts';
 export * from './hypotheses.ts';
 export * from './repair.ts';
 export * from './engine.ts';
+export * from './impact.ts';

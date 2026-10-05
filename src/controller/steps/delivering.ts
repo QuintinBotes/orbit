@@ -10,19 +10,22 @@
  */
 import { join } from 'node:path';
 import { atomicWriteJson } from '../../core/fsx.ts';
+import { appendEvent } from '../../storage/events.ts';
 import { OrbitError, isOrbitError } from '../../core/errors.ts';
 import { git, treeOf } from '../../evidence/git.ts';
 import { isFresh } from '../../evidence/freshness.ts';
-import { currentEvidenceReport, setCandidateStatus } from '../../evidence/store.ts';
+import { currentEvidenceReport, setCandidateStatus, type EvidenceReportRecord } from '../../evidence/store.ts';
 import { listReviews } from '../../review/store.ts';
+import type { ReviewRecord } from '../../review/types.ts';
 import { DELIVERY_MODES } from '../../policy/config.ts';
 import { ActionLedger } from '../../delivery/actions.ts';
 import { deliver, type DeliveryResult } from '../../delivery/deliver.ts';
+import { performRelease, type ReleaseResult } from '../../delivery/release.ts';
 import { FakeGitHub, GhCliClient, type GitHubClient } from '../../delivery/github.ts';
 import { resolveRemoteUrl } from '../../delivery/git.ts';
-import type { RunContext } from '../context.ts';
-import { completionGate } from '../gates.ts';
-import { assertContract, decide, finishRun, move, safePoint, type StepResult } from './common.ts';
+import { homeOf, type RunContext } from '../context.ts';
+import { completionGate, deliveryGate } from '../gates.ts';
+import { assertContract, blockOnOpenQuestions, decide, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
 import { implementerProvider } from './reviewing.ts';
 import { recordGate } from './preflight.ts';
 
@@ -40,12 +43,17 @@ export async function deliveringStep(ctx: RunContext): Promise<StepResult> {
     // Evidence or review went stale since review (a policy or tree change): verify again rather than deliver.
     return move(ctx, 'VERIFYING', `delivery refused: ${!ev ? 'no live evidence' : !review ? 'no approving review of this tree' : 'the evidence is stale'}; verifying again`);
   }
+  // Nothing is delivered while a criterion waits for a person's decision.
+  const waiting = await blockOnOpenQuestions(ctx, 'delivery');
+  if (waiting) return waiting;
 
   if (!DELIVERY_MODES.has(ctx.run.mode)) {
     const branch = ctx.run.branch ?? `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
     // Local only: a ref in the user's repository pointing at the reviewed candidate commit. No push, no pull request.
     await git(ctx.run.repoRoot, ['update-ref', '-m', `orbit: reviewed candidate of ${ctx.run.id}`, `refs/heads/${branch}`, cand.commitSha]);
     const tree = await treeOf(ctx.run.repoRoot, `refs/heads/${branch}`);
+    const refused = await deliveryGateOrBlock(ctx, ev, review, tree);
+    if (refused) return refused;
     return complete(ctx, tree, { branch, commit: cand.commitSha, delivery: 'local branch; no external action in this mode' });
   }
 
@@ -73,10 +81,117 @@ export async function deliveringStep(ctx: RunContext): Promise<StepResult> {
     if (isOrbitError(err, 'DELIVERY_FAILED') && err.details?.definitive === true) return finishRun(ctx, 'BLOCKED', `delivery failed: ${err.message}`);
     throw err;
   }
+  // delivery/deliver checked freshness before each external action; the gate trail records the delivered tree.
+  const refused = await deliveryGateOrBlock(ctx, ev, review, result.tree);
+  if (refused) return refused;
   atomicWriteJson(join(ctx.runDir, DELIVERY_FILE), { commit: result.commit, tree: result.tree, branch: result.branch, pr: result.pr ? { number: result.pr.number, url: result.pr.url, state: result.pr.state, isDraft: result.pr.isDraft } : null, pr_skipped: result.prSkipped, warnings: result.warnings, delivered_at: ctx.clock.now() });
   setCandidateStatus(ctx.db, cand.id, 'DELIVERED');
   decide(ctx, { id: `dec-${ctx.run.id}-delivered-${result.commit}`, kind: 'delivery.completed', summary: `delivered ${result.commit.slice(0, 12)} (tree ${result.tree.slice(0, 12)}) to ${result.branch}${result.pr ? `, PR #${result.pr.number}` : ''}`, data: { commit: result.commit, tree: result.tree, branch: result.branch, pr: result.pr?.number ?? null, pr_skipped: result.prSkipped } });
   return move(ctx, 'AWAITING_CI', `delivered ${result.commit.slice(0, 12)} to ${result.branch}`, { patch: { branch: result.branch }, data: { commit: result.commit, pr: result.pr?.number ?? null } });
+}
+
+export const RELEASE_FILE = 'release.json';
+
+/** What delivery recorded (delivery.json), as the release reads it. */
+export interface DeliveredRecord {
+  commit: string;
+  tree: string;
+  branch: string;
+  pr: { number: number } | null;
+}
+
+/**
+ * Release mode (spec sections 5 and 15): after delivery and green CI, merge the exact reviewed commit and deploy
+ * it through the release profile (delivery/release.performRelease, which re-checks the freshness gate, the head
+ * commit, the branch checks and open blockers before every action and reconciles lost responses). The
+ * controller's readiness gate is the completion gate on the delivered tree. Returns the step result: WAIT while
+ * checks are pending, BLOCKED on a refusal, SUCCEEDED through the completion gate once released.
+ */
+export async function releaseDelivered(ctx: RunContext, d: DeliveredRecord, outcome: Record<string, unknown>, notes: string[] = []): Promise<StepResult> {
+  const contract = assertContract(ctx);
+  const cand = ctx.candidate;
+  if (!cand) throw new OrbitError('INTERNAL', `run ${ctx.run.id} is releasing without a candidate`);
+  const ev = currentEvidenceReport(ctx.db, ctx.run.id, cand.id);
+  const review = listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).filter((r) => r.verdict === 'APPROVE').at(-1) ?? null;
+  if (!ev || !review) return finishRun(ctx, 'BLOCKED', `release refused: ${!ev ? 'no live evidence' : 'no approving review'} for the delivered tree ${d.tree}`, { outcome });
+  const release = ctx.snapshot.config.release ?? null;
+  const envs = release ? Object.keys(release.environments) : [];
+  // One defined environment is the release target; with several, the profile does not say which one this run deploys to.
+  const environment = envs.length === 1 ? envs[0]! : null;
+  let result: ReleaseResult;
+  try {
+    result = await performRelease({
+      run: { id: ctx.run.id, repoRoot: ctx.run.repoRoot, branch: ctx.run.branch, baseRevision: ctx.run.baseRevision, policyHash: ctx.run.policyHash, cancelRequested: ctx.run.cancelRequested, goal: ctx.run.goal },
+      candidate: { id: cand.id, commitSha: cand.commitSha, treeHash: cand.treeHash, parentSha: cand.parentSha },
+      evidence: { id: ev.id, candidateId: cand.id, treeHash: ev.treeHash, policyHash: ev.policyHash, checkConfigHash: ev.checkConfigHash, verdict: ev.verdict, invalidatedAt: ev.invalidatedAt },
+      review: { id: review.id, candidateId: review.candidateId, treeHash: review.treeHash, verdict: review.verdict, invalidatedAt: review.invalidatedAt },
+      snapshot: ctx.snapshot,
+      ledger: new ActionLedger(ctx.db, ctx.clock, { runDir: ctx.runDir, actor: ctx.ownerId }),
+      client: await githubClient(ctx),
+      clock: ctx.clock,
+      commit: d.commit,
+      pr: d.pr?.number ?? null,
+      contractMerge: contract.delivery.merge,
+      environment,
+      readiness: () => {
+        const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: cand, implementerProvider: implementerProvider(ctx), deliveredTree: d.tree, now: ctx.clock.now() });
+        return { ok: gate.passed, reasons: gate.reasons };
+      },
+      isolation: ctx.isolation(),
+      workDir: ctx.runDir,
+      homeDir: homeOf(ctx.deps),
+    });
+  } catch (err) {
+    if (isOrbitError(err, 'CANCELLED')) {
+      const s = await safePoint(ctx);
+      if (s) return s;
+    }
+    if (isOrbitError(err) && (err.details?.definitive === true || err.code === 'POLICY_DENIED')) {
+      return finishRun(ctx, 'BLOCKED', `release refused: ${err.message}`, { outcome: { ...outcome, release_error: { code: err.code, rule: err.details?.rule ?? null } } });
+    }
+    throw err;
+  }
+  if (result.status === 'pending') return releasePending(ctx, result, d, outcome);
+  const summary = {
+    merge: result.merge ? { pr: result.merge.number, head: result.merge.headSha, merge_commit: result.merge.mergeCommitSha, method: result.merge.method } : null,
+    merge_skipped: result.mergeSkipped,
+    deploy: result.deploy ? { environment: result.deploy.environment, sha: result.deploy.sha, branch: result.deploy.branch } : null,
+    deploy_skipped: result.deploySkipped ?? (envs.length > 1 ? `the release profile defines ${envs.length} environments (${envs.join(', ')}) and names none for this run` : null),
+  };
+  atomicWriteJson(join(ctx.runDir, RELEASE_FILE), { ...summary, released_at: ctx.clock.now() });
+  decide(ctx, { id: `dec-${ctx.run.id}-released-${d.commit}`, kind: 'release.completed', summary: `release of ${d.commit.slice(0, 12)}: ${summary.merge ? `merged PR #${summary.merge.pr}` : `no merge (${summary.merge_skipped})`}; ${summary.deploy ? `deployed to ${summary.deploy.environment}` : `no deploy (${summary.deploy_skipped})`}`, data: summary });
+  return complete(ctx, d.tree, { ...outcome, release: summary }, notes);
+}
+
+const RELEASE_WAIT_EVENT = 'release.waiting';
+
+/**
+ * A release waiting for checks (branch checks before the merge, CI on the deployed commit before the deploy) waits
+ * at most delivery.ci_timeout_minutes per phase, counted from the first time it was seen waiting; a required check
+ * that never reports would otherwise keep the run in AWAITING_CI forever. Nothing has been merged or deployed for
+ * the phase that timed out, so the run blocks for a person.
+ */
+function releasePending(ctx: RunContext, result: ReleaseResult, d: DeliveredRecord, outcome: Record<string, unknown>): Promise<StepResult> | StepResult {
+  const phase = result.merge ? `deploy:${result.merge.mergeCommitSha ?? 'none'}` : `merge:${d.commit}`;
+  const now = ctx.clock.now();
+  const first = ctx.db.get<{ ts: number | null }>("SELECT MIN(ts) AS ts FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.phase') = ?", ctx.run.id, RELEASE_WAIT_EVENT, phase)?.ts ?? null;
+  if (first === null) ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, RELEASE_WAIT_EVENT, ctx.ownerId, { phase, reason: result.pending }, now));
+  const timeoutMinutes = ctx.snapshot.config.delivery.ci_timeout_minutes;
+  if (first !== null && now - first >= timeoutMinutes * 60_000) {
+    return finishRun(ctx, 'BLOCKED', `release did not become ready within ${timeoutMinutes} minutes: ${result.pending ?? 'still waiting'}`, { outcome: { ...outcome, release_pending: { phase, reason: result.pending } } });
+  }
+  return WAIT(`release: ${result.pending ?? 'waiting'}`);
+}
+
+/**
+ * The spec section 5 delivery gate over what was delivered: live, fresh evidence and an approving review of the
+ * same tree, and the delivered commit's tree equal to it. Recorded in the gate trail; a failure blocks.
+ */
+async function deliveryGateOrBlock(ctx: RunContext, ev: EvidenceReportRecord, review: ReviewRecord, deliveredTree: string): Promise<StepResult | null> {
+  const gate = deliveryGate({ snapshot: ctx.snapshot, candidate: ctx.candidate!, evidence: ev, review: { treeHash: review.treeHash, verdict: review.verdict }, deliveryCommitTree: deliveredTree });
+  recordGate(ctx, gate);
+  if (gate.passed) return null;
+  return finishRun(ctx, 'BLOCKED', `delivery gate: ${gate.reasons.join('; ')}`, { outcome: { gate: gate.reasons, code: gate.details.code } });
 }
 
 /** The completion gate, then SUCCEEDED; anything short of it is not success. */

@@ -61,6 +61,9 @@ export const CLAUDE_WORKER_ENV: Readonly<Record<string, string>> = {
   CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
 };
 
+/** Claude Code's per-request max_tokens cap. */
+export const ENV_MAX_OUTPUT_TOKENS = 'CLAUDE_CODE_MAX_OUTPUT_TOKENS';
+
 /** Git must not take optional locks in a worktree the controller snapshots concurrently. */
 export const COMMON_WORKER_ENV: Readonly<Record<string, string>> = { GIT_OPTIONAL_LOCKS: '0' };
 
@@ -68,7 +71,7 @@ export const COMMON_WORKER_ENV: Readonly<Record<string, string>> = { GIT_OPTIONA
  * Names a caller may never set through TaskSpec.env: delivery and cloud
  * credentials, and the variables that would undo the fixed settings above.
  */
-const FORBIDDEN_EXTRA = /^(GH_|GITHUB_|SSH_|AWS_|AZURE_|GOOGLE_|GCLOUD_|NPM_|NODE_OPTIONS$|NODE_AUTH_TOKEN$|LD_|DYLD_|CLAUDE_CODE_RETRY_WATCHDOG$|CLAUDE_CODE_EFFORT_LEVEL$|CLAUDE_CODE_SUBPROCESS_ENV_SCRUB$|CLAUDE_CODE_USE_)/;
+const FORBIDDEN_EXTRA = /^(GH_|GITHUB_|SSH_|AWS_|AZURE_|GOOGLE_|GCLOUD_|NPM_|NODE_OPTIONS$|NODE_AUTH_TOKEN$|LD_|DYLD_|CLAUDE_CODE_RETRY_WATCHDOG$|CLAUDE_CODE_MAX_OUTPUT_TOKENS$|CLAUDE_CODE_EFFORT_LEVEL$|CLAUDE_CODE_SUBPROCESS_ENV_SCRUB$|CLAUDE_CODE_USE_)/;
 
 export interface WorkerEnvInput {
   provider: EnvProvider;
@@ -81,6 +84,13 @@ export interface WorkerEnvInput {
   tmpDir: string;
   /** TaskSpec.env: added after the base, before Orbit's fixed values. */
   extra?: Readonly<Record<string, string>>;
+  /**
+   * Output token budget. For Claude it becomes CLAUDE_CODE_MAX_OUTPUT_TOKENS,
+   * which sets the per-request max_tokens (verified against a local fake API:
+   * the request body carries the value; unset it carried the model default).
+   * Ignored for Codex, which has no verified output cap.
+   */
+  maxOutputTokens?: number | null;
 }
 
 export function buildWorkerEnv(input: WorkerEnvInput): Record<string, string> {
@@ -100,7 +110,14 @@ export function buildWorkerEnv(input: WorkerEnvInput): Record<string, string> {
     env[key] = v;
   }
   Object.assign(env, COMMON_WORKER_ENV);
-  if (input.provider === 'claude') Object.assign(env, CLAUDE_WORKER_ENV);
+  if (input.provider === 'claude') {
+    Object.assign(env, CLAUDE_WORKER_ENV);
+    const cap = input.maxOutputTokens;
+    if (cap !== undefined && cap !== null) {
+      if (!Number.isSafeInteger(cap) || cap < 1) throw new OrbitError('CONFIG_INVALID', `maxOutputTokens must be a positive integer, got ${String(cap)}`);
+      env[ENV_MAX_OUTPUT_TOKENS] = String(cap);
+    }
+  }
   env.TMPDIR = input.tmpDir;
   env[ENV_POLICY_PATH] = input.policyPath;
   env[ENV_POLICY_HASH] = input.policyHash;

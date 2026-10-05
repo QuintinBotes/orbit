@@ -54,7 +54,10 @@ actions:
   # merge and deploy_production need mode release.
   merge: false
   deploy_production: false
+  # Reserved: workers never hold or change secrets, so this must stay false.
   change_secrets: false
+  # When false, commands that change file modes, owners, ACLs or flags
+  # (chmod, chown, chgrp, chflags, chattr, setfacl) are denied.
   change_permissions: false
 
 dependencies:
@@ -72,6 +75,19 @@ dependencies:
   #   allow                    run them
   install_scripts: deny-unless-allowlisted
   install_script_allowlist: []
+  # Vulnerability and license policy (npm lockfiles). When enabled, npm audit
+  # runs on the base revision and again on any candidate that changes
+  # package.json or the lockfile; the candidate is blocked when it adds a
+  # vulnerability at or above fail_on, or a package whose license is not on
+  # license_allowlist (null: no license policy). Findings the base already
+  # had are recorded, never blamed on the candidate. An exception names an
+  # advisory (GHSA-xxxx-xxxx-xxxx or npm:<id>) or license:<package>, with a
+  # reason and an optional expiry date.
+  audit:
+    enabled: false
+    fail_on: high
+    license_allowlist: null
+    exceptions: []
 
 network:
   # Hosts workers and checks may reach. Exact names, IPv4 addresses, or
@@ -123,8 +139,9 @@ scheduler:
 
 agents:
   default_parallelism: 1
+  # Parallel writers always get disjoint work units, and writers always get
+  # their own worktree; these three cannot be turned off.
   require_independent_work_units: true
-  # Writers always get their own worktree; these two cannot be turned off.
   isolate_writers: true
   prohibit_shared_worktree_writes: true
   cancel_obsolete_workers: true
@@ -137,6 +154,17 @@ review:
   # independent review cannot fall back to the same provider.
   fallback_same_provider_allowed: false
   block_unresolved_high_impact_findings: true
+
+# Secret-scan and SAST findings (static security gate). Findings at a listed
+# severity block; the others are reported as advisory. An exception waives
+# one rule (optionally under one path glob) until it expires, and its reason
+# is recorded with the evidence. SAST checks that write SARIF to
+# $ORBIT_ARTIFACTS_DIR are judged by finding severity, not only exit status.
+static_security:
+  block_severities: [critical, high]
+  exceptions: []
+  # Example:
+  #   - {rule_id: generic-api-key, path_glob: "tests/fixtures/**", reason: "revoked sample keys", expires: 2026-12-31}
 
 delivery:
   # github (gh CLI, controller credentials only) or fake (tests and demos).
@@ -224,6 +252,10 @@ ui: null
 #     baseline_changes_require_review: true
 #     baseline_globs: ["**/*-snapshots/**"]
 #   visual_baseline_auto_accept: false
+#   exploration:
+#     enabled: false
+#     max_minutes: 15
+#     budget_usd: 2
 # example-ui:end
 
 isolation:
@@ -235,6 +267,15 @@ isolation:
   # Required when provider is container, for example:
   #   container: {image: "node:22-bookworm", memory_mb: 4096, cpus: 2, pids: 512}
   container: null
+  # Hard per-process limits for workers and checks, applied with ulimit
+  # (sandbox-runtime, none) or docker --ulimit (container). null leaves a
+  # limit unset. max_processes counts every process of your user id, not
+  # only the command's, so set it well above what you already run. Memory
+  # is limited only by the container provider.
+  limits:
+    cpu_seconds: null
+    max_processes: null
+    max_file_mb: null
 
 providers:
   claude:
@@ -262,12 +303,40 @@ routing:
   # Work kind -> model family or exact id, overriding the default routing table.
   # Every value must be permitted by allowed_models.
   overrides: {}
+  # Output token budget per role, stated in each worker's prompt.
+  output_budgets:
+    planner: 4000
+    implementer: 8000
+    verifier: 3000
+    reviewer: 4000
+    inquisitor: 3000
+    curator: 2000
+    explorer: 2000
 
 retention:
   keep_runs_days: 30
   # Extra regular expressions redacted from logs and artifacts before they
   # are stored or sent to a provider.
   redact_patterns: []
+
+# Release mode only: how to merge, and where and how to deploy. Required (not
+# null) in mode release, together with actions.merge or
+# actions.deploy_production. Example:
+release: null
+# example-release:start
+# release:
+#   merge:
+#     method: squash            # squash, merge or rebase
+#     require_checks: [build]   # CI checks that must be green before merging
+#     delete_branch: true
+#   environments:
+#     production:
+#       deploy_command: [npm, run, deploy]   # argv, never run through a shell
+#       allowed_branches: [main]
+#       require_ci_green: true
+#       network_hosts: []                    # must be covered by network.allowed_hosts
+#       timeout_seconds: 1800
+# example-release:end
 
 # Learning layer (docs/decisions/0002-learning-layer.md). Lessons are advisory:
 # nothing learned can change this file, checks, tests or protected paths.

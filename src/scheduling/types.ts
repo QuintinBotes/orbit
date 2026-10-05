@@ -180,6 +180,8 @@ export interface WorkUnit {
   /** Worktree path when known. Writers never share one with any other active unit. */
   worktree?: string | null;
   status?: WorkUnitStatus;
+  /** Drives a browser (Playwright): limited to one per core pair, whatever the other slots allow. */
+  browser?: boolean;
 }
 
 export interface Capacity {
@@ -191,6 +193,8 @@ export interface Capacity {
   memory: { free_mb: number; per_worker_mb: number; headroom_mb: number };
   backoff: Record<string, { until: number; consecutive: number }>;
   notes: string[];
+  /** Concurrent browser units: one Playwright run per core pair (at least one). */
+  browser_slots: number;
 }
 
 export interface SchedulePlan {
@@ -199,6 +203,11 @@ export interface SchedulePlan {
   limit: number;
   running: number;
   capacity: Capacity;
+  /**
+   * Units admitted beside another active unit on the same revision: each re-reads the shared context (diff,
+   * evidence, packet), and that duplicated reading was charged to admission as `usd`.
+   */
+  context_duplication: { id: string; shared_with: string; usd: number }[];
 }
 
 export interface ObsoleteUnit {

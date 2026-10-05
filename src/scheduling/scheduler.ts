@@ -6,7 +6,7 @@ import type { Clock } from '../core/clock.ts';
 import { systemClock } from '../core/clock.ts';
 import { OrbitError } from '../core/errors.ts';
 import type { OrbitConfig } from '../policy/types.ts';
-import type { BudgetLedger } from './budget.ts';
+import { ROLE_COST_CEILING_USD, type BudgetLedger } from './budget.ts';
 import type { BudgetPhase, Capacity, ObsoleteUnit, SchedulePlan, WorkUnit, WorkUnitStatus } from './types.ts';
 
 /**
@@ -52,7 +52,14 @@ export interface PlanOptions {
   parallelism?: number;
   /** Admission hook, typically budgetAdmission(ledger). It must count `committed`, or parallel units are each admitted against the same budget. */
   admit?: (unit: WorkUnit, context: AdmitContext) => { admitted: boolean; reasons?: string[] };
+  /**
+   * Context-duplication cost: a unit started beside an active unit on the same revision reads the same context
+   * again, which costs this fraction of its estimate (its role ceiling when unknown) on top. Default 0.25; 0 off.
+   */
+  contextDuplication?: number;
 }
+
+export const DEFAULT_CONTEXT_DUPLICATION = 0.25;
 
 /**
  * The admission hook backed by the budget ledger. Each unit's budget is its
@@ -136,7 +143,10 @@ export class AgentScheduler {
     const now = this.clock.now();
     const backoff: Capacity['backoff'] = {};
     for (const [provider, b] of this.backoff) if (b.until > now) backoff[provider] = { ...b };
+    // Browsers are CPU heavy: one Playwright run per core pair.
+    const browserSlots = Math.max(1, Math.floor(Math.floor(cores) / 2));
     return {
+      browser_slots: browserSlots,
       slots,
       default_parallelism: this.config.agents.default_parallelism,
       limited_by: limitedBy,
@@ -181,18 +191,26 @@ export class AgentScheduler {
     const deferred: SchedulePlan['deferred'] = [];
     const now = this.clock.now();
     const worktrees = new WorktreeIndex();
+    const fraction = opts.contextDuplication ?? DEFAULT_CONTEXT_DUPLICATION;
+    if (!(Number.isFinite(fraction) && fraction >= 0)) throw new OrbitError('SCHEMA_INVALID', 'contextDuplication must be a non-negative number');
+    const duplication: SchedulePlan['context_duplication'] = [];
 
     for (const unit of units) {
       if (status(unit) !== 'pending') continue;
-      const reason = this.blocker(unit, byId, cyclic, active, limit, now, capacity, worktrees) ?? admission(unit, opts.admit, active);
+      const shared = fraction > 0 && unit.revision !== null ? active.find((a) => a.revision === unit.revision) : undefined;
+      const extra = shared ? duplicationUnit(unit, fraction) : null;
+      const reason = this.blocker(unit, byId, cyclic, active, limit, now, capacity, worktrees) ?? admission(unit, opts.admit, extra ? [...active, extra] : active);
       if (reason) {
         deferred.push({ id: unit.id, reason });
         continue;
       }
+      if (shared && extra) duplication.push({ id: unit.id, shared_with: shared.id, usd: extra.budget.costUsd ?? 0 });
       active.push(unit);
+      // The duplicated reading stays committed for the rest of this plan, like the unit itself.
+      if (extra) active.push(extra);
       start.push(unit);
     }
-    return { start, deferred, limit, running: units.filter((u) => status(u) === 'running').length, capacity };
+    return { start, deferred, limit, running: units.filter((u) => status(u) === 'running').length, capacity, context_duplication: duplication };
   }
 
   /**
@@ -245,10 +263,15 @@ export class AgentScheduler {
       const b = this.backoff.get(unit.provider);
       if (b && b.until > now) return `${unit.provider} rate limited until ${new Date(b.until).toISOString()}`;
     }
-    if (active.length >= limit) {
-      return `at capacity: ${active.length} active of ${limit} (limited by ${limit < capacity.slots ? 'requested parallelism' : capacity.limited_by.join(', ')})`;
+    const occupying = active.filter((a) => !isDuplication(a));
+    if (occupying.length >= limit) {
+      return `at capacity: ${occupying.length} active of ${limit} (limited by ${limit < capacity.slots ? 'requested parallelism' : capacity.limited_by.join(', ')})`;
     }
-    for (const other of active) {
+    if (unit.browser) {
+      const browsers = occupying.filter((a) => a.browser === true).length;
+      if (browsers >= capacity.browser_slots) return `browser capacity: ${browsers} Playwright run(s) active of ${capacity.browser_slots} (one per core pair)`;
+    }
+    for (const other of occupying) {
       if ((unit.writer || other.writer) && unit.worktree && other.worktree && worktrees.overlap(unit.worktree, other.worktree)) {
         return `worktree ${unit.worktree} is in use by ${other.id}${unit.worktree === other.worktree ? '' : ` (${other.worktree})`}; writers never share a worktree`;
       }
@@ -256,6 +279,20 @@ export class AgentScheduler {
     }
     return null;
   }
+}
+
+const DUPLICATION_SUFFIX = '#context-duplication';
+
+/** A committed-cost entry for re-reading a shared context; it occupies no slot. */
+function duplicationUnit(unit: WorkUnit, fraction: number): WorkUnit {
+  const role = unit.role === 'check' ? null : unit.role;
+  const base = unit.budget.costUsd ?? (role === null ? 0 : ROLE_COST_CEILING_USD[role]);
+  const usd = Math.round(base * fraction * 1e6) / 1e6;
+  return { id: `${unit.id}${DUPLICATION_SUFFIX}`, role: unit.role, writer: false, ownedPaths: [], dependsOn: [], revision: unit.revision, cancelWhen: [], budget: { costUsd: usd }, provider: null, worktree: null, status: 'running' };
+}
+
+function isDuplication(u: WorkUnit): boolean {
+  return u.id.endsWith(DUPLICATION_SUFFIX);
 }
 
 function admission(unit: WorkUnit, admit: PlanOptions['admit'], active: readonly WorkUnit[]): string | null {

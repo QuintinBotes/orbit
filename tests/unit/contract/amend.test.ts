@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyAmendment, assessAmendment, type AmendmentChange, type AmendmentProposal } from '../../../src/contract/amend.ts';
+import { applyAmendment, assessAmendment, baselineExceptionProposal, type AmendmentChange, type AmendmentProposal } from '../../../src/contract/amend.ts';
 import { isOrbitError, type OrbitError, type OrbitErrorCode } from '../../../src/core/errors.ts';
 import type { ContractAmendment, GoalContract } from '../../../src/contract/types.ts';
 import { contract, snapshot, uiConfig } from './fixtures.ts';
@@ -284,5 +284,68 @@ describe('applyAmendment: criterion ids', () => {
     ];
     const add = proposal({ op: 'add_criterion', statement: 'Show a progress bar.', proof: ['Component test.'], mandatory: false, ui: false, check_ids: [] });
     expect(applyAmendment(c, add, { snapshot: snap, history }).contract.acceptance_criteria.at(-1)!.id).toBe('AC-8');
+  });
+});
+
+describe('accept_baseline_failure (a pre-existing failure the contract accepts)', () => {
+  const FP = 'test-failure:reports-tests:3f9a2c';
+  const accept = (fingerprint = FP, checkId = 'reports-tests') => baselineExceptionProposal({ checkId, fingerprint, excerpt: 'AssertionError in reports.test.ts' }, 'the export suite already fails on main');
+  const recorded = [{ checkId: 'reports-tests', fingerprint: FP }];
+
+  it('always needs a human decision, even when the fingerprint matches the recorded baseline failure', () => {
+    const { snap, c } = setup();
+    const a = assessAmendment(c, accept(), { snapshot: snap, baselineFailures: recorded });
+    expect(a.forbidden).toEqual([]);
+    expect(a.approvalReasons).toEqual(['accepts the failure of check reports-tests that already exists on the base revision as an exception']);
+    expect(a.record).toMatchObject({ field: 'baseline_exceptions', old_value: [], approval_required: true, affected_verification: ['check:reports-tests', 'AC-1'] });
+    const err = expectCode(() => applyAmendment(c, accept(), { snapshot: snap, baselineFailures: recorded }), 'POLICY_DENIED');
+    expect(err.message).toContain('needs a human decision');
+  });
+
+  it('adds the exception to the contract once a recorded human decision approves it', () => {
+    const { snap, c } = setup();
+    const { contract: next, record, approvedBy } = applyAmendment(c, accept(), { snapshot: snap, baselineFailures: recorded, approvedBy: HUMAN });
+    expect(approvedBy).toBe(HUMAN);
+    expect(next.baseline_exceptions).toEqual([{ check_id: 'reports-tests', fingerprint: FP, reason: 'the export suite already fails on main' }]);
+    expect(record.new_value).toEqual(next.baseline_exceptions);
+    expect(c.baseline_exceptions).toBeUndefined();
+  });
+
+  it('is forbidden when the fingerprint differs from the recorded baseline failure, even with approval', () => {
+    const { snap, c } = setup();
+    const err = expectCode(() => applyAmendment(c, accept('test-failure:reports-tests:other'), { snapshot: snap, baselineFailures: recorded, approvedBy: HUMAN }), 'POLICY_DENIED');
+    expect(err.message).toContain('fingerprint does not equal the failure recorded on the base revision');
+  });
+
+  it('is forbidden for a check that did not fail on the base revision, and when no baseline was supplied', () => {
+    const { snap, c } = setup();
+    const none = expectCode(() => applyAmendment(c, accept(), { snapshot: snap, baselineFailures: [], approvedBy: HUMAN }), 'POLICY_DENIED');
+    expect(none.message).toContain('did not fail on the base revision');
+    const unknown = expectCode(() => applyAmendment(c, accept(), { snapshot: snap, approvedBy: HUMAN }), 'POLICY_DENIED');
+    expect(unknown.message).toContain('cannot be confirmed');
+    const unrecorded = expectCode(() => applyAmendment(c, accept(), { snapshot: snap, baselineFailures: [{ checkId: 'reports-tests', fingerprint: null }], approvedBy: HUMAN }), 'POLICY_DENIED');
+    expect(unrecorded.message).toContain('fingerprint does not equal');
+  });
+
+  it('rejects a check the contract does not require, a repeat of the same exception, and a failure without a fingerprint', () => {
+    const { snap, c } = setup();
+    expectCode(() => applyAmendment(c, accept(FP, 'build'), { snapshot: snap, baselineFailures: [{ checkId: 'build', fingerprint: FP }], approvedBy: HUMAN }), 'CONTRACT_INVALID');
+    const withException = applyAmendment(c, accept(), { snapshot: snap, baselineFailures: recorded, approvedBy: HUMAN }).contract;
+    expectCode(() => applyAmendment(withException, accept(), { snapshot: snap, baselineFailures: recorded, approvedBy: HUMAN }), 'CONTRACT_INVALID');
+    expectCode(() => baselineExceptionProposal({ checkId: 'reports-tests', fingerprint: null }), 'CONTRACT_INVALID');
+  });
+
+  it('replaces an earlier exception for the same check when the failure has since changed', () => {
+    const { snap, c } = setup();
+    const first = applyAmendment(c, accept(), { snapshot: snap, baselineFailures: recorded, approvedBy: HUMAN }).contract;
+    const second = applyAmendment(first, accept('test-failure:reports-tests:new'), { snapshot: snap, baselineFailures: [{ checkId: 'reports-tests', fingerprint: 'test-failure:reports-tests:new' }], approvedBy: HUMAN }).contract;
+    expect(second.baseline_exceptions).toHaveLength(1);
+    expect(second.baseline_exceptions![0]!.fingerprint).toBe('test-failure:reports-tests:new');
+  });
+
+  it('is not an operation a model can propose: the inquisitor schema does not list it', async () => {
+    const { readFileSync } = await import('node:fs');
+    const schema = readFileSync(new URL('../../../schemas/inquisitor-output.schema.json', import.meta.url), 'utf8');
+    expect(schema).not.toContain('accept_baseline_failure');
   });
 });

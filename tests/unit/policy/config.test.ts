@@ -105,6 +105,10 @@ describe('defaults', () => {
     expect(sastCheckIds({ config: c })).toEqual(['sast']);
     expect(c.ui?.journey_check_ids).toEqual(['ui-journeys']);
     expect(c.ui?.visual_baseline_auto_accept).toBe(false);
+    expect(c.ui?.exploration).toEqual({ enabled: false, max_minutes: 15, budget_usd: 2 });
+    const release = validateConfig({ ...(parse(TEMPLATE) as object), mode: 'release', actions: { merge: true, deploy_production: true }, ...(parse(exampleBlock('release')) as object) });
+    expect(release.release?.merge.method).toBe('squash');
+    expect(release.release?.environments.production?.deploy_command).toEqual(['npm', 'run', 'deploy']);
   });
 
   it('writes no em or en dashes in the template', () => {
@@ -199,14 +203,16 @@ describe('mode semantics', () => {
       expect(p.join('\n')).toMatch(/actions\.merge: requires mode "release"/);
       expect(p.join('\n')).toMatch(/actions\.deploy_production: requires mode "release"/);
     }
-    expect(parseConfig('version: 1\nmode: release\nactions: {merge: true, deploy_production: true}\n').actions.merge).toBe(true);
+    const release = 'release: {environments: {production: {deploy_command: [npm, run, deploy]}}}';
+    expect(parseConfig(`version: 1\nmode: release\nactions: {merge: true, deploy_production: true}\n${release}\n`).actions.merge).toBe(true);
   });
 
   it('refuses isolation none in unattended modes unless explicitly allowed', () => {
     for (const mode of ['autonomous', 'autonomous-delivery', 'release']) {
-      const p = problems(() => parseConfig(`version: 1\nmode: ${mode}\nisolation: {provider: none}\n`));
+      const extra = mode === 'release' ? 'actions: {merge: true}\nrelease: {}\n' : '';
+      const p = problems(() => parseConfig(`version: 1\nmode: ${mode}\n${extra}isolation: {provider: none}\n`));
       expect(p.join('\n')).toMatch(/isolation\.provider: "none" is refused/);
-      expect(parseConfig(`version: 1\nmode: ${mode}\nisolation: {provider: none, allow_unisolated: true}\n`).isolation.provider).toBe('none');
+      expect(parseConfig(`version: 1\nmode: ${mode}\n${extra}isolation: {provider: none, allow_unisolated: true}\n`).isolation.provider).toBe('none');
     }
   });
 
@@ -338,9 +344,12 @@ describe('loadConfig', () => {
     mkdirSync(join(root, '.orbit'));
     writeFileSync(join(root, '.orbit', 'config.yaml'), 'version: 1\nmode: supervised\n');
     writeFileSync(join(root, 'other.yaml'), 'version: 1\nmode: autonomous\n');
+    writeFileSync(join(root, 'release.yaml'), 'version: 1\nmode: autonomous\nactions: {merge: false}\nrelease: {merge: {method: rebase}}\n');
     expect(loadConfig(root).mode).toBe('supervised');
     expect(loadConfig(root, 'other.yaml').mode).toBe('autonomous');
-    expect(loadConfig(root, join(root, 'other.yaml'), { mode: 'release' }).mode).toBe('release');
+    // A command-line release mode is validated as if the file had said it: it needs a release block and a release action.
+    expect(problems(() => loadConfig(root, join(root, 'other.yaml'), { mode: 'release' })).join('\n')).toMatch(/release: required in mode "release"/);
+    expect(problems(() => loadConfig(root, 'release.yaml', { mode: 'release' })).join('\n')).toMatch(/needs actions\.merge or actions\.deploy_production/);
   });
 
   it('reports a missing file as NOT_FOUND and an invalid one with its path', () => {
@@ -373,5 +382,108 @@ describe('semantic rule failures', () => {
     const quiet: string[] = [];
     applySemanticRules([broken], config, false, quiet);
     expect(quiet).toEqual([]);
+  });
+});
+
+describe('sections shared with the delivery, routing, UI, evidence and isolation layers', () => {
+  it('defaults every new section so a minimal file resolves, and older-style partial overrides merge with the defaults', () => {
+    const c = parseConfig('version: 1\n');
+    expect(c.release).toBeNull();
+    expect(c.routing.output_budgets).toEqual({ planner: 4000, implementer: 8000, verifier: 3000, reviewer: 4000, inquisitor: 3000, curator: 2000, explorer: 2000 });
+    expect(c.dependencies.audit).toEqual({ enabled: false, fail_on: 'high', license_allowlist: null, exceptions: [] });
+    expect(c.static_security).toEqual({ block_severities: ['critical', 'high'], exceptions: [] });
+    expect(c.isolation.limits).toEqual({ cpu_seconds: null, max_processes: null, max_file_mb: null });
+    expect(parseConfig('version: 1\nui: true\n').ui?.exploration).toEqual({ enabled: false, max_minutes: 15, budget_usd: 2 });
+
+    const o = parseConfig(
+      [
+        'version: 1',
+        'routing: {output_budgets: {implementer: 12000}}',
+        'ui: {exploration: {enabled: true}}',
+        'dependencies: {audit: {enabled: true, license_allowlist: [MIT, Apache-2.0], exceptions: [{id: GHSA-c2qf-rxjj-qqgw, reason: no reachable code path in our usage}]}}',
+        'static_security: {block_severities: [critical], exceptions: [{rule_id: generic-api-key, reason: documented sample key in fixtures, path_glob: "tests/fixtures/**"}]}',
+        'isolation: {limits: {cpu_seconds: 600}}',
+        '',
+      ].join('\n'),
+    );
+    expect(o.routing.output_budgets).toMatchObject({ implementer: 12000, planner: 4000 });
+    expect(o.ui?.exploration).toEqual({ enabled: true, max_minutes: 15, budget_usd: 2 });
+    expect(o.dependencies.audit?.exceptions).toEqual([{ id: 'GHSA-c2qf-rxjj-qqgw', reason: 'no reachable code path in our usage', expires: null }]);
+    expect(o.static_security?.exceptions).toEqual([{ rule_id: 'generic-api-key', reason: 'documented sample key in fixtures', path_glob: 'tests/fixtures/**', expires: null }]);
+    expect(o.isolation.limits).toEqual({ cpu_seconds: 600, max_processes: null, max_file_mb: null });
+  });
+
+  it('fills release defaults and checks release settings against the rest of the policy', () => {
+    const c = parseConfig('version: 1\nmode: release\nactions: {merge: true, deploy_production: true}\nrelease: {environments: {production: {deploy_command: [npm, run, deploy], network_hosts: [api.github.com]}}}\n');
+    expect(c.release).toEqual({
+      merge: { method: 'squash', require_checks: [], delete_branch: true },
+      environments: { production: { deploy_command: ['npm', 'run', 'deploy'], allowed_branches: ['main'], require_ci_green: true, network_hosts: ['api.github.com'], timeout_seconds: 1800 } },
+    });
+    const p = problems(() =>
+      parseConfig(
+        [
+          'version: 1',
+          'mode: release',
+          'actions: {merge: false, deploy_production: true}',
+          'release:',
+          '  merge: {method: fast-forward}',
+          '  environments:',
+          '    staging: {deploy_command: "npm run deploy", network_hosts: [deploy.acme.example.com], allowed_branches: []}',
+          '    production: {timeout_seconds: 60}',
+          '',
+        ].join('\n'),
+      ),
+    ).join('\n');
+    expect(p).toMatch(/release\.merge\.method: must be one of "squash", "merge", "rebase"/);
+    expect(p).toMatch(/release\.environments\.staging\.deploy_command: must be an argv array/);
+    expect(p).toMatch(/release\.environments\.production\.deploy_command: required/);
+    expect(p).toMatch(/release\.environments\.staging\.network_hosts\[0\]: "deploy\.acme\.example\.com" is not covered by network\.allowed_hosts/);
+    expect(p).toMatch(/release\.environments\.staging\.allowed_branches: is empty/);
+    expect(problems(() => parseConfig('version: 1\nmode: release\nactions: {deploy_production: true}\nrelease: {}\n')).join('\n')).toMatch(/no environment is defined to deploy to/);
+    // A release block outside release mode is kept and does nothing.
+    expect(parseConfig('version: 1\nrelease: {merge: {method: merge}}\n').release?.merge.method).toBe('merge');
+  });
+
+  it('refuses malformed exceptions, budgets and limits', () => {
+    const p = problems(() =>
+      parseConfig(
+        [
+          'version: 1',
+          'routing: {output_budgets: {implementer: 10, reviewer_x: 100}}',
+          'dependencies: {audit: {fail_on: severe, exceptions: [{id: "anything goes", reason: short}]}}',
+          'static_security: {block_severities: [info], exceptions: [{rule_id: x, reason: a long enough reason, path_glob: "../outside/**", expires: 31-12-2026}]}',
+          'isolation: {limits: {max_processes: 4, max_file_mb: 0}}',
+          'ui: {exploration: {max_minutes: 0}}',
+          '',
+        ].join('\n'),
+      ),
+    ).join('\n');
+    expect(p).toMatch(/routing\.output_budgets\.implementer: must be >= 100/);
+    expect(p).toMatch(/routing\.output_budgets: unknown key "reviewer_x"/);
+    expect(p).toMatch(/dependencies\.audit\.fail_on: must be one of/);
+    expect(p).toMatch(/dependencies\.audit\.exceptions\[0\]\.id: must match pattern/);
+    expect(p).toMatch(/dependencies\.audit\.exceptions\[0\]\.reason: must NOT have fewer than 10 characters/);
+    expect(p).toMatch(/static_security\.block_severities\[0\]: must be one of/);
+    expect(p).toMatch(/static_security\.exceptions\[0\]\.path_glob: "\.\.\/outside\/\*\*"/);
+    expect(p).toMatch(/static_security\.exceptions\[0\]\.expires: must match format "date"/);
+    expect(p).toMatch(/isolation\.limits\.max_processes/);
+    expect(p).toMatch(/isolation\.limits\.max_file_mb/);
+    expect(p).toMatch(/ui\.exploration\.max_minutes: must be >= 1/);
+  });
+});
+
+describe('keys the policy cannot turn off (gap G26)', () => {
+  it('refuses require_independent_work_units: false and change_secrets: true, and keeps change_permissions configurable', () => {
+    const p = problems(() => parseConfig('version: 1\nagents: {require_independent_work_units: false}\nactions: {change_secrets: true}\n')).join('\n');
+    expect(p).toMatch(/agents\.require_independent_work_units: must be true/);
+    expect(p).toMatch(/actions\.change_secrets: must be false/);
+    expect(parseConfig('version: 1\nactions: {change_permissions: true}\n').actions.change_permissions).toBe(true);
+    expect(parseConfig('version: 1\n').actions.change_permissions).toBe(false);
+  });
+
+  it('refuses a redaction pattern that matches the empty string, which redaction could only skip (a silent leak)', () => {
+    const p = problems(() => parseConfig('version: 1\nretention: {redact_patterns: ["acme-[A-Z0-9]{8}", "(?:acme_key=)?[A-Za-z0-9]*"]}\n'));
+    expect(p.join('\n')).toMatch(/retention\.redact_patterns\[1\]: matches the empty string/);
+    expect(p.join('\n')).not.toMatch(/redact_patterns\[0\]/);
   });
 });

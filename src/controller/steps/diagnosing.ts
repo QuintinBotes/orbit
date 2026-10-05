@@ -19,6 +19,8 @@ import type { RepairBrief } from '../../evidence/types.ts';
 import { briefFromDiagnosis, nonProgress, nonProgressThreshold, progressSince, validateRepairBrief, type AttemptSnapshot } from '../../inquisition/repair.ts';
 import { eliminatedHypothesisIds, proposeHypothesis, toPrior } from '../../inquisition/hypotheses.ts';
 import { listHypotheses, listQuestions } from '../../inquisition/store.ts';
+import { listDecisions } from '../../storage/decisions.ts';
+import { availableParallelism, freemem, loadavg } from 'node:os';
 import { extensionDecisionRecord } from '../../scheduling/budget.ts';
 import type { RunContext } from '../context.ts';
 import { routeFor } from '../workers.ts';
@@ -67,6 +69,7 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
     stored = { attempt: next, source: 'scope', fingerprint, brief: scopeBrief(ctx, fingerprint, primary.excerpt ?? 'scope inspection denied the candidate') };
   } else {
     const priors = listHypotheses(ctx.db, ctx.run.id).map(toPrior);
+    const timeouts = timeoutContext(ctx, cand.id);
     const route = routeFor(ctx, `diagnose:${cand.id}`, failures.length > 0 && repeatedCount(ctx, fingerprint) >= config.scheduler.repeated_failure_threshold ? 'complex-diagnosis' : 'focused-tests', {
       difficulty: (ctx.run.difficulty ?? 'medium') as 'simple' | 'medium' | 'complex',
       attempt: 1,
@@ -87,14 +90,16 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
         effort: route.effort,
         cwd: ctx.run.worktreePath!,
         readOnly: true,
-        prompt: (workerId) => diagnosisPrompt(ctx, fingerprint, failures, workerId),
+        prompt: (workerId) => diagnosisPrompt(ctx, fingerprint, failures, workerId, timeouts),
       }),
       accept: (r) => {
         const out = validateModelOutput('diagnosis', r.structured);
         const brief = briefFromDiagnosis(out);
         const v = validateRepairBrief(brief, { policyCheckIds: Object.keys(config.checks), expectedFingerprint: fingerprint, priorHypotheses: priors });
         if (!v.valid) throw new OrbitError('MALFORMED_OUTPUT', `the repair brief is not usable: ${v.problems.join('; ')}`);
-        return { out, brief };
+        // A timeout is diagnosed, never fixed by waiting longer (spec section 14).
+        if (timeouts && raisesTimeout(brief.scoped_fix)) throw new OrbitError('MALFORMED_OUTPUT', `the scoped fix raises a timeout ("${brief.scoped_fix.slice(0, 200)}"); a timed-out check needs its cause found, not more time`);
+        return { out, brief: timeouts ? withTimeoutHypothesis(brief, timeouts) : brief };
       },
       exhausted: () => finishRun(ctx, 'EXHAUSTED', `diagnosis produced no valid repair brief within ${MAX_REGENERATIONS} attempts for ${fingerprint}`),
     });
@@ -106,6 +111,8 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
     }
     const chosen = out.competing_hypotheses.find((h) => h.id === out.chosen_hypothesis_id) ?? null;
     const statement = chosen?.statement ?? brief.hypotheses[0]?.statement ?? '';
+    const location = localizedFault(out, brief, cand.diffStat?.paths ?? []);
+    if (location) decide(ctx, { id: `dec-${ctx.run.id}-localized-${next - 1}`, kind: 'repair.localized', summary: `fault of attempt ${next - 1} localized at ${location}`, data: { attempt: next - 1, location, hypothesis: statement, fingerprint } });
     try {
       const proposed = proposeHypothesis(ctx.db, ctx.run.id, { statement, fingerprint, experiment: brief.experiment, expectedObservation: brief.expected_observation }, ctx.clock);
       hypothesisIsNew = proposed.novelty.isNew;
@@ -119,8 +126,10 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
 
   // 5. Allowance: an extension needs progress, a new hypothesis and the reserve intact; the hard cap never moves.
   if (att.used >= att.allowance) {
-    const prev = history.length >= 2 ? history[history.length - 2]! : null;
-    const cur = history.at(-1) ?? null;
+    // Read again: this diagnosis may have localized the fault of the attempt it examined.
+    const now = attemptHistory(ctx);
+    const prev = now.length >= 2 ? now[now.length - 2]! : null;
+    const cur = now.at(-1) ?? null;
     const p = cur ? progressSince(prev, cur) : null;
     const decision = ctx.ledger.requestExtension({
       counter: 'implementation_attempts',
@@ -158,6 +167,11 @@ export function attemptHistory(ctx: RunContext): AttemptSnapshot[] {
   const eliminated = eliminatedHypothesisIds(ctx.db, ctx.run.id);
   const resolved = listQuestions(ctx.db, ctx.run.id, { status: 'answered' }).map((q) => q.id);
   const last = currentAttempt(ctx);
+  const localized = new Map<number, string>();
+  for (const d of listDecisions(ctx.db, ctx.run.id, { kind: 'repair.localized' })) {
+    const data = d.data as { attempt?: number; location?: string } | null;
+    if (typeof data?.attempt === 'number' && typeof data.location === 'string') localized.set(data.attempt, data.location);
+  }
   for (let k = 1; k <= last; k++) {
     const candId = attemptCandidateId(ctx, k);
     if (!candId) continue;
@@ -171,7 +185,7 @@ export function attemptHistory(ctx: RunContext): AttemptSnapshot[] {
       failingMandatoryChecks: checks.filter((c) => mandatory.has(c.id) && c.status !== 'PASSED').map((c) => c.id),
       failureFingerprints: [...new Set(failures.filter((f) => f.candidateId === candId).map((f) => f.fingerprint))],
       eliminatedHypotheses: eliminated,
-      localizedFault: null,
+      localizedFault: localized.get(k) ?? null,
       resolvedAmbiguities: resolved,
     });
   }
@@ -192,7 +206,7 @@ function scopeBrief(ctx: RunContext, fingerprint: string, why: string): RepairBr
   };
 }
 
-function diagnosisPrompt(ctx: RunContext, fingerprint: string, failures: FailureRecord[], workerId: string): string {
+function diagnosisPrompt(ctx: RunContext, fingerprint: string, failures: FailureRecord[], workerId: string, timeouts: TimeoutContext | null): string {
   const contract = assertContract(ctx);
   const cand = ctx.candidate!;
   const refs: EvidenceRef[] = [];
@@ -208,6 +222,7 @@ function diagnosisPrompt(ctx: RunContext, fingerprint: string, failures: Failure
     'a scoped fix, post-fix checks (trusted check ids only) and the constraints the repair must preserve.',
     `Trusted check ids: ${Object.keys(ctx.snapshot.config.checks).join(', ') || 'none'}.`,
     priors.length > 0 ? `Hypotheses already recorded (a reworded one is not new): ${priors.map((h) => `[${h.status}] ${h.statement}`).join(' | ')}` : 'No earlier hypotheses.',
+    ...(timeouts ? timeoutPromptLines(timeouts) : []),
   ].join('\n');
   return renderWorkerPrompt({
     role: 'verifier',
@@ -219,4 +234,96 @@ function diagnosisPrompt(ctx: RunContext, fingerprint: string, failures: Failure
     untrusted: failures.filter((f) => f.excerpt && !refs.length).slice(0, 3).map((f) => ({ label: `failure ${f.id} (${f.source})`, content: f.excerpt! })),
     advisoryBlock: advisoryBlockFor(ctx, { role: 'verifier', workerId, paths: contract.allowed_paths, checkIds: contract.required_check_ids, fingerprints: [fingerprint] }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Timeouts (spec section 14: diagnose performance or environment, do not blindly rerun)
+
+export interface TimedOutCheck {
+  checkId: string;
+  durationMs: number | null;
+  timeoutSeconds: number | null;
+  /** The same check's duration on the base revision, when the baseline ran it to a final status. */
+  baselineMs: number | null;
+}
+
+export interface TimeoutContext {
+  checks: TimedOutCheck[];
+  /** Machine load when the diagnosis was asked for: what the scheduler's capacity probe reads. */
+  machine: { cores: number; loadAvg1m: number | null; freeMemMb: number };
+}
+
+/** The candidate's timed-out checks with their baselines and the machine's load; null when nothing timed out. */
+export function timeoutContext(ctx: RunContext, candidateId: string, probe: { cores: number; loadAvg1m: number | null; freeMemMb: number } = machineProbe()): TimeoutContext | null {
+  const rows = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId }).filter((r) => r.status === 'TIMEOUT' || r.timedOut);
+  if (rows.length === 0) return null;
+  const base = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: null });
+  const checks = rows.map((r) => {
+    const b = base.filter((x) => x.checkId === r.checkId && x.endedAt !== null && x.status !== 'TIMEOUT').at(-1);
+    return {
+      checkId: r.checkId,
+      durationMs: r.endedAt === null ? null : r.endedAt - r.startedAt,
+      timeoutSeconds: ctx.snapshot.config.checks[r.checkId]?.timeout_seconds ?? null,
+      baselineMs: b && b.endedAt !== null ? b.endedAt - b.startedAt : null,
+    };
+  });
+  return { checks, machine: probe };
+}
+
+function machineProbe(): { cores: number; loadAvg1m: number | null; freeMemMb: number } {
+  const load = loadavg()[0];
+  return { cores: availableParallelism(), loadAvg1m: typeof load === 'number' && Number.isFinite(load) && load > 0 ? Math.round(load * 100) / 100 : null, freeMemMb: Math.floor(freemem() / (1024 * 1024)) };
+}
+
+function describeTimeouts(t: TimeoutContext): string {
+  const parts = t.checks.map((c) => {
+    const ran = c.durationMs === null ? 'an unknown time' : `${Math.round(c.durationMs / 1000)} s`;
+    const base = c.baselineMs === null ? 'no baseline duration' : `${Math.round(c.baselineMs / 1000)} s on the base revision`;
+    return `${c.checkId} timed out after ${ran} (limit ${c.timeoutSeconds ?? '?'} s; ${base})`;
+  });
+  const m = t.machine;
+  return `${parts.join('; ')}; machine: ${m.cores} core(s), load average ${m.loadAvg1m ?? 'unknown'}, ${m.freeMemMb} MB free`;
+}
+
+/** The prompt lines that make an environment or performance cause a mandatory hypothesis. */
+export function timeoutPromptLines(t: TimeoutContext): string[] {
+  return [
+    `Timeouts: ${describeTimeouts(t)}.`,
+    'One competing hypothesis must be an environment or performance cause (machine load, a slow dependency, resource limits, a performance regression in the change) rather than a logic defect, with the observation that would tell them apart (compare with the baseline duration).',
+    'Raising, extending or removing a timeout is never the scoped fix.',
+  ];
+}
+
+const ENV_HYPOTHESIS = /\b(environment|performance|load|slow|latency|resource|memory|cpu|machine|contention|regression in speed|hang|deadlock)\b/i;
+
+/** The brief carries the environment or performance hypothesis even when the diagnosis left it out. */
+export function withTimeoutHypothesis(brief: RepairBrief, t: TimeoutContext): RepairBrief {
+  const hypotheses = brief.hypotheses.some((h) => ENV_HYPOTHESIS.test(h.statement))
+    ? brief.hypotheses
+    : [...brief.hypotheses, { statement: 'The timeout comes from the environment or a performance regression (machine load, resource limits, a slower code path) rather than a logic defect', supporting: describeTimeouts(t) }];
+  const constraint = 'Do not raise, extend or remove any check or test timeout';
+  return { ...brief, hypotheses, preserved_constraints: brief.preserved_constraints.includes(constraint) ? brief.preserved_constraints : [...brief.preserved_constraints, constraint] };
+}
+
+/** A fix that buys time instead of finding the cause. */
+export function raisesTimeout(text: string): boolean {
+  return /\b(raise|raising|increase|increasing|extend|extending|bump|bumping|lengthen|double|doubling|remove|removing|disable|disabling|relax|relaxing)\b[^.]{0,40}\btime-?outs?\b/i.test(text) || /\btime-?outs?\b[^.]{0,40}\b(longer|higher|larger|raised|increased|extended|removed|disabled)\b/i.test(text);
+}
+
+// ---------------------------------------------------------------------------
+// Fault localization
+
+/**
+ * Where the fault is, when the diagnosis pins it down: a chosen hypothesis the diagnosis holds with high or
+ * medium confidence and supports with evidence, and a scoped fix that names a file the candidate changed. Null
+ * otherwise; a location is progress only the first time it is found (inquisition/repair.progressSince).
+ */
+export function localizedFault(out: DiagnosisOutput, brief: RepairBrief, changedPaths: readonly string[]): string | null {
+  const chosen = out.competing_hypotheses.find((h) => h.id === out.chosen_hypothesis_id);
+  if (!chosen || chosen.status === 'ruled-out' || chosen.supporting_evidence.length === 0) return null;
+  if (out.confidence === 'low') return null;
+  const changed = new Set(changedPaths);
+  const named = brief.scoped_fix.match(/[A-Za-z0-9_@][A-Za-z0-9_@./-]*\.[A-Za-z0-9]+/g) ?? [];
+  const path = named.map((p) => p.replace(/^\.\//, '').replace(/[.,;:]+$/, '')).find((p) => changed.has(p));
+  return path ? `${path}: ${chosen.statement}`.slice(0, 300) : null;
 }

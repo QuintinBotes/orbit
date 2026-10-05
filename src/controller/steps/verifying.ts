@@ -17,6 +17,7 @@ import { sha256 } from '../../core/hash.ts';
 import { OrbitError } from '../../core/errors.ts';
 import { inspectScope } from '../../policy/scope.ts';
 import { compileGlobs } from '../../policy/globs.ts';
+import { staticSecurityPolicy } from '../../policy/config.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../../evidence/candidate.ts';
 import { git } from '../../evidence/git.ts';
 import { installDependencies } from '../../evidence/baseline.ts';
@@ -32,11 +33,14 @@ import type { Trigger } from '../../inquisition/types.ts';
 import { validateModelOutput, type ImplementerOutput } from '../../contract/model-outputs.ts';
 import { listWorkers } from '../../storage/workers.ts';
 import { homeOf, runWorktreeRoot, type RunContext } from '../context.ts';
-import { implementationScopeGate, staticSecurityGate, uiGate, behaviourGate } from '../gates.ts';
-import { sastCheckIds, scanCandidateSecrets } from '../security.ts';
+import { implementationScopeGate, staticSecurityGate, uiGate, behaviourGate, type ScopeGateDetails } from '../gates.ts';
+import { authorizedOnce, deniedDependencyOperations, grantFor, requestAuthorization, scopeWithGrants } from '../authorization.ts';
+import { judgeSastResult, sastCheckIds, scanCandidateSecrets } from '../security.ts';
 import { storedPlan } from './contracting.ts';
 import { assertContract, decide, finishRun, move, progress, safePoint, type StepResult } from './common.ts';
 import { recordGate } from './preflight.ts';
+import { exploreCandidate, explorationEnabled, explorationUnverified } from '../exploration.ts';
+import type { ExplorationResult } from '../../ui/explore.ts';
 
 export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
   const stop = await safePoint(ctx);
@@ -48,9 +52,21 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
   if (existing && isFresh(existing.report, { candidate: cand, snapshot: ctx.snapshot })) return act(ctx, cand, existing);
 
   // 1. Implementation scope: the gate the hooks only assist.
-  const scope = cand.scope ?? (await inspectScope({ repoRoot: ctx.run.repoRoot, baseRev: ctx.run.baseRevision!, candidateRev: cand.commitSha, snapshot: ctx.snapshot, contractAllowedPaths: contract.allowed_paths }));
+  let scope = cand.scope ?? (await inspectScope({ repoRoot: ctx.run.repoRoot, baseRev: ctx.run.baseRevision!, candidateRev: cand.commitSha, snapshot: ctx.snapshot, contractAllowedPaths: contract.allowed_paths }));
   if (!cand.scope) setCandidateScope(ctx.db, cand.id, scope);
-  const scopeGate = implementationScopeGate(scope, ctx.snapshot);
+  let scopeGate = implementationScopeGate(scope, ctx.snapshot);
+  const authorizedOnceNotes: string[] = [];
+  if (!scopeGate.passed && ctx.run.mode === 'supervised') {
+    // Supervised mode asks a person before refusing a dependency change the policy does not authorize (spec section 5).
+    const asked = await askForAuthorization(ctx, cand, scope, scopeGate.details);
+    if (asked.kind === 'blocked') return asked.result;
+    if (asked.kind === 'granted') {
+      scope = asked.scope;
+      authorizedOnceNotes.push(...asked.notes);
+      scopeGate = implementationScopeGate(scope, ctx.snapshot);
+      scopeGate.notes.push(...asked.notes);
+    }
+  }
   recordGate(ctx, scopeGate);
   if (!scopeGate.passed) {
     decide(ctx, { id: `dec-${ctx.run.id}-deny-${cand.id}`, kind: 'policy.deny', summary: `candidate ${cand.seq} denied by scope inspection: ${scopeGate.reasons.join('; ')}`, data: { candidate_id: cand.id, scope, policy_violation: scopeGate.details.policyViolation } });
@@ -102,10 +118,21 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
     }
     const uiG = uiGate({ required: uiRequired, configured: ui !== null && ui.journey_check_ids.length > 0, result: uiResult });
     recordGate(ctx, uiG);
+    // 3b. Agent-driven exploration (ui.exploration): only reproduced findings count, and they count as failures.
+    let exploration: ExplorationResult | null = null;
+    if (uiRequired && explorationEnabled(ui)) {
+      exploration = await exploreCandidate(ctx, cand, checkoutDir, join(candidateEvidenceDir(ctx.runDir, cand.seq), 'ui-exploration'));
+      const explored = await safePoint(ctx);
+      if (explored) return explored;
+    }
 
     // 4. Static security: secret scan of the change, configured SAST.
-    const scan = await scanCandidateSecrets({ repoRoot: ctx.run.repoRoot, baseRev: ctx.run.baseRevision!, commit: cand.commitSha, outDir: join(candidateEvidenceDir(ctx.runDir, cand.seq), 'security'), ...(ctx.deps.gitleaksPath === undefined ? {} : { gitleaksPath: ctx.deps.gitleaksPath }), hostPath: (ctx.deps.hostEnv ?? process.env).PATH });
-    const sast = sastCheckIds(ctx.snapshot).map((id) => ({ checkId: id, status: results.find((r) => r.checkId === id)?.status ?? null }));
+    // Severities and exceptions come from the run's frozen policy (static_security), judged at the controller's clock.
+    const staticPolicy = staticSecurityPolicy(ctx.snapshot.config);
+    const judgedAt = ctx.clock.now();
+    const scan = await scanCandidateSecrets({ repoRoot: ctx.run.repoRoot, baseRev: ctx.run.baseRevision!, commit: cand.commitSha, outDir: join(candidateEvidenceDir(ctx.runDir, cand.seq), 'security'), ...(ctx.deps.gitleaksPath === undefined ? {} : { gitleaksPath: ctx.deps.gitleaksPath }), hostPath: (ctx.deps.hostEnv ?? process.env).PATH, policy: staticPolicy, now: judgedAt });
+    const sastVerdicts = sastCheckIds(ctx.snapshot).map((id) => judgeSastResult(results.find((r) => r.checkId === id) ?? null, id, staticPolicy, judgedAt));
+    const sast = sastVerdicts.map((v) => ({ checkId: v.checkId, status: v.status }));
     const security = staticSecurityGate({ scan, sast });
     recordGate(ctx, security);
 
@@ -113,7 +140,11 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
     const uiResults: UiResultInput[] = uiResult ? toEvidenceUi(uiResult) : [];
     const evaluation = evaluateEvidence({ contract, candidate: cand, checkResults: results, uiResults, scope, snapshot: ctx.snapshot, uiRequired });
     const report = evaluation.report;
-    report.unverified.push(...security.notes, ...uiG.notes.filter((n) => !report.unverified.includes(n)));
+    report.unverified.push(...security.notes, ...uiG.notes.filter((n) => !report.unverified.includes(n)), ...authorizedOnceNotes);
+    // A dependency audit that could not run on this candidate is unverified, never silently a pass (a blocking one stopped the install).
+    if (install.audit && install.audit.blocking.length === 0 && install.audit.summary) report.unverified.push(install.audit.summary);
+    // Waived or advisory SAST findings, and SARIF that could not be read, are disclosed with the evidence.
+    for (const v of sastVerdicts) if (v.note && (!v.classification || v.classification.excepted.length > 0 || v.classification.advisory.length > 0)) report.unverified.push(v.note);
     if (security.status === 'fail') {
       report.verdict = 'FAIL';
       for (const f of scan.findings) {
@@ -121,6 +152,13 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
       }
     }
     if (uiG.status === 'fail' && report.verdict === 'PASS') report.verdict = 'FAIL';
+    if (exploration) {
+      report.unverified.push(...explorationUnverified(exploration));
+      if (exploration.reproduced.length > 0) {
+        report.verdict = 'FAIL';
+        report.unverified.push(`UI exploration reproduced ${exploration.reproduced.length} defect(s) as failing tests: ${exploration.reproduced.map((f) => `${f.id} (${f.severity})`).join(', ')}`);
+      }
+    }
     recordGate(ctx, behaviourGate({ ...evaluation, report }));
     const saved = saveEvidenceReport({ db: ctx.db, runDir: ctx.runDir, candidate: cand, report, clock: ctx.clock });
     return act(ctx, cand, saved);
@@ -129,6 +167,38 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
     // checking this same tree in it, and ensureCheckout reuses or replaces it on the next pass.
     if (!ctx.signal.aborted) await cleanupCandidateCheckout(ctx.run.repoRoot, checkoutDir).catch(() => {});
   }
+}
+
+type AuthorizationOutcome = { kind: 'not-applicable' } | { kind: 'denied' } | { kind: 'blocked'; result: StepResult } | { kind: 'granted'; scope: ScopeReport; notes: string[] };
+
+/**
+ * A scope refusal made only of dependency changes the policy does not authorize: each one is authorized once by
+ * a person's answer, refused, or asked about (the run blocks until the answer). Anything else in the refusal is
+ * repaired as before, so nothing is asked about then.
+ */
+async function askForAuthorization(ctx: RunContext, cand: CandidateRecord, scope: ScopeReport, details: ScopeGateDetails): Promise<AuthorizationOutcome> {
+  if (details.policyViolation) return { kind: 'not-applicable' };
+  const ops = deniedDependencyOperations(scope, ctx.snapshot);
+  if (ops.length === 0) return { kind: 'not-applicable' };
+  const remaining = implementationScopeGate(scopeWithGrants(scope, ops), ctx.snapshot);
+  if (!remaining.passed) return { kind: 'not-applicable' };
+  const pending: string[] = [];
+  const notes: string[] = [];
+  for (const op of ops) {
+    const g = grantFor(ctx, op, cand.treeHash);
+    if (g.state === 'denied') return { kind: 'denied' };
+    if (g.state === 'granted') {
+      if (!authorizedOnce(ctx, op, cand.treeHash)) return { kind: 'denied' };
+      notes.push(`authorized once by ${g.approvedBy} (decision ${g.decisionId}): ${op.summary}; the policy itself does not allow it`);
+      continue;
+    }
+    const q = g.state === 'pending' ? g.questionId : requestAuthorization(ctx, op, cand).id;
+    pending.push(`${q}: ${op.summary}`);
+  }
+  if (pending.length > 0) {
+    return { kind: 'blocked', result: await finishRun(ctx, 'BLOCKED', `supervised mode: candidate ${cand.seq} needs a person's authorization before verification continues; answer approve-once or deny with orbit decide, then orbit resume ${ctx.run.id}. Questions: ${pending.join(' | ')}`, { outcome: { authorization: pending } }) };
+  }
+  return { kind: 'granted', scope: scopeWithGrants(scope, ops), notes };
 }
 
 async function act(ctx: RunContext, cand: CandidateRecord, ev: EvidenceReportRecord): Promise<StepResult> {

@@ -17,7 +17,21 @@ import addFormatsModule from 'ajv-formats';
 import type { ErrorObject, ValidateFunction } from 'ajv/dist/2020.js';
 import configSchema from '../../schemas/config.schema.json' with { type: 'json' };
 import { OrbitError } from '../core/errors.ts';
-import type { CheckCategory, CheckDefinition, OrbitConfig, ProviderConfig, UiConfig } from './types.ts';
+import { applyRedactPatterns } from '../core/redact.ts';
+import type {
+  BudgetRole,
+  CheckCategory,
+  CheckDefinition,
+  DependencyAuditConfig,
+  IsolationLimits,
+  OrbitConfig,
+  ProviderConfig,
+  ReleaseConfig,
+  ReleaseEnvironment,
+  StaticSecurityConfig,
+  UiConfig,
+  UiExplorationConfig,
+} from './types.ts';
 import { globProblem } from './globs.ts';
 import { hostEntryCovered, hostEntryProblem } from './hosts.ts';
 
@@ -110,6 +124,7 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
       change_lockfile: false,
       install_scripts: 'deny-unless-allowlisted',
       install_script_allowlist: [],
+      audit: defaultDependencyAudit(),
     },
     network: { allowed_hosts: ['github.com', 'api.github.com', 'registry.npmjs.org'] },
     ambiguity: {
@@ -160,7 +175,7 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
     verification: { allow_flaky_pass: false },
     checks: {},
     ui: null,
-    isolation: { provider: 'sandbox-runtime', allow_unisolated: false, container: null },
+    isolation: { provider: 'sandbox-runtime', allow_unisolated: false, container: null, limits: defaultIsolationLimits() },
     providers: {
       // Running Orbit at all sends code to Claude, so the Claude adapter is eligible by default.
       claude: defaultProvider('claude', true),
@@ -168,7 +183,9 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
       codex: defaultProvider('codex', false),
     },
     // Fable is left out on purpose: headless Claude Code bills Fable usage credits without asking.
-    routing: { allowed_models: ['opus', 'sonnet', 'haiku'], overrides: {} },
+    routing: { allowed_models: ['opus', 'sonnet', 'haiku'], overrides: {}, output_budgets: { ...DEFAULT_OUTPUT_BUDGETS } },
+    static_security: defaultStaticSecurity(),
+    release: null,
     retention: { keep_runs_days: 30, redact_patterns: [] },
     knowledge: { enabled: true, share_globally: false, max_advisory_tokens: 800, curator_budget_usd: 0.25, eval_budget_usd: 0, auto_adopt_overlays: true },
     guard: { terms_file: null, allowed_emails: [] },
@@ -231,7 +248,67 @@ export function defaultUi(): UiConfig {
       baseline_globs: ['**/*-snapshots/**', '**/__screenshots__/**', '**/__image_snapshots__/**'],
     },
     visual_baseline_auto_accept: false,
+    exploration: defaultUiExploration(),
   };
+}
+
+/** Output token budgets per role: the architecture's token-efficiency table. */
+export const DEFAULT_OUTPUT_BUDGETS: Readonly<Record<BudgetRole, number>> = Object.freeze({
+  planner: 4000,
+  implementer: 8000,
+  verifier: 3000,
+  reviewer: 4000,
+  inquisitor: 3000,
+  curator: 2000,
+  explorer: 2000,
+});
+
+export const BUDGET_ROLES: readonly BudgetRole[] = Object.freeze(Object.keys(DEFAULT_OUTPUT_BUDGETS) as BudgetRole[]);
+
+export function defaultUiExploration(): UiExplorationConfig {
+  return { enabled: false, max_minutes: 15, budget_usd: 2 };
+}
+
+export function defaultDependencyAudit(): DependencyAuditConfig {
+  return { enabled: false, fail_on: 'high', license_allowlist: null, exceptions: [] };
+}
+
+export function defaultStaticSecurity(): StaticSecurityConfig {
+  return { block_severities: ['critical', 'high'], exceptions: [] };
+}
+
+export function defaultIsolationLimits(): IsolationLimits {
+  return { cpu_seconds: null, max_processes: null, max_file_mb: null };
+}
+
+/** Filled in for a `release:` block that leaves its merge settings out. */
+export function defaultReleaseMerge(): ReleaseConfig['merge'] {
+  return { method: 'squash', require_checks: [], delete_branch: true };
+}
+
+/** Filled in for each release environment; deploy_command has no default. */
+export function defaultReleaseEnvironment(baseBranch: string): Omit<ReleaseEnvironment, 'deploy_command'> {
+  return { allowed_branches: [baseBranch], require_ci_green: true, network_hosts: [], timeout_seconds: 1800 };
+}
+
+/**
+ * The sections added after the first snapshots were written, read with their
+ * defaults when a config (an older snapshot's) does not carry them.
+ */
+export function outputBudgets(config: Pick<OrbitConfig, 'routing'>): Record<BudgetRole, number> {
+  return { ...DEFAULT_OUTPUT_BUDGETS, ...(config.routing.output_budgets ?? {}) };
+}
+
+export function staticSecurityPolicy(config: Pick<OrbitConfig, 'static_security'>): StaticSecurityConfig {
+  return config.static_security ?? defaultStaticSecurity();
+}
+
+export function dependencyAuditPolicy(config: Pick<OrbitConfig, 'dependencies'>): DependencyAuditConfig {
+  return config.dependencies.audit ?? defaultDependencyAudit();
+}
+
+export function isolationLimits(config: Pick<OrbitConfig, 'isolation'>): IsolationLimits {
+  return config.isolation.limits ?? defaultIsolationLimits();
 }
 
 function defaultProvider(id: string, eligible: boolean): ProviderConfig {
@@ -254,7 +331,10 @@ export function loadConfig(repoRoot: string, path?: string, opts: Omit<ConfigOpt
     if (code === 'ENOENT') throw new OrbitError('NOT_FOUND', `no Orbit config at ${file}; run "orbit init" to create one`, { path: file });
     throw new OrbitError('CONFIG_INVALID', `cannot read ${file}: ${(err as Error).message}`, { path: file, problems: [`cannot read file: ${code ?? 'error'}`] });
   }
-  return parseConfig(text, { ...opts, source: file });
+  const config = parseConfig(text, { ...opts, source: file });
+  // Commands that read the live config (doctor, init checks, policy show) print through the same redaction a run uses.
+  applyRedactPatterns(config.retention.redact_patterns);
+  return config;
 }
 
 /** Parse YAML text and resolve it. */
@@ -310,12 +390,16 @@ function invalid(source: string, problems: string[]): OrbitError {
 
 function mergeWithDefaults(raw: Record<string, unknown>, mode: RunMode, problems: string[]): Record<string, unknown> {
   const base = defaultConfig(mode) as unknown as Record<string, unknown>;
-  const { checks, ui, providers, ...rest } = raw;
+  const { checks, ui, providers, release, ...rest } = raw;
   const merged = deepMerge(base, rest) as Record<string, unknown>;
   merged.checks = normalizeChecks(checks, problems);
   merged.ui = normalizeUi(ui, problems);
+  const repo = merged.repository;
+  merged.release = normalizeRelease(release, isPlainObject(repo) && typeof repo.base_branch === 'string' ? repo.base_branch : 'main', problems);
   merged.providers = normalizeProviders(providers, base.providers as Record<string, ProviderConfig>);
   normalizeContainer(merged);
+  fillNullDefaults(merged, ['dependencies', 'audit', 'exceptions'], ['expires']);
+  fillNullDefaults(merged, ['static_security', 'exceptions'], ['path_glob', 'expires']);
   normalizeArgvField(merged, ['dependencies', 'install_command'], 'dependencies.install_command', problems);
   return merged;
 }
@@ -361,6 +445,29 @@ function normalizeUi(raw: unknown, problems: string[]): unknown {
   return merged;
 }
 
+function normalizeRelease(raw: unknown, baseBranch: string, problems: string[]): unknown {
+  if (raw === undefined || raw === null) return null;
+  if (!isPlainObject(raw)) return raw;
+  const out: Record<string, unknown> = { ...raw };
+  out.merge = raw.merge === undefined ? defaultReleaseMerge() : isPlainObject(raw.merge) ? { ...defaultReleaseMerge(), ...raw.merge } : raw.merge;
+  if (raw.environments === undefined || raw.environments === null) out.environments = {};
+  else if (isPlainObject(raw.environments)) {
+    const envs: Record<string, unknown> = {};
+    for (const [name, def] of Object.entries(raw.environments)) {
+      if (!isPlainObject(def)) {
+        envs[name] = def;
+        continue;
+      }
+      const env: Record<string, unknown> = { ...defaultReleaseEnvironment(baseBranch), ...def };
+      if (def.deploy_command === undefined) problems.push(`release.environments.${name}.deploy_command: required`);
+      normalizeArgvField(env, ['deploy_command'], `release.environments.${name}.deploy_command`, problems);
+      envs[name] = env;
+    }
+    out.environments = envs;
+  }
+  return out;
+}
+
 function normalizeProviders(raw: unknown, defaults: Record<string, ProviderConfig>): unknown {
   if (raw === undefined || raw === null) return { ...defaults };
   if (!isPlainObject(raw)) return raw;
@@ -374,6 +481,19 @@ function normalizeProviders(raw: unknown, defaults: Record<string, ProviderConfi
 function normalizeContainer(merged: Record<string, unknown>): void {
   const iso = merged.isolation;
   if (isPlainObject(iso) && isPlainObject(iso.container)) iso.container = { ...CONTAINER_DEFAULTS, ...iso.container };
+}
+
+/** Exception entries may leave out their nullable fields; they read as null. */
+function fillNullDefaults(obj: Record<string, unknown>, path: string[], keys: string[]): void {
+  let list: unknown = obj;
+  for (const key of path) list = isPlainObject(list) ? list[key] : undefined;
+  if (!Array.isArray(list)) return;
+  list.forEach((entry, i) => {
+    if (!isPlainObject(entry)) return;
+    const filled: Record<string, unknown> = { ...entry };
+    for (const k of keys) if (filled[k] === undefined) filled[k] = null;
+    list[i] = filled;
+  });
 }
 
 /** argv fields never take a string: there is no `shell` switch for them. */
@@ -491,6 +611,40 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
       }
     }
   },
+  function releaseRules(c, problems) {
+    const release = c.release ?? null;
+    if (c.mode === 'release') {
+      if (release === null) problems.push('release: required in mode "release" (merge settings and the deploy environments)');
+      if (c.actions.merge !== true && c.actions.deploy_production !== true) {
+        problems.push('mode: "release" needs actions.merge or actions.deploy_production to be true; without either, use autonomous-delivery');
+      }
+    }
+    if (release === null) return;
+    const envs = Object.entries(release.environments);
+    if (c.actions.deploy_production === true && envs.length === 0) {
+      problems.push('release.environments: actions.deploy_production is true but no environment is defined to deploy to');
+    }
+    for (const [name, env] of envs) {
+      const where = `release.environments.${name}`;
+      if (env.deploy_command.length > 0 && env.deploy_command[0]!.trim() === '') problems.push(`${where}.deploy_command: the program must not be empty`);
+      env.network_hosts.forEach((h, i) => {
+        const p = hostEntryProblem(h);
+        if (p) problems.push(`${where}.network_hosts[${i}]: ${JSON.stringify(h)} ${p}`);
+        else if (!hostEntryCovered(h, c.network.allowed_hosts)) problems.push(`${where}.network_hosts[${i}]: ${JSON.stringify(h)} is not covered by network.allowed_hosts`);
+      });
+      if (env.allowed_branches.length === 0) problems.push(`${where}.allowed_branches: is empty, so nothing could ever be deployed to ${name}`);
+    }
+  },
+  function staticSecurityRules(c, problems) {
+    const s = c.static_security;
+    if (!s) return;
+    s.exceptions.forEach((e, i) => {
+      if (e.path_glob !== null) {
+        const p = globProblem(e.path_glob);
+        if (p) problems.push(`static_security.exceptions[${i}].path_glob: ${JSON.stringify(e.path_glob)} ${p}`);
+      }
+    });
+  },
   function deliveryChainIsConsistent(c, problems) {
     const a = c.actions;
     if (a.push_task_branch && !a.commit) problems.push('actions.push_task_branch: requires actions.commit (there is nothing to push without a commit)');
@@ -564,11 +718,15 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
   },
   function retentionPatterns(c, problems) {
     c.retention.redact_patterns.forEach((p, i) => {
+      let re: RegExp;
       try {
-        new RegExp(p, 'u');
+        re = new RegExp(p, 'u');
       } catch (err) {
         problems.push(`retention.redact_patterns[${i}]: not a valid regular expression (${(err as Error).message})`);
+        return;
       }
+      // core/redact skips such a pattern (it would tag every position), so accepting it would leave the user's secrets unredacted.
+      if (re.test('')) problems.push(`retention.redact_patterns[${i}]: matches the empty string, so it cannot be applied; require at least one character (for example + instead of *)`);
     });
   },
   function repositoryBranches(c, problems) {

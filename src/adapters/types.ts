@@ -62,6 +62,15 @@ export interface TaskSpec {
   sessionId?: string;
   /** Environment for the task. Adapters start from a scrubbed base and add only these. */
   env: Record<string, string>;
+  /**
+   * Output token budget for this task (routing.output_budgets for the role).
+   * Absent: the policy snapshot's routing.output_budgets for the role, else
+   * ROLE_OUTPUT_TOKENS. null: no budget. The Claude adapter enforces it as
+   * CLAUDE_CODE_MAX_OUTPUT_TOKENS (a verified per-request max_tokens cap);
+   * Codex has no verified output cap, so the budget is an instruction in the
+   * prompt and overruns are measured and recorded.
+   */
+  outputTokens?: number | null;
 }
 
 export interface TaskHandle {
@@ -119,6 +128,10 @@ export interface UsageReport {
   costUsd: number | null;
   /** 'reported' by the provider, 'estimated' from tokens x pricing, or 'unavailable'. Never silently zero. */
   costSource: 'reported' | 'estimated' | 'unavailable';
+  /** Milliseconds from spawn to the first line of provider output, from the worker log; absent when not measured. */
+  timeToFirstEventMs?: number | null;
+  /** The output token budget the task launched under; absent when it ran without one or the record predates budgets. */
+  outputBudgetTokens?: number | null;
 }
 
 export interface ProviderAdapter {

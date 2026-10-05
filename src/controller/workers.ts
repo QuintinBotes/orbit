@@ -20,7 +20,8 @@ import { appendEvent } from '../storage/events.ts';
 import { getDecision, recordDecision } from '../storage/decisions.ts';
 import { finishWorker, getWorker, listActiveWorkers, listWorkers, markWorkerRunning, planWorker, type WorkerOutcome, type WorkerRecord } from '../storage/workers.ts';
 import type { ProviderAdapter, TaskHandle, TaskResult, TaskSpec, UsageReport, WorkerRole } from '../adapters/types.ts';
-import { archiveAttempt, handleFromWorkerDir, LAUNCH_FILE } from '../adapters/supervise.ts';
+import { archiveAttempt, handleFromWorkerDir, LAUNCH_FILE, readLogLines } from '../adapters/supervise.ts';
+import { LOG_FILE } from '../adapters/shim.ts';
 import { renderSystemPrompt, ROLE_OUTPUT_KIND } from '../adapters/prompt.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
 import { profileForWorker } from '../isolation/profiles.ts';
@@ -34,6 +35,7 @@ import type { BudgetPhase } from '../scheduling/types.ts';
 import { homeOf, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
 import { activeOverlayFor } from './knowledge-hooks.ts';
+import { ingestWorkerDenials } from './denials.ts';
 
 export interface WorkerRequest {
   role: WorkerRole;
@@ -52,6 +54,8 @@ export interface WorkerRequest {
   maxBudgetUsd?: number | null;
   ownedPaths?: string[] | null;
   phase?: BudgetPhase;
+  /** A structured-output schema other than the role's (a strict-compatible JSON schema); the result is validated against it. */
+  outputSchema?: object;
 }
 
 export type WorkerStatus =
@@ -126,7 +130,7 @@ async function observe(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): Pr
     const row = finishWorker(ctx.db, w.id, { state: 'LOST', resultStatus: 'lost', error: 'the worker directory has no pid.json' }, ctx.clock, ctx.ownerId);
     return { status: 'finished', worker: row, result: accountFinished(ctx, row, req.phase) };
   }
-  const result = await adapter.collectResult(handle, { outputSchema: schemaFor(w.role) });
+  const result = await adapter.collectResult(handle, { outputSchema: req.outputSchema ?? schemaFor(w.role) });
   if (!result) return { status: 'running', worker: w };
   const row = finishWorker(ctx.db, w.id, outcomeOf(result), ctx.clock, ctx.ownerId);
   return { status: 'finished', worker: row, result: accountFinished(ctx, row, req.phase, result) };
@@ -208,7 +212,7 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
     workerDir: w.workerDir,
     prompt: req.prompt(w.id),
     systemPrompt: systemPromptFor(ctx, w.role),
-    outputSchema: schemaFor(w.role),
+    outputSchema: req.outputSchema ?? schemaFor(w.role),
     readOnly: req.readOnly,
     maxTurns: ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session,
     timeoutMs,
@@ -287,10 +291,28 @@ function emptyUsage(provider: string): UsageReport {
  */
 export function accountWorker(ctx: RunContext, w: WorkerRecord, result: TaskResult, phase: BudgetPhase = 'work'): void {
   if (ctx.db.get('SELECT 1 AS x FROM usage WHERE run_id = ? AND worker_id = ? LIMIT 1', ctx.run.id, w.id)) return;
-  const usage = result.usage ?? emptyUsage(w.provider);
+  // Denials inside the session (guard hook, permission rules) become policy.deny decisions before anything else.
+  try {
+    ingestWorkerDenials({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir, actor: ctx.ownerId }, w);
+  } catch (err) {
+    ctx.log.warn('could not read the worker transcript for policy denials', { worker_id: w.id, error: messageOf(err) });
+  }
+  let usage = result.usage ?? emptyUsage(w.provider);
+  // A session the provider refused at authentication ran no model: its spend is a measured zero, not unknown.
+  if (result.status === 'auth_failed' && usage.costUsd === null && authFailureSpentNothing(w, usage)) usage = { ...usage, costUsd: 0, costSource: 'reported' };
   if (ctx.ledger) {
     const cap = spendCapOf(ctx, w.id);
-    ctx.ledger.consumeCost({ costUsd: usage.costUsd, costSource: usage.costSource }, w.role, { phase, ceilingUsd: cap === null ? null : cap.ceilingUsd });
+    // A lost session is charged its measured usage or at most the role ceiling: the restart that replaces it runs
+    // under a cap of its own, and charging both at the full session cap would count one piece of work twice.
+    const ceilingUsd = cap === null ? null : result.status === 'lost' ? Math.min(cap.ceilingUsd, ROLE_COST_CEILING_USD[w.role]) : cap.ceilingUsd;
+    try {
+      ctx.ledger.consumeCost({ costUsd: usage.costUsd, costSource: usage.costSource }, w.role, { phase, ceilingUsd });
+    } catch (err) {
+      // The charge is recorded (and so is the exhaustion); an authentication failure still blocks on credentials,
+      // which is the truthful cause, rather than ending the run EXHAUSTED on spend nobody can show happened.
+      if (!(result.status === 'auth_failed' && isOrbitError(err, 'BUDGET_EXHAUSTED'))) throw err;
+      ctx.log.warn('budget exhausted while charging an auth-failed session; blocking on credentials', { worker_id: w.id });
+    }
   }
   recordUsage(ctx.db, { runId: ctx.run.id, workerId: w.id, provider: w.provider, model: usage.model ?? w.model, usage, durationMs: result.durationMs }, ctx.clock);
   // A model the provider actually ran on is validated on that surface; nothing else marks a model available.
@@ -302,6 +324,25 @@ export function accountWorker(ctx: RunContext, w: WorkerRecord, result: TaskResu
       /* the registry is advisory here; a failure to update it never fails the step */
     }
   }
+}
+
+/**
+ * True when an auth-failed session's transcript shows no model ran: a result line reporting
+ * total_cost_usd 0 with empty modelUsage, or no assistant message other than the provider's API error
+ * message. Without a transcript, no reported token counts means the same.
+ */
+export function authFailureSpentNothing(w: Pick<WorkerRecord, 'workerDir'>, usage: UsageReport): boolean {
+  if ((usage.inputTokens ?? 0) > 0 || (usage.outputTokens ?? 0) > 0) return false;
+  const path = join(w.workerDir, LOG_FILE);
+  if (!existsSync(path)) return true;
+  const { events } = readLogLines(path);
+  const result = events.filter((e) => e.type === 'result').at(-1);
+  if (result) {
+    const mu = result.modelUsage;
+    const emptyUsageMap = mu === undefined || (typeof mu === 'object' && mu !== null && Object.keys(mu).length === 0);
+    if (result.total_cost_usd === 0 && emptyUsageMap) return true;
+  }
+  return !events.some((e) => e.type === 'assistant' && e.error === undefined && (e as { is_api_error_message?: unknown }).is_api_error_message !== true);
 }
 
 /** Record a worker's spend cap before it starts, so the cost charged without a report is that cap plus one request. */

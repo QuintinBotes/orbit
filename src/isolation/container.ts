@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { OrbitError } from '../core/errors.ts';
+import type { IsolationLimits } from '../policy/types.ts';
+import { dockerUlimitArgs } from './limits.ts';
 import type { IsolationProvider, SandboxProfile, WrappedCommand } from './types.ts';
 import { assertArgv, canonicalPath, isWithin, probeFailure, readablePathsOf, runBounded, uniq, which } from './util.ts';
 
@@ -38,6 +40,8 @@ export interface ContainerOptions {
   user?: { uid: number; gid: number };
   envFileDir?: string;
   probeTimeoutMs?: number;
+  /** `isolation.limits`, passed as docker --ulimit flags (CPU time, process count, file size). */
+  ulimits?: IsolationLimits | null;
 }
 
 export interface ContainerWrappedCommand extends WrappedCommand {
@@ -159,6 +163,7 @@ export class ContainerIsolation implements IsolationProvider {
         '--network', 'none',
         '--memory', `${limits.memoryMb}m`, '--memory-swap', `${limits.memoryMb}m`,
         '--cpus', String(limits.cpus), '--pids-limit', String(limits.pids),
+        ...dockerUlimitArgs(this.opts.ulimits),
         '--read-only', '--tmpfs', `/tmp:rw,noexec,nosuid,size=${this.opts.tmpfsSizeMb ?? 256}m`,
         '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
         '--user', `${user.uid}:${user.gid}`,

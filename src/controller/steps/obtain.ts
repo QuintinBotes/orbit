@@ -10,7 +10,7 @@ import type { TaskResult } from '../../adapters/types.ts';
 import type { WorkerRecord } from '../../storage/workers.ts';
 import type { RunContext } from '../context.ts';
 import { ensureWorker, type WorkerRequest } from '../workers.ts';
-import { handleWorkerFailure, WAIT, type StepResult } from './common.ts';
+import { handleWorkerFailure, retryWait, WAIT, type StepResult } from './common.ts';
 
 export interface ObtainOptions<T> {
   base: string;
@@ -42,6 +42,11 @@ export async function obtain<T>(ctx: RunContext, opts: ObtainOptions<T>): Promis
   for (;;) {
     const purpose = `${opts.base}#${n}`;
     const fresh = ctx.db.get('SELECT 1 AS x FROM workers WHERE run_id = ? AND purpose = ?', ctx.run.id, purpose) === undefined;
+    if (fresh) {
+      // A transient failure set a backoff: nothing new starts for this unit before it passes.
+      const wait = retryWait(ctx, opts.base);
+      if (wait) return { ok: false, step: wait };
+    }
     if (fresh && opts.beforeStart) chargeOnce(ctx, purpose, () => opts.beforeStart!(n));
     const st = await ensureWorker(ctx, opts.request(purpose, n));
     if (st.status === 'running') return { ok: false, step: WAIT(`${opts.what} (${st.worker.id}) is running`) };
@@ -55,7 +60,7 @@ export async function obtain<T>(ctx: RunContext, opts: ObtainOptions<T>): Promis
         failure = { status: 'malformed_output', error: err.message };
       }
     } else failure = { status: r.status, error: r.error };
-    const h = await handleWorkerFailure(ctx, { provider: st.worker.provider, ...failure }, { attemptsUsed: n, maxAttempts: opts.maxAttempts, what: opts.what, ...(opts.exhausted ? { exhausted: opts.exhausted } : {}) });
+    const h = await handleWorkerFailure(ctx, { provider: st.worker.provider, ...failure }, { attemptsUsed: n, maxAttempts: opts.maxAttempts, what: opts.what, base: opts.base, purpose, ...(opts.exhausted ? { exhausted: opts.exhausted } : {}) });
     if (!h.retry) return { ok: false, step: h.result };
     n++;
   }

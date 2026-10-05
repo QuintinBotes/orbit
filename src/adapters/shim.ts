@@ -43,6 +43,8 @@ export const SHIM_LOG_FILE = 'shim.log';
 export const DEFAULT_GRACE_MS = 5_000;
 /** How often the provider's log is scanned for an abort pattern. */
 const ABORT_POLL_MS = 200;
+/** How often the shim looks for the provider's first line of output (time-to-first-event). */
+const FIRST_OUTPUT_POLL_MS = 25;
 /** Leftover helpers get this long after the provider exits before the group is killed. */
 const LEFTOVER_GRACE_MS = 1_000;
 const ESCALATION = ['SIGINT', 'SIGTERM', 'SIGKILL'] as const;
@@ -105,6 +107,8 @@ export interface ExitRecord {
   /** Set when the provider could not be started at all. */
   error: string | null;
   startedAt: number;
+  /** When the provider first wrote to its log; null when it wrote nothing (or an older shim wrote this record). */
+  firstOutputAt?: number | null;
   endedAt: number;
 }
 
@@ -172,6 +176,9 @@ class Shim {
   private childExited = false;
   private settle: ((r: ExitRecord) => void) | null = null;
   private logOffset = 0;
+  /** Size of the log when the provider started; output beyond it is the provider's. */
+  private logStartSize = 0;
+  private firstOutputAt: number | null = null;
   private logCarry = '';
 
   constructor(options: ShimOptions, pgid: number) {
@@ -210,6 +217,7 @@ class Shim {
       } catch {
         this.logOffset = 0;
       }
+      this.logStartSize = this.logOffset;
       // Same process group as the shim (no `detached`), so one group signal
       // reaches the provider and everything it forks.
       child = spawn(command, args, { cwd: this.o.cwd, env: cleanEnv(this.o.env), stdio: [stdin, out, err], windowsHide: true });
@@ -228,6 +236,7 @@ class Shim {
     child.once('exit', (code, signal) => void this.onChildExit(code, signal));
 
     this.writePid(child);
+    this.watchFirstOutput();
 
     if (this.o.timeoutMs > 0) {
       this.later(this.o.timeoutMs, () => {
@@ -346,6 +355,7 @@ class Shim {
   }
 
   private record(code: number | null, signal: string | null, error: string | null): ExitRecord {
+    this.noteFirstOutput();
     return {
       version: 1,
       code,
@@ -356,6 +366,7 @@ class Shim {
       escalation: [...this.escalation],
       error,
       startedAt: this.startedAt,
+      firstOutputAt: this.firstOutputAt,
       endedAt: this.clock.now(),
     };
   }
@@ -401,6 +412,24 @@ class Shim {
       fn();
     }, ms);
     this.timers.add(t);
+  }
+
+  /** Note the moment the provider first wrote to the log, for the model's time-to-first-event latency. */
+  private noteFirstOutput(): void {
+    if (this.firstOutputAt !== null) return;
+    try {
+      if (statSync(join(this.workerDir, LOG_FILE)).size > this.logStartSize) this.firstOutputAt = this.clock.now();
+    } catch {
+      /* no log yet */
+    }
+  }
+
+  private watchFirstOutput(): void {
+    this.later(FIRST_OUTPUT_POLL_MS, () => {
+      if (this.finished) return;
+      this.noteFirstOutput();
+      if (this.firstOutputAt === null) this.watchFirstOutput();
+    });
   }
 
   private watchForAbort(): void {

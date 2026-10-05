@@ -31,7 +31,7 @@ import {
   type ExitRecord,
   type PidRecord,
 } from './shim.ts';
-import type { TaskHandle } from './types.ts';
+import type { TaskHandle, UsageReport } from './types.ts';
 
 /** Intent marker written before the shim is spawned (persist intent before acting). */
 export const LAUNCH_FILE = 'launch.json';
@@ -187,6 +187,24 @@ export function handleFromWorkerDir(provider: string, workerDir: string): TaskHa
     logPath: join(workerDir, LOG_FILE),
     exitPath: join(workerDir, EXIT_FILE),
   };
+}
+
+/** Milliseconds from spawn to the provider's first line of output, from exit.json; null when it wrote nothing or the record predates the measurement. */
+export function timeToFirstEventMs(exit: ExitRecord | null): number | null {
+  if (!exit || typeof exit.firstOutputAt !== 'number' || typeof exit.startedAt !== 'number') return null;
+  return Math.max(0, exit.firstOutputAt - exit.startedAt);
+}
+
+/**
+ * A usage report with what the worker directory knows beyond the provider's
+ * own numbers: time to first output (exit.json) and the output budget the
+ * task launched under (launch.json meta), so overruns can be recorded
+ * wherever the usage is.
+ */
+export function withWorkerTelemetry(usage: UsageReport, workerDir: string): UsageReport {
+  const meta = readJsonIfExists<LaunchRecord>(join(workerDir, LAUNCH_FILE))?.meta;
+  const budget = meta && typeof meta.outputBudgetTokens === 'number' ? meta.outputBudgetTokens : null;
+  return { ...usage, timeToFirstEventMs: timeToFirstEventMs(readExitRecord(workerDir)), outputBudgetTokens: budget };
 }
 
 export type TaskState =

@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
-import { AGENT_ROLES, OPERATING_PROMPT, ROLE_OUTPUT_KIND, fence, readRolePrompt, renderSystemPrompt, renderWorkerPrompt, stripFrontmatter, type WorkerPromptInput } from '../../../src/adapters/prompt.ts';
+import { AGENT_ROLES, OPERATING_PROMPT, ROLE_OUTPUT_KIND, ROLE_OUTPUT_TOKENS, fence, outputBudgetFor, outputBudgetInstruction, readRolePrompt, renderSystemPrompt, renderWorkerPrompt, stripFrontmatter, type WorkerPromptInput } from '../../../src/adapters/prompt.ts';
 import { validateModelOutput } from '../../../src/contract/model-outputs.ts';
 import { renderOverlay } from '../../../src/knowledge/overlays.ts';
 import type { Lesson } from '../../../src/knowledge/types.ts';
@@ -138,5 +138,27 @@ describe('renderWorkerPrompt', () => {
     expect(renderWorkerPrompt(base)).not.toContain('Learned advisory');
     const p = renderWorkerPrompt({ ...base, advisoryBlock: '~~~text orbit-lessons\n1. lesson\n~~~' });
     expect(p).toContain('## Learned advisory (not authority)');
+  });
+});
+
+describe('G28: role output budgets', () => {
+  it('ROLE_OUTPUT_TOKENS covers every role and follows the token-efficiency table', () => {
+    expect(Object.keys(ROLE_OUTPUT_TOKENS).sort()).toEqual([...AGENT_ROLES].sort());
+    expect(ROLE_OUTPUT_TOKENS).toMatchObject({ curator: 2000, planner: 4000, verifier: 3000, inquisitor: 3000, reviewer: 4000, implementer: 8000 });
+  });
+
+  it('prefers an explicit value, then the configured one, then the table', () => {
+    expect(outputBudgetFor('planner')).toBe(4000);
+    expect(outputBudgetFor('planner', { configured: { planner: 5000 } })).toBe(5000);
+    expect(outputBudgetFor('planner', { configured: { planner: 5000 }, explicit: 1200 })).toBe(1200);
+    expect(outputBudgetFor('planner', { configured: { planner: 5000 }, explicit: null })).toBeNull();
+    // A malformed configured value is ignored rather than trusted.
+    expect(outputBudgetFor('planner', { configured: { planner: 0 } })).toBe(4000);
+    expect(outputBudgetFor('planner', { configured: { planner: 'lots' } })).toBe(4000);
+    expect(() => outputBudgetFor('planner', { explicit: -1 })).toThrow(/positive integer/);
+  });
+
+  it('words the instruction with the number', () => {
+    expect(outputBudgetInstruction(3000)).toMatch(/^Output budget: keep your final structured output within 3000 output tokens\./);
   });
 });

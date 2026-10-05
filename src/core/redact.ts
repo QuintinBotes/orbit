@@ -45,6 +45,47 @@ const MIN_EXTRA_SECRET_LENGTH = 4;
 // Short env values ("1", "dev") would turn ordinary words into redactions.
 const MIN_ENV_SECRET_LENGTH = 8;
 
+/**
+ * Configured patterns (`retention.redact_patterns`) in force for this
+ * process, keyed by source and flags. Every redaction honours them: `redact`,
+ * `redactForProvider`, `redactValue` and each `createRedactor` instance, so
+ * the logger, worker prompts, review packets, CI and check logs and the
+ * final report need no extra plumbing to apply a user's patterns.
+ *
+ * Usage: the policy layer calls `applyRedactPatterns(config.retention.redact_patterns)`
+ * whenever it freezes, verifies or loads a policy (policy/snapshot.ts,
+ * policy/config.ts loadConfig), which is how every run's controller picks up
+ * its patterns. A caller that needs a fixed, explicit set instead uses
+ * `createRedactor({ patterns })`, which applies those on top of the
+ * registered ones.
+ *
+ * Patterns are only ever added: one controller process may own runs whose
+ * policies differ, and over-redaction is preferred to a leak, so text is
+ * redacted with the union of every policy this process has loaded.
+ */
+const registered = new Map<string, RegExp>();
+
+/** Register configured patterns for every later redaction in this process. Invalid patterns throw CONFIG-style errors at config load, not here; here they are skipped. */
+export function applyRedactPatterns(patterns: readonly (RegExp | string)[] | null | undefined): void {
+  for (const p of patterns ?? []) {
+    let re: RegExp;
+    try {
+      re = toGlobalRegExp(p);
+    } catch {
+      continue;
+    }
+    // An empty match would put a tag between every character.
+    if (re.test('')) continue;
+    const key = `${re.flags}/${re.source}`;
+    if (!registered.has(key)) registered.set(key, re);
+  }
+}
+
+/** The configured patterns now in force (copies), for diagnostics and tests. */
+export function registeredRedactPatterns(): RegExp[] {
+  return [...registered.values()].map((re) => new RegExp(re.source, re.flags));
+}
+
 /** Redact known secret shapes, the given exact values, and secret-named environment values. */
 export function redact(text: string, extraSecrets?: Iterable<string>): string {
   return redactWith(text, { extraSecrets });
@@ -55,12 +96,17 @@ export function redactForProvider(text: string, extraSecrets?: Iterable<string>)
   return stripHomePaths(redactWith(text, { extraSecrets }));
 }
 
-/** A redactor with fixed options: an explicit environment, extra values and config patterns. */
+/** A redactor with fixed options: an explicit environment, extra values and config patterns (on top of the registered ones). */
 export function createRedactor(options: RedactorOptions = {}): Redactor {
+  const custom: RegExp[] = [];
+  for (const p of options.patterns ?? []) {
+    const re = toGlobalRegExp(p);
+    if (!re.test('')) custom.push(re);
+  }
   const opts: InternalOptions = {
     extraSecrets: options.extraSecrets ? [...options.extraSecrets] : undefined,
     env: options.env,
-    custom: (options.patterns ?? []).map(toGlobalRegExp),
+    custom,
   };
   return {
     redact: (text) => redactWith(text, opts),
@@ -415,7 +461,7 @@ function redactWith(input: string, opts: InternalOptions): string {
     text = applyRule(rule, text);
   }
 
-  for (const re of opts.custom ?? []) {
+  for (const re of [...(opts.custom ?? []), ...registered.values()]) {
     re.lastIndex = 0;
     text = text.replace(re, tag('custom'));
   }
@@ -534,9 +580,20 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 }
 
+/**
+ * Config validation compiles patterns with the `u` flag, so they are applied
+ * with it too (`\p{L}` must mean a letter here as well); a string that only
+ * compiles without it still works for direct callers.
+ */
 function toGlobalRegExp(p: RegExp | string): RegExp {
-  if (typeof p === 'string') return new RegExp(p, 'g');
-  return p.flags.includes('g') ? p : new RegExp(p.source, `${p.flags}g`);
+  if (typeof p === 'string') {
+    try {
+      return new RegExp(p, 'gu');
+    } catch {
+      return new RegExp(p, 'g');
+    }
+  }
+  return p.flags.includes('g') ? new RegExp(p.source, p.flags) : new RegExp(p.source, `${p.flags}g`);
 }
 
 function walk(value: unknown, r: (s: string) => string, seen: WeakSet<object>, depth: number, secretKey: string | null): unknown {

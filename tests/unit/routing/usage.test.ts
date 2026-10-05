@@ -171,3 +171,61 @@ describe('route outcomes', () => {
 function registryPricingUsed(notes: string[]): boolean {
   return !notes.some((n) => n.startsWith('cost unavailable'));
 }
+
+describe('G29: registry latency from time to first event', () => {
+  it('records a rolling median per model and writes it through the registry', () => {
+    const { db, clock, registry } = setup();
+    expect(registry.get(SONNET)?.latencyMs).toBeNull();
+    const rec = (ms: number | null, workerId = 'w') => recordUsage(db, { runId: 'run-1', workerId, usage: report({ outputTokens: 10, timeToFirstEventMs: ms }), durationMs: 1000 }, clock);
+    rec(900);
+    expect(registry.get(SONNET)?.latencyMs).toBe(900);
+    rec(300);
+    expect(registry.get(SONNET)?.latencyMs).toBe(600);
+    rec(5000);
+    expect(registry.get(SONNET)?.latencyMs).toBe(900);
+    // A missing or invalid measurement changes nothing and never records a zero.
+    rec(null);
+    rec(Number.NaN);
+    rec(-5);
+    expect(registry.get(SONNET)?.latencyMs).toBe(900);
+    // Other models keep their own median.
+    expect(registry.get(OPUS)?.latencyMs).toBeNull();
+  });
+
+  it('keeps only the most recent samples, so one slow outlier ages out', () => {
+    const { registry } = setup();
+    registry.recordLatency(SONNET, 60_000, 5);
+    for (let i = 0; i < 5; i++) registry.recordLatency(SONNET, 100, 5);
+    expect(registry.get(SONNET)?.latencyMs).toBe(100);
+  });
+
+  it('prefers an explicit input over the report, and ignores unregistered models', () => {
+    const { db, clock, registry } = setup();
+    recordUsage(db, { runId: 'run-1', workerId: 'w', usage: report({ timeToFirstEventMs: 100 }), timeToFirstEventMs: 700, durationMs: 1 }, clock);
+    expect(registry.get(SONNET)?.latencyMs).toBe(700);
+    expect(registry.recordLatency('no-such-model', 5)).toBeNull();
+    expect(() => recordUsage(db, { runId: 'run-1', workerId: 'w', model: 'no-such-model', usage: report({ model: 'no-such-model', timeToFirstEventMs: 5 }), durationMs: 1 }, clock)).not.toThrow();
+  });
+});
+
+describe('G28: output budget overruns are recorded', () => {
+  const overruns = (db: ReturnType<typeof setup>['db']) => db.all<{ data_json: string }>("SELECT data_json FROM events WHERE type = 'usage.output-budget-exceeded' ORDER BY id").map((r) => JSON.parse(r.data_json) as Record<string, unknown>);
+
+  it('records an event and a note when reported output exceeds the budget, and not otherwise', () => {
+    const { db, clock } = setup();
+    const within = recordUsage(db, { runId: 'run-1', workerId: 'w1', usage: report({ outputTokens: 3000, outputBudgetTokens: 3000 }), durationMs: 1 }, clock);
+    expect(within.outputBudgetExceeded).toBe(false);
+    expect(overruns(db)).toEqual([]);
+    const over = recordUsage(db, { runId: 'run-1', workerId: 'w2', role: 'verifier', usage: report({ outputTokens: 4200, outputBudgetTokens: 3000 }), durationMs: 1 }, clock);
+    expect(over.outputBudgetExceeded).toBe(true);
+    expect(over.notes).toContain('output 4200 tokens exceeded the 3000 token budget for verifier');
+    expect(overruns(db)).toEqual([expect.objectContaining({ worker_id: 'w2', role: 'verifier', output_tokens: 4200, budget_tokens: 3000, over_by: 1200 })]);
+  });
+
+  it('cannot judge an unreported output or an absent budget', () => {
+    const { db, clock } = setup();
+    expect(recordUsage(db, { runId: 'run-1', workerId: 'w', usage: report({ outputTokens: null, outputBudgetTokens: 10 }), durationMs: 1 }, clock).outputBudgetExceeded).toBe(false);
+    expect(recordUsage(db, { runId: 'run-1', workerId: 'w', usage: report({ outputTokens: 99999 }), durationMs: 1 }, clock).outputBudgetExceeded).toBe(false);
+    expect(overruns(db)).toEqual([]);
+  });
+});

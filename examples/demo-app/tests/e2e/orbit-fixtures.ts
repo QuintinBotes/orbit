@@ -9,6 +9,8 @@
  *                              a repository whose config forgot
  *                              `screenshot: 'only-on-failure'` still gets one
  *   orbit-a11y                 one per expectNoSeriousA11yViolations call
+ *   orbit-keyboard             one per expectKeyboardReachable call: tab
+ *                              order, reachability and focus ring per element
  *
  * Requires @playwright/test and @axe-core/playwright in the repository.
  * The file is a template: copy it into the repository's journeys directory;
@@ -23,11 +25,19 @@ import { dirname } from 'node:path';
 
 export { expect };
 
+// These run inside the browser (page.evaluate), where the DOM exists; the repository's
+// TypeScript config may not include the DOM lib, so they are declared loosely here.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+declare const document: any;
+declare const window: any;
+declare function getComputedStyle(el: any): any;
+
 /** Bump when the attachment shapes below change; the runner checks it. */
-export const ORBIT_FIXTURE_VERSION = 1;
+export const ORBIT_FIXTURE_VERSION = 2;
 export const DIAGNOSTICS_ATTACHMENT = 'orbit-diagnostics';
 export const A11Y_ATTACHMENT = 'orbit-a11y';
 export const FAILURE_SCREENSHOT_ATTACHMENT = 'orbit-failure-screenshot';
+export const KEYBOARD_ATTACHMENT = 'orbit-keyboard';
 
 // Bounds keep a chatty page from producing megabytes of attachment and keep
 // any one message from carrying a whole stack dump into a model prompt.
@@ -165,8 +175,23 @@ export interface A11yAttachment {
   seriousOrCritical: number;
   newViolations: A11yEntry[];
   baselined: A11yEntry[];
+  /**
+   * True when ORBIT_A11Y_FAIL_ON=none (ui.accessibility.fail_on_new_serious_or_critical: false):
+   * new violations are recorded here but do not fail the test.
+   */
+  advisory: boolean;
   /** Automated scans find only some problems (spec section 13); said every time, not once in a README. */
   limitation: string;
+}
+
+/**
+ * Which impacts fail a test. Orbit's runner sets ORBIT_A11Y_FAIL_ON from
+ * ui.accessibility.fail_on_new_serious_or_critical: `serious,critical` when
+ * true, `none` when false. Unset (the fixture used outside Orbit) means fail.
+ */
+export function a11yFailsOn(env: Readonly<Record<string, string | undefined>> = process.env): boolean {
+  const raw = (env.ORBIT_A11Y_FAIL_ON ?? 'serious,critical').trim().toLowerCase();
+  return raw !== 'none';
 }
 
 export const A11Y_LIMITATION = 'Automated axe-core scans cover only part of WCAG; a pass is not a claim of accessibility.';
@@ -245,12 +270,153 @@ export async function expectNoSeriousA11yViolations(page: Page, options: A11yOpt
     seriousOrCritical: found.length,
     newViolations,
     baselined: found.filter((e) => known.has(e.fingerprint)),
+    advisory: !a11yFailsOn(),
     limitation: A11Y_LIMITATION,
   };
   await base.info().attach(A11Y_ATTACHMENT, { body: JSON.stringify(attachment), contentType: 'application/json' });
 
+  if (newViolations.length > 0 && attachment.advisory) return;
   if (newViolations.length > 0) {
     const lines = newViolations.map((e) => `  ${e.impact} ${e.ruleId} at ${e.target}: ${e.help}`);
     throw new Error(`${newViolations.length} new serious or critical accessibility violation(s) on ${path} at ${viewport}:\n${lines.join('\n')}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard navigation
+
+export interface KeyboardEntry {
+  selector: string;
+  /** 1-based number of the Tab press that first focused a match; null when never reached. */
+  reachedAtTab: number | null;
+  /** Whether a focus indicator (outline or box-shadow) was visible on the element when focused; null when never reached. */
+  focusVisible: boolean | null;
+}
+export interface KeyboardAttachment {
+  version: number;
+  url: string;
+  viewport: string;
+  tabsPressed: number;
+  ordered: boolean;
+  entries: KeyboardEntry[];
+  /** Selectors never focused within the Tab budget. */
+  unreachable: string[];
+  /** Selectors focused before one that was listed earlier. */
+  outOfOrder: string[];
+  /** Selectors focused without a visible focus indicator. */
+  missingFocusRing: string[];
+  passed: boolean;
+  limitation: string;
+}
+
+export const KEYBOARD_LIMITATION = 'Keyboard checks cover tab order, reachability and a visible focus indicator for the listed elements only; they do not test operation by keyboard, focus traps or screen reader behaviour.';
+
+export interface KeyboardOptions {
+  /** Require the selectors to be reached in the order given (default true). */
+  ordered?: boolean;
+  /** Require a visible focus indicator on each (default true). */
+  requireFocusRing?: boolean;
+  /** Most Tab presses to try (default 60). */
+  maxTabs?: number;
+}
+
+interface Focused {
+  matches: number[];
+  ring: boolean;
+  key: string;
+  isBody: boolean;
+}
+
+/**
+ * Presses Tab from the top of the page and checks that every CSS selector in
+ * `selectors` receives focus, in the order given, with a visible focus
+ * indicator. Call it right after navigation, before clicking anything:
+ * sequential focus navigation starts from the last interaction.
+ */
+export async function expectKeyboardReachable(page: Page, selectors: string[], options: KeyboardOptions = {}): Promise<void> {
+  if (selectors.length === 0) throw new Error('expectKeyboardReachable needs at least one selector');
+  const ordered = options.ordered ?? true;
+  const requireRing = options.requireFocusRing ?? true;
+  const maxTabs = Math.min(Math.max(options.maxTabs ?? 60, 1), 300);
+  await page.evaluate(() => {
+    const active = document.activeElement;
+    if (active && active !== document.body && typeof active.blur === 'function') active.blur();
+    window.scrollTo(0, 0);
+  });
+
+  const entries: KeyboardEntry[] = selectors.map((selector) => ({ selector, reachedAtTab: null, focusVisible: null }));
+  const seen = new Set<string>();
+  let pressed = 0;
+  while (pressed < maxTabs && entries.some((e) => e.reachedAtTab === null)) {
+    await page.keyboard.press('Tab');
+    pressed += 1;
+    const focused = await page.evaluate((sels: string[]): Focused => {
+      let el: any = document.activeElement;
+      while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+      if (!el || el === document.body || el === document.documentElement) return { matches: [], ring: false, key: 'body', isBody: true };
+      const style = getComputedStyle(el);
+      const outline = style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0 && style.outlineColor !== 'rgba(0, 0, 0, 0)' && style.outlineColor !== 'transparent';
+      const ring = outline || (style.boxShadow !== 'none' && style.boxShadow !== '');
+      const matches: number[] = [];
+      sels.forEach((s: string, i: number) => {
+        try {
+          if (el.matches(s)) matches.push(i);
+        } catch {
+          /* invalid selector: reported as unreachable */
+        }
+      });
+      const index = Array.prototype.indexOf.call(document.querySelectorAll(el.tagName), el);
+      return { matches, ring, key: `${el.tagName}#${el.id}:${index}`, isBody: false };
+    }, selectors);
+    if (focused.isBody) {
+      // Focus left the page content: every focusable element has been visited.
+      if (seen.size > 0) break;
+      continue;
+    }
+    if (seen.has(focused.key)) break;
+    seen.add(focused.key);
+    for (const i of focused.matches) {
+      const entry = entries[i];
+      if (entry && entry.reachedAtTab === null) {
+        entry.reachedAtTab = pressed;
+        entry.focusVisible = focused.ring;
+      }
+    }
+  }
+
+  const unreachable = entries.filter((e) => e.reachedAtTab === null).map((e) => e.selector);
+  const outOfOrder: string[] = [];
+  if (ordered) {
+    let last = 0;
+    for (const e of entries) {
+      if (e.reachedAtTab === null) continue;
+      if (e.reachedAtTab < last) outOfOrder.push(e.selector);
+      else last = e.reachedAtTab;
+    }
+  }
+  const missingFocusRing = requireRing ? entries.filter((e) => e.reachedAtTab !== null && e.focusVisible === false).map((e) => e.selector) : [];
+  const size = page.viewportSize();
+  const attachment: KeyboardAttachment = {
+    version: ORBIT_FIXTURE_VERSION,
+    url: new URL(page.url()).pathname,
+    viewport: size ? `${size.width}x${size.height}` : 'unknown',
+    tabsPressed: pressed,
+    ordered,
+    entries,
+    unreachable,
+    outOfOrder,
+    missingFocusRing,
+    passed: unreachable.length === 0 && outOfOrder.length === 0 && missingFocusRing.length === 0,
+    limitation: KEYBOARD_LIMITATION,
+  };
+  await base.info().attach(KEYBOARD_ATTACHMENT, { body: JSON.stringify(attachment), contentType: 'application/json' });
+
+  if (!attachment.passed) {
+    const lines = [
+      ...unreachable.map((s) => `  not reachable by Tab within ${pressed} presses: ${s}`),
+      ...outOfOrder.map((s) => `  focused before an element listed earlier: ${s}`),
+      ...missingFocusRing.map((s) => `  no visible focus indicator: ${s}`),
+    ];
+    throw new Error(`keyboard navigation problems on ${attachment.url} at ${attachment.viewport}:\n${lines.join('\n')}`);
   }
 }

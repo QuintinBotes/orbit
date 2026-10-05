@@ -179,6 +179,8 @@ interface StoredEval {
   observed_cost: { samples: number; cost_usd: number; list_estimate_usd: number | null; cost_basis: string | null; last_at: number } | null;
   qualified_for: string[];
   justified_work_kinds: string[];
+  /** Most recent time-to-first-event samples in milliseconds, oldest first; latency_ms is their median. */
+  latency_samples_ms: number[];
 }
 
 interface Draft {
@@ -270,8 +272,18 @@ function emptyEligibility(): StoredEligibility {
   return { display_name: null, aliases: [], cli_alias: null, min_cli_version: null, requires_explicit_policy: false, provider_default: false, notes: [], provenance: {} };
 }
 
+/** How many recent time-to-first-event samples the rolling median covers. */
+export const LATENCY_WINDOW = 25;
+
+/** Median of a non-empty list; the mean of the two middle values for an even count, rounded. */
+function medianOf(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 === 1 ? (sorted[mid] as number) : Math.round(((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2);
+}
+
 function emptyEval(): StoredEval {
-  return { observed_cost: null, qualified_for: [], justified_work_kinds: [] };
+  return { observed_cost: null, qualified_for: [], justified_work_kinds: [], latency_samples_ms: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -597,6 +609,27 @@ export class ModelRegistry {
       draft.evaluation.qualified_for = uniq([...draft.evaluation.qualified_for, ...(result.qualifiedFor ?? [])]);
       draft.evaluation.justified_work_kinds = uniq([...draft.evaluation.justified_work_kinds, ...(result.justifiedWorkKinds ?? [])]);
       draft.refreshedAt = now;
+      this.writeDraft(draft);
+      return draftToEntry(draft);
+    });
+  }
+
+  /**
+   * Record one time-to-first-event sample for a model (spawn to the first
+   * line of provider output, from the worker log) and set latency_ms to the
+   * median of the most recent `window` samples. Returns null, recording
+   * nothing, for an unregistered model or a sample that is not a finite,
+   * non-negative number.
+   */
+  recordLatency(model: string, ms: number | null | undefined, window = LATENCY_WINDOW): ModelEntry | null {
+    if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return null;
+    const size = Math.max(1, Math.floor(window));
+    return this.db.tx(() => {
+      const draft = this.findDraft(model);
+      if (!draft) return null;
+      const samples = [...(draft.evaluation.latency_samples_ms ?? []), Math.round(ms)].slice(-size);
+      draft.evaluation.latency_samples_ms = samples;
+      draft.latencyMs = medianOf(samples);
       this.writeDraft(draft);
       return draftToEntry(draft);
     });

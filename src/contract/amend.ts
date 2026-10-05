@@ -15,12 +15,12 @@
 import { OrbitError } from '../core/errors.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import type { AcceptanceCriterion, ContractAmendment, GoalContract } from './types.ts';
-import type { AmendmentChange, AmendmentProposal } from './amendment-types.ts';
+import type { AmendmentChange, AmendmentProposal, HumanAmendmentChange, HumanAmendmentProposal } from './amendment-types.ts';
 import { containedInAny, normalizeGlob } from './globs.ts';
 import { validateContract } from './validate.ts';
 import { compareWording, normalizeEntry } from './wording.ts';
 
-export type { AmendmentChange, AmendmentProposal } from './amendment-types.ts';
+export type { AmendmentChange, AmendmentProposal, HumanAmendmentChange, HumanAmendmentProposal } from './amendment-types.ts';
 
 export interface AmendOptions {
   /** The run's frozen policy; scope, checks and merge permission are checked against it. */
@@ -40,6 +40,13 @@ export interface AmendOptions {
    * would let them speak for a different requirement.
    */
   history?: readonly ContractAmendment[];
+  /**
+   * The mandatory checks that already fail on the base revision, as the baseline
+   * recorded them (evidence/baseline.ts BaselineReport.failures). `accept_baseline_failure`
+   * is forbidden without it: an exception is only ever for a failure the baseline
+   * actually recorded, with exactly the recorded fingerprint.
+   */
+  baselineFailures?: readonly { checkId: string; fingerprint: string | null }[];
 }
 
 export interface AmendmentAssessment {
@@ -67,7 +74,7 @@ const DECISION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
  * and CONTRACT_INVALID when the proposal is malformed or the result fails
  * contract validation.
  */
-export function applyAmendment(contract: GoalContract, proposal: AmendmentProposal, opts: AmendOptions): AmendResult {
+export function applyAmendment(contract: GoalContract, proposal: AmendmentProposal | HumanAmendmentProposal, opts: AmendOptions): AmendResult {
   const approvedBy = opts.approvedBy ?? null;
   if (approvedBy !== null && !DECISION_ID.test(approvedBy)) {
     throw new OrbitError('POLICY_DENIED', 'amendment approval must reference a recorded decision id');
@@ -91,14 +98,14 @@ export function applyAmendment(contract: GoalContract, proposal: AmendmentPropos
 }
 
 /** Classify an amendment without applying it; throws CONTRACT_INVALID for malformed proposals. */
-export function assessAmendment(contract: GoalContract, proposal: AmendmentProposal, opts: Pick<AmendOptions, 'snapshot' | 'history'>): AmendmentAssessment {
+export function assessAmendment(contract: GoalContract, proposal: AmendmentProposal | HumanAmendmentProposal, opts: Pick<AmendOptions, 'snapshot' | 'history' | 'baselineFailures'>): AmendmentAssessment {
   if (!proposal || typeof proposal !== 'object' || !proposal.change || typeof proposal.change !== 'object') {
     invalid('amendment must have a change');
   }
   const evidence = text(proposal.evidence, 'evidence');
   const reason = text(proposal.reason, 'reason');
   const next = structuredClone(contract);
-  const ctx: Ctx = { contract, next, snapshot: opts.snapshot, history: opts.history ?? [], approval: [], forbidden: [] };
+  const ctx: Ctx = { contract, next, snapshot: opts.snapshot, history: opts.history ?? [], baselineFailures: opts.baselineFailures ?? null, approval: [], forbidden: [] };
   const change = applyChange(ctx, proposal.change);
   // Cloned so the record cannot change when either contract is later mutated.
   const record: ContractAmendment = {
@@ -118,6 +125,7 @@ interface Ctx {
   next: GoalContract;
   snapshot: PolicySnapshot;
   history: readonly ContractAmendment[];
+  baselineFailures: readonly { checkId: string; fingerprint: string | null }[] | null;
   approval: string[];
   forbidden: string[];
 }
@@ -195,7 +203,7 @@ function noop(): never {
   invalid('the change does not alter the contract');
 }
 
-function applyChange(ctx: Ctx, change: AmendmentChange): Applied {
+function applyChange(ctx: Ctx, change: AmendmentChange | HumanAmendmentChange): Applied {
   const { contract, next } = ctx;
   switch (change.op) {
     case 'clarify_objective': {
@@ -423,6 +431,34 @@ function applyChange(ctx: Ctx, change: AmendmentChange): Applied {
       return { field: 'delivery', oldValue: old, newValue: next.delivery, affected: ['delivery'] };
     }
 
+    case 'accept_baseline_failure': {
+      const checkId = text(change.check_id, 'check_id');
+      const fingerprint = text(change.fingerprint, 'fingerprint');
+      const reason = text(change.reason, 'reason');
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(checkId)) invalid('check_id must be a check id');
+      if (!contract.required_check_ids.includes(checkId)) invalid(`check "${checkId}" is not in required_check_ids, so there is nothing to except`);
+      const previous = (contract.baseline_exceptions ?? []).find((e) => e.check_id === checkId);
+      if (previous && previous.fingerprint === fingerprint) noop();
+      // Never a model's call: accepting a failing mandatory check changes what "green" means.
+      ctx.approval.push(`accepts the failure of check ${checkId} that already exists on the base revision as an exception`);
+      if (ctx.baselineFailures === null) {
+        ctx.forbidden.push('the recorded baseline failures were not supplied, so the fingerprint cannot be confirmed');
+      } else {
+        const recorded = ctx.baselineFailures.find((f) => f.checkId === checkId);
+        if (!recorded) ctx.forbidden.push(`check "${checkId}" did not fail on the base revision, so there is no baseline failure to accept`);
+        else if (recorded.fingerprint === null || recorded.fingerprint !== fingerprint) ctx.forbidden.push(`fingerprint does not equal the failure recorded on the base revision for check "${checkId}"`);
+      }
+      const added = { check_id: checkId, fingerprint, reason };
+      const before = contract.baseline_exceptions ?? [];
+      next.baseline_exceptions = [...before.filter((e) => e.check_id !== checkId), added];
+      return {
+        field: 'baseline_exceptions',
+        oldValue: before,
+        newValue: next.baseline_exceptions,
+        affected: [`check:${checkId}`, ...contract.acceptance_criteria.filter((ac) => ac.check_ids?.includes(checkId)).map((ac) => ac.id)],
+      };
+    }
+
     default: {
       const op = (change as { op?: unknown }).op;
       return invalid(`unknown amendment operation ${JSON.stringify(op)}`);
@@ -439,4 +475,20 @@ function uniqueIds(values: unknown, name: string, minItems: number): string[] {
   }
   if (out.length < minItems) invalid(`${name} needs at least ${minItems} entr${minItems === 1 ? 'y' : 'ies'}`);
   return out;
+}
+
+/**
+ * The proposal a decision request carries when a required check already fails on the base revision.
+ * Applying it still needs a human decision and the recorded fingerprint (see `accept_baseline_failure`).
+ */
+export function baselineExceptionProposal(failure: { checkId: string; fingerprint: string | null; excerpt?: string | null }, reason?: string): HumanAmendmentProposal {
+  if (failure.fingerprint === null || failure.fingerprint.trim() === '') {
+    throw new OrbitError('CONTRACT_INVALID', `check "${failure.checkId}" failed on the base revision without a fingerprint, so it cannot be excepted`);
+  }
+  const excerpt = failure.excerpt?.trim();
+  return {
+    change: { op: 'accept_baseline_failure', check_id: failure.checkId, fingerprint: failure.fingerprint, reason: reason?.trim() || `check ${failure.checkId} already fails on the base revision` },
+    evidence: `the baseline run of check ${failure.checkId} failed with fingerprint ${failure.fingerprint}${excerpt ? `: ${excerpt.slice(0, 400)}` : ''}`,
+    reason: reason?.trim() || `the failure predates this run; accepting it lets the run be judged on its own change, and only while the check keeps failing the same way`,
+  };
 }

@@ -85,14 +85,16 @@ describe.skipIf(!READY)('acceptance: ambiguity (Orbit Inquisition)', () => {
     const contract = JSON.parse(done.contractJson!) as { assumptions: { statement: string; status: string }[] };
     expect(contract.assumptions).toEqual([expect.objectContaining({ statement: question, status: 'needs-decision' })]);
     // Independent work continued: AC-1 was implemented, checked and supported by evidence.
-    expect(listWorkers(db, { runId, role: 'implementer' })).toHaveLength(1);
+    const implementers = listWorkers(db, { runId, role: 'implementer' });
+    expect(implementers).toHaveLength(1);
+    // The implementer was told which criterion waits for a decision, so it does not guess it.
+    expect(readFileSync(join(implementers[0]!.workerDir, 'prompt.md'), 'utf8')).toContain("Blocked, waiting for a person's decision (do not implement or guess them): AC-2.");
     const ev = listEvidenceReports(db, runId).at(-1);
     expect(ev?.report.acceptance_evidence.find((a) => a.criterion_id === 'AC-1')?.status).toBe('supported');
     assertRunInvariants(l, runId);
   }, 180_000);
 
-  // DEFECT: after an Inquisition disposition of continue-partial, nothing keeps the blocked criterion from completion: the run delivers a PR and SUCCEEDS with the material question unanswered and no question persisted.
-  it.fails('scenario 4: the blocked criterion keeps the run from success and delivery, and its question waits for a person', async () => {
+  it('scenario 4: the blocked criterion keeps the run from success and delivery, and its question waits for a person', async () => {
     const { l, runId } = await materialRun();
     const db = l.db();
     const done = runState(l, runId);

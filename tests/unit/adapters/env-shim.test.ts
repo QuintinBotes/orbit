@@ -106,3 +106,22 @@ describe('sessionIdFor', () => {
     expect(sessionIdFor('w2')).not.toBe(a);
   });
 });
+
+describe('G28: the output budget variable', () => {
+  it('sets CLAUDE_CODE_MAX_OUTPUT_TOKENS for Claude only, from the budget', () => {
+    expect(buildWorkerEnv({ ...input('claude'), maxOutputTokens: 4000 }).CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('4000');
+    expect(buildWorkerEnv({ ...input('claude') })).not.toHaveProperty('CLAUDE_CODE_MAX_OUTPUT_TOKENS');
+    expect(buildWorkerEnv({ ...input('claude'), maxOutputTokens: null })).not.toHaveProperty('CLAUDE_CODE_MAX_OUTPUT_TOKENS');
+    expect(buildWorkerEnv({ ...input('codex'), maxOutputTokens: 4000 })).not.toHaveProperty('CLAUDE_CODE_MAX_OUTPUT_TOKENS');
+  });
+
+  it('never takes the cap from the host environment or from caller-supplied extras', () => {
+    expect(buildWorkerEnv({ ...input('claude'), base: { ...HOST, CLAUDE_CODE_MAX_OUTPUT_TOKENS: '128000' }, maxOutputTokens: 4000 }).CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('4000');
+    expect(() => buildWorkerEnv({ ...input('claude', { CLAUDE_CODE_MAX_OUTPUT_TOKENS: '128000' }), maxOutputTokens: 4000 })).toThrow(/may not set CLAUDE_CODE_MAX_OUTPUT_TOKENS/);
+    expect(() => passThrough({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: '1' }, ['CLAUDE_CODE_MAX_OUTPUT_TOKENS'])).toThrow(/may not pass through/);
+  });
+
+  it('refuses a budget that is not a positive integer', () => {
+    for (const bad of [0, -1, 1.5, Number.NaN]) expect(() => buildWorkerEnv({ ...input('claude'), maxOutputTokens: bad })).toThrow(/positive integer/);
+  });
+});

@@ -20,7 +20,9 @@ export {
   branchRef,
   createDeliveryCommit,
   deliveryRef,
+  fetchBranchContaining,
   findDeliveryCommit,
+  hasCommit,
   gitEnv,
   isObjectId,
   lsRemoteBranch,
@@ -42,10 +44,12 @@ export {
   CHECK_BUCKETS,
   FakeGitHub,
   GhCliClient,
+  MERGE_METHODS,
   classifyGhFailure,
   parseAuthStatus,
   parseChecks,
   parseFailedSteps,
+  parseMergeState,
   parsePullRequest,
   parsePullRequestList,
   parseRunListAsChecks,
@@ -62,11 +66,15 @@ export {
   type GhCliOptions,
   type GhRunner,
   type GitHubClient,
+  type MergeMethod,
+  type MergePullRequestInput,
+  type MergeState,
   type PullRequestInfo,
   type PullRequestState,
 } from './github.ts';
 export { assertDeliverable, assertRecordedBindings, verifyCandidateTree, type DeliveryCandidate, type DeliveryEvidence, type DeliveryReview, type DeliveryRun, type GateInput } from './gate.ts';
 export { deliver, type DeliverInput, type DeliveryReport, type DeliveryResult } from './deliver.ts';
+export { performRelease, releaseConfig, verdictOf, type CheckVerdict, type DeployReceipt, type MergeReceipt, type ReleaseInput, type ReleaseReadiness, type ReleaseResult } from './release.ts';
 export {
   CI_STATES,
   ciFingerprint,

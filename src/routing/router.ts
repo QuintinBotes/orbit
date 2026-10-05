@@ -372,9 +372,16 @@ function observedDifficulty(ctx: Ctx, startTier: number): Trigger[] {
       // Spec escalation column: coupled changes or difficult causal failures.
       // A complex classification is a prediction, not observed difficulty, so
       // it raises effort (see finish) rather than the tier.
+      // A single failed attempt is not a difficult causal failure: it gets a
+      // repair brief on the same tier. The failed-attempt signal counts only
+      // once equivalent failures have repeated up to the threshold
+      // (docs/decisions/0001, "Implementer escalation").
       if (s.coupled) out.push({ signal: 'coupled-change', detail: 'the change couples several subsystems', evidence: ctx.evidence });
       if (repeated) out.push(repeatedT);
-      if (strongFailed) out.push(strongT);
+      if (strongFailed && repeatedCount) out.push(strongT);
+      else if (strongFailed) {
+        ctx.ignored.push(`a single failed attempt on ${prev?.model ?? 'unknown'} does not escalate ${ctx.workKind}; ${s.repeatedFingerprints} of ${ctx.threshold} equivalent failures observed, so it gets a repair brief on the same tier`);
+      }
       break;
     case 'architecture':
     case 'complex-diagnosis':

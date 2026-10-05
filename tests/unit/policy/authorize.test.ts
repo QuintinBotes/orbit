@@ -144,7 +144,7 @@ describe('actions', () => {
     const autonomous = snapshotOf('mode: autonomous\n');
     expect(authorize(autonomous, { kind: 'action', action: 'open_pull_request' })).toMatchObject({ allowed: false, rule: 'actions.open_pull_request' });
     expect(authorize(autonomous, { kind: 'action', action: 'test' })).toMatchObject({ allowed: true });
-    const release = snapshotOf('mode: release\nactions: {merge: true}\n');
+    const release = snapshotOf('mode: release\nactions: {merge: true}\nrelease: {merge: {method: squash}}\n');
     expect(authorize(release, { kind: 'action', action: 'merge' })).toMatchObject({ allowed: true, rule: 'actions.merge' });
   });
 
@@ -290,5 +290,21 @@ describe('bash', () => {
     expect(bash('PATH=./evil:$PATH git status')).toMatchObject({ allowed: false, rule: 'bash.opaque' });
     expect(bash('$TOOL --version')).toMatchObject({ allowed: false, rule: 'bash.opaque' });
     expect(authorize(DEFAULT, { kind: 'bash', command: 'ls' })).toMatchObject({ allowed: false, rule: 'scope.no-root' });
+  });
+});
+
+describe('actions.change_permissions (gap G26: the key has an effect)', () => {
+  const permitted = snapshotOf('scope: {allowed_paths: ["apps/**", "tests/**"]}\nactions: {change_permissions: true}\n');
+
+  it('denies commands that change file modes, owners, ACLs or flags unless the policy allows it', () => {
+    for (const cmd of ['chmod +x apps/web/a.ts', '/bin/chmod 644 apps/web/a.ts', 'npm test && chmod -R g+w apps', 'chflags uchg apps/web/a.ts', 'setfacl -m u:acme:rw apps/web/a.ts', 'chattr +i apps/web/a.ts']) {
+      expect(bash(cmd), cmd).toMatchObject({ allowed: false, rule: 'actions.change_permissions' });
+    }
+    expect(bash('chmod +x apps/web/a.ts', permitted)).toMatchObject({ allowed: true });
+    // Allowing permission changes widens nothing else: protected paths and setuid stay denied.
+    expect(bash('chmod 600 .env', permitted)).toMatchObject({ allowed: false, rule: 'bash.protected-write' });
+    expect(bash('chmod u+s apps/web/a.ts', permitted)).toMatchObject({ allowed: false, rule: 'bash.privilege' });
+    // Ordinary commands are unaffected.
+    expect(bash('ls -l apps/web')).toMatchObject({ allowed: true });
   });
 });

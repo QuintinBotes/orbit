@@ -27,6 +27,7 @@ import type { OrbitDb } from '../storage/db.ts';
 import type { Clock } from '../core/clock.ts';
 import { listEvidenceReports } from '../evidence/store.ts';
 import { listFindings, listReviews } from '../review/store.ts';
+import { readSecurityPolicy } from '../review/resolve.ts';
 import { listLedger, listQuestions } from '../inquisition/store.ts';
 import { summarizeUsage } from '../routing/usage.ts';
 import { BudgetLedger } from '../scheduling/budget.ts';
@@ -123,6 +124,21 @@ export function buildFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportO
   risks.push(...(env?.gate?.notes ?? []));
   if (!usage.costComplete || budget.cost_measurement.includes('unmeasured')) risks.push(`model spend: ${budget.cost_measurement}`);
   for (const f of findings.filter((x) => x.status === 'advisory' || x.status === 'open' || x.status === 'claim_pending')) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}): ${f.claim.slice(0, 160)}`);
+  // Confirmed defects not yet resolved are blocking; they must never vanish from the report.
+  for (const f of findings.filter((x) => x.status === 'accepted')) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, accepted, unresolved, blocking): ${f.claim.slice(0, 160)}`);
+  let exceptions: { expires?: string }[] = [];
+  try {
+    if (opts.snapshot) exceptions = readSecurityPolicy(opts.snapshot).exceptions;
+  } catch {
+    exceptions = [];
+  }
+  for (const f of findings.filter((x) => x.status === 'excepted')) {
+    const ex = (f.resolutionJson as { exception?: { index?: unknown; reason?: unknown } } | null)?.exception;
+    const index = typeof ex?.index === 'number' ? ex.index : -1;
+    const expires = exceptions[index]?.expires;
+    const reason = typeof ex?.reason === 'string' ? ex.reason : (f.resolution ?? 'no reason recorded');
+    risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, excepted by policy): ${f.claim.slice(0, 120)}; exception reason: ${reason.slice(0, 160)}; expires: ${expires ?? 'never'}`);
+  }
   for (const q of listQuestions(db, run.id, { status: 'open' })) risks.push(`open question: ${q.question.slice(0, 200)}`);
   for (const c of ev?.report.checks.filter((x) => x.flaky) ?? []) risks.push(`check ${c.id} passed only on a rerun (flaky)`);
 

@@ -4,6 +4,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ClaudeAdapter } from '../../../src/adapters/claude.ts';
+import { outputBudgetInstruction } from '../../../src/adapters/prompt.ts';
 import { readExitRecord, readPidRecord } from '../../../src/adapters/shim.ts';
 import { archiveAttempt, nextSessionId } from '../../../src/adapters/supervise.ts';
 import { FAKE_CLAUDE, IMPLEMENTER_OUTPUT, alive, implementerSpec, makeFixture, waitFor, writeScenario, type Fixture } from './helpers.ts';
@@ -74,7 +75,7 @@ describe.skipIf(!canStripTypes)('ClaudeAdapter + shim + fake-claude', () => {
     expect(call.envKeys).not.toContain('SSH_AUTH_SOCK');
     expect(call.envKeys).not.toContain('AWS_SECRET_ACCESS_KEY');
     expect(call.envKeys).toEqual(expect.arrayContaining(['ORBIT_POLICY_PATH', 'ORBIT_POLICY_HASH', 'ORBIT_WORKTREE', 'CLAUDE_CODE_DISABLE_AUTO_MEMORY', 'GIT_OPTIONAL_LOCKS']));
-    expect(call.promptBytes).toBe('Change apps/a.ts.'.length);
+    expect(call.promptBytes).toBe(`Change apps/a.ts.\n\n${outputBudgetInstruction(8000)}\n`.length);
     expect(call.argv).toEqual(expect.arrayContaining(['--session-id', handle.sessionId, '--permission-mode', 'dontAsk', '--strict-mcp-config']));
 
     const { events, nextOffset } = await a.streamEvents(handle, 0);

@@ -67,8 +67,7 @@ describe.skipIf(!canStripTypes)('fault: worker killed during an edit', () => {
     expect(events(l, run.id, 'lease.takeover').length).toBeGreaterThanOrEqual(1);
   }, 90_000);
 
-  // DEFECT: controller/steps/implementing.ts:132-147 treats a LOST implementer under a live controller as a finished attempt (no bounded restart) and its unreported cost is charged at the session ceiling, which EXHAUSTS the run at once.
-  it.fails('the worker dies under a live controller: it is detected LOST and restarted in the preserved worktree, without a duplicate', async () => {
+  it('the worker dies under a live controller: it is detected LOST and restarted in the preserved worktree, without a duplicate', async () => {
     const l = t.lab();
     writeScenario(l, crashingScenario());
     const run = startLabRun(l);

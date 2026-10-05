@@ -40,6 +40,9 @@ import { isTerminal, RUN_STATES, type RunState } from './states.ts';
 import { step } from './steps/index.ts';
 import type { StepResult } from './steps/common.ts';
 import { finalizeRun, writeFinalReport } from './report.ts';
+import { pruneExpiredRuns, type PruneResult } from '../storage/retention.ts';
+
+const DAY_MS = 24 * 60 * 60_000;
 
 export interface ControllerOptions {
   deps: Omit<ControllerDeps, 'ownerId'> & { ownerId?: string };
@@ -77,6 +80,12 @@ export interface ControllerOptions {
   credentialCheckMs?: number;
   /** Providers checked with a live probe (a tiny real request) rather than a status query. Default Claude, whose status cannot see an expired credential. */
   liveProbeProviders?: readonly string[];
+  /**
+   * Artifact retention (retention.keep_runs_days): expired finished runs are pruned when the controller starts and,
+   * in service mode, every `intervalMs` (default one day; 0 turns the periodic pass off). `keepDays` overrides the
+   * value read from the newest run's frozen policy.
+   */
+  retention?: { keepDays?: number; intervalMs?: number };
 }
 
 export interface TickReport {
@@ -108,6 +117,7 @@ export class Controller {
   private stopping: Promise<void> | null = null;
   private signalHandler: ((sig: NodeJS.Signals) => void) | null = null;
   private watching = false;
+  private pruning = false;
   lastReconcile: ReconcileReport | null = null;
 
   constructor(opts: ControllerOptions) {
@@ -142,6 +152,13 @@ export class Controller {
 
     await this.reconcile(this.opts.mode === 'foreground' ? [this.opts.runId!] : undefined);
     this.ensureFinalReports();
+    await this.pruneRetention();
+    const retentionMs = this.opts.retention?.intervalMs ?? DAY_MS;
+    if (this.opts.mode === 'service' && retentionMs > 0) {
+      const t = setInterval(() => void this.pruneRetention(), retentionMs);
+      t.unref();
+      this.timers.push(t);
+    }
     while (!this.stopped) {
       await this.tick();
       if (this.opts.mode === 'foreground' && this.foregroundDone()) break;
@@ -516,6 +533,48 @@ export class Controller {
         this.log.warn('final report repair failed', { run_id: row.id, error: messageOf(err) });
       }
     }
+  }
+
+  /**
+   * Remove the artifacts of finished runs older than retention.keep_runs_days (storage/retention). The period
+   * comes from the newest run's frozen policy for each repository in this database, unless the options set it.
+   * Never fails the controller: a pass that cannot run is logged and tried again on the next one.
+   */
+  async pruneRetention(): Promise<PruneResult[]> {
+    if (this.pruning || this.stopped) return [];
+    this.pruning = true;
+    const out: PruneResult[] = [];
+    try {
+      const { db, clock } = this.deps;
+      for (const { repo_root: repoRoot } of db.all<{ repo_root: string }>('SELECT DISTINCT repo_root FROM runs')) {
+        try {
+          const keepDays = this.opts.retention?.keepDays ?? this.keepDaysFor(repoRoot);
+          if (keepDays === null) continue;
+          const r = await pruneExpiredRuns(db, { repoRoot, keepDays, clock, orbitHome: this.deps.orbitHome });
+          out.push(r);
+          if (r.pruned.length > 0 || r.skipped.length > 0) this.log.info('retention pass', { repo: repoRoot, keep_days: keepDays, pruned: r.pruned.map((p) => p.runId), skipped: r.skipped.length });
+        } catch (err) {
+          this.log.warn('retention pass failed', { repo: repoRoot, error: messageOf(err) });
+        }
+      }
+    } finally {
+      this.pruning = false;
+    }
+    return out;
+  }
+
+  /** retention.keep_runs_days of the newest run of a repository whose frozen policy still verifies. */
+  private keepDaysFor(repoRoot: string): number | null {
+    for (const row of this.deps.db.all<{ id: string }>('SELECT id FROM runs WHERE repo_root = ? ORDER BY created_at DESC LIMIT 20', repoRoot)) {
+      try {
+        const run = getRun(this.deps.db, row.id);
+        const days = verifySnapshot(run.policyPath, run.policyHash).config.retention?.keep_runs_days;
+        if (typeof days === 'number' && Number.isInteger(days) && days >= 1) return days;
+      } catch {
+        /* a pruned or unverifiable snapshot says nothing; try an older run */
+      }
+    }
+    return null;
   }
 
   /** Runs this controller currently owns. */

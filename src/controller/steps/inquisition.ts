@@ -17,8 +17,6 @@ import { profileForWorker } from '../../isolation/profiles.ts';
 import { currentEvidenceReport } from '../../evidence/store.ts';
 import { homeOf, type RunContext } from '../context.ts';
 import { assertLeaseHeld } from '../run-store.ts';
-import type { ProviderAdapter, TaskSpec } from '../../adapters/types.ts';
-import { ENV_POLICY_HASH, ENV_POLICY_PATH, ENV_WORKTREE } from '../../policy/guard-hook.ts';
 import type { RunState } from '../states.ts';
 import { adapterFor, collectIfFinished, routeFor, systemPromptFor } from '../workers.ts';
 import { listActiveWorkers } from '../../storage/workers.ts';
@@ -47,7 +45,7 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
   const supported = ctx.candidate ? (currentEvidenceReport(ctx.db, ctx.run.id, ctx.candidate.id)?.report.acceptance_evidence.filter((a) => a.status === 'supported').map((a) => a.criterion_id) ?? []) : [];
   const result = await runInquisition({
     trigger,
-    adapter: guardEnvAdapter(adapterFor(ctx, route.provider)),
+    adapter: adapterFor(ctx, route.provider),
     context: {
       db: ctx.db,
       clock: ctx.clock,
@@ -110,25 +108,4 @@ function enteringTrigger(ctx: RunContext): Trigger | null {
   if (!row?.data_json) return null;
   const d = JSON.parse(row.data_json) as { data?: { trigger?: Trigger } };
   return d.data?.trigger ?? null;
-}
-
-/**
- * The engine names the guard hook's variables in the task environment, which every adapter refuses
- * (POLICY_DENIED: a worker environment may not set them), so no inquisitor could start. The adapters set
- * those variables themselves from `policyPath`, `policyHash` and `cwd`; here they are moved there instead.
- */
-function guardEnvAdapter(inner: ProviderAdapter): ProviderAdapter {
-  const reserved = new Set([ENV_POLICY_PATH, ENV_POLICY_HASH, ENV_WORKTREE]);
-  const scrub = (spec: TaskSpec): TaskSpec => {
-    const env = Object.fromEntries(Object.entries(spec.env).filter(([k]) => !reserved.has(k)));
-    const hash = spec.policyHash ?? spec.env[ENV_POLICY_HASH];
-    return { ...spec, env, ...(hash === undefined ? {} : { policyHash: hash }) };
-  };
-  return new Proxy(inner, {
-    get(target, prop) {
-      if (prop === 'startTask') return (spec: TaskSpec) => target.startTask(scrub(spec));
-      const v: unknown = Reflect.get(target, prop, target);
-      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
-    },
-  });
 }

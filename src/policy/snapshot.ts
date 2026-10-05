@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
 import { atomicWrite } from '../core/fsx.ts';
 import { hashObject } from '../core/hash.ts';
+import { applyRedactPatterns } from '../core/redact.ts';
 import type { Clock } from '../core/clock.ts';
 import type { OrbitConfig, PolicySnapshot } from './types.ts';
 import { effectiveProtectedPaths } from './builtin.ts';
@@ -73,6 +74,7 @@ export function snapshotPolicy(config: OrbitConfig, input: SnapshotInput): Snaps
   };
   const hash = snapshotHash(snapshot);
   atomicWrite(path, `${JSON.stringify(snapshot, null, 2)}\n`, SNAPSHOT_MODE);
+  applySnapshotRedaction(snapshot);
   return { snapshot: deepFreeze(snapshot), hash, path };
 }
 
@@ -122,8 +124,17 @@ export function verifySnapshot(path: string, expectedHash: string): PolicySnapsh
   if (odd !== null) throw tampered(path, `the policy snapshot contains the key ${JSON.stringify(odd)}, which is never written by Orbit`);
   const actual = snapshotHash(parsed);
   if (actual !== expectedHash) throw tampered(path, 'the policy snapshot does not match its recorded hash', { actual });
+  // Every process that acts for a run verifies its snapshot first, so this is where the run's own
+  // redaction patterns come into force for its logs, prompts, packets and reports (S3.28).
+  applySnapshotRedaction(parsed);
   // Frozen so that nothing downstream can drift from what was verified.
   return deepFreeze(parsed);
+}
+
+/** Put the snapshot's `retention.redact_patterns` in force for every redaction in this process (core/redact). */
+export function applySnapshotRedaction(snapshot: Pick<PolicySnapshot, 'config'>): void {
+  const patterns = (snapshot.config as Partial<OrbitConfig>).retention?.redact_patterns;
+  if (Array.isArray(patterns)) applyRedactPatterns(patterns.filter((p): p is string => typeof p === 'string'));
 }
 
 function deepFreeze<T>(value: T): T {

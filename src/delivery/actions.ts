@@ -1,6 +1,7 @@
 /**
  * The external-action ledger (spec §15, scenario 8). Every action that leaves
- * the machine (a commit that will be pushed, a push, a pull request) goes
+ * the machine (a commit that will be pushed, a push, a pull request, and in
+ * release mode a merge or a deployment) goes
  * through `performAction`:
  *
  *   validate -> persist INTENT -> mark EXECUTING -> execute -> receipt (SUCCEEDED)
@@ -36,7 +37,7 @@ export const ACTION_STATES = ['INTENT', 'EXECUTING', 'SUCCEEDED', 'UNKNOWN', 'FA
 export type ActionState = (typeof ACTION_STATES)[number];
 
 /** Kinds Orbit's delivery performs. The kind names the fault points: `delivery.<kind>.after-execute`. */
-export const ACTION_KINDS = ['commit', 'push', 'pr_create', 'pr_update'] as const;
+export const ACTION_KINDS = ['commit', 'push', 'pr_create', 'pr_update', 'merge', 'deploy'] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
 export const DEFAULT_MAX_ATTEMPTS = 3;

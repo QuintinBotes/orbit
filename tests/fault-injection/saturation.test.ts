@@ -69,8 +69,7 @@ describe('fault: resource saturation (scheduler)', () => {
 });
 
 describe.skipIf(!canStripTypes)('fault: resource saturation (controller with real workers)', () => {
-  // DEFECT: controller/steps/implementing.ts:87 builds the scheduler's running set from this run's workers only (listActiveWorkers(ctx.db, ctx.run.id)), so with memory saturated each run gets its own "one worker" slot and two runs start two implementers at once.
-  it.fails('with memory saturated, a controller owning two runs never has more than one implementer running', async () => {
+  it('with memory saturated, a controller owning two runs never has more than one implementer running', async () => {
     const l = t.lab();
     writeScenario(l, baseScenario({ implementer: [{ ...implementMul('*'), sleepMs: 2_500 }] }));
     const first = startLabRun(l);

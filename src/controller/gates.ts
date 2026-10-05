@@ -27,6 +27,8 @@ import { currentEvidenceReport, type CandidateRecord, type EvidenceReportRecord 
 import type { ScopeReport } from '../evidence/types.ts';
 import type { UiRunResult } from '../ui/types.ts';
 import { isOrbitError } from '../core/errors.ts';
+import { criteriaBlockedByQuestions, openQuestions } from '../inquisition/questions.ts';
+import type { QuestionRecord } from '../inquisition/store.ts';
 import type { RunRecord } from './run-store.ts';
 import type { SecretScanResult } from './security.ts';
 
@@ -350,16 +352,23 @@ export interface CompletionInput {
   now: number;
 }
 
+/** Criteria blocked by open material questions, with the questions that block them. */
+export function blockingQuestions(db: OrbitDb, runId: string): { criteria: string[]; questions: QuestionRecord[] } {
+  const waiting = openQuestions(db, runId).filter((q) => q.material);
+  const criteria = criteriaBlockedByQuestions(waiting);
+  return { criteria, questions: waiting.filter((q) => q.affected.some((a) => criteria.includes(a))) };
+}
+
 /**
  * No success without current evidence: a fresh PASS report and an APPROVE
  * review of the same tree, and the delivered (or locally branched) commit's
  * tree equal to it.
  */
-export function completionGate(db: OrbitDb, input: CompletionInput): GateResult<{ evidenceId: string | null; reviewId: string | null }> {
+export function completionGate(db: OrbitDb, input: CompletionInput): GateResult<{ evidenceId: string | null; reviewId: string | null; blockedCriteria: string[] }> {
   const reasons: string[] = [];
   const evidence: string[] = [];
   const c = input.candidate;
-  if (!c) return result('completion', ['there is no candidate'], [], [], { evidenceId: null, reviewId: null });
+  if (!c) return result('completion', ['there is no candidate'], [], [], { evidenceId: null, reviewId: null, blockedCriteria: [] });
   const report = currentEvidenceReport(db, input.run.id, c.id);
   if (!report) reasons.push(`no live evidence report for candidate ${c.id}`);
   else {
@@ -373,8 +382,11 @@ export function completionGate(db: OrbitDb, input: CompletionInput): GateResult<
   if (!approve) reasons.push(`no APPROVE review of tree ${c.treeHash}`);
   else evidence.push(`review ${approve.id} by ${approve.provider}: APPROVE on tree ${approve.treeHash}`);
   if (!g.ok) reasons.push(...g.reasons);
+  // A criterion an open material question blocks is not done, whatever the checks say (spec section 10).
+  const { criteria: blocked, questions: waiting } = blockingQuestions(db, input.run.id);
+  if (blocked.length > 0) reasons.push(`${blocked.join(', ')} ${blocked.length === 1 ? 'is' : 'are'} blocked by open question(s) ${waiting.map((q) => q.id).join(', ')} waiting for a person`);
   if (input.deliveredTree === null) reasons.push('no delivered commit to compare with the reviewed tree');
   else if (input.deliveredTree !== c.treeHash) reasons.push(`the delivered tree ${input.deliveredTree} is not the reviewed tree ${c.treeHash}`);
   else evidence.push(`delivered tree ${input.deliveredTree}`);
-  return result('completion', reasons, evidence, [], { evidenceId: report?.id ?? null, reviewId: approve?.id ?? null });
+  return result('completion', reasons, evidence, [], { evidenceId: report?.id ?? null, reviewId: approve?.id ?? null, blockedCriteria: blocked });
 }

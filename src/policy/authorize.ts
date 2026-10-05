@@ -15,6 +15,8 @@
  *   dependency  dependencies.add_packages / change_lockfile / install_scripts.
  *   network     host must match network.allowed_hosts (see hosts.ts forms).
  *   bash        classifyBash, then the rules above for whatever it found;
+ *               commands that change file modes, owners, ACLs or flags
+ *               need actions.change_permissions;
  *               write targets are resolved like edits, globs are expanded
  *               against the disk and also judged as patterns, link targets
  *               count as writes, and files with other hard links are never
@@ -268,11 +270,25 @@ function authorizeBash(config: OrbitConfig, c: Compiled, command: unknown, ctx: 
       if (d) return d;
     }
   }
+  if (config.actions.change_permissions !== true) {
+    const perm = cls.commands.find((x) => PERMISSION_COMMANDS.has(commandName(x.argv[0]))) ?? cls.writes.find((w) => PERMISSION_COMMANDS.has(commandName(w.via)));
+    if (perm) {
+      const what = 'argv' in perm ? perm.argv.slice(0, 3).join(' ') : `${perm.via} ${perm.path}`;
+      return deny('actions.change_permissions', `${what} changes file permissions, which this policy does not authorize (actions.change_permissions is false)`);
+    }
+  }
   for (const w of cls.writes) {
     const d = judgeWrite(config, c, w, root);
     if (d) return d;
   }
   return allow('bash.allowed', `${cls.category}: nothing statically denied (advisory; the OS sandbox and diff inspection still apply)`);
+}
+
+/** Commands that change file modes, owners, ACLs or flags: actions.change_permissions. */
+export const PERMISSION_COMMANDS: ReadonlySet<string> = new Set(['chmod', 'chown', 'chgrp', 'chflags', 'chattr', 'setfacl', 'lchmod', 'lchown']);
+
+function commandName(word: string | undefined): string {
+  return (word ?? '').split('/').pop() ?? '';
 }
 
 function judgeCommand(config: OrbitConfig, cmd: BashCommandInfo): AuthorizationDecision | null {

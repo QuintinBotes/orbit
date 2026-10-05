@@ -47,6 +47,7 @@ import { assertClaudeSettings, renderClaudeSettings, type ClaudeTier } from './c
 import { CLAUDE_AUTH_ERRORS, classifyClaudeTranscript, claudeEvents, claudeUsage, emptyUsage, type ClaudeTaskResult } from './claude-transcript.ts';
 import { defaultOrbitCommands } from './commands.ts';
 import { buildWorkerEnv, passThrough, claudeEnvCredential } from './env.ts';
+import { outputBudgetFor, outputBudgetInstruction } from './prompt.ts';
 import type { AbortPattern } from './shim.ts';
 import {
   LAUNCH_FILE,
@@ -59,6 +60,7 @@ import {
   readNewLines,
   nextSessionId,
   taskState,
+  withWorkerTelemetry,
   type LaunchRecord,
 } from './supervise.ts';
 import type { CredentialStatus, ProviderAdapter, ProviderCapabilities, ProviderEvent, TaskHandle, TaskSpec, UsageReport } from './types.ts';
@@ -245,7 +247,9 @@ export class ClaudeAdapter implements ProviderAdapter {
     const tmpDir = prepareWorkerTmpDir(workerDir);
     const baseEnv = this.baseEnv();
     const tier = await this.chooseTier(baseEnv);
-    const env = buildWorkerEnv({ provider: 'claude', base: baseEnv, policyPath: spec.policyPath, policyHash, worktree, tmpDir, extra: { ...passThrough(this.baseEnv(), this.opts.passEnv), ...spec.env } });
+    // The verified mechanism is CLAUDE_CODE_MAX_OUTPUT_TOKENS (the request's max_tokens); the instruction keeps the model inside it rather than cut off.
+    const outputTokens = outputBudgetFor(spec.role, { explicit: spec.outputTokens, configured: snapshot.config.routing.output_budgets });
+    const env = buildWorkerEnv({ provider: 'claude', base: baseEnv, policyPath: spec.policyPath, policyHash, worktree, tmpDir, maxOutputTokens: outputTokens, extra: { ...passThrough(this.baseEnv(), this.opts.passEnv), ...spec.env } });
 
     const settings = renderClaudeSettings({
       snapshot,
@@ -259,7 +263,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       tmpDir,
     });
     assertClaudeSettings(settings);
-    writePrivate(join(workerDir, PROMPT_FILE), spec.prompt);
+    writePrivate(join(workerDir, PROMPT_FILE), outputTokens === null ? spec.prompt : `${spec.prompt.trimEnd()}\n\n${outputBudgetInstruction(outputTokens)}\n`);
     writePrivate(join(workerDir, SYSTEM_FILE), spec.systemPrompt);
     atomicWriteJson(join(workerDir, SETTINGS_FILE), settings, 0o600);
 
@@ -310,7 +314,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       stdinPath: join(workerDir, PROMPT_FILE),
       abortOn: CLAUDE_ABORT_PATTERNS,
       cleanupPaths,
-      meta: { tier, limitations },
+      meta: { tier, limitations, outputBudgetTokens: outputTokens },
       clock: this.clock,
     });
     return { ...handle, tier, limitations, sessionId };
@@ -350,13 +354,14 @@ export class ClaudeAdapter implements ProviderAdapter {
     } else {
       result = classifyClaudeTranscript({ events: log.events, malformedTail: log.malformedTail, exit: st.exit, outputSchema: spec.outputSchema, expectedSessionId: st.pid?.sessionId ?? null });
     }
+    result = { ...result, usage: withWorkerTelemetry(result.usage, handle.workerDir) };
     atomicWriteJson(join(handle.workerDir, RESULT_FILE), result, 0o600);
     return result;
   }
 
   async reportUsage(handle: TaskHandle): Promise<UsageReport> {
     if (!existsSync(handle.logPath)) return emptyUsage(this.id);
-    return claudeUsage(readLogLines(handle.logPath).events);
+    return withWorkerTelemetry(claudeUsage(readLogLines(handle.logPath).events), handle.workerDir);
   }
 
   /** Reattach to a worker from its directory alone (pid.json), as a restarted controller does. */

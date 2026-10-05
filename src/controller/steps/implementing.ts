@@ -13,20 +13,27 @@
  */
 import { join } from 'node:path';
 import { readJsonIfExists } from '../../core/fsx.ts';
-import { OrbitError } from '../../core/errors.ts';
+import { OrbitError, isOrbitError } from '../../core/errors.ts';
 import { appendEvent } from '../../storage/events.ts';
-import { listActiveWorkers } from '../../storage/workers.ts';
+import { listActiveWorkers, type WorkerRecord } from '../../storage/workers.ts';
+import { classifyFailure, decideRetry } from '../../recovery/backoff.ts';
+import { recoveryAttemptsRemaining, spendRecoveryAttempt } from '../../recovery/budget.ts';
+import { stopRowProcess } from '../../recovery/reconcile.ts';
 import { renderWorkerPrompt, type EvidenceRef, type PromptBrief } from '../../adapters/prompt.ts';
 import { snapshotCandidate } from '../../evidence/candidate.ts';
 import { invalidateEvidence } from '../../evidence/freshness.ts';
-import { currentEvidenceReport, listCheckRuns, listFailures } from '../../evidence/store.ts';
+import { currentEvidenceReport, listCheckRuns, listEvidenceReports, listFailures } from '../../evidence/store.ts';
+import { progressSince } from '../../inquisition/repair.ts';
+import { attemptHistory } from './diagnosing.ts';
+import { cancelObsoleteWork } from './reviewing.ts';
 import { invalidateStaleReviews } from '../../review/stale.ts';
-import { AgentScheduler, budgetAdmission } from '../../scheduling/scheduler.ts';
+import { budgetAdmission } from '../../scheduling/scheduler.ts';
 import type { DifficultyClass, WorkUnit } from '../../scheduling/types.ts';
-import { CANDIDATE_EVENT, type RunContext } from '../context.ts';
+import { CANDIDATE_EVENT, machineAdmission, schedulerFor, type RunContext } from '../context.ts';
+import { blockingQuestions } from '../gates.ts';
 import { ensureWorker, recordSpendCap, routeFor, sessionSpendCap } from '../workers.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
-import { assertContract, blockOnAuth, finishRun, move, note, policySummary, progress, safePoint, WAIT, type StepResult } from './common.ts';
+import { assertContract, blockOnAuth, finishRun, move, note, policySummary, progress, retryWait, safePoint, scheduleTransientRetry, WAIT, type StepResult } from './common.ts';
 import { latestAttempt } from './obtain.ts';
 
 export const ATTEMPT_EVENT = 'implementation.attempt';
@@ -81,19 +88,37 @@ export async function implementingStep(ctx: RunContext): Promise<StepResult> {
 /** Admit and count a new attempt. Returns a step result when it may not start (budget, capacity). */
 async function startAttempt(ctx: RunContext, n: number): Promise<StepResult | null> {
   const ledger = ctx.ledger!;
-  const config = ctx.snapshot.config;
   const route = routeFor(ctx, `implement:${n}`, 'routine-code', routeSignals(ctx, n));
-  const scheduler = new AgentScheduler({ agents: config.agents, scheduler: config.scheduler }, { clock: ctx.clock });
-  const running: WorkUnit[] = listActiveWorkers(ctx.db, ctx.run.id).map((w) => ({ id: w.id, role: w.role, writer: !['planner', 'verifier', 'reviewer', 'inquisitor'].includes(w.role), ownedPaths: w.ownedPaths ?? [], dependsOn: [], revision: null, cancelWhen: [], budget: {}, provider: w.provider, worktree: w.cwd, status: 'running' }));
-  const unit: WorkUnit = { id: `implement:${n}`, role: 'implementer', writer: true, ownedPaths: assertContract(ctx).allowed_paths, dependsOn: [], revision: null, cancelWhen: [], budget: {}, provider: route.provider, worktree: ctx.run.worktreePath, status: 'pending' };
-  const plan = scheduler.plan([...running, unit], { admit: budgetAdmission(ledger) });
-  if (!plan.start.some((u) => u.id === unit.id)) {
-    const why = plan.deferred.find((d) => d.id === unit.id)?.reason ?? 'not admitted';
+  const scheduler = schedulerFor(ctx);
+  // Capacity is the machine's, not the run's: every live worker of this repository's database occupies a slot,
+  // whichever run it belongs to (spec section 8; scenario 15 with two runs under one controller).
+  const running = runningUnits(ctx);
+  const own = new Set(running.filter((u) => u.runId === ctx.run.id).map((u) => u.unit.id));
+  const cap = sessionSpendCap(ctx, route.model, 'implementer');
+  const unit: WorkUnit = {
+    id: `implement:${n}`,
+    role: 'implementer',
+    writer: true,
+    ownedPaths: assertContract(ctx).allowed_paths,
+    dependsOn: [],
+    revision: ctx.candidate?.treeHash ?? null,
+    cancelWhen: [],
+    // Admission keeps the conservative role ceiling for the cost estimate: an attempt is more than one session.
+    budget: { costUsd: null, wallMs: null, maxTurns: ledger.maxTurnsPerSession() },
+    provider: route.provider,
+    worktree: ctx.run.worktreePath,
+    status: 'pending',
+  };
+  // The run's own limits (parallel_workers, parallelism, worktree, ownership, budget) over its own units...
+  const plan = scheduler.plan([...running.filter((r) => own.has(r.unit.id)).map((r) => r.unit), unit], { admit: budgetAdmission(ledger) });
+  // ...and the machine's (CPU, memory) over every run's.
+  const machine = plan.start.some((u) => u.id === unit.id) ? machineAdmission(ctx, running.map((r) => r.unit), [unit]) : null;
+  if (!plan.start.some((u) => u.id === unit.id) || (machine && !machine.start.has(unit.id))) {
+    const why = plan.deferred.find((d) => d.id === unit.id)?.reason ?? machine?.deferred.get(unit.id) ?? 'not admitted';
     // Budget refusals cannot clear by waiting; capacity and worktree conflicts can.
-    if (/cost|wall time/i.test(why)) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not admitted: the remaining budget cannot support an honest completion (${why})`, { data: { admission: why } });
+    if (/^not admitted by budget/.test(why)) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not admitted: the remaining budget cannot support an honest completion (${why})`, { data: { admission: why } });
     return WAIT(`attempt ${n} deferred: ${why}`);
   }
-  const cap = sessionSpendCap(ctx, route.model, 'implementer');
   if (cap.capUsd !== null && cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not started: no model budget left under the hard cap less the closing reserve`);
 
   // The attempt is counted and recorded in one transaction, so a crash can neither count it twice nor lose it.
@@ -106,12 +131,45 @@ async function startAttempt(ctx: RunContext, n: number): Promise<StepResult | nu
   return null;
 }
 
+const READ_ONLY_ROLES = new Set(['planner', 'verifier', 'reviewer', 'inquisitor', 'curator', 'explorer']);
+
+/**
+ * Every live worker of the repository as a running work unit, with the run it belongs to, plus the attempts
+ * other runs were admitted for whose implementer is not planned yet. Steps of different runs interleave between
+ * admission and the worker row, so an admitted attempt holds its slot from the moment it is counted.
+ */
+export function runningUnits(ctx: RunContext): { runId: string; unit: WorkUnit }[] {
+  const out: { runId: string; unit: WorkUnit }[] = listActiveWorkers(ctx.db).map((w) => ({
+    runId: w.runId,
+    // Another run's writer edits its own worktree, so its paths cannot collide with this run's; it still takes a slot.
+    unit: { id: w.id, role: w.role, writer: w.runId === ctx.run.id && !READ_ONLY_ROLES.has(w.role), ownedPaths: w.ownedPaths ?? [], dependsOn: [], revision: null, cancelWhen: [], budget: {}, provider: w.provider, worktree: w.cwd, status: 'running' },
+  }));
+  const reserved = ctx.db.all<{ run_id: string; attempt: number }>(
+    `SELECT e.run_id, MAX(CAST(json_extract(e.data_json, '$.attempt') AS INTEGER)) AS attempt FROM events e JOIN runs r ON r.id = e.run_id
+     WHERE e.type = ? AND e.run_id <> ? AND r.state IN ('IMPLEMENTING', 'REPAIRING') GROUP BY e.run_id`,
+    ATTEMPT_EVENT,
+    ctx.run.id,
+  );
+  for (const r of reserved) {
+    const planned = ctx.db.get("SELECT 1 AS x FROM workers WHERE run_id = ? AND role = 'implementer' AND attempt = ? LIMIT 1", r.run_id, r.attempt);
+    const produced = ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? LIMIT 1", r.run_id, CANDIDATE_EVENT, r.attempt);
+    if (planned || produced) continue;
+    out.push({ runId: r.run_id, unit: { id: `reserved:${r.run_id}:${r.attempt}`, role: 'implementer', writer: false, ownedPaths: [], dependsOn: [], revision: null, cancelWhen: [], budget: {}, provider: null, worktree: null, status: 'running' } });
+  }
+  return out;
+}
+
 async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable<RunContext['contract']>): Promise<StepResult> {
   const route = routeFor(ctx, `implement:${n}`, 'routine-code', routeSignals(ctx, n));
-  let k = Math.max(1, latestAttempt(ctx, `implement:${n}`));
-  const cap = capOf(ctx, n);
+  const base = `implement:${n}`;
+  let k = Math.max(1, latestAttempt(ctx, base));
   for (;;) {
-    const purpose = `implement:${n}#${k}`;
+    const purpose = `${base}#${k}`;
+    if (!ctx.db.get('SELECT 1 AS x FROM workers WHERE run_id = ? AND purpose = ?', ctx.run.id, purpose)) {
+      // A transient failure set a backoff: the next session of this attempt waits it out.
+      const wait = retryWait(ctx, base);
+      if (wait) return wait;
+    }
     const st = await ensureWorker(ctx, {
       role: 'implementer',
       purpose,
@@ -122,7 +180,7 @@ async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable
       cwd: ctx.run.worktreePath!,
       readOnly: false,
       prompt: (workerId) => implementerPrompt(ctx, n, workerId),
-      maxBudgetUsd: cap,
+      maxBudgetUsd: capOf(ctx, n, purpose),
       ownedPaths: contract.allowed_paths,
     });
     if (st.status === 'running') return WAIT(`implementer ${st.worker.id} (attempt ${n}) is running`);
@@ -134,8 +192,8 @@ async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable
         const stop = await safePoint(ctx);
         if (stop) return stop;
       }
-      ctx.ledger!.consume('infrastructure_retries', 1);
-      note(ctx, 'worker.retry', { purpose, status: r.status });
+      const stop = await scheduleTransientRetry(ctx, { base, purpose, what: `implementer (attempt ${n})`, status: r.status, error: r.error });
+      if (stop) return stop;
       k++;
       continue;
     }
@@ -143,9 +201,57 @@ async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable
       const stop = await safePoint(ctx);
       if (stop) return stop;
     }
+    if (r.status === 'lost') {
+      // The worker died under a live controller (spec section 14: preserve the worktree, restart a bounded worker).
+      // Its half-written tree is not an attempt: a new session of the same attempt continues in the same worktree.
+      const stop = await restartLostImplementer(ctx, st.worker, n, `${base}#${k + 1}`, route.model);
+      if (stop) return stop;
+      k++;
+      continue;
+    }
     if (r.status !== 'succeeded') note(ctx, 'implementation.worker-ended', { attempt: n, status: r.status, error: r.error?.slice(0, 300) ?? null, note: 'its edits are verified like any other' });
     return snapshot(ctx, n, st.worker.id);
   }
+}
+
+export const LOST_RESTART_EVENT = 'recovery.worker-restart';
+
+/**
+ * Restart a lost implementer the way reconciliation would (recovery/reconcile): the failure is classified as a
+ * crash, the recovery budget decides, one recovery attempt is spent (once per lost worker, with its record),
+ * any process the lost worker left is stopped, and the next session runs in the preserved worktree under a
+ * fresh spend cap. Returns a terminal result when the recovery budget refuses.
+ */
+async function restartLostImplementer(ctx: RunContext, lost: WorkerRecord, n: number, nextPurpose: string, model: string | null): Promise<StepResult | null> {
+  const already = ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.worker_id') = ? LIMIT 1", ctx.run.id, LOST_RESTART_EVENT, lost.id);
+  if (already) return null;
+  const decision = decideRetry({
+    classification: classifyFailure({ status: 'lost' }),
+    provider: lost.provider,
+    runId: ctx.run.id,
+    attempt: 1,
+    infrastructureRetriesRemaining: Number.POSITIVE_INFINITY,
+    wallRemainingMs: null,
+    costRemainingUsd: null,
+    recoveryAttemptsRemaining: recoveryAttemptsRemaining(ctx.db, ctx.run.id, undefined),
+  });
+  if (decision.action !== 'restart') return finishRun(ctx, 'EXHAUSTED', `recovery_attempts exhausted: lost implementer ${lost.id} (attempt ${n}) cannot be restarted: ${decision.reason}`, { data: { counter: 'recovery_attempts' } });
+  // Nothing of the lost session may still write into the worktree the restart is about to use.
+  const gone = await stopRowProcess(ctx.timing.killGraceMs, lost);
+  if (gone === 'unknown') return WAIT(`lost implementer ${lost.id}: its process could not be confirmed stopped; not restarting yet`);
+  try {
+    spendRecoveryAttempt(ctx.db, ctx.run.id, ctx.clock, { ledgerFor: () => ctx.ledger, actor: ctx.ownerId, why: `restart of lost implementer ${lost.id} (attempt ${n})` });
+  } catch (err) {
+    if (isOrbitError(err, 'BUDGET_EXHAUSTED')) return finishRun(ctx, 'EXHAUSTED', `recovery_attempts exhausted: lost implementer ${lost.id} (attempt ${n}) cannot be restarted: ${err.message}`, { data: { counter: 'recovery_attempts' } });
+    throw err;
+  }
+  const cap = sessionSpendCap(ctx, model, 'implementer');
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, LOST_RESTART_EVENT, ctx.ownerId, { worker_id: lost.id, attempt: n, next_purpose: nextPurpose, cwd_preserved: lost.cwd, live_controller: true }, ctx.clock.now()));
+  if (cap.capUsd !== null) {
+    if (cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `lost implementer ${lost.id} not restarted: no model budget left under the hard cap less the closing reserve`);
+    recordSpendCap(ctx, nextPurpose, cap.capUsd, cap.worstCaseUsd);
+  }
+  return null;
 }
 
 async function snapshot(ctx: RunContext, n: number, workerId: string): Promise<StepResult> {
@@ -155,11 +261,16 @@ async function snapshot(ctx: RunContext, n: number, workerId: string): Promise<S
   invalidateStaleReviews(ctx.db, { runId: ctx.run.id, runDir: ctx.runDir, current: { candidateId: cand.id, treeHash: cand.treeHash }, cause: `attempt ${n}` }, ctx.clock);
   ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, CANDIDATE_EVENT, ctx.ownerId, { attempt: n, candidate_id: cand.id, seq: cand.seq, tree_hash: cand.treeHash, reused: !cand.created }, ctx.clock.now()));
   ctx.candidate = cand;
+  // Read-only work on the previous revision (reviewers, verifiers, explorers) is worthless now: stop it.
+  await cancelObsoleteWork(ctx, cand.treeHash);
   progress(ctx, 'candidate', { attempt: n, candidate_id: cand.id, seq: cand.seq, tree_hash: cand.treeHash, reused: !cand.created });
   return move(ctx, 'VERIFYING', `attempt ${n} produced candidate ${cand.seq}${cand.created ? '' : ' (the same tree as an earlier candidate)'}`);
 }
 
-function capOf(ctx: RunContext, n: number): number | null {
+/** The spend cap of a session: the one recorded for its purpose, else the attempt's. */
+function capOf(ctx: RunContext, n: number, purpose: string): number | null {
+  const own = ctx.db.get<{ cap: number | null }>("SELECT json_extract(data_json, '$.cap_usd') AS cap FROM events WHERE run_id = ? AND type = 'worker.spend-cap' AND json_extract(data_json, '$.purpose') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, purpose);
+  if (typeof own?.cap === 'number') return own.cap;
   const row = ctx.db.get<{ cap: number | null }>("SELECT json_extract(data_json, '$.spend_cap_usd') AS cap FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, ATTEMPT_EVENT, n);
   return typeof row?.cap === 'number' ? row.cap : null;
 }
@@ -167,28 +278,84 @@ function capOf(ctx: RunContext, n: number): number | null {
 /**
  * Escalation signals from durable records only: equivalent failures (same
  * fingerprint on distinct candidates) with the failure record ids as
- * evidence, and the previous route with its outcome.
+ * evidence, the previous route with its outcome, the planning assessment's
+ * security impact, and whether the hard diagnosis that escalated an earlier
+ * attempt is solved (so routine follow-up may route back down, spec section 8).
  */
-function routeSignals(ctx: RunContext, n: number): Parameters<typeof routeFor>[3] {
+export function routeSignals(ctx: RunContext, n: number): Parameters<typeof routeFor>[3] {
   const difficulty = (ctx.run.difficulty ?? 'medium') as DifficultyClass;
   const failures = listFailures(ctx.db, ctx.run.id);
-  const latest = failures.at(-1) ?? null;
-  const same = latest ? failures.filter((f) => f.fingerprint === latest.fingerprint) : [];
-  const repeated = new Set(same.map((f) => f.candidateId ?? `row-${f.id}`)).size;
-  const evidence = same.map((f) => `failure:${f.id}`);
   const prev = n > 1 ? ctx.db.get<{ data_json: string }>('SELECT data_json FROM decisions WHERE id = ?', `dec-route-${ctx.run.id}-implement_${n - 1}`) : undefined;
   const prevRoute = prev ? (JSON.parse(prev.data_json) as { provider: string; model: string; effort: string | null }) : null;
+  const solved = n > 1 && diagnosisSolved(ctx, n);
+  const latest = failures.at(-1) ?? null;
+  const same = latest && !solved ? failures.filter((f) => f.fingerprint === latest.fingerprint) : [];
+  const repeated = new Set(same.map((f) => f.candidateId ?? `row-${f.id}`)).size;
+  const evidence = same.map((f) => `failure:${f.id}`);
+  const security = criticalSecurity(ctx);
   return {
     difficulty,
     attempt: n,
     repeatedFingerprints: repeated,
     ...(evidence.length > 0 ? { evidence } : {}),
-    ...(prevRoute ? { previousRoute: { provider: prevRoute.provider, model: prevRoute.model, effort: prevRoute.effort, outcome: 'failed' as const, evidence } } : {}),
+    ...(security ? { criticalSecurity: true } : {}),
+    ...(solved ? { diagnosisSolved: true } : {}),
+    ...(prevRoute ? { previousRoute: { provider: prevRoute.provider, model: prevRoute.model, effort: prevRoute.effort, outcome: solved ? ('verified' as const) : ('failed' as const), evidence } } : {}),
   };
+}
+
+/** The planning assessment found a security-sensitive change (difficulty factor security_impact). */
+function criticalSecurity(ctx: RunContext): boolean {
+  if (!ctx.run.difficultyJson) return false;
+  try {
+    const a = JSON.parse(ctx.run.difficultyJson) as { factors?: { factor: string; value: unknown }[] };
+    return a.factors?.some((f) => f.factor === 'security_impact' && f.value === true) ?? false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The diagnosis that escalated an earlier attempt is solved: some earlier implementation route escalated, the
+ * fingerprints that drove it are gone from the newest attempt's evidence, no equivalent failure repeated on that
+ * candidate, and the newest attempt made measurable progress on the cause (a fixed mandatory check or a
+ * localized fault, inquisition/repair.progressSince).
+ */
+function diagnosisSolved(ctx: RunContext, n: number): boolean {
+  let escalatedAt = 0;
+  for (let k = n - 1; k >= 1; k--) {
+    const row = ctx.db.get<{ data_json: string }>('SELECT data_json FROM decisions WHERE id = ?', `dec-route-${ctx.run.id}-implement_${k}`);
+    const d = row ? (JSON.parse(row.data_json) as { escalated_from?: unknown }) : null;
+    if (d?.escalated_from) {
+      escalatedAt = k;
+      break;
+    }
+  }
+  if (escalatedAt === 0) return false;
+  const latestCand = attemptCandidateId(ctx, n - 1);
+  if (!latestCand) return false;
+  const report = listEvidenceReports(ctx.db, ctx.run.id).filter((r) => r.candidateId === latestCand).at(-1);
+  if (!report) return false;
+  const failures = listFailures(ctx.db, ctx.run.id);
+  const earlier = new Set<string>();
+  for (let k = 1; k < escalatedAt; k++) {
+    const c = attemptCandidateId(ctx, k);
+    for (const f of failures) if (c !== null && f.candidateId === c) earlier.add(f.fingerprint);
+  }
+  if (earlier.size === 0) return false;
+  const now = new Set(failures.filter((f) => f.candidateId === latestCand).map((f) => f.fingerprint));
+  if ([...earlier].some((fp) => now.has(fp))) return false;
+  const history = attemptHistory(ctx);
+  const cur = history.find((h) => h.attempt === n - 1);
+  if (!cur) return false;
+  const before = [...history].reverse().find((h) => h.attempt < n - 1) ?? null;
+  const p = progressSince(before, cur);
+  return p.fixed_checks.length > 0 || p.localized_fault !== null || (report.verdict === 'PASS' && p.made_progress);
 }
 
 function implementerPrompt(ctx: RunContext, n: number, workerId: string): string {
   const contract = assertContract(ctx);
+  const blocked = blockingQuestions(ctx.db, ctx.run.id).criteria;
   const stored = readJsonIfExists<StoredBrief>(briefPath(ctx, n));
   const briefs: PromptBrief[] = stored ? [{ label: `${stored.source} repair brief`, content: stored.brief, ref: `briefs/attempt-${n}.json` }] : [];
   const refs: EvidenceRef[] = [];
@@ -204,6 +371,7 @@ function implementerPrompt(ctx: RunContext, n: number, workerId: string): string
     'Make the smallest coherent change. Add or extend behaviour tests that would fail without it. Stay inside the allowed paths.',
     'Do not commit, push, or edit protected paths, policy, CI configuration or check definitions. The controller snapshots your worktree and runs the trusted checks itself.',
     `Acceptance criteria: ${contract.acceptance_criteria.map((c) => `${c.id}${c.mandatory ? '' : ' (optional)'}: ${c.statement}`).join(' | ')}`,
+    ...(blocked.length > 0 ? [`Blocked, waiting for a person's decision (do not implement or guess them): ${blocked.join(', ')}. Implement the other criteria only.`] : []),
   ].join('\n');
   return renderWorkerPrompt({
     role: 'implementer',

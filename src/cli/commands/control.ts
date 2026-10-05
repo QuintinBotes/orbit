@@ -109,8 +109,11 @@ export const CANCEL_OPTIONS: OptionSpec = {
   wait: { type: 'string', description: 'seconds to wait for a live controller to finish the cancellation', valueName: 'seconds' },
 };
 
-/** Collaborators for ending a run this process owns: the configured adapters when the policy loads, otherwise none (enough for a BLOCKED run, whose workers are already stopped). */
-function cancelDeps(ctx: CliContext, repo: string, db: OrbitDb, ownerId: string): ControllerDeps {
+/**
+ * Collaborators for a command that works on a run this process owns under a CLI lease (cancel, verify, repair): the configured
+ * adapters when the policy loads, otherwise none (enough for a BLOCKED run, whose workers are already stopped).
+ */
+export function cliLeaseDeps(ctx: CliContext, repo: string, db: OrbitDb, ownerId: string): ControllerDeps {
   try {
     const factory = ctx.seams.controllerDeps ?? defaultControllerDeps;
     return { ...factory({ repoRoot: repo, db, clock: ctx.clock, config: loadConfig(repo), env: ctx.env, orbitHome: ctx.orbitHome }), ownerId };
@@ -157,7 +160,7 @@ export async function cancelCommand(args: Args, ctx: CliContext): Promise<number
     // Nobody owns it (a BLOCKED run, or a run whose controller is gone): take a short lease and finish the job here.
     try {
       await withCliLease(ctx, db, found.id, async (ownerId) => {
-        const deps = cancelDeps(ctx, repo, db, ownerId);
+        const deps = cliLeaseDeps(ctx, repo, db, ownerId);
         const ac = new AbortController();
         let rc;
         try {

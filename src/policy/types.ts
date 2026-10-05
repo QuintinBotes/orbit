@@ -69,6 +69,70 @@ export interface UiConfig {
   accessibility: { enabled: boolean; fail_on_new_serious_or_critical: boolean };
   visual: { enabled: boolean; baseline_changes_require_review: boolean; baseline_globs: string[] };
   visual_baseline_auto_accept: false;
+  /**
+   * Exploratory UI testing (spec section 13). Parsed configs always carry it
+   * (default disabled); optional in the type so older snapshots still read.
+   * Findings are unproven until reproduced as a failing test.
+   */
+  exploration?: UiExplorationConfig;
+}
+
+export interface UiExplorationConfig {
+  enabled: boolean;
+  /** Wall-clock ceiling for one exploration session. */
+  max_minutes: number;
+  /** Spend ceiling for one exploration session. */
+  budget_usd: number;
+}
+
+export type MergeMethod = 'squash' | 'merge' | 'rebase';
+
+export interface ReleaseEnvironment {
+  /** argv, never run through a shell. */
+  deploy_command: string[];
+  /** Branches this environment may be deployed from; empty means none. */
+  allowed_branches: string[];
+  require_ci_green: boolean;
+  /** Hosts the deploy command may reach; each must be covered by network.allowed_hosts. */
+  network_hosts: string[];
+  timeout_seconds: number;
+}
+
+/** Release mode only (spec section 5 Execution modes): how to merge and where to deploy. */
+export interface ReleaseConfig {
+  merge: { method: MergeMethod; require_checks: string[]; delete_branch: boolean };
+  environments: Record<string, ReleaseEnvironment>;
+}
+
+/** Roles with an output token budget (architecture "Token efficiency"). */
+export type BudgetRole = 'planner' | 'implementer' | 'verifier' | 'reviewer' | 'inquisitor' | 'curator' | 'explorer';
+
+export type AuditSeverity = 'critical' | 'high' | 'moderate' | 'low';
+
+/** Vulnerability and license policy at the baseline and dependency gates (spec section 5). */
+export interface DependencyAuditConfig {
+  enabled: boolean;
+  /** Findings at or above this severity that the candidate introduces block it. */
+  fail_on: AuditSeverity;
+  /** SPDX identifiers a newly introduced package may carry; null means no license policy. */
+  license_allowlist: string[] | null;
+  /** An advisory id (GHSA-..., or npm:<source>) or license:<package> that is accepted, with why and until when. */
+  exceptions: { id: string; reason: string; expires: string | null }[];
+}
+
+export type StaticSeverity = 'critical' | 'high' | 'medium' | 'low';
+
+/** Severity and exception rules for secret-scan and SAST findings (spec section 5). */
+export interface StaticSecurityConfig {
+  block_severities: StaticSeverity[];
+  exceptions: { rule_id: string; path_glob: string | null; reason: string; expires: string | null }[];
+}
+
+/** Per-process resource limits applied inside the sandbox; null leaves a limit unset. */
+export interface IsolationLimits {
+  cpu_seconds: number | null;
+  max_processes: number | null;
+  max_file_mb: number | null;
 }
 
 export interface ProviderConfig {
@@ -104,7 +168,9 @@ export interface OrbitConfig {
     repair_ci: boolean;
     merge: boolean;
     deploy_production: boolean;
-    change_secrets: boolean;
+    /** Reserved: workers never hold or change secrets, so only false is accepted. */
+    change_secrets: false;
+    /** Read by authorize: when false, chmod-class commands (file modes, owners, ACLs, flags) are denied. */
     change_permissions: boolean;
   };
   dependencies: {
@@ -114,6 +180,8 @@ export interface OrbitConfig {
     change_lockfile: boolean;
     install_scripts: 'deny' | 'deny-unless-allowlisted' | 'allow';
     install_script_allowlist: string[];
+    /** Parsed configs always carry it (default disabled); optional in the type so older snapshots still read. */
+    audit?: DependencyAuditConfig;
   };
   network: { allowed_hosts: string[] };
   ambiguity: {
@@ -136,7 +204,8 @@ export interface OrbitConfig {
   };
   agents: {
     default_parallelism: number;
-    require_independent_work_units: boolean;
+    /** Parallel writers always get disjoint work units; cannot be turned off (the scheduler enforces path ownership). */
+    require_independent_work_units: true;
     isolate_writers: true;
     prohibit_shared_worktree_writes: true;
     cancel_obsolete_workers: boolean;
@@ -167,13 +236,21 @@ export interface OrbitConfig {
     /** 'none' is refused in unattended modes unless this is true. */
     allow_unisolated: boolean;
     container: { image: string; memory_mb: number; cpus: number; pids: number } | null;
+    /** Parsed configs always carry it (all null by default); optional in the type so older snapshots still read. */
+    limits?: IsolationLimits;
   };
   providers: Record<string, ProviderConfig>;
   routing: {
     allowed_models: string[];
     /** Work kind -> model family or exact id, overriding the default table. */
     overrides: Record<string, string>;
+    /** Output token budget per role. Parsed configs always carry it; optional in the type so older snapshots still read. */
+    output_budgets?: Record<BudgetRole, number>;
   };
+  /** Severity and exception rules for the static security gate. Parsed configs always carry it. */
+  static_security?: StaticSecurityConfig;
+  /** Merge and deploy settings; required (non-null) in mode release. Parsed configs always carry it (default null). */
+  release?: ReleaseConfig | null;
   retention: { keep_runs_days: number; redact_patterns: string[] };
   verification: {
     /** A check that passed only on a rerun is disclosed as flaky; when false it cannot make the verdict PASS. */

@@ -42,8 +42,7 @@ describe.skipIf(!canStripTypes)('fault: malformed model output', () => {
 });
 
 describe.skipIf(!canStripTypes)('fault: expired credentials', () => {
-  // DEFECT: controller/workers.ts:132 (accountFinished) charges the unreported cost of the auth-failed session at its ceiling (spend cap plus a worst-case request) before blockOnAuth runs; the charge reaches the cap less the reserve, so the run ends EXHAUSTED instead of BLOCKED on credentials.
-  it.fails('an implementer whose credentials expire mid-run blocks the run with a truthful blocker and is not retried', async () => {
+  it('an implementer whose credentials expire mid-run blocks the run with a truthful blocker and is not retried', async () => {
     const l = t.lab();
     // hangAfterRetry: the provider would keep retrying for a long time; the shim must stop it on the first auth retry.
     writeScenario(l, baseScenario({ implementer: [{ outcome: 'auth_failure', hangAfterRetry: 60_000 }, implementMul('*')] }));

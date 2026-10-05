@@ -31,11 +31,27 @@ export type AmendmentChange =
   | { op: 'remove_escalation_topic'; topic: string }
   | { op: 'set_delivery'; draft_pr: boolean; merge: boolean };
 
+/** The operations a model may propose; schemas/inquisitor-output.schema.json lists exactly these. */
 export type AmendmentOp = AmendmentChange['op'];
+
+/**
+ * Operations only the controller builds, from a person's decision. A model cannot propose them
+ * (the inquisitor schema does not list them), so a model-authorized exception is impossible by construction.
+ */
+export type HumanAmendmentChange =
+  /** Accept a failure the base revision already has. Always needs a human decision, and the fingerprint must equal the recorded baseline failure. */
+  { op: 'accept_baseline_failure'; check_id: string; fingerprint: string; reason: string };
 
 export interface AmendmentProposal {
   change: AmendmentChange;
   /** What was observed that motivates the change. Required: no amendment without evidence. */
+  evidence: string;
+  reason: string;
+}
+
+/** A person-authorized proposal (see HumanAmendmentChange); applyAmendment takes it like any other. */
+export interface HumanAmendmentProposal {
+  change: HumanAmendmentChange;
   evidence: string;
   reason: string;
 }

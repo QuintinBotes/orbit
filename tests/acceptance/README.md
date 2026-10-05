@@ -22,8 +22,8 @@ npm cache that can install the example offline (otherwise Orbit's own
 needs the `claude` CLI on PATH and is skipped without it; it never reaches a
 real model (the CLI talks to `tests/fakes/fake-anthropic-api.mjs`).
 
-Tests marked `it.fails` assert spec behaviour that the runtime does not meet
-yet; each carries a `DEFECT:` comment with the cause.
+Every test is a plain `it`: no scenario is marked `it.fails`, so the suite
+passes only when the runtime meets each one.
 
 ## Index
 
@@ -32,7 +32,7 @@ yet; each carries a `DEFECT:` comment with the cause.
 | 1 | Scoped feature passes with behaviour tests | `feature-and-repair.test.ts` | scenario 1: a scoped feature passes with behaviour tests and is delivered as one draft PR of the reviewed tree |
 | 2 | Reproducible regression is repaired | `feature-and-repair.test.ts` | scenario 2: a reproducible regression is diagnosed from the failing check and repaired in the next attempt |
 | 3 | Reversible ambiguity resolved unattended | `ambiguity.test.ts` | scenario 3: a reversible ambiguity is resolved unattended from the planner recommendation and recorded as a decision |
-| 4 | Material ambiguity blocks affected work, independent work continues | `ambiguity.test.ts` | scenario 4: a material ambiguity goes to the Inquisition, blocks the criterion it affects, and the independent criterion is implemented and verified; scenario 4: the blocked criterion keeps the run from success and delivery (`it.fails`, DEFECT) |
+| 4 | Material ambiguity blocks affected work, independent work continues | `ambiguity.test.ts` | scenario 4: a material ambiguity goes to the Inquisition, blocks the criterion it affects, and the independent criterion is implemented and verified; scenario 4: the blocked criterion keeps the run from success and delivery, and its question waits for a person |
 | 5 | Weak tests rejected despite green status | `proof-and-progress.test.ts` | scenario 5: green checks over weakened tests are rejected as proof |
 | 6 | Repeated non-progress terminates | `proof-and-progress.test.ts` | scenario 6: attempts that keep failing the same way without progress end the run EXHAUSTED before the hard cap |
 | 7 | Restart does not duplicate workers or actions | `restart-and-delivery.test.ts` | scenario 7: a controller killed mid-implementation ...; scenario 7: a controller killed as delivery opens the PR ... |
@@ -40,9 +40,9 @@ yet; each carries a `DEFECT:` comment with the cause.
 | 9 | Unauthorized protected changes are rejected | `policy-and-evidence.test.ts` | scenario 9: a candidate that edits protected paths is rejected outright |
 | 10 | Stale evidence cannot authorize delivery | `policy-and-evidence.test.ts` | scenario 10: evidence that goes stale in the middle of delivery stops the next external action |
 | 11 | No permission-prompt deadlock | `credentials-and-routing.test.ts` | scenario 11: an unattended run whose worker asks for edits and commands that need permission ... (real `claude`) |
-| 12 | Expired credentials produce a truthful blocker | `credentials-and-routing.test.ts` | scenario 12: reviewer credentials that expire mid-run ... (`orbit resume`); scenario 12: credentials already expired at the start ...; scenario 12: an implementer whose credentials expire mid-run (401) ... (`it.fails`, DEFECT) |
+| 12 | Expired credentials produce a truthful blocker | `credentials-and-routing.test.ts` | scenario 12: reviewer credentials that expire mid-run ... (`orbit resume`); scenario 12: credentials already expired at the start ...; scenario 12: an implementer whose credentials expire mid-run (401) blocks on credentials, not on budget |
 | 13 | Simple work uses a low-cost eligible route | `credentials-and-routing.test.ts` | scenario 13: simple work uses the low-cost eligible route |
-| 14 | Difficult work escalates only with recorded justification | `credentials-and-routing.test.ts` | scenario 14: difficult work escalates only with recorded justification ...; scenario 14: the implementer is not escalated on a single localized failure (`it.fails`, DEFECT) |
+| 14 | Difficult work escalates only with recorded justification | `credentials-and-routing.test.ts` | scenario 14: difficult work escalates only with recorded justification ... (repeated_failure_threshold 1, so one failure is the repeated equivalent failure); scenario 14: the implementer is not escalated on a single localized failure |
 | 15 | Parallel work respects isolation and resource limits | `parallel.test.ts` | scenario 15: two runs work at once ...; scenario 15: with capacity for one run, the second run waits |
 | 16 | Cross-provider disagreement becomes a testable claim | `review-and-security.test.ts` | scenario 16: a reviewer claim the implementer's evidence does not settle becomes a testable claim |
 | 17 | UI defect reproduced, repaired, reverified | `ui.test.ts` | scenario 17 (and demo run 3): a UI defect is reproduced in Chromium ... |

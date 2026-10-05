@@ -362,3 +362,31 @@ export async function reconcilePush(o: RemoteOptions & { commit: string; branch:
   if (sha !== o.commit) return null;
   return { remote: redact(o.remote), ref: branchRef(o.branch), sha, outcome: 'up-to-date' };
 }
+
+/**
+ * Fetch `branch` from the remote into the private ref `ref` (under
+ * refs/orbit/) and confirm `commit` is on it: the tip itself or an ancestor.
+ * Used by release to obtain a merge commit the host made on the base branch.
+ * Returns the fetched tip.
+ */
+export async function fetchBranchContaining(o: RemoteOptions & { branch: string; commit: string; ref: string }): Promise<string> {
+  assertRemote(o.remote);
+  if (!isObjectId(o.commit)) throw new OrbitError('INTERNAL', `not a full commit sha: ${o.commit}`);
+  if (!o.ref.startsWith('refs/orbit/') || REF_FORBIDDEN.test(o.ref.slice('refs/'.length))) throw new OrbitError('INTERNAL', `fetch target must be a private refs/orbit/ ref: ${o.ref}`);
+  if (o.branch.startsWith('-') || REF_FORBIDDEN.test(o.branch)) throw new OrbitError('CONFIG_INVALID', `not a valid branch name: ${JSON.stringify(o.branch)}`, { definitive: true });
+  const { env, pre } = remoteEnvAndArgs(o);
+  const res = await git(o.repoRoot, [...pre, 'fetch', '--no-tags', '--no-write-fetch-head', '--', o.remote, `+${branchRef(o.branch)}:${o.ref}`], { ...o, env });
+  if (res.exitCode !== 0) throw classifyRemoteFailure('git fetch', res);
+  const tip = (await git(o.repoRoot, ['rev-parse', '--verify', '--quiet', `${o.ref}^{commit}`], o)).stdout.trim();
+  if (!isObjectId(tip)) throw new OrbitError('GIT_FAILED', `git fetch of ${o.branch} produced no commit at ${o.ref}`);
+  const onBranch = tip === o.commit || (await git(o.repoRoot, ['merge-base', '--is-ancestor', o.commit, tip], o)).exitCode === 0;
+  if (!onBranch) {
+    throw new OrbitError('DELIVERY_FAILED', `commit ${o.commit.slice(0, 12)} is not on ${o.branch} at ${o.remote}`, { branch: o.branch, commit: o.commit, tip, definitive: true });
+  }
+  return tip;
+}
+
+/** Whether the local repository has `commit` as a commit object. */
+export async function hasCommit(repoRoot: string, commit: string, opts: GitOptions = {}): Promise<boolean> {
+  return isObjectId(commit) && (await objectExists(repoRoot, `${commit}^{commit}`, opts));
+}

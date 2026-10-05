@@ -26,7 +26,9 @@
     "retention",
     "verification",
     "knowledge",
-    "guard"
+    "guard",
+    "static_security",
+    "release"
   ],
   "properties": {
     "version": { "const": 1 },
@@ -46,10 +48,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["allowed_paths", "protected_paths"],
-      "properties": {
-        "allowed_paths": { "$ref": "#/$defs/globList" },
-        "protected_paths": { "$ref": "#/$defs/globList" }
-      }
+      "properties": { "allowed_paths": { "$ref": "#/$defs/globList" }, "protected_paths": { "$ref": "#/$defs/globList" } }
     },
     "actions": {
       "type": "object",
@@ -77,21 +76,17 @@
         "repair_ci": { "type": "boolean" },
         "merge": { "type": "boolean" },
         "deploy_production": { "type": "boolean" },
-        "change_secrets": { "type": "boolean" },
-        "change_permissions": { "type": "boolean" }
+        "change_secrets": { "const": false, "description": "Reserved: workers never hold or change secrets, so only false is accepted." },
+        "change_permissions": {
+          "type": "boolean",
+          "description": "When false, commands that change file modes, owners, ACLs or flags (chmod, chown, chgrp, chflags, chattr, setfacl) are denied."
+        }
       }
     },
     "dependencies": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "install_existing_lockfile",
-        "install_command",
-        "add_packages",
-        "change_lockfile",
-        "install_scripts",
-        "install_script_allowlist"
-      ],
+      "required": ["install_existing_lockfile", "install_command", "add_packages", "change_lockfile", "install_scripts", "install_script_allowlist", "audit"],
       "properties": {
         "install_existing_lockfile": { "type": "boolean" },
         "install_command": { "oneOf": [{ "$ref": "#/$defs/argv" }, { "type": "null" }] },
@@ -103,6 +98,45 @@
           "maxItems": 200,
           "uniqueItems": true,
           "items": { "type": "string", "pattern": "^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*$", "maxLength": 214 }
+        },
+        "audit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "fail_on", "license_allowlist", "exceptions"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "fail_on": { "enum": ["critical", "high", "moderate", "low"] },
+            "license_allowlist": {
+              "oneOf": [
+                { "type": "null" },
+                {
+                  "type": "array",
+                  "maxItems": 500,
+                  "uniqueItems": true,
+                  "items": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9.+:-]*$" }
+                }
+              ]
+            },
+            "exceptions": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "reason", "expires"],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300,
+                    "pattern": "^(GHSA(-[23456789cfghjmpqrvwx]{4}){3}|npm:[0-9]{1,12}|license:(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*(@[A-Za-z0-9.+_-]+)?)$"
+                  },
+                  "reason": { "type": "string", "minLength": 10, "maxLength": 1000 },
+                  "expires": { "type": ["string", "null"], "format": "date" }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -110,9 +144,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["allowed_hosts"],
-      "properties": {
-        "allowed_hosts": { "$ref": "#/$defs/hostList" }
-      }
+      "properties": { "allowed_hosts": { "$ref": "#/$defs/hostList" } }
     },
     "ambiguity": {
       "type": "object",
@@ -174,12 +206,7 @@
         "extension": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "attempts_per_extension",
-            "require_measurable_progress",
-            "require_new_hypothesis",
-            "preserve_final_verification_reserve"
-          ],
+          "required": ["attempts_per_extension", "require_measurable_progress", "require_new_hypothesis", "preserve_final_verification_reserve"],
           "properties": {
             "attempts_per_extension": { "type": "integer", "minimum": 1, "maximum": 100 },
             "require_measurable_progress": { "type": "boolean" },
@@ -194,16 +221,10 @@
     "agents": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "default_parallelism",
-        "require_independent_work_units",
-        "isolate_writers",
-        "prohibit_shared_worktree_writes",
-        "cancel_obsolete_workers"
-      ],
+      "required": ["default_parallelism", "require_independent_work_units", "isolate_writers", "prohibit_shared_worktree_writes", "cancel_obsolete_workers"],
       "properties": {
         "default_parallelism": { "type": "integer", "minimum": 1, "maximum": 64 },
-        "require_independent_work_units": { "type": "boolean" },
+        "require_independent_work_units": { "const": true, "description": "Parallel writers always get disjoint work units; this cannot be turned off." },
         "isolate_writers": { "const": true },
         "prohibit_shared_worktree_writes": { "const": true },
         "cancel_obsolete_workers": { "type": "boolean" }
@@ -268,19 +289,12 @@
       "required": ["allow_flaky_pass"],
       "properties": { "allow_flaky_pass": { "type": "boolean" } }
     },
-    "checks": {
-      "type": "object",
-      "maxProperties": 200,
-      "propertyNames": { "$ref": "#/$defs/checkId" },
-      "additionalProperties": { "$ref": "#/$defs/check" }
-    },
-    "ui": {
-      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/ui" }]
-    },
+    "checks": { "type": "object", "maxProperties": 200, "propertyNames": { "$ref": "#/$defs/checkId" }, "additionalProperties": { "$ref": "#/$defs/check" } },
+    "ui": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/ui" }] },
     "isolation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "allow_unisolated", "container"],
+      "required": ["provider", "allow_unisolated", "container", "limits"],
       "properties": {
         "provider": { "enum": ["sandbox-runtime", "container", "none"] },
         "allow_unisolated": { "type": "boolean" },
@@ -299,6 +313,16 @@
               }
             }
           ]
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cpu_seconds", "max_processes", "max_file_mb"],
+          "properties": {
+            "cpu_seconds": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1, "maximum": 604800 }] },
+            "max_processes": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 16, "maximum": 1000000 }] },
+            "max_file_mb": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1, "maximum": 1048576 }] }
+          }
         }
       }
     },
@@ -322,20 +346,28 @@
     "routing": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["allowed_models", "overrides"],
+      "required": ["allowed_models", "overrides", "output_budgets"],
       "properties": {
-        "allowed_models": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 64,
-          "uniqueItems": true,
-          "items": { "$ref": "#/$defs/modelId" }
-        },
+        "allowed_models": { "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/modelId" } },
         "overrides": {
           "type": "object",
           "maxProperties": 64,
           "propertyNames": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" },
           "additionalProperties": { "$ref": "#/$defs/modelId" }
+        },
+        "output_budgets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["planner", "implementer", "verifier", "reviewer", "inquisitor", "curator", "explorer"],
+          "properties": {
+            "planner": { "type": "integer", "minimum": 100, "maximum": 200000 },
+            "implementer": { "type": "integer", "minimum": 100, "maximum": 200000 },
+            "verifier": { "type": "integer", "minimum": 100, "maximum": 200000 },
+            "reviewer": { "type": "integer", "minimum": 100, "maximum": 200000 },
+            "inquisitor": { "type": "integer", "minimum": 100, "maximum": 200000 },
+            "curator": { "type": "integer", "minimum": 100, "maximum": 200000 },
+            "explorer": { "type": "integer", "minimum": 100, "maximum": 200000 }
+          }
         }
       }
     },
@@ -369,27 +401,79 @@
         "terms_file": { "type": ["string", "null"], "minLength": 1, "maxLength": 1024 },
         "allowed_emails": { "type": "array", "maxItems": 50, "items": { "type": "string", "minLength": 3, "maxLength": 320 } }
       }
+    },
+    "static_security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["block_severities", "exceptions"],
+      "properties": {
+        "block_severities": { "type": "array", "uniqueItems": true, "items": { "enum": ["critical", "high", "medium", "low"] } },
+        "exceptions": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["rule_id", "path_glob", "reason", "expires"],
+            "properties": {
+              "rule_id": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$" },
+              "path_glob": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/glob" }] },
+              "reason": { "type": "string", "minLength": 10, "maxLength": 1000 },
+              "expires": { "type": ["string", "null"], "format": "date" }
+            }
+          }
+        }
+      }
+    },
+    "release": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["merge", "environments"],
+          "properties": {
+            "merge": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["method", "require_checks", "delete_branch"],
+              "properties": {
+                "method": { "enum": ["squash", "merge", "rebase"] },
+                "require_checks": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+                "delete_branch": { "type": "boolean" }
+              }
+            },
+            "environments": {
+              "type": "object",
+              "maxProperties": 20,
+              "propertyNames": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$" },
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["deploy_command", "allowed_branches", "require_ci_green", "network_hosts", "timeout_seconds"],
+                "properties": {
+                  "deploy_command": { "$ref": "#/$defs/argv" },
+                  "allowed_branches": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "$ref": "#/$defs/refName" } },
+                  "require_ci_green": { "type": "boolean" },
+                  "network_hosts": { "$ref": "#/$defs/hostList" },
+                  "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 }
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   },
   "$defs": {
-    "refName": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 200,
-      "pattern": "^(?!-)(?!.*\\.\\.)(?!.*//)(?!.*@\\{)(?!.*\\.lock(/|$))[A-Za-z0-9._/-]+$"
-    },
+    "refName": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^(?!-)(?!.*\\.\\.)(?!.*//)(?!.*@\\{)(?!.*\\.lock(/|$))[A-Za-z0-9._/-]+$" },
     "glob": {
       "type": "string",
       "minLength": 1,
       "maxLength": 512,
       "description": "Repository-relative POSIX glob (picomatch syntax, dotfiles included). No leading '/', '!', './' or '~', and no '..' segment."
     },
-    "globList": {
-      "type": "array",
-      "maxItems": 500,
-      "uniqueItems": true,
-      "items": { "$ref": "#/$defs/glob" }
-    },
+    "globList": { "type": "array", "maxItems": 500, "uniqueItems": true, "items": { "$ref": "#/$defs/glob" } },
     "hostList": {
       "type": "array",
       "maxItems": 500,
@@ -401,12 +485,7 @@
         "maxLength": 253
       }
     },
-    "argv": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 500,
-      "items": { "type": "string", "maxLength": 32768 }
-    },
+    "argv": { "type": "array", "minItems": 1, "maxItems": 500, "items": { "type": "string", "maxLength": 32768 } },
     "checkId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
     "providerId": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$" },
     "modelId": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[a-z0-9][a-z0-9._:\\[\\]-]*$" },
@@ -448,17 +527,13 @@
         "journey_check_ids",
         "accessibility",
         "visual",
-        "visual_baseline_auto_accept"
+        "visual_baseline_auto_accept",
+        "exploration"
       ],
       "properties": {
         "required_when_ui_changes": { "type": "boolean" },
         "ui_paths": { "$ref": "#/$defs/globList" },
-        "browsers": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": { "enum": ["chromium", "firefox", "webkit"] }
-        },
+        "browsers": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["chromium", "firefox", "webkit"] } },
         "viewports": {
           "type": "array",
           "minItems": 1,
@@ -490,10 +565,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["enabled", "fail_on_new_serious_or_critical"],
-          "properties": {
-            "enabled": { "type": "boolean" },
-            "fail_on_new_serious_or_critical": { "type": "boolean" }
-          }
+          "properties": { "enabled": { "type": "boolean" }, "fail_on_new_serious_or_critical": { "type": "boolean" } }
         },
         "visual": {
           "type": "object",
@@ -505,7 +577,17 @@
             "baseline_globs": { "$ref": "#/$defs/globList" }
           }
         },
-        "visual_baseline_auto_accept": { "const": false }
+        "visual_baseline_auto_accept": { "const": false },
+        "exploration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "max_minutes", "budget_usd"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "max_minutes": { "type": "integer", "minimum": 1, "maximum": 240 },
+            "budget_usd": { "type": "number", "minimum": 0, "maximum": 1000 }
+          }
+        }
       }
     }
   }

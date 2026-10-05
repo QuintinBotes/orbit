@@ -13,11 +13,10 @@ import { recordUsage } from '../routing/usage.ts';
 import type { ProviderAdapter, TaskResult, TaskSpec } from '../adapters/types.ts';
 import type { SandboxProfile } from '../isolation/types.ts';
 import { assessAmendment, applyAmendment, type AmendmentProposal } from '../contract/amend.ts';
-import { MODEL_OUTPUT_SCHEMAS, validateModelOutput, type InquisitorOutput } from '../contract/model-outputs.ts';
+import { MODEL_OUTPUT_SCHEMAS, validateModelOutput, type InquisitorOutput, type InquisitorQuestion } from '../contract/model-outputs.ts';
 import { strictSchemaViolations } from '../contract/strict-schema.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { wordTokens } from '../contract/wording.ts';
-import { ENV_POLICY_HASH, ENV_POLICY_PATH, ENV_WORKTREE } from '../policy/guard-hook.ts';
 import { snapshotHash } from '../policy/snapshot.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { mentionsIrreversible, riskCategoriesInText } from './heuristics.ts';
@@ -375,7 +374,10 @@ async function runWorker(adapter: ProviderAdapter, ctx: InquisitionContext, opts
     timeoutMs: opts.timeoutMs ?? 300_000,
     sandbox: opts.sandbox,
     policyPath: opts.policyPath,
-    env: { [ENV_POLICY_PATH]: opts.policyPath, [ENV_POLICY_HASH]: snapshotHash(ctx.snapshot), [ENV_WORKTREE]: opts.cwd },
+    // The adapters set the guard hook's variables themselves from policyPath, policyHash and cwd, and refuse a
+    // task environment that names them: nothing a caller passes may point the guard at another policy.
+    policyHash: snapshotHash(ctx.snapshot),
+    env: {},
   };
   const started = clock.now();
   let handle;
@@ -851,6 +853,48 @@ function reusableOutput(prior: readonly WorkerRecord[]): { output: InquisitorOut
   return { output: found?.output ?? null, workerId: found?.workerId ?? null, spent };
 }
 
+/**
+ * A question for blocked criteria that no open material question covers. Its text is the question the trigger
+ * names (the planner's unresolved decision, say) or one built from the trigger summary; its options are to state
+ * the behaviour or to drop the criteria, so nothing is recommended that a person did not decide. Null when every
+ * blocked criterion is already covered, or when no question passing the quality rules can be built.
+ */
+export function questionForUncovered(ctx: InquisitionContext, trigger: Trigger, blocked: readonly string[], continuing: readonly string[], contract: GoalContract): QuestionRecord | null {
+  if (blocked.length === 0) return null;
+  const covered = new Set(openQuestions(ctx.db, ctx.runId).filter((q) => q.material).flatMap((q) => q.affected));
+  const ids = blocked.filter((b) => !covered.has(b));
+  if (ids.length === 0) return null;
+  // The same ask often appears twice (the planner's question and the assumption recording it, "AS-1: ...").
+  const named = [...new Set(trigger.evidence.map((e) => e.trim().replace(/^[A-Z]+-\d+:\s*/, '')).filter((e) => e.endsWith('?')))];
+  const subject = ids.join(', ');
+  const texts = [
+    ...(named.length === 1 ? [named[0]!] : []),
+    `Which behaviour should ${subject} have, given that ${trigger.summary.trim().replace(/[.?!\s]+$/, '')}?`,
+  ];
+  const evidence = [`${trigger.kind} inquiry: ${trigger.summary}`, ...trigger.evidence.filter((e) => e.trim().length >= 10)].map((e) => e.slice(0, 500)).slice(0, 6);
+  const rest = continuing.filter((c) => !ids.includes(c));
+  for (const question of texts) {
+    const draft: InquisitorQuestion = {
+      question,
+      changes: ['implementation', 'proof'],
+      evidence,
+      options: [
+        { label: 'decide', description: `A person states the behaviour ${subject} must have; the run resumes to implement and prove it`, consequences: `${subject} are implemented and verified against the stated behaviour after orbit resume` },
+        { label: 'defer', description: `Leave ${subject} out of this run${rest.length > 0 ? ` and deliver ${rest.join(', ')} only` : ''}`, consequences: `${subject} must be removed from the contract by an approved amendment before the run can deliver; that behaviour stays as it is until a later run decides it` },
+      ],
+      recommendation: 'decide',
+      recommendation_reason: 'the behaviour is material and inspection did not settle it, so only a person can choose it',
+      safe_default: { exists: false, option: null, reason: 'any answer chosen without a person would be a guess about material behaviour' },
+      material: true,
+      affected_work: ids,
+      unblocked_work: rest,
+    };
+    if (!validateQuestion(draft, { contract }).valid) continue;
+    return persistQuestion(ctx.db, ctx.runId, trigger.mode, draft, ctx.clock, { contract, actor: 'inquisition' }).question;
+  }
+  return null;
+}
+
 export async function runInquisition(input: RunInquisitionInput): Promise<InquisitionResult> {
   const { trigger, adapter } = input;
   input.signal?.throwIfAborted();
@@ -963,6 +1007,10 @@ export async function runInquisition(input: RunInquisitionInput): Promise<Inquis
   });
   // Applying amendments may have changed the contract; blocking is recomputed on it (an added criterion is independent work).
   const after = blockingDisposition({ blocked: [...blocked], contract: committed.contract, mode: policy.mode, supportedCriteria: ctx.supportedCriteria, dependsOn: ctx.dependsOn });
+  // Every blocked criterion waits on a question a person can answer (`orbit questions`); one the rules and the
+  // worker left without a question gets one built from the trigger, never a guessed answer.
+  const fallback = questionForUncovered(ctx, trigger, after.blockedCriteria, after.continuingCriteria, committed.contract);
+  if (fallback) committed.questions.push(fallback);
 
   const rejectGreen = PROOF_BLOCKING_TRIGGERS.includes(trigger.kind);
   ctx.db.tx(() =>

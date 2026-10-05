@@ -47,13 +47,16 @@ Per test, as attachments Orbit reads back:
 |---|---|
 | `orbit-diagnostics` | console errors, uncaught page errors, failed requests, HTTP 4xx and 5xx responses, the browser name and version, the viewport and the final URL |
 | `orbit-failure-screenshot` | a full-page screenshot when the test fails, even if the config forgot `screenshot: 'only-on-failure'` |
-| `orbit-a11y` | one per accessibility scan: new and baselined serious or critical violations |
+| `orbit-a11y` | one per accessibility scan: new and baselined serious or critical violations, and whether the scan was advisory |
+| `orbit-keyboard` | one per `expectKeyboardReachable` call: the Tab press that reached each element, and whether it showed a focus indicator |
 
 Console errors and failed requests are recorded, not failed on. Assert on them in a journey when they matter.
 
 ## Accessibility
 
 `expectNoSeriousA11yViolations(page, { baselinePath })` runs axe-core and fails on serious or critical violations. With a `baselinePath`, violations already in that file are tolerated and only new ones fail; each is fingerprinted by rule, element, page path and viewport. A missing baseline file counts as empty.
+
+`ui.accessibility.fail_on_new_serious_or_critical` reaches the fixture as `ORBIT_A11Y_FAIL_ON` (`serious,critical` or `none`). With `none` a new violation is still attached to the report but is advisory: it does not fail the test, and the run lists it under `a11yAdvisory` and `unverified`. Outside Orbit the variable is unset and violations fail.
 
 Recording a baseline is a person's decision, never Orbit's:
 
@@ -64,6 +67,16 @@ ORBIT_A11Y_RECORD_BASELINE=1 npx playwright test e2e/a11y.spec.ts
 The recorder refuses to run when `ORBIT_UI_RUN` is set, which Orbit's runner always sets. A candidate that edits a baseline file is reported and blocked for review; it cannot pass on that edit.
 
 Automated scans find only part of the possible accessibility problems. A clean scan is not a claim that the interface is accessible, and Orbit's reports say so.
+
+## Keyboard navigation
+
+`expectKeyboardReachable(page, ['#status', '#export'])` presses Tab from the top of the page and fails unless every CSS selector is focused, in the order given, with a visible focus indicator (an outline or a box shadow). Call it right after navigation, before clicking anything, because sequential focus navigation starts from the last interaction. Options: `ordered: false` to skip the order check, `requireFocusRing: false` to skip the indicator check, `maxTabs` (default 60).
+
+It checks tab order, reachability and the indicator for the elements you list. It does not test that they work from the keyboard, focus traps or screen reader behaviour, and Orbit's reports say so.
+
+## Exploration
+
+When `ui.exploration.enabled` is true, an explorer worker looks for defects on the running application. Each candidate finding is turned into a Playwright spec outside your repository (under the run's evidence directory) and kept only if that spec fails on every run against the candidate. Reproduced findings come back as failing specs for the implementer; they are never acceptance evidence.
 
 ## Visual baselines
 

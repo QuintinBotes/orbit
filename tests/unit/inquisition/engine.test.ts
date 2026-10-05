@@ -5,8 +5,8 @@ import { listWorkers } from '../../../src/storage/workers.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../../../src/contract/model-outputs.ts';
 import { snapshotHash } from '../../../src/policy/snapshot.ts';
 import type { ImplementerOutput } from '../../../src/contract/model-outputs.ts';
-import { answerQuestion, criteriaBlockedByQuestions, openQuestions } from '../../../src/inquisition/questions.ts';
-import { applyApprovedAmendment, authorityMap, rebuildContract, renderInquisitorPrompt, runInquisition, type InquisitionContext, type InquisitorWorkerOptions } from '../../../src/inquisition/engine.ts';
+import { answerQuestion, criteriaBlockedByQuestions, openQuestions, validateQuestion } from '../../../src/inquisition/questions.ts';
+import { applyApprovedAmendment, authorityMap, questionForUncovered, rebuildContract, renderInquisitorPrompt, runInquisition, type InquisitionContext, type InquisitorWorkerOptions } from '../../../src/inquisition/engine.ts';
 import type { Ambiguity } from '../../../src/inquisition/resolve.ts';
 import { listAmendments, listLedger, listQuestions } from '../../../src/inquisition/store.ts';
 import { detectTriggers, loadInquisitionSnapshot, proofAdequacy } from '../../../src/inquisition/triggers.ts';
@@ -222,7 +222,7 @@ describe('scenario 5: weak tests are rejected despite green', () => {
 });
 
 describe('inquisitor worker', () => {
-  it('runs a worker only when judgement is needed, with a persisted row, the strict schema and the guard environment', async () => {
+  it('runs a worker only when judgement is needed, with a persisted row, the strict schema, the policy hash and no task environment', async () => {
     env = setup();
     addFailure(env.db, 'fp-a', 'c1');
     addFailure(env.db, 'fp-a', 'c2');
@@ -234,7 +234,11 @@ describe('inquisitor worker', () => {
     const spec = adapter.specs[0]!;
     expect(spec).toMatchObject({ role: 'inquisitor', readOnly: true, runId: RUN, model: 'fake-model' });
     expect(spec.outputSchema).toBe(MODEL_OUTPUT_SCHEMAS.inquisitor);
-    expect(spec.env).toEqual({ ORBIT_POLICY_PATH: `${env.dir}/policy.json`, ORBIT_POLICY_HASH: snapshotHash(env.snap), ORBIT_WORKTREE: `${env.dir}/wt` });
+    // The guard variables are the adapter's to set; the engine passes the hash and an empty environment.
+    expect(spec.env).toEqual({});
+    expect(spec.policyHash).toBe(snapshotHash(env.snap));
+    expect(spec.policyPath).toBe(`${env.dir}/policy.json`);
+    expect(spec.cwd).toBe(`${env.dir}/wt`);
     const [w] = listWorkers(env.db, { runId: RUN });
     expect(w).toMatchObject({ role: 'inquisitor', state: 'SUCCEEDED', provider: 'fake', resultStatus: 'succeeded' });
     expect(w!.purpose).toBe(`inquisition:diagnose:${t.key}`);
@@ -262,7 +266,10 @@ describe('inquisitor worker', () => {
     });
     const adapter = new ScriptedAdapter([{ structured: out }]);
     const res = await runInquisition({ trigger: trig({ kind: 'repeated_failure', mode: 'diagnose' }), context: env.ctx({}, { worker: workerOpts(env) }), adapter });
-    expect(res.questions).toHaveLength(1);
+    // The valid worker question, and one built from the trigger for AC-2, which the rejected question left without one.
+    expect(res.questions).toHaveLength(2);
+    expect(res.questions[1]).toMatchObject({ material: true, affected: ['AC-2'], status: 'open' });
+    expect(res.questions[1]!.options.map((o) => o.label)).toEqual(['decide', 'defer']);
     expect(res.rejectedQuestions).toEqual([expect.objectContaining({ problems: expect.arrayContaining([expect.stringContaining('permission or opinion')]) })]);
     expect(res.blockedCriteria).toEqual(['AC-1', 'AC-2']);
     expect(res.continuingCriteria).toEqual(['AC-3']);
@@ -273,6 +280,20 @@ describe('inquisitor worker', () => {
     const out = inquisitorOutput({ unknowns: [{ statement: 'Which time zone applies to exported dates', material: true, blocks: ['AC-2'] }] });
     const res = await runInquisition({ trigger: trig(), context: env.ctx({}, { worker: workerOpts(env) }), adapter: new ScriptedAdapter([{ structured: out }]) });
     expect(res.blockedCriteria).toEqual(['AC-2']);
+  });
+
+  it('a blocked criterion no question covers gets a persisted material question built from the trigger, once', async () => {
+    env = setup();
+    const t = trig({ evidence: ['Should unknown /api paths answer with a JSON error body, and with which fields?'], subjects: ['AC-2'] });
+    const out = inquisitorOutput({ unknowns: [{ statement: 'The JSON error body for unknown /api paths', material: true, blocks: ['AC-2'] }] });
+    const first = await runInquisition({ trigger: t, context: env.ctx({}, { worker: workerOpts(env) }), adapter: new ScriptedAdapter([{ structured: out }]) });
+    expect(first.blockedCriteria).toEqual(['AC-2']);
+    const open = listQuestions(env.db, RUN, { status: 'open' });
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({ material: true, affected: ['AC-2'], question: 'Should unknown /api paths answer with a JSON error body, and with which fields?' });
+    expect(validateQuestion({ question: open[0]!.question, changes: ['implementation', 'proof'], evidence: open[0]!.evidence, options: open[0]!.options, recommendation: 'decide', recommendation_reason: 'only a person can choose it here', safe_default: { exists: false, option: null, reason: 'a guess about material behaviour' }, material: true, affected_work: ['AC-2'], unblocked_work: [] }).valid).toBe(true);
+    // Covered now: a second inquiry into the same blocked criterion does not ask again.
+    expect(questionForUncovered(env.ctx(), t, ['AC-2'], [], env.ctx().contract)).toBeNull();
   });
 
   it('never lets a worker decide a material matter: security, billing, irreversible and contract topics are refused and kept visible', async () => {

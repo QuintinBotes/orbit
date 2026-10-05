@@ -29,8 +29,14 @@ function marking(): object {
   return implementer([SRC_TEXT, TEST_TEXT], { extra: { sleepMs: 2_500 } });
 }
 
+/**
+ * The scheduler counts every live worker of the repository against the machine's capacity, so "room for both"
+ * is stated as a machine with room (16 cores, 64 GB free) rather than read from whatever this host is doing.
+ */
+const ROOMY = { schedulerProbe: { availableParallelism: () => 16, freemem: () => 64_000 * 1024 * 1024 } };
+
 async function serve(l: Lab, runIds: string[], maxRuns: number): Promise<void> {
-  const c = new Controller({ mode: 'service', deps: labDeps(l), maxRuns, tickIntervalMs: 50, leaseTtlMs: 30_000, leaseRenewMs: 1_000, graceMs: 300, watchdogMs: 0 });
+  const c = new Controller({ mode: 'service', deps: labDeps(l, ROOMY), maxRuns, tickIntervalMs: 50, leaseTtlMs: 30_000, leaseRenewMs: 1_000, graceMs: 300, watchdogMs: 0 });
   const started = c.start();
   try {
     await waitFor(() => runIds.every((id) => isTerminal(runState(l, id).state)), 240_000, 100);

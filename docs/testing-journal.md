@@ -32,6 +32,19 @@ Entry format:
 
 ---
 
+### 2026-10-05: publication hygiene lessons
+  - Tested: sanitized history rewrites, each verified offline by two scanners, commit counts and tip diffs before any force-push.
+  - Went well: force-with-lease pins meant nothing could overwrite a concurrent change; branch protection was restored by a trap on every exit path; unpushed local branches were remapped onto rewritten history with uncommitted work intact.
+  - Went wrong: a broader term list found leaks a narrower first audit had missed; shell variables passed as single arguments under zsh broke two command batches (nothing was changed either time).
+  - Root cause: a narrow term list; a "forbidden words" guard that lists the words publishes them; zsh does not word-split unquoted variables.
+  - Change: guard greps replaced by publish-guard (terms stay private, outside the repository); multi-argument shell work goes through bash scripts with arrays.
+  ### 2026-10-05: privacy: personal data added to the guarded terms; Orbit published privately
+- Tested: a scan of Orbit (working tree and full history) and the plugin catalog for personal identifiers (home path, personal email, machine name, personal Claude config directory names, a third party's name), then the first push of Orbit through publish-guard's pre-push hook.
+- Went well: the catalog was already clean; Orbit had one real hit (a test using a personal config directory name as sample data) and two in the first version of an interface note. The pre-push hook passed only after history was clean, which is the point of it.
+- Went wrong: a broad scan for the personal config name also matched the Orbit identifier `claude-worker`; converting fixture literals to runtime-built addresses left two partial domains that still parsed as addresses, which the pre-commit hook caught.
+- Root cause: substring terms need word boundaries where they overlap real identifiers; fixture rewrites must move the whole domain into the runtime constant.
+- Change: personal identifiers added to the private terms file with a word-bounded pattern for config directory names; CI secrets refreshed in all six guarded repositories; Orbit's unpublished history rewritten (fixture domains, config names) and pushed to the private repository at 5b63791.
+
 ### 2026-10-05: coverage: first measurement
 - Tested: `vitest run --coverage` over `src/**` (v8 provider).
 - Went well: functions 90.5%, lines 88.9%, statements 85.8% on the first measurement; every source file is reached by some test.

@@ -7,6 +7,7 @@ import { createAdapter, createAdapters, providerKind } from '../../../src/adapte
 import { ClaudeAdapter } from '../../../src/adapters/claude.ts';
 import { readExitRecord } from '../../../src/adapters/shim.ts';
 import { archiveAttempt } from '../../../src/adapters/supervise.ts';
+import { ROLE_OUTPUT_TOKENS, outputBudgetInstruction } from '../../../src/adapters/prompt.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../../../src/contract/model-outputs.ts';
 import type { TaskSpec } from '../../../src/adapters/types.ts';
 import { FAKE_CLAUDE, FAKE_CODEX, IMPLEMENTER_OUTPUT, REVIEW_OUTPUT, implementerSpec, makeFixture, waitFor, writeScenario, type Fixture } from './helpers.ts';
@@ -49,7 +50,7 @@ describe.skipIf(!canStripTypes)('CodexAdapter + shim + fake-codex', () => {
     expect(call.role).toBe('reviewer');
     expect(call.argv).toEqual(expect.arrayContaining(['exec', '--sandbox', 'read-only', '--ephemeral', '--ignore-user-config', '--json', '-m', 'gpt-6-astra', '-']));
     expect(call.envKeys).not.toContain('GH_TOKEN');
-    expect(call.promptBytes).toBe('You are the reviewer.\n\nReview candidate abc123.'.length);
+    expect(call.promptBytes).toBe(`You are the reviewer.\n\nReview candidate abc123.\n${outputBudgetInstruction(4000)}\n`.length);
     expect(existsSync(join(f.workerDir, 'last-message.json'))).toBe(true);
     expect((await a.streamEvents(handle, 0)).events.at(-1)?.type).toBe('finished');
     expect(await a.reportUsage(handle)).toMatchObject({ inputTokens: 1234 });
