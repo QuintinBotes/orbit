@@ -3,6 +3,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
 import { sha256 } from '../core/hash.ts';
+import { credentialGlobsOf } from '../policy/builtin.ts';
 import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
 import type { SandboxProfile } from './types.ts';
 import { canonicalPath, credentialFilesIn, gitCommonDir, isWithin, uniq } from './util.ts';
@@ -155,6 +156,8 @@ export interface WorkerProfileInput {
   timeoutMs?: number;
   /** The environment Orbit runs with, for CLAUDE_CONFIG_DIR and CODEX_HOME; defaults to process.env. */
   env?: Record<string, string | undefined>;
+  /** Entries the credential enumeration may visit before the build refuses; defaults to CREDENTIAL_WALK_LIMIT (a test seam). */
+  credentialWalkLimit?: number;
 }
 
 export interface CheckProfileInput {
@@ -168,6 +171,12 @@ export interface CheckProfileInput {
   claudeConfigDir?: string;
   codexHome?: string;
   env?: Record<string, string | undefined>;
+  /** Entries the credential enumeration may visit before the build refuses; defaults to CREDENTIAL_WALK_LIMIT (a test seam). */
+  credentialWalkLimit?: number;
+}
+
+function walkLimit(input: { credentialWalkLimit?: number }): { credentialWalkLimit?: number } {
+  return input.credentialWalkLimit === undefined ? {} : { credentialWalkLimit: input.credentialWalkLimit };
 }
 
 /**
@@ -212,7 +221,7 @@ export function profileForWorker(input: WorkerProfileInput): BuiltProfile {
 
   return {
     writablePaths: uniq([worktree, workerDir, tmp, own]),
-    denyReadPaths: denyList({ home, repoRoot: input.snapshot.repo_root, worktree, extra: others }),
+    denyReadPaths: denyList({ home, repoRoot: input.snapshot.repo_root, worktree, extra: others, snapshot: input.snapshot, ...walkLimit(input) }),
     readablePaths: uniq([
       ...readableFor(worktree, input.readablePaths),
       ...(input.policyPath ? [canonicalPath(input.policyPath)] : []),
@@ -240,7 +249,7 @@ export function profileForCheck(input: CheckProfileInput): BuiltProfile {
   const providerState = [...claudeLogins(home, env, dirs.claudeConfigDir).flatMap((d) => claudeState(home, d)), ...codexHomes(home, env, dirs.codexHome)];
   return {
     writablePaths: uniq([worktree, ...(input.extraWritable ?? []).map(canonicalPath)]),
-    denyReadPaths: denyList({ home, repoRoot: input.snapshot.repo_root, worktree, extra: providerState }),
+    denyReadPaths: denyList({ home, repoRoot: input.snapshot.repo_root, worktree, extra: providerState, snapshot: input.snapshot, ...walkLimit(input) }),
     readablePaths: readableFor(worktree, input.readablePaths),
     allowedHosts: uniq(input.check.network_hosts),
     limits: { timeoutMs: input.check.timeout_seconds * 1000, ...resourceLimits(input.snapshot) },
@@ -319,7 +328,7 @@ export function repoParentDenial(repoRoot: string, homeDir: string): { path: str
  * work and untracked files such as .env, none of which is in the worktree.
  * Only when the worktree is the checkout itself can it not be denied.
  */
-function denyList(opts: { home: string; repoRoot: string; worktree: string; extra: string[] }): string[] {
+function denyList(opts: { home: string; repoRoot: string; worktree: string; extra: string[]; snapshot: PolicySnapshot; credentialWalkLimit?: number }): string[] {
   if (!opts.repoRoot) throw new OrbitError('INTERNAL', 'policy snapshot has no repo_root');
   const repo = canonicalPath(opts.repoRoot);
   const parent = repoParentDenial(repo, opts.home).path;
@@ -328,8 +337,9 @@ function denyList(opts: { home: string; repoRoot: string; worktree: string; extr
     ...SYSTEM_DENY_READ.map(canonicalPath),
     join(repo, '.orbit'),
     ...(isWithin(repo, opts.worktree) ? [] : [repo]),
-    // Credential files in the worktree (.env, keys): a deny nested in the re-allowed worktree stays the more specific rule.
-    ...credentialFilesIn(opts.worktree),
+    // Credential files in the worktree (.env, keys, and what the policy protects as credentials): a deny nested in the
+    // re-allowed worktree stays the more specific rule. An enumeration that cannot finish throws rather than guess.
+    ...credentialFilesIn(opts.worktree, credentialGlobsOf(opts.snapshot), opts.credentialWalkLimit === undefined ? {} : { limit: opts.credentialWalkLimit }),
     orbitTmpRoot(),
     ...(parent ? [parent] : []),
     ...opts.extra,

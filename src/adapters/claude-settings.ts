@@ -22,7 +22,7 @@ import { existsSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
 import { compileSchema, schemaErrors } from '../core/schema.ts';
-import { BUILTIN_CREDENTIAL_PATHS, HOME_CREDENTIAL_PATHS } from '../policy/builtin.ts';
+import { HOME_CREDENTIAL_PATHS, credentialGlobsOf } from '../policy/builtin.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 
 export type ClaudeTier = 'os-sandbox' | 'claude-sandbox';
@@ -127,9 +127,9 @@ export function renderClaudeSettings(input: ClaudeSettingsInput): ClaudeSettings
   return settings;
 }
 
-/** Built-in credential globs (their contents are secrets, so reading is denied too, not only editing). */
+/** Built-in credential globs and the policy's protected credential globs (their contents are secrets, so reading is denied too, not only editing). */
 function credentialGlobs(snapshot: PolicySnapshot): string[] {
-  return BUILTIN_CREDENTIAL_PATHS.filter((g) => snapshot.effective_protected_paths.includes(g));
+  return credentialGlobsOf(snapshot);
 }
 
 const RULE = { type: 'string', minLength: 3, maxLength: 4096, pattern: '^[A-Za-z][A-Za-z0-9_]*(\\(.+\\))?$' };

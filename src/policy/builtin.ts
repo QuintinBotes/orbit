@@ -105,6 +105,39 @@ export const BUILTIN_PROTECTED_PATHS: readonly string[] = Object.freeze(BUILTIN_
 /** Globs whose contents are secrets: the Read tool is denied on these, not just edits. */
 export const BUILTIN_CREDENTIAL_PATHS: readonly string[] = Object.freeze(BUILTIN_PROTECTIONS.filter((p) => p.credential).map((p) => p.glob));
 
+// Whole-word patterns, so `src/tokenizer/**` and `packages/keyboard/**` are not credentials.
+const CREDENTIAL_GLOB_WORDS = [
+  String.raw`(?:^|[^a-z0-9])(?:secrets?|credentials?|passwords?|passwd|htpasswd|keystores?|truststores?)(?![a-z0-9])`,
+  String.raw`(?:^|[^a-z0-9])(?:private|api|access|auth|signing|service[_-]?account)[_-]?(?:keys?|tokens?)(?![a-z0-9])`,
+  String.raw`\.(?:env|pem|key|keystore|p12|pfx|jks|kdbx|gpg|tfvars|netrc|npmrc|pypirc)(?![a-z0-9])`,
+];
+const CREDENTIAL_GLOB = new RegExp(CREDENTIAL_GLOB_WORDS.join('|'), 'i');
+
+/**
+ * Whether a protected glob names credential material, by what the glob itself says. Protected means "never
+ * edit"; it does not mean "never read" (a worker repairing CI must read `.github/**`, and `infra/**` is code),
+ * so only a glob that names secrets also denies reads: a segment such as `secrets`, `credentials`, `passwords`,
+ * `api_key`, `private-key`, or an extension such as `.key`, `.pem`, `.p12`, `.env`, `.tfvars`. Matching is on whole words.
+ */
+export function isCredentialGlob(glob: string): boolean {
+  return CREDENTIAL_GLOB.test(glob);
+}
+
+/**
+ * Every glob whose files must be unreadable to a worker: the built-in credential globs plus the policy's own
+ * protected globs that name credential material. Built from the snapshot's effective list and the config's list,
+ * so a snapshot assembled without one of them can never deny less than the policy says. Used by the Read and
+ * Bash judgements, the OS read-deny enumeration and the Claude settings, so the layers cannot disagree.
+ */
+export function credentialGlobsOf(snapshot: { effective_protected_paths?: readonly string[]; config?: { scope?: { protected_paths?: readonly string[]; credential_paths?: readonly string[] } } }): string[] {
+  const out = new Set<string>(BUILTIN_CREDENTIAL_PATHS);
+  // Explicit credential locations are authoritative; the name-based reading below is only a fallback.
+  for (const glob of snapshot.config?.scope?.credential_paths ?? []) if (typeof glob === 'string') out.add(glob);
+  const policy = [...(snapshot.effective_protected_paths ?? []), ...(snapshot.config?.scope?.protected_paths ?? [])];
+  for (const glob of policy) if (typeof glob === 'string' && isCredentialGlob(glob)) out.add(glob);
+  return [...out];
+}
+
 /**
  * Credential locations outside any worktree, relative to the home directory.
  * The OS sandbox is the real control for these; the guard hook denies them

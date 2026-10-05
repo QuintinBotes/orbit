@@ -29,7 +29,7 @@ import { isAbsolute, join, posix, relative, sep } from 'node:path';
 import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import picomatch from 'picomatch';
 import type { AuthorizationDecision, Operation, OrbitConfig, PolicySnapshot } from './types.ts';
-import { BUILTIN_CREDENTIAL_PATHS, BUILTIN_PROTECTED_PATHS, HOME_CREDENTIAL_PATHS } from './builtin.ts';
+import { BUILTIN_PROTECTED_PATHS, HOME_CREDENTIAL_PATHS, credentialGlobsOf } from './builtin.ts';
 import { compileGlobs, globBases, hasGlobChars, stripDotSlash, type PathMatcher } from './globs.ts';
 import { canonicalize, isCaseInsensitiveFs, relativeInside, resolveDetailed, toPosix } from './paths.ts';
 import { hostAllowed, normalizeHost } from './hosts.ts';
@@ -104,7 +104,8 @@ function compiled(snapshot: PolicySnapshot): Compiled {
     protectedGlobs,
     protectedBases: globBases(protectedGlobs),
     allowed: compileGlobs(snapshot.config.scope.allowed_paths, { nocase: false }),
-    credential: compileGlobs(BUILTIN_CREDENTIAL_PATHS, { nocase: true }),
+    // The built-in credential globs and the policy's own protected globs that name credentials (ADR 0005).
+    credential: compileGlobs(credentialGlobsOf(snapshot), { nocase: true }),
     homeCredential: compileGlobs(HOME_CREDENTIAL_PATHS, { nocase: true }),
   };
   cache.set(snapshot, c);
@@ -152,10 +153,30 @@ function authorizeRead(c: Compiled, path: unknown, ctx: AuthorizeContext): Autho
   // Judge both the name used and the file reached: a symlink named README pointing at .env is still .env.
   for (const p of [canonical, abs]) {
     if (c.credential(stripRoot(toPosix(p)))) return deny('read.credential', `${path} holds credentials`);
+    // Policy globs are worktree-relative (`secrets/**`), so they are judged against the path inside the worktree too.
+    if (insideWorktree(ctx.worktreeRoot, p).some((rel) => c.credential(rel))) return deny('read.credential', `${path} holds credentials`);
     const underHome = homeRelative(home, p);
     if (underHome !== null && c.homeCredential(underHome)) return deny('read.credential', `${path} is a credential location`);
   }
   return allow('read.allowed', 'not a credential file');
+}
+
+/** The worktree-relative spellings of an absolute path (through the root as written and as resolved); empty when it is outside. */
+function insideWorktree(root: string | undefined, p: string): string[] {
+  if (!root) return [];
+  let rootReal = root;
+  try {
+    rootReal = realpathSync.native(root);
+  } catch {
+    // A root that does not exist holds nothing to match.
+  }
+  const ci = isCaseInsensitiveFs(rootReal);
+  const out: string[] = [];
+  for (const r of new Set([root, rootReal])) {
+    const rel = relativeInside(r, p, ci);
+    if (rel !== null && rel !== '.') out.push(rel);
+  }
+  return out;
 }
 
 function homeRelative(home: string, p: string): string | null {
@@ -357,7 +378,7 @@ function judgeRead(c: Compiled, r: BashRead, root: string, home: string): Author
   }
   const targets = r.glob ? expandOnDisk(r.abs) : [r.abs];
   if (targets === null) return deny('bash.glob-too-broad', `${r.via} ${r.path} matches too many files to inspect`);
-  if (r.glob && c.credential(stripRoot(toPosix(r.abs)))) return denied(r.path);
+  if (r.glob && (c.credential(stripRoot(toPosix(r.abs))) || insideWorktree(root, r.abs).some((rel) => c.credential(rel)))) return denied(r.path);
   for (const t of targets) {
     const d = authorizeRead(c, t, { worktreeRoot: root, home });
     if (!d.allowed) return denied(r.glob ? t : r.path);

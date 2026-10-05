@@ -317,6 +317,84 @@ describe('credential files inside the worktree', () => {
   });
 });
 
+describe('credential enumeration covers the policy and node_modules, and fails closed', () => {
+  function worker(l: ReturnType<typeof layout>, extra: { protectedPaths?: string[]; credentialWalkLimit?: number } = {}) {
+    return profileForWorker({
+      worktree: l.worktree,
+      workerDir: l.workerDir,
+      snapshot: snapshotFor({ repoRoot: l.repo, ...(extra.protectedPaths ? { protectedPaths: extra.protectedPaths } : {}) }),
+      provider: 'claude',
+      claudeConfigDir: l.claudeDir,
+      homeDir: l.home,
+      env: {},
+      ...(extra.credentialWalkLimit === undefined ? {} : { credentialWalkLimit: extra.credentialWalkLimit }),
+    });
+  }
+
+  function plantFile(worktree: string, rel: string): string {
+    mkdirSync(join(worktree, rel, '..'), { recursive: true });
+    writeFileSync(join(worktree, rel), 'synthetic acme value\n');
+    return join(worktree, rel);
+  }
+
+  it('puts files named by the policy\'s protected credential globs on the read-deny list', () => {
+    const l = layout();
+    const secret = plantFile(l.worktree, 'secrets/db-password.txt');
+    const key = plantFile(l.worktree, 'config/prod.key');
+    const workflow = plantFile(l.worktree, '.github/workflows/ci.yml');
+    const infra = plantFile(l.worktree, 'infra/main.tf');
+    const p = worker(l, { protectedPaths: ['.github/**', 'infra/**', 'secrets/**', 'config/*.key'] });
+    // A directory the glob names (`secrets/**` names `secrets`) is denied as a whole, which covers the file.
+    // (The worktree itself sits under a denied directory and is re-allowed, so only denies inside it count.)
+    const covered = (f: string) => p.denyReadPaths.some((d) => d !== l.worktree && isWithin(d, l.worktree) && isWithin(f, d));
+    expect(covered(secret)).toBe(true);
+    expect(covered(key)).toBe(true);
+    // Protected for writing is not unreadable: a worker repairing CI must still read the workflow and the infra code.
+    expect(covered(workflow)).toBe(false);
+    expect(covered(infra)).toBe(false);
+  });
+
+  it('does the same for a check', () => {
+    const l = layout();
+    const secret = plantFile(l.worktree, 'secrets/db-password.txt');
+    const p = profileForCheck({ worktree: l.worktree, check: checkFor(), snapshot: snapshotFor({ repoRoot: l.repo, protectedPaths: ['secrets/**'] }), homeDir: l.home, env: {} });
+    expect(p.denyReadPaths.some((d) => d !== l.worktree && isWithin(d, l.worktree) && isWithin(secret, d))).toBe(true);
+  });
+
+  it('does not skip node_modules', () => {
+    const l = layout();
+    const vendored = plantFile(l.worktree, 'node_modules/pkg/.env');
+    const nestedKey = plantFile(l.worktree, 'node_modules/@acme/tool/certs/server.pem');
+    const p = worker(l);
+    expect(p.denyReadPaths).toContain(vendored);
+    expect(p.denyReadPaths).toContain(nestedKey);
+  });
+
+  it('refuses to build a worker profile when the walk hits its traversal cap', () => {
+    const l = layout();
+    for (let i = 0; i < 12; i++) plantFile(l.worktree, `src/file-${i}.ts`);
+    plantFile(l.worktree, '.env');
+    let caught: unknown;
+    try {
+      worker(l, { credentialWalkLimit: 5 });
+    } catch (err) {
+      caught = err;
+    }
+    expect(isOrbitError(caught)).toBe(true);
+    expect((caught as { code: string }).code).toBe('ISOLATION_UNAVAILABLE');
+    expect((caught as Error).message).toMatch(/credential/i);
+    expect((caught as Error).message).toMatch(/5/);
+  });
+
+  it('refuses for a check as well, and still builds when the cap is not reached', () => {
+    const l = layout();
+    for (let i = 0; i < 12; i++) plantFile(l.worktree, `src/file-${i}.ts`);
+    const check = (limit: number) => profileForCheck({ worktree: l.worktree, check: checkFor(), snapshot: snapshotFor({ repoRoot: l.repo }), homeDir: l.home, env: {}, credentialWalkLimit: limit });
+    expect(() => check(5)).toThrow(/credential/i);
+    expect(() => check(1000)).not.toThrow();
+  });
+});
+
 describe('repoParentDenial', () => {
   it('denies the projects directory when that is safe', () => {
     const l = layout();

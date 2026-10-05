@@ -733,3 +733,78 @@ describe('runShim: provider output is redacted before it is persisted', () => {
     expect(readFileSync(join(r.dir, STDERR_FILE), 'utf8')).toBe('warn: slow\n');
   });
 });
+
+describe('runShim: a multi-line private key block in provider output is persisted as one marker', () => {
+  // Built at runtime so no key-shaped literal sits in the repository.
+  const LABEL = ['OPENSSH', 'PRIVATE', 'KEY'].join(' ');
+  const BEGIN = ['-----', 'BEGIN ', LABEL, '-----'].join('');
+  const END = ['-----', 'END ', LABEL, '-----'].join('');
+  const bodyLine = (i: number): string => Buffer.from(`acme-synthetic-key-material-${i}-`.repeat(3)).toString('base64').slice(0, 64);
+  const body = (n: number): string[] => Array.from({ length: n }, (_, i) => bodyLine(i));
+
+  /** A provider that prints the given lines, one per console call, to the chosen stream. */
+  const printing = (stream: 'log' | 'error', lines: string[]): string[] => [NODE, '-e', `for (const l of ${JSON.stringify(lines)}) console.${stream}(l);`];
+
+  it.each(['log', 'error'] as const)('removes a physical PEM block from %s and keeps the lines around it', async (stream) => {
+    const r = rig();
+    const lines = ['before the key', BEGIN, ...body(25), END, 'after the key'];
+    await r.run({ argv: printing(stream, lines) });
+    const text = readFileSync(join(r.dir, stream === 'log' ? LOG_FILE : STDERR_FILE), 'utf8');
+    expect(text).not.toContain(BEGIN);
+    expect(text).not.toContain(END);
+    for (const l of body(25)) expect(text, l).not.toContain(l);
+    expect(text).toBe('before the key\n[REDACTED:private-key]\nafter the key\n');
+  });
+
+  it('suppresses the key on both streams at once, with JSON lines around it staying valid', async () => {
+    const r = rig();
+    const script = [
+      `const K=${JSON.stringify([BEGIN, ...body(10), END])};`,
+      "console.log(JSON.stringify({type:'assistant',n:1}));",
+      'for (const l of K) console.log(l);',
+      'for (const l of K) console.error(l);',
+      "console.log(JSON.stringify({type:'assistant',n:2}));",
+    ].join('');
+    await r.run({ argv: [NODE, '-e', script] });
+    const log = readFileSync(join(r.dir, LOG_FILE), 'utf8');
+    const err = readFileSync(join(r.dir, STDERR_FILE), 'utf8');
+    for (const text of [log, err]) {
+      expect(text).not.toContain(body(10)[0]!);
+      expect(text).toContain('[REDACTED:private-key]');
+    }
+    const lines = log.split('\n').filter((l) => l.startsWith('{'));
+    expect(lines.map((l) => JSON.parse(l))).toEqual([{ type: 'assistant', n: 1 }, { type: 'assistant', n: 2 }]);
+  });
+
+  it('keeps suppressing past the bound when no END arrives, says so once, and drops the rest of the stream', async () => {
+    const r = rig();
+    const lines = ['before', BEGIN, ...body(260), 'a line that is never written', 'neither is this one'];
+    await r.run({ argv: printing('log', lines) });
+    const text = readFileSync(join(r.dir, LOG_FILE), 'utf8');
+    for (const l of [BEGIN, bodyLine(0), bodyLine(199), bodyLine(259), 'a line that is never written', 'neither is this one']) expect(text, l).not.toContain(l);
+    const out = text.split('\n').filter(Boolean);
+    expect(out[0]).toBe('before');
+    expect(out[1]).toBe('[REDACTED:private-key]');
+    expect(out).toHaveLength(3);
+    expect(out[2]).toMatch(/^\[REDACTED:private-key\].*no END line within 200 lines.*rest of this stream/);
+  });
+
+  it('redacts a block whose END is the last line without a newline, and text before the BEGIN on its line', async () => {
+    const r = rig();
+    const script = `process.stdout.write(${JSON.stringify(['key: ' + BEGIN, ...body(3), END].join('\n'))})`;
+    await r.run({ argv: [NODE, '-e', script] });
+    expect(readFileSync(join(r.dir, LOG_FILE), 'utf8')).toBe('key: [REDACTED:private-key]\n');
+  });
+
+  it('does not start a block for a complete JSON line that merely mentions a header', async () => {
+    const r = rig();
+    const lines = [JSON.stringify({ type: 'assistant', text: `the file starts with ${BEGIN}` }), JSON.stringify({ type: 'assistant', n: 2 }), 'plain tail'];
+    await r.run({ argv: printing('log', lines) });
+    const out = readFileSync(join(r.dir, LOG_FILE), 'utf8').split('\n').filter(Boolean);
+    expect(out).toHaveLength(3);
+    expect(JSON.parse(out[0]!)).toMatchObject({ type: 'assistant' });
+    expect(out[0]).not.toContain(BEGIN);
+    expect(JSON.parse(out[1]!)).toEqual({ type: 'assistant', n: 2 });
+    expect(out[2]).toBe('plain tail');
+  });
+});

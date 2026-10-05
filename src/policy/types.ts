@@ -175,6 +175,8 @@ export interface OrbitConfig {
     allowed_paths: string[];
     /** Always also includes the built-in protected set (see policy/builtin.ts). */
     protected_paths: string[];
+    /** Credential locations workers may not read (OS read-deny, Read tool, Bash reads), in addition to the built-ins. */
+    credential_paths?: string[];
   };
   actions: {
     edit: boolean;

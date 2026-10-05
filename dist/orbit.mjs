@@ -578,6 +578,16 @@ var init_redact = __esm({
 });
 
 // src/policy/builtin.ts
+function isCredentialGlob(glob) {
+  return CREDENTIAL_GLOB.test(glob);
+}
+function credentialGlobsOf(snapshot2) {
+  const out = new Set(BUILTIN_CREDENTIAL_PATHS);
+  for (const glob of snapshot2.config?.scope?.credential_paths ?? []) if (typeof glob === "string") out.add(glob);
+  const policy = [...snapshot2.effective_protected_paths ?? [], ...snapshot2.config?.scope?.protected_paths ?? []];
+  for (const glob of policy) if (typeof glob === "string" && isCredentialGlob(glob)) out.add(glob);
+  return [...out];
+}
 function effectiveProtectedPaths(config) {
   const out = [];
   for (const glob of [...BUILTIN_PROTECTED_PATHS, ...config.scope.protected_paths]) {
@@ -585,7 +595,7 @@ function effectiveProtectedPaths(config) {
   }
   return out;
 }
-var BUILTIN_PROTECTIONS, BUILTIN_PROTECTED_PATHS, BUILTIN_CREDENTIAL_PATHS, HOME_CREDENTIAL_PATHS;
+var BUILTIN_PROTECTIONS, BUILTIN_PROTECTED_PATHS, BUILTIN_CREDENTIAL_PATHS, CREDENTIAL_GLOB_WORDS, CREDENTIAL_GLOB, HOME_CREDENTIAL_PATHS;
 var init_builtin = __esm({
   "src/policy/builtin.ts"() {
     "use strict";
@@ -673,6 +683,12 @@ var init_builtin = __esm({
     ]);
     BUILTIN_PROTECTED_PATHS = Object.freeze(BUILTIN_PROTECTIONS.map((p) => p.glob));
     BUILTIN_CREDENTIAL_PATHS = Object.freeze(BUILTIN_PROTECTIONS.filter((p) => p.credential).map((p) => p.glob));
+    CREDENTIAL_GLOB_WORDS = [
+      String.raw`(?:^|[^a-z0-9])(?:secrets?|credentials?|passwords?|passwd|htpasswd|keystores?|truststores?)(?![a-z0-9])`,
+      String.raw`(?:^|[^a-z0-9])(?:private|api|access|auth|signing|service[_-]?account)[_-]?(?:keys?|tokens?)(?![a-z0-9])`,
+      String.raw`\.(?:env|pem|key|keystore|p12|pfx|jks|kdbx|gpg|tfvars|netrc|npmrc|pypirc)(?![a-z0-9])`
+    ];
+    CREDENTIAL_GLOB = new RegExp(CREDENTIAL_GLOB_WORDS.join("|"), "i");
     HOME_CREDENTIAL_PATHS = Object.freeze([
       ".ssh/**",
       ".aws/**",
@@ -20859,7 +20875,7 @@ var init_config_schema = __esm({
           type: "object",
           additionalProperties: false,
           required: ["allowed_paths", "protected_paths"],
-          properties: { allowed_paths: { $ref: "#/$defs/globList" }, protected_paths: { $ref: "#/$defs/globList" } }
+          properties: { allowed_paths: { $ref: "#/$defs/globList" }, protected_paths: { $ref: "#/$defs/globList" }, credential_paths: { $ref: "#/$defs/globList" } }
         },
         actions: {
           type: "object",
@@ -21423,7 +21439,8 @@ function defaultConfig(mode = DEFAULT_MODE) {
     repository: { base_branch: "main", branch_prefix: "orbit/", allow_dirty_start: false, remote: "origin" },
     scope: {
       allowed_paths: ["apps/**", "packages/**", "tests/**", "docs/**"],
-      protected_paths: [".github/**", "infra/**", ".orbit/config.yaml", "**/.env*"]
+      protected_paths: [".github/**", "infra/**", ".orbit/config.yaml", "**/.env*"],
+      credential_paths: []
     },
     actions: {
       edit: true,
@@ -22090,7 +22107,8 @@ function compiled2(snapshot2) {
     protectedGlobs,
     protectedBases: globBases(protectedGlobs),
     allowed: compileGlobs(snapshot2.config.scope.allowed_paths, { nocase: false }),
-    credential: compileGlobs(BUILTIN_CREDENTIAL_PATHS, { nocase: true }),
+    // The built-in credential globs and the policy's own protected globs that name credentials (ADR 0005).
+    credential: compileGlobs(credentialGlobsOf(snapshot2), { nocase: true }),
     homeCredential: compileGlobs(HOME_CREDENTIAL_PATHS, { nocase: true })
   };
   cache.set(snapshot2, c);
@@ -22132,10 +22150,26 @@ function authorizeRead(c, path, ctx) {
   }
   for (const p of [canonical, abs]) {
     if (c.credential(stripRoot(toPosix(p)))) return deny("read.credential", `${path} holds credentials`);
+    if (insideWorktree(ctx.worktreeRoot, p).some((rel) => c.credential(rel))) return deny("read.credential", `${path} holds credentials`);
     const underHome = homeRelative(home2, p);
     if (underHome !== null && c.homeCredential(underHome)) return deny("read.credential", `${path} is a credential location`);
   }
   return allow("read.allowed", "not a credential file");
+}
+function insideWorktree(root, p) {
+  if (!root) return [];
+  let rootReal = root;
+  try {
+    rootReal = realpathSync3.native(root);
+  } catch {
+  }
+  const ci = isCaseInsensitiveFs(rootReal);
+  const out = [];
+  for (const r of /* @__PURE__ */ new Set([root, rootReal])) {
+    const rel = relativeInside(r, p, ci);
+    if (rel !== null && rel !== ".") out.push(rel);
+  }
+  return out;
 }
 function homeRelative(home2, p) {
   let homeReal = home2;
@@ -22303,7 +22337,7 @@ function judgeRead(c, r, root, home2) {
   }
   const targets = r.glob ? expandOnDisk(r.abs) : [r.abs];
   if (targets === null) return deny("bash.glob-too-broad", `${r.via} ${r.path} matches too many files to inspect`);
-  if (r.glob && c.credential(stripRoot(toPosix(r.abs)))) return denied(r.path);
+  if (r.glob && (c.credential(stripRoot(toPosix(r.abs))) || insideWorktree(root, r.abs).some((rel) => c.credential(rel)))) return denied(r.path);
   for (const t of targets) {
     const d = authorizeRead(c, t, { worktreeRoot: root, home: home2 });
     if (!d.allowed) return denied(r.glob ? t : r.path);
@@ -24621,36 +24655,49 @@ function probeFailure(r) {
   const status2 = r.signal ? `signal ${r.signal}` : `exit ${r.code}`;
   return text2 ? `${status2}: ${text2.slice(0, 300)}` : status2;
 }
-function credentialFilesIn(worktree) {
+function credentialFilesIn(worktree, globs = BUILTIN_CREDENTIAL_PATHS, opts = {}) {
   const root = canonicalPath(worktree);
-  const isCredential = compileGlobs(BUILTIN_CREDENTIAL_PATHS, { nocase: true });
+  const limit = opts.limit ?? CREDENTIAL_WALK_LIMIT;
+  const isCredential = compileGlobs(globs, { nocase: true });
   const found = [];
   const stack = [root];
   let visited = 0;
-  while (stack.length > 0 && visited < CREDENTIAL_WALK_LIMIT) {
+  while (stack.length > 0) {
     const dir = stack.pop();
     let entries;
     try {
-      entries = readdirSync2(dir);
+      entries = readdirSync2(dir, { withFileTypes: true });
     } catch {
       continue;
     }
-    for (const name of entries) {
-      visited++;
-      const abs = join6(dir, name);
-      let st;
-      try {
-        st = lstatSync3(abs);
-      } catch {
-        continue;
+    for (const entry of entries) {
+      if (++visited > limit) {
+        throw new OrbitError(
+          "ISOLATION_UNAVAILABLE",
+          `credential enumeration of ${root} stopped after ${limit} entries; refusing to build a sandbox profile that could leave credential files readable (an unfinished walk cannot show that none is; remove or relocate large generated trees such as node_modules)`,
+          { worktree: root, limit }
+        );
       }
+      const abs = join6(dir, entry.name);
       const rel = abs.slice(root.length + 1);
-      if (st.isDirectory()) {
-        if (!CREDENTIAL_WALK_SKIP.has(name)) stack.push(abs);
+      let isDir = entry.isDirectory();
+      let isLink = entry.isSymbolicLink();
+      if (!isDir && !isLink && !entry.isFile()) {
+        try {
+          const st = lstatSync3(abs);
+          isDir = st.isDirectory();
+          isLink = st.isSymbolicLink();
+        } catch {
+          continue;
+        }
+      }
+      if (isDir) {
+        if (isCredential(rel)) found.push(abs);
+        else if (!CREDENTIAL_WALK_SKIP.has(entry.name)) stack.push(abs);
         continue;
       }
       if (!isCredential(rel)) continue;
-      if (!st.isSymbolicLink()) {
+      if (!isLink) {
         found.push(abs);
         continue;
       }
@@ -24668,8 +24715,8 @@ var init_util = __esm({
     init_builtin();
     init_globs();
     UNSAFE_PATH = /[*?[\]{}\n\r\0]/;
-    CREDENTIAL_WALK_SKIP = /* @__PURE__ */ new Set([".git", "node_modules"]);
-    CREDENTIAL_WALK_LIMIT = 2e5;
+    CREDENTIAL_WALK_SKIP = /* @__PURE__ */ new Set([".git"]);
+    CREDENTIAL_WALK_LIMIT = 1e6;
   }
 });
 
@@ -24677,6 +24724,9 @@ var init_util = __esm({
 import { chmodSync as chmodSync2, lstatSync as lstatSync4, mkdirSync as mkdirSync5 } from "node:fs";
 import { homedir as homedir4, tmpdir as tmpdir3 } from "node:os";
 import { dirname as dirname7, isAbsolute as isAbsolute6, join as join7 } from "node:path";
+function walkLimit(input) {
+  return input.credentialWalkLimit === void 0 ? {} : { credentialWalkLimit: input.credentialWalkLimit };
+}
 function profileForWorker(input) {
   const home2 = canonicalPath(input.homeDir);
   const worktree = canonicalPath(input.worktree);
@@ -24701,7 +24751,7 @@ function profileForWorker(input) {
   assertProviderDirConfinable(own, home2);
   return {
     writablePaths: uniq([worktree, workerDir, tmp, own]),
-    denyReadPaths: denyList({ home: home2, repoRoot: input.snapshot.repo_root, worktree, extra: others }),
+    denyReadPaths: denyList({ home: home2, repoRoot: input.snapshot.repo_root, worktree, extra: others, snapshot: input.snapshot, ...walkLimit(input) }),
     readablePaths: uniq([
       ...readableFor(worktree, input.readablePaths),
       ...input.policyPath ? [canonicalPath(input.policyPath)] : [],
@@ -24723,7 +24773,7 @@ function profileForCheck(input) {
   const providerState = [...claudeLogins(home2, env, dirs.claudeConfigDir).flatMap((d) => claudeState(home2, d)), ...codexHomes(home2, env, dirs.codexHome)];
   return {
     writablePaths: uniq([worktree, ...(input.extraWritable ?? []).map(canonicalPath)]),
-    denyReadPaths: denyList({ home: home2, repoRoot: input.snapshot.repo_root, worktree, extra: providerState }),
+    denyReadPaths: denyList({ home: home2, repoRoot: input.snapshot.repo_root, worktree, extra: providerState, snapshot: input.snapshot, ...walkLimit(input) }),
     readablePaths: readableFor(worktree, input.readablePaths),
     allowedHosts: uniq(input.check.network_hosts),
     limits: { timeoutMs: input.check.timeout_seconds * 1e3, ...resourceLimits(input.snapshot) }
@@ -24773,8 +24823,9 @@ function denyList(opts) {
     ...SYSTEM_DENY_READ.map(canonicalPath),
     join7(repo, ".orbit"),
     ...isWithin(repo, opts.worktree) ? [] : [repo],
-    // Credential files in the worktree (.env, keys): a deny nested in the re-allowed worktree stays the more specific rule.
-    ...credentialFilesIn(opts.worktree),
+    // Credential files in the worktree (.env, keys, and what the policy protects as credentials): a deny nested in the
+    // re-allowed worktree stays the more specific rule. An enumeration that cannot finish throws rather than guess.
+    ...credentialFilesIn(opts.worktree, credentialGlobsOf(opts.snapshot), opts.credentialWalkLimit === void 0 ? {} : { limit: opts.credentialWalkLimit }),
     orbitTmpRoot(),
     ...parent ? [parent] : [],
     ...opts.extra
@@ -24816,6 +24867,7 @@ var init_profiles = __esm({
     "use strict";
     init_errors();
     init_hash();
+    init_builtin();
     init_util();
     PROVIDER_HOSTS = {
       claude: ["api.anthropic.com", "claude.ai", "platform.claude.com"],
@@ -25066,7 +25118,7 @@ function renderClaudeSettings(input) {
   return settings;
 }
 function credentialGlobs(snapshot2) {
-  return BUILTIN_CREDENTIAL_PATHS.filter((g) => snapshot2.effective_protected_paths.includes(g));
+  return credentialGlobsOf(snapshot2);
 }
 function claudeSettingsProblems(settings) {
   const problems = schemaErrors(compileSchema(CLAUDE_SETTINGS_SCHEMA), settings);
@@ -26410,6 +26462,16 @@ function runShim(options) {
   if (options.argv.length === 0 || !options.argv[0]) throw new OrbitError("INTERNAL", "the shim needs a provider command");
   return new Shim(options, pgid, host).run();
 }
+function isJsonLine(line3) {
+  const t = line3.trimStart();
+  if (!t.startsWith("{") && !t.startsWith("[")) return false;
+  try {
+    JSON.parse(line3);
+    return true;
+  } catch {
+    return false;
+  }
+}
 function isRemovable(p) {
   if (!isAbsolute8(p) || !existsSync9(p)) return false;
   const name = basename4(p);
@@ -26572,7 +26634,7 @@ async function shimMain(args, host) {
   });
   return 0;
 }
-var PID_FILE, EXIT_FILE, LOG_FILE, STDERR_FILE, SHIM_LOG_FILE, DEFAULT_GRACE_MS, ABORT_POLL_MS, FIRST_OUTPUT_POLL_MS, LEFTOVER_GRACE_MS, OUTPUT_POLL_MS, OUTPUT_PUMP_BYTES, ESCALATION, MAX_TIMER_MS, DEFAULT_HOST, Shim, MAX_PENDING_LINE, PENDING_OVERLAP, LineSink, Spill;
+var PID_FILE, EXIT_FILE, LOG_FILE, STDERR_FILE, SHIM_LOG_FILE, DEFAULT_GRACE_MS, ABORT_POLL_MS, FIRST_OUTPUT_POLL_MS, LEFTOVER_GRACE_MS, OUTPUT_POLL_MS, OUTPUT_PUMP_BYTES, ESCALATION, MAX_TIMER_MS, DEFAULT_HOST, Shim, MAX_PENDING_LINE, PENDING_OVERLAP, MAX_KEY_BLOCK_LINES, KEY_MARKER, KEY_HEADER, LineSink, Spill;
 var init_shim = __esm({
   "src/adapters/shim.ts"() {
     "use strict";
@@ -26955,11 +27017,15 @@ var init_shim = __esm({
     };
     MAX_PENDING_LINE = 64 * 1024 * 1024;
     PENDING_OVERLAP = 8 * 1024;
+    MAX_KEY_BLOCK_LINES = 200;
+    KEY_MARKER = "[REDACTED:private-key]";
+    KEY_HEADER = /-----BEGIN([A-Z0-9 ]{0,40}) PRIVATE KEY( BLOCK)?-----/;
     LineSink = class {
       fd;
       decoder = new StringDecoder2("utf8");
       pending = "";
       redact;
+      keyBlock = null;
       constructor(fd, redact2) {
         this.fd = fd;
         this.redact = redact2;
@@ -26983,7 +27049,36 @@ var init_shim = __esm({
         this.pending = "";
       }
       emit(line3, terminated) {
-        const text2 = this.redact(line3) + (terminated ? "\n" : "");
+        const eol = terminated ? "\n" : "";
+        const block2 = this.keyBlock;
+        if (block2) {
+          this.dropFromKeyBlock(block2, line3, eol);
+          return;
+        }
+        const header2 = line3.includes("PRIVATE KEY") ? KEY_HEADER.exec(line3) : null;
+        if (header2 && !isJsonLine(line3)) {
+          const footer = `-----END${header2[1]} PRIVATE KEY${header2[2] ?? ""}-----`;
+          if (!line3.includes(footer, header2.index + header2[0].length)) {
+            this.keyBlock = { footer, dropped: 0, endless: false };
+            this.put(this.redact(line3.slice(0, header2.index)) + KEY_MARKER + eol);
+            return;
+          }
+        }
+        this.put(this.redact(line3) + eol);
+      }
+      dropFromKeyBlock(block2, line3, eol) {
+        if (block2.endless) return;
+        if (line3.includes(block2.footer)) {
+          this.keyBlock = null;
+          return;
+        }
+        block2.dropped++;
+        if (block2.dropped >= MAX_KEY_BLOCK_LINES) {
+          block2.endless = true;
+          this.put(`${KEY_MARKER} no END line within ${MAX_KEY_BLOCK_LINES} lines; the rest of this stream is suppressed${eol}`);
+        }
+      }
+      put(text2) {
         try {
           const buf = Buffer.from(text2, "utf8");
           let off = 0;
@@ -45763,22 +45858,38 @@ function parseCombinedStatus(text2) {
   const statuses = Array.isArray(o.statuses) ? o.statuses : [];
   const checks = statuses.map((raw) => {
     const st = obj2("commit status", raw);
-    const state = str4("commit status", st, "state");
+    const state2 = str4("commit status", st, "state");
     const opt = (k) => typeof st[k] === "string" && st[k] !== "" ? st[k] : null;
     return {
       name: str4("commit status", st, "context"),
-      bucket: statusBucket(state),
-      state: state.toUpperCase(),
+      bucket: statusBucket(state2),
+      state: state2.toUpperCase(),
       link: opt("target_url"),
       workflow: null,
       runId: null,
       jobId: null,
       startedAt: opt("created_at"),
-      completedAt: state === "pending" ? null : opt("updated_at"),
+      completedAt: state2 === "pending" ? null : opt("updated_at"),
       description: opt("description")
     };
   });
-  return { sha, checks };
+  const state = typeof o.state === "string" && o.state !== "" ? o.state.toLowerCase() : void 0;
+  const total = typeof o.total_count === "number" && Number.isInteger(o.total_count) && o.total_count >= 0 ? o.total_count : void 0;
+  return { sha, checks, ...state === void 0 ? {} : { state }, ...total === void 0 ? {} : { total } };
+}
+function readNote(name, bucket, description) {
+  return { name, bucket, state: bucket === "fail" ? "FAILURE" : "PENDING", link: null, workflow: null, runId: null, jobId: null, startedAt: null, completedAt: null, description };
+}
+function statusReadNotes(status2, read, everything) {
+  const total = status2.total ?? read.length;
+  if (status2.state === "failure" || status2.state === "error") {
+    return everything.some((c) => c.bucket === "fail") ? [] : [readNote("commit status (combined)", "fail", `the combined commit status is ${status2.state}`)];
+  }
+  if (read.length < total) return [readNote("commit status (incomplete)", "pending", `read ${read.length} of ${total} commit status contexts`)];
+  if (status2.state !== void 0 && status2.state !== "success" && total > 0 && !read.some((c) => c.bucket === "pending")) {
+    return [readNote("commit status (combined)", "pending", `the combined commit status is ${status2.state}, but no status context is pending`)];
+  }
+  return [];
 }
 function parseFailedSteps(text2) {
   const o = obj2("run view", parseJson4("run view", text2));
@@ -45866,7 +45977,7 @@ function emptyState() {
     merges: 0
   };
 }
-var CHECK_BUCKETS, MERGE_METHODS, RUN_LINK, PR_FIELDS, MERGE_FIELDS, MERGE_REFUSED, CHECK_FIELDS, RUN_FIELDS, CHECK_RUNS_PER_PAGE, CHECK_RUNS_MAX_PAGES, GhCliClient, FakeGitHub;
+var CHECK_BUCKETS, MERGE_METHODS, RUN_LINK, PR_FIELDS, MERGE_FIELDS, MERGE_REFUSED, CHECK_FIELDS, RUN_FIELDS, CHECK_RUNS_PER_PAGE, CHECK_RUNS_MAX_PAGES, STATUS_PER_PAGE, STATUS_MAX_PAGES, GhCliClient, FakeGitHub;
 var init_github = __esm({
   "src/delivery/github.ts"() {
     "use strict";
@@ -45885,6 +45996,8 @@ var init_github = __esm({
     RUN_FIELDS = "databaseId,status,conclusion,headSha,headBranch,event,workflowName,name,attempt,url,startedAt,updatedAt";
     CHECK_RUNS_PER_PAGE = 100;
     CHECK_RUNS_MAX_PAGES = 10;
+    STATUS_PER_PAGE = 100;
+    STATUS_MAX_PAGES = 10;
     GhCliClient = class {
       token;
       gh;
@@ -46031,35 +46144,50 @@ ${res.stdout}`;
       }
       async checksForCommit(sha) {
         assertSha(sha);
-        const repo = this.opts.repo;
         let runs;
+        let runsTotal;
         try {
-          runs = await this.checkRuns(sha);
+          ({ runs, total: runsTotal } = await this.checkRuns(sha));
         } catch (err) {
           const code2 = err.code;
           if (code2 === "AUTH_MISSING") return this.checksFromRuns(sha);
           if (/No commit found/i.test(err.message ?? "")) return { checks: [], absent: true, headSha: sha };
           throw err;
         }
-        let status2 = { sha: null, checks: [] };
+        let status2 = null;
         try {
-          status2 = parseCombinedStatus(await this.api("commit status", `repos/${repo}/commits/${sha}/status?per_page=100`));
+          status2 = await this.combinedStatus(sha);
         } catch (err) {
           if (err.code !== "AUTH_MISSING") throw err;
         }
-        const reported = [.../* @__PURE__ */ new Set([...runs.map((r) => r.headSha.toLowerCase()), ...status2.sha ? [status2.sha.toLowerCase()] : []])];
+        const reported = [.../* @__PURE__ */ new Set([...runs.map((r) => r.headSha.toLowerCase()), ...status2 ? [status2.sha.toLowerCase()] : []])];
         const other = reported.find((r) => !sameCommit(r, sha));
         if (other !== void 0) return { checks: [], absent: false, headSha: other };
-        const checks = [...runs.map(({ headSha: _sha, ...c }) => c), ...status2.checks];
+        const checks = [...runs.map(({ headSha: _sha, ...c }) => c), ...status2?.checks ?? []];
+        if (runs.length < runsTotal) checks.push(readNote("check runs (incomplete)", "pending", `read ${runs.length} of ${runsTotal} check runs`));
+        if (status2) checks.push(...statusReadNotes(status2, status2.checks, checks));
         if (checks.length === 0) return this.checksFromRuns(sha);
         return { checks, absent: false, headSha: reported[0] ?? sha };
+      }
+      /** Every page of the combined status; aggregate state and total_count are those of the first page. */
+      async combinedStatus(sha) {
+        let first = null;
+        const checks = [];
+        for (let page = 1; page <= STATUS_MAX_PAGES; page++) {
+          const got = parseCombinedStatus(await this.api("commit status", `repos/${this.opts.repo}/commits/${sha}/status?per_page=${STATUS_PER_PAGE}&page=${page}`));
+          if (first === null) first = got;
+          else if (got.sha.toLowerCase() !== first.sha.toLowerCase()) throw malformed("commit status", "pages report different commits");
+          checks.push(...got.checks);
+          if (got.checks.length < STATUS_PER_PAGE || first.total !== void 0 && checks.length >= first.total) break;
+        }
+        return { ...first, checks };
       }
       async checkRuns(sha) {
         const all = [];
         for (let page = 1; page <= CHECK_RUNS_MAX_PAGES; page++) {
           const { total, runs } = parseCheckRuns(await this.api("check runs", `repos/${this.opts.repo}/commits/${sha}/check-runs?per_page=${CHECK_RUNS_PER_PAGE}&page=${page}`));
           all.push(...runs);
-          if (runs.length < CHECK_RUNS_PER_PAGE || all.length >= total) return all;
+          if (runs.length < CHECK_RUNS_PER_PAGE || all.length >= total) return { runs: all, total };
         }
         throw new OrbitError("DELIVERY_FAILED", `commit ${sha.slice(0, 12)} has more than ${CHECK_RUNS_PER_PAGE * CHECK_RUNS_MAX_PAGES} check runs; Orbit does not judge CI on a partial list`, { definitive: true });
       }
@@ -50545,12 +50673,15 @@ async function scanCandidateSecrets(input) {
 function withPolicy(result2, input) {
   const all = result2.findings.map((f) => ({ ...f, severity: f.severity ?? secretSeverity(f.rule) }));
   const c = classifyStaticFindings(all, input.policy ?? defaultStaticSecurity(), input.now);
+  const unreadable = new Set(c.advisory.filter((f) => f.rule === UNSCANNABLE_RULE));
+  const blocking = unreadable.size === 0 ? c.blocking : all.filter((f) => unreadable.has(f) || c.blocking.includes(f));
+  const advisory = unreadable.size === 0 ? c.advisory : c.advisory.filter((f) => !unreadable.has(f));
   const parts = [baseNote(result2.note)];
   if (c.excepted.length > 0) parts.push(`${c.excepted.length} finding(s) waived by static_security.exceptions: ${c.excepted.slice(0, 10).map((e) => `${e.finding.rule} at ${e.finding.file}${e.finding.line ? `:${e.finding.line}` : ""} (${e.reason})`).join("; ")}`);
-  if (c.advisory.length > 0) parts.push(`${c.advisory.length} advisory finding(s) below the blocking severities: ${c.advisory.slice(0, 10).map((f) => `${f.rule} [${f.severity}] at ${f.file}${f.line ? `:${f.line}` : ""}`).join("; ")}`);
+  if (advisory.length > 0) parts.push(`${advisory.length} advisory finding(s) below the blocking severities: ${advisory.slice(0, 10).map((f) => `${f.rule} [${f.severity}] at ${f.file}${f.line ? `:${f.line}` : ""}`).join("; ")}`);
   if (c.expired.length > 0) parts.push(`expired exception(s) not applied: ${c.expired.map((e) => `${e.rule_id} (expired ${e.expires})`).join(", ")}`);
-  const completed = !c.blocking.some((f) => f.rule === UNSCANNABLE_RULE);
-  return { ...result2, completed, findings: c.blocking, advisory: c.advisory, excepted: c.excepted, note: parts.join("; ") };
+  const completed = !blocking.some((f) => f.rule === UNSCANNABLE_RULE);
+  return { ...result2, completed, findings: blocking, advisory, excepted: c.excepted, note: parts.join("; ") };
 }
 function baseNote(note3) {
   const i = note3.search(/; (?:\d+ finding\(s\) waived|\d+ advisory finding|expired exception)/);

@@ -81,13 +81,20 @@ describe('secret scan of a candidate', () => {
     expect(again.scanner).toBe(first.scanner);
   });
   describe('files above the gitleaks input limit', () => {
-    const big = (): string => `${'x'.repeat(79)}\n`.repeat(70_000) + `export const token = '${TOKEN}';\n`; // about 5.3 MiB
+    // The old built-in scanner read the candidate's diff through a capture bounded at 8 MiB, so a secret only counts as
+    // found by the streaming scan when it sits beyond that: these files are about 9.6 MiB with the secret at the end.
+    const OLD_CAPTURE = 8 * 1024 * 1024;
+    const big = (): string => `${'x'.repeat(79)}\n`.repeat(120_000) + `export const token = '${TOKEN}';\n`;
+
+    it('place the secret beyond what the old scanner read', () => {
+      expect(big().indexOf(TOKEN)).toBeGreaterThan(OLD_CAPTURE + 1024 * 1024);
+    });
 
     it.skipIf(!gitleaks)('are scanned by the built-in detector, not skipped, when gitleaks runs', async () => {
       const r = repoWith({ 'apps/big.txt': big() });
       const res = await scanCandidateSecrets({ repoRoot: r.repo, baseRev: r.base, commit: r.head, outDir: r.out });
       expect(res.scanner).toBe('gitleaks');
-      expect(res.findings).toEqual([expect.objectContaining({ file: 'apps/big.txt', line: 70_001 })]);
+      expect(res.findings).toEqual([expect.objectContaining({ file: 'apps/big.txt', line: 120_001 })]);
       expect(readFileSync(res.reportPath, 'utf8')).not.toContain(TOKEN);
     });
 
@@ -95,11 +102,15 @@ describe('secret scan of a candidate', () => {
       const r = repoWith({ 'apps/big.txt': big() });
       const res = await scanCandidateSecrets({ repoRoot: r.repo, baseRev: r.base, commit: r.head, outDir: r.out, gitleaksPath: null });
       expect(res.scanner).toBe('builtin');
-      expect(res.findings).toEqual([expect.objectContaining({ file: 'apps/big.txt', line: 70_001 })]);
+      expect(res.findings).toEqual([expect.objectContaining({ file: 'apps/big.txt', line: 120_001 })]);
+      expect(res.completed).toBe(true);
     });
 
-    it('find a secret that straddles a chunk boundary on one very long line', async () => {
-      const r = repoWith({ 'apps/long.txt': `${'y'.repeat(6 * 1024 * 1024 + 123)} ${TOKEN} tail\n` });
+    it('find a secret that straddles a chunk boundary on one very long line, beyond the old capture', async () => {
+      // Windows are 1 MiB and each starts 8 KiB before the previous one ended; the end of the ninth is at this offset.
+      const boundary = 8 * (1024 * 1024 - 8 * 1024) + 1024 * 1024;
+      expect(boundary).toBeGreaterThan(OLD_CAPTURE);
+      const r = repoWith({ 'apps/long.txt': `${'y'.repeat(boundary - Math.floor(TOKEN.length / 2) - 1)} ${TOKEN} tail\n` });
       const res = await scanCandidateSecrets({ repoRoot: r.repo, baseRev: r.base, commit: r.head, outDir: r.out, gitleaksPath: null });
       expect(res.findings).toEqual([expect.objectContaining({ file: 'apps/long.txt', line: 1 })]);
     });
@@ -112,6 +123,24 @@ describe('secret scan of a candidate', () => {
       expect(res.completed).toBe(false);
       expect(res.findings).toEqual([expect.objectContaining({ file: 'apps/huge.bin', rule: 'unscannable-file' })]);
       expect(res.note).toMatch(/could not be scanned/);
+    });
+
+    it.each([[['high']], [['critical']], [[]]] as const)('is incomplete and blocking whatever block_severities says (%j)', async (severities) => {
+      const r = repoWith({ 'apps/huge.bin': 'z'.repeat(4096) });
+      const policy = { block_severities: [...severities] as ('critical' | 'high' | 'medium' | 'low')[], exceptions: [] };
+      const res = await scanCandidateSecrets({ repoRoot: r.repo, baseRev: r.base, commit: r.head, outDir: r.out, gitleaksPath: null, maxScanBytes: 1024, policy });
+      expect(res.completed).toBe(false);
+      expect(res.findings).toEqual([expect.objectContaining({ file: 'apps/huge.bin', rule: 'unscannable-file' })]);
+      expect(res.advisory ?? []).toEqual([]);
+    });
+
+    it('stays incomplete when block_severities would make it advisory and the exception covers another path', async () => {
+      const r = repoWith({ 'apps/huge.bin': 'z'.repeat(4096), 'apps/vendored.bin': 'z'.repeat(4096) });
+      const policy = { block_severities: ['high'] as 'high'[], exceptions: [{ rule_id: 'unscannable-file', path_glob: 'apps/vendored.bin', reason: 'vendored blob', expires: null }] };
+      const res = await scanCandidateSecrets({ repoRoot: r.repo, baseRev: r.base, commit: r.head, outDir: r.out, gitleaksPath: null, maxScanBytes: 1024, policy });
+      expect(res.completed).toBe(false);
+      expect(res.findings).toEqual([expect.objectContaining({ file: 'apps/huge.bin', rule: 'unscannable-file' })]);
+      expect(res.excepted).toEqual([expect.objectContaining({ reason: 'vendored blob' })]);
     });
 
     it('is waived only by a policy exception for that rule and path', async () => {

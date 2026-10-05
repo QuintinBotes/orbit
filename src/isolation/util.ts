@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { accessSync, constants, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, type Dirent } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
 import { BUILTIN_CREDENTIAL_PATHS } from '../policy/builtin.ts';
@@ -200,45 +200,68 @@ export function probeFailure(r: BoundedResult): string {
   return text ? `${status}: ${text.slice(0, 300)}` : status;
 }
 
-const CREDENTIAL_WALK_SKIP = new Set(['.git', 'node_modules']);
-const CREDENTIAL_WALK_LIMIT = 200_000;
+// `.git` is the repository's own store (the worker needs it readable and preflight inspects its configuration).
+// `node_modules` is deliberately not skipped: a vendored package can ship a `.env` or a key, and a shell reads it
+// as easily as any other file.
+const CREDENTIAL_WALK_SKIP = new Set(['.git']);
+export const CREDENTIAL_WALK_LIMIT = 1_000_000;
 
 /**
- * Credential files present in a worktree: files matching the built-in credential globs (.env*, *.pem, SSH keys,
- * .npmrc, .netrc), as canonical absolute paths for the OS read-deny list. The Read tool refuses them by policy;
- * this keeps a shell (`cat .env`) from reading them either. A symlink counts by the file it reaches, and one that
- * leaves the worktree is left to the rules for where it points. `.git` and `node_modules` are not walked.
+ * Credential files present in a worktree: files matching the credential globs (by default the built-in ones:
+ * .env*, *.pem, SSH keys, .npmrc, .netrc; profiles also pass the policy's protected credential globs), as
+ * canonical absolute paths for the OS read-deny list. The Read tool refuses them by policy; this keeps a shell
+ * (`cat .env`) from reading them either. A directory a glob names is denied as a whole. A symlink counts by the
+ * file it reaches, and one that leaves the worktree is left to the rules for where it points. `.git` is not
+ * walked; `node_modules` is.
+ *
+ * The walk is bounded, and a bound it cannot finish within fails closed: an unfinished enumeration would leave
+ * credential files readable without anyone knowing, so it throws ISOLATION_UNAVAILABLE instead of returning
+ * what it had.
  */
-export function credentialFilesIn(worktree: string): string[] {
+export function credentialFilesIn(worktree: string, globs: readonly string[] = BUILTIN_CREDENTIAL_PATHS, opts: { limit?: number } = {}): string[] {
   const root = canonicalPath(worktree);
-  const isCredential = compileGlobs(BUILTIN_CREDENTIAL_PATHS, { nocase: true });
+  const limit = opts.limit ?? CREDENTIAL_WALK_LIMIT;
+  const isCredential = compileGlobs(globs, { nocase: true });
   const found: string[] = [];
   const stack = [root];
   let visited = 0;
-  while (stack.length > 0 && visited < CREDENTIAL_WALK_LIMIT) {
+  while (stack.length > 0) {
     const dir = stack.pop()!;
-    let entries: string[];
+    let entries: Dirent[];
     try {
-      entries = readdirSync(dir);
+      entries = readdirSync(dir, { withFileTypes: true });
     } catch {
       continue;
     }
-    for (const name of entries) {
-      visited++;
-      const abs = join(dir, name);
-      let st;
-      try {
-        st = lstatSync(abs);
-      } catch {
-        continue;
+    for (const entry of entries) {
+      if (++visited > limit) {
+        throw new OrbitError(
+          'ISOLATION_UNAVAILABLE',
+          `credential enumeration of ${root} stopped after ${limit} entries; refusing to build a sandbox profile that could leave credential files readable (an unfinished walk cannot show that none is; remove or relocate large generated trees such as node_modules)`,
+          { worktree: root, limit },
+        );
       }
+      const abs = join(dir, entry.name);
       const rel = abs.slice(root.length + 1);
-      if (st.isDirectory()) {
-        if (!CREDENTIAL_WALK_SKIP.has(name)) stack.push(abs);
+      let isDir = entry.isDirectory();
+      let isLink = entry.isSymbolicLink();
+      if (!isDir && !isLink && !entry.isFile()) {
+        // The filesystem did not say what this is: ask.
+        try {
+          const st = lstatSync(abs);
+          isDir = st.isDirectory();
+          isLink = st.isSymbolicLink();
+        } catch {
+          continue;
+        }
+      }
+      if (isDir) {
+        if (isCredential(rel)) found.push(abs);
+        else if (!CREDENTIAL_WALK_SKIP.has(entry.name)) stack.push(abs);
         continue;
       }
       if (!isCredential(rel)) continue;
-      if (!st.isSymbolicLink()) {
+      if (!isLink) {
         found.push(abs);
         continue;
       }

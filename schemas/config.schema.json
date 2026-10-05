@@ -48,7 +48,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["allowed_paths", "protected_paths"],
-      "properties": { "allowed_paths": { "$ref": "#/$defs/globList" }, "protected_paths": { "$ref": "#/$defs/globList" } }
+      "properties": { "allowed_paths": { "$ref": "#/$defs/globList" }, "protected_paths": { "$ref": "#/$defs/globList" }, "credential_paths": { "$ref": "#/$defs/globList" } }
     },
     "actions": {
       "type": "object",

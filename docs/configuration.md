@@ -49,6 +49,8 @@ base branch.
 scope:
   allowed_paths: ["apps/**", "packages/**", "tests/**", "docs/**"]
   protected_paths: [".github/**", "infra/**", ".orbit/config.yaml", "**/.env*"]
+
+`scope.credential_paths` (list of globs, default empty): files workers may never read, enforced by the OS read-deny list, the Read tool and the Bash read check, in addition to the built-in credential patterns. Use it for credentials whose names do not say so.
 ```
 
 A worker may change only `allowed_paths`; anything else fails the scope gate.
@@ -263,6 +265,11 @@ id, the built-in scanner's kind such as `github-token`, or the SARIF rule id),
 under one path glob when `path_glob` is set, until `expires`. The waiver and
 its reason are recorded with the evidence; an expired exception is reported
 and not applied.
+
+A changed file the scanner could not read (its size is unknown, or it is above
+the 1 GiB streaming limit) is reported as an `unscannable-file` finding. It
+blocks and leaves the scan incomplete whatever `block_severities` lists; only
+an exception for that rule and path waives it.
 
 ## delivery
 

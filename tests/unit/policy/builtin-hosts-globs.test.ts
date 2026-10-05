@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_CREDENTIAL_PATHS, BUILTIN_PROTECTED_PATHS, BUILTIN_PROTECTIONS, effectiveProtectedPaths } from '../../../src/policy/builtin.ts';
+import { BUILTIN_CREDENTIAL_PATHS, BUILTIN_PROTECTED_PATHS, BUILTIN_PROTECTIONS, credentialGlobsOf, effectiveProtectedPaths, isCredentialGlob } from '../../../src/policy/builtin.ts';
 import { hostAllowed, hostEntryCovered, hostEntryProblem, normalizeHost } from '../../../src/policy/hosts.ts';
 import { compileGlobs, globBases, globProblem } from '../../../src/policy/globs.ts';
 
@@ -22,6 +22,24 @@ describe('built-in protections', () => {
     expect(merged.slice(0, BUILTIN_PROTECTED_PATHS.length)).toEqual([...BUILTIN_PROTECTED_PATHS]);
     expect(merged.filter((g) => g === '**/.env*')).toHaveLength(1);
     expect(merged).toContain('infra/**');
+  });
+});
+
+describe('protected credential globs of a policy', () => {
+  it.each(['secrets/**', 'config/*.key', '**/*.pem', 'deploy/credentials.json', '**/*secret*', 'infra/terraform.tfvars', 'config/api_key.txt', 'private-key/**', '**/.env.production', 'ops/passwords/**', 'certs/*.p12'])('treats %s as credential material', (glob) => {
+    expect(isCredentialGlob(glob), glob).toBe(true);
+  });
+
+  it.each(['.github/**', 'infra/**', '.orbit/config.yaml', 'apps/locked/**', 'src/tokenizer/**', 'packages/keyboard/**', 'docs/**', 'src/author/**'])('does not treat %s as credential material', (glob) => {
+    expect(isCredentialGlob(glob), glob).toBe(false);
+  });
+
+  it('adds the policy\'s credential globs to the built-in ones, from the effective list and from the config', () => {
+    const globs = credentialGlobsOf({ effective_protected_paths: ['.github/**', 'secrets/**'], config: { scope: { protected_paths: ['config/*.key', 'infra/**'] } } });
+    expect(globs).toEqual(expect.arrayContaining([...BUILTIN_CREDENTIAL_PATHS, 'secrets/**', 'config/*.key']));
+    expect(globs).not.toContain('.github/**');
+    expect(globs).not.toContain('infra/**');
+    expect(credentialGlobsOf({})).toEqual([...BUILTIN_CREDENTIAL_PATHS]);
   });
 });
 

@@ -91,3 +91,34 @@ describe('bash: static reads of credential paths', () => {
     expect(cls.reads.map((r) => r.path).sort()).toEqual(['.env', 'deploy/server.pem']);
   });
 });
+
+describe('protected credential globs from the policy', () => {
+  // The default config protects .github/** and infra/** too: those are code, not credentials, and stay readable.
+  const POLICY = snapshotOf('scope: {allowed_paths: ["apps/**"], protected_paths: [".github/**", "infra/**", "secrets/**", "config/*.key"]}\n');
+  const run = (command: string) => authorize(POLICY, { kind: 'bash', command }, { worktreeRoot: wt, home });
+  const read = (path: string) => authorize(POLICY, { kind: 'read', path }, { worktreeRoot: wt, home });
+
+  beforeAll(() => {
+    mkdirSync(join(wt, 'secrets'), { recursive: true });
+    mkdirSync(join(wt, 'config'), { recursive: true });
+    mkdirSync(join(wt, '.github', 'workflows'), { recursive: true });
+    mkdirSync(join(wt, 'infra'), { recursive: true });
+    writeFileSync(join(wt, 'secrets', 'db-password.txt'), 'x\n');
+    writeFileSync(join(wt, 'config', 'prod.key'), 'x\n');
+    writeFileSync(join(wt, '.github', 'workflows', 'ci.yml'), 'name: ci\n');
+    writeFileSync(join(wt, 'infra', 'main.tf'), 'x\n');
+  });
+
+  it.each(['cat secrets/db-password.txt', 'head -n 1 config/prod.key', 'cat < secrets/db-password.txt', 'cat secrets/*', 'cp config/prod.key /tmp/leak'])('denies %s', (cmd) => {
+    expect(run(cmd), cmd).toMatchObject({ allowed: false, rule: 'bash.credential-read' });
+  });
+
+  it('denies the Read tool on them as well', () => {
+    expect(read('secrets/db-password.txt')).toMatchObject({ allowed: false, rule: 'read.credential' });
+    expect(read(join(wt, 'config', 'prod.key'))).toMatchObject({ allowed: false, rule: 'read.credential' });
+  });
+
+  it.each(['cat .github/workflows/ci.yml', 'cat infra/main.tf', 'cat README.md'])('still allows %s', (cmd) => {
+    expect(run(cmd), cmd).toMatchObject({ allowed: true });
+  });
+});

@@ -157,6 +157,18 @@ describe('renderClaudeSettings', () => {
     expect(s.permissions.allow.some((r) => r === 'Edit' || r === 'Bash')).toBe(false);
   });
 
+  it('denies Read on the policy\'s protected credential globs, not on every protected glob', () => {
+    const custom = snapshotPolicy(parseConfig('version: 1\nscope: {allowed_paths: ["apps/**"], protected_paths: [".github/**", "secrets/**", "config/*.key"]}\n'), {
+      runId: 'orb-s2',
+      repoRoot: base,
+      runDir: join(base, 'run2'),
+      clock: new ManualClock(),
+    });
+    const deny = renderClaudeSettings(input({ snapshot: custom.snapshot, policyPath: custom.path })).permissions.deny;
+    expect(deny).toEqual(expect.arrayContaining(['Read(//wt/secrets/**)', 'Read(//wt/config/*.key)', 'Edit(//wt/.github/**)']));
+    expect(deny).not.toContain('Read(//wt/.github/**)');
+  });
+
   it('gives read-only roles no allow rule at all', () => {
     expect(renderClaudeSettings(input({ readOnly: true })).permissions.allow).toEqual([]);
   });

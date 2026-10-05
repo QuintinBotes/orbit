@@ -103,6 +103,7 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
     scope: {
       allowed_paths: ['apps/**', 'packages/**', 'tests/**', 'docs/**'],
       protected_paths: ['.github/**', 'infra/**', '.orbit/config.yaml', '**/.env*'],
+      credential_paths: [],
     },
     actions: {
       edit: true,

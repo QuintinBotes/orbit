@@ -337,8 +337,21 @@ export function statusBucket(state: string): CheckBucket {
   }
 }
 
-/** `GET /repos/{owner}/{repo}/commits/{ref}/status`: the commit it reports and its latest status per context. */
-export function parseCombinedStatus(text: string): { sha: string; checks: CheckInfo[] } {
+/** One page of the combined status: the commit, its aggregate state and context count when reported, and this page's contexts. */
+export interface CombinedStatus {
+  sha: string;
+  /** The aggregate over every context (success, pending, failure; error is treated like failure). Absent when the response omits it. */
+  state?: string;
+  /** How many contexts the commit has in all, across pages. Absent when the response omits it. */
+  total?: number;
+  checks: CheckInfo[];
+}
+
+/**
+ * `GET /repos/{owner}/{repo}/commits/{ref}/status`: the commit it reports, the aggregate `state` and `total_count`
+ * (the same on every page) and this page's latest status per context.
+ */
+export function parseCombinedStatus(text: string): CombinedStatus {
   const o = obj('commit status', parseJson('commit status', text));
   const sha = str('commit status', o, 'sha');
   const statuses = Array.isArray(o.statuses) ? o.statuses : [];
@@ -359,7 +372,36 @@ export function parseCombinedStatus(text: string): { sha: string; checks: CheckI
       description: opt('description'),
     };
   });
-  return { sha, checks };
+  const state = typeof o.state === 'string' && o.state !== '' ? o.state.toLowerCase() : undefined;
+  const total = typeof o.total_count === 'number' && Number.isInteger(o.total_count) && o.total_count >= 0 ? o.total_count : undefined;
+  return { sha, checks, ...(state === undefined ? {} : { state }), ...(total === undefined ? {} : { total }) };
+}
+
+/** A check that stands for something the read could not show: a failure the aggregate reports, or contexts not read. */
+function readNote(name: string, bucket: 'fail' | 'pending', description: string): CheckInfo {
+  return { name, bucket, state: bucket === 'fail' ? 'FAILURE' : 'PENDING', link: null, workflow: null, runId: null, jobId: null, startedAt: null, completedAt: null, description };
+}
+
+/**
+ * What a partial or contradictory read of a commit's statuses must not be: a pass. The aggregate state and
+ * `total_count` come from the host and cover every context, so they judge the contexts that were read:
+ *   - an aggregate of failure or error with no failing check in the result becomes a failing check (the failing
+ *     context sits on a page that was not read);
+ *   - fewer contexts read than `total_count` becomes a pending check (the read is incomplete, so nothing is concluded);
+ *   - any other aggregate than success with contexts to show, and none of them pending, becomes a pending check
+ *     (a context changed between the reads).
+ * A commit with no statuses reports an aggregate of pending and a total of 0: that adds nothing.
+ */
+export function statusReadNotes(status: Pick<CombinedStatus, 'state' | 'total'>, read: readonly CheckInfo[], everything: readonly CheckInfo[]): CheckInfo[] {
+  const total = status.total ?? read.length;
+  if (status.state === 'failure' || status.state === 'error') {
+    return everything.some((c) => c.bucket === 'fail') ? [] : [readNote('commit status (combined)', 'fail', `the combined commit status is ${status.state}`)];
+  }
+  if (read.length < total) return [readNote('commit status (incomplete)', 'pending', `read ${read.length} of ${total} commit status contexts`)];
+  if (status.state !== undefined && status.state !== 'success' && total > 0 && !read.some((c) => c.bucket === 'pending')) {
+    return [readNote('commit status (combined)', 'pending', `the combined commit status is ${status.state}, but no status context is pending`)];
+  }
+  return [];
 }
 
 export function parseFailedSteps(text: string): { job: string; step: string }[] {
@@ -450,6 +492,9 @@ const RUN_FIELDS = 'databaseId,status,conclusion,headSha,headBranch,event,workfl
 const CHECK_RUNS_PER_PAGE = 100;
 /** A commit with more check runs than this is refused rather than judged on a partial list. */
 const CHECK_RUNS_MAX_PAGES = 10;
+const STATUS_PER_PAGE = 100;
+/** Statuses beyond this many pages are not read; the result then stays pending (fewer contexts read than total_count). */
+const STATUS_MAX_PAGES = 10;
 
 export class GhCliClient implements GitHubClient {
   private readonly token: string | undefined;
@@ -617,10 +662,10 @@ export class GhCliClient implements GitHubClient {
 
   private async checksForCommit(sha: string): Promise<ChecksResult> {
     assertSha(sha);
-    const repo = this.opts.repo;
     let runs: CommitCheckRun[];
+    let runsTotal: number;
     try {
-      runs = await this.checkRuns(sha);
+      ({ runs, total: runsTotal } = await this.checkRuns(sha));
     } catch (err) {
       const code = (err as { code?: string }).code;
       // A fine-grained token may not be able to read check runs; workflow runs by commit are Actions-read.
@@ -629,29 +674,46 @@ export class GhCliClient implements GitHubClient {
       if (/No commit found/i.test((err as Error).message ?? '')) return { checks: [], absent: true, headSha: sha };
       throw err;
     }
-    let status: { sha: string | null; checks: CheckInfo[] } = { sha: null, checks: [] };
+    let status: CombinedStatus | null = null;
     try {
-      status = parseCombinedStatus(await this.api('commit status', `repos/${repo}/commits/${sha}/status?per_page=100`));
+      status = await this.combinedStatus(sha);
     } catch (err) {
       // Without commit-status read access only the check runs are known.
       if ((err as { code?: string }).code !== 'AUTH_MISSING') throw err;
     }
-    const reported = [...new Set([...runs.map((r) => r.headSha.toLowerCase()), ...(status.sha ? [status.sha.toLowerCase()] : [])])];
+    const reported = [...new Set([...runs.map((r) => r.headSha.toLowerCase()), ...(status ? [status.sha.toLowerCase()] : [])])];
     const other = reported.find((r) => !sameCommit(r, sha));
     // The response is about another commit: none of it says anything about this one.
     if (other !== undefined) return { checks: [], absent: false, headSha: other };
-    const checks: CheckInfo[] = [...runs.map(({ headSha: _sha, ...c }) => c), ...status.checks];
+    const checks: CheckInfo[] = [...runs.map(({ headSha: _sha, ...c }) => c), ...(status?.checks ?? [])];
+    // Reading fewer than the host counted, or less than its aggregate state implies, is not a pass.
+    if (runs.length < runsTotal) checks.push(readNote('check runs (incomplete)', 'pending', `read ${runs.length} of ${runsTotal} check runs`));
+    if (status) checks.push(...statusReadNotes(status, status.checks, checks));
     // Nothing reported yet: a queued workflow run can exist before its check runs do.
     if (checks.length === 0) return this.checksFromRuns(sha);
     return { checks, absent: false, headSha: reported[0] ?? sha };
   }
 
-  private async checkRuns(sha: string): Promise<CommitCheckRun[]> {
+  /** Every page of the combined status; aggregate state and total_count are those of the first page. */
+  private async combinedStatus(sha: string): Promise<CombinedStatus> {
+    let first: CombinedStatus | null = null;
+    const checks: CheckInfo[] = [];
+    for (let page = 1; page <= STATUS_MAX_PAGES; page++) {
+      const got = parseCombinedStatus(await this.api('commit status', `repos/${this.opts.repo}/commits/${sha}/status?per_page=${STATUS_PER_PAGE}&page=${page}`));
+      if (first === null) first = got;
+      else if (got.sha.toLowerCase() !== first.sha.toLowerCase()) throw malformed('commit status', 'pages report different commits');
+      checks.push(...got.checks);
+      if (got.checks.length < STATUS_PER_PAGE || (first.total !== undefined && checks.length >= first.total)) break;
+    }
+    return { ...first!, checks };
+  }
+
+  private async checkRuns(sha: string): Promise<{ runs: CommitCheckRun[]; total: number }> {
     const all: CommitCheckRun[] = [];
     for (let page = 1; page <= CHECK_RUNS_MAX_PAGES; page++) {
       const { total, runs } = parseCheckRuns(await this.api('check runs', `repos/${this.opts.repo}/commits/${sha}/check-runs?per_page=${CHECK_RUNS_PER_PAGE}&page=${page}`));
       all.push(...runs);
-      if (runs.length < CHECK_RUNS_PER_PAGE || all.length >= total) return all;
+      if (runs.length < CHECK_RUNS_PER_PAGE || all.length >= total) return { runs: all, total };
     }
     throw new OrbitError('DELIVERY_FAILED', `commit ${sha.slice(0, 12)} has more than ${CHECK_RUNS_PER_PAGE * CHECK_RUNS_MAX_PAGES} check runs; Orbit does not judge CI on a partial list`, { definitive: true });
   }

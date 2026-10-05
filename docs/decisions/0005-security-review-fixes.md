@@ -52,3 +52,38 @@ with a test that fails on the old code.
 8. **CI checks could be attributed to the wrong revision.** Checks are read
    per commit (`repos/{owner}/{repo}/commits/{sha}/check-runs` and the
    combined status) and labelled with the SHA the response reports.
+
+## Amendments after the independent re-review (2026-10-05)
+
+A second review confirmed five of the eight fixes and found four of them
+incomplete, plus one new defect. The decisions above stand; these close the gaps.
+
+3. **Credential read-deny.** "Protected credential globs" are the built-in
+   credential globs plus every protected glob of the policy that names credential
+   material (`secrets/**`, `config/*.key`; whole-word match on `secret`,
+   `credential`, `password`, `api_key`, `private_key` or an extension such as
+   `.key`, `.pem`, `.env`). `.github/**` and `infra/**` are protected for writing
+   only and stay readable. One list (`credentialGlobsOf`) feeds the Read tool, the
+   Bash read classifier, the Claude settings and the OS read-deny enumeration.
+   The enumeration walks `node_modules`, and when it exceeds its traversal cap it
+   fails closed: the worker (or check) profile build refuses with
+   `ISOLATION_UNAVAILABLE` rather than return a partial list.
+4. **Multi-line secrets in worker output.** The line sink keeps one piece of
+   state per stream: on a `-----BEGIN ... PRIVATE KEY-----` line it writes one
+   `[REDACTED:private-key]` marker and drops every line through the matching END
+   line. With no END within 200 lines it keeps dropping until the stream ends and
+   writes one more marker line saying so. A complete JSON line never opens a block.
+6. **Scan completeness.** An `unscannable-file` finding that no policy exception
+   waives blocks and makes the scan incomplete whatever `block_severities`
+   lists. The large-file tests place the secret beyond the old 8 MiB capture.
+8. **CI status pagination.** Every page of the combined status is read. Its
+   aggregate state and `total_count` judge the read: an aggregate of failure or
+   error with no failing check becomes a failing check, fewer contexts read than
+   `total_count` (also for check runs) becomes a pending check, and an aggregate
+   other than success with no pending context becomes a pending check. A partial
+   read can no longer produce a passed result.
+
+Explicit credential paths (architect decision): `scope.credential_paths` lists
+credential locations a repository adds, and it is authoritative. The
+name-based reading of `protected_paths` above remains only as a fallback for
+configurations that predate the key.

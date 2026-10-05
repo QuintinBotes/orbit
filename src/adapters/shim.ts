@@ -600,15 +600,47 @@ class Shim {
 const MAX_PENDING_LINE = 64 * 1024 * 1024;
 const PENDING_OVERLAP = 8 * 1024;
 
+/** Lines after a private key header that are held back waiting for its END line. */
+const MAX_KEY_BLOCK_LINES = 200;
+const KEY_MARKER = '[REDACTED:private-key]';
+const KEY_HEADER = /-----BEGIN([A-Z0-9 ]{0,40}) PRIVATE KEY( BLOCK)?-----/;
+
+/** A private key block that began on an earlier line: the footer that ends it, and how much of it has been dropped. */
+interface KeyBlock {
+  footer: string;
+  dropped: number;
+  /** No footer within the bound: everything up to the end of the stream is dropped. */
+  endless: boolean;
+}
+
+/** Whether the line is one complete JSON document (it is then redacted by value, never part of a text block). */
+function isJsonLine(line: string): boolean {
+  const t = line.trimStart();
+  if (!t.startsWith('{') && !t.startsWith('[')) return false;
+  try {
+    JSON.parse(line);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Splits a byte stream into lines, passes each through `redact` and appends it to a file descriptor. Whole lines
  * only, so a secret is never cut by a chunk boundary; the unterminated tail is written by `flush`.
+ *
+ * A PEM private key spans physical lines, which `redact` cannot see one at a time. The sink therefore keeps one
+ * piece of state per stream: on a `-----BEGIN ... PRIVATE KEY-----` line it writes a single marker and drops every
+ * following line up to and including the matching `-----END ... PRIVATE KEY-----` line. A block with no END within
+ * MAX_KEY_BLOCK_LINES lines is dropped until the stream ends, and one more marker line says so. A complete JSON line
+ * never opens a block (a JSON string cannot continue on the next physical line); it is redacted by value.
  */
 class LineSink {
   readonly fd: number;
   private readonly decoder = new StringDecoder('utf8');
   private pending = '';
   private readonly redact: (line: string) => string;
+  private keyBlock: KeyBlock | null = null;
 
   constructor(fd: number, redact: (line: string) => string) {
     this.fd = fd;
@@ -636,7 +668,39 @@ class LineSink {
   }
 
   private emit(line: string, terminated: boolean): void {
-    const text = this.redact(line) + (terminated ? '\n' : '');
+    const eol = terminated ? '\n' : '';
+    const block = this.keyBlock;
+    if (block) {
+      this.dropFromKeyBlock(block, line, eol);
+      return;
+    }
+    const header = line.includes('PRIVATE KEY') ? KEY_HEADER.exec(line) : null;
+    if (header && !isJsonLine(line)) {
+      const footer = `-----END${header[1]} PRIVATE KEY${header[2] ?? ''}-----`;
+      // A whole block on one line is the redactor's to remove; only a block that continues needs state.
+      if (!line.includes(footer, header.index + header[0].length)) {
+        this.keyBlock = { footer, dropped: 0, endless: false };
+        this.put(this.redact(line.slice(0, header.index)) + KEY_MARKER + eol);
+        return;
+      }
+    }
+    this.put(this.redact(line) + eol);
+  }
+
+  private dropFromKeyBlock(block: KeyBlock, line: string, eol: string): void {
+    if (block.endless) return;
+    if (line.includes(block.footer)) {
+      this.keyBlock = null;
+      return;
+    }
+    block.dropped++;
+    if (block.dropped >= MAX_KEY_BLOCK_LINES) {
+      block.endless = true;
+      this.put(`${KEY_MARKER} no END line within ${MAX_KEY_BLOCK_LINES} lines; the rest of this stream is suppressed${eol}`);
+    }
+  }
+
+  private put(text: string): void {
     try {
       const buf = Buffer.from(text, 'utf8');
       let off = 0;

@@ -41,6 +41,9 @@ scope:
   # remove: .orbit/**, .git, nested .git dirs, .claude/settings*.json,
   # .mcp.json, **/.env*, **/*.pem, SSH keys, **/.npmrc and **/.netrc.
   protected_paths: [".github/**", "infra/**", ".orbit/config.yaml", "**/.env*"]
+  # Files workers may never read, in addition to the built-in credential
+  # patterns (.env files, keys, cloud and git credentials).
+  credential_paths: []
 
 actions:
   edit: true

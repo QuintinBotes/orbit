@@ -2,13 +2,16 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ManualClock } from '../../../src/core/clock.ts';
 import type { ExecResult } from '../../../src/core/exec.ts';
+import { observeCi } from '../../../src/delivery/ci.ts';
 import {
   FakeGitHub,
   GhCliClient,
   classifyGhFailure,
   parseAuthStatus,
   parseChecks,
+  parseCombinedStatus,
   parseFailedSteps,
   parsePullRequest,
   parsePullRequestList,
@@ -433,5 +436,106 @@ describe('GhCliClient.listChecks reads checks per commit and labels them from th
     expect(r.checks.find((x) => x.name === 'ext/scan')).toMatchObject({ bucket: 'fail', description: 'found 1' });
     expect(r.checks.find((x) => x.name === 'ext/lint')!.bucket).toBe('pass');
     expect(calls.filter((p) => p.includes('/check-runs'))).toHaveLength(2);
+  });
+  describe('combined commit status pagination and aggregate state', () => {
+    const ctx = (i: number, state = 'success') => ({ context: `job-${i}`, state, target_url: null, description: null });
+    const page = (path: string): number => Number(/[?&]page=(\d+)/.exec(path)?.[1] ?? '1');
+
+    /** A host with `contexts` status contexts (page size 100), the given aggregate state and an empty check-run list. */
+    function host(contexts: ReturnType<typeof ctx>[], aggregate: string, calls: string[] = [], total = contexts.length): GhRunner {
+      return async (argv) => {
+        const path = argv.find((a) => a.startsWith('repos/')) ?? '';
+        calls.push(path);
+        if (argv[1] === 'run') return res({ stdout: '[]' });
+        if (path.includes('/check-runs')) return res({ stdout: JSON.stringify({ total_count: 0, check_runs: [] }) });
+        const n = page(path);
+        return res({ stdout: JSON.stringify({ sha: A, state: aggregate, total_count: total, statuses: contexts.slice((n - 1) * 100, n * 100) }) });
+      };
+    }
+    const client = (runner: GhRunner) => new GhCliClient({ repo: 'acme/app', env: { PATH: '/bin', GH_TOKEN: TOKEN }, runner });
+
+    it('keeps the aggregate state and total_count of the page, and ignores values that are not a state and a count', () => {
+      expect(parseCombinedStatus(JSON.stringify({ sha: A, state: 'FAILURE', total_count: 101, statuses: [ctx(1)] }))).toMatchObject({ sha: A, state: 'failure', total: 101 });
+      const bare = parseCombinedStatus(JSON.stringify({ sha: A, state: '', total_count: -1, statuses: [] }));
+      expect(bare).not.toHaveProperty('state');
+      expect(bare).not.toHaveProperty('total');
+    });
+
+    it('does not turn a failing aggregate green when the failing context is beyond the first page (reviewer scenario)', async () => {
+      // Every request answers with the same first 100 successful contexts, the aggregate failure and total_count 101.
+      const c = client(async (argv) => {
+        const path = argv.find((a) => a.startsWith('repos/')) ?? '';
+        const payload = path.includes('/check-runs')
+          ? { total_count: 0, check_runs: [] }
+          : { sha: A, state: 'failure', total_count: 101, statuses: Array.from({ length: 100 }, (_, i) => ctx(i)) };
+        return res({ stdout: JSON.stringify(payload) });
+      });
+      const result = await c.listChecks({ sha: A });
+      expect(result.checks.some((check) => check.bucket === 'fail')).toBe(true);
+    });
+
+    it('reads every page and sees the failing context on the second', async () => {
+      const calls: string[] = [];
+      const contexts = [...Array.from({ length: 100 }, (_, i) => ctx(i)), { ...ctx(100, 'failure'), context: 'security/scan' }];
+      const r = await client(host(contexts, 'failure', calls)).listChecks({ sha: A });
+      expect(calls.filter((p) => p.includes('/status'))).toHaveLength(2);
+      expect(r.checks).toHaveLength(101);
+      expect(r.checks.find((x) => x.name === 'security/scan')).toMatchObject({ bucket: 'fail' });
+      expect(r.checks.filter((x) => x.bucket === 'fail')).toHaveLength(1);
+    });
+
+    it('reads all pages of a commit with only successful contexts and reports it green', async () => {
+      const contexts = Array.from({ length: 230 }, (_, i) => ctx(i));
+      const calls: string[] = [];
+      const r = await client(host(contexts, 'success', calls)).listChecks({ sha: A });
+      expect(calls.filter((p) => p.includes('/status'))).toHaveLength(3);
+      expect(r.checks).toHaveLength(230);
+      expect(r.checks.every((x) => x.bucket === 'pass')).toBe(true);
+    });
+
+    it('keeps an incomplete read pending: fewer contexts than total_count are never a pass', async () => {
+      // The host claims 150 contexts but serves 100 and then an empty page.
+      const r = await client(host(Array.from({ length: 100 }, (_, i) => ctx(i)), 'pending', [], 150)).listChecks({ sha: A });
+      expect(r.checks.some((x) => x.bucket === 'pending')).toBe(true);
+      expect(r.checks.some((x) => x.bucket === 'fail')).toBe(false);
+    });
+
+    it('maps an aggregate error to a fail bucket even when every read context is green', async () => {
+      const r = await client(host([ctx(1), ctx(2)], 'error')).listChecks({ sha: A });
+      expect(r.checks.filter((x) => x.bucket === 'fail')).toHaveLength(1);
+    });
+
+    it('does not pass when the aggregate is pending although every read context is green', async () => {
+      const r = await client(host([ctx(1), ctx(2)], 'pending')).listChecks({ sha: A });
+      expect(r.checks.some((x) => x.bucket === 'pending')).toBe(true);
+    });
+
+    it('adds nothing for a complete, consistent read, or for a commit with no statuses at all', async () => {
+      expect((await client(host([ctx(1), ctx(2)], 'success')).listChecks({ sha: A })).checks).toHaveLength(2);
+      expect((await client(host([], 'pending')).listChecks({ sha: A })).checks).toHaveLength(0);
+    });
+
+    it('is judged failed by observeCi, not passed, for the reviewer scenario', async () => {
+      const contexts = [...Array.from({ length: 100 }, (_, i) => ctx(i)), { ...ctx(100, 'failure'), context: 'security/scan' }];
+      const r = await observeCi({ client: client(host(contexts, 'failure')), sha: A, clock: new ManualClock(), timeoutMs: 0, readLogs: false });
+      expect(r.state).toBe('failed');
+    });
+
+    it('is never passed by observeCi while the read is incomplete', async () => {
+      const r = await observeCi({ client: client(host(Array.from({ length: 100 }, (_, i) => ctx(i)), 'pending', [], 150)), sha: A, clock: new ManualClock(), timeoutMs: 0, readLogs: false });
+      expect(r.state).toBe('pending');
+    });
+
+    it('keeps a check-run list pending when a short page ends the read before total_count', async () => {
+      const calls: string[] = [];
+      const c = client(async (argv) => {
+        const path = argv.find((a) => a.startsWith('repos/')) ?? '';
+        calls.push(path);
+        if (path.includes('/check-runs')) return res({ stdout: JSON.stringify({ total_count: 150, check_runs: Array.from({ length: 10 }, (_, i) => run(A, 'success', { id: i, name: `job-${i}` })) }) });
+        return res({ stdout: JSON.stringify({ sha: A, state: 'success', total_count: 0, statuses: [] }) });
+      });
+      const r = await c.listChecks({ sha: A });
+      expect(r.checks.some((x) => x.bucket === 'pending')).toBe(true);
+    });
   });
 });

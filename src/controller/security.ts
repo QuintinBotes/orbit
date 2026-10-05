@@ -177,13 +177,18 @@ export async function scanCandidateSecrets(input: SecretScanInput): Promise<Secr
 function withPolicy(result: SecretScanResult, input: Pick<SecretScanInput, 'policy' | 'now'>): SecretScanResult {
   const all = result.findings.map((f) => ({ ...f, severity: f.severity ?? secretSeverity(f.rule) }));
   const c = classifyStaticFindings(all, input.policy ?? defaultStaticSecurity(), input.now);
+  // A file nobody could read is not a finding to weigh against block_severities: it means the scan did not look at
+  // it. Unless a policy exception waives it (path and rule), it blocks and the scan is incomplete, whatever the
+  // blocking severities are; the exception is what restores completeness.
+  const unreadable = new Set(c.advisory.filter((f) => f.rule === UNSCANNABLE_RULE));
+  const blocking = unreadable.size === 0 ? c.blocking : all.filter((f) => unreadable.has(f) || c.blocking.includes(f));
+  const advisory = unreadable.size === 0 ? c.advisory : c.advisory.filter((f) => !unreadable.has(f));
   const parts = [baseNote(result.note)];
   if (c.excepted.length > 0) parts.push(`${c.excepted.length} finding(s) waived by static_security.exceptions: ${c.excepted.slice(0, 10).map((e) => `${e.finding.rule} at ${e.finding.file}${e.finding.line ? `:${e.finding.line}` : ''} (${e.reason})`).join('; ')}`);
-  if (c.advisory.length > 0) parts.push(`${c.advisory.length} advisory finding(s) below the blocking severities: ${c.advisory.slice(0, 10).map((f) => `${f.rule} [${f.severity}] at ${f.file}${f.line ? `:${f.line}` : ''}`).join('; ')}`);
+  if (advisory.length > 0) parts.push(`${advisory.length} advisory finding(s) below the blocking severities: ${advisory.slice(0, 10).map((f) => `${f.rule} [${f.severity}] at ${f.file}${f.line ? `:${f.line}` : ''}`).join('; ')}`);
   if (c.expired.length > 0) parts.push(`expired exception(s) not applied: ${c.expired.map((e) => `${e.rule_id} (expired ${e.expires})`).join(', ')}`);
-  // Complete unless a file nobody could read is still blocking: a policy exception for it restores completeness.
-  const completed = !c.blocking.some((f) => f.rule === UNSCANNABLE_RULE);
-  return { ...result, completed, findings: c.blocking, advisory: c.advisory, excepted: c.excepted, note: parts.join('; ') };
+  const completed = !blocking.some((f) => f.rule === UNSCANNABLE_RULE);
+  return { ...result, completed, findings: blocking, advisory, excepted: c.excepted, note: parts.join('; ') };
 }
 
 /** The scanner's own note, without the policy summary a previous judgement appended. */

@@ -25,6 +25,8 @@ export function snapshotFor(opts: {
   allowedHosts?: string[];
   wallMinutes?: number;
   container?: { image: string; memory_mb: number; cpus: number; pids: number } | null;
+  /** The user's scope.protected_paths; the snapshot's effective list is the built-ins plus these. */
+  protectedPaths?: string[];
 }): PolicySnapshot {
   return {
     schema: 'orbit.policy/1',
@@ -36,8 +38,9 @@ export function snapshotFor(opts: {
       network: { allowed_hosts: opts.allowedHosts ?? [] },
       scheduler: { hard_limits: { wall_minutes: opts.wallMinutes ?? 120 } },
       isolation: { provider: 'sandbox-runtime', allow_unisolated: false, container: opts.container ?? null },
+      scope: { allowed_paths: [], protected_paths: opts.protectedPaths ?? [] },
     },
-    effective_protected_paths: [],
+    effective_protected_paths: [...(opts.protectedPaths ?? [])],
     check_config_hashes: {},
   } as unknown as PolicySnapshot;
 }
