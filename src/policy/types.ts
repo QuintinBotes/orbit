@@ -17,6 +17,12 @@ export interface CheckDefinition {
   timeout_seconds: number;
   /** Hosts this check may reach. Empty = no network. */
   network_hosts: string[];
+  /**
+   * May the check listen on 127.0.0.1 (a test suite that starts an HTTP server)? Default true. It grants the
+   * sandbox's loopback bind only; outbound reach stays exactly `network_hosts`. A definition frozen into a snapshot
+   * written before the key existed has none, and reads as the default.
+   */
+  local_binding: boolean;
   /** Extra environment. The host environment is not inherited beyond a fixed safe set. */
   env: Record<string, string>;
   mandatory: boolean;

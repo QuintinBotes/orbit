@@ -117,7 +117,8 @@ describe.skipIf(!status.ok)(status.ok ? 'sandbox-runtime isolation (real srt)' :
     expect(add.code).not.toBe(0);
   });
 
-  it('has no network when no hosts are allowed (local server control)', async () => {
+  /** A loopback server in this process, probed three ways: unsandboxed (control), then through `profile`. */
+  async function probeLoopback(profile: SandboxProfile): Promise<{ direct: string; code: number | null; stdout: string }> {
     const server: Server = createServer((_q, res) => res.end('reachable'));
     await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
@@ -127,13 +128,28 @@ describe.skipIf(!status.ok)(status.ok ? 'sandbox-runtime isolation (real srt)' :
       const direct = await new Promise<string>((done, fail) =>
         execFile(process.execPath, ['-e', probe], { encoding: 'utf8', timeout: 10_000 }, (err, out) => (err ? fail(err) : done(out))),
       );
-      expect(direct.trim()).toBe('reachable');
-      const r = await runWrapped(wrap([process.execPath, '-e', probe]), worktree);
-      expect(r.code).toBe(3);
-      expect(r.stdout).toMatch(/blocked/);
+      const r = await runWrapped(wrap([process.execPath, '-e', probe], profile), worktree);
+      return { direct: direct.trim(), code: r.code, stdout: r.stdout };
     } finally {
       server.close();
     }
+  }
+
+  it('has no network when no hosts are allowed and the check says local_binding: false (local server control)', async () => {
+    const strict = profileForCheck({ worktree, check: checkFor({ local_binding: false }), snapshot: snapshotFor({ repoRoot: repo }), homeDir: home, env: {} });
+    const r = await probeLoopback(strict);
+    expect(r.direct).toBe('reachable');
+    expect(r.code).toBe(3);
+    expect(r.stdout).toMatch(/blocked/);
+  });
+
+  it('lets a check with local_binding (the default) reach a loopback server in this process, which is all the permission gives', async () => {
+    const r = await probeLoopback(checkProfile);
+    expect(checkProfile.allowLocalBinding).toBe(true);
+    expect(checkProfile.allowedHosts).toEqual([]);
+    expect(r.direct).toBe('reachable');
+    expect(r.code).toBe(0);
+    expect(r.stdout.trim()).toBe('reachable');
   });
 
   it.runIf(curl !== null)('refuses a host that is not on the allowlist', async () => {

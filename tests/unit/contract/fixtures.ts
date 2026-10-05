@@ -12,6 +12,7 @@ export function check(id: string, overrides: Partial<CheckDefinition> = {}): Che
     cwd: '.',
     timeout_seconds: 600,
     network_hosts: [],
+    local_binding: true,
     env: {},
     mandatory: false,
     flaky_reruns: 0,

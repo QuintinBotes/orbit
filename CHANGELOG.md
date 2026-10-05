@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Checks may listen on loopback: `local_binding` (default true) on a check
+  sets the sandbox's local binding for that check only. Outbound reach is still
+  `network_hosts`. The first live run failed the demo app's `unit` check on the
+  base revision and every candidate with `listen EPERM` because every trusted
+  check ran with loopback binding denied.
+- An environment failure is not repaired: a mandatory check that fails on the
+  candidate as it failed on the base revision, with a sandbox or environment
+  denial in its output (EPERM, "operation not permitted", an srt violation
+  marker, EACCES outside the worktree), ends the run BLOCKED before the repair
+  loop. The outcome reason names the check, the cause and the two ways forward
+  (fix the environment or the check definition, or approve the baseline
+  exception question). An approved baseline exception also makes an earlier
+  FAIL or INCOMPLETE evidence report stale, so the resumed run judges the
+  recorded results under the amended contract.
 - Engineering practices: the planner selects or justifies each of the nine
   practices; the contract, the reviewer packet and the final report carry them.
 - A pre-existing failing mandatory check raises a decision question in

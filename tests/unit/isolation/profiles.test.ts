@@ -267,6 +267,22 @@ describe('profileForCheck', () => {
     expect(p.denyReadPaths).toEqual(expect.arrayContaining(HOME_DENY_READ.map((rel) => join(l.home, rel))));
   });
 
+  it('lets a check listen on loopback by default and refuses it when local_binding is false, without touching the outbound rules', () => {
+    const l = layout();
+    const profile = (check: ReturnType<typeof checkFor>) => profileForCheck({ worktree: l.worktree, check, snapshot: snapshotFor({ repoRoot: l.repo, allowedHosts: ['github.com'] }), homeDir: l.home, env: {} });
+    const open = profile(checkFor({ local_binding: true, network_hosts: ['github.com'] }));
+    const strict = profile(checkFor({ local_binding: false, network_hosts: ['github.com'] }));
+    expect(open.allowLocalBinding).toBe(true);
+    expect(strict.allowLocalBinding).toBe(false);
+    // The two profiles differ in nothing else: hosts, paths and limits are the check's own either way.
+    expect({ ...open, allowLocalBinding: false }).toEqual(strict);
+    expect(open.allowedHosts).toEqual(['github.com']);
+    expect(profile(checkFor()).allowLocalBinding).toBe(true);
+    // A definition frozen into an older snapshot has no such key; it reads as the default.
+    const { local_binding: _omitted, ...older } = checkFor();
+    expect(profile(older as ReturnType<typeof checkFor>).allowLocalBinding).toBe(true);
+  });
+
   it('means no network for a check that names no hosts', () => {
     const l = layout();
     const p = profileForCheck({ worktree: l.worktree, check: checkFor(), snapshot: snapshotFor({ repoRoot: l.repo, allowedHosts: ['github.com'] }), homeDir: l.home, env: {} });

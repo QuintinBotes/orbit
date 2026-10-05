@@ -58,7 +58,8 @@ export function planInstall(snapshot: PolicySnapshot, checkoutDir: string, opts:
   const deps = snapshot.config.dependencies;
   if (!deps.install_existing_lockfile) return { skip: true, reason: 'policy does not allow installing dependencies from the existing lockfile' };
   const hosts = [...(opts.registryHosts ?? NPM_REGISTRY_HOSTS)];
-  const base = { shell: false, cwd: '.', timeout_seconds: INSTALL_TIMEOUT_SECONDS, network_hosts: hosts, mandatory: false, flaky_reruns: 1, kind: 'command' as const };
+  // Installing and auditing are Orbit's own commands: registry hosts only, and nothing listens on loopback.
+  const base = { shell: false, cwd: '.', timeout_seconds: INSTALL_TIMEOUT_SECONDS, network_hosts: hosts, local_binding: false, mandatory: false, flaky_reruns: 1, kind: 'command' as const };
   const quiet = { npm_config_fund: 'false', npm_config_audit: 'false', npm_config_progress: 'false', npm_config_update_notifier: 'false' };
   const scriptsDenied = deps.install_scripts !== 'allow';
 
@@ -295,6 +296,7 @@ export async function runDependencyAudit(ctx: RunnerContext & { registryHosts?: 
     cwd: '.',
     timeout_seconds: AUDIT_TIMEOUT_SECONDS,
     network_hosts: [...(ctx.registryHosts ?? NPM_REGISTRY_HOSTS)],
+    local_binding: false,
     env: { npm_config_fund: 'false', npm_config_progress: 'false', npm_config_update_notifier: 'false' },
     mandatory: false,
     flaky_reruns: 0,

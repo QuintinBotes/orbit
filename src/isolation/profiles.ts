@@ -240,6 +240,9 @@ export function profileForWorker(input: WorkerProfileInput): BuiltProfile {
  * A check is the repository's own code, so it gets the worktree (and any
  * extra output directory), the hosts its definition names and nothing else.
  * Model-provider credentials are denied along with every other credential.
+ * Listening on loopback is a separate permission, `local_binding` (default
+ * true: a test suite that starts an HTTP server is ordinary); it opens no
+ * outbound route, so `allowedHosts` is the definition's `network_hosts` either way.
  */
 export function profileForCheck(input: CheckProfileInput): BuiltProfile {
   const home = canonicalPath(input.homeDir ?? homedir());
@@ -252,6 +255,8 @@ export function profileForCheck(input: CheckProfileInput): BuiltProfile {
     denyReadPaths: denyList({ home, repoRoot: input.snapshot.repo_root, worktree, extra: providerState, snapshot: input.snapshot, ...walkLimit(input) }),
     readablePaths: readableFor(worktree, input.readablePaths),
     allowedHosts: uniq(input.check.network_hosts),
+    // `!== false`: a definition frozen into an older snapshot has no key and reads as the default.
+    allowLocalBinding: input.check.local_binding !== false,
     limits: { timeoutMs: input.check.timeout_seconds * 1000, ...resourceLimits(input.snapshot) },
   };
 }

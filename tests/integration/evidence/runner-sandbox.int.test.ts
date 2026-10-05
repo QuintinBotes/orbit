@@ -52,6 +52,32 @@ console.log("denied:"+denied.join(","));process.exit(denied.length===2?0:1)`;
     expect(existsSync(checkDirOf(e, 'sb'))).toBe(true);
   });
 
+  // A test suite that starts an HTTP server on loopback (the demo app's `unit` check) listens, then reaches itself.
+  const LOOPBACK_SERVER = `const net=require("net");
+const server=net.createServer((c)=>c.end("pong"));
+server.on("error",(e)=>{console.error("Error: "+e.message);process.exit(1)});
+server.listen(0,"127.0.0.1",()=>{
+  const c=net.connect(server.address().port,"127.0.0.1");let got="";
+  c.on("data",(d)=>{got+=d});
+  c.on("error",(e)=>{console.error("Error: connect "+e.code);process.exit(2)});
+  c.on("end",()=>{console.log("loopback "+got);server.close()});
+});`;
+
+  it('lets a check that may bind loopback listen on 127.0.0.1 and reach itself (local_binding: true)', async () => {
+    const e = await setup(LOOPBACK_SERVER, { local_binding: true });
+    const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['sb'] });
+    expect(readFileSync(r!.logPath, 'utf8')).toContain('loopback pong');
+    expect(r).toMatchObject({ status: 'PASSED', exitCode: 0, isolation: 'sandbox-runtime' });
+  });
+
+  it('still denies the same bind when the check says local_binding: false', async () => {
+    const e = await setup(LOOPBACK_SERVER, { local_binding: false });
+    const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['sb'] });
+    expect(r!.status).toBe('FAILED');
+    expect(readFileSync(r!.logPath, 'utf8')).toMatch(/listen EPERM/);
+    expect(readFileSync(r!.logPath, 'utf8')).not.toContain('loopback pong');
+  });
+
   it('cancels a sandboxed check and leaves nothing running', async () => {
     const e = await setup('setInterval(()=>{},1000)', { timeout_seconds: 120 });
     const ac = new AbortController();

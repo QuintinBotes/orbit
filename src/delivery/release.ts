@@ -591,6 +591,7 @@ async function runDeploy(a: {
       cwd: '.',
       timeout_seconds: env.timeout_seconds,
       network_hosts: [...env.network_hosts],
+      local_binding: false,
       env: {},
       mandatory: true,
       flaky_reruns: 0,
@@ -781,7 +782,7 @@ async function runVerifyCommand(a: {
   try {
     mkdirSync(home, { recursive: true, mode: 0o700 });
     const tmp = prepareWorkerTmpDir(dir);
-    const def: CheckDefinition = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: '.', timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], env: {}, mandatory: true, flaky_reruns: 0, kind: 'command', category: 'other' };
+    const def: CheckDefinition = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: '.', timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], local_binding: false, env: {}, mandatory: true, flaky_reruns: 0, kind: 'command', category: 'other' };
     const profile = profileForCheck({ worktree: checkout, check: def, snapshot, extraWritable: [home, tmp], ...(input.homeDir ? { homeDir: input.homeDir } : {}) });
     const cmdEnv = releaseCommandEnv({ home, tmp, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha, extra: { ORBIT_RELEASE_VERIFY: '1' } });
     const wrapped = a.isolation.wrap([...a.command], profile, { cwd: checkout, env: cmdEnv });

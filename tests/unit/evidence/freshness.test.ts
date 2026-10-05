@@ -78,6 +78,17 @@ describe('invalidateEvidence', () => {
     expect(invalidateEvidence(db, CANDIDATE.runId, 'superseded', clock, { exceptTreeHash: 'tree-b' })).toBe(1);
     expect(currentEvidenceReport(db, CANDIDATE.runId, 'cand-2')).not.toBeNull();
   });
+
+  it('can spare a PASS, which a change to what is excused cannot alter, and stale only the verdicts it could', () => {
+    const { db, clock } = setup();
+    insertEvidenceReport(db, { candidateId: 'cand-1', report: { ...report(), verdict: 'FAIL' }, reportPath: null }, clock);
+    insertEvidenceReport(db, { candidateId: 'cand-2', report: { ...report(), tree_hash: 'tree-b', verdict: 'INCOMPLETE' }, reportPath: null }, clock);
+    insertEvidenceReport(db, { candidateId: 'cand-3', report: { ...report(), tree_hash: 'tree-c', verdict: 'PASS' }, reportPath: null }, clock);
+    expect(invalidateEvidence(db, CANDIDATE.runId, 'the contract now excuses a failure', clock, { exceptVerdict: 'PASS' })).toBe(2);
+    expect(currentEvidenceReport(db, CANDIDATE.runId, 'cand-1')).toBeNull();
+    expect(currentEvidenceReport(db, CANDIDATE.runId, 'cand-2')).toBeNull();
+    expect(currentEvidenceReport(db, CANDIDATE.runId, 'cand-3')?.verdict).toBe('PASS');
+  });
 });
 
 describe('assertDeliverable', () => {

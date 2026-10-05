@@ -53,6 +53,7 @@ export function checkFor(overrides: Partial<CheckDefinition> = {}): CheckDefinit
     cwd: '.',
     timeout_seconds: 300,
     network_hosts: [],
+    local_binding: true,
     env: {},
     mandatory: true,
     flaky_reruns: 0,

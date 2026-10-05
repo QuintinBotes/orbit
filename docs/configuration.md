@@ -314,10 +314,23 @@ checks:
 | `cwd` | relative to the worktree root (default `.`) |
 | `timeout_seconds` | default 600 |
 | `network_hosts` | hosts the check may reach; must be covered by `network.allowed_hosts` |
+| `local_binding` | default true: the check may listen on 127.0.0.1 (a test suite that starts an HTTP server); outbound reach is still only `network_hosts`. Set false for a check that never serves |
 | `env` | extra environment; delivery credentials such as `GH_TOKEN` are refused |
 | `mandatory` | default true; a run cannot succeed while it fails |
 | `flaky_reruns` | 0 to 5; reruns are used only to classify flakiness |
 | `kind` | `command` (default) or `playwright` |
+
+A check that fails on a candidate exactly as it failed on the base revision,
+with a sandbox or environment denial in its output (`EPERM`, "operation not
+permitted", an srt violation marker, or `EACCES` on a path outside the
+worktree), is an environment failure, not a defect in the change. The run ends
+`BLOCKED` before the repair loop instead of spending attempts on it. The outcome
+reason names the check and the cause and offers two ways forward: fix the
+environment or the check definition and start a new run (a run's policy and
+recorded check results are frozen), or approve the baseline
+exception question that PREFLIGHT raised for the pre-existing failure with
+`orbit decide`, then `orbit resume`. A plain pre-existing code failure, with no
+such signal, keeps the repair loop.
 
 A check that fails then passes on rerun is reported as flaky. With
 `verification.allow_flaky_pass: false` (the default) a flaky pass cannot make the

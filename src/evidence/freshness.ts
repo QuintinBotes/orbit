@@ -40,13 +40,15 @@ export function isFresh(report: EvidenceReport, ctx: FreshnessContext): boolean 
  * Mark the run's live evidence reports stale, with the reason, in one
  * transaction with an event. Call when the candidate or the configuration
  * changes. Returns how many reports were invalidated; reports already
- * invalidated keep their original reason.
+ * invalidated keep their original reason. `exceptTreeHash` spares the report
+ * for the tree that is still current; `exceptVerdict` spares reports with that
+ * verdict (a change that can only excuse failures cannot alter a PASS).
  */
-export function invalidateEvidence(db: OrbitDb, runId: string, reason: string, clock: Clock, opts: { exceptTreeHash?: string } = {}): number {
+export function invalidateEvidence(db: OrbitDb, runId: string, reason: string, clock: Clock, opts: { exceptTreeHash?: string; exceptVerdict?: EvidenceReport['verdict'] } = {}): number {
   const now = clock.now();
   return db.tx(() => {
-    const live = db.all<{ id: string; tree_hash: string }>('SELECT id, tree_hash FROM evidence_reports WHERE run_id = ? AND invalidated_at IS NULL', runId);
-    const targets = live.filter((r) => r.tree_hash !== opts.exceptTreeHash);
+    const live = db.all<{ id: string; tree_hash: string; verdict: string }>('SELECT id, tree_hash, verdict FROM evidence_reports WHERE run_id = ? AND invalidated_at IS NULL', runId);
+    const targets = live.filter((r) => r.tree_hash !== opts.exceptTreeHash && r.verdict !== opts.exceptVerdict);
     for (const t of targets) db.run('UPDATE evidence_reports SET invalidated_at = ?, invalidated_reason = ? WHERE id = ?', now, reason, t.id);
     if (targets.length > 0) appendEvent(db, runId, 'evidence.invalidated', 'controller', { reason, reports: targets.map((t) => t.id) }, now);
     return targets.length;

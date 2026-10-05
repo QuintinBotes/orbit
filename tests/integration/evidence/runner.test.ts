@@ -11,7 +11,7 @@ import { getCheckRun, listCheckRuns, listFailures } from '../../../src/evidence/
 import { isOrbitError } from '../../../src/core/errors.ts';
 import { sh } from '../../unit/evidence/fixtures.ts';
 import { nodeCheck, checkDef, write } from '../../unit/evidence/fixtures.ts';
-import { checkDirOf, pidGone, readText, runnerEnv, waitFor, type RunnerEnv } from './harness.ts';
+import { checkDirOf, pidGone, readText, recordingIsolation, runnerEnv, waitFor, type RunnerEnv } from './harness.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FAKE_GH_TOKEN = `ghp_${'a1B2'.repeat(9)}`;
@@ -78,6 +78,17 @@ describe('runChecks: results and evidence', () => {
     expect(r!.excerpt).not.toContain('hunter2-not-a-real-secret');
     expect(existsSync(join(checkDirOf(e, 'leaky'), 'output.raw'))).toBe(false);
     for (const row of e.run.db.all<{ excerpt: string | null }>('SELECT excerpt FROM check_runs')) expect(row.excerpt ?? '').not.toContain('hunter2');
+  });
+
+  it('asks the isolation provider for loopback only for a check that may bind it, and leaves its outbound hosts alone', async () => {
+    const isolation = recordingIsolation();
+    const e = await setup(
+      [nodeCheck('serves', 'process.exit(0)', { local_binding: true, network_hosts: ['registry.npmjs.org'] }), nodeCheck('plain', 'process.exit(0)', { local_binding: false, network_hosts: ['registry.npmjs.org'] })],
+      { isolation },
+    );
+    await run(e, ['serves', 'plain']);
+    expect(isolation.profiles.map((p) => p.allowLocalBinding)).toEqual([true, false]);
+    expect(isolation.profiles.map((p) => p.allowedHosts)).toEqual([['registry.npmjs.org'], ['registry.npmjs.org']]);
   });
 
   it('starts from a fixed environment: no host variables, a private HOME and TMPDIR, the check env on top', async () => {

@@ -196,6 +196,10 @@ delivery:
 #   timeout_seconds  default 600
 #   network_hosts    hosts this check may reach; must be covered by
 #                    network.allowed_hosts (default: none)
+#   local_binding    whether the check may listen on 127.0.0.1, as a test
+#                    suite that starts an HTTP server does (default: true).
+#                    It opens no outbound route: reach stays network_hosts.
+#                    Set false for a check that never needs to serve.
 #   env              extra environment; delivery credentials such as
 #                    GH_TOKEN are refused
 #   mandatory        default true; a run cannot succeed while it fails

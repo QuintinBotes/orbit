@@ -6,6 +6,7 @@ import { installDependencies, runBaseline } from '../../../src/evidence/baseline
 import { listCheckRuns, listFailures } from '../../../src/evidence/store.ts';
 import { systemClock } from '../../../src/core/clock.ts';
 import { NoIsolation } from '../../../src/isolation/none.ts';
+import { recordingIsolation } from './harness.ts';
 import type { OrbitConfig } from '../../../src/policy/types.ts';
 import { checkDef, makeRepo, makeRun, nodeCheck, sh, tempRoot, write, type TestRun } from '../../unit/evidence/fixtures.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../../../src/evidence/candidate.ts';
@@ -62,6 +63,16 @@ describe('runBaseline', () => {
     expect(again.reused).toBe(true);
     expect(again.report.failures).toEqual(out.report.failures);
     expect(listCheckRuns(run.db, { runId: run.runId })).toHaveLength(2);
+  });
+
+  it('runs the base revision\'s checks with the loopback permission their definitions carry', async () => {
+    const t = tempRoot();
+    const r = makeRepo(t.root);
+    const run = makeRun(t.root, r.repo, [nodeCheck('serves', 'process.exit(0)', { local_binding: true }), nodeCheck('plain', 'process.exit(0)', { local_binding: false })]);
+    cleanups.push(() => run.db.close(), () => t.remove());
+    const isolation = recordingIsolation();
+    await runBaseline(baselineInput(t, r.repo, r.base, run, { isolation }));
+    expect(isolation.profiles.map((p) => p.allowLocalBinding).sort()).toEqual([false, true]);
   });
 
   it('runs only the requested checks and refuses ids the policy does not define', async () => {

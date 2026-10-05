@@ -199,7 +199,8 @@ function report(ctx: CliContext, argv: readonly string[], err: unknown): number 
   else {
     ctx.io.err(`orbit: ${message}\n`);
     const problems = isOrbitError(err) && Array.isArray(err.details?.problems) ? (err.details.problems as unknown[]).filter((x): x is string => typeof x === 'string') : [];
-    for (const p of problems.slice(0, 20)) ctx.io.err(`  - ${p}\n`);
+    // Most errors already list their problems in the message; print only the ones it does not.
+    for (const p of problems.filter((x) => !message.includes(x)).slice(0, 20)) ctx.io.err(`  - ${p}\n`);
     if (orbitCode === 'INTERNAL' && !isOrbitError(err) && err instanceof Error && ctx.env.ORBIT_DEBUG) ctx.io.err(`${err.stack ?? ''}\n`);
   }
   return code;

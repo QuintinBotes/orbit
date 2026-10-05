@@ -21325,7 +21325,7 @@ var init_config_schema = __esm({
         check: {
           type: "object",
           additionalProperties: false,
-          required: ["id", "command", "shell", "cwd", "timeout_seconds", "network_hosts", "env", "mandatory", "flaky_reruns", "kind"],
+          required: ["id", "command", "shell", "cwd", "timeout_seconds", "network_hosts", "local_binding", "env", "mandatory", "flaky_reruns", "kind"],
           properties: {
             id: { $ref: "#/$defs/checkId" },
             command: {
@@ -21336,6 +21336,10 @@ var init_config_schema = __esm({
             cwd: { type: "string", minLength: 1, maxLength: 1024 },
             timeout_seconds: { type: "integer", minimum: 1, maximum: 86400 },
             network_hosts: { $ref: "#/$defs/hostList" },
+            local_binding: {
+              type: "boolean",
+              description: "Whether the check may listen on 127.0.0.1 (default true). Outbound reach is network_hosts only."
+            },
             env: {
               type: "object",
               maxProperties: 100,
@@ -21538,6 +21542,7 @@ function defaultCheck(id) {
     cwd: ".",
     timeout_seconds: 600,
     network_hosts: [],
+    local_binding: true,
     env: {},
     mandatory: true,
     flaky_reruns: 0,
@@ -24777,6 +24782,8 @@ function profileForCheck(input) {
     denyReadPaths: denyList({ home: home2, repoRoot: input.snapshot.repo_root, worktree, extra: providerState, snapshot: input.snapshot, ...walkLimit(input) }),
     readablePaths: readableFor(worktree, input.readablePaths),
     allowedHosts: uniq(input.check.network_hosts),
+    // `!== false`: a definition frozen into an older snapshot has no key and reads as the default.
+    allowLocalBinding: input.check.local_binding !== false,
     limits: { timeoutMs: input.check.timeout_seconds * 1e3, ...resourceLimits(input.snapshot) }
   };
 }
@@ -42991,8 +42998,8 @@ function isFresh(report2, ctx) {
 function invalidateEvidence(db, runId, reason, clock, opts = {}) {
   const now = clock.now();
   return db.tx(() => {
-    const live = db.all("SELECT id, tree_hash FROM evidence_reports WHERE run_id = ? AND invalidated_at IS NULL", runId);
-    const targets = live.filter((r) => r.tree_hash !== opts.exceptTreeHash);
+    const live = db.all("SELECT id, tree_hash, verdict FROM evidence_reports WHERE run_id = ? AND invalidated_at IS NULL", runId);
+    const targets = live.filter((r) => r.tree_hash !== opts.exceptTreeHash && r.verdict !== opts.exceptVerdict);
     for (const t of targets) db.run("UPDATE evidence_reports SET invalidated_at = ?, invalidated_reason = ? WHERE id = ?", now, reason, t.id);
     if (targets.length > 0) appendEvent(db, runId, "evidence.invalidated", "controller", { reason, reports: targets.map((t) => t.id) }, now);
     return targets.length;
@@ -43632,6 +43639,7 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
         const res = ctx.db.run("UPDATE runs SET contract_json = ?, contract_hash = ? WHERE id = ? AND contract_json = ?", JSON.stringify(next), after, ctx.runId, row2.contract_json);
         if (res.changes !== 1) return false;
         insertAmendment(ctx.db, { runId: ctx.runId, record, change: proposal.change, status: "applied", approvedBy: answerId, contractBefore: before, contractAfter: after }, ctx.clock, "controller");
+        invalidateEvidence(ctx.db, ctx.runId, `the contract now accepts a baseline exception for check ${data.check_id}`, ctx.clock, { exceptVerdict: "PASS" });
         appendEvent(ctx.db, ctx.runId, "contract.amended", "controller", { field: record.field, check_id: data.check_id, approved_by: answerId }, ctx.clock.now());
         return true;
       });
@@ -43669,6 +43677,7 @@ var init_baseline_exception = __esm({
     init_fsx();
     init_hash();
     init_redact();
+    init_freshness();
     init_amend();
     init_snapshot();
     init_decisions();
@@ -45516,6 +45525,7 @@ async function runDeploy(a) {
       cwd: ".",
       timeout_seconds: env.timeout_seconds,
       network_hosts: [...env.network_hosts],
+      local_binding: false,
       env: {},
       mandatory: true,
       flaky_reruns: 0,
@@ -45643,7 +45653,7 @@ async function runVerifyCommand(a) {
   try {
     mkdirSync14(home2, { recursive: true, mode: 448 });
     const tmp = prepareWorkerTmpDir(dir);
-    const def = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: ".", timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], env: {}, mandatory: true, flaky_reruns: 0, kind: "command", category: "other" };
+    const def = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: ".", timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], local_binding: false, env: {}, mandatory: true, flaky_reruns: 0, kind: "command", category: "other" };
     const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [home2, tmp], ...input.homeDir ? { homeDir: input.homeDir } : {} });
     const cmdEnv = releaseCommandEnv({ home: home2, tmp, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha, extra: { ORBIT_RELEASE_VERIFY: "1" } });
     const wrapped = a.isolation.wrap([...a.command], profile, { cwd: checkout, env: cmdEnv });
@@ -47678,7 +47688,7 @@ function planInstall(snapshot2, checkoutDir, opts = {}) {
   const deps = snapshot2.config.dependencies;
   if (!deps.install_existing_lockfile) return { skip: true, reason: "policy does not allow installing dependencies from the existing lockfile" };
   const hosts = [...opts.registryHosts ?? NPM_REGISTRY_HOSTS];
-  const base = { shell: false, cwd: ".", timeout_seconds: INSTALL_TIMEOUT_SECONDS, network_hosts: hosts, mandatory: false, flaky_reruns: 1, kind: "command" };
+  const base = { shell: false, cwd: ".", timeout_seconds: INSTALL_TIMEOUT_SECONDS, network_hosts: hosts, local_binding: false, mandatory: false, flaky_reruns: 1, kind: "command" };
   const quiet = { npm_config_fund: "false", npm_config_audit: "false", npm_config_progress: "false", npm_config_update_notifier: "false" };
   const scriptsDenied = deps.install_scripts !== "allow";
   if (deps.install_command) {
@@ -47820,6 +47830,7 @@ async function runDependencyAudit(ctx, subject) {
     cwd: ".",
     timeout_seconds: AUDIT_TIMEOUT_SECONDS,
     network_hosts: [...ctx.registryHosts ?? NPM_REGISTRY_HOSTS],
+    local_binding: false,
     env: { npm_config_fund: "false", npm_config_progress: "false", npm_config_update_notifier: "false" },
     mandatory: false,
     flaky_reruns: 0,
@@ -48951,7 +48962,7 @@ async function executeApproved(ctx, plan, dir, rel) {
   mkdirSync16(home2, { recursive: true, mode: 448 });
   const tmp = prepareWorkerTmpDir(dir);
   const hosts = [.../* @__PURE__ */ new Set([...ctx.snapshot.config.network.allowed_hosts, ...plan.host ? [plan.host] : []])];
-  const def = { id: `approved-${rel.split("/").at(-1)}`, command: plan.argv, shell: false, cwd: ".", timeout_seconds: APPROVED_TIMEOUT_S, network_hosts: hosts, env: {}, mandatory: false, flaky_reruns: 0, kind: "command" };
+  const def = { id: `approved-${rel.split("/").at(-1)}`, command: plan.argv, shell: false, cwd: ".", timeout_seconds: APPROVED_TIMEOUT_S, network_hosts: hosts, local_binding: false, env: {}, mandatory: false, flaky_reruns: 0, kind: "command" };
   const profile = profileForCheck({ worktree, check: def, snapshot: ctx.snapshot, extraWritable: [home2, tmp] });
   const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home2, TMPDIR: tmp, LANG: "C.UTF-8", TERM: "dumb", NO_COLOR: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" };
   const wrapped = ctx.isolation().wrap(plan.argv, profile, { cwd: worktree, env });
@@ -49744,6 +49755,122 @@ var init_triggers = __esm({
   }
 });
 
+// src/evidence/environment-failure.ts
+function within2(path, root) {
+  const r = root.length > 1 ? root.replace(/\/+$/, "") : root;
+  return path === r || path.startsWith(`${r}/`);
+}
+function deniedOutside(line3, roots) {
+  if (!DENIED.test(line3)) return false;
+  const paths = line3.match(ABSOLUTE_PATH) ?? [];
+  return paths.some((p) => !roots.some((root) => within2(p.replace(/[.]+$/, ""), root)));
+}
+function classifyEnvironmentFailure(input) {
+  const { fingerprint, baselineFingerprint } = input;
+  if (!fingerprint || !baselineFingerprint || fingerprint !== baselineFingerprint) return null;
+  const signals = [];
+  const lines = [];
+  const see = (signal) => {
+    if (!signals.includes(signal)) signals.push(signal);
+  };
+  for (const raw of stripAnsi(input.output).split("\n", MAX_SCANNED_LINES2)) {
+    const line3 = raw.replace(/\r$/, "");
+    const found = [];
+    if (VIOLATION.test(line3)) found.push("sandbox-violation");
+    if (EPERM.test(line3)) found.push("eperm");
+    if (NOT_PERMITTED.test(line3)) found.push("operation-not-permitted");
+    if (deniedOutside(line3, input.insideRoots)) found.push("eacces-outside-worktree");
+    if (found.length === 0) continue;
+    for (const s of found) see(s);
+    const shown = line3.trim().slice(0, MAX_LINE_CHARS);
+    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown)) lines.push(shown);
+  }
+  if (signals.length === 0) return null;
+  return { checkId: input.checkId, fingerprint, signals, cause: signals.map((s) => CAUSES[s]).join("; "), lines };
+}
+var MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES;
+var init_environment_failure = __esm({
+  "src/evidence/environment-failure.ts"() {
+    "use strict";
+    init_fingerprint();
+    MAX_EVIDENCE_LINES = 3;
+    MAX_LINE_CHARS = 200;
+    MAX_SCANNED_LINES2 = 2e5;
+    VIOLATION = /<\/?sandbox_violations>|\bSandbox:.*\bdeny\(|X-Proxy-Error|Connection blocked by network allowlist/i;
+    EPERM = /\bEPERM\b/;
+    NOT_PERMITTED = /operation not permitted/i;
+    DENIED = /\bEACCES\b|permission denied/i;
+    ABSOLUTE_PATH = /(?<![\w./~<>-])\/[^\s'"`:,;()<>[\]{}|]+/g;
+    CAUSES = {
+      "sandbox-violation": "the sandbox reported a denied operation",
+      eperm: "an operation the sandbox does not permit failed with EPERM",
+      "operation-not-permitted": 'the operating system answered "operation not permitted"',
+      "eacces-outside-worktree": "permission was denied (EACCES) on a path outside the worktree"
+    };
+  }
+});
+
+// src/controller/environment-block.ts
+import { readFileSync as readFileSync20 } from "node:fs";
+import { dirname as dirname22, join as join41 } from "node:path";
+function outputOf(row) {
+  if (row.logPath) {
+    try {
+      return readFileSync20(row.logPath, "utf8").slice(0, MAX_LOG_BYTES);
+    } catch {
+    }
+  }
+  return row.excerpt ?? "";
+}
+function environmentFailuresFor(ctx, cand, report2) {
+  const baseline = readJsonIfExists(join41(ctx.runDir, BASELINE_FILE2));
+  if (!baseline || baseline.baseRevision !== ctx.run.baseRevision) return [];
+  const accepted = new Map((ctx.contract?.baseline_exceptions ?? []).map((e) => [e.check_id, e.fingerprint]));
+  const checkout = join41(runWorktreeRoot(ctx), `check-${cand.seq}`);
+  const out = [];
+  for (const base of baseline.failures) {
+    const result2 = report2.checks.find((c) => c.id === base.checkId);
+    if (!result2 || result2.status !== "FAILED" && result2.status !== "TIMEOUT") continue;
+    const row = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id, checkId: base.checkId, rootsOnly: true }).at(-1);
+    if (!row || row.fingerprint === null || accepted.get(base.checkId) === row.fingerprint) continue;
+    const found = classifyEnvironmentFailure({
+      checkId: base.checkId,
+      fingerprint: row.fingerprint,
+      baselineFingerprint: base.fingerprint,
+      output: outputOf(row),
+      // The checkout (the check's cwd is resolved, the checkout path may not be) and the evidence directory holding its scratch HOME.
+      insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname22(row.logPath)] : []]
+    });
+    if (found) out.push({ ...found, questionId: baselineQuestionId(ctx.run.id, base.checkId, row.fingerprint) });
+  }
+  return out;
+}
+function environmentBlockReason(input) {
+  const { runId, candidateSeq, failures } = input;
+  const many = failures.length > 1;
+  const names = failures.map((f) => f.checkId).join(", ");
+  const causes = failures.map((f) => `${f.checkId}: ${f.cause}${f.lines[0] ? ` (${JSON.stringify(f.lines[0])})` : ""}`).join("; ");
+  const answers = failures.map((f) => `orbit decide ${runId} ${f.questionId} Approve`).join(" and ");
+  return [
+    `${many ? "checks" : "check"} ${names} ${many ? "fail" : "fails"} on candidate ${candidateSeq} exactly as on the base revision, and the output shows an environment cause, not a defect in the change: ${causes}`,
+    "no repair attempt was spent, because changing the code cannot fix it",
+    `two ways forward: fix the environment or the check definition and start a new run (this run's policy and recorded check results are frozen), or approve a baseline exception for the pre-existing failure with ${answers}, then orbit resume ${runId}`
+  ].join(". ");
+}
+var MAX_LOG_BYTES;
+var init_environment_block = __esm({
+  "src/controller/environment-block.ts"() {
+    "use strict";
+    init_fsx();
+    init_baseline();
+    init_environment_failure();
+    init_store();
+    init_baseline_exception();
+    init_context2();
+    MAX_LOG_BYTES = 4 * 1024 * 1024;
+  }
+});
+
 // src/ui/report.ts
 function stripAnsi2(text2) {
   return text2.replace(ANSI3, "");
@@ -50011,9 +50138,9 @@ var init_report3 = __esm({
 });
 
 // src/ui/runner.ts
-import { copyFileSync, existsSync as existsSync33, mkdirSync as mkdirSync17, readFileSync as readFileSync20, realpathSync as realpathSync14, rmSync as rmSync12, statSync as statSync12, writeFileSync as writeFileSync7 } from "node:fs";
+import { copyFileSync, existsSync as existsSync33, mkdirSync as mkdirSync17, readFileSync as readFileSync21, realpathSync as realpathSync14, rmSync as rmSync12, statSync as statSync12, writeFileSync as writeFileSync7 } from "node:fs";
 import { createRequire as createRequire3 } from "node:module";
-import { basename as basename11, dirname as dirname22, isAbsolute as isAbsolute15, join as join41, relative as relative4, resolve as resolve12, sep as sep8 } from "node:path";
+import { basename as basename11, dirname as dirname23, isAbsolute as isAbsolute15, join as join42, relative as relative4, resolve as resolve12, sep as sep8 } from "node:path";
 async function runUiChecks(input) {
   const clock = input.clock ?? systemClock;
   const { snapshot: snapshot2, uiConfig, candidate } = input;
@@ -50037,14 +50164,14 @@ async function runUiChecks(input) {
     enforcement: UI_ENFORCEMENT_VERSION,
     projects: input.projects ?? null
   });
-  atomicWriteJson(join41(outDir, "ui-run.json"), { state: "running", candidate: candidate.id, startedAt, checks: checks.map((c) => c.id) });
+  atomicWriteJson(join42(outDir, "ui-run.json"), { state: "running", candidate: candidate.id, startedAt, checks: checks.map((c) => c.id) });
   const reasons = [];
   const unverified = [];
   const checkRuns = [];
   const journeys = [];
   let terminal = null;
   let app = null;
-  const tmpDir = ensureDir(join41(outDir, "tmp"));
+  const tmpDir = ensureDir(join42(outDir, "tmp"));
   const baseEnv = safeBaseEnv(input.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;
   try {
@@ -50060,7 +50187,7 @@ async function runUiChecks(input) {
           env: { ...input.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir },
           isolation: { provider: input.isolation, profile },
           isolatedTestData: uiConfig.environment.isolated_test_data,
-          stateDir: join41(outDir, "app"),
+          stateDir: join42(outDir, "app"),
           clock,
           pollMs: input.appPollMs,
           hostEnv: input.hostEnv
@@ -50166,7 +50293,7 @@ async function runUiChecks(input) {
     startedAt,
     endedAt: clock.now()
   };
-  atomicWriteJson(join41(outDir, "ui-result.json"), redactValue(result2));
+  atomicWriteJson(join42(outDir, "ui-result.json"), redactValue(result2));
   return result2;
 }
 function toEvidenceUi(result2) {
@@ -50217,10 +50344,10 @@ function shellQuote(arg) {
 }
 async function runOneCheck(ctx) {
   const { input, check, checkoutDir, clock } = ctx;
-  const checkDir = ensureDir(join41(ctx.outDir, check.id));
-  const outputDir = join41(checkDir, "test-results");
-  const reportPath2 = join41(checkDir, "playwright-report.json");
-  const logPath = join41(checkDir, "run.log");
+  const checkDir = ensureDir(join42(ctx.outDir, check.id));
+  const outputDir = join42(checkDir, "test-results");
+  const reportPath2 = join42(checkDir, "playwright-report.json");
+  const logPath = join42(checkDir, "run.log");
   const cwd = resolve12(checkoutDir, check.cwd);
   if (relative4(checkoutDir, cwd).startsWith("..") || isAbsolute15(relative4(checkoutDir, cwd))) {
     throw new OrbitError("POLICY_DENIED", `check ${check.id} cwd leaves the checkout`, { rule: "checks.cwd", check: check.id });
@@ -50250,7 +50377,7 @@ async function runOneCheck(ctx) {
   const started = clock.now();
   let exec;
   try {
-    exec = await execCapture(wrapped.argv, { cwd, env: wrapped.env, timeoutMs: check.timeout_seconds * 1e3, abortSignal: input.abortSignal, maxOutputBytes: MAX_LOG_BYTES });
+    exec = await execCapture(wrapped.argv, { cwd, env: wrapped.env, timeoutMs: check.timeout_seconds * 1e3, abortSignal: input.abortSignal, maxOutputBytes: MAX_LOG_BYTES2 });
   } finally {
     wrapped.cleanup();
   }
@@ -50262,7 +50389,7 @@ ${exec.stderr}` : ""}`), { mode: 384 });
   const reportFound = existsSync33(reportPath2);
   if (reportFound) {
     try {
-      parsed2 = parsePlaywrightReport(JSON.parse(readFileSync20(reportPath2, "utf8")));
+      parsed2 = parsePlaywrightReport(JSON.parse(readFileSync21(reportPath2, "utf8")));
     } catch (err) {
       parseProblem = `the Playwright report could not be parsed: ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -50335,8 +50462,8 @@ function buildJourney(test, ctx, checkDir, cwd) {
   const focus = failing[failing.length - 1] ?? test.results[test.results.length - 1];
   const status2 = journeyStatus(test);
   const slug = `${sha256(id).slice(0, 8)}-${title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}`;
-  const artifactDir = join41(checkDir, "artifacts", slug);
-  const collected = focus ? collectAttachments(focus.attachments, { checkoutDir, outputDir: join41(checkDir, "test-results"), artifactDir }) : { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
+  const artifactDir = join42(checkDir, "artifacts", slug);
+  const collected = focus ? collectAttachments(focus.attachments, { checkoutDir, outputDir: join42(checkDir, "test-results"), artifactDir }) : { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
   const firstError = (failing[0] ?? focus)?.error ?? null;
   const rootDir = checkoutDir;
   const error = firstError && status2 !== "PASSED" ? describeError(firstError, rootDir) : null;
@@ -50396,9 +50523,9 @@ function escapeRegExp3(text2) {
 function fallbackBrowser(checkoutDir, configured) {
   const name = configured[0] ?? "chromium";
   try {
-    const req = createRequire3(join41(checkoutDir, "package.json"));
-    const dir = dirname22(req.resolve("playwright-core/package.json"));
-    const parsed2 = JSON.parse(readFileSync20(join41(dir, "browsers.json"), "utf8"));
+    const req = createRequire3(join42(checkoutDir, "package.json"));
+    const dir = dirname23(req.resolve("playwright-core/package.json"));
+    const parsed2 = JSON.parse(readFileSync21(join42(dir, "browsers.json"), "utf8"));
     const list = parsed2.browsers ?? [];
     const version = list.find((b) => b.name === name)?.browserVersion;
     return version ? { name, version: `${version} (declared by playwright-core, not observed)` } : null;
@@ -50441,20 +50568,20 @@ function collectAttachments(attachments, dirs) {
         continue;
       }
       if (size > MAX_ARTIFACT_BYTES) continue;
-      bytes = readFileSync20(real);
+      bytes = readFileSync21(real);
       stored = real;
       if (!isInside(real, outputReal)) {
         mkdirSync17(dirs.artifactDir, { recursive: true });
-        const copy = join41(dirs.artifactDir, `${kind}-${basename11(real)}`);
+        const copy = join42(dirs.artifactDir, `${kind}-${basename11(real)}`);
         copyFileSync(real, copy);
         stored = copy;
       }
     } else if (bytes !== null) {
       mkdirSync17(dirs.artifactDir, { recursive: true });
       const ext = EXTENSIONS[att.contentType.split(";")[0]?.trim() ?? ""] ?? ".bin";
-      stored = join41(dirs.artifactDir, `${att.name.replace(/[^A-Za-z0-9._-]+/g, "_")}${ext}`);
+      stored = join42(dirs.artifactDir, `${att.name.replace(/[^A-Za-z0-9._-]+/g, "_")}${ext}`);
       writeFileSync7(stored, TEXTUAL.test(att.contentType) ? redact(bytes.toString("utf8")) : bytes, { mode: 384 });
-      bytes = readFileSync20(stored);
+      bytes = readFileSync21(stored);
     }
     if (bytes === null || stored === null) continue;
     if (kind === "diagnostics") {
@@ -50574,7 +50701,7 @@ function changedA11yBaselines(journeys, checkoutDir, changed) {
   }
   return [...out].sort();
 }
-var FORBIDDEN_ARG, SAME_AS_ENFORCED, UI_ENFORCEMENT_VERSION, MAX_ARTIFACT_BYTES, MAX_LOG_BYTES, GIT_ENV_KEYS, UI_LIMITATIONS, UI_RUN_ENTRY, FAILED_RESULT, EXTENSIONS, TEXTUAL, JOURNEY_FILE;
+var FORBIDDEN_ARG, SAME_AS_ENFORCED, UI_ENFORCEMENT_VERSION, MAX_ARTIFACT_BYTES, MAX_LOG_BYTES2, GIT_ENV_KEYS, UI_LIMITATIONS, UI_RUN_ENTRY, FAILED_RESULT, EXTENSIONS, TEXTUAL, JOURNEY_FILE;
 var init_runner2 = __esm({
   "src/ui/runner.ts"() {
     "use strict";
@@ -50595,7 +50722,7 @@ var init_runner2 = __esm({
     SAME_AS_ENFORCED = /* @__PURE__ */ new Set(["--reporter=json", "--update-snapshots=none", "--trace=retain-on-failure"]);
     UI_ENFORCEMENT_VERSION = 1;
     MAX_ARTIFACT_BYTES = 50 * 1024 * 1024;
-    MAX_LOG_BYTES = 4 * 1024 * 1024;
+    MAX_LOG_BYTES2 = 4 * 1024 * 1024;
     GIT_ENV_KEYS = ["PATH", "HOME", "LANG", "LC_ALL"];
     UI_LIMITATIONS = [
       "Automated accessibility scans (axe-core) find only part of the possible accessibility problems; a clean scan is not a claim that the interface is accessible.",
@@ -50610,14 +50737,14 @@ var init_runner2 = __esm({
 });
 
 // src/controller/security.ts
-import { accessSync as accessSync2, constants as constants3, existsSync as existsSync34, mkdirSync as mkdirSync18, readFileSync as readFileSync21, rmSync as rmSync13, statSync as statSync13 } from "node:fs";
-import { delimiter as delimiter3, dirname as dirname23, join as join42, normalize as normalize2, sep as sep9 } from "node:path";
+import { accessSync as accessSync2, constants as constants3, existsSync as existsSync34, mkdirSync as mkdirSync18, readFileSync as readFileSync22, rmSync as rmSync13, statSync as statSync13 } from "node:fs";
+import { delimiter as delimiter3, dirname as dirname24, join as join43, normalize as normalize2, sep as sep9 } from "node:path";
 import { tmpdir as tmpdir11 } from "node:os";
 import { spawn as spawn5 } from "node:child_process";
 function findOnPath(name, pathVar = process.env.PATH) {
   for (const dir of (pathVar ?? "").split(delimiter3)) {
     if (!dir) continue;
-    const p = join42(dir, name);
+    const p = join43(dir, name);
     try {
       accessSync2(p, constants3.X_OK);
       if (statSync13(p).isFile()) return p;
@@ -50631,7 +50758,7 @@ async function changedFiles3(repoRoot, base, commit) {
   return out.split("\0").filter((p) => p.length > 0);
 }
 async function scanCandidateSecrets(input) {
-  const reportPath2 = join42(input.outDir, "secret-scan.json");
+  const reportPath2 = join43(input.outDir, "secret-scan.json");
   const prior = readJsonIfExists(reportPath2);
   if (prior && prior.completed && prior.commit === input.commit) {
     const { raw: raw2, commit: _commit, ...rest } = prior;
@@ -50769,7 +50896,7 @@ function judgeSastResult(result2, checkId, policy, now) {
   if (files.length === 0 || result2.status !== "PASSED" && result2.status !== "FAILED") return { checkId, status: result2.status, sarif: false, classification: null, note: null };
   const findings = [];
   try {
-    for (const f of files) findings.push(...parseSarif(readFileSync21(f, "utf8")));
+    for (const f of files) findings.push(...parseSarif(readFileSync22(f, "utf8")));
   } catch (err) {
     return { checkId, status: result2.status, sarif: false, classification: null, note: `SAST check ${checkId}: SARIF output unreadable (${err.message}); its exit status stands` };
   }
@@ -50780,25 +50907,25 @@ function judgeSastResult(result2, checkId, policy, now) {
   return { checkId, status: status2, sarif: true, classification: c, note: `SAST check ${checkId}: ${bits.join(", ")} finding(s) under static_security${waived.length ? `; waived: ${waived.join("; ")}` : ""}` };
 }
 async function runGitleaks(bin, input, files, reportPath2) {
-  const work = join42(input.outDir, "secret-scan");
+  const work = join43(input.outDir, "secret-scan");
   rmSync13(work, { recursive: true, force: true });
-  const scanRoot = join42(work, "tree");
-  const tree = join42(scanRoot, "files");
-  const trusted = join42(work, "trusted");
+  const scanRoot = join43(work, "tree");
+  const tree = join43(scanRoot, "files");
+  const trusted = join43(work, "trusted");
   mkdirSync18(tree, { recursive: true, mode: 448 });
   mkdirSync18(trusted, { recursive: true, mode: 448 });
-  const config = join42(trusted, "gitleaks.toml");
+  const config = join43(trusted, "gitleaks.toml");
   atomicWrite(config, TRUSTED_GITLEAKS_CONFIG, 292);
   let copied = 0;
   for (const rel of files) {
-    const target = normalize2(join42(tree, rel));
+    const target = normalize2(join43(tree, rel));
     if (!target.startsWith(tree + sep9)) continue;
     const content = await git2(input.repoRoot, ["cat-file", "blob", `${input.commit}:${rel}`]);
-    mkdirSync18(dirname23(target), { recursive: true });
+    mkdirSync18(dirname24(target), { recursive: true });
     atomicWrite(target, content, 384);
     copied++;
   }
-  const raw = join42(work, "gitleaks-report.json");
+  const raw = join43(work, "gitleaks-report.json");
   const r = await execCapture([bin, "dir", scanRoot, "-c", config, "-i", trusted, "--ignore-gitleaks-allow", "--redact", "-f", "json", "-r", raw, "--no-banner", "--exit-code", "1"], {
     // GITLEAKS_CONFIG and friends from the host would outrank nothing here (-c wins), but the scan needs nothing from it either.
     env: { PATH: input.hostPath ?? process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir11() },
@@ -50933,8 +51060,8 @@ var init_security = __esm({
 });
 
 // src/ui/explore.ts
-import { existsSync as existsSync35, readFileSync as readFileSync22, realpathSync as realpathSync15, symlinkSync, writeFileSync as writeFileSync8 } from "node:fs";
-import { dirname as dirname24, join as join43, resolve as resolve13 } from "node:path";
+import { existsSync as existsSync35, readFileSync as readFileSync23, realpathSync as realpathSync15, symlinkSync, writeFileSync as writeFileSync8 } from "node:fs";
+import { dirname as dirname25, join as join44, resolve as resolve13 } from "node:path";
 function explorationConfigOf(ui) {
   const raw = ui.exploration;
   if (!raw || typeof raw !== "object") return DISABLED;
@@ -51032,8 +51159,8 @@ async function exploreUi(opts) {
   const onAbort = () => control.abort();
   opts.abortSignal?.addEventListener("abort", onAbort, { once: true });
   if (opts.abortSignal?.aborted) control.abort();
-  atomicWriteJson(join43(outDir, "exploration.json"), { state: "running", candidate: opts.candidate.id, startedAt });
-  const tmpDir = ensureDir(join43(outDir, "tmp"));
+  atomicWriteJson(join44(outDir, "exploration.json"), { state: "running", candidate: opts.candidate.id, startedAt });
+  const tmpDir = ensureDir(join44(outDir, "tmp"));
   const baseEnv = safeBaseEnv(opts.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;
   let app = null;
@@ -51055,7 +51182,7 @@ async function exploreUi(opts) {
           env: { ...opts.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: opts.uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir },
           isolation: { provider: opts.isolation, profile },
           isolatedTestData: opts.uiConfig.environment.isolated_test_data,
-          stateDir: join43(outDir, "app"),
+          stateDir: join44(outDir, "app"),
           clock,
           pollMs: opts.appPollMs,
           hostEnv: opts.hostEnv
@@ -51115,7 +51242,7 @@ async function exploreUi(opts) {
     startedAt,
     endedAt: clock.now()
   };
-  atomicWriteJson(join43(outDir, "exploration.json"), redactValue(result2));
+  atomicWriteJson(join44(outDir, "exploration.json"), redactValue(result2));
   return result2;
 }
 async function runExplorer(a) {
@@ -51234,7 +51361,7 @@ function baseFinding(c) {
   };
 }
 async function proveOne(p, cand, base, viewport) {
-  const dir = ensureDir(join43(p.outDir, "specs", cand.id));
+  const dir = ensureDir(join44(p.outDir, "specs", cand.id));
   const fileName = `${cand.id}.spec.ts`;
   let response;
   try {
@@ -51246,7 +51373,7 @@ async function proveOne(p, cand, base, viewport) {
   p.charge(response.costUsd);
   const problems = lintExplorationSpec(response.source, p.baseUrl);
   const source = redact(response.source);
-  const specPath = join43(dir, fileName);
+  const specPath = join44(dir, fileName);
   writeFileSync8(specPath, source, { mode: 384 });
   const spec = { path: specPath, sha256: sha256(source), source };
   if (problems.length > 0) return { ...base, spec, status: "invalid_test", reason: `the test was refused: ${problems.join("; ")}` };
@@ -51279,7 +51406,7 @@ async function proveOne(p, cand, base, viewport) {
   };
 }
 function writePlaywrightConfig(dir, baseUrl, ui, viewport) {
-  const path = join43(dir, "playwright.config.mjs");
+  const path = join44(dir, "playwright.config.mjs");
   const config = {
     testDir: dir,
     testMatch: "**/*.spec.ts",
@@ -51295,23 +51422,23 @@ function writePlaywrightConfig(dir, baseUrl, ui, viewport) {
   return path;
 }
 function linkNodeModules(dir, checkoutDir) {
-  const target = join43(dir, "node_modules");
+  const target = join44(dir, "node_modules");
   if (existsSync35(target)) return;
   let cur = checkoutDir;
   for (; ; ) {
-    const candidate = join43(cur, "node_modules");
+    const candidate = join44(cur, "node_modules");
     if (existsSync35(candidate)) {
       symlinkSync(realpathSync15(candidate), target);
       return;
     }
-    const up = dirname24(cur);
+    const up = dirname25(cur);
     if (up === cur) return;
     cur = up;
   }
 }
 async function runSpec(p, a) {
-  const outputDir = join43(a.dir, `run-${a.n}`);
-  const reportPath2 = join43(a.dir, `report-${a.n}.json`);
+  const outputDir = join44(a.dir, `run-${a.n}`);
+  const reportPath2 = join44(a.dir, `report-${a.n}.json`);
   const argv2 = ["npx", "--no-install", "playwright", "test", "--config", a.configPath, "--reporter=json", "--update-snapshots=none", "--retries=0", "--trace=retain-on-failure", `--output=${outputDir}`];
   const env = {
     ...p.baseEnv,
@@ -51342,7 +51469,7 @@ async function runSpec(p, a) {
   if (!existsSync35(reportPath2)) return fail3(`no Playwright report (exit ${exec.exitCode ?? "signal"}): ${(exec.stderr || exec.stdout).trim().slice(-200)}`);
   let tests;
   try {
-    const parsed2 = parsePlaywrightReport(JSON.parse(readFileSync22(reportPath2, "utf8")));
+    const parsed2 = parsePlaywrightReport(JSON.parse(readFileSync23(reportPath2, "utf8")));
     if (parsed2.errors.length > 0) return fail3(`Playwright reported errors: ${parsed2.errors.join("; ")}`);
     tests = parsed2.tests;
   } catch (err2) {
@@ -51414,7 +51541,7 @@ var init_explore = __esm({
 });
 
 // src/controller/exploration.ts
-import { join as join44 } from "node:path";
+import { join as join45 } from "node:path";
 function explorationEnabled(ui) {
   return ui !== null && explorationConfigOf(ui).enabled;
 }
@@ -51491,7 +51618,7 @@ async function exploreCandidate(ctx, cand, checkoutDir, outDir, opts = {}) {
       return { source: out.source, costUsd: r.usage.costUsd };
     }
   });
-  atomicWrite(join44(outDir, "exploration.md"), renderExplorationReport(result2), 384);
+  atomicWrite(join45(outDir, "exploration.md"), renderExplorationReport(result2), 384);
   for (const f of explorationFollowUps(result2)) {
     recordFailure(
       ctx.db,
@@ -51552,7 +51679,7 @@ var init_exploration = __esm({
 });
 
 // src/controller/verification.ts
-import { join as join45 } from "node:path";
+import { join as join46 } from "node:path";
 async function collectVerificationEvidence(ctx, cand, opts) {
   const contract = ctx.contract;
   if (!contract) throw new OrbitError("TRANSITION_INVALID", `run ${ctx.run.id} has no contract yet; there is nothing to verify`);
@@ -51589,7 +51716,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
   const uiRequired = contract.acceptance_criteria.some((c) => c.ui === true) || ui !== null && ui.required_when_ui_changes && changed.some(compileGlobs(ui.ui_paths, { nocase: false }));
   let uiResult = null;
   if (uiRequired && ui && ui.journey_check_ids.length > 0) {
-    uiResult = await runUiChecks({ checkoutDir, snapshot: snapshot2, candidate: cand, uiConfig: ui, journeyCheckIds: ui.journey_check_ids, isolation: ctx.isolation(), outDir: join45(candidateEvidenceDir(ctx.runDir, cand.seq), "ui"), clock: ctx.clock, abortSignal: ctx.signal, homeDir: homeOf(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
+    uiResult = await runUiChecks({ checkoutDir, snapshot: snapshot2, candidate: cand, uiConfig: ui, journeyCheckIds: ui.journey_check_ids, isolation: ctx.isolation(), outDir: join46(candidateEvidenceDir(ctx.runDir, cand.seq), "ui"), clock: ctx.clock, abortSignal: ctx.signal, homeDir: homeOf(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
     const afterUi = await checkpoint();
     if (afterUi !== null) return { stopped: afterUi };
   }
@@ -51598,7 +51725,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
   let exploration = null;
   const wouldExplore = uiRequired && explorationEnabled(ui);
   if (wouldExplore && opts.exploration) {
-    exploration = await exploreCandidate(ctx, cand, checkoutDir, join45(candidateEvidenceDir(ctx.runDir, cand.seq), "ui-exploration"));
+    exploration = await exploreCandidate(ctx, cand, checkoutDir, join46(candidateEvidenceDir(ctx.runDir, cand.seq), "ui-exploration"));
     const explored = await checkpoint();
     if (explored !== null) return { stopped: explored };
   }
@@ -51608,7 +51735,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
     repoRoot: ctx.run.repoRoot,
     baseRev,
     commit: cand.commitSha,
-    outDir: join45(candidateEvidenceDir(ctx.runDir, cand.seq), "security"),
+    outDir: join46(candidateEvidenceDir(ctx.runDir, cand.seq), "security"),
     ...ctx.deps.gitleaksPath === void 0 ? {} : { gitleaksPath: ctx.deps.gitleaksPath },
     hostPath: (ctx.deps.hostEnv ?? process.env).PATH,
     policy: staticPolicy,
@@ -51674,7 +51801,7 @@ var init_verification = __esm({
 
 // src/controller/steps/verifying.ts
 import { existsSync as existsSync36, readdirSync as readdirSync8 } from "node:fs";
-import { join as join46 } from "node:path";
+import { join as join47 } from "node:path";
 async function verifyingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -51710,7 +51837,7 @@ async function verifyingStep(ctx) {
     }
     return act(ctx, cand, report2);
   }
-  const checkoutDir = join46(runWorktreeRoot(ctx), `check-${cand.seq}`);
+  const checkoutDir = join47(runWorktreeRoot(ctx), `check-${cand.seq}`);
   await ensureCheckout(ctx, cand, checkoutDir);
   try {
     const collected = await collectVerificationEvidence(ctx, cand, { checkoutDir, scope, notes: authorizedOnceNotes, checkpoint: () => safePoint(ctx), onGate: (g) => recordGate(ctx, g), exploration: true });
@@ -51761,9 +51888,21 @@ async function act(ctx, cand, ev) {
     progress(ctx, "evidence.pass", { candidate_id: cand.id, report_id: ev.id });
     return move2(ctx, "REVIEWING", `candidate ${cand.seq} verified: PASS (${ev.id})`);
   }
-  if (verdict === "FAIL") return move2(ctx, "DIAGNOSING", `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
+  if (verdict === "FAIL") {
+    const environment = environmentFailuresFor(ctx, cand, ev.report);
+    if (environment.length > 0) return blockOnEnvironment(ctx, cand, ev, environment);
+    return move2(ctx, "DIAGNOSING", `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
+  }
   if (trigger) return move2(ctx, "INQUISITION", `verification incomplete: ${trigger.summary}`, { data: { trigger } });
   return finishRun(ctx, "BLOCKED", `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join("; ") || "the evidence is incomplete"}`, { outcome: { report_id: ev.id } });
+}
+async function blockOnEnvironment(ctx, cand, ev, failures) {
+  const reason = environmentBlockReason({ runId: ctx.run.id, candidateSeq: cand.seq, failures });
+  const checks = failures.map((f) => ({ check_id: f.checkId, fingerprint: f.fingerprint, signals: f.signals, cause: f.cause, evidence_lines: f.lines, question_id: f.questionId }));
+  decide2(ctx, { id: `dec-${ctx.run.id}-environment-${cand.id}`, kind: "verification.environment-failure", summary: reason, data: { candidate_id: cand.id, report_id: ev.id, checks } });
+  const blockedIds = new Set(failures.map((f) => f.checkId));
+  const others = ev.report.checks.filter((c) => (c.status === "FAILED" || c.status === "TIMEOUT") && !blockedIds.has(c.id)).map((c) => c.id);
+  return finishRun(ctx, "BLOCKED", reason, { outcome: { candidate_id: cand.id, report_id: ev.id, environment_failures: checks, other_failing_checks: others } });
 }
 function handledTriggerKeys(ctx) {
   const keys = /* @__PURE__ */ new Set();
@@ -51823,6 +51962,7 @@ var init_verifying = __esm({
     init_store();
     init_triggers();
     init_model_outputs();
+    init_environment_block();
     init_workers();
     init_context2();
     init_gates();
@@ -52100,8 +52240,8 @@ var init_diagnosing = __esm({
 });
 
 // src/controller/steps/reviewing.ts
-import { existsSync as existsSync38, readdirSync as readdirSync9, readFileSync as readFileSync23 } from "node:fs";
-import { join as join47 } from "node:path";
+import { existsSync as existsSync38, readdirSync as readdirSync9, readFileSync as readFileSync24 } from "node:fs";
+import { join as join48 } from "node:path";
 async function reviewingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -52563,21 +52703,21 @@ async function preparePacket(ctx, cand, reviewDir, provider) {
     questions: listQuestions(ctx.db, ctx.run.id, { status: "open" }).map((q) => q.question),
     provider
   });
-  atomicWrite(join47(reviewDir, "packet.md"), packet.text, 384);
-  atomicWriteJson(join47(reviewDir, "packet.json"), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
+  atomicWrite(join48(reviewDir, "packet.md"), packet.text, 384);
+  atomicWriteJson(join48(reviewDir, "packet.json"), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
 }
 function packetShaOf(reviewDir) {
   try {
-    return JSON.parse(readText(join47(reviewDir, "packet.json"))).sha256;
+    return JSON.parse(readText(join48(reviewDir, "packet.json"))).sha256;
   } catch {
     return "";
   }
 }
 function readText(p) {
-  return readFileSync23(p, "utf8");
+  return readFileSync24(p, "utf8");
 }
 function reviewerPrompt(ctx, cand, reviewDir, focus = "general") {
-  const text2 = readText(join47(reviewDir, "packet.md"));
+  const text2 = readText(join48(reviewDir, "packet.md"));
   const contract = assertContract(ctx);
   const task = [
     "Review the exact candidate in this read-only checkout against the contract and the bound evidence in the packet. Do not edit anything and do not ask questions.",
@@ -52597,9 +52737,9 @@ function reviewerPrompt(ctx, cand, reviewDir, focus = "general") {
   });
 }
 async function prepareReview(ctx, cand, provider) {
-  const reviewDir = join47(ctx.runDir, "reviews", String(cand.seq));
-  const checkout = join47(runWorktreeRoot(ctx), `review-${cand.seq}`);
-  if (!existsSync38(join47(reviewDir, "packet.md"))) await preparePacket(ctx, cand, reviewDir, provider);
+  const reviewDir = join48(ctx.runDir, "reviews", String(cand.seq));
+  const checkout = join48(runWorktreeRoot(ctx), `review-${cand.seq}`);
+  if (!existsSync38(join48(reviewDir, "packet.md"))) await preparePacket(ctx, cand, reviewDir, provider);
   if (!existsSync38(checkout) || readdirSync9(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
@@ -52652,7 +52792,7 @@ var init_reviewing = __esm({
 });
 
 // src/controller/steps/delivering.ts
-import { join as join48 } from "node:path";
+import { join as join49 } from "node:path";
 async function deliveringStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -52700,7 +52840,7 @@ async function deliveringStep(ctx) {
   }
   const refused = await deliveryGateOrBlock(ctx, ev, review, result2.tree);
   if (refused) return refused;
-  atomicWriteJson(join48(ctx.runDir, DELIVERY_FILE), { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr ? { number: result2.pr.number, url: result2.pr.url, state: result2.pr.state, isDraft: result2.pr.isDraft } : null, pr_skipped: result2.prSkipped, warnings: result2.warnings, delivered_at: ctx.clock.now() });
+  atomicWriteJson(join49(ctx.runDir, DELIVERY_FILE), { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr ? { number: result2.pr.number, url: result2.pr.url, state: result2.pr.state, isDraft: result2.pr.isDraft } : null, pr_skipped: result2.prSkipped, warnings: result2.warnings, delivered_at: ctx.clock.now() });
   setCandidateStatus(ctx.db, cand.id, "DELIVERED");
   decide2(ctx, { id: `dec-${ctx.run.id}-delivered-${result2.commit}`, kind: "delivery.completed", summary: `delivered ${result2.commit.slice(0, 12)} (tree ${result2.tree.slice(0, 12)}) to ${result2.branch}${result2.pr ? `, PR #${result2.pr.number}` : ""}`, data: { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr?.number ?? null, pr_skipped: result2.prSkipped } });
   return move2(ctx, "AWAITING_CI", `delivered ${result2.commit.slice(0, 12)} to ${result2.branch}`, { patch: { branch: result2.branch }, data: { commit: result2.commit, pr: result2.pr?.number ?? null } });
@@ -52770,7 +52910,7 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
     deploys: result2.deploys.map((x) => ({ environment: x.environment, sha: x.sha, branch: x.branch })),
     deploy_skipped: result2.deploySkipped
   };
-  atomicWriteJson(join48(ctx.runDir, RELEASE_FILE), { ...summary, released_at: ctx.clock.now() });
+  atomicWriteJson(join49(ctx.runDir, RELEASE_FILE), { ...summary, released_at: ctx.clock.now() });
   const deployed = summary.deploys.length > 0 ? `deployed to ${summary.deploys.map((x) => x.environment).join(", ")}${summary.deploy_skipped ? ` (not: ${summary.deploy_skipped})` : ""}` : `no deploy (${summary.deploy_skipped})`;
   decide2(ctx, { id: `dec-${ctx.run.id}-released-${d.commit}`, kind: "release.completed", summary: `release of ${d.commit.slice(0, 12)}: ${summary.merge ? `merged PR #${summary.merge.pr}` : `no merge (${summary.merge_skipped})`}; ${deployed}`, data: summary });
   return complete(ctx, d.tree, { ...outcome, release: summary }, notes);
@@ -52828,7 +52968,7 @@ async function githubClient(ctx) {
   if (config.delivery.provider === "fake") {
     const url = await resolveRemoteUrl(ctx.run.repoRoot, remote).catch(() => null);
     const local = url !== null && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !/^[^/]+@[^:]+:/.test(url) ? url : void 0;
-    return new FakeGitHub({ statePath: join48(ctx.run.repoRoot, ".orbit", "fake-github.json"), ...local ? { remoteGitDir: local } : {} });
+    return new FakeGitHub({ statePath: join49(ctx.run.repoRoot, ".orbit", "fake-github.json"), ...local ? { remoteGitDir: local } : {} });
   }
   return githubClientFor(ctx.run.repoRoot, remote, ctx.deps.hostEnv ?? process.env);
 }
@@ -52868,11 +53008,11 @@ var init_delivering = __esm({
 
 // src/controller/steps/awaiting-ci.ts
 import { existsSync as existsSync39 } from "node:fs";
-import { join as join49 } from "node:path";
+import { join as join50 } from "node:path";
 async function awaitingCiStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
-  const d = readJsonIfExists(join49(ctx.runDir, DELIVERY_FILE));
+  const d = readJsonIfExists(join50(ctx.runDir, DELIVERY_FILE));
   if (!d || !ctx.ledger) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is AWAITING_CI without a delivery record`);
   const config = ctx.snapshot.config;
   const client = await githubClient(ctx);
@@ -52992,7 +53132,7 @@ async function blockOnConflict(ctx, d, base, m, reason) {
   return finishRun(ctx, "BLOCKED", reason, { outcome: { ...base, base_conflict: { baseBranch: m.baseBranch, from: m.from, to: m.to, files } } });
 }
 async function rebaseCandidate(ctx, cand, tip) {
-  const checkoutDir = join49(runWorktreeRoot(ctx), `rebase-${tip.slice(0, 12)}`);
+  const checkoutDir = join50(runWorktreeRoot(ctx), `rebase-${tip.slice(0, 12)}`);
   const env = { ...gitEnv4({}, ctx.deps.hostEnv ?? process.env), GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name, GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name, GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email };
   await cleanupCandidateCheckout(ctx.run.repoRoot, checkoutDir).catch(() => {
   });
@@ -53400,7 +53540,7 @@ var init_ledger = __esm({
 
 // src/inquisition/engine.ts
 import { mkdirSync as mkdirSync19 } from "node:fs";
-import { join as join50 } from "node:path";
+import { join as join51 } from "node:path";
 function ledgerDraft(runId, claim, source, experiment, status2 = "unverified", reversibility2 = "costly-to-reverse") {
   return { runId, claim, source, confidence: "low", consequence: "the work ships on an unchecked belief", reversibility: reversibility2, experiment, status: status2 };
 }
@@ -53513,7 +53653,7 @@ async function runWorker(adapter, ctx, opts, trigger, prompt, attempt, signal) {
   const { db, clock } = ctx;
   signal?.throwIfAborted();
   const workerId = opts.workerIdFor?.(attempt) ?? newId("wrk");
-  const workerDir = join50(opts.workerDir, workerId);
+  const workerDir = join51(opts.workerDir, workerId);
   db.tx(() => {
     opts.fence?.();
     planWorker(db, { id: workerId, runId: ctx.runId, role: "inquisitor", purpose: workerPurpose(trigger), provider: opts.route.provider, model: opts.route.model, effort: opts.route.effort, workerDir, cwd: opts.cwd, attempt }, clock);
@@ -54059,7 +54199,7 @@ var init_engine = __esm({
 });
 
 // src/controller/steps/inquisition.ts
-import { join as join51 } from "node:path";
+import { join as join52 } from "node:path";
 async function inquisitionStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -54074,7 +54214,7 @@ async function inquisitionStep(ctx) {
   const cwd = ctx.run.worktreePath;
   const env = ctx.deps.hostEnv ?? process.env;
   const home2 = homeOf(ctx.deps);
-  const workerDir = join51(ctx.runDir, "workers");
+  const workerDir = join52(ctx.runDir, "workers");
   const supported = ctx.candidate ? currentEvidenceReport(ctx.db, ctx.run.id, ctx.candidate.id)?.report.acceptance_evidence.filter((a) => a.status === "supported").map((a) => a.criterion_id) ?? [] : [];
   const result2 = await runInquisition({
     trigger,
@@ -54092,7 +54232,7 @@ async function inquisitionStep(ctx) {
         route: { provider: route2.provider, model: route2.model, effort: route2.effort },
         workerDir,
         cwd,
-        sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: ctx.snapshot, provider: route2.provider.startsWith("codex") ? "codex" : "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join51(home2, ".claude"), homeDir: home2, policyPath: ctx.run.policyPath, readablePaths: [ctx.deps.orbitInstallDir], env }),
+        sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: ctx.snapshot, provider: route2.provider.startsWith("codex") ? "codex" : "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join52(home2, ".claude"), homeDir: home2, policyPath: ctx.run.policyPath, readablePaths: [ctx.deps.orbitInstallDir], env }),
         policyPath: ctx.run.policyPath,
         systemPrompt: systemPromptFor(ctx, "inquisitor"),
         maxTurns: ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session,
@@ -54103,7 +54243,7 @@ async function inquisitionStep(ctx) {
     signal: ctx.signal
   });
   const patch = hashObject(result2.contract) !== hashObject(contract) ? { contractJson: JSON.stringify(result2.contract), contractHash: hashObject(result2.contract) } : void 0;
-  if (patch) atomicWriteJson(join51(ctx.runDir, "contract.json"), result2.contract);
+  if (patch) atomicWriteJson(join52(ctx.runDir, "contract.json"), result2.contract);
   const after = await safePoint(ctx);
   if (after) return after;
   if (result2.disposition === "ask" || result2.disposition === "block") {
@@ -54287,14 +54427,14 @@ var init_difficulty = __esm({
 });
 
 // src/controller/steps/planning.ts
-import { join as join52 } from "node:path";
+import { join as join53 } from "node:path";
 async function planningStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
   const exceptions = applyBaselineExceptionAnswers({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { snapshot: ctx.snapshot });
   const contract = exceptions.contract ?? assertContract(ctx);
   const plan = storedPlan(ctx);
-  const baseline = readJsonIfExists(join52(ctx.runDir, BASELINE_FILE2));
+  const baseline = readJsonIfExists(join53(ctx.runDir, BASELINE_FILE2));
   if (plan) {
     decide2(ctx, {
       id: `dec-${ctx.run.id}-proof-map`,
@@ -54483,7 +54623,7 @@ var init_steps = __esm({
 // src/storage/retention.ts
 import { existsSync as existsSync40, lstatSync as lstatSync7, realpathSync as realpathSync16, rmSync as rmSync14 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
-import { dirname as dirname25, join as join53, resolve as resolve14 } from "node:path";
+import { dirname as dirname26, join as join54, resolve as resolve14 } from "node:path";
 function repoKeyFor(repoRoot) {
   let real = repoRoot;
   try {
@@ -54497,8 +54637,8 @@ async function pruneExpiredRuns(db, opts) {
   const now = opts.clock.now();
   const cutoff = now - opts.keepDays * DAY_MS;
   const repoRoot = realOrResolved(opts.repoRoot);
-  const runsRoot = join53(repoRoot, ".orbit", "runs");
-  const worktreesRoot = join53(opts.orbitHome ?? process.env.ORBIT_HOME ?? join53(homedir10(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
+  const runsRoot = join54(repoRoot, ".orbit", "runs");
+  const worktreesRoot = join54(opts.orbitHome ?? process.env.ORBIT_HOME ?? join54(homedir10(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
   const placeholders = PRUNABLE_STATES.map(() => "?").join(", ");
   const rows = db.all(
     `SELECT r.id, r.state, r.policy_path, r.ended_at, r.updated_at FROM runs r
@@ -54521,14 +54661,14 @@ async function pruneExpiredRuns(db, opts) {
       result2.skipped.push({ runId: row.id, reason: "a controller still holds its lease" });
       continue;
     }
-    const runDir2 = join53(runsRoot, row.id);
-    const recorded = dirname25(row.policy_path);
-    const literalRunDir = join53(resolve14(opts.repoRoot), ".orbit", "runs", row.id);
+    const runDir2 = join54(runsRoot, row.id);
+    const recorded = dirname26(row.policy_path);
+    const literalRunDir = join54(resolve14(opts.repoRoot), ".orbit", "runs", row.id);
     if (![runDir2, literalRunDir].includes(resolve14(recorded)) && realOrResolved(recorded) !== runDir2) {
       result2.skipped.push({ runId: row.id, reason: `its recorded run directory ${recorded} is not ${runDir2}` });
       continue;
     }
-    const targets = [runDir2, join53(worktreesRoot, row.id)].filter((p) => isRealDirectory(p));
+    const targets = [runDir2, join54(worktreesRoot, row.id)].filter((p) => isRealDirectory(p));
     if (!opts.dryRun) {
       for (const t of targets) rmSync14(t, { recursive: true, force: true });
       db.tx(() => appendEvent(db, row.id, ARTIFACTS_PRUNED_EVENT, "gc", { keep_runs_days: opts.keepDays, removed: targets }, now));
@@ -54536,7 +54676,7 @@ async function pruneExpiredRuns(db, opts) {
     }
     result2.pruned.push({ runId: row.id, state: row.state, endedAt: row.ended_at ?? row.updated_at, removed: targets });
   }
-  if (removedWorktree && existsSync40(join53(repoRoot, ".git"))) {
+  if (removedWorktree && existsSync40(join54(repoRoot, ".git"))) {
     await execCapture(["git", "worktree", "prune"], { cwd: repoRoot, timeoutMs: 3e4 }).catch(() => void 0);
   }
   return result2;
@@ -54576,7 +54716,7 @@ __export(loop_exports, {
 });
 import { existsSync as existsSync41 } from "node:fs";
 import { hostname as hostname4 } from "node:os";
-import { dirname as dirname26, join as join54 } from "node:path";
+import { dirname as dirname27, join as join55 } from "node:path";
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -54997,8 +55137,8 @@ var init_loop = __esm({
         for (const row of db.all("SELECT id FROM runs WHERE ended_at IS NOT NULL AND ended_at >= ?", since)) {
           try {
             const run = getRun(db, row.id);
-            const runDir2 = dirname26(run.policyPath);
-            if (existsSync41(join54(runDir2, "final.md"))) continue;
+            const runDir2 = dirname27(run.policyPath);
+            if (existsSync41(join55(runDir2, "final.md"))) continue;
             let snapshot2 = null;
             try {
               snapshot2 = verifySnapshot(run.policyPath, run.policyHash);
@@ -55060,7 +55200,7 @@ var init_loop = __esm({
 
 // src/controller/service.ts
 import { existsSync as existsSync42, mkdirSync as mkdirSync20, rmSync as rmSync15 } from "node:fs";
-import { join as join55 } from "node:path";
+import { join as join56 } from "node:path";
 function serviceLabel(repoRoot) {
   return `${SERVICE_LABEL_PREFIX}.${repoKey(repoRoot)}`;
 }
@@ -55071,7 +55211,7 @@ function serviceSpec(input) {
     entry: input.entry,
     args: ["service", "run", "--repo", input.repoRoot],
     workingDirectory: input.repoRoot,
-    logDir: join55(input.orbitHome, "logs"),
+    logDir: join56(input.orbitHome, "logs"),
     env: {
       PATH: input.path ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
       NODE_OPTIONS: "--disable-warning=ExperimentalWarning",
@@ -55082,7 +55222,7 @@ function serviceSpec(input) {
   };
 }
 function logPaths(spec) {
-  return { out: join55(spec.logDir, `${spec.label}.out.log`), err: join55(spec.logDir, `${spec.label}.err.log`) };
+  return { out: join56(spec.logDir, `${spec.label}.out.log`), err: join56(spec.logDir, `${spec.label}.err.log`) };
 }
 function xml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -55123,7 +55263,7 @@ function renderLaunchdPlist(spec) {
   ].join("\n");
 }
 function launchdPlistPath(homeDir, label) {
-  return join55(homeDir, "Library", "LaunchAgents", `${label}.plist`);
+  return join56(homeDir, "Library", "LaunchAgents", `${label}.plist`);
 }
 function launchctlCommands(label, uid, plistPath) {
   const domain = `gui/${uid}`;
@@ -55164,7 +55304,7 @@ function renderSystemdUnit(spec) {
   ].join("\n");
 }
 function systemdUnitPath(homeDir, label) {
-  return join55(homeDir, ".config", "systemd", "user", `${label}.service`);
+  return join56(homeDir, ".config", "systemd", "user", `${label}.service`);
 }
 function systemctlCommands(label) {
   const unit = `${label}.service`;
@@ -55190,7 +55330,7 @@ async function installService(spec, opts) {
   mkdirSync20(spec.logDir, { recursive: true, mode: 448 });
   if (opts.platform === "darwin") {
     const plist = launchdPlistPath(opts.homeDir, spec.label);
-    mkdirSync20(join55(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
+    mkdirSync20(join56(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
     atomicWrite(plist, renderLaunchdPlist(spec), 420);
     const cmd = launchctlCommands(spec.label, opts.uid, plist);
     await must(run, cmd.bootout, [0, 3]);
@@ -55200,7 +55340,7 @@ async function installService(spec, opts) {
   }
   if (opts.platform === "linux") {
     const unit = systemdUnitPath(opts.homeDir, spec.label);
-    mkdirSync20(join55(opts.homeDir, ".config", "systemd", "user"), { recursive: true });
+    mkdirSync20(join56(opts.homeDir, ".config", "systemd", "user"), { recursive: true });
     atomicWrite(unit, renderSystemdUnit(spec), 420);
     const cmd = systemctlCommands(spec.label);
     await must(run, cmd.daemonReload, [0]);
@@ -55417,7 +55557,7 @@ var init_drive = __esm({
 });
 
 // src/cli/commands/control.ts
-import { join as join56, resolve as resolve15 } from "node:path";
+import { join as join57, resolve as resolve15 } from "node:path";
 async function pauseCommand(args, ctx) {
   const [id] = args.expect(1);
   const repo = await resolveRepo(ctx, args.str("repo"));
@@ -55495,7 +55635,7 @@ function cliLeaseDeps(ctx, repo, db, ownerId) {
       db,
       clock: ctx.clock,
       ownerId,
-      logger: createLogger({ file: join56(ctx.orbitHome, "logs", "controller.jsonl"), clock: ctx.clock }),
+      logger: createLogger({ file: join57(ctx.orbitHome, "logs", "controller.jsonl"), clock: ctx.clock }),
       adapters: {},
       registry: new ModelRegistry(db, ctx.clock),
       orbitHome: ctx.orbitHome,
@@ -55599,7 +55739,7 @@ var init_inquisition2 = __esm({
 });
 
 // src/cli/commands/decide.ts
-import { dirname as dirname27 } from "node:path";
+import { dirname as dirname28 } from "node:path";
 function matchQuestion(db, runId, ref2) {
   const all = listQuestions(db, runId);
   const exact = all.find((q) => q.id === ref2);
@@ -55638,7 +55778,7 @@ async function decideCommand(args, ctx) {
     const run = findRunByPrefix(db, runRef);
     if (isTerminal(run.state) && run.state !== "BLOCKED") throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is ${run.state}; its questions can no longer change anything`);
     const q = matchQuestion(db, run.id, qRef);
-    const result2 = answerQuestion(db, dirname27(run.policyPath), q.id, answer, by, ctx.clock);
+    const result2 = answerQuestion(db, dirname28(run.policyPath), q.id, answer, by, ctx.clock);
     const remaining = openQuestions(db, run.id);
     if (args.bool("json")) {
       json(ctx.io, { run_id: run.id, question_id: q.id, answer: result2.question.answer, chosen_option: result2.chosenOption?.label ?? null, decision_id: result2.decision.id, unblocks: result2.unblocks, baseline_exception: result2.baselineException, open_questions: remaining.map((x) => x.id), run_state: run.state });
@@ -55716,7 +55856,7 @@ var init_recovery = __esm({
 
 // src/cli/commands/service.ts
 import { existsSync as existsSync43 } from "node:fs";
-import { join as join57 } from "node:path";
+import { join as join58 } from "node:path";
 function managerOptions(ctx) {
   return { platform: ctx.platform, homeDir: ctx.homeDir, uid: ctx.uid, ...ctx.seams.serviceRunner ? { run: ctx.seams.serviceRunner } : {} };
 }
@@ -55745,7 +55885,7 @@ async function serviceInstallCommand(args, ctx) {
   else {
     line2(ctx.io, `service ${status2.label} installed (${status2.platform}): ${status2.loaded ? "loaded" : status2.detail}`);
     line2(ctx.io, `definition: ${status2.definitionPath}`);
-    line2(ctx.io, `logs: ${join57(ctx.orbitHome, "logs")}`);
+    line2(ctx.io, `logs: ${join58(ctx.orbitHome, "logs")}`);
     line2(ctx.io, "No credentials were written to the definition. For unattended runs export ANTHROPIC_API_KEY (and CODEX_API_KEY) where the service can see them; see docs/decisions/0003-authentication.md.");
     for (const w of warnings) ctx.io.err(`warning: ${w}
 `);
@@ -55789,7 +55929,7 @@ async function serviceRunCommand(args, ctx) {
   const config = loadConfig(repo);
   const db = openDb(stateDbPath(repo));
   try {
-    const logger = createLogger({ file: join57(ctx.orbitHome, "logs", "controller.jsonl"), stderr: true, clock: ctx.clock });
+    const logger = createLogger({ file: join58(ctx.orbitHome, "logs", "controller.jsonl"), stderr: true, clock: ctx.clock });
     const factory = ctx.seams.controllerDeps ?? defaultControllerDeps;
     const deps = factory({ repoRoot: repo, db, clock: ctx.clock, config, env: ctx.env, orbitHome: ctx.orbitHome, logger });
     const controller = new Controller({ deps, mode: "service", handleSignals: true, ...ctx.seams.controller ?? {} });
@@ -55821,10 +55961,10 @@ var init_service2 = __esm({
 });
 
 // src/cli/commands/doctor.ts
-import { accessSync as accessSync3, constants as constants4, existsSync as existsSync44, mkdtempSync as mkdtempSync6, readFileSync as readFileSync24, rmSync as rmSync16, statSync as statSync14 } from "node:fs";
+import { accessSync as accessSync3, constants as constants4, existsSync as existsSync44, mkdtempSync as mkdtempSync6, readFileSync as readFileSync25, rmSync as rmSync16, statSync as statSync14 } from "node:fs";
 import { createRequire as createRequire4 } from "node:module";
 import { tmpdir as tmpdir12 } from "node:os";
-import { delimiter as delimiter4, isAbsolute as isAbsolute16, join as join58, resolve as resolve16 } from "node:path";
+import { delimiter as delimiter4, isAbsolute as isAbsolute16, join as join59, resolve as resolve16 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
     try {
@@ -55839,7 +55979,7 @@ function which2(cmd, env, cwd = process.cwd()) {
   }
   for (const dir of (env.PATH ?? "").split(delimiter4)) {
     if (!dir) continue;
-    const p = join58(dir, cmd);
+    const p = join59(dir, cmd);
     if (ok(p)) return p;
   }
   return null;
@@ -55939,13 +56079,13 @@ function checkStorage(p) {
   const { repo } = p;
   if (!repo) return warn2("storage", "storage", "no repository, so no state database to check", "a repository", null);
   const path = stateDbPath(repo);
-  const dir = join58(repo, ".orbit");
+  const dir = join59(repo, ".orbit");
   let db = null;
   try {
     if (!existsSync44(path)) {
-      const scratch = mkdtempSync6(join58(tmpdir12(), "orbit-doctor-"));
+      const scratch = mkdtempSync6(join59(tmpdir12(), "orbit-doctor-"));
       try {
-        db = openDb(join58(scratch, "probe.sqlite"));
+        db = openDb(join59(scratch, "probe.sqlite"));
         const mode2 = String((db.get("PRAGMA journal_mode") ?? {}).journal_mode);
         if (mode2.toLowerCase() !== "wal") return fail2("storage", "storage", `SQLite cannot use WAL on this filesystem (journal_mode=${mode2})`, "WAL journaling", "use a local disk, not a network or container bind mount");
       } finally {
@@ -56001,20 +56141,18 @@ function checkConfiguredChecks(p) {
       details.push(`${c.id}: shell builtin "${word}" (not resolved)`);
       continue;
     }
-    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join58(repo, "node_modules", ".bin", word), ctx.env) : null);
+    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join59(repo, "node_modules", ".bin", word), ctx.env) : null);
     if (!found) {
       details.push(`${c.id}: "${word}" was not found${c.mandatory ? "" : " (optional check)"}${c.cwd !== "." ? ` (cwd ${c.cwd})` : ""}`);
       bump(level);
       continue;
     }
-    const argv2 = c.shell ? [] : c.command;
-    const pm = ["npm", "pnpm", "yarn"].includes(word) ? argv2[1] : void 0;
-    const script = pm === "run" || pm === "run-script" ? argv2[2] : pm === "test" ? "test" : void 0;
+    const script = c.shell ? void 0 : packageScriptOf(c.command);
     if (script) {
-      const pj = join58(cwd, "package.json");
+      const pj = join59(cwd, "package.json");
       let defined = false;
       try {
-        defined = typeof JSON.parse(readFileSync24(pj, "utf8")).scripts?.[script] === "string";
+        defined = typeof JSON.parse(readFileSync25(pj, "utf8")).scripts?.[script] === "string";
       } catch {
         defined = false;
       }
@@ -56172,12 +56310,33 @@ function providerKindSafe(id) {
     return null;
   }
 }
+function packageScriptOf(argv2) {
+  const [pm, sub, ...rest] = argv2;
+  if (!pm || !["npm", "pnpm", "yarn"].includes(pm)) return void 0;
+  if (sub === "test") return "test";
+  if (sub !== "run" && sub !== "run-script") return void 0;
+  return rest.find((a) => !a.startsWith("-"));
+}
+function packageInstalled(req, name) {
+  try {
+    req.resolve(`${name}/package.json`);
+    return true;
+  } catch (err) {
+    if (err.code === "ERR_PACKAGE_PATH_NOT_EXPORTED") return true;
+  }
+  try {
+    req.resolve(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
 function playwrightCache(env, home2, platform3) {
   const override = env.PLAYWRIGHT_BROWSERS_PATH;
   if (override && override !== "0") return override;
-  if (platform3 === "darwin") return join58(home2, "Library", "Caches", "ms-playwright");
-  if (platform3 === "win32") return join58(env.LOCALAPPDATA ?? join58(home2, "AppData", "Local"), "ms-playwright");
-  return join58(env.XDG_CACHE_HOME ?? join58(home2, ".cache"), "ms-playwright");
+  if (platform3 === "darwin") return join59(home2, "Library", "Caches", "ms-playwright");
+  if (platform3 === "win32") return join59(env.LOCALAPPDATA ?? join59(home2, "AppData", "Local"), "ms-playwright");
+  return join59(env.XDG_CACHE_HOME ?? join59(home2, ".cache"), "ms-playwright");
 }
 function checkPlaywright(p) {
   const { config, repo, ctx } = p;
@@ -56185,7 +56344,7 @@ function checkPlaywright(p) {
   if (!wanted) return pass("playwright", "ui", "not required: no ui section and no playwright check is configured");
   const level = fail2;
   if (!repo) return level("playwright", "ui", "no repository to look for Playwright in", "a repository", null);
-  const req = createRequire4(join58(repo, "package.json"));
+  const req = createRequire4(join59(repo, "package.json"));
   let pwTest = null;
   try {
     pwTest = req.resolve("@playwright/test/package.json");
@@ -56203,7 +56362,7 @@ function checkPlaywright(p) {
   if (!core) return level("playwright", "ui", "playwright-core is missing next to @playwright/test", "playwright-core", "reinstall dependencies");
   let revisions = {};
   try {
-    const bj = JSON.parse(readFileSync24(join58(core, "..", "browsers.json"), "utf8"));
+    const bj = JSON.parse(readFileSync25(join59(core, "..", "browsers.json"), "utf8"));
     revisions = Object.fromEntries((bj.browsers ?? []).map((b) => [b.name, b.revision]));
   } catch {
     details.push("browsers.json could not be read; browser revisions are not checked");
@@ -56214,15 +56373,14 @@ function checkPlaywright(p) {
   for (const b of names) {
     const dirs = b === "chromium" ? ["chromium", "chromium_headless_shell"] : [b];
     const revs = dirs.map((d) => ({ d, rev: revisions[d] ?? revisions[b] ?? null }));
-    const present = revs.some((r) => r.rev ? existsSync44(join58(cache2, `${r.d}-${r.rev}`)) : false);
+    const present = revs.some((r) => r.rev ? existsSync44(join59(cache2, `${r.d}-${r.rev}`)) : false);
     details.push(`${b}: ${present ? `installed (${cache2})` : `not found in ${cache2}`}`);
     if (!present && revs.some((r) => r.rev)) missing.push(b);
   }
   if (config.ui?.accessibility.enabled) {
-    try {
-      req.resolve("@axe-core/playwright/package.json");
+    if (packageInstalled(req, "@axe-core/playwright")) {
       details.push("@axe-core/playwright: installed");
-    } catch {
+    } else {
       details.push("@axe-core/playwright: not installed (accessibility scans are enabled in the ui policy)");
       missing.push("@axe-core/playwright");
     }
@@ -56289,7 +56447,7 @@ async function checkService(p) {
   if (linger === "no") details.push(`lingering is off for ${ctx.user}: the service stops at logout (loginctl enable-linger ${ctx.user})`);
   if (!status2.installed) return warn2("service", "service", "no service is installed, so runs only progress while a terminal is attached", "an installed background service (survives terminal closure and restarts after failure)", "orbit service install", details);
   if (status2.loaded !== true) return warn2("service", "service", `service installed but ${status2.loaded === false ? "not loaded" : `state unknown (${status2.detail})`}`, "a loaded service", "orbit service install (reloads it)", details);
-  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join58(ctx.orbitHome, "logs")}, then orbit service install to restart it`, details);
+  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join59(ctx.orbitHome, "logs")}, then orbit service install to restart it`, details);
   if (linger === "no") return warn2("service", "service", "service is loaded; lingering is off", "systemd lingering", `loginctl enable-linger ${ctx.user}`, details);
   return pass("service", "service", live ? "service loaded and its controller heartbeat is fresh" : "service loaded; the controller has not published a heartbeat yet", details);
 }
@@ -56464,10 +56622,10 @@ var init_gc = __esm({
 });
 
 // src/cli/commands/init.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync45, mkdirSync as mkdirSync21, readFileSync as readFileSync25, writeFileSync as writeFileSync9 } from "node:fs";
-import { dirname as dirname28, join as join59 } from "node:path";
+import { appendFileSync as appendFileSync2, existsSync as existsSync45, mkdirSync as mkdirSync21, readFileSync as readFileSync26, writeFileSync as writeFileSync9 } from "node:fs";
+import { dirname as dirname29, join as join60 } from "node:path";
 function templatePath() {
-  return join59(orbitInstallDir(), "templates", "config.yaml");
+  return join60(orbitInstallDir(), "templates", "config.yaml");
 }
 async function excludeFile(ctx, repo) {
   const r = await execCapture(["git", "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15e3 });
@@ -56477,15 +56635,15 @@ async function excludeFile(ctx, repo) {
 async function initCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
-  const configPath = join59(repo, ".orbit", "config.yaml");
+  const configPath = join60(repo, ".orbit", "config.yaml");
   let config;
   if (existsSync45(configPath)) config = "exists";
   else {
     const tpl = templatePath();
     if (!existsSync45(tpl)) throw new OrbitError("NOT_FOUND", `the starter template ${tpl} is missing from this installation`);
-    mkdirSync21(dirname28(configPath), { recursive: true });
+    mkdirSync21(dirname29(configPath), { recursive: true });
     try {
-      writeFileSync9(configPath, readFileSync25(tpl, "utf8"), { flag: "wx", mode: 420 });
+      writeFileSync9(configPath, readFileSync26(tpl, "utf8"), { flag: "wx", mode: 420 });
       config = "created";
     } catch (err) {
       if (err.code !== "EEXIST") throw err;
@@ -56493,8 +56651,8 @@ async function initCommand(args, ctx) {
     }
   }
   const excludePath = await excludeFile(ctx, repo);
-  mkdirSync21(dirname28(excludePath), { recursive: true });
-  const current = existsSync45(excludePath) ? readFileSync25(excludePath, "utf8") : "";
+  mkdirSync21(dirname29(excludePath), { recursive: true });
+  const current = existsSync45(excludePath) ? readFileSync26(excludePath, "utf8") : "";
   const have = new Set(current.split("\n").map((l) => l.trim()));
   const missing = EXCLUDE_RULES.filter((r) => !have.has(r));
   if (missing.length > 0) {
@@ -56680,10 +56838,10 @@ var init_ingest = __esm({
 });
 
 // src/cli/commands/learn.ts
-import { existsSync as existsSync46, mkdirSync as mkdirSync23, readFileSync as readFileSync26, statSync as statSync15 } from "node:fs";
-import { basename as basename12, isAbsolute as isAbsolute18, join as join60, relative as relative5, resolve as resolve17 } from "node:path";
+import { existsSync as existsSync46, mkdirSync as mkdirSync23, readFileSync as readFileSync27, statSync as statSync15 } from "node:fs";
+import { basename as basename12, isAbsolute as isAbsolute18, join as join61, relative as relative5, resolve as resolve17 } from "node:path";
 function knowledgePath(ctx, repo, global) {
-  return global ? join60(ctx.orbitHome, "knowledge.sqlite") : join60(repo, ".orbit", "knowledge.sqlite");
+  return global ? join61(ctx.orbitHome, "knowledge.sqlite") : join61(repo, ".orbit", "knowledge.sqlite");
 }
 function openExisting(ctx, repo, global) {
   const path = knowledgePath(ctx, repo, global);
@@ -56803,7 +56961,7 @@ async function readSource(ctx, repo, ref2, label) {
   if (!st.isFile()) throw new OrbitError("SCHEMA_INVALID", `${path} is not a regular file`);
   if (st.size > FETCH_MAX_BYTES) throw new OrbitError("SCHEMA_INVALID", `${path} is larger than ${FETCH_MAX_BYTES} bytes`);
   const rel = relative5(repo, path);
-  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute18(rel) ? rel : basename12(path), content: readFileSync26(path, "utf8") };
+  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute18(rel) ? rel : basename12(path), content: readFileSync27(path, "utf8") };
 }
 async function runIngestCurator(ctx, repo, config, prompt) {
   if (!(config.knowledge.curator_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.curator_budget_usd is 0, so no curator may run; raise it, or supply the curator output with --curator-output");
@@ -56814,7 +56972,7 @@ async function runIngestCurator(ctx, repo, config, prompt) {
     if (!deps.adapters.claude) throw new OrbitError("PROVIDER_UNAVAILABLE", "no claude provider is configured; the curator runs on Claude");
     deps.registry.seed();
     const id = `ingest-${ctx.clock.now().toString(36)}`;
-    const dir = join60(ctx.orbitHome, "ingest", repoKey(repo), id);
+    const dir = join61(ctx.orbitHome, "ingest", repoKey(repo), id);
     mkdirSync23(dir, { recursive: true, mode: 448 });
     const snap = snapshotPolicy(config, { runId: id, repoRoot: repo, runDir: dir, clock: ctx.clock });
     const out = await runCurator(
@@ -56844,14 +57002,14 @@ async function learnIngestCommand(args, ctx) {
   const prepared = args.str("curator-output");
   if (prepared) {
     try {
-      output = JSON.parse(readFileSync26(resolve17(ctx.cwd, prepared), "utf8"));
+      output = JSON.parse(readFileSync27(resolve17(ctx.cwd, prepared), "utf8"));
     } catch (err) {
       throw new OrbitError("SCHEMA_INVALID", `${prepared} is not readable JSON: ${err instanceof Error ? oneLine3(err.message, 120) : "error"}`);
     }
   } else ({ output, model } = await runIngestCurator(ctx, repo, config, task.prompt));
   const result2 = acceptIngestOutput(output, source, ctx.clock, model ? { curatorModel: model } : {});
-  mkdirSync23(join60(repo, ".orbit"), { recursive: true });
-  const store = KnowledgeStore.open(join60(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
+  mkdirSync23(join61(repo, ".orbit"), { recursive: true });
+  const store = KnowledgeStore.open(join61(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const created = [];
   const merged = [];
   const rejected = [...result2.rejected];
@@ -56927,7 +57085,7 @@ async function learnEvalCommand(args, ctx) {
   if (!(config.knowledge.eval_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.eval_budget_usd is 0, which disables replay evaluations and with them automatic overlay adoption; set a budget to evaluate");
   const metricsFile = args.str("metrics");
   const db = openState(repo);
-  const store = KnowledgeStore.open(join60(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
+  const store = KnowledgeStore.open(join61(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const runner = metricsFile ? null : ctx.seams.evalRunner ? budgeted(ctx.seams.evalRunner, config.knowledge.eval_budget_usd) : new ReplayEvalRunner({
     repoRoot: repo,
     config,
@@ -56962,7 +57120,7 @@ async function learnEvalCommand(args, ctx) {
       if (metricsFile) {
         let m;
         try {
-          m = JSON.parse(readFileSync26(resolve17(ctx.cwd, metricsFile), "utf8"));
+          m = JSON.parse(readFileSync27(resolve17(ctx.cwd, metricsFile), "utf8"));
         } catch (err) {
           throw new OrbitError("SCHEMA_INVALID", `${metricsFile} is not readable JSON: ${err instanceof Error ? oneLine3(err.message, 120) : "error"}`);
         }
@@ -57055,7 +57213,7 @@ var init_learn2 = __esm({
 
 // src/cli/commands/logs.ts
 import { closeSync as closeSync8, existsSync as existsSync47, fstatSync as fstatSync4, openSync as openSync8, readSync as readSync5, statSync as statSync16 } from "node:fs";
-import { dirname as dirname29, join as join61 } from "node:path";
+import { dirname as dirname30, join as join62 } from "node:path";
 function readTail(path, lines) {
   const size = statSync16(path).size;
   const fd = openSync8(path, "r");
@@ -57117,7 +57275,7 @@ async function logsCommand(args, ctx) {
   const asJson = args.bool("json");
   return withState(repo, async (db) => {
     const run = findRunByPrefix(db, runRef);
-    const runDir2 = dirname29(run.policyPath);
+    const runDir2 = dirname30(run.policyPath);
     const wantController = !args.bool("workers") && !args.str("worker");
     const wantWorkers = !args.bool("controller");
     const sources = [];
@@ -57129,13 +57287,13 @@ async function logsCommand(args, ctx) {
         sources.push({ ...s, offset: 0 });
       };
       if (wantController) {
-        add({ label: "controller", kind: "controller", path: join61(ctx.orbitHome, "logs", "controller.jsonl"), runId: run.id });
-        add({ label: "controller", kind: "controller", path: join61(runDir2, "logs", "controller.jsonl") });
+        add({ label: "controller", kind: "controller", path: join62(ctx.orbitHome, "logs", "controller.jsonl"), runId: run.id });
+        add({ label: "controller", kind: "controller", path: join62(runDir2, "logs", "controller.jsonl") });
       }
       if (wantWorkers) {
         for (const w of listWorkers(db, { runId: run.id })) {
           if (args.str("worker") && w.id !== args.str("worker")) continue;
-          for (const f of ["log.jsonl", "stderr.log", "shim.log"]) add({ label: `${w.id}${f === "log.jsonl" ? "" : `:${f.split(".")[0]}`}`, kind: "worker", path: join61(w.workerDir, f) });
+          for (const f of ["log.jsonl", "stderr.log", "shim.log"]) add({ label: `${w.id}${f === "log.jsonl" ? "" : `:${f.split(".")[0]}`}`, kind: "worker", path: join62(w.workerDir, f) });
         }
       }
     };
@@ -57502,23 +57660,23 @@ var init_release2 = __esm({
 });
 
 // src/cli/commands/report.ts
-import { existsSync as existsSync49, readFileSync as readFileSync27 } from "node:fs";
-import { dirname as dirname30, join as join62 } from "node:path";
+import { existsSync as existsSync49, readFileSync as readFileSync28 } from "node:fs";
+import { dirname as dirname31, join as join63 } from "node:path";
 async function reportCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   if (args.bool("learning")) return withState(repo, (db) => learningReport(ctx, repo, db, args.bool("json")));
   const [id] = args.expect(1);
   return withState(repo, (db) => {
     const run = findRunByPrefix(db, id);
-    const runDir2 = dirname30(run.policyPath);
-    const finalMd = join62(runDir2, "final.md");
-    const finalJson = join62(runDir2, "final.json");
+    const runDir2 = dirname31(run.policyPath);
+    const finalMd = join63(runDir2, "final.md");
+    const finalJson = join63(runDir2, "final.json");
     const asJson = args.bool("json");
     if (isTerminal(run.state) && !args.bool("interim") && existsSync49(finalMd)) {
       if (asJson) {
-        if (existsSync49(finalJson)) ctx.io.out(readFileSync27(finalJson, "utf8"));
+        if (existsSync49(finalJson)) ctx.io.out(readFileSync28(finalJson, "utf8"));
         else json(ctx.io, buildFinalReport(db, run, { runDir: runDir2, clock: ctx.clock, snapshot: snapshotOrNull(run.policyPath, run.policyHash) }));
-      } else ctx.io.out(readFileSync27(finalMd, "utf8"));
+      } else ctx.io.out(readFileSync28(finalMd, "utf8"));
       return EXIT.OK;
     }
     const report2 = buildFinalReport(db, run, { runDir: runDir2, clock: ctx.clock, snapshot: snapshotOrNull(run.policyPath, run.policyHash) });
@@ -57543,7 +57701,7 @@ function snapshotOrNull(path, hash) {
 function learningReport(ctx, repo, db, asJson) {
   const runs = db.all("SELECT id, state, created_at FROM runs WHERE state IN ('SUCCEEDED','EXHAUSTED','IMPOSSIBLE','BLOCKED') ORDER BY created_at");
   const windows = [{ label: "base prompt", from: 0, to: Number.POSITIVE_INFINITY }];
-  const kPath = join62(repo, ".orbit", "knowledge.sqlite");
+  const kPath = join63(repo, ".orbit", "knowledge.sqlite");
   const overlays = [];
   if (existsSync49(kPath)) {
     const store = KnowledgeStore.open(kPath, { clock: ctx.clock });
@@ -58255,7 +58413,7 @@ var init_status = __esm({
 });
 
 // src/cli/commands/verify.ts
-import { join as join63, relative as relative6 } from "node:path";
+import { join as join64, relative as relative6 } from "node:path";
 function exitCodeForVerdict(verdict) {
   return verdict === "PASS" ? EXIT.OK : verdict === "FAIL" ? EXIT.VERIFY_FAILED : EXIT.VERIFY_INCOMPLETE;
 }
@@ -58306,7 +58464,7 @@ async function verifyCandidate(rc) {
   if (!rc.run.baseRevision) throw new OrbitError("TRANSITION_INVALID", `run ${rc.run.id} has no base revision; preflight did not finish`);
   const snapshot2 = rc.snapshot;
   const scope = cand.scope ?? await inspectScope({ repoRoot: rc.run.repoRoot, baseRev: rc.run.baseRevision, candidateRev: cand.commitSha, snapshot: snapshot2, contractAllowedPaths: contract.allowed_paths });
-  const checkoutDir = join63(runWorktreeRoot(rc), `verify-${cand.seq}`);
+  const checkoutDir = join64(runWorktreeRoot(rc), `verify-${cand.seq}`);
   await cleanupCandidateCheckout(rc.run.repoRoot, checkoutDir).catch(() => {
   });
   await materializeCandidate(rc.run.repoRoot, cand.commitSha, checkoutDir, { readOnly: false });
@@ -58492,7 +58650,7 @@ function report(ctx, argv2, err) {
     ctx.io.err(`orbit: ${message}
 `);
     const problems = isOrbitError(err) && Array.isArray(err.details?.problems) ? err.details.problems.filter((x) => typeof x === "string") : [];
-    for (const p of problems.slice(0, 20)) ctx.io.err(`  - ${p}
+    for (const p of problems.filter((x) => !message.includes(x)).slice(0, 20)) ctx.io.err(`  - ${p}
 `);
     if (orbitCode === "INTERNAL" && !isOrbitError(err) && err instanceof Error && ctx.env.ORBIT_DEBUG) ctx.io.err(`${err.stack ?? ""}
 `);

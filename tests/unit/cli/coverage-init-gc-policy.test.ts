@@ -348,5 +348,5 @@ describe('orbit run --detach', () => {
 });
 
 function defaultCheckDef(id: string) {
-  return { id, command: ['node', '-e', '0'], shell: false, cwd: '.', timeout_seconds: 60, network_hosts: [], env: {}, mandatory: true, flaky_reruns: 0, kind: 'command' as const, category: 'test' as const };
+  return { id, command: ['node', '-e', '0'], shell: false, cwd: '.', timeout_seconds: 60, network_hosts: [], local_binding: true, env: {}, mandatory: true, flaky_reruns: 0, kind: 'command' as const, category: 'test' as const };
 }

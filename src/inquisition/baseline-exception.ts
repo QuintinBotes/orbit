@@ -20,6 +20,7 @@ import { isOrbitError, OrbitError } from '../core/errors.ts';
 import { atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
 import { canonicalJson, hashObject } from '../core/hash.ts';
 import { redact } from '../core/redact.ts';
+import { invalidateEvidence } from '../evidence/freshness.ts';
 import { applyAmendment, assessAmendment, baselineExceptionProposal } from '../contract/amend.ts';
 import type { HumanAmendmentProposal } from '../contract/amendment-types.ts';
 import type { ContractAmendment, GoalContract } from '../contract/types.ts';
@@ -281,6 +282,9 @@ export function applyBaselineExceptionAnswers(ctx: RunScope, opts: { questionId?
         const res = ctx.db.run('UPDATE runs SET contract_json = ?, contract_hash = ? WHERE id = ? AND contract_json = ?', JSON.stringify(next), after, ctx.runId, row.contract_json);
         if (res.changes !== 1) return false;
         insertAmendment(ctx.db, { runId: ctx.runId, record, change: proposal.change, status: 'applied', approvedBy: answerId, contractBefore: before, contractAfter: after }, ctx.clock, 'controller');
+        // A verdict reached under the contract as it was may now differ: the failure it counted is excused. The check results
+        // are recorded, so the next verification only evaluates them again; a PASS cannot change and stands.
+        invalidateEvidence(ctx.db, ctx.runId, `the contract now accepts a baseline exception for check ${data.check_id}`, ctx.clock, { exceptVerdict: 'PASS' });
         appendEvent(ctx.db, ctx.runId, 'contract.amended', 'controller', { field: record.field, check_id: data.check_id, approved_by: answerId }, ctx.clock.now());
         return true;
       });

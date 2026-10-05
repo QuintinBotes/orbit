@@ -498,7 +498,7 @@
     "check": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "command", "shell", "cwd", "timeout_seconds", "network_hosts", "env", "mandatory", "flaky_reruns", "kind"],
+      "required": ["id", "command", "shell", "cwd", "timeout_seconds", "network_hosts", "local_binding", "env", "mandatory", "flaky_reruns", "kind"],
       "properties": {
         "id": { "$ref": "#/$defs/checkId" },
         "command": {
@@ -509,6 +509,10 @@
         "cwd": { "type": "string", "minLength": 1, "maxLength": 1024 },
         "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
         "network_hosts": { "$ref": "#/$defs/hostList" },
+        "local_binding": {
+          "type": "boolean",
+          "description": "Whether the check may listen on 127.0.0.1 (default true). Outbound reach is network_hosts only."
+        },
         "env": {
           "type": "object",
           "maxProperties": 100,

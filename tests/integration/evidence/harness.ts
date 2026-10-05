@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ManualClock, systemClock, type Clock } from '../../../src/core/clock.ts';
 import { NoIsolation } from '../../../src/isolation/none.ts';
-import type { IsolationProvider } from '../../../src/isolation/types.ts';
+import type { IsolationProvider, SandboxProfile } from '../../../src/isolation/types.ts';
 import { cleanupCandidateCheckout, materializeCandidate, snapshotCandidate } from '../../../src/evidence/candidate.ts';
 import type { RunnerContext } from '../../../src/evidence/runner.ts';
 import type { CandidateRecord } from '../../../src/evidence/store.ts';
@@ -79,4 +79,16 @@ export function pidGone(pid: number): boolean {
 /** Where a check's detached-process files live for a candidate. */
 export function checkDirOf(env: RunnerEnv, checkId: string, attempt = 0): string {
   return join(env.run.runDir, 'evidence', String(env.candidate.seq), attempt === 0 ? checkId : `${checkId}~${attempt}`);
+}
+
+/** NoIsolation that remembers every profile it was asked to wrap, to assert what the runner asked the provider to enforce. */
+export function recordingIsolation(): IsolationProvider & { profiles: SandboxProfile[] } {
+  const inner = new NoIsolation();
+  const profiles: SandboxProfile[] = [];
+  return {
+    kind: inner.kind,
+    profiles,
+    available: () => inner.available(),
+    wrap: (argv, profile, opts) => (profiles.push(profile), inner.wrap(argv, profile, opts)),
+  };
 }

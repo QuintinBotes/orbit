@@ -275,9 +275,7 @@ function checkConfiguredChecks(p: Probe): DoctorCheck {
       continue;
     }
     // A package-manager script that does not exist is a failure the first run would otherwise discover.
-    const argv = c.shell ? [] : c.command;
-    const pm = ['npm', 'pnpm', 'yarn'].includes(word) ? argv[1] : undefined;
-    const script = pm === 'run' || pm === 'run-script' ? argv[2] : pm === 'test' ? 'test' : undefined;
+    const script = c.shell ? undefined : packageScriptOf(c.command);
     if (script) {
       const pj = join(cwd, 'package.json');
       let defined = false;
@@ -473,6 +471,36 @@ function providerKindSafe(id: string): string | null {
 
 // -- browsers -----------------------------------------------------------------
 
+/**
+ * Whether a package is installed where `req` resolves from. Resolving "<name>/package.json" is not
+ * enough: packages with a restrictive exports map (such as @axe-core/playwright) refuse it with
+ * ERR_PACKAGE_PATH_NOT_EXPORTED while being installed, so that error counts as present, and the
+ * package's main entry is tried as well.
+ */
+/** The package-manager script a check runs (`npm run --silent lint` is "lint"), or undefined when it runs none. */
+export function packageScriptOf(argv: readonly string[]): string | undefined {
+  const [pm, sub, ...rest] = argv;
+  if (!pm || !['npm', 'pnpm', 'yarn'].includes(pm)) return undefined;
+  if (sub === 'test') return 'test';
+  if (sub !== 'run' && sub !== 'run-script') return undefined;
+  return rest.find((a) => !a.startsWith('-'));
+}
+
+export function packageInstalled(req: NodeJS.Require, name: string): boolean {
+  try {
+    req.resolve(`${name}/package.json`);
+    return true;
+  } catch (err) {
+    if ((err as { code?: string }).code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') return true;
+  }
+  try {
+    req.resolve(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function playwrightCache(env: Env, home: string, platform: NodeJS.Platform): string {
   const override = env.PLAYWRIGHT_BROWSERS_PATH;
   if (override && override !== '0') return override;
@@ -521,10 +549,9 @@ function checkPlaywright(p: Probe): DoctorCheck {
     if (!present && revs.some((r) => r.rev)) missing.push(b);
   }
   if (config.ui?.accessibility.enabled) {
-    try {
-      req.resolve('@axe-core/playwright/package.json');
+    if (packageInstalled(req, '@axe-core/playwright')) {
       details.push('@axe-core/playwright: installed');
-    } catch {
+    } else {
       details.push('@axe-core/playwright: not installed (accessibility scans are enabled in the ui policy)');
       missing.push('@axe-core/playwright');
     }

@@ -11,6 +11,7 @@ import type { PolicySnapshot } from '../../../src/policy/types.ts';
 import { openDb, type OrbitDb } from '../../../src/storage/db.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
 import { syncContract } from '../../../src/inquisition/engine.ts';
+import { currentEvidenceReport, insertEvidenceReport, listEvidenceReports } from '../../../src/evidence/store.ts';
 import {
   BASELINE_EXCEPTION_REQUEST_KIND,
   applyBaselineExceptionAnswers,
@@ -152,6 +153,34 @@ describe('an approved answer applies the exception through the amendment rules (
     expect(amd).toMatchObject({ approvedBy: `dec-answer-${qid}`, contractBefore: hashObject(before), contractAfter: hashObject(after) });
     expect(amd!.record).toMatchObject({ field: 'baseline_exceptions', approval_required: true });
     expect(listDecisions(env.db, RUN, { kind: 'contract.baseline-exception' })).toHaveLength(1);
+  });
+
+  it('makes a report judged before the exception stale, so the next verification evaluates the recorded results under the amended contract; a PASS stands', () => {
+    env = setup();
+    env.baseline([FAILURE]);
+    const qid = raise(env).raised[0]!.question.id;
+    const report = (candidateId: string, verdict: 'PASS' | 'FAIL') => ({
+      candidateId,
+      reportPath: null,
+      report: { task_id: 't', run_id: RUN, attempt: 1, candidate_revision: 'c', tree_hash: `tree-${candidateId}`, check_config_hash: 'h', policy_hash: env!.policyHash, scope: {} as never, checks: [], ui: [], acceptance_evidence: [], verdict, unverified: [] },
+    });
+    insertEvidenceReport(env.db, report('cand-fail', 'FAIL'), env.clock);
+    insertEvidenceReport(env.db, report('cand-pass', 'PASS'), env.clock);
+
+    answerQuestion(env.db, env.runDir, qid, 'Approve', 'alice', env.clock);
+    expect(currentEvidenceReport(env.db, RUN, 'cand-fail')).toBeNull();
+    expect(currentEvidenceReport(env.db, RUN, 'cand-pass')?.verdict).toBe('PASS');
+    const stale = listEvidenceReports(env.db, RUN).find((r) => r.candidateId === 'cand-fail');
+    expect(stale?.invalidatedReason).toMatch(/baseline exception for check lint/);
+  });
+
+  it('a Reject leaves every report as it is', () => {
+    env = setup();
+    env.baseline([FAILURE]);
+    const qid = raise(env).raised[0]!.question.id;
+    insertEvidenceReport(env.db, { candidateId: 'cand-fail', reportPath: null, report: { task_id: 't', run_id: RUN, attempt: 1, candidate_revision: 'c', tree_hash: 'tree-x', check_config_hash: 'h', policy_hash: env.policyHash, scope: {} as never, checks: [], ui: [], acceptance_evidence: [], verdict: 'FAIL', unverified: [] } }, env.clock);
+    answerQuestion(env.db, env.runDir, qid, 'Reject', 'alice', env.clock);
+    expect(currentEvidenceReport(env.db, RUN, 'cand-fail')?.verdict).toBe('FAIL');
   });
 
   it('is idempotent: answering the same way again, or applying again, changes nothing', () => {

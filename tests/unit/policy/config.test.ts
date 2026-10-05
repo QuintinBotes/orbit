@@ -6,7 +6,7 @@ import { parse } from 'yaml';
 import Ajv2020Module from 'ajv/dist/2020.js';
 import addFormatsModule from 'ajv-formats';
 import schema from '../../../schemas/config.schema.json' with { type: 'json' };
-import { checkCategory, defaultConfig, isolationLimits, loadConfig, modelPermitted, parseConfig, sastCheckIds, validateConfig } from '../../../src/policy/config.ts';
+import { checkCategory, defaultCheck, defaultConfig, isolationLimits, loadConfig, modelPermitted, parseConfig, sastCheckIds, validateConfig } from '../../../src/policy/config.ts';
 import { isOrbitError, type OrbitError } from '../../../src/core/errors.ts';
 
 const TEMPLATE = readFileSync(new URL('../../../templates/config.yaml', import.meta.url), 'utf8');
@@ -131,12 +131,20 @@ describe('check normalization', () => {
       cwd: '.',
       timeout_seconds: 600,
       network_hosts: [],
+      local_binding: true,
       env: {},
       mandatory: true,
       flaky_reruns: 0,
       kind: 'command',
       category: 'test',
     });
+  });
+
+  it('lets a check bind loopback unless it says local_binding: false, and refuses a non-boolean value', () => {
+    const c = parseConfig('version: 1\nchecks:\n  unit: {command: [npm, test]}\n  strict: {command: [npm, test], local_binding: false}\n  open: {command: [npm, test], local_binding: true}\n');
+    expect(Object.fromEntries(Object.entries(c.checks).map(([id, k]) => [id, k.local_binding]))).toEqual({ unit: true, strict: false, open: true });
+    expect(defaultCheck('x').local_binding).toBe(true);
+    expect(problems(() => parseConfig('version: 1\nchecks:\n  a: {command: [x], local_binding: "yes"}\n')).join('\n')).toMatch(/local_binding/);
   });
 
   it('categorizes checks: default test, playwright implies ui, explicit wins, unknown categories are refused', () => {

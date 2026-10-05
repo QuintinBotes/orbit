@@ -50,6 +50,13 @@ Closed in 30e6e5c: G1 to G3, G5 to G13, G16 to G23, G26, G28, G29, G31 to G36, G
 
 ---
 
+### 2026-10-05: first live run with real providers (demo 1, simple goal)
+- Tested: Orbit end to end on a local copy of the demo app in autonomous mode with the real Claude CLI (subscription login, claude-sandbox tier) and Codex as reviewer, no delivery.
+- Went well: `orbit doctor` found three real bugs before any model spend (a keychain login reported as logged out because USER was dropped, `@axe-core/playwright` reported missing because its exports hide package.json, `npm run --silent lint` read as a script named "--silent"); a contradictory mode/actions config was refused with exit 4; the real planner produced a 3-criterion contract with the practices block; routing stayed on Sonnet with no unjustified escalation; the run stopped honestly at EXHAUSTED instead of claiming success.
+- Went wrong: the `unit` check failed on the base revision and every candidate with `listen EPERM 127.0.0.1` because trusted checks ran with loopback binding denied; Orbit then spent all three attempts on a failure the code could not cause (repairs produced the identical tree). Config problems were printed twice.
+- Root cause: the check sandbox profile denied local binding for all checks; diagnosis did not distinguish an environment failure identical to the baseline from a code failure; the CLI printed the error message and its problem list.
+- Change: doctor and CLI fixes made (tests failed first); check `local_binding` (default true) and environment-failure blocking in progress. Demo 1 to be re-run after.
+
 ### 2026-10-05: security re-reviews: all eight findings closed
 - Tested: two further Codex (gpt-6.1-sol) re-reviews of the fix diffs, each judging every finding and whether its test would fail if the fix were reverted.
 - Went well: the first re-review confirmed five fixes and showed exactly why three were partial (built-in credential globs only, line-wise redaction missing multi-line keys, scan completeness tied to blocking severity) plus a new CI bypass (only the first page of commit statuses read, aggregate failure discarded); the second confirmed all four closed.

@@ -249,6 +249,16 @@ repair the environment (`orbit doctor`), then `orbit resume <run-id>`.
 `resume --force` continues even though material questions are open; use it
 knowingly.
 
+A run that is `BLOCKED` on an environment failure (a mandatory check that fails
+on the candidate as it failed on the base revision, with a sandbox or
+environment denial in its output) spent no repair attempt. Its reason names the
+check and offers two ways forward. Fixing the environment or the check
+definition means a new run, because the run's policy and recorded check results
+are frozen. Approving the baseline exception with `orbit decide <run-id>
+<question-id> Approve`, then `orbit resume <run-id>`, carries this run on: the
+failure is accepted as recorded, and the next verification judges the recorded
+check results under the amended contract.
+
 ## Heartbeats and the watchdog
 
 Each controller registers itself and publishes a heartbeat every 5 seconds. A

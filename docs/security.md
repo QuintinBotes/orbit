@@ -77,6 +77,11 @@ State these plainly to yourself before running unattended.
 - **Reads are broad.** Under sandbox-runtime, reads are allowed everywhere except
   denied paths, so the rest of your home directory is readable by a worker.
   Egress is filtered by host name, and traffic to an allowed host is not inspected.
+- **Checks may use loopback.** A check's `local_binding` (default true) lets its
+  process listen on 127.0.0.1, which a test suite that starts an HTTP server
+  needs. Under sandbox-runtime that also lets it connect to other services on
+  this machine's loopback while it runs; it opens no route to any other host.
+  Set `local_binding: false` on a check that never needs it.
 - **Static classification of bash commands is advisory.** It catches common
   dangerous shapes but cannot prove an arbitrary shell command safe. The OS
   sandbox and the controller's diff inspection are what hold.
