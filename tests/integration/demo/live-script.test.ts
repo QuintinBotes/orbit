@@ -264,4 +264,25 @@ writeFileSync('.orbit/runs/' + id + '/final.md', '# Orbit run ' + id + ': SUCCEE
     expect(code, out).toBe(0);
     expect(out).toContain('progress: seen while running');
   }, 120_000);
+  it('collects reports without local paths: home, the clone and the system temp directory', async () => {
+    const stub = join(base, 'orbit-paths.mjs');
+    writeFileSync(stub, `import { mkdirSync, writeFileSync } from 'node:fs';
+const [cmd] = process.argv.slice(2);
+if (cmd === 'doctor' || cmd === 'models') process.exit(0);
+const id = 'orb-20261005-000000-dddddd';
+console.log('run ' + id + ' started');
+mkdirSync('.orbit/runs/' + id, { recursive: true });
+const lines = ['# Orbit run ' + id + ': SUCCEEDED', '', '- denied: cd ' + process.env.HOME + '/.orbit/worktrees/abc', '- clone: ' + process.cwd() + '/src/app.ts', '- temp: /private/var/folders/ab/cdef/T/orbit-x/y', '- temp2: /var/folders/ab/cdef/T/z'];
+writeFileSync('.orbit/runs/' + id + '/final.md', lines.join('\\n') + '\\n');
+`);
+    const out = join(base, 'reports-paths');
+    const r = await run(['--repo', 'acme/demo', '--workdir', join(base, 'work7'), '--out', out, '--yes', '--goals', 'simple', '--orbit', `node ${stub}`], { GH_TOKEN: TOKEN });
+    expect(r.code, r.stdout + r.stderr).toBe(0);
+    const report = readFileSync(join(out, 'simple.md'), 'utf8');
+    expect(report).not.toContain(base);
+    expect(report).not.toMatch(/\/var\/folders\//);
+    expect(report).toContain('- denied: cd ~/.orbit/worktrees/abc');
+    expect(report).toContain('- clone: <demo-repo>/src/app.ts');
+    expect(report).toContain('- temp: <tmp>/orbit-x/y');
+  }, 120_000);
 });

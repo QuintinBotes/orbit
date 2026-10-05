@@ -73,6 +73,19 @@ today="$(date +%F)"
 out="${out:-$root/docs/demos/$today}"
 
 # Everything printed passes through this. Orbit redacts its own logs; this is the second line of defence.
+# Reports are published with the demo: no local path may survive in them. The clone first (both
+# spellings, it may sit under a symlinked temp directory), then the home directory, then any
+# remaining per-user macOS temp directory. Literal matches, so no path is read as a pattern.
+scrub_paths() {
+  SCRUB_CLONE="$clone" SCRUB_CLONE_REAL="$(cd "$clone" 2>/dev/null && pwd -P || echo "$clone")" perl -pe '
+    BEGIN { $c = $ENV{SCRUB_CLONE}; $r = $ENV{SCRUB_CLONE_REAL}; $h = $ENV{HOME}; }
+    s/\Q$r\E/<demo-repo>/g if length $r;
+    s/\Q$c\E/<demo-repo>/g if length $c;
+    s/\Q$h\E/~/g if length $h;
+    s#(?:/private)?/var/folders/[^/\s]+/[^/\s]+/T#<tmp>#g;
+  '
+}
+
 # Line-buffered, or progress only shows when a run ends: BSD sed spells it -l, GNU sed -u.
 if sed --version >/dev/null 2>&1; then sed_lines=-u; else sed_lines=-l; fi
 redact() {
@@ -236,7 +249,7 @@ for g in "${goal_list[@]}"; do
   outcome="exit $status"
   pr="none"
   if [ -n "$run_id" ] && [ -f "$report" ]; then
-    redact <"$report" >"$out/$g.md"
+    redact <"$report" | scrub_paths >"$out/$g.md"
     outcome="$(sed -n 's/^# Orbit run [^:]*: //p' "$report" | head -n 1)"
     pr="$(sed -n 's/^- pull request: //p' "$report" | head -n 1)"
   else
