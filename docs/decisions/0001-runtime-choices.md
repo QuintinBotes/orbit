@@ -97,3 +97,13 @@ configuration and `--ignore-gitleaks-allow`, because a repository's own
 gitleaks, Orbit's built-in secret patterns run and the evidence says so.
 SAST runs only as checks the user defines in policy. With none defined, the
 report lists static analysis as unverified rather than passed.
+
+## Implementer escalation (gap G11)
+
+The implementer starts on the routine tier (Sonnet) and escalates to Opus
+only on observed difficulty: the same failure fingerprint recurring up to
+`scheduler.repeated_failure_threshold`, or a diagnosis that records evidence
+of a coupled or complex causal failure. A single failed attempt gets a repair
+brief on the same tier. Once the diagnosis is solved, routine follow-up work
+routes back down. Expected cost per verified task, not worker confidence,
+drives the choice (spec §8).

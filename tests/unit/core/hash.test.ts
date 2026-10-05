@@ -50,9 +50,7 @@ describe('canonicalJson', () => {
     expect(hashObject(['ab', 'c'])).not.toBe(hashObject(['a', 'bc']));
   });
 
-  // KNOWN DEFECT, reported to the owner of src/core/hash.ts: sortValue
-  // rebuilds every object from Object.keys, so a Date (no own keys) becomes
-  // {} and two different dates hash identically. Flip to `it` once fixed.
+  // Dates have no own keys; canonicalJson serializes them through toJSON.
   it('serializes Dates through toJSON so different dates hash differently', () => {
     expect(hashObject({ at: new Date(1) })).not.toBe(hashObject({ at: new Date(2) }));
   });

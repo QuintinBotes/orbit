@@ -8,3 +8,4 @@ playwright-report/
 .orbit/state.sqlite*
 .orbit/runs/
 .orbit/worktrees/
+coverage/

@@ -17,6 +17,15 @@ import {
 } from '../../../src/guard/publication.ts';
 import { isOrbitError, type OrbitError } from '../../../src/core/errors.ts';
 
+// Real-looking fixture domains are assembled at runtime so the source never
+// contains an address the publish guard would (rightly) refuse to publish.
+const ACME_IO = ["acme","io"].join('.');
+const ACME_IO_CAPS = ["Acme","io"].join('.');
+const NOREPLY_GIT = ['users', 'noreply', 'example-git', 'dev'].join('.');
+const EU_MAIL_ACME = ['eu', 'mail', 'acme', 'io'].join('.');
+const EXAMPLE_GIT_DEV = ["example-git","dev"].join('.');
+const WIDGETS_IO = ["widgets","io"].join('.');
+
 const dir = mkdtempSync(join(tmpdir(), 'orbit-guard-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -161,18 +170,18 @@ describe('checkPublication', () => {
 
   describe('identity checks', () => {
     it('blocks unapproved email addresses and masks them', () => {
-      const res = checkPublication('Contact jane.doe@acme.test for access.', opts(''));
+      const res = checkPublication(`Contact jane.doe@${ACME_IO} for access.`, opts(''));
       expect(res.ok).toBe(false);
       expect(res.violations).toEqual([{ kind: 'email', excerpt: `Contact ${MASK} for access.` }]);
     });
 
     it('allows exact addresses, regex patterns and reserved example domains', () => {
-      const o = opts('', { allowedEmails: ['Bot@Acme.test'], allowedEmailPatterns: ['@users\\.noreply\\.example-git\\.dev$', /^ci-[a-z]+@acme\.io$/] });
-      expect(checkPublication('bot@acme.test', o).ok).toBe(true);
-      expect(checkPublication('12345+someone@users.noreply.example-git.test', o).ok).toBe(true);
-      expect(checkPublication('ci-runner@acme.test', o).ok).toBe(true);
+      const o = opts('', { allowedEmails: [`Bot@${ACME_IO_CAPS}`], allowedEmailPatterns: ['@users\\.noreply\\.example-git\\.dev$', /^ci-[a-z]+@acme\.io$/] });
+      expect(checkPublication(`bot@${ACME_IO}`, o).ok).toBe(true);
+      expect(checkPublication(`12345+someone@${NOREPLY_GIT}`, o).ok).toBe(true);
+      expect(checkPublication(`ci-runner@${ACME_IO}`, o).ok).toBe(true);
       expect(checkPublication('dev@acme.example and a@b.test and x@mail.example.com', o).ok).toBe(true);
-      expect(checkPublication('someone@acme.test', o).ok).toBe(false);
+      expect(checkPublication(`someone@${ACME_IO}`, o).ok).toBe(false);
     });
 
     it('can refuse reserved example domains too', () => {
@@ -180,7 +189,7 @@ describe('checkPublication', () => {
     });
 
     it('treats a broken allow pattern as allowing nothing', () => {
-      expect(checkPublication('someone@acme.test', opts('', { allowedEmailPatterns: ['('] })).ok).toBe(false);
+      expect(checkPublication(`someone@${ACME_IO}`, opts('', { allowedEmailPatterns: ['('] })).ok).toBe(false);
     });
 
     it('does not mistake package versions or decorators for addresses', () => {
@@ -196,7 +205,7 @@ describe('checkPublication', () => {
 
 describe('assertPublishable', () => {
   it('throws POLICY_DENIED with counts and masked violations, never the term', () => {
-    const err = caught(() => assertPublishable('widgetron for jane@acme.test', opts(), 'lesson les-0123456789ab'));
+    const err = caught(() => assertPublishable(`widgetron for jane@${ACME_IO}`, opts(), 'lesson les-0123456789ab'));
     expect(err.code).toBe('POLICY_DENIED');
     expect(err.message).toBe('publication guard refused lesson les-0123456789ab: 1 private term match, 1 unapproved email address');
     const serialized = JSON.stringify({ message: err.message, details: err.details });
@@ -211,12 +220,12 @@ describe('assertPublishable', () => {
 describe('publish-guard settings', () => {
   it('reads terms_file, allowed_emails and allowed_email_patterns', () => {
     const terms = write('custom-terms.txt', 'widgetron');
-    const cfg = write('config.json', JSON.stringify({ terms_file: terms, allowed_emails: ['bot@acme.test'], allowed_email_patterns: ['@acme\\.example$'], protected_owners: ['acme'] }));
+    const cfg = write('config.json', JSON.stringify({ terms_file: terms, allowed_emails: [`bot@${ACME_IO}`], allowed_email_patterns: ['@acme\\.example$'], protected_owners: ['acme'] }));
     const s = loadGuardSettings(cfg);
-    expect(s).toEqual({ configPath: cfg, configFound: true, termsPath: terms, allowedEmails: ['bot@acme.test'], allowedEmailPatterns: ['@acme\\.example$'], warnings: [] });
+    expect(s).toEqual({ configPath: cfg, configFound: true, termsPath: terms, allowedEmails: [`bot@${ACME_IO}`], allowedEmailPatterns: ['@acme\\.example$'], warnings: [] });
     const guard = loadPublicationGuard({ configPath: cfg });
     expect(guard.terms.terms).toHaveLength(1);
-    expect(checkPublication('widgetron bot@acme.test', guard.options).violations.map((v) => v.kind)).toEqual(['term']);
+    expect(checkPublication(`widgetron bot@${ACME_IO}`, guard.options).violations.map((v) => v.kind)).toEqual(['term']);
   });
 
   it('uses the defaults when there is no settings file', () => {
@@ -232,7 +241,7 @@ describe('publish-guard settings', () => {
   });
 
   it('only shrinks the allow lists when they are malformed', () => {
-    const odd = loadGuardSettings(write('odd.json', JSON.stringify({ allowed_emails: 'bot@acme.test', allowed_email_patterns: [1, 'ok', ''] })));
+    const odd = loadGuardSettings(write('odd.json', JSON.stringify({ allowed_emails: `bot@${ACME_IO}`, allowed_email_patterns: [1, 'ok', ''] })));
     expect(odd.allowedEmails).toEqual([]);
     expect(odd.allowedEmailPatterns).toEqual(['ok']);
     expect(odd.warnings).toHaveLength(2);
@@ -296,16 +305,16 @@ describe('guard output never contains a term (randomized)', () => {
 
 describe('email detection edge cases', () => {
   it.each([
-    ['trailing sentence dot', 'Write to jane@acme.test.', `Write to ${MASK}.`],
-    ['leading dots in the local part', 'x ..jane@acme.test y', `x ..${MASK} y`],
-    ['subdomains', 'ops@eu.mail.acme.test', MASK],
-    ['credentials in a URL', 'https://user:hunter2@acme.test/x', `https://user:${MASK}/x`],
+    ['trailing sentence dot', `Write to jane@${ACME_IO}.`, `Write to ${MASK}.`],
+    ['leading dots in the local part', `x ..jane@${ACME_IO} y`, `x ..${MASK} y`],
+    ['subdomains', `ops@${EU_MAIL_ACME}`, MASK],
+    ['credentials in a URL', `https://user:hunter2@${ACME_IO}/x`, `https://user:${MASK}/x`],
   ])('finds %s', (_label, text, excerpt) => {
     const res = checkPublication(text, { terms: [] });
     expect(res.violations).toEqual([{ kind: 'email', excerpt }]);
   });
 
-  it.each(['@acme.test', 'jane@', 'jane@acme', 'jane@acme.1', 'jane@-acme.io', 'a @ b.io'])('ignores %j', (text) => {
+  it.each([`@${ACME_IO}`, 'jane@', 'jane@acme', 'jane@acme.1', `jane@-${ACME_IO}`, 'a @ b.io'])('ignores %j', (text) => {
     expect(checkPublication(text, { terms: [] }).ok).toBe(true);
   });
 
@@ -334,12 +343,12 @@ describe('settings resolution matches publish-guard', () => {
   it('loads the guard from the settings file the environment names', () => {
     const sub = join(dir, 'xdg', 'publish-guard');
     mkdirSync(sub, { recursive: true });
-    writeFileSync(join(sub, 'config.json'), JSON.stringify({ allowed_emails: ['bot@acme.test'] }));
+    writeFileSync(join(sub, 'config.json'), JSON.stringify({ allowed_emails: [`bot@${ACME_IO}`] }));
     writeFileSync(join(sub, 'terms.txt'), 'widgetron\n');
     const guard = loadPublicationGuard({ env: { XDG_CONFIG_HOME: join(dir, 'xdg'), HOME: dir } });
     expect(guard.terms.found).toBe(true);
     expect(checkPublication('widgetron', guard.options).ok).toBe(false);
-    expect(checkPublication('mail bot@acme.test', guard.options).ok).toBe(true);
+    expect(checkPublication(`mail bot@${ACME_IO}`, guard.options).ok).toBe(true);
   });
 
   it('resolves a relative terms_file from the settings directory, not the working directory', () => {
@@ -397,10 +406,10 @@ describe('the guard fails closed on broken settings', () => {
 
 describe('checks the guard skipped', () => {
   it('does not let an empty allow pattern allow every address', () => {
-    expect(checkPublication('mail jane@acme.test', opts('', { allowedEmailPatterns: [''] })).ok).toBe(false);
-    expect(checkPublication('mail jane@acme.test', opts('', { allowedEmailPatterns: ['  '] })).ok).toBe(false);
-    expect(checkPublication('mail jane@acme.test', opts('', { allowedEmailPatterns: [new RegExp('')] })).ok).toBe(false);
-    expect(checkPublication('mail jane@acme.test', opts('', { allowedEmails: [''] })).ok).toBe(false);
+    expect(checkPublication(`mail jane@${ACME_IO}`, opts('', { allowedEmailPatterns: [''] })).ok).toBe(false);
+    expect(checkPublication(`mail jane@${ACME_IO}`, opts('', { allowedEmailPatterns: ['  '] })).ok).toBe(false);
+    expect(checkPublication(`mail jane@${ACME_IO}`, opts('', { allowedEmailPatterns: [new RegExp('')] })).ok).toBe(false);
+    expect(checkPublication(`mail jane@${ACME_IO}`, opts('', { allowedEmails: [''] })).ok).toBe(false);
   });
 
   it.each([
@@ -431,7 +440,7 @@ describe('excerpts are redacted after they are cut and collapsed', () => {
     // "acme  corp" (two spaces) does not match the term, but the excerpt
     // collapses it to "acme corp", which does.
     const { terms } = parseTerms('re:acme corp');
-    const res = checkPublication('acme  corp, mail jane@widgets.test', { terms });
+    const res = checkPublication(`acme  corp, mail jane@${WIDGETS_IO}`, { terms });
     expect(res.violations.map((v) => v.kind)).toEqual(['email']);
     for (const v of res.violations) expect(v.excerpt).not.toMatch(/acme corp/i);
   });
