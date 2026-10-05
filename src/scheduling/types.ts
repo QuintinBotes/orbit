@@ -208,6 +208,11 @@ export interface SchedulePlan {
    * evidence, packet), and that duplicated reading was charged to admission as `usd`.
    */
   context_duplication: { id: string; shared_with: string; usd: number }[];
+  /**
+   * Writers admitted while other writers were active: each must later be integrated serially with them, and that
+   * merge overhead was charged to admission as `usd`.
+   */
+  merge_overhead: { id: string; alongside: string[]; usd: number }[];
 }
 
 export interface ObsoleteUnit {

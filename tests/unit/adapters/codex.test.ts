@@ -109,6 +109,17 @@ describe('codex invocation', () => {
     expect(buildCodexArgv({ command: ['codex'], model: 'm', effort: null, cwd: '/r', schemaPath: 's', lastMessagePath: 'o' }).join(' ')).not.toContain('model_reasoning_effort');
   });
 
+  it('sets only config keys verified against codex-cli 0.153.4, and no output-token cap (G53)', () => {
+    // Checked for G53: `codex exec --help`, docs/interfaces/codex-cli.md and the config keys compiled into the 0.153.4 binary name no
+    // setting that caps a turn's output tokens (model_context_window, model_auto_compact_token_limit and tool_output_token_limit
+    // bound the context window and tool output, not the model's answer; max_output_tokens exists only as an argument of the
+    // exec_command tool). A guessed `-c` key could not be shown to take effect, and unknown keys are only rejected under --strict-config.
+    const argv = buildCodexArgv({ command: ['codex'], model: 'm', effort: 'high', cwd: '/r', schemaPath: 's', lastMessagePath: 'o' });
+    const keys = argv.flatMap((a, i) => (argv[i - 1] === '-c' ? [a.slice(0, a.indexOf('='))] : []));
+    expect(keys.sort()).toEqual(['model_reasoning_effort', 'web_search']);
+    expect(argv.join(' ')).not.toMatch(/max_output|output_token|max_tokens|max_completion/);
+  });
+
   it('parses flags from a clap help page', () => {
     const help = '  -m, --model <MODEL>\n  -s, --sandbox <SANDBOX_MODE>\n      --ephemeral\n      --ignore-user-config\n      --output-schema <FILE>\n      --json\n  -o, --output-last-message <FILE>\n  -C, --cd <DIR>\n';
     const flags = parseHelpFlags(help);

@@ -96,6 +96,8 @@ describe('dependency audit at the baseline and dependency gates', () => {
     const baseline = await runBaseline({ ...ctxFor(l), repoRoot: l.repo, baseRev: l.base, checkoutDir: join(l.t.root, 'baseline') });
     expect(baseline.report.audit).toMatchObject({ ran: true, reason: null, licenses: [] });
     expect(baseline.report.audit!.vulnerabilities.map((v) => [v.id, v.package, v.severity])).toEqual([[OLD_ADVISORY, 'old-pkg', 'moderate']]);
+    // Below fail_on (high), so the gate has nothing to list.
+    expect(baseline.report.auditNotes).toEqual([]);
     // A pre-existing finding is recorded, not a failure of anything.
     expect(listFailures(l.run.db, l.run.runId)).toEqual([]);
 
@@ -146,10 +148,21 @@ describe('dependency audit at the baseline and dependency gates', () => {
     expect(out.ok).toBe(false);
   });
 
+  it('records one gate note per base finding at or above fail_on, for the baseline gate to show (G52)', async () => {
+    const l = lab({ fail_on: 'moderate' });
+    const baseline = await runBaseline({ ...ctxFor(l), repoRoot: l.repo, baseRev: l.base, checkoutDir: join(l.t.root, 'baseline') });
+    expect(baseline.report.auditNotes).toEqual([`pre-existing vulnerability on the base revision: old-pkg: ${OLD_ADVISORY} (moderate) ReDoS in parser`]);
+    // The note is part of the stored baseline, so a reused baseline carries it too.
+    const again = await runBaseline({ ...ctxFor(l), repoRoot: l.repo, baseRev: l.base, checkoutDir: join(l.t.root, 'baseline') });
+    expect(again.reused).toBe(true);
+    expect(again.report.auditNotes).toEqual(baseline.report.auditNotes);
+  });
+
   it('does nothing when the audit is off', async () => {
     const l = lab({ enabled: false });
     const baseline = await runBaseline({ ...ctxFor(l), repoRoot: l.repo, baseRev: l.base, checkoutDir: join(l.t.root, 'baseline') });
     expect(baseline.report.audit).toBeUndefined();
+    expect(baseline.report.auditNotes).toEqual([]);
     const { cand, dir } = await candidateWith(l, lockfile({ 'evil-pkg': { version: '1.0.0', license: 'GPL-3.0-only' } }), 'off');
     const out = await installDependencies({ ...ctxFor(l), checkoutDir: dir, candidate: cand });
     expect(out).toMatchObject({ ok: true });

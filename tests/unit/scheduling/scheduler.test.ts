@@ -285,3 +285,35 @@ describe('browser capacity and context duplication (spec section 8; docs/gaps.md
     expect(s.obsolete(running, 'tree-1')).toEqual([]);
   });
 });
+
+describe('merge overhead (spec section 8; docs/gaps.md G14)', () => {
+  it('charges a writer started beside another active writer for its later serial integration, and admits by it', () => {
+    const s = scheduler({ parallel: 4, defaultParallelism: 4 });
+    const seen: { id: string; committed: { id: string; cost: number | null | undefined }[] }[] = [];
+    const admit = (u: WorkUnit, c: { committed: WorkUnit[] }) => {
+      seen.push({ id: u.id, committed: c.committed.map((x) => ({ id: x.id, cost: x.budget.costUsd })) });
+      const total = c.committed.reduce((n, x) => n + (x.budget.costUsd ?? 0), 0) + (u.budget.costUsd ?? 0);
+      return { admitted: total <= 9, reasons: [`total ${total}`] };
+    };
+    const units = [writer('unit-a', ['apps/a/**'], { budget: { costUsd: 4 } }), writer('unit-b', ['apps/b/**'], { budget: { costUsd: 4 } }), writer('unit-c', ['apps/c/**'], { budget: { costUsd: 0.2 } })];
+    const plan = s.plan(units, { admit, mergeOverhead: 0.25 });
+    expect(plan.start.map((u) => u.id)).toEqual(['unit-a', 'unit-b']);
+    expect(plan.merge_overhead).toEqual([{ id: 'unit-b', alongside: ['unit-a'], usd: 1 }]);
+    expect(seen[1]!.committed).toEqual([{ id: 'unit-a', cost: 4 }, { id: 'unit-b#merge-overhead', cost: 1 }]);
+    // 4 + 4 + 1 merge + 0.2 + its own merge with two writers (0.05) = 9.25 > 9: the third writer waits and runs later, serially.
+    expect(plan.deferred).toEqual([{ id: 'unit-c', reason: 'not admitted by budget: total 9.25' }]);
+    // The merge entry occupies no slot: with room, a third writer would start.
+    expect(s.plan(units, { admit: () => ({ admitted: true }), mergeOverhead: 0.25 }).start).toHaveLength(3);
+  });
+
+  it('charges nothing to a writer alone, to readers, or when turned off', () => {
+    const s = scheduler({ parallel: 4, defaultParallelism: 4 });
+    expect(s.plan([writer('only', ['apps/**'])]).merge_overhead).toEqual([]);
+    expect(s.plan([writer('w', ['apps/**']), unit('review', { role: 'reviewer' })]).merge_overhead).toEqual([]);
+    expect(s.plan([writer('a', ['apps/a/**']), writer('b', ['apps/b/**'])], { mergeOverhead: 0 }).merge_overhead).toEqual([]);
+    // Unknown estimates fall back to the role ceiling, like context duplication.
+    const [m] = s.plan([writer('a', ['apps/a/**']), writer('b', ['apps/b/**'])]).merge_overhead;
+    expect(m).toMatchObject({ id: 'b', alongside: ['a'] });
+    expect(m!.usd).toBeGreaterThan(0);
+  });
+});

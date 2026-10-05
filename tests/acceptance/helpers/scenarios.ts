@@ -6,6 +6,7 @@
  *
  * `$CANDIDATE` and `$FINGERPRINT` are resolved by the fakes from the prompt.
  */
+import { ENGINEERING_PRACTICES } from '../../../src/contract/practices.ts';
 
 export const NOT_FOUND_TEXT = 'Page not found. Try /reports.';
 export const GOAL = 'Make the not-found response friendlier: unknown paths answer 404 with the plain text "Page not found. Try /reports." Add a unit test for the text.';
@@ -65,6 +66,11 @@ export function planner(opts: { criteria?: Criterion[]; decisions?: Decision[]; 
       assumptions: [],
       unresolved_decisions: opts.decisions ?? [],
       material_topics: [],
+      practices: ENGINEERING_PRACTICES.map((practice) => ({
+        practice,
+        applicable: practice === 'behavior-tests' || practice === 'input-validation-and-authorization',
+        justification: practice === 'behavior-tests' || practice === 'input-validation-and-authorization' ? 'covered by the planned tests and the existing checks' : `a small handler change does not involve ${practice}`,
+      })),
     },
   };
 }

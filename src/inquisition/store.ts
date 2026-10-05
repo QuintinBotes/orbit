@@ -3,7 +3,7 @@ import type { Clock } from '../core/clock.ts';
 import { OrbitError } from '../core/errors.ts';
 import { newId } from '../core/ids.ts';
 import { appendEvent } from '../storage/events.ts';
-import type { AmendmentChange } from '../contract/amendment-types.ts';
+import type { AmendmentChange, HumanAmendmentChange } from '../contract/amendment-types.ts';
 import type { ContractAmendment } from '../contract/types.ts';
 import type { InquisitionMode, Level, Reversibility } from './types.ts';
 
@@ -372,7 +372,7 @@ export interface AmendmentRecord {
   runId: string;
   record: ContractAmendment;
   /** The proposed operation, kept so an approved amendment can be re-applied exactly. */
-  change: AmendmentChange | null;
+  change: AmendmentChange | HumanAmendmentChange | null;
   approvedBy: string | null;
   status: AmendmentStatus;
   /** Why it is pending or rejected; empty for applied ones. */
@@ -399,7 +399,7 @@ interface AmendmentRow {
 }
 
 function toAmendment(r: AmendmentRow): AmendmentRecord {
-  const env = parseJson<{ affected_verification?: string[]; change?: AmendmentChange | null; note?: string; contract_before?: string | null; contract_after?: string | null }>(r.affected_json, {});
+  const env = parseJson<{ affected_verification?: string[]; change?: AmendmentChange | HumanAmendmentChange | null; note?: string; contract_before?: string | null; contract_after?: string | null }>(r.affected_json, {});
   return {
     id: r.id,
     runId: r.run_id,
@@ -426,7 +426,7 @@ export interface NewAmendment {
   id?: string;
   runId: string;
   record: ContractAmendment;
-  change: AmendmentChange | null;
+  change: AmendmentChange | HumanAmendmentChange | null;
   status: AmendmentStatus;
   approvedBy?: string | null;
   note?: string;

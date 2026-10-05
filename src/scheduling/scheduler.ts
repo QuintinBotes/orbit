@@ -57,9 +57,16 @@ export interface PlanOptions {
    * again, which costs this fraction of its estimate (its role ceiling when unknown) on top. Default 0.25; 0 off.
    */
   contextDuplication?: number;
+  /**
+   * Merge-overhead cost: a writer started while another writer is active must later be integrated serially with
+   * it (rebuild the candidate, re-run the invalidated evidence, and on a conflict redo the work serially), which
+   * costs this fraction of its estimate (its role ceiling when unknown) on top. Default 0.15; 0 turns it off.
+   */
+  mergeOverhead?: number;
 }
 
 export const DEFAULT_CONTEXT_DUPLICATION = 0.25;
+export const DEFAULT_MERGE_OVERHEAD = 0.15;
 
 /**
  * The admission hook backed by the budget ledger. Each unit's budget is its
@@ -194,23 +201,31 @@ export class AgentScheduler {
     const fraction = opts.contextDuplication ?? DEFAULT_CONTEXT_DUPLICATION;
     if (!(Number.isFinite(fraction) && fraction >= 0)) throw new OrbitError('SCHEMA_INVALID', 'contextDuplication must be a non-negative number');
     const duplication: SchedulePlan['context_duplication'] = [];
+    const mergeFraction = opts.mergeOverhead ?? DEFAULT_MERGE_OVERHEAD;
+    if (!(Number.isFinite(mergeFraction) && mergeFraction >= 0)) throw new OrbitError('SCHEMA_INVALID', 'mergeOverhead must be a non-negative number');
+    const merges: SchedulePlan['merge_overhead'] = [];
 
     for (const unit of units) {
       if (status(unit) !== 'pending') continue;
       const shared = fraction > 0 && unit.revision !== null ? active.find((a) => a.revision === unit.revision) : undefined;
       const extra = shared ? duplicationUnit(unit, fraction) : null;
-      const reason = this.blocker(unit, byId, cyclic, active, limit, now, capacity, worktrees) ?? admission(unit, opts.admit, extra ? [...active, extra] : active);
+      const writers = unit.writer && mergeFraction > 0 ? active.filter((a) => a.writer && !isDuplication(a)) : [];
+      const merge = writers.length > 0 ? overheadUnit(unit, mergeFraction, MERGE_SUFFIX) : null;
+      const charged = [...active, ...(extra ? [extra] : []), ...(merge ? [merge] : [])];
+      const reason = this.blocker(unit, byId, cyclic, active, limit, now, capacity, worktrees) ?? admission(unit, opts.admit, charged);
       if (reason) {
         deferred.push({ id: unit.id, reason });
         continue;
       }
       if (shared && extra) duplication.push({ id: unit.id, shared_with: shared.id, usd: extra.budget.costUsd ?? 0 });
+      if (merge) merges.push({ id: unit.id, alongside: writers.map((w) => w.id), usd: merge.budget.costUsd ?? 0 });
       active.push(unit);
-      // The duplicated reading stays committed for the rest of this plan, like the unit itself.
+      // The duplicated reading and the later merge stay committed for the rest of this plan, like the unit itself.
       if (extra) active.push(extra);
+      if (merge) active.push(merge);
       start.push(unit);
     }
-    return { start, deferred, limit, running: units.filter((u) => status(u) === 'running').length, capacity, context_duplication: duplication };
+    return { start, deferred, limit, running: units.filter((u) => status(u) === 'running').length, capacity, context_duplication: duplication, merge_overhead: merges };
   }
 
   /**
@@ -282,17 +297,24 @@ export class AgentScheduler {
 }
 
 const DUPLICATION_SUFFIX = '#context-duplication';
+const MERGE_SUFFIX = '#merge-overhead';
 
 /** A committed-cost entry for re-reading a shared context; it occupies no slot. */
 function duplicationUnit(unit: WorkUnit, fraction: number): WorkUnit {
+  return overheadUnit(unit, fraction, DUPLICATION_SUFFIX);
+}
+
+/** A committed-cost entry (context duplication, merge overhead) worth `fraction` of the unit's estimate; it occupies no slot. */
+function overheadUnit(unit: WorkUnit, fraction: number, suffix: string): WorkUnit {
   const role = unit.role === 'check' ? null : unit.role;
   const base = unit.budget.costUsd ?? (role === null ? 0 : ROLE_COST_CEILING_USD[role]);
   const usd = Math.round(base * fraction * 1e6) / 1e6;
-  return { id: `${unit.id}${DUPLICATION_SUFFIX}`, role: unit.role, writer: false, ownedPaths: [], dependsOn: [], revision: unit.revision, cancelWhen: [], budget: { costUsd: usd }, provider: null, worktree: null, status: 'running' };
+  return { id: `${unit.id}${suffix}`, role: unit.role, writer: false, ownedPaths: [], dependsOn: [], revision: unit.revision, cancelWhen: [], budget: { costUsd: usd }, provider: null, worktree: null, status: 'running' };
 }
 
+/** A cost-only entry: it occupies no slot, worktree or ownership. */
 function isDuplication(u: WorkUnit): boolean {
-  return u.id.endsWith(DUPLICATION_SUFFIX);
+  return u.id.endsWith(DUPLICATION_SUFFIX) || u.id.endsWith(MERGE_SUFFIX);
 }
 
 function admission(unit: WorkUnit, admit: PlanOptions['admit'], active: readonly WorkUnit[]): string | null {

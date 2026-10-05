@@ -16,7 +16,7 @@ import { runWrapped } from './run.ts';
  * the command, and the file size limit is exercised by writing past it.
  */
 const bash = findLimitShell();
-const LIMITS: IsolationLimits = { cpu_seconds: 37, max_processes: 1500, max_file_mb: 1 };
+const LIMITS: IsolationLimits = { cpu_seconds: 37, max_processes: 1500, max_file_mb: 1, memory_mb: null };
 const READ_BACK = 'echo "t=$(ulimit -t) u=$(ulimit -u) f=$(ulimit -f) H=$(ulimit -H -t)"';
 
 describe.skipIf(!bash)('isolation.limits with the host bash', () => {

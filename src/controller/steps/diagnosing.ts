@@ -254,7 +254,7 @@ export interface TimeoutContext {
 }
 
 /** The candidate's timed-out checks with their baselines and the machine's load; null when nothing timed out. */
-export function timeoutContext(ctx: RunContext, candidateId: string, probe: { cores: number; loadAvg1m: number | null; freeMemMb: number } = machineProbe()): TimeoutContext | null {
+export function timeoutContext(ctx: RunContext, candidateId: string, probe: { cores: number; loadAvg1m: number | null; freeMemMb: number } = machineProbe(ctx)): TimeoutContext | null {
   const rows = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId }).filter((r) => r.status === 'TIMEOUT' || r.timedOut);
   if (rows.length === 0) return null;
   const base = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: null });
@@ -270,9 +270,12 @@ export function timeoutContext(ctx: RunContext, candidateId: string, probe: { co
   return { checks, machine: probe };
 }
 
-function machineProbe(): { cores: number; loadAvg1m: number | null; freeMemMb: number } {
-  const load = loadavg()[0];
-  return { cores: availableParallelism(), loadAvg1m: typeof load === 'number' && Number.isFinite(load) && load > 0 ? Math.round(load * 100) / 100 : null, freeMemMb: Math.floor(freemem() / (1024 * 1024)) };
+/** What the scheduler reads: the controller's injected probe (ControllerDeps.schedulerProbe) when given, else the host. */
+function machineProbe(ctx: RunContext): { cores: number; loadAvg1m: number | null; freeMemMb: number } {
+  const probe = ctx.deps.schedulerProbe;
+  // An injected probe stands for a machine whose load the host cannot report.
+  const load = probe ? undefined : loadavg()[0];
+  return { cores: probe ? probe.availableParallelism() : availableParallelism(), loadAvg1m: typeof load === 'number' && Number.isFinite(load) && load > 0 ? Math.round(load * 100) / 100 : null, freeMemMb: Math.floor((probe ? probe.freemem() : freemem()) / (1024 * 1024)) };
 }
 
 function describeTimeouts(t: TimeoutContext): string {

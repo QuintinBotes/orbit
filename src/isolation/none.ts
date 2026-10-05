@@ -40,12 +40,13 @@ export class NoIsolation implements IsolationProvider {
 }
 
 export function noIsolationLimitations(profile: SandboxProfile, limits?: IsolationLimits | null): string[] {
+  const memoryNote = limits?.memory_mb ? ` (isolation.limits.memory_mb ${limits.memory_mb} MB is not enforced without a sandbox-runtime)` : '';
   const hosts = profile.allowedHosts.length ? `only ${profile.allowedHosts.join(', ')} were allowed` : 'no network was allowed';
   return [
     `No filesystem write restriction: the command can write anywhere the Orbit user can (the main checkout, .orbit state and policy snapshots, shell rc files), not just ${profile.writablePaths.length} allowed path(s).`,
     `No read restriction: none of the ${profile.denyReadPaths.length} denied path(s) (credentials such as ~/.ssh and ~/.aws, Orbit state, other projects) is protected.`,
     `No network restriction: every host is reachable, although ${hosts}.`,
-    hasLimits(limits) ? `No memory limit; only ulimit hard limits apply (${describeLimits(limits).join(', ')}).` : 'No CPU, memory or process-count limits.',
+    hasLimits(limits) ? `No memory limit${memoryNote}; only ulimit hard limits apply (${describeLimits(limits).join(', ')}).` : `No CPU, memory or process-count limits${memoryNote}.`,
     "No wall-clock enforcement beyond the caller killing the command's process group.",
     'Sockets and agents reachable from the environment (SSH agent, Docker or other container-control sockets) are reachable from the command.',
     'Mandatory protections of git hooks, git config and shell rc files are absent.',

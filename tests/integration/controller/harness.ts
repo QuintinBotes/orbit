@@ -4,6 +4,7 @@
  * behind the real adapters and shim, and a private ~/.orbit. No vitest
  * import, so the child controller (fixtures/controller-main.ts) can use it.
  */
+import { ENGINEERING_PRACTICES } from '../../../src/contract/practices.ts';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -140,6 +141,14 @@ export function labAdapters(lab: Pick<Lab, 'config' | 'templatePath' | 'scenario
   return out;
 }
 
+/**
+ * A fixed machine for tests that start several workers at once (docs/gaps.md G54): 16 cores and 64 GB free,
+ * whatever this host is doing, so admission is decided by the units and limits under test, not by the machine
+ * the suite runs on. Pass it as `schedulerProbe`. labDeps leaves the probe unset because the saturation fault
+ * tests read a deliberately saturated host through node:os.
+ */
+export const FIXED_PROBE: NonNullable<ControllerDeps['schedulerProbe']> = Object.freeze({ availableParallelism: () => 16, freemem: () => 64_000 * 1024 * 1024 });
+
 export function labDeps(lab: Lab, db: OrbitDb = lab.db()): Omit<ControllerDeps, 'ownerId'> {
   return {
     db,
@@ -181,7 +190,17 @@ export const PLANNER_OUTPUT = {
   assumptions: [],
   unresolved_decisions: [],
   material_topics: [],
+  practices: plannerPractices(),
 };
+
+/** The planner's engineering-practice selection (contract/practices): every practice, each with a reason. */
+export function plannerPractices(applicable: readonly string[] = ['behavior-tests', 'compatibility-and-public-interfaces']): { practice: string; applicable: boolean; justification: string }[] {
+  return ENGINEERING_PRACTICES.map((practice) => ({
+    practice,
+    applicable: applicable.includes(practice),
+    justification: applicable.includes(practice) ? 'covered by the planned behaviour test and the existing checks' : `a small calculator function change does not involve ${practice}`,
+  }));
+}
 
 export const IMPLEMENTER_OUTPUT = {
   summary: 'added mul and a behaviour test',

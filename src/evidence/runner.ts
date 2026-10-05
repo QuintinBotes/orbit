@@ -9,6 +9,7 @@ import { sha256 } from '../core/hash.ts';
 import { spawnDetached } from '../core/exec.ts';
 import { isAlive, killGroup, processStartTime } from '../core/proc.ts';
 import { isSecretEnvName, redact } from '../core/redact.ts';
+import { RESOURCE_LIMIT_EXIT_CODE, resourceLimitNote } from '../isolation/memory.ts';
 import { prepareWorkerTmpDir, profileForCheck, workerTmpDir } from '../isolation/profiles.ts';
 import type { IsolationProvider, WrappedCommand } from '../isolation/types.ts';
 import { checkConfigHash, snapshotHash } from '../policy/snapshot.ts';
@@ -727,7 +728,12 @@ function finalize(ctx: RunnerContext, def: CheckDefinition, row: CheckRunRecord,
       note = `could not start the check: ${redact(exit.error, secrets)}`;
     } else if (exit.timedOut) status = 'TIMEOUT';
     else if (exit.cancelled) status = 'CANCELLED';
-    else status = exit.exitCode === 0 ? 'PASSED' : 'FAILED';
+    else {
+      status = exit.exitCode === 0 ? 'PASSED' : 'FAILED';
+      // The memory watchdog (isolation/memory.ts) stopped the check: a resource-limit failure, not an ordinary one, so the repair brief and the log name the limit.
+      const limit = status === 'FAILED' && exit.exitCode === RESOURCE_LIMIT_EXIT_CODE ? resourceLimitNote(body) : null;
+      if (limit) note = `resource limit exceeded, ${limit}`;
+    }
   } else if (synthetic === 'cancelled') {
     status = 'CANCELLED';
     note = 'the check was cancelled and did not report an exit record';

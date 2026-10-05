@@ -12,6 +12,7 @@ import type { GoalContract } from './types.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { containedInAny, globsMayOverlap, isAnalysableGlob } from './globs.ts';
 import { validateAgainst } from './json-schema.ts';
+import { practiceProblems } from './practices.ts';
 
 export interface ContractCheckOptions {
   /**
@@ -81,6 +82,10 @@ function crossCheck(c: GoalContract, snapshot: PolicySnapshot, expectedHash: str
     if (seenExceptions.has(e.check_id)) problems.push(`check "${e.check_id}" has more than one baseline exception`);
     seenExceptions.add(e.check_id);
   }
+
+  // A recorded selection accounts for every engineering practice once, and an omission says why (a contract made
+  // before the selection existed carries none).
+  if (c.practices !== undefined) problems.push(...practiceProblems(c.practices).map((p) => `practices: ${p}`));
 
   for (const id of c.required_check_ids) {
     if (!isCheck(id)) problems.push(`required check "${id}" is not defined by the policy`);

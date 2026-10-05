@@ -130,6 +130,8 @@ export interface GitHubClient {
   findPullRequest(head: string): Promise<PullRequestInfo | null>;
   createPullRequest(input: CreatePullRequestInput): Promise<PullRequestInfo>;
   updatePullRequest(number: number, changes: { title?: string; body?: string }): Promise<PullRequestInfo>;
+  /** Mark a draft pull request ready for review (`gh pr ready`). Idempotent: a ready one stays ready. */
+  markPullRequestReady(number: number): Promise<PullRequestInfo>;
   /**
    * Merge only when the PR head is still `headSha` (`gh pr merge --match-head-commit`).
    * Like a create, it may take effect remotely and still throw, so callers
@@ -469,6 +471,13 @@ export class GhCliClient implements GitHubClient {
     return this.viewPullRequest(number);
   }
 
+  async markPullRequestReady(number: number): Promise<PullRequestInfo> {
+    if (!Number.isInteger(number) || number <= 0) throw new OrbitError('INTERNAL', 'pull request number must be a positive integer');
+    this.assertToken();
+    await this.ok('pr ready', ['pr', 'ready', String(number), '-R', this.opts.repo]);
+    return this.viewPullRequest(number);
+  }
+
   private async viewPullRequest(number: number): Promise<PullRequestInfo> {
     const out = await this.ok('pr view', ['pr', 'view', String(number), '-R', this.opts.repo, '--json', PR_FIELDS]);
     return parsePullRequest(parseJson('pr view', out));
@@ -605,6 +614,8 @@ interface FakeFaults {
   authExpired: boolean;
   /** Number of upcoming mergePullRequest calls that merge and then fail with a lost response. */
   loseMergeResponse: number;
+  /** Number of upcoming markPullRequestReady calls that mark it ready and then fail with a lost response. */
+  loseReadyResponse: number;
 }
 
 interface FakeState {
@@ -619,6 +630,8 @@ interface FakeState {
   creates: number;
   updates: number;
   merges: number;
+  /** Draft pull requests that were marked ready. */
+  readies?: number;
 }
 
 export interface FakeGitHubOptions {
@@ -726,6 +739,26 @@ export class FakeGitHub implements GitHubClient {
       s.updates++;
       out = this.view(s, pr);
     });
+    return out!;
+  }
+
+  async markPullRequestReady(number: number): Promise<PullRequestInfo> {
+    this.enter('markPullRequestReady');
+    let out: PullRequestInfo | null = null;
+    let lose = false;
+    this.mutate((s) => {
+      const pr = s.prs.find((p) => p.number === number);
+      if (!pr) throw new OrbitError('NOT_FOUND', `no pull request #${number}`, { definitive: true });
+      if (pr.state !== 'OPEN') throw new OrbitError('DELIVERY_FAILED', `gh pr ready failed: pull request #${number} is ${pr.state.toLowerCase()}`, { definitive: true });
+      if (pr.isDraft) s.readies = (s.readies ?? 0) + 1;
+      pr.isDraft = false;
+      out = this.view(s, pr);
+      if ((s.faults.loseReadyResponse ?? 0) > 0) {
+        s.faults.loseReadyResponse--;
+        lose = true;
+      }
+    });
+    if (lose) throw new OrbitError('PROVIDER_TRANSIENT', 'connection reset while waiting for the ready response');
     return out!;
   }
 
@@ -917,7 +950,7 @@ function emptyState(): FakeState {
     ci: {},
     logs: {},
     heads: {},
-    faults: { loseCreateResponse: 0, rateLimit: 0, rateLimitRetryAfterMs: 1000, authExpired: false, loseMergeResponse: 0 },
+    faults: { loseCreateResponse: 0, rateLimit: 0, rateLimitRetryAfterMs: 1000, authExpired: false, loseMergeResponse: 0, loseReadyResponse: 0 },
     calls: [],
     creates: 0,
     updates: 0,

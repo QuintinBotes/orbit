@@ -34,8 +34,7 @@ export function defaultOrbitHome(env: Readonly<Record<string, string | undefined
 }
 
 /** The directory holding agents/, schemas/ and dist/: three levels up from this file in the sources, one from the bundle. */
-export function orbitInstallDir(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
+export function orbitInstallDir(here: string = dirname(fileURLToPath(import.meta.url))): string {
   return here.endsWith(join('src', 'controller')) ? resolve(here, '..', '..') : resolve(here, '..');
 }
 

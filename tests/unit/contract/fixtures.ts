@@ -2,6 +2,7 @@ import type { OrbitConfig, PolicySnapshot, CheckDefinition, UiConfig } from '../
 import type { GoalContract } from '../../../src/contract/types.ts';
 import type { PlannerOutput } from '../../../src/contract/model-outputs.ts';
 import { hashObject } from '../../../src/core/hash.ts';
+import { ENGINEERING_PRACTICES, type PracticeSelection } from '../../../src/contract/practices.ts';
 
 export function check(id: string, overrides: Partial<CheckDefinition> = {}): CheckDefinition {
   return {
@@ -54,6 +55,7 @@ export function config(t: ConfigTweaks = {}): OrbitConfig {
       test: true,
       commit: true,
       push_task_branch: true,
+      rebase_task_branch: false,
       open_pull_request: t.openPullRequest ?? true,
       read_ci_logs: true,
       repair_ci: true,
@@ -169,6 +171,21 @@ export function contract(snap: PolicySnapshot, overrides: Partial<GoalContract> 
   };
 }
 
+/**
+ * A complete engineering-practice selection (spec section 5): every practice listed once. Practices named in
+ * `omitted` are marked not applicable with a reason; the rest are applicable. Use it wherever a planner output is built.
+ */
+export function practiceSelection(omitted: readonly string[] = ['performance-hotspots', 'accessibility', 'rollback-and-migration']): PracticeSelection[] {
+  return ENGINEERING_PRACTICES.map((practice) => {
+    const omit = omitted.includes(practice);
+    return {
+      practice,
+      applicable: !omit,
+      justification: omit ? `the export reads pages already served by the existing report query, so ${practice} is out of scope here` : 'covered by the planned tests and the existing checks',
+    };
+  });
+}
+
 export function planner(overrides: Partial<PlannerOutput> = {}): PlannerOutput {
   return {
     objective: '  Add CSV export for filtered reports.  ',
@@ -198,6 +215,7 @@ export function planner(overrides: Partial<PlannerOutput> = {}): PlannerOutput {
     required_check_ids: ['build', 'curl-evil'],
     non_goals: ['Change report filtering semantics', ' change report filtering semantics '],
     risks: [{ risk: 'Large exports', impact: 'medium', mitigation: 'stream' }],
+    practices: practiceSelection(),
     assumptions: [{ statement: 'Exports use the existing report query.', basis: 'apps/api/reports.ts', status: 'unverified' }],
     unresolved_decisions: [],
     material_topics: ['Security rules', 'billing'],

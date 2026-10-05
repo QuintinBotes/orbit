@@ -12,7 +12,7 @@ import { finishWorker, isWorkerActive, listWorkers, markWorkerRunning, planWorke
 import { recordUsage } from '../routing/usage.ts';
 import type { ProviderAdapter, TaskResult, TaskSpec } from '../adapters/types.ts';
 import type { SandboxProfile } from '../isolation/types.ts';
-import { assessAmendment, applyAmendment, type AmendmentProposal } from '../contract/amend.ts';
+import { assessAmendment, applyAmendment, type AmendmentProposal, type HumanAmendmentProposal } from '../contract/amend.ts';
 import { MODEL_OUTPUT_SCHEMAS, validateModelOutput, type InquisitorOutput, type InquisitorQuestion } from '../contract/model-outputs.ts';
 import { strictSchemaViolations } from '../contract/strict-schema.ts';
 import type { GoalContract } from '../contract/types.ts';
@@ -30,6 +30,7 @@ import {
   validateQuestion,
   type AnsweredAsk,
 } from './questions.ts';
+import { recordImpactRegister } from './impact.ts';
 import { entriesFromWorker, transitionAssumption } from './ledger.ts';
 import {
   authorizationIds,
@@ -169,6 +170,8 @@ export interface InquisitionResult {
   output: InquisitorOutput | null;
   plan: ResolutionPlan;
   decisions: DecisionRecord[];
+  /** The `inquisition.impact-register` decision a risk-review wrote; null in every other mode, or when the change touches no risk category. */
+  impactRegister: DecisionRecord | null;
   /** Open questions this inquiry created or found already open. */
   questions: QuestionRecord[];
   /** Questions too weak to ask, with why. They are not persisted; the criteria they touch stay blocked. */
@@ -653,6 +656,17 @@ export function processAmendments(ctx: InquisitionContext, mode: InquisitionMode
 }
 
 /**
+ * A stored amendment as a proposal, and the options replaying it needs. An `accept_baseline_failure` replay carries
+ * the failure its own record names: the table only holds one that was applied against the baseline report's
+ * recorded fingerprint, so the replay does not need the report again.
+ */
+function replayOf(rec: AmendmentRecord): { proposal: AmendmentProposal | HumanAmendmentProposal; baselineFailures?: { checkId: string; fingerprint: string | null }[] } {
+  const change = rec.change!;
+  const proposal = { change, evidence: rec.record.evidence, reason: rec.record.reason } as AmendmentProposal | HumanAmendmentProposal;
+  return change.op === 'accept_baseline_failure' ? { proposal, baselineFailures: [{ checkId: change.check_id, fingerprint: change.fingerprint }] } : { proposal };
+}
+
+/**
  * Apply a pending amendment after a person approved it. The approval must be
  * a recorded answer to this amendment's own question, given by a human and
  * choosing "Approve"; any other decision id, or a model-authored one, is
@@ -673,7 +687,8 @@ export function applyApprovedAmendment(ctx: InquisitionContext, amendmentId: str
   if (rec.status === 'applied' && rec.approvedBy === decisionId) return { contract, amendment: rec };
   if (rec.status !== 'pending-approval') throw new OrbitError('TRANSITION_INVALID', `amendment ${amendmentId} is ${rec.status}, not pending approval`);
   if (!rec.change) throw new OrbitError('INTERNAL', `amendment ${amendmentId} has no stored change to apply`);
-  const res = applyAmendment(contract, { change: rec.change, evidence: rec.record.evidence, reason: rec.record.reason }, { snapshot: ctx.snapshot, approvedBy: decisionId, history: amendmentHistory(ctx.db, ctx.runId) });
+  const replay = replayOf(rec);
+  const res = applyAmendment(contract, replay.proposal, { snapshot: ctx.snapshot, approvedBy: decisionId, history: amendmentHistory(ctx.db, ctx.runId), ...(replay.baselineFailures ? { baselineFailures: replay.baselineFailures } : {}) });
   return { contract: res.contract, amendment: resolveAmendment(ctx.db, amendmentId, 'applied', decisionId, ctx.clock, 'controller', { before: hashObject(contract), after: hashObject(res.contract) }) };
 }
 
@@ -704,7 +719,8 @@ export function rebuildContract(base: GoalContract, ctx: Pick<InquisitionContext
   const history: AmendmentRecord['record'][] = [];
   for (const rec of appliedInOrder(ctx.db, ctx.runId)) {
     if (!rec.change) continue;
-    const res = applyAmendment(contract, { change: rec.change, evidence: rec.record.evidence, reason: rec.record.reason }, { snapshot: ctx.snapshot, approvedBy: rec.approvedBy, history });
+    const replay = replayOf(rec);
+    const res = applyAmendment(contract, replay.proposal, { snapshot: ctx.snapshot, approvedBy: rec.approvedBy, history, ...(replay.baselineFailures ? { baselineFailures: replay.baselineFailures } : {}) });
     contract = res.contract;
     history.push(res.record);
   }
@@ -737,7 +753,8 @@ export function syncContract(ctx: Pick<InquisitionContext, 'db' | 'runId' | 'sna
   let current = contract;
   for (const rec of applied.slice(from)) {
     if (!rec.change) continue;
-    const res = applyAmendment(current, { change: rec.change, evidence: rec.record.evidence, reason: rec.record.reason }, { snapshot: ctx.snapshot, approvedBy: rec.approvedBy, history });
+    const replay = replayOf(rec);
+    const res = applyAmendment(current, replay.proposal, { snapshot: ctx.snapshot, approvedBy: rec.approvedBy, history, ...(replay.baselineFailures ? { baselineFailures: replay.baselineFailures } : {}) });
     current = res.contract;
     history.push(res.record);
   }
@@ -1005,6 +1022,8 @@ export async function runInquisition(input: RunInquisitionInput): Promise<Inquis
     questions: (absorbed?.questions ?? []).map((q) => ({ draft: q.draft })),
     proposals: finalPlan.amendments,
   });
+  // Risk-review mode produces the impact register (spec S10.3): one decision per inquiry, keyed by the trigger, so a re-run records nothing new.
+  const impactRegister = recordImpactRegister({ db: ctx.db, clock: ctx.clock, runId: ctx.runId, runDir: ctx.runDir, policy, inquiry: ctx.inquiry }, trigger);
   // Applying amendments may have changed the contract; blocking is recomputed on it (an added criterion is independent work).
   const after = blockingDisposition({ blocked: [...blocked], contract: committed.contract, mode: policy.mode, supportedCriteria: ctx.supportedCriteria, dependsOn: ctx.dependsOn });
   // Every blocked criterion waits on a question a person can answer (`orbit questions`); one the rules and the
@@ -1032,6 +1051,7 @@ export async function runInquisition(input: RunInquisitionInput): Promise<Inquis
     output,
     plan: { ...finalPlan, ...after },
     decisions: committed.decisions,
+    impactRegister,
     questions: committed.questions,
     rejectedQuestions: [...(absorbed?.rejectedQuestions ?? []).map(({ question, problems }) => ({ question, problems })), ...committed.rejectedQuestions],
     ledger: committed.ledger,

@@ -14,6 +14,7 @@ import { atomicWriteJson } from '../../core/fsx.ts';
 import { isOrbitError } from '../../core/errors.ts';
 import { adminDirFor, git, resolveCommit, treeOf } from '../../evidence/git.ts';
 import { runBaseline } from '../../evidence/baseline.ts';
+import { raiseBaselineExceptionQuestions } from '../../inquisition/baseline-exception.ts';
 import { validateCredentials, type BlockedCredentialState, type CredentialCheck } from '../../recovery/credentials.ts';
 import { selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../review/select.ts';
 import type { ProviderCapabilities, CredentialStatus } from '../../adapters/types.ts';
@@ -82,6 +83,18 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
       summary: `pre-existing failures on ${head.slice(0, 12)}: ${baseline.report.failures.map((f) => f.checkId).join(', ')}`,
       data: { failures: baseline.report.failures },
     });
+    // Spec section 6: a run is never green while a mandatory check fails, unless the contract accepts a documented
+    // baseline exception. Only a person can accept one, so each pre-existing failure becomes a question; the run goes
+    // on, and an approved answer (`orbit decide`) adds the exception to the contract, bound to the recorded fingerprint.
+    const raised = raiseBaselineExceptionQuestions({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { failures: baseline.report.failures, baseRevision: head });
+    if (raised.skipped.length > 0) {
+      decide(ctx, {
+        id: `dec-${ctx.run.id}-baseline-exception-skipped`,
+        kind: 'baseline.exception-unavailable',
+        summary: `no baseline exception can be offered for: ${raised.skipped.map((s) => s.checkId).join(', ')} (${raised.skipped[0]!.why})`,
+        data: { skipped: raised.skipped },
+      });
+    }
   }
 
   const worktree = await ensureWorktree(repo, join(wtRoot, 'implementer'), head);

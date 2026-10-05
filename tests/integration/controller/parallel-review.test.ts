@@ -10,7 +10,7 @@ import { cancelObsoleteWork } from '../../../src/controller/steps/reviewing.ts';
 import { step } from '../../../src/controller/steps/index.ts';
 import { listWorkers } from '../../../src/storage/workers.ts';
 import { listReviews } from '../../../src/review/store.ts';
-import { APPROVE, baseScenario, canStripTypes, drive, events, implementMul, PLANNER_OUTPUT, runState, startLabRun, stepTo, tracker, waitFor, writeScenario } from '../../fault-injection/helpers.ts';
+import { APPROVE, baseScenario, canStripTypes, drive, events, FIXED_PROBE, implementMul, PLANNER_OUTPUT, runState, startLabRun, stepTo, tracker, waitFor, writeScenario } from '../../fault-injection/helpers.ts';
 
 const t = tracker();
 afterEach(() => t.cleanup());
@@ -18,7 +18,7 @@ afterEach(() => t.cleanup());
 // The objective names a permission check, so planning classifies the change as security-sensitive; apps/** is a UI path.
 const PLANNER = { structured: { ...PLANNER_OUTPUT, objective: 'Add a mul function to the calculator behind the existing permission check.' } };
 // A roomy machine, so capacity is decided by the units and not by whatever else this host is running.
-const ROOMY = { schedulerProbe: { availableParallelism: () => 16, freemem: () => 64_000 * 1024 * 1024 } };
+const ROOMY = { schedulerProbe: FIXED_PROBE };
 const lab = () => t.lab({ tweak: (c) => void (c.ui = { ...defaultUi(), ui_paths: ['apps/**'], required_when_ui_changes: false, journey_check_ids: [] }) });
 
 describe.skipIf(!canStripTypes)('controller: parallel review units', () => {

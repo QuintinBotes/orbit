@@ -1,0 +1,690 @@
+/**
+ * The worker shim, run in this process. The shim normally runs as its own
+ * session leader and signals its whole process group, so these tests give it
+ * a fake `host` (group signals become signals to the one provider child, the
+ * group listing and the signal source are scripted) and a real provider
+ * process. Nothing here signals the test runner's own group.
+ */
+import { EventEmitter } from 'node:events';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  EXIT_FILE,
+  LOG_FILE,
+  PID_FILE,
+  STDERR_FILE,
+  argvHash,
+  groupMembers,
+  parseShimArgs,
+  readExitRecord,
+  readFrom,
+  readPgid,
+  readPidRecord,
+  runShim,
+  shimArgs,
+  shimMain,
+  type ExitRecord,
+  type ShimHost,
+  type ShimOptions,
+} from '../../../src/adapters/shim.ts';
+import * as proc from '../../../src/core/proc.ts';
+
+vi.mock('../../../src/core/proc.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/core/proc.ts')>();
+  return { ...actual, processStartTime: vi.fn(actual.processStartTime) };
+});
+
+const dirs: string[] = [];
+function tmp(prefix = 'orbit-shimcov-'): string {
+  const d = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  dirs.push(d);
+  return d;
+}
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+
+const NODE = process.execPath;
+const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function until(cond: () => boolean, ms = 10_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error('condition not reached');
+    await sleepMs(10);
+  }
+}
+
+/** A provider that ends on SIGINT and SIGTERM only when `quitOn` says so, and otherwise ignores them. */
+const stubborn = `process.on('SIGINT',()=>{});process.on('SIGTERM',()=>{});setInterval(()=>{},1000);console.log('up')`;
+const polite = `process.on('SIGINT',()=>process.exit(0));process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);console.log('up')`;
+const plain = `setInterval(()=>{},1000)`;
+
+interface Rig {
+  dir: string;
+  signals: string[];
+  members: number[][];
+  emitter: EventEmitter;
+  host: ShimHost;
+  /** True when the provider announces readiness with a line, so signals are held back until it does. */
+  awaitsUp: boolean;
+  childPid(): number;
+  started(): Promise<void>;
+  run(over?: Partial<ShimOptions> & { argv?: string[] }): Promise<ExitRecord>;
+}
+
+/**
+ * Block until the provider has printed its readiness line. A signal sent before a provider installed its
+ * handlers would end it by the default action, so a stubborn or polite provider would race its own start-up
+ * under load. Blocking here is safe: the provider is another process, and the shim is paused only for the wait.
+ */
+function waitForUp(dir: string, ms = 20_000): void {
+  const end = Date.now() + ms;
+  const cell = new Int32Array(new SharedArrayBuffer(4));
+  while (Date.now() < end) {
+    try {
+      if (readFileSync(join(dir, LOG_FILE), 'utf8').includes('up')) return;
+    } catch {
+      /* the log is created a moment after the shim starts */
+    }
+    Atomics.wait(cell, 0, 0, 5);
+  }
+  throw new Error('the provider never reported readiness');
+}
+
+function rig(behaviour: { throwOn?: string[]; echoSelf?: boolean; pgid?: number | null; deliver?: boolean } = {}): Rig {
+  const dir = tmp();
+  const signals: string[] = [];
+  const emitter = new EventEmitter();
+  const members: number[][] = [];
+  const r: Rig = {
+    dir,
+    signals,
+    members,
+    emitter,
+    host: {
+      pgidOf: () => (behaviour.pgid === undefined ? process.pid : behaviour.pgid),
+      signalGroup: (_pgid, sig) => {
+        signals.push(sig);
+        if (behaviour.throwOn?.includes(sig)) throw new Error('no such group');
+        if (behaviour.deliver !== false) {
+          if (r.awaitsUp) waitForUp(dir);
+          const pid = r.childPid();
+          if (pid) {
+            try {
+              process.kill(pid, sig);
+            } catch {
+              /* already gone */
+            }
+          }
+        }
+        if (behaviour.echoSelf && (sig === 'SIGINT' || sig === 'SIGTERM')) queueMicrotask(() => emitter.emit(sig));
+      },
+      groupMembers: () => members.shift() ?? [],
+      onSignal: (sig, listener) => {
+        emitter.on(sig, listener);
+      },
+    },
+    awaitsUp: false,
+    childPid: () => readPidRecord(dir)?.childPid ?? 0,
+    started: () => until(() => (readPidRecord(dir)?.childPid ?? 0) > 0),
+    run(over = {}) {
+      const { argv = [NODE, '-e', 'process.exit(0)'], ...rest } = over;
+      r.awaitsUp = argv.some((a) => a.includes("console.log('up')"));
+      return runShim({ workerDir: dir, argv, env: { PATH: process.env.PATH }, cwd: dir, timeoutMs: 0, graceMs: 50, host: r.host, ...rest });
+    },
+  };
+  return r;
+}
+
+describe('runShim: a provider that runs to its end', () => {
+  it('records pid.json and exit.json, keeps the provider output in the log files and notes the first output', async () => {
+    const r = rig();
+    writeFileSync(join(r.dir, 'prompt.md'), 'hello from the prompt');
+    const rec = await r.run({
+      argv: [NODE, '-e', "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{console.log(JSON.stringify({type:'echo',s}));console.error('warn');process.exit(3)})"],
+      stdinPath: join(r.dir, 'prompt.md'),
+      sessionId: 'sess-1',
+    });
+    expect(rec).toMatchObject({ version: 1, code: 3, signal: null, timedOut: false, cancelled: false, aborted: null, error: null, escalation: [] });
+    expect(typeof rec.firstOutputAt).toBe('number');
+    expect(rec.endedAt).toBeGreaterThanOrEqual(rec.startedAt);
+    expect(readExitRecord(r.dir)).toEqual(rec);
+    expect(readFileSync(join(r.dir, LOG_FILE), 'utf8')).toContain('"s":"hello from the prompt"');
+    expect(readFileSync(join(r.dir, STDERR_FILE), 'utf8')).toContain('warn');
+    const pid = readPidRecord(r.dir)!;
+    expect(pid).toMatchObject({ version: 1, shimPid: process.pid, pgid: process.pid, sessionId: 'sess-1' });
+    expect(pid.childPid).toBeGreaterThan(0);
+    expect(pid.shimStart).not.toBeNull();
+    expect(statSync(join(r.dir, PID_FILE)).mode & 0o777).toBe(0o600);
+    expect(statSync(join(r.dir, EXIT_FILE)).mode & 0o777).toBe(0o600);
+  });
+
+  it('records an argv hash that tells one launch from another and a null session when none is given', async () => {
+    const r = rig();
+    const argv = [NODE, '-e', 'process.exit(0)'];
+    await r.run({ argv });
+    const pid = readPidRecord(r.dir)!;
+    expect(pid.argvHash).toBe(argvHash(argv));
+    expect(pid.argvHash).not.toBe(argvHash([...argv, 'x']));
+    expect(pid.sessionId).toBeNull();
+  });
+
+  it('reports no first output when the provider writes nothing, and ignores output that predates the launch', async () => {
+    const r = rig();
+    writeFileSync(join(r.dir, LOG_FILE), '{"old":true}\n');
+    const rec = await r.run({ argv: [NODE, '-e', 'process.exit(0)'] });
+    expect(rec.firstOutputAt).toBeNull();
+    expect(readFileSync(join(r.dir, LOG_FILE), 'utf8')).toBe('{"old":true}\n');
+  });
+
+  it('polls until output arrives, so a late first line still gets a timestamp', async () => {
+    const r = rig();
+    const rec = await r.run({ argv: [NODE, '-e', "setTimeout(()=>{console.log('late');},150);setTimeout(()=>process.exit(0),400)"] });
+    expect(typeof rec.firstOutputAt).toBe('number');
+  });
+
+  it('drops environment entries that are not strings', async () => {
+    const r = rig();
+    await r.run({
+      argv: [NODE, '-e', "console.log(JSON.stringify({a:process.env.ORBIT_T_A??null,b:process.env.ORBIT_T_B??null}))"],
+      env: { PATH: process.env.PATH, ORBIT_T_A: 'yes', ORBIT_T_B: undefined },
+    });
+    expect(readFileSync(join(r.dir, LOG_FILE), 'utf8').trim()).toBe('{"a":"yes","b":null}');
+  });
+});
+
+describe('runShim: a provider that cannot start', () => {
+  it('records the errno when the command does not exist, and still writes pid.json', async () => {
+    const r = rig();
+    const rec = await r.run({ argv: ['/nonexistent/orbit-provider'] });
+    expect(rec).toMatchObject({ code: null, signal: null, error: 'could not start /nonexistent/orbit-provider: ENOENT' });
+    expect(readPidRecord(r.dir)).toMatchObject({ childPid: null, childStart: null });
+    expect(readExitRecord(r.dir)?.error).toMatch(/ENOENT/);
+  });
+
+  it('records the errno when the prompt file cannot be opened', async () => {
+    const r = rig();
+    const rec = await r.run({ stdinPath: join(r.dir, 'missing-prompt.md') });
+    expect(rec.error).toBe(`could not start ${NODE}: ENOENT`);
+    expect(rec.code).toBeNull();
+    expect(readPidRecord(r.dir)?.childPid).toBeNull();
+  });
+
+  it('keeps a pid.json left by an earlier launch in the same directory when the new provider cannot start', async () => {
+    const r = rig();
+    writeFileSync(join(r.dir, PID_FILE), JSON.stringify({ version: 1, shimPid: 1, pgid: 1, childPid: 9, argvHash: 'sha256:old' }));
+    const rec = await r.run({ argv: ['/nonexistent/orbit-provider'] });
+    expect(rec.error).toMatch(/ENOENT/);
+    expect(readPidRecord(r.dir)).toMatchObject({ shimPid: 1, childPid: 9, argvHash: 'sha256:old' });
+  });
+
+  it('creates a missing worker directory for its records when the log cannot be opened there', async () => {
+    const base = tmp();
+    const dir = join(base, 'not-yet');
+    const rec = await runShim({ workerDir: dir, argv: [NODE, '-e', '0'], env: {}, cwd: base, timeoutMs: 0, host: { pgidOf: () => process.pid } });
+    expect(rec.error).toMatch(/ENOENT/);
+    expect(rec.firstOutputAt).toBeNull();
+    expect(existsSync(join(dir, EXIT_FILE))).toBe(true);
+    expect(readPidRecord(dir)?.childPid).toBeNull();
+  });
+
+  it('leaves shimStart null when the shim cannot read its own start time', async () => {
+    vi.mocked(proc.processStartTime).mockImplementation(() => {
+      throw new Error('no ps');
+    });
+    const r = rig();
+    await r.run();
+    const pid = readPidRecord(r.dir)!;
+    expect(pid.shimStart).toBeNull();
+    expect(pid.childStart).toBeNull();
+    expect(pid.childPid).toBeGreaterThan(0);
+  });
+});
+
+describe('runShim: preconditions', () => {
+  it('refuses to run unless the process leads its own group', () => {
+    const r = rig({ pgid: process.pid + 1 });
+    expect(() => r.run()).toThrow(/must lead its own process group/);
+    const none = rig({ pgid: null });
+    expect(() => none.run()).toThrow(/pgid null/);
+  });
+
+  it('refuses an empty provider command', () => {
+    const r = rig();
+    expect(() => r.run({ argv: [] })).toThrow(/needs a provider command/);
+    expect(() => r.run({ argv: [''] })).toThrow(/needs a provider command/);
+  });
+});
+
+describe('runShim: timeout and escalation', () => {
+  it('ends a provider that outlives its timeout with SIGINT first', async () => {
+    const r = rig({ echoSelf: true });
+    const rec = await r.run({ argv: [NODE, '-e', plain], timeoutMs: 150 });
+    expect(rec).toMatchObject({ timedOut: true, cancelled: false, signal: 'SIGINT', escalation: ['SIGINT'] });
+    // The shim received its own group signal and swallowed it instead of treating it as a cancellation.
+    expect(r.signals).toEqual(['SIGINT']);
+  });
+
+  it('goes through SIGINT, SIGTERM and SIGKILL for a provider that ignores both, writing exit.json before the kill', async () => {
+    const r = rig({ echoSelf: true });
+    const rec = await r.run({ argv: [NODE, '-e', stubborn], timeoutMs: 100, graceMs: 80 });
+    expect(rec).toMatchObject({ timedOut: true, cancelled: false, signal: 'SIGKILL', escalation: ['SIGINT', 'SIGTERM', 'SIGKILL'] });
+    expect(r.signals).toEqual(['SIGINT', 'SIGTERM', 'SIGKILL']);
+    expect(readExitRecord(r.dir)).toEqual(rec);
+  });
+
+  it('still counts a stage whose group signal failed because the group is gone, and carries on', async () => {
+    const r = rig({ throwOn: ['SIGINT'] });
+    const rec = await r.run({ argv: [NODE, '-e', plain], timeoutMs: 100, graceMs: 60 });
+    expect(rec.escalation).toEqual(['SIGINT', 'SIGTERM']);
+    expect(rec.timedOut).toBe(true);
+    expect(rec.signal).toBe('SIGTERM');
+  });
+
+  it('survives the group already being gone at the final SIGKILL', async () => {
+    const r = rig({ throwOn: ['SIGKILL'] });
+    const rec = await r.run({ argv: [NODE, '-e', stubborn], timeoutMs: 80, graceMs: 60 });
+    expect(rec.escalation).toEqual(['SIGINT', 'SIGTERM', 'SIGKILL']);
+    expect(rec.signal).toBe('SIGKILL');
+    expect(readExitRecord(r.dir)?.escalation).toEqual(['SIGINT', 'SIGTERM', 'SIGKILL']);
+    // The provider outlived the shim's record; when it does end, the late exit changes nothing.
+    process.kill(r.childPid(), 'SIGKILL');
+    await sleepMs(150);
+    expect(readExitRecord(r.dir)).toEqual(rec);
+  });
+
+  it('splits a timeout longer than a timer can hold and still fires at the end', async () => {
+    const real = globalThis.setTimeout;
+    const delays: number[] = [];
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+      delays.push(ms ?? 0);
+      // Shrink the maximal timer so the test does not wait 24 days.
+      return real(fn, ms === 2_147_483_647 ? 5 : ms);
+    }) as unknown as typeof setTimeout);
+    const r = rig();
+    const rec = await r.run({ argv: [NODE, '-e', plain], timeoutMs: 2_147_483_647 + 60, graceMs: 50 });
+    expect(delays).toContain(2_147_483_647);
+    expect(delays).toContain(60);
+    expect(rec).toMatchObject({ timedOut: true, escalation: ['SIGINT'] });
+  });
+
+  it('does not start a second escalation while one is running', async () => {
+    const r = rig();
+    const done = r.run({ argv: [NODE, '-e', stubborn], timeoutMs: 60, graceMs: 200 });
+    await r.started();
+    await until(() => r.signals.length === 1);
+    r.emitter.emit('SIGTERM');
+    const rec = await done;
+    expect(rec.timedOut).toBe(true);
+    expect(rec.cancelled).toBe(true);
+    // One ladder: SIGINT from the timeout, then SIGTERM and SIGKILL; the external SIGTERM added none of its own.
+    expect(rec.escalation).toEqual(['SIGINT', 'SIGTERM', 'SIGKILL']);
+  });
+});
+
+describe('runShim: the real process-level defaults', () => {
+  it('uses the real group probe, group signal, group listing and signal registration unless told otherwise', async () => {
+    // Without a host the shim looks up its own group, which is not its own here.
+    const dir = tmp();
+    expect(() => runShim({ workerDir: dir, argv: [NODE, '-e', '0'], env: {}, cwd: dir, timeoutMs: 0 })).toThrow(/must lead its own process group/);
+
+    // With only the group probe replaced, the remaining defaults are real; process.on and process.kill are
+    // intercepted so no handler is installed on, and no group signal leaves, the test runner.
+    const handlers: string[] = [];
+    const killed: Array<[number, string | number | undefined]> = [];
+    vi.spyOn(process, 'on').mockImplementation(((ev: string) => {
+      handlers.push(ev);
+      return process;
+    }) as typeof process.on);
+    vi.spyOn(process, 'kill').mockImplementation(((pid: number, sig?: string | number) => {
+      killed.push([pid, sig]);
+      return true;
+    }) as typeof process.kill);
+    const done = runShim({ workerDir: dir, argv: [NODE, '-e', stubborn], env: {}, cwd: dir, timeoutMs: 80, graceMs: 40, host: { pgidOf: () => process.pid } });
+    const rec = await done;
+    const childPid = readPidRecord(dir)!.childPid!;
+    vi.mocked(process.kill).mockRestore();
+    process.kill(childPid, 'SIGKILL');
+    expect(handlers).toEqual(expect.arrayContaining(['SIGINT', 'SIGTERM', 'SIGHUP']));
+    expect(killed).toEqual([[-process.pid, 'SIGINT'], [-process.pid, 'SIGTERM'], [-process.pid, 'SIGKILL']]);
+    expect(rec.escalation).toEqual(['SIGINT', 'SIGTERM', 'SIGKILL']);
+  });
+});
+
+describe('runShim: the default group listing', () => {
+  it('asks the real ps about the group when the provider ends, and signals only that group', async () => {
+    const dir = tmp();
+    const killed: Array<[number, string | number | undefined]> = [];
+    vi.spyOn(process, 'on').mockImplementation((() => process) as typeof process.on);
+    vi.spyOn(process, 'kill').mockImplementation(((pid: number, sig?: string | number) => {
+      killed.push([pid, sig]);
+      return true;
+    }) as typeof process.kill);
+    const rec = await runShim({ workerDir: dir, argv: [NODE, '-e', 'process.exit(0)'], env: {}, cwd: dir, timeoutMs: 0, graceMs: 20, host: { pgidOf: () => process.pid } });
+    expect(rec).toMatchObject({ code: 0, error: null });
+    // Whatever else shares this test runner's group is treated as leftovers; no signal went anywhere else.
+    expect(killed.every(([pid]) => pid === -process.pid)).toBe(true);
+    expect(rec.escalation.length).toBe(killed.length);
+  });
+});
+
+describe('runShim: signals from outside', () => {
+  it('forwards SIGINT to a provider that ends its turn on it, and records the cancellation', async () => {
+    const r = rig();
+    const done = r.run({ argv: [NODE, '-e', polite], graceMs: 100 });
+    await r.started();
+    await until(() => existsSync(join(r.dir, LOG_FILE)) && readFileSync(join(r.dir, LOG_FILE), 'utf8').includes('up'));
+    r.emitter.emit('SIGINT');
+    const rec = await done;
+    expect(rec).toMatchObject({ cancelled: true, timedOut: false, code: 0, escalation: [] });
+  });
+
+  it('turns SIGHUP into SIGTERM for the provider', async () => {
+    const r = rig();
+    const done = r.run({ argv: [NODE, '-e', polite], graceMs: 100 });
+    await r.started();
+    await until(() => readFileSync(join(r.dir, LOG_FILE), 'utf8').includes('up'));
+    r.emitter.emit('SIGHUP');
+    const rec = await done;
+    expect(rec).toMatchObject({ cancelled: true, code: 0, escalation: [] });
+  });
+
+  it('after SIGINT the stubborn provider gets SIGTERM then SIGKILL, each after the grace period', async () => {
+    const r = rig();
+    const done = r.run({ argv: [NODE, '-e', stubborn], graceMs: 80 });
+    await r.started();
+    await until(() => readFileSync(join(r.dir, LOG_FILE), 'utf8').includes('up'));
+    r.emitter.emit('SIGINT');
+    const rec = await done;
+    expect(rec).toMatchObject({ cancelled: true, escalation: ['SIGTERM', 'SIGKILL'], signal: 'SIGKILL' });
+  });
+
+  it('after SIGTERM the stubborn provider goes straight to SIGKILL after the grace period', async () => {
+    const r = rig();
+    const done = r.run({ argv: [NODE, '-e', stubborn], graceMs: 80 });
+    await r.started();
+    await until(() => readFileSync(join(r.dir, LOG_FILE), 'utf8').includes('up'));
+    r.emitter.emit('SIGTERM');
+    const rec = await done;
+    expect(rec).toMatchObject({ cancelled: true, escalation: ['SIGKILL'], signal: 'SIGKILL' });
+  });
+
+  it('ignores a signal that arrives after the provider has ended', async () => {
+    const r = rig();
+    const rec = await r.run();
+    r.emitter.emit('SIGTERM');
+    r.emitter.emit('SIGINT');
+    expect(readExitRecord(r.dir)).toEqual(rec);
+    expect(readExitRecord(r.dir)?.cancelled).toBe(false);
+    expect(r.signals).toEqual([]);
+  });
+});
+
+describe('runShim: abort patterns', () => {
+  it('cancels the provider on the first output line that matches a pattern and records which one', async () => {
+    const r = rig();
+    const script = [
+      "console.log('not json at all');",
+      "console.log('{broken json');",
+      "console.log('[1,2,3]');",
+      "console.log(JSON.stringify({type:'system',subtype:'init'}));",
+      "console.log(JSON.stringify({type:'system',subtype:'api_retry',error:'authentication_failed'}));",
+      'setInterval(()=>{},1000)',
+    ].join('');
+    const rec = await r.run({
+      argv: [NODE, '-e', script],
+      abortOn: [{ type: 'result', is_error: 'true' }, { type: 'system', error: 'authentication_failed' }],
+    });
+    expect(rec.aborted).toBe(JSON.stringify({ type: 'system', error: 'authentication_failed' }));
+    expect(rec).toMatchObject({ timedOut: false, cancelled: false, signal: 'SIGINT', escalation: ['SIGINT'] });
+  }, 15_000);
+
+  it('reassembles a line that was written in two pieces across polls', async () => {
+    const r = rig();
+    const script = "process.stdout.write('{\"type\":\"sys');setTimeout(()=>process.stdout.write('tem\",\"error\":\"boom\"}\\n'),450);setInterval(()=>{},1000)";
+    const rec = await r.run({ argv: [NODE, '-e', script], abortOn: [{ error: 'boom' }] });
+    expect(rec.aborted).toBe('{"error":"boom"}');
+  }, 15_000);
+
+  it('keeps watching while nothing matches, and stops once the provider ended on its own', async () => {
+    const r = rig();
+    const rec = await r.run({ argv: [NODE, '-e', "console.log(JSON.stringify({type:'ok'}));setTimeout(()=>process.exit(0),500)"], abortOn: [{ type: 'never' }] });
+    expect(rec).toMatchObject({ aborted: null, code: 0, escalation: [] });
+  });
+
+  it('stops scanning while an escalation is already running', async () => {
+    const r = rig();
+    const rec = await r.run({ argv: [NODE, '-e', stubborn], abortOn: [{ type: 'never' }], timeoutMs: 100, graceMs: 450 });
+    expect(rec).toMatchObject({ timedOut: true, aborted: null, escalation: ['SIGINT', 'SIGTERM', 'SIGKILL'] });
+  }, 15_000);
+
+  it('keeps polling when the log cannot be read, and the provider still ends on cancellation', async () => {
+    const r = rig();
+    const done = r.run({ argv: [NODE, '-e', polite], abortOn: [{ type: 'never' }], graceMs: 100 });
+    await r.started();
+    await until(() => readFileSync(join(r.dir, LOG_FILE), 'utf8').includes('up'));
+    rmSync(join(r.dir, LOG_FILE));
+    await sleepMs(500);
+    r.emitter.emit('SIGINT');
+    const rec = await done;
+    expect(rec).toMatchObject({ aborted: null, cancelled: true, code: 0 });
+  }, 15_000);
+
+  it('does not watch at all with an empty pattern list', async () => {
+    const r = rig();
+    const rec = await r.run({ argv: [NODE, '-e', "console.log(JSON.stringify({type:'system',error:'x'}))"], abortOn: [] });
+    expect(rec.aborted).toBeNull();
+  });
+});
+
+describe('runShim: helpers the provider leaves behind', () => {
+  function fakeClock() {
+    let t = 1_000;
+    return { now: () => t, sleep: async (ms: number) => void (t += ms) };
+  }
+
+  it('lets helpers finish when they end within the grace period, after one SIGTERM to the group', async () => {
+    const r = rig({ deliver: false });
+    r.members.push([process.pid, 4242], [process.pid, 4242], [process.pid]);
+    const rec = await r.run({ clock: fakeClock() });
+    expect(rec).toMatchObject({ code: 0, escalation: ['SIGTERM'], signal: null });
+    expect(r.signals).toEqual(['SIGTERM']);
+  });
+
+  it('kills the group when helpers are still there after the grace period, keeping the provider\'s own exit', async () => {
+    const r = rig({ deliver: false });
+    for (let i = 0; i < 100; i++) r.members.push([4242]);
+    const rec = await r.run({ clock: fakeClock(), argv: [NODE, '-e', 'process.exit(5)'] });
+    expect(rec).toMatchObject({ code: 5, signal: null, escalation: ['SIGTERM', 'SIGKILL'] });
+    expect(r.signals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(readExitRecord(r.dir)).toEqual(rec);
+  });
+
+  it('does not wait when the only group member is the shim itself', async () => {
+    const r = rig({ deliver: false });
+    r.members.push([process.pid]);
+    const rec = await r.run();
+    expect(rec.escalation).toEqual([]);
+    expect(r.signals).toEqual([]);
+  });
+});
+
+describe('runShim: cleanup paths', () => {
+  it('removes only directories Orbit made in the temp directory', async () => {
+    const r = rig();
+    const mine = join(tmpdir(), `orbit-shimcov-clean-${process.pid}-${Date.now()}`);
+    mkdirSync(mine);
+    writeFileSync(join(mine, 'settings.json'), '{}');
+    const notOrbit = tmp('shimcov-keep-');
+    const nested = join(r.dir, 'orbit-nested');
+    mkdirSync(nested);
+    await r.run({ cleanupPaths: [mine, notOrbit, nested, 'orbit-relative', join(tmpdir(), 'orbit-does-not-exist-xyz')] });
+    expect(existsSync(mine)).toBe(false);
+    expect(existsSync(notOrbit)).toBe(true);
+    expect(existsSync(nested)).toBe(true);
+  });
+
+  it('cleans up even when the provider could not start', async () => {
+    const r = rig();
+    const mine = join(tmpdir(), `orbit-shimcov-fail-${process.pid}-${Date.now()}`);
+    mkdirSync(mine);
+    await r.run({ argv: ['/nonexistent/orbit-provider'], cleanupPaths: [mine] });
+    expect(existsSync(mine)).toBe(false);
+  });
+});
+
+describe('record readers', () => {
+  it('return null for a missing, torn or foreign file', () => {
+    const d = tmp();
+    expect(readPidRecord(d)).toBeNull();
+    writeFileSync(join(d, PID_FILE), '{"shimPid":');
+    expect(readPidRecord(d)).toBeNull();
+    writeFileSync(join(d, PID_FILE), '[1]');
+    expect(readPidRecord(d)).toBeNull();
+    writeFileSync(join(d, PID_FILE), '"x"');
+    expect(readPidRecord(d)).toBeNull();
+    writeFileSync(join(d, PID_FILE), '{"shimPid":"1","pgid":2}');
+    expect(readPidRecord(d)).toBeNull();
+    writeFileSync(join(d, PID_FILE), '{"shimPid":1,"pgid":2}');
+    expect(readPidRecord(d)).toEqual({ shimPid: 1, pgid: 2 });
+    writeFileSync(join(d, EXIT_FILE), '{"timedOut":true}');
+    expect(readExitRecord(d)).toBeNull();
+    writeFileSync(join(d, EXIT_FILE), '{"timedOut":true,"endedAt":5}');
+    expect(readExitRecord(d)).toMatchObject({ endedAt: 5 });
+  });
+});
+
+describe('readFrom', () => {
+  it('reads from an offset, caps the length, and gives null for an unreadable path', () => {
+    const d = tmp();
+    const f = join(d, 'log');
+    writeFileSync(f, 'abcdefghij');
+    expect(readFrom(f, 3)?.toString()).toBe('defghij');
+    expect(readFrom(f, 3, 2)?.toString()).toBe('de');
+    expect(readFrom(f, 10)?.length).toBe(0);
+    expect(readFrom(f, 50)?.length).toBe(0);
+    expect(readFrom(join(d, 'missing'), 0)).toBeNull();
+    // A directory opens but cannot be read.
+    expect(readFrom(d, 0)).toBeNull();
+  });
+});
+
+describe('process group helpers', () => {
+  it('readPgid reads the group of a live process and null for one that does not exist', () => {
+    expect(readPgid(process.pid)).toBeGreaterThan(0);
+    expect(readPgid(2 ** 30)).toBeNull();
+  });
+
+  it('readPgid on linux parses /proc/<pid>/stat even when the command name holds spaces and parentheses', () => {
+    const procDir = tmp();
+    mkdirSync(join(procDir, '77'));
+    writeFileSync(join(procDir, '77', 'stat'), '77 (we ird) name) S 1 4242 4242 0 -1 4194560');
+    expect(readPgid(77, { platform: 'linux', procDir })).toBe(4242);
+    mkdirSync(join(procDir, '78'));
+    writeFileSync(join(procDir, '78', 'stat'), '78 (x) S 1 0 0');
+    expect(readPgid(78, { platform: 'linux', procDir })).toBeNull();
+    mkdirSync(join(procDir, '79'));
+    writeFileSync(join(procDir, '79', 'stat'), '79 (x) S 1 abc 0');
+    expect(readPgid(79, { platform: 'linux', procDir })).toBeNull();
+    expect(readPgid(80, { platform: 'linux', procDir })).toBeNull();
+  });
+
+  it('readPgid with platform linux reads the real /proc by default', () => {
+    expect(readPgid(process.pid, { platform: 'linux' })).toBe(process.platform === 'linux' ? readPgid(process.pid) : null);
+  });
+
+  it('groupMembers lists exactly the processes of a group, and nothing for an unused group', async () => {
+    const child = spawn(NODE, ['-e', 'setInterval(()=>{},1000)'], { detached: true, stdio: 'ignore' });
+    try {
+      await until(() => child.pid !== undefined && groupMembers(child.pid).length > 0);
+      expect(groupMembers(child.pid!)).toEqual([child.pid]);
+      expect(groupMembers(2 ** 30)).toEqual([]);
+    } finally {
+      process.kill(-child.pid!, 'SIGKILL');
+    }
+  });
+
+  it('groupMembers and readPgid answer empty when ps cannot run', () => {
+    const saved = process.env.PATH;
+    process.env.PATH = '';
+    try {
+      expect(groupMembers(1)).toEqual([]);
+      expect(readPgid(process.pid)).toBeNull();
+    } finally {
+      process.env.PATH = saved;
+    }
+  });
+});
+
+describe('shimArgs', () => {
+  it('writes only the options that were given, provider argv last after --', () => {
+    expect(shimArgs({ workerDir: '/w', timeoutMs: 7, argv: ['p', '-x'] })).toEqual(['--worker-dir', '/w', '--timeout-ms', '7', '--', 'p', '-x']);
+    expect(shimArgs({ workerDir: '/w', timeoutMs: 0, graceMs: 0, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], argv: ['p'] })).toEqual(['--worker-dir', '/w', '--timeout-ms', '0', '--grace-ms', '0', '--', 'p']);
+    const full = shimArgs({ workerDir: '/w', timeoutMs: 1, sessionId: 's', stdinPath: '/p', cwd: '/c', abortOn: [{ a: 'b' }], cleanupPaths: ['/orbit-x', '/orbit-y'], argv: ['p'] });
+    expect(parseShimArgs(full)).toMatchObject({ sessionId: 's', stdinPath: '/p', cwd: '/c', abortOn: [{ a: 'b' }], cleanupPaths: ['/orbit-x', '/orbit-y'] });
+  });
+});
+
+describe('parseShimArgs', () => {
+  it('rejects a missing provider command, a dangling flag and a bad number', () => {
+    expect(() => parseShimArgs(['--worker-dir', '/w', '--'])).toThrow(/expected --/);
+    expect(() => parseShimArgs(['--worker-dir', '/w', '--timeout-ms', '1.5', '--', 'x'])).toThrow(/non-negative integer/);
+    expect(() => parseShimArgs(['--worker-dir', '/w', '--grace-ms', 'abc', '--', 'x'])).toThrow(/non-negative integer/);
+    expect(() => parseShimArgs(['--worker-dir', '/w', '--cwd', '--', 'x'])).toThrow();
+    expect(() => parseShimArgs(['--worker-dir', '/w', '--abort-on', 'null', '--', 'x'])).toThrow(/JSON object/);
+    expect(() => parseShimArgs(['--worker-dir', '/w', '--abort-on', '{"a":1}', '--', 'x'])).toThrow(/JSON object/);
+    expect(() => parseShimArgs(['--abort-on', '{"a":"b"}', '--', 'x'])).toThrow(/absolute/);
+  });
+
+  it('defaults the optional fields', () => {
+    expect(parseShimArgs(['--worker-dir', '/w', '--', 'x', 'y'])).toEqual({ workerDir: '/w', timeoutMs: 0, graceMs: 5000, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], argv: ['x', 'y'] });
+  });
+});
+
+describe('shimMain', () => {
+  let stderr: string;
+  beforeEach(() => {
+    stderr = '';
+    vi.spyOn(process.stderr, 'write').mockImplementation(((chunk: string | Uint8Array) => {
+      stderr += String(chunk);
+      return true;
+    }) as typeof process.stderr.write);
+  });
+
+  it('answers 2 with the problem on stderr when the arguments are bad', async () => {
+    expect(await shimMain(['--worker-dir', 'relative', '--', 'x'])).toBe(2);
+    expect(stderr).toBe('orbit shim: --worker-dir must be an absolute path\n');
+    stderr = '';
+    expect(await shimMain([])).toBe(2);
+    expect(stderr).toMatch(/expected -- followed by the provider command/);
+  });
+
+  it('without a host it needs to lead its own process group, which a test runner does not', async () => {
+    const dir = tmp();
+    await expect(shimMain(['--worker-dir', dir, '--', NODE, '-e', '0'])).rejects.toThrow(/must lead its own process group/);
+  });
+
+  it('supervises the provider named after -- and answers 0 once exit.json is written', async () => {
+    const dir = tmp();
+    const host: Partial<ShimHost> = { pgidOf: () => process.pid, onSignal: () => {}, groupMembers: () => [] };
+    const code = await shimMain(['--worker-dir', dir, '--timeout-ms', '0', '--session-id', 's9', '--cwd', dir, '--', NODE, '-e', 'console.log(process.cwd());process.exit(4)'], host);
+    expect(code).toBe(0);
+    expect(readExitRecord(dir)).toMatchObject({ code: 4, error: null });
+    expect(readPidRecord(dir)?.sessionId).toBe('s9');
+    expect(realpathSync(readFileSync(join(dir, LOG_FILE), 'utf8').trim())).toBe(dir);
+  });
+
+  it('runs the provider in the current directory when --cwd is not given, and passes --stdin through', async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'p.md'), 'prompt text');
+    const host: Partial<ShimHost> = { pgidOf: () => process.pid, onSignal: () => {}, groupMembers: () => [] };
+    const code = await shimMain(['--worker-dir', dir, '--stdin', join(dir, 'p.md'), '--', NODE, '-e', "process.stdin.pipe(process.stdout);"], host);
+    expect(code).toBe(0);
+    expect(readFileSync(join(dir, LOG_FILE), 'utf8')).toBe('prompt text');
+  });
+});

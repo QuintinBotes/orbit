@@ -8,6 +8,7 @@
 import { join } from 'node:path';
 import { readJsonIfExists } from '../../core/fsx.ts';
 import { BASELINE_FILE, type BaselineReport } from '../../evidence/baseline.ts';
+import { applyBaselineExceptionAnswers } from '../../inquisition/baseline-exception.ts';
 import { listQuestions } from '../../inquisition/store.ts';
 import { classifyDifficulty } from '../../scheduling/difficulty.ts';
 import { BudgetLedger } from '../../scheduling/budget.ts';
@@ -22,7 +23,10 @@ const SECURITY_WORDS = /\b(secur\w*|auth\w*|permission\w*|privacy|secret\w*|cred
 export async function planningStep(ctx: RunContext): Promise<StepResult> {
   const stop = await safePoint(ctx);
   if (stop) return stop;
-  const contract = assertContract(ctx);
+  // A person may have approved a baseline exception before the run had a contract (`orbit decide` during PREFLIGHT or
+  // CONTRACTING); it is applied now, so planning, difficulty and every later step see the contract that carries it.
+  const exceptions = applyBaselineExceptionAnswers({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { snapshot: ctx.snapshot });
+  const contract = exceptions.contract ?? assertContract(ctx);
   const plan = storedPlan(ctx);
   const baseline = readJsonIfExists<BaselineReport>(join(ctx.runDir, BASELINE_FILE));
 
@@ -36,6 +40,18 @@ export async function planningStep(ctx: RunContext): Promise<StepResult> {
         expected_changed_files: plan.expected_changed_files,
         risks: plan.risks,
       },
+    });
+  }
+
+  // Spec section 5: the practices selected for this task and the reason for each omission are part of the durable record.
+  if (contract.practices) {
+    const omitted = contract.practices.filter((p) => !p.applicable);
+    const selected = contract.practices.length - omitted.length;
+    decide(ctx, {
+      id: `dec-${ctx.run.id}-practices`,
+      kind: 'planning.practices',
+      summary: `engineering practices: ${selected} selected${omitted.length > 0 ? `, ${omitted.length} omitted with a reason (${omitted.map((p) => p.practice).join(', ')})` : ''}`,
+      data: { practices: contract.practices },
     });
   }
 

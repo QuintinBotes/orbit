@@ -77,7 +77,36 @@ export interface ShimOptions {
   /** Removed once the provider has ended, e.g. a sandbox settings directory. */
   cleanupPaths?: string[];
   clock?: Clock;
+  /** Process-level effects (group signals, group listing, signal handlers); tests substitute pieces, production uses the real ones. */
+  host?: Partial<ShimHost>;
 }
+
+/**
+ * The shim's contact with the operating system's process groups and signals.
+ * The defaults are the real calls; an in-process test replaces them so that
+ * nothing ever signals the test runner's own group.
+ */
+export interface ShimHost {
+  /** Process group of `pid`, or null when unreadable. */
+  pgidOf(pid: number): number | null;
+  /** Signal every member of group `pgid`; throws when the group is gone. */
+  signalGroup(pgid: number, signal: NodeJS.Signals): void;
+  /** Process ids currently in group `pgid`. */
+  groupMembers(pgid: number): number[];
+  /** Register a handler for a signal the shim itself receives. */
+  onSignal(signal: 'SIGINT' | 'SIGTERM' | 'SIGHUP', listener: () => void): void;
+}
+
+const DEFAULT_HOST: ShimHost = {
+  pgidOf: (pid) => readPgid(pid),
+  signalGroup: (pgid, signal) => {
+    process.kill(-pgid, signal);
+  },
+  groupMembers: (pgid) => groupMembers(pgid),
+  onSignal: (signal, listener) => {
+    process.on(signal, listener);
+  },
+};
 
 export interface PidRecord {
   version: 1;
@@ -147,17 +176,19 @@ function readRecord<T>(path: string, check: (o: Record<string, unknown>) => bool
  * caller's group (a test runner, a terminal).
  */
 export function runShim(options: ShimOptions): Promise<ExitRecord> {
-  const pgid = readPgid(process.pid);
+  const host: ShimHost = { ...DEFAULT_HOST, ...options.host };
+  const pgid = host.pgidOf(process.pid);
   if (pgid !== process.pid) {
     throw new OrbitError('INTERNAL', `the shim must lead its own process group (pid ${process.pid}, pgid ${String(pgid)}); start it detached`);
   }
   if (options.argv.length === 0 || !options.argv[0]) throw new OrbitError('INTERNAL', 'the shim needs a provider command');
-  return new Shim(options, pgid).run();
+  return new Shim(options, pgid, host).run();
 }
 
 class Shim {
   private readonly o: ShimOptions;
   private readonly pgid: number;
+  private readonly host: ShimHost;
   private readonly clock: Clock;
   private readonly graceMs: number;
   private readonly workerDir: string;
@@ -181,9 +212,10 @@ class Shim {
   private firstOutputAt: number | null = null;
   private logCarry = '';
 
-  constructor(options: ShimOptions, pgid: number) {
+  constructor(options: ShimOptions, pgid: number, host: ShimHost) {
     this.o = options;
     this.pgid = pgid;
+    this.host = host;
     this.clock = options.clock ?? { now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
     this.graceMs = Math.max(0, options.graceMs ?? DEFAULT_GRACE_MS);
     this.workerDir = resolve(options.workerDir);
@@ -193,7 +225,7 @@ class Shim {
   run(): Promise<ExitRecord> {
     return new Promise<ExitRecord>((resolvePromise) => {
       this.settle = resolvePromise;
-      for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(sig, () => this.onSignal(sig));
+      for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) this.host.onSignal(sig, () => this.onSignal(sig));
       this.start();
     });
   }
@@ -293,7 +325,7 @@ class Shim {
     this.escalation.push(sig);
     this.selfSent[sig]!++;
     try {
-      process.kill(-this.pgid, sig);
+      this.host.signalGroup(this.pgid, sig);
     } catch {
       this.selfSent[sig]!--;
     }
@@ -326,7 +358,7 @@ class Shim {
     const rec = this.record(code, providerKilled ? 'SIGKILL' : signal, null);
     this.persist(rec);
     try {
-      process.kill(-this.pgid, 'SIGKILL');
+      this.host.signalGroup(this.pgid, 'SIGKILL');
     } catch {
       /* group already gone */
     }
@@ -397,7 +429,7 @@ class Shim {
   }
 
   private leftovers(): number[] {
-    return groupMembers(this.pgid).filter((p) => p !== process.pid);
+    return this.host.groupMembers(this.pgid).filter((p) => p !== process.pid);
   }
 
   private later(ms: number, fn: () => void): void {
@@ -522,10 +554,10 @@ export function groupMembers(pgid: number): number[] {
 }
 
 /** Process group of `pid`, or null when it cannot be read. */
-export function readPgid(pid: number): number | null {
+export function readPgid(pid: number, opts: { platform?: NodeJS.Platform; procDir?: string } = {}): number | null {
   try {
-    if (process.platform === 'linux') {
-      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    if ((opts.platform ?? process.platform) === 'linux') {
+      const stat = readFileSync(join(opts.procDir ?? '/proc', String(pid), 'stat'), 'utf8');
       const n = Number(stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/)[2]);
       return Number.isSafeInteger(n) && n > 0 ? n : null;
     }
@@ -655,7 +687,7 @@ function nonNegativeInt(flag: string, value: string): number {
 }
 
 /** Process entry for `orbit shim`: exit 0 once exit.json is written, 2 on bad arguments. */
-export async function shimMain(args: readonly string[]): Promise<number> {
+export async function shimMain(args: readonly string[], host?: Partial<ShimHost>): Promise<number> {
   let parsed: ParsedShimArgs;
   try {
     parsed = parseShimArgs(args);
@@ -674,6 +706,7 @@ export async function shimMain(args: readonly string[]): Promise<number> {
     stdinPath: parsed.stdinPath,
     abortOn: parsed.abortOn,
     cleanupPaths: parsed.cleanupPaths,
+    ...(host ? { host } : {}),
   });
   return 0;
 }

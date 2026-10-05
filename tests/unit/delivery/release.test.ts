@@ -28,6 +28,7 @@ function checks(list: [string, CheckBucket][], over: Partial<ChecksResult> = {})
 
 describe('release action kinds', () => {
   it('names merge and deploy, so their fault points exist', () => {
+    expect(ACTION_KINDS).toContain('pr_ready');
     expect(ACTION_KINDS).toContain('merge');
     expect(ACTION_KINDS).toContain('deploy');
   });

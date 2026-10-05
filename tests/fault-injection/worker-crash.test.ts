@@ -2,6 +2,7 @@
 // worktree/checkpoint; restart bounded worker"). The fake implementer writes part of its change,
 // then is SIGKILLed with its whole process group (shim included), so no exit.json is ever written.
 import { afterEach, describe, expect, it } from 'vitest';
+import type { ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { killGroup } from '../../src/core/proc.ts';
@@ -24,12 +25,22 @@ function crashingScenario(): object {
   });
 }
 
-async function killWorkerMidEdit(l: Lab, runId: string): Promise<{ id: string; pid: number; pgid: number; worktree: string }> {
+/**
+ * `controller` is a controller that must die together with the worker: it is killed first, so it cannot notice
+ * the dead worker and restart it in the window before the test would otherwise kill it. Without this, a slow
+ * host lets the live controller reconcile the worker itself and the next controller finds nothing to do. The
+ * worker runs in its own session, so it keeps running until it is killed here.
+ */
+async function killWorkerMidEdit(l: Lab, runId: string, controller?: ChildProcess): Promise<{ id: string; pid: number; pgid: number; worktree: string }> {
   const w = await waitFor(() => listWorkers(l.db(), { runId, role: 'implementer' }).find((x) => x.state === 'RUNNING' && x.pgid !== null), 30_000);
   const worktree = runState(l, runId).worktreePath!;
   // Mid-edit: the first half of the change is on disk and the worker is still going.
   await waitFor(() => existsSync(join(worktree, 'apps/wip.mjs')), 15_000);
   t.group(w.pgid);
+  if (controller) {
+    controller.kill('SIGKILL');
+    await exited(controller);
+  }
   killGroup(w.pgid!, 'SIGKILL');
   await waitFor(() => !alive(w.pid!), 5_000);
   expect(existsSync(join(w.workerDir, 'exit.json'))).toBe(false);
@@ -42,7 +53,7 @@ describe.skipIf(!canStripTypes)('fault: worker killed during an edit', () => {
     writeScenario(l, crashingScenario());
     const run = startLabRun(l);
     const a = t.child(spawnFaultyController(l, { mode: 'service', leaseTtlMs: 1_000 }));
-    const killed = await killWorkerMidEdit(l, run.id);
+    const killed = await killWorkerMidEdit(l, run.id, a);
     a.kill('SIGKILL');
     await exited(a);
 

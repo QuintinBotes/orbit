@@ -18,8 +18,13 @@
  * new action that is validated from the start; a lost merge response is
  * reconciled by reading the PR's merge state, never by merging again.
  *
+ * A draft pull request cannot be merged, so with `release.merge.mark_ready`
+ * (default true) the merge is preceded by a ledgered `pr_ready` action keyed by
+ * PR and head commit; with it off, a draft refuses the merge with that reason.
+ *
  * Deploy. Only to an environment the caller names and the release profile
- * defines, with `deploy_production` authorized. The deployed ref must match
+ * defines (or, with `environments: 'all'`, to every defined environment the
+ * deployed ref is allowed for, in profile order), with `deploy_production` authorized. The deployed ref must match
  * the environment's `allowed_branches` (the base branch after a merge, the
  * task branch without one), CI must be green on the deployed commit when the
  * environment requires it, and every host the command may reach must be in
@@ -29,9 +34,11 @@
  * the action ledger like every external action. Its outcome is written to a
  * file the moment it exits, which is what reconciles a lost receipt. A deploy
  * that may have started but left no outcome, or that failed, is never re-run
- * automatically: it is reported as a blocker for a person to resolve.
+ * automatically: it is reported as a blocker. An environment's trusted
+ * `verify_command` (resolveDeploy) or a person (`orbit release resolve`) settles
+ * an UNKNOWN deploy: deployed adopts it, not deployed lets the next call run it.
  */
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { platform } from 'node:os';
 import { join } from 'node:path';
 import picomatch from 'picomatch';
@@ -39,12 +46,13 @@ import type { Clock } from '../core/clock.ts';
 import type { AuthorizationDecision, CheckDefinition, PolicySnapshot, ReleaseConfig, ReleaseEnvironment } from '../policy/types.ts';
 import type { IsolationProvider } from '../isolation/types.ts';
 import type { ActionLedger, ActionRecord } from './actions.ts';
-import type { ChecksResult, GitHubClient, MergeMethod, MergeState } from './github.ts';
+import type { ChecksResult, GitHubClient, MergeMethod, MergeState, PullRequestInfo } from './github.ts';
 import type { DeliveryCandidate, DeliveryEvidence, DeliveryReview, DeliveryRun } from './gate.ts';
 import type { GitOptions } from './git.ts';
 import { execCapture } from '../core/exec.ts';
 import { OrbitError } from '../core/errors.ts';
 import { atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
+import { recordDecision } from '../storage/decisions.ts';
 import { redact } from '../core/redact.ts';
 import { authorize } from '../policy/authorize.ts';
 import { prepareWorkerTmpDir, profileForCheck } from '../isolation/profiles.ts';
@@ -73,8 +81,14 @@ export interface ReleaseInput {
   pr: number | null;
   /** The run contract's `delivery.merge`: the goal itself asks for a merge. Without it nothing is merged. */
   contractMerge: boolean;
-  /** A key of `release.environments` to deploy to; null or omitted deploys nothing. */
+  /** A key of `release.environments` to deploy to; null or omitted deploys nothing. Refused when the ref is not allowed. */
   environment?: string | null;
+  /**
+   * Several keys, or 'all' for every defined environment, deployed in order. Named keys are strict like `environment`;
+   * with 'all' an environment whose allowed_branches do not cover the deployed ref is skipped with a reason, and
+   * so is every environment when deploy_production is not authorized.
+   */
+  environments?: readonly string[] | 'all';
   /**
    * The controller's own release gate, evaluated now: the completion gate and
    * the review policy (blocking findings). Called before every release action
@@ -126,7 +140,9 @@ export interface ReleaseResult {
   pending: string | null;
   merge: MergeReceipt | null;
   mergeSkipped: string | null;
+  /** The first deployment, or null; see `deploys` for all of them. */
   deploy: DeployReceipt | null;
+  deploys: DeployReceipt[];
   deploySkipped: string | null;
   actions: ActionRecord[];
 }
@@ -224,6 +240,7 @@ export async function performRelease(input: ReleaseInput): Promise<ReleaseResult
         const v = await checksGate();
         if (v.state === 'pending') return pendingResult(ledger, run.id, `waiting for branch checks on ${commit.slice(0, 12)}: ${v.detail}`, null, mergeSkipped);
         if (v.state === 'failed') throw new OrbitError('DELIVERY_FAILED', `merge refused: branch checks on ${commit.slice(0, 12)} are not green: ${v.detail}`, { definitive: true, checks: v.detail });
+        await markReadyIfDraft({ number, commit, branch, tree, markReady: release.merge.mark_ready, run, candidate, client, ledger, mergeAuth, precheck: async () => { await baseGate(); await prGate(); } });
       }
 
       const receiptOf = (s: MergeState): MergeReceipt => ({ number, headSha: s.headRefOid, mergeCommitSha: s.mergeCommitSha, baseBranch: s.baseRefName, method, mergedAt: s.mergedAt });
@@ -262,75 +279,141 @@ export async function performRelease(input: ReleaseInput): Promise<ReleaseResult
   }
 
   // ---- deploy -----------------------------------------------------------
-  let deploy: DeployReceipt | null = null;
-  let deploySkipped: string | null = null;
-  const envName = input.environment ?? null;
-  if (envName === null) {
-    deploySkipped = 'no release environment was requested';
+  const deploys: DeployReceipt[] = [];
+  const skipped: string[] = [];
+  const requested = requestedEnvironments(input, release);
+  if (requested.names.length === 0) {
+    skipped.push(requested.none);
   } else {
-    const deployAuth = requireAllowed(authorize(snapshot, { kind: 'action', action: 'deploy_production' }), 'deploying');
-    if (!ENV_NAME.test(envName) || !Object.hasOwn(release.environments, envName)) {
-      deny('release.environment', `release environment ${JSON.stringify(envName)} is not defined in the release profile (defined: ${Object.keys(release.environments).join(', ') || 'none'})`);
-    }
-    const env = release.environments[envName]!;
-    // After a merge the base branch carries the release; without one, the task branch at the delivered commit.
-    const target = merge ? { branch: merge.baseBranch, sha: merge.mergeCommitSha } : { branch, sha: commit };
-    if (!target.sha || !isObjectId(target.sha)) throw new OrbitError('DELIVERY_FAILED', `the merge of pull request #${merge?.number} reported no merge commit to deploy`, { definitive: true });
-    const sha = target.sha;
-    if (env.allowed_branches.length === 0 || !picomatch(env.allowed_branches, { dot: true })(target.branch)) {
-      deny('release.allowed_branches', `environment ${envName} may not be deployed from ${target.branch} (allowed: ${env.allowed_branches.join(', ') || 'none'})`);
-    }
-    for (const host of env.network_hosts) requireAllowed(authorize(snapshot, { kind: 'network', host }), `deploy network access to ${host}`);
-    if (!Array.isArray(env.deploy_command) || env.deploy_command.length === 0 || env.deploy_command.some((a) => typeof a !== 'string' || a.length === 0)) {
-      throw new OrbitError('CONFIG_INVALID', `release environment ${envName} has no usable deploy_command`, { definitive: true });
-    }
-    if (!input.isolation || !input.workDir) throw new OrbitError('INTERNAL', 'deploying needs an isolation provider and a work directory');
-    const isolation = input.isolation;
-    const files = deployFiles(input.workDir, envName, sha);
+    // Named environments are strict: a refusal is an error. 'all' only skips what this release is not for.
+    const deployAuthDecision = authorize(snapshot, { kind: 'action', action: 'deploy_production' });
+    if (!requested.strict && !deployAuthDecision.allowed) {
+      skipped.push(`deploying is not authorized: ${deployAuthDecision.reason}`);
+    } else {
+      const deployAuth = requireAllowed(deployAuthDecision, 'deploying');
+      // After a merge the base branch carries the release; without one, the task branch at the delivered commit.
+      const target = merge ? { branch: merge.baseBranch, sha: merge.mergeCommitSha } : { branch, sha: commit };
+      for (const envName of requested.names) {
+        if (!ENV_NAME.test(envName) || !Object.hasOwn(release.environments, envName)) {
+          deny('release.environment', `release environment ${JSON.stringify(envName)} is not defined in the release profile (defined: ${Object.keys(release.environments).join(', ') || 'none'})`);
+        }
+        const env = release.environments[envName]!;
+        const allowedHere = env.allowed_branches.length > 0 && picomatch(env.allowed_branches, { dot: true })(target.branch);
+        if (!allowedHere) {
+          if (requested.strict) deny('release.allowed_branches', `environment ${envName} may not be deployed from ${target.branch} (allowed: ${env.allowed_branches.join(', ') || 'none'})`);
+          skipped.push(`environment ${envName} is not deployed from ${target.branch} (allowed: ${env.allowed_branches.join(', ') || 'none'})`);
+          continue;
+        }
+        if (!target.sha || !isObjectId(target.sha)) throw new OrbitError('DELIVERY_FAILED', `the merge of pull request #${merge?.number} reported no merge commit to deploy`, { definitive: true });
+        const sha = target.sha;
+        for (const host of env.network_hosts) requireAllowed(authorize(snapshot, { kind: 'network', host }), `deploy network access to ${host}`);
+        if (!Array.isArray(env.deploy_command) || env.deploy_command.length === 0 || env.deploy_command.some((a) => typeof a !== 'string' || a.length === 0)) {
+          throw new OrbitError('CONFIG_INVALID', `release environment ${envName} has no usable deploy_command`, { definitive: true });
+        }
+        if (!input.isolation || !input.workDir) throw new OrbitError('INTERNAL', 'deploying needs an isolation provider and a work directory');
+        const isolation = input.isolation;
+        const files = deployFiles(input.workDir, envName, sha);
 
-    const key = `release:${run.id}:deploy:${envName}:${sha}`;
-    const prior = ledger.find(key);
-    if (prior?.state === 'SUCCEEDED') deploy = prior.receipt as DeployReceipt;
-    else {
-      if (prior?.state === 'FAILED') {
-        throw new OrbitError('DELIVERY_FAILED', `the deploy of ${sha.slice(0, 12)} to ${envName} failed earlier (${prior.error ?? 'no detail'}); a failed deploy is not retried automatically`, { definitive: true, actionId: prior.id });
-      }
-      const ciGate = async (): Promise<CheckVerdict> => verdictOf(await client.listChecks({ sha }), sha, [], true);
-      if (env.require_ci_green) {
-        apiAllowed();
-        const v = await ciGate();
-        if (v.state === 'pending') return pendingResult(ledger, run.id, `waiting for CI on ${sha.slice(0, 12)} before deploying to ${envName}: ${v.detail}`, merge, mergeSkipped);
-        if (v.state === 'failed') throw new OrbitError('DELIVERY_FAILED', `deploy refused: CI on ${sha.slice(0, 12)} is not green: ${v.detail}`, { definitive: true, checks: v.detail });
-      }
+        const key = `release:${run.id}:deploy:${envName}:${sha}`;
+        const prior = ledger.find(key);
+        if (prior?.state === 'SUCCEEDED') {
+          deploys.push(prior.receipt as DeployReceipt);
+          continue;
+        }
+        if (prior?.state === 'FAILED') {
+          const unknown = deployTimedOut(files, sha);
+          throw new OrbitError('DELIVERY_FAILED', `the deploy of ${sha.slice(0, 12)} to ${envName} failed earlier (${prior.error ?? 'no detail'}); a failed deploy is not retried automatically${unknown ? '; it timed out, so run "orbit release resolve <run-id>" to settle whether it took effect' : ''}`, { definitive: true, actionId: prior.id, ...(unknown ? unknownDetails(envName, sha) : {}) });
+        }
+        const ciGate = async (): Promise<CheckVerdict> => verdictOf(await client.listChecks({ sha }), sha, [], true);
+        if (env.require_ci_green) {
+          apiAllowed();
+          const v = await ciGate();
+          if (v.state === 'pending') return pendingResult(ledger, run.id, `waiting for CI on ${sha.slice(0, 12)} before deploying to ${envName}: ${v.detail}`, merge, mergeSkipped, deploys);
+          if (v.state === 'failed') throw new OrbitError('DELIVERY_FAILED', `deploy refused: CI on ${sha.slice(0, 12)} is not green: ${v.detail}`, { definitive: true, checks: v.detail });
+        }
 
-      const result = await ledger.performAction<DeployReceipt>(
-        { runId: run.id, kind: 'deploy', idempotencyKey: key, target: { environment: envName, branch: target.branch, sha, command: env.deploy_command.map((a) => redact(a)) }, candidateId: candidate.id, treeHash: tree, commitSha: sha },
-        {
-          execute: (ctx) => runDeploy({ input, env, envName, branch: target.branch, sha, isolation, files, attempt: ctx.attempt, remote, viaBaseBranch: merge !== null }),
-          reconcile: async () => readDeployOutcome(files, sha),
-        },
-        {
-          authorization: deployAuth,
-          precheck: async () => {
-            requireAllowed(authorize(snapshot, { kind: 'action', action: 'deploy_production' }), 'deploying');
-            await baseGate();
-            if (env.require_ci_green) {
-              const v = await ciGate();
-              if (v.state !== 'passed') throw new OrbitError('DELIVERY_FAILED', `deploy refused: CI on ${sha.slice(0, 12)} is ${v.state}: ${v.detail}`, { definitive: v.state === 'failed', checks: v.detail });
-            }
+        const result = await ledger.performAction<DeployReceipt>(
+          { runId: run.id, kind: 'deploy', idempotencyKey: key, target: { environment: envName, branch: target.branch, sha, command: env.deploy_command.map((a) => redact(a)) }, candidateId: candidate.id, treeHash: tree, commitSha: sha },
+          {
+            execute: (ctx) => runDeploy({ input, env, envName, branch: target.branch, sha, isolation, files, attempt: ctx.attempt, remote, viaBaseBranch: merge !== null }),
+            reconcile: async () => readDeployOutcome(files, sha, envName),
           },
-        },
-      );
-      deploy = result.receipt;
+          {
+            authorization: deployAuth,
+            precheck: async () => {
+              requireAllowed(authorize(snapshot, { kind: 'action', action: 'deploy_production' }), 'deploying');
+              await baseGate();
+              if (env.require_ci_green) {
+                const v = await ciGate();
+                if (v.state !== 'passed') throw new OrbitError('DELIVERY_FAILED', `deploy refused: CI on ${sha.slice(0, 12)} is ${v.state}: ${v.detail}`, { definitive: v.state === 'failed', checks: v.detail });
+              }
+            },
+          },
+        );
+        deploys.push(result.receipt);
+      }
     }
   }
+  const deploySkipped = skipped.length > 0 ? skipped.join('; ') : null;
 
-  ledger.event(run.id, 'release.completed', { merge: merge ? { pr: merge.number, head: merge.headSha, merge_commit: merge.mergeCommitSha } : null, merge_skipped: mergeSkipped, deploy: deploy ? { environment: deploy.environment, sha: deploy.sha } : null, deploy_skipped: deploySkipped });
-  return { status: 'released', pending: null, merge, mergeSkipped, deploy, deploySkipped, actions: ledger.list(run.id) };
+  ledger.event(run.id, 'release.completed', { merge: merge ? { pr: merge.number, head: merge.headSha, merge_commit: merge.mergeCommitSha } : null, merge_skipped: mergeSkipped, deploy: deploys[0] ? { environment: deploys[0].environment, sha: deploys[0].sha } : null, deploys: deploys.map((d) => ({ environment: d.environment, sha: d.sha })), deploy_skipped: deploySkipped });
+  return { status: 'released', pending: null, merge, mergeSkipped, deploy: deploys[0] ?? null, deploys, deploySkipped, actions: ledger.list(run.id) };
 }
 
-function pendingResult(ledger: ActionLedger, runId: string, reason: string, merge: MergeReceipt | null, mergeSkipped: string | null): ReleaseResult {
-  return { status: 'pending', pending: reason, merge, mergeSkipped, deploy: null, deploySkipped: null, actions: ledger.list(runId) };
+/** Which environments this call deploys to: the named ones (strict), or every defined one. */
+function requestedEnvironments(input: ReleaseInput, release: ReleaseConfig): { names: string[]; strict: boolean; none: string } {
+  const all = Object.keys(release.environments);
+  if (input.environments === 'all') return { names: all, strict: false, none: 'no release environment is defined in the release profile' };
+  const names = input.environments ? [...input.environments] : input.environment ? [input.environment] : [];
+  return { names, strict: true, none: 'no release environment was requested' };
+}
+
+/**
+ * A draft pull request cannot be merged. With mark_ready (default) it is marked ready first, as its own
+ * ledgered action keyed by PR and head commit (a lost response is reconciled by reading the PR); without it
+ * the merge is refused for that reason, and nothing is changed on the host.
+ */
+async function markReadyIfDraft(a: {
+  number: number;
+  commit: string;
+  branch: string;
+  tree: string;
+  markReady: boolean | undefined;
+  run: DeliveryRun;
+  candidate: DeliveryCandidate;
+  client: GitHubClient;
+  ledger: ActionLedger;
+  mergeAuth: AuthorizationDecision;
+  precheck: () => Promise<void>;
+}): Promise<void> {
+  const { number, commit, client } = a;
+  const key = `release:${a.run.id}:pr-ready:${number}:${commit}`;
+  const done = a.ledger.find(key);
+  if (done?.state === 'SUCCEEDED') return;
+  const pr = await client.findPullRequest(a.branch);
+  if (!pr || pr.number !== number || !pr.isDraft) return;
+  if (a.markReady === false) {
+    throw new OrbitError('DELIVERY_FAILED', `merge refused: pull request #${number} is a draft and release.merge.mark_ready is false; mark it ready for review or turn mark_ready on`, { definitive: true, draft: true });
+  }
+  await a.ledger.performAction<PullRequestInfo>(
+    { runId: a.run.id, kind: 'pr_ready', idempotencyKey: key, target: { pr: number, head: commit }, candidateId: a.candidate.id, treeHash: a.tree, commitSha: commit },
+    {
+      execute: async () => {
+        const r = await client.markPullRequestReady(number);
+        if (r.isDraft) throw new OrbitError('DELIVERY_FAILED', `pull request #${number} is still a draft after it was marked ready`, { definitive: true });
+        return r;
+      },
+      reconcile: async () => {
+        const now = await client.findPullRequest(a.branch);
+        return now && now.number === number && !now.isDraft ? now : null;
+      },
+    },
+    { authorization: a.mergeAuth, precheck: a.precheck },
+  );
+}
+
+function pendingResult(ledger: ActionLedger, runId: string, reason: string, merge: MergeReceipt | null, mergeSkipped: string | null, deploys: DeployReceipt[] = []): ReleaseResult {
+  return { status: 'pending', pending: reason, merge, mergeSkipped, deploy: deploys[0] ?? null, deploys, deploySkipped: null, actions: ledger.list(runId) };
 }
 
 // ---------------------------------------------------------------------------
@@ -424,16 +507,26 @@ function deployFiles(workDir: string, envName: string, sha: string): DeployFiles
  * definitive "unknown" when the command started and left no outcome; null
  * only when it never started, which makes executing it safe.
  */
-function readDeployOutcome(files: DeployFiles, sha: string): DeployReceipt | null {
+function readDeployOutcome(files: DeployFiles, sha: string, envName: string): DeployReceipt | null {
   const outcome = readJsonIfExists<DeployOutcome>(files.outcome);
   if (outcome && outcome.sha === sha) {
     if (outcome.exitCode === 0 && !outcome.timedOut) return receiptOf(outcome);
-    throw new OrbitError('DELIVERY_FAILED', `the deploy of ${sha.slice(0, 12)} to ${outcome.environment} ${outcome.timedOut ? 'timed out' : `exited ${outcome.exitCode ?? 'by signal'}`}; it is not retried automatically`, { definitive: true });
+    throw new OrbitError('DELIVERY_FAILED', `the deploy of ${sha.slice(0, 12)} to ${outcome.environment} ${outcome.timedOut ? 'timed out, so whether it took effect is unknown' : `exited ${outcome.exitCode ?? 'by signal'}`}; it is not retried automatically`, { definitive: true, ...(outcome.timedOut ? unknownDetails(envName, sha) : {}) });
   }
   if (existsSync(files.started)) {
-    throw new OrbitError('DELIVERY_FAILED', `the deploy of ${sha.slice(0, 12)} started but recorded no outcome (the controller stopped while it ran); check the environment, then resolve this run by hand`, { definitive: true, outcomeUnknown: true });
+    throw new OrbitError('DELIVERY_FAILED', `the deploy of ${sha.slice(0, 12)} started but recorded no outcome (the controller stopped while it ran); check the environment, then run "orbit release resolve <run-id>" (the environment's verify_command) or pass --deployed or --not-deployed`, { definitive: true, outcomeUnknown: true, environment: envName, sha });
   }
   return null;
+}
+
+function unknownDetails(environment: string, sha: string): Record<string, unknown> {
+  return { outcomeUnknown: true, environment, sha };
+}
+
+/** A deploy that timed out may still have taken effect: that is an unknown outcome, not a plain failure. */
+function deployTimedOut(files: DeployFiles, sha: string): boolean {
+  const o = readJsonIfExists<DeployOutcome>(files.outcome);
+  return o !== null && o.sha === sha && o.timedOut === true;
 }
 
 function receiptOf(o: DeployOutcome): DeployReceipt {
@@ -488,23 +581,7 @@ async function runDeploy(a: {
       category: 'other',
     };
     const profile = profileForCheck({ worktree: checkout, check: def, snapshot, extraWritable: [files.home, tmp], ...(input.homeDir ? { homeDir: input.homeDir } : {}) });
-    const cmdEnv: Record<string, string> = {
-      PATH: process.env.PATH ?? '/usr/bin:/bin',
-      HOME: files.home,
-      TMPDIR: tmp,
-      LANG: platform() === 'darwin' ? 'en_US.UTF-8' : 'C.UTF-8',
-      TERM: 'dumb',
-      CI: '1',
-      NO_COLOR: '1',
-      GIT_CONFIG_GLOBAL: '/dev/null',
-      GIT_CONFIG_NOSYSTEM: '1',
-      GIT_TERMINAL_PROMPT: '0',
-      ...(input.deployEnv ?? {}),
-      ORBIT_RUN_ID: run.id,
-      ORBIT_RELEASE_ENVIRONMENT: envName,
-      ORBIT_RELEASE_BRANCH: branch,
-      ORBIT_RELEASE_SHA: sha,
-    };
+    const cmdEnv = releaseCommandEnv({ home: files.home, tmp, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha });
     const wrapped = a.isolation.wrap([...env.deploy_command], profile, { cwd: checkout, env: cmdEnv });
     // The marker goes down before the command starts: from here on, a missing outcome means "unknown", never "not run".
     atomicWriteJson(files.started, { environment: envName, sha, attempt: a.attempt, started_at: input.clock.now() }, 0o600);
@@ -518,10 +595,191 @@ async function runDeploy(a: {
     }
     atomicWriteJson(files.outcome, outcome, 0o600);
     if (outcome.exitCode !== 0 || outcome.timedOut) {
-      throw new OrbitError('DELIVERY_FAILED', `the deploy of ${sha.slice(0, 12)} to ${envName} ${outcome.timedOut ? `timed out after ${env.timeout_seconds}s` : `exited ${outcome.exitCode ?? 'by signal'}`}: ${outcome.output.slice(-500)}`, { definitive: true });
+      throw new OrbitError('DELIVERY_FAILED', `the deploy of ${sha.slice(0, 12)} to ${envName} ${outcome.timedOut ? `timed out after ${env.timeout_seconds}s, so whether it took effect is unknown` : `exited ${outcome.exitCode ?? 'by signal'}`}: ${outcome.output.slice(-500)}`, { definitive: true, ...(outcome.timedOut ? unknownDetails(envName, sha) : {}) });
     }
     return receiptOf(outcome);
   } finally {
     await cleanupCandidateCheckout(repoRoot, files.checkout).catch(() => {});
+  }
+}
+
+/** The scrubbed environment of a deploy or verify command: the controller's deploy credentials, never a worker's. */
+function releaseCommandEnv(a: { home: string; tmp: string; deployEnv: Record<string, string> | undefined; runId: string; envName: string; branch: string; sha: string; extra?: Record<string, string> }): Record<string, string> {
+  return {
+    PATH: process.env.PATH ?? '/usr/bin:/bin',
+    HOME: a.home,
+    TMPDIR: a.tmp,
+    LANG: platform() === 'darwin' ? 'en_US.UTF-8' : 'C.UTF-8',
+    TERM: 'dumb',
+    CI: '1',
+    NO_COLOR: '1',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_TERMINAL_PROMPT: '0',
+    ...(a.deployEnv ?? {}),
+    ORBIT_RUN_ID: a.runId,
+    ORBIT_RELEASE_ENVIRONMENT: a.envName,
+    ORBIT_RELEASE_BRANCH: a.branch,
+    ORBIT_RELEASE_SHA: a.sha,
+    ...(a.extra ?? {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// settling an UNKNOWN deploy
+
+export type DeployResolutionKind = 'verify' | 'deployed' | 'not-deployed';
+
+export interface ResolveDeployInput {
+  run: DeliveryRun;
+  snapshot: PolicySnapshot;
+  ledger: ActionLedger;
+  clock: Clock;
+  /** Normally the run directory (the same one performRelease deployed from). */
+  workDir: string;
+  /** The environment key; required only when more than one deploy awaits resolution. */
+  environment?: string;
+  /**
+   * verify: run the environment's trusted verify_command. Exit 0 means the deploy took effect, exit 1 that it did
+   * not, anything else (another exit, a timeout, no verify_command) that this cannot tell, and nothing changes.
+   * deployed | not-deployed: record what a person found out.
+   */
+  resolution: DeployResolutionKind;
+  /** Who resolved it, for the record. */
+  by: string;
+  /** Required to run a verify_command. */
+  isolation?: IsolationProvider;
+  deployEnv?: Record<string, string>;
+  homeDir?: string;
+  git?: GitOptions;
+}
+
+export interface DeployResolution {
+  actionId: string;
+  environment: string;
+  branch: string;
+  sha: string;
+  verdict: 'deployed' | 'not-deployed' | 'unknown';
+  via: 'verify_command' | 'person';
+  detail: string;
+}
+
+/** Deploy actions whose outcome nobody knows: started with no receipt (EXECUTING, UNKNOWN), or timed out. */
+export function unresolvedDeploys(ledger: ActionLedger, runId: string, workDir: string): ActionRecord[] {
+  return ledger.list(runId, { kind: 'deploy' }).filter((a) => {
+    if (a.state === 'EXECUTING' || a.state === 'UNKNOWN') return true;
+    if (a.state !== 'FAILED') return false;
+    const t = a.target as { environment?: string; sha?: string } | null;
+    return typeof t?.environment === 'string' && typeof t.sha === 'string' && deployTimedOut(deployFiles(workDir, t.environment, t.sha), t.sha);
+  });
+}
+
+/**
+ * Settle a deploy left UNKNOWN (a crash mid-deploy, a lost outcome, a timeout). A deploy that took effect is
+ * recorded as the action's receipt, so nothing runs again; one that did not has its started marker removed, so the
+ * next performRelease may run it, within the ledger's attempt budget. Everything is recorded as a decision.
+ */
+export async function resolveDeploy(input: ResolveDeployInput): Promise<DeployResolution> {
+  const { run, snapshot, ledger } = input;
+  if (snapshot.config.mode !== 'release') throw new OrbitError('POLICY_DENIED', `resolving a deploy needs mode release; this run is ${snapshot.config.mode}`, { rule: 'mode.release-required' });
+  const release = releaseConfig(snapshot);
+  if (!release) throw new OrbitError('POLICY_DENIED', 'mode release needs a release profile (release: in the configuration)', { rule: 'release.profile-missing' });
+  const pending = unresolvedDeploys(ledger, run.id, input.workDir).filter((a) => input.environment === undefined || (a.target as { environment?: string }).environment === input.environment);
+  if (pending.length === 0) throw new OrbitError('NOT_FOUND', `run ${run.id} has no deploy with an unknown outcome${input.environment ? ` to ${input.environment}` : ''}`);
+  if (pending.length > 1) {
+    throw new OrbitError('TRANSITION_INVALID', `run ${run.id} has ${pending.length} deploys with an unknown outcome (${pending.map((a) => (a.target as { environment: string }).environment).join(', ')}); name one with --environment`);
+  }
+  const action = pending[0]!;
+  const t = action.target as { environment: string; branch: string; sha: string };
+  const files = deployFiles(input.workDir, t.environment, t.sha);
+  const done = (verdict: DeployResolution['verdict'], via: DeployResolution['via'], detail: string): DeployResolution => ({ actionId: action.id, environment: t.environment, branch: t.branch, sha: t.sha, verdict, via, detail });
+
+  let verdict: DeployResolution['verdict'];
+  let via: DeployResolution['via'] = 'person';
+  let detail: string;
+  if (input.resolution === 'verify') {
+    via = 'verify_command';
+    const env = Object.hasOwn(release.environments, t.environment) ? release.environments[t.environment]! : null;
+    if (!env) throw new OrbitError('CONFIG_INVALID', `release environment ${t.environment} is no longer defined in the release profile`, { definitive: true });
+    if (!Array.isArray(env.verify_command) || env.verify_command.length === 0 || env.verify_command.some((a) => typeof a !== 'string' || a.length === 0)) {
+      return done('unknown', via, `environment ${t.environment} has no verify_command`);
+    }
+    if (!input.isolation) throw new OrbitError('INTERNAL', 'running a verify_command needs an isolation provider');
+    const res = await runVerifyCommand({ input, env, envName: t.environment, branch: t.branch, sha: t.sha, files, isolation: input.isolation, command: env.verify_command });
+    verdict = res.verdict;
+    detail = res.detail;
+  } else {
+    verdict = input.resolution;
+    detail = `${input.by} reports the deploy of ${t.sha.slice(0, 12)} to ${t.environment} ${input.resolution === 'deployed' ? 'took effect' : 'did not take effect'}`;
+  }
+
+  ledger.event(run.id, 'release.deploy-resolution', { action_id: action.id, environment: t.environment, sha: t.sha, via, verdict, by: input.by });
+  if (verdict === 'unknown') return done(verdict, via, detail);
+
+  if (verdict === 'deployed') {
+    const receipt: DeployReceipt = { environment: t.environment, branch: t.branch, sha: t.sha, tree: action.treeHash ?? '', exitCode: 0, durationMs: 0, isolation: via === 'verify_command' ? 'verify_command' : 'person', limitations: [`resolved after an unknown outcome: ${detail}`], output: redact(detail).slice(-OUTPUT_TAIL) };
+    mkdirSync(files.dir, { recursive: true, mode: 0o700 });
+    // The outcome file is what reconciles a deploy, so it says the same thing as the ledger.
+    atomicWriteJson(files.outcome, { environment: t.environment, branch: t.branch, sha: t.sha, tree: receipt.tree, attempt: action.attempts, exitCode: 0, timedOut: false, durationMs: 0, isolation: receipt.isolation, limitations: receipt.limitations, output: receipt.output } satisfies DeployOutcome, 0o600);
+    ledger.recordReceipt(action, receipt, 'reconcile');
+  } else {
+    // Nothing took effect: forget that it started, and leave the action reconcilable so the next call may execute it.
+    rmSync(files.started, { force: true });
+    rmSync(files.outcome, { force: true });
+    ledger.markUnknown(action, `resolved: the deploy did not take effect (${detail})`);
+  }
+  recordDecision(
+    ledger.db,
+    input.workDir,
+    { id: `dec-${action.id}-resolved-${verdict}-${ledger.get(action.id).updatedAt}`, runId: run.id, kind: 'release.deploy-resolved', summary: `deploy of ${t.sha.slice(0, 12)} to ${t.environment} resolved as ${verdict} by ${via === 'verify_command' ? 'verify_command' : input.by}: ${detail}`, data: { action_id: action.id, environment: t.environment, sha: t.sha, verdict, via, by: input.by } },
+    input.clock,
+    { actor: input.by },
+  );
+  return done(verdict, via, detail);
+}
+
+async function runVerifyCommand(a: {
+  input: ResolveDeployInput;
+  env: ReleaseEnvironment;
+  envName: string;
+  branch: string;
+  sha: string;
+  files: DeployFiles;
+  isolation: IsolationProvider;
+  command: readonly string[];
+}): Promise<{ verdict: DeployResolution['verdict']; detail: string }> {
+  const { input, env, envName, branch, sha, files } = a;
+  const { run, snapshot } = input;
+  for (const host of env.network_hosts) {
+    const d = authorize(snapshot, { kind: 'network', host });
+    if (!d.allowed) throw new OrbitError('POLICY_DENIED', `verifying the deploy needs network access to ${host}: ${d.reason}`, { rule: d.rule, definitive: true });
+  }
+  if (!(await hasCommit(run.repoRoot, sha, input.git))) return { verdict: 'unknown', detail: `commit ${sha.slice(0, 12)} is not in the repository, so the verify_command has nothing to run on` };
+  const dir = join(files.dir, 'verify');
+  const checkoutDir = join(dir, 'checkout');
+  const home = join(dir, 'home');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (existsSync(checkoutDir)) await cleanupCandidateCheckout(run.repoRoot, checkoutDir);
+  const checkout = await materializeCandidate(run.repoRoot, sha, checkoutDir, { readOnly: false });
+  try {
+    mkdirSync(home, { recursive: true, mode: 0o700 });
+    const tmp = prepareWorkerTmpDir(dir);
+    const def: CheckDefinition = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: '.', timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], env: {}, mandatory: true, flaky_reruns: 0, kind: 'command', category: 'other' };
+    const profile = profileForCheck({ worktree: checkout, check: def, snapshot, extraWritable: [home, tmp], ...(input.homeDir ? { homeDir: input.homeDir } : {}) });
+    const cmdEnv = releaseCommandEnv({ home, tmp, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha, extra: { ORBIT_RELEASE_VERIFY: '1' } });
+    const wrapped = a.isolation.wrap([...a.command], profile, { cwd: checkout, env: cmdEnv });
+    try {
+      const res = await execCapture(wrapped.argv, { cwd: checkout, env: wrapped.env, timeoutMs: env.timeout_seconds * 1000, maxOutputBytes: 1024 * 1024 });
+      const output = redact(`${res.stdout}${res.stderr ? `\n${res.stderr}` : ''}`).trim().slice(-500);
+      const tail = output ? `: ${output}` : '';
+      if (res.timedOut) return { verdict: 'unknown', detail: `the verify_command timed out after ${env.timeout_seconds}s` };
+      if (res.exitCode === 0) return { verdict: 'deployed', detail: `verify_command exited 0 for ${sha.slice(0, 12)} in ${envName}${tail}` };
+      if (res.exitCode === 1) return { verdict: 'not-deployed', detail: `verify_command exited 1 for ${sha.slice(0, 12)} in ${envName}${tail}` };
+      return { verdict: 'unknown', detail: `verify_command ${res.exitCode === null ? 'was stopped by a signal' : `exited ${res.exitCode}`} (0 means deployed, 1 means not deployed), so the outcome is still unknown${tail}` };
+    } finally {
+      wrapped.cleanup();
+    }
+  } finally {
+    await cleanupCandidateCheckout(run.repoRoot, checkout).catch(() => {});
   }
 }

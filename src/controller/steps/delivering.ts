@@ -20,7 +20,7 @@ import type { ReviewRecord } from '../../review/types.ts';
 import { DELIVERY_MODES } from '../../policy/config.ts';
 import { ActionLedger } from '../../delivery/actions.ts';
 import { deliver, type DeliveryResult } from '../../delivery/deliver.ts';
-import { performRelease, type ReleaseResult } from '../../delivery/release.ts';
+import { performRelease, resolveDeploy, type ReleaseResult } from '../../delivery/release.ts';
 import { FakeGitHub, GhCliClient, type GitHubClient } from '../../delivery/github.ts';
 import { resolveRemoteUrl } from '../../delivery/git.ts';
 import { homeOf, type RunContext } from '../context.ts';
@@ -116,23 +116,24 @@ export async function releaseDelivered(ctx: RunContext, d: DeliveredRecord, outc
   if (!ev || !review) return finishRun(ctx, 'BLOCKED', `release refused: ${!ev ? 'no live evidence' : 'no approving review'} for the delivered tree ${d.tree}`, { outcome });
   const release = ctx.snapshot.config.release ?? null;
   const envs = release ? Object.keys(release.environments) : [];
-  // One defined environment is the release target; with several, the profile does not say which one this run deploys to.
-  const environment = envs.length === 1 ? envs[0]! : null;
-  let result: ReleaseResult;
-  try {
-    result = await performRelease({
-      run: { id: ctx.run.id, repoRoot: ctx.run.repoRoot, branch: ctx.run.branch, baseRevision: ctx.run.baseRevision, policyHash: ctx.run.policyHash, cancelRequested: ctx.run.cancelRequested, goal: ctx.run.goal },
+  const deliveryRun = { id: ctx.run.id, repoRoot: ctx.run.repoRoot, branch: ctx.run.branch, baseRevision: ctx.run.baseRevision, policyHash: ctx.run.policyHash, cancelRequested: ctx.run.cancelRequested, goal: ctx.run.goal };
+  const ledger = new ActionLedger(ctx.db, ctx.clock, { runDir: ctx.runDir, actor: ctx.ownerId });
+  const client = await githubClient(ctx);
+  const runRelease = (): Promise<ReleaseResult> =>
+    performRelease({
+      run: deliveryRun,
       candidate: { id: cand.id, commitSha: cand.commitSha, treeHash: cand.treeHash, parentSha: cand.parentSha },
       evidence: { id: ev.id, candidateId: cand.id, treeHash: ev.treeHash, policyHash: ev.policyHash, checkConfigHash: ev.checkConfigHash, verdict: ev.verdict, invalidatedAt: ev.invalidatedAt },
       review: { id: review.id, candidateId: review.candidateId, treeHash: review.treeHash, verdict: review.verdict, invalidatedAt: review.invalidatedAt },
       snapshot: ctx.snapshot,
-      ledger: new ActionLedger(ctx.db, ctx.clock, { runDir: ctx.runDir, actor: ctx.ownerId }),
-      client: await githubClient(ctx),
+      ledger,
+      client,
       clock: ctx.clock,
       commit: d.commit,
       pr: d.pr?.number ?? null,
       contractMerge: contract.delivery.merge,
-      environment,
+      // Every environment the release profile defines that the deployed ref is allowed for, in profile order.
+      environments: 'all',
       readiness: () => {
         const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: cand, implementerProvider: implementerProvider(ctx), deliveredTree: d.tree, now: ctx.clock.now() });
         return { ok: gate.passed, reasons: gate.reasons };
@@ -141,26 +142,56 @@ export async function releaseDelivered(ctx: RunContext, d: DeliveredRecord, outc
       workDir: ctx.runDir,
       homeDir: homeOf(ctx.deps),
     });
-  } catch (err) {
-    if (isOrbitError(err, 'CANCELLED')) {
-      const s = await safePoint(ctx);
-      if (s) return s;
+
+  // A deploy with an unknown outcome is first settled by the environment's verify_command and the release is then
+  // tried again (once per environment at most); only an outcome that stays unknown goes to a person.
+  let result: ReleaseResult | null = null;
+  for (let settled = 0; result === null; settled++) {
+    try {
+      result = await runRelease();
+    } catch (err) {
+      if (isOrbitError(err, 'CANCELLED')) {
+        const s = await safePoint(ctx);
+        if (s) return s;
+      }
+      const unknownEnv = isOrbitError(err) && err.details?.outcomeUnknown === true && typeof err.details.environment === 'string' ? err.details.environment : null;
+      if (unknownEnv !== null && settled <= envs.length) {
+        const auto = await settleUnknownDeploy(ctx, ledger, deliveryRun, unknownEnv);
+        if (auto.settled) continue;
+        const how = `Find out whether it took effect, then run: orbit release resolve ${ctx.run.id} --deployed (or --not-deployed), and orbit resume ${ctx.run.id}`;
+        return finishRun(ctx, 'BLOCKED', `release refused: ${(err as Error).message}${auto.detail ? ` (automatic check: ${auto.detail})` : ''}. ${how}`, { outcome: { ...outcome, release_error: { code: 'DELIVERY_FAILED', outcome_unknown: true, environment: unknownEnv } } });
+      }
+      if (isOrbitError(err) && (err.details?.definitive === true || err.code === 'POLICY_DENIED')) {
+        return finishRun(ctx, 'BLOCKED', `release refused: ${err.message}`, { outcome: { ...outcome, release_error: { code: err.code, rule: err.details?.rule ?? null } } });
+      }
+      throw err;
     }
-    if (isOrbitError(err) && (err.details?.definitive === true || err.code === 'POLICY_DENIED')) {
-      return finishRun(ctx, 'BLOCKED', `release refused: ${err.message}`, { outcome: { ...outcome, release_error: { code: err.code, rule: err.details?.rule ?? null } } });
-    }
-    throw err;
   }
   if (result.status === 'pending') return releasePending(ctx, result, d, outcome);
   const summary = {
     merge: result.merge ? { pr: result.merge.number, head: result.merge.headSha, merge_commit: result.merge.mergeCommitSha, method: result.merge.method } : null,
     merge_skipped: result.mergeSkipped,
     deploy: result.deploy ? { environment: result.deploy.environment, sha: result.deploy.sha, branch: result.deploy.branch } : null,
-    deploy_skipped: result.deploySkipped ?? (envs.length > 1 ? `the release profile defines ${envs.length} environments (${envs.join(', ')}) and names none for this run` : null),
+    deploys: result.deploys.map((x) => ({ environment: x.environment, sha: x.sha, branch: x.branch })),
+    deploy_skipped: result.deploySkipped,
   };
   atomicWriteJson(join(ctx.runDir, RELEASE_FILE), { ...summary, released_at: ctx.clock.now() });
-  decide(ctx, { id: `dec-${ctx.run.id}-released-${d.commit}`, kind: 'release.completed', summary: `release of ${d.commit.slice(0, 12)}: ${summary.merge ? `merged PR #${summary.merge.pr}` : `no merge (${summary.merge_skipped})`}; ${summary.deploy ? `deployed to ${summary.deploy.environment}` : `no deploy (${summary.deploy_skipped})`}`, data: summary });
+  const deployed = summary.deploys.length > 0 ? `deployed to ${summary.deploys.map((x) => x.environment).join(', ')}${summary.deploy_skipped ? ` (not: ${summary.deploy_skipped})` : ''}` : `no deploy (${summary.deploy_skipped})`;
+  decide(ctx, { id: `dec-${ctx.run.id}-released-${d.commit}`, kind: 'release.completed', summary: `release of ${d.commit.slice(0, 12)}: ${summary.merge ? `merged PR #${summary.merge.pr}` : `no merge (${summary.merge_skipped})`}; ${deployed}`, data: summary });
   return complete(ctx, d.tree, { ...outcome, release: summary }, notes);
+}
+
+/**
+ * Before asking a person about a deploy whose outcome is unknown, ask the environment (its trusted verify_command).
+ * Settled means the ledger now says what happened (deployed, or not deployed and safe to run again).
+ */
+async function settleUnknownDeploy(ctx: RunContext, ledger: ActionLedger, run: Parameters<typeof resolveDeploy>[0]['run'], environment: string): Promise<{ settled: boolean; detail: string | null }> {
+  try {
+    const r = await resolveDeploy({ run, snapshot: ctx.snapshot, ledger, clock: ctx.clock, workDir: ctx.runDir, environment, resolution: 'verify', by: 'controller', isolation: ctx.isolation(), homeDir: homeOf(ctx.deps) });
+    return { settled: r.verdict !== 'unknown', detail: r.detail };
+  } catch (err) {
+    return { settled: false, detail: err instanceof Error ? err.message.slice(0, 300) : String(err) };
+  }
 }
 
 const RELEASE_WAIT_EVENT = 'release.waiting';

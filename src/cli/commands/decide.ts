@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { OrbitError } from '../../core/errors.ts';
 import { isTerminal } from '../../controller/states.ts';
 import { answerQuestion, listQuestions, openQuestions, type QuestionRecord } from '../../inquisition/index.ts';
+import type { BaselineApplyOutcome } from '../../inquisition/baseline-exception.ts';
 import type { OrbitDb } from '../../storage/db.ts';
 import type { Args, OptionSpec } from '../args.ts';
 import { findRunByPrefix, resolveRepo, withState, type CliContext } from '../context.ts';
@@ -27,6 +28,24 @@ function matchQuestion(db: OrbitDb, runId: string, ref: string): QuestionRecord 
   throw new OrbitError('NOT_FOUND', `run ${runId} has no question ${ref}${all.length ? `; its questions: ${all.map((q) => q.id).join(', ')}` : ' (it has asked none)'}`);
 }
 
+/** What an answer to a baseline-exception question did to the contract, in one line. */
+function describeBaselineException(o: BaselineApplyOutcome): string {
+  const check = `check ${o.checkId}`;
+  const why = o.detail ? ` (${oneLine(o.detail, 200)})` : '';
+  switch (o.status) {
+    case 'applied':
+      return `baseline exception recorded: the contract now accepts the pre-existing failure of ${check}, bound to its recorded fingerprint`;
+    case 'already-applied':
+      return `baseline exception for ${check} was already in the contract`;
+    case 'deferred':
+      return `baseline exception for ${check} approved; it is applied as soon as the run has a contract`;
+    case 'refused':
+      return `baseline exception for ${check} refused${why}: the contract is unchanged`;
+    default:
+      return `baseline exception for ${check} not accepted${why}: the contract is unchanged`;
+  }
+}
+
 export async function decideCommand(args: Args, ctx: CliContext): Promise<number> {
   const usage = 'orbit decide <run-id> <question-id> <answer...>';
   const [runRef, qRef, ...rest] = args.positionals;
@@ -43,10 +62,11 @@ export async function decideCommand(args: Args, ctx: CliContext): Promise<number
     const result = answerQuestion(db, dirname(run.policyPath), q.id, answer, by, ctx.clock);
     const remaining = openQuestions(db, run.id);
     if (args.bool('json')) {
-      json(ctx.io, { run_id: run.id, question_id: q.id, answer: result.question.answer, chosen_option: result.chosenOption?.label ?? null, decision_id: result.decision.id, unblocks: result.unblocks, open_questions: remaining.map((x) => x.id), run_state: run.state });
+      json(ctx.io, { run_id: run.id, question_id: q.id, answer: result.question.answer, chosen_option: result.chosenOption?.label ?? null, decision_id: result.decision.id, unblocks: result.unblocks, baseline_exception: result.baselineException, open_questions: remaining.map((x) => x.id), run_state: run.state });
       return EXIT.OK;
     }
     line(ctx.io, `recorded ${result.decision.id}: ${result.chosenOption ? `chose option ${result.chosenOption.label}` : 'free-text answer'} by ${by}`);
+    if (result.baselineException) line(ctx.io, describeBaselineException(result.baselineException));
     if (result.unblocks.length > 0) line(ctx.io, `unblocks: ${result.unblocks.join(', ')}`);
     if (remaining.length > 0) line(ctx.io, `${remaining.length} question(s) still open: ${remaining.map((x) => x.id).join(', ')}`);
     if (run.state === 'BLOCKED') line(ctx.io, `The run is BLOCKED. Continue it with: orbit resume ${run.id}`);

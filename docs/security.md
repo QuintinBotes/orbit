@@ -67,10 +67,13 @@ The hooks assist. The controller's diff inspection is the gate.
 
 State these plainly to yourself before running unattended.
 
-- **sandbox-runtime has no CPU, memory or process-count limits.** It confines
-  filesystem and network access only. Orbit enforces wall time by killing the
-  process group. Use `isolation.provider: container` for resource limits.
-  `orbit doctor` and every evidence record state this gap.
+- **sandbox-runtime confines filesystem and network, not resources.** Orbit
+  adds wall time (it kills the process group), `ulimit` limits for CPU time,
+  process count and file size, and a resident-memory watchdog on the process
+  group (`isolation.limits.memory_mb`). The watchdog samples, so a fast
+  allocation can overshoot before the group is killed, and the process limit is
+  per user id. Use `isolation.provider: container` for a hard memory, CPU and
+  pids ceiling. See [resource limits](operations.md#resource-limits-per-isolation-provider).
 - **Reads are broad.** Under sandbox-runtime, reads are allowed everywhere except
   denied paths, so the rest of your home directory is readable by a worker.
   Egress is filtered by host name, and traffic to an allowed host is not inspected.
@@ -95,6 +98,17 @@ State these plainly to yourself before running unattended.
   to Codex when `providers.codex.data_policy_eligible` is true. Decide that per repository.
 - **Fable models** are excluded by default because headless Claude Code bills
   them without a consent prompt.
+
+## Release mode
+
+Merge and production deploy are off in every mode except `release`, and each
+needs its own action flag. They run only in the controller, with a token no
+worker holds, as ledgered actions with intent, receipt and reconciliation.
+Marking a draft pull request ready, rebasing a moved task branch
+(`actions.rebase_task_branch`, default false) and verifying an unknown deploy
+(`release.environments[*].verify_command`) are separate, explicit steps. See
+[release mode safeguards](operations.md#release-mode-safeguards). A native
+`/goal` in an interactive session never completes a run; the controller does.
 
 ## Learning layer
 

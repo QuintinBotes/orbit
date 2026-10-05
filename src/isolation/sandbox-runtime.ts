@@ -3,7 +3,8 @@ import { tmpdir, userInfo } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
 import type { IsolationLimits } from '../policy/types.ts';
-import { describeLimits, hasLimits, withResourceLimits } from './limits.ts';
+import { describeLimits, hasLimits, hasMemoryLimit, withResourceLimits } from './limits.ts';
+import { DEFAULT_MEMORY_SAMPLE_MS, withMemoryWatchdog, type MemoryWatchdogOptions } from './memory.ts';
 import type { IsolationProvider, SandboxProfile, WrappedCommand } from './types.ts';
 import {
   assertArgv,
@@ -153,6 +154,8 @@ export interface SandboxRuntimeOptions {
   limits?: IsolationLimits | null;
   /** bash used to apply the limits; undefined searches the usual locations, null means there is none (tests). */
   limitShell?: string | null;
+  /** The memory watchdog's `ps`, node and sampling interval; tests only. */
+  memory?: MemoryWatchdogOptions;
 }
 
 export type SrtSource = 'configured' | 'PATH' | 'install';
@@ -293,8 +296,11 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
       const file = join(dir, 'settings.json');
       writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
       chmodSync(file, 0o600);
+      const srtArgv = [srt.path, '--settings', file, '--', ...(launch.restore.length ? ['/usr/bin/env', '--', ...launch.restore] : []), ...command];
+      // Outside the sandbox and in the same process group as the command, so a kill of the group stops both.
+      const memoryMb = this.opts.limits?.memory_mb ?? null;
       return {
-        argv: [srt.path, '--settings', file, '--', ...(launch.restore.length ? ['/usr/bin/env', '--', ...launch.restore] : []), ...command],
+        argv: withMemoryWatchdog(srtArgv, memoryMb, this.opts.memory),
         env: launch.env,
         cleanup,
         limitations: limitationsFor(profile, this.platform, this.opts.limits),
@@ -466,8 +472,11 @@ function launcherPathEntryIsSafe(entry: string, reach: SandboxReach): boolean {
 
 function limitationsFor(profile: SandboxProfile, platform: NodeJS.Platform, limits?: IsolationLimits | null): string[] {
   const out = [...SRT_LIMITATIONS];
-  if (hasLimits(limits)) {
-    out[0] = `sandbox-runtime confines filesystem access and network egress; isolation.limits adds ulimit hard limits inside the sandbox (${describeLimits(limits).join(', ')}). Memory is not limited, and the process limit counts every process of the user id.`;
+  const parts: string[] = [];
+  if (hasLimits(limits) && describeLimits(limits).length > 0) parts.push(`isolation.limits adds ulimit hard limits inside the sandbox (${describeLimits(limits).join(', ')}); the process limit counts every process of the user id`);
+  if (hasMemoryLimit(limits)) parts.push(`a watchdog kills the command's processes when their summed resident memory passes ${limits.memory_mb} MB (sampled every ${DEFAULT_MEMORY_SAMPLE_MS} ms, so a fast allocation can overshoot first; shared pages count once per process; processes that detach from the command's tree are not seen)`);
+  if (parts.length > 0) {
+    out[0] = `sandbox-runtime confines filesystem access and network egress; ${parts.join('; ')}.${hasMemoryLimit(limits) ? '' : ' Memory is not limited.'}`;
   }
   if (platform === 'linux') out.push(LINUX_LIMITATION);
   const { memoryMb, cpus, pids } = profile.limits;

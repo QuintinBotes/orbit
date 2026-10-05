@@ -1,10 +1,15 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { systemClock } from '../../../src/core/clock.ts';
 import { OrbitError } from '../../../src/core/errors.ts';
 import { acquireLease, getLease, getRun, releaseLease, transition } from '../../../src/controller/run-store.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
+import { hashObject } from '../../../src/core/hash.ts';
+import { startRun } from '../../../src/controller/start.ts';
+import { verifySnapshot } from '../../../src/policy/snapshot.ts';
+import { raiseBaselineExceptionQuestions } from '../../../src/inquisition/baseline-exception.ts';
+import { config as fixtureConfig, contract as fixtureContract } from '../contract/fixtures.ts';
 import { makeLab, type Lab } from './lab.ts';
 
 const labs: Lab[] = [];
@@ -200,6 +205,28 @@ describe('orbit decide and questions', () => {
     const viaStdin = await l.cli(['decide', run.id, q2.id, '-'], {}, 'round to cents\n');
     expect(viaStdin.code, viaStdin.err).toBe(0);
     expect(l.db().get<{ answer: string }>('SELECT answer FROM questions WHERE id = ?', q2.id)?.answer).toBe('round to cents');
+  });
+
+  it('says what an answer to a baseline-exception question did to the contract (G27)', async () => {
+    const l = lab();
+    const run = startRun({ db: l.db(), repoRoot: l.repo, goal: 'Add CSV export', config: fixtureConfig(), clock: systemClock });
+    const runDir = dirname(run.policyPath);
+    const snap = verifySnapshot(run.policyPath, run.policyHash);
+    const contract = fixtureContract(snap, { policy_hash: run.policyHash });
+    l.db().run('UPDATE runs SET contract_json = ?, contract_hash = ? WHERE id = ?', JSON.stringify(contract), hashObject(contract), run.id);
+    const failure = { checkId: 'lint', fingerprint: 'test-failure:lint:9f2c41d07a33b2e1', excerpt: 'src/export.ts:12 error' };
+    writeFileSync(join(runDir, 'baseline.json'), JSON.stringify({ schema: 'orbit.baseline/1', runId: run.id, failures: [failure], complete: true }));
+    const [asked, other] = [failure, { ...failure, checkId: 'typecheck', fingerprint: 'test-failure:typecheck:0123456789abcdef' }].map((f) => raiseBaselineExceptionQuestions({ db: l.db(), clock: systemClock, runId: run.id, runDir }, { failures: [f], baseRevision: 'a'.repeat(40) }).raised[0]!.question);
+
+    const rejected = await l.cli(['decide', run.id, other!.id, 'Reject']);
+    expect(rejected.code, rejected.err).toBe(0);
+    expect(rejected.out).toMatch(/baseline exception for check typecheck not accepted .*the contract is unchanged/);
+
+    const approved = await l.cli(['decide', run.id, asked!.id, 'Approve', '--json']);
+    expect(approved.code, approved.err).toBe(0);
+    expect(JSON.parse(approved.out)).toMatchObject({ baseline_exception: { checkId: 'lint', status: 'applied' } });
+    const text = await l.cli(['decide', run.id, asked!.id, 'Approve']);
+    expect(text.out).toMatch(/baseline exception for check lint was already in the contract/);
   });
 
   it('refuses answers from a model, a worker or a subsystem', async () => {

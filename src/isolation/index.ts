@@ -11,7 +11,9 @@ export { ContainerIsolation, DEFAULT_CONTAINER_IMAGE, DEFAULT_CONTAINER_LIMITS, 
 export type { ContainerOptions, ContainerWrappedCommand } from './container.ts';
 export { NoIsolation, noIsolationLimitations } from './none.ts';
 export type { NoIsolationOptions } from './none.ts';
-export { withResourceLimits, dockerUlimitArgs, limitScript, hasLimits, describeLimits, findLimitShell, LIMIT_SHELLS, LIMIT_WRAPPER_NAME } from './limits.ts';
+export { withResourceLimits, dockerUlimitArgs, limitScript, hasLimits, hasMemoryLimit, describeLimits, findLimitShell, LIMIT_SHELLS, LIMIT_WRAPPER_NAME } from './limits.ts';
+export { withMemoryWatchdog, findPs, resourceLimitNote, RESOURCE_LIMIT_EXIT_CODE, RESOURCE_LIMIT_MARKER, MEMORY_WATCHDOG_SOURCE, DEFAULT_MEMORY_SAMPLE_MS } from './memory.ts';
+export type { MemoryWatchdogOptions } from './memory.ts';
 export {
   profileForWorker,
   profileForCheck,

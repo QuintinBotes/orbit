@@ -119,6 +119,20 @@ describe('GhCliClient (stubbed runner)', () => {
     return new GhCliClient({ repo: 'acme/app', env, runner });
   }
 
+  it('marks a pull request ready with gh pr ready and reads it back, and refuses without the scoped token', async () => {
+    const seen: (readonly string[])[] = [];
+    const c = client(async (argv) => {
+      seen.push(argv);
+      return res({ stdout: argv[2] === 'view' ? JSON.stringify({ ...PR, isDraft: false }) : '' });
+    });
+    const pr = await c.markPullRequestReady(7);
+    expect(pr.isDraft).toBe(false);
+    expect(seen[0]).toEqual(['gh', 'pr', 'ready', '7', '-R', 'acme/app']);
+    expect(seen[1]!.slice(0, 3)).toEqual(['gh', 'pr', 'view']);
+    await expect(client(async () => res({}), { PATH: '/bin' }).markPullRequestReady(7)).rejects.toMatchObject({ code: 'AUTH_MISSING' });
+    await expect(c.markPullRequestReady(0)).rejects.toMatchObject({ code: 'INTERNAL' });
+  });
+
   it('lists PRs by exact head with the verified flags and a scrubbed environment', async () => {
     const seen: { argv: readonly string[]; env: Record<string, string | undefined> }[] = [];
     const c = client(async (argv, o) => {
@@ -244,6 +258,18 @@ describe('FakeGitHub', () => {
     await expect(fake.createPullRequest({ head: 'orbit/r1', base: 'main', title: 't', body: 'b', draft: true })).rejects.toThrow(/already exists/);
     expect((await fake.findPullRequest('orbit/r1'))?.number).toBe(1);
     expect(await fake.findPullRequest('orbit/other')).toBeNull();
+  });
+
+  it('marks a draft ready (counted once), refuses a closed PR and can lose the response after doing it', async () => {
+    await fake.createPullRequest({ head: 'orbit/r1', base: 'main', title: 't', body: 'b', draft: true });
+    fake.setFaults({ loseReadyResponse: 1 });
+    await expect(fake.markPullRequestReady(1)).rejects.toMatchObject({ code: 'PROVIDER_TRANSIENT' });
+    expect((await fake.findPullRequest('orbit/r1'))?.isDraft).toBe(false);
+    expect((await fake.markPullRequestReady(1)).isDraft).toBe(false);
+    expect(fake.state.readies).toBe(1);
+    await expect(fake.markPullRequestReady(99)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    fake.setPullRequestState(1, 'CLOSED');
+    await expect(fake.markPullRequestReady(1)).rejects.toMatchObject({ code: 'DELIVERY_FAILED' });
   });
 
   it('shares state across instances on the same file (a restarted controller)', async () => {

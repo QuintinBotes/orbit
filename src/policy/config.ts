@@ -109,6 +109,7 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
       test: true,
       commit: delivering,
       push_task_branch: delivering,
+      rebase_task_branch: false,
       open_pull_request: delivering,
       read_ci_logs: delivering,
       repair_ci: delivering,
@@ -277,18 +278,24 @@ export function defaultStaticSecurity(): StaticSecurityConfig {
   return { block_severities: ['critical', 'high'], exceptions: [] };
 }
 
+/**
+ * RLIMIT_NPROC counts every process of the user id, not only the command's, so
+ * a low default stops `npm run` from forking on a busy desktop (a developer
+ * account commonly runs 600 or more). 2048 stays under macOS's default
+ * per-user ceiling while leaving room for the account's own processes.
+ */
 export function defaultIsolationLimits(): IsolationLimits {
-  return { cpu_seconds: null, max_processes: null, max_file_mb: null };
+  return { cpu_seconds: 3600, max_processes: 2048, max_file_mb: 2048, memory_mb: 4096 };
 }
 
 /** Filled in for a `release:` block that leaves its merge settings out. */
 export function defaultReleaseMerge(): ReleaseConfig['merge'] {
-  return { method: 'squash', require_checks: [], delete_branch: true };
+  return { method: 'squash', require_checks: [], delete_branch: true, mark_ready: true };
 }
 
 /** Filled in for each release environment; deploy_command has no default. */
 export function defaultReleaseEnvironment(baseBranch: string): Omit<ReleaseEnvironment, 'deploy_command'> {
-  return { allowed_branches: [baseBranch], require_ci_green: true, network_hosts: [], timeout_seconds: 1800 };
+  return { verify_command: null, allowed_branches: [baseBranch], require_ci_green: true, network_hosts: [], timeout_seconds: 1800 };
 }
 
 /**
@@ -308,7 +315,8 @@ export function dependencyAuditPolicy(config: Pick<OrbitConfig, 'dependencies'>)
 }
 
 export function isolationLimits(config: Pick<OrbitConfig, 'isolation'>): IsolationLimits {
-  return config.isolation.limits ?? defaultIsolationLimits();
+  // A snapshot written before a limit existed reads that limit with its default.
+  return { ...defaultIsolationLimits(), ...(config.isolation.limits ?? {}) };
 }
 
 function defaultProvider(id: string, eligible: boolean): ProviderConfig {
@@ -461,6 +469,7 @@ function normalizeRelease(raw: unknown, baseBranch: string, problems: string[]):
       const env: Record<string, unknown> = { ...defaultReleaseEnvironment(baseBranch), ...def };
       if (def.deploy_command === undefined) problems.push(`release.environments.${name}.deploy_command: required`);
       normalizeArgvField(env, ['deploy_command'], `release.environments.${name}.deploy_command`, problems);
+      normalizeArgvField(env, ['verify_command'], `release.environments.${name}.verify_command`, problems);
       envs[name] = env;
     }
     out.environments = envs;
@@ -627,6 +636,7 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
     for (const [name, env] of envs) {
       const where = `release.environments.${name}`;
       if (env.deploy_command.length > 0 && env.deploy_command[0]!.trim() === '') problems.push(`${where}.deploy_command: the program must not be empty`);
+      if (env.verify_command && env.verify_command[0]!.trim() === '') problems.push(`${where}.verify_command: the program must not be empty`);
       env.network_hosts.forEach((h, i) => {
         const p = hostEntryProblem(h);
         if (p) problems.push(`${where}.network_hosts[${i}]: ${JSON.stringify(h)} ${p}`);
@@ -648,6 +658,7 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
   function deliveryChainIsConsistent(c, problems) {
     const a = c.actions;
     if (a.push_task_branch && !a.commit) problems.push('actions.push_task_branch: requires actions.commit (there is nothing to push without a commit)');
+    if (a.rebase_task_branch && !a.commit) problems.push('actions.rebase_task_branch: requires actions.commit (a rebase rewrites the task branch commits)');
     if (a.open_pull_request && !a.push_task_branch) problems.push('actions.open_pull_request: requires actions.push_task_branch (a pull request needs a pushed task branch)');
     if (a.repair_ci && !a.push_task_branch) problems.push('actions.repair_ci: requires actions.push_task_branch (CI runs on a pushed task branch)');
     if (a.repair_ci && !a.read_ci_logs) problems.push('actions.repair_ci: requires actions.read_ci_logs (repairs are driven by the CI logs)');

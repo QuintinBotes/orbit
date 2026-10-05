@@ -1,10 +1,12 @@
 /**
  * `orbit verify [run-id]`: run the independent verification for a run's latest
  * candidate and print a verdict per contract criterion with the artifacts it
- * rests on. It uses the same trusted pieces as the controller's VERIFYING step
- * (a clean checkout of the exact candidate tree, the frozen policy's checks,
- * the scope inspection, the evidence evaluation), takes a short CLI lease so
- * it never runs beside a live controller, and never moves the run's state.
+ * rests on. It collects evidence with the controller's own function
+ * (controller/verification.collectVerificationEvidence: a clean checkout of
+ * the exact candidate tree, the frozen policy's checks, static security judged
+ * under the frozen static_security policy, the evidence evaluation), so its
+ * verdict matches VERIFYING's. It takes a short CLI lease so it never runs
+ * beside a live controller, and never moves the run's state.
  *
  * Check results are durable and bound to the candidate and the check
  * configuration, so a check that already ran for this candidate is reported
@@ -12,20 +14,12 @@
  */
 import { join, relative } from 'node:path';
 import { OrbitError } from '../../core/errors.ts';
-import { compileGlobs } from '../../policy/globs.ts';
 import { inspectScope } from '../../policy/scope.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../../evidence/candidate.ts';
-import { installDependencies } from '../../evidence/baseline.ts';
-import { git } from '../../evidence/git.ts';
-import { candidateEvidenceDir, runChecks, type RunnerContext } from '../../evidence/runner.ts';
-import { evaluateEvidence, type UiResultInput } from '../../evidence/report.ts';
-import type { CheckResult, EvidenceReport } from '../../evidence/types.ts';
-import { runUiChecks, toEvidenceUi } from '../../ui/runner.ts';
-import type { UiRunResult } from '../../ui/types.ts';
-import { loadRunContext, homeOf, runWorktreeRoot, type RunContext } from '../../controller/context.ts';
+import type { EvidenceReport } from '../../evidence/types.ts';
+import { loadRunContext, runWorktreeRoot, type RunContext } from '../../controller/context.ts';
 import { listRuns, renewLease, type RunRecord } from '../../controller/run-store.ts';
-import { sastCheckIds, scanCandidateSecrets } from '../../controller/security.ts';
-import { staticSecurityGate, uiGate } from '../../controller/gates.ts';
+import { collectVerificationEvidence } from '../../controller/verification.ts';
 import type { GoalContract } from '../../contract/types.ts';
 import type { Args } from '../args.ts';
 import { findRunByPrefix, openState, resolveRepo, withCliLease, type CliContext } from '../context.ts';
@@ -108,59 +102,14 @@ export async function verifyCandidate(rc: RunContext): Promise<VerifyOutcome> {
   await cleanupCandidateCheckout(rc.run.repoRoot, checkoutDir).catch(() => {});
   await materializeCandidate(rc.run.repoRoot, cand.commitSha, checkoutDir, { readOnly: false });
   try {
-    const runner: RunnerContext = {
-      db: rc.db,
-      run: { id: rc.run.id, policyHash: rc.run.policyHash },
-      snapshot,
-      isolation: rc.isolation(),
-      checkoutDir,
-      runDir: rc.runDir,
-      clock: rc.clock,
-      detachSignal: rc.signal,
-      pollMs: rc.timing.checkPollMs,
-      killGraceMs: rc.timing.killGraceMs,
-      homeDir: homeOf(rc.deps),
-    };
-    const install = await installDependencies({ ...runner, candidate: cand });
-    const commandChecks = contract.required_check_ids.filter((id) => snapshot.config.checks[id]?.kind === 'command');
-    const results: CheckResult[] = [...install.results];
-    if (install.skipped || install.ok) results.push(...(await runChecks({ ...runner, candidate: cand, checkIds: commandChecks })));
-
-    const changed = await changedPaths(rc.run.repoRoot, rc.run.baseRevision, cand.commitSha);
-    const ui = snapshot.config.ui;
-    const uiRequired = contract.acceptance_criteria.some((c) => c.ui === true) || (ui !== null && ui.required_when_ui_changes && changed.some(compileGlobs(ui.ui_paths, { nocase: false })));
-    let uiResult: UiRunResult | null = null;
-    if (uiRequired && ui && ui.journey_check_ids.length > 0) {
-      uiResult = await runUiChecks({ checkoutDir, snapshot, candidate: cand, uiConfig: ui, journeyCheckIds: ui.journey_check_ids, isolation: rc.isolation(), outDir: join(candidateEvidenceDir(rc.runDir, cand.seq), 'ui'), clock: rc.clock, abortSignal: rc.signal, homeDir: homeOf(rc.deps), hostEnv: rc.deps.hostEnv ?? process.env });
-    }
-    const uiG = uiGate({ required: uiRequired, configured: ui !== null && ui.journey_check_ids.length > 0, result: uiResult });
-
-    const scan = await scanCandidateSecrets({ repoRoot: rc.run.repoRoot, baseRev: rc.run.baseRevision, commit: cand.commitSha, outDir: join(candidateEvidenceDir(rc.runDir, cand.seq), 'security'), ...(rc.deps.gitleaksPath === undefined ? {} : { gitleaksPath: rc.deps.gitleaksPath }), hostPath: (rc.deps.hostEnv ?? process.env).PATH });
-    const sast = sastCheckIds(snapshot).map((id) => ({ checkId: id, status: results.find((r) => r.checkId === id)?.status ?? null }));
-    const security = staticSecurityGate({ scan, sast });
-
-    const uiResults: UiResultInput[] = uiResult ? toEvidenceUi(uiResult) : [];
-    const evaluation = evaluateEvidence({ contract, candidate: cand, checkResults: results, uiResults, scope, snapshot, uiRequired });
-    const report = evaluation.report;
-    const failReasons = [...evaluation.failReasons];
-    report.unverified.push(...security.notes, ...uiG.notes.filter((n) => !report.unverified.includes(n)));
-    if (security.status === 'fail') {
-      report.verdict = 'FAIL';
-      failReasons.push(...security.reasons);
-    }
-    if (uiG.status === 'fail' && report.verdict === 'PASS') {
-      report.verdict = 'FAIL';
-      failReasons.push(...uiG.reasons);
-    }
-    return { run: rc.run, candidateSeq: cand.seq, candidateId: cand.id, treeHash: cand.treeHash, report, failReasons, incompleteReasons: evaluation.incompleteReasons };
+    // The same evidence function as VERIFYING, so findings are judged under the same frozen policy.
+    const collected = await collectVerificationEvidence(rc, cand, { checkoutDir, scope, exploration: false });
+    if ('stopped' in collected) throw new OrbitError('INTERNAL', 'verification stopped without a checkpoint');
+    const { report, failReasons, incompleteReasons } = collected.evidence;
+    return { run: rc.run, candidateSeq: cand.seq, candidateId: cand.id, treeHash: cand.treeHash, report, failReasons, incompleteReasons };
   } finally {
     await cleanupCandidateCheckout(rc.run.repoRoot, checkoutDir).catch(() => {});
   }
-}
-
-async function changedPaths(repoRoot: string, baseRev: string, commit: string): Promise<string[]> {
-  const out = await git(repoRoot, ['diff', '--name-only', '-z', '--no-renames', baseRev, commit, '--']);
-  return out.split('\0').filter((p) => p.length > 0);
 }
 
 function print(ctx: CliContext, repo: string, asJson: boolean, o: VerifyOutcome, contractJson: string): number {

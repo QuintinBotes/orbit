@@ -5,7 +5,7 @@ import { resetFaults } from '../../../src/core/faults.ts';
 import { NoIsolation } from '../../../src/isolation/none.ts';
 import type { OrbitConfig } from '../../../src/policy/types.ts';
 import { deliver } from '../../../src/delivery/deliver.ts';
-import { performRelease, type ReleaseInput } from '../../../src/delivery/release.ts';
+import { performRelease, resolveDeploy, unresolvedDeploys, type ReleaseInput } from '../../../src/delivery/release.ts';
 import type { DeliveryCandidate, DeliveryEvidence, DeliveryReview } from '../../../src/delivery/gate.ts';
 import { git, makeLab, type Lab } from './harness.ts';
 
@@ -37,10 +37,10 @@ function releaseLab(tweak: (c: OrbitConfig) => void = () => {}): Lab {
       cfg.isolation = { ...cfg.isolation, provider: 'none', allow_unisolated: true };
       cfg.network.allowed_hosts = [...cfg.network.allowed_hosts, 'deploy.example.com'];
       cfg.release = {
-        merge: { method: 'squash', require_checks: ['test'], delete_branch: true },
+        merge: { method: 'squash', require_checks: ['test'], delete_branch: true, mark_ready: true },
         environments: {
-          staging: { deploy_command: RECORD, allowed_branches: ['main'], require_ci_green: true, network_hosts: ['deploy.example.com'], timeout_seconds: 60 },
-          preview: { deploy_command: RECORD, allowed_branches: ['orbit/*'], require_ci_green: false, network_hosts: [], timeout_seconds: 60 },
+          staging: { deploy_command: RECORD, allowed_branches: ['main'], require_ci_green: true, network_hosts: ['deploy.example.com'], timeout_seconds: 60, verify_command: null },
+          preview: { deploy_command: RECORD, allowed_branches: ['orbit/*'], require_ci_green: false, network_hosts: [], timeout_seconds: 60, verify_command: null },
         },
       };
       tweak(cfg);
@@ -253,8 +253,8 @@ describe('performRelease: deploy', () => {
 
   it('refuses an environment the profile does not name, a branch it does not allow, and a host the policy does not allow', async () => {
     const l = releaseLab((cfg) => {
-      cfg.release!.environments.locked = { deploy_command: RECORD, allowed_branches: ['release/*'], require_ci_green: false, network_hosts: [], timeout_seconds: 60 };
-      cfg.release!.environments.leaky = { deploy_command: RECORD, allowed_branches: ['orbit/*'], require_ci_green: false, network_hosts: ['exfil.example.net'], timeout_seconds: 60 };
+      cfg.release!.environments.locked = { deploy_command: RECORD, allowed_branches: ['release/*'], require_ci_green: false, network_hosts: [], timeout_seconds: 60, verify_command: null };
+      cfg.release!.environments.leaky = { deploy_command: RECORD, allowed_branches: ['orbit/*'], require_ci_green: false, network_hosts: ['exfil.example.net'], timeout_seconds: 60, verify_command: null };
     });
     const d = await delivered(l);
     const base = { contractMerge: false };
@@ -319,5 +319,238 @@ describe('performRelease: deploy', () => {
     const r = await performRelease(input(l, d, { contractMerge: false, environment: 'preview' }));
     expect(r.deploy?.sha).toBe(d.commit);
     expect(deploys(l)).toHaveLength(1);
+  });
+});
+
+describe('performRelease: a draft pull request (G48)', () => {
+  const draftLab = (mark?: boolean): Lab =>
+    releaseLab((cfg) => {
+      cfg.delivery.pull_request = 'draft';
+      if (mark !== undefined) cfg.release!.merge.mark_ready = mark;
+    });
+
+  it('marks the draft ready as its own ledgered action before the merge, then merges', async () => {
+    const l = draftLab();
+    const d = await delivered(l);
+    expect(l.fake.state.prs[0]!.isDraft).toBe(true);
+    l.fake.scriptCi(d.commit, [[{ name: 'test', bucket: 'pass' }]]);
+
+    const r = await performRelease(input(l, d));
+    expect(r.status).toBe('released');
+    expect(r.merge).toMatchObject({ number: d.pr, headSha: d.commit });
+    expect(kinds(l)).toContain('pr_ready:SUCCEEDED');
+    expect(kinds(l)).toContain('merge:SUCCEEDED');
+    const order = l.ledger().list(l.runId).map((a) => a.kind);
+    expect(order.indexOf('pr_ready')).toBeGreaterThan(-1);
+    expect(order.indexOf('pr_ready')).toBeLessThan(order.indexOf('merge'));
+    expect(l.fake.state.readies).toBe(1);
+    expect(l.ledger().list(l.runId, { kind: 'pr_ready' })[0]).toMatchObject({ state: 'SUCCEEDED', commitSha: d.commit, treeHash: d.c.treeHash });
+
+    // Idempotent: nothing is marked ready or merged a second time.
+    await performRelease(input(l, d));
+    expect(l.fake.state.readies).toBe(1);
+    expect(l.fake.state.merges).toBe(1);
+  });
+
+  it('reconciles a lost ready response by reading the pull request, marking it ready once', async () => {
+    const l = draftLab();
+    const d = await delivered(l);
+    l.fake.scriptCi(d.commit, [[{ name: 'test', bucket: 'pass' }]]);
+    l.fake.setFaults({ loseReadyResponse: 1 });
+    const r = await performRelease(input(l, d));
+    expect(r.status).toBe('released');
+    expect(l.fake.state.calls.filter((c) => c === 'markPullRequestReady')).toHaveLength(1);
+    expect(l.ledger().list(l.runId, { kind: 'pr_ready' })[0]).toMatchObject({ state: 'SUCCEEDED', attempts: 1 });
+  });
+
+  it('with mark_ready off a draft refuses the merge with that reason and changes nothing on the host', async () => {
+    const l = draftLab(false);
+    const d = await delivered(l);
+    l.fake.scriptCi(d.commit, [[{ name: 'test', bucket: 'pass' }]]);
+    await expect(performRelease(input(l, d))).rejects.toMatchObject({ code: 'DELIVERY_FAILED', message: expect.stringMatching(/draft and release\.merge\.mark_ready is false/), details: { definitive: true } });
+    expect(l.fake.state.readies ?? 0).toBe(0);
+    expect(l.fake.state.merges).toBe(0);
+    expect(l.fake.state.prs[0]!.isDraft).toBe(true);
+  });
+
+  it('a ready pull request is never marked ready again', async () => {
+    const l = releaseLab();
+    const d = await delivered(l);
+    l.fake.scriptCi(d.commit, [[{ name: 'test', bucket: 'pass' }]]);
+    await performRelease(input(l, d));
+    expect(l.ledger().list(l.runId, { kind: 'pr_ready' })).toEqual([]);
+    expect(l.fake.state.calls).not.toContain('markPullRequestReady');
+  });
+});
+
+describe('performRelease: every environment the release names (G50)', () => {
+  const twoEnvLab = (deployAllowed = true): Lab =>
+    releaseLab((cfg) => {
+      cfg.actions.deploy_production = deployAllowed;
+      cfg.release!.merge.require_checks = [];
+      cfg.release!.environments = {
+        staging: { deploy_command: RECORD, allowed_branches: ['main'], require_ci_green: false, network_hosts: [], timeout_seconds: 60, verify_command: null },
+        canary: { deploy_command: RECORD, allowed_branches: ['main'], require_ci_green: false, network_hosts: [], timeout_seconds: 60, verify_command: null },
+        preview: { deploy_command: RECORD, allowed_branches: ['orbit/*'], require_ci_green: false, network_hosts: [], timeout_seconds: 60, verify_command: null },
+      };
+    });
+
+  it("'all' deploys the merge commit to each defined environment the base branch is allowed for, in order, and says why it skipped the rest", async () => {
+    const l = twoEnvLab();
+    const d = await delivered(l);
+    const r = await performRelease(input(l, d, { environments: 'all' }));
+    expect(r.status).toBe('released');
+    const mergeSha = r.merge!.mergeCommitSha!;
+    expect(r.deploys.map((x) => [x.environment, x.sha])).toEqual([['staging', mergeSha], ['canary', mergeSha]]);
+    expect(r.deploy?.environment).toBe('staging');
+    expect(r.deploySkipped).toMatch(/environment preview is not deployed from main/);
+    expect(deploys(l)).toEqual([`${mergeSha} widget v1`, `${mergeSha} widget v1`]);
+    expect(l.ledger().list(l.runId, { kind: 'deploy' }).map((a) => (a.target as { environment: string }).environment)).toEqual(['staging', 'canary']);
+
+    // Idempotent: a second call deploys nothing more.
+    const again = await performRelease(input(l, d, { environments: 'all' }));
+    expect(again.deploys).toHaveLength(2);
+    expect(deploys(l)).toHaveLength(2);
+  });
+
+  it("'all' without a merge deploys to the environments that allow the task branch", async () => {
+    const l = twoEnvLab();
+    const d = await delivered(l);
+    const r = await performRelease(input(l, d, { contractMerge: false, environments: 'all' }));
+    expect(r.deploys.map((x) => x.environment)).toEqual(['preview']);
+    expect(r.deploySkipped).toMatch(/staging is not deployed from orbit\//);
+    expect(deploys(l)).toEqual([`${d.commit} widget v1`]);
+  });
+
+  it("'all' skips every environment, with the reason, when deploy_production is not authorized", async () => {
+    const l = twoEnvLab(false);
+    const d = await delivered(l);
+    const r = await performRelease(input(l, d, { contractMerge: false, environments: 'all' }));
+    expect(r.deploys).toEqual([]);
+    expect(r.deploySkipped).toMatch(/deploying is not authorized/);
+    expect(deploys(l)).toEqual([]);
+  });
+
+  it('explicitly named environments are strict: a branch the first does not allow refuses the whole release before it deploys anything', async () => {
+    const l = twoEnvLab();
+    const d = await delivered(l);
+    await expect(performRelease(input(l, d, { contractMerge: false, environments: ['preview', 'staging'] }))).rejects.toMatchObject({ code: 'POLICY_DENIED', details: { rule: 'release.allowed_branches' } });
+    // preview ran before staging was refused; that is the order the caller asked for.
+    expect(deploys(l)).toEqual([`${d.commit} widget v1`]);
+  });
+
+  it("'all' with no environment defined says so", async () => {
+    const l = releaseLab((cfg) => void (cfg.release!.environments = {}));
+    const d = await delivered(l);
+    const r = await performRelease(input(l, d, { contractMerge: false, environments: 'all' }));
+    expect(r.deploys).toEqual([]);
+    expect(r.deploySkipped).toMatch(/no release environment is defined/);
+  });
+});
+
+describe('resolveDeploy: a deploy left UNKNOWN (G51)', () => {
+  // Exit 0 when $LIVE exists (the deploy took effect), 1 when it does not, 2 when $BROKEN exists (cannot tell).
+  const VERIFY = [node, '-e', "const fs=require('fs');process.exit(fs.existsSync(process.env.BROKEN)?2:fs.existsSync(process.env.LIVE)?0:1)"];
+
+  async function unknownDeploy(withVerify = true): Promise<{ l: Lab; d: Delivered; live: string; broken: string }> {
+    const l = releaseLab((cfg) => {
+      if (withVerify) cfg.release!.environments.preview!.verify_command = VERIFY;
+    });
+    const d = await delivered(l);
+    faults('delivery.deploy.after-execute=throw');
+    await expect(performRelease(input(l, d, { contractMerge: false, environment: 'preview' }))).rejects.toThrow();
+    faults('');
+    const outcome = join(l.dir, 'runs', l.runId, 'release', `deploy-preview-${d.commit.slice(0, 12)}`, 'outcome.json');
+    rmSync(outcome);
+    await expect(performRelease(input(l, d, { contractMerge: false, environment: 'preview' }))).rejects.toMatchObject({ details: { outcomeUnknown: true, environment: 'preview', sha: d.commit } });
+    return { l, d, live: join(l.dir, 'live'), broken: join(l.dir, 'broken') };
+  }
+
+  const resolve = (l: Lab, over: Partial<Parameters<typeof resolveDeploy>[0]> = {}) =>
+    resolveDeploy({ run: l.deliveryRun, snapshot: l.snapshot, ledger: l.ledger(), clock: l.clock, workDir: join(l.dir, 'runs', l.runId), resolution: 'verify', by: 'acme-operator', isolation: new NoIsolation(), ...over });
+
+  it('verify_command exit 0: the deploy is adopted, never run again, and the next release completes with its receipt', async () => {
+    const { l, d, live, broken } = await unknownDeploy();
+    writeFileSync(live, 'yes');
+    const r = await resolve(l, { deployEnv: { LIVE: live, BROKEN: broken } });
+    expect(r).toMatchObject({ verdict: 'deployed', via: 'verify_command', environment: 'preview', sha: d.commit });
+    expect(l.ledger().list(l.runId, { kind: 'deploy' })[0]).toMatchObject({ state: 'SUCCEEDED' });
+
+    const done = await performRelease(input(l, d, { contractMerge: false, environment: 'preview' }));
+    expect(done.deploy).toMatchObject({ environment: 'preview', sha: d.commit, exitCode: 0 });
+    expect(deploys(l)).toHaveLength(1);
+    const decisions = readFileSync(join(l.dir, 'runs', l.runId, 'decisions.jsonl'), 'utf8');
+    expect(decisions).toMatch(/release\.deploy-resolved/);
+  });
+
+  it('verify_command exit 1: the deploy did not take effect, so the next release runs it once more', async () => {
+    const { l, d, live, broken } = await unknownDeploy();
+    const r = await resolve(l, { deployEnv: { LIVE: live, BROKEN: broken } });
+    expect(r).toMatchObject({ verdict: 'not-deployed', via: 'verify_command' });
+    expect(deploys(l)).toHaveLength(1);
+
+    const done = await performRelease(input(l, d, { contractMerge: false, environment: 'preview' }));
+    expect(done.deploy?.sha).toBe(d.commit);
+    expect(deploys(l)).toHaveLength(2);
+    expect(l.ledger().list(l.runId, { kind: 'deploy' })[0]).toMatchObject({ state: 'SUCCEEDED', attempts: 2 });
+  });
+
+  it('any other verify_command result leaves the deploy unknown and changes nothing', async () => {
+    const { l, d, live, broken } = await unknownDeploy();
+    writeFileSync(broken, 'x');
+    const r = await resolve(l, { deployEnv: { LIVE: live, BROKEN: broken } });
+    expect(r.verdict).toBe('unknown');
+    expect(r.detail).toMatch(/exited 2/);
+    expect(l.ledger().list(l.runId, { kind: 'deploy' })[0]!.state).not.toBe('SUCCEEDED');
+    await expect(performRelease(input(l, d, { contractMerge: false, environment: 'preview' }))).rejects.toMatchObject({ details: { outcomeUnknown: true } });
+    expect(deploys(l)).toHaveLength(1);
+  });
+
+  it('an environment without a verify_command stays unknown under verify, and a person can settle it', async () => {
+    const { l, d } = await unknownDeploy(false);
+    const v = await resolve(l);
+    expect(v).toMatchObject({ verdict: 'unknown', detail: expect.stringMatching(/no verify_command/) });
+
+    const person = await resolve(l, { resolution: 'deployed', by: 'acme-operator' });
+    expect(person).toMatchObject({ verdict: 'deployed', via: 'person' });
+    const done = await performRelease(input(l, d, { contractMerge: false, environment: 'preview' }));
+    expect(done.deploy?.sha).toBe(d.commit);
+    expect(deploys(l)).toHaveLength(1);
+  });
+
+  it('a person reporting not-deployed lets the release run the command again', async () => {
+    const { l, d } = await unknownDeploy(false);
+    expect(await resolve(l, { resolution: 'not-deployed' })).toMatchObject({ verdict: 'not-deployed', via: 'person' });
+    await performRelease(input(l, d, { contractMerge: false, environment: 'preview' }));
+    expect(deploys(l)).toHaveLength(2);
+  });
+
+  it('a deploy that timed out is an unknown outcome that can be settled', async () => {
+    const l = releaseLab((cfg) => {
+      const e = cfg.release!.environments.preview!;
+      e.deploy_command = [node, '-e', "require('fs').appendFileSync(process.env.MARK, 'ran\\n'); setTimeout(() => {}, 30000)"];
+      e.timeout_seconds = 1;
+    });
+    const d = await delivered(l);
+    await expect(performRelease(input(l, d, { contractMerge: false, environment: 'preview' }))).rejects.toMatchObject({ details: { outcomeUnknown: true, environment: 'preview' } });
+    await expect(performRelease(input(l, d, { contractMerge: false, environment: 'preview' }))).rejects.toMatchObject({ details: { outcomeUnknown: true } });
+    expect(deploys(l)).toEqual(['ran']);
+    expect(l.ledger().list(l.runId, { kind: 'deploy' })[0]!.state).toBe('FAILED');
+    expect(unresolvedDeploys(l.ledger(), l.runId, join(l.dir, 'runs', l.runId))).toHaveLength(1);
+
+    await resolve(l, { resolution: 'deployed' });
+    const done = await performRelease(input(l, d, { contractMerge: false, environment: 'preview' }));
+    expect(done.deploy?.sha).toBe(d.commit);
+    expect(deploys(l)).toEqual(['ran']);
+  }, 60_000);
+
+  it('refuses when nothing is unresolved, outside release mode, and without a name when two are', async () => {
+    const l = releaseLab();
+    const d = await delivered(l);
+    await expect(resolve(l, { resolution: 'deployed' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await performRelease(input(l, d, { contractMerge: false, environment: 'preview' }));
+    await expect(resolve(l, { resolution: 'deployed' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    const other = { ...l.snapshot, config: { ...l.snapshot.config, mode: 'autonomous-delivery' as const } };
+    await expect(resolve(l, { snapshot: other, resolution: 'deployed' })).rejects.toMatchObject({ code: 'POLICY_DENIED' });
   });
 });

@@ -6,7 +6,7 @@ import { parse } from 'yaml';
 import Ajv2020Module from 'ajv/dist/2020.js';
 import addFormatsModule from 'ajv-formats';
 import schema from '../../../schemas/config.schema.json' with { type: 'json' };
-import { checkCategory, defaultConfig, loadConfig, modelPermitted, parseConfig, sastCheckIds, validateConfig } from '../../../src/policy/config.ts';
+import { checkCategory, defaultConfig, isolationLimits, loadConfig, modelPermitted, parseConfig, sastCheckIds, validateConfig } from '../../../src/policy/config.ts';
 import { isOrbitError, type OrbitError } from '../../../src/core/errors.ts';
 
 const TEMPLATE = readFileSync(new URL('../../../templates/config.yaml', import.meta.url), 'utf8');
@@ -392,7 +392,7 @@ describe('sections shared with the delivery, routing, UI, evidence and isolation
     expect(c.routing.output_budgets).toEqual({ planner: 4000, implementer: 8000, verifier: 3000, reviewer: 4000, inquisitor: 3000, curator: 2000, explorer: 2000 });
     expect(c.dependencies.audit).toEqual({ enabled: false, fail_on: 'high', license_allowlist: null, exceptions: [] });
     expect(c.static_security).toEqual({ block_severities: ['critical', 'high'], exceptions: [] });
-    expect(c.isolation.limits).toEqual({ cpu_seconds: null, max_processes: null, max_file_mb: null });
+    expect(c.isolation.limits).toEqual({ cpu_seconds: 3600, max_processes: 2048, max_file_mb: 2048, memory_mb: 4096 });
     expect(parseConfig('version: 1\nui: true\n').ui?.exploration).toEqual({ enabled: false, max_minutes: 15, budget_usd: 2 });
 
     const o = parseConfig(
@@ -410,14 +410,14 @@ describe('sections shared with the delivery, routing, UI, evidence and isolation
     expect(o.ui?.exploration).toEqual({ enabled: true, max_minutes: 15, budget_usd: 2 });
     expect(o.dependencies.audit?.exceptions).toEqual([{ id: 'GHSA-c2qf-rxjj-qqgw', reason: 'no reachable code path in our usage', expires: null }]);
     expect(o.static_security?.exceptions).toEqual([{ rule_id: 'generic-api-key', reason: 'documented sample key in fixtures', path_glob: 'tests/fixtures/**', expires: null }]);
-    expect(o.isolation.limits).toEqual({ cpu_seconds: 600, max_processes: null, max_file_mb: null });
+    expect(o.isolation.limits).toEqual({ cpu_seconds: 600, max_processes: 2048, max_file_mb: 2048, memory_mb: 4096 });
   });
 
   it('fills release defaults and checks release settings against the rest of the policy', () => {
     const c = parseConfig('version: 1\nmode: release\nactions: {merge: true, deploy_production: true}\nrelease: {environments: {production: {deploy_command: [npm, run, deploy], network_hosts: [api.github.com]}}}\n');
     expect(c.release).toEqual({
-      merge: { method: 'squash', require_checks: [], delete_branch: true },
-      environments: { production: { deploy_command: ['npm', 'run', 'deploy'], allowed_branches: ['main'], require_ci_green: true, network_hosts: ['api.github.com'], timeout_seconds: 1800 } },
+      merge: { method: 'squash', require_checks: [], delete_branch: true, mark_ready: true },
+      environments: { production: { deploy_command: ['npm', 'run', 'deploy'], verify_command: null, allowed_branches: ['main'], require_ci_green: true, network_hosts: ['api.github.com'], timeout_seconds: 1800 } },
     });
     const p = problems(() =>
       parseConfig(
@@ -452,7 +452,7 @@ describe('sections shared with the delivery, routing, UI, evidence and isolation
           'routing: {output_budgets: {implementer: 10, reviewer_x: 100}}',
           'dependencies: {audit: {fail_on: severe, exceptions: [{id: "anything goes", reason: short}]}}',
           'static_security: {block_severities: [info], exceptions: [{rule_id: x, reason: a long enough reason, path_glob: "../outside/**", expires: 31-12-2026}]}',
-          'isolation: {limits: {max_processes: 4, max_file_mb: 0}}',
+          'isolation: {limits: {max_processes: 4, max_file_mb: 0, memory_mb: 8}}',
           'ui: {exploration: {max_minutes: 0}}',
           '',
         ].join('\n'),
@@ -468,6 +468,7 @@ describe('sections shared with the delivery, routing, UI, evidence and isolation
     expect(p).toMatch(/static_security\.exceptions\[0\]\.expires: must match format "date"/);
     expect(p).toMatch(/isolation\.limits\.max_processes/);
     expect(p).toMatch(/isolation\.limits\.max_file_mb/);
+    expect(p).toMatch(/isolation\.limits\.memory_mb/);
     expect(p).toMatch(/ui\.exploration\.max_minutes: must be >= 1/);
   });
 });
@@ -485,5 +486,31 @@ describe('keys the policy cannot turn off (gap G26)', () => {
     const p = problems(() => parseConfig('version: 1\nretention: {redact_patterns: ["acme-[A-Z0-9]{8}", "(?:acme_key=)?[A-Za-z0-9]*"]}\n'));
     expect(p.join('\n')).toMatch(/retention\.redact_patterns\[1\]: matches the empty string/);
     expect(p.join('\n')).not.toMatch(/redact_patterns\[0\]/);
+  });
+});
+
+describe('limits, rebase and release keys added for the isolation and delivery layers (G24)', () => {
+  it('turns the limits on by default, lets a value be switched off with null, and keeps unset keys at their defaults', () => {
+    const d = parseConfig('version: 1\n');
+    expect(d.isolation.limits).toEqual({ cpu_seconds: 3600, max_processes: 2048, max_file_mb: 2048, memory_mb: 4096 });
+    expect(defaultConfig().isolation.limits).toEqual(d.isolation.limits);
+    expect(parseConfig('version: 1\nisolation: {limits: {memory_mb: null, max_processes: null}}\n').isolation.limits).toEqual({ cpu_seconds: 3600, max_processes: null, max_file_mb: 2048, memory_mb: null });
+    expect(isolationLimits({ isolation: { ...d.isolation, limits: { cpu_seconds: 5, max_processes: 7, max_file_mb: null } as never } })).toEqual({ cpu_seconds: 5, max_processes: 7, max_file_mb: null, memory_mb: 4096 });
+  });
+
+  it('defaults actions.rebase_task_branch to false and requires actions.commit for it', () => {
+    expect(parseConfig('version: 1\n').actions.rebase_task_branch).toBe(false);
+    expect(parseConfig('version: 1\nmode: autonomous-delivery\nactions: {rebase_task_branch: true}\n').actions.rebase_task_branch).toBe(true);
+    expect(problems(() => parseConfig('version: 1\nmode: autonomous\nactions: {rebase_task_branch: true}\n')).join('\n')).toMatch(/actions\.rebase_task_branch: requires actions\.commit/);
+    expect(problems(() => parseConfig('version: 1\nactions: {rebase_task_branch: yes-please}\n')).join('\n')).toMatch(/actions\.rebase_task_branch/);
+  });
+
+  it('reads release.merge.mark_ready and release.environments.*.verify_command, argv only', () => {
+    const c = parseConfig('version: 1\nmode: release\nactions: {merge: true, deploy_production: true}\nrelease: {merge: {mark_ready: false}, environments: {production: {deploy_command: [npm, run, deploy], verify_command: [npm, run, check-deploy]}}}\n');
+    expect(c.release?.merge.mark_ready).toBe(false);
+    expect(c.release?.environments.production?.verify_command).toEqual(['npm', 'run', 'check-deploy']);
+    const bad = problems(() => parseConfig('version: 1\nmode: release\nactions: {merge: true}\nrelease: {environments: {production: {deploy_command: [npm, run, deploy], verify_command: "npm run check"}, staging: {deploy_command: [x], verify_command: [""]}}}\n')).join('\n');
+    expect(bad).toMatch(/release\.environments\.production\.verify_command: must be an argv array/);
+    expect(bad).toMatch(/release\.environments\.staging\.verify_command: the program must not be empty/);
   });
 });

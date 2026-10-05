@@ -90,6 +90,12 @@ export type MergeMethod = 'squash' | 'merge' | 'rebase';
 export interface ReleaseEnvironment {
   /** argv, never run through a shell. */
   deploy_command: string[];
+  /**
+   * Trusted argv that reports whether a deploy took effect: exit 0 means it
+   * did, any other exit means it did not. Used to reconcile a deploy whose
+   * outcome is UNKNOWN. null leaves that to `orbit release resolve`.
+   */
+  verify_command: string[] | null;
   /** Branches this environment may be deployed from; empty means none. */
   allowed_branches: string[];
   require_ci_green: boolean;
@@ -100,7 +106,13 @@ export interface ReleaseEnvironment {
 
 /** Release mode only (spec section 5 Execution modes): how to merge and where to deploy. */
 export interface ReleaseConfig {
-  merge: { method: MergeMethod; require_checks: string[]; delete_branch: boolean };
+  merge: {
+    method: MergeMethod;
+    require_checks: string[];
+    delete_branch: boolean;
+    /** Release mode marks a draft pull request ready for review, as a ledgered action, before merging it. */
+    mark_ready: boolean;
+  };
   environments: Record<string, ReleaseEnvironment>;
 }
 
@@ -133,6 +145,12 @@ export interface IsolationLimits {
   cpu_seconds: number | null;
   max_processes: number | null;
   max_file_mb: number | null;
+  /**
+   * Resident memory of the command's processes in MB, enforced by a watchdog
+   * that samples them (isolation/memory.ts). Applied by sandbox-runtime; the
+   * container provider uses isolation.container.memory_mb instead.
+   */
+  memory_mb: number | null;
 }
 
 export interface ProviderConfig {
@@ -163,6 +181,8 @@ export interface OrbitConfig {
     test: boolean;
     commit: boolean;
     push_task_branch: boolean;
+    /** Permission to rebase the task branch onto a base branch that moved on. */
+    rebase_task_branch: boolean;
     open_pull_request: boolean;
     read_ci_logs: boolean;
     repair_ci: boolean;

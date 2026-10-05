@@ -108,11 +108,16 @@ export function ingestWorkerDenials(input: IngestInput, w: Pick<WorkerRecord, 'i
   return found;
 }
 
+/** A command or URL as a denial records it (redacted, bounded), so a grant can be matched to exactly it. */
+export function denialTarget(v: string): string {
+  return clip(v, 300);
+}
+
 function targetOf(input: Record<string, unknown> | undefined): string | null {
   if (!input) return null;
   for (const k of ['file_path', 'notebook_path', 'path', 'command', 'url']) {
     const v = input[k];
-    if (typeof v === 'string' && v.length > 0) return clip(v, 300);
+    if (typeof v === 'string' && v.length > 0) return denialTarget(v);
   }
   return null;
 }

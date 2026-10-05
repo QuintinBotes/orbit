@@ -19,8 +19,10 @@ import explorerSchema from '../../schemas/explorer-output.schema.json' with { ty
 import { OrbitError } from '../core/errors.ts';
 import { validateAgainst } from './json-schema.ts';
 import type { AmendmentProposal, AssumptionStatusValue } from './amendment-types.ts';
+import { practiceProblems, type PracticeSelection } from './practices.ts';
 
 export type { AmendmentChange, AmendmentProposal, AssumptionStatusValue } from './amendment-types.ts';
+export type { EngineeringPractice, PracticeSelection } from './practices.ts';
 
 export const MODEL_OUTPUT_SCHEMAS = {
   planner: plannerSchema as object,
@@ -83,6 +85,14 @@ export function validateModelOutput<K extends ModelOutputKind>(kind: K, value: u
       errors: res.errors,
     });
   }
+  // The strict schema cannot say "each practice exactly once, with a reason", so that is checked here: a plan that
+  // leaves a practice unaccounted for is malformed output (bounded regeneration), not a plan with fewer practices.
+  if (kind === 'planner') {
+    const problems = practiceProblems((res.value as PlannerOutput).practices);
+    if (problems.length > 0) {
+      throw new OrbitError('MALFORMED_OUTPUT', `planner output does not account for the engineering practices: ${problems.slice(0, 5).join('; ')}`, { kind, errors: problems });
+    }
+  }
   return res.value;
 }
 
@@ -113,6 +123,8 @@ export interface PlannerOutput {
   required_check_ids: string[];
   non_goals: string[];
   risks: { risk: string; impact: Level; mitigation: string }[];
+  /** One entry per engineering practice (spec section 5): selected, or omitted with a reason. */
+  practices: PracticeSelection[];
   assumptions: { statement: string; basis: string; status: 'unverified' | 'supported' | 'needs-decision' }[];
   unresolved_decisions: { question: string; options: string[]; recommendation: string | null; material: boolean; affected_criteria: string[] }[];
   material_topics: string[];

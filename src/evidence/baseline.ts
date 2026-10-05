@@ -354,6 +354,24 @@ function describeFinding(f: AuditFinding): string {
   return f.kind === 'license' ? `${f.package} is licensed ${f.detail}, which is not on the license allowlist` : `${f.package}: ${f.id} (${f.severity})${f.detail ? ` ${f.detail}` : ''}`;
 }
 
+/** Most base-revision findings listed one by one in the baseline gate; the rest are counted in one closing note. */
+export const MAX_BASELINE_AUDIT_NOTES = 50;
+
+/**
+ * One note per finding the base revision already has at or above `fail_on`
+ * (and one per disallowed license), for the baseline gate to show in
+ * `final.md`. They are disclosure only: base findings never block the
+ * candidate. Empty when the audit is off or did not run, so nothing is claimed
+ * about a tree that was not audited.
+ */
+export function baselineAuditNotes(audit: DependencyAudit | null | undefined, policy: DependencyAuditConfig): string[] {
+  if (!policy.enabled || !audit?.ran) return [];
+  const listed = [...audit.vulnerabilities.filter((f) => SEVERITY_RANK[f.severity ?? 'low'] >= SEVERITY_RANK[policy.fail_on]), ...audit.licenses];
+  const notes = listed.slice(0, MAX_BASELINE_AUDIT_NOTES).map((f) => `pre-existing ${f.kind === 'license' ? 'license problem' : 'vulnerability'} on the base revision: ${describeFinding(f)}`);
+  if (listed.length > MAX_BASELINE_AUDIT_NOTES) notes.push(`and ${listed.length - MAX_BASELINE_AUDIT_NOTES} more pre-existing dependency audit finding(s) on the base revision`);
+  return notes;
+}
+
 /** The candidate side of the dependency gate, called from installDependencies after a successful candidate install. */
 async function auditCandidate(ctx: RunnerContext & { candidate: Candidate; registryHosts?: readonly string[] }): Promise<AuditGateOutcome | null> {
   const policy = dependencyAuditPolicy(ctx.snapshot.config);
@@ -416,6 +434,8 @@ export interface BaselineReport {
   install: { skipped: boolean; reason: string | null; ok: boolean };
   /** The base revision's dependency audit; absent when `dependencies.audit` is off (or in baselines recorded before it existed). */
   audit?: DependencyAudit | null;
+  /** Gate notes for the base revision's audit findings at or above `fail_on` (see baselineAuditNotes); absent in baselines recorded before it existed. */
+  auditNotes?: string[];
   checks: BaselineCheckEntry[];
   /** Mandatory checks that already fail (or time out) on the base revision. */
   failures: { checkId: string; fingerprint: string | null; excerpt: string | null }[];
@@ -521,6 +541,7 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
       checkIds,
       install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
       ...(audit ? { audit } : {}),
+      auditNotes: baselineAuditNotes(audit, dependencyAuditPolicy(snapshot.config)),
       checks: entries,
       failures: entries.filter((e) => e.mandatory && (e.status === 'FAILED' || e.status === 'TIMEOUT')).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
       // Every requested check produced a decisive result (no ERROR, no CANCELLED, none skipped).

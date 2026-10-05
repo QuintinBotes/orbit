@@ -12,6 +12,7 @@
     "required_check_ids",
     "non_goals",
     "risks",
+    "practices",
     "assumptions",
     "unresolved_decisions",
     "material_topics"
@@ -131,6 +132,26 @@
           "risk": { "type": "string" },
           "impact": { "type": "string", "enum": ["low", "medium", "high"] },
           "mitigation": { "type": "string" }
+        }
+      }
+    },
+    "practices": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "description": "Engineering practices (spec section 5): exactly one entry for each of the nine practices. Mark a practice applicable when the task needs it and say how the plan meets it; mark it not applicable only with a concrete reason the task does not need it. The reviewer rejects an unjustified omission.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["practice", "applicable", "justification"],
+        "properties": {
+          "practice": {
+            "type": "string",
+            "enum": ["behavior-tests", "empty-and-loading-states", "input-validation-and-authorization", "sensitive-data-handling", "compatibility-and-public-interfaces", "performance-hotspots", "accessibility", "documentation", "rollback-and-migration"],
+            "description": "behavior-tests: positive, negative, boundary and error-path tests. empty-and-loading-states. input-validation-and-authorization. sensitive-data-handling. compatibility-and-public-interfaces. performance-hotspots: performance checks for material hotspots. accessibility: for UI work. documentation: for public behavior changes. rollback-and-migration: explicit plans when those actions are authorized."
+          },
+          "applicable": { "type": "boolean" },
+          "justification": { "type": "string", "description": "Applicable: how the plan satisfies the practice. Not applicable: why this task does not need it." }
         }
       }
     },

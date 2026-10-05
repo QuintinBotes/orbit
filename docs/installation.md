@@ -9,7 +9,7 @@
 | `claude` CLI | everything | Claude Code, version 2.1.284 or newer to route to Sonnet 5.5. |
 | `codex` CLI | independent review | Optional only if you set `review.independent_provider_required: false`. Also set `providers.codex.data_policy_eligible: true` when sending sanitized code to it is permitted. |
 | `srt` (sandbox-runtime) | default isolation | `npm install --global @anthropic-ai/sandbox-runtime`. On Linux it needs bubblewrap; on macOS it uses Seatbelt. Orbit also finds an `srt` in its own `node_modules/.bin`. |
-| Docker | `isolation.provider: container` | Adds CPU, memory and pids limits. The image must already exist locally; Orbit runs containers with `--pull never`. |
+| Docker | `isolation.provider: container` | Adds hard CPU, memory and pids limits. The image must already exist locally; Orbit runs containers with `--pull never`. |
 | Playwright and its browsers | UI verification | `npm install -D @playwright/test` in the target repository, then `npx playwright install chromium`. For accessibility scans also `@axe-core/playwright`. |
 | `gh` CLI and a `GH_TOKEN` | delivery in `autonomous-delivery` and `release` modes | Use a fine-grained token scoped to the one repository. |
 | `gitleaks` | stronger secret scan | Optional. Without it Orbit uses built-in patterns and the evidence says so. |
@@ -101,6 +101,8 @@ Trusted checks always run in `srt` (or the container).
 Isolation providers for checks and UI fixtures:
 
 - `sandbox-runtime`: filesystem write allowlist, credential read denials and an
-  egress host allowlist. No CPU, memory or process limits.
+  egress host allowlist. CPU time, process count and file size are limited with
+  `ulimit` and memory by a resident-memory watchdog (`isolation.limits`); these
+  are weaker than a container's kernel limits.
 - `container`: Docker with CPU, memory and pids limits and no network.
 - `none`: refused in autonomous modes unless `isolation.allow_unisolated` is true.

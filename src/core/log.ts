@@ -50,7 +50,8 @@ export interface LoggerOptions {
 }
 
 // Same as clock.systemClock; see core/proc.ts for why it is not imported.
-const realClock: Clock = { now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
+// Exported only so tests can exercise it: the logger itself never sleeps.
+export const realClock: Clock = { now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 
 const LEVELS: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 const RESERVED = new Set(['ts', 'level', 'msg']);

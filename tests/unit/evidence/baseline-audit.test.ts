@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { disallowedLicenses, evaluateDependencyAudit, parseNpmAudit, type DependencyAudit } from '../../../src/evidence/baseline.ts';
+import { baselineAuditNotes, disallowedLicenses, evaluateDependencyAudit, MAX_BASELINE_AUDIT_NOTES, parseNpmAudit, type DependencyAudit } from '../../../src/evidence/baseline.ts';
 import { defaultDependencyAudit } from '../../../src/policy/config.ts';
 
 const report = (vulns: Record<string, unknown>) => JSON.stringify({ auditReportVersion: 2, vulnerabilities: vulns, metadata: {} });
@@ -73,5 +73,33 @@ describe('evaluateDependencyAudit', () => {
     expect(evaluateDependencyAudit(audit({}), cand, policy, Date.UTC(2026, 11, 31, 12)).excepted).toHaveLength(1);
     expect(evaluateDependencyAudit(audit({}), cand, policy, Date.UTC(2027, 0, 1)).blocking).toHaveLength(1);
     expect(evaluateDependencyAudit(audit({}), cand, policy, undefined).expired).toEqual([{ id: 'GHSA-8888-9999-cccc', expires: '2026-12-31' }]);
+  });
+});
+
+describe('baselineAuditNotes (G52)', () => {
+  const audit = (over: Partial<DependencyAudit>): DependencyAudit => ({ ran: true, reason: null, manifestHash: 'h', vulnerabilities: [], licenses: [], logPath: null, ...over });
+  const v = (id: string, pkg: string, severity: 'critical' | 'high' | 'moderate' | 'low') => ({ id, kind: 'vulnerability' as const, package: pkg, severity, detail: 'advisory title' });
+  const on = { ...defaultDependencyAudit(), enabled: true, fail_on: 'high' as const };
+
+  it('lists each base finding at or above fail_on and each disallowed license, and skips the rest', () => {
+    const lic = { id: 'license:gpl-pkg@1.0.0', kind: 'license' as const, package: 'gpl-pkg', severity: null, detail: 'GPL-3.0-only' };
+    const notes = baselineAuditNotes(audit({ vulnerabilities: [v('GHSA-1111-2222-3333', 'a', 'critical'), v('GHSA-4444-5555-6666', 'b', 'high'), v('GHSA-7777-8888-9999', 'c', 'moderate')], licenses: [lic] }), on);
+    expect(notes).toEqual([
+      'pre-existing vulnerability on the base revision: a: GHSA-1111-2222-3333 (critical) advisory title',
+      'pre-existing vulnerability on the base revision: b: GHSA-4444-5555-6666 (high) advisory title',
+      'pre-existing license problem on the base revision: gpl-pkg is licensed GPL-3.0-only, which is not on the license allowlist',
+    ]);
+    expect(baselineAuditNotes(audit({ vulnerabilities: [v('GHSA-7777-8888-9999', 'c', 'moderate')] }), { ...on, fail_on: 'moderate' })).toHaveLength(1);
+  });
+
+  it('claims nothing when the audit is off or did not run, and bounds a long list', () => {
+    const found = audit({ vulnerabilities: [v('GHSA-1111-2222-3333', 'a', 'critical')] });
+    expect(baselineAuditNotes(found, { ...on, enabled: false })).toEqual([]);
+    expect(baselineAuditNotes(audit({ ...found, ran: false, reason: 'no npm lockfile' }), on)).toEqual([]);
+    expect(baselineAuditNotes(null, on)).toEqual([]);
+    const many = audit({ vulnerabilities: Array.from({ length: MAX_BASELINE_AUDIT_NOTES + 3 }, (_, i) => v(`GHSA-${i}`, `p${i}`, 'high')) });
+    const notes = baselineAuditNotes(many, on);
+    expect(notes).toHaveLength(MAX_BASELINE_AUDIT_NOTES + 1);
+    expect(notes.at(-1)).toBe('and 3 more pre-existing dependency audit finding(s) on the base revision');
   });
 });

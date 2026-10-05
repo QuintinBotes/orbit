@@ -82,6 +82,43 @@ checkout. Mutable data never lives in the installed plugin directory.
 | No unlimited recovery | `recovery_attempts` budget counter |
 | Bounded active workers | scheduler admission against `parallel_workers` and resources |
 
+## Parallel writers, supervised authorization, resource limits
+
+- **Parallel writers within one run** (`scheduling/work-units.ts`,
+  `controller/parallel-writers.ts`). When the planner mapped every criterion
+  to files and the criteria form at least two units with pairwise disjoint
+  paths, each unit gets its own implementer in its own worktree. Units are
+  admitted like any worker (parallelism, resources, rate limits, budget) and
+  the scheduler charges a merge overhead for a writer beside another writer.
+  Finished units are integrated into the run's worktree one at a time and
+  every evidence report is invalidated; a unit that touches a file already
+  integrated is serialized onto the integrated tree. Only with
+  `agents.default_parallelism` of 2 or more, never in supervised mode, and the
+  attempt still yields one candidate that is verified as a whole.
+- **Supervised authorization** (`controller/authorization.ts`). Denied
+  dependency changes and denied `actions.*` and `network.*` operations become
+  persisted approve-once or deny questions. Approve-once for a worker
+  operation retries the attempt under a read-only grant policy (a copy of the
+  frozen snapshot widened by exactly that operation, hashed); afterwards the
+  transcript is checked and any other policy-denied command blocks the run as
+  a violation. The run's own snapshot never changes.
+- **One evidence collection** (`controller/verification.ts`).
+  `collectVerificationEvidence` is called by the VERIFYING step and by
+  `orbit verify`, so a finding is judged under one policy wherever it is
+  asked for.
+- **Rebase and release** (`steps/awaiting-ci.ts`, `delivery/release.ts`).
+  With `actions.rebase_task_branch` a moved base is rebased onto in an
+  isolated checkout, evidence and reviews are invalidated and the run goes
+  back to VERIFYING (`AWAITING_CI -> VERIFYING`, at most 3 rebases). Release
+  mode marks a draft pull request ready (ledgered `pr_ready`) before the
+  merge, deploys each defined environment its branch allows, and settles an
+  UNKNOWN deploy with `verify_command` or `orbit release resolve`.
+- **Resource limits** (`isolation/limits.ts`, `isolation/memory.ts`).
+  `isolation.limits` is on by default. CPU time, process count and file size
+  are `ulimit` hard limits (docker `--ulimit` under the container provider);
+  memory under sandbox-runtime is a resident-memory watchdog around srt. The
+  process limit counts the whole user id, so its default is high (2048).
+
 ## Modules
 
 | Dir | Owns | Key exports |

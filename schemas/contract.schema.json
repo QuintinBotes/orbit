@@ -58,6 +58,20 @@
         }
       }
     },
+    "practices": {
+      "type": "array",
+      "maxItems": 9,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["practice", "applicable", "justification"],
+        "properties": {
+          "practice": { "enum": ["behavior-tests", "empty-and-loading-states", "input-validation-and-authorization", "sensitive-data-handling", "compatibility-and-public-interfaces", "performance-hotspots", "accessibility", "documentation", "rollback-and-migration"] },
+          "applicable": { "type": "boolean" },
+          "justification": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        }
+      }
+    },
     "baseline_exceptions": {
       "type": "array",
       "items": {

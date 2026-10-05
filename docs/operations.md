@@ -57,6 +57,142 @@ again reloads it. `orbit service uninstall` removes it; runs and state are
 untouched. `orbit service status` exits 0 only when the service is loaded.
 Other platforms have no service; use `orbit run --foreground`.
 
+## Command reference
+
+Every command accepts `--repo <dir>`, `--json` and `--help`.
+
+| Command | Flags |
+|---|---|
+| `orbit doctor` | `--probe` makes live requests (a few cents) |
+| `orbit init` | none |
+| `orbit run` | `--goal <text>` (or `-` for stdin), `--mode supervised\|autonomous\|autonomous-delivery\|release`, `--policy <path>`, `--foreground`, `--detach` |
+| `orbit status [run-id]` | `--all` lists every run, not the latest 10 |
+| `orbit logs <run-id>` | `--follow` / `-f`, `--lines <n>`, `--controller`, `--workers`, `--worker <id>` |
+| `orbit pause <run-id>` | none |
+| `orbit resume <run-id>` | `--foreground`, `--force`, `--policy <path>` |
+| `orbit cancel <run-id>` | `--wait <seconds>` |
+| `orbit report [run-id]` | `--interim`, `--learning` |
+| `orbit questions <run-id>` | `--all` includes answered and withdrawn questions |
+| `orbit decide <run-id> <question-id> <answer...>` | `--by <name>` (models and workers cannot decide) |
+| `orbit verify [run-id]` | see below |
+| `orbit repair <run-id \| description>` | `--foreground`, `--policy <path>`, and the `orbit run` options other than `--goal` |
+| `orbit stats` | `--since <when>`, `--until <when>`: an ISO date or time, or a span such as `90m`, `24h`, `7d`, `2w` |
+| `orbit gc` | `--keep-days <n>` (at least 1; default `retention.keep_runs_days`), `--dry-run` |
+| `orbit release resolve <run-id>` | `--deployed`, `--not-deployed`, `--environment <name>`, `--by <name>`; see [Release mode safeguards](#release-mode-safeguards) |
+| `orbit policy show <run-id>` | none |
+| `orbit models list` / `models refresh` | `--probe` on refresh |
+| `orbit learn ...` | see [the learning layer](learning.md) |
+| `orbit service install / uninstall / status / run` | `--entry <path>` on install |
+
+### verify, repair, inquisition
+
+`orbit verify [run-id]` (default: the most recent run) re-runs the independent
+verification of the run's latest candidate: a clean checkout of the exact
+candidate tree, the frozen policy's checks, scope inspection and the evidence
+evaluation. It prints a verdict per contract criterion with the artifacts it
+rests on. It takes a short lease so it never runs beside a live controller and
+never changes the run's state. It uses the same evidence function as the
+VERIFYING step, so a waived finding gives the same verdict in both. Exit 0
+means PASS, 14 means FAIL (a check failed or scope was violated), 15 means
+INCOMPLETE (a mandatory criterion is unproven; treat it as not done).
+
+`orbit repair <run-id>` hands the failure of a `BLOCKED` or paused run with FAIL
+evidence to a repair. A run id that does not qualify is refused with the
+reason. Given a description instead of a run id, it starts a new run with the
+goal `Repair: <description>`.
+
+Orbit Inquisition is not a command. The controller runs it for unclear goals,
+weak evidence and repeated failures, and `/orbit:inquisition` runs it
+interactively inside Claude Code. Questions it persists appear in
+`orbit questions` and are answered with `orbit decide`.
+
+### stats and gc
+
+`orbit stats` prints success rate, cost, token and cache use, repair loops and
+time to green for this repository, read-only. `orbit gc` deletes the run
+directories and worktrees of finished runs that ended more than
+`retention.keep_runs_days` ago. Database rows stay and `BLOCKED` runs are never
+touched. Use `--dry-run` first.
+
+## Using the native /goal command
+
+Claude Code has a native `/goal` command that keeps an interactive session
+pointed at an objective. It is an optional aid for supervised work and Orbit
+does not depend on it. It never decides that a run is done.
+
+When it helps: after a supervised `/orbit:run` submit, while you stay in the
+session and wait. The `/orbit:run` skill offers to set it. Set it to the run's
+objective plus this exact evidence line, with your run id:
+
+```
+evidence: orbit status <run-id> reports SUCCEEDED
+```
+
+The controller is the completion authority. A run is `SUCCEEDED` only when the
+controller has fresh passing evidence and an approving review of the same
+candidate tree, and the evidence line above only reads that state. If `/goal`
+says the goal is met while `orbit status` says otherwise, or a session believes
+the work is done, trust `orbit status` and `orbit verify`. Do not use `/goal`
+to bypass a `BLOCKED` run: answer the question with `orbit decide` and resume.
+
+## Release mode safeguards
+
+`orbit run --mode release` is the only way Orbit merges or deploys, and each
+needs its own action: `actions.merge` and `actions.deploy_production`. The
+safeguards:
+
+- `release` must be configured (not null), and `actions.merge` or
+  `actions.deploy_production` must be true. Deploy needs at least one
+  environment with `allowed_branches`.
+- Merging requires green CI for the checks in `release.merge.require_checks`
+  and an approving review of the exact tree. The merge, like every external
+  action, is recorded as intent, executed, then recorded as a receipt, and a
+  lost response is looked up rather than repeated.
+- `delivery.pull_request` defaults to `draft`, and a draft cannot be merged.
+  With `release.merge.mark_ready: true` (the default) release mode first marks
+  the pull request ready for review as its own ledgered action, then merges.
+  Set it to `false` to refuse to merge a draft instead.
+- If the base branch moved, Orbit rebases the task branch only when
+  `actions.rebase_task_branch` is true (default false). Otherwise the run
+  blocks and asks you.
+- A deploy runs the environment's `deploy_command` (an argv, never a shell)
+  only from an allowed branch, with `require_ci_green` honoured, inside the
+  timeout and the environment's `network_hosts`. If the outcome is unknown,
+  for example the command timed out, Orbit never repeats it blindly. When the
+  environment has `verify_command` (a trusted argv that reports whether the
+  deploy took effect), Orbit runs it to reconcile the unknown deploy. Without
+  one the run blocks for you to decide.
+- `orbit release resolve <run-id>` settles a deploy that is still unknown.
+  With no flag it runs the environment's `verify_command` in a checkout of the
+  deployed commit (exit 0 means deployed, exit 1 means not deployed, anything
+  else leaves it unknown and changes nothing). `--deployed` records that you
+  found the deploy took effect, so it is adopted and never run again;
+  `--not-deployed` records that it did not, so the next release attempt may run
+  it once. `--environment <name>` picks one when several are unresolved.
+  Models and workers cannot resolve a deploy. Continue a blocked run with
+  `orbit resume <run-id>` afterwards.
+- Workers never hold `GH_TOKEN` or deploy credentials. Only the controller acts.
+
+## Resource limits per isolation provider
+
+| Limit | `sandbox-runtime` | `container` | `none` |
+|---|---|---|---|
+| Wall time | process group killed at the timeout | killed at the timeout | killed at the timeout |
+| CPU seconds (`isolation.limits.cpu_seconds`, default 3600) | `ulimit` inside the sandbox | `docker --ulimit` | `ulimit` |
+| Processes (`max_processes`, default 2048) | `ulimit -u`, per user id | `--pids-limit` and `--ulimit` | `ulimit -u` |
+| Largest file written (`max_file_mb`, default 2048) | `ulimit` | `docker --ulimit` | `ulimit` |
+| Memory (`memory_mb`, default 4096) | resident-memory watchdog on the process group | container memory limit (`isolation.container.memory_mb`) | not enforced |
+| Network and filesystem | allowlists, write confinement | no network, container filesystem | none |
+
+Set a limit to `null` to turn it off. `max_processes` counts every process of
+your user id, so keep it well above what the account already runs. The
+sandbox-runtime memory limit is a watchdog, not a kernel cap: it samples the
+group's resident memory and kills the group when it exceeds the limit, so a
+fast allocation can overshoot before it is caught. Use `container` when you
+need a hard memory ceiling. When limits are set and no `bash` is found, a
+command is refused rather than run without them. `none` is refused in
+autonomous modes unless `isolation.allow_unisolated` is true.
+
 ## Logs
 
 ```bash

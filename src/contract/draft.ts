@@ -17,6 +17,7 @@ import { reconcileAuthority } from './authority.ts';
 import { intersectWithScope, literalGlob, normalizeGlob } from './globs.ts';
 import { validateModelOutput, type PlannerOutput } from './model-outputs.ts';
 import { policyHashOf, validateContract } from './validate.ts';
+import { normalizePractices, type PracticeSelection } from './practices.ts';
 import { normalizeEntry } from './wording.ts';
 
 export interface DraftContractInput {
@@ -31,7 +32,7 @@ export interface DraftContractInput {
   policyHash?: string;
 }
 
-export type DraftAdjustmentKind = 'check-dropped' | 'check-added' | 'path-dropped' | 'path-narrowed' | 'path-added' | 'topic-added' | 'decision-recorded' | 'authority-mismatch';
+export type DraftAdjustmentKind = 'check-dropped' | 'check-added' | 'path-dropped' | 'path-narrowed' | 'path-added' | 'topic-added' | 'decision-recorded' | 'authority-mismatch' | 'practice-selected';
 
 /** A change the controller made to the planner's proposal, with its reason. */
 export interface DraftAdjustment {
@@ -175,6 +176,18 @@ export function draftContract(input: DraftContractInput): DraftResult {
     }
   }
 
+  // Spec section 5: practices are selected per task and omissions justified. The planner's selection is kept as it
+  // stands, except that UI work always gets accessibility: leaving it out for a criterion the contract itself marks
+  // as UI is not a judgement the planner can make.
+  const practices: PracticeSelection[] = normalizePractices(plan.practices);
+  const uiCriteria = criteria.filter((c) => c.ui === true).map((c) => c.id);
+  const access = practices.find((p) => p.practice === 'accessibility');
+  if (access && !access.applicable && uiCriteria.length > 0) {
+    access.applicable = true;
+    access.justification = `the contract has UI criteria (${uiCriteria.join(', ')}); the planner's reason for omitting it was: ${access.justification}`;
+    adjustments.push({ kind: 'practice-selected', subject: 'accessibility', reason: `the planner omitted it, but ${uiCriteria.join(', ')} ${uiCriteria.length === 1 ? 'is a UI criterion' : 'are UI criteria'}` });
+  }
+
   const actions = config.actions;
   const contract: GoalContract = {
     version: '1.0',
@@ -186,6 +199,7 @@ export function draftContract(input: DraftContractInput): DraftResult {
     allowed_paths: allowed,
     required_check_ids: required,
     assumptions,
+    practices,
     delivery: {
       draft_pr: Boolean(actions?.open_pull_request) && config.delivery?.pull_request === 'draft',
       // Merge is opt-in per run even when the policy permits it; only an

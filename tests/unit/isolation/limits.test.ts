@@ -16,8 +16,8 @@ afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
 
-const ALL: IsolationLimits = { cpu_seconds: 120, max_processes: 256, max_file_mb: 64 };
-const NONE: IsolationLimits = { cpu_seconds: null, max_processes: null, max_file_mb: null };
+const ALL: IsolationLimits = { cpu_seconds: 120, max_processes: 256, max_file_mb: 64, memory_mb: null };
+const NONE: IsolationLimits = { cpu_seconds: null, max_processes: null, max_file_mb: null, memory_mb: null };
 
 function profile(writable: string[] = []): SandboxProfile {
   return { writablePaths: writable, denyReadPaths: [], allowedHosts: [], limits: { timeoutMs: 60_000, memoryMb: null, cpus: null, pids: null } };

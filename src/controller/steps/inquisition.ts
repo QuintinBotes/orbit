@@ -10,6 +10,7 @@
 import { join } from 'node:path';
 import { atomicWriteJson } from '../../core/fsx.ts';
 import { hashObject } from '../../core/hash.ts';
+import { applyBaselineExceptionAnswers } from '../../inquisition/baseline-exception.ts';
 import { runInquisition } from '../../inquisition/engine.ts';
 import { loadInquisitionSnapshot, thresholdsFromPolicy } from '../../inquisition/triggers.ts';
 import type { Trigger } from '../../inquisition/types.ts';
@@ -27,7 +28,8 @@ import { handledTriggerKeys, pendingTrigger } from './verifying.ts';
 export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
   const stop = await safePoint(ctx);
   if (stop) return stop;
-  const contract = assertContract(ctx);
+  // An exception a person approved since the contract was loaded is part of it before any inquiry reasons about it.
+  const contract = applyBaselineExceptionAnswers({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { snapshot: ctx.snapshot }).contract ?? assertContract(ctx);
   const resume: RunState = ctx.run.resumeState ?? (ctx.candidate ? 'VERIFYING' : 'PLANNING');
   const trigger = enteringTrigger(ctx) ?? (ctx.candidate ? pendingTrigger(ctx, ctx.candidate, null) : null);
   if (!trigger || handledTriggerKeys(ctx).has(trigger.key)) return move(ctx, resume, trigger ? `inquiry ${trigger.key} already settled; resuming ${resume}` : `nothing left to inquire into; resuming ${resume}`);

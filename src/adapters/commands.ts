@@ -29,8 +29,7 @@ export function sourceCommands(node: string = process.execPath): OrbitCommands {
  * The bundle when this code runs from it, the sources otherwise. The bundle
  * is a single .mjs file, so this module's own URL names it.
  */
-export function defaultOrbitCommands(): OrbitCommands {
-  const self = fileURLToPath(import.meta.url);
+export function defaultOrbitCommands(self: string = fileURLToPath(import.meta.url)): OrbitCommands {
   if (self.endsWith('.mjs') && existsSync(self)) return orbitCommands(self);
   return sourceCommands();
 }

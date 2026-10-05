@@ -4,13 +4,16 @@ Every concrete requirement of `docs/spec.md` (sections 1 to 21), the code that
 implements it and the tests that prove it. Non-done rows have a fix in
 `docs/gaps.md`, where each gap names the requirement ids it covers.
 
-Re-audit of 2026-10-05, taken after the gap-closing wave (controller, release,
-policy, CLI, observability and UI fixers, then an independent verifier). Every
-row was re-checked against the spec and every status change below rests on a
-test that was read. `npx vitest run --coverage` (v8, `src/**`): 220 test
-files, 3350 tests, 3348 passed, 1 failed (I/demo/example.test.ts "copies
-Orbit's Playwright fixtures template unchanged") and 1 skipped
-(`identity.test.ts`, Linux only). No `it.fails` marker remains in `tests/`.
+Final re-audit of 2026-10-05, after the stabilizer wave (G40 and G49). The
+audit went through spec sections 1 to 21 requirement by requirement, checked
+mechanically that every test cited below exists in the named file under the
+quoted name, and read the tests behind every row that changed in the last two
+waves (among them S3.27, S3.28, S4.3, S5.2, S5.13, S5.28, S6.6, S8.21, S8.27,
+S14.11, S15.5 and S15.6). `npx vitest run --coverage`: 343 test files, 6356
+tests passed and 1 skipped (`identity.test.ts`, Linux only), none failing;
+thresholds met and enforced (see "Coverage" at the end). No `it.fails`,
+`it.todo` or `.only` marker remains in `tests/` outside fixtures that test the
+weakening detector.
 
 Status rules:
 
@@ -55,11 +58,11 @@ sometimes shortened.
 | S2.2 | Early vertical slice: contract, worker, checks, repair, review, report | controller steps | I/controller/runs.test.ts "scenario 1", "scenario 2" | done |
 | S2.3 | Codex as first independent review provider | `adapters/codex.ts:CodexAdapter` | I/adapters/codex-fake.test.ts "runs a read-only review..." | done |
 | S2.4 | No duplicate workers or actions after crash, closed terminal, lost response | `recovery/reconcile.ts:reconcileOnStart`, `delivery/actions.ts:ActionLedger` | A/restart-and-delivery.test.ts "scenario 7", "scenario 8"; F/worker-crash.test.ts (both tests) | done |
-| S2.5 | Installation, configuration, security docs, demo repository | `docs/*.md`, `examples/demo-app` | I/demo/example.test.ts "copies Orbit's Playwright fixtures template unchanged" FAILS: `examples/demo-app/tests/e2e/orbit-fixtures.ts` lacks the keyboard helper added to `templates/playwright/orbit-fixtures.ts` | partial |
+| S2.5 | Installation, configuration, security docs, demo repository | `docs/*.md`, `examples/demo-app` | I/demo/example.test.ts "copies Orbit's Playwright fixtures template unchanged", A/demo-shapes.test.ts "demo 1..." | done |
 | S2.6 | Demo 1: simple task on a low-cost route | `scripts/demo/mock-demo.ts` | A/demo-shapes.test.ts "demo 1...", I/demo/mock-demo.test.ts "simple: SUCCEEDED on a cheap route" | done |
 | S2.7 | Demo 2: difficult task with evidence-backed escalation | same | A/demo-shapes.test.ts "demo 2...", I/demo/mock-demo.test.ts "difficult..." | done |
 | S2.8 | Demo 3: UI fails browser checks, repaired, reviewed, draft PR | same | A/ui.test.ts "scenario 17 (and demo run 3)", I/demo/mock-demo.test.ts "ui..." | done |
-| S2.9 | Demos run unattended against real providers | `scripts/demo/run-live-demo.sh` | I/demo/live-script.test.ts (stubbed gh and orbit only) | untested |
+| S2.9 | Demos run unattended against real providers | `scripts/demo/run-live-demo.sh`; README "Live demo" says it has not run against real providers and gives the reproduction commands | I/demo/live-script.test.ts (stubbed gh and orbit only); the run itself needs credentials (G39) | untested |
 | S2.10 | Safe stop: unauthorized action | `delivery/deliver.ts`, `policy/authorize.ts` | A/safe-stops.test.ts "unauthorized action..." | done |
 | S2.11 | Safe stop: stale evidence | `evidence/freshness.ts:assertDeliverable` | A/policy-and-evidence.test.ts "scenario 10..." | done |
 | S2.12 | Safe stop: repeated non-progress | `inquisition/repair.ts:nonProgress` | A/proof-and-progress.test.ts "scenario 6..." | done |
@@ -90,17 +93,17 @@ sometimes shortened.
 | S3.15 | JSON Schema for contracts and all model outputs | `core/schema.ts`, `schemas/*.json`, `contract/model-outputs.ts` | U/schemas/model-output-schemas.test.ts, U/core/schema.test.ts | done |
 | S3.16 | Container or equivalent isolated workers | `isolation/sandbox-runtime.ts`, `isolation/container.ts` | I/isolation/sandbox-runtime.int.test.ts, I/isolation/container.int.test.ts | done |
 | S3.17 | Git worktrees for task isolation | `steps/preflight.ts:ensureWorktree` | A/parallel.test.ts "scenario 15: two runs work at once..." | done |
-| S3.18 | Vitest | `vitest.config.ts` | whole suite | done |
+| S3.18 | Vitest | `vitest.config.ts` (coverage over `src/**`, thresholds lines 95, functions 95, statements 95, branches 90) | whole suite; `npm run test:coverage` exits 0 | done |
 | S3.19 | Structured JSON logs | `core/log.ts:createLogger` | U/core/log.test.ts "writes one JSON object per line..." | done |
 | S3.20 | CLI executable named `orbit` | `package.json` bin, `cli/cli.ts:main` | U/cli/cli.test.ts, I/plugin/plugin.test.ts "runs --version and doctor --json" | done |
 | S3.21 | Record justification for different defaults | `docs/decisions/0001..0004` | U/ui/decision.test.ts "records the decision, the reasons and the consequences" (0004 only) | done |
-| S3.22 | Plugin layout (skills, agents, hooks, src dirs, schemas, templates, tests, examples, docs) | repository tree | I/plugin/plugin.test.ts "lists six skills and the agents" | done |
+| S3.22 | Plugin layout (skills, agents, hooks, src dirs, schemas, templates, tests, examples, docs) | repository tree | I/plugin/plugin.test.ts "lists six skills and the seven agents" | done |
 | S3.23 | Manifest `.claude-plugin/plugin.json` with name, version, description, license, keywords | `.claude-plugin/plugin.json` | I/plugin/plugin.test.ts "validates under --strict" | done |
 | S3.24 | `.orbit/` layout: config, state.sqlite, runs/<id>/{contract, policy, decisions.jsonl, evidence, logs, final.md} | `controller/start.ts`, `storage/decisions.ts`, `controller/report.ts` | I/cli/run.test.ts "drives a run to success... leaves a final report", U/storage/decisions.test.ts | done |
 | S3.25 | No mutable run data in the plugin directory | `controller/context.ts:runWorktreeRoot` | A/parallel.test.ts "scenario 15..." | done |
 | S3.26 | Protect policy and trusted storage from workers | `isolation/profiles.ts`, `policy/snapshot.ts` (mode 0444) | U/policy/snapshot.test.ts "detects a snapshot made writable", I/isolation/sandbox-runtime.int.test.ts "cannot read sibling projects, the main checkout or Orbit state" | done |
 | S3.27 | Artifact retention rules | `storage/retention.ts:pruneExpiredRuns`, `cli/commands/gc.ts`, `controller/loop.ts` (start and periodic pass) | U/storage/retention.test.ts "never touches BLOCKED or still-active runs...", I/controller/retention.test.ts "the periodic pass prunes a run that expires while the service runs", U/cli/gc-stats.test.ts | done |
-| S3.28 | Redaction rules (configured patterns) | `core/redact.ts:applyRedactPatterns`, called by `policy/snapshot.ts` and `loadConfig`; `controller/report.ts:writeFinalReport` writes `final.json` without `redact` | I/policy/redact-patterns.test.ts "verifying a run snapshot puts its patterns in force for the controller log, worker prompts and final.md", "...for the review packet" | partial |
+| S3.28 | Redaction rules (configured patterns) | `core/redact.ts:applyRedactPatterns`, called by `policy/snapshot.ts` and `loadConfig`; `controller/report.ts:buildFinalReport` deep-redacts, so `final.json`, `final.md` and `orbit report --json` are covered | I/policy/redact-patterns.test.ts "verifying a run snapshot puts its patterns in force for the controller log, worker prompts and final.md", "...for the review packet"; U/controller/report-redact.test.ts "redacts every string of final.json, not only final.md" | done |
 
 ## 4. Commands and unattended operation
 
@@ -108,7 +111,7 @@ sometimes shortened.
 |---|---|---|---|---|
 | S4.1 | `/orbit:run <goal>` | `skills/run/SKILL.md` to `orbit run` | I/plugin/plugin.test.ts "skills pass arguments through verbatim" | done |
 | S4.2 | `/orbit:inquisition <goal-or-plan>` | `skills/inquisition/SKILL.md` (conversational grill without a run; `orbit questions` and `orbit decide <run-id> <question-id>` with one) | I/plugin/plugin.test.ts "resolves every orbit command a skill names...", "never invents an inquisition command" | done |
-| S4.3 | `/orbit:verify [run-id]` | `cli/commands/verify.ts:verifyCommand`; its secret scan ignores `static_security` and it never judges SAST output with `judgeSastResult`, so its verdict can differ from VERIFYING | I/cli/verify-repair.test.ts "prints a verdict per criterion...", "exits 14 on FAIL...", "refuses while a live controller owns the run" | partial |
+| S4.3 | `/orbit:verify [run-id]` | `cli/commands/verify.ts:verifyCommand` and `steps/verifying.ts` both call `controller/verification.ts:collectVerificationEvidence`, so one policy judges a finding wherever it is asked | I/cli/verify-repair.test.ts "prints a verdict per criterion...", "exits 14 on FAIL...", "refuses while a live controller owns the run", "judges a secret finding waived by static_security.exceptions the way the run did..." | done |
 | S4.4 | `/orbit:repair <failure-or-run-id>` | `cli/commands/repair.ts:repairCommand` | I/cli/verify-repair.test.ts "moves a BLOCKED run with FAIL evidence to DIAGNOSING and the controller completes the repair", "turns a description into a repair run..." | done |
 | S4.5 | `/orbit:status [run-id]` | `skills/status/SKILL.md` | I/plugin/plugin.test.ts "names only real run states in the status skill" | done |
 | S4.6 | `/orbit:resume <run-id>` | `skills/resume/SKILL.md` | plugin test | done |
@@ -132,7 +135,7 @@ sometimes shortened.
 | S4.24 | Graceful shutdown | `controller/loop.ts` | I/controller/loop.test.ts "shuts down gracefully on SIGTERM" | done |
 | S4.25 | Terminate or reconcile orphan processes | `recovery/reconcile.ts:stopWorker` | I/recovery/reconcile-processes.test.ts, I/recovery/adversarial.test.ts | done |
 | S4.26 | Block on expired credentials, no indefinite retry | `recovery/credentials.ts:checkRunCredentials` | I/controller/service-loop.test.ts "credentials are checked again while a run works..." | done |
-| S4.27 | Use native `/goal` when available as a continuation aid | `skills/run/SKILL.md` "Keeping the session on the goal (optional)" | I/plugin/plugin.test.ts "offers native /goal as an optional aid while keeping the controller as the completion authority" | done |
+| S4.27 | Use native `/goal` when available as a continuation aid | `skills/run/SKILL.md` "Keeping the session on the goal (optional)", `docs/operations.md` "Using the native /goal command" | I/plugin/plugin.test.ts "offers native /goal as an optional aid while keeping the controller as the completion authority" | done |
 | S4.28 | Controller works without `/goal` | controller has no `/goal` dependency | whole suite | done |
 
 ## 5. Authorization and security gates
@@ -140,7 +143,7 @@ sometimes shortened.
 | ID | Requirement | Implementation | Tests | Status |
 |---|---|---|---|---|
 | S5.1 | Supervised mode asks for material decisions | `steps/inquisition.ts` (disposition ask: BLOCKED with questions), `cli/commands/decide.ts` | U/inquisition/resolve.test.ts "unattended with nothing independent left: BLOCKED. Supervised: wait for the person" | done |
-| S5.2 | Supervised mode asks for unauthorized actions | `controller/authorization.ts` (lockfile and package changes: persisted approve-once or deny question, one-tree grant); denied worker operations (`actions.change_permissions` commands, unlisted hosts) are only denied | I/controller/supervised-authorization.test.ts "a lockfile change blocks on a persisted authorization question; approve-once from a person lets that candidate through" | partial |
+| S5.2 | Supervised mode asks for unauthorized actions | `controller/authorization.ts` (lockfile and package changes, and `actions.*` and `network.*` denials from a worker: persisted approve-once or deny question; approve-once retries the attempt under a read-only grant policy for exactly that operation and the transcript is checked afterwards); `steps/implementing.ts`, `controller/workers.ts` | I/controller/supervised-authorization.test.ts "a lockfile change blocks on a persisted authorization question; approve-once from a person lets that candidate through", "a denied chmod becomes a persisted question; approve-once retries the attempt under a grant for exactly that operation", "deny retries the attempt as a scope repair under the unchanged policy", "autonomous mode only records the denial and asks nothing"; U/controller/authorization-grants.test.ts | done |
 | S5.3 | Autonomous mode: preauthorized work, reversible ambiguity resolved | `inquisition/resolve.ts:resolveAmbiguities` | A/ambiguity.test.ts "scenario 3..." | done |
 | S5.4 | Autonomous delivery: commit, push task branch, PR, CI repair | `steps/delivering.ts`, `steps/awaiting-ci.ts` | A/feature-and-repair.test.ts "scenario 1", F/injection.test.ts "a CI log with injected instructions becomes a fenced repair brief..." | done |
 | S5.5 | Release mode: narrowly scoped release actions via a release profile | `delivery/release.ts:performRelease`, `steps/delivering.ts`, `steps/awaiting-ci.ts`, `policy/config.ts` (`release` block) | I/delivery/release.test.ts "refuses every release action outside release mode...", I/controller/release.test.ts | done |
@@ -151,7 +154,7 @@ sometimes shortened.
 | S5.10 | Intake gate: repository, scope, budgets, measurable criteria; reject invalid contract | `gates.ts:intakeGate` | U/controller/gates.test.ts "rejects a criterion that cites no trusted check..." | done |
 | S5.11 | Environment gate: isolation, scoped credentials, network controls; block unattended | `gates.ts:environmentGate` | U/controller/gates.test.ts "refuses an unavailable provider and blocks on missing or expired credentials" | done |
 | S5.12 | Baseline gate: locked install, existing failures recorded | `gates.ts:baselineGate`, `evidence/baseline.ts:runBaseline` | U/controller/gates.test.ts "records pre-existing failures...", I/evidence/baseline.test.ts | done |
-| S5.13 | Baseline gate: vulnerability and license policy | `evidence/baseline.ts` (`dependencies.audit`), `steps/verifying.ts` (unverified audit disclosed) | I/evidence/baseline-audit.test.ts "records the base revision findings and blocks a candidate that adds a high vulnerability or a disallowed license", I/controller/static-security-policy.test.ts "a candidate dependency audit that could not run is disclosed as unverified..." | done |
+| S5.13 | Baseline gate: vulnerability and license policy | `evidence/baseline.ts` (`dependencies.audit`), `controller/gates.ts:baselineGate` (one note per base finding), `steps/verifying.ts` (unverified audit disclosed) | I/evidence/baseline-audit.test.ts "records the base revision findings and blocks a candidate that adds a high vulnerability or a disallowed license", U/controller/gates.test.ts "lists each base-revision audit finding the baseline recorded...", I/controller/static-security-policy.test.ts "a candidate dependency audit that could not run is disclosed as unverified..." | done |
 | S5.14 | Implementation gate: filesystem bounds, protected paths; deny and record | `gates.ts:implementationScopeGate`, `steps/verifying.ts` (policy.deny decision) | U/controller/gates.test.ts "treats protected paths and escaping symlinks as a policy violation" | done |
 | S5.15 | Static security: secret scan | `controller/security.ts:scanCandidateSecrets` | I/controller/security.test.ts, U/controller/gates.test.ts "fails on secrets..." | done |
 | S5.16 | Static security: configured SAST | `policy/config.ts:sastCheckIds`, `gates.ts:staticSecurityGate` | U/controller/gates.test.ts "reports static analysis as unverified... when the policy defines no SAST" | done |
@@ -166,7 +169,7 @@ sometimes shortened.
 | S5.25 | Workers cannot modify policy, trusted runner or authorization state | `isolation/profiles.ts`, `policy/builtin.ts` | A/policy-and-evidence.test.ts "scenario 9", F/policy-faults.test.ts | done |
 | S5.26 | Policy expansion needs a separately authorized revision | `contract/amend.ts`, `inquisition/engine.ts:processAmendments` | U/inquisition/engine.test.ts "widening scope beyond the frozen policy is refused outright" | done |
 | S5.27 | Trusted components mounted read-only | `isolation/profiles.ts` (read-only config, policy) | U/isolation/profiles.test.ts "keeps the config dir surfaces that run code on the host read-only" | done |
-| S5.28 | Restrict filesystem, network, CPU, memory, process count, time | srt: fs and network; `isolation/limits.ts` adds `ulimit` CPU time, process count and file size, all off by default; memory only in the container provider | U/isolation/limits.test.ts, I/isolation/limits.int.test.ts "sets CPU time, process count and file size as hard limits for the command" (macOS only run), I/isolation/container.int.test.ts | partial |
+| S5.28 | Restrict filesystem, network, CPU, memory, process count, time | srt: fs and network; `isolation/limits.ts` sets `ulimit` CPU time, process count and file size and `isolation/memory.ts` is a resident-memory watchdog around srt; all on by default (`isolation.limits`, null turns one off); the container provider keeps its own memory limit and `none` enforces no memory | U/isolation/limits.test.ts, U/isolation/memory.test.ts, I/isolation/limits.int.test.ts "sets CPU time, process count and file size as hard limits for the command" (macOS only run), I/isolation/memory.int.test.ts "stops a sandboxed command that holds too much memory" (real srt), I/evidence/runner-memory.test.ts, I/isolation/container.int.test.ts, A/demo-shapes.test.ts "demo 1..." (default limits on a busy account) | done |
 | S5.29 | No host credentials, SSH agents, container sockets | `adapters/env.ts:buildWorkerEnv`, `isolation/profiles.ts` | U/adapters/env-shim.test.ts "starts from an allowlist...", U/isolation/profiles.test.ts "denies container-engine state and keychains" | done |
 | S5.30 | Separate implementation and delivery credentials; none in workers | `adapters/env.ts`, `delivery/github.ts:GhCliClient` | U/adapters/env-shim.test.ts, I/delivery/gh-cli.test.ts "uses the controller token only" | done |
 | S5.31 | Resolve symlinks, canonicalize, reject traversal | `policy/paths.ts:resolveInside` | U/policy/paths.test.ts | done |
@@ -178,7 +181,7 @@ sometimes shortened.
 | S5.37 | Enforce provider data-handling eligibility | `review/packet.ts:assertProviderEligible` | I/review/packet.test.ts "refuses a provider whose data_policy_eligible is false" | done |
 | S5.38 | Explicit scanner severity and exception rules | `controller/security.ts` (secret severities, SARIF severities, `static_security.exceptions`), `review/resolve.ts` | I/policy/static-security.test.ts "gives every secret finding a severity...", "reads severity from security-severity scores, falling back to the result level" | done |
 | S5.39 | Hooks assist; controller checks and isolation remain the gate | `policy/scope.ts` after `policy/guard-hook.ts` | F/policy-faults.test.ts | done |
-| S5.40 | Select applicable engineering practices per task and justify omissions | none (planner schema has no practices field) | none | missing |
+| S5.40 | Select applicable engineering practices per task and justify omissions | `contract/practices.ts`, `schemas/planner-output.schema.json`, `contract/draft.ts`, `review/packet.ts`, `steps/planning.ts` (`planning.practices` decision), `controller/report.ts` ("Engineering practices") | U/contract/draft.test.ts (engineering practices), U/schemas/model-output-schemas.test.ts "planner output: engineering practices", U/review/packet-practices.test.ts, U/controller/report-practices.test.ts | done |
 
 ## 6. Goal contracts and state
 
@@ -189,7 +192,7 @@ sometimes shortened.
 | S6.3 | Preflight captures status and revision | `steps/preflight.ts:preflightStep` | I/controller/runs.test.ts (via runs) | done |
 | S6.4 | Reject dirty starts unless permitted | `steps/preflight.ts` | I/controller/terminal-paths.test.ts "a dirty start is refused by default, naming the uncommitted path...", "with repository.allow_dirty_start the run proceeds..." | done |
 | S6.5 | Run baseline checks, record pre-existing failures | `evidence/baseline.ts:runBaseline` | I/evidence/baseline.test.ts "records pre-existing failures on the base revision..." | done |
-| S6.6 | Never green with failing mandatory checks unless the contract accepts a documented baseline exception | `evidence/report.ts` honours `baseline_exceptions`; `contract/amend.ts` has `accept_baseline_failure` and `baselineExceptionProposal`, but no controller, Inquisition or CLI path calls them | U/evidence/report.test.ts "accepts the failure whose fingerprint equals the recorded one", U/contract/amend.test.ts | partial |
+| S6.6 | Never green with failing mandatory checks unless the contract accepts a documented baseline exception | `evidence/report.ts` honours `baseline_exceptions`; `steps/preflight.ts` raises a question per pre-existing failure, `inquisition/questions.ts:answerQuestion` (`orbit decide`) applies "Approve" through `inquisition/baseline-exception.ts` and `contract/amend.ts`; `cli/commands/decide.ts` prints the outcome | U/evidence/report.test.ts "accepts the failure whose fingerprint equals the recorded one", U/contract/amend.test.ts, U/inquisition/baseline-exception.test.ts, U/inquisition/baseline-exception-run.test.ts (a failing mandatory check through to SUCCEEDED), U/cli/control.test.ts "says what an answer to a baseline-exception question did to the contract" | done |
 | S6.7 | Amendments: clarify or add tests; never remove mandatory, redefine success, broaden scope | `contract/amend.ts:applyAmendment` | U/contract/amend.test.ts | done |
 | S6.8 | Amendment records old, new, evidence, reason, approval, affected verification | `contract/types.ts:ContractAmendment`, `inquisition/store.ts` | U/contract/amend.test.ts, U/inquisition/store.test.ts | done |
 | S6.9 | State machine edges | `controller/states.ts` | U/storage/run-store.test.ts "accepts every listed edge and rejects every other pair" | done |
@@ -258,14 +261,14 @@ sometimes shortened.
 | S8.18 | Compact contracts, decisions, repair briefs | `contract/*`, `inquisition/repair.ts` | U/inquisition/repair.test.ts | done |
 | S8.19 | Supported prompt caching (stable prefix first) | `adapters/prompt.ts` ordering; cache tokens in `routing/usage.ts` | U/adapters/prompt-agents.test.ts, U/routing/usage.test.ts "...cache hit ratio" | done |
 | S8.20 | Do not repeat the spec in each worker | `adapters/prompt.ts:OPERATING_PROMPT` | U/adapters/prompt-agents.test.ts "...never the spec" | done |
-| S8.21 | Role-specific output budgets | `routing.output_budgets`, `adapters/prompt.ts:outputBudgetInstruction`, `adapters/claude.ts` (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`); Codex: instruction plus recorded limitation | I/adapters/output-budget.test.ts "gives the implementer the table default, sets the cap variable...", "sends the role budget as the request max_tokens..." (real CLI) | done |
+| S8.21 | Role-specific output budgets | `routing.output_budgets`, `adapters/prompt.ts:outputBudgetInstruction`, `adapters/claude.ts` (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`); Codex: instruction plus recorded limitation (no verified output-token key exists, checked against codex 0.153.4; guarded in U/adapters/codex.test.ts) | I/adapters/output-budget.test.ts "gives the implementer the table default, sets the cap variable...", "sends the role budget as the request max_tokens..." (real CLI) | done |
 | S8.22 | Evidence references and hashes in handoffs | `adapters/prompt.ts:EvidenceRef` | U/adapters/prompt-agents.test.ts | done |
 | S8.23 | Track input, output, cached tokens and cost per accepted run | `routing/usage.ts:recordUsage`, `summarizeUsage`, `cli/commands/report.ts` | U/routing/usage.test.ts, U/cli/inspect.test.ts "summarizes verified pass rate, attempts and cost over time" | done |
 | S8.24 | One implementer; planner when needed; verifier after changes; reviewer after checks pass | `controller/states.ts`, steps | A/feature-and-repair.test.ts | done |
-| S8.25 | Extra workers only for bounded independent units, weighing CPU, memory, browsers, rate limits, spend, context duplication, merge overhead | `AgentScheduler` (cores, memory, browser slots, rate limits, budget, context duplication); merge overhead is not weighed | U/scheduling/scheduler.test.ts "allows one Playwright run per core pair...", "charges a unit started beside another on the same revision..." | partial |
+| S8.25 | Extra workers only for bounded independent units, weighing CPU, memory, browsers, rate limits, spend, context duplication, merge overhead | `AgentScheduler` (cores, memory, browser slots, rate limits, budget, context duplication, merge overhead as `mergeOverhead`) | U/scheduling/scheduler.test.ts "allows one Playwright run per core pair...", "charges a unit started beside another on the same revision...", "merge overhead" tests (G14), U/scheduling/work-units.test.ts | done |
 | S8.26 | Good parallelism: separate check suites | `evidence/runner.ts:runCheckSet` concurrency | I/evidence/runner.test.ts "runs independent checks concurrently up to the limit" | done |
-| S8.27 | Good parallelism: separate security and UI review, separable changes in isolated worktrees | `steps/reviewing.ts` (security and UI reviewers at once); separable changes only as separate runs (one writer per run) | I/controller/parallel-review.test.ts "starts the security and the UI review together...", A/parallel.test.ts | partial |
-| S8.28 | Avoid shared-file edits, duplicate fixes, stale-revision reviews | `AgentScheduler` | U/scheduling/scheduler.test.ts "serializes writers whose owned paths overlap...", "cancels reviews and verifications of a stale revision" | done |
+| S8.27 | Good parallelism: separate security and UI review, separable changes in isolated worktrees | `steps/reviewing.ts` (security and UI reviewers at once); `scheduling/work-units.ts` and `controller/parallel-writers.ts` (disjoint work units in their own worktrees, integrated serially; only with `agents.default_parallelism` of 2 or more and never in supervised mode) | I/controller/parallel-review.test.ts "starts the security and the UI review together...", I/controller/parallel-writers.test.ts "runs two disjoint work units at once in their own worktrees, integrates both serially and verifies one candidate", A/parallel.test.ts | done |
+| S8.28 | Avoid shared-file edits, duplicate fixes, stale-revision reviews, speculative research | `AgentScheduler`; `scheduling/work-units.ts` (units come only from contract criteria with mapped files, and criteria whose paths may overlap stay in one unit, so two writers never attempt the same fix); Orbit has no research role, so no worker is spawned outside the plan | U/scheduling/scheduler.test.ts "serializes writers whose owned paths overlap...", "cancels reviews and verifications of a stale revision"; U/scheduling/work-units.test.ts "keeps criteria whose paths may overlap together, through globs and chains", "does not split when a criterion has no mapped file or there is only one criterion" | done |
 | S8.29 | Every task has ownership, inputs, schema, dependencies, revision, cancellation, budget | `scheduling/types.ts:WorkUnit`, filled in `steps/implementing.ts` and `steps/reviewing.ts` | I/controller/parallel-review.test.ts "a new candidate cancels both running reviewers", U/scheduling/scheduler.test.ts "a new revision makes both parallel reviewers obsolete" | done |
 | S8.30 | Writers never share a mutable worktree | `AgentScheduler`, per-run worktrees | U/scheduling/scheduler.test.ts "never lets a writer share a worktree", A/parallel.test.ts | done |
 | S8.31 | Integrate serially, then invalidate affected evidence | single writer; `evidence/freshness.ts:invalidateEvidence` | U/evidence/freshness.test.ts "marks every live report stale..." | done |
@@ -287,7 +290,7 @@ sometimes shortened.
 |---|---|---|---|---|
 | S10.1 | Minimum questions and smallest experiments | `inquisition/resolve.ts` | U/inquisition/resolve.test.ts | done |
 | S10.2 | Triggers: missing outcomes, contradictions, green without proof, repeated failure, architecture, hidden decisions, scope pressure, unsupported confidence, oracle weakening | `inquisition/triggers.ts:detectTriggers`, `types.ts:TRIGGER_KINDS` | U/inquisition/triggers.test.ts | done |
-| S10.3 | Modes and outputs: clarify, challenge, reconcile (authority map), diagnose, risk review (impact register), decision record | `types.ts:INQUISITION_MODES`, `engine.ts:authorityMap`, `inquisition/impact.ts:recordImpactRegister` (its comment says the engine calls it; nothing does) | U/inquisition/engine.test.ts "ranks conflicting sources and flags ties", U/inquisition/impact.test.ts (direct calls only) | partial |
+| S10.3 | Modes and outputs: clarify, challenge, reconcile (authority map), diagnose, risk review (impact register), decision record | `types.ts:INQUISITION_MODES`, `engine.ts:authorityMap`, `engine.ts:runInquisition` records `inquisition/impact.ts:recordImpactRegister` for a risk-review | U/inquisition/engine.test.ts "ranks conflicting sources and flags ties", "records exactly one impact-register decision for a risk-review over an auth path, and none for a challenge", U/inquisition/impact.test.ts | done |
 | S10.4 | Procedure: evidence, facts versus assumptions, interpretations, ranking, experiment, ask last | `engine.ts:runInquisition` | U/inquisition/engine.test.ts "accepts only an authorized experiment that tells interpretations apart" | done |
 | S10.5 | Unattended: never wait on the keyboard; persist questions, continue independent work, or BLOCKED | `steps/inquisition.ts`, `gates.ts:completionGate` | A/ambiguity.test.ts "scenario 4: the blocked criterion keeps the run from success and delivery, and its question waits for a person" | done |
 | S10.6 | Autonomous resolution rules | `inquisition/resolve.ts:classifyAmbiguity` | U/inquisition/resolve.test.ts "never guesses, even when a choice was named" | done |
@@ -369,7 +372,7 @@ sometimes shortened.
 | S14.8 | Timeout: diagnose performance or environment | `steps/diagnosing.ts` (timeout context, mandatory environment hypothesis, no raised timeout) | U/controller/diagnosing-timeout.test.ts "names the timed-out check, its baseline and the machine load, and makes an environment hypothesis mandatory" | done |
 | S14.9 | Flaky check: bounded reruns, disclosed | `evidence/runner.ts` flaky_reruns | I/evidence/runner.test.ts "records a pass after a failure as flaky, never clean" | done |
 | S14.10 | Lost action response: query remote before retry | `delivery/actions.ts:ActionLedger` | U/delivery/actions.test.ts "after an error, reconciles BEFORE retrying" | done |
-| S14.11 | Conflict: rebase only if authorized; invalidate changed evidence | `steps/awaiting-ci.ts` detects a delivered commit that conflicts with the moved base and BLOCKS; no rebase path, no policy key to authorize one | I/controller/base-conflict.test.ts "a delivered commit that conflicts with the moved base blocks with the conflicting paths" | partial |
+| S14.11 | Conflict: rebase only if authorized; invalidate changed evidence | `steps/awaiting-ci.ts`: with `actions.rebase_task_branch` it rebases onto the moved base in an isolated checkout, invalidates evidence and reviews and goes back to VERIFYING (at most 3 rebases per run); a conflict or a missing permission blocks naming the paths and the key. Mergeability is the local `git merge-tree` check, not a host field | I/controller/base-conflict.test.ts "a delivered commit that conflicts with the moved base blocks with the conflicting paths", "with actions.rebase_task_branch a base that moved is rebased onto...", "with the permission, a base that moved into a conflict blocks...", "without the permission a base that moved cleanly still completes without any rebase" | done |
 | S14.12 | Budget exhaustion: stop workers, keep artifacts, report | `steps/common.ts:finishRun` | F/budgets.test.ts "...with the failing evidence and the worktree preserved" | done |
 | S14.13 | Self-healing cannot rewrite policy; recovery has a budget | `recovery/budget.ts` | U/recovery/budget.test.ts | done |
 
@@ -381,8 +384,8 @@ sometimes shortened.
 | S15.2 | Create or update one PR per run | `delivery/deliver.ts` | I/delivery/deliver.test.ts "delivers a repaired candidate as a fast-forward... and updates the same PR" | done |
 | S15.3 | Observe CI, sanitized logs, repair within cycle limits | `delivery/ci.ts`, `steps/awaiting-ci.ts` | I/delivery/ci-flow.test.ts, F/injection.test.ts | done |
 | S15.4 | Before every action: validate, persist intent, execute, receipt, reconcile | `delivery/actions.ts:ActionLedger.perform` | U/delivery/actions.test.ts "persists intent, executes and stores the receipt" | done |
-| S15.5 | Opt-in merge with exact candidate, branch checks, review policy, no blockers; revalidate after changes | `delivery/release.ts:performRelease` (merge), `delivery/github.ts` (`--match-head-commit`), `steps/delivering.ts` | I/delivery/release.test.ts "merges the exact reviewed commit after green branch checks...", "refuses the merge when the PR head moved off the reviewed commit...", "revalidates on every call...", I/controller/release.test.ts | done |
-| S15.6 | Deployment through a release profile with environment safeguards | `delivery/release.ts` (deploy: `release.environments`, allowed branches, hosts, green CI, action ledger) | I/delivery/release.test.ts "refuses an environment the profile does not name, a branch it does not allow, and a host the policy does not allow", "records a failed deploy and never re-runs it automatically" | done |
+| S15.5 | Opt-in merge with exact candidate, branch checks, review policy, no blockers; revalidate after changes | `delivery/release.ts:performRelease` (merge), `delivery/github.ts` (`--match-head-commit`), `steps/delivering.ts`; a ledgered `pr_ready` action marks a draft ready before the merge (`release.merge.mark_ready`) | I/delivery/release.test.ts "merges the exact reviewed commit after green branch checks...", "refuses the merge when the PR head moved off the reviewed commit...", "revalidates on every call...", I/controller/release.test.ts, I/delivery/release.test.ts "performRelease: a draft pull request (G48)", I/controller/release-deploy.test.ts "a draft pull request is marked ready, merged, and the merge commit is deployed..." | done |
+| S15.6 | Deployment through a release profile with environment safeguards | `delivery/release.ts` (deploy: `release.environments`, allowed branches, hosts, green CI, action ledger; every defined environment deploys in profile order, skipped ones reported; an UNKNOWN outcome is settled by `verify_command` or `orbit release resolve`) | I/delivery/release.test.ts "refuses an environment the profile does not name, a branch it does not allow, and a host the policy does not allow", "records a failed deploy and never re-runs it automatically", I/controller/release-deploy.test.ts (all four tests), U/cli/release.test.ts "orbit release resolve" | done |
 
 ## 16. Observability
 
@@ -407,7 +410,7 @@ sometimes shortened.
 | ID | Requirement | Implementation | Tests | Status |
 |---|---|---|---|---|
 | S17.1 | Unit tests: contracts, policy, traversal, fingerprints, budgets, routing, scheduling, freshness, transitions, decisions, redaction, reconciliation | n/a | U/contract, U/policy, U/evidence, U/scheduling, U/routing, U/storage, U/core/redact.test.ts, U/delivery/actions.test.ts | done |
-| S17.2 | Integration tests: plugin, hooks, worker launch, worktree isolation, SQLite recovery, checks, mock review, UI fixtures, mock delivery, service restart | n/a | I/plugin, I/cli/hook.test.ts, I/adapters, I/isolation, I/recovery, I/evidence, I/review, I/ui, I/delivery, I/controller/service-loop.test.ts; one failure: I/demo/example.test.ts (see S2.5) | partial |
+| S17.2 | Integration tests: plugin, hooks, worker launch, worktree isolation, SQLite recovery, checks, mock review, UI fixtures, mock delivery, service restart | n/a | I/plugin, I/cli/hook.test.ts, I/adapters, I/isolation, I/recovery, I/evidence, I/review, I/ui, I/delivery, I/controller/service-loop.test.ts; I/demo/example.test.ts (see S2.5) | done |
 | S17.F1 | Fault: kill worker during edit | n/a | F/worker-crash.test.ts (both tests pass) | done |
 | S17.F2 | Fault: kill controller mid-transition | n/a | F/controller-crash.test.ts | done |
 | S17.F3 | Fault: lose PR response | n/a | F/delivery.test.ts "a lost pull request response is reconciled..." | done |
@@ -448,13 +451,13 @@ sometimes shortened.
 |---|---|---|---|---|
 | S18.1 | Contracts, policy, storage, doctor, transitions | `contract/`, `policy/`, `storage/`, `cli/commands/doctor.ts` | see S3, S4, S6 | done |
 | S18.2 | Isolated worker plus trusted verification slice | `adapters/`, `isolation/`, `evidence/` | I/controller/runs.test.ts | done |
-| S18.3 | Inquisition, repair briefs, non-progress detection | `inquisition/` | see S10 (S10.3 partial) | partial |
-| S18.4 | Persistent execution and fault recovery | `controller/loop.ts`, `recovery/` | see S14 (S14.11 partial) | partial |
+| S18.3 | Inquisition, repair briefs, non-progress detection | `inquisition/` | see S10 | done |
+| S18.4 | Persistent execution and fault recovery | `controller/loop.ts`, `recovery/` | see S14 | done |
 | S18.5 | Registry, token accounting, adaptive budgets, scheduling | `routing/`, `scheduling/` | see S8 | done |
 | S18.6 | Codex review adapter and disagreement resolution | `adapters/codex.ts`, `review/` | see S12 | done |
 | S18.7 | UI runner, accessibility, visual artifacts | `ui/` | see S13 | done |
 | S18.8 | Delivery, CI repair, action reconciliation | `delivery/` | see S15 | done |
-| S18.9 | Acceptance suite, docs, demo runs, security review | `tests/acceptance`, `docs/`, `examples/` | acceptance green; live demo never run; I/demo/example.test.ts fails | partial |
+| S18.9 | Acceptance suite, docs, demo runs, security review | `tests/acceptance`, `docs/`, `examples/` | acceptance green; I/demo/example.test.ts and I/demo/mock-demo.test.ts pass; live demo never run, `docs/demos/` holds no report (G39) | partial |
 | S18.10 | Enforcement exists before autonomous delivery | `policy/`, `isolation/` | U/policy/*, I/isolation/* | done |
 
 ## 19. Definition of delivered
@@ -464,15 +467,15 @@ sometimes shortened.
 | S19.1 | Installs | `docs/installation.md`, `scripts/check-plugin.mjs` | I/plugin/plugin.test.ts "validates under --strict" | done |
 | S19.2 | Loads | plugin, `dist/orbit.mjs` | I/plugin/plugin.test.ts "is current and starts with a node shebang" | done |
 | S19.3 | Runs persistently | `controller/service.ts`, `controller/loop.ts` | I/controller/service-loop.test.ts | done |
-| S19.4 | Completes the demo unattended | mock demo; live demo never run | I/demo/mock-demo.test.ts | partial |
+| S19.4 | Completes the demo unattended | mock demo; live demo never run, `docs/demos/` holds no report (G39) | I/demo/mock-demo.test.ts "simple: SUCCEEDED on a cheap route", A/demo-shapes.test.ts | partial |
 | S19.5 | Commands use documented interfaces | `docs/interfaces/*` | U/adapters/claude-invocation.test.ts "builds the verified headless invocation" | done |
 | S19.6 | State survives restart | `storage/`, `recovery/` | A/restart-and-delivery.test.ts | done |
 | S19.7 | Policies enforced outside prompts | `policy/`, `isolation/` | F/policy-faults.test.ts | done |
 | S19.8 | Evidence is candidate-bound | `evidence/` | U/evidence/freshness.test.ts | done |
 | S19.9 | Inquisition works interactively and unattended | see S4.2, S10.5 | A/ambiguity.test.ts, I/plugin/plugin.test.ts | done |
 | S19.10 | Review and delivery are reconciled | `review/stale.ts`, `delivery/actions.ts` | I/review/flow.test.ts, I/delivery/deliver.test.ts | done |
-| S19.11 | Fault tests pass | `tests/fault-injection` | all pass, no `it.fails` | done |
-| S19.12 | No placeholder labelled functional | the skills now call real commands; `inquisition/impact.ts` says the engine records the impact register, which nothing does (S10.3) | I/plugin/plugin.test.ts "resolves every orbit command a skill names to a registered command" | partial |
+| S19.11 | Fault tests pass | `tests/fault-injection` | all pass, no `it.fails`; the flaky kill-order race in F/worker-crash.test.ts is fixed (G49) and the full suite passed at 4 and at 8 workers | done |
+| S19.12 | No placeholder labelled functional | the skills call real commands; the impact register is recorded by the engine (S10.3) | I/plugin/plugin.test.ts "resolves every orbit command a skill names to a registered command", U/inquisition/engine.test.ts "records exactly one impact-register decision..." | done |
 | S19.13 | Final report: outcome, goal, behaviour, criterion evidence, checks, decisions, assumptions, repairs, revision, branch, PR, budget, risks, blocker or next action | `controller/report.ts:buildFinalReport` | U/controller/report.test.ts "has every section spec section 19 asks for" | done |
 
 ## 20. Example user invocation
@@ -490,56 +493,47 @@ sometimes shortened.
 
 ## Counts
 
-| Status | Before (previous audit) | After (this audit) |
-|---|---|---|
-| done | 285 | 341 |
-| partial | 54 | 16 |
-| missing | 15 | 1 |
-| untested | 5 | 1 |
-| total | 359 | 359 |
+| Status | Earlier re-audit (before the fixer waves) | Previous version of this table | This audit |
+|---|---|---|---|
+| done | 341 | 356 | 356 |
+| partial | 16 | 2 | 2 |
+| missing | 1 | 0 | 0 |
+| untested | 1 | 1 | 1 |
+| total | 359 | 359 | 359 |
 
-Partial rows in sections 17, 18 and 19 roll up a root gap listed elsewhere
-(they name it with "see"). `docs/gaps.md` lists each root gap once.
+No status changed in this audit: every `done` row was confirmed, and the three
+non-done rows (S2.9, S18.9, S19.4) all wait on the live demo (G39). Rows that
+are `done` but carry a hardening follow-up name it in `docs/gaps.md` (G24 for
+S5.28, G50 for S15.6, G53 for S8.21, G55 for S6.6, G56 for S14.11).
 
 ## Coverage
 
-Measured with `npx vitest run --coverage --coverage.reporter=json-summary
---coverage.reporter=text-summary --coverage.reportOnFailure=true
---coverage.include='src/**'` (the failing demo test would otherwise suppress
-the report; `include` makes files no test loads count as 0%).
+Measured in this audit with `npx vitest run --coverage` (the configuration in
+`vitest.config.ts`: v8 provider, `include: ['src/**']`, `reportOnFailure`,
+thresholds lines 95, functions 95, statements 95, branches 90). The run exited
+0: 343 test files, 6356 tests passed, 1 skipped, none failing. 211 source
+files are measured; the four excluded files hold only types.
 
-| Metric | Covered |
-|---|---|
-| Statements | 86.30% (20866 of 24176) |
-| Branches | 77.96% (15962 of 20473) |
-| Functions | 91.10% (3688 of 4048) |
-| Lines | 89.53% (17310 of 19334) |
-
-Files below 80% lines (19 of 207):
-
-| File | Lines | Branches |
+| Metric | Covered | Enforced floor |
 |---|---|---|
-| `adapters/hook-main.ts` | 0% (0 of 1) | n/a |
-| `adapters/shim-main.ts` | 0% (0 of 1) | n/a |
-| `cli/commands/internal.ts` | 0% (0 of 13) | 0% |
-| `cli/hook.ts` | 0% (0 of 16) | 0% |
-| `cli/main.ts` | 0% (0 of 7) | 0% |
-| `policy/types.ts` | 0% (0 of 1) | n/a |
-| `ui/types.ts` | 0% (0 of 3) | n/a |
-| `cli/commands/doctor.ts` | 0.9% (4 of 420) | 0% |
-| `adapters/shim.ts` | 28.6% (78 of 273) | 24.7% |
-| `cli/commands/models.ts` | 33.7% (30 of 89) | 29.7% |
-| `controller/start.ts` | 40.7% (11 of 27) | 33.3% |
-| `controller/workers.ts` | 65.9% (120 of 182) | 51.2% |
-| `recovery/identity.ts` | 66.7% (18 of 27) | 64.5% |
-| `cli/commands/service.ts` | 68.3% (41 of 60) | 56.2% |
-| `policy/bash.ts` | 68.5% (802 of 1171) | 56.2% |
-| `cli/io.ts` | 70.6% (24 of 34) | 75.9% |
-| `policy/guard-hook.ts` | 72.6% (53 of 73) | 83.5% |
-| `cli/commands/report.ts` | 77.6% (52 of 67) | 56.0% |
-| `core/proc.ts` | 78.2% (61 of 78) | 61.9% |
+| Lines | 99.68% (20017 of 20080) | 95% |
+| Functions | 99.69% (4219 of 4232) | 95% |
+| Statements | 99.11% (24910 of 25132) | 95% |
+| Branches | 96.40% (20432 of 21195) | 90% |
 
-Most of the 0% files and the low `doctor.ts`, `shim.ts`, `hook.ts` and
-`main.ts` figures are code that runs only in spawned child processes (the CLI,
-the worker shim, the guard hook), which in-process v8 coverage does not see.
-`policy/types.ts` and `ui/types.ts` hold only types plus a constant or two.
+Lowest files per metric:
+
+| Metric | Lowest files |
+|---|---|
+| Lines | `inquisition/impact.ts` 96.87%, `controller/verification.ts` 96.96%, `inquisition/resolve.ts` 97.22% |
+| Functions | `controller/steps/awaiting-ci.ts` 95.00%, `inquisition/resolve.ts` 96.29%, `policy/weakening.ts` 96.96% |
+| Statements | `routing/registry.ts` 94.70%, `adapters/claude-settings.ts` 96.00%, `controller/steps/implementing.ts` 96.10% |
+| Branches | `isolation/limits.ts` 90.24%, `review/stale.ts` 90.62%, `contract/draft.ts` 90.66% |
+
+No file is under 80% lines (the per-file floor in `docs/testing-journal.md`),
+though that floor is not yet enforced by configuration (G57). The code that
+runs only in spawned processes (the CLI entry, the guard hook, the worker
+shim) is now covered by in-process entry tests
+(U/cli/coverage-entry-process.test.ts, U/adapters/coverage-entry-main.test.ts,
+U/adapters/coverage-entry-shim.test.ts) instead of being invisible to v8.
+`src/` contains no coverage-ignore comment.

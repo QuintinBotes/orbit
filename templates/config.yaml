@@ -48,6 +48,9 @@ actions:
   # The next four need mode autonomous-delivery or release.
   commit: true
   push_task_branch: true
+  # Permission to rebase the task branch onto a base branch that moved on.
+  # Needs commit.
+  rebase_task_branch: false
   open_pull_request: true
   repair_ci: true
   read_ci_logs: true
@@ -267,15 +270,20 @@ isolation:
   # Required when provider is container, for example:
   #   container: {image: "node:22-bookworm", memory_mb: 4096, cpus: 2, pids: 512}
   container: null
-  # Hard per-process limits for workers and checks, applied with ulimit
-  # (sandbox-runtime, none) or docker --ulimit (container). null leaves a
-  # limit unset. max_processes counts every process of your user id, not
-  # only the command's, so set it well above what you already run. Memory
-  # is limited only by the container provider.
+  # Hard per-process limits for workers and checks, on by default. null turns
+  # a limit off. cpu_seconds, max_processes and max_file_mb are applied with
+  # ulimit (sandbox-runtime, none) or docker --ulimit (container).
+  # max_processes counts every process of your user id, not only the
+  # command's, so raise it if your account already runs many processes.
+  # memory_mb is enforced under sandbox-runtime by a watchdog that samples the
+  # resident memory of the command's processes and kills them past the limit;
+  # the container provider uses container.memory_mb instead, and none does not
+  # enforce memory.
   limits:
-    cpu_seconds: null
-    max_processes: null
-    max_file_mb: null
+    cpu_seconds: 3600
+    max_processes: 2048
+    max_file_mb: 2048
+    memory_mb: 4096
 
 providers:
   claude:
@@ -329,9 +337,11 @@ release: null
 #     method: squash            # squash, merge or rebase
 #     require_checks: [build]   # CI checks that must be green before merging
 #     delete_branch: true
+#     mark_ready: true          # mark a draft pull request ready before merging
 #   environments:
 #     production:
 #       deploy_command: [npm, run, deploy]   # argv, never run through a shell
+#       verify_command: null                 # argv that exits 0 when the deploy took effect
 #       allowed_branches: [main]
 #       require_ci_green: true
 #       network_hosts: []                    # must be covered by network.allowed_hosts

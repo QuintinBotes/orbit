@@ -66,6 +66,18 @@ describe('timeout diagnosis', () => {
     rows[0]!.timedOut = false;
     expect(timeoutContext(ctx, 'cand-1', { cores: 4, loadAvg1m: null, freeMemMb: 2048 })).toBeNull();
   });
+
+  it('reads the machine through the controller\'s injected probe, not the host (G54)', () => {
+    const db = {
+      all: (_sql: string, ...params: unknown[]) =>
+        params[1] === 'cand-1'
+          ? [{ id: 'u', run_id: 'run-1', candidate_id: 'cand-1', check_id: 'unit', kind: 'command', tree_hash: 't', check_config_hash: 'c', policy_hash: 'p', command_json: '[]', cwd: '/', isolation: 'none', status: 'TIMEOUT', exit_code: null, timed_out: 1, cancelled: 0, flaky: 0, rerun_of: null, pid: null, log_path: null, log_sha256: null, fingerprint: null, excerpt: null, artifacts_json: null, meta_json: null, started_at: 0, ended_at: 120_000 }]
+          : [],
+    };
+    const probe = { availableParallelism: () => 3, freemem: () => 1234 * 1024 * 1024 };
+    const ctx = { db, deps: { schedulerProbe: probe }, run: { id: 'run-1' }, snapshot: { config: { checks: { unit: { timeout_seconds: 120 } } } } } as unknown as RunContext;
+    expect(timeoutContext(ctx, 'cand-1')?.machine).toEqual({ cores: 3, loadAvg1m: null, freeMemMb: 1234 });
+  });
 });
 
 describe('fault localization', () => {

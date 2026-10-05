@@ -184,7 +184,11 @@ export class CodexAdapter implements ProviderAdapter {
 
     const policyHash = spec.policyHash ?? snapshotFileHash(spec.policyPath);
     const snapshot = verifySnapshot(spec.policyPath, policyHash);
-    // Codex has no verified output cap (no documented flag or config key limits a turn's output tokens), so the budget is an instruction, and overruns are measured and recorded.
+    // Codex has no verified output cap (G53): checked against codex-cli 0.153.4, whose `exec --help`, interface notes and compiled-in
+    // config keys have no setting for a turn's output tokens (model_context_window, model_auto_compact_token_limit and
+    // tool_output_token_limit bound context and tool output, not the answer). A guessed `-c` key could not be shown to take effect (unknown keys are only
+    // rejected under --strict-config). The budget is therefore an instruction, and overruns are measured from
+    // turn.completed usage and recorded (routing/usage.ts, usage.output-budget-exceeded). Revisit when Codex documents a cap.
     const outputTokens = outputBudgetFor(spec.role, { explicit: spec.outputTokens, configured: snapshot.config.routing.output_budgets });
     const checkout = canonicalPath(spec.cwd);
     const workerDir = spec.workerDir;

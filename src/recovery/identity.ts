@@ -16,8 +16,8 @@ import { isGroupAlive, processInfo } from '../core/proc.ts';
 const CLOCK_TICKS_PER_SECOND = 100;
 
 /** Epoch milliseconds for a start string from core/proc, or null when it cannot be converted. */
-export function startToEpochMs(start: string, btimeSeconds: number | null = bootTimeSeconds()): number | null {
-  if (process.platform === 'linux') {
+export function startToEpochMs(start: string, btimeSeconds: number | null = bootTimeSeconds(), platform: NodeJS.Platform = process.platform): number | null {
+  if (platform === 'linux') {
     const ticks = Number(start);
     if (!Number.isFinite(ticks) || btimeSeconds === null) return null;
     return btimeSeconds * 1000 + Math.round((ticks / CLOCK_TICKS_PER_SECOND) * 1000);
@@ -27,10 +27,11 @@ export function startToEpochMs(start: string, btimeSeconds: number | null = boot
   return Number.isFinite(ms) ? ms : null;
 }
 
-function bootTimeSeconds(): number | null {
-  if (process.platform !== 'linux') return null;
+/** Boot time in epoch seconds from /proc/stat (Linux only); the platform and the reader are injectable for tests. */
+export function bootTimeSeconds(platform: NodeJS.Platform = process.platform, read: (path: string) => string = (p) => readFileSync(p, 'utf8')): number | null {
+  if (platform !== 'linux') return null;
   try {
-    const m = /^btime\s+(\d+)/m.exec(readFileSync('/proc/stat', 'utf8'));
+    const m = /^btime\s+(\d+)/m.exec(read('/proc/stat'));
     return m ? Number(m[1]) : null;
   } catch {
     return null;

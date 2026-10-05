@@ -11,6 +11,8 @@
  * example that these scenarios no longer fit fails loudly instead of silently.
  */
 
+import { ENGINEERING_PRACTICES, type PracticeSelection } from '../../../src/contract/practices.ts';
+
 export interface Edit {
   op: 'write' | 'replace' | 'delete';
   path: string;
@@ -45,6 +47,26 @@ export const EXPECTATIONS: Record<GoalName, DemoExpectation> = {
 const COMMAND_CHECKS = ['lint', 'unit'];
 const ALL_CHECKS = [...COMMAND_CHECKS, 'ui'];
 
+/**
+ * The planner's engineering-practice selection (spec section 5) for a demo goal: every practice listed once.
+ * UI work always selects accessibility; the others the demo app has no use for are omitted with the reason.
+ */
+function practices(ui: boolean): PracticeSelection[] {
+  const omitted: Record<string, string> = {
+    'empty-and-loading-states': 'the demo app renders nothing that loads asynchronously, and an empty result is already covered by an existing test',
+    'sensitive-data-handling': 'the demo data is public sample content and the change adds no new field or log line',
+    'performance-hotspots': 'the demo app serves a handful of rows, so no request path is a material hotspot',
+    'rollback-and-migration': 'the change has no schema or data migration and no deployment action is authorized',
+    ...(ui ? {} : { accessibility: 'the change touches server responses only and adds no user interface element' }),
+  };
+  return ENGINEERING_PRACTICES.map((practice) => {
+    const reason = omitted[practice];
+    return reason === undefined
+      ? { practice, applicable: true, justification: practice === 'accessibility' ? 'the UI journey runs the accessibility scan on the changed page' : 'covered by the criteria, their tests and the existing checks' }
+      : { practice, applicable: false, justification: reason };
+  });
+}
+
 function plan(p: {
   objective: string;
   current: [string, string][];
@@ -71,6 +93,7 @@ function plan(p: {
     required_check_ids: p.criteria.some((c) => c.ui) ? ALL_CHECKS : COMMAND_CHECKS,
     non_goals: p.nonGoals,
     risks: p.risks ?? [],
+    practices: practices(p.criteria.some((c) => c.ui)),
     assumptions: [],
     unresolved_decisions: [],
     material_topics: [],

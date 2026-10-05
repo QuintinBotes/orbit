@@ -7,6 +7,8 @@
  * checks defined in trusted configuration; a check id the policy does not
  * define makes the contract invalid.
  */
+import type { PracticeSelection } from './practices.ts';
+
 export interface AcceptanceCriterion {
   id: string;
   statement: string;
@@ -50,6 +52,11 @@ export interface GoalContract {
   allowed_paths: string[];
   required_check_ids: string[];
   assumptions: ContractAssumption[];
+  /**
+   * The planner's selection of engineering practices (spec section 5), one entry per practice: applicable, or
+   * omitted with its reason. Absent on a contract created before the selection existed; every new contract has it.
+   */
+  practices?: PracticeSelection[];
   /** Optional: documented pre-existing failures the evidence report may accept. */
   baseline_exceptions?: BaselineException[];
   delivery: { draft_pr: boolean; merge: boolean };

@@ -79,10 +79,10 @@ export function modesRequestedInGoal(goal: string): { mode: RunMode; phrase: str
   const out: { mode: RunMode; phrase: string }[] = [];
   for (const re of MODE_PHRASES) {
     for (const m of goal.matchAll(re)) {
-      const word = m[1];
-      const mode = word === undefined ? null : normalizeMode(word);
+      // Every mode pattern has one capture group, and a global match always carries its index.
+      const mode = normalizeMode(m[1]!);
       if (mode === null || out.some((o) => o.mode === mode)) continue;
-      if (isNegated(goal, m.index ?? 0)) continue;
+      if (isNegated(goal, m.index!)) continue;
       out.push({ mode, phrase: m[0].trim() });
     }
   }
@@ -109,7 +109,7 @@ export function reconcileAuthority(goal: string, config: Pick<OrbitConfig, 'mode
   for (const p of ACTION_PATTERNS) {
     const seen = new Set<string>();
     for (const m of goal.matchAll(p.re)) {
-      const negated = isNegated(goal, m.index ?? 0);
+      const negated = isNegated(goal, m.index!);
       const allowed = config.actions[p.action] === true;
       const phrase = m[0].trim();
       const key = `${negated}:${p.action}`;

@@ -4,6 +4,7 @@ import { execCapture } from '../core/exec.ts';
 import { sha256 } from '../core/hash.ts';
 import { redactForProvider } from '../core/redact.ts';
 import type { GoalContract } from '../contract/types.ts';
+import { ENGINEERING_PRACTICES } from '../contract/practices.ts';
 import type { Candidate, EvidenceReport } from '../evidence/types.ts';
 import { BUILTIN_CREDENTIAL_PATHS } from '../policy/builtin.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
@@ -483,8 +484,44 @@ ${bullet(
     500,
   )}`);
 
+  const practices = engineeringPracticesSection(contract, red);
+  if (practices !== '') sec.push(practices);
+
+  // The practice question is the controller's, asked of every review whatever the caller listed (spec section 5).
   sec.push(`## Review questions
 
-${bullet(input.questions.map(red), 20, 500)}`);
+${bullet([...practiceReviewQuestions(contract), ...input.questions.map(red)], 20, 500)}`);
   return sec.join('\n');
+}
+
+/**
+ * The planner's engineering-practice selection (spec section 5), as the reviewer sees it: each practice, whether
+ * the task needs it, and the reason. Empty for a contract made before the selection existed; the review question
+ * (`practiceReviewQuestions`) says so, because an absent selection must not read as "nothing was needed".
+ */
+export function engineeringPracticesSection(contract: GoalContract, red: (s: string) => string = (s) => s): string {
+  const selection = contract.practices;
+  if (selection === undefined) return '';
+  const lines = ENGINEERING_PRACTICES.map((practice) => {
+    const s = selection.find((x) => x.practice === practice);
+    if (!s) return `- ${practice}: NOT ACCOUNTED FOR (neither selected nor justified as omitted)`;
+    return `- ${practice} [${s.applicable ? 'applicable' : 'OMITTED'}]: ${red(oneLine(s.justification, 300))}`;
+  });
+  return `## Engineering practices
+
+${lines.join('\n')}
+`;
+}
+
+/** Questions every review answers about the practice selection: an omission without a sound reason is a finding. */
+export function practiceReviewQuestions(contract: GoalContract): string[] {
+  if (contract.practices === undefined) return ['No practice selection is recorded: which engineering practices does this change lack? Report each.'];
+  const omitted = contract.practices.filter((p) => !p.applicable).map((p) => p.practice);
+  const out = [
+    omitted.length > 0
+      ? `Is each omitted engineering practice (${omitted.join(', ')}) really not needed here? Report a finding for every omission whose justification is unsound, citing the code that needs the practice.`
+      : 'No engineering practice was omitted. Does the change meet each as its justification claims? Report a finding for any it does not.',
+  ];
+  if (ENGINEERING_PRACTICES.some((p) => !contract.practices!.some((x) => x.practice === p))) out.push('Some practices are not accounted for in the selection. Which does this change need? Report each.');
+  return out;
 }

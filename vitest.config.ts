@@ -8,5 +8,14 @@ export default defineConfig({
     maxWorkers: 4,
     testTimeout: 60_000,
     hookTimeout: 60_000,
+    coverage: {
+      provider: 'v8',
+      include: ['src/**'],
+      // Only files that hold types and no runtime code: they have nothing to execute.
+      exclude: ['src/contract/amendment-types.ts', 'src/contract/types.ts', 'src/evidence/types.ts', 'src/isolation/types.ts'],
+      reporter: ['text-summary', 'json-summary'],
+      reportOnFailure: true,
+      thresholds: { lines: 95, functions: 95, statements: 95, branches: 90 },
+    },
   },
 });

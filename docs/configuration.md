@@ -65,6 +65,7 @@ actions:
   test: true
   commit: true
   push_task_branch: true
+  rebase_task_branch: false
   open_pull_request: true
   repair_ci: true
   read_ci_logs: true
@@ -76,6 +77,10 @@ actions:
 
 `commit`, `push_task_branch`, `open_pull_request` and `repair_ci` need mode
 `autonomous-delivery` or `release`. `merge` and `deploy_production` need `release`.
+
+`rebase_task_branch` (default `false`) is the permission to rebase the task
+branch onto a base branch that has moved on. It needs `commit`. While it is
+`false`, a moved base branch is reported and never rebased over.
 
 `change_secrets` is reserved: workers never hold or change secrets, so only
 `false` is accepted. `change_permissions` is read by the authorization layer:
@@ -92,9 +97,11 @@ release:
     method: squash            # squash | merge | rebase
     require_checks: [build]   # CI checks that must be green before merging
     delete_branch: true
+    mark_ready: true          # mark a draft pull request ready for review before merging
   environments:
     production:
       deploy_command: [npm, run, deploy]   # argv, never run through a shell
+      verify_command: null                 # argv that exits 0 when the deploy took effect
       allowed_branches: [main]             # default: the base branch
       require_ci_green: true
       network_hosts: []                    # must be covered by network.allowed_hosts
@@ -107,6 +114,17 @@ Default `null`. Mode `release` requires it (not null) and needs
 environment, and an environment with no `allowed_branches` is an error, since
 nothing could ever be deployed to it. Left-out merge settings and environment
 fields take the defaults shown; `deploy_command` has none.
+
+`merge.mark_ready` (default `true`): when the pull request is still a draft,
+release mode marks it ready for review as its own ledgered action before it
+merges. Set it to `false` to have a person do that.
+
+`verify_command` (default `null`) is a trusted command that reports whether a
+deploy took effect: exit 0 means it did, any other exit means it did not. It is
+used to reconcile a deploy whose outcome is UNKNOWN (for example after a crash
+in the middle of it). It runs like `deploy_command`, in isolation and with the
+environment's `network_hosts`. With `null`, an UNKNOWN deploy waits for a
+person.
 
 ## dependencies and network
 
@@ -332,9 +350,10 @@ isolation:
   allow_unisolated: false
   container: {image: "node:22-bookworm", memory_mb: 4096, cpus: 2, pids: 512}  # required for container
   limits:
-    cpu_seconds: null          # CPU time per process
-    max_processes: null        # processes of the user id (RLIMIT_NPROC)
-    max_file_mb: null          # largest file a process may write
+    cpu_seconds: 3600          # CPU time per process
+    max_processes: 2048         # processes of the user id (RLIMIT_NPROC)
+    max_file_mb: 2048          # largest file a process may write
+    memory_mb: 4096            # resident memory of the command's processes (watchdog)
 
 providers:
   claude:
@@ -351,16 +370,40 @@ providers:
     extra_args: []
 ```
 
-`isolation.limits` sets hard per-process limits on every worker shell
-command and check. With `sandbox-runtime` and `none` they are applied by
-`bash` with `ulimit` right before the command starts (inside the sandbox, so
-srt itself is not limited); with `container` they become `docker --ulimit`
-flags next to the container's own memory, CPU and pids limits. A wrapped
-command cannot raise them again. `max_processes` is the kernel's per-user
-limit: it counts every process of your user id, not only the command's, so
-set it well above what the account already runs. Memory is limited only by
-the container provider. When limits are set and no `bash` is found, the
-command is refused rather than run without them.
+`isolation.limits` is on by default. Set a value to `null` to turn that limit
+off. It sets hard per-process limits on every worker shell command and check.
+With `sandbox-runtime` and `none` the first three are applied by `bash` with
+`ulimit` right before the command starts (inside the sandbox, so srt itself is
+not limited); with `container` they become `docker --ulimit` flags next to the
+container's own memory, CPU and pids limits. A wrapped command cannot raise
+them again. `max_processes` is the kernel's per-user limit: it counts every
+process of your user id, not only the command's, so if your account already
+runs more than 2048 processes (a desktop with many applications can), raise it
+or the command will fail to start processes. When limits are set and no
+`bash` is found, the command is refused rather than run without them.
+
+`memory_mb` cannot be a ulimit (RLIMIT_AS breaks node, the JVM and Go, and
+macOS ignores RLIMIT_RSS), so under `sandbox-runtime` a watchdog starts the
+command, samples the resident memory of the command's process group and
+descendants with `ps` every 500 ms, and kills them all with SIGKILL when the
+sum passes the limit. The check or worker is then recorded as a resource-limit
+failure that names the limit. It samples, so a command that allocates faster
+than that can overshoot before it is stopped, and it sums resident sets, so
+memory shared between processes counts once per process. Without `ps` (or
+node), the command is refused rather than run without the limit.
+
+What each provider enforces:
+
+| limit | sandbox-runtime | container | none |
+| --- | --- | --- | --- |
+| `cpu_seconds` | ulimit | `--ulimit cpu` | ulimit |
+| `max_processes` | ulimit | `--ulimit nproc`, plus `container.pids` | ulimit |
+| `max_file_mb` | ulimit | `--ulimit fsize` | ulimit |
+| `memory_mb` | resident-memory watchdog | not used; `container.memory_mb` is enforced by Docker | not enforced |
+
+`none` runs commands with every permission of the Orbit user and applies only
+the ulimit limits; it enforces no memory limit. The wall-clock timeout is the
+caller's job under every provider.
 
 ## routing and retention
 

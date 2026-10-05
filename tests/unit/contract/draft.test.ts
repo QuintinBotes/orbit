@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { BASELINE_MATERIAL_TOPICS, draftContract, type DraftContractInput } from '../../../src/contract/draft.ts';
 import { policyHashOf, validateContract } from '../../../src/contract/validate.ts';
 import { isOrbitError } from '../../../src/core/errors.ts';
-import { BASELINE, check, planner, snapshot, uiConfig } from './fixtures.ts';
+import { BASELINE, check, planner, practiceSelection, snapshot, uiConfig } from './fixtures.ts';
+import { ENGINEERING_PRACTICES } from '../../../src/contract/practices.ts';
 
 function input(overrides: Partial<DraftContractInput> = {}): DraftContractInput {
   return {
@@ -165,5 +166,54 @@ describe('draftContract', () => {
     expect(() => draftContract(input({ snapshot: snap, plannerOutput: plan }))).toThrow(/no mandatory criterion is marked ui/);
     plan.criteria[0]!.ui = true;
     expect(draftContract(input({ snapshot: snap, plannerOutput: plan })).contract.acceptance_criteria[0]!.ui).toBe(true);
+  });
+
+  describe('engineering practices (S5.40)', () => {
+    it('stores the planner selection on the contract, in the canonical order, with each omission justified', () => {
+      const shuffled = [...practiceSelection()].reverse();
+      const { contract } = draftContract(input({ plannerOutput: planner({ practices: shuffled }) }));
+      expect(contract.practices?.map((p) => p.practice)).toEqual([...ENGINEERING_PRACTICES]);
+      const omitted = contract.practices!.filter((p) => !p.applicable);
+      expect(omitted.map((p) => p.practice)).toEqual(['performance-hotspots', 'accessibility', 'rollback-and-migration']);
+      for (const p of contract.practices!) expect(p.justification.length).toBeGreaterThan(0);
+    });
+
+    it('rejects a plan that leaves a practice unaccounted for, lists one twice, or omits one without a reason', () => {
+      // Nine entries, so the schema's count passes, but one practice is never mentioned and another is listed twice.
+      const missing = practiceSelection().map((p) => (p.practice === 'documentation' ? { ...p, practice: 'accessibility' as const } : p));
+      expect(() => draftContract(input({ plannerOutput: planner({ practices: missing }) }))).toThrow(/practice "documentation" is neither selected nor justified as omitted/);
+      expect(() => draftContract(input({ plannerOutput: planner({ practices: missing }) }))).toThrow(/practice "accessibility" is listed 2 times/);
+      try {
+        draftContract(input({ plannerOutput: planner({ practices: missing }) }));
+        throw new Error('expected failure');
+      } catch (err) {
+        expect(isOrbitError(err, 'MALFORMED_OUTPUT')).toBe(true);
+      }
+      const bare = practiceSelection().map((p) => (p.practice === 'performance-hotspots' ? { ...p, applicable: false, justification: 'n/a' } : p));
+      expect(() => draftContract(input({ plannerOutput: planner({ practices: bare }) }))).toThrow(/omission of practice "performance-hotspots" gives no reason/);
+      const blank = practiceSelection().map((p) => (p.practice === 'documentation' ? { ...p, justification: '   ' } : p));
+      expect(() => draftContract(input({ plannerOutput: planner({ practices: blank }) }))).toThrow(/documentation.*no justification/);
+    });
+
+    it('keeps accessibility for UI work even when the planner omitted it, and records why', () => {
+      const snap = snapshot({ ui: uiConfig(), checks: { 'reports-tests': check('reports-tests'), build: check('build') } });
+      const plan = planner({ allowed_paths: ['apps/web/**'] });
+      plan.criteria[0]!.ui = true;
+      const { contract, adjustments } = draftContract(input({ snapshot: snap, plannerOutput: plan }));
+      const a11y = contract.practices!.find((p) => p.practice === 'accessibility')!;
+      expect(a11y.applicable).toBe(true);
+      expect(a11y.justification).toContain('AC-1');
+      expect(adjustments).toContainEqual(expect.objectContaining({ kind: 'practice-selected', subject: 'accessibility' }));
+    });
+
+    it('a contract whose recorded selection is incomplete fails validation; one with no selection (an older run) still validates', () => {
+      const inp = input();
+      const { contract } = draftContract(inp);
+      const partial = { ...contract, practices: contract.practices!.slice(0, 4) };
+      expect(() => validateContract(partial, inp.snapshot)).toThrow(/practices: practice "performance-hotspots" is neither selected/);
+      const older = { ...contract };
+      delete older.practices;
+      expect(validateContract(older, inp.snapshot)).toBe(older);
+    });
   });
 });

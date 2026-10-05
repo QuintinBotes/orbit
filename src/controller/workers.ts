@@ -32,6 +32,7 @@ import { recordUsage, routeStats } from '../routing/usage.ts';
 import type { RouteSignals, WorkKind } from '../routing/types.ts';
 import { ROLE_COST_CEILING_USD, ROLE_WALL_CEILING_MS } from '../scheduling/budget.ts';
 import type { BudgetPhase } from '../scheduling/types.ts';
+import type { PolicySnapshot } from '../policy/types.ts';
 import { homeOf, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
 import { activeOverlayFor } from './knowledge-hooks.ts';
@@ -56,6 +57,11 @@ export interface WorkerRequest {
   phase?: BudgetPhase;
   /** A structured-output schema other than the role's (a strict-compatible JSON schema); the result is validated against it. */
   outputSchema?: object;
+  /**
+   * The policy this session runs under when not the run's frozen snapshot: a supervised grant policy
+   * (authorization.grantPolicy), built at spawn time in the session's own directory.
+   */
+  policy?: (workerDir: string) => { path: string; hash: string; snapshot: PolicySnapshot };
 }
 
 export type WorkerStatus =
@@ -190,14 +196,15 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
   const env = ctx.deps.hostEnv ?? process.env;
   const provider = w.provider.startsWith('codex') ? 'codex' : 'claude';
   const timeoutMs = workerTimeoutMs(ctx, w.role);
+  const policy = req.policy ? req.policy(w.workerDir) : { path: ctx.run.policyPath, hash: ctx.run.policyHash, snapshot: ctx.snapshot };
   const sandbox = profileForWorker({
     worktree: req.cwd,
     workerDir: w.workerDir,
-    snapshot: ctx.snapshot,
+    snapshot: policy.snapshot,
     provider,
     claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'),
     homeDir: home,
-    policyPath: ctx.run.policyPath,
+    policyPath: policy.path,
     readablePaths: [ctx.deps.orbitInstallDir],
     timeoutMs,
     env,
@@ -217,8 +224,8 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
     maxTurns: ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session,
     timeoutMs,
     sandbox,
-    policyPath: ctx.run.policyPath,
-    policyHash: ctx.run.policyHash,
+    policyPath: policy.path,
+    policyHash: policy.hash,
     env: {},
     ...(req.maxBudgetUsd === undefined ? {} : { maxBudgetUsd: req.maxBudgetUsd }),
   };

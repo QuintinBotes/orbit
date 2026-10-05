@@ -210,6 +210,8 @@ export function labDeps(lab: Lab, extra: Partial<ControllerDeps> = {}): Omit<Con
     orbitInstallDir: ORBIT_ROOT,
     // Deterministic across machines: the built-in secret patterns, not whatever gitleaks is installed.
     gitleaksPath: null,
+    // ...and a fixed machine for scheduling (16 cores, 64 GB free), not whatever this host is doing (G54).
+    schedulerProbe: { availableParallelism: () => 16, freemem: () => 64_000 * 1024 * 1024 },
     timing: { checkPollMs: 50, killGraceMs: 300, ciAbsentGraceMs: 0, workerTimeoutMs: 180_000 },
     ...extra,
   };

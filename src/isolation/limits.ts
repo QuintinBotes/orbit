@@ -19,8 +19,10 @@ import { isExecutableFile } from './util.ts';
  *                  it well above what the account already runs.
  *   max_file_mb    RLIMIT_FSIZE: largest file a process may write (SIGXFSZ).
  * Memory is not limited here: RLIMIT_AS breaks runtimes that reserve large
- * virtual ranges (node, the JVM, Go), and macOS ignores RLIMIT_RSS. Use the
- * container provider for a memory ceiling.
+ * virtual ranges (node, the JVM, Go), and macOS ignores RLIMIT_RSS.
+ * `memory_mb` is enforced by the resident-memory watchdog (isolation/memory.ts)
+ * under sandbox-runtime, and by Docker's own memory limit under the container
+ * provider.
  */
 
 /** bash, not /bin/sh: `ulimit -u` and the 1024-byte unit of `-f` are bash's; dash spells them differently. */
@@ -33,7 +35,11 @@ export function hasLimits(limits: IsolationLimits | null | undefined): limits is
   return !!limits && (limits.cpu_seconds !== null || limits.max_processes !== null || limits.max_file_mb !== null);
 }
 
-/** Plain words for the evidence record: what the wrapper enforces. */
+export function hasMemoryLimit(limits: IsolationLimits | null | undefined): limits is IsolationLimits & { memory_mb: number } {
+  return !!limits && limits.memory_mb !== null && limits.memory_mb !== undefined;
+}
+
+/** Plain words for the evidence record: what the ulimit wrapper enforces. */
 export function describeLimits(limits: IsolationLimits): string[] {
   const out: string[] = [];
   if (limits.cpu_seconds !== null) out.push(`CPU time ${limits.cpu_seconds} s per process`);

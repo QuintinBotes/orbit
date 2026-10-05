@@ -58,6 +58,7 @@
         "test",
         "commit",
         "push_task_branch",
+        "rebase_task_branch",
         "open_pull_request",
         "read_ci_logs",
         "repair_ci",
@@ -71,6 +72,7 @@
         "test": { "type": "boolean" },
         "commit": { "type": "boolean" },
         "push_task_branch": { "type": "boolean" },
+        "rebase_task_branch": { "type": "boolean" },
         "open_pull_request": { "type": "boolean" },
         "read_ci_logs": { "type": "boolean" },
         "repair_ci": { "type": "boolean" },
@@ -317,11 +319,12 @@
         "limits": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["cpu_seconds", "max_processes", "max_file_mb"],
+          "required": ["cpu_seconds", "max_processes", "max_file_mb", "memory_mb"],
           "properties": {
             "cpu_seconds": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1, "maximum": 604800 }] },
             "max_processes": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 16, "maximum": 1000000 }] },
-            "max_file_mb": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1, "maximum": 1048576 }] }
+            "max_file_mb": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1, "maximum": 1048576 }] },
+            "memory_mb": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 64, "maximum": 4194304 }] }
           }
         }
       }
@@ -436,11 +439,12 @@
             "merge": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["method", "require_checks", "delete_branch"],
+              "required": ["method", "require_checks", "delete_branch", "mark_ready"],
               "properties": {
                 "method": { "enum": ["squash", "merge", "rebase"] },
                 "require_checks": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
-                "delete_branch": { "type": "boolean" }
+                "delete_branch": { "type": "boolean" },
+                "mark_ready": { "type": "boolean" }
               }
             },
             "environments": {
@@ -450,9 +454,10 @@
               "additionalProperties": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["deploy_command", "allowed_branches", "require_ci_green", "network_hosts", "timeout_seconds"],
+                "required": ["deploy_command", "verify_command", "allowed_branches", "require_ci_green", "network_hosts", "timeout_seconds"],
                 "properties": {
                   "deploy_command": { "$ref": "#/$defs/argv" },
+                  "verify_command": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/argv" }] },
                   "allowed_branches": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "$ref": "#/$defs/refName" } },
                   "require_ci_green": { "type": "boolean" },
                   "network_hosts": { "$ref": "#/$defs/hostList" },

@@ -46,19 +46,20 @@ const CHECKS: { reason: string; test: (text: string) => boolean }[] = [
 function onlyVocabularyDots(text: string): boolean {
   const re = new RegExp(String.raw`(?:^|[^\w.])([\w-]+\.(?:${FILE_EXTENSIONS}))\b`, 'gi');
   for (const m of text.matchAll(re)) {
-    if (!DOTTED_VOCABULARY.has((m[1] ?? '').toLowerCase())) return false;
+    // Group 1 always participates in a match.
+    if (!DOTTED_VOCABULARY.has(m[1]!.toLowerCase())) return false;
   }
   return true;
 }
 
 function hasDottedIdentifier(text: string): boolean {
   for (const m of text.matchAll(/\b([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)\b/g)) {
-    const token = m[1] ?? '';
+    const token = m[1]!;
     if (DOTTED_VOCABULARY.has(token.toLowerCase())) continue;
     const parts = token.split('.');
     // "e.g" and sentence joins like "end.Then" without a space are not identifiers.
     if (parts.every((p) => p.length <= 1)) continue;
-    if (parts.length === 2 && /^[A-Z]/.test(parts[1] ?? '') && /^[a-z]+$/.test(parts[0] ?? '') && (parts[0] ?? '').length > 3) continue;
+    if (parts.length === 2 && /^[A-Z]/.test(parts[1]!) && /^[a-z]+$/.test(parts[0]!) && parts[0]!.length > 3) continue;
     return true;
   }
   return false;

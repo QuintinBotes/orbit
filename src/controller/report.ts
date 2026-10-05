@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
 import { atomicWrite, atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
 import { sha256 } from '../core/hash.ts';
-import { redact } from '../core/redact.ts';
+import { redact, redactValue } from '../core/redact.ts';
 import { appendEvent } from '../storage/events.ts';
 import { listDecisions } from '../storage/decisions.ts';
 import { finishWorker, listWorkers, markWorkerRunning, planWorker, type WorkerRecord } from '../storage/workers.ts';
@@ -65,6 +65,8 @@ export interface FinalReport {
   reviews: { id: string; provider: string; model: string | null; verdict: string; tree_hash: string; findings: number }[];
   decisions: { kind: string; summary: string; at: number }[];
   assumptions: { id: string; statement: string; status: string }[];
+  /** The engineering practices (spec section 5) the plan selected or omitted, with the reason for each; empty for a contract that predates the selection. */
+  practices?: { practice: string; applicable: boolean; justification: string }[];
   repairs: { attempt: number; source: string; fingerprint: string | null }[];
   revision: { base: string | null; candidate: string | null; tree: string | null; branch: string | null; delivered_commit: string | null; pull_request: { number: number; url: string | null } | null };
   budget: { counters: BudgetSnapshot['counters']; cost_measurement: string; cost_usd: number; cost_complete: boolean; tokens: { input: number; output: number; cache_read: number; cache_write: number } } | null;
@@ -81,7 +83,10 @@ export interface WriteReportOptions {
   snapshot?: PolicySnapshot | null;
 }
 
-/** Build and write final.md and final.json. Idempotent: the same records produce the same report. */
+/**
+ * Build and write final.md and final.json. Idempotent: the same records produce the same report.
+ * Both files, and the returned report, carry the redacted form (see `buildFinalReport`).
+ */
 export function writeFinalReport(db: OrbitDb, runId: string, opts: WriteReportOptions): FinalReport {
   const run = getRun(db, runId);
   const report = buildFinalReport(db, run, opts);
@@ -90,7 +95,17 @@ export function writeFinalReport(db: OrbitDb, runId: string, opts: WriteReportOp
   return report;
 }
 
+/**
+ * The report as built from the durable records, deeply redacted with the policy redactor (S3.28): every string,
+ * at any depth, passes through `redactValue`, which applies the built-in secret shapes and the
+ * `retention.redact_patterns` in force. A goal, outcome reason, decision summary or finding that quoted a secret
+ * is therefore never stored in final.json, printed by `orbit report --json`, or read by the learning layer.
+ */
 export function buildFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptions): FinalReport {
+  return redactValue(assembleFinalReport(db, run, opts)) as FinalReport;
+}
+
+function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptions): FinalReport {
   const contract = parseContract(run.contractJson);
   const cand = currentCandidate(db, run.id);
   const reports = listEvidenceReports(db, run.id);
@@ -158,6 +173,7 @@ export function buildFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportO
     reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length })),
     decisions,
     assumptions: [...(contract?.assumptions ?? []).map((a) => ({ id: a.id, statement: a.statement, status: a.status })), ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))],
+    practices: (contract?.practices ?? []).map((p) => ({ practice: p.practice, applicable: p.applicable, justification: p.justification })),
     repairs: repairs(opts.runDir),
     revision: {
       base: run.baseRevision,
@@ -222,6 +238,7 @@ export function renderMarkdown(r: FinalReport): string {
   out.push('## Reviews', '', list(r.reviews.map((v) => `${v.provider}/${v.model ?? 'default'}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))`)), '');
   out.push('## Decisions', '', list(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), '');
   out.push('## Assumptions', '', list(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), '');
+  if (r.practices && r.practices.length > 0) out.push('## Engineering practices', '', list(r.practices.map((p) => `${p.practice} [${p.applicable ? 'selected' : 'omitted'}]: ${p.justification}`)), '');
   out.push('## Repairs', '', list(r.repairs.map((x) => `attempt ${x.attempt}: ${x.source} brief${x.fingerprint ? ` for ${x.fingerprint}` : ''}`)), '');
   const rv = r.revision;
   out.push('## Revision, branch and pull request', '', list([`base: ${rv.base ?? 'none'}`, `candidate: ${rv.candidate ?? 'none'} (tree ${rv.tree ?? 'none'})`, `branch: ${rv.branch ?? 'none'}`, `delivered commit: ${rv.delivered_commit ?? 'none'}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ''}` : 'none'}`]), '');

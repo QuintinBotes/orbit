@@ -10,6 +10,7 @@ import type { CliContext, CliSeams } from '../../../src/cli/context.ts';
 import { systemClock } from '../../../src/core/clock.ts';
 import { acquireLease, getRun, listRuns, releaseLease, transition } from '../../../src/controller/run-store.ts';
 import { listWorkers } from '../../../src/storage/workers.ts';
+import { listEvidenceReports } from '../../../src/evidence/store.ts';
 import { baseScenario, DIAGNOSIS, implementMul, labDeps, makeLab, seedRegistry, waitFor, writeScenario, type Lab } from '../controller/harness.ts';
 
 const labs: Lab[] = [];
@@ -26,10 +27,14 @@ function seams(l: Lab): CliSeams {
     controller: { tickIntervalMs: 20, leaseTtlMs: 30_000, graceMs: 300, shutdownGraceMs: 400, startGraceMs: 2_000 },
     controllerDeps: (input) => {
       seedRegistry(input.db!);
-      return labDeps(l, input.db);
+      // Deterministic across machines: the built-in secret patterns, not whatever gitleaks is installed.
+      return { ...labDeps(l, input.db), gitleaksPath: null };
     },
   };
 }
+
+// A token shape the built-in scanner knows (github-token), assembled at runtime so no token-shaped literal is in the source.
+const FIXTURE_TOKEN = ['gh', 'p_', 'A1b2C3d4'.repeat(5)].join('');
 
 async function cli(l: Lab, argv: string[], over: Partial<CliContext> = {}) {
   const io = memoryIo();
@@ -91,6 +96,30 @@ describe('orbit verify', () => {
     expect(getRun(l.db(), id)).toMatchObject({ state: 'DIAGNOSING', paused: true });
     // Leave nothing running behind the test.
     expect((await cli(l, ['cancel', id])).code).toBe(0);
+  }, 120_000);
+
+  it('judges a secret finding waived by static_security.exceptions the way the run did: exit 0 and the same evidence as the run report (G47)', async () => {
+    const l = lab({
+      tweak: (c) => {
+        c.static_security = {
+          block_severities: ['critical', 'high'],
+          exceptions: [{ rule_id: 'github-token', path_glob: 'tests/fixtures/**', reason: 'revoked token used by the acme parser fixture', expires: null }],
+        };
+      },
+    });
+    writeScenario(l, baseScenario({ implementer: [implementMul('*', [{ op: 'write', path: 'tests/fixtures/token.txt', content: `${FIXTURE_TOKEN}\n` }])] }));
+    const done = await cli(l, ['run', '--goal', GOAL, '--foreground', '--policy', l.configPath]);
+    expect(done.code, `${done.out}\n${done.err}`).toBe(0);
+    const id = listRuns(l.db(), { limit: 1 })[0]!.id;
+    const own = listEvidenceReports(l.db(), id).at(-1)!.report;
+    expect(own.verdict).toBe('PASS');
+
+    const r = await cli(l, ['verify', id, '--json']);
+    expect(r.code, `${r.out}\n${r.err}`).toBe(0);
+    const j = JSON.parse(r.out) as { verdict: string; fail_reasons: string[]; unverified: string[] };
+    expect(j.verdict).toBe(own.verdict);
+    expect(j.fail_reasons).toEqual([]);
+    expect([...j.unverified].sort()).toEqual([...own.unverified].sort());
   }, 120_000);
 
   it('refuses while a live controller owns the run', async () => {

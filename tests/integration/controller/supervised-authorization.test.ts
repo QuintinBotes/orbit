@@ -2,6 +2,7 @@
 // a dependency change becomes a persisted authorization question and the run blocks; approve-once from a person
 // authorizes that change for that candidate only; deny sends it back to repair; a model identity cannot answer.
 import { afterEach, describe, expect, it } from 'vitest';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { systemClock } from '../../../src/core/clock.ts';
 import { isOrbitError } from '../../../src/core/errors.ts';
@@ -9,7 +10,9 @@ import { Controller } from '../../../src/controller/loop.ts';
 import { acquireLease, releaseLease, transition } from '../../../src/controller/run-store.ts';
 import { answerQuestion } from '../../../src/inquisition/questions.ts';
 import { listQuestions, setQuestionAnswer } from '../../../src/inquisition/store.ts';
-import { listDecisions } from '../../../src/storage/decisions.ts';
+import { listDecisions, recordDecision } from '../../../src/storage/decisions.ts';
+import { step } from '../../../src/controller/steps/index.ts';
+import { stepTo, waitFor } from '../../fault-injection/helpers.ts';
 import { listWorkers } from '../../../src/storage/workers.ts';
 import { listEvidenceReports } from '../../../src/evidence/store.ts';
 import { loadRunContext } from '../../../src/controller/context.ts';
@@ -124,4 +127,100 @@ describe.skipIf(!canStripTypes)('controller: supervised one-shot authorization',
     expect(grantFor(ctx, op!, ctx.candidate!.treeHash).state).toBe('denied');
     expect(grantFor(ctx, op!, 'f'.repeat(40)).state).toBe('none');
   }, 120_000);
+});
+
+/**
+ * The implementer of attempt 1 runs and, inside its session, the guard denies `chmod +x apps/run.sh`
+ * (actions.change_permissions is false). The fake CLI does not run the guard hook, so the denial is recorded
+ * exactly as controller/denials records one from a transcript, while the session is finishing.
+ */
+async function deniedChmodRun(l: Lab): Promise<string> {
+  writeScenario(l, baseScenario({ implementer: [implementMul('*'), implementMul('*')] }));
+  const run = startLabRun(l);
+  const deps = await stepTo(l, run.id, 'IMPLEMENTING');
+  await step(deps, run.id, new AbortController().signal);
+  const w = await waitFor(() => listWorkers(l.db(), { runId: run.id, role: 'implementer' })[0], 30_000);
+  await waitFor(() => existsSync(join(w.workerDir, 'exit.json')), 60_000);
+  recordDecision(
+    l.db(),
+    join(l.repo, '.orbit', 'runs', run.id),
+    {
+      id: `dec-${run.id}-deny-${w.id}-toolu_chmod`,
+      runId: run.id,
+      kind: 'policy.deny',
+      summary: `implementer ${w.id}: Bash denied by the guard hook (actions.change_permissions) on chmod +x apps/run.sh`,
+      data: { source: 'guard-hook', worker_id: w.id, role: 'implementer', provider: w.provider, tool: 'Bash', tool_use_id: 'toolu_chmod', rule: 'actions.change_permissions', target: 'chmod +x apps/run.sh', reason: 'chmod +x apps/run.sh changes file permissions, which this policy does not authorize' },
+    },
+    systemClock,
+    { actor: 'guard' },
+  );
+  releaseLease(l.db(), run.id, 'controller-a');
+  await drive(l, run.id);
+  return run.id;
+}
+
+describe.skipIf(!canStripTypes)('controller: supervised authorization of operations denied inside a worker (G15)', () => {
+  it('a denied chmod becomes a persisted question; approve-once retries the attempt under a grant for exactly that operation', async () => {
+    const l = supervisedLab();
+    const id = await deniedChmodRun(l);
+
+    const blocked = runState(l, id);
+    expect(blocked.state).toBe('BLOCKED');
+    expect(blocked.outcomeReason).toMatch(/implementation attempt 1 was denied operations the policy does not authorize/);
+    const [q] = listQuestions(l.db(), id, { status: 'open' });
+    expect(q).toMatchObject({ material: true, changes: ['authority'] });
+    expect(q!.options.map((o) => o.label)).toEqual(['approve-once', 'deny']);
+    expect(q!.question).toMatch(/implementation attempt 1 run `chmod \+x apps\/run\.sh`/);
+    const [req] = listDecisions(l.db(), id, { kind: 'authorization.request' });
+    expect(req?.data).toMatchObject({ question_id: q!.id, attempt: 1, subject: 'attempt:1', operation: { kind: 'bash', command: 'chmod +x apps/run.sh' } });
+    // Nothing was snapshotted or verified while the question was open.
+    expect(listEvidenceReports(l.db(), id)).toEqual([]);
+
+    answerQuestion(l.db(), join(l.repo, '.orbit', 'runs', id), q!.id, 'approve-once', 'acme-dev', systemClock);
+    resume(l, id);
+    await drive(l, id);
+
+    const done = runState(l, id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    const [grant] = listDecisions(l.db(), id, { kind: 'authorization.grant' });
+    expect(grant?.data).toMatchObject({ question_id: q!.id, approved_by: 'acme-dev', attempt: 1, operation: { kind: 'bash', command: 'chmod +x apps/run.sh' } });
+    // The attempt was retried, not a new attempt counted: one attempt, two sessions.
+    const ws = listWorkers(l.db(), { runId: id, role: 'implementer' });
+    expect(ws.map((w) => w.purpose)).toEqual(['implement:1#1', 'implement:1#2']);
+    // The retried session ran under the grant policy: the frozen snapshot widened by exactly change_permissions.
+    const grantFile = join(ws[1]!.workerDir, 'policy-grant.json');
+    const granted = JSON.parse(readFileSync(grantFile, 'utf8')) as { config: { actions: Record<string, boolean> } };
+    const ctx = loadRunContext({ ...labDeps(l), ownerId: 'x' }, id, new AbortController().signal);
+    expect(granted.config.actions).toEqual({ ...ctx.snapshot.config.actions, change_permissions: true });
+    expect(existsSync(join(ws[0]!.workerDir, 'policy-grant.json'))).toBe(false);
+    expect(readFileSync(join(ws[1]!.workerDir, 'prompt.md'), 'utf8')).toMatch(/Authorized once, for this attempt only: run `chmod \+x apps\/run\.sh`/);
+    // The run's own policy did not widen.
+    expect(ctx.snapshot.config.actions.change_permissions).toBe(false);
+  }, 180_000);
+
+  it('deny retries the attempt as a scope repair under the unchanged policy', async () => {
+    const l = supervisedLab();
+    const id = await deniedChmodRun(l);
+    const [q] = listQuestions(l.db(), id, { status: 'open' });
+    answerQuestion(l.db(), join(l.repo, '.orbit', 'runs', id), q!.id, 'deny', 'acme-dev', systemClock);
+    resume(l, id);
+    await drive(l, id);
+
+    const done = runState(l, id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(listDecisions(l.db(), id, { kind: 'authorization.grant' })).toEqual([]);
+    const ws = listWorkers(l.db(), { runId: id, role: 'implementer' });
+    expect(ws.map((w) => w.purpose)).toEqual(['implement:1#1', 'implement:1#2']);
+    expect(existsSync(join(ws[1]!.workerDir, 'policy-grant.json'))).toBe(false);
+    expect(readFileSync(join(ws[1]!.workerDir, 'prompt.md'), 'utf8')).toMatch(/Refused by a person: run `chmod \+x apps\/run\.sh`\. Do not try it again/);
+  }, 180_000);
+
+  it('autonomous mode only records the denial and asks nothing', async () => {
+    const l = makeLab();
+    labs.push(l);
+    const id = await deniedChmodRun(l);
+    expect(runState(l, id).state).toBe('SUCCEEDED');
+    expect(listQuestions(l.db(), id)).toEqual([]);
+    expect(listWorkers(l.db(), { runId: id, role: 'implementer' })).toHaveLength(1);
+  }, 180_000);
 });

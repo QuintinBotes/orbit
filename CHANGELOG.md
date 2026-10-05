@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+- Engineering practices: the planner selects or justifies each of the nine
+  practices; the contract, the reviewer packet and the final report carry them.
+- A pre-existing failing mandatory check raises a decision question in
+  PREFLIGHT; `orbit decide` with "Approve" adds a fingerprint-bound baseline
+  exception to the contract, and the command prints what it did.
+- The Inquisition records the impact register for a risk review; `final.json`
+  and `orbit report --json` are redacted like `final.md`.
+- Supervised mode also asks about denied `actions.*` and `network.*` operations
+  from a worker (approve-once retries the attempt under a grant for exactly
+  that operation; deny sends a scope repair).
+- Parallel writers within one run for disjoint work units (only with
+  `agents.default_parallelism` of 2 or more, never supervised), with merge
+  overhead charged by the scheduler.
+- `orbit verify` and the VERIFYING step share one evidence collection.
+- Release mode: marks a draft pull request ready before merging, rebases a
+  moved base when `actions.rebase_task_branch` allows, deploys each defined
+  environment its branch allows, and `orbit release resolve` settles an unknown
+  deploy.
+- `isolation.limits` is on by default (CPU 3600 s, 2048 processes, 2048 MB
+  files, 4096 MB memory). The process default is high because the limit counts
+  every process of the user id.
+- The baseline gate lists base-revision dependency audit findings.
+- Documented every CLI command and flag, including `verify`, `repair`, `stats`
+  and `gc`, release mode safeguards, and resource limits per isolation provider.
+- Documented the native `/goal` command as an optional interactive aid; the
+  controller stays the completion authority.
+- The README now states that the live demo has not yet run against real providers.
+- Config keys documented: `actions.rebase_task_branch`,
+  `release.merge.mark_ready`, `release.environments[*].verify_command`, and
+  `isolation.limits.memory_mb` (enforced under sandbox-runtime by a
+  resident-memory watchdog on the process group).
+
 ## 0.1.0
 
 First release.

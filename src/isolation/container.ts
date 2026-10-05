@@ -178,7 +178,11 @@ export class ContainerIsolation implements IsolationProvider {
         argv: [docker, ...args],
         env: cliEnv,
         cleanup,
-        limitations: [...CONTAINER_LIMITATIONS, ...notes],
+        limitations: [
+          ...CONTAINER_LIMITATIONS,
+          ...(this.opts.ulimits?.memory_mb ? [`isolation.limits.memory_mb (${this.opts.ulimits.memory_mb} MB) is not used by the container provider; Docker enforces ${limits.memoryMb} MB (isolation.container.memory_mb) instead.`] : []),
+          ...notes,
+        ],
         containerName: name,
       };
     } catch (err) {

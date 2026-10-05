@@ -22,7 +22,9 @@ import { isOrbitError } from '../../../src/core/errors.ts';
 import type { RepairBrief } from '../../../src/evidence/types.ts';
 import type { Lesson } from '../../../src/knowledge/types.ts';
 import lessonSchema from '../../../schemas/lesson.schema.json' with { type: 'json' };
-import { contract, snapshot } from '../contract/fixtures.ts';
+import { contract, practiceSelection, snapshot } from '../contract/fixtures.ts';
+import { ENGINEERING_PRACTICES } from '../../../src/contract/practices.ts';
+import contractSchema from '../../../schemas/contract.schema.json' with { type: 'json' };
 
 const KINDS = Object.keys(MODEL_OUTPUT_SCHEMAS) as ModelOutputKind[];
 const schemasDir = fileURLToPath(new URL('../../../schemas/', import.meta.url));
@@ -65,6 +67,7 @@ const plannerExample: PlannerOutput = {
   required_check_ids: ['lint'],
   non_goals: ['Change filtering'],
   risks: [{ risk: 'Large exports', impact: 'medium', mitigation: 'stream' }],
+  practices: practiceSelection(['accessibility']),
   assumptions: [{ statement: 'Same query', basis: 'reports.ts', status: 'unverified' }],
   unresolved_decisions: [{ question: 'All pages?', options: ['all', 'current'], recommendation: null, material: true, affected_criteria: ['all'] }],
   material_topics: ['billing'],
@@ -282,6 +285,49 @@ describe('model-output schemas obey the strict structured-output rules', () => {
         expect(isOrbitError(err, 'MALFORMED_OUTPUT')).toBe(true);
       }
     });
+  });
+});
+
+describe('planner output: engineering practices (S5.40)', () => {
+  const plannerSchemaNode = loadFile('planner') as { required: string[]; properties: { practices: { minItems: number; maxItems: number; items: { required: string[]; properties: { practice: { enum: string[] } } } } } };
+
+  it('requires a practices field whose enum is exactly the nine spec practices, in the contract schema too', () => {
+    expect(plannerSchemaNode.required).toContain('practices');
+    expect(plannerSchemaNode.properties.practices.items.properties.practice.enum).toEqual([...ENGINEERING_PRACTICES]);
+    expect(plannerSchemaNode.properties.practices.minItems).toBe(ENGINEERING_PRACTICES.length);
+    expect(plannerSchemaNode.properties.practices.maxItems).toBe(ENGINEERING_PRACTICES.length);
+    const contractPractice = (contractSchema as unknown as { properties: { practices: { items: { properties: { practice: { enum: string[] } } } } } }).properties.practices.items.properties.practice.enum;
+    expect(contractPractice).toEqual([...ENGINEERING_PRACTICES]);
+    expect(ENGINEERING_PRACTICES).toHaveLength(9);
+  });
+
+  it('rejects planner output with no practices, an unknown practice, a missing justification or the wrong count', () => {
+    const base = structuredClone(plannerExample) as unknown as Record<string, unknown>;
+    const without = { ...base };
+    delete without.practices;
+    expect(validateAgainst(MODEL_OUTPUT_SCHEMAS.planner, without).ok).toBe(false);
+    const unknown = { ...base, practices: practiceSelection().map((p, i) => (i === 0 ? { ...p, practice: 'vibes' } : p)) };
+    expect(validateAgainst(MODEL_OUTPUT_SCHEMAS.planner, unknown).ok).toBe(false);
+    const noReason = { ...base, practices: practiceSelection().map((p, i) => (i === 0 ? { practice: p.practice, applicable: p.applicable } : p)) };
+    expect(validateAgainst(MODEL_OUTPUT_SCHEMAS.planner, noReason).ok).toBe(false);
+    const short = { ...base, practices: practiceSelection().slice(0, 8) };
+    expect(validateAgainst(MODEL_OUTPUT_SCHEMAS.planner, short).ok).toBe(false);
+    expect(() => validateModelOutput('planner', short)).toThrow(/does not match planner-output.schema.json/);
+  });
+
+  it('validateModelOutput also refuses a duplicate practice or an unexplained omission that the schema alone lets through', () => {
+    const dup = structuredClone(plannerExample);
+    dup.practices = [...practiceSelection().slice(0, 8), practiceSelection()[0]!];
+    expect(validateAgainst(MODEL_OUTPUT_SCHEMAS.planner, dup).ok).toBe(true);
+    expect(() => validateModelOutput('planner', dup)).toThrow(/behavior-tests. is listed 2 times; practice .rollback-and-migration. is neither selected nor justified/);
+    const unexplained = structuredClone(plannerExample);
+    unexplained.practices = practiceSelection().map((p) => (p.practice === 'documentation' ? { ...p, applicable: false, justification: 'not needed' } : p));
+    expect(() => validateModelOutput('planner', unexplained)).toThrow(/omission of practice "documentation"/);
+  });
+
+  it('the planner prompt names every practice', () => {
+    const prompt = readFileSync(fileURLToPath(new URL('../../../agents/planner.md', import.meta.url)), 'utf8');
+    for (const p of ENGINEERING_PRACTICES) expect(prompt, p).toContain(p);
   });
 });
 

@@ -511,9 +511,9 @@ var init_redact = __esm({
         hintRe: KEYWORD_HINT,
         re: new RegExp(String.raw`(?<![A-Za-z0-9_.-])(["']?)([A-Za-z0-9_.-]{0,64}?${KEYWORDS})\1([ \t]*[:=][ \t]*)(${DQ}|${SQ})`, "gi"),
         replace: (m, g) => {
-          const [q, key2, sep10, value] = g;
+          const [q, key2, sep11, value] = g;
           if (isLiteralPlaceholder(value.slice(1, -1))) return m;
-          return `${q}${key2}${q}${sep10}${value[0]}${tag(kindForKey(key2))}${value[0]}`;
+          return `${q}${key2}${q}${sep11}${value[0]}${tag(kindForKey(key2))}${value[0]}`;
         }
       },
       {
@@ -9688,10 +9688,10 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
   let offset = bm.offset;
   let commentEnd = null;
   for (const collItem of bm.items) {
-    const { start, key: key2, sep: sep10, value } = collItem;
+    const { start, key: key2, sep: sep11, value } = collItem;
     const keyProps = resolveProps(start, {
       indicator: "explicit-key-ind",
-      next: key2 ?? sep10?.[0],
+      next: key2 ?? sep11?.[0],
       offset,
       onError,
       parentIndent: bm.indent,
@@ -9705,7 +9705,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
         else if ("indent" in key2 && key2.indent !== bm.indent)
           onError(offset, "BAD_INDENT", startColMsg);
       }
-      if (!keyProps.anchor && !keyProps.tag && !sep10) {
+      if (!keyProps.anchor && !keyProps.tag && !sep11) {
         commentEnd = keyProps.end;
         if (keyProps.comment) {
           if (map2.comment)
@@ -9729,7 +9729,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
     ctx.atKey = false;
     if (mapIncludes(ctx, map2.items, keyNode))
       onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
-    const valueProps = resolveProps(sep10 ?? [], {
+    const valueProps = resolveProps(sep11 ?? [], {
       indicator: "map-value-ind",
       next: value,
       offset: keyNode.range[2],
@@ -9745,7 +9745,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
         if (ctx.options.strict && keyProps.start < valueProps.found.offset - 1024)
           onError(keyNode.range, "KEY_OVER_1024_CHARS", "The : indicator must be at most 1024 chars after the start of an implicit block mapping key");
       }
-      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : composeEmptyNode2(ctx, offset, sep10, null, valueProps, onError);
+      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : composeEmptyNode2(ctx, offset, sep11, null, valueProps, onError);
       if (ctx.schema.compat)
         flowIndentCheck(bm.indent, value, onError);
       offset = valueNode.range[2];
@@ -9840,7 +9840,7 @@ function resolveEnd(end, offset, reqSpace, onError) {
   let comment = "";
   if (end) {
     let hasSpace = false;
-    let sep10 = "";
+    let sep11 = "";
     for (const token of end) {
       const { source, type } = token;
       switch (type) {
@@ -9854,13 +9854,13 @@ function resolveEnd(end, offset, reqSpace, onError) {
           if (!comment)
             comment = cb;
           else
-            comment += sep10 + cb;
-          sep10 = "";
+            comment += sep11 + cb;
+          sep11 = "";
           break;
         }
         case "newline":
           if (comment)
-            sep10 += source;
+            sep11 += source;
           hasSpace = true;
           break;
         default:
@@ -9891,18 +9891,18 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
   let offset = fc.offset + fc.start.source.length;
   for (let i = 0; i < fc.items.length; ++i) {
     const collItem = fc.items[i];
-    const { start, key: key2, sep: sep10, value } = collItem;
+    const { start, key: key2, sep: sep11, value } = collItem;
     const props = resolveProps(start, {
       flow: fcName,
       indicator: "explicit-key-ind",
-      next: key2 ?? sep10?.[0],
+      next: key2 ?? sep11?.[0],
       offset,
       onError,
       parentIndent: fc.indent,
       startOnNewline: false
     });
     if (!props.found) {
-      if (!props.anchor && !props.tag && !sep10 && !value) {
+      if (!props.anchor && !props.tag && !sep11 && !value) {
         if (i === 0 && props.comma)
           onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`);
         else if (i < fc.items.length - 1)
@@ -9956,8 +9956,8 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
         }
       }
     }
-    if (!isMap2 && !sep10 && !props.found) {
-      const valueNode = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, sep10, null, props, onError);
+    if (!isMap2 && !sep11 && !props.found) {
+      const valueNode = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, sep11, null, props, onError);
       coll.items.push(valueNode);
       offset = valueNode.range[2];
       if (isBlock(value))
@@ -9969,7 +9969,7 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
       if (isBlock(key2))
         onError(keyNode.range, "BLOCK_IN_FLOW", blockMsg);
       ctx.atKey = false;
-      const valueProps = resolveProps(sep10 ?? [], {
+      const valueProps = resolveProps(sep11 ?? [], {
         flow: fcName,
         indicator: "map-value-ind",
         next: value,
@@ -9980,8 +9980,8 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
       });
       if (valueProps.found) {
         if (!isMap2 && !props.found && ctx.options.strict) {
-          if (sep10)
-            for (const st of sep10) {
+          if (sep11)
+            for (const st of sep11) {
               if (st === valueProps.found)
                 break;
               if (st.type === "newline") {
@@ -9998,7 +9998,7 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
         else
           onError(valueProps.start, "MISSING_CHAR", `Missing , or : between ${fcName} items`);
       }
-      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode2(ctx, valueProps.end, sep10, null, valueProps, onError) : null;
+      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode2(ctx, valueProps.end, sep11, null, valueProps, onError) : null;
       if (valueNode) {
         if (isBlock(value))
           onError(valueNode.range, "BLOCK_IN_FLOW", blockMsg);
@@ -10184,7 +10184,7 @@ function resolveBlockScalar(ctx, scalar, onError) {
       chompStart = i + 1;
   }
   let value = "";
-  let sep10 = "";
+  let sep11 = "";
   let prevMoreIndented = false;
   for (let i = 0; i < contentStart; ++i)
     value += lines[i][0].slice(trimIndent) + "\n";
@@ -10201,24 +10201,24 @@ function resolveBlockScalar(ctx, scalar, onError) {
       indent = "";
     }
     if (type === Scalar.BLOCK_LITERAL) {
-      value += sep10 + indent.slice(trimIndent) + content;
-      sep10 = "\n";
+      value += sep11 + indent.slice(trimIndent) + content;
+      sep11 = "\n";
     } else if (indent.length > trimIndent || content[0] === "	") {
-      if (sep10 === " ")
-        sep10 = "\n";
-      else if (!prevMoreIndented && sep10 === "\n")
-        sep10 = "\n\n";
-      value += sep10 + indent.slice(trimIndent) + content;
-      sep10 = "\n";
+      if (sep11 === " ")
+        sep11 = "\n";
+      else if (!prevMoreIndented && sep11 === "\n")
+        sep11 = "\n\n";
+      value += sep11 + indent.slice(trimIndent) + content;
+      sep11 = "\n";
       prevMoreIndented = true;
     } else if (content === "") {
-      if (sep10 === "\n")
+      if (sep11 === "\n")
         value += "\n";
       else
-        sep10 = "\n";
+        sep11 = "\n";
     } else {
-      value += sep10 + content;
-      sep10 = " ";
+      value += sep11 + content;
+      sep11 = " ";
       prevMoreIndented = false;
     }
   }
@@ -10398,25 +10398,25 @@ function unfoldLines(source) {
     trimBoth = /^[ \t]+|[ \t]+$/g;
   }
   let res = match[1].replace(trimEnd, "");
-  let sep10 = " ";
+  let sep11 = " ";
   let pos = line3.lastIndex;
   while (match = line3.exec(source)) {
     const lm = match[1].replace(trimBoth, "");
     if (lm === "") {
-      if (sep10 === "\n")
-        res += sep10;
+      if (sep11 === "\n")
+        res += sep11;
       else
-        sep10 = "\n";
+        sep11 = "\n";
     } else {
-      res += sep10 + lm;
-      sep10 = " ";
+      res += sep11 + lm;
+      sep11 = " ";
     }
     pos = line3.lastIndex;
   }
   const last = /[ \t]*(.*)/sy;
   last.lastIndex = pos;
   match = last.exec(source);
-  return res + sep10 + (match?.[1] ?? "");
+  return res + sep11 + (match?.[1] ?? "");
 }
 function doubleQuotedValue(source, onError) {
   let res = "";
@@ -12127,18 +12127,18 @@ var init_parser = __esm({
         if (this.type === "map-value-ind") {
           const prev = getPrevProps(this.peek(2));
           const start = getFirstKeyStartProps(prev);
-          let sep10;
+          let sep11;
           if (scalar.end) {
-            sep10 = scalar.end;
-            sep10.push(this.sourceToken);
+            sep11 = scalar.end;
+            sep11.push(this.sourceToken);
             delete scalar.end;
           } else
-            sep10 = [this.sourceToken];
+            sep11 = [this.sourceToken];
           const map2 = {
             type: "block-map",
             offset: scalar.offset,
             indent: scalar.indent,
-            items: [{ start, key: scalar, sep: sep10 }]
+            items: [{ start, key: scalar, sep: sep11 }]
           };
           this.onKeyLine = true;
           this.stack[this.stack.length - 1] = map2;
@@ -12291,15 +12291,15 @@ var init_parser = __esm({
                 } else if (isFlowToken(it.key) && !includesToken(it.sep, "newline")) {
                   const start2 = getFirstKeyStartProps(it.start);
                   const key2 = it.key;
-                  const sep10 = it.sep;
-                  sep10.push(this.sourceToken);
+                  const sep11 = it.sep;
+                  sep11.push(this.sourceToken);
                   delete it.key;
                   delete it.sep;
                   this.stack.push({
                     type: "block-map",
                     offset: this.offset,
                     indent: this.indent,
-                    items: [{ start: start2, key: key2, sep: sep10 }]
+                    items: [{ start: start2, key: key2, sep: sep11 }]
                   });
                 } else if (start.length > 0) {
                   it.sep = it.sep.concat(start, this.sourceToken);
@@ -12493,13 +12493,13 @@ var init_parser = __esm({
             const prev = getPrevProps(parent);
             const start = getFirstKeyStartProps(prev);
             fixFlowSeqItems(fc);
-            const sep10 = fc.end.splice(1, fc.end.length);
-            sep10.push(this.sourceToken);
+            const sep11 = fc.end.splice(1, fc.end.length);
+            sep11.push(this.sourceToken);
             const map2 = {
               type: "block-map",
               offset: fc.offset,
               indent: fc.indent,
-              items: [{ start, key: fc, sep: sep10 }]
+              items: [{ start, key: fc, sep: sep11 }]
             };
             this.onKeyLine = true;
             this.stack[this.stack.length - 1] = map2;
@@ -15645,7 +15645,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref2];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve19.call(this, root, ref2);
+      let _sch = resolve20.call(this, root, ref2);
       if (_sch === void 0) {
         const schema4 = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref2];
         const { schemaId } = this.opts;
@@ -15672,7 +15672,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve19(root, ref2) {
+    function resolve20(root, ref2) {
       let sch;
       while (typeof (sch = this.refs[ref2]) == "string")
         ref2 = sch;
@@ -16498,11 +16498,11 @@ var require_fast_uri = __commonJS({
         normalizeString(uri, options);
       } else if (typeof uri === "object") {
         uri = /** @type {T} */
-        parse5(serialize2(uri, options), options);
+        parse5(serialize3(uri, options), options);
       }
       return uri;
     }
-    function resolve19(baseURI, relativeURI, options) {
+    function resolve20(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -16533,13 +16533,13 @@ var require_fast_uri = __commonJS({
         throw new Error(resolved.error);
       }
       schemelessOptions.skipEscape = true;
-      return serialize2(resolved, schemelessOptions);
+      return serialize3(resolved, schemelessOptions);
     }
     function resolveComponent(base, relative7, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
-        base = parse5(serialize2(base, options), options);
-        relative7 = parse5(serialize2(relative7, options), options);
+        base = parse5(serialize3(base, options), options);
+        relative7 = parse5(serialize3(relative7, options), options);
       }
       options = options || {};
       if (!options.tolerant && relative7.scheme) {
@@ -16593,7 +16593,7 @@ var require_fast_uri = __commonJS({
       const normalizedB = normalizeComparableURI(uriB, options);
       return normalizedA !== void 0 && normalizedB !== void 0 && normalizedA === normalizedB;
     }
-    function serialize2(cmpts, opts) {
+    function serialize3(cmpts, opts) {
       const component = {
         host: cmpts.host,
         scheme: cmpts.scheme,
@@ -16847,7 +16847,7 @@ var require_fast_uri = __commonJS({
     function normalizeStringWithStatus(uri, opts) {
       const { parsed: parsed2, malformedAuthorityOrPort, malformedPercentEncoding, malformedSchemeSpecific, malformedHost, malformedScheme } = parseWithStatus(uri, opts);
       return {
-        normalized: malformedAuthorityOrPort || malformedPercentEncoding || malformedSchemeSpecific || malformedHost || malformedScheme ? uri : serialize2(parsed2, opts),
+        normalized: malformedAuthorityOrPort || malformedPercentEncoding || malformedSchemeSpecific || malformedHost || malformedScheme ? uri : serialize3(parsed2, opts),
         malformedAuthorityOrPort,
         malformedPercentEncoding,
         malformedSchemeSpecific,
@@ -16861,7 +16861,7 @@ var require_fast_uri = __commonJS({
       }
       let value;
       try {
-        value = typeof uri === "string" ? uri : serialize2(uri, opts);
+        value = typeof uri === "string" ? uri : serialize3(uri, opts);
       } catch {
         return void 0;
       }
@@ -16871,10 +16871,10 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize: normalize3,
-      resolve: resolve19,
+      resolve: resolve20,
       resolveComponent,
       equal,
-      serialize: serialize2,
+      serialize: serialize3,
       parse: parse5
     };
     module.exports = fastUri;
@@ -20748,6 +20748,7 @@ var init_config_schema = __esm({
             "test",
             "commit",
             "push_task_branch",
+            "rebase_task_branch",
             "open_pull_request",
             "read_ci_logs",
             "repair_ci",
@@ -20761,6 +20762,7 @@ var init_config_schema = __esm({
             test: { type: "boolean" },
             commit: { type: "boolean" },
             push_task_branch: { type: "boolean" },
+            rebase_task_branch: { type: "boolean" },
             open_pull_request: { type: "boolean" },
             read_ci_logs: { type: "boolean" },
             repair_ci: { type: "boolean" },
@@ -21007,11 +21009,12 @@ var init_config_schema = __esm({
             limits: {
               type: "object",
               additionalProperties: false,
-              required: ["cpu_seconds", "max_processes", "max_file_mb"],
+              required: ["cpu_seconds", "max_processes", "max_file_mb", "memory_mb"],
               properties: {
                 cpu_seconds: { oneOf: [{ type: "null" }, { type: "integer", minimum: 1, maximum: 604800 }] },
                 max_processes: { oneOf: [{ type: "null" }, { type: "integer", minimum: 16, maximum: 1e6 }] },
-                max_file_mb: { oneOf: [{ type: "null" }, { type: "integer", minimum: 1, maximum: 1048576 }] }
+                max_file_mb: { oneOf: [{ type: "null" }, { type: "integer", minimum: 1, maximum: 1048576 }] },
+                memory_mb: { oneOf: [{ type: "null" }, { type: "integer", minimum: 64, maximum: 4194304 }] }
               }
             }
           }
@@ -21126,11 +21129,12 @@ var init_config_schema = __esm({
                 merge: {
                   type: "object",
                   additionalProperties: false,
-                  required: ["method", "require_checks", "delete_branch"],
+                  required: ["method", "require_checks", "delete_branch", "mark_ready"],
                   properties: {
                     method: { enum: ["squash", "merge", "rebase"] },
                     require_checks: { type: "array", maxItems: 100, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 200 } },
-                    delete_branch: { type: "boolean" }
+                    delete_branch: { type: "boolean" },
+                    mark_ready: { type: "boolean" }
                   }
                 },
                 environments: {
@@ -21140,9 +21144,10 @@ var init_config_schema = __esm({
                   additionalProperties: {
                     type: "object",
                     additionalProperties: false,
-                    required: ["deploy_command", "allowed_branches", "require_ci_green", "network_hosts", "timeout_seconds"],
+                    required: ["deploy_command", "verify_command", "allowed_branches", "require_ci_green", "network_hosts", "timeout_seconds"],
                     properties: {
                       deploy_command: { $ref: "#/$defs/argv" },
+                      verify_command: { oneOf: [{ type: "null" }, { $ref: "#/$defs/argv" }] },
                       allowed_branches: { type: "array", maxItems: 50, uniqueItems: true, items: { $ref: "#/$defs/refName" } },
                       require_ci_green: { type: "boolean" },
                       network_hosts: { $ref: "#/$defs/hostList" },
@@ -21303,6 +21308,7 @@ function defaultConfig(mode = DEFAULT_MODE) {
       test: true,
       commit: delivering,
       push_task_branch: delivering,
+      rebase_task_branch: false,
       open_pull_request: delivering,
       read_ci_logs: delivering,
       repair_ci: delivering,
@@ -21437,13 +21443,13 @@ function defaultStaticSecurity() {
   return { block_severities: ["critical", "high"], exceptions: [] };
 }
 function defaultIsolationLimits() {
-  return { cpu_seconds: null, max_processes: null, max_file_mb: null };
+  return { cpu_seconds: 3600, max_processes: 2048, max_file_mb: 2048, memory_mb: 4096 };
 }
 function defaultReleaseMerge() {
-  return { method: "squash", require_checks: [], delete_branch: true };
+  return { method: "squash", require_checks: [], delete_branch: true, mark_ready: true };
 }
 function defaultReleaseEnvironment(baseBranch) {
-  return { allowed_branches: [baseBranch], require_ci_green: true, network_hosts: [], timeout_seconds: 1800 };
+  return { verify_command: null, allowed_branches: [baseBranch], require_ci_green: true, network_hosts: [], timeout_seconds: 1800 };
 }
 function staticSecurityPolicy(config) {
   return config.static_security ?? defaultStaticSecurity();
@@ -21573,6 +21579,7 @@ function normalizeRelease(raw, baseBranch, problems) {
       const env = { ...defaultReleaseEnvironment(baseBranch), ...def };
       if (def.deploy_command === void 0) problems.push(`release.environments.${name}.deploy_command: required`);
       normalizeArgvField(env, ["deploy_command"], `release.environments.${name}.deploy_command`, problems);
+      normalizeArgvField(env, ["verify_command"], `release.environments.${name}.verify_command`, problems);
       envs[name] = env;
     }
     out.environments = envs;
@@ -21790,6 +21797,7 @@ var init_config = __esm({
         for (const [name, env] of envs) {
           const where = `release.environments.${name}`;
           if (env.deploy_command.length > 0 && env.deploy_command[0].trim() === "") problems.push(`${where}.deploy_command: the program must not be empty`);
+          if (env.verify_command && env.verify_command[0].trim() === "") problems.push(`${where}.verify_command: the program must not be empty`);
           env.network_hosts.forEach((h, i) => {
             const p = hostEntryProblem(h);
             if (p) problems.push(`${where}.network_hosts[${i}]: ${JSON.stringify(h)} ${p}`);
@@ -21811,6 +21819,7 @@ var init_config = __esm({
       function deliveryChainIsConsistent(c, problems) {
         const a = c.actions;
         if (a.push_task_branch && !a.commit) problems.push("actions.push_task_branch: requires actions.commit (there is nothing to push without a commit)");
+        if (a.rebase_task_branch && !a.commit) problems.push("actions.rebase_task_branch: requires actions.commit (a rebase rewrites the task branch commits)");
         if (a.open_pull_request && !a.push_task_branch) problems.push("actions.open_pull_request: requires actions.push_task_branch (a pull request needs a pushed task branch)");
         if (a.repair_ci && !a.push_task_branch) problems.push("actions.repair_ci: requires actions.push_task_branch (CI runs on a pushed task branch)");
         if (a.repair_ci && !a.read_ci_logs) problems.push("actions.repair_ci: requires actions.read_ci_logs (repairs are driven by the CI logs)");
@@ -22706,7 +22715,7 @@ var init_clock = __esm({
     "use strict";
     systemClock = {
       now: () => Date.now(),
-      sleep: (ms) => new Promise((resolve19) => setTimeout(resolve19, ms))
+      sleep: (ms) => new Promise((resolve20) => setTimeout(resolve20, ms))
     };
   }
 });
@@ -23768,7 +23777,8 @@ var init_states = __esm({
       VERIFYING: ["REVIEWING", "DIAGNOSING", "INQUISITION", ...ALWAYS],
       REVIEWING: ["DELIVERING", "REPAIRING", "DIAGNOSING", "INQUISITION", "SUCCEEDED", ...ALWAYS],
       DELIVERING: ["AWAITING_CI", "SUCCEEDED", "VERIFYING", ...ALWAYS],
-      AWAITING_CI: ["SUCCEEDED", "DIAGNOSING", ...ALWAYS],
+      // VERIFYING: a task branch rebased onto a moved base branch is a new candidate (actions.rebase_task_branch).
+      AWAITING_CI: ["SUCCEEDED", "DIAGNOSING", "VERIFYING", ...ALWAYS],
       INQUISITION: [...WORKING, "IMPOSSIBLE", ...ALWAYS],
       DIAGNOSING: ["REPAIRING", "INQUISITION", "IMPOSSIBLE", ...ALWAYS],
       REPAIRING: ["VERIFYING", "DIAGNOSING", "INQUISITION", ...ALWAYS],
@@ -25239,8 +25249,7 @@ function sourceCommands(node = process.execPath) {
   const here = dirname8(fileURLToPath(import.meta.url));
   return { shim: [node, "--no-warnings", join8(here, "shim-main.ts")], hook: [node, "--no-warnings", join8(here, "hook-main.ts")] };
 }
-function defaultOrbitCommands() {
-  const self = fileURLToPath(import.meta.url);
+function defaultOrbitCommands(self = fileURLToPath(import.meta.url)) {
   if (self.endsWith(".mjs") && existsSync7(self)) return orbitCommands(self);
   return sourceCommands();
 }
@@ -26191,12 +26200,13 @@ function readRecord(path, check) {
   }
 }
 function runShim(options) {
-  const pgid = readPgid(process.pid);
+  const host = { ...DEFAULT_HOST, ...options.host };
+  const pgid = host.pgidOf(process.pid);
   if (pgid !== process.pid) {
     throw new OrbitError("INTERNAL", `the shim must lead its own process group (pid ${process.pid}, pgid ${String(pgid)}); start it detached`);
   }
   if (options.argv.length === 0 || !options.argv[0]) throw new OrbitError("INTERNAL", "the shim needs a provider command");
-  return new Shim(options, pgid).run();
+  return new Shim(options, pgid, host).run();
 }
 function isRemovable(p) {
   if (!isAbsolute8(p) || !existsSync9(p)) return false;
@@ -26239,10 +26249,10 @@ function groupMembers(pgid) {
   }
   return out;
 }
-function readPgid(pid) {
+function readPgid(pid, opts = {}) {
   try {
-    if (process.platform === "linux") {
-      const stat = readFileSync8(`/proc/${pid}/stat`, "utf8");
+    if ((opts.platform ?? process.platform) === "linux") {
+      const stat = readFileSync8(join10(opts.procDir ?? "/proc", String(pid), "stat"), "utf8");
       const n3 = Number(stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[2]);
       return Number.isSafeInteger(n3) && n3 > 0 ? n3 : null;
     }
@@ -26286,10 +26296,10 @@ function shimArgs(opts) {
   return [...out, "--", ...opts.argv];
 }
 function parseShimArgs(args) {
-  const sep10 = args.indexOf("--");
-  if (sep10 === -1 || sep10 === args.length - 1) throw new OrbitError("CONFIG_INVALID", "orbit shim: expected -- followed by the provider command");
-  const opts = args.slice(0, sep10);
-  const out = { workerDir: "", timeoutMs: 0, graceMs: DEFAULT_GRACE_MS, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], argv: args.slice(sep10 + 1) };
+  const sep11 = args.indexOf("--");
+  if (sep11 === -1 || sep11 === args.length - 1) throw new OrbitError("CONFIG_INVALID", "orbit shim: expected -- followed by the provider command");
+  const opts = args.slice(0, sep11);
+  const out = { workerDir: "", timeoutMs: 0, graceMs: DEFAULT_GRACE_MS, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], argv: args.slice(sep11 + 1) };
   for (let i = 0; i < opts.length; i += 2) {
     const flag = opts[i];
     const value = opts[i + 1];
@@ -26336,7 +26346,7 @@ function nonNegativeInt(flag, value) {
   if (!Number.isSafeInteger(n2) || n2 < 0) throw new OrbitError("CONFIG_INVALID", `orbit shim: ${flag} must be a non-negative integer`);
   return n2;
 }
-async function shimMain(args) {
+async function shimMain(args, host) {
   let parsed2;
   try {
     parsed2 = parseShimArgs(args);
@@ -26355,11 +26365,12 @@ async function shimMain(args) {
     sessionId: parsed2.sessionId,
     stdinPath: parsed2.stdinPath,
     abortOn: parsed2.abortOn,
-    cleanupPaths: parsed2.cleanupPaths
+    cleanupPaths: parsed2.cleanupPaths,
+    ...host ? { host } : {}
   });
   return 0;
 }
-var PID_FILE, EXIT_FILE, LOG_FILE, STDERR_FILE, SHIM_LOG_FILE, DEFAULT_GRACE_MS, ABORT_POLL_MS, FIRST_OUTPUT_POLL_MS, LEFTOVER_GRACE_MS, ESCALATION, MAX_TIMER_MS, Shim;
+var PID_FILE, EXIT_FILE, LOG_FILE, STDERR_FILE, SHIM_LOG_FILE, DEFAULT_GRACE_MS, ABORT_POLL_MS, FIRST_OUTPUT_POLL_MS, LEFTOVER_GRACE_MS, ESCALATION, MAX_TIMER_MS, DEFAULT_HOST, Shim;
 var init_shim = __esm({
   "src/adapters/shim.ts"() {
     "use strict";
@@ -26378,9 +26389,20 @@ var init_shim = __esm({
     LEFTOVER_GRACE_MS = 1e3;
     ESCALATION = ["SIGINT", "SIGTERM", "SIGKILL"];
     MAX_TIMER_MS = 2147483647;
+    DEFAULT_HOST = {
+      pgidOf: (pid) => readPgid(pid),
+      signalGroup: (pgid, signal) => {
+        process.kill(-pgid, signal);
+      },
+      groupMembers: (pgid) => groupMembers(pgid),
+      onSignal: (signal, listener) => {
+        process.on(signal, listener);
+      }
+    };
     Shim = class {
       o;
       pgid;
+      host;
       clock;
       graceMs;
       workerDir;
@@ -26403,9 +26425,10 @@ var init_shim = __esm({
       logStartSize = 0;
       firstOutputAt = null;
       logCarry = "";
-      constructor(options, pgid) {
+      constructor(options, pgid, host) {
         this.o = options;
         this.pgid = pgid;
+        this.host = host;
         this.clock = options.clock ?? { now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
         this.graceMs = Math.max(0, options.graceMs ?? DEFAULT_GRACE_MS);
         this.workerDir = resolve5(options.workerDir);
@@ -26414,7 +26437,7 @@ var init_shim = __esm({
       run() {
         return new Promise((resolvePromise) => {
           this.settle = resolvePromise;
-          for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => this.onSignal(sig));
+          for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) this.host.onSignal(sig, () => this.onSignal(sig));
           this.start();
         });
       }
@@ -26499,7 +26522,7 @@ var init_shim = __esm({
         this.escalation.push(sig);
         this.selfSent[sig]++;
         try {
-          process.kill(-this.pgid, sig);
+          this.host.signalGroup(this.pgid, sig);
         } catch {
           this.selfSent[sig]--;
         }
@@ -26528,7 +26551,7 @@ var init_shim = __esm({
         const rec = this.record(code2, providerKilled ? "SIGKILL" : signal, null);
         this.persist(rec);
         try {
-          process.kill(-this.pgid, "SIGKILL");
+          this.host.signalGroup(this.pgid, "SIGKILL");
         } catch {
         }
         this.finish(rec, false);
@@ -26590,7 +26613,7 @@ var init_shim = __esm({
         }
       }
       leftovers() {
-        return groupMembers(this.pgid).filter((p) => p !== process.pid);
+        return this.host.groupMembers(this.pgid).filter((p) => p !== process.pid);
       }
       later(ms, fn) {
         if (ms > MAX_TIMER_MS) {
@@ -28755,6 +28778,9 @@ var init_adapters = __esm({
 function hasLimits(limits) {
   return !!limits && (limits.cpu_seconds !== null || limits.max_processes !== null || limits.max_file_mb !== null);
 }
+function hasMemoryLimit(limits) {
+  return !!limits && limits.memory_mb !== null && limits.memory_mb !== void 0;
+}
 function describeLimits(limits) {
   const out = [];
   if (limits.cpu_seconds !== null) out.push(`CPU time ${limits.cpu_seconds} s per process`);
@@ -29012,7 +29038,11 @@ var init_container = __esm({
             argv: [docker, ...args],
             env: cliEnv,
             cleanup,
-            limitations: [...CONTAINER_LIMITATIONS, ...notes],
+            limitations: [
+              ...CONTAINER_LIMITATIONS,
+              ...this.opts.ulimits?.memory_mb ? [`isolation.limits.memory_mb (${this.opts.ulimits.memory_mb} MB) is not used by the container provider; Docker enforces ${limits.memoryMb} MB (isolation.container.memory_mb) instead.`] : [],
+              ...notes
+            ],
             containerName: name
           };
         } catch (err) {
@@ -29036,12 +29066,13 @@ var init_container = __esm({
 
 // src/isolation/none.ts
 function noIsolationLimitations(profile, limits) {
+  const memoryNote = limits?.memory_mb ? ` (isolation.limits.memory_mb ${limits.memory_mb} MB is not enforced without a sandbox-runtime)` : "";
   const hosts = profile.allowedHosts.length ? `only ${profile.allowedHosts.join(", ")} were allowed` : "no network was allowed";
   return [
     `No filesystem write restriction: the command can write anywhere the Orbit user can (the main checkout, .orbit state and policy snapshots, shell rc files), not just ${profile.writablePaths.length} allowed path(s).`,
     `No read restriction: none of the ${profile.denyReadPaths.length} denied path(s) (credentials such as ~/.ssh and ~/.aws, Orbit state, other projects) is protected.`,
     `No network restriction: every host is reachable, although ${hosts}.`,
-    hasLimits(limits) ? `No memory limit; only ulimit hard limits apply (${describeLimits(limits).join(", ")}).` : "No CPU, memory or process-count limits.",
+    hasLimits(limits) ? `No memory limit${memoryNote}; only ulimit hard limits apply (${describeLimits(limits).join(", ")}).` : `No CPU, memory or process-count limits${memoryNote}.`,
     "No wall-clock enforcement beyond the caller killing the command's process group.",
     "Sockets and agents reachable from the environment (SSH agent, Docker or other container-control sockets) are reachable from the command.",
     "Mandatory protections of git hooks, git config and shell rc files are absent."
@@ -29076,8 +29107,139 @@ var init_none = __esm({
   }
 });
 
+// src/isolation/memory.ts
+import { existsSync as existsSync14 } from "node:fs";
+function findPs(candidates = PS_PATHS) {
+  return candidates.find((p) => isExecutableFile(p)) ?? null;
+}
+function withMemoryWatchdog(argv2, memoryMb, opts = {}) {
+  if (memoryMb === null || memoryMb === void 0) return [...argv2];
+  if (!Number.isSafeInteger(memoryMb) || memoryMb < 64) throw new OrbitError("CONFIG_INVALID", `isolation.limits.memory_mb must be an integer of at least 64 (got ${String(memoryMb)})`);
+  const ps = opts.ps === void 0 ? findPs() : opts.ps;
+  if (!ps) throw new OrbitError("ISOLATION_UNAVAILABLE", `isolation.limits.memory_mb needs ps to sample memory, and none was found (looked in ${PS_PATHS.join(", ")})`, { rule: "isolation.limits.memory_mb" });
+  const node = opts.node ?? process.execPath;
+  if (!existsSync14(node)) throw new OrbitError("ISOLATION_UNAVAILABLE", `isolation.limits.memory_mb needs node to run its watchdog, and ${node} does not exist`, { rule: "isolation.limits.memory_mb" });
+  const interval = opts.intervalMs ?? DEFAULT_MEMORY_SAMPLE_MS;
+  return [node, "-e", MEMORY_WATCHDOG_SOURCE, ps, String(memoryMb), String(interval), ...argv2];
+}
+function resourceLimitNote(output) {
+  for (const line3 of output.split("\n")) {
+    if (line3.startsWith(RESOURCE_LIMIT_MARKER)) return line3.slice(RESOURCE_LIMIT_MARKER.length).trim().slice(0, 300);
+  }
+  return null;
+}
+var RESOURCE_LIMIT_EXIT_CODE, RESOURCE_LIMIT_MARKER, DEFAULT_MEMORY_SAMPLE_MS, MAX_BLIND_SAMPLES, PS_PATHS, MEMORY_WATCHDOG_SOURCE;
+var init_memory = __esm({
+  "src/isolation/memory.ts"() {
+    "use strict";
+    init_errors();
+    init_util();
+    RESOURCE_LIMIT_EXIT_CODE = 198;
+    RESOURCE_LIMIT_MARKER = "[orbit-resource-limit]";
+    DEFAULT_MEMORY_SAMPLE_MS = 500;
+    MAX_BLIND_SAMPLES = 5;
+    PS_PATHS = ["/bin/ps", "/usr/bin/ps"];
+    MEMORY_WATCHDOG_SOURCE = `// Generated by Orbit (isolation/memory.ts). Do not edit.
+const { spawn, execFileSync } = require('node:child_process');
+const { writeSync } = require('node:fs');
+const os = require('node:os');
+
+const psPath = process.argv[1];
+const limitMb = Number(process.argv[2]);
+const intervalMs = Number(process.argv[3]);
+const maxBlind = ${MAX_BLIND_SAMPLES};
+const command = process.argv.slice(4);
+const MARKER = ${JSON.stringify(RESOURCE_LIMIT_MARKER)};
+const EXIT_CODE = ${RESOURCE_LIMIT_EXIT_CODE};
+
+function say(text) {
+  try { writeSync(2, text); } catch (e) { /* stderr closed */ }
+}
+
+function sample() {
+  const out = execFileSync(psPath, ['-axo', 'pid=,ppid=,pgid=,rss='], { encoding: 'utf8', timeout: 5000, maxBuffer: 64 * 1024 * 1024 });
+  const rows = [];
+  let self = null;
+  for (const line of out.split('\\n')) {
+    const f = line.trim().split(/\\s+/).map(Number);
+    if (f.length < 4 || f.some((n) => !Number.isFinite(n))) continue;
+    const row = { pid: f[0], ppid: f[1], pgid: f[2], rssKb: f[3] };
+    rows.push(row);
+    if (row.pid === process.pid) self = row;
+  }
+  // The process group counts only when the supervisor leads it; otherwise it is the caller's group and not ours to measure or kill.
+  const leads = self !== null && self.pgid === process.pid;
+  const byParent = new Map();
+  for (const r of rows) {
+    if (!byParent.has(r.ppid)) byParent.set(r.ppid, []);
+    byParent.get(r.ppid).push(r);
+  }
+  const members = new Map();
+  const stack = [process.pid];
+  while (stack.length > 0) {
+    for (const r of byParent.get(stack.pop()) || []) {
+      if (!members.has(r.pid)) { members.set(r.pid, r); stack.push(r.pid); }
+    }
+  }
+  if (leads) for (const r of rows) if (r.pgid === process.pid && r.pid !== process.pid) members.set(r.pid, r);
+  members.delete(process.pid);
+  let kb = 0;
+  for (const r of members.values()) kb += r.rssKb;
+  return { kb, pids: [...members.keys()] };
+}
+
+function killAll(pids) {
+  for (const pid of pids) {
+    try { process.kill(pid, 'SIGKILL'); } catch (e) { /* already gone */ }
+  }
+}
+
+let child = null;
+let blind = 0;
+let timer = null;
+
+function enforce(why, pids) {
+  if (timer) clearInterval(timer);
+  say('\\n' + MARKER + ' ' + why + '; the command was stopped\\n');
+  killAll(pids);
+  if (child && child.pid !== undefined) { try { child.kill('SIGKILL'); } catch (e) { /* gone */ } }
+  process.exit(EXIT_CODE);
+}
+
+function check() {
+  let s;
+  try {
+    s = sample();
+  } catch (e) {
+    blind += 1;
+    if (blind >= maxBlind) enforce('memory could not be sampled (' + String(e && e.message ? e.message : e).split('\\n')[0].slice(0, 120) + '), so the limit cannot be enforced', child && child.pid !== undefined ? [child.pid] : []);
+    return;
+  }
+  blind = 0;
+  const mb = Math.round(s.kb / 1024);
+  if (mb > limitMb) enforce('memory: the command used ' + mb + ' MB resident, over isolation.limits.memory_mb (' + limitMb + ' MB)', s.pids);
+}
+
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+  process.on(sig, () => { if (child) { try { child.kill(sig); } catch (e) { /* gone */ } } });
+}
+
+child = spawn(command[0], command.slice(1), { stdio: 'inherit' });
+child.on('error', (e) => {
+  say('orbit memory watchdog: could not start ' + command[0] + ': ' + String(e && e.message ? e.message : e) + '\\n');
+  process.exit(127);
+});
+child.on('exit', (code, signal) => {
+  if (timer) clearInterval(timer);
+  process.exit(code !== null ? code : 128 + (os.constants.signals[signal] || 0));
+});
+timer = setInterval(check, intervalMs);
+`;
+  }
+});
+
 // src/isolation/sandbox-runtime.ts
-import { chmodSync as chmodSync4, existsSync as existsSync14, mkdirSync as mkdirSync7, mkdtempSync as mkdtempSync3, readFileSync as readFileSync9, realpathSync as realpathSync5, rmSync as rmSync5, writeFileSync as writeFileSync4 } from "node:fs";
+import { chmodSync as chmodSync4, existsSync as existsSync15, mkdirSync as mkdirSync7, mkdtempSync as mkdtempSync3, readFileSync as readFileSync9, realpathSync as realpathSync5, rmSync as rmSync5, writeFileSync as writeFileSync4 } from "node:fs";
 import { tmpdir as tmpdir7, userInfo } from "node:os";
 import { basename as basename9, delimiter as delimiter2, dirname as dirname13, isAbsolute as isAbsolute11, join as join15 } from "node:path";
 function normalizeHost2(raw) {
@@ -29134,7 +29296,7 @@ function seccompHelperFor(srtPath, arch) {
     return null;
   }
   const rel = join15("vendor", "seccomp", vendorArch, "apply-seccomp");
-  return [join15(dist, "sandbox", rel), join15(dist, "..", rel), join15(dist, rel)].find((p) => existsSync14(p)) ?? null;
+  return [join15(dist, "sandbox", rel), join15(dist, "..", rel), join15(dist, rel)].find((p) => existsSync15(p)) ?? null;
 }
 function sandboxEnv(env, allowWrite) {
   const out = { ...env };
@@ -29212,8 +29374,11 @@ function launcherPathEntryIsSafe(entry, reach) {
 }
 function limitationsFor(profile, platform3, limits) {
   const out = [...SRT_LIMITATIONS];
-  if (hasLimits(limits)) {
-    out[0] = `sandbox-runtime confines filesystem access and network egress; isolation.limits adds ulimit hard limits inside the sandbox (${describeLimits(limits).join(", ")}). Memory is not limited, and the process limit counts every process of the user id.`;
+  const parts = [];
+  if (hasLimits(limits) && describeLimits(limits).length > 0) parts.push(`isolation.limits adds ulimit hard limits inside the sandbox (${describeLimits(limits).join(", ")}); the process limit counts every process of the user id`);
+  if (hasMemoryLimit(limits)) parts.push(`a watchdog kills the command's processes when their summed resident memory passes ${limits.memory_mb} MB (sampled every ${DEFAULT_MEMORY_SAMPLE_MS} ms, so a fast allocation can overshoot first; shared pages count once per process; processes that detach from the command's tree are not seen)`);
+  if (parts.length > 0) {
+    out[0] = `sandbox-runtime confines filesystem access and network egress; ${parts.join("; ")}.${hasMemoryLimit(limits) ? "" : " Memory is not limited."}`;
   }
   if (platform3 === "linux") out.push(LINUX_LIMITATION);
   const { memoryMb, cpus, pids } = profile.limits;
@@ -29235,6 +29400,7 @@ var init_sandbox_runtime = __esm({
     "use strict";
     init_errors();
     init_limits();
+    init_memory();
     init_util();
     DENIED_RESOLVED_ADDRESSES = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "198.18.0.0/15", "fc00::/7"];
     LABEL2 = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
@@ -29325,7 +29491,7 @@ var init_sandbox_runtime = __esm({
           const canary = join15(canaryDir, "orbit-canary");
           const probe = await runBounded(srt.path, ["--settings", file, "--", "/bin/sh", "-c", 'echo x > "$1" 2>/dev/null; exit 0', "sh", canary], { timeoutMs });
           if (probe.code !== 0) return { ok: false, detail: `srt ${version.stdout.trim()} could not start a sandboxed command (${probeFailure(probe)})` };
-          if (existsSync14(canary)) return { ok: false, detail: `srt at ${srt.path} ran a command without confining it: a write no rule allowed succeeded` };
+          if (existsSync15(canary)) return { ok: false, detail: `srt at ${srt.path} ran a command without confining it: a write no rule allowed succeeded` };
         } finally {
           rmSync5(dir, { recursive: true, force: true });
         }
@@ -29359,8 +29525,10 @@ var init_sandbox_runtime = __esm({
           writeFileSync4(file, `${JSON.stringify(settings, null, 2)}
 `, { mode: 384, flag: "wx" });
           chmodSync4(file, 384);
+          const srtArgv = [srt.path, "--settings", file, "--", ...launch.restore.length ? ["/usr/bin/env", "--", ...launch.restore] : [], ...command];
+          const memoryMb = this.opts.limits?.memory_mb ?? null;
           return {
-            argv: [srt.path, "--settings", file, "--", ...launch.restore.length ? ["/usr/bin/env", "--", ...launch.restore] : [], ...command],
+            argv: withMemoryWatchdog(srtArgv, memoryMb, this.opts.memory),
             env: launch.env,
             cleanup,
             limitations: limitationsFor(profile, this.platform, this.opts.limits)
@@ -29424,6 +29592,7 @@ var init_isolation = __esm({
     init_container();
     init_none();
     init_limits();
+    init_memory();
     init_profiles();
   }
 });
@@ -29442,8 +29611,7 @@ function stateDbPath(repoRoot) {
 function defaultOrbitHome(env = process.env) {
   return env.ORBIT_HOME ?? join16(homedir5(), ".orbit");
 }
-function orbitInstallDir() {
-  const here = dirname14(fileURLToPath3(import.meta.url));
+function orbitInstallDir(here = dirname14(fileURLToPath3(import.meta.url))) {
   return here.endsWith(join16("src", "controller")) ? resolve6(here, "..", "..") : resolve6(here, "..");
 }
 function startRun(input) {
@@ -29552,7 +29720,7 @@ var init_io = __esm({
 });
 
 // src/cli/context.ts
-import { existsSync as existsSync15, realpathSync as realpathSync7 } from "node:fs";
+import { existsSync as existsSync16, realpathSync as realpathSync7 } from "node:fs";
 import { homedir as homedir6, hostname as hostname2, userInfo as userInfo2 } from "node:os";
 import { dirname as dirname15, resolve as resolve7 } from "node:path";
 function createContext(overrides = {}) {
@@ -29591,7 +29759,7 @@ function safeRealpath(p) {
 }
 async function resolveRepo(ctx, flag) {
   const start = resolve7(ctx.cwd, flag ?? ".");
-  if (!existsSync15(start)) throw new OrbitError("NOT_FOUND", `${start} does not exist`);
+  if (!existsSync16(start)) throw new OrbitError("NOT_FOUND", `${start} does not exist`);
   let r;
   try {
     r = await execCapture(["git", "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"], { cwd: start, timeoutMs: 15e3, env: gitEnv(ctx.env) });
@@ -29612,7 +29780,7 @@ function gitEnv(env) {
 }
 function openState(repoRoot, opts = {}) {
   const path = stateDbPath(repoRoot);
-  if (!opts.create && !existsSync15(path)) throw new OrbitError("NOT_FOUND", `no Orbit state in ${repoRoot}; run "orbit init", then "orbit run"`, { path });
+  if (!opts.create && !existsSync16(path)) throw new OrbitError("NOT_FOUND", `no Orbit state in ${repoRoot}; run "orbit init", then "orbit run"`, { path });
   return openDb(path);
 }
 async function withState(repoRoot, fn, opts = {}) {
@@ -30535,6 +30703,7 @@ var init_planner_output_schema = __esm({
         "required_check_ids",
         "non_goals",
         "risks",
+        "practices",
         "assumptions",
         "unresolved_decisions",
         "material_topics"
@@ -30654,6 +30823,26 @@ var init_planner_output_schema = __esm({
               risk: { type: "string" },
               impact: { type: "string", enum: ["low", "medium", "high"] },
               mitigation: { type: "string" }
+            }
+          }
+        },
+        practices: {
+          type: "array",
+          minItems: 9,
+          maxItems: 9,
+          description: "Engineering practices (spec section 5): exactly one entry for each of the nine practices. Mark a practice applicable when the task needs it and say how the plan meets it; mark it not applicable only with a concrete reason the task does not need it. The reviewer rejects an unjustified omission.",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["practice", "applicable", "justification"],
+            properties: {
+              practice: {
+                type: "string",
+                enum: ["behavior-tests", "empty-and-loading-states", "input-validation-and-authorization", "sensitive-data-handling", "compatibility-and-public-interfaces", "performance-hotspots", "accessibility", "documentation", "rollback-and-migration"],
+                description: "behavior-tests: positive, negative, boundary and error-path tests. empty-and-loading-states. input-validation-and-authorization. sensitive-data-handling. compatibility-and-public-interfaces. performance-hotspots: performance checks for material hotspots. accessibility: for UI work. documentation: for public behavior changes. rollback-and-migration: explicit plans when those actions are authorized."
+              },
+              applicable: { type: "boolean" },
+              justification: { type: "string", description: "Applicable: how the plan satisfies the practice. Not applicable: why this task does not need it." }
             }
           }
         },
@@ -31571,6 +31760,246 @@ var init_json_schema = __esm({
   }
 });
 
+// src/contract/wording.ts
+function wordTokens(text2) {
+  return text2.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+function isSubsequence(needle, hay) {
+  let i = 0;
+  for (const t of hay) {
+    if (i < needle.length && needle[i] === t) i++;
+  }
+  return i === needle.length;
+}
+function countPhrase(tokens3, phrase) {
+  const words = phrase.split(" ");
+  let n2 = 0;
+  for (let i = 0; i + words.length <= tokens3.length; i++) {
+    if (words.every((w, k) => tokens3[i + k] === w)) n2++;
+  }
+  return n2;
+}
+function countWord(tokens3, word) {
+  return tokens3.reduce((n2, t) => t === word ? n2 + 1 : n2, 0);
+}
+function compareWording(prev, next) {
+  const a = wordTokens(prev);
+  const b = wordTokens(next);
+  const reasons = [];
+  if (b.length === 0) reasons.push("the new text is empty");
+  if (!isSubsequence(a, b)) reasons.push("the new text drops or reorders words of the old text");
+  const qualifiers = /* @__PURE__ */ new Set();
+  const others = /* @__PURE__ */ new Set();
+  for (const w of new Set(b)) {
+    if (countWord(b, w) <= countWord(a, w)) continue;
+    if (QUALIFIER_WORDS.has(w)) qualifiers.add(w);
+    else if (!NEUTRAL_ADDITIONS.has(w)) others.add(w);
+  }
+  for (const p of QUALIFIER_PHRASES) {
+    if (countPhrase(b, p) > countPhrase(a, p)) qualifiers.add(p);
+  }
+  if (qualifiers.size > 0) reasons.push(`the new text adds qualifying language (${[...qualifiers].sort().join(", ")})`);
+  if (others.size > 0) {
+    const shown = [...others].slice(0, MAX_LISTED_WORDS);
+    const more = others.size > shown.length ? `, and ${others.size - shown.length} more` : "";
+    reasons.push(`the new text adds words that can narrow or redefine it (${shown.join(", ")}${more})`);
+  }
+  return { clarification: reasons.length === 0, reasons };
+}
+function normalizeEntry(text2) {
+  return wordTokens(text2).join(" ");
+}
+var NEUTRAL_ADDITIONS, QUALIFIER_WORDS, MAX_LISTED_WORDS, QUALIFIER_PHRASES;
+var init_wording = __esm({
+  "src/contract/wording.ts"() {
+    "use strict";
+    NEUTRAL_ADDITIONS = /* @__PURE__ */ new Set([
+      "a",
+      "an",
+      "the",
+      "and",
+      "also",
+      "all",
+      "every",
+      "each",
+      "both",
+      "always",
+      "must",
+      "fully",
+      "entire",
+      "entirely",
+      "whole",
+      "complete",
+      "completely",
+      "correctly",
+      "exactly",
+      "strictly"
+    ]);
+    QUALIFIER_WORDS = /* @__PURE__ */ new Set([
+      // exceptions and narrowing
+      "only",
+      "except",
+      "excepting",
+      "excluding",
+      "exclude",
+      "excludes",
+      "unless",
+      "but",
+      "however",
+      "subset",
+      "partial",
+      "partially",
+      "some",
+      "first",
+      "limit",
+      "limits",
+      "limited",
+      "max",
+      "maximum",
+      "most",
+      "least",
+      "until",
+      "before",
+      "after",
+      // negation
+      "not",
+      "no",
+      "never",
+      "without",
+      "none",
+      "nor",
+      "cannot",
+      "don",
+      "doesn",
+      "didn",
+      "isn",
+      "aren",
+      "wasn",
+      "weren",
+      "won",
+      "wouldn",
+      "shouldn",
+      "couldn",
+      "t",
+      // hedges and modality
+      "may",
+      "might",
+      "optionally",
+      "optional",
+      "should",
+      "could",
+      "can",
+      "ideally",
+      "preferably",
+      "possible",
+      "possibly",
+      "feasible",
+      "approximately",
+      "roughly",
+      "about",
+      "around",
+      "mostly",
+      "generally",
+      "usually",
+      "typically",
+      "eventually",
+      "later",
+      "temporarily",
+      "attempt",
+      "attempts",
+      "try",
+      "tries",
+      "best",
+      "effort",
+      // conditions
+      "if",
+      "when",
+      "whenever",
+      "where",
+      "while",
+      "provided",
+      "assuming",
+      // alternatives and replacement
+      "or",
+      "either",
+      "alternatively",
+      "instead",
+      "otherwise",
+      "rather",
+      "replace",
+      "replaces",
+      "replaced",
+      // skipping
+      "skip",
+      "skips",
+      "skipped",
+      "ignore",
+      "ignores",
+      "ignored",
+      "omit",
+      "omits",
+      "omitted",
+      "drop",
+      "drops",
+      "dropped",
+      "remove",
+      "removes",
+      "removed"
+    ]);
+    MAX_LISTED_WORDS = 8;
+    QUALIFIER_PHRASES = ["up to", "at most", "no more than", "less than", "fewer than", "for now", "as needed", "as appropriate", "or similar", "and or"];
+  }
+});
+
+// src/contract/practices.ts
+function practiceProblems(selection) {
+  const problems = [];
+  const counts = /* @__PURE__ */ new Map();
+  for (const s of selection) counts.set(s.practice, (counts.get(s.practice) ?? 0) + 1);
+  for (const p of ENGINEERING_PRACTICES) {
+    const n2 = counts.get(p) ?? 0;
+    if (n2 === 0) problems.push(`practice "${p}" is neither selected nor justified as omitted`);
+    else if (n2 > 1) problems.push(`practice "${p}" is listed ${n2} times`);
+  }
+  for (const s of selection) {
+    const reason = s.justification.trim();
+    if (reason === "") problems.push(`practice "${s.practice}" has no justification`);
+    else if (!s.applicable && (EMPTY_REASON.test(reason) || wordTokens(reason).length < MIN_OMISSION_WORDS)) {
+      problems.push(`the omission of practice "${s.practice}" gives no reason (say why the task does not need it)`);
+    }
+  }
+  return problems;
+}
+function normalizePractices(selection) {
+  const out = [];
+  for (const p of ENGINEERING_PRACTICES) {
+    const s = selection.find((x) => x.practice === p);
+    if (s) out.push({ practice: p, applicable: s.applicable, justification: s.justification.trim().slice(0, MAX_JUSTIFICATION_CHARS) });
+  }
+  return out;
+}
+var ENGINEERING_PRACTICES, EMPTY_REASON, MIN_OMISSION_WORDS, MAX_JUSTIFICATION_CHARS;
+var init_practices = __esm({
+  "src/contract/practices.ts"() {
+    "use strict";
+    init_wording();
+    ENGINEERING_PRACTICES = [
+      "behavior-tests",
+      "empty-and-loading-states",
+      "input-validation-and-authorization",
+      "sensitive-data-handling",
+      "compatibility-and-public-interfaces",
+      "performance-hotspots",
+      "accessibility",
+      "documentation",
+      "rollback-and-migration"
+    ];
+    EMPTY_REASON = /^(?:n\/?a|none|nothing|no|not applicable|not needed|not relevant|irrelevant|skip(?:ped)?|tbd|todo|-+|\.+)$/i;
+    MIN_OMISSION_WORDS = 3;
+    MAX_JUSTIFICATION_CHARS = 1e3;
+  }
+});
+
 // src/contract/model-outputs.ts
 function validateModelOutput(kind, value) {
   const res = validateAgainst(MODEL_OUTPUT_SCHEMAS[kind], value);
@@ -31579,6 +32008,12 @@ function validateModelOutput(kind, value) {
       kind,
       errors: res.errors
     });
+  }
+  if (kind === "planner") {
+    const problems = practiceProblems(res.value.practices);
+    if (problems.length > 0) {
+      throw new OrbitError("MALFORMED_OUTPUT", `planner output does not account for the engineering practices: ${problems.slice(0, 5).join("; ")}`, { kind, errors: problems });
+    }
   }
   return res.value;
 }
@@ -31595,6 +32030,7 @@ var init_model_outputs = __esm({
     init_explorer_output_schema();
     init_errors();
     init_json_schema();
+    init_practices();
     MODEL_OUTPUT_SCHEMAS = {
       planner: planner_output_schema_default,
       implementer: implementer_output_schema_default,
@@ -31617,7 +32053,7 @@ var init_model_outputs = __esm({
 });
 
 // src/storage/decisions.ts
-import { closeSync as closeSync5, existsSync as existsSync16, fstatSync as fstatSync3, openSync as openSync5, readFileSync as readFileSync10, readSync as readSync2, writeSync as writeSync2 } from "node:fs";
+import { closeSync as closeSync5, existsSync as existsSync17, fstatSync as fstatSync3, openSync as openSync5, readFileSync as readFileSync10, readSync as readSync2, writeSync as writeSync2 } from "node:fs";
 import { join as join17 } from "node:path";
 function toRecord4(r) {
   return { id: r.id, runId: r.run_id, kind: r.kind, summary: r.summary, data: r.data_json === null ? null : JSON.parse(r.data_json), createdAt: r.created_at };
@@ -31664,7 +32100,7 @@ function listDecisions(db, runId, opts = {}) {
 }
 function readDecisionsMirror(runDir2) {
   const path = decisionsPath(runDir2);
-  if (!existsSync16(path)) return [];
+  if (!existsSync17(path)) return [];
   const out = [];
   for (const line3 of readFileSync10(path, "utf8").split("\n")) {
     if (line3.trim() === "") continue;
@@ -31683,7 +32119,7 @@ function assertNoTransaction(db, fn) {
 }
 function appendLine(runDir2, d) {
   const path = decisionsPath(runDir2);
-  if (existsSync16(path)) {
+  if (existsSync17(path)) {
     const fd = openSync5(path, "a+");
     try {
       const size = fstatSync3(fd).size;
@@ -32279,7 +32715,7 @@ var init_store = __esm({
 });
 
 // src/evidence/check-shim.ts
-import { existsSync as existsSync17, readFileSync as readFileSync11 } from "node:fs";
+import { existsSync as existsSync18, readFileSync as readFileSync11 } from "node:fs";
 import { join as join18 } from "node:path";
 function ensureShim(runDir2) {
   const path = join18(runDir2, "check-shim.mjs");
@@ -32292,7 +32728,7 @@ function ensureShim(runDir2) {
   return path;
 }
 function readJsonFile(path) {
-  if (!existsSync17(path)) return null;
+  if (!existsSync18(path)) return null;
   try {
     return JSON.parse(readFileSync11(path, "utf8"));
   } catch {
@@ -33045,8 +33481,8 @@ var init_backoff = __esm({
 
 // src/recovery/identity.ts
 import { readFileSync as readFileSync12 } from "node:fs";
-function startToEpochMs(start, btimeSeconds = bootTimeSeconds()) {
-  if (process.platform === "linux") {
+function startToEpochMs(start, btimeSeconds = bootTimeSeconds(), platform3 = process.platform) {
+  if (platform3 === "linux") {
     const ticks = Number(start);
     if (!Number.isFinite(ticks) || btimeSeconds === null) return null;
     return btimeSeconds * 1e3 + Math.round(ticks / CLOCK_TICKS_PER_SECOND * 1e3);
@@ -33054,10 +33490,10 @@ function startToEpochMs(start, btimeSeconds = bootTimeSeconds()) {
   const ms = Date.parse(`${start} UTC`);
   return Number.isFinite(ms) ? ms : null;
 }
-function bootTimeSeconds() {
-  if (process.platform !== "linux") return null;
+function bootTimeSeconds(platform3 = process.platform, read = (p) => readFileSync12(p, "utf8")) {
+  if (platform3 !== "linux") return null;
   try {
-    const m = /^btime\s+(\d+)/m.exec(readFileSync12("/proc/stat", "utf8"));
+    const m = /^btime\s+(\d+)/m.exec(read("/proc/stat"));
     return m ? Number(m[1]) : null;
   } catch {
     return null;
@@ -33098,7 +33534,7 @@ var init_identity2 = __esm({
 });
 
 // src/recovery/reconcile.ts
-import { existsSync as existsSync18, readdirSync as readdirSync2 } from "node:fs";
+import { existsSync as existsSync19, readdirSync as readdirSync2 } from "node:fs";
 import { dirname as dirname16, join as join20 } from "node:path";
 async function reconcileOnStart(opts) {
   const ctx = {
@@ -33587,7 +34023,7 @@ async function stopCheck(ctx, dir, shimPid, stillOurs, childPgid) {
   } catch {
   }
   const deadline = Date.now() + ctx.graceMs * 2 + 1e3;
-  while (Date.now() < deadline && !existsSync18(shimPath(dir, "exit")) && stillOurs()) await systemClock.sleep(25);
+  while (Date.now() < deadline && !existsSync19(shimPath(dir, "exit")) && stillOurs()) await systemClock.sleep(25);
   if (stillOurs()) {
     try {
       process.kill(shimPid, "SIGKILL");
@@ -33614,7 +34050,7 @@ function findAppStateFiles(root) {
     if (depth > 6) return;
     for (const name of safeDirs(dir)) {
       const child = join20(dir, name);
-      if (name === "app" && existsSync18(join20(child, APP_STATE_FILE))) out.push(join20(child, APP_STATE_FILE));
+      if (name === "app" && existsSync19(join20(child, APP_STATE_FILE))) out.push(join20(child, APP_STATE_FILE));
       else walk4(child, depth + 1);
     }
   };
@@ -33995,7 +34431,7 @@ var init_git = __esm({
 
 // src/evidence/runner.ts
 import { createHash as createHash3, randomBytes as randomBytes4 } from "node:crypto";
-import { closeSync as closeSync7, existsSync as existsSync19, lstatSync as lstatSync4, mkdirSync as mkdirSync8, openSync as openSync7, readSync as readSync4, readdirSync as readdirSync4, realpathSync as realpathSync9, rmSync as rmSync6, statSync as statSync11 } from "node:fs";
+import { closeSync as closeSync7, existsSync as existsSync20, lstatSync as lstatSync4, mkdirSync as mkdirSync8, openSync as openSync7, readSync as readSync4, readdirSync as readdirSync4, realpathSync as realpathSync9, rmSync as rmSync6, statSync as statSync11 } from "node:fs";
 import { platform } from "node:os";
 import { join as join23, resolve as resolve8, sep as sep4 } from "node:path";
 function candidateEvidenceDir(runDir2, seq2) {
@@ -34461,7 +34897,11 @@ function finalize(ctx, def, row, dirs, exit, synthetic) {
       note3 = `could not start the check: ${redact(exit.error, secrets)}`;
     } else if (exit.timedOut) status2 = "TIMEOUT";
     else if (exit.cancelled) status2 = "CANCELLED";
-    else status2 = exit.exitCode === 0 ? "PASSED" : "FAILED";
+    else {
+      status2 = exit.exitCode === 0 ? "PASSED" : "FAILED";
+      const limit = status2 === "FAILED" && exit.exitCode === RESOURCE_LIMIT_EXIT_CODE ? resourceLimitNote(body) : null;
+      if (limit) note3 = `resource limit exceeded, ${limit}`;
+    }
   } else if (synthetic === "cancelled") {
     status2 = "CANCELLED";
     note3 = "the check was cancelled and did not report an exit record";
@@ -34507,7 +34947,7 @@ ${note3}
   });
 }
 function readCapped(path) {
-  if (!existsSync19(path)) return "";
+  if (!existsSync20(path)) return "";
   const size = statSync11(path).size;
   const len = Math.min(size, MAX_RAW_READ);
   const buf = Buffer.alloc(len);
@@ -34586,6 +35026,7 @@ var init_runner = __esm({
     init_exec();
     init_proc();
     init_redact();
+    init_memory();
     init_profiles();
     init_snapshot();
     init_fingerprint();
@@ -34667,6 +35108,20 @@ var init_contract_schema = __esm({
               id: { type: "string", pattern: "^AS-[0-9]+$" },
               statement: { type: "string", minLength: 1, maxLength: 2e3 },
               status: { enum: ["unverified", "supported", "rejected", "needs-decision"] }
+            }
+          }
+        },
+        practices: {
+          type: "array",
+          maxItems: 9,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["practice", "applicable", "justification"],
+            properties: {
+              practice: { enum: ["behavior-tests", "empty-and-loading-states", "input-validation-and-authorization", "sensitive-data-handling", "compatibility-and-public-interfaces", "performance-hotspots", "accessibility", "documentation", "rollback-and-migration"] },
+              applicable: { type: "boolean" },
+              justification: { type: "string", minLength: 1, maxLength: 2e3 }
             }
           }
         },
@@ -34906,12 +35361,12 @@ function intersectWithScope(glob, scope) {
   const g = normalizeGlob(glob);
   if (g === null) return [];
   if (containedInAny(g, scope)) return [g];
-  const inside = [];
+  const inside2 = [];
   for (const s of scope) {
     const n2 = normalizeGlob(s);
-    if (n2 !== null && globContains(g, n2) && !inside.includes(n2)) inside.push(n2);
+    if (n2 !== null && globContains(g, n2) && !inside2.includes(n2)) inside2.push(n2);
   }
-  return inside;
+  return inside2;
 }
 function literalGlob(path) {
   if (/[*?{}]/.test(path)) return null;
@@ -34975,6 +35430,7 @@ function crossCheck(c, snapshot2, expectedHash) {
     if (seenExceptions.has(e.check_id)) problems.push(`check "${e.check_id}" has more than one baseline exception`);
     seenExceptions.add(e.check_id);
   }
+  if (c.practices !== void 0) problems.push(...practiceProblems(c.practices).map((p) => `practices: ${p}`));
   for (const id of c.required_check_ids) {
     if (!isCheck(id)) problems.push(`required check "${id}" is not defined by the policy`);
   }
@@ -35014,6 +35470,7 @@ var init_validate = __esm({
     init_hash();
     init_globs2();
     init_json_schema();
+    init_practices();
   }
 });
 
@@ -35629,13 +36086,16 @@ function budgetAdmission(ledger, phase = "work") {
   };
 }
 function duplicationUnit(unit, fraction) {
+  return overheadUnit(unit, fraction, DUPLICATION_SUFFIX);
+}
+function overheadUnit(unit, fraction, suffix) {
   const role = unit.role === "check" ? null : unit.role;
   const base = unit.budget.costUsd ?? (role === null ? 0 : ROLE_COST_CEILING_USD[role]);
   const usd3 = Math.round(base * fraction * 1e6) / 1e6;
-  return { id: `${unit.id}${DUPLICATION_SUFFIX}`, role: unit.role, writer: false, ownedPaths: [], dependsOn: [], revision: unit.revision, cancelWhen: [], budget: { costUsd: usd3 }, provider: null, worktree: null, status: "running" };
+  return { id: `${unit.id}${suffix}`, role: unit.role, writer: false, ownedPaths: [], dependsOn: [], revision: unit.revision, cancelWhen: [], budget: { costUsd: usd3 }, provider: null, worktree: null, status: "running" };
 }
 function isDuplication(u) {
-  return u.id.endsWith(DUPLICATION_SUFFIX);
+  return u.id.endsWith(DUPLICATION_SUFFIX) || u.id.endsWith(MERGE_SUFFIX);
 }
 function admission(unit, admit, active) {
   if (!admit) return null;
@@ -35733,7 +36193,7 @@ function staticPrefix(p) {
 function isSegmentPrefix(prefix, of) {
   return prefix.length <= of.length && prefix.every((s, i) => s === of[i]);
 }
-var import_picomatch3, DEFAULT_CONTEXT_DUPLICATION, DEFAULT_PER_WORKER_MB, DEFAULT_HEADROOM_MB, DEFAULT_BACKOFF2, REVISION_BOUND_ROLES, AgentScheduler, DUPLICATION_SUFFIX, WorktreeIndex, GLOB_CHARS;
+var import_picomatch3, DEFAULT_CONTEXT_DUPLICATION, DEFAULT_MERGE_OVERHEAD, DEFAULT_PER_WORKER_MB, DEFAULT_HEADROOM_MB, DEFAULT_BACKOFF2, REVISION_BOUND_ROLES, AgentScheduler, DUPLICATION_SUFFIX, MERGE_SUFFIX, WorktreeIndex, GLOB_CHARS;
 var init_scheduler = __esm({
   "src/scheduling/scheduler.ts"() {
     "use strict";
@@ -35742,6 +36202,7 @@ var init_scheduler = __esm({
     init_errors();
     init_budget2();
     DEFAULT_CONTEXT_DUPLICATION = 0.25;
+    DEFAULT_MERGE_OVERHEAD = 0.15;
     DEFAULT_PER_WORKER_MB = 1024;
     DEFAULT_HEADROOM_MB = 1024;
     DEFAULT_BACKOFF2 = { baseMs: 3e4, maxMs: 15 * 6e4 };
@@ -35838,21 +36299,29 @@ var init_scheduler = __esm({
         const fraction = opts.contextDuplication ?? DEFAULT_CONTEXT_DUPLICATION;
         if (!(Number.isFinite(fraction) && fraction >= 0)) throw new OrbitError("SCHEMA_INVALID", "contextDuplication must be a non-negative number");
         const duplication = [];
+        const mergeFraction = opts.mergeOverhead ?? DEFAULT_MERGE_OVERHEAD;
+        if (!(Number.isFinite(mergeFraction) && mergeFraction >= 0)) throw new OrbitError("SCHEMA_INVALID", "mergeOverhead must be a non-negative number");
+        const merges = [];
         for (const unit of units) {
           if (status(unit) !== "pending") continue;
           const shared = fraction > 0 && unit.revision !== null ? active.find((a) => a.revision === unit.revision) : void 0;
           const extra = shared ? duplicationUnit(unit, fraction) : null;
-          const reason = this.blocker(unit, byId, cyclic, active, limit, now, capacity, worktrees) ?? admission(unit, opts.admit, extra ? [...active, extra] : active);
+          const writers = unit.writer && mergeFraction > 0 ? active.filter((a) => a.writer && !isDuplication(a)) : [];
+          const merge2 = writers.length > 0 ? overheadUnit(unit, mergeFraction, MERGE_SUFFIX) : null;
+          const charged = [...active, ...extra ? [extra] : [], ...merge2 ? [merge2] : []];
+          const reason = this.blocker(unit, byId, cyclic, active, limit, now, capacity, worktrees) ?? admission(unit, opts.admit, charged);
           if (reason) {
             deferred.push({ id: unit.id, reason });
             continue;
           }
           if (shared && extra) duplication.push({ id: unit.id, shared_with: shared.id, usd: extra.budget.costUsd ?? 0 });
+          if (merge2) merges.push({ id: unit.id, alongside: writers.map((w) => w.id), usd: merge2.budget.costUsd ?? 0 });
           active.push(unit);
           if (extra) active.push(extra);
+          if (merge2) active.push(merge2);
           start.push(unit);
         }
-        return { start, deferred, limit, running: units.filter((u) => status(u) === "running").length, capacity, context_duplication: duplication };
+        return { start, deferred, limit, running: units.filter((u) => status(u) === "running").length, capacity, context_duplication: duplication, merge_overhead: merges };
       }
       /**
        * Units to cancel because their result can no longer matter: reviews and
@@ -35912,6 +36381,7 @@ var init_scheduler = __esm({
       }
     };
     DUPLICATION_SUFFIX = "#context-duplication";
+    MERGE_SUFFIX = "#merge-overhead";
     WorktreeIndex = class {
       cache = /* @__PURE__ */ new Map();
       overlap(a, b) {
@@ -38534,7 +39004,7 @@ var init_store3 = __esm({
 });
 
 // src/controller/eval-runner.ts
-import { existsSync as existsSync20, mkdirSync as mkdirSync10, rmSync as rmSync7 } from "node:fs";
+import { existsSync as existsSync21, mkdirSync as mkdirSync10, rmSync as rmSync7 } from "node:fs";
 import { join as join25 } from "node:path";
 function measureRun(db, runId, requiredCheckIds) {
   const run = getRun(db, runId);
@@ -38595,7 +39065,7 @@ function replayConfig(config, remainingUsd) {
   return c;
 }
 async function cloneAt(source, dest, revision) {
-  if (existsSync20(dest)) rmSync7(dest, { recursive: true, force: true });
+  if (existsSync21(dest)) rmSync7(dest, { recursive: true, force: true });
   try {
     await git2(join25(dest, ".."), ["clone", "--local", "--no-checkout", "--quiet", source, dest]);
     await git2(dest, ["cat-file", "-e", `${revision}^{commit}`]);
@@ -38851,7 +39321,7 @@ var init_knowledge_hooks = __esm({
 });
 
 // src/controller/denials.ts
-import { existsSync as existsSync21 } from "node:fs";
+import { existsSync as existsSync22 } from "node:fs";
 import { join as join27 } from "node:path";
 function denialsFromTranscript(events) {
   const uses = /* @__PURE__ */ new Map();
@@ -38892,7 +39362,7 @@ function denialsFromTranscript(events) {
 }
 function ingestWorkerDenials(input, w) {
   const path = join27(w.workerDir, LOG_FILE);
-  if (!existsSync21(path)) return [];
+  if (!existsSync22(path)) return [];
   const found = denialsFromTranscript(readLogLines(path).events);
   for (const d of found) {
     recordDecision(
@@ -38911,11 +39381,14 @@ function ingestWorkerDenials(input, w) {
   }
   return found;
 }
+function denialTarget(v) {
+  return clip3(v, 300);
+}
 function targetOf(input) {
   if (!input) return null;
   for (const k of ["file_path", "notebook_path", "path", "command", "url"]) {
     const v = input[k];
-    if (typeof v === "string" && v.length > 0) return clip3(v, 300);
+    if (typeof v === "string" && v.length > 0) return denialTarget(v);
   }
   return null;
 }
@@ -38944,7 +39417,7 @@ var init_denials = __esm({
 });
 
 // src/controller/workers.ts
-import { existsSync as existsSync22, mkdirSync as mkdirSync11 } from "node:fs";
+import { existsSync as existsSync23, mkdirSync as mkdirSync11 } from "node:fs";
 import { join as join28 } from "node:path";
 function workersFor(ctx, purpose) {
   return listWorkers(ctx.db, { runId: ctx.run.id }).filter((w) => w.purpose === purpose);
@@ -39028,7 +39501,7 @@ async function spawn4(ctx, w, req) {
   try {
     handle = await adapter.startTask(spec);
   } catch (err) {
-    if (isOrbitError(err, "TRANSITION_INVALID") && existsSync22(join28(w.workerDir, LAUNCH_FILE))) {
+    if (isOrbitError(err, "TRANSITION_INVALID") && existsSync23(join28(w.workerDir, LAUNCH_FILE))) {
       const h = handleOf(adapter, w);
       if (h) {
         markWorkerRunning(ctx.db, w.id, { pid: h.pid, pgid: h.pgid, procStart: h.procStart }, ctx.clock, ctx.ownerId);
@@ -39052,14 +39525,15 @@ function taskSpec(ctx, w, req) {
   const env = ctx.deps.hostEnv ?? process.env;
   const provider = w.provider.startsWith("codex") ? "codex" : "claude";
   const timeoutMs = workerTimeoutMs(ctx, w.role);
+  const policy = req.policy ? req.policy(w.workerDir) : { path: ctx.run.policyPath, hash: ctx.run.policyHash, snapshot: ctx.snapshot };
   const sandbox = profileForWorker({
     worktree: req.cwd,
     workerDir: w.workerDir,
-    snapshot: ctx.snapshot,
+    snapshot: policy.snapshot,
     provider,
     claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join28(home2, ".claude"),
     homeDir: home2,
-    policyPath: ctx.run.policyPath,
+    policyPath: policy.path,
     readablePaths: [ctx.deps.orbitInstallDir],
     timeoutMs,
     env
@@ -39079,8 +39553,8 @@ function taskSpec(ctx, w, req) {
     maxTurns: ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session,
     timeoutMs,
     sandbox,
-    policyPath: ctx.run.policyPath,
-    policyHash: ctx.run.policyHash,
+    policyPath: policy.path,
+    policyHash: policy.hash,
     env: {},
     ...req.maxBudgetUsd === void 0 ? {} : { maxBudgetUsd: req.maxBudgetUsd }
   };
@@ -39164,7 +39638,7 @@ function accountWorker(ctx, w, result2, phase = "work") {
 function authFailureSpentNothing(w, usage) {
   if ((usage.inputTokens ?? 0) > 0 || (usage.outputTokens ?? 0) > 0) return false;
   const path = join28(w.workerDir, LOG_FILE);
-  if (!existsSync22(path)) return true;
+  if (!existsSync23(path)) return true;
   const { events } = readLogLines(path);
   const result2 = events.filter((e) => e.type === "result").at(-1);
   if (result2) {
@@ -39262,7 +39736,7 @@ function messageOf(err) {
 }
 async function collectIfFinished(ctx, w) {
   if (w.state === "PLANNED") {
-    if (!existsSync22(join28(w.workerDir, LAUNCH_FILE))) {
+    if (!existsSync23(join28(w.workerDir, LAUNCH_FILE))) {
       finishWorker(ctx.db, w.id, { state: "CANCELLED", resultStatus: "cancelled", error: "never started before the controller restarted" }, ctx.clock, ctx.ownerId);
       return false;
     }
@@ -40355,17 +40829,17 @@ var init_extract = __esm({
 function onlyVocabularyDots(text2) {
   const re = new RegExp(String.raw`(?:^|[^\w.])([\w-]+\.(?:${FILE_EXTENSIONS}))\b`, "gi");
   for (const m of text2.matchAll(re)) {
-    if (!DOTTED_VOCABULARY.has((m[1] ?? "").toLowerCase())) return false;
+    if (!DOTTED_VOCABULARY.has(m[1].toLowerCase())) return false;
   }
   return true;
 }
 function hasDottedIdentifier(text2) {
   for (const m of text2.matchAll(/\b([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)\b/g)) {
-    const token = m[1] ?? "";
+    const token = m[1];
     if (DOTTED_VOCABULARY.has(token.toLowerCase())) continue;
     const parts = token.split(".");
     if (parts.every((p) => p.length <= 1)) continue;
-    if (parts.length === 2 && /^[A-Z]/.test(parts[1] ?? "") && /^[a-z]+$/.test(parts[0] ?? "") && (parts[0] ?? "").length > 3) continue;
+    if (parts.length === 2 && /^[A-Z]/.test(parts[1]) && /^[a-z]+$/.test(parts[0]) && parts[0].length > 3) continue;
     return true;
   }
   return false;
@@ -41310,7 +41784,7 @@ var init_publication = __esm({
 });
 
 // src/controller/report.ts
-import { existsSync as existsSync23, mkdirSync as mkdirSync12, readdirSync as readdirSync5, readFileSync as readFileSync16 } from "node:fs";
+import { existsSync as existsSync24, mkdirSync as mkdirSync12, readdirSync as readdirSync5, readFileSync as readFileSync16 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
 import { join as join30 } from "node:path";
 function writeFinalReport(db, runId, opts) {
@@ -41321,6 +41795,9 @@ function writeFinalReport(db, runId, opts) {
   return report2;
 }
 function buildFinalReport(db, run, opts) {
+  return redactValue(assembleFinalReport(db, run, opts));
+}
+function assembleFinalReport(db, run, opts) {
   const contract = parseContract(run.contractJson);
   const cand = currentCandidate(db, run.id);
   const reports = listEvidenceReports(db, run.id);
@@ -41384,6 +41861,7 @@ function buildFinalReport(db, run, opts) {
     reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length })),
     decisions,
     assumptions: [...(contract?.assumptions ?? []).map((a) => ({ id: a.id, statement: a.statement, status: a.status })), ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))],
+    practices: (contract?.practices ?? []).map((p) => ({ practice: p.practice, applicable: p.applicable, justification: p.justification })),
     repairs: repairs(opts.runDir),
     revision: {
       base: run.baseRevision,
@@ -41405,7 +41883,7 @@ function tokens(t) {
 }
 function repairs(runDir2) {
   const dir = join30(runDir2, "briefs");
-  if (!existsSync23(dir)) return [];
+  if (!existsSync24(dir)) return [];
   return readdirSync5(dir).filter((f) => /^attempt-\d+\.json$/.test(f)).map((f) => readJsonIfExists(join30(dir, f))).filter((b) => b !== null).map((b) => ({ attempt: b.attempt, source: b.source, fingerprint: b.fingerprint })).sort((a, b) => a.attempt - b.attempt);
 }
 function nextAction(run, branch, pr) {
@@ -41437,6 +41915,7 @@ function renderMarkdown(r) {
   out.push("## Reviews", "", list(r.reviews.map((v) => `${v.provider}/${v.model ?? "default"}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))`)), "");
   out.push("## Decisions", "", list(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), "");
   out.push("## Assumptions", "", list(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), "");
+  if (r.practices && r.practices.length > 0) out.push("## Engineering practices", "", list(r.practices.map((p) => `${p.practice} [${p.applicable ? "selected" : "omitted"}]: ${p.justification}`)), "");
   out.push("## Repairs", "", list(r.repairs.map((x) => `attempt ${x.attempt}: ${x.source} brief${x.fingerprint ? ` for ${x.fingerprint}` : ""}`)), "");
   const rv = r.revision;
   out.push("## Revision, branch and pull request", "", list([`base: ${rv.base ?? "none"}`, `candidate: ${rv.candidate ?? "none"} (tree ${rv.tree ?? "none"})`, `branch: ${rv.branch ?? "none"}`, `delivered commit: ${rv.delivered_commit ?? "none"}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ""}` : "none"}`]), "");
@@ -41497,7 +41976,7 @@ async function learnAtTerminal(ctx) {
       attempts: listWorkers(ctx.db, { runId: run.id, role: "implementer" }).length,
       verifiedCriteria: ev?.report.acceptance_evidence.filter((a) => a.status === "supported").map((a) => a.criterion_id) ?? [],
       contradictedLessonIds: [],
-      artifact: existsSync23(join30(ctx.runDir, "final.md")) ? { path: "final.md", sha256: sha256(readFileSync16(join30(ctx.runDir, "final.md"))) } : { path: "final.md", sha256: null }
+      artifact: existsSync24(join30(ctx.runDir, "final.md")) ? { path: "final.md", sha256: sha256(readFileSync16(join30(ctx.runDir, "final.md"))) } : { path: "final.md", sha256: null }
     });
     if (k.share_globally) {
       const guard = loadPublicationGuard(ctx.snapshot.config.guard.terms_file ? { termsPath: ctx.snapshot.config.guard.terms_file } : {});
@@ -42027,197 +42506,6 @@ var init_freshness = __esm({
   }
 });
 
-// src/contract/wording.ts
-function wordTokens(text2) {
-  return text2.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
-}
-function isSubsequence(needle, hay) {
-  let i = 0;
-  for (const t of hay) {
-    if (i < needle.length && needle[i] === t) i++;
-  }
-  return i === needle.length;
-}
-function countPhrase(tokens3, phrase) {
-  const words = phrase.split(" ");
-  let n2 = 0;
-  for (let i = 0; i + words.length <= tokens3.length; i++) {
-    if (words.every((w, k) => tokens3[i + k] === w)) n2++;
-  }
-  return n2;
-}
-function countWord(tokens3, word) {
-  return tokens3.reduce((n2, t) => t === word ? n2 + 1 : n2, 0);
-}
-function compareWording(prev, next) {
-  const a = wordTokens(prev);
-  const b = wordTokens(next);
-  const reasons = [];
-  if (b.length === 0) reasons.push("the new text is empty");
-  if (!isSubsequence(a, b)) reasons.push("the new text drops or reorders words of the old text");
-  const qualifiers = /* @__PURE__ */ new Set();
-  const others = /* @__PURE__ */ new Set();
-  for (const w of new Set(b)) {
-    if (countWord(b, w) <= countWord(a, w)) continue;
-    if (QUALIFIER_WORDS.has(w)) qualifiers.add(w);
-    else if (!NEUTRAL_ADDITIONS.has(w)) others.add(w);
-  }
-  for (const p of QUALIFIER_PHRASES) {
-    if (countPhrase(b, p) > countPhrase(a, p)) qualifiers.add(p);
-  }
-  if (qualifiers.size > 0) reasons.push(`the new text adds qualifying language (${[...qualifiers].sort().join(", ")})`);
-  if (others.size > 0) {
-    const shown = [...others].slice(0, MAX_LISTED_WORDS);
-    const more = others.size > shown.length ? `, and ${others.size - shown.length} more` : "";
-    reasons.push(`the new text adds words that can narrow or redefine it (${shown.join(", ")}${more})`);
-  }
-  return { clarification: reasons.length === 0, reasons };
-}
-function normalizeEntry(text2) {
-  return wordTokens(text2).join(" ");
-}
-var NEUTRAL_ADDITIONS, QUALIFIER_WORDS, MAX_LISTED_WORDS, QUALIFIER_PHRASES;
-var init_wording = __esm({
-  "src/contract/wording.ts"() {
-    "use strict";
-    NEUTRAL_ADDITIONS = /* @__PURE__ */ new Set([
-      "a",
-      "an",
-      "the",
-      "and",
-      "also",
-      "all",
-      "every",
-      "each",
-      "both",
-      "always",
-      "must",
-      "fully",
-      "entire",
-      "entirely",
-      "whole",
-      "complete",
-      "completely",
-      "correctly",
-      "exactly",
-      "strictly"
-    ]);
-    QUALIFIER_WORDS = /* @__PURE__ */ new Set([
-      // exceptions and narrowing
-      "only",
-      "except",
-      "excepting",
-      "excluding",
-      "exclude",
-      "excludes",
-      "unless",
-      "but",
-      "however",
-      "subset",
-      "partial",
-      "partially",
-      "some",
-      "first",
-      "limit",
-      "limits",
-      "limited",
-      "max",
-      "maximum",
-      "most",
-      "least",
-      "until",
-      "before",
-      "after",
-      // negation
-      "not",
-      "no",
-      "never",
-      "without",
-      "none",
-      "nor",
-      "cannot",
-      "don",
-      "doesn",
-      "didn",
-      "isn",
-      "aren",
-      "wasn",
-      "weren",
-      "won",
-      "wouldn",
-      "shouldn",
-      "couldn",
-      "t",
-      // hedges and modality
-      "may",
-      "might",
-      "optionally",
-      "optional",
-      "should",
-      "could",
-      "can",
-      "ideally",
-      "preferably",
-      "possible",
-      "possibly",
-      "feasible",
-      "approximately",
-      "roughly",
-      "about",
-      "around",
-      "mostly",
-      "generally",
-      "usually",
-      "typically",
-      "eventually",
-      "later",
-      "temporarily",
-      "attempt",
-      "attempts",
-      "try",
-      "tries",
-      "best",
-      "effort",
-      // conditions
-      "if",
-      "when",
-      "whenever",
-      "where",
-      "while",
-      "provided",
-      "assuming",
-      // alternatives and replacement
-      "or",
-      "either",
-      "alternatively",
-      "instead",
-      "otherwise",
-      "rather",
-      "replace",
-      "replaces",
-      "replaced",
-      // skipping
-      "skip",
-      "skips",
-      "skipped",
-      "ignore",
-      "ignores",
-      "ignored",
-      "omit",
-      "omits",
-      "omitted",
-      "drop",
-      "drops",
-      "dropped",
-      "remove",
-      "removes",
-      "removed"
-    ]);
-    MAX_LISTED_WORDS = 8;
-    QUALIFIER_PHRASES = ["up to", "at most", "no more than", "less than", "fewer than", "for now", "as needed", "as appropriate", "or similar", "and or"];
-  }
-});
-
 // src/inquisition/heuristics.ts
 function riskCategoriesInText(text2) {
   return RISK_CATEGORIES.filter((c) => TEXT[c].test(text2));
@@ -42268,6 +42556,605 @@ var init_heuristics = __esm({
       data: /(^|\/)(migrations?|seeds?)(\/|$)|\.sql$|(^|\/)schema\.[a-z]+$/i,
       compatibility: /\.proto$|(^|\/)(openapi|swagger)[^/]*\.(ya?ml|json)$|(^|\/)api\/v\d+(\/|$)/i
     };
+  }
+});
+
+// src/inquisition/actors.ts
+function isHumanActor(by) {
+  const trimmed = by.trim();
+  return trimmed !== "" && !NON_HUMAN.test(trimmed);
+}
+function answerDecisionId(questionId) {
+  return `dec-answer-${questionId}`;
+}
+var NON_HUMAN, ANSWER_DECISION_KIND;
+var init_actors = __esm({
+  "src/inquisition/actors.ts"() {
+    "use strict";
+    NON_HUMAN = /^(planner|implementer|verifier|reviewer|inquisitor|inquisition|curator|worker|wrk|model|agent|subagent|assistant|claude|codex|gpt|gemini|controller|scheduler|recovery|delivery|evidence|routing|orbit|system|service|daemon|shim|hook|llm|ai|bot|fake)([:\-_/ ].*)?$/i;
+    ANSWER_DECISION_KIND = "inquisition.answer";
+  }
+});
+
+// src/contract/amend.ts
+function applyAmendment(contract, proposal, opts) {
+  const approvedBy = opts.approvedBy ?? null;
+  if (approvedBy !== null && !DECISION_ID.test(approvedBy)) {
+    throw new OrbitError("POLICY_DENIED", "amendment approval must reference a recorded decision id");
+  }
+  const a = assessAmendment(contract, proposal, opts);
+  if (a.forbidden.length > 0) {
+    throw new OrbitError("POLICY_DENIED", `amendment exceeds the policy: ${a.forbidden.join("; ")}`, {
+      record: a.record,
+      forbidden: a.forbidden,
+      approvalReasons: a.approvalReasons
+    });
+  }
+  if (a.approvalReasons.length > 0 && approvedBy === null) {
+    throw new OrbitError("POLICY_DENIED", `amendment needs a human decision: ${a.approvalReasons.join("; ")}`, {
+      record: a.record,
+      approvalReasons: a.approvalReasons
+    });
+  }
+  const validated = validateContract(a.next, opts.snapshot, opts.policyHash === void 0 ? {} : { policyHash: opts.policyHash });
+  return { contract: validated, record: a.record, approvedBy };
+}
+function assessAmendment(contract, proposal, opts) {
+  if (!proposal || typeof proposal !== "object" || !proposal.change || typeof proposal.change !== "object") {
+    invalid2("amendment must have a change");
+  }
+  const evidence = text(proposal.evidence, "evidence");
+  const reason = text(proposal.reason, "reason");
+  const next = structuredClone(contract);
+  const ctx = { contract, next, snapshot: opts.snapshot, history: opts.history ?? [], baselineFailures: opts.baselineFailures ?? null, approval: [], forbidden: [] };
+  const change = applyChange(ctx, proposal.change);
+  const record = {
+    field: change.field,
+    old_value: structuredClone(change.oldValue),
+    new_value: structuredClone(change.newValue),
+    evidence,
+    reason,
+    approval_required: ctx.approval.length > 0,
+    affected_verification: change.affected
+  };
+  return { next, record, approvalReasons: ctx.approval, forbidden: ctx.forbidden };
+}
+function invalid2(message) {
+  throw new OrbitError("CONTRACT_INVALID", `amendment rejected: ${message}`);
+}
+function text(value, name) {
+  if (typeof value !== "string" || value.trim() === "") invalid2(`${name} must be a non-empty string`);
+  return value.trim();
+}
+function textList(values, name, minItems = 1) {
+  if (!Array.isArray(values)) invalid2(`${name} must be a list`);
+  const out = [];
+  for (const v of values) {
+    const t = text(v, name);
+    if (!out.some((o) => normalizeEntry(o) === normalizeEntry(t))) out.push(t);
+  }
+  if (out.length < minItems) invalid2(`${name} needs at least ${minItems} entr${minItems === 1 ? "y" : "ies"}`);
+  return out;
+}
+function criterion(c, id) {
+  const found = c.acceptance_criteria.find((ac) => ac.id === id);
+  if (!found) invalid2(`no criterion ${String(id)}`);
+  return found;
+}
+function nextId(prefix, ids) {
+  let max = 0;
+  for (const id of ids) {
+    const m = new RegExp(`^${prefix}-([0-9]+)$`).exec(id);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `${prefix}-${max + 1}`;
+}
+function criterionIdsIn(history) {
+  const ids = [];
+  const collect2 = (v) => {
+    if (typeof v === "string" && CRITERION_ID.test(v)) ids.push(v);
+    else if (v !== null && typeof v === "object" && !Array.isArray(v)) collect2(v.id);
+  };
+  for (const record of history) {
+    for (const a of record.affected_verification ?? []) collect2(a);
+    collect2(record.old_value);
+    collect2(record.new_value);
+  }
+  return ids;
+}
+function checkDefined(ctx, id) {
+  return Object.prototype.hasOwnProperty.call(ctx.snapshot.config.checks ?? {}, id);
+}
+function requireDefinedChecks(ctx, ids) {
+  for (const id of ids) {
+    if (!checkDefined(ctx, id)) ctx.forbidden.push(`check "${id}" is not defined by the policy, and a contract cannot add check commands`);
+  }
+}
+function noop() {
+  invalid2("the change does not alter the contract");
+}
+function applyChange(ctx, change) {
+  const { contract, next } = ctx;
+  switch (change.op) {
+    case "clarify_objective": {
+      const objective = text(change.objective, "objective");
+      if (objective === contract.objective) noop();
+      const verdict = compareWording(contract.objective, objective);
+      if (!verdict.clarification) ctx.approval.push(`redefines the objective: ${verdict.reasons.join(", ")}`);
+      next.objective = objective;
+      return { field: "objective", oldValue: contract.objective, newValue: objective, affected: [...contract.acceptance_criteria.map((ac) => ac.id), "review"] };
+    }
+    case "clarify_criterion": {
+      const old = criterion(contract, change.criterion_id);
+      const statement = text(change.statement, "statement");
+      if (statement === old.statement) noop();
+      const verdict = compareWording(old.statement, statement);
+      if (!verdict.clarification && old.mandatory) {
+        ctx.approval.push(`weakens or redefines mandatory criterion ${old.id}: ${verdict.reasons.join(", ")}`);
+      }
+      criterion(next, old.id).statement = statement;
+      return { field: `acceptance_criteria[${old.id}].statement`, oldValue: old.statement, newValue: statement, affected: [old.id] };
+    }
+    case "add_criterion": {
+      const statement = text(change.statement, "statement");
+      const proof = textList(change.proof, "proof");
+      const checkIds = uniqueIds(change.check_ids, "check_ids", 0);
+      if (typeof change.mandatory !== "boolean" || typeof change.ui !== "boolean") invalid2("mandatory and ui must be booleans");
+      requireDefinedChecks(ctx, checkIds);
+      const id = nextId("AC", [...contract.acceptance_criteria.map((ac) => ac.id), ...criterionIdsIn(ctx.history)]);
+      const added = { id, statement, proof, mandatory: change.mandatory, ui: change.ui, check_ids: checkIds };
+      next.acceptance_criteria.push(added);
+      for (const cid of checkIds) if (!next.required_check_ids.includes(cid)) next.required_check_ids.push(cid);
+      return { field: "acceptance_criteria", oldValue: null, newValue: added, affected: [id, ...checkIds.map((c) => `check:${c}`)] };
+    }
+    case "add_proof": {
+      const old = criterion(contract, change.criterion_id);
+      const have = new Set(old.proof.map(normalizeEntry));
+      const fresh = textList(change.proof, "proof").filter((p) => !have.has(normalizeEntry(p)));
+      if (fresh.length === 0) noop();
+      const target = criterion(next, old.id);
+      target.proof = [...old.proof, ...fresh];
+      return { field: `acceptance_criteria[${old.id}].proof`, oldValue: old.proof, newValue: target.proof, affected: [old.id] };
+    }
+    case "replace_proof": {
+      const old = criterion(contract, change.criterion_id);
+      const proof = textList(change.proof, "proof");
+      if (proof.length === old.proof.length && proof.every((p, i) => p === old.proof[i])) noop();
+      old.proof.forEach((entry, i) => {
+        if (!proof.some((p) => compareWording(entry, p).clarification)) {
+          ctx.approval.push(`removes or weakens proof entry ${i + 1} of criterion ${old.id}`);
+        }
+      });
+      criterion(next, old.id).proof = proof;
+      return { field: `acceptance_criteria[${old.id}].proof`, oldValue: old.proof, newValue: proof, affected: [old.id] };
+    }
+    case "set_mandatory": {
+      const old = criterion(contract, change.criterion_id);
+      if (typeof change.mandatory !== "boolean") invalid2("mandatory must be a boolean");
+      if (change.mandatory === old.mandatory) noop();
+      if (!change.mandatory) ctx.approval.push(`makes mandatory criterion ${old.id} optional`);
+      criterion(next, old.id).mandatory = change.mandatory;
+      return { field: `acceptance_criteria[${old.id}].mandatory`, oldValue: old.mandatory, newValue: change.mandatory, affected: [old.id] };
+    }
+    case "remove_criterion": {
+      const old = criterion(contract, change.criterion_id);
+      ctx.approval.push(`removes ${old.mandatory ? "mandatory " : ""}criterion ${old.id} and its proof`);
+      next.acceptance_criteria = next.acceptance_criteria.filter((ac) => ac.id !== old.id);
+      return { field: "acceptance_criteria", oldValue: old, newValue: null, affected: [old.id] };
+    }
+    case "add_required_checks": {
+      const ids = uniqueIds(change.check_ids, "check_ids", 1);
+      requireDefinedChecks(ctx, ids);
+      const target = change.criterion_id === null ? null : criterion(next, change.criterion_id);
+      const before = { required_check_ids: [...contract.required_check_ids], ...target ? { check_ids: [...target.check_ids ?? []] } : {} };
+      let changed = false;
+      for (const id of ids) {
+        if (!next.required_check_ids.includes(id)) {
+          next.required_check_ids.push(id);
+          changed = true;
+        }
+        if (target && !(target.check_ids ?? []).includes(id)) {
+          target.check_ids = [...target.check_ids ?? [], id];
+          changed = true;
+        }
+      }
+      if (!changed) noop();
+      const after = { required_check_ids: [...next.required_check_ids], ...target ? { check_ids: [...target.check_ids ?? []] } : {} };
+      return {
+        field: target ? `acceptance_criteria[${target.id}].check_ids` : "required_check_ids",
+        oldValue: before,
+        newValue: after,
+        affected: [...target ? [target.id] : [], ...ids.map((c) => `check:${c}`)]
+      };
+    }
+    case "remove_required_checks": {
+      const ids = uniqueIds(change.check_ids, "check_ids", 1);
+      const checks = ctx.snapshot.config.checks ?? {};
+      if (change.criterion_id === null) {
+        const removed2 = ids.filter((id) => contract.required_check_ids.includes(id));
+        if (removed2.length === 0) noop();
+        for (const id of removed2) {
+          if (checks[id]?.mandatory) ctx.forbidden.push(`check "${id}" is mandatory in the policy and cannot be removed`);
+        }
+        ctx.approval.push(`removes required check${removed2.length === 1 ? "" : "s"} ${removed2.join(", ")}`);
+        next.required_check_ids = next.required_check_ids.filter((id) => !removed2.includes(id));
+        const touched = [];
+        for (const ac of next.acceptance_criteria) {
+          if (ac.check_ids?.some((id) => removed2.includes(id))) {
+            ac.check_ids = ac.check_ids.filter((id) => !removed2.includes(id));
+            touched.push(ac.id);
+          }
+        }
+        return { field: "required_check_ids", oldValue: contract.required_check_ids, newValue: next.required_check_ids, affected: [...touched, ...removed2.map((c) => `check:${c}`)] };
+      }
+      const old = criterion(contract, change.criterion_id);
+      const removed = ids.filter((id) => (old.check_ids ?? []).includes(id));
+      if (removed.length === 0) noop();
+      ctx.approval.push(`removes check evidence ${removed.join(", ")} from criterion ${old.id}`);
+      const target = criterion(next, old.id);
+      target.check_ids = (target.check_ids ?? []).filter((id) => !removed.includes(id));
+      return { field: `acceptance_criteria[${old.id}].check_ids`, oldValue: old.check_ids ?? [], newValue: target.check_ids, affected: [old.id] };
+    }
+    case "set_allowed_paths": {
+      if (!Array.isArray(change.allowed_paths) || change.allowed_paths.length === 0) invalid2("allowed_paths must be a non-empty list");
+      const globs = [];
+      for (const raw of change.allowed_paths) {
+        const g = typeof raw === "string" ? normalizeGlob(raw) : null;
+        if (g === null) {
+          ctx.forbidden.push(`allowed path "${String(raw)}" uses glob syntax that cannot be checked against the policy scope`);
+          continue;
+        }
+        if (!globs.includes(g)) globs.push(g);
+      }
+      const same = globs.length === contract.allowed_paths.length && globs.every((g) => contract.allowed_paths.includes(g));
+      if (same && ctx.forbidden.length === 0) noop();
+      const scope = ctx.snapshot.config.scope?.allowed_paths ?? [];
+      for (const g of globs) {
+        if (!containedInAny(g, contract.allowed_paths)) ctx.approval.push(`widens allowed_paths with "${g}"`);
+        if (!containedInAny(g, scope)) ctx.forbidden.push(`allowed path "${g}" is outside the policy scope`);
+      }
+      next.allowed_paths = globs;
+      return { field: "allowed_paths", oldValue: contract.allowed_paths, newValue: globs, affected: ["scope"] };
+    }
+    case "add_non_goal": {
+      const goal = text(change.non_goal, "non_goal");
+      if (contract.non_goals.some((n2) => normalizeEntry(n2) === normalizeEntry(goal))) noop();
+      ctx.approval.push("adds a non-goal, which can redefine success");
+      next.non_goals = [...contract.non_goals, goal];
+      return { field: "non_goals", oldValue: contract.non_goals, newValue: next.non_goals, affected: ["review"] };
+    }
+    case "remove_non_goal": {
+      const goal = text(change.non_goal, "non_goal");
+      const kept = contract.non_goals.filter((n2) => normalizeEntry(n2) !== normalizeEntry(goal));
+      if (kept.length === contract.non_goals.length) invalid2("no such non-goal");
+      ctx.approval.push("removes a non-goal, which broadens the work");
+      next.non_goals = kept;
+      return { field: "non_goals", oldValue: contract.non_goals, newValue: kept, affected: ["review"] };
+    }
+    case "set_assumption": {
+      const statement = text(change.statement, "statement");
+      const statuses = ["unverified", "supported", "rejected", "needs-decision"];
+      if (!statuses.includes(change.status)) invalid2("unknown assumption status");
+      if (change.assumption_id === null) {
+        const id = nextId("AS", contract.assumptions.map((a) => a.id));
+        const added = { id, statement, status: change.status };
+        next.assumptions = [...contract.assumptions, added];
+        return { field: "assumptions", oldValue: null, newValue: added, affected: ["review"] };
+      }
+      const old = contract.assumptions.find((a) => a.id === change.assumption_id);
+      if (!old) invalid2(`no assumption ${String(change.assumption_id)}`);
+      if (old.statement === statement && old.status === change.status) noop();
+      if (old.status === "needs-decision" && change.status !== "needs-decision") {
+        ctx.approval.push(`resolves needs-decision assumption ${old.id}`);
+      }
+      const updated = { id: old.id, statement, status: change.status };
+      next.assumptions = next.assumptions.map((a) => a.id === old.id ? updated : a);
+      return { field: `assumptions[${old.id}]`, oldValue: old, newValue: updated, affected: ["review"] };
+    }
+    case "add_escalation_topic": {
+      const topic = text(change.topic, "topic");
+      if (contract.escalation.material_topics.some((t) => normalizeEntry(t) === normalizeEntry(topic))) noop();
+      next.escalation.material_topics = [...contract.escalation.material_topics, topic];
+      return { field: "escalation.material_topics", oldValue: contract.escalation.material_topics, newValue: next.escalation.material_topics, affected: [] };
+    }
+    case "remove_escalation_topic": {
+      const topic = text(change.topic, "topic");
+      const kept = contract.escalation.material_topics.filter((t) => normalizeEntry(t) !== normalizeEntry(topic));
+      if (kept.length === contract.escalation.material_topics.length) invalid2("no such escalation topic");
+      ctx.approval.push("removes an escalation topic, which lets the run guess where it had to ask");
+      next.escalation.material_topics = kept;
+      return { field: "escalation.material_topics", oldValue: contract.escalation.material_topics, newValue: kept, affected: [] };
+    }
+    case "set_delivery": {
+      if (typeof change.draft_pr !== "boolean" || typeof change.merge !== "boolean") invalid2("draft_pr and merge must be booleans");
+      const old = contract.delivery;
+      if (old.draft_pr === change.draft_pr && old.merge === change.merge) noop();
+      const actions = ctx.snapshot.config.actions;
+      if (change.merge && !old.merge) {
+        ctx.approval.push("turns on merge");
+        if (!actions?.merge) ctx.forbidden.push("the policy does not allow merge");
+      }
+      if (!change.draft_pr && old.draft_pr) ctx.approval.push("turns a draft pull request into a ready one");
+      if (change.draft_pr && !old.draft_pr && (!actions?.open_pull_request || ctx.snapshot.config.delivery?.pull_request === "none")) {
+        ctx.forbidden.push("the policy does not allow opening a pull request");
+      }
+      next.delivery = { draft_pr: change.draft_pr, merge: change.merge };
+      return { field: "delivery", oldValue: old, newValue: next.delivery, affected: ["delivery"] };
+    }
+    case "accept_baseline_failure": {
+      const checkId = text(change.check_id, "check_id");
+      const fingerprint = text(change.fingerprint, "fingerprint");
+      const reason = text(change.reason, "reason");
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(checkId)) invalid2("check_id must be a check id");
+      if (!contract.required_check_ids.includes(checkId)) invalid2(`check "${checkId}" is not in required_check_ids, so there is nothing to except`);
+      const previous = (contract.baseline_exceptions ?? []).find((e) => e.check_id === checkId);
+      if (previous && previous.fingerprint === fingerprint) noop();
+      ctx.approval.push(`accepts the failure of check ${checkId} that already exists on the base revision as an exception`);
+      if (ctx.baselineFailures === null) {
+        ctx.forbidden.push("the recorded baseline failures were not supplied, so the fingerprint cannot be confirmed");
+      } else {
+        const recorded = ctx.baselineFailures.find((f) => f.checkId === checkId);
+        if (!recorded) ctx.forbidden.push(`check "${checkId}" did not fail on the base revision, so there is no baseline failure to accept`);
+        else if (recorded.fingerprint === null || recorded.fingerprint !== fingerprint) ctx.forbidden.push(`fingerprint does not equal the failure recorded on the base revision for check "${checkId}"`);
+      }
+      const added = { check_id: checkId, fingerprint, reason };
+      const before = contract.baseline_exceptions ?? [];
+      next.baseline_exceptions = [...before.filter((e) => e.check_id !== checkId), added];
+      return {
+        field: "baseline_exceptions",
+        oldValue: before,
+        newValue: next.baseline_exceptions,
+        affected: [`check:${checkId}`, ...contract.acceptance_criteria.filter((ac) => ac.check_ids?.includes(checkId)).map((ac) => ac.id)]
+      };
+    }
+    default: {
+      const op = change.op;
+      return invalid2(`unknown amendment operation ${JSON.stringify(op)}`);
+    }
+  }
+}
+function uniqueIds(values, name, minItems) {
+  if (!Array.isArray(values)) invalid2(`${name} must be a list`);
+  const out = [];
+  for (const v of values) {
+    if (typeof v !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(v)) invalid2(`${name} entries must be check ids`);
+    if (!out.includes(v)) out.push(v);
+  }
+  if (out.length < minItems) invalid2(`${name} needs at least ${minItems} entr${minItems === 1 ? "y" : "ies"}`);
+  return out;
+}
+function baselineExceptionProposal(failure, reason) {
+  if (failure.fingerprint === null || failure.fingerprint.trim() === "") {
+    throw new OrbitError("CONTRACT_INVALID", `check "${failure.checkId}" failed on the base revision without a fingerprint, so it cannot be excepted`);
+  }
+  const excerpt2 = failure.excerpt?.trim();
+  return {
+    change: { op: "accept_baseline_failure", check_id: failure.checkId, fingerprint: failure.fingerprint, reason: reason?.trim() || `check ${failure.checkId} already fails on the base revision` },
+    evidence: `the baseline run of check ${failure.checkId} failed with fingerprint ${failure.fingerprint}${excerpt2 ? `: ${excerpt2.slice(0, 400)}` : ""}`,
+    reason: reason?.trim() || `the failure predates this run; accepting it lets the run be judged on its own change, and only while the check keeps failing the same way`
+  };
+}
+var DECISION_ID, CRITERION_ID;
+var init_amend = __esm({
+  "src/contract/amend.ts"() {
+    "use strict";
+    init_errors();
+    init_globs2();
+    init_validate();
+    init_wording();
+    DECISION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+    CRITERION_ID = /^AC-[0-9]+$/;
+  }
+});
+
+// src/inquisition/baseline-exception.ts
+import { join as join32 } from "node:path";
+function keyOf(runId, checkId, fingerprint) {
+  return hashObject({ run: runId, check: checkId, fingerprint }).slice(7, 19);
+}
+function baselineQuestionId(runId, checkId, fingerprint) {
+  return `q-baseline-${keyOf(runId, checkId, fingerprint)}`;
+}
+function requestDecisionId(runId, checkId, fingerprint) {
+  return `dec-${runId}-baseline-exception-${keyOf(runId, checkId, fingerprint)}`;
+}
+function raiseBaselineExceptionQuestions(ctx, input) {
+  const out = { raised: [], skipped: [] };
+  const rev = input.baseRevision.slice(0, 12);
+  for (const f of input.failures) {
+    if (f.fingerprint === null || f.fingerprint.trim() === "") {
+      out.skipped.push({ checkId: f.checkId, why: "it failed without a fingerprint, so a later failure of the same check could not be told apart from it" });
+      continue;
+    }
+    const fingerprint = f.fingerprint;
+    const excerpt2 = f.excerpt === null ? null : redact(f.excerpt);
+    const proposal = baselineExceptionProposal({ checkId: f.checkId, fingerprint, excerpt: excerpt2 });
+    const qid = baselineQuestionId(ctx.runId, f.checkId, fingerprint);
+    const question = findQuestion(ctx.db, qid) ?? insertQuestion(
+      ctx.db,
+      {
+        id: qid,
+        runId: ctx.runId,
+        mode: "decision-record",
+        question: `Check ${f.checkId} already fails on the base revision ${rev}; should that failure be accepted as a documented baseline exception for this run?`,
+        evidence: [proposal.evidence, `Fingerprint of the recorded failure: ${fingerprint}.`],
+        options: [
+          {
+            label: BASELINE_APPROVE,
+            description: `Record a baseline exception for check ${f.checkId}: it may keep failing with fingerprint ${fingerprint} and the run can still be green.`,
+            consequences: `The contract gains a baseline exception bound to that fingerprint and the report lists it as accepted. A different failure of ${f.checkId} is still a failure.`
+          },
+          {
+            label: BASELINE_REJECT,
+            description: `Do not accept it: check ${f.checkId} must pass for the run to be green.`,
+            consequences: "The run goes on under the normal rules; unless the change makes the check pass, the evidence stays failing and the run cannot succeed."
+          }
+        ],
+        changes: ["proof"],
+        recommendation: { option: BASELINE_REJECT, reason: "accepting a failing mandatory check changes what green means, so only a person should decide it" },
+        safeDefault: { exists: true, option: BASELINE_REJECT, reason: "leaving the check mandatory is the stricter reading and loses nothing but time" },
+        material: false,
+        affected: [`check:${f.checkId}`],
+        unblocked: []
+      },
+      ctx.clock,
+      "controller"
+    );
+    const data = { question_id: qid, check_id: f.checkId, fingerprint, base_revision: input.baseRevision, proposal };
+    const request2 = recordDecision(
+      ctx.db,
+      ctx.runDir,
+      {
+        id: requestDecisionId(ctx.runId, f.checkId, fingerprint),
+        runId: ctx.runId,
+        kind: BASELINE_EXCEPTION_REQUEST_KIND,
+        summary: `baseline exception requested for check ${f.checkId} (fingerprint ${fingerprint}); applies only if a person approves question ${qid}`,
+        data
+      },
+      ctx.clock,
+      { actor: "controller" }
+    );
+    out.raised.push({ question, request: request2 });
+  }
+  return out;
+}
+function applyBaselineExceptionAnswers(ctx, opts = {}) {
+  const requests2 = listDecisions(ctx.db, ctx.runId, { kind: BASELINE_EXCEPTION_REQUEST_KIND }).map((d) => ({ decision: d, data: d.data })).filter((r) => opts.questionId === void 0 || r.data.question_id === opts.questionId);
+  const outcomes = [];
+  const load = () => {
+    const row2 = ctx.db.get("SELECT contract_json, contract_hash, policy_path, policy_hash FROM runs WHERE id = ?", ctx.runId);
+    if (!row2) throw new OrbitError("NOT_FOUND", `no run ${ctx.runId}`);
+    return row2;
+  };
+  for (const { data } of requests2) {
+    const outcome = (status2, detail = null) => {
+      outcomes.push({ questionId: data.question_id, checkId: data.check_id, status: status2, detail });
+    };
+    const q = findQuestion(ctx.db, data.question_id);
+    if (!q || q.status !== "answered") {
+      outcome("unanswered");
+      continue;
+    }
+    const answerId = answerDecisionId(q.id);
+    const answer = getDecision(ctx.db, answerId);
+    const answeredBy = answer?.data?.answered_by;
+    if (!answer || answer.kind !== ANSWER_DECISION_KIND || answer.runId !== ctx.runId || typeof answeredBy !== "string" || !isHumanActor(answeredBy)) {
+      outcome("declined", "the answer is not a recorded decision by a person");
+      continue;
+    }
+    if (q.answer !== BASELINE_APPROVE) {
+      outcome("declined", q.answer === BASELINE_REJECT ? "a person rejected the exception" : 'the answer is not "Approve", so nothing is excepted');
+      continue;
+    }
+    const canonical = canonicalJson(data.proposal.change);
+    const prior = listAmendments(ctx.db, ctx.runId).filter((a) => a.change !== null && canonicalJson(a.change) === canonical);
+    if (prior.some((a) => a.status === "applied")) {
+      outcome("already-applied");
+      continue;
+    }
+    if (prior.some((a) => a.status === "rejected")) {
+      outcome("refused", "an earlier attempt was refused; see the rejected amendment");
+      continue;
+    }
+    let applied = false;
+    for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS && !applied; attempt++) {
+      const row2 = load();
+      if (row2.contract_json === null) {
+        outcome("deferred", "the run has no contract yet");
+        break;
+      }
+      const current = JSON.parse(row2.contract_json);
+      let snapshot2;
+      try {
+        snapshot2 = opts.snapshot ?? verifySnapshot(row2.policy_path, row2.policy_hash);
+      } catch (err) {
+        outcome("refused", `the policy snapshot could not be verified: ${err instanceof Error ? err.message : String(err)}`);
+        break;
+      }
+      const baseline = readJsonIfExists(join32(ctx.runDir, BASELINE_FILE));
+      const proposal = data.proposal;
+      let next;
+      let record;
+      try {
+        const res = applyAmendment(current, proposal, {
+          snapshot: snapshot2,
+          approvedBy: answerId,
+          policyHash: row2.policy_hash,
+          history: amendmentHistory(ctx.db, ctx.runId),
+          ...baseline ? { baselineFailures: baseline.failures.map((f) => ({ checkId: f.checkId, fingerprint: f.fingerprint })) } : {}
+        });
+        next = res.contract;
+        record = res.record;
+      } catch (err) {
+        if (!isOrbitError(err)) throw err;
+        if (/does not alter the contract/.test(err.message)) {
+          outcome("already-applied", "the contract already carries this exception");
+          break;
+        }
+        let rejected;
+        try {
+          rejected = assessAmendment(current, proposal, { snapshot: snapshot2, baselineFailures: baseline?.failures.map((f) => ({ checkId: f.checkId, fingerprint: f.fingerprint })) }).record;
+        } catch {
+          rejected = { field: "baseline_exceptions", old_value: null, new_value: null, evidence: proposal.evidence, reason: proposal.reason, approval_required: true, affected_verification: [`check:${data.check_id}`] };
+        }
+        insertAmendment(ctx.db, { runId: ctx.runId, record: rejected, change: proposal.change, status: "rejected", approvedBy: answerId, note: err.message }, ctx.clock, "controller");
+        outcome("refused", err.message);
+        break;
+      }
+      const before = hashObject(current);
+      const after = hashObject(next);
+      const wrote = ctx.db.tx(() => {
+        const res = ctx.db.run("UPDATE runs SET contract_json = ?, contract_hash = ? WHERE id = ? AND contract_json = ?", JSON.stringify(next), after, ctx.runId, row2.contract_json);
+        if (res.changes !== 1) return false;
+        insertAmendment(ctx.db, { runId: ctx.runId, record, change: proposal.change, status: "applied", approvedBy: answerId, contractBefore: before, contractAfter: after }, ctx.clock, "controller");
+        appendEvent(ctx.db, ctx.runId, "contract.amended", "controller", { field: record.field, check_id: data.check_id, approved_by: answerId }, ctx.clock.now());
+        return true;
+      });
+      if (!wrote) continue;
+      applied = true;
+      recordDecision(
+        ctx.db,
+        ctx.runDir,
+        {
+          id: `dec-${ctx.runId}-baseline-exception-applied-${keyOf(ctx.runId, data.check_id, data.fingerprint)}`,
+          runId: ctx.runId,
+          kind: "contract.baseline-exception",
+          summary: `the contract accepts the pre-existing failure of check ${data.check_id} (fingerprint ${data.fingerprint}) as a baseline exception, approved by ${answeredBy} in ${answerId}`,
+          data: { check_id: data.check_id, fingerprint: data.fingerprint, approved_by: answeredBy, answer_decision: answerId, question_id: data.question_id }
+        },
+        ctx.clock,
+        { actor: "controller" }
+      );
+      outcome("applied");
+    }
+    if (!applied && !outcomes.some((o) => o.questionId === data.question_id)) {
+      throw new OrbitError("CONCURRENT_UPDATE", `the contract of run ${ctx.runId} kept changing while the baseline exception for check ${data.check_id} was applied`, { questionId: data.question_id });
+    }
+  }
+  const row = load();
+  const contract = row.contract_json === null ? null : JSON.parse(row.contract_json);
+  if (contract && outcomes.some((o) => o.status === "applied" || o.status === "already-applied")) atomicWriteJson(join32(ctx.runDir, "contract.json"), contract);
+  return { contract, outcomes };
+}
+var BASELINE_EXCEPTION_REQUEST_KIND, BASELINE_APPROVE, BASELINE_REJECT, BASELINE_FILE, MAX_CAS_ATTEMPTS;
+var init_baseline_exception = __esm({
+  "src/inquisition/baseline-exception.ts"() {
+    "use strict";
+    init_errors();
+    init_fsx();
+    init_hash();
+    init_redact();
+    init_amend();
+    init_snapshot();
+    init_decisions();
+    init_events();
+    init_actors();
+    init_store4();
+    BASELINE_EXCEPTION_REQUEST_KIND = "baseline.exception-request";
+    BASELINE_APPROVE = "Approve";
+    BASELINE_REJECT = "Reject";
+    BASELINE_FILE = "baseline.json";
+    MAX_CAS_ATTEMPTS = 4;
   }
 });
 
@@ -42427,10 +43314,6 @@ function persistQuestion(db, runId, mode, q, clock, opts = {}) {
     return { question, created: true, classification };
   });
 }
-function isHumanActor(by) {
-  const trimmed = by.trim();
-  return trimmed !== "" && !NON_HUMAN.test(trimmed);
-}
 function answerQuestion(db, runDir2, id, answer, by, clock) {
   if (!isHumanActor(by)) throw new OrbitError("POLICY_DENIED", `"${by}" cannot answer a question: decisions come from a person, not a model or worker`, { by });
   const text2 = answer.trim();
@@ -42443,7 +43326,7 @@ function answerQuestion(db, runDir2, id, answer, by, clock) {
     db,
     runDir2,
     {
-      id: `dec-answer-${id}`,
+      id: answerDecisionId(id),
       runId: question.runId,
       kind: ANSWER_DECISION_KIND,
       summary: `${matched ? `chose "${matched.label}"` : "answered"}: ${question.question}`,
@@ -42452,7 +43335,13 @@ function answerQuestion(db, runDir2, id, answer, by, clock) {
     clock,
     { actor: by.trim() }
   );
-  return { question, decision, chosenOption: matched, unblocks: question.affected };
+  let baselineException = null;
+  try {
+    baselineException = applyBaselineExceptionAnswers({ db, clock, runId: question.runId, runDir: runDir2 }, { questionId: id }).outcomes[0] ?? null;
+  } catch (err) {
+    db.tx(() => appendEvent(db, question.runId, "baseline-exception.apply-failed", by.trim(), { question_id: id, error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, clock.now()));
+  }
+  return { question, decision, chosenOption: matched, unblocks: question.affected, baselineException };
 }
 function openQuestions(db, runId) {
   return listQuestions(db, runId, { status: "open" });
@@ -42465,7 +43354,7 @@ function criteriaBlockedByQuestions(questions) {
   }
   return [...out].sort();
 }
-var QUESTION_CHANGES, ANSWERABLE_BY_INSPECTION, NOT_A_DECISION, NO_EVIDENCE, AC_ID, NON_HUMAN, ANSWER_DECISION_KIND;
+var QUESTION_CHANGES, ANSWERABLE_BY_INSPECTION, NOT_A_DECISION, NO_EVIDENCE, AC_ID;
 var init_questions = __esm({
   "src/inquisition/questions.ts"() {
     "use strict";
@@ -42475,6 +43364,9 @@ var init_questions = __esm({
     init_wording();
     init_heuristics();
     init_store4();
+    init_actors();
+    init_baseline_exception();
+    init_events();
     QUESTION_CHANGES = ["implementation", "proof", "authority", "scope"];
     ANSWERABLE_BY_INSPECTION = [
       /^\s*(where|which file|what file|in which (file|directory|folder))\b/i,
@@ -42496,8 +43388,6 @@ var init_questions = __esm({
     ];
     NO_EVIDENCE = /^\s*(none|n\/a|na|nothing|unknown|tbd|todo|-+|\.+)\s*\.?\s*$/i;
     AC_ID = /^AC-[0-9]+$/;
-    NON_HUMAN = /^(planner|implementer|verifier|reviewer|inquisitor|inquisition|curator|worker|wrk|model|agent|subagent|assistant|claude|codex|gpt|gemini|controller|scheduler|recovery|delivery|evidence|routing|orbit|system|service|daemon|shim|hook|llm|ai|bot|fake)([:\-_/ ].*)?$/i;
-    ANSWER_DECISION_KIND = "inquisition.answer";
   }
 });
 
@@ -42597,6 +43487,7 @@ function baselineGate(report2) {
   const evidence = [`baseline of ${report2.baseRevision} (tree ${report2.baseTree}): ${report2.checks.length} check(s)`];
   if (!report2.install.skipped && !report2.install.ok) reasons.push(`the locked dependency install failed on the base revision${report2.install.reason ? `: ${report2.install.reason}` : ""}`);
   for (const f of report2.failures) notes.push(`pre-existing failure on the base revision: ${f.checkId}${f.fingerprint ? ` (${f.fingerprint})` : ""}`);
+  for (const n2 of report2.auditNotes ?? []) notes.push(n2);
   if (!report2.complete) notes.push("the baseline is incomplete: some checks could not produce a decisive result on the base revision");
   return result("baseline", reasons, evidence, notes, { failures: report2.failures }, !report2.complete && reasons.length === 0);
 }
@@ -42930,6 +43821,165 @@ var init_common = __esm({
     DONE = { progressed: true, done: true };
     WORKER_RETRY_EVENT = "worker.retry";
     MAX_REGENERATIONS = 2;
+  }
+});
+
+// src/evidence/candidate.ts
+import { chmodSync as chmodSync5, existsSync as existsSync25, lstatSync as lstatSync5, mkdirSync as mkdirSync13, mkdtempSync as mkdtempSync4, readdirSync as readdirSync6, realpathSync as realpathSync13, rmSync as rmSync8, writeFileSync as writeFileSync5 } from "node:fs";
+import { tmpdir as tmpdir9 } from "node:os";
+import { dirname as dirname20, join as join33, parse as parse4, sep as sep7 } from "node:path";
+function candidateRef(runId, seq2) {
+  return `refs/orbit/${runId}/candidates/${seq2}`;
+}
+async function snapshotCandidate(input) {
+  const { db, clock, repoRoot, runId } = input;
+  if (!RUN_ID.test(runId)) throw new OrbitError("INTERNAL", `run id is not safe in a ref name: ${JSON.stringify(runId)}`);
+  const base = await resolveCommit(repoRoot, input.baseRev);
+  const { gitDir, worktree } = await adminDirFor(repoRoot, input.worktree);
+  const tree = await stageTree({ gitDir, worktree, base, extraExcludes: input.extraExcludes ?? [] });
+  const row = reserveCandidate(db, { runId, attempt: input.attempt, workerId: input.workerId, treeHash: tree, parentSha: base }, clock);
+  if (row.status !== "CREATING") return { ...row, created: false };
+  const message = `orbit candidate ${runId}/${row.seq}
+
+attempt: ${row.attempt}
+worker: ${row.workerId ?? "none"}
+tree: ${tree}
+`;
+  const when = `${Math.floor(row.createdAt / 1e3)} +0000`;
+  const commit = (await git2(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], {
+    env: {
+      GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name,
+      GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email,
+      GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name,
+      GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email,
+      GIT_AUTHOR_DATE: when,
+      GIT_COMMITTER_DATE: when
+    }
+  })).trim();
+  await git2(repoRoot, ["update-ref", candidateRef(runId, row.seq), commit]);
+  const stat = await diffStat(repoRoot, await treeOf(repoRoot, base), tree);
+  const done = finalizeCandidate(db, row.id, commit, stat, clock);
+  return { ...done, created: true };
+}
+async function stageTree(o) {
+  const scratch = mkdtempSync4(join33(tmpdir9(), "orbit-index-"));
+  try {
+    const excludes = join33(scratch, "exclude");
+    writeFileSync5(excludes, `${[...BUILTIN_EXCLUDES, ...o.extraExcludes].join("\n")}
+`);
+    const env = { GIT_DIR: o.gitDir, GIT_WORK_TREE: o.worktree, GIT_INDEX_FILE: join33(scratch, "index") };
+    const opts = { env, config: { "core.excludesFile": excludes } };
+    await git2(o.worktree, ["read-tree", o.base], opts);
+    await git2(o.worktree, ["add", "-A", "--", "."], opts);
+    return (await git2(o.worktree, ["write-tree"], opts)).trim();
+  } finally {
+    rmSync8(scratch, { recursive: true, force: true });
+  }
+}
+async function diffStat(repoRoot, fromTree, toTree) {
+  const out = await git2(repoRoot, ["diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", fromTree, toTree, "--"]);
+  const stat = { files: 0, insertions: 0, deletions: 0, binaryFiles: 0, paths: [], truncated: false };
+  for (const rec of out.split("\0")) {
+    if (!rec) continue;
+    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(rec);
+    if (!m) continue;
+    stat.files++;
+    if (m[1] === "-") stat.binaryFiles++;
+    else {
+      stat.insertions += Number(m[1]);
+      stat.deletions += Number(m[2]);
+    }
+    if (stat.paths.length < MAX_DIFF_PATHS) stat.paths.push(m[3]);
+    else stat.truncated = true;
+  }
+  return stat;
+}
+async function materializeCandidate(repoRoot, commit, dir, opts = {}) {
+  const sha = await resolveCommit(repoRoot, commit);
+  if (existsSync25(dir) && readdirSync6(dir).length > 0) {
+    throw new OrbitError("GIT_FAILED", `checkout directory is not empty: ${dir}`, { dir });
+  }
+  mkdirSync13(dirname20(dir), { recursive: true });
+  await git2(repoRoot, ["worktree", "add", "--detach", "--force", dir, sha]);
+  const real = realpathSync13(dir);
+  if (opts.readOnly !== false) makeReadOnly(real);
+  return real;
+}
+async function cleanupCandidateCheckout(repoRoot, dir) {
+  assertDisposableCheckout(repoRoot, dir);
+  if (existsSync25(dir)) makeWritable(dir);
+  try {
+    await git2(repoRoot, ["worktree", "remove", "--force", dir]);
+  } catch {
+    rmSync8(dir, { recursive: true, force: true });
+  }
+  rmSync8(dir, { recursive: true, force: true });
+  await git2(repoRoot, ["worktree", "prune"]).catch(() => {
+  });
+}
+function assertDisposableCheckout(repoRoot, dir) {
+  if (!existsSync25(dir)) return;
+  const target = realpathSync13(dir);
+  const root = realpathSync13(repoRoot);
+  const refuse = (why) => {
+    throw new OrbitError("GIT_FAILED", `refusing to remove ${dir}: ${why}`, { dir, repoRoot });
+  };
+  if (target === root || root.startsWith(target.endsWith(sep7) ? target : target + sep7)) refuse("it is or contains the repository");
+  if (target === parse4(target).root) refuse("it is a filesystem root");
+  let dotGit;
+  try {
+    dotGit = lstatSync5(join33(target, ".git"));
+  } catch {
+    return;
+  }
+  if (dotGit.isDirectory()) refuse("it holds its own .git directory, so it is a repository, not a checkout");
+}
+function walk3(dir, visit3) {
+  for (const name of readdirSync6(dir)) {
+    const p = join33(dir, name);
+    const st = lstatSync5(p);
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) {
+      if (name === ".git") continue;
+      walk3(p, visit3);
+      visit3(p, true);
+    } else visit3(p, false);
+  }
+}
+function makeReadOnly(dir) {
+  walk3(dir, (p, isDir) => chmodSync5(p, isDir ? 365 : lstatSync5(p).mode & 365));
+  chmodSync5(dir, 365);
+}
+function makeWritable(dir) {
+  try {
+    chmodSync5(dir, 493);
+    const stack = [dir];
+    while (stack.length) {
+      const d = stack.pop();
+      for (const name of readdirSync6(d)) {
+        const p = join33(d, name);
+        const st = lstatSync5(p);
+        if (st.isSymbolicLink()) continue;
+        if (st.isDirectory()) {
+          chmodSync5(p, 493);
+          if (name !== ".git") stack.push(p);
+        } else chmodSync5(p, st.mode | 128);
+      }
+    }
+  } catch {
+  }
+}
+var ORBIT_GIT_IDENTITY, BUILTIN_EXCLUDES, RUN_ID, MAX_DIFF_PATHS;
+var init_candidate = __esm({
+  "src/evidence/candidate.ts"() {
+    "use strict";
+    init_errors();
+    init_git();
+    init_store();
+    ORBIT_GIT_IDENTITY = { name: "Orbit", email: "orbit@orbit.invalid" };
+    BUILTIN_EXCLUDES = [".DS_Store", "Thumbs.db", "node_modules/"];
+    RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+    MAX_DIFF_PATHS = 200;
   }
 });
 
@@ -43588,169 +44638,10 @@ var init_deliver = __esm({
   }
 });
 
-// src/evidence/candidate.ts
-import { chmodSync as chmodSync5, existsSync as existsSync24, lstatSync as lstatSync5, mkdirSync as mkdirSync13, mkdtempSync as mkdtempSync4, readdirSync as readdirSync6, realpathSync as realpathSync13, rmSync as rmSync8, writeFileSync as writeFileSync5 } from "node:fs";
-import { tmpdir as tmpdir9 } from "node:os";
-import { dirname as dirname20, join as join32, parse as parse4, sep as sep7 } from "node:path";
-function candidateRef(runId, seq2) {
-  return `refs/orbit/${runId}/candidates/${seq2}`;
-}
-async function snapshotCandidate(input) {
-  const { db, clock, repoRoot, runId } = input;
-  if (!RUN_ID.test(runId)) throw new OrbitError("INTERNAL", `run id is not safe in a ref name: ${JSON.stringify(runId)}`);
-  const base = await resolveCommit(repoRoot, input.baseRev);
-  const { gitDir, worktree } = await adminDirFor(repoRoot, input.worktree);
-  const tree = await stageTree({ gitDir, worktree, base, extraExcludes: input.extraExcludes ?? [] });
-  const row = reserveCandidate(db, { runId, attempt: input.attempt, workerId: input.workerId, treeHash: tree, parentSha: base }, clock);
-  if (row.status !== "CREATING") return { ...row, created: false };
-  const message = `orbit candidate ${runId}/${row.seq}
-
-attempt: ${row.attempt}
-worker: ${row.workerId ?? "none"}
-tree: ${tree}
-`;
-  const when = `${Math.floor(row.createdAt / 1e3)} +0000`;
-  const commit = (await git2(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], {
-    env: {
-      GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name,
-      GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email,
-      GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name,
-      GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email,
-      GIT_AUTHOR_DATE: when,
-      GIT_COMMITTER_DATE: when
-    }
-  })).trim();
-  await git2(repoRoot, ["update-ref", candidateRef(runId, row.seq), commit]);
-  const stat = await diffStat(repoRoot, await treeOf(repoRoot, base), tree);
-  const done = finalizeCandidate(db, row.id, commit, stat, clock);
-  return { ...done, created: true };
-}
-async function stageTree(o) {
-  const scratch = mkdtempSync4(join32(tmpdir9(), "orbit-index-"));
-  try {
-    const excludes = join32(scratch, "exclude");
-    writeFileSync5(excludes, `${[...BUILTIN_EXCLUDES, ...o.extraExcludes].join("\n")}
-`);
-    const env = { GIT_DIR: o.gitDir, GIT_WORK_TREE: o.worktree, GIT_INDEX_FILE: join32(scratch, "index") };
-    const opts = { env, config: { "core.excludesFile": excludes } };
-    await git2(o.worktree, ["read-tree", o.base], opts);
-    await git2(o.worktree, ["add", "-A", "--", "."], opts);
-    return (await git2(o.worktree, ["write-tree"], opts)).trim();
-  } finally {
-    rmSync8(scratch, { recursive: true, force: true });
-  }
-}
-async function diffStat(repoRoot, fromTree, toTree) {
-  const out = await git2(repoRoot, ["diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", fromTree, toTree, "--"]);
-  const stat = { files: 0, insertions: 0, deletions: 0, binaryFiles: 0, paths: [], truncated: false };
-  for (const rec of out.split("\0")) {
-    if (!rec) continue;
-    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(rec);
-    if (!m) continue;
-    stat.files++;
-    if (m[1] === "-") stat.binaryFiles++;
-    else {
-      stat.insertions += Number(m[1]);
-      stat.deletions += Number(m[2]);
-    }
-    if (stat.paths.length < MAX_DIFF_PATHS) stat.paths.push(m[3]);
-    else stat.truncated = true;
-  }
-  return stat;
-}
-async function materializeCandidate(repoRoot, commit, dir, opts = {}) {
-  const sha = await resolveCommit(repoRoot, commit);
-  if (existsSync24(dir) && readdirSync6(dir).length > 0) {
-    throw new OrbitError("GIT_FAILED", `checkout directory is not empty: ${dir}`, { dir });
-  }
-  mkdirSync13(dirname20(dir), { recursive: true });
-  await git2(repoRoot, ["worktree", "add", "--detach", "--force", dir, sha]);
-  const real = realpathSync13(dir);
-  if (opts.readOnly !== false) makeReadOnly(real);
-  return real;
-}
-async function cleanupCandidateCheckout(repoRoot, dir) {
-  assertDisposableCheckout(repoRoot, dir);
-  if (existsSync24(dir)) makeWritable(dir);
-  try {
-    await git2(repoRoot, ["worktree", "remove", "--force", dir]);
-  } catch {
-    rmSync8(dir, { recursive: true, force: true });
-  }
-  rmSync8(dir, { recursive: true, force: true });
-  await git2(repoRoot, ["worktree", "prune"]).catch(() => {
-  });
-}
-function assertDisposableCheckout(repoRoot, dir) {
-  if (!existsSync24(dir)) return;
-  const target = realpathSync13(dir);
-  const root = realpathSync13(repoRoot);
-  const refuse = (why) => {
-    throw new OrbitError("GIT_FAILED", `refusing to remove ${dir}: ${why}`, { dir, repoRoot });
-  };
-  if (target === root || root.startsWith(target.endsWith(sep7) ? target : target + sep7)) refuse("it is or contains the repository");
-  if (target === parse4(target).root) refuse("it is a filesystem root");
-  let dotGit;
-  try {
-    dotGit = lstatSync5(join32(target, ".git"));
-  } catch {
-    return;
-  }
-  if (dotGit.isDirectory()) refuse("it holds its own .git directory, so it is a repository, not a checkout");
-}
-function walk3(dir, visit3) {
-  for (const name of readdirSync6(dir)) {
-    const p = join32(dir, name);
-    const st = lstatSync5(p);
-    if (st.isSymbolicLink()) continue;
-    if (st.isDirectory()) {
-      if (name === ".git") continue;
-      walk3(p, visit3);
-      visit3(p, true);
-    } else visit3(p, false);
-  }
-}
-function makeReadOnly(dir) {
-  walk3(dir, (p, isDir) => chmodSync5(p, isDir ? 365 : lstatSync5(p).mode & 365));
-  chmodSync5(dir, 365);
-}
-function makeWritable(dir) {
-  try {
-    chmodSync5(dir, 493);
-    const stack = [dir];
-    while (stack.length) {
-      const d = stack.pop();
-      for (const name of readdirSync6(d)) {
-        const p = join32(d, name);
-        const st = lstatSync5(p);
-        if (st.isSymbolicLink()) continue;
-        if (st.isDirectory()) {
-          chmodSync5(p, 493);
-          if (name !== ".git") stack.push(p);
-        } else chmodSync5(p, st.mode | 128);
-      }
-    }
-  } catch {
-  }
-}
-var ORBIT_GIT_IDENTITY, BUILTIN_EXCLUDES, RUN_ID, MAX_DIFF_PATHS;
-var init_candidate = __esm({
-  "src/evidence/candidate.ts"() {
-    "use strict";
-    init_errors();
-    init_git();
-    init_store();
-    ORBIT_GIT_IDENTITY = { name: "Orbit", email: "orbit@orbit.invalid" };
-    BUILTIN_EXCLUDES = [".DS_Store", "Thumbs.db", "node_modules/"];
-    RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-    MAX_DIFF_PATHS = 200;
-  }
-});
-
 // src/delivery/release.ts
-import { existsSync as existsSync25, mkdirSync as mkdirSync14 } from "node:fs";
+import { existsSync as existsSync26, mkdirSync as mkdirSync14, rmSync as rmSync9 } from "node:fs";
 import { platform as platform2 } from "node:os";
-import { join as join33 } from "node:path";
+import { join as join34 } from "node:path";
 function releaseConfig(snapshot2) {
   return snapshot2.config.release ?? null;
 }
@@ -43816,6 +44707,10 @@ async function performRelease(input) {
         const v = await checksGate();
         if (v.state === "pending") return pendingResult(ledger, run.id, `waiting for branch checks on ${commit.slice(0, 12)}: ${v.detail}`, null, mergeSkipped);
         if (v.state === "failed") throw new OrbitError("DELIVERY_FAILED", `merge refused: branch checks on ${commit.slice(0, 12)} are not green: ${v.detail}`, { definitive: true, checks: v.detail });
+        await markReadyIfDraft({ number, commit, branch, tree, markReady: release.merge.mark_ready, run, candidate, client, ledger, mergeAuth, precheck: async () => {
+          await baseGate();
+          await prGate();
+        } });
       }
       const receiptOf2 = (s) => ({ number, headSha: s.headRefOid, mergeCommitSha: s.mergeCommitSha, baseBranch: s.baseRefName, method, mergedAt: s.mergedAt });
       const result2 = await ledger.performAction(
@@ -43851,70 +44746,115 @@ async function performRelease(input) {
       merge2 = result2.receipt;
     }
   }
-  let deploy = null;
-  let deploySkipped = null;
-  const envName = input.environment ?? null;
-  if (envName === null) {
-    deploySkipped = "no release environment was requested";
+  const deploys = [];
+  const skipped = [];
+  const requested = requestedEnvironments(input, release);
+  if (requested.names.length === 0) {
+    skipped.push(requested.none);
   } else {
-    const deployAuth = requireAllowed(authorize(snapshot2, { kind: "action", action: "deploy_production" }), "deploying");
-    if (!ENV_NAME2.test(envName) || !Object.hasOwn(release.environments, envName)) {
-      deny2("release.environment", `release environment ${JSON.stringify(envName)} is not defined in the release profile (defined: ${Object.keys(release.environments).join(", ") || "none"})`);
-    }
-    const env = release.environments[envName];
-    const target = merge2 ? { branch: merge2.baseBranch, sha: merge2.mergeCommitSha } : { branch, sha: commit };
-    if (!target.sha || !isObjectId(target.sha)) throw new OrbitError("DELIVERY_FAILED", `the merge of pull request #${merge2?.number} reported no merge commit to deploy`, { definitive: true });
-    const sha = target.sha;
-    if (env.allowed_branches.length === 0 || !(0, import_picomatch6.default)(env.allowed_branches, { dot: true })(target.branch)) {
-      deny2("release.allowed_branches", `environment ${envName} may not be deployed from ${target.branch} (allowed: ${env.allowed_branches.join(", ") || "none"})`);
-    }
-    for (const host of env.network_hosts) requireAllowed(authorize(snapshot2, { kind: "network", host }), `deploy network access to ${host}`);
-    if (!Array.isArray(env.deploy_command) || env.deploy_command.length === 0 || env.deploy_command.some((a) => typeof a !== "string" || a.length === 0)) {
-      throw new OrbitError("CONFIG_INVALID", `release environment ${envName} has no usable deploy_command`, { definitive: true });
-    }
-    if (!input.isolation || !input.workDir) throw new OrbitError("INTERNAL", "deploying needs an isolation provider and a work directory");
-    const isolation = input.isolation;
-    const files = deployFiles(input.workDir, envName, sha);
-    const key2 = `release:${run.id}:deploy:${envName}:${sha}`;
-    const prior = ledger.find(key2);
-    if (prior?.state === "SUCCEEDED") deploy = prior.receipt;
-    else {
-      if (prior?.state === "FAILED") {
-        throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} to ${envName} failed earlier (${prior.error ?? "no detail"}); a failed deploy is not retried automatically`, { definitive: true, actionId: prior.id });
-      }
-      const ciGate = async () => verdictOf2(await client.listChecks({ sha }), sha, [], true);
-      if (env.require_ci_green) {
-        apiAllowed();
-        const v = await ciGate();
-        if (v.state === "pending") return pendingResult(ledger, run.id, `waiting for CI on ${sha.slice(0, 12)} before deploying to ${envName}: ${v.detail}`, merge2, mergeSkipped);
-        if (v.state === "failed") throw new OrbitError("DELIVERY_FAILED", `deploy refused: CI on ${sha.slice(0, 12)} is not green: ${v.detail}`, { definitive: true, checks: v.detail });
-      }
-      const result2 = await ledger.performAction(
-        { runId: run.id, kind: "deploy", idempotencyKey: key2, target: { environment: envName, branch: target.branch, sha, command: env.deploy_command.map((a) => redact(a)) }, candidateId: candidate.id, treeHash: tree, commitSha: sha },
-        {
-          execute: (ctx) => runDeploy({ input, env, envName, branch: target.branch, sha, isolation, files, attempt: ctx.attempt, remote, viaBaseBranch: merge2 !== null }),
-          reconcile: async () => readDeployOutcome(files, sha)
-        },
-        {
-          authorization: deployAuth,
-          precheck: async () => {
-            requireAllowed(authorize(snapshot2, { kind: "action", action: "deploy_production" }), "deploying");
-            await baseGate();
-            if (env.require_ci_green) {
-              const v = await ciGate();
-              if (v.state !== "passed") throw new OrbitError("DELIVERY_FAILED", `deploy refused: CI on ${sha.slice(0, 12)} is ${v.state}: ${v.detail}`, { definitive: v.state === "failed", checks: v.detail });
+    const deployAuthDecision = authorize(snapshot2, { kind: "action", action: "deploy_production" });
+    if (!requested.strict && !deployAuthDecision.allowed) {
+      skipped.push(`deploying is not authorized: ${deployAuthDecision.reason}`);
+    } else {
+      const deployAuth = requireAllowed(deployAuthDecision, "deploying");
+      const target = merge2 ? { branch: merge2.baseBranch, sha: merge2.mergeCommitSha } : { branch, sha: commit };
+      for (const envName of requested.names) {
+        if (!ENV_NAME2.test(envName) || !Object.hasOwn(release.environments, envName)) {
+          deny2("release.environment", `release environment ${JSON.stringify(envName)} is not defined in the release profile (defined: ${Object.keys(release.environments).join(", ") || "none"})`);
+        }
+        const env = release.environments[envName];
+        const allowedHere = env.allowed_branches.length > 0 && (0, import_picomatch6.default)(env.allowed_branches, { dot: true })(target.branch);
+        if (!allowedHere) {
+          if (requested.strict) deny2("release.allowed_branches", `environment ${envName} may not be deployed from ${target.branch} (allowed: ${env.allowed_branches.join(", ") || "none"})`);
+          skipped.push(`environment ${envName} is not deployed from ${target.branch} (allowed: ${env.allowed_branches.join(", ") || "none"})`);
+          continue;
+        }
+        if (!target.sha || !isObjectId(target.sha)) throw new OrbitError("DELIVERY_FAILED", `the merge of pull request #${merge2?.number} reported no merge commit to deploy`, { definitive: true });
+        const sha = target.sha;
+        for (const host of env.network_hosts) requireAllowed(authorize(snapshot2, { kind: "network", host }), `deploy network access to ${host}`);
+        if (!Array.isArray(env.deploy_command) || env.deploy_command.length === 0 || env.deploy_command.some((a) => typeof a !== "string" || a.length === 0)) {
+          throw new OrbitError("CONFIG_INVALID", `release environment ${envName} has no usable deploy_command`, { definitive: true });
+        }
+        if (!input.isolation || !input.workDir) throw new OrbitError("INTERNAL", "deploying needs an isolation provider and a work directory");
+        const isolation = input.isolation;
+        const files = deployFiles(input.workDir, envName, sha);
+        const key2 = `release:${run.id}:deploy:${envName}:${sha}`;
+        const prior = ledger.find(key2);
+        if (prior?.state === "SUCCEEDED") {
+          deploys.push(prior.receipt);
+          continue;
+        }
+        if (prior?.state === "FAILED") {
+          const unknown = deployTimedOut(files, sha);
+          throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} to ${envName} failed earlier (${prior.error ?? "no detail"}); a failed deploy is not retried automatically${unknown ? '; it timed out, so run "orbit release resolve <run-id>" to settle whether it took effect' : ""}`, { definitive: true, actionId: prior.id, ...unknown ? unknownDetails(envName, sha) : {} });
+        }
+        const ciGate = async () => verdictOf2(await client.listChecks({ sha }), sha, [], true);
+        if (env.require_ci_green) {
+          apiAllowed();
+          const v = await ciGate();
+          if (v.state === "pending") return pendingResult(ledger, run.id, `waiting for CI on ${sha.slice(0, 12)} before deploying to ${envName}: ${v.detail}`, merge2, mergeSkipped, deploys);
+          if (v.state === "failed") throw new OrbitError("DELIVERY_FAILED", `deploy refused: CI on ${sha.slice(0, 12)} is not green: ${v.detail}`, { definitive: true, checks: v.detail });
+        }
+        const result2 = await ledger.performAction(
+          { runId: run.id, kind: "deploy", idempotencyKey: key2, target: { environment: envName, branch: target.branch, sha, command: env.deploy_command.map((a) => redact(a)) }, candidateId: candidate.id, treeHash: tree, commitSha: sha },
+          {
+            execute: (ctx) => runDeploy({ input, env, envName, branch: target.branch, sha, isolation, files, attempt: ctx.attempt, remote, viaBaseBranch: merge2 !== null }),
+            reconcile: async () => readDeployOutcome(files, sha, envName)
+          },
+          {
+            authorization: deployAuth,
+            precheck: async () => {
+              requireAllowed(authorize(snapshot2, { kind: "action", action: "deploy_production" }), "deploying");
+              await baseGate();
+              if (env.require_ci_green) {
+                const v = await ciGate();
+                if (v.state !== "passed") throw new OrbitError("DELIVERY_FAILED", `deploy refused: CI on ${sha.slice(0, 12)} is ${v.state}: ${v.detail}`, { definitive: v.state === "failed", checks: v.detail });
+              }
             }
           }
-        }
-      );
-      deploy = result2.receipt;
+        );
+        deploys.push(result2.receipt);
+      }
     }
   }
-  ledger.event(run.id, "release.completed", { merge: merge2 ? { pr: merge2.number, head: merge2.headSha, merge_commit: merge2.mergeCommitSha } : null, merge_skipped: mergeSkipped, deploy: deploy ? { environment: deploy.environment, sha: deploy.sha } : null, deploy_skipped: deploySkipped });
-  return { status: "released", pending: null, merge: merge2, mergeSkipped, deploy, deploySkipped, actions: ledger.list(run.id) };
+  const deploySkipped = skipped.length > 0 ? skipped.join("; ") : null;
+  ledger.event(run.id, "release.completed", { merge: merge2 ? { pr: merge2.number, head: merge2.headSha, merge_commit: merge2.mergeCommitSha } : null, merge_skipped: mergeSkipped, deploy: deploys[0] ? { environment: deploys[0].environment, sha: deploys[0].sha } : null, deploys: deploys.map((d) => ({ environment: d.environment, sha: d.sha })), deploy_skipped: deploySkipped });
+  return { status: "released", pending: null, merge: merge2, mergeSkipped, deploy: deploys[0] ?? null, deploys, deploySkipped, actions: ledger.list(run.id) };
 }
-function pendingResult(ledger, runId, reason, merge2, mergeSkipped) {
-  return { status: "pending", pending: reason, merge: merge2, mergeSkipped, deploy: null, deploySkipped: null, actions: ledger.list(runId) };
+function requestedEnvironments(input, release) {
+  const all = Object.keys(release.environments);
+  if (input.environments === "all") return { names: all, strict: false, none: "no release environment is defined in the release profile" };
+  const names = input.environments ? [...input.environments] : input.environment ? [input.environment] : [];
+  return { names, strict: true, none: "no release environment was requested" };
+}
+async function markReadyIfDraft(a) {
+  const { number, commit, client } = a;
+  const key2 = `release:${a.run.id}:pr-ready:${number}:${commit}`;
+  const done = a.ledger.find(key2);
+  if (done?.state === "SUCCEEDED") return;
+  const pr = await client.findPullRequest(a.branch);
+  if (!pr || pr.number !== number || !pr.isDraft) return;
+  if (a.markReady === false) {
+    throw new OrbitError("DELIVERY_FAILED", `merge refused: pull request #${number} is a draft and release.merge.mark_ready is false; mark it ready for review or turn mark_ready on`, { definitive: true, draft: true });
+  }
+  await a.ledger.performAction(
+    { runId: a.run.id, kind: "pr_ready", idempotencyKey: key2, target: { pr: number, head: commit }, candidateId: a.candidate.id, treeHash: a.tree, commitSha: commit },
+    {
+      execute: async () => {
+        const r = await client.markPullRequestReady(number);
+        if (r.isDraft) throw new OrbitError("DELIVERY_FAILED", `pull request #${number} is still a draft after it was marked ready`, { definitive: true });
+        return r;
+      },
+      reconcile: async () => {
+        const now = await client.findPullRequest(a.branch);
+        return now && now.number === number && !now.isDraft ? now : null;
+      }
+    },
+    { authorization: a.mergeAuth, precheck: a.precheck }
+  );
+}
+function pendingResult(ledger, runId, reason, merge2, mergeSkipped, deploys = []) {
+  return { status: "pending", pending: reason, merge: merge2, mergeSkipped, deploy: deploys[0] ?? null, deploys, deploySkipped: null, actions: ledger.list(runId) };
 }
 function assertDeliveredCommit(ledger, runId, commit, tree) {
   const pushed = ledger.list(runId, { kind: "push", state: "SUCCEEDED" }).filter((a) => a.commitSha === commit && a.treeHash === tree);
@@ -43953,19 +44893,26 @@ function verdictOf2(result2, sha, required, requireAny) {
   return { state: "passed", detail: `${result2.checks.length} check(s) green` };
 }
 function deployFiles(workDir, envName, sha) {
-  const dir = join33(workDir, "release", `deploy-${envName}-${sha.slice(0, 12)}`);
-  return { dir, checkout: join33(dir, "checkout"), home: join33(dir, "home"), started: join33(dir, "started.json"), outcome: join33(dir, "outcome.json") };
+  const dir = join34(workDir, "release", `deploy-${envName}-${sha.slice(0, 12)}`);
+  return { dir, checkout: join34(dir, "checkout"), home: join34(dir, "home"), started: join34(dir, "started.json"), outcome: join34(dir, "outcome.json") };
 }
-function readDeployOutcome(files, sha) {
+function readDeployOutcome(files, sha, envName) {
   const outcome = readJsonIfExists(files.outcome);
   if (outcome && outcome.sha === sha) {
     if (outcome.exitCode === 0 && !outcome.timedOut) return receiptOf(outcome);
-    throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} to ${outcome.environment} ${outcome.timedOut ? "timed out" : `exited ${outcome.exitCode ?? "by signal"}`}; it is not retried automatically`, { definitive: true });
+    throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} to ${outcome.environment} ${outcome.timedOut ? "timed out, so whether it took effect is unknown" : `exited ${outcome.exitCode ?? "by signal"}`}; it is not retried automatically`, { definitive: true, ...outcome.timedOut ? unknownDetails(envName, sha) : {} });
   }
-  if (existsSync25(files.started)) {
-    throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} started but recorded no outcome (the controller stopped while it ran); check the environment, then resolve this run by hand`, { definitive: true, outcomeUnknown: true });
+  if (existsSync26(files.started)) {
+    throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} started but recorded no outcome (the controller stopped while it ran); check the environment, then run "orbit release resolve <run-id>" (the environment's verify_command) or pass --deployed or --not-deployed`, { definitive: true, outcomeUnknown: true, environment: envName, sha });
   }
   return null;
+}
+function unknownDetails(environment, sha) {
+  return { outcomeUnknown: true, environment, sha };
+}
+function deployTimedOut(files, sha) {
+  const o = readJsonIfExists(files.outcome);
+  return o !== null && o.sha === sha && o.timedOut === true;
 }
 function receiptOf(o) {
   return { environment: o.environment, branch: o.branch, sha: o.sha, tree: o.tree, exitCode: o.exitCode ?? -1, durationMs: o.durationMs, isolation: o.isolation, limitations: o.limitations, output: o.output };
@@ -43984,7 +44931,7 @@ async function runDeploy(a) {
     await fetchBranchContaining({ repoRoot, remote: a.remote, token: input.token, ...input.git, branch, commit: sha, ref: `refs/orbit/release/${run.id}` });
   }
   mkdirSync14(files.dir, { recursive: true, mode: 448 });
-  if (existsSync25(files.checkout)) await cleanupCandidateCheckout(repoRoot, files.checkout);
+  if (existsSync26(files.checkout)) await cleanupCandidateCheckout(repoRoot, files.checkout);
   const checkout = await materializeCandidate(repoRoot, sha, files.checkout, { readOnly: false });
   try {
     const tree = (await execCapture(["git", "rev-parse", `${sha}^{tree}`], { cwd: repoRoot, env: gitEnv4(), timeoutMs: 3e4 })).stdout.trim();
@@ -44004,23 +44951,7 @@ async function runDeploy(a) {
       category: "other"
     };
     const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [files.home, tmp], ...input.homeDir ? { homeDir: input.homeDir } : {} });
-    const cmdEnv = {
-      PATH: process.env.PATH ?? "/usr/bin:/bin",
-      HOME: files.home,
-      TMPDIR: tmp,
-      LANG: platform2() === "darwin" ? "en_US.UTF-8" : "C.UTF-8",
-      TERM: "dumb",
-      CI: "1",
-      NO_COLOR: "1",
-      GIT_CONFIG_GLOBAL: "/dev/null",
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_TERMINAL_PROMPT: "0",
-      ...input.deployEnv ?? {},
-      ORBIT_RUN_ID: run.id,
-      ORBIT_RELEASE_ENVIRONMENT: envName,
-      ORBIT_RELEASE_BRANCH: branch,
-      ORBIT_RELEASE_SHA: sha
-    };
+    const cmdEnv = releaseCommandEnv({ home: files.home, tmp, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha });
     const wrapped = a.isolation.wrap([...env.deploy_command], profile, { cwd: checkout, env: cmdEnv });
     atomicWriteJson(files.started, { environment: envName, sha, attempt: a.attempt, started_at: input.clock.now() }, 384);
     let outcome;
@@ -44034,11 +44965,130 @@ ${res.stderr}` : ""}`).slice(-OUTPUT_TAIL);
     }
     atomicWriteJson(files.outcome, outcome, 384);
     if (outcome.exitCode !== 0 || outcome.timedOut) {
-      throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} to ${envName} ${outcome.timedOut ? `timed out after ${env.timeout_seconds}s` : `exited ${outcome.exitCode ?? "by signal"}`}: ${outcome.output.slice(-500)}`, { definitive: true });
+      throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} to ${envName} ${outcome.timedOut ? `timed out after ${env.timeout_seconds}s, so whether it took effect is unknown` : `exited ${outcome.exitCode ?? "by signal"}`}: ${outcome.output.slice(-500)}`, { definitive: true, ...outcome.timedOut ? unknownDetails(envName, sha) : {} });
     }
     return receiptOf(outcome);
   } finally {
     await cleanupCandidateCheckout(repoRoot, files.checkout).catch(() => {
+    });
+  }
+}
+function releaseCommandEnv(a) {
+  return {
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    HOME: a.home,
+    TMPDIR: a.tmp,
+    LANG: platform2() === "darwin" ? "en_US.UTF-8" : "C.UTF-8",
+    TERM: "dumb",
+    CI: "1",
+    NO_COLOR: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_TERMINAL_PROMPT: "0",
+    ...a.deployEnv ?? {},
+    ORBIT_RUN_ID: a.runId,
+    ORBIT_RELEASE_ENVIRONMENT: a.envName,
+    ORBIT_RELEASE_BRANCH: a.branch,
+    ORBIT_RELEASE_SHA: a.sha,
+    ...a.extra ?? {}
+  };
+}
+function unresolvedDeploys(ledger, runId, workDir) {
+  return ledger.list(runId, { kind: "deploy" }).filter((a) => {
+    if (a.state === "EXECUTING" || a.state === "UNKNOWN") return true;
+    if (a.state !== "FAILED") return false;
+    const t = a.target;
+    return typeof t?.environment === "string" && typeof t.sha === "string" && deployTimedOut(deployFiles(workDir, t.environment, t.sha), t.sha);
+  });
+}
+async function resolveDeploy(input) {
+  const { run, snapshot: snapshot2, ledger } = input;
+  if (snapshot2.config.mode !== "release") throw new OrbitError("POLICY_DENIED", `resolving a deploy needs mode release; this run is ${snapshot2.config.mode}`, { rule: "mode.release-required" });
+  const release = releaseConfig(snapshot2);
+  if (!release) throw new OrbitError("POLICY_DENIED", "mode release needs a release profile (release: in the configuration)", { rule: "release.profile-missing" });
+  const pending = unresolvedDeploys(ledger, run.id, input.workDir).filter((a) => input.environment === void 0 || a.target.environment === input.environment);
+  if (pending.length === 0) throw new OrbitError("NOT_FOUND", `run ${run.id} has no deploy with an unknown outcome${input.environment ? ` to ${input.environment}` : ""}`);
+  if (pending.length > 1) {
+    throw new OrbitError("TRANSITION_INVALID", `run ${run.id} has ${pending.length} deploys with an unknown outcome (${pending.map((a) => a.target.environment).join(", ")}); name one with --environment`);
+  }
+  const action = pending[0];
+  const t = action.target;
+  const files = deployFiles(input.workDir, t.environment, t.sha);
+  const done = (verdict2, via2, detail2) => ({ actionId: action.id, environment: t.environment, branch: t.branch, sha: t.sha, verdict: verdict2, via: via2, detail: detail2 });
+  let verdict;
+  let via = "person";
+  let detail;
+  if (input.resolution === "verify") {
+    via = "verify_command";
+    const env = Object.hasOwn(release.environments, t.environment) ? release.environments[t.environment] : null;
+    if (!env) throw new OrbitError("CONFIG_INVALID", `release environment ${t.environment} is no longer defined in the release profile`, { definitive: true });
+    if (!Array.isArray(env.verify_command) || env.verify_command.length === 0 || env.verify_command.some((a) => typeof a !== "string" || a.length === 0)) {
+      return done("unknown", via, `environment ${t.environment} has no verify_command`);
+    }
+    if (!input.isolation) throw new OrbitError("INTERNAL", "running a verify_command needs an isolation provider");
+    const res = await runVerifyCommand({ input, env, envName: t.environment, branch: t.branch, sha: t.sha, files, isolation: input.isolation, command: env.verify_command });
+    verdict = res.verdict;
+    detail = res.detail;
+  } else {
+    verdict = input.resolution;
+    detail = `${input.by} reports the deploy of ${t.sha.slice(0, 12)} to ${t.environment} ${input.resolution === "deployed" ? "took effect" : "did not take effect"}`;
+  }
+  ledger.event(run.id, "release.deploy-resolution", { action_id: action.id, environment: t.environment, sha: t.sha, via, verdict, by: input.by });
+  if (verdict === "unknown") return done(verdict, via, detail);
+  if (verdict === "deployed") {
+    const receipt = { environment: t.environment, branch: t.branch, sha: t.sha, tree: action.treeHash ?? "", exitCode: 0, durationMs: 0, isolation: via === "verify_command" ? "verify_command" : "person", limitations: [`resolved after an unknown outcome: ${detail}`], output: redact(detail).slice(-OUTPUT_TAIL) };
+    mkdirSync14(files.dir, { recursive: true, mode: 448 });
+    atomicWriteJson(files.outcome, { environment: t.environment, branch: t.branch, sha: t.sha, tree: receipt.tree, attempt: action.attempts, exitCode: 0, timedOut: false, durationMs: 0, isolation: receipt.isolation, limitations: receipt.limitations, output: receipt.output }, 384);
+    ledger.recordReceipt(action, receipt, "reconcile");
+  } else {
+    rmSync9(files.started, { force: true });
+    rmSync9(files.outcome, { force: true });
+    ledger.markUnknown(action, `resolved: the deploy did not take effect (${detail})`);
+  }
+  recordDecision(
+    ledger.db,
+    input.workDir,
+    { id: `dec-${action.id}-resolved-${verdict}-${ledger.get(action.id).updatedAt}`, runId: run.id, kind: "release.deploy-resolved", summary: `deploy of ${t.sha.slice(0, 12)} to ${t.environment} resolved as ${verdict} by ${via === "verify_command" ? "verify_command" : input.by}: ${detail}`, data: { action_id: action.id, environment: t.environment, sha: t.sha, verdict, via, by: input.by } },
+    input.clock,
+    { actor: input.by }
+  );
+  return done(verdict, via, detail);
+}
+async function runVerifyCommand(a) {
+  const { input, env, envName, branch, sha, files } = a;
+  const { run, snapshot: snapshot2 } = input;
+  for (const host of env.network_hosts) {
+    const d = authorize(snapshot2, { kind: "network", host });
+    if (!d.allowed) throw new OrbitError("POLICY_DENIED", `verifying the deploy needs network access to ${host}: ${d.reason}`, { rule: d.rule, definitive: true });
+  }
+  if (!await hasCommit(run.repoRoot, sha, input.git)) return { verdict: "unknown", detail: `commit ${sha.slice(0, 12)} is not in the repository, so the verify_command has nothing to run on` };
+  const dir = join34(files.dir, "verify");
+  const checkoutDir = join34(dir, "checkout");
+  const home2 = join34(dir, "home");
+  mkdirSync14(dir, { recursive: true, mode: 448 });
+  if (existsSync26(checkoutDir)) await cleanupCandidateCheckout(run.repoRoot, checkoutDir);
+  const checkout = await materializeCandidate(run.repoRoot, sha, checkoutDir, { readOnly: false });
+  try {
+    mkdirSync14(home2, { recursive: true, mode: 448 });
+    const tmp = prepareWorkerTmpDir(dir);
+    const def = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: ".", timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], env: {}, mandatory: true, flaky_reruns: 0, kind: "command", category: "other" };
+    const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [home2, tmp], ...input.homeDir ? { homeDir: input.homeDir } : {} });
+    const cmdEnv = releaseCommandEnv({ home: home2, tmp, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha, extra: { ORBIT_RELEASE_VERIFY: "1" } });
+    const wrapped = a.isolation.wrap([...a.command], profile, { cwd: checkout, env: cmdEnv });
+    try {
+      const res = await execCapture(wrapped.argv, { cwd: checkout, env: wrapped.env, timeoutMs: env.timeout_seconds * 1e3, maxOutputBytes: 1024 * 1024 });
+      const output = redact(`${res.stdout}${res.stderr ? `
+${res.stderr}` : ""}`).trim().slice(-500);
+      const tail2 = output ? `: ${output}` : "";
+      if (res.timedOut) return { verdict: "unknown", detail: `the verify_command timed out after ${env.timeout_seconds}s` };
+      if (res.exitCode === 0) return { verdict: "deployed", detail: `verify_command exited 0 for ${sha.slice(0, 12)} in ${envName}${tail2}` };
+      if (res.exitCode === 1) return { verdict: "not-deployed", detail: `verify_command exited 1 for ${sha.slice(0, 12)} in ${envName}${tail2}` };
+      return { verdict: "unknown", detail: `verify_command ${res.exitCode === null ? "was stopped by a signal" : `exited ${res.exitCode}`} (0 means deployed, 1 means not deployed), so the outcome is still unknown${tail2}` };
+    } finally {
+      wrapped.cleanup();
+    }
+  } finally {
+    await cleanupCandidateCheckout(run.repoRoot, checkout).catch(() => {
     });
   }
 }
@@ -44050,6 +45100,7 @@ var init_release = __esm({
     init_exec();
     init_errors();
     init_fsx();
+    init_decisions();
     init_redact();
     init_authorize();
     init_profiles();
@@ -44063,7 +45114,7 @@ var init_release = __esm({
 
 // src/delivery/github.ts
 import { execFileSync } from "node:child_process";
-import { existsSync as existsSync26, readFileSync as readFileSync17 } from "node:fs";
+import { existsSync as existsSync27, readFileSync as readFileSync17 } from "node:fs";
 function malformed(what, detail) {
   return new OrbitError("MALFORMED_OUTPUT", `gh ${what}: ${detail}`);
 }
@@ -44261,7 +45312,7 @@ function emptyState() {
     ci: {},
     logs: {},
     heads: {},
-    faults: { loseCreateResponse: 0, rateLimit: 0, rateLimitRetryAfterMs: 1e3, authExpired: false, loseMergeResponse: 0 },
+    faults: { loseCreateResponse: 0, rateLimit: 0, rateLimitRetryAfterMs: 1e3, authExpired: false, loseMergeResponse: 0, loseReadyResponse: 0 },
     calls: [],
     creates: 0,
     updates: 0,
@@ -44366,6 +45417,12 @@ ${res.stdout}`);
         if (changes.title !== void 0) argv2.push("--title", changes.title);
         if (changes.body !== void 0) argv2.push("--body-file", "-");
         if (argv2.length > 5) await this.ok("pr edit", argv2, changes.body);
+        return this.viewPullRequest(number);
+      }
+      async markPullRequestReady(number) {
+        if (!Number.isInteger(number) || number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
+        this.assertToken();
+        await this.ok("pr ready", ["pr", "ready", String(number), "-R", this.opts.repo]);
         return this.viewPullRequest(number);
       }
       async viewPullRequest(number) {
@@ -44540,6 +45597,25 @@ ${res.stdout}`;
         });
         return out;
       }
+      async markPullRequestReady(number) {
+        this.enter("markPullRequestReady");
+        let out = null;
+        let lose = false;
+        this.mutate((s) => {
+          const pr = s.prs.find((p) => p.number === number);
+          if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${number}`, { definitive: true });
+          if (pr.state !== "OPEN") throw new OrbitError("DELIVERY_FAILED", `gh pr ready failed: pull request #${number} is ${pr.state.toLowerCase()}`, { definitive: true });
+          if (pr.isDraft) s.readies = (s.readies ?? 0) + 1;
+          pr.isDraft = false;
+          out = this.view(s, pr);
+          if ((s.faults.loseReadyResponse ?? 0) > 0) {
+            s.faults.loseReadyResponse--;
+            lose = true;
+          }
+        });
+        if (lose) throw new OrbitError("PROVIDER_TRANSIENT", "connection reset while waiting for the ready response");
+        return out;
+      }
       /**
        * Like the real service: refused unless the PR is open, not a draft and its
        * head is still `headSha`. With a remote attached, the base branch really
@@ -44696,7 +45772,7 @@ ${res.stdout}`;
         }
       }
       load() {
-        if (!existsSync26(this.opts.statePath)) return emptyState();
+        if (!existsSync27(this.opts.statePath)) return emptyState();
         return JSON.parse(readFileSync17(this.opts.statePath, "utf8"));
       }
       mutate(fn) {
@@ -45054,10 +46130,34 @@ ${bullet(
     30,
     500
   )}`);
+  const practices = engineeringPracticesSection(contract, red);
+  if (practices !== "") sec.push(practices);
   sec.push(`## Review questions
 
-${bullet(input.questions.map(red), 20, 500)}`);
+${bullet([...practiceReviewQuestions(contract), ...input.questions.map(red)], 20, 500)}`);
   return sec.join("\n");
+}
+function engineeringPracticesSection(contract, red = (s) => s) {
+  const selection = contract.practices;
+  if (selection === void 0) return "";
+  const lines = ENGINEERING_PRACTICES.map((practice) => {
+    const s = selection.find((x) => x.practice === practice);
+    if (!s) return `- ${practice}: NOT ACCOUNTED FOR (neither selected nor justified as omitted)`;
+    return `- ${practice} [${s.applicable ? "applicable" : "OMITTED"}]: ${red(oneLine4(s.justification, 300))}`;
+  });
+  return `## Engineering practices
+
+${lines.join("\n")}
+`;
+}
+function practiceReviewQuestions(contract) {
+  if (contract.practices === void 0) return ["No practice selection is recorded: which engineering practices does this change lack? Report each."];
+  const omitted = contract.practices.filter((p) => !p.applicable).map((p) => p.practice);
+  const out = [
+    omitted.length > 0 ? `Is each omitted engineering practice (${omitted.join(", ")}) really not needed here? Report a finding for every omission whose justification is unsound, citing the code that needs the practice.` : "No engineering practice was omitted. Does the change meet each as its justification claims? Report a finding for any it does not."
+  ];
+  if (ENGINEERING_PRACTICES.some((p) => !contract.practices.some((x) => x.practice === p))) out.push("Some practices are not accounted for in the selection. Which does this change need? Report each.");
+  return out;
 }
 var import_picomatch7, enc, byteLen, DEFAULTS2, EXCLUDED_RESERVE, entryOverhead, MAX_LIST_ITEMS, GENERATED;
 var init_packet = __esm({
@@ -45068,6 +46168,7 @@ var init_packet = __esm({
     init_exec();
     init_hash();
     init_redact();
+    init_practices();
     init_builtin();
     init_weakening();
     init_resolve();
@@ -45565,10 +46666,1504 @@ var init_obtain = __esm({
   }
 });
 
+// src/scheduling/work-units.ts
+function planWorkUnits(criteria) {
+  if (criteria.length < 2) return null;
+  const paths = criteria.map((c) => [...new Set(c.paths.map((p) => p.trim()).filter((p) => p.length > 0))]);
+  if (paths.some((p) => p.length === 0)) return null;
+  const parent = criteria.map((_, i) => i);
+  const find = (i) => {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i]];
+      i = parent[i];
+    }
+    return i;
+  };
+  for (let i = 0; i < criteria.length; i++) {
+    for (let j = i + 1; j < criteria.length; j++) {
+      if (pathsOverlap(paths[i], paths[j])) parent[find(j)] = find(i);
+    }
+  }
+  const groups = /* @__PURE__ */ new Map();
+  for (let i = 0; i < criteria.length; i++) {
+    const r = find(i);
+    groups.set(r, [...groups.get(r) ?? [], i]);
+  }
+  if (groups.size < 2) return null;
+  const ordered = [...groups.values()].sort((a, b) => a[0] - b[0]);
+  return ordered.map((members, k) => ({
+    id: `u${k + 1}`,
+    criteria: members.map((i) => criteria[i].id),
+    ownedPaths: [...new Set(members.flatMap((i) => paths[i]))].sort()
+  }));
+}
+var init_work_units = __esm({
+  "src/scheduling/work-units.ts"() {
+    "use strict";
+    init_scheduler();
+  }
+});
+
+// src/contract/authority.ts
+function clauseBefore(text2, index) {
+  const head = text2.slice(Math.max(0, index - 60), index);
+  const cut = Math.max(head.lastIndexOf("."), head.lastIndexOf(";"), head.lastIndexOf("\n"), head.lastIndexOf("!"), head.lastIndexOf("?"));
+  return cut >= 0 ? head.slice(cut + 1) : head;
+}
+function isNegated2(text2, index) {
+  return NEGATION2.test(clauseBefore(text2, index));
+}
+function normalizeMode(word) {
+  const w = word.toLowerCase().replace(/\s+/g, "-");
+  if (w === "autonomous-delivery" || w === "autonomous") return w;
+  if (w === "supervised" || w === "release") return w;
+  return null;
+}
+function modesRequestedInGoal(goal) {
+  const out = [];
+  for (const re of MODE_PHRASES) {
+    for (const m of goal.matchAll(re)) {
+      const mode = normalizeMode(m[1]);
+      if (mode === null || out.some((o) => o.mode === mode)) continue;
+      if (isNegated2(goal, m.index)) continue;
+      out.push({ mode, phrase: m[0].trim() });
+    }
+  }
+  return out;
+}
+function reconcileAuthority(goal, config) {
+  const out = [];
+  for (const { mode, phrase } of modesRequestedInGoal(goal)) {
+    if (mode === config.mode) continue;
+    const more = MODE_RANK[mode] > MODE_RANK[config.mode];
+    out.push({
+      kind: more ? "exceeds-policy" : "stricter-than-policy",
+      subject: `mode:${mode}`,
+      phrase,
+      detail: more ? `the goal asks for mode ${mode}, but the policy freezes mode ${config.mode}; the policy governs` : `the goal asks for mode ${mode}, which carries less authority than the policy's ${config.mode}; the run keeps the policy's mode and only uses what the goal allows`
+    });
+  }
+  for (const p of ACTION_PATTERNS) {
+    const seen = /* @__PURE__ */ new Set();
+    for (const m of goal.matchAll(p.re)) {
+      const negated = isNegated2(goal, m.index);
+      const allowed = config.actions[p.action] === true;
+      const phrase = m[0].trim();
+      const key2 = `${negated}:${p.action}`;
+      if (seen.has(key2)) continue;
+      seen.add(key2);
+      if (negated && allowed) {
+        out.push({ kind: "stricter-than-policy", subject: `actions.${p.action}`, phrase, detail: `the goal forbids ${p.label}, which the policy allows; the run does not ${p.label}` });
+      } else if (!negated && !allowed) {
+        out.push({ kind: "exceeds-policy", subject: `actions.${p.action}`, phrase, detail: `the goal asks to ${p.label}, but the policy does not allow it (actions.${p.action} is false); the policy governs` });
+      }
+    }
+  }
+  return out;
+}
+var MODE_RANK, ACTION_PATTERNS, NEGATION2, MODE_WORDS, MODE_PHRASES;
+var init_authority2 = __esm({
+  "src/contract/authority.ts"() {
+    "use strict";
+    MODE_RANK = { supervised: 0, autonomous: 1, "autonomous-delivery": 2, release: 3 };
+    ACTION_PATTERNS = [
+      { action: "merge", label: "merge", re: /\bmerg(?:e|es|ed|ing)\b(?!\s+conflicts?\b)/gi },
+      { action: "deploy_production", label: "deploy to production", re: /\b(?:deploy(?:s|ed|ing)?|ship(?:s|ped|ping)?|releas(?:e|es|ed|ing))\b[^.;\n]{0,30}\b(?:production|prod)\b/gi },
+      { action: "push_task_branch", label: "push a branch", re: /\bpush(?:es|ed|ing)?\b[^.;\n]{0,25}\b(?:branch|branches|origin|remote|changes|commits?|code)\b/gi },
+      { action: "open_pull_request", label: "open a pull request", re: /\b(?:open|opens|opened|opening|create|creates|created|creating|raise|submit)\b[^.;\n]{0,20}\b(?:pull[- ]requests?|prs?)\b/gi }
+    ];
+    NEGATION2 = /\b(?:do not|don'?t|dont|never|must not|mustn'?t|should not|shouldn'?t|without|no|not|avoid|skip|refrain from)\b/i;
+    MODE_WORDS = "(autonomous[- ]delivery|release|supervised|autonomous)";
+    MODE_PHRASES = [
+      /\b(autonomous[- ]delivery)\b(?:\s+(?:mode|profile))?/gi,
+      new RegExp(`\\b${MODE_WORDS}\\s+(?:mode|profile)\\b`, "gi"),
+      new RegExp(`\\b(?:in|under|using|use|with|switch(?:ing)? to|set(?:ting)? (?:the )?mode to|mode:?)\\s+(?:the\\s+)?(?:mode\\s+)?${MODE_WORDS}\\s+(?:mode|profile)\\b`, "gi")
+    ];
+  }
+});
+
+// src/contract/draft.ts
+function draftContract(input) {
+  const plan = validateModelOutput("planner", input.plannerOutput);
+  const { snapshot: snapshot2 } = input;
+  const config = snapshot2.config;
+  const checks = config.checks ?? {};
+  const isCheck = (id) => Object.prototype.hasOwnProperty.call(checks, id);
+  const adjustments = [];
+  const dropCheck = (id, where) => {
+    if (!adjustments.some((a) => a.kind === "check-dropped" && a.subject === id)) {
+      adjustments.push({ kind: "check-dropped", subject: id, reason: `${where} names check "${id}", which the policy does not define` });
+    }
+  };
+  const criteria = plan.criteria.map((c, i) => {
+    const checkIds = [];
+    for (const id of c.check_ids) {
+      if (!isCheck(id)) dropCheck(id, `criterion ${c.key}`);
+      else if (!checkIds.includes(id)) checkIds.push(id);
+    }
+    return {
+      id: `AC-${i + 1}`,
+      statement: c.statement.trim(),
+      proof: uniqueText(c.proof),
+      mandatory: c.mandatory,
+      ui: c.ui,
+      check_ids: checkIds
+    };
+  });
+  const required = [];
+  for (const id of plan.required_check_ids) {
+    if (!isCheck(id)) dropCheck(id, "required_check_ids");
+    else if (!required.includes(id)) required.push(id);
+  }
+  for (const ac of criteria) {
+    for (const id of ac.check_ids ?? []) {
+      if (!required.includes(id)) {
+        required.push(id);
+        adjustments.push({ kind: "check-added", subject: id, reason: `criterion ${ac.id} cites it as evidence` });
+      }
+    }
+  }
+  for (const id of Object.keys(checks).sort()) {
+    if (checks[id]?.mandatory && !required.includes(id)) {
+      required.push(id);
+      adjustments.push({ kind: "check-added", subject: id, reason: "the policy marks it mandatory" });
+    }
+  }
+  const scope = config.scope?.allowed_paths ?? [];
+  const allowed = [];
+  const keep = (g) => {
+    if (!allowed.includes(g)) allowed.push(g);
+  };
+  for (const proposed of plan.allowed_paths) {
+    const inside2 = intersectWithScope(proposed, scope);
+    const normalized = normalizeGlob(proposed);
+    if (inside2.length === 0) {
+      adjustments.push({ kind: "path-dropped", subject: proposed, reason: normalized === null ? "glob syntax cannot be checked against the policy scope" : "not inside the policy scope" });
+    } else if (inside2.length === 1 && inside2[0] === normalized) {
+      keep(normalized);
+    } else {
+      inside2.forEach(keep);
+      adjustments.push({ kind: "path-narrowed", subject: proposed, reason: `narrowed to the policy scope: ${inside2.join(", ")}` });
+    }
+  }
+  if (allowed.length === 0) {
+    for (const f of plan.expected_changed_files) {
+      const g = literalGlob(f.path);
+      if (g !== null && intersectWithScope(g, scope).includes(g)) {
+        if (!allowed.includes(g)) adjustments.push({ kind: "path-added", subject: g, reason: "expected changed file inside the policy scope" });
+        keep(g);
+      }
+    }
+  }
+  if (allowed.length === 0) {
+    throw new OrbitError("CONTRACT_INVALID", "no proposed path lies inside the policy scope", { adjustments });
+  }
+  const assumptions = plan.assumptions.map((a, i) => ({
+    id: `AS-${i + 1}`,
+    statement: a.statement.trim(),
+    status: a.status
+  }));
+  for (const d of plan.unresolved_decisions) {
+    const statement = d.question.trim();
+    if (!d.material || statement === "") continue;
+    const same = assumptions.find((a) => normalizeEntry(a.statement) === normalizeEntry(statement));
+    const target = same ?? { id: `AS-${assumptions.length + 1}`, statement, status: "needs-decision" };
+    if (same) same.status = "needs-decision";
+    else assumptions.push(target);
+    adjustments.push({ kind: "decision-recorded", subject: target.id, reason: "the planner left a material decision unresolved" });
+  }
+  for (const m of reconcileAuthority(input.goal, config)) {
+    adjustments.push({ kind: "authority-mismatch", subject: m.subject, reason: `${m.detail} (goal text: "${m.phrase}")` });
+    if (m.kind !== "exceeds-policy") continue;
+    const statement = `The goal asks for more authority than the policy grants (${m.subject}: "${m.phrase}"). Confirm that the policy governs, or change the policy and start a new run.`;
+    if (!assumptions.some((a) => normalizeEntry(a.statement) === normalizeEntry(statement))) {
+      assumptions.push({ id: `AS-${assumptions.length + 1}`, statement, status: "needs-decision" });
+    }
+  }
+  const topics = uniqueText(plan.material_topics);
+  for (const t of BASELINE_MATERIAL_TOPICS) {
+    if (!topics.some((x) => normalizeEntry(x) === normalizeEntry(t))) {
+      topics.push(t);
+      adjustments.push({ kind: "topic-added", subject: t, reason: "spec section 10 forbids guessing it" });
+    }
+  }
+  const practices = normalizePractices(plan.practices);
+  const uiCriteria = criteria.filter((c) => c.ui === true).map((c) => c.id);
+  const access = practices.find((p) => p.practice === "accessibility");
+  if (access && !access.applicable && uiCriteria.length > 0) {
+    access.applicable = true;
+    access.justification = `the contract has UI criteria (${uiCriteria.join(", ")}); the planner's reason for omitting it was: ${access.justification}`;
+    adjustments.push({ kind: "practice-selected", subject: "accessibility", reason: `the planner omitted it, but ${uiCriteria.join(", ")} ${uiCriteria.length === 1 ? "is a UI criterion" : "are UI criteria"}` });
+  }
+  const actions = config.actions;
+  const contract = {
+    version: "1.0",
+    task_id: input.taskId,
+    original_goal: input.goal,
+    objective: plan.objective.trim(),
+    acceptance_criteria: criteria,
+    non_goals: uniqueText(plan.non_goals),
+    allowed_paths: allowed,
+    required_check_ids: required,
+    assumptions,
+    practices,
+    delivery: {
+      draft_pr: Boolean(actions?.open_pull_request) && config.delivery?.pull_request === "draft",
+      // Merge is opt-in per run even when the policy permits it; only an
+      // approved amendment turns it on.
+      merge: false
+    },
+    policy_hash: input.policyHash ?? policyHashOf(snapshot2),
+    baseline_revision: input.baselineRevision,
+    escalation: { material_topics: topics }
+  };
+  const validated = validateContract(contract, snapshot2, input.policyHash === void 0 ? {} : { policyHash: input.policyHash });
+  return { contract: validated, adjustments };
+}
+function uniqueText(values) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const v of values) {
+    const t = v.trim();
+    const key2 = normalizeEntry(t);
+    if (t === "" || seen.has(key2)) continue;
+    seen.add(key2);
+    out.push(t);
+  }
+  return out;
+}
+var BASELINE_MATERIAL_TOPICS;
+var init_draft = __esm({
+  "src/contract/draft.ts"() {
+    "use strict";
+    init_errors();
+    init_authority2();
+    init_globs2();
+    init_model_outputs();
+    init_validate();
+    init_practices();
+    init_wording();
+    BASELINE_MATERIAL_TOPICS = [
+      "product semantics",
+      "security rules",
+      "financial effects",
+      "irreversible data behavior"
+    ];
+  }
+});
+
+// src/evidence/baseline.ts
+import { existsSync as existsSync28, readFileSync as readFileSync18 } from "node:fs";
+import { join as join35 } from "node:path";
+function planInstall(snapshot2, checkoutDir, opts = {}) {
+  const deps = snapshot2.config.dependencies;
+  if (!deps.install_existing_lockfile) return { skip: true, reason: "policy does not allow installing dependencies from the existing lockfile" };
+  const hosts = [...opts.registryHosts ?? NPM_REGISTRY_HOSTS];
+  const base = { shell: false, cwd: ".", timeout_seconds: INSTALL_TIMEOUT_SECONDS, network_hosts: hosts, mandatory: false, flaky_reruns: 1, kind: "command" };
+  const quiet = { npm_config_fund: "false", npm_config_audit: "false", npm_config_progress: "false", npm_config_update_notifier: "false" };
+  const scriptsDenied = deps.install_scripts !== "allow";
+  if (deps.install_command) {
+    return {
+      skip: false,
+      definitions: [
+        {
+          ...base,
+          id: INSTALL_CHECK_ID,
+          command: [...deps.install_command],
+          // A configured command cannot be given a flag blindly, so scripts are denied through the package managers' own environment switches.
+          env: { ...quiet, ...scriptsDenied ? { npm_config_ignore_scripts: "true", YARN_ENABLE_SCRIPTS: "false" } : {} }
+        }
+      ]
+    };
+  }
+  const hasNpmLock = existsSync28(join35(checkoutDir, "package-lock.json")) || existsSync28(join35(checkoutDir, "npm-shrinkwrap.json"));
+  if (!hasNpmLock) {
+    const other = OTHER_LOCKFILES.find((f) => existsSync28(join35(checkoutDir, f)));
+    return {
+      skip: true,
+      reason: other ? `found ${other}, which Orbit does not install by itself; set dependencies.install_command to install from it` : "no lockfile to install from; Orbit never creates one"
+    };
+  }
+  const defs = [{ ...base, id: INSTALL_CHECK_ID, command: scriptsDenied ? ["npm", "ci", "--ignore-scripts"] : ["npm", "ci"], env: quiet }];
+  if (deps.install_scripts === "deny-unless-allowlisted" && deps.install_script_allowlist.length > 0) {
+    defs.push({ ...base, id: INSTALL_SCRIPTS_CHECK_ID, command: ["npm", "rebuild", ...deps.install_script_allowlist], env: quiet, flaky_reruns: 0 });
+  }
+  return { skip: false, definitions: defs };
+}
+async function installDependencies(ctx) {
+  const plan = planInstall(ctx.snapshot, ctx.checkoutDir, { registryHosts: ctx.registryHosts });
+  if (plan.skip) {
+    const audit2 = ctx.candidate ? await auditCandidate({ ...ctx, candidate: ctx.candidate }) : null;
+    if (audit2 && audit2.blocking.length > 0) return { skipped: false, reason: audit2.summary, ok: false, results: [], audit: audit2 };
+    return { skipped: true, reason: plan.reason, ok: false, results: [], audit: audit2 };
+  }
+  const definitions = { ...ctx.definitions, ...Object.fromEntries(plan.definitions.map((d) => [d.id, d])) };
+  let subject;
+  if (ctx.candidate) subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: "install" };
+  else if (ctx.baseTree) subject = baselineSubject(ctx.runDir, ctx.baseTree, "install");
+  else throw new OrbitError("INTERNAL", "installDependencies needs a candidate or a base tree to bind to");
+  const results = [];
+  for (const def of plan.definitions) {
+    const [r] = await runCheckSet({ ...ctx, definitions }, subject, [def]);
+    if (!r) break;
+    results.push(r);
+    if (r.status !== "PASSED") break;
+  }
+  const ok = results.length === plan.definitions.length && results.every((r) => r.status === "PASSED");
+  if (!ok || !ctx.candidate) return { skipped: false, reason: null, ok, results };
+  const audit = await auditCandidate({ ...ctx, candidate: ctx.candidate });
+  if (audit && audit.blocking.length > 0) return { skipped: false, reason: audit.summary, ok: false, results, audit };
+  return { skipped: false, reason: null, ok, results, audit };
+}
+function manifestHash(dir) {
+  const parts = [];
+  for (const f of MANIFEST_FILES) {
+    const p = join35(dir, f);
+    if (existsSync28(p)) parts.push(`${f}\0${sha256(readFileSync18(p))}`);
+  }
+  return parts.length > 0 ? sha256(parts.join("\n")) : null;
+}
+function parseNpmAudit(text2) {
+  let doc;
+  try {
+    doc = JSON.parse(text2);
+  } catch {
+    throw new Error("npm audit did not write a JSON report");
+  }
+  const d = doc;
+  if (d.error) throw new Error(`npm audit failed: ${redact(String(d.error.summary ?? d.error.code ?? "error")).slice(0, 200)}`);
+  if (!d.vulnerabilities || typeof d.vulnerabilities !== "object") throw new Error("the npm audit report has no vulnerabilities section (npm 7 or later is needed)");
+  const out = /* @__PURE__ */ new Map();
+  for (const [name, v] of Object.entries(d.vulnerabilities)) {
+    if (!Array.isArray(v?.via)) continue;
+    for (const via of v.via) {
+      if (!via || typeof via !== "object") continue;
+      const a = via;
+      const ghsa = typeof a.url === "string" ? /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/.exec(a.url)?.[0] : void 0;
+      const id = ghsa ?? (typeof a.source === "number" || typeof a.source === "string" ? `npm:${a.source}` : null);
+      const severity = typeof a.severity === "string" && Object.hasOwn(SEVERITY_RANK, a.severity) ? a.severity : null;
+      if (!id || !severity) continue;
+      const pkg = typeof a.name === "string" ? a.name : name;
+      out.set(`${id}\0${pkg}`, { id, kind: "vulnerability", package: pkg, severity, detail: redact(typeof a.title === "string" ? a.title : "").slice(0, 200) });
+    }
+  }
+  return [...out.values()].sort((x, y) => x.id.localeCompare(y.id) || x.package.localeCompare(y.package));
+}
+function disallowedLicenses(lockText, allowlist) {
+  let lock;
+  try {
+    lock = JSON.parse(lockText);
+  } catch {
+    throw new Error("the lockfile is not valid JSON");
+  }
+  if (!lock.packages || typeof lock.packages !== "object") throw new Error("the lockfile has no packages section (lockfileVersion 2 or later records licenses)");
+  const allowed = new Set(allowlist.map((l) => l.toLowerCase()));
+  const out = /* @__PURE__ */ new Map();
+  for (const [key2, entry] of Object.entries(lock.packages)) {
+    if (key2 === "" || !entry || typeof entry !== "object" || entry.link === true) continue;
+    const name = typeof entry.name === "string" ? entry.name : key2.slice(key2.lastIndexOf("node_modules/") + "node_modules/".length);
+    const version = typeof entry.version === "string" ? entry.version : "0.0.0";
+    const license = typeof entry.license === "string" ? entry.license : null;
+    if (license !== null && licenseAllowed(license, allowed)) continue;
+    const id = `license:${name}@${version}`;
+    out.set(id, { id, kind: "license", package: name, severity: null, detail: license ?? "no license recorded" });
+  }
+  return [...out.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+function licenseAllowed(expr, allowed) {
+  const e = expr.replace(/[()]/g, " ").trim().toLowerCase();
+  return e.split(/\s+or\s+/).some((alt) => alt.split(/\s+and\s+/).every((part) => allowed.has(part.trim())));
+}
+function lockfileIn(dir) {
+  for (const f of ["npm-shrinkwrap.json", "package-lock.json"]) if (existsSync28(join35(dir, f))) return join35(dir, f);
+  return null;
+}
+async function runDependencyAudit(ctx, subject) {
+  const policy = dependencyAuditPolicy(ctx.snapshot.config);
+  if (!policy.enabled) return null;
+  const hash = manifestHash(ctx.checkoutDir);
+  const lock = lockfileIn(ctx.checkoutDir);
+  if (!lock) return { ran: false, reason: "no npm lockfile (package-lock.json or npm-shrinkwrap.json); the dependency audit supports npm lockfiles only", manifestHash: hash, vulnerabilities: [], licenses: [], logPath: null };
+  const problems = [];
+  let licenses = [];
+  if (policy.license_allowlist !== null) {
+    try {
+      licenses = disallowedLicenses(readFileSync18(lock, "utf8"), policy.license_allowlist);
+    } catch (err) {
+      problems.push(`license policy not checked: ${err.message}`);
+    }
+  }
+  const def = {
+    id: AUDIT_CHECK_ID,
+    // The report goes to a file, so warnings on stderr cannot corrupt it; a written report is success even when it lists vulnerabilities.
+    command: [`npm audit --json --package-lock-only > "$ORBIT_ARTIFACTS_DIR/${AUDIT_REPORT}"; s=$?; if [ -s "$ORBIT_ARTIFACTS_DIR/${AUDIT_REPORT}" ]; then exit 0; fi; exit $s`],
+    shell: true,
+    cwd: ".",
+    timeout_seconds: AUDIT_TIMEOUT_SECONDS,
+    network_hosts: [...ctx.registryHosts ?? NPM_REGISTRY_HOSTS],
+    env: { npm_config_fund: "false", npm_config_progress: "false", npm_config_update_notifier: "false" },
+    mandatory: false,
+    flaky_reruns: 0,
+    kind: "command"
+  };
+  const [r] = await runCheckSet({ ...ctx, definitions: { ...ctx.definitions, [AUDIT_CHECK_ID]: def } }, subject, [def]);
+  let vulnerabilities = [];
+  let ran = false;
+  if (!r) problems.push("npm audit did not start (cancelled)");
+  else if (r.status !== "PASSED") problems.push(`npm audit ${r.status === "TIMEOUT" ? "timed out" : `could not produce a report (${r.status})`}`);
+  else {
+    const report2 = r.artifacts.find((a) => a.path.endsWith(`/${AUDIT_REPORT}`));
+    try {
+      if (!report2) throw new Error("npm audit wrote no report");
+      vulnerabilities = parseNpmAudit(readFileSync18(report2.path, "utf8"));
+      ran = true;
+    } catch (err) {
+      problems.push(err.message);
+    }
+  }
+  return { ran, reason: problems.length ? problems.join("; ") : null, manifestHash: hash, vulnerabilities, licenses, logPath: r?.logPath ?? null };
+}
+function evaluateDependencyAudit(base, candidate, policy, now) {
+  const known = new Set(base?.ran ? [...base.vulnerabilities, ...base.licenses].map(key) : base ? base.licenses.map(key) : []);
+  const out = { blocking: [], advisory: [], excepted: [], expired: [], preexisting: [] };
+  for (const f of [...candidate.vulnerabilities, ...candidate.licenses]) {
+    if (known.has(key(f))) {
+      out.preexisting.push(f);
+      continue;
+    }
+    const exception = policy.exceptions.find((e) => e.id === f.id || f.kind === "license" && e.id === `license:${f.package}`);
+    if (exception) {
+      if (exception.expires !== null && (now === void 0 || now > exceptionExpiryMs(exception.expires))) {
+        if (!out.expired.some((x) => x.id === exception.id)) out.expired.push({ id: exception.id, expires: exception.expires });
+      } else {
+        out.excepted.push({ finding: f, reason: exception.reason, expires: exception.expires });
+        continue;
+      }
+    }
+    if (f.kind === "license" || SEVERITY_RANK[f.severity] >= SEVERITY_RANK[policy.fail_on]) out.blocking.push(f);
+    else out.advisory.push(f);
+  }
+  return out;
+}
+function key(f) {
+  return `${f.id}\0${f.package}`;
+}
+function describeFinding(f) {
+  return f.kind === "license" ? `${f.package} is licensed ${f.detail}, which is not on the license allowlist` : `${f.package}: ${f.id} (${f.severity})${f.detail ? ` ${f.detail}` : ""}`;
+}
+function baselineAuditNotes(audit, policy) {
+  if (!policy.enabled || !audit?.ran) return [];
+  const listed = [...audit.vulnerabilities.filter((f) => SEVERITY_RANK[f.severity ?? "low"] >= SEVERITY_RANK[policy.fail_on]), ...audit.licenses];
+  const notes = listed.slice(0, MAX_BASELINE_AUDIT_NOTES).map((f) => `pre-existing ${f.kind === "license" ? "license problem" : "vulnerability"} on the base revision: ${describeFinding(f)}`);
+  if (listed.length > MAX_BASELINE_AUDIT_NOTES) notes.push(`and ${listed.length - MAX_BASELINE_AUDIT_NOTES} more pre-existing dependency audit finding(s) on the base revision`);
+  return notes;
+}
+async function auditCandidate(ctx) {
+  const policy = dependencyAuditPolicy(ctx.snapshot.config);
+  if (!policy.enabled) return null;
+  const baseline = readJsonIfExists(join35(ctx.runDir, BASELINE_FILE2));
+  const baseAudit = baseline?.audit ?? null;
+  const empty = { blocking: [], advisory: [], excepted: [], expired: [], preexisting: [] };
+  if (baseAudit && baseAudit.manifestHash !== null && baseAudit.manifestHash === manifestHash(ctx.checkoutDir)) {
+    return { audited: false, candidate: null, ...empty, summary: null };
+  }
+  const subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: "install" };
+  const audit = await runDependencyAudit(ctx, subject);
+  if (!audit) return null;
+  const judged = evaluateDependencyAudit(baseAudit, audit, policy, ctx.clock.now());
+  const summary = judged.blocking.length ? `dependency audit: the candidate introduces ${judged.blocking.length} finding(s) the policy blocks: ${judged.blocking.slice(0, 5).map(describeFinding).join("; ")}` : audit.ran ? null : `dependency audit unverified: ${audit.reason ?? "npm audit did not run"}`;
+  for (const f of judged.blocking) {
+    recordFailure(ctx.db, { runId: ctx.run.id, candidateId: ctx.candidate.id, source: "install", sourceId: `dependency-audit:${ctx.candidate.id}:${f.id}:${f.package}`, fingerprint: `dependency-audit:${f.id}`, excerpt: describeFinding(f) }, ctx.clock);
+  }
+  ctx.db.tx(
+    () => appendEvent(ctx.db, ctx.run.id, "dependency.audit", "controller", {
+      candidate_id: ctx.candidate.id,
+      ran: audit.ran,
+      reason: audit.reason,
+      blocking: judged.blocking.map((f) => f.id),
+      advisory: judged.advisory.map((f) => f.id),
+      excepted: judged.excepted.map((e) => ({ id: e.finding.id, reason: e.reason })),
+      expired: judged.expired,
+      preexisting: judged.preexisting.length
+    }, ctx.clock.now())
+  );
+  return { audited: true, candidate: audit, ...judged, summary };
+}
+async function runBaseline(input) {
+  const { db, run, snapshot: snapshot2, runDir: runDir2, clock } = input;
+  assertRunPolicy(db, run, snapshot2);
+  const baseRevision = await resolveCommit(input.repoRoot, input.baseRev);
+  const baseTree = await treeOf(input.repoRoot, baseRevision);
+  const ids = input.checkIds ?? Object.values(snapshot2.config.checks).filter((c) => c.mandatory && c.kind === "command").map((c) => c.id);
+  for (const id of ids) {
+    if (!snapshot2.config.checks[id]) throw new OrbitError("POLICY_DENIED", `baseline check ${JSON.stringify(id)} is not defined in the policy snapshot`, { checkId: id });
+  }
+  const defs = [...new Set(ids)].map((id) => snapshot2.config.checks[id]).filter((d) => d.kind === "command");
+  const checkIds = defs.map((d) => d.id).sort();
+  const file = join35(runDir2, BASELINE_FILE2);
+  const prior = readJsonIfExists(file);
+  if (prior && prior.schema === "orbit.baseline/1" && prior.complete && prior.baseRevision === baseRevision && prior.policyHash === run.policyHash && Array.isArray(prior.checkIds) && prior.checkIds.join("\0") === checkIds.join("\0")) {
+    return { report: prior, results: [], reused: true };
+  }
+  const checkoutDir = input.checkoutDir ?? join35(prepareWorkerTmpDir(join35(runDir2, "baseline-checkout")), `base-${sha256(run.id).slice(0, 8)}`);
+  await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
+  await materializeCandidate(input.repoRoot, baseRevision, checkoutDir, { readOnly: false });
+  try {
+    const ctx = {
+      db,
+      run,
+      snapshot: snapshot2,
+      isolation: input.isolation,
+      checkoutDir,
+      runDir: runDir2,
+      clock,
+      signal: input.signal,
+      parallelism: input.parallelism,
+      pollMs: input.pollMs,
+      killGraceMs: input.killGraceMs,
+      homeDir: input.homeDir
+    };
+    const install = await installDependencies({ ...ctx, baseTree, registryHosts: input.registryHosts });
+    const results = install.skipped || install.ok ? await runCheckSet(ctx, baselineSubject(runDir2, baseTree), defs) : [];
+    const audit = await runDependencyAudit({ ...ctx, registryHosts: input.registryHosts }, baselineSubject(runDir2, baseTree, "install"));
+    const entries = results.map((r) => ({
+      checkId: r.checkId,
+      mandatory: snapshot2.config.checks[r.checkId]?.mandatory === true,
+      status: r.status,
+      exitCode: r.exitCode,
+      flaky: r.flaky,
+      fingerprint: r.fingerprint,
+      excerpt: r.excerpt,
+      log: r.logPath
+    }));
+    const report2 = {
+      schema: "orbit.baseline/1",
+      runId: run.id,
+      baseRevision,
+      baseTree,
+      policyHash: run.policyHash,
+      checkIds,
+      install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
+      ...audit ? { audit } : {},
+      auditNotes: baselineAuditNotes(audit, dependencyAuditPolicy(snapshot2.config)),
+      checks: entries,
+      failures: entries.filter((e) => e.mandatory && (e.status === "FAILED" || e.status === "TIMEOUT")).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
+      // Every requested check produced a decisive result (no ERROR, no CANCELLED, none skipped).
+      complete: (install.skipped || install.ok) && entries.length === defs.length && entries.every((e) => e.status === "PASSED" || e.status === "FAILED" || e.status === "TIMEOUT"),
+      recordedAt: clock.now()
+    };
+    atomicWriteJson(file, report2);
+    const auditSummary = audit ? { ran: audit.ran, reason: audit.reason, vulnerabilities: audit.vulnerabilities.length, disallowed_licenses: audit.licenses.length } : null;
+    db.tx(() => appendEvent(db, run.id, "baseline.recorded", "controller", { base_revision: baseRevision, base_tree: baseTree, failures: report2.failures.map((f) => f.checkId), complete: report2.complete, audit: auditSummary }, clock.now()));
+    return { report: report2, results, reused: false };
+  } finally {
+    await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
+  }
+}
+var BASELINE_FILE2, NPM_REGISTRY_HOSTS, INSTALL_TIMEOUT_SECONDS, OTHER_LOCKFILES, AUDIT_CHECK_ID, AUDIT_TIMEOUT_SECONDS, AUDIT_REPORT, MANIFEST_FILES, SEVERITY_RANK, MAX_BASELINE_AUDIT_NOTES;
+var init_baseline = __esm({
+  "src/evidence/baseline.ts"() {
+    "use strict";
+    init_errors();
+    init_fsx();
+    init_hash();
+    init_redact();
+    init_profiles();
+    init_config();
+    init_resolve();
+    init_events();
+    init_candidate();
+    init_git();
+    init_runner();
+    init_store();
+    BASELINE_FILE2 = "baseline.json";
+    NPM_REGISTRY_HOSTS = ["registry.npmjs.org"];
+    INSTALL_TIMEOUT_SECONDS = 900;
+    OTHER_LOCKFILES = ["yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "deno.lock"];
+    AUDIT_CHECK_ID = "orbit-dependency-audit";
+    AUDIT_TIMEOUT_SECONDS = 300;
+    AUDIT_REPORT = "npm-audit.json";
+    MANIFEST_FILES = ["package.json", "package-lock.json", "npm-shrinkwrap.json"];
+    SEVERITY_RANK = { critical: 4, high: 3, moderate: 2, low: 1 };
+    MAX_BASELINE_AUDIT_NOTES = 50;
+  }
+});
+
+// src/review/select.ts
+function selectionDecisionRecord(sel) {
+  return {
+    kind: "review.select",
+    summary: sel.decision === "SELECT" ? `reviewer ${sel.provider}/${sel.model ?? "default"} (${sel.independent ? "independent" : "same provider"})` : `review blocked: ${sel.reason}`.slice(0, 300),
+    data: sel
+  };
+}
+function selectReviewer(input) {
+  const { config } = input.snapshot;
+  const review = config.review;
+  const impl = input.implementer.provider;
+  const alternatives = [];
+  const ids = /* @__PURE__ */ new Set([...Object.keys(config.providers), ...Object.keys(input.capabilities), impl, review.preferred_provider]);
+  const order = [...ids].sort((a, b) => Number(b === review.preferred_provider) - Number(a === review.preferred_provider) || a.localeCompare(b));
+  const providerProblem = (p) => {
+    const cap = input.capabilities[p];
+    if (!cap) return { reason: `no adapter capabilities were reported for "${p}"`, code: "PROVIDER_UNAVAILABLE" };
+    if (!cap.available) return { reason: `provider "${p}" is not available: ${cap.detail || "adapter reported unavailable"}`, code: "PROVIDER_UNAVAILABLE" };
+    if (!cap.structuredOutput) return { reason: `provider "${p}" cannot return schema-constrained output, which review findings require`, code: "PROVIDER_UNAVAILABLE" };
+    const cred = input.credentials[p];
+    if (!cred) return { reason: `credentials for "${p}" were not validated`, code: "PROVIDER_UNAVAILABLE" };
+    if (cred.state === "expired") return { reason: `credentials for "${p}" are expired${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
+    if (cred.state === "invalid") return { reason: `credentials for "${p}" are invalid${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
+    if (cred.state === "missing") return { reason: `no credentials for "${p}"${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_MISSING" };
+    if (cred.state !== "valid") return { reason: `credentials for "${p}" could not be validated (${cred.state})${cred.detail ? `: ${cred.detail}` : ""}`, code: "PROVIDER_UNAVAILABLE" };
+    if (p !== impl && config.providers[p]?.data_policy_eligible !== true) {
+      return { reason: `providers.${p}.data_policy_eligible is not true, so the review packet may not be sent to it`, code: "POLICY_DENIED" };
+    }
+    return null;
+  };
+  const problems = /* @__PURE__ */ new Map();
+  const usableProviders = [];
+  for (const p of order) {
+    const prob = providerProblem(p);
+    if (prob) {
+      problems.set(p, prob);
+      alternatives.push({ provider: p, model: null, reason: prob.reason });
+    } else usableProviders.push(p);
+  }
+  let substituted = false;
+  for (const p of usableProviders.filter((x) => x !== impl)) {
+    const m = qualifiedModel(p, input, alternatives);
+    if (!m) continue;
+    substituted = p !== review.preferred_provider;
+    return finish3(input, m, true, substituted, alternatives, substituted ? `preferred provider "${review.preferred_provider}" is unusable (${problems.get(review.preferred_provider)?.reason ?? "not selected"}); "${p}" is an independent, qualified provider` : `independent reviewer "${p}" (implementer: "${impl}")`);
+  }
+  const sameAllowed = !review.independent_provider_required || review.fallback_same_provider_allowed;
+  if (!sameAllowed) {
+    const independentIds = order.filter((p) => p !== impl);
+    const detail = independentIds.length === 0 ? `no provider other than "${impl}" is configured` : independentIds.map((p) => problems.get(p)?.reason ?? `"${p}" has no model qualified for review`).join("; ");
+    const preferredProblem = problems.get(review.preferred_provider);
+    const code2 = review.preferred_provider !== impl && preferredProblem ? preferredProblem.code : "PROVIDER_UNAVAILABLE";
+    return {
+      decision: "BLOCK",
+      code: code2,
+      reason: `independent review is required (review.independent_provider_required=true, fallback_same_provider_allowed=false) and no independent reviewer is usable: ${detail}. Review is not being substituted by "${impl}" or any equivalent label; verification is incomplete until an independent provider is available.`,
+      alternatives
+    };
+  }
+  if (problems.has(impl)) {
+    return {
+      decision: "BLOCK",
+      code: problems.get(impl).code,
+      reason: `no independent reviewer is usable and same-provider review is allowed, but "${impl}" cannot review: ${problems.get(impl).reason}`,
+      alternatives
+    };
+  }
+  const same = sameProviderModel(input, alternatives);
+  if (!same.ok) {
+    return { decision: "BLOCK", code: "PROVIDER_UNAVAILABLE", reason: `no independent reviewer is usable and same-provider review is allowed, but ${same.reason}`, alternatives };
+  }
+  return finish3(
+    input,
+    same.usable,
+    false,
+    false,
+    alternatives,
+    `no independent reviewer is usable; policy allows same-provider review, so "${impl}" reviews with ${same.usable.model} (${same.usable.detail}) at a different tier than the implementer`
+  );
+}
+function finish3(input, u, independent, substitutedForPreferred, alternatives, reason) {
+  const cap = input.capabilities[u.provider];
+  return {
+    decision: "SELECT",
+    provider: u.provider,
+    model: u.model,
+    effort: input.snapshot.config.providers[u.provider]?.reasoning_effort ?? null,
+    independent,
+    basis: u.basis,
+    substitutedForPreferred,
+    readOnlySandbox: cap?.readOnlySandbox === true,
+    reason,
+    alternatives
+  };
+}
+function qualifiedModel(provider, input, alternatives) {
+  const cfg = input.snapshot.config;
+  const cap = input.capabilities[provider];
+  const configured = cfg.providers[provider]?.model ?? null;
+  const offered = (m) => !cap || cap.models.length === 0 || cap.models.includes(m);
+  if (configured !== null) {
+    if (!offered(configured)) {
+      alternatives.push({ provider, model: configured, reason: `providers.${provider}.model "${configured}" is not offered by the adapter` });
+      return null;
+    }
+    return { provider, model: configured, basis: "configured", detail: `providers.${provider}.model names it` };
+  }
+  const reg = input.registry;
+  const surface = PROVIDER_SURFACE2[provider];
+  if (reg && surface) {
+    const a = reg.assess({ surface, provider, allowedModels: [...cfg.routing.allowed_models, `${provider}:*`], structuredOutput: true });
+    const ranked = a.eligible.filter((e) => offered(e.modelId));
+    if (provider === "claude") {
+      const tiered = ranked.filter((e) => (tierOf(e) ?? 0) >= REVIEW_QUALITY_FLOOR_TIER && allowMatch(e, cfg.routing.allowed_models) !== null);
+      const pick = tiered[0];
+      if (pick) return { provider, model: pick.modelId, basis: "tier", detail: `${pick.family} meets the opus-class floor` };
+    } else {
+      const evaluated = ranked.find((e) => e.evaluation.qualifiedFor.includes("safety-review"));
+      if (evaluated) return { provider, model: evaluated.modelId, basis: "evaluation", detail: "a recorded safety-review evaluation" };
+      const recommended = ranked.find((e) => e.eligibility.providerDefault);
+      if (recommended) return { provider, model: recommended.modelId, basis: "provider-default", detail: `it is ${provider}'s recommended model` };
+    }
+  }
+  alternatives.push({ provider, model: null, reason: `no model of "${provider}" is qualified for review: none is named in providers.${provider}.model, evaluated for safety review, or recommended by the provider${provider === "claude" ? ", and none is opus-class or above" : ""}` });
+  return null;
+}
+function sameProviderModel(input, alternatives) {
+  const impl = input.implementer;
+  const cfg = input.snapshot.config;
+  const reg = input.registry;
+  if (!reg) return { ok: false, reason: "no model registry was supplied, so a different-tier reviewer model cannot be chosen" };
+  const implEntry = impl.model ? reg.get(impl.model) : null;
+  const implTier = implEntry ? tierOf(implEntry) : null;
+  if (implTier === null) {
+    return { ok: false, reason: `the implementer's model tier is unknown (${impl.model ?? "provider default"}), so a different-tier reviewer cannot be shown to differ` };
+  }
+  const surface = PROVIDER_SURFACE2[impl.provider];
+  if (!surface) return { ok: false, reason: `"${impl.provider}" has no tiered models, so a different-tier same-provider review is not defined` };
+  const cap = input.capabilities[impl.provider];
+  const a = reg.assess({ surface, provider: impl.provider, allowedModels: cfg.routing.allowed_models, structuredOutput: true });
+  for (const ex of a.excluded) if (ex.model.provider === impl.provider) alternatives.push({ provider: impl.provider, model: ex.model.modelId, reason: `ineligible: ${ex.reasons.join("; ")}` });
+  const candidates = a.eligible.filter((e) => {
+    const t = tierOf(e);
+    if (t === null) return false;
+    if (cap && cap.models.length > 0 && !cap.models.includes(e.modelId)) return false;
+    if (t < REVIEW_QUALITY_FLOOR_TIER) {
+      alternatives.push({ provider: impl.provider, model: e.modelId, reason: `${e.family} is below the review quality floor (opus-class)` });
+      return false;
+    }
+    if (t === implTier) {
+      alternatives.push({ provider: impl.provider, model: e.modelId, reason: `same tier (${e.family}) as the implementer's model` });
+      return false;
+    }
+    return true;
+  });
+  const pick = candidates[0];
+  if (!pick) return { ok: false, reason: `no allowed ${impl.provider} model is at or above the opus-class floor and in a different tier than the implementer's ${implEntry?.family ?? impl.model}` };
+  return { ok: true, usable: { provider: impl.provider, model: pick.modelId, basis: "tier", detail: `${pick.family} is at or above the opus-class floor and differs from the implementer's ${implEntry?.family}` } };
+}
+var REVIEW_QUALITY_FLOOR_TIER, PROVIDER_SURFACE2;
+var init_select = __esm({
+  "src/review/select.ts"() {
+    "use strict";
+    init_errors();
+    init_registry();
+    REVIEW_QUALITY_FLOOR_TIER = 3;
+    PROVIDER_SURFACE2 = { claude: "claude-cli", codex: "codex-cli" };
+  }
+});
+
+// src/controller/steps/preflight.ts
+import { existsSync as existsSync29, mkdirSync as mkdirSync15, rmSync as rmSync10 } from "node:fs";
+import { dirname as dirname21, join as join36 } from "node:path";
+async function preflightStep(ctx) {
+  const stop = await safePoint(ctx);
+  if (stop) return stop;
+  const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot });
+  recordGate(ctx, intake);
+  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
+  const env = await checkEnvironment(ctx);
+  recordGate(ctx, env.gate);
+  if (!env.gate.passed) {
+    const auth = env.credentials.find((c) => c.provider === env.gate.details.blockedProvider && c.verdict === "blocked");
+    if (auth?.status) return blockOnAuth(ctx, auth.provider, auth.status.state, auth.status.detail);
+    return finishRun(ctx, "BLOCKED", `environment gate: ${env.gate.reasons.join("; ")}`, { outcome: { gate: env.gate } });
+  }
+  const repo = ctx.run.repoRoot;
+  const head = await resolveCommit(repo, "HEAD");
+  const baseTree = await treeOf(repo, head);
+  const dirty = await dirtyPaths(repo);
+  if (dirty.length > 0) {
+    if (!ctx.snapshot.config.repository.allow_dirty_start) {
+      return finishRun(ctx, "BLOCKED", `the repository has uncommitted changes (${dirty.slice(0, 10).join(", ")}${dirty.length > 10 ? ", ..." : ""}); commit or stash them, or set repository.allow_dirty_start`, { outcome: { dirty: dirty.slice(0, 50) } });
+    }
+    decide2(ctx, { id: `dec-${ctx.run.id}-dirty-start`, kind: "preflight.dirty-start", summary: `dirty start allowed by policy; ${dirty.length} uncommitted path(s) are not part of the run, which starts from ${head}`, data: { paths: dirty.slice(0, 200) } });
+  }
+  const wtRoot = runWorktreeRoot(ctx);
+  mkdirSync15(wtRoot, { recursive: true, mode: 448 });
+  const baseline = await runBaseline({
+    db: ctx.db,
+    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
+    repoRoot: repo,
+    baseRev: head,
+    snapshot: ctx.snapshot,
+    isolation: ctx.isolation(),
+    runDir: ctx.runDir,
+    clock: ctx.clock,
+    signal: ctx.signal,
+    pollMs: ctx.timing.checkPollMs,
+    killGraceMs: ctx.timing.killGraceMs,
+    homeDir: homeOf(ctx.deps),
+    checkoutDir: join36(wtRoot, "baseline")
+  });
+  const after = await safePoint(ctx);
+  if (after) return after;
+  const bg = baselineGate(baseline.report);
+  recordGate(ctx, bg);
+  if (!bg.passed && bg.status === "fail") return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}`, { outcome: { gate: bg } });
+  if (baseline.report.failures.length > 0) {
+    decide2(ctx, {
+      id: `dec-${ctx.run.id}-baseline-failures`,
+      kind: "baseline.failures",
+      summary: `pre-existing failures on ${head.slice(0, 12)}: ${baseline.report.failures.map((f) => f.checkId).join(", ")}`,
+      data: { failures: baseline.report.failures }
+    });
+    const raised = raiseBaselineExceptionQuestions({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { failures: baseline.report.failures, baseRevision: head });
+    if (raised.skipped.length > 0) {
+      decide2(ctx, {
+        id: `dec-${ctx.run.id}-baseline-exception-skipped`,
+        kind: "baseline.exception-unavailable",
+        summary: `no baseline exception can be offered for: ${raised.skipped.map((s) => s.checkId).join(", ")} (${raised.skipped[0].why})`,
+        data: { skipped: raised.skipped }
+      });
+    }
+  }
+  const worktree = await ensureWorktree(repo, join36(wtRoot, "implementer"), head);
+  const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
+  return move2(ctx, "CONTRACTING", `preflight passed at ${head.slice(0, 12)}${baseline.report.failures.length ? ` with ${baseline.report.failures.length} pre-existing failure(s)` : ""}`, {
+    patch: { baseRevision: head, baseTree, worktreePath: worktree, branch },
+    data: { base_revision: head, base_tree: baseTree, worktree, environment: env.gate.notes }
+  });
+}
+function recordGate(ctx, g) {
+  decide2(ctx, {
+    kind: `gate.${g.gate}`,
+    summary: `${g.gate} gate ${g.status}${g.reasons.length ? `: ${g.reasons.join("; ")}` : ""}${g.notes.length ? ` (notes: ${g.notes.join("; ")})` : ""}`,
+    data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure }
+  });
+}
+async function dirtyPaths(repo) {
+  const out = await git2(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).orbit"]);
+  return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3));
+}
+async function ensureWorktree(repo, path, base) {
+  if (existsSync29(path)) {
+    try {
+      return (await adminDirFor(repo, path)).worktree;
+    } catch (err) {
+      if (!isOrbitError(err)) throw err;
+      rmSync10(path, { recursive: true, force: true });
+    }
+  }
+  mkdirSync15(dirname21(path), { recursive: true, mode: 448 });
+  await git2(repo, ["worktree", "prune"]);
+  await git2(repo, ["worktree", "add", "--detach", "--force", path, base]);
+  return (await adminDirFor(repo, path)).worktree;
+}
+async function checkEnvironment(ctx) {
+  const config = ctx.snapshot.config;
+  try {
+    ctx.deps.registry.seed();
+  } catch (err) {
+    ctx.log.warn("model registry seed failed", { error: messageOf(err) });
+  }
+  let isolation;
+  try {
+    const iso2 = ctx.isolation();
+    const status2 = await iso2.available();
+    isolation = { kind: iso2.kind, available: status2.ok, detail: status2.detail };
+  } catch (err) {
+    isolation = { error: messageOf(err) };
+  }
+  const capabilities = {};
+  for (const [id, adapter] of Object.entries(ctx.deps.adapters)) {
+    try {
+      capabilities[id] = await adapter.discoverCapabilities();
+    } catch (err) {
+      capabilities[id] = { provider: id, available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: "none", costReporting: false, detail: messageOf(err) };
+    }
+  }
+  const required = /* @__PURE__ */ new Set([IMPLEMENTER_PROVIDER]);
+  if (config.review.independent_provider_required && config.review.preferred_provider !== IMPLEMENTER_PROVIDER) required.add(config.review.preferred_provider);
+  const all = await validateCredentials({ adapters: ctx.deps.adapters, providers: [.../* @__PURE__ */ new Set([...required, ...Object.keys(ctx.deps.adapters)])] });
+  const credentialsById = {};
+  for (const c of all) credentialsById[c.provider] = c.status ?? void 0;
+  let reviewer = null;
+  if (config.review.independent_provider_required) {
+    reviewer = selectReviewer({ snapshot: ctx.snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: ctx.deps.registry });
+    if (reviewer.decision === "SELECT") {
+      required.delete(config.review.preferred_provider);
+      required.add(reviewer.provider);
+    }
+  }
+  const credentials = all.filter((c) => required.has(c.provider));
+  const gate = environmentGate({ snapshot: ctx.snapshot, mode: ctx.run.mode, isolation, credentials, reviewer });
+  atomicWriteJson(join36(ctx.runDir, "environment.json"), {
+    checked_at: ctx.clock.now(),
+    gate,
+    capabilities,
+    credentials: all.map((c) => ({ provider: c.provider, verdict: c.verdict, state: c.status?.state ?? null, method: c.status?.method ?? null, error: c.error })),
+    reviewer: reviewer ? selectionDecisionRecord(reviewer).summary : null
+  });
+  return { gate, credentials: all, capabilities, reviewer };
+}
+var IMPLEMENTER_PROVIDER;
+var init_preflight = __esm({
+  "src/controller/steps/preflight.ts"() {
+    "use strict";
+    init_fsx();
+    init_errors();
+    init_git();
+    init_baseline();
+    init_baseline_exception();
+    init_credentials();
+    init_select();
+    init_context2();
+    init_gates();
+    init_common();
+    init_workers2();
+    IMPLEMENTER_PROVIDER = "claude";
+  }
+});
+
+// src/controller/steps/contracting.ts
+import { readFileSync as readFileSync19 } from "node:fs";
+import { join as join37 } from "node:path";
+async function contractingStep(ctx) {
+  const stop = await safePoint(ctx);
+  if (stop) return stop;
+  if (ctx.contract) return accept(ctx, ctx.contract, null);
+  const route2 = routeFor(ctx, "plan", "routine-code", { difficulty: "medium", attempt: 1, repeatedFingerprints: 0 });
+  const got = await obtain(ctx, {
+    base: "plan",
+    maxAttempts: MAX_REGENERATIONS,
+    what: "the planner",
+    request: (purpose) => ({
+      role: "planner",
+      purpose,
+      provider: route2.provider,
+      model: route2.model,
+      effort: route2.effort,
+      cwd: worktreeOf(ctx),
+      readOnly: true,
+      prompt: (workerId) => plannerPrompt(ctx, workerId)
+    }),
+    accept: (r) => validateModelOutput("planner", r.structured)
+  });
+  if (!got.ok) return got.step;
+  const plan = got.value;
+  atomicWriteJson(join37(ctx.runDir, PLANNER_FILE), { worker_id: got.worker.id, output: plan });
+  let drafted;
+  try {
+    drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? "", taskId: ctx.run.id, policyHash: ctx.run.policyHash });
+  } catch (err) {
+    if (!(err instanceof OrbitError) || err.code !== "CONTRACT_INVALID") throw err;
+    return finishRun(ctx, "BLOCKED", `intake gate rejected the planner's contract: ${err.message}`, { outcome: { problems: err.details ?? null } });
+  }
+  for (const a of drafted.adjustments) {
+    decide2(ctx, { id: `dec-${ctx.run.id}-draft-${hashObject(a).slice(7, 23)}`, kind: `contract.${a.kind}`, summary: `${a.subject}: ${a.reason}`, data: a });
+  }
+  for (const [i, d] of plan.unresolved_decisions.entries()) {
+    if (d.material) continue;
+    decide2(ctx, { id: `dec-${ctx.run.id}-plan-choice-${i + 1}`, kind: "inquisition.resolve", summary: `reversible choice: ${d.question} -> ${d.recommendation ?? d.options[0] ?? "convention"}`, data: { question: d.question, options: d.options, choice: d.recommendation ?? d.options[0] ?? null, basis: "planner recommendation; reversible" } });
+  }
+  return accept(ctx, drafted.contract, plan);
+}
+async function accept(ctx, contract, plan) {
+  const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot, contract });
+  recordGate(ctx, intake);
+  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate rejected the contract: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
+  atomicWriteJson(join37(ctx.runDir, "contract.json"), contract);
+  const patch = { contractJson: JSON.stringify(contract), contractHash: hashObject(contract) };
+  const material = (plan?.unresolved_decisions ?? []).filter((d) => d.material);
+  const open = contract.assumptions.filter((a) => a.status === "needs-decision");
+  if (material.length > 0 || plan !== null && open.length > 0) {
+    const keys = new Map((plan?.criteria ?? []).map((c, i) => [c.key, `AC-${i + 1}`]));
+    const subjects = [...new Set(material.flatMap((d) => d.affected_criteria.map((k) => keys.get(k) ?? k)).filter((s) => /^AC-\d+$/.test(s)))];
+    const trigger = {
+      kind: "hidden_decision",
+      mode: "clarify",
+      summary: `the planner left ${material.length || open.length} material decision(s) unresolved`,
+      evidence: [...material.map((d) => d.question), ...open.map((a) => `${a.id}: ${a.statement}`)].slice(0, 20),
+      subjects,
+      key: `contracting:${hashObject(material.map((d) => d.question)).slice(7, 23)}`
+    };
+    return move2(ctx, "INQUISITION", trigger.summary, { patch, data: { trigger } });
+  }
+  return move2(ctx, "PLANNING", `contract accepted: ${contract.acceptance_criteria.length} criteria, checks ${contract.required_check_ids.join(", ") || "none"}`, { patch });
+}
+function worktreeOf(ctx) {
+  if (!ctx.run.worktreePath) throw new OrbitError("INTERNAL", `run ${ctx.run.id} has no worktree; preflight did not finish`);
+  return ctx.run.worktreePath;
+}
+function plannerPrompt(ctx, workerId) {
+  const checks = Object.values(ctx.snapshot.config.checks).map((c) => `${c.id}${c.mandatory ? " (mandatory)" : ""}`);
+  const task = [
+    "Draft the goal contract for the goal below. Read the repository as needed; do not edit anything.",
+    "Return the current behaviour, criteria that are observable and testable, the proof for each, the trusted check ids that would show it,",
+    "the files you expect to change, the narrowest allowed paths, non-goals, risks, assumptions and any decision you cannot settle from evidence.",
+    `Trusted checks the policy defines: ${checks.join(", ") || "none"}. Name only these as check ids.`,
+    "",
+    `Goal (from the user): ${ctx.run.goal}`
+  ].join("\n");
+  return renderWorkerPrompt({
+    role: "planner",
+    task,
+    contract: null,
+    policySummary: policySummary(ctx, { readOnly: true }),
+    candidate: { revision: ctx.run.baseRevision, treeHash: ctx.run.baseTree, base: ctx.run.baseRevision },
+    advisoryBlock: advisoryBlockFor(ctx, { role: "planner", workerId, paths: ctx.snapshot.config.scope.allowed_paths, checkIds: Object.keys(ctx.snapshot.config.checks), fingerprints: [] })
+  });
+}
+function storedPlan(ctx) {
+  try {
+    const raw = JSON.parse(readFileSync19(join37(ctx.runDir, PLANNER_FILE), "utf8")).output;
+    return raw ? validateModelOutput("planner", raw) : null;
+  } catch {
+    return null;
+  }
+}
+var PLANNER_FILE;
+var init_contracting = __esm({
+  "src/controller/steps/contracting.ts"() {
+    "use strict";
+    init_fsx();
+    init_hash();
+    init_errors();
+    init_draft();
+    init_model_outputs();
+    init_prompt();
+    init_gates();
+    init_workers2();
+    init_knowledge_hooks();
+    init_common();
+    init_obtain();
+    init_preflight();
+    PLANNER_FILE = "planner.json";
+  }
+});
+
+// src/controller/parallel-writers.ts
+import { copyFileSync, lstatSync as lstatSync6, mkdirSync as mkdirSync16, readlinkSync as readlinkSync2, rmSync as rmSync11, statSync as statSync12, symlinkSync, chmodSync as chmodSync6, existsSync as existsSync30 } from "node:fs";
+import { dirname as dirname22, join as join38, resolve as resolve11, sep as sep8 } from "node:path";
+function splitAttempt(ctx, contract, fresh) {
+  if (!fresh || ctx.run.mode === "supervised") return null;
+  if (ctx.snapshot.config.agents.default_parallelism < 2) return null;
+  const plan = storedPlan(ctx);
+  if (!plan || plan.criteria.length !== contract.acceptance_criteria.length) return null;
+  if (blockingQuestions(ctx.db, ctx.run.id).criteria.length > 0) return null;
+  return planWorkUnits(contract.acceptance_criteria.map((c, i) => ({ id: c.id, paths: plan.criteria[i].changes.map((x) => x.path) })));
+}
+function recordedUnits(ctx, n2) {
+  const row = ctx.db.get("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id LIMIT 1", ctx.run.id, UNITS_EVENT, n2);
+  return row ? JSON.parse(row.data_json).units ?? null : null;
+}
+function serializedUnits(ctx, n2) {
+  return unitEvents(ctx, UNIT_SERIALIZED_EVENT, n2);
+}
+function unitPurpose(n2, u) {
+  return `implement:${n2}/${u.id}#1`;
+}
+function unitWorktree(ctx, n2, u) {
+  return join38(runWorktreeRoot(ctx), `unit-${n2}-${u.id}`);
+}
+async function runParallelUnits(ctx, n2, units, opts) {
+  const settled = () => /* @__PURE__ */ new Set([...unitEvents(ctx, UNIT_INTEGRATED_EVENT, n2).map((e) => e.unit), ...serializedUnits(ctx, n2).map((e) => e.unit)]);
+  for (const u of units) {
+    if (settled().has(u.id)) continue;
+    const existing = workersFor(ctx, unitPurpose(n2, u)).at(-1);
+    if (!existing) continue;
+    const st = await ensureWorker(ctx, request(ctx, n2, u, units, opts));
+    if (st.status === "running") continue;
+    const r = st.result;
+    if (r.status === "auth_failed") return { kind: "step", result: await blockOnAuth(ctx, st.worker.provider, "auth_failed", r.error) };
+    if (r.status === "cancelled") {
+      const stop = await safePoint(ctx);
+      if (stop) return { kind: "step", result: stop };
+    }
+    if (r.status === "transient_error" || r.status === "cancelled" || r.status === "lost") {
+      await serialize2(ctx, n2, u, `its session ended ${r.status}${r.error ? ` (${r.error.slice(0, 200)})` : ""}`);
+      continue;
+    }
+    await integrate(ctx, n2, u, st.worker);
+  }
+  const done = settled();
+  const waiting = units.filter((u) => !done.has(u.id) && workersFor(ctx, unitPurpose(n2, u)).length === 0);
+  const active = units.filter((u) => !done.has(u.id) && workersFor(ctx, unitPurpose(n2, u)).length > 0);
+  if (waiting.length > 0) {
+    const started = await admitAndStart(ctx, n2, units, waiting, opts);
+    if (started.count === 0 && active.length === 0) {
+      if (!started.budget) return { kind: "step", result: WAIT(`work units of attempt ${n2} deferred: ${started.why}`) };
+      for (const u of waiting) await serialize2(ctx, n2, u, `not admitted as a parallel writer: ${started.why}`);
+    }
+  }
+  const now = settled();
+  if (units.every((u) => now.has(u.id))) {
+    for (const u of units) await removeWorktree(ctx, n2, u);
+    const dropped = serializedUnits(ctx, n2);
+    if (dropped.length > 0) return { kind: "serialize", units: dropped };
+    const last = unitEvents(ctx, UNIT_INTEGRATED_EVENT, n2).at(-1);
+    return { kind: "done", workerId: last.worker_id };
+  }
+  const running = units.filter((u) => !now.has(u.id)).map((u) => u.id);
+  return { kind: "step", result: WAIT(`attempt ${n2}: work units ${running.join(", ")} are running in their own worktrees`) };
+}
+function request(ctx, n2, u, all, opts) {
+  const purpose = unitPurpose(n2, u);
+  const cap = ctx.db.get("SELECT json_extract(data_json, '$.cap_usd') AS cap FROM events WHERE run_id = ? AND type = 'worker.spend-cap' AND json_extract(data_json, '$.purpose') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, purpose);
+  return {
+    role: "implementer",
+    purpose,
+    attempt: n2,
+    provider: opts.route.provider,
+    model: opts.route.model,
+    effort: opts.route.effort,
+    cwd: unitWorktree(ctx, n2, u),
+    readOnly: false,
+    prompt: (workerId) => opts.prompt(u, all, workerId),
+    maxBudgetUsd: typeof cap?.cap === "number" ? cap.cap : null,
+    ownedPaths: u.ownedPaths
+  };
+}
+async function admitAndStart(ctx, n2, all, waiting, opts) {
+  const running = opts.running();
+  const own = running.filter((r) => r.runId === ctx.run.id).map((r) => r.unit);
+  const pending = waiting.map((u) => ({
+    id: unitPurpose(n2, u).replace(/#1$/, ""),
+    role: "implementer",
+    writer: true,
+    ownedPaths: u.ownedPaths,
+    dependsOn: [],
+    revision: null,
+    cancelWhen: [],
+    budget: { costUsd: null, wallMs: null, maxTurns: opts.maxTurns },
+    provider: opts.route.provider,
+    worktree: unitWorktree(ctx, n2, u),
+    status: "pending"
+  }));
+  const plan = schedulerFor(ctx).plan([...own, ...pending], { admit: budgetAdmission(ctx.ledger), parallelism: ctx.snapshot.config.agents.default_parallelism });
+  const admitted = plan.start.filter((s) => pending.some((p) => p.id === s.id));
+  const machine = admitted.length > 0 ? machineAdmission(ctx, running.map((r) => r.unit), admitted) : null;
+  let count3 = 0;
+  let unfunded = false;
+  const total = sessionSpendCap(ctx, opts.route.model, "implementer");
+  const share = total.capUsd === null ? null : Math.floor(total.capUsd / waiting.length * 100) / 100;
+  for (const unit of admitted) {
+    if (machine && !machine.start.has(unit.id)) continue;
+    const u = waiting.find((w) => unitPurpose(n2, w).startsWith(`${unit.id}#`));
+    const cap = { capUsd: share, worstCaseUsd: total.worstCaseUsd };
+    if (cap.capUsd !== null && cap.capUsd <= 0) {
+      unfunded = true;
+      continue;
+    }
+    const merge2 = plan.merge_overhead.find((m) => m.id === unit.id);
+    if (merge2) note2(ctx, MERGE_OVERHEAD_EVENT, { attempt: n2, unit: u.id, alongside: merge2.alongside, usd: merge2.usd });
+    if (cap.capUsd !== null) recordSpendCap(ctx, unitPurpose(n2, u), cap.capUsd, cap.worstCaseUsd);
+    const dir = unitWorktree(ctx, n2, u);
+    if (!existsSync30(dir)) await materializeCandidate(ctx.run.repoRoot, ctx.run.baseRevision, dir, { readOnly: false });
+    await ensureWorker(ctx, request(ctx, n2, u, all, opts));
+    count3++;
+  }
+  const deferred = plan.deferred.filter((d) => pending.some((p) => p.id === d.id)).map((d) => d.reason);
+  const reasons = [...deferred, ...machine ? [...machine.deferred.values()] : [], ...unfunded ? ["no model budget left for another session"] : []];
+  const budget = unfunded || deferred.some((r) => /^not admitted by budget/.test(r));
+  return { kind: "started", count: count3, why: reasons[0] ?? "not admitted", budget };
+}
+async function integrate(ctx, n2, u, w) {
+  const target = ctx.run.worktreePath;
+  const source = w.cwd;
+  const intent = unitEvents(ctx, UNIT_INTEGRATING_EVENT, n2).find((e) => e.unit === u.id);
+  let paths;
+  if (intent) paths = intent.paths;
+  else {
+    paths = await changedFiles2(source);
+    const busy = new Set(await changedFiles2(target));
+    const clash = paths.filter((p) => busy.has(p));
+    if (clash.length > 0) {
+      await serialize2(ctx, n2, u, `conflict: ${clash.slice(0, 10).join(", ")} already changed by integrated work`);
+      await removeWorktree(ctx, n2, u);
+      return;
+    }
+    note2(ctx, UNIT_INTEGRATING_EVENT, { attempt: n2, unit: u.id, worker_id: w.id, paths });
+  }
+  for (const p of paths) copyPath(source, target, p);
+  note2(ctx, UNIT_INTEGRATED_EVENT, { attempt: n2, unit: u.id, worker_id: w.id, paths });
+  invalidateEvidence(ctx.db, ctx.run.id, `work unit ${u.id} of attempt ${n2} integrated (${paths.length} file(s))`, ctx.clock);
+  await removeWorktree(ctx, n2, u);
+}
+async function serialize2(ctx, n2, u, reason) {
+  if (serializedUnits(ctx, n2).some((s) => s.unit === u.id)) return;
+  note2(ctx, UNIT_SERIALIZED_EVENT, { attempt: n2, unit: u.id, criteria: u.criteria, reason });
+  decide2(ctx, { id: `dec-${ctx.run.id}-serialize-${n2}-${u.id}`, kind: "scheduling.serialize", summary: `work unit ${u.id} (${u.criteria.join(", ")}) of attempt ${n2} goes to the serial implementer: ${reason}`, data: { attempt: n2, unit: u.id, criteria: u.criteria, reason } });
+}
+async function removeWorktree(ctx, n2, u) {
+  const dir = unitWorktree(ctx, n2, u);
+  if (existsSync30(dir)) await cleanupCandidateCheckout(ctx.run.repoRoot, dir).catch(() => {
+  });
+}
+async function changedFiles2(dir) {
+  const out = await git2(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"]);
+  return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3)).sort();
+}
+function copyPath(source, target, rel) {
+  const from = resolve11(source, rel);
+  const to = resolve11(target, rel);
+  if (!inside(from, source) || !inside(to, target)) return;
+  let st = null;
+  try {
+    st = lstatSync6(from);
+  } catch {
+    st = null;
+  }
+  rmSync11(to, { force: true });
+  if (st === null) return;
+  mkdirSync16(dirname22(to), { recursive: true });
+  if (st.isSymbolicLink()) symlinkSync(readlinkSync2(from), to);
+  else if (st.isFile()) {
+    copyFileSync(from, to);
+    chmodSync6(to, statSync12(from).mode & 511);
+  }
+}
+function inside(p, root) {
+  return p.startsWith(root.endsWith(sep8) ? root : `${root}${sep8}`);
+}
+function unitEvents(ctx, type, n2) {
+  return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id", ctx.run.id, type, n2).map((r) => JSON.parse(r.data_json));
+}
+function recordUnits(ctx, n2, units) {
+  appendEvent(ctx.db, ctx.run.id, UNITS_EVENT, ctx.ownerId, { attempt: n2, units }, ctx.clock.now());
+}
+var UNITS_EVENT, UNIT_INTEGRATING_EVENT, UNIT_INTEGRATED_EVENT, UNIT_SERIALIZED_EVENT, MERGE_OVERHEAD_EVENT;
+var init_parallel_writers = __esm({
+  "src/controller/parallel-writers.ts"() {
+    "use strict";
+    init_events();
+    init_git();
+    init_candidate();
+    init_freshness();
+    init_scheduler();
+    init_work_units();
+    init_context2();
+    init_gates();
+    init_workers2();
+    init_contracting();
+    init_common();
+    UNITS_EVENT = "implementation.units";
+    UNIT_INTEGRATING_EVENT = "implementation.unit-integrating";
+    UNIT_INTEGRATED_EVENT = "implementation.unit-integrated";
+    UNIT_SERIALIZED_EVENT = "implementation.unit-serialized";
+    MERGE_OVERHEAD_EVENT = "scheduler.merge-overhead";
+  }
+});
+
+// src/controller/authorization.ts
+import { existsSync as existsSync31 } from "node:fs";
+import { join as join39 } from "node:path";
+function operationKey(op) {
+  return `op-${sha256(canonicalJson(op)).slice(0, 16)}`;
+}
+function deniedDependencyOperations(scope, snapshot2) {
+  const out = [];
+  const consider = (op, summary) => {
+    const d = authorize(snapshot2, op);
+    if (!d.allowed) out.push({ op, key: operationKey(op), summary, denial: `${d.rule}: ${d.reason}` });
+  };
+  if (scope.lockfile_changed) consider({ kind: "dependency", change: "change_lockfile", detail: "lockfile changed by the candidate" }, "change the dependency lockfile");
+  if (scope.dependency_manifest_changed.length > 0) {
+    const files = [...scope.dependency_manifest_changed].sort();
+    consider({ kind: "dependency", change: "add_package", detail: files.join(", ") }, `change dependencies in ${files.join(", ")}`);
+  }
+  return out;
+}
+function requests(ctx) {
+  return listDecisions(ctx.db, ctx.run.id, { kind: AUTHORIZATION_REQUEST_KIND }).map((d) => d.data);
+}
+function attemptSubject(n2) {
+  return `attempt:${n2}`;
+}
+function grantFor(ctx, op, subject) {
+  const req = requests(ctx).filter((r) => r.op_key === op.key && (r.subject ?? r.tree_hash) === subject).at(-1);
+  if (!req) return { state: "none" };
+  const q = findQuestion(ctx.db, req.question_id);
+  if (!q || q.status === "withdrawn") return { state: "none" };
+  if (q.status === "open") return { state: "pending", questionId: q.id };
+  const by = q.answeredBy;
+  if (q.answer !== APPROVE_ONCE || !by || !isHumanActor(by)) return { state: "denied", questionId: q.id, by };
+  const id = `dec-${ctx.run.id}-grant-${q.id}`;
+  if (!getDecision(ctx.db, id)) {
+    const forAttempt = req.attempt !== void 0;
+    const what = forAttempt ? `implementation attempt ${req.attempt} only` : `candidate tree ${subject.slice(0, 12)} only`;
+    const where = forAttempt ? { attempt: req.attempt, subject } : { tree_hash: subject };
+    decide2(ctx, { id, kind: AUTHORIZATION_GRANT_KIND, summary: `${by} authorized once: ${op.summary} (${what})`, data: { question_id: q.id, op_key: op.key, operation: op.op, ...where, approved_by: by, policy_denial: op.denial } });
+  }
+  return { state: "granted", decisionId: id, approvedBy: by, questionId: q.id };
+}
+function authorizedOnce(ctx, op, treeHash) {
+  if (authorize(ctx.snapshot, op.op).allowed) return true;
+  return grantFor(ctx, op, treeHash).state === "granted";
+}
+function requestAuthorization(ctx, op, cand) {
+  return ask(
+    ctx,
+    op,
+    {
+      question: `May this run ${op.summary} for candidate ${cand.seq} (tree ${cand.treeHash.slice(0, 12)}), which the policy does not authorize?`,
+      evidence: [`the policy denies it: ${op.denial}`, `operation ${op.key}: ${JSON.stringify(op.op)}`, `the implementation-scope gate found this change in candidate ${cand.seq}; supervised mode asks instead of repairing it away`],
+      approve: { description: `Authorize this one operation for candidate ${cand.seq} only`, consequences: "verification continues with the change; any other candidate or operation is asked about again" },
+      deny: "the change goes back to the implementer as a scope repair, or the run stops if no attempt is left",
+      recommendationReason: "the frozen policy does not allow it; approve only when the dependency change is intended",
+      affected: `authorization ${op.key} for tree ${cand.treeHash.slice(0, 12)}`
+    },
+    { id: `dec-${ctx.run.id}-authreq-${op.key}-${cand.treeHash.slice(0, 12)}`, summary: `asked a person to authorize once: ${op.summary} (candidate ${cand.seq})`, data: { tree_hash: cand.treeHash, subject: cand.treeHash, candidate_id: cand.id } }
+  );
+}
+function requestAttemptAuthorization(ctx, op, n2, worker) {
+  const subject = attemptSubject(n2);
+  return ask(
+    ctx,
+    op,
+    {
+      question: `May the ${worker.role} of implementation attempt ${n2} ${op.summary}, which the policy does not authorize?`,
+      evidence: [`the policy denies it: ${op.denial}`, `operation ${op.key}: ${JSON.stringify(op.op)}`, `the guard refused it inside worker ${worker.id} (attempt ${n2}); supervised mode asks instead of only denying it`],
+      approve: { description: `Authorize this one operation for implementation attempt ${n2} only`, consequences: "the attempt is retried with exactly this operation allowed; any other operation or attempt is asked about again" },
+      deny: "the attempt is retried as a scope repair: the implementer finishes the work without the operation",
+      recommendationReason: "the frozen policy does not allow it; approve only when the operation is intended and needed",
+      affected: `authorization ${op.key} for attempt ${n2}`
+    },
+    { id: `dec-${ctx.run.id}-authreq-${op.key}-a${n2}`, summary: `asked a person to authorize once: ${op.summary} (attempt ${n2})`, data: { subject, attempt: n2, worker_id: worker.id } }
+  );
+}
+function ask(ctx, op, text2, request2) {
+  const q = {
+    question: text2.question,
+    changes: ["authority"],
+    evidence: text2.evidence,
+    options: [
+      { label: APPROVE_ONCE, description: text2.approve.description, consequences: text2.approve.consequences },
+      { label: DENY2, description: "Keep the policy as it is and refuse the operation", consequences: text2.deny }
+    ],
+    recommendation: DENY2,
+    recommendation_reason: text2.recommendationReason,
+    safe_default: { exists: true, option: DENY2, reason: "denying keeps the authority the run started with" },
+    material: true,
+    affected_work: [text2.affected],
+    unblocked_work: []
+  };
+  const question = persistQuestion(ctx.db, ctx.run.id, "risk-review", q, ctx.clock, { actor: ctx.ownerId }).question;
+  const subject = request2.data.subject ?? request2.data.tree_hash;
+  const existing = requests(ctx).some((r) => r.question_id === question.id && (r.subject ?? r.tree_hash) === subject);
+  if (!existing) {
+    decide2(ctx, { id: request2.id, kind: AUTHORIZATION_REQUEST_KIND, summary: request2.summary, data: { question_id: question.id, op_key: op.key, operation: op.op, policy_denial: op.denial, ...request2.data } });
+  }
+  return question;
+}
+function scopeWithGrants(scope, granted) {
+  const lockfile = granted.some((g) => g.op.kind === "dependency" && g.op.change === "change_lockfile");
+  const manifests = granted.some((g) => g.op.kind === "dependency" && g.op.change === "add_package");
+  return { ...scope, lockfile_changed: lockfile ? false : scope.lockfile_changed, dependency_manifest_changed: manifests ? [] : scope.dependency_manifest_changed };
+}
+function deniedWorkerOperations(ctx, worker) {
+  const out = /* @__PURE__ */ new Map();
+  for (const d of listDecisions(ctx.db, ctx.run.id, { kind: "policy.deny" })) {
+    const data = d.data ?? {};
+    if (data.worker_id !== worker.id || data.source !== "guard-hook") continue;
+    const rule = data.rule ?? "";
+    if (!ASKABLE_RULE.test(rule) || NEVER_GRANTED.has(rule) || !data.target) continue;
+    const host = URL_HOST.exec(data.target)?.[1]?.toLowerCase() ?? null;
+    let op;
+    let summary;
+    if (data.tool === "Bash") {
+      if (rule.startsWith("network.") && !host) continue;
+      op = { kind: "bash", command: data.target };
+      summary = `run \`${data.target}\``;
+    } else if (rule.startsWith("network.") && host) {
+      op = { kind: "network", host };
+      summary = `reach ${host}`;
+    } else continue;
+    const now = authorize(ctx.snapshot, op, { worktreeRoot: worker.cwd });
+    if (now.allowed) continue;
+    const key2 = operationKey(op);
+    if (!out.has(key2)) out.set(key2, { op, key: key2, summary, denial: `${rule}: ${data.reason ?? now.reason}`, rule });
+  }
+  return [...out.values()];
+}
+function grantPolicy(ctx, granted, dir) {
+  const snapshot2 = JSON.parse(JSON.stringify(ctx.snapshot));
+  const config = snapshot2.config;
+  for (const g of granted) {
+    const rule = g.rule ?? "";
+    if (rule.startsWith("actions.") && !NEVER_GRANTED.has(rule)) {
+      const name = rule.slice("actions.".length).split(".")[0];
+      if (name !== "change_secrets" && Object.hasOwn(config.actions, name)) config.actions[name] = true;
+    } else if (rule.startsWith("network.")) {
+      const host = g.op.kind === "network" ? g.op.host : g.op.kind === "bash" ? URL_HOST.exec(g.op.command)?.[1]?.toLowerCase() ?? null : null;
+      if (host && !config.network.allowed_hosts.includes(host)) config.network.allowed_hosts = [...config.network.allowed_hosts, host];
+    }
+  }
+  const path = join39(dir, GRANT_POLICY_FILE);
+  const hash = snapshotHash(snapshot2);
+  if (!existsSync31(path)) atomicWrite(path, `${JSON.stringify(snapshot2, null, 2)}
+`, 292);
+  return { path, hash, snapshot: snapshot2 };
+}
+function ungrantedCommands(events, snapshot2, worktreeRoot, granted) {
+  const denied = new Set(denialsFromTranscript(events).map((d) => d.toolUseId));
+  const out = [];
+  for (const e of events) {
+    if (e.type !== "assistant") continue;
+    const message = e.message;
+    const content = Array.isArray(message?.content) ? message.content : [];
+    for (const b of content) {
+      if (!b || b.type !== "tool_use" || typeof b.id !== "string" || denied.has(b.id)) continue;
+      const input = b.input ?? {};
+      let op = null;
+      if (b.name === "Bash" && typeof input.command === "string") op = { kind: "bash", command: input.command };
+      else if (typeof input.url === "string") {
+        const host = URL_HOST.exec(input.url)?.[1]?.toLowerCase();
+        if (host) op = { kind: "network", host };
+      }
+      if (!op) continue;
+      const d = authorize(snapshot2, op, { worktreeRoot });
+      if (d.allowed || !ASKABLE_RULE.test(d.rule)) continue;
+      const shown = op.kind === "bash" ? denialTarget(op.command) : op.host;
+      const named = granted.some((g) => op.kind === "bash" && g.op.kind === "bash" && g.op.command === shown || op.kind === "network" && g.op.kind === "network" && g.op.host === op.host);
+      if (!named) out.push(shown);
+    }
+  }
+  return out;
+}
+function sessionEvents(worker) {
+  const path = join39(worker.workerDir, LOG_FILE);
+  return existsSync31(path) ? readLogLines(path).events : [];
+}
+var APPROVE_ONCE, DENY2, AUTHORIZATION_REQUEST_KIND, AUTHORIZATION_GRANT_KIND, ASKABLE_RULE, NEVER_GRANTED, URL_HOST, GRANT_POLICY_FILE;
+var init_authorization = __esm({
+  "src/controller/authorization.ts"() {
+    "use strict";
+    init_hash();
+    init_fsx();
+    init_authorize();
+    init_snapshot();
+    init_questions();
+    init_store4();
+    init_decisions();
+    init_supervise();
+    init_shim();
+    init_common();
+    init_denials();
+    APPROVE_ONCE = "approve-once";
+    DENY2 = "deny";
+    AUTHORIZATION_REQUEST_KIND = "authorization.request";
+    AUTHORIZATION_GRANT_KIND = "authorization.grant";
+    ASKABLE_RULE = /^(?:actions|network)\./;
+    NEVER_GRANTED = /* @__PURE__ */ new Set(["actions.change_secrets"]);
+    URL_HOST = /\bhttps?:\/\/([A-Za-z0-9.-]+)/;
+    GRANT_POLICY_FILE = "policy-grant.json";
+  }
+});
+
 // src/controller/steps/implementing.ts
-import { join as join34 } from "node:path";
+import { existsSync as existsSync32 } from "node:fs";
+import { join as join40 } from "node:path";
 function briefPath(ctx, attempt) {
-  return join34(ctx.runDir, "briefs", `attempt-${attempt}.json`);
+  return join40(ctx.runDir, "briefs", `attempt-${attempt}.json`);
 }
 function currentAttempt(ctx) {
   const row = ctx.db.get("SELECT MAX(CAST(json_extract(data_json, '$.attempt') AS INTEGER)) AS n FROM events WHERE run_id = ? AND type = ?", ctx.run.id, ATTEMPT_EVENT);
@@ -45626,11 +48221,17 @@ async function startAttempt(ctx, n2) {
     return WAIT(`attempt ${n2} deferred: ${why}`);
   }
   if (cap.capUsd !== null && cap.capUsd <= 0) return finishRun(ctx, "EXHAUSTED", `attempt ${n2} not started: no model budget left under the hard cap less the closing reserve`);
-  ctx.db.tx(() => {
-    if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, ATTEMPT_EVENT, n2)) return;
+  const units = splitAttempt(ctx, assertContract(ctx), n2 === 1 && !existsSync32(briefPath(ctx, n2)));
+  const counted = ctx.db.tx(() => {
+    if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, ATTEMPT_EVENT, n2)) return false;
     ledger.consume("implementation_attempts", 1);
     appendEvent(ctx.db, ctx.run.id, ATTEMPT_EVENT, ctx.ownerId, { attempt: n2, route: route2.decisionId, spend_cap_usd: cap.capUsd }, ctx.clock.now());
+    if (units) recordUnits(ctx, n2, units);
+    return true;
   });
+  if (counted && units) {
+    decide2(ctx, { id: `dec-${ctx.run.id}-units-${n2}`, kind: "scheduling.work-units", summary: `attempt ${n2} runs as ${units.length} parallel writers with disjoint files: ${units.map((u) => `${u.id} (${u.criteria.join(", ")})`).join("; ")}`, data: { attempt: n2, units } });
+  }
   if (cap.capUsd !== null) recordSpendCap(ctx, `implement:${n2}#1`, cap.capUsd, cap.worstCaseUsd);
   return null;
 }
@@ -45657,6 +48258,12 @@ function runningUnits(ctx) {
 async function continueAttempt(ctx, n2, contract) {
   const route2 = routeFor(ctx, `implement:${n2}`, "routine-code", routeSignals(ctx, n2));
   const base = `implement:${n2}`;
+  const units = recordedUnits(ctx, n2);
+  if (units && latestAttempt(ctx, base) === 0) {
+    const r = await runParallelUnits(ctx, n2, units, { route: route2, contract, prompt: (u, all, workerId) => implementerPrompt(ctx, n2, workerId, null, { unit: u, all }), running: () => runningUnits(ctx), maxTurns: ctx.ledger.maxTurnsPerSession() });
+    if (r.kind === "step") return r.result;
+    if (r.kind === "done") return snapshot(ctx, n2, r.workerId);
+  }
   let k = Math.max(1, latestAttempt(ctx, base));
   for (; ; ) {
     const purpose = `${base}#${k}`;
@@ -45664,6 +48271,7 @@ async function continueAttempt(ctx, n2, contract) {
       const wait = retryWait(ctx, base);
       if (wait) return wait;
     }
+    const auth = authorizationFor(ctx, n2, k);
     const st = await ensureWorker(ctx, {
       role: "implementer",
       purpose,
@@ -45673,9 +48281,10 @@ async function continueAttempt(ctx, n2, contract) {
       effort: route2.effort,
       cwd: ctx.run.worktreePath,
       readOnly: false,
-      prompt: (workerId) => implementerPrompt(ctx, n2, workerId),
+      prompt: (workerId) => implementerPrompt(ctx, n2, workerId, auth),
       maxBudgetUsd: capOf(ctx, n2, purpose),
-      ownedPaths: contract.allowed_paths
+      ownedPaths: contract.allowed_paths,
+      ...auth && auth.granted.length > 0 ? { policy: (dir) => grantPolicy(ctx, auth.granted, dir) } : {}
     });
     if (st.status === "running") return WAIT(`implementer ${st.worker.id} (attempt ${n2}) is running`);
     const r = st.result;
@@ -45701,9 +48310,52 @@ async function continueAttempt(ctx, n2, contract) {
       k++;
       continue;
     }
+    const sup = await superviseDenials(ctx, n2, k, st.worker);
+    if (sup.kind === "stop") return sup.result;
+    if (sup.kind === "retry") {
+      k++;
+      continue;
+    }
     if (r.status !== "succeeded") note2(ctx, "implementation.worker-ended", { attempt: n2, status: r.status, error: r.error?.slice(0, 300) ?? null, note: "its edits are verified like any other" });
     return snapshot(ctx, n2, st.worker.id);
   }
+}
+function authorizationRetries(ctx, n2) {
+  return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id", ctx.run.id, AUTHORIZATION_RETRY_EVENT, n2).map((r) => JSON.parse(r.data_json));
+}
+function authorizationFor(ctx, n2, k) {
+  return authorizationRetries(ctx, n2).filter((r) => r.next <= k).at(-1) ?? null;
+}
+async function superviseDenials(ctx, n2, k, worker) {
+  if (ctx.run.mode !== "supervised") return { kind: "proceed" };
+  const retries = authorizationRetries(ctx, n2);
+  if (retries.some((r) => r.after === k)) return { kind: "retry" };
+  const auth = retries.filter((r) => r.next <= k).at(-1);
+  if (auth && auth.granted.length > 0) {
+    const extra = ungrantedCommands(sessionEvents(worker), ctx.snapshot, worker.cwd, auth.granted);
+    if (extra.length > 0) {
+      decide2(ctx, { id: `dec-${ctx.run.id}-deny-ungranted-${worker.id}`, kind: "policy.deny", summary: `implementer ${worker.id} ran under a one-shot grant and did what no grant names: ${extra.join("; ")}`, data: { source: "grant-check", worker_id: worker.id, attempt: n2, ungranted: extra, granted: auth.granted.map((g) => g.key) } });
+      return { kind: "stop", result: await finishRun(ctx, "BLOCKED", `policy violation in attempt ${n2}: under a one-shot grant the implementer also ran what the policy denies and no person authorized (${extra.join("; ")}); its work will not be verified or delivered`, { outcome: { attempt: n2, ungranted: extra } }) };
+    }
+  }
+  const applied = new Set(retries.flatMap((r) => [...r.granted, ...r.refused].map((g) => g.key)));
+  const ops = deniedWorkerOperations(ctx, worker).filter((o) => !applied.has(o.key));
+  if (ops.length === 0) return { kind: "proceed" };
+  const subject = attemptSubject(n2);
+  const pending = [];
+  const granted = [];
+  const refused = [];
+  for (const op of ops) {
+    const g = grantFor(ctx, op, subject);
+    if (g.state === "granted") granted.push(op);
+    else if (g.state === "denied") refused.push(op);
+    else pending.push(`${g.state === "pending" ? g.questionId : requestAttemptAuthorization(ctx, op, n2, worker).id}: ${op.summary}`);
+  }
+  if (pending.length > 0) {
+    return { kind: "stop", result: await finishRun(ctx, "BLOCKED", `supervised mode: implementation attempt ${n2} was denied operations the policy does not authorize; a person decides each one (approve-once or deny with orbit decide, then orbit resume ${ctx.run.id}). Questions: ${pending.join(" | ")}`, { outcome: { authorization: pending } }) };
+  }
+  note2(ctx, AUTHORIZATION_RETRY_EVENT, { attempt: n2, after: k, next: k + 1, granted, refused });
+  return { kind: "retry" };
 }
 async function restartLostImplementer(ctx, lost, n2, nextPurpose, model) {
   const already = ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.worker_id') = ? LIMIT 1", ctx.run.id, LOST_RESTART_EVENT, lost.id);
@@ -45812,7 +48464,7 @@ function diagnosisSolved(ctx, n2) {
   const p = progressSince(before, cur);
   return p.fixed_checks.length > 0 || p.localized_fault !== null || report2.verdict === "PASS" && p.made_progress;
 }
-function implementerPrompt(ctx, n2, workerId) {
+function implementerPrompt(ctx, n2, workerId, auth = null, parallel = null) {
   const contract = assertContract(ctx);
   const blocked = blockingQuestions(ctx.db, ctx.run.id).criteria;
   const stored = readJsonIfExists(briefPath(ctx, n2));
@@ -45826,11 +48478,13 @@ function implementerPrompt(ctx, n2, workerId) {
     }
   }
   const task = [
-    n2 === 1 || !stored ? "Implement the contract below in this worktree." : `Repair attempt ${n2}: act on the repair brief below; change the cause, not the tests that show it.`,
+    parallel ? "Implement your work unit of the contract below in this worktree." : n2 === 1 || !stored ? "Implement the contract below in this worktree." : `Repair attempt ${n2}: act on the repair brief below; change the cause, not the tests that show it.`,
     "Make the smallest coherent change. Add or extend behaviour tests that would fail without it. Stay inside the allowed paths.",
     "Do not commit, push, or edit protected paths, policy, CI configuration or check definitions. The controller snapshots your worktree and runs the trusted checks itself.",
     `Acceptance criteria: ${contract.acceptance_criteria.map((c) => `${c.id}${c.mandatory ? "" : " (optional)"}: ${c.statement}`).join(" | ")}`,
-    ...blocked.length > 0 ? [`Blocked, waiting for a person's decision (do not implement or guess them): ${blocked.join(", ")}. Implement the other criteria only.`] : []
+    ...blocked.length > 0 ? [`Blocked, waiting for a person's decision (do not implement or guess them): ${blocked.join(", ")}. Implement the other criteria only.`] : [],
+    ...authorizationLines(auth),
+    ...parallelLines(ctx, n2, parallel)
   ].join("\n");
   return renderWorkerPrompt({
     role: "implementer",
@@ -45843,10 +48497,33 @@ function implementerPrompt(ctx, n2, workerId) {
     advisoryBlock: advisoryBlockFor(ctx, { role: "implementer", workerId, paths: contract.allowed_paths, checkIds: contract.required_check_ids, fingerprints: stored?.fingerprint ? [stored.fingerprint] : [] })
   });
 }
+function parallelLines(ctx, n2, parallel) {
+  if (parallel) {
+    const others = parallel.all.filter((u) => u.id !== parallel.unit.id);
+    return [
+      `You are work unit ${parallel.unit.id} of ${parallel.all.length} parallel writers for this attempt, each in its own worktree. Implement only ${parallel.unit.criteria.join(", ")}; the other criteria are someone else's.`,
+      `Change only these files (plus a new behaviour test of your own for your criteria): ${parallel.unit.ownedPaths.join(", ")}.`,
+      `Do not touch what the other units own: ${others.flatMap((u) => u.ownedPaths).join(", ")}. The controller integrates the units one at a time; a unit that touches a file another unit changed is redone serially.`
+    ];
+  }
+  const dropped = serializedUnits(ctx, n2);
+  if (dropped.length === 0) return [];
+  return [
+    "Part of this attempt was implemented by parallel writers and is already in this worktree; keep it.",
+    ...dropped.map((d) => `Work unit ${d.unit} (${d.criteria.join(", ")}) could not be integrated in parallel (${d.reason}). Implement ${d.criteria.join(", ")} now, on top of the integrated work.`)
+  ];
+}
+function authorizationLines(auth) {
+  if (!auth) return [];
+  const lines = ["An earlier session of this attempt was denied operations the policy does not authorize, and a person answered. Continue from the current worktree: the earlier edits are there."];
+  for (const g of auth.granted) lines.push(`Authorized once, for this attempt only: ${g.summary}. You may do exactly this; anything else outside the policy is still refused and stops the run.`);
+  for (const g of auth.refused) lines.push(`Refused by a person: ${g.summary}. Do not try it again; finish the work inside the policy without it.`);
+  return lines;
+}
 function relative3(root, p) {
   return p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p;
 }
-var ATTEMPT_EVENT, READ_ONLY_ROLES, LOST_RESTART_EVENT;
+var ATTEMPT_EVENT, READ_ONLY_ROLES, AUTHORIZATION_RETRY_EVENT, LOST_RESTART_EVENT;
 var init_implementing = __esm({
   "src/controller/steps/implementing.ts"() {
     "use strict";
@@ -45869,1205 +48546,15 @@ var init_implementing = __esm({
     init_context2();
     init_gates();
     init_workers2();
+    init_parallel_writers();
+    init_authorization();
     init_knowledge_hooks();
     init_common();
     init_obtain();
     ATTEMPT_EVENT = "implementation.attempt";
     READ_ONLY_ROLES = /* @__PURE__ */ new Set(["planner", "verifier", "reviewer", "inquisitor", "curator", "explorer"]);
+    AUTHORIZATION_RETRY_EVENT = "authorization.retry";
     LOST_RESTART_EVENT = "recovery.worker-restart";
-  }
-});
-
-// src/evidence/baseline.ts
-import { existsSync as existsSync27, readFileSync as readFileSync18 } from "node:fs";
-import { join as join35 } from "node:path";
-function planInstall(snapshot2, checkoutDir, opts = {}) {
-  const deps = snapshot2.config.dependencies;
-  if (!deps.install_existing_lockfile) return { skip: true, reason: "policy does not allow installing dependencies from the existing lockfile" };
-  const hosts = [...opts.registryHosts ?? NPM_REGISTRY_HOSTS];
-  const base = { shell: false, cwd: ".", timeout_seconds: INSTALL_TIMEOUT_SECONDS, network_hosts: hosts, mandatory: false, flaky_reruns: 1, kind: "command" };
-  const quiet = { npm_config_fund: "false", npm_config_audit: "false", npm_config_progress: "false", npm_config_update_notifier: "false" };
-  const scriptsDenied = deps.install_scripts !== "allow";
-  if (deps.install_command) {
-    return {
-      skip: false,
-      definitions: [
-        {
-          ...base,
-          id: INSTALL_CHECK_ID,
-          command: [...deps.install_command],
-          // A configured command cannot be given a flag blindly, so scripts are denied through the package managers' own environment switches.
-          env: { ...quiet, ...scriptsDenied ? { npm_config_ignore_scripts: "true", YARN_ENABLE_SCRIPTS: "false" } : {} }
-        }
-      ]
-    };
-  }
-  const hasNpmLock = existsSync27(join35(checkoutDir, "package-lock.json")) || existsSync27(join35(checkoutDir, "npm-shrinkwrap.json"));
-  if (!hasNpmLock) {
-    const other = OTHER_LOCKFILES.find((f) => existsSync27(join35(checkoutDir, f)));
-    return {
-      skip: true,
-      reason: other ? `found ${other}, which Orbit does not install by itself; set dependencies.install_command to install from it` : "no lockfile to install from; Orbit never creates one"
-    };
-  }
-  const defs = [{ ...base, id: INSTALL_CHECK_ID, command: scriptsDenied ? ["npm", "ci", "--ignore-scripts"] : ["npm", "ci"], env: quiet }];
-  if (deps.install_scripts === "deny-unless-allowlisted" && deps.install_script_allowlist.length > 0) {
-    defs.push({ ...base, id: INSTALL_SCRIPTS_CHECK_ID, command: ["npm", "rebuild", ...deps.install_script_allowlist], env: quiet, flaky_reruns: 0 });
-  }
-  return { skip: false, definitions: defs };
-}
-async function installDependencies(ctx) {
-  const plan = planInstall(ctx.snapshot, ctx.checkoutDir, { registryHosts: ctx.registryHosts });
-  if (plan.skip) {
-    const audit2 = ctx.candidate ? await auditCandidate({ ...ctx, candidate: ctx.candidate }) : null;
-    if (audit2 && audit2.blocking.length > 0) return { skipped: false, reason: audit2.summary, ok: false, results: [], audit: audit2 };
-    return { skipped: true, reason: plan.reason, ok: false, results: [], audit: audit2 };
-  }
-  const definitions = { ...ctx.definitions, ...Object.fromEntries(plan.definitions.map((d) => [d.id, d])) };
-  let subject;
-  if (ctx.candidate) subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: "install" };
-  else if (ctx.baseTree) subject = baselineSubject(ctx.runDir, ctx.baseTree, "install");
-  else throw new OrbitError("INTERNAL", "installDependencies needs a candidate or a base tree to bind to");
-  const results = [];
-  for (const def of plan.definitions) {
-    const [r] = await runCheckSet({ ...ctx, definitions }, subject, [def]);
-    if (!r) break;
-    results.push(r);
-    if (r.status !== "PASSED") break;
-  }
-  const ok = results.length === plan.definitions.length && results.every((r) => r.status === "PASSED");
-  if (!ok || !ctx.candidate) return { skipped: false, reason: null, ok, results };
-  const audit = await auditCandidate({ ...ctx, candidate: ctx.candidate });
-  if (audit && audit.blocking.length > 0) return { skipped: false, reason: audit.summary, ok: false, results, audit };
-  return { skipped: false, reason: null, ok, results, audit };
-}
-function manifestHash(dir) {
-  const parts = [];
-  for (const f of MANIFEST_FILES) {
-    const p = join35(dir, f);
-    if (existsSync27(p)) parts.push(`${f}\0${sha256(readFileSync18(p))}`);
-  }
-  return parts.length > 0 ? sha256(parts.join("\n")) : null;
-}
-function parseNpmAudit(text2) {
-  let doc;
-  try {
-    doc = JSON.parse(text2);
-  } catch {
-    throw new Error("npm audit did not write a JSON report");
-  }
-  const d = doc;
-  if (d.error) throw new Error(`npm audit failed: ${redact(String(d.error.summary ?? d.error.code ?? "error")).slice(0, 200)}`);
-  if (!d.vulnerabilities || typeof d.vulnerabilities !== "object") throw new Error("the npm audit report has no vulnerabilities section (npm 7 or later is needed)");
-  const out = /* @__PURE__ */ new Map();
-  for (const [name, v] of Object.entries(d.vulnerabilities)) {
-    if (!Array.isArray(v?.via)) continue;
-    for (const via of v.via) {
-      if (!via || typeof via !== "object") continue;
-      const a = via;
-      const ghsa = typeof a.url === "string" ? /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/.exec(a.url)?.[0] : void 0;
-      const id = ghsa ?? (typeof a.source === "number" || typeof a.source === "string" ? `npm:${a.source}` : null);
-      const severity = typeof a.severity === "string" && Object.hasOwn(SEVERITY_RANK, a.severity) ? a.severity : null;
-      if (!id || !severity) continue;
-      const pkg = typeof a.name === "string" ? a.name : name;
-      out.set(`${id}\0${pkg}`, { id, kind: "vulnerability", package: pkg, severity, detail: redact(typeof a.title === "string" ? a.title : "").slice(0, 200) });
-    }
-  }
-  return [...out.values()].sort((x, y) => x.id.localeCompare(y.id) || x.package.localeCompare(y.package));
-}
-function disallowedLicenses(lockText, allowlist) {
-  let lock;
-  try {
-    lock = JSON.parse(lockText);
-  } catch {
-    throw new Error("the lockfile is not valid JSON");
-  }
-  if (!lock.packages || typeof lock.packages !== "object") throw new Error("the lockfile has no packages section (lockfileVersion 2 or later records licenses)");
-  const allowed = new Set(allowlist.map((l) => l.toLowerCase()));
-  const out = /* @__PURE__ */ new Map();
-  for (const [key2, entry] of Object.entries(lock.packages)) {
-    if (key2 === "" || !entry || typeof entry !== "object" || entry.link === true) continue;
-    const name = typeof entry.name === "string" ? entry.name : key2.slice(key2.lastIndexOf("node_modules/") + "node_modules/".length);
-    const version = typeof entry.version === "string" ? entry.version : "0.0.0";
-    const license = typeof entry.license === "string" ? entry.license : null;
-    if (license !== null && licenseAllowed(license, allowed)) continue;
-    const id = `license:${name}@${version}`;
-    out.set(id, { id, kind: "license", package: name, severity: null, detail: license ?? "no license recorded" });
-  }
-  return [...out.values()].sort((a, b) => a.id.localeCompare(b.id));
-}
-function licenseAllowed(expr, allowed) {
-  const e = expr.replace(/[()]/g, " ").trim().toLowerCase();
-  return e.split(/\s+or\s+/).some((alt) => alt.split(/\s+and\s+/).every((part) => allowed.has(part.trim())));
-}
-function lockfileIn(dir) {
-  for (const f of ["npm-shrinkwrap.json", "package-lock.json"]) if (existsSync27(join35(dir, f))) return join35(dir, f);
-  return null;
-}
-async function runDependencyAudit(ctx, subject) {
-  const policy = dependencyAuditPolicy(ctx.snapshot.config);
-  if (!policy.enabled) return null;
-  const hash = manifestHash(ctx.checkoutDir);
-  const lock = lockfileIn(ctx.checkoutDir);
-  if (!lock) return { ran: false, reason: "no npm lockfile (package-lock.json or npm-shrinkwrap.json); the dependency audit supports npm lockfiles only", manifestHash: hash, vulnerabilities: [], licenses: [], logPath: null };
-  const problems = [];
-  let licenses = [];
-  if (policy.license_allowlist !== null) {
-    try {
-      licenses = disallowedLicenses(readFileSync18(lock, "utf8"), policy.license_allowlist);
-    } catch (err) {
-      problems.push(`license policy not checked: ${err.message}`);
-    }
-  }
-  const def = {
-    id: AUDIT_CHECK_ID,
-    // The report goes to a file, so warnings on stderr cannot corrupt it; a written report is success even when it lists vulnerabilities.
-    command: [`npm audit --json --package-lock-only > "$ORBIT_ARTIFACTS_DIR/${AUDIT_REPORT}"; s=$?; if [ -s "$ORBIT_ARTIFACTS_DIR/${AUDIT_REPORT}" ]; then exit 0; fi; exit $s`],
-    shell: true,
-    cwd: ".",
-    timeout_seconds: AUDIT_TIMEOUT_SECONDS,
-    network_hosts: [...ctx.registryHosts ?? NPM_REGISTRY_HOSTS],
-    env: { npm_config_fund: "false", npm_config_progress: "false", npm_config_update_notifier: "false" },
-    mandatory: false,
-    flaky_reruns: 0,
-    kind: "command"
-  };
-  const [r] = await runCheckSet({ ...ctx, definitions: { ...ctx.definitions, [AUDIT_CHECK_ID]: def } }, subject, [def]);
-  let vulnerabilities = [];
-  let ran = false;
-  if (!r) problems.push("npm audit did not start (cancelled)");
-  else if (r.status !== "PASSED") problems.push(`npm audit ${r.status === "TIMEOUT" ? "timed out" : `could not produce a report (${r.status})`}`);
-  else {
-    const report2 = r.artifacts.find((a) => a.path.endsWith(`/${AUDIT_REPORT}`));
-    try {
-      if (!report2) throw new Error("npm audit wrote no report");
-      vulnerabilities = parseNpmAudit(readFileSync18(report2.path, "utf8"));
-      ran = true;
-    } catch (err) {
-      problems.push(err.message);
-    }
-  }
-  return { ran, reason: problems.length ? problems.join("; ") : null, manifestHash: hash, vulnerabilities, licenses, logPath: r?.logPath ?? null };
-}
-function evaluateDependencyAudit(base, candidate, policy, now) {
-  const known = new Set(base?.ran ? [...base.vulnerabilities, ...base.licenses].map(key) : base ? base.licenses.map(key) : []);
-  const out = { blocking: [], advisory: [], excepted: [], expired: [], preexisting: [] };
-  for (const f of [...candidate.vulnerabilities, ...candidate.licenses]) {
-    if (known.has(key(f))) {
-      out.preexisting.push(f);
-      continue;
-    }
-    const exception = policy.exceptions.find((e) => e.id === f.id || f.kind === "license" && e.id === `license:${f.package}`);
-    if (exception) {
-      if (exception.expires !== null && (now === void 0 || now > exceptionExpiryMs(exception.expires))) {
-        if (!out.expired.some((x) => x.id === exception.id)) out.expired.push({ id: exception.id, expires: exception.expires });
-      } else {
-        out.excepted.push({ finding: f, reason: exception.reason, expires: exception.expires });
-        continue;
-      }
-    }
-    if (f.kind === "license" || SEVERITY_RANK[f.severity] >= SEVERITY_RANK[policy.fail_on]) out.blocking.push(f);
-    else out.advisory.push(f);
-  }
-  return out;
-}
-function key(f) {
-  return `${f.id}\0${f.package}`;
-}
-function describeFinding(f) {
-  return f.kind === "license" ? `${f.package} is licensed ${f.detail}, which is not on the license allowlist` : `${f.package}: ${f.id} (${f.severity})${f.detail ? ` ${f.detail}` : ""}`;
-}
-async function auditCandidate(ctx) {
-  const policy = dependencyAuditPolicy(ctx.snapshot.config);
-  if (!policy.enabled) return null;
-  const baseline = readJsonIfExists(join35(ctx.runDir, BASELINE_FILE));
-  const baseAudit = baseline?.audit ?? null;
-  const empty = { blocking: [], advisory: [], excepted: [], expired: [], preexisting: [] };
-  if (baseAudit && baseAudit.manifestHash !== null && baseAudit.manifestHash === manifestHash(ctx.checkoutDir)) {
-    return { audited: false, candidate: null, ...empty, summary: null };
-  }
-  const subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: "install" };
-  const audit = await runDependencyAudit(ctx, subject);
-  if (!audit) return null;
-  const judged = evaluateDependencyAudit(baseAudit, audit, policy, ctx.clock.now());
-  const summary = judged.blocking.length ? `dependency audit: the candidate introduces ${judged.blocking.length} finding(s) the policy blocks: ${judged.blocking.slice(0, 5).map(describeFinding).join("; ")}` : audit.ran ? null : `dependency audit unverified: ${audit.reason ?? "npm audit did not run"}`;
-  for (const f of judged.blocking) {
-    recordFailure(ctx.db, { runId: ctx.run.id, candidateId: ctx.candidate.id, source: "install", sourceId: `dependency-audit:${ctx.candidate.id}:${f.id}:${f.package}`, fingerprint: `dependency-audit:${f.id}`, excerpt: describeFinding(f) }, ctx.clock);
-  }
-  ctx.db.tx(
-    () => appendEvent(ctx.db, ctx.run.id, "dependency.audit", "controller", {
-      candidate_id: ctx.candidate.id,
-      ran: audit.ran,
-      reason: audit.reason,
-      blocking: judged.blocking.map((f) => f.id),
-      advisory: judged.advisory.map((f) => f.id),
-      excepted: judged.excepted.map((e) => ({ id: e.finding.id, reason: e.reason })),
-      expired: judged.expired,
-      preexisting: judged.preexisting.length
-    }, ctx.clock.now())
-  );
-  return { audited: true, candidate: audit, ...judged, summary };
-}
-async function runBaseline(input) {
-  const { db, run, snapshot: snapshot2, runDir: runDir2, clock } = input;
-  assertRunPolicy(db, run, snapshot2);
-  const baseRevision = await resolveCommit(input.repoRoot, input.baseRev);
-  const baseTree = await treeOf(input.repoRoot, baseRevision);
-  const ids = input.checkIds ?? Object.values(snapshot2.config.checks).filter((c) => c.mandatory && c.kind === "command").map((c) => c.id);
-  for (const id of ids) {
-    if (!snapshot2.config.checks[id]) throw new OrbitError("POLICY_DENIED", `baseline check ${JSON.stringify(id)} is not defined in the policy snapshot`, { checkId: id });
-  }
-  const defs = [...new Set(ids)].map((id) => snapshot2.config.checks[id]).filter((d) => d.kind === "command");
-  const checkIds = defs.map((d) => d.id).sort();
-  const file = join35(runDir2, BASELINE_FILE);
-  const prior = readJsonIfExists(file);
-  if (prior && prior.schema === "orbit.baseline/1" && prior.complete && prior.baseRevision === baseRevision && prior.policyHash === run.policyHash && Array.isArray(prior.checkIds) && prior.checkIds.join("\0") === checkIds.join("\0")) {
-    return { report: prior, results: [], reused: true };
-  }
-  const checkoutDir = input.checkoutDir ?? join35(prepareWorkerTmpDir(join35(runDir2, "baseline-checkout")), `base-${sha256(run.id).slice(0, 8)}`);
-  await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
-  await materializeCandidate(input.repoRoot, baseRevision, checkoutDir, { readOnly: false });
-  try {
-    const ctx = {
-      db,
-      run,
-      snapshot: snapshot2,
-      isolation: input.isolation,
-      checkoutDir,
-      runDir: runDir2,
-      clock,
-      signal: input.signal,
-      parallelism: input.parallelism,
-      pollMs: input.pollMs,
-      killGraceMs: input.killGraceMs,
-      homeDir: input.homeDir
-    };
-    const install = await installDependencies({ ...ctx, baseTree, registryHosts: input.registryHosts });
-    const results = install.skipped || install.ok ? await runCheckSet(ctx, baselineSubject(runDir2, baseTree), defs) : [];
-    const audit = await runDependencyAudit({ ...ctx, registryHosts: input.registryHosts }, baselineSubject(runDir2, baseTree, "install"));
-    const entries = results.map((r) => ({
-      checkId: r.checkId,
-      mandatory: snapshot2.config.checks[r.checkId]?.mandatory === true,
-      status: r.status,
-      exitCode: r.exitCode,
-      flaky: r.flaky,
-      fingerprint: r.fingerprint,
-      excerpt: r.excerpt,
-      log: r.logPath
-    }));
-    const report2 = {
-      schema: "orbit.baseline/1",
-      runId: run.id,
-      baseRevision,
-      baseTree,
-      policyHash: run.policyHash,
-      checkIds,
-      install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
-      ...audit ? { audit } : {},
-      checks: entries,
-      failures: entries.filter((e) => e.mandatory && (e.status === "FAILED" || e.status === "TIMEOUT")).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
-      // Every requested check produced a decisive result (no ERROR, no CANCELLED, none skipped).
-      complete: (install.skipped || install.ok) && entries.length === defs.length && entries.every((e) => e.status === "PASSED" || e.status === "FAILED" || e.status === "TIMEOUT"),
-      recordedAt: clock.now()
-    };
-    atomicWriteJson(file, report2);
-    const auditSummary = audit ? { ran: audit.ran, reason: audit.reason, vulnerabilities: audit.vulnerabilities.length, disallowed_licenses: audit.licenses.length } : null;
-    db.tx(() => appendEvent(db, run.id, "baseline.recorded", "controller", { base_revision: baseRevision, base_tree: baseTree, failures: report2.failures.map((f) => f.checkId), complete: report2.complete, audit: auditSummary }, clock.now()));
-    return { report: report2, results, reused: false };
-  } finally {
-    await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
-  }
-}
-var BASELINE_FILE, NPM_REGISTRY_HOSTS, INSTALL_TIMEOUT_SECONDS, OTHER_LOCKFILES, AUDIT_CHECK_ID, AUDIT_TIMEOUT_SECONDS, AUDIT_REPORT, MANIFEST_FILES, SEVERITY_RANK;
-var init_baseline = __esm({
-  "src/evidence/baseline.ts"() {
-    "use strict";
-    init_errors();
-    init_fsx();
-    init_hash();
-    init_redact();
-    init_profiles();
-    init_config();
-    init_resolve();
-    init_events();
-    init_candidate();
-    init_git();
-    init_runner();
-    init_store();
-    BASELINE_FILE = "baseline.json";
-    NPM_REGISTRY_HOSTS = ["registry.npmjs.org"];
-    INSTALL_TIMEOUT_SECONDS = 900;
-    OTHER_LOCKFILES = ["yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "deno.lock"];
-    AUDIT_CHECK_ID = "orbit-dependency-audit";
-    AUDIT_TIMEOUT_SECONDS = 300;
-    AUDIT_REPORT = "npm-audit.json";
-    MANIFEST_FILES = ["package.json", "package-lock.json", "npm-shrinkwrap.json"];
-    SEVERITY_RANK = { critical: 4, high: 3, moderate: 2, low: 1 };
-  }
-});
-
-// src/ui/report.ts
-function stripAnsi2(text2) {
-  return text2.replace(ANSI3, "");
-}
-function cleanText(text2, max = MAX_MESSAGE_CHARS) {
-  const clean = redact(stripAnsi2(text2));
-  return clean.length > max ? `${clean.slice(0, max)}
-[orbit: truncated ${clean.length - max} characters]` : clean;
-}
-function parsePlaywrightReport(raw) {
-  if (!isObj(raw)) throw new TypeError("Playwright report is not an object");
-  const config = isObj(raw.config) ? raw.config : {};
-  const stats = isObj(raw.stats) ? raw.stats : {};
-  const report2 = {
-    playwrightVersion: str5(config.version),
-    updateSnapshots: str5(config.updateSnapshots),
-    grepInvert: config.grepInvert !== null && config.grepInvert !== void 0,
-    shard: config.shard !== null && config.shard !== void 0,
-    projectNames: arr(config.projects).flatMap((p) => isObj(p) && typeof p.name === "string" ? [p.name] : []),
-    selection: selectionSignals(config),
-    errors: arr(raw.errors).map((e) => cleanText(isObj(e) ? str5(e.message) ?? str5(e.stack) ?? "unknown error" : String(e), 1e3)),
-    stats: { expected: num4(stats.expected), unexpected: num4(stats.unexpected), flaky: num4(stats.flaky), skipped: num4(stats.skipped) },
-    tests: []
-  };
-  for (const suite of arr(raw.suites)) walkSuite(suite, [], true, report2);
-  return report2;
-}
-function selectionSignals(config) {
-  const out = [];
-  if (config.grepInvert !== null && config.grepInvert !== void 0) out.push("grepInvert is set");
-  if (config.shard !== null && config.shard !== void 0) out.push("shard is set");
-  for (const a of arr(config.argv)) if (typeof a === "string" && SELECTION_ARG.test(a)) out.push(`the command line carries ${cleanText(a, 80)}`);
-  for (const p of arr(config.projects)) {
-    if (!isObj(p)) continue;
-    const ignored = Array.isArray(p.testIgnore) ? p.testIgnore.length > 0 : typeof p.testIgnore === "string" && p.testIgnore !== "";
-    if (ignored) out.push(`project ${cleanText(str5(p.name) ?? "?", 80)} sets testIgnore`);
-  }
-  return [...new Set(out)];
-}
-function walkSuite(suite, parents, isFile, out) {
-  if (!isObj(suite)) return;
-  const title = str5(suite.title);
-  const path = isFile || title === null || title === "" ? parents : [...parents, title];
-  for (const spec of arr(suite.specs)) {
-    if (!isObj(spec)) continue;
-    for (const test of arr(spec.tests)) {
-      if (!isObj(test)) continue;
-      out.tests.push({
-        titlePath: [...path, str5(spec.title) ?? "(untitled)"],
-        file: str5(spec.file) ?? str5(suite.file) ?? "",
-        line: num4(spec.line),
-        projectName: str5(test.projectName) ?? str5(test.projectId) ?? "",
-        outcome: str5(test.status) ?? "unknown",
-        expectedStatus: str5(test.expectedStatus) ?? "passed",
-        annotations: arr(test.annotations).flatMap((a) => isObj(a) && typeof a.type === "string" ? [a.type] : []),
-        results: arr(test.results).flatMap((r) => isObj(r) ? [parseResult(r)] : [])
-      });
-    }
-  }
-  for (const child of arr(suite.suites)) walkSuite(child, path, false, out);
-}
-function parseResult(r) {
-  const err = isObj(r.error) ? r.error : null;
-  const loc = err && isObj(err.location) ? err.location : null;
-  return {
-    status: str5(r.status) ?? "unknown",
-    durationMs: num4(r.duration),
-    retry: num4(r.retry),
-    error: err ? {
-      message: cleanText(str5(err.message) ?? str5(err.stack) ?? "unknown error"),
-      snippet: str5(err.snippet) === null ? null : cleanText(str5(err.snippet) ?? "", 1500),
-      location: loc && str5(loc.file) !== null ? { file: str5(loc.file) ?? "", line: num4(loc.line), column: num4(loc.column) } : null
-    } : null,
-    steps: arr(r.steps).slice(0, MAX_STEPS).flatMap((s) => isObj(s) ? [parseStep(s, 0)] : []),
-    attachments: arr(r.attachments).flatMap((a) => isObj(a) ? parseAttachment(a) : [])
-  };
-}
-function parseStep(s, depth) {
-  return {
-    title: cleanText(str5(s.title) ?? "", 200),
-    durationMs: num4(s.duration),
-    failed: isObj(s.error),
-    steps: depth >= 4 ? [] : arr(s.steps).flatMap((c) => isObj(c) ? [parseStep(c, depth + 1)] : [])
-  };
-}
-function parseAttachment(a) {
-  const name = str5(a.name);
-  if (name === null) return [];
-  let body = null;
-  const b64 = str5(a.body);
-  if (b64 !== null && b64.length <= MAX_INLINE_BODY_BYTES * 4 / 3 + 4) body = Buffer.from(b64, "base64");
-  return [{ name, contentType: str5(a.contentType) ?? "application/octet-stream", path: str5(a.path), body }];
-}
-function summarizeSteps(steps) {
-  return steps.map((s) => ({ title: s.title, status: s.failed ? "failed" : "passed", durationMs: Math.round(s.durationMs) }));
-}
-function failedStepPath(steps) {
-  const failing = steps.find((s) => s.failed);
-  if (!failing) return null;
-  const parts = [failing.title];
-  let cur = failing;
-  for (; ; ) {
-    const next = cur.steps.find((s) => s.failed);
-    if (!next) break;
-    parts.push(next.title);
-    cur = next;
-  }
-  return parts.filter(Boolean).join(" > ") || null;
-}
-function describeError(err, rootDir) {
-  const message = err.message;
-  const exp = EXPECTED.exec(message)?.[1]?.trim() ?? null;
-  const rec = RECEIVED.exec(message)?.[1]?.trim() ?? null;
-  let diff = null;
-  if (exp === null && rec === null && /^[-+] (Expected|Received)\b/m.test(message)) {
-    const lines = message.split("\n");
-    const start = lines.findIndex((l) => /^- Expected\b/.test(l));
-    if (start >= 0) diff = lines.slice(start, start + MAX_DIFF_LINES).join("\n").trimEnd();
-  }
-  const loc = err.location;
-  return {
-    message,
-    location: loc ? { file: relativeTo(loc.file, rootDir), line: loc.line, column: loc.column } : null,
-    snippet: err.snippet,
-    expected: exp,
-    observed: rec,
-    diff
-  };
-}
-function relativeTo(file, rootDir) {
-  if (!rootDir) return file;
-  const prefix = rootDir.endsWith("/") ? rootDir : `${rootDir}/`;
-  return file.startsWith(prefix) ? file.slice(prefix.length) : file;
-}
-function parseErrorContext(markdown) {
-  const sections = /* @__PURE__ */ new Map();
-  let current = null;
-  let buf = [];
-  const flush = () => {
-    if (current !== null) sections.set(current, buf.join("\n").trim());
-    buf = [];
-  };
-  let inFence = false;
-  for (const line3 of markdown.split("\n")) {
-    if (/^```/.test(line3)) inFence = !inFence;
-    const h = !inFence ? /^#\s+(.+?)\s*$/.exec(line3) : null;
-    if (h) {
-      flush();
-      current = h[1]?.toLowerCase() ?? null;
-      continue;
-    }
-    buf.push(line3);
-  }
-  flush();
-  const fenced2 = (s) => {
-    if (!s) return null;
-    const m = /```[a-z]*\n([\s\S]*?)\n```/.exec(s);
-    return cleanText(m?.[1] ?? s, 6e3);
-  };
-  return { errorDetails: fenced2(sections.get("error details")), pageSnapshot: fenced2(sections.get("page snapshot")) };
-}
-function parseDiagnostics(body) {
-  const j = safeJson(body);
-  if (!isObj(j)) return null;
-  const list = (v, pick) => arr(v).slice(0, MAX_ENTRIES).flatMap((e) => {
-    const p = isObj(e) ? pick(e) : null;
-    return p === null ? [] : [p];
-  });
-  return {
-    consoleErrors: list(j.consoleErrors, (e) => ({ type: str5(e.type) ?? "error", text: cleanText(str5(e.text) ?? "", 1e3), url: str5(e.url) ?? "", line: num4(e.line) })),
-    pageErrors: list(j.pageErrors, (e) => ({ name: str5(e.name) ?? "Error", message: cleanText(str5(e.message) ?? "", 1e3) })),
-    failedRequests: list(j.failedRequests, (e) => ({ url: cleanText(str5(e.url) ?? "", 500), method: str5(e.method) ?? "GET", failure: str5(e.failure) ?? "unknown" })),
-    badResponses: list(j.badResponses, (e) => ({ url: cleanText(str5(e.url) ?? "", 500), method: str5(e.method) ?? "GET", status: num4(e.status) })),
-    finalUrl: str5(j.finalUrl),
-    dropped: num4(j.dropped)
-  };
-}
-function parseBrowserInfo(body) {
-  const j = safeJson(body);
-  if (!isObj(j)) return null;
-  const vp = isObj(j.viewport) ? j.viewport : null;
-  const name = str5(j.browserName);
-  const version = str5(j.browserVersion);
-  if (name === null || version === null) return null;
-  return {
-    name,
-    version,
-    viewport: vp && typeof vp.width === "number" && typeof vp.height === "number" ? { width: vp.width, height: vp.height } : null,
-    project: str5(j.project)
-  };
-}
-function parseA11y(body) {
-  const j = safeJson(body);
-  if (!isObj(j)) return null;
-  const entry = (e) => ({
-    ruleId: str5(e.ruleId) ?? "",
-    impact: str5(e.impact) ?? "",
-    target: cleanText(str5(e.target) ?? "", 500),
-    url: str5(e.url) ?? "",
-    viewport: str5(e.viewport) ?? "",
-    help: cleanText(str5(e.help) ?? "", 300),
-    fingerprint: str5(e.fingerprint) ?? ""
-  });
-  return {
-    url: str5(j.url) ?? "",
-    viewport: str5(j.viewport) ?? "",
-    baselinePath: str5(j.baselinePath),
-    baselineLoaded: j.baselineLoaded === true,
-    seriousOrCritical: num4(j.seriousOrCritical),
-    newViolations: arr(j.newViolations).slice(0, MAX_ENTRIES).flatMap((e) => isObj(e) ? [entry(e)] : []),
-    baselinedCount: arr(j.baselined).length,
-    advisory: j.advisory === true
-  };
-}
-function parseKeyboard(body) {
-  const j = safeJson(body);
-  if (!isObj(j)) return null;
-  const names = (v) => arr(v).slice(0, MAX_ENTRIES).flatMap((e) => typeof e === "string" ? [cleanText(e, 300)] : []);
-  const entries = arr(j.entries).slice(0, MAX_ENTRIES).flatMap((e) => {
-    if (!isObj(e) || typeof e.selector !== "string") return [];
-    return [{ selector: cleanText(e.selector, 300), reachedAtTab: typeof e.reachedAtTab === "number" ? e.reachedAtTab : null, focusVisible: typeof e.focusVisible === "boolean" ? e.focusVisible : null }];
-  });
-  const unreachable = names(j.unreachable);
-  const outOfOrder = names(j.outOfOrder);
-  const missingFocusRing = names(j.missingFocusRing);
-  return {
-    url: str5(j.url) ?? "",
-    viewport: str5(j.viewport) ?? "",
-    tabsPressed: num4(j.tabsPressed),
-    ordered: j.ordered !== false,
-    entries,
-    unreachable,
-    outOfOrder,
-    missingFocusRing,
-    // Recomputed rather than trusted: a scan that lists problems has not passed whatever its own flag says.
-    passed: j.passed === true && unreachable.length === 0 && outOfOrder.length === 0 && missingFocusRing.length === 0
-  };
-}
-function safeJson(body) {
-  try {
-    return JSON.parse(body.toString("utf8"));
-  } catch {
-    return null;
-  }
-}
-var ANSI3, MAX_MESSAGE_CHARS, MAX_DIFF_LINES, MAX_STEPS, isObj, str5, num4, arr, MAX_INLINE_BODY_BYTES, SELECTION_ARG, EXPECTED, RECEIVED, MAX_ENTRIES;
-var init_report3 = __esm({
-  "src/ui/report.ts"() {
-    "use strict";
-    init_redact();
-    ANSI3 = /\u001b\[[0-9;]*[A-Za-z]/g;
-    MAX_MESSAGE_CHARS = 4e3;
-    MAX_DIFF_LINES = 40;
-    MAX_STEPS = 50;
-    isObj = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
-    str5 = (v) => typeof v === "string" ? v : null;
-    num4 = (v, fallback = 0) => typeof v === "number" && Number.isFinite(v) ? v : fallback;
-    arr = (v) => Array.isArray(v) ? v : [];
-    MAX_INLINE_BODY_BYTES = 2 * 1024 * 1024;
-    SELECTION_ARG = /^(?:-g|--grep|-G|--grep-invert|--shard|--only-changed|--last-failed|--test-list|--test-list-invert)(?:=.*)?$/;
-    EXPECTED = /^\s*Expected(?:\s+[a-z][a-z ]*)?:\s*(.+)$/im;
-    RECEIVED = /^\s*Received(?:\s+[a-z][a-z ]*)?:\s*(.+)$/im;
-    MAX_ENTRIES = 200;
-  }
-});
-
-// src/ui/runner.ts
-import { copyFileSync, existsSync as existsSync28, mkdirSync as mkdirSync15, readFileSync as readFileSync19, realpathSync as realpathSync14, rmSync as rmSync9, statSync as statSync12, writeFileSync as writeFileSync6 } from "node:fs";
-import { createRequire as createRequire3 } from "node:module";
-import { basename as basename11, dirname as dirname21, isAbsolute as isAbsolute14, join as join36, relative as relative4, resolve as resolve11, sep as sep8 } from "node:path";
-async function runUiChecks(input) {
-  const clock = input.clock ?? systemClock;
-  const { snapshot: snapshot2, uiConfig, candidate } = input;
-  const checkoutDir = realpathSync14(input.checkoutDir);
-  const outDir = realpathSync14(ensureDir(resolve11(input.outDir)));
-  const startedAt = clock.now();
-  const checks = resolveChecks(snapshot2, input.journeyCheckIds);
-  for (const check of checks) assertCheckCommandAllowed(check);
-  const baseUrl = uiConfig.environment.base_url;
-  assertBaseUrl(baseUrl, uiConfig.environment.isolated_test_data);
-  if (uiConfig.environment.production_accounts !== false) {
-    throw new OrbitError("POLICY_DENIED", "ui.environment.production_accounts must be false", { rule: "ui.environment.production_accounts" });
-  }
-  await assertCheckoutMatchesCandidate(checkoutDir, candidate, outDir);
-  const globs = compileGlobs(uiConfig.visual.baseline_globs, { nocase: false });
-  const candidateChanges = await changedBetween(checkoutDir, candidate.parentSha, candidate.commitSha);
-  const visualFromDiff = candidateChanges.filter((c) => globs(c.path)).map((c) => c.path);
-  const configHash = hashObject({
-    ui: uiConfig,
-    checks: checks.map((c) => [c.id, snapshot2.check_config_hashes[c.id] ?? hashObject(c)]),
-    enforcement: UI_ENFORCEMENT_VERSION,
-    projects: input.projects ?? null
-  });
-  atomicWriteJson(join36(outDir, "ui-run.json"), { state: "running", candidate: candidate.id, startedAt, checks: checks.map((c) => c.id) });
-  const reasons = [];
-  const unverified = [];
-  const checkRuns = [];
-  const journeys = [];
-  let terminal = null;
-  let app = null;
-  const tmpDir = ensureDir(join36(outDir, "tmp"));
-  const baseEnv = safeBaseEnv(input.hostEnv ?? process.env);
-  const port = new URL(baseUrl).port;
-  try {
-    if (uiConfig.environment.start_command !== null) {
-      const appCheck = { ...defaultCheck("ui-app"), command: uiConfig.environment.start_command, network_hosts: [], timeout_seconds: uiConfig.environment.ready_timeout_seconds };
-      const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot: snapshot2, extraWritable: [tmpDir], homeDir: input.homeDir, env: input.hostEnv });
-      try {
-        app = await startApp({
-          command: uiConfig.environment.start_command,
-          cwd: checkoutDir,
-          baseUrl,
-          readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1e3,
-          env: { ...input.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir },
-          isolation: { provider: input.isolation, profile },
-          isolatedTestData: uiConfig.environment.isolated_test_data,
-          stateDir: join36(outDir, "app"),
-          clock,
-          pollMs: input.appPollMs,
-          hostEnv: input.hostEnv
-        });
-      } catch (err) {
-        if (err instanceof OrbitError && (err.code === "ISOLATION_UNAVAILABLE" || err.code === "POLICY_DENIED")) throw err;
-        terminal = "ERROR";
-        reasons.push(`the application did not start: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    } else {
-      unverified.push("ui.environment.start_command is not set: the application at base_url was started by something other than Orbit, so its build is not bound to this candidate");
-    }
-    if (terminal === null) {
-      for (const check of checks) {
-        const run = await runOneCheck({ input, check, checkoutDir, outDir, tmpDir, baseEnv, baseUrl, clock });
-        checkRuns.push(run.run);
-        journeys.push(...run.journeys);
-        reasons.push(...run.reasons);
-        unverified.push(...run.unverified);
-        if (run.terminal && terminal === null) terminal = run.terminal;
-        if (run.terminal === "CANCELLED") break;
-      }
-    }
-  } finally {
-    if (app) await stopApp(app, { clock });
-  }
-  const written = await baselineFilesWrittenDuringRun(checkoutDir, candidate.commitSha, globs);
-  const visualBaselineChanges = [.../* @__PURE__ */ new Set([...visualFromDiff, ...written])].sort();
-  const changedPaths3 = /* @__PURE__ */ new Set([...candidateChanges.map((c) => c.path), ...await touchedSince(checkoutDir, candidate.commitSha)]);
-  const a11yBaselineChanges = [.../* @__PURE__ */ new Set([...changedA11yBaselines(journeys, checkoutDir, changedPaths3), ...[...changedPaths3].filter(looksLikeA11yBaseline)])].sort();
-  if (written.length > 0) reasons.push(`the run itself wrote baseline files: ${written.join(", ")}`);
-  const drift = await driftSince(checkoutDir, candidate.commitSha);
-  const outside = (p) => !isInside(resolve11(checkoutDir, p), outDir);
-  const mutated = drift.modified.filter((p) => !globs(p) && !looksLikeA11yBaseline(p) && outside(p));
-  if (mutated.length > 0) {
-    reasons.push(`the run modified tracked files, so its evidence no longer describes the candidate: ${mutated.slice(0, 10).join(", ")}`);
-    terminal ??= "ERROR";
-  }
-  const leftovers = drift.untracked.filter((p) => !globs(p) && !looksLikeA11yBaseline(p) && outside(p));
-  if (leftovers.length > 0) unverified.push(`the run left untracked files in the checkout: ${leftovers.slice(0, 10).join(", ")}`);
-  const journeyFiles = new Set(journeys.map((j) => j.file));
-  const deletedJourneys = candidateChanges.filter((c) => c.status === "D" && JOURNEY_FILE.test(c.path)).map((c) => c.path);
-  if (deletedJourneys.length > 0) unverified.push(`the candidate deleted journey files, so their coverage is gone: ${deletedJourneys.join(", ")}`);
-  const editedJourneys = candidateChanges.filter((c) => c.status !== "D" && journeyFiles.has(c.path)).map((c) => c.path);
-  if (editedJourneys.length > 0) unverified.push(`the candidate changed journey definitions that this run executed (check that no assertion was weakened): ${editedJourneys.join(", ")}`);
-  const stats = tally(journeys);
-  const coverage = coverageOf(journeys, uiConfig);
-  if (journeys.length > 0) {
-    if (coverage.missingViewports.length) unverified.push(`configured viewports never exercised: ${coverage.missingViewports.map((v) => `${v.width}x${v.height}`).join(", ")}`);
-    if (coverage.missingBrowsers.length) unverified.push(`configured browsers never exercised: ${coverage.missingBrowsers.join(", ")}`);
-    if (uiConfig.accessibility.enabled && !journeys.some((j) => j.a11y.length > 0)) unverified.push("accessibility is enabled but no journey ran an accessibility scan");
-  }
-  const advisoryCount = journeys.reduce((n2, j) => n2 + j.a11y.filter((s) => s.advisory).reduce((m, s) => m + s.newViolations.length, 0), 0);
-  if (advisoryCount > 0) {
-    unverified.push(`${advisoryCount} new serious or critical accessibility violation(s) were recorded as advisory because ui.accessibility.fail_on_new_serious_or_critical is false; they did not fail any journey`);
-  }
-  for (const j of journeys) {
-    if (j.annotations.includes("test.fail")) unverified.push(`journey ${j.id} is annotated test.fail(): a "pass" there means the failure still happens`);
-  }
-  const failing = journeys.filter((j) => j.status === "FAILED" || j.status === "TIMED_OUT" || j.status === "SKIPPED");
-  for (const j of failing) reasons.push(j.status === "SKIPPED" ? `journey ${j.id} was skipped, which proves nothing` : `journey ${j.id} ${j.status === "TIMED_OUT" ? "timed out" : "failed"}${j.failedStep ? ` at step "${j.failedStep}"` : ""}`);
-  const needsReview = uiConfig.visual.baseline_changes_require_review && (visualBaselineChanges.length > 0 || a11yBaselineChanges.length > 0);
-  if (needsReview) {
-    reasons.push(`stored baselines changed in the candidate and need human review: ${[...visualBaselineChanges, ...a11yBaselineChanges].join(", ")}`);
-  }
-  if (journeys.some((j) => j.status === "INTERRUPTED")) terminal = "CANCELLED";
-  let verdict;
-  if (terminal !== null) verdict = terminal;
-  else if (failing.length > 0) verdict = "FAIL";
-  else if (needsReview) verdict = "BLOCKED";
-  else verdict = "PASS";
-  const browsers = uniqueBy(journeys.flatMap((j) => j.browser ? [j.browser] : []), (b) => `${b.name}@${b.version}`);
-  const viewports = coverage.observedViewports;
-  const result2 = {
-    verdict,
-    passed: verdict === "PASS",
-    reasons,
-    binding: {
-      candidateId: candidate.id,
-      treeHash: candidate.treeHash,
-      checkConfigHash: configHash,
-      policyHash: snapshotHash(snapshot2),
-      commitSha: candidate.commitSha,
-      playwrightVersion: checkRuns.find((c) => c.playwrightVersion)?.playwrightVersion ?? null,
-      browsers,
-      viewports,
-      baseUrl,
-      keyboard: { scans: journeys.reduce((n2, j) => n2 + j.keyboard.length, 0), failed: journeys.reduce((n2, j) => n2 + j.keyboard.filter((k) => !k.passed).length, 0) },
-      accessibilityFailOn: a11yFailOn(uiConfig)
-    },
-    journeys,
-    checks: checkRuns,
-    stats,
-    flaky: journeys.some((j) => j.status === "FLAKY"),
-    visualBaselineChanges,
-    a11yBaselineChanges,
-    a11yAdvisory: journeys.flatMap((j) => j.a11y.filter((s) => s.advisory).flatMap((s) => s.newViolations)),
-    consoleErrorCount: journeys.reduce((n2, j) => n2 + (j.diagnostics?.consoleErrors.length ?? 0) + (j.diagnostics?.pageErrors.length ?? 0), 0),
-    coverage,
-    unverified,
-    limitations: [...UI_LIMITATIONS],
-    outDir,
-    startedAt,
-    endedAt: clock.now()
-  };
-  atomicWriteJson(join36(outDir, "ui-result.json"), redactValue(result2));
-  return result2;
-}
-function toEvidenceUi(result2) {
-  const runStatus = result2.verdict === "TIMEOUT" ? "TIMEOUT" : result2.verdict === "CANCELLED" ? "CANCELLED" : result2.verdict === "ERROR" ? "ERROR" : null;
-  const entries = result2.journeys.map((j) => ({
-    journey: j.id,
-    checkId: j.checkId,
-    status: runStatus ?? (j.status === "PASSED" || j.status === "FLAKY" ? "PASSED" : j.status === "TIMED_OUT" ? "TIMEOUT" : j.status === "INTERRUPTED" ? "CANCELLED" : "FAILED"),
-    artifacts: j.artifacts.map((a) => a.path)
-  }));
-  if (result2.verdict !== "PASS" && entries.every((e) => e.status === "PASSED")) {
-    entries.push({ journey: UI_RUN_ENTRY, ...result2.checks[0] ? { checkId: result2.checks[0].checkId } : {}, status: runStatus ?? "FAILED", artifacts: [...result2.visualBaselineChanges, ...result2.a11yBaselineChanges] });
-  }
-  return entries;
-}
-function resolveChecks(snapshot2, ids) {
-  if (ids.length === 0) throw new OrbitError("CONFIG_INVALID", "ui is configured but no journey checks are named (ui.journey_check_ids is empty)", { rule: "ui.journey_check_ids" });
-  return ids.map((id) => {
-    const check = snapshot2.config.checks[id];
-    if (!check) throw new OrbitError("CONFIG_INVALID", `ui journey check ${JSON.stringify(id)} is not defined in checks`, { id });
-    if (check.kind !== "playwright") throw new OrbitError("CONFIG_INVALID", `ui journey check ${JSON.stringify(id)} must have kind: playwright`, { id, kind: check.kind });
-    return check;
-  });
-}
-function a11yFailOn(ui) {
-  return ui.accessibility.fail_on_new_serious_or_critical ? "serious,critical" : "none";
-}
-function assertCheckCommandAllowed(check) {
-  const tokens3 = check.shell ? (check.command[0] ?? "").split(/[\s;&|()'"`]+/) : check.command;
-  const bad = tokens3.find((t) => FORBIDDEN_ARG.test(t) && !SAME_AS_ENFORCED.has(t));
-  if (bad !== void 0) {
-    throw new OrbitError("POLICY_DENIED", `journey check ${JSON.stringify(check.id)} carries ${JSON.stringify(bad)}, which Orbit sets itself or forbids (baseline updates, reporters, output, traces and retries are not configurable)`, {
-      rule: "ui.enforced_flags",
-      check: check.id,
-      arg: bad
-    });
-  }
-}
-function enforcedFlags(check, outputDir, projects) {
-  return ["--reporter=json", "--update-snapshots=none", "--trace=retain-on-failure", `--output=${outputDir}`, `--retries=${check.flaky_reruns}`, ...(projects ?? []).map((p) => `--project=${p}`)];
-}
-function buildArgv(check, flags) {
-  if (check.shell) return ["/bin/sh", "-c", `${check.command[0] ?? ""} "$@"`, "orbit-ui", ...flags];
-  return [...check.command, ...flags];
-}
-function shellQuote(arg) {
-  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`;
-}
-async function runOneCheck(ctx) {
-  const { input, check, checkoutDir, clock } = ctx;
-  const checkDir = ensureDir(join36(ctx.outDir, check.id));
-  const outputDir = join36(checkDir, "test-results");
-  const reportPath2 = join36(checkDir, "playwright-report.json");
-  const logPath = join36(checkDir, "run.log");
-  const cwd = resolve11(checkoutDir, check.cwd);
-  if (relative4(checkoutDir, cwd).startsWith("..") || isAbsolute14(relative4(checkoutDir, cwd))) {
-    throw new OrbitError("POLICY_DENIED", `check ${check.id} cwd leaves the checkout`, { rule: "checks.cwd", check: check.id });
-  }
-  const flags = enforcedFlags(check, outputDir, input.projects);
-  const argv2 = buildArgv(check, flags);
-  const env = {
-    ...ctx.baseEnv,
-    ...check.env,
-    TMPDIR: ctx.tmpDir,
-    FORCE_COLOR: "0",
-    ORBIT_UI_RUN: "1",
-    ORBIT_UI_BASE_URL: ctx.baseUrl,
-    ORBIT_UI_VIEWPORTS: JSON.stringify(input.uiConfig.viewports),
-    ORBIT_UI_BROWSERS: JSON.stringify(input.uiConfig.browsers),
-    // The fixture reads this: `none` records new serious or critical violations as advisory instead of failing the journey.
-    ORBIT_A11Y_FAIL_ON: a11yFailOn(input.uiConfig),
-    PLAYWRIGHT_JSON_OUTPUT_FILE: reportPath2
-  };
-  const profile = {
-    ...profileForCheck({ worktree: checkoutDir, check, snapshot: input.snapshot, extraWritable: [checkDir, ctx.tmpDir], homeDir: input.homeDir, env: input.hostEnv }),
-    allowLocalBinding: true
-  };
-  rmSync9(reportPath2, { force: true });
-  rmSync9(outputDir, { recursive: true, force: true });
-  const wrapped = input.isolation.wrap(argv2, profile, { cwd, env });
-  const started = clock.now();
-  let exec;
-  try {
-    exec = await execCapture(wrapped.argv, { cwd, env: wrapped.env, timeoutMs: check.timeout_seconds * 1e3, abortSignal: input.abortSignal, maxOutputBytes: MAX_LOG_BYTES });
-  } finally {
-    wrapped.cleanup();
-  }
-  writeFileSync6(logPath, redact(`${exec.stdout}${exec.stderr ? `
---- stderr ---
-${exec.stderr}` : ""}`), { mode: 384 });
-  let parsed2 = null;
-  let parseProblem = null;
-  const reportFound = existsSync28(reportPath2);
-  if (reportFound) {
-    try {
-      parsed2 = parsePlaywrightReport(JSON.parse(readFileSync19(reportPath2, "utf8")));
-    } catch (err) {
-      parseProblem = `the Playwright report could not be parsed: ${err instanceof Error ? err.message : String(err)}`;
-    }
-  }
-  const run = {
-    checkId: check.id,
-    argv: argv2,
-    exitCode: exec.exitCode,
-    timedOut: exec.timedOut,
-    cancelled: exec.cancelled,
-    durationMs: clock.now() - started,
-    logPath,
-    reportPath: reportPath2,
-    reportFound,
-    isolation: input.isolation.kind,
-    isolationLimitations: wrapped.limitations,
-    playwrightVersion: parsed2?.playwrightVersion ?? null
-  };
-  const reasons = [];
-  const unverified = [];
-  const quiet = (terminal) => ({ run, journeys: [], reasons, unverified, terminal });
-  if (exec.cancelled) {
-    reasons.push(`check ${check.id} was cancelled`);
-    return quiet("CANCELLED");
-  }
-  if (exec.timedOut) {
-    reasons.push(`check ${check.id} exceeded its ${check.timeout_seconds} s limit`);
-    return quiet("TIMEOUT");
-  }
-  if (parsed2 === null) {
-    reasons.push(parseProblem ?? `check ${check.id} produced no Playwright report (exit ${exec.exitCode ?? "signal"}): ${tail(exec.stderr || exec.stdout)}`);
-    return quiet("ERROR");
-  }
-  if (parsed2.errors.length > 0) {
-    reasons.push(`Playwright reported global errors in ${check.id}: ${parsed2.errors.join("; ")}`);
-    return quiet("ERROR");
-  }
-  if (parsed2.updateSnapshots !== "none") {
-    reasons.push(`Playwright ran with updateSnapshots=${String(parsed2.updateSnapshots)} instead of none; the run cannot be trusted`);
-    return quiet("ERROR");
-  }
-  if (parsed2.tests.length === 0) {
-    reasons.push(`check ${check.id} ran no journeys; an empty run is not a pass`);
-    return quiet("ERROR");
-  }
-  if (parsed2.selection.length > 0) unverified.push(`check ${check.id}: the run was narrowed (${parsed2.selection.join("; ")}), so some journeys may not have run`);
-  const journeys = parsed2.tests.map((t) => buildJourney(t, ctx, checkDir, cwd));
-  const counted = parsed2.stats.expected + parsed2.stats.unexpected + parsed2.stats.flaky + parsed2.stats.skipped;
-  if (counted !== parsed2.tests.length) {
-    reasons.push(`check ${check.id}: the report's totals (${counted}) do not match the ${parsed2.tests.length} journeys it lists`);
-    return quiet("ERROR");
-  }
-  const anyFailed = journeys.some((j) => j.status === "FAILED" || j.status === "TIMED_OUT" || j.status === "INTERRUPTED");
-  if (exec.exitCode !== 0 && !anyFailed || exec.exitCode === 0 && anyFailed) {
-    reasons.push(`check ${check.id} exited with ${exec.exitCode ?? "a signal"} but its report ${anyFailed ? "lists failures" : "lists none"}; the report cannot be trusted`);
-    return quiet("ERROR");
-  }
-  return { run, journeys, reasons, unverified, terminal: null };
-}
-function tail(text2, max = 600) {
-  const t = redact(text2).trim();
-  return t.length > max ? `...${t.slice(-max)}` : t || "(no output)";
-}
-function buildJourney(test, ctx, checkDir, cwd) {
-  const { checkoutDir } = ctx;
-  const file = relativeTo(test.file, checkoutDir);
-  const title = test.titlePath[test.titlePath.length - 1] ?? "";
-  const id = `${test.projectName}/${file}#${test.titlePath.join(" > ")}`;
-  const failing = test.results.filter((r) => FAILED_RESULT.has(r.status));
-  const focus = failing[failing.length - 1] ?? test.results[test.results.length - 1];
-  const status2 = journeyStatus(test);
-  const slug = `${sha256(id).slice(0, 8)}-${title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}`;
-  const artifactDir = join36(checkDir, "artifacts", slug);
-  const collected = focus ? collectAttachments(focus.attachments, { checkoutDir, outputDir: join36(checkDir, "test-results"), artifactDir }) : { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
-  const firstError = (failing[0] ?? focus)?.error ?? null;
-  const rootDir = checkoutDir;
-  const error = firstError && status2 !== "PASSED" ? describeError(firstError, rootDir) : null;
-  const projectFlag = `--project=${test.projectName}`;
-  const grep = ["-g", escapeRegExp3(title)];
-  const reproFlags = ["--update-snapshots=none", "--trace=retain-on-failure", "--reporter=list", projectFlag, ...grep];
-  const reproArgv = buildArgv(ctx.check, reproFlags);
-  const reproduction = {
-    cwd,
-    argv: reproArgv,
-    env: { ORBIT_UI_RUN: "1", ORBIT_UI_BASE_URL: ctx.baseUrl },
-    command: `cd ${shellQuote(cwd)} && ORBIT_UI_RUN=1 ORBIT_UI_BASE_URL=${shellQuote(ctx.baseUrl)} ${reproArgv.map(shellQuote).join(" ")}`
-  };
-  const declared = collected.browser ?? null;
-  const browser = declared ? { name: declared.name, version: declared.version } : fallbackBrowser(checkoutDir, ctx.input.uiConfig.browsers);
-  return {
-    id,
-    title,
-    titlePath: test.titlePath,
-    file,
-    line: test.line,
-    project: test.projectName,
-    checkId: ctx.check.id,
-    status: status2,
-    attempts: test.results.length,
-    durationMs: Math.round(test.results.reduce((n2, r) => n2 + r.durationMs, 0)),
-    browser,
-    viewport: declared?.viewport ?? null,
-    steps: focus ? summarizeSteps(focus.steps) : [],
-    failedStep: focus ? failedStepPath((failing[0] ?? focus).steps) : null,
-    error,
-    artifacts: collected.artifacts,
-    diagnostics: collected.diagnostics,
-    a11y: collected.a11y,
-    keyboard: collected.keyboard,
-    errorContext: collected.errorContext,
-    reproduction,
-    annotations: [...test.annotations, ...test.expectedStatus === "failed" ? ["test.fail"] : []]
-  };
-}
-function journeyStatus(test) {
-  if (test.results.some((r) => r.status === "interrupted")) return "INTERRUPTED";
-  switch (test.outcome) {
-    case "expected":
-      return "PASSED";
-    case "flaky":
-      return "FLAKY";
-    case "skipped":
-      return "SKIPPED";
-    default:
-      return test.results.some((r) => r.status === "timedOut") ? "TIMED_OUT" : "FAILED";
-  }
-}
-function escapeRegExp3(text2) {
-  return text2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-function fallbackBrowser(checkoutDir, configured) {
-  const name = configured[0] ?? "chromium";
-  try {
-    const req = createRequire3(join36(checkoutDir, "package.json"));
-    const dir = dirname21(req.resolve("playwright-core/package.json"));
-    const parsed2 = JSON.parse(readFileSync19(join36(dir, "browsers.json"), "utf8"));
-    const list = parsed2.browsers ?? [];
-    const version = list.find((b) => b.name === name)?.browserVersion;
-    return version ? { name, version: `${version} (declared by playwright-core, not observed)` } : null;
-  } catch {
-    return null;
-  }
-}
-function kindOf2(a) {
-  const n2 = a.name;
-  if (n2 === "screenshot" || n2 === "orbit-failure-screenshot") return "screenshot";
-  if (n2 === "trace") return "trace";
-  if (n2 === "video" || a.contentType.startsWith("video/")) return "video";
-  if (n2 === "error-context") return "error-context";
-  if (n2 === "orbit-diagnostics") return "diagnostics";
-  if (n2 === "orbit-a11y") return "accessibility";
-  if (n2 === "orbit-keyboard") return "keyboard";
-  if (/-expected\.png$/.test(n2)) return "visual-expected";
-  if (/-actual\.png$/.test(n2)) return "visual-actual";
-  if (/-diff\.png$/.test(n2)) return "visual-diff";
-  return "other";
-}
-function collectAttachments(attachments, dirs) {
-  const out = { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
-  const outputReal = safeReal(dirs.outputDir);
-  const checkoutReal = safeReal(dirs.checkoutDir);
-  const seen = /* @__PURE__ */ new Set();
-  for (const att of attachments) {
-    const kind = kindOf2(att);
-    let bytes = att.body;
-    let stored = null;
-    if (att.path !== null) {
-      const real = safeReal(att.path);
-      if (real === null || !(isInside(real, outputReal) || isInside(real, checkoutReal))) continue;
-      let size;
-      try {
-        const st = statSync12(real);
-        if (!st.isFile()) continue;
-        size = st.size;
-      } catch {
-        continue;
-      }
-      if (size > MAX_ARTIFACT_BYTES) continue;
-      bytes = readFileSync19(real);
-      stored = real;
-      if (!isInside(real, outputReal)) {
-        mkdirSync15(dirs.artifactDir, { recursive: true });
-        const copy = join36(dirs.artifactDir, `${kind}-${basename11(real)}`);
-        copyFileSync(real, copy);
-        stored = copy;
-      }
-    } else if (bytes !== null) {
-      mkdirSync15(dirs.artifactDir, { recursive: true });
-      const ext = EXTENSIONS[att.contentType.split(";")[0]?.trim() ?? ""] ?? ".bin";
-      stored = join36(dirs.artifactDir, `${att.name.replace(/[^A-Za-z0-9._-]+/g, "_")}${ext}`);
-      writeFileSync6(stored, TEXTUAL.test(att.contentType) ? redact(bytes.toString("utf8")) : bytes, { mode: 384 });
-      bytes = readFileSync19(stored);
-    }
-    if (bytes === null || stored === null) continue;
-    if (kind === "diagnostics") {
-      out.diagnostics ??= parseDiagnostics(bytes);
-      out.browser ??= parseBrowserInfo(bytes);
-    } else if (kind === "accessibility") {
-      const scan = parseA11y(bytes);
-      if (scan) out.a11y.push(scan);
-    } else if (kind === "keyboard") {
-      const scan = parseKeyboard(bytes);
-      if (scan) out.keyboard.push(scan);
-    } else if (kind === "error-context") {
-      out.errorContext ??= parseErrorContext(bytes.toString("utf8"));
-    }
-    if (seen.has(stored)) continue;
-    seen.add(stored);
-    out.artifacts.push({ name: att.name, kind, contentType: att.contentType, path: stored, sha256: sha256(bytes), bytes: bytes.length });
-  }
-  return out;
-}
-function safeReal(path) {
-  try {
-    return realpathSync14(path);
-  } catch {
-    return null;
-  }
-}
-function isInside(child, parent) {
-  if (parent === null) return false;
-  return child === parent || child.startsWith(parent.endsWith(sep8) ? parent : parent + sep8);
-}
-function tally(journeys) {
-  const s = { passed: 0, failed: 0, flaky: 0, skipped: 0, other: 0 };
-  for (const j of journeys) {
-    if (j.status === "PASSED") s.passed += 1;
-    else if (j.status === "FLAKY") s.flaky += 1;
-    else if (j.status === "SKIPPED") s.skipped += 1;
-    else if (j.status === "FAILED" || j.status === "TIMED_OUT") s.failed += 1;
-    else s.other += 1;
-  }
-  return s;
-}
-function coverageOf(journeys, ui) {
-  const observedViewports = uniqueBy(journeys.flatMap((j) => j.viewport ? [j.viewport] : []), (v) => `${v.width}x${v.height}`);
-  const observedBrowsers = [...new Set(journeys.flatMap((j) => j.browser ? [j.browser.name] : []))];
-  const hasViewport = (v) => observedViewports.some((o) => o.width === v.width && o.height === v.height);
-  return {
-    configuredViewports: ui.viewports,
-    observedViewports,
-    missingViewports: ui.viewports.filter((v) => !hasViewport(v)),
-    configuredBrowsers: ui.browsers,
-    observedBrowsers,
-    missingBrowsers: ui.browsers.filter((b) => !observedBrowsers.includes(b))
-  };
-}
-function uniqueBy(items, key2) {
-  const seen = /* @__PURE__ */ new Map();
-  for (const i of items) if (!seen.has(key2(i))) seen.set(key2(i), i);
-  return [...seen.values()];
-}
-async function git5(cwd, args) {
-  const env = { GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" };
-  for (const k of GIT_ENV_KEYS) if (process.env[k]) env[k] = process.env[k];
-  const r = await execCapture(["git", ...args], { cwd, env, timeoutMs: 3e4 });
-  if (r.exitCode !== 0) throw new OrbitError("GIT_FAILED", `git ${args[0]} failed: ${tail(r.stderr)}`, { args: args.slice(0, 3), exitCode: r.exitCode });
-  return r.stdout;
-}
-async function assertCheckoutMatchesCandidate(checkoutDir, candidate, outDir) {
-  const tree = (await git5(checkoutDir, ["rev-parse", `${candidate.commitSha}^{tree}`])).trim();
-  if (tree !== candidate.treeHash) {
-    throw new OrbitError("STALE_EVIDENCE", `candidate ${candidate.id} names tree ${candidate.treeHash} but its commit has tree ${tree}`, { candidate: candidate.id });
-  }
-  const drift = (await git5(checkoutDir, ["diff", "--name-only", "-z", "--ignore-submodules=none", candidate.commitSha, "--"])).split("\0").filter(Boolean);
-  if (drift.length > 0) {
-    throw new OrbitError("STALE_EVIDENCE", `the checkout differs from candidate ${candidate.id}; UI evidence would not describe the candidate (${drift.slice(0, 5).join(", ")})`, { candidate: candidate.id, paths: drift.slice(0, 20) });
-  }
-  const stray = (await untrackedFiles(checkoutDir)).filter((p) => !isInside(resolve11(checkoutDir, p), outDir));
-  if (stray.length > 0) {
-    throw new OrbitError("STALE_EVIDENCE", `the checkout holds untracked files that are not part of candidate ${candidate.id}; UI evidence would not describe the candidate (${stray.slice(0, 5).join(", ")})`, { candidate: candidate.id, paths: stray.slice(0, 20) });
-  }
-}
-async function untrackedFiles(cwd) {
-  return (await git5(cwd, ["ls-files", "-z", "--others", "--exclude-standard"])).split("\0").filter(Boolean);
-}
-async function changedBetween(cwd, base, head) {
-  const raw = await git5(cwd, ["diff", "--name-status", "-z", "--no-renames", "--no-ext-diff", "--ignore-submodules=none", base, head, "--"]);
-  const tokens3 = raw.split("\0").filter((t) => t.length > 0);
-  const out = [];
-  for (let i = 0; i + 1 < tokens3.length; i += 2) out.push({ status: tokens3[i], path: tokens3[i + 1] });
-  return out;
-}
-async function driftSince(cwd, commit) {
-  const modified = (await git5(cwd, ["diff", "--name-only", "-z", "--ignore-submodules=none", commit, "--"])).split("\0").filter(Boolean);
-  return { modified, untracked: await untrackedFiles(cwd) };
-}
-async function touchedSince(cwd, commit) {
-  const d = await driftSince(cwd, commit);
-  return [...d.modified, ...d.untracked];
-}
-async function baselineFilesWrittenDuringRun(cwd, commit, isBaseline) {
-  return (await touchedSince(cwd, commit)).filter(isBaseline);
-}
-function looksLikeA11yBaseline(path) {
-  return /(?:a11y|axe|accessibility)[^/]*baseline[^/]*$|baseline[^/]*(?:a11y|axe|accessibility)[^/]*$/i.test(path);
-}
-function changedA11yBaselines(journeys, checkoutDir, changed) {
-  const out = /* @__PURE__ */ new Set();
-  const root = safeReal(checkoutDir);
-  for (const j of journeys) {
-    for (const scan of j.a11y) {
-      if (!scan.baselinePath) continue;
-      const real = safeReal(scan.baselinePath) ?? resolve11(scan.baselinePath);
-      if (!isInside(real, root) || root === null) continue;
-      const rel = relative4(root, real).split(sep8).join("/");
-      if (changed.has(rel)) out.add(rel);
-    }
-  }
-  return [...out].sort();
-}
-var FORBIDDEN_ARG, SAME_AS_ENFORCED, UI_ENFORCEMENT_VERSION, MAX_ARTIFACT_BYTES, MAX_LOG_BYTES, GIT_ENV_KEYS, UI_LIMITATIONS, UI_RUN_ENTRY, FAILED_RESULT, EXTENSIONS, TEXTUAL, JOURNEY_FILE;
-var init_runner2 = __esm({
-  "src/ui/runner.ts"() {
-    "use strict";
-    init_clock();
-    init_errors();
-    init_exec();
-    init_fsx();
-    init_hash();
-    init_redact();
-    init_profiles();
-    init_config();
-    init_globs();
-    init_snapshot();
-    init_app_fixture();
-    init_env2();
-    init_report3();
-    FORBIDDEN_ARG = /^(?:-u|--update-snapshots(?:=.*)?|--update-source-method(?:=.*)?|--ignore-snapshots|--pass-with-no-tests|--run-agents(?:=.*)?|--ui|--headed|--debug|--reporter(?:=.*)?|--add-reporter(?:=.*)?|--output(?:=.*)?|--trace(?:=.*)?|--retries(?:=.*)?)$/;
-    SAME_AS_ENFORCED = /* @__PURE__ */ new Set(["--reporter=json", "--update-snapshots=none", "--trace=retain-on-failure"]);
-    UI_ENFORCEMENT_VERSION = 1;
-    MAX_ARTIFACT_BYTES = 50 * 1024 * 1024;
-    MAX_LOG_BYTES = 4 * 1024 * 1024;
-    GIT_ENV_KEYS = ["PATH", "HOME", "LANG", "LC_ALL"];
-    UI_LIMITATIONS = [
-      "Automated accessibility scans (axe-core) find only part of the possible accessibility problems; a clean scan is not a claim that the interface is accessible.",
-      "Visual checks compare pixels against stored baselines on one browser and platform; they do not judge whether a layout is usable or correct."
-    ];
-    UI_RUN_ENTRY = "orbit:ui-run";
-    FAILED_RESULT = /* @__PURE__ */ new Set(["failed", "timedOut", "interrupted"]);
-    EXTENSIONS = { "application/json": ".json", "text/plain": ".txt", "text/markdown": ".md", "image/png": ".png", "application/zip": ".zip", "video/webm": ".webm" };
-    TEXTUAL = /^(?:text\/|application\/json)/;
-    JOURNEY_FILE = /\.(?:spec|test)\.[cm]?[jt]sx?$/;
   }
 });
 
@@ -47361,123 +48848,899 @@ var init_triggers = __esm({
   }
 });
 
-// src/controller/authorization.ts
-function operationKey(op) {
-  return `op-${sha256(canonicalJson(op)).slice(0, 16)}`;
+// src/ui/report.ts
+function stripAnsi2(text2) {
+  return text2.replace(ANSI3, "");
 }
-function deniedDependencyOperations(scope, snapshot2) {
-  const out = [];
-  const consider = (op, summary) => {
-    const d = authorize(snapshot2, op);
-    if (!d.allowed) out.push({ op, key: operationKey(op), summary, denial: `${d.rule}: ${d.reason}` });
+function cleanText(text2, max = MAX_MESSAGE_CHARS) {
+  const clean = redact(stripAnsi2(text2));
+  return clean.length > max ? `${clean.slice(0, max)}
+[orbit: truncated ${clean.length - max} characters]` : clean;
+}
+function parsePlaywrightReport(raw) {
+  if (!isObj(raw)) throw new TypeError("Playwright report is not an object");
+  const config = isObj(raw.config) ? raw.config : {};
+  const stats = isObj(raw.stats) ? raw.stats : {};
+  const report2 = {
+    playwrightVersion: str5(config.version),
+    updateSnapshots: str5(config.updateSnapshots),
+    grepInvert: config.grepInvert !== null && config.grepInvert !== void 0,
+    shard: config.shard !== null && config.shard !== void 0,
+    projectNames: arr(config.projects).flatMap((p) => isObj(p) && typeof p.name === "string" ? [p.name] : []),
+    selection: selectionSignals(config),
+    errors: arr(raw.errors).map((e) => cleanText(isObj(e) ? str5(e.message) ?? str5(e.stack) ?? "unknown error" : String(e), 1e3)),
+    stats: { expected: num4(stats.expected), unexpected: num4(stats.unexpected), flaky: num4(stats.flaky), skipped: num4(stats.skipped) },
+    tests: []
   };
-  if (scope.lockfile_changed) consider({ kind: "dependency", change: "change_lockfile", detail: "lockfile changed by the candidate" }, "change the dependency lockfile");
-  if (scope.dependency_manifest_changed.length > 0) {
-    const files = [...scope.dependency_manifest_changed].sort();
-    consider({ kind: "dependency", change: "add_package", detail: files.join(", ") }, `change dependencies in ${files.join(", ")}`);
+  for (const suite of arr(raw.suites)) walkSuite(suite, [], true, report2);
+  return report2;
+}
+function selectionSignals(config) {
+  const out = [];
+  if (config.grepInvert !== null && config.grepInvert !== void 0) out.push("grepInvert is set");
+  if (config.shard !== null && config.shard !== void 0) out.push("shard is set");
+  for (const a of arr(config.argv)) if (typeof a === "string" && SELECTION_ARG.test(a)) out.push(`the command line carries ${cleanText(a, 80)}`);
+  for (const p of arr(config.projects)) {
+    if (!isObj(p)) continue;
+    const ignored = Array.isArray(p.testIgnore) ? p.testIgnore.length > 0 : typeof p.testIgnore === "string" && p.testIgnore !== "";
+    if (ignored) out.push(`project ${cleanText(str5(p.name) ?? "?", 80)} sets testIgnore`);
+  }
+  return [...new Set(out)];
+}
+function walkSuite(suite, parents, isFile, out) {
+  if (!isObj(suite)) return;
+  const title = str5(suite.title);
+  const path = isFile || title === null || title === "" ? parents : [...parents, title];
+  for (const spec of arr(suite.specs)) {
+    if (!isObj(spec)) continue;
+    for (const test of arr(spec.tests)) {
+      if (!isObj(test)) continue;
+      out.tests.push({
+        titlePath: [...path, str5(spec.title) ?? "(untitled)"],
+        file: str5(spec.file) ?? str5(suite.file) ?? "",
+        line: num4(spec.line),
+        projectName: str5(test.projectName) ?? str5(test.projectId) ?? "",
+        outcome: str5(test.status) ?? "unknown",
+        expectedStatus: str5(test.expectedStatus) ?? "passed",
+        annotations: arr(test.annotations).flatMap((a) => isObj(a) && typeof a.type === "string" ? [a.type] : []),
+        results: arr(test.results).flatMap((r) => isObj(r) ? [parseResult(r)] : [])
+      });
+    }
+  }
+  for (const child of arr(suite.suites)) walkSuite(child, path, false, out);
+}
+function parseResult(r) {
+  const err = isObj(r.error) ? r.error : null;
+  const loc = err && isObj(err.location) ? err.location : null;
+  return {
+    status: str5(r.status) ?? "unknown",
+    durationMs: num4(r.duration),
+    retry: num4(r.retry),
+    error: err ? {
+      message: cleanText(str5(err.message) ?? str5(err.stack) ?? "unknown error"),
+      snippet: str5(err.snippet) === null ? null : cleanText(str5(err.snippet) ?? "", 1500),
+      location: loc && str5(loc.file) !== null ? { file: str5(loc.file) ?? "", line: num4(loc.line), column: num4(loc.column) } : null
+    } : null,
+    steps: arr(r.steps).slice(0, MAX_STEPS).flatMap((s) => isObj(s) ? [parseStep(s, 0)] : []),
+    attachments: arr(r.attachments).flatMap((a) => isObj(a) ? parseAttachment(a) : [])
+  };
+}
+function parseStep(s, depth) {
+  return {
+    title: cleanText(str5(s.title) ?? "", 200),
+    durationMs: num4(s.duration),
+    failed: isObj(s.error),
+    steps: depth >= 4 ? [] : arr(s.steps).flatMap((c) => isObj(c) ? [parseStep(c, depth + 1)] : [])
+  };
+}
+function parseAttachment(a) {
+  const name = str5(a.name);
+  if (name === null) return [];
+  let body = null;
+  const b64 = str5(a.body);
+  if (b64 !== null && b64.length <= MAX_INLINE_BODY_BYTES * 4 / 3 + 4) body = Buffer.from(b64, "base64");
+  return [{ name, contentType: str5(a.contentType) ?? "application/octet-stream", path: str5(a.path), body }];
+}
+function summarizeSteps(steps) {
+  return steps.map((s) => ({ title: s.title, status: s.failed ? "failed" : "passed", durationMs: Math.round(s.durationMs) }));
+}
+function failedStepPath(steps) {
+  const failing = steps.find((s) => s.failed);
+  if (!failing) return null;
+  const parts = [failing.title];
+  let cur = failing;
+  for (; ; ) {
+    const next = cur.steps.find((s) => s.failed);
+    if (!next) break;
+    parts.push(next.title);
+    cur = next;
+  }
+  return parts.filter(Boolean).join(" > ") || null;
+}
+function describeError(err, rootDir) {
+  const message = err.message;
+  const exp = EXPECTED.exec(message)?.[1]?.trim() ?? null;
+  const rec = RECEIVED.exec(message)?.[1]?.trim() ?? null;
+  let diff = null;
+  if (exp === null && rec === null && /^[-+] (Expected|Received)\b/m.test(message)) {
+    const lines = message.split("\n");
+    const start = lines.findIndex((l) => /^- Expected\b/.test(l));
+    if (start >= 0) diff = lines.slice(start, start + MAX_DIFF_LINES).join("\n").trimEnd();
+  }
+  const loc = err.location;
+  return {
+    message,
+    location: loc ? { file: relativeTo(loc.file, rootDir), line: loc.line, column: loc.column } : null,
+    snippet: err.snippet,
+    expected: exp,
+    observed: rec,
+    diff
+  };
+}
+function relativeTo(file, rootDir) {
+  if (!rootDir) return file;
+  const prefix = rootDir.endsWith("/") ? rootDir : `${rootDir}/`;
+  return file.startsWith(prefix) ? file.slice(prefix.length) : file;
+}
+function parseErrorContext(markdown) {
+  const sections = /* @__PURE__ */ new Map();
+  let current = null;
+  let buf = [];
+  const flush = () => {
+    if (current !== null) sections.set(current, buf.join("\n").trim());
+    buf = [];
+  };
+  let inFence = false;
+  for (const line3 of markdown.split("\n")) {
+    if (/^```/.test(line3)) inFence = !inFence;
+    const h = !inFence ? /^#\s+(.+?)\s*$/.exec(line3) : null;
+    if (h) {
+      flush();
+      current = h[1]?.toLowerCase() ?? null;
+      continue;
+    }
+    buf.push(line3);
+  }
+  flush();
+  const fenced2 = (s) => {
+    if (!s) return null;
+    const m = /```[a-z]*\n([\s\S]*?)\n```/.exec(s);
+    return cleanText(m?.[1] ?? s, 6e3);
+  };
+  return { errorDetails: fenced2(sections.get("error details")), pageSnapshot: fenced2(sections.get("page snapshot")) };
+}
+function parseDiagnostics(body) {
+  const j = safeJson(body);
+  if (!isObj(j)) return null;
+  const list = (v, pick) => arr(v).slice(0, MAX_ENTRIES).flatMap((e) => {
+    const p = isObj(e) ? pick(e) : null;
+    return p === null ? [] : [p];
+  });
+  return {
+    consoleErrors: list(j.consoleErrors, (e) => ({ type: str5(e.type) ?? "error", text: cleanText(str5(e.text) ?? "", 1e3), url: str5(e.url) ?? "", line: num4(e.line) })),
+    pageErrors: list(j.pageErrors, (e) => ({ name: str5(e.name) ?? "Error", message: cleanText(str5(e.message) ?? "", 1e3) })),
+    failedRequests: list(j.failedRequests, (e) => ({ url: cleanText(str5(e.url) ?? "", 500), method: str5(e.method) ?? "GET", failure: str5(e.failure) ?? "unknown" })),
+    badResponses: list(j.badResponses, (e) => ({ url: cleanText(str5(e.url) ?? "", 500), method: str5(e.method) ?? "GET", status: num4(e.status) })),
+    finalUrl: str5(j.finalUrl),
+    dropped: num4(j.dropped)
+  };
+}
+function parseBrowserInfo(body) {
+  const j = safeJson(body);
+  if (!isObj(j)) return null;
+  const vp = isObj(j.viewport) ? j.viewport : null;
+  const name = str5(j.browserName);
+  const version = str5(j.browserVersion);
+  if (name === null || version === null) return null;
+  return {
+    name,
+    version,
+    viewport: vp && typeof vp.width === "number" && typeof vp.height === "number" ? { width: vp.width, height: vp.height } : null,
+    project: str5(j.project)
+  };
+}
+function parseA11y(body) {
+  const j = safeJson(body);
+  if (!isObj(j)) return null;
+  const entry = (e) => ({
+    ruleId: str5(e.ruleId) ?? "",
+    impact: str5(e.impact) ?? "",
+    target: cleanText(str5(e.target) ?? "", 500),
+    url: str5(e.url) ?? "",
+    viewport: str5(e.viewport) ?? "",
+    help: cleanText(str5(e.help) ?? "", 300),
+    fingerprint: str5(e.fingerprint) ?? ""
+  });
+  return {
+    url: str5(j.url) ?? "",
+    viewport: str5(j.viewport) ?? "",
+    baselinePath: str5(j.baselinePath),
+    baselineLoaded: j.baselineLoaded === true,
+    seriousOrCritical: num4(j.seriousOrCritical),
+    newViolations: arr(j.newViolations).slice(0, MAX_ENTRIES).flatMap((e) => isObj(e) ? [entry(e)] : []),
+    baselinedCount: arr(j.baselined).length,
+    advisory: j.advisory === true
+  };
+}
+function parseKeyboard(body) {
+  const j = safeJson(body);
+  if (!isObj(j)) return null;
+  const names = (v) => arr(v).slice(0, MAX_ENTRIES).flatMap((e) => typeof e === "string" ? [cleanText(e, 300)] : []);
+  const entries = arr(j.entries).slice(0, MAX_ENTRIES).flatMap((e) => {
+    if (!isObj(e) || typeof e.selector !== "string") return [];
+    return [{ selector: cleanText(e.selector, 300), reachedAtTab: typeof e.reachedAtTab === "number" ? e.reachedAtTab : null, focusVisible: typeof e.focusVisible === "boolean" ? e.focusVisible : null }];
+  });
+  const unreachable = names(j.unreachable);
+  const outOfOrder = names(j.outOfOrder);
+  const missingFocusRing = names(j.missingFocusRing);
+  return {
+    url: str5(j.url) ?? "",
+    viewport: str5(j.viewport) ?? "",
+    tabsPressed: num4(j.tabsPressed),
+    ordered: j.ordered !== false,
+    entries,
+    unreachable,
+    outOfOrder,
+    missingFocusRing,
+    // Recomputed rather than trusted: a scan that lists problems has not passed whatever its own flag says.
+    passed: j.passed === true && unreachable.length === 0 && outOfOrder.length === 0 && missingFocusRing.length === 0
+  };
+}
+function safeJson(body) {
+  try {
+    return JSON.parse(body.toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+var ANSI3, MAX_MESSAGE_CHARS, MAX_DIFF_LINES, MAX_STEPS, isObj, str5, num4, arr, MAX_INLINE_BODY_BYTES, SELECTION_ARG, EXPECTED, RECEIVED, MAX_ENTRIES;
+var init_report3 = __esm({
+  "src/ui/report.ts"() {
+    "use strict";
+    init_redact();
+    ANSI3 = /\u001b\[[0-9;]*[A-Za-z]/g;
+    MAX_MESSAGE_CHARS = 4e3;
+    MAX_DIFF_LINES = 40;
+    MAX_STEPS = 50;
+    isObj = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+    str5 = (v) => typeof v === "string" ? v : null;
+    num4 = (v, fallback = 0) => typeof v === "number" && Number.isFinite(v) ? v : fallback;
+    arr = (v) => Array.isArray(v) ? v : [];
+    MAX_INLINE_BODY_BYTES = 2 * 1024 * 1024;
+    SELECTION_ARG = /^(?:-g|--grep|-G|--grep-invert|--shard|--only-changed|--last-failed|--test-list|--test-list-invert)(?:=.*)?$/;
+    EXPECTED = /^\s*Expected(?:\s+[a-z][a-z ]*)?:\s*(.+)$/im;
+    RECEIVED = /^\s*Received(?:\s+[a-z][a-z ]*)?:\s*(.+)$/im;
+    MAX_ENTRIES = 200;
+  }
+});
+
+// src/ui/runner.ts
+import { copyFileSync as copyFileSync2, existsSync as existsSync33, mkdirSync as mkdirSync17, readFileSync as readFileSync20, realpathSync as realpathSync14, rmSync as rmSync12, statSync as statSync13, writeFileSync as writeFileSync6 } from "node:fs";
+import { createRequire as createRequire3 } from "node:module";
+import { basename as basename11, dirname as dirname23, isAbsolute as isAbsolute14, join as join41, relative as relative4, resolve as resolve12, sep as sep9 } from "node:path";
+async function runUiChecks(input) {
+  const clock = input.clock ?? systemClock;
+  const { snapshot: snapshot2, uiConfig, candidate } = input;
+  const checkoutDir = realpathSync14(input.checkoutDir);
+  const outDir = realpathSync14(ensureDir(resolve12(input.outDir)));
+  const startedAt = clock.now();
+  const checks = resolveChecks(snapshot2, input.journeyCheckIds);
+  for (const check of checks) assertCheckCommandAllowed(check);
+  const baseUrl = uiConfig.environment.base_url;
+  assertBaseUrl(baseUrl, uiConfig.environment.isolated_test_data);
+  if (uiConfig.environment.production_accounts !== false) {
+    throw new OrbitError("POLICY_DENIED", "ui.environment.production_accounts must be false", { rule: "ui.environment.production_accounts" });
+  }
+  await assertCheckoutMatchesCandidate(checkoutDir, candidate, outDir);
+  const globs = compileGlobs(uiConfig.visual.baseline_globs, { nocase: false });
+  const candidateChanges = await changedBetween(checkoutDir, candidate.parentSha, candidate.commitSha);
+  const visualFromDiff = candidateChanges.filter((c) => globs(c.path)).map((c) => c.path);
+  const configHash = hashObject({
+    ui: uiConfig,
+    checks: checks.map((c) => [c.id, snapshot2.check_config_hashes[c.id] ?? hashObject(c)]),
+    enforcement: UI_ENFORCEMENT_VERSION,
+    projects: input.projects ?? null
+  });
+  atomicWriteJson(join41(outDir, "ui-run.json"), { state: "running", candidate: candidate.id, startedAt, checks: checks.map((c) => c.id) });
+  const reasons = [];
+  const unverified = [];
+  const checkRuns = [];
+  const journeys = [];
+  let terminal = null;
+  let app = null;
+  const tmpDir = ensureDir(join41(outDir, "tmp"));
+  const baseEnv = safeBaseEnv(input.hostEnv ?? process.env);
+  const port = new URL(baseUrl).port;
+  try {
+    if (uiConfig.environment.start_command !== null) {
+      const appCheck = { ...defaultCheck("ui-app"), command: uiConfig.environment.start_command, network_hosts: [], timeout_seconds: uiConfig.environment.ready_timeout_seconds };
+      const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot: snapshot2, extraWritable: [tmpDir], homeDir: input.homeDir, env: input.hostEnv });
+      try {
+        app = await startApp({
+          command: uiConfig.environment.start_command,
+          cwd: checkoutDir,
+          baseUrl,
+          readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1e3,
+          env: { ...input.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir },
+          isolation: { provider: input.isolation, profile },
+          isolatedTestData: uiConfig.environment.isolated_test_data,
+          stateDir: join41(outDir, "app"),
+          clock,
+          pollMs: input.appPollMs,
+          hostEnv: input.hostEnv
+        });
+      } catch (err) {
+        if (err instanceof OrbitError && (err.code === "ISOLATION_UNAVAILABLE" || err.code === "POLICY_DENIED")) throw err;
+        terminal = "ERROR";
+        reasons.push(`the application did not start: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else {
+      unverified.push("ui.environment.start_command is not set: the application at base_url was started by something other than Orbit, so its build is not bound to this candidate");
+    }
+    if (terminal === null) {
+      for (const check of checks) {
+        const run = await runOneCheck({ input, check, checkoutDir, outDir, tmpDir, baseEnv, baseUrl, clock });
+        checkRuns.push(run.run);
+        journeys.push(...run.journeys);
+        reasons.push(...run.reasons);
+        unverified.push(...run.unverified);
+        if (run.terminal && terminal === null) terminal = run.terminal;
+        if (run.terminal === "CANCELLED") break;
+      }
+    }
+  } finally {
+    if (app) await stopApp(app, { clock });
+  }
+  const written = await baselineFilesWrittenDuringRun(checkoutDir, candidate.commitSha, globs);
+  const visualBaselineChanges = [.../* @__PURE__ */ new Set([...visualFromDiff, ...written])].sort();
+  const changedPaths2 = /* @__PURE__ */ new Set([...candidateChanges.map((c) => c.path), ...await touchedSince(checkoutDir, candidate.commitSha)]);
+  const a11yBaselineChanges = [.../* @__PURE__ */ new Set([...changedA11yBaselines(journeys, checkoutDir, changedPaths2), ...[...changedPaths2].filter(looksLikeA11yBaseline)])].sort();
+  if (written.length > 0) reasons.push(`the run itself wrote baseline files: ${written.join(", ")}`);
+  const drift = await driftSince(checkoutDir, candidate.commitSha);
+  const outside = (p) => !isInside(resolve12(checkoutDir, p), outDir);
+  const mutated = drift.modified.filter((p) => !globs(p) && !looksLikeA11yBaseline(p) && outside(p));
+  if (mutated.length > 0) {
+    reasons.push(`the run modified tracked files, so its evidence no longer describes the candidate: ${mutated.slice(0, 10).join(", ")}`);
+    terminal ??= "ERROR";
+  }
+  const leftovers = drift.untracked.filter((p) => !globs(p) && !looksLikeA11yBaseline(p) && outside(p));
+  if (leftovers.length > 0) unverified.push(`the run left untracked files in the checkout: ${leftovers.slice(0, 10).join(", ")}`);
+  const journeyFiles = new Set(journeys.map((j) => j.file));
+  const deletedJourneys = candidateChanges.filter((c) => c.status === "D" && JOURNEY_FILE.test(c.path)).map((c) => c.path);
+  if (deletedJourneys.length > 0) unverified.push(`the candidate deleted journey files, so their coverage is gone: ${deletedJourneys.join(", ")}`);
+  const editedJourneys = candidateChanges.filter((c) => c.status !== "D" && journeyFiles.has(c.path)).map((c) => c.path);
+  if (editedJourneys.length > 0) unverified.push(`the candidate changed journey definitions that this run executed (check that no assertion was weakened): ${editedJourneys.join(", ")}`);
+  const stats = tally(journeys);
+  const coverage = coverageOf(journeys, uiConfig);
+  if (journeys.length > 0) {
+    if (coverage.missingViewports.length) unverified.push(`configured viewports never exercised: ${coverage.missingViewports.map((v) => `${v.width}x${v.height}`).join(", ")}`);
+    if (coverage.missingBrowsers.length) unverified.push(`configured browsers never exercised: ${coverage.missingBrowsers.join(", ")}`);
+    if (uiConfig.accessibility.enabled && !journeys.some((j) => j.a11y.length > 0)) unverified.push("accessibility is enabled but no journey ran an accessibility scan");
+  }
+  const advisoryCount = journeys.reduce((n2, j) => n2 + j.a11y.filter((s) => s.advisory).reduce((m, s) => m + s.newViolations.length, 0), 0);
+  if (advisoryCount > 0) {
+    unverified.push(`${advisoryCount} new serious or critical accessibility violation(s) were recorded as advisory because ui.accessibility.fail_on_new_serious_or_critical is false; they did not fail any journey`);
+  }
+  for (const j of journeys) {
+    if (j.annotations.includes("test.fail")) unverified.push(`journey ${j.id} is annotated test.fail(): a "pass" there means the failure still happens`);
+  }
+  const failing = journeys.filter((j) => j.status === "FAILED" || j.status === "TIMED_OUT" || j.status === "SKIPPED");
+  for (const j of failing) reasons.push(j.status === "SKIPPED" ? `journey ${j.id} was skipped, which proves nothing` : `journey ${j.id} ${j.status === "TIMED_OUT" ? "timed out" : "failed"}${j.failedStep ? ` at step "${j.failedStep}"` : ""}`);
+  const needsReview = uiConfig.visual.baseline_changes_require_review && (visualBaselineChanges.length > 0 || a11yBaselineChanges.length > 0);
+  if (needsReview) {
+    reasons.push(`stored baselines changed in the candidate and need human review: ${[...visualBaselineChanges, ...a11yBaselineChanges].join(", ")}`);
+  }
+  if (journeys.some((j) => j.status === "INTERRUPTED")) terminal = "CANCELLED";
+  let verdict;
+  if (terminal !== null) verdict = terminal;
+  else if (failing.length > 0) verdict = "FAIL";
+  else if (needsReview) verdict = "BLOCKED";
+  else verdict = "PASS";
+  const browsers = uniqueBy(journeys.flatMap((j) => j.browser ? [j.browser] : []), (b) => `${b.name}@${b.version}`);
+  const viewports = coverage.observedViewports;
+  const result2 = {
+    verdict,
+    passed: verdict === "PASS",
+    reasons,
+    binding: {
+      candidateId: candidate.id,
+      treeHash: candidate.treeHash,
+      checkConfigHash: configHash,
+      policyHash: snapshotHash(snapshot2),
+      commitSha: candidate.commitSha,
+      playwrightVersion: checkRuns.find((c) => c.playwrightVersion)?.playwrightVersion ?? null,
+      browsers,
+      viewports,
+      baseUrl,
+      keyboard: { scans: journeys.reduce((n2, j) => n2 + j.keyboard.length, 0), failed: journeys.reduce((n2, j) => n2 + j.keyboard.filter((k) => !k.passed).length, 0) },
+      accessibilityFailOn: a11yFailOn(uiConfig)
+    },
+    journeys,
+    checks: checkRuns,
+    stats,
+    flaky: journeys.some((j) => j.status === "FLAKY"),
+    visualBaselineChanges,
+    a11yBaselineChanges,
+    a11yAdvisory: journeys.flatMap((j) => j.a11y.filter((s) => s.advisory).flatMap((s) => s.newViolations)),
+    consoleErrorCount: journeys.reduce((n2, j) => n2 + (j.diagnostics?.consoleErrors.length ?? 0) + (j.diagnostics?.pageErrors.length ?? 0), 0),
+    coverage,
+    unverified,
+    limitations: [...UI_LIMITATIONS],
+    outDir,
+    startedAt,
+    endedAt: clock.now()
+  };
+  atomicWriteJson(join41(outDir, "ui-result.json"), redactValue(result2));
+  return result2;
+}
+function toEvidenceUi(result2) {
+  const runStatus = result2.verdict === "TIMEOUT" ? "TIMEOUT" : result2.verdict === "CANCELLED" ? "CANCELLED" : result2.verdict === "ERROR" ? "ERROR" : null;
+  const entries = result2.journeys.map((j) => ({
+    journey: j.id,
+    checkId: j.checkId,
+    status: runStatus ?? (j.status === "PASSED" || j.status === "FLAKY" ? "PASSED" : j.status === "TIMED_OUT" ? "TIMEOUT" : j.status === "INTERRUPTED" ? "CANCELLED" : "FAILED"),
+    artifacts: j.artifacts.map((a) => a.path)
+  }));
+  if (result2.verdict !== "PASS" && entries.every((e) => e.status === "PASSED")) {
+    entries.push({ journey: UI_RUN_ENTRY, ...result2.checks[0] ? { checkId: result2.checks[0].checkId } : {}, status: runStatus ?? "FAILED", artifacts: [...result2.visualBaselineChanges, ...result2.a11yBaselineChanges] });
+  }
+  return entries;
+}
+function resolveChecks(snapshot2, ids) {
+  if (ids.length === 0) throw new OrbitError("CONFIG_INVALID", "ui is configured but no journey checks are named (ui.journey_check_ids is empty)", { rule: "ui.journey_check_ids" });
+  return ids.map((id) => {
+    const check = snapshot2.config.checks[id];
+    if (!check) throw new OrbitError("CONFIG_INVALID", `ui journey check ${JSON.stringify(id)} is not defined in checks`, { id });
+    if (check.kind !== "playwright") throw new OrbitError("CONFIG_INVALID", `ui journey check ${JSON.stringify(id)} must have kind: playwright`, { id, kind: check.kind });
+    return check;
+  });
+}
+function a11yFailOn(ui) {
+  return ui.accessibility.fail_on_new_serious_or_critical ? "serious,critical" : "none";
+}
+function assertCheckCommandAllowed(check) {
+  const tokens3 = check.shell ? (check.command[0] ?? "").split(/[\s;&|()'"`]+/) : check.command;
+  const bad = tokens3.find((t) => FORBIDDEN_ARG.test(t) && !SAME_AS_ENFORCED.has(t));
+  if (bad !== void 0) {
+    throw new OrbitError("POLICY_DENIED", `journey check ${JSON.stringify(check.id)} carries ${JSON.stringify(bad)}, which Orbit sets itself or forbids (baseline updates, reporters, output, traces and retries are not configurable)`, {
+      rule: "ui.enforced_flags",
+      check: check.id,
+      arg: bad
+    });
+  }
+}
+function enforcedFlags(check, outputDir, projects) {
+  return ["--reporter=json", "--update-snapshots=none", "--trace=retain-on-failure", `--output=${outputDir}`, `--retries=${check.flaky_reruns}`, ...(projects ?? []).map((p) => `--project=${p}`)];
+}
+function buildArgv(check, flags) {
+  if (check.shell) return ["/bin/sh", "-c", `${check.command[0] ?? ""} "$@"`, "orbit-ui", ...flags];
+  return [...check.command, ...flags];
+}
+function shellQuote(arg) {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+async function runOneCheck(ctx) {
+  const { input, check, checkoutDir, clock } = ctx;
+  const checkDir = ensureDir(join41(ctx.outDir, check.id));
+  const outputDir = join41(checkDir, "test-results");
+  const reportPath2 = join41(checkDir, "playwright-report.json");
+  const logPath = join41(checkDir, "run.log");
+  const cwd = resolve12(checkoutDir, check.cwd);
+  if (relative4(checkoutDir, cwd).startsWith("..") || isAbsolute14(relative4(checkoutDir, cwd))) {
+    throw new OrbitError("POLICY_DENIED", `check ${check.id} cwd leaves the checkout`, { rule: "checks.cwd", check: check.id });
+  }
+  const flags = enforcedFlags(check, outputDir, input.projects);
+  const argv2 = buildArgv(check, flags);
+  const env = {
+    ...ctx.baseEnv,
+    ...check.env,
+    TMPDIR: ctx.tmpDir,
+    FORCE_COLOR: "0",
+    ORBIT_UI_RUN: "1",
+    ORBIT_UI_BASE_URL: ctx.baseUrl,
+    ORBIT_UI_VIEWPORTS: JSON.stringify(input.uiConfig.viewports),
+    ORBIT_UI_BROWSERS: JSON.stringify(input.uiConfig.browsers),
+    // The fixture reads this: `none` records new serious or critical violations as advisory instead of failing the journey.
+    ORBIT_A11Y_FAIL_ON: a11yFailOn(input.uiConfig),
+    PLAYWRIGHT_JSON_OUTPUT_FILE: reportPath2
+  };
+  const profile = {
+    ...profileForCheck({ worktree: checkoutDir, check, snapshot: input.snapshot, extraWritable: [checkDir, ctx.tmpDir], homeDir: input.homeDir, env: input.hostEnv }),
+    allowLocalBinding: true
+  };
+  rmSync12(reportPath2, { force: true });
+  rmSync12(outputDir, { recursive: true, force: true });
+  const wrapped = input.isolation.wrap(argv2, profile, { cwd, env });
+  const started = clock.now();
+  let exec;
+  try {
+    exec = await execCapture(wrapped.argv, { cwd, env: wrapped.env, timeoutMs: check.timeout_seconds * 1e3, abortSignal: input.abortSignal, maxOutputBytes: MAX_LOG_BYTES });
+  } finally {
+    wrapped.cleanup();
+  }
+  writeFileSync6(logPath, redact(`${exec.stdout}${exec.stderr ? `
+--- stderr ---
+${exec.stderr}` : ""}`), { mode: 384 });
+  let parsed2 = null;
+  let parseProblem = null;
+  const reportFound = existsSync33(reportPath2);
+  if (reportFound) {
+    try {
+      parsed2 = parsePlaywrightReport(JSON.parse(readFileSync20(reportPath2, "utf8")));
+    } catch (err) {
+      parseProblem = `the Playwright report could not be parsed: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+  const run = {
+    checkId: check.id,
+    argv: argv2,
+    exitCode: exec.exitCode,
+    timedOut: exec.timedOut,
+    cancelled: exec.cancelled,
+    durationMs: clock.now() - started,
+    logPath,
+    reportPath: reportPath2,
+    reportFound,
+    isolation: input.isolation.kind,
+    isolationLimitations: wrapped.limitations,
+    playwrightVersion: parsed2?.playwrightVersion ?? null
+  };
+  const reasons = [];
+  const unverified = [];
+  const quiet = (terminal) => ({ run, journeys: [], reasons, unverified, terminal });
+  if (exec.cancelled) {
+    reasons.push(`check ${check.id} was cancelled`);
+    return quiet("CANCELLED");
+  }
+  if (exec.timedOut) {
+    reasons.push(`check ${check.id} exceeded its ${check.timeout_seconds} s limit`);
+    return quiet("TIMEOUT");
+  }
+  if (parsed2 === null) {
+    reasons.push(parseProblem ?? `check ${check.id} produced no Playwright report (exit ${exec.exitCode ?? "signal"}): ${tail(exec.stderr || exec.stdout)}`);
+    return quiet("ERROR");
+  }
+  if (parsed2.errors.length > 0) {
+    reasons.push(`Playwright reported global errors in ${check.id}: ${parsed2.errors.join("; ")}`);
+    return quiet("ERROR");
+  }
+  if (parsed2.updateSnapshots !== "none") {
+    reasons.push(`Playwright ran with updateSnapshots=${String(parsed2.updateSnapshots)} instead of none; the run cannot be trusted`);
+    return quiet("ERROR");
+  }
+  if (parsed2.tests.length === 0) {
+    reasons.push(`check ${check.id} ran no journeys; an empty run is not a pass`);
+    return quiet("ERROR");
+  }
+  if (parsed2.selection.length > 0) unverified.push(`check ${check.id}: the run was narrowed (${parsed2.selection.join("; ")}), so some journeys may not have run`);
+  const journeys = parsed2.tests.map((t) => buildJourney(t, ctx, checkDir, cwd));
+  const counted = parsed2.stats.expected + parsed2.stats.unexpected + parsed2.stats.flaky + parsed2.stats.skipped;
+  if (counted !== parsed2.tests.length) {
+    reasons.push(`check ${check.id}: the report's totals (${counted}) do not match the ${parsed2.tests.length} journeys it lists`);
+    return quiet("ERROR");
+  }
+  const anyFailed = journeys.some((j) => j.status === "FAILED" || j.status === "TIMED_OUT" || j.status === "INTERRUPTED");
+  if (exec.exitCode !== 0 && !anyFailed || exec.exitCode === 0 && anyFailed) {
+    reasons.push(`check ${check.id} exited with ${exec.exitCode ?? "a signal"} but its report ${anyFailed ? "lists failures" : "lists none"}; the report cannot be trusted`);
+    return quiet("ERROR");
+  }
+  return { run, journeys, reasons, unverified, terminal: null };
+}
+function tail(text2, max = 600) {
+  const t = redact(text2).trim();
+  return t.length > max ? `...${t.slice(-max)}` : t || "(no output)";
+}
+function buildJourney(test, ctx, checkDir, cwd) {
+  const { checkoutDir } = ctx;
+  const file = relativeTo(test.file, checkoutDir);
+  const title = test.titlePath[test.titlePath.length - 1] ?? "";
+  const id = `${test.projectName}/${file}#${test.titlePath.join(" > ")}`;
+  const failing = test.results.filter((r) => FAILED_RESULT.has(r.status));
+  const focus = failing[failing.length - 1] ?? test.results[test.results.length - 1];
+  const status2 = journeyStatus(test);
+  const slug = `${sha256(id).slice(0, 8)}-${title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}`;
+  const artifactDir = join41(checkDir, "artifacts", slug);
+  const collected = focus ? collectAttachments(focus.attachments, { checkoutDir, outputDir: join41(checkDir, "test-results"), artifactDir }) : { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
+  const firstError = (failing[0] ?? focus)?.error ?? null;
+  const rootDir = checkoutDir;
+  const error = firstError && status2 !== "PASSED" ? describeError(firstError, rootDir) : null;
+  const projectFlag = `--project=${test.projectName}`;
+  const grep = ["-g", escapeRegExp3(title)];
+  const reproFlags = ["--update-snapshots=none", "--trace=retain-on-failure", "--reporter=list", projectFlag, ...grep];
+  const reproArgv = buildArgv(ctx.check, reproFlags);
+  const reproduction = {
+    cwd,
+    argv: reproArgv,
+    env: { ORBIT_UI_RUN: "1", ORBIT_UI_BASE_URL: ctx.baseUrl },
+    command: `cd ${shellQuote(cwd)} && ORBIT_UI_RUN=1 ORBIT_UI_BASE_URL=${shellQuote(ctx.baseUrl)} ${reproArgv.map(shellQuote).join(" ")}`
+  };
+  const declared = collected.browser ?? null;
+  const browser = declared ? { name: declared.name, version: declared.version } : fallbackBrowser(checkoutDir, ctx.input.uiConfig.browsers);
+  return {
+    id,
+    title,
+    titlePath: test.titlePath,
+    file,
+    line: test.line,
+    project: test.projectName,
+    checkId: ctx.check.id,
+    status: status2,
+    attempts: test.results.length,
+    durationMs: Math.round(test.results.reduce((n2, r) => n2 + r.durationMs, 0)),
+    browser,
+    viewport: declared?.viewport ?? null,
+    steps: focus ? summarizeSteps(focus.steps) : [],
+    failedStep: focus ? failedStepPath((failing[0] ?? focus).steps) : null,
+    error,
+    artifacts: collected.artifacts,
+    diagnostics: collected.diagnostics,
+    a11y: collected.a11y,
+    keyboard: collected.keyboard,
+    errorContext: collected.errorContext,
+    reproduction,
+    annotations: [...test.annotations, ...test.expectedStatus === "failed" ? ["test.fail"] : []]
+  };
+}
+function journeyStatus(test) {
+  if (test.results.some((r) => r.status === "interrupted")) return "INTERRUPTED";
+  switch (test.outcome) {
+    case "expected":
+      return "PASSED";
+    case "flaky":
+      return "FLAKY";
+    case "skipped":
+      return "SKIPPED";
+    default:
+      return test.results.some((r) => r.status === "timedOut") ? "TIMED_OUT" : "FAILED";
+  }
+}
+function escapeRegExp3(text2) {
+  return text2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function fallbackBrowser(checkoutDir, configured) {
+  const name = configured[0] ?? "chromium";
+  try {
+    const req = createRequire3(join41(checkoutDir, "package.json"));
+    const dir = dirname23(req.resolve("playwright-core/package.json"));
+    const parsed2 = JSON.parse(readFileSync20(join41(dir, "browsers.json"), "utf8"));
+    const list = parsed2.browsers ?? [];
+    const version = list.find((b) => b.name === name)?.browserVersion;
+    return version ? { name, version: `${version} (declared by playwright-core, not observed)` } : null;
+  } catch {
+    return null;
+  }
+}
+function kindOf2(a) {
+  const n2 = a.name;
+  if (n2 === "screenshot" || n2 === "orbit-failure-screenshot") return "screenshot";
+  if (n2 === "trace") return "trace";
+  if (n2 === "video" || a.contentType.startsWith("video/")) return "video";
+  if (n2 === "error-context") return "error-context";
+  if (n2 === "orbit-diagnostics") return "diagnostics";
+  if (n2 === "orbit-a11y") return "accessibility";
+  if (n2 === "orbit-keyboard") return "keyboard";
+  if (/-expected\.png$/.test(n2)) return "visual-expected";
+  if (/-actual\.png$/.test(n2)) return "visual-actual";
+  if (/-diff\.png$/.test(n2)) return "visual-diff";
+  return "other";
+}
+function collectAttachments(attachments, dirs) {
+  const out = { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
+  const outputReal = safeReal(dirs.outputDir);
+  const checkoutReal = safeReal(dirs.checkoutDir);
+  const seen = /* @__PURE__ */ new Set();
+  for (const att of attachments) {
+    const kind = kindOf2(att);
+    let bytes = att.body;
+    let stored = null;
+    if (att.path !== null) {
+      const real = safeReal(att.path);
+      if (real === null || !(isInside(real, outputReal) || isInside(real, checkoutReal))) continue;
+      let size;
+      try {
+        const st = statSync13(real);
+        if (!st.isFile()) continue;
+        size = st.size;
+      } catch {
+        continue;
+      }
+      if (size > MAX_ARTIFACT_BYTES) continue;
+      bytes = readFileSync20(real);
+      stored = real;
+      if (!isInside(real, outputReal)) {
+        mkdirSync17(dirs.artifactDir, { recursive: true });
+        const copy = join41(dirs.artifactDir, `${kind}-${basename11(real)}`);
+        copyFileSync2(real, copy);
+        stored = copy;
+      }
+    } else if (bytes !== null) {
+      mkdirSync17(dirs.artifactDir, { recursive: true });
+      const ext = EXTENSIONS[att.contentType.split(";")[0]?.trim() ?? ""] ?? ".bin";
+      stored = join41(dirs.artifactDir, `${att.name.replace(/[^A-Za-z0-9._-]+/g, "_")}${ext}`);
+      writeFileSync6(stored, TEXTUAL.test(att.contentType) ? redact(bytes.toString("utf8")) : bytes, { mode: 384 });
+      bytes = readFileSync20(stored);
+    }
+    if (bytes === null || stored === null) continue;
+    if (kind === "diagnostics") {
+      out.diagnostics ??= parseDiagnostics(bytes);
+      out.browser ??= parseBrowserInfo(bytes);
+    } else if (kind === "accessibility") {
+      const scan = parseA11y(bytes);
+      if (scan) out.a11y.push(scan);
+    } else if (kind === "keyboard") {
+      const scan = parseKeyboard(bytes);
+      if (scan) out.keyboard.push(scan);
+    } else if (kind === "error-context") {
+      out.errorContext ??= parseErrorContext(bytes.toString("utf8"));
+    }
+    if (seen.has(stored)) continue;
+    seen.add(stored);
+    out.artifacts.push({ name: att.name, kind, contentType: att.contentType, path: stored, sha256: sha256(bytes), bytes: bytes.length });
   }
   return out;
 }
-function requests(ctx) {
-  return listDecisions(ctx.db, ctx.run.id, { kind: AUTHORIZATION_REQUEST_KIND }).map((d) => d.data);
-}
-function grantFor(ctx, op, treeHash) {
-  const req = requests(ctx).filter((r) => r.op_key === op.key && r.tree_hash === treeHash).at(-1);
-  if (!req) return { state: "none" };
-  const q = findQuestion(ctx.db, req.question_id);
-  if (!q || q.status === "withdrawn") return { state: "none" };
-  if (q.status === "open") return { state: "pending", questionId: q.id };
-  const by = q.answeredBy;
-  if (q.answer !== APPROVE_ONCE || !by || !isHumanActor(by)) return { state: "denied", questionId: q.id, by };
-  const id = `dec-${ctx.run.id}-grant-${q.id}`;
-  if (!getDecision(ctx.db, id)) {
-    decide2(ctx, { id, kind: AUTHORIZATION_GRANT_KIND, summary: `${by} authorized once: ${op.summary} (candidate tree ${treeHash.slice(0, 12)} only)`, data: { question_id: q.id, op_key: op.key, operation: op.op, tree_hash: treeHash, approved_by: by, policy_denial: op.denial } });
+function safeReal(path) {
+  try {
+    return realpathSync14(path);
+  } catch {
+    return null;
   }
-  return { state: "granted", decisionId: id, approvedBy: by, questionId: q.id };
 }
-function authorizedOnce(ctx, op, treeHash) {
-  if (authorize(ctx.snapshot, op.op).allowed) return true;
-  return grantFor(ctx, op, treeHash).state === "granted";
+function isInside(child, parent) {
+  if (parent === null) return false;
+  return child === parent || child.startsWith(parent.endsWith(sep9) ? parent : parent + sep9);
 }
-function requestAuthorization(ctx, op, cand) {
-  const q = persistQuestion(
-    ctx.db,
-    ctx.run.id,
-    "risk-review",
-    {
-      question: `May this run ${op.summary} for candidate ${cand.seq} (tree ${cand.treeHash.slice(0, 12)}), which the policy does not authorize?`,
-      changes: ["authority"],
-      evidence: [`the policy denies it: ${op.denial}`, `operation ${op.key}: ${JSON.stringify(op.op)}`, `the implementation-scope gate found this change in candidate ${cand.seq}; supervised mode asks instead of repairing it away`],
-      options: [
-        { label: APPROVE_ONCE, description: `Authorize this one operation for candidate ${cand.seq} only`, consequences: "verification continues with the change; any other candidate or operation is asked about again" },
-        { label: DENY2, description: "Keep the policy as it is and refuse the change", consequences: "the change goes back to the implementer as a scope repair, or the run stops if no attempt is left" }
-      ],
-      recommendation: DENY2,
-      recommendation_reason: "the frozen policy does not allow it; approve only when the dependency change is intended",
-      safe_default: { exists: true, option: DENY2, reason: "denying keeps the authority the run started with" },
-      material: true,
-      affected_work: [`authorization ${op.key} for tree ${cand.treeHash.slice(0, 12)}`],
-      unblocked_work: []
-    },
-    ctx.clock,
-    { actor: ctx.ownerId }
-  ).question;
-  const existing = requests(ctx).some((r) => r.question_id === q.id && r.tree_hash === cand.treeHash);
-  if (!existing) {
-    decide2(ctx, { id: `dec-${ctx.run.id}-authreq-${op.key}-${cand.treeHash.slice(0, 12)}`, kind: AUTHORIZATION_REQUEST_KIND, summary: `asked a person to authorize once: ${op.summary} (candidate ${cand.seq})`, data: { question_id: q.id, op_key: op.key, tree_hash: cand.treeHash, candidate_id: cand.id, operation: op.op, policy_denial: op.denial } });
+function tally(journeys) {
+  const s = { passed: 0, failed: 0, flaky: 0, skipped: 0, other: 0 };
+  for (const j of journeys) {
+    if (j.status === "PASSED") s.passed += 1;
+    else if (j.status === "FLAKY") s.flaky += 1;
+    else if (j.status === "SKIPPED") s.skipped += 1;
+    else if (j.status === "FAILED" || j.status === "TIMED_OUT") s.failed += 1;
+    else s.other += 1;
   }
-  return q;
+  return s;
 }
-function scopeWithGrants(scope, granted) {
-  const lockfile = granted.some((g) => g.op.kind === "dependency" && g.op.change === "change_lockfile");
-  const manifests = granted.some((g) => g.op.kind === "dependency" && g.op.change === "add_package");
-  return { ...scope, lockfile_changed: lockfile ? false : scope.lockfile_changed, dependency_manifest_changed: manifests ? [] : scope.dependency_manifest_changed };
+function coverageOf(journeys, ui) {
+  const observedViewports = uniqueBy(journeys.flatMap((j) => j.viewport ? [j.viewport] : []), (v) => `${v.width}x${v.height}`);
+  const observedBrowsers = [...new Set(journeys.flatMap((j) => j.browser ? [j.browser.name] : []))];
+  const hasViewport = (v) => observedViewports.some((o) => o.width === v.width && o.height === v.height);
+  return {
+    configuredViewports: ui.viewports,
+    observedViewports,
+    missingViewports: ui.viewports.filter((v) => !hasViewport(v)),
+    configuredBrowsers: ui.browsers,
+    observedBrowsers,
+    missingBrowsers: ui.browsers.filter((b) => !observedBrowsers.includes(b))
+  };
 }
-var APPROVE_ONCE, DENY2, AUTHORIZATION_REQUEST_KIND, AUTHORIZATION_GRANT_KIND;
-var init_authorization = __esm({
-  "src/controller/authorization.ts"() {
+function uniqueBy(items, key2) {
+  const seen = /* @__PURE__ */ new Map();
+  for (const i of items) if (!seen.has(key2(i))) seen.set(key2(i), i);
+  return [...seen.values()];
+}
+async function git5(cwd, args) {
+  const env = { GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" };
+  for (const k of GIT_ENV_KEYS) if (process.env[k]) env[k] = process.env[k];
+  const r = await execCapture(["git", ...args], { cwd, env, timeoutMs: 3e4 });
+  if (r.exitCode !== 0) throw new OrbitError("GIT_FAILED", `git ${args[0]} failed: ${tail(r.stderr)}`, { args: args.slice(0, 3), exitCode: r.exitCode });
+  return r.stdout;
+}
+async function assertCheckoutMatchesCandidate(checkoutDir, candidate, outDir) {
+  const tree = (await git5(checkoutDir, ["rev-parse", `${candidate.commitSha}^{tree}`])).trim();
+  if (tree !== candidate.treeHash) {
+    throw new OrbitError("STALE_EVIDENCE", `candidate ${candidate.id} names tree ${candidate.treeHash} but its commit has tree ${tree}`, { candidate: candidate.id });
+  }
+  const drift = (await git5(checkoutDir, ["diff", "--name-only", "-z", "--ignore-submodules=none", candidate.commitSha, "--"])).split("\0").filter(Boolean);
+  if (drift.length > 0) {
+    throw new OrbitError("STALE_EVIDENCE", `the checkout differs from candidate ${candidate.id}; UI evidence would not describe the candidate (${drift.slice(0, 5).join(", ")})`, { candidate: candidate.id, paths: drift.slice(0, 20) });
+  }
+  const stray = (await untrackedFiles(checkoutDir)).filter((p) => !isInside(resolve12(checkoutDir, p), outDir));
+  if (stray.length > 0) {
+    throw new OrbitError("STALE_EVIDENCE", `the checkout holds untracked files that are not part of candidate ${candidate.id}; UI evidence would not describe the candidate (${stray.slice(0, 5).join(", ")})`, { candidate: candidate.id, paths: stray.slice(0, 20) });
+  }
+}
+async function untrackedFiles(cwd) {
+  return (await git5(cwd, ["ls-files", "-z", "--others", "--exclude-standard"])).split("\0").filter(Boolean);
+}
+async function changedBetween(cwd, base, head) {
+  const raw = await git5(cwd, ["diff", "--name-status", "-z", "--no-renames", "--no-ext-diff", "--ignore-submodules=none", base, head, "--"]);
+  const tokens3 = raw.split("\0").filter((t) => t.length > 0);
+  const out = [];
+  for (let i = 0; i + 1 < tokens3.length; i += 2) out.push({ status: tokens3[i], path: tokens3[i + 1] });
+  return out;
+}
+async function driftSince(cwd, commit) {
+  const modified = (await git5(cwd, ["diff", "--name-only", "-z", "--ignore-submodules=none", commit, "--"])).split("\0").filter(Boolean);
+  return { modified, untracked: await untrackedFiles(cwd) };
+}
+async function touchedSince(cwd, commit) {
+  const d = await driftSince(cwd, commit);
+  return [...d.modified, ...d.untracked];
+}
+async function baselineFilesWrittenDuringRun(cwd, commit, isBaseline) {
+  return (await touchedSince(cwd, commit)).filter(isBaseline);
+}
+function looksLikeA11yBaseline(path) {
+  return /(?:a11y|axe|accessibility)[^/]*baseline[^/]*$|baseline[^/]*(?:a11y|axe|accessibility)[^/]*$/i.test(path);
+}
+function changedA11yBaselines(journeys, checkoutDir, changed) {
+  const out = /* @__PURE__ */ new Set();
+  const root = safeReal(checkoutDir);
+  for (const j of journeys) {
+    for (const scan of j.a11y) {
+      if (!scan.baselinePath) continue;
+      const real = safeReal(scan.baselinePath) ?? resolve12(scan.baselinePath);
+      if (!isInside(real, root) || root === null) continue;
+      const rel = relative4(root, real).split(sep9).join("/");
+      if (changed.has(rel)) out.add(rel);
+    }
+  }
+  return [...out].sort();
+}
+var FORBIDDEN_ARG, SAME_AS_ENFORCED, UI_ENFORCEMENT_VERSION, MAX_ARTIFACT_BYTES, MAX_LOG_BYTES, GIT_ENV_KEYS, UI_LIMITATIONS, UI_RUN_ENTRY, FAILED_RESULT, EXTENSIONS, TEXTUAL, JOURNEY_FILE;
+var init_runner2 = __esm({
+  "src/ui/runner.ts"() {
     "use strict";
+    init_clock();
+    init_errors();
+    init_exec();
+    init_fsx();
     init_hash();
-    init_authorize();
-    init_questions();
-    init_store4();
-    init_decisions();
-    init_common();
-    APPROVE_ONCE = "approve-once";
-    DENY2 = "deny";
-    AUTHORIZATION_REQUEST_KIND = "authorization.request";
-    AUTHORIZATION_GRANT_KIND = "authorization.grant";
+    init_redact();
+    init_profiles();
+    init_config();
+    init_globs();
+    init_snapshot();
+    init_app_fixture();
+    init_env2();
+    init_report3();
+    FORBIDDEN_ARG = /^(?:-u|--update-snapshots(?:=.*)?|--update-source-method(?:=.*)?|--ignore-snapshots|--pass-with-no-tests|--run-agents(?:=.*)?|--ui|--headed|--debug|--reporter(?:=.*)?|--add-reporter(?:=.*)?|--output(?:=.*)?|--trace(?:=.*)?|--retries(?:=.*)?)$/;
+    SAME_AS_ENFORCED = /* @__PURE__ */ new Set(["--reporter=json", "--update-snapshots=none", "--trace=retain-on-failure"]);
+    UI_ENFORCEMENT_VERSION = 1;
+    MAX_ARTIFACT_BYTES = 50 * 1024 * 1024;
+    MAX_LOG_BYTES = 4 * 1024 * 1024;
+    GIT_ENV_KEYS = ["PATH", "HOME", "LANG", "LC_ALL"];
+    UI_LIMITATIONS = [
+      "Automated accessibility scans (axe-core) find only part of the possible accessibility problems; a clean scan is not a claim that the interface is accessible.",
+      "Visual checks compare pixels against stored baselines on one browser and platform; they do not judge whether a layout is usable or correct."
+    ];
+    UI_RUN_ENTRY = "orbit:ui-run";
+    FAILED_RESULT = /* @__PURE__ */ new Set(["failed", "timedOut", "interrupted"]);
+    EXTENSIONS = { "application/json": ".json", "text/plain": ".txt", "text/markdown": ".md", "image/png": ".png", "application/zip": ".zip", "video/webm": ".webm" };
+    TEXTUAL = /^(?:text\/|application\/json)/;
+    JOURNEY_FILE = /\.(?:spec|test)\.[cm]?[jt]sx?$/;
   }
 });
 
 // src/controller/security.ts
-import { accessSync as accessSync2, constants as constants3, existsSync as existsSync29, mkdirSync as mkdirSync16, readFileSync as readFileSync20, rmSync as rmSync10, statSync as statSync13 } from "node:fs";
-import { delimiter as delimiter3, dirname as dirname22, join as join37, normalize as normalize2, sep as sep9 } from "node:path";
+import { accessSync as accessSync2, constants as constants3, existsSync as existsSync34, mkdirSync as mkdirSync18, readFileSync as readFileSync21, rmSync as rmSync13, statSync as statSync14 } from "node:fs";
+import { delimiter as delimiter3, dirname as dirname24, join as join42, normalize as normalize2, sep as sep10 } from "node:path";
 import { tmpdir as tmpdir10 } from "node:os";
 function findOnPath(name, pathVar = process.env.PATH) {
   for (const dir of (pathVar ?? "").split(delimiter3)) {
     if (!dir) continue;
-    const p = join37(dir, name);
+    const p = join42(dir, name);
     try {
       accessSync2(p, constants3.X_OK);
-      if (statSync13(p).isFile()) return p;
+      if (statSync14(p).isFile()) return p;
     } catch {
     }
   }
   return null;
 }
-async function changedFiles2(repoRoot, base, commit) {
+async function changedFiles3(repoRoot, base, commit) {
   const out = await git2(repoRoot, ["diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACMRT", base, commit, "--"]);
   return out.split("\0").filter((p) => p.length > 0);
 }
 async function scanCandidateSecrets(input) {
-  const reportPath2 = join37(input.outDir, "secret-scan.json");
+  const reportPath2 = join42(input.outDir, "secret-scan.json");
   const prior = readJsonIfExists(reportPath2);
   if (prior && prior.completed && prior.commit === input.commit) {
     const { raw: raw2, commit: _commit, ...rest } = prior;
     return withPolicy({ ...rest, findings: raw2 ?? prior.findings }, input);
   }
-  const files = await changedFiles2(input.repoRoot, input.baseRev, input.commit);
+  const files = await changedFiles3(input.repoRoot, input.baseRev, input.commit);
   const gitleaks = input.gitleaksPath === null ? null : input.gitleaksPath ?? findOnPath("gitleaks", input.hostPath);
   let result2 = null;
   let why = gitleaks ? "" : "gitleaks is not installed";
@@ -47590,7 +49853,7 @@ function judgeSastResult(result2, checkId, policy, now) {
   if (files.length === 0 || result2.status !== "PASSED" && result2.status !== "FAILED") return { checkId, status: result2.status, sarif: false, classification: null, note: null };
   const findings = [];
   try {
-    for (const f of files) findings.push(...parseSarif(readFileSync20(f, "utf8")));
+    for (const f of files) findings.push(...parseSarif(readFileSync21(f, "utf8")));
   } catch (err) {
     return { checkId, status: result2.status, sarif: false, classification: null, note: `SAST check ${checkId}: SARIF output unreadable (${err.message}); its exit status stands` };
   }
@@ -47601,27 +49864,27 @@ function judgeSastResult(result2, checkId, policy, now) {
   return { checkId, status: status2, sarif: true, classification: c, note: `SAST check ${checkId}: ${bits.join(", ")} finding(s) under static_security${waived.length ? `; waived: ${waived.join("; ")}` : ""}` };
 }
 async function runGitleaks(bin, input, files, reportPath2) {
-  const work = join37(input.outDir, "secret-scan");
-  rmSync10(work, { recursive: true, force: true });
-  const scanRoot = join37(work, "tree");
-  const tree = join37(scanRoot, "files");
-  const trusted = join37(work, "trusted");
-  mkdirSync16(tree, { recursive: true, mode: 448 });
-  mkdirSync16(trusted, { recursive: true, mode: 448 });
-  const config = join37(trusted, "gitleaks.toml");
+  const work = join42(input.outDir, "secret-scan");
+  rmSync13(work, { recursive: true, force: true });
+  const scanRoot = join42(work, "tree");
+  const tree = join42(scanRoot, "files");
+  const trusted = join42(work, "trusted");
+  mkdirSync18(tree, { recursive: true, mode: 448 });
+  mkdirSync18(trusted, { recursive: true, mode: 448 });
+  const config = join42(trusted, "gitleaks.toml");
   atomicWrite(config, TRUSTED_GITLEAKS_CONFIG, 292);
   let copied = 0;
   for (const rel of files) {
-    const target = normalize2(join37(tree, rel));
-    if (!target.startsWith(tree + sep9)) continue;
+    const target = normalize2(join42(tree, rel));
+    if (!target.startsWith(tree + sep10)) continue;
     const size = Number((await git2(input.repoRoot, ["cat-file", "-s", `${input.commit}:${rel}`])).trim());
     if (!Number.isFinite(size) || size > MAX_FILE_BYTES) continue;
     const content = await git2(input.repoRoot, ["cat-file", "blob", `${input.commit}:${rel}`]);
-    mkdirSync16(dirname22(target), { recursive: true });
+    mkdirSync18(dirname24(target), { recursive: true });
     atomicWrite(target, content, 384);
     copied++;
   }
-  const raw = join37(work, "gitleaks-report.json");
+  const raw = join42(work, "gitleaks-report.json");
   const r = await execCapture([bin, "dir", scanRoot, "-c", config, "-i", trusted, "--ignore-gitleaks-allow", "--redact", "-f", "json", "-r", raw, "--no-banner", "--exit-code", "1"], {
     // GITLEAKS_CONFIG and friends from the host would outrank nothing here (-c wins), but the scan needs nothing from it either.
     env: { PATH: input.hostPath ?? process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir10() },
@@ -47629,14 +49892,14 @@ async function runGitleaks(bin, input, files, reportPath2) {
     timeoutMs: input.timeoutMs ?? 12e4
   });
   if (r.exitCode !== 0 && r.exitCode !== 1) throw new Error(`exit ${r.exitCode ?? r.signal}: ${redact(r.stderr).slice(0, 300)}`);
-  const parsed2 = existsSync29(raw) ? readJsonIfExists(raw) ?? [] : [];
+  const parsed2 = existsSync34(raw) ? readJsonIfExists(raw) ?? [] : [];
   const findings = parsed2.map((f) => ({ file: relativeTo2(tree, f.File ?? ""), line: typeof f.StartLine === "number" ? f.StartLine : null, rule: String(f.RuleID ?? "secret") }));
   if (r.exitCode === 1 && findings.length === 0) throw new Error("reported leaks but wrote no readable report");
-  rmSync10(scanRoot, { recursive: true, force: true });
+  rmSync13(scanRoot, { recursive: true, force: true });
   return { scanner: "gitleaks", completed: true, findings, files: copied, note: "gitleaks with Orbit's trusted configuration and --ignore-gitleaks-allow", reportPath: reportPath2 };
 }
 function relativeTo2(root, p) {
-  return p.startsWith(root + sep9) ? p.slice(root.length + 1) : p;
+  return p.startsWith(root + sep10) ? p.slice(root.length + 1) : p;
 }
 async function builtinScan(input, files, reportPath2, why) {
   const findings = [];
@@ -47694,689 +49957,9 @@ var init_security = __esm({
   }
 });
 
-// src/contract/authority.ts
-function clauseBefore(text2, index) {
-  const head = text2.slice(Math.max(0, index - 60), index);
-  const cut = Math.max(head.lastIndexOf("."), head.lastIndexOf(";"), head.lastIndexOf("\n"), head.lastIndexOf("!"), head.lastIndexOf("?"));
-  return cut >= 0 ? head.slice(cut + 1) : head;
-}
-function isNegated2(text2, index) {
-  return NEGATION2.test(clauseBefore(text2, index));
-}
-function normalizeMode(word) {
-  const w = word.toLowerCase().replace(/\s+/g, "-");
-  if (w === "autonomous-delivery" || w === "autonomous") return w;
-  if (w === "supervised" || w === "release") return w;
-  return null;
-}
-function modesRequestedInGoal(goal) {
-  const out = [];
-  for (const re of MODE_PHRASES) {
-    for (const m of goal.matchAll(re)) {
-      const word = m[1];
-      const mode = word === void 0 ? null : normalizeMode(word);
-      if (mode === null || out.some((o) => o.mode === mode)) continue;
-      if (isNegated2(goal, m.index ?? 0)) continue;
-      out.push({ mode, phrase: m[0].trim() });
-    }
-  }
-  return out;
-}
-function reconcileAuthority(goal, config) {
-  const out = [];
-  for (const { mode, phrase } of modesRequestedInGoal(goal)) {
-    if (mode === config.mode) continue;
-    const more = MODE_RANK[mode] > MODE_RANK[config.mode];
-    out.push({
-      kind: more ? "exceeds-policy" : "stricter-than-policy",
-      subject: `mode:${mode}`,
-      phrase,
-      detail: more ? `the goal asks for mode ${mode}, but the policy freezes mode ${config.mode}; the policy governs` : `the goal asks for mode ${mode}, which carries less authority than the policy's ${config.mode}; the run keeps the policy's mode and only uses what the goal allows`
-    });
-  }
-  for (const p of ACTION_PATTERNS) {
-    const seen = /* @__PURE__ */ new Set();
-    for (const m of goal.matchAll(p.re)) {
-      const negated = isNegated2(goal, m.index ?? 0);
-      const allowed = config.actions[p.action] === true;
-      const phrase = m[0].trim();
-      const key2 = `${negated}:${p.action}`;
-      if (seen.has(key2)) continue;
-      seen.add(key2);
-      if (negated && allowed) {
-        out.push({ kind: "stricter-than-policy", subject: `actions.${p.action}`, phrase, detail: `the goal forbids ${p.label}, which the policy allows; the run does not ${p.label}` });
-      } else if (!negated && !allowed) {
-        out.push({ kind: "exceeds-policy", subject: `actions.${p.action}`, phrase, detail: `the goal asks to ${p.label}, but the policy does not allow it (actions.${p.action} is false); the policy governs` });
-      }
-    }
-  }
-  return out;
-}
-var MODE_RANK, ACTION_PATTERNS, NEGATION2, MODE_WORDS, MODE_PHRASES;
-var init_authority2 = __esm({
-  "src/contract/authority.ts"() {
-    "use strict";
-    MODE_RANK = { supervised: 0, autonomous: 1, "autonomous-delivery": 2, release: 3 };
-    ACTION_PATTERNS = [
-      { action: "merge", label: "merge", re: /\bmerg(?:e|es|ed|ing)\b(?!\s+conflicts?\b)/gi },
-      { action: "deploy_production", label: "deploy to production", re: /\b(?:deploy(?:s|ed|ing)?|ship(?:s|ped|ping)?|releas(?:e|es|ed|ing))\b[^.;\n]{0,30}\b(?:production|prod)\b/gi },
-      { action: "push_task_branch", label: "push a branch", re: /\bpush(?:es|ed|ing)?\b[^.;\n]{0,25}\b(?:branch|branches|origin|remote|changes|commits?|code)\b/gi },
-      { action: "open_pull_request", label: "open a pull request", re: /\b(?:open|opens|opened|opening|create|creates|created|creating|raise|submit)\b[^.;\n]{0,20}\b(?:pull[- ]requests?|prs?)\b/gi }
-    ];
-    NEGATION2 = /\b(?:do not|don'?t|dont|never|must not|mustn'?t|should not|shouldn'?t|without|no|not|avoid|skip|refrain from)\b/i;
-    MODE_WORDS = "(autonomous[- ]delivery|release|supervised|autonomous)";
-    MODE_PHRASES = [
-      /\b(autonomous[- ]delivery)\b(?:\s+(?:mode|profile))?/gi,
-      new RegExp(`\\b${MODE_WORDS}\\s+(?:mode|profile)\\b`, "gi"),
-      new RegExp(`\\b(?:in|under|using|use|with|switch(?:ing)? to|set(?:ting)? (?:the )?mode to|mode:?)\\s+(?:the\\s+)?(?:mode\\s+)?${MODE_WORDS}\\s+(?:mode|profile)\\b`, "gi")
-    ];
-  }
-});
-
-// src/contract/draft.ts
-function draftContract(input) {
-  const plan = validateModelOutput("planner", input.plannerOutput);
-  const { snapshot: snapshot2 } = input;
-  const config = snapshot2.config;
-  const checks = config.checks ?? {};
-  const isCheck = (id) => Object.prototype.hasOwnProperty.call(checks, id);
-  const adjustments = [];
-  const dropCheck = (id, where) => {
-    if (!adjustments.some((a) => a.kind === "check-dropped" && a.subject === id)) {
-      adjustments.push({ kind: "check-dropped", subject: id, reason: `${where} names check "${id}", which the policy does not define` });
-    }
-  };
-  const criteria = plan.criteria.map((c, i) => {
-    const checkIds = [];
-    for (const id of c.check_ids) {
-      if (!isCheck(id)) dropCheck(id, `criterion ${c.key}`);
-      else if (!checkIds.includes(id)) checkIds.push(id);
-    }
-    return {
-      id: `AC-${i + 1}`,
-      statement: c.statement.trim(),
-      proof: uniqueText(c.proof),
-      mandatory: c.mandatory,
-      ui: c.ui,
-      check_ids: checkIds
-    };
-  });
-  const required = [];
-  for (const id of plan.required_check_ids) {
-    if (!isCheck(id)) dropCheck(id, "required_check_ids");
-    else if (!required.includes(id)) required.push(id);
-  }
-  for (const ac of criteria) {
-    for (const id of ac.check_ids ?? []) {
-      if (!required.includes(id)) {
-        required.push(id);
-        adjustments.push({ kind: "check-added", subject: id, reason: `criterion ${ac.id} cites it as evidence` });
-      }
-    }
-  }
-  for (const id of Object.keys(checks).sort()) {
-    if (checks[id]?.mandatory && !required.includes(id)) {
-      required.push(id);
-      adjustments.push({ kind: "check-added", subject: id, reason: "the policy marks it mandatory" });
-    }
-  }
-  const scope = config.scope?.allowed_paths ?? [];
-  const allowed = [];
-  const keep = (g) => {
-    if (!allowed.includes(g)) allowed.push(g);
-  };
-  for (const proposed of plan.allowed_paths) {
-    const inside = intersectWithScope(proposed, scope);
-    const normalized = normalizeGlob(proposed);
-    if (inside.length === 0) {
-      adjustments.push({ kind: "path-dropped", subject: proposed, reason: normalized === null ? "glob syntax cannot be checked against the policy scope" : "not inside the policy scope" });
-    } else if (inside.length === 1 && inside[0] === normalized) {
-      keep(normalized);
-    } else {
-      inside.forEach(keep);
-      adjustments.push({ kind: "path-narrowed", subject: proposed, reason: `narrowed to the policy scope: ${inside.join(", ")}` });
-    }
-  }
-  if (allowed.length === 0) {
-    for (const f of plan.expected_changed_files) {
-      const g = literalGlob(f.path);
-      if (g !== null && intersectWithScope(g, scope).includes(g)) {
-        if (!allowed.includes(g)) adjustments.push({ kind: "path-added", subject: g, reason: "expected changed file inside the policy scope" });
-        keep(g);
-      }
-    }
-  }
-  if (allowed.length === 0) {
-    throw new OrbitError("CONTRACT_INVALID", "no proposed path lies inside the policy scope", { adjustments });
-  }
-  const assumptions = plan.assumptions.map((a, i) => ({
-    id: `AS-${i + 1}`,
-    statement: a.statement.trim(),
-    status: a.status
-  }));
-  for (const d of plan.unresolved_decisions) {
-    const statement = d.question.trim();
-    if (!d.material || statement === "") continue;
-    const same = assumptions.find((a) => normalizeEntry(a.statement) === normalizeEntry(statement));
-    const target = same ?? { id: `AS-${assumptions.length + 1}`, statement, status: "needs-decision" };
-    if (same) same.status = "needs-decision";
-    else assumptions.push(target);
-    adjustments.push({ kind: "decision-recorded", subject: target.id, reason: "the planner left a material decision unresolved" });
-  }
-  for (const m of reconcileAuthority(input.goal, config)) {
-    adjustments.push({ kind: "authority-mismatch", subject: m.subject, reason: `${m.detail} (goal text: "${m.phrase}")` });
-    if (m.kind !== "exceeds-policy") continue;
-    const statement = `The goal asks for more authority than the policy grants (${m.subject}: "${m.phrase}"). Confirm that the policy governs, or change the policy and start a new run.`;
-    if (!assumptions.some((a) => normalizeEntry(a.statement) === normalizeEntry(statement))) {
-      assumptions.push({ id: `AS-${assumptions.length + 1}`, statement, status: "needs-decision" });
-    }
-  }
-  const topics = uniqueText(plan.material_topics);
-  for (const t of BASELINE_MATERIAL_TOPICS) {
-    if (!topics.some((x) => normalizeEntry(x) === normalizeEntry(t))) {
-      topics.push(t);
-      adjustments.push({ kind: "topic-added", subject: t, reason: "spec section 10 forbids guessing it" });
-    }
-  }
-  const actions = config.actions;
-  const contract = {
-    version: "1.0",
-    task_id: input.taskId,
-    original_goal: input.goal,
-    objective: plan.objective.trim(),
-    acceptance_criteria: criteria,
-    non_goals: uniqueText(plan.non_goals),
-    allowed_paths: allowed,
-    required_check_ids: required,
-    assumptions,
-    delivery: {
-      draft_pr: Boolean(actions?.open_pull_request) && config.delivery?.pull_request === "draft",
-      // Merge is opt-in per run even when the policy permits it; only an
-      // approved amendment turns it on.
-      merge: false
-    },
-    policy_hash: input.policyHash ?? policyHashOf(snapshot2),
-    baseline_revision: input.baselineRevision,
-    escalation: { material_topics: topics }
-  };
-  const validated = validateContract(contract, snapshot2, input.policyHash === void 0 ? {} : { policyHash: input.policyHash });
-  return { contract: validated, adjustments };
-}
-function uniqueText(values) {
-  const out = [];
-  const seen = /* @__PURE__ */ new Set();
-  for (const v of values) {
-    const t = v.trim();
-    const key2 = normalizeEntry(t);
-    if (t === "" || seen.has(key2)) continue;
-    seen.add(key2);
-    out.push(t);
-  }
-  return out;
-}
-var BASELINE_MATERIAL_TOPICS;
-var init_draft = __esm({
-  "src/contract/draft.ts"() {
-    "use strict";
-    init_errors();
-    init_authority2();
-    init_globs2();
-    init_model_outputs();
-    init_validate();
-    init_wording();
-    BASELINE_MATERIAL_TOPICS = [
-      "product semantics",
-      "security rules",
-      "financial effects",
-      "irreversible data behavior"
-    ];
-  }
-});
-
-// src/review/select.ts
-function selectionDecisionRecord(sel) {
-  return {
-    kind: "review.select",
-    summary: sel.decision === "SELECT" ? `reviewer ${sel.provider}/${sel.model ?? "default"} (${sel.independent ? "independent" : "same provider"})` : `review blocked: ${sel.reason}`.slice(0, 300),
-    data: sel
-  };
-}
-function selectReviewer(input) {
-  const { config } = input.snapshot;
-  const review = config.review;
-  const impl = input.implementer.provider;
-  const alternatives = [];
-  const ids = /* @__PURE__ */ new Set([...Object.keys(config.providers), ...Object.keys(input.capabilities), impl, review.preferred_provider]);
-  const order = [...ids].sort((a, b) => Number(b === review.preferred_provider) - Number(a === review.preferred_provider) || a.localeCompare(b));
-  const providerProblem = (p) => {
-    const cap = input.capabilities[p];
-    if (!cap) return { reason: `no adapter capabilities were reported for "${p}"`, code: "PROVIDER_UNAVAILABLE" };
-    if (!cap.available) return { reason: `provider "${p}" is not available: ${cap.detail || "adapter reported unavailable"}`, code: "PROVIDER_UNAVAILABLE" };
-    if (!cap.structuredOutput) return { reason: `provider "${p}" cannot return schema-constrained output, which review findings require`, code: "PROVIDER_UNAVAILABLE" };
-    const cred = input.credentials[p];
-    if (!cred) return { reason: `credentials for "${p}" were not validated`, code: "PROVIDER_UNAVAILABLE" };
-    if (cred.state === "expired") return { reason: `credentials for "${p}" are expired${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
-    if (cred.state === "invalid") return { reason: `credentials for "${p}" are invalid${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
-    if (cred.state === "missing") return { reason: `no credentials for "${p}"${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_MISSING" };
-    if (cred.state !== "valid") return { reason: `credentials for "${p}" could not be validated (${cred.state})${cred.detail ? `: ${cred.detail}` : ""}`, code: "PROVIDER_UNAVAILABLE" };
-    if (p !== impl && config.providers[p]?.data_policy_eligible !== true) {
-      return { reason: `providers.${p}.data_policy_eligible is not true, so the review packet may not be sent to it`, code: "POLICY_DENIED" };
-    }
-    return null;
-  };
-  const problems = /* @__PURE__ */ new Map();
-  const usableProviders = [];
-  for (const p of order) {
-    const prob = providerProblem(p);
-    if (prob) {
-      problems.set(p, prob);
-      alternatives.push({ provider: p, model: null, reason: prob.reason });
-    } else usableProviders.push(p);
-  }
-  let substituted = false;
-  for (const p of usableProviders.filter((x) => x !== impl)) {
-    const m = qualifiedModel(p, input, alternatives);
-    if (!m) continue;
-    substituted = p !== review.preferred_provider;
-    return finish3(input, m, true, substituted, alternatives, substituted ? `preferred provider "${review.preferred_provider}" is unusable (${problems.get(review.preferred_provider)?.reason ?? "not selected"}); "${p}" is an independent, qualified provider` : `independent reviewer "${p}" (implementer: "${impl}")`);
-  }
-  const sameAllowed = !review.independent_provider_required || review.fallback_same_provider_allowed;
-  if (!sameAllowed) {
-    const independentIds = order.filter((p) => p !== impl);
-    const detail = independentIds.length === 0 ? `no provider other than "${impl}" is configured` : independentIds.map((p) => problems.get(p)?.reason ?? `"${p}" has no model qualified for review`).join("; ");
-    const preferredProblem = problems.get(review.preferred_provider);
-    const code2 = review.preferred_provider !== impl && preferredProblem ? preferredProblem.code : "PROVIDER_UNAVAILABLE";
-    return {
-      decision: "BLOCK",
-      code: code2,
-      reason: `independent review is required (review.independent_provider_required=true, fallback_same_provider_allowed=false) and no independent reviewer is usable: ${detail}. Review is not being substituted by "${impl}" or any equivalent label; verification is incomplete until an independent provider is available.`,
-      alternatives
-    };
-  }
-  if (problems.has(impl)) {
-    return {
-      decision: "BLOCK",
-      code: problems.get(impl).code,
-      reason: `no independent reviewer is usable and same-provider review is allowed, but "${impl}" cannot review: ${problems.get(impl).reason}`,
-      alternatives
-    };
-  }
-  const same = sameProviderModel(input, alternatives);
-  if (!same.ok) {
-    return { decision: "BLOCK", code: "PROVIDER_UNAVAILABLE", reason: `no independent reviewer is usable and same-provider review is allowed, but ${same.reason}`, alternatives };
-  }
-  return finish3(
-    input,
-    same.usable,
-    false,
-    false,
-    alternatives,
-    `no independent reviewer is usable; policy allows same-provider review, so "${impl}" reviews with ${same.usable.model} (${same.usable.detail}) at a different tier than the implementer`
-  );
-}
-function finish3(input, u, independent, substitutedForPreferred, alternatives, reason) {
-  const cap = input.capabilities[u.provider];
-  return {
-    decision: "SELECT",
-    provider: u.provider,
-    model: u.model,
-    effort: input.snapshot.config.providers[u.provider]?.reasoning_effort ?? null,
-    independent,
-    basis: u.basis,
-    substitutedForPreferred,
-    readOnlySandbox: cap?.readOnlySandbox === true,
-    reason,
-    alternatives
-  };
-}
-function qualifiedModel(provider, input, alternatives) {
-  const cfg = input.snapshot.config;
-  const cap = input.capabilities[provider];
-  const configured = cfg.providers[provider]?.model ?? null;
-  const offered = (m) => !cap || cap.models.length === 0 || cap.models.includes(m);
-  if (configured !== null) {
-    if (!offered(configured)) {
-      alternatives.push({ provider, model: configured, reason: `providers.${provider}.model "${configured}" is not offered by the adapter` });
-      return null;
-    }
-    return { provider, model: configured, basis: "configured", detail: `providers.${provider}.model names it` };
-  }
-  const reg = input.registry;
-  const surface = PROVIDER_SURFACE2[provider];
-  if (reg && surface) {
-    const a = reg.assess({ surface, provider, allowedModels: [...cfg.routing.allowed_models, `${provider}:*`], structuredOutput: true });
-    const ranked = a.eligible.filter((e) => offered(e.modelId));
-    if (provider === "claude") {
-      const tiered = ranked.filter((e) => (tierOf(e) ?? 0) >= REVIEW_QUALITY_FLOOR_TIER && allowMatch(e, cfg.routing.allowed_models) !== null);
-      const pick = tiered[0];
-      if (pick) return { provider, model: pick.modelId, basis: "tier", detail: `${pick.family} meets the opus-class floor` };
-    } else {
-      const evaluated = ranked.find((e) => e.evaluation.qualifiedFor.includes("safety-review"));
-      if (evaluated) return { provider, model: evaluated.modelId, basis: "evaluation", detail: "a recorded safety-review evaluation" };
-      const recommended = ranked.find((e) => e.eligibility.providerDefault);
-      if (recommended) return { provider, model: recommended.modelId, basis: "provider-default", detail: `it is ${provider}'s recommended model` };
-    }
-  }
-  alternatives.push({ provider, model: null, reason: `no model of "${provider}" is qualified for review: none is named in providers.${provider}.model, evaluated for safety review, or recommended by the provider${provider === "claude" ? ", and none is opus-class or above" : ""}` });
-  return null;
-}
-function sameProviderModel(input, alternatives) {
-  const impl = input.implementer;
-  const cfg = input.snapshot.config;
-  const reg = input.registry;
-  if (!reg) return { ok: false, reason: "no model registry was supplied, so a different-tier reviewer model cannot be chosen" };
-  const implEntry = impl.model ? reg.get(impl.model) : null;
-  const implTier = implEntry ? tierOf(implEntry) : null;
-  if (implTier === null) {
-    return { ok: false, reason: `the implementer's model tier is unknown (${impl.model ?? "provider default"}), so a different-tier reviewer cannot be shown to differ` };
-  }
-  const surface = PROVIDER_SURFACE2[impl.provider];
-  if (!surface) return { ok: false, reason: `"${impl.provider}" has no tiered models, so a different-tier same-provider review is not defined` };
-  const cap = input.capabilities[impl.provider];
-  const a = reg.assess({ surface, provider: impl.provider, allowedModels: cfg.routing.allowed_models, structuredOutput: true });
-  for (const ex of a.excluded) if (ex.model.provider === impl.provider) alternatives.push({ provider: impl.provider, model: ex.model.modelId, reason: `ineligible: ${ex.reasons.join("; ")}` });
-  const candidates = a.eligible.filter((e) => {
-    const t = tierOf(e);
-    if (t === null) return false;
-    if (cap && cap.models.length > 0 && !cap.models.includes(e.modelId)) return false;
-    if (t < REVIEW_QUALITY_FLOOR_TIER) {
-      alternatives.push({ provider: impl.provider, model: e.modelId, reason: `${e.family} is below the review quality floor (opus-class)` });
-      return false;
-    }
-    if (t === implTier) {
-      alternatives.push({ provider: impl.provider, model: e.modelId, reason: `same tier (${e.family}) as the implementer's model` });
-      return false;
-    }
-    return true;
-  });
-  const pick = candidates[0];
-  if (!pick) return { ok: false, reason: `no allowed ${impl.provider} model is at or above the opus-class floor and in a different tier than the implementer's ${implEntry?.family ?? impl.model}` };
-  return { ok: true, usable: { provider: impl.provider, model: pick.modelId, basis: "tier", detail: `${pick.family} is at or above the opus-class floor and differs from the implementer's ${implEntry?.family}` } };
-}
-var REVIEW_QUALITY_FLOOR_TIER, PROVIDER_SURFACE2;
-var init_select = __esm({
-  "src/review/select.ts"() {
-    "use strict";
-    init_errors();
-    init_registry();
-    REVIEW_QUALITY_FLOOR_TIER = 3;
-    PROVIDER_SURFACE2 = { claude: "claude-cli", codex: "codex-cli" };
-  }
-});
-
-// src/controller/steps/preflight.ts
-import { existsSync as existsSync30, mkdirSync as mkdirSync17, rmSync as rmSync11 } from "node:fs";
-import { dirname as dirname23, join as join38 } from "node:path";
-async function preflightStep(ctx) {
-  const stop = await safePoint(ctx);
-  if (stop) return stop;
-  const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot });
-  recordGate(ctx, intake);
-  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
-  const env = await checkEnvironment(ctx);
-  recordGate(ctx, env.gate);
-  if (!env.gate.passed) {
-    const auth = env.credentials.find((c) => c.provider === env.gate.details.blockedProvider && c.verdict === "blocked");
-    if (auth?.status) return blockOnAuth(ctx, auth.provider, auth.status.state, auth.status.detail);
-    return finishRun(ctx, "BLOCKED", `environment gate: ${env.gate.reasons.join("; ")}`, { outcome: { gate: env.gate } });
-  }
-  const repo = ctx.run.repoRoot;
-  const head = await resolveCommit(repo, "HEAD");
-  const baseTree = await treeOf(repo, head);
-  const dirty = await dirtyPaths(repo);
-  if (dirty.length > 0) {
-    if (!ctx.snapshot.config.repository.allow_dirty_start) {
-      return finishRun(ctx, "BLOCKED", `the repository has uncommitted changes (${dirty.slice(0, 10).join(", ")}${dirty.length > 10 ? ", ..." : ""}); commit or stash them, or set repository.allow_dirty_start`, { outcome: { dirty: dirty.slice(0, 50) } });
-    }
-    decide2(ctx, { id: `dec-${ctx.run.id}-dirty-start`, kind: "preflight.dirty-start", summary: `dirty start allowed by policy; ${dirty.length} uncommitted path(s) are not part of the run, which starts from ${head}`, data: { paths: dirty.slice(0, 200) } });
-  }
-  const wtRoot = runWorktreeRoot(ctx);
-  mkdirSync17(wtRoot, { recursive: true, mode: 448 });
-  const baseline = await runBaseline({
-    db: ctx.db,
-    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
-    repoRoot: repo,
-    baseRev: head,
-    snapshot: ctx.snapshot,
-    isolation: ctx.isolation(),
-    runDir: ctx.runDir,
-    clock: ctx.clock,
-    signal: ctx.signal,
-    pollMs: ctx.timing.checkPollMs,
-    killGraceMs: ctx.timing.killGraceMs,
-    homeDir: homeOf(ctx.deps),
-    checkoutDir: join38(wtRoot, "baseline")
-  });
-  const after = await safePoint(ctx);
-  if (after) return after;
-  const bg = baselineGate(baseline.report);
-  recordGate(ctx, bg);
-  if (!bg.passed && bg.status === "fail") return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}`, { outcome: { gate: bg } });
-  if (baseline.report.failures.length > 0) {
-    decide2(ctx, {
-      id: `dec-${ctx.run.id}-baseline-failures`,
-      kind: "baseline.failures",
-      summary: `pre-existing failures on ${head.slice(0, 12)}: ${baseline.report.failures.map((f) => f.checkId).join(", ")}`,
-      data: { failures: baseline.report.failures }
-    });
-  }
-  const worktree = await ensureWorktree(repo, join38(wtRoot, "implementer"), head);
-  const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
-  return move2(ctx, "CONTRACTING", `preflight passed at ${head.slice(0, 12)}${baseline.report.failures.length ? ` with ${baseline.report.failures.length} pre-existing failure(s)` : ""}`, {
-    patch: { baseRevision: head, baseTree, worktreePath: worktree, branch },
-    data: { base_revision: head, base_tree: baseTree, worktree, environment: env.gate.notes }
-  });
-}
-function recordGate(ctx, g) {
-  decide2(ctx, {
-    kind: `gate.${g.gate}`,
-    summary: `${g.gate} gate ${g.status}${g.reasons.length ? `: ${g.reasons.join("; ")}` : ""}${g.notes.length ? ` (notes: ${g.notes.join("; ")})` : ""}`,
-    data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure }
-  });
-}
-async function dirtyPaths(repo) {
-  const out = await git2(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).orbit"]);
-  return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3));
-}
-async function ensureWorktree(repo, path, base) {
-  if (existsSync30(path)) {
-    try {
-      return (await adminDirFor(repo, path)).worktree;
-    } catch (err) {
-      if (!isOrbitError(err)) throw err;
-      rmSync11(path, { recursive: true, force: true });
-    }
-  }
-  mkdirSync17(dirname23(path), { recursive: true, mode: 448 });
-  await git2(repo, ["worktree", "prune"]);
-  await git2(repo, ["worktree", "add", "--detach", "--force", path, base]);
-  return (await adminDirFor(repo, path)).worktree;
-}
-async function checkEnvironment(ctx) {
-  const config = ctx.snapshot.config;
-  try {
-    ctx.deps.registry.seed();
-  } catch (err) {
-    ctx.log.warn("model registry seed failed", { error: messageOf(err) });
-  }
-  let isolation;
-  try {
-    const iso2 = ctx.isolation();
-    const status2 = await iso2.available();
-    isolation = { kind: iso2.kind, available: status2.ok, detail: status2.detail };
-  } catch (err) {
-    isolation = { error: messageOf(err) };
-  }
-  const capabilities = {};
-  for (const [id, adapter] of Object.entries(ctx.deps.adapters)) {
-    try {
-      capabilities[id] = await adapter.discoverCapabilities();
-    } catch (err) {
-      capabilities[id] = { provider: id, available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: "none", costReporting: false, detail: messageOf(err) };
-    }
-  }
-  const required = /* @__PURE__ */ new Set([IMPLEMENTER_PROVIDER]);
-  if (config.review.independent_provider_required && config.review.preferred_provider !== IMPLEMENTER_PROVIDER) required.add(config.review.preferred_provider);
-  const all = await validateCredentials({ adapters: ctx.deps.adapters, providers: [.../* @__PURE__ */ new Set([...required, ...Object.keys(ctx.deps.adapters)])] });
-  const credentialsById = {};
-  for (const c of all) credentialsById[c.provider] = c.status ?? void 0;
-  let reviewer = null;
-  if (config.review.independent_provider_required) {
-    reviewer = selectReviewer({ snapshot: ctx.snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: ctx.deps.registry });
-    if (reviewer.decision === "SELECT") {
-      required.delete(config.review.preferred_provider);
-      required.add(reviewer.provider);
-    }
-  }
-  const credentials = all.filter((c) => required.has(c.provider));
-  const gate = environmentGate({ snapshot: ctx.snapshot, mode: ctx.run.mode, isolation, credentials, reviewer });
-  atomicWriteJson(join38(ctx.runDir, "environment.json"), {
-    checked_at: ctx.clock.now(),
-    gate,
-    capabilities,
-    credentials: all.map((c) => ({ provider: c.provider, verdict: c.verdict, state: c.status?.state ?? null, method: c.status?.method ?? null, error: c.error })),
-    reviewer: reviewer ? selectionDecisionRecord(reviewer).summary : null
-  });
-  return { gate, credentials: all, capabilities, reviewer };
-}
-var IMPLEMENTER_PROVIDER;
-var init_preflight = __esm({
-  "src/controller/steps/preflight.ts"() {
-    "use strict";
-    init_fsx();
-    init_errors();
-    init_git();
-    init_baseline();
-    init_credentials();
-    init_select();
-    init_context2();
-    init_gates();
-    init_common();
-    init_workers2();
-    IMPLEMENTER_PROVIDER = "claude";
-  }
-});
-
-// src/controller/steps/contracting.ts
-import { readFileSync as readFileSync21 } from "node:fs";
-import { join as join39 } from "node:path";
-async function contractingStep(ctx) {
-  const stop = await safePoint(ctx);
-  if (stop) return stop;
-  if (ctx.contract) return accept(ctx, ctx.contract, null);
-  const route2 = routeFor(ctx, "plan", "routine-code", { difficulty: "medium", attempt: 1, repeatedFingerprints: 0 });
-  const got = await obtain(ctx, {
-    base: "plan",
-    maxAttempts: MAX_REGENERATIONS,
-    what: "the planner",
-    request: (purpose) => ({
-      role: "planner",
-      purpose,
-      provider: route2.provider,
-      model: route2.model,
-      effort: route2.effort,
-      cwd: worktreeOf(ctx),
-      readOnly: true,
-      prompt: (workerId) => plannerPrompt(ctx, workerId)
-    }),
-    accept: (r) => validateModelOutput("planner", r.structured)
-  });
-  if (!got.ok) return got.step;
-  const plan = got.value;
-  atomicWriteJson(join39(ctx.runDir, PLANNER_FILE), { worker_id: got.worker.id, output: plan });
-  let drafted;
-  try {
-    drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? "", taskId: ctx.run.id, policyHash: ctx.run.policyHash });
-  } catch (err) {
-    if (!(err instanceof OrbitError) || err.code !== "CONTRACT_INVALID") throw err;
-    return finishRun(ctx, "BLOCKED", `intake gate rejected the planner's contract: ${err.message}`, { outcome: { problems: err.details ?? null } });
-  }
-  for (const a of drafted.adjustments) {
-    decide2(ctx, { id: `dec-${ctx.run.id}-draft-${hashObject(a).slice(7, 23)}`, kind: `contract.${a.kind}`, summary: `${a.subject}: ${a.reason}`, data: a });
-  }
-  for (const [i, d] of plan.unresolved_decisions.entries()) {
-    if (d.material) continue;
-    decide2(ctx, { id: `dec-${ctx.run.id}-plan-choice-${i + 1}`, kind: "inquisition.resolve", summary: `reversible choice: ${d.question} -> ${d.recommendation ?? d.options[0] ?? "convention"}`, data: { question: d.question, options: d.options, choice: d.recommendation ?? d.options[0] ?? null, basis: "planner recommendation; reversible" } });
-  }
-  return accept(ctx, drafted.contract, plan);
-}
-async function accept(ctx, contract, plan) {
-  const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot, contract });
-  recordGate(ctx, intake);
-  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate rejected the contract: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
-  atomicWriteJson(join39(ctx.runDir, "contract.json"), contract);
-  const patch = { contractJson: JSON.stringify(contract), contractHash: hashObject(contract) };
-  const material = (plan?.unresolved_decisions ?? []).filter((d) => d.material);
-  const open = contract.assumptions.filter((a) => a.status === "needs-decision");
-  if (material.length > 0 || plan !== null && open.length > 0) {
-    const keys = new Map((plan?.criteria ?? []).map((c, i) => [c.key, `AC-${i + 1}`]));
-    const subjects = [...new Set(material.flatMap((d) => d.affected_criteria.map((k) => keys.get(k) ?? k)).filter((s) => /^AC-\d+$/.test(s)))];
-    const trigger = {
-      kind: "hidden_decision",
-      mode: "clarify",
-      summary: `the planner left ${material.length || open.length} material decision(s) unresolved`,
-      evidence: [...material.map((d) => d.question), ...open.map((a) => `${a.id}: ${a.statement}`)].slice(0, 20),
-      subjects,
-      key: `contracting:${hashObject(material.map((d) => d.question)).slice(7, 23)}`
-    };
-    return move2(ctx, "INQUISITION", trigger.summary, { patch, data: { trigger } });
-  }
-  return move2(ctx, "PLANNING", `contract accepted: ${contract.acceptance_criteria.length} criteria, checks ${contract.required_check_ids.join(", ") || "none"}`, { patch });
-}
-function worktreeOf(ctx) {
-  if (!ctx.run.worktreePath) throw new OrbitError("INTERNAL", `run ${ctx.run.id} has no worktree; preflight did not finish`);
-  return ctx.run.worktreePath;
-}
-function plannerPrompt(ctx, workerId) {
-  const checks = Object.values(ctx.snapshot.config.checks).map((c) => `${c.id}${c.mandatory ? " (mandatory)" : ""}`);
-  const task = [
-    "Draft the goal contract for the goal below. Read the repository as needed; do not edit anything.",
-    "Return the current behaviour, criteria that are observable and testable, the proof for each, the trusted check ids that would show it,",
-    "the files you expect to change, the narrowest allowed paths, non-goals, risks, assumptions and any decision you cannot settle from evidence.",
-    `Trusted checks the policy defines: ${checks.join(", ") || "none"}. Name only these as check ids.`,
-    "",
-    `Goal (from the user): ${ctx.run.goal}`
-  ].join("\n");
-  return renderWorkerPrompt({
-    role: "planner",
-    task,
-    contract: null,
-    policySummary: policySummary(ctx, { readOnly: true }),
-    candidate: { revision: ctx.run.baseRevision, treeHash: ctx.run.baseTree, base: ctx.run.baseRevision },
-    advisoryBlock: advisoryBlockFor(ctx, { role: "planner", workerId, paths: ctx.snapshot.config.scope.allowed_paths, checkIds: Object.keys(ctx.snapshot.config.checks), fingerprints: [] })
-  });
-}
-function storedPlan(ctx) {
-  try {
-    const raw = JSON.parse(readFileSync21(join39(ctx.runDir, PLANNER_FILE), "utf8")).output;
-    return raw ? validateModelOutput("planner", raw) : null;
-  } catch {
-    return null;
-  }
-}
-var PLANNER_FILE;
-var init_contracting = __esm({
-  "src/controller/steps/contracting.ts"() {
-    "use strict";
-    init_fsx();
-    init_hash();
-    init_errors();
-    init_draft();
-    init_model_outputs();
-    init_prompt();
-    init_gates();
-    init_workers2();
-    init_knowledge_hooks();
-    init_common();
-    init_obtain();
-    init_preflight();
-    PLANNER_FILE = "planner.json";
-  }
-});
-
 // src/ui/explore.ts
-import { existsSync as existsSync31, readFileSync as readFileSync22, realpathSync as realpathSync15, symlinkSync, writeFileSync as writeFileSync7 } from "node:fs";
-import { dirname as dirname24, join as join40, resolve as resolve12 } from "node:path";
+import { existsSync as existsSync35, readFileSync as readFileSync22, realpathSync as realpathSync15, symlinkSync as symlinkSync2, writeFileSync as writeFileSync7 } from "node:fs";
+import { dirname as dirname25, join as join43, resolve as resolve13 } from "node:path";
 function explorationConfigOf(ui) {
   const raw = ui.exploration;
   if (!raw || typeof raw !== "object") return DISABLED;
@@ -48426,7 +50009,7 @@ async function exploreUi(opts) {
   const startedAt = clock.now();
   const cfg = opts.exploration ?? explorationConfigOf(opts.uiConfig);
   const baseUrl = opts.uiConfig.environment.base_url;
-  const outDir = resolve12(opts.outDir);
+  const outDir = resolve13(opts.outDir);
   const blank = (outcome2, reasons2) => ({
     outcome: outcome2,
     findings: [],
@@ -48474,8 +50057,8 @@ async function exploreUi(opts) {
   const onAbort = () => control.abort();
   opts.abortSignal?.addEventListener("abort", onAbort, { once: true });
   if (opts.abortSignal?.aborted) control.abort();
-  atomicWriteJson(join40(outDir, "exploration.json"), { state: "running", candidate: opts.candidate.id, startedAt });
-  const tmpDir = ensureDir(join40(outDir, "tmp"));
+  atomicWriteJson(join43(outDir, "exploration.json"), { state: "running", candidate: opts.candidate.id, startedAt });
+  const tmpDir = ensureDir(join43(outDir, "tmp"));
   const baseEnv = safeBaseEnv(opts.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;
   let app = null;
@@ -48497,7 +50080,7 @@ async function exploreUi(opts) {
           env: { ...opts.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: opts.uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir },
           isolation: { provider: opts.isolation, profile },
           isolatedTestData: opts.uiConfig.environment.isolated_test_data,
-          stateDir: join40(outDir, "app"),
+          stateDir: join43(outDir, "app"),
           clock,
           pollMs: opts.appPollMs,
           hostEnv: opts.hostEnv
@@ -48557,7 +50140,7 @@ async function exploreUi(opts) {
     startedAt,
     endedAt: clock.now()
   };
-  atomicWriteJson(join40(outDir, "exploration.json"), redactValue(result2));
+  atomicWriteJson(join43(outDir, "exploration.json"), redactValue(result2));
   return result2;
 }
 async function runExplorer(a) {
@@ -48676,7 +50259,7 @@ function baseFinding(c) {
   };
 }
 async function proveOne(p, cand, base, viewport) {
-  const dir = ensureDir(join40(p.outDir, "specs", cand.id));
+  const dir = ensureDir(join43(p.outDir, "specs", cand.id));
   const fileName = `${cand.id}.spec.ts`;
   let response;
   try {
@@ -48688,7 +50271,7 @@ async function proveOne(p, cand, base, viewport) {
   p.charge(response.costUsd);
   const problems = lintExplorationSpec(response.source, p.baseUrl);
   const source = redact(response.source);
-  const specPath = join40(dir, fileName);
+  const specPath = join43(dir, fileName);
   writeFileSync7(specPath, source, { mode: 384 });
   const spec = { path: specPath, sha256: sha256(source), source };
   if (problems.length > 0) return { ...base, spec, status: "invalid_test", reason: `the test was refused: ${problems.join("; ")}` };
@@ -48721,7 +50304,7 @@ async function proveOne(p, cand, base, viewport) {
   };
 }
 function writePlaywrightConfig(dir, baseUrl, ui, viewport) {
-  const path = join40(dir, "playwright.config.mjs");
+  const path = join43(dir, "playwright.config.mjs");
   const config = {
     testDir: dir,
     testMatch: "**/*.spec.ts",
@@ -48737,23 +50320,23 @@ function writePlaywrightConfig(dir, baseUrl, ui, viewport) {
   return path;
 }
 function linkNodeModules(dir, checkoutDir) {
-  const target = join40(dir, "node_modules");
-  if (existsSync31(target)) return;
+  const target = join43(dir, "node_modules");
+  if (existsSync35(target)) return;
   let cur = checkoutDir;
   for (; ; ) {
-    const candidate = join40(cur, "node_modules");
-    if (existsSync31(candidate)) {
-      symlinkSync(realpathSync15(candidate), target);
+    const candidate = join43(cur, "node_modules");
+    if (existsSync35(candidate)) {
+      symlinkSync2(realpathSync15(candidate), target);
       return;
     }
-    const up = dirname24(cur);
+    const up = dirname25(cur);
     if (up === cur) return;
     cur = up;
   }
 }
 async function runSpec(p, a) {
-  const outputDir = join40(a.dir, `run-${a.n}`);
-  const reportPath2 = join40(a.dir, `report-${a.n}.json`);
+  const outputDir = join43(a.dir, `run-${a.n}`);
+  const reportPath2 = join43(a.dir, `report-${a.n}.json`);
   const argv2 = ["npx", "--no-install", "playwright", "test", "--config", a.configPath, "--reporter=json", "--update-snapshots=none", "--retries=0", "--trace=retain-on-failure", `--output=${outputDir}`];
   const env = {
     ...p.baseEnv,
@@ -48781,7 +50364,7 @@ async function runSpec(p, a) {
   const fail3 = (error) => ({ run: { status: "error", exitCode: exec.exitCode, durationMs, error: cleanText(error, 300) }, artifacts: [] });
   if (exec.cancelled) return fail3("the run was cancelled");
   if (exec.timedOut) return fail3("the run exceeded its time limit");
-  if (!existsSync31(reportPath2)) return fail3(`no Playwright report (exit ${exec.exitCode ?? "signal"}): ${(exec.stderr || exec.stdout).trim().slice(-200)}`);
+  if (!existsSync35(reportPath2)) return fail3(`no Playwright report (exit ${exec.exitCode ?? "signal"}): ${(exec.stderr || exec.stdout).trim().slice(-200)}`);
   let tests;
   try {
     const parsed2 = parsePlaywrightReport(JSON.parse(readFileSync22(reportPath2, "utf8")));
@@ -48856,7 +50439,7 @@ var init_explore = __esm({
 });
 
 // src/controller/exploration.ts
-import { join as join41 } from "node:path";
+import { join as join44 } from "node:path";
 function explorationEnabled(ui) {
   return ui !== null && explorationConfigOf(ui).enabled;
 }
@@ -48933,7 +50516,7 @@ async function exploreCandidate(ctx, cand, checkoutDir, outDir, opts = {}) {
       return { source: out.source, costUsd: r.usage.costUsd };
     }
   });
-  atomicWrite(join41(outDir, "exploration.md"), renderExplorationReport(result2), 384);
+  atomicWrite(join44(outDir, "exploration.md"), renderExplorationReport(result2), 384);
   for (const f of explorationFollowUps(result2)) {
     recordFailure(
       ctx.db,
@@ -48993,9 +50576,130 @@ var init_exploration = __esm({
   }
 });
 
+// src/controller/verification.ts
+import { join as join45 } from "node:path";
+async function collectVerificationEvidence(ctx, cand, opts) {
+  const contract = ctx.contract;
+  if (!contract) throw new OrbitError("TRANSITION_INVALID", `run ${ctx.run.id} has no contract yet; there is nothing to verify`);
+  const baseRev = ctx.run.baseRevision;
+  if (!baseRev) throw new OrbitError("TRANSITION_INVALID", `run ${ctx.run.id} has no base revision; preflight did not finish`);
+  const snapshot2 = ctx.snapshot;
+  const { checkoutDir, scope } = opts;
+  const gate = (g) => opts.onGate?.(g);
+  const checkpoint = async () => opts.checkpoint ? opts.checkpoint() : null;
+  const runner = {
+    db: ctx.db,
+    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
+    snapshot: snapshot2,
+    isolation: ctx.isolation(),
+    checkoutDir,
+    runDir: ctx.runDir,
+    clock: ctx.clock,
+    // The signal means "stop supervising" (lease lost, shutdown, watchdog), never "cancel": the checks keep running
+    // for the run's next owner. A durable cancellation reaches the runner through the run row.
+    detachSignal: ctx.signal,
+    pollMs: ctx.timing.checkPollMs,
+    killGraceMs: ctx.timing.killGraceMs,
+    homeDir: homeOf(ctx.deps)
+  };
+  const install = await installDependencies({ ...runner, candidate: cand });
+  const commandChecks = contract.required_check_ids.filter((id) => snapshot2.config.checks[id]?.kind === "command");
+  const results = [...install.results];
+  if (install.skipped || install.ok) results.push(...await runChecks({ ...runner, candidate: cand, checkIds: commandChecks }));
+  const afterChecks = await checkpoint();
+  if (afterChecks !== null) return { stopped: afterChecks };
+  if (ctx.signal.aborted) throw new OrbitError("CANCELLED", "the step was interrupted during checks");
+  const changed = await changedPaths(ctx.run.repoRoot, baseRev, cand.commitSha);
+  const ui = snapshot2.config.ui;
+  const uiRequired = contract.acceptance_criteria.some((c) => c.ui === true) || ui !== null && ui.required_when_ui_changes && changed.some(compileGlobs(ui.ui_paths, { nocase: false }));
+  let uiResult = null;
+  if (uiRequired && ui && ui.journey_check_ids.length > 0) {
+    uiResult = await runUiChecks({ checkoutDir, snapshot: snapshot2, candidate: cand, uiConfig: ui, journeyCheckIds: ui.journey_check_ids, isolation: ctx.isolation(), outDir: join45(candidateEvidenceDir(ctx.runDir, cand.seq), "ui"), clock: ctx.clock, abortSignal: ctx.signal, homeDir: homeOf(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
+    const afterUi = await checkpoint();
+    if (afterUi !== null) return { stopped: afterUi };
+  }
+  const uiG = uiGate({ required: uiRequired, configured: ui !== null && ui.journey_check_ids.length > 0, result: uiResult });
+  gate(uiG);
+  let exploration = null;
+  const wouldExplore = uiRequired && explorationEnabled(ui);
+  if (wouldExplore && opts.exploration) {
+    exploration = await exploreCandidate(ctx, cand, checkoutDir, join45(candidateEvidenceDir(ctx.runDir, cand.seq), "ui-exploration"));
+    const explored = await checkpoint();
+    if (explored !== null) return { stopped: explored };
+  }
+  const staticPolicy = staticSecurityPolicy(snapshot2.config);
+  const judgedAt = ctx.clock.now();
+  const scan = await scanCandidateSecrets({
+    repoRoot: ctx.run.repoRoot,
+    baseRev,
+    commit: cand.commitSha,
+    outDir: join45(candidateEvidenceDir(ctx.runDir, cand.seq), "security"),
+    ...ctx.deps.gitleaksPath === void 0 ? {} : { gitleaksPath: ctx.deps.gitleaksPath },
+    hostPath: (ctx.deps.hostEnv ?? process.env).PATH,
+    policy: staticPolicy,
+    now: judgedAt
+  });
+  const sastVerdicts = sastCheckIds2(snapshot2).map((id) => judgeSastResult(results.find((r) => r.checkId === id) ?? null, id, staticPolicy, judgedAt));
+  const security = staticSecurityGate({ scan, sast: sastVerdicts.map((v) => ({ checkId: v.checkId, status: v.status })) });
+  gate(security);
+  const uiResults = uiResult ? toEvidenceUi(uiResult) : [];
+  const evaluation = evaluateEvidence({ contract, candidate: cand, checkResults: results, uiResults, scope, snapshot: snapshot2, uiRequired });
+  const report2 = evaluation.report;
+  const failReasons = [...evaluation.failReasons];
+  const disclose = (text2) => {
+    if (!report2.unverified.includes(text2)) report2.unverified.push(text2);
+  };
+  for (const n2 of [...security.notes, ...uiG.notes, ...opts.notes ?? []]) disclose(n2);
+  if (install.audit && install.audit.blocking.length === 0 && install.audit.summary) disclose(install.audit.summary);
+  for (const v of sastVerdicts) if (v.note && (!v.classification || v.classification.excepted.length > 0 || v.classification.advisory.length > 0)) disclose(v.note);
+  if (security.status === "fail") {
+    report2.verdict = "FAIL";
+    failReasons.push(...security.reasons);
+  }
+  if (uiG.status === "fail" && report2.verdict === "PASS") {
+    report2.verdict = "FAIL";
+    failReasons.push(...uiG.reasons);
+  }
+  if (exploration) {
+    for (const n2 of explorationUnverified(exploration)) disclose(n2);
+    if (exploration.reproduced.length > 0) {
+      report2.verdict = "FAIL";
+      const why = `UI exploration reproduced ${exploration.reproduced.length} defect(s) as failing tests: ${exploration.reproduced.map((f) => `${f.id} (${f.severity})`).join(", ")}`;
+      disclose(why);
+      failReasons.push(why);
+    }
+  } else if (wouldExplore && !opts.exploration) {
+    disclose(EXPLORATION_NOT_RUN);
+  }
+  return { evidence: { report: report2, failReasons, incompleteReasons: evaluation.incompleteReasons, evaluation, scan, sast: sastVerdicts, security, ui: uiG, uiRequired, exploration } };
+}
+async function changedPaths(repoRoot, baseRev, commit) {
+  const out = await git2(repoRoot, ["diff", "--name-only", "-z", "--no-renames", baseRev, commit, "--"]);
+  return out.split("\0").filter((p) => p.length > 0);
+}
+var EXPLORATION_NOT_RUN;
+var init_verification = __esm({
+  "src/controller/verification.ts"() {
+    "use strict";
+    init_errors();
+    init_globs();
+    init_config();
+    init_git();
+    init_baseline();
+    init_runner();
+    init_report2();
+    init_runner2();
+    init_context2();
+    init_gates();
+    init_security();
+    init_exploration();
+    EXPLORATION_NOT_RUN = "UI exploration (ui.exploration) runs only in the controller's VERIFYING step; this verification did not explore the UI";
+  }
+});
+
 // src/controller/steps/verifying.ts
-import { existsSync as existsSync32, readdirSync as readdirSync7 } from "node:fs";
-import { join as join42 } from "node:path";
+import { existsSync as existsSync36, readdirSync as readdirSync7 } from "node:fs";
+import { join as join46 } from "node:path";
 async function verifyingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -49029,73 +50733,15 @@ async function verifyingStep(ctx) {
     }
     return act(ctx, cand, report2);
   }
-  const checkoutDir = join42(runWorktreeRoot(ctx), `check-${cand.seq}`);
+  const checkoutDir = join46(runWorktreeRoot(ctx), `check-${cand.seq}`);
   await ensureCheckout(ctx, cand, checkoutDir);
   try {
-    const runner = {
-      db: ctx.db,
-      run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
-      snapshot: ctx.snapshot,
-      isolation: ctx.isolation(),
-      checkoutDir,
-      runDir: ctx.runDir,
-      clock: ctx.clock,
-      // The step's signal means "stop supervising" (lease lost, shutdown, watchdog), never "cancel": the checks
-      // keep running for the run's next owner. A durable cancellation reaches the runner through the run row.
-      detachSignal: ctx.signal,
-      pollMs: ctx.timing.checkPollMs,
-      killGraceMs: ctx.timing.killGraceMs,
-      homeDir: homeOf(ctx.deps)
-    };
-    const install = await installDependencies({ ...runner, candidate: cand });
-    const commandChecks = contract.required_check_ids.filter((id) => ctx.snapshot.config.checks[id]?.kind === "command");
-    const results = [...install.results];
-    if (install.skipped || install.ok) results.push(...await runChecks({ ...runner, candidate: cand, checkIds: commandChecks }));
-    const after = await safePoint(ctx);
-    if (after) return after;
-    if (ctx.signal.aborted) throw new OrbitError("CANCELLED", "the step was interrupted during checks");
-    const changed = await changedPaths(ctx, cand);
-    const ui = ctx.snapshot.config.ui;
-    const uiRequired = contract.acceptance_criteria.some((c) => c.ui === true) || ui !== null && ui.required_when_ui_changes && changed.some(compileGlobs(ui.ui_paths, { nocase: false }));
-    let uiResult = null;
-    if (uiRequired && ui && ui.journey_check_ids.length > 0) {
-      uiResult = await runUiChecks({ checkoutDir, snapshot: ctx.snapshot, candidate: cand, uiConfig: ui, journeyCheckIds: ui.journey_check_ids, isolation: ctx.isolation(), outDir: join42(candidateEvidenceDir(ctx.runDir, cand.seq), "ui"), clock: ctx.clock, abortSignal: ctx.signal, homeDir: homeOf(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
-      const uiAfter = await safePoint(ctx);
-      if (uiAfter) return uiAfter;
-    }
-    const uiG = uiGate({ required: uiRequired, configured: ui !== null && ui.journey_check_ids.length > 0, result: uiResult });
-    recordGate(ctx, uiG);
-    let exploration = null;
-    if (uiRequired && explorationEnabled(ui)) {
-      exploration = await exploreCandidate(ctx, cand, checkoutDir, join42(candidateEvidenceDir(ctx.runDir, cand.seq), "ui-exploration"));
-      const explored = await safePoint(ctx);
-      if (explored) return explored;
-    }
-    const staticPolicy = staticSecurityPolicy(ctx.snapshot.config);
-    const judgedAt = ctx.clock.now();
-    const scan = await scanCandidateSecrets({ repoRoot: ctx.run.repoRoot, baseRev: ctx.run.baseRevision, commit: cand.commitSha, outDir: join42(candidateEvidenceDir(ctx.runDir, cand.seq), "security"), ...ctx.deps.gitleaksPath === void 0 ? {} : { gitleaksPath: ctx.deps.gitleaksPath }, hostPath: (ctx.deps.hostEnv ?? process.env).PATH, policy: staticPolicy, now: judgedAt });
-    const sastVerdicts = sastCheckIds2(ctx.snapshot).map((id) => judgeSastResult(results.find((r) => r.checkId === id) ?? null, id, staticPolicy, judgedAt));
-    const sast = sastVerdicts.map((v) => ({ checkId: v.checkId, status: v.status }));
-    const security = staticSecurityGate({ scan, sast });
-    recordGate(ctx, security);
-    const uiResults = uiResult ? toEvidenceUi(uiResult) : [];
-    const evaluation = evaluateEvidence({ contract, candidate: cand, checkResults: results, uiResults, scope, snapshot: ctx.snapshot, uiRequired });
-    const report2 = evaluation.report;
-    report2.unverified.push(...security.notes, ...uiG.notes.filter((n2) => !report2.unverified.includes(n2)), ...authorizedOnceNotes);
-    if (install.audit && install.audit.blocking.length === 0 && install.audit.summary) report2.unverified.push(install.audit.summary);
-    for (const v of sastVerdicts) if (v.note && (!v.classification || v.classification.excepted.length > 0 || v.classification.advisory.length > 0)) report2.unverified.push(v.note);
+    const collected = await collectVerificationEvidence(ctx, cand, { checkoutDir, scope, notes: authorizedOnceNotes, checkpoint: () => safePoint(ctx), onGate: (g) => recordGate(ctx, g), exploration: true });
+    if ("stopped" in collected) return collected.stopped;
+    const { report: report2, evaluation, security, scan } = collected.evidence;
     if (security.status === "fail") {
-      report2.verdict = "FAIL";
       for (const f of scan.findings) {
         recordFailure(ctx.db, { runId: ctx.run.id, candidateId: cand.id, source: "check", sourceId: `secret-scan:${cand.id}:${f.file}:${f.line ?? 0}`, fingerprint: `secret-scan:${f.rule}:${f.file}`, excerpt: `potential secret (${f.rule}) at ${f.file}${f.line ? `:${f.line}` : ""}; value redacted` }, ctx.clock);
-      }
-    }
-    if (uiG.status === "fail" && report2.verdict === "PASS") report2.verdict = "FAIL";
-    if (exploration) {
-      report2.unverified.push(...explorationUnverified(exploration));
-      if (exploration.reproduced.length > 0) {
-        report2.verdict = "FAIL";
-        report2.unverified.push(`UI exploration reproduced ${exploration.reproduced.length} defect(s) as failing tests: ${exploration.reproduced.map((f) => `${f.id} (${f.severity})`).join(", ")}`);
       }
     }
     recordGate(ctx, behaviourGate({ ...evaluation, report: report2 }));
@@ -49176,7 +50822,7 @@ function scopeFingerprint(scope) {
   return `scope:${sha256(JSON.stringify([[...scope.forbidden_paths_changed].sort(), [...scope.out_of_scope_paths_changed].sort(), scope.within_size_limits, scope.lockfile_changed, [...scope.symlinks_escaping].sort()])).slice(0, 16)}`;
 }
 async function ensureCheckout(ctx, cand, dir) {
-  if (existsSync32(dir) && readdirSync7(dir).length > 0) {
+  if (existsSync36(dir) && readdirSync7(dir).length > 0) {
     try {
       const tree = (await git2(dir, ["rev-parse", "HEAD^{tree}"])).trim();
       if (tree === cand.treeHash && (await git2(dir, ["status", "--porcelain", "--untracked-files=no"])).trim() === "") return;
@@ -49186,42 +50832,32 @@ async function ensureCheckout(ctx, cand, dir) {
   }
   await materializeCandidate(ctx.run.repoRoot, cand.commitSha, dir, { readOnly: false });
 }
-async function changedPaths(ctx, cand) {
-  const out = await git2(ctx.run.repoRoot, ["diff", "--name-only", "-z", "--no-renames", ctx.run.baseRevision, cand.commitSha, "--"]);
-  return out.split("\0").filter((p) => p.length > 0);
-}
 var init_verifying = __esm({
   "src/controller/steps/verifying.ts"() {
     "use strict";
     init_hash();
     init_errors();
     init_scope();
-    init_globs();
-    init_config();
     init_candidate();
     init_git();
-    init_baseline();
-    init_runner();
     init_report2();
     init_freshness();
     init_store();
-    init_runner2();
     init_triggers();
     init_model_outputs();
     init_workers();
     init_context2();
     init_gates();
     init_authorization();
-    init_security();
+    init_verification();
     init_contracting();
     init_common();
     init_preflight();
-    init_exploration();
   }
 });
 
 // src/controller/steps/diagnosing.ts
-import { existsSync as existsSync33 } from "node:fs";
+import { existsSync as existsSync37 } from "node:fs";
 import { availableParallelism as availableParallelism2, freemem as freemem2, loadavg } from "node:os";
 async function diagnosingStep(ctx) {
   const stop = await safePoint(ctx);
@@ -49327,7 +50963,7 @@ async function diagnosingStep(ctx) {
       return finishRun(ctx, "EXHAUSTED", `implementation attempt allowance spent (${att.used} of ${att.allowance}) and no extension: ${decision.denied_because.join("; ")}`, { outcome: { extension: decision } });
     }
   }
-  if (!existsSync33(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
+  if (!existsSync37(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
   decide2(ctx, { id: `dec-${ctx.run.id}-brief-${next}`, kind: "repair.brief", summary: `repair brief (${stored.source}) for attempt ${next}: ${fingerprint}`, data: { attempt: next, source: stored.source, fingerprint, path: `briefs/attempt-${next}.json` } });
   return move2(ctx, "REPAIRING", `repair brief for attempt ${next} (${stored.source})`, { data: { attempt: next, fingerprint } });
 }
@@ -49408,7 +51044,7 @@ function diagnosisPrompt(ctx, fingerprint, failures, workerId, timeouts) {
     advisoryBlock: advisoryBlockFor(ctx, { role: "verifier", workerId, paths: contract.allowed_paths, checkIds: contract.required_check_ids, fingerprints: [fingerprint] })
   });
 }
-function timeoutContext(ctx, candidateId, probe = machineProbe()) {
+function timeoutContext(ctx, candidateId, probe = machineProbe(ctx)) {
   const rows = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId }).filter((r) => r.status === "TIMEOUT" || r.timedOut);
   if (rows.length === 0) return null;
   const base = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: null });
@@ -49423,9 +51059,10 @@ function timeoutContext(ctx, candidateId, probe = machineProbe()) {
   });
   return { checks, machine: probe };
 }
-function machineProbe() {
-  const load = loadavg()[0];
-  return { cores: availableParallelism2(), loadAvg1m: typeof load === "number" && Number.isFinite(load) && load > 0 ? Math.round(load * 100) / 100 : null, freeMemMb: Math.floor(freemem2() / (1024 * 1024)) };
+function machineProbe(ctx) {
+  const probe = ctx.deps.schedulerProbe;
+  const load = probe ? void 0 : loadavg()[0];
+  return { cores: probe ? probe.availableParallelism() : availableParallelism2(), loadAvg1m: typeof load === "number" && Number.isFinite(load) && load > 0 ? Math.round(load * 100) / 100 : null, freeMemMb: Math.floor((probe ? probe.freemem() : freemem2()) / (1024 * 1024)) };
 }
 function describeTimeouts(t) {
   const parts = t.checks.map((c) => {
@@ -49451,11 +51088,11 @@ function withTimeoutHypothesis(brief, t) {
 function raisesTimeout(text2) {
   return /\b(raise|raising|increase|increasing|extend|extending|bump|bumping|lengthen|double|doubling|remove|removing|disable|disabling|relax|relaxing)\b[^.]{0,40}\btime-?outs?\b/i.test(text2) || /\btime-?outs?\b[^.]{0,40}\b(longer|higher|larger|raised|increased|extended|removed|disabled)\b/i.test(text2);
 }
-function localizedFault(out, brief, changedPaths3) {
+function localizedFault(out, brief, changedPaths2) {
   const chosen = out.competing_hypotheses.find((h) => h.id === out.chosen_hypothesis_id);
   if (!chosen || chosen.status === "ruled-out" || chosen.supporting_evidence.length === 0) return null;
   if (out.confidence === "low") return null;
-  const changed = new Set(changedPaths3);
+  const changed = new Set(changedPaths2);
   const named = brief.scoped_fix.match(/[A-Za-z0-9_@][A-Za-z0-9_@./-]*\.[A-Za-z0-9]+/g) ?? [];
   const path = named.map((p) => p.replace(/^\.\//, "").replace(/[.,;:]+$/, "")).find((p) => changed.has(p));
   return path ? `${path}: ${chosen.statement}`.slice(0, 300) : null;
@@ -49485,8 +51122,8 @@ var init_diagnosing = __esm({
 });
 
 // src/controller/steps/reviewing.ts
-import { existsSync as existsSync34, readdirSync as readdirSync8, readFileSync as readFileSync23 } from "node:fs";
-import { join as join43 } from "node:path";
+import { existsSync as existsSync38, readdirSync as readdirSync8, readFileSync as readFileSync23 } from "node:fs";
+import { join as join47 } from "node:path";
 async function reviewingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -49883,7 +51520,7 @@ async function routeToRepair(ctx, cand, toRepair, resolution, texts) {
   const claims = new Map(resolution.claims.map((c) => [c.findingId, c]));
   const briefs = toRepair.map((d) => reviewBrief(ctx, d, claims.get(d.findingId)?.proposedValidation ?? null, texts.get(d.findingId), contract));
   const stored = { attempt: next, source: "review", fingerprint: briefs[0].fingerprint, brief: briefs.length === 1 ? briefs[0] : { briefs }, refs: toRepair.flatMap((d) => d.memberIds) };
-  if (!existsSync34(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
+  if (!existsSync38(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
   const record = { attempt: next, tree_hash: cand.treeHash, candidate_id: cand.id, commit: cand.commitSha, findings: toRepair.map((d) => ({ finding_id: d.findingId, member_ids: d.memberIds, fingerprint: d.fingerprint, external_id: d.externalId })) };
   ctx.db.tx(() => {
     if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, REVIEW_REPAIR_EVENT, next)) return;
@@ -49948,12 +51585,12 @@ async function preparePacket(ctx, cand, reviewDir, provider) {
     questions: listQuestions(ctx.db, ctx.run.id, { status: "open" }).map((q) => q.question),
     provider
   });
-  atomicWrite(join43(reviewDir, "packet.md"), packet.text, 384);
-  atomicWriteJson(join43(reviewDir, "packet.json"), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
+  atomicWrite(join47(reviewDir, "packet.md"), packet.text, 384);
+  atomicWriteJson(join47(reviewDir, "packet.json"), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
 }
 function packetShaOf(reviewDir) {
   try {
-    return JSON.parse(readText(join43(reviewDir, "packet.json"))).sha256;
+    return JSON.parse(readText(join47(reviewDir, "packet.json"))).sha256;
   } catch {
     return "";
   }
@@ -49962,7 +51599,7 @@ function readText(p) {
   return readFileSync23(p, "utf8");
 }
 function reviewerPrompt(ctx, cand, reviewDir, focus = "general") {
-  const text2 = readText(join43(reviewDir, "packet.md"));
+  const text2 = readText(join47(reviewDir, "packet.md"));
   const contract = assertContract(ctx);
   const task = [
     "Review the exact candidate in this read-only checkout against the contract and the bound evidence in the packet. Do not edit anything and do not ask questions.",
@@ -49982,10 +51619,10 @@ function reviewerPrompt(ctx, cand, reviewDir, focus = "general") {
   });
 }
 async function prepareReview(ctx, cand, provider) {
-  const reviewDir = join43(ctx.runDir, "reviews", String(cand.seq));
-  const checkout = join43(runWorktreeRoot(ctx), `review-${cand.seq}`);
-  if (!existsSync34(join43(reviewDir, "packet.md"))) await preparePacket(ctx, cand, reviewDir, provider);
-  if (!existsSync34(checkout) || readdirSync8(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
+  const reviewDir = join47(ctx.runDir, "reviews", String(cand.seq));
+  const checkout = join47(runWorktreeRoot(ctx), `review-${cand.seq}`);
+  if (!existsSync38(join47(reviewDir, "packet.md"))) await preparePacket(ctx, cand, reviewDir, provider);
+  if (!existsSync38(checkout) || readdirSync8(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
 var FOCUS_TEXT, REVIEW_REPAIR_EVENT, UNDECIDED;
@@ -50037,7 +51674,7 @@ var init_reviewing = __esm({
 });
 
 // src/controller/steps/delivering.ts
-import { join as join44 } from "node:path";
+import { join as join48 } from "node:path";
 async function deliveringStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -50085,7 +51722,7 @@ async function deliveringStep(ctx) {
   }
   const refused = await deliveryGateOrBlock(ctx, ev, review, result2.tree);
   if (refused) return refused;
-  atomicWriteJson(join44(ctx.runDir, DELIVERY_FILE), { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr ? { number: result2.pr.number, url: result2.pr.url, state: result2.pr.state, isDraft: result2.pr.isDraft } : null, pr_skipped: result2.prSkipped, warnings: result2.warnings, delivered_at: ctx.clock.now() });
+  atomicWriteJson(join48(ctx.runDir, DELIVERY_FILE), { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr ? { number: result2.pr.number, url: result2.pr.url, state: result2.pr.state, isDraft: result2.pr.isDraft } : null, pr_skipped: result2.prSkipped, warnings: result2.warnings, delivered_at: ctx.clock.now() });
   setCandidateStatus(ctx.db, cand.id, "DELIVERED");
   decide2(ctx, { id: `dec-${ctx.run.id}-delivered-${result2.commit}`, kind: "delivery.completed", summary: `delivered ${result2.commit.slice(0, 12)} (tree ${result2.tree.slice(0, 12)}) to ${result2.branch}${result2.pr ? `, PR #${result2.pr.number}` : ""}`, data: { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr?.number ?? null, pr_skipped: result2.prSkipped } });
   return move2(ctx, "AWAITING_CI", `delivered ${result2.commit.slice(0, 12)} to ${result2.branch}`, { patch: { branch: result2.branch }, data: { commit: result2.commit, pr: result2.pr?.number ?? null } });
@@ -50099,50 +51736,73 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
   if (!ev || !review) return finishRun(ctx, "BLOCKED", `release refused: ${!ev ? "no live evidence" : "no approving review"} for the delivered tree ${d.tree}`, { outcome });
   const release = ctx.snapshot.config.release ?? null;
   const envs = release ? Object.keys(release.environments) : [];
-  const environment = envs.length === 1 ? envs[0] : null;
-  let result2;
-  try {
-    result2 = await performRelease({
-      run: { id: ctx.run.id, repoRoot: ctx.run.repoRoot, branch: ctx.run.branch, baseRevision: ctx.run.baseRevision, policyHash: ctx.run.policyHash, cancelRequested: ctx.run.cancelRequested, goal: ctx.run.goal },
-      candidate: { id: cand.id, commitSha: cand.commitSha, treeHash: cand.treeHash, parentSha: cand.parentSha },
-      evidence: { id: ev.id, candidateId: cand.id, treeHash: ev.treeHash, policyHash: ev.policyHash, checkConfigHash: ev.checkConfigHash, verdict: ev.verdict, invalidatedAt: ev.invalidatedAt },
-      review: { id: review.id, candidateId: review.candidateId, treeHash: review.treeHash, verdict: review.verdict, invalidatedAt: review.invalidatedAt },
-      snapshot: ctx.snapshot,
-      ledger: new ActionLedger(ctx.db, ctx.clock, { runDir: ctx.runDir, actor: ctx.ownerId }),
-      client: await githubClient(ctx),
-      clock: ctx.clock,
-      commit: d.commit,
-      pr: d.pr?.number ?? null,
-      contractMerge: contract.delivery.merge,
-      environment,
-      readiness: () => {
-        const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: cand, implementerProvider: implementerProvider(ctx), deliveredTree: d.tree, now: ctx.clock.now() });
-        return { ok: gate.passed, reasons: gate.reasons };
-      },
-      isolation: ctx.isolation(),
-      workDir: ctx.runDir,
-      homeDir: homeOf(ctx.deps)
-    });
-  } catch (err) {
-    if (isOrbitError(err, "CANCELLED")) {
-      const s = await safePoint(ctx);
-      if (s) return s;
+  const deliveryRun = { id: ctx.run.id, repoRoot: ctx.run.repoRoot, branch: ctx.run.branch, baseRevision: ctx.run.baseRevision, policyHash: ctx.run.policyHash, cancelRequested: ctx.run.cancelRequested, goal: ctx.run.goal };
+  const ledger = new ActionLedger(ctx.db, ctx.clock, { runDir: ctx.runDir, actor: ctx.ownerId });
+  const client = await githubClient(ctx);
+  const runRelease = () => performRelease({
+    run: deliveryRun,
+    candidate: { id: cand.id, commitSha: cand.commitSha, treeHash: cand.treeHash, parentSha: cand.parentSha },
+    evidence: { id: ev.id, candidateId: cand.id, treeHash: ev.treeHash, policyHash: ev.policyHash, checkConfigHash: ev.checkConfigHash, verdict: ev.verdict, invalidatedAt: ev.invalidatedAt },
+    review: { id: review.id, candidateId: review.candidateId, treeHash: review.treeHash, verdict: review.verdict, invalidatedAt: review.invalidatedAt },
+    snapshot: ctx.snapshot,
+    ledger,
+    client,
+    clock: ctx.clock,
+    commit: d.commit,
+    pr: d.pr?.number ?? null,
+    contractMerge: contract.delivery.merge,
+    // Every environment the release profile defines that the deployed ref is allowed for, in profile order.
+    environments: "all",
+    readiness: () => {
+      const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: cand, implementerProvider: implementerProvider(ctx), deliveredTree: d.tree, now: ctx.clock.now() });
+      return { ok: gate.passed, reasons: gate.reasons };
+    },
+    isolation: ctx.isolation(),
+    workDir: ctx.runDir,
+    homeDir: homeOf(ctx.deps)
+  });
+  let result2 = null;
+  for (let settled = 0; result2 === null; settled++) {
+    try {
+      result2 = await runRelease();
+    } catch (err) {
+      if (isOrbitError(err, "CANCELLED")) {
+        const s = await safePoint(ctx);
+        if (s) return s;
+      }
+      const unknownEnv = isOrbitError(err) && err.details?.outcomeUnknown === true && typeof err.details.environment === "string" ? err.details.environment : null;
+      if (unknownEnv !== null && settled <= envs.length) {
+        const auto = await settleUnknownDeploy(ctx, ledger, deliveryRun, unknownEnv);
+        if (auto.settled) continue;
+        const how = `Find out whether it took effect, then run: orbit release resolve ${ctx.run.id} --deployed (or --not-deployed), and orbit resume ${ctx.run.id}`;
+        return finishRun(ctx, "BLOCKED", `release refused: ${err.message}${auto.detail ? ` (automatic check: ${auto.detail})` : ""}. ${how}`, { outcome: { ...outcome, release_error: { code: "DELIVERY_FAILED", outcome_unknown: true, environment: unknownEnv } } });
+      }
+      if (isOrbitError(err) && (err.details?.definitive === true || err.code === "POLICY_DENIED")) {
+        return finishRun(ctx, "BLOCKED", `release refused: ${err.message}`, { outcome: { ...outcome, release_error: { code: err.code, rule: err.details?.rule ?? null } } });
+      }
+      throw err;
     }
-    if (isOrbitError(err) && (err.details?.definitive === true || err.code === "POLICY_DENIED")) {
-      return finishRun(ctx, "BLOCKED", `release refused: ${err.message}`, { outcome: { ...outcome, release_error: { code: err.code, rule: err.details?.rule ?? null } } });
-    }
-    throw err;
   }
   if (result2.status === "pending") return releasePending(ctx, result2, d, outcome);
   const summary = {
     merge: result2.merge ? { pr: result2.merge.number, head: result2.merge.headSha, merge_commit: result2.merge.mergeCommitSha, method: result2.merge.method } : null,
     merge_skipped: result2.mergeSkipped,
     deploy: result2.deploy ? { environment: result2.deploy.environment, sha: result2.deploy.sha, branch: result2.deploy.branch } : null,
-    deploy_skipped: result2.deploySkipped ?? (envs.length > 1 ? `the release profile defines ${envs.length} environments (${envs.join(", ")}) and names none for this run` : null)
+    deploys: result2.deploys.map((x) => ({ environment: x.environment, sha: x.sha, branch: x.branch })),
+    deploy_skipped: result2.deploySkipped
   };
-  atomicWriteJson(join44(ctx.runDir, RELEASE_FILE), { ...summary, released_at: ctx.clock.now() });
-  decide2(ctx, { id: `dec-${ctx.run.id}-released-${d.commit}`, kind: "release.completed", summary: `release of ${d.commit.slice(0, 12)}: ${summary.merge ? `merged PR #${summary.merge.pr}` : `no merge (${summary.merge_skipped})`}; ${summary.deploy ? `deployed to ${summary.deploy.environment}` : `no deploy (${summary.deploy_skipped})`}`, data: summary });
+  atomicWriteJson(join48(ctx.runDir, RELEASE_FILE), { ...summary, released_at: ctx.clock.now() });
+  const deployed = summary.deploys.length > 0 ? `deployed to ${summary.deploys.map((x) => x.environment).join(", ")}${summary.deploy_skipped ? ` (not: ${summary.deploy_skipped})` : ""}` : `no deploy (${summary.deploy_skipped})`;
+  decide2(ctx, { id: `dec-${ctx.run.id}-released-${d.commit}`, kind: "release.completed", summary: `release of ${d.commit.slice(0, 12)}: ${summary.merge ? `merged PR #${summary.merge.pr}` : `no merge (${summary.merge_skipped})`}; ${deployed}`, data: summary });
   return complete(ctx, d.tree, { ...outcome, release: summary }, notes);
+}
+async function settleUnknownDeploy(ctx, ledger, run, environment) {
+  try {
+    const r = await resolveDeploy({ run, snapshot: ctx.snapshot, ledger, clock: ctx.clock, workDir: ctx.runDir, environment, resolution: "verify", by: "controller", isolation: ctx.isolation(), homeDir: homeOf(ctx.deps) });
+    return { settled: r.verdict !== "unknown", detail: r.detail };
+  } catch (err) {
+    return { settled: false, detail: err instanceof Error ? err.message.slice(0, 300) : String(err) };
+  }
 }
 function releasePending(ctx, result2, d, outcome) {
   const phase = result2.merge ? `deploy:${result2.merge.mergeCommitSha ?? "none"}` : `merge:${d.commit}`;
@@ -50189,7 +51849,7 @@ async function githubClient(ctx) {
   if (config.delivery.provider === "fake") {
     const url = await resolveRemoteUrl(ctx.run.repoRoot, remote).catch(() => null);
     const local = url !== null && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !/^[^/]+@[^:]+:/.test(url) ? url : void 0;
-    return new FakeGitHub({ statePath: join44(ctx.run.repoRoot, ".orbit", "fake-github.json"), ...local ? { remoteGitDir: local } : {} });
+    return new FakeGitHub({ statePath: join48(ctx.run.repoRoot, ".orbit", "fake-github.json"), ...local ? { remoteGitDir: local } : {} });
   }
   return githubClientFor(ctx.run.repoRoot, remote, ctx.deps.hostEnv ?? process.env);
 }
@@ -50228,11 +51888,12 @@ var init_delivering = __esm({
 });
 
 // src/controller/steps/awaiting-ci.ts
-import { join as join45 } from "node:path";
+import { existsSync as existsSync39 } from "node:fs";
+import { join as join49 } from "node:path";
 async function awaitingCiStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
-  const d = readJsonIfExists(join45(ctx.runDir, DELIVERY_FILE));
+  const d = readJsonIfExists(join49(ctx.runDir, DELIVERY_FILE));
   if (!d || !ctx.ledger) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is AWAITING_CI without a delivery record`);
   const config = ctx.snapshot.config;
   const client = await githubClient(ctx);
@@ -50241,8 +51902,8 @@ async function awaitingCiStep(ctx) {
   const elapsed = ctx.clock.now() - d.delivered_at;
   const base = { branch: d.branch, commit: d.commit, pr: d.pr?.number ?? null };
   if (obs.state === "passed") {
-    const conflict = await blockOnBaseConflict(ctx, d, base);
-    if (conflict) return conflict;
+    const moved = await handleMovedBase(ctx, d, base);
+    if (moved) return moved;
     if (ctx.run.mode === "release") return releaseDelivered(ctx, d, { ...base, ci: "passed" });
     return complete(ctx, d.tree, { ...base, ci: "passed" });
   }
@@ -50272,15 +51933,15 @@ async function awaitingCiStep(ctx) {
       if (elapsed >= timeoutMs) return finishRun(ctx, "BLOCKED", `no CI checks were reported for ${d.commit.slice(0, 12)} within ${config.delivery.ci_timeout_minutes} minutes and delivery.require_ci is true`, { outcome: base });
       return WAIT("no CI checks reported yet");
     }
-    const conflict = await blockOnBaseConflict(ctx, d, base);
-    if (conflict) return conflict;
+    const moved = await handleMovedBase(ctx, d, base);
+    if (moved) return moved;
     if (ctx.run.mode === "release") return releaseDelivered(ctx, d, { ...base, ci: "none reported" }, ["no CI checks were reported for the delivered commit; CI is unverified"]);
     return complete(ctx, d.tree, { ...base, ci: "none reported" }, ["no CI checks were reported for the delivered commit; CI is unverified"]);
   }
   if (elapsed >= timeoutMs) return finishRun(ctx, "BLOCKED", `CI did not finish within ${config.delivery.ci_timeout_minutes} minutes (pending: ${obs.pending.join(", ") || "unknown"})`, { outcome: base });
   return WAIT(`CI pending on ${d.commit.slice(0, 12)}${obs.pending.length ? ` (${obs.pending.join(", ")})` : ""}`);
 }
-async function baseConflict(ctx, d) {
+async function baseMovement(ctx, d) {
   const config = ctx.snapshot.config;
   const remote = config.repository.remote;
   const baseBranch = config.repository.base_branch;
@@ -50296,25 +51957,92 @@ async function baseConflict(ctx, d) {
     const ref2 = `refs/orbit/${ctx.run.id}/base`;
     await fetchBranchContaining({ repoRoot: ctx.run.repoRoot, remote, branch: baseBranch, commit: from, ref: ref2, env: gitEnv4({}, env) });
     const merged = await execCapture(["git", "merge-tree", "--write-tree", "--name-only", "--no-messages", tip, d.commit], { cwd: ctx.run.repoRoot, env: gitEnv4({}, env), timeoutMs: 6e4 });
-    if (merged.exitCode === 0) return null;
+    if (merged.exitCode === 0) return { baseBranch, from, to: tip, conflicts: [] };
     if (merged.exitCode !== 1) {
       ctx.log.warn("could not compute the merge with the moved base branch", { exit: merged.exitCode, stderr: merged.stderr.slice(0, 300) });
       return null;
     }
     const files = merged.stdout.split("\n").slice(1).map((l) => l.trim()).filter((l) => l.length > 0);
-    return { baseBranch, from, to: tip, files };
+    return { baseBranch, from, to: tip, conflicts: files.length > 0 ? files : ["(unknown paths)"] };
   } catch (err) {
     ctx.log.warn("could not read the base branch on the remote", { error: err instanceof Error ? err.message.slice(0, 300) : String(err) });
     return null;
   }
 }
-async function blockOnBaseConflict(ctx, d, base) {
-  const c = await baseConflict(ctx, d);
-  if (!c) return null;
-  decide2(ctx, { id: `dec-${ctx.run.id}-base-conflict-${d.commit}-${c.to}`, kind: "delivery.base-conflict", summary: `${c.baseBranch} moved from ${c.from.slice(0, 12)} to ${c.to.slice(0, 12)}; the delivered ${d.commit.slice(0, 12)} conflicts in ${c.files.join(", ") || "unknown paths"}`, data: { ...c, commit: d.commit } });
-  return finishRun(ctx, "BLOCKED", `the base branch ${c.baseBranch} moved (${c.from.slice(0, 12)} to ${c.to.slice(0, 12)}) and the delivered commit ${d.commit.slice(0, 12)} no longer merges cleanly: conflicts in ${c.files.slice(0, 10).join(", ") || "unknown paths"}. Rebasing the task branch is not an authorized action; rebase it or close the pull request, then start a new run`, { outcome: { ...base, base_conflict: c } });
+async function handleMovedBase(ctx, d, base) {
+  const m = await baseMovement(ctx, d);
+  if (!m) return null;
+  const decision = authorize(ctx.snapshot, { kind: "action", action: "rebase_task_branch" });
+  const conflict = m.conflicts.length > 0;
+  const short2 = (sha) => sha.slice(0, 12);
+  const where = `${m.baseBranch} moved (${short2(m.from)} to ${short2(m.to)})`;
+  const paths = m.conflicts.slice(0, 10).join(", ");
+  if (!decision.allowed) {
+    if (!conflict) return null;
+    return blockOnConflict(ctx, d, base, m, `the base branch ${where} and the delivered commit ${short2(d.commit)} no longer merges cleanly: conflicts in ${m.conflicts[0] === "(unknown paths)" ? "unknown paths" : paths}. Rebasing the task branch is not authorized (actions.rebase_task_branch: ${decision.reason}); rebase it yourself or close the pull request, then start a new run`);
+  }
+  if (conflict) {
+    return blockOnConflict(ctx, d, base, m, `the base branch ${where} and rebasing the task branch onto it conflicts in ${m.conflicts[0] === "(unknown paths)" ? "unknown paths" : paths}; resolve the conflict by hand or close the pull request, then start a new run`);
+  }
+  const done = ctx.db.all(`SELECT json_extract(data_json, '$.to') AS "to" FROM events WHERE run_id = ? AND type = ?`, ctx.run.id, REBASE_EVENT).map((r) => r.to);
+  if (done.length >= MAX_REBASES && !done.includes(m.to)) {
+    return blockOnConflict(ctx, d, base, m, `the base branch ${where} and this run already rebased onto a moved base ${done.length} times; it will not rebase again. Merge or close the pull request, or start a new run`);
+  }
+  const cand = ctx.candidate;
+  if (!cand) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is AWAITING_CI without a candidate`);
+  const rebased = await rebaseCandidate(ctx, cand, m.to);
+  if (rebased.kind === "conflict") {
+    return blockOnConflict(ctx, d, base, { ...m, conflicts: rebased.files }, `the base branch ${where} and rebasing the task branch onto it conflicts in ${rebased.files.join(", ") || "unknown paths"}; resolve the conflict by hand or close the pull request, then start a new run`);
+  }
+  const next = rebased.candidate;
+  const reason = `rebased candidate ${cand.seq} onto ${m.baseBranch} ${short2(m.to)}: new candidate ${next.seq} (tree ${next.treeHash})`;
+  invalidateEvidence(ctx.db, ctx.run.id, reason, ctx.clock, { exceptTreeHash: next.treeHash });
+  invalidateStaleReviews(ctx.db, { runId: ctx.run.id, runDir: ctx.runDir, current: { candidateId: next.id, treeHash: next.treeHash }, cause: "rebase onto the moved base branch" }, ctx.clock);
+  ctx.db.tx(() => {
+    appendEvent(ctx.db, ctx.run.id, REBASE_EVENT, ctx.ownerId, { from: m.from, to: m.to, old_candidate_id: cand.id, candidate_id: next.id, tree_hash: next.treeHash }, ctx.clock.now());
+    appendEvent(ctx.db, ctx.run.id, CANDIDATE_EVENT, ctx.ownerId, { attempt: currentAttempt(ctx), candidate_id: next.id, seq: next.seq, tree_hash: next.treeHash, reused: !next.created, rebase: true }, ctx.clock.now());
+  });
+  ctx.candidate = next;
+  decide2(ctx, { id: `dec-${ctx.run.id}-rebase-${m.to}`, kind: "delivery.rebased", summary: `${m.baseBranch} moved from ${short2(m.from)} to ${short2(m.to)}; rebased the reviewed candidate (${short2(cand.commitSha)}) onto it as ${short2(next.commitSha)}, evidence and reviews invalidated`, data: { from: m.from, to: m.to, old_commit: cand.commitSha, commit: next.commitSha, tree: next.treeHash } });
+  const baseTree = (await execCapture(["git", "rev-parse", `${m.to}^{tree}`], { cwd: ctx.run.repoRoot, env: gitEnv4({}, ctx.deps.hostEnv ?? process.env), timeoutMs: 3e4 })).stdout.trim();
+  return move2(ctx, "VERIFYING", `${reason}; verifying again`, { patch: { baseRevision: m.to, ...baseTree ? { baseTree } : {} }, data: { rebase: { from: m.from, to: m.to } } });
 }
-var CI_CYCLE_EVENT;
+async function blockOnConflict(ctx, d, base, m, reason) {
+  const files = m.conflicts[0] === "(unknown paths)" ? [] : m.conflicts;
+  decide2(ctx, { id: `dec-${ctx.run.id}-base-conflict-${d.commit}-${m.to}`, kind: "delivery.base-conflict", summary: `${m.baseBranch} moved from ${m.from.slice(0, 12)} to ${m.to.slice(0, 12)}; ${reason.slice(0, 300)}`, data: { baseBranch: m.baseBranch, from: m.from, to: m.to, files, commit: d.commit } });
+  return finishRun(ctx, "BLOCKED", reason, { outcome: { ...base, base_conflict: { baseBranch: m.baseBranch, from: m.from, to: m.to, files } } });
+}
+async function rebaseCandidate(ctx, cand, tip) {
+  const checkoutDir = join49(runWorktreeRoot(ctx), `rebase-${tip.slice(0, 12)}`);
+  const env = { ...gitEnv4({}, ctx.deps.hostEnv ?? process.env), GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name, GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name, GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email };
+  await cleanupCandidateCheckout(ctx.run.repoRoot, checkoutDir).catch(() => {
+  });
+  await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkoutDir, { readOnly: false });
+  try {
+    const res = await execCapture(["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "rebase", "--onto", tip, cand.parentSha, "HEAD"], { cwd: checkoutDir, env, timeoutMs: 12e4 });
+    if (res.exitCode !== 0) {
+      const unmerged = await execCapture(["git", "diff", "--name-only", "--diff-filter=U"], { cwd: checkoutDir, env, timeoutMs: 3e4 });
+      await execCapture(["git", "rebase", "--abort"], { cwd: checkoutDir, env, timeoutMs: 3e4 }).catch(() => null);
+      const files = unmerged.stdout.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+      if (files.length === 0) throw new OrbitError("GIT_FAILED", `git rebase onto ${tip.slice(0, 12)} failed: ${(res.stderr || res.stdout).trim().slice(0, 300)}`);
+      return { kind: "conflict", files };
+    }
+    const attempt = currentAttempt(ctx);
+    const next = await snapshotCandidate({ db: ctx.db, clock: ctx.clock, repoRoot: ctx.run.repoRoot, worktree: checkoutDir, runId: ctx.run.id, baseRev: tip, attempt, workerId: null });
+    if (ctx.run.worktreePath && existsSync39(ctx.run.worktreePath)) {
+      try {
+        await git2(ctx.run.worktreePath, ["reset", "--hard", next.commitSha]);
+      } catch (err) {
+        ctx.log.warn("could not move the run worktree onto the rebased candidate", { error: err instanceof Error ? err.message.slice(0, 300) : String(err) });
+      }
+    }
+    return { kind: "rebased", candidate: next };
+  } finally {
+    await cleanupCandidateCheckout(ctx.run.repoRoot, checkoutDir).catch(() => {
+    });
+  }
+}
+var CI_CYCLE_EVENT, MAX_REBASES, REBASE_EVENT;
 var init_awaiting_ci = __esm({
   "src/controller/steps/awaiting-ci.ts"() {
     "use strict";
@@ -50322,465 +52050,21 @@ var init_awaiting_ci = __esm({
     init_errors();
     init_events();
     init_store();
+    init_candidate();
+    init_git();
+    init_freshness();
+    init_stale();
     init_authorize();
     init_exec();
     init_git2();
     init_ci();
+    init_context2();
     init_common();
     init_delivering();
     init_implementing();
     CI_CYCLE_EVENT = "ci.repair-cycle";
-  }
-});
-
-// src/contract/amend.ts
-function applyAmendment(contract, proposal, opts) {
-  const approvedBy = opts.approvedBy ?? null;
-  if (approvedBy !== null && !DECISION_ID.test(approvedBy)) {
-    throw new OrbitError("POLICY_DENIED", "amendment approval must reference a recorded decision id");
-  }
-  const a = assessAmendment(contract, proposal, opts);
-  if (a.forbidden.length > 0) {
-    throw new OrbitError("POLICY_DENIED", `amendment exceeds the policy: ${a.forbidden.join("; ")}`, {
-      record: a.record,
-      forbidden: a.forbidden,
-      approvalReasons: a.approvalReasons
-    });
-  }
-  if (a.approvalReasons.length > 0 && approvedBy === null) {
-    throw new OrbitError("POLICY_DENIED", `amendment needs a human decision: ${a.approvalReasons.join("; ")}`, {
-      record: a.record,
-      approvalReasons: a.approvalReasons
-    });
-  }
-  const validated = validateContract(a.next, opts.snapshot, opts.policyHash === void 0 ? {} : { policyHash: opts.policyHash });
-  return { contract: validated, record: a.record, approvedBy };
-}
-function assessAmendment(contract, proposal, opts) {
-  if (!proposal || typeof proposal !== "object" || !proposal.change || typeof proposal.change !== "object") {
-    invalid2("amendment must have a change");
-  }
-  const evidence = text(proposal.evidence, "evidence");
-  const reason = text(proposal.reason, "reason");
-  const next = structuredClone(contract);
-  const ctx = { contract, next, snapshot: opts.snapshot, history: opts.history ?? [], baselineFailures: opts.baselineFailures ?? null, approval: [], forbidden: [] };
-  const change = applyChange(ctx, proposal.change);
-  const record = {
-    field: change.field,
-    old_value: structuredClone(change.oldValue),
-    new_value: structuredClone(change.newValue),
-    evidence,
-    reason,
-    approval_required: ctx.approval.length > 0,
-    affected_verification: change.affected
-  };
-  return { next, record, approvalReasons: ctx.approval, forbidden: ctx.forbidden };
-}
-function invalid2(message) {
-  throw new OrbitError("CONTRACT_INVALID", `amendment rejected: ${message}`);
-}
-function text(value, name) {
-  if (typeof value !== "string" || value.trim() === "") invalid2(`${name} must be a non-empty string`);
-  return value.trim();
-}
-function textList(values, name, minItems = 1) {
-  if (!Array.isArray(values)) invalid2(`${name} must be a list`);
-  const out = [];
-  for (const v of values) {
-    const t = text(v, name);
-    if (!out.some((o) => normalizeEntry(o) === normalizeEntry(t))) out.push(t);
-  }
-  if (out.length < minItems) invalid2(`${name} needs at least ${minItems} entr${minItems === 1 ? "y" : "ies"}`);
-  return out;
-}
-function criterion(c, id) {
-  const found = c.acceptance_criteria.find((ac) => ac.id === id);
-  if (!found) invalid2(`no criterion ${String(id)}`);
-  return found;
-}
-function nextId(prefix, ids) {
-  let max = 0;
-  for (const id of ids) {
-    const m = new RegExp(`^${prefix}-([0-9]+)$`).exec(id);
-    if (m) max = Math.max(max, Number(m[1]));
-  }
-  return `${prefix}-${max + 1}`;
-}
-function criterionIdsIn(history) {
-  const ids = [];
-  const collect2 = (v) => {
-    if (typeof v === "string" && CRITERION_ID.test(v)) ids.push(v);
-    else if (v !== null && typeof v === "object" && !Array.isArray(v)) collect2(v.id);
-  };
-  for (const record of history) {
-    for (const a of record.affected_verification ?? []) collect2(a);
-    collect2(record.old_value);
-    collect2(record.new_value);
-  }
-  return ids;
-}
-function checkDefined(ctx, id) {
-  return Object.prototype.hasOwnProperty.call(ctx.snapshot.config.checks ?? {}, id);
-}
-function requireDefinedChecks(ctx, ids) {
-  for (const id of ids) {
-    if (!checkDefined(ctx, id)) ctx.forbidden.push(`check "${id}" is not defined by the policy, and a contract cannot add check commands`);
-  }
-}
-function noop() {
-  invalid2("the change does not alter the contract");
-}
-function applyChange(ctx, change) {
-  const { contract, next } = ctx;
-  switch (change.op) {
-    case "clarify_objective": {
-      const objective = text(change.objective, "objective");
-      if (objective === contract.objective) noop();
-      const verdict = compareWording(contract.objective, objective);
-      if (!verdict.clarification) ctx.approval.push(`redefines the objective: ${verdict.reasons.join(", ")}`);
-      next.objective = objective;
-      return { field: "objective", oldValue: contract.objective, newValue: objective, affected: [...contract.acceptance_criteria.map((ac) => ac.id), "review"] };
-    }
-    case "clarify_criterion": {
-      const old = criterion(contract, change.criterion_id);
-      const statement = text(change.statement, "statement");
-      if (statement === old.statement) noop();
-      const verdict = compareWording(old.statement, statement);
-      if (!verdict.clarification && old.mandatory) {
-        ctx.approval.push(`weakens or redefines mandatory criterion ${old.id}: ${verdict.reasons.join(", ")}`);
-      }
-      criterion(next, old.id).statement = statement;
-      return { field: `acceptance_criteria[${old.id}].statement`, oldValue: old.statement, newValue: statement, affected: [old.id] };
-    }
-    case "add_criterion": {
-      const statement = text(change.statement, "statement");
-      const proof = textList(change.proof, "proof");
-      const checkIds = uniqueIds(change.check_ids, "check_ids", 0);
-      if (typeof change.mandatory !== "boolean" || typeof change.ui !== "boolean") invalid2("mandatory and ui must be booleans");
-      requireDefinedChecks(ctx, checkIds);
-      const id = nextId("AC", [...contract.acceptance_criteria.map((ac) => ac.id), ...criterionIdsIn(ctx.history)]);
-      const added = { id, statement, proof, mandatory: change.mandatory, ui: change.ui, check_ids: checkIds };
-      next.acceptance_criteria.push(added);
-      for (const cid of checkIds) if (!next.required_check_ids.includes(cid)) next.required_check_ids.push(cid);
-      return { field: "acceptance_criteria", oldValue: null, newValue: added, affected: [id, ...checkIds.map((c) => `check:${c}`)] };
-    }
-    case "add_proof": {
-      const old = criterion(contract, change.criterion_id);
-      const have = new Set(old.proof.map(normalizeEntry));
-      const fresh = textList(change.proof, "proof").filter((p) => !have.has(normalizeEntry(p)));
-      if (fresh.length === 0) noop();
-      const target = criterion(next, old.id);
-      target.proof = [...old.proof, ...fresh];
-      return { field: `acceptance_criteria[${old.id}].proof`, oldValue: old.proof, newValue: target.proof, affected: [old.id] };
-    }
-    case "replace_proof": {
-      const old = criterion(contract, change.criterion_id);
-      const proof = textList(change.proof, "proof");
-      if (proof.length === old.proof.length && proof.every((p, i) => p === old.proof[i])) noop();
-      old.proof.forEach((entry, i) => {
-        if (!proof.some((p) => compareWording(entry, p).clarification)) {
-          ctx.approval.push(`removes or weakens proof entry ${i + 1} of criterion ${old.id}`);
-        }
-      });
-      criterion(next, old.id).proof = proof;
-      return { field: `acceptance_criteria[${old.id}].proof`, oldValue: old.proof, newValue: proof, affected: [old.id] };
-    }
-    case "set_mandatory": {
-      const old = criterion(contract, change.criterion_id);
-      if (typeof change.mandatory !== "boolean") invalid2("mandatory must be a boolean");
-      if (change.mandatory === old.mandatory) noop();
-      if (!change.mandatory) ctx.approval.push(`makes mandatory criterion ${old.id} optional`);
-      criterion(next, old.id).mandatory = change.mandatory;
-      return { field: `acceptance_criteria[${old.id}].mandatory`, oldValue: old.mandatory, newValue: change.mandatory, affected: [old.id] };
-    }
-    case "remove_criterion": {
-      const old = criterion(contract, change.criterion_id);
-      ctx.approval.push(`removes ${old.mandatory ? "mandatory " : ""}criterion ${old.id} and its proof`);
-      next.acceptance_criteria = next.acceptance_criteria.filter((ac) => ac.id !== old.id);
-      return { field: "acceptance_criteria", oldValue: old, newValue: null, affected: [old.id] };
-    }
-    case "add_required_checks": {
-      const ids = uniqueIds(change.check_ids, "check_ids", 1);
-      requireDefinedChecks(ctx, ids);
-      const target = change.criterion_id === null ? null : criterion(next, change.criterion_id);
-      const before = { required_check_ids: [...contract.required_check_ids], ...target ? { check_ids: [...target.check_ids ?? []] } : {} };
-      let changed = false;
-      for (const id of ids) {
-        if (!next.required_check_ids.includes(id)) {
-          next.required_check_ids.push(id);
-          changed = true;
-        }
-        if (target && !(target.check_ids ?? []).includes(id)) {
-          target.check_ids = [...target.check_ids ?? [], id];
-          changed = true;
-        }
-      }
-      if (!changed) noop();
-      const after = { required_check_ids: [...next.required_check_ids], ...target ? { check_ids: [...target.check_ids ?? []] } : {} };
-      return {
-        field: target ? `acceptance_criteria[${target.id}].check_ids` : "required_check_ids",
-        oldValue: before,
-        newValue: after,
-        affected: [...target ? [target.id] : [], ...ids.map((c) => `check:${c}`)]
-      };
-    }
-    case "remove_required_checks": {
-      const ids = uniqueIds(change.check_ids, "check_ids", 1);
-      const checks = ctx.snapshot.config.checks ?? {};
-      if (change.criterion_id === null) {
-        const removed2 = ids.filter((id) => contract.required_check_ids.includes(id));
-        if (removed2.length === 0) noop();
-        for (const id of removed2) {
-          if (checks[id]?.mandatory) ctx.forbidden.push(`check "${id}" is mandatory in the policy and cannot be removed`);
-        }
-        ctx.approval.push(`removes required check${removed2.length === 1 ? "" : "s"} ${removed2.join(", ")}`);
-        next.required_check_ids = next.required_check_ids.filter((id) => !removed2.includes(id));
-        const touched = [];
-        for (const ac of next.acceptance_criteria) {
-          if (ac.check_ids?.some((id) => removed2.includes(id))) {
-            ac.check_ids = ac.check_ids.filter((id) => !removed2.includes(id));
-            touched.push(ac.id);
-          }
-        }
-        return { field: "required_check_ids", oldValue: contract.required_check_ids, newValue: next.required_check_ids, affected: [...touched, ...removed2.map((c) => `check:${c}`)] };
-      }
-      const old = criterion(contract, change.criterion_id);
-      const removed = ids.filter((id) => (old.check_ids ?? []).includes(id));
-      if (removed.length === 0) noop();
-      ctx.approval.push(`removes check evidence ${removed.join(", ")} from criterion ${old.id}`);
-      const target = criterion(next, old.id);
-      target.check_ids = (target.check_ids ?? []).filter((id) => !removed.includes(id));
-      return { field: `acceptance_criteria[${old.id}].check_ids`, oldValue: old.check_ids ?? [], newValue: target.check_ids, affected: [old.id] };
-    }
-    case "set_allowed_paths": {
-      if (!Array.isArray(change.allowed_paths) || change.allowed_paths.length === 0) invalid2("allowed_paths must be a non-empty list");
-      const globs = [];
-      for (const raw of change.allowed_paths) {
-        const g = typeof raw === "string" ? normalizeGlob(raw) : null;
-        if (g === null) {
-          ctx.forbidden.push(`allowed path "${String(raw)}" uses glob syntax that cannot be checked against the policy scope`);
-          continue;
-        }
-        if (!globs.includes(g)) globs.push(g);
-      }
-      const same = globs.length === contract.allowed_paths.length && globs.every((g) => contract.allowed_paths.includes(g));
-      if (same && ctx.forbidden.length === 0) noop();
-      const scope = ctx.snapshot.config.scope?.allowed_paths ?? [];
-      for (const g of globs) {
-        if (!containedInAny(g, contract.allowed_paths)) ctx.approval.push(`widens allowed_paths with "${g}"`);
-        if (!containedInAny(g, scope)) ctx.forbidden.push(`allowed path "${g}" is outside the policy scope`);
-      }
-      next.allowed_paths = globs;
-      return { field: "allowed_paths", oldValue: contract.allowed_paths, newValue: globs, affected: ["scope"] };
-    }
-    case "add_non_goal": {
-      const goal = text(change.non_goal, "non_goal");
-      if (contract.non_goals.some((n2) => normalizeEntry(n2) === normalizeEntry(goal))) noop();
-      ctx.approval.push("adds a non-goal, which can redefine success");
-      next.non_goals = [...contract.non_goals, goal];
-      return { field: "non_goals", oldValue: contract.non_goals, newValue: next.non_goals, affected: ["review"] };
-    }
-    case "remove_non_goal": {
-      const goal = text(change.non_goal, "non_goal");
-      const kept = contract.non_goals.filter((n2) => normalizeEntry(n2) !== normalizeEntry(goal));
-      if (kept.length === contract.non_goals.length) invalid2("no such non-goal");
-      ctx.approval.push("removes a non-goal, which broadens the work");
-      next.non_goals = kept;
-      return { field: "non_goals", oldValue: contract.non_goals, newValue: kept, affected: ["review"] };
-    }
-    case "set_assumption": {
-      const statement = text(change.statement, "statement");
-      const statuses = ["unverified", "supported", "rejected", "needs-decision"];
-      if (!statuses.includes(change.status)) invalid2("unknown assumption status");
-      if (change.assumption_id === null) {
-        const id = nextId("AS", contract.assumptions.map((a) => a.id));
-        const added = { id, statement, status: change.status };
-        next.assumptions = [...contract.assumptions, added];
-        return { field: "assumptions", oldValue: null, newValue: added, affected: ["review"] };
-      }
-      const old = contract.assumptions.find((a) => a.id === change.assumption_id);
-      if (!old) invalid2(`no assumption ${String(change.assumption_id)}`);
-      if (old.statement === statement && old.status === change.status) noop();
-      if (old.status === "needs-decision" && change.status !== "needs-decision") {
-        ctx.approval.push(`resolves needs-decision assumption ${old.id}`);
-      }
-      const updated = { id: old.id, statement, status: change.status };
-      next.assumptions = next.assumptions.map((a) => a.id === old.id ? updated : a);
-      return { field: `assumptions[${old.id}]`, oldValue: old, newValue: updated, affected: ["review"] };
-    }
-    case "add_escalation_topic": {
-      const topic = text(change.topic, "topic");
-      if (contract.escalation.material_topics.some((t) => normalizeEntry(t) === normalizeEntry(topic))) noop();
-      next.escalation.material_topics = [...contract.escalation.material_topics, topic];
-      return { field: "escalation.material_topics", oldValue: contract.escalation.material_topics, newValue: next.escalation.material_topics, affected: [] };
-    }
-    case "remove_escalation_topic": {
-      const topic = text(change.topic, "topic");
-      const kept = contract.escalation.material_topics.filter((t) => normalizeEntry(t) !== normalizeEntry(topic));
-      if (kept.length === contract.escalation.material_topics.length) invalid2("no such escalation topic");
-      ctx.approval.push("removes an escalation topic, which lets the run guess where it had to ask");
-      next.escalation.material_topics = kept;
-      return { field: "escalation.material_topics", oldValue: contract.escalation.material_topics, newValue: kept, affected: [] };
-    }
-    case "set_delivery": {
-      if (typeof change.draft_pr !== "boolean" || typeof change.merge !== "boolean") invalid2("draft_pr and merge must be booleans");
-      const old = contract.delivery;
-      if (old.draft_pr === change.draft_pr && old.merge === change.merge) noop();
-      const actions = ctx.snapshot.config.actions;
-      if (change.merge && !old.merge) {
-        ctx.approval.push("turns on merge");
-        if (!actions?.merge) ctx.forbidden.push("the policy does not allow merge");
-      }
-      if (!change.draft_pr && old.draft_pr) ctx.approval.push("turns a draft pull request into a ready one");
-      if (change.draft_pr && !old.draft_pr && (!actions?.open_pull_request || ctx.snapshot.config.delivery?.pull_request === "none")) {
-        ctx.forbidden.push("the policy does not allow opening a pull request");
-      }
-      next.delivery = { draft_pr: change.draft_pr, merge: change.merge };
-      return { field: "delivery", oldValue: old, newValue: next.delivery, affected: ["delivery"] };
-    }
-    case "accept_baseline_failure": {
-      const checkId = text(change.check_id, "check_id");
-      const fingerprint = text(change.fingerprint, "fingerprint");
-      const reason = text(change.reason, "reason");
-      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(checkId)) invalid2("check_id must be a check id");
-      if (!contract.required_check_ids.includes(checkId)) invalid2(`check "${checkId}" is not in required_check_ids, so there is nothing to except`);
-      const previous = (contract.baseline_exceptions ?? []).find((e) => e.check_id === checkId);
-      if (previous && previous.fingerprint === fingerprint) noop();
-      ctx.approval.push(`accepts the failure of check ${checkId} that already exists on the base revision as an exception`);
-      if (ctx.baselineFailures === null) {
-        ctx.forbidden.push("the recorded baseline failures were not supplied, so the fingerprint cannot be confirmed");
-      } else {
-        const recorded = ctx.baselineFailures.find((f) => f.checkId === checkId);
-        if (!recorded) ctx.forbidden.push(`check "${checkId}" did not fail on the base revision, so there is no baseline failure to accept`);
-        else if (recorded.fingerprint === null || recorded.fingerprint !== fingerprint) ctx.forbidden.push(`fingerprint does not equal the failure recorded on the base revision for check "${checkId}"`);
-      }
-      const added = { check_id: checkId, fingerprint, reason };
-      const before = contract.baseline_exceptions ?? [];
-      next.baseline_exceptions = [...before.filter((e) => e.check_id !== checkId), added];
-      return {
-        field: "baseline_exceptions",
-        oldValue: before,
-        newValue: next.baseline_exceptions,
-        affected: [`check:${checkId}`, ...contract.acceptance_criteria.filter((ac) => ac.check_ids?.includes(checkId)).map((ac) => ac.id)]
-      };
-    }
-    default: {
-      const op = change.op;
-      return invalid2(`unknown amendment operation ${JSON.stringify(op)}`);
-    }
-  }
-}
-function uniqueIds(values, name, minItems) {
-  if (!Array.isArray(values)) invalid2(`${name} must be a list`);
-  const out = [];
-  for (const v of values) {
-    if (typeof v !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(v)) invalid2(`${name} entries must be check ids`);
-    if (!out.includes(v)) out.push(v);
-  }
-  if (out.length < minItems) invalid2(`${name} needs at least ${minItems} entr${minItems === 1 ? "y" : "ies"}`);
-  return out;
-}
-var DECISION_ID, CRITERION_ID;
-var init_amend = __esm({
-  "src/contract/amend.ts"() {
-    "use strict";
-    init_errors();
-    init_globs2();
-    init_validate();
-    init_wording();
-    DECISION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-    CRITERION_ID = /^AC-[0-9]+$/;
-  }
-});
-
-// src/inquisition/types.ts
-var init_types6 = __esm({
-  "src/inquisition/types.ts"() {
-    "use strict";
-  }
-});
-
-// src/inquisition/ledger.ts
-function stamp(db, runId, e, clock, supporting) {
-  if (!LEDGER_EVIDENCE_KINDS.includes(e.kind)) throw new OrbitError("SCHEMA_INVALID", `unknown evidence kind ${String(e.kind)}`);
-  if (typeof e.ref !== "string" || !e.ref.trim()) throw new OrbitError("SCHEMA_INVALID", "evidence needs a reference a person can look up");
-  const ref2 = e.ref.trim();
-  if (e.kind === "check") {
-    const row = db.get("SELECT status, flaky FROM check_runs WHERE id = ? AND run_id = ?", ref2, runId);
-    if (!row) throw new OrbitError("NOT_FOUND", `evidence names check run ${ref2}, which this run does not have`, { ref: ref2 });
-    if (supporting && (row.status !== "PASSED" || row.flaky === 1)) {
-      throw new OrbitError("SCHEMA_INVALID", `check run ${ref2} ${row.status === "PASSED" ? "passed only after a rerun" : `ended ${row.status}`}; it cannot support a claim`, { ref: ref2 });
-    }
-  }
-  if (e.kind === "experiment" && !experimentExists(db, runId, ref2)) {
-    throw new OrbitError("NOT_FOUND", `evidence names experiment ${ref2}, which this run did not run (expected a hypothesis, check run or worker id)`, { ref: ref2 });
-  }
-  if (e.kind === "decision") {
-    const d = getDecision(db, ref2);
-    if (!d || d.runId !== runId) throw new OrbitError("NOT_FOUND", `evidence names decision ${ref2}, which this run does not have`, { ref: ref2 });
-  }
-  return { kind: e.kind, ref: ref2, ...e.note === void 0 ? {} : { note: e.note }, at: clock.now() };
-}
-function experimentExists(db, runId, ref2) {
-  for (const table3 of ["hypotheses", "check_runs", "workers"]) {
-    if (db.get(`SELECT 1 AS x FROM ${table3} WHERE id = ? AND run_id = ?`, ref2, runId)) return true;
-  }
-  return false;
-}
-function transitionAssumption(db, id, to, evidence, clock, actor = "controller") {
-  return db.tx(() => {
-    const cur = getLedgerEntry(db, id);
-    if (cur.status === to) return cur;
-    if (!ALLOWED[cur.status].includes(to)) {
-      throw new OrbitError("TRANSITION_INVALID", `assumption ${id} cannot go from ${cur.status} to ${to}`, { ledgerId: id, from: cur.status, to });
-    }
-    if (evidence.length === 0) throw new OrbitError("SCHEMA_INVALID", `assumption ${id}: a status change needs evidence`, { ledgerId: id });
-    const stamped = evidence.map((e) => stamp(db, cur.runId, e, clock, to === "supported"));
-    const settles2 = stamped.some((e) => SETTLING_KINDS.has(e.kind));
-    if ((to === "supported" || to === "rejected") && !settles2) {
-      throw new OrbitError("SCHEMA_INVALID", `assumption ${id} cannot become ${to} on a review alone; run a check or experiment`, { ledgerId: id });
-    }
-    if (cur.status === "needs-decision") {
-      const human = stamped.find((e) => {
-        if (e.kind !== "decision") return false;
-        const d = getDecision(db, e.ref);
-        const by = d?.data?.answered_by;
-        return d?.kind === "inquisition.answer" && typeof by === "string" && isHumanActor(by);
-      });
-      if (!human) throw new OrbitError("POLICY_DENIED", `assumption ${id} needs a human decision (an answered question) to leave needs-decision`, { ledgerId: id });
-    }
-    return writeLedgerStatus(db, id, cur.status, to, stamped, clock, actor);
-  });
-}
-function entriesFromWorker(runId, output, now) {
-  return output.ledger.map((l) => ({
-    runId,
-    claim: l.claim,
-    source: l.source,
-    confidence: l.confidence,
-    consequence: l.consequence_if_wrong,
-    reversibility: l.reversibility,
-    experiment: l.validation_experiment,
-    status: l.status === "needs-decision" || l.reversibility !== "reversible" && !l.validation_experiment?.trim() ? "needs-decision" : "unverified",
-    evidence: l.status === "supported" || l.status === "rejected" ? [{ kind: "asserted", ref: "inquisitor-output", note: `the worker asserted "${l.status}" without evidence; kept unverified`, at: now }] : []
-  }));
-}
-var ALLOWED, SETTLING_KINDS;
-var init_ledger = __esm({
-  "src/inquisition/ledger.ts"() {
-    "use strict";
-    init_errors();
-    init_decisions();
-    init_types6();
-    init_questions();
-    init_store4();
-    ALLOWED = {
-      unverified: ["supported", "rejected", "needs-decision"],
-      "needs-decision": ["supported", "rejected"],
-      supported: ["rejected", "unverified"],
-      rejected: ["supported"]
-    };
-    SETTLING_KINDS = /* @__PURE__ */ new Set(["check", "experiment", "inspection", "decision"]);
+    MAX_REBASES = 3;
+    REBASE_EVENT = "delivery.rebased";
   }
 });
 
@@ -50971,11 +52255,175 @@ var init_resolve2 = __esm({
   }
 });
 
+// src/inquisition/impact.ts
+function reversibility(category, evidence) {
+  if (category === "data" && evidence.some((e) => DESTRUCTIVE2.test(e))) return "irreversible";
+  if (category === "billing" || category === "privacy") return "costly-to-reverse";
+  if (category === "data" || category === "compatibility" || category === "security") return "costly-to-reverse";
+  return "reversible";
+}
+function diffPathsByCategory(diff) {
+  const out = /* @__PURE__ */ new Map();
+  const chunks = diff.split(/^diff --git /m).slice(1);
+  for (const chunk of chunks) {
+    const m = /^\+\+\+ b\/(.+)$/m.exec(chunk);
+    if (!m?.[1]) continue;
+    for (const c of riskCategoriesInDiff(chunk).keys()) out.set(c, [...out.get(c) ?? [], m[1].trim()]);
+  }
+  return out;
+}
+function buildImpactRegister(inquiry, policy, trigger) {
+  const fromPaths = riskCategoriesInPaths(inquiry.changedFiles);
+  const fromDiff = inquiry.diff ? riskCategoriesInDiff(inquiry.diff) : /* @__PURE__ */ new Map();
+  const diffPaths = inquiry.diff ? diffPathsByCategory(inquiry.diff) : /* @__PURE__ */ new Map();
+  const known = authorizationIds(policy);
+  const entries = [];
+  for (const category of RISK_CATEGORIES) {
+    const paths = [.../* @__PURE__ */ new Set([...fromPaths.get(category) ?? [], ...diffPaths.get(category) ?? []])].sort();
+    const evidence = [...fromDiff.get(category) ?? [], ...paths.map((p) => `path ${p}`)];
+    if (paths.length === 0 && evidence.length === 0) continue;
+    const available = known.filter((id) => ID_HINT[category].test(id)).sort();
+    entries.push({
+      category,
+      affected_paths: paths,
+      reversibility: reversibility(category, evidence),
+      authorizations_available: available,
+      authorization_needed: available.length > 0 ? `one of: ${available.join(", ")}` : "a person's decision: the policy offers no authorization for this category",
+      evidence: evidence.slice(0, 8).map((e) => redact(e))
+    });
+  }
+  return { trigger: trigger.key, entries };
+}
+function recordImpactRegister(ctx, trigger) {
+  if (trigger.mode !== "risk-review") return null;
+  const register = buildImpactRegister(ctx.inquiry, ctx.policy, trigger);
+  if (register.entries.length === 0) return null;
+  const summary = `impact register: ${register.entries.map((e) => `${e.category} (${e.reversibility})`).join(", ")}`;
+  return recordDecision(
+    ctx.db,
+    ctx.runDir,
+    { id: `dec-impact-${hashObject({ run: ctx.runId, t: trigger.key }).slice(7, 19)}`, runId: ctx.runId, kind: IMPACT_REGISTER_KIND, summary, data: register },
+    ctx.clock,
+    { actor: "inquisition" }
+  );
+}
+var IMPACT_REGISTER_KIND, ID_HINT, DESTRUCTIVE2;
+var init_impact = __esm({
+  "src/inquisition/impact.ts"() {
+    "use strict";
+    init_hash();
+    init_redact();
+    init_decisions();
+    init_heuristics();
+    init_resolve2();
+    IMPACT_REGISTER_KIND = "inquisition.impact-register";
+    ID_HINT = {
+      security: /secur|sast|audit|secret|scan/i,
+      privacy: /privacy|pii|secret|scan/i,
+      billing: /billing|payment|merge|deploy/i,
+      data: /migrat|schema|data|deploy/i,
+      compatibility: /compat|contract|api|typecheck|build/i
+    };
+    DESTRUCTIVE2 = /\b(drop (?:table|column)|truncate|delete from|hard[- ]delete\w*|purge\w*|data loss|irreversible|cascade delete)\b/i;
+  }
+});
+
+// src/inquisition/types.ts
+var init_types6 = __esm({
+  "src/inquisition/types.ts"() {
+    "use strict";
+  }
+});
+
+// src/inquisition/ledger.ts
+function stamp(db, runId, e, clock, supporting) {
+  if (!LEDGER_EVIDENCE_KINDS.includes(e.kind)) throw new OrbitError("SCHEMA_INVALID", `unknown evidence kind ${String(e.kind)}`);
+  if (typeof e.ref !== "string" || !e.ref.trim()) throw new OrbitError("SCHEMA_INVALID", "evidence needs a reference a person can look up");
+  const ref2 = e.ref.trim();
+  if (e.kind === "check") {
+    const row = db.get("SELECT status, flaky FROM check_runs WHERE id = ? AND run_id = ?", ref2, runId);
+    if (!row) throw new OrbitError("NOT_FOUND", `evidence names check run ${ref2}, which this run does not have`, { ref: ref2 });
+    if (supporting && (row.status !== "PASSED" || row.flaky === 1)) {
+      throw new OrbitError("SCHEMA_INVALID", `check run ${ref2} ${row.status === "PASSED" ? "passed only after a rerun" : `ended ${row.status}`}; it cannot support a claim`, { ref: ref2 });
+    }
+  }
+  if (e.kind === "experiment" && !experimentExists(db, runId, ref2)) {
+    throw new OrbitError("NOT_FOUND", `evidence names experiment ${ref2}, which this run did not run (expected a hypothesis, check run or worker id)`, { ref: ref2 });
+  }
+  if (e.kind === "decision") {
+    const d = getDecision(db, ref2);
+    if (!d || d.runId !== runId) throw new OrbitError("NOT_FOUND", `evidence names decision ${ref2}, which this run does not have`, { ref: ref2 });
+  }
+  return { kind: e.kind, ref: ref2, ...e.note === void 0 ? {} : { note: e.note }, at: clock.now() };
+}
+function experimentExists(db, runId, ref2) {
+  for (const table3 of ["hypotheses", "check_runs", "workers"]) {
+    if (db.get(`SELECT 1 AS x FROM ${table3} WHERE id = ? AND run_id = ?`, ref2, runId)) return true;
+  }
+  return false;
+}
+function transitionAssumption(db, id, to, evidence, clock, actor = "controller") {
+  return db.tx(() => {
+    const cur = getLedgerEntry(db, id);
+    if (cur.status === to) return cur;
+    if (!ALLOWED[cur.status].includes(to)) {
+      throw new OrbitError("TRANSITION_INVALID", `assumption ${id} cannot go from ${cur.status} to ${to}`, { ledgerId: id, from: cur.status, to });
+    }
+    if (evidence.length === 0) throw new OrbitError("SCHEMA_INVALID", `assumption ${id}: a status change needs evidence`, { ledgerId: id });
+    const stamped = evidence.map((e) => stamp(db, cur.runId, e, clock, to === "supported"));
+    const settles2 = stamped.some((e) => SETTLING_KINDS.has(e.kind));
+    if ((to === "supported" || to === "rejected") && !settles2) {
+      throw new OrbitError("SCHEMA_INVALID", `assumption ${id} cannot become ${to} on a review alone; run a check or experiment`, { ledgerId: id });
+    }
+    if (cur.status === "needs-decision") {
+      const human = stamped.find((e) => {
+        if (e.kind !== "decision") return false;
+        const d = getDecision(db, e.ref);
+        const by = d?.data?.answered_by;
+        return d?.kind === "inquisition.answer" && typeof by === "string" && isHumanActor(by);
+      });
+      if (!human) throw new OrbitError("POLICY_DENIED", `assumption ${id} needs a human decision (an answered question) to leave needs-decision`, { ledgerId: id });
+    }
+    return writeLedgerStatus(db, id, cur.status, to, stamped, clock, actor);
+  });
+}
+function entriesFromWorker(runId, output, now) {
+  return output.ledger.map((l) => ({
+    runId,
+    claim: l.claim,
+    source: l.source,
+    confidence: l.confidence,
+    consequence: l.consequence_if_wrong,
+    reversibility: l.reversibility,
+    experiment: l.validation_experiment,
+    status: l.status === "needs-decision" || l.reversibility !== "reversible" && !l.validation_experiment?.trim() ? "needs-decision" : "unverified",
+    evidence: l.status === "supported" || l.status === "rejected" ? [{ kind: "asserted", ref: "inquisitor-output", note: `the worker asserted "${l.status}" without evidence; kept unverified`, at: now }] : []
+  }));
+}
+var ALLOWED, SETTLING_KINDS;
+var init_ledger = __esm({
+  "src/inquisition/ledger.ts"() {
+    "use strict";
+    init_errors();
+    init_decisions();
+    init_types6();
+    init_questions();
+    init_store4();
+    ALLOWED = {
+      unverified: ["supported", "rejected", "needs-decision"],
+      "needs-decision": ["supported", "rejected"],
+      supported: ["rejected", "unverified"],
+      rejected: ["supported"]
+    };
+    SETTLING_KINDS = /* @__PURE__ */ new Set(["check", "experiment", "inspection", "decision"]);
+  }
+});
+
 // src/inquisition/engine.ts
-import { mkdirSync as mkdirSync18 } from "node:fs";
-import { join as join46 } from "node:path";
-function ledgerDraft(runId, claim, source, experiment, status2 = "unverified", reversibility = "costly-to-reverse") {
-  return { runId, claim, source, confidence: "low", consequence: "the work ships on an unchecked belief", reversibility, experiment, status: status2 };
+import { mkdirSync as mkdirSync19 } from "node:fs";
+import { join as join50 } from "node:path";
+function ledgerDraft(runId, claim, source, experiment, status2 = "unverified", reversibility2 = "costly-to-reverse") {
+  return { runId, claim, source, confidence: "low", consequence: "the work ships on an unchecked belief", reversibility: reversibility2, experiment, status: status2 };
 }
 function deterministicLedger(t, runId) {
   switch (t.kind) {
@@ -51086,12 +52534,12 @@ async function runWorker(adapter, ctx, opts, trigger, prompt, attempt, signal) {
   const { db, clock } = ctx;
   signal?.throwIfAborted();
   const workerId = opts.workerIdFor?.(attempt) ?? newId("wrk");
-  const workerDir = join46(opts.workerDir, workerId);
+  const workerDir = join50(opts.workerDir, workerId);
   db.tx(() => {
     opts.fence?.();
     planWorker(db, { id: workerId, runId: ctx.runId, role: "inquisitor", purpose: workerPurpose(trigger), provider: opts.route.provider, model: opts.route.model, effort: opts.route.effort, workerDir, cwd: opts.cwd, attempt }, clock);
   });
-  mkdirSync18(workerDir, { recursive: true });
+  mkdirSync19(workerDir, { recursive: true });
   const spec = {
     runId: ctx.runId,
     workerId,
@@ -51327,6 +52775,11 @@ function processAmendments(ctx, mode, proposals) {
   }
   return { contract, outcomes, questions, refused };
 }
+function replayOf(rec) {
+  const change = rec.change;
+  const proposal = { change, evidence: rec.record.evidence, reason: rec.record.reason };
+  return change.op === "accept_baseline_failure" ? { proposal, baselineFailures: [{ checkId: change.check_id, fingerprint: change.fingerprint }] } : { proposal };
+}
 function appliedInOrder(db, runId) {
   const appliedAt = /* @__PURE__ */ new Map();
   for (const e of db.all("SELECT id, data_json FROM events WHERE run_id = ? AND type = 'amendment.applied' ORDER BY id", runId)) {
@@ -51352,7 +52805,8 @@ function syncContract(ctx, contract) {
   let current = contract;
   for (const rec of applied.slice(from)) {
     if (!rec.change) continue;
-    const res = applyAmendment(current, { change: rec.change, evidence: rec.record.evidence, reason: rec.record.reason }, { snapshot: ctx.snapshot, approvedBy: rec.approvedBy, history });
+    const replay = replayOf(rec);
+    const res = applyAmendment(current, replay.proposal, { snapshot: ctx.snapshot, approvedBy: rec.approvedBy, history, ...replay.baselineFailures ? { baselineFailures: replay.baselineFailures } : {} });
     current = res.contract;
     history.push(res.record);
   }
@@ -51554,6 +53008,7 @@ async function runInquisition(input) {
     questions: (absorbed?.questions ?? []).map((q) => ({ draft: q.draft })),
     proposals: finalPlan.amendments
   });
+  const impactRegister = recordImpactRegister({ db: ctx.db, clock: ctx.clock, runId: ctx.runId, runDir: ctx.runDir, policy, inquiry: ctx.inquiry }, trigger);
   const after = blockingDisposition({ blocked: [...blocked], contract: committed.contract, mode: policy.mode, supportedCriteria: ctx.supportedCriteria, dependsOn: ctx.dependsOn });
   const fallback = questionForUncovered(ctx, trigger, after.blockedCriteria, after.continuingCriteria, committed.contract);
   if (fallback) committed.questions.push(fallback);
@@ -51577,6 +53032,7 @@ async function runInquisition(input) {
     output,
     plan: { ...finalPlan, ...after },
     decisions: committed.decisions,
+    impactRegister,
     questions: committed.questions,
     rejectedQuestions: [...(absorbed?.rejectedQuestions ?? []).map(({ question, problems }) => ({ question, problems })), ...committed.rejectedQuestions],
     ledger: committed.ledger,
@@ -51610,6 +53066,7 @@ var init_engine = __esm({
     init_snapshot();
     init_heuristics();
     init_questions();
+    init_impact();
     init_ledger();
     init_resolve2();
     init_store4();
@@ -51623,11 +53080,11 @@ var init_engine = __esm({
 });
 
 // src/controller/steps/inquisition.ts
-import { join as join47 } from "node:path";
+import { join as join51 } from "node:path";
 async function inquisitionStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
-  const contract = assertContract(ctx);
+  const contract = applyBaselineExceptionAnswers({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { snapshot: ctx.snapshot }).contract ?? assertContract(ctx);
   const resume = ctx.run.resumeState ?? (ctx.candidate ? "VERIFYING" : "PLANNING");
   const trigger = enteringTrigger(ctx) ?? (ctx.candidate ? pendingTrigger(ctx, ctx.candidate, null) : null);
   if (!trigger || handledTriggerKeys(ctx).has(trigger.key)) return move2(ctx, resume, trigger ? `inquiry ${trigger.key} already settled; resuming ${resume}` : `nothing left to inquire into; resuming ${resume}`);
@@ -51638,7 +53095,7 @@ async function inquisitionStep(ctx) {
   const cwd = ctx.run.worktreePath;
   const env = ctx.deps.hostEnv ?? process.env;
   const home2 = homeOf(ctx.deps);
-  const workerDir = join47(ctx.runDir, "workers");
+  const workerDir = join51(ctx.runDir, "workers");
   const supported = ctx.candidate ? currentEvidenceReport(ctx.db, ctx.run.id, ctx.candidate.id)?.report.acceptance_evidence.filter((a) => a.status === "supported").map((a) => a.criterion_id) ?? [] : [];
   const result2 = await runInquisition({
     trigger,
@@ -51656,7 +53113,7 @@ async function inquisitionStep(ctx) {
         route: { provider: route2.provider, model: route2.model, effort: route2.effort },
         workerDir,
         cwd,
-        sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: ctx.snapshot, provider: route2.provider.startsWith("codex") ? "codex" : "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join47(home2, ".claude"), homeDir: home2, policyPath: ctx.run.policyPath, readablePaths: [ctx.deps.orbitInstallDir], env }),
+        sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: ctx.snapshot, provider: route2.provider.startsWith("codex") ? "codex" : "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join51(home2, ".claude"), homeDir: home2, policyPath: ctx.run.policyPath, readablePaths: [ctx.deps.orbitInstallDir], env }),
         policyPath: ctx.run.policyPath,
         systemPrompt: systemPromptFor(ctx, "inquisitor"),
         maxTurns: ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session,
@@ -51667,7 +53124,7 @@ async function inquisitionStep(ctx) {
     signal: ctx.signal
   });
   const patch = hashObject(result2.contract) !== hashObject(contract) ? { contractJson: JSON.stringify(result2.contract), contractHash: hashObject(result2.contract) } : void 0;
-  if (patch) atomicWriteJson(join47(ctx.runDir, "contract.json"), result2.contract);
+  if (patch) atomicWriteJson(join51(ctx.runDir, "contract.json"), result2.contract);
   const after = await safePoint(ctx);
   if (after) return after;
   if (result2.disposition === "ask" || result2.disposition === "block") {
@@ -51707,6 +53164,7 @@ var init_inquisition = __esm({
     "use strict";
     init_fsx();
     init_hash();
+    init_baseline_exception();
     init_engine();
     init_triggers();
     init_profiles();
@@ -51850,13 +53308,14 @@ var init_difficulty = __esm({
 });
 
 // src/controller/steps/planning.ts
-import { join as join48 } from "node:path";
+import { join as join52 } from "node:path";
 async function planningStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
-  const contract = assertContract(ctx);
+  const exceptions = applyBaselineExceptionAnswers({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { snapshot: ctx.snapshot });
+  const contract = exceptions.contract ?? assertContract(ctx);
   const plan = storedPlan(ctx);
-  const baseline = readJsonIfExists(join48(ctx.runDir, BASELINE_FILE));
+  const baseline = readJsonIfExists(join52(ctx.runDir, BASELINE_FILE2));
   if (plan) {
     decide2(ctx, {
       id: `dec-${ctx.run.id}-proof-map`,
@@ -51867,6 +53326,16 @@ async function planningStep(ctx) {
         expected_changed_files: plan.expected_changed_files,
         risks: plan.risks
       }
+    });
+  }
+  if (contract.practices) {
+    const omitted = contract.practices.filter((p) => !p.applicable);
+    const selected = contract.practices.length - omitted.length;
+    decide2(ctx, {
+      id: `dec-${ctx.run.id}-practices`,
+      kind: "planning.practices",
+      summary: `engineering practices: ${selected} selected${omitted.length > 0 ? `, ${omitted.length} omitted with a reason (${omitted.map((p) => p.practice).join(", ")})` : ""}`,
+      data: { practices: contract.practices }
     });
   }
   const expected = plan?.expected_changed_files.map((f) => f.path) ?? [];
@@ -51910,6 +53379,7 @@ var init_planning = __esm({
     "use strict";
     init_fsx();
     init_baseline();
+    init_baseline_exception();
     init_store4();
     init_difficulty();
     init_budget2();
@@ -52032,9 +53502,9 @@ var init_steps = __esm({
 });
 
 // src/storage/retention.ts
-import { existsSync as existsSync35, lstatSync as lstatSync6, realpathSync as realpathSync16, rmSync as rmSync12 } from "node:fs";
+import { existsSync as existsSync40, lstatSync as lstatSync7, realpathSync as realpathSync16, rmSync as rmSync14 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
-import { dirname as dirname25, join as join49, resolve as resolve13 } from "node:path";
+import { dirname as dirname26, join as join53, resolve as resolve14 } from "node:path";
 function repoKeyFor(repoRoot) {
   let real = repoRoot;
   try {
@@ -52048,8 +53518,8 @@ async function pruneExpiredRuns(db, opts) {
   const now = opts.clock.now();
   const cutoff = now - opts.keepDays * DAY_MS;
   const repoRoot = realOrResolved(opts.repoRoot);
-  const runsRoot = join49(repoRoot, ".orbit", "runs");
-  const worktreesRoot = join49(opts.orbitHome ?? process.env.ORBIT_HOME ?? join49(homedir10(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
+  const runsRoot = join53(repoRoot, ".orbit", "runs");
+  const worktreesRoot = join53(opts.orbitHome ?? process.env.ORBIT_HOME ?? join53(homedir10(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
   const placeholders = PRUNABLE_STATES.map(() => "?").join(", ");
   const rows = db.all(
     `SELECT r.id, r.state, r.policy_path, r.ended_at, r.updated_at FROM runs r
@@ -52072,22 +53542,22 @@ async function pruneExpiredRuns(db, opts) {
       result2.skipped.push({ runId: row.id, reason: "a controller still holds its lease" });
       continue;
     }
-    const runDir2 = join49(runsRoot, row.id);
-    const recorded = dirname25(row.policy_path);
-    const literalRunDir = join49(resolve13(opts.repoRoot), ".orbit", "runs", row.id);
-    if (![runDir2, literalRunDir].includes(resolve13(recorded)) && realOrResolved(recorded) !== runDir2) {
+    const runDir2 = join53(runsRoot, row.id);
+    const recorded = dirname26(row.policy_path);
+    const literalRunDir = join53(resolve14(opts.repoRoot), ".orbit", "runs", row.id);
+    if (![runDir2, literalRunDir].includes(resolve14(recorded)) && realOrResolved(recorded) !== runDir2) {
       result2.skipped.push({ runId: row.id, reason: `its recorded run directory ${recorded} is not ${runDir2}` });
       continue;
     }
-    const targets = [runDir2, join49(worktreesRoot, row.id)].filter((p) => isRealDirectory(p));
+    const targets = [runDir2, join53(worktreesRoot, row.id)].filter((p) => isRealDirectory(p));
     if (!opts.dryRun) {
-      for (const t of targets) rmSync12(t, { recursive: true, force: true });
+      for (const t of targets) rmSync14(t, { recursive: true, force: true });
       db.tx(() => appendEvent(db, row.id, ARTIFACTS_PRUNED_EVENT, "gc", { keep_runs_days: opts.keepDays, removed: targets }, now));
       if (targets.some((t) => t.startsWith(worktreesRoot))) removedWorktree = true;
     }
     result2.pruned.push({ runId: row.id, state: row.state, endedAt: row.ended_at ?? row.updated_at, removed: targets });
   }
-  if (removedWorktree && existsSync35(join49(repoRoot, ".git"))) {
+  if (removedWorktree && existsSync40(join53(repoRoot, ".git"))) {
     await execCapture(["git", "worktree", "prune"], { cwd: repoRoot, timeoutMs: 3e4 }).catch(() => void 0);
   }
   return result2;
@@ -52096,12 +53566,12 @@ function realOrResolved(p) {
   try {
     return realpathSync16(p);
   } catch {
-    return resolve13(p);
+    return resolve14(p);
   }
 }
 function isRealDirectory(p) {
   try {
-    return lstatSync6(p).isDirectory();
+    return lstatSync7(p).isDirectory();
   } catch {
     return false;
   }
@@ -52125,9 +53595,9 @@ var loop_exports = {};
 __export(loop_exports, {
   Controller: () => Controller
 });
-import { existsSync as existsSync36 } from "node:fs";
+import { existsSync as existsSync41 } from "node:fs";
 import { hostname as hostname4 } from "node:os";
-import { dirname as dirname26, join as join50 } from "node:path";
+import { dirname as dirname27, join as join54 } from "node:path";
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -52296,8 +53766,8 @@ var init_loop = __esm({
         const timeoutMs = this.opts.stepTimeoutMs ?? 45 * 6e4;
         const graceMs = this.opts.stepAbortGraceMs ?? 6e4;
         let wedge = null;
-        const gaveUp = new Promise((resolve19) => {
-          wedge = setTimeout(() => resolve19("wedged"), timeoutMs + graceMs);
+        const gaveUp = new Promise((resolve20) => {
+          wedge = setTimeout(() => resolve20("wedged"), timeoutMs + graceMs);
           wedge.unref();
         });
         const timer = setTimeout(() => {
@@ -52548,8 +54018,8 @@ var init_loop = __esm({
         for (const row of db.all("SELECT id FROM runs WHERE ended_at IS NOT NULL AND ended_at >= ?", since)) {
           try {
             const run = getRun(db, row.id);
-            const runDir2 = dirname26(run.policyPath);
-            if (existsSync36(join50(runDir2, "final.md"))) continue;
+            const runDir2 = dirname27(run.policyPath);
+            if (existsSync41(join54(runDir2, "final.md"))) continue;
             let snapshot2 = null;
             try {
               snapshot2 = verifySnapshot(run.policyPath, run.policyHash);
@@ -52610,8 +54080,8 @@ var init_loop = __esm({
 });
 
 // src/controller/service.ts
-import { existsSync as existsSync37, mkdirSync as mkdirSync19, rmSync as rmSync13 } from "node:fs";
-import { join as join51 } from "node:path";
+import { existsSync as existsSync42, mkdirSync as mkdirSync20, rmSync as rmSync15 } from "node:fs";
+import { join as join55 } from "node:path";
 function serviceLabel(repoRoot) {
   return `${SERVICE_LABEL_PREFIX}.${repoKey(repoRoot)}`;
 }
@@ -52622,7 +54092,7 @@ function serviceSpec(input) {
     entry: input.entry,
     args: ["service", "run", "--repo", input.repoRoot],
     workingDirectory: input.repoRoot,
-    logDir: join51(input.orbitHome, "logs"),
+    logDir: join55(input.orbitHome, "logs"),
     env: {
       PATH: input.path ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
       NODE_OPTIONS: "--disable-warning=ExperimentalWarning",
@@ -52633,7 +54103,7 @@ function serviceSpec(input) {
   };
 }
 function logPaths(spec) {
-  return { out: join51(spec.logDir, `${spec.label}.out.log`), err: join51(spec.logDir, `${spec.label}.err.log`) };
+  return { out: join55(spec.logDir, `${spec.label}.out.log`), err: join55(spec.logDir, `${spec.label}.err.log`) };
 }
 function xml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -52674,7 +54144,7 @@ function renderLaunchdPlist(spec) {
   ].join("\n");
 }
 function launchdPlistPath(homeDir, label) {
-  return join51(homeDir, "Library", "LaunchAgents", `${label}.plist`);
+  return join55(homeDir, "Library", "LaunchAgents", `${label}.plist`);
 }
 function launchctlCommands(label, uid, plistPath) {
   const domain = `gui/${uid}`;
@@ -52715,7 +54185,7 @@ function renderSystemdUnit(spec) {
   ].join("\n");
 }
 function systemdUnitPath(homeDir, label) {
-  return join51(homeDir, ".config", "systemd", "user", `${label}.service`);
+  return join55(homeDir, ".config", "systemd", "user", `${label}.service`);
 }
 function systemctlCommands(label) {
   const unit = `${label}.service`;
@@ -52738,10 +54208,10 @@ async function must(run, argv2, ok) {
 }
 async function installService(spec, opts) {
   const run = opts.run ?? defaultRunner;
-  mkdirSync19(spec.logDir, { recursive: true, mode: 448 });
+  mkdirSync20(spec.logDir, { recursive: true, mode: 448 });
   if (opts.platform === "darwin") {
     const plist = launchdPlistPath(opts.homeDir, spec.label);
-    mkdirSync19(join51(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
+    mkdirSync20(join55(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
     atomicWrite(plist, renderLaunchdPlist(spec), 420);
     const cmd = launchctlCommands(spec.label, opts.uid, plist);
     await must(run, cmd.bootout, [0, 3]);
@@ -52751,7 +54221,7 @@ async function installService(spec, opts) {
   }
   if (opts.platform === "linux") {
     const unit = systemdUnitPath(opts.homeDir, spec.label);
-    mkdirSync19(join51(opts.homeDir, ".config", "systemd", "user"), { recursive: true });
+    mkdirSync20(join55(opts.homeDir, ".config", "systemd", "user"), { recursive: true });
     atomicWrite(unit, renderSystemdUnit(spec), 420);
     const cmd = systemctlCommands(spec.label);
     await must(run, cmd.daemonReload, [0]);
@@ -52765,14 +54235,14 @@ async function uninstallService(label, opts) {
   if (opts.platform === "darwin") {
     const plist = launchdPlistPath(opts.homeDir, label);
     await must(run, launchctlCommands(label, opts.uid, plist).bootout, [0, 3]);
-    rmSync13(plist, { force: true });
+    rmSync15(plist, { force: true });
     return serviceStatus(label, opts);
   }
   if (opts.platform === "linux") {
     const unit = systemdUnitPath(opts.homeDir, label);
     const cmd = systemctlCommands(label);
-    if (existsSync37(unit)) await run(cmd.disable);
-    rmSync13(unit, { force: true });
+    if (existsSync42(unit)) await run(cmd.disable);
+    rmSync15(unit, { force: true });
     await must(run, cmd.daemonReload, [0]);
     return serviceStatus(label, opts);
   }
@@ -52784,14 +54254,14 @@ async function serviceStatus(label, opts) {
     const path = launchdPlistPath(opts.homeDir, label);
     const r = await run(launchctlCommands(label, opts.uid, path).print);
     const loaded = r.exitCode === 0 ? true : r.exitCode === 113 ? false : null;
-    return { label, platform: opts.platform, definitionPath: path, installed: existsSync37(path), loaded, detail: loaded === null ? `launchctl print exited ${r.exitCode ?? "by signal"}` : loaded ? "loaded" : "not loaded" };
+    return { label, platform: opts.platform, definitionPath: path, installed: existsSync42(path), loaded, detail: loaded === null ? `launchctl print exited ${r.exitCode ?? "by signal"}` : loaded ? "loaded" : "not loaded" };
   }
   if (opts.platform === "linux") {
     const path = systemdUnitPath(opts.homeDir, label);
     const r = await run(systemctlCommands(label).isActive);
     const word = r.stdout.trim();
     const loaded = word === "active" || word === "activating" || word === "reloading" ? true : word === "inactive" || word === "failed" ? false : null;
-    return { label, platform: opts.platform, definitionPath: path, installed: existsSync37(path), loaded, detail: word || `systemctl exited ${r.exitCode ?? "by signal"}` };
+    return { label, platform: opts.platform, definitionPath: path, installed: existsSync42(path), loaded, detail: word || `systemctl exited ${r.exitCode ?? "by signal"}` };
   }
   return unsupported(opts.platform);
 }
@@ -52968,7 +54438,7 @@ var init_drive = __esm({
 });
 
 // src/cli/commands/control.ts
-import { join as join52, resolve as resolve14 } from "node:path";
+import { join as join56, resolve as resolve15 } from "node:path";
 async function pauseCommand(args, ctx) {
   const [id] = args.expect(1);
   const repo = await resolveRepo(ctx, args.str("repo"));
@@ -53022,7 +54492,7 @@ async function resumeCommand(args, ctx) {
     if (args.bool("foreground")) {
       if (!args.bool("json")) line2(ctx.io, `run ${after.id}: ${notes.join(", ")}; driving it in the foreground (Ctrl-C pauses it)`);
       const policy = args.str("policy");
-      const config = loadConfig(repo, policy ? resolve14(ctx.cwd, policy) : void 0);
+      const config = loadConfig(repo, policy ? resolve15(ctx.cwd, policy) : void 0);
       const result2 = await driveForeground(ctx, { repoRoot: repo, config, db, runId: after.id, fromStart: false, json: args.bool("json") });
       return result2.exitCode;
     }
@@ -53046,7 +54516,7 @@ function cliLeaseDeps(ctx, repo, db, ownerId) {
       db,
       clock: ctx.clock,
       ownerId,
-      logger: createLogger({ file: join52(ctx.orbitHome, "logs", "controller.jsonl"), clock: ctx.clock }),
+      logger: createLogger({ file: join56(ctx.orbitHome, "logs", "controller.jsonl"), clock: ctx.clock }),
       adapters: {},
       registry: new ModelRegistry(db, ctx.clock),
       orbitHome: ctx.orbitHome,
@@ -53130,18 +54600,6 @@ var init_control = __esm({
   }
 });
 
-// src/inquisition/impact.ts
-var init_impact = __esm({
-  "src/inquisition/impact.ts"() {
-    "use strict";
-    init_hash();
-    init_redact();
-    init_decisions();
-    init_heuristics();
-    init_resolve2();
-  }
-});
-
 // src/inquisition/index.ts
 var init_inquisition2 = __esm({
   "src/inquisition/index.ts"() {
@@ -53157,11 +54615,12 @@ var init_inquisition2 = __esm({
     init_repair();
     init_engine();
     init_impact();
+    init_baseline_exception();
   }
 });
 
 // src/cli/commands/decide.ts
-import { dirname as dirname27 } from "node:path";
+import { dirname as dirname28 } from "node:path";
 function matchQuestion(db, runId, ref2) {
   const all = listQuestions(db, runId);
   const exact = all.find((q) => q.id === ref2);
@@ -53170,6 +54629,22 @@ function matchQuestion(db, runId, ref2) {
   if (hits.length === 1) return hits[0];
   if (hits.length > 1) throw new OrbitError("NOT_FOUND", `"${ref2}" matches more than one question of run ${runId} (${hits.map((q) => q.id).join(", ")})`);
   throw new OrbitError("NOT_FOUND", `run ${runId} has no question ${ref2}${all.length ? `; its questions: ${all.map((q) => q.id).join(", ")}` : " (it has asked none)"}`);
+}
+function describeBaselineException(o) {
+  const check = `check ${o.checkId}`;
+  const why = o.detail ? ` (${oneLine3(o.detail, 200)})` : "";
+  switch (o.status) {
+    case "applied":
+      return `baseline exception recorded: the contract now accepts the pre-existing failure of ${check}, bound to its recorded fingerprint`;
+    case "already-applied":
+      return `baseline exception for ${check} was already in the contract`;
+    case "deferred":
+      return `baseline exception for ${check} approved; it is applied as soon as the run has a contract`;
+    case "refused":
+      return `baseline exception for ${check} refused${why}: the contract is unchanged`;
+    default:
+      return `baseline exception for ${check} not accepted${why}: the contract is unchanged`;
+  }
 }
 async function decideCommand(args, ctx) {
   const usage = "orbit decide <run-id> <question-id> <answer...>";
@@ -53184,13 +54659,14 @@ async function decideCommand(args, ctx) {
     const run = findRunByPrefix(db, runRef);
     if (isTerminal(run.state) && run.state !== "BLOCKED") throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is ${run.state}; its questions can no longer change anything`);
     const q = matchQuestion(db, run.id, qRef);
-    const result2 = answerQuestion(db, dirname27(run.policyPath), q.id, answer, by, ctx.clock);
+    const result2 = answerQuestion(db, dirname28(run.policyPath), q.id, answer, by, ctx.clock);
     const remaining = openQuestions(db, run.id);
     if (args.bool("json")) {
-      json(ctx.io, { run_id: run.id, question_id: q.id, answer: result2.question.answer, chosen_option: result2.chosenOption?.label ?? null, decision_id: result2.decision.id, unblocks: result2.unblocks, open_questions: remaining.map((x) => x.id), run_state: run.state });
+      json(ctx.io, { run_id: run.id, question_id: q.id, answer: result2.question.answer, chosen_option: result2.chosenOption?.label ?? null, decision_id: result2.decision.id, unblocks: result2.unblocks, baseline_exception: result2.baselineException, open_questions: remaining.map((x) => x.id), run_state: run.state });
       return EXIT.OK;
     }
     line2(ctx.io, `recorded ${result2.decision.id}: ${result2.chosenOption ? `chose option ${result2.chosenOption.label}` : "free-text answer"} by ${by}`);
+    if (result2.baselineException) line2(ctx.io, describeBaselineException(result2.baselineException));
     if (result2.unblocks.length > 0) line2(ctx.io, `unblocks: ${result2.unblocks.join(", ")}`);
     if (remaining.length > 0) line2(ctx.io, `${remaining.length} question(s) still open: ${remaining.map((x) => x.id).join(", ")}`);
     if (run.state === "BLOCKED") line2(ctx.io, `The run is BLOCKED. Continue it with: orbit resume ${run.id}`);
@@ -53260,8 +54736,8 @@ var init_recovery = __esm({
 });
 
 // src/cli/commands/service.ts
-import { existsSync as existsSync38 } from "node:fs";
-import { join as join53 } from "node:path";
+import { existsSync as existsSync43 } from "node:fs";
+import { join as join57 } from "node:path";
 function managerOptions(ctx) {
   return { platform: ctx.platform, homeDir: ctx.homeDir, uid: ctx.uid, ...ctx.seams.serviceRunner ? { run: ctx.seams.serviceRunner } : {} };
 }
@@ -53280,7 +54756,7 @@ async function serviceInstallCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   loadConfig(repo);
   const entry = args.str("entry") ?? ctx.entry;
-  if (!entry || !existsSync38(entry)) throw new OrbitError("NOT_FOUND", `the orbit entry script ${entry || "(unknown)"} does not exist; pass --entry <path to dist/orbit.mjs>`);
+  if (!entry || !existsSync43(entry)) throw new OrbitError("NOT_FOUND", `the orbit entry script ${entry || "(unknown)"} does not exist; pass --entry <path to dist/orbit.mjs>`);
   const warnings = [];
   if (!entry.endsWith(".mjs")) warnings.push(`the service will run ${entry}, not a built dist/orbit.mjs; build the bundle for a durable installation`);
   const spec = serviceSpec({ repoRoot: repo, orbitHome: ctx.orbitHome, entry, ...ctx.env.PATH ? { path: ctx.env.PATH } : {} });
@@ -53290,7 +54766,7 @@ async function serviceInstallCommand(args, ctx) {
   else {
     line2(ctx.io, `service ${status2.label} installed (${status2.platform}): ${status2.loaded ? "loaded" : status2.detail}`);
     line2(ctx.io, `definition: ${status2.definitionPath}`);
-    line2(ctx.io, `logs: ${join53(ctx.orbitHome, "logs")}`);
+    line2(ctx.io, `logs: ${join57(ctx.orbitHome, "logs")}`);
     line2(ctx.io, "No credentials were written to the definition. For unattended runs export ANTHROPIC_API_KEY (and CODEX_API_KEY) where the service can see them; see docs/decisions/0003-authentication.md.");
     for (const w of warnings) ctx.io.err(`warning: ${w}
 `);
@@ -53310,7 +54786,7 @@ async function serviceStatusCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   const status2 = await serviceStatus(serviceLabel(repo), managerOptions(ctx));
   let heartbeats = [];
-  if (existsSync38(stateDbPath(repo))) {
+  if (existsSync43(stateDbPath(repo))) {
     const db = openState(repo);
     try {
       heartbeats = controllers(db, ctx.clock.now(), { limit: 5 }).map((c) => ({ id: c.record.id, mode: c.record.mode, pid: c.record.pid, heartbeat_age_ms: c.age, live: c.live, last_progress_at: c.record.lastProgressAt }));
@@ -53334,7 +54810,7 @@ async function serviceRunCommand(args, ctx) {
   const config = loadConfig(repo);
   const db = openDb(stateDbPath(repo));
   try {
-    const logger = createLogger({ file: join53(ctx.orbitHome, "logs", "controller.jsonl"), stderr: true, clock: ctx.clock });
+    const logger = createLogger({ file: join57(ctx.orbitHome, "logs", "controller.jsonl"), stderr: true, clock: ctx.clock });
     const factory = ctx.seams.controllerDeps ?? defaultControllerDeps;
     const deps = factory({ repoRoot: repo, db, clock: ctx.clock, config, env: ctx.env, orbitHome: ctx.orbitHome, logger });
     const controller = new Controller({ deps, mode: "service", handleSignals: true, ...ctx.seams.controller ?? {} });
@@ -53366,25 +54842,25 @@ var init_service2 = __esm({
 });
 
 // src/cli/commands/doctor.ts
-import { accessSync as accessSync3, constants as constants4, existsSync as existsSync39, mkdtempSync as mkdtempSync5, readFileSync as readFileSync24, rmSync as rmSync14, statSync as statSync14 } from "node:fs";
+import { accessSync as accessSync3, constants as constants4, existsSync as existsSync44, mkdtempSync as mkdtempSync5, readFileSync as readFileSync24, rmSync as rmSync16, statSync as statSync15 } from "node:fs";
 import { createRequire as createRequire4 } from "node:module";
 import { tmpdir as tmpdir11 } from "node:os";
-import { delimiter as delimiter4, isAbsolute as isAbsolute15, join as join54, resolve as resolve15 } from "node:path";
+import { delimiter as delimiter4, isAbsolute as isAbsolute15, join as join58, resolve as resolve16 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
     try {
-      return statSync14(p).isFile() && (accessSync3(p, constants4.X_OK), true);
+      return statSync15(p).isFile() && (accessSync3(p, constants4.X_OK), true);
     } catch {
       return false;
     }
   };
   if (cmd.includes("/")) {
-    const p = isAbsolute15(cmd) ? cmd : resolve15(cwd, cmd);
+    const p = isAbsolute15(cmd) ? cmd : resolve16(cwd, cmd);
     return ok(p) ? p : null;
   }
   for (const dir of (env.PATH ?? "").split(delimiter4)) {
     if (!dir) continue;
-    const p = join54(dir, cmd);
+    const p = join58(dir, cmd);
     if (ok(p)) return p;
   }
   return null;
@@ -53484,24 +54960,24 @@ function checkStorage(p) {
   const { repo } = p;
   if (!repo) return warn2("storage", "storage", "no repository, so no state database to check", "a repository", null);
   const path = stateDbPath(repo);
-  const dir = join54(repo, ".orbit");
+  const dir = join58(repo, ".orbit");
   let db = null;
   try {
-    if (!existsSync39(path)) {
-      const scratch = mkdtempSync5(join54(tmpdir11(), "orbit-doctor-"));
+    if (!existsSync44(path)) {
+      const scratch = mkdtempSync5(join58(tmpdir11(), "orbit-doctor-"));
       try {
-        db = openDb(join54(scratch, "probe.sqlite"));
+        db = openDb(join58(scratch, "probe.sqlite"));
         const mode2 = String((db.get("PRAGMA journal_mode") ?? {}).journal_mode);
         if (mode2.toLowerCase() !== "wal") return fail2("storage", "storage", `SQLite cannot use WAL on this filesystem (journal_mode=${mode2})`, "WAL journaling", "use a local disk, not a network or container bind mount");
       } finally {
         db?.close();
         db = null;
-        rmSync14(scratch, { recursive: true, force: true });
+        rmSync16(scratch, { recursive: true, force: true });
       }
       try {
-        accessSync3(existsSync39(dir) ? dir : repo, constants4.W_OK);
+        accessSync3(existsSync44(dir) ? dir : repo, constants4.W_OK);
       } catch {
-        return fail2("storage", "storage", `${existsSync39(dir) ? dir : repo} is not writable`, "a writable .orbit directory", "fix permissions");
+        return fail2("storage", "storage", `${existsSync44(dir) ? dir : repo} is not writable`, "a writable .orbit directory", "fix permissions");
       }
       return pass("storage", "storage", "no state database yet; it will be created in .orbit/ (WAL works, directory writable)");
     }
@@ -53531,7 +55007,7 @@ function checkConfiguredChecks(p) {
   const details = [];
   let status2 = "pass";
   for (const c of entries) {
-    const cwd = repo ? resolve15(repo, c.cwd) : ctx.cwd;
+    const cwd = repo ? resolve16(repo, c.cwd) : ctx.cwd;
     const word = checkWord(c);
     const bump = (s) => {
       if (s === "fail" || s === "warn" && status2 === "pass") status2 = s;
@@ -53546,7 +55022,7 @@ function checkConfiguredChecks(p) {
       details.push(`${c.id}: shell builtin "${word}" (not resolved)`);
       continue;
     }
-    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join54(repo, "node_modules", ".bin", word), ctx.env) : null);
+    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join58(repo, "node_modules", ".bin", word), ctx.env) : null);
     if (!found) {
       details.push(`${c.id}: "${word}" was not found${c.mandatory ? "" : " (optional check)"}${c.cwd !== "." ? ` (cwd ${c.cwd})` : ""}`);
       bump(level);
@@ -53556,7 +55032,7 @@ function checkConfiguredChecks(p) {
     const pm = ["npm", "pnpm", "yarn"].includes(word) ? argv2[1] : void 0;
     const script = pm === "run" || pm === "run-script" ? argv2[2] : pm === "test" ? "test" : void 0;
     if (script) {
-      const pj = join54(cwd, "package.json");
+      const pj = join58(cwd, "package.json");
       let defined = false;
       try {
         defined = typeof JSON.parse(readFileSync24(pj, "utf8")).scripts?.[script] === "string";
@@ -53716,9 +55192,9 @@ function providerKindSafe(id) {
 function playwrightCache(env, home2, platform3) {
   const override = env.PLAYWRIGHT_BROWSERS_PATH;
   if (override && override !== "0") return override;
-  if (platform3 === "darwin") return join54(home2, "Library", "Caches", "ms-playwright");
-  if (platform3 === "win32") return join54(env.LOCALAPPDATA ?? join54(home2, "AppData", "Local"), "ms-playwright");
-  return join54(env.XDG_CACHE_HOME ?? join54(home2, ".cache"), "ms-playwright");
+  if (platform3 === "darwin") return join58(home2, "Library", "Caches", "ms-playwright");
+  if (platform3 === "win32") return join58(env.LOCALAPPDATA ?? join58(home2, "AppData", "Local"), "ms-playwright");
+  return join58(env.XDG_CACHE_HOME ?? join58(home2, ".cache"), "ms-playwright");
 }
 function checkPlaywright(p) {
   const { config, repo, ctx } = p;
@@ -53726,7 +55202,7 @@ function checkPlaywright(p) {
   if (!wanted) return pass("playwright", "ui", "not required: no ui section and no playwright check is configured");
   const level = fail2;
   if (!repo) return level("playwright", "ui", "no repository to look for Playwright in", "a repository", null);
-  const req = createRequire4(join54(repo, "package.json"));
+  const req = createRequire4(join58(repo, "package.json"));
   let pwTest = null;
   try {
     pwTest = req.resolve("@playwright/test/package.json");
@@ -53744,7 +55220,7 @@ function checkPlaywright(p) {
   if (!core) return level("playwright", "ui", "playwright-core is missing next to @playwright/test", "playwright-core", "reinstall dependencies");
   let revisions = {};
   try {
-    const bj = JSON.parse(readFileSync24(join54(core, "..", "browsers.json"), "utf8"));
+    const bj = JSON.parse(readFileSync24(join58(core, "..", "browsers.json"), "utf8"));
     revisions = Object.fromEntries((bj.browsers ?? []).map((b) => [b.name, b.revision]));
   } catch {
     details.push("browsers.json could not be read; browser revisions are not checked");
@@ -53755,7 +55231,7 @@ function checkPlaywright(p) {
   for (const b of names) {
     const dirs = b === "chromium" ? ["chromium", "chromium_headless_shell"] : [b];
     const revs = dirs.map((d) => ({ d, rev: revisions[d] ?? revisions[b] ?? null }));
-    const present = revs.some((r) => r.rev ? existsSync39(join54(cache2, `${r.d}-${r.rev}`)) : false);
+    const present = revs.some((r) => r.rev ? existsSync44(join58(cache2, `${r.d}-${r.rev}`)) : false);
     details.push(`${b}: ${present ? `installed (${cache2})` : `not found in ${cache2}`}`);
     if (!present && revs.some((r) => r.rev)) missing.push(b);
   }
@@ -53810,7 +55286,7 @@ async function checkService(p) {
   let beat = "no controller has registered in this repository";
   let stale = false;
   let live = false;
-  if (existsSync39(stateDbPath(repo))) {
+  if (existsSync44(stateDbPath(repo))) {
     let db = null;
     try {
       db = openDb(stateDbPath(repo));
@@ -53830,7 +55306,7 @@ async function checkService(p) {
   if (linger === "no") details.push(`lingering is off for ${ctx.user}: the service stops at logout (loginctl enable-linger ${ctx.user})`);
   if (!status2.installed) return warn2("service", "service", "no service is installed, so runs only progress while a terminal is attached", "an installed background service (survives terminal closure and restarts after failure)", "orbit service install", details);
   if (status2.loaded !== true) return warn2("service", "service", `service installed but ${status2.loaded === false ? "not loaded" : `state unknown (${status2.detail})`}`, "a loaded service", "orbit service install (reloads it)", details);
-  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join54(ctx.orbitHome, "logs")}, then orbit service install to restart it`, details);
+  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join58(ctx.orbitHome, "logs")}, then orbit service install to restart it`, details);
   if (linger === "no") return warn2("service", "service", "service is loaded; lingering is off", "systemd lingering", `loginctl enable-linger ${ctx.user}`, details);
   return pass("service", "service", live ? "service loaded and its controller heartbeat is fresh" : "service loaded; the controller has not published a heartbeat yet", details);
 }
@@ -53889,7 +55365,7 @@ async function runDoctor(ctx, opts) {
   });
   let regDb = null;
   try {
-    const persisted = repo !== null && existsSync39(stateDbPath(repo));
+    const persisted = repo !== null && existsSync44(stateDbPath(repo));
     regDb = persisted ? openDb(stateDbPath(repo)) : openDb(":memory:");
     const registry = new ModelRegistry(regDb, ctx.clock);
     if (!persisted || registry.list().length === 0) registry.seed();
@@ -54005,10 +55481,10 @@ var init_gc = __esm({
 });
 
 // src/cli/commands/init.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync40, mkdirSync as mkdirSync20, readFileSync as readFileSync25, writeFileSync as writeFileSync8 } from "node:fs";
-import { dirname as dirname28, join as join55 } from "node:path";
+import { appendFileSync as appendFileSync2, existsSync as existsSync45, mkdirSync as mkdirSync21, readFileSync as readFileSync25, writeFileSync as writeFileSync8 } from "node:fs";
+import { dirname as dirname29, join as join59 } from "node:path";
 function templatePath() {
-  return join55(orbitInstallDir(), "templates", "config.yaml");
+  return join59(orbitInstallDir(), "templates", "config.yaml");
 }
 async function excludeFile(ctx, repo) {
   const r = await execCapture(["git", "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15e3 });
@@ -54018,13 +55494,13 @@ async function excludeFile(ctx, repo) {
 async function initCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
-  const configPath = join55(repo, ".orbit", "config.yaml");
+  const configPath = join59(repo, ".orbit", "config.yaml");
   let config;
-  if (existsSync40(configPath)) config = "exists";
+  if (existsSync45(configPath)) config = "exists";
   else {
     const tpl = templatePath();
-    if (!existsSync40(tpl)) throw new OrbitError("NOT_FOUND", `the starter template ${tpl} is missing from this installation`);
-    mkdirSync20(dirname28(configPath), { recursive: true });
+    if (!existsSync45(tpl)) throw new OrbitError("NOT_FOUND", `the starter template ${tpl} is missing from this installation`);
+    mkdirSync21(dirname29(configPath), { recursive: true });
     try {
       writeFileSync8(configPath, readFileSync25(tpl, "utf8"), { flag: "wx", mode: 420 });
       config = "created";
@@ -54034,8 +55510,8 @@ async function initCommand(args, ctx) {
     }
   }
   const excludePath = await excludeFile(ctx, repo);
-  mkdirSync20(dirname28(excludePath), { recursive: true });
-  const current = existsSync40(excludePath) ? readFileSync25(excludePath, "utf8") : "";
+  mkdirSync21(dirname29(excludePath), { recursive: true });
+  const current = existsSync45(excludePath) ? readFileSync25(excludePath, "utf8") : "";
   const have = new Set(current.split("\n").map((l) => l.trim()));
   const missing = EXCLUDE_RULES.filter((r) => !have.has(r));
   if (missing.length > 0) {
@@ -54081,7 +55557,7 @@ var init_init = __esm({
 
 // src/cli/commands/internal.ts
 import { spawn as spawn5 } from "node:child_process";
-import { mkdirSync as mkdirSync21 } from "node:fs";
+import { mkdirSync as mkdirSync22 } from "node:fs";
 import { isAbsolute as isAbsolute16 } from "node:path";
 async function shimCommand(rawArgs) {
   return shimMain(rawArgs);
@@ -54092,16 +55568,16 @@ async function checkRunnerCommand(rawArgs, ctx) {
     ctx.io.err("usage: orbit check-runner <absolute run dir> <absolute check dir>\n");
     return EXIT.USAGE;
   }
-  mkdirSync21(runDir2, { recursive: true });
+  mkdirSync22(runDir2, { recursive: true });
   const shim = ensureShim(runDir2);
-  return new Promise((resolve19) => {
+  return new Promise((resolve20) => {
     const child = spawn5(process.execPath, [shim, checkDir], { stdio: "inherit", env: process.env });
     child.on("error", (err) => {
       ctx.io.err(`check-runner: cannot start the check shim: ${err.message}
 `);
-      resolve19(EXIT.FAILURE);
+      resolve20(EXIT.FAILURE);
     });
-    child.on("exit", (code2, signal) => resolve19(code2 ?? (signal ? 128 : EXIT.FAILURE)));
+    child.on("exit", (code2, signal) => resolve20(code2 ?? (signal ? 128 : EXIT.FAILURE)));
   });
 }
 var init_internal = __esm({
@@ -54221,14 +55697,14 @@ var init_ingest = __esm({
 });
 
 // src/cli/commands/learn.ts
-import { existsSync as existsSync41, mkdirSync as mkdirSync22, readFileSync as readFileSync26, statSync as statSync15 } from "node:fs";
-import { basename as basename12, isAbsolute as isAbsolute17, join as join56, relative as relative5, resolve as resolve16 } from "node:path";
+import { existsSync as existsSync46, mkdirSync as mkdirSync23, readFileSync as readFileSync26, statSync as statSync16 } from "node:fs";
+import { basename as basename12, isAbsolute as isAbsolute17, join as join60, relative as relative5, resolve as resolve17 } from "node:path";
 function knowledgePath(ctx, repo, global) {
-  return global ? join56(ctx.orbitHome, "knowledge.sqlite") : join56(repo, ".orbit", "knowledge.sqlite");
+  return global ? join60(ctx.orbitHome, "knowledge.sqlite") : join60(repo, ".orbit", "knowledge.sqlite");
 }
 function openExisting(ctx, repo, global) {
   const path = knowledgePath(ctx, repo, global);
-  if (!existsSync41(path)) throw new OrbitError("NOT_FOUND", `no ${global ? "global" : "repository"} knowledge graph at ${path}; it is created by the first run that learns something, or by "orbit learn ingest"`);
+  if (!existsSync46(path)) throw new OrbitError("NOT_FOUND", `no ${global ? "global" : "repository"} knowledge graph at ${path}; it is created by the first run that learns something, or by "orbit learn ingest"`);
   return KnowledgeStore.open(path, { clock: ctx.clock });
 }
 function lessonRow(l, support, contradict) {
@@ -54297,9 +55773,9 @@ async function learnExportCommand(args, ctx) {
     const doc = JSON.stringify(store.exportJsonLd(), null, 2);
     const out = args.str("out");
     if (out) {
-      atomicWrite(resolve16(ctx.cwd, out), `${doc}
+      atomicWrite(resolve17(ctx.cwd, out), `${doc}
 `);
-      line2(ctx.io, `exported ${store.count()} lesson(s) as JSON-LD to ${resolve16(ctx.cwd, out)}`);
+      line2(ctx.io, `exported ${store.count()} lesson(s) as JSON-LD to ${resolve17(ctx.cwd, out)}`);
     } else ctx.io.out(`${doc}
 `);
     return EXIT.OK;
@@ -54338,9 +55814,9 @@ async function readSource(ctx, repo, ref2, label) {
     }
     return { kind: "url", ref: ref2, content: Buffer.concat(chunks).toString("utf8") };
   }
-  const path = resolve16(ctx.cwd, ref2);
-  if (!existsSync41(path)) throw new OrbitError("NOT_FOUND", `${path} does not exist`);
-  const st = statSync15(path);
+  const path = resolve17(ctx.cwd, ref2);
+  if (!existsSync46(path)) throw new OrbitError("NOT_FOUND", `${path} does not exist`);
+  const st = statSync16(path);
   if (!st.isFile()) throw new OrbitError("SCHEMA_INVALID", `${path} is not a regular file`);
   if (st.size > FETCH_MAX_BYTES) throw new OrbitError("SCHEMA_INVALID", `${path} is larger than ${FETCH_MAX_BYTES} bytes`);
   const rel = relative5(repo, path);
@@ -54355,8 +55831,8 @@ async function runIngestCurator(ctx, repo, config, prompt) {
     if (!deps.adapters.claude) throw new OrbitError("PROVIDER_UNAVAILABLE", "no claude provider is configured; the curator runs on Claude");
     deps.registry.seed();
     const id = `ingest-${ctx.clock.now().toString(36)}`;
-    const dir = join56(ctx.orbitHome, "ingest", repoKey(repo), id);
-    mkdirSync22(dir, { recursive: true, mode: 448 });
+    const dir = join60(ctx.orbitHome, "ingest", repoKey(repo), id);
+    mkdirSync23(dir, { recursive: true, mode: 448 });
     const snap = snapshotPolicy(config, { runId: id, repoRoot: repo, runDir: dir, clock: ctx.clock });
     const out = await runCurator(
       { deps, clock: ctx.clock, snapshot: snap.snapshot, policyPath: snap.path, policyHash: snap.hash, runId: id, dir, budgetUsd: config.knowledge.curator_budget_usd, env: ctx.env, homeDir: ctx.homeDir },
@@ -54385,14 +55861,14 @@ async function learnIngestCommand(args, ctx) {
   const prepared = args.str("curator-output");
   if (prepared) {
     try {
-      output = JSON.parse(readFileSync26(resolve16(ctx.cwd, prepared), "utf8"));
+      output = JSON.parse(readFileSync26(resolve17(ctx.cwd, prepared), "utf8"));
     } catch (err) {
       throw new OrbitError("SCHEMA_INVALID", `${prepared} is not readable JSON: ${err instanceof Error ? oneLine3(err.message, 120) : "error"}`);
     }
   } else ({ output, model } = await runIngestCurator(ctx, repo, config, task.prompt));
   const result2 = acceptIngestOutput(output, source, ctx.clock, model ? { curatorModel: model } : {});
-  mkdirSync22(join56(repo, ".orbit"), { recursive: true });
-  const store = KnowledgeStore.open(join56(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
+  mkdirSync23(join60(repo, ".orbit"), { recursive: true });
+  const store = KnowledgeStore.open(join60(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const created = [];
   const merged = [];
   const rejected = [...result2.rejected];
@@ -54468,7 +55944,7 @@ async function learnEvalCommand(args, ctx) {
   if (!(config.knowledge.eval_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.eval_budget_usd is 0, which disables replay evaluations and with them automatic overlay adoption; set a budget to evaluate");
   const metricsFile = args.str("metrics");
   const db = openState(repo);
-  const store = KnowledgeStore.open(join56(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
+  const store = KnowledgeStore.open(join60(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const runner = metricsFile ? null : ctx.seams.evalRunner ? budgeted(ctx.seams.evalRunner, config.knowledge.eval_budget_usd) : new ReplayEvalRunner({
     repoRoot: repo,
     config,
@@ -54503,7 +55979,7 @@ async function learnEvalCommand(args, ctx) {
       if (metricsFile) {
         let m;
         try {
-          m = JSON.parse(readFileSync26(resolve16(ctx.cwd, metricsFile), "utf8"));
+          m = JSON.parse(readFileSync26(resolve17(ctx.cwd, metricsFile), "utf8"));
         } catch (err) {
           throw new OrbitError("SCHEMA_INVALID", `${metricsFile} is not readable JSON: ${err instanceof Error ? oneLine3(err.message, 120) : "error"}`);
         }
@@ -54595,10 +56071,10 @@ var init_learn2 = __esm({
 });
 
 // src/cli/commands/logs.ts
-import { closeSync as closeSync8, existsSync as existsSync42, fstatSync as fstatSync4, openSync as openSync8, readSync as readSync5, statSync as statSync16 } from "node:fs";
-import { dirname as dirname29, join as join57 } from "node:path";
+import { closeSync as closeSync8, existsSync as existsSync47, fstatSync as fstatSync4, openSync as openSync8, readSync as readSync5, statSync as statSync17 } from "node:fs";
+import { dirname as dirname30, join as join61 } from "node:path";
 function readTail(path, lines) {
-  const size = statSync16(path).size;
+  const size = statSync17(path).size;
   const fd = openSync8(path, "r");
   try {
     const start = Math.max(0, size - TAIL_BYTES);
@@ -54658,25 +56134,25 @@ async function logsCommand(args, ctx) {
   const asJson = args.bool("json");
   return withState(repo, async (db) => {
     const run = findRunByPrefix(db, runRef);
-    const runDir2 = dirname29(run.policyPath);
+    const runDir2 = dirname30(run.policyPath);
     const wantController = !args.bool("workers") && !args.str("worker");
     const wantWorkers = !args.bool("controller");
     const sources = [];
     const known = /* @__PURE__ */ new Set();
     const discover = () => {
       const add = (s) => {
-        if (known.has(s.path) || !existsSync42(s.path)) return;
+        if (known.has(s.path) || !existsSync47(s.path)) return;
         known.add(s.path);
         sources.push({ ...s, offset: 0 });
       };
       if (wantController) {
-        add({ label: "controller", kind: "controller", path: join57(ctx.orbitHome, "logs", "controller.jsonl"), runId: run.id });
-        add({ label: "controller", kind: "controller", path: join57(runDir2, "logs", "controller.jsonl") });
+        add({ label: "controller", kind: "controller", path: join61(ctx.orbitHome, "logs", "controller.jsonl"), runId: run.id });
+        add({ label: "controller", kind: "controller", path: join61(runDir2, "logs", "controller.jsonl") });
       }
       if (wantWorkers) {
         for (const w of listWorkers(db, { runId: run.id })) {
           if (args.str("worker") && w.id !== args.str("worker")) continue;
-          for (const f of ["log.jsonl", "stderr.log", "shim.log"]) add({ label: `${w.id}${f === "log.jsonl" ? "" : `:${f.split(".")[0]}`}`, kind: "worker", path: join57(w.workerDir, f) });
+          for (const f of ["log.jsonl", "stderr.log", "shim.log"]) add({ label: `${w.id}${f === "log.jsonl" ? "" : `:${f.split(".")[0]}`}`, kind: "worker", path: join61(w.workerDir, f) });
         }
       }
     };
@@ -54748,7 +56224,7 @@ var init_logs = __esm({
 });
 
 // src/cli/commands/models.ts
-import { existsSync as existsSync43 } from "node:fs";
+import { existsSync as existsSync48 } from "node:fs";
 function configOrDefault(repo) {
   try {
     return { config: loadConfig(repo), loaded: true };
@@ -54760,7 +56236,7 @@ async function modelsListCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
   const { config, loaded } = configOrDefault(repo);
-  const persisted = existsSync43(stateDbPath(repo));
+  const persisted = existsSync48(stateDbPath(repo));
   const db = persisted ? openState(repo) : openDb(":memory:");
   try {
     const registry = new ModelRegistry(db, ctx.clock);
@@ -54954,22 +56430,110 @@ var init_policy2 = __esm({
   }
 });
 
+// src/cli/commands/release.ts
+async function releaseResolveCommand(args, ctx) {
+  const [ref2] = args.expect(1);
+  if (args.bool("deployed") && args.bool("not-deployed")) throw new UsageError("--deployed and --not-deployed are exclusive", RELEASE_RESOLVE_USAGE);
+  const resolution = args.bool("deployed") ? "deployed" : args.bool("not-deployed") ? "not-deployed" : "verify";
+  const environment = args.str("environment");
+  const by = (args.str("by") ?? ctx.user).trim() || ctx.user;
+  const repo = await resolveRepo(ctx, args.str("repo"));
+  const db = openState(repo);
+  try {
+    const run = findRunByPrefix(db, ref2);
+    if (isTerminal(run.state) && run.state !== "BLOCKED") throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is ${run.state}; there is no deploy left to resolve`);
+    const outcome = await withCliLease(
+      ctx,
+      db,
+      run.id,
+      async (ownerId) => {
+        const renew = setInterval(() => {
+          try {
+            renewLease(db, run.id, ownerId, LEASE_TTL_MS, ctx.clock);
+          } catch {
+          }
+        }, LEASE_RENEW_MS);
+        renew.unref();
+        try {
+          const rc = loadRunContext(cliLeaseDeps(ctx, repo, db, ownerId), run.id, new AbortController().signal);
+          const ledger = new ActionLedger(db, ctx.clock, { runDir: rc.runDir, actor: by });
+          const result3 = await resolveDeploy({
+            run: { id: rc.run.id, repoRoot: rc.run.repoRoot, branch: rc.run.branch, baseRevision: rc.run.baseRevision, policyHash: rc.run.policyHash, cancelRequested: rc.run.cancelRequested, goal: rc.run.goal },
+            snapshot: rc.snapshot,
+            ledger,
+            clock: ctx.clock,
+            workDir: rc.runDir,
+            ...environment === void 0 ? {} : { environment },
+            resolution,
+            by,
+            ...resolution === "verify" ? { isolation: rc.isolation(), homeDir: homeOf(rc.deps) } : {}
+          });
+          return { result: result3 };
+        } finally {
+          clearInterval(renew);
+        }
+      },
+      LEASE_TTL_MS
+    );
+    const { result: result2 } = outcome;
+    if (args.bool("json")) {
+      json(ctx.io, { run_id: run.id, environment: result2.environment, sha: result2.sha, verdict: result2.verdict, via: result2.via, detail: result2.detail, action_id: result2.actionId, run_state: run.state });
+      return result2.verdict === "unknown" ? EXIT.FAILURE : EXIT.OK;
+    }
+    if (result2.verdict === "unknown") {
+      line2(ctx.io, `the deploy of ${result2.sha.slice(0, 12)} to ${result2.environment} is still unknown: ${result2.detail}`);
+      line2(ctx.io, `Find out whether it took effect, then run: orbit release resolve ${run.id} --deployed   (or --not-deployed)`);
+      return EXIT.FAILURE;
+    }
+    line2(ctx.io, `${result2.environment}: the deploy of ${result2.sha.slice(0, 12)} is recorded as ${result2.verdict === "deployed" ? "DEPLOYED (it will not run again)" : "NOT DEPLOYED (the next release attempt may run it)"}; ${result2.detail}`);
+    line2(ctx.io, run.state === "BLOCKED" ? `Continue the run with: orbit resume ${run.id}` : "The controller picks this up at the run's next release attempt.");
+    return EXIT.OK;
+  } finally {
+    db.close();
+  }
+}
+var LEASE_TTL_MS, LEASE_RENEW_MS, RELEASE_RESOLVE_OPTIONS, RELEASE_RESOLVE_USAGE;
+var init_release2 = __esm({
+  "src/cli/commands/release.ts"() {
+    "use strict";
+    init_errors();
+    init_states();
+    init_context2();
+    init_run_store();
+    init_actions();
+    init_release();
+    init_context();
+    init_exit();
+    init_io();
+    init_control();
+    LEASE_TTL_MS = 10 * 6e4;
+    LEASE_RENEW_MS = 2e4;
+    RELEASE_RESOLVE_OPTIONS = {
+      deployed: { type: "boolean", description: "record that the deploy took effect (adopt it; it is never run again)" },
+      "not-deployed": { type: "boolean", description: "record that the deploy did not take effect (the next release attempt may run it)" },
+      environment: { type: "string", description: "which environment, when more than one deploy is unresolved", valueName: "name" },
+      by: { type: "string", description: "who is resolving it (default: your user name); recorded with the decision", valueName: "name" }
+    };
+    RELEASE_RESOLVE_USAGE = "orbit release resolve <run-id> [--deployed | --not-deployed] [--environment name] [--by name] [--json]";
+  }
+});
+
 // src/cli/commands/report.ts
-import { existsSync as existsSync44, readFileSync as readFileSync27 } from "node:fs";
-import { dirname as dirname30, join as join58 } from "node:path";
+import { existsSync as existsSync49, readFileSync as readFileSync27 } from "node:fs";
+import { dirname as dirname31, join as join62 } from "node:path";
 async function reportCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   if (args.bool("learning")) return withState(repo, (db) => learningReport(ctx, repo, db, args.bool("json")));
   const [id] = args.expect(1);
   return withState(repo, (db) => {
     const run = findRunByPrefix(db, id);
-    const runDir2 = dirname30(run.policyPath);
-    const finalMd = join58(runDir2, "final.md");
-    const finalJson = join58(runDir2, "final.json");
+    const runDir2 = dirname31(run.policyPath);
+    const finalMd = join62(runDir2, "final.md");
+    const finalJson = join62(runDir2, "final.json");
     const asJson = args.bool("json");
-    if (isTerminal(run.state) && !args.bool("interim") && existsSync44(finalMd)) {
+    if (isTerminal(run.state) && !args.bool("interim") && existsSync49(finalMd)) {
       if (asJson) {
-        if (existsSync44(finalJson)) ctx.io.out(readFileSync27(finalJson, "utf8"));
+        if (existsSync49(finalJson)) ctx.io.out(readFileSync27(finalJson, "utf8"));
         else json(ctx.io, buildFinalReport(db, run, { runDir: runDir2, clock: ctx.clock, snapshot: snapshotOrNull(run.policyPath, run.policyHash) }));
       } else ctx.io.out(readFileSync27(finalMd, "utf8"));
       return EXIT.OK;
@@ -54996,9 +56560,9 @@ function snapshotOrNull(path, hash) {
 function learningReport(ctx, repo, db, asJson) {
   const runs = db.all("SELECT id, state, created_at FROM runs WHERE state IN ('SUCCEEDED','EXHAUSTED','IMPOSSIBLE','BLOCKED') ORDER BY created_at");
   const windows = [{ label: "base prompt", from: 0, to: Number.POSITIVE_INFINITY }];
-  const kPath = join58(repo, ".orbit", "knowledge.sqlite");
+  const kPath = join62(repo, ".orbit", "knowledge.sqlite");
   const overlays = [];
-  if (existsSync44(kPath)) {
+  if (existsSync49(kPath)) {
     const store = KnowledgeStore.open(kPath, { clock: ctx.clock });
     try {
       for (const o of store.listOverlays({ scope: "repo" })) {
@@ -55065,7 +56629,7 @@ var init_report4 = __esm({
 });
 
 // src/cli/commands/run.ts
-import { resolve as resolve17 } from "node:path";
+import { resolve as resolve18 } from "node:path";
 async function runCommand(args, ctx) {
   const usage = 'orbit run --goal "<goal>" [--mode <mode>] [--policy <path>] [--foreground | --detach]';
   if (args.bool("foreground") && args.bool("detach")) throw new UsageError("--foreground and --detach cannot be combined", usage);
@@ -55077,7 +56641,7 @@ async function runCommand(args, ctx) {
   if (!goal) throw new UsageError('a goal is required: orbit run --goal "..."', usage);
   const repo = await resolveRepo(ctx, args.str("repo"));
   const policy = args.str("policy");
-  const config = loadConfig(repo, policy ? resolve17(ctx.cwd, policy) : void 0, mode ? { mode } : {});
+  const config = loadConfig(repo, policy ? resolve18(ctx.cwd, policy) : void 0, mode ? { mode } : {});
   const db = openState(repo, { create: true });
   try {
     const service = liveServiceController(db, ctx.clock.now());
@@ -55123,7 +56687,7 @@ var init_run = __esm({
 });
 
 // src/cli/commands/repair.ts
-import { resolve as resolve18 } from "node:path";
+import { resolve as resolve19 } from "node:path";
 function runArgv(args, goal) {
   const argv2 = ["--goal", goal];
   for (const name of ["repo", "mode", "policy"]) {
@@ -55179,7 +56743,7 @@ async function repairCommand(args, ctx) {
         line2(ctx.io, `run ${after.id}: repairing failure ${fingerprint}; the controller writes the brief to ${brief}. Driving it in the foreground (Ctrl-C pauses it)`);
       }
       const policy = args.str("policy");
-      const config = loadConfig(repo, policy ? resolve18(ctx.cwd, policy) : void 0);
+      const config = loadConfig(repo, policy ? resolve19(ctx.cwd, policy) : void 0);
       const result2 = await driveForeground(ctx, { repoRoot: repo, config, db, runId: after.id, fromStart: false, json: args.bool("json") });
       return result2.exitCode;
     }
@@ -55701,7 +57265,7 @@ var init_status = __esm({
 });
 
 // src/cli/commands/verify.ts
-import { join as join59, relative as relative6 } from "node:path";
+import { join as join63, relative as relative6 } from "node:path";
 function exitCodeForVerdict(verdict) {
   return verdict === "PASS" ? EXIT.OK : verdict === "FAIL" ? EXIT.VERIFY_FAILED : EXIT.VERIFY_INCOMPLETE;
 }
@@ -55724,10 +57288,10 @@ async function verifyCommand(args, ctx) {
       async (ownerId) => {
         const renew = setInterval(() => {
           try {
-            renewLease(db, run.id, ownerId, LEASE_TTL_MS, ctx.clock);
+            renewLease(db, run.id, ownerId, LEASE_TTL_MS2, ctx.clock);
           } catch {
           }
-        }, LEASE_RENEW_MS);
+        }, LEASE_RENEW_MS2);
         renew.unref();
         const abort = new AbortController();
         try {
@@ -55737,7 +57301,7 @@ async function verifyCommand(args, ctx) {
           clearInterval(renew);
         }
       },
-      LEASE_TTL_MS
+      LEASE_TTL_MS2
     );
     return print(ctx, repo, args.bool("json"), outcome, run.contractJson);
   } finally {
@@ -55752,61 +57316,19 @@ async function verifyCandidate(rc) {
   if (!rc.run.baseRevision) throw new OrbitError("TRANSITION_INVALID", `run ${rc.run.id} has no base revision; preflight did not finish`);
   const snapshot2 = rc.snapshot;
   const scope = cand.scope ?? await inspectScope({ repoRoot: rc.run.repoRoot, baseRev: rc.run.baseRevision, candidateRev: cand.commitSha, snapshot: snapshot2, contractAllowedPaths: contract.allowed_paths });
-  const checkoutDir = join59(runWorktreeRoot(rc), `verify-${cand.seq}`);
+  const checkoutDir = join63(runWorktreeRoot(rc), `verify-${cand.seq}`);
   await cleanupCandidateCheckout(rc.run.repoRoot, checkoutDir).catch(() => {
   });
   await materializeCandidate(rc.run.repoRoot, cand.commitSha, checkoutDir, { readOnly: false });
   try {
-    const runner = {
-      db: rc.db,
-      run: { id: rc.run.id, policyHash: rc.run.policyHash },
-      snapshot: snapshot2,
-      isolation: rc.isolation(),
-      checkoutDir,
-      runDir: rc.runDir,
-      clock: rc.clock,
-      detachSignal: rc.signal,
-      pollMs: rc.timing.checkPollMs,
-      killGraceMs: rc.timing.killGraceMs,
-      homeDir: homeOf(rc.deps)
-    };
-    const install = await installDependencies({ ...runner, candidate: cand });
-    const commandChecks = contract.required_check_ids.filter((id) => snapshot2.config.checks[id]?.kind === "command");
-    const results = [...install.results];
-    if (install.skipped || install.ok) results.push(...await runChecks({ ...runner, candidate: cand, checkIds: commandChecks }));
-    const changed = await changedPaths2(rc.run.repoRoot, rc.run.baseRevision, cand.commitSha);
-    const ui = snapshot2.config.ui;
-    const uiRequired = contract.acceptance_criteria.some((c) => c.ui === true) || ui !== null && ui.required_when_ui_changes && changed.some(compileGlobs(ui.ui_paths, { nocase: false }));
-    let uiResult = null;
-    if (uiRequired && ui && ui.journey_check_ids.length > 0) {
-      uiResult = await runUiChecks({ checkoutDir, snapshot: snapshot2, candidate: cand, uiConfig: ui, journeyCheckIds: ui.journey_check_ids, isolation: rc.isolation(), outDir: join59(candidateEvidenceDir(rc.runDir, cand.seq), "ui"), clock: rc.clock, abortSignal: rc.signal, homeDir: homeOf(rc.deps), hostEnv: rc.deps.hostEnv ?? process.env });
-    }
-    const uiG = uiGate({ required: uiRequired, configured: ui !== null && ui.journey_check_ids.length > 0, result: uiResult });
-    const scan = await scanCandidateSecrets({ repoRoot: rc.run.repoRoot, baseRev: rc.run.baseRevision, commit: cand.commitSha, outDir: join59(candidateEvidenceDir(rc.runDir, cand.seq), "security"), ...rc.deps.gitleaksPath === void 0 ? {} : { gitleaksPath: rc.deps.gitleaksPath }, hostPath: (rc.deps.hostEnv ?? process.env).PATH });
-    const sast = sastCheckIds2(snapshot2).map((id) => ({ checkId: id, status: results.find((r) => r.checkId === id)?.status ?? null }));
-    const security = staticSecurityGate({ scan, sast });
-    const uiResults = uiResult ? toEvidenceUi(uiResult) : [];
-    const evaluation = evaluateEvidence({ contract, candidate: cand, checkResults: results, uiResults, scope, snapshot: snapshot2, uiRequired });
-    const report2 = evaluation.report;
-    const failReasons = [...evaluation.failReasons];
-    report2.unverified.push(...security.notes, ...uiG.notes.filter((n2) => !report2.unverified.includes(n2)));
-    if (security.status === "fail") {
-      report2.verdict = "FAIL";
-      failReasons.push(...security.reasons);
-    }
-    if (uiG.status === "fail" && report2.verdict === "PASS") {
-      report2.verdict = "FAIL";
-      failReasons.push(...uiG.reasons);
-    }
-    return { run: rc.run, candidateSeq: cand.seq, candidateId: cand.id, treeHash: cand.treeHash, report: report2, failReasons, incompleteReasons: evaluation.incompleteReasons };
+    const collected = await collectVerificationEvidence(rc, cand, { checkoutDir, scope, exploration: false });
+    if ("stopped" in collected) throw new OrbitError("INTERNAL", "verification stopped without a checkpoint");
+    const { report: report2, failReasons, incompleteReasons } = collected.evidence;
+    return { run: rc.run, candidateSeq: cand.seq, candidateId: cand.id, treeHash: cand.treeHash, report: report2, failReasons, incompleteReasons };
   } finally {
     await cleanupCandidateCheckout(rc.run.repoRoot, checkoutDir).catch(() => {
     });
   }
-}
-async function changedPaths2(repoRoot, baseRev, commit) {
-  const out = await git2(repoRoot, ["diff", "--name-only", "-z", "--no-renames", baseRev, commit, "--"]);
-  return out.split("\0").filter((p) => p.length > 0);
 }
 function print(ctx, repo, asJson, o, contractJson) {
   const contract = JSON.parse(contractJson);
@@ -55849,29 +57371,22 @@ function print(ctx, repo, asJson, o, contractJson) {
   if (o.report.verdict === "FAIL") line2(ctx.io, `hand the failure to a repair with: orbit repair ${o.run.id}`);
   return code2;
 }
-var LEASE_TTL_MS, LEASE_RENEW_MS;
+var LEASE_TTL_MS2, LEASE_RENEW_MS2;
 var init_verify = __esm({
   "src/cli/commands/verify.ts"() {
     "use strict";
     init_errors();
-    init_globs();
     init_scope();
     init_candidate();
-    init_baseline();
-    init_git();
-    init_runner();
-    init_report2();
-    init_runner2();
     init_context2();
     init_run_store();
-    init_security();
-    init_gates();
+    init_verification();
     init_context();
     init_exit();
     init_io();
     init_control();
-    LEASE_TTL_MS = 10 * 6e4;
-    LEASE_RENEW_MS = 2e4;
+    LEASE_TTL_MS2 = 10 * 6e4;
+    LEASE_RENEW_MS2 = 2e4;
   }
 });
 
@@ -56013,6 +57528,7 @@ var init_cli = __esm({
     init_logs();
     init_models2();
     init_policy2();
+    init_release2();
     init_report4();
     init_run();
     init_service2();
@@ -56047,6 +57563,7 @@ var init_cli = __esm({
       { name: "verify", summary: "independent verification of a run's latest candidate: a verdict per criterion with its evidence (exit 14 FAIL, 15 INCOMPLETE)", usage: "orbit verify [run-id] [--json]", run: verifyCommand },
       { name: "repair", summary: "repair a failed run (BLOCKED or paused with FAIL evidence) or start a run to repair a described failure", usage: "orbit repair <run-id | failure description> [--foreground] [--policy <path>]", options: REPAIR_OPTIONS, run: repairCommand },
       { name: "stats", summary: "the spec section 16 metrics for this repository's runs (success, cost, repair loops, time to green), optionally in a time window", usage: STATS_USAGE, options: STATS_OPTIONS, run: statsCommand },
+      { name: "release resolve", summary: "settle a deploy whose outcome is unknown: run the environment's verify_command, or record --deployed / --not-deployed", usage: RELEASE_RESOLVE_USAGE, options: RELEASE_RESOLVE_OPTIONS, run: releaseResolveCommand },
       { name: "gc", summary: "apply artifact retention: delete the run directories and worktrees of finished runs older than retention.keep_runs_days", usage: GC_USAGE, options: GC_OPTIONS, run: gcCommand },
       { name: "policy show", summary: "the frozen policy a run acts under, verified against its hash", usage: "orbit policy show <run-id> [--json]", run: policyShowCommand }
     ];

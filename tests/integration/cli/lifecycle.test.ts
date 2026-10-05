@@ -110,15 +110,18 @@ describe('cancel is durable across processes', () => {
     const s = setup();
     const run = s.newRun();
     s.moveTo(run.id, ['PREFLIGHT', 'CONTRACTING', 'PLANNING']);
-    // A controller that died: its lease is still unexpired, so the CLI must not take the run.
-    acquireLease(s.db, run.id, 'dead-controller', 6_000, systemClock);
+    // A controller that died: its lease is still unexpired, so the CLI must not take the run. The TTL is far
+    // longer than any child start-up, so slow hosts cannot expire it early; the test expires it explicitly below.
+    acquireLease(s.db, run.id, 'dead-controller', 600_000, systemClock);
     const cancel = await s.box.run(['cancel', run.id]);
     expect(cancel.code, cancel.stderr).toBe(0);
     expect(cancel.stdout).toMatch(/cancellation recorded; the controller that owns the run ends it at its next safe point/);
     const mid = JSON.parse((await s.box.run(['status', run.id, '--json'])).stdout) as { state: string; cancel_requested: boolean; owner: { owner_id: string } | null };
     expect(mid).toMatchObject({ state: 'PLANNING', cancel_requested: true, owner: { owner_id: 'dead-controller' } });
 
-    // The request survives with no process alive. A fresh service takes the run once the dead lease expires and ends it.
+    // The request survives with no process alive. The dead lease expires (driven here, not waited for), and a
+    // fresh service takes the run and ends it.
+    s.db.run('UPDATE leases SET expires_at = ? WHERE run_id = ? AND owner_id = ?', systemClock.now() - 1, run.id, 'dead-controller');
     const service = startService(s.box);
     await waitFor(() => getRun(s.db, run.id).state === 'CANCELLED', 40_000).catch((err: Error) => {
       throw new Error(`${err.message}\nservice output:\n${service.output()}`);

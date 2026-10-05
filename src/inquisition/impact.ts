@@ -8,8 +8,10 @@
  * person's decision. The register is a decision record, so reports and later
  * inquiries read it from the same place as every other decision.
  *
- * The engine calls `recordImpactRegister` when the inquiry's mode is
- * `risk-review`; the function is a no-op for every other mode.
+ * `engine.ts:runInquisition` calls `recordImpactRegister` for every inquiry,
+ * after the amendments are committed; the function itself is a no-op unless the
+ * trigger's mode is `risk-review` (and returns null when nothing is touched).
+ * Tested in tests/unit/inquisition/engine.test.ts.
  */
 import { hashObject } from '../core/hash.ts';
 import { redact } from '../core/redact.ts';

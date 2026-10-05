@@ -60,8 +60,8 @@ function depsFor(l: Lab, ownerId: string): ControllerDeps {
   return { ...labDeps(l), ownerId };
 }
 
-function service(l: Lab, extra: Partial<ConstructorParameters<typeof Controller>[0]> = {}): Controller {
-  const c = new Controller({ mode: 'service', deps: labDeps(l), tickIntervalMs: 50, leaseTtlMs: 30_000, graceMs: 300, shutdownGraceMs: 200, ...extra });
+function service(l: Lab, extra: Partial<ConstructorParameters<typeof Controller>[0]> = {}, deps: Omit<ControllerDeps, 'ownerId'> = labDeps(l)): Controller {
+  const c = new Controller({ mode: 'service', deps, tickIntervalMs: 50, leaseTtlMs: 30_000, graceMs: 300, shutdownGraceMs: 200, ...extra });
   controllers.push({ c, done: c.start() });
   return c;
 }
@@ -166,9 +166,18 @@ describe.skipIf(!canStripTypes)('controller loop: recovery wiring', () => {
     // Every Claude call that is not a worker role (the live probe) fails authentication.
     const l = lab({ implementer: [{ ...implementMul('*'), sleepMs: 60_000 }], '*': [{ outcome: 'auth_failure' }] });
     const run = startLabRun(l);
-    const c = service(l, { credentialCheckMs: 1_500 });
+    // The check is due a fixed interval after the run's start. A real short interval would race the run's own
+    // start-up on a slow host (the run could be blocked before any worker ran), so the interval is long and the
+    // controller's clock is moved past it once the worker is running. The lease and worker timeout outlast the jump.
+    const interval = 300_000;
+    let skewMs = 0;
+    const skewed = { ...systemClock, now: () => Date.now() + skewMs };
+    const deps = { ...labDeps(l), clock: skewed, timing: { ...labDeps(l).timing, workerTimeoutMs: 3_600_000 } };
+    const c = service(l, { credentialCheckMs: interval, leaseTtlMs: 3_600_000 }, deps);
     const w = await waitFor(() => listWorkers(l.db(), { runId: run.id, role: 'implementer' }).find((x) => x.state === 'RUNNING' && x.pgid !== null), 30_000);
     groups.push(w.pgid!);
+    expect(runState(l, run.id).state).not.toBe('BLOCKED');
+    skewMs = interval + 1_000;
     await waitFor(() => (runState(l, run.id).state === 'BLOCKED' ? true : null), 30_000);
     const checked = l.db().all<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'credentials.checked'", run.id).map((r) => JSON.parse(r.data_json) as { providers: { provider: string; live: boolean; verdict: string }[] });
     expect(checked.at(-1)!.providers).toEqual(expect.arrayContaining([expect.objectContaining({ provider: 'claude', live: true, verdict: 'blocked' })]));

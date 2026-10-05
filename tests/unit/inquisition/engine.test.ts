@@ -573,3 +573,28 @@ describe('reconcile: authority map', () => {
     expect(adapter.specs).toEqual([]);
   });
 });
+
+describe('risk-review: the impact register (S10.3)', () => {
+  const authDiff = ['diff --git a/src/auth/login.ts b/src/auth/login.ts', '--- a/src/auth/login.ts', '+++ b/src/auth/login.ts', '+export const bypass = true;', ''].join('\n');
+
+  it('records exactly one impact-register decision for a risk-review over an auth path, and none for a challenge', async () => {
+    env = setup();
+    const extras = { changedFiles: ['src/auth/login.ts'], diff: authDiff };
+    const review = trig({ kind: 'hidden_decision', mode: 'risk-review', summary: 'the change touches security but the contract never mentions it', evidence: ['src/auth/login.ts'], key: 'hidden_decision:auth' });
+    const first = await runInquisition({ trigger: review, context: env.ctx(extras) });
+    const registers = () => listDecisions(env!.db, RUN).filter((d) => d.kind === 'inquisition.impact-register');
+    expect(registers()).toHaveLength(1);
+    expect(first.impactRegister?.id).toBe(registers()[0]!.id);
+    expect((registers()[0]!.data as { entries: { category: string; affected_paths: string[] }[] }).entries).toEqual([expect.objectContaining({ category: 'security', affected_paths: ['src/auth/login.ts'] })]);
+    // The same inquiry again does not record a second register.
+    await runInquisition({ trigger: review, context: env.ctx(extras) });
+    expect(registers()).toHaveLength(1);
+
+    env.cleanup();
+    env = setup();
+    const challenge = trig({ kind: 'green_without_proof', mode: 'challenge', subjects: ['AC-1'], key: 'green_without_proof:x' });
+    const res = await runInquisition({ trigger: challenge, context: env.ctx(extras) });
+    expect(res.impactRegister).toBeNull();
+    expect(listDecisions(env.db, RUN).filter((d) => d.kind === 'inquisition.impact-register')).toHaveLength(0);
+  });
+});

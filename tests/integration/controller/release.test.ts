@@ -32,7 +32,7 @@ function releaseLab(extra?: (c: OrbitConfig) => void): { l: Lab; remote: string 
       c.actions = { ...c.actions, commit: true, push_task_branch: true, open_pull_request: true, read_ci_logs: true, repair_ci: true, merge: true };
       // A draft pull request cannot be merged: release runs open ready ones.
       c.delivery = { ...c.delivery, provider: 'fake', require_ci: false, pull_request: 'ready' };
-      c.release = { merge: { method: 'squash', require_checks: [], delete_branch: false }, environments: {} };
+      c.release = { merge: { method: 'squash', require_checks: [], delete_branch: false, mark_ready: true }, environments: {} };
       extra?.(c);
     },
   });
@@ -143,7 +143,7 @@ describe.skipIf(!canStripTypes)('controller: release mode', () => {
   it('a required branch check that never reports does not keep a release waiting forever: it blocks after delivery.ci_timeout_minutes', async () => {
     const { l } = releaseLab((c) => {
       c.delivery = { ...c.delivery, ci_timeout_minutes: 1 };
-      c.release = { merge: { method: 'squash', require_checks: ['acme-required-gate'], delete_branch: false }, environments: {} };
+      c.release = { merge: { method: 'squash', require_checks: ['acme-required-gate'], delete_branch: false, mark_ready: true }, environments: {} };
     });
     writeScenario(l, baseScenario({ implementer: [implementMul('*')] }));
     const run = startLabRun(l);

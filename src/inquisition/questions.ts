@@ -15,6 +15,9 @@ import {
   type QuestionOption,
   type QuestionRecord,
 } from './store.ts';
+import { ANSWER_DECISION_KIND, answerDecisionId, isHumanActor } from './actors.ts';
+import { applyBaselineExceptionAnswers, type BaselineApplyOutcome } from './baseline-exception.ts';
+import { appendEvent } from '../storage/events.ts';
 import type { InquisitionMode, InquisitorQuestion } from './types.ts';
 
 /**
@@ -292,13 +295,7 @@ export function persistQuestion(db: OrbitDb, runId: string, mode: InquisitionMod
   });
 }
 
-/** Model, worker, controller and subsystem identities can never answer a question: that would be a model authorizing itself. */
-const NON_HUMAN = /^(planner|implementer|verifier|reviewer|inquisitor|inquisition|curator|worker|wrk|model|agent|subagent|assistant|claude|codex|gpt|gemini|controller|scheduler|recovery|delivery|evidence|routing|orbit|system|service|daemon|shim|hook|llm|ai|bot|fake)([:\-_/ ].*)?$/i;
-
-export function isHumanActor(by: string): boolean {
-  const trimmed = by.trim();
-  return trimmed !== '' && !NON_HUMAN.test(trimmed);
-}
+export { isHumanActor };
 
 export interface AnsweredQuestion {
   question: QuestionRecord;
@@ -307,9 +304,11 @@ export interface AnsweredQuestion {
   chosenOption: QuestionOption | null;
   /** Affected work released by this answer. */
   unblocks: string[];
+  /** For the answer to a baseline-exception question (preflight): what happened to the exception; null for any other question. */
+  baselineException: BaselineApplyOutcome | null;
 }
 
-export const ANSWER_DECISION_KIND = 'inquisition.answer';
+export { ANSWER_DECISION_KIND };
 
 /**
  * `orbit decide`: record a person's answer. The answer lands on the question
@@ -331,7 +330,7 @@ export function answerQuestion(db: OrbitDb, runDir: string, id: string, answer: 
     db,
     runDir,
     {
-      id: `dec-answer-${id}`,
+      id: answerDecisionId(id),
       runId: question.runId,
       kind: ANSWER_DECISION_KIND,
       summary: `${matched ? `chose "${matched.label}"` : 'answered'}: ${question.question}`,
@@ -340,7 +339,16 @@ export function answerQuestion(db: OrbitDb, runDir: string, id: string, answer: 
     clock,
     { actor: by.trim() },
   );
-  return { question, decision, chosenOption: matched, unblocks: question.affected };
+  // The answer to a baseline-exception question is applied to the run's contract here, while the person is answering:
+  // "Approve" adds the exception through the amendment rules, anything else leaves the contract alone.
+  let baselineException: BaselineApplyOutcome | null = null;
+  try {
+    baselineException = applyBaselineExceptionAnswers({ db, clock, runId: question.runId, runDir }, { questionId: id }).outcomes[0] ?? null;
+  } catch (err) {
+    // The answer itself is recorded; the controller retries the application at its next step.
+    db.tx(() => appendEvent(db, question.runId, 'baseline-exception.apply-failed', by.trim(), { question_id: id, error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, clock.now()));
+  }
+  return { question, decision, chosenOption: matched, unblocks: question.affected, baselineException };
 }
 
 export function openQuestions(db: OrbitDb, runId: string): QuestionRecord[] {

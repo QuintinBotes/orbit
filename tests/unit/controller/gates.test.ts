@@ -132,6 +132,13 @@ describe('baselineGate', () => {
     expect(baselineGate(report({ install: { skipped: false, reason: 'npm ci failed', ok: false } })).status).toBe('fail');
     expect(baselineGate(report({ complete: false })).status).toBe('unverified');
   });
+  it('lists each base-revision audit finding the baseline recorded, without failing the gate (G52)', () => {
+    const auditNotes = ['pre-existing vulnerability on the base revision: left-pad 1.0.0 (high) GHSA-test-0001', 'pre-existing license problem on the base revision: widget 2.0.0 uses GPL-3.0'];
+    const g = baselineGate(report({ auditNotes }));
+    expect(g.passed).toBe(true);
+    expect(g.notes).toEqual(expect.arrayContaining(auditNotes));
+    expect(baselineGate(report()).notes.filter((n) => /audit|vulnerab|licen/.test(n))).toEqual([]);
+  });
 });
 
 describe('implementationScopeGate', () => {

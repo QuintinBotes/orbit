@@ -47,6 +47,16 @@ degraded but usable.
   environment, then `orbit resume <run-id>`.
 - **`resume` exits 5 (CONFLICT).** A live controller owns the run, or open
   questions remain. Answer them, or pass `--force` if you accept the risk.
+- **`orbit verify` exits 14 or 15.** 14 means the evidence verdict is FAIL; hand it to
+  `orbit repair <run-id>`. 15 means a mandatory criterion is unproven; treat the work as
+  not done and look at which criterion has no evidence.
+- **A release run is BLOCKED at the merge or deploy.** Read `orbit status <run-id>`. Common
+  causes: the pull request is still a draft and `release.merge.mark_ready` is false; the base
+  branch moved and `actions.rebase_task_branch` is false; a deploy outcome is unknown and the
+  environment has no `verify_command`. See [release mode safeguards](operations.md#release-mode-safeguards).
+- **A command is killed for memory under `sandbox-runtime`.** The resident-memory watchdog
+  hit `isolation.limits.memory_mb`. Raise it, or use `isolation.provider: container`.
+- **Disk is filling with old runs.** `orbit gc --dry-run`, then `orbit gc`.
 - **Exit 4 (CONFIG).** The configuration, contract or an action failed policy
   validation. The message lists each problem. `orbit policy show <run-id>`
   shows what the run was frozen with.

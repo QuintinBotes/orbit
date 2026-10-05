@@ -32,6 +32,7 @@ import {
 import { LOGS_OPTIONS, logsCommand } from './commands/logs.ts';
 import { MODELS_REFRESH_OPTIONS, modelsListCommand, modelsRefreshCommand } from './commands/models.ts';
 import { policyShowCommand } from './commands/policy.ts';
+import { RELEASE_RESOLVE_OPTIONS, RELEASE_RESOLVE_USAGE, releaseResolveCommand } from './commands/release.ts';
 import { REPORT_OPTIONS, reportCommand } from './commands/report.ts';
 import { RUN_OPTIONS, runCommand } from './commands/run.ts';
 import { SERVICE_INSTALL_OPTIONS, serviceInstallCommand, serviceRunCommand, serviceStatusCommand, serviceUninstallCommand } from './commands/service.ts';
@@ -76,6 +77,7 @@ export const COMMANDS: readonly CommandDef[] = [
   { name: 'verify', summary: 'independent verification of a run\'s latest candidate: a verdict per criterion with its evidence (exit 14 FAIL, 15 INCOMPLETE)', usage: 'orbit verify [run-id] [--json]', run: verifyCommand },
   { name: 'repair', summary: 'repair a failed run (BLOCKED or paused with FAIL evidence) or start a run to repair a described failure', usage: 'orbit repair <run-id | failure description> [--foreground] [--policy <path>]', options: REPAIR_OPTIONS, run: repairCommand },
   { name: 'stats', summary: 'the spec section 16 metrics for this repository\'s runs (success, cost, repair loops, time to green), optionally in a time window', usage: STATS_USAGE, options: STATS_OPTIONS, run: statsCommand },
+  { name: 'release resolve', summary: 'settle a deploy whose outcome is unknown: run the environment\'s verify_command, or record --deployed / --not-deployed', usage: RELEASE_RESOLVE_USAGE, options: RELEASE_RESOLVE_OPTIONS, run: releaseResolveCommand },
   { name: 'gc', summary: 'apply artifact retention: delete the run directories and worktrees of finished runs older than retention.keep_runs_days', usage: GC_USAGE, options: GC_OPTIONS, run: gcCommand },
   { name: 'policy show', summary: 'the frozen policy a run acts under, verified against its hash', usage: 'orbit policy show <run-id> [--json]', run: policyShowCommand },
 ];

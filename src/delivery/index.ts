@@ -74,7 +74,7 @@ export {
 } from './github.ts';
 export { assertDeliverable, assertRecordedBindings, verifyCandidateTree, type DeliveryCandidate, type DeliveryEvidence, type DeliveryReview, type DeliveryRun, type GateInput } from './gate.ts';
 export { deliver, type DeliverInput, type DeliveryReport, type DeliveryResult } from './deliver.ts';
-export { performRelease, releaseConfig, verdictOf, type CheckVerdict, type DeployReceipt, type MergeReceipt, type ReleaseInput, type ReleaseReadiness, type ReleaseResult } from './release.ts';
+export { performRelease, releaseConfig, resolveDeploy, unresolvedDeploys, verdictOf, type CheckVerdict, type DeployReceipt, type DeployResolution, type DeployResolutionKind, type MergeReceipt, type ReleaseInput, type ReleaseReadiness, type ReleaseResult, type ResolveDeployInput } from './release.ts';
 export {
   CI_STATES,
   ciFingerprint,

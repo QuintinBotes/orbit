@@ -11,6 +11,7 @@
  * failures (block), transient provider failures and stray cancellations
  * (retry within the attempt, bounded by infrastructure_retries) skip that.
  */
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJsonIfExists } from '../../core/fsx.ts';
 import { OrbitError, isOrbitError } from '../../core/errors.ts';
@@ -32,8 +33,11 @@ import type { DifficultyClass, WorkUnit } from '../../scheduling/types.ts';
 import { CANDIDATE_EVENT, machineAdmission, schedulerFor, type RunContext } from '../context.ts';
 import { blockingQuestions } from '../gates.ts';
 import { ensureWorker, recordSpendCap, routeFor, sessionSpendCap } from '../workers.ts';
+import { recordedUnits, recordUnits, runParallelUnits, serializedUnits, splitAttempt } from '../parallel-writers.ts';
+import type { WorkUnitPlan } from '../../scheduling/work-units.ts';
+import { attemptSubject, deniedWorkerOperations, grantFor, grantPolicy, requestAttemptAuthorization, sessionEvents, ungrantedCommands, type GuardedOperation } from '../authorization.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
-import { assertContract, blockOnAuth, finishRun, move, note, policySummary, progress, retryWait, safePoint, scheduleTransientRetry, WAIT, type StepResult } from './common.ts';
+import { assertContract, blockOnAuth, decide, finishRun, move, note, policySummary, progress, retryWait, safePoint, scheduleTransientRetry, WAIT, type StepResult } from './common.ts';
 import { latestAttempt } from './obtain.ts';
 
 export const ATTEMPT_EVENT = 'implementation.attempt';
@@ -121,12 +125,19 @@ async function startAttempt(ctx: RunContext, n: number): Promise<StepResult | nu
   }
   if (cap.capUsd !== null && cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not started: no model budget left under the hard cap less the closing reserve`);
 
-  // The attempt is counted and recorded in one transaction, so a crash can neither count it twice nor lose it.
-  ctx.db.tx(() => {
-    if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, ATTEMPT_EVENT, n)) return;
+  // A fresh attempt whose criteria map to disjoint files runs as parallel writers in their own worktrees (G14).
+  const units = splitAttempt(ctx, assertContract(ctx), n === 1 && !existsSync(briefPath(ctx, n)));
+  // The attempt is counted and recorded in one transaction (with its work units), so a crash can neither count it twice nor lose it.
+  const counted = ctx.db.tx(() => {
+    if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, ATTEMPT_EVENT, n)) return false;
     ledger.consume('implementation_attempts', 1);
     appendEvent(ctx.db, ctx.run.id, ATTEMPT_EVENT, ctx.ownerId, { attempt: n, route: route.decisionId, spend_cap_usd: cap.capUsd }, ctx.clock.now());
+    if (units) recordUnits(ctx, n, units);
+    return true;
   });
+  if (counted && units) {
+    decide(ctx, { id: `dec-${ctx.run.id}-units-${n}`, kind: 'scheduling.work-units', summary: `attempt ${n} runs as ${units.length} parallel writers with disjoint files: ${units.map((u) => `${u.id} (${u.criteria.join(', ')})`).join('; ')}`, data: { attempt: n, units } });
+  }
   if (cap.capUsd !== null) recordSpendCap(ctx, `implement:${n}#1`, cap.capUsd, cap.worstCaseUsd);
   return null;
 }
@@ -162,6 +173,13 @@ export function runningUnits(ctx: RunContext): { runId: string; unit: WorkUnit }
 async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable<RunContext['contract']>): Promise<StepResult> {
   const route = routeFor(ctx, `implement:${n}`, 'routine-code', routeSignals(ctx, n));
   const base = `implement:${n}`;
+  const units = recordedUnits(ctx, n);
+  if (units && latestAttempt(ctx, base) === 0) {
+    const r = await runParallelUnits(ctx, n, units, { route, contract, prompt: (u, all, workerId) => implementerPrompt(ctx, n, workerId, null, { unit: u, all }), running: () => runningUnits(ctx), maxTurns: ctx.ledger!.maxTurnsPerSession() });
+    if (r.kind === 'step') return r.result;
+    if (r.kind === 'done') return snapshot(ctx, n, r.workerId);
+    // Some units could not be integrated in parallel: one implementer finishes their criteria on the integrated tree.
+  }
   let k = Math.max(1, latestAttempt(ctx, base));
   for (;;) {
     const purpose = `${base}#${k}`;
@@ -170,6 +188,8 @@ async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable
       const wait = retryWait(ctx, base);
       if (wait) return wait;
     }
+    // A supervised retry carries what a person authorized once for this attempt, or refused.
+    const auth = authorizationFor(ctx, n, k);
     const st = await ensureWorker(ctx, {
       role: 'implementer',
       purpose,
@@ -179,9 +199,10 @@ async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable
       effort: route.effort,
       cwd: ctx.run.worktreePath!,
       readOnly: false,
-      prompt: (workerId) => implementerPrompt(ctx, n, workerId),
+      prompt: (workerId) => implementerPrompt(ctx, n, workerId, auth),
       maxBudgetUsd: capOf(ctx, n, purpose),
       ownedPaths: contract.allowed_paths,
+      ...(auth && auth.granted.length > 0 ? { policy: (dir: string) => grantPolicy(ctx, auth.granted, dir) } : {}),
     });
     if (st.status === 'running') return WAIT(`implementer ${st.worker.id} (attempt ${n}) is running`);
     const r = st.result;
@@ -209,9 +230,82 @@ async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable
       k++;
       continue;
     }
+    // Supervised mode: what the guard denied inside the session is asked about, not only denied (spec section 5).
+    const sup = await superviseDenials(ctx, n, k, st.worker);
+    if (sup.kind === 'stop') return sup.result;
+    if (sup.kind === 'retry') {
+      k++;
+      continue;
+    }
     if (r.status !== 'succeeded') note(ctx, 'implementation.worker-ended', { attempt: n, status: r.status, error: r.error?.slice(0, 300) ?? null, note: 'its edits are verified like any other' });
     return snapshot(ctx, n, st.worker.id);
   }
+}
+
+export const AUTHORIZATION_RETRY_EVENT = 'authorization.retry';
+
+/** A supervised retry of an attempt after a person answered for operations its session was denied. */
+export interface AuthorizationRetry {
+  attempt: number;
+  /** Session number (`implement:<n>#<k>`) whose denials were answered. */
+  after: number;
+  /** Session number that runs with the answers. */
+  next: number;
+  granted: GuardedOperation[];
+  refused: GuardedOperation[];
+}
+
+function authorizationRetries(ctx: RunContext, n: number): AuthorizationRetry[] {
+  return ctx.db
+    .all<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id", ctx.run.id, AUTHORIZATION_RETRY_EVENT, n)
+    .map((r) => JSON.parse(r.data_json) as AuthorizationRetry);
+}
+
+/** The answers session `k` of attempt `n` runs with: the newest retry that starts at or before it (a transient restart keeps them). */
+function authorizationFor(ctx: RunContext, n: number, k: number): AuthorizationRetry | null {
+  return authorizationRetries(ctx, n).filter((r) => r.next <= k).at(-1) ?? null;
+}
+
+type Supervision = { kind: 'proceed' } | { kind: 'retry' } | { kind: 'stop'; result: StepResult };
+
+/**
+ * Supervised mode (spec section 5: ask before unauthorized actions; section 10: persist questions, never wait on a
+ * keyboard). The action-class operations the guard denied inside session `k` of attempt `n` become persisted
+ * approve-once or deny questions and the run blocks until a person answers. Once every one is answered, the
+ * attempt is retried in the same worktree: approved operations under a grant policy that allows exactly them
+ * for this attempt, refused ones as a scope repair. A session under a grant policy that ran anything else the
+ * frozen policy denies is a policy violation. Each operation is retried at most once per attempt.
+ */
+async function superviseDenials(ctx: RunContext, n: number, k: number, worker: WorkerRecord): Promise<Supervision> {
+  if (ctx.run.mode !== 'supervised') return { kind: 'proceed' };
+  const retries = authorizationRetries(ctx, n);
+  if (retries.some((r) => r.after === k)) return { kind: 'retry' };
+  const auth = retries.filter((r) => r.next <= k).at(-1);
+  if (auth && auth.granted.length > 0) {
+    const extra = ungrantedCommands(sessionEvents(worker), ctx.snapshot, worker.cwd, auth.granted);
+    if (extra.length > 0) {
+      decide(ctx, { id: `dec-${ctx.run.id}-deny-ungranted-${worker.id}`, kind: 'policy.deny', summary: `implementer ${worker.id} ran under a one-shot grant and did what no grant names: ${extra.join('; ')}`, data: { source: 'grant-check', worker_id: worker.id, attempt: n, ungranted: extra, granted: auth.granted.map((g) => g.key) } });
+      return { kind: 'stop', result: await finishRun(ctx, 'BLOCKED', `policy violation in attempt ${n}: under a one-shot grant the implementer also ran what the policy denies and no person authorized (${extra.join('; ')}); its work will not be verified or delivered`, { outcome: { attempt: n, ungranted: extra } }) };
+    }
+  }
+  const applied = new Set(retries.flatMap((r) => [...r.granted, ...r.refused].map((g) => g.key)));
+  const ops = deniedWorkerOperations(ctx, worker).filter((o) => !applied.has(o.key));
+  if (ops.length === 0) return { kind: 'proceed' };
+  const subject = attemptSubject(n);
+  const pending: string[] = [];
+  const granted: GuardedOperation[] = [];
+  const refused: GuardedOperation[] = [];
+  for (const op of ops) {
+    const g = grantFor(ctx, op, subject);
+    if (g.state === 'granted') granted.push(op);
+    else if (g.state === 'denied') refused.push(op);
+    else pending.push(`${g.state === 'pending' ? g.questionId : requestAttemptAuthorization(ctx, op, n, worker).id}: ${op.summary}`);
+  }
+  if (pending.length > 0) {
+    return { kind: 'stop', result: await finishRun(ctx, 'BLOCKED', `supervised mode: implementation attempt ${n} was denied operations the policy does not authorize; a person decides each one (approve-once or deny with orbit decide, then orbit resume ${ctx.run.id}). Questions: ${pending.join(' | ')}`, { outcome: { authorization: pending } }) };
+  }
+  note(ctx, AUTHORIZATION_RETRY_EVENT, { attempt: n, after: k, next: k + 1, granted, refused } satisfies AuthorizationRetry);
+  return { kind: 'retry' };
 }
 
 export const LOST_RESTART_EVENT = 'recovery.worker-restart';
@@ -353,7 +447,7 @@ function diagnosisSolved(ctx: RunContext, n: number): boolean {
   return p.fixed_checks.length > 0 || p.localized_fault !== null || (report.verdict === 'PASS' && p.made_progress);
 }
 
-function implementerPrompt(ctx: RunContext, n: number, workerId: string): string {
+function implementerPrompt(ctx: RunContext, n: number, workerId: string, auth: AuthorizationRetry | null = null, parallel: { unit: WorkUnitPlan; all: readonly WorkUnitPlan[] } | null = null): string {
   const contract = assertContract(ctx);
   const blocked = blockingQuestions(ctx.db, ctx.run.id).criteria;
   const stored = readJsonIfExists<StoredBrief>(briefPath(ctx, n));
@@ -367,11 +461,13 @@ function implementerPrompt(ctx: RunContext, n: number, workerId: string): string
     }
   }
   const task = [
-    n === 1 || !stored ? 'Implement the contract below in this worktree.' : `Repair attempt ${n}: act on the repair brief below; change the cause, not the tests that show it.`,
+    parallel ? 'Implement your work unit of the contract below in this worktree.' : n === 1 || !stored ? 'Implement the contract below in this worktree.' : `Repair attempt ${n}: act on the repair brief below; change the cause, not the tests that show it.`,
     'Make the smallest coherent change. Add or extend behaviour tests that would fail without it. Stay inside the allowed paths.',
     'Do not commit, push, or edit protected paths, policy, CI configuration or check definitions. The controller snapshots your worktree and runs the trusted checks itself.',
     `Acceptance criteria: ${contract.acceptance_criteria.map((c) => `${c.id}${c.mandatory ? '' : ' (optional)'}: ${c.statement}`).join(' | ')}`,
     ...(blocked.length > 0 ? [`Blocked, waiting for a person's decision (do not implement or guess them): ${blocked.join(', ')}. Implement the other criteria only.`] : []),
+    ...authorizationLines(auth),
+    ...parallelLines(ctx, n, parallel),
   ].join('\n');
   return renderWorkerPrompt({
     role: 'implementer',
@@ -383,6 +479,33 @@ function implementerPrompt(ctx: RunContext, n: number, workerId: string): string
     evidenceRefs: refs,
     advisoryBlock: advisoryBlockFor(ctx, { role: 'implementer', workerId, paths: contract.allowed_paths, checkIds: contract.required_check_ids, fingerprints: stored?.fingerprint ? [stored.fingerprint] : [] }),
   });
+}
+
+/** A unit writer's share of the attempt, or what the serial implementer takes over from units that could not be integrated. */
+function parallelLines(ctx: RunContext, n: number, parallel: { unit: WorkUnitPlan; all: readonly WorkUnitPlan[] } | null): string[] {
+  if (parallel) {
+    const others = parallel.all.filter((u) => u.id !== parallel.unit.id);
+    return [
+      `You are work unit ${parallel.unit.id} of ${parallel.all.length} parallel writers for this attempt, each in its own worktree. Implement only ${parallel.unit.criteria.join(', ')}; the other criteria are someone else's.`,
+      `Change only these files (plus a new behaviour test of your own for your criteria): ${parallel.unit.ownedPaths.join(', ')}.`,
+      `Do not touch what the other units own: ${others.flatMap((u) => u.ownedPaths).join(', ')}. The controller integrates the units one at a time; a unit that touches a file another unit changed is redone serially.`,
+    ];
+  }
+  const dropped = serializedUnits(ctx, n);
+  if (dropped.length === 0) return [];
+  return [
+    'Part of this attempt was implemented by parallel writers and is already in this worktree; keep it.',
+    ...dropped.map((d) => `Work unit ${d.unit} (${d.criteria.join(', ')}) could not be integrated in parallel (${d.reason}). Implement ${d.criteria.join(', ')} now, on top of the integrated work.`),
+  ];
+}
+
+/** What a person answered about operations an earlier session of this attempt was denied. */
+function authorizationLines(auth: AuthorizationRetry | null): string[] {
+  if (!auth) return [];
+  const lines = ['An earlier session of this attempt was denied operations the policy does not authorize, and a person answered. Continue from the current worktree: the earlier edits are there.'];
+  for (const g of auth.granted) lines.push(`Authorized once, for this attempt only: ${g.summary}. You may do exactly this; anything else outside the policy is still refused and stops the run.`);
+  for (const g of auth.refused) lines.push(`Refused by a person: ${g.summary}. Do not try it again; finish the work inside the policy without it.`);
+  return lines;
 }
 
 function relative(root: string, p: string): string {
