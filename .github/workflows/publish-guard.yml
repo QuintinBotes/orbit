@@ -1,0 +1,34 @@
+name: Publish guard
+
+# Fails when a push, pull request, issue or comment would publish a private
+# term or a disallowed email. The scanner comes from QuintinBotes/claude-plugins
+# at the pinned commit below. Setup:
+#   gh secret set PUBLISH_GUARD_TERMS < ~/.config/publish-guard/terms.txt
+#   gh variable set PUBLISH_GUARD_ALLOWED_EMAILS --body "<your commit address>"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [main]
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created, edited]
+  pull_request_review:
+    types: [submitted, edited]
+  pull_request_review_comment:
+    types: [created, edited]
+
+permissions: {}
+
+jobs:
+  guard:
+    permissions:
+      contents: read
+    uses: QuintinBotes/claude-plugins/.github/workflows/publish-guard.yml@5993581d07f39e5f1f27d87af8fb449f8f770887 # v0.1.0 (publish-guard)
+    with:
+      allowed-emails: ${{ vars.PUBLISH_GUARD_ALLOWED_EMAILS }}
+      allowed-email-patterns: '^noreply@anthropic\.com$'
+    secrets:
+      PUBLISH_GUARD_TERMS: ${{ secrets.PUBLISH_GUARD_TERMS }}

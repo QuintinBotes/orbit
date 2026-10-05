@@ -4,7 +4,7 @@
 // and answers with `--json` JSONL events. See README.md for the scenario format.
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { applyEdits, attemptWrite, flagValue, loadStep, logArgv, readStdin, roleFromSchema, sleep } from './scenario.mjs';
+import { applyEdits, attemptWrite, flagValue, loadStep, logArgv, readStdin, renderPlaceholders, roleFromSchema, sleep } from './scenario.mjs';
 
 const argv = process.argv.slice(2);
 const env = process.env;
@@ -89,7 +89,8 @@ if (schemaPath) {
   }
 }
 const role = roleFromSchema(schema);
-const { step, call } = loadStep(role, env);
+const loaded = loadStep(role, env);
+const call = loaded.call;
 const lastMessage = flagValue(argv, '-o') ?? flagValue(argv, '--output-last-message');
 const cwd = flagValue(argv, '-C') ?? flagValue(argv, '--cd') ?? process.cwd();
 process.stderr.write('Reading additional input from stdin...\n');
@@ -98,6 +99,7 @@ if (argv.at(-1) === '-' && prompt.trim() === '') {
   process.stderr.write('No prompt provided via stdin.\n');
   process.exit(1);
 }
+const step = renderPlaceholders(loaded.step, prompt);
 logArgv(env, { tool: 'codex', role, call, argv, envKeys: Object.keys(env).sort(), cwd, promptBytes: prompt.length });
 
 process.on('SIGINT', () => {

@@ -20,7 +20,8 @@ import { ActionLedger } from '../delivery/actions.ts';
 import { finishCheckRun, isFinalCheckStatus } from '../evidence/store.ts';
 import { readJsonFile, shimPath, type ShimExit, type ShimIntent, type ShimLaunch, type ShimPid } from '../evidence/check-shim.ts';
 import { APP_STATE_FILE, reconcileApp, type ReconcileOutcome } from '../ui/app-fixture.ts';
-import { enterRecovery, spendRecoveryAttempt, type EnterRecoveryOutcome, type LedgerFor } from './budget.ts';
+import { enterRecovery, exhaustRecovery, recoveryAttemptsRemaining, spendRecoveryAttempt, type EnterRecoveryOutcome, type LedgerFor } from './budget.ts';
+import { classifyFailure, decideRetry } from './backoff.ts';
 import { groupOwnership, processOwnership } from './identity.ts';
 
 /**
@@ -302,16 +303,28 @@ async function reconcileRun(ctx: Ctx, initial: RunRecord): Promise<RunReconcileR
     }
   }
 
-  const stop = isRunTerminal(run.state) || run.cancelRequested;
-  for (const w of listWorkers(db, { runId: run.id, states: ['PLANNED', 'RUNNING'] })) {
-    try {
-      rep.workers.push(await reconcileWorker(ctx, run, w, stop || w.cancelRequested));
-    } catch (err) {
-      // One damaged worker directory must not leave the run's checks, app fixtures and in-flight actions unreconciled.
-      const message = `worker ${w.id}: ${redact(err instanceof Error ? err.message : String(err)).slice(0, 500)}`;
-      ctx.report.errors.push({ runId: run.id, message });
-      note(ctx, run.id, 'recovery.worker-error', { worker_id: w.id, error: message });
+  const seen = new Set<string>();
+  // Two passes at most: a lost worker the recovery budget cannot restart ends the run (EXHAUSTED), and then
+  // every worker the first pass left running belongs to an ended run and is stopped too.
+  for (let pass = 0; pass < 2; pass++) {
+    const stop = isRunTerminal(run.state) || run.cancelRequested;
+    for (const w of listWorkers(db, { runId: run.id, states: ['PLANNED', 'RUNNING'] })) {
+      if (seen.has(w.id) && !stop) continue;
+      seen.add(w.id);
+      try {
+        const wr = await reconcileWorker(ctx, run, w, stop || w.cancelRequested);
+        const prior = rep.workers.findIndex((x) => x.workerId === wr.workerId);
+        if (prior >= 0) rep.workers[prior] = wr;
+        else rep.workers.push(wr);
+        if (wr.restartRefused === 'budget' && !stop) run = getRun(db, run.id);
+      } catch (err) {
+        // One damaged worker directory must not leave the run's checks, app fixtures and in-flight actions unreconciled.
+        const message = `worker ${w.id}: ${redact(err instanceof Error ? err.message : String(err)).slice(0, 500)}`;
+        ctx.report.errors.push({ runId: run.id, message });
+        note(ctx, run.id, 'recovery.worker-error', { worker_id: w.id, error: message });
+      }
     }
+    if (stop || !isRunTerminal(run.state)) break;
   }
   // The restart planning above may not have changed the run, but a worker pass can race a cancellation: read it again.
   run = getRun(db, run.id);
@@ -540,7 +553,32 @@ async function restartOrGiveUp(ctx: Ctx, run: RunRecord, w: WorkerRecord, obs: O
   };
 
   if (stop) return giveUp('cancelled', 'CANCELLED');
+  if (w.role === 'inquisitor') {
+    // The Inquisition engine owns its worker: the INQUISITION step starts a fresh one (counting what this one
+    // spent) when it resumes, so recovery neither restarts it nor spends recovery budget on it.
+    const row = finish(ctx, w.id, { state: 'LOST', resultStatus: 'lost', exitCode: partial?.exitCode ?? null, result: partial, error: lostDetail });
+    rep.state = row.state;
+    rep.detail = `${lostDetail}; the inquisition step starts its own worker when it resumes`;
+    return;
+  }
   if (w.restartCount >= ctx.maxWorkerRestarts) return giveUp('restart-limit', 'LOST');
+
+  // Recovery has a budget: the retry decision is told what is left of it, and a refusal ends the run.
+  const decision = decideRetry({
+    classification: classifyFailure({ status: 'lost' }),
+    provider: w.provider,
+    runId: run.id,
+    attempt: w.restartCount + 1,
+    infrastructureRetriesRemaining: Number.POSITIVE_INFINITY,
+    wallRemainingMs: null,
+    costRemainingUsd: null,
+    recoveryAttemptsRemaining: recoveryAttemptsRemaining(db, run.id, ctx.opts.fallbackRecoveries),
+  });
+  if (decision.action !== 'restart') {
+    giveUp('budget', 'LOST');
+    exhaust(ctx, run, `lost worker ${w.id} cannot be restarted: ${decision.reason}`);
+    return;
+  }
 
   try {
     archiveAttempt(w.provider, w.workerDir);
@@ -559,10 +597,24 @@ async function restartOrGiveUp(ctx: Ctx, run: RunRecord, w: WorkerRecord, obs: O
     rep.restartPlanned = true;
     rep.state = 'PLANNED';
   } catch (err) {
-    if (isOrbitError(err, 'BUDGET_EXHAUSTED')) return giveUp('budget', 'LOST');
+    if (isOrbitError(err, 'BUDGET_EXHAUSTED')) {
+      giveUp('budget', 'LOST');
+      exhaust(ctx, run, `lost worker ${w.id} cannot be restarted: ${err.message}`);
+      return;
+    }
     // Cancelled between the pass starting and now: nothing may be planned for a cancelled run.
     if (isOrbitError(err, 'CANCELLED') || isOrbitError(err, 'TRANSITION_INVALID')) return giveUp('cancelled', 'LOST');
     throw err;
+  }
+}
+
+/** The recovery budget refused a restart: the run ends EXHAUSTED (reason recovery_attempts) unless it already ended. */
+function exhaust(ctx: Ctx, run: RunRecord, why: string): void {
+  try {
+    const ended = ctx.db.tx(() => exhaustRecovery(ctx.db, ctx.clock, { runId: run.id, ownerId: ctx.ownerId, why }));
+    if (ended) ctx.report.summary.runsExhausted++;
+  } catch (err) {
+    ctx.report.errors.push({ runId: run.id, message: `could not end the run after a refused restart: ${err instanceof Error ? err.message : String(err)}` });
   }
 }
 

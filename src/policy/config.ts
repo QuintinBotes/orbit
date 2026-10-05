@@ -17,7 +17,7 @@ import addFormatsModule from 'ajv-formats';
 import type { ErrorObject, ValidateFunction } from 'ajv/dist/2020.js';
 import configSchema from '../../schemas/config.schema.json' with { type: 'json' };
 import { OrbitError } from '../core/errors.ts';
-import type { CheckDefinition, OrbitConfig, ProviderConfig, UiConfig } from './types.ts';
+import type { CheckCategory, CheckDefinition, OrbitConfig, ProviderConfig, UiConfig } from './types.ts';
 import { globProblem } from './globs.ts';
 import { hostEntryCovered, hostEntryProblem } from './hosts.ts';
 
@@ -187,7 +187,24 @@ export function defaultCheck(id: string): CheckDefinition {
     mandatory: true,
     flaky_reruns: 0,
     kind: 'command',
+    category: 'test',
   };
+}
+
+/** The category a check evidences; absent (older snapshots, synthesized checks) reads as the default. */
+export function checkCategory(check: Pick<CheckDefinition, 'kind' | 'category'>): CheckCategory {
+  return check.category ?? (check.kind === 'playwright' ? 'ui' : 'test');
+}
+
+/**
+ * Ids of the checks categorized 'sast', in definition order. The controller's
+ * static security gate calls this with the run's policy snapshot (or anything
+ * carrying the parsed config's checks).
+ */
+export function sastCheckIds(snapshot: { config: { checks: Record<string, Pick<CheckDefinition, 'kind' | 'category'>> } }): string[] {
+  return Object.entries(snapshot.config.checks)
+    .filter(([, check]) => checkCategory(check) === 'sast')
+    .map(([id]) => id);
 }
 
 export function defaultUi(): UiConfig {
@@ -325,7 +342,9 @@ function normalizeChecks(raw: unknown, problems: string[]): unknown {
       problems.push(`${where}.command: with "shell: true" the command must be one string (the script for /bin/sh -c)`);
     }
     if (command === undefined) problems.push(`${where}.command: required`);
-    out[id] = { ...defaultCheck(id), ...def, command: command ?? [] };
+    // A playwright check is a UI check unless it says otherwise.
+    const category = def.category ?? (def.kind === 'playwright' ? 'ui' : 'test');
+    out[id] = { ...defaultCheck(id), ...def, command: command ?? [], category };
   }
   return out;
 }

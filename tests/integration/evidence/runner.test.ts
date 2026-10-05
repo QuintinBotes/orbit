@@ -244,6 +244,37 @@ describe('runChecks: time limits and cancellation', () => {
     expect(await run(e, ['after'])).toEqual([]);
   });
 
+  it('stops supervising on a detach signal without killing the check; the next owner reattaches and collects it', async () => {
+    // Lease lost or controller shutdown is not a cancellation: the check must outlive its supervisor.
+    const script = `const fs=require("fs");const f=process.env.ORBIT_ARTIFACTS_DIR+"/go";const t=setInterval(()=>{if(fs.existsSync(f)){clearInterval(t);console.log("finished after detach")}},50)`;
+    const e = await setup([nodeCheck('long', script, { timeout_seconds: 120 })]);
+    const ac = new AbortController();
+    const pending = run(e, ['long'], { detachSignal: ac.signal });
+    const pidFile = join(checkDirOf(e, 'long'), 'pid.json');
+    await waitFor(() => existsSync(pidFile));
+    ac.abort(new Error('lease lost'));
+    const err = await pending.then(() => null, (x: unknown) => x);
+    expect(isOrbitError(err, 'CANCELLED')).toBe(true);
+    expect((err as { details?: { detached?: boolean } }).details?.detached).toBe(true);
+    const [row] = listCheckRuns(e.run.db, { runId: e.run.runId, checkId: 'long' });
+    expect(row!.status).toBe('RUNNING');
+    const pids = JSON.parse(readFileSync(pidFile, 'utf8')) as { shimPid: number };
+    expect(pidGone(pids.shimPid)).toBe(false);
+    // The next owner reattaches: the same row ends PASSED and nothing was launched twice.
+    write(join(checkDirOf(e, 'long'), 'artifacts', 'go'), '1');
+    const [r] = await run(e, ['long']);
+    expect(r).toMatchObject({ id: row!.id, status: 'PASSED', cancelled: false });
+    expect(listCheckRuns(e.run.db, { runId: e.run.runId, checkId: 'long' })).toHaveLength(1);
+  });
+
+  it('a detach signal that is already aborted starts nothing', async () => {
+    const e = await setup([nodeCheck('ok', '')]);
+    const ac = new AbortController();
+    ac.abort();
+    await expect(run(e, ['ok'], { detachSignal: ac.signal })).rejects.toMatchObject({ code: 'CANCELLED', details: { detached: true } });
+    expect(listCheckRuns(e.run.db, { runId: e.run.runId })).toHaveLength(0);
+  });
+
   it('does not start when the signal is already aborted', async () => {
     const e = await setup([nodeCheck('ok', '')]);
     const ac = new AbortController();

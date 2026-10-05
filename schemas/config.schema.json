@@ -432,7 +432,8 @@
         },
         "mandatory": { "type": "boolean" },
         "flaky_reruns": { "type": "integer", "minimum": 0, "maximum": 5 },
-        "kind": { "enum": ["command", "playwright"] }
+        "kind": { "enum": ["command", "playwright"] },
+        "category": { "enum": ["test", "lint", "typecheck", "build", "sast", "ui", "other"] }
       }
     },
     "ui": {

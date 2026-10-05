@@ -8,15 +8,12 @@ import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { OrbitError, isOrbitError } from '../../core/errors.ts';
 import { atomicWrite } from '../../core/fsx.ts';
-import { redact } from '../../core/redact.ts';
 import { loadConfig } from '../../policy/index.ts';
 import { snapshotPolicy } from '../../policy/snapshot.ts';
 import type { OrbitConfig } from '../../policy/types.ts';
-import { MODEL_OUTPUT_SCHEMAS } from '../../contract/model-outputs.ts';
-import { renderSystemPrompt } from '../../adapters/prompt.ts';
-import type { TaskSpec } from '../../adapters/types.ts';
-import { profileForWorker } from '../../isolation/profiles.ts';
 import { defaultControllerDeps, repoKey } from '../../controller/index.ts';
+import { runCurator } from '../../controller/report.ts';
+import { ReplayEvalRunner } from '../../controller/eval-runner.ts';
 import { KnowledgeStore, type LessonFilters } from '../../knowledge/store.ts';
 import { LESSON_KINDS, type Lesson, type LessonKind, type LessonScope, type LessonStatus, type OverlayStatus, type PromptOverlay, type EvalMetrics } from '../../knowledge/types.ts';
 import { acceptIngestOutput, buildIngestTask, INGEST_CONTENT_MAX, type IngestSource } from '../../knowledge/ingest.ts';
@@ -190,61 +187,24 @@ async function readSource(ctx: CliContext, repo: string, ref: string, label: str
   return { kind: 'file', ref: !rel.startsWith('..') && !isAbsolute(rel) ? rel : basename(path), content: readFileSync(path, 'utf8') };
 }
 
-const CURATOR_TIMEOUT_MS = 5 * 60_000;
-
 async function runIngestCurator(ctx: CliContext, repo: string, config: OrbitConfig, prompt: string): Promise<{ output: unknown; model: string | null }> {
   if (!(config.knowledge.curator_budget_usd > 0)) throw new OrbitError('CONFIG_INVALID', 'knowledge.curator_budget_usd is 0, so no curator may run; raise it, or supply the curator output with --curator-output');
   const db = openState(repo, { create: true });
   try {
     const factory = ctx.seams.controllerDeps ?? defaultControllerDeps;
     const deps = factory({ repoRoot: repo, db, clock: ctx.clock, config, env: ctx.env, orbitHome: ctx.orbitHome });
-    const adapter = deps.adapters.claude;
-    if (!adapter) throw new OrbitError('PROVIDER_UNAVAILABLE', 'no claude provider is configured; the curator runs on Claude');
+    if (!deps.adapters.claude) throw new OrbitError('PROVIDER_UNAVAILABLE', 'no claude provider is configured; the curator runs on Claude');
     deps.registry.seed();
-    const model = deps.registry.list().find((e) => e.provider === 'claude' && e.family === 'haiku' && e.surfaces.some((s) => s.surface === 'claude-cli' && s.available !== false))?.modelId ?? null;
-    // A task needs a policy snapshot to be a worker at all; this one lives under ~/.orbit, outside the repository.
+    // A task needs a policy snapshot to be a worker at all; this one lives under ~/.orbit, outside the repository, and there is no run to attribute the worker to.
     const id = `ingest-${ctx.clock.now().toString(36)}`;
     const dir = join(ctx.orbitHome, 'ingest', repoKey(repo), id);
-    const workerDir = join(dir, 'curator');
-    const cwd = join(dir, 'cwd');
-    mkdirSync(workerDir, { recursive: true, mode: 0o700 });
-    mkdirSync(cwd, { recursive: true, mode: 0o700 });
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
     const snap = snapshotPolicy(config, { runId: id, repoRoot: repo, runDir: dir, clock: ctx.clock });
-    const home = ctx.homeDir;
-    const spec: TaskSpec & { maxBudgetUsd: number } = {
-      runId: id,
-      workerId: `${id}-curator`,
-      role: 'curator',
-      model,
-      effort: null,
-      cwd,
-      workerDir,
-      prompt,
-      systemPrompt: renderSystemPrompt('curator', deps.agentsDir ? { agentsDir: deps.agentsDir } : {}),
-      outputSchema: MODEL_OUTPUT_SCHEMAS.curator,
-      readOnly: true,
-      maxTurns: 3,
-      timeoutMs: CURATOR_TIMEOUT_MS,
-      sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: snap.snapshot, provider: 'claude', claudeConfigDir: ctx.env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'), homeDir: home, policyPath: snap.path, readablePaths: [deps.orbitInstallDir], env: ctx.env }),
-      policyPath: snap.path,
-      policyHash: snap.hash,
-      env: {},
-      maxBudgetUsd: config.knowledge.curator_budget_usd,
-    };
-    const handle = await adapter.startTask(spec);
-    const deadline = Date.now() + CURATOR_TIMEOUT_MS + 30_000;
-    for (;;) {
-      const r = await adapter.collectResult(handle, { outputSchema: MODEL_OUTPUT_SCHEMAS.curator });
-      if (r) {
-        if (r.status !== 'succeeded') throw new OrbitError(r.status === 'auth_failed' ? 'AUTH_EXPIRED' : 'PROVIDER_UNAVAILABLE', `the curator ended ${r.status}${r.error ? `: ${redact(r.error).slice(0, 200)}` : ''}`);
-        return { output: r.structured, model };
-      }
-      if (Date.now() > deadline) {
-        await adapter.cancelTask(handle);
-        throw new OrbitError('PROVIDER_UNAVAILABLE', 'the curator timed out');
-      }
-      await new Promise((res) => setTimeout(res, 200));
-    }
+    const out = await runCurator(
+      { deps, clock: ctx.clock, snapshot: snap.snapshot, policyPath: snap.path, policyHash: snap.hash, runId: id, dir, budgetUsd: config.knowledge.curator_budget_usd, env: ctx.env, homeDir: ctx.homeDir },
+      { prompt },
+    );
+    return { output: out.output, model: out.model };
   } finally {
     db.close();
   }
@@ -376,12 +336,24 @@ export async function learnEvalCommand(args: Args, ctx: CliContext): Promise<num
   const config = loadConfig(repo);
   if (!(config.knowledge.eval_budget_usd > 0)) throw new OrbitError('CONFIG_INVALID', 'knowledge.eval_budget_usd is 0, which disables replay evaluations and with them automatic overlay adoption; set a budget to evaluate');
   const metricsFile = args.str('metrics');
-  const runner = ctx.seams.evalRunner;
-  if (!runner && !metricsFile) {
-    throw new OrbitError('PROVIDER_UNAVAILABLE', 'this installation has no replay runner (the controller does not provide one yet), so a candidate cannot be replayed here. Supply metrics measured elsewhere with --metrics <file>, or use "orbit learn overlays" to inspect candidates');
-  }
   const db = openState(repo);
   const store = KnowledgeStore.open(join(repo, '.orbit', 'knowledge.sqlite'), { clock: ctx.clock });
+  // An injected runner is bounded by the budget here; the controller's own replay runner enforces it per case (and caps each run's spend).
+  const runner: EvalRunner | null = metricsFile
+    ? null
+    : ctx.seams.evalRunner
+      ? budgeted(ctx.seams.evalRunner, config.knowledge.eval_budget_usd)
+      : new ReplayEvalRunner({
+          repoRoot: repo,
+          config,
+          clock: ctx.clock,
+          orbitHome: ctx.orbitHome,
+          budgetUsd: config.knowledge.eval_budget_usd,
+          registryDb: db,
+          env: ctx.env,
+          deps: ctx.seams.controllerDeps ?? defaultControllerDeps,
+          ...(ctx.seams.controller ? { controller: ctx.seams.controller } : {}),
+        });
   try {
     let overlay: PromptOverlay | null;
     if (overlayId) {
@@ -413,7 +385,7 @@ export async function learnEvalCommand(args: Args, ctx: CliContext): Promise<num
         if (!m.baseline || !m.candidate || typeof m.cases !== 'number') throw new OrbitError('SCHEMA_INVALID', `${metricsFile} needs {cases, baseline, candidate}`);
         input = { cases: m.cases, suite_id: typeof m.suite_id === 'string' ? m.suite_id : suite.id, baseline: m.baseline, candidate: m.candidate };
       } else {
-        const r = await evaluateOverlay(budgeted(runner!, config.knowledge.eval_budget_usd), suite, baseline, overlay);
+        const r = await evaluateOverlay(runner!, suite, baseline, overlay);
         input = { cases: r.cases, suite_id: r.suite_id, baseline: r.baseline, candidate: r.candidate };
       }
       try {

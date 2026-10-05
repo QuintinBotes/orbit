@@ -4,10 +4,10 @@ import { join } from 'node:path';
 import { readExitRecord, readPidRecord } from '../../../src/adapters/shim.ts';
 import { processStartTime } from '../../../src/core/proc.ts';
 import { requestCancel, transition, getRun } from '../../../src/controller/run-store.ts';
-import { requestWorkerCancel } from '../../../src/storage/workers.ts';
+import { markWorkerRunning, planWorker, requestWorkerCancel } from '../../../src/storage/workers.ts';
 import { reconcileOnStart } from '../../../src/recovery/reconcile.ts';
 import { IMPLEMENTER_OUTPUT, OWNER, alive, canStripTypes, cleanupAll, clock, counterUsed, makeEnv, makeRun, planImplementer, seedCounters, sleep, startWorker, strangerProcess, waitFor, workerRow } from './helpers.ts';
-import { implementerSpec } from '../adapters/helpers.ts';
+import { implementerSpec, writeScenario } from '../adapters/helpers.ts';
 
 afterEach(cleanupAll);
 
@@ -134,7 +134,47 @@ describe.skipIf(!canStripTypes)('reconcileOnStart: workers', () => {
     const rep2 = await run(broke);
     expect(rep2.runs[0]!.workers[0]).toMatchObject({ observation: 'lost', restartPlanned: false, restartRefused: 'budget', state: 'LOST' });
     expect(workerRow(broke)).toMatchObject({ state: 'LOST', restart_count: 0 });
-    expect(getRun(broke.db, broke.runId).state).toBe('IMPLEMENTING');
+    // A stage whose worker cannot be restarted would only crash-loop into the same refusal: the run ends, naming the counter.
+    expect(getRun(broke.db, broke.runId)).toMatchObject({ state: 'EXHAUSTED' });
+    expect(getRun(broke.db, broke.runId).outcomeReason).toMatch(/recovery_attempts/);
+  });
+
+  it('a refused restart is decided with the recovery budget left: with none left nothing is spent or archived and the run is EXHAUSTED', async () => {
+    const env = makeEnv();
+    makeRun(env);
+    seedCounters(env, { recovery_attempts: 2 });
+    env.db.run("UPDATE budget_counters SET used = 2 WHERE run_id = ? AND counter = 'recovery_attempts'", env.runId);
+    const s = await startWorker(env, SLOW);
+    process.kill(s.shimPid, 'SIGKILL');
+    process.kill(s.childPid, 'SIGKILL');
+    await waitFor(() => !alive(s.shimPid) && !alive(s.childPid));
+    const rep = await run(env);
+    expect(rep.runs[0]!.workers[0]).toMatchObject({ observation: 'lost', restartPlanned: false, restartRefused: 'budget', state: 'LOST' });
+    expect(counterUsed(env, 'recovery_attempts')).toBe(2);
+    // The lost attempt's files were not archived for a restart that will never happen.
+    expect(existsSync(join(env.f.workerDir, 'pid.json'))).toBe(true);
+    const ended = getRun(env.db, env.runId);
+    expect(ended.state).toBe('EXHAUSTED');
+    expect(ended.outcomeReason).toMatch(/recovery_attempts exhausted/);
+    expect(rep.summary.runsExhausted).toBe(1);
+  });
+
+  it('a lost inquisitor is not restarted and spends no recovery budget: the INQUISITION step starts its own', async () => {
+    const env = makeEnv();
+    makeRun(env, ['PREFLIGHT', 'CONTRACTING', 'INQUISITION']);
+    seedCounters(env, { recovery_attempts: 3 });
+    writeScenario(env.f, { roles: { '*': [SLOW] } });
+    planWorker(env.db, { id: 'w1', runId: env.runId, role: 'inquisitor', purpose: 'inquisition:clarify:k', provider: 'claude', model: 'sonnet', workerDir: env.f.workerDir, cwd: env.f.repo }, clock);
+    const handle = await env.adapter.startTask(implementerSpec(env.f));
+    markWorkerRunning(env.db, 'w1', { pid: handle.pid, pgid: handle.pgid, procStart: handle.procStart }, clock);
+    const childPid = (await waitFor(() => readPidRecord(env.f.workerDir)?.childPid ?? null)) as number;
+    process.kill(handle.pid, 'SIGKILL');
+    process.kill(childPid, 'SIGKILL');
+    await waitFor(() => !alive(handle.pid) && !alive(childPid));
+    const rep = await run(env);
+    expect(rep.runs[0]!.workers[0]).toMatchObject({ observation: 'lost', restartPlanned: false, state: 'LOST' });
+    expect(counterUsed(env, 'recovery_attempts')).toBe(0);
+    expect(getRun(env.db, env.runId).state).toBe('INQUISITION');
   });
 });
 

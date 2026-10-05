@@ -75,6 +75,17 @@ A step:
 | `exitCode` | override the exit code of `success` or `no_result` |
 | `hangAfterRetry` | (Claude `auth_failure`) waits this long after the first `api_retry`, to prove the shim aborts on it |
 
+Any string in a step (`structured`, edit `content`, ...) may use two
+placeholders, resolved by the fake from the prompt the worker was given, so
+a static scenario can echo what only exists during a run:
+
+| Placeholder | Resolved from | Used for |
+|---|---|---|
+| `$CANDIDATE` | the first `- revision: <40 hex>` line of the prompt | a review's `candidate_revision` |
+| `$FINGERPRINT` | `Failure fingerprint: <id>` in the prompt | the fingerprint a repair brief or diagnosis must name |
+
+A placeholder whose value is not in the prompt is left as written.
+
 Outcomes:
 
 | `outcome` | Claude | Codex |

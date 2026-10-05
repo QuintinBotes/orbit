@@ -98,11 +98,16 @@ interface Probing {
   probeCredentials?: (opts?: { timeoutMs?: number }) => Promise<CredentialStatus>;
 }
 
-/** The live probe of an adapter, looking through a wrapper that exposes the real adapter as `inner` (FakeAdapter). */
+/** The live probe of an adapter, looking through wrappers that expose the adapter they wrap as `inner` (FakeAdapter, and wrappers of it). */
 function probeOf(adapter: ProviderAdapter): ((opts?: { timeoutMs?: number }) => Promise<CredentialStatus>) | null {
-  for (const candidate of [adapter, (adapter as { inner?: unknown }).inner]) {
-    const p = (candidate as Probing | undefined)?.probeCredentials;
-    if (typeof p === 'function') return (opts) => p.call(candidate, opts);
+  let candidate: unknown = adapter;
+  for (let depth = 0; depth < 4 && candidate; depth++) {
+    const p = (candidate as Probing).probeCredentials;
+    if (typeof p === 'function') {
+      const self = candidate;
+      return (opts) => p.call(self, opts);
+    }
+    candidate = (candidate as { inner?: unknown }).inner;
   }
   return null;
 }
@@ -112,6 +117,8 @@ export interface ValidateOptions {
   providers: readonly string[];
   /** Use each adapter's live probe when it has one. It costs a tiny request but detects expiry. Default false. */
   live?: boolean;
+  /** Use the live probe for these providers only (for example Claude, whose status check cannot see expiry). */
+  liveProviders?: readonly string[];
   timeoutMs?: number;
 }
 
@@ -124,7 +131,7 @@ export async function validateCredentials(opts: ValidateOptions): Promise<Creden
       out.push({ provider, verdict: 'error', status: null, live: false, error: `no adapter for provider ${provider}` });
       continue;
     }
-    const probe = opts.live ? probeOf(adapter) : null;
+    const probe = opts.live || opts.liveProviders?.includes(provider) ? probeOf(adapter) : null;
     try {
       const status = probe ? await probe({ ...(opts.timeoutMs === undefined ? {} : { timeoutMs: opts.timeoutMs }) }) : await adapter.validateCredentials();
       out.push({ provider, verdict: verdictOf(status.state), status, live: probe !== null, error: null });

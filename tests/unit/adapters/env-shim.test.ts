@@ -48,6 +48,11 @@ describe('buildWorkerEnv', () => {
     }
   });
 
+  it('marks every worker environment with ORBIT_WORKER=1 for the plugin hooks, and refuses a caller that tries to unset it', () => {
+    for (const provider of ['claude', 'codex'] as const) expect(buildWorkerEnv(input(provider)).ORBIT_WORKER).toBe('1');
+    expect(() => buildWorkerEnv(input('claude', { ORBIT_WORKER: '0' }))).toThrow(/may not set/);
+  });
+
   it('passes each provider only its own credentials and config directory', () => {
     const claude = buildWorkerEnv(input('claude'));
     expect(claude).toMatchObject({ ANTHROPIC_API_KEY: 'sk-ant-user', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-user', CLAUDE_CONFIG_DIR: '/home/u/.claude-x', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1', CLAUDE_CODE_MAX_RETRIES: '4' });

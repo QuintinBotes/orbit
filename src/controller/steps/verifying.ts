@@ -75,7 +75,9 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
       checkoutDir,
       runDir: ctx.runDir,
       clock: ctx.clock,
-      signal: ctx.signal,
+      // The step's signal means "stop supervising" (lease lost, shutdown, watchdog), never "cancel": the checks
+      // keep running for the run's next owner. A durable cancellation reaches the runner through the run row.
+      detachSignal: ctx.signal,
       pollMs: ctx.timing.checkPollMs,
       killGraceMs: ctx.timing.killGraceMs,
       homeDir: homeOf(ctx.deps),

@@ -26,6 +26,12 @@ import { nullLogger, type Logger } from '../core/log.ts';
 import { appendEvent } from '../storage/events.ts';
 import { heartbeatController, markControllerStopped, registerController, type ControllerMode } from '../storage/controllers.ts';
 import { reconcileOnStart, type ReconcileReport } from '../recovery/reconcile.ts';
+import { watchdogTick, type WatchdogConfig } from '../recovery/watchdog.ts';
+import { checkRunCredentials, credentialCheckDue, providersForRun } from '../recovery/credentials.ts';
+import { reattachCheck, type RunnerContext } from '../evidence/runner.ts';
+import { getCheckRun, isFinalCheckStatus } from '../evidence/store.ts';
+import { loadRunContext } from './context.ts';
+import { stopActiveWorkers } from './workers.ts';
 import { verifySnapshot } from '../policy/snapshot.ts';
 import { BudgetLedger } from '../scheduling/budget.ts';
 import type { ControllerDeps } from './context.ts';
@@ -33,7 +39,7 @@ import { getLease, getRun, listRuns, releaseLease, renewLease } from './run-stor
 import { isTerminal, RUN_STATES, type RunState } from './states.ts';
 import { step } from './steps/index.ts';
 import type { StepResult } from './steps/common.ts';
-import { writeFinalReport } from './report.ts';
+import { finalizeRun, writeFinalReport } from './report.ts';
 
 export interface ControllerOptions {
   deps: Omit<ControllerDeps, 'ownerId'> & { ownerId?: string };
@@ -61,6 +67,16 @@ export interface ControllerOptions {
   /** Passed to reconciliation. */
   graceMs?: number;
   startGraceMs?: number;
+  /** Service mode: how often the watchdog (recovery/watchdog) runs. Default 30 s; 0 turns it off. */
+  watchdogMs?: number;
+  watchdog?: Partial<WatchdogConfig>;
+  /**
+   * How often a run's provider credentials are checked again while it works (the run's start counts as the
+   * first check, made by preflight). Default 15 min; 0 turns it off.
+   */
+  credentialCheckMs?: number;
+  /** Providers checked with a live probe (a tiny real request) rather than a status query. Default Claude, whose status cannot see an expired credential. */
+  liveProbeProviders?: readonly string[];
 }
 
 export interface TickReport {
@@ -91,6 +107,7 @@ export class Controller {
   private started = false;
   private stopping: Promise<void> | null = null;
   private signalHandler: ((sig: NodeJS.Signals) => void) | null = null;
+  private watching = false;
   lastReconcile: ReconcileReport | null = null;
 
   constructor(opts: ControllerOptions) {
@@ -119,6 +136,8 @@ export class Controller {
     }
     this.timers.push(setInterval(() => this.heartbeat(), this.opts.heartbeatMs ?? 5_000));
     this.timers.push(setInterval(() => this.renewAll(), this.opts.leaseRenewMs ?? Math.max(250, Math.floor(this.ttl / 4))));
+    const watchdogMs = this.opts.watchdogMs ?? 30_000;
+    if (this.opts.mode === 'service' && watchdogMs > 0) this.timers.push(setInterval(() => void this.watchdog(), watchdogMs));
     for (const t of this.timers) t.unref();
 
     await this.reconcile(this.opts.mode === 'foreground' ? [this.opts.runId!] : undefined);
@@ -148,6 +167,11 @@ export class Controller {
     }
     const inflight = [...[...this.owned.values()].map((o) => o.inflight), ...this.draining.values()].filter((p): p is Promise<void> => p !== null);
     if (inflight.length > 0) await Promise.race([Promise.allSettled(inflight), sleep(this.opts.shutdownGraceMs ?? 5_000)]);
+    // Steps still running stop supervising before their leases go: a shutdown is not a cancellation, so their
+    // checks and workers are detached (left running) for the next controller to reattach to, never killed.
+    const late = [...this.owned.values()].filter((o) => o.inflight !== null);
+    for (const o of late) o.abort?.abort(new Error(`controller stopping: ${reason}`));
+    if (late.length > 0) await Promise.race([Promise.allSettled(late.map((o) => o.inflight)), sleep(1_000)]);
     const { db, clock } = this.deps;
     for (const runId of this.owned.keys()) {
       try {
@@ -215,6 +239,11 @@ export class Controller {
     timer.unref();
     const work = (async (): Promise<'settled'> => {
       try {
+        if (await this.credentialCheck(runId, ac.signal)) {
+          report.steps.push({ runId, state, result: { progressed: true, done: true } });
+          if (this.owned.get(runId) === slot) this.drop(runId, 'credentials blocked the run');
+          return 'settled';
+        }
         const result = await step(this.deps, runId, ac.signal);
         report.steps.push({ runId, state, result });
         if (result.done && this.owned.get(runId) === slot) {
@@ -282,11 +311,20 @@ export class Controller {
       for (const e of this.lastReconcile.errors) this.log.warn('reconcile error', { run_id: e.runId, error: e.message });
     } catch (err) {
       this.log.error('reconcile failed', { error: messageOf(err) });
+      this.lastReconcile = null;
     }
+    // No new work before reconciliation: a run whose pass failed (or a pass that failed outright) is not taken
+    // up now; its lease is released and the next claim reconciles it again.
+    const reconciled = new Set((this.lastReconcile?.runs ?? []).filter((r) => r.skipped === null).map((r) => r.runId));
     const max = this.opts.mode === 'foreground' ? 1 : (this.opts.maxRuns ?? Number.POSITIVE_INFINITY);
     for (const run of listRuns(db, { states: NON_TERMINAL, limit: 1_000 })) {
       const lease = getLease(db, run.id);
       if (!lease || lease.ownerId !== this.ownerId || this.owned.has(run.id) || this.draining.has(run.id)) continue;
+      if (!reconciled.has(run.id)) {
+        releaseLease(db, run.id, this.ownerId);
+        this.log.warn('run not reconciled; not taken up', { run_id: run.id });
+        continue;
+      }
       if (this.opts.mode === 'foreground' && run.id !== this.opts.runId) {
         releaseLease(db, run.id, this.ownerId);
         continue;
@@ -298,6 +336,99 @@ export class Controller {
       }
       this.owned.set(run.id, { inflight: null, abort: null });
     }
+    if (this.lastReconcile) await this.collectFinishedChecks(this.lastReconcile);
+    // Reconciliation can end a run (recovery budget spent); its report is written now, not at the next start.
+    this.ensureFinalReports();
+  }
+
+  /**
+   * Checks that finished while no controller supervised them (reconciliation saw their exit record) are
+   * recorded now, for every owned run, so their rows do not stay RUNNING until some step happens to look.
+   * Only what already finished is collected: nothing is started or supervised here (a pre-aborted detach).
+   */
+  private async collectFinishedChecks(rep: ReconcileReport): Promise<void> {
+    const { db, clock } = this.deps;
+    for (const r of rep.runs) {
+      const finished = r.checks.filter((c) => c.observation === 'finished' && !c.closed);
+      if (finished.length === 0 || !this.owned.has(r.runId)) continue;
+      try {
+        const ctx = loadRunContext(this.deps, r.runId, new AbortController().signal);
+        const detach = new AbortController();
+        detach.abort(new Error('collecting finished checks after reconciliation'));
+        for (const c of finished) {
+          const row = getCheckRun(db, c.checkRunId);
+          if (isFinalCheckStatus(row.status)) continue;
+          const runner: RunnerContext = { db, run: { id: ctx.run.id, policyHash: ctx.run.policyHash }, snapshot: ctx.snapshot, isolation: ctx.isolation(), checkoutDir: row.cwd, runDir: ctx.runDir, clock, detachSignal: detach.signal, pollMs: ctx.timing.checkPollMs, killGraceMs: ctx.timing.killGraceMs };
+          try {
+            await reattachCheck(runner, c.checkRunId);
+          } catch (err) {
+            // A flaky rerun is due: that is the verifying step's to start, not reconciliation's.
+            if (!isOrbitError(err, 'CANCELLED')) this.log.warn('could not collect a finished check', { run_id: r.runId, check_run: c.checkRunId, error: messageOf(err) });
+          }
+        }
+      } catch (err) {
+        this.log.warn('could not collect finished checks', { run_id: r.runId, error: messageOf(err) });
+      }
+    }
+  }
+
+  /** One watchdog pass (service mode). A run it abandons or exhausts has its in-flight step stopped here too. */
+  private async watchdog(): Promise<void> {
+    if (this.watching || this.stopped) return;
+    this.watching = true;
+    try {
+      const rep = await watchdogTick({
+        db: this.deps.db,
+        clock: this.deps.clock,
+        ownerId: this.ownerId,
+        adapters: this.deps.adapters,
+        ledgerFor: (id) => this.ledgerFor(id),
+        ...(this.opts.watchdog ? { config: this.opts.watchdog } : {}),
+      });
+      let ended = false;
+      for (const f of rep.findings) {
+        this.log.warn('watchdog', { kind: f.kind, run_id: f.runId ?? null, controller: f.controllerId ?? null, action: f.action, detail: f.detail.slice(0, 300) });
+        if ((f.action === 'abandoned-to-recovering' || f.action === 'exhausted') && f.runId) {
+          this.owned.get(f.runId)?.abort?.abort(new Error(`watchdog: ${f.detail}`));
+          if (f.action === 'exhausted') ended = true;
+        }
+      }
+      if (ended) this.ensureFinalReports();
+    } catch (err) {
+      this.log.warn('watchdog failed', { error: messageOf(err) });
+    } finally {
+      this.watching = false;
+    }
+  }
+
+  /**
+   * The periodic credential check (spec section 14: an authentication failure blocks, it is never retried).
+   * Due every `credentialCheckMs`, counted from the run's start (preflight checked then) or the last check.
+   * Returns true when the check blocked the run; its workers are stopped and its report written.
+   */
+  private async credentialCheck(runId: string, signal: AbortSignal): Promise<boolean> {
+    const interval = this.opts.credentialCheckMs ?? 15 * 60_000;
+    if (interval <= 0) return false;
+    const { db, clock } = this.deps;
+    const run = getRun(db, runId);
+    if (run.state === 'CREATED' || isTerminal(run.state) || run.paused || run.cancelRequested) return false;
+    if (clock.now() - run.createdAt < interval || !credentialCheckDue(db, runId, clock, interval)) return false;
+    const rep = await checkRunCredentials({
+      db,
+      clock,
+      ownerId: this.ownerId,
+      runId,
+      adapters: this.deps.adapters,
+      providers: providersForRun(db, runId, Object.keys(this.deps.adapters).includes('claude') ? ['claude'] : []),
+      liveProviders: this.opts.liveProbeProviders ?? ['claude'],
+      timeoutMs: 60_000,
+    });
+    if (rep.blocked?.outcome !== 'blocked' || signal.aborted) return false;
+    const ctx = loadRunContext(this.deps, runId, signal);
+    const unstoppable = await stopActiveWorkers(ctx, rep.blocked.blocker.message.slice(0, 300));
+    if (unstoppable.length > 0) this.note(runId, 'workers.stop-failed', { workers: unstoppable });
+    await finalizeRun(ctx);
+    return true;
   }
 
   private ledgerFor(runId: string): BudgetLedger | null {

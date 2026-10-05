@@ -12,6 +12,8 @@ export {
   RUN_MODES,
   UNATTENDED_MODES,
   defaultCheck,
+  checkCategory,
+  sastCheckIds,
   defaultConfig,
   defaultUi,
   loadConfig,

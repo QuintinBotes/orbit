@@ -1,0 +1,176 @@
+# Orbit configuration for the demo app (autonomous-delivery profile).
+#
+# This file is trusted input: workers cannot edit it (it is protected), and a
+# run freezes it into .orbit/runs/<run-id>/policy.json when it starts.
+# Validate it with: orbit doctor
+
+version: 1
+
+# Commit, push an orbit/* branch, open a draft PR and repair CI without asking.
+# Merging and deploying stay off.
+mode: autonomous-delivery
+
+repository:
+  base_branch: main
+  branch_prefix: orbit/
+  allow_dirty_start: false
+  remote: origin
+
+scope:
+  # Workers may change application code and tests, nothing else.
+  allowed_paths: ["src/**", "tests/**"]
+  protected_paths: [".github/**", "infra/**", ".orbit/config.yaml", "**/.env*", "package.json", "package-lock.json", "playwright.config.ts", "tsconfig.json"]
+
+actions:
+  edit: true
+  test: true
+  commit: true
+  push_task_branch: true
+  open_pull_request: true
+  repair_ci: true
+  read_ci_logs: true
+  merge: false
+  deploy_production: false
+  change_secrets: false
+  change_permissions: false
+
+dependencies:
+  # npm ci from the existing lockfile; lifecycle scripts never run.
+  install_existing_lockfile: true
+  install_command: null
+  add_packages: false
+  change_lockfile: false
+  install_scripts: deny
+  install_script_allowlist: []
+
+network:
+  allowed_hosts: [github.com, api.github.com, registry.npmjs.org]
+
+ambiguity:
+  resolve_reversible_choices: true
+  require_evidence_for_behavior_changes: true
+  block_security_or_data_semantics: true
+
+scheduler:
+  hard_limits:
+    implementation_attempts: 6
+    diagnostic_experiments: 8
+    review_rounds: 3
+    ci_repair_cycles: 3
+    worker_turns_per_session: 30
+    wall_minutes: 60
+    model_cost_usd: 30
+    parallel_workers: 2
+    changed_files: 20
+    changed_lines: 800
+    infrastructure_retries: 3
+    recovery_attempts: 3
+  initial_allowances:
+    simple_attempts: 2
+    medium_attempts: 3
+    complex_attempts: 5
+
+agents:
+  default_parallelism: 1
+  require_independent_work_units: true
+  isolate_writers: true
+  prohibit_shared_worktree_writes: true
+  cancel_obsolete_workers: true
+
+review:
+  # Claude writes, Codex reviews. No same-provider fallback.
+  independent_provider_required: true
+  preferred_provider: codex
+  fallback_same_provider_allowed: false
+  block_unresolved_high_impact_findings: true
+
+delivery:
+  provider: github
+  pull_request: draft
+  max_ci_repair_cycles: 3
+  ci_timeout_minutes: 30
+  require_ci: false
+
+checks:
+  lint:
+    command: [npm, run, --silent, lint]
+    timeout_seconds: 300
+  unit:
+    command: [npm, test, --silent]
+    timeout_seconds: 300
+    flaky_reruns: 1
+  # Browser journeys run through Orbit's UI runner, and only when a criterion or a changed
+  # UI path needs browser evidence (the ui section below), so this check is not mandatory
+  # for every run. When UI evidence is required, the UI gate makes it mandatory.
+  ui:
+    command: [npx, --no-install, playwright, test]
+    kind: playwright
+    mandatory: false
+    timeout_seconds: 600
+
+ui:
+  required_when_ui_changes: true
+  ui_paths: ["src/views/**", "src/public/**"]
+  browsers: [chromium]
+  viewports:
+    - {width: 1440, height: 900}
+    - {width: 390, height: 844}
+  environment:
+    base_url: http://127.0.0.1:4310
+    start_command: [node, src/main.ts]
+    ready_timeout_seconds: 60
+    isolated_test_data: true
+    production_accounts: false
+  journey_check_ids: [ui]
+  accessibility:
+    enabled: true
+    fail_on_new_serious_or_critical: true
+  visual:
+    enabled: true
+    baseline_changes_require_review: true
+    baseline_globs: ["tests/e2e/__screenshots__/**"]
+  visual_baseline_auto_accept: false
+
+isolation:
+  provider: sandbox-runtime
+  allow_unisolated: false
+  container: null
+
+providers:
+  claude:
+    command: claude
+    data_policy_eligible: true
+    model: null
+    reasoning_effort: null
+    extra_args: []
+  codex:
+    command: codex
+    # The demo app is synthetic and public, so sending its code to Codex for the
+    # independent review is allowed. Set this deliberately in your own repository.
+    data_policy_eligible: true
+    model: null
+    reasoning_effort: null
+    extra_args: []
+
+routing:
+  allowed_models: [opus, sonnet, haiku]
+  overrides: {}
+
+retention:
+  keep_runs_days: 30
+  redact_patterns: []
+
+knowledge:
+  enabled: true
+  share_globally: false
+  max_advisory_tokens: 800
+  curator_budget_usd: 0.25
+  eval_budget_usd: 0
+  auto_adopt_overlays: true
+
+guard:
+  terms_file: null
+  allowed_emails: []
+
+verification:
+  allow_flaky_pass: false

@@ -15,7 +15,7 @@ import { systemClock } from '../core/clock.ts';
 import { OrbitError } from '../core/errors.ts';
 import { spawnDetached } from '../core/exec.ts';
 import { atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
-import { isAlive, isGroupAlive, terminateGroup } from '../core/proc.ts';
+import { isAlive, isGroupAlive, processStartTime, terminateGroup } from '../core/proc.ts';
 import {
   EXIT_FILE,
   LOG_FILE,
@@ -46,6 +46,14 @@ export interface LaunchRecord {
   argvHash: string;
   sessionId: string | null;
   requestedAt: number;
+  /**
+   * The spawned shim's pid and start time, written right after the spawn and
+   * before waiting for pid.json, so reconciliation can tell a slow-starting
+   * shim from a dead one and never launches a second shim beside it. Absent
+   * until the spawn happened; procStart is null when ps could not read it.
+   */
+  pid?: number;
+  procStart?: string | null;
   /** Adapter facts for reporting only (isolation tier, limitations); never used to decide anything. */
   meta?: Record<string, unknown>;
 }
@@ -110,11 +118,23 @@ export async function launchShim(input: LaunchInput): Promise<TaskHandle> {
   });
   const shimLog = join(input.workerDir, SHIM_LOG_FILE);
   const { pid } = spawnDetached([...input.shimCommand, ...args], { cwd: input.cwd, env: input.env, stdoutPath: shimLog, stderrPath: shimLog });
+  recordShimIdentity(input.workerDir, launch, pid);
   const handle = await waitForHandle(input.provider, input.workerDir, pid, clock);
   if (handle) return handle;
   // The shim never wrote pid.json: it failed on its arguments or could not
   // start at all. Its log says why.
   throw new OrbitError('PROVIDER_UNAVAILABLE', `worker shim for ${input.workerId} did not start (see ${shimLog})`, { workerId: input.workerId, shimLog });
+}
+
+/** Add the shim's pid and start time to launch.json (atomic rewrite of the record written before the spawn). */
+function recordShimIdentity(workerDir: string, launch: LaunchRecord, pid: number): void {
+  let procStart: string | null = null;
+  try {
+    procStart = processStartTime(pid);
+  } catch {
+    procStart = null;
+  }
+  atomicWriteJson(join(workerDir, LAUNCH_FILE), { ...launch, pid, procStart }, 0o600);
 }
 
 /**

@@ -115,6 +115,12 @@ export interface InquisitorWorkerOptions {
   /** Bounded regeneration of malformed output (spec section 14). */
   maxAttempts?: number;
   workerIdFor?: (attempt: number) => string;
+  /**
+   * Lease fence: throws (LEASE_LOST) when the caller no longer owns the run. Asserted inside the transaction
+   * that records a worker's intent and again immediately before the process starts, so a controller that lost
+   * the run cannot start an inquisitor beside the new owner's.
+   */
+  fence?: () => void;
 }
 
 export interface InquisitionContext {
@@ -136,6 +142,11 @@ export interface RunInquisitionInput {
   trigger: Trigger;
   context: InquisitionContext;
   adapter?: ProviderAdapter;
+  /**
+   * Stop supervising (lease lost, watchdog, shutdown): nothing new starts, and a running inquisitor is left
+   * running, unfinished, for the run's next owner to collect. The call rejects with the signal's reason.
+   */
+  signal?: AbortSignal;
 }
 
 export interface RefusedItem {
@@ -306,6 +317,19 @@ function workerPurpose(trigger: Trigger): string {
   return `inquisition:${trigger.mode}:${trigger.key}`;
 }
 
+function sleepOrAbort(clock: Clock, ms: number, signal: AbortSignal | undefined): Promise<void> {
+  if (!signal) return clock.sleep(ms);
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((done) => {
+    const onAbort = (): void => done();
+    signal.addEventListener('abort', onAbort, { once: true });
+    void clock.sleep(ms).then(() => {
+      signal.removeEventListener('abort', onAbort);
+      done();
+    });
+  });
+}
+
 function finishedState(status: TaskResult['status']): FinishedWorkerState {
   if (status === 'succeeded') return 'SUCCEEDED';
   if (status === 'cancelled') return 'CANCELLED';
@@ -323,12 +347,17 @@ interface WorkerRun {
  * crash after the spawn leaves a row the recovery module reconciles from the
  * worker directory instead of a second inquisitor.
  */
-async function runWorker(adapter: ProviderAdapter, ctx: InquisitionContext, opts: InquisitorWorkerOptions, trigger: Trigger, prompt: string, attempt: number): Promise<WorkerRun> {
+async function runWorker(adapter: ProviderAdapter, ctx: InquisitionContext, opts: InquisitorWorkerOptions, trigger: Trigger, prompt: string, attempt: number, signal: AbortSignal | undefined): Promise<WorkerRun> {
   const { db, clock } = ctx;
+  signal?.throwIfAborted();
   const workerId = opts.workerIdFor?.(attempt) ?? newId('wrk');
   const workerDir = join(opts.workerDir, workerId);
+  // The intent is fenced by the lease in the same transaction that records it.
+  db.tx(() => {
+    opts.fence?.();
+    planWorker(db, { id: workerId, runId: ctx.runId, role: 'inquisitor', purpose: workerPurpose(trigger), provider: opts.route.provider, model: opts.route.model, effort: opts.route.effort, workerDir, cwd: opts.cwd, attempt }, clock);
+  });
   mkdirSync(workerDir, { recursive: true });
-  planWorker(db, { id: workerId, runId: ctx.runId, role: 'inquisitor', purpose: workerPurpose(trigger), provider: opts.route.provider, model: opts.route.model, effort: opts.route.effort, workerDir, cwd: opts.cwd, attempt }, clock);
 
   const spec: TaskSpec = {
     runId: ctx.runId,
@@ -351,6 +380,9 @@ async function runWorker(adapter: ProviderAdapter, ctx: InquisitionContext, opts
   const started = clock.now();
   let handle;
   try {
+    // Starting a process is an external effect: only a live step of the current lease holder may do it.
+    signal?.throwIfAborted();
+    opts.fence?.();
     handle = await adapter.startTask(spec);
   } catch (err) {
     finishWorker(db, workerId, { state: 'FAILED', resultStatus: 'failed', error: (err as Error).message }, clock);
@@ -363,6 +395,8 @@ async function runWorker(adapter: ProviderAdapter, ctx: InquisitionContext, opts
   for (;;) {
     result = await adapter.collectResult(handle, { outputSchema: spec.outputSchema });
     if (result) break;
+    // Stop supervising, not cancel: the worker keeps running and its row stays RUNNING for the next owner.
+    signal?.throwIfAborted();
     if (clock.now() >= deadline) {
       await adapter.cancelTask(handle);
       // What a cancelled worker spent is unknown, and an unmeasured row keeps that visible where no row would read as free.
@@ -372,7 +406,7 @@ async function runWorker(adapter: ProviderAdapter, ctx: InquisitionContext, opts
       });
       return { workerId, result: null };
     }
-    await clock.sleep(opts.pollMs ?? 500);
+    await sleepOrAbort(clock, opts.pollMs ?? 500, signal);
   }
   // One transaction: a crash between the result and its usage row would otherwise lose the spend for good, because a restart reuses the stored result and never sees the usage again.
   // One session, one usage row; cost is the session's own, never a running total.
@@ -819,6 +853,7 @@ function reusableOutput(prior: readonly WorkerRecord[]): { output: InquisitorOut
 
 export async function runInquisition(input: RunInquisitionInput): Promise<InquisitionResult> {
   const { trigger, adapter } = input;
+  input.signal?.throwIfAborted();
   // The contract the controller persisted may predate amendments this inquiry (or an earlier incarnation of it) already applied.
   const ctx: InquisitionContext = { ...input.context, contract: syncContract(input.context, input.context.contract) };
   const policy = ctx.snapshot.config;
@@ -870,7 +905,7 @@ export async function runInquisition(input: RunInquisitionInput): Promise<Inquis
         const attempts = Math.max(1, ctx.worker.maxAttempts ?? 2) - reused.spent;
         const prompt = attempts > 0 ? renderInquisitorPrompt(trigger, ctx) : '';
         for (let n = 1; n <= attempts && output === null; n++) {
-          const run = await runWorker(adapter, ctx, ctx.worker, trigger, prompt, prior.length + n);
+          const run = await runWorker(adapter, ctx, ctx.worker, trigger, prompt, prior.length + n, input.signal);
           workerIds.push(run.workerId);
           spawned++;
           const r = run.result;
@@ -916,7 +951,8 @@ export async function runInquisition(input: RunInquisitionInput): Promise<Inquis
     ...blockingDisposition({ blocked: [...blocked], contract: ctx.contract, mode: policy.mode, supportedCriteria: ctx.supportedCriteria, dependsOn: ctx.dependsOn }),
   };
 
-  // 4. Persist.
+  // 4. Persist, unless this step stopped (another owner may be inquiring into the same trigger now).
+  input.signal?.throwIfAborted();
   const committed = commitPlan(ctx, {
     plan: finalPlan,
     trigger,

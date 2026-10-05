@@ -94,7 +94,7 @@ export function buildWorkerEnv(input: WorkerEnvInput): Record<string, string> {
     if (key.startsWith(LOCALE_PREFIX) && typeof v === 'string') env[key] = v;
   }
   for (const [key, v] of Object.entries(input.extra ?? {})) {
-    if (FORBIDDEN_EXTRA.test(key) || key === ENV_POLICY_PATH || key === ENV_POLICY_HASH || key === ENV_WORKTREE) {
+    if (FORBIDDEN_EXTRA.test(key) || key === ENV_POLICY_PATH || key === ENV_POLICY_HASH || key === ENV_WORKTREE || key === 'ORBIT_WORKER') {
       throw new OrbitError('POLICY_DENIED', `worker environment may not set ${key}`, { variable: key });
     }
     env[key] = v;
@@ -105,6 +105,8 @@ export function buildWorkerEnv(input: WorkerEnvInput): Record<string, string> {
   env[ENV_POLICY_PATH] = input.policyPath;
   env[ENV_POLICY_HASH] = input.policyHash;
   env[ENV_WORKTREE] = input.worktree;
+  // The plugin's hooks key on this to tell a worker session from the user's own.
+  env.ORBIT_WORKER = '1';
   return env;
 }
 

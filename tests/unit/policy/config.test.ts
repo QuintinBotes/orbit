@@ -6,7 +6,7 @@ import { parse } from 'yaml';
 import Ajv2020Module from 'ajv/dist/2020.js';
 import addFormatsModule from 'ajv-formats';
 import schema from '../../../schemas/config.schema.json' with { type: 'json' };
-import { defaultConfig, loadConfig, modelPermitted, parseConfig, validateConfig } from '../../../src/policy/config.ts';
+import { checkCategory, defaultConfig, loadConfig, modelPermitted, parseConfig, sastCheckIds, validateConfig } from '../../../src/policy/config.ts';
 import { isOrbitError, type OrbitError } from '../../../src/core/errors.ts';
 
 const TEMPLATE = readFileSync(new URL('../../../templates/config.yaml', import.meta.url), 'utf8');
@@ -98,9 +98,11 @@ describe('defaults', () => {
   it('keeps the template examples valid when uncommented', () => {
     const raw = { ...(parse(TEMPLATE) as object), ...(parse(`checks:\n${exampleBlock('checks')}`) as object), ...(parse(exampleBlock('ui')) as object) };
     const c = validateConfig(raw);
-    expect(Object.keys(c.checks).sort()).toEqual(['build', 'lint', 'typecheck', 'ui-journeys', 'unit-tests']);
+    expect(Object.keys(c.checks).sort()).toEqual(['build', 'lint', 'sast', 'typecheck', 'ui-journeys', 'unit-tests']);
     expect(c.checks.build).toMatchObject({ shell: true, command: ['npm run build && test -f dist/index.js'] });
-    expect(c.checks.lint).toMatchObject({ shell: false, cwd: '.', mandatory: true, timeout_seconds: 300, kind: 'command' });
+    expect(c.checks.lint).toMatchObject({ shell: false, cwd: '.', mandatory: true, timeout_seconds: 300, kind: 'command', category: 'lint' });
+    expect(c.checks['ui-journeys']?.category).toBe('ui');
+    expect(sastCheckIds({ config: c })).toEqual(['sast']);
     expect(c.ui?.journey_check_ids).toEqual(['ui-journeys']);
     expect(c.ui?.visual_baseline_auto_accept).toBe(false);
   });
@@ -129,7 +131,30 @@ describe('check normalization', () => {
       mandatory: true,
       flaky_reruns: 0,
       kind: 'command',
+      category: 'test',
     });
+  });
+
+  it('categorizes checks: default test, playwright implies ui, explicit wins, unknown categories are refused', () => {
+    const c = parseConfig(
+      [
+        'version: 1',
+        'checks:',
+        '  unit: {command: [npm, test]}',
+        '  e2e: {command: [npx, playwright, test], kind: playwright}',
+        '  e2e-other: {command: [npx, playwright, test], kind: playwright, category: other}',
+        '  semgrep: {command: [semgrep, scan], category: sast}',
+        '  audit: {command: [npm, audit], category: sast}',
+        '  lint: {command: [npm, run, lint], category: lint}',
+        '',
+      ].join('\n'),
+    );
+    expect(Object.fromEntries(Object.entries(c.checks).map(([id, k]) => [id, k.category]))).toEqual({ unit: 'test', e2e: 'ui', 'e2e-other': 'other', semgrep: 'sast', audit: 'sast', lint: 'lint' });
+    expect(sastCheckIds({ config: c })).toEqual(['semgrep', 'audit']);
+    expect(sastCheckIds({ config: parseConfig('version: 1\n') })).toEqual([]);
+    expect(checkCategory({ kind: 'command' })).toBe('test');
+    expect(checkCategory({ kind: 'playwright' })).toBe('ui');
+    expect(problems(() => parseConfig('version: 1\nchecks:\n  a: {command: [x], category: security}\n')).join('\n')).toMatch(/category/);
   });
 
   it('refuses shell: true with a multi-element argv, a mismatched id and a missing command', () => {

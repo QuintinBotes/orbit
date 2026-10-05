@@ -168,21 +168,31 @@ delivery:
 #   flaky_reruns     reruns used only to classify flakiness (0 to 5); a
 #                    flaky pass is reported as flaky, never as clean
 #   kind             command (default) or playwright
+#   category         what the check evidences: test (default), lint,
+#                    typecheck, build, sast, ui or other. A playwright check
+#                    is "ui" unless it says otherwise. Checks in the "sast"
+#                    category feed the static security gate.
 #
 # Define your checks before the first run. Examples (uncomment and adapt):
 checks:
 # example-checks:start
 #   lint:
 #     command: [npm, run, lint]
+#     category: lint
 #     timeout_seconds: 300
 #   typecheck:
 #     command: [npx, tsc, --noEmit]
+#     category: typecheck
 #   unit-tests:
 #     command: [npm, test]
 #     flaky_reruns: 1
 #   build:
 #     command: "npm run build && test -f dist/index.js"
 #     shell: true
+#     category: build
+#   sast:
+#     command: [semgrep, scan, --error, --quiet]
+#     category: sast
 #   ui-journeys:
 #     command: [npx, playwright, test, --reporter=json, --update-snapshots=none]
 #     kind: playwright

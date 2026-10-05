@@ -14,19 +14,21 @@
  * repository opted in and the publication guard clears the text.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { OrbitError } from '../core/errors.ts';
 import { atomicWrite, atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
 import { sha256 } from '../core/hash.ts';
 import { redact } from '../core/redact.ts';
 import { appendEvent } from '../storage/events.ts';
 import { listDecisions } from '../storage/decisions.ts';
-import { listWorkers } from '../storage/workers.ts';
+import { finishWorker, listWorkers, markWorkerRunning, planWorker, type WorkerRecord } from '../storage/workers.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import type { Clock } from '../core/clock.ts';
 import { listEvidenceReports } from '../evidence/store.ts';
 import { listFindings, listReviews } from '../review/store.ts';
 import { listLedger, listQuestions } from '../inquisition/store.ts';
-import { summarizeUsage, recordUsage } from '../routing/usage.ts';
+import { summarizeUsage } from '../routing/usage.ts';
 import { BudgetLedger } from '../scheduling/budget.ts';
 import type { BudgetSnapshot } from '../scheduling/budget.ts';
 import { DELIVERY_MODES } from '../policy/config.ts';
@@ -40,10 +42,13 @@ import { promoteToGlobal } from '../knowledge/global.ts';
 import { checkPublication, loadPublicationGuard } from '../guard/publication.ts';
 import { profileForWorker } from '../isolation/profiles.ts';
 import { renderSystemPrompt } from '../adapters/prompt.ts';
-import type { TaskSpec } from '../adapters/types.ts';
+import type { TaskHandle, TaskResult, TaskSpec } from '../adapters/types.ts';
 import { getRun, type RunRecord } from './run-store.ts';
-import { currentCandidate, homeOf, type RunContext } from './context.ts';
-import { globalKnowledgePath, repoKnowledgePath } from './knowledge-hooks.ts';
+import { currentCandidate, type ControllerDeps, type RunContext } from './context.ts';
+import { assertLeaseHeld } from './run-store.ts';
+import { accountWorker, outcomeOf, recordSpendCap } from './workers.ts';
+import { autoEvaluateOverlays } from './eval-runner.ts';
+import { checkLiveOverlays, globalKnowledgePath, repoKnowledgePath } from './knowledge-hooks.ts';
 
 export interface FinalReport {
   schema: 'orbit.final/1';
@@ -256,12 +261,16 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
   if (!k?.enabled) return;
   const run = ctx.refresh();
   const store = KnowledgeStore.open(repoKnowledgePath(ctx), { clock: ctx.clock });
-  const summary: { learn: LearnReport | null; skipped: string | null; settled: unknown; promoted: unknown } = { learn: null, skipped: null, settled: null, promoted: null };
+  const summary: { learn: LearnReport | null; skipped: string | null; settled: unknown; promoted: unknown; overlays: unknown } = { learn: null, skipped: null, settled: null, promoted: null, overlays: null };
   try {
     const admitted = curationAdmitted(ctx);
     if (run.state === 'CANCELLED') summary.skipped = 'cancelled runs are not curated';
     else if (!admitted.ok) summary.skipped = admitted.why;
-    else summary.learn = await learnFromRun({ store, runDb: ctx.db, runId: run.id, runDir: ctx.runDir, clock: ctx.clock, curatorModel: admitted.model ?? 'claude-default', runCurator: (task) => runCurator(ctx, task, admitted.model) });
+    else {
+      const host = curatorHostFor(ctx);
+      summary.learn = await learnFromRun({ store, runDb: ctx.db, runId: run.id, runDir: ctx.runDir, clock: ctx.clock, curatorModel: admitted.model ?? 'claude-default', runCurator: async (task) => (await runCurator(host, task, admitted.model)).output });
+    }
+    if (summary.skipped !== null) ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.curation-skipped', ctx.ownerId, { reason: summary.skipped }, ctx.clock.now()));
 
     const ev = listEvidenceReports(ctx.db, run.id).at(-1);
     summary.settled = settleRun(store, run.id, {
@@ -281,6 +290,13 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
         global.close();
       }
     }
+
+    // Overlays (ADR 0002): a settled run is live evidence about the active overlay, and the moment to try a waiting candidate.
+    if (run.state !== 'CANCELLED') {
+      const live = checkLiveOverlays(ctx, store);
+      const evaluated = await autoEvaluateOverlays(ctx, store);
+      summary.overlays = { live, evaluated };
+    }
   } finally {
     store.close();
   }
@@ -288,39 +304,115 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
   ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.completed', ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0 }, ctx.clock.now()));
 }
 
-/** Curation spends from the closing reserve only when the reserve can still pay for it. */
+/** The curator for this run's learning: a recorded worker of the run, files under its learning/ directory. */
+function curatorHostFor(ctx: RunContext): CuratorHost {
+  return {
+    deps: ctx.deps,
+    clock: ctx.clock,
+    snapshot: ctx.snapshot,
+    policyPath: ctx.run.policyPath,
+    policyHash: ctx.run.policyHash,
+    runId: ctx.run.id,
+    dir: join(ctx.runDir, 'learning'),
+    budgetUsd: ctx.snapshot.config.knowledge.curator_budget_usd,
+    recorded: ctx,
+  };
+}
+
+/** Curation spends from the closing reserve only when the reserve can still pay for it; otherwise it is skipped and the reason recorded. */
 function curationAdmitted(ctx: RunContext): { ok: true; model: string | null } | { ok: false; why: string } {
   const k = ctx.snapshot.config.knowledge;
   if (!(k.curator_budget_usd > 0)) return { ok: false, why: 'knowledge.curator_budget_usd is 0' };
   if (!ctx.deps.adapters.claude) return { ok: false, why: 'no claude adapter for the curator' };
-  const ledger = ctx.db.get('SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1', ctx.run.id) ? new BudgetLedger(ctx.db, ctx.clock).attach(ctx.run.id, ctx.snapshot) : null;
+  const ledger = ctx.ledger ?? (ctx.db.get('SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1', ctx.run.id) ? new BudgetLedger(ctx.db, ctx.clock).attach(ctx.run.id, ctx.snapshot) : null);
   if (ledger) {
     const d = ledger.admit({ role: 'curator', estimatedCostUsd: k.curator_budget_usd, phase: 'final' });
     if (!d.admitted) return { ok: false, why: `the budget reserve cannot pay for curation: ${d.reasons.join('; ')}` };
   }
-  const model = ctx.deps.registry.list().find((e) => e.provider === 'claude' && e.family === 'haiku' && e.surfaces.some((s) => s.surface === 'claude-cli' && s.available === true))?.modelId ?? null;
-  return { ok: true, model };
+  return { ok: true, model: curatorModelFor(ctx.deps.registry) };
 }
 
 /**
- * The curator runs after the run ended, so it has no worker row (the
- * workers table takes no new work for a terminal run); its intent is an
- * event written before the spawn, and its files live under learning/.
- * Bounded by its own timeout and the curator budget.
+ * Everything the curator needs, so the same code runs it for a finished run
+ * (a recorded worker of that run) and for `orbit learn ingest` (no run: only
+ * its files and its usage return to the caller).
  */
-async function runCurator(ctx: RunContext, task: { prompt: string }, model: string | null): Promise<unknown> {
-  const adapter = ctx.deps.adapters.claude!;
-  const n = Number(ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND type = 'learning.curator-planned'", ctx.run.id)?.n ?? 0) + 1;
-  const workerId = `${ctx.run.id}-curator-${n}`;
-  const workerDir = join(ctx.runDir, 'learning', `curator-${n}`);
-  const cwd = join(ctx.runDir, 'learning', 'cwd');
-  mkdirSync(workerDir, { recursive: true, mode: 0o700 });
+export interface CuratorHost {
+  deps: Pick<ControllerDeps, 'adapters' | 'registry' | 'orbitInstallDir' | 'agentsDir' | 'hostEnv' | 'homeDir'>;
+  clock: Clock;
+  snapshot: PolicySnapshot;
+  policyPath: string;
+  policyHash: string;
+  /** The run id the worker is attributed to (an ingest id when there is no run). */
+  runId: string;
+  /** Where the curator's own files live: <dir>/cwd always, and <dir>/curator-<n> when it is not recorded. */
+  dir: string;
+  /** Spend ceiling for the curator's own budget flag (knowledge.curator_budget_usd). */
+  budgetUsd: number;
+  /** Host environment, for the provider's configuration directory. */
+  env?: Readonly<Record<string, string | undefined>>;
+  homeDir?: string;
+  timeoutMs?: number;
+  /**
+   * When set, the curator is a recorded worker of this run: the row is planned
+   * before the spawn (the workers table takes a curator on a terminal run and
+   * no other role), finished with the adapter's classification, and its cost
+   * charged to the run's final-phase budget and its usage recorded.
+   */
+  recorded?: RunContext;
+}
+
+export interface CuratorOutcome {
+  output: unknown;
+  model: string | null;
+  workerId: string | null;
+}
+
+/** The Haiku model validated on the CLI surface, or null for the provider's default. */
+export function curatorModelFor(registry: ControllerDeps['registry']): string | null {
+  return registry.list().find((e) => e.provider === 'claude' && e.family === 'haiku' && e.surfaces.some((s) => s.surface === 'claude-cli' && s.available !== false))?.modelId ?? null;
+}
+
+/**
+ * Run the curator on `task` and return its structured output. Throws an
+ * OrbitError when the worker ends in anything but success (AUTH_EXPIRED for a
+ * rejected credential, PROVIDER_UNAVAILABLE otherwise); a recorded worker row
+ * and its usage are written before the error leaves.
+ */
+export async function runCurator(host: CuratorHost, task: { prompt: string }, model: string | null = curatorModelFor(host.deps.registry)): Promise<CuratorOutcome> {
+  const adapter = host.deps.adapters.claude;
+  if (!adapter) throw new OrbitError('PROVIDER_UNAVAILABLE', 'no claude provider is configured; the curator runs on Claude');
+  const ctx = host.recorded ?? null;
+  const timeoutMs = host.timeoutMs ?? CURATOR_TIMEOUT_MS;
+  const env = host.env ?? host.deps.hostEnv ?? process.env;
+  const home = host.homeDir ?? host.deps.homeDir ?? homedir();
+  const cwd = join(host.dir, 'cwd');
   mkdirSync(cwd, { recursive: true, mode: 0o700 });
-  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.curator-planned', ctx.ownerId, { worker_id: workerId, model }, ctx.clock.now()));
-  const env = ctx.deps.hostEnv ?? process.env;
-  const home = homeOf(ctx.deps);
+
+  let row: WorkerRecord | null = null;
+  let workerId: string;
+  let workerDir: string;
+  let purpose: string | null = null;
+  if (ctx) {
+    const n = listWorkers(ctx.db, { runId: ctx.run.id, role: 'curator' }).length + 1;
+    workerId = `${ctx.run.id}-curator-${n}`;
+    purpose = `curate:${n}`;
+    workerDir = join(ctx.runDir, 'workers', workerId);
+    mkdirSync(workerDir, { recursive: true, mode: 0o700 });
+    recordSpendCap(ctx, purpose, host.budgetUsd, 0);
+    const ctxNow = ctx;
+    row = ctx.db.tx(() => {
+      assertLeaseHeld(ctxNow.db, ctxNow.run.id, ctxNow.ownerId, ctxNow.clock.now());
+      return planWorker(ctxNow.db, { id: workerId, runId: ctxNow.run.id, role: 'curator', purpose, provider: adapter.id, model, effort: null, workerDir, cwd }, ctxNow.clock, ctxNow.ownerId);
+    });
+  } else {
+    workerId = `${host.runId}-curator`;
+    workerDir = join(host.dir, 'curator');
+    mkdirSync(workerDir, { recursive: true, mode: 0o700 });
+  }
+
   const spec: TaskSpec & { maxBudgetUsd: number } = {
-    runId: ctx.run.id,
+    runId: host.runId,
     workerId,
     role: 'curator',
     model,
@@ -328,30 +420,56 @@ async function runCurator(ctx: RunContext, task: { prompt: string }, model: stri
     cwd,
     workerDir,
     prompt: task.prompt,
-    systemPrompt: renderSystemPrompt('curator', ctx.deps.agentsDir ? { agentsDir: ctx.deps.agentsDir } : {}),
+    systemPrompt: renderSystemPrompt('curator', host.deps.agentsDir ? { agentsDir: host.deps.agentsDir } : {}),
     outputSchema: MODEL_OUTPUT_SCHEMAS.curator,
     readOnly: true,
     maxTurns: 3,
-    timeoutMs: CURATOR_TIMEOUT_MS,
-    sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: ctx.snapshot, provider: 'claude', claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'), homeDir: home, policyPath: ctx.run.policyPath, readablePaths: [ctx.deps.orbitInstallDir], env }),
-    policyPath: ctx.run.policyPath,
-    policyHash: ctx.run.policyHash,
+    timeoutMs,
+    sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: host.snapshot, provider: 'claude', claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'), homeDir: home, policyPath: host.policyPath, readablePaths: [host.deps.orbitInstallDir], env }),
+    policyPath: host.policyPath,
+    policyHash: host.policyHash,
     env: {},
-    maxBudgetUsd: ctx.snapshot.config.knowledge.curator_budget_usd,
+    maxBudgetUsd: host.budgetUsd,
   };
-  const handle = await adapter.startTask(spec);
-  const deadline = Date.now() + CURATOR_TIMEOUT_MS + 30_000;
+
+  let handle: TaskHandle;
+  try {
+    handle = await adapter.startTask(spec);
+  } catch (err) {
+    if (ctx && row) finishWorker(ctx.db, row.id, { state: 'FAILED', resultStatus: 'failed', error: redact(err instanceof Error ? err.message : String(err)).slice(0, 2000) }, ctx.clock, ctx.ownerId);
+    throw err;
+  }
+  if (ctx && row) row = markWorkerRunning(ctx.db, row.id, { pid: handle.pid, pgid: handle.pgid, procStart: handle.procStart }, ctx.clock, ctx.ownerId);
+
+  const deadline = Date.now() + timeoutMs + 30_000;
+  let result: TaskResult | null = null;
+  let timedOut = false;
   for (;;) {
-    const r = await adapter.collectResult(handle, { outputSchema: MODEL_OUTPUT_SCHEMAS.curator });
-    if (r) {
-      recordUsage(ctx.db, { runId: ctx.run.id, workerId: null, provider: adapter.id, usage: r.usage, durationMs: r.durationMs }, ctx.clock);
-      if (r.status !== 'succeeded') throw new Error(`curator ended ${r.status}${r.error ? `: ${r.error.slice(0, 200)}` : ''}`);
-      return r.structured;
-    }
+    result = await adapter.collectResult(handle, { outputSchema: MODEL_OUTPUT_SCHEMAS.curator });
+    if (result) break;
     if (Date.now() > deadline) {
+      timedOut = true;
       await adapter.cancelTask(handle);
-      throw new Error('curator timed out');
+      const stop = Date.now() + 5_000;
+      while (!(result = await adapter.collectResult(handle, { outputSchema: MODEL_OUTPUT_SCHEMAS.curator })) && Date.now() < stop) await new Promise((res) => setTimeout(res, 100));
+      break;
     }
     await new Promise((res) => setTimeout(res, 200));
   }
+
+  if (ctx && row) {
+    const done = finishWorker(ctx.db, row.id, result ? outcomeOf(result) : { state: 'LOST', resultStatus: 'lost', error: 'the curator did not stop after it timed out' }, ctx.clock, ctx.ownerId);
+    if (result) {
+      try {
+        accountWorker(ctx, done, result, 'final');
+      } catch (err) {
+        ctx.log.warn('curator cost could not be charged', { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+  }
+  if (!result || timedOut) throw new OrbitError('PROVIDER_UNAVAILABLE', 'the curator timed out');
+  if (result.status !== 'succeeded') {
+    throw new OrbitError(result.status === 'auth_failed' ? 'AUTH_EXPIRED' : 'PROVIDER_UNAVAILABLE', `the curator ended ${result.status}${result.error ? `: ${redact(result.error).slice(0, 200)}` : ''}`);
+  }
+  return { output: result.structured, model, workerId: ctx ? workerId : null };
 }

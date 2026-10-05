@@ -1,0 +1,24 @@
+{
+  "name": "orbit-demo-app",
+  "private": true,
+  "version": "1.0.0",
+  "description": "A small reports app for demonstrating Orbit. Dependency-light: node:http and no framework.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/main.ts",
+    "lint": "tsc --noEmit",
+    "test": "node --test \"tests/unit/*.test.ts\"",
+    "test:ui": "playwright test",
+    "ui:baselines": "playwright test visual -u"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2"
+  }
+}

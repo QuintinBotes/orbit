@@ -319,6 +319,23 @@ describe('adversarial review', () => {
     expect(listWorkers(db, { runId: 'r1' }).map((w) => w.id)).toEqual(['w1']);
   });
 
+  it('plans a curator, and only a curator, on a terminal run; a cancellation request still refuses it', () => {
+    const { db, clock } = setup();
+    for (const state of TERMINAL_STATES) {
+      db.run('UPDATE runs SET state = ? WHERE id = ?', state, 'r1');
+      for (const role of ['planner', 'implementer', 'verifier', 'reviewer', 'inquisitor'] as const) {
+        expect(codeOf(() => planWorker(db, spec(`n-${role}-${state}`, { role }), clock)), `${role} on ${state}`).toBe('TRANSITION_INVALID');
+      }
+      const w = planWorker(db, spec(`cur-${state}`, { role: 'curator' }), clock);
+      expect(w).toMatchObject({ role: 'curator', state: 'PLANNED' });
+      expect(markWorkerRunning(db, w.id, PROC, clock).state).toBe('RUNNING');
+      expect(finishWorker(db, w.id, { state: 'SUCCEEDED' }, clock).state).toBe('SUCCEEDED');
+      expect(codeOf(() => planWorkerRestart(db, w.id, clock)), state).toBe('TRANSITION_INVALID');
+    }
+    db.run('UPDATE runs SET cancel_requested = 1 WHERE id = ?', 'r1');
+    expect(codeOf(() => planWorker(db, spec('cur-cancelled', { role: 'curator' }), clock))).toBe('CANCELLED');
+  });
+
   it('still records and finishes a worker spawned before the cancellation landed, so it can be stopped', () => {
     const { db, clock } = setup();
     planWorker(db, spec('w1'), clock);

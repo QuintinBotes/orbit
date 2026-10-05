@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { systemClock } from '../../../src/core/clock.ts';
-import { killGroup } from '../../../src/core/proc.ts';
+import { isAlive, killGroup } from '../../../src/core/proc.ts';
 import { LAUNCH_FILE } from '../../../src/adapters/supervise.ts';
 import { loadRunContext, repoKey, type ControllerDeps } from '../../../src/controller/context.ts';
 import { Controller } from '../../../src/controller/loop.ts';
@@ -15,7 +15,7 @@ import { acquireLease } from '../../../src/controller/run-store.ts';
 import { step, STEPS } from '../../../src/controller/steps/index.ts';
 import type { StepResult } from '../../../src/controller/steps/common.ts';
 import { ensureWorker, type WorkerRequest } from '../../../src/controller/workers.ts';
-import { listCheckRuns } from '../../../src/evidence/store.ts';
+import { getCheckRun, listCheckRuns } from '../../../src/evidence/store.ts';
 import { listWorkers, planWorker } from '../../../src/storage/workers.ts';
 import { baseScenario, implementMul, labDeps, makeLab, runState, startLabRun, waitFor, writeScenario, type Lab } from './harness.ts';
 
@@ -183,9 +183,13 @@ describe.skipIf(!canStripTypes)('controller: adversarial checks', () => {
     const root = join(l.orbitHome, 'worktrees', repoKey(l.repo), run.id);
     const checkouts = readdirSync(root).filter((n) => n.startsWith('check-'));
     expect(checkouts).toHaveLength(1);
+    groups.push(check.pid!);
     ac.abort(new Error('lease lost'));
     await verifying;
     expect(existsSync(join(root, checkouts[0]!))).toBe(true);
     expect(runState(l, run.id).state).toBe('VERIFYING');
+    // Losing the lease is not a cancellation: the check keeps running, unfinalized, for the next owner to reattach to.
+    expect(getCheckRun(l.db(), check.id).status).toBe('RUNNING');
+    expect(isAlive(check.pid!)).toBe(true);
   }, 90_000);
 });

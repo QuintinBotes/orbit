@@ -63,7 +63,18 @@ export interface RunnerContext {
   checkoutDir: string;
   runDir: string;
   clock: Clock;
+  /**
+   * Cancel: the checks are being cancelled for good (a durable run cancellation, a baseline the caller
+   * abandons). Running checks are signalled, their groups killed, and their rows end CANCELLED.
+   */
   signal?: AbortSignal;
+  /**
+   * Stop supervising: the caller is going away but the run is not cancelled (its lease was lost, the
+   * controller is shutting down, a step watchdog fired). Nothing is killed and no row is finalized:
+   * running checks keep running for the run's next owner, which reattaches to them. Nothing new starts.
+   * The call rejects with a CANCELLED error whose details carry `detached: true`.
+   */
+  detachSignal?: AbortSignal;
   /** Checks running at once. Default 1. */
   parallelism?: number;
   pollMs?: number;
@@ -153,6 +164,10 @@ export async function runCheckSet(ctx: RunnerContext, subject: CheckSubject, def
     for (;;) {
       const i = next++;
       if (i >= defs.length) return;
+      if (detached(ctx)) {
+        errors.push(detachError(ctx));
+        return;
+      }
       if (cancelRequested(ctx)) return;
       try {
         results[i] = await executeCheckGroup(ctx, subject, defs[i]!);
@@ -285,6 +300,16 @@ function definitionForRow(ctx: RunnerContext, subject: CheckSubject, row: CheckR
   return validDefinition(stored, row.checkId);
 }
 
+/** The caller stopped supervising (see RunnerContext.detachSignal); it is not a cancellation. */
+function detached(ctx: Pick<RunnerContext, 'detachSignal'>): boolean {
+  return ctx.detachSignal?.aborted === true;
+}
+
+function detachError(ctx: Pick<RunnerContext, 'detachSignal'>): OrbitError {
+  const why = ctx.detachSignal?.reason instanceof Error ? ctx.detachSignal.reason.message : 'supervision stopped';
+  return new OrbitError('CANCELLED', `check supervision stopped (${why}); running checks are left for the run's next owner to reattach to`, { detached: true });
+}
+
 function cancelRequested(ctx: Pick<RunnerContext, 'db' | 'run' | 'signal'>): boolean {
   if (ctx.signal?.aborted) return true;
   const row = ctx.db.get<{ cancel_requested: number }>('SELECT cancel_requested FROM runs WHERE id = ?', ctx.run.id);
@@ -364,6 +389,7 @@ async function executeCheckGroup(ctx: RunnerContext, subject: CheckSubject, def:
       }
       if (cancelRequested(ctx)) break;
     }
+    if (detached(ctx)) throw detachError(ctx);
     touched = true;
     const root = group[0] ?? null;
     const planned = await launchAttempt(ctx, subject, def, configHash, root?.id ?? null);
@@ -547,14 +573,14 @@ async function assertCheckoutUnmodified(dir: string, nextCheck: string): Promise
 // supervising
 
 function sleepOrAbort(ctx: RunnerContext, ms: number): Promise<void> {
-  const sig = ctx.signal;
-  if (!sig) return ctx.clock.sleep(ms);
-  if (sig.aborted) return Promise.resolve();
+  const sigs = [ctx.signal, ctx.detachSignal].filter((x): x is AbortSignal => x !== undefined);
+  if (sigs.length === 0) return ctx.clock.sleep(ms);
+  if (sigs.some((x) => x.aborted)) return Promise.resolve();
   return new Promise<void>((done) => {
     const onAbort = () => done();
-    sig.addEventListener('abort', onAbort, { once: true });
+    for (const x of sigs) x.addEventListener('abort', onAbort, { once: true });
     void ctx.clock.sleep(ms).then(() => {
-      sig.removeEventListener('abort', onAbort);
+      for (const x of sigs) x.removeEventListener('abort', onAbort);
       done();
     });
   });
@@ -598,11 +624,18 @@ async function superviseAttempt(ctx: RunnerContext, subject: CheckSubject, def: 
   const backstop = row.startedAt + def.timeout_seconds * 1000 + grace * 2 + 2_000;
   let cancelSentAt: number | null = null;
   let checkedIdentity = false;
+  let detachedHere = false;
 
   try {
     for (;;) {
       const exit = readJsonFile<ShimExit>(shimPath(dirs.checkDir, 'exit'));
       if (exit && (token === null || exit.token === token)) return finalize(ctx, def, row, dirs, exit, null);
+      // Stop supervising, not cancel: the process and its row are left exactly as they are for the next owner.
+      // A cancellation already under way is finished first, since that one must end in a recorded outcome.
+      if (cancelSentAt === null && detached(ctx) && !cancelRequested(ctx)) {
+        detachedHere = true;
+        throw detachError(ctx);
+      }
 
       const shim = readShim(dirs.checkDir, token);
       const now = ctx.clock.now();
@@ -650,7 +683,8 @@ async function superviseAttempt(ctx: RunnerContext, subject: CheckSubject, def: 
       await sleepOrAbort(ctx, poll);
     }
   } finally {
-    wrapped?.cleanup();
+    // Cleanup of a wrapper can stop what it wraps (a container is removed); a detached check must keep running.
+    if (!detachedHere) wrapped?.cleanup();
   }
 }
 

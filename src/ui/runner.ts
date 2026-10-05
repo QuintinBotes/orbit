@@ -286,11 +286,12 @@ export function toEvidenceUi(result: UiRunResult): UiEvidenceEntry[] {
   const runStatus = result.verdict === 'TIMEOUT' ? 'TIMEOUT' : result.verdict === 'CANCELLED' ? 'CANCELLED' : result.verdict === 'ERROR' ? 'ERROR' : null;
   const entries: UiEvidenceEntry[] = result.journeys.map((j) => ({
     journey: j.id,
+    checkId: j.checkId,
     status: runStatus ?? (j.status === 'PASSED' || j.status === 'FLAKY' ? 'PASSED' : j.status === 'TIMED_OUT' ? 'TIMEOUT' : j.status === 'INTERRUPTED' ? 'CANCELLED' : 'FAILED'),
     artifacts: j.artifacts.map((a) => a.path),
   }));
   if (result.verdict !== 'PASS' && entries.every((e) => e.status === 'PASSED')) {
-    entries.push({ journey: UI_RUN_ENTRY, status: runStatus ?? 'FAILED', artifacts: [...result.visualBaselineChanges, ...result.a11yBaselineChanges] });
+    entries.push({ journey: UI_RUN_ENTRY, ...(result.checks[0] ? { checkId: result.checks[0].checkId } : {}), status: runStatus ?? 'FAILED', artifacts: [...result.visualBaselineChanges, ...result.a11yBaselineChanges] });
   }
   return entries;
 }

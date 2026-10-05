@@ -1,0 +1,15 @@
+:root { color-scheme: light; }
+body { font-family: Arial, Helvetica, sans-serif; margin: 0; background: #ffffff; color: #1a1a1a; }
+main { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+h1 { font-size: 1.8rem; margin: 0 0 16px; }
+.toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+select, input, button { font-size: 1rem; padding: 6px 10px; }
+button { background: #0b5cad; color: #ffffff; border: 0; border-radius: 4px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px; border-bottom: 1px solid #d0d0d0; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+#summary, #totals { margin: 12px 0; }
+.pager { display: flex; gap: 16px; align-items: center; margin-top: 16px; }
+.pager a { color: #0b5cad; }
+.pager span[aria-disabled="true"] { color: #595959; }
+@media (max-width: 480px) { table { font-size: 0.85rem; } th, td { padding: 6px 4px; } }

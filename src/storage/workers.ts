@@ -24,7 +24,8 @@ import { appendEvent } from './events.ts';
  * a worker atomically.
  *
  * Planning (or re-planning) a worker is new work for the run, so it is refused
- * once the run has a durable cancellation request or has ended, checked in the
+ * once the run has a durable cancellation request or has ended (the end-of-run
+ * curator, and only that role, may still be planned on an ended run), checked in the
  * same transaction as the insert: a cancellation that commits after the
  * controller last read the run still stops the spawn. Recording a process that
  * already exists stays allowed, so it can be stopped.
@@ -158,7 +159,7 @@ export interface NewWorker {
 export function planWorker(db: OrbitDb, input: NewWorker, clock: Clock, actor = 'controller'): WorkerRecord {
   const now = clock.now();
   return db.tx(() => {
-    assertRunAcceptsWork(db, input.runId, input.id);
+    assertRunAcceptsWork(db, input.runId, input.id, input.role === 'curator');
     if (db.get('SELECT 1 AS x FROM workers WHERE id = ?', input.id)) {
       throw new OrbitError('CONCURRENT_UPDATE', `worker ${input.id} already exists`, { workerId: input.id });
     }
@@ -367,13 +368,18 @@ export function planWorkerRestart(db: OrbitDb, id: string, clock: Clock, actor =
   });
 }
 
-function assertRunAcceptsWork(db: OrbitDb, runId: string, workerId: string): void {
+/**
+ * `endOfRun` is true only for the curator (ADR 0002): learning runs after the
+ * terminal transition, as a recorded worker, and is the one role a terminal
+ * run still takes. A durable cancellation request refuses it like any other.
+ */
+function assertRunAcceptsWork(db: OrbitDb, runId: string, workerId: string, endOfRun = false): void {
   const run = db.get<{ state: string; cancel_requested: number }>('SELECT state, cancel_requested FROM runs WHERE id = ?', runId);
   if (!run) throw new OrbitError('NOT_FOUND', `no run ${runId}`);
   if (run.cancel_requested === 1) {
     throw new OrbitError('CANCELLED', `run ${runId} has a durable cancellation request; worker ${workerId} will not be planned`, { runId, workerId });
   }
-  if (TERMINAL_RUN_STATES.has(run.state)) {
+  if (TERMINAL_RUN_STATES.has(run.state) && !endOfRun) {
     throw new OrbitError('TRANSITION_INVALID', `run ${runId} is ${run.state}; it takes no new workers`, { runId, workerId, state: run.state });
   }
 }

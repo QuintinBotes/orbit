@@ -4,7 +4,8 @@
  * row and directory, a restart resumes the newest, and the bound is counted
  * from durable rows rather than from memory.
  */
-import { isOrbitError } from '../../core/errors.ts';
+import { isOrbitError, type OrbitError } from '../../core/errors.ts';
+import { appendEvent } from '../../storage/events.ts';
 import type { TaskResult } from '../../adapters/types.ts';
 import type { WorkerRecord } from '../../storage/workers.ts';
 import type { RunContext } from '../context.ts';
@@ -41,7 +42,7 @@ export async function obtain<T>(ctx: RunContext, opts: ObtainOptions<T>): Promis
   for (;;) {
     const purpose = `${opts.base}#${n}`;
     const fresh = ctx.db.get('SELECT 1 AS x FROM workers WHERE run_id = ? AND purpose = ?', ctx.run.id, purpose) === undefined;
-    if (fresh) opts.beforeStart?.(n);
+    if (fresh && opts.beforeStart) chargeOnce(ctx, purpose, () => opts.beforeStart!(n));
     const st = await ensureWorker(ctx, opts.request(purpose, n));
     if (st.status === 'running') return { ok: false, step: WAIT(`${opts.what} (${st.worker.id}) is running`) };
     const r = st.result;
@@ -58,4 +59,28 @@ export async function obtain<T>(ctx: RunContext, opts: ObtainOptions<T>): Promis
     if (!h.retry) return { ok: false, step: h.result };
     n++;
   }
+}
+
+export const START_CHARGE_EVENT = 'worker.start-charged';
+
+/**
+ * The budget charge for starting a purpose's worker, made at most once. The charge comes before the worker
+ * row exists (a refused charge must leave no intent behind), so a crash between the two would otherwise charge
+ * the same start again on the next pass. The charge and its marker commit together, keyed by the purpose,
+ * which names exactly one worker.
+ */
+export function chargeOnce(ctx: RunContext, purpose: string, charge: () => void): void {
+  const refusal = ctx.db.tx((): OrbitError | null => {
+    if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.purpose') = ? LIMIT 1", ctx.run.id, START_CHARGE_EVENT, purpose)) return null;
+    try {
+      charge();
+    } catch (err) {
+      // Returned, not thrown: the ledger's own record of the refusal must commit.
+      if (isOrbitError(err, 'BUDGET_EXHAUSTED')) return err;
+      throw err;
+    }
+    appendEvent(ctx.db, ctx.run.id, START_CHARGE_EVENT, ctx.ownerId, { purpose }, ctx.clock.now());
+    return null;
+  });
+  if (refusal) throw refusal;
 }

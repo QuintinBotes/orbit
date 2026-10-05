@@ -55,6 +55,30 @@ describe.skipIf(!canStripTypes)('CodexAdapter + shim + fake-codex', () => {
     expect(await a.reportUsage(handle)).toMatchObject({ inputTokens: 1234 });
   });
 
+  it('resolves $CANDIDATE in the scenario from the prompt, so a static scenario can echo the revision under review', async () => {
+    const f = fixture();
+    writeScenario(f, { roles: { reviewer: [{ structured: { ...REVIEW_OUTPUT, candidate_revision: '$CANDIDATE' } }] } });
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const { result } = await run(codex(f), reviewSpec(f, { prompt: `Review candidate.\n- revision: ${sha}\n` }));
+    expect(result.status).toBe('succeeded');
+    expect((result.structured as { candidate_revision: string }).candidate_revision).toBe(sha);
+  });
+
+  it('records the shim pid and start time in launch.json at spawn time and marks the worker environment', async () => {
+    const f = fixture();
+    writeScenario(f, { roles: { reviewer: [{ sleepMs: 1500, structured: REVIEW_OUTPUT }] } });
+    const a = codex(f);
+    const spec = reviewSpec(f);
+    const handle = await a.startTask(spec);
+    const launch = JSON.parse(readFileSync(join(f.workerDir, 'launch.json'), 'utf8')) as { pid?: number; procStart?: string | null; workerId: string };
+    expect(launch.pid).toBe(handle.pid);
+    expect(launch.procStart ?? null).toBe(handle.procStart);
+    expect(typeof launch.pid).toBe('number');
+    expect((await waitFor(() => a.collectResult(handle, spec), 30_000)).status).toBe('succeeded');
+    const call = JSON.parse(readFileSync(f.argvLog, 'utf8').trim()) as { envKeys: string[] };
+    expect(call.envKeys).toContain('ORBIT_WORKER');
+  });
+
   it('classifies invalid JSON at exit 0 as malformed, an auth failure as auth_failed, and SIGINT as cancelled', async () => {
     const f = fixture();
     const a = codex(f);

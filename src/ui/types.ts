@@ -201,6 +201,8 @@ export interface UiRunResult {
 /** The slice of a run the evidence report carries (EvidenceReport.ui). */
 export interface UiEvidenceEntry {
   journey: string;
+  /** The playwright check the journey belongs to, so criteria and required checks can map to it. */
+  checkId?: string;
   status: 'PASSED' | 'FAILED' | 'ERROR' | 'TIMEOUT' | 'CANCELLED';
   artifacts: string[];
 }

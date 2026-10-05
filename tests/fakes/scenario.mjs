@@ -39,6 +39,35 @@ export function loadStep(role, env = process.env) {
   return { scenario, step: step ?? {}, call };
 }
 
+/**
+ * Placeholders a scenario may use in any string of a step (structured output,
+ * edit content, ...), resolved from the prompt the worker was given:
+ *   $CANDIDATE    the candidate commit named by "- revision: <40 hex>" (what a review must echo)
+ *   $FINGERPRINT  the failure fingerprint named by "Failure fingerprint: <id>" (what a repair brief must name)
+ * A placeholder whose value is not in the prompt is left as written.
+ */
+export function promptPlaceholders(prompt) {
+  return {
+    $CANDIDATE: /- revision: ([0-9a-f]{40})/.exec(prompt)?.[1] ?? null,
+    $FINGERPRINT: /Failure fingerprint: (\S+)/.exec(prompt)?.[1] ?? null,
+  };
+}
+
+export function renderPlaceholders(value, prompt) {
+  const map = promptPlaceholders(prompt);
+  const walk = (v) => {
+    if (typeof v === 'string') {
+      let t = v;
+      for (const [k, to] of Object.entries(map)) if (to !== null) t = t.split(k).join(to);
+      return t;
+    }
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
+    return v;
+  };
+  return walk(value);
+}
+
 export function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }

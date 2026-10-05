@@ -23,7 +23,18 @@ export interface CheckDefinition {
   /** Bounded reruns used only to classify flakiness; a flaky pass is disclosed, not clean. */
   flaky_reruns: number;
   kind: 'command' | 'playwright';
+  /**
+   * What the check evidences. Parsed configs always carry it (default 'test';
+   * kind 'playwright' implies 'ui'); it is optional in the type only so
+   * synthesized check definitions and older snapshots read as 'test'. The
+   * controller's static security gate lists the 'sast' checks (sastCheckIds).
+   */
+  category?: CheckCategory;
 }
+
+export type CheckCategory = 'test' | 'lint' | 'typecheck' | 'build' | 'sast' | 'ui' | 'other';
+
+export const CHECK_CATEGORIES: readonly CheckCategory[] = ['test', 'lint', 'typecheck', 'build', 'sast', 'ui', 'other'];
 
 export interface HardLimits {
   implementation_attempts: number;

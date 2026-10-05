@@ -3,7 +3,7 @@ import type { Clock } from '../core/clock.ts';
 import { OrbitError, isOrbitError } from '../core/errors.ts';
 import { appendEvent } from '../storage/events.ts';
 import { transition, getRun, type RunRecord } from '../controller/run-store.ts';
-import type { RunState } from '../core/run-states.ts';
+import { TERMINAL_STATES, type RunState } from '../core/run-states.ts';
 
 /**
  * Recovery has a budget (spec section 14: "Recovery itself has a budget",
@@ -76,6 +76,42 @@ export function spendRecoveryAttempt(db: OrbitDb, runId: string, clock: Clock, o
     return null;
   });
   if (refusal) throw refusal;
+}
+
+/**
+ * What is left of the run's recovery budget: its counter when the budget exists, otherwise the fallback bound
+ * less the attempts recorded so far. What `spendRecoveryAttempt` would allow, read without spending.
+ */
+export function recoveryAttemptsRemaining(db: OrbitDb, runId: string, fallbackMax: number | undefined): number {
+  const row = db.get<{ used: number; allowance: number }>("SELECT used, allowance FROM budget_counters WHERE run_id = ? AND counter = 'recovery_attempts'", runId);
+  if (row) return Math.max(0, row.allowance - row.used);
+  const used = Number(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND type = ?', runId, RECOVERY_ATTEMPT_EVENT)?.n ?? 0);
+  return Math.max(0, (fallbackMax ?? DEFAULT_FALLBACK_RECOVERIES) - used);
+}
+
+/**
+ * End a run whose recovery budget refused a restart: a lost worker that cannot be restarted leaves the stage
+ * without the work it was doing, and resuming it would only crash-loop into the same refusal. EXHAUSTED,
+ * naming the counter. Returns null when the run already ended or a cancellation is pending (CANCELLED wins).
+ */
+export function exhaustRecovery(db: OrbitDb, clock: Clock, input: { runId: string; ownerId: string; why: string }): RunRecord | null {
+  const run = getRun(db, input.runId);
+  if (TERMINAL_STATES.has(run.state) || run.cancelRequested) return null;
+  const reason = `recovery_attempts exhausted: ${input.why}`;
+  return transition(
+    db,
+    {
+      runId: run.id,
+      to: 'EXHAUSTED',
+      ownerId: input.ownerId,
+      reason,
+      actor: input.ownerId,
+      expectedFrom: run.state,
+      data: { counter: 'recovery_attempts', limit: 'recovery_attempts', trigger: input.why },
+      patch: { outcomeReason: reason.slice(0, 2000), outcomeJson: JSON.stringify({ state: 'EXHAUSTED', reason, limit: 'recovery_attempts' }) },
+    },
+    clock,
+  );
 }
 
 export type EnterRecoveryOutcome =

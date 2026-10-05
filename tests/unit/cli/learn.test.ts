@@ -177,13 +177,14 @@ describe('orbit learn overlays and eval', () => {
     expect(r.err).toMatch(/eval_budget_usd is 0/);
   });
 
-  it('says plainly when no replay runner is available instead of faking a result', async () => {
+  it('uses the controller\'s replay runner without an injected one, and says plainly when a case cannot be replayed', async () => {
     const l = lab();
     seed(l);
+    // No injected runner: the command no longer stops with "no replay runner" (exit 7); the seeded run's base revision is not in this repository.
     const r = await l.cli(['learn', 'eval', '--role', 'implementer']);
-    expect(r.code).toBe(7);
-    expect(r.err).toMatch(/no replay runner/);
-    expect(r.err).toMatch(/--metrics/);
+    expect(r.code).toBe(3);
+    expect(r.err).toMatch(/cannot replay at abc123/);
+    expect(r.err).not.toMatch(/no replay runner/);
   });
 
   it('distills a candidate, replays it, and adopts it only when it improves without regression', async () => {

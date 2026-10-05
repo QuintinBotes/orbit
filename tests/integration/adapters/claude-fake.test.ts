@@ -37,6 +37,22 @@ async function collect(a: ClaudeAdapter, handle: Parameters<ClaudeAdapter['colle
 }
 
 describe.skipIf(!canStripTypes)('ClaudeAdapter + shim + fake-claude', () => {
+  it('resolves $CANDIDATE and $FINGERPRINT in the scenario from the prompt, in structured output and edits, and leaves them alone when the prompt has none', async () => {
+    const f = fixture();
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    writeScenario(f, { roles: { implementer: [{ edits: [{ op: 'write', path: 'apps/note.txt', content: 'for $CANDIDATE' }], structured: { ...IMPLEMENTER_OUTPUT, summary: 'rev $CANDIDATE fp $FINGERPRINT' } }] } });
+    const a = adapter();
+    const spec = implementerSpec(f, { prompt: `Review.\n- revision: ${sha}\nFailure fingerprint: fp-test-1\n` });
+    const result = await collect(a, await a.startTask(spec), f);
+    expect(result.status).toBe('succeeded');
+    expect((result.structured as { summary: string }).summary).toBe(`rev ${sha} fp fp-test-1`);
+    expect(readFileSync(join(f.repo, 'apps', 'note.txt'), 'utf8')).toBe(`for ${sha}`);
+
+    archiveAttempt('claude', f.workerDir);
+    const bare = await collect(a, await a.startTask(implementerSpec(f, { prompt: 'No identifiers here.', sessionId: nextSessionId('w1', f.workerDir) })), f);
+    expect((bare.structured as { summary: string }).summary).toBe('rev $CANDIDATE fp $FINGERPRINT');
+  });
+
   it('runs a worker end to end: edits applied, pid and exit files, validated output, usage from modelUsage', async () => {
     const f = fixture();
     writeScenario(f, { roles: { implementer: [{ edits: [{ op: 'replace', path: 'apps/a.ts', find: '1', replace: '2' }], structured: IMPLEMENTER_OUTPUT }] } });
