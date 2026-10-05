@@ -436,3 +436,22 @@ describe('creating and reading runs', () => {
     expect(codeOf(() => getRun(db, 'r1'))).toBe('INTERNAL');
   });
 });
+
+describe('resuming a blocked run', () => {
+  it('clears ended_at and the blocker outcome when the run leaves BLOCKED', async () => {
+    const { openDb } = await import('../../../src/storage/db.ts');
+    const { ManualClock } = await import('../../../src/core/clock.ts');
+    const rs = await import('../../../src/controller/run-store.ts');
+    const db = openDb(':memory:');
+    const clock = new ManualClock();
+    rs.createRun(db, { id: 'rb', repoRoot: '/r', goal: 'g', mode: 'autonomous', policyHash: 'sha256:x', policyPath: '/p' }, clock);
+    rs.acquireLease(db, 'rb', 'o', 60_000, clock);
+    rs.transition(db, { runId: 'rb', to: 'PREFLIGHT', ownerId: 'o', reason: 'start' }, clock);
+    rs.transition(db, { runId: 'rb', to: 'BLOCKED', ownerId: 'o', reason: 'needs decision', patch: { outcomeReason: 'question Q-1 open' } }, clock);
+    expect(rs.getRun(db, 'rb').endedAt).not.toBeNull();
+    const resumed = rs.transition(db, { runId: 'rb', to: 'PREFLIGHT', ownerId: 'o', reason: 'decided' }, clock);
+    expect(resumed.endedAt).toBeNull();
+    expect(resumed.outcomeReason).toBeNull();
+    expect(resumed.resumeState).toBeNull();
+  });
+});

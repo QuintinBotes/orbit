@@ -1,0 +1,713 @@
+/**
+ * `orbit doctor`: every capability a run depends on, each reported pass, warn
+ * or fail with the exact capability that is missing and how to supply it
+ * (spec section 4, and the verified checks in docs/interfaces/). It creates
+ * nothing (an existing state database is only opened, as any command does),
+ * calls no model except with --probe (tiny requests, a few cents), and never
+ * prints a credential or a private term.
+ */
+import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { delimiter, isAbsolute, join, resolve } from 'node:path';
+import { OrbitError } from '../../core/errors.ts';
+import { execCapture } from '../../core/exec.ts';
+import { redact } from '../../core/redact.ts';
+import { defaultConfig, loadConfig } from '../../policy/index.ts';
+import type { OrbitConfig } from '../../policy/types.ts';
+import type { CredentialStatus, ProviderAdapter, ProviderCapabilities } from '../../adapters/types.ts';
+import { CLAUDE_SANDBOX_LIMITATIONS, compareVersions, claudeEnvCredential, createAdapters, providerKind } from '../../adapters/index.ts';
+import { CONTAINER_LIMITATIONS, SRT_LIMITATIONS, getIsolation, noIsolationLimitations } from '../../isolation/index.ts';
+import type { IsolationProvider } from '../../isolation/types.ts';
+import { ModelRegistry, allowMatch } from '../../routing/registry.ts';
+import { selectReviewer } from '../../review/select.ts';
+import { LOGIN_COMMANDS, validateCredentials } from '../../recovery/index.ts';
+import { parseAuthStatus } from '../../delivery/github.ts';
+import { defaultTermsPath, loadPublicationGuard } from '../../guard/publication.ts';
+import { DELIVERY_MODES } from '../../policy/config.ts';
+import { openDb, type OrbitDb } from '../../storage/db.ts';
+import { MIGRATIONS } from '../../storage/schema.ts';
+import { orbitInstallDir, serviceLabel, serviceStatus, stateDbPath } from '../../controller/index.ts';
+import type { Args, OptionSpec } from '../args.ts';
+import { controllers, gitEnv, resolveRepo, type CliContext } from '../context.ts';
+import { EXIT } from '../exit.ts';
+import { ago, json, line, oneLine } from '../io.ts';
+import { lingerState } from './service.ts';
+
+export const DOCTOR_OPTIONS: OptionSpec = {
+  probe: { type: 'boolean', description: 'also make tiny live requests (a few cents): one per provider that has a probe to detect expired or revoked credentials, and one per eligible Claude model' },
+};
+
+export type CheckStatus = 'pass' | 'warn' | 'fail';
+
+export interface DoctorCheck {
+  id: string;
+  area: string;
+  status: CheckStatus;
+  summary: string;
+  details: string[];
+  /** The exact capability that is absent, for warn and fail. */
+  missing: string | null;
+  fix: string | null;
+}
+
+export interface DoctorReport {
+  repo: string | null;
+  ok: boolean;
+  counts: Record<CheckStatus, number>;
+  checks: DoctorCheck[];
+}
+
+const MIN_NODE = '22.16.0';
+const MIN_GIT = '2.31.0';
+
+type Env = Readonly<Record<string, string | undefined>>;
+
+/** First executable named `cmd` on `env.PATH` (or the path itself when it has a slash). */
+export function which(cmd: string, env: Env, cwd = process.cwd()): string | null {
+  const ok = (p: string): boolean => {
+    try {
+      return statSync(p).isFile() && (accessSync(p, constants.X_OK), true);
+    } catch {
+      return false;
+    }
+  };
+  if (cmd.includes('/')) {
+    const p = isAbsolute(cmd) ? cmd : resolve(cwd, cmd);
+    return ok(p) ? p : null;
+  }
+  for (const dir of (env.PATH ?? '').split(delimiter)) {
+    if (!dir) continue;
+    const p = join(dir, cmd);
+    if (ok(p)) return p;
+  }
+  return null;
+}
+
+function pass(id: string, area: string, summary: string, details: string[] = []): DoctorCheck {
+  return { id, area, status: 'pass', summary, details, missing: null, fix: null };
+}
+function warn(id: string, area: string, summary: string, missing: string | null, fix: string | null, details: string[] = []): DoctorCheck {
+  return { id, area, status: 'warn', summary, details, missing, fix };
+}
+function fail(id: string, area: string, summary: string, missing: string | null, fix: string | null, details: string[] = []): DoctorCheck {
+  return { id, area, status: 'fail', summary, details, missing, fix };
+}
+
+interface Probe {
+  ctx: CliContext;
+  repo: string | null;
+  config: OrbitConfig;
+  configLoaded: boolean;
+  live: boolean;
+}
+
+/** Providers' minimal environment: enough for them to find their login, nothing delivery-related. */
+function toolEnv(env: Env): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = {};
+  for (const k of ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'XDG_CONFIG_HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CODEX_API_KEY']) if (env[k] !== undefined) out[k] = env[k];
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+
+function checkNode(): DoctorCheck {
+  const v = process.versions.node;
+  return compareVersions(v, MIN_NODE) >= 0 ? pass('runtime.node', 'runtime', `Node v${v}`) : fail('runtime.node', 'runtime', `Node v${v} is older than ${MIN_NODE}`, `Node >= ${MIN_NODE} (node:sqlite timeout, isTransaction)`, 'install a current Node 22 LTS');
+}
+
+function checkSqlite(): DoctorCheck {
+  let db: OrbitDb | null = null;
+  try {
+    db = openDb(':memory:');
+    db.raw.exec('CREATE VIRTUAL TABLE doctor_fts USING fts5(x)');
+    return pass('runtime.sqlite', 'runtime', 'node:sqlite works and includes FTS5 (the learning layer needs it)');
+  } catch (err) {
+    return fail('runtime.sqlite', 'runtime', `node:sqlite is not usable: ${oneLine(err instanceof Error ? err.message : String(err), 160)}`, 'node:sqlite with FTS5', 'use Node >= 22.16');
+  } finally {
+    db?.close();
+  }
+}
+
+async function checkGit(p: Probe): Promise<DoctorCheck[]> {
+  const { ctx, repo, config } = p;
+  const out: DoctorCheck[] = [];
+  const env = gitEnv(ctx.env);
+  let v;
+  try {
+    v = await execCapture(['git', '--version'], { env, timeoutMs: 15_000 });
+  } catch {
+    return [fail('git.cli', 'git', 'git was not found', 'the git executable on PATH', 'install git (>= 2.31)')];
+  }
+  const ver = /(\d+\.\d+(?:\.\d+)?)/.exec(v.stdout)?.[1] ?? '0';
+  out.push(compareVersions(ver, MIN_GIT) >= 0 ? pass('git.cli', 'git', `git ${ver}`) : warn('git.cli', 'git', `git ${ver} is older than ${MIN_GIT}`, `git >= ${MIN_GIT} (--path-format, worktree repair)`, 'upgrade git'));
+  if (!repo) {
+    out.push(fail('git.repo', 'git', 'not inside a git repository', 'a git repository to run in', 'run from a repository, or pass --repo <dir>'));
+    return out;
+  }
+  const g = (args: string[]) => execCapture(['git', ...args], { cwd: repo, env, timeoutMs: 20_000 });
+  const head = await g(['rev-parse', '--verify', 'HEAD']);
+  if (head.exitCode !== 0) {
+    out.push(fail('git.repo', 'git', `${repo} has no commits`, 'a base revision (at least one commit)', 'make an initial commit'));
+    return out;
+  }
+  const wt = await g(['worktree', 'list', '--porcelain']);
+  const details: string[] = [];
+  const problems: { missing: string; fix: string; severity: CheckStatus }[] = [];
+  if (wt.exitCode !== 0) {
+    problems.push({ missing: 'git worktree support', fix: 'upgrade git (worktrees need git >= 2.5)', severity: 'fail' });
+    details.push(`git worktree list failed: ${oneLine(wt.stderr, 160)}`);
+  }
+  const base = await g(['rev-parse', '--verify', '--quiet', `refs/heads/${config.repository.base_branch}`]);
+  if (base.exitCode !== 0) {
+    problems.push({ missing: `base branch ${config.repository.base_branch}`, fix: `create it, or set repository.base_branch to an existing branch`, severity: 'warn' });
+    details.push(`repository.base_branch "${config.repository.base_branch}" does not exist locally`);
+  }
+  const needsRemote = config.actions.push_task_branch && DELIVERY_MODES.has(config.mode);
+  if (needsRemote) {
+    const rem = await g(['remote', 'get-url', config.repository.remote]);
+    if (rem.exitCode !== 0) {
+      problems.push({ missing: `remote ${config.repository.remote}`, fix: `git remote add ${config.repository.remote} <url>, or choose a mode that does not deliver`, severity: 'warn' });
+      details.push(`delivery pushes task branches but remote "${config.repository.remote}" is not configured`);
+    }
+  }
+  const dirty = await g(['status', '--porcelain=v1', '--untracked-files=normal', '--', '.', ':(exclude).orbit']);
+  if (dirty.stdout.trim() !== '' && !config.repository.allow_dirty_start) {
+    problems.push({ missing: 'a clean working tree', fix: 'commit or stash the changes, or set repository.allow_dirty_start', severity: 'warn' });
+    details.push(`${dirty.stdout.trim().split('\n').length} uncommitted path(s); a run would refuse to start (repository.allow_dirty_start is false)`);
+  }
+  if (problems.length === 0) {
+    out.push(pass('git.repo', 'git', `repository ${repo}; worktrees supported`, details));
+    return out;
+  }
+  const status: CheckStatus = problems.some((x) => x.severity === 'fail') ? 'fail' : 'warn';
+  out.push({ id: 'git.repo', area: 'git', status, summary: `repository ${repo}: missing ${problems.map((x) => x.missing).join(', ')}`, details, missing: problems.map((x) => x.missing).join('; '), fix: problems.map((x) => x.fix).join('; ') });
+  return out;
+}
+
+function checkConfig(p: Probe, error: unknown): DoctorCheck {
+  if (p.configLoaded) return pass('config', 'config', `.orbit/config.yaml is valid (mode ${p.config.mode})`);
+  if (error instanceof OrbitError && error.code === 'NOT_FOUND') return fail('config', 'config', 'no .orbit/config.yaml', 'the repository policy file', 'run "orbit init", then define your checks');
+  const problems = error instanceof OrbitError && Array.isArray(error.details?.problems) ? (error.details.problems as string[]) : [error instanceof Error ? error.message : String(error)];
+  return fail('config', 'config', `configuration is invalid (${problems.length} problem${problems.length === 1 ? '' : 's'})`, 'a valid .orbit/config.yaml', 'fix the problems below; checks use defaults until then', problems.slice(0, 12).map((x) => oneLine(x, 200)));
+}
+
+function checkStorage(p: Probe): DoctorCheck {
+  const { repo } = p;
+  if (!repo) return warn('storage', 'storage', 'no repository, so no state database to check', 'a repository', null);
+  const path = stateDbPath(repo);
+  const dir = join(repo, '.orbit');
+  let db: OrbitDb | null = null;
+  try {
+    if (!existsSync(path)) {
+      // Prove the same properties on a scratch database, without creating anything in the repository.
+      const scratch = mkdtempSync(join(tmpdir(), 'orbit-doctor-'));
+      try {
+        db = openDb(join(scratch, 'probe.sqlite'));
+        const mode = String((db.get<{ journal_mode: string }>('PRAGMA journal_mode') ?? {}).journal_mode);
+        if (mode.toLowerCase() !== 'wal') return fail('storage', 'storage', `SQLite cannot use WAL on this filesystem (journal_mode=${mode})`, 'WAL journaling', 'use a local disk, not a network or container bind mount');
+      } finally {
+        db?.close();
+        db = null;
+        rmSync(scratch, { recursive: true, force: true });
+      }
+      try {
+        accessSync(existsSync(dir) ? dir : repo, constants.W_OK);
+      } catch {
+        return fail('storage', 'storage', `${existsSync(dir) ? dir : repo} is not writable`, 'a writable .orbit directory', 'fix permissions');
+      }
+      return pass('storage', 'storage', 'no state database yet; it will be created in .orbit/ (WAL works, directory writable)');
+    }
+    db = openDb(path);
+    const mode = String((db.get<{ journal_mode: string }>('PRAGMA journal_mode') ?? {}).journal_mode);
+    const version = Number((db.get<{ user_version: number }>('PRAGMA user_version') ?? { user_version: 0 }).user_version);
+    db.tx(() => db!.run('CREATE TEMP TABLE IF NOT EXISTS doctor_probe (x)'));
+    if (mode.toLowerCase() !== 'wal') return warn('storage', 'storage', `${path} is not in WAL mode (journal_mode=${mode})`, 'WAL journaling', 'it is set when Orbit opens the database; check the filesystem');
+    return pass('storage', 'storage', `state database writable, WAL, schema version ${version}/${MIGRATIONS.length}`);
+  } catch (err) {
+    return fail('storage', 'storage', `state database problem: ${oneLine(err instanceof Error ? err.message : String(err), 200)}`, 'a writable, current state.sqlite', 'check file permissions and that Orbit is not older than the database');
+  } finally {
+    db?.close();
+  }
+}
+
+/** The word a configured check runs, resolved without executing anything. */
+function checkWord(check: OrbitConfig['checks'][string]): string | null {
+  if (check.shell) {
+    const first = (check.command[0] ?? '').trim().split(/\s+/).find((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
+    return first ?? null;
+  }
+  return check.command[0] ?? null;
+}
+
+const SHELL_BUILTINS = new Set(['cd', 'export', 'set', 'test', '[', 'true', 'false', 'echo', 'exit', 'exec', ':', 'source', '.', 'eval', 'unset']);
+
+function checkConfiguredChecks(p: Probe): DoctorCheck {
+  const { repo, config, ctx } = p;
+  const entries = Object.values(config.checks);
+  if (entries.length === 0) return warn('checks', 'checks', 'no checks are defined', 'at least one trusted check (a run cannot produce passing evidence without one)', 'define checks in .orbit/config.yaml (see the commented examples)');
+  const details: string[] = [];
+  let status: CheckStatus = 'pass';
+  for (const c of entries) {
+    const cwd = repo ? resolve(repo, c.cwd) : ctx.cwd;
+    const word = checkWord(c);
+    const bump = (s: CheckStatus) => {
+      if (s === 'fail' || (s === 'warn' && status === 'pass')) status = s;
+    };
+    const level: CheckStatus = c.mandatory ? 'fail' : 'warn';
+    if (!word) {
+      details.push(`${c.id}: has no command`);
+      bump(level);
+      continue;
+    }
+    if (c.shell && SHELL_BUILTINS.has(word)) {
+      details.push(`${c.id}: shell builtin "${word}" (not resolved)`);
+      continue;
+    }
+    const found = which(word, ctx.env, cwd) ?? (repo && !word.includes('/') ? which(join(repo, 'node_modules', '.bin', word), ctx.env) : null);
+    if (!found) {
+      details.push(`${c.id}: "${word}" was not found${c.mandatory ? '' : ' (optional check)'}${c.cwd !== '.' ? ` (cwd ${c.cwd})` : ''}`);
+      bump(level);
+      continue;
+    }
+    // A package-manager script that does not exist is a failure the first run would otherwise discover.
+    const argv = c.shell ? [] : c.command;
+    const pm = ['npm', 'pnpm', 'yarn'].includes(word) ? argv[1] : undefined;
+    const script = pm === 'run' || pm === 'run-script' ? argv[2] : pm === 'test' ? 'test' : undefined;
+    if (script) {
+      const pj = join(cwd, 'package.json');
+      let defined = false;
+      try {
+        defined = typeof (JSON.parse(readFileSync(pj, 'utf8')) as { scripts?: Record<string, string> }).scripts?.[script] === 'string';
+      } catch {
+        defined = false;
+      }
+      if (!defined) {
+        details.push(`${c.id}: ${word} script "${script}" is not defined in ${pj.startsWith(repo ?? '\0') ? pj.slice((repo ?? '').length + 1) : pj}`);
+        bump(level);
+        continue;
+      }
+    }
+    details.push(`${c.id}: ${word} -> ${found}`);
+  }
+  const summary = status === 'pass' ? `${entries.length} check(s) resolve` : `${details.filter((d) => /not found|not defined|no command/.test(d)).length} of ${entries.length} check(s) cannot run`;
+  return status === 'pass' ? pass('checks', 'checks', summary, details) : { id: 'checks', area: 'checks', status, summary, details, missing: 'the executable or script a configured check runs', fix: 'install it, or correct the check in .orbit/config.yaml' };
+}
+
+interface IsolationFacts {
+  provider: IsolationProvider | null;
+  available: boolean;
+}
+
+async function checkIsolation(p: Probe): Promise<{ check: DoctorCheck; facts: IsolationFacts }> {
+  const { config, ctx } = p;
+  let provider: IsolationProvider;
+  try {
+    provider = getIsolation(config.isolation, { orbitInstallDir: orbitInstallDir(), mode: config.mode });
+  } catch (err) {
+    return { check: fail('isolation', 'isolation', oneLine(err instanceof Error ? err.message : String(err), 240), 'an isolation provider permitted for unattended runs', 'set isolation.provider to sandbox-runtime or container'), facts: { provider: null, available: false } };
+  }
+  const st = await provider.available();
+  const limitations =
+    provider.kind === 'sandbox-runtime'
+      ? SRT_LIMITATIONS
+      : provider.kind === 'container'
+        ? CONTAINER_LIMITATIONS
+        : noIsolationLimitations({ writablePaths: [], denyReadPaths: [], allowedHosts: [], limits: { timeoutMs: 0, memoryMb: null, cpus: null, pids: null } });
+  const details = [`provider: ${provider.kind}`, ...limitations.map((l) => `limitation: ${l}`)];
+  if (provider.kind === 'container' && config.isolation.container && st.ok) {
+    const docker = await execCapture(['docker', 'image', 'inspect', '--format', '{{.Id}}', config.isolation.container.image], { env: toolEnv(ctx.env), timeoutMs: 30_000 }).catch(() => null);
+    if (!docker || docker.exitCode !== 0) {
+      return { check: fail('isolation', 'isolation', `container image ${config.isolation.container.image} is not present locally`, `the image ${config.isolation.container.image} (containers run with --pull never)`, `docker pull ${config.isolation.container.image}`, details), facts: { provider, available: false } };
+    }
+  }
+  if (!st.ok) return { check: fail('isolation', 'isolation', `${provider.kind} isolation is unavailable: ${oneLine(st.detail, 200)}`, `${provider.kind} isolation (${provider.kind === 'sandbox-runtime' ? 'the srt binary and Seatbelt or bubblewrap' : 'a running Docker daemon'})`, 'install and start it; Orbit refuses to degrade to less isolation', details), facts: { provider, available: false } };
+  if (provider.kind === 'none') return { check: warn('isolation', 'isolation', `no isolation: workers and checks run with the Orbit user's full permissions (isolation.allow_unisolated)`, 'an isolation provider', 'use sandbox-runtime or container', details), facts: { provider, available: true } };
+  return { check: pass('isolation', 'isolation', `${provider.kind}: ${oneLine(st.detail, 160)}`, details), facts: { provider, available: true } };
+}
+
+interface ProviderFacts {
+  capabilities: Record<string, ProviderCapabilities>;
+  credentials: Record<string, CredentialStatus | undefined>;
+  adapters: Record<string, ProviderAdapter>;
+}
+
+async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegistry): Promise<{ checks: DoctorCheck[]; facts: ProviderFacts }> {
+  const { config, ctx } = p;
+  const checks: DoctorCheck[] = [];
+  const facts: ProviderFacts = { capabilities: {}, credentials: {}, adapters: {} };
+  let adapters: Record<string, ProviderAdapter>;
+  try {
+    adapters = createAdapters(config, { isolation: null, baseEnv: toolEnv(ctx.env), clock: ctx.clock });
+  } catch (err) {
+    return { checks: [fail('providers', 'providers', oneLine(err instanceof Error ? err.message : String(err), 240), 'valid provider settings', 'fix providers in .orbit/config.yaml')], facts };
+  }
+  facts.adapters = adapters;
+  const ids = Object.keys(adapters);
+  const required = new Set<string>(['claude']);
+  if (config.review.independent_provider_required) required.add(config.review.preferred_provider);
+  const caps = await Promise.all(
+    ids.map(async (id) => {
+      try {
+        return await adapters[id]!.discoverCapabilities();
+      } catch (err) {
+        return { provider: id, available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: 'none' as const, costReporting: false, detail: err instanceof Error ? err.message : String(err) };
+      }
+    }),
+  );
+  ids.forEach((id, i) => (facts.capabilities[id] = caps[i]!));
+  const creds = await validateCredentials({ adapters, providers: ids.filter((id) => facts.capabilities[id]!.available), live: p.live, timeoutMs: 90_000 });
+  for (const c of creds) facts.credentials[c.provider] = c.status ?? undefined;
+
+  for (const id of ids) {
+    const cap = facts.capabilities[id]!;
+    const needed = required.has(id);
+    const level = needed ? fail : warn;
+    const kind = providerKind(id);
+    const exe = config.providers[id]!.command;
+    if (!cap.available) {
+      checks.push(level(`${id}.cli`, 'providers', `${id} is not usable: ${oneLine(cap.detail, 200)}`, `the ${kind} CLI (${exe}) on PATH${kind === 'claude' ? ', >= 2.1.284 for Sonnet 5.5' : ''}`, kind === 'claude' ? 'install Claude Code (https://code.claude.com)' : 'install the Codex CLI', needed ? [] : ['not required for this configuration']));
+      continue;
+    }
+    const cliDetails = [`structured output: ${cap.structuredOutput ? 'yes' : 'no'}`, `read-only sandbox: ${cap.readOnlySandbox ? 'yes' : 'no'}`, `usage reporting: ${cap.usageReporting}`, `cost reporting: ${cap.costReporting ? 'yes' : 'no'}`];
+    checks.push(pass(`${id}.cli`, 'providers', `${kind} ${cap.version ?? 'version unknown'} at ${which(exe, ctx.env) ?? exe}`, cliDetails));
+
+    const cred = creds.find((c) => c.provider === id);
+    if (!cred) continue;
+    const st = cred.status;
+    if (cred.verdict === 'blocked' && st) {
+      const alt = kind === 'claude' ? 'or set ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN from "claude setup-token")' : 'or set CODEX_API_KEY';
+      checks.push(level(`${id}.auth`, 'providers', `${id} credentials are ${st.state}: ${oneLine(st.detail, 200)}`, `a working ${kind} credential`, `${LOGIN_COMMANDS[kind] ?? 'log in'} ${alt}`));
+    } else if (cred.verdict === 'error') {
+      checks.push(level(`${id}.auth`, 'providers', `${id} credentials could not be checked: ${cred.error ?? 'unknown error'}`, `a ${kind} credential check`, null));
+    } else if (st) {
+      const subscription = st.method === 'claude.ai' || st.method === 'chatgpt';
+      const detail = [`method: ${st.method ?? 'unknown'}`, oneLine(st.detail, 300)];
+      if (subscription) detail.push('unattended service runs should use API-key authentication (docs/decisions/0003-authentication.md); a subscription login is fine for foreground runs');
+      const summary = cred.verdict === 'valid' ? `${id} credential valid (${st.method ?? 'unknown method'})${cred.live ? ', confirmed by a live request' : ''}` : `${id} credential present (${st.method ?? 'unknown method'}); not verified${p.live ? '' : ' (use --probe for a live check)'}`;
+      checks.push(pass(`${id}.auth`, 'providers', summary, detail));
+    }
+    if (kind === 'claude') {
+      const envCred = claudeEnvCredential(ctx.env);
+      if (iso.available && iso.provider?.kind === 'sandbox-runtime' && envCred) checks.push(pass(`${id}.worker-tier`, 'providers', `workers run in the os-sandbox tier (${envCred} is set, so the whole claude process is confined)`));
+      else {
+        const why = !envCred ? 'no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in the environment (a keychain login is invisible inside srt)' : 'sandbox-runtime isolation is not in use';
+        checks.push(warn(`${id}.worker-tier`, 'providers', `workers run in the claude-sandbox tier: ${why}`, 'an exported Claude credential plus sandbox-runtime for the strongest tier', 'export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)', CLAUDE_SANDBOX_LIMITATIONS.map((l) => `limitation: ${l}`)));
+      }
+    }
+  }
+
+  // Independent review: judged exactly as a run would judge it.
+  if (config.review.independent_provider_required || ids.some((i) => i !== 'claude')) {
+    const sel = selectReviewer({ snapshot: { config }, capabilities: facts.capabilities, credentials: facts.credentials, implementer: { provider: 'claude', model: null }, registry });
+    if (sel.decision === 'SELECT') checks.push(pass('review', 'providers', `independent review: ${sel.provider}/${sel.model ?? 'default'} (${sel.independent ? 'independent' : 'same provider'})`, sel.alternatives.map((a) => `not used: ${a.provider}: ${oneLine(a.reason, 200)}`)));
+    else {
+      const mandatory = config.review.independent_provider_required;
+      const c = (mandatory ? fail : warn)('review', 'providers', `independent review would block: ${oneLine(sel.reason, 300)}`, 'a usable, data-policy-eligible reviewer from another provider', 'log in to the reviewer provider and set providers.<id>.data_policy_eligible: true if sending sanitized code to it is permitted', sel.alternatives.map((a) => `${a.provider}: ${oneLine(a.reason, 200)}`));
+      checks.push(c);
+    }
+  }
+  return { checks, facts };
+}
+
+async function checkModels(p: Probe, registry: ModelRegistry, facts: ProviderFacts): Promise<DoctorCheck> {
+  const { config } = p;
+  const claudeVersion = Object.values(facts.capabilities).find((c) => c.provider === 'claude' || providerKindSafe(c.provider) === 'claude')?.version ?? null;
+  const details: string[] = [];
+  let usable = 0;
+  // --probe: one tiny live request per eligible model, so "eligible" means "answered", not just "allowed".
+  const probe = p.live ? liveProbeOf(facts.adapters.claude) : null;
+  const claudeCred = facts.credentials.claude;
+  const canProbe = probe !== null && claudeCred !== undefined && claudeCred.state !== 'missing' && claudeCred.state !== 'invalid' && claudeCred.state !== 'expired';
+  for (const e of registry.list().filter((m) => m.provider === 'claude')) {
+    const match = allowMatch(e, config.routing.allowed_models);
+    const surface = e.surfaces.find((s) => s.surface === 'claude-cli');
+    const min = e.eligibility.minCliVersion;
+    const reasons: string[] = [];
+    if (match === null) reasons.push('not in routing.allowed_models');
+    else if (match === 'wildcard' && e.eligibility.requiresExplicitPolicy) reasons.push('needs an explicit routing.allowed_models entry');
+    if (surface?.available === false) reasons.push(`unavailable: ${surface.detail ?? 'a check said so'}`);
+    if (min && claudeVersion && compareVersions(claudeVersion, min) < 0) reasons.push(`needs claude >= ${min}, installed ${claudeVersion}`);
+    const state = surface?.available === true ? 'validated' : 'unvalidated (validated on first use, or "orbit models refresh --probe")';
+    if (reasons.length === 0) {
+      usable++;
+      let live = '';
+      if (canProbe) {
+        const st = await probe!({ model: e.eligibility.cliAlias ?? e.modelId, timeoutMs: 90_000 }).catch((err: unknown) => ({ state: 'unknown' as const, method: null, detail: err instanceof Error ? err.message : String(err) }));
+        live = st.state === 'valid' ? '; live probe answered' : `; live probe inconclusive (${st.state}: ${oneLine(st.detail, 120)})`;
+      }
+      details.push(`${e.modelId}: eligible, ${state}${live}`);
+    } else details.push(`${e.modelId}: excluded, ${reasons.join('; ')}`);
+  }
+  if (usable === 0) return fail('models', 'models', 'no allowed Claude model is eligible', 'at least one routing.allowed_models entry that the installed claude CLI can run', 'allow sonnet, opus or haiku in routing.allowed_models and upgrade claude if a minimum version is listed', details);
+  return pass('models', 'models', `${usable} Claude model(s) eligible under the policy`, details);
+}
+
+type LiveProbe = (opts: { model?: string; timeoutMs?: number }) => Promise<CredentialStatus>;
+
+/** The adapter's live probe, looking through a wrapper that exposes the real adapter as `inner` (the fakes). */
+function liveProbeOf(adapter: ProviderAdapter | undefined): LiveProbe | null {
+  for (const candidate of [adapter, (adapter as { inner?: unknown } | undefined)?.inner]) {
+    const fn = (candidate as { probeCredentials?: LiveProbe } | undefined)?.probeCredentials;
+    if (typeof fn === 'function') return (opts) => fn.call(candidate, opts);
+  }
+  return null;
+}
+
+function providerKindSafe(id: string): string | null {
+  try {
+    return providerKind(id);
+  } catch {
+    return null;
+  }
+}
+
+// -- browsers -----------------------------------------------------------------
+
+function playwrightCache(env: Env, home: string, platform: NodeJS.Platform): string {
+  const override = env.PLAYWRIGHT_BROWSERS_PATH;
+  if (override && override !== '0') return override;
+  if (platform === 'darwin') return join(home, 'Library', 'Caches', 'ms-playwright');
+  if (platform === 'win32') return join(env.LOCALAPPDATA ?? join(home, 'AppData', 'Local'), 'ms-playwright');
+  return join(env.XDG_CACHE_HOME ?? join(home, '.cache'), 'ms-playwright');
+}
+
+function checkPlaywright(p: Probe): DoctorCheck {
+  const { config, repo, ctx } = p;
+  const wanted = config.ui !== null || Object.values(config.checks).some((c) => c.kind === 'playwright');
+  if (!wanted) return pass('playwright', 'ui', 'not required: no ui section and no playwright check is configured');
+  const level = fail;
+  if (!repo) return level('playwright', 'ui', 'no repository to look for Playwright in', 'a repository', null);
+  const req = createRequire(join(repo, 'package.json'));
+  let pwTest: string | null = null;
+  try {
+    pwTest = req.resolve('@playwright/test/package.json');
+  } catch {
+    pwTest = null;
+  }
+  if (!pwTest) return level('playwright', 'ui', '@playwright/test is not installed in this repository', '@playwright/test in the repository (a devDependency)', 'npm install -D @playwright/test, then npx playwright install');
+  const details: string[] = [];
+  let core: string | null = null;
+  try {
+    core = req.resolve('playwright-core/package.json');
+  } catch {
+    core = null;
+  }
+  if (!core) return level('playwright', 'ui', 'playwright-core is missing next to @playwright/test', 'playwright-core', 'reinstall dependencies');
+  let revisions: Record<string, string> = {};
+  try {
+    const bj = JSON.parse(readFileSync(join(core, '..', 'browsers.json'), 'utf8')) as { browsers?: { name: string; revision: string }[] };
+    revisions = Object.fromEntries((bj.browsers ?? []).map((b) => [b.name, b.revision]));
+  } catch {
+    details.push('browsers.json could not be read; browser revisions are not checked');
+  }
+  const cache = playwrightCache(ctx.env, ctx.homeDir, ctx.platform);
+  const names = config.ui?.browsers ?? ['chromium'];
+  const missing: string[] = [];
+  for (const b of names) {
+    const dirs = b === 'chromium' ? ['chromium', 'chromium_headless_shell'] : [b];
+    const revs = dirs.map((d) => ({ d, rev: revisions[d] ?? revisions[b] ?? null }));
+    const present = revs.some((r) => (r.rev ? existsSync(join(cache, `${r.d}-${r.rev}`)) : false));
+    details.push(`${b}: ${present ? `installed (${cache})` : `not found in ${cache}`}`);
+    if (!present && revs.some((r) => r.rev)) missing.push(b);
+  }
+  if (config.ui?.accessibility.enabled) {
+    try {
+      req.resolve('@axe-core/playwright/package.json');
+      details.push('@axe-core/playwright: installed');
+    } catch {
+      details.push('@axe-core/playwright: not installed (accessibility scans are enabled in the ui policy)');
+      missing.push('@axe-core/playwright');
+    }
+  }
+  if (missing.length > 0) return level('playwright', 'ui', `missing: ${missing.join(', ')}`, `Playwright browsers/packages: ${missing.join(', ')}`, `npx playwright install ${missing.filter((m) => !m.startsWith('@')).join(' ')}`.trim(), details);
+  return pass('playwright', 'ui', 'Playwright and its browsers are installed', details);
+}
+
+// -- delivery -----------------------------------------------------------------
+
+async function checkDelivery(p: Probe): Promise<DoctorCheck> {
+  const { config, ctx } = p;
+  const delivering = config.delivery.provider === 'github' && DELIVERY_MODES.has(config.mode) && (config.actions.open_pull_request || config.actions.push_task_branch || config.actions.repair_ci);
+  if (!delivering) return pass('delivery', 'delivery', `not required: ${config.delivery.provider === 'fake' ? 'delivery uses the fake provider' : `mode ${config.mode} does not deliver`}`);
+  const gh = which('gh', ctx.env);
+  if (!gh) return fail('delivery', 'delivery', 'the gh CLI was not found', 'the gh executable on PATH', 'install GitHub CLI (https://cli.github.com)');
+  const token = ctx.env.GH_TOKEN;
+  if (!token) return fail('delivery', 'delivery', 'GH_TOKEN is not set for the controller', 'a fine-grained GH_TOKEN scoped to the target repository (delivery refuses a broad keyring login)', 'export GH_TOKEN in the environment the controller or service runs in');
+  const env: Record<string, string | undefined> = { ...toolEnv(ctx.env), GH_TOKEN: token, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1' };
+  const r = await execCapture([gh, 'auth', 'status', '--json', 'hosts'], { env, timeoutMs: 30_000 }).catch((err: unknown) => err as Error);
+  if (r instanceof Error) return fail('delivery', 'delivery', `gh could not run: ${oneLine(r.message, 160)}`, 'a working gh CLI', null);
+  if (r.exitCode !== 0) return fail('delivery', 'delivery', `gh auth status failed: ${oneLine(redact(`${r.stderr}${r.stdout}`), 200)}`, 'a valid GitHub credential', 'gh auth login, or export a valid GH_TOKEN');
+  try {
+    const st = parseAuthStatus(r.stdout, 'github.com', true);
+    if (!st.ok) return fail('delivery', 'delivery', `GitHub credential is not usable: ${st.error ?? 'unknown'}`, 'a valid GH_TOKEN', 'export a valid fine-grained GH_TOKEN');
+    return pass('delivery', 'delivery', `gh authenticated as ${st.login ?? 'unknown'} via ${st.tokenSource ?? 'unknown'}`, [`scopes: ${st.scopes ?? 'not reported (fine-grained tokens carry repository permissions instead)'}`]);
+  } catch (err) {
+    return warn('delivery', 'delivery', `gh auth status gave an unreadable answer: ${oneLine(err instanceof Error ? err.message : String(err), 160)}`, 'a gh version that supports "auth status --json hosts"', 'upgrade gh');
+  }
+}
+
+function checkGitleaks(p: Probe): DoctorCheck {
+  const found = which('gitleaks', p.ctx.env);
+  return found
+    ? pass('gitleaks', 'security', `gitleaks at ${found} (the secret scan uses Orbit's trusted configuration)`)
+    : warn('gitleaks', 'security', 'gitleaks is not installed; Orbit\'s built-in secret patterns are used and the evidence says so', 'the gitleaks executable (optional)', 'install gitleaks for a stronger secret scan');
+}
+
+// -- service ------------------------------------------------------------------
+
+async function checkService(p: Probe): Promise<DoctorCheck> {
+  const { repo, ctx } = p;
+  if (!repo) return warn('service', 'service', 'no repository, so no service to check', 'a repository', null);
+  if (ctx.platform !== 'darwin' && ctx.platform !== 'linux') return warn('service', 'service', `persistent service is not supported on ${ctx.platform}`, 'launchd (macOS) or systemd --user (Linux)', 'use "orbit run --foreground"');
+  let status;
+  try {
+    status = await serviceStatus(serviceLabel(repo), { platform: ctx.platform, homeDir: ctx.homeDir, uid: ctx.uid, ...(ctx.seams.serviceRunner ? { run: ctx.seams.serviceRunner } : {}) });
+  } catch (err) {
+    return warn('service', 'service', `service status could not be read: ${oneLine(err instanceof Error ? err.message : String(err), 160)}`, 'launchctl or systemctl', null);
+  }
+  const details = [`label: ${status.label}`, `definition: ${status.definitionPath}`];
+  const now = ctx.clock.now();
+  let beat = 'no controller has registered in this repository';
+  let stale = false;
+  let live = false;
+  if (existsSync(stateDbPath(repo))) {
+    let db: OrbitDb | null = null;
+    try {
+      db = openDb(stateDbPath(repo));
+      const all = controllers(db, now, { limit: 5 });
+      live = all.some((c) => c.live);
+      const unstopped = all.filter((c) => c.record.stoppedAt === null);
+      stale = unstopped.length > 0 && !live;
+      if (all.length > 0) beat = all.map((c) => `${c.record.mode} controller pid ${c.record.pid}: heartbeat ${ago(now, c.record.heartbeatAt)}${c.live ? ' (live)' : c.record.stoppedAt ? ' (stopped)' : ' (stale)'}`).join('; ');
+    } catch {
+      beat = 'the state database could not be read';
+    } finally {
+      db?.close();
+    }
+  }
+  details.push(`heartbeat: ${beat}`);
+  const linger = await lingerState(ctx);
+  if (linger === 'no') details.push(`lingering is off for ${ctx.user}: the service stops at logout (loginctl enable-linger ${ctx.user})`);
+  if (!status.installed) return warn('service', 'service', 'no service is installed, so runs only progress while a terminal is attached', 'an installed background service (survives terminal closure and restarts after failure)', 'orbit service install', details);
+  if (status.loaded !== true) return warn('service', 'service', `service installed but ${status.loaded === false ? 'not loaded' : `state unknown (${status.detail})`}`, 'a loaded service', 'orbit service install (reloads it)', details);
+  if (stale) return warn('service', 'service', 'service is loaded but its controller heartbeat is stale', 'a fresh controller heartbeat (it may be wedged or still starting)', `check ${join(ctx.orbitHome, 'logs')}, then orbit service install to restart it`, details);
+  if (linger === 'no') return warn('service', 'service', 'service is loaded; lingering is off', 'systemd lingering', `loginctl enable-linger ${ctx.user}`, details);
+  return pass('service', 'service', live ? 'service loaded and its controller heartbeat is fresh' : 'service loaded; the controller has not published a heartbeat yet', details);
+}
+
+// -- guard --------------------------------------------------------------------
+
+function checkGuard(p: Probe): DoctorCheck {
+  const { config, ctx } = p;
+  const env = { ...ctx.env, HOME: ctx.homeDir };
+  const path = config.guard.terms_file ?? defaultTermsPath(env);
+  const shares = config.knowledge.share_globally;
+  try {
+    const g = loadPublicationGuard(config.guard.terms_file ? { termsPath: config.guard.terms_file, env } : { env });
+    if (g.terms.found) return pass('guard.terms', 'guard', `publish-guard terms file present (${g.terms.terms.length} term(s); never printed)`, [`path: ${g.terms.path}`, ...g.warnings.slice(0, 5)]);
+    return (shares ? fail : warn)('guard.terms', 'guard', `no publish-guard terms file at ${path}`, 'the private-terms file (checked before anything leaves this repository)', shares ? 'create it, or set knowledge.share_globally: false' : 'create it to have private terms checked before publication; Orbit never reads or copies its contents into a repository');
+  } catch (err) {
+    return fail('guard.terms', 'guard', `the publication guard cannot load its terms: ${oneLine(err instanceof Error ? err.message : String(err), 200)}`, 'a readable terms file', 'fix the path or permissions; Orbit refuses to publish without it once it is configured');
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; probe: boolean }): Promise<DoctorReport> {
+  let repo: string | null = null;
+  try {
+    repo = await resolveRepo(ctx, opts.repoFlag);
+  } catch {
+    repo = null;
+  }
+  let config = defaultConfig();
+  let configLoaded = false;
+  let configError: unknown = null;
+  if (repo) {
+    try {
+      config = loadConfig(repo);
+      configLoaded = true;
+    } catch (err) {
+      configError = err;
+    }
+  } else configError = new OrbitError('NOT_FOUND', 'not inside a git repository');
+  const p: Probe = { ctx, repo, config, configLoaded, live: opts.probe };
+
+  const checks: DoctorCheck[] = [];
+  const safely = async (id: string, area: string, fn: () => Promise<DoctorCheck | DoctorCheck[]> | DoctorCheck | DoctorCheck[]): Promise<void> => {
+    try {
+      const r = await fn();
+      checks.push(...(Array.isArray(r) ? r : [r]));
+    } catch (err) {
+      checks.push(fail(id, area, `this check crashed: ${oneLine(err instanceof Error ? err.message : String(err), 200)}`, null, 'report this as an Orbit bug'));
+    }
+  };
+
+  await safely('runtime.node', 'runtime', checkNode);
+  await safely('runtime.sqlite', 'runtime', checkSqlite);
+  await safely('git', 'git', () => checkGit(p));
+  await safely('config', 'config', () => checkConfig(p, configError));
+  await safely('storage', 'storage', () => checkStorage(p));
+  await safely('checks', 'checks', () => checkConfiguredChecks(p));
+
+  let isoFacts: IsolationFacts = { provider: null, available: false };
+  await safely('isolation', 'isolation', async () => {
+    const r = await checkIsolation(p);
+    isoFacts = r.facts;
+    return r.check;
+  });
+
+  // The registry for eligibility: the repository's, if it has one, otherwise the shipped seed in memory.
+  let regDb: OrbitDb | null = null;
+  try {
+    const persisted = repo !== null && existsSync(stateDbPath(repo));
+    regDb = persisted ? openDb(stateDbPath(repo!)) : openDb(':memory:');
+    const registry = new ModelRegistry(regDb, ctx.clock);
+    if (!persisted || registry.list().length === 0) registry.seed();
+    let facts: ProviderFacts = { capabilities: {}, credentials: {}, adapters: {} };
+    await safely('providers', 'providers', async () => {
+      const r = await checkProviders(p, isoFacts, registry);
+      facts = r.facts;
+      return r.checks;
+    });
+    await safely('models', 'models', () => checkModels(p, registry, facts));
+  } catch (err) {
+    checks.push(fail('models', 'models', `the model registry could not be read: ${oneLine(err instanceof Error ? err.message : String(err), 200)}`, 'a readable model registry', null));
+  } finally {
+    regDb?.close();
+  }
+
+  await safely('playwright', 'ui', () => checkPlaywright(p));
+  await safely('delivery', 'delivery', () => checkDelivery(p));
+  await safely('gitleaks', 'security', () => checkGitleaks(p));
+  await safely('service', 'service', () => checkService(p));
+  await safely('guard.terms', 'guard', () => checkGuard(p));
+
+  const counts: Record<CheckStatus, number> = { pass: 0, warn: 0, fail: 0 };
+  for (const c of checks) counts[c.status]++;
+  return { repo, ok: counts.fail === 0, counts, checks };
+}
+
+export async function doctorCommand(args: Args, ctx: CliContext): Promise<number> {
+  args.expect(0);
+  const report = await runDoctor(ctx, { ...(args.str('repo') ? { repoFlag: args.str('repo')! } : {}), probe: args.bool('probe') });
+  if (args.bool('json')) {
+    json(ctx.io, report);
+    return report.ok ? EXIT.OK : EXIT.FAILURE;
+  }
+  line(ctx.io, `orbit doctor${report.repo ? `  (${report.repo})` : ''}`);
+  line(ctx.io);
+  const tag = { pass: 'PASS', warn: 'WARN', fail: 'FAIL' } as const;
+  for (const c of report.checks) {
+    line(ctx.io, `${tag[c.status]}  ${c.id.padEnd(18)} ${c.summary}`);
+    if (c.status !== 'pass') {
+      if (c.missing) line(ctx.io, `      missing: ${c.missing}`);
+      if (c.fix) line(ctx.io, `      fix:     ${c.fix}`);
+    }
+    for (const d of c.details) line(ctx.io, `      ${d}`);
+  }
+  line(ctx.io);
+  line(ctx.io, `${report.counts.pass} passed, ${report.counts.warn} warning(s), ${report.counts.fail} failed`);
+  return report.ok ? EXIT.OK : EXIT.FAILURE;
+}

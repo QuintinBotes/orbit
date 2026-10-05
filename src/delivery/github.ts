@@ -329,7 +329,10 @@ export class GhCliClient implements GitHubClient {
   private readonly timeoutMs: number;
   private readonly baseEnv: Readonly<Record<string, string | undefined>>;
 
-  constructor(private readonly opts: GhCliOptions) {
+  private readonly opts: GhCliOptions;
+
+  constructor(opts: GhCliOptions) {
+    this.opts = opts;
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(opts.repo)) throw new OrbitError('CONFIG_INVALID', `repository ${JSON.stringify(opts.repo)} is not OWNER/REPO`, { definitive: true });
     this.baseEnv = opts.env ?? process.env;
     this.token = this.baseEnv.GH_TOKEN || undefined;
@@ -537,7 +540,11 @@ export interface FakeGitHubOptions {
 }
 
 export class FakeGitHub implements GitHubClient {
-  constructor(private readonly opts: FakeGitHubOptions) {}
+  private readonly opts: FakeGitHubOptions;
+
+  constructor(opts: FakeGitHubOptions) {
+    this.opts = opts;
+  }
 
   // -- test controls
 

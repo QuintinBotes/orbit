@@ -225,10 +225,13 @@ function toOverlay(r: OverlayRow): PromptOverlay {
  * row or its evidence edges.
  */
 export class KnowledgeStore {
-  private constructor(
-    readonly db: OrbitDb,
-    readonly clock: Clock,
-  ) {}
+  readonly db: OrbitDb;
+  readonly clock: Clock;
+
+  private constructor(db: OrbitDb, clock: Clock) {
+    this.db = db;
+    this.clock = clock;
+  }
 
   static open(path: string, options: { clock?: Clock; busyTimeoutMs?: number } = {}): KnowledgeStore {
     return new KnowledgeStore(openKnowledgeDb(path, options.busyTimeoutMs === undefined ? {} : { busyTimeoutMs: options.busyTimeoutMs }), options.clock ?? systemClock);

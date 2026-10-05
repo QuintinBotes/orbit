@@ -168,12 +168,15 @@ export class ActionLedger {
   private readonly maxAttempts: number;
   private readonly actor: string;
 
-  constructor(
-    /** Public so delivery can re-read the recorded evidence bindings in the same database. */
-    readonly db: OrbitDb,
-    private readonly clock: Clock,
-    private readonly opts: LedgerOptions = {},
-  ) {
+  /** Public so delivery can re-read the recorded evidence bindings in the same database. */
+  readonly db: OrbitDb;
+  private readonly clock: Clock;
+  private readonly opts: LedgerOptions;
+
+  constructor(db: OrbitDb, clock: Clock, opts: LedgerOptions = {}) {
+    this.db = db;
+    this.clock = clock;
+    this.opts = opts;
     this.maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
     this.actor = opts.actor ?? 'delivery';
     if (!Number.isInteger(this.maxAttempts) || this.maxAttempts < 1) throw new OrbitError('INTERNAL', 'maxAttempts must be a positive integer');

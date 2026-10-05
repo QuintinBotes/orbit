@@ -216,6 +216,12 @@ export function transition(db: OrbitDb, req: TransitionRequest, clock: Clock): R
       sets.push('ended_at = ?');
       params.push(now);
     }
+    // Resuming a BLOCKED run: it is live again, so its end time and blocker outcome no longer apply.
+    if (isTerminal(run.state) && !isTerminal(req.to)) {
+      sets.push('ended_at = NULL');
+      if (!req.patch || !('outcomeReason' in req.patch)) sets.push('outcome_reason = NULL');
+      if (!req.patch || !('outcomeJson' in req.patch)) sets.push('outcome_json = NULL');
+    }
     for (const [key, value] of Object.entries(req.patch ?? {})) {
       const col = PATCH_COLUMNS[key];
       if (!col) throw new OrbitError('INTERNAL', `cannot patch ${key} in a transition`);
