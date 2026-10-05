@@ -148,7 +148,9 @@ providers:
     # The demo app is synthetic and public, so sending its code to Codex for the
     # independent review is allowed. Set this deliberately in your own repository.
     data_policy_eligible: true
-    model: null
+    # The reviewer model, from `codex debug models`. Needs Codex CLI 0.160.0 or later
+    # with a ChatGPT login.
+    model: gpt-6.1-sol
     reasoning_effort: null
     extra_args: []
 

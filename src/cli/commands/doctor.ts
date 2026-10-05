@@ -102,10 +102,14 @@ interface Probe {
   live: boolean;
 }
 
-/** Providers' minimal environment: enough for them to find their login, nothing delivery-related. */
-function toolEnv(env: Env): Record<string, string | undefined> {
+/**
+ * Providers' minimal environment: enough for them to find their login, nothing delivery-related.
+ * USER and LOGNAME are required on macOS: without them a keychain (subscription) login reads as
+ * logged out, so doctor would report missing credentials for a user who is signed in.
+ */
+export function toolEnv(env: Env): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
-  for (const k of ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'XDG_CONFIG_HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CODEX_API_KEY']) if (env[k] !== undefined) out[k] = env[k];
+  for (const k of ['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TMPDIR', 'XDG_CONFIG_HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CODEX_API_KEY']) if (env[k] !== undefined) out[k] = env[k];
   return out;
 }
 

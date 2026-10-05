@@ -78,10 +78,13 @@ export async function modelsListCommand(args: Args, ctx: CliContext): Promise<nu
   }
 }
 
-/** The environment a provider CLI is started with when Orbit only asks it a question: no repository, no delivery credentials. */
-function probeEnv(env: Readonly<Record<string, string | undefined>>): Record<string, string | undefined> {
+/**
+ * The environment a provider CLI is started with when Orbit only asks it a question: no repository, no delivery
+ * credentials. USER and LOGNAME let a macOS keychain login be found (see doctor's toolEnv).
+ */
+export function probeEnv(env: Readonly<Record<string, string | undefined>>): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
-  for (const k of ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'CODEX_HOME', 'CODEX_API_KEY', 'CLAUDE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']) if (env[k] !== undefined) out[k] = env[k];
+  for (const k of ['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TMPDIR', 'CODEX_HOME', 'CODEX_API_KEY', 'CLAUDE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']) if (env[k] !== undefined) out[k] = env[k];
   return out;
 }
 

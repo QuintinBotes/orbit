@@ -55723,7 +55723,7 @@ function fail2(id, area, summary, missing, fix, details = []) {
 }
 function toolEnv(env) {
   const out = {};
-  for (const k of ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "XDG_CONFIG_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CODEX_API_KEY"]) if (env[k] !== void 0) out[k] = env[k];
+  for (const k of ["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "XDG_CONFIG_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CODEX_API_KEY"]) if (env[k] !== void 0) out[k] = env[k];
   return out;
 }
 function checkNode() {
@@ -57129,7 +57129,7 @@ async function modelsListCommand(args, ctx) {
 }
 function probeEnv(env) {
   const out = {};
-  for (const k of ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "CODEX_HOME", "CODEX_API_KEY", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]) if (env[k] !== void 0) out[k] = env[k];
+  for (const k of ["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "CODEX_HOME", "CODEX_API_KEY", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]) if (env[k] !== void 0) out[k] = env[k];
   return out;
 }
 async function modelsRefreshCommand(args, ctx) {
