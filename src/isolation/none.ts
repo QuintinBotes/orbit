@@ -1,6 +1,6 @@
 import type { IsolationLimits } from '../policy/types.ts';
 import { describeLimits, hasLimits, withResourceLimits } from './limits.ts';
-import type { IsolationProvider, SandboxProfile, WrappedCommand } from './types.ts';
+import type { IsolationProvider, SandboxProfile, WrapOptions, WrappedCommand } from './types.ts';
 import { assertArgv } from './util.ts';
 
 export interface NoIsolationOptions {
@@ -28,7 +28,7 @@ export class NoIsolation implements IsolationProvider {
     return { ok: true, detail: 'no isolation: commands run with every permission of the Orbit user' };
   }
 
-  wrap(argv: string[], profile: SandboxProfile, opts: { cwd: string; env: Record<string, string> }): WrappedCommand {
+  wrap(argv: string[], profile: SandboxProfile, opts: WrapOptions): WrappedCommand {
     assertArgv(argv);
     return {
       argv: withResourceLimits(argv, this.opts.limits, { shell: this.opts.limitShell }),

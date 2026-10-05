@@ -35,8 +35,22 @@ export interface WrappedCommand {
   limitations: string[];
 }
 
+export interface WrapOptions {
+  cwd: string;
+  env: Record<string, string>;
+  /**
+   * Absolute paths of files the caller will hand the wrapped command as descriptors 0 to 2, opened for writing
+   * (stdout and stderr appended to a log, as spawnDetached does for an application that must outlive the controller).
+   * Pipes, /dev/null, a descriptor opened read-only and a file the sandbox can already read need nothing. A provider
+   * that confines file access by path must keep these usable: under macOS Seatbelt a descriptor opened for writing on
+   * a path the sandbox may not read fails fstat with EPERM, and node aborts at startup when fstat fails on descriptor
+   * 0, 1 or 2. Naming a file here makes it readable by the command, nothing more; it is never made writable by path.
+   */
+  stdioFiles?: string[];
+}
+
 export interface IsolationProvider {
   readonly kind: 'sandbox-runtime' | 'container' | 'none';
   available(): Promise<{ ok: boolean; detail: string }>;
-  wrap(argv: string[], profile: SandboxProfile, opts: { cwd: string; env: Record<string, string> }): WrappedCommand;
+  wrap(argv: string[], profile: SandboxProfile, opts: WrapOptions): WrappedCommand;
 }

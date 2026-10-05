@@ -14,7 +14,7 @@ import { defaultCheck } from '../policy/config.ts';
 import { compileGlobs } from '../policy/globs.ts';
 import { snapshotHash } from '../policy/snapshot.ts';
 import type { CheckDefinition, PolicySnapshot, UiConfig } from '../policy/types.ts';
-import { assertBaseUrl, startApp, stopApp, type AppHandle } from './app-fixture.ts';
+import { APP_LOG_FILE, assertBaseUrl, startApp, stopApp, type AppHandle } from './app-fixture.ts';
 import { safeBaseEnv } from './env.ts';
 import {
   describeError,
@@ -42,6 +42,7 @@ import type {
   UiJourneyResult,
   UiJourneyStatus,
   UiKeyboardScan,
+  UiNotExecuted,
   UiReproduction,
   UiRunResult,
   UiRunVerdict,
@@ -70,6 +71,8 @@ const SAME_AS_ENFORCED = new Set(['--reporter=json', '--update-snapshots=none', 
 
 /** Bump when the enforced flags change: the version is part of the configuration hash. */
 export const UI_ENFORCEMENT_VERSION = 1;
+/** The run's result, written at the end of runUiChecks into the UI evidence directory. */
+export const UI_RESULT_FILE = 'ui-result.json';
 const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024;
 const MAX_LOG_BYTES = 4 * 1024 * 1024;
 const GIT_ENV_KEYS = ['PATH', 'HOME', 'LANG', 'LC_ALL'];
@@ -142,6 +145,7 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
   const unverified: string[] = [];
   const checkRuns: UiCheckRun[] = [];
   const journeys: UiJourneyResult[] = [];
+  const notExecuted: UiNotExecuted[] = [];
   let terminal: UiRunVerdict | null = null;
   let app: AppHandle | null = null;
   const tmpDir = ensureDir(join(outDir, 'tmp'));
@@ -172,6 +176,7 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
         if (err instanceof OrbitError && (err.code === 'ISOLATION_UNAVAILABLE' || err.code === 'POLICY_DENIED')) throw err;
         terminal = 'ERROR';
         reasons.push(`the application did not start: ${err instanceof Error ? err.message : String(err)}`);
+        notExecuted.push({ stage: 'application', checkId: null, logPath: join(outDir, 'app', APP_LOG_FILE), signal: null });
       }
     } else {
       unverified.push('ui.environment.start_command is not set: the application at base_url was started by something other than Orbit, so its build is not bound to this candidate');
@@ -184,6 +189,7 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
         journeys.push(...run.journeys);
         reasons.push(...run.reasons);
         unverified.push(...run.unverified);
+        if (run.notExecuted) notExecuted.push(run.notExecuted);
         if (run.terminal && terminal === null) terminal = run.terminal;
         if (run.terminal === 'CANCELLED') break;
       }
@@ -273,12 +279,13 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
     consoleErrorCount: journeys.reduce((n, j) => n + (j.diagnostics?.consoleErrors.length ?? 0) + (j.diagnostics?.pageErrors.length ?? 0), 0),
     coverage,
     unverified,
+    notExecuted,
     limitations: [...UI_LIMITATIONS],
     outDir,
     startedAt,
     endedAt: clock.now(),
   };
-  atomicWriteJson(join(outDir, 'ui-result.json'), redactValue(result));
+  atomicWriteJson(join(outDir, UI_RESULT_FILE), redactValue(result));
   return result;
 }
 
@@ -372,6 +379,8 @@ interface CheckOutcome {
   reasons: string[];
   unverified: string[];
   terminal: UiRunVerdict | null;
+  /** Set when the check's Playwright process wrote no report at all. */
+  notExecuted?: UiNotExecuted;
 }
 
 async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
@@ -455,7 +464,8 @@ async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
   }
   if (parsed === null) {
     reasons.push(parseProblem ?? `check ${check.id} produced no Playwright report (exit ${exec.exitCode ?? 'signal'}): ${tail(exec.stderr || exec.stdout)}`);
-    return quiet('ERROR');
+    // A report that exists but cannot be read is the repository's output; no report at all means the process never got that far.
+    return { ...quiet('ERROR'), ...(reportFound ? {} : { notExecuted: { stage: 'journeys' as const, checkId: check.id, logPath, signal: exec.signal } }) };
   }
   if (parsed.errors.length > 0) {
     reasons.push(`Playwright reported global errors in ${check.id}: ${parsed.errors.join('; ')}`);

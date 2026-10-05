@@ -25,6 +25,27 @@
   with `--sandbox read-only` and records that reads are unrestricted. The
   adapter refuses `danger-full-access` in any combination but the `srt` wrapper;
   other isolation providers are no longer wrapped around Codex.
+- The UI application starts under `srt` again (second live finding on the demo
+  app). `startApp` hands the app its log as stdout and stderr, and the log sits
+  in the run's evidence directory, which every profile read-denies. On macOS
+  Seatbelt answers EPERM to `fstat` on a descriptor opened for writing on such
+  a path, and node aborts at startup when `fstat` fails on descriptor 0, 1 or 2
+  (`node::InitializeOncePerProcessInternal`, then `SIGABRT`), so the mandatory
+  UI checks never ran. The isolation providers' `wrap` now takes `stdioFiles`:
+  files the caller hands the command as descriptors; the `srt` provider makes
+  exactly those files readable (never writable) and the app fixture names its
+  log. Egress rules, credential read-denies, the write allowlist and the
+  default limits are unchanged. Unit checks were never affected: the check shim
+  gives the sandboxed command pipes, and workers get an unlinked spill file.
+- A mandatory check that could not execute is an environment failure too: the
+  UI application or a check's process was killed by a crash signal before it
+  printed anything of its own, or the runner could not start the check. The run
+  ends `BLOCKED` at once, through the same path as the failures above, instead
+  of entering the Inquisition and the repair loop (in the live run it repeated
+  the identical tree before blocking). The reason names the check, the cause and
+  the log, and the one way forward that applies (there is no baseline exception
+  for a check that never ran). A check that ran and failed, or an application
+  that threw while loading, keeps the repair loop.
 - Checks may listen on loopback: `local_binding` (default true) on a check
   sets the sandbox's local binding for that check only. Outbound reach is still
   `network_hosts`. The first live run failed the demo app's `unit` check on the

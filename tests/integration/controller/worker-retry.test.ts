@@ -27,7 +27,10 @@ describe.skipIf(!canStripTypes)('controller: worker retry backoff', () => {
     const r = JSON.parse(retries[0]!.data_json) as { base: string; purpose: string; retry: number; delay_ms: number; ceiling_ms: number; not_before: number };
     expect(r).toMatchObject({ base: 'implement:1', purpose: 'implement:1#1', retry: 1 });
     expect(r.delay_ms).toBeLessThanOrEqual(r.ceiling_ms);
-    expect(r.not_before).toBe(retries[0]!.ts + r.delay_ms);
+    // not_before is computed just before the event is appended, so the event is stamped the same millisecond or a few later.
+    const stamped = retries[0]!.ts - (r.not_before - r.delay_ms);
+    expect(stamped).toBeGreaterThanOrEqual(0);
+    expect(stamped).toBeLessThan(1_000);
     const workers = listWorkers(l.db(), { runId: run.id, role: 'implementer' });
     expect(workers.map((w) => [w.purpose, w.attempt, w.resultStatus])).toEqual([
       ['implement:1#1', 1, 'transient_error'],

@@ -5,7 +5,7 @@ import { OrbitError } from '../core/errors.ts';
 import type { IsolationLimits } from '../policy/types.ts';
 import { describeLimits, hasLimits, hasMemoryLimit, withResourceLimits } from './limits.ts';
 import { DEFAULT_MEMORY_SAMPLE_MS, withMemoryWatchdog, type MemoryWatchdogOptions } from './memory.ts';
-import type { IsolationProvider, SandboxProfile, WrappedCommand } from './types.ts';
+import type { IsolationProvider, SandboxProfile, WrapOptions, WrappedCommand } from './types.ts';
 import {
   assertArgv,
   assertRepresentablePath,
@@ -88,6 +88,9 @@ export function normalizeHost(raw: string): string {
  *   ~/.orbit, the git directory under a denied projects directory) is added
  *   to allowRead, since a process that cannot read what it may write cannot
  *   work.
+ * - A stdio file (WrapOptions.stdioFiles) inside a denied region is added to
+ *   allowRead and to nothing else: node aborts at startup when fstat fails on
+ *   a descriptor for a file Seatbelt does not let it read.
  * - A denied path inside a writable path is also write-denied: whatever the
  *   profile says must not be read is trusted or secret, and overwriting it is
  *   worse than reading it.
@@ -97,7 +100,7 @@ export function normalizeHost(raw: string): string {
  *   beats allowWrite whatever their nesting.
  * - No hosts means no network.
  */
-export function buildSrtSettings(profile: SandboxProfile, opts: { extraDenyRead?: string[] } = {}): SrtSettings {
+export function buildSrtSettings(profile: SandboxProfile, opts: { extraDenyRead?: string[]; stdioFiles?: string[] } = {}): SrtSettings {
   const prepare = (paths: string[], what: string) =>
     uniq(
       paths.map((p) => {
@@ -108,8 +111,11 @@ export function buildSrtSettings(profile: SandboxProfile, opts: { extraDenyRead?
   const writable = prepare(profile.writablePaths, 'writable path');
   const denied = prepare([...profile.denyReadPaths, ...(opts.extraDenyRead ?? [])], 'read-denied path');
   const readOnly = prepare(readablePathsOf(profile), 'read-only path');
+  const stdio = prepare(opts.stdioFiles ?? [], 'stdio file');
   const hosts = uniq(profile.allowedHosts.map(normalizeHost));
 
+  const hidden = stdio.find((f) => denied.includes(f));
+  if (hidden) throw new OrbitError('INTERNAL', `${hidden} is both handed to the command as a descriptor and read-denied in one profile`);
   const contradiction = writable.find((w) => denied.includes(w));
   if (contradiction) throw new OrbitError('INTERNAL', `${contradiction} is both writable and read-denied in one profile`);
 
@@ -131,7 +137,9 @@ export function buildSrtSettings(profile: SandboxProfile, opts: { extraDenyRead?
       // Nested denies are kept on purpose: a deny inside a re-allowed path
       // only stays denied if srt sees it as the more specific rule.
       denyRead: denied,
-      allowRead: uniq([...writable, ...readOnly].filter(insideDenied)),
+      // Stdio files are readable and nothing else: a descriptor for a file the sandbox may not read breaks node's
+      // startup (see WrapOptions.stdioFiles), and the descriptor itself needs no write rule.
+      allowRead: uniq([...writable, ...readOnly, ...stdio].filter(insideDenied)),
       allowWrite: withoutNested(writable),
       denyWrite: uniq([...denied.filter((d) => !writable.includes(d)), ...readOnly].filter(insideWritable)),
     },
@@ -266,7 +274,7 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
     return { ok: true, detail: `srt ${version.stdout.trim()} (${srt.source}: ${srt.path}); ${platform.detail}; sandbox probe passed` };
   }
 
-  wrap(argv: string[], profile: SandboxProfile, opts: { cwd: string; env: Record<string, string> }): WrappedCommand {
+  wrap(argv: string[], profile: SandboxProfile, opts: WrapOptions): WrappedCommand {
     assertArgv(argv);
     const precheck = this.platformCheck();
     if (!precheck.ok) throw new OrbitError('ISOLATION_UNAVAILABLE', `sandbox-runtime unavailable: ${precheck.detail}`);
@@ -284,7 +292,7 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
     };
     try {
       // The sandboxed process has no business reading its own policy.
-      const settings = buildSrtSettings(profile, { extraDenyRead: [dir] });
+      const settings = buildSrtSettings(profile, { extraDenyRead: [dir], stdioFiles: opts.stdioFiles });
       const reach = sandboxReach(settings, opts.env.HOME);
       assertLauncherOutOfReach(srt.path, reach);
       const launch = launcherEnv(sandboxEnv(opts.env, settings.filesystem.allowWrite), reach);

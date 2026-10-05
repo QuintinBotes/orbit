@@ -329,6 +329,15 @@ describe('checks that cannot be believed', () => {
     expect((await verdictOf({ signal: true })).reasons[0]).toContain('(exit signal)');
   });
 
+  it('records a journey check whose process wrote no report as not executed, with its log and signal; a report that exists but cannot be read is not', async () => {
+    const killed = await verdictOf({ signal: true });
+    expect(killed.notExecuted).toEqual([{ stage: 'journeys', checkId: 'ui-journeys', logPath: join(killed.outDir, 'ui-journeys', 'run.log'), signal: 'SIGKILL' }]);
+    const exited = await verdictOf({ exitCode: 3, stderr: 'playwright: command not found' });
+    expect(exited.notExecuted).toEqual([{ stage: 'journeys', checkId: 'ui-journeys', logPath: join(exited.outDir, 'ui-journeys', 'run.log'), signal: null }]);
+    expect((await verdictOf({ report: 'not json at all' })).notExecuted).toEqual([]);
+    expect((await verdictOf({ report: report([ok('x')]) })).notExecuted).toEqual([]);
+  });
+
   it('is ERROR when the report cannot be read, has global errors, was written with snapshots updating, or lists no journeys', async () => {
     expect((await verdictOf({ report: 'not json at all' })).reasons[0]).toMatch(/^the Playwright report could not be parsed: /);
     expect((await verdictOf({ report: '[1]' })).reasons[0]).toBe('the Playwright report could not be parsed: Playwright report is not an object');
@@ -429,6 +438,14 @@ describe('starting the application', () => {
     expect(result.reasons[0]).toMatch(/^the application did not start: /);
     expect(fake.apps).toEqual([['definitely-not-a-real-binary-acme']]);
     expect(fake.calls).toHaveLength(0);
+  });
+
+  it('records that the application never ran, with where its log is, so the controller can tell a crash from the application\'s own error', async () => {
+    const p = policy({ ui: (u) => { u.environment.start_command = ['definitely-not-a-real-binary-acme']; } });
+    const c = candidate();
+    const { result } = await run(p, c, () => ({ report: report([ok('x')]) }));
+    expect(result.notExecuted).toEqual([{ stage: 'application', checkId: null, logPath: join(result.outDir, 'app', 'app.log'), signal: null }]);
+    expect(JSON.parse(readFileSync(join(result.outDir, 'ui-result.json'), 'utf8')).notExecuted).toEqual(result.notExecuted);
   });
 
   it('reports a plain failure to start as ERROR, but lets a missing isolation provider or a policy refusal stop the run', async () => {

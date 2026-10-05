@@ -193,6 +193,22 @@ export interface UiBinding extends EvidenceBinding {
   accessibilityFailOn: 'serious,critical' | 'none';
 }
 
+/**
+ * A process the run needed that never got as far as running anything of the repository's: the application under
+ * test (stage `application`), or a journey check whose Playwright process wrote no report (stage `journeys`). The
+ * controller reads the log to tell an environment failure (the process crashed before it printed anything) from
+ * the candidate's own (the application threw), and stops instead of repairing the former.
+ */
+export interface UiNotExecuted {
+  stage: 'application' | 'journeys';
+  /** The journey check, for stage `journeys`. */
+  checkId: string | null;
+  /** The process's output: the application's app.log, or the check's run.log. Always inside the run's evidence directory. */
+  logPath: string;
+  /** The signal that ended the process, when it is known. */
+  signal: string | null;
+}
+
 export interface UiRunResult {
   verdict: UiRunVerdict;
   passed: boolean;
@@ -221,6 +237,8 @@ export interface UiRunResult {
   };
   /** Things the run could not establish, stated rather than implied (feeds EvidenceReport.unverified). */
   unverified: string[];
+  /** Processes that never got as far as running the repository's code; empty when every process the run needed ran. */
+  notExecuted: UiNotExecuted[];
   /** Coverage limits that always apply, such as the limits of automated accessibility scans. */
   limitations: string[];
   outDir: string;

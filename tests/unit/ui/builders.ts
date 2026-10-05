@@ -44,6 +44,7 @@ export function runResult(over: Partial<UiRunResult> = {}): UiRunResult {
     consoleErrorCount: 0,
     coverage: { configuredViewports: [], observedViewports: [], missingViewports: [], configuredBrowsers: [], observedBrowsers: [], missingBrowsers: [] },
     unverified: [],
+    notExecuted: [],
     limitations: ['Automated accessibility scans find only part of the possible problems.'],
     outDir: '/evidence/ui',
     startedAt: 1,

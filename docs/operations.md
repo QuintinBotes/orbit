@@ -259,6 +259,15 @@ are frozen. Approving the baseline exception with `orbit decide <run-id>
 failure is accepted as recorded, and the next verification judges the recorded
 check results under the amended contract.
 
+A run that is `BLOCKED` because a mandatory check could not execute (the UI
+application or a check's process was killed by a crash signal before it printed
+anything, or the runner could not start the check) also spent no repair attempt.
+Its reason names the check, the cause and the log (the application's
+`app.log` under `evidence/<n>/ui/app/`, or the check's log). There is no
+baseline exception to approve, because the check never ran: fix the
+environment (`orbit doctor` checks the isolation provider and its limits) or the
+check definition, then start a new run.
+
 ## Heartbeats and the watchdog
 
 Each controller registers itself and publishes a heartbeat every 5 seconds. A

@@ -7,6 +7,8 @@ export default defineConfig({
     // SQLite files; they share nothing, but they are heavy, so cap the pool.
     maxWorkers: 4,
     testTimeout: 60_000,
+    // Times in expected output are written in UTC; a test that is about local time sets its own zone.
+    env: { TZ: 'UTC' },
     hookTimeout: 60_000,
     coverage: {
       provider: 'v8',

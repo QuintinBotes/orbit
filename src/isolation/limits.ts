@@ -32,6 +32,9 @@ export const LIMIT_SHELLS: readonly string[] = ['/bin/bash', '/usr/bin/bash', '/
 /** argv[0] of the wrapper, shown in process listings and in `$0` errors. */
 export const LIMIT_WRAPPER_NAME = 'orbit-limits';
 
+/** The wrapper's exit status when a limit cannot be read or applied (125: the wrapper itself failed, as env and docker run use it). */
+export const LIMIT_FAILURE_EXIT = 125;
+
 export function hasLimits(limits: IsolationLimits | null | undefined): limits is IsolationLimits {
   return !!limits && (limits.cpu_seconds !== null || limits.max_processes !== null || limits.max_file_mb !== null);
 }
@@ -94,6 +97,13 @@ export function describeLimits(limits: IsolationLimits): string[] {
  * The `ulimit` script. Values are validated integers, never interpolated
  * from anything else, and the command follows as `"$@"`, so nothing of the
  * command is ever parsed by this shell.
+ *
+ * A host whose hard limit is already stricter keeps it: raising a hard limit
+ * is not allowed, and the stricter limit already does what was asked (a macOS
+ * runner's hard process limit is below the default 2048). A limit that cannot
+ * be read or applied exits ${LIMIT_FAILURE_EXIT} with a line on stderr, never 1, so the
+ * failure cannot pass for the command's own answer (a verify_command's exit 1
+ * means "not deployed").
  */
 export function limitScript(limits: IsolationLimits): string {
   const steps: string[] = [];
@@ -101,12 +111,13 @@ export function limitScript(limits: IsolationLimits): string {
     if (!Number.isSafeInteger(v) || v < 1) throw new OrbitError('CONFIG_INVALID', `isolation.limits.${what} must be a positive integer (got ${String(v)})`);
     return v;
   };
-  // Neither -H nor -S: bash sets both, so the command cannot raise the limit back.
-  if (limits.cpu_seconds !== null) steps.push(`ulimit -t ${int(limits.cpu_seconds, 'cpu_seconds')}`);
-  if (limits.max_processes !== null) steps.push(`ulimit -u ${int(limits.max_processes, 'max_processes')}`);
+  // Neither -H nor -S when setting: bash sets both, so the command cannot raise the limit back.
+  if (limits.cpu_seconds !== null) steps.push(`orbit_limit -t ${int(limits.cpu_seconds, 'cpu_seconds')}`);
+  if (limits.max_processes !== null) steps.push(`orbit_limit -u ${int(limits.max_processes, 'max_processes')}`);
   // bash counts -f in 1024-byte blocks outside POSIX mode, which `set +o posix` guarantees.
-  if (limits.max_file_mb !== null) steps.push(`ulimit -f ${int(limits.max_file_mb, 'max_file_mb') * 1024}`);
-  return `set +o posix; ${steps.join(' && ')} && exec "$@"`;
+  if (limits.max_file_mb !== null) steps.push(`orbit_limit -f ${int(limits.max_file_mb, 'max_file_mb') * 1024}`);
+  const fn = `orbit_limit() { h=$(ulimit -H "$1") || { echo "orbit-limits: cannot read ulimit $1" >&2; exit ${LIMIT_FAILURE_EXIT}; }; if [ "$h" = unlimited ] || [ "$h" -gt "$2" ]; then ulimit "$1" "$2" || { echo "orbit-limits: cannot set ulimit $1 $2" >&2; exit ${LIMIT_FAILURE_EXIT}; }; fi; }`;
+  return `set +o posix; ${fn}; ${steps.join(' && ')} && exec "$@"`;
 }
 
 export function findLimitShell(candidates: readonly string[] = LIMIT_SHELLS): string | null {

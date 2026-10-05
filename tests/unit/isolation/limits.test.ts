@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -34,8 +35,10 @@ function code(fn: () => unknown): string | undefined {
 
 describe('resource limit argv (isolation.limits)', () => {
   it('builds a bash ulimit wrapper that sets hard limits and execs the command as "$@"', () => {
-    expect(limitScript(ALL)).toBe('set +o posix; ulimit -t 120 && ulimit -u 256 && ulimit -f 65536 && exec "$@"');
-    expect(limitScript({ ...NONE, max_file_mb: 1 })).toBe('set +o posix; ulimit -f 1024 && exec "$@"');
+    expect(limitScript(ALL)).toMatch(/^set \+o posix; orbit_limit\(\) \{.*\}; orbit_limit -t 120 && orbit_limit -u 256 && orbit_limit -f 65536 && exec "\$@"$/);
+    expect(limitScript({ ...NONE, max_file_mb: 1 })).toMatch(/; orbit_limit -f 1024 && exec "\$@"$/);
+    // Setting uses plain ulimit (soft and hard together), so the command cannot raise a limit back.
+    expect(limitScript(ALL)).toContain('ulimit "$1" "$2"');
     expect(withResourceLimits(['npm', 'test', '--', '$(rm -rf /)'], ALL, { shell: '/bin/bash' })).toEqual([
       '/bin/bash',
       '-c',
@@ -61,6 +64,33 @@ describe('resource limit argv (isolation.limits)', () => {
   it('passes the same limits to docker as --ulimit flags, in bytes for file size', () => {
     expect(dockerUlimitArgs(ALL)).toEqual(['--ulimit', 'cpu=120:120', '--ulimit', 'nproc=256:256', '--ulimit', `fsize=${64 * 1024 * 1024}:${64 * 1024 * 1024}`]);
     expect(dockerUlimitArgs(NONE)).toEqual([]);
+  });
+});
+
+describe('the wrapper under a host that is already stricter (macOS CI runners: hard process limit below 2048)', () => {
+  // Lowers the hard process limit first, as such a host has it, then runs the wrapper.
+  const underHardLimit = (hard: number, limits: IsolationLimits, cmd: string) =>
+    spawnSync('/bin/bash', ['-c', `ulimit -u ${hard} && exec "$@"`, 'host', '/bin/bash', '-c', limitScript(limits), LIMIT_WRAPPER_NAME, '/bin/bash', '-c', cmd], { encoding: 'utf8' });
+
+  it('keeps the stricter host limit and still runs the command', () => {
+    const current = Number(spawnSync('/bin/bash', ['-c', 'ulimit -H -u'], { encoding: 'utf8' }).stdout.trim());
+    const hard = Math.min(current, 1500) - 1;
+    const r = underHardLimit(hard, { ...NONE, max_processes: hard + 500 }, 'ulimit -H -u; exit 0');
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim()).toBe(String(hard));
+  });
+
+  it('still lowers a limit the host allows, and the command cannot raise it back', () => {
+    const r = spawnSync('/bin/bash', ['-c', limitScript({ ...NONE, max_processes: 300 }), LIMIT_WRAPPER_NAME, '/bin/bash', '-c', 'ulimit -H -u; ulimit -u 301 2>/dev/null && echo raised; exit 0'], { encoding: 'utf8' });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim()).toBe('300');
+  });
+
+  it('exits 125 with a message, never 1, when a limit cannot be applied', () => {
+    // A stricter host limit is kept, so the remaining failure is a limit bash cannot read: an unknown flag stands in for it.
+    const r = spawnSync('/bin/bash', ['-c', limitScript({ ...NONE, cpu_seconds: 60 }).replace('orbit_limit -t 60', 'orbit_limit -Z 60'), LIMIT_WRAPPER_NAME, '/bin/bash', '-c', 'exit 0'], { encoding: 'utf8' });
+    expect(r.status).toBe(125);
+    expect(r.stderr).toMatch(/^orbit-limits: /m);
   });
 });
 

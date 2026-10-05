@@ -172,7 +172,11 @@ export async function startApp(opts: StartAppOptions): Promise<AppHandle> {
   // An application under test exists to listen on loopback, so startApp grants allowLocalBinding itself
   // rather than trusting every caller to remember it (a profile without it makes the app fail to bind under srt).
   const profile: SandboxProfile = { ...opts.isolation.profile, allowLocalBinding: true };
-  const wrapped = opts.isolation.provider.wrap(opts.command, profile, { cwd: opts.cwd, env });
+  // The log is handed to the app as its stdout and stderr. It lives in the run's evidence directory, which profiles
+  // read-deny, and a sandboxed node aborts at startup when it holds a descriptor it may not read (WrapOptions.stdioFiles),
+  // so the file exists before the wrap and the provider is told about it.
+  closeSync(openSync(logPath, 'a', 0o600));
+  const wrapped = opts.isolation.provider.wrap(opts.command, profile, { cwd: opts.cwd, env, stdioFiles: [logPath] });
   let spawned: { pid: number; pgid: number };
   try {
     spawned = spawnDetached(wrapped.argv, { cwd: opts.cwd, env: wrapped.env, stdoutPath: logPath, stderrPath: logPath });

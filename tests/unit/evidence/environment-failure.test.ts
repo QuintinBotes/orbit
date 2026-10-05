@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyEnvironmentFailure, type EnvironmentFailureInput } from '../../../src/evidence/environment-failure.ts';
+import { classifyEnvironmentFailure, classifyNotExecuted, type EnvironmentFailureInput } from '../../../src/evidence/environment-failure.ts';
 
 const CHECKOUT = '/orbit/runs/acme/worktrees/check-1';
 const SAME = 'fp:0123456789abcdef';
@@ -115,5 +115,80 @@ describe('classifyEnvironmentFailure: EACCES counts only outside the worktree', 
 
   it('reads "Permission denied" from the shell the same way as EACCES', () => {
     expect(classifyEnvironmentFailure(input('cp: cannot create regular file \'/usr/local/bin/tool\': Permission denied\n'))?.signals).toEqual(['eacces-outside-worktree']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A check that could not execute at all
+
+// What the demo app's log held in the first live run (UI app started under srt): only node's crash report and srt's note.
+const LIVE_ABORT = [
+  '----- Native stack trace -----',
+  '',
+  ' 1: 0x106eb9cf4 node::InitializeOncePerProcessInternal(std::__1::vector<std::__1::basic_string<char>> const&, node::ProcessInitializationFlags::Flags) (.cold.11) [/opt/acme/bin/node]',
+  ' 2: 0x1050acb40 node::InitializeOncePerProcessInternal(std::__1::vector<std::__1::basic_string<char>> const&, node::ProcessInitializationFlags::Flags) [/opt/acme/bin/node]',
+  ' 3: 0x1050ad720 node::Start(int, char**) [/opt/acme/bin/node]',
+  ' 4: 0x192ee3e80 start [/usr/lib/dyld]',
+  'Process killed by signal: SIGABRT',
+  '',
+].join('\n');
+
+describe('classifyNotExecuted: the live crash', () => {
+  it('names a process that died of SIGABRT with nothing but its crash report as an environment cause, with the signal line first and where node was', () => {
+    const f = classifyNotExecuted({ checkId: 'ui', output: LIVE_ABORT });
+    expect(f).toMatchObject({ checkId: 'ui', fingerprint: null, signals: ['process-aborted'] });
+    expect(f!.cause).toMatch(/killed by a fatal signal before it printed anything of its own \(SIGABRT\)/);
+    expect(f!.lines).toEqual(['Process killed by signal: SIGABRT', expect.stringMatching(/^1: 0x106eb9cf4 node::InitializeOncePerProcessInternal/)]);
+  });
+
+  it('reads the signal from the runner when the log has no srt line, and from the check log footer', () => {
+    expect(classifyNotExecuted({ checkId: 'unit', output: '', signal: 'SIGSEGV' })?.cause).toMatch(/\(SIGSEGV\)/);
+    const footer = '[orbit] check=unit status=FAILED exit=SIGABRT\n';
+    expect(classifyNotExecuted({ checkId: 'unit', output: footer })?.cause).toMatch(/\(SIGABRT\)/);
+    // The runner's footer is never the program's own output, so a crash report plus the footer is still a crash before anything ran.
+    expect(classifyNotExecuted({ checkId: 'unit', output: `${LIVE_ABORT}[orbit] check=unit status=FAILED exit=1\n` })?.signals).toEqual(['process-aborted']);
+  });
+
+  it('accepts node\'s own report of process.abort(), which adds a JavaScript section, and a report with no signal named at all', () => {
+    const out = ['----- Native stack trace -----', '', ' 1: 0x104a2eeac node::Abort(v8::FunctionCallbackInfo<v8::Value> const&) [/opt/acme/bin/node]', '----- JavaScript stack trace -----', '', '1: file:///app/main.mjs:3:9', '2: run (node:internal/modules/esm/module_job:343:25)', ''].join('\n');
+    const f = classifyNotExecuted({ checkId: 'ui', output: out });
+    expect(f?.signals).toEqual(['process-aborted']);
+    expect(f?.cause).toBe('the process was killed by a fatal signal before it printed anything of its own');
+  });
+
+  it('reads the colour codes out of the log', () => {
+    expect(classifyNotExecuted({ checkId: 'ui', output: `\u001B[31mProcess killed by signal: SIGBUS\u001B[39m\n` })?.signals).toEqual(['process-aborted']);
+  });
+});
+
+describe('classifyNotExecuted: a process that ran keeps the normal path', () => {
+  it('is null for an application that threw while loading, a failing assertion, a segfault after test output, and an empty log', () => {
+    for (const output of [
+      "SyntaxError: Unexpected token '}'\n    at ModuleLoader.moduleStrategy (node:internal/modules/esm/translators:152:18)\n",
+      'AssertionError [ERR_ASSERTION]: expected 3 to equal 4\n',
+      '12 tests passed\n----- Native stack trace -----\n 1: 0x1 addon::crash() [x]\nProcess killed by signal: SIGSEGV\n',
+      '',
+    ]) {
+      expect(classifyNotExecuted({ checkId: 'ui', output }), output).toBeNull();
+    }
+  });
+
+  it('is null for signals that come from a deadline, a person, the memory watchdog or a configured limit', () => {
+    for (const signal of ['SIGKILL', 'SIGTERM', 'SIGINT', 'SIGXCPU', 'SIGXFSZ']) {
+      expect(classifyNotExecuted({ checkId: 'unit', output: '', signal }), signal).toBeNull();
+      expect(classifyNotExecuted({ checkId: 'unit', output: `Process killed by signal: ${signal}\n` }), signal).toBeNull();
+      expect(classifyNotExecuted({ checkId: 'unit', output: `[orbit] check=unit status=FAILED exit=${signal}\n` }), signal).toBeNull();
+    }
+  });
+});
+
+describe('classifyNotExecuted: a check the runner could not start', () => {
+  it('names it as an environment cause, with the runner\'s own words', () => {
+    const f = classifyNotExecuted({ checkId: 'unit', output: '', startFailure: 'could not start the check: spawn npx ENOENT' });
+    expect(f).toMatchObject({ checkId: 'unit', fingerprint: null, signals: ['start-failed'], cause: 'the check could not be started', lines: ['could not start the check: spawn npx ENOENT'] });
+  });
+
+  it('ignores a blank note', () => {
+    expect(classifyNotExecuted({ checkId: 'unit', output: '', startFailure: '  ' })).toBeNull();
   });
 });

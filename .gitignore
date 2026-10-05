@@ -9,3 +9,8 @@ playwright-report/
 .orbit/runs/
 .orbit/worktrees/
 coverage/
+
+# Written by tools run with HOME unset or set to a literal "~"; never commit them.
+/Library/
+/~/
+/.demo-build/

@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { OrbitError } from '../core/errors.ts';
 import type { IsolationLimits } from '../policy/types.ts';
 import { dockerUlimitArgs } from './limits.ts';
-import type { IsolationProvider, SandboxProfile, WrappedCommand } from './types.ts';
+import type { IsolationProvider, SandboxProfile, WrapOptions, WrappedCommand } from './types.ts';
 import { assertArgv, canonicalPath, isWithin, probeFailure, readablePathsOf, runBounded, uniq, which } from './util.ts';
 
 /**
@@ -119,7 +119,7 @@ export class ContainerIsolation implements IsolationProvider {
     if (pull.code !== 0) throw new OrbitError('ISOLATION_UNAVAILABLE', `could not pull ${this.image} (${probeFailure(pull)})`, { image: this.image });
   }
 
-  wrap(argv: string[], profile: SandboxProfile, opts: { cwd: string; env: Record<string, string> }): ContainerWrappedCommand {
+  wrap(argv: string[], profile: SandboxProfile, opts: WrapOptions): ContainerWrappedCommand {
     assertArgv(argv);
     if (profile.allowedHosts.length > 0) {
       throw new OrbitError(

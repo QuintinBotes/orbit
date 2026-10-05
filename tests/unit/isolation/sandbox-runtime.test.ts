@@ -135,6 +135,38 @@ describe('buildSrtSettings', () => {
     expect(s.filesystem.denyRead).toEqual([]);
   });
 
+  // The live crash: a descriptor handed to the command for a file under a read-denied directory (the app's log under
+  // ~/.orbit) made node abort at startup on macOS (fstat EPERM on fd 1 and 2).
+  it('re-allows reading a stdio file inside a denied region, and nothing else about it', () => {
+    const r = root();
+    const home = join(r, 'home');
+    const log = join(home, '.orbit', 'runs', 'orb-1', 'ui', 'app', 'app.log');
+    const writable = join(r, 'worktree');
+    const s = buildSrtSettings(profile({ writablePaths: [writable], denyReadPaths: [join(home, '.orbit')] }), { stdioFiles: [log] });
+    expect(s.filesystem.denyRead).toEqual([join(home, '.orbit')]);
+    expect(s.filesystem.allowRead).toEqual([log]);
+    // Readable is all it is: no write rule by path (the descriptor is already open), and no write deny either.
+    expect(s.filesystem.allowWrite).toEqual([writable]);
+    expect(s.filesystem.denyWrite).toEqual([]);
+  });
+
+  it('adds nothing for a stdio file the sandbox can already read, and does not write-deny one inside a writable path', () => {
+    const r = root();
+    const writable = join(r, 'worktree');
+    const inside = join(writable, 'app.log');
+    const s = buildSrtSettings(profile({ writablePaths: [writable], denyReadPaths: [join(r, 'secrets')] }), { stdioFiles: [inside, join(r, 'elsewhere', 'out.log')] });
+    expect(s.filesystem.allowRead).toEqual([]);
+    expect(s.filesystem.denyWrite).toEqual([]);
+  });
+
+  it('refuses a stdio file that is itself read-denied or cannot be expressed', () => {
+    const r = root();
+    const log = join(r, 'home', '.ssh', 'id_rsa');
+    expect(codeOf(() => buildSrtSettings(profile({ denyReadPaths: [log] }), { stdioFiles: [log] }))).toBe('INTERNAL');
+    expect(codeOf(() => buildSrtSettings(profile(), { stdioFiles: ['relative.log'] }))).toBe('INTERNAL');
+    expect(codeOf(() => buildSrtSettings(profile(), { stdioFiles: ['/srv/*/app.log'] }))).toBe('ISOLATION_UNAVAILABLE');
+  });
+
   it('refuses a writable path that a read-only path would silently cover', () => {
     const r = root();
     const cfg = join(r, 'cfg');
@@ -202,6 +234,25 @@ describe('SandboxRuntimeIsolation.wrap', () => {
     expect(existsSync(file)).toBe(false);
     expect(readdirSync(settingsDir)).toEqual([]);
     expect(() => w.cleanup()).not.toThrow();
+  });
+
+  it('puts the files handed to the command as stdio into the settings file it writes', () => {
+    const r = root();
+    const { bin, srt, settingsDir } = fakeHost(r);
+    const iso = new SandboxRuntimeIsolation({ srtPath: srt, pathEnv: bin, platform: 'linux', settingsDir });
+    const wt = join(r, 'wt');
+    mkdirSync(wt);
+    const denied = join(r, 'home', '.orbit');
+    const log = join(denied, 'runs', 'orb-1', 'app.log');
+    const p = profile({ writablePaths: [wt], denyReadPaths: [denied] });
+    const w = iso.wrap(['node', 'src/main.ts'], p, { cwd: wt, env: { PATH: '/usr/bin' }, stdioFiles: [log] });
+    const written = JSON.parse(readFileSync(w.argv[2]!, 'utf8'));
+    expect(written.filesystem.allowRead).toEqual([log]);
+    w.cleanup();
+    // Without the option the same profile leaves the log unreadable, which is what broke node's startup.
+    const bare = iso.wrap(['node', 'src/main.ts'], p, { cwd: wt, env: { PATH: '/usr/bin' } });
+    expect(JSON.parse(readFileSync(bare.argv[2]!, 'utf8')).filesystem.allowRead).not.toContain(log);
+    bare.cleanup();
   });
 
   it('carries a private TMPDIR through srt only when the sandbox can write it', () => {

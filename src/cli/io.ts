@@ -37,6 +37,17 @@ export function createIo(stdout: Writable, stderr: Writable, stdin?: Readable): 
 }
 
 /** A capture for tests and for commands that compose other commands. */
+/**
+ * HH:MM:SS in the local time zone, for lines a person reads beside their own clock.
+ * Accepts epoch milliseconds or an ISO string; anything else shows a placeholder.
+ */
+export function clockTime(ts: number | string | undefined | null): string {
+  const ms = typeof ts === 'number' ? ts : typeof ts === 'string' ? Date.parse(ts) : Number.NaN;
+  if (!Number.isFinite(ms)) return '--:--:--';
+  const d = new Date(ms);
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
+}
+
 export function memoryIo(stdin = ''): Io & { stdout: string; stderr: string } {
   const io = {
     stdout: '',

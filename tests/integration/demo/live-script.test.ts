@@ -76,6 +76,9 @@ esac`,
   );
   stub('claude', 'exit 0');
   stub('codex', 'exit 0');
+  // npm ci leaves what a real install would: the package doctor looks for. npx (browser install) is a no-op.
+  stub('npm', `case "$1" in ci) mkdir -p node_modules/@playwright/test && echo '{}' > node_modules/@playwright/test/package.json ;; *) echo "unexpected npm call: $*" >&2; exit 9 ;; esac`);
+  stub('npx', 'exit 0');
   // A stand-in for orbit: doctor passes; run writes a report and prints the token it was given, to prove redaction.
   const orbit = join(base, 'orbit-stub.mjs');
   writeFileSync(
@@ -83,6 +86,7 @@ esac`,
     `import { mkdirSync, writeFileSync } from 'node:fs';
 const [cmd] = process.argv.slice(2);
 if (cmd === 'doctor') { console.log('doctor: all checks passed'); process.exit(0); }
+if (cmd === 'models') { console.log('models: probed'); process.exit(0); }
 if (cmd === 'run') {
   let goal = '';
   for await (const c of process.stdin) goal += c;
@@ -182,6 +186,8 @@ process.exit(10);
     expect(r.code).toBe(1);
     expect(r.stdout).toMatch(/simple: exit 10 \(exit 10\)|simple: .*exit 10/);
     expect(readFileSync(join(out, 'README.md'), 'utf8')).toMatch(/\| simple \| orb-20261005-000000-aaaaaa \| exit 10 \| none \|/);
+    // The stub also fails the model probe: that is a warning, not a reason to skip the runs.
+    expect(r.stdout).toMatch(/warning: the model probe failed \(exit 10\)/);
   }, 120_000);
 
   it('stops before any run when doctor fails', async () => {
@@ -192,5 +198,70 @@ process.exit(10);
     expect(r.stdout).toMatch(/codex is not logged in/);
     expect(r.stdout).not.toMatch(/run should never start/);
     expect(existsSync(join(base, 'reports-doctor'))).toBe(false);
+  }, 120_000);
+  it('installs the dependencies before doctor, also when the repository already exists', async () => {
+    const strict = join(base, 'orbit-doctor-needs-install.mjs');
+    writeFileSync(strict, `import { existsSync } from 'node:fs';
+if (process.argv[2] === 'doctor') {
+  if (!existsSync('node_modules/@playwright/test/package.json')) { console.log('doctor: FAIL @playwright/test is not installed'); process.exit(3); }
+  console.log('doctor: all checks passed'); process.exit(0);
+}
+process.exit(1);
+`);
+    const r = await run(['--repo', 'acme/demo', '--workdir', join(base, 'work4'), '--out', join(base, 'reports-install'), '--yes', '--goals', 'simple', '--orbit', `node ${strict}`], { GH_TOKEN: TOKEN });
+    expect(r.stdout).not.toMatch(/is not installed/);
+    expect(r.stdout).toContain('doctor: all checks passed');
+  }, 120_000);
+  it('validates the models live after doctor and before the first run, so escalation has an eligible target', async () => {
+    const calls = join(base, 'orbit-calls.log');
+    const rec = join(base, 'orbit-recording.mjs');
+    writeFileSync(rec, `import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(calls)}, args.join(' ') + '\\n');
+if (args[0] === 'doctor') { console.log('doctor: all checks passed'); process.exit(0); }
+if (args[0] === 'models') { console.log('probed'); process.exit(0); }
+if (args[0] === 'run') {
+  const id = 'orb-20261005-000000-abcdef';
+  console.log('run ' + id + ' started');
+  mkdirSync('.orbit/runs/' + id, { recursive: true });
+  writeFileSync('.orbit/runs/' + id + '/final.md', '# Orbit run ' + id + ': SUCCEEDED\\n');
+  process.exit(0);
+}
+process.exit(64);
+`);
+    const r = await run(['--repo', 'acme/demo', '--workdir', join(base, 'work5'), '--out', join(base, 'reports-probe'), '--yes', '--goals', 'simple', '--orbit', `node ${rec}`], { GH_TOKEN: TOKEN });
+    expect(r.code, r.stdout + r.stderr).toBe(0);
+    const order = readFileSync(calls, 'utf8').trim().split('\n').map((l) => l.split(' ').slice(0, 3).join(' '));
+    expect(order[0]).toBe('doctor');
+    expect(order[1]).toBe('models refresh --probe');
+    expect(order[2]?.startsWith('run')).toBe(true);
+  }, 120_000);
+  it('passes progress through as it happens, not when the run ends', async () => {
+    const seen = join(base, 'progress-seen');
+    const stub = join(base, 'orbit-progress.mjs');
+    writeFileSync(stub, `import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+const [cmd] = process.argv.slice(2);
+if (cmd !== 'run') process.exit(0);
+console.log('[12:00:00] CREATED -> PREFLIGHT  run started');
+// Wait (up to 10 s) until the test has seen that line on the script's output.
+const until = Date.now() + 10_000;
+while (!existsSync(${JSON.stringify(seen)}) && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+console.log(existsSync(${JSON.stringify(seen)}) ? 'progress: seen while running' : 'progress: not seen while running');
+const id = 'orb-20261005-000000-cccccc';
+console.log('run ' + id + ' started');
+mkdirSync('.orbit/runs/' + id, { recursive: true });
+writeFileSync('.orbit/runs/' + id + '/final.md', '# Orbit run ' + id + ': SUCCEEDED\\n');
+`);
+    const full: NodeJS.ProcessEnv = { PATH: `${bin}${delimiter}${process.env.PATH}`, HOME: base, TMPDIR: base, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${bare}.insteadOf`, GIT_CONFIG_VALUE_0: 'https://github.com/acme/demo.git', GH_TOKEN: TOKEN };
+    const child = spawn('bash', [SCRIPT, '--repo', 'acme/demo', '--workdir', join(base, 'work6'), '--out', join(base, 'reports-progress'), '--yes', '--goals', 'simple', '--orbit', `node ${stub}`], { cwd: base, env: full, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let seenWhileRunning = false;
+    child.stdout.on('data', (d: Buffer) => {
+      out += d.toString();
+      if (!seenWhileRunning && out.includes('CREATED -> PREFLIGHT')) { seenWhileRunning = true; writeFileSync(seen, ''); }
+    });
+    const code = await new Promise<number | null>((resolve) => child.on('close', resolve));
+    expect(code, out).toBe(0);
+    expect(out).toContain('progress: seen while running');
   }, 120_000);
 });

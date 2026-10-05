@@ -14,7 +14,7 @@ import { isTerminal } from '../../controller/states.ts';
 import { listQuestions } from '../../inquisition/store.ts';
 import { liveLease, type CliContext } from '../context.ts';
 import { EXIT, exitCodeForState } from '../exit.ts';
-import { json, line, oneLine } from '../io.ts';
+import { json, line, oneLine, clockTime } from '../io.ts';
 
 interface EventRow {
   id: number;
@@ -30,7 +30,7 @@ interface EventRow {
 const QUIET = /^(lease\.|budget\.)/;
 
 export function formatEvent(e: EventRow): string {
-  const at = new Date(e.ts).toISOString().slice(11, 19);
+  const at = clockTime(e.ts);
   let data: Record<string, unknown> = {};
   try {
     // An event recorded without data is stored as the JSON text "null".

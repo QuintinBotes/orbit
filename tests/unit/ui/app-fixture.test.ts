@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -82,6 +82,25 @@ describe('startApp', () => {
     expect(seen).toEqual([true]);
     // The caller's own object is not modified.
     expect('allowLocalBinding' in plain).toBe(false);
+  });
+
+  it('tells the provider about the log it hands the app as stdout and stderr, and creates it first (a sandboxed node aborts at startup on a descriptor it may not read)', async () => {
+    const seen: { stdioFiles: string[] | undefined; existed: boolean; mode: number }[] = [];
+    const none = new NoIsolation();
+    const recording = {
+      kind: none.kind,
+      available: () => none.available(),
+      wrap: (argv: string[], profile: Parameters<NoIsolation['wrap']>[1], o: Parameters<NoIsolation['wrap']>[2]) => {
+        const file = o.stdioFiles?.[0];
+        seen.push({ stdioFiles: o.stdioFiles, existed: file !== undefined && existsSync(file), mode: file !== undefined && existsSync(file) ? statSync(file).mode & 0o777 : 0 });
+        return none.wrap(argv, profile, o);
+      },
+    };
+    let calls = 0;
+    const h = await startApp(opts({ isolation: { provider: recording, profile: isolation.profile }, probe: async () => (++calls <= 1 ? null : 200) }));
+    await stopApp(h);
+    expect(seen).toEqual([{ stdioFiles: [h.logPath], existed: true, mode: 0o600 }]);
+    expect(h.logPath).toBe(join(dir, 'state', 'app.log'));
   });
 
   it('refuses to test a server it did not start', async () => {

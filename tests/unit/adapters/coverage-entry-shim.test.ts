@@ -60,8 +60,9 @@ async function until(cond: () => boolean, ms = 10_000): Promise<void> {
 }
 
 /** A provider that ends on SIGINT and SIGTERM only when `quitOn` says so, and otherwise ignores them. */
-const stubborn = `process.on('SIGINT',()=>{});process.on('SIGTERM',()=>{});setInterval(()=>{},1000);console.log('up')`;
-const polite = `process.on('SIGINT',()=>process.exit(0));process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);console.log('up')`;
+/** Readiness is a marker file the provider writes itself: the shim copies the provider's output into the log from its own event loop, which waitForUp holds still. */
+const stubborn = `process.on('SIGINT',()=>{});process.on('SIGTERM',()=>{});setInterval(()=>{},1000);process.env.ORBIT_TEST_READY&&require('node:fs').writeFileSync(process.env.ORBIT_TEST_READY,'1');console.log('up')`;
+const polite = `process.on('SIGINT',()=>process.exit(0));process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);process.env.ORBIT_TEST_READY&&require('node:fs').writeFileSync(process.env.ORBIT_TEST_READY,'1');console.log('up')`;
 const plain = `setInterval(()=>{},1000)`;
 
 interface Rig {
@@ -77,19 +78,23 @@ interface Rig {
   run(over?: Partial<ShimOptions> & { argv?: string[] }): Promise<ExitRecord>;
 }
 
+const READY_FILE = '.ready';
+const READY_ENV = 'ORBIT_TEST_READY';
+
 /**
- * Block until the provider has printed its readiness line. A signal sent before a provider installed its
- * handlers would end it by the default action, so a stubborn or polite provider would race its own start-up
- * under load. Blocking here is safe: the provider is another process, and the shim is paused only for the wait.
+ * Block until the provider has installed its handlers and written its readiness marker. A signal sent before
+ * that would end it by the default action, so a stubborn or polite provider would race its own start-up under
+ * load. Blocking here is safe: the provider is another process and writes the marker itself. It must not wait
+ * on the log: the shim moves provider output into the log from its own event loop, which this wait holds still.
  */
 function waitForUp(dir: string, ms = 20_000): void {
   const end = Date.now() + ms;
   const cell = new Int32Array(new SharedArrayBuffer(4));
   while (Date.now() < end) {
     try {
-      if (readFileSync(join(dir, LOG_FILE), 'utf8').includes('up')) return;
+      if (existsSync(join(dir, READY_FILE))) return;
     } catch {
-      /* the log is created a moment after the shim starts */
+      /* nothing to read yet */
     }
     Atomics.wait(cell, 0, 0, 5);
   }
@@ -135,7 +140,7 @@ function rig(behaviour: { throwOn?: string[]; echoSelf?: boolean; pgid?: number 
     run(over = {}) {
       const { argv = [NODE, '-e', 'process.exit(0)'], ...rest } = over;
       r.awaitsUp = argv.some((a) => a.includes("console.log('up')"));
-      return runShim({ workerDir: dir, argv, env: { PATH: process.env.PATH }, cwd: dir, timeoutMs: 0, graceMs: 50, host: r.host, ...rest });
+      return runShim({ workerDir: dir, argv, env: { PATH: process.env.PATH, [READY_ENV]: join(dir, READY_FILE) }, cwd: dir, timeoutMs: 0, graceMs: 50, host: r.host, ...rest });
     },
   };
   return r;
@@ -614,7 +619,8 @@ describe('process group helpers', () => {
     process.env.PATH = '';
     try {
       expect(groupMembers(1)).toEqual([]);
-      expect(readPgid(process.pid)).toBeNull();
+      // The linux branch reads /proc and never runs ps, so ask for the ps branch explicitly.
+      expect(readPgid(process.pid, { platform: 'darwin' })).toBeNull();
     } finally {
       process.env.PATH = saved;
     }

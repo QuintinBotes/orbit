@@ -5,6 +5,7 @@
 // BLOCKED before the repair loop, naming the check, the cause and the two ways forward. A plain pre-existing code failure
 // keeps the repair loop.
 import { afterEach, describe, expect, it } from 'vitest';
+import { defaultCheck, defaultUi } from '../../../src/policy/config.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { systemClock } from '../../../src/core/clock.ts';
@@ -14,7 +15,7 @@ import { listEvidenceReports } from '../../../src/evidence/store.ts';
 import { answerQuestion } from '../../../src/inquisition/questions.ts';
 import { listQuestions } from '../../../src/inquisition/store.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
-import { baseScenario, DIAGNOSIS, implementMul, labDeps, makeLab, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
+import { baseScenario, DIAGNOSIS, implementMul, PLANNER_OUTPUT, labDeps, makeLab, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
 
 const canStripTypes = Boolean((process as unknown as { features?: { typescript?: unknown } }).features?.typescript);
 
@@ -147,4 +148,115 @@ describe.skipIf(!canStripTypes)('controller: environment failures are not repair
     expect(reports.at(-1)?.verdict).toBe('PASS');
     expect(reports.at(-1)?.report.unverified.join('\n')).toMatch(/baseline exception; accepted/);
   }, 240_000);
+});
+
+// The first live run on the demo app, second finding: the UI app fixture crashed at start (the app aborted under the
+// sandbox), so the mandatory UI check could not execute at all. The unit check passed and the evidence was INCOMPLETE.
+// The implementer had claimed the journeys passed, which the controller had no result for, so the run went to the
+// Inquisition and the repair loop and repeated the identical tree before it blocked. A mandatory check that could not
+// execute because of the environment now ends the run BLOCKED at once, through the same path as the failures above.
+const NATIVE_ABORT = 'process.abort();\n';
+const THROWING_APP = "throw new SyntaxError('Unexpected token } in tools/app-throws.mjs');\n";
+
+/** The planner also commits to a mandatory UI criterion proven by the `ui` journey check, which the contract's required checks do not list. */
+function withUiCriterion(scenario: object): object {
+  const s = scenario as { roles: { planner: { structured: typeof PLANNER_OUTPUT }[] } };
+  const plan = s.roles.planner[0]!.structured;
+  const criterion = { key: 'ui', statement: 'The calculator page shows the product of 2 and 3 as 6.', mandatory: true, ui: true, proof: ['journeys/mul.spec.ts asserts the page shows 6'], check_ids: ['ui'], changes: [{ path: 'apps/calc.mjs', summary: 'add mul' }] };
+  return { ...s, roles: { ...s.roles, planner: [{ structured: { ...plan, criteria: [...plan.criteria, criterion] } }] } };
+}
+
+/** The implementer says it ran the journeys and they pass, which the controller has no result for: an unsupported claim that opens an inquiry. */
+function implementClaimingUi(): object {
+  const claim = {
+    checks_run: [{ check_id: 'ui', command: 'npx --no-install playwright test', claimed_result: 'passed', note: 'ran the journeys in my own session' }],
+    evidence_refs: [{ criterion_id: 'AC-2', ref: 'journeys/mul.spec.ts', note: 'the journey passes in my session' }],
+  };
+  const mul = implementMul('*') as { edits: object[]; structured: object };
+  return { ...mul, structured: { ...mul.structured, ...claim } };
+}
+
+function uiLab(appFile: string, appSource: string): Lab {
+  return lab({
+    files: { [appFile]: appSource },
+    tweak: (c) => {
+      c.checks.ui = { ...defaultCheck('ui'), command: ['npx', '--no-install', 'playwright', 'test'], kind: 'playwright', mandatory: true, timeout_seconds: 120 };
+      c.ui = {
+        ...defaultUi(),
+        ui_paths: ['apps/**'],
+        required_when_ui_changes: true,
+        environment: { base_url: 'http://127.0.0.1:4399', start_command: [process.execPath, appFile], ready_timeout_seconds: 20, isolated_test_data: true, production_accounts: false },
+        journey_check_ids: ['ui'],
+      };
+    },
+  });
+}
+
+describe.skipIf(!canStripTypes)('controller: a check that could not execute is an environment failure', () => {
+  it('the live sequence: the UI app aborts at start, the mandatory UI check never runs, and the run ends BLOCKED after zero repair attempts', async () => {
+    const l = uiLab('tools/app-abort.mjs', NATIVE_ABORT);
+    writeScenario(l, withUiCriterion(baseScenario({ implementer: [implementClaimingUi(), implementClaimingUi(), implementClaimingUi()], verifier: [DIAGNOSIS] })));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
+    const reason = done.outcomeReason ?? '';
+    expect(reason).toMatch(/^check ui could not execute on candidate 1, and the output shows an environment cause, not a defect in the change/);
+    expect(reason).toMatch(/killed by a fatal signal before it printed anything of its own/);
+    expect(reason).toContain('app.log');
+    expect(reason).toMatch(/no repair attempt was spent/);
+    expect(reason).toMatch(/fix the environment \(orbit doctor checks the isolation provider and its limits\) or the check definition and start a new run/);
+
+    // Straight from the first verification to BLOCKED: no inquiry, no diagnosis, no repair, no second implementation, no brief.
+    const path = transitions(l, run.id);
+    expect(path).toEqual(['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING', 'VERIFYING', 'BLOCKED']);
+    expect(attemptsUsed(l, run.id)).toBe(1);
+    expect(existsSync(join(runDirOf(l, run.id), 'briefs'))).toBe(false);
+
+    // The evidence was INCOMPLETE (the UI run errored), and the decision record names the cause and the log.
+    const [ev] = listEvidenceReports(l.db(), run.id);
+    expect(ev?.verdict).toBe('INCOMPLETE');
+    const [decision] = listDecisions(l.db(), run.id, { kind: 'verification.environment-failure' });
+    expect(decision?.data).toMatchObject({ checks: [expect.objectContaining({ check_id: 'ui', fingerprint: null, signals: ['process-aborted'], question_id: null, log_path: expect.stringContaining('app.log') })] });
+    const final = readFileSync(join(runDirOf(l, run.id), 'final.md'), 'utf8');
+    expect(final).toMatch(/^# Orbit run \S+: BLOCKED/);
+    expect(final).toMatch(/check ui could not execute on candidate 1/);
+    expect(final).not.toMatch(/[\u2013\u2014]/);
+  }, 180_000);
+
+  it('a UI app that throws while loading is the code\'s failure: the same evidence still goes through the inquiry and the repair loop', async () => {
+    const l = uiLab('tools/app-throws.mjs', THROWING_APP);
+    writeScenario(l, withUiCriterion(baseScenario({ implementer: [implementClaimingUi(), implementClaimingUi(), implementClaimingUi()], verifier: [DIAGNOSIS] })));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const path = transitions(l, run.id);
+    expect(path).toContain('INQUISITION');
+    expect(path).toContain('REPAIRING');
+    expect(listDecisions(l.db(), run.id, { kind: 'verification.environment-failure' })).toEqual([]);
+    expect(runState(l, run.id).outcomeReason ?? '').not.toMatch(/could not execute/);
+  }, 240_000);
+
+  it('a command check whose process aborts before it runs, on every revision, ends BLOCKED after zero repair attempts', async () => {
+    const l = lab({
+      files: { 'tools/unit-abort.mjs': NATIVE_ABORT },
+      tweak: (c) => {
+        c.checks.unit = { ...c.checks.unit!, command: [process.execPath, 'tools/unit-abort.mjs'] };
+      },
+    });
+    writeScenario(l, baseScenario({ implementer: [implementMul('*')], verifier: [DIAGNOSIS] }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
+    expect(done.outcomeReason).toMatch(/^check unit could not execute on candidate 1/);
+    expect(done.outcomeReason).toMatch(/killed by a fatal signal/);
+    const path = transitions(l, run.id);
+    expect(path).not.toContain('DIAGNOSING');
+    expect(path).not.toContain('REPAIRING');
+    expect(path).not.toContain('INQUISITION');
+    expect(attemptsUsed(l, run.id)).toBe(1);
+  }, 180_000);
 });

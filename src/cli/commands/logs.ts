@@ -11,7 +11,7 @@ import { listWorkers } from '../../storage/workers.ts';
 import type { Args, OptionSpec } from '../args.ts';
 import { findRunByPrefix, resolveRepo, withState, type CliContext } from '../context.ts';
 import { EXIT } from '../exit.ts';
-import { oneLine } from '../io.ts';
+import { oneLine, clockTime } from '../io.ts';
 
 export const LOGS_OPTIONS: OptionSpec = {
   follow: { type: 'boolean', short: 'f', description: 'keep printing new lines until the run ends' },
@@ -81,7 +81,7 @@ function render(source: Source, text: string, asJson: boolean): string {
     try {
       const o = JSON.parse(text) as Record<string, unknown>;
       const { ts, level, msg, ...rest } = o;
-      const at = typeof ts === 'string' ? ts.slice(11, 19) : '--:--:--';
+      const at = clockTime(typeof ts === 'string' ? ts : undefined);
       const extra = Object.entries(rest)
         .filter(([k]) => k !== 'run_id')
         .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)

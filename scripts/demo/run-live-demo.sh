@@ -73,8 +73,10 @@ today="$(date +%F)"
 out="${out:-$root/docs/demos/$today}"
 
 # Everything printed passes through this. Orbit redacts its own logs; this is the second line of defence.
+# Line-buffered, or progress only shows when a run ends: BSD sed spells it -l, GNU sed -u.
+if sed --version >/dev/null 2>&1; then sed_lines=-u; else sed_lines=-l; fi
 redact() {
-  sed -E \
+  sed "$sed_lines" -E \
     -e 's/(gh[pousr]_|github_pat_)[A-Za-z0-9_]{12,}/[redacted]/g' \
     -e 's/sk-ant-[A-Za-z0-9_-]{8,}/[redacted]/g' \
     -e 's/sk-[A-Za-z0-9_-]{20,}/[redacted]/g' \
@@ -143,6 +145,16 @@ cd "$clone"
 git config user.name "${GIT_AUTHOR_NAME:-$(git config --global user.name || echo 'Orbit Demo')}"
 git config user.email "${GIT_AUTHOR_EMAIL:-$(git config --global user.email || echo 'orbit-demo@users.noreply.github.com')}"
 
+# The demo app's own dependencies: doctor checks them and the UI checks run them.
+installed=""
+install_deps() {
+  [ -n "$installed" ] && return 0
+  say "installing the demo app's dependencies"
+  npm ci --ignore-scripts --no-audit --no-fund 2>&1 | redact | tail -n 3
+  npx --no-install playwright install chromium 2>&1 | redact | tail -n 3
+  installed=1
+}
+
 if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
   # An empty repository: seed it from the example. DEMO.md is for maintainers and stays out.
   confirm "Push the demo app to the new main branch of $repo?"
@@ -153,8 +165,7 @@ if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
   # Visual baselines are recorded per platform. A person records them; Orbit never does.
   if [ ! -d "tests/e2e/__screenshots__/desktop/$(node -p 'process.platform')" ]; then
     say "recording visual baselines for this platform (a person's decision, done here once)"
-    npm ci --ignore-scripts --no-audit --no-fund 2>&1 | redact | tail -n 3
-    npx --no-install playwright install chromium 2>&1 | redact | tail -n 3
+    install_deps
     npx --no-install playwright test visual -u --reporter=null 2>&1 | redact | tail -n 5
     git add -A
     git commit -q -m "Record visual baselines for $(node -p 'process.platform')"
@@ -167,6 +178,8 @@ else
   [ -f .orbit/config.yaml ] || die "$repo has commits but no .orbit/config.yaml; it does not look like the demo app. Use an empty or demo repository."
   [ -z "$(git status --porcelain)" ] || die "the clone at $clone has uncommitted changes"
 fi
+
+install_deps
 
 # --- doctor ---------------------------------------------------------------------------------
 say ""
@@ -182,6 +195,18 @@ if [ "$doctor_status" -ne 0 ]; then
   say "doctor reported a problem (exit $doctor_status); fix it and run this script again. Nothing was run."
   exit 3
 fi
+
+# The model registry is per repository and starts unvalidated: without a live probe the router
+# has no eligible stronger model, so the difficult goal could never escalate. A few cents.
+say ""
+say "orbit models refresh --probe"
+# A failed probe is reported, not fatal: the runs still state the route they could take.
+set +e
+# shellcheck disable=SC2086
+$orbit_cmd models refresh --probe 2>&1 | redact
+probe_status=${PIPESTATUS[0]}
+set -e
+[ "$probe_status" -eq 0 ] || say "warning: the model probe failed (exit $probe_status); the runs may not be able to escalate"
 
 # --- the runs ---------------------------------------------------------------------------------
 mkdir -p "$out"

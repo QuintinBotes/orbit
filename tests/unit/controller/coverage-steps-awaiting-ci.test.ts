@@ -300,12 +300,12 @@ describe('a moved base branch', () => {
   /** A bare remote holding main at the run's base, then main moved by one commit that edits `file`. */
   function moveBase(file: string, text: string, edit = true): Remote {
     const bare = join(lab.base, 'remote.git');
-    execFileSync('git', ['init', '-q', '--bare', bare]);
+    execFileSync('git', ['init', '-q', '--bare', '--initial-branch=main', bare]);
     gitIn(lab.repo, 'remote', 'add', 'origin', bare);
     gitIn(lab.repo, 'push', '-q', 'origin', 'main:refs/heads/main');
     if (!edit) return { bare, tip: gitIn(lab.repo, 'rev-parse', 'HEAD') };
     const clone = join(lab.base, 'clone');
-    execFileSync('git', ['clone', '-q', bare, clone]);
+    execFileSync('git', ['clone', '-q', '--branch', 'main', bare, clone]);
     gitIn(clone, 'config', 'user.email', 'dev@example.test');
     gitIn(clone, 'config', 'user.name', 'dev');
     mkdirSync(dirname(join(clone, file)), { recursive: true });

@@ -8,7 +8,10 @@
  * PASS goes to review unless a proof-weakening trigger fires (scenario 5:
  * weak tests are rejected despite green status); FAIL goes to diagnosis with
  * failure records; INCOMPLETE goes to Inquisition when a trigger explains it
- * and to BLOCKED otherwise ("mandatory verification is unavailable").
+ * and to BLOCKED otherwise ("mandatory verification is unavailable"). An
+ * environment failure (a failure the base revision has too with a denial in
+ * its output, or a mandatory check that could not execute at all) is BLOCKED
+ * first, whatever the verdict: no repair or inquiry can fix it.
  * A protected-path edit is a policy violation: BLOCKED, never repaired.
  */
 import { existsSync, readdirSync } from 'node:fs';
@@ -26,7 +29,7 @@ import type { ScopeReport } from '../../evidence/types.ts';
 import { detectTriggers, loadInquisitionSnapshot, PROOF_BLOCKING_TRIGGERS, thresholdsFromPolicy } from '../../inquisition/triggers.ts';
 import type { Trigger } from '../../inquisition/types.ts';
 import { validateModelOutput, type ImplementerOutput } from '../../contract/model-outputs.ts';
-import { environmentBlockReason, environmentFailuresFor, type BlockedCheck } from '../environment-block.ts';
+import { checksNotExecutedFor, environmentBlockReason, environmentFailuresFor, type BlockedCheck } from '../environment-block.ts';
 import { listWorkers } from '../../storage/workers.ts';
 import { runWorktreeRoot, type RunContext } from '../context.ts';
 import { implementationScopeGate, behaviourGate, type ScopeGateDetails } from '../gates.ts';
@@ -135,26 +138,28 @@ async function askForAuthorization(ctx: RunContext, cand: CandidateRecord, scope
 
 async function act(ctx: RunContext, cand: CandidateRecord, ev: EvidenceReportRecord): Promise<StepResult> {
   const verdict = ev.report.verdict;
-  const trigger = pendingTrigger(ctx, cand, verdict === 'PASS' ? PROOF_BLOCKING_TRIGGERS : null);
   if (verdict === 'PASS') {
+    const trigger = pendingTrigger(ctx, cand, PROOF_BLOCKING_TRIGGERS);
     if (trigger) return move(ctx, 'INQUISITION', `green checks, but ${trigger.summary}`, { data: { trigger } });
     progress(ctx, 'evidence.pass', { candidate_id: cand.id, report_id: ev.id });
     return move(ctx, 'REVIEWING', `candidate ${cand.seq} verified: PASS (${ev.id})`);
   }
-  if (verdict === 'FAIL') {
-    // A failure the base revision has too, with the sandbox or the host refusing an operation in its output, is the
-    // environment's: no repair can fix it, so the repair loop is never entered for it.
-    const environment = environmentFailuresFor(ctx, cand, ev.report);
-    if (environment.length > 0) return blockOnEnvironment(ctx, cand, ev, environment);
-    return move(ctx, 'DIAGNOSING', `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
-  }
+  // An environment failure is the environment's, and no repair can fix it, so neither the repair loop nor an inquiry
+  // is entered for it: a failure the base revision has too with the sandbox or the host refusing an operation in its
+  // output, or a mandatory check that could not execute at all (its process was killed before it printed anything).
+  // A check that ran and failed on the code keeps the normal path.
+  const sameAsBase = verdict === 'FAIL' ? environmentFailuresFor(ctx, cand, ev.report) : [];
+  const environment = [...sameAsBase, ...checksNotExecutedFor(ctx, cand, ev.report).filter((n) => !sameAsBase.some((b) => b.checkId === n.checkId))];
+  if (environment.length > 0) return blockOnEnvironment(ctx, cand, ev, environment);
+  if (verdict === 'FAIL') return move(ctx, 'DIAGNOSING', `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
+  const trigger = pendingTrigger(ctx, cand, null);
   if (trigger) return move(ctx, 'INQUISITION', `verification incomplete: ${trigger.summary}`, { data: { trigger } });
   return finishRun(ctx, 'BLOCKED', `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join('; ') || 'the evidence is incomplete'}`, { outcome: { report_id: ev.id } });
 }
 
 async function blockOnEnvironment(ctx: RunContext, cand: CandidateRecord, ev: EvidenceReportRecord, failures: BlockedCheck[]): Promise<StepResult> {
   const reason = environmentBlockReason({ runId: ctx.run.id, candidateSeq: cand.seq, failures });
-  const checks = failures.map((f) => ({ check_id: f.checkId, fingerprint: f.fingerprint, signals: f.signals, cause: f.cause, evidence_lines: f.lines, question_id: f.questionId }));
+  const checks = failures.map((f) => ({ check_id: f.checkId, fingerprint: f.fingerprint, signals: f.signals, cause: f.cause, evidence_lines: f.lines, question_id: f.questionId, ...(f.logPath ? { log_path: f.logPath } : {}) }));
   decide(ctx, { id: `dec-${ctx.run.id}-environment-${cand.id}`, kind: 'verification.environment-failure', summary: reason, data: { candidate_id: cand.id, report_id: ev.id, checks } });
   const blockedIds = new Set(failures.map((f) => f.checkId));
   const others = ev.report.checks.filter((c) => (c.status === 'FAILED' || c.status === 'TIMEOUT') && !blockedIds.has(c.id)).map((c) => c.id);

@@ -332,6 +332,15 @@ exception question that PREFLIGHT raised for the pre-existing failure with
 `orbit decide`, then `orbit resume`. A plain pre-existing code failure, with no
 such signal, keeps the repair loop.
 
+A mandatory check that could not execute at all is an environment failure too,
+with or without a base-revision comparison: its process (or the UI application
+under test) was killed by a crash signal such as `SIGABRT` before it printed
+anything of its own, or the runner could not start it. The run ends `BLOCKED`
+before the Inquisition and the repair loop, and the reason names the check, the
+cause and the log. Only the first way forward applies, since a check that never
+ran has no failure to except. A check that ran and failed, an application that
+threw while loading, or a crash after test output keeps the repair loop.
+
 A check that fails then passes on rerun is reported as flaky. With
 `verification.allow_flaky_pass: false` (the default) a flaky pass cannot make the
 verdict PASS.
