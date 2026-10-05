@@ -93,6 +93,9 @@ describe.skipIf(!canStripTypes)('CodexAdapter + shim + fake-codex', () => {
     archiveAttempt('codex', f.workerDir);
     writeScenario(f, { roles: { '*': [{ sleepMs: 30_000, structured: REVIEW_OUTPUT }] } });
     const handle = await a.startTask(reviewSpec(f));
+    // Cancel only once the provider is running: fake-codex installs its SIGINT handler before it prints
+    // thread.started, so a signal sent earlier (a slow start under load) would kill it as a plain failure.
+    await waitFor(async () => (existsSync(handle.logPath) && readFileSync(handle.logPath, 'utf8').includes('thread.started') ? true : null), 30_000);
     await a.cancelTask(handle);
     const result = await waitFor(() => a.collectResult(handle, reviewSpec(f)), 30_000);
     expect(result.status).toBe('cancelled');
