@@ -14,3 +14,16 @@ describe('scope.credential_paths', () => {
     expect(globs).not.toContain('.github/**');
   });
 });
+
+describe('scope.credential_paths validation', () => {
+  it('rejects absolute and escaping entries, which could never match a repository path', async () => {
+    const { validateConfig } = await import('../../../src/policy/config.ts');
+    for (const bad of ['/repo/ops/vault.bin', '../outside/key.pem']) {
+      expect(() => validateConfig({ version: 1, scope: { credential_paths: [bad] } })).toThrow(expect.objectContaining({ code: 'CONFIG_INVALID' }));
+    }
+  });
+  it('accepts repository-relative globs', async () => {
+    const { validateConfig } = await import('../../../src/policy/config.ts');
+    expect(validateConfig({ version: 1, scope: { credential_paths: ['ops/vault/**'] } }).scope.credential_paths).toEqual(['ops/vault/**']);
+  });
+});

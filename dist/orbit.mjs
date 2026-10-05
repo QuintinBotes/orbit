@@ -21986,6 +21986,7 @@ var init_config = __esm({
       function scopeGlobs(c, problems) {
         globList(c.scope.allowed_paths, "scope.allowed_paths", problems);
         globList(c.scope.protected_paths, "scope.protected_paths", problems);
+        globList(c.scope.credential_paths ?? [], "scope.credential_paths", problems);
         if (c.actions.edit && c.scope.allowed_paths.length === 0) problems.push("scope.allowed_paths: is empty, so actions.edit would allow nothing; list paths or set actions.edit to false");
       },
       function networkHosts(c, problems) {
