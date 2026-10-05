@@ -57,11 +57,6 @@ export interface WorkerRequest {
   phase?: BudgetPhase;
   /** A structured-output schema other than the role's (a strict-compatible JSON schema); the result is validated against it. */
   outputSchema?: object;
-  /**
-   * The policy this session runs under when not the run's frozen snapshot: a supervised grant policy
-   * (authorization.grantPolicy), built at spawn time in the session's own directory.
-   */
-  policy?: (workerDir: string) => { path: string; hash: string; snapshot: PolicySnapshot };
 }
 
 export type WorkerStatus =
@@ -196,7 +191,8 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
   const env = ctx.deps.hostEnv ?? process.env;
   const provider = w.provider.startsWith('codex') ? 'codex' : 'claude';
   const timeoutMs = workerTimeoutMs(ctx, w.role);
-  const policy = req.policy ? req.policy(w.workerDir) : { path: ctx.run.policyPath, hash: ctx.run.policyHash, snapshot: ctx.snapshot };
+  // Every session runs under the run's frozen snapshot; nothing (an approve-once grant included) widens a worker.
+  const policy = { path: ctx.run.policyPath, hash: ctx.run.policyHash, snapshot: ctx.snapshot };
   const sandbox = profileForWorker({
     worktree: req.cwd,
     workerDir: w.workerDir,

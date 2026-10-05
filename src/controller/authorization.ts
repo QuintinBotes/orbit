@@ -17,27 +17,31 @@
  * - action-class operations denied inside a worker session (the guard hook's
  *   `actions.*` and `network.*` rules, recorded by controller/denials as
  *   `policy.deny`): a `chmod +x`, a host outside network.allowed_hosts. The
- *   grant names the operation and the implementation attempt. The retried
- *   session of that attempt runs under a grant policy: a copy of the frozen
- *   snapshot widened by exactly what the granted operations need (that host;
- *   that action), written read-only into the session's own directory and
- *   hashed, so the worker's guard hook and sandbox allow it. The run's own
- *   snapshot never changes, and after the session the controller re-reads its
- *   transcript and refuses the attempt as a policy violation if any command
- *   ran that the frozen policy denies and no grant names exactly
+ *   grant names the operation and the implementation attempt. A grant never
+ *   widens the worker's sandbox, hook policy or action flags: the controller
+ *   runs exactly the approved command itself, once, in isolation, records it
+ *   as an action (`approved_command` in the action ledger) and hands the
+ *   retried session its output as an artifact (`runApprovedOperation`). The
+ *   retried session runs under the run's frozen snapshot, and afterwards the
+ *   controller re-reads its transcript and refuses the attempt as a policy
+ *   violation if any command ran that the frozen policy denies
  *   (`ungrantedCommands`).
  *
  * Delivery actions do not arise in supervised mode: it delivers nothing
  * outside the repository (the reviewed candidate is left on a local branch),
  * so there is no delivery action to authorize there.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { canonicalJson, sha256 } from '../core/hash.ts';
-import { atomicWrite } from '../core/fsx.ts';
+import { atomicWrite, readJsonIfExists } from '../core/fsx.ts';
+import { OrbitError, isOrbitError } from '../core/errors.ts';
+import { execCapture } from '../core/exec.ts';
+import { redact } from '../core/redact.ts';
 import { authorize } from '../policy/authorize.ts';
-import { snapshotHash } from '../policy/snapshot.ts';
-import type { Operation, OrbitConfig, PolicySnapshot } from '../policy/types.ts';
+import type { CheckDefinition, Operation, PolicySnapshot } from '../policy/types.ts';
+import { prepareWorkerTmpDir, profileForCheck } from '../isolation/profiles.ts';
+import { ActionLedger } from '../delivery/actions.ts';
 import type { ScopeReport } from '../evidence/types.ts';
 import { isHumanActor, persistQuestion } from '../inquisition/questions.ts';
 import type { InquisitorQuestion } from '../inquisition/types.ts';
@@ -64,6 +68,8 @@ export interface GuardedOperation {
   denial: string;
   /** The policy rule that refused it (worker denials: `actions.<name>` or `network.<...>`). */
   rule?: string;
+  /** A network operation of a fetch tool: the exact URL it was denied, which is what an approval lets the controller fetch. */
+  target?: string;
 }
 
 export function operationKey(op: Operation): string {
@@ -264,41 +270,124 @@ export function deniedWorkerOperations(ctx: RunContext, worker: Pick<WorkerRecor
     const now = authorize(ctx.snapshot, op, { worktreeRoot: worker.cwd });
     if (now.allowed) continue;
     const key = operationKey(op);
-    if (!out.has(key)) out.set(key, { op, key, summary, denial: `${rule}: ${data.reason ?? now.reason}`, rule });
+    if (!out.has(key)) out.set(key, { op, key, summary, denial: `${rule}: ${data.reason ?? now.reason}`, rule, ...(op.kind === 'network' ? { target: data.target } : {}) });
   }
   return [...out.values()];
 }
 
-export const GRANT_POLICY_FILE = 'policy-grant.json';
+// ---------------------------------------------------------------------------
+// Approved operations, run by the controller
+
+/** The action-ledger kind of an approved command the controller ran on a worker's behalf. */
+export const APPROVED_COMMAND_ACTION = 'approved_command';
+const APPROVED_TIMEOUT_S = 300;
+const APPROVED_MAX_OUTPUT_BYTES = 1024 * 1024;
+const APPROVED_EXCERPT_CHARS = 4_000;
+const OUTPUT_FILE = 'output.txt';
+const RECEIPT_FILE = 'receipt.json';
+
+/** What became of one approved operation: the controller ran it (once) and where its output is. */
+export interface ApprovedRun {
+  key: string;
+  /** The exact command that ran, as the person approved it; null when nothing could be run. */
+  command: string | null;
+  state: 'SUCCEEDED' | 'UNKNOWN' | 'NOT_RUN';
+  exit_code: number | null;
+  timed_out: boolean;
+  /** The output artifact, relative to the run directory. */
+  path: string | null;
+  sha256: string | null;
+  /** The tail of the (redacted) output. Untrusted: it is command output. */
+  excerpt: string | null;
+  note: string | null;
+}
+
+interface ApprovedReceipt {
+  exit_code: number | null;
+  timed_out: boolean;
+  path: string;
+  sha256: string;
+  excerpt: string;
+}
+
+/** The exact argv an approval covers, with the one host it may reach; null when the operation names no command. */
+function approvedPlan(op: GuardedOperation): { argv: string[]; shown: string; host: string | null } | null {
+  const network = (op.rule ?? '').startsWith('network.');
+  if (op.op.kind === 'bash') return { argv: ['/bin/sh', '-c', op.op.command], shown: op.op.command, host: network ? (URL_HOST.exec(op.op.command)?.[1]?.toLowerCase() ?? null) : null };
+  if (op.op.kind === 'network' && op.target && URL_HOST.exec(op.target)?.[1]?.toLowerCase() === op.op.host) {
+    return { argv: ['curl', '-sS', '--proto', '=http,https', '--max-time', String(APPROVED_TIMEOUT_S), '--', op.target], shown: `fetch ${op.target}`, host: op.op.host };
+  }
+  return null;
+}
 
 /**
- * The policy a session runs under when a person authorized operations once for its attempt: the frozen snapshot
- * widened by exactly what each granted operation needs (`actions.<name>` for an action rule, the one host for a
- * network rule), written read-only into the session's directory. The run's snapshot is not touched.
+ * Run one operation a person approved once for attempt `n`, as the controller, never through the worker. Exactly
+ * the approved command runs, once, in the run's worktree under the configured isolation: the frozen policy's
+ * hosts plus only the approved host, a private home and temp directory, and the check profile's read denials.
+ * It is an action in the ledger (kind `approved_command`, one attempt): a restarted controller finds the recorded
+ * receipt, and a run whose outcome was lost is reported as unknown and never repeated. The output is redacted
+ * and stored as an artifact under the run directory for the retried session.
  */
-export function grantPolicy(ctx: RunContext, granted: readonly GuardedOperation[], dir: string): { path: string; hash: string; snapshot: PolicySnapshot } {
-  const snapshot = JSON.parse(JSON.stringify(ctx.snapshot)) as PolicySnapshot;
-  const config = snapshot.config as OrbitConfig;
-  for (const g of granted) {
-    const rule = g.rule ?? '';
-    if (rule.startsWith('actions.') && !NEVER_GRANTED.has(rule)) {
-      const name = rule.slice('actions.'.length).split('.')[0] as keyof OrbitConfig['actions'];
-      if (name !== 'change_secrets' && Object.hasOwn(config.actions, name)) (config.actions as Record<string, boolean>)[name] = true;
-    } else if (rule.startsWith('network.')) {
-      const host = g.op.kind === 'network' ? g.op.host : g.op.kind === 'bash' ? (URL_HOST.exec(g.op.command)?.[1]?.toLowerCase() ?? null) : null;
-      if (host && !config.network.allowed_hosts.includes(host)) config.network.allowed_hosts = [...config.network.allowed_hosts, host];
-    }
+export async function runApprovedOperation(ctx: RunContext, n: number, op: GuardedOperation, grant: { decisionId: string; approvedBy: string }): Promise<ApprovedRun> {
+  const plan = approvedPlan(op);
+  const none: Omit<ApprovedRun, 'state' | 'note'> = { key: op.key, command: plan?.shown ?? null, exit_code: null, timed_out: false, path: null, sha256: null, excerpt: null };
+  if (!plan) return { ...none, state: 'NOT_RUN', note: 'the approval names a host but no exact command or address, so the controller had nothing exact to run' };
+  const rel = join('authorization', `attempt-${n}`, op.key);
+  const dir = join(ctx.runDir, rel);
+  const ledger = new ActionLedger(ctx.db, ctx.clock, { runDir: ctx.runDir, maxAttempts: 1, actor: ctx.ownerId });
+  const recorded = (): ApprovedReceipt | null => readJsonIfExists<ApprovedReceipt>(join(dir, RECEIPT_FILE));
+  try {
+    const done = await ledger.performAction<ApprovedReceipt>(
+      { runId: ctx.run.id, kind: APPROVED_COMMAND_ACTION, idempotencyKey: `${ctx.run.id}:approved:${n}:${op.key}`, target: { command: plan.shown, attempt: n, op_key: op.key, grant: grant.decisionId } },
+      {
+        execute: () => executeApproved(ctx, plan, dir, rel),
+        // Only the receipt written after the command finished proves it ran; without it the command is not run again.
+        reconcile: async () => {
+          const r = recorded();
+          if (r) return r;
+          throw new OrbitError('INTERNAL', 'the approved command may have started before the controller stopped; it is not run a second time', { definitive: true });
+        },
+      },
+      { authorization: { allowed: true, rule: 'authorization.grant', reason: `approved once by ${grant.approvedBy} (${grant.decisionId}) for attempt ${n}` } },
+    );
+    const r = done.receipt;
+    return { ...none, state: 'SUCCEEDED', exit_code: r.exit_code, timed_out: r.timed_out, path: r.path, sha256: r.sha256, excerpt: r.excerpt, note: null };
+  } catch (err) {
+    if (isOrbitError(err, 'CANCELLED') || isOrbitError(err, 'LEASE_LOST') || isOrbitError(err, 'CONCURRENT_UPDATE')) throw err;
+    return { ...none, state: 'UNKNOWN', note: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) };
   }
-  const path = join(dir, GRANT_POLICY_FILE);
-  const hash = snapshotHash(snapshot);
-  if (!existsSync(path)) atomicWrite(path, `${JSON.stringify(snapshot, null, 2)}\n`, 0o444);
-  return { path, hash, snapshot };
+}
+
+async function executeApproved(ctx: RunContext, plan: { argv: string[]; shown: string; host: string | null }, dir: string, rel: string): Promise<ApprovedReceipt> {
+  const worktree = ctx.run.worktreePath!;
+  const home = join(dir, 'home');
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  const tmp = prepareWorkerTmpDir(dir);
+  const hosts = [...new Set([...ctx.snapshot.config.network.allowed_hosts, ...(plan.host ? [plan.host] : [])])];
+  const def: CheckDefinition = { id: `approved-${rel.split('/').at(-1)}`, command: plan.argv, shell: false, cwd: '.', timeout_seconds: APPROVED_TIMEOUT_S, network_hosts: hosts, env: {}, mandatory: false, flaky_reruns: 0, kind: 'command' };
+  const profile = profileForCheck({ worktree, check: def, snapshot: ctx.snapshot, extraWritable: [home, tmp] });
+  const env: Record<string, string> = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, TMPDIR: tmp, LANG: 'C.UTF-8', TERM: 'dumb', NO_COLOR: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
+  const wrapped = ctx.isolation().wrap(plan.argv, profile, { cwd: worktree, env });
+  let r;
+  try {
+    r = await execCapture(wrapped.argv, { cwd: worktree, env: wrapped.env, timeoutMs: APPROVED_TIMEOUT_S * 1000, maxOutputBytes: APPROVED_MAX_OUTPUT_BYTES, abortSignal: ctx.signal });
+  } catch (err) {
+    throw new OrbitError('INTERNAL', `the approved command could not start: ${err instanceof Error ? err.message : String(err)}`, { definitive: true }, { cause: err });
+  } finally {
+    wrapped.cleanup();
+  }
+  const text = redact(`$ ${plan.shown}\n[exit ${r.exitCode ?? `signal ${r.signal ?? 'unknown'}`}${r.timedOut ? ', timed out' : ''}]\n--- stdout ---\n${r.stdout}\n--- stderr ---\n${r.stderr}\n`);
+  atomicWrite(join(dir, OUTPUT_FILE), text, 0o600);
+  const receipt: ApprovedReceipt = { exit_code: r.exitCode, timed_out: r.timedOut, path: join(rel, OUTPUT_FILE), sha256: sha256(text), excerpt: text.slice(-APPROVED_EXCERPT_CHARS) };
+  // Last: its presence is what tells a restarted controller the command ran.
+  atomicWrite(join(dir, RECEIPT_FILE), `${JSON.stringify(receipt)}\n`, 0o600);
+  return receipt;
 }
 
 /**
  * Commands a session ran (the guard did not deny them) that the frozen policy denies under an action-class rule
- * and no grant names exactly. A session under a grant policy may only do what the person authorized; anything
- * else it did with the widened policy is a policy violation. Returned redacted, as the denials record them.
+ * and no grant in `granted` names exactly. A retried session runs under the frozen policy, so anything of this
+ * kind it did is a policy violation. Returned redacted, as the denials record them.
  */
 export function ungrantedCommands(events: readonly Record<string, unknown>[], snapshot: PolicySnapshot, worktreeRoot: string, granted: readonly GuardedOperation[]): string[] {
   const denied = new Set(denialsFromTranscript(events).map((d) => d.toolUseId));

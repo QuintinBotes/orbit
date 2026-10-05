@@ -50,6 +50,20 @@ Closed in 30e6e5c: G1 to G3, G5 to G13, G16 to G23, G26, G28, G29, G31 to G36, G
 
 ---
 
+### 2026-10-05: independent security review by Codex (gpt-6.1-sol)
+- Tested: an adversarial review of the policy, isolation, adapter, delivery and controller modules on a read-only checkout of 7f7d0d7, by a different provider than the one that wrote the code.
+- Went well: eight concrete defects with failure scenarios and demonstrating tests; it confirmed no further defect in publication guarding, policy hash verification, candidate/evidence/review tree matching and UNKNOWN-deploy reconciliation. Running it through the Codex CLI cost no Claude tokens.
+- Went wrong: one critical (parallel integration could write through a symlink outside the worktree) and six high (delivery actions not fenced by the lease, worker shells able to read credential files and git config, unredacted worker output, additional push URLs, large files skipping the secret scan while reporting complete, approve-once widening worker permissions), one medium (checks attributed to the wrong SHA). Separately, `gpt-6.1-sol` was refused for ChatGPT-account logins on codex-cli 0.153.4.
+- Root cause: our own reviewers checked each module against its brief; the cross-cutting paths (controller writing as itself, grants, remote configuration) fell between briefs. The model refusal was an outdated CLI.
+- Change: decisions in ADR 0005; fixes in progress with failing-first tests. `codex update` to 0.160.0 made gpt-6.1-sol work; `orbit doctor` should warn on an outdated Codex CLI (proposed).
+
+### 2026-10-05: minor gaps: target environment, late approvals, coverage floor
+- Tested: the last minor gaps, each with a failing-first test checked by reverting the fix.
+- Went well: `orbit run --environment`, late baseline-exception approvals and the rebased-then-failing candidate now have end-to-end tests; the coverage gate also enforces a per-file floor.
+- Went wrong: an older release test assumed a partial deploy before a refused environment; a browser-launch test errored once under load.
+- Root cause: only the unit suite of the changed module was run before the full suite.
+- Change: fixed in 8515373. Proposed: `npm run test:related` mapping a source directory to its unit and integration suites.
+
 ### 2026-10-05: gap-fix round: 37 spec gaps closed, five more defects found in review
 - Tested: seven fixers with disjoint file ownership, each closing gaps with a test that failed first; an adversarial verifier over the controller, release and policy changes; a fresh traceability audit that only counted a gap closed after reading its test.
 - Went well: the fake-provider lab made every controller gap reproducible end to end; all six `it.fails` defect markers flipped to passing; release mode reused the action ledger, freshness gate and isolation profiles, so `release.ts` stayed small; traceability rose from 285 to 341 of 359 requirements done.

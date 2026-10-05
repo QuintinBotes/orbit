@@ -226,4 +226,20 @@ describe('remote resolution for network authorization', () => {
       await expect(resolveRemoteUrl(lab.work, 'nosuchremote')).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
     }
   });
+
+  it('reads every push URL of a remote and refuses a second one', async () => {
+    git(lab.work, ['remote', 'set-url', '--add', '--push', 'origin', lab.remote]);
+    expect(await resolveRemoteUrl(lab.work, 'origin')).toBe(lab.remote);
+    git(lab.work, ['remote', 'set-url', '--add', '--push', 'origin', 'https://evil.example/acme/app.git']);
+    await expect(resolveRemoteUrl(lab.work, 'origin')).rejects.toMatchObject({ code: 'CONFIG_INVALID', message: expect.stringContaining('2 push URLs') });
+  });
+
+  it('refuses a resolved URL that a url.<base>.insteadOf rule would rewrite again when pushed to directly', async () => {
+    const canary = join(lab.dir, 'canary.git');
+    git(lab.work, ['config', `url.${canary}.pushInsteadOf`, lab.remote]);
+    // Through the name, git already applied the rule: the answer is where a push really goes.
+    expect(await resolveRemoteUrl(lab.work, 'origin')).toBe(canary);
+    // A URL given directly would be rewritten on push, so it is not where the push goes.
+    await expect(resolveRemoteUrl(lab.work, lab.remote)).rejects.toMatchObject({ code: 'CONFIG_INVALID', message: expect.stringContaining('rewrite') });
+  });
 });

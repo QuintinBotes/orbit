@@ -275,6 +275,53 @@ describe('runParallelUnits', () => {
     expect(data(UNIT_INTEGRATED_EVENT).map((e) => e.paths)).toEqual([['../escape.txt']]);
   });
 
+  it('rejects a unit that adds a symlink leaving the repository, so a later unit cannot write through it', async () => {
+    // Unit u1 links apps/staging to a directory outside the repository; u2 adds apps/staging/orbit.mjs in its
+    // own checkout. The paths differ, so no exact-path conflict stops them.
+    let outside = '';
+    const script: Script = {
+      edit: {
+        u1: (cwd) => symlinkSync(outside, join(cwd, 'apps', 'staging')),
+        u2: write('apps/staging/orbit.mjs', 'export const pwned = true;\n'),
+      },
+      collect: {},
+    };
+    const { main } = await setup(script);
+    outside = join(lab.home, 'outside');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'orbit.mjs'), 'canary\n');
+    await runParallelUnits(lab.ctx(), 1, UNITS, options());
+    script.collect!.u1 = result();
+    script.collect!.u2 = result();
+    await runParallelUnits(lab.ctx(), 1, UNITS, options());
+    expect(readFileSync(join(outside, 'orbit.mjs'), 'utf8')).toBe('canary\n');
+    expect(lstatSync(join(main, 'apps', 'staging')).isSymbolicLink()).toBe(false);
+    const [ser] = data(UNIT_SERIALIZED_EVENT);
+    expect(ser).toMatchObject({ unit: 'u1', criteria: ['AC-1'] });
+    expect(ser.reason).toMatch(/^rejected: symlink leaves the repository: apps\/staging/);
+    expect(readFileSync(join(main, 'apps', 'staging', 'orbit.mjs'), 'utf8')).toBe('export const pwned = true;\n');
+  });
+
+  it('never writes beyond a symlink another unit integrated: the later unit is a conflict', async () => {
+    // A link that stays inside the repository is accepted; a unit writing below it is refused by git apply.
+    const script: Script = {
+      edit: {
+        u1: (cwd) => symlinkSync('../docs', join(cwd, 'apps', 'staging')),
+        u2: write('apps/staging/orbit.mjs', 'export const x = 1;\n'),
+      },
+      collect: {},
+    };
+    const { main } = await setup(script);
+    mkdirSync(join(main, 'docs'));
+    await runParallelUnits(lab.ctx(), 1, UNITS, options());
+    script.collect!.u1 = result();
+    script.collect!.u2 = result();
+    const out = await runParallelUnits(lab.ctx(), 1, UNITS, options());
+    expect(readlinkSync(join(main, 'apps', 'staging'))).toBe('../docs');
+    expect(existsSync(join(main, 'docs', 'orbit.mjs'))).toBe(false);
+    expect(out).toMatchObject({ kind: 'serialize', units: [{ unit: 'u2', reason: expect.stringMatching(/^conflict: /) }] });
+  });
+
   it('a unit whose session was lost, cancelled or failed transiently goes to the serial writer, with the reason', async () => {
     const script: Script = { collect: { u1: result({ status: 'lost', error: null }), u2: result({ status: 'transient_error', error: 'overloaded' }) } };
     await setup(script);

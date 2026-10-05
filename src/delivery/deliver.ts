@@ -132,9 +132,12 @@ export async function deliver(input: DeliverInput): Promise<DeliveryResult> {
 
   // ---- push -------------------------------------------------------------
   const pushAuth = requireAllowed(authorize(snapshot, { kind: 'action', action: 'push_task_branch', target: branch }), 'pushing the task branch');
-  // A remote name is resolved to the URL git will push to, so the name cannot hide the host from the policy.
-  requireAllowed(networkAllowed(remoteHost(await resolveRemoteUrl(run.repoRoot, remote, input.git))), 'reaching the remote');
-  const remoteOpts = { repoRoot: run.repoRoot, remote, token: input.token, ...input.git };
+  // A remote name is resolved to the one URL git will push to, so the name cannot hide the host from the policy.
+  // Every remote operation then uses that validated URL itself: the name could gain another push URL, or point
+  // elsewhere, between this check and the push.
+  const pushUrl = await resolveRemoteUrl(run.repoRoot, remote, input.git);
+  requireAllowed(networkAllowed(remoteHost(pushUrl)), 'reaching the remote');
+  const remoteOpts = { ...input.git, repoRoot: run.repoRoot, remote: pushUrl, token: input.token };
   const pushResult = await ledger.performAction<PushReceipt>(
     { runId: run.id, kind: 'push', idempotencyKey: `deliver:${run.id}:push:${branch}:${commit}`, target: { remote: redact(remote), ref: `refs/heads/${branch}`, commit }, candidateId: candidate.id, treeHash: tree, commitSha: commit },
     {

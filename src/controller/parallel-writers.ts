@@ -10,8 +10,11 @@
  * any other work: the run's parallelism and parallel_workers, the machine's CPU and memory, rate-limit
  * backoff, the budget, and the merge overhead a writer beside another writer costs.
  *
- * A finished unit is integrated into the run's worktree on its own, one at a time: the files it changed are
- * copied over (or deleted), and every evidence report of the run is invalidated. A unit whose changes touch a
+ * A finished unit is integrated into the run's worktree on its own, one at a time: its changes against the base
+ * are applied with `git apply --index`, which never writes beyond a symbolic link, and every evidence report of
+ * the run is invalidated. Nothing is copied through the filesystem as the controller. A unit that adds a symlink
+ * leaving the repository is rejected before integration, and the integrated tree is inspected again before it is
+ * accepted; a rejected unit's criteria go to the serial implementer. A unit whose changes touch a
  * file the integrated work already changed is a conflict: its work is dropped and its criteria go to one
  * serial implementer that continues on top of the integrated tree. So does a unit whose session did not finish
  * (lost, cancelled, a transient failure) or that the budget cannot admit while nothing else runs. The attempt
@@ -20,12 +23,14 @@
  * State is durable events, so a restarted controller resumes exactly: the unit plan (`implementation.units`,
  * recorded with the attempt), the integration intent and result per unit, and each serialized unit.
  */
-import { copyFileSync, lstatSync, mkdirSync, readlinkSync, rmSync, statSync, symlinkSync, chmodSync, existsSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { appendEvent } from '../storage/events.ts';
 import type { WorkerRecord } from '../storage/workers.ts';
-import { git } from '../evidence/git.ts';
-import { cleanupCandidateCheckout, materializeCandidate } from '../evidence/candidate.ts';
+import { adminDirFor, git } from '../evidence/git.ts';
+import { cleanupCandidateCheckout, materializeCandidate, ORBIT_GIT_IDENTITY } from '../evidence/candidate.ts';
+import { inspectScope } from '../policy/scope.ts';
 import { invalidateEvidence } from '../evidence/freshness.ts';
 import { budgetAdmission } from '../scheduling/scheduler.ts';
 import type { WorkUnit } from '../scheduling/types.ts';
@@ -100,6 +105,8 @@ interface IntegratedUnit {
   unit: string;
   worker_id: string;
   paths: string[];
+  /** The unit's work as a commit on the base (absent in intents recorded before it was kept). */
+  commit?: string;
 }
 
 /** One pass over attempt `n`'s units: integrate what finished, start what is admitted, and say what is left. */
@@ -219,32 +226,57 @@ async function admitAndStart(ctx: RunContext, n: number, all: readonly WorkUnitP
 }
 
 /**
- * Integrate a finished unit into the run's worktree: the files it changed against the base, copied (or deleted)
- * one by one. A path the integrated work already changed is a conflict and serializes the unit. The intent is
- * recorded before the copy, so a crash mid-copy finishes the same copy rather than seeing its own files as a
- * conflict.
+ * Integrate a finished unit into the run's worktree. The unit's tree is committed on the base by the controller
+ * (from a private index, never the unit's own git state), inspected, and its changes applied to the run's
+ * worktree with `git apply --index`. A unit that adds a symlink leaving the repository is rejected before
+ * anything is applied; a path the integrated work already changed, or a patch git refuses (it never writes
+ * beyond a symlink), is a conflict. Either way the unit is serialized. The integrated tree is inspected before
+ * it is accepted, and a unit that makes it escape is reverted and serialized. The intent is recorded before the
+ * apply, so a crash mid-apply restores those paths to the base and applies the same patch again.
  */
 async function integrate(ctx: RunContext, n: number, u: WorkUnitPlan, w: WorkerRecord): Promise<void> {
-  const target = ctx.run.worktreePath!;
-  const source = w.cwd;
+  const repoRoot = ctx.run.repoRoot;
+  const base = ctx.run.baseRevision!;
+  const target = await adminDirFor(repoRoot, ctx.run.worktreePath!);
   const intent = unitEvents<IntegratedUnit>(ctx, UNIT_INTEGRATING_EVENT, n).find((e) => e.unit === u.id);
+  const commit = intent?.commit ?? (await commitWorktree(repoRoot, await adminDirFor(repoRoot, w.cwd), base, `orbit work unit ${u.id} of attempt ${n}`));
   let paths: string[];
-  if (intent) paths = intent.paths;
-  else {
-    paths = await changedFiles(source);
+  if (intent) {
+    paths = intent.paths;
+    await restoreToBase(target, base, safePaths(paths));
+  } else {
+    paths = await changedBetween(repoRoot, base, commit);
+    // Escaping symlinks first: nothing of such a unit reaches the run's worktree.
+    const escaping = await escapingLinks(ctx, base, commit);
+    if (escaping.length > 0) return reject(ctx, n, u, `rejected: symlink leaves the repository: ${escaping.slice(0, 10).join(', ')}`);
     const busy = new Set(await changedFiles(target));
     const clash = paths.filter((p) => busy.has(p));
-    if (clash.length > 0) {
-      await serialize(ctx, n, u, `conflict: ${clash.slice(0, 10).join(', ')} already changed by integrated work`);
-      await removeWorktree(ctx, n, u);
-      return;
-    }
-    note(ctx, UNIT_INTEGRATING_EVENT, { attempt: n, unit: u.id, worker_id: w.id, paths } satisfies IntegratedUnit);
+    if (clash.length > 0) return reject(ctx, n, u, `conflict: ${clash.slice(0, 10).join(', ')} already changed by integrated work`);
+    note(ctx, UNIT_INTEGRATING_EVENT, { attempt: n, unit: u.id, worker_id: w.id, paths, commit } satisfies IntegratedUnit);
   }
-  for (const p of paths) copyPath(source, target, p);
+  const patch = await unitPatch(repoRoot, base, commit, safePaths(paths));
+  if (patch.length > 0) {
+    const before = await escapingLinks(ctx, base, await commitWorktree(repoRoot, target, base, 'orbit integrated tree'));
+    try {
+      await applyPatch(target, patch, false);
+    } catch (err) {
+      return reject(ctx, n, u, `conflict: git apply refused the unit's changes (${err instanceof Error ? err.message.slice(0, 200) : String(err)})`);
+    }
+    const after = await escapingLinks(ctx, base, await commitWorktree(repoRoot, target, base, 'orbit integrated tree'));
+    const added = after.filter((p) => !before.includes(p));
+    if (added.length > 0) {
+      await applyPatch(target, patch, true);
+      return reject(ctx, n, u, `rejected: symlink leaves the repository: ${added.slice(0, 10).join(', ')}`);
+    }
+  }
   note(ctx, UNIT_INTEGRATED_EVENT, { attempt: n, unit: u.id, worker_id: w.id, paths } satisfies IntegratedUnit);
   // The run's tree changed: every evidence report describes another tree now (spec section 11).
   invalidateEvidence(ctx.db, ctx.run.id, `work unit ${u.id} of attempt ${n} integrated (${paths.length} file(s))`, ctx.clock);
+  await removeWorktree(ctx, n, u);
+}
+
+async function reject(ctx: RunContext, n: number, u: WorkUnitPlan, reason: string): Promise<void> {
+  await serialize(ctx, n, u, reason);
   await removeWorktree(ctx, n, u);
 }
 
@@ -259,9 +291,19 @@ async function removeWorktree(ctx: RunContext, n: number, u: WorkUnitPlan): Prom
   if (existsSync(dir)) await cleanupCandidateCheckout(ctx.run.repoRoot, dir).catch(() => {});
 }
 
+/** Untracked noise left out of a unit's tree, as candidates leave it out (evidence/candidate). */
+const UNIT_EXCLUDES = ['.DS_Store', 'Thumbs.db', 'node_modules/'];
+
+type Checkout = { gitDir: string; worktree: string };
+
+/** git in a checkout through its admin directory, never the checkout's own `.git` file, with literal pathspecs. */
+function inCheckout(c: Checkout, extra: Record<string, string> = {}): { env: Record<string, string> } {
+  return { env: { GIT_DIR: c.gitDir, GIT_WORK_TREE: c.worktree, GIT_LITERAL_PATHSPECS: '1', ...extra } };
+}
+
 /** Files changed or added in a checkout against its HEAD (the base revision), repository-relative; ignored files excluded. */
-async function changedFiles(dir: string): Promise<string[]> {
-  const out = await git(dir, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames']);
+async function changedFiles(c: Checkout): Promise<string[]> {
+  const out = await git(c.worktree, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'], inCheckout(c));
   return out
     .split('\0')
     .filter((e) => e.length > 3)
@@ -269,28 +311,62 @@ async function changedFiles(dir: string): Promise<string[]> {
     .sort();
 }
 
-function copyPath(source: string, target: string, rel: string): void {
-  const from = resolve(source, rel);
-  const to = resolve(target, rel);
-  if (!inside(from, source) || !inside(to, target)) return;
-  let st: ReturnType<typeof lstatSync> | null = null;
+/** A checkout's files as a commit on the base, staged from a private index so its own index is never read or touched. */
+async function commitWorktree(repoRoot: string, c: Checkout, base: string, message: string): Promise<string> {
+  const scratch = mkdtempSync(join(tmpdir(), 'orbit-unit-'));
   try {
-    st = lstatSync(from);
-  } catch {
-    st = null;
-  }
-  rmSync(to, { force: true });
-  if (st === null) return;
-  mkdirSync(dirname(to), { recursive: true });
-  if (st.isSymbolicLink()) symlinkSync(readlinkSync(from), to);
-  else if (st.isFile()) {
-    copyFileSync(from, to);
-    chmodSync(to, statSync(from).mode & 0o777);
+    const excludes = join(scratch, 'exclude');
+    writeFileSync(excludes, `${UNIT_EXCLUDES.join('\n')}\n`);
+    const opts = { ...inCheckout(c, { GIT_INDEX_FILE: join(scratch, 'index') }), config: { 'core.excludesFile': excludes } };
+    await git(c.worktree, ['read-tree', base], opts);
+    await git(c.worktree, ['add', '-A', '--', '.'], opts);
+    const tree = (await git(c.worktree, ['write-tree'], opts)).trim();
+    const id = { GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name, GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name, GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_AUTHOR_DATE: '946684800 +0000', GIT_COMMITTER_DATE: '946684800 +0000' };
+    return (await git(repoRoot, ['commit-tree', tree, '-p', base, '-m', message], { env: id })).trim();
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
 }
 
-function inside(p: string, root: string): boolean {
-  return p.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
+/** Paths that differ between two commits, sorted. */
+async function changedBetween(repoRoot: string, from: string, to: string): Promise<string[]> {
+  const out = await git(repoRoot, ['diff', '--name-only', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', from, to, '--']);
+  return out.split('\0').filter((p) => p.length > 0).sort();
+}
+
+/** Changed symlinks of `commit` whose target leaves the repository or reaches a protected path (policy.inspectScope). */
+async function escapingLinks(ctx: RunContext, base: string, commit: string): Promise<string[]> {
+  const report = await inspectScope({ repoRoot: ctx.run.repoRoot, baseRev: base, candidateRev: commit, snapshot: ctx.snapshot });
+  return report.symlinks_escaping;
+}
+
+/** Repository-relative paths only: nothing absolute and no `..` segment reaches git as a pathspec. */
+function safePaths(paths: readonly string[]): string[] {
+  return paths.filter((p) => p.length > 0 && !p.startsWith('/') && !p.split(/[\\/]/).includes('..'));
+}
+
+async function unitPatch(repoRoot: string, base: string, commit: string, paths: readonly string[]): Promise<string> {
+  if (paths.length === 0) return '';
+  return git(repoRoot, ['diff', '--binary', '--full-index', '--no-renames', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--no-color', base, commit, '--', ...paths], { env: { GIT_LITERAL_PATHSPECS: '1' } });
+}
+
+/** `git apply --index` (or its reverse) in the run's worktree: all or nothing, and never beyond a symlink. */
+async function applyPatch(c: Checkout, patch: string, reverse: boolean): Promise<void> {
+  const args = ['apply', '--index', '--whitespace=nowarn', ...(reverse ? ['--reverse'] : []), '-'];
+  await git(c.worktree, ['apply', '--index', '--check', '--whitespace=nowarn', ...(reverse ? ['--reverse'] : []), '-'], { ...inCheckout(c), input: patch });
+  await git(c.worktree, args, { ...inCheckout(c), input: patch });
+}
+
+/** Put `paths` of the run's worktree (index and files) back to the base, through git, before a patch is applied again. */
+async function restoreToBase(c: Checkout, base: string, paths: readonly string[]): Promise<void> {
+  if (paths.length === 0) return;
+  const inBase = new Set((await git(c.worktree, ['ls-tree', '-r', '-z', '--name-only', base, '--', ...paths], inCheckout(c))).split('\0').filter((p) => p.length > 0));
+  const absent = paths.filter((p) => !inBase.has(p));
+  if (absent.length > 0) {
+    await git(c.worktree, ['rm', '-rqf', '--ignore-unmatch', '--', ...absent], inCheckout(c));
+    await git(c.worktree, ['clean', '-fq', '--', ...absent], inCheckout(c));
+  }
+  if (inBase.size > 0) await git(c.worktree, ['checkout', base, '--', ...inBase], inCheckout(c));
 }
 
 function unitEvents<T>(ctx: RunContext, type: string, n: number): T[] {

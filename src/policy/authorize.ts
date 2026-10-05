@@ -33,7 +33,7 @@ import { BUILTIN_CREDENTIAL_PATHS, BUILTIN_PROTECTED_PATHS, HOME_CREDENTIAL_PATH
 import { compileGlobs, globBases, hasGlobChars, stripDotSlash, type PathMatcher } from './globs.ts';
 import { canonicalize, isCaseInsensitiveFs, relativeInside, resolveDetailed, toPosix } from './paths.ts';
 import { hostAllowed, normalizeHost } from './hosts.ts';
-import { BASH_CATEGORIES_BY_SEVERITY, classifyBash, type BashCommandInfo, type BashWrite } from './bash.ts';
+import { BASH_CATEGORIES_BY_SEVERITY, classifyBash, type BashCommandInfo, type BashRead, type BashWrite } from './bash.ts';
 import { DELIVERY_ACTIONS, DELIVERY_MODES, RELEASE_ACTIONS } from './config.ts';
 
 export interface AuthorizeContext {
@@ -281,6 +281,11 @@ function authorizeBash(config: OrbitConfig, c: Compiled, command: unknown, ctx: 
     const d = judgeWrite(config, c, w, root);
     if (d) return d;
   }
+  // Advisory layer: the OS read-deny list is the real control (ADR 0005), this makes the denial immediate and explained.
+  for (const r of cls.reads) {
+    const d = judgeRead(c, r, root, ctx.home ?? homedir());
+    if (d) return d;
+  }
   return allow('bash.allowed', `${cls.category}: nothing statically denied (advisory; the OS sandbox and diff inspection still apply)`);
 }
 
@@ -341,6 +346,23 @@ function tempRoots(): string[] {
   }
   tempRootsCache = [...out];
   return tempRootsCache;
+}
+
+/** A static read of a credential path (built-in credential globs, well-known credential locations under home). */
+function judgeRead(c: Compiled, r: BashRead, root: string, home: string): AuthorizationDecision | null {
+  const denied = (shown: string): AuthorizationDecision => deny('bash.credential-read', `${r.via} reads ${shown}, which holds credentials`);
+  if (r.abs === null) {
+    // Only known at run time: the literal text (a variable in front of `.env`) is all there is to check.
+    return c.credential(stripDotSlash(toPosix(posix.normalize(r.path.replace(/^\/+/, ''))))) ? denied(r.path) : null;
+  }
+  const targets = r.glob ? expandOnDisk(r.abs) : [r.abs];
+  if (targets === null) return deny('bash.glob-too-broad', `${r.via} ${r.path} matches too many files to inspect`);
+  if (r.glob && c.credential(stripRoot(toPosix(r.abs)))) return denied(r.path);
+  for (const t of targets) {
+    const d = authorizeRead(c, t, { worktreeRoot: root, home });
+    if (!d.allowed) return denied(r.glob ? t : r.path);
+  }
+  return null;
 }
 
 function judgeWrite(config: OrbitConfig, c: Compiled, w: BashWrite, root: string): AuthorizationDecision | null {

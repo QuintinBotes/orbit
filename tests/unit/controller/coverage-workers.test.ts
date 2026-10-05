@@ -127,14 +127,16 @@ describe('ensureWorker: a fresh work unit', () => {
     expect(adapter.specs[1]!.timeoutMs).toBe(60_000);
   });
 
-  it('runs a request under the policy it names, built in the worker\'s own directory', async () => {
+  it('runs every request under the run\'s frozen policy: a request cannot name a wider one', async () => {
     const adapter = stub();
     lab = makeUnitLab({ adapters: { claude: adapter }, path: ['PREFLIGHT'] });
     const ctx = lab.ctx();
     const dirs: string[] = [];
-    await ensureWorker(ctx, request({ policy: (dir) => (dirs.push(dir), { path: join(dir, 'grant.json'), hash: 'sha256:grant', snapshot: ctx.snapshot }) }));
-    expect(dirs).toEqual([adapter.specs[0]!.workerDir]);
-    expect(adapter.specs[0]).toMatchObject({ policyPath: join(dirs[0]!, 'grant.json'), policyHash: 'sha256:grant' });
+    // A caller that still tries to hand a session another policy is ignored (docs/decisions/0005, finding 7).
+    const widened = { ...request(), policy: (dir: string) => (dirs.push(dir), { path: join(dir, 'grant.json'), hash: 'sha256:grant', snapshot: ctx.snapshot }) };
+    await ensureWorker(ctx, widened as Parameters<typeof ensureWorker>[1]);
+    expect(dirs).toEqual([]);
+    expect(adapter.specs[0]).toMatchObject({ policyPath: ctx.run.policyPath, policyHash: ctx.run.policyHash });
   });
 
   it('refuses a provider with no adapter before recording the start', async () => {

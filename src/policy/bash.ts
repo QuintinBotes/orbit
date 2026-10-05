@@ -89,6 +89,18 @@ export interface BashCommandInfo {
   ignoreScripts: boolean | null;
 }
 
+/** A file a command reads, as far as the command line shows it (ADR 0005: credential paths are denied). */
+export interface BashRead {
+  /** Path as written in the command. */
+  path: string;
+  /** Absolute path, joined but not normalized; null when it depends on run time or on an unknown directory. */
+  abs: string | null;
+  /** Contains unquoted glob characters. */
+  glob: boolean;
+  /** What reads it: '<', 'cat', 'grep', ... */
+  via: string;
+}
+
 export interface BashClassification {
   category: BashCategory;
   reasons: string[];
@@ -98,6 +110,8 @@ export interface BashClassification {
   opaque: boolean;
   commands: BashCommandInfo[];
   writes: BashWrite[];
+  /** Files named as inputs of commands known to read their arguments, and input redirections. */
+  reads: BashRead[];
 }
 
 export interface BashContext {
@@ -115,6 +129,7 @@ const MAX_DEPTH = 8;
 interface State {
   commands: BashCommandInfo[];
   writes: BashWrite[];
+  reads: BashRead[];
   reasons: string[];
   opaque: boolean;
   parsed: boolean;
@@ -128,6 +143,7 @@ export function classifyBash(command: string, ctx: BashContext = {}): BashClassi
   const state: State = {
     commands: [],
     writes: [],
+    reads: [],
     reasons: [],
     opaque: false,
     parsed: true,
@@ -151,7 +167,7 @@ export function classifyBash(command: string, ctx: BashContext = {}): BashClassi
   for (const c of BASH_CATEGORIES_BY_SEVERITY) {
     for (const info of state.commands) if (info.category === c) for (const r of info.reasons) if (!reasons.includes(r)) reasons.push(r);
   }
-  return { category, reasons, parsed: state.parsed, opaque: state.opaque, commands: state.commands, writes: state.writes };
+  return { category, reasons, parsed: state.parsed, opaque: state.opaque, commands: state.commands, writes: state.writes, reads: state.reads };
 }
 
 // ---------------------------------------------------------------------------
@@ -291,6 +307,7 @@ function classifyArgv(words: Word[], env: Env): string | null | undefined {
     return classifyArgv(wrapped, env);
   }
 
+  collectReads(name, args, env);
   let cd: string | null | undefined;
   const handler = handlerFor(name);
   if (handler) {
@@ -623,9 +640,52 @@ function handleRedirect(r: Redirect, base: string | null, state: State): void {
     state.commands.push({ argv: [r.op, target.text], category: info.category, reasons: info.reasons, hosts: info.hosts, hostsComplete: info.hostsComplete, install: null, ignoreScripts: null });
     return;
   }
+  if (isRead && r.op !== '<&') addRead(state, target, base, r.op);
   if (!isWrite) return;
   if (!target.dynamic && DEV_SINKS.test(target.text)) return;
   addWrite(state, target, base, 'write', r.op, false);
+}
+
+function addRead(state: State, word: Word, base: string | null, via: string): void {
+  if (!word.text || DEV_SINKS.test(word.text)) return;
+  const abs = targetPath(word, base, state);
+  state.reads.push({ path: word.text, abs: abs !== null && abs.startsWith(CWD_MARK) ? null : abs, glob: word.glob, via });
+}
+
+/** Commands whose arguments are files they read (or copy, or upload), for the static credential-read check. */
+const FILE_READERS: ReadonlySet<string> = new Set([
+  'cat', 'tac', 'head', 'tail', 'less', 'more', 'most', 'nl', 'od', 'xxd', 'hexdump', 'strings', 'base64', 'base32', 'basenc',
+  'cp', 'install', 'grep', 'egrep', 'fgrep', 'zgrep', 'zcat', 'gzcat', 'rg', 'ag', 'ack', 'sed', 'awk', 'gawk', 'mawk',
+  'sort', 'uniq', 'cut', 'paste', 'join', 'comm', 'diff', 'cmp', 'sdiff', 'jq', 'yq', 'bat', 'batcat', 'fold', 'fmt', 'column',
+  'rev', 'shuf', 'split', 'source', '.', 'curl', 'wget', 'scp', 'rsync', 'openssl', 'gpg', 'zip', 'tar', '7z', 'gzip', 'bzip2', 'xz',
+  'sha256sum', 'sha1sum', 'shasum', 'md5sum', 'md5', 'cksum', 'b2sum',
+]);
+
+/** The files a known reader names: its non-option arguments, `--opt=value` values and `@file` upload sources; for git, `rev:path` and paths after `--`. */
+function collectReads(name: string, args: Word[], env: Env): void {
+  const git = name === 'git';
+  if (!git && !FILE_READERS.has(name)) return;
+  let afterDashDash = false;
+  for (const w of args) {
+    let text = w.text;
+    if (!afterDashDash && text === '--') {
+      afterDashDash = true;
+      continue;
+    }
+    if (!afterDashDash && text.startsWith('-')) {
+      const eq = text.indexOf('=');
+      if (!text.startsWith('--') || eq === -1) continue;
+      text = text.slice(eq + 1);
+    }
+    if (git) {
+      const rev = /^[^-/][^:\s]*:(?!\/\/)(.+)$/.exec(text);
+      if (rev) text = rev[1]!;
+      else if (!afterDashDash) continue;
+    }
+    if (text.startsWith('@')) text = text.slice(1);
+    if (text === '' || text.includes('://') || /^\d+$/.test(text)) continue;
+    addRead(env.state, { ...w, text }, env.base, name);
+  }
 }
 
 function addWrite(state: State, word: Word, base: string | null, kind: BashWrite['kind'], via: string, recursive: boolean, unpack = false): void {

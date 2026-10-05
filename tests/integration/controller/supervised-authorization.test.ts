@@ -187,13 +187,18 @@ describe.skipIf(!canStripTypes)('controller: supervised authorization of operati
     // The attempt was retried, not a new attempt counted: one attempt, two sessions.
     const ws = listWorkers(l.db(), { runId: id, role: 'implementer' });
     expect(ws.map((w) => w.purpose)).toEqual(['implement:1#1', 'implement:1#2']);
-    // The retried session ran under the grant policy: the frozen snapshot widened by exactly change_permissions.
-    const grantFile = join(ws[1]!.workerDir, 'policy-grant.json');
-    const granted = JSON.parse(readFileSync(grantFile, 'utf8')) as { config: { actions: Record<string, boolean> } };
+    // The retried session was not widened (docs/decisions/0005, finding 7): no grant policy exists for either
+    // session; the controller ran exactly the approved command once, as a recorded action, and handed over its output.
     const ctx = loadRunContext({ ...labDeps(l), ownerId: 'x' }, id, new AbortController().signal);
-    expect(granted.config.actions).toEqual({ ...ctx.snapshot.config.actions, change_permissions: true });
     expect(existsSync(join(ws[0]!.workerDir, 'policy-grant.json'))).toBe(false);
-    expect(readFileSync(join(ws[1]!.workerDir, 'prompt.md'), 'utf8')).toMatch(/Authorized once, for this attempt only: run `chmod \+x apps\/run\.sh`/);
+    expect(existsSync(join(ws[1]!.workerDir, 'policy-grant.json'))).toBe(false);
+    const actions = l.db().all<{ state: string; target_json: string }>("SELECT state, target_json FROM actions WHERE run_id = ? AND kind = 'approved_command'", id);
+    expect(actions).toHaveLength(1);
+    expect(actions[0]!.state).toBe('SUCCEEDED');
+    expect(JSON.parse(actions[0]!.target_json)).toMatchObject({ command: 'chmod +x apps/run.sh', attempt: 1 });
+    const prompt = readFileSync(join(ws[1]!.workerDir, 'prompt.md'), 'utf8');
+    expect(prompt).toMatch(/Authorized once, for this attempt only: run `chmod \+x apps\/run\.sh`/);
+    expect(prompt).toMatch(/The controller ran exactly this command once, in isolation, on your behalf/);
     // The run's own policy did not widen.
     expect(ctx.snapshot.config.actions.change_permissions).toBe(false);
   }, 180_000);

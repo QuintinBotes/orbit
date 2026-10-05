@@ -688,3 +688,48 @@ describe('shimMain', () => {
     expect(readFileSync(join(dir, LOG_FILE), 'utf8')).toBe('prompt text');
   });
 });
+
+describe('runShim: provider output is redacted before it is persisted', () => {
+  // Synthetic values built at runtime so no literal credential sits in the repository.
+  const TOKEN = ['ghp', '_', 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8'].join('');
+  const ENV_VALUE = ['opaque', 'value', 'for', 'the', 'test', '0123'].join('-');
+
+  const provider = [
+    `const T=${JSON.stringify(TOKEN)};const E=process.env.ACME_SERVICE_TOKEN;`,
+    "console.log(JSON.stringify({type:'user',message:{content:[{type:'tool_result',content:'out: '+T+'\\n'}]}}));",
+    "console.log(JSON.stringify({type:'user',message:{content:[{type:'tool_result',content:'API_KEY=\"abc\\\\\"def123456\" done'}]}}));",
+    "console.log(JSON.stringify({type:'assistant',note:'kept as is',n:1}));",
+    "console.log('plain line with '+T+' inside');",
+    "console.log('env value '+E);",
+    "console.error('provider error: '+T);",
+    "process.stdout.write('no newline at the end '+T);",
+  ].join('');
+
+  it('writes no credential to log.jsonl or stderr.log and keeps every JSON line parseable', async () => {
+    const r = rig();
+    const rec = await r.run({ argv: [NODE, '-e', provider], env: { PATH: process.env.PATH, ACME_SERVICE_TOKEN: ENV_VALUE } });
+    expect(rec.code).toBe(0);
+    const log = readFileSync(join(r.dir, LOG_FILE), 'utf8');
+    const err = readFileSync(join(r.dir, STDERR_FILE), 'utf8');
+    for (const text of [log, err]) {
+      expect(text).not.toContain(TOKEN);
+      expect(text).not.toContain(ENV_VALUE);
+      expect(text).not.toContain('def123456');
+      expect(text).toContain('[REDACTED:');
+    }
+    const lines = log.split('\n').filter((l) => l.startsWith('{'));
+    expect(lines).toHaveLength(3);
+    for (const l of lines) expect(() => JSON.parse(l)).not.toThrow();
+    expect(JSON.parse(lines[2]!)).toEqual({ type: 'assistant', note: 'kept as is', n: 1 });
+    expect(log).toContain('no newline at the end [REDACTED:');
+    expect(err).toContain('provider error: [REDACTED:');
+  });
+
+  it('still notes the first output and leaves ordinary output byte for byte', async () => {
+    const r = rig();
+    const rec = await r.run({ argv: [NODE, '-e', "console.log(JSON.stringify({type:'system',subtype:'init'}));console.error('warn: slow')"] });
+    expect(typeof rec.firstOutputAt).toBe('number');
+    expect(readFileSync(join(r.dir, LOG_FILE), 'utf8')).toBe('{"type":"system","subtype":"init"}\n');
+    expect(readFileSync(join(r.dir, STDERR_FILE), 'utf8')).toBe('warn: slow\n');
+  });
+});

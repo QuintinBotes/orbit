@@ -45,7 +45,7 @@ import picomatch from 'picomatch';
 import type { Clock } from '../core/clock.ts';
 import type { AuthorizationDecision, CheckDefinition, PolicySnapshot, ReleaseConfig, ReleaseEnvironment } from '../policy/types.ts';
 import type { IsolationProvider } from '../isolation/types.ts';
-import type { ActionLedger, ActionRecord } from './actions.ts';
+import { DEFAULT_ACTION_DEADLINE_MS, type ActionLedger, type ActionRecord } from './actions.ts';
 import type { ChecksResult, GitHubClient, MergeMethod, MergeState, PullRequestInfo } from './github.ts';
 import type { DeliveryCandidate, DeliveryEvidence, DeliveryReview, DeliveryRun } from './gate.ts';
 import type { GitOptions } from './git.ts';
@@ -355,6 +355,8 @@ export async function performRelease(input: ReleaseInput): Promise<ReleaseResult
           },
           {
             authorization: deployAuth,
+            // The deploy command may run for its whole timeout, plus the fetch and checkout before it.
+            deadlineMs: env.timeout_seconds * 1000 + DEFAULT_ACTION_DEADLINE_MS,
             precheck: async () => {
               requireAllowed(authorize(snapshot, { kind: 'action', action: 'deploy_production' }), 'deploying');
               await baseGate();

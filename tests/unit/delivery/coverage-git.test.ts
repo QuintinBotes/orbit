@@ -62,6 +62,14 @@ describe('resolveRemoteUrl', () => {
     const none = fakeGit(`case "$1 $2" in 'remote get-url') exit 0;; esac`);
     await expect(resolveRemoteUrl(lab.work, 'origin', { env: none.env })).rejects.toMatchObject({ message: expect.stringContaining('has 0 push URLs') });
   });
+
+  it('refuses when the rewrite rules cannot be read, and ignores an entry without a value', async () => {
+    const broken = fakeGit(`case "$1 $2" in 'config -z') echo 'fatal: bad config' >&2; exit 3;; esac`);
+    await expect(resolveRemoteUrl(lab.work, 'origin', { env: broken.env })).rejects.toMatchObject({ code: 'GIT_FAILED', message: expect.stringContaining('insteadOf') });
+    const valueless = fakeGit(`case "$1 $2" in 'config -z') printf 'url.x.insteadof\\0'; exit 0;; esac`);
+    expect(await resolveRemoteUrl(lab.work, 'origin', { env: valueless.env })).toBe(lab.remote);
+    expect(valueless.calls().some((l) => l.startsWith('remote get-url --push --all origin'))).toBe(true);
+  });
 });
 
 describe('createDeliveryCommit when git misbehaves', () => {

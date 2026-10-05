@@ -9,7 +9,7 @@
  * is recorded on the run row until the transition that leaves PREFLIGHT.
  */
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { atomicWriteJson } from '../../core/fsx.ts';
 import { isOrbitError } from '../../core/errors.ts';
 import { adminDirFor, git, resolveCommit, treeOf } from '../../evidence/git.ts';
@@ -43,6 +43,16 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
   }
 
   const repo = ctx.run.repoRoot;
+  // ADR 0005: the worker may read the shared git directory, so credentials in the git configuration are refused up front.
+  const credentialProblems = await gitCredentialProblems(repo);
+  if (credentialProblems.length > 0) {
+    return finishRun(
+      ctx,
+      'BLOCKED',
+      `the repository's git configuration carries credentials a worker could read (${credentialProblems.join('; ')}); remove them and authenticate through a credential helper outside the repository`,
+      { outcome: { git_credentials: credentialProblems } },
+    );
+  }
   const head = await resolveCommit(repo, 'HEAD');
   const baseTree = await treeOf(repo, head);
   const dirty = await dirtyPaths(repo);
@@ -111,6 +121,62 @@ export function recordGate(ctx: RunContext, g: GateResult<unknown>): void {
     summary: `${g.gate} gate ${g.status}${g.reasons.length ? `: ${g.reasons.join('; ')}` : ''}${g.notes.length ? ` (notes: ${g.notes.join('; ')})` : ''}`,
     data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure },
   });
+}
+
+const URL_USERINFO = /^([a-z][a-z0-9+.-]*):\/\/([^/?#@]*)@/i;
+const AUTH_HEADER = /authorization|cookie|bearer|token|api[-_]?key|secret/i;
+
+/** Whether a URL carries userinfo that is a secret: any `user:password@`, or a bare userinfo on http(s), where it is a token. */
+function urlCarriesCredentials(value: string): boolean {
+  const m = URL_USERINFO.exec(value.trim());
+  if (!m) return false;
+  return m[2]!.includes(':') || /^https?$/i.test(m[1]!);
+}
+
+/**
+ * Credential material in the repository's own git configuration (local and the common configuration of a linked
+ * worktree), as plain descriptions that name the setting and never its value: userinfo in remote or rewritten
+ * URLs, authorization headers in `http.*.extraheader`, literal credential settings, and a credential store file
+ * inside the repository. A worker may read the shared git directory, so none of this may be there (ADR 0005).
+ */
+export async function gitCredentialProblems(repo: string): Promise<string[]> {
+  const entries: { key: string; value: string }[] = [];
+  for (const scope of ['--local', '--worktree']) {
+    let out: string;
+    try {
+      out = await git(repo, ['config', scope, '--list', '-z']);
+    } catch {
+      continue; // no worktree-specific configuration
+    }
+    for (const raw of out.split('\0')) {
+      if (!raw) continue;
+      const nl = raw.indexOf('\n');
+      entries.push(nl === -1 ? { key: raw, value: '' } : { key: raw.slice(0, nl), value: raw.slice(nl + 1) });
+    }
+  }
+  const root = resolve(repo);
+  const problems: string[] = [];
+  const note = (text: string): void => {
+    if (!problems.includes(text)) problems.push(text);
+  };
+  for (const { key, value } of entries) {
+    const k = key.toLowerCase();
+    if (/^remote\..+\.(?:url|pushurl)$/.test(k) && urlCarriesCredentials(value)) note(`${key} has credentials in its URL`);
+    else if (/^url\..+\.(?:insteadof|pushinsteadof)$/.test(k) && (urlCarriesCredentials(value) || urlCarriesCredentials(key.slice(4, key.toLowerCase().lastIndexOf('.'))))) note('a url.<base>.insteadOf rewrite has credentials in a URL');
+    else if (/^http\.(?:.+\.)?extraheader$/.test(k) && AUTH_HEADER.test(value)) note(`${key} sets an authorization header`);
+    else if (/^credential\.(?:.+\.)?(?:password|token|secret)$/.test(k)) note(`${key} holds a literal credential`);
+    else if (/^credential(?:\..+)?\.helper$/.test(k)) {
+      const v = value.trim();
+      if (v.startsWith('!') && /password|token|secret/i.test(v)) note(`${key} embeds a credential in a shell helper`);
+      const store = /^store\b.*?--file(?:=|\s+)(\S+)/.exec(v);
+      if (store) {
+        const file = store[1]!.replace(/^["']|["']$/g, '');
+        const abs = isAbsolute(file) ? resolve(file) : resolve(root, file);
+        if (!isAbsolute(file) || abs === root || abs.startsWith(`${root}/`)) note(`${key} stores credentials in a file inside the repository`);
+      }
+    }
+  }
+  return problems;
 }
 
 /** Paths git reports as changed or untracked, leaving out Orbit's own state directory. */

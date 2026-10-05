@@ -175,6 +175,22 @@ function redact(text2, extraSecrets) {
 function redactForProvider(text2, extraSecrets) {
   return stripHomePaths(redactWith(text2, { extraSecrets }));
 }
+function createRedactor(options = {}) {
+  const custom = [];
+  for (const p of options.patterns ?? []) {
+    const re = toGlobalRegExp(p);
+    if (!re.test("")) custom.push(re);
+  }
+  const opts = {
+    extraSecrets: options.extraSecrets ? [...options.extraSecrets] : void 0,
+    env: options.env,
+    custom
+  };
+  return {
+    redact: (text2) => redactWith(text2, opts),
+    forProvider: (text2) => stripHomePaths(redactWith(text2, opts))
+  };
+}
 function redactValue(value, redactor = redact) {
   return walk(value, redactor, /* @__PURE__ */ new WeakSet(), 0, null);
 }
@@ -511,9 +527,9 @@ var init_redact = __esm({
         hintRe: KEYWORD_HINT,
         re: new RegExp(String.raw`(?<![A-Za-z0-9_.-])(["']?)([A-Za-z0-9_.-]{0,64}?${KEYWORDS})\1([ \t]*[:=][ \t]*)(${DQ}|${SQ})`, "gi"),
         replace: (m, g) => {
-          const [q, key2, sep11, value] = g;
+          const [q, key2, sep10, value] = g;
           if (isLiteralPlaceholder(value.slice(1, -1))) return m;
-          return `${q}${key2}${q}${sep11}${value[0]}${tag(kindForKey(key2))}${value[0]}`;
+          return `${q}${key2}${q}${sep10}${value[0]}${tag(kindForKey(key2))}${value[0]}`;
         }
       },
       {
@@ -3536,6 +3552,7 @@ function classifyBash(command, ctx = {}) {
   const state = {
     commands: [],
     writes: [],
+    reads: [],
     reasons: [],
     opaque: false,
     parsed: true,
@@ -3561,7 +3578,7 @@ function classifyBash(command, ctx = {}) {
       for (const r of info.reasons) if (!reasons.includes(r)) reasons.push(r);
     }
   }
-  return { category, reasons, parsed: state.parsed, opaque: state.opaque, commands: state.commands, writes: state.writes };
+  return { category, reasons, parsed: state.parsed, opaque: state.opaque, commands: state.commands, writes: state.writes, reads: state.reads };
 }
 function classifySource(src, state, depth, base) {
   if (depth > MAX_DEPTH) {
@@ -3647,6 +3664,7 @@ function classifyArgv(words, env) {
     }
     return classifyArgv(wrapped, env);
   }
+  collectReads(name, args, env);
   let cd;
   const handler = handlerFor(name);
   if (handler) {
@@ -3893,9 +3911,40 @@ function handleRedirect(r, base, state) {
     state.commands.push({ argv: [r.op, target.text], category: info.category, reasons: info.reasons, hosts: info.hosts, hostsComplete: info.hostsComplete, install: null, ignoreScripts: null });
     return;
   }
+  if (isRead && r.op !== "<&") addRead(state, target, base, r.op);
   if (!isWrite) return;
   if (!target.dynamic && DEV_SINKS.test(target.text)) return;
   addWrite(state, target, base, "write", r.op, false);
+}
+function addRead(state, word, base, via) {
+  if (!word.text || DEV_SINKS.test(word.text)) return;
+  const abs = targetPath(word, base, state);
+  state.reads.push({ path: word.text, abs: abs !== null && abs.startsWith(CWD_MARK) ? null : abs, glob: word.glob, via });
+}
+function collectReads(name, args, env) {
+  const git6 = name === "git";
+  if (!git6 && !FILE_READERS.has(name)) return;
+  let afterDashDash = false;
+  for (const w of args) {
+    let text2 = w.text;
+    if (!afterDashDash && text2 === "--") {
+      afterDashDash = true;
+      continue;
+    }
+    if (!afterDashDash && text2.startsWith("-")) {
+      const eq = text2.indexOf("=");
+      if (!text2.startsWith("--") || eq === -1) continue;
+      text2 = text2.slice(eq + 1);
+    }
+    if (git6) {
+      const rev = /^[^-/][^:\s]*:(?!\/\/)(.+)$/.exec(text2);
+      if (rev) text2 = rev[1];
+      else if (!afterDashDash) continue;
+    }
+    if (text2.startsWith("@")) text2 = text2.slice(1);
+    if (text2 === "" || text2.includes("://") || /^\d+$/.test(text2)) continue;
+    addRead(env.state, { ...w, text: text2 }, env.base, name);
+  }
 }
 function addWrite(state, word, base, kind, via, recursive, unpack = false) {
   const abs = targetPath(word, base, state);
@@ -5065,7 +5114,7 @@ function valueOfLong(args, opt) {
   const i = args.findIndex((a) => a.text === opt);
   return i >= 0 ? args[i + 1] : void 0;
 }
-var BASH_CATEGORIES_BY_SEVERITY, CWD_MARK, MAX_DEPTH, RESERVED_PREFIX, RESERVED_END, Info, READ_ONLY, BUILD_TEST, PRIVILEGE, PUBLISH, DESTRUCTIVE, SHELLS, INTERPRETERS, FETCHERS, SENSITIVE_ENV, BENIGN_ENV, COMMAND_ENV, BENIGN_COMMAND_VALUE, DEV_SINKS, HANDLERS, GIT_READ, GIT_HISTORY_WRITE, GIT_DANGEROUS_CONFIG, NPM_INSTALL, NPM_CHANGE, NPM_READ, NPM_RUN, NPM_PUBLISH, NPM_CREDENTIALS, CURL_VALUE_SHORT, CURL_VALUE_LONG, CURL_REROUTE, CURL_WRITE, GLOB_SHOPTS;
+var BASH_CATEGORIES_BY_SEVERITY, CWD_MARK, MAX_DEPTH, RESERVED_PREFIX, RESERVED_END, Info, READ_ONLY, BUILD_TEST, PRIVILEGE, PUBLISH, DESTRUCTIVE, SHELLS, INTERPRETERS, FETCHERS, SENSITIVE_ENV, BENIGN_ENV, COMMAND_ENV, BENIGN_COMMAND_VALUE, DEV_SINKS, FILE_READERS, HANDLERS, GIT_READ, GIT_HISTORY_WRITE, GIT_DANGEROUS_CONFIG, NPM_INSTALL, NPM_CHANGE, NPM_READ, NPM_RUN, NPM_PUBLISH, NPM_CREDENTIALS, CURL_VALUE_SHORT, CURL_VALUE_LONG, CURL_REROUTE, CURL_WRITE, GLOB_SHOPTS;
 var init_bash = __esm({
   "src/policy/bash.ts"() {
     "use strict";
@@ -5508,6 +5557,78 @@ var init_bash = __esm({
     COMMAND_ENV = /* @__PURE__ */ new Set(["GIT_PAGER", "PAGER", "MANPAGER", "GIT_EDITOR", "EDITOR", "VISUAL", "GIT_SEQUENCE_EDITOR"]);
     BENIGN_COMMAND_VALUE = /^(|cat|less|more|true|false|:|vi|vim|nvim|nano|less -[A-Za-z]+)$/;
     DEV_SINKS = /^\/dev\/(null|stdout|stderr|stdin|tty|fd\/\d+|zero|random|urandom)$/;
+    FILE_READERS = /* @__PURE__ */ new Set([
+      "cat",
+      "tac",
+      "head",
+      "tail",
+      "less",
+      "more",
+      "most",
+      "nl",
+      "od",
+      "xxd",
+      "hexdump",
+      "strings",
+      "base64",
+      "base32",
+      "basenc",
+      "cp",
+      "install",
+      "grep",
+      "egrep",
+      "fgrep",
+      "zgrep",
+      "zcat",
+      "gzcat",
+      "rg",
+      "ag",
+      "ack",
+      "sed",
+      "awk",
+      "gawk",
+      "mawk",
+      "sort",
+      "uniq",
+      "cut",
+      "paste",
+      "join",
+      "comm",
+      "diff",
+      "cmp",
+      "sdiff",
+      "jq",
+      "yq",
+      "bat",
+      "batcat",
+      "fold",
+      "fmt",
+      "column",
+      "rev",
+      "shuf",
+      "split",
+      "source",
+      ".",
+      "curl",
+      "wget",
+      "scp",
+      "rsync",
+      "openssl",
+      "gpg",
+      "zip",
+      "tar",
+      "7z",
+      "gzip",
+      "bzip2",
+      "xz",
+      "sha256sum",
+      "sha1sum",
+      "shasum",
+      "md5sum",
+      "md5",
+      "cksum",
+      "b2sum"
+    ]);
     HANDLERS = {
       cd: cdHandler,
       pushd: cdHandler,
@@ -9688,10 +9809,10 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
   let offset = bm.offset;
   let commentEnd = null;
   for (const collItem of bm.items) {
-    const { start, key: key2, sep: sep11, value } = collItem;
+    const { start, key: key2, sep: sep10, value } = collItem;
     const keyProps = resolveProps(start, {
       indicator: "explicit-key-ind",
-      next: key2 ?? sep11?.[0],
+      next: key2 ?? sep10?.[0],
       offset,
       onError,
       parentIndent: bm.indent,
@@ -9705,7 +9826,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
         else if ("indent" in key2 && key2.indent !== bm.indent)
           onError(offset, "BAD_INDENT", startColMsg);
       }
-      if (!keyProps.anchor && !keyProps.tag && !sep11) {
+      if (!keyProps.anchor && !keyProps.tag && !sep10) {
         commentEnd = keyProps.end;
         if (keyProps.comment) {
           if (map2.comment)
@@ -9729,7 +9850,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
     ctx.atKey = false;
     if (mapIncludes(ctx, map2.items, keyNode))
       onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
-    const valueProps = resolveProps(sep11 ?? [], {
+    const valueProps = resolveProps(sep10 ?? [], {
       indicator: "map-value-ind",
       next: value,
       offset: keyNode.range[2],
@@ -9745,7 +9866,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
         if (ctx.options.strict && keyProps.start < valueProps.found.offset - 1024)
           onError(keyNode.range, "KEY_OVER_1024_CHARS", "The : indicator must be at most 1024 chars after the start of an implicit block mapping key");
       }
-      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : composeEmptyNode2(ctx, offset, sep11, null, valueProps, onError);
+      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : composeEmptyNode2(ctx, offset, sep10, null, valueProps, onError);
       if (ctx.schema.compat)
         flowIndentCheck(bm.indent, value, onError);
       offset = valueNode.range[2];
@@ -9840,7 +9961,7 @@ function resolveEnd(end, offset, reqSpace, onError) {
   let comment = "";
   if (end) {
     let hasSpace = false;
-    let sep11 = "";
+    let sep10 = "";
     for (const token of end) {
       const { source, type } = token;
       switch (type) {
@@ -9854,13 +9975,13 @@ function resolveEnd(end, offset, reqSpace, onError) {
           if (!comment)
             comment = cb;
           else
-            comment += sep11 + cb;
-          sep11 = "";
+            comment += sep10 + cb;
+          sep10 = "";
           break;
         }
         case "newline":
           if (comment)
-            sep11 += source;
+            sep10 += source;
           hasSpace = true;
           break;
         default:
@@ -9891,18 +10012,18 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
   let offset = fc.offset + fc.start.source.length;
   for (let i = 0; i < fc.items.length; ++i) {
     const collItem = fc.items[i];
-    const { start, key: key2, sep: sep11, value } = collItem;
+    const { start, key: key2, sep: sep10, value } = collItem;
     const props = resolveProps(start, {
       flow: fcName,
       indicator: "explicit-key-ind",
-      next: key2 ?? sep11?.[0],
+      next: key2 ?? sep10?.[0],
       offset,
       onError,
       parentIndent: fc.indent,
       startOnNewline: false
     });
     if (!props.found) {
-      if (!props.anchor && !props.tag && !sep11 && !value) {
+      if (!props.anchor && !props.tag && !sep10 && !value) {
         if (i === 0 && props.comma)
           onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`);
         else if (i < fc.items.length - 1)
@@ -9956,8 +10077,8 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
         }
       }
     }
-    if (!isMap2 && !sep11 && !props.found) {
-      const valueNode = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, sep11, null, props, onError);
+    if (!isMap2 && !sep10 && !props.found) {
+      const valueNode = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, sep10, null, props, onError);
       coll.items.push(valueNode);
       offset = valueNode.range[2];
       if (isBlock(value))
@@ -9969,7 +10090,7 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
       if (isBlock(key2))
         onError(keyNode.range, "BLOCK_IN_FLOW", blockMsg);
       ctx.atKey = false;
-      const valueProps = resolveProps(sep11 ?? [], {
+      const valueProps = resolveProps(sep10 ?? [], {
         flow: fcName,
         indicator: "map-value-ind",
         next: value,
@@ -9980,8 +10101,8 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
       });
       if (valueProps.found) {
         if (!isMap2 && !props.found && ctx.options.strict) {
-          if (sep11)
-            for (const st of sep11) {
+          if (sep10)
+            for (const st of sep10) {
               if (st === valueProps.found)
                 break;
               if (st.type === "newline") {
@@ -9998,7 +10119,7 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
         else
           onError(valueProps.start, "MISSING_CHAR", `Missing , or : between ${fcName} items`);
       }
-      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode2(ctx, valueProps.end, sep11, null, valueProps, onError) : null;
+      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode2(ctx, valueProps.end, sep10, null, valueProps, onError) : null;
       if (valueNode) {
         if (isBlock(value))
           onError(valueNode.range, "BLOCK_IN_FLOW", blockMsg);
@@ -10184,7 +10305,7 @@ function resolveBlockScalar(ctx, scalar, onError) {
       chompStart = i + 1;
   }
   let value = "";
-  let sep11 = "";
+  let sep10 = "";
   let prevMoreIndented = false;
   for (let i = 0; i < contentStart; ++i)
     value += lines[i][0].slice(trimIndent) + "\n";
@@ -10201,24 +10322,24 @@ function resolveBlockScalar(ctx, scalar, onError) {
       indent = "";
     }
     if (type === Scalar.BLOCK_LITERAL) {
-      value += sep11 + indent.slice(trimIndent) + content;
-      sep11 = "\n";
+      value += sep10 + indent.slice(trimIndent) + content;
+      sep10 = "\n";
     } else if (indent.length > trimIndent || content[0] === "	") {
-      if (sep11 === " ")
-        sep11 = "\n";
-      else if (!prevMoreIndented && sep11 === "\n")
-        sep11 = "\n\n";
-      value += sep11 + indent.slice(trimIndent) + content;
-      sep11 = "\n";
+      if (sep10 === " ")
+        sep10 = "\n";
+      else if (!prevMoreIndented && sep10 === "\n")
+        sep10 = "\n\n";
+      value += sep10 + indent.slice(trimIndent) + content;
+      sep10 = "\n";
       prevMoreIndented = true;
     } else if (content === "") {
-      if (sep11 === "\n")
+      if (sep10 === "\n")
         value += "\n";
       else
-        sep11 = "\n";
+        sep10 = "\n";
     } else {
-      value += sep11 + content;
-      sep11 = " ";
+      value += sep10 + content;
+      sep10 = " ";
       prevMoreIndented = false;
     }
   }
@@ -10398,25 +10519,25 @@ function unfoldLines(source) {
     trimBoth = /^[ \t]+|[ \t]+$/g;
   }
   let res = match[1].replace(trimEnd, "");
-  let sep11 = " ";
+  let sep10 = " ";
   let pos = line3.lastIndex;
   while (match = line3.exec(source)) {
     const lm = match[1].replace(trimBoth, "");
     if (lm === "") {
-      if (sep11 === "\n")
-        res += sep11;
+      if (sep10 === "\n")
+        res += sep10;
       else
-        sep11 = "\n";
+        sep10 = "\n";
     } else {
-      res += sep11 + lm;
-      sep11 = " ";
+      res += sep10 + lm;
+      sep10 = " ";
     }
     pos = line3.lastIndex;
   }
   const last = /[ \t]*(.*)/sy;
   last.lastIndex = pos;
   match = last.exec(source);
-  return res + sep11 + (match?.[1] ?? "");
+  return res + sep10 + (match?.[1] ?? "");
 }
 function doubleQuotedValue(source, onError) {
   let res = "";
@@ -12127,18 +12248,18 @@ var init_parser = __esm({
         if (this.type === "map-value-ind") {
           const prev = getPrevProps(this.peek(2));
           const start = getFirstKeyStartProps(prev);
-          let sep11;
+          let sep10;
           if (scalar.end) {
-            sep11 = scalar.end;
-            sep11.push(this.sourceToken);
+            sep10 = scalar.end;
+            sep10.push(this.sourceToken);
             delete scalar.end;
           } else
-            sep11 = [this.sourceToken];
+            sep10 = [this.sourceToken];
           const map2 = {
             type: "block-map",
             offset: scalar.offset,
             indent: scalar.indent,
-            items: [{ start, key: scalar, sep: sep11 }]
+            items: [{ start, key: scalar, sep: sep10 }]
           };
           this.onKeyLine = true;
           this.stack[this.stack.length - 1] = map2;
@@ -12291,15 +12412,15 @@ var init_parser = __esm({
                 } else if (isFlowToken(it.key) && !includesToken(it.sep, "newline")) {
                   const start2 = getFirstKeyStartProps(it.start);
                   const key2 = it.key;
-                  const sep11 = it.sep;
-                  sep11.push(this.sourceToken);
+                  const sep10 = it.sep;
+                  sep10.push(this.sourceToken);
                   delete it.key;
                   delete it.sep;
                   this.stack.push({
                     type: "block-map",
                     offset: this.offset,
                     indent: this.indent,
-                    items: [{ start: start2, key: key2, sep: sep11 }]
+                    items: [{ start: start2, key: key2, sep: sep10 }]
                   });
                 } else if (start.length > 0) {
                   it.sep = it.sep.concat(start, this.sourceToken);
@@ -12493,13 +12614,13 @@ var init_parser = __esm({
             const prev = getPrevProps(parent);
             const start = getFirstKeyStartProps(prev);
             fixFlowSeqItems(fc);
-            const sep11 = fc.end.splice(1, fc.end.length);
-            sep11.push(this.sourceToken);
+            const sep10 = fc.end.splice(1, fc.end.length);
+            sep10.push(this.sourceToken);
             const map2 = {
               type: "block-map",
               offset: fc.offset,
               indent: fc.indent,
-              items: [{ start, key: fc, sep: sep11 }]
+              items: [{ start, key: fc, sep: sep10 }]
             };
             this.onKeyLine = true;
             this.stack[this.stack.length - 1] = map2;
@@ -22120,6 +22241,10 @@ function authorizeBash(config, c, command, ctx) {
     const d = judgeWrite(config, c, w, root);
     if (d) return d;
   }
+  for (const r of cls.reads) {
+    const d = judgeRead(c, r, root, ctx.home ?? homedir3());
+    if (d) return d;
+  }
   return allow("bash.allowed", `${cls.category}: nothing statically denied (advisory; the OS sandbox and diff inspection still apply)`);
 }
 function commandName(word) {
@@ -22170,6 +22295,20 @@ function tempRoots() {
   }
   tempRootsCache = [...out];
   return tempRootsCache;
+}
+function judgeRead(c, r, root, home2) {
+  const denied = (shown) => deny("bash.credential-read", `${r.via} reads ${shown}, which holds credentials`);
+  if (r.abs === null) {
+    return c.credential(stripDotSlash(toPosix(posix3.normalize(r.path.replace(/^\/+/, ""))))) ? denied(r.path) : null;
+  }
+  const targets = r.glob ? expandOnDisk(r.abs) : [r.abs];
+  if (targets === null) return deny("bash.glob-too-broad", `${r.via} ${r.path} matches too many files to inspect`);
+  if (r.glob && c.credential(stripRoot(toPosix(r.abs)))) return denied(r.path);
+  for (const t of targets) {
+    const d = authorizeRead(c, t, { worktreeRoot: root, home: home2 });
+    if (!d.allowed) return denied(r.glob ? t : r.path);
+  }
+  return null;
 }
 function judgeWrite(config, c, w, root) {
   const via = w.via;
@@ -23512,6 +23651,12 @@ var init_schema4 = __esm({
       /* 4: the release environment a run names (orbit run --environment); null when it names none */
       `
   ALTER TABLE runs ADD COLUMN environment TEXT;
+  `,
+      /* 5: who started an action's current attempt, when, and until when it may still be in flight */
+      `
+  ALTER TABLE actions ADD COLUMN executor TEXT;
+  ALTER TABLE actions ADD COLUMN started_at INTEGER;
+  ALTER TABLE actions ADD COLUMN deadline_at INTEGER;
   `
     ];
   }
@@ -24355,7 +24500,7 @@ var init_strict_schema = __esm({
 
 // src/isolation/util.ts
 import { spawn as spawn2 } from "node:child_process";
-import { accessSync, constants as constants2, existsSync as existsSync5, readFileSync as readFileSync5, realpathSync as realpathSync4, statSync as statSync2 } from "node:fs";
+import { accessSync, constants as constants2, existsSync as existsSync5, lstatSync as lstatSync3, readdirSync as readdirSync2, readFileSync as readFileSync5, realpathSync as realpathSync4, statSync as statSync2 } from "node:fs";
 import { basename as basename3, delimiter, dirname as dirname6, isAbsolute as isAbsolute5, join as join6, resolve as resolve3, sep as sep3 } from "node:path";
 function readablePathsOf(profile) {
   const extra = profile.readablePaths;
@@ -24476,17 +24621,60 @@ function probeFailure(r) {
   const status2 = r.signal ? `signal ${r.signal}` : `exit ${r.code}`;
   return text2 ? `${status2}: ${text2.slice(0, 300)}` : status2;
 }
-var UNSAFE_PATH;
+function credentialFilesIn(worktree) {
+  const root = canonicalPath(worktree);
+  const isCredential = compileGlobs(BUILTIN_CREDENTIAL_PATHS, { nocase: true });
+  const found = [];
+  const stack = [root];
+  let visited = 0;
+  while (stack.length > 0 && visited < CREDENTIAL_WALK_LIMIT) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync2(dir);
+    } catch {
+      continue;
+    }
+    for (const name of entries) {
+      visited++;
+      const abs = join6(dir, name);
+      let st;
+      try {
+        st = lstatSync3(abs);
+      } catch {
+        continue;
+      }
+      const rel = abs.slice(root.length + 1);
+      if (st.isDirectory()) {
+        if (!CREDENTIAL_WALK_SKIP.has(name)) stack.push(abs);
+        continue;
+      }
+      if (!isCredential(rel)) continue;
+      if (!st.isSymbolicLink()) {
+        found.push(abs);
+        continue;
+      }
+      const target = canonicalPath(abs);
+      if (isWithin(target, root)) found.push(target);
+    }
+  }
+  return uniq(found).sort();
+}
+var UNSAFE_PATH, CREDENTIAL_WALK_SKIP, CREDENTIAL_WALK_LIMIT;
 var init_util = __esm({
   "src/isolation/util.ts"() {
     "use strict";
     init_errors();
+    init_builtin();
+    init_globs();
     UNSAFE_PATH = /[*?[\]{}\n\r\0]/;
+    CREDENTIAL_WALK_SKIP = /* @__PURE__ */ new Set([".git", "node_modules"]);
+    CREDENTIAL_WALK_LIMIT = 2e5;
   }
 });
 
 // src/isolation/profiles.ts
-import { chmodSync as chmodSync2, lstatSync as lstatSync3, mkdirSync as mkdirSync5 } from "node:fs";
+import { chmodSync as chmodSync2, lstatSync as lstatSync4, mkdirSync as mkdirSync5 } from "node:fs";
 import { homedir as homedir4, tmpdir as tmpdir3 } from "node:os";
 import { dirname as dirname7, isAbsolute as isAbsolute6, join as join7 } from "node:path";
 function profileForWorker(input) {
@@ -24549,7 +24737,7 @@ function workerTmpDir(workerDir, root = orbitTmpRoot()) {
 }
 function prepareWorkerTmpDir(workerDir, root = orbitTmpRoot()) {
   mkdirSync5(root, { recursive: true, mode: 448 });
-  const st = lstatSync3(root);
+  const st = lstatSync4(root);
   const uid = process.getuid?.();
   if (!st.isDirectory() || st.isSymbolicLink() || uid !== void 0 && st.uid !== uid || (st.mode & 63) !== 0) {
     throw new OrbitError("ISOLATION_UNAVAILABLE", `${root} is not a private directory owned by this user; refusing to put worker temp files there`, { path: root });
@@ -24585,6 +24773,8 @@ function denyList(opts) {
     ...SYSTEM_DENY_READ.map(canonicalPath),
     join7(repo, ".orbit"),
     ...isWithin(repo, opts.worktree) ? [] : [repo],
+    // Credential files in the worktree (.env, keys): a deny nested in the re-allowed worktree stays the more specific rule.
+    ...credentialFilesIn(opts.worktree),
     orbitTmpRoot(),
     ...parent ? [parent] : [],
     ...opts.extra
@@ -26183,7 +26373,9 @@ complete; the controller determines completion from independent gates.`;
 
 // src/adapters/shim.ts
 import { spawn as spawn3, spawnSync as spawnSync2 } from "node:child_process";
-import { closeSync as closeSync4, existsSync as existsSync9, fstatSync as fstatSync2, openSync as openSync4, readFileSync as readFileSync8, readSync, rmSync, statSync as statSync5 } from "node:fs";
+import { closeSync as closeSync4, existsSync as existsSync9, fstatSync as fstatSync2, openSync as openSync4, readFileSync as readFileSync8, readSync, rmSync, statSync as statSync5, unlinkSync, writeSync as writeSync2 } from "node:fs";
+import { randomBytes as randomBytes3 } from "node:crypto";
+import { StringDecoder as StringDecoder2 } from "node:string_decoder";
 import { tmpdir as tmpdir4 } from "node:os";
 import { basename as basename4, dirname as dirname10, isAbsolute as isAbsolute8, join as join10, resolve as resolve5 } from "node:path";
 function argvHash(argv2) {
@@ -26306,10 +26498,10 @@ function shimArgs(opts) {
   return [...out, "--", ...opts.argv];
 }
 function parseShimArgs(args) {
-  const sep11 = args.indexOf("--");
-  if (sep11 === -1 || sep11 === args.length - 1) throw new OrbitError("CONFIG_INVALID", "orbit shim: expected -- followed by the provider command");
-  const opts = args.slice(0, sep11);
-  const out = { workerDir: "", timeoutMs: 0, graceMs: DEFAULT_GRACE_MS, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], argv: args.slice(sep11 + 1) };
+  const sep10 = args.indexOf("--");
+  if (sep10 === -1 || sep10 === args.length - 1) throw new OrbitError("CONFIG_INVALID", "orbit shim: expected -- followed by the provider command");
+  const opts = args.slice(0, sep10);
+  const out = { workerDir: "", timeoutMs: 0, graceMs: DEFAULT_GRACE_MS, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], argv: args.slice(sep10 + 1) };
   for (let i = 0; i < opts.length; i += 2) {
     const flag = opts[i];
     const value = opts[i + 1];
@@ -26380,7 +26572,7 @@ async function shimMain(args, host) {
   });
   return 0;
 }
-var PID_FILE, EXIT_FILE, LOG_FILE, STDERR_FILE, SHIM_LOG_FILE, DEFAULT_GRACE_MS, ABORT_POLL_MS, FIRST_OUTPUT_POLL_MS, LEFTOVER_GRACE_MS, ESCALATION, MAX_TIMER_MS, DEFAULT_HOST, Shim;
+var PID_FILE, EXIT_FILE, LOG_FILE, STDERR_FILE, SHIM_LOG_FILE, DEFAULT_GRACE_MS, ABORT_POLL_MS, FIRST_OUTPUT_POLL_MS, LEFTOVER_GRACE_MS, OUTPUT_POLL_MS, OUTPUT_PUMP_BYTES, ESCALATION, MAX_TIMER_MS, DEFAULT_HOST, Shim, MAX_PENDING_LINE, PENDING_OVERLAP, LineSink, Spill;
 var init_shim = __esm({
   "src/adapters/shim.ts"() {
     "use strict";
@@ -26388,6 +26580,7 @@ var init_shim = __esm({
     init_fsx();
     init_hash();
     init_proc();
+    init_redact();
     PID_FILE = "pid.json";
     EXIT_FILE = "exit.json";
     LOG_FILE = "log.jsonl";
@@ -26397,6 +26590,8 @@ var init_shim = __esm({
     ABORT_POLL_MS = 200;
     FIRST_OUTPUT_POLL_MS = 25;
     LEFTOVER_GRACE_MS = 1e3;
+    OUTPUT_POLL_MS = 20;
+    OUTPUT_PUMP_BYTES = 8 * 1024 * 1024;
     ESCALATION = ["SIGINT", "SIGTERM", "SIGKILL"];
     MAX_TIMER_MS = 2147483647;
     DEFAULT_HOST = {
@@ -26435,6 +26630,8 @@ var init_shim = __esm({
       logStartSize = 0;
       firstOutputAt = null;
       logCarry = "";
+      redactor;
+      spills = [];
       constructor(options, pgid, host) {
         this.o = options;
         this.pgid = pgid;
@@ -26443,6 +26640,7 @@ var init_shim = __esm({
         this.graceMs = Math.max(0, options.graceMs ?? DEFAULT_GRACE_MS);
         this.workerDir = resolve5(options.workerDir);
         this.startedAt = this.clock.now();
+        this.redactor = createRedactor({ env: cleanEnv2(options.env) });
       }
       run() {
         return new Promise((resolvePromise) => {
@@ -26456,10 +26654,10 @@ var init_shim = __esm({
         const fds = [];
         let child;
         try {
-          const out = openSync4(join10(this.workerDir, LOG_FILE), "a", 384);
-          fds.push(out);
-          const err = openSync4(join10(this.workerDir, STDERR_FILE), "a", 384);
-          fds.push(err);
+          const log = openSync4(join10(this.workerDir, LOG_FILE), "a", 384);
+          fds.push(log);
+          const errLog = openSync4(join10(this.workerDir, STDERR_FILE), "a", 384);
+          fds.push(errLog);
           let stdin = "ignore";
           if (this.o.stdinPath) {
             stdin = openSync4(this.o.stdinPath, "r");
@@ -26471,16 +26669,22 @@ var init_shim = __esm({
             this.logOffset = 0;
           }
           this.logStartSize = this.logOffset;
-          child = spawn3(command, args, { cwd: this.o.cwd, env: cleanEnv2(this.o.env), stdio: [stdin, out, err], windowsHide: true });
+          this.spills = [new Spill(this.openSpill("out"), this.sinkFor(log)), new Spill(this.openSpill("err"), this.sinkFor(errLog))];
+          child = spawn3(command, args, { cwd: this.o.cwd, env: cleanEnv2(this.o.env), stdio: [stdin, this.spills[0].fd, this.spills[1].fd], windowsHide: true });
         } catch (err) {
+          this.closeOutput();
           this.finishWithoutChild(`could not start ${command}: ${describe2(err)}`);
           return;
         } finally {
-          for (const fd of fds) safeClose(fd);
+          for (const fd of fds) if (!this.spills.some((sp) => sp.sink.fd === fd)) safeClose(fd);
         }
         this.child = child;
+        this.pumpLater();
         child.once("error", (err) => {
-          if (child.pid === void 0) this.finishWithoutChild(`could not start ${command}: ${describe2(err)}`);
+          if (child.pid === void 0) {
+            this.closeOutput();
+            this.finishWithoutChild(`could not start ${command}: ${describe2(err)}`);
+          }
         });
         if (child.pid === void 0) return;
         child.once("exit", (code2, signal) => void this.onChildExit(code2, signal));
@@ -26549,7 +26753,68 @@ var init_shim = __esm({
             return;
           }
         }
+        this.closeOutput();
         this.finish(this.record(code2, signal, null));
+      }
+      /** An anonymous file the provider writes one stream to: created in the worker directory and unlinked at once, so it is no artifact. */
+      openSpill(name) {
+        const path = join10(this.workerDir, `.spill-${name}-${process.pid}-${randomBytes3(4).toString("hex")}`);
+        const fd = openSync4(path, "a+", 384);
+        try {
+          unlinkSync(path);
+        } catch {
+        }
+        return fd;
+      }
+      sinkFor(fd) {
+        return new LineSink(fd, (line3) => this.redactLine(line3));
+      }
+      /** Move what the provider has written so far, redacted, into the artifacts; at most a bounded amount per call. */
+      pumpOutput(limit) {
+        for (const sp of this.spills) sp.pump(limit);
+      }
+      pumpLater() {
+        this.later(OUTPUT_POLL_MS, () => {
+          if (this.finished || this.spills.length === 0) return;
+          this.pumpOutput(OUTPUT_PUMP_BYTES);
+          this.pumpLater();
+        });
+      }
+      /**
+       * One line of provider output with every secret removed. A line that is a JSON document is redacted by value
+       * and written back as JSON, so a replacement can never break its quoting; any other line is redacted as text.
+       */
+      redactLine(line3) {
+        const t = line3.trimStart();
+        if (t.startsWith("{") || t.startsWith("[")) {
+          try {
+            const value = JSON.parse(line3);
+            const before = JSON.stringify(value);
+            const after = JSON.stringify(redactValue(value, this.redactor.redact));
+            if (after !== before) return after;
+            const text2 = this.redactor.redact(line3);
+            if (text2 === line3) return line3;
+            try {
+              JSON.parse(text2);
+              return text2;
+            } catch {
+              return JSON.stringify({ type: "orbit_redacted_line" });
+            }
+          } catch {
+          }
+        }
+        return this.redactor.redact(line3);
+      }
+      /** Write everything the provider produced, redacted, flush the unterminated tails and close the files. */
+      closeOutput() {
+        const spills = this.spills;
+        this.spills = [];
+        for (const sp of spills) {
+          sp.pump(Infinity);
+          sp.sink.flush();
+          safeClose(sp.fd);
+          safeClose(sp.sink.fd);
+        }
       }
       /**
        * Write exit.json first: SIGKILL to the group ends the shim too. `code` and
@@ -26558,6 +26823,7 @@ var init_shim = __esm({
        */
       killGroupAndFinish(code2, signal, providerKilled = false) {
         this.escalation.push("SIGKILL");
+        this.closeOutput();
         const rec = this.record(code2, providerKilled ? "SIGKILL" : signal, null);
         this.persist(rec);
         try {
@@ -26685,6 +26951,77 @@ var init_shim = __esm({
           }
         }
         return null;
+      }
+    };
+    MAX_PENDING_LINE = 64 * 1024 * 1024;
+    PENDING_OVERLAP = 8 * 1024;
+    LineSink = class {
+      fd;
+      decoder = new StringDecoder2("utf8");
+      pending = "";
+      redact;
+      constructor(fd, redact2) {
+        this.fd = fd;
+        this.redact = redact2;
+      }
+      write(chunk) {
+        this.pending += this.decoder.write(chunk);
+        let start = 0;
+        for (let nl = this.pending.indexOf("\n", start); nl !== -1; nl = this.pending.indexOf("\n", start)) {
+          this.emit(this.pending.slice(start, nl), true);
+          start = nl + 1;
+        }
+        this.pending = this.pending.slice(start);
+        if (this.pending.length > MAX_PENDING_LINE) {
+          this.emit(this.pending.slice(0, this.pending.length - PENDING_OVERLAP), false);
+          this.pending = this.pending.slice(this.pending.length - PENDING_OVERLAP);
+        }
+      }
+      flush() {
+        this.pending += this.decoder.end();
+        if (this.pending.length > 0) this.emit(this.pending, false);
+        this.pending = "";
+      }
+      emit(line3, terminated) {
+        const text2 = this.redact(line3) + (terminated ? "\n" : "");
+        try {
+          const buf = Buffer.from(text2, "utf8");
+          let off = 0;
+          while (off < buf.length) off += writeSync2(this.fd, buf, off, buf.length - off);
+        } catch {
+        }
+      }
+    };
+    Spill = class {
+      fd;
+      sink;
+      pos = 0;
+      constructor(fd, sink) {
+        this.fd = fd;
+        this.sink = sink;
+      }
+      pump(limit) {
+        let moved = 0;
+        const buf = Buffer.alloc(1024 * 1024);
+        while (moved < limit) {
+          let size;
+          try {
+            size = fstatSync2(this.fd).size;
+          } catch {
+            return;
+          }
+          if (this.pos >= size) return;
+          let n2 = 0;
+          try {
+            n2 = readSync(this.fd, buf, 0, Math.min(buf.length, size - this.pos), this.pos);
+          } catch {
+            return;
+          }
+          if (n2 <= 0) return;
+          this.pos += n2;
+          moved += n2;
+          this.sink.write(buf.subarray(0, n2));
+        }
       }
     };
   }
@@ -28862,7 +29199,7 @@ import { spawnSync as spawnSync3 } from "node:child_process";
 import { chmodSync as chmodSync3, existsSync as existsSync13, mkdtempSync as mkdtempSync2, rmSync as rmSync4, statSync as statSync8, writeFileSync as writeFileSync3 } from "node:fs";
 import { tmpdir as tmpdir6 } from "node:os";
 import { join as join14 } from "node:path";
-import { randomBytes as randomBytes3 } from "node:crypto";
+import { randomBytes as randomBytes4 } from "node:crypto";
 function planMounts(profile) {
   const notes = [];
   const check = (p) => {
@@ -29006,7 +29343,7 @@ var init_container = __esm({
           throw new OrbitError("INTERNAL", `working directory ${cwd} is not inside any mounted path, so it would not exist in the container`);
         }
         const containerEnv = containerEnvFor(opts.env);
-        const name = `orbit-${randomBytes3(6).toString("hex")}`;
+        const name = `orbit-${randomBytes4(6).toString("hex")}`;
         const dir = mkdtempSync2(join14(this.opts.envFileDir ?? tmpdir6(), "orbit-docker-"));
         const cliEnv = this.cliEnv();
         let cleaned = false;
@@ -30194,11 +30531,11 @@ function gitEnv2() {
 }
 function git(repoRoot, args) {
   const argv2 = ["-C", repoRoot, "-c", "core.fsmonitor=false", "-c", "core.quotepath=false", "-c", "core.hooksPath=/dev/null", ...args];
-  return new Promise((resolvePromise, reject) => {
+  return new Promise((resolvePromise, reject2) => {
     execFile("git", argv2, { env: gitEnv2(), encoding: "buffer", maxBuffer: MAX_GIT_OUTPUT, windowsHide: true }, (err, stdout, stderr) => {
       if (err) {
         const msg = Buffer.isBuffer(stderr) ? stderr.toString("utf8").trim() : String(stderr ?? "");
-        reject(new OrbitError("GIT_FAILED", `git ${args[0]} failed: ${msg || err.message}`, { args }, { cause: err }));
+        reject2(new OrbitError("GIT_FAILED", `git ${args[0]} failed: ${msg || err.message}`, { args }, { cause: err }));
         return;
       }
       resolvePromise(stdout);
@@ -32080,7 +32417,7 @@ var init_model_outputs = __esm({
 });
 
 // src/storage/decisions.ts
-import { closeSync as closeSync5, existsSync as existsSync17, fstatSync as fstatSync3, openSync as openSync5, readFileSync as readFileSync10, readSync as readSync2, writeSync as writeSync2 } from "node:fs";
+import { closeSync as closeSync5, existsSync as existsSync17, fstatSync as fstatSync3, openSync as openSync5, readFileSync as readFileSync10, readSync as readSync2, writeSync as writeSync3 } from "node:fs";
 import { join as join17 } from "node:path";
 function toRecord4(r) {
   return { id: r.id, runId: r.run_id, kind: r.kind, summary: r.summary, data: r.data_json === null ? null : JSON.parse(r.data_json), createdAt: r.created_at };
@@ -32151,7 +32488,7 @@ function appendLine(runDir2, d) {
     try {
       const size = fstatSync3(fd).size;
       const last = Buffer.alloc(1);
-      if (size > 0 && readSync2(fd, last, 0, 1, size - 1) === 1 && last[0] !== 10) writeSync2(fd, "\n");
+      if (size > 0 && readSync2(fd, last, 0, 1, size - 1) === 1 && last[0] !== 10) writeSync3(fd, "\n");
     } finally {
       closeSync5(fd);
     }
@@ -32194,14 +32531,20 @@ function toRecord5(row) {
     receipt: row.receipt_json === null ? null : JSON.parse(row.receipt_json),
     error: row.error,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    executor: row.executor ?? null,
+    startedAt: row.started_at ?? null,
+    deadlineAt: row.deadline_at ?? null
   };
+}
+function assertDeadline(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) throw new OrbitError("INTERNAL", "an action deadline must be a positive number of milliseconds");
 }
 function errorText(err) {
   if (isOrbitError(err)) return `${err.code}: ${err.message}`;
   return err instanceof Error ? err.message : String(err);
 }
-var DEFAULT_MAX_ATTEMPTS, DEFINITIVE_CODES, ActionLedger;
+var DEFAULT_MAX_ATTEMPTS, DEFAULT_ACTION_DEADLINE_MS, DEFINITIVE_CODES, ActionLedger;
 var init_actions = __esm({
   "src/delivery/actions.ts"() {
     "use strict";
@@ -32213,6 +32556,7 @@ var init_actions = __esm({
     init_events();
     init_decisions();
     DEFAULT_MAX_ATTEMPTS = 3;
+    DEFAULT_ACTION_DEADLINE_MS = 10 * 6e4;
     DEFINITIVE_CODES = /* @__PURE__ */ new Set([
       "AUTH_EXPIRED",
       "AUTH_MISSING",
@@ -32227,6 +32571,9 @@ var init_actions = __esm({
     ActionLedger = class {
       maxAttempts;
       actor;
+      /** The lease holder to assert; null when this ledger is not fenced. */
+      owner;
+      deadlineMs;
       /** Public so delivery can re-read the recorded evidence bindings in the same database. */
       db;
       clock;
@@ -32237,7 +32584,14 @@ var init_actions = __esm({
         this.opts = opts;
         this.maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
         this.actor = opts.actor ?? "delivery";
+        this.owner = opts.ownerId === void 0 ? opts.actor ?? null : opts.ownerId;
+        this.deadlineMs = opts.actionDeadlineMs ?? DEFAULT_ACTION_DEADLINE_MS;
         if (!Number.isInteger(this.maxAttempts) || this.maxAttempts < 1) throw new OrbitError("INTERNAL", "maxAttempts must be a positive integer");
+        assertDeadline(this.deadlineMs);
+      }
+      /** Who this ledger records as the executor of the attempts it starts. */
+      get executorId() {
+        return this.owner ?? this.actor;
       }
       /** Append a run event (for callers that finish a multi-action step). */
       event(runId, type, data) {
@@ -32296,21 +32650,49 @@ var init_actions = __esm({
           return { action: this.get(id), created: true };
         });
       }
-      /** INTENT | EXECUTING | UNKNOWN | FAILED -> EXECUTING, counting the attempt. The attempt count is a compare-and-set, so two executors cannot both start the same attempt. */
-      markExecuting(action) {
+      /**
+       * INTENT | EXECUTING | UNKNOWN | FAILED -> EXECUTING, counting the attempt. In one transaction: the run is
+       * not cancelled, this ledger's owner holds the run's lease, the attempt count is unchanged (a compare-and-set,
+       * so two executors cannot both start the same attempt), and an attempt another owner started is past its
+       * deadline and was reconciled after it. Records the executor, the start time and the new deadline.
+       */
+      markExecuting(action, opts = {}) {
         const now = this.clock.now();
+        const deadlineMs = opts.deadlineMs ?? this.deadlineMs;
+        assertDeadline(deadlineMs);
         return this.db.tx(() => {
           const run = this.db.get("SELECT cancel_requested FROM runs WHERE id = ?", action.runId);
           if (run?.cancel_requested) throw new OrbitError("CANCELLED", `run ${action.runId} has a durable cancellation request; ${action.kind} will not start`, { actionId: action.id });
+          if (this.owner !== null) {
+            const lease = this.db.get("SELECT owner_id, expires_at FROM leases WHERE run_id = ?", action.runId);
+            if (!lease || lease.owner_id !== this.owner || lease.expires_at <= now) {
+              throw new OrbitError("LEASE_LOST", `controller ${this.owner} does not hold the lease for run ${action.runId}; ${action.kind} will not start`, { actionId: action.id, definitive: true });
+            }
+          }
+          const current = this.db.get("SELECT * FROM actions WHERE id = ?", action.id);
+          if (current && current.attempts === action.attempts && current.attempts > 0 && (current.state === "EXECUTING" || current.state === "UNKNOWN") && current.executor !== this.executorId) {
+            const deadline = current.deadline_at ?? current.updated_at + this.deadlineMs;
+            if (opts.reconciledAt === void 0 || opts.reconciledAt < deadline) {
+              throw new OrbitError("CONCURRENT_UPDATE", `${action.kind} attempt ${current.attempts} of action ${action.id} was started by ${current.executor ?? "an earlier controller"} and may still be in flight until ${new Date(deadline).toISOString()}`, {
+                actionId: action.id,
+                executor: current.executor,
+                deadlineAt: deadline,
+                retryAfterMs: Math.max(1e3, deadline - now)
+              });
+            }
+          }
           const res = this.db.run(
-            `UPDATE actions SET state = 'EXECUTING', attempts = attempts + 1, error = NULL, updated_at = ?
+            `UPDATE actions SET state = 'EXECUTING', attempts = attempts + 1, error = NULL, updated_at = ?, executor = ?, started_at = ?, deadline_at = ?
          WHERE id = ? AND attempts = ? AND state IN ('INTENT', 'EXECUTING', 'UNKNOWN', 'FAILED')`,
             now,
+            this.executorId,
+            now,
+            now + deadlineMs,
             action.id,
             action.attempts
           );
           if (res.changes !== 1) throw new OrbitError("CONCURRENT_UPDATE", `action ${action.id} changed under this executor`, { actionId: action.id });
-          appendEvent(this.db, action.runId, "action.executing", this.actor, { action_id: action.id, kind: action.kind, attempt: action.attempts + 1 }, now);
+          appendEvent(this.db, action.runId, "action.executing", this.actor, { action_id: action.id, kind: action.kind, attempt: action.attempts + 1, executor: this.executorId, deadline_at: now + deadlineMs }, now);
           return this.get(action.id);
         });
       }
@@ -32333,7 +32715,8 @@ var init_actions = __esm({
         const now = this.clock.now();
         const message = redact(reason).slice(0, 2e3);
         return this.db.tx(() => {
-          this.db.run("UPDATE actions SET state = ?, error = ?, updated_at = ? WHERE id = ? AND state != ?", state, message, now, action.id, "SUCCEEDED");
+          const res = this.db.run("UPDATE actions SET state = ?, error = ?, updated_at = ? WHERE id = ? AND state != ? AND attempts = ?", state, message, now, action.id, "SUCCEEDED", action.attempts);
+          if (res.changes === 0 && this.db.get("SELECT attempts FROM actions WHERE id = ?", action.id)?.attempts !== action.attempts) return this.get(action.id);
           appendEvent(this.db, action.runId, event, this.actor, { action_id: action.id, kind: action.kind, attempts: action.attempts, error: message }, now);
           return this.get(action.id);
         });
@@ -32350,7 +32733,9 @@ var init_actions = __esm({
         let lastError = null;
         for (; ; ) {
           if (lastError !== null) await this.clock.sleep(this.delayBefore(action.attempts, lastError));
+          let reconciledAt;
           if (action.attempts > 0 || action.state === "EXECUTING" || action.state === "UNKNOWN") {
+            reconciledAt = this.clock.now();
             const found = await this.reconcileOnce(action, handlers);
             if (found.action.state === "SUCCEEDED") return { action: found.action, receipt: found.action.receipt, outcome: "reconciled" };
             action = found.action;
@@ -32364,8 +32749,8 @@ var init_actions = __esm({
             }, lastError ? { cause: lastError } : void 0);
           }
           await options.precheck?.();
-          action = this.markExecuting(action);
-          const ctx = { action, attempt: action.attempts };
+          action = this.markExecuting(action, { reconciledAt, deadlineMs: options.deadlineMs });
+          const ctx = { action, attempt: action.attempts, deadlineAt: action.deadlineAt };
           faultPoint(`delivery.${action.kind}.before-execute`);
           let receipt;
           try {
@@ -32389,7 +32774,7 @@ var init_actions = __esm({
         }
       }
       async reconcileOnce(action, handlers) {
-        const ctx = { action, attempt: action.attempts };
+        const ctx = { action, attempt: action.attempts, deadlineAt: action.deadlineAt };
         let found;
         try {
           found = await handlers.reconcile(ctx);
@@ -33561,7 +33946,7 @@ var init_identity2 = __esm({
 });
 
 // src/recovery/reconcile.ts
-import { existsSync as existsSync19, readdirSync as readdirSync2 } from "node:fs";
+import { existsSync as existsSync19, readdirSync as readdirSync3 } from "node:fs";
 import { dirname as dirname16, join as join20 } from "node:path";
 async function reconcileOnStart(opts) {
   const ctx = {
@@ -33970,7 +34355,7 @@ function findCheckDirs(root) {
 }
 function safeDirs(dir) {
   try {
-    return readdirSync2(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+    return readdirSync3(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
   } catch {
     return [];
   }
@@ -34376,7 +34761,7 @@ var init_fingerprint = __esm({
 });
 
 // src/evidence/git.ts
-import { readdirSync as readdirSync3, readFileSync as readFileSync13, realpathSync as realpathSync8 } from "node:fs";
+import { readdirSync as readdirSync4, readFileSync as readFileSync13, realpathSync as realpathSync8 } from "node:fs";
 import { tmpdir as tmpdir8 } from "node:os";
 import { join as join22 } from "node:path";
 function gitEnv3(extra = {}) {
@@ -34433,7 +34818,7 @@ async function adminDirFor(repoRoot, worktree) {
   const admin = join22(common, "worktrees");
   let names = [];
   try {
-    names = readdirSync3(admin);
+    names = readdirSync4(admin);
   } catch {
   }
   for (const name of names) {
@@ -34457,8 +34842,8 @@ var init_git = __esm({
 });
 
 // src/evidence/runner.ts
-import { createHash as createHash3, randomBytes as randomBytes4 } from "node:crypto";
-import { closeSync as closeSync7, existsSync as existsSync20, lstatSync as lstatSync4, mkdirSync as mkdirSync8, openSync as openSync7, readSync as readSync4, readdirSync as readdirSync4, realpathSync as realpathSync9, rmSync as rmSync6, statSync as statSync11 } from "node:fs";
+import { createHash as createHash3, randomBytes as randomBytes5 } from "node:crypto";
+import { closeSync as closeSync7, existsSync as existsSync20, lstatSync as lstatSync5, mkdirSync as mkdirSync8, openSync as openSync7, readSync as readSync4, readdirSync as readdirSync5, realpathSync as realpathSync9, rmSync as rmSync6, statSync as statSync11 } from "node:fs";
 import { platform } from "node:os";
 import { join as join23, resolve as resolve8, sep as sep4 } from "node:path";
 function candidateEvidenceDir(runDir2, seq2) {
@@ -34753,7 +35138,7 @@ async function launchAttempt(ctx, subject, def, configHash, rerunOf) {
     wrapped.cleanup();
     throw err;
   }
-  const token = randomBytes4(8).toString("hex");
+  const token = randomBytes5(8).toString("hex");
   const intent = {
     token,
     checkRunId: row.id,
@@ -35004,7 +35389,7 @@ function collectArtifacts(dir) {
     const d = stack.pop();
     let names;
     try {
-      names = readdirSync4(d).sort();
+      names = readdirSync5(d).sort();
     } catch {
       continue;
     }
@@ -35012,7 +35397,7 @@ function collectArtifacts(dir) {
       const p = join23(d, name);
       let st;
       try {
-        st = lstatSync4(p);
+        st = lstatSync5(p);
       } catch {
         continue;
       }
@@ -35389,12 +35774,12 @@ function intersectWithScope(glob, scope) {
   const g = normalizeGlob(glob);
   if (g === null) return [];
   if (containedInAny(g, scope)) return [g];
-  const inside2 = [];
+  const inside = [];
   for (const s of scope) {
     const n2 = normalizeGlob(s);
-    if (n2 !== null && globContains(g, n2) && !inside2.includes(n2)) inside2.push(n2);
+    if (n2 !== null && globContains(g, n2) && !inside.includes(n2)) inside.push(n2);
   }
-  return inside2;
+  return inside;
 }
 function literalGlob(path) {
   if (/[*?{}]/.test(path)) return null;
@@ -39569,7 +39954,7 @@ function taskSpec(ctx, w, req) {
   const env = ctx.deps.hostEnv ?? process.env;
   const provider = w.provider.startsWith("codex") ? "codex" : "claude";
   const timeoutMs = workerTimeoutMs(ctx, w.role);
-  const policy = req.policy ? req.policy(w.workerDir) : { path: ctx.run.policyPath, hash: ctx.run.policyHash, snapshot: ctx.snapshot };
+  const policy = { path: ctx.run.policyPath, hash: ctx.run.policyHash, snapshot: ctx.snapshot };
   const sandbox = profileForWorker({
     worktree: req.cwd,
     workerDir: w.workerDir,
@@ -41828,7 +42213,7 @@ var init_publication = __esm({
 });
 
 // src/controller/report.ts
-import { existsSync as existsSync24, mkdirSync as mkdirSync12, readdirSync as readdirSync5, readFileSync as readFileSync16 } from "node:fs";
+import { existsSync as existsSync24, mkdirSync as mkdirSync12, readdirSync as readdirSync6, readFileSync as readFileSync16 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
 import { join as join30 } from "node:path";
 function writeFinalReport(db, runId, opts) {
@@ -41928,7 +42313,7 @@ function tokens(t) {
 function repairs(runDir2) {
   const dir = join30(runDir2, "briefs");
   if (!existsSync24(dir)) return [];
-  return readdirSync5(dir).filter((f) => /^attempt-\d+\.json$/.test(f)).map((f) => readJsonIfExists(join30(dir, f))).filter((b) => b !== null).map((b) => ({ attempt: b.attempt, source: b.source, fingerprint: b.fingerprint })).sort((a, b) => a.attempt - b.attempt);
+  return readdirSync6(dir).filter((f) => /^attempt-\d+\.json$/.test(f)).map((f) => readJsonIfExists(join30(dir, f))).filter((b) => b !== null).map((b) => ({ attempt: b.attempt, source: b.source, fingerprint: b.fingerprint })).sort((a, b) => a.attempt - b.attempt);
 }
 function nextAction(run, branch, pr) {
   switch (run.state) {
@@ -43884,7 +44269,7 @@ var init_common = __esm({
 });
 
 // src/evidence/candidate.ts
-import { chmodSync as chmodSync5, existsSync as existsSync25, lstatSync as lstatSync5, mkdirSync as mkdirSync13, mkdtempSync as mkdtempSync4, readdirSync as readdirSync6, realpathSync as realpathSync13, rmSync as rmSync8, writeFileSync as writeFileSync5 } from "node:fs";
+import { chmodSync as chmodSync5, existsSync as existsSync25, lstatSync as lstatSync6, mkdirSync as mkdirSync13, mkdtempSync as mkdtempSync4, readdirSync as readdirSync7, realpathSync as realpathSync13, rmSync as rmSync8, writeFileSync as writeFileSync5 } from "node:fs";
 import { tmpdir as tmpdir9 } from "node:os";
 import { dirname as dirname20, join as join33, parse as parse4, sep as sep7 } from "node:path";
 function candidateRef(runId, seq2) {
@@ -43955,7 +44340,7 @@ async function diffStat(repoRoot, fromTree, toTree) {
 }
 async function materializeCandidate(repoRoot, commit, dir, opts = {}) {
   const sha = await resolveCommit(repoRoot, commit);
-  if (existsSync25(dir) && readdirSync6(dir).length > 0) {
+  if (existsSync25(dir) && readdirSync7(dir).length > 0) {
     throw new OrbitError("GIT_FAILED", `checkout directory is not empty: ${dir}`, { dir });
   }
   mkdirSync13(dirname20(dir), { recursive: true });
@@ -43987,16 +44372,16 @@ function assertDisposableCheckout(repoRoot, dir) {
   if (target === parse4(target).root) refuse("it is a filesystem root");
   let dotGit;
   try {
-    dotGit = lstatSync5(join33(target, ".git"));
+    dotGit = lstatSync6(join33(target, ".git"));
   } catch {
     return;
   }
   if (dotGit.isDirectory()) refuse("it holds its own .git directory, so it is a repository, not a checkout");
 }
 function walk3(dir, visit3) {
-  for (const name of readdirSync6(dir)) {
+  for (const name of readdirSync7(dir)) {
     const p = join33(dir, name);
-    const st = lstatSync5(p);
+    const st = lstatSync6(p);
     if (st.isSymbolicLink()) continue;
     if (st.isDirectory()) {
       if (name === ".git") continue;
@@ -44006,7 +44391,7 @@ function walk3(dir, visit3) {
   }
 }
 function makeReadOnly(dir) {
-  walk3(dir, (p, isDir) => chmodSync5(p, isDir ? 365 : lstatSync5(p).mode & 365));
+  walk3(dir, (p, isDir) => chmodSync5(p, isDir ? 365 : lstatSync6(p).mode & 365));
   chmodSync5(dir, 365);
 }
 function makeWritable(dir) {
@@ -44015,9 +44400,9 @@ function makeWritable(dir) {
     const stack = [dir];
     while (stack.length) {
       const d = stack.pop();
-      for (const name of readdirSync6(d)) {
+      for (const name of readdirSync7(d)) {
         const p = join33(d, name);
-        const st = lstatSync5(p);
+        const st = lstatSync6(p);
         if (st.isSymbolicLink()) continue;
         if (st.isDirectory()) {
           chmodSync5(p, 493);
@@ -44166,14 +44551,32 @@ function remoteHost2(address) {
 }
 async function resolveRemoteUrl(repoRoot, remote, opts = {}) {
   assertRemote(remote);
-  const res = await git3(repoRoot, ["remote", "get-url", "--push", remote], opts);
+  const res = await git3(repoRoot, ["remote", "get-url", "--push", "--all", remote], opts);
+  let url;
   if (res.exitCode === 0) {
     const urls = res.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
     if (urls.length !== 1) throw new OrbitError("CONFIG_INVALID", `remote ${remote} has ${urls.length} push URLs; delivery needs exactly one`, { definitive: true });
-    return urls[0];
+    url = urls[0];
+  } else if (/[/:]/.test(remote)) {
+    url = remote;
+  } else {
+    throw new OrbitError("CONFIG_INVALID", `no git remote named ${JSON.stringify(remote)} in the repository`, { definitive: true });
   }
-  if (/[/:]/.test(remote)) return remote;
-  throw new OrbitError("CONFIG_INVALID", `no git remote named ${JSON.stringify(remote)} in the repository`, { definitive: true });
+  assertRemote(url);
+  await assertNotRewritten(repoRoot, url, opts);
+  return url;
+}
+async function assertNotRewritten(repoRoot, url, opts) {
+  const res = await git3(repoRoot, ["config", "-z", "--get-regexp", "^url\\..*\\.(insteadof|pushinsteadof)$"], opts);
+  if (res.exitCode === 1 && res.stdout === "") return;
+  if (res.exitCode !== 0) throw fail("git config --get-regexp url.*.insteadOf", res);
+  for (const entry of res.stdout.split("\0")) {
+    const nl = entry.indexOf("\n");
+    const prefix = nl < 0 ? "" : entry.slice(nl + 1);
+    if (prefix !== "" && url.startsWith(prefix)) {
+      throw new OrbitError("CONFIG_INVALID", `the push URL ${redact(url)} matches a url.<base>.${/pushinsteadof$/i.test(entry.slice(0, nl)) ? "pushInsteadOf" : "insteadOf"} rule, so git would rewrite it to another destination; remove the rule or name the final URL`, { definitive: true });
+    }
+  }
 }
 function remoteEnvAndArgs(o) {
   if (!o.token) return { env: o.env ?? gitEnv4(), pre: [] };
@@ -44585,8 +44988,9 @@ async function deliver(input) {
   );
   const commit = commitResult.receipt.commit;
   const pushAuth = requireAllowed(authorize(snapshot2, { kind: "action", action: "push_task_branch", target: branch }), "pushing the task branch");
-  requireAllowed(networkAllowed(remoteHost2(await resolveRemoteUrl(run.repoRoot, remote, input.git))), "reaching the remote");
-  const remoteOpts = { repoRoot: run.repoRoot, remote, token: input.token, ...input.git };
+  const pushUrl = await resolveRemoteUrl(run.repoRoot, remote, input.git);
+  requireAllowed(networkAllowed(remoteHost2(pushUrl)), "reaching the remote");
+  const remoteOpts = { ...input.git, repoRoot: run.repoRoot, remote: pushUrl, token: input.token };
   const pushResult = await ledger.performAction(
     { runId: run.id, kind: "push", idempotencyKey: `deliver:${run.id}:push:${branch}:${commit}`, target: { remote: redact(remote), ref: `refs/heads/${branch}`, commit }, candidateId: candidate.id, treeHash: tree, commitSha: commit },
     {
@@ -44873,6 +45277,8 @@ async function performRelease(input) {
           },
           {
             authorization: deployAuth,
+            // The deploy command may run for its whole timeout, plus the fetch and checkout before it.
+            deadlineMs: env.timeout_seconds * 1e3 + DEFAULT_ACTION_DEADLINE_MS,
             precheck: async () => {
               requireAllowed(authorize(snapshot2, { kind: "action", action: "deploy_production" }), "deploying");
               await baseGate();
@@ -45167,6 +45573,7 @@ var init_release = __esm({
   "src/delivery/release.ts"() {
     "use strict";
     import_picomatch6 = __toESM(require_picomatch2(), 1);
+    init_actions();
     init_exec();
     init_errors();
     init_fsx();
@@ -45311,6 +45718,68 @@ function runBucket(status2, conclusion) {
       return "fail";
   }
 }
+function parseCheckRuns(text2) {
+  const o = obj2("check runs", parseJson4("check runs", text2));
+  const total = o.total_count;
+  if (typeof total !== "number" || !Number.isInteger(total) || total < 0) throw malformed("check runs", "field total_count is missing or not a count");
+  if (!Array.isArray(o.check_runs)) throw malformed("check runs", "field check_runs is missing or not an array");
+  const runs = o.check_runs.map((raw) => {
+    const r = obj2("check runs", raw);
+    const status2 = str4("check runs", r, "status");
+    const conclusion = typeof r.conclusion === "string" ? r.conclusion : "";
+    const opt = (k) => typeof r[k] === "string" && r[k] !== "" ? r[k] : null;
+    const link = opt("html_url") ?? opt("details_url");
+    const m = link ? RUN_LINK.exec(link) : null;
+    const output = r.output && typeof r.output === "object" ? r.output : {};
+    return {
+      name: str4("check runs", r, "name"),
+      headSha: str4("check runs", r, "head_sha"),
+      bucket: runBucket(status2, conclusion),
+      state: (conclusion || status2).toUpperCase(),
+      link,
+      workflow: null,
+      runId: m?.[1] ?? null,
+      jobId: m?.[2] ?? null,
+      startedAt: opt("started_at"),
+      completedAt: opt("completed_at"),
+      description: typeof output.title === "string" && output.title !== "" ? output.title : null
+    };
+  });
+  return { total, runs };
+}
+function statusBucket(state) {
+  switch (state) {
+    case "success":
+      return "pass";
+    case "pending":
+      return "pending";
+    default:
+      return "fail";
+  }
+}
+function parseCombinedStatus(text2) {
+  const o = obj2("commit status", parseJson4("commit status", text2));
+  const sha = str4("commit status", o, "sha");
+  const statuses = Array.isArray(o.statuses) ? o.statuses : [];
+  const checks = statuses.map((raw) => {
+    const st = obj2("commit status", raw);
+    const state = str4("commit status", st, "state");
+    const opt = (k) => typeof st[k] === "string" && st[k] !== "" ? st[k] : null;
+    return {
+      name: str4("commit status", st, "context"),
+      bucket: statusBucket(state),
+      state: state.toUpperCase(),
+      link: opt("target_url"),
+      workflow: null,
+      runId: null,
+      jobId: null,
+      startedAt: opt("created_at"),
+      completedAt: state === "pending" ? null : opt("updated_at"),
+      description: opt("description")
+    };
+  });
+  return { sha, checks };
+}
 function parseFailedSteps(text2) {
   const o = obj2("run view", parseJson4("run view", text2));
   const jobs = Array.isArray(o.jobs) ? o.jobs : [];
@@ -45370,6 +45839,14 @@ function assertMergeInput(input) {
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(input.headSha)) throw new OrbitError("INTERNAL", `not a full commit sha: ${JSON.stringify(input.headSha)}`);
   if (!MERGE_METHODS.includes(input.method)) throw new OrbitError("CONFIG_INVALID", `unknown merge method ${JSON.stringify(input.method)}`, { definitive: true });
 }
+function assertSha(sha) {
+  if (!/^[0-9a-f]{7,64}$/.test(sha)) throw new OrbitError("INTERNAL", `not a commit sha: ${sha}`);
+}
+function sameCommit(reported, asked) {
+  const r = reported.toLowerCase();
+  const a = asked.toLowerCase();
+  return a.length >= 40 ? r === a : r.startsWith(a);
+}
 function assertHead(head) {
   if (typeof head !== "string" || head === "" || head.startsWith("-") || /[\s\0]/.test(head)) {
     throw new OrbitError("INTERNAL", `not a usable head branch: ${JSON.stringify(head)}`);
@@ -45389,7 +45866,7 @@ function emptyState() {
     merges: 0
   };
 }
-var CHECK_BUCKETS, MERGE_METHODS, RUN_LINK, PR_FIELDS, MERGE_FIELDS, MERGE_REFUSED, CHECK_FIELDS, RUN_FIELDS, GhCliClient, FakeGitHub;
+var CHECK_BUCKETS, MERGE_METHODS, RUN_LINK, PR_FIELDS, MERGE_FIELDS, MERGE_REFUSED, CHECK_FIELDS, RUN_FIELDS, CHECK_RUNS_PER_PAGE, CHECK_RUNS_MAX_PAGES, GhCliClient, FakeGitHub;
 var init_github = __esm({
   "src/delivery/github.ts"() {
     "use strict";
@@ -45406,6 +45883,8 @@ var init_github = __esm({
     MERGE_REFUSED = /Head branch was modified|not mergeable|merge conflict|required status check|review is required|reviews? required|base branch policy|protected branch|Merge method .* not allowed|not allowed on this repository|HTTP 405|HTTP 409|HTTP 422/i;
     CHECK_FIELDS = "name,state,bucket,link,workflow,event,startedAt,completedAt,description";
     RUN_FIELDS = "databaseId,status,conclusion,headSha,headBranch,event,workflowName,name,attempt,url,startedAt,updatedAt";
+    CHECK_RUNS_PER_PAGE = 100;
+    CHECK_RUNS_MAX_PAGES = 10;
     GhCliClient = class {
       token;
       gh;
@@ -45523,35 +46002,75 @@ ${res.stdout}`;
         const out = await this.ok("pr view", ["pr", "view", String(number), "-R", this.opts.repo, "--json", MERGE_FIELDS]);
         return parseMergeState(parseJson4("pr view", out));
       }
+      /**
+       * Checks for a commit are read per commit (its check runs and its combined status) and labelled with the
+       * commit the responses report, so checks of another revision (the PR head after the branch moved) can never
+       * be attributed to the commit asked about. Only a PR query without a commit uses the PR's current checks,
+       * and those are labelled with no commit at all.
+       */
       async listChecks(query) {
         this.assertToken();
-        if ("pr" in query) {
-          if (query.sha) {
-            const head = (await this.viewPullRequest(query.pr)).headRefOid;
-            if (head !== query.sha) return this.checksFromRuns(query.sha);
-          }
-          const headSha = query.sha ?? null;
-          const res = await this.exec(["pr", "checks", String(query.pr), "-R", this.opts.repo, "--json", CHECK_FIELDS]);
-          if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh pr checks timed out");
-          if (res.exitCode === 0) {
-            const checks = parseChecks(res.stdout);
-            if (checks.length > 0 || !query.sha) return { checks, absent: checks.length === 0, headSha };
-            return this.checksFromRuns(query.sha);
-          }
-          const text2 = `${res.stderr}
+        if (query.sha !== void 0) return this.checksForCommit(query.sha);
+        const pr = query.pr;
+        const res = await this.exec(["pr", "checks", String(pr), "-R", this.opts.repo, "--json", CHECK_FIELDS]);
+        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh pr checks timed out");
+        if (res.exitCode === 0) {
+          const checks = parseChecks(res.stdout);
+          return { checks, absent: checks.length === 0, headSha: null };
+        }
+        const text2 = `${res.stderr}
 ${res.stdout}`;
-          if (/no checks reported/i.test(text2)) return query.sha ? this.checksFromRuns(query.sha) : { checks: [], absent: true, headSha };
-          const err = classifyGhFailure("pr checks", res.exitCode, text2);
-          if (err.code === "AUTH_MISSING" && query.sha) return this.checksFromRuns(query.sha);
+        if (/no checks reported/i.test(text2)) return { checks: [], absent: true, headSha: null };
+        throw classifyGhFailure("pr checks", res.exitCode, text2);
+      }
+      async api(what, path) {
+        const argv2 = ["api", "-H", "Accept: application/vnd.github+json"];
+        if (this.opts.host) argv2.push("--hostname", this.opts.host);
+        argv2.push(path);
+        return this.ok(what, argv2);
+      }
+      async checksForCommit(sha) {
+        assertSha(sha);
+        const repo = this.opts.repo;
+        let runs;
+        try {
+          runs = await this.checkRuns(sha);
+        } catch (err) {
+          const code2 = err.code;
+          if (code2 === "AUTH_MISSING") return this.checksFromRuns(sha);
+          if (/No commit found/i.test(err.message ?? "")) return { checks: [], absent: true, headSha: sha };
           throw err;
         }
-        return this.checksFromRuns(query.sha);
+        let status2 = { sha: null, checks: [] };
+        try {
+          status2 = parseCombinedStatus(await this.api("commit status", `repos/${repo}/commits/${sha}/status?per_page=100`));
+        } catch (err) {
+          if (err.code !== "AUTH_MISSING") throw err;
+        }
+        const reported = [.../* @__PURE__ */ new Set([...runs.map((r) => r.headSha.toLowerCase()), ...status2.sha ? [status2.sha.toLowerCase()] : []])];
+        const other = reported.find((r) => !sameCommit(r, sha));
+        if (other !== void 0) return { checks: [], absent: false, headSha: other };
+        const checks = [...runs.map(({ headSha: _sha, ...c }) => c), ...status2.checks];
+        if (checks.length === 0) return this.checksFromRuns(sha);
+        return { checks, absent: false, headSha: reported[0] ?? sha };
+      }
+      async checkRuns(sha) {
+        const all = [];
+        for (let page = 1; page <= CHECK_RUNS_MAX_PAGES; page++) {
+          const { total, runs } = parseCheckRuns(await this.api("check runs", `repos/${this.opts.repo}/commits/${sha}/check-runs?per_page=${CHECK_RUNS_PER_PAGE}&page=${page}`));
+          all.push(...runs);
+          if (runs.length < CHECK_RUNS_PER_PAGE || all.length >= total) return all;
+        }
+        throw new OrbitError("DELIVERY_FAILED", `commit ${sha.slice(0, 12)} has more than ${CHECK_RUNS_PER_PAGE * CHECK_RUNS_MAX_PAGES} check runs; Orbit does not judge CI on a partial list`, { definitive: true });
       }
       async checksFromRuns(sha) {
-        if (!/^[0-9a-f]{7,64}$/.test(sha)) throw new OrbitError("INTERNAL", `not a commit sha: ${sha}`);
+        assertSha(sha);
         const out = await this.ok("run list", ["run", "list", "-R", this.opts.repo, "--commit", sha, "-L", "50", "--json", RUN_FIELDS]);
-        const checks = parseRunListAsChecks(out);
-        return { checks, absent: checks.length === 0, headSha: sha };
+        const rows = parseJson4("run list", out);
+        const reported = Array.isArray(rows) ? rows.map((r) => r && typeof r === "object" && typeof r.headSha === "string" ? r.headSha.toLowerCase() : null) : [];
+        const checks = parseRunListAsChecks(out).filter((_, i) => reported[i] == null || sameCommit(reported[i], sha));
+        const labelled = reported.find((r) => r != null && sameCommit(r, sha));
+        return { checks, absent: checks.length === 0, headSha: labelled ?? sha };
       }
       async failedLogs(runId) {
         if (!/^\d+$/.test(runId)) throw new OrbitError("INTERNAL", `not a run id: ${runId}`);
@@ -46905,15 +47424,15 @@ function draftContract(input) {
     if (!allowed.includes(g)) allowed.push(g);
   };
   for (const proposed of plan.allowed_paths) {
-    const inside2 = intersectWithScope(proposed, scope);
+    const inside = intersectWithScope(proposed, scope);
     const normalized = normalizeGlob(proposed);
-    if (inside2.length === 0) {
+    if (inside.length === 0) {
       adjustments.push({ kind: "path-dropped", subject: proposed, reason: normalized === null ? "glob syntax cannot be checked against the policy scope" : "not inside the policy scope" });
-    } else if (inside2.length === 1 && inside2[0] === normalized) {
+    } else if (inside.length === 1 && inside[0] === normalized) {
       keep(normalized);
     } else {
-      inside2.forEach(keep);
-      adjustments.push({ kind: "path-narrowed", subject: proposed, reason: `narrowed to the policy scope: ${inside2.join(", ")}` });
+      inside.forEach(keep);
+      adjustments.push({ kind: "path-narrowed", subject: proposed, reason: `narrowed to the policy scope: ${inside.join(", ")}` });
     }
   }
   if (allowed.length === 0) {
@@ -47533,7 +48052,7 @@ var init_select = __esm({
 
 // src/controller/steps/preflight.ts
 import { existsSync as existsSync29, mkdirSync as mkdirSync15, rmSync as rmSync10 } from "node:fs";
-import { dirname as dirname21, join as join36 } from "node:path";
+import { dirname as dirname21, isAbsolute as isAbsolute14, join as join36, resolve as resolve11 } from "node:path";
 async function preflightStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -47548,6 +48067,15 @@ async function preflightStep(ctx) {
     return finishRun(ctx, "BLOCKED", `environment gate: ${env.gate.reasons.join("; ")}`, { outcome: { gate: env.gate } });
   }
   const repo = ctx.run.repoRoot;
+  const credentialProblems = await gitCredentialProblems(repo);
+  if (credentialProblems.length > 0) {
+    return finishRun(
+      ctx,
+      "BLOCKED",
+      `the repository's git configuration carries credentials a worker could read (${credentialProblems.join("; ")}); remove them and authenticate through a credential helper outside the repository`,
+      { outcome: { git_credentials: credentialProblems } }
+    );
+  }
   const head = await resolveCommit(repo, "HEAD");
   const baseTree = await treeOf(repo, head);
   const dirty = await dirtyPaths(repo);
@@ -47609,6 +48137,50 @@ function recordGate(ctx, g) {
     summary: `${g.gate} gate ${g.status}${g.reasons.length ? `: ${g.reasons.join("; ")}` : ""}${g.notes.length ? ` (notes: ${g.notes.join("; ")})` : ""}`,
     data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure }
   });
+}
+function urlCarriesCredentials(value) {
+  const m = URL_USERINFO.exec(value.trim());
+  if (!m) return false;
+  return m[2].includes(":") || /^https?$/i.test(m[1]);
+}
+async function gitCredentialProblems(repo) {
+  const entries = [];
+  for (const scope of ["--local", "--worktree"]) {
+    let out;
+    try {
+      out = await git2(repo, ["config", scope, "--list", "-z"]);
+    } catch {
+      continue;
+    }
+    for (const raw of out.split("\0")) {
+      if (!raw) continue;
+      const nl = raw.indexOf("\n");
+      entries.push(nl === -1 ? { key: raw, value: "" } : { key: raw.slice(0, nl), value: raw.slice(nl + 1) });
+    }
+  }
+  const root = resolve11(repo);
+  const problems = [];
+  const note3 = (text2) => {
+    if (!problems.includes(text2)) problems.push(text2);
+  };
+  for (const { key: key2, value } of entries) {
+    const k = key2.toLowerCase();
+    if (/^remote\..+\.(?:url|pushurl)$/.test(k) && urlCarriesCredentials(value)) note3(`${key2} has credentials in its URL`);
+    else if (/^url\..+\.(?:insteadof|pushinsteadof)$/.test(k) && (urlCarriesCredentials(value) || urlCarriesCredentials(key2.slice(4, key2.toLowerCase().lastIndexOf("."))))) note3("a url.<base>.insteadOf rewrite has credentials in a URL");
+    else if (/^http\.(?:.+\.)?extraheader$/.test(k) && AUTH_HEADER.test(value)) note3(`${key2} sets an authorization header`);
+    else if (/^credential\.(?:.+\.)?(?:password|token|secret)$/.test(k)) note3(`${key2} holds a literal credential`);
+    else if (/^credential(?:\..+)?\.helper$/.test(k)) {
+      const v = value.trim();
+      if (v.startsWith("!") && /password|token|secret/i.test(v)) note3(`${key2} embeds a credential in a shell helper`);
+      const store = /^store\b.*?--file(?:=|\s+)(\S+)/.exec(v);
+      if (store) {
+        const file = store[1].replace(/^["']|["']$/g, "");
+        const abs = isAbsolute14(file) ? resolve11(file) : resolve11(root, file);
+        if (!isAbsolute14(file) || abs === root || abs.startsWith(`${root}/`)) note3(`${key2} stores credentials in a file inside the repository`);
+      }
+    }
+  }
+  return problems;
 }
 async function dirtyPaths(repo) {
   const out = await git2(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).orbit"]);
@@ -47675,7 +48247,7 @@ async function checkEnvironment(ctx) {
   });
   return { gate, credentials: all, capabilities, reviewer };
 }
-var IMPLEMENTER_PROVIDER;
+var IMPLEMENTER_PROVIDER, URL_USERINFO, AUTH_HEADER;
 var init_preflight = __esm({
   "src/controller/steps/preflight.ts"() {
     "use strict";
@@ -47691,6 +48263,8 @@ var init_preflight = __esm({
     init_common();
     init_workers2();
     IMPLEMENTER_PROVIDER = "claude";
+    URL_USERINFO = /^([a-z][a-z0-9+.-]*):\/\/([^/?#@]*)@/i;
+    AUTH_HEADER = /authorization|cookie|bearer|token|api[-_]?key|secret/i;
   }
 });
 
@@ -47812,8 +48386,9 @@ var init_contracting = __esm({
 });
 
 // src/controller/parallel-writers.ts
-import { copyFileSync, lstatSync as lstatSync6, mkdirSync as mkdirSync16, readlinkSync as readlinkSync2, rmSync as rmSync11, statSync as statSync12, symlinkSync, chmodSync as chmodSync6, existsSync as existsSync30 } from "node:fs";
-import { dirname as dirname22, join as join38, resolve as resolve11, sep as sep8 } from "node:path";
+import { existsSync as existsSync30, mkdtempSync as mkdtempSync5, rmSync as rmSync11, writeFileSync as writeFileSync6 } from "node:fs";
+import { tmpdir as tmpdir10 } from "node:os";
+import { join as join38 } from "node:path";
 function splitAttempt(ctx, contract, fresh) {
   if (!fresh || ctx.run.mode === "supervised") return null;
   if (ctx.snapshot.config.agents.default_parallelism < 2) return null;
@@ -47938,25 +48513,45 @@ async function admitAndStart(ctx, n2, all, waiting, opts) {
   return { kind: "started", count: count3, why: reasons[0] ?? "not admitted", budget };
 }
 async function integrate(ctx, n2, u, w) {
-  const target = ctx.run.worktreePath;
-  const source = w.cwd;
+  const repoRoot = ctx.run.repoRoot;
+  const base = ctx.run.baseRevision;
+  const target = await adminDirFor(repoRoot, ctx.run.worktreePath);
   const intent = unitEvents(ctx, UNIT_INTEGRATING_EVENT, n2).find((e) => e.unit === u.id);
+  const commit = intent?.commit ?? await commitWorktree(repoRoot, await adminDirFor(repoRoot, w.cwd), base, `orbit work unit ${u.id} of attempt ${n2}`);
   let paths;
-  if (intent) paths = intent.paths;
-  else {
-    paths = await changedFiles2(source);
+  if (intent) {
+    paths = intent.paths;
+    await restoreToBase(target, base, safePaths(paths));
+  } else {
+    paths = await changedBetween(repoRoot, base, commit);
+    const escaping = await escapingLinks(ctx, base, commit);
+    if (escaping.length > 0) return reject(ctx, n2, u, `rejected: symlink leaves the repository: ${escaping.slice(0, 10).join(", ")}`);
     const busy = new Set(await changedFiles2(target));
     const clash = paths.filter((p) => busy.has(p));
-    if (clash.length > 0) {
-      await serialize2(ctx, n2, u, `conflict: ${clash.slice(0, 10).join(", ")} already changed by integrated work`);
-      await removeWorktree(ctx, n2, u);
-      return;
-    }
-    note2(ctx, UNIT_INTEGRATING_EVENT, { attempt: n2, unit: u.id, worker_id: w.id, paths });
+    if (clash.length > 0) return reject(ctx, n2, u, `conflict: ${clash.slice(0, 10).join(", ")} already changed by integrated work`);
+    note2(ctx, UNIT_INTEGRATING_EVENT, { attempt: n2, unit: u.id, worker_id: w.id, paths, commit });
   }
-  for (const p of paths) copyPath(source, target, p);
+  const patch = await unitPatch(repoRoot, base, commit, safePaths(paths));
+  if (patch.length > 0) {
+    const before = await escapingLinks(ctx, base, await commitWorktree(repoRoot, target, base, "orbit integrated tree"));
+    try {
+      await applyPatch(target, patch, false);
+    } catch (err) {
+      return reject(ctx, n2, u, `conflict: git apply refused the unit's changes (${err instanceof Error ? err.message.slice(0, 200) : String(err)})`);
+    }
+    const after = await escapingLinks(ctx, base, await commitWorktree(repoRoot, target, base, "orbit integrated tree"));
+    const added = after.filter((p) => !before.includes(p));
+    if (added.length > 0) {
+      await applyPatch(target, patch, true);
+      return reject(ctx, n2, u, `rejected: symlink leaves the repository: ${added.slice(0, 10).join(", ")}`);
+    }
+  }
   note2(ctx, UNIT_INTEGRATED_EVENT, { attempt: n2, unit: u.id, worker_id: w.id, paths });
   invalidateEvidence(ctx.db, ctx.run.id, `work unit ${u.id} of attempt ${n2} integrated (${paths.length} file(s))`, ctx.clock);
+  await removeWorktree(ctx, n2, u);
+}
+async function reject(ctx, n2, u, reason) {
+  await serialize2(ctx, n2, u, reason);
   await removeWorktree(ctx, n2, u);
 }
 async function serialize2(ctx, n2, u, reason) {
@@ -47969,31 +48564,58 @@ async function removeWorktree(ctx, n2, u) {
   if (existsSync30(dir)) await cleanupCandidateCheckout(ctx.run.repoRoot, dir).catch(() => {
   });
 }
-async function changedFiles2(dir) {
-  const out = await git2(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"]);
+function inCheckout(c, extra = {}) {
+  return { env: { GIT_DIR: c.gitDir, GIT_WORK_TREE: c.worktree, GIT_LITERAL_PATHSPECS: "1", ...extra } };
+}
+async function changedFiles2(c) {
+  const out = await git2(c.worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"], inCheckout(c));
   return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3)).sort();
 }
-function copyPath(source, target, rel) {
-  const from = resolve11(source, rel);
-  const to = resolve11(target, rel);
-  if (!inside(from, source) || !inside(to, target)) return;
-  let st = null;
+async function commitWorktree(repoRoot, c, base, message) {
+  const scratch = mkdtempSync5(join38(tmpdir10(), "orbit-unit-"));
   try {
-    st = lstatSync6(from);
-  } catch {
-    st = null;
-  }
-  rmSync11(to, { force: true });
-  if (st === null) return;
-  mkdirSync16(dirname22(to), { recursive: true });
-  if (st.isSymbolicLink()) symlinkSync(readlinkSync2(from), to);
-  else if (st.isFile()) {
-    copyFileSync(from, to);
-    chmodSync6(to, statSync12(from).mode & 511);
+    const excludes = join38(scratch, "exclude");
+    writeFileSync6(excludes, `${UNIT_EXCLUDES.join("\n")}
+`);
+    const opts = { ...inCheckout(c, { GIT_INDEX_FILE: join38(scratch, "index") }), config: { "core.excludesFile": excludes } };
+    await git2(c.worktree, ["read-tree", base], opts);
+    await git2(c.worktree, ["add", "-A", "--", "."], opts);
+    const tree = (await git2(c.worktree, ["write-tree"], opts)).trim();
+    const id = { GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name, GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name, GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_AUTHOR_DATE: "946684800 +0000", GIT_COMMITTER_DATE: "946684800 +0000" };
+    return (await git2(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], { env: id })).trim();
+  } finally {
+    rmSync11(scratch, { recursive: true, force: true });
   }
 }
-function inside(p, root) {
-  return p.startsWith(root.endsWith(sep8) ? root : `${root}${sep8}`);
+async function changedBetween(repoRoot, from, to) {
+  const out = await git2(repoRoot, ["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", from, to, "--"]);
+  return out.split("\0").filter((p) => p.length > 0).sort();
+}
+async function escapingLinks(ctx, base, commit) {
+  const report2 = await inspectScope({ repoRoot: ctx.run.repoRoot, baseRev: base, candidateRev: commit, snapshot: ctx.snapshot });
+  return report2.symlinks_escaping;
+}
+function safePaths(paths) {
+  return paths.filter((p) => p.length > 0 && !p.startsWith("/") && !p.split(/[\\/]/).includes(".."));
+}
+async function unitPatch(repoRoot, base, commit, paths) {
+  if (paths.length === 0) return "";
+  return git2(repoRoot, ["diff", "--binary", "--full-index", "--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--no-color", base, commit, "--", ...paths], { env: { GIT_LITERAL_PATHSPECS: "1" } });
+}
+async function applyPatch(c, patch, reverse) {
+  const args = ["apply", "--index", "--whitespace=nowarn", ...reverse ? ["--reverse"] : [], "-"];
+  await git2(c.worktree, ["apply", "--index", "--check", "--whitespace=nowarn", ...reverse ? ["--reverse"] : [], "-"], { ...inCheckout(c), input: patch });
+  await git2(c.worktree, args, { ...inCheckout(c), input: patch });
+}
+async function restoreToBase(c, base, paths) {
+  if (paths.length === 0) return;
+  const inBase = new Set((await git2(c.worktree, ["ls-tree", "-r", "-z", "--name-only", base, "--", ...paths], inCheckout(c))).split("\0").filter((p) => p.length > 0));
+  const absent = paths.filter((p) => !inBase.has(p));
+  if (absent.length > 0) {
+    await git2(c.worktree, ["rm", "-rqf", "--ignore-unmatch", "--", ...absent], inCheckout(c));
+    await git2(c.worktree, ["clean", "-fq", "--", ...absent], inCheckout(c));
+  }
+  if (inBase.size > 0) await git2(c.worktree, ["checkout", base, "--", ...inBase], inCheckout(c));
 }
 function unitEvents(ctx, type, n2) {
   return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id", ctx.run.id, type, n2).map((r) => JSON.parse(r.data_json));
@@ -48001,13 +48623,14 @@ function unitEvents(ctx, type, n2) {
 function recordUnits(ctx, n2, units) {
   appendEvent(ctx.db, ctx.run.id, UNITS_EVENT, ctx.ownerId, { attempt: n2, units }, ctx.clock.now());
 }
-var UNITS_EVENT, UNIT_INTEGRATING_EVENT, UNIT_INTEGRATED_EVENT, UNIT_SERIALIZED_EVENT, MERGE_OVERHEAD_EVENT;
+var UNITS_EVENT, UNIT_INTEGRATING_EVENT, UNIT_INTEGRATED_EVENT, UNIT_SERIALIZED_EVENT, MERGE_OVERHEAD_EVENT, UNIT_EXCLUDES;
 var init_parallel_writers = __esm({
   "src/controller/parallel-writers.ts"() {
     "use strict";
     init_events();
     init_git();
     init_candidate();
+    init_scope();
     init_freshness();
     init_scheduler();
     init_work_units();
@@ -48021,11 +48644,12 @@ var init_parallel_writers = __esm({
     UNIT_INTEGRATED_EVENT = "implementation.unit-integrated";
     UNIT_SERIALIZED_EVENT = "implementation.unit-serialized";
     MERGE_OVERHEAD_EVENT = "scheduler.merge-overhead";
+    UNIT_EXCLUDES = [".DS_Store", "Thumbs.db", "node_modules/"];
   }
 });
 
 // src/controller/authorization.ts
-import { existsSync as existsSync31 } from "node:fs";
+import { existsSync as existsSync31, mkdirSync as mkdirSync16 } from "node:fs";
 import { join as join39 } from "node:path";
 function operationKey(op) {
   return `op-${sha256(canonicalJson(op)).slice(0, 16)}`;
@@ -48151,28 +48775,77 @@ function deniedWorkerOperations(ctx, worker) {
     const now = authorize(ctx.snapshot, op, { worktreeRoot: worker.cwd });
     if (now.allowed) continue;
     const key2 = operationKey(op);
-    if (!out.has(key2)) out.set(key2, { op, key: key2, summary, denial: `${rule}: ${data.reason ?? now.reason}`, rule });
+    if (!out.has(key2)) out.set(key2, { op, key: key2, summary, denial: `${rule}: ${data.reason ?? now.reason}`, rule, ...op.kind === "network" ? { target: data.target } : {} });
   }
   return [...out.values()];
 }
-function grantPolicy(ctx, granted, dir) {
-  const snapshot2 = JSON.parse(JSON.stringify(ctx.snapshot));
-  const config = snapshot2.config;
-  for (const g of granted) {
-    const rule = g.rule ?? "";
-    if (rule.startsWith("actions.") && !NEVER_GRANTED.has(rule)) {
-      const name = rule.slice("actions.".length).split(".")[0];
-      if (name !== "change_secrets" && Object.hasOwn(config.actions, name)) config.actions[name] = true;
-    } else if (rule.startsWith("network.")) {
-      const host = g.op.kind === "network" ? g.op.host : g.op.kind === "bash" ? URL_HOST.exec(g.op.command)?.[1]?.toLowerCase() ?? null : null;
-      if (host && !config.network.allowed_hosts.includes(host)) config.network.allowed_hosts = [...config.network.allowed_hosts, host];
-    }
+function approvedPlan(op) {
+  const network = (op.rule ?? "").startsWith("network.");
+  if (op.op.kind === "bash") return { argv: ["/bin/sh", "-c", op.op.command], shown: op.op.command, host: network ? URL_HOST.exec(op.op.command)?.[1]?.toLowerCase() ?? null : null };
+  if (op.op.kind === "network" && op.target && URL_HOST.exec(op.target)?.[1]?.toLowerCase() === op.op.host) {
+    return { argv: ["curl", "-sS", "--proto", "=http,https", "--max-time", String(APPROVED_TIMEOUT_S), "--", op.target], shown: `fetch ${op.target}`, host: op.op.host };
   }
-  const path = join39(dir, GRANT_POLICY_FILE);
-  const hash = snapshotHash(snapshot2);
-  if (!existsSync31(path)) atomicWrite(path, `${JSON.stringify(snapshot2, null, 2)}
-`, 292);
-  return { path, hash, snapshot: snapshot2 };
+  return null;
+}
+async function runApprovedOperation(ctx, n2, op, grant) {
+  const plan = approvedPlan(op);
+  const none = { key: op.key, command: plan?.shown ?? null, exit_code: null, timed_out: false, path: null, sha256: null, excerpt: null };
+  if (!plan) return { ...none, state: "NOT_RUN", note: "the approval names a host but no exact command or address, so the controller had nothing exact to run" };
+  const rel = join39("authorization", `attempt-${n2}`, op.key);
+  const dir = join39(ctx.runDir, rel);
+  const ledger = new ActionLedger(ctx.db, ctx.clock, { runDir: ctx.runDir, maxAttempts: 1, actor: ctx.ownerId });
+  const recorded = () => readJsonIfExists(join39(dir, RECEIPT_FILE));
+  try {
+    const done = await ledger.performAction(
+      { runId: ctx.run.id, kind: APPROVED_COMMAND_ACTION, idempotencyKey: `${ctx.run.id}:approved:${n2}:${op.key}`, target: { command: plan.shown, attempt: n2, op_key: op.key, grant: grant.decisionId } },
+      {
+        execute: () => executeApproved(ctx, plan, dir, rel),
+        // Only the receipt written after the command finished proves it ran; without it the command is not run again.
+        reconcile: async () => {
+          const r2 = recorded();
+          if (r2) return r2;
+          throw new OrbitError("INTERNAL", "the approved command may have started before the controller stopped; it is not run a second time", { definitive: true });
+        }
+      },
+      { authorization: { allowed: true, rule: "authorization.grant", reason: `approved once by ${grant.approvedBy} (${grant.decisionId}) for attempt ${n2}` } }
+    );
+    const r = done.receipt;
+    return { ...none, state: "SUCCEEDED", exit_code: r.exit_code, timed_out: r.timed_out, path: r.path, sha256: r.sha256, excerpt: r.excerpt, note: null };
+  } catch (err) {
+    if (isOrbitError(err, "CANCELLED") || isOrbitError(err, "LEASE_LOST") || isOrbitError(err, "CONCURRENT_UPDATE")) throw err;
+    return { ...none, state: "UNKNOWN", note: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) };
+  }
+}
+async function executeApproved(ctx, plan, dir, rel) {
+  const worktree = ctx.run.worktreePath;
+  const home2 = join39(dir, "home");
+  mkdirSync16(home2, { recursive: true, mode: 448 });
+  const tmp = prepareWorkerTmpDir(dir);
+  const hosts = [.../* @__PURE__ */ new Set([...ctx.snapshot.config.network.allowed_hosts, ...plan.host ? [plan.host] : []])];
+  const def = { id: `approved-${rel.split("/").at(-1)}`, command: plan.argv, shell: false, cwd: ".", timeout_seconds: APPROVED_TIMEOUT_S, network_hosts: hosts, env: {}, mandatory: false, flaky_reruns: 0, kind: "command" };
+  const profile = profileForCheck({ worktree, check: def, snapshot: ctx.snapshot, extraWritable: [home2, tmp] });
+  const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home2, TMPDIR: tmp, LANG: "C.UTF-8", TERM: "dumb", NO_COLOR: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" };
+  const wrapped = ctx.isolation().wrap(plan.argv, profile, { cwd: worktree, env });
+  let r;
+  try {
+    r = await execCapture(wrapped.argv, { cwd: worktree, env: wrapped.env, timeoutMs: APPROVED_TIMEOUT_S * 1e3, maxOutputBytes: APPROVED_MAX_OUTPUT_BYTES, abortSignal: ctx.signal });
+  } catch (err) {
+    throw new OrbitError("INTERNAL", `the approved command could not start: ${err instanceof Error ? err.message : String(err)}`, { definitive: true }, { cause: err });
+  } finally {
+    wrapped.cleanup();
+  }
+  const text2 = redact(`$ ${plan.shown}
+[exit ${r.exitCode ?? `signal ${r.signal ?? "unknown"}`}${r.timedOut ? ", timed out" : ""}]
+--- stdout ---
+${r.stdout}
+--- stderr ---
+${r.stderr}
+`);
+  atomicWrite(join39(dir, OUTPUT_FILE), text2, 384);
+  const receipt = { exit_code: r.exitCode, timed_out: r.timedOut, path: join39(rel, OUTPUT_FILE), sha256: sha256(text2), excerpt: text2.slice(-APPROVED_EXCERPT_CHARS) };
+  atomicWrite(join39(dir, RECEIPT_FILE), `${JSON.stringify(receipt)}
+`, 384);
+  return receipt;
 }
 function ungrantedCommands(events, snapshot2, worktreeRoot, granted) {
   const denied = new Set(denialsFromTranscript(events).map((d) => d.toolUseId));
@@ -48204,14 +48877,18 @@ function sessionEvents(worker) {
   const path = join39(worker.workerDir, LOG_FILE);
   return existsSync31(path) ? readLogLines(path).events : [];
 }
-var APPROVE_ONCE, DENY2, AUTHORIZATION_REQUEST_KIND, AUTHORIZATION_GRANT_KIND, ASKABLE_RULE, NEVER_GRANTED, URL_HOST, GRANT_POLICY_FILE;
+var APPROVE_ONCE, DENY2, AUTHORIZATION_REQUEST_KIND, AUTHORIZATION_GRANT_KIND, ASKABLE_RULE, NEVER_GRANTED, URL_HOST, APPROVED_COMMAND_ACTION, APPROVED_TIMEOUT_S, APPROVED_MAX_OUTPUT_BYTES, APPROVED_EXCERPT_CHARS, OUTPUT_FILE, RECEIPT_FILE;
 var init_authorization = __esm({
   "src/controller/authorization.ts"() {
     "use strict";
     init_hash();
     init_fsx();
+    init_errors();
+    init_exec();
+    init_redact();
     init_authorize();
-    init_snapshot();
+    init_profiles();
+    init_actions();
     init_questions();
     init_store4();
     init_decisions();
@@ -48226,7 +48903,12 @@ var init_authorization = __esm({
     ASKABLE_RULE = /^(?:actions|network)\./;
     NEVER_GRANTED = /* @__PURE__ */ new Set(["actions.change_secrets"]);
     URL_HOST = /\bhttps?:\/\/([A-Za-z0-9.-]+)/;
-    GRANT_POLICY_FILE = "policy-grant.json";
+    APPROVED_COMMAND_ACTION = "approved_command";
+    APPROVED_TIMEOUT_S = 300;
+    APPROVED_MAX_OUTPUT_BYTES = 1024 * 1024;
+    APPROVED_EXCERPT_CHARS = 4e3;
+    OUTPUT_FILE = "output.txt";
+    RECEIPT_FILE = "receipt.json";
   }
 });
 
@@ -48354,8 +49036,7 @@ async function continueAttempt(ctx, n2, contract) {
       readOnly: false,
       prompt: (workerId) => implementerPrompt(ctx, n2, workerId, auth),
       maxBudgetUsd: capOf(ctx, n2, purpose),
-      ownedPaths: contract.allowed_paths,
-      ...auth && auth.granted.length > 0 ? { policy: (dir) => grantPolicy(ctx, auth.granted, dir) } : {}
+      ownedPaths: contract.allowed_paths
     });
     if (st.status === "running") return WAIT(`implementer ${st.worker.id} (attempt ${n2}) is running`);
     const r = st.result;
@@ -48403,7 +49084,7 @@ async function superviseDenials(ctx, n2, k, worker) {
   if (retries.some((r) => r.after === k)) return { kind: "retry" };
   const auth = retries.filter((r) => r.next <= k).at(-1);
   if (auth && auth.granted.length > 0) {
-    const extra = ungrantedCommands(sessionEvents(worker), ctx.snapshot, worker.cwd, auth.granted);
+    const extra = ungrantedCommands(sessionEvents(worker), ctx.snapshot, worker.cwd, []);
     if (extra.length > 0) {
       decide2(ctx, { id: `dec-${ctx.run.id}-deny-ungranted-${worker.id}`, kind: "policy.deny", summary: `implementer ${worker.id} ran under a one-shot grant and did what no grant names: ${extra.join("; ")}`, data: { source: "grant-check", worker_id: worker.id, attempt: n2, ungranted: extra, granted: auth.granted.map((g) => g.key) } });
       return { kind: "stop", result: await finishRun(ctx, "BLOCKED", `policy violation in attempt ${n2}: under a one-shot grant the implementer also ran what the policy denies and no person authorized (${extra.join("; ")}); its work will not be verified or delivered`, { outcome: { attempt: n2, ungranted: extra } }) };
@@ -48415,17 +49096,22 @@ async function superviseDenials(ctx, n2, k, worker) {
   const subject = attemptSubject(n2);
   const pending = [];
   const granted = [];
+  const grants = [];
   const refused = [];
   for (const op of ops) {
     const g = grantFor(ctx, op, subject);
-    if (g.state === "granted") granted.push(op);
-    else if (g.state === "denied") refused.push(op);
+    if (g.state === "granted") {
+      granted.push(op);
+      grants.push({ decisionId: g.decisionId, approvedBy: g.approvedBy });
+    } else if (g.state === "denied") refused.push(op);
     else pending.push(`${g.state === "pending" ? g.questionId : requestAttemptAuthorization(ctx, op, n2, worker).id}: ${op.summary}`);
   }
   if (pending.length > 0) {
     return { kind: "stop", result: await finishRun(ctx, "BLOCKED", `supervised mode: implementation attempt ${n2} was denied operations the policy does not authorize; a person decides each one (approve-once or deny with orbit decide, then orbit resume ${ctx.run.id}). Questions: ${pending.join(" | ")}`, { outcome: { authorization: pending } }) };
   }
-  note2(ctx, AUTHORIZATION_RETRY_EVENT, { attempt: n2, after: k, next: k + 1, granted, refused });
+  const executed = [];
+  for (const [i, op] of granted.entries()) executed.push(await runApprovedOperation(ctx, n2, op, grants[i]));
+  note2(ctx, AUTHORIZATION_RETRY_EVENT, { attempt: n2, after: k, next: k + 1, granted, refused, executed });
   return { kind: "retry" };
 }
 async function restartLostImplementer(ctx, lost, n2, nextPurpose, model) {
@@ -48548,6 +49234,10 @@ function implementerPrompt(ctx, n2, workerId, auth = null, parallel = null) {
       refs.push({ id: row.checkId, path: relative3(ctx.runDir, row.logPath), sha256: row.logSha256, summary: `${row.checkId} ${row.status} on candidate ${cand.seq}`, ...row.excerpt ? { excerpt: row.excerpt } : {} });
     }
   }
+  for (const e of auth?.executed ?? []) {
+    if (e.state !== "SUCCEEDED" || !e.path || !e.sha256) continue;
+    refs.push({ id: `approved-${e.key}`, path: e.path, sha256: e.sha256, summary: `output of the approved command \`${e.command}\`, run once by the controller (exit ${e.exit_code ?? "none"}${e.timed_out ? ", timed out" : ""})`, ...e.excerpt ? { excerpt: e.excerpt } : {} });
+  }
   const task = [
     parallel ? "Implement your work unit of the contract below in this worktree." : n2 === 1 || !stored ? "Implement the contract below in this worktree." : `Repair attempt ${n2}: act on the repair brief below; change the cause, not the tests that show it.`,
     "Make the smallest coherent change. Add or extend behaviour tests that would fail without it. Stay inside the allowed paths.",
@@ -48587,9 +49277,15 @@ function parallelLines(ctx, n2, parallel) {
 function authorizationLines(auth) {
   if (!auth) return [];
   const lines = ["An earlier session of this attempt was denied operations the policy does not authorize, and a person answered. Continue from the current worktree: the earlier edits are there."];
-  for (const g of auth.granted) lines.push(`Authorized once, for this attempt only: ${g.summary}. You may do exactly this; anything else outside the policy is still refused and stops the run.`);
+  for (const g of auth.granted) lines.push(`Authorized once, for this attempt only: ${g.summary}. ${approvedOutcome(auth.executed?.find((e) => e.key === g.key) ?? null)} Do not run it yourself: you are still refused it, and anything else outside the policy stops the run.`);
   for (const g of auth.refused) lines.push(`Refused by a person: ${g.summary}. Do not try it again; finish the work inside the policy without it.`);
   return lines;
+}
+function approvedOutcome(e) {
+  if (!e) return "The controller performs approved operations; the policy you run under is unchanged.";
+  if (e.state === "SUCCEEDED") return `The controller ran exactly this command once, in isolation, on your behalf (exit code ${e.exit_code ?? "none"}${e.timed_out ? ", timed out" : ""}); its output is the evidence artifact approved-${e.key} (${e.path}).`;
+  if (e.state === "UNKNOWN") return `The controller started it on your behalf, but its outcome is unknown (${e.note ?? "no detail"}); it is not run again.`;
+  return `Nothing was run for it: ${e.note ?? "there was no exact command to run"}.`;
 }
 function relative3(root, p) {
   return p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p;
@@ -49186,9 +49882,9 @@ var init_report3 = __esm({
 });
 
 // src/ui/runner.ts
-import { copyFileSync as copyFileSync2, existsSync as existsSync33, mkdirSync as mkdirSync17, readFileSync as readFileSync20, realpathSync as realpathSync14, rmSync as rmSync12, statSync as statSync13, writeFileSync as writeFileSync6 } from "node:fs";
+import { copyFileSync, existsSync as existsSync33, mkdirSync as mkdirSync17, readFileSync as readFileSync20, realpathSync as realpathSync14, rmSync as rmSync12, statSync as statSync12, writeFileSync as writeFileSync7 } from "node:fs";
 import { createRequire as createRequire3 } from "node:module";
-import { basename as basename11, dirname as dirname23, isAbsolute as isAbsolute14, join as join41, relative as relative4, resolve as resolve12, sep as sep9 } from "node:path";
+import { basename as basename11, dirname as dirname22, isAbsolute as isAbsolute15, join as join41, relative as relative4, resolve as resolve12, sep as sep8 } from "node:path";
 async function runUiChecks(input) {
   const clock = input.clock ?? systemClock;
   const { snapshot: snapshot2, uiConfig, candidate } = input;
@@ -49204,7 +49900,7 @@ async function runUiChecks(input) {
   }
   await assertCheckoutMatchesCandidate(checkoutDir, candidate, outDir);
   const globs = compileGlobs(uiConfig.visual.baseline_globs, { nocase: false });
-  const candidateChanges = await changedBetween(checkoutDir, candidate.parentSha, candidate.commitSha);
+  const candidateChanges = await changedBetween2(checkoutDir, candidate.parentSha, candidate.commitSha);
   const visualFromDiff = candidateChanges.filter((c) => globs(c.path)).map((c) => c.path);
   const configHash = hashObject({
     ui: uiConfig,
@@ -49397,7 +50093,7 @@ async function runOneCheck(ctx) {
   const reportPath2 = join41(checkDir, "playwright-report.json");
   const logPath = join41(checkDir, "run.log");
   const cwd = resolve12(checkoutDir, check.cwd);
-  if (relative4(checkoutDir, cwd).startsWith("..") || isAbsolute14(relative4(checkoutDir, cwd))) {
+  if (relative4(checkoutDir, cwd).startsWith("..") || isAbsolute15(relative4(checkoutDir, cwd))) {
     throw new OrbitError("POLICY_DENIED", `check ${check.id} cwd leaves the checkout`, { rule: "checks.cwd", check: check.id });
   }
   const flags = enforcedFlags(check, outputDir, input.projects);
@@ -49429,7 +50125,7 @@ async function runOneCheck(ctx) {
   } finally {
     wrapped.cleanup();
   }
-  writeFileSync6(logPath, redact(`${exec.stdout}${exec.stderr ? `
+  writeFileSync7(logPath, redact(`${exec.stdout}${exec.stderr ? `
 --- stderr ---
 ${exec.stderr}` : ""}`), { mode: 384 });
   let parsed2 = null;
@@ -49572,7 +50268,7 @@ function fallbackBrowser(checkoutDir, configured) {
   const name = configured[0] ?? "chromium";
   try {
     const req = createRequire3(join41(checkoutDir, "package.json"));
-    const dir = dirname23(req.resolve("playwright-core/package.json"));
+    const dir = dirname22(req.resolve("playwright-core/package.json"));
     const parsed2 = JSON.parse(readFileSync20(join41(dir, "browsers.json"), "utf8"));
     const list = parsed2.browsers ?? [];
     const version = list.find((b) => b.name === name)?.browserVersion;
@@ -49609,7 +50305,7 @@ function collectAttachments(attachments, dirs) {
       if (real === null || !(isInside(real, outputReal) || isInside(real, checkoutReal))) continue;
       let size;
       try {
-        const st = statSync13(real);
+        const st = statSync12(real);
         if (!st.isFile()) continue;
         size = st.size;
       } catch {
@@ -49621,14 +50317,14 @@ function collectAttachments(attachments, dirs) {
       if (!isInside(real, outputReal)) {
         mkdirSync17(dirs.artifactDir, { recursive: true });
         const copy = join41(dirs.artifactDir, `${kind}-${basename11(real)}`);
-        copyFileSync2(real, copy);
+        copyFileSync(real, copy);
         stored = copy;
       }
     } else if (bytes !== null) {
       mkdirSync17(dirs.artifactDir, { recursive: true });
       const ext = EXTENSIONS[att.contentType.split(";")[0]?.trim() ?? ""] ?? ".bin";
       stored = join41(dirs.artifactDir, `${att.name.replace(/[^A-Za-z0-9._-]+/g, "_")}${ext}`);
-      writeFileSync6(stored, TEXTUAL.test(att.contentType) ? redact(bytes.toString("utf8")) : bytes, { mode: 384 });
+      writeFileSync7(stored, TEXTUAL.test(att.contentType) ? redact(bytes.toString("utf8")) : bytes, { mode: 384 });
       bytes = readFileSync20(stored);
     }
     if (bytes === null || stored === null) continue;
@@ -49659,7 +50355,7 @@ function safeReal(path) {
 }
 function isInside(child, parent) {
   if (parent === null) return false;
-  return child === parent || child.startsWith(parent.endsWith(sep9) ? parent : parent + sep9);
+  return child === parent || child.startsWith(parent.endsWith(sep8) ? parent : parent + sep8);
 }
 function tally(journeys) {
   const s = { passed: 0, failed: 0, flaky: 0, skipped: 0, other: 0 };
@@ -49714,7 +50410,7 @@ async function assertCheckoutMatchesCandidate(checkoutDir, candidate, outDir) {
 async function untrackedFiles(cwd) {
   return (await git5(cwd, ["ls-files", "-z", "--others", "--exclude-standard"])).split("\0").filter(Boolean);
 }
-async function changedBetween(cwd, base, head) {
+async function changedBetween2(cwd, base, head) {
   const raw = await git5(cwd, ["diff", "--name-status", "-z", "--no-renames", "--no-ext-diff", "--ignore-submodules=none", base, head, "--"]);
   const tokens3 = raw.split("\0").filter((t) => t.length > 0);
   const out = [];
@@ -49743,7 +50439,7 @@ function changedA11yBaselines(journeys, checkoutDir, changed) {
       if (!scan.baselinePath) continue;
       const real = safeReal(scan.baselinePath) ?? resolve12(scan.baselinePath);
       if (!isInside(real, root) || root === null) continue;
-      const rel = relative4(root, real).split(sep9).join("/");
+      const rel = relative4(root, real).split(sep8).join("/");
       if (changed.has(rel)) out.add(rel);
     }
   }
@@ -49785,16 +50481,17 @@ var init_runner2 = __esm({
 });
 
 // src/controller/security.ts
-import { accessSync as accessSync2, constants as constants3, existsSync as existsSync34, mkdirSync as mkdirSync18, readFileSync as readFileSync21, rmSync as rmSync13, statSync as statSync14 } from "node:fs";
-import { delimiter as delimiter3, dirname as dirname24, join as join42, normalize as normalize2, sep as sep10 } from "node:path";
-import { tmpdir as tmpdir10 } from "node:os";
+import { accessSync as accessSync2, constants as constants3, existsSync as existsSync34, mkdirSync as mkdirSync18, readFileSync as readFileSync21, rmSync as rmSync13, statSync as statSync13 } from "node:fs";
+import { delimiter as delimiter3, dirname as dirname23, join as join42, normalize as normalize2, sep as sep9 } from "node:path";
+import { tmpdir as tmpdir11 } from "node:os";
+import { spawn as spawn5 } from "node:child_process";
 function findOnPath(name, pathVar = process.env.PATH) {
   for (const dir of (pathVar ?? "").split(delimiter3)) {
     if (!dir) continue;
     const p = join42(dir, name);
     try {
       accessSync2(p, constants3.X_OK);
-      if (statSync14(p).isFile()) return p;
+      if (statSync13(p).isFile()) return p;
     } catch {
     }
   }
@@ -49811,7 +50508,8 @@ async function scanCandidateSecrets(input) {
     const { raw: raw2, commit: _commit, ...rest } = prior;
     return withPolicy({ ...rest, findings: raw2 ?? prior.findings }, input);
   }
-  const files = await changedFiles3(input.repoRoot, input.baseRev, input.commit);
+  const changed = await changedFiles3(input.repoRoot, input.baseRev, input.commit);
+  const { small: files, large, unscannable } = await partitionBySize(input, changed);
   const gitleaks = input.gitleaksPath === null ? null : input.gitleaksPath ?? findOnPath("gitleaks", input.hostPath);
   let result2 = null;
   let why = gitleaks ? "" : "gitleaks is not installed";
@@ -49822,9 +50520,23 @@ async function scanCandidateSecrets(input) {
       why = `gitleaks could not complete (${err instanceof Error ? err.message : String(err)})`;
     }
   } else if (gitleaks) {
-    result2 = { scanner: "gitleaks", completed: true, findings: [], files: 0, note: "gitleaks: the candidate adds or modifies no files", reportPath: reportPath2 };
+    result2 = { scanner: "gitleaks", completed: true, findings: [], files: 0, note: changed.length === 0 ? "gitleaks: the candidate adds or modifies no files" : "gitleaks: every changed file is above its input limit", reportPath: reportPath2 };
   }
   result2 ??= await builtinScan(input, files, reportPath2, why);
+  if (large.length > 0 || unscannable.length > 0) {
+    const bigFindings = [];
+    for (const rel of large) {
+      try {
+        bigFindings.push(...await scanBlobInChunks(input.repoRoot, input.commit, rel));
+      } catch {
+        unscannable.push(rel);
+      }
+    }
+    for (const rel of unscannable) bigFindings.push({ file: rel, line: null, rule: UNSCANNABLE_RULE, severity: "critical" });
+    const noteBits = [`${large.length} file(s) above ${MAX_FILE_BYTES} bytes scanned by the built-in detector in chunks`];
+    if (unscannable.length > 0) noteBits.push(`${unscannable.length} file(s) could not be scanned: ${unscannable.slice(0, 10).join(", ")}`);
+    result2 = { ...result2, findings: [...result2.findings, ...bigFindings], note: `${result2.note}; ${noteBits.join("; ")}` };
+  }
   const raw = result2.findings.map((f) => ({ ...f, severity: f.severity ?? secretSeverity(f.rule) }));
   const judged = withPolicy({ ...result2, findings: raw }, input);
   atomicWriteJson(reportPath2, { ...judged, raw, commit: input.commit });
@@ -49837,7 +50549,8 @@ function withPolicy(result2, input) {
   if (c.excepted.length > 0) parts.push(`${c.excepted.length} finding(s) waived by static_security.exceptions: ${c.excepted.slice(0, 10).map((e) => `${e.finding.rule} at ${e.finding.file}${e.finding.line ? `:${e.finding.line}` : ""} (${e.reason})`).join("; ")}`);
   if (c.advisory.length > 0) parts.push(`${c.advisory.length} advisory finding(s) below the blocking severities: ${c.advisory.slice(0, 10).map((f) => `${f.rule} [${f.severity}] at ${f.file}${f.line ? `:${f.line}` : ""}`).join("; ")}`);
   if (c.expired.length > 0) parts.push(`expired exception(s) not applied: ${c.expired.map((e) => `${e.rule_id} (expired ${e.expires})`).join(", ")}`);
-  return { ...result2, findings: c.blocking, advisory: c.advisory, excepted: c.excepted, note: parts.join("; ") };
+  const completed = !c.blocking.some((f) => f.rule === UNSCANNABLE_RULE);
+  return { ...result2, completed, findings: c.blocking, advisory: c.advisory, excepted: c.excepted, note: parts.join("; ") };
 }
 function baseNote(note3) {
   const i = note3.search(/; (?:\d+ finding\(s\) waived|\d+ advisory finding|expired exception)/);
@@ -49947,18 +50660,16 @@ async function runGitleaks(bin, input, files, reportPath2) {
   let copied = 0;
   for (const rel of files) {
     const target = normalize2(join42(tree, rel));
-    if (!target.startsWith(tree + sep10)) continue;
-    const size = Number((await git2(input.repoRoot, ["cat-file", "-s", `${input.commit}:${rel}`])).trim());
-    if (!Number.isFinite(size) || size > MAX_FILE_BYTES) continue;
+    if (!target.startsWith(tree + sep9)) continue;
     const content = await git2(input.repoRoot, ["cat-file", "blob", `${input.commit}:${rel}`]);
-    mkdirSync18(dirname24(target), { recursive: true });
+    mkdirSync18(dirname23(target), { recursive: true });
     atomicWrite(target, content, 384);
     copied++;
   }
   const raw = join42(work, "gitleaks-report.json");
   const r = await execCapture([bin, "dir", scanRoot, "-c", config, "-i", trusted, "--ignore-gitleaks-allow", "--redact", "-f", "json", "-r", raw, "--no-banner", "--exit-code", "1"], {
     // GITLEAKS_CONFIG and friends from the host would outrank nothing here (-c wins), but the scan needs nothing from it either.
-    env: { PATH: input.hostPath ?? process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir10() },
+    env: { PATH: input.hostPath ?? process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir11() },
     cwd: work,
     timeoutMs: input.timeoutMs ?? 12e4
   });
@@ -49970,12 +50681,69 @@ async function runGitleaks(bin, input, files, reportPath2) {
   return { scanner: "gitleaks", completed: true, findings, files: copied, note: "gitleaks with Orbit's trusted configuration and --ignore-gitleaks-allow", reportPath: reportPath2 };
 }
 function relativeTo2(root, p) {
-  return p.startsWith(root + sep10) ? p.slice(root.length + 1) : p;
+  return p.startsWith(root + sep9) ? p.slice(root.length + 1) : p;
+}
+async function partitionBySize(input, changed) {
+  const max = input.maxScanBytes ?? MAX_SCAN_BYTES;
+  const small = [];
+  const large = [];
+  const unscannable = [];
+  for (const rel of changed) {
+    let size = NaN;
+    try {
+      size = Number((await git2(input.repoRoot, ["cat-file", "-s", `${input.commit}:${rel}`])).trim());
+    } catch {
+    }
+    if (!Number.isFinite(size) || size > max) unscannable.push(rel);
+    else if (size > MAX_FILE_BYTES) large.push(rel);
+    else small.push(rel);
+  }
+  return { small, large, unscannable };
+}
+async function scanBlobInChunks(repoRoot, commit, rel) {
+  const found = /* @__PURE__ */ new Map();
+  let line3 = 1;
+  const judge = (text2, at) => {
+    const red = redact(text2);
+    if (red === text2) return;
+    for (const m of red.matchAll(/\[REDACTED:([a-z0-9_-]+)\]/gi)) found.set(`${at}:${m[1]}`, { file: rel, line: at, rule: `builtin:${m[1]}` });
+  };
+  const child = spawn5("git", ["cat-file", "blob", `${commit}:${rel}`], { cwd: repoRoot, env: gitEnv3(), stdio: ["ignore", "pipe", "ignore"] });
+  const exited = new Promise((resolve20, reject2) => {
+    child.once("error", reject2);
+    child.once("close", (code2) => resolve20(code2));
+  });
+  const timer = setTimeout(() => child.kill("SIGKILL"), 10 * 6e4);
+  try {
+    child.stdout.setEncoding("latin1");
+    let carry = "";
+    for await (const chunk of child.stdout) {
+      carry += chunk;
+      let start = 0;
+      for (let nl = carry.indexOf("\n", start); nl !== -1; nl = carry.indexOf("\n", start)) {
+        judge(carry.slice(start, nl), line3);
+        line3++;
+        start = nl + 1;
+      }
+      carry = carry.slice(start);
+      while (carry.length > SCAN_WINDOW) {
+        judge(carry.slice(0, SCAN_WINDOW), line3);
+        carry = carry.slice(SCAN_WINDOW - SCAN_OVERLAP);
+      }
+    }
+    if (carry.length > 0) judge(carry, line3);
+    const code2 = await exited;
+    if (code2 !== 0) throw new Error(`git cat-file exited ${code2}`);
+  } finally {
+    clearTimeout(timer);
+    child.kill();
+  }
+  return [...found.values()];
 }
 async function builtinScan(input, files, reportPath2, why) {
   const findings = [];
   if (files.length > 0) {
-    const diff = await git2(input.repoRoot, ["diff", "-U0", "--no-renames", "--no-ext-diff", "--no-textconv", "--text", input.baseRev, input.commit, "--"]);
+    const diff = await git2(input.repoRoot, ["diff", "-U0", "--no-renames", "--no-ext-diff", "--no-textconv", "--text", input.baseRev, input.commit, "--", ...files.map((f) => `:(top,literal)${f}`)]);
     let file = "";
     let line3 = 0;
     for (const raw of diff.split("\n")) {
@@ -50010,7 +50778,7 @@ async function builtinScan(input, files, reportPath2, why) {
 function sastCheckIds2(snapshot2) {
   return Object.keys(snapshot2.config.checks).filter((id) => SAST_ID.test(id)).sort();
 }
-var import_picomatch8, TRUSTED_GITLEAKS_CONFIG, MAX_FILE_BYTES, CRITICAL_SECRET_RULE, SAST_ID;
+var import_picomatch8, UNSCANNABLE_RULE, TRUSTED_GITLEAKS_CONFIG, MAX_FILE_BYTES, MAX_SCAN_BYTES, SCAN_WINDOW, SCAN_OVERLAP, CRITICAL_SECRET_RULE, SAST_ID;
 var init_security = __esm({
   "src/controller/security.ts"() {
     "use strict";
@@ -50021,16 +50789,20 @@ var init_security = __esm({
     init_git();
     init_config();
     init_resolve();
+    UNSCANNABLE_RULE = "unscannable-file";
     TRUSTED_GITLEAKS_CONFIG = 'title = "orbit trusted secret scan"\n\n[extend]\nuseDefault = true\n';
     MAX_FILE_BYTES = 5 * 1024 * 1024;
+    MAX_SCAN_BYTES = 1024 * 1024 * 1024;
+    SCAN_WINDOW = 1024 * 1024;
+    SCAN_OVERLAP = 8 * 1024;
     CRITICAL_SECRET_RULE = /(?:^|[:_-])(?:private-key|aws|gcp|azure|github|gitlab|anthropic|openai|stripe|slack-(?:bot|user|app|legacy)|npm-access|pypi|twilio|sendgrid|heroku|digitalocean|doppler|hashicorp|vault|age-secret|jwt-base64)(?:[:_-]|$)/i;
     SAST_ID = /^(sast|semgrep|codeql|bandit|static[-_]?analysis|security[-_]scan)([-_.:].*)?$/i;
   }
 });
 
 // src/ui/explore.ts
-import { existsSync as existsSync35, readFileSync as readFileSync22, realpathSync as realpathSync15, symlinkSync as symlinkSync2, writeFileSync as writeFileSync7 } from "node:fs";
-import { dirname as dirname25, join as join43, resolve as resolve13 } from "node:path";
+import { existsSync as existsSync35, readFileSync as readFileSync22, realpathSync as realpathSync15, symlinkSync, writeFileSync as writeFileSync8 } from "node:fs";
+import { dirname as dirname24, join as join43, resolve as resolve13 } from "node:path";
 function explorationConfigOf(ui) {
   const raw = ui.exploration;
   if (!raw || typeof raw !== "object") return DISABLED;
@@ -50343,7 +51115,7 @@ async function proveOne(p, cand, base, viewport) {
   const problems = lintExplorationSpec(response.source, p.baseUrl);
   const source = redact(response.source);
   const specPath = join43(dir, fileName);
-  writeFileSync7(specPath, source, { mode: 384 });
+  writeFileSync8(specPath, source, { mode: 384 });
   const spec = { path: specPath, sha256: sha256(source), source };
   if (problems.length > 0) return { ...base, spec, status: "invalid_test", reason: `the test was refused: ${problems.join("; ")}` };
   const configPath = writePlaywrightConfig(dir, p.baseUrl, p.opts.uiConfig, viewport);
@@ -50386,7 +51158,7 @@ function writePlaywrightConfig(dir, baseUrl, ui, viewport) {
     expect: { timeout: 5e3 },
     use: { baseURL: baseUrl, browserName: ui.browsers[0] ?? "chromium", ...viewport ? { viewport } : {}, trace: "retain-on-failure", screenshot: "only-on-failure" }
   };
-  writeFileSync7(path, `export default ${JSON.stringify(config, null, 2)};
+  writeFileSync8(path, `export default ${JSON.stringify(config, null, 2)};
 `, { mode: 384 });
   return path;
 }
@@ -50397,10 +51169,10 @@ function linkNodeModules(dir, checkoutDir) {
   for (; ; ) {
     const candidate = join43(cur, "node_modules");
     if (existsSync35(candidate)) {
-      symlinkSync2(realpathSync15(candidate), target);
+      symlinkSync(realpathSync15(candidate), target);
       return;
     }
-    const up = dirname25(cur);
+    const up = dirname24(cur);
     if (up === cur) return;
     cur = up;
   }
@@ -50769,7 +51541,7 @@ var init_verification = __esm({
 });
 
 // src/controller/steps/verifying.ts
-import { existsSync as existsSync36, readdirSync as readdirSync7 } from "node:fs";
+import { existsSync as existsSync36, readdirSync as readdirSync8 } from "node:fs";
 import { join as join46 } from "node:path";
 async function verifyingStep(ctx) {
   const stop = await safePoint(ctx);
@@ -50895,7 +51667,7 @@ function scopeFingerprint(scope) {
   return `scope:${sha256(JSON.stringify([[...scope.forbidden_paths_changed].sort(), [...scope.out_of_scope_paths_changed].sort(), scope.within_size_limits, scope.lockfile_changed, [...scope.symlinks_escaping].sort()])).slice(0, 16)}`;
 }
 async function ensureCheckout(ctx, cand, dir) {
-  if (existsSync36(dir) && readdirSync7(dir).length > 0) {
+  if (existsSync36(dir) && readdirSync8(dir).length > 0) {
     try {
       const tree = (await git2(dir, ["rev-parse", "HEAD^{tree}"])).trim();
       if (tree === cand.treeHash && (await git2(dir, ["status", "--porcelain", "--untracked-files=no"])).trim() === "") return;
@@ -51196,7 +51968,7 @@ var init_diagnosing = __esm({
 });
 
 // src/controller/steps/reviewing.ts
-import { existsSync as existsSync38, readdirSync as readdirSync8, readFileSync as readFileSync23 } from "node:fs";
+import { existsSync as existsSync38, readdirSync as readdirSync9, readFileSync as readFileSync23 } from "node:fs";
 import { join as join47 } from "node:path";
 async function reviewingStep(ctx) {
   const stop = await safePoint(ctx);
@@ -51696,7 +52468,7 @@ async function prepareReview(ctx, cand, provider) {
   const reviewDir = join47(ctx.runDir, "reviews", String(cand.seq));
   const checkout = join47(runWorktreeRoot(ctx), `review-${cand.seq}`);
   if (!existsSync38(join47(reviewDir, "packet.md"))) await preparePacket(ctx, cand, reviewDir, provider);
-  if (!existsSync38(checkout) || readdirSync8(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
+  if (!existsSync38(checkout) || readdirSync9(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
 var FOCUS_TEXT, REVIEW_REPAIR_EVENT, UNDECIDED;
@@ -53579,7 +54351,7 @@ var init_steps = __esm({
 // src/storage/retention.ts
 import { existsSync as existsSync40, lstatSync as lstatSync7, realpathSync as realpathSync16, rmSync as rmSync14 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
-import { dirname as dirname26, join as join53, resolve as resolve14 } from "node:path";
+import { dirname as dirname25, join as join53, resolve as resolve14 } from "node:path";
 function repoKeyFor(repoRoot) {
   let real = repoRoot;
   try {
@@ -53618,7 +54390,7 @@ async function pruneExpiredRuns(db, opts) {
       continue;
     }
     const runDir2 = join53(runsRoot, row.id);
-    const recorded = dirname26(row.policy_path);
+    const recorded = dirname25(row.policy_path);
     const literalRunDir = join53(resolve14(opts.repoRoot), ".orbit", "runs", row.id);
     if (![runDir2, literalRunDir].includes(resolve14(recorded)) && realOrResolved(recorded) !== runDir2) {
       result2.skipped.push({ runId: row.id, reason: `its recorded run directory ${recorded} is not ${runDir2}` });
@@ -53672,7 +54444,7 @@ __export(loop_exports, {
 });
 import { existsSync as existsSync41 } from "node:fs";
 import { hostname as hostname4 } from "node:os";
-import { dirname as dirname27, join as join54 } from "node:path";
+import { dirname as dirname26, join as join54 } from "node:path";
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -54093,7 +54865,7 @@ var init_loop = __esm({
         for (const row of db.all("SELECT id FROM runs WHERE ended_at IS NOT NULL AND ended_at >= ?", since)) {
           try {
             const run = getRun(db, row.id);
-            const runDir2 = dirname27(run.policyPath);
+            const runDir2 = dirname26(run.policyPath);
             if (existsSync41(join54(runDir2, "final.md"))) continue;
             let snapshot2 = null;
             try {
@@ -54695,7 +55467,7 @@ var init_inquisition2 = __esm({
 });
 
 // src/cli/commands/decide.ts
-import { dirname as dirname28 } from "node:path";
+import { dirname as dirname27 } from "node:path";
 function matchQuestion(db, runId, ref2) {
   const all = listQuestions(db, runId);
   const exact = all.find((q) => q.id === ref2);
@@ -54734,7 +55506,7 @@ async function decideCommand(args, ctx) {
     const run = findRunByPrefix(db, runRef);
     if (isTerminal(run.state) && run.state !== "BLOCKED") throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is ${run.state}; its questions can no longer change anything`);
     const q = matchQuestion(db, run.id, qRef);
-    const result2 = answerQuestion(db, dirname28(run.policyPath), q.id, answer, by, ctx.clock);
+    const result2 = answerQuestion(db, dirname27(run.policyPath), q.id, answer, by, ctx.clock);
     const remaining = openQuestions(db, run.id);
     if (args.bool("json")) {
       json(ctx.io, { run_id: run.id, question_id: q.id, answer: result2.question.answer, chosen_option: result2.chosenOption?.label ?? null, decision_id: result2.decision.id, unblocks: result2.unblocks, baseline_exception: result2.baselineException, open_questions: remaining.map((x) => x.id), run_state: run.state });
@@ -54917,20 +55689,20 @@ var init_service2 = __esm({
 });
 
 // src/cli/commands/doctor.ts
-import { accessSync as accessSync3, constants as constants4, existsSync as existsSync44, mkdtempSync as mkdtempSync5, readFileSync as readFileSync24, rmSync as rmSync16, statSync as statSync15 } from "node:fs";
+import { accessSync as accessSync3, constants as constants4, existsSync as existsSync44, mkdtempSync as mkdtempSync6, readFileSync as readFileSync24, rmSync as rmSync16, statSync as statSync14 } from "node:fs";
 import { createRequire as createRequire4 } from "node:module";
-import { tmpdir as tmpdir11 } from "node:os";
-import { delimiter as delimiter4, isAbsolute as isAbsolute15, join as join58, resolve as resolve16 } from "node:path";
+import { tmpdir as tmpdir12 } from "node:os";
+import { delimiter as delimiter4, isAbsolute as isAbsolute16, join as join58, resolve as resolve16 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
     try {
-      return statSync15(p).isFile() && (accessSync3(p, constants4.X_OK), true);
+      return statSync14(p).isFile() && (accessSync3(p, constants4.X_OK), true);
     } catch {
       return false;
     }
   };
   if (cmd.includes("/")) {
-    const p = isAbsolute15(cmd) ? cmd : resolve16(cwd, cmd);
+    const p = isAbsolute16(cmd) ? cmd : resolve16(cwd, cmd);
     return ok(p) ? p : null;
   }
   for (const dir of (env.PATH ?? "").split(delimiter4)) {
@@ -55039,7 +55811,7 @@ function checkStorage(p) {
   let db = null;
   try {
     if (!existsSync44(path)) {
-      const scratch = mkdtempSync5(join58(tmpdir11(), "orbit-doctor-"));
+      const scratch = mkdtempSync6(join58(tmpdir12(), "orbit-doctor-"));
       try {
         db = openDb(join58(scratch, "probe.sqlite"));
         const mode2 = String((db.get("PRAGMA journal_mode") ?? {}).journal_mode);
@@ -55560,8 +56332,8 @@ var init_gc = __esm({
 });
 
 // src/cli/commands/init.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync45, mkdirSync as mkdirSync21, readFileSync as readFileSync25, writeFileSync as writeFileSync8 } from "node:fs";
-import { dirname as dirname29, join as join59 } from "node:path";
+import { appendFileSync as appendFileSync2, existsSync as existsSync45, mkdirSync as mkdirSync21, readFileSync as readFileSync25, writeFileSync as writeFileSync9 } from "node:fs";
+import { dirname as dirname28, join as join59 } from "node:path";
 function templatePath() {
   return join59(orbitInstallDir(), "templates", "config.yaml");
 }
@@ -55579,9 +56351,9 @@ async function initCommand(args, ctx) {
   else {
     const tpl = templatePath();
     if (!existsSync45(tpl)) throw new OrbitError("NOT_FOUND", `the starter template ${tpl} is missing from this installation`);
-    mkdirSync21(dirname29(configPath), { recursive: true });
+    mkdirSync21(dirname28(configPath), { recursive: true });
     try {
-      writeFileSync8(configPath, readFileSync25(tpl, "utf8"), { flag: "wx", mode: 420 });
+      writeFileSync9(configPath, readFileSync25(tpl, "utf8"), { flag: "wx", mode: 420 });
       config = "created";
     } catch (err) {
       if (err.code !== "EEXIST") throw err;
@@ -55589,7 +56361,7 @@ async function initCommand(args, ctx) {
     }
   }
   const excludePath = await excludeFile(ctx, repo);
-  mkdirSync21(dirname29(excludePath), { recursive: true });
+  mkdirSync21(dirname28(excludePath), { recursive: true });
   const current = existsSync45(excludePath) ? readFileSync25(excludePath, "utf8") : "";
   const have = new Set(current.split("\n").map((l) => l.trim()));
   const missing = EXCLUDE_RULES.filter((r) => !have.has(r));
@@ -55635,22 +56407,22 @@ var init_init = __esm({
 });
 
 // src/cli/commands/internal.ts
-import { spawn as spawn5 } from "node:child_process";
+import { spawn as spawn6 } from "node:child_process";
 import { mkdirSync as mkdirSync22 } from "node:fs";
-import { isAbsolute as isAbsolute16 } from "node:path";
+import { isAbsolute as isAbsolute17 } from "node:path";
 async function shimCommand(rawArgs) {
   return shimMain(rawArgs);
 }
 async function checkRunnerCommand(rawArgs, ctx) {
   const [runDir2, checkDir, ...extra] = rawArgs;
-  if (!runDir2 || !checkDir || extra.length > 0 || !isAbsolute16(runDir2) || !isAbsolute16(checkDir)) {
+  if (!runDir2 || !checkDir || extra.length > 0 || !isAbsolute17(runDir2) || !isAbsolute17(checkDir)) {
     ctx.io.err("usage: orbit check-runner <absolute run dir> <absolute check dir>\n");
     return EXIT.USAGE;
   }
   mkdirSync22(runDir2, { recursive: true });
   const shim = ensureShim(runDir2);
   return new Promise((resolve20) => {
-    const child = spawn5(process.execPath, [shim, checkDir], { stdio: "inherit", env: process.env });
+    const child = spawn6(process.execPath, [shim, checkDir], { stdio: "inherit", env: process.env });
     child.on("error", (err) => {
       ctx.io.err(`check-runner: cannot start the check shim: ${err.message}
 `);
@@ -55776,8 +56548,8 @@ var init_ingest = __esm({
 });
 
 // src/cli/commands/learn.ts
-import { existsSync as existsSync46, mkdirSync as mkdirSync23, readFileSync as readFileSync26, statSync as statSync16 } from "node:fs";
-import { basename as basename12, isAbsolute as isAbsolute17, join as join60, relative as relative5, resolve as resolve17 } from "node:path";
+import { existsSync as existsSync46, mkdirSync as mkdirSync23, readFileSync as readFileSync26, statSync as statSync15 } from "node:fs";
+import { basename as basename12, isAbsolute as isAbsolute18, join as join60, relative as relative5, resolve as resolve17 } from "node:path";
 function knowledgePath(ctx, repo, global) {
   return global ? join60(ctx.orbitHome, "knowledge.sqlite") : join60(repo, ".orbit", "knowledge.sqlite");
 }
@@ -55895,11 +56667,11 @@ async function readSource(ctx, repo, ref2, label) {
   }
   const path = resolve17(ctx.cwd, ref2);
   if (!existsSync46(path)) throw new OrbitError("NOT_FOUND", `${path} does not exist`);
-  const st = statSync16(path);
+  const st = statSync15(path);
   if (!st.isFile()) throw new OrbitError("SCHEMA_INVALID", `${path} is not a regular file`);
   if (st.size > FETCH_MAX_BYTES) throw new OrbitError("SCHEMA_INVALID", `${path} is larger than ${FETCH_MAX_BYTES} bytes`);
   const rel = relative5(repo, path);
-  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute17(rel) ? rel : basename12(path), content: readFileSync26(path, "utf8") };
+  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute18(rel) ? rel : basename12(path), content: readFileSync26(path, "utf8") };
 }
 async function runIngestCurator(ctx, repo, config, prompt) {
   if (!(config.knowledge.curator_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.curator_budget_usd is 0, so no curator may run; raise it, or supply the curator output with --curator-output");
@@ -56150,10 +56922,10 @@ var init_learn2 = __esm({
 });
 
 // src/cli/commands/logs.ts
-import { closeSync as closeSync8, existsSync as existsSync47, fstatSync as fstatSync4, openSync as openSync8, readSync as readSync5, statSync as statSync17 } from "node:fs";
-import { dirname as dirname30, join as join61 } from "node:path";
+import { closeSync as closeSync8, existsSync as existsSync47, fstatSync as fstatSync4, openSync as openSync8, readSync as readSync5, statSync as statSync16 } from "node:fs";
+import { dirname as dirname29, join as join61 } from "node:path";
 function readTail(path, lines) {
-  const size = statSync17(path).size;
+  const size = statSync16(path).size;
   const fd = openSync8(path, "r");
   try {
     const start = Math.max(0, size - TAIL_BYTES);
@@ -56213,7 +56985,7 @@ async function logsCommand(args, ctx) {
   const asJson = args.bool("json");
   return withState(repo, async (db) => {
     const run = findRunByPrefix(db, runRef);
-    const runDir2 = dirname30(run.policyPath);
+    const runDir2 = dirname29(run.policyPath);
     const wantController = !args.bool("workers") && !args.str("worker");
     const wantWorkers = !args.bool("controller");
     const sources = [];
@@ -56599,14 +57371,14 @@ var init_release2 = __esm({
 
 // src/cli/commands/report.ts
 import { existsSync as existsSync49, readFileSync as readFileSync27 } from "node:fs";
-import { dirname as dirname31, join as join62 } from "node:path";
+import { dirname as dirname30, join as join62 } from "node:path";
 async function reportCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   if (args.bool("learning")) return withState(repo, (db) => learningReport(ctx, repo, db, args.bool("json")));
   const [id] = args.expect(1);
   return withState(repo, (db) => {
     const run = findRunByPrefix(db, id);
-    const runDir2 = dirname31(run.policyPath);
+    const runDir2 = dirname30(run.policyPath);
     const finalMd = join62(runDir2, "final.md");
     const finalJson = join62(runDir2, "final.json");
     const asJson = args.bool("json");

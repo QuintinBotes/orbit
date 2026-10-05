@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process';
-import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
+import { BUILTIN_CREDENTIAL_PATHS } from '../policy/builtin.ts';
+import { compileGlobs } from '../policy/globs.ts';
 import type { SandboxProfile } from './types.ts';
 
 /**
@@ -196,4 +198,53 @@ export function probeFailure(r: BoundedResult): string {
   const text = (r.stderr || r.stdout).trim().split('\n').filter(Boolean).slice(-1)[0] ?? '';
   const status = r.signal ? `signal ${r.signal}` : `exit ${r.code}`;
   return text ? `${status}: ${text.slice(0, 300)}` : status;
+}
+
+const CREDENTIAL_WALK_SKIP = new Set(['.git', 'node_modules']);
+const CREDENTIAL_WALK_LIMIT = 200_000;
+
+/**
+ * Credential files present in a worktree: files matching the built-in credential globs (.env*, *.pem, SSH keys,
+ * .npmrc, .netrc), as canonical absolute paths for the OS read-deny list. The Read tool refuses them by policy;
+ * this keeps a shell (`cat .env`) from reading them either. A symlink counts by the file it reaches, and one that
+ * leaves the worktree is left to the rules for where it points. `.git` and `node_modules` are not walked.
+ */
+export function credentialFilesIn(worktree: string): string[] {
+  const root = canonicalPath(worktree);
+  const isCredential = compileGlobs(BUILTIN_CREDENTIAL_PATHS, { nocase: true });
+  const found: string[] = [];
+  const stack = [root];
+  let visited = 0;
+  while (stack.length > 0 && visited < CREDENTIAL_WALK_LIMIT) {
+    const dir = stack.pop()!;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of entries) {
+      visited++;
+      const abs = join(dir, name);
+      let st;
+      try {
+        st = lstatSync(abs);
+      } catch {
+        continue;
+      }
+      const rel = abs.slice(root.length + 1);
+      if (st.isDirectory()) {
+        if (!CREDENTIAL_WALK_SKIP.has(name)) stack.push(abs);
+        continue;
+      }
+      if (!isCredential(rel)) continue;
+      if (!st.isSymbolicLink()) {
+        found.push(abs);
+        continue;
+      }
+      const target = canonicalPath(abs);
+      if (isWithin(target, root)) found.push(target);
+    }
+  }
+  return uniq(found).sort();
 }

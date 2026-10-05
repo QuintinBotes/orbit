@@ -12,7 +12,10 @@ import {
   parseFailedSteps,
   parseMergeState,
   parsePullRequest,
+  parseCheckRuns,
+  parseCombinedStatus,
   parseRunListAsChecks,
+  statusBucket,
   type GhRunner,
 } from '../../../src/delivery/github.ts';
 import { git, makeLab, type Lab } from '../../integration/delivery/harness.ts';
@@ -189,17 +192,18 @@ describe('GhCliClient merge, checks and logs: remaining edges', () => {
     await expect(c.getMergeState(-1)).rejects.toMatchObject({ code: 'INTERNAL' });
   });
 
-  it('falls back to workflow runs when a PR has no checks and a commit is known, and refuses a malformed commit', async () => {
+  it('falls back to workflow runs when a commit has no checks yet, and refuses a malformed commit', async () => {
     const sha = 'd'.repeat(40);
     const calls: string[] = [];
     const c = client(async (argv) => {
-      calls.push(`${argv[1]} ${argv[2]}`);
-      if (argv[2] === 'view') return res({ stdout: JSON.stringify({ ...PR, headRefOid: sha }) });
-      if (argv[1] === 'pr') return res({ stdout: '[]' });
+      const path = argv.find((a) => a.startsWith('repos/')) ?? '';
+      calls.push(path.includes('/check-runs') ? 'check-runs' : path.includes('/status') ? 'status' : `${argv[1]} ${argv[2]}`);
+      if (path.includes('/check-runs')) return res({ stdout: JSON.stringify({ total_count: 0, check_runs: [] }) });
+      if (path.includes('/status')) return res({ stdout: JSON.stringify({ state: 'pending', sha, total_count: 0, statuses: [] }) });
       return res({ stdout: JSON.stringify([{ databaseId: 5, status: 'completed', conclusion: 'success', workflowName: 'ci' }]) });
     });
     const r = await c.listChecks({ pr: 7, sha });
-    expect(calls).toEqual(['pr view', 'pr checks', 'run list']);
+    expect(calls).toEqual(['check-runs', 'status', 'run list']);
     expect(r).toMatchObject({ absent: false, headSha: sha, checks: [{ bucket: 'pass' }] });
     await expect(c.listChecks({ sha: 'not-a-sha' })).rejects.toMatchObject({ code: 'INTERNAL', message: expect.stringContaining('not a commit sha') });
   });
@@ -371,5 +375,57 @@ describe('FakeGitHub attached to a real remote', () => {
     vi.stubEnv('PATH', undefined as unknown as string);
     const merged = await lab.fake.mergePullRequest({ number: 1, headSha: head, method: 'rebase', deleteBranch: false });
     expect(merged.mergeCommitSha).toBe(head);
+  });
+});
+
+describe('GhCliClient per-commit checks: edges', () => {
+  const SHA = 'f'.repeat(40);
+  const apiPath = (argv: readonly string[]): string => argv.find((a) => a.startsWith('repos/')) ?? '';
+  const checkRun = (over: Record<string, unknown> = {}) => ({ name: 'build', head_sha: SHA, status: 'completed', conclusion: 'success', details_url: 'https://ci.example/x', output: { title: 'ok' }, ...over });
+
+  it('parses check runs and commit statuses, refusing malformed pages', () => {
+    expect(parseCheckRuns(JSON.stringify({ total_count: 1, check_runs: [checkRun()] })).runs[0]).toMatchObject({ bucket: 'pass', state: 'SUCCESS', link: 'https://ci.example/x', runId: null, description: 'ok', headSha: SHA });
+    expect(parseCheckRuns(JSON.stringify({ total_count: 1, check_runs: [checkRun({ status: 'queued', conclusion: null, output: null })] })).runs[0]).toMatchObject({ bucket: 'pending', state: 'QUEUED', description: null });
+    expect(() => parseCheckRuns(JSON.stringify({ check_runs: [] }))).toThrow(expect.objectContaining({ code: 'MALFORMED_OUTPUT', message: expect.stringContaining('total_count') }));
+    expect(() => parseCheckRuns(JSON.stringify({ total_count: 0 }))).toThrow(/check_runs/);
+    expect(() => parseCheckRuns(JSON.stringify({ total_count: 1, check_runs: [{ name: 'x', status: 'completed' }] }))).toThrow(/head_sha/);
+    expect(parseCombinedStatus(JSON.stringify({ sha: SHA }))).toEqual({ sha: SHA, checks: [] });
+    expect(parseCombinedStatus(JSON.stringify({ sha: SHA, statuses: [{ context: 'ext', state: 'pending', created_at: 't0', updated_at: 't1' }] })).checks[0]).toMatchObject({ bucket: 'pending', startedAt: 't0', completedAt: null });
+    expect(() => parseCombinedStatus(JSON.stringify({ statuses: [] }))).toThrow(/sha/);
+    expect(statusBucket('error')).toBe('fail');
+    expect(statusBucket('failure')).toBe('fail');
+  });
+
+  it('reports a commit the host does not know yet as absent, and rethrows other failures', async () => {
+    const missing = client(async () => res({ exitCode: 1, stderr: 'No commit found for SHA: ffff (HTTP 422)' }));
+    expect(await missing.listChecks({ sha: SHA })).toEqual({ checks: [], absent: true, headSha: SHA });
+    const down = client(async () => res({ exitCode: 1, stderr: 'HTTP 502: Bad Gateway' }));
+    await expect(down.listChecks({ sha: SHA })).rejects.toMatchObject({ code: 'PROVIDER_TRANSIENT' });
+    await expect(client(timedOut).listChecks({ sha: SHA })).rejects.toMatchObject({ code: 'PROVIDER_TRANSIENT', message: expect.stringContaining('check runs timed out') });
+  });
+
+  it('uses the check runs alone when the token cannot read commit statuses, and rethrows other status failures', async () => {
+    const runner = (statusErr: string): GhRunner => async (argv) => (apiPath(argv).includes('/check-runs') ? res({ stdout: JSON.stringify({ total_count: 1, check_runs: [checkRun()] }) }) : res({ exitCode: 1, stderr: statusErr }));
+    expect(await client(runner('Resource not accessible by personal access token (HTTP 403)')).listChecks({ sha: SHA })).toMatchObject({ headSha: SHA, absent: false, checks: [{ bucket: 'pass' }] });
+    await expect(client(runner('HTTP 500')).listChecks({ sha: SHA })).rejects.toMatchObject({ code: 'PROVIDER_TRANSIENT' });
+  });
+
+  it('labels a status response about another commit with that commit, and passes the configured host', async () => {
+    const argvs: string[][] = [];
+    const c = new GhCliClient({ repo: 'acme/app', host: 'ghe.example', env: { PATH: '/bin', GH_TOKEN: TOKEN }, runner: async (argv) => {
+      argvs.push([...argv]);
+      if (apiPath(argv).includes('/check-runs')) return res({ stdout: JSON.stringify({ total_count: 0, check_runs: [] }) });
+      return res({ stdout: JSON.stringify({ sha: 'e'.repeat(40), statuses: [{ context: 'ext', state: 'success' }] }) });
+    } });
+    expect(await c.listChecks({ sha: SHA })).toEqual({ checks: [], absent: false, headSha: 'e'.repeat(40) });
+    expect(argvs[0]).toEqual(expect.arrayContaining(['--hostname', 'ghe.example']));
+  });
+
+  it('accepts an abbreviated commit and refuses to judge a commit with more check runs than it reads', async () => {
+    const short = client(async (argv) => (apiPath(argv).includes('/check-runs') ? res({ stdout: JSON.stringify({ total_count: 1, check_runs: [checkRun()] }) }) : res({ stdout: JSON.stringify({ sha: SHA, statuses: [] }) })));
+    expect(await short.listChecks({ sha: 'fffffff' })).toMatchObject({ headSha: SHA, checks: [{ bucket: 'pass' }] });
+    const page = Array.from({ length: 100 }, (_, i) => checkRun({ name: `job-${i}` }));
+    const huge = client(async () => res({ stdout: JSON.stringify({ total_count: 5000, check_runs: page }) }));
+    await expect(huge.listChecks({ sha: SHA })).rejects.toMatchObject({ code: 'DELIVERY_FAILED', message: expect.stringContaining('more than 1000 check runs') });
   });
 });

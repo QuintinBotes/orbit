@@ -273,6 +273,33 @@ describe.skipIf(!status.ok)(status.ok ? 'sandbox-runtime isolation (real srt)' :
     }
   });
 
+  it('keeps a worker shell from reading credential files in its own worktree', async () => {
+    const workerDir = join(repo, '.orbit', 'runs', 'orb-1', 'workers', 'w4');
+    mkdirSync(workerDir, { recursive: true });
+    const planted = [join(worktree, '.env'), join(worktree, 'deploy', 'server.pem')];
+    mkdirSync(join(worktree, 'deploy'), { recursive: true });
+    writeFileSync(planted[0]!, 'TOKEN=acme-worktree-secret');
+    writeFileSync(planted[1]!, 'acme-worktree-pem');
+    writeFileSync(join(worktree, 'notes.txt'), 'plain acme notes');
+    const tmp = prepareWorkerTmpDir(workerDir);
+    try {
+      const profile = profileForWorker({ worktree, workerDir, snapshot: snapshotFor({ repoRoot: repo }), provider: 'claude', claudeConfigDir: join(home, '.claude-cfg'), homeDir: home, env: {} });
+      const attempt = (label: string, cmd: string) => `if ${cmd} 2>/dev/null; then echo "${label}=open"; else echo "${label}=blocked"; fi`;
+      const script = [
+        attempt('env', 'cat .env >/dev/null'),
+        attempt('pem', 'cat deploy/server.pem >/dev/null'),
+        attempt('env-redirect', 'sh -c "read x < .env"'),
+        attempt('notes', 'cat notes.txt >/dev/null'),
+      ].join('\n');
+      const r = await runWrapped(wrap(['sh', '-c', script], profile, { TMPDIR: tmp }), worktree);
+      expect(r.stdout.trim().split('\n')).toEqual(['env=blocked', 'pem=blocked', 'env-redirect=blocked', 'notes=open']);
+      expect(r.stdout).not.toContain('acme-worktree-secret');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+      for (const f of [...planted, join(worktree, 'notes.txt')]) rmSync(f, { force: true });
+    }
+  });
+
   it('reports exit 0 when the caller kills the group with SIGTERM (documented limitation)', async () => {
     const w = wrap(['sleep', '30']);
     expect(w.limitations.join('\n')).toMatch(/SIGTERM or SIGINT, srt exits 0/);

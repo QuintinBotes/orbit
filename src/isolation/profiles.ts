@@ -5,7 +5,7 @@ import { OrbitError } from '../core/errors.ts';
 import { sha256 } from '../core/hash.ts';
 import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
 import type { SandboxProfile } from './types.ts';
-import { canonicalPath, gitCommonDir, isWithin, uniq } from './util.ts';
+import { canonicalPath, credentialFilesIn, gitCommonDir, isWithin, uniq } from './util.ts';
 
 /**
  * Profiles say what an untrusted process may touch; providers decide how to
@@ -328,6 +328,8 @@ function denyList(opts: { home: string; repoRoot: string; worktree: string; extr
     ...SYSTEM_DENY_READ.map(canonicalPath),
     join(repo, '.orbit'),
     ...(isWithin(repo, opts.worktree) ? [] : [repo]),
+    // Credential files in the worktree (.env, keys): a deny nested in the re-allowed worktree stays the more specific rule.
+    ...credentialFilesIn(opts.worktree),
     orbitTmpRoot(),
     ...(parent ? [parent] : []),
     ...opts.extra,

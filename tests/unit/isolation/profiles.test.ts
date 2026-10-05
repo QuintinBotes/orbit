@@ -274,6 +274,49 @@ describe('profileForCheck', () => {
   });
 });
 
+describe('credential files inside the worktree', () => {
+  function plant(worktree: string): string[] {
+    const files = ['.env', '.env.production', 'config/server.pem', 'deploy/.npmrc', 'deploy/keys/id_ed25519', 'docs/.netrc'];
+    for (const rel of files) {
+      mkdirSync(join(worktree, rel, '..'), { recursive: true });
+      writeFileSync(join(worktree, rel), 'synthetic acme secret\n');
+    }
+    mkdirSync(join(worktree, 'src'), { recursive: true });
+    writeFileSync(join(worktree, 'src', 'index.ts'), 'export {};\n');
+    mkdirSync(join(worktree, 'node_modules', 'pkg'), { recursive: true });
+    writeFileSync(join(worktree, 'node_modules', 'pkg', '.env'), 'vendored\n');
+    return files.map((rel) => join(worktree, rel));
+  }
+
+  it('are on a worker\'s OS read-deny list, with the rest of the worktree still readable', () => {
+    const l = layout();
+    const planted = plant(l.worktree);
+    const p = profileForWorker({ worktree: l.worktree, workerDir: l.workerDir, snapshot: snapshotFor({ repoRoot: l.repo }), provider: 'claude', claudeConfigDir: l.claudeDir, homeDir: l.home, env: {} });
+    for (const f of planted) expect(p.denyReadPaths, f).toContain(f);
+    expect(p.denyReadPaths).not.toContain(join(l.worktree, 'src', 'index.ts'));
+    expect(p.denyReadPaths).not.toContain(l.worktree);
+    // srt keeps a deny inside a re-allowed worktree as the more specific rule.
+    const srt = buildSrtSettings(p).filesystem;
+    expect(srt.denyRead).toContain(join(l.worktree, '.env'));
+    expect(srt.allowRead).toContain(l.worktree);
+  });
+
+  it('are on a check\'s read-deny list too', () => {
+    const l = layout();
+    const planted = plant(l.worktree);
+    const p = profileForCheck({ worktree: l.worktree, check: checkFor(), snapshot: snapshotFor({ repoRoot: l.repo }), homeDir: l.home, env: {} });
+    for (const f of planted) expect(p.denyReadPaths, f).toContain(f);
+  });
+
+  it('include one a symlink names, by the file it reaches', () => {
+    const l = layout();
+    writeFileSync(join(l.worktree, 'real.txt'), 'x\n');
+    symlinkSync(join(l.worktree, 'real.txt'), join(l.worktree, '.env.local'));
+    const p = profileForWorker({ worktree: l.worktree, workerDir: l.workerDir, snapshot: snapshotFor({ repoRoot: l.repo }), provider: 'claude', claudeConfigDir: l.claudeDir, homeDir: l.home, env: {} });
+    expect(p.denyReadPaths).toContain(join(l.worktree, 'real.txt'));
+  });
+});
+
 describe('repoParentDenial', () => {
   it('denies the projects directory when that is safe', () => {
     const l = layout();

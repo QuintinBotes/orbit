@@ -35,7 +35,7 @@ import { blockingQuestions } from '../gates.ts';
 import { ensureWorker, recordSpendCap, routeFor, sessionSpendCap } from '../workers.ts';
 import { recordedUnits, recordUnits, runParallelUnits, serializedUnits, splitAttempt } from '../parallel-writers.ts';
 import type { WorkUnitPlan } from '../../scheduling/work-units.ts';
-import { attemptSubject, deniedWorkerOperations, grantFor, grantPolicy, requestAttemptAuthorization, sessionEvents, ungrantedCommands, type GuardedOperation } from '../authorization.ts';
+import { attemptSubject, deniedWorkerOperations, grantFor, requestAttemptAuthorization, runApprovedOperation, sessionEvents, ungrantedCommands, type ApprovedRun, type GuardedOperation } from '../authorization.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
 import { assertContract, blockOnAuth, decide, finishRun, move, note, policySummary, progress, retryWait, safePoint, scheduleTransientRetry, WAIT, type StepResult } from './common.ts';
 import { latestAttempt } from './obtain.ts';
@@ -202,7 +202,6 @@ async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable
       prompt: (workerId) => implementerPrompt(ctx, n, workerId, auth),
       maxBudgetUsd: capOf(ctx, n, purpose),
       ownedPaths: contract.allowed_paths,
-      ...(auth && auth.granted.length > 0 ? { policy: (dir: string) => grantPolicy(ctx, auth.granted, dir) } : {}),
     });
     if (st.status === 'running') return WAIT(`implementer ${st.worker.id} (attempt ${n}) is running`);
     const r = st.result;
@@ -253,6 +252,8 @@ export interface AuthorizationRetry {
   next: number;
   granted: GuardedOperation[];
   refused: GuardedOperation[];
+  /** What the controller ran for each granted operation (absent in events written before it ran them). */
+  executed?: ApprovedRun[];
 }
 
 function authorizationRetries(ctx: RunContext, n: number): AuthorizationRetry[] {
@@ -272,9 +273,10 @@ type Supervision = { kind: 'proceed' } | { kind: 'retry' } | { kind: 'stop'; res
  * Supervised mode (spec section 5: ask before unauthorized actions; section 10: persist questions, never wait on a
  * keyboard). The action-class operations the guard denied inside session `k` of attempt `n` become persisted
  * approve-once or deny questions and the run blocks until a person answers. Once every one is answered, the
- * attempt is retried in the same worktree: approved operations under a grant policy that allows exactly them
- * for this attempt, refused ones as a scope repair. A session under a grant policy that ran anything else the
- * frozen policy denies is a policy violation. Each operation is retried at most once per attempt.
+ * controller runs each approved operation itself, exactly as approved, once, in isolation (a recorded action),
+ * and the attempt is retried in the same worktree under the unchanged frozen policy with the output of each as an
+ * artifact; refused ones are a scope repair. A retried session that ran anything the frozen policy denies is a
+ * policy violation. Each operation is retried at most once per attempt.
  */
 async function superviseDenials(ctx: RunContext, n: number, k: number, worker: WorkerRecord): Promise<Supervision> {
   if (ctx.run.mode !== 'supervised') return { kind: 'proceed' };
@@ -282,7 +284,8 @@ async function superviseDenials(ctx: RunContext, n: number, k: number, worker: W
   if (retries.some((r) => r.after === k)) return { kind: 'retry' };
   const auth = retries.filter((r) => r.next <= k).at(-1);
   if (auth && auth.granted.length > 0) {
-    const extra = ungrantedCommands(sessionEvents(worker), ctx.snapshot, worker.cwd, auth.granted);
+    // The controller ran what was approved; the worker itself was never allowed it, so no grant excuses anything here.
+    const extra = ungrantedCommands(sessionEvents(worker), ctx.snapshot, worker.cwd, []);
     if (extra.length > 0) {
       decide(ctx, { id: `dec-${ctx.run.id}-deny-ungranted-${worker.id}`, kind: 'policy.deny', summary: `implementer ${worker.id} ran under a one-shot grant and did what no grant names: ${extra.join('; ')}`, data: { source: 'grant-check', worker_id: worker.id, attempt: n, ungranted: extra, granted: auth.granted.map((g) => g.key) } });
       return { kind: 'stop', result: await finishRun(ctx, 'BLOCKED', `policy violation in attempt ${n}: under a one-shot grant the implementer also ran what the policy denies and no person authorized (${extra.join('; ')}); its work will not be verified or delivered`, { outcome: { attempt: n, ungranted: extra } }) };
@@ -294,17 +297,23 @@ async function superviseDenials(ctx: RunContext, n: number, k: number, worker: W
   const subject = attemptSubject(n);
   const pending: string[] = [];
   const granted: GuardedOperation[] = [];
+  const grants: { decisionId: string; approvedBy: string }[] = [];
   const refused: GuardedOperation[] = [];
   for (const op of ops) {
     const g = grantFor(ctx, op, subject);
-    if (g.state === 'granted') granted.push(op);
-    else if (g.state === 'denied') refused.push(op);
+    if (g.state === 'granted') {
+      granted.push(op);
+      grants.push({ decisionId: g.decisionId, approvedBy: g.approvedBy });
+    } else if (g.state === 'denied') refused.push(op);
     else pending.push(`${g.state === 'pending' ? g.questionId : requestAttemptAuthorization(ctx, op, n, worker).id}: ${op.summary}`);
   }
   if (pending.length > 0) {
     return { kind: 'stop', result: await finishRun(ctx, 'BLOCKED', `supervised mode: implementation attempt ${n} was denied operations the policy does not authorize; a person decides each one (approve-once or deny with orbit decide, then orbit resume ${ctx.run.id}). Questions: ${pending.join(' | ')}`, { outcome: { authorization: pending } }) };
   }
-  note(ctx, AUTHORIZATION_RETRY_EVENT, { attempt: n, after: k, next: k + 1, granted, refused } satisfies AuthorizationRetry);
+  // Exactly what was approved, run by the controller (never by the worker), once each.
+  const executed: ApprovedRun[] = [];
+  for (const [i, op] of granted.entries()) executed.push(await runApprovedOperation(ctx, n, op, grants[i]!));
+  note(ctx, AUTHORIZATION_RETRY_EVENT, { attempt: n, after: k, next: k + 1, granted, refused, executed } satisfies AuthorizationRetry);
   return { kind: 'retry' };
 }
 
@@ -460,6 +469,10 @@ function implementerPrompt(ctx: RunContext, n: number, workerId: string, auth: A
       refs.push({ id: row.checkId, path: relative(ctx.runDir, row.logPath), sha256: row.logSha256, summary: `${row.checkId} ${row.status} on candidate ${cand.seq}`, ...(row.excerpt ? { excerpt: row.excerpt } : {}) });
     }
   }
+  for (const e of auth?.executed ?? []) {
+    if (e.state !== 'SUCCEEDED' || !e.path || !e.sha256) continue;
+    refs.push({ id: `approved-${e.key}`, path: e.path, sha256: e.sha256, summary: `output of the approved command \`${e.command}\`, run once by the controller (exit ${e.exit_code ?? 'none'}${e.timed_out ? ', timed out' : ''})`, ...(e.excerpt ? { excerpt: e.excerpt } : {}) });
+  }
   const task = [
     parallel ? 'Implement your work unit of the contract below in this worktree.' : n === 1 || !stored ? 'Implement the contract below in this worktree.' : `Repair attempt ${n}: act on the repair brief below; change the cause, not the tests that show it.`,
     'Make the smallest coherent change. Add or extend behaviour tests that would fail without it. Stay inside the allowed paths.',
@@ -503,9 +516,17 @@ function parallelLines(ctx: RunContext, n: number, parallel: { unit: WorkUnitPla
 function authorizationLines(auth: AuthorizationRetry | null): string[] {
   if (!auth) return [];
   const lines = ['An earlier session of this attempt was denied operations the policy does not authorize, and a person answered. Continue from the current worktree: the earlier edits are there.'];
-  for (const g of auth.granted) lines.push(`Authorized once, for this attempt only: ${g.summary}. You may do exactly this; anything else outside the policy is still refused and stops the run.`);
+  for (const g of auth.granted) lines.push(`Authorized once, for this attempt only: ${g.summary}. ${approvedOutcome(auth.executed?.find((e) => e.key === g.key) ?? null)} Do not run it yourself: you are still refused it, and anything else outside the policy stops the run.`);
   for (const g of auth.refused) lines.push(`Refused by a person: ${g.summary}. Do not try it again; finish the work inside the policy without it.`);
   return lines;
+}
+
+/** What the controller did with one approved operation, for the retried session. */
+function approvedOutcome(e: ApprovedRun | null): string {
+  if (!e) return 'The controller performs approved operations; the policy you run under is unchanged.';
+  if (e.state === 'SUCCEEDED') return `The controller ran exactly this command once, in isolation, on your behalf (exit code ${e.exit_code ?? 'none'}${e.timed_out ? ', timed out' : ''}); its output is the evidence artifact approved-${e.key} (${e.path}).`;
+  if (e.state === 'UNKNOWN') return `The controller started it on your behalf, but its outcome is unknown (${e.note ?? 'no detail'}); it is not run again.`;
+  return `Nothing was run for it: ${e.note ?? 'there was no exact command to run'}.`;
 }
 
 function relative(root: string, p: string): string {

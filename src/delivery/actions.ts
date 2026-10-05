@@ -20,6 +20,15 @@
  * retried intent resumes the existing row rather than inserting a second one,
  * and a new ledger instance (a restarted controller) on the same database
  * picks up exactly where the old one stopped.
+ *
+ * Attempts are fenced by the run's lease (decision 0005, item 2). Starting an
+ * attempt asserts, in the same transaction that moves the action to EXECUTING,
+ * that this ledger's owner holds the run's unexpired lease, and records the
+ * executor, the start time and the attempt's deadline. Another owner that finds
+ * an attempt it did not start still EXECUTING (or UNKNOWN) starts no new
+ * attempt until that deadline has passed and a reconciliation read issued
+ * after it found the effect absent: the old owner's request may still land
+ * until then.
  */
 import type { Clock } from '../core/clock.ts';
 import type { OrbitDb } from '../storage/db.ts';
@@ -41,6 +50,11 @@ export const ACTION_KINDS = ['commit', 'push', 'pr_create', 'pr_update', 'pr_rea
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
 export const DEFAULT_MAX_ATTEMPTS = 3;
+/**
+ * How long an attempt may stay in flight before another owner may assume it ended. Longer than every
+ * request the delivery handlers make (git 120 s, gh 60 s); a deploy passes its own `deadlineMs`.
+ */
+export const DEFAULT_ACTION_DEADLINE_MS = 10 * 60_000;
 
 export interface ActionRecord {
   id: string;
@@ -58,6 +72,12 @@ export interface ActionRecord {
   error: string | null;
   createdAt: number;
   updatedAt: number;
+  /** The owner that started the current attempt; null before the first. */
+  executor: string | null;
+  /** When the current attempt started. */
+  startedAt: number | null;
+  /** Until when the current attempt may still be in flight. */
+  deadlineAt: number | null;
 }
 
 export interface ActionInput {
@@ -75,6 +95,8 @@ export interface ActionContext {
   action: ActionRecord;
   /** 1-based number of this execution (0 while reconciling before the first). */
   attempt: number;
+  /** The attempt's deadline: a handler must not let its request outlive it (null while reconciling before the first). */
+  deadlineAt: number | null;
 }
 
 export interface ActionHandlers<T> {
@@ -93,6 +115,8 @@ export interface PerformOptions {
    * went stale while a retry waited cannot authorize the retry.
    */
   precheck?: () => void | Promise<void>;
+  /** How long one attempt may stay in flight; default the ledger's `actionDeadlineMs`. */
+  deadlineMs?: number;
 }
 
 export interface ActionResult<T> {
@@ -109,6 +133,20 @@ export interface LedgerOptions {
   /** Delay before re-executing after a failure within one call. Default 500 ms doubling, capped at 30 s. */
   backoffMs?: (attempt: number) => number;
   actor?: string;
+  /**
+   * The lease holder this ledger acts for. Starting an attempt asserts it holds the run's unexpired lease.
+   * Defaults to `actor` when one is given (the controller passes its owner id as the actor); null turns the
+   * fence off, for callers that hold no lease (tests, library use).
+   */
+  ownerId?: string | null;
+  /** Default deadline of one attempt. Default DEFAULT_ACTION_DEADLINE_MS. */
+  actionDeadlineMs?: number;
+}
+
+export interface StartOptions {
+  /** When the reconciliation read that preceded this attempt was issued. Required to take over another owner's attempt. */
+  reconciledAt?: number;
+  deadlineMs?: number;
 }
 
 /** Failures that mean the remote refused: nothing happened, and repeating the request cannot help. */
@@ -144,6 +182,9 @@ interface ActionRow {
   error: string | null;
   created_at: number;
   updated_at: number;
+  executor: string | null;
+  started_at: number | null;
+  deadline_at: number | null;
 }
 
 function toRecord(row: ActionRow): ActionRecord {
@@ -162,12 +203,18 @@ function toRecord(row: ActionRow): ActionRecord {
     error: row.error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    executor: row.executor ?? null,
+    startedAt: row.started_at ?? null,
+    deadlineAt: row.deadline_at ?? null,
   };
 }
 
 export class ActionLedger {
   private readonly maxAttempts: number;
   private readonly actor: string;
+  /** The lease holder to assert; null when this ledger is not fenced. */
+  private readonly owner: string | null;
+  private readonly deadlineMs: number;
 
   /** Public so delivery can re-read the recorded evidence bindings in the same database. */
   readonly db: OrbitDb;
@@ -180,7 +227,15 @@ export class ActionLedger {
     this.opts = opts;
     this.maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
     this.actor = opts.actor ?? 'delivery';
+    this.owner = opts.ownerId === undefined ? (opts.actor ?? null) : opts.ownerId;
+    this.deadlineMs = opts.actionDeadlineMs ?? DEFAULT_ACTION_DEADLINE_MS;
     if (!Number.isInteger(this.maxAttempts) || this.maxAttempts < 1) throw new OrbitError('INTERNAL', 'maxAttempts must be a positive integer');
+    assertDeadline(this.deadlineMs);
+  }
+
+  /** Who this ledger records as the executor of the attempts it starts. */
+  get executorId(): string {
+    return this.owner ?? this.actor;
   }
 
   /** Append a run event (for callers that finish a multi-action step). */
@@ -250,22 +305,51 @@ export class ActionLedger {
     });
   }
 
-  /** INTENT | EXECUTING | UNKNOWN | FAILED -> EXECUTING, counting the attempt. The attempt count is a compare-and-set, so two executors cannot both start the same attempt. */
-  markExecuting(action: ActionRecord): ActionRecord {
+  /**
+   * INTENT | EXECUTING | UNKNOWN | FAILED -> EXECUTING, counting the attempt. In one transaction: the run is
+   * not cancelled, this ledger's owner holds the run's lease, the attempt count is unchanged (a compare-and-set,
+   * so two executors cannot both start the same attempt), and an attempt another owner started is past its
+   * deadline and was reconciled after it. Records the executor, the start time and the new deadline.
+   */
+  markExecuting(action: ActionRecord, opts: StartOptions = {}): ActionRecord {
     const now = this.clock.now();
+    const deadlineMs = opts.deadlineMs ?? this.deadlineMs;
+    assertDeadline(deadlineMs);
     return this.db.tx(() => {
       const run = this.db.get<{ cancel_requested: number }>('SELECT cancel_requested FROM runs WHERE id = ?', action.runId);
       // A new external side effect after a durable cancellation would outlive the run's authority.
       if (run?.cancel_requested) throw new OrbitError('CANCELLED', `run ${action.runId} has a durable cancellation request; ${action.kind} will not start`, { actionId: action.id });
+      if (this.owner !== null) {
+        const lease = this.db.get<{ owner_id: string; expires_at: number }>('SELECT owner_id, expires_at FROM leases WHERE run_id = ?', action.runId);
+        if (!lease || lease.owner_id !== this.owner || lease.expires_at <= now) {
+          throw new OrbitError('LEASE_LOST', `controller ${this.owner} does not hold the lease for run ${action.runId}; ${action.kind} will not start`, { actionId: action.id, definitive: true });
+        }
+      }
+      const current = this.db.get<ActionRow>('SELECT * FROM actions WHERE id = ?', action.id);
+      if (current && current.attempts === action.attempts && current.attempts > 0 && (current.state === 'EXECUTING' || current.state === 'UNKNOWN') && current.executor !== this.executorId) {
+        // Another owner's request may still be in flight: wait for its deadline, then for a read issued after it.
+        const deadline = current.deadline_at ?? current.updated_at + this.deadlineMs;
+        if (opts.reconciledAt === undefined || opts.reconciledAt < deadline) {
+          throw new OrbitError('CONCURRENT_UPDATE', `${action.kind} attempt ${current.attempts} of action ${action.id} was started by ${current.executor ?? 'an earlier controller'} and may still be in flight until ${new Date(deadline).toISOString()}`, {
+            actionId: action.id,
+            executor: current.executor,
+            deadlineAt: deadline,
+            retryAfterMs: Math.max(1000, deadline - now),
+          });
+        }
+      }
       const res = this.db.run(
-        `UPDATE actions SET state = 'EXECUTING', attempts = attempts + 1, error = NULL, updated_at = ?
+        `UPDATE actions SET state = 'EXECUTING', attempts = attempts + 1, error = NULL, updated_at = ?, executor = ?, started_at = ?, deadline_at = ?
          WHERE id = ? AND attempts = ? AND state IN ('INTENT', 'EXECUTING', 'UNKNOWN', 'FAILED')`,
         now,
+        this.executorId,
+        now,
+        now + deadlineMs,
         action.id,
         action.attempts,
       );
       if (res.changes !== 1) throw new OrbitError('CONCURRENT_UPDATE', `action ${action.id} changed under this executor`, { actionId: action.id });
-      appendEvent(this.db, action.runId, 'action.executing', this.actor, { action_id: action.id, kind: action.kind, attempt: action.attempts + 1 }, now);
+      appendEvent(this.db, action.runId, 'action.executing', this.actor, { action_id: action.id, kind: action.kind, attempt: action.attempts + 1, executor: this.executorId, deadline_at: now + deadlineMs }, now);
       return this.get(action.id);
     });
   }
@@ -292,7 +376,9 @@ export class ActionLedger {
     const now = this.clock.now();
     const message = redact(reason).slice(0, 2000);
     return this.db.tx(() => {
-      this.db.run('UPDATE actions SET state = ?, error = ?, updated_at = ? WHERE id = ? AND state != ?', state, message, now, action.id, 'SUCCEEDED');
+      // Only for the attempt the caller knows: a stale owner must not overwrite an attempt the new owner started.
+      const res = this.db.run('UPDATE actions SET state = ?, error = ?, updated_at = ? WHERE id = ? AND state != ? AND attempts = ?', state, message, now, action.id, 'SUCCEEDED', action.attempts);
+      if (res.changes === 0 && this.db.get<{ attempts: number }>('SELECT attempts FROM actions WHERE id = ?', action.id)?.attempts !== action.attempts) return this.get(action.id);
       appendEvent(this.db, action.runId, event, this.actor, { action_id: action.id, kind: action.kind, attempts: action.attempts, error: message }, now);
       return this.get(action.id);
     });
@@ -313,8 +399,10 @@ export class ActionLedger {
     for (;;) {
       // Wait before the reconciling read too: a read sent straight into a rate limit fails and aborts the call.
       if (lastError !== null) await this.clock.sleep(this.delayBefore(action.attempts, lastError));
+      let reconciledAt: number | undefined;
       // Anything attempted before (this call, an earlier call, a crashed predecessor) may have taken effect.
       if (action.attempts > 0 || action.state === 'EXECUTING' || action.state === 'UNKNOWN') {
+        reconciledAt = this.clock.now();
         const found = await this.reconcileOnce(action, handlers);
         if (found.action.state === 'SUCCEEDED') return { action: found.action, receipt: found.action.receipt as T, outcome: 'reconciled' };
         action = found.action;
@@ -330,8 +418,8 @@ export class ActionLedger {
       }
 
       await options.precheck?.();
-      action = this.markExecuting(action);
-      const ctx: ActionContext = { action, attempt: action.attempts };
+      action = this.markExecuting(action, { reconciledAt, deadlineMs: options.deadlineMs });
+      const ctx: ActionContext = { action, attempt: action.attempts, deadlineAt: action.deadlineAt };
 
       // A fault here leaves the row EXECUTING, as a crash would: the next call reconciles first.
       faultPoint(`delivery.${action.kind}.before-execute`);
@@ -361,7 +449,7 @@ export class ActionLedger {
   }
 
   private async reconcileOnce<T>(action: ActionRecord, handlers: ActionHandlers<T>): Promise<{ action: ActionRecord }> {
-    const ctx: ActionContext = { action, attempt: action.attempts };
+    const ctx: ActionContext = { action, attempt: action.attempts, deadlineAt: action.deadlineAt };
     let found: T | null;
     try {
       found = await handlers.reconcile(ctx);
@@ -396,6 +484,10 @@ export class ActionLedger {
     const backoff = this.opts.backoffMs ? this.opts.backoffMs(attempts) : Math.min(30_000, 500 * 2 ** Math.max(0, attempts - 1));
     return Math.max(hinted, backoff);
   }
+}
+
+function assertDeadline(ms: number): void {
+  if (!Number.isFinite(ms) || ms <= 0) throw new OrbitError('INTERNAL', 'an action deadline must be a positive number of milliseconds');
 }
 
 function errorText(err: unknown): string {

@@ -297,7 +297,10 @@ describe('supervised mode', () => {
     expect(second).toBeTruthy();
     const spec = (lab.deps.adapters.claude as ScriptedAdapter).specs.at(-1)!;
     expect(spec.prompt).toContain('Authorized once, for this attempt only');
-    expect(spec.policyPath).toContain('policy-grant.json');
+    // The retried session is not widened: the controller ran the approved command, the worker keeps the frozen policy.
+    expect(spec.policyPath).toBe(getRun(lab.db, lab.runId).policyPath);
+    expect(spec.prompt).toContain('The controller ran exactly this command once, in isolation, on your behalf');
+    expect(lab.db.all("SELECT state FROM actions WHERE run_id = ? AND kind = 'approved_command'", lab.runId)).toEqual([{ state: 'SUCCEEDED' }]);
   });
 
   it('a refused operation is retried as a scope repair, and each operation is retried at most once', async () => {

@@ -17,6 +17,7 @@ case "$1 $2" in
   "pr view") cat "$d/pr-view.json" ;;
   "pr checks") if [ -f "$d/nochecks" ]; then echo "no checks reported on the 'orbit/r1' branch" >&2; exit 1; fi; cat "$d/checks.json" ;;
   "run list") cat "$d/run-list.json" ;;
+  "api -H") case "$*" in *check-runs*) cat "$d/check-runs.json" ;; */status*) cat "$d/status.json" ;; *) echo "unexpected: $*" >&2; exit 1 ;; esac ;;
   "run view") if [ -f "$d/log-gone" ]; then echo "failed to get run log: HTTP 410: Server Error" >&2; exit 1; fi; printf 'build\\tnpm test\\t2026-01-01T00:00:00Z \\033[31mFAIL\\033[0m\\n' ;;
   "auth status") cat "$d/auth.json" ;;
   *) echo "unexpected: $*" >&2; exit 1 ;;
@@ -54,6 +55,8 @@ beforeEach(() => {
   put('calls.log', '');
   put('pr-list.json', '[]');
   put('pr-view.json', JSON.stringify(PR));
+  put('check-runs.json', JSON.stringify({ total_count: 0, check_runs: [] }));
+  put('status.json', JSON.stringify({ state: 'pending', sha: 'a'.repeat(40), total_count: 0, statuses: [] }));
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -92,12 +95,21 @@ describe('GhCliClient with a real gh executable', () => {
 
   it('computes pass/fail from bucket although the command exits 0', async () => {
     put('checks.json', JSON.stringify([{ name: 'build', state: 'FAILURE', bucket: 'fail', link: 'https://github.com/acme/app/actions/runs/42/job/9' }]));
-    const r = await client().listChecks({ pr: 7, sha: 'a'.repeat(40) });
+    const r = await client().listChecks({ pr: 7 });
     expect(r.checks[0]).toMatchObject({ bucket: 'fail', runId: '42', jobId: '9' });
+    expect(r.headSha).toBeNull();
   });
 
-  it('maps "no checks reported" (exit 1) onto a workflow-run lookup by commit', async () => {
-    put('nochecks', '1');
+  it("reads a commit's own check runs and status, labelled with the commit they report", async () => {
+    put('check-runs.json', JSON.stringify({ total_count: 1, check_runs: [{ name: 'build', head_sha: 'a'.repeat(40), status: 'completed', conclusion: 'failure', html_url: 'https://github.com/acme/app/actions/runs/42/job/9' }] }));
+    const r = await client().listChecks({ pr: 7, sha: 'a'.repeat(40) });
+    expect(r).toMatchObject({ headSha: 'a'.repeat(40), checks: [{ bucket: 'fail', runId: '42', jobId: '9' }] });
+    expect(calls().some((l) => l.includes(`repos/acme/app/commits/${'a'.repeat(40)}/check-runs`))).toBe(true);
+    expect(calls().some((l) => l.includes(`repos/acme/app/commits/${'a'.repeat(40)}/status`))).toBe(true);
+    expect(calls().some((l) => l.startsWith('pr checks'))).toBe(false);
+  });
+
+  it('maps a commit nothing has reported on yet onto a workflow-run lookup by commit', async () => {
     put('run-list.json', JSON.stringify([{ databaseId: 42, status: 'completed', conclusion: 'failure', workflowName: 'ci', url: 'https://github.com/acme/app/actions/runs/42' }]));
     const r = await client().listChecks({ pr: 7, sha: 'a'.repeat(40) });
     expect(r).toMatchObject({ absent: false, checks: [{ bucket: 'fail', runId: '42' }] });

@@ -4,9 +4,15 @@
  *
  * The adapter spawns the shim detached, so it leads its own session and
  * process group. The shim starts the provider process in that same group,
- * with stdout and stderr going straight to files through descriptors it
- * opened, records who is running in pid.json, and when the provider ends
- * writes exit.json. Both files are written atomically. Nothing here talks to
+ * sends its stdout and stderr to anonymous spill files (created in the worker
+ * directory and unlinked at once, so they are never an artifact), and
+ * redacts what arrives line by line (core/redact, ADR 0005) into log.jsonl
+ * and stderr.log, so no credential a provider or a worker command prints is
+ * ever stored in an artifact. Spill files rather than pipes: a shim killed
+ * with SIGKILL must leave the provider running to be found, and a pipe with
+ * no reader would kill it on its next write. It records who is running in
+ * pid.json, and when the provider ends writes exit.json after the last line
+ * is on disk. Both files are written atomically. Nothing here talks to
  * the controller: any controller incarnation can read the files, so a
  * controller crash never loses a worker, and a shim that is itself killed
  * with SIGKILL leaves pid.json without exit.json, which is how
@@ -24,7 +30,9 @@
  * run of the shim in tests), so it uses no parameter properties or enums.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, rmSync, statSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { StringDecoder } from 'node:string_decoder';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import type { Clock } from '../core/clock.ts';
@@ -32,6 +40,7 @@ import { OrbitError } from '../core/errors.ts';
 import { atomicWriteJson } from '../core/fsx.ts';
 import { sha256 } from '../core/hash.ts';
 import { processStartTime } from '../core/proc.ts';
+import { createRedactor, redactValue, type Redactor } from '../core/redact.ts';
 
 export const PID_FILE = 'pid.json';
 export const EXIT_FILE = 'exit.json';
@@ -47,6 +56,9 @@ const ABORT_POLL_MS = 200;
 const FIRST_OUTPUT_POLL_MS = 25;
 /** Leftover helpers get this long after the provider exits before the group is killed. */
 const LEFTOVER_GRACE_MS = 1_000;
+/** How often the provider's spilled output is redacted into the artifacts, and how much one tick moves at most. */
+const OUTPUT_POLL_MS = 20;
+const OUTPUT_PUMP_BYTES = 8 * 1024 * 1024;
 const ESCALATION = ['SIGINT', 'SIGTERM', 'SIGKILL'] as const;
 const MAX_TIMER_MS = 2_147_483_647;
 type EscalationSignal = (typeof ESCALATION)[number];
@@ -211,6 +223,8 @@ class Shim {
   private logStartSize = 0;
   private firstOutputAt: number | null = null;
   private logCarry = '';
+  private readonly redactor: Redactor;
+  private spills: Spill[] = [];
 
   constructor(options: ShimOptions, pgid: number, host: ShimHost) {
     this.o = options;
@@ -220,6 +234,7 @@ class Shim {
     this.graceMs = Math.max(0, options.graceMs ?? DEFAULT_GRACE_MS);
     this.workerDir = resolve(options.workerDir);
     this.startedAt = this.clock.now();
+    this.redactor = createRedactor({ env: cleanEnv(options.env) });
   }
 
   run(): Promise<ExitRecord> {
@@ -235,10 +250,10 @@ class Shim {
     const fds: number[] = [];
     let child: ChildProcess;
     try {
-      const out = openSync(join(this.workerDir, LOG_FILE), 'a', 0o600);
-      fds.push(out);
-      const err = openSync(join(this.workerDir, STDERR_FILE), 'a', 0o600);
-      fds.push(err);
+      const log = openSync(join(this.workerDir, LOG_FILE), 'a', 0o600);
+      fds.push(log);
+      const errLog = openSync(join(this.workerDir, STDERR_FILE), 'a', 0o600);
+      fds.push(errLog);
       let stdin: number | 'ignore' = 'ignore';
       if (this.o.stdinPath) {
         stdin = openSync(this.o.stdinPath, 'r');
@@ -252,17 +267,25 @@ class Shim {
       this.logStartSize = this.logOffset;
       // Same process group as the shim (no `detached`), so one group signal
       // reaches the provider and everything it forks.
-      child = spawn(command, args, { cwd: this.o.cwd, env: cleanEnv(this.o.env), stdio: [stdin, out, err], windowsHide: true });
+      // Output goes to spill files and is redacted into the artifacts as it arrives (ADR 0005). The sinks keep
+      // their own descriptors for the artifacts; the shim's other copies are closed below.
+      this.spills = [new Spill(this.openSpill('out'), this.sinkFor(log)), new Spill(this.openSpill('err'), this.sinkFor(errLog))];
+      child = spawn(command, args, { cwd: this.o.cwd, env: cleanEnv(this.o.env), stdio: [stdin, this.spills[0]!.fd, this.spills[1]!.fd], windowsHide: true });
     } catch (err) {
+      this.closeOutput();
       this.finishWithoutChild(`could not start ${command}: ${describe(err)}`);
       return;
     } finally {
-      for (const fd of fds) safeClose(fd);
+      for (const fd of fds) if (!this.spills.some((sp) => sp.sink.fd === fd)) safeClose(fd);
     }
     this.child = child;
+    this.pumpLater();
     child.once('error', (err) => {
       // ENOENT and EACCES arrive here, after spawn() returned.
-      if (child.pid === undefined) this.finishWithoutChild(`could not start ${command}: ${describe(err)}`);
+      if (child.pid === undefined) {
+        this.closeOutput();
+        this.finishWithoutChild(`could not start ${command}: ${describe(err)}`);
+      }
     });
     if (child.pid === undefined) return;
     child.once('exit', (code, signal) => void this.onChildExit(code, signal));
@@ -345,7 +368,77 @@ class Shim {
         return;
       }
     }
+    this.closeOutput();
     this.finish(this.record(code, signal, null));
+  }
+
+  /** An anonymous file the provider writes one stream to: created in the worker directory and unlinked at once, so it is no artifact. */
+  private openSpill(name: string): number {
+    const path = join(this.workerDir, `.spill-${name}-${process.pid}-${randomBytes(4).toString('hex')}`);
+    const fd = openSync(path, 'a+', 0o600);
+    try {
+      unlinkSync(path);
+    } catch {
+      /* the name is gone either way for readers that matter: nothing else knows it */
+    }
+    return fd;
+  }
+
+  private sinkFor(fd: number): LineSink {
+    return new LineSink(fd, (line) => this.redactLine(line));
+  }
+
+  /** Move what the provider has written so far, redacted, into the artifacts; at most a bounded amount per call. */
+  private pumpOutput(limit: number): void {
+    for (const sp of this.spills) sp.pump(limit);
+  }
+
+  private pumpLater(): void {
+    this.later(OUTPUT_POLL_MS, () => {
+      if (this.finished || this.spills.length === 0) return;
+      this.pumpOutput(OUTPUT_PUMP_BYTES);
+      this.pumpLater();
+    });
+  }
+
+  /**
+   * One line of provider output with every secret removed. A line that is a JSON document is redacted by value
+   * and written back as JSON, so a replacement can never break its quoting; any other line is redacted as text.
+   */
+  private redactLine(line: string): string {
+    const t = line.trimStart();
+    if (t.startsWith('{') || t.startsWith('[')) {
+      try {
+        const value = JSON.parse(line) as unknown;
+        const before = JSON.stringify(value);
+        const after = JSON.stringify(redactValue(value, this.redactor.redact));
+        if (after !== before) return after;
+        const text = this.redactor.redact(line);
+        if (text === line) return line;
+        try {
+          JSON.parse(text);
+          return text;
+        } catch {
+          // Redaction matched text the structured walk did not, and the text form is no longer JSON.
+          return JSON.stringify({ type: 'orbit_redacted_line' });
+        }
+      } catch {
+        /* not JSON after all: redact it as text */
+      }
+    }
+    return this.redactor.redact(line);
+  }
+
+  /** Write everything the provider produced, redacted, flush the unterminated tails and close the files. */
+  private closeOutput(): void {
+    const spills = this.spills;
+    this.spills = [];
+    for (const sp of spills) {
+      sp.pump(Infinity);
+      sp.sink.flush();
+      safeClose(sp.fd);
+      safeClose(sp.sink.fd);
+    }
   }
 
   /**
@@ -355,6 +448,7 @@ class Shim {
    */
   private killGroupAndFinish(code: number | null, signal: string | null, providerKilled = false): void {
     this.escalation.push('SIGKILL');
+    this.closeOutput();
     const rec = this.record(code, providerKilled ? 'SIGKILL' : signal, null);
     this.persist(rec);
     try {
@@ -499,6 +593,93 @@ class Shim {
       }
     }
     return null;
+  }
+}
+
+/** Longest line held back waiting for its newline; beyond it, all but the last few KiB are written so memory stays bounded. */
+const MAX_PENDING_LINE = 64 * 1024 * 1024;
+const PENDING_OVERLAP = 8 * 1024;
+
+/**
+ * Splits a byte stream into lines, passes each through `redact` and appends it to a file descriptor. Whole lines
+ * only, so a secret is never cut by a chunk boundary; the unterminated tail is written by `flush`.
+ */
+class LineSink {
+  readonly fd: number;
+  private readonly decoder = new StringDecoder('utf8');
+  private pending = '';
+  private readonly redact: (line: string) => string;
+
+  constructor(fd: number, redact: (line: string) => string) {
+    this.fd = fd;
+    this.redact = redact;
+  }
+
+  write(chunk: Buffer): void {
+    this.pending += this.decoder.write(chunk);
+    let start = 0;
+    for (let nl = this.pending.indexOf('\n', start); nl !== -1; nl = this.pending.indexOf('\n', start)) {
+      this.emit(this.pending.slice(start, nl), true);
+      start = nl + 1;
+    }
+    this.pending = this.pending.slice(start);
+    if (this.pending.length > MAX_PENDING_LINE) {
+      this.emit(this.pending.slice(0, this.pending.length - PENDING_OVERLAP), false);
+      this.pending = this.pending.slice(this.pending.length - PENDING_OVERLAP);
+    }
+  }
+
+  flush(): void {
+    this.pending += this.decoder.end();
+    if (this.pending.length > 0) this.emit(this.pending, false);
+    this.pending = '';
+  }
+
+  private emit(line: string, terminated: boolean): void {
+    const text = this.redact(line) + (terminated ? '\n' : '');
+    try {
+      const buf = Buffer.from(text, 'utf8');
+      let off = 0;
+      while (off < buf.length) off += writeSync(this.fd, buf, off, buf.length - off);
+    } catch {
+      /* the artifact could not be written (descriptor closed, disk full): the provider carries on */
+    }
+  }
+}
+
+/** A provider output stream's spill file and how far the shim has read it (positional reads: the offset the provider writes at is never moved). */
+class Spill {
+  readonly fd: number;
+  readonly sink: LineSink;
+  private pos = 0;
+
+  constructor(fd: number, sink: LineSink) {
+    this.fd = fd;
+    this.sink = sink;
+  }
+
+  pump(limit: number): void {
+    let moved = 0;
+    const buf = Buffer.alloc(1024 * 1024);
+    while (moved < limit) {
+      let size: number;
+      try {
+        size = fstatSync(this.fd).size;
+      } catch {
+        return;
+      }
+      if (this.pos >= size) return;
+      let n = 0;
+      try {
+        n = readSync(this.fd, buf, 0, Math.min(buf.length, size - this.pos), this.pos);
+      } catch {
+        return;
+      }
+      if (n <= 0) return;
+      this.pos += n;
+      moved += n;
+      this.sink.write(buf.subarray(0, n));
+    }
   }
 }
 

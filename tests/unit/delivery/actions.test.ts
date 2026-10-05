@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ManualClock } from '../../../src/core/clock.ts';
 import { OrbitError } from '../../../src/core/errors.ts';
 import { resetFaults } from '../../../src/core/faults.ts';
-import { createRun, requestCancel } from '../../../src/controller/run-store.ts';
+import { acquireLease, createRun, requestCancel } from '../../../src/controller/run-store.ts';
 import { openDb, type OrbitDb } from '../../../src/storage/db.ts';
 import { ACTION_STATES, ActionLedger, isDefinitiveFailure, type ActionInput } from '../../../src/delivery/actions.ts';
 
@@ -351,5 +351,114 @@ describe('ActionLedger: reconciliation after a transient failure', () => {
     }, { authorization: allow });
     // A read sent straight into a rate limit would fail and abort; it goes after the wait.
     expect(reconcileAt).toEqual([4000]);
+  });
+});
+
+describe('ActionLedger: lease-fenced attempts', () => {
+  const TTL = 60_000;
+
+  it('a controller that lost its lease starts no action, and the new owner does not re-execute an in-flight attempt', async () => {
+    expect(acquireLease(db, 'r1', 'ctl-a', TTL, clock)).not.toBeNull();
+    const a = ledger({ actor: 'ctl-a' });
+    const b = ledger({ actor: 'ctl-b' });
+    let release!: (v: { pr: number }) => void;
+    let started!: () => void;
+    const startedP = new Promise<void>((r) => (started = r));
+    const executions: string[] = [];
+    const slow = a.performAction(input(), {
+      execute: () => {
+        executions.push('a');
+        started();
+        return new Promise<{ pr: number }>((r) => (release = r));
+      },
+      reconcile: async () => null,
+    }, { authorization: allow });
+    await startedP;
+
+    // A's lease expires while its request is still in flight; B takes the run over.
+    clock.advance(TTL + 1);
+    expect(acquireLease(db, 'r1', 'ctl-b', TTL, clock)).not.toBeNull();
+    await expect(
+      b.performAction(input(), { execute: async () => { executions.push('b'); return { pr: 2 }; }, reconcile: async () => null }, { authorization: allow }),
+    ).rejects.toMatchObject({ code: 'CONCURRENT_UPDATE' });
+    expect(executions).toEqual(['a']);
+
+    release({ pr: 1 });
+    await slow;
+    // A may record what its own request did, but it starts nothing new.
+    await expect(
+      a.performAction(input({ idempotencyKey: 'k2' }), { execute: async () => { executions.push('a2'); return 1; }, reconcile: async () => null }, { authorization: allow }),
+    ).rejects.toMatchObject({ code: 'LEASE_LOST' });
+    expect(executions).toEqual(['a']);
+  });
+
+  it('records the executor, the start time and the deadline of each attempt', () => {
+    acquireLease(db, 'r1', 'ctl-a', TTL, clock);
+    const a = ledger({ actor: 'ctl-a', actionDeadlineMs: 5_000 });
+    const { action } = a.recordIntent(input());
+    const started = a.markExecuting(action);
+    expect(started).toMatchObject({ executor: 'ctl-a', startedAt: clock.now(), deadlineAt: clock.now() + 5_000 });
+  });
+
+  it('after the in-flight attempt deadline, the new owner reconciles and only then retries', async () => {
+    acquireLease(db, 'r1', 'ctl-a', TTL, clock);
+    const a = ledger({ actor: 'ctl-a', actionDeadlineMs: 120_000 });
+    const { action } = a.recordIntent(input());
+    a.markExecuting(action); // A dies with its request in flight
+    clock.advance(TTL + 1);
+    acquireLease(db, 'r1', 'ctl-b', 10 * TTL, clock);
+    const b = ledger({ actor: 'ctl-b' });
+    const order: string[] = [];
+    const h = { execute: async () => { order.push('execute'); return { pr: 2 }; }, reconcile: async () => { order.push('reconcile'); return null; } };
+    await expect(b.performAction(input(), h, { authorization: allow })).rejects.toMatchObject({ code: 'CONCURRENT_UPDATE', details: { retryAfterMs: expect.any(Number) } });
+    expect(order).toEqual(['reconcile']);
+    clock.advance(120_000);
+    order.length = 0;
+    const r = await b.performAction(input(), h, { authorization: allow });
+    expect(order).toEqual(['reconcile', 'execute']);
+    expect(r.action).toMatchObject({ state: 'SUCCEEDED', attempts: 2, executor: 'ctl-b' });
+  });
+
+  it('refuses to start an attempt for a run whose lease this owner does not hold', () => {
+    const a = ledger({ actor: 'ctl-a' });
+    const { action } = a.recordIntent(input());
+    expect(() => a.markExecuting(action)).toThrow(expect.objectContaining({ code: 'LEASE_LOST' }));
+    expect(a.find('k1')).toMatchObject({ state: 'INTENT', attempts: 0 });
+    acquireLease(db, 'r1', 'ctl-a', TTL, clock);
+    clock.advance(TTL);
+    expect(() => a.markExecuting(action)).toThrow(expect.objectContaining({ code: 'LEASE_LOST' }));
+  });
+
+  it('treats an attempt recorded before executors were tracked as another owner\'s, in flight until its last update plus the deadline', () => {
+    acquireLease(db, 'r1', 'ctl-b', 10 * TTL, clock);
+    const b = ledger({ actor: 'ctl-b', actionDeadlineMs: 1_000 });
+    const { action } = b.recordIntent(input());
+    db.run("UPDATE actions SET state = 'UNKNOWN', attempts = 1, updated_at = ? WHERE id = ?", clock.now(), action.id);
+    const legacy = b.get(action.id);
+    expect(legacy).toMatchObject({ executor: null, startedAt: null, deadlineAt: null });
+    expect(() => b.markExecuting(legacy, { reconciledAt: clock.now() })).toThrow(expect.objectContaining({ code: 'CONCURRENT_UPDATE', details: expect.objectContaining({ executor: null }) }));
+    clock.advance(1_000);
+    expect(b.markExecuting(legacy, { reconciledAt: clock.now() })).toMatchObject({ attempts: 2, executor: 'ctl-b' });
+  });
+
+  it('runs unfenced with ownerId null, and refuses a nonsensical deadline', () => {
+    const l = ledger({ actor: 'someone', ownerId: null });
+    const { action } = l.recordIntent(input());
+    expect(l.markExecuting(action)).toMatchObject({ state: 'EXECUTING', executor: 'someone' });
+    expect(() => ledger({ actionDeadlineMs: 0 })).toThrow(expect.objectContaining({ code: 'INTERNAL' }));
+    expect(() => l.markExecuting(l.find('k1')!, { deadlineMs: Number.NaN })).toThrow(/deadline/);
+  });
+
+  it('a stale owner cannot overwrite the state of an attempt started by the new owner', () => {
+    acquireLease(db, 'r1', 'ctl-a', TTL, clock);
+    const a = ledger({ actor: 'ctl-a', actionDeadlineMs: 1_000 });
+    const { action } = a.recordIntent(input());
+    const mine = a.markExecuting(action);
+    clock.advance(TTL + 1);
+    acquireLease(db, 'r1', 'ctl-b', TTL, clock);
+    const b = ledger({ actor: 'ctl-b' });
+    b.markExecuting(mine, { reconciledAt: clock.now() });
+    a.markUnknown(mine, 'late error from the old request');
+    expect(a.find('k1')).toMatchObject({ state: 'EXECUTING', attempts: 2, executor: 'ctl-b' });
   });
 });

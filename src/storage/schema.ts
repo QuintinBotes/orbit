@@ -374,4 +374,9 @@ export const MIGRATIONS: readonly string[] = [
   /* 4: the release environment a run names (orbit run --environment); null when it names none */ `
   ALTER TABLE runs ADD COLUMN environment TEXT;
   `,
+  /* 5: who started an action's current attempt, when, and until when it may still be in flight */ `
+  ALTER TABLE actions ADD COLUMN executor TEXT;
+  ALTER TABLE actions ADD COLUMN started_at INTEGER;
+  ALTER TABLE actions ADD COLUMN deadline_at INTEGER;
+  `,
 ];

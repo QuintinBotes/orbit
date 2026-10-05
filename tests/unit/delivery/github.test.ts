@@ -199,13 +199,14 @@ describe('GhCliClient (stubbed runner)', () => {
     const sha = 'b'.repeat(40);
     const calls: string[] = [];
     const c = client(async (argv) => {
-      calls.push(`${argv[1]} ${argv[2]}`);
-      if (argv[2] === 'view') return res({ stdout: JSON.stringify({ ...PR, headRefOid: sha }) });
-      if (argv[1] === 'pr') return res({ exitCode: 1, stderr: "no checks reported on the 'orbit/r1' branch" });
+      const path = argv.find((a) => a.startsWith('repos/'));
+      calls.push(path ? `api ${path.split('/')[5]!.split('?')[0]}` : `${argv[1]} ${argv[2]}`);
+      if (path?.includes('/check-runs')) return res({ stdout: JSON.stringify({ total_count: 0, check_runs: [] }) });
+      if (path?.includes('/status')) return res({ stdout: JSON.stringify({ state: 'pending', sha, total_count: 0, statuses: [] }) });
       return res({ stdout: JSON.stringify([{ databaseId: 5, status: 'in_progress', conclusion: '', workflowName: 'ci', url: 'u' }]) });
     });
     const r = await c.listChecks({ pr: 7, sha });
-    expect(calls).toEqual(['pr view', 'pr checks', 'run list']);
+    expect(calls).toEqual(['api check-runs', 'api status', 'run list']);
     expect(r).toMatchObject({ absent: false, headSha: sha, checks: [{ bucket: 'pending', runId: '5' }] });
     const none = await client(async () => res({ exitCode: 1, stderr: "no checks reported on the 'b' branch" })).listChecks({ pr: 7 });
     expect(none).toEqual({ checks: [], absent: true, headSha: null });
@@ -213,8 +214,7 @@ describe('GhCliClient (stubbed runner)', () => {
 
   it('falls back to workflow runs when the token cannot read check runs', async () => {
     const c = client(async (argv) => {
-      if (argv[2] === 'view') return res({ stdout: JSON.stringify({ ...PR, headRefOid: 'c'.repeat(40) }) });
-      if (argv[1] === 'pr') return res({ exitCode: 1, stderr: 'Resource not accessible by personal access token (HTTP 403)' });
+      if (argv[1] === 'api') return res({ exitCode: 1, stderr: 'Resource not accessible by personal access token (HTTP 403)' });
       return res({ stdout: '[]' });
     });
     expect(await c.listChecks({ pr: 7, sha: 'c'.repeat(40) })).toEqual({ checks: [], absent: true, headSha: 'c'.repeat(40) });
@@ -327,29 +327,39 @@ describe('GhCliClient.listChecks binds checks to the commit asked about', () => 
   const TOKEN = 'github_pat_scopedtokenvalue0123456789';
   const SHA = 'c'.repeat(40);
 
-  it('when the PR head is another commit, reads workflow runs for the asked commit instead of the PR rollup', async () => {
+  it('when the PR head is another commit, never uses the PR rollup: the asked commit has only its own runs', async () => {
     const calls: string[] = [];
     const c = new GhCliClient({ repo: 'acme/app', env: { PATH: '/bin', GH_TOKEN: TOKEN }, runner: async (argv) => {
       calls.push(`${argv[1]} ${argv[2]}`);
       if (argv[2] === 'view') return res({ stdout: JSON.stringify(PR) }); // head is a...a
       if (argv[2] === 'checks') return res({ stdout: JSON.stringify([{ name: 'build', state: 'SUCCESS', bucket: 'pass', link: '' }]) });
+      if (argv[1] === 'api') return res({ exitCode: 1, stderr: 'Resource not accessible by personal access token (HTTP 403)' });
       return res({ stdout: JSON.stringify([{ databaseId: 9, status: 'in_progress', conclusion: '', workflowName: 'ci', url: 'u', headSha: SHA }]) });
     } });
     const r = await c.listChecks({ pr: 7, sha: SHA });
-    expect(calls).toEqual(['pr view', 'run list']);
+    expect(calls).toEqual(['api -H', 'run list']);
     expect(r).toMatchObject({ headSha: SHA, absent: false, checks: [{ bucket: 'pending', runId: '9' }] });
   });
 
-  it('when the PR head is the asked commit, uses the PR checks and says which commit they are for', async () => {
+  it('when the PR head is the asked commit, reads that commit and says which commit the checks are for', async () => {
     const calls: string[] = [];
     const c = new GhCliClient({ repo: 'acme/app', env: { PATH: '/bin', GH_TOKEN: TOKEN }, runner: async (argv) => {
-      calls.push(`${argv[1]} ${argv[2]}`);
-      if (argv[2] === 'view') return res({ stdout: JSON.stringify({ ...PR, headRefOid: SHA }) });
-      return res({ stdout: JSON.stringify([{ name: 'build', state: 'FAILURE', bucket: 'fail', link: '' }]) });
+      const path = argv.find((a) => a.startsWith('repos/')) ?? '';
+      calls.push(path.includes('/check-runs') ? 'check-runs' : path.includes('/status') ? 'status' : `${argv[1]} ${argv[2]}`);
+      if (path.includes('/check-runs')) return res({ stdout: JSON.stringify({ total_count: 1, check_runs: [{ name: 'build', head_sha: SHA, status: 'completed', conclusion: 'failure', html_url: '' }] }) });
+      return res({ stdout: JSON.stringify({ state: 'failure', sha: SHA, total_count: 0, statuses: [] }) });
     } });
     const r = await c.listChecks({ pr: 7, sha: SHA });
-    expect(calls).toEqual(['pr view', 'pr checks']);
+    expect(calls).toEqual(['check-runs', 'status']);
     expect(r).toMatchObject({ headSha: SHA, checks: [{ bucket: 'fail' }] });
+  });
+
+  it('ignores a workflow run that reports another commit', async () => {
+    const c = new GhCliClient({ repo: 'acme/app', env: { PATH: '/bin', GH_TOKEN: TOKEN }, runner: async (argv) => {
+      if (argv[1] === 'api') return res({ exitCode: 1, stderr: 'HTTP 403' });
+      return res({ stdout: JSON.stringify([{ databaseId: 9, status: 'completed', conclusion: 'success', workflowName: 'ci', url: 'u', headSha: 'e'.repeat(40) }]) });
+    } });
+    expect(await c.listChecks({ sha: SHA })).toEqual({ checks: [], absent: true, headSha: SHA });
   });
 
   it('FakeGitHub reports which commit its PR checks are for', async () => {
@@ -363,5 +373,65 @@ describe('GhCliClient.listChecks binds checks to the commit asked about', () => 
     } finally {
       rmSync(d, { recursive: true, force: true });
     }
+  });
+});
+
+describe('GhCliClient.listChecks reads checks per commit and labels them from the response', () => {
+  const TOKEN = 'github_pat_scopedtokenvalue0123456789';
+  const A = 'a'.repeat(40);
+  const B = 'b'.repeat(40);
+  const run = (sha: string, conclusion: string, over: Record<string, unknown> = {}) => ({ id: 1, name: 'build', head_sha: sha, status: 'completed', conclusion, html_url: 'https://github.com/acme/app/actions/runs/5/job/6', started_at: 's', completed_at: 'c', ...over });
+
+  /** The branch moved from A to B between the head lookup and a PR-level checks read: B's green checks must not count for A. */
+  function movingBranch(calls: string[]): GhRunner {
+    return async (argv) => {
+      calls.push(argv.slice(1).join(' '));
+      if (argv[1] === 'pr' && argv[2] === 'view') return res({ stdout: JSON.stringify({ ...PR, headRefOid: A }) });
+      if (argv[1] === 'pr' && argv[2] === 'checks') return res({ stdout: JSON.stringify([{ name: 'build', state: 'SUCCESS', bucket: 'pass', link: '' }]) });
+      const path = argv.find((a) => a.startsWith('repos/')) ?? '';
+      if (path.startsWith(`repos/acme/app/commits/${A}/check-runs`)) return res({ stdout: JSON.stringify({ total_count: 1, check_runs: [run(A, 'failure')] }) });
+      if (path.startsWith(`repos/acme/app/commits/${A}/status`)) return res({ stdout: JSON.stringify({ state: 'pending', sha: A, total_count: 0, statuses: [] }) });
+      if (argv[1] === 'run') return res({ stdout: '[]' });
+      return res({ exitCode: 1, stderr: `unexpected: ${argv.join(' ')}` });
+    };
+  }
+
+  it("never reports another commit's green checks as the asked commit's", async () => {
+    const calls: string[] = [];
+    const c = new GhCliClient({ repo: 'acme/app', env: { PATH: '/bin', GH_TOKEN: TOKEN }, runner: movingBranch(calls) });
+    const r = await c.listChecks({ pr: 7, sha: A });
+    expect(r.headSha).toBe(A);
+    expect(r.checks).toEqual([expect.objectContaining({ name: 'build', bucket: 'fail', runId: '5', jobId: '6' })]);
+    expect(calls.some((l) => l.startsWith('pr checks'))).toBe(false);
+    expect(calls.some((l) => l.includes(`repos/acme/app/commits/${A}/check-runs`))).toBe(true);
+  });
+
+  it('labels the result with the commit the response reports, not the one asked about', async () => {
+    const c = new GhCliClient({ repo: 'acme/app', env: { PATH: '/bin', GH_TOKEN: TOKEN }, runner: async (argv) => {
+      const path = argv.find((a) => a.startsWith('repos/')) ?? '';
+      if (path.includes('/check-runs')) return res({ stdout: JSON.stringify({ total_count: 1, check_runs: [run(B, 'success')] }) });
+      return res({ stdout: JSON.stringify({ state: 'success', sha: B, total_count: 0, statuses: [] }) });
+    } });
+    const r = await c.listChecks({ sha: A });
+    expect(r.headSha).toBe(B);
+    expect(r.checks.filter((x) => x.bucket === 'pass')).toEqual([]);
+  });
+
+  it('merges the combined status contexts with the check runs, paging through every check run', async () => {
+    const calls: string[] = [];
+    const c = new GhCliClient({ repo: 'acme/app', env: { PATH: '/bin', GH_TOKEN: TOKEN }, runner: async (argv) => {
+      const path = argv.find((a) => a.startsWith('repos/')) ?? '';
+      calls.push(path);
+      if (path.includes('/check-runs') && /[?&]page=1(&|$)/.test(path)) return res({ stdout: JSON.stringify({ total_count: 101, check_runs: Array.from({ length: 100 }, (_, i) => run(A, 'success', { id: i, name: `job-${i}` })) }) });
+      if (path.includes('/check-runs')) return res({ stdout: JSON.stringify({ total_count: 101, check_runs: [run(A, 'in_progress', { id: 100, name: 'slow', status: 'in_progress', conclusion: null })] }) });
+      return res({ stdout: JSON.stringify({ state: 'failure', sha: A, total_count: 2, statuses: [{ context: 'ext/scan', state: 'failure', target_url: 'https://ci.example/1', description: 'found 1' }, { context: 'ext/lint', state: 'success', target_url: null, description: null }] }) });
+    } });
+    const r = await c.listChecks({ sha: A });
+    expect(r.headSha).toBe(A);
+    expect(r.checks).toHaveLength(103);
+    expect(r.checks.find((x) => x.name === 'slow')!.bucket).toBe('pending');
+    expect(r.checks.find((x) => x.name === 'ext/scan')).toMatchObject({ bucket: 'fail', description: 'found 1' });
+    expect(r.checks.find((x) => x.name === 'ext/lint')!.bucket).toBe('pass');
+    expect(calls.filter((p) => p.includes('/check-runs'))).toHaveLength(2);
   });
 });

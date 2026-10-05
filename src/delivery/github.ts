@@ -289,6 +289,79 @@ export function runBucket(status: string, conclusion: string): CheckBucket {
   }
 }
 
+/** A check run of `GET /repos/{owner}/{repo}/commits/{ref}/check-runs`, with the commit it reports. */
+export interface CommitCheckRun extends CheckInfo {
+  headSha: string;
+}
+
+/** One page of `GET /repos/{owner}/{repo}/commits/{ref}/check-runs`. */
+export function parseCheckRuns(text: string): { total: number; runs: CommitCheckRun[] } {
+  const o = obj('check runs', parseJson('check runs', text));
+  const total = o.total_count;
+  if (typeof total !== 'number' || !Number.isInteger(total) || total < 0) throw malformed('check runs', 'field total_count is missing or not a count');
+  if (!Array.isArray(o.check_runs)) throw malformed('check runs', 'field check_runs is missing or not an array');
+  const runs = o.check_runs.map((raw): CommitCheckRun => {
+    const r = obj('check runs', raw);
+    const status = str('check runs', r, 'status');
+    const conclusion = typeof r.conclusion === 'string' ? r.conclusion : '';
+    const opt = (k: string): string | null => (typeof r[k] === 'string' && r[k] !== '' ? (r[k] as string) : null);
+    const link = opt('html_url') ?? opt('details_url');
+    const m = link ? RUN_LINK.exec(link) : null;
+    const output = r.output && typeof r.output === 'object' ? (r.output as Record<string, unknown>) : {};
+    return {
+      name: str('check runs', r, 'name'),
+      headSha: str('check runs', r, 'head_sha'),
+      bucket: runBucket(status, conclusion),
+      state: (conclusion || status).toUpperCase(),
+      link,
+      workflow: null,
+      runId: m?.[1] ?? null,
+      jobId: m?.[2] ?? null,
+      startedAt: opt('started_at'),
+      completedAt: opt('completed_at'),
+      description: typeof output.title === 'string' && output.title !== '' ? output.title : null,
+    };
+  });
+  return { total, runs };
+}
+
+/** A commit status state as a check bucket: error and failure fail, pending is pending. */
+export function statusBucket(state: string): CheckBucket {
+  switch (state) {
+    case 'success':
+      return 'pass';
+    case 'pending':
+      return 'pending';
+    default:
+      return 'fail';
+  }
+}
+
+/** `GET /repos/{owner}/{repo}/commits/{ref}/status`: the commit it reports and its latest status per context. */
+export function parseCombinedStatus(text: string): { sha: string; checks: CheckInfo[] } {
+  const o = obj('commit status', parseJson('commit status', text));
+  const sha = str('commit status', o, 'sha');
+  const statuses = Array.isArray(o.statuses) ? o.statuses : [];
+  const checks = statuses.map((raw): CheckInfo => {
+    const st = obj('commit status', raw);
+    const state = str('commit status', st, 'state');
+    const opt = (k: string): string | null => (typeof st[k] === 'string' && st[k] !== '' ? (st[k] as string) : null);
+    return {
+      name: str('commit status', st, 'context'),
+      bucket: statusBucket(state),
+      state: state.toUpperCase(),
+      link: opt('target_url'),
+      workflow: null,
+      runId: null,
+      jobId: null,
+      startedAt: opt('created_at'),
+      completedAt: state === 'pending' ? null : opt('updated_at'),
+      description: opt('description'),
+    };
+  });
+  return { sha, checks };
+}
+
 export function parseFailedSteps(text: string): { job: string; step: string }[] {
   const o = obj('run view', parseJson('run view', text));
   const jobs = Array.isArray(o.jobs) ? o.jobs : [];
@@ -374,6 +447,9 @@ const MERGE_FIELDS = 'number,state,headRefOid,baseRefName,mergeCommit,mergedAt';
 const MERGE_REFUSED = /Head branch was modified|not mergeable|merge conflict|required status check|review is required|reviews? required|base branch policy|protected branch|Merge method .* not allowed|not allowed on this repository|HTTP 405|HTTP 409|HTTP 422/i;
 const CHECK_FIELDS = 'name,state,bucket,link,workflow,event,startedAt,completedAt,description';
 const RUN_FIELDS = 'databaseId,status,conclusion,headSha,headBranch,event,workflowName,name,attempt,url,startedAt,updatedAt';
+const CHECK_RUNS_PER_PAGE = 100;
+/** A commit with more check runs than this is refused rather than judged on a partial list. */
+const CHECK_RUNS_MAX_PAGES = 10;
 
 export class GhCliClient implements GitHubClient {
   private readonly token: string | undefined;
@@ -510,39 +586,85 @@ export class GhCliClient implements GitHubClient {
     return parseMergeState(parseJson('pr view', out));
   }
 
+  /**
+   * Checks for a commit are read per commit (its check runs and its combined status) and labelled with the
+   * commit the responses report, so checks of another revision (the PR head after the branch moved) can never
+   * be attributed to the commit asked about. Only a PR query without a commit uses the PR's current checks,
+   * and those are labelled with no commit at all.
+   */
   async listChecks(query: ChecksQuery): Promise<ChecksResult> {
     this.assertToken();
-    if ('pr' in query) {
-      // `gh pr checks` reports the PR's current head, which lags a push for a moment: read the head first,
-      // and when it is not the commit asked about, read that commit's own workflow runs instead.
-      if (query.sha) {
-        const head = (await this.viewPullRequest(query.pr)).headRefOid;
-        if (head !== query.sha) return this.checksFromRuns(query.sha);
-      }
-      const headSha = query.sha ?? null;
-      const res = await this.exec(['pr', 'checks', String(query.pr), '-R', this.opts.repo, '--json', CHECK_FIELDS]);
-      if (res.timedOut) throw new OrbitError('PROVIDER_TRANSIENT', 'gh pr checks timed out');
-      if (res.exitCode === 0) {
-        const checks = parseChecks(res.stdout);
-        if (checks.length > 0 || !query.sha) return { checks, absent: checks.length === 0, headSha };
-        return this.checksFromRuns(query.sha);
-      }
-      const text = `${res.stderr}\n${res.stdout}`;
-      // "no checks reported on the '<branch>' branch" exits 1: CI has not started or is not configured.
-      if (/no checks reported/i.test(text)) return query.sha ? this.checksFromRuns(query.sha) : { checks: [], absent: true, headSha };
-      const err = classifyGhFailure('pr checks', res.exitCode, text);
-      // A fine-grained token may not be able to read check runs (UNVERIFIED in the notes); workflow runs are Actions-read.
-      if (err.code === 'AUTH_MISSING' && query.sha) return this.checksFromRuns(query.sha);
+    if (query.sha !== undefined) return this.checksForCommit(query.sha);
+    const pr = (query as { pr: number }).pr;
+    const res = await this.exec(['pr', 'checks', String(pr), '-R', this.opts.repo, '--json', CHECK_FIELDS]);
+    if (res.timedOut) throw new OrbitError('PROVIDER_TRANSIENT', 'gh pr checks timed out');
+    if (res.exitCode === 0) {
+      const checks = parseChecks(res.stdout);
+      return { checks, absent: checks.length === 0, headSha: null };
+    }
+    const text = `${res.stderr}\n${res.stdout}`;
+    // "no checks reported on the '<branch>' branch" exits 1: CI has not started or is not configured.
+    if (/no checks reported/i.test(text)) return { checks: [], absent: true, headSha: null };
+    throw classifyGhFailure('pr checks', res.exitCode, text);
+  }
+
+  private async api(what: string, path: string): Promise<string> {
+    const argv = ['api', '-H', 'Accept: application/vnd.github+json'];
+    if (this.opts.host) argv.push('--hostname', this.opts.host);
+    argv.push(path);
+    return this.ok(what, argv);
+  }
+
+  private async checksForCommit(sha: string): Promise<ChecksResult> {
+    assertSha(sha);
+    const repo = this.opts.repo;
+    let runs: CommitCheckRun[];
+    try {
+      runs = await this.checkRuns(sha);
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      // A fine-grained token may not be able to read check runs; workflow runs by commit are Actions-read.
+      if (code === 'AUTH_MISSING') return this.checksFromRuns(sha);
+      // The host does not have the commit yet: nothing has reported on it.
+      if (/No commit found/i.test((err as Error).message ?? '')) return { checks: [], absent: true, headSha: sha };
       throw err;
     }
-    return this.checksFromRuns(query.sha);
+    let status: { sha: string | null; checks: CheckInfo[] } = { sha: null, checks: [] };
+    try {
+      status = parseCombinedStatus(await this.api('commit status', `repos/${repo}/commits/${sha}/status?per_page=100`));
+    } catch (err) {
+      // Without commit-status read access only the check runs are known.
+      if ((err as { code?: string }).code !== 'AUTH_MISSING') throw err;
+    }
+    const reported = [...new Set([...runs.map((r) => r.headSha.toLowerCase()), ...(status.sha ? [status.sha.toLowerCase()] : [])])];
+    const other = reported.find((r) => !sameCommit(r, sha));
+    // The response is about another commit: none of it says anything about this one.
+    if (other !== undefined) return { checks: [], absent: false, headSha: other };
+    const checks: CheckInfo[] = [...runs.map(({ headSha: _sha, ...c }) => c), ...status.checks];
+    // Nothing reported yet: a queued workflow run can exist before its check runs do.
+    if (checks.length === 0) return this.checksFromRuns(sha);
+    return { checks, absent: false, headSha: reported[0] ?? sha };
+  }
+
+  private async checkRuns(sha: string): Promise<CommitCheckRun[]> {
+    const all: CommitCheckRun[] = [];
+    for (let page = 1; page <= CHECK_RUNS_MAX_PAGES; page++) {
+      const { total, runs } = parseCheckRuns(await this.api('check runs', `repos/${this.opts.repo}/commits/${sha}/check-runs?per_page=${CHECK_RUNS_PER_PAGE}&page=${page}`));
+      all.push(...runs);
+      if (runs.length < CHECK_RUNS_PER_PAGE || all.length >= total) return all;
+    }
+    throw new OrbitError('DELIVERY_FAILED', `commit ${sha.slice(0, 12)} has more than ${CHECK_RUNS_PER_PAGE * CHECK_RUNS_MAX_PAGES} check runs; Orbit does not judge CI on a partial list`, { definitive: true });
   }
 
   private async checksFromRuns(sha: string): Promise<ChecksResult> {
-    if (!/^[0-9a-f]{7,64}$/.test(sha)) throw new OrbitError('INTERNAL', `not a commit sha: ${sha}`);
+    assertSha(sha);
     const out = await this.ok('run list', ['run', 'list', '-R', this.opts.repo, '--commit', sha, '-L', '50', '--json', RUN_FIELDS]);
-    const checks = parseRunListAsChecks(out);
-    return { checks, absent: checks.length === 0, headSha: sha };
+    const rows = parseJson('run list', out);
+    const reported = Array.isArray(rows) ? rows.map((r) => (r && typeof r === 'object' && typeof (r as Record<string, unknown>).headSha === 'string' ? ((r as Record<string, unknown>).headSha as string).toLowerCase() : null)) : [];
+    // A row about another commit is not this commit's run.
+    const checks = parseRunListAsChecks(out).filter((_, i) => reported[i] == null || sameCommit(reported[i]!, sha));
+    const labelled = reported.find((r): r is string => r != null && sameCommit(r, sha));
+    return { checks, absent: checks.length === 0, headSha: labelled ?? sha };
   }
 
   async failedLogs(runId: string): Promise<FailedLogs> {
@@ -580,6 +702,17 @@ function assertMergeInput(input: MergePullRequestInput): void {
   if (!Number.isInteger(input.number) || input.number <= 0) throw new OrbitError('INTERNAL', 'pull request number must be a positive integer');
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(input.headSha)) throw new OrbitError('INTERNAL', `not a full commit sha: ${JSON.stringify(input.headSha)}`);
   if (!(MERGE_METHODS as readonly string[]).includes(input.method)) throw new OrbitError('CONFIG_INVALID', `unknown merge method ${JSON.stringify(input.method)}`, { definitive: true });
+}
+
+function assertSha(sha: string): void {
+  if (!/^[0-9a-f]{7,64}$/.test(sha)) throw new OrbitError('INTERNAL', `not a commit sha: ${sha}`);
+}
+
+/** Whether a full sha a response reports is the (possibly abbreviated) sha asked about. */
+function sameCommit(reported: string, asked: string): boolean {
+  const r = reported.toLowerCase();
+  const a = asked.toLowerCase();
+  return a.length >= 40 ? r === a : r.startsWith(a);
 }
 
 function assertHead(head: string): void {

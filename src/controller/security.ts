@@ -24,11 +24,12 @@
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { delimiter, dirname, join, normalize, sep } from 'node:path';
 import { tmpdir } from 'node:os';
+import { spawn } from 'node:child_process';
 import { atomicWrite, atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
 import { execCapture } from '../core/exec.ts';
 import picomatch from 'picomatch';
 import { redact } from '../core/redact.ts';
-import { git } from '../evidence/git.ts';
+import { git, gitEnv } from '../evidence/git.ts';
 import { defaultStaticSecurity } from '../policy/config.ts';
 import type { PolicySnapshot, StaticSecurityConfig, StaticSeverity } from '../policy/types.ts';
 import { exceptionExpiryMs } from '../review/resolve.ts';
@@ -89,12 +90,21 @@ export interface SecretScanInput {
   policy?: StaticSecurityConfig;
   /** Clock reading for exception expiry. Without it a dated exception cannot be shown to be current and does not apply. */
   now?: number;
+  /** Largest file the built-in detector will stream. A larger one is reported as unscannable. Default 1 GiB. */
+  maxScanBytes?: number;
 }
+
+/** Rule of the finding recorded for a changed file that no scanner could read; it blocks like a secret unless a policy exception waives it. */
+export const UNSCANNABLE_RULE = 'unscannable-file';
 
 /** Orbit's trusted gitleaks configuration: the default rules, no allowlist the repository could widen. */
 export const TRUSTED_GITLEAKS_CONFIG = 'title = "orbit trusted secret scan"\n\n[extend]\nuseDefault = true\n';
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_SCAN_BYTES = 1024 * 1024 * 1024;
+/** Streaming scan: text is judged in windows of this size, each overlapping the last so a secret on a very long line is not cut. */
+const SCAN_WINDOW = 1024 * 1024;
+const SCAN_OVERLAP = 8 * 1024;
 
 export function findOnPath(name: string, pathVar: string | undefined = process.env.PATH): string | null {
   for (const dir of (pathVar ?? '').split(delimiter)) {
@@ -126,7 +136,8 @@ export async function scanCandidateSecrets(input: SecretScanInput): Promise<Secr
     return withPolicy({ ...rest, findings: raw ?? prior.findings }, input);
   }
 
-  const files = await changedFiles(input.repoRoot, input.baseRev, input.commit);
+  const changed = await changedFiles(input.repoRoot, input.baseRev, input.commit);
+  const { small: files, large, unscannable } = await partitionBySize(input, changed);
   const gitleaks = input.gitleaksPath === null ? null : (input.gitleaksPath ?? findOnPath('gitleaks', input.hostPath));
   let result: SecretScanResult | null = null;
   let why = gitleaks ? '' : 'gitleaks is not installed';
@@ -137,9 +148,26 @@ export async function scanCandidateSecrets(input: SecretScanInput): Promise<Secr
       why = `gitleaks could not complete (${err instanceof Error ? err.message : String(err)})`;
     }
   } else if (gitleaks) {
-    result = { scanner: 'gitleaks', completed: true, findings: [], files: 0, note: 'gitleaks: the candidate adds or modifies no files', reportPath };
+    result = { scanner: 'gitleaks', completed: true, findings: [], files: 0, note: changed.length === 0 ? 'gitleaks: the candidate adds or modifies no files' : 'gitleaks: every changed file is above its input limit', reportPath };
   }
   result ??= await builtinScan(input, files, reportPath, why);
+  // Files above the gitleaks input limit are not skipped: the built-in detector streams them in chunks. A file
+  // that cannot be read at all is a blocking finding of its own, so the scan is not reported as clean.
+  if (large.length > 0 || unscannable.length > 0) {
+    const bigFindings: SecretFinding[] = [];
+    for (const rel of large) {
+      try {
+        bigFindings.push(...(await scanBlobInChunks(input.repoRoot, input.commit, rel)));
+      } catch {
+        unscannable.push(rel);
+      }
+    }
+    for (const rel of unscannable) bigFindings.push({ file: rel, line: null, rule: UNSCANNABLE_RULE, severity: 'critical' });
+    // `files` stays what the main scan covered; the files streamed here are counted in the note.
+    const noteBits = [`${large.length} file(s) above ${MAX_FILE_BYTES} bytes scanned by the built-in detector in chunks`];
+    if (unscannable.length > 0) noteBits.push(`${unscannable.length} file(s) could not be scanned: ${unscannable.slice(0, 10).join(', ')}`);
+    result = { ...result, findings: [...result.findings, ...bigFindings], note: `${result.note}; ${noteBits.join('; ')}` };
+  }
   const raw = result.findings.map((f) => ({ ...f, severity: f.severity ?? secretSeverity(f.rule) }));
   const judged = withPolicy({ ...result, findings: raw }, input);
   atomicWriteJson(reportPath, { ...judged, raw, commit: input.commit });
@@ -153,7 +181,9 @@ function withPolicy(result: SecretScanResult, input: Pick<SecretScanInput, 'poli
   if (c.excepted.length > 0) parts.push(`${c.excepted.length} finding(s) waived by static_security.exceptions: ${c.excepted.slice(0, 10).map((e) => `${e.finding.rule} at ${e.finding.file}${e.finding.line ? `:${e.finding.line}` : ''} (${e.reason})`).join('; ')}`);
   if (c.advisory.length > 0) parts.push(`${c.advisory.length} advisory finding(s) below the blocking severities: ${c.advisory.slice(0, 10).map((f) => `${f.rule} [${f.severity}] at ${f.file}${f.line ? `:${f.line}` : ''}`).join('; ')}`);
   if (c.expired.length > 0) parts.push(`expired exception(s) not applied: ${c.expired.map((e) => `${e.rule_id} (expired ${e.expires})`).join(', ')}`);
-  return { ...result, findings: c.blocking, advisory: c.advisory, excepted: c.excepted, note: parts.join('; ') };
+  // Complete unless a file nobody could read is still blocking: a policy exception for it restores completeness.
+  const completed = !c.blocking.some((f) => f.rule === UNSCANNABLE_RULE);
+  return { ...result, completed, findings: c.blocking, advisory: c.advisory, excepted: c.excepted, note: parts.join('; ') };
 }
 
 /** The scanner's own note, without the policy summary a previous judgement appended. */
@@ -332,8 +362,6 @@ async function runGitleaks(bin: string, input: SecretScanInput, files: string[],
   for (const rel of files) {
     const target = normalize(join(tree, rel));
     if (!target.startsWith(tree + sep)) continue;
-    const size = Number((await git(input.repoRoot, ['cat-file', '-s', `${input.commit}:${rel}`])).trim());
-    if (!Number.isFinite(size) || size > MAX_FILE_BYTES) continue;
     const content = await git(input.repoRoot, ['cat-file', 'blob', `${input.commit}:${rel}`]);
     mkdirSync(dirname(target), { recursive: true });
     atomicWrite(target, content, 0o600);
@@ -358,11 +386,74 @@ function relativeTo(root: string, p: string): string {
   return p.startsWith(root + sep) ? p.slice(root.length + 1) : p;
 }
 
+/** Changed files split by size: under the gitleaks input limit, streamable above it, and unreadable (unknown size or above the hard limit). */
+async function partitionBySize(input: SecretScanInput, changed: string[]): Promise<{ small: string[]; large: string[]; unscannable: string[] }> {
+  const max = input.maxScanBytes ?? MAX_SCAN_BYTES;
+  const small: string[] = [];
+  const large: string[] = [];
+  const unscannable: string[] = [];
+  for (const rel of changed) {
+    let size = NaN;
+    try {
+      size = Number((await git(input.repoRoot, ['cat-file', '-s', `${input.commit}:${rel}`])).trim());
+    } catch {
+      /* unknown size: unscannable */
+    }
+    if (!Number.isFinite(size) || size > max) unscannable.push(rel);
+    else if (size > MAX_FILE_BYTES) large.push(rel);
+    else small.push(rel);
+  }
+  return { small, large, unscannable };
+}
+
+/** The core/redact secret shapes over a whole blob, read as a stream in bounded windows. Throws when git cannot deliver the blob. */
+async function scanBlobInChunks(repoRoot: string, commit: string, rel: string): Promise<SecretFinding[]> {
+  const found = new Map<string, SecretFinding>();
+  let line = 1;
+  const judge = (text: string, at: number): void => {
+    const red = redact(text);
+    if (red === text) return;
+    for (const m of red.matchAll(/\[REDACTED:([a-z0-9_-]+)\]/gi)) found.set(`${at}:${m[1]}`, { file: rel, line: at, rule: `builtin:${m[1]}` });
+  };
+  const child = spawn('git', ['cat-file', 'blob', `${commit}:${rel}`], { cwd: repoRoot, env: gitEnv(), stdio: ['ignore', 'pipe', 'ignore'] });
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code) => resolve(code));
+  });
+  const timer = setTimeout(() => child.kill('SIGKILL'), 10 * 60_000);
+  try {
+    child.stdout.setEncoding('latin1');
+    let carry = '';
+    for await (const chunk of child.stdout as AsyncIterable<string>) {
+      carry += chunk;
+      let start = 0;
+      for (let nl = carry.indexOf('\n', start); nl !== -1; nl = carry.indexOf('\n', start)) {
+        judge(carry.slice(start, nl), line);
+        line++;
+        start = nl + 1;
+      }
+      carry = carry.slice(start);
+      while (carry.length > SCAN_WINDOW) {
+        judge(carry.slice(0, SCAN_WINDOW), line);
+        carry = carry.slice(SCAN_WINDOW - SCAN_OVERLAP);
+      }
+    }
+    if (carry.length > 0) judge(carry, line);
+    const code = await exited;
+    if (code !== 0) throw new Error(`git cat-file exited ${code}`);
+  } finally {
+    clearTimeout(timer);
+    child.kill();
+  }
+  return [...found.values()];
+}
+
 /** Built-in fallback: the core/redact secret shapes over every added line. */
 async function builtinScan(input: SecretScanInput, files: string[], reportPath: string, why: string): Promise<SecretScanResult> {
   const findings: SecretFinding[] = [];
   if (files.length > 0) {
-    const diff = await git(input.repoRoot, ['diff', '-U0', '--no-renames', '--no-ext-diff', '--no-textconv', '--text', input.baseRev, input.commit, '--']);
+    // `files` holds only the files under the input limit: larger ones are streamed by the caller, so a huge diff never has to fit in memory.
+    const diff = await git(input.repoRoot, ['diff', '-U0', '--no-renames', '--no-ext-diff', '--no-textconv', '--text', input.baseRev, input.commit, '--', ...files.map((f) => `:(top,literal)${f}`)]);
     let file = '';
     let line = 0;
     for (const raw of diff.split('\n')) {

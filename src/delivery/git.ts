@@ -224,21 +224,46 @@ export function remoteHost(address: string): string | null {
 
 /**
  * The URL a push to `remote` really goes to. A configured remote name is
- * resolved through git itself (`remote get-url --push` applies pushurl and
- * insteadOf rewrites), so a name can never hide the host it reaches from the
- * network policy. A URL or path is returned as is; an unknown name is refused.
+ * resolved through git itself (`remote get-url --push --all` applies pushurl
+ * and insteadOf rewrites and lists every push URL), so a name can never hide
+ * the host it reaches from the network policy. A remote with more than one push
+ * URL is refused: git would push to each of them. A URL or path is returned as
+ * is. Either way the result must be a URL git pushes to unchanged (no
+ * `url.<base>.insteadOf` or `pushInsteadOf` rule matches it), because delivery
+ * pushes to this URL itself, never to the name. An unknown name is refused.
  */
 export async function resolveRemoteUrl(repoRoot: string, remote: string, opts: GitOptions = {}): Promise<string> {
   assertRemote(remote);
-  const res = await git(repoRoot, ['remote', 'get-url', '--push', remote], opts);
+  const res = await git(repoRoot, ['remote', 'get-url', '--push', '--all', remote], opts);
+  let url: string;
   if (res.exitCode === 0) {
     const urls = res.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
     // Several push URLs would each need authorizing and reconciling; delivery does not support that.
     if (urls.length !== 1) throw new OrbitError('CONFIG_INVALID', `remote ${remote} has ${urls.length} push URLs; delivery needs exactly one`, { definitive: true });
-    return urls[0]!;
+    url = urls[0]!;
+  } else if (/[/:]/.test(remote)) {
+    url = remote;
+  } else {
+    throw new OrbitError('CONFIG_INVALID', `no git remote named ${JSON.stringify(remote)} in the repository`, { definitive: true });
   }
-  if (/[/:]/.test(remote)) return remote;
-  throw new OrbitError('CONFIG_INVALID', `no git remote named ${JSON.stringify(remote)} in the repository`, { definitive: true });
+  assertRemote(url);
+  await assertNotRewritten(repoRoot, url, opts);
+  return url;
+}
+
+/** Refuses a URL that a configured url.<base>.insteadOf or pushInsteadOf rule would rewrite when pushed to directly. */
+async function assertNotRewritten(repoRoot: string, url: string, opts: GitOptions): Promise<void> {
+  const res = await git(repoRoot, ['config', '-z', '--get-regexp', '^url\\..*\\.(insteadof|pushinsteadof)$'], opts);
+  // Exit 1: no such rule is configured.
+  if (res.exitCode === 1 && res.stdout === '') return;
+  if (res.exitCode !== 0) throw fail('git config --get-regexp url.*.insteadOf', res);
+  for (const entry of res.stdout.split('\0')) {
+    const nl = entry.indexOf('\n');
+    const prefix = nl < 0 ? '' : entry.slice(nl + 1);
+    if (prefix !== '' && url.startsWith(prefix)) {
+      throw new OrbitError('CONFIG_INVALID', `the push URL ${redact(url)} matches a url.<base>.${/pushinsteadof$/i.test(entry.slice(0, nl)) ? 'pushInsteadOf' : 'insteadOf'} rule, so git would rewrite it to another destination; remove the rule or name the final URL`, { definitive: true });
+    }
+  }
 }
 
 function remoteEnvAndArgs(o: RemoteOptions): { env: Record<string, string | undefined>; pre: string[] } {

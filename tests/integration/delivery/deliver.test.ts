@@ -1,4 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetFaults } from '../../../src/core/faults.ts';
 import { openDb } from '../../../src/storage/db.ts';
 import { ActionLedger } from '../../../src/delivery/actions.ts';
@@ -536,6 +539,43 @@ describe('network authorization covers the remote a name points at', () => {
     const c = lab.candidate('a');
     await expect(deliver(input(c, { remote: 'nosuchremote' }))).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
     expect(lab.ledger().list(lab.runId, { kind: 'push' })).toHaveLength(0);
+  });
+
+  it('refuses a remote with a second push URL before pushing to either', async () => {
+    const c = lab.candidate('a');
+    const canary = join(lab.dir, 'canary.git');
+    git(lab.dir, ['init', '--bare', '-b', 'main', canary]);
+    // git remote get-url --push without --all prints only the first of these.
+    git(lab.work, ['remote', 'set-url', '--add', '--push', 'origin', lab.remote]);
+    git(lab.work, ['remote', 'set-url', '--add', '--push', 'origin', canary]);
+    await expect(deliver(input(c))).rejects.toMatchObject({ code: 'CONFIG_INVALID', message: expect.stringContaining('2 push URLs') });
+    expect(lab.ledger().list(lab.runId, { kind: 'push' })).toHaveLength(0);
+    expect(lab.remoteSha(branch())).toBeNull();
+    expect(() => git(canary, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch()}`])).toThrow();
+  });
+
+  it('pushes to and reads back from the validated URL itself, never through the remote name', async () => {
+    const c = lab.candidate('a');
+    const bin = join(lab.dir, 'logbin');
+    const log = join(lab.dir, 'git-calls.log');
+    mkdirSync(bin);
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\nexec '${realGit}' "$@"\n`);
+    chmodSync(join(bin, 'git'), 0o755);
+    vi.stubEnv('PATH', `${bin}:${process.env.PATH ?? ''}`);
+    try {
+      const r = await deliver(input(c));
+      expect(lab.remoteSha(branch())).toBe(r.commit);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    const calls = readFileSync(log, 'utf8').split('\n').filter(Boolean);
+    const remoteCalls = calls.filter((l) => / (push|ls-remote) /.test(` ${l} `));
+    expect(remoteCalls.length).toBeGreaterThan(0);
+    for (const l of remoteCalls) {
+      expect(l).toContain(` -- ${lab.remote} `);
+      expect(l).not.toMatch(/ origin( |$)/);
+    }
   });
 });
 

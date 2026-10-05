@@ -8,23 +8,23 @@ import {
   APPROVE_ONCE,
   AUTHORIZATION_GRANT_KIND,
   AUTHORIZATION_REQUEST_KIND,
+  APPROVED_COMMAND_ACTION,
   DENY,
-  GRANT_POLICY_FILE,
   attemptSubject,
   authorizedOnce,
   deniedDependencyOperations,
   deniedWorkerOperations,
   grantFor,
-  grantPolicy,
   operationKey,
   requestAttemptAuthorization,
   requestAuthorization,
+  runApprovedOperation,
   scopeWithGrants,
   sessionEvents,
   ungrantedCommands,
   type GuardedOperation,
 } from '../../../src/controller/authorization.ts';
-import { addCandidate, cleanScope, makeUnitLab, type UnitLab } from './coverage-helpers.ts';
+import { addCandidate, cleanScope, giveRepository, makeUnitLab, type UnitLab } from './coverage-helpers.ts';
 
 let lab: UnitLab;
 afterEach(() => lab?.cleanup());
@@ -239,45 +239,48 @@ describe('deniedWorkerOperations', () => {
   });
 });
 
-describe('grantPolicy', () => {
-  it('widens only for known, grantable actions, and for the host a network or shell operation names', () => {
-    lab = makeUnitLab({ tweak: supervised });
-    const ctx = lab.ctx();
-    const dir = mkdtempSync(join(lab.base, 'g-'));
-    const grant = grantPolicy(
-      ctx,
-      [
-        guarded({ kind: 'bash', command: 'chmod +x a' }, 'actions.change_permissions'),
-        guarded({ kind: 'bash', command: 'sh -c secrets' }, 'actions.change_secrets'),
-        guarded({ kind: 'bash', command: 'x' }, 'actions.unknown_action'),
-        guarded({ kind: 'bash', command: 'curl https://Shell.Example.test/x' }, 'network.not-allowed'),
-        guarded({ kind: 'bash', command: 'curl nothing' }, 'network.not-allowed'),
-        guarded({ kind: 'network', host: 'net.example.test' }, 'network.not-allowed'),
-        guarded({ kind: 'network', host: 'net.example.test' }, 'network.not-allowed'),
-        guarded({ kind: 'dependency', change: 'add_package', detail: 'p' }, 'network.not-allowed'),
-        guarded({ kind: 'bash', command: 'other' }, 'protected_path'),
-        guarded({ kind: 'bash', command: 'norule' }),
-      ],
-      dir,
-    );
-    const c = grant.snapshot.config;
-    expect(c.actions.change_permissions).toBe(true);
-    expect(c.actions.change_secrets).toBe(false);
-    expect((c.actions as Record<string, unknown>).unknown_action).toBeUndefined();
-    expect(c.network.allowed_hosts).toEqual([...ctx.snapshot.config.network.allowed_hosts, 'shell.example.test', 'net.example.test']);
-    expect(grant.path).toBe(join(dir, GRANT_POLICY_FILE));
+describe('runApprovedOperation', () => {
+  const grant = { decisionId: 'dec-grant', approvedBy: 'acme-dev' };
+  const actions = () => lab.db.all<{ kind: string; state: string; attempts: number }>('SELECT kind, state, attempts FROM actions WHERE run_id = ?', lab.runId);
+
+  it('runs exactly the approved command once, in the run\'s worktree, as a recorded action, and never again', async () => {
+    lab = makeUnitLab({ tweak: supervised, path: ['PREFLIGHT'] });
+    const { worktree } = await giveRepository(lab);
+    const op = guarded({ kind: 'bash', command: 'printf x >> ran.txt; echo acme-out' }, 'actions.change_permissions');
+    const first = await runApprovedOperation(lab.ctx(), 1, op, grant);
+    expect(first).toMatchObject({ key: op.key, command: 'printf x >> ran.txt; echo acme-out', state: 'SUCCEEDED', exit_code: 0, timed_out: false, note: null });
+    expect(readFileSync(join(lab.ctx().runDir, first.path!), 'utf8')).toContain('acme-out');
+    expect(first.excerpt).toContain('acme-out');
+    expect(actions()).toEqual([{ kind: APPROVED_COMMAND_ACTION, state: 'SUCCEEDED', attempts: 1 }]);
+    // Asked again (a restarted controller): the recorded receipt, not a second run.
+    const again = await runApprovedOperation(lab.ctx(), 1, op, grant);
+    expect(again).toEqual(first);
+    expect(readFileSync(join(worktree, 'ran.txt'), 'utf8')).toBe('x');
+    // The run's policy did not widen.
+    expect(lab.ctx().snapshot.config.actions.change_permissions).toBe(false);
   });
 
-  it('keeps an existing grant file as it is and returns the same hash for the same widening', () => {
-    lab = makeUnitLab({ tweak: supervised });
+  it('a run whose outcome was lost is reported unknown and not repeated', async () => {
+    lab = makeUnitLab({ tweak: supervised, path: ['PREFLIGHT'] });
+    const { worktree } = await giveRepository(lab);
+    const op = guarded({ kind: 'bash', command: 'printf x >> ran.txt' }, 'actions.change_permissions');
+    // A controller that died while the command ran: the action is EXECUTING and no receipt was written.
+    lab.db.run("INSERT INTO actions (id, run_id, kind, idempotency_key, target_json, state, attempts, created_at, updated_at) VALUES ('act-lost', ?, ?, ?, ?, 'EXECUTING', 1, 1, 1)", lab.runId, APPROVED_COMMAND_ACTION, `${lab.runId}:approved:1:${op.key}`, JSON.stringify({ command: 'printf x >> ran.txt', attempt: 1, op_key: op.key, grant: grant.decisionId }));
+    const out = await runApprovedOperation(lab.ctx(), 1, op, grant);
+    expect(out).toMatchObject({ state: 'UNKNOWN', path: null });
+    expect(out.note).toMatch(/not run a second time/);
+    expect(existsSync(join(worktree, 'ran.txt'))).toBe(false);
+  });
+
+  it('runs nothing for an operation that names no exact command or address', async () => {
+    lab = makeUnitLab({ tweak: supervised, path: ['PREFLIGHT'] });
+    await giveRepository(lab);
     const ctx = lab.ctx();
-    const dir = mkdtempSync(join(lab.base, 'g-'));
-    const ops = [guarded({ kind: 'bash', command: 'chmod +x a' }, 'actions.change_permissions')];
-    const first = grantPolicy(ctx, ops, dir);
-    const before = readFileSync(first.path, 'utf8');
-    const second = grantPolicy(ctx, ops, dir);
-    expect(second.hash).toBe(first.hash);
-    expect(readFileSync(second.path, 'utf8')).toBe(before);
+    const bare = await runApprovedOperation(ctx, 1, guarded({ kind: 'network', host: 'net.example.test' }, 'network.not-allowed'), grant);
+    expect(bare).toMatchObject({ state: 'NOT_RUN', command: null });
+    const elsewhere = await runApprovedOperation(ctx, 1, { ...guarded({ kind: 'network', host: 'net.example.test' }, 'network.not-allowed'), target: 'https://other.example.test/x' }, grant);
+    expect(elsewhere).toMatchObject({ state: 'NOT_RUN' });
+    expect(actions()).toEqual([]);
   });
 });
 

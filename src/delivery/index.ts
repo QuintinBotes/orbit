@@ -3,6 +3,7 @@ export {
   ACTION_KINDS,
   ACTION_STATES,
   ActionLedger,
+  DEFAULT_ACTION_DEADLINE_MS,
   DEFAULT_MAX_ATTEMPTS,
   isDefinitiveFailure,
   type ActionContext,
@@ -14,6 +15,7 @@ export {
   type ActionState,
   type LedgerOptions,
   type PerformOptions,
+  type StartOptions,
 } from './actions.ts';
 export {
   assertTaskBranch,

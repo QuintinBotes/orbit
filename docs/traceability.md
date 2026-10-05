@@ -491,6 +491,21 @@ sometimes shortened.
 | S21.1 | Workers get the compact operating prompt, role, bounded unit, contract, policy summary, candidate, evidence | `adapters/prompt.ts:OPERATING_PROMPT`, `steps/common.ts:policySummary` | U/adapters/prompt-agents.test.ts "starts with the compact operating prompt..." | done |
 | S21.2 | Structured output with paths, evidence, findings, next action; never claim completion | `schemas/implementer-output.schema.json` | U/schemas/model-output-schemas.test.ts "gives the implementer no way to claim completion" | done |
 
+## Security review 1
+
+The first independent security review (`docs/decisions/0005-security-review-fixes.md`). Each fix ships with a test that failed on the code before it.
+
+| Finding | Fix | Test |
+|---|---|---|
+| 1. Parallel integration wrote through symlinks (critical) | `controller/parallel-writers.ts`: per-unit tree checked with `inspectScope`, changes applied with `git apply --index`, integrated tree re-checked | U/controller/coverage-parallel-writers.test.ts "rejects a unit that adds a symlink leaving the repository, so a later unit cannot write through it" |
+| 2. Lost lease did not fence external actions (high) | `delivery/actions.ts:markExecuting` checks the lease in the transaction that sets EXECUTING and records executor and deadline (`storage/schema.ts` migration 5) | U/delivery/actions.test.ts "a controller that lost its lease starts no action, and the new owner does not re-execute an in-flight attempt" |
+| 3. Worker shell read credentials (high) | `steps/preflight.ts:gitCredentialProblems`, `isolation/util.ts:credentialFilesIn` into `isolation/profiles.ts`, `policy/bash.ts` reads denied by `policy/authorize.ts` (`bash.credential-read`) | I/controller/preflight-credentials.test.ts, U/policy/bash-credential-reads.test.ts, U/isolation/profiles.test.ts "credential files inside the worktree" |
+| 4. Worker output stored unredacted (high) | `adapters/shim.ts` redacts line by line before `log.jsonl` and `stderr.log` | U/adapters/coverage-entry-shim.test.ts "writes no credential to log.jsonl or stderr.log..." |
+| 5. Extra push URLs escaped authorization (high) | `delivery/git.ts` reads every push URL and refuses rewrites; `delivery/deliver.ts` pushes to the checked URL | I/delivery/deliver.test.ts "refuses a remote with a second push URL before pushing to either" |
+| 6. Oversized files skipped the secret scan (high) | `controller/security.ts` streams large files in overlapping windows; unreadable or oversized files become a blocking `unscannable-file` finding | I/controller/security.test.ts "are scanned by the built-in detector... when gitleaks runs" |
+| 7. Approve-once widened the worker (high) | `controller/authorization.ts:runApprovedOperation` runs the approved command once in isolation; no grant policy | U/controller/approve-once-isolation.test.ts "an approved GET runs once in isolation as a recorded action, and a different POST by the retried worker never reaches the host" |
+| 8. PR checks attributed to the wrong revision (medium) | `delivery/github.ts` reads check runs and status of the given commit and labels them with the reported SHA | U/delivery/github.test.ts "never reports another commit's green checks as the asked commit's" |
+
 ## Counts
 
 | Status | Earlier re-audit (before the fixer waves) | Previous version of this table | This audit |
@@ -511,15 +526,15 @@ S5.28, G53 for S8.21).
 Measured with `npm run test:coverage` (vitest, then the per-file floor script; the configuration in
 `vitest.config.ts`: v8 provider, `include: ['src/**']`, `reportOnFailure`,
 thresholds lines 95, functions 95, statements 95, branches 90). The run exited
-0: 347 test files, 6399 tests passed, 1 skipped, none failing. 211 source
+0 (after the security review fixes): 350 test files, 6476 tests passed, 1 skipped, none failing. 211 source
 files are measured; the four excluded files hold only types.
 
 | Metric | Covered | Enforced floor |
 |---|---|---|
-| Lines | 99.68% (20068 of 20131) | 95% |
-| Functions | 99.69% (4229 of 4242) | 95% |
-| Statements | 99.11% (24978 of 25202) | 95% |
-| Branches | 96.39% (20507 of 21275) | 90% |
+| Lines | 99.59% (20453 of 20536) | 95% |
+| Functions | 99.65% (4297 of 4312) | 95% |
+| Statements | 98.99% (25429 of 25686) | 95% |
+| Branches | 96.18% (20785 of 21610) | 90% |
 
 Lowest files per metric:
 
