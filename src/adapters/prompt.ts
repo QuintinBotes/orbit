@@ -28,7 +28,7 @@ import type { WorkerRole } from './types.ts';
 
 /** Every role with a prompt in agents/: the worker roles plus the learning layer's curator (ADR 0002). */
 export type AgentRole = WorkerRole | 'curator';
-export const AGENT_ROLES: readonly AgentRole[] = ['planner', 'implementer', 'verifier', 'reviewer', 'inquisitor', 'curator'];
+export const AGENT_ROLES: readonly AgentRole[] = ['planner', 'implementer', 'verifier', 'reviewer', 'inquisitor', 'curator', 'explorer'];
 
 /** The structured output each role returns (schemas/<kind>-output.schema.json). */
 export const ROLE_OUTPUT_KIND: Readonly<Record<AgentRole, ModelOutputKind>> = {
@@ -38,6 +38,7 @@ export const ROLE_OUTPUT_KIND: Readonly<Record<AgentRole, ModelOutputKind>> = {
   reviewer: 'review',
   inquisitor: 'inquisitor',
   curator: 'curator',
+  explorer: 'explorer',
 };
 
 /** Spec section 21, verbatim. */

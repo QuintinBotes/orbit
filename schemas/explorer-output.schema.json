@@ -1,0 +1,70 @@
+{
+  "title": "Orbit explorer output",
+  "description": "Candidate UI findings from agent-driven exploration. A finding counts only after the controller turns its proposed test into a Playwright test that fails reproducibly on the candidate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "observations",
+    "candidate_findings",
+    "coverage_notes"
+  ],
+  "properties": {
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "candidate_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "summary",
+          "steps",
+          "expected",
+          "observed",
+          "severity",
+          "proposed_test"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expected": {
+            "type": "string"
+          },
+          "observed": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "proposed_test": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "coverage_notes": {
+      "type": "string"
+    }
+  }
+}

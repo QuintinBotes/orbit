@@ -15,6 +15,7 @@ import diagnosisSchema from '../../schemas/diagnosis-output.schema.json' with { 
 import reviewSchema from '../../schemas/review-output.schema.json' with { type: 'json' };
 import inquisitorSchema from '../../schemas/inquisitor-output.schema.json' with { type: 'json' };
 import curatorSchema from '../../schemas/curator-output.schema.json' with { type: 'json' };
+import explorerSchema from '../../schemas/explorer-output.schema.json' with { type: 'json' };
 import { OrbitError } from '../core/errors.ts';
 import { validateAgainst } from './json-schema.ts';
 import type { AmendmentProposal, AssumptionStatusValue } from './amendment-types.ts';
@@ -28,6 +29,7 @@ export const MODEL_OUTPUT_SCHEMAS = {
   review: reviewSchema as object,
   inquisitor: inquisitorSchema as object,
   curator: curatorSchema as object,
+  explorer: explorerSchema as object,
 } as const;
 
 export type ModelOutputKind = keyof typeof MODEL_OUTPUT_SCHEMAS;
@@ -40,6 +42,7 @@ export const MODEL_OUTPUT_SCHEMA_FILES: Readonly<Record<ModelOutputKind, string>
   review: 'review-output.schema.json',
   inquisitor: 'inquisitor-output.schema.json',
   curator: 'curator-output.schema.json',
+  explorer: 'explorer-output.schema.json',
 };
 
 export interface ModelOutputs {
@@ -49,6 +52,22 @@ export interface ModelOutputs {
   review: ReviewOutput;
   inquisitor: InquisitorOutput;
   curator: CuratorOutput;
+  explorer: ExplorerOutput;
+}
+
+/** schemas/explorer-output.schema.json: candidate UI findings, unproven until reproduced as a failing test. */
+export interface ExplorerOutput {
+  observations: string[];
+  candidate_findings: {
+    id: string;
+    summary: string;
+    steps: string[];
+    expected: string;
+    observed: string;
+    severity: 'critical' | 'high' | 'medium' | 'low';
+    proposed_test: string;
+  }[];
+  coverage_notes: string;
 }
 
 /**

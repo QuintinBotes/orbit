@@ -11,7 +11,7 @@
  */
 import type { SandboxProfile } from '../isolation/types.ts';
 
-export type WorkerRole = 'planner' | 'implementer' | 'verifier' | 'reviewer' | 'inquisitor' | 'curator';
+export type WorkerRole = 'planner' | 'implementer' | 'verifier' | 'reviewer' | 'inquisitor' | 'curator' | 'explorer';
 
 export interface ProviderCapabilities {
   provider: string;

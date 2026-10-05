@@ -174,6 +174,22 @@ const curatorExample: CuratorOutput = {
   discarded: [{ source: 'observation 3', reason: 'only one run' }],
 };
 
+const explorerExample: ModelOutputs['explorer'] = {
+  observations: ['Export button is reachable by keyboard'],
+  candidate_findings: [
+    {
+      id: 'EX-1',
+      summary: 'Empty filter result shows a stale row count',
+      steps: ['Open reports', 'Filter by a value with no matches'],
+      expected: 'Row count reads 0',
+      observed: 'Row count keeps the previous total',
+      severity: 'medium',
+      proposed_test: 'filter with no matches shows a zero row count',
+    },
+  ],
+  coverage_notes: 'Reports page only; settings not explored.',
+};
+
 const EXAMPLES: { [K in ModelOutputKind]: ModelOutputs[K] } = {
   planner: plannerExample,
   implementer: implementerExample,
@@ -181,13 +197,14 @@ const EXAMPLES: { [K in ModelOutputKind]: ModelOutputs[K] } = {
   review: reviewExample,
   inquisitor: inquisitorExample,
   curator: curatorExample,
+  explorer: explorerExample,
 };
 
 // ---------------------------------------------------------------------------
 
 describe('model-output schemas obey the strict structured-output rules', () => {
-  it('covers exactly the six model roles', () => {
-    expect(KINDS.sort()).toEqual(['curator', 'diagnosis', 'implementer', 'inquisitor', 'planner', 'review']);
+  it('covers exactly the seven model roles', () => {
+    expect(KINDS.sort()).toEqual(['curator', 'diagnosis', 'explorer', 'implementer', 'inquisitor', 'planner', 'review']);
   });
 
   describe.each(KINDS)('%s', (kind) => {

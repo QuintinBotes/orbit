@@ -59,6 +59,7 @@ export const ROLE_COST_CEILING_USD: Readonly<Record<BudgetRole, number>> = {
   reviewer: 4,
   inquisitor: 2,
   curator: 1,
+  explorer: 3,
 };
 
 export const ROLE_WALL_CEILING_MS: Readonly<Record<BudgetRole, number>> = {
@@ -68,6 +69,7 @@ export const ROLE_WALL_CEILING_MS: Readonly<Record<BudgetRole, number>> = {
   reviewer: 20 * 60_000,
   inquisitor: 10 * 60_000,
   curator: 5 * 60_000,
+  explorer: 20 * 60_000,
 };
 
 /** How the reserve is apportioned for reporting; enforcement uses the total. */

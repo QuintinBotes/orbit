@@ -23,11 +23,11 @@ describe('plugin manifest and components', () => {
     expect(existsSync(join(root, 'CLAUDE.md'))).toBe(false);
   });
 
-  it('lists six skills and the agents', () => {
+  it('lists six skills and the seven agents', () => {
     const r = run('claude', ['--plugin-dir', root, 'plugin', 'details', 'orbit']);
     expect(r.status, r.stderr).toBe(0);
     for (const s of ['inquisition', 'repair', 'resume', 'run', 'status', 'verify']) expect(r.stdout).toMatch(new RegExp(`Skills \\(6\\).*\\b${s}\\b`));
-    for (const a of ['reviewer', 'inquisitor', 'curator', 'verifier', 'planner', 'implementer']) expect(r.stdout).toMatch(new RegExp(`Agents \\(6\\).*\\b${a}\\b`));
+    for (const a of ['reviewer', 'inquisitor', 'curator', 'verifier', 'planner', 'implementer', 'explorer']) expect(r.stdout).toMatch(new RegExp(`Agents \\(7\\).*\\b${a}\\b`));
   });
 
   it('keeps frontmatter inside the verified key lists', () => {

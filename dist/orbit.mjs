@@ -28318,14 +28318,15 @@ var init_prompt = __esm({
     init_errors();
     init_redact();
     init_overlays();
-    AGENT_ROLES = ["planner", "implementer", "verifier", "reviewer", "inquisitor", "curator"];
+    AGENT_ROLES = ["planner", "implementer", "verifier", "reviewer", "inquisitor", "curator", "explorer"];
     ROLE_OUTPUT_KIND = {
       planner: "planner",
       implementer: "implementer",
       verifier: "diagnosis",
       reviewer: "review",
       inquisitor: "inquisitor",
-      curator: "curator"
+      curator: "curator",
+      explorer: "explorer"
     };
     OPERATING_PROMPT = `You are an Orbit worker, not the authorization authority.
 
@@ -31031,6 +31032,83 @@ var init_curator_output_schema = __esm({
   }
 });
 
+// schemas/explorer-output.schema.json
+var explorer_output_schema_default;
+var init_explorer_output_schema = __esm({
+  "schemas/explorer-output.schema.json"() {
+    explorer_output_schema_default = {
+      title: "Orbit explorer output",
+      description: "Candidate UI findings from agent-driven exploration. A finding counts only after the controller turns its proposed test into a Playwright test that fails reproducibly on the candidate.",
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "observations",
+        "candidate_findings",
+        "coverage_notes"
+      ],
+      properties: {
+        observations: {
+          type: "array",
+          items: {
+            type: "string"
+          }
+        },
+        candidate_findings: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: [
+              "id",
+              "summary",
+              "steps",
+              "expected",
+              "observed",
+              "severity",
+              "proposed_test"
+            ],
+            properties: {
+              id: {
+                type: "string"
+              },
+              summary: {
+                type: "string"
+              },
+              steps: {
+                type: "array",
+                items: {
+                  type: "string"
+                }
+              },
+              expected: {
+                type: "string"
+              },
+              observed: {
+                type: "string"
+              },
+              severity: {
+                type: "string",
+                enum: [
+                  "critical",
+                  "high",
+                  "medium",
+                  "low"
+                ]
+              },
+              proposed_test: {
+                type: "string"
+              }
+            }
+          }
+        },
+        coverage_notes: {
+          type: "string"
+        }
+      }
+    };
+  }
+});
+
 // src/contract/json-schema.ts
 function ajv2() {
   if (!instance2) {
@@ -31102,6 +31180,7 @@ var init_model_outputs = __esm({
     init_review_output_schema();
     init_inquisitor_output_schema();
     init_curator_output_schema();
+    init_explorer_output_schema();
     init_errors();
     init_json_schema();
     MODEL_OUTPUT_SCHEMAS = {
@@ -31110,7 +31189,8 @@ var init_model_outputs = __esm({
       diagnosis: diagnosis_output_schema_default,
       review: review_output_schema_default,
       inquisitor: inquisitor_output_schema_default,
-      curator: curator_output_schema_default
+      curator: curator_output_schema_default,
+      explorer: explorer_output_schema_default
     };
     MODEL_OUTPUT_SCHEMA_FILES = {
       planner: "planner-output.schema.json",
@@ -31118,7 +31198,8 @@ var init_model_outputs = __esm({
       diagnosis: "diagnosis-output.schema.json",
       review: "review-output.schema.json",
       inquisitor: "inquisitor-output.schema.json",
-      curator: "curator-output.schema.json"
+      curator: "curator-output.schema.json",
+      explorer: "explorer-output.schema.json"
     };
   }
 });
@@ -34689,7 +34770,8 @@ var init_budget2 = __esm({
       verifier: 2,
       reviewer: 4,
       inquisitor: 2,
-      curator: 1
+      curator: 1,
+      explorer: 3
     };
     ROLE_WALL_CEILING_MS = {
       planner: 15 * 6e4,
@@ -34697,7 +34779,8 @@ var init_budget2 = __esm({
       verifier: 20 * 6e4,
       reviewer: 20 * 6e4,
       inquisitor: 10 * 6e4,
-      curator: 5 * 6e4
+      curator: 5 * 6e4,
+      explorer: 20 * 6e4
     };
     RESERVE_SHARES = { final_verification: 0.4, review: 0.45, reporting: 0.15 };
     EXPERIMENTS_PER_ATTEMPT = 2;
