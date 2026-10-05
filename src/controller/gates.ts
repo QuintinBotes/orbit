@@ -16,9 +16,10 @@ import type { ReviewerSelection } from '../review/select.ts';
 import { reviewGate, type ReviewGateResult } from '../review/stale.ts';
 import { listReviews } from '../review/store.ts';
 import type { GoalContract } from '../contract/types.ts';
-import { contractProblems } from '../contract/validate.ts';
+import { contractProblems, releaseEnvironmentProblem } from '../contract/validate.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { UNATTENDED_MODES } from '../policy/config.ts';
+import { RESOURCE_LIMIT_FIX, resourceLimitRefusals } from '../isolation/limits.ts';
 import { snapshotHash } from '../policy/snapshot.ts';
 import type { BaselineReport } from '../evidence/baseline.ts';
 import type { Evaluation } from '../evidence/report.ts';
@@ -76,7 +77,7 @@ function result<D>(gate: GateName, reasons: string[], evidence: string[], notes:
 // Intake
 
 export interface IntakeInput {
-  run: Pick<RunRecord, 'id' | 'repoRoot' | 'mode' | 'policyHash'>;
+  run: Pick<RunRecord, 'id' | 'repoRoot' | 'mode' | 'policyHash'> & Partial<Pick<RunRecord, 'environment'>>;
   snapshot: PolicySnapshot;
   /** Proposed or stored contract; validated here. Omitted at preflight, before a contract exists. */
   contract?: unknown;
@@ -100,6 +101,13 @@ export function intakeGate(input: IntakeInput): GateResult<{ problems: string[] 
   const limits = snapshot.config.scheduler.hard_limits;
   for (const [k, v] of Object.entries(limits)) if (!(typeof v === 'number' && v > 0)) reasons.push(`hard limit ${k} must be positive`);
   if (snapshot.config.scope.allowed_paths.length === 0) reasons.push('the policy allows no paths, so no implementation is authorized');
+  // A run that names its release environment (`orbit run --environment`) names one the policy defines.
+  const environment = input.run.environment ?? null;
+  if (environment !== null) {
+    const why = releaseEnvironmentProblem(snapshot.config, environment);
+    if (why) reasons.push(`the run names release environment ${JSON.stringify(environment)}, which cannot be used: ${why}`);
+    else evidence.push(`release environment ${environment}`);
+  }
 
   const problems = input.contract === undefined ? [] : contractProblems(input.contract, snapshot, { policyHash: run.policyHash });
   reasons.push(...problems.map((p) => `contract: ${p}`));
@@ -115,6 +123,9 @@ export function intakeGate(input: IntakeInput): GateResult<{ problems: string[] 
       if (!byCheck && !byUi) reasons.push(`${a.id} is not measurable: it cites no trusted check${a.ui ? ' and the policy defines no UI journeys' : ''}`);
     }
     if (c.allowed_paths.length === 0) reasons.push('the contract allows no paths');
+    if ((c.delivery.environment ?? null) !== environment) {
+      reasons.push(`the contract's delivery.environment (${c.delivery.environment ?? 'none'}) is not the release environment the run names (${environment ?? 'none'})`);
+    }
   }
   return result('intake', reasons, evidence, [], { problems });
 }
@@ -160,6 +171,13 @@ export function environmentGate(input: EnvironmentInput): GateResult<{ blockedPr
       code = 'ISOLATION_UNAVAILABLE';
     } else if (iso.kind === 'sandbox-runtime') {
       notes.push('sandbox-runtime limits filesystem writes and network egress but not CPU, memory or process count');
+    }
+    // A policy that requires its resource limits does not run on a provider that cannot enforce them; without the
+    // key the gap is only stated in the evidence record.
+    const unenforced = resourceLimitRefusals(input.snapshot.config.isolation, iso.kind);
+    if (unenforced.length > 0) {
+      reasons.push(...unenforced.map((u) => `${u}; ${RESOURCE_LIMIT_FIX}`));
+      code ??= 'ISOLATION_UNAVAILABLE';
     }
   }
 

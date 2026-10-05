@@ -296,10 +296,11 @@
     "isolation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "allow_unisolated", "container", "limits"],
+      "required": ["provider", "allow_unisolated", "container", "limits", "require_resource_limits"],
       "properties": {
         "provider": { "enum": ["sandbox-runtime", "container", "none"] },
         "allow_unisolated": { "type": "boolean" },
+        "require_resource_limits": { "type": "boolean" },
         "container": {
           "oneOf": [
             { "type": "null" },

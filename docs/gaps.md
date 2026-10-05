@@ -8,13 +8,52 @@ changed in the last two waves. Each gap is listed once, with the requirement
 ids it covers. Gap ids carry over from earlier audits where the gap is the
 same; new ids start at G55.
 
-Closed since the previous version of this file, each with the test or
+Closed since the previous versions of this file, each with the test or
 measurement that proves it:
+
+- G50 (named release environment): `orbit run --environment <name>` stores the
+  name on the run (`runs.environment`, migration 4) and in the contract as
+  `delivery.environment`; `controller/gates.ts:intakeGate` refuses a name the
+  release profile does not define, and `delivery/release.ts` deploys only the
+  named environment and refuses it before the merge when it is undefined or not
+  allowed for the deployed branch. Tests: U/cli/run-environment.test.ts,
+  U/contract/release-environment.test.ts, U/controller/gates.test.ts "the
+  release environment a run names (G50)", U/delivery/coverage-release.test.ts "a
+  named environment is refused before anything is merged (G50)",
+  I/controller/release-deploy.test.ts "a run that names its environment
+  (orbit run --environment) deploys only that one", "a named environment the base
+  branch is not allowed for blocks the release before the pull request is merged"
+  and "a run that names an environment the release profile does not define is
+  refused at intake".
+- G55 (baseline exception approved mid-run): `controller/steps/verifying.ts`
+  applies any approved, unapplied baseline-exception answer before it judges
+  the evidence. Test: U/inquisition/baseline-exception-run.test.ts "an approval
+  recorded after planning, whose apply step never ran, is applied when
+  VERIFYING starts".
+- G56 (rebased candidate that fails verification): I/controller/base-conflict.test.ts
+  "a rebased candidate that then fails verification goes to DIAGNOSING and is
+  never pushed" (a test only; the behaviour was already right).
+- G57 (per-file coverage floor and saturation probe):
+  `scripts/check-coverage-floor.mjs` runs after vitest in
+  `npm run test:coverage` and fails with the files under 80% lines
+  (U/scripts/coverage-floor.test.ts); F/saturation.test.ts passes its saturated
+  probe through `ControllerDeps.schedulerProbe` and no longer mocks `node:os`,
+  and `labDeps` defaults to `FIXED_PROBE`. What is left of G57 is the journal
+  entry, below.
+- G24 (`isolation.require_resource_limits`): when true, `environmentGate` blocks
+  a run whose provider cannot enforce a configured limit and `orbit doctor`
+  fails with the same message (`isolation/limits.ts:unenforcedLimits`). Tests:
+  U/controller/gates.test.ts "environmentGate: isolation.require_resource_limits
+  (G24)", U/isolation/limits.test.ts "unenforcedLimits and
+  resourceLimitRefusals", U/cli/coverage-doctor-system.test.ts "fails when
+  isolation.require_resource_limits is true", U/policy/config.test.ts,
+  I/controller/require-resource-limits.test.ts. What is left of G24 is the Linux
+  hard cap, below.
 
 - G40 (coverage): `vitest.config.ts` now restricts coverage to `src/**`,
   reports on failure and enforces lines 95, functions 95, statements 95 and
   branches 90. Measured totals: lines 99.68%, functions 99.69%, statements
-  99.11%, branches 96.40%. The lowest file is `src/inquisition/impact.ts` at
+  99.11%, branches 96.39%. The lowest file is `src/inquisition/impact.ts` at
   96.87% lines. The child-process entries (`cli/main.ts`, `cli/hook.ts`,
   `cli/commands/internal.ts`, `adapters/shim.ts`, `adapters/hook-main.ts`,
   `adapters/shim-main.ts`) are covered by in-process entry tests
@@ -39,7 +78,7 @@ Severity:
   still works.
 - **nice**: conformance, hardening or hygiene with little behavioural effect.
 
-Blockers: 1. Should: 0. Nice: 6.
+Blockers: 1. Should: 0. Nice: 3.
 
 ## Blockers
 
@@ -70,40 +109,23 @@ None.
 
 ## Nice
 
-### G24. Memory and process limits: what is left (nice)
+### G24. Memory hard cap under sandbox-runtime on Linux (nice)
 
 Covers S5.28 (done for the default provider). `isolation.limits` is on by
 default (CPU 3600 s, 2048 processes, 2048 MB files, 4096 MB memory) and
 `memory_mb` is enforced under sandbox-runtime by a resident-memory watchdog
 (`isolation/memory.ts`, I/isolation/memory.int.test.ts under the real srt).
-What remains:
+`isolation.require_resource_limits` already refuses a provider that cannot
+enforce a configured limit, and counts the watchdog as no hard cap. What
+remains:
 
-- Add `isolation.require_resource_limits` (default false) to
-  `policy/config.ts`, `schemas/config.schema.json` and `templates/config.yaml`.
-  When true, `controller/gates.ts:environmentGate` refuses a provider that
-  cannot enforce every configured limit and names the missing one. Today the
-  container provider ignores `limits.memory_mb` (it has its own `--memory`)
-  and `none` enforces no memory limit; both say so in their limitations but
-  nothing refuses them. Test: a U/controller/gates.test.ts case per provider,
-  with the key on and off.
 - On Linux, use a hard cap (`systemd-run --user --scope -p MemoryMax=<mb>M`)
   when it is available, in place of the sampling watchdog, which a fast
   allocation between samples can overshoot. Test: the existing
-  I/isolation/memory.int.test.ts on a Linux CI runner.
-
-### G50. A run does not name its release environment (nice)
-
-Covers S15.6 (done). With `environments: 'all'` the controller deploys every
-environment whose `allowed_branches` cover the ref, in profile order, and
-reports the rest as skipped (I/controller/release-deploy.test.ts). No run or
-contract field names the target, so a profile with staging and production
-deploys to both when the branch allows it.
-
-- Add `orbit run --environment <name>` and a contract field
-  `delivery.environment`, validated against `release.environments` at intake
-  (`controller/gates.ts:intakeGate`), and make `delivery/release.ts` deploy
-  only that environment. Tests: an intake refusal for an unknown name, and a
-  release-deploy case where only the named environment runs.
+  I/isolation/memory.int.test.ts on a Linux CI runner. When this lands,
+  `unenforcedLimits` must stop reporting sandbox-runtime for memory on a host
+  where the cap is in use (a U/isolation/limits.test.ts case with the cap
+  available and not).
 
 ### G53. `routing.output_budgets` is an instruction only for Codex (nice)
 
@@ -117,48 +139,10 @@ measured and recorded, and the limitation is disclosed.
   Codex help output for an output-token setting; if one exists, pass it in
   `adapters/codex.ts` and replace the guard test with an argv assertion.
 
-### G55. A baseline exception approved mid-run is applied only at PLANNING and INQUISITION (nice)
+### G57. Testing journal entry for G40 and G49 (nice)
 
-Covers S6.6 (done). `orbit decide` applies an approved baseline exception at
-once (`inquisition/questions.ts:answerQuestion`), and PLANNING and INQUISITION
-retry any answer still unapplied (`applyBaselineExceptionAnswers`). If the
-apply step does not complete after the answer is recorded (the process dies
-between the two), a run already past PLANNING reaches VERIFYING without the
-exception and repairs a failure the person accepted.
-
-- Call `applyBaselineExceptionAnswers` at the start of
-  `controller/steps/verifying.ts` as well. Test: record an "Approve" answer
-  with no applied amendment (insert the answer decision directly), drive the
-  run from IMPLEMENTING, and assert the evidence report accepts the failure
-  and the run does not enter DIAGNOSING.
-
-### G56. No controller test for a rebased candidate that then fails verification (nice)
-
-Covers S14.11 (done). I/controller/base-conflict.test.ts proves a clean rebase
-invalidates the old evidence and verifies and reviews the rebased candidate
-again, and that a conflicting rebase blocks. No test shows a rebased candidate
-that fails its checks going to DIAGNOSING, with the rebase counted against the
-limit of 3 and no push of the failing tree.
-
-- Add a base-conflict case where the moved base breaks a mandatory check
-  (for example a test file on the base that the candidate's change fails), and
-  assert DIAGNOSING, an invalidated first report, no second `push` action
-  until a repaired candidate passes, and one pull request.
-
-### G57. Test-quality hygiene left after G40 and G49 (nice)
-
-- The coverage floor in `docs/testing-journal.md` includes "no file under 80%
-  lines", but `vitest.config.ts` enforces only the global thresholds. Every
-  file is above 96% today, so nothing fails; a regression in one small file
-  would pass. Add a per-file check (a glob threshold with `perFile`, or a short
-  script over `coverage-summary.json` run by `npm run test:coverage`) and a
-  test that a file under the floor fails it.
 - `docs/testing-journal.md` still lists G40 as open with the first
   measurement, and has no entry for the G49 repeat runs. Add an entry with the
   final totals, the four flaky-test root causes, and the repeat runs (full
   suite three times at 4 workers, once at 8 workers, the touched files 4 times
   under 20 CPU burners).
-- F/saturation.test.ts replaces `node:os` `freemem` through a module mock for
-  the two-run controller case. `ControllerDeps.schedulerProbe` already exists
-  (`controller/context.ts`); pass a saturated probe there so the test does not
-  depend on module mocking order.

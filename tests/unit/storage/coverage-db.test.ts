@@ -66,6 +66,18 @@ describe('migrations', () => {
     expect(second.all('SELECT * FROM t2')).toEqual([]);
   });
 
+  it('migration 4 adds runs.environment to a database at schema version 3 and keeps its runs', () => {
+    const path = join(dir, 'v3.db');
+    const old = openDb(path, { migrations: MIGRATIONS.slice(0, 3) });
+    old.run("INSERT INTO runs (id, repo_root, goal, mode, state, policy_hash, policy_path, created_at, updated_at) VALUES ('r1', '/repo', 'g', 'release', 'CREATED', 'sha256:x', '/p', 1, 1)");
+    expect((old.get('PRAGMA user_version') as { user_version: number }).user_version).toBe(3);
+    expect(old.all<{ name: string }>('PRAGMA table_info(runs)').map((c) => c.name)).not.toContain('environment');
+    old.close();
+    const db = track(openDb(path));
+    expect((db.get('PRAGMA user_version') as { user_version: number }).user_version).toBe(MIGRATIONS.length);
+    expect(db.get('SELECT environment FROM runs WHERE id = ?', 'r1')).toEqual({ environment: null });
+  });
+
   it('refuses a database written by a newer Orbit and leaves it untouched', () => {
     const path = join(dir, 'newer.db');
     openDb(path, { migrations: [T1, T2] }).close();

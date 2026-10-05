@@ -22,7 +22,7 @@
     "test:acceptance": "vitest run tests/acceptance",
     "validate:plugin": "claude plugin validate . --strict",
     "verify": "npm run typecheck && npm run check:dist && npm test && npm run validate:plugin",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage && node scripts/check-coverage-floor.mjs"
   },
   "devDependencies": {
     "@anthropic-ai/sandbox-runtime": "^0.0.78",

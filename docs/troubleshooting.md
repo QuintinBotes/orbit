@@ -23,6 +23,7 @@ degraded but usable.
 | `isolation` | sandbox-runtime unavailable | Install `srt` (`npm install --global @anthropic-ai/sandbox-runtime`); on Linux install bubblewrap. Orbit will not fall back to weaker isolation. |
 | `isolation` | container image not present locally | `docker pull <image>`. Containers run with `--pull never`. Make sure the Docker daemon is running. |
 | `isolation` | `none` provider warning | Workers run with your full permissions. Use `sandbox-runtime` or `container`. |
+| `isolation` | `isolation.require_resource_limits is true but ... cannot enforce isolation.limits.memory_mb` | The provider has no hard memory cap. Use `isolation.provider: container` with `container.memory_mb` no higher than `limits.memory_mb`, set `limits.memory_mb: null`, or set `require_resource_limits: false`. |
 | `claude.cli` | claude not usable | Install Claude Code and put it on PATH, or set `providers.claude.command`. Sonnet 5.5 needs 2.1.284 or newer. |
 | `claude.auth` | credentials expired, invalid or missing | `claude auth login`, or export `ANTHROPIC_API_KEY`, or `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`. For the service, make the variable visible to it (see [operations](operations.md#installing-the-service)). Then `orbit resume <run-id>`. |
 | `claude.worker-tier` | workers use the `claude-sandbox` tier | No exported Claude credential, or not using sandbox-runtime. Export `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` and use `isolation.provider: sandbox-runtime` for the `os-sandbox` tier. |

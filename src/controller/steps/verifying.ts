@@ -15,6 +15,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { sha256 } from '../../core/hash.ts';
 import { OrbitError } from '../../core/errors.ts';
+import { applyBaselineExceptionAnswers } from '../../inquisition/baseline-exception.ts';
 import { inspectScope } from '../../policy/scope.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../../evidence/candidate.ts';
 import { git } from '../../evidence/git.ts';
@@ -37,6 +38,11 @@ import { recordGate } from './preflight.ts';
 export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
   const stop = await safePoint(ctx);
   if (stop) return stop;
+  // An exception a person approved whose apply step never completed (the process died between recording the answer
+  // and applying it) is part of the contract before any evidence is judged against it; otherwise a failure the
+  // person accepted would be repaired.
+  const exceptions = applyBaselineExceptionAnswers({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { snapshot: ctx.snapshot });
+  if (exceptions.contract) ctx.contract = exceptions.contract;
   const contract = assertContract(ctx);
   const cand = ctx.candidate;
   if (!cand) throw new OrbitError('INTERNAL', `run ${ctx.run.id} is VERIFYING without a candidate`);

@@ -23,6 +23,14 @@
 - `isolation.limits` is on by default (CPU 3600 s, 2048 processes, 2048 MB
   files, 4096 MB memory). The process default is high because the limit counts
   every process of the user id.
+- `orbit run --environment <name>` (release mode) deploys only that
+  environment; the name is kept in the contract as `delivery.environment` and
+  is refused when the release profile does not define it or does not allow it
+  for the deployed branch, before anything is merged.
+- `isolation.require_resource_limits` (default false) refuses a provider that
+  cannot enforce a configured limit, at preflight and in `orbit doctor`.
+- An approved baseline exception is also applied when VERIFYING starts, and
+  `npm run test:coverage` enforces an 80% per-file lines floor.
 - The baseline gate lists base-revision dependency audit findings.
 - Documented every CLI command and flag, including `verify`, `repair`, `stats`
   and `gc`, release mode safeguards, and resource limits per isolation provider.

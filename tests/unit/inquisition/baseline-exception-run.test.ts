@@ -6,9 +6,10 @@ import { loadRunContext, type ControllerDeps } from '../../../src/controller/con
 import { acquireLease } from '../../../src/controller/run-store.ts';
 import { step } from '../../../src/controller/steps/index.ts';
 import { listEvidenceReports } from '../../../src/evidence/store.ts';
+import { answerDecisionId } from '../../../src/inquisition/actors.ts';
 import { answerQuestion } from '../../../src/inquisition/questions.ts';
-import { listAmendments, listQuestions } from '../../../src/inquisition/store.ts';
-import { listDecisions } from '../../../src/storage/decisions.ts';
+import { listAmendments, listQuestions, setQuestionAnswer } from '../../../src/inquisition/store.ts';
+import { listDecisions, recordDecision } from '../../../src/storage/decisions.ts';
 import { baseScenario, implementMul, labDeps, makeLab, runState, startLabRun, writeScenario, type Lab } from '../../integration/controller/harness.ts';
 
 const canStripTypes = Boolean((process as unknown as { features?: { typescript?: unknown } }).features?.typescript);
@@ -76,5 +77,56 @@ describe.skipIf(!canStripTypes)('a baseline failure becomes a decision, and an a
     const final = JSON.parse(readFileSync(join(runDir, 'final.json'), 'utf8')) as { unverified: string[]; decisions: { kind: string }[] };
     expect(final.unverified.join('\n')).toMatch(/baseline exception; accepted/);
     expect(final.decisions.map((d) => d.kind)).toEqual(expect.arrayContaining(['baseline.exception-request', 'contract.baseline-exception']));
+  }, 180_000);
+  it('an approval recorded after planning, whose apply step never ran, is applied when VERIFYING starts (G55): the failure is accepted and the run never enters DIAGNOSING', async () => {
+    const l = makeLab({
+      files: { 'tools/legacy-check.mjs': LEGACY },
+      tweak: (c) => {
+        c.checks.legacy = { ...c.checks.unit!, id: 'legacy', command: [process.execPath, 'tools/legacy-check.mjs'], mandatory: true };
+      },
+    });
+    labs.push(l);
+    writeScenario(l, baseScenario({ implementer: [implementMul('*')] }));
+    const run = startLabRun(l);
+    const deps: ControllerDeps = { ...labDeps(l), ownerId: 'controller-a' };
+    acquireLease(l.db(), run.id, 'controller-a', 3_600_000, systemClock);
+    const signal = new AbortController().signal;
+
+    // Drive to IMPLEMENTING: PLANNING has run, so it did not see an answer (there was none), and VERIFYING has not.
+    for (let i = 0; i < 1_200 && runState(l, run.id).state !== 'IMPLEMENTING'; i++) {
+      await step(deps, run.id, signal);
+      if (runState(l, run.id).state !== 'IMPLEMENTING') await sleep(25);
+    }
+    expect(runState(l, run.id).state).toBe('IMPLEMENTING');
+    expect(loadRunContext(deps, run.id, signal).contract!.baseline_exceptions).toBeUndefined();
+
+    // The person's answer is recorded (the row and the decision), but the process died before the apply step ran.
+    const req = listDecisions(l.db(), run.id, { kind: 'baseline.exception-request' })[0]!.data as { question_id: string };
+    const runDir = join(l.repo, '.orbit', 'runs', run.id);
+    setQuestionAnswer(l.db(), req.question_id, 'Approve', 'alice', systemClock);
+    recordDecision(
+      l.db(),
+      runDir,
+      { id: answerDecisionId(req.question_id), runId: run.id, kind: 'inquisition.answer', summary: 'chose "Approve"', data: { question_id: req.question_id, answer: 'Approve', chosen_option: 'Approve', free_text: false, answered_by: 'alice', material: false, affected: [] } },
+      systemClock,
+      { actor: 'alice' },
+    );
+    expect(listAmendments(l.db(), run.id, { status: 'applied' })).toEqual([]);
+    expect(loadRunContext(deps, run.id, signal).contract!.baseline_exceptions).toBeUndefined();
+
+    const states = new Set<string>();
+    for (let i = 0; i < 2_400 && !['SUCCEEDED', 'BLOCKED', 'EXHAUSTED', 'IMPOSSIBLE', 'CANCELLED'].includes(runState(l, run.id).state); i++) {
+      await step(deps, run.id, signal);
+      states.add(runState(l, run.id).state);
+      await sleep(25);
+    }
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(states.has('DIAGNOSING')).toBe(false);
+    expect(listAmendments(l.db(), run.id, { status: 'applied' }).map((a) => a.record.field)).toEqual(['baseline_exceptions']);
+    const reports = listEvidenceReports(l.db(), run.id);
+    expect(reports).toHaveLength(1);
+    expect(reports[0]?.verdict).toBe('PASS');
+    expect(reports[0]?.report.unverified.join('\n')).toMatch(/baseline exception; accepted/);
   }, 180_000);
 });

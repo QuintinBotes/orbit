@@ -10,7 +10,7 @@ import { listDecisions } from '../../../src/storage/decisions.ts';
 import { FakeGitHub } from '../../../src/delivery/github.ts';
 import { listCandidates, listEvidenceReports } from '../../../src/evidence/store.ts';
 import { readJsonIfExists } from '../../../src/core/fsx.ts';
-import { baseScenario, git, implementMul, labDeps, makeLab, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
+import { baseScenario, DIAGNOSIS, git, implementMul, labDeps, makeLab, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
 
 const canStripTypes = Boolean((process as unknown as { features?: { typescript?: unknown } }).features?.typescript);
 
@@ -113,6 +113,57 @@ describe.skipIf(!canStripTypes)('controller: a moved base branch', () => {
     // The run's own base revision followed the rebase.
     expect(done.baseRevision).toBe(moved);
   }, 180_000);
+
+  it('a rebased candidate that then fails verification goes to DIAGNOSING and is never pushed: only the repaired candidate is delivered, to one pull request (S14.11, G56)', async () => {
+    const { l, remote } = deliveryLab(true);
+    // The first candidate multiplies with `*`; the repair keeps -0 out of the result, which the moved base requires.
+    const repaired = {
+      edits: [{ op: 'write', path: 'apps/calc.mjs', content: 'export const add = (a, b) => a + b;\nexport const mul = (a, b) => (a * b) || 0;\n' }],
+      structured: { ...(implementMul('*') as { structured: object }).structured, summary: 'mul no longer returns negative zero' },
+    };
+    writeScenario(l, baseScenario({ implementer: [implementMul('*'), repaired], verifier: [DIAGNOSIS] }));
+    const run = startLabRun(l);
+    // The moved base adds a mandatory test the reviewed candidate fails: mul(-1, 0) must be 0, not -0. On the base itself
+    // (no mul yet) it passes, and it merges cleanly with the candidate, so only verification can tell.
+    const baseTest = "import * as calc from '../apps/calc.mjs';\nif (typeof calc.mul === 'function' && !Object.is(calc.mul(-1, 0), 0)) { console.error('mul(-1, 0) expected 0, got -0'); process.exit(1); }\n";
+    const moved = moveRemoteBase(l, remote, 'tests/zz-base.test.mjs', baseTest);
+    await new Controller({ mode: 'foreground', runId: run.id, deps: labDeps(l), tickIntervalMs: 20, graceMs: 300 }).start();
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(done.baseRevision).toBe(moved);
+
+    // One rebase (counted against the limit of 3), and the rebased candidate failed its mandatory check.
+    expect(listDecisions(l.db(), run.id, { kind: 'delivery.rebased' })).toHaveLength(1);
+    const cands = listCandidates(l.db(), run.id);
+    expect(cands).toHaveLength(3);
+    expect(cands[1]!.parentSha).toBe(moved);
+    expect(git(l.repo, 'show', `${cands[1]!.commitSha}:tests/zz-base.test.mjs`)).toContain('Object.is');
+    const reports = listEvidenceReports(l.db(), run.id);
+    expect(reports).toHaveLength(3);
+    expect(reports[0]!.invalidatedAt).not.toBeNull();
+    expect(reports[1]).toMatchObject({ treeHash: cands[1]!.treeHash, verdict: 'FAIL' });
+    expect(reports[1]!.report.checks.find((c) => c.id === 'unit')?.status).toBe('FAILED');
+    expect(reports[2]).toMatchObject({ treeHash: cands[2]!.treeHash, verdict: 'PASS', invalidatedAt: null });
+
+    // The run went from the rebase to VERIFYING, then DIAGNOSING, and only then into REPAIRING.
+    const path = l.db().all<{ to_state: string; type: string }>("SELECT to_state, type FROM events WHERE run_id = ? AND type IN ('state.transition', 'delivery.rebased') ORDER BY rowid", run.id);
+    const afterRebase = path.slice(path.findIndex((e) => e.type === 'delivery.rebased')).filter((e) => e.type === 'state.transition').map((e) => e.to_state);
+    expect(afterRebase.slice(0, 3)).toEqual(['VERIFYING', 'DIAGNOSING', 'REPAIRING']);
+
+    // Two pushes: the first candidate, then the repaired one. The failing rebased tree was never pushed.
+    const pushes = l.db().all<{ commit_sha: string }>("SELECT commit_sha FROM actions WHERE run_id = ? AND kind = 'push' AND state = 'SUCCEEDED' ORDER BY created_at, rowid", run.id).map((r) => r.commit_sha);
+    expect(pushes).toHaveLength(2);
+    const pushedTrees = pushes.map((sha) => git(l.repo, 'rev-parse', `${sha}^{tree}`));
+    expect(pushedTrees).toEqual([cands[0]!.treeHash, cands[2]!.treeHash]);
+    expect(pushedTrees).not.toContain(cands[1]!.treeHash);
+    const delivery = readJsonIfExists<{ commit: string; tree: string; branch: string }>(join(l.repo, '.orbit', 'runs', run.id, 'delivery.json'))!;
+    expect(delivery.tree).toBe(cands[2]!.treeHash);
+    expect(git(remote, 'rev-parse', `refs/heads/${delivery.branch}`)).toBe(delivery.commit);
+    const state = new FakeGitHub({ statePath: join(l.repo, '.orbit', 'fake-github.json') }).state as unknown as { creates: number; prs: unknown[] };
+    expect(state.creates).toBe(1);
+    expect(state.prs).toHaveLength(1);
+  }, 240_000);
 
   it('with the permission, a base that moved into a conflict blocks with the conflicting paths and rebases nothing', async () => {
     const { l, remote } = deliveryLab(true);

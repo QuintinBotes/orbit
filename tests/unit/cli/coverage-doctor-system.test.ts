@@ -550,6 +550,22 @@ describe('isolation', () => {
     expect(c.isolation!.details.length).toBeGreaterThan(3);
   });
 
+  it('fails when isolation.require_resource_limits is true and the provider cannot enforce a configured limit, naming it and the way out (G24)', async () => {
+    const w = world();
+    const strict = (c: OrbitConfig) => void (c.isolation.require_resource_limits = true);
+    hooks.isolation = () => fakeIsolation('sandbox-runtime', true, 'srt 1.2 and seatbelt');
+    const srt = await doctor(w, { config: cfg((c) => { c.isolation.provider = 'sandbox-runtime'; strict(c); }) });
+    expect(srt.isolation).toMatchObject({ status: 'fail', missing: expect.stringContaining('enforces every configured isolation limit'), fix: expect.stringContaining('set isolation.limits.memory_mb to null') });
+    expect(srt.isolation!.summary).toMatch(/^isolation\.require_resource_limits is true but sandbox-runtime cannot enforce isolation\.limits\.memory_mb \(4096 MB\)/);
+    expect(srt.isolation!.details.some((d) => d.startsWith('refused: isolation.require_resource_limits'))).toBe(true);
+    // The key off, or the memory limit off, is a pass again.
+    expect((await doctor(w, { config: cfg((c) => { c.isolation.provider = 'sandbox-runtime'; }) })).isolation!.status).toBe('pass');
+    expect((await doctor(w, { config: cfg((c) => { c.isolation.provider = 'sandbox-runtime'; strict(c); c.isolation.limits = { ...c.isolation.limits!, memory_mb: null }; }) })).isolation!.status).toBe('pass');
+    hooks.isolation = () => fakeIsolation('none', true, 'not isolated');
+    const none = await doctor(w, { config: cfg(strict) });
+    expect(none.isolation).toMatchObject({ status: 'fail', summary: expect.stringContaining('none cannot enforce isolation.limits.memory_mb') });
+  });
+
   it('checks that the container image is present locally, and says how to get it', async () => {
     const w = world();
     hooks.isolation = () => fakeIsolation('container', true, 'docker 27 running');

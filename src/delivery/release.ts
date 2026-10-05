@@ -208,6 +208,26 @@ export async function performRelease(input: ReleaseInput): Promise<ReleaseResult
     if (config.delivery.provider === 'github') requireAllowed(authorize(snapshot, { kind: 'network', host: 'api.github.com' }), 'reaching the pull request API');
   };
 
+  const requested = requestedEnvironments(input, release);
+  const definedEnvironment = (envName: string): ReleaseEnvironment => {
+    if (!ENV_NAME.test(envName) || !Object.hasOwn(release.environments, envName)) {
+      deny('release.environment', `release environment ${JSON.stringify(envName)} is not defined in the release profile (defined: ${Object.keys(release.environments).join(', ') || 'none'})`);
+    }
+    return release.environments[envName]!;
+  };
+  const allowedOn = (env: ReleaseEnvironment, onBranch: string): boolean => env.allowed_branches.length > 0 && picomatch(env.allowed_branches, { dot: true })(onBranch);
+  const notAllowed = (envName: string, env: ReleaseEnvironment, onBranch: string): string => `environment ${envName} may not be deployed from ${onBranch} (allowed: ${env.allowed_branches.join(', ') || 'none'})`;
+
+  // A named environment is refused before anything is merged: one that is not defined, or that the branch the deploy
+  // would come from is not allowed for, must not leave a merged pull request behind a refused release.
+  if (requested.strict && requested.names.length > 0) {
+    requireAllowed(authorize(snapshot, { kind: 'action', action: 'deploy_production' }), 'deploying');
+    const planned = input.contractMerge ? baseBranch : branch;
+    for (const envName of requested.names) {
+      if (!allowedOn(definedEnvironment(envName), planned)) deny('release.allowed_branches', notAllowed(envName, release.environments[envName]!, planned));
+    }
+  }
+
   // ---- merge ------------------------------------------------------------
   let merge: MergeReceipt | null = null;
   let mergeSkipped: string | null = null;
@@ -281,7 +301,6 @@ export async function performRelease(input: ReleaseInput): Promise<ReleaseResult
   // ---- deploy -----------------------------------------------------------
   const deploys: DeployReceipt[] = [];
   const skipped: string[] = [];
-  const requested = requestedEnvironments(input, release);
   if (requested.names.length === 0) {
     skipped.push(requested.none);
   } else {
@@ -294,13 +313,9 @@ export async function performRelease(input: ReleaseInput): Promise<ReleaseResult
       // After a merge the base branch carries the release; without one, the task branch at the delivered commit.
       const target = merge ? { branch: merge.baseBranch, sha: merge.mergeCommitSha } : { branch, sha: commit };
       for (const envName of requested.names) {
-        if (!ENV_NAME.test(envName) || !Object.hasOwn(release.environments, envName)) {
-          deny('release.environment', `release environment ${JSON.stringify(envName)} is not defined in the release profile (defined: ${Object.keys(release.environments).join(', ') || 'none'})`);
-        }
-        const env = release.environments[envName]!;
-        const allowedHere = env.allowed_branches.length > 0 && picomatch(env.allowed_branches, { dot: true })(target.branch);
-        if (!allowedHere) {
-          if (requested.strict) deny('release.allowed_branches', `environment ${envName} may not be deployed from ${target.branch} (allowed: ${env.allowed_branches.join(', ') || 'none'})`);
+        const env = definedEnvironment(envName);
+        if (!allowedOn(env, target.branch)) {
+          if (requested.strict) deny('release.allowed_branches', notAllowed(envName, env, target.branch));
           skipped.push(`environment ${envName} is not deployed from ${target.branch} (allowed: ${env.allowed_branches.join(', ') || 'none'})`);
           continue;
         }

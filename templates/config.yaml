@@ -284,6 +284,13 @@ isolation:
     max_processes: 2048
     max_file_mb: 2048
     memory_mb: 4096
+  # When true, a run is refused if the provider cannot enforce every limit
+  # above that is not null, instead of running with the gap noted in the
+  # evidence. sandbox-runtime has no hard memory cap (its watchdog samples),
+  # none enforces no memory limit, and container enforces
+  # container.memory_mb, which then may not exceed limits.memory_mb. Set
+  # memory_mb to null, or use the container provider, to satisfy it.
+  require_resource_limits: false
 
 providers:
   claude:

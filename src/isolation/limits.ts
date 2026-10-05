@@ -1,5 +1,6 @@
 import { OrbitError } from '../core/errors.ts';
-import type { IsolationLimits } from '../policy/types.ts';
+import { isolationLimits } from '../policy/config.ts';
+import type { IsolationLimits, OrbitConfig } from '../policy/types.ts';
 import { isExecutableFile } from './util.ts';
 
 /**
@@ -37,6 +38,47 @@ export function hasLimits(limits: IsolationLimits | null | undefined): limits is
 
 export function hasMemoryLimit(limits: IsolationLimits | null | undefined): limits is IsolationLimits & { memory_mb: number } {
   return !!limits && limits.memory_mb !== null && limits.memory_mb !== undefined;
+}
+
+/** A configured limit the provider cannot enforce as configured, and why. */
+export interface UnenforcedLimit {
+  limit: keyof IsolationLimits;
+  /** The configured value. */
+  configured: number;
+  reason: string;
+}
+
+/**
+ * The configured limits a provider cannot enforce (`isolation.require_resource_limits`). CPU time, process count
+ * and file size are set with ulimit (sandbox-runtime, none) or docker --ulimit (container) by every provider, and
+ * wrapping fails closed when bash is missing, so they are always enforced. Memory is the one that differs:
+ * sandbox-runtime has only the sampling watchdog, which a fast allocation can overshoot and which is no hard cap;
+ * `none` enforces nothing; the container provider ignores `limits.memory_mb` and enforces its own hard
+ * `container.memory_mb`, which counts only when it is no higher than the configured limit. A limit set to null is
+ * not configured and never reported.
+ */
+export function unenforcedLimits(kind: 'sandbox-runtime' | 'container' | 'none', limits: IsolationLimits, container: { memory_mb: number } | null): UnenforcedLimit[] {
+  if (!hasMemoryLimit(limits)) return [];
+  const configured = limits.memory_mb;
+  const none = (reason: string): UnenforcedLimit[] => [{ limit: 'memory_mb', configured, reason }];
+  if (kind === 'sandbox-runtime') return none('sandbox-runtime has no hard memory cap: its watchdog only samples resident memory, so a fast allocation can overshoot the limit');
+  if (kind === 'none') return none('isolation provider none enforces no memory limit');
+  if (container === null) return none('the container provider has no isolation.container section, so no memory cap is set');
+  if (container.memory_mb > configured) return none(`the container provider ignores isolation.limits.memory_mb and enforces isolation.container.memory_mb (${container.memory_mb} MB), which is higher`);
+  return [];
+}
+
+/** What to do about a refusal under `isolation.require_resource_limits`; shown by the environment gate and by `orbit doctor`. */
+export const RESOURCE_LIMIT_FIX = 'use isolation.provider "container" with isolation.container.memory_mb no higher than isolation.limits.memory_mb, set isolation.limits.memory_mb to null to run without a memory limit, or set isolation.require_resource_limits to false';
+
+/**
+ * One sentence per configured limit the provider cannot enforce, when the policy sets
+ * `isolation.require_resource_limits`; empty when it does not, or when every configured limit is enforced.
+ */
+export function resourceLimitRefusals(isolation: OrbitConfig['isolation'], kind: 'sandbox-runtime' | 'container' | 'none'): string[] {
+  if (isolation.require_resource_limits !== true) return [];
+  const limits = isolationLimits({ isolation });
+  return unenforcedLimits(kind, limits, isolation.container).map((u) => `isolation.require_resource_limits is true but ${kind} cannot enforce isolation.limits.${u.limit} (${u.configured} MB): ${u.reason}`);
 }
 
 /** Plain words for the evidence record: what the ulimit wrapper enforces. */

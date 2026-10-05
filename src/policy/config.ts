@@ -176,7 +176,7 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
     verification: { allow_flaky_pass: false },
     checks: {},
     ui: null,
-    isolation: { provider: 'sandbox-runtime', allow_unisolated: false, container: null, limits: defaultIsolationLimits() },
+    isolation: { provider: 'sandbox-runtime', allow_unisolated: false, container: null, limits: defaultIsolationLimits(), require_resource_limits: false },
     providers: {
       // Running Orbit at all sends code to Claude, so the Claude adapter is eligible by default.
       claude: defaultProvider('claude', true),

@@ -46,6 +46,8 @@ export interface StartRunInput {
   clock?: Clock;
   runId?: string;
   actor?: string;
+  /** The release environment this run deploys to (a key of `release.environments`); checked by the intake gate. */
+  environment?: string | null;
 }
 
 export function startRun(input: StartRunInput): RunRecord {
@@ -54,7 +56,7 @@ export function startRun(input: StartRunInput): RunRecord {
   const id = input.runId ?? newRunId(clock.now());
   const runDir = join(orbitDir(repoRoot), 'runs', id);
   const snap = snapshotPolicy(input.config, { runId: id, repoRoot, runDir, clock });
-  return createRun(input.db, { id, repoRoot, goal: input.goal, mode: input.config.mode, policyHash: snap.hash, policyPath: snap.path }, clock, input.actor ?? 'cli');
+  return createRun(input.db, { id, repoRoot, goal: input.goal, mode: input.config.mode, policyHash: snap.hash, policyPath: snap.path, ...(input.environment ? { environment: input.environment } : {}) }, clock, input.actor ?? 'cli');
 }
 
 export interface DefaultDepsInput {

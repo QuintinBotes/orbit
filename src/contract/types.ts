@@ -59,7 +59,15 @@ export interface GoalContract {
   practices?: PracticeSelection[];
   /** Optional: documented pre-existing failures the evidence report may accept. */
   baseline_exceptions?: BaselineException[];
-  delivery: { draft_pr: boolean; merge: boolean };
+  delivery: {
+    draft_pr: boolean;
+    merge: boolean;
+    /**
+     * Optional: the one release environment this run deploys to (a key of the policy's `release.environments`, set by
+     * `orbit run --environment`). Absent, release mode deploys every defined environment the deployed branch is allowed for.
+     */
+    environment?: string;
+  };
   /** Filled at run start from the policy snapshot. */
   policy_hash: string;
   baseline_revision: string;

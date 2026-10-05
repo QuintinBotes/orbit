@@ -84,7 +84,7 @@ From inside Claude Code the same flow is available as skills:
 |---|---|
 | `orbit doctor [--probe]` | Check every capability a run depends on. `--probe` makes live requests. |
 | `orbit init` | Write `.orbit/config.yaml` from the starter template. |
-| `orbit run --goal <text>` | Freeze the policy and start a run (`--mode`, `--policy`, `--foreground`, `--detach`). |
+| `orbit run --goal <text>` | Freeze the policy and start a run (`--mode`, `--environment`, `--policy`, `--foreground`, `--detach`). |
 | `orbit status [run-id]` | State, stage, attempts, budgets, workers, questions, heartbeat. |
 | `orbit logs <run-id>` | Controller and worker logs, redacted (`--follow`, `--lines`, `--controller`, `--workers`, `--worker`). |
 | `orbit verify [run-id]` | Independent verification of a run's latest candidate: a verdict per criterion with its evidence. Exit 14 for FAIL, 15 for INCOMPLETE. |

@@ -148,6 +148,57 @@ describe.skipIf(!canStripTypes)('controller: release mode deploys', () => {
     expect(release.deploy_skipped).toMatch(/environment preview is not deployed from main/);
   }, 120_000);
 
+  it('a run that names its environment (orbit run --environment) deploys only that one; the contract carries the name (G50)', async () => {
+    const mark = markFile();
+    const { l } = releaseLab({ staging: env(record(mark)), canary: env(record(mark)) });
+    writeScenario(l, baseScenario({ implementer: [implementMul('*')] }));
+    const run = startLabRun(l, undefined, { environment: 'canary' });
+    expect(run.environment).toBe('canary');
+    await withMergeRequested(l, run.id);
+    expect((JSON.parse(runState(l, run.id).contractJson!) as { delivery: { environment?: string } }).delivery.environment).toBe('canary');
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    const release = releaseFile(l, run.id);
+    const sha = release.merge!.merge_commit;
+    expect(release.deploys).toEqual([{ environment: 'canary', sha, branch: 'main' }]);
+    expect(release.deploy_skipped).toBeNull();
+    expect(lines(mark)).toEqual([`canary ${sha}`]);
+    expect(l.db().all<{ target_json: string }>("SELECT target_json FROM actions WHERE run_id = ? AND kind = 'deploy'", run.id).map((a) => (JSON.parse(a.target_json) as { environment: string }).environment)).toEqual(['canary']);
+  }, 120_000);
+
+  it('a named environment the base branch is not allowed for blocks the release before the pull request is merged (G50)', async () => {
+    const mark = markFile();
+    const { l, remote } = releaseLab({ staging: env(record(mark)), preview: env(record(mark), { allowed_branches: ['orbit/*'] }) });
+    writeScenario(l, baseScenario({ implementer: [implementMul('*')] }));
+    const run = startLabRun(l, undefined, { environment: 'preview' });
+    await withMergeRequested(l, run.id);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
+    expect(done.outcomeReason).toMatch(/release refused: environment preview may not be deployed from main \(allowed: orbit\/\*\)/);
+    expect(fakeState(l).prs.map((p) => p.state)).toEqual(['OPEN']);
+    expect(git(remote, 'log', '--format=%s', 'refs/heads/main')).toBe('base');
+    expect(lines(mark)).toEqual([]);
+    expect(l.db().all<{ kind: string }>("SELECT kind FROM actions WHERE run_id = ? AND kind IN ('merge', 'deploy')", run.id)).toEqual([]);
+  }, 120_000);
+
+  it('a run that names an environment the release profile does not define is refused at intake, before any worker starts (G50)', async () => {
+    const mark = markFile();
+    const { l } = releaseLab({ staging: env(record(mark)) });
+    writeScenario(l, baseScenario({ implementer: [implementMul('*')] }));
+    const run = startLabRun(l, undefined, { environment: 'production' });
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state).toBe('BLOCKED');
+    expect(done.outcomeReason).toMatch(/intake gate: the run names release environment "production", which cannot be used: "production" is not defined in release\.environments \(defined: staging\)/);
+    expect(l.db().all('SELECT id FROM workers WHERE run_id = ?', run.id)).toEqual([]);
+    expect(lines(mark)).toEqual([]);
+  }, 120_000);
+
   it('a deploy that timed out is settled by the environment\'s verify_command before anyone is asked: deployed means adopted, never run twice', async () => {
     const mark = markFile();
     const { l } = releaseLab({

@@ -28,6 +28,8 @@ export interface RunRecord {
   worktreePath: string | null;
   difficulty: string | null;
   difficultyJson: string | null;
+  /** The release environment the run was started for (`orbit run --environment`); null when it names none. */
+  environment: string | null;
   outcomeReason: string | null;
   outcomeJson: string | null;
   paused: boolean;
@@ -57,6 +59,7 @@ interface RunRow {
   worktree_path: string | null;
   difficulty: string | null;
   difficulty_json: string | null;
+  environment: string | null;
   outcome_reason: string | null;
   outcome_json: string | null;
   paused: number;
@@ -88,6 +91,7 @@ function toRecord(r: RunRow): RunRecord {
     worktreePath: r.worktree_path,
     difficulty: r.difficulty,
     difficultyJson: r.difficulty_json,
+    environment: r.environment ?? null,
     outcomeReason: r.outcome_reason,
     outcomeJson: r.outcome_json,
     paused: r.paused === 1,
@@ -108,24 +112,27 @@ export interface NewRun {
   mode: RunMode;
   policyHash: string;
   policyPath: string;
+  /** The release environment the run names; validated by the caller against the policy. */
+  environment?: string | null;
 }
 
 export function createRun(db: OrbitDb, input: NewRun, clock: Clock, actor = 'cli'): RunRecord {
   const now = clock.now();
   return db.tx(() => {
     db.run(
-      `INSERT INTO runs (id, repo_root, goal, mode, state, policy_hash, policy_path, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'CREATED', ?, ?, ?, ?)`,
+      `INSERT INTO runs (id, repo_root, goal, mode, state, policy_hash, policy_path, environment, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'CREATED', ?, ?, ?, ?, ?)`,
       input.id,
       input.repoRoot,
       input.goal,
       input.mode,
       input.policyHash,
       input.policyPath,
+      input.environment ?? null,
       now,
       now,
     );
-    appendEvent(db, input.id, 'run.created', actor, { mode: input.mode, policy_hash: input.policyHash }, now, null, 'CREATED');
+    appendEvent(db, input.id, 'run.created', actor, { mode: input.mode, policy_hash: input.policyHash, ...(input.environment ? { environment: input.environment } : {}) }, now, null, 'CREATED');
     return getRun(db, input.id);
   });
 }

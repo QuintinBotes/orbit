@@ -25,7 +25,8 @@ import { json, line, oneLine } from '../io.ts';
 import { driveForeground } from './drive.ts';
 import { RUN_OPTIONS, runCommand } from './run.ts';
 
-const { goal: _goal, ...RUN_OPTIONS_WITHOUT_GOAL } = RUN_OPTIONS;
+// A repair does not pick a release environment, so repair has no --environment option.
+const { goal: _goal, environment: _environment, ...RUN_OPTIONS_WITHOUT_GOAL } = RUN_OPTIONS;
 
 export const REPAIR_OPTIONS: OptionSpec = {
   ...RUN_OPTIONS_WITHOUT_GOAL,

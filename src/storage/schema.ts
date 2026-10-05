@@ -371,4 +371,7 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE reviews ADD COLUMN invalidated_reason TEXT;
   ALTER TABLE hypotheses ADD COLUMN fingerprint TEXT;
   `,
+  /* 4: the release environment a run names (orbit run --environment); null when it names none */ `
+  ALTER TABLE runs ADD COLUMN environment TEXT;
+  `,
 ];

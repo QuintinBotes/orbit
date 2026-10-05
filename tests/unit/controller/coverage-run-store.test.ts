@@ -13,6 +13,18 @@ function fresh(): { db: OrbitDb; clock: ManualClock } {
 const go = (db: OrbitDb, clock: ManualClock, to: Parameters<typeof transition>[1]['to'], extra: Partial<Parameters<typeof transition>[1]> = {}) => transition(db, { runId: 'r1', to, ownerId: 'ctl', reason: 'test', ...extra }, clock);
 const types = (db: OrbitDb): string[] => db.all<{ type: string }>("SELECT type FROM events WHERE run_id = 'r1' ORDER BY id").map((r) => r.type);
 
+describe('the release environment a run names', () => {
+  it('is stored with the run and its created event, and is null when the run names none', () => {
+    const { db, clock } = fresh();
+    expect(getRun(db, 'r1').environment).toBeNull();
+    const named = createRun(db, { id: 'r2', repoRoot: '/repo', goal: 'g', mode: 'release', policyHash: 'sha256:x', policyPath: '/p', environment: 'staging' }, clock);
+    expect(named.environment).toBe('staging');
+    expect(getRun(db, 'r2').environment).toBe('staging');
+    expect(JSON.parse(db.get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = 'r2' AND type = 'run.created'")!.data_json)).toEqual({ mode: 'release', policy_hash: 'sha256:x', environment: 'staging' });
+    expect(JSON.parse(db.get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = 'r1' AND type = 'run.created'")!.data_json)).toEqual({ mode: 'autonomous', policy_hash: 'sha256:x' });
+  });
+});
+
 describe('transition patches and resume', () => {
   it('a blocked run that resumes is live again: end time and outcome are cleared unless the patch sets them', () => {
     const { db, clock } = fresh();

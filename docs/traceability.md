@@ -9,7 +9,7 @@ audit went through spec sections 1 to 21 requirement by requirement, checked
 mechanically that every test cited below exists in the named file under the
 quoted name, and read the tests behind every row that changed in the last two
 waves (among them S3.27, S3.28, S4.3, S5.2, S5.13, S5.28, S6.6, S8.21, S8.27,
-S14.11, S15.5 and S15.6). `npx vitest run --coverage`: 343 test files, 6356
+S14.11, S15.5 and S15.6). `npm run test:coverage`: 347 test files, 6399
 tests passed and 1 skipped (`identity.test.ts`, Linux only), none failing;
 thresholds met and enforced (see "Coverage" at the end). No `it.fails`,
 `it.todo` or `.only` marker remains in `tests/` outside fixtures that test the
@@ -169,7 +169,7 @@ sometimes shortened.
 | S5.25 | Workers cannot modify policy, trusted runner or authorization state | `isolation/profiles.ts`, `policy/builtin.ts` | A/policy-and-evidence.test.ts "scenario 9", F/policy-faults.test.ts | done |
 | S5.26 | Policy expansion needs a separately authorized revision | `contract/amend.ts`, `inquisition/engine.ts:processAmendments` | U/inquisition/engine.test.ts "widening scope beyond the frozen policy is refused outright" | done |
 | S5.27 | Trusted components mounted read-only | `isolation/profiles.ts` (read-only config, policy) | U/isolation/profiles.test.ts "keeps the config dir surfaces that run code on the host read-only" | done |
-| S5.28 | Restrict filesystem, network, CPU, memory, process count, time | srt: fs and network; `isolation/limits.ts` sets `ulimit` CPU time, process count and file size and `isolation/memory.ts` is a resident-memory watchdog around srt; all on by default (`isolation.limits`, null turns one off); the container provider keeps its own memory limit and `none` enforces no memory | U/isolation/limits.test.ts, U/isolation/memory.test.ts, I/isolation/limits.int.test.ts "sets CPU time, process count and file size as hard limits for the command" (macOS only run), I/isolation/memory.int.test.ts "stops a sandboxed command that holds too much memory" (real srt), I/evidence/runner-memory.test.ts, I/isolation/container.int.test.ts, A/demo-shapes.test.ts "demo 1..." (default limits on a busy account) | done |
+| S5.28 | Restrict filesystem, network, CPU, memory, process count, time | srt: fs and network; `isolation/limits.ts` sets `ulimit` CPU time, process count and file size and `isolation/memory.ts` is a resident-memory watchdog around srt; all on by default (`isolation.limits`, null turns one off); the container provider keeps its own memory limit and `none` enforces no memory; `isolation.require_resource_limits` (default false) makes `controller/gates.ts:environmentGate` and `orbit doctor` refuse a provider that cannot enforce a configured limit (`isolation/limits.ts:unenforcedLimits`) | U/isolation/limits.test.ts "unenforcedLimits and resourceLimitRefusals", U/controller/gates.test.ts "environmentGate: isolation.require_resource_limits (G24)", U/cli/coverage-doctor-system.test.ts "fails when isolation.require_resource_limits is true", I/controller/require-resource-limits.test.ts, U/isolation/limits.test.ts, U/isolation/memory.test.ts, I/isolation/limits.int.test.ts "sets CPU time, process count and file size as hard limits for the command" (macOS only run), I/isolation/memory.int.test.ts "stops a sandboxed command that holds too much memory" (real srt), I/evidence/runner-memory.test.ts, I/isolation/container.int.test.ts, A/demo-shapes.test.ts "demo 1..." (default limits on a busy account) | done |
 | S5.29 | No host credentials, SSH agents, container sockets | `adapters/env.ts:buildWorkerEnv`, `isolation/profiles.ts` | U/adapters/env-shim.test.ts "starts from an allowlist...", U/isolation/profiles.test.ts "denies container-engine state and keychains" | done |
 | S5.30 | Separate implementation and delivery credentials; none in workers | `adapters/env.ts`, `delivery/github.ts:GhCliClient` | U/adapters/env-shim.test.ts, I/delivery/gh-cli.test.ts "uses the controller token only" | done |
 | S5.31 | Resolve symlinks, canonicalize, reject traversal | `policy/paths.ts:resolveInside` | U/policy/paths.test.ts | done |
@@ -192,7 +192,7 @@ sometimes shortened.
 | S6.3 | Preflight captures status and revision | `steps/preflight.ts:preflightStep` | I/controller/runs.test.ts (via runs) | done |
 | S6.4 | Reject dirty starts unless permitted | `steps/preflight.ts` | I/controller/terminal-paths.test.ts "a dirty start is refused by default, naming the uncommitted path...", "with repository.allow_dirty_start the run proceeds..." | done |
 | S6.5 | Run baseline checks, record pre-existing failures | `evidence/baseline.ts:runBaseline` | I/evidence/baseline.test.ts "records pre-existing failures on the base revision..." | done |
-| S6.6 | Never green with failing mandatory checks unless the contract accepts a documented baseline exception | `evidence/report.ts` honours `baseline_exceptions`; `steps/preflight.ts` raises a question per pre-existing failure, `inquisition/questions.ts:answerQuestion` (`orbit decide`) applies "Approve" through `inquisition/baseline-exception.ts` and `contract/amend.ts`; `cli/commands/decide.ts` prints the outcome | U/evidence/report.test.ts "accepts the failure whose fingerprint equals the recorded one", U/contract/amend.test.ts, U/inquisition/baseline-exception.test.ts, U/inquisition/baseline-exception-run.test.ts (a failing mandatory check through to SUCCEEDED), U/cli/control.test.ts "says what an answer to a baseline-exception question did to the contract" | done |
+| S6.6 | Never green with failing mandatory checks unless the contract accepts a documented baseline exception | `evidence/report.ts` honours `baseline_exceptions`; `steps/preflight.ts` raises a question per pre-existing failure, `inquisition/questions.ts:answerQuestion` (`orbit decide`) applies "Approve" through `inquisition/baseline-exception.ts` and `contract/amend.ts`; `cli/commands/decide.ts` prints the outcome; `controller/steps/verifying.ts` applies an approved answer whose apply step never ran before it judges the evidence | U/evidence/report.test.ts "accepts the failure whose fingerprint equals the recorded one", U/contract/amend.test.ts, U/inquisition/baseline-exception.test.ts, U/inquisition/baseline-exception-run.test.ts (a failing mandatory check through to SUCCEEDED), U/cli/control.test.ts "says what an answer to a baseline-exception question did to the contract", U/inquisition/baseline-exception-run.test.ts "an approval recorded after planning, whose apply step never ran, is applied when VERIFYING starts" | done |
 | S6.7 | Amendments: clarify or add tests; never remove mandatory, redefine success, broaden scope | `contract/amend.ts:applyAmendment` | U/contract/amend.test.ts | done |
 | S6.8 | Amendment records old, new, evidence, reason, approval, affected verification | `contract/types.ts:ContractAmendment`, `inquisition/store.ts` | U/contract/amend.test.ts, U/inquisition/store.test.ts | done |
 | S6.9 | State machine edges | `controller/states.ts` | U/storage/run-store.test.ts "accepts every listed edge and rejects every other pair" | done |
@@ -372,7 +372,7 @@ sometimes shortened.
 | S14.8 | Timeout: diagnose performance or environment | `steps/diagnosing.ts` (timeout context, mandatory environment hypothesis, no raised timeout) | U/controller/diagnosing-timeout.test.ts "names the timed-out check, its baseline and the machine load, and makes an environment hypothesis mandatory" | done |
 | S14.9 | Flaky check: bounded reruns, disclosed | `evidence/runner.ts` flaky_reruns | I/evidence/runner.test.ts "records a pass after a failure as flaky, never clean" | done |
 | S14.10 | Lost action response: query remote before retry | `delivery/actions.ts:ActionLedger` | U/delivery/actions.test.ts "after an error, reconciles BEFORE retrying" | done |
-| S14.11 | Conflict: rebase only if authorized; invalidate changed evidence | `steps/awaiting-ci.ts`: with `actions.rebase_task_branch` it rebases onto the moved base in an isolated checkout, invalidates evidence and reviews and goes back to VERIFYING (at most 3 rebases per run); a conflict or a missing permission blocks naming the paths and the key. Mergeability is the local `git merge-tree` check, not a host field | I/controller/base-conflict.test.ts "a delivered commit that conflicts with the moved base blocks with the conflicting paths", "with actions.rebase_task_branch a base that moved is rebased onto...", "with the permission, a base that moved into a conflict blocks...", "without the permission a base that moved cleanly still completes without any rebase" | done |
+| S14.11 | Conflict: rebase only if authorized; invalidate changed evidence | `steps/awaiting-ci.ts`: with `actions.rebase_task_branch` it rebases onto the moved base in an isolated checkout, invalidates evidence and reviews and goes back to VERIFYING (at most 3 rebases per run); a conflict or a missing permission blocks naming the paths and the key. Mergeability is the local `git merge-tree` check, not a host field | I/controller/base-conflict.test.ts "a delivered commit that conflicts with the moved base blocks with the conflicting paths", "with actions.rebase_task_branch a base that moved is rebased onto...", "with the permission, a base that moved into a conflict blocks...", "without the permission a base that moved cleanly still completes without any rebase", "a rebased candidate that then fails verification goes to DIAGNOSING and is never pushed" | done |
 | S14.12 | Budget exhaustion: stop workers, keep artifacts, report | `steps/common.ts:finishRun` | F/budgets.test.ts "...with the failing evidence and the worktree preserved" | done |
 | S14.13 | Self-healing cannot rewrite policy; recovery has a budget | `recovery/budget.ts` | U/recovery/budget.test.ts | done |
 
@@ -385,7 +385,7 @@ sometimes shortened.
 | S15.3 | Observe CI, sanitized logs, repair within cycle limits | `delivery/ci.ts`, `steps/awaiting-ci.ts` | I/delivery/ci-flow.test.ts, F/injection.test.ts | done |
 | S15.4 | Before every action: validate, persist intent, execute, receipt, reconcile | `delivery/actions.ts:ActionLedger.perform` | U/delivery/actions.test.ts "persists intent, executes and stores the receipt" | done |
 | S15.5 | Opt-in merge with exact candidate, branch checks, review policy, no blockers; revalidate after changes | `delivery/release.ts:performRelease` (merge), `delivery/github.ts` (`--match-head-commit`), `steps/delivering.ts`; a ledgered `pr_ready` action marks a draft ready before the merge (`release.merge.mark_ready`) | I/delivery/release.test.ts "merges the exact reviewed commit after green branch checks...", "refuses the merge when the PR head moved off the reviewed commit...", "revalidates on every call...", I/controller/release.test.ts, I/delivery/release.test.ts "performRelease: a draft pull request (G48)", I/controller/release-deploy.test.ts "a draft pull request is marked ready, merged, and the merge commit is deployed..." | done |
-| S15.6 | Deployment through a release profile with environment safeguards | `delivery/release.ts` (deploy: `release.environments`, allowed branches, hosts, green CI, action ledger; every defined environment deploys in profile order, skipped ones reported; an UNKNOWN outcome is settled by `verify_command` or `orbit release resolve`) | I/delivery/release.test.ts "refuses an environment the profile does not name, a branch it does not allow, and a host the policy does not allow", "records a failed deploy and never re-runs it automatically", I/controller/release-deploy.test.ts (all four tests), U/cli/release.test.ts "orbit release resolve" | done |
+| S15.6 | Deployment through a release profile with environment safeguards | `delivery/release.ts` (deploy: `release.environments`, allowed branches, hosts, green CI, action ledger; every defined environment deploys in profile order, skipped ones reported, unless the run names one with `orbit run --environment` (stored as `runs.environment` and `delivery.environment`, checked by `controller/gates.ts:intakeGate`, deployed alone and refused before the merge when undefined or not allowed for the branch); an UNKNOWN outcome is settled by `verify_command` or `orbit release resolve`) | I/delivery/release.test.ts "refuses an environment the profile does not name, a branch it does not allow, and a host the policy does not allow", "records a failed deploy and never re-runs it automatically", I/controller/release-deploy.test.ts (all tests, among them "a run that names its environment (orbit run --environment) deploys only that one", "a named environment the base branch is not allowed for blocks the release before the pull request is merged" and "a run that names an environment the release profile does not define is refused at intake"), U/cli/run-environment.test.ts, U/contract/release-environment.test.ts, U/delivery/coverage-release.test.ts "a named environment is refused before anything is merged (G50)", U/cli/release.test.ts "orbit release resolve" | done |
 
 ## 16. Observability
 
@@ -504,22 +504,22 @@ sometimes shortened.
 No status changed in this audit: every `done` row was confirmed, and the three
 non-done rows (S2.9, S18.9, S19.4) all wait on the live demo (G39). Rows that
 are `done` but carry a hardening follow-up name it in `docs/gaps.md` (G24 for
-S5.28, G50 for S15.6, G53 for S8.21, G55 for S6.6, G56 for S14.11).
+S5.28, G53 for S8.21).
 
 ## Coverage
 
-Measured in this audit with `npx vitest run --coverage` (the configuration in
+Measured with `npm run test:coverage` (vitest, then the per-file floor script; the configuration in
 `vitest.config.ts`: v8 provider, `include: ['src/**']`, `reportOnFailure`,
 thresholds lines 95, functions 95, statements 95, branches 90). The run exited
-0: 343 test files, 6356 tests passed, 1 skipped, none failing. 211 source
+0: 347 test files, 6399 tests passed, 1 skipped, none failing. 211 source
 files are measured; the four excluded files hold only types.
 
 | Metric | Covered | Enforced floor |
 |---|---|---|
-| Lines | 99.68% (20017 of 20080) | 95% |
-| Functions | 99.69% (4219 of 4232) | 95% |
-| Statements | 99.11% (24910 of 25132) | 95% |
-| Branches | 96.40% (20432 of 21195) | 90% |
+| Lines | 99.68% (20068 of 20131) | 95% |
+| Functions | 99.69% (4229 of 4242) | 95% |
+| Statements | 99.11% (24978 of 25202) | 95% |
+| Branches | 96.39% (20507 of 21275) | 90% |
 
 Lowest files per metric:
 
@@ -528,10 +528,11 @@ Lowest files per metric:
 | Lines | `inquisition/impact.ts` 96.87%, `controller/verification.ts` 96.96%, `inquisition/resolve.ts` 97.22% |
 | Functions | `controller/steps/awaiting-ci.ts` 95.00%, `inquisition/resolve.ts` 96.29%, `policy/weakening.ts` 96.96% |
 | Statements | `routing/registry.ts` 94.70%, `adapters/claude-settings.ts` 96.00%, `controller/steps/implementing.ts` 96.10% |
-| Branches | `isolation/limits.ts` 90.24%, `review/stale.ts` 90.62%, `contract/draft.ts` 90.66% |
+| Branches | `review/stale.ts` 90.62%, `controller/steps/implementing.ts` 90.68%, `contract/draft.ts` 90.90% |
 
 No file is under 80% lines (the per-file floor in `docs/testing-journal.md`),
-though that floor is not yet enforced by configuration (G57). The code that
+and `npm run test:coverage` now enforces it (`scripts/check-coverage-floor.mjs`,
+U/scripts/coverage-floor.test.ts). The code that
 runs only in spawned processes (the CLI entry, the guard hook, the worker
 shim) is now covered by in-process entry tests
 (U/cli/coverage-entry-process.test.ts, U/adapters/coverage-entry-main.test.ts,

@@ -498,6 +498,13 @@ describe('limits, rebase and release keys added for the isolation and delivery l
     expect(isolationLimits({ isolation: { ...d.isolation, limits: { cpu_seconds: 5, max_processes: 7, max_file_mb: null } as never } })).toEqual({ cpu_seconds: 5, max_processes: 7, max_file_mb: null, memory_mb: 4096 });
   });
 
+  it('defaults isolation.require_resource_limits to false, accepts true, and refuses a non-boolean (G24)', () => {
+    expect(parseConfig('version: 1\n').isolation.require_resource_limits).toBe(false);
+    expect(defaultConfig().isolation.require_resource_limits).toBe(false);
+    expect(parseConfig('version: 1\nisolation: {require_resource_limits: true}\n').isolation.require_resource_limits).toBe(true);
+    expect(problems(() => parseConfig('version: 1\nisolation: {require_resource_limits: sometimes}\n')).join('\n')).toMatch(/isolation\/require_resource_limits|isolation\.require_resource_limits/);
+  });
+
   it('defaults actions.rebase_task_branch to false and requires actions.commit for it', () => {
     expect(parseConfig('version: 1\n').actions.rebase_task_branch).toBe(false);
     expect(parseConfig('version: 1\nmode: autonomous-delivery\nactions: {rebase_task_branch: true}\n').actions.rebase_task_branch).toBe(true);

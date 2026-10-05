@@ -108,6 +108,11 @@ release:
       timeout_seconds: 1800
 ```
 
+A run can name the one environment it deploys to with `orbit run --environment
+<name>`; the name must be a key of `environments`, and the contract carries it
+as `delivery.environment` (see [operations.md](operations.md#release-mode-safeguards)).
+Without it a run deploys every environment its branch is allowed for.
+
 Default `null`. Mode `release` requires it (not null) and needs
 `actions.merge` or `actions.deploy_production` to be true; without either, use
 `autonomous-delivery`. `actions.deploy_production: true` needs at least one
@@ -354,6 +359,7 @@ isolation:
     max_processes: 2048         # processes of the user id (RLIMIT_NPROC)
     max_file_mb: 2048          # largest file a process may write
     memory_mb: 4096            # resident memory of the command's processes (watchdog)
+  require_resource_limits: false   # true: refuse a provider that cannot enforce a configured limit
 
 providers:
   claude:
@@ -404,6 +410,25 @@ What each provider enforces:
 `none` runs commands with every permission of the Orbit user and applies only
 the ulimit limits; it enforces no memory limit. The wall-clock timeout is the
 caller's job under every provider.
+
+`require_resource_limits` (default `false`) turns a gap in that table into a
+refusal. By default a limit the provider cannot enforce is only stated in the
+evidence record. With `true`, the environment gate at preflight blocks the run
+(before any worker starts) when a limit that is not `null` cannot be enforced,
+and `orbit doctor` fails its isolation check with the same message. The
+ulimit-based limits are enforced by every provider, so only `memory_mb` can be
+refused:
+
+- `sandbox-runtime` is refused: its watchdog samples resident memory and a fast
+  allocation can overshoot it, so it is not a hard cap.
+- `none` is refused: it enforces no memory limit.
+- `container` is accepted when `container.memory_mb` (Docker's hard cap, which
+  replaces `limits.memory_mb`) is no higher than `limits.memory_mb`, and refused
+  when it is higher or `container` is not set.
+
+To satisfy it, use the `container` provider, set `limits.memory_mb: null` to
+run without a memory limit (the other limits stay required), or set
+`require_resource_limits: false`.
 
 ## routing and retention
 

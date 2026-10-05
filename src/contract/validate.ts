@@ -9,7 +9,7 @@ import contractSchema from '../../schemas/contract.schema.json' with { type: 'js
 import { OrbitError } from '../core/errors.ts';
 import { hashObject } from '../core/hash.ts';
 import type { GoalContract } from './types.ts';
-import type { PolicySnapshot } from '../policy/types.ts';
+import type { OrbitConfig, PolicySnapshot } from '../policy/types.ts';
 import { containedInAny, globsMayOverlap, isAnalysableGlob } from './globs.ts';
 import { validateAgainst } from './json-schema.ts';
 import { practiceProblems } from './practices.ts';
@@ -21,6 +21,24 @@ export interface ContractCheckOptions {
    * is hashed differently.
    */
   policyHash?: string;
+}
+
+/** The names `release.environments` accepts (schemas/config.schema.json). */
+export const RELEASE_ENVIRONMENT_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
+
+/**
+ * Why a run cannot name `name` as its release environment under `config`, or null when it can: release actions exist
+ * only in mode release, and the name must be a key of the release profile.
+ */
+export function releaseEnvironmentProblem(config: OrbitConfig, name: string): string | null {
+  if (config.mode !== 'release') return `a release environment can be named only in mode release (the policy's mode is ${config.mode})`;
+  const release = config.release;
+  if (!release) return 'the policy has no release profile (release: in the configuration)';
+  if (!RELEASE_ENVIRONMENT_NAME.test(name) || !Object.hasOwn(release.environments, name)) {
+    const defined = Object.keys(release.environments);
+    return `${JSON.stringify(name)} is not defined in release.environments (defined: ${defined.join(', ') || 'none'})`;
+  }
+  return null;
 }
 
 /** The hash a contract bound to `snapshot` must carry. */
@@ -118,6 +136,10 @@ function crossCheck(c: GoalContract, snapshot: PolicySnapshot, expectedHash: str
     }
   }
 
+  if (c.delivery.environment !== undefined) {
+    const why = releaseEnvironmentProblem(config, c.delivery.environment);
+    if (why) problems.push(`delivery.environment: ${why}`);
+  }
   if (c.delivery.merge && !config.actions?.merge) problems.push('delivery.merge is true but the policy does not allow merge');
   if (c.delivery.draft_pr && (!config.actions?.open_pull_request || config.delivery?.pull_request === 'none')) {
     problems.push('delivery.draft_pr is true but the policy does not allow opening a pull request');

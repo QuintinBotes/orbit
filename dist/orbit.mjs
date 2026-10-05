@@ -20986,10 +20986,11 @@ var init_config_schema = __esm({
         isolation: {
           type: "object",
           additionalProperties: false,
-          required: ["provider", "allow_unisolated", "container", "limits"],
+          required: ["provider", "allow_unisolated", "container", "limits", "require_resource_limits"],
           properties: {
             provider: { enum: ["sandbox-runtime", "container", "none"] },
             allow_unisolated: { type: "boolean" },
+            require_resource_limits: { type: "boolean" },
             container: {
               oneOf: [
                 { type: "null" },
@@ -21375,7 +21376,7 @@ function defaultConfig(mode = DEFAULT_MODE) {
     verification: { allow_flaky_pass: false },
     checks: {},
     ui: null,
-    isolation: { provider: "sandbox-runtime", allow_unisolated: false, container: null, limits: defaultIsolationLimits() },
+    isolation: { provider: "sandbox-runtime", allow_unisolated: false, container: null, limits: defaultIsolationLimits(), require_resource_limits: false },
     providers: {
       // Running Orbit at all sends code to Claude, so the Claude adapter is eligible by default.
       claude: defaultProvider("claude", true),
@@ -21456,6 +21457,9 @@ function staticSecurityPolicy(config) {
 }
 function dependencyAuditPolicy(config) {
   return config.dependencies.audit ?? defaultDependencyAudit();
+}
+function isolationLimits(config) {
+  return { ...defaultIsolationLimits(), ...config.isolation.limits ?? {} };
 }
 function defaultProvider(id, eligible) {
   return { command: id, data_policy_eligible: eligible, model: null, reasoning_effort: null, extra_args: [] };
@@ -23504,6 +23508,10 @@ var init_schema4 = __esm({
       `
   ALTER TABLE reviews ADD COLUMN invalidated_reason TEXT;
   ALTER TABLE hypotheses ADD COLUMN fingerprint TEXT;
+  `,
+      /* 4: the release environment a run names (orbit run --environment); null when it names none */
+      `
+  ALTER TABLE runs ADD COLUMN environment TEXT;
   `
     ];
   }
@@ -23833,6 +23841,7 @@ function toRecord2(r) {
     worktreePath: r.worktree_path,
     difficulty: r.difficulty,
     difficultyJson: r.difficulty_json,
+    environment: r.environment ?? null,
     outcomeReason: r.outcome_reason,
     outcomeJson: r.outcome_json,
     paused: r.paused === 1,
@@ -23849,18 +23858,19 @@ function createRun(db, input, clock, actor = "cli") {
   const now = clock.now();
   return db.tx(() => {
     db.run(
-      `INSERT INTO runs (id, repo_root, goal, mode, state, policy_hash, policy_path, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'CREATED', ?, ?, ?, ?)`,
+      `INSERT INTO runs (id, repo_root, goal, mode, state, policy_hash, policy_path, environment, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'CREATED', ?, ?, ?, ?, ?)`,
       input.id,
       input.repoRoot,
       input.goal,
       input.mode,
       input.policyHash,
       input.policyPath,
+      input.environment ?? null,
       now,
       now
     );
-    appendEvent(db, input.id, "run.created", actor, { mode: input.mode, policy_hash: input.policyHash }, now, null, "CREATED");
+    appendEvent(db, input.id, "run.created", actor, { mode: input.mode, policy_hash: input.policyHash, ...input.environment ? { environment: input.environment } : {} }, now, null, "CREATED");
     return getRun(db, input.id);
   });
 }
@@ -28781,6 +28791,21 @@ function hasLimits(limits) {
 function hasMemoryLimit(limits) {
   return !!limits && limits.memory_mb !== null && limits.memory_mb !== void 0;
 }
+function unenforcedLimits(kind, limits, container) {
+  if (!hasMemoryLimit(limits)) return [];
+  const configured = limits.memory_mb;
+  const none = (reason) => [{ limit: "memory_mb", configured, reason }];
+  if (kind === "sandbox-runtime") return none("sandbox-runtime has no hard memory cap: its watchdog only samples resident memory, so a fast allocation can overshoot the limit");
+  if (kind === "none") return none("isolation provider none enforces no memory limit");
+  if (container === null) return none("the container provider has no isolation.container section, so no memory cap is set");
+  if (container.memory_mb > configured) return none(`the container provider ignores isolation.limits.memory_mb and enforces isolation.container.memory_mb (${container.memory_mb} MB), which is higher`);
+  return [];
+}
+function resourceLimitRefusals(isolation, kind) {
+  if (isolation.require_resource_limits !== true) return [];
+  const limits = isolationLimits({ isolation });
+  return unenforcedLimits(kind, limits, isolation.container).map((u) => `isolation.require_resource_limits is true but ${kind} cannot enforce isolation.limits.${u.limit} (${u.configured} MB): ${u.reason}`);
+}
 function describeLimits(limits) {
   const out = [];
   if (limits.cpu_seconds !== null) out.push(`CPU time ${limits.cpu_seconds} s per process`);
@@ -28819,14 +28844,16 @@ function dockerUlimitArgs(limits) {
   }
   return out;
 }
-var LIMIT_SHELLS, LIMIT_WRAPPER_NAME;
+var LIMIT_SHELLS, LIMIT_WRAPPER_NAME, RESOURCE_LIMIT_FIX;
 var init_limits = __esm({
   "src/isolation/limits.ts"() {
     "use strict";
     init_errors();
+    init_config();
     init_util();
     LIMIT_SHELLS = ["/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash", "/opt/homebrew/bin/bash"];
     LIMIT_WRAPPER_NAME = "orbit-limits";
+    RESOURCE_LIMIT_FIX = 'use isolation.provider "container" with isolation.container.memory_mb no higher than isolation.limits.memory_mb, set isolation.limits.memory_mb to null to run without a memory limit, or set isolation.require_resource_limits to false';
   }
 });
 
@@ -29620,7 +29647,7 @@ function startRun(input) {
   const id = input.runId ?? newRunId(clock.now());
   const runDir2 = join16(orbitDir(repoRoot), "runs", id);
   const snap = snapshotPolicy(input.config, { runId: id, repoRoot, runDir: runDir2, clock });
-  return createRun(input.db, { id, repoRoot, goal: input.goal, mode: input.config.mode, policyHash: snap.hash, policyPath: snap.path }, clock, input.actor ?? "cli");
+  return createRun(input.db, { id, repoRoot, goal: input.goal, mode: input.config.mode, policyHash: snap.hash, policyPath: snap.path, ...input.environment ? { environment: input.environment } : {} }, clock, input.actor ?? "cli");
 }
 function defaultControllerDeps(input) {
   const repoRoot = realpathSync6(input.repoRoot);
@@ -35144,7 +35171,8 @@ var init_contract_schema = __esm({
           required: ["draft_pr", "merge"],
           properties: {
             draft_pr: { type: "boolean" },
-            merge: { type: "boolean" }
+            merge: { type: "boolean" },
+            environment: { type: "string", pattern: "^[a-z][a-z0-9_-]{0,31}$" }
           }
         },
         policy_hash: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
@@ -35384,6 +35412,16 @@ var init_globs2 = __esm({
 });
 
 // src/contract/validate.ts
+function releaseEnvironmentProblem(config, name) {
+  if (config.mode !== "release") return `a release environment can be named only in mode release (the policy's mode is ${config.mode})`;
+  const release = config.release;
+  if (!release) return "the policy has no release profile (release: in the configuration)";
+  if (!RELEASE_ENVIRONMENT_NAME.test(name) || !Object.hasOwn(release.environments, name)) {
+    const defined = Object.keys(release.environments);
+    return `${JSON.stringify(name)} is not defined in release.environments (defined: ${defined.join(", ") || "none"})`;
+  }
+  return null;
+}
 function policyHashOf(snapshot2) {
   return hashObject(snapshot2);
 }
@@ -35456,12 +35494,17 @@ function crossCheck(c, snapshot2, expectedHash) {
       if (ac.mandatory) problems.push(`mandatory criterion ${ac.id} needs browser evidence, but the policy has no ui configuration`);
     }
   }
+  if (c.delivery.environment !== void 0) {
+    const why = releaseEnvironmentProblem(config, c.delivery.environment);
+    if (why) problems.push(`delivery.environment: ${why}`);
+  }
   if (c.delivery.merge && !config.actions?.merge) problems.push("delivery.merge is true but the policy does not allow merge");
   if (c.delivery.draft_pr && (!config.actions?.open_pull_request || config.delivery?.pull_request === "none")) {
     problems.push("delivery.draft_pr is true but the policy does not allow opening a pull request");
   }
   return problems;
 }
+var RELEASE_ENVIRONMENT_NAME;
 var init_validate = __esm({
   "src/contract/validate.ts"() {
     "use strict";
@@ -35471,6 +35514,7 @@ var init_validate = __esm({
     init_globs2();
     init_json_schema();
     init_practices();
+    RELEASE_ENVIRONMENT_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
   }
 });
 
@@ -42878,7 +42922,7 @@ function applyChange(ctx, change) {
       if (change.draft_pr && !old.draft_pr && (!actions?.open_pull_request || ctx.snapshot.config.delivery?.pull_request === "none")) {
         ctx.forbidden.push("the policy does not allow opening a pull request");
       }
-      next.delivery = { draft_pr: change.draft_pr, merge: change.merge };
+      next.delivery = { ...old, draft_pr: change.draft_pr, merge: change.merge };
       return { field: "delivery", oldValue: old, newValue: next.delivery, affected: ["delivery"] };
     }
     case "accept_baseline_failure": {
@@ -43414,6 +43458,12 @@ function intakeGate(input) {
   const limits = snapshot2.config.scheduler.hard_limits;
   for (const [k, v] of Object.entries(limits)) if (!(typeof v === "number" && v > 0)) reasons.push(`hard limit ${k} must be positive`);
   if (snapshot2.config.scope.allowed_paths.length === 0) reasons.push("the policy allows no paths, so no implementation is authorized");
+  const environment = input.run.environment ?? null;
+  if (environment !== null) {
+    const why = releaseEnvironmentProblem(snapshot2.config, environment);
+    if (why) reasons.push(`the run names release environment ${JSON.stringify(environment)}, which cannot be used: ${why}`);
+    else evidence.push(`release environment ${environment}`);
+  }
   const problems = input.contract === void 0 ? [] : contractProblems(input.contract, snapshot2, { policyHash: run.policyHash });
   reasons.push(...problems.map((p) => `contract: ${p}`));
   if (input.contract !== void 0 && problems.length === 0) {
@@ -43428,6 +43478,9 @@ function intakeGate(input) {
       if (!byCheck && !byUi) reasons.push(`${a.id} is not measurable: it cites no trusted check${a.ui ? " and the policy defines no UI journeys" : ""}`);
     }
     if (c.allowed_paths.length === 0) reasons.push("the contract allows no paths");
+    if ((c.delivery.environment ?? null) !== environment) {
+      reasons.push(`the contract's delivery.environment (${c.delivery.environment ?? "none"}) is not the release environment the run names (${environment ?? "none"})`);
+    }
   }
   return result("intake", reasons, evidence, [], { problems });
 }
@@ -43456,6 +43509,11 @@ function environmentGate(input) {
       code2 = "ISOLATION_UNAVAILABLE";
     } else if (iso2.kind === "sandbox-runtime") {
       notes.push("sandbox-runtime limits filesystem writes and network egress but not CPU, memory or process count");
+    }
+    const unenforced = resourceLimitRefusals(input.snapshot.config.isolation, iso2.kind);
+    if (unenforced.length > 0) {
+      reasons.push(...unenforced.map((u) => `${u}; ${RESOURCE_LIMIT_FIX}`));
+      code2 ??= "ISOLATION_UNAVAILABLE";
     }
   }
   for (const c of input.credentials) {
@@ -43607,6 +43665,7 @@ var init_gates = __esm({
     init_store3();
     init_validate();
     init_config();
+    init_limits();
     init_snapshot();
     init_freshness();
     init_store();
@@ -44678,6 +44737,22 @@ async function performRelease(input) {
   const apiAllowed = () => {
     if (config.delivery.provider === "github") requireAllowed(authorize(snapshot2, { kind: "network", host: "api.github.com" }), "reaching the pull request API");
   };
+  const requested = requestedEnvironments(input, release);
+  const definedEnvironment = (envName) => {
+    if (!ENV_NAME2.test(envName) || !Object.hasOwn(release.environments, envName)) {
+      deny2("release.environment", `release environment ${JSON.stringify(envName)} is not defined in the release profile (defined: ${Object.keys(release.environments).join(", ") || "none"})`);
+    }
+    return release.environments[envName];
+  };
+  const allowedOn = (env, onBranch) => env.allowed_branches.length > 0 && (0, import_picomatch6.default)(env.allowed_branches, { dot: true })(onBranch);
+  const notAllowed = (envName, env, onBranch) => `environment ${envName} may not be deployed from ${onBranch} (allowed: ${env.allowed_branches.join(", ") || "none"})`;
+  if (requested.strict && requested.names.length > 0) {
+    requireAllowed(authorize(snapshot2, { kind: "action", action: "deploy_production" }), "deploying");
+    const planned = input.contractMerge ? baseBranch : branch;
+    for (const envName of requested.names) {
+      if (!allowedOn(definedEnvironment(envName), planned)) deny2("release.allowed_branches", notAllowed(envName, release.environments[envName], planned));
+    }
+  }
   let merge2 = null;
   let mergeSkipped = null;
   if (!input.contractMerge) {
@@ -44748,7 +44823,6 @@ async function performRelease(input) {
   }
   const deploys = [];
   const skipped = [];
-  const requested = requestedEnvironments(input, release);
   if (requested.names.length === 0) {
     skipped.push(requested.none);
   } else {
@@ -44759,13 +44833,9 @@ async function performRelease(input) {
       const deployAuth = requireAllowed(deployAuthDecision, "deploying");
       const target = merge2 ? { branch: merge2.baseBranch, sha: merge2.mergeCommitSha } : { branch, sha: commit };
       for (const envName of requested.names) {
-        if (!ENV_NAME2.test(envName) || !Object.hasOwn(release.environments, envName)) {
-          deny2("release.environment", `release environment ${JSON.stringify(envName)} is not defined in the release profile (defined: ${Object.keys(release.environments).join(", ") || "none"})`);
-        }
-        const env = release.environments[envName];
-        const allowedHere = env.allowed_branches.length > 0 && (0, import_picomatch6.default)(env.allowed_branches, { dot: true })(target.branch);
-        if (!allowedHere) {
-          if (requested.strict) deny2("release.allowed_branches", `environment ${envName} may not be deployed from ${target.branch} (allowed: ${env.allowed_branches.join(", ") || "none"})`);
+        const env = definedEnvironment(envName);
+        if (!allowedOn(env, target.branch)) {
+          if (requested.strict) deny2("release.allowed_branches", notAllowed(envName, env, target.branch));
           skipped.push(`environment ${envName} is not deployed from ${target.branch} (allowed: ${env.allowed_branches.join(", ") || "none"})`);
           continue;
         }
@@ -46911,7 +46981,8 @@ function draftContract(input) {
       draft_pr: Boolean(actions?.open_pull_request) && config.delivery?.pull_request === "draft",
       // Merge is opt-in per run even when the policy permits it; only an
       // approved amendment turns it on.
-      merge: false
+      merge: false,
+      ...input.environment ? { environment: input.environment } : {}
     },
     policy_hash: input.policyHash ?? policyHashOf(snapshot2),
     baseline_revision: input.baselineRevision,
@@ -47652,7 +47723,7 @@ async function contractingStep(ctx) {
   atomicWriteJson(join37(ctx.runDir, PLANNER_FILE), { worker_id: got.worker.id, output: plan });
   let drafted;
   try {
-    drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? "", taskId: ctx.run.id, policyHash: ctx.run.policyHash });
+    drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? "", taskId: ctx.run.id, policyHash: ctx.run.policyHash, environment: ctx.run.environment });
   } catch (err) {
     if (!(err instanceof OrbitError) || err.code !== "CONTRACT_INVALID") throw err;
     return finishRun(ctx, "BLOCKED", `intake gate rejected the planner's contract: ${err.message}`, { outcome: { problems: err.details ?? null } });
@@ -50703,6 +50774,8 @@ import { join as join46 } from "node:path";
 async function verifyingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
+  const exceptions = applyBaselineExceptionAnswers({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { snapshot: ctx.snapshot });
+  if (exceptions.contract) ctx.contract = exceptions.contract;
   const contract = assertContract(ctx);
   const cand = ctx.candidate;
   if (!cand) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is VERIFYING without a candidate`);
@@ -50837,6 +50910,7 @@ var init_verifying = __esm({
     "use strict";
     init_hash();
     init_errors();
+    init_baseline_exception();
     init_scope();
     init_candidate();
     init_git();
@@ -51751,8 +51825,9 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
     commit: d.commit,
     pr: d.pr?.number ?? null,
     contractMerge: contract.delivery.merge,
-    // Every environment the release profile defines that the deployed ref is allowed for, in profile order.
-    environments: "all",
+    // The environment the contract names deploys alone, and is refused when it is undefined or not allowed for the
+    // deployed ref; without one, every environment the release profile defines that the ref is allowed for, in profile order.
+    environments: contract.delivery.environment ? [contract.delivery.environment] : "all",
     readiness: () => {
       const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: cand, implementerProvider: implementerProvider(ctx), deliveredTree: d.tree, now: ctx.clock.now() });
       return { ok: gate.passed, reasons: gate.reasons };
@@ -55068,6 +55143,10 @@ async function checkIsolation(p) {
     }
   }
   if (!st.ok) return { check: fail2("isolation", "isolation", `${provider.kind} isolation is unavailable: ${oneLine3(st.detail, 200)}`, `${provider.kind} isolation (${provider.kind === "sandbox-runtime" ? "the srt binary and Seatbelt or bubblewrap" : "a running Docker daemon"})`, "install and start it; Orbit refuses to degrade to less isolation", details), facts: { provider, available: false } };
+  const unenforced = resourceLimitRefusals(config.isolation, provider.kind);
+  if (unenforced.length > 0) {
+    return { check: fail2("isolation", "isolation", oneLine3(unenforced[0], 300), "a provider that enforces every configured isolation limit (isolation.require_resource_limits is true)", RESOURCE_LIMIT_FIX, [...details, ...unenforced.map((u) => `refused: ${u}`)]), facts: { provider, available: false } };
+  }
   if (provider.kind === "none") return { check: warn2("isolation", "isolation", `no isolation: workers and checks run with the Orbit user's full permissions (isolation.allow_unisolated)`, "an isolation provider", "use sandbox-runtime or container", details), facts: { provider, available: true } };
   return { check: pass("isolation", "isolation", `${provider.kind}: ${oneLine3(st.detail, 160)}`, details), facts: { provider, available: true } };
 }
@@ -56631,7 +56710,7 @@ var init_report4 = __esm({
 // src/cli/commands/run.ts
 import { resolve as resolve18 } from "node:path";
 async function runCommand(args, ctx) {
-  const usage = 'orbit run --goal "<goal>" [--mode <mode>] [--policy <path>] [--foreground | --detach]';
+  const usage = 'orbit run --goal "<goal>" [--mode <mode>] [--environment <name>] [--policy <path>] [--foreground | --detach]';
   if (args.bool("foreground") && args.bool("detach")) throw new UsageError("--foreground and --detach cannot be combined", usage);
   const mode = args.oneOf("mode", RUN_MODES);
   let goal = args.str("goal") ?? "";
@@ -56642,23 +56721,28 @@ async function runCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   const policy = args.str("policy");
   const config = loadConfig(repo, policy ? resolve18(ctx.cwd, policy) : void 0, mode ? { mode } : {});
+  const environment = args.str("environment");
+  if (environment !== void 0) {
+    const why = releaseEnvironmentProblem(config, environment);
+    if (why) throw new UsageError(`--environment ${environment}: ${why}`, usage);
+  }
   const db = openState(repo, { create: true });
   try {
     const service = liveServiceController(db, ctx.clock.now());
     const foreground = args.bool("foreground") ? true : args.bool("detach") ? false : service === null;
-    const run = startRun({ db, repoRoot: repo, goal, config, clock: ctx.clock, actor: `cli:${ctx.user}` });
+    const run = startRun({ db, repoRoot: repo, goal, config, clock: ctx.clock, actor: `cli:${ctx.user}`, ...environment !== void 0 ? { environment } : {} });
     const asJson = args.bool("json");
     if (!foreground) {
-      if (asJson) json(ctx.io, { run_id: run.id, state: run.state, mode: run.mode, detached: true, service_running: service !== null });
+      if (asJson) json(ctx.io, { run_id: run.id, state: run.state, mode: run.mode, ...run.environment ? { environment: run.environment } : {}, detached: true, service_running: service !== null });
       else {
-        line2(ctx.io, `run ${run.id} created (${run.mode}), handed to the service`);
+        line2(ctx.io, `run ${run.id} created (${run.mode}${run.environment ? `, environment ${run.environment}` : ""}), handed to the service`);
         if (!service) ctx.io.err('warning: no service is running, so nothing is working on this run yet. Start one with "orbit service install" (or "orbit service run"), or drive the run here with "orbit resume ' + run.id + ' --foreground".\n');
         line2(ctx.io, `follow it with: orbit status ${run.id}`);
       }
       return 0;
     }
-    if (!asJson) line2(ctx.io, `run ${run.id} started (${run.mode}, foreground; Ctrl-C pauses it, it does not cancel)`);
-    else ctx.io.out(`${JSON.stringify({ type: "started", run_id: run.id, mode: run.mode })}
+    if (!asJson) line2(ctx.io, `run ${run.id} started (${run.mode}${run.environment ? `, environment ${run.environment}` : ""}, foreground; Ctrl-C pauses it, it does not cancel)`);
+    else ctx.io.out(`${JSON.stringify({ type: "started", run_id: run.id, mode: run.mode, ...run.environment ? { environment: run.environment } : {} })}
 `);
     const result2 = await driveForeground(ctx, { repoRoot: repo, config, db, runId: run.id, fromStart: true, json: asJson });
     return result2.exitCode;
@@ -56670,6 +56754,7 @@ var RUN_OPTIONS;
 var init_run = __esm({
   "src/cli/commands/run.ts"() {
     "use strict";
+    init_validate();
     init_policy();
     init_controller();
     init_context();
@@ -56680,6 +56765,7 @@ var init_run = __esm({
       goal: { type: "string", description: 'the goal (or "-" to read it from stdin); the remaining arguments are appended', valueName: "text" },
       mode: { type: "string", description: "supervised, autonomous, autonomous-delivery or release; validated exactly as if the policy file said it", valueName: "mode" },
       policy: { type: "string", description: "policy file (default: .orbit/config.yaml)", valueName: "path" },
+      environment: { type: "string", description: "release mode: deploy only to this environment of the release profile (refused when it is not defined or not allowed for the branch); default: every environment the branch is allowed for", valueName: "name" },
       foreground: { type: "boolean", description: "drive the run in this terminal (the default when no service is running); Ctrl-C pauses it" },
       detach: { type: "boolean", description: "create the run and leave it to the service" }
     };
@@ -56763,7 +56849,7 @@ function nextAttempt(db, runId) {
   const row = db.get("SELECT MAX(CAST(json_extract(data_json, '$.attempt') AS INTEGER)) AS n FROM events WHERE run_id = ? AND type = ?", runId, ATTEMPT_EVENT);
   return Number(row?.n ?? 0) + 1;
 }
-var _goal, RUN_OPTIONS_WITHOUT_GOAL, REPAIR_OPTIONS, USAGE, RUN_ID3;
+var _goal, _environment, RUN_OPTIONS_WITHOUT_GOAL, REPAIR_OPTIONS, USAGE, RUN_ID3;
 var init_repair2 = __esm({
   "src/cli/commands/repair.ts"() {
     "use strict";
@@ -56782,7 +56868,7 @@ var init_repair2 = __esm({
     init_io();
     init_drive();
     init_run();
-    ({ goal: _goal, ...RUN_OPTIONS_WITHOUT_GOAL } = RUN_OPTIONS);
+    ({ goal: _goal, environment: _environment, ...RUN_OPTIONS_WITHOUT_GOAL } = RUN_OPTIONS);
     REPAIR_OPTIONS = {
       ...RUN_OPTIONS_WITHOUT_GOAL,
       foreground: { type: "boolean", description: "drive the repair in this terminal instead of leaving it to the service" },
@@ -57539,7 +57625,7 @@ var init_cli = __esm({
     COMMANDS = [
       { name: "doctor", summary: "check every capability a run depends on, with the exact missing piece for each failure", usage: "orbit doctor [--probe] [--json]", options: DOCTOR_OPTIONS, run: doctorCommand },
       { name: "init", summary: "write .orbit/config.yaml from the starter template and keep runtime state out of git status", usage: "orbit init", run: initCommand },
-      { name: "run", summary: "start a run: freeze the policy, then drive it here or hand it to the service", usage: 'orbit run --goal "<goal>" [--mode <mode>] [--policy <path>] [--foreground | --detach]', options: RUN_OPTIONS, run: runCommand },
+      { name: "run", summary: "start a run: freeze the policy, then drive it here or hand it to the service", usage: 'orbit run --goal "<goal>" [--mode <mode>] [--environment <name>] [--policy <path>] [--foreground | --detach]', options: RUN_OPTIONS, run: runCommand },
       { name: "status", summary: "state, stage, attempts, budgets, workers, open questions and heartbeat of a run (or the recent runs)", usage: "orbit status [run-id] [--all] [--json]", options: STATUS_OPTIONS, run: statusCommand },
       { name: "logs", summary: "controller and worker logs of a run, redacted", usage: "orbit logs <run-id> [--follow] [--lines n] [--controller | --workers | --worker id]", options: LOGS_OPTIONS, run: logsCommand },
       { name: "pause", summary: "pause a run durably; workers keep running and are collected on resume", usage: "orbit pause <run-id>", run: pauseCommand },

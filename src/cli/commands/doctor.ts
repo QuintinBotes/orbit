@@ -17,7 +17,7 @@ import { defaultConfig, loadConfig } from '../../policy/index.ts';
 import type { OrbitConfig } from '../../policy/types.ts';
 import type { CredentialStatus, ProviderAdapter, ProviderCapabilities } from '../../adapters/types.ts';
 import { CLAUDE_SANDBOX_LIMITATIONS, compareVersions, claudeEnvCredential, createAdapters, providerKind } from '../../adapters/index.ts';
-import { CONTAINER_LIMITATIONS, SRT_LIMITATIONS, getIsolation, noIsolationLimitations } from '../../isolation/index.ts';
+import { CONTAINER_LIMITATIONS, RESOURCE_LIMIT_FIX, SRT_LIMITATIONS, getIsolation, noIsolationLimitations, resourceLimitRefusals } from '../../isolation/index.ts';
 import type { IsolationProvider } from '../../isolation/types.ts';
 import { ModelRegistry, allowMatch } from '../../routing/registry.ts';
 import { selectReviewer } from '../../review/select.ts';
@@ -322,6 +322,11 @@ async function checkIsolation(p: Probe): Promise<{ check: DoctorCheck; facts: Is
     }
   }
   if (!st.ok) return { check: fail('isolation', 'isolation', `${provider.kind} isolation is unavailable: ${oneLine(st.detail, 200)}`, `${provider.kind} isolation (${provider.kind === 'sandbox-runtime' ? 'the srt binary and Seatbelt or bubblewrap' : 'a running Docker daemon'})`, 'install and start it; Orbit refuses to degrade to less isolation', details), facts: { provider, available: false } };
+  // The policy requires every configured limit to be enforced; a run would be refused at preflight, so say so here.
+  const unenforced = resourceLimitRefusals(config.isolation, provider.kind);
+  if (unenforced.length > 0) {
+    return { check: fail('isolation', 'isolation', oneLine(unenforced[0]!, 300), 'a provider that enforces every configured isolation limit (isolation.require_resource_limits is true)', RESOURCE_LIMIT_FIX, [...details, ...unenforced.map((u) => `refused: ${u}`)]), facts: { provider, available: false } };
+  }
   if (provider.kind === 'none') return { check: warn('isolation', 'isolation', `no isolation: workers and checks run with the Orbit user's full permissions (isolation.allow_unisolated)`, 'an isolation provider', 'use sandbox-runtime or container', details), facts: { provider, available: true } };
   return { check: pass('isolation', 'isolation', `${provider.kind}: ${oneLine(st.detail, 160)}`, details), facts: { provider, available: true } };
 }

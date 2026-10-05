@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { isOrbitError } from '../../../src/core/errors.ts';
 import { getIsolation } from '../../../src/isolation/index.ts';
-import { dockerUlimitArgs, hasLimits, LIMIT_WRAPPER_NAME, limitScript, withResourceLimits } from '../../../src/isolation/limits.ts';
+import { dockerUlimitArgs, hasLimits, LIMIT_WRAPPER_NAME, limitScript, resourceLimitRefusals, unenforcedLimits, withResourceLimits } from '../../../src/isolation/limits.ts';
 import { NoIsolation } from '../../../src/isolation/none.ts';
 import { SandboxRuntimeIsolation, SRT_LIMITATIONS } from '../../../src/isolation/sandbox-runtime.ts';
 import type { SandboxProfile } from '../../../src/isolation/types.ts';
@@ -103,5 +103,34 @@ describe('providers apply isolation.limits', () => {
     expect(w.limitations.join('\n')).toMatch(/only ulimit hard limits apply/);
     expect(getIsolation(defaultConfig().isolation, { orbitInstallDir: '/opt/orbit' })).toBeInstanceOf(SandboxRuntimeIsolation);
     expect(new NoIsolation().wrap(['true'], profile(), { cwd: '/', env: {} }).argv).toEqual(['true']);
+  });
+});
+
+describe('unenforcedLimits and resourceLimitRefusals (isolation.require_resource_limits, G24)', () => {
+  const WITH_MEMORY: IsolationLimits = { ...ALL, memory_mb: 4096 };
+
+  it('CPU time, process count and file size are enforced by every provider; only memory differs', () => {
+    for (const kind of ['sandbox-runtime', 'container', 'none'] as const) expect(unenforcedLimits(kind, { ...ALL }, { memory_mb: 4096 }), kind).toEqual([]);
+  });
+
+  it('memory: sandbox-runtime only samples, none enforces nothing, the container counts only with a cap no higher than the limit', () => {
+    expect(unenforcedLimits('sandbox-runtime', WITH_MEMORY, null)).toEqual([expect.objectContaining({ limit: 'memory_mb', configured: 4096, reason: expect.stringContaining('no hard memory cap') })]);
+    expect(unenforcedLimits('none', WITH_MEMORY, null)).toEqual([expect.objectContaining({ limit: 'memory_mb', reason: expect.stringContaining('enforces no memory limit') })]);
+    expect(unenforcedLimits('container', WITH_MEMORY, { memory_mb: 4096 })).toEqual([]);
+    expect(unenforcedLimits('container', WITH_MEMORY, { memory_mb: 1024 })).toEqual([]);
+    expect(unenforcedLimits('container', WITH_MEMORY, { memory_mb: 4097 })).toEqual([expect.objectContaining({ reason: expect.stringContaining('isolation.container.memory_mb (4097 MB), which is higher') })]);
+    expect(unenforcedLimits('container', WITH_MEMORY, null)).toEqual([expect.objectContaining({ reason: expect.stringContaining('no isolation.container section') })]);
+  });
+
+  it('refusals are empty unless the policy requires the limits, and then say which limit and which provider', () => {
+    const base = defaultConfig('autonomous').isolation;
+    expect(base.require_resource_limits).toBe(false);
+    expect(resourceLimitRefusals(base, 'sandbox-runtime')).toEqual([]);
+    const required = { ...base, require_resource_limits: true };
+    expect(resourceLimitRefusals(required, 'sandbox-runtime')).toEqual([expect.stringMatching(/^isolation\.require_resource_limits is true but sandbox-runtime cannot enforce isolation\.limits\.memory_mb \(4096 MB\)/)]);
+    expect(resourceLimitRefusals({ ...required, limits: { ...base.limits!, memory_mb: null } }, 'sandbox-runtime')).toEqual([]);
+    // A snapshot written before the key existed has neither the key nor possibly the limits: nothing is required.
+    const { require_resource_limits: _omitted, ...legacy } = base;
+    expect(resourceLimitRefusals(legacy, 'none')).toEqual([]);
   });
 });

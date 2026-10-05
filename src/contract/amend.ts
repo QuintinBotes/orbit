@@ -427,7 +427,8 @@ function applyChange(ctx: Ctx, change: AmendmentChange | HumanAmendmentChange): 
       if (change.draft_pr && !old.draft_pr && (!actions?.open_pull_request || ctx.snapshot.config.delivery?.pull_request === 'none')) {
         ctx.forbidden.push('the policy does not allow opening a pull request');
       }
-      next.delivery = { draft_pr: change.draft_pr, merge: change.merge };
+      // The target environment is the person's choice at `orbit run --environment`; an amendment never changes it.
+      next.delivery = { ...old, draft_pr: change.draft_pr, merge: change.merge };
       return { field: 'delivery', oldValue: old, newValue: next.delivery, affected: ['delivery'] };
     }
 

@@ -65,7 +65,7 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 |---|---|
 | `orbit doctor` | `--probe` makes live requests (a few cents) |
 | `orbit init` | none |
-| `orbit run` | `--goal <text>` (or `-` for stdin), `--mode supervised\|autonomous\|autonomous-delivery\|release`, `--policy <path>`, `--foreground`, `--detach` |
+| `orbit run` | `--goal <text>` (or `-` for stdin), `--mode supervised\|autonomous\|autonomous-delivery\|release`, `--environment <name>` (release mode: deploy only there), `--policy <path>`, `--foreground`, `--detach` |
 | `orbit status [run-id]` | `--all` lists every run, not the latest 10 |
 | `orbit logs <run-id>` | `--follow` / `-f`, `--lines <n>`, `--controller`, `--workers`, `--worker <id>` |
 | `orbit pause <run-id>` | none |
@@ -75,7 +75,7 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 | `orbit questions <run-id>` | `--all` includes answered and withdrawn questions |
 | `orbit decide <run-id> <question-id> <answer...>` | `--by <name>` (models and workers cannot decide) |
 | `orbit verify [run-id]` | see below |
-| `orbit repair <run-id \| description>` | `--foreground`, `--policy <path>`, and the `orbit run` options other than `--goal` |
+| `orbit repair <run-id \| description>` | `--foreground`, `--policy <path>`, and the `orbit run` options other than `--goal` and `--environment` |
 | `orbit stats` | `--since <when>`, `--until <when>`: an ISO date or time, or a span such as `90m`, `24h`, `7d`, `2w` |
 | `orbit gc` | `--keep-days <n>` (at least 1; default `retention.keep_runs_days`), `--dry-run` |
 | `orbit release resolve <run-id>` | `--deployed`, `--not-deployed`, `--environment <name>`, `--by <name>`; see [Release mode safeguards](#release-mode-safeguards) |
@@ -155,6 +155,18 @@ safeguards:
 - If the base branch moved, Orbit rebases the task branch only when
   `actions.rebase_task_branch` is true (default false). Otherwise the run
   blocks and asks you.
+- `orbit run --mode release --environment <name>` names the one environment the
+  run deploys to. Without it, a release deploys every environment in
+  `release.environments` that the deployed branch is allowed for, in profile
+  order, and reports the rest as skipped. With it, only that environment
+  deploys, and the run is refused when the name is not defined (at the command,
+  before any run exists, and again at the intake gate) or when
+  `allowed_branches` does not cover the branch the deploy comes from (the base
+  branch with a merge, else the task branch). The branch check happens before
+  the merge, so a refused environment leaves the pull request open. The name is
+  stored on the run and in the contract as `delivery.environment`, and an
+  amendment cannot change it; `--environment` needs `--mode release` and is not
+  an option of `orbit repair`.
 - A deploy runs the environment's `deploy_command` (an argv, never a shell)
   only from an allowed branch, with `require_ci_green` honoured, inside the
   timeout and the environment's `network_hosts`. If the outcome is unknown,
@@ -190,7 +202,12 @@ sandbox-runtime memory limit is a watchdog, not a kernel cap: it samples the
 group's resident memory and kills the group when it exceeds the limit, so a
 fast allocation can overshoot before it is caught. Use `container` when you
 need a hard memory ceiling. When limits are set and no `bash` is found, a
-command is refused rather than run without them. `none` is refused in
+command is refused rather than run without them. Set
+`isolation.require_resource_limits: true` to have Orbit refuse a run at
+preflight, and `orbit doctor` fail, when the provider cannot enforce a limit
+that is set (today only `memory_mb`: `sandbox-runtime` and `none` cannot hard-cap
+it, `container` can when `container.memory_mb` is no higher); the message
+names the limit and the fix. `none` is refused in
 autonomous modes unless `isolation.allow_unisolated` is true.
 
 ## Logs

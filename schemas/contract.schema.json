@@ -91,7 +91,8 @@
       "required": ["draft_pr", "merge"],
       "properties": {
         "draft_pr": { "type": "boolean" },
-        "merge": { "type": "boolean" }
+        "merge": { "type": "boolean" },
+        "environment": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$" }
       }
     },
     "policy_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },

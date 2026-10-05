@@ -55,7 +55,7 @@ export async function contractingStep(ctx: RunContext): Promise<StepResult> {
 
   let drafted: ReturnType<typeof draftContract>;
   try {
-    drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? '', taskId: ctx.run.id, policyHash: ctx.run.policyHash });
+    drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? '', taskId: ctx.run.id, policyHash: ctx.run.policyHash, environment: ctx.run.environment });
   } catch (err) {
     if (!(err instanceof OrbitError) || err.code !== 'CONTRACT_INVALID') throw err;
     return finishRun(ctx, 'BLOCKED', `intake gate rejected the planner's contract: ${err.message}`, { outcome: { problems: err.details ?? null } });

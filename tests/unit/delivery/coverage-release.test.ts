@@ -287,6 +287,46 @@ describe('merge: a draft pull request', () => {
   });
 });
 
+describe('a named environment is refused before anything is merged (G50)', () => {
+  const mergeActions = (l: Lab) => l.ledger().list(l.runId, { kind: 'merge' });
+  const untouched = (l: Lab) => {
+    expect(l.fake.state.prs.map((p) => p.state)).toEqual(['OPEN']);
+    expect(mergeActions(l)).toEqual([]);
+  };
+
+  it('an environment the base branch is not allowed for leaves the pull request open', async () => {
+    const l = releaseLab();
+    const d = await delivered(l);
+    pass(l, d.commit);
+    // preview is allowed for orbit/* only; a merge would deploy from main.
+    await expect(performRelease(input(l, d, { environments: ['preview'] }))).rejects.toMatchObject({ code: 'POLICY_DENIED', details: expect.objectContaining({ rule: 'release.allowed_branches', definitive: true }), message: expect.stringContaining('environment preview may not be deployed from main (allowed: orbit/*)') });
+    untouched(l);
+  });
+
+  it('without a merge the environment is judged against the task branch', async () => {
+    const l = releaseLab();
+    const d = await delivered(l);
+    await expect(performRelease(input(l, d, { contractMerge: false, environments: ['staging'] }))).rejects.toMatchObject({ details: expect.objectContaining({ rule: 'release.allowed_branches' }), message: expect.stringContaining(`environment staging may not be deployed from orbit/${l.runId} (allowed: main)`) });
+    expect(l.fake.state.prs.map((p) => p.state)).toEqual(['OPEN']);
+  });
+
+  it('an environment the profile does not define leaves the pull request open', async () => {
+    const l = releaseLab();
+    const d = await delivered(l);
+    pass(l, d.commit);
+    await expect(performRelease(input(l, d, { environments: ['production'] }))).rejects.toMatchObject({ code: 'POLICY_DENIED', details: expect.objectContaining({ rule: 'release.environment' }), message: expect.stringContaining('(defined: staging, preview)') });
+    untouched(l);
+  });
+
+  it('a policy that does not authorize deploying refuses the named environment before the merge', async () => {
+    const l = releaseLab((cfg) => void (cfg.actions.deploy_production = false));
+    const d = await delivered(l);
+    pass(l, d.commit);
+    await expect(performRelease(input(l, d, { environments: ['staging'] }))).rejects.toMatchObject({ code: 'POLICY_DENIED', message: expect.stringContaining('deploying is not authorized') });
+    untouched(l);
+  });
+});
+
 describe('deploy: environment selection and configuration', () => {
   it('says "none" when a named environment is not defined and the profile defines none', async () => {
     const l = releaseLab((cfg) => void (cfg.release!.environments = {}));

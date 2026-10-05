@@ -132,8 +132,9 @@ export async function releaseDelivered(ctx: RunContext, d: DeliveredRecord, outc
       commit: d.commit,
       pr: d.pr?.number ?? null,
       contractMerge: contract.delivery.merge,
-      // Every environment the release profile defines that the deployed ref is allowed for, in profile order.
-      environments: 'all',
+      // The environment the contract names deploys alone, and is refused when it is undefined or not allowed for the
+      // deployed ref; without one, every environment the release profile defines that the ref is allowed for, in profile order.
+      environments: contract.delivery.environment ? [contract.delivery.environment] : 'all',
       readiness: () => {
         const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: cand, implementerProvider: implementerProvider(ctx), deliveredTree: d.tree, now: ctx.clock.now() });
         return { ok: gate.passed, reasons: gate.reasons };

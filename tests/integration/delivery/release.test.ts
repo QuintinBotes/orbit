@@ -435,8 +435,8 @@ describe('performRelease: every environment the release names (G50)', () => {
     const l = twoEnvLab();
     const d = await delivered(l);
     await expect(performRelease(input(l, d, { contractMerge: false, environments: ['preview', 'staging'] }))).rejects.toMatchObject({ code: 'POLICY_DENIED', details: { rule: 'release.allowed_branches' } });
-    // preview ran before staging was refused; that is the order the caller asked for.
-    expect(deploys(l)).toEqual([`${d.commit} widget v1`]);
+    // Every named environment is checked before any is deployed (G50): preview, which is allowed, did not run either.
+    expect(deploys(l)).toEqual([]);
   });
 
   it("'all' with no environment defined says so", async () => {

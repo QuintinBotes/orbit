@@ -126,10 +126,10 @@ export function seedRegistry(db: OrbitDb): void {
   for (const e of registry.list()) if (e.provider === 'claude' && e.family !== 'fable') registry.markAvailability(e.modelId, 'claude-cli', true, 'validated by the test lab');
 }
 
-export function startLabRun(lab: Lab, goal = 'Add a mul function to the calculator.'): RunRecord {
+export function startLabRun(lab: Lab, goal = 'Add a mul function to the calculator.', opts: { environment?: string } = {}): RunRecord {
   const db = lab.db();
   seedRegistry(db);
-  return startRun({ db, repoRoot: lab.repo, goal, config: lab.config, clock: systemClock });
+  return startRun({ db, repoRoot: lab.repo, goal, config: lab.config, clock: systemClock, ...(opts.environment !== undefined ? { environment: opts.environment } : {}) });
 }
 
 export function labAdapters(lab: Pick<Lab, 'config' | 'templatePath' | 'scenarioPath' | 'argvLog'>): Record<string, ProviderAdapter> {
@@ -144,8 +144,8 @@ export function labAdapters(lab: Pick<Lab, 'config' | 'templatePath' | 'scenario
 /**
  * A fixed machine for tests that start several workers at once (docs/gaps.md G54): 16 cores and 64 GB free,
  * whatever this host is doing, so admission is decided by the units and limits under test, not by the machine
- * the suite runs on. Pass it as `schedulerProbe`. labDeps leaves the probe unset because the saturation fault
- * tests read a deliberately saturated host through node:os.
+ * the suite runs on. labDeps passes it as `schedulerProbe` by default; a test that needs another machine (the
+ * saturation fault test) overrides it in the deps it builds.
  */
 export const FIXED_PROBE: NonNullable<ControllerDeps['schedulerProbe']> = Object.freeze({ availableParallelism: () => 16, freemem: () => 64_000 * 1024 * 1024 });
 
@@ -159,6 +159,7 @@ export function labDeps(lab: Lab, db: OrbitDb = lab.db()): Omit<ControllerDeps, 
     hostEnv: process.env,
     orbitInstallDir: ORBIT_ROOT,
     timing: { checkPollMs: 50, killGraceMs: 300, ciAbsentGraceMs: 0, workerTimeoutMs: 120_000 },
+    schedulerProbe: FIXED_PROBE,
   };
 }
 

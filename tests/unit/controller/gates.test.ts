@@ -91,6 +91,106 @@ describe('intakeGate', () => {
     const s = snap();
     expect(intakeGate({ run: run(s), snapshot: s }).status).toBe('pass');
   });
+
+  describe('the release environment a run names (G50)', () => {
+    const releaseSnap = () =>
+      snap((c) => {
+        c.mode = 'release';
+        const env = { deploy_command: ['node', '-e', '0'], allowed_branches: ['main'], require_ci_green: false, network_hosts: [], timeout_seconds: 30, verify_command: null };
+        c.release = { merge: { method: 'squash', require_checks: [], delete_branch: false, mark_ready: true }, environments: { staging: env, canary: env } };
+      });
+
+    it('passes a defined environment before and after the contract, and records it as evidence', () => {
+      const s = releaseSnap();
+      const named = { ...run(s), environment: 'canary' };
+      const early = intakeGate({ run: named, snapshot: s });
+      expect(early.status).toBe('pass');
+      expect(early.evidence).toContain('release environment canary');
+      const withContract = intakeGate({ run: named, snapshot: s, contract: contract(s, { delivery: { draft_pr: false, merge: false, environment: 'canary' } }) });
+      expect(withContract.status, withContract.reasons.join('; ')).toBe('pass');
+    });
+
+    it('refuses an environment the release profile does not define, at preflight, naming the defined ones', () => {
+      const s = releaseSnap();
+      const g = intakeGate({ run: { ...run(s), environment: 'production' }, snapshot: s });
+      expect(g.passed).toBe(false);
+      expect(g.onFailure).toBe('reject-contract');
+      expect(g.reasons.join('\n')).toMatch(/the run names release environment "production", which cannot be used: "production" is not defined in release\.environments \(defined: staging, canary\)/);
+    });
+
+    it('refuses an environment when the policy is not in release mode', () => {
+      const s = snap();
+      const g = intakeGate({ run: { ...run(s), environment: 'staging' }, snapshot: s });
+      expect(g.reasons.join('\n')).toMatch(/only in mode release/);
+    });
+
+    it('refuses a contract whose delivery.environment is not the one the run names, in either direction', () => {
+      const s = releaseSnap();
+      const onContract = contract(s, { delivery: { draft_pr: false, merge: false, environment: 'staging' } });
+      expect(intakeGate({ run: { ...run(s), environment: 'canary' }, snapshot: s, contract: onContract }).reasons.join('\n')).toMatch(/delivery\.environment \(staging\) is not the release environment the run names \(canary\)/);
+      expect(intakeGate({ run: run(s), snapshot: s, contract: onContract }).reasons.join('\n')).toMatch(/delivery\.environment \(staging\) is not the release environment the run names \(none\)/);
+      expect(intakeGate({ run: { ...run(s), environment: 'canary' }, snapshot: s, contract: contract(s) }).reasons.join('\n')).toMatch(/delivery\.environment \(none\) is not the release environment the run names \(canary\)/);
+    });
+  });
+});
+
+describe('environmentGate: isolation.require_resource_limits (G24)', () => {
+  type Kind = 'sandbox-runtime' | 'container' | 'none';
+  const gate = (kind: Kind, over: { require?: boolean; limits?: Partial<NonNullable<OrbitConfig['isolation']['limits']>>; containerMemory?: number | null } = {}) => {
+    const s = snap((c) => {
+      c.isolation.provider = kind;
+      c.isolation.allow_unisolated = true;
+      c.isolation.require_resource_limits = over.require ?? false;
+      c.isolation.limits = { cpu_seconds: 3600, max_processes: 2048, max_file_mb: 2048, memory_mb: 4096, ...(over.limits ?? {}) };
+      c.isolation.container = over.containerMemory === null ? null : { image: 'node:22-bookworm', memory_mb: over.containerMemory ?? 4096, cpus: 2, pids: 512 };
+    });
+    return environmentGate({ snapshot: s, mode: 'autonomous', isolation: { kind, available: true, detail: kind }, credentials: [], reviewer: null });
+  };
+
+  it('with the key off, no provider is refused for a limit it cannot enforce', () => {
+    for (const kind of ['sandbox-runtime', 'container', 'none'] as const) expect(gate(kind).passed, kind).toBe(true);
+  });
+
+  it('refuses sandbox-runtime, which only samples memory, and names isolation.limits.memory_mb and the way out', () => {
+    const g = gate('sandbox-runtime', { require: true });
+    expect(g.passed).toBe(false);
+    expect(g.onFailure).toBe('block-unattended');
+    expect(g.details.code).toBe('ISOLATION_UNAVAILABLE');
+    const text = g.reasons.join('\n');
+    expect(text).toMatch(/isolation\.require_resource_limits is true but sandbox-runtime cannot enforce isolation\.limits\.memory_mb \(4096 MB\): sandbox-runtime has no hard memory cap/);
+    expect(text).toMatch(/set isolation\.limits\.memory_mb to null/);
+  });
+
+  it('refuses provider none, which enforces no memory limit', () => {
+    const g = gate('none', { require: true });
+    expect(g.passed).toBe(false);
+    expect(g.reasons.join('\n')).toMatch(/none cannot enforce isolation\.limits\.memory_mb \(4096 MB\): isolation provider none enforces no memory limit/);
+  });
+
+  it('accepts the container provider when its hard cap is no higher than the configured limit, and refuses it when it is higher or missing', () => {
+    expect(gate('container', { require: true }).passed).toBe(true);
+    expect(gate('container', { require: true, containerMemory: 2048 }).passed).toBe(true);
+    const higher = gate('container', { require: true, containerMemory: 8192 });
+    expect(higher.passed).toBe(false);
+    expect(higher.reasons.join('\n')).toMatch(/container cannot enforce isolation\.limits\.memory_mb \(4096 MB\): the container provider ignores isolation\.limits\.memory_mb and enforces isolation\.container\.memory_mb \(8192 MB\), which is higher/);
+    expect(gate('container', { require: true, containerMemory: null }).reasons.join('\n')).toMatch(/no isolation\.container section/);
+  });
+
+  it('a limit set to null is not configured, so every provider passes with the key on', () => {
+    for (const kind of ['sandbox-runtime', 'container', 'none'] as const) expect(gate(kind, { require: true, limits: { memory_mb: null } }).passed, kind).toBe(true);
+  });
+
+  it('still reports the other refusals alongside it, and an unavailable provider is refused for being unavailable', () => {
+    const s = snap((c) => {
+      c.isolation.require_resource_limits = true;
+    });
+    const unavailable = environmentGate({ snapshot: s, mode: 'autonomous', isolation: { error: 'srt is not installed' }, credentials: [], reviewer: null });
+    expect(unavailable.reasons).toEqual(['isolation is unavailable: srt is not installed']);
+    const both = environmentGate({ snapshot: s, mode: 'autonomous', isolation: { kind: 'sandbox-runtime', available: false, detail: 'srt not found' }, credentials: [], reviewer: null });
+    expect(both.reasons).toHaveLength(2);
+    expect(both.reasons[0]).toMatch(/sandbox-runtime isolation is unavailable/);
+    expect(both.reasons[1]).toMatch(/cannot enforce isolation\.limits\.memory_mb/);
+  });
 });
 
 describe('environmentGate', () => {

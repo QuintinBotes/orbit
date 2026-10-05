@@ -30,6 +30,8 @@ export interface DraftContractInput {
   taskId: string;
   /** Hash to bind; defaults to the canonical hash of `snapshot`. */
   policyHash?: string;
+  /** The release environment the run names (`orbit run --environment`); carried into `delivery.environment`. */
+  environment?: string | null;
 }
 
 export type DraftAdjustmentKind = 'check-dropped' | 'check-added' | 'path-dropped' | 'path-narrowed' | 'path-added' | 'topic-added' | 'decision-recorded' | 'authority-mismatch' | 'practice-selected';
@@ -205,6 +207,7 @@ export function draftContract(input: DraftContractInput): DraftResult {
       // Merge is opt-in per run even when the policy permits it; only an
       // approved amendment turns it on.
       merge: false,
+      ...(input.environment ? { environment: input.environment } : {}),
     },
     policy_hash: input.policyHash ?? policyHashOf(snapshot),
     baseline_revision: input.baselineRevision,

@@ -2,21 +2,16 @@
 // more than capacity, and when the machine's memory or CPU is saturated it defers work instead of
 // starting it. The first block drives the real AgentScheduler with saturated probes; the second runs
 // the real controller with two runs and real fake workers while free memory reads as exhausted.
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { AgentScheduler } from '../../src/scheduling/scheduler.ts';
 import type { WorkUnit } from '../../src/scheduling/types.ts';
 import { Controller } from '../../src/controller/loop.ts';
 import { isTerminal } from '../../src/controller/states.ts';
 import { listActiveWorkers } from '../../src/storage/workers.ts';
-import { baseScenario, canStripTypes, implementMul, labDeps, runState, startLabRun, tracker, waitFor, writeScenario } from './helpers.ts';
+import { baseScenario, canStripTypes, FIXED_PROBE, implementMul, labDeps, runState, startLabRun, tracker, waitFor, writeScenario } from './helpers.ts';
 
-// Free memory reads as exhausted for everything this file runs, the controller's scheduler included.
-const memory = vi.hoisted(() => ({ freeBytes: 0 }));
-vi.mock('node:os', async (importOriginal) => {
-  const os = await importOriginal<typeof import('node:os')>();
-  const freemem = () => memory.freeBytes;
-  return { ...os, freemem, default: { ...os, freemem } };
-});
+// Free memory reads as exhausted for the controller's scheduler: the probe is passed through ControllerDeps.schedulerProbe.
+const SATURATED = Object.freeze({ availableParallelism: () => 16, freemem: () => 0 });
 
 const t = tracker();
 afterEach(() => t.cleanup());
@@ -69,12 +64,18 @@ describe('fault: resource saturation (scheduler)', () => {
 });
 
 describe.skipIf(!canStripTypes)('fault: resource saturation (controller with real workers)', () => {
+  it('the integration harness defaults to the fixed probe, so only a test that asks for saturation sees it', () => {
+    const l = t.lab();
+    expect(labDeps(l).schedulerProbe).toBe(FIXED_PROBE);
+    expect(FIXED_PROBE.freemem()).toBeGreaterThan(SATURATED.freemem());
+  });
+
   it('with memory saturated, a controller owning two runs never has more than one implementer running', async () => {
     const l = t.lab();
     writeScenario(l, baseScenario({ implementer: [{ ...implementMul('*'), sleepMs: 2_500 }] }));
     const first = startLabRun(l);
     const second = startLabRun(l, 'Add a mul function to the calculator, second request.');
-    const c = new Controller({ mode: 'service', deps: labDeps(l), leaseTtlMs: 30_000, leaseRenewMs: 500, tickIntervalMs: 50, graceMs: 300, shutdownGraceMs: 300 });
+    const c = new Controller({ mode: 'service', deps: { ...labDeps(l), schedulerProbe: SATURATED }, leaseTtlMs: 30_000, leaseRenewMs: 500, tickIntervalMs: 50, graceMs: 300, shutdownGraceMs: 300 });
     const started = c.start();
     let peak = 0;
     try {

@@ -258,6 +258,12 @@ export interface OrbitConfig {
     container: { image: string; memory_mb: number; cpus: number; pids: number } | null;
     /** Parsed configs always carry it (all null by default); optional in the type so older snapshots still read. */
     limits?: IsolationLimits;
+    /**
+     * When true, a run refuses an isolation provider that cannot enforce every configured limit (isolation/limits.ts
+     * `unenforcedLimits`), instead of running with the limit named in the evidence record as unenforced. Parsed
+     * configs always carry it (false by default); optional in the type so older snapshots still read.
+     */
+    require_resource_limits?: boolean;
   };
   providers: Record<string, ProviderConfig>;
   routing: {
