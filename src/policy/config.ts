@@ -322,7 +322,17 @@ export function isolationLimits(config: Pick<OrbitConfig, 'isolation'>): Isolati
 }
 
 function defaultProvider(id: string, eligible: boolean): ProviderConfig {
-  return { command: id, data_policy_eligible: eligible, model: null, reasoning_effort: null, extra_args: [] };
+  const base: ProviderConfig = { command: id, data_policy_eligible: eligible, model: null, reasoning_effort: null, extra_args: [] };
+  // The isolation tier is a Codex reviewer setting; no other provider carries the key.
+  return providerFamily(id) === 'codex' ? { ...base, tier: 'auto' } : base;
+}
+
+/** The provider family an id names: `claude`, `codex`, or an id starting with one of them (`codex-review`); null for any other. */
+function providerFamily(id: string): 'claude' | 'codex' | null {
+  for (const family of ['claude', 'codex'] as const) {
+    if (id === family || id.startsWith(`${family}-`) || id.startsWith(`${family}_`)) return family;
+  }
+  return null;
 }
 
 const CONTAINER_DEFAULTS = { memory_mb: 4096, cpus: 2, pids: 512 };
@@ -680,6 +690,14 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
     }
     if (!Object.hasOwn(c.providers, c.review.preferred_provider)) {
       problems.push(`review.preferred_provider: "${c.review.preferred_provider}" is not defined under providers`);
+    }
+  },
+  function providerTiers(c, problems) {
+    for (const [id, provider] of Object.entries(c.providers)) {
+      // Rejected rather than ignored: a tier that silently did nothing would read as confinement that is not there.
+      if (isPlainObject(provider) && provider.tier !== undefined && providerFamily(id) === 'claude') {
+        problems.push(`providers.${id}.tier: is a setting of the Codex reviewer only; Claude workers choose their own tier (os-sandbox with an exported credential and sandbox-runtime, else claude-sandbox)`);
+      }
     }
   },
   function scopeGlobs(c, problems) {

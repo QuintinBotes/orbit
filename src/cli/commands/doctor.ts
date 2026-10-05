@@ -16,7 +16,7 @@ import { redact } from '../../core/redact.ts';
 import { defaultConfig, loadConfig } from '../../policy/index.ts';
 import type { OrbitConfig } from '../../policy/types.ts';
 import type { CredentialStatus, ProviderAdapter, ProviderCapabilities } from '../../adapters/types.ts';
-import { CLAUDE_SANDBOX_LIMITATIONS, compareVersions, claudeEnvCredential, createAdapters, providerKind } from '../../adapters/index.ts';
+import { CLAUDE_SANDBOX_LIMITATIONS, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, compareVersions, claudeEnvCredential, codexEnvCredential, createAdapters, decideCodexTier, providerKind, type CodexTierDecision, type CodexTierSetting } from '../../adapters/index.ts';
 import { CONTAINER_LIMITATIONS, RESOURCE_LIMIT_FIX, SRT_LIMITATIONS, getIsolation, noIsolationLimitations, resourceLimitRefusals } from '../../isolation/index.ts';
 import type { IsolationProvider } from '../../isolation/types.ts';
 import { ModelRegistry, allowMatch } from '../../routing/registry.ts';
@@ -401,7 +401,7 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
         const why = !envCred ? 'no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in the environment (a keychain login is invisible inside srt)' : 'sandbox-runtime isolation is not in use';
         checks.push(warn(`${id}.worker-tier`, 'providers', `workers run in the claude-sandbox tier: ${why}`, 'an exported Claude credential plus sandbox-runtime for the strongest tier', 'export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)', CLAUDE_SANDBOX_LIMITATIONS.map((l) => `limitation: ${l}`)));
       }
-    }
+    } else checks.push(codexTierCheck(id, config.providers[id]!.tier ?? 'auto', codexEnvCredential(ctx.env), iso.available && iso.provider?.kind === 'sandbox-runtime', level));
   }
 
   // Independent review: judged exactly as a run would judge it.
@@ -415,6 +415,30 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
     }
   }
   return { checks, facts };
+}
+
+/**
+ * The tier the Codex reviewer will use and why: the adapter's own decision
+ * (decideCodexTier) applied to what doctor can see, so the report and a run
+ * cannot disagree. An explicit os-sandbox without srt would fail the run
+ * (ISOLATION_UNAVAILABLE), so it is judged like a missing reviewer.
+ */
+function codexTierCheck(id: string, setting: CodexTierSetting, apiKeyVar: string | null, srtInUse: boolean, level: typeof fail): DoctorCheck {
+  const check = `${id}.worker-tier`;
+  let decision: CodexTierDecision;
+  try {
+    decision = decideCodexTier({ setting, providerId: id, apiKeyVar, srt: { ok: srtInUse, why: 'sandbox-runtime isolation is not in use' } });
+  } catch (err) {
+    return level(check, 'providers', oneLine(err instanceof Error ? err.message : String(err), 300), 'sandbox-runtime isolation, or providers.<id>.tier set to auto or codex-sandbox', 'set isolation.provider to sandbox-runtime, or set the tier to auto or codex-sandbox');
+  }
+  const summary = `the Codex reviewer runs in the ${decision.tier} tier: ${oneLine(decision.reason, 300)}`;
+  const limitations = (decision.tier === 'os-sandbox' ? CODEX_OS_SANDBOX_LIMITATIONS : CODEX_LIMITATIONS).map((l) => `limitation: ${l}`);
+  if (decision.tier === 'os-sandbox') {
+    if (!decision.risky) return pass(check, 'providers', summary, limitations);
+    return warn(check, 'providers', summary, 'an exported API key (CODEX_API_KEY or OPENAI_API_KEY), or an API-key login in CODEX_HOME', 'export CODEX_API_KEY or OPENAI_API_KEY, or set the tier to auto', limitations);
+  }
+  if (!decision.automatic) return pass(check, 'providers', summary, limitations);
+  return warn(check, 'providers', summary, 'an exported API key (CODEX_API_KEY or OPENAI_API_KEY) plus sandbox-runtime for the os-sandbox tier', 'export CODEX_API_KEY or OPENAI_API_KEY (an API-key login, not a ChatGPT login)', limitations);
 }
 
 async function checkModels(p: Probe, registry: ModelRegistry, facts: ProviderFacts): Promise<DoctorCheck> {

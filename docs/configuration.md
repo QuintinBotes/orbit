@@ -394,7 +394,30 @@ providers:
     model: null
     reasoning_effort: null
     extra_args: []
+    tier: auto                    # auto | os-sandbox | codex-sandbox (Codex only)
 ```
+
+`providers.<id>.tier` is the isolation tier of the Codex reviewer (ADR 0001,
+"Codex reviewer tiers" and "Second live finding"). It is chosen by login type,
+because Codex inside `srt` cannot use a ChatGPT login (it connects, then fails
+with "workspace routing discovery failed"):
+
+| value | what runs | when |
+| --- | --- | --- |
+| `auto` (default) | `os-sandbox` when `CODEX_API_KEY` or `OPENAI_API_KEY` is set (not blank) in the worker environment and `srt` starts here; otherwise `codex-sandbox` | the usual choice |
+| `os-sandbox` | `codex exec --sandbox danger-full-access` inside `srt`, which is then the only sandbox | refuses with `ISOLATION_UNAVAILABLE` when `srt` is not in use or does not start; it never falls back to an unwrapped Codex. With no API key in the environment it still runs, and records that a ChatGPT login cannot work there (an API-key login stored in `CODEX_HOME` can) |
+| `codex-sandbox` | `codex exec --sandbox read-only`, never wrapped in `srt`, even when `srt` and an API key are available | reads are unrestricted, and the worker record says so |
+
+Both API key variables are passed to a Codex worker (and to no other worker).
+The worker record always carries the tier and its limitations, and `orbit
+doctor` reports the tier the reviewer will use and why (`codex.worker-tier`),
+as a warning when `auto` falls back to `codex-sandbox`. The key exists for
+Codex providers only (`codex`, or an id starting with `codex-` or `codex_`):
+`providers.claude.tier` is rejected with a config error, not ignored, because
+Claude workers choose their own tier (`os-sandbox` with an exported credential
+and `sandbox-runtime`, else `claude-sandbox`; see [installation](installation.md#isolation-tiers))
+and a setting that silently did nothing would read as confinement that is not
+there. A config without the key (an older snapshot) reads as `auto`.
 
 `isolation.limits` is on by default. Set a value to `null` to turn that limit
 off. It sets hard per-process limits on every worker shell command and check.

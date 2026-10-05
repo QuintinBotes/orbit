@@ -163,7 +163,8 @@ describe.skipIf(!srtStatus.ok)(srtStatus.ok ? 'CodexAdapter os-sandbox tier unde
     const base = implementerSpec(f, { role: 'reviewer', readOnly: true, model: 'gpt-6-astra', effort: 'high', outputSchema: MODEL_OUTPUT_SCHEMAS.review, prompt: 'Review candidate abc123.', env: { ORBIT_FAKE_SCENARIO: join(f.workerDir, 'scenario.json'), ORBIT_FAKE_ARGV_LOG: argvLog } });
     const sandbox = profileForWorker({ worktree: f.repo, workerDir: f.workerDir, snapshot: verifySnapshot(f.policyPath, f.policyHash), provider: 'codex', claudeConfigDir: join(f.base, 'claude'), codexHome, homeDir: homedir(), policyPath: f.policyPath, readablePaths: [ORBIT_ROOT], timeoutMs: 60_000, env: {} });
     const spec = { ...base, sandbox };
-    const a = new CodexAdapter({ command: [process.execPath, FAKE_CODEX], isolation: srt, graceMs: 300, baseEnv: { PATH: process.env.PATH, HOME: process.env.HOME, CODEX_HOME: codexHome } });
+    // An API key in the worker environment is what makes `auto` choose srt: a ChatGPT login cannot run under it (ADR 0001, "Second live finding").
+    const a = new CodexAdapter({ command: [process.execPath, FAKE_CODEX], isolation: srt, graceMs: 300, baseEnv: { PATH: process.env.PATH, HOME: process.env.HOME, CODEX_HOME: codexHome, CODEX_API_KEY: 'sk-acme-test-0000' } });
     const handle = await a.startTask(spec);
     expect(handle.tier).toBe('os-sandbox');
     const result = await waitFor(() => a.collectResult(handle, spec), 60_000);

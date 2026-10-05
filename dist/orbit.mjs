@@ -21170,7 +21170,8 @@ var init_config_schema = __esm({
               data_policy_eligible: { type: "boolean" },
               model: { oneOf: [{ type: "null" }, { type: "string", minLength: 1, maxLength: 200, pattern: "^[A-Za-z0-9][A-Za-z0-9._:/\\[\\]-]*$" }] },
               reasoning_effort: { oneOf: [{ type: "null" }, { type: "string", pattern: "^[a-z]{1,20}$" }] },
-              extra_args: { type: "array", maxItems: 100, items: { type: "string", maxLength: 4096 } }
+              extra_args: { type: "array", maxItems: 100, items: { type: "string", maxLength: 4096 } },
+              tier: { enum: ["auto", "os-sandbox", "codex-sandbox"] }
             }
           }
         },
@@ -21605,7 +21606,14 @@ function isolationLimits(config) {
   return { ...defaultIsolationLimits(), ...config.isolation.limits ?? {} };
 }
 function defaultProvider(id, eligible) {
-  return { command: id, data_policy_eligible: eligible, model: null, reasoning_effort: null, extra_args: [] };
+  const base = { command: id, data_policy_eligible: eligible, model: null, reasoning_effort: null, extra_args: [] };
+  return providerFamily(id) === "codex" ? { ...base, tier: "auto" } : base;
+}
+function providerFamily(id) {
+  for (const family of ["claude", "codex"]) {
+    if (id === family || id.startsWith(`${family}-`) || id.startsWith(`${family}_`)) return family;
+  }
+  return null;
 }
 function loadConfig(repoRoot, path, opts = {}) {
   const file = path === void 0 ? join4(repoRoot, CONFIG_RELATIVE_PATH) : isAbsolute2(path) ? path : resolve(repoRoot, path);
@@ -21986,6 +21994,13 @@ var init_config = __esm({
         }
         if (!Object.hasOwn(c.providers, c.review.preferred_provider)) {
           problems.push(`review.preferred_provider: "${c.review.preferred_provider}" is not defined under providers`);
+        }
+      },
+      function providerTiers(c, problems) {
+        for (const [id, provider] of Object.entries(c.providers)) {
+          if (isPlainObject(provider) && provider.tier !== void 0 && providerFamily(id) === "claude") {
+            problems.push(`providers.${id}.tier: is a setting of the Codex reviewer only; Claude workers choose their own tier (os-sandbox with an exported credential and sandbox-runtime, else claude-sandbox)`);
+          }
         }
       },
       function scopeGlobs(c, problems) {
@@ -25586,6 +25601,13 @@ function claudeEnvCredential(env) {
   }
   return null;
 }
+function codexEnvCredential(env) {
+  for (const key2 of CODEX_ENV_CREDENTIALS) {
+    const v = env[key2];
+    if (typeof v === "string" && v.trim() !== "") return key2;
+  }
+  return null;
+}
 function passThrough(base, names) {
   const out = {};
   for (const n2 of names ?? []) {
@@ -25595,7 +25617,7 @@ function passThrough(base, names) {
   }
   return out;
 }
-var BASE_ENV_KEYS, LOCALE_PREFIX, NETWORK_ENV_KEYS, PROVIDER_ENV_KEYS, CLAUDE_ENV_CREDENTIALS, CLAUDE_WORKER_ENV, ENV_MAX_OUTPUT_TOKENS, COMMON_WORKER_ENV, FORBIDDEN_EXTRA;
+var BASE_ENV_KEYS, LOCALE_PREFIX, NETWORK_ENV_KEYS, PROVIDER_ENV_KEYS, CLAUDE_ENV_CREDENTIALS, CODEX_ENV_CREDENTIALS, CLAUDE_WORKER_ENV, ENV_MAX_OUTPUT_TOKENS, COMMON_WORKER_ENV, FORBIDDEN_EXTRA;
 var init_env = __esm({
   "src/adapters/env.ts"() {
     "use strict";
@@ -25606,9 +25628,10 @@ var init_env = __esm({
     NETWORK_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR"];
     PROVIDER_ENV_KEYS = {
       claude: ["CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL"],
-      codex: ["CODEX_HOME", "CODEX_API_KEY"]
+      codex: ["CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY"]
     };
     CLAUDE_ENV_CREDENTIALS = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
+    CODEX_ENV_CREDENTIALS = ["CODEX_API_KEY", "OPENAI_API_KEY"];
     CLAUDE_WORKER_ENV = {
       CLAUDE_CODE_MAX_RETRIES: "4",
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
@@ -28839,6 +28862,24 @@ var init_codex_events = __esm({
 import { chmodSync as chmodSync3, existsSync as existsSync12, mkdirSync as mkdirSync7, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import { basename as basename6, dirname as dirname12, isAbsolute as isAbsolute10, join as join13 } from "node:path";
+function decideCodexTier(i) {
+  const key2 = i.providerId ? `providers.${i.providerId}.tier` : "providers.codex.tier";
+  if (i.setting === "codex-sandbox") {
+    return { tier: "codex-sandbox", reason: `${key2} is codex-sandbox, so Codex is never wrapped in srt`, automatic: false, risky: false };
+  }
+  if (i.setting === "os-sandbox") {
+    if (!i.srt.ok) {
+      throw new OrbitError("ISOLATION_UNAVAILABLE", `${key2} is os-sandbox but ${i.srt.why}; refusing to run Codex without srt (set the tier to auto or codex-sandbox to run it under its own read-only sandbox instead)`, { tier: "os-sandbox", providerId: i.providerId ?? "codex" });
+    }
+    if (i.apiKeyVar === null) {
+      return { tier: "os-sandbox", reason: `${key2} is os-sandbox, but ${NO_KEY_REASON}; this works only with an API-key login stored in CODEX_HOME`, automatic: false, risky: true };
+    }
+    return { tier: "os-sandbox", reason: `${key2} is os-sandbox and sandbox-runtime is in use`, automatic: false, risky: false };
+  }
+  if (i.apiKeyVar === null) return { tier: "codex-sandbox", reason: NO_KEY_REASON, automatic: true, risky: false };
+  if (!i.srt.ok) return { tier: "codex-sandbox", reason: i.srt.why, automatic: true, risky: false };
+  return { tier: "os-sandbox", reason: `${i.apiKeyVar} is set and sandbox-runtime is in use, so the whole codex process is confined`, automatic: true, risky: false };
+}
 function buildCodexArgv(i) {
   const tier = i.tier ?? "codex-sandbox";
   if (tier === "os-sandbox" && i.wrapper !== "sandbox-runtime") {
@@ -28917,7 +28958,7 @@ function launchModel(workerDir) {
   const meta = readJsonIfExists(join13(workerDir, LAUNCH_FILE))?.meta;
   return meta && typeof meta.model === "string" ? meta.model : null;
 }
-var CODEX_PROMPT_FILE, CODEX_SCHEMA_FILE, CODEX_LAST_MESSAGE_FILE, CODEX_RESULT_FILE, CODEX_EFFORTS, CODEX_REQUIRED_FLAGS, CODEX_EXTRA_ARGS_ALLOWED, PROJECT_CONFIG_LIMITATION, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, DANGER_FULL_ACCESS, NO_OS_ISOLATION, REVIEWER_TMP_DIR, CodexAdapter;
+var CODEX_PROMPT_FILE, CODEX_SCHEMA_FILE, CODEX_LAST_MESSAGE_FILE, CODEX_RESULT_FILE, CODEX_EFFORTS, CODEX_REQUIRED_FLAGS, CODEX_EXTRA_ARGS_ALLOWED, PROJECT_CONFIG_LIMITATION, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, NO_KEY_REASON, DANGER_FULL_ACCESS, NO_OS_ISOLATION, REVIEWER_TMP_DIR, CodexAdapter;
 var init_codex = __esm({
   "src/adapters/codex.ts"() {
     "use strict";
@@ -28953,6 +28994,7 @@ var init_codex = __esm({
       "Codex's state directory (its login file, logs and caches) is writable by the reviewer, and reads outside the denied paths are unrestricted: any file the user can read may reach the provider.",
       PROJECT_CONFIG_LIMITATION
     ];
+    NO_KEY_REASON = 'no CODEX_API_KEY or OPENAI_API_KEY in the environment, and a ChatGPT login cannot run under srt (Codex fails with "workspace routing discovery failed")';
     DANGER_FULL_ACCESS = "danger-full-access";
     NO_OS_ISOLATION = "No OS isolation around the codex process itself; only its own read-only sandbox applies to the commands it runs.";
     REVIEWER_TMP_DIR = "tmp";
@@ -29052,7 +29094,7 @@ ${status2.stderr}`;
         const outputTokens = outputBudgetFor(spec.role, { explicit: spec.outputTokens, configured: snapshot2.config.routing.output_budgets });
         const checkout = canonicalPath(spec.cwd);
         const workerDir = spec.workerDir;
-        const choice = await this.chooseTier();
+        const choice = await this.chooseTier(codexEnvCredential({ ...this.baseEnv(), ...spec.env }));
         const tmpDir = choice.srt ? reviewerTmpDir(workerDir) : prepareWorkerTmpDir(workerDir);
         const env = buildWorkerEnv({ provider: "codex", base: this.baseEnv(), policyPath: spec.policyPath, policyHash, worktree: checkout, tmpDir, extra: { ...passThrough(this.baseEnv(), this.opts.passEnv), ...spec.env } });
         const srt = choice.srt ? { provider: choice.srt, profile: codexReviewerProfile(spec.sandbox, { checkout, workerDir, codexHome: codexHomeFor(homeOf(env), env), homeDir: homeOf(env) }) } : null;
@@ -29063,7 +29105,7 @@ ${outputBudgetInstruction(outputTokens)}
 `}`, { mode: 384 });
         atomicWriteJson(join13(workerDir, CODEX_SCHEMA_FILE), spec.outputSchema, 384);
         rmSync3(join13(workerDir, CODEX_LAST_MESSAGE_FILE), { force: true });
-        const tier = srt ? "os-sandbox" : "codex-sandbox";
+        const tier = choice.decision.tier;
         const argv2 = buildCodexArgv({ command: this.command, model: spec.model, effort: spec.effort, cwd: checkout, schemaPath: join13(workerDir, CODEX_SCHEMA_FILE), lastMessagePath: join13(workerDir, CODEX_LAST_MESSAGE_FILE), tier, wrapper: srt?.provider.kind ?? null });
         let launchArgv = argv2;
         let launchEnv = env;
@@ -29082,9 +29124,10 @@ ${outputBudgetInstruction(outputTokens)}
           launchEnv = wrapped.env;
           limitations.push(...wrapped.limitations);
           for (const a of wrapped.argv) if (isAbsolute10(a) && basename6(dirname12(a)).startsWith("orbit-srt-")) cleanupPaths.push(dirname12(a));
+          if (choice.decision.risky) limitations.push(`Codex runs in the os-sandbox tier although it may not work there: ${choice.decision.reason}.`);
         } else {
           limitations.push(NO_OS_ISOLATION);
-          if (choice.note) limitations.push(choice.note);
+          limitations.push(`Codex runs in the codex-sandbox tier, under its own read-only sandbox and without srt: ${choice.decision.reason}.`);
         }
         const handle = await launchShim({
           provider: this.id,
@@ -29146,20 +29189,25 @@ ${outputBudgetInstruction(outputTokens)}
         return this.opts.baseEnv ?? process.env;
       }
       /**
-       * os-sandbox needs sandbox-runtime and a probe that shows it starts here;
-       * otherwise Codex runs unwrapped under its own read-only sandbox, and `note`
-       * says why. Other isolation providers are not used around Codex: the ADR's
-       * tiers are srt or no srt, and `danger-full-access` is for srt alone.
+       * The tier for this task (decideCodexTier). Only sandbox-runtime is used
+       * around Codex: the ADR's tiers are srt or no srt, and `danger-full-access`
+       * is for srt alone. srt is probed once per adapter, and only when the
+       * answer can depend on it (an explicit os-sandbox, or `auto` with an API key).
        */
-      async chooseTier() {
+      async chooseTier(apiKeyVar) {
+        const setting = this.opts.tier ?? "auto";
+        const consult = setting === "os-sandbox" || setting === "auto" && apiKeyVar !== null;
+        const status2 = consult ? await this.srtStatus() : { provider: null, ok: false, why: "sandbox-runtime was not consulted" };
+        const decision = decideCodexTier({ setting, providerId: this.id, apiKeyVar, srt: { ok: status2.ok, why: status2.why } });
+        return { srt: decision.tier === "os-sandbox" ? status2.provider : null, decision };
+      }
+      async srtStatus() {
         const isolation = this.opts.isolation ?? null;
-        if (isolation === null || isolation.kind === "none") return { srt: null, note: null };
-        if (isolation.kind !== "sandbox-runtime") {
-          return { srt: null, note: `The ${isolation.kind} isolation provider is not used around Codex (only sandbox-runtime is); Codex runs under its own read-only sandbox.` };
-        }
+        if (isolation === null || isolation.kind === "none") return { provider: null, ok: false, why: "sandbox-runtime isolation is not in use" };
+        if (isolation.kind !== "sandbox-runtime") return { provider: null, ok: false, why: `the ${isolation.kind} isolation provider is not used around Codex (only sandbox-runtime is)` };
         this.srtProbe ??= await isolation.available();
-        if (!this.srtProbe.ok) return { srt: null, note: `sandbox-runtime is unavailable (${this.srtProbe.detail}); Codex runs under its own read-only sandbox.` };
-        return { srt: isolation, note: null };
+        if (!this.srtProbe.ok) return { provider: null, ok: false, why: `sandbox-runtime is unavailable (${this.srtProbe.detail})` };
+        return { provider: isolation, ok: true, why: "" };
       }
       async run(args, timeoutMs) {
         const base = this.baseEnv();
@@ -29263,7 +29311,7 @@ function createAdapter(id, config, deps = {}) {
   const fake = fakeKind(config.command);
   if (fake) {
     if (fake !== kind) throw new OrbitError("CONFIG_INVALID", `providers.${id}.command points at the ${fake} fake`, { provider: id });
-    return fake === "claude" ? new FakeAdapter({ provider: "claude", script: config.command, ...common, hookCommand: deps.hookCommand, tier: deps.claudeTier, modelEfforts: deps.modelEfforts, models: deps.models ? () => deps.models("claude") : void 0 }) : new FakeAdapter({ provider: "codex", script: config.command, ...common });
+    return fake === "claude" ? new FakeAdapter({ provider: "claude", script: config.command, ...common, hookCommand: deps.hookCommand, tier: deps.claudeTier, modelEfforts: deps.modelEfforts, models: deps.models ? () => deps.models("claude") : void 0 }) : new FakeAdapter({ provider: "codex", script: config.command, ...common, tier: config.tier });
   }
   if (kind === "claude") {
     return new ClaudeAdapter({
@@ -29275,7 +29323,7 @@ function createAdapter(id, config, deps = {}) {
       models: deps.models ? () => deps.models("claude") : void 0
     });
   }
-  return new CodexAdapter({ ...common, command: commandArgv(config.command) });
+  return new CodexAdapter({ ...common, command: commandArgv(config.command), tier: config.tier });
 }
 function createAdapters(config, deps = {}) {
   const out = {};
@@ -56332,7 +56380,7 @@ async function checkProviders(p, iso2, registry) {
         const why = !envCred ? "no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in the environment (a keychain login is invisible inside srt)" : "sandbox-runtime isolation is not in use";
         checks.push(warn2(`${id}.worker-tier`, "providers", `workers run in the claude-sandbox tier: ${why}`, "an exported Claude credential plus sandbox-runtime for the strongest tier", "export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)", CLAUDE_SANDBOX_LIMITATIONS.map((l) => `limitation: ${l}`)));
       }
-    }
+    } else checks.push(codexTierCheck(id, config.providers[id].tier ?? "auto", codexEnvCredential(ctx.env), iso2.available && iso2.provider?.kind === "sandbox-runtime", level));
   }
   if (config.review.independent_provider_required || ids.some((i) => i !== "claude")) {
     const sel = selectReviewer({ snapshot: { config }, capabilities: facts.capabilities, credentials: facts.credentials, implementer: { provider: "claude", model: null }, registry });
@@ -56344,6 +56392,23 @@ async function checkProviders(p, iso2, registry) {
     }
   }
   return { checks, facts };
+}
+function codexTierCheck(id, setting, apiKeyVar, srtInUse, level) {
+  const check = `${id}.worker-tier`;
+  let decision;
+  try {
+    decision = decideCodexTier({ setting, providerId: id, apiKeyVar, srt: { ok: srtInUse, why: "sandbox-runtime isolation is not in use" } });
+  } catch (err) {
+    return level(check, "providers", oneLine3(err instanceof Error ? err.message : String(err), 300), "sandbox-runtime isolation, or providers.<id>.tier set to auto or codex-sandbox", "set isolation.provider to sandbox-runtime, or set the tier to auto or codex-sandbox");
+  }
+  const summary = `the Codex reviewer runs in the ${decision.tier} tier: ${oneLine3(decision.reason, 300)}`;
+  const limitations = (decision.tier === "os-sandbox" ? CODEX_OS_SANDBOX_LIMITATIONS : CODEX_LIMITATIONS).map((l) => `limitation: ${l}`);
+  if (decision.tier === "os-sandbox") {
+    if (!decision.risky) return pass(check, "providers", summary, limitations);
+    return warn2(check, "providers", summary, "an exported API key (CODEX_API_KEY or OPENAI_API_KEY), or an API-key login in CODEX_HOME", "export CODEX_API_KEY or OPENAI_API_KEY, or set the tier to auto", limitations);
+  }
+  if (!decision.automatic) return pass(check, "providers", summary, limitations);
+  return warn2(check, "providers", summary, "an exported API key (CODEX_API_KEY or OPENAI_API_KEY) plus sandbox-runtime for the os-sandbox tier", "export CODEX_API_KEY or OPENAI_API_KEY (an API-key login, not a ChatGPT login)", limitations);
 }
 async function checkModels(p, registry, facts) {
   const { config } = p;

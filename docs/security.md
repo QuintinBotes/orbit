@@ -90,7 +90,13 @@ State these plainly to yourself before running unattended.
 - **The `claude-sandbox` tier is weaker than `os-sandbox`.** Edit and Write
   confinement depends on Claude Code's permission layer, not the OS. `orbit
   doctor` warns when a run would use it.
-- **The Codex reviewer's two tiers confine different things.** Codex's own
+- **The Codex reviewer's two tiers confine different things, and the login
+  type picks one.** A ChatGPT login cannot run inside `srt` (Codex fails with
+  "workspace routing discovery failed"), so `providers.codex.tier: auto` uses
+  the `os-sandbox` tier only with `CODEX_API_KEY` or `OPENAI_API_KEY` in the
+  environment and an `srt` that starts, and the weaker `codex-sandbox` tier
+  otherwise; `orbit doctor` warns when it falls back. An explicit `os-sandbox`
+  without `srt` is refused, never run unwrapped. Codex's own
   sandbox cannot start inside `srt` on macOS, so in the `os-sandbox` tier Codex
   runs with `--sandbox danger-full-access` and `srt` is the only sandbox: it
   allows writes only to the worker directory and Codex's state directory (never

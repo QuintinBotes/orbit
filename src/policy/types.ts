@@ -159,6 +159,14 @@ export interface IsolationLimits {
   memory_mb: number | null;
 }
 
+/**
+ * Isolation tier of the Codex reviewer (ADR 0001, "Second live finding"):
+ * `auto` picks `os-sandbox` (srt around the whole codex process) only with an
+ * API key in the worker environment and an srt that starts, else
+ * `codex-sandbox` (unwrapped, Codex's own read-only sandbox).
+ */
+export type CodexTierSetting = 'auto' | 'os-sandbox' | 'codex-sandbox';
+
 export interface ProviderConfig {
   command: string;
   /** User attests that sending sanitized code and diffs to this provider is permitted. */
@@ -166,6 +174,11 @@ export interface ProviderConfig {
   model: string | null;
   reasoning_effort: string | null;
   extra_args: string[];
+  /**
+   * Codex providers only (a Claude provider rejects the key). Parsed configs
+   * carry it for every Codex provider; absent in older snapshots, which read as `auto`.
+   */
+  tier?: CodexTierSetting;
 }
 
 export interface OrbitConfig {

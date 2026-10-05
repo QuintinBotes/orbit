@@ -316,6 +316,14 @@ providers:
     model: null
     reasoning_effort: null
     extra_args: []
+    # Isolation tier of the Codex reviewer. auto: os-sandbox (Codex inside srt,
+    # srt the only sandbox) only when CODEX_API_KEY or OPENAI_API_KEY is in the
+    # environment and srt starts here; otherwise codex-sandbox (Codex under its
+    # own read-only sandbox, no srt, reads unrestricted). A ChatGPT login cannot
+    # run under srt. os-sandbox fails closed without srt; codex-sandbox never
+    # uses it. orbit doctor reports the tier and why. Codex providers only: a
+    # Claude provider rejects this key.
+    tier: auto
 
 routing:
   # Model families (or exact ids) Orbit may route work to. Fable is left out

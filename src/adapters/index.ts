@@ -22,8 +22,8 @@ export { renderClaudeSettings, claudeSettingsProblems, assertClaudeSettings, abs
 export type { ClaudeSettings, ClaudeSettingsInput } from './claude-settings.ts';
 export { classifyClaudeTranscript, claudeUsage, claudeEvents, subtractUsage, sessionProblems, CLAUDE_END_REASONS, CLAUDE_AUTH_ERRORS, CLAUDE_TRANSIENT_ERRORS } from './claude-transcript.ts';
 export type { ClaudeTaskResult, ClaudeEndReason } from './claude-transcript.ts';
-export { CodexAdapter, buildCodexArgv, parseHelpFlags, parseDoctorChecks, CODEX_EFFORTS, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, CODEX_REQUIRED_FLAGS } from './codex.ts';
-export type { CodexAdapterOptions, CodexTaskHandle, CodexTaskSpec, CodexTier } from './codex.ts';
+export { CodexAdapter, buildCodexArgv, decideCodexTier, parseHelpFlags, parseDoctorChecks, CODEX_EFFORTS, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, CODEX_REQUIRED_FLAGS } from './codex.ts';
+export type { CodexAdapterOptions, CodexSrtStatus, CodexTaskHandle, CodexTaskSpec, CodexTier, CodexTierDecision, CodexTierInput, CodexTierSetting } from './codex.ts';
 export { classifyCodexTranscript, codexUsage, codexEvents, CODEX_END_REASONS } from './codex-events.ts';
 export type { CodexTaskResult, CodexEndReason } from './codex-events.ts';
 export { FakeAdapter, FAKE_ENV_KEYS, FAKE_SCRIPTS, fakeKind } from './fake.ts';
@@ -32,7 +32,7 @@ export { runShim, shimMain, parseShimArgs, shimArgs, readPidRecord, readExitReco
 export type { ShimOptions, PidRecord, ExitRecord, AbortPattern } from './shim.ts';
 export { launchShim, reattachLaunch, handleFromWorkerDir, taskState, cancelShim, archiveAttempt, archivedAttempts, ATTEMPT_FILES, nextSessionId, sessionIdFor, readLogLines, readNewLines, LAUNCH_FILE, CANCEL_FILE } from './supervise.ts';
 export type { TaskState, LaunchRecord } from './supervise.ts';
-export { buildWorkerEnv, claudeEnvCredential, passThrough, CLAUDE_WORKER_ENV, PROVIDER_ENV_KEYS, ENV_MAX_OUTPUT_TOKENS } from './env.ts';
+export { buildWorkerEnv, claudeEnvCredential, codexEnvCredential, passThrough, CLAUDE_WORKER_ENV, CODEX_ENV_CREDENTIALS, PROVIDER_ENV_KEYS, ENV_MAX_OUTPUT_TOKENS } from './env.ts';
 export { renderWorkerPrompt, renderSystemPrompt, readRolePrompt, stripFrontmatter, fence, ROLE_OUTPUT_KIND, ROLE_OUTPUT_TOKENS, AGENT_ROLES, outputBudgetFor, outputBudgetInstruction } from './prompt.ts';
 export type { AgentRole, WorkerPromptInput, EvidenceRef, PromptBrief } from './prompt.ts';
 export { defaultOrbitCommands, orbitCommands, sourceCommands } from './commands.ts';
@@ -73,7 +73,7 @@ export function createAdapter(id: string, config: ProviderConfig, deps: AdapterD
     if (fake !== kind) throw new OrbitError('CONFIG_INVALID', `providers.${id}.command points at the ${fake} fake`, { provider: id });
     return fake === 'claude'
       ? new FakeAdapter({ provider: 'claude', script: config.command, ...common, hookCommand: deps.hookCommand, tier: deps.claudeTier, modelEfforts: deps.modelEfforts, models: deps.models ? () => deps.models!('claude') : undefined })
-      : new FakeAdapter({ provider: 'codex', script: config.command, ...common });
+      : new FakeAdapter({ provider: 'codex', script: config.command, ...common, tier: config.tier });
   }
   if (kind === 'claude') {
     return new ClaudeAdapter({
@@ -85,7 +85,7 @@ export function createAdapter(id: string, config: ProviderConfig, deps: AdapterD
       models: deps.models ? () => deps.models!('claude') : undefined,
     });
   }
-  return new CodexAdapter({ ...common, command: commandArgv(config.command) });
+  return new CodexAdapter({ ...common, command: commandArgv(config.command), tier: config.tier });
 }
 
 /** One adapter per configured provider. */

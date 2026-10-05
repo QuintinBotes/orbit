@@ -123,3 +123,14 @@ two tiers as Claude workers:
 
 `danger-full-access` is passed only together with the srt wrapper; the
 adapter refuses that flag in any other combination.
+
+Second live finding: with a ChatGPT login, Codex inside srt connects through
+the proxy (srt logs every request to chatgpt.com as allowed, and curl
+reaches it through the same proxy) yet fails with "workspace routing
+discovery failed". The cause is inside Codex's client and is not pursued
+further here. The tier is therefore chosen by login type: with a ChatGPT
+login Codex runs in the `codex-sandbox` tier; with an API key
+(`CODEX_API_KEY` or `OPENAI_API_KEY`) it runs in the `os-sandbox` tier, which
+was verified to reach the provider. `providers.codex.tier` (`auto`,
+`os-sandbox`, `codex-sandbox`) overrides the choice, and the evidence always
+records the tier and its limitations.

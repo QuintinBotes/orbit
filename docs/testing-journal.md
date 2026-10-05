@@ -50,6 +50,13 @@ Closed in 30e6e5c: G1 to G3, G5 to G13, G16 to G23, G26, G28, G29, G31 to G36, G
 
 ---
 
+### 2026-10-05: live demo 1, third run: Codex with a ChatGPT login cannot work under srt
+- Tested: demo 1 after the single-sandbox fix (7369267); then direct probes of Codex inside srt with and without its apps and plugins features, with srt debug logging, and curl through the same proxy.
+- Went well: the nested-sandbox error was gone and Codex started; curl through srt's proxy reached chatgpt.com while example.com was refused, which ruled out the allowlist; srt's debug log showed every Codex request to chatgpt.com allowed, which ruled out host blocking; the run again blocked honestly at review rather than skipping it.
+- Went wrong: Codex failed with "workspace routing discovery failed" after five reconnects, in the run and in the direct probe; disabling apps and plugins did not help.
+- Root cause: inside Codex's client when it talks to the ChatGPT backend through srt's proxy; not pursued further (outside our code, and diminishing returns).
+- Change: ADR 0001 records tier selection by login type (ChatGPT login: codex-sandbox; API key: os-sandbox; explicit override); implementation in progress. Proposed: report the issue upstream with the minimal srt plus codex reproduction.
+
 ### 2026-10-05: live demo 1 re-run: verification passes, the Codex reviewer cannot start
 - Tested: demo 1 again on a fresh lab after the loopback and environment-failure fixes (9a81424).
 - Went well: graded simple; the first candidate passed every mandatory check (the unit suite now binds loopback); the run blocked honestly at review instead of skipping the mandatory independent reviewer.

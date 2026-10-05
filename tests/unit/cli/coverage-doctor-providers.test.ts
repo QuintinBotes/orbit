@@ -262,6 +262,74 @@ describe('worker tier', () => {
   });
 });
 
+describe('codex worker tier', () => {
+  const srtInUse = (x: OrbitConfig) => {
+    x.isolation = { ...x.isolation, provider: 'sandbox-runtime' };
+  };
+  const KEYS_OFF = { CODEX_API_KEY: undefined, OPENAI_API_KEY: undefined };
+  const noSrt = () => {
+    hooks.isolation = () => ({ kind: 'none', available: async () => ({ ok: true, detail: 'not isolated' }), wrap: () => ({}) as never });
+  };
+  const codex = () => ({ claude: adapter('claude'), codex: adapter('codex', { cred: { state: 'valid', method: 'chatgpt', detail: 'logged in' } }) });
+  const withTier = (tier: 'auto' | 'os-sandbox' | 'codex-sandbox') => (x: OrbitConfig) => {
+    srtInUse(x);
+    x.providers = { ...x.providers, codex: { ...x.providers.codex!, tier } };
+  };
+
+  it.each(['CODEX_API_KEY', 'OPENAI_API_KEY'])('is os-sandbox when %s is exported and srt is in use, naming the variable and never its value', async (name) => {
+    const w = world();
+    const secret = 'sk-acme-doctor-secret-0001';
+    const c = await doctor(w, codex(), cfg(srtInUse), { env: { ...KEYS_OFF, [name]: secret } });
+    expect(c['codex.worker-tier']).toMatchObject({ status: 'pass', summary: expect.stringContaining('the Codex reviewer runs in the os-sandbox tier') });
+    expect(c['codex.worker-tier']!.summary).toContain(name);
+    expect(JSON.stringify(c['codex.worker-tier'])).not.toContain(secret);
+  });
+
+  it('is codex-sandbox with a ChatGPT login (no API key), saying why, what to do and what is unrestricted', async () => {
+    const w = world();
+    const c = await doctor(w, codex(), cfg(srtInUse), { env: KEYS_OFF });
+    expect(c['codex.worker-tier']).toMatchObject({
+      status: 'warn',
+      missing: 'an exported API key (CODEX_API_KEY or OPENAI_API_KEY) plus sandbox-runtime for the os-sandbox tier',
+      fix: 'export CODEX_API_KEY or OPENAI_API_KEY (an API-key login, not a ChatGPT login)',
+    });
+    expect(c['codex.worker-tier']!.summary).toMatch(/^the Codex reviewer runs in the codex-sandbox tier: no CODEX_API_KEY or OPENAI_API_KEY in the environment, and a ChatGPT login cannot run under srt/);
+    expect(c['codex.worker-tier']!.details.join('\n')).toMatch(/limitation: Reads are unrestricted/);
+  });
+
+  it('is codex-sandbox when an API key is set but srt is not the isolation in use', async () => {
+    const w = world();
+    noSrt();
+    const c = await doctor(w, codex(), cfg(), { env: { ...KEYS_OFF, CODEX_API_KEY: 'sk-acme-doctor-0002' } });
+    expect(c['codex.worker-tier']).toMatchObject({ status: 'warn', summary: 'the Codex reviewer runs in the codex-sandbox tier: sandbox-runtime isolation is not in use' });
+  });
+
+  it('reports an explicit codex-sandbox as a choice, not a warning, even with an API key and srt', async () => {
+    const w = world();
+    const c = await doctor(w, codex(), cfg(withTier('codex-sandbox')), { env: { ...KEYS_OFF, CODEX_API_KEY: 'sk-acme-doctor-0003' } });
+    expect(c['codex.worker-tier']).toMatchObject({ status: 'pass', summary: expect.stringContaining('providers.codex.tier is codex-sandbox') });
+    expect(c['codex.worker-tier']!.details.join('\n')).toMatch(/limitation: Reads are unrestricted/);
+  });
+
+  it('reports an explicit os-sandbox with srt as a choice, and warns that a ChatGPT login cannot work in it', async () => {
+    const w = world();
+    const keyed = await doctor(w, codex(), cfg(withTier('os-sandbox')), { env: { ...KEYS_OFF, CODEX_API_KEY: 'sk-acme-doctor-0004' } });
+    expect(keyed['codex.worker-tier']).toMatchObject({ status: 'pass', summary: expect.stringContaining('the Codex reviewer runs in the os-sandbox tier') });
+    const chatgpt = await doctor(w, codex(), cfg(withTier('os-sandbox')), { env: KEYS_OFF });
+    expect(chatgpt['codex.worker-tier']).toMatchObject({ status: 'warn', summary: expect.stringMatching(/os-sandbox tier.*ChatGPT login cannot run under srt/) });
+  });
+
+  it('fails when os-sandbox is chosen but srt is not in use and review needs Codex, and only warns when it does not', async () => {
+    const w = world();
+    noSrt();
+    const env = { ...KEYS_OFF, CODEX_API_KEY: 'sk-acme-doctor-0005' };
+    const required = await doctor(w, codex(), cfg((x) => { x.providers = { ...x.providers, codex: { ...x.providers.codex!, tier: 'os-sandbox' } }; }), { env });
+    expect(required['codex.worker-tier']).toMatchObject({ status: 'fail', summary: expect.stringMatching(/providers\.codex\.tier is os-sandbox but sandbox-runtime isolation is not in use/) });
+    const optional = await doctor(w, codex(), cfg((x) => { x.review.independent_provider_required = false; x.providers = { ...x.providers, codex: { ...x.providers.codex!, tier: 'os-sandbox' } }; }), { env });
+    expect(optional['codex.worker-tier']?.status).toBe('warn');
+  });
+});
+
 describe('independent review', () => {
   it('names the reviewer a run would choose, and the providers it would not use', async () => {
     const w = world();

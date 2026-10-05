@@ -409,7 +409,8 @@ describe('CodexAdapter', () => {
     // wrap() puts the command it was given last, like srt does; the adapter refuses a wrapper that did not.
     const wrap = vi.fn((argv: string[]) => ({ argv: ['/opt/srt', '--settings', '/tmp/orbit-srt-q/settings.json', '--', ...argv], env: { W: '1' }, cleanup() {}, limitations: ['srt'] }));
     const iso = { kind: 'sandbox-runtime' as const, wrap, available: async () => ({ ok: true, detail: '' }) };
-    const withIso = await adapter({ isolation: iso }).startTask(reviewSpec(g));
+    // An API key in the worker environment is what lets `auto` choose srt (a ChatGPT login cannot run under it).
+    const withIso = await adapter({ isolation: iso, baseEnv: { PATH: '/usr/bin', CODEX_HOME: '/h/.codex', CODEX_API_KEY: 'sk-acme-test-0000' } }).startTask(reviewSpec(g));
     expect(withIso.tier).toBe('os-sandbox');
     expect(withIso.limitations).toEqual(expect.arrayContaining(['srt']));
     expect(withIso.limitations.some((l) => l.startsWith('Output budget'))).toBe(true);

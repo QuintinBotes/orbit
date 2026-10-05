@@ -18,6 +18,12 @@
  * together with the sandbox-runtime wrapper, and the adapter refuses it in any
  * other combination.
  *
+ * The tier is chosen by login type (ADR 0001, "Second live finding"; see
+ * decideCodexTier): inside srt Codex cannot use a ChatGPT login, so `auto`
+ * picks os-sandbox only with an API key in the worker environment and an srt
+ * that starts, and `providers.codex.tier` overrides that. An explicit
+ * os-sandbox without srt fails closed; an explicit codex-sandbox never wraps.
+ *
  * Always -m: a user's configured default can be one the installed CLI cannot
  * use (it returned HTTP 400 in the verified probe). Never --full-auto or -a
  * (exec rejects both), never --yolo or any --dangerously-* flag. No
@@ -37,12 +43,13 @@ import { strictSchemaViolations } from '../contract/strict-schema.ts';
 import type { IsolationProvider } from '../isolation/types.ts';
 import { codexHomeFor, codexReviewerProfile, prepareWorkerTmpDir } from '../isolation/profiles.ts';
 import { canonicalPath } from '../isolation/util.ts';
+import type { CodexTierSetting } from '../policy/types.ts';
 import { verifySnapshot } from '../policy/snapshot.ts';
 import { parseCodexCatalog } from '../routing/registry.ts';
 import { snapshotFileHash } from './claude.ts';
 import { CODEX_END_REASONS, classifyCodexTranscript, codexEvents, codexUsage, type CodexTaskResult } from './codex-events.ts';
 import { defaultOrbitCommands } from './commands.ts';
-import { buildWorkerEnv, passThrough } from './env.ts';
+import { buildWorkerEnv, codexEnvCredential, passThrough } from './env.ts';
 import { outputBudgetFor, outputBudgetInstruction } from './prompt.ts';
 import { LAUNCH_FILE, cancelShim, handleFromWorkerDir, launchShim, reattachLaunch, readLogLines, readNewLines, taskState, withWorkerTelemetry, type LaunchRecord } from './supervise.ts';
 import type { CredentialStatus, ProviderAdapter, ProviderCapabilities, ProviderEvent, TaskHandle, TaskSpec, UsageReport } from './types.ts';
@@ -60,7 +67,8 @@ export const CODEX_EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh
 export const CODEX_REQUIRED_FLAGS: readonly string[] = ['--sandbox', '--ephemeral', '--ignore-user-config', '--json', '--output-schema', '--output-last-message', '--model', '--cd'];
 export const CODEX_EXTRA_ARGS_ALLOWED: readonly string[] = [];
 
-export type CodexTier = 'os-sandbox' | 'codex-sandbox';
+export type CodexTier = Exclude<CodexTierSetting, 'auto'>;
+export type { CodexTierSetting };
 
 /** policyHash comes from TaskSpec: used when given, derived from the snapshot file when absent (verified either way). */
 export type CodexTaskSpec = TaskSpec;
@@ -77,6 +85,8 @@ export interface CodexAdapterOptions {
    * that cannot start here, runs it unwrapped under Codex's own read-only sandbox (the codex-sandbox tier).
    */
   isolation?: IsolationProvider | null;
+  /** providers.<id>.tier: `auto` (default) chooses by login type; the other two override the choice. */
+  tier?: CodexTierSetting;
   baseEnv?: Record<string, string | undefined>;
   shimCommand?: string[];
   graceMs?: number;
@@ -105,6 +115,67 @@ export const CODEX_OS_SANDBOX_LIMITATIONS: readonly string[] = [
   "Codex's state directory (its login file, logs and caches) is writable by the reviewer, and reads outside the denied paths are unrestricted: any file the user can read may reach the provider.",
   PROJECT_CONFIG_LIMITATION,
 ];
+
+/** What the adapter (or `orbit doctor`) knows about srt when it chooses: whether it will wrap here, and if not, why in one clause. */
+export interface CodexSrtStatus {
+  ok: boolean;
+  why: string;
+}
+
+export interface CodexTierInput {
+  setting: CodexTierSetting;
+  /** The provider id, for messages that name the key to change. */
+  providerId?: string;
+  /** Name of the API key variable present in the worker environment, or null (a ChatGPT login, or a login stored in CODEX_HOME). */
+  apiKeyVar: string | null;
+  srt: CodexSrtStatus;
+}
+
+export interface CodexTierDecision {
+  tier: CodexTier;
+  /** Why, as one clause that reads after "the Codex reviewer runs in the <tier> tier: ". */
+  reason: string;
+  /** True when no tier was configured (`auto`): the choice was Orbit's, not the user's. */
+  automatic: boolean;
+  /** An explicit os-sandbox with no API key: srt confines it, but a ChatGPT login cannot run there. */
+  risky: boolean;
+}
+
+const NO_KEY_REASON = 'no CODEX_API_KEY or OPENAI_API_KEY in the environment, and a ChatGPT login cannot run under srt (Codex fails with "workspace routing discovery failed")';
+
+/**
+ * The tier of the Codex reviewer (ADR 0001, "Second live finding"). Inside
+ * srt Codex connects but fails with "workspace routing discovery failed" on a
+ * ChatGPT login, so the tier follows the login type:
+ *
+ *   auto           os-sandbox only with an API key (CODEX_API_KEY or
+ *                  OPENAI_API_KEY) in the worker environment and an srt that
+ *                  starts; otherwise codex-sandbox
+ *   os-sandbox     srt or nothing: throws ISOLATION_UNAVAILABLE without srt
+ *                  (fail closed), never falls back to an unwrapped Codex
+ *   codex-sandbox  never wrapped, whatever else is available
+ *
+ * Pure: the caller supplies what it saw, so `orbit doctor` and the adapter
+ * cannot disagree.
+ */
+export function decideCodexTier(i: CodexTierInput): CodexTierDecision {
+  const key = i.providerId ? `providers.${i.providerId}.tier` : 'providers.codex.tier';
+  if (i.setting === 'codex-sandbox') {
+    return { tier: 'codex-sandbox', reason: `${key} is codex-sandbox, so Codex is never wrapped in srt`, automatic: false, risky: false };
+  }
+  if (i.setting === 'os-sandbox') {
+    if (!i.srt.ok) {
+      throw new OrbitError('ISOLATION_UNAVAILABLE', `${key} is os-sandbox but ${i.srt.why}; refusing to run Codex without srt (set the tier to auto or codex-sandbox to run it under its own read-only sandbox instead)`, { tier: 'os-sandbox', providerId: i.providerId ?? 'codex' });
+    }
+    if (i.apiKeyVar === null) {
+      return { tier: 'os-sandbox', reason: `${key} is os-sandbox, but ${NO_KEY_REASON}; this works only with an API-key login stored in CODEX_HOME`, automatic: false, risky: true };
+    }
+    return { tier: 'os-sandbox', reason: `${key} is os-sandbox and sandbox-runtime is in use`, automatic: false, risky: false };
+  }
+  if (i.apiKeyVar === null) return { tier: 'codex-sandbox', reason: NO_KEY_REASON, automatic: true, risky: false };
+  if (!i.srt.ok) return { tier: 'codex-sandbox', reason: i.srt.why, automatic: true, risky: false };
+  return { tier: 'os-sandbox', reason: `${i.apiKeyVar} is set and sandbox-runtime is in use, so the whole codex process is confined`, automatic: true, risky: false };
+}
 
 const DANGER_FULL_ACCESS = 'danger-full-access';
 
@@ -223,7 +294,8 @@ export class CodexAdapter implements ProviderAdapter {
     const outputTokens = outputBudgetFor(spec.role, { explicit: spec.outputTokens, configured: snapshot.config.routing.output_budgets });
     const checkout = canonicalPath(spec.cwd);
     const workerDir = spec.workerDir;
-    const choice = await this.chooseTier();
+    // The login type chooses the tier, so the key is read from the environment the worker will really get.
+    const choice = await this.chooseTier(codexEnvCredential({ ...this.baseEnv(), ...spec.env }));
     const tmpDir = choice.srt ? reviewerTmpDir(workerDir) : prepareWorkerTmpDir(workerDir);
     const env = buildWorkerEnv({ provider: 'codex', base: this.baseEnv(), policyPath: spec.policyPath, policyHash, worktree: checkout, tmpDir, extra: { ...passThrough(this.baseEnv(), this.opts.passEnv), ...spec.env } });
     // Built before anything is written or launched: a layout that would make the checkout writable is refused outright.
@@ -234,7 +306,7 @@ export class CodexAdapter implements ProviderAdapter {
     // attempt must not be mistaken for this one's answer.
     rmSync(join(workerDir, CODEX_LAST_MESSAGE_FILE), { force: true });
 
-    const tier: CodexTier = srt ? 'os-sandbox' : 'codex-sandbox';
+    const tier: CodexTier = choice.decision.tier;
     const argv = buildCodexArgv({ command: this.command, model: spec.model, effort: spec.effort, cwd: checkout, schemaPath: join(workerDir, CODEX_SCHEMA_FILE), lastMessagePath: join(workerDir, CODEX_LAST_MESSAGE_FILE), tier, wrapper: srt?.provider.kind ?? null });
     let launchArgv = argv;
     let launchEnv = env;
@@ -253,9 +325,10 @@ export class CodexAdapter implements ProviderAdapter {
       launchEnv = wrapped.env;
       limitations.push(...wrapped.limitations);
       for (const a of wrapped.argv) if (isAbsolute(a) && basename(dirname(a)).startsWith('orbit-srt-')) cleanupPaths.push(dirname(a));
+      if (choice.decision.risky) limitations.push(`Codex runs in the os-sandbox tier although it may not work there: ${choice.decision.reason}.`);
     } else {
       limitations.push(NO_OS_ISOLATION);
-      if (choice.note) limitations.push(choice.note);
+      limitations.push(`Codex runs in the codex-sandbox tier, under its own read-only sandbox and without srt: ${choice.decision.reason}.`);
     }
 
     const handle = await launchShim({
@@ -326,20 +399,26 @@ export class CodexAdapter implements ProviderAdapter {
   }
 
   /**
-   * os-sandbox needs sandbox-runtime and a probe that shows it starts here;
-   * otherwise Codex runs unwrapped under its own read-only sandbox, and `note`
-   * says why. Other isolation providers are not used around Codex: the ADR's
-   * tiers are srt or no srt, and `danger-full-access` is for srt alone.
+   * The tier for this task (decideCodexTier). Only sandbox-runtime is used
+   * around Codex: the ADR's tiers are srt or no srt, and `danger-full-access`
+   * is for srt alone. srt is probed once per adapter, and only when the
+   * answer can depend on it (an explicit os-sandbox, or `auto` with an API key).
    */
-  private async chooseTier(): Promise<{ srt: IsolationProvider | null; note: string | null }> {
+  private async chooseTier(apiKeyVar: string | null): Promise<{ srt: IsolationProvider | null; decision: CodexTierDecision }> {
+    const setting = this.opts.tier ?? 'auto';
+    const consult = setting === 'os-sandbox' || (setting === 'auto' && apiKeyVar !== null);
+    const status = consult ? await this.srtStatus() : { provider: null, ok: false, why: 'sandbox-runtime was not consulted' };
+    const decision = decideCodexTier({ setting, providerId: this.id, apiKeyVar, srt: { ok: status.ok, why: status.why } });
+    return { srt: decision.tier === 'os-sandbox' ? status.provider : null, decision };
+  }
+
+  private async srtStatus(): Promise<CodexSrtStatus & { provider: IsolationProvider | null }> {
     const isolation = this.opts.isolation ?? null;
-    if (isolation === null || isolation.kind === 'none') return { srt: null, note: null };
-    if (isolation.kind !== 'sandbox-runtime') {
-      return { srt: null, note: `The ${isolation.kind} isolation provider is not used around Codex (only sandbox-runtime is); Codex runs under its own read-only sandbox.` };
-    }
+    if (isolation === null || isolation.kind === 'none') return { provider: null, ok: false, why: 'sandbox-runtime isolation is not in use' };
+    if (isolation.kind !== 'sandbox-runtime') return { provider: null, ok: false, why: `the ${isolation.kind} isolation provider is not used around Codex (only sandbox-runtime is)` };
     this.srtProbe ??= await isolation.available();
-    if (!this.srtProbe.ok) return { srt: null, note: `sandbox-runtime is unavailable (${this.srtProbe.detail}); Codex runs under its own read-only sandbox.` };
-    return { srt: isolation, note: null };
+    if (!this.srtProbe.ok) return { provider: null, ok: false, why: `sandbox-runtime is unavailable (${this.srtProbe.detail})` };
+    return { provider: isolation, ok: true, why: '' };
   }
 
   private async run(args: string[], timeoutMs: number): Promise<{ ok: boolean; stdout: string; stderr: string; detail: string }> {

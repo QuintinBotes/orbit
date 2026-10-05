@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorkerEnv, claudeEnvCredential, passThrough } from '../../../src/adapters/env.ts';
+import { buildWorkerEnv, claudeEnvCredential, codexEnvCredential, passThrough } from '../../../src/adapters/env.ts';
 import { parseShimArgs, shimArgs } from '../../../src/adapters/shim.ts';
 import { sessionIdFor } from '../../../src/adapters/supervise.ts';
 
@@ -40,7 +40,8 @@ describe('buildWorkerEnv', () => {
   it('starts from an allowlist: delivery, cloud, registry and loader variables never reach a worker', () => {
     for (const provider of ['claude', 'codex'] as const) {
       const env = buildWorkerEnv(input(provider));
-      for (const leaked of ['GH_TOKEN', 'GITHUB_TOKEN', 'SSH_AUTH_SOCK', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_PROFILE', 'GOOGLE_APPLICATION_CREDENTIALS', 'AZURE_CLIENT_SECRET', 'NPM_TOKEN', 'NODE_AUTH_TOKEN', 'NODE_OPTIONS', 'DYLD_INSERT_LIBRARIES', 'CLAUDE_CODE_RETRY_WATCHDOG', 'CLAUDE_CODE_EFFORT_LEVEL', 'CLAUDE_CODE_USE_BEDROCK', 'DOCKER_HOST', 'OPENAI_API_KEY']) {
+      // The OpenAI key is a Codex credential (it selects the os-sandbox tier): only a Codex worker gets it.
+      for (const leaked of ['GH_TOKEN', 'GITHUB_TOKEN', 'SSH_AUTH_SOCK', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_PROFILE', 'GOOGLE_APPLICATION_CREDENTIALS', 'AZURE_CLIENT_SECRET', 'NPM_TOKEN', 'NODE_AUTH_TOKEN', 'NODE_OPTIONS', 'DYLD_INSERT_LIBRARIES', 'CLAUDE_CODE_RETRY_WATCHDOG', 'CLAUDE_CODE_EFFORT_LEVEL', 'CLAUDE_CODE_USE_BEDROCK', 'DOCKER_HOST', ...(provider === 'claude' ? ['OPENAI_API_KEY'] : [])]) {
         expect(env, `${provider}: ${leaked}`).not.toHaveProperty(leaked);
       }
       expect(env).toMatchObject({ PATH: HOST.PATH, HOME: HOST.HOME, LANG: HOST.LANG, LC_CTYPE: 'UTF-8', HTTPS_PROXY: HOST.HTTPS_PROXY, GIT_OPTIONAL_LOCKS: '0', TMPDIR: '/tmp/orbit-1/x' });
@@ -72,6 +73,20 @@ describe('buildWorkerEnv', () => {
     expect(buildWorkerEnv(input('claude', { ORBIT_FAKE_SCENARIO: '/s.json', CI: '1' }))).toMatchObject({ ORBIT_FAKE_SCENARIO: '/s.json', CI: '1' });
     expect(() => passThrough(HOST, ['GITHUB_TOKEN'])).toThrow(/may not pass through/);
     expect(passThrough(HOST, ['LANG', 'MISSING'])).toEqual({ LANG: HOST.LANG });
+  });
+
+  it('gives a Codex worker the OpenAI API key too (it selects the os-sandbox tier) and a Claude worker never', () => {
+    expect(buildWorkerEnv(input('codex'))).toMatchObject({ CODEX_API_KEY: 'sk-codex', OPENAI_API_KEY: 'sk-openai' });
+    expect(buildWorkerEnv(input('claude'))).not.toHaveProperty('OPENAI_API_KEY');
+    expect(buildWorkerEnv({ ...input('codex'), base: { ...HOST, OPENAI_API_KEY: '' } })).not.toHaveProperty('OPENAI_API_KEY');
+  });
+
+  it('names (never returns) the env API key that selects the Codex os-sandbox tier', () => {
+    expect(codexEnvCredential(HOST)).toBe('CODEX_API_KEY');
+    expect(codexEnvCredential({ OPENAI_API_KEY: 'sk-openai' })).toBe('OPENAI_API_KEY');
+    expect(codexEnvCredential({ CODEX_API_KEY: '  ', OPENAI_API_KEY: 'sk-openai' })).toBe('OPENAI_API_KEY');
+    expect(codexEnvCredential({ CODEX_API_KEY: '', OPENAI_API_KEY: '   ', CODEX_HOME: '/home/u/.codex' })).toBeNull();
+    expect(codexEnvCredential({})).toBeNull();
   });
 
   it('names (never returns) the env credential that enables the os-sandbox tier', () => {

@@ -35,11 +35,19 @@ export const NETWORK_ENV_KEYS: readonly string[] = ['HTTP_PROXY', 'HTTPS_PROXY',
  */
 export const PROVIDER_ENV_KEYS: Readonly<Record<EnvProvider, readonly string[]>> = {
   claude: ['CLAUDE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL'],
-  codex: ['CODEX_HOME', 'CODEX_API_KEY'],
+  codex: ['CODEX_HOME', 'CODEX_API_KEY', 'OPENAI_API_KEY'],
 };
 
 /** The credentials that let a Claude worker run inside srt, where a keychain login is invisible (ADR 0001, 0003). */
 export const CLAUDE_ENV_CREDENTIALS: readonly string[] = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
+
+/**
+ * The API keys that put the Codex reviewer in the os-sandbox tier (ADR 0001,
+ * "Second live finding"): with one of them Codex works inside srt, with a
+ * ChatGPT login it does not. Both are passed to a Codex worker, so "present in
+ * the worker environment" and "present in the allowlisted base" agree.
+ */
+export const CODEX_ENV_CREDENTIALS: readonly string[] = ['CODEX_API_KEY', 'OPENAI_API_KEY'];
 
 /**
  * Fixed settings for Claude workers (claude-headless-and-sandbox.md sections
@@ -130,6 +138,15 @@ export function buildWorkerEnv(input: WorkerEnvInput): Record<string, string> {
 /** Which Claude env credential is present, by name only. */
 export function claudeEnvCredential(env: Readonly<Record<string, string | undefined>>): string | null {
   for (const key of CLAUDE_ENV_CREDENTIALS) {
+    const v = env[key];
+    if (typeof v === 'string' && v.trim() !== '') return key;
+  }
+  return null;
+}
+
+/** Which Codex API key variable is present (not blank), by name only. */
+export function codexEnvCredential(env: Readonly<Record<string, string | undefined>>): string | null {
+  for (const key of CODEX_ENV_CREDENTIALS) {
     const v = env[key];
     if (typeof v === 'string' && v.trim() !== '') return key;
   }

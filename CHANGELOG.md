@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- The Codex reviewer's tier is chosen by login type (ADR 0001, "Second live
+  finding"). Inside `srt`, Codex with a ChatGPT login fails with "workspace
+  routing discovery failed", so the new `providers.codex.tier` (`auto`,
+  `os-sandbox`, `codex-sandbox`; default `auto`) picks `os-sandbox` only when
+  `CODEX_API_KEY` or `OPENAI_API_KEY` is in the worker environment and `srt`
+  starts, and `codex-sandbox` otherwise, recording that reads are unrestricted
+  and that a ChatGPT login cannot run under `srt`. An explicit `os-sandbox`
+  without `srt` fails closed with `ISOLATION_UNAVAILABLE`; an explicit
+  `codex-sandbox` never wraps. `OPENAI_API_KEY` is now passed to Codex workers
+  (and to no other worker). `orbit doctor` reports the tier and why
+  (`codex.worker-tier`). A Claude provider rejects the `tier` key. The refusal
+  of `--sandbox danger-full-access` outside the `srt` wrapper is unchanged.
 - The Codex reviewer follows two tiers (ADR 0001, "Codex reviewer tiers"). The
   first live run showed Codex's own sandbox cannot start inside `srt` on macOS
   (`sandbox_apply: Operation not permitted`), so the reviewer exited 1 with

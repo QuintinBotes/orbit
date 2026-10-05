@@ -106,14 +106,24 @@ error 1)`). So in the first tier `srt` is the only sandbox.
 
 | Tier | How | Requires | Confinement |
 |---|---|---|---|
-| `os-sandbox` (preferred) | `codex exec --sandbox danger-full-access` runs inside `srt`; the flag is passed only together with the `srt` wrapper | `isolation.provider: sandbox-runtime` and an `srt` that starts here, a Codex login kept in `$CODEX_HOME/auth.json` (the default) or `CODEX_API_KEY` | `srt`: writes only to the worker directory and Codex's state directory (`CODEX_HOME`, default `~/.codex`), never the review checkout; egress only to `api.openai.com` and `chatgpt.com`; credential paths unreadable except Codex's own auth file, which it must read to log in |
+| `os-sandbox` | `codex exec --sandbox danger-full-access` runs inside `srt`; the flag is passed only together with the `srt` wrapper | `isolation.provider: sandbox-runtime` and an `srt` that starts here, and an API key (`CODEX_API_KEY` or `OPENAI_API_KEY`) in the environment | `srt`: writes only to the worker directory and Codex's state directory (`CODEX_HOME`, default `~/.codex`), never the review checkout; egress only to `api.openai.com` and `chatgpt.com`; credential paths unreadable except Codex's own auth file, which it must read to log in |
 | `codex-sandbox` | `codex exec --sandbox read-only`, no `srt` | nothing extra | writes and network blocked for Codex's commands; reads are unrestricted, recorded as a limitation on the worker |
 
-Without a working `srt` (or with the `container` provider, which is not used
-around Codex) the reviewer runs in `codex-sandbox` and says so in its
-limitations. Under `os-sandbox`, Codex's state directory is writable (it
-refreshes its login there), and a login stored in the system keychain instead
-of the auth file has not been verified to be visible inside `srt`.
+The tier is chosen by login type (ADR 0001, "Second live finding"). Inside
+`srt`, Codex with a ChatGPT login connects through the proxy and then fails
+with "workspace routing discovery failed"; with an API key it reaches the
+provider. So `providers.codex.tier: auto` (the default) uses `os-sandbox` only
+when `CODEX_API_KEY` or `OPENAI_API_KEY` is set and `srt` starts here, and
+`codex-sandbox` otherwise, with a ChatGPT login or without a working `srt` (or
+with the `container` provider, which is not used around Codex). The reviewer
+says which in its limitations, and `orbit doctor` reports the tier and why
+(`codex.worker-tier`). Set `providers.codex.tier` to `os-sandbox` to demand
+`srt` (the run is refused with `ISOLATION_UNAVAILABLE` when it is missing) or
+to `codex-sandbox` to never wrap Codex; see
+[configuration](configuration.md#isolation-and-providers). Under `os-sandbox`,
+Codex's state directory is writable (it refreshes its login there), and a login
+stored in the system keychain instead of the auth file has not been verified to
+be visible inside `srt`.
 
 Isolation providers for checks and UI fixtures:
 
