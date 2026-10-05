@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { systemClock, type Clock } from '../core/clock.ts';
@@ -15,8 +15,9 @@ import { defaultCheck } from '../policy/config.ts';
 import { compileGlobs } from '../policy/globs.ts';
 import { snapshotHash } from '../policy/snapshot.ts';
 import type { CheckDefinition, PolicySnapshot, UiConfig } from '../policy/types.ts';
-import { APP_LOG_FILE, assertBaseUrl, startApp, stopApp, type AppHandle } from './app-fixture.ts';
+import { APP_LOG_FILE, assertBaseUrl, logTail, startApp, stopApp, type AppHandle } from './app-fixture.ts';
 import { safeBaseEnv } from './env.ts';
+import { LAUNCH_ENV, LAUNCH_STATUS_FILE, UI_SINGLE_SANDBOX, describeLaunchFailure, singleSandboxLimitation, launchFailed, launcherArgv, readLaunchStatus, type LaunchSpec } from './single-sandbox.ts';
 import {
   describeError,
   failedStepPath,
@@ -154,19 +155,27 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
   const tmpDir = ensureDir(join(outDir, 'tmp'));
   const baseEnv = safeBaseEnv(input.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;
+  const appStart = uiConfig.environment.start_command;
+  const appEnv: Record<string, string> = { ...(input.appEnv ?? {}), ORBIT_UI_BASE_URL: baseUrl, ...(port ? { PORT: port, ORBIT_UI_PORT: port } : {}), ORBIT_UI_ISOLATED_TEST_DATA: uiConfig.environment.isolated_test_data ? '1' : '0', TMPDIR: tmpDir };
+  // A provider whose every sandbox has its own loopback (srt on Linux, containers): an application started in one is
+  // unreachable from a browser in another, so each journey check starts it inside its own sandbox (single-sandbox.ts).
+  const launch: AppLaunch | null =
+    appStart !== null && input.isolation.privateLoopback === true
+      ? { command: appStart, env: { ...baseEnv, ...appEnv }, readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1000, stateDir: ensureDir(join(outDir, 'app')), pollMs: input.appPollMs }
+      : null;
 
   try {
-    if (uiConfig.environment.start_command !== null) {
-      const appCheck: CheckDefinition = { ...defaultCheck('ui-app'), command: uiConfig.environment.start_command, network_hosts: [], timeout_seconds: uiConfig.environment.ready_timeout_seconds };
+    if (appStart !== null && launch === null) {
+      const appCheck: CheckDefinition = { ...defaultCheck('ui-app'), command: appStart, network_hosts: [], timeout_seconds: uiConfig.environment.ready_timeout_seconds };
       // startApp adds allowLocalBinding: the application is the one process here that must listen on loopback.
       const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot, extraWritable: [tmpDir], homeDir: input.homeDir, env: input.hostEnv });
       try {
         app = await startApp({
-          command: uiConfig.environment.start_command,
+          command: appStart,
           cwd: checkoutDir,
           baseUrl,
           readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1000,
-          env: { ...(input.appEnv ?? {}), ORBIT_UI_BASE_URL: baseUrl, ...(port ? { PORT: port, ORBIT_UI_PORT: port } : {}), ORBIT_UI_ISOLATED_TEST_DATA: uiConfig.environment.isolated_test_data ? '1' : '0', TMPDIR: tmpDir },
+          env: appEnv,
           isolation: { provider: input.isolation, profile },
           isolatedTestData: uiConfig.environment.isolated_test_data,
           stateDir: join(outDir, 'app'),
@@ -181,13 +190,13 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
         reasons.push(`the application did not start: ${err instanceof Error ? err.message : String(err)}`);
         notExecuted.push({ stage: 'application', checkId: null, logPath: join(outDir, 'app', APP_LOG_FILE), signal: null });
       }
-    } else {
+    } else if (appStart === null) {
       unverified.push('ui.environment.start_command is not set: the application at base_url was started by something other than Orbit, so its build is not bound to this candidate');
     }
 
     if (terminal === null) {
       for (const check of checks) {
-        const run = await runOneCheck({ input, check, checkoutDir, outDir, tmpDir, baseEnv, baseUrl, clock });
+        const run = await runOneCheck({ input, check, checkoutDir, outDir, tmpDir, baseEnv, baseUrl, clock, launch });
         checkRuns.push(run.run);
         journeys.push(...run.journeys);
         reasons.push(...run.reasons);
@@ -195,6 +204,8 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
         if (run.notExecuted) notExecuted.push(run.notExecuted);
         if (run.terminal && terminal === null) terminal = run.terminal;
         if (run.terminal === 'CANCELLED') break;
+        // The next check would start the same application the same way.
+        if (run.appFailed) break;
       }
     }
   } finally {
@@ -259,6 +270,9 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
     unverified.push(`check ${c.checkId} ran its browser under sandbox-runtime ${c.srtVersion ?? 'of unknown version'} with the isolation adjustment ${c.isolationAdjustments.join(', ')}: ${CHROMIUM_MACH_RENDEZVOUS_LIMITATION}`);
   }
   const adjusted = checkRuns.some((c) => c.isolationAdjustments?.includes(CHROMIUM_MACH_RENDEZVOUS));
+  const single = checkRuns.some((c) => c.isolationAdjustments?.includes(UI_SINGLE_SANDBOX));
+  const singleLimitation = singleSandboxLimitation(input.isolation.kind);
+  if (single) unverified.push(`the application under test and the journeys ran in one sandbox (${UI_SINGLE_SANDBOX}): ${singleLimitation}`);
 
   const browsers = uniqueBy(journeys.flatMap((j) => (j.browser ? [j.browser] : [])), (b) => `${b.name}@${b.version}`);
   const viewports = coverage.observedViewports;
@@ -290,7 +304,7 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
     coverage,
     unverified,
     notExecuted,
-    limitations: [...UI_LIMITATIONS, ...(adjusted ? [CHROMIUM_MACH_RENDEZVOUS_LIMITATION] : [])],
+    limitations: [...UI_LIMITATIONS, ...(adjusted ? [CHROMIUM_MACH_RENDEZVOUS_LIMITATION] : []), ...(single ? [singleLimitation] : [])],
     outDir,
     startedAt,
     endedAt: clock.now(),
@@ -372,6 +386,20 @@ export function shellQuote(arg: string): string {
 // ---------------------------------------------------------------------------
 // One check
 
+/** The application, when each journey check starts it inside its own sandbox (single-sandbox.ts). */
+interface AppLaunch {
+  command: string[];
+  /** The application's whole environment, as the app fixture would give it. */
+  env: Record<string, string>;
+  readyTimeoutMs: number;
+  /** The run's application directory: app.log and the launcher's record. */
+  stateDir: string;
+  pollMs?: number;
+}
+
+/** Each stop signal's grace period inside the launcher, and the time the check's limit is extended by for stopping. */
+const LAUNCH_GRACE_MS = 2_000;
+
 interface CheckContext {
   input: UiRunInput;
   check: CheckDefinition;
@@ -381,6 +409,7 @@ interface CheckContext {
   baseEnv: Record<string, string>;
   baseUrl: string;
   clock: Clock;
+  launch: AppLaunch | null;
 }
 
 interface CheckOutcome {
@@ -391,6 +420,8 @@ interface CheckOutcome {
   terminal: UiRunVerdict | null;
   /** Set when the check's Playwright process wrote no report at all. */
   notExecuted?: UiNotExecuted;
+  /** Single-sandbox mode: the application never served this check. */
+  appFailed?: boolean;
 }
 
 async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
@@ -418,8 +449,10 @@ async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
     ORBIT_A11Y_FAIL_ON: a11yFailOn(input.uiConfig),
     PLAYWRIGHT_JSON_OUTPUT_FILE: reportPath,
   };
+  const launch = ctx.launch;
   const profile: SandboxProfile = {
-    ...profileForCheck({ worktree: checkoutDir, check, snapshot: input.snapshot, extraWritable: [checkDir, ctx.tmpDir], homeDir: input.homeDir, env: input.hostEnv }),
+    // Single-sandbox mode: the application shares the check's sandbox and writes its log and the launcher's record there.
+    ...profileForCheck({ worktree: checkoutDir, check, snapshot: input.snapshot, extraWritable: [checkDir, ctx.tmpDir, ...(launch ? [launch.stateDir] : [])], homeDir: input.homeDir, env: input.hostEnv }),
     allowLocalBinding: true,
     // The browser run, and only it: Chromium's Mach rendezvous rules under srt on macOS (never the application or a worker).
     chromiumMachRendezvous: true,
@@ -427,12 +460,14 @@ async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
   // A report or results from an earlier run in this directory must never be read as this run's.
   rmSync(reportPath, { force: true });
   rmSync(outputDir, { recursive: true, force: true });
-  const wrapped = input.isolation.wrap(argv, profile, { cwd, env });
+  const spec = launch ? launchSpec(launch, { baseUrl: ctx.baseUrl, checkoutDir, argv, cwd, env }) : null;
+  const wrapped = spec ? input.isolation.wrap(launcherArgv(input.isolation.launcherNode), profile, { cwd, env: { ...env, [LAUNCH_ENV]: JSON.stringify(spec) } }) : input.isolation.wrap(argv, profile, { cwd, env });
   const started = clock.now();
   let exec;
   let preloadRefusal: string | null = null;
   try {
-    exec = await execCapture(wrapped.argv, { cwd, env: wrapped.env, timeoutMs: check.timeout_seconds * 1000, abortSignal: input.abortSignal, maxOutputBytes: MAX_LOG_BYTES });
+    const timeoutMs = check.timeout_seconds * 1000 + (spec ? spec.readyTimeoutMs + 4 * LAUNCH_GRACE_MS : 0);
+    exec = await execCapture(wrapped.argv, { cwd, env: wrapped.env, timeoutMs, abortSignal: input.abortSignal, maxOutputBytes: MAX_LOG_BYTES });
   } finally {
     // Recorded in the wrapper's own directory, which cleanup() removes.
     preloadRefusal = wrapped.preloadRefusal?.() ?? null;
@@ -463,7 +498,7 @@ async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
     reportFound,
     isolation: input.isolation.kind,
     isolationLimitations: wrapped.limitations,
-    isolationAdjustments: wrapped.adjustments ?? [],
+    isolationAdjustments: [...(wrapped.adjustments ?? []), ...(spec ? [UI_SINGLE_SANDBOX] : [])],
     srtVersion: input.isolation.kind === 'sandbox-runtime' ? (wrapped.runtimeVersion ?? null) : null,
     playwrightVersion: parsed?.playwrightVersion ?? null,
   };
@@ -478,6 +513,17 @@ async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
   if (exec.timedOut) {
     reasons.push(`check ${check.id} exceeded its ${check.timeout_seconds} s limit`);
     return quiet('TIMEOUT');
+  }
+  if (spec) {
+    // Written from inside the sandbox, so it can only turn this check into an error, never into a pass.
+    const status = readLaunchStatus(spec.statusPath);
+    if (status !== null && launchFailed(status)) {
+      reasons.push(`the application did not start: ${describeLaunchFailure(status, spec)}: ${logTail(spec.app.logPath).trim() || '(no output)'}`);
+      return { ...quiet('ERROR'), notExecuted: { stage: 'application', checkId: null, logPath: spec.app.logPath, signal: null }, appFailed: true };
+    }
+    if (status?.app === 'stopped' && status.exitedDuringCheck === true) {
+      unverified.push(`the application exited on its own while check ${check.id} ran (${status.signal ? `signal ${status.signal}` : `exit ${status.code ?? '?'}`}); journeys after that point tested nothing`);
+    }
   }
   // A browser the sandbox stopped is the environment's, whatever the report says about the journeys it could not run.
   const blocked = browserIsolationFailure({
@@ -526,6 +572,29 @@ async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
     return quiet('ERROR');
   }
   return { run, journeys, reasons, unverified, terminal: null };
+}
+
+/**
+ * What the launcher needs to start the application and then the check inside one sandbox. The application gets its own
+ * environment back: the names only the check has are dropped and its own values set over the rest, so it sees what the
+ * app fixture would give it plus whatever the provider adds inside (srt's proxy variables).
+ */
+function launchSpec(launch: AppLaunch, c: { baseUrl: string; checkoutDir: string; argv: string[]; cwd: string; env: Record<string, string> }): LaunchSpec {
+  const logPath = join(launch.stateDir, APP_LOG_FILE);
+  const statusPath = join(launch.stateDir, LAUNCH_STATUS_FILE);
+  // A record or log from an earlier check of this run must never be read as this one's.
+  rmSync(statusPath, { force: true });
+  closeSync(openSync(logPath, 'a', 0o600));
+  return {
+    baseUrl: c.baseUrl,
+    readyTimeoutMs: launch.readyTimeoutMs,
+    pollMs: Math.max(10, launch.pollMs ?? 200),
+    requestTimeoutMs: 2_000,
+    graceMs: LAUNCH_GRACE_MS,
+    statusPath,
+    app: { argv: launch.command, cwd: c.checkoutDir, env: launch.env, dropEnv: Object.keys(c.env).filter((k) => !(k in launch.env)), logPath },
+    check: { argv: c.argv, cwd: c.cwd },
+  };
 }
 
 /** srt-chromium-preload.mjs exits with this when it refuses; it also records why where the sandbox cannot write. */

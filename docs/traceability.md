@@ -62,7 +62,7 @@ sometimes shortened.
 | S2.6 | Demo 1: simple task on a low-cost route | `scripts/demo/mock-demo.ts` | A/demo-shapes.test.ts "demo 1...", I/demo/mock-demo.test.ts "simple: SUCCEEDED on a cheap route" | done |
 | S2.7 | Demo 2: difficult task with evidence-backed escalation | same | A/demo-shapes.test.ts "demo 2...", I/demo/mock-demo.test.ts "difficult..." | done |
 | S2.8 | Demo 3: UI fails browser checks, repaired, reviewed, draft PR | same | A/ui.test.ts "scenario 17 (and demo run 3)", I/demo/mock-demo.test.ts "ui..." | done |
-| S2.9 | Demos run unattended against real providers | `scripts/demo/run-live-demo.sh`; README "Live demo" says it has not run against real providers and gives the reproduction commands | I/demo/live-script.test.ts (stubbed gh and orbit only); the run itself needs credentials (G39) | untested |
+| S2.9 | Demos run unattended against real providers | `scripts/demo/run-live-demo.sh`; README "Live runs and what is not proven yet" says what ran against real providers and what did not, and gives the reproduction commands | I/demo/live-script.test.ts (stubbed gh and orbit only); `docs/demos/2026-10-05/` holds the live reports: simple and difficult SUCCEEDED with draft PRs, ui BLOCKED (G39) | partial |
 | S2.10 | Safe stop: unauthorized action | `delivery/deliver.ts`, `policy/authorize.ts` | A/safe-stops.test.ts "unauthorized action..." | done |
 | S2.11 | Safe stop: stale evidence | `evidence/freshness.ts:assertDeliverable` | A/policy-and-evidence.test.ts "scenario 10..." | done |
 | S2.12 | Safe stop: repeated non-progress | `inquisition/repair.ts:nonProgress` | A/proof-and-progress.test.ts "scenario 6..." | done |
@@ -459,7 +459,7 @@ sometimes shortened.
 | S18.6 | Codex review adapter and disagreement resolution | `adapters/codex.ts`, `review/` | see S12 | done |
 | S18.7 | UI runner, accessibility, visual artifacts | `ui/` | see S13 | done |
 | S18.8 | Delivery, CI repair, action reconciliation | `delivery/` | see S15 | done |
-| S18.9 | Acceptance suite, docs, demo runs, security review | `tests/acceptance`, `docs/`, `examples/` | acceptance green; I/demo/example.test.ts and I/demo/mock-demo.test.ts pass; live demo never run, `docs/demos/` holds no report (G39) | partial |
+| S18.9 | Acceptance suite, docs, demo runs, security review | `tests/acceptance`, `docs/`, `examples/` | acceptance green; I/demo/example.test.ts and I/demo/mock-demo.test.ts pass; the live demo ran in part on 2026-10-05, see `docs/demos/2026-10-05/` (G39) | partial |
 | S18.10 | Enforcement exists before autonomous delivery | `policy/`, `isolation/` | U/policy/*, I/isolation/* | done |
 
 ## 19. Definition of delivered
@@ -469,7 +469,7 @@ sometimes shortened.
 | S19.1 | Installs | `docs/installation.md`, `scripts/check-plugin.mjs` | I/plugin/plugin.test.ts "validates under --strict" | done |
 | S19.2 | Loads | plugin, `dist/orbit.mjs` | I/plugin/plugin.test.ts "is current and starts with a node shebang" | done |
 | S19.3 | Runs persistently | `controller/service.ts`, `controller/loop.ts` | I/controller/service-loop.test.ts | done |
-| S19.4 | Completes the demo unattended | mock demo; live demo never run, `docs/demos/` holds no report (G39) | I/demo/mock-demo.test.ts "simple: SUCCEEDED on a cheap route", A/demo-shapes.test.ts | partial |
+| S19.4 | Completes the demo unattended | mock demo; live: simple and difficult SUCCEEDED, ui BLOCKED (`docs/demos/2026-10-05/`, G39) | I/demo/mock-demo.test.ts "simple: SUCCEEDED on a cheap route", A/demo-shapes.test.ts | partial |
 | S19.5 | Commands use documented interfaces | `docs/interfaces/*` | U/adapters/claude-invocation.test.ts "builds the verified headless invocation" | done |
 | S19.6 | State survives restart | `storage/`, `recovery/` | A/restart-and-delivery.test.ts | done |
 | S19.7 | Policies enforced outside prompts | `policy/`, `isolation/` | F/policy-faults.test.ts | done |
@@ -508,18 +508,63 @@ The first independent security review (`docs/decisions/0005-security-review-fixe
 | 7. Approve-once widened the worker (high) | `controller/authorization.ts:runApprovedOperation` runs the approved command once in isolation; no grant policy | U/controller/approve-once-isolation.test.ts "an approved GET runs once in isolation as a recorded action, and a different POST by the retried worker never reaches the host" |
 | 8. PR checks attributed to the wrong revision (medium) | `delivery/github.ts` reads check runs and status of the given commit and labels them with the reported SHA; re-review: every status page is read and the aggregate state and `total_count` keep a partial read from passing | U/delivery/github.test.ts "never reports another commit's green checks as the asked commit's" and "combined commit status pagination and aggregate state" |
 
+## End-to-end test 1
+
+Defects from the first end-to-end test of Orbit 0.1.0 (five testers, three live runs; P are product defects, D documentation). Each product fix ships with a test that failed on the code before it, except where the row says otherwise. P13, P14 and the Linux rows came in the second wave, with the integration pass that ran the CI steps on macOS and in a Linux container.
+
+| Defect | Fix | Test |
+|---|---|---|
+| P1. Approved contract amendments never applied | `inquisition/amendment-answers.ts:applyAmendmentAnswers`, called by `cli/commands/decide.ts` and at every safe point (`steps/common.ts`) | I/controller/amendment-approval.test.ts "\"Approve\" applies the pending amendment to the run contract..." and "an approval recorded without being applied (an interrupted decide)..."; U/inquisition/amendment-answers.test.ts |
+| P2. A verify PASS on checks that prove nothing | `evidence/report.ts`: a candidate tree equal to the base tree is INCOMPLETE, a criterion is unverified unless a check failed on the base revision or the candidate adds or changes a test; `controller/verification.ts` passes base tree, baseline and changed paths | U/evidence/report.test.ts "is INCOMPLETE, with no criterion supported, when the candidate tree is the base tree"; I/cli/verify-repair.test.ts "does not PASS a candidate whose tree is the base tree..." |
+| P3. Resume replays the stored failure | `steps/obtain.ts:attemptStart` starts a fresh attempt after a resume, bounded by `recovery_attempts` | F/resume-after-fix.test.ts "a reviewer that failed twice blocks; after the fix, resume starts review attempt 3..." |
+| P4. An accepted reviewer claim dead-ends in BLOCKED | `steps/reviewing.ts:settleInquiredClaims`: a claim the inquiry supports (ledger or a cited amendment) is accepted, one it refutes is rejected with the ledger evidence, any other stays pending and goes to a repair attempt that runs its discriminating test | I/controller/review-repair.test.ts "a medium claim the Inquisition accepts..."; U/controller/coverage-steps-reviewing.test.ts "a claim the inquiry supports in its ledger..." and "...rejects in its ledger on evidence..."; A/review-and-security.test.ts "scenario 16" |
+| P5. Starter config fails the quickstart | `templates/config.yaml`: mode `autonomous`, delivery actions follow the mode | U/cli/e2e-fixes.test.ts "validates under every mode the quickstart names, with no hand editing" |
+| P6. Doctor's review fix is wrong on a fresh setup | `cli/review-fix.ts` follows the selection's alternatives | U/cli/doctor-actionable.test.ts "with codex eligible but no model qualified, the fix is to refresh the catalog or name a model" |
+| P7. SessionStart hook never prints | `orbit questions --pending [--quiet]`; the hook reports failures on stderr | I/plugin/plugin.test.ts "prints the open questions of a run at session start (P7)" |
+| P8. Actionable text truncated | `cli/io.ts:flat`, no truncation in doctor, status, drive, verify, models | U/cli/doctor-actionable.test.ts "names the whole install command for a missing srt, in the fix and in the JSON" |
+| P9. Plugin install runs `npm ci` of every devDependency | `plugin/package.json` pins srt only, with a lockfile; `scripts/check-plugin.mjs:payloadProblems` | I/plugin/plugin.test.ts "holds only the allowed files..." and "fails on a devDependency..." |
+| P10. Plugin users have no init, doctor or `orbit` | `/orbit:init`, `/orbit:doctor`, `plugin/bin/orbit`, `core/invocation.ts:orbitHint` | I/plugin/plugin.test.ts "lists eight skills, init and doctor among them, and the seven agents (P10)"; U/cli/plugin-invocation.test.ts |
+| P11. Skill flows leave runs idle or orphaned | skills check `service status`, then `--detach` or `--foreground` in the background; `resume --detach` | I/plugin/plugin.test.ts "check the service, then detach to it or drive in the background and say so" (written after the change) |
+| P12. Config-caused blocks cannot be cleared by resume | `steps/common.ts:finishRun` tags frozen-policy blocks; `resume` exits 5 unless `--force` | U/controller/block-causes.test.ts; U/cli/control.test.ts "refuses with exit 5 and names a new run as the way forward; --force still resumes" |
+| P15. Small budgets fail at admission; charges far above spend | `scheduling/budget.ts`: token-priced estimate, session ceiling at most half the cap and at least $1; `controller/workers.ts`, `steps/planning.ts` | U/scheduling/budget.test.ts "charges a token-priced estimate instead of the role ceiling..."; U/controller/coverage-workers.test.ts "charges an estimate priced from the reported tokens..." |
+| P16. Resume after `kill -9` refused until the lease expires | `cli/commands/drive.ts:expireLeaseOfDeadOwner` | U/cli/drive-dead-owner.test.ts "proceeds when the owner is registered on this host and its process is gone" |
+| P17. Block messages hide the real cause | `inquisition/repair.ts`, `steps/diagnosing.ts`, `contract/draft.ts`, `controller/report.ts` | U/inquisition/repair.test.ts "nonProgress names an attempt that changed nothing"; U/contract/draft.test.ts "a plan whose paths all fall outside the policy scope..."; U/controller/block-causes.test.ts "an EXHAUSTED non-progress stop is not reported as a spent budget" |
+| P18. A baseline question even when the failing test is the goal | `steps/baseline-questions.ts`: withdrawn and recorded as `baseline.expected-to-flip` | I/controller/baseline-expected-flip.test.ts "asks no baseline exception question when the failing test is the goal..." |
+| P19. Worktrees never removed | `controller/worktree-cleanup.ts` for SUCCEEDED and CANCELLED (unsaved edits snapshotted first); `gc --keep-days 0` | I/controller/worktree-cleanup.test.ts "a SUCCEEDED run leaves no worktree behind..." |
+| P20. `orbit run` creates the run before preflight | `cli/admission.ts`: dirty tree, git credentials and (foreground) the environment gate before `createRun` | U/cli/e2e-fixes.test.ts "refuses a dirty working tree, creates no run and names the way out" |
+| P21. `status` after init says to init | `cli/commands/status.ts`, `cli/context.ts` | U/cli/e2e-fixes.test.ts "says there are no runs yet instead of telling the user to run init again" |
+| P22. Crash on a closed pipe | EPIPE handler in `cli/main.ts` | U/cli/epipe.test.ts "\"orbit help\" with its reader gone exits 0 and prints no stack" |
+| P23. Service wording and stale controllers | `controller/service.ts`: uninstall polls launchd or reports `stopPending`; dead controllers marked stopped | U/controller/service.test.ts "polls until launchd no longer lists the job..." and "marks stopped the controllers of this host whose process is gone..."; U/cli/service.test.ts |
+| P24. Default `allowed_paths` match nothing | doctor warns; `cli/layout.ts` derives paths at init | U/cli/doctor-actionable.test.ts "warns on scope in a repository laid out under src/..."; U/cli/e2e-fixes.test.ts "uses the top-level directories the repository tracks" |
+| P25. Skill arguments unquoted | quoted here-documents, `orbit repair -`, run ids checked | I/plugin/plugin.test.ts "never puts $ARGUMENTS in a bash fence"; U/cli/plugin-invocation.test.ts "repair - reads the failure description from stdin..." |
+| P26. A local commit reported as delivered | `controller/report.ts`: `delivered_commit` only from a real delivery | U/controller/coverage-report-build.test.ts "in a local mode, names the candidate commit as local and not delivered..." |
+| P27. Verification and guidance problems | evidence paths relative to the run directory (`evidence/report.ts`, `cli/commands/verify.ts`); `models list` agrees with doctor | U/evidence/report.test.ts "gives artifacts and check logs as paths relative to the run directory..."; U/cli/e2e-fixes.test.ts "models list agrees with doctor..." |
+| P28. Polish | `-v`, group help, `help nosuch` exit 2, did-you-mean, parse errors, `--policy`, no "(cancelling)" on finished runs | U/cli/e2e-fixes.test.ts "P28 and P27: command line polish" and "lists CANCELLED without \"(cancelling)\"..." (the last written after the fix) |
+| P29. Output caps too small for a realistic goal | `policy/config.ts:DEFAULT_OUTPUT_BUDGETS` raised; one retry at double the cap up to 32000 (`controller/workers.ts`) | U/controller/output-cap-retry.test.ts "retries a planner that exceeded its output cap once with the cap doubled..." |
+| P13. A read-only role with a bad key surfaced as a crash | `isolation/profiles.ts:readOnlyProfile` keeps the worktree readable, so the CLI reaches its first request and a bad key is `auth_failed`; a crash error carries the redacted stderr tail (`adapters/claude.ts`) | I/adapters/os-sandbox.test.ts "starts a read-only role inside srt: it reads its worktree, cannot write it, and a bad key is a credential failure"; I/adapters/claude-fake.test.ts "puts the CLI's stderr into the error of a run that ended without a transcript..." |
+| P14. A Claude worker cannot read its own worktree under `~/.orbit` (macOS) | `adapters/claude-settings.ts`: `sandbox.filesystem.allowRead` for the worktree, temp dir and readable paths inside a deny | I/adapters/claude-sandbox-worktree.test.ts "runs node, npm and git in the worktree while credentials, the checkout and other runs stay unreadable" |
+| P17(d). Login advice when an exported key overrides the login | `recovery/credentials.ts:authBlocker` says fix or unset the variable; callers pass the controller's host environment (`steps/common.ts:blockOnAuth`, `recovery/backoff.ts` `env`) | U/recovery/credentials.test.ts "does not suggest a login when an exported key overrides it..."; U/controller/coverage-steps-common.test.ts "advises from the controller's host environment, not the test process's..."; U/recovery/backoff.test.ts "decideRetry and retryWithBackoff advise unsetting a key exported in the given environment..." |
+| P29 follow-up. Adapter tests pinned the old output caps | `claude-fake`, `codex-fake`, `output-budget` tests read `DEFAULT_OUTPUT_BUDGETS` | the five tests, which failed on the raised caps (test change only) |
+| Service breaks after a plugin update | `controller/service.ts`: plist and unit start `~/.orbit/bin/orbit`, a private launcher every command repoints at the running bundle; `isolation/profiles.ts` refuses a provider directory that is, contains or sits inside the Orbit home | U/controller/service-launcher.test.ts "survives a plugin update: install from path A, run from path B..."; U/cli/service-launcher.test.ts "install from bundle A, then any command from bundle B..."; U/isolation/profiles.test.ts "refuses a provider config dir that is, contains or sits inside the Orbit home..." |
+| Linux: UI checks never reached the application under srt | `ui/single-sandbox.ts` launcher, used when the provider says `privateLoopback` (srt on Linux; containers, with the image's `node`); exploration refuses up front (`ui/explore.ts`); doctor says so | U/ui/single-sandbox.test.ts "runs the application and the journeys in one wrapped launcher..." and "starts the launcher with the provider's own node..."; I/ui/ui-single-sandbox-srt.test.ts (Linux); I/ui/ui-single-container.test.ts (where the Playwright image is present); U/ui/coverage-explore.test.ts "does not start the application under a provider whose every sandbox has its own loopback..."; U/cli/doctor-browser-isolation.test.ts "on Linux names the one-sandbox mode..." |
+| Linux: srt found by walking up from the bundle | `isolation/sandbox-runtime.ts:installBinDirs`: PATH, the plugin's own `node_modules/.bin`, then the development checkout's only | U/isolation/sandbox-runtime.test.ts "finds the development checkout's srt when the install directory is the checkout's plugin/..." and "ignores an srt planted in any directory above those two" |
+| Linux CI: a bare native frame broke crash classification | `evidence/environment-failure.ts:TRACE_FRAME` | U/evidence/environment-failure.test.ts "accepts a native frame node cannot name, which is a bare address..." |
+| CI as GitHub runs it (CI=true, Linux) | demo `playwright.config.ts` reporter `list`; acceptance labs record this platform's baselines first (`demo-shapes`, scenario 18 compares with the lab template); the gitlink test sets `diff.ignoreSubmodules` after its commit (git 2.39 refused it) | I/demo/example.test.ts "passes the browser journeys on desktop and mobile..." (failed with CI=true on macOS); A/demo-shapes.test.ts "demo 2" and A/ui.test.ts "scenario 18" (failed on Linux); I/policy/scope-adversarial.test.ts "sees a submodule pointer change..." (failed on git 2.39) |
+| D1 to D11. Documentation | README, installation, configuration, operations, troubleshooting, security, architecture, learning, gaps, demos README, CHANGELOG; skills rewritten (D11) | D2 followed literally to a passing doctor and a started run; I/plugin/plugin.test.ts "does not contradict itself" (D11) |
+
 ## Counts
 
 | Status | Earlier re-audit (before the fixer waves) | Previous version of this table | This audit |
 |---|---|---|---|
 | done | 341 | 356 | 356 |
-| partial | 16 | 2 | 2 |
+| partial | 16 | 2 | 3 |
 | missing | 1 | 0 | 0 |
-| untested | 1 | 1 | 1 |
+| untested | 1 | 1 | 0 |
 | total | 359 | 359 | 359 |
 
-No status changed in this audit: every `done` row was confirmed, and the three
-non-done rows (S2.9, S18.9, S19.4) all wait on the live demo (G39). Rows that
+Every `done` row was confirmed in this audit. The live demo then ran in part
+(2026-10-05), which moved S2.9 from `untested` to `partial`; the three non-done
+rows (S2.9, S18.9, S19.4) now wait on the UI demo goal running live (G39). Rows that
 are `done` but carry a hardening follow-up name it in `docs/gaps.md` (G24 for
 S5.28, G53 for S8.21).
 

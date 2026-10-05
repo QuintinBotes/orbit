@@ -18,7 +18,7 @@ import { stateDbPath } from '../../controller/start.ts';
 import type { Args, OptionSpec } from '../args.ts';
 import { openState, resolveRepo, type CliContext } from '../context.ts';
 import { EXIT } from '../exit.ts';
-import { json, line, oneLine, table } from '../io.ts';
+import { flat, json, line, table } from '../io.ts';
 
 export const MODELS_REFRESH_OPTIONS: OptionSpec = {
   probe: { type: 'boolean', description: 'also make one tiny live request per allowed Claude model to validate it (costs a few cents)' },
@@ -51,6 +51,8 @@ export async function modelsListCommand(args: Args, ctx: CliContext): Promise<nu
         const reasons = a?.excluded.find((x) => x.model.modelId === e.modelId)?.reasons ?? [];
         const eligible = a?.eligible.some((x) => x.modelId === e.modelId) ?? false;
         const policy = allowMatch(e, config.routing.allowed_models);
+        // "Not yet validated" is not a reason to refuse a model: doctor calls it eligible, unvalidated, and so does this list.
+        const onlyUnvalidated = !eligible && reasons.length > 0 && reasons.every((r) => /not yet validated$/.test(r));
         return {
           model: e.modelId,
           provider: e.provider,
@@ -60,6 +62,7 @@ export async function modelsListCommand(args: Args, ctx: CliContext): Promise<nu
           availability_detail: s.detail,
           policy: policy === 'explicit' ? 'allowed' : policy === 'wildcard' ? 'wildcard' : 'not allowed',
           eligible,
+          status: eligible ? 'eligible' : onlyUnvalidated ? 'eligible-unvalidated' : 'excluded',
           reasons,
         };
       }),
@@ -68,7 +71,7 @@ export async function modelsListCommand(args: Args, ctx: CliContext): Promise<nu
       json(ctx.io, { config_loaded: loaded, persisted, allowed_models: config.routing.allowed_models, models: rows });
       return EXIT.OK;
     }
-    ctx.io.out(table(rows.map((r) => [r.model, r.surface, r.availability, r.policy, r.eligible ? 'yes' : `no: ${oneLine(r.reasons.join('; '), 90)}`]), ['MODEL', 'SURFACE', 'AVAILABILITY', 'POLICY', 'ELIGIBLE']));
+    ctx.io.out(table(rows.map((r) => [r.model, r.surface, r.availability, r.policy, r.status === 'eligible' ? 'yes' : r.status === 'eligible-unvalidated' ? 'yes, unvalidated' : `no: ${r.reasons.join('; ')}`]), ['MODEL', 'SURFACE', 'AVAILABILITY', 'POLICY', 'ELIGIBLE']));
     if (!loaded) line(ctx.io, '\n(no valid .orbit/config.yaml: showing eligibility under the default allowed_models)');
     if (!persisted) line(ctx.io, '(no state database yet: showing the shipped registry seed)');
     line(ctx.io, '\nunvalidated means Orbit has not yet seen the model run on that surface; "orbit models refresh --probe" checks it live.');
@@ -113,7 +116,7 @@ export async function modelsRefreshCommand(args: Args, ctx: CliContext): Promise
         const adapter = createAdapter(id, pc, { baseEnv: { ...probeEnv(ctx.env) }, clock: ctx.clock });
         const caps = await adapter.discoverCapabilities();
         if (!caps.available || !caps.version) {
-          notes.push(`provider ${id}: claude CLI unavailable (${oneLine(caps.detail, 200)}); registry availability left as it was`);
+          notes.push(`provider ${id}: claude CLI unavailable (${flat(caps.detail)}); registry availability left as it was`);
           continue;
         }
         notes.push(`provider ${id}: claude ${caps.version}`);
@@ -136,13 +139,13 @@ export async function modelsRefreshCommand(args: Args, ctx: CliContext): Promise
             if (st.state === 'valid') {
               registry.markAvailability(e.modelId, 'claude-cli', true, `live probe succeeded (${st.method ?? 'credential'})`);
               notes.push(`  ${e.modelId}: validated by a live request`);
-            } else notes.push(`  ${e.modelId}: probe inconclusive (${st.state}: ${oneLine(st.detail, 160)}); not marked`);
+            } else notes.push(`  ${e.modelId}: probe inconclusive (${st.state}: ${flat(st.detail)}); not marked`);
           }
         }
       } else {
         const r = await execCapture([...commandArgv(pc.command), 'debug', 'models'], { env: probeEnv(ctx.env), timeoutMs: 60_000, cwd: repo }).catch((err: unknown) => err as Error);
         if (r instanceof Error) {
-          notes.push(`provider ${id}: ${oneLine(r.message, 200)}`);
+          notes.push(`provider ${id}: ${flat(r.message)}`);
           continue;
         }
         if (r.exitCode !== 0) {
@@ -154,7 +157,7 @@ export async function modelsRefreshCommand(args: Args, ctx: CliContext): Promise
           changes[`catalog:${id}`] = res;
           notes.push(`provider ${id}: ${res.listed.length} model(s) listed${res.hidden.length ? `, ${res.hidden.length} hidden` : ''}${res.absent.length ? `, ${res.absent.length} no longer offered` : ''}${res.providerDefault ? `; default ${res.providerDefault}` : ''}`);
         } catch (err) {
-          throw new OrbitError('MALFORMED_OUTPUT', `${id}: "debug models" printed something that is not a model catalog (${err instanceof Error ? oneLine(err.message, 160) : 'unreadable'})`);
+          throw new OrbitError('MALFORMED_OUTPUT', `${id}: "debug models" printed something that is not a model catalog (${err instanceof Error ? flat(err.message) : 'unreadable'})`);
         }
       }
     }

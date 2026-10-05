@@ -97,7 +97,12 @@ describe('srt settings for the application', () => {
   });
 });
 
-describe.skipIf(!srtStatus.ok)(srtStatus.ok ? 'the application under srt' : `the application under srt skipped: ${srtStatus.detail}`, () => {
+// srt's allowLocalBinding is macOS-only. On Linux every srt process gets its own network namespace, so an application started under srt
+// listens on a loopback nobody else can reach (the readiness probe, a browser, a second srt process all get ECONNREFUSED).
+// UI checks there run the application and the browser in one sandbox instead (ui-single-sandbox-srt.test.ts).
+const LOOPBACK_SHARED = process.platform !== 'linux';
+
+describe.skipIf(!srtStatus.ok || !LOOPBACK_SHARED)(srtStatus.ok ? 'the application under srt' : `the application under srt skipped: ${srtStatus.detail}`, () => {
   const launch = async (port: number, appProfile: ReturnType<typeof profile> | Omit<ReturnType<typeof profile>, 'allowLocalBinding'>) => {
     const app = join(dir, 'app');
     mkdirSync(app);

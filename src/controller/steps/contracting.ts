@@ -21,6 +21,7 @@ import { intakeGate } from '../gates.ts';
 import { routeFor } from '../workers.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
 import { decide, finishRun, MAX_REGENERATIONS, move, policySummary, safePoint, type StepResult } from './common.ts';
+import { settleExpectedFlips } from './baseline-questions.ts';
 import { obtain } from './obtain.ts';
 import { recordGate } from './preflight.ts';
 
@@ -76,6 +77,8 @@ async function accept(ctx: RunContext, contract: GoalContract, plan: PlannerOutp
   recordGate(ctx, intake);
   if (!intake.passed) return finishRun(ctx, 'BLOCKED', `intake gate rejected the contract: ${intake.reasons.join('; ')}`, { outcome: { gate: intake } });
   atomicWriteJson(join(ctx.runDir, 'contract.json'), contract);
+  // A check that fails on the base revision and is the proof of a criterion is the goal itself: expected to flip, not an exception to ask about.
+  settleExpectedFlips(ctx, contract);
   const patch = { contractJson: JSON.stringify(contract), contractHash: hashObject(contract) };
 
   const material = (plan?.unresolved_decisions ?? []).filter((d) => d.material);

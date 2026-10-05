@@ -12,6 +12,7 @@ import {
   serviceStatus,
   systemdUnitPath,
   uninstallService,
+  pruneDeadControllers,
   type CommandRunner,
 } from '../../../src/controller/service.ts';
 
@@ -54,16 +55,21 @@ describe('service definitions', () => {
     expect(plist).toContain('<key>ThrottleInterval</key><integer>10</integer>');
     expect(plist).toContain(`<string>${join(h, '.orbit', 'logs', `${s.label}.out.log`)}</string>`);
     expect(plist).toContain('<string>/work/acme &amp; co</string>');
-    expect(plist).toContain('<string>/opt/node/bin/node</string>\n    <string>/opt/orbit/dist/orbit.mjs</string>\n    <string>service</string>\n    <string>run</string>');
+    // The definition starts the stable launcher, not node and the versioned bundle path, which change on every plugin update (service-launcher.test.ts).
+    expect(plist).toContain(`<string>${join(h, '.orbit', 'bin', 'orbit')}</string>\n    <string>service</string>\n    <string>run</string>`);
+    expect(plist).not.toContain('/opt/orbit/dist/orbit.mjs');
+    expect(plist).not.toContain('<string>/opt/node/bin/node</string>\n    <string>/opt/orbit');
     expect(plist).not.toContain('AbandonProcessGroup');
   });
 
   it('renders a systemd user unit that keeps workers alive across a controller restart', () => {
-    const unit = renderSystemdUnit(spec(home()));
+    const h = home();
+    const unit = renderSystemdUnit(spec(h));
     expect(unit).toContain('KillMode=process');
     expect(unit).toContain('Restart=on-failure');
     expect(unit).toContain('RestartSec=5');
-    expect(unit).toContain('ExecStart="/opt/node/bin/node" "/opt/orbit/dist/orbit.mjs" "service" "run" "--repo" "/work/acme & co"');
+    expect(unit).toContain(`ExecStart="${join(h, '.orbit', 'bin', 'orbit')}" "service" "run" "--repo" "/work/acme & co"`);
+    expect(unit).not.toContain('/opt/orbit/dist/orbit.mjs');
     expect(unit).toMatch(/StartLimitBurst=10[\s\S]*\[Service\]/);
     expect(unit).toContain('Environment="NODE_OPTIONS=--disable-warning=ExperimentalWarning"');
   });
@@ -125,5 +131,64 @@ describe('install, status and uninstall (no real service manager)', () => {
   it('refuses platforms without a supported service manager', async () => {
     const h = home();
     await expect(installService(spec(h), { platform: 'win32', homeDir: h, uid: 0, run: runner() })).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
+  });
+});
+
+
+describe('uninstall waits for launchd to let go of the job (P23)', () => {
+  /** launchctl print answers 0 (still listed) for the first `listed` probes after bootout, then 113. */
+  function lingering(listed: number): CommandRunner & { calls: string[][]; probes: () => number } {
+    const calls: string[][] = [];
+    let seen = 0;
+    const fn = (async (argv: string[]) => {
+      calls.push(argv);
+      if (argv.includes('print')) {
+        seen++;
+        return { exitCode: seen <= listed ? 0 : 113, stdout: '', stderr: '' };
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    }) as CommandRunner & { calls: string[][]; probes: () => number };
+    fn.calls = calls;
+    fn.probes = () => seen;
+    return fn;
+  }
+
+  it('polls until launchd no longer lists the job, then reports it gone', async () => {
+    const h = home();
+    const s = spec(h);
+    const run = lingering(3);
+    const slept: number[] = [];
+    const st = await uninstallService(s.label, { platform: 'darwin', homeDir: h, uid: 501, run, pollMs: 100, stopTimeoutMs: 5_000, sleep: async (ms) => void slept.push(ms) });
+    expect(st).toMatchObject({ installed: false, loaded: false, stopPending: false });
+    expect(run.probes()).toBe(4);
+    expect(slept).toEqual([100, 100, 100]);
+  });
+
+  it('gives up after the stop timeout and says the stop is still pending instead of claiming it is gone', async () => {
+    const h = home();
+    const s = spec(h);
+    const run = lingering(Number.POSITIVE_INFINITY);
+    let now = 0;
+    const st = await uninstallService(s.label, { platform: 'darwin', homeDir: h, uid: 501, run, pollMs: 1_000, stopTimeoutMs: 3_000, sleep: async (ms) => void (now += ms), now: () => now });
+    expect(st).toMatchObject({ installed: false, loaded: true, stopPending: true });
+    expect(st.detail).toMatch(/still stopping/);
+  });
+});
+
+describe('pruneDeadControllers (P23)', () => {
+  it('marks stopped the controllers of this host whose process is gone, and leaves live ones and other hosts alone', async () => {
+    const { openDb } = await import('../../../src/storage/db.ts');
+    const { ManualClock } = await import('../../../src/core/clock.ts');
+    const { registerController, listControllers, getController } = await import('../../../src/storage/controllers.ts');
+    const { hostname } = await import('node:os');
+    const db = openDb(':memory:');
+    const clock = new ManualClock(1_000_000);
+    registerController(db, { id: 'ctl-dead', pid: 2_000_000_000, host: hostname(), procStart: 'x', mode: 'foreground' }, clock);
+    registerController(db, { id: 'ctl-live', pid: process.pid, host: hostname(), procStart: null, mode: 'foreground' }, clock);
+    registerController(db, { id: 'ctl-elsewhere', pid: 2_000_000_001, host: 'another-host.invalid', procStart: null, mode: 'foreground' }, clock);
+    const pruned = pruneDeadControllers(db, clock);
+    expect(pruned).toEqual(['ctl-dead']);
+    expect(getController(db, 'ctl-dead')).toMatchObject({ stopReason: expect.stringMatching(/process is gone/) });
+    expect(listControllers(db).map((c) => c.id).sort()).toEqual(['ctl-elsewhere', 'ctl-live']);
   });
 });

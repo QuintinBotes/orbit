@@ -343,3 +343,39 @@ describe('BudgetLedger.requestExtension (spec section 7)', () => {
     expect(caught(() => ledger.requestExtension(ext({ counter: 'cost_usd' as never }))).code).toBe('SCHEMA_INVALID');
   });
 });
+
+
+describe('small budgets and measured charges (P15)', () => {
+  it('admits the first session under a $2 or $4 cap: an unmeasured session is presumed to cost at most half the cap, not the full role ceiling', () => {
+    for (const cap of [2, 4]) {
+      const { ledger } = setup(policy({ hard: { model_cost_usd: cap } }));
+      const d = ledger.admit({ role: 'implementer' });
+      expect(d.admitted, `cap $${cap}: ${d.reasons[0]}`).toBe(true);
+      expect(d.cost.estimate).toBeLessThanOrEqual(cap / 2);
+      expect(d.cost.basis).toBe('ceiling');
+    }
+  });
+
+  it('still refuses a cap too small for any honest session, and keeps the full role ceilings on a normal cap', () => {
+    for (const cap of [0.05, 0.5, 1]) expect(setup(policy({ hard: { model_cost_usd: cap } })).ledger.admit({ role: 'implementer' }).admitted, `cap $${cap}`).toBe(false);
+    const normal = setup().ledger;
+    expect(normal.admit({ role: 'implementer' }).cost.estimate).toBe(ROLE_COST_CEILING_USD.implementer);
+    expect(normal.roleCostCeiling('reviewer')).toBe(ROLE_COST_CEILING_USD.reviewer);
+  });
+
+  it('charges a token-priced estimate instead of the role ceiling when tokens were reported but no cost', () => {
+    const { ledger, db } = setup();
+    const charge = ledger.consumeCost({ costUsd: null }, 'implementer', { tokenEstimate: { costUsd: 0.167, basis: 'dearest listed pricing', model: 'gpt-x' } });
+    expect(charge).toMatchObject({ charged: 0.167, basis: 'estimated' });
+    expect(charge.charged).toBeLessThan(ROLE_COST_CEILING_USD.implementer);
+    expect(ledger.state('cost_usd').used).toBeCloseTo(0.167, 9);
+    expect(events(db, 'budget.cost-ceiling-charged')).toEqual([]);
+    expect(events(db, 'budget.cost-token-estimated')).toEqual([expect.objectContaining({ role: 'implementer', charged_usd: 0.167, basis: 'dearest listed pricing', model: 'gpt-x' })]);
+  });
+
+  it('a reported cost wins over a token estimate, and no estimate keeps the ceiling', () => {
+    const { ledger } = setup();
+    expect(ledger.consumeCost({ costUsd: 0.2, costSource: 'reported' }, 'implementer', { tokenEstimate: { costUsd: 5, basis: 'x', model: null } })).toMatchObject({ charged: 0.2, basis: 'reported' });
+    expect(ledger.consumeCost({ costUsd: null }, 'reviewer')).toMatchObject({ charged: ROLE_COST_CEILING_USD.reviewer, basis: 'ceiling' });
+  });
+});

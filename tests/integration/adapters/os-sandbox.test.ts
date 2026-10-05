@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,8 @@ import { prepareWorkerTmpDir, profileForWorker } from '../../../src/isolation/pr
 import { SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.ts';
 import { verifySnapshot } from '../../../src/policy/snapshot.ts';
 import { startFakeAnthropicApi } from '../../fakes/fake-anthropic-api.mjs';
-import { FAKE_CLAUDE, IMPLEMENTER_OUTPUT, implementerSpec, makeFixture, waitFor, writeScenario, type Fixture } from './helpers.ts';
+import { MODEL_OUTPUT_SCHEMAS } from '../../../src/contract/model-outputs.ts';
+import { FAKE_CLAUDE, IMPLEMENTER_OUTPUT, REVIEW_OUTPUT, implementerSpec, makeFixture, waitFor, writeScenario, type Fixture } from './helpers.ts';
 
 // The os-sandbox tier: the whole provider process inside srt. Skipped when
 // srt cannot run here (no binary, or an outer sandbox that forbids nesting).
@@ -62,7 +63,53 @@ describe.skipIf(!srtStatus.ok)(`ClaudeAdapter os-sandbox tier under srt (${srtSt
     expect(result.status, result.error ?? '').toBe('succeeded');
     expect(readFileSync(join(f.repo, 'apps', 'inside.ts'), 'utf8')).toBe('ok\n');
     expect(existsSync(outside)).toBe(false);
-    expect(readFileSync(join(f.workerDir, 'log.jsonl'), 'utf8')).toMatch(/denied: EPERM/);
+    const log = readFileSync(join(f.workerDir, 'log.jsonl'), 'utf8');
+    if (process.platform === 'darwin') {
+      // Seatbelt refuses the write.
+      expect(log).toMatch(/denied: EPERM/);
+    } else {
+      // bubblewrap hides the read-denied parent behind an empty tmpfs: the attempt succeeds inside the sandbox and is gone with it,
+      // which the existsSync check above proves. The tool result still shows the attempt was made.
+      expect(log).toMatch(/"tool_use_id":"toolu_forbidden","content":"(written|denied: E[A-Z]+)"/);
+    }
+  });
+
+  // P13: a read-only role's worktree (here the checkout, whose parent the
+  // profile denies; in a real run a worktree under the denied ~/.orbit) was
+  // dropped from the writable set and never re-allowed for reading, so the
+  // CLI could not even resolve its working directory and died in a few
+  // hundred milliseconds ("An unknown error occurred (Unexpected)") before
+  // any request. A bad key therefore surfaced as a crash, never as a
+  // credential failure; a good key failed the same way.
+  it('starts a read-only role inside srt: it reads its worktree, cannot write it, and a bad key is a credential failure', async () => {
+    const f = makeFixture();
+    fixtures.push(f);
+    const scenario = { ...f, scenarioPath: join(f.workerDir, 'scenario.json') };
+    const a = new ClaudeAdapter({
+      command: [process.execPath, FAKE_CLAUDE],
+      isolation: srt,
+      tier: 'os-sandbox',
+      graceMs: 300,
+      baseEnv: { PATH: process.env.PATH, HOME: process.env.HOME, ANTHROPIC_API_KEY: 'sk-ant-bad-000', CLAUDE_CONFIG_DIR: configDir },
+    });
+    const reviewer = () => ({ ...osSpec(f), role: 'reviewer' as const, readOnly: true, outputSchema: MODEL_OUTPUT_SCHEMAS.review });
+
+    writeScenario(scenario, { roles: { '*': [{ outcome: 'auth_failure' }] } });
+    const spec = reviewer();
+    const handle = await a.startTask(spec);
+    const failed = await waitFor(() => a.collectResult(handle, spec), 60_000);
+    expect(failed.status, `${failed.error ?? ''} ${readFileSync(join(f.workerDir, 'stderr.log'), 'utf8')}`).toBe('auth_failed');
+    expect(failed.reason).toBe('auth');
+
+    rmSync(f.workerDir, { recursive: true, force: true });
+    mkdirSync(f.workerDir, { recursive: true, mode: 0o700 });
+    writeScenario(scenario, { roles: { '*': [{ forbiddenWrite: { path: join(f.repo, 'apps', 'review.ts') }, structured: REVIEW_OUTPUT }] } });
+    const okSpec = reviewer();
+    const okHandle = await a.startTask(okSpec);
+    const ok = await waitFor(() => a.collectResult(okHandle, okSpec), 60_000);
+    expect(ok.status, `${ok.error ?? ''} ${readFileSync(join(f.workerDir, 'stderr.log'), 'utf8')}`).toBe('succeeded');
+    expect(ok.structured).toEqual(REVIEW_OUTPUT);
+    expect(existsSync(join(f.repo, 'apps', 'review.ts'))).toBe(false);
   });
 
   it('refuses the os-sandbox tier without an environment credential (a keychain login is invisible inside srt)', async () => {

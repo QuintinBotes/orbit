@@ -13,8 +13,12 @@ import { getRun, setPaused, type RunRecord } from '../../controller/run-store.ts
 import { isTerminal } from '../../controller/states.ts';
 import { listQuestions } from '../../inquisition/store.ts';
 import { liveLease, type CliContext } from '../context.ts';
+import { hostname } from 'node:os';
+import { isAlive } from '../../core/proc.ts';
+import { findController } from '../../storage/controllers.ts';
+import type { Lease } from '../../controller/run-store.ts';
 import { EXIT, exitCodeForState } from '../exit.ts';
-import { json, line, oneLine, clockTime } from '../io.ts';
+import { flat, json, line, clockTime } from '../io.ts';
 
 interface EventRow {
   id: number;
@@ -42,14 +46,25 @@ export function formatEvent(e: EventRow): string {
   const reason = typeof data.reason === 'string' ? data.reason : '';
   switch (e.type) {
     case 'state.transition':
-      return `[${at}] ${e.from_state ?? '-'} -> ${e.to_state ?? '-'}${reason ? `  ${oneLine(reason, 140)}` : ''}`;
+      return `[${at}] ${e.from_state ?? '-'} -> ${e.to_state ?? '-'}${reason ? `  ${flat(reason)}` : ''}`;
     case 'progress':
       return `[${at}] progress: ${typeof data.kind === 'string' ? data.kind : 'recorded'}`;
     case 'decision.recorded':
       return `[${at}] decision recorded: ${typeof data.kind === 'string' ? data.kind : ''}`;
     default:
-      return `[${at}] ${e.type}${reason ? `: ${oneLine(reason, 140)}` : ''}`;
+      return `[${at}] ${e.type}${reason ? `: ${flat(reason)}` : ''}`;
   }
+}
+
+/**
+ * Expire a lease whose owner is a controller registered on this host whose process is gone. Returns false when the
+ * owner may still be alive (another host, a CLI lease, or a live process), and the lease stands.
+ */
+export function expireLeaseOfDeadOwner(db: OrbitDb, lease: Lease, now: number): boolean {
+  const owner = findController(db, lease.ownerId);
+  if (!owner || owner.host !== hostname() || isAlive(owner.pid, owner.procStart)) return false;
+  db.run('UPDATE leases SET expires_at = ? WHERE run_id = ? AND owner_id = ? AND expires_at = ?', now, lease.runId, lease.ownerId, lease.expiresAt);
+  return true;
 }
 
 export interface DriveOptions {
@@ -72,7 +87,13 @@ export interface DriveResult {
 export async function driveForeground(ctx: CliContext, opts: DriveOptions): Promise<DriveResult> {
   const { db, runId } = opts;
   const lease = liveLease(db, runId, ctx.clock.now());
-  if (lease) throw new OrbitError('CONCURRENT_UPDATE', `run ${runId} is owned by a live controller (${lease.ownerId}); it is already being worked on. Use "orbit status ${runId}"`, { runId });
+  if (lease) {
+    // A controller killed on this host (kill -9) leaves a lease that has not expired yet; its process is gone, so the
+    // lease is stale and is expired here for the new controller to take over (recorded as a lease takeover).
+    if (!expireLeaseOfDeadOwner(db, lease, ctx.clock.now())) {
+      throw new OrbitError('CONCURRENT_UPDATE', `run ${runId} is owned by a live controller (${lease.ownerId}); it is already being worked on. Use "orbit status ${runId}"`, { runId });
+    }
+  }
   const before = getRun(db, runId);
   if (before.paused) throw new OrbitError('TRANSITION_INVALID', `run ${runId} is paused; run "orbit resume ${runId}" first`);
 
@@ -168,11 +189,14 @@ function announceEnd(ctx: CliContext, db: OrbitDb, run: RunRecord, exitCode: num
     return;
   }
   if (isTerminal(run.state)) {
-    line(ctx.io, `run ${run.id} ended ${run.state}${run.outcomeReason ? `: ${oneLine(run.outcomeReason, 300)}` : ''}`);
+    line(ctx.io, `run ${run.id} ended ${run.state}${run.outcomeReason ? `: ${flat(run.outcomeReason)}` : ''}`);
     line(ctx.io, `report: orbit report ${run.id}`);
     if (run.state === 'BLOCKED') {
-      for (const q of open) line(ctx.io, `  open question ${q.id}: ${oneLine(q.question, 140)}`);
-      line(ctx.io, open.length > 0 ? `answer with "orbit decide ${run.id} <question-id> <answer>", then "orbit resume ${run.id}"` : `resolve the reason above, then "orbit resume ${run.id}"`);
+      for (const q of open) line(ctx.io, `  open question ${q.id}: ${flat(q.question)}`);
+      const frozen = /"frozen_policy"/.test(run.outcomeJson ?? '');
+      if (open.length > 0) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "orbit resume ${run.id}"`);
+      else if (frozen) line(ctx.io, `this block comes from the run's frozen policy: fix .orbit/config.yaml, then "orbit cancel ${run.id}" and start a new run with "orbit run"`);
+      else line(ctx.io, `resolve the reason above, then "orbit resume ${run.id}"`);
     }
   } else {
     line(ctx.io, `run ${run.id} is ${run.state}${run.paused ? ' and paused' : ''}; continue with "orbit resume ${run.id}"`);

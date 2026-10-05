@@ -11,7 +11,7 @@
 # --out DIR           where each run's final.md goes (default: docs/demos/<today> in this checkout)
 # --workdir DIR       where the local clone lives (default: a new temp directory)
 # --goals LIST        comma separated subset of simple, difficult, ui (default: all three)
-# --orbit COMMAND     how to start Orbit (default: node dist/orbit.mjs from this checkout)
+# --orbit COMMAND     how to start Orbit (default: node plugin/dist/orbit.mjs from this checkout)
 # --yes               do not ask before creating the repository or pushing the first commit
 # --dry-run           print what would happen and stop; creates and runs nothing
 #
@@ -88,8 +88,8 @@ say() { printf '%s\n' "$*" | redact; }
 gh_admin() { env -u GH_TOKEN -u GITHUB_TOKEN gh "$@"; }
 
 if [ -z "$orbit_cmd" ]; then
-  if [ -f "$root/dist/orbit.mjs" ]; then
-    orbit_cmd="node $root/dist/orbit.mjs"
+  if [ -f "$root/plugin/dist/orbit.mjs" ]; then
+    orbit_cmd="node $root/plugin/dist/orbit.mjs"
   else
     orbit_cmd="node --experimental-transform-types --no-warnings $root/src/cli/main.ts"
   fi

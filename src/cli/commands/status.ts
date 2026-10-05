@@ -3,23 +3,31 @@
  * on it and what it is waiting for. Everything comes from durable state, so
  * it is the same answer whether a controller is running or not.
  */
+import { existsSync } from 'node:fs';
 import { OrbitError } from '../../core/errors.ts';
 import type { OrbitDb } from '../../storage/db.ts';
 import { findController } from '../../storage/controllers.ts';
 import { listWorkers, type WorkerRecord } from '../../storage/workers.ts';
 import { listRuns, type RunRecord } from '../../controller/run-store.ts';
+import { isTerminal } from '../../controller/states.ts';
+import { stateDbPath } from '../../controller/start.ts';
 import { verifySnapshot } from '../../policy/snapshot.ts';
 import { BudgetLedger } from '../../scheduling/budget.ts';
 import type { CostMeasurement, CounterState, ReserveState } from '../../scheduling/types.ts';
 import { listQuestions } from '../../inquisition/store.ts';
 import type { Args, OptionSpec } from '../args.ts';
-import { controllers, findRunByPrefix, liveLease, resolveRepo, withState, type CliContext } from '../context.ts';
-import { ago, iso, json, line, oneLine, table } from '../io.ts';
+import { controllers, findRunByPrefix, initialised, liveLease, resolveRepo, withState, type CliContext } from '../context.ts';
+import { ago, flat, iso, json, line, oneLine, table } from '../io.ts';
 import { EXIT } from '../exit.ts';
 
 export const STATUS_OPTIONS: OptionSpec = {
   all: { type: 'boolean', description: 'list every run, not just the 10 most recent' },
 };
+
+/** Ended for good: a BLOCKED run is terminal for the controller but can still be cancelled, so a pending request there is real. */
+function finished(state: string): boolean {
+  return state !== 'BLOCKED' && isTerminal(state as Parameters<typeof isTerminal>[0]);
+}
 
 export interface RunStatus {
   id: string;
@@ -128,12 +136,13 @@ function fmtCounter(c: CounterState): string {
 
 export function renderRunStatus(s: RunStatus, now: number): string {
   const out: string[] = [];
-  const flags = [s.paused ? 'paused' : '', s.cancel_requested ? 'cancel requested' : ''].filter(Boolean);
+  // A finished run is not still being cancelled, whatever the request flag says.
+  const flags = [s.paused ? 'paused' : '', s.cancel_requested && !finished(s.state) ? 'cancel requested' : ''].filter(Boolean);
   out.push(`run ${s.id}  ${s.state}${flags.length ? `  (${flags.join(', ')})` : ''}`);
-  out.push(`goal:      ${oneLine(s.goal, 200)}`);
+  out.push(`goal:      ${flat(s.goal)}`);
   out.push(`mode:      ${s.mode}${s.difficulty ? `   difficulty: ${s.difficulty}` : ''}${s.branch ? `   branch: ${s.branch}` : ''}`);
   out.push(`stage:     ${s.stage}`);
-  if (s.outcome_reason) out.push(`outcome:   ${oneLine(s.outcome_reason, 300)}`);
+  if (s.outcome_reason) out.push(`outcome:   ${flat(s.outcome_reason)}`);
   out.push(`progress:  last progress ${ago(now, s.last_progress_at)}${s.last_event ? `; last event ${s.last_event.type}${s.last_event.to_state ? ` -> ${s.last_event.to_state}` : ''} ${ago(now, s.last_event.at)}` : ''}`);
   if (s.owner) out.push(`owner:     ${s.owner.owner_id} (lease until ${iso(s.owner.lease_expires_at)})`);
   else out.push('owner:     none (no controller currently owns this run)');
@@ -149,7 +158,7 @@ export function renderRunStatus(s: RunStatus, now: number): string {
   out.push(`workers:   ${s.workers.active.length} active${counts ? ` (all: ${counts})` : ''}`);
   for (const w of s.workers.active) out.push(`  ${w.id}  ${w.role}  ${w.provider}/${w.model ?? 'default'}  ${w.state}${w.spawned_at ? `  started ${ago(now, w.spawned_at)}` : ''}`);
   out.push(`questions: ${s.questions.open.length} open, ${s.questions.answered} answered`);
-  for (const q of s.questions.open) out.push(`  ${q.id}${q.material ? '  [material]' : ''}  ${oneLine(q.question, 140)}`);
+  for (const q of s.questions.open) out.push(`  ${q.id}${q.material ? '  [material]' : ''}  ${flat(q.question)}`);
   if (s.questions.open.length > 0) out.push(`  answer with: orbit decide ${s.id} <question-id> <answer>`);
   return `${out.join('\n')}\n`;
 }
@@ -157,6 +166,12 @@ export function renderRunStatus(s: RunStatus, now: number): string {
 export async function statusCommand(args: Args, ctx: CliContext): Promise<number> {
   const repo = await resolveRepo(ctx, args.str('repo'));
   const [id] = args.expect(0, 1);
+  // Right after "orbit init" there is no state database yet: that is "no runs", not "not initialised".
+  if (id === undefined && !existsSync(stateDbPath(repo)) && initialised(repo)) {
+    if (args.bool('json')) json(ctx.io, { runs: [], controllers: [] });
+    else line(ctx.io, 'no runs yet; start one with: orbit run --goal "..."');
+    return EXIT.OK;
+  }
   return withState(repo, (db) => {
     const now = ctx.clock.now();
     if (id) {
@@ -175,7 +190,7 @@ export async function statusCommand(args: Args, ctx: CliContext): Promise<number
       return EXIT.OK;
     }
     if (runs.length === 0) line(ctx.io, 'no runs yet; start one with: orbit run --goal "..."');
-    else ctx.io.out(table(runs.map((r) => [r.id, r.state + (r.paused ? ' (paused)' : '') + (r.cancelRequested ? ' (cancelling)' : ''), r.mode, ago(now, r.lastProgressAt ?? r.createdAt), oneLine(r.goal, 70)]), ['RUN', 'STATE', 'MODE', 'LAST PROGRESS', 'GOAL']));
+    else ctx.io.out(table(runs.map((r) => [r.id, r.state + (r.paused ? ' (paused)' : '') + (r.cancelRequested && !finished(r.state) ? ' (cancelling)' : ''), r.mode, ago(now, r.lastProgressAt ?? r.createdAt), oneLine(r.goal, 70)]), ['RUN', 'STATE', 'MODE', 'LAST PROGRESS', 'GOAL']));
     const live = ctrl.filter((c) => c.live);
     line(ctx.io, live.length ? `controllers: ${live.map((c) => `${c.record.mode} pid ${c.record.pid} (heartbeat ${ago(now, c.record.heartbeatAt)})`).join('; ')}` : 'controllers: none running');
     return EXIT.OK;

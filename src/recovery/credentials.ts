@@ -5,6 +5,7 @@ import type { OrbitDb } from '../storage/db.ts';
 import { appendEvent } from '../storage/events.ts';
 import { transition, getRun, type RunRecord } from '../controller/run-store.ts';
 import { TERMINAL_STATES } from '../core/run-states.ts';
+import { claudeEnvCredential, codexEnvCredential } from '../adapters/env.ts';
 import type { CredentialState, CredentialStatus, ProviderAdapter } from '../adapters/types.ts';
 
 /**
@@ -54,6 +55,19 @@ export interface AuthBlockerInput {
   detail?: string | null;
   runId?: string | null;
   loginCommands?: Readonly<Record<string, string>>;
+  /**
+   * The environment the provider's workers run with, to tell whether an
+   * exported credential variable overrides the login. Defaults to
+   * process.env, which is what the adapters hand their workers by default.
+   */
+  env?: Readonly<Record<string, string | undefined>>;
+}
+
+/** Which exported variable the provider's CLI uses instead of its login, by name only; null when none is set. */
+export function exportedCredential(provider: string, env: Readonly<Record<string, string | undefined>>): string | null {
+  if (provider === 'claude') return claudeEnvCredential(env);
+  if (provider === 'codex') return codexEnvCredential(env);
+  return null;
 }
 
 const WHAT: Record<BlockedCredentialState, string> = {
@@ -66,18 +80,23 @@ const WHAT: Record<BlockedCredentialState, string> = {
 /**
  * The blocker text for a provider whose credentials do not work. It says what
  * is wrong, what the user runs, that Orbit will not retry, and how to resume.
+ * When a credential variable is exported, the CLI uses it instead of the
+ * login (ANTHROPIC_API_KEY beats `claude auth login`, CODEX_API_KEY beats
+ * `codex login`), so a fresh login would change nothing: the advice is then
+ * to fix or unset that variable.
  */
 export function authBlocker(input: AuthBlockerInput): AuthBlocker {
   const commands = input.loginCommands ?? LOGIN_COMMANDS;
-  const command = commands[input.provider] ?? `${input.provider} login`;
+  const login = commands[input.provider] ?? `${input.provider} login`;
+  const exported = exportedCredential(input.provider, input.env ?? process.env);
   const alt = KEY_ALTERNATIVES[input.provider];
   const detail = input.detail ? redact(input.detail).slice(0, 300) : null;
   const resume = input.runId ? ` then resume the run with \`orbit resume ${input.runId}\`` : ' then resume the run with `orbit resume <run-id>`';
-  const message =
-    `Blocked: the ${input.provider} credentials ${WHAT[input.state]}. ` +
-    `Run \`${command}\`${alt ? ` (or ${alt})` : ''},${resume}. ` +
-    'Orbit does not retry authentication failures.' +
-    (detail ? ` Provider detail: ${detail}` : '');
+  const command = exported ? `unset ${exported} (or set it to a valid key)` : login;
+  const fix = exported
+    ? `${exported} is set in Orbit's environment and takes precedence over a \`${login}\` login, so logging in does not help: set ${exported} to a valid credential, or unset it to use the login,${resume}. `
+    : `Run \`${login}\`${alt ? ` (or ${alt})` : ''},${resume}. `;
+  const message = `Blocked: the ${input.provider} credentials ${WHAT[input.state]}. ` + fix + 'Orbit does not retry authentication failures.' + (detail ? ` Provider detail: ${detail}` : '');
   return { kind: 'authentication', provider: input.provider, state: input.state, command, message, detail };
 }
 
@@ -221,6 +240,8 @@ export interface RunCredentialCheckOptions extends ValidateOptions {
   ownerId: string;
   runId: string;
   loginCommands?: Readonly<Record<string, string>>;
+  /** The workers' environment, for the blocker's advice (see AuthBlockerInput.env). Defaults to process.env. */
+  env?: Readonly<Record<string, string | undefined>>;
 }
 
 export interface RunCredentialReport {
@@ -251,7 +272,7 @@ export async function checkRunCredentials(opts: RunCredentialCheckOptions): Prom
   );
   const failed = checks.find((c) => c.verdict === 'blocked');
   if (!failed || !failed.status) return { runId: opts.runId, checks, blocked: null };
-  const blocker = authBlocker({ provider: failed.provider, state: failed.status.state as BlockedCredentialState, detail: failed.status.detail, runId: opts.runId, ...(opts.loginCommands ? { loginCommands: opts.loginCommands } : {}) });
+  const blocker = authBlocker({ provider: failed.provider, state: failed.status.state as BlockedCredentialState, detail: failed.status.detail, runId: opts.runId, ...(opts.loginCommands ? { loginCommands: opts.loginCommands } : {}), ...(opts.env ? { env: opts.env } : {}) });
   let blocked: BlockOutcome;
   try {
     blocked = blockRunOnCredentials(opts.db, opts.clock, opts.ownerId, opts.runId, blocker);

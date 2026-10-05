@@ -177,6 +177,22 @@ describe('failures of a session', () => {
     expect(n).toBeGreaterThan(0);
   });
 
+  it('a session whose response exceeded the output cap is retried once in the same attempt with the cap doubled, and the decision is recorded (P29)', async () => {
+    const { adapter } = await setup({
+      script: ({ purpose }) =>
+        purpose === 'implement:1#1'
+          ? okResult(null, { status: 'failed', error: "API Error: Claude's response exceeded the 8000 output token maximum. To configure this behavior, set the CLAUDE_CODE_MAX_OUTPUT_TOKENS environment variable." })
+          : okResult(IMPL),
+    });
+    const out = await settle();
+    for (let i = 0; i < 8 && state() === 'IMPLEMENTING'; i++) await settle();
+    expect(out).toBeDefined();
+    expect(state()).toBe('VERIFYING');
+    expect(listWorkers(lab.db, { runId: lab.runId, role: 'implementer' }).map((w) => w.purpose)).toEqual(['implement:1#1', 'implement:1#2']);
+    expect(adapter.specs.map((sp) => sp.outputTokens)).toEqual([undefined, 16000]);
+    expect(decisions('worker.output-cap-raised')).toHaveLength(1);
+  });
+
   it('a cancellation that arrives while the session runs ends the step at the next safe point', async () => {
     await setup({
       script: () => {

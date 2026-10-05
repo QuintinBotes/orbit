@@ -73,9 +73,15 @@ server.listen(0,"127.0.0.1",()=>{
   it('still denies the same bind when the check says local_binding: false', async () => {
     const e = await setup(LOOPBACK_SERVER, { local_binding: false });
     const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['sb'] });
-    expect(r!.status).toBe('FAILED');
-    expect(readFileSync(r!.logPath, 'utf8')).toMatch(/listen EPERM/);
-    expect(readFileSync(r!.logPath, 'utf8')).not.toContain('loopback pong');
+    if (process.platform === 'darwin') {
+      expect(r!.status).toBe('FAILED');
+      expect(readFileSync(r!.logPath, 'utf8')).toMatch(/listen EPERM/);
+      expect(readFileSync(r!.logPath, 'utf8')).not.toContain('loopback pong');
+    } else {
+      // srt's allowLocalBinding is macOS-only: a Linux sandbox always has a private loopback, which the check may bind and nothing outside can reach.
+      expect(r!.status).toBe('PASSED');
+      expect(readFileSync(r!.logPath, 'utf8')).toContain('loopback pong');
+    }
   });
 
   it('cancels a sandboxed check and leaves nothing running', async () => {

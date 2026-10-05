@@ -302,7 +302,7 @@ describe('checkRunCredentials: who may block', () => {
     makeRun(db, clock, 'r1', 'ctl-1');
     clock.advance(120_000); // the lease of ctl-1 lapses
     acquireLease(db, 'r1', 'ctl-2', 60_000, clock);
-    const rep = await checkRunCredentials({ db, clock, ownerId: 'ctl-1', runId: 'r1', providers: ['claude'], adapters: { claude: expired }, loginCommands: { claude: 'acme login' } });
+    const rep = await checkRunCredentials({ db, clock, ownerId: 'ctl-1', runId: 'r1', providers: ['claude'], adapters: { claude: expired }, loginCommands: { claude: 'acme login' }, env: {} });
     expect(rep.blocked).toMatchObject({ outcome: 'not-applicable', blocker: { command: 'acme login' } });
     expect(getRun(db, 'r1').state).toBe('IMPLEMENTING');
   });

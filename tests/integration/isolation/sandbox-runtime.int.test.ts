@@ -81,11 +81,20 @@ describe.skipIf(!status.ok)(status.ok ? 'sandbox-runtime isolation (real srt)' :
   });
 
   it('cannot write outside the worktree', async () => {
-    for (const target of [join(outside, 'f.txt'), join(home, 'planted.txt'), join(repo, '.orbit', 'policy.json'), join(repo, 'README.md')]) {
+    // Seatbelt refuses every write (EPERM). bubblewrap mounts the host read-only (EROFS) and hides a read-denied directory behind an
+    // empty tmpfs: a write into it succeeds inside the sandbox and is gone with it, so on Linux the host's state is the proof for those.
+    const refused: [string, RegExp | null][] = [[join(outside, 'f.txt'), /Read-only file system/], [join(home, 'planted.txt'), /Read-only file system/], [join(repo, '.orbit', 'policy.json'), null], [join(repo, 'README.md'), null]];
+    for (const [target, linux] of refused) {
       const r = await runWrapped(wrap(['sh', '-c', 'echo tampered > "$1"', 'sh', target]), worktree);
-      expect(r.code, target).not.toBe(0);
-      expect(r.stderr, target).toMatch(/Operation not permitted/);
+      if (process.platform === 'darwin') {
+        expect(r.code, target).not.toBe(0);
+        expect(r.stderr, target).toMatch(/Operation not permitted/);
+      } else if (linux) {
+        expect(r.code, target).not.toBe(0);
+        expect(r.stderr, target).toMatch(linux);
+      }
     }
+    expect(readFileSync(join(repo, 'README.md'), 'utf8')).toBe('acme\n');
     expect(existsSync(join(outside, 'f.txt'))).toBe(false);
     expect(existsSync(join(home, 'planted.txt'))).toBe(false);
     expect(readFileSync(join(repo, '.orbit', 'policy.json'), 'utf8')).toBe('{"frozen":true}');
@@ -94,9 +103,15 @@ describe.skipIf(!status.ok)(status.ok ? 'sandbox-runtime isolation (real srt)' :
   it('cannot read ~/.ssh (a planted key under a fake HOME)', async () => {
     expect(readFileSync(join(home, '.ssh', 'id_ed25519'), 'utf8')).toBe(privateKey);
     const r = await runWrapped(wrap(['sh', '-c', 'cat "$HOME/.ssh/id_ed25519"; ls "$HOME/.ssh"']), worktree);
-    expect(r.code).not.toBe(0);
     expect(r.stdout).not.toContain(privateKey);
-    expect(r.stderr).toMatch(/Operation not permitted/);
+    if (process.platform === 'darwin') {
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toMatch(/Operation not permitted/);
+    } else {
+      // bubblewrap replaces the directory with an empty tmpfs: the key is absent, and listing the empty directory succeeds.
+      expect(r.stderr).toMatch(/id_ed25519: No such file or directory/);
+      expect(r.stdout.trim()).toBe('');
+    }
   });
 
   it('cannot read sibling projects, the main checkout or Orbit state', async () => {
@@ -148,8 +163,14 @@ describe.skipIf(!status.ok)(status.ok ? 'sandbox-runtime isolation (real srt)' :
     expect(checkProfile.allowLocalBinding).toBe(true);
     expect(checkProfile.allowedHosts).toEqual([]);
     expect(r.direct).toBe('reachable');
-    expect(r.code).toBe(0);
-    expect(r.stdout.trim()).toBe('reachable');
+    if (process.platform === 'darwin') {
+      expect(r.code).toBe(0);
+      expect(r.stdout.trim()).toBe('reachable');
+    } else {
+      // srt's allowLocalBinding is macOS-only: on Linux the sandbox always has its own network namespace, so the host's loopback is unreachable.
+      expect(r.code).toBe(3);
+      expect(r.stdout).toMatch(/blocked/);
+    }
   });
 
   it.runIf(curl !== null)('refuses a host that is not on the allowlist', async () => {

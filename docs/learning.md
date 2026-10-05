@@ -101,6 +101,7 @@ orbit learn list --status validated
 orbit learn list --kind failure-pattern --search "lockfile"
 orbit learn show <lesson-id>                  # statement, evidence and history
 orbit learn list --global                     # the same, in the global graph
+orbit learn list --limit 10                    # at most 10 lessons (default 50)
 orbit report --learning                       # pass rate, attempts and cost per accepted task over time, by overlay version
 orbit stats --since 30d                       # success, cost and repair loops for the last 30 days
 ```

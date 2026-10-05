@@ -2,14 +2,14 @@
   "name": "orbit-dev",
   "private": true,
   "version": "0.1.0",
-  "description": "Build and test tooling for Orbit, an autonomous, evidence-driven engineering loop for Claude Code. The shipped CLI is a single bundle with no runtime dependencies beyond Node.",
+  "description": "Development workspace for Orbit, an autonomous, evidence-driven engineering loop for Claude Code. The plugin is plugin/: a single bundle plus the sandbox runtime (srt) as its only dependency.",
   "type": "module",
   "license": "MIT",
   "engines": {
     "node": ">=22.16"
   },
   "bin": {
-    "orbit": "dist/orbit.mjs"
+    "orbit": "plugin/dist/orbit.mjs"
   },
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -20,7 +20,7 @@
     "test:integration": "vitest run tests/integration",
     "test:fault": "vitest run tests/fault-injection",
     "test:acceptance": "vitest run tests/acceptance",
-    "validate:plugin": "claude plugin validate . --strict",
+    "validate:plugin": "node scripts/check-plugin.mjs",
     "verify": "npm run typecheck && npm run check:dist && npm test && npm run validate:plugin",
     "test:coverage": "vitest run --coverage && node scripts/check-coverage-floor.mjs"
   },

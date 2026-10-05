@@ -18,9 +18,14 @@ version: 1
 #   autonomous           do preauthorized work; resolve reversible, low-risk ambiguity
 #   autonomous-delivery  also commit, push a task branch, open a PR, observe and repair CI
 #   release              also merge and deploy, each only when its action below is true
+# The starter is "autonomous": Orbit works on a local orbit/<run-id> branch and
+# never pushes. To let it deliver, change this to autonomous-delivery; the four
+# delivery actions below then turn on by themselves (and need a GitHub
+# credential for the pull request, see "orbit doctor").
 # Delivery actions (commit, push, PR, CI repair) default to on only in the
-# delivery modes; turning one on in supervised or autonomous mode is an error.
-mode: autonomous-delivery
+# delivery modes; setting one to true in supervised or autonomous mode is an
+# error, so leave them out unless you want to override the mode's default.
+mode: autonomous
 
 repository:
   base_branch: main
@@ -48,15 +53,18 @@ scope:
 actions:
   edit: true
   test: true
-  # The next four need mode autonomous-delivery or release.
-  commit: true
-  push_task_branch: true
+  # commit, push_task_branch, open_pull_request, repair_ci and read_ci_logs follow the mode:
+  # on in autonomous-delivery and release, off otherwise. They are left out here
+  # on purpose, so "orbit run --mode <mode>" is valid in every mode. Set one
+  # to false to switch it off in a delivery mode (the first four are an error when true outside the delivery modes).
+  # commit: true
+  # push_task_branch: true
+  # open_pull_request: true
+  # repair_ci: true
+  # read_ci_logs: true
   # Permission to rebase the task branch onto a base branch that moved on.
   # Needs commit.
   rebase_task_branch: false
-  open_pull_request: true
-  repair_ci: true
-  read_ci_logs: true
   # merge and deploy_production need mode release.
   merge: false
   deploy_production: false
@@ -335,13 +343,13 @@ routing:
   overrides: {}
   # Output token budget per role, stated in each worker's prompt.
   output_budgets:
-    planner: 4000
-    implementer: 8000
-    verifier: 3000
-    reviewer: 4000
-    inquisitor: 3000
-    curator: 2000
-    explorer: 2000
+    planner: 16000
+    implementer: 24000
+    verifier: 8000
+    reviewer: 12000
+    inquisitor: 6000
+    curator: 4000
+    explorer: 6000
 
 retention:
   keep_runs_days: 30

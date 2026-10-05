@@ -34,7 +34,8 @@ const status = (state: CredentialState, detail = 'd'): CredentialStatus => ({ st
 
 describe('authBlocker', () => {
   it('names the provider, what is wrong, the command to run, that nothing is retried, and how to resume', () => {
-    const b = authBlocker({ provider: 'claude', state: 'expired', runId: 'orb-7' });
+    // No credential variable exported: the login is what the CLI uses, so logging in is the fix.
+    const b = authBlocker({ provider: 'claude', state: 'expired', runId: 'orb-7', env: {} });
     expect(b.message).toContain('claude');
     expect(b.message).toContain('are expired');
     expect(b.message).toContain('`claude auth login`');
@@ -42,8 +43,27 @@ describe('authBlocker', () => {
     expect(b.message).toContain('orbit resume orb-7');
     expect(b.message).toContain('does not retry');
     expect(b.command).toBe('claude auth login');
-    expect(authBlocker({ provider: 'codex', state: 'invalid' }).command).toBe('codex login');
-    expect(authBlocker({ provider: 'codex', state: 'missing' }).message).toContain('are missing');
+    expect(authBlocker({ provider: 'codex', state: 'invalid', env: {} }).command).toBe('codex login');
+    expect(authBlocker({ provider: 'codex', state: 'missing', env: {} }).message).toContain('are missing');
+  });
+
+  it('does not suggest a login when an exported key overrides it: it names the variable to fix or unset (P17d)', () => {
+    const key = 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCDEF';
+    const b = authBlocker({ provider: 'claude', state: 'auth_failed', runId: 'orb-7', env: { ANTHROPIC_API_KEY: key } });
+    expect(b.message).not.toMatch(/Run `claude auth login`/);
+    expect(b.message).toContain('ANTHROPIC_API_KEY is set');
+    expect(b.message).toMatch(/takes precedence over a `claude auth login` login/);
+    expect(b.message).toContain('orbit resume orb-7');
+    expect(b.message).not.toContain('abcdefghijklmnopqrstuvwxyz');
+    expect(b.command).toBe('unset ANTHROPIC_API_KEY (or set it to a valid key)');
+    expect(authBlocker({ provider: 'claude', state: 'expired', env: { CLAUDE_CODE_OAUTH_TOKEN: 'tok' } }).message).toContain('CLAUDE_CODE_OAUTH_TOKEN is set');
+    const codex = authBlocker({ provider: 'codex', state: 'invalid', env: { CODEX_API_KEY: 'k' } });
+    expect(codex.message).toContain('CODEX_API_KEY is set');
+    expect(codex.command).toBe('unset CODEX_API_KEY (or set it to a valid key)');
+    // A blank variable is not a credential, and another provider's key does not matter.
+    expect(authBlocker({ provider: 'claude', state: 'expired', env: { ANTHROPIC_API_KEY: ' ', CODEX_API_KEY: 'k' } }).command).toBe('claude auth login');
+    // A missing credential with nothing exported keeps both ways to provide one.
+    expect(authBlocker({ provider: 'claude', state: 'missing', env: {} }).message).toContain('(or set ANTHROPIC_API_KEY');
   });
 
   it('falls back to a generic command for an unknown provider and honours an override', () => {
@@ -83,7 +103,7 @@ describe('blocking a run', () => {
   it('moves the run to BLOCKED with the truthful blocker as its outcome, and is idempotent', () => {
     const { db, clock } = setup();
     makeRun(db, clock, 'r1', 'ctl-1');
-    const blocker = authBlocker({ provider: 'claude', state: 'expired', runId: 'r1' });
+    const blocker = authBlocker({ provider: 'claude', state: 'expired', runId: 'r1', env: {} });
     const first = blockRunOnCredentials(db, clock, 'ctl-1', 'r1', blocker);
     expect(first.outcome).toBe('blocked');
     const run = getRun(db, 'r1');
@@ -112,7 +132,7 @@ describe('checkRunCredentials (scenario 12)', () => {
     const { db, clock } = setup();
     makeRun(db, clock, 'r1', 'ctl-1');
     const adapters = { claude: stub('claude', status('expired', 'OAuth token has expired')) };
-    const rep = await checkRunCredentials({ db, clock, ownerId: 'ctl-1', runId: 'r1', adapters, providers: ['claude'] });
+    const rep = await checkRunCredentials({ db, clock, ownerId: 'ctl-1', runId: 'r1', adapters, providers: ['claude'], env: {} });
     expect(rep.blocked?.outcome).toBe('blocked');
     const run = getRun(db, 'r1');
     expect(run.state).toBe('BLOCKED');

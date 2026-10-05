@@ -218,6 +218,20 @@ describe('exploration set-up', () => {
     expect((await exploreUi({ ...opts, isolation: plain })).reasons).toEqual(['the application did not start: plain']);
   });
 
+  it('does not start the application under a provider whose every sandbox has its own loopback: nothing outside could reach it', async () => {
+    const config = { ...ui, environment: { ...ui.environment, start_command: ['node', 'server.js'], base_url: 'http://localhost' } };
+    const { opts, fake } = options({ uiConfig: config });
+    let wrapped = 0;
+    let asked = false;
+    const provider: IsolationProvider = { ...fake.provider, privateLoopback: true, wrap: (...args) => ((wrapped += 1), fake.provider.wrap(...args)) };
+    const result = await exploreUi({ ...opts, isolation: provider, explore: async () => ((asked = true), explored([])) });
+    expect(result.outcome).toBe('app_failed');
+    expect(result.reasons.join(' ')).toMatch(/own loopback/);
+    expect(result.reasons.join(' ')).toMatch(/journey checks/);
+    expect(wrapped).toBe(0);
+    expect(asked).toBe(false);
+  });
+
   it('notes that the application was not started by Orbit when there is no start command', async () => {
     const { opts } = options({ scenario: () => passing() });
     const result = await exploreUi(opts);

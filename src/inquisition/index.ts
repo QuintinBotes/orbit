@@ -11,3 +11,4 @@ export * from './repair.ts';
 export * from './engine.ts';
 export * from './impact.ts';
 export * from './baseline-exception.ts';
+export * from './amendment-answers.ts';

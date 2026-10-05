@@ -88,6 +88,19 @@ describe('the final report of a run with everything recorded', () => {
     expect(r.residual_risks.find((x) => x.startsWith('review finding F-1'))!.length).toBeLessThan(260);
   });
 
+  // P26: a local mode makes the candidate commit on a local branch; nothing is delivered, and the report must not say it was.
+  it('in a local mode, names the candidate commit as local and not delivered, never as a delivered commit', () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    const cand = addCandidate(lab);
+    lab.db.run("UPDATE runs SET contract_json = ?, base_revision = ?, branch = ?, state = 'SUCCEEDED', mode = 'autonomous', outcome_json = ? WHERE id = ?", JSON.stringify(contractOf()), 'b'.repeat(40), 'orbit/orb-unit', JSON.stringify({ branch: 'orbit/orb-unit', commit: cand.commitSha, delivery: 'local branch; no external action in this mode' }), lab.runId);
+    const r = build();
+    expect(r.revision.delivered_commit).toBeNull();
+    expect(r.revision.candidate).toBe(cand.commitSha);
+    const md = renderMarkdown(r);
+    expect(md).not.toContain(`delivered commit: ${cand.commitSha}`);
+    expect(md).toContain(`candidate commit (local, not delivered): ${cand.commitSha}`);
+  });
+
   it('lists a mandatory criterion that is not supported among the things not verified', () => {
     lab = makeUnitLab({ path: ['PREFLIGHT'] });
     lab.db.run('UPDATE runs SET contract_json = ? WHERE id = ?', JSON.stringify(contractOf()), lab.runId);

@@ -190,12 +190,18 @@ describe('orbit gc', () => {
     return { id: run.id, dir };
   }
 
-  it('refuses a retention period below one day', async () => {
+  it('refuses a negative retention period, and takes 0 to mean every finished run (P19)', async () => {
     const l = lab();
-    const r = await l.cli(['gc', '--keep-days', '0']);
+    const r = await l.cli(['gc', '--keep-days=-1']);
     expect(r.code).toBe(2);
-    expect(r.err).toContain('--keep-days must be at least 1');
+    expect(r.err).toContain('--keep-days must be a non-negative integer');
     expect(r.err).toContain('usage: orbit gc [--keep-days <n>] [--dry-run] [--json]');
+    const ended = endedRun(l, 'Finished a moment ago.', 0);
+    const zero = await l.cli(['gc', '--keep-days', '0']);
+    expect(zero.code, zero.err).toBe(0);
+    expect(zero.out).toContain('(0 days)');
+    expect(zero.out).toContain(`pruned ${ended.id} (CANCELLED`);
+    expect(existsSync(ended.dir)).toBe(false);
   });
 
   it('says "1 day" for one day and takes the period from the policy when none is given', async () => {
@@ -340,7 +346,7 @@ describe('orbit run --detach', () => {
     registerController(l.db(), { id: 'svc-1', pid: process.pid, host: hostname(), mode: 'service' }, systemClock);
     const quiet = await l.cli(['run', '--goal', 'Add a mul function.', '--detach']);
     expect(quiet.code, quiet.err).toBe(0);
-    expect(quiet.out).toMatch(/run .* created \(autonomous-delivery\), handed to the service/);
+    expect(quiet.out).toMatch(/run .* created \(autonomous\), handed to the service/);
     expect(quiet.err).toBe('');
     const j = await l.cli(['run', '--goal', 'Add a div function.', '--detach', '--json']);
     expect(JSON.parse(j.out)).toMatchObject({ detached: true, service_running: true, state: 'CREATED' });

@@ -9,6 +9,8 @@ export default defineConfig({
   fullyParallel: false,
   workers: 2,
   retries: 0,
+  // The same output everywhere: Playwright's default switches to "dot" when CI is set, which hides the project names.
+  reporter: 'list',
   timeout: 20_000,
   expect: { timeout: 5_000, toHaveScreenshot: { maxDiffPixelRatio: 0.01 } },
   // The platform is part of the path: renderings differ between operating systems.

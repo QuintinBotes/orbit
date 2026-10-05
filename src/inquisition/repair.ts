@@ -143,6 +143,8 @@ export interface AttemptSnapshot {
   resolvedAmbiguities: readonly string[];
   tokens?: number;
   diffLines?: number;
+  /** The candidate tree the attempt produced, when known: an attempt that reproduces an earlier tree changed nothing. */
+  treeHash?: string;
 }
 
 /** Spec section 7 progress record; the key names match scheduling's ProgressReport. */
@@ -262,8 +264,19 @@ export function nonProgress(history: readonly AttemptSnapshot[], threshold: numb
     fingerprint = shared[0] ?? null;
   }
   const terminate = streak >= threshold;
+  // The plainest non-progress there is: a stalled attempt produced exactly the tree of an earlier one.
+  let sameTreeAs: number | null = null;
+  for (const a of recent) {
+    if (a.treeHash === undefined) continue;
+    const earlier = history.find((h) => h.attempt < a.attempt && h.treeHash === a.treeHash);
+    if (earlier) {
+      sameTreeAs = earlier.attempt;
+      break;
+    }
+  }
+  const sameTree = sameTreeAs !== null ? `: no measurable progress (same tree as attempt ${sameTreeAs})` : '';
   const reason = terminate
-    ? `${streak} consecutive attempts made no progress${fingerprint ? ` (the same failure, ${fingerprint}, each time)` : ''}; more attempts, tokens or lines would not change that`
+    ? `${streak} consecutive attempts made no progress${sameTree}${fingerprint ? ` (the same failure, ${fingerprint}, each time)` : ''}; more attempts, tokens or lines would not change that`
     : streak === 0
       ? 'the latest attempt made progress'
       : `${streak} of ${threshold} attempts without progress`;

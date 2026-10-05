@@ -15,6 +15,8 @@ import { OrbitError, isOrbitError } from '../../core/errors.ts';
 import { git, treeOf } from '../../evidence/git.ts';
 import { isFresh } from '../../evidence/freshness.ts';
 import { currentEvidenceReport, setCandidateStatus, type EvidenceReportRecord } from '../../evidence/store.ts';
+import type { GoalContract } from '../../contract/types.ts';
+import type { EvidenceReport } from '../../evidence/types.ts';
 import { listReviews } from '../../review/store.ts';
 import type { ReviewRecord } from '../../review/types.ts';
 import { DELIVERY_MODES } from '../../policy/config.ts';
@@ -235,17 +237,29 @@ export async function complete(ctx: RunContext, deliveredTree: string, outcome: 
 }
 
 function deliverySummary(ctx: RunContext): string {
-  const contract = assertContract(ctx);
   const ev = ctx.candidate ? currentEvidenceReport(ctx.db, ctx.run.id, ctx.candidate.id) : null;
-  const lines = [`Orbit run ${ctx.run.id}: ${contract.objective}`, '', 'Acceptance criteria:'];
+  return formatDeliverySummary(ctx.run.id, assertContract(ctx), ev?.report ?? null);
+}
+
+/**
+ * The pull request body: criteria with their evidence status, the checks, the browser journeys and what was not
+ * verified. It is what a reviewer reads first, so no kind of evidence the run gathered may be left off.
+ */
+export function formatDeliverySummary(
+  runId: string,
+  contract: Pick<GoalContract, 'objective' | 'acceptance_criteria'>,
+  report: Pick<EvidenceReport, 'acceptance_evidence' | 'checks' | 'ui' | 'unverified'> | null,
+): string {
+  const lines = [`Orbit run ${runId}: ${contract.objective}`, '', 'Acceptance criteria:'];
   for (const c of contract.acceptance_criteria) {
-    const e = ev?.report.acceptance_evidence.find((a) => a.criterion_id === c.id);
+    const e = report?.acceptance_evidence.find((a) => a.criterion_id === c.id);
     lines.push(`- ${c.id} (${e?.status ?? 'unverified'}): ${c.statement}`);
   }
-  if (ev) {
+  if (report) {
     lines.push('', 'Checks:');
-    for (const ch of ev.report.checks) lines.push(`- ${ch.id}: ${ch.status}${ch.flaky ? ' (flaky)' : ''}`);
-    if (ev.report.unverified.length > 0) lines.push('', 'Not verified:', ...ev.report.unverified.map((u) => `- ${u}`));
+    for (const ch of report.checks) lines.push(`- ${ch.id}: ${ch.status}${ch.flaky ? ' (flaky)' : ''}`);
+    if (report.ui.length > 0) lines.push('', 'Browser journeys:', ...report.ui.map((j) => `- ${j.journey}: ${j.status}`));
+    if (report.unverified.length > 0) lines.push('', 'Not verified:', ...report.unverified.map((u) => `- ${u}`));
   }
   return lines.join('\n');
 }

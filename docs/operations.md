@@ -11,6 +11,31 @@ Both run the same reconcile loop. The difference is who keeps the controller ali
 | Restarts after a controller crash | No | Yes, on failure only, throttled |
 | Credentials | your shell's environment | only what the service process can see; see below |
 
+`orbit run` drives the run in the terminal when no service is installed, and
+hands it to the service when there is one; `--foreground` and `--detach` choose.
+`orbit resume` and `orbit repair` only clear a pause or a block, or create the
+run: they leave it to the service unless you pass `--foreground`, and without a
+service nothing is working on it ("No controller is running" says so). A run in
+the Claude Code skills follows the same rule: `/orbit:run`, `/orbit:resume` and
+`/orbit:repair` check `orbit service status` first, then hand the run to the
+service (`--detach`) or, with no service, drive it from the session in the
+background (`--foreground`), where it pauses when the session ends. Runs that
+must outlive the session, and any unattended use, need the service.
+
+Nothing stops you starting a second run in a repository while another is
+active. Each run has its own id, policy, run directory, worktrees and branch, and
+starts from the commit checked out when it starts; Orbit does not coordinate
+changes between runs, so keep their scopes apart.
+
+Before it creates a run, `orbit run` refuses, and says why, when the working
+tree has uncommitted changes (`.orbit/` is exempt) and
+`repository.allow_dirty_start` is false, when the repository's git configuration
+holds credentials a worker could read, and, for a run this process will drive,
+when the environment gate fails (isolation, credentials, reviewer). Nothing is
+created and no model is called in that case; the message names the fix, and
+`orbit doctor` shows the same problems. A detached run is judged by the service's
+environment, not yours, so only the first two checks apply to it.
+
 A foreground run exits with a code that names the state it ended in: 0
 `SUCCEEDED`, 10 `BLOCKED`, 11 `EXHAUSTED`, 12 `IMPOSSIBLE`, 13 `CANCELLED`, 20
 paused. `orbit help exit-codes` prints the whole table.
@@ -53,8 +78,13 @@ per repository, running `orbit service run --repo <root>`. The label is
 
 The definition uses absolute paths for Node and the bundle, restarts only on
 failure, throttles restarts, and writes logs under `~/.orbit/logs`. Installing
-again reloads it. `orbit service uninstall` removes it; runs and state are
-untouched. `orbit service status` exits 0 only when the service is loaded.
+again reloads it. `orbit service uninstall` removes it and waits for the service
+manager to let go of the job; runs and state are untouched. A controller finishes
+its current step before it stops, so uninstall can report that the manager is
+"still stopping" the controller: check with `orbit service status`, which then
+says "not installed, but the service manager still holds the job" and exits 1
+until it is gone. `orbit service status` exits 0 only when the service is loaded,
+and a controller whose process has died is listed as stopped.
 Other platforms have no service; use `orbit run --foreground`.
 
 ## Command reference
@@ -69,19 +99,20 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 | `orbit status [run-id]` | `--all` lists every run, not the latest 10 |
 | `orbit logs <run-id>` | `--follow` / `-f`, `--lines <n>`, `--controller`, `--workers`, `--worker <id>` |
 | `orbit pause <run-id>` | none |
-| `orbit resume <run-id>` | `--foreground`, `--force`, `--policy <path>` |
+| `orbit resume <run-id>` | `--foreground` or `--detach` (the default: leave it to the service), `--force`, `--policy <path>` |
 | `orbit cancel <run-id>` | `--wait <seconds>` |
-| `orbit report [run-id]` | `--interim`, `--learning` |
+| `orbit report <run-id>` | `--interim`; `orbit report --learning` takes no run id |
 | `orbit questions <run-id>` | `--all` includes answered and withdrawn questions |
+| `orbit questions --pending` | the open questions of every unfinished run; `--quiet` prints nothing when there are none (what the plugin's SessionStart hook runs) |
 | `orbit decide <run-id> <question-id> <answer...>` | `--by <name>` (models and workers cannot decide) |
 | `orbit verify [run-id]` | see below |
-| `orbit repair <run-id \| description>` | `--foreground`, `--policy <path>`, and the `orbit run` options other than `--goal` and `--environment` |
+| `orbit repair <run-id \| description \| ->` | `--foreground` or `--detach`, `--mode <mode>`, `--policy <path>`; `-` reads the description from stdin |
 | `orbit stats` | `--since <when>`, `--until <when>`: an ISO date or time, or a span such as `90m`, `24h`, `7d`, `2w` |
-| `orbit gc` | `--keep-days <n>` (at least 1; default `retention.keep_runs_days`), `--dry-run` |
+| `orbit gc` | `--keep-days <n>` (0 prunes every finished run now; default `retention.keep_runs_days`), `--dry-run` |
 | `orbit release resolve <run-id>` | `--deployed`, `--not-deployed`, `--environment <name>`, `--by <name>`; see [Release mode safeguards](#release-mode-safeguards) |
 | `orbit policy show <run-id>` | none |
 | `orbit models list` / `models refresh` | `--probe` on refresh |
-| `orbit learn ...` | see [the learning layer](learning.md) |
+| `orbit learn list` | `--status`, `--kind`, `--search <text>`, `--global`, `--limit <n>` (default 50); the other `learn` commands are in [the learning layer](learning.md) |
 | `orbit service install / uninstall / status / run` | `--entry <path>` on install |
 
 ### verify, repair, inquisition
@@ -94,7 +125,20 @@ rests on. It takes a short lease so it never runs beside a live controller and
 never changes the run's state. It uses the same evidence function as the
 VERIFYING step, so a waived finding gives the same verdict in both. Exit 0
 means PASS, 14 means FAIL (a check failed or scope was violated), 15 means
-INCOMPLETE (a mandatory criterion is unproven; treat it as not done).
+INCOMPLETE (a mandatory criterion is unproven; treat it as not done). It needs
+a run that has a contract and a candidate, and exits 5 saying which is missing
+when it has not.
+
+A green check is not enough for PASS. A criterion is only `supported` when its
+checks passed and at least one of them either failed on the base revision (so
+the change turned it green) or the candidate adds or changes a test; otherwise
+it is `unverified` with the reason "no new evidence". A candidate whose tree is
+the base revision's tree makes no change, and the verdict is INCOMPLETE. The
+test-change rule counts a changed test anywhere in the run, since a contract does
+not map criteria to test files, so it can still pass a criterion whose own test
+was left alone when another test changed. The evidence report lists its
+artifacts (check logs and the like) as paths relative to the run directory, and
+`orbit verify` prints them relative to the repository.
 
 `orbit repair <run-id>` hands the failure of a `BLOCKED` or paused run with FAIL
 evidence to a repair. A run id that does not qualify is refused with the
@@ -106,13 +150,31 @@ weak evidence and repeated failures, and `/orbit:inquisition` runs it
 interactively inside Claude Code. Questions it persists appear in
 `orbit questions` and are answered with `orbit decide`.
 
+### Where a run's result goes
+
+Every run builds its candidate as a commit on a ref of its own, because that
+commit is how evidence is bound to an exact tree (it is authored as
+`Orbit <orbit@orbit.invalid>`). In `supervised` and `autonomous` mode, and
+whenever `actions.commit` is false, nothing is delivered: when the run passes its
+completion gate, the reviewed candidate commit is left on the local branch
+`<repository.branch_prefix><run-id>` (default `orbit/<run-id>`) and the run
+`SUCCEEDED` with "local branch; no external action in this mode". Your working
+tree and current branch are not touched. The report calls it
+"candidate commit (local, not delivered)"; "delivered commit" appears only when a
+real delivery happened. Look at the result with `git log orbit/<run-id>` and
+`orbit report <run-id>`. In the delivery modes Orbit builds the delivery commit
+on exactly the reviewed tree, pushes the task branch and opens a pull request
+(draft by default).
+
 ### stats and gc
 
 `orbit stats` prints success rate, cost, token and cache use, repair loops and
 time to green for this repository, read-only. `orbit gc` deletes the run
 directories and worktrees of finished runs that ended more than
-`retention.keep_runs_days` ago. Database rows stay and `BLOCKED` runs are never
-touched. Use `--dry-run` first.
+`retention.keep_runs_days` ago (`--keep-days 0`: every finished run now).
+Database rows stay and `BLOCKED` runs are never touched. Use `--dry-run` first.
+Runs that end `SUCCEEDED` or `CANCELLED` already remove their own worktrees; see
+[retention](configuration.md#routing-and-retention).
 
 ## Using the native /goal command
 
@@ -226,7 +288,9 @@ Files on disk:
 - `<repo>/.orbit/runs/<run-id>/`: the frozen policy, contract, evidence, the final
   report (`final.md`) and `workers/<worker-id>/` with prompt, log, exit record and result.
 - `~/.orbit/worktrees/<repo-hash>/<run-id>/<worker-id>`: worker checkouts, outside
-  the repository on purpose.
+  the repository on purpose. A run that ends `SUCCEEDED` or `CANCELLED` removes its
+  worktrees; one that is `BLOCKED`, `EXHAUSTED` or paused keeps them until it
+  finishes or `orbit gc` removes them.
 
 Logs are redacted before they are stored. Add patterns of your own with
 `retention.redact_patterns`.
@@ -245,9 +309,27 @@ controller restart. After a durable cancel the run can only reach `CANCELLED`.
 A `BLOCKED` run names its reason: an open question, an expired credential, an
 unavailable mandatory reviewer, an unauthorized action. Answer questions with
 `orbit questions <run-id>` and `orbit decide <run-id> <question-id> <answer>`,
-repair the environment (`orbit doctor`), then `orbit resume <run-id>`.
-`resume --force` continues even though material questions are open; use it
-knowingly.
+repair the environment (`orbit doctor`), then `orbit resume <run-id>` (add
+`--foreground` when no service is running, or nothing drives the run). An
+`Approve` answer to a contract amendment applies the amendment to the contract
+at once and invalidates the evidence it affects, so a resumed run verifies the
+candidate again before it is reviewed; `Reject` closes the amendment and leaves
+the contract unchanged. `resume --force` continues even though material
+questions are open; use it knowingly.
+
+**A block that comes from the frozen policy cannot be cleared by resuming.** A
+run keeps the policy it started with, so editing `.orbit/config.yaml` does not
+change it and resuming would block again. When the reason is one of these, it
+says so and names the setting: a provider that is not
+`data_policy_eligible`, a `providers.<id>.model` the provider does not offer or no
+qualified review model, `scope.allowed_paths` that leave nothing a worker may
+change, an isolation provider of `none`, a mode that differs from the policy's,
+an invalid configuration or a policy snapshot that no longer matches its hash.
+`orbit resume` then refuses (exit 5) instead of looping. The way forward is: fix
+`.orbit/config.yaml`, `orbit cancel <run-id>`, and start a new run with `orbit
+run`. If what you fixed is outside the policy (for example `orbit models
+refresh`, which updates the model catalog rather than the policy), `orbit resume
+<run-id> --force` continues the same run.
 
 A run that is `BLOCKED` on an environment failure (a mandatory check that fails
 on the candidate as it failed on the base revision, with a sandbox or
@@ -258,6 +340,14 @@ are frozen. Approving the baseline exception with `orbit decide <run-id>
 <question-id> Approve`, then `orbit resume <run-id>`, carries this run on: the
 failure is accepted as recorded, and the next verification judges the recorded
 check results under the amended contract.
+
+PREFLIGHT asks that baseline-exception question for every mandatory check that
+already fails on the base revision. When the goal is to make that check pass (the
+contract's criteria name the check as their proof), the failure is expected to
+flip and the question is withdrawn with a `baseline.expected-to-flip` decision.
+A failure that is the environment's (a sandbox refusal) keeps its question, and
+any question still open when a run `SUCCEEDED` is withdrawn, so a green run does
+not list one.
 
 A run that is `BLOCKED` because a mandatory check could not execute (the UI
 application or a check's process was killed by a crash signal before it printed
@@ -299,6 +389,15 @@ the controller:
   request is recorded as an intent before it happens and a receipt after, so a
   lost response is looked up rather than repeated.
 
+Resuming a run that blocked on a worker failure you have since fixed (a login,
+a broken provider wrapper) starts a fresh series of attempts for that worker
+instead of replaying the stored failure. Each such restart spends one of
+`recovery_attempts`, so a loop of resumes is bounded, and with none left the
+run ends `EXHAUSTED`. A foreground `resume` after `kill -9` of the controller
+does not wait for the dead controller's lease to expire: when the owner is a
+controller of this machine whose process is gone, the lease is expired for you
+and recorded as a takeover.
+
 Workers outlive the controller: they run in their own session and process
 group, and the systemd unit uses `KillMode=process`. Orphans are terminated by
 reconciliation when their run is terminal or cancelled. Expired credentials
@@ -316,9 +415,12 @@ To upgrade:
 1. `orbit service uninstall` (or stop foreground runs). Runs and workers keep their state.
 2. Copy `.orbit/state.sqlite*` and `.orbit/knowledge.sqlite*` somewhere safe. Copy all
    files that match, including the `-wal` and `-shm` files, with no controller running.
-3. Install the new Orbit, then run `orbit doctor`. Reinstall the service with
-   `orbit service install`; the definition points at the bundle path, so
-   reinstall after moving or updating it.
+3. Install the new Orbit, then run `orbit doctor`. The service definition
+   starts the launcher `~/.orbit/bin/orbit`, not the bundle, and any `orbit`
+   command run from the new install repoints the launcher at it, so the service
+   needs no reinstall. `orbit service status` shows the bundle the launcher runs
+   and says when it is missing. A running controller keeps the old bundle until
+   it restarts; `orbit service install` restarts it at once.
 
 A database written by a newer Orbit is refused with "database is at schema
 version N, newer than this Orbit"; upgrade Orbit rather than editing the file.

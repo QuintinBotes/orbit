@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// Builds dist/orbit.mjs, the single-file CLI the plugin ships. The plugin has no
-// install step (--plugin-dir and local marketplaces skip dependency install), so
-// every runtime dependency is bundled.
-// Files the bundle loads at runtime but must not inline are copied beside it as they are (RUNTIME_FILES).
+// Builds plugin/dist/orbit.mjs, the single-file CLI the plugin ships (docs/decisions/0006-plugin-packaging.md).
+// Every runtime dependency is bundled except srt, the plugin package's one dependency, which runs as its own program.
+// Files the bundle loads at runtime but must not inline are copied beside it as they are (RUNTIME_FILES); text the
+// bundle needs from outside src/ (the starter config) is inlined, because plugin/ holds no templates/ directory.
 //   node scripts/build.mjs            build, then smoke run --version
-//   node scripts/build.mjs --check    build in memory; fail if dist/orbit.mjs or a runtime file is stale
+//   node scripts/build.mjs --check    build in memory; fail if plugin/dist/orbit.mjs or a runtime file is stale
 import { build } from 'esbuild';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -13,10 +13,10 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const entry = process.env.ORBIT_BUILD_ENTRY ?? join(root, 'src/cli/main.ts');
-const outfile = process.env.ORBIT_BUILD_OUT ?? join(root, 'dist/orbit.mjs');
+const outfile = process.env.ORBIT_BUILD_OUT ?? join(root, 'plugin/dist/orbit.mjs');
 const check = process.argv.includes('--check');
 
-// Runtime files shipped next to dist/orbit.mjs, by name in dist/ and source. The srt preload runs in its own node
+// Runtime files shipped next to plugin/dist/orbit.mjs, by name in dist/ and source. The srt preload runs in its own node
 // process ahead of srt (src/isolation/sandbox-runtime.ts finds it beside the bundle), so it cannot be bundled.
 const RUNTIME_FILES = [['srt-chromium-preload.mjs', join(root, 'src/isolation/srt-chromium-preload.mjs')]];
 
@@ -52,6 +52,8 @@ try {
     minify: false,
     // Resolve dependencies from this repository even when the entry lives elsewhere.
     nodePaths: [join(root, 'node_modules')],
+    // `orbit init` writes this starter config; src/cli/commands/init.ts reads the file itself when run from the sources.
+    define: { __ORBIT_CONFIG_TEMPLATE__: JSON.stringify(readFileSync(join(root, 'templates/config.yaml'), 'utf8')) },
   });
 } catch {
   // esbuild already printed the diagnostics; a bare stack trace adds nothing.

@@ -80,6 +80,11 @@ export function chromiumAvailable(): boolean {
   return spawnSync(process.execPath, ['-e', script], { cwd: templateRoot(), env: cleanEnv() }).status === 0;
 }
 
+/** The copy of the demo every lab repository starts from, with this platform's baselines once ensureBaselines ran. */
+export function labTemplateDir(): string {
+  return templateRoot();
+}
+
 /** Baselines are per platform; where none were committed, record them in the template (a person would, not Orbit). */
 export function ensureBaselines(): void {
   const dir = templateRoot();

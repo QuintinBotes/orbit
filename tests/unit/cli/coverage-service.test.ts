@@ -112,7 +112,7 @@ describe('orbit service install', () => {
     expect(r.out).toMatch(new RegExp(`^service ${serviceLabel(l.repo)} installed \\(darwin\\): loaded\\n`));
     expect(r.out).toContain(`logs: ${join(l.orbitHome, 'logs')}\n`);
     expect(r.out).toContain('No credentials were written to the definition.');
-    expect(r.err).toBe(`warning: the service will run ${entry}, not a built dist/orbit.mjs; build the bundle for a durable installation\n`);
+    expect(r.err).toBe(`warning: the service will run ${entry}, not a built plugin/dist/orbit.mjs; build the bundle for a durable installation\n`);
   });
 
   it('without PATH in the environment installs a definition that carries none', async () => {
@@ -141,7 +141,7 @@ describe('orbit service install', () => {
     const { runner } = prepare(l);
     const missing = await l.cli(['service', 'install', '--entry', join(l.base, 'nope.mjs')], { seams: { serviceRunner: runner } });
     expect(missing.code).toBe(3);
-    expect(missing.err).toContain(`the orbit entry script ${join(l.base, 'nope.mjs')} does not exist; pass --entry <path to dist/orbit.mjs>`);
+    expect(missing.err).toContain(`the orbit entry script ${join(l.base, 'nope.mjs')} does not exist; pass --entry <path to plugin/dist/orbit.mjs>`);
     const unknown = await l.cli(['service', 'install'], { entry: '', seams: { serviceRunner: runner } });
     expect(unknown.err).toContain('the orbit entry script (unknown) does not exist');
   });

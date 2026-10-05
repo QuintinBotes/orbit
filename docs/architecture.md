@@ -64,7 +64,15 @@ also appends an `events` row. Artifacts live under `.orbit/runs/<run-id>/`:
 
 Worktrees live outside the repository at `~/.orbit/worktrees/<repo-hash>/<run-id>/<worker-id>`
 so a worker's filesystem allowlist never includes `.orbit/` or the main
-checkout. Mutable data never lives in the installed plugin directory.
+checkout. Mutable data never lives in the installed plugin directory. A run that
+ends `SUCCEEDED` or `CANCELLED` removes its worktrees (`controller/worktree-cleanup.ts`;
+an unsaved edit is first saved as a candidate); `BLOCKED`, `EXHAUSTED` and paused
+runs keep them, and `orbit gc` removes the finished ones.
+
+The plugin is the `plugin/` directory of the repository, not the repository root
+(`docs/decisions/0006-plugin-packaging.md`): the bundle `plugin/dist/orbit.mjs`,
+`hooks/`, `skills/`, `agents/`, `bin/orbit` and a `package.json` whose only
+dependency is the sandbox runtime. The root is the development workspace.
 
 ## State machine
 
@@ -190,6 +198,19 @@ provider does not report cost, the ledger estimates from tokens and registry
 pricing and labels the figure `estimated`; with neither, admission control
 uses a conservative per-role ceiling and the report says spend is unmeasured.
 
+Admission reserves a ceiling for a session before it starts, and the ledger
+charges what the session actually cost when it ends, so an unused ceiling is
+released. The role ceilings are planner $2, implementer $6, verifier $2,
+reviewer $4, inquisitor $2, curator $1 and explorer $3. A session is never
+presumed to cost more than half the cost cap (and never less than $1), so a
+$2 or $4 cap still admits its first session; a cap too small for any honest
+session (under about $1.25 once the closing reserve is held back) still stops
+the run EXHAUSTED before work starts. A session whose
+provider reports tokens but no cost (Codex under a ChatGPT login) is charged
+what its tokens would cost at the model's registry price, or at the dearest
+listed price when the model has none, and recorded as `budget.cost-token-estimated`.
+Only a session with no usable token counts is charged the ceiling.
+
 ## Learning layer
 
 See `src/knowledge/types.ts` and `docs/decisions/0002-learning-layer.md`.
@@ -224,13 +245,18 @@ cheapest adequate route is the default and escalation needs recorded evidence.
 | Role / work | Default route | Escalates to | Output budget |
 |---|---|---|---|
 | log classification, fingerprint triage, extraction | deterministic code first, then Haiku | Sonnet on ambiguity or security relevance | 1k tokens |
-| curator (learning layer) | Haiku | Sonnet when lessons fail validation | 2k |
-| planner | Sonnet | Opus for coupled or architectural goals | 4k |
-| implementer | Sonnet | Opus after repeated equivalent failures with evidence | per-session turn cap |
-| verifier (diagnosis) | Sonnet | Opus for hard causal failures; back to Sonnet once the cause is localized | 3k |
-| inquisitor | Sonnet | Opus for material or security-sensitive ambiguity | 3k |
-| reviewer | Codex (other provider) | never below the quality floor (Opus-class or qualified other provider) | 4k |
+| curator (learning layer) | Haiku | Sonnet when lessons fail validation | 4k |
+| planner | Sonnet | Opus for coupled or architectural goals | 16k |
+| implementer | Sonnet | Opus after repeated equivalent failures with evidence | 24k, and the per-session turn cap |
+| verifier (diagnosis) | Sonnet | Opus for hard causal failures; back to Sonnet once the cause is localized | 8k |
+| inquisitor | Sonnet | Opus for material or security-sensitive ambiguity | 6k |
+| reviewer | Codex (other provider) | never below the quality floor (Opus-class or qualified other provider) | 12k |
 | Fable | never by default | only when policy allows it and evaluation justifies the cost | |
+
+The budgets are per response and count extended thinking, so they are sized for
+a realistic contract, file write or review. A response that still exceeds its
+cap is retried once with the cap doubled, up to 32k, and the controller records
+a `worker.output-cap-raised` decision.
 
 Mechanics that keep tokens down:
 

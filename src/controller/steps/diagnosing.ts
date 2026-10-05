@@ -187,6 +187,7 @@ export function attemptHistory(ctx: RunContext): AttemptSnapshot[] {
       eliminatedHypotheses: eliminated,
       localizedFault: localized.get(k) ?? null,
       resolvedAmbiguities: resolved,
+      treeHash: r.report.tree_hash,
     });
   }
   return out;

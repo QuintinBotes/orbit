@@ -14,7 +14,7 @@ import { classifyDifficulty } from '../../scheduling/difficulty.ts';
 import { BudgetLedger } from '../../scheduling/budget.ts';
 import type { Coupling } from '../../scheduling/types.ts';
 import type { RunContext } from '../context.ts';
-import { routeFor } from '../workers.ts';
+import { routeFor, tokenEstimateFor } from '../workers.ts';
 import { assertContract, decide, move, note, safePoint, type StepResult } from './common.ts';
 import { storedPlan } from './contracting.ts';
 
@@ -88,13 +88,15 @@ function prechargeUsage(ctx: RunContext): void {
   const ledger = ctx.ledger;
   if (!ledger) return;
   if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'budget.precharged'", ctx.run.id)) return;
-  const rows = ctx.db.all<{ worker_id: string | null; cost_usd: number | null; cost_source: string; role: string | null }>(
-    'SELECT u.worker_id, u.cost_usd, u.cost_source, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ? ORDER BY u.id',
+  const rows = ctx.db.all<{ worker_id: string | null; provider: string; model: string | null; input_tokens: number | null; output_tokens: number | null; cache_read_tokens: number | null; cache_write_tokens: number | null; cost_usd: number | null; cost_source: string; role: string | null }>(
+    'SELECT u.worker_id, u.provider, u.model, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens, u.cost_usd, u.cost_source, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ? ORDER BY u.id',
     ctx.run.id,
   );
   let total = 0;
   for (const r of rows) {
-    const charge = ledger.consumeCost({ costUsd: r.cost_usd, costSource: r.cost_source }, (r.role as 'planner' | null) ?? 'planner');
+    // A session with tokens but no cost is charged what the tokens would cost, not the planner ceiling.
+    const tokenEstimate = r.cost_usd === null ? tokenEstimateFor(ctx, r, { provider: r.provider, model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cacheReadTokens: r.cache_read_tokens, cacheWriteTokens: r.cache_write_tokens, costUsd: null, costSource: 'unavailable' }) : null;
+    const charge = ledger.consumeCost({ costUsd: r.cost_usd, costSource: r.cost_source }, (r.role as 'planner' | null) ?? 'planner', { tokenEstimate });
     total += charge.charged;
   }
   note(ctx, 'budget.precharged', { usage_rows: rows.length, charged_usd: Math.round(total * 1e6) / 1e6 });

@@ -121,7 +121,8 @@ async function fetchStatus(url: string, timeoutMs: number): Promise<number | nul
   }
 }
 
-function logTail(path: string): string {
+/** The end of an application log, redacted; empty when it cannot be read. */
+export function logTail(path: string): string {
   try {
     const size = statSync(path).size;
     const len = Math.min(size, LOG_TAIL_BYTES);

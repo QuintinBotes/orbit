@@ -112,7 +112,7 @@ function drive(l: Lab, argv: string[], over: Parameters<Lab['cli']>[1] = {}) {
   hooks.fake = true;
   const signals = new EventEmitter();
   const exits: number[] = [];
-  const result = l.cli(argv, { seams: { pollMs: 5, controllerDeps: () => ({}) as never, signals, exit: ((c: number) => void exits.push(c)) as never }, ...over });
+  const result = l.cli(argv, { seams: { pollMs: 5, controllerDeps: () => ({}) as never, admission: async () => null, signals, exit: ((c: number) => void exits.push(c)) as never }, ...over });
   return { result, signals, exits };
 }
 
@@ -123,7 +123,8 @@ describe('formatEvent', () => {
   it('shows a state transition with its reason, or with dashes for missing states', () => {
     expect(formatEvent(row({ type: 'state.transition', from_state: 'PLANNING', to_state: 'IMPLEMENTING', data_json: '{"reason":"contract accepted"}' }))).toBe('[13:04:09] PLANNING -> IMPLEMENTING  contract accepted');
     expect(formatEvent(row({ type: 'state.transition' }))).toBe('[13:04:09] - -> -');
-    expect(formatEvent(row({ type: 'state.transition', data_json: JSON.stringify({ reason: 'r '.repeat(100) }) }))).toMatch(/ -> -  r r r.*\.\.\.$/);
+    // A reason says what to do next, so it is shown whole (it used to be cut at 140 characters, mid-sentence).
+    expect(formatEvent(row({ type: 'state.transition', data_json: JSON.stringify({ reason: 'r '.repeat(100) }) }))).toBe(`[13:04:09] - -> -  ${'r '.repeat(100).trim()}`);
   });
 
   it('names a progress or decision event by its kind, with a fallback', () => {
@@ -159,7 +160,7 @@ describe('orbit run --foreground and resume --foreground, with a scripted contro
     const { result } = drive(l, ['run', '--goal', 'Add a mul function.', '--foreground']);
     const r = await result;
     expect(r.code, r.err).toBe(13);
-    expect(r.out).toMatch(/^run orb-\S+ started \(autonomous-delivery, foreground; Ctrl-C pauses it, it does not cancel\)\n/);
+    expect(r.out).toMatch(/^run orb-\S+ started \(autonomous, foreground; Ctrl-C pauses it, it does not cancel\)\n/);
     expect(r.out).toMatch(/progress: planning\n/);
     expect(r.out).toMatch(/PREFLIGHT -> CANCELLED {2}enough\n/);
     expect(r.out).not.toMatch(/lease\.|budget\./);

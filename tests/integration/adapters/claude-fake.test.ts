@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ClaudeAdapter } from '../../../src/adapters/claude.ts';
 import { outputBudgetInstruction } from '../../../src/adapters/prompt.ts';
-import { readExitRecord, readPidRecord } from '../../../src/adapters/shim.ts';
+import { DEFAULT_OUTPUT_BUDGETS } from '../../../src/policy/config.ts';
+import { LOG_FILE, readExitRecord, readPidRecord } from '../../../src/adapters/shim.ts';
 import { archiveAttempt, nextSessionId } from '../../../src/adapters/supervise.ts';
 import { FAKE_CLAUDE, IMPLEMENTER_OUTPUT, alive, implementerSpec, makeFixture, waitFor, writeScenario, type Fixture } from './helpers.ts';
 
@@ -75,7 +76,7 @@ describe.skipIf(!canStripTypes)('ClaudeAdapter + shim + fake-claude', () => {
     expect(call.envKeys).not.toContain('SSH_AUTH_SOCK');
     expect(call.envKeys).not.toContain('AWS_SECRET_ACCESS_KEY');
     expect(call.envKeys).toEqual(expect.arrayContaining(['ORBIT_POLICY_PATH', 'ORBIT_POLICY_HASH', 'ORBIT_WORKTREE', 'CLAUDE_CODE_DISABLE_AUTO_MEMORY', 'GIT_OPTIONAL_LOCKS']));
-    expect(call.promptBytes).toBe(`Change apps/a.ts.\n\n${outputBudgetInstruction(8000)}\n`.length);
+    expect(call.promptBytes).toBe(`Change apps/a.ts.\n\n${outputBudgetInstruction(DEFAULT_OUTPUT_BUDGETS.implementer)}\n`.length);
     expect(call.argv).toEqual(expect.arrayContaining(['--session-id', handle.sessionId, '--permission-mode', 'dontAsk', '--strict-mcp-config']));
 
     const { events, nextOffset } = await a.streamEvents(handle, 0);
@@ -141,6 +142,8 @@ describe.skipIf(!canStripTypes)('ClaudeAdapter + shim + fake-claude', () => {
     const spec = implementerSpec(f);
     const handle = await a.startTask(spec);
     const pid = readPidRecord(f.workerDir)!;
+    // startTask returns once the shim has spawned the provider, not once the provider has started: the count below needs its argv line to exist.
+    await waitFor(() => existsSync(f.argvLog) || null);
     process.kill(handle.pid, 'SIGKILL');
     await waitFor(() => !alive(handle.pid) || null);
     expect((await collect(a, handle, f)).status).toBe('lost');
@@ -188,6 +191,9 @@ describe.skipIf(!canStripTypes)('ClaudeAdapter + shim + fake-claude', () => {
     writeScenario(f, { roles: { '*': [{ sleepMs: 30_000, structured: IMPLEMENTER_OUTPUT }] } });
     const a = adapter();
     const handle = await a.startTask(implementerSpec(f));
+    // SIGINT ends the turn only once the provider is up: before it installs its handler the signal ends the process (code null, signal SIGINT).
+    // The init line is written after the handler is installed, so it marks the provider as ready for the signal.
+    await waitFor(() => (existsSync(join(f.workerDir, LOG_FILE)) && readFileSync(join(f.workerDir, LOG_FILE), 'utf8').includes('"subtype":"init"')) || null);
     await a.cancelTask(handle);
     const result = await collect(a, handle, f);
     expect(result.status).toBe('cancelled');
@@ -228,6 +234,17 @@ describe.skipIf(!canStripTypes)('ClaudeAdapter + shim + fake-claude', () => {
     const result = await collect(a, await a.startTask(implementerSpec(f)), f);
     expect(result).toMatchObject({ status: 'failed', exitCode: 137 });
     expect(readFileSync(join(f.repo, 'apps', 'b.ts'), 'utf8')).toBe('export const');
+  });
+
+  it('puts the CLI\'s stderr into the error of a run that ended without a transcript, redacted, so the block names the real cause', async () => {
+    // P13: "exited 1 without a result line" alone hid "An unknown error occurred (Unexpected)", which was in stderr.log only.
+    const f = fixture();
+    writeScenario(f, { roles: { '*': [{ outcome: 'acme-unexpected key=sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789' }] } });
+    const a = adapter();
+    const result = await collect(a, await a.startTask(implementerSpec(f)), f);
+    expect(result).toMatchObject({ status: 'failed', reason: 'crashed', exitCode: 1 });
+    expect(result.error).toMatch(/^exited 1 without a result line; stderr: fake-claude: unknown outcome acme-unexpected key=/);
+    expect(result.error).not.toContain('abcdefghijklmnopqrstuvwxyz0123456789');
   });
 
   it('classifies malformed output, structured output that fails the schema, and max turns', async () => {

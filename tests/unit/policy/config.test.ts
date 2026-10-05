@@ -90,9 +90,17 @@ describe('defaults', () => {
     expect(c.review.security.exceptions).toEqual([{ category: 'authorization', severities: ['high'], reason: 'tenant model is replaced next quarter', location: null, expires: '2026-12-31' }]);
   });
 
+  // The starter mode is autonomous (it used to be autonomous-delivery with the four delivery actions written as true,
+  // which made `orbit run --mode autonomous` fail on a fresh init), so it resolves to the autonomous defaults.
   it('accepts the starter template and resolves it to the defaults', () => {
     const c = parseConfig(TEMPLATE);
-    expect(JSON.parse(JSON.stringify(c))).toEqual(JSON.parse(JSON.stringify(defaultConfig())));
+    expect(JSON.parse(JSON.stringify(c))).toEqual(JSON.parse(JSON.stringify(defaultConfig('autonomous'))));
+  });
+
+  it('accepts the starter template under every mode, because its delivery actions follow the mode', () => {
+    for (const mode of ['supervised', 'autonomous', 'autonomous-delivery'] as const) {
+      expect(JSON.parse(JSON.stringify(parseConfig(TEMPLATE, { mode }))), mode).toEqual(JSON.parse(JSON.stringify(defaultConfig(mode))));
+    }
   });
 
   it('keeps the template examples valid when uncommented', () => {
@@ -397,7 +405,7 @@ describe('sections shared with the delivery, routing, UI, evidence and isolation
   it('defaults every new section so a minimal file resolves, and older-style partial overrides merge with the defaults', () => {
     const c = parseConfig('version: 1\n');
     expect(c.release).toBeNull();
-    expect(c.routing.output_budgets).toEqual({ planner: 4000, implementer: 8000, verifier: 3000, reviewer: 4000, inquisitor: 3000, curator: 2000, explorer: 2000 });
+    expect(c.routing.output_budgets).toEqual({ planner: 16000, implementer: 24000, verifier: 8000, reviewer: 12000, inquisitor: 6000, curator: 4000, explorer: 6000 });
     expect(c.dependencies.audit).toEqual({ enabled: false, fail_on: 'high', license_allowlist: null, exceptions: [] });
     expect(c.static_security).toEqual({ block_severities: ['critical', 'high'], exceptions: [] });
     expect(c.isolation.limits).toEqual({ cpu_seconds: 3600, max_processes: 2048, max_file_mb: 2048, memory_mb: 4096 });
@@ -414,7 +422,7 @@ describe('sections shared with the delivery, routing, UI, evidence and isolation
         '',
       ].join('\n'),
     );
-    expect(o.routing.output_budgets).toMatchObject({ implementer: 12000, planner: 4000 });
+    expect(o.routing.output_budgets).toMatchObject({ implementer: 12000, planner: 16000 });
     expect(o.ui?.exploration).toEqual({ enabled: true, max_minutes: 15, budget_usd: 2 });
     expect(o.dependencies.audit?.exceptions).toEqual([{ id: 'GHSA-c2qf-rxjj-qqgw', reason: 'no reachable code path in our usage', expires: null }]);
     expect(o.static_security?.exceptions).toEqual([{ rule_id: 'generic-api-key', reason: 'documented sample key in fixtures', path_glob: 'tests/fixtures/**', expires: null }]);

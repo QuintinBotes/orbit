@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isOrbitError } from '../../../src/core/errors.ts';
@@ -204,6 +204,75 @@ describe('SandboxRuntimeIsolation.resolveSrt', () => {
     const onPath = writeExecutable(join(pathBin, 'srt'), 'exit 0');
     expect(new SandboxRuntimeIsolation({ orbitInstallDir: install, pathEnv: pathBin }).resolveSrt()).toEqual({ path: onPath, source: 'PATH' });
     expect(new SandboxRuntimeIsolation({ pathEnv: join(r, 'empty') }).resolveSrt()).toBeNull();
+  });
+
+  // The lookup is bounded (ADR 0006): PATH, then the plugin's own node_modules/.bin beside dist/, then the development
+  // checkout's when the plugin directory sits in one. It used to walk up to the file system root, so any node_modules/.bin
+  // in a directory above the install (a shared parent, the home directory) could supply the srt that confines everything.
+  it("finds the plugin's own srt beside its dist/ directory", () => {
+    const r = root();
+    const install = join(r, 'cache', 'orbit', '0.1.0');
+    mkdirSync(join(install, 'dist'), { recursive: true });
+    const own = writeExecutable(join(install, 'node_modules', '.bin', 'srt'), 'exit 0');
+    const empty = join(r, 'empty');
+    mkdirSync(empty);
+    expect(new SandboxRuntimeIsolation({ orbitInstallDir: install, pathEnv: empty }).resolveSrt()).toEqual({ path: own, source: 'install' });
+  });
+
+  it("finds the development checkout's srt when the install directory is the checkout's plugin/, and the plugin's own wins", () => {
+    const r = root();
+    const checkout = join(r, 'checkout');
+    const install = join(checkout, 'plugin');
+    mkdirSync(join(install, 'dist'), { recursive: true });
+    writeFileSync(join(checkout, 'package.json'), JSON.stringify({ name: 'orbit-dev', private: true }));
+    const devSrt = writeExecutable(join(checkout, 'node_modules', '.bin', 'srt'), 'exit 0');
+    const empty = join(r, 'empty');
+    mkdirSync(empty);
+    expect(new SandboxRuntimeIsolation({ orbitInstallDir: install, pathEnv: empty }).resolveSrt()).toEqual({ path: devSrt, source: 'install' });
+    const own = writeExecutable(join(install, 'node_modules', '.bin', 'srt'), 'exit 0');
+    expect(new SandboxRuntimeIsolation({ orbitInstallDir: install, pathEnv: empty }).resolveSrt()).toEqual({ path: own, source: 'install' });
+    // Running from the sources the install directory is the checkout itself.
+    expect(new SandboxRuntimeIsolation({ orbitInstallDir: checkout, pathEnv: empty }).resolveSrt()).toEqual({ path: devSrt, source: 'install' });
+  });
+
+  it('ignores an srt planted in any directory above those two', () => {
+    const r = root();
+    const empty = join(r, 'empty');
+    mkdirSync(empty);
+    writeExecutable(join(r, 'node_modules', '.bin', 'srt'), 'exit 0');
+    // A plugin cache entry: neither it nor its parent holds srt, the shared directory above does.
+    const cached = join(r, 'cache', 'orbit', '0.1.0');
+    mkdirSync(cached, { recursive: true });
+    writeExecutable(join(r, 'cache', 'node_modules', '.bin', 'srt'), 'exit 0');
+    expect(new SandboxRuntimeIsolation({ orbitInstallDir: cached, pathEnv: empty }).resolveSrt()).toBeNull();
+    // A directory named plugin whose parent is not Orbit's development checkout is not one.
+    const lookalike = join(r, 'acme', 'plugin');
+    mkdirSync(lookalike, { recursive: true });
+    writeExecutable(join(r, 'acme', 'node_modules', '.bin', 'srt'), 'exit 0');
+    expect(new SandboxRuntimeIsolation({ orbitInstallDir: lookalike, pathEnv: empty }).resolveSrt()).toBeNull();
+    // A real checkout without srt of its own: the directory above the checkout is never searched.
+    const checkout = join(r, 'work', 'checkout');
+    mkdirSync(join(checkout, 'plugin'), { recursive: true });
+    writeFileSync(join(checkout, 'package.json'), JSON.stringify({ name: 'orbit-dev', private: true }));
+    writeExecutable(join(r, 'work', 'node_modules', '.bin', 'srt'), 'exit 0');
+    expect(new SandboxRuntimeIsolation({ orbitInstallDir: join(checkout, 'plugin'), pathEnv: empty }).resolveSrt()).toBeNull();
+    expect(new SandboxRuntimeIsolation({ orbitInstallDir: checkout, pathEnv: empty }).resolveSrt()).toBeNull();
+    // A non-executable srt in an allowed place is skipped.
+    writeFileSync(join(checkout, 'package.json'), JSON.stringify({ name: 'orbit-dev', private: true }));
+    mkdirSync(join(checkout, 'node_modules', '.bin'), { recursive: true });
+    writeFileSync(join(checkout, 'node_modules', '.bin', 'srt'), 'not executable', { mode: 0o644 });
+    expect(new SandboxRuntimeIsolation({ orbitInstallDir: join(checkout, 'plugin'), pathEnv: empty }).resolveSrt()).toBeNull();
+  });
+
+  it('names where it looked when srt is missing', async () => {
+    const r = root();
+    const checkout = join(r, 'checkout');
+    const install = join(checkout, 'plugin');
+    mkdirSync(install, { recursive: true });
+    const iso = (dir: string) => new SandboxRuntimeIsolation({ orbitInstallDir: dir, pathEnv: join(r, 'empty'), platform: 'darwin', sandboxExecPath: '/usr/bin/true' });
+    expect((await iso(install).available()).detail).toBe(`srt not found on PATH or in ${join(install, 'node_modules', '.bin')}; install @anthropic-ai/sandbox-runtime`);
+    writeFileSync(join(checkout, 'package.json'), JSON.stringify({ name: 'orbit-dev', private: true }));
+    expect((await iso(install).available()).detail).toBe(`srt not found on PATH or in ${join(install, 'node_modules', '.bin')} or ${join(checkout, 'node_modules', '.bin')}; install @anthropic-ai/sandbox-runtime`);
   });
 });
 

@@ -156,6 +156,11 @@ describe('classifyNotExecuted: the live crash', () => {
     expect(f?.cause).toBe('the process was killed by a fatal signal before it printed anything of its own');
   });
 
+  it('accepts a native frame node cannot name, which is a bare address once the line is trimmed (the Linux x64 runner prints one)', () => {
+    const out = ['----- Native stack trace -----', '', ' 1: 0x1052410  [/usr/local/bin/node]', ' 2: 0x7f3a1c2e4b50 ', '', '----- JavaScript stack trace -----', '', '1: file:///app/main.mjs:1:9', ''].join('\n');
+    expect(classifyNotExecuted({ checkId: 'unit', output: out })?.signals).toEqual(['process-aborted']);
+  });
+
   it('reads the colour codes out of the log', () => {
     expect(classifyNotExecuted({ checkId: 'ui', output: `\u001B[31mProcess killed by signal: SIGBUS\u001B[39m\n` })?.signals).toEqual(['process-aborted']);
   });

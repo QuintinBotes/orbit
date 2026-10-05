@@ -16,19 +16,28 @@ protected path.
 ## mode
 
 ```yaml
-mode: autonomous-delivery
+mode: autonomous
 ```
 
 | Mode | Behaviour |
 |---|---|
 | `supervised` | Ask for material decisions and unauthorized actions. |
-| `autonomous` | Do preauthorized work; resolve reversible, low-risk ambiguity. |
+| `autonomous` | Do preauthorized work; resolve reversible, low-risk ambiguity. Never pushes: the result is a local branch. |
 | `autonomous-delivery` | Also commit, push a task branch, open a pull request, observe and repair CI. |
 | `release` | Also merge and deploy, each only when its action is true. |
 
-`orbit run --mode <mode>` overrides it and is validated as if the file said it.
-Delivery actions default to on only in the delivery modes; turning one on in
-`supervised` or `autonomous` is an error.
+The starter template sets `autonomous`, so a new repository never pushes until
+you change it. A file with no `mode` key at all is read as
+`autonomous-delivery`. `orbit run --mode <mode>` overrides the file and is
+validated as if the file said it.
+
+The delivery actions (`commit`, `push_task_branch`, `open_pull_request`,
+`repair_ci`, `read_ci_logs`) follow the mode: when the file does not mention
+them they are on in `autonomous-delivery` and `release` and off in the other two.
+The starter template leaves them out, so it validates under every mode and
+`--mode` works from any starting point. Setting one of the first four to `true`
+in `supervised` or `autonomous` is an error, and so is setting `merge` or
+`deploy_production` to `true` outside `release`.
 
 ## repository
 
@@ -49,9 +58,20 @@ base branch.
 scope:
   allowed_paths: ["apps/**", "packages/**", "tests/**", "docs/**"]
   protected_paths: [".github/**", "infra/**", ".orbit/config.yaml", "**/.env*"]
-
-`scope.credential_paths` (list of globs, default empty): files workers may never read, enforced by the OS read-deny list, the Read tool and the Bash read check, in addition to the built-in credential patterns. Use it for credentials whose names do not say so.
+  credential_paths: []
 ```
+
+`scope.credential_paths` (list of globs, default empty): files workers may never
+read, enforced by the OS read-deny list, the Read tool and the Bash read check,
+in addition to the built-in credential patterns. Use it for credentials whose
+names do not say so.
+
+The template's `allowed_paths` are examples (`apps/`, `packages/`, `tests/`,
+`docs/`) that match nothing in most repositories, and a worker can then change
+nothing. `orbit init` replaces them with globs derived from your tracked files
+and says so, and `orbit doctor` warns (`scope`) when `allowed_paths` match no
+tracked file. Review the result: it must include the directories your tests live
+in, because the tests a worker adds are changes too.
 
 A worker may change only `allowed_paths`; anything else fails the scope gate.
 A goal contract can narrow the scope but never widen it. Protected paths win
@@ -60,6 +80,10 @@ nested `.git` directories, `.claude/settings*.json`, `.mcp.json`, `**/.env*`,
 `**/*.pem`, SSH keys, `**/.npmrc` and `**/.netrc`.
 
 ## actions
+
+The block below is the full set as it reads in a delivery mode. In the starter
+template the five delivery actions are commented out so they follow the mode
+(see [mode](#mode)).
 
 ```yaml
 actions:
@@ -219,6 +243,32 @@ is granted only with measurable progress and a new, evidence-backed hypothesis,
 and never from the final verification reserve. After
 `repeated_failure_threshold` equivalent failures Orbit stops and interrogates
 the plan.
+
+### Cost admission and the role ceilings
+
+Before it starts a worker, Orbit checks that the session fits in what is left of
+`model_cost_usd` (after the share held back by `final_reserve_fraction`). It does
+not know in advance what the session will cost, so it reserves a ceiling for it,
+and when the session ends it charges what the session actually cost and releases
+the rest. The ceilings, used only when nothing better is known:
+
+| Role | planner | implementer | verifier | reviewer | inquisitor | curator | explorer |
+|---|---|---|---|---|---|---|---|
+| Ceiling (USD) | 2 | 6 | 2 | 4 | 2 | 1 | 3 |
+
+Two rules keep a small cap usable. A session is never presumed to cost more than
+half of `model_cost_usd`, and never less than $1, so `model_cost_usd: 2` or `4`
+admits its first session, while a cap too small for any honest session (below
+about $1.25 once the closing reserve is held back; $0.05 and $0.50 are) stops the
+run `EXHAUSTED` before any work starts. The ceilings are not configurable.
+
+What a session is charged afterwards, in order of preference: the cost the
+provider reported; otherwise, for a provider that reports tokens but no cost
+(Codex under a ChatGPT login), what those tokens would cost at the model's price
+in the registry (the dearest listed price when the model has none), recorded as
+`budget.cost-token-estimated`; otherwise, with no usable token counts, the
+ceiling. The report says how much of the spend is measured and how much is
+estimated, so the cap bounds spend but is not an exact spend guarantee.
 
 ## agents and review
 
@@ -489,13 +539,13 @@ routing:
   allowed_models: [opus, sonnet, haiku]   # fable is excluded on purpose
   overrides: {}                           # work kind -> family or exact id, within allowed_models
   output_budgets:                         # output tokens per role, 100 to 200000
-    planner: 4000
-    implementer: 8000
-    verifier: 3000
-    reviewer: 4000
-    inquisitor: 3000
-    curator: 2000
-    explorer: 2000
+    planner: 16000
+    implementer: 24000
+    verifier: 8000
+    reviewer: 12000
+    inquisitor: 6000
+    curator: 4000
+    explorer: 6000
 
 retention:
   keep_runs_days: 30
@@ -504,7 +554,12 @@ retention:
 
 `output_budgets` defaults follow the token-efficiency table in
 [the architecture](architecture.md); a partial map overrides only the roles it
-names.
+names. A value is the most a worker may emit in one response: Orbit sets it as
+the provider's per-response limit and states it in the worker's prompt. When a response exceeds its cap (the Claude CLI
+reports "Claude's response exceeded the N output token maximum"), the unit is
+retried once with the cap doubled, up to 32000, and the decision is recorded as
+`worker.output-cap-raised`. A unit is raised once; a second overflow, or a cap
+already at 32000, fails the unit as any other failed session would.
 
 `redact_patterns` are JavaScript regular expressions (compiled with the `u`
 flag). From the moment a run's policy is frozen or verified, every redaction
@@ -515,12 +570,23 @@ empty string is refused when the configuration is loaded, because it could
 never be applied.
 
 `keep_runs_days` is the artifact retention period. The retention pass
-(`pruneExpiredRuns` in `src/storage/retention.ts`) removes `.orbit/runs/<id>/`
-and the run's worktrees under `$ORBIT_HOME/worktrees/` for runs that ended
-(`SUCCEEDED`, `EXHAUSTED`, `IMPOSSIBLE` or `CANCELLED`) more than that many days
-ago. The database rows stay and are marked with a `run.artifacts_pruned`
-event. A `BLOCKED` run is never pruned, and neither is a run whose controller
-still holds its lease.
+(`orbit gc`; `pruneExpiredRuns` in `src/storage/retention.ts`) removes
+`.orbit/runs/<id>/` and the run's worktrees under `$ORBIT_HOME/worktrees/` for
+runs that ended (`SUCCEEDED`, `EXHAUSTED`, `IMPOSSIBLE` or `CANCELLED`) more than
+that many days ago. `orbit gc --keep-days 0` prunes every finished run now. The
+database rows stay and are marked with a `run.artifacts_pruned` event. A
+`BLOCKED` run is never pruned, and neither is a run whose controller still holds
+its lease.
+
+Worktrees are separate from retention. A run that ends `SUCCEEDED` or
+`CANCELLED` removes its own worktrees when it ends, since its result is the
+branch and the candidate refs, not the checkout (an unsaved edit in the
+implementer's worktree is first saved as a candidate, so nothing is lost; if that
+fails the worktree is kept). A run that stops `BLOCKED` or `EXHAUSTED`, or is
+paused, keeps its worktrees so a person can resume from them. `orbit gc` removes
+the worktrees of an `EXHAUSTED` run (after `keep_runs_days`, or at once with
+`--keep-days 0`); those of a `BLOCKED` run stay until the run is resumed to an
+end or cancelled.
 
 ## knowledge and guard
 

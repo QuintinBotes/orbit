@@ -73,7 +73,8 @@ describe.skipIf(!canStripTypes)('fault: worker killed during an edit', () => {
     expect(implCalls).toHaveLength(2);
     // The restart ran in the preserved worktree: the killed worker's partial file is still there and part of the candidate.
     expect(new Set(implCalls.map((c) => c.cwd))).toEqual(new Set([killed.worktree]));
-    expect(readFileSync(join(killed.worktree, 'apps/wip.mjs'), 'utf8')).toBe(WIP);
+    // The run succeeded, so its worktree is gone (P19); the partial file lives on in the delivered branch.
+    expect(existsSync(killed.worktree)).toBe(false);
     expect(git(l.repo, 'show', `orbit/${run.id}:apps/wip.mjs`)).toBe(WIP.trim());
     expect(events(l, run.id, 'lease.takeover').length).toBeGreaterThanOrEqual(1);
   }, 90_000);
@@ -93,8 +94,10 @@ describe.skipIf(!canStripTypes)('fault: worker killed during an edit', () => {
     expect(first.resultStatus).toBe('lost');
     // Never two live implementers: every implementer process started after the killed one was gone.
     expect(calls(l, 'implementer').every((c) => c.cwd === killed.worktree)).toBe(true);
-    expect(readFileSync(join(killed.worktree, 'apps/wip.mjs'), 'utf8')).toBe(WIP);
     expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    // The worktree of a succeeded run is removed (P19); the partial file survives in the delivered branch.
+    expect(existsSync(killed.worktree)).toBe(false);
+    expect(git(l.repo, 'show', `orbit/${run.id}:apps/wip.mjs`)).toBe(WIP.trim());
     // A lost worker is restarted for the same attempt; its half-written tree is not handed to verification as an attempt.
     expect(events(l, run.id, 'implementation.attempt')).toHaveLength(1);
     expect(calls(l, 'implementer')).toHaveLength(2);

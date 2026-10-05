@@ -42,9 +42,12 @@ Claude Code's documented behaviour (plugins reference, 2026-10):
 3. `bin/orbit` runs the bundle with the current node, so `orbit` works in the
    Bash tool of any session with the plugin enabled. Terminal use outside
    Claude Code stays documented (an alias or `npm install --global`).
-4. Orbit finds `srt` on PATH first, then in the nearest `node_modules/.bin`
-   walking up from its bundle (the plugin's own install, or the development
-   checkout).
+4. Orbit finds `srt` on PATH first, then in the plugin's own
+   `node_modules/.bin` beside its `dist/`, then in the development checkout's
+   `node_modules/.bin`, which counts only when the install directory is
+   `plugin/` inside a checkout whose package is `orbit-dev`. It never walks
+   further up: a `node_modules/.bin` in a shared parent directory would
+   otherwise supply the `srt` that confines every command.
 5. Skills pass a goal or any free text to the CLI through a here-document
    with a quoted delimiter and `--goal -`, never as shell words; run ids and
    flags are validated by the CLI. New skills `/orbit:init` and

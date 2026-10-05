@@ -1,9 +1,10 @@
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join, relative, sep } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { atomicWriteJson } from '../core/fsx.ts';
 import { hashObject } from '../core/hash.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { snapshotHash } from '../policy/snapshot.ts';
+import { isTestPath } from '../policy/weakening.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { candidateEvidenceDir } from './runner.ts';
@@ -37,6 +38,23 @@ export interface BuildReportInput {
   snapshot: PolicySnapshot;
   /** The candidate touches UI paths (or the contract needs UI proof): missing or failing journeys then block PASS. */
   uiRequired?: boolean;
+  /**
+   * The base revision, so a green check that says nothing about the change is never counted as support (spec section
+   * 10 "green checks without proof"). Absent only for callers that judge results without a base (no candidate change
+   * can then be compared); the controller and `orbit verify` always pass it.
+   */
+  base?: BaseComparison;
+  /** The run directory: artifacts and logs are then named by their path relative to it, so a reader can open them. */
+  runDir?: string;
+}
+
+export interface BaseComparison {
+  /** Tree of the base revision; a candidate with the same tree changes nothing. */
+  treeHash: string;
+  /** The base revision's check results (baseline.json), or null when no baseline of this revision is recorded. */
+  checks: readonly { checkId: string; status: CheckStatus }[] | null;
+  /** Paths the candidate adds or modifies relative to the base revision (deletions excluded). */
+  changedPaths: readonly string[];
 }
 
 /** One hash over the configuration of the given checks, in id order. */
@@ -126,12 +144,21 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
     return true;
   };
 
+  // A path a reader can open: relative to the run directory when it lies inside it; otherwise as it was given.
+  const runDir = input.runDir;
+  const artifactPath = (p: string, fallback: string): string => {
+    if (runDir === undefined) return fallback;
+    const r = relative(runDir, p);
+    return r === '' || r.startsWith('..') || isAbsolute(r) ? p : r.split(sep).join('/');
+  };
+  const logName = (p: string): string => artifactPath(p, basename(p));
+
   const evidenceFor = (checkId: string): Evidence => {
     const r = valid.get(checkId);
     const journeys = ui.get(checkId);
     if (!r && !journeys) return { outcome: 'missing', artifacts: [] };
     if (r) {
-      const art = [basename(r.logPath)];
+      const art = [logName(r.logPath)];
       switch (r.status) {
         case 'PASSED':
           return { outcome: r.flaky ? 'flaky' : 'passed', status: r.status, artifacts: art };
@@ -143,7 +170,7 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
       }
     }
     const worst = journeys!.find((j) => j.status !== 'PASSED');
-    const art = journeys!.flatMap((j) => j.artifacts);
+    const art = journeys!.flatMap((j) => j.artifacts.map((a) => (isAbsolute(a) ? artifactPath(a, a) : a)));
     if (!worst) return { outcome: journeys!.some((j) => j.flaky) ? 'flaky' : 'passed', status: 'PASSED', artifacts: art };
     return { outcome: worst.status === 'FAILED' || worst.status === 'TIMEOUT' ? 'failed' : 'error', status: worst.status, artifacts: art };
   };
@@ -183,6 +210,24 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
     if (!mandatory.has(r.checkId) && (r.status === 'FAILED' || r.status === 'TIMEOUT')) note(unverified, `optional check ${r.checkId} ${r.status === 'TIMEOUT' ? 'timed out' : 'failed'}`);
   }
 
+  // What the change could have turned green (spec section 10 "green checks without proof"). A candidate whose tree is
+  // the base tree changes nothing, so nothing it passes is evidence about a change. A criterion whose mapped checks
+  // have no failing result on the base revision rests on a green result the base revision gives as well, unless the
+  // candidate adds or changes a test those checks can run: without one, the pass is no new evidence.
+  const base = input.base;
+  const noChange = base !== undefined && base.treeHash === candidate.treeHash;
+  if (noChange) note(incomplete, 'the candidate makes no change: its tree is the base revision\'s tree, so no check result is evidence of a change');
+  const testChanged = base !== undefined && base.changedPaths.some(isTestPath);
+  const baseStatus = new Map((base?.checks ?? []).map((c) => [c.checkId, c.status] as const));
+  const newEvidenceGap = (ids: readonly string[]): string | null => {
+    if (base === undefined) return null;
+    if (noChange) return 'the candidate makes no change, so its green checks are no evidence of one';
+    if (testChanged) return null;
+    if (ids.some((id) => baseStatus.get(id) === 'FAILED' || baseStatus.get(id) === 'TIMEOUT')) return null;
+    const passed = base.checks !== null && ids.every((id) => baseStatus.get(id) === 'PASSED');
+    return `no new evidence: ${ids.join(', ')} ${passed ? 'already passed on the base revision' : 'has no failing result recorded on the base revision'} and the candidate adds or changes no test`;
+  };
+
   // Criteria.
   const journeyIds = new Set(snapshot.config.ui?.journey_check_ids ?? []);
   const isBrowserCheck = (id: string): boolean => snapshot.config.checks[id]?.kind === 'playwright' || journeyIds.has(id) || ui.has(id);
@@ -214,7 +259,13 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
         status = 'unverified';
         why = 'no browser check is mapped to this UI criterion; command checks alone do not prove a user journey';
       } else {
-        status = 'supported';
+        const gapWhy = newEvidenceGap(ids);
+        if (gapWhy !== null) {
+          status = 'unverified';
+          why = gapWhy;
+        } else {
+          status = 'supported';
+        }
       }
     }
     if (c.mandatory) {
@@ -258,7 +309,7 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
 
   const checks = [...valid.values()]
     .sort((a, b) => a.checkId.localeCompare(b.checkId))
-    .map((r) => ({ id: r.checkId, status: r.status, exit_code: r.exitCode, flaky: r.flaky, log: basename(r.logPath) }));
+    .map((r) => ({ id: r.checkId, status: r.status, exit_code: r.exitCode, flaky: r.flaky, log: logName(r.logPath) }));
   // Journey checks that came in as UI results carry no CheckResult, so the hash covers exactly the checks listed in `checks`.
   const report: EvidenceReport = {
     task_id: contract.task_id,

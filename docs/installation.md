@@ -8,26 +8,87 @@
 | git 2.5 or newer | everything | Workers run in `git worktree` checkouts. The repository needs the configured remote (default `origin`) for delivery. |
 | `claude` CLI | everything | Claude Code, version 2.1.284 or newer to route to Sonnet 5.5. |
 | `codex` CLI | independent review | Optional only if you set `review.independent_provider_required: false`. Also set `providers.codex.data_policy_eligible: true` when sending sanitized code to it is permitted. |
-| `srt` (sandbox-runtime) | default isolation | `npm install --global @anthropic-ai/sandbox-runtime`. On Linux it needs bubblewrap; on macOS it uses Seatbelt. Orbit also finds an `srt` in its own `node_modules/.bin`. |
+| `srt` (sandbox-runtime) | default isolation | The one runtime dependency of Orbit; the default isolation does not work without it. A plugin install brings it (see below), and `npm ci` in a clone installs it into the clone's `node_modules`. To put it on your PATH instead: `npm install --global @anthropic-ai/sandbox-runtime`. Orbit looks on PATH first, then in the plugin's own `node_modules/.bin`, then (in a clone) the checkout's; never in a directory further up. On Linux it needs bubblewrap; on macOS it uses Seatbelt. |
 | Docker | `isolation.provider: container` | Adds hard CPU, memory and pids limits. The image must already exist locally; Orbit runs containers with `--pull never`. |
 | Playwright and its browsers | UI verification | `npm install -D @playwright/test` in the target repository, then `npx playwright install chromium`. For accessibility scans also `@axe-core/playwright`. Under `srt` on macOS only Playwright's bundled Chromium is supported (not Google Chrome, Firefox or WebKit), and browser checks need `srt` 0.0.78; see [Browsers under srt on macOS](#browsers-under-srt-on-macos). |
 | `gh` CLI and a `GH_TOKEN` | delivery in `autonomous-delivery` and `release` modes | Use a fine-grained token scoped to the one repository. |
 | `gitleaks` | stronger secret scan | Optional. Without it Orbit uses built-in patterns and the evidence says so. |
 
+## Status of the repository
+
+Orbit 0.1.0 is pre-release. The repository becomes public at the first release.
+Until then the marketplace install and the clone URL below work only for people
+who have access to the repository, and "from a checkout" below is the way to try
+it.
+
 ## Install the plugin
 
-From the marketplace, once it is public:
+From the marketplace. The `claude-plugins` catalog entry is a `git-subdir`
+source: this repository, path `plugin`.
 
 ```
 /plugin marketplace add QuintinBotes/claude-plugins
 /plugin install orbit@quintinbotes
 ```
 
-The plugin provides the skills `/orbit:run`, `/orbit:status`, `/orbit:resume`,
-`/orbit:verify`, `/orbit:repair` and `/orbit:inquisition`, six agents, and a
-PreToolUse guard hook. The skills call `node "${CLAUDE_PLUGIN_ROOT}/dist/orbit.mjs"`.
-A plugin alone does not give persistent execution; the service does (see
-[operations](operations.md)).
+When a plugin has a `package.json` and a lockfile, Claude Code installs its
+registry dependencies at the locked versions (with scripts disabled, within a
+time limit). Orbit's plugin lists one, `@anthropic-ai/sandbox-runtime` (`srt`)
+pinned to 0.0.78, so a marketplace install brings `srt` and nothing else; it
+needs `npm` and network access at install time. Check the result with
+`/orbit:doctor`: its `isolation` line names the `srt` it found.
+
+The plugin provides the skills `/orbit:init`, `/orbit:doctor`, `/orbit:run`,
+`/orbit:status`, `/orbit:resume`, `/orbit:verify`, `/orbit:repair` and
+`/orbit:inquisition`, seven agents, a SessionStart hook that lists the pending
+questions of the repository's unfinished runs (`orbit questions --pending`; it
+prints nothing when there are none and never blocks a session), and a PreToolUse
+guard hook. It also puts `orbit` on the PATH of Claude Code's Bash tool (its
+`bin/orbit`) while the plugin is enabled. It is not on the PATH of a separate
+terminal: use a clone (below), or call the plugin's `bin/orbit` by its full
+path. Messages that tell you to run `orbit <command>` name the `/orbit:<skill>`
+instead when they exist (`init`, `doctor`, `run`, `status`, `resume`, `verify`,
+`repair`); the other commands (`models refresh`, `decide`, `questions`,
+`service install`, `report`, `logs`) run through Claude Code's Bash tool, which
+you can ask Claude to do.
+
+A plugin alone does not give persistent execution: without the background
+service, `/orbit:run`, `/orbit:resume` and `/orbit:repair` drive the run from the
+Claude Code session in the background, and it pauses when the session ends. The
+service does outlive the session (see [operations](operations.md)). The service
+starts a stable launcher, `~/.orbit/bin/orbit`, which Orbit repoints at the
+installed plugin version whenever it runs, so a plugin update needs no service
+reinstall.
+
+### From a checkout, before a release
+
+Load the plugin from a clone for one session, with no marketplace:
+
+```bash
+git clone https://github.com/QuintinBotes/orbit.git
+cd orbit
+npm ci
+claude --plugin-dir ./plugin
+```
+
+`npm ci` supplies `srt` from the clone's `node_modules`, which Orbit finds from
+the bundle. To exercise the marketplace path itself, write a marketplace of your
+own. A `git-subdir` source takes the clone's `file://` URL (a bare path fails
+at install time with "Invalid git URL"), and it installs the committed state of
+the clone:
+
+```json
+{
+  "name": "orbit-local",
+  "owner": { "name": "you" },
+  "plugins": [
+    { "name": "orbit", "source": { "source": "git-subdir", "url": "file:///ABSOLUTE/PATH/TO/orbit", "path": "plugin" } }
+  ]
+}
+```
+
+Save it as `.claude-plugin/marketplace.json` in an empty directory, then
+`/plugin marketplace add <that directory>` and `/plugin install orbit@orbit-local`.
 
 ## Install the CLI
 
@@ -39,8 +100,17 @@ npm install --global .
 orbit --version
 ```
 
-`dist/orbit.mjs` is a committed bundle with no runtime dependencies, so a
-checkout is all you need to run it: `node dist/orbit.mjs doctor`.
+`npm install --global .` does not copy Orbit: it links the global `orbit`
+command to this clone (`plugin/dist/orbit.mjs`), so deleting or moving the clone
+breaks it, and a `git pull` changes what it runs. Keep the clone. Nor does it
+put `srt` on your PATH: `orbit doctor` passes only because Orbit finds the
+clone's own `node_modules/.bin/srt`. If you want `srt` independent of the clone,
+install it globally (`npm install --global @anthropic-ai/sandbox-runtime`).
+
+`plugin/dist/orbit.mjs` is a committed bundle; its only runtime dependency is
+the sandbox runtime `srt`, found on PATH, in the plugin's own `node_modules/.bin` or in the clone's.
+A checkout with `npm ci` is all you need to run it without a global install:
+`node plugin/dist/orbit.mjs doctor`, or `plugin/bin/orbit doctor`.
 
 ## First run in a repository
 
@@ -50,10 +120,20 @@ orbit init
 orbit doctor
 ```
 
-`orbit init` writes `.orbit/config.yaml` and adds the state files to
-`.git/info/exclude`, so nothing runtime-related shows in `git status` and
-nothing is committed for you. Review the file like code and commit it if you
-want it shared. See [configuration](configuration.md).
+`orbit init` (plugin: `/orbit:init`) writes `.orbit/config.yaml` and adds the
+state files to `.git/info/exclude`, so nothing runtime-related shows in `git
+status` (the config file itself shows as untracked) and nothing is committed for
+you. The starter mode is `autonomous`: runs end on a local branch and never push.
+Review the file like code and commit it if you want it shared. The README
+[quickstart](../README.md#quickstart) lists what to set before the first run:
+`scope.allowed_paths`, at least one check, `providers.codex.data_policy_eligible`,
+and `orbit models refresh`. See [configuration](configuration.md).
+
+A run starts only from a clean working tree (`.orbit/` is exempt) unless
+`repository.allow_dirty_start` is true, and refuses to start, creating nothing,
+when the repository's git configuration holds credentials or the environment
+check fails (isolation, credentials, reviewer). `orbit doctor` reports the same
+problems earlier.
 
 ## Authentication
 
@@ -76,7 +156,8 @@ method each one reports.
   the same variables exported.
 - An expired or invalid credential blocks the run with an explicit reason. Orbit
   does not retry authentication failures. Fix the credential, then
-  `orbit resume <run-id>`.
+  `orbit resume <run-id>` (with `--foreground` when no service is running, or the
+  run is not driven).
 - The starter configuration leaves Fable models out of
   `routing.allowed_models`, because headless Claude Code bills Fable usage
   credits without a consent prompt. Add `fable` yourself if you accept that.

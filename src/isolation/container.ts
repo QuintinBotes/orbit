@@ -68,6 +68,10 @@ const IMAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/;
 
 export class ContainerIsolation implements IsolationProvider {
   readonly kind = 'container' as const;
+  /** --network none: each container has a loopback of its own, so a UI check runs the application inside its own container. */
+  readonly privateLoopback = true;
+  /** The image's node, found on the container's PATH; the host's node path means nothing inside. */
+  readonly launcherNode = 'node';
   readonly image: string;
   private readonly opts: ContainerOptions;
   private readonly hostEnv: Record<string, string | undefined>;

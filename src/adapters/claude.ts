@@ -29,18 +29,19 @@
  * the only option with a keychain login. Both load the same permission rules
  * and guard hook, and the controller's diff inspection gates either.
  */
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { systemClock } from '../core/clock.ts';
 import { OrbitError } from '../core/errors.ts';
 import { execCapture } from '../core/exec.ts';
+import { redact } from '../core/redact.ts';
 import { atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
 import { strictSchemaViolations } from '../contract/strict-schema.ts';
 import type { IsolationProvider, SandboxProfile } from '../isolation/types.ts';
 import { prepareWorkerTmpDir } from '../isolation/profiles.ts';
-import { canonicalPath, isWithin } from '../isolation/util.ts';
+import { canonicalPath, isWithin, readablePathsOf } from '../isolation/util.ts';
 import { snapshotHash, verifySnapshot } from '../policy/snapshot.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { assertClaudeSettings, renderClaudeSettings, type ClaudeTier } from './claude-settings.ts';
@@ -48,7 +49,7 @@ import { CLAUDE_AUTH_ERRORS, classifyClaudeTranscript, claudeEvents, claudeUsage
 import { defaultOrbitCommands } from './commands.ts';
 import { buildWorkerEnv, passThrough, claudeEnvCredential } from './env.ts';
 import { outputBudgetFor, outputBudgetInstruction } from './prompt.ts';
-import type { AbortPattern } from './shim.ts';
+import { STDERR_FILE, type AbortPattern } from './shim.ts';
 import {
   LAUNCH_FILE,
   cancelShim,
@@ -260,6 +261,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       readOnly: spec.readOnly,
       hookCommand,
       denyReadPaths: spec.sandbox.denyReadPaths,
+      readablePaths: readablePathsOf(spec.sandbox),
       tmpDir,
     });
     assertClaudeSettings(settings);
@@ -353,6 +355,9 @@ export class ClaudeAdapter implements ProviderAdapter {
       };
     } else {
       result = classifyClaudeTranscript({ events: log.events, malformedTail: log.malformedTail, exit: st.exit, outputSchema: spec.outputSchema, expectedSessionId: st.pid?.sessionId ?? null });
+      // A CLI that died before its transcript says why only on stderr; without it the block reads "exited 1 without a result line".
+      const stderr = result.reason === 'crashed' ? stderrTail(handle.workerDir) : null;
+      if (stderr) result = { ...result, error: `${result.error ?? 'crashed'}; stderr: ${stderr}` };
     }
     result = { ...result, usage: withWorkerTelemetry(result.usage, handle.workerDir) };
     atomicWriteJson(join(handle.workerDir, RESULT_FILE), result, 0o600);
@@ -549,10 +554,23 @@ export function snapshotFileHash(path: string): string {
   return snapshotHash(snap);
 }
 
-/** A read-only role's sandbox drops the worktree from the writable set. */
+/**
+ * A read-only role's sandbox drops the worktree from the writable set and
+ * keeps it readable. Worktrees live under ~/.orbit (or beside a denied
+ * checkout), which the profile read-denies; only the writable set re-opened
+ * them. Without the read grant the CLI cannot resolve its own working
+ * directory and dies before its first request ("An unknown error occurred
+ * (Unexpected)", exit 1, no transcript), so every read-only role failed in
+ * this tier and a bad key was reported as a crash, not a credential failure.
+ */
 export function readOnlyProfile(profile: SandboxProfile, worktree: string, readOnly: boolean): SandboxProfile {
   if (!readOnly) return profile;
-  return { ...profile, writablePaths: profile.writablePaths.filter((p) => !isWithin(canonicalPath(p), worktree)) };
+  const narrowed: SandboxProfile & { readablePaths: string[] } = {
+    ...profile,
+    writablePaths: profile.writablePaths.filter((p) => !isWithin(canonicalPath(p), worktree)),
+    readablePaths: [...new Set([...readablePathsOf(profile), worktree])],
+  };
+  return narrowed;
 }
 
 /** Per-invocation settings directories an isolation wrapper created in the temp directory. */
@@ -564,6 +582,24 @@ function wrapperTempDirs(argv: string[]): string[] {
     if (basename(dir).startsWith('orbit-srt-')) out.push(dir);
   }
   return [...new Set(out)];
+}
+
+/** The last lines of the worker's stderr.log (already redacted by the shim; redacted again here), at most 300 characters, or null. */
+export function stderrTail(workerDir: string, maxChars = 300): string | null {
+  let text: string;
+  try {
+    text = readFileSync(join(workerDir, STDERR_FILE), 'utf8');
+  } catch {
+    return null;
+  }
+  const lines = redact(text)
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+  let tail = lines.slice(-3).join(' | ');
+  if (tail.length > maxChars) tail = `...${tail.slice(-(maxChars - 3))}`;
+  return tail;
 }
 
 function writePrivate(path: string, text: string): void {

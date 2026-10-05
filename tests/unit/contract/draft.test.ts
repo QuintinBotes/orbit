@@ -216,4 +216,17 @@ describe('draftContract', () => {
       expect(validateContract(older, inp.snapshot)).toBe(older);
     });
   });
+
+  it('a plan whose paths all fall outside the policy scope names the paths and the scope (P17)', () => {
+    const plan = planner({ allowed_paths: ['.github/**'], expected_changed_files: [{ path: '.github/workflows/ci.yml', change: 'modify', reason: 'pin the action' }] });
+    let message = '';
+    try {
+      draftContract(input({ plannerOutput: plan }));
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toMatch(/no proposed path lies inside the policy scope/);
+    expect(message).toContain('.github/');
+    expect(message).toContain('apps/');
+  });
 });

@@ -8,7 +8,7 @@ import { validateModelOutput } from '../../../src/contract/model-outputs.ts';
 import { renderOverlay } from '../../../src/knowledge/overlays.ts';
 import type { Lesson } from '../../../src/knowledge/types.ts';
 
-const AGENTS = fileURLToPath(new URL('../../../agents/', import.meta.url));
+const AGENTS = fileURLToPath(new URL('../../../plugin/agents/', import.meta.url));
 // Verified plugin-agent fields (docs/interfaces/claude-code-plugin.md section 3).
 const PLUGIN_AGENT_FIELDS = new Set(['name', 'description', 'model', 'effort', 'maxTurns', 'tools', 'disallowedTools', 'skills', 'memory', 'background', 'omitClaudeMd', 'isolation', 'color', 'experimental']);
 const READ_ONLY = ['planner', 'verifier', 'reviewer', 'inquisitor', 'curator'];

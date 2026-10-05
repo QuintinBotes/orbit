@@ -9,6 +9,7 @@ import { ClaudeAdapter } from '../../../src/adapters/claude.ts';
 import { FakeAdapter } from '../../../src/adapters/fake.ts';
 import { outputBudgetInstruction } from '../../../src/adapters/prompt.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../../../src/contract/model-outputs.ts';
+import { DEFAULT_OUTPUT_BUDGETS } from '../../../src/policy/config.ts';
 import type { TaskSpec } from '../../../src/adapters/types.ts';
 import { startFakeAnthropicApi } from '../../fakes/fake-anthropic-api.mjs';
 import { FAKE_CLAUDE, FAKE_CODEX, IMPLEMENTER_OUTPUT, REVIEW_OUTPUT, implementerSpec, makeFixture, waitFor, writeScenario, type Fixture } from './helpers.ts';
@@ -51,8 +52,8 @@ describe.skipIf(!canStripTypes)('output budgets through the Claude adapter (fake
     const { handle, result } = await run(fakeClaude(), implementerSpec(f));
     expect(result.status).toBe('succeeded');
     expect(envKeysOf(f)).toContain('CLAUDE_CODE_MAX_OUTPUT_TOKENS');
-    expect(readFileSync(join(f.workerDir, 'prompt.md'), 'utf8')).toBe(`Change apps/a.ts.\n\n${outputBudgetInstruction(8000)}\n`);
-    expect(result.usage.outputBudgetTokens).toBe(8000);
+    expect(readFileSync(join(f.workerDir, 'prompt.md'), 'utf8')).toBe(`Change apps/a.ts.\n\n${outputBudgetInstruction(DEFAULT_OUTPUT_BUDGETS.implementer)}\n`);
+    expect(result.usage.outputBudgetTokens).toBe(DEFAULT_OUTPUT_BUDGETS.implementer);
     expect((handle as { limitations?: string[] }).limitations?.join(' ') ?? '').not.toMatch(/output budget/i);
   });
 
@@ -98,9 +99,9 @@ describe.skipIf(!canStripTypes)('output budgets through the Codex adapter (fake 
     const a = new FakeAdapter({ provider: 'codex', script: FAKE_CODEX, graceMs: 300, baseEnv: { PATH: process.env.PATH, HOME: process.env.HOME } });
     const spec: TaskSpec = { ...implementerSpec(f), role: 'reviewer', model: 'gpt-6-astra', effort: 'high', readOnly: true, outputSchema: MODEL_OUTPUT_SCHEMAS.review, prompt: 'Review candidate abc123.', systemPrompt: 'You are the reviewer.' };
     const { handle, result } = await run(a, spec);
-    expect(result.usage.outputBudgetTokens).toBe(4000);
-    expect(readFileSync(join(f.workerDir, 'prompt.md'), 'utf8')).toContain(outputBudgetInstruction(4000));
-    expect((handle as { limitations?: string[] }).limitations?.join(' ')).toMatch(/Output budget of 4000 tokens is an instruction only/);
+    expect(result.usage.outputBudgetTokens).toBe(DEFAULT_OUTPUT_BUDGETS.reviewer);
+    expect(readFileSync(join(f.workerDir, 'prompt.md'), 'utf8')).toContain(outputBudgetInstruction(DEFAULT_OUTPUT_BUDGETS.reviewer));
+    expect((handle as { limitations?: string[] }).limitations?.join(' ')).toContain(`Output budget of ${DEFAULT_OUTPUT_BUDGETS.reviewer} tokens is an instruction only`);
     expect(envKeysOf(f)).not.toContain('CLAUDE_CODE_MAX_OUTPUT_TOKENS');
   });
 });
@@ -165,11 +166,11 @@ describe.skipIf(!CLAUDE || !canStripTypes)('CLAUDE_CODE_MAX_OUTPUT_TOKENS reache
   it('sends the role budget as the request max_tokens, and the model default when the budget is null', async () => {
     const budgeted = await maxTokensFor({});
     expect(budgeted.length).toBeGreaterThan(0);
-    expect(new Set(budgeted)).toEqual(new Set([8000]));
+    expect(new Set(budgeted)).toEqual(new Set([DEFAULT_OUTPUT_BUDGETS.implementer]));
     const custom = await maxTokensFor({ outputTokens: 2500 });
     expect(new Set(custom)).toEqual(new Set([2500]));
     const uncapped = await maxTokensFor({ outputTokens: null });
     expect(uncapped.length).toBeGreaterThan(0);
-    expect(uncapped.every((n) => typeof n === 'number' && n > 8000)).toBe(true);
+    expect(uncapped.every((n) => typeof n === 'number' && n > DEFAULT_OUTPUT_BUDGETS.implementer)).toBe(true);
   }, 240_000);
 });

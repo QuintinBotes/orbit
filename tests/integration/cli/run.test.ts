@@ -125,7 +125,9 @@ describe('orbit run --foreground', () => {
     // Planning proposes paths outside the policy's scope, so the run cannot proceed under its authority.
     expect(r.code, r.out).toBe(10);
     expect(r.out).toMatch(/ended BLOCKED/);
-    expect(r.out).toMatch(/resolve the reason above, then "orbit resume orb-/);
+    // The scope is in the run's frozen policy, so resuming cannot help: the way forward is a new run (P12, P17).
+    expect(r.out).toMatch(/frozen policy: fix \.orbit\/config\.yaml, then "orbit cancel orb-[^"]+" and start a new run/);
+    expect(r.out).not.toMatch(/resolve the reason above, then "orbit resume/);
     expect(r.out).toMatch(/report: orbit report orb-/);
   });
 });

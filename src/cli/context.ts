@@ -9,6 +9,7 @@ import { dirname, resolve } from 'node:path';
 import { systemClock, type Clock } from '../core/clock.ts';
 import { OrbitError } from '../core/errors.ts';
 import { execCapture } from '../core/exec.ts';
+import { orbitHint } from '../core/invocation.ts';
 import { newOwnerId } from '../core/ids.ts';
 import { isAlive } from '../core/proc.ts';
 import { openDb, type OrbitDb } from '../storage/db.ts';
@@ -20,6 +21,7 @@ import type { ControllerOptions } from '../controller/loop.ts';
 import type { CommandRunner } from '../controller/service.ts';
 import type { EvalRunner } from '../knowledge/evals.ts';
 import { createIo, type Io } from './io.ts';
+import type { AdmissionCheck } from './admission.ts';
 
 /** The part of `process` the CLI uses for Ctrl-C and SIGTERM; an EventEmitter stands in for it in tests. */
 export interface SignalSource {
@@ -30,6 +32,8 @@ export interface SignalSource {
 export interface CliSeams {
   /** Runs launchctl/systemctl; tests replace it so nothing is ever loaded into the real service manager. */
   serviceRunner?: CommandRunner;
+  /** How long `service uninstall` waits for the service manager to let go of the job; tests shorten it. */
+  serviceStopTimeoutMs?: number;
   /** Builds the controller's collaborators (foreground runs, `service run`, cancellation); tests inject fake adapters. */
   controllerDeps?: (input: DefaultDepsInput) => Omit<ControllerDeps, 'ownerId'>;
   /** Replays a case for `learn eval`; without one the command explains what is missing. */
@@ -42,6 +46,8 @@ export interface CliSeams {
   signals?: SignalSource;
   /** Ends the process on a second Ctrl-C; default process.exit. */
   exit?: (code: number) => never;
+  /** Judges whether `orbit run` may start (dirty tree, environment gate) before it creates a run; tests that script the controller replace it. */
+  admission?: AdmissionCheck;
 }
 
 export interface CliContext {
@@ -55,7 +61,7 @@ export interface CliContext {
   /** The person acting. Decisions are recorded under this name, so it must look like a person, not a subsystem. */
   user: string;
   orbitHome: string;
-  /** The script that is running (dist/orbit.mjs, or the TypeScript entry from a source checkout). */
+  /** The script that is running (plugin/dist/orbit.mjs, or the TypeScript entry from a source checkout). */
   entry: string;
   seams: CliSeams;
 }
@@ -121,10 +127,19 @@ export function gitEnv(env: Readonly<Record<string, string | undefined>>): Recor
   return out;
 }
 
+/** Whether `orbit init` has been run here (the repository has its policy file), though no run has created state yet. */
+export function initialised(repoRoot: string): boolean {
+  return existsSync(resolve(repoRoot, '.orbit', 'config.yaml'));
+}
+
 /** Open the repository's state database. Without `create` a missing one is an error: reading commands must not conjure state. */
 export function openState(repoRoot: string, opts: { create?: boolean } = {}): OrbitDb {
   const path = stateDbPath(repoRoot);
-  if (!opts.create && !existsSync(path)) throw new OrbitError('NOT_FOUND', `no Orbit state in ${repoRoot}; run "orbit init", then "orbit run"`, { path });
+  if (!opts.create && !existsSync(path)) {
+    // After "orbit init" the state database is simply not there yet: it appears with the first run. Say that, not "run init".
+    if (initialised(repoRoot)) throw new OrbitError('NOT_FOUND', `no runs yet in ${repoRoot}; start one with: orbit run --goal "..."`, { path });
+    throw new OrbitError('NOT_FOUND', `no Orbit state in ${repoRoot}; run ${orbitHint('init')}, then ${orbitHint('run')}`, { path });
+  }
   return openDb(path);
 }
 

@@ -1,13 +1,16 @@
-/** `orbit run`: freeze the policy, create the run, then drive it here or hand it to the service. */
+/** `orbit run`: refuse what is cheap to detect, freeze the policy, create the run, then drive it here or hand it to the service. */
+import { OrbitError } from '../../core/errors.ts';
 import { releaseEnvironmentProblem } from '../../contract/validate.ts';
 import { loadConfig, RUN_MODES } from '../../policy/index.ts';
 import type { OrbitConfig } from '../../policy/types.ts';
-import { startRun } from '../../controller/index.ts';
+import { startRun, stateDbPath } from '../../controller/index.ts';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Args, OptionSpec } from '../args.ts';
 import { liveServiceController, openState, resolveRepo, type CliContext } from '../context.ts';
 import { UsageError } from '../exit.ts';
 import { json, line } from '../io.ts';
+import { admitRun } from '../admission.ts';
 import { driveForeground } from './drive.ts';
 
 export const RUN_OPTIONS: OptionSpec = {
@@ -31,6 +34,8 @@ export async function runCommand(args: Args, ctx: CliContext): Promise<number> {
 
   const repo = await resolveRepo(ctx, args.str('repo'));
   const policy = args.str('policy');
+  // A policy file that is not there is not an invitation to run "orbit init": the repository's own config is a different file.
+  if (policy !== undefined && !existsSync(resolve(ctx.cwd, policy))) throw new OrbitError('NOT_FOUND', `policy file ${resolve(ctx.cwd, policy)} does not exist; check the --policy path`);
   // Every problem in the policy is reported at once, before any state exists.
   const config: OrbitConfig = loadConfig(repo, policy ? resolve(ctx.cwd, policy) : undefined, mode ? { mode } : {});
 
@@ -41,10 +46,23 @@ export async function runCommand(args: Args, ctx: CliContext): Promise<number> {
     if (why) throw new UsageError(`--environment ${environment}: ${why}`, usage);
   }
 
+  // Whether a service will pick the run up decides who drives it, and that decides what admission can judge.
+  // Reading it must not create the state database: a refused run leaves no state behind.
+  let service: ReturnType<typeof liveServiceController> = null;
+  if (existsSync(stateDbPath(repo))) {
+    const probe = openState(repo);
+    try {
+      service = liveServiceController(probe, ctx.clock.now());
+    } finally {
+      probe.close();
+    }
+  }
+  const foreground = args.bool('foreground') ? true : args.bool('detach') ? false : service === null;
+  // Cheap-to-detect problems (dirty tree, failing environment gate) refuse the run before a run, or a model call, exists.
+  await admitRun(ctx, { repo, config, foreground });
+
   const db = openState(repo, { create: true });
   try {
-    const service = liveServiceController(db, ctx.clock.now());
-    const foreground = args.bool('foreground') ? true : args.bool('detach') ? false : service === null;
     // The policy is frozen (snapshot, hash, read-only) before the run row that names it exists.
     const run = startRun({ db, repoRoot: repo, goal, config, clock: ctx.clock, actor: `cli:${ctx.user}`, ...(environment !== undefined ? { environment } : {}) });
     const asJson = args.bool('json');

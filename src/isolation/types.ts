@@ -68,6 +68,18 @@ export interface WrapOptions {
 
 export interface IsolationProvider {
   readonly kind: 'sandbox-runtime' | 'container' | 'none';
+  /**
+   * Every wrapped command gets its own network namespace, so a server one wrapped command listens on is unreachable
+   * from the host and from every other wrapped command (srt on Linux). A UI check then runs the application and the
+   * browser in one wrapped launcher (src/ui/single-sandbox.ts). Absent or false: wrapped commands share the host's loopback.
+   * Containers have it too: each runs with --network none.
+   */
+  readonly privateLoopback?: boolean;
+  /**
+   * The node that runs that launcher inside the wrapped command: a container has the image's node on its PATH, not the
+   * host's. Absent: the controller's own node (process.execPath), which a sandbox on the host can run.
+   */
+  readonly launcherNode?: string;
   available(): Promise<{ ok: boolean; detail: string }>;
   wrap(argv: string[], profile: SandboxProfile, opts: WrapOptions): WrappedCommand;
 }

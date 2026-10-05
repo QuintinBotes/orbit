@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 type Baseline = typeof import('../../../src/evidence/baseline.ts');
@@ -102,6 +103,8 @@ describe('preconditions', () => {
 describe('collecting evidence', () => {
   it('runs the required command checks in the candidate checkout and judges the evidence, gates in order', async () => {
     const s = setup();
+    // The candidate adds a test (P2: a green check counts only when the change could have turned it green).
+    hooks.git.mockImplementation(async (_cwd: string, args: string[]) => (args.includes('--diff-filter=ACMT') ? 'apps/calc.mjs\0tests/calc.test.mjs\0' : ''));
     const gates: string[] = [];
     const out = await run(s, { onGate: (g: { gate: string }) => gates.push(g.gate), notes: ['one-shot authorization used'] });
     expect('evidence' in out).toBe(true);
@@ -116,6 +119,39 @@ describe('collecting evidence', () => {
     const runnerCtx = hooks.runChecks.mock.calls[0]![0] as { checkIds: string[]; checkoutDir: string; pollMs: number; killGraceMs: number };
     expect(runnerCtx).toMatchObject({ checkIds: ['unit'], checkoutDir: s.checkoutDir, pollMs: 20, killGraceMs: 50 });
     expect(hooks.scanCandidateSecrets.mock.calls[0]![0]).toMatchObject({ baseRev: s.ctx.run.baseRevision, commit: s.cand.commitSha, now: lab.clock.now() });
+  });
+
+  // P2: the base revision is the comparison. The tree, the recorded baseline and the paths the candidate adds or modifies.
+  it('does not support a criterion whose check already passed on the base revision when the candidate adds no test', async () => {
+    const s = setup();
+    const baseTree = 'b'.repeat(40);
+    writeFileSync(join(s.ctx.runDir, 'baseline.json'), JSON.stringify({ schema: 'orbit.baseline/1', baseTree, policyHash: s.ctx.run.policyHash, checks: [{ checkId: 'unit', status: 'PASSED' }] }));
+    hooks.git.mockImplementation(async (_cwd: string, args: string[]) => (args[0] === 'rev-parse' ? `${baseTree}\n` : args.includes('--diff-filter=ACMT') ? 'apps/calc.mjs\0' : ''));
+    const out = await run(s);
+    if (!('evidence' in out)) throw new Error('stopped');
+    expect(out.evidence.report.verdict).toBe('INCOMPLETE');
+    expect(out.evidence.report.acceptance_evidence[0]).toMatchObject({ status: 'unverified', note: expect.stringContaining('already passed on the base revision') });
+    const diff = hooks.git.mock.calls.find((c) => (c[1] as string[]).includes('--diff-filter=ACMT'))![1] as string[];
+    expect(diff).toEqual(expect.arrayContaining([s.ctx.run.baseRevision, s.cand.commitSha]));
+  });
+
+  it('is INCOMPLETE for a candidate whose tree is the base tree', async () => {
+    const s = setup();
+    hooks.git.mockImplementation(async (_cwd: string, args: string[]) => (args[0] === 'rev-parse' ? `${s.cand.treeHash}\n` : ''));
+    const out = await run(s);
+    if (!('evidence' in out)) throw new Error('stopped');
+    expect(out.evidence.report.verdict).toBe('INCOMPLETE');
+    expect(out.evidence.incompleteReasons.join('\n')).toContain('the candidate makes no change');
+  });
+
+  it('ignores a baseline recorded under another policy: its failing result is not taken as the base revision\'s', async () => {
+    const s = setup();
+    const baseTree = 'b'.repeat(40);
+    writeFileSync(join(s.ctx.runDir, 'baseline.json'), JSON.stringify({ schema: 'orbit.baseline/1', baseTree, policyHash: 'sha256:other', checks: [{ checkId: 'unit', status: 'FAILED' }] }));
+    hooks.git.mockImplementation(async (_cwd: string, args: string[]) => (args[0] === 'rev-parse' ? `${baseTree}\n` : args.includes('--diff-filter=ACMT') ? 'apps/calc.mjs\0' : ''));
+    const out = await run(s);
+    if (!('evidence' in out)) throw new Error('stopped');
+    expect(out.evidence.report.acceptance_evidence[0]).toMatchObject({ status: 'unverified', note: expect.stringContaining('no failing result recorded on the base revision') });
   });
 
   it('does not run the checks when the dependency install failed, and says nothing passed without them', async () => {

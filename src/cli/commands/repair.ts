@@ -1,5 +1,5 @@
 /**
- * `orbit repair <run-id | failure text>`.
+ * `orbit repair <run-id | failure text | ->` ("-" reads either from stdin).
  *
  * With a run id: the run's latest evidence must say FAIL and the run must be
  * BLOCKED or paused. The CLI takes a short lease, moves the run to DIAGNOSING
@@ -34,7 +34,7 @@ export const REPAIR_OPTIONS: OptionSpec = {
   policy: { type: 'string', description: 'policy file for the foreground controller or the new run (default: .orbit/config.yaml)', valueName: 'path' },
 };
 
-const USAGE = 'orbit repair <run-id | failure description> [--foreground] [--policy <path>]';
+const USAGE = 'orbit repair <run-id | failure description | -> [--foreground | --detach] [--mode <mode>] [--policy <path>]';
 const RUN_ID = /^orb-[A-Za-z0-9-]+$/;
 
 /** The options `repair` forwards to `orbit run` when it is given a description instead of a run. */
@@ -49,7 +49,13 @@ function runArgv(args: Args, goal: string): string[] {
 }
 
 export async function repairCommand(args: Args, ctx: CliContext): Promise<number> {
-  const words = args.positionals;
+  let words = args.positionals;
+  // "-": the run id or the description comes on stdin, so free text never passes through a shell (the plugin skills).
+  if (words.length === 1 && words[0] === '-') {
+    const text = (await ctx.io.readStdin()).trim();
+    if (!text) throw new UsageError('a run id or a description of the failure is required on stdin', USAGE);
+    words = [text];
+  }
   if (words.length === 0) throw new UsageError('a run id or a description of the failure is required', USAGE);
   const first = words[0]!;
   if (!RUN_ID.test(first)) {

@@ -224,6 +224,8 @@ function findAgentsDir(): string {
   let dir = dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 5; i++) {
     if (existsSync(join(dir, 'agents', 'implementer.md'))) return join(dir, 'agents');
+    // From the sources the agents are in the checkout's plugin/ payload (docs/decisions/0006-plugin-packaging.md).
+    if (existsSync(join(dir, 'plugin', 'agents', 'implementer.md'))) return join(dir, 'plugin', 'agents');
     dir = dirname(dir);
   }
   throw new OrbitError('NOT_FOUND', 'cannot find the agents/ directory of the Orbit installation');

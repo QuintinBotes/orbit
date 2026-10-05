@@ -119,12 +119,12 @@ describe('pruneExpiredRuns (retention.keep_runs_days)', () => {
     expect(existsSync(join(precious, 'keep.txt'))).toBe(true);
   });
 
-  it('reports without removing anything in a dry run, and rejects a non-positive retention period', async () => {
+  it('reports without removing anything in a dry run, and rejects a negative retention period', async () => {
     const p = run('orb-dry', 'IMPOSSIBLE', 45);
     const r = await pruneExpiredRuns(db, { repoRoot: repo, keepDays: 30, clock, orbitHome: home, dryRun: true });
     expect(r.pruned).toEqual([{ runId: 'orb-dry', state: 'IMPOSSIBLE', endedAt: clock.now() - 45 * DAY, removed: [p.runDir, p.worktree] }]);
     expect(existsSync(p.runDir)).toBe(true);
     expect(prunedEvents('orb-dry')).toHaveLength(0);
-    await expect(pruneExpiredRuns(db, { repoRoot: repo, keepDays: 0, clock, orbitHome: home })).rejects.toThrow(/keepDays/);
+    await expect(pruneExpiredRuns(db, { repoRoot: repo, keepDays: -1, clock, orbitHome: home })).rejects.toThrow(/keepDays/);
   });
 });

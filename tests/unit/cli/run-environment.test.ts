@@ -20,7 +20,8 @@ function releasePolicy(l: Lab): string {
   config.isolation = { ...config.isolation, provider: 'none', allow_unisolated: true };
   const env = { deploy_command: [node, '-e', '0'], allowed_branches: ['main'], require_ci_green: false, network_hosts: [], timeout_seconds: 30, verify_command: null };
   config.release = { merge: { method: 'squash', require_checks: [], delete_branch: false, mark_ready: true }, environments: { staging: env, canary: env } };
-  const file = join(l.repo, 'release-policy.yaml');
+  // Outside the repository: an untracked file inside it would be an uncommitted change, which `orbit run` now refuses before creating a run.
+  const file = join(l.base, 'release-policy.yaml');
   writeFileSync(file, stringify(config));
   return file;
 }

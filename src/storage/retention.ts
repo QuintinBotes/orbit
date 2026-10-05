@@ -77,7 +77,7 @@ export function repoKeyFor(repoRoot: string): string {
 }
 
 export async function pruneExpiredRuns(db: OrbitDb, opts: PruneOptions): Promise<PruneResult> {
-  if (!Number.isInteger(opts.keepDays) || opts.keepDays < 1) throw new RangeError(`keepDays must be a positive integer (got ${String(opts.keepDays)})`);
+  if (!Number.isInteger(opts.keepDays) || opts.keepDays < 0) throw new RangeError(`keepDays must be a non-negative integer (got ${String(opts.keepDays)})`);
   const now = opts.clock.now();
   const cutoff = now - opts.keepDays * DAY_MS;
   const repoRoot = realOrResolved(opts.repoRoot);
@@ -87,7 +87,7 @@ export async function pruneExpiredRuns(db: OrbitDb, opts: PruneOptions): Promise
   const placeholders = PRUNABLE_STATES.map(() => '?').join(', ');
   const rows = db.all<RunRow>(
     `SELECT r.id, r.state, r.policy_path, r.ended_at, r.updated_at FROM runs r
-     WHERE r.state IN (${placeholders}) AND COALESCE(r.ended_at, r.updated_at) < ?
+     WHERE r.state IN (${placeholders}) AND COALESCE(r.ended_at, r.updated_at) ${opts.keepDays === 0 ? '<=' : '<'} ?
        AND NOT EXISTS (SELECT 1 FROM events e WHERE e.run_id = r.id AND e.type = ?)
      ORDER BY COALESCE(r.ended_at, r.updated_at), r.id`,
     ...PRUNABLE_STATES,

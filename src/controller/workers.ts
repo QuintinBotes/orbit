@@ -30,9 +30,11 @@ import { route, toDecisionRecord } from '../routing/router.ts';
 import { allowMatch, tierOf, worstCaseRequestUsd } from '../routing/registry.ts';
 import { recordUsage, routeStats } from '../routing/usage.ts';
 import type { RouteSignals, WorkKind } from '../routing/types.ts';
-import { ROLE_COST_CEILING_USD, ROLE_WALL_CEILING_MS } from '../scheduling/budget.ts';
+import { dearestPricing, ROLE_COST_CEILING_USD, ROLE_WALL_CEILING_MS, type TokenEstimate } from '../scheduling/budget.ts';
+import { estimateCost, inputIncludesCacheRead } from '../routing/pricing.ts';
 import type { BudgetPhase } from '../scheduling/types.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
+import { DEFAULT_OUTPUT_BUDGETS } from '../policy/config.ts';
 import { homeOf, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
 import { activeOverlayFor } from './knowledge-hooks.ts';
@@ -191,6 +193,7 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
   const env = ctx.deps.hostEnv ?? process.env;
   const provider = w.provider.startsWith('codex') ? 'codex' : 'claude';
   const timeoutMs = workerTimeoutMs(ctx, w.role);
+  const outputCap = raisedOutputCap(ctx, req.purpose);
   // Every session runs under the run's frozen snapshot; nothing (an approve-once grant included) widens a worker.
   const policy = { path: ctx.run.policyPath, hash: ctx.run.policyHash, snapshot: ctx.snapshot };
   const sandbox = profileForWorker({
@@ -223,8 +226,80 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
     policyPath: policy.path,
     policyHash: policy.hash,
     env: {},
+    ...(outputCap === null ? {} : { outputTokens: outputCap }),
     ...(req.maxBudgetUsd === undefined ? {} : { maxBudgetUsd: req.maxBudgetUsd }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Output cap overflow
+
+/** Decision kind recorded when a unit's per-response output cap is raised after a response exceeded it. */
+export const OUTPUT_CAP_DECISION_KIND = 'worker.output-cap-raised';
+/**
+ * The most a retry may raise a per-response output cap to. 32000 is Claude Code's own interactive default and
+ * below the output limit of every model Orbit routes to, so a doubled cap never asks for more than a model can emit.
+ */
+export const OUTPUT_CAP_CEILING = 32_000;
+const OUTPUT_CAP_ERROR = /exceeded the (?:([\d,]+) )?output token maximum/i;
+
+/**
+ * Whether a worker's error says its response exceeded the per-response output cap (the Claude CLI reports
+ * "API Error: Claude's response exceeded the 4000 output token maximum."), and the cap it ran under when it says so.
+ */
+export function outputCapExceeded(error: string | null | undefined): { cap: number | null } | null {
+  const m = typeof error === 'string' ? OUTPUT_CAP_ERROR.exec(error) : null;
+  if (!m) return null;
+  const cap = m[1] === undefined ? null : Number(m[1].replace(/,/g, ''));
+  return { cap: cap !== null && Number.isSafeInteger(cap) && cap > 0 ? cap : null };
+}
+
+/** A unit is a purpose without its attempt number: `plan#2` and `plan#1` are tries of the unit `plan`. */
+function unitOf(purpose: string): string {
+  return purpose.replace(/#\d+$/, '');
+}
+
+function outputCapDecisionId(ctx: RunContext, purpose: string): string {
+  return `dec-${ctx.run.id}-outcap-${unitOf(purpose).replace(/[^A-Za-z0-9_-]/g, '_')}`;
+}
+
+/** The raised output cap recorded for the unit of `purpose`, or null when its cap was never raised. */
+export function raisedOutputCap(ctx: RunContext, purpose: string): number | null {
+  const d = getDecision(ctx.db, outputCapDecisionId(ctx, purpose));
+  const cap = (d?.data as { new_cap?: unknown } | null | undefined)?.new_cap;
+  return typeof cap === 'number' ? cap : null;
+}
+
+/**
+ * A worker failed with `error`. When that is an output cap overflow and the unit has not been raised before,
+ * record a decision doubling the cap (bounded by OUTPUT_CAP_CEILING) and return the new cap: the caller retries
+ * the unit, and every later session of it starts under the new cap. A unit is raised once; a cap already at the
+ * ceiling cannot be raised. Returns null when the failure is anything else or no raise is possible.
+ */
+export function raiseOutputCap(ctx: RunContext, purpose: string, error: string | null | undefined): number | null {
+  const over = outputCapExceeded(error);
+  if (!over) return null;
+  if (raisedOutputCap(ctx, purpose) !== null) return null;
+  const role = (ctx.db.get<{ role: string }>('SELECT role FROM workers WHERE run_id = ? AND purpose = ? ORDER BY rowid DESC LIMIT 1', ctx.run.id, purpose)?.role ?? null) as WorkerRole | null;
+  const configured = role ? (ctx.snapshot.config.routing.output_budgets?.[role as keyof typeof DEFAULT_OUTPUT_BUDGETS] ?? DEFAULT_OUTPUT_BUDGETS[role as keyof typeof DEFAULT_OUTPUT_BUDGETS]) : undefined;
+  const previous = over.cap ?? configured;
+  if (previous === undefined || previous >= OUTPUT_CAP_CEILING) return null;
+  const next = Math.min(previous * 2, OUTPUT_CAP_CEILING);
+  const base = unitOf(purpose);
+  recordDecision(
+    ctx.db,
+    ctx.runDir,
+    {
+      id: outputCapDecisionId(ctx, purpose),
+      runId: ctx.run.id,
+      kind: OUTPUT_CAP_DECISION_KIND,
+      summary: `${role ?? 'worker'} ${base}: a response exceeded its ${previous} output token cap; retrying once with ${next}`,
+      data: { base, role, previous_cap: previous, new_cap: next, ceiling: OUTPUT_CAP_CEILING },
+    },
+    ctx.clock,
+    { actor: ctx.ownerId },
+  );
+  return next;
 }
 
 function workerTimeoutMs(ctx: RunContext, role: WorkerRole): number {
@@ -307,9 +382,9 @@ export function accountWorker(ctx: RunContext, w: WorkerRecord, result: TaskResu
     const cap = spendCapOf(ctx, w.id);
     // A lost session is charged its measured usage or at most the role ceiling: the restart that replaces it runs
     // under a cap of its own, and charging both at the full session cap would count one piece of work twice.
-    const ceilingUsd = cap === null ? null : result.status === 'lost' ? Math.min(cap.ceilingUsd, ROLE_COST_CEILING_USD[w.role]) : cap.ceilingUsd;
+    const ceilingUsd = cap === null ? null : result.status === 'lost' ? Math.min(cap.ceilingUsd, ctx.ledger.roleCostCeiling(w.role)) : cap.ceilingUsd;
     try {
-      ctx.ledger.consumeCost({ costUsd: usage.costUsd, costSource: usage.costSource }, w.role, { phase, ceilingUsd });
+      ctx.ledger.consumeCost({ costUsd: usage.costUsd, costSource: usage.costSource }, w.role, { phase, ceilingUsd, tokenEstimate: tokenEstimateFor(ctx, w, usage) });
     } catch (err) {
       // The charge is recorded (and so is the exhaustion); an authentication failure still blocks on credentials,
       // which is the truthful cause, rather than ending the run EXHAUSTED on spend nobody can show happened.
@@ -327,6 +402,25 @@ export function accountWorker(ctx: RunContext, w: WorkerRecord, result: TaskResu
       /* the registry is advisory here; a failure to update it never fails the step */
     }
   }
+}
+
+/**
+ * What a session's reported tokens would cost, for a provider that reported no cost: priced at the model's own
+ * registry rate, or at the dearest listed rate when the model has none (never below what any known model charges).
+ * Null when there is nothing to price (no tokens, or no model in the registry has a price).
+ */
+export function tokenEstimateFor(ctx: RunContext, w: Pick<WorkerRecord, 'provider' | 'model'>, usage: UsageReport): TokenEstimate | null {
+  if (usage.costUsd !== null) return null;
+  const model = usage.model ?? w.model;
+  const own = model ? (ctx.deps.registry.get(model)?.pricing ?? null) : null;
+  const pricing = own ?? dearestPricing(ctx.deps.registry.list().map((e) => e.pricing));
+  const est = estimateCost(
+    { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cacheReadTokens: usage.cacheReadTokens, cacheWriteTokens: usage.cacheWriteTokens },
+    pricing,
+    { inputIncludesCacheRead: inputIncludesCacheRead(w.provider.startsWith('codex') ? 'codex' : w.provider) },
+  );
+  if (est.costUsd === null) return null;
+  return { costUsd: est.costUsd, basis: own ? 'model pricing' : 'dearest listed pricing', model };
 }
 
 /**
@@ -369,7 +463,7 @@ export function committedSpendUsd(ctx: RunContext): number {
   let total = 0;
   for (const w of listActiveWorkers(ctx.db, ctx.run.id)) {
     const cap = spendCapOf(ctx, w.id);
-    total += cap ? cap.ceilingUsd : ROLE_COST_CEILING_USD[w.role];
+    total += cap ? cap.ceilingUsd : (ctx.ledger?.roleCostCeiling(w.role) ?? ROLE_COST_CEILING_USD[w.role]);
   }
   return total;
 }
@@ -380,7 +474,7 @@ export function committedSpendUsd(ctx: RunContext): number {
  */
 export function sessionSpendCap(ctx: RunContext, model: string | null, role: WorkerRole, phase: BudgetPhase = 'work'): { capUsd: number | null; worstCaseUsd: number } {
   const entry = model ? ctx.deps.registry.get(model) : null;
-  const worst = (entry ? worstCaseRequestUsd(entry) : null) ?? ROLE_COST_CEILING_USD[role] / 4;
+  const worst = (entry ? worstCaseRequestUsd(entry) : null) ?? (ctx.ledger?.roleCostCeiling(role) ?? ROLE_COST_CEILING_USD[role]) / 4;
   if (!ctx.ledger) return { capUsd: null, worstCaseUsd: worst };
   return { capUsd: ctx.ledger.workerSpendCapUsd(worst, phase, committedSpendUsd(ctx)), worstCaseUsd: worst };
 }

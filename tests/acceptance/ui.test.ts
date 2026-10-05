@@ -15,7 +15,7 @@ import { listDecisions } from '../../src/storage/decisions.ts';
 import { listWorkers } from '../../src/storage/workers.ts';
 import { listEvidenceReports } from '../../src/evidence/store.ts';
 import { listReviews } from '../../src/review/store.ts';
-import { chromiumAvailable, DEMO_DIR, drive, ensureBaselines, freePort, git, makeLab, READY, startLabRun, waitFor, writeScenario, type Lab } from './helpers/lab.ts';
+import { chromiumAvailable, DEMO_DIR, drive, ensureBaselines, freePort, git, labTemplateDir, makeLab, READY, startLabRun, waitFor, writeScenario, type Lab } from './helpers/lab.ts';
 import { implementer, scenario } from './helpers/scenarios.ts';
 import { assertRunInvariants, transitions } from './helpers/invariants.ts';
 import { scenarioFor } from '../../scripts/demo/mock/scenarios.ts';
@@ -130,8 +130,9 @@ describe.skipIf(!CHROMIUM)('acceptance: UI verification in a real browser', () =
       expect(['EXHAUSTED', 'BLOCKED']).toContain(done.state);
       expect(listReviews(db, run.id, { includeInvalidated: true })).toEqual([]);
       expect(lab18.github().state.prs).toEqual([]);
-      // The stored baselines in the repository are unchanged.
-      for (const s of shots) expect(readFileSync(join(lab18.repo, s)).equals(readFileSync(join(DEMO_DIR, s)))).toBe(existsSync(join(DEMO_DIR, s)));
+      // The stored baselines in the repository are unchanged. They are compared with the lab's template, not the
+      // committed example: on a platform the example has no baselines for, ensureBaselines recorded them there.
+      for (const s of shots) expect(readFileSync(join(lab18.repo, s)).equals(readFileSync(join(labTemplateDir(), s))), s).toBe(true);
       assertRunInvariants(lab18, run.id);
     } finally {
       rmSync(scratch, { recursive: true, force: true });

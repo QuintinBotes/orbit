@@ -66,7 +66,7 @@ describe.skipIf(!status.ok || !bash)('isolation.limits under the real srt', () =
   it('applies the limits inside the sandbox', async () => {
     const provider = new SandboxRuntimeIsolation({ orbitInstallDir, limits: LIMITS });
     const profile: SandboxProfile = { writablePaths: [t.root], denyReadPaths: [], allowedHosts: [], limits: { timeoutMs: 30_000, memoryMb: null, cpus: null, pids: null } };
-    const w = provider.wrap(['/bin/sh', '-c', READ_BACK], profile, { cwd: t.root, env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: t.root } });
+    const w = provider.wrap([bash!, '-c', READ_BACK], profile, { cwd: t.root, env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: t.root } });
     try {
       const r = await runWrapped(w, t.root);
       expect(r.code, r.stderr).toBe(0);

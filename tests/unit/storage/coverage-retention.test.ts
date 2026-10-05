@@ -110,9 +110,20 @@ describe('pruneExpiredRuns edge cases', () => {
   });
 
   it('rejects fractional, negative and non-numeric retention periods', async () => {
+    // Zero is a period: "everything that has finished" (P19). It is not in this list any more.
     for (const bad of [0.5, -1, Number.NaN, Number.POSITIVE_INFINITY, '30' as unknown as number]) {
-      await expect(pruneExpiredRuns(db, { repoRoot: repo, keepDays: bad, clock, orbitHome: home })).rejects.toThrow(/keepDays must be a positive integer/);
+      await expect(pruneExpiredRuns(db, { repoRoot: repo, keepDays: bad, clock, orbitHome: home })).rejects.toThrow(/keepDays must be a non-negative integer/);
     }
+  });
+
+  it('a retention period of zero prunes every finished run, including one that ended this instant, and still never a BLOCKED one (P19)', async () => {
+    const done = addRun('orb-just-ended', 'SUCCEEDED', 0);
+    const blocked = addRun('orb-blocked-now', 'BLOCKED', 0);
+    const r = await pruneExpiredRuns(db, { repoRoot: repo, keepDays: 0, clock, orbitHome: home });
+    expect(r.pruned.map((p) => p.runId)).toEqual(['orb-just-ended']);
+    expect(existsSync(done.runDir)).toBe(false);
+    expect(existsSync(done.worktree)).toBe(false);
+    expect(existsSync(blocked.runDir)).toBe(true);
   });
 });
 

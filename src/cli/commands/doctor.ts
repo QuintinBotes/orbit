@@ -22,6 +22,7 @@ import { CONTAINER_LIMITATIONS, RESOURCE_LIMIT_FIX, SRT_LIMITATIONS, credentialD
 import { CHROMIUM_MACH_RENDEZVOUS_LIMITATION, SRT_VERIFIED_VERSION, type SandboxRuntimeIsolation } from '../../isolation/sandbox-runtime.ts';
 import type { IsolationProvider, SandboxProfile } from '../../isolation/types.ts';
 import { safeBaseEnv } from '../../ui/env.ts';
+import { UI_SINGLE_SANDBOX, UI_SINGLE_SANDBOX_LIMITATION } from '../../ui/single-sandbox.ts';
 import { ModelRegistry, allowMatch } from '../../routing/registry.ts';
 import { selectReviewer } from '../../review/select.ts';
 import { LOGIN_COMMANDS, validateCredentials } from '../../recovery/index.ts';
@@ -34,8 +35,12 @@ import { orbitInstallDir, serviceLabel, serviceStatus, stateDbPath } from '../..
 import type { Args, OptionSpec } from '../args.ts';
 import { controllers, gitEnv, resolveRepo, type CliContext } from '../context.ts';
 import { EXIT } from '../exit.ts';
-import { ago, json, line, oneLine } from '../io.ts';
+import { ago, flat, json, line, oneLine } from '../io.ts';
 import { lingerState } from './service.ts';
+import { compileGlobs } from '../../policy/globs.ts';
+import { suggestAllowedPaths, trackedFiles } from '../layout.ts';
+import { orbitHint } from '../../core/invocation.ts';
+import { reviewFix } from '../review-fix.ts';
 
 export const DOCTOR_OPTIONS: OptionSpec = {
   probe: { type: 'boolean', description: 'also make tiny live requests (a few cents): one per provider that has a probe to detect expired or revoked credentials, and one per eligible Claude model' },
@@ -87,6 +92,16 @@ export function which(cmd: string, env: Env, cwd = process.cwd()): string | null
   return null;
 }
 
+/**
+ * What went wrong, for a check whose own code failed. A message Orbit wrote on purpose (an OrbitError, such as a policy the
+ * isolation provider refuses) is shown whole: it says what to change. Anything else is an arbitrary exception text and is
+ * cut, so one runaway message cannot swamp the report.
+ */
+function errText(err: unknown, max: number): string {
+  if (err instanceof OrbitError) return flat(err.message);
+  return oneLine(err instanceof Error ? err.message : String(err), max);
+}
+
 function pass(id: string, area: string, summary: string, details: string[] = []): DoctorCheck {
   return { id, area, status: 'pass', summary, details, missing: null, fix: null };
 }
@@ -130,7 +145,7 @@ function checkSqlite(): DoctorCheck {
     db.raw.exec('CREATE VIRTUAL TABLE doctor_fts USING fts5(x)');
     return pass('runtime.sqlite', 'runtime', 'node:sqlite works and includes FTS5 (the learning layer needs it)');
   } catch (err) {
-    return fail('runtime.sqlite', 'runtime', `node:sqlite is not usable: ${oneLine(err instanceof Error ? err.message : String(err), 160)}`, 'node:sqlite with FTS5', 'use Node >= 22.16');
+    return fail('runtime.sqlite', 'runtime', `node:sqlite is not usable: ${errText(err, 160)}`, 'node:sqlite with FTS5', 'use Node >= 22.16');
   } finally {
     db?.close();
   }
@@ -163,7 +178,7 @@ async function checkGit(p: Probe): Promise<DoctorCheck[]> {
   const problems: { missing: string; fix: string; severity: CheckStatus }[] = [];
   if (wt.exitCode !== 0) {
     problems.push({ missing: 'git worktree support', fix: 'upgrade git (worktrees need git >= 2.5)', severity: 'fail' });
-    details.push(`git worktree list failed: ${oneLine(wt.stderr, 160)}`);
+    details.push(`git worktree list failed: ${flat(wt.stderr)}`);
   }
   const base = await g(['rev-parse', '--verify', '--quiet', `refs/heads/${config.repository.base_branch}`]);
   if (base.exitCode !== 0) {
@@ -194,9 +209,9 @@ async function checkGit(p: Probe): Promise<DoctorCheck[]> {
 
 function checkConfig(p: Probe, error: unknown): DoctorCheck {
   if (p.configLoaded) return pass('config', 'config', `.orbit/config.yaml is valid (mode ${p.config.mode})`);
-  if (error instanceof OrbitError && error.code === 'NOT_FOUND') return fail('config', 'config', 'no .orbit/config.yaml', 'the repository policy file', 'run "orbit init", then define your checks');
+  if (error instanceof OrbitError && error.code === 'NOT_FOUND') return fail('config', 'config', 'no .orbit/config.yaml', 'the repository policy file', `run ${orbitHint('init')}, then define your checks`);
   const problems = error instanceof OrbitError && Array.isArray(error.details?.problems) ? (error.details.problems as string[]) : [error instanceof Error ? error.message : String(error)];
-  return fail('config', 'config', `configuration is invalid (${problems.length} problem${problems.length === 1 ? '' : 's'})`, 'a valid .orbit/config.yaml', 'fix the problems below; checks use defaults until then', problems.slice(0, 12).map((x) => oneLine(x, 200)));
+  return fail('config', 'config', `configuration is invalid (${problems.length} problem${problems.length === 1 ? '' : 's'})`, 'a valid .orbit/config.yaml', 'fix the problems below; checks use defaults until then', problems.slice(0, 12).map((x) => flat(x)));
 }
 
 function checkStorage(p: Probe): DoctorCheck {
@@ -232,7 +247,7 @@ function checkStorage(p: Probe): DoctorCheck {
     if (mode.toLowerCase() !== 'wal') return warn('storage', 'storage', `${path} is not in WAL mode (journal_mode=${mode})`, 'WAL journaling', 'it is set when Orbit opens the database; check the filesystem');
     return pass('storage', 'storage', `state database writable, WAL, schema version ${version}/${MIGRATIONS.length}`);
   } catch (err) {
-    return fail('storage', 'storage', `state database problem: ${oneLine(err instanceof Error ? err.message : String(err), 200)}`, 'a writable, current state.sqlite', 'check file permissions and that Orbit is not older than the database');
+    return fail('storage', 'storage', `state database problem: ${errText(err, 200)}`, 'a writable, current state.sqlite', 'check file permissions and that Orbit is not older than the database');
   } finally {
     db?.close();
   }
@@ -299,6 +314,37 @@ function checkConfiguredChecks(p: Probe): DoctorCheck {
   return status === 'pass' ? pass('checks', 'checks', summary, details) : { id: 'checks', area: 'checks', status, summary, details, missing: 'the executable or script a configured check runs', fix: 'install it, or correct the check in .orbit/config.yaml' };
 }
 
+const SRT_INSTALL = 'npm install --global @anthropic-ai/sandbox-runtime';
+
+/** The command that supplies the missing isolation, not a description of it; Orbit never degrades to less isolation. */
+function isolationFix(kind: IsolationProvider['kind'], detail: string): string {
+  if (kind === 'container') return 'start the Docker daemon (for example "open -a Docker" on macOS, or "sudo systemctl start docker" on Linux); Orbit refuses to degrade to less isolation';
+  if (/not found|install @anthropic-ai\/sandbox-runtime/i.test(detail)) return `${SRT_INSTALL}; Orbit refuses to degrade to less isolation`;
+  return `fix the cause named above, or reinstall with: ${SRT_INSTALL}; Orbit refuses to degrade to less isolation`;
+}
+
+/** P24: allowed_paths that match no tracked file authorize nothing, so a run would be unable to change anything. */
+async function checkScope(p: Probe): Promise<DoctorCheck[]> {
+  const { repo, config, ctx } = p;
+  if (!repo || !p.configLoaded) return [];
+  const files = await trackedFiles(ctx, repo);
+  if (files.length === 0) return [];
+  const globs = config.scope.allowed_paths;
+  const matches = compileGlobs(globs, { nocase: false });
+  const hit = files.filter((f) => matches(f)).length;
+  if (hit > 0) return [pass('scope', 'config', `scope.allowed_paths (${globs.join(', ')}) matches ${hit} of ${files.length} tracked file(s)`)];
+  const suggestion = suggestAllowedPaths(files);
+  return [
+    warn(
+      'scope',
+      'config',
+      `scope.allowed_paths (${globs.join(', ')}) matches no tracked file, so a worker could change nothing`,
+      'allowed_paths that match files in this repository',
+      suggestion.length > 0 ? `set scope.allowed_paths in .orbit/config.yaml, for example [${suggestion.map((x) => `"${x}"`).join(', ')}]` : 'set scope.allowed_paths in .orbit/config.yaml to globs that match the files a worker may change',
+    ),
+  ];
+}
+
 interface IsolationFacts {
   provider: IsolationProvider | null;
   available: boolean;
@@ -310,7 +356,7 @@ async function checkIsolation(p: Probe): Promise<{ check: DoctorCheck; facts: Is
   try {
     provider = getIsolation(config.isolation, { orbitInstallDir: orbitInstallDir(), mode: config.mode });
   } catch (err) {
-    return { check: fail('isolation', 'isolation', oneLine(err instanceof Error ? err.message : String(err), 240), 'an isolation provider permitted for unattended runs', 'set isolation.provider to sandbox-runtime or container'), facts: { provider: null, available: false } };
+    return { check: fail('isolation', 'isolation', errText(err, 240), 'an isolation provider permitted for unattended runs', 'set isolation.provider to sandbox-runtime or container'), facts: { provider: null, available: false } };
   }
   const st = await provider.available();
   const limitations =
@@ -326,14 +372,14 @@ async function checkIsolation(p: Probe): Promise<{ check: DoctorCheck; facts: Is
       return { check: fail('isolation', 'isolation', `container image ${config.isolation.container.image} is not present locally`, `the image ${config.isolation.container.image} (containers run with --pull never)`, `docker pull ${config.isolation.container.image}`, details), facts: { provider, available: false } };
     }
   }
-  if (!st.ok) return { check: fail('isolation', 'isolation', `${provider.kind} isolation is unavailable: ${oneLine(st.detail, 200)}`, `${provider.kind} isolation (${provider.kind === 'sandbox-runtime' ? 'the srt binary and Seatbelt or bubblewrap' : 'a running Docker daemon'})`, 'install and start it; Orbit refuses to degrade to less isolation', details), facts: { provider, available: false } };
+  if (!st.ok) return { check: fail('isolation', 'isolation', `${provider.kind} isolation is unavailable: ${flat(st.detail)}`, `${provider.kind} isolation (${provider.kind === 'sandbox-runtime' ? 'the srt binary and Seatbelt or bubblewrap' : 'a running Docker daemon'})`, isolationFix(provider.kind, st.detail), details), facts: { provider, available: false } };
   // The policy requires every configured limit to be enforced; a run would be refused at preflight, so say so here.
   const unenforced = resourceLimitRefusals(config.isolation, provider.kind);
   if (unenforced.length > 0) {
-    return { check: fail('isolation', 'isolation', oneLine(unenforced[0]!, 300), 'a provider that enforces every configured isolation limit (isolation.require_resource_limits is true)', RESOURCE_LIMIT_FIX, [...details, ...unenforced.map((u) => `refused: ${u}`)]), facts: { provider, available: false } };
+    return { check: fail('isolation', 'isolation', flat(unenforced[0]!), 'a provider that enforces every configured isolation limit (isolation.require_resource_limits is true)', RESOURCE_LIMIT_FIX, [...details, ...unenforced.map((u) => `refused: ${u}`)]), facts: { provider, available: false } };
   }
   if (provider.kind === 'none') return { check: warn('isolation', 'isolation', `no isolation: workers and checks run with the Orbit user's full permissions (isolation.allow_unisolated)`, 'an isolation provider', 'use sandbox-runtime or container', details), facts: { provider, available: true } };
-  return { check: pass('isolation', 'isolation', `${provider.kind}: ${oneLine(st.detail, 160)}`, details), facts: { provider, available: true } };
+  return { check: pass('isolation', 'isolation', `${provider.kind}: ${flat(st.detail)}`, details), facts: { provider, available: true } };
 }
 
 interface ProviderFacts {
@@ -350,7 +396,7 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
   try {
     adapters = createAdapters(config, { isolation: null, baseEnv: toolEnv(ctx.env), clock: ctx.clock });
   } catch (err) {
-    return { checks: [fail('providers', 'providers', oneLine(err instanceof Error ? err.message : String(err), 240), 'valid provider settings', 'fix providers in .orbit/config.yaml')], facts };
+    return { checks: [fail('providers', 'providers', errText(err, 240), 'valid provider settings', 'fix providers in .orbit/config.yaml')], facts };
   }
   facts.adapters = adapters;
   const ids = Object.keys(adapters);
@@ -376,7 +422,7 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
     const kind = providerKind(id);
     const exe = config.providers[id]!.command;
     if (!cap.available) {
-      checks.push(level(`${id}.cli`, 'providers', `${id} is not usable: ${oneLine(cap.detail, 200)}`, `the ${kind} CLI (${exe}) on PATH${kind === 'claude' ? ', >= 2.1.284 for Sonnet 5.5' : ''}`, kind === 'claude' ? 'install Claude Code (https://code.claude.com)' : 'install the Codex CLI', needed ? [] : ['not required for this configuration']));
+      checks.push(level(`${id}.cli`, 'providers', `${id} is not usable: ${flat(cap.detail)}`, `the ${kind} CLI (${exe}) on PATH${kind === 'claude' ? ', >= 2.1.284 for Sonnet 5.5' : ''}`, kind === 'claude' ? 'install Claude Code (https://code.claude.com)' : 'install the Codex CLI', needed ? [] : ['not required for this configuration']));
       continue;
     }
     const cliDetails = [`structured output: ${cap.structuredOutput ? 'yes' : 'no'}`, `read-only sandbox: ${cap.readOnlySandbox ? 'yes' : 'no'}`, `usage reporting: ${cap.usageReporting}`, `cost reporting: ${cap.costReporting ? 'yes' : 'no'}`];
@@ -387,12 +433,12 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
     const st = cred.status;
     if (cred.verdict === 'blocked' && st) {
       const alt = kind === 'claude' ? 'or set ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN from "claude setup-token")' : 'or set CODEX_API_KEY';
-      checks.push(level(`${id}.auth`, 'providers', `${id} credentials are ${st.state}: ${oneLine(st.detail, 200)}`, `a working ${kind} credential`, `${LOGIN_COMMANDS[kind] ?? 'log in'} ${alt}`));
+      checks.push(level(`${id}.auth`, 'providers', `${id} credentials are ${st.state}: ${flat(st.detail)}`, `a working ${kind} credential`, `${LOGIN_COMMANDS[kind] ?? 'log in'} ${alt}`));
     } else if (cred.verdict === 'error') {
       checks.push(level(`${id}.auth`, 'providers', `${id} credentials could not be checked: ${cred.error ?? 'unknown error'}`, `a ${kind} credential check`, null));
     } else if (st) {
       const subscription = st.method === 'claude.ai' || st.method === 'chatgpt';
-      const detail = [`method: ${st.method ?? 'unknown'}`, oneLine(st.detail, 300)];
+      const detail = [`method: ${st.method ?? 'unknown'}`, flat(st.detail)];
       if (subscription) detail.push('unattended service runs should use API-key authentication (docs/decisions/0003-authentication.md); a subscription login is fine for foreground runs');
       const summary = cred.verdict === 'valid' ? `${id} credential valid (${st.method ?? 'unknown method'})${cred.live ? ', confirmed by a live request' : ''}` : `${id} credential present (${st.method ?? 'unknown method'}); not verified${p.live ? '' : ' (use --probe for a live check)'}`;
       checks.push(pass(`${id}.auth`, 'providers', summary, detail));
@@ -410,10 +456,10 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
   // Independent review: judged exactly as a run would judge it.
   if (config.review.independent_provider_required || ids.some((i) => i !== 'claude')) {
     const sel = selectReviewer({ snapshot: { config }, capabilities: facts.capabilities, credentials: facts.credentials, implementer: { provider: 'claude', model: null }, registry });
-    if (sel.decision === 'SELECT') checks.push(pass('review', 'providers', `independent review: ${sel.provider}/${sel.model ?? 'default'} (${sel.independent ? 'independent' : 'same provider'})`, sel.alternatives.map((a) => `not used: ${a.provider}: ${oneLine(a.reason, 200)}`)));
+    if (sel.decision === 'SELECT') checks.push(pass('review', 'providers', `independent review: ${sel.provider}/${sel.model ?? 'default'} (${sel.independent ? 'independent' : 'same provider'})`, sel.alternatives.map((a) => `not used: ${a.provider}: ${flat(a.reason)}`)));
     else {
       const mandatory = config.review.independent_provider_required;
-      const c = (mandatory ? fail : warn)('review', 'providers', `independent review would block: ${oneLine(sel.reason, 300)}`, 'a usable, data-policy-eligible reviewer from another provider', 'log in to the reviewer provider and set providers.<id>.data_policy_eligible: true if sending sanitized code to it is permitted', sel.alternatives.map((a) => `${a.provider}: ${oneLine(a.reason, 200)}`));
+      const c = (mandatory ? fail : warn)('review', 'providers', `independent review would block: ${flat(sel.reason)}`, 'a usable, data-policy-eligible reviewer from another provider', reviewFix(sel.alternatives), sel.alternatives.map((a) => `${a.provider}: ${flat(a.reason)}`));
       checks.push(c);
     }
   }
@@ -432,9 +478,9 @@ function codexTierCheck(id: string, setting: CodexTierSetting, apiKeyVar: string
   try {
     decision = decideCodexTier({ setting, providerId: id, apiKeyVar, srt: { ok: srtInUse, why: 'sandbox-runtime isolation is not in use' } });
   } catch (err) {
-    return level(check, 'providers', oneLine(err instanceof Error ? err.message : String(err), 300), 'sandbox-runtime isolation, or providers.<id>.tier set to auto or codex-sandbox', 'set isolation.provider to sandbox-runtime, or set the tier to auto or codex-sandbox');
+    return level(check, 'providers', errText(err, 300), 'sandbox-runtime isolation, or providers.<id>.tier set to auto or codex-sandbox', 'set isolation.provider to sandbox-runtime, or set the tier to auto or codex-sandbox');
   }
-  const summary = `the Codex reviewer runs in the ${decision.tier} tier: ${oneLine(decision.reason, 300)}`;
+  const summary = `the Codex reviewer runs in the ${decision.tier} tier: ${flat(decision.reason)}`;
   const limitations = (decision.tier === 'os-sandbox' ? CODEX_OS_SANDBOX_LIMITATIONS : CODEX_LIMITATIONS).map((l) => `limitation: ${l}`);
   if (decision.tier === 'os-sandbox') {
     if (!decision.risky) return pass(check, 'providers', summary, limitations);
@@ -468,7 +514,7 @@ async function checkModels(p: Probe, registry: ModelRegistry, facts: ProviderFac
       let live = '';
       if (canProbe) {
         const st = await probe!({ model: e.eligibility.cliAlias ?? e.modelId, timeoutMs: 90_000 }).catch((err: unknown) => ({ state: 'unknown' as const, method: null, detail: err instanceof Error ? err.message : String(err) }));
-        live = st.state === 'valid' ? '; live probe answered' : `; live probe inconclusive (${st.state}: ${oneLine(st.detail, 120)})`;
+        live = st.state === 'valid' ? '; live probe answered' : `; live probe inconclusive (${st.state}: ${flat(st.detail)})`;
       }
       details.push(`${e.modelId}: eligible, ${state}${live}`);
     } else details.push(`${e.modelId}: excluded, ${reasons.join('; ')}`);
@@ -667,8 +713,8 @@ export interface BrowserIsolationInput {
  * against, and Playwright's real headless Chromium must start through the preload and render a page; the limitation
  * is stated. The launch is Orbit's own command against the browser binary: no JavaScript of the repository runs, and
  * the profile read-denies every credential path, Orbit's state and the repository. On Linux there is no Mach and no
- * rule, and whether the application and the tests in separate srt processes share loopback has not been verified, so
- * it says so.
+ * rule; every srt sandbox has its own loopback, so the journey checks run in one sandbox (ui/single-sandbox.ts) and
+ * exploration is refused, which it says.
  */
 export async function browserIsolationCheck(input: BrowserIsolationInput): Promise<DoctorCheck> {
   const id = 'ui.browser-isolation';
@@ -679,7 +725,7 @@ export async function browserIsolationCheck(input: BrowserIsolationInput): Promi
   const info = (provider as SandboxRuntimeIsolation).browserIsolation();
   const limitation = `limitation: ${CHROMIUM_MACH_RENDEZVOUS_LIMITATION}`;
   if (!info.rules) {
-    return warn(id, 'ui', 'unverified on Linux: no Mach rule is needed, but whether the application and the browser run in separate srt processes share loopback has not been verified', 'a run of the real-srt browser test on Linux (tests/integration/ui/browser-isolation-srt.test.ts)', 'use isolation.provider: container if the journeys cannot reach the application', [info.detail]);
+    return pass(id, 'ui', `Linux: no Mach rule is needed; every srt sandbox has its own loopback, so each journey check runs the application and the browser in one sandbox (${UI_SINGLE_SANDBOX}); UI exploration is not available under srt on Linux`, [info.detail, `limitation: ${UI_SINGLE_SANDBOX_LIMITATION}`]);
   }
   if (!info.verified) {
     return fail(id, 'ui', `${info.detail}; browser checks are refused`, `srt ${SRT_VERIFIED_VERSION} (@anthropic-ai/sandbox-runtime)`, `install @anthropic-ai/sandbox-runtime@${SRT_VERIFIED_VERSION}`, [info.detail, limitation]);
@@ -716,7 +762,7 @@ export async function browserIsolationCheck(input: BrowserIsolationInput): Promi
     }
     return pass(id, 'ui', `Chromium starts under srt ${info.srtVersion} with the two Mach rendezvous rules`, details);
   } catch (err) {
-    return fail(id, 'ui', `headless Chromium could not be launched under srt: ${oneLine(err instanceof Error ? err.message : String(err), 240)}`, 'a sandbox-runtime that can wrap the browser', 'see docs/troubleshooting.md', [info.detail, limitation]);
+    return fail(id, 'ui', `headless Chromium could not be launched under srt: ${errText(err, 240)}`, 'a sandbox-runtime that can wrap the browser', 'see docs/troubleshooting.md', [info.detail, limitation]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -734,14 +780,14 @@ async function checkDelivery(p: Probe): Promise<DoctorCheck> {
   if (!token) return fail('delivery', 'delivery', 'GH_TOKEN is not set for the controller', 'a fine-grained GH_TOKEN scoped to the target repository (delivery refuses a broad keyring login)', 'export GH_TOKEN in the environment the controller or service runs in');
   const env: Record<string, string | undefined> = { ...toolEnv(ctx.env), GH_TOKEN: token, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1' };
   const r = await execCapture([gh, 'auth', 'status', '--json', 'hosts'], { env, timeoutMs: 30_000 }).catch((err: unknown) => err as Error);
-  if (r instanceof Error) return fail('delivery', 'delivery', `gh could not run: ${oneLine(r.message, 160)}`, 'a working gh CLI', null);
-  if (r.exitCode !== 0) return fail('delivery', 'delivery', `gh auth status failed: ${oneLine(redact(`${r.stderr}${r.stdout}`), 200)}`, 'a valid GitHub credential', 'gh auth login, or export a valid GH_TOKEN');
+  if (r instanceof Error) return fail('delivery', 'delivery', `gh could not run: ${flat(r.message)}`, 'a working gh CLI', null);
+  if (r.exitCode !== 0) return fail('delivery', 'delivery', `gh auth status failed: ${flat(redact(`${r.stderr}${r.stdout}`))}`, 'a valid GitHub credential', 'gh auth login, or export a valid GH_TOKEN');
   try {
     const st = parseAuthStatus(r.stdout, 'github.com', true);
     if (!st.ok) return fail('delivery', 'delivery', `GitHub credential is not usable: ${st.error ?? 'unknown'}`, 'a valid GH_TOKEN', 'export a valid fine-grained GH_TOKEN');
     return pass('delivery', 'delivery', `gh authenticated as ${st.login ?? 'unknown'} via ${st.tokenSource ?? 'unknown'}`, [`scopes: ${st.scopes ?? 'not reported (fine-grained tokens carry repository permissions instead)'}`]);
   } catch (err) {
-    return warn('delivery', 'delivery', `gh auth status gave an unreadable answer: ${oneLine(err instanceof Error ? err.message : String(err), 160)}`, 'a gh version that supports "auth status --json hosts"', 'upgrade gh');
+    return warn('delivery', 'delivery', `gh auth status gave an unreadable answer: ${errText(err, 160)}`, 'a gh version that supports "auth status --json hosts"', 'upgrade gh');
   }
 }
 
@@ -762,7 +808,7 @@ async function checkService(p: Probe): Promise<DoctorCheck> {
   try {
     status = await serviceStatus(serviceLabel(repo), { platform: ctx.platform, homeDir: ctx.homeDir, uid: ctx.uid, ...(ctx.seams.serviceRunner ? { run: ctx.seams.serviceRunner } : {}) });
   } catch (err) {
-    return warn('service', 'service', `service status could not be read: ${oneLine(err instanceof Error ? err.message : String(err), 160)}`, 'launchctl or systemctl', null);
+    return warn('service', 'service', `service status could not be read: ${errText(err, 160)}`, 'launchctl or systemctl', null);
   }
   const details = [`label: ${status.label}`, `definition: ${status.definitionPath}`];
   const now = ctx.clock.now();
@@ -787,9 +833,9 @@ async function checkService(p: Probe): Promise<DoctorCheck> {
   details.push(`heartbeat: ${beat}`);
   const linger = await lingerState(ctx);
   if (linger === 'no') details.push(`lingering is off for ${ctx.user}: the service stops at logout (loginctl enable-linger ${ctx.user})`);
-  if (!status.installed) return warn('service', 'service', 'no service is installed, so runs only progress while a terminal is attached', 'an installed background service (survives terminal closure and restarts after failure)', 'orbit service install', details);
-  if (status.loaded !== true) return warn('service', 'service', `service installed but ${status.loaded === false ? 'not loaded' : `state unknown (${status.detail})`}`, 'a loaded service', 'orbit service install (reloads it)', details);
-  if (stale) return warn('service', 'service', 'service is loaded but its controller heartbeat is stale', 'a fresh controller heartbeat (it may be wedged or still starting)', `check ${join(ctx.orbitHome, 'logs')}, then orbit service install to restart it`, details);
+  if (!status.installed) return warn('service', 'service', 'no service is installed, so runs only progress while a terminal is attached', 'an installed background service (survives terminal closure and restarts after failure)', orbitHint('service install', undefined, { quote: false }), details);
+  if (status.loaded !== true) return warn('service', 'service', `service installed but ${status.loaded === false ? 'not loaded' : `state unknown (${status.detail})`}`, 'a loaded service', `${orbitHint('service install', undefined, { quote: false })} (reloads it)`, details);
+  if (stale) return warn('service', 'service', 'service is loaded but its controller heartbeat is stale', 'a fresh controller heartbeat (it may be wedged or still starting)', `check ${join(ctx.orbitHome, 'logs')}, then ${orbitHint('service install', undefined, { quote: false })} to restart it`, details);
   if (linger === 'no') return warn('service', 'service', 'service is loaded; lingering is off', 'systemd lingering', `loginctl enable-linger ${ctx.user}`, details);
   return pass('service', 'service', live ? 'service loaded and its controller heartbeat is fresh' : 'service loaded; the controller has not published a heartbeat yet', details);
 }
@@ -806,7 +852,7 @@ function checkGuard(p: Probe): DoctorCheck {
     if (g.terms.found) return pass('guard.terms', 'guard', `publish-guard terms file present (${g.terms.terms.length} term(s); never printed)`, [`path: ${g.terms.path}`, ...g.warnings.slice(0, 5)]);
     return (shares ? fail : warn)('guard.terms', 'guard', `no publish-guard terms file at ${path}`, 'the private-terms file (checked before anything leaves this repository)', shares ? 'create it, or set knowledge.share_globally: false' : 'create it to have private terms checked before publication; Orbit never reads or copies its contents into a repository');
   } catch (err) {
-    return fail('guard.terms', 'guard', `the publication guard cannot load its terms: ${oneLine(err instanceof Error ? err.message : String(err), 200)}`, 'a readable terms file', 'fix the path or permissions; Orbit refuses to publish without it once it is configured');
+    return fail('guard.terms', 'guard', `the publication guard cannot load its terms: ${errText(err, 200)}`, 'a readable terms file', 'fix the path or permissions; Orbit refuses to publish without it once it is configured');
   }
 }
 
@@ -838,7 +884,7 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; prob
       const r = await fn();
       checks.push(...(Array.isArray(r) ? r : [r]));
     } catch (err) {
-      checks.push(fail(id, area, `this check crashed: ${oneLine(err instanceof Error ? err.message : String(err), 200)}`, null, 'report this as an Orbit bug'));
+      checks.push(fail(id, area, `this check crashed: ${errText(err, 200)}`, null, 'report this as an Orbit bug'));
     }
   };
 
@@ -848,6 +894,7 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; prob
   await safely('config', 'config', () => checkConfig(p, configError));
   await safely('storage', 'storage', () => checkStorage(p));
   await safely('checks', 'checks', () => checkConfiguredChecks(p));
+  await safely('scope', 'config', () => checkScope(p));
 
   let isoFacts: IsolationFacts = { provider: null, available: false };
   await safely('isolation', 'isolation', async () => {
@@ -871,7 +918,7 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; prob
     });
     await safely('models', 'models', () => checkModels(p, registry, facts));
   } catch (err) {
-    checks.push(fail('models', 'models', `the model registry could not be read: ${oneLine(err instanceof Error ? err.message : String(err), 200)}`, 'a readable model registry', null));
+    checks.push(fail('models', 'models', `the model registry could not be read: ${errText(err, 200)}`, 'a readable model registry', null));
   } finally {
     regDb?.close();
   }

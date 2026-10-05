@@ -209,6 +209,8 @@ export interface RetryContext {
   recoveryAttemptsRemaining?: number | null;
   /** Longest provider retry-after to wait for; default DEFAULT_MAX_RETRY_AFTER_MS. */
   maxRetryAfterMs?: number;
+  /** The environment the workers get, for the authentication advice (an exported key overrides a login); default process.env. */
+  env?: Readonly<Record<string, string | undefined>>;
 }
 
 export type StopLimit = 'attempts' | 'infrastructure_retries' | 'wall' | 'cost' | 'regenerations' | 'permanent' | 'unavailable' | 'retry_after' | 'recovery_attempts';
@@ -234,7 +236,7 @@ export function decideRetry(ctx: RetryContext): RetryDecision {
     case 'authentication':
       return {
         action: 'block',
-        blocker: authBlocker({ provider: ctx.provider ?? 'the model provider', state: 'auth_failed', ...(ctx.runId ? { runId: ctx.runId } : {}) }),
+        blocker: authBlocker({ provider: ctx.provider ?? 'the model provider', state: 'auth_failed', ...(ctx.runId ? { runId: ctx.runId } : {}), ...(ctx.env ? { env: ctx.env } : {}) }),
         reason: `authentication failure (${ctx.classification.reason}); not retried`,
       };
     case 'crash':
@@ -306,6 +308,8 @@ export interface RetryOptions {
   /** Classify a thrown value; default classifyFailure({ error }). */
   classify?: (err: unknown) => Classification;
   onRetry?: (info: { attempt: number; delayMs: number; error: unknown }) => void;
+  /** The environment the workers get (see RetryContext.env). */
+  env?: Readonly<Record<string, string | undefined>>;
 }
 
 /**
@@ -327,6 +331,7 @@ export async function retryWithBackoff<T>(op: (attempt: number) => Promise<T>, o
         attempt,
         ...(opts.policy ? { policy: opts.policy } : {}),
         ...(opts.random ? { random: opts.random } : {}),
+        ...(opts.env ? { env: opts.env } : {}),
         infrastructureRetriesRemaining: opts.budget.infrastructureRetriesRemaining(),
         wallRemainingMs: opts.budget.wallRemainingMs?.() ?? null,
         costRemainingUsd: opts.budget.costRemainingUsd?.() ?? null,

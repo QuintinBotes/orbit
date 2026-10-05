@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { OrbitError } from '../../../src/core/errors.ts';
@@ -112,6 +112,29 @@ describe('blockOnAuth', () => {
     expect(await blockOnAuth(lab.ctx(), 'claude', 'expired', null)).toEqual({ progressed: true, done: true });
   });
 
+  it("advises from the controller's host environment, not the test process's: an exported key there means unset it, none means log in", async () => {
+    // The controller's process.env is not what the workers get: the deps' host environment is (start.ts hostEnv).
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', '');
+    try {
+      lab = makeUnitLab({ path: ['PREFLIGHT'], deps: { hostEnv: { PATH: process.env.PATH, ANTHROPIC_API_KEY: 'sk-ant-acme-not-valid' } } });
+      await blockOnAuth(lab.ctx(), 'claude', 'auth_failed', null);
+      const reason = getRun(lab.db, lab.runId).outcomeReason ?? '';
+      expect(reason).toContain('ANTHROPIC_API_KEY is set');
+      expect(reason).not.toContain('Run `claude auth login`');
+      lab.cleanup();
+
+      vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-acme-in-the-test-process');
+      lab = makeUnitLab({ path: ['PREFLIGHT'], deps: { hostEnv: { PATH: process.env.PATH } } });
+      await blockOnAuth(lab.ctx(), 'claude', 'auth_failed', null);
+      const second = getRun(lab.db, lab.runId).outcomeReason ?? '';
+      expect(second).toContain('Run `claude auth login`');
+      expect(second).not.toContain('ANTHROPIC_API_KEY is set');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('a pending cancellation wins over the block', async () => {
     lab = makeUnitLab({ path: ['PREFLIGHT'] });
     requestCancel(lab.db, lab.runId, 'user', lab.clock);
@@ -213,7 +236,13 @@ describe('outcomeForError', () => {
   it.each(['POLICY_TAMPERED', 'POLICY_DENIED', 'SCOPE_VIOLATION', 'ISOLATION_UNAVAILABLE', 'CONFIG_INVALID', 'CONTRACT_INVALID', 'PROVIDER_UNAVAILABLE'] as const)('%s blocks the run for a person', async (code) => {
     lab = makeUnitLab({ path: ['PREFLIGHT'] });
     await outcomeForError(lab.ctx(), new OrbitError(code, 'cannot proceed'));
-    expect(getRun(lab.db, lab.runId)).toMatchObject({ state: 'BLOCKED', outcomeReason: `${code}: cannot proceed` });
+    const run = getRun(lab.db, lab.runId);
+    expect(run.state).toBe('BLOCKED');
+    // A tampered snapshot or invalid configuration is in the run's frozen policy: resuming cannot clear it, so the reason also names a new run (P12).
+    if (code === 'POLICY_TAMPERED' || code === 'CONFIG_INVALID') {
+      expect(run.outcomeReason).toMatch(new RegExp(`^${code}: cannot proceed This comes from the run's frozen policy`));
+      expect(run.outcomeReason).toMatch(/start a new run/);
+    } else expect(run.outcomeReason).toBe(`${code}: cannot proceed`);
     lab.cleanup();
   });
 });

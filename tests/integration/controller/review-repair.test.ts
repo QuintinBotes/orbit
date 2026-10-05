@@ -126,4 +126,47 @@ describe.skipIf(!canStripTypes)('controller: the review repair loop', () => {
     const entered = l.db().get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'state.transition' AND to_state = 'INQUISITION'", run.id)!;
     expect((JSON.parse(entered.data_json) as { data: { trigger: { kind: string; summary: string } } }).data.trigger).toMatchObject({ kind: 'hidden_decision', summary: expect.stringMatching(/financial/) });
   }, 120_000);
+
+  it('a medium claim the Inquisition accepts (it adds a criterion for it) goes to a repair attempt that names the finding, not to BLOCKED', async () => {
+    const l = lab();
+    const medium = { ...FINDING, severity: 'medium' };
+    // A BLOCK verdict with a medium finding: below the blocking severities and without REPAIR_REQUIRED, so the claim goes to the Inquisition.
+    const blockReview = { structured: { verdict: 'BLOCK', candidate_revision: '$CANDIDATE', findings: [medium] } };
+    const accept = {
+      structured: {
+        mode: 'reconcile',
+        trigger: 'reviewer_disagreement',
+        facts: [],
+        assumptions: [],
+        unknowns: [],
+        ledger: [],
+        interpretations: [],
+        chosen_experiment: null,
+        autonomous_decisions: [],
+        questions: [],
+        amendments: [
+          {
+            change: { op: 'add_criterion', statement: 'mul throws a TypeError when an argument is not a number.', proof: ['tests/mul-input.test.mjs asserts mul("a", 2) throws a TypeError'], mandatory: true, ui: false, check_ids: ['unit'] },
+            evidence: 'COR-1: mul("a", 2) evaluates "a" * 2, which is NaN; nothing checks the argument types.',
+            reason: 'the review claim COR-1 holds on inspection; the contract should require the behaviour',
+          },
+        ],
+      },
+    };
+    writeScenario(l, baseScenario({ implementer: [implementMul('*'), REPAIR], reviewer: [blockReview, APPROVE], inquisitor: [accept] }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const path = transitions(l, run.id);
+    const firstReview = path.indexOf('REVIEWING');
+    expect(path.slice(firstReview, firstReview + 4), path.join(' ')).toEqual(['REVIEWING', 'INQUISITION', 'REVIEWING', 'REPAIRING']);
+    expect(path).not.toContain('BLOCKED');
+    const stored = JSON.parse(readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'briefs', 'attempt-2.json'), 'utf8')) as { source: string; brief: { evidence: string[]; hypotheses: { statement: string }[] } };
+    expect(stored.source).toBe('review');
+    expect(stored.brief.evidence.join('\n')).toContain('COR-1');
+    expect(stored.brief.hypotheses[0]!.statement).toBe(FINDING.claim);
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(listFindings(l.db(), run.id)[0]).toMatchObject({ externalId: 'COR-1', status: 'resolved' });
+  }, 120_000);
 });

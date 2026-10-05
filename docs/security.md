@@ -45,6 +45,29 @@ mutating commands are refused inside a worker process.
 
 The hooks assist. The controller's diff inspection is the gate.
 
+## Plugin install and skills
+
+- **What the install brings.** The plugin payload is the `plugin/` directory:
+  the bundle, hooks, skills, agents and a `package.json` with one dependency,
+  the sandbox runtime `srt`, pinned to 0.0.78 with a lockfile. Claude Code
+  installs it at the locked version with install scripts disabled. A check
+  (`npm run validate:plugin`) fails the build when the payload holds anything
+  else, in particular a development dependency. The `node-forge` advisory
+  `npm audit` reports arrives through `srt` itself and is tracked upstream.
+- **Skills keep your text away from the shell.** A goal or other free text
+  reaches the CLI on stdin through a here-document with a quoted delimiter
+  (`--goal -`, `repair -`), never as shell words, and run ids are checked against
+  `^orb-[0-9a-z-]+$` before they are used. The skill arguments are data for the
+  model to read, not command text.
+- **The hooks.** The SessionStart hook runs `orbit questions --pending --quiet`
+  and prints only open questions of the repository's unfinished runs; it reports
+  its own failures on stderr and never blocks a session. The PreToolUse guard
+  hook is described under "What is not enforced" (it fails open on timeout).
+- **Run admission.** `orbit run` refuses, before creating a run, a repository
+  whose git configuration carries credentials a worker could read (for example a
+  token in a remote URL), and a dirty working tree unless
+  `repository.allow_dirty_start` is true.
+
 ## Credential handling
 
 - Orbit has no login flow and never reads, stores, copies or forwards provider

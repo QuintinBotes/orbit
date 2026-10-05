@@ -8,6 +8,7 @@ import { MODEL_OUTPUT_SCHEMAS } from '../../../src/contract/model-outputs.ts';
 import { ManualClock } from '../../../src/core/clock.ts';
 import { parseConfig } from '../../../src/policy/config.ts';
 import { snapshotPolicy } from '../../../src/policy/snapshot.ts';
+import { readablePathsOf } from '../../../src/isolation/util.ts';
 
 function argv(over: Partial<ClaudeArgvInput> = {}): string[] {
   return buildClaudeArgv({
@@ -120,9 +121,12 @@ describe('model facts', () => {
     expect(compareVersions('2.1.259', '2.1.259')).toBe(0);
   });
 
-  it('drops the worktree from a read-only role\'s writable set', () => {
-    const p = { writablePaths: ['/wt', '/wt/sub', '/w', '/tmp/o'], denyReadPaths: [], allowedHosts: [], limits: { timeoutMs: 1, memoryMb: null, cpus: null, pids: null } };
-    expect(readOnlyProfile(p, '/wt', true).writablePaths).toEqual(['/w', '/tmp/o']);
+  it('drops the worktree from a read-only role\'s writable set and keeps it readable (P13)', () => {
+    const p = { writablePaths: ['/wt', '/wt/sub', '/w', '/tmp/o'], denyReadPaths: ['/home/u/.orbit'], allowedHosts: [], limits: { timeoutMs: 1, memoryMb: null, cpus: null, pids: null }, readablePaths: ['/repo/.git'] };
+    const ro = readOnlyProfile(p, '/wt', true);
+    expect(ro.writablePaths).toEqual(['/w', '/tmp/o']);
+    // The worktree usually sits in a denied region (~/.orbit); only the writable set re-opened it for reading.
+    expect(readablePathsOf(ro)).toEqual(['/repo/.git', '/wt']);
     expect(readOnlyProfile(p, '/wt', false)).toBe(p);
   });
 });
@@ -186,6 +190,24 @@ describe('renderClaudeSettings', () => {
     const os = renderClaudeSettings(input({ tier: 'os-sandbox' }));
     expect(os.sandbox).toEqual({ enabled: false });
     expect(os.permissions.allow).toContain('Bash');
+  });
+
+  it('re-opens for reading the worktree, temp directory and read-only paths that sit inside a denied region, and nothing else (P14)', () => {
+    // A real run: the worktree under the denied ~/.orbit, the shared git directory inside the denied checkout.
+    const s = renderClaudeSettings(
+      input({
+        worktree: '/home/u/.orbit/repos/acme/wt',
+        tmpDir: '/tmp/orbit-1/abc',
+        denyReadPaths: ['/home/u/.ssh', '/home/u/.orbit', '/home/u/src/acme', '/home/u/.orbit/repos/acme/wt/.env', '/tmp/orbit-1'],
+        readablePaths: ['/home/u/src/acme/.git', '/opt/orbit'],
+      }),
+    );
+    expect(s.sandbox).toMatchObject({ filesystem: { allowRead: ['/home/u/.orbit/repos/acme/wt', '/tmp/orbit-1/abc', '/home/u/src/acme/.git'] } });
+    // The nested credential deny stays in denyRead, where it is the more specific rule.
+    expect((s.sandbox as { filesystem: { denyRead: string[] } }).filesystem.denyRead).toContain('/home/u/.orbit/repos/acme/wt/.env');
+    expect(claudeSettingsProblems(s)).toEqual([]);
+    // Nothing denied around the worktree: nothing to re-open.
+    expect(renderClaudeSettings(input()).sandbox).toMatchObject({ filesystem: { allowRead: [] } });
   });
 
   it('validates before spawn: the rendered file passes, and anything Claude Code would ignore or that disables the guard fails', () => {

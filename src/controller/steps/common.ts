@@ -13,9 +13,12 @@ import { authBlocker, blockRunOnCredentials, type BlockedCredentialState } from 
 import type { RunContext } from '../context.ts';
 import { isTerminal, type RunState } from '../states.ts';
 import { markProgress, transition, type TransitionRequest } from '../run-store.ts';
-import { stopActiveWorkers } from '../workers.ts';
+import { raiseOutputCap, stopActiveWorkers } from '../workers.ts';
+import { closeMootBaselineQuestions } from './baseline-questions.ts';
+import { releaseRunWorktrees } from '../worktree-cleanup.ts';
 import { finalizeRun } from '../report.ts';
 import { blockingQuestions } from '../gates.ts';
+import { applyAmendmentAnswers } from '../../inquisition/amendment-answers.ts';
 
 export interface StepResult {
   /** The run changed state or recorded progress. */
@@ -64,20 +67,57 @@ export function decide(ctx: RunContext, input: { id?: string; kind: string; summ
  * outcome. BLOCKED keeps nothing running either: it waits for a person.
  */
 export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown> } = {}): Promise<StepResult> {
+  if (to === 'BLOCKED') {
+    // A block whose cause lives in the frozen policy cannot be cleared by editing the config and resuming: say so.
+    const setting = frozenPolicyCause(reason, typeof opts.data?.code === 'string' ? opts.data.code : undefined);
+    if (setting !== null) {
+      reason = `${reason} ${frozenPolicyAdvice(ctx.run.id, setting)}`;
+      opts = { ...opts, outcome: { ...(opts.outcome ?? {}), frozen_policy: { setting } } };
+    }
+  }
   const unstoppable = await stopActiveWorkers(ctx, `run ${to.toLowerCase()}: ${reason}`.slice(0, 300));
   if (unstoppable.length > 0) note(ctx, 'workers.stop-failed', { workers: unstoppable });
   const outcome = { state: to, reason, ...(opts.outcome ?? {}), ...(unstoppable.length > 0 ? { workers_not_stopped: unstoppable } : {}) };
   ctx.refresh();
   // A durable cancellation outranks every other outcome: only CANCELLED is reachable once it is recorded.
   const target = ctx.run.cancelRequested && to !== 'CANCELLED' ? 'CANCELLED' : to;
+  if (target === 'SUCCEEDED') closeMootBaselineQuestions(ctx);
   const why = target === to ? reason : `cancelled by request (the step had decided ${to}: ${reason})`;
   const result = move(ctx, target, why, { patch: { outcomeReason: why.slice(0, 2000), outcomeJson: JSON.stringify(target === to ? outcome : { ...outcome, state: target, decided: to }) }, data: opts.data });
   await finalizeRun(ctx);
+  // The result lives in the branch and the candidate refs; a finished run does not keep a checkout (BLOCKED and EXHAUSTED do).
+  if (target === 'SUCCEEDED' || target === 'CANCELLED') await releaseRunWorktrees(ctx);
   return result;
 }
 
+/**
+ * The policy setting a block comes from, when the cause is fixed in the run's frozen policy snapshot rather than in
+ * the environment: the run keeps the policy it started with, so editing .orbit/config.yaml cannot clear it and
+ * `orbit resume` would only block again. Null for blocks a person can clear outside the policy (a login, CI).
+ */
+export function frozenPolicyCause(reason: string, code?: string): string | null {
+  if (code === 'POLICY_TAMPERED' || /^POLICY_TAMPERED\b/.test(reason)) return 'the policy snapshot (it no longer matches its recorded hash)';
+  if (code === 'CONFIG_INVALID' || /^CONFIG_INVALID\b/.test(reason)) return 'the configuration the run started with';
+  const eligible = /providers\.([\w-]+)\.data_policy_eligible is not true/.exec(reason);
+  if (eligible) return `providers.${eligible[1]}.data_policy_eligible`;
+  const notOffered = /providers\.([\w-]+)\.model "[^"]*" is not offered/.exec(reason);
+  if (notOffered) return `providers.${notOffered[1]}.model`;
+  const noModel = /"([\w-]+)" has no model qualified for review|no model of "([\w-]+)" is qualified for review/.exec(reason);
+  if (noModel) return `providers.${noModel[1] ?? noModel[2]}.model (or a refreshed model catalog: orbit models refresh)`;
+  if (/no proposed path lies inside the policy scope|the policy allows no paths/.test(reason)) return 'scope.allowed_paths';
+  if (/execution needs isolation; the policy selects none/.test(reason)) return 'isolation.provider';
+  if (/differs from the frozen policy mode/.test(reason)) return 'mode';
+  return null;
+}
+
+/** What to do about a frozen-policy block: the config change applies only to a new run. */
+export function frozenPolicyAdvice(runId: string, setting: string): string {
+  return `This comes from the run's frozen policy (${setting}): a run keeps the policy it started with, so editing .orbit/config.yaml does not change it and resuming would block again. Fix the config, then cancel this run (orbit cancel ${runId}) and start a new run with orbit run. If what you fixed is outside the policy (for example orbit models refresh), resume with orbit resume ${runId} --force.`;
+}
+
 export async function blockOnAuth(ctx: RunContext, provider: string, state: BlockedCredentialState, detail: string | null): Promise<StepResult> {
-  const blocker = authBlocker({ provider, state, detail, runId: ctx.run.id });
+  // The workers get the controller's host environment, so that is where an exported key would override a login.
+  const blocker = authBlocker({ provider, state, detail, runId: ctx.run.id, env: ctx.deps.hostEnv ?? process.env });
   await stopActiveWorkers(ctx, blocker.message.slice(0, 300));
   const out = blockRunOnCredentials(ctx.db, ctx.clock, ctx.ownerId, ctx.run.id, blocker);
   ctx.refresh();
@@ -97,6 +137,7 @@ export async function safePoint(ctx: RunContext): Promise<StepResult | null> {
   if (isTerminal(run.state)) return { progressed: false, done: true };
   if (run.cancelRequested) return finishRun(ctx, 'CANCELLED', 'cancelled by request');
   if (run.paused) return { progressed: false, done: true, waiting: 'paused' };
+  applyAnsweredAmendments(ctx);
   if (ctx.ledger) {
     ctx.ledger.syncWall();
     for (const counter of ['wall_ms', 'cost_usd'] as const) {
@@ -107,6 +148,19 @@ export async function safePoint(ctx: RunContext): Promise<StepResult | null> {
     }
   }
   return null;
+}
+
+/**
+ * A person's answer to a contract amendment's approval question takes effect before any step reasons about the
+ * contract: `orbit decide` applies it, and this applies one whose application was interrupted or failed there.
+ */
+function applyAnsweredAmendments(ctx: RunContext): void {
+  if (!ctx.policyVerified || !ctx.contract) return;
+  const waiting = ctx.db.get("SELECT 1 AS x FROM amendments a JOIN questions q ON q.id = 'q-amd-' || a.id WHERE a.run_id = ? AND a.status = 'pending-approval' AND q.status = 'answered' LIMIT 1", ctx.run.id);
+  if (!waiting) return;
+  const applied = applyAmendmentAnswers({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { snapshot: ctx.snapshot });
+  if (applied.contract) ctx.contract = applied.contract;
+  if (applied.changed) ctx.refresh();
 }
 
 function round(n: number): string {
@@ -281,6 +335,9 @@ export async function handleWorkerFailure(
     if (stop) return { retry: false, result: stop };
     return { retry: true };
   }
+  // A response that exceeded the output cap fails the same way every time at the same cap: retry the unit once
+  // with the cap doubled (a recorded decision), without spending a regeneration on it.
+  if (failed.status === 'failed' && opts.purpose && raiseOutputCap(ctx, opts.purpose, failed.error) !== null) return { retry: true };
   if (opts.attemptsUsed < opts.maxAttempts) {
     note(ctx, 'worker.regenerate', { what: opts.what, status: failed.status, attempts: opts.attemptsUsed, error: failed.error?.slice(0, 300) ?? null });
     return { retry: true };

@@ -264,3 +264,21 @@ describe('orbit decide and questions', () => {
     expect(r.code).toBe(5);
   });
 });
+
+describe('orbit resume on a block from the frozen policy (P12)', () => {
+  it('refuses with exit 5 and names a new run as the way forward; --force still resumes', async () => {
+    const l = lab();
+    const run = l.newRun();
+    l.moveTo(run.id, ['PREFLIGHT', 'BLOCKED']);
+    l.db().run('UPDATE runs SET outcome_json = ? WHERE id = ?', JSON.stringify({ state: 'BLOCKED', reason: 'x', frozen_policy: { setting: 'providers.codex.model' } }), run.id);
+    const refused = await l.cli(['resume', run.id]);
+    expect(refused.code).toBe(5);
+    expect(refused.err).toMatch(/frozen policy/);
+    expect(refused.err).toMatch(/providers\.codex\.model/);
+    expect(refused.err).toMatch(/new run/);
+    expect(getRun(l.db(), run.id).state).toBe('BLOCKED');
+    const forced = await l.cli(['resume', run.id, '--force']);
+    expect(forced.code, forced.err).toBe(0);
+    expect(getRun(l.db(), run.id).state).toBe('PREFLIGHT');
+  });
+});

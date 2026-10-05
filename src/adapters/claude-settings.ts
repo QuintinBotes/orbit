@@ -22,6 +22,7 @@ import { existsSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
 import { compileSchema, schemaErrors } from '../core/schema.ts';
+import { isWithin } from '../isolation/util.ts';
 import { HOME_CREDENTIAL_PATHS, credentialGlobsOf } from '../policy/builtin.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 
@@ -47,7 +48,7 @@ export interface ClaudeSandboxSettings {
   failIfUnavailable: true;
   autoAllowBashIfSandboxed: boolean;
   allowUnsandboxedCommands: false;
-  filesystem: { allowWrite: string[]; denyRead: string[] };
+  filesystem: { allowWrite: string[]; denyRead: string[]; allowRead: string[] };
   network: { allowedDomains: string[]; strictAllowlist: true };
 }
 
@@ -63,6 +64,13 @@ export interface ClaudeSettingsInput {
   hookCommand: string[];
   /** Paths the Bash sandbox must not read (the worker's isolation profile deny list); claude-sandbox tier only. */
   denyReadPaths: string[];
+  /**
+   * Paths the worker may read though they sit inside a denied region (the
+   * profile's read-only paths, such as the shared git directory under a
+   * denied projects directory); claude-sandbox tier only. The worktree and
+   * temp directory are added here whatever the caller passes.
+   */
+  readablePaths?: string[];
   /** The worker's private temp directory; Bash may write it. */
   tmpDir: string;
 }
@@ -119,12 +127,31 @@ export function renderClaudeSettings(input: ClaudeSettingsInput): ClaudeSettings
             filesystem: {
               allowWrite: uniq(input.readOnly ? [input.tmpDir] : [worktree, input.tmpDir]),
               denyRead: uniq(input.denyReadPaths),
+              allowRead: reopenedReads(input),
             },
             network: { allowedDomains: uniq(cfg.network.allowed_hosts), strictAllowlist: true },
           }
         : { enabled: false },
   };
   return settings;
+}
+
+/**
+ * What the Bash sandbox must read back inside a denied region. Worktrees
+ * live under ~/.orbit, which every worker profile denies (it holds every
+ * run), and the shared git directory sits in the user's checkout, which is
+ * denied too. Without these entries a sandboxed command cannot even resolve
+ * its working directory: node and npm die with "EPERM: operation not
+ * permitted, uv_cwd" and git with "Unable to read current working
+ * directory". Only paths inside a deny are listed (the same rule as the srt
+ * settings in isolation/sandbox-runtime.ts); a deny nested inside one of
+ * them, such as a credential file in the worktree, stays the more specific
+ * rule and stays denied.
+ */
+function reopenedReads(input: ClaudeSettingsInput): string[] {
+  const denied = input.denyReadPaths;
+  const wanted = uniq([input.worktree, input.tmpDir, ...(input.readablePaths ?? [])]);
+  return wanted.filter((p) => denied.some((d) => isWithin(p, d)));
 }
 
 /** Built-in credential globs and the policy's protected credential globs (their contents are secrets, so reading is denied too, not only editing). */
@@ -199,8 +226,8 @@ export const CLAUDE_SETTINGS_SCHEMA = {
             filesystem: {
               type: 'object',
               additionalProperties: false,
-              required: ['allowWrite', 'denyRead'],
-              properties: { allowWrite: { type: 'array', minItems: 1, items: ABS }, denyRead: { type: 'array', items: ABS } },
+              required: ['allowWrite', 'denyRead', 'allowRead'],
+              properties: { allowWrite: { type: 'array', minItems: 1, items: ABS }, denyRead: { type: 'array', items: ABS }, allowRead: { type: 'array', items: ABS } },
             },
             network: {
               type: 'object',

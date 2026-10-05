@@ -19,7 +19,7 @@ function prepare(l: Lab): { entry: string; calls: string[][]; runner: CommandRun
   mkdirSync(join(l.repo, '.orbit'), { recursive: true });
   writeFileSync(join(l.repo, '.orbit', 'config.yaml'), CONFIG);
   const entry = join(l.base, 'orbit.mjs');
-  writeFileSync(entry, '// stand-in for dist/orbit.mjs\n');
+  writeFileSync(entry, '// stand-in for plugin/dist/orbit.mjs\n');
   const calls: string[][] = [];
   // Never the real service manager: a stand-in that records what would have been run.
   const runner: CommandRunner = async (argv) => {
@@ -41,7 +41,10 @@ describe('orbit service install, status and uninstall', () => {
     expect(j.label).toBe(serviceLabel(l.repo));
     expect(j).toMatchObject({ installed: true, loaded: true });
     const plist = readFileSync(j.definitionPath, 'utf8');
-    expect(plist).toContain(entry);
+    // The plist starts the stable launcher; the launcher, not the plist, names the bundle (service-launcher.test.ts).
+    expect(plist).toContain(`<string>${join(l.orbitHome, 'bin', 'orbit')}</string>`);
+    expect(plist).not.toContain(entry);
+    expect(readFileSync(join(l.orbitHome, 'bin', 'orbit'), 'utf8')).toContain(entry);
     expect(plist).toContain('<string>service</string>');
     expect(plist).toContain(l.repo);
     expect(plist).not.toContain(secret);
@@ -67,7 +70,8 @@ describe('orbit service install, status and uninstall', () => {
     const unit = readFileSync((JSON.parse(r.out) as { definitionPath: string }).definitionPath, 'utf8');
     expect(unit).toContain('KillMode=process');
     expect(unit).toContain('Restart=on-failure');
-    expect(unit).toContain(`"${entry}"`);
+    expect(unit).toContain(`"${join(l.orbitHome, 'bin', 'orbit')}"`);
+    expect(unit).not.toContain(entry);
   });
 
   it('reports a service that is not running with exit code 1, like systemctl is-active', async () => {
@@ -96,7 +100,7 @@ describe('orbit service install, status and uninstall', () => {
     writeFileSync(ts, '');
     const r = await l.cli(['service', 'install', '--entry', ts], { platform: 'darwin', uid: 501, seams: { serviceRunner: runner } });
     expect(r.code).toBe(0);
-    expect(r.err).toMatch(/not a built dist\/orbit\.mjs/);
+    expect(r.err).toMatch(/not a built plugin\/dist\/orbit\.mjs/);
   });
 
   it('says the service is unsupported where there is no service manager', async () => {
@@ -105,5 +109,44 @@ describe('orbit service install, status and uninstall', () => {
     const r = await l.cli(['service', 'install', '--entry', entry], { platform: 'win32', seams: { serviceRunner: runner } });
     expect(r.code).toBe(4);
     expect(r.err).toMatch(/orbit run --foreground/);
+  });
+});
+
+
+describe('service status wording and stale controllers (P23)', () => {
+  it('a removed definition whose job launchd still holds is not "not installed, loaded" with exit 0: it says the job is still stopping and exits 1', async () => {
+    const l = lab();
+    prepare(l);
+    // launchd still lists the job although the plist is gone.
+    const runner: CommandRunner = async (argv) => ({ exitCode: argv.includes('print') ? 0 : 0, stdout: '', stderr: '' });
+    const r = await l.cli(['service', 'status'], { platform: 'darwin', uid: 501, seams: { serviceRunner: runner } });
+    expect(r.out).not.toMatch(/not installed, loaded/);
+    expect(r.out).toMatch(/not installed.*launchd still holds the job/);
+    expect(r.code).toBe(1);
+  });
+
+  it('prunes foreground controllers whose process is gone instead of listing them as stale for ever', async () => {
+    const l = lab();
+    const { runner } = prepare(l);
+    const { registerController } = await import('../../../src/storage/controllers.ts');
+    const { systemClock } = await import('../../../src/core/clock.ts');
+    const { hostname } = await import('node:os');
+    registerController(l.db(), { id: 'ctl-gone', pid: 2_000_000_000, host: hostname(), procStart: 'x', mode: 'foreground' }, systemClock);
+    const r = await l.cli(['service', 'status', '--json'], { platform: 'darwin', uid: 501, seams: { serviceRunner: runner } });
+    expect(JSON.parse(r.out)).toMatchObject({ controllers: [] });
+    const text = await l.cli(['service', 'status'], { platform: 'darwin', uid: 501, seams: { serviceRunner: runner } });
+    expect(text.out).toMatch(/controller: none has registered/);
+    expect(text.out).not.toMatch(/stale/);
+  });
+
+  it('uninstall says when the controller is still stopping instead of claiming it is uninstalled', async () => {
+    const l = lab();
+    const { entry } = prepare(l);
+    const runner: CommandRunner = async () => ({ exitCode: 0, stdout: '', stderr: '' });
+    await l.cli(['service', 'install', '--entry', entry], { platform: 'darwin', uid: 501, seams: { serviceRunner: runner } });
+    const r = await l.cli(['service', 'uninstall'], { platform: 'darwin', uid: 501, seams: { serviceRunner: runner, serviceStopTimeoutMs: 0 } });
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/removed; launchd is still stopping the controller/);
+    expect(r.out).not.toMatch(/ uninstalled;/);
   });
 });

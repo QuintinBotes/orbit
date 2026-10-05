@@ -69,15 +69,18 @@ function throwing(value: unknown, name = 'boom'): void {
 }
 
 describe('help and version', () => {
-  it('help <command> prints that command\'s options, and the general help for an unknown one', async () => {
+  it('help <command> prints that command\'s options, and refuses an unknown one', async () => {
     const one = await run(['help', 'status']);
     expect(one.code).toBe(0);
     expect(one.out).toContain('Usage: orbit status');
     expect(one.out).toContain('--json');
     const two = await run(['help', 'models', 'list']);
     expect(two.out).toContain('Usage: orbit models list');
+    // Asking for help on a command that does not exist is a usage error, not a silent general help (it used to exit 0).
     const unknown = await run(['help', 'frobnicate']);
-    expect(unknown.out).toBe(helpText());
+    expect(unknown.code).toBe(2);
+    expect(unknown.out).toBe('');
+    expect(unknown.err).toMatch(/unknown command "frobnicate"/);
     const codes = await run(['help', 'exit-codes']);
     expect(codes.out).toBe(exitCodesText());
     expect(codes.out).toContain('VERIFY_INCOMPLETE');
@@ -317,9 +320,9 @@ describe('Args', () => {
     } catch (e) {
       expect((e as UsageError).usage).toBe('orbit t');
       expect((e as UsageError).message).not.toContain('\n');
-      expect((e as UsageError).message).toMatch(/Unknown option '--nope'/);
+      expect((e as UsageError).message).toMatch(/^unknown option "--nope" for "orbit t"/);
     }
-    expect(() => parse(['--name'])).toThrow(/argument missing/i);
+    expect(() => parse(['--name'])).toThrow(/option --name needs a value/);
   });
 
   it('merges the global options and makes a command without options work', () => {

@@ -6,7 +6,7 @@
 // no mach-register option and allows only listed mach-lookup names, so Chromium aborts. This preload adds exactly two
 // constant rules, for that name pattern only, to the profile srt hands to sandbox-exec.
 //
-// Plain JavaScript with no dependencies, so it runs before srt and is shipped next to dist/orbit.mjs as it is.
+// Plain JavaScript with no dependencies, so it runs before srt and is shipped next to plugin/dist/orbit.mjs as it is.
 // The rules are constants; nothing is read from the environment, and from the arguments only the path of srt's settings
 // file, to record a refusal beside it (Orbit's own directory, which the sandbox can neither read nor write). Every shape
 // of command it was not verified against (srt 0.0.78) is refused with exit 97, before a sandbox starts, so a changed

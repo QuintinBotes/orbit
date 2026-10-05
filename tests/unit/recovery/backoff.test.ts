@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ManualClock } from '../../../src/core/clock.ts';
 import { OrbitError } from '../../../src/core/errors.ts';
 import {
@@ -233,5 +233,28 @@ describe('retryWithBackoff', () => {
     let calls = 0;
     await expect(retryWithBackoff(async () => { calls++; throw err; }, { clock: new ManualClock(), budget: b })).rejects.toBe(err);
     expect(calls).toBe(1);
+  });
+});
+
+describe('authentication advice follows the environment the workers get', () => {
+  it('decideRetry and retryWithBackoff advise unsetting a key exported in the given environment, not the process one', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', '');
+    try {
+      const env = { ANTHROPIC_API_KEY: 'sk-ant-acme-not-valid' };
+      const auth = { kind: 'authentication', reason: '401', retryAfterMs: null } as const;
+      const d = decideRetry({ classification: auth, provider: 'claude', attempt: 1, infrastructureRetriesRemaining: 3, wallRemainingMs: null, costRemainingUsd: null, env });
+      expect(d.action === 'block' ? d.blocker.command : d.action).toMatch(/^unset ANTHROPIC_API_KEY/);
+      const clock = new ManualClock(0);
+      let caught: unknown;
+      try {
+        await retryWithBackoff(async () => { throw new OrbitError('AUTH_EXPIRED', 'expired'); }, { clock, provider: 'claude', env, budget: { consume: () => {}, infrastructureRetriesRemaining: () => 3 } });
+      } catch (err) {
+        caught = err;
+      }
+      expect((caught as OrbitError).message).toContain('ANTHROPIC_API_KEY is set');
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

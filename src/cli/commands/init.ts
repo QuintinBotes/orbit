@@ -14,13 +14,26 @@ import type { Args } from '../args.ts';
 import { gitEnv, resolveRepo, type CliContext } from '../context.ts';
 import { EXIT } from '../exit.ts';
 import { json, line } from '../io.ts';
+import { suggestAllowedPaths, trackedFiles } from '../layout.ts';
+import { orbitHint } from '../../core/invocation.ts';
 
 /** Runtime state only. config.yaml is deliberately not here: it is reviewed like code and normally committed. */
 export const EXCLUDE_RULES: readonly string[] = ['/.orbit/state.sqlite*', '/.orbit/knowledge.sqlite*', '/.orbit/runs/'];
 const EXCLUDE_HEADER = '# Orbit runtime state (added by "orbit init")';
 
+/** The starter config the build inlines into the bundle (scripts/build.mjs); undefined when running from the sources. */
+declare const __ORBIT_CONFIG_TEMPLATE__: string | undefined;
+
 export function templatePath(): string {
   return join(orbitInstallDir(), 'templates', 'config.yaml');
+}
+
+/** The starter config: inlined in the bundle (the plugin ships no templates/ directory), else read from the installation. */
+function templateText(): string {
+  if (typeof __ORBIT_CONFIG_TEMPLATE__ === 'string') return __ORBIT_CONFIG_TEMPLATE__;
+  const tpl = templatePath();
+  if (!existsSync(tpl)) throw new OrbitError('NOT_FOUND', `the starter template ${tpl} is missing from this installation`);
+  return readFileSync(tpl, 'utf8');
 }
 
 async function excludeFile(ctx: CliContext, repo: string): Promise<string> {
@@ -34,14 +47,17 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   const repo = await resolveRepo(ctx, args.str('repo'));
   const configPath = join(repo, '.orbit', 'config.yaml');
   let config: 'created' | 'exists';
+  // The paths derived from the repository's layout, when the template's own do not fit it (P24).
+  let derivedPaths: string[] = [];
   if (existsSync(configPath)) config = 'exists';
   else {
-    const tpl = templatePath();
-    if (!existsSync(tpl)) throw new OrbitError('NOT_FOUND', `the starter template ${tpl} is missing from this installation`);
+    let text = templateText();
     mkdirSync(dirname(configPath), { recursive: true });
+    derivedPaths = suggestAllowedPaths(await trackedFiles(ctx, repo));
+    if (derivedPaths.length > 0) text = text.replace(/^(\s*allowed_paths: )\[.*\]$/m, `$1[${derivedPaths.map((x) => JSON.stringify(x)).join(', ')}]`);
     try {
       // wx: never replace a file that appeared since the check above.
-      writeFileSync(configPath, readFileSync(tpl, 'utf8'), { flag: 'wx', mode: 0o644 });
+      writeFileSync(configPath, text, { flag: 'wx', mode: 0o644 });
       config = 'created';
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
@@ -68,15 +84,16 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   }
 
   if (args.bool('json')) {
-    json(ctx.io, { repo, config: { path: configPath, status: config }, exclude: { path: excludePath, added: missing }, config_problems: problems });
+    json(ctx.io, { repo, config: { path: configPath, status: config, ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}) }, exclude: { path: excludePath, added: missing }, config_problems: problems });
     return EXIT.OK;
   }
   line(ctx.io, config === 'created' ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
+  if (config === 'created' && derivedPaths.length > 0) line(ctx.io, `scope.allowed_paths set to ${derivedPaths.join(', ')} from the repository layout (the template's apps/, packages/ and docs/ matched nothing here); review it`);
   line(ctx.io, missing.length > 0 ? `added ${missing.length} rule(s) to ${excludePath} so runtime state stays out of git status` : `${excludePath} already excludes Orbit runtime state`);
   if (problems.length > 0) {
     line(ctx.io, 'The configuration does not validate yet:');
     for (const p of problems.slice(0, 10)) line(ctx.io, `  - ${p}`);
   } else line(ctx.io, 'The configuration validates.');
-  line(ctx.io, 'Next: define your checks in .orbit/config.yaml, then run "orbit doctor".');
+  line(ctx.io, `Next: define your checks in .orbit/config.yaml, then run ${orbitHint('doctor')}.`);
   return EXIT.OK;
 }

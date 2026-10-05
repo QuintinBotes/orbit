@@ -318,7 +318,13 @@ export async function exploreUi(opts: ExploreOptions): Promise<ExplorationResult
 
   try {
     const uiStart = opts.uiConfig.environment.start_command;
-    if (uiStart !== null) {
+    if (uiStart !== null && opts.isolation.privateLoopback === true) {
+      // Every sandbox of this provider (srt on Linux) has its own loopback: an application started in one is unreachable
+      // from the explorer and from the reproduction specs, each in a sandbox of its own. Journey checks avoid this by
+      // running the application and the browser in one sandbox (single-sandbox.ts); exploration has no such mode yet.
+      outcome = 'app_failed';
+      reasons.push(`exploration is not available under ${opts.isolation.kind}: every sandbox has its own loopback, so neither the explorer nor a reproduction spec could reach an application Orbit starts; the journey checks run the application and the browser in one sandbox instead`);
+    } else if (uiStart !== null) {
       const appCheck = { ...defaultCheck('ui-app'), command: uiStart, network_hosts: [], timeout_seconds: opts.uiConfig.environment.ready_timeout_seconds };
       const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot: opts.snapshot, extraWritable: [tmpDir], homeDir: opts.homeDir, env: opts.hostEnv });
       try {

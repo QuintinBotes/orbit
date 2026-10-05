@@ -151,7 +151,11 @@ export function buildSrtSettings(profile: SandboxProfile, opts: { extraDenyRead?
 export interface SandboxRuntimeOptions {
   /** Explicit srt binary (absolute). When set it is the only candidate: a missing configured binary means unavailable, never a fallback to another srt. */
   srtPath?: string;
-  /** Orbit's install directory; `node_modules/.bin/srt` beneath it is the last candidate. */
+  /**
+   * Orbit's install directory (the plugin root, or the checkout when running from the sources). After PATH, only its
+   * own `node_modules/.bin/srt` and, when it is a development checkout's plugin/, the checkout's are candidates; the
+   * lookup never walks further up (docs/decisions/0006-plugin-packaging.md).
+   */
   orbitInstallDir?: string;
   /** Where per-invocation settings directories go. Defaults to the OS temp directory. */
   settingsDir?: string;
@@ -210,7 +214,7 @@ export const CHROMIUM_MACH_RENDEZVOUS_LIMITATION =
   "This widens one thing: a sandboxed process can look up the rendezvous port of another Playwright Chromium run by the same user, or claim the name a starting one will use, which at worst stops that browser from starting. " +
   "Only Playwright's bundled Chromium is supported under srt on macOS; Google Chrome, Firefox and WebKit are not.";
 
-/** srt-chromium-preload.mjs: beside this module in the sources, beside dist/orbit.mjs in the bundle (scripts/build.mjs copies it there). */
+/** srt-chromium-preload.mjs: beside this module in the sources, beside the bundle in plugin/dist/ (scripts/build.mjs copies it there). */
 export function defaultChromiumPreloadPath(): string {
   return fileURLToPath(new URL('./srt-chromium-preload.mjs', import.meta.url));
 }
@@ -253,17 +257,38 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
     this.pathEnv = opts.pathEnv ?? process.env.PATH;
   }
 
+  /**
+   * srt on Linux always runs bubblewrap with a new network namespace (allowLocalBinding is a macOS-only setting), so
+   * each sandbox has a loopback of its own. Seatbelt on macOS shares the host's.
+   */
+  get privateLoopback(): boolean {
+    return this.platform === 'linux';
+  }
+
   resolveSrt(): { path: string; source: SrtSource } | null {
     if (this.opts.srtPath !== undefined) {
       return isAbsolute(this.opts.srtPath) && isExecutableFile(this.opts.srtPath) ? { path: this.opts.srtPath, source: 'configured' } : null;
     }
     const onPath = which('srt', this.pathEnv);
     if (onPath) return { path: onPath, source: 'PATH' };
-    if (this.opts.orbitInstallDir && isAbsolute(this.opts.orbitInstallDir)) {
-      const bundled = join(this.opts.orbitInstallDir, 'node_modules', '.bin', 'srt');
+    for (const bin of this.installBinDirs()) {
+      const bundled = join(bin, 'srt');
       if (isExecutableFile(bundled)) return { path: bundled, source: 'install' };
     }
     return null;
+  }
+
+  /**
+   * The only node_modules/.bin directories searched after PATH (docs/decisions/0006-plugin-packaging.md): the plugin's
+   * own, beside its dist/ (or the checkout's, when running from the sources), then the development checkout's when the
+   * install directory is that checkout's plugin/. Never anything further up: a node_modules/.bin in a shared parent
+   * directory would otherwise supply the srt that confines every command.
+   */
+  private installBinDirs(): string[] {
+    const install = this.opts.orbitInstallDir;
+    if (!install || !isAbsolute(install)) return [];
+    const checkout = developmentCheckoutOf(install);
+    return [join(install, 'node_modules', '.bin'), ...(checkout ? [join(checkout, 'node_modules', '.bin')] : [])];
   }
 
   /**
@@ -429,8 +454,27 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
 
   private missingDetail(): string {
     if (this.opts.srtPath !== undefined) return `configured srt ${this.opts.srtPath} is not an absolute path to an executable file`;
-    const where = this.opts.orbitInstallDir ? ` or ${join(this.opts.orbitInstallDir, 'node_modules', '.bin', 'srt')}` : '';
+    const bins = this.installBinDirs();
+    const where = bins.length ? ` or in ${bins.join(' or ')}` : '';
     return `srt not found on PATH${where}; install @anthropic-ai/sandbox-runtime`;
+  }
+}
+
+/** The development workspace's package name (the checkout's package.json); the plugin directory is its plugin/. */
+const DEVELOPMENT_PACKAGE = 'orbit-dev';
+
+/**
+ * The development checkout an install directory belongs to: its parent, when the install directory is named plugin and
+ * the parent's package.json is Orbit's development workspace. Null for every other install (a plugin cache entry).
+ */
+export function developmentCheckoutOf(installDir: string): string | null {
+  if (basename(installDir) !== 'plugin') return null;
+  const parent = dirname(installDir);
+  try {
+    const meta = JSON.parse(readFileSync(join(parent, 'package.json'), 'utf8')) as { name?: unknown };
+    return meta.name === DEVELOPMENT_PACKAGE ? parent : null;
+  } catch {
+    return null;
   }
 }
 

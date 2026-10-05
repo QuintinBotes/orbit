@@ -78,10 +78,44 @@ export class Args {
   /** Exactly the number of positionals the command takes, or a usage error. */
   expect(min: number, max: number = min): readonly string[] {
     if (this.positionals.length < min || this.positionals.length > max) {
-      throw new UsageError(min === max ? `expected ${min} argument(s), got ${this.positionals.length}` : `expected ${min} to ${max} arguments, got ${this.positionals.length}`, this.usage);
+      const base = min === max ? `expected ${min} argument(s), got ${this.positionals.length}` : `expected ${min} to ${max} arguments, got ${this.positionals.length}`;
+      // Name what is missing (a run id, a question id) from the usage line, so the message is not just a count.
+      const missing = this.positionals.length < min ? usagePositionals(this.usage).slice(this.positionals.length, min) : [];
+      throw new UsageError(missing.length > 0 ? `${base} (missing: ${missing.join(' ')})` : base, this.usage);
     }
     return this.positionals;
   }
+}
+
+/** The command words of a usage line, "orbit models list" for "orbit models list [--json]". */
+export function usageCommand(usage: string): string {
+  const words: string[] = [];
+  for (const w of usage.trim().split(/\s+/)) {
+    if (/^[\[<-]/.test(w) || w === '|') break;
+    words.push(w);
+  }
+  return words.join(' ');
+}
+
+/** The required positional placeholders of a usage line: "<run-id>" and "<question-id>" for "orbit decide <run-id> <question-id> ...". */
+export function usagePositionals(usage: string): string[] {
+  const head = usage.split(/\s+\[|\s--/)[0] ?? '';
+  return head.match(/<[^>]+>/g) ?? [];
+}
+
+/** The parser's own messages are one long sentence with a stray quote; say the same thing plainly. */
+function plainParseError(err: unknown, usage: string, names: readonly string[]): string {
+  const raw = err instanceof Error ? err.message.split('\n')[0]! : String(err);
+  const code = (err as { code?: string } | null)?.code;
+  const option = /'(-{1,2}[^\s'<]+)/.exec(raw)?.[1];
+  if (code === 'ERR_PARSE_ARGS_UNKNOWN_OPTION' && option) {
+    const command = usageCommand(usage) || 'orbit';
+    return `unknown option "${option}" for "${command}" (it accepts ${names.map((n) => `--${n}`).join(', ')})`;
+  }
+  if (code === 'ERR_PARSE_ARGS_INVALID_OPTION_VALUE' && option) {
+    return /missing/i.test(raw) ? `option ${option} needs a value` : `option ${option} does not take a value`;
+  }
+  return raw;
 }
 
 export function parseCommand(argv: readonly string[], spec: OptionSpec | undefined, usage: string): Args {
@@ -92,7 +126,6 @@ export function parseCommand(argv: readonly string[], spec: OptionSpec | undefin
     const r = parseArgs({ args: [...argv], options, allowPositionals: true, strict: true });
     return new Args(r.values as Record<string, string | boolean | (string | boolean)[] | undefined>, r.positionals, usage);
   } catch (err) {
-    const message = err instanceof Error ? err.message.split('\n')[0]! : String(err);
-    throw new UsageError(message, usage);
+    throw new UsageError(plainParseError(err, usage, Object.keys(options)), usage);
   }
 }

@@ -326,7 +326,7 @@ describe('planner output: engineering practices (S5.40)', () => {
   });
 
   it('the planner prompt names every practice', () => {
-    const prompt = readFileSync(fileURLToPath(new URL('../../../agents/planner.md', import.meta.url)), 'utf8');
+    const prompt = readFileSync(fileURLToPath(new URL('../../../plugin/agents/planner.md', import.meta.url)), 'utf8');
     for (const p of ENGINEERING_PRACTICES) expect(prompt, p).toContain(p);
   });
 });

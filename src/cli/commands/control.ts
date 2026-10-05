@@ -19,7 +19,7 @@ import { canTransition, isTerminal, type RunState } from '../../controller/state
 import { listQuestions } from '../../inquisition/store.ts';
 import type { Args, OptionSpec } from '../args.ts';
 import { findRunByPrefix, liveLease, liveServiceController, openState, resolveRepo, withCliLease, withState, type CliContext } from '../context.ts';
-import { EXIT } from '../exit.ts';
+import { EXIT, UsageError } from '../exit.ts';
 import { json, line } from '../io.ts';
 import { driveForeground } from './drive.ts';
 
@@ -43,6 +43,7 @@ export async function pauseCommand(args: Args, ctx: CliContext): Promise<number>
 
 export const RESUME_OPTIONS: OptionSpec = {
   foreground: { type: 'boolean', description: 'drive the run in this terminal instead of leaving it to the service' },
+  detach: { type: 'boolean', description: 'leave the run to the service (the default; it says so when no service is running)' },
   force: { type: 'boolean', description: 'resume a BLOCKED run even though material questions are still open' },
   policy: { type: 'string', description: 'policy file for the foreground controller (default: .orbit/config.yaml)', valueName: 'path' },
 };
@@ -50,12 +51,35 @@ export const RESUME_OPTIONS: OptionSpec = {
 /** Where a blocked run goes back to: the stage it stopped in, or the earliest stage its durable state supports. */
 function resumeTarget(db: OrbitDb, run: RunRecord): RunState {
   const prior = run.resumeState;
-  if (prior && canTransition('BLOCKED', prior)) return prior;
+  if (prior && canTransition('BLOCKED', prior)) {
+    // Review and delivery act only on live evidence; a decision that changed the contract while the run was blocked
+    // (an approved amendment) invalidated it, so the candidate is verified again first.
+    if ((prior === 'REVIEWING' || prior === 'DELIVERING') && !liveEvidenceForLatestCandidate(db, run.id)) return 'VERIFYING';
+    return prior;
+  }
   if (db.get('SELECT 1 AS x FROM candidates WHERE run_id = ? LIMIT 1', run.id)) return 'VERIFYING';
   return run.contractJson ? 'PLANNING' : 'PREFLIGHT';
 }
 
+function liveEvidenceForLatestCandidate(db: OrbitDb, runId: string): boolean {
+  const cand = db.get<{ id: string }>('SELECT id FROM candidates WHERE run_id = ? ORDER BY seq DESC LIMIT 1', runId);
+  if (!cand) return false;
+  return db.get('SELECT 1 AS x FROM evidence_reports WHERE run_id = ? AND candidate_id = ? AND invalidated_at IS NULL LIMIT 1', runId, cand.id) !== undefined;
+}
+
+/** The policy setting a block came from, when the controller recorded it as a frozen-policy block. */
+function frozenPolicySetting(run: RunRecord): string | null {
+  try {
+    const o = run.outcomeJson ? (JSON.parse(run.outcomeJson) as { frozen_policy?: { setting?: unknown } }) : null;
+    if (!o?.frozen_policy) return null;
+    return typeof o.frozen_policy.setting === 'string' ? o.frozen_policy.setting : 'a policy setting';
+  } catch {
+    return null;
+  }
+}
+
 export async function resumeCommand(args: Args, ctx: CliContext): Promise<number> {
+  if (args.bool('foreground') && args.bool('detach')) throw new UsageError('--foreground and --detach cannot be combined', 'orbit resume <run-id> [--foreground | --detach] [--force]');
   const [id] = args.expect(1);
   const repo = await resolveRepo(ctx, args.str('repo'));
   const db = openState(repo);
@@ -66,6 +90,14 @@ export async function resumeCommand(args: Args, ctx: CliContext): Promise<number
 
     const notes: string[] = [];
     if (run.state === 'BLOCKED') {
+      const frozen = frozenPolicySetting(run);
+      if (frozen !== null && !args.bool('force')) {
+        throw new OrbitError(
+          'TRANSITION_INVALID',
+          `run ${run.id} is BLOCKED by its frozen policy (${frozen}); a run keeps the policy it started with, so resuming would block again. Fix .orbit/config.yaml, cancel this run (orbit cancel ${run.id}) and start a new run with orbit run. If what you fixed is outside the policy (for example orbit models refresh), pass --force`,
+          { frozen_policy: frozen },
+        );
+      }
       const open = listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material);
       if (open.length > 0 && !args.bool('force')) {
         throw new OrbitError('TRANSITION_INVALID', `run ${run.id} is BLOCKED with ${open.length} material question(s) still open (${open.map((q) => q.id).join(', ')}); answer them with "orbit decide ${run.id} <question-id> <answer>", or pass --force to resume without an answer`, { open: open.map((q) => q.id) });

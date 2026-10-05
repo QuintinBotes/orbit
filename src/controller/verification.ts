@@ -16,10 +16,11 @@ import { join } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
 import { compileGlobs } from '../policy/globs.ts';
 import { staticSecurityPolicy } from '../policy/config.ts';
+import { readJsonIfExists } from '../core/fsx.ts';
 import { git } from '../evidence/git.ts';
-import { installDependencies } from '../evidence/baseline.ts';
+import { BASELINE_FILE, installDependencies, type BaselineReport } from '../evidence/baseline.ts';
 import { candidateEvidenceDir, runChecks, type RunnerContext } from '../evidence/runner.ts';
-import { evaluateEvidence, type Evaluation, type UiResultInput } from '../evidence/report.ts';
+import { evaluateEvidence, type BaseComparison, type Evaluation, type UiResultInput } from '../evidence/report.ts';
 import type { CandidateRecord } from '../evidence/store.ts';
 import type { CheckResult, EvidenceReport, ScopeReport } from '../evidence/types.ts';
 import { runUiChecks, toEvidenceUi } from '../ui/runner.ts';
@@ -148,7 +149,8 @@ export async function collectVerificationEvidence<S = never>(ctx: RunContext, ca
 
   // The evidence report, bound to tree, check configuration and policy.
   const uiResults: UiResultInput[] = uiResult ? toEvidenceUi(uiResult) : [];
-  const evaluation = evaluateEvidence({ contract, candidate: cand, checkResults: results, uiResults, scope, snapshot, uiRequired });
+  const base = await baseComparison(ctx, baseRev, cand.commitSha);
+  const evaluation = evaluateEvidence({ contract, candidate: cand, checkResults: results, uiResults, scope, snapshot, uiRequired, base, runDir: ctx.runDir });
   const report = evaluation.report;
   const failReasons = [...evaluation.failReasons];
   const disclose = (text: string): void => {
@@ -179,6 +181,23 @@ export async function collectVerificationEvidence<S = never>(ctx: RunContext, ca
     disclose(EXPLORATION_NOT_RUN);
   }
   return { evidence: { report, failReasons, incompleteReasons: evaluation.incompleteReasons, evaluation, scan, sast: sastVerdicts, security, ui: uiG, uiRequired, exploration } };
+}
+
+/**
+ * What the candidate is compared with so a green check that the base revision gives as well is not taken as proof:
+ * the base tree, the base revision's recorded check results (only a baseline of this revision under this policy),
+ * and the paths the candidate adds or modifies.
+ */
+async function baseComparison(ctx: RunContext, baseRev: string, commit: string): Promise<BaseComparison> {
+  const treeHash = (await git(ctx.run.repoRoot, ['rev-parse', '--verify', `${baseRev}^{tree}`])).trim();
+  const baseline = readJsonIfExists<BaselineReport>(join(ctx.runDir, BASELINE_FILE));
+  const usable = baseline !== null && baseline.schema === 'orbit.baseline/1' && baseline.baseTree === treeHash && baseline.policyHash === ctx.run.policyHash && Array.isArray(baseline.checks);
+  const out = await git(ctx.run.repoRoot, ['diff', '--name-only', '-z', '--no-renames', '--diff-filter=ACMT', baseRev, commit, '--']);
+  return {
+    treeHash,
+    checks: usable ? baseline.checks.map((c) => ({ checkId: c.checkId, status: c.status })) : null,
+    changedPaths: out.split('\0').filter((p) => p.length > 0),
+  };
 }
 
 async function changedPaths(repoRoot: string, baseRev: string, commit: string): Promise<string[]> {

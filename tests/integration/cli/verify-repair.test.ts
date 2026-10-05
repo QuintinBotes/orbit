@@ -10,8 +10,10 @@ import type { CliContext, CliSeams } from '../../../src/cli/context.ts';
 import { systemClock } from '../../../src/core/clock.ts';
 import { acquireLease, getRun, listRuns, releaseLease, transition } from '../../../src/controller/run-store.ts';
 import { listWorkers } from '../../../src/storage/workers.ts';
-import { listEvidenceReports } from '../../../src/evidence/store.ts';
-import { baseScenario, DIAGNOSIS, implementMul, labDeps, makeLab, seedRegistry, waitFor, writeScenario, type Lab } from '../controller/harness.ts';
+import { finalizeCandidate, listEvidenceReports, reserveCandidate } from '../../../src/evidence/store.ts';
+import { appendEvent } from '../../../src/storage/events.ts';
+import { CANDIDATE_EVENT } from '../../../src/controller/context.ts';
+import { baseScenario, DIAGNOSIS, git, implementMul, labDeps, makeLab, seedRegistry, waitFor, writeScenario, type Lab } from '../controller/harness.ts';
 
 const labs: Lab[] = [];
 function lab(opts: Parameters<typeof makeLab>[0] = {}): Lab {
@@ -120,6 +122,30 @@ describe('orbit verify', () => {
     expect(j.verdict).toBe(own.verdict);
     expect(j.fail_reasons).toEqual([]);
     expect([...j.unverified].sort()).toEqual([...own.unverified].sort());
+  }, 120_000);
+
+  // P2: a candidate that changes nothing proves nothing, however green its checks are. P27: evidence is a path, not a bare log name.
+  it('does not PASS a candidate whose tree is the base tree, and names evidence by a path a person can open', async () => {
+    const l = lab();
+    // A paused run (a finished one starts no new check), whose current candidate is then replaced by a no-op.
+    const id = await failedPausedRun(l);
+    const run = getRun(l.db(), id);
+    const baseTree = git(l.repo, 'rev-parse', `${run.baseRevision!}^{tree}`);
+    // A no-op candidate: the base revision itself, recorded as the run's current candidate.
+    const db = l.db();
+    const reserved = reserveCandidate(db, { runId: id, attempt: 9, workerId: null, treeHash: baseTree, parentSha: run.baseRevision! }, systemClock);
+    const noop = finalizeCandidate(db, reserved.id, run.baseRevision!, { files: 0, insertions: 0, deletions: 0, binaryFiles: 0, paths: [], truncated: false }, systemClock);
+    appendEvent(db, id, CANDIDATE_EVENT, 'test', { candidate_id: noop.id }, systemClock.now());
+
+    const r = await cli(l, ['verify', id]);
+    expect(r.out).not.toMatch(/verdict PASS/);
+    expect(r.code, `${r.out}\n${r.err}`).toBe(15);
+    expect(r.out).toMatch(/AC-1  unverified/);
+    expect(r.out).toContain('incomplete: the candidate makes no change');
+    expect(r.out).toMatch(/\n {6}evidence: \.orbit\/runs\/\S+\/evidence\/\d+\/unit\.log\n/);
+    expect(r.out).toMatch(/unit  PASSED \(exit 0\)  \.orbit\/runs\/\S+\/evidence\/\d+\/unit\.log\n/);
+    expect(getRun(l.db(), id)).toMatchObject({ state: 'DIAGNOSING', paused: true });
+    expect((await cli(l, ['cancel', id])).code).toBe(0);
   }, 120_000);
 
   it('refuses while a live controller owns the run', async () => {

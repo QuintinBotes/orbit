@@ -239,3 +239,12 @@ describe('nonProgress (scenario 6: repeated non-progress terminates)', () => {
     expect(nonProgressThreshold(2)).toBe(3);
   });
 });
+
+describe('nonProgress names an attempt that changed nothing (P17)', () => {
+  it('says the stalled attempts produced the same tree as an earlier attempt', () => {
+    const history = [attempt(1, { treeHash: 'tree-a' }), attempt(2, { treeHash: 'tree-a' }), attempt(3, { treeHash: 'tree-a' })];
+    const d = nonProgress(history, 2);
+    expect(d.terminate).toBe(true);
+    expect(d.reason).toContain('no measurable progress (same tree as attempt 1)');
+  });
+});

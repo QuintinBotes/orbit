@@ -180,7 +180,9 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
       candidate: cand?.commitSha ?? null,
       tree: cand?.treeHash ?? null,
       branch,
-      delivered_commit: delivery?.commit ?? outcomeJson?.commit ?? null,
+      // Only a delivery action delivers. A local mode leaves the candidate commit on a local branch: that is the
+      // `candidate` above, never a delivered commit.
+      delivered_commit: delivery?.commit ?? (DELIVERY_MODES.has(run.mode) ? (outcomeJson?.commit ?? null) : null),
       pull_request: prNumber === null ? null : { number: prNumber, url: delivery?.pr?.url ?? null },
     },
     budget,
@@ -206,15 +208,30 @@ function repairs(runDir: string): FinalReport['repairs'] {
     .sort((a, b) => a.attempt - b.attempt);
 }
 
+function outcomeHas(run: RunRecord, key: string): boolean {
+  try {
+    const o: unknown = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
+    return o !== null && typeof o === 'object' && key in o;
+  } catch {
+    return false;
+  }
+}
+
 function nextAction(run: RunRecord, branch: string | null, pr: number | null): string {
   switch (run.state) {
     case 'SUCCEEDED':
       return DELIVERY_MODES.has(run.mode)
         ? `Review${pr !== null ? ` pull request #${pr}` : ` branch ${branch ?? 'orbit/<run>'}`} and merge it if you accept it; Orbit does not merge.`
         : `Inspect the local branch ${branch ?? `orbit/${run.id}`} (the reviewed candidate) and merge it yourself if you accept it.`;
-    case 'BLOCKED':
-      return `${run.outcomeReason ?? 'The run is blocked.'} Resolve that, then run \`orbit resume ${run.id}\`.`;
+    case 'BLOCKED': {
+      const why = run.outcomeReason ?? 'The run is blocked.';
+      // A frozen-policy block already names the way forward (a new run), and most others already name the resume command.
+      if (outcomeHas(run, 'frozen_policy') || /orbit resume/.test(why)) return why;
+      return `${why} Resolve that, then run \`orbit resume ${run.id}\`.`;
+    }
     case 'EXHAUSTED':
+      // Repeated non-progress is a stop on evidence, not on budget: saying the budget is spent would hide the cause.
+      if (outcomeHas(run, 'non_progress')) return `The run stopped because repeated attempts made no measurable progress (${run.outcomeReason ?? 'see decisions'}). More attempts would not change that; the worktree and evidence are preserved. Revise the goal or the approach and start a new run.`;
       return `The authorized budget is spent (${run.outcomeReason ?? 'see decisions'}). The worktree and evidence are preserved; continue by hand from them or start a new run with a revised goal or limits.`;
     case 'IMPOSSIBLE':
       return `${run.outcomeReason ?? 'No authorized way to meet the contract was found.'} Revise the goal or the authorization before trying again.`;
@@ -241,7 +258,7 @@ export function renderMarkdown(r: FinalReport): string {
   if (r.practices && r.practices.length > 0) out.push('## Engineering practices', '', list(r.practices.map((p) => `${p.practice} [${p.applicable ? 'selected' : 'omitted'}]: ${p.justification}`)), '');
   out.push('## Repairs', '', list(r.repairs.map((x) => `attempt ${x.attempt}: ${x.source} brief${x.fingerprint ? ` for ${x.fingerprint}` : ''}`)), '');
   const rv = r.revision;
-  out.push('## Revision, branch and pull request', '', list([`base: ${rv.base ?? 'none'}`, `candidate: ${rv.candidate ?? 'none'} (tree ${rv.tree ?? 'none'})`, `branch: ${rv.branch ?? 'none'}`, `delivered commit: ${rv.delivered_commit ?? 'none'}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ''}` : 'none'}`]), '');
+  out.push('## Revision, branch and pull request', '', list([`base: ${rv.base ?? 'none'}`, `candidate: ${rv.candidate ?? 'none'} (tree ${rv.tree ?? 'none'})`, `branch: ${rv.branch ?? 'none'}`, rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? 'none'}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ''}` : 'none'}`]), '');
   if (r.budget) {
     const b = r.budget;
     out.push('## Budget consumption', '', list([...b.counters.map((c) => `${c.counter}: ${round(c.used)} used of ${round(c.allowance)} allowed (hard cap ${round(c.hard_cap)})`), `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? 'measured' : 'incomplete: some usage has no cost'}); ${b.cost_measurement}`, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), '');

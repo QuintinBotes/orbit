@@ -24,16 +24,36 @@ claude.ai login or subscription limits to anyone else (see
 - It does not merge or deploy to production unless you enable `release` mode
   and the matching action.
 
+## Status
+
+Orbit 0.1.0 is pre-release. This repository becomes public at the first release;
+until then the marketplace entry and the clone URL below work only for people
+who have access to it. Where this document says what Orbit does, it describes the
+code in this repository. [Live runs and what is not proven yet](#live-runs-and-what-is-not-proven-yet) says
+what has been run against real providers.
+
 ## Install
 
-Plugin, from the marketplace once it is public:
+Orbit needs Node.js 22.16 or newer, git, and the `claude` and `codex` programs
+you already use (with their own logins). Everything else is in
+[docs/installation.md](docs/installation.md).
+
+**As a plugin**, from the `claude-plugins` catalog (a `git-subdir` entry that
+points at the `plugin/` directory of this repository):
 
 ```
 /plugin marketplace add QuintinBotes/claude-plugins
 /plugin install orbit@quintinbotes
 ```
 
-CLI, from this repository (Node 22.16 or newer):
+Claude Code installs the plugin's one dependency, the sandbox runtime `srt`, as
+part of the install (this needs `npm` and network access). You get the skills
+`/orbit:init`, `/orbit:doctor`, `/orbit:run`, `/orbit:status`, `/orbit:resume`,
+`/orbit:verify`, `/orbit:repair` and `/orbit:inquisition`, and `orbit` on the PATH
+of Claude Code's Bash tool. It is not on the PATH of your own terminal: for that,
+use the clone below.
+
+**From a clone** (the CLI, and a way to try the plugin before it is released):
 
 ```bash
 git clone https://github.com/QuintinBotes/orbit.git
@@ -43,40 +63,110 @@ npm install --global .
 orbit --version
 ```
 
-The plugin and the CLI are the same single bundle, `dist/orbit.mjs`, with no
-runtime dependencies beyond Node. Prerequisites and optional tools are in
-[docs/installation.md](docs/installation.md).
+`npm install --global .` links `orbit` to this clone instead of copying it, so
+keep the clone where it is: deleting it breaks `orbit`. `npm ci` is what
+installs `srt` (in the clone's `node_modules`, where Orbit finds it; it is not
+put on your PATH). To load the plugin from the clone for one Claude Code session,
+without a marketplace:
+
+```bash
+claude --plugin-dir ./plugin
+```
 
 ## Quickstart
 
-Run these inside the git repository you want Orbit to work on.
+Follow these steps in order, in the git repository you want Orbit to work on.
+It needs at least one commit and a clean working tree. Each step gives the
+`orbit` command (from a clone, in a terminal or in Claude Code's Bash tool) and,
+in parentheses, what to use instead in Claude Code with the plugin installed.
 
-```bash
-orbit doctor                       # what is missing, with the exact fix for each item
-orbit init                         # writes .orbit/config.yaml and keeps run state out of git status
-$EDITOR .orbit/config.yaml         # set scope.allowed_paths and define your checks
-orbit doctor                       # should now report no failures
-orbit run --goal "Add a CSV export to the reports page" --mode autonomous
+**1. Initialise.** `orbit init` (plugin: `/orbit:init`)
+
+This writes `.orbit/config.yaml` from the starter template and adds rules to
+`.git/info/exclude`, so run state stays out of `git status` (the config file
+itself shows up as untracked: commit it if you want it shared). The starter mode
+is `autonomous`: Orbit works on a local branch `orbit/<run-id>` and never
+pushes. `init` also replaces the template's example `scope.allowed_paths` with
+globs that match your layout, and tells you so.
+
+**2. Edit `.orbit/config.yaml`.** Three edits are needed before a run can pass.
+Each key below already exists in the file (`checks:` has only commented
+examples), so change it in place rather than pasting a second copy:
+
+```yaml
+scope:
+  allowed_paths: ["src/**", "tests/**"]     # everything a worker may change, tests included
+
+checks:                                      # the only commands Orbit runs as evidence
+  unit-tests:
+    command: [npm, test]
+
+providers:
+  codex:
+    data_policy_eligible: true               # only if sending sanitized code to Codex is allowed
 ```
 
-`orbit run` drives the run in your terminal when no service is installed
-(Ctrl-C pauses it). To leave it running in the background:
+Without a check nothing can be verified. Without `data_policy_eligible: true`
+the independent review (by Codex) cannot run and runs that need it stop as
+`BLOCKED`. If sending code to Codex is not allowed, see
+[review](docs/configuration.md#agents-and-review) for turning independent review
+off knowingly. Every other setting has a working default.
+
+**3. Read the Codex model catalog once.** `orbit models refresh`
+(plugin: ask Claude to run it, or accept it when `/orbit:doctor` suggests it)
+
+Without it, Orbit does not know which Codex model may review, and doctor fails
+`review`. The alternative is to name a model in `providers.codex.model`.
+
+**4. Check.** `orbit doctor` (plugin: `/orbit:doctor`)
+
+It should end with `0 failed`. Warnings are normal on a fresh setup and each one
+prints its `fix:` line. With a subscription login (rather than exported API
+keys) you will typically see `claude.worker-tier`, `codex.worker-tier` and
+`service`: runs work, with the weaker `claude-sandbox` and `codex-sandbox`
+tiers and no background service (see [installation](docs/installation.md#isolation-tiers)).
+Any `FAIL` names what is missing and the command that fixes it.
+
+**5. First run.** `orbit run --goal "Add a CSV export to the reports page"`
+(plugin: `/orbit:run Add a CSV export to the reports page`)
+
+Before it creates anything, `orbit run` refuses, and says why, when the working
+tree has uncommitted changes (only `.orbit/` is exempt), the repository's git
+configuration holds credentials, or the environment gate fails. No run exists
+and no model has been called in that case. Otherwise it drives the run in your
+terminal and prints each step; Ctrl-C pauses it (`orbit resume <run-id>
+--foreground` continues it). From a plugin session with no service, `/orbit:run`
+starts the run in the background of that session and says so.
+
+When it ends, `orbit report <run-id>` prints the final report, including the
+verdict per criterion and the branch. The change is on the local branch
+`orbit/<run-id>`; your working tree and your branch are untouched. Look at it
+with `git log orbit/<run-id>` and merge it yourself.
+
+**To let Orbit deliver**, set `mode: autonomous-delivery`, install the `gh` CLI
+and export a fine-grained `GH_TOKEN`. Commit, push, pull request and CI repair
+then turn on by themselves (the template leaves those actions out so that they
+follow the mode). A run then pushes `orbit/<run-id>` and opens a draft pull
+request.
+
+**To run unattended**, install the background service, then hand runs to it:
 
 ```bash
 orbit service install
-orbit run --goal "Add a CSV export to the reports page" --detach
+orbit run --goal "..." --detach
 orbit status                       # recent runs
 orbit logs <run-id> --follow
-orbit report <run-id>              # final report, or --interim while it runs
 ```
+
+Plugin skills need the service for runs that outlive the Claude Code session.
+Make credentials visible to it as described in
+[operations](docs/operations.md#installing-the-service).
 
 A run ends in `SUCCEEDED`, `BLOCKED` (a question or a missing capability),
 `EXHAUSTED` (a hard cap was reached), `IMPOSSIBLE` or `CANCELLED`. A blocked run
-is continued with `orbit decide` and `orbit resume`.
-
-From inside Claude Code the same flow is available as skills:
-`/orbit:run`, `/orbit:status`, `/orbit:resume`, `/orbit:verify`,
-`/orbit:repair` and `/orbit:inquisition`. They call the CLI.
+is continued with `orbit decide` and `orbit resume`, except when the block comes
+from the run's frozen policy: then fix the config, cancel the run and start a new
+one ([troubleshooting](docs/troubleshooting.md#run-problems)).
 
 ## Commands
 
@@ -88,15 +178,15 @@ From inside Claude Code the same flow is available as skills:
 | `orbit status [run-id]` | State, stage, attempts, budgets, workers, questions, heartbeat. |
 | `orbit logs <run-id>` | Controller and worker logs, redacted (`--follow`, `--lines`, `--controller`, `--workers`, `--worker`). |
 | `orbit verify [run-id]` | Independent verification of a run's latest candidate: a verdict per criterion with its evidence. Exit 14 for FAIL, 15 for INCOMPLETE. |
-| `orbit repair <run-id \| description>` | Repair a failed run (BLOCKED or paused with FAIL evidence), or start a run to repair a described failure (`--foreground`, `--policy`, plus the `run` options). |
+| `orbit repair <run-id \| description \| ->` | Repair a failed run (BLOCKED or paused with FAIL evidence), or start a run to repair a described failure (`--foreground`, `--detach`, `--mode`, `--policy`). `-` reads the description from stdin. |
 | `orbit stats` | Success rate, cost, repair loops and time to green for this repository (`--since`, `--until`). |
 | `orbit gc` | Apply artifact retention to finished runs (`--keep-days`, `--dry-run`). |
 | `orbit pause <run-id>` | Pause durably. |
-| `orbit resume <run-id>` | Unpause, or continue a blocked run (`--foreground`, `--force`). |
+| `orbit resume <run-id>` | Unpause, or continue a blocked run. Leaves the run to the service unless you pass `--foreground` (`--detach`, `--force`). |
 | `orbit cancel <run-id>` | Cancel durably (`--wait`). |
 | `orbit report <run-id>` | Final or interim report (`--interim`); `orbit report --learning` shows improvement over time. |
-| `orbit questions <run-id>` | Questions a run is waiting on. |
-| `orbit decide <run-id> <question-id> <answer>` | Record your answer (`--by`). Approving a baseline-exception question puts the exception in the run's contract. `orbit questions` takes `--all` to include answered ones. |
+| `orbit questions <run-id>` | Questions a run is waiting on (`--all` includes answered ones). `orbit questions --pending` lists those of every unfinished run (`--quiet` prints nothing when there are none). |
+| `orbit decide <run-id> <question-id> <answer>` | Record your answer (`--by`). Approving a baseline-exception question puts the exception in the run's contract. |
 | `orbit release resolve <run-id>` | Settle a release-mode deploy whose outcome is unknown: runs the environment's `verify_command`, or records `--deployed` / `--not-deployed`. |
 | `orbit policy show <run-id>` | The frozen policy, verified against its hash. |
 | `orbit models list` / `models refresh` | The model registry and its availability. |
@@ -112,14 +202,29 @@ separate command either: `orbit run --mode release`, with the `release` and
 `actions` sections of the policy. See
 [release mode](docs/operations.md#release-mode-safeguards).
 
-## Live demo
+## Live runs and what is not proven yet
 
 `scripts/demo/run-live-demo.sh` runs three demo goals against live providers on
-a private GitHub repository. **Status: not yet run against real providers.**
-Only the mock demo (`scripts/demo/run-mock-demo.sh`) has run, and its tests
-use stubbed `gh` and `orbit`. Treat any claim about live behaviour as
-unverified until the maintainer has run the live demo and updated this label.
-To reproduce it yourself (this spends real money on provider usage):
+a private GitHub repository (the demo repository is private; this one becomes
+public at the first release). On 2026-10-05 the three goals were run for real,
+Claude writing and Codex reviewing, and the controllers' own reports are in
+[docs/demos/2026-10-05](docs/demos/2026-10-05/README.md):
+
+| Goal | Outcome |
+|---|---|
+| simple | `SUCCEEDED`, branch pushed and draft pull request opened |
+| difficult | `SUCCEEDED`, with an evidence-backed escalation to a stronger model, browser checks under `srt`, branch pushed and draft pull request opened |
+| ui | `BLOCKED` at the planner: a response exceeded its output token cap. The cap has been raised and a capped response is retried once at double the cap; this goal has not been run live since |
+
+No CI ran in the demo repository, so the reports say CI is unverified. These
+have **not** been run against real providers: CI observation and repair, release
+mode (merge and deploy), container isolation, the `os-sandbox` tier with a valid
+exported key, accessibility and visual UI verification, gitleaks, the learning
+layer beyond curator calls, and the service on Linux. They are covered by the
+mock demo (`scripts/demo/run-mock-demo.sh`, which runs with stubbed `gh` and
+`orbit`) and the automated tests only; treat a claim about their live behaviour
+as unverified. To reproduce the live demo yourself (this spends real money on
+provider usage):
 
 ```bash
 scripts/demo/run-live-demo.sh --repo OWNER/NAME --dry-run   # prints the plan, runs nothing

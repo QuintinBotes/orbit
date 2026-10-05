@@ -33,7 +33,10 @@ export function defaultOrbitHome(env: Readonly<Record<string, string | undefined
   return env.ORBIT_HOME ?? join(homedir(), '.orbit');
 }
 
-/** The directory holding agents/, schemas/ and dist/: three levels up from this file in the sources, one from the bundle. */
+/**
+ * Orbit's installation: one level up from the bundle (the plugin root, holding agents/ and dist/), or three levels up
+ * from this file in the sources (the checkout, holding templates/, node_modules/ and plugin/).
+ */
 export function orbitInstallDir(here: string = dirname(fileURLToPath(import.meta.url))): string {
   return here.endsWith(join('src', 'controller')) ? resolve(here, '..', '..') : resolve(here, '..');
 }

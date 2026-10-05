@@ -6,14 +6,14 @@
  * run (a UI task that fails browser checks, repairs, passes independent
  * review and opens a draft PR) is scenario 17 in ui.test.ts.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { listDecisions } from '../../src/storage/decisions.ts';
 import { listWorkers } from '../../src/storage/workers.ts';
 import { listEvidenceReports, listFailures } from '../../src/evidence/store.ts';
 import { listReviews } from '../../src/review/store.ts';
-import { DEMO_DIR, drive, git, makeLab, orbit, READY, seedRegistry, startLabRun, waitFor, writeScenario, type Lab } from './helpers/lab.ts';
+import { chromiumAvailable, DEMO_DIR, drive, ensureBaselines, git, makeLab, orbit, READY, seedRegistry, startLabRun, waitFor, writeScenario, type Lab } from './helpers/lab.ts';
 import { assertRunInvariants } from './helpers/invariants.ts';
 import { scenarioFor } from '../../scripts/demo/mock/scenarios.ts';
 
@@ -35,6 +35,12 @@ interface RouteData {
 }
 
 describe.skipIf(!READY)('acceptance: the demo runs of spec section 2', () => {
+  // The demo's journeys include its visual ones, whose baselines are per platform: where the example has none
+  // committed (Linux), they are recorded in the lab template first, as a person would, or every run fails on them.
+  beforeAll(() => {
+    if (chromiumAvailable()) ensureBaselines();
+  }, 300_000);
+
   it('demo 1: a simple task runs unattended through `orbit run --foreground` on a low-cost route in one attempt and opens a draft PR', async () => {
     const l = lab();
     writeScenario(l, scenarioFor('simple'));

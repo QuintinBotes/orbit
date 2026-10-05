@@ -82,26 +82,30 @@ Blockers: 1. Should: 0. Nice: 3.
 
 ## Blockers
 
-### G39. The live demo has never run against real providers (blocker)
+### G39. The live demo has run only in part against real providers (blocker)
 
-Covers S2.9 (untested), S18.9 (partial), S19.4 (partial). Only the mock demo
-runs (I/demo/mock-demo.test.ts, A/demo-shapes.test.ts). `docs/demos/` does not
-exist, so there is no report from a live run.
-`scripts/demo/run-live-demo.sh` is tested with stubbed `gh` and `orbit` only
-(I/demo/live-script.test.ts). The README "Live demo" section already labels
-the live demo unverified and gives the reproduction commands, as spec section
-2 asks for environment-blocked work.
+Covers S2.9 (partial), S18.9 (partial), S19.4 (partial). On 2026-10-05 the
+simple and difficult goals ran against Claude and Codex and delivered draft pull
+requests in the private demo repository (both SUCCEEDED), and the UI goal was
+BLOCKED at the planner on its output token cap (since fixed; not re-run live).
+The controllers' reports are in `docs/demos/2026-10-05/`. The demo repository has
+no CI workflow, so CI observation and repair, release mode, container isolation,
+the `os-sandbox` tier with a valid exported key, accessibility and visual UI
+verification, gitleaks, the learning layer beyond curator calls and the service on
+Linux have not run live (the README section "Live runs and what is not proven
+yet" lists them). `scripts/demo/run-live-demo.sh` is tested with stubbed `gh` and
+`orbit` only (I/demo/live-script.test.ts).
 
 Fix (needs real Anthropic and Codex credentials, a fine-grained `GH_TOKEN`
 and a private repository, so it cannot be closed from the test suite):
 
-1. `scripts/demo/run-live-demo.sh --repo OWNER/NAME --dry-run`, then the same
-   without `--dry-run`. Exit 0 means all three runs SUCCEEDED.
-2. Commit the three `final.md` reports the script writes to
-   `docs/demos/<date>/`, after checking them for tokens, personal names and
-   host paths.
-3. Change the README "Live demo" status line to name the date and the reports,
-   and set S2.9, S18.9 and S19.4 to done in `docs/traceability.md`.
+1. Re-run the UI goal with `scripts/demo/run-live-demo.sh --repo OWNER/NAME
+   --goals ui` (or the whole script) and expect a draft pull request. Exit 0
+   means every goal run SUCCEEDED.
+2. Commit the `final.md` report the script writes to `docs/demos/<date>/`, after
+   checking it for tokens, personal names and host paths.
+3. Update the README status table, and set S2.9, S18.9 and S19.4 to done in
+   `docs/traceability.md` once every demo goal has succeeded live.
 
 ## Should
 

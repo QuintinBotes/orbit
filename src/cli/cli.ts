@@ -9,8 +9,9 @@ import { Args, GLOBAL_OPTIONS, parseCommand, type OptionSpec } from './args.ts';
 import { createContext, type CliContext } from './context.ts';
 import { EXIT, EXIT_CODE_DOCS, UsageError, exitCodeFor } from './exit.ts';
 import { ORBIT_VERSION } from './version.ts';
+import { setInvocationEnv } from '../core/invocation.ts';
 import { cancelCommand, CANCEL_OPTIONS, pauseCommand, resumeCommand, RESUME_OPTIONS } from './commands/control.ts';
-import { DECIDE_OPTIONS, decideCommand, QUESTIONS_OPTIONS, questionsCommand } from './commands/decide.ts';
+import { DECIDE_OPTIONS, decideCommand, QUESTIONS_OPTIONS, QUESTIONS_USAGE, questionsCommand } from './commands/decide.ts';
 import { DOCTOR_OPTIONS, doctorCommand } from './commands/doctor.ts';
 import { GC_OPTIONS, GC_USAGE, gcCommand } from './commands/gc.ts';
 import { initCommand } from './commands/init.ts';
@@ -35,7 +36,7 @@ import { policyShowCommand } from './commands/policy.ts';
 import { RELEASE_RESOLVE_OPTIONS, RELEASE_RESOLVE_USAGE, releaseResolveCommand } from './commands/release.ts';
 import { REPORT_OPTIONS, reportCommand } from './commands/report.ts';
 import { RUN_OPTIONS, runCommand } from './commands/run.ts';
-import { SERVICE_INSTALL_OPTIONS, serviceInstallCommand, serviceRunCommand, serviceStatusCommand, serviceUninstallCommand } from './commands/service.ts';
+import { SERVICE_INSTALL_OPTIONS, refreshServiceLauncher, serviceInstallCommand, serviceRunCommand, serviceStatusCommand, serviceUninstallCommand } from './commands/service.ts';
 import { REPAIR_OPTIONS, repairCommand } from './commands/repair.ts';
 import { STATS_OPTIONS, STATS_USAGE, statsCommand } from './commands/stats.ts';
 import { STATUS_OPTIONS, statusCommand } from './commands/status.ts';
@@ -57,11 +58,11 @@ export const COMMANDS: readonly CommandDef[] = [
   { name: 'status', summary: 'state, stage, attempts, budgets, workers, open questions and heartbeat of a run (or the recent runs)', usage: 'orbit status [run-id] [--all] [--json]', options: STATUS_OPTIONS, run: statusCommand },
   { name: 'logs', summary: 'controller and worker logs of a run, redacted', usage: 'orbit logs <run-id> [--follow] [--lines n] [--controller | --workers | --worker id]', options: LOGS_OPTIONS, run: logsCommand },
   { name: 'pause', summary: 'pause a run durably; workers keep running and are collected on resume', usage: 'orbit pause <run-id>', run: pauseCommand },
-  { name: 'resume', summary: 'unpause a run, or resume a BLOCKED one after a decision or an environment repair', usage: 'orbit resume <run-id> [--foreground] [--force]', options: RESUME_OPTIONS, run: resumeCommand },
+  { name: 'resume', summary: 'unpause a run, or resume a BLOCKED one after a decision or an environment repair', usage: 'orbit resume <run-id> [--foreground | --detach] [--force]', options: RESUME_OPTIONS, run: resumeCommand },
   { name: 'cancel', summary: 'cancel a run durably (works for blocked or ownerless runs too)', usage: 'orbit cancel <run-id> [--wait seconds]', options: CANCEL_OPTIONS, run: cancelCommand },
   { name: 'report', summary: 'the final report of a run, or a live interim report while it runs (--learning: improvement over time)', usage: 'orbit report <run-id> [--interim] [--json]   |   orbit report --learning', options: REPORT_OPTIONS, run: reportCommand },
   { name: 'decide', summary: 'record your answer to a question the run persisted', usage: 'orbit decide <run-id> <question-id> <answer...> [--by name]', options: DECIDE_OPTIONS, run: decideCommand },
-  { name: 'questions', summary: 'the questions a run is waiting on', usage: 'orbit questions <run-id> [--all] [--json]', options: QUESTIONS_OPTIONS, run: questionsCommand },
+  { name: 'questions', summary: 'the questions a run is waiting on (--pending: those of every unfinished run)', usage: QUESTIONS_USAGE, options: QUESTIONS_OPTIONS, run: questionsCommand },
   { name: 'models list', summary: 'the model registry with availability and eligibility under the policy', usage: 'orbit models list [--json]', run: modelsListCommand },
   { name: 'models refresh', summary: 'reseed the registry, read the installed CLIs and the Codex catalog (--probe validates live)', usage: 'orbit models refresh [--probe] [--json]', options: MODELS_REFRESH_OPTIONS, run: modelsRefreshCommand },
   { name: 'learn list', summary: 'lessons in the knowledge graph', usage: 'orbit learn list [--status s] [--kind k] [--search text] [--global] [--json]', options: LEARN_LIST_OPTIONS, run: learnListCommand },
@@ -75,7 +76,7 @@ export const COMMANDS: readonly CommandDef[] = [
   { name: 'service status', summary: 'is the service installed and loaded, and is its controller alive (exit 0 only when loaded)', usage: 'orbit service status [--json]', run: serviceStatusCommand },
   { name: 'service run', summary: 'run the persistent controller in this process (what the service definition starts)', usage: 'orbit service run', run: serviceRunCommand },
   { name: 'verify', summary: 'independent verification of a run\'s latest candidate: a verdict per criterion with its evidence (exit 14 FAIL, 15 INCOMPLETE)', usage: 'orbit verify [run-id] [--json]', run: verifyCommand },
-  { name: 'repair', summary: 'repair a failed run (BLOCKED or paused with FAIL evidence) or start a run to repair a described failure', usage: 'orbit repair <run-id | failure description> [--foreground] [--policy <path>]', options: REPAIR_OPTIONS, run: repairCommand },
+  { name: 'repair', summary: 'repair a failed run (BLOCKED or paused with FAIL evidence) or start a run to repair a described failure', usage: 'orbit repair <run-id | failure description | -> [--foreground | --detach] [--mode <mode>] [--policy <path>]', options: REPAIR_OPTIONS, run: repairCommand },
   { name: 'stats', summary: 'the spec section 16 metrics for this repository\'s runs (success, cost, repair loops, time to green), optionally in a time window', usage: STATS_USAGE, options: STATS_OPTIONS, run: statsCommand },
   { name: 'release resolve', summary: 'settle a deploy whose outcome is unknown: run the environment\'s verify_command, or record --deployed / --not-deployed', usage: RELEASE_RESOLVE_USAGE, options: RELEASE_RESOLVE_OPTIONS, run: releaseResolveCommand },
   { name: 'gc', summary: 'apply artifact retention: delete the run directories and worktrees of finished runs older than retention.keep_runs_days', usage: GC_USAGE, options: GC_OPTIONS, run: gcCommand },
@@ -113,6 +114,63 @@ export function exitCodesText(): string {
   return ['Exit codes:', ...EXIT_CODE_DOCS.map((e) => `  ${String(e.code).padStart(2)}  ${e.name.padEnd(19)}${e.meaning}`), '', '"orbit hook pre-tool-use" is the exception: it follows Claude Code\'s hook protocol and exits 0 (allow, or a deny decision on stdout) or 2 (block).', ''].join('\n');
 }
 
+/** The subcommand groups ("models", "learn", ...) and their commands. */
+function groupOf(word: string): CommandDef[] {
+  return COMMANDS.filter((c) => c.name.startsWith(`${word} `));
+}
+
+export function groupHelp(group: string): string {
+  const members = groupOf(group);
+  const pad = Math.max(...members.map((c) => c.name.length)) + 8;
+  return [
+    `orbit ${group}: ${members.length} subcommands`,
+    '',
+    `Usage: orbit ${group} <subcommand> [options]`,
+    '',
+    'Subcommands:',
+    ...members.map((c) => `  ${`orbit ${c.name}`.padEnd(pad)}${c.summary}`),
+    '',
+    `Run "orbit ${group} <subcommand> --help" for a subcommand's options.`,
+    '',
+  ].join('\n');
+}
+
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) row[j] = Math.min(prev[j]! + 1, row[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = row;
+  }
+  return prev[b.length]!;
+}
+
+/** The candidate closest to `word` when it is plausibly a typo of it (distance at most a third of the word, and at least 1 or 2). */
+function closest(word: string, candidates: readonly string[]): string | null {
+  const limit = Math.max(2, Math.floor(word.length / 3));
+  let best: { name: string; d: number } | null = null;
+  for (const name of candidates) {
+    const d = editDistance(word.toLowerCase(), name.toLowerCase());
+    if (d <= limit && (best === null || d < best.d)) best = { name, d };
+  }
+  return best?.name ?? null;
+}
+
+/** The error for words that name no command, with a suggestion when one is close and the choices when it is not. */
+function unknownCommand(words: readonly string[]): UsageError {
+  const [first = '', second] = words;
+  const known = [...new Set(COMMANDS.map((c) => c.name.split(' ')[0]!))];
+  const members = groupOf(first);
+  if (members.length > 0) {
+    const subs = members.map((c) => c.name.slice(first.length + 1));
+    if (second === undefined || second.startsWith('-')) return new UsageError(`"orbit ${first}" needs a subcommand: ${subs.join(', ')}`);
+    const near = closest(second, subs);
+    return new UsageError(`unknown subcommand "${second}" for "orbit ${first}"; ${near ? `did you mean "${first} ${near}"? ` : ''}subcommands: ${subs.join(', ')}`);
+  }
+  const near = closest(first, [...known, 'help', 'version']);
+  return new UsageError(`unknown command "${first}"; ${near ? `did you mean "${near}"? ` : ''}commands: ${known.join(', ')}`);
+}
+
 /**
  * Commands that only read. A worker process (its environment carries the
  * policy variables set by adapters/env.ts, and the plugin's ORBIT_WORKER
@@ -137,17 +195,23 @@ function findCommand(argv: readonly string[]): { def: CommandDef; rest: string[]
 
 export async function main(argv: readonly string[], overrides: Partial<CliContext> = {}): Promise<number> {
   const ctx = createContext(overrides);
+  // Messages name commands in the form that works for how this process was started (bin/orbit marks the plugin).
+  setInvocationEnv(ctx.env);
+  // An installed service starts a stable launcher; keep it pointing at this bundle, which changes on every plugin update.
+  if (!inWorker(ctx.env)) refreshServiceLauncher(ctx);
   const [first] = argv;
   try {
     if (first === undefined || first === '--help' || first === '-h' || first === 'help') {
       if (first === 'help' && argv[1] === 'exit-codes') ctx.io.out(exitCodesText());
       else if (first === 'help' && argv[1]) {
         const found = findCommand(argv.slice(1));
-        ctx.io.out(found ? commandHelp(found.def) : helpText());
+        if (found) ctx.io.out(commandHelp(found.def));
+        else if (argv[2] === undefined && groupOf(argv[1]).length > 0) ctx.io.out(groupHelp(argv[1]));
+        else throw unknownCommand(argv.slice(1));
       } else ctx.io.out(helpText());
       return first === undefined ? EXIT.USAGE : EXIT.OK;
     }
-    if (first === '--version' || first === '-V' || first === 'version') {
+    if (first === '--version' || first === '-V' || first === '-v' || first === 'version') {
       ctx.io.out(`${ORBIT_VERSION}\n`);
       return EXIT.OK;
     }
@@ -163,9 +227,12 @@ export async function main(argv: readonly string[], overrides: Partial<CliContex
 
     const found = findCommand(argv);
     if (!found) {
-      const known = [...new Set(COMMANDS.map((c) => c.name.split(' ')[0]!))];
-      const sub = COMMANDS.filter((c) => c.name.startsWith(`${first} `)).map((c) => c.name.slice(first.length + 1));
-      throw new UsageError(sub.length > 0 ? `"orbit ${first}" needs a subcommand: ${sub.join(', ')}` : `unknown command "${first}"; commands: ${known.join(', ')}`);
+      // "orbit models --help" and "orbit models -h" describe the group.
+      if (groupOf(first).length > 0 && argv.slice(1).some((a) => a === '--help' || a === '-h')) {
+        ctx.io.out(groupHelp(first));
+        return EXIT.OK;
+      }
+      throw unknownCommand(argv);
     }
     if (inWorker(ctx.env) && !WORKER_SAFE.has(found.def.name)) {
       throw new OrbitError('POLICY_DENIED', `"orbit ${found.def.name}" is refused inside a worker: workers cannot decide, resume, cancel or otherwise change runs`);

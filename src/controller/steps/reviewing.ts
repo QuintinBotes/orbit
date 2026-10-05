@@ -33,7 +33,7 @@ import { selectReviewer, selectionDecisionRecord, type ReviewerSelection } from 
 import type { CredentialStatus } from '../../adapters/types.ts';
 import { listReviews, loadResolverState, persistResolution, recordReview } from '../../review/store.ts';
 import type { IngestedReview } from '../../review/types.ts';
-import { listLedger, listQuestions } from '../../inquisition/store.ts';
+import { listAmendments, listLedger, listQuestions } from '../../inquisition/store.ts';
 import type { Trigger } from '../../inquisition/types.ts';
 import { machineAdmission, runWorktreeRoot, schedulerFor, type RunContext } from '../context.ts';
 import { independentReviewGate } from '../gates.ts';
@@ -308,6 +308,7 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
   const evidence = await repairEvidence(ctx, cand, repairs);
   const resolution = resolveFindings({ findings: state.findings, previousFindings: state.previousFindings, reviews: state.reviews, snapshot: ctx.snapshot, evidence, treeHash: cand.treeHash, now: ctx.clock.now() });
   markRepaired(resolution, repaired);
+  const undecided = settleInquiredClaims(ctx, cand, resolution);
   persistResolution(ctx.db, ctx.runDir, ctx.run.id, resolution, ctx.clock);
   const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now() });
   recordGate(ctx, gate);
@@ -324,12 +325,15 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
   const repairRequested = state.reviews.some((r) => r.verdict === 'REPAIR_REQUIRED');
   const blockRank = blockSeverityRank(ctx);
   const open = resolution.dispositions.filter((d) => d.status === 'accepted' || d.status === 'claim_pending' || d.status === 'open');
-  const toRepair = open.filter((d) => d.status === 'accepted' || ((repairRequested || d.memberIds.some((id) => repaired.has(id))) && (d.blocking || severityRank(d.severity) <= blockRank)));
+  const toRepair = open.filter(
+    (d) => d.status === 'accepted' || undecided.has(d.findingId) || ((repairRequested || d.memberIds.some((id) => repaired.has(id))) && (d.blocking || severityRank(d.severity) <= blockRank)),
+  );
   if (toRepair.length > 0) {
-    // Only a disagreement, or a finding about material semantics nobody may guess, needs the Inquisition first.
+    // Only a disagreement, or a finding about material semantics nobody may guess, needs the Inquisition first;
+    // a claim it has already inquired into on this tree goes to its discriminating test instead of back to it.
     const texts = findingTexts(state);
     const inquire = toRepair
-      .filter((d) => d.status !== 'accepted')
+      .filter((d) => d.status !== 'accepted' && !undecided.has(d.findingId))
       .map((d) => ({ d, why: d.disagreement ? [`disagreement (${d.disagreement.kinds.join(', ')})`] : materialSemantics(ctx, d, texts.get(d.findingId)) }))
       .filter((x) => x.why.length > 0);
     if (inquire.length > 0) {
@@ -354,7 +358,7 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
       summary: `${resolution.claimsToTest.length} review claim(s) need a discriminating test before they can be accepted or rejected`,
       evidence: resolution.claimsToTest.slice(0, 20).map((c) => `${c.findingId}: ${c.statement}`.slice(0, 300)),
       subjects: [],
-      key: `review:${cand.treeHash}:${resolution.claimsToTest.map((c) => c.findingId).sort().join(',')}`.slice(0, 500),
+      key: claimsTriggerKey(cand, resolution.claimsToTest),
     };
     if (!handledTriggerKeys(ctx).has(trigger.key)) return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
   }
@@ -475,6 +479,64 @@ async function repairEvidence(ctx: RunContext, cand: CandidateRecord, repairs: r
     }
   }
   return out;
+}
+
+function claimsTriggerKey(cand: CandidateRecord, claims: readonly { findingId: string }[]): string {
+  return `review:${cand.treeHash}:${claims.map((c) => c.findingId).sort().join(',')}`.slice(0, 500);
+}
+
+/**
+ * Claims the Inquisition has already inquired into on this tree are not left pending (which could only end
+ * BLOCKED, since the inquiry will not run twice). The inquiry's own record decides, never a default:
+ * - a ledger entry naming the claim that was rejected on evidence rejects it;
+ * - a ledger entry naming it that was supported, or a contract amendment the inquiry proposed citing it as its
+ *   evidence or reason, accepts it;
+ * - otherwise the claim stays pending (nobody's say-so accepts or rejects it) and is returned, so it goes to a
+ *   repair attempt whose brief is its discriminating test: the reviewer's validation written as a test, failing on
+ *   this tree and then fixed, or passing, which refutes the claim on the repaired tree.
+ */
+function settleInquiredClaims(ctx: RunContext, cand: CandidateRecord, resolution: Resolution): Set<string> {
+  const undecided = new Set<string>();
+  if (resolution.claimsToTest.length === 0) return undecided;
+  const key = claimsTriggerKey(cand, resolution.claimsToTest);
+  if (!handledTriggerKeys(ctx).has(key)) return undecided;
+  const pending = new Set(resolution.claimsToTest.map((c) => c.findingId));
+  const ledger = listLedger(ctx.db, ctx.run.id);
+  const amendments = listAmendments(ctx.db, ctx.run.id).filter((a) => a.status !== 'rejected');
+  for (const d of resolution.dispositions) {
+    if (!pending.has(d.findingId) || d.status !== 'claim_pending') continue;
+    const names = [d.findingId, d.externalId, d.fingerprint].filter((x): x is string => typeof x === 'string' && x.length > 0).map((x) => x.toLowerCase());
+    const cites = (text: string): boolean => names.some((n) => text.toLowerCase().includes(n));
+    const refuted = ledger.find((e) => e.status === 'rejected' && cites(e.claim));
+    const supported = ledger.find((e) => e.status === 'supported' && cites(e.claim));
+    const amended = amendments.find((a) => cites(`${a.record.evidence}\n${a.record.reason}`));
+    if (refuted) {
+      d.status = 'rejected';
+      d.blocking = false;
+      // A rejection is stored only with the evidence it rests on: the ledger entry and what that entry cites.
+      d.evidenceRefs = [...d.evidenceRefs, `ledger:${refuted.id}`, ...refuted.evidence.map((e) => `${e.kind}:${e.ref}`)];
+      d.reason = `rejected by the Inquisition (inquiry ${key}): ledger entry ${refuted.id} was rejected on evidence: ${refuted.claim.slice(0, 200)}`;
+    } else if (supported || amended) {
+      d.status = 'accepted';
+      const basis = supported ? `ledger entry ${supported.id} supports it` : `amendment ${amended!.id} (${amended!.record.field}) cites it`;
+      d.reason = `accepted by the Inquisition (inquiry ${key}): ${basis}; a repair attempt must confirm it with a failing test and fix it, or show with a passing test that it does not hold`;
+    } else {
+      undecided.add(d.findingId);
+      d.reason = `the Inquisition (inquiry ${key}) neither supported nor refuted it; a repair attempt runs its discriminating test: the reviewer's validation fails on this tree and is fixed, or passes and refutes it`;
+    }
+  }
+  resolution.accepted = resolution.dispositions.filter((d) => d.status === 'accepted');
+  resolution.rejected = resolution.dispositions.filter((d) => d.status === 'rejected');
+  resolution.blocking = resolution.dispositions.filter((d) => d.blocking);
+  resolution.claimsToTest = resolution.claimsToTest.filter((c) => resolution.dispositions.some((d) => d.findingId === c.findingId && d.status === 'claim_pending'));
+  for (const c of resolution.claims) {
+    const d = resolution.dispositions.find((x) => x.findingId === c.findingId);
+    if (d) {
+      c.status = d.status;
+      c.blocking = d.blocking;
+    }
+  }
+  return undecided;
 }
 
 /** A claim that was sent to repair and no longer holds was repaired: resolved, not rejected (it was never refuted on the tree it was raised on). */

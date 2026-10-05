@@ -1,12 +1,20 @@
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { COMMANDS } from '../../../src/cli/cli.ts';
 import { RUN_STATES } from '../../../src/core/run-states.ts';
+import { SRT_VERIFIED_VERSION } from '../../../src/isolation/sandbox-runtime.ts';
+import { makeLab } from '../../unit/cli/lab.ts';
 
 const root = resolve(import.meta.dirname, '../../..');
+/** The plugin payload (docs/decisions/0006-plugin-packaging.md): the repository root is only the development workspace. */
+const plugin = join(root, 'plugin');
+const SKILLS = ['doctor', 'init', 'inquisition', 'repair', 'resume', 'run', 'status', 'verify'];
+const skillText = (s: string) => readFileSync(join(plugin, 'skills', s, 'SKILL.md'), 'utf8');
+/** The bodies of the ```bash fences of a skill. */
+const bashFences = (text: string) => [...text.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]!);
 const hasEntry = existsSync(join(root, 'src/cli/main.ts'));
 const run = (cmd: string, args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string } = {}) =>
   spawnSync(cmd, args, { cwd: opts.cwd ?? root, env: opts.env ?? process.env, input: opts.input, encoding: 'utf8', timeout: 90_000 });
@@ -17,42 +25,148 @@ afterAll(() => { for (const d of tmp) rmSync(d, { recursive: true, force: true }
 
 describe('plugin manifest and components', () => {
   it('validates under --strict', () => {
-    const r = run('claude', ['plugin', 'validate', '--strict', root]);
+    const r = run('claude', ['plugin', 'validate', '--strict', plugin]);
     expect(r.status, r.stdout + r.stderr).toBe(0);
   });
 
   it('has no CLAUDE.md at the plugin root', () => {
-    expect(existsSync(join(root, 'CLAUDE.md'))).toBe(false);
+    expect(existsSync(join(plugin, 'CLAUDE.md'))).toBe(false);
   });
 
-  it('lists six skills and the seven agents', () => {
-    const r = run('claude', ['--plugin-dir', root, 'plugin', 'details', 'orbit']);
+  it('lists eight skills, init and doctor among them, and the seven agents (P10)', () => {
+    const r = run('claude', ['--plugin-dir', plugin, 'plugin', 'details', 'orbit']);
     expect(r.status, r.stderr).toBe(0);
-    for (const s of ['inquisition', 'repair', 'resume', 'run', 'status', 'verify']) expect(r.stdout).toMatch(new RegExp(`Skills \\(6\\).*\\b${s}\\b`));
+    for (const s of SKILLS) expect(r.stdout).toMatch(new RegExp(`Skills \\(8\\).*\\b${s}\\b`));
     for (const a of ['reviewer', 'inquisitor', 'curator', 'verifier', 'planner', 'implementer', 'explorer']) expect(r.stdout).toMatch(new RegExp(`Agents \\(7\\).*\\b${a}\\b`));
   });
 
-  it('keeps frontmatter inside the verified key lists', () => {
+  it('keeps frontmatter inside the verified key lists and the payload inside the allowed set', () => {
     const r = run('node', ['scripts/check-plugin.mjs']);
     expect(r.status, r.stdout + r.stderr).toBe(0);
   });
 
-  it('skills pass arguments through verbatim to the bundle', () => {
-    for (const s of ['run', 'inquisition', 'verify', 'repair', 'status', 'resume']) {
-      const text = readFileSync(join(root, 'skills', s, 'SKILL.md'), 'utf8');
-      expect(text).toContain('node "${CLAUDE_PLUGIN_ROOT}/dist/orbit.mjs"');
-      expect(text).toContain('$ARGUMENTS');
-      expect(text).toContain(`/orbit:${s}`);
+  it('skills show the arguments to the model and run the plugin\'s own orbit by absolute path', () => {
+    for (const s of SKILLS) {
+      const text = skillText(s);
+      expect(text, s).toContain('"${CLAUDE_PLUGIN_ROOT}/bin/orbit"');
+      expect(text, s).not.toContain('dist/orbit.mjs');
+      expect(text, s).toContain('$ARGUMENTS');
+      expect(text, s).toContain(`/orbit:${s}`);
     }
   });
 });
 
-/** Every `node ".../dist/orbit.mjs" <words>` invocation a skill tells the model to run, with the skill it came from. */
+describe('skills keep user text away from the shell (P25)', () => {
+  it('never puts $ARGUMENTS in a bash fence', () => {
+    for (const s of SKILLS) for (const fence of bashFences(skillText(s))) expect(fence, `skills/${s}/SKILL.md`).not.toContain('$ARGUMENTS');
+  });
+
+  it('passes goals and other free text through a here-document with a quoted delimiter', () => {
+    const free = [
+      ['run', /orbit" run --goal - .*<<'ORBIT_GOAL'/],
+      ['repair', /orbit" repair - .*<<'ORBIT_TEXT'/],
+      ['inquisition', /orbit" decide <run-id> <question-id> - <<'ORBIT_ANSWER'/],
+    ] as const;
+    for (const [s, re] of free) expect(bashFences(skillText(s)).join('\n'), s).toMatch(re);
+    // Every here-document in every skill has a quoted delimiter, so nothing inside it is expanded.
+    for (const s of SKILLS) for (const fence of bashFences(skillText(s))) for (const m of fence.matchAll(/<<-?\s*(\S+)/g)) expect(m[1], `skills/${s}/SKILL.md`).toMatch(/^'[A-Z_]+'$/);
+  });
+
+  it('validates a run id before it reaches a command line', () => {
+    for (const s of ['status', 'resume', 'verify', 'repair', 'inquisition']) expect(skillText(s), s).toContain('^orb-[0-9a-z-]+$');
+  });
+});
+
+describe('skills never leave a run idle or orphaned (P11, D11)', () => {
+  it('check the service, then detach to it or drive in the background and say so', () => {
+    for (const s of ['run', 'resume', 'repair']) {
+      const text = skillText(s);
+      expect(text, s).toContain('"${CLAUDE_PLUGIN_ROOT}/bin/orbit" service status');
+      expect(text, s).toContain('--detach');
+      expect(text, s).toContain('--foreground');
+      expect(text, s).toContain('run_in_background');
+      expect(text, s).toContain('"${CLAUDE_PLUGIN_ROOT}/bin/orbit" service install');
+    }
+  });
+
+  it('does not contradict itself', () => {
+    const runSkill = skillText('run');
+    expect(runSkill).not.toMatch(/Do not rewrite, quote or reorder/);
+    expect(runSkill).not.toMatch(/Submit, report the run id, and stop/);
+    expect(skillText('resume')).toContain('--foreground');
+  });
+});
+
+describe('plugin payload (ADR 0006, P9)', () => {
+  it('holds only the allowed files, and a package whose only dependency is srt at the verified version', async () => {
+    const { payloadProblems } = await import('../../../scripts/check-plugin.mjs');
+    expect(payloadProblems(plugin)).toEqual([]);
+    const pkg = JSON.parse(readFileSync(join(plugin, 'package.json'), 'utf8')) as Record<string, unknown>;
+    expect(pkg.dependencies).toEqual({ '@anthropic-ai/sandbox-runtime': SRT_VERIFIED_VERSION });
+    expect(pkg).not.toHaveProperty('devDependencies');
+  });
+
+  it('fails on a devDependency, a dev lockfile entry, a stray file or a wrong srt pin', async () => {
+    const { payloadProblems } = await import('../../../scripts/check-plugin.mjs');
+    const copy = () => {
+      const d = mkTmp('orbit-payload-');
+      for (const e of readdirSync(plugin)) if (e !== 'node_modules') cpSync(join(plugin, e), join(d, e), { recursive: true });
+      return d;
+    };
+    const edit = (d: string, file: string, fn: (j: Record<string, any>) => void) => {
+      const j = JSON.parse(readFileSync(join(d, file), 'utf8')) as Record<string, any>;
+      fn(j);
+      writeFileSync(join(d, file), JSON.stringify(j, null, 2));
+    };
+
+    const dev = copy();
+    edit(dev, 'package.json', (j) => { j.devDependencies = { vitest: '5.0.3' }; });
+    expect(payloadProblems(dev).join('\n')).toMatch(/devDependencies/);
+
+    const lock = copy();
+    edit(lock, 'package-lock.json', (j) => { j.packages['node_modules/vitest'] = { version: '5.0.3', dev: true }; });
+    expect(payloadProblems(lock).join('\n')).toMatch(/node_modules\/vitest/);
+
+    const stray = copy();
+    writeFileSync(join(stray, 'notes.md'), 'x');
+    mkdirSync(join(stray, 'src'));
+    writeFileSync(join(stray, 'src', 'x.ts'), 'x');
+    const strayProblems = payloadProblems(stray).join('\n');
+    expect(strayProblems).toMatch(/notes\.md/);
+    expect(strayProblems).toMatch(/src\/x\.ts/);
+
+    const pin = copy();
+    edit(pin, 'package.json', (j) => { j.dependencies['@anthropic-ai/sandbox-runtime'] = '^0.0.78'; });
+    expect(payloadProblems(pin).join('\n')).toMatch(/sandbox-runtime/);
+
+    const extraDep = copy();
+    edit(extraDep, 'package.json', (j) => { j.dependencies.yaml = '2.9.1'; });
+    expect(payloadProblems(extraDep).join('\n')).toMatch(/yaml/);
+  });
+
+  it('ships bin/orbit, which runs the bundle by absolute path, through PATH and through a link', () => {
+    const bin = join(plugin, 'bin', 'orbit');
+    expect(statSync(bin).mode & 0o111).not.toBe(0);
+    const direct = run(bin, ['--version'], { cwd: mkTmp('orbit-bin-') });
+    expect(direct.status, direct.stderr).toBe(0);
+    expect(direct.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    const viaPath = run('orbit', ['--version'], { cwd: mkTmp('orbit-bin-'), env: { ...process.env, PATH: `${join(plugin, 'bin')}:${process.env.PATH}` } });
+    expect(viaPath.status, viaPath.stderr).toBe(0);
+    expect(viaPath.stdout).toBe(direct.stdout);
+    const links = mkTmp('orbit-binlink-');
+    symlinkSync(bin, join(links, 'orbit'));
+    const linked = run('orbit', ['--version'], { cwd: links, env: { ...process.env, PATH: `${links}:${process.env.PATH}` } });
+    expect(linked.status, linked.stderr).toBe(0);
+    expect(linked.stdout).toBe(direct.stdout);
+  });
+});
+
+/** Every `".../bin/orbit" <words>` invocation a skill tells the model to run, with the skill it came from. */
 function skillInvocations(): { skill: string; words: string[]; text: string }[] {
   const out: { skill: string; words: string[]; text: string }[] = [];
-  for (const skill of ['run', 'inquisition', 'verify', 'repair', 'status', 'resume']) {
-    const body = readFileSync(join(root, 'skills', skill, 'SKILL.md'), 'utf8');
-    for (const m of body.matchAll(/dist\/orbit\.mjs"\s+([^\n`]+)/g)) {
+  for (const skill of SKILLS) {
+    const body = skillText(skill);
+    for (const m of body.matchAll(/bin\/orbit"\s+([^\n`]+)/g)) {
       out.push({ skill, words: m[1]!.trim().split(/\s+/), text: m[1]!.trim() });
     }
   }
@@ -64,20 +178,20 @@ describe('skills call commands that exist', () => {
 
   it('resolves every orbit command a skill names to a registered command', () => {
     const calls = skillInvocations();
-    expect(calls.length).toBeGreaterThanOrEqual(6);
+    expect(calls.length).toBeGreaterThanOrEqual(8);
     for (const { skill, words } of calls) {
       const [a, b] = words;
       const resolved = names.includes(`${a} ${b}`) || names.includes(a!);
       expect(resolved, `skills/${skill}/SKILL.md runs "orbit ${words.join(' ')}", which is not in COMMANDS`).toBe(true);
     }
-    // The commands the six skills exist for.
+    // The commands the skills exist for.
     const used = new Set(calls.map((c) => c.words[0]));
-    for (const c of ['run', 'verify', 'repair', 'status', 'resume', 'decide', 'questions']) expect(used.has(c), c).toBe(true);
+    for (const c of ['init', 'doctor', 'run', 'verify', 'repair', 'status', 'resume', 'decide', 'questions', 'service']) expect(used.has(c), c).toBe(true);
   });
 
   it('never invents an inquisition command', () => {
     for (const s of ['inquisition', 'run', 'repair', 'verify']) {
-      expect(readFileSync(join(root, 'skills', s, 'SKILL.md'), 'utf8')).not.toMatch(/orbit\.mjs"\s+inquisition/);
+      expect(skillText(s)).not.toMatch(/bin\/orbit"\s+inquisition/);
     }
     expect(names).not.toContain('inquisition');
   });
@@ -86,12 +200,12 @@ describe('skills call commands that exist', () => {
     const decide = COMMANDS.find((c) => c.name === 'decide')!;
     expect(decide.usage).toMatch(/^orbit decide <run-id> <question-id> <answer\.\.\.>/);
     const line = skillInvocations().find((c) => c.skill === 'inquisition' && c.words[0] === 'decide');
-    expect(line?.text).toMatch(/^decide <run-id> <question-id> "/);
+    expect(line?.text).toMatch(/^decide <run-id> <question-id> - <<'ORBIT_ANSWER'/);
     expect(skillInvocations().some((c) => c.skill === 'inquisition' && c.text === 'questions <run-id>')).toBe(true);
   });
 
   it('names only real run states in the status skill', () => {
-    const body = readFileSync(join(root, 'skills/status/SKILL.md'), 'utf8').split('---').slice(2).join('---');
+    const body = skillText('status').split('---').slice(2).join('---');
     expect(body).not.toMatch(/\b(RUNNING|DONE|FAILED)\b/);
     const states = (body.match(/\b[A-Z]{5,}(?:_[A-Z]+)?\b/g) ?? []).filter((w) => w !== 'ARGUMENTS');
     expect(states.length).toBeGreaterThan(3);
@@ -100,16 +214,16 @@ describe('skills call commands that exist', () => {
   });
 
   it('documents the verify exit codes and the repair hand-off', () => {
-    const verify = readFileSync(join(root, 'skills/verify/SKILL.md'), 'utf8');
+    const verify = skillText('verify');
     expect(verify).toMatch(/14 means FAIL/);
     expect(verify).toMatch(/15 means INCOMPLETE/);
-    const repair = readFileSync(join(root, 'skills/repair/SKILL.md'), 'utf8');
+    const repair = skillText('repair');
     expect(repair).toMatch(/Repair: <your text>/);
     expect(repair).toMatch(/DIAGNOSING/);
   });
 
   it('offers native /goal as an optional aid while keeping the controller as the completion authority', () => {
-    const run = readFileSync(join(root, 'skills/run/SKILL.md'), 'utf8');
+    const run = skillText('run');
     expect(run).toMatch(/\/goal/);
     expect(run).toMatch(/evidence: orbit status <run-id> reports SUCCEEDED/);
     expect(run).toMatch(/completion gate stays the authority|stays the authority/);
@@ -119,14 +233,14 @@ describe('skills call commands that exist', () => {
 
 describe('manifest', () => {
   it('carries the keywords of the spec example', () => {
-    const manifest = JSON.parse(readFileSync(join(root, '.claude-plugin/plugin.json'), 'utf8')) as { name: string; keywords: string[] };
+    const manifest = JSON.parse(readFileSync(join(plugin, '.claude-plugin/plugin.json'), 'utf8')) as { name: string; keywords: string[] };
     expect(manifest.name).toBe('orbit');
     for (const k of ['claude-code', 'autonomous', 'verification', 'self-healing', 'engineering']) expect(manifest.keywords).toContain(k);
   });
 });
 
 describe('hooks.json', () => {
-  const hooks = JSON.parse(readFileSync(join(root, 'hooks/hooks.json'), 'utf8')) as {
+  const hooks = JSON.parse(readFileSync(join(plugin, 'hooks/hooks.json'), 'utf8')) as {
     hooks: Record<string, { matcher?: string; hooks: { type: string; command: string; args?: string[]; timeout?: number }[] }[]>;
   };
   const handlers = Object.values(hooks.hooks).flatMap((g) => g.flatMap((e) => e.hooks));
@@ -136,7 +250,7 @@ describe('hooks.json', () => {
     for (const h of handlers) {
       expect(h.type).toBe('command');
       expect(h.command).toBe('node');
-      const script = (h.args?.[0] ?? '').replace('${CLAUDE_PLUGIN_ROOT}', root);
+      const script = (h.args?.[0] ?? '').replace('${CLAUDE_PLUGIN_ROOT}', plugin);
       expect(existsSync(script), script).toBe(true);
       expect(h.timeout).toBeLessThanOrEqual(10);
     }
@@ -149,19 +263,20 @@ describe('hooks.json', () => {
   it('guard is a no-op outside workers and fails closed for workers', () => {
     const env = { ...process.env };
     delete env.ORBIT_WORKER;
-    expect(run('node', ['hooks/guard.mjs'], { env, input: '{}' }).status).toBe(0);
+    delete env.CLAUDE_PROJECT_DIR;
+    expect(run('node', [join(plugin, 'hooks/guard.mjs')], { env, input: '{}' }).status).toBe(0);
     // A copy without dist/ models a missing bundle: the guard must block, not silently pass.
-    const plugin = mkTmp('orbit-plugin-');
-    mkdirSync(join(plugin, 'hooks'));
-    cpSync(join(root, 'hooks/guard.mjs'), join(plugin, 'hooks/guard.mjs'));
-    const r = run('node', [join(plugin, 'hooks/guard.mjs')], { env: { ...env, ORBIT_WORKER: '1' }, input: '{}' });
+    const copy = mkTmp('orbit-plugin-');
+    mkdirSync(join(copy, 'hooks'));
+    cpSync(join(plugin, 'hooks/guard.mjs'), join(copy, 'hooks/guard.mjs'));
+    const r = run('node', [join(copy, 'hooks/guard.mjs')], { env: { ...env, ORBIT_WORKER: '1' }, input: '{}' });
     expect(r.status).toBe(2);
     expect(r.stderr).toContain('failed closed');
   });
 
   it('session start is silent in a repo without Orbit state', () => {
     const dir = mkTmp('orbit-ss-');
-    const r = run('node', [join(root, 'hooks/session-start.mjs')], { cwd: dir });
+    const r = run('node', [join(plugin, 'hooks/session-start.mjs')], { cwd: dir });
     expect(r.status).toBe(0);
     expect(r.stdout).toBe('');
   });
@@ -170,14 +285,14 @@ describe('hooks.json', () => {
 describe('hook scripts against a fake bundle', () => {
   // A throwaway plugin copy lets the scripts run against controlled bundle behaviour.
   const mkPlugin = (bundleSrc: string) => {
-    const plugin = mkTmp('orbit-fake-');
-    mkdirSync(join(plugin, 'hooks'));
-    mkdirSync(join(plugin, 'dist'));
-    for (const f of ['guard.mjs', 'session-start.mjs']) cpSync(join(root, 'hooks', f), join(plugin, 'hooks', f));
-    writeFileSync(join(plugin, 'dist/orbit.mjs'), bundleSrc);
-    return plugin;
+    const fake = mkTmp('orbit-fake-');
+    mkdirSync(join(fake, 'hooks'));
+    mkdirSync(join(fake, 'dist'));
+    for (const f of ['guard.mjs', 'session-start.mjs']) cpSync(join(plugin, 'hooks', f), join(fake, 'hooks', f));
+    writeFileSync(join(fake, 'dist/orbit.mjs'), bundleSrc);
+    return fake;
   };
-  const worker = { ...process.env, ORBIT_WORKER: '1' };
+  const worker = { ...process.env, ORBIT_WORKER: '1', CLAUDE_PROJECT_DIR: '' };
 
   it.each([
     ['sync throw', 'throw new Error("x")'],
@@ -204,6 +319,7 @@ describe('hook scripts against a fake bundle', () => {
     writeFileSync(join(repo, '.orbit/state.sqlite'), '');
     const env = { ...process.env };
     delete env.ORBIT_WORKER;
+    delete env.CLAUDE_PROJECT_DIR;
     const r = run('node', [join(plugin, 'hooks/session-start.mjs')], { cwd: repo, env });
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('not instructions');
@@ -211,16 +327,34 @@ describe('hook scripts against a fake bundle', () => {
     expect(run('node', [join(plugin, 'hooks/session-start.mjs')], { cwd: repo, env: worker }).stdout).toBe('');
   });
 
-  it('session start never fails when the bundle crashes', () => {
-    const plugin = mkPlugin('process.stdout.write("partial"); process.exit(3);');
+  it('session start never fails when the bundle crashes, and says why on stderr only', () => {
+    const plugin = mkPlugin('process.stdout.write("partial"); process.stderr.write("boom"); process.exit(3);');
     const repo = mkTmp('orbit-ssrepo-');
     mkdirSync(join(repo, '.orbit'));
     writeFileSync(join(repo, '.orbit/state.sqlite'), '');
     const env = { ...process.env };
     delete env.ORBIT_WORKER;
+    delete env.CLAUDE_PROJECT_DIR;
     const r = run('node', [join(plugin, 'hooks/session-start.mjs')], { cwd: repo, env });
     expect(r.status).toBe(0);
     expect(r.stdout).toBe('');
+    expect(r.stderr).toMatch(/orbit session-start: .*exit 3.*boom/);
+  });
+
+  it('session start asks the bundle for the pending questions of every run, quietly', () => {
+    const plugin = mkPlugin('process.stdout.write(JSON.stringify(process.argv.slice(2)));');
+    const repo = mkTmp('orbit-ssrepo-');
+    mkdirSync(join(repo, '.orbit'));
+    writeFileSync(join(repo, '.orbit/state.sqlite'), '');
+    const env = { ...process.env };
+    delete env.ORBIT_WORKER;
+    delete env.CLAUDE_PROJECT_DIR;
+    const r = run('node', [join(plugin, 'hooks/session-start.mjs')], { cwd: repo, env });
+    expect(r.stdout).toContain('["questions","--pending","--quiet"]');
+    // Exactly what the CLI accepts.
+    const questions = COMMANDS.find((c) => c.name === 'questions')!;
+    expect(questions.usage).toContain('--pending');
+    expect(Object.keys(questions.options ?? {})).toEqual(expect.arrayContaining(['pending', 'quiet']));
   });
 });
 
@@ -274,8 +408,9 @@ describe.skipIf(!hasEntry)('bundle', () => {
   });
 
   it('is current and starts with a node shebang, with the srt preload beside it', () => {
-    expect(readFileSync(join(root, 'dist/orbit.mjs'), 'utf8').startsWith('#!/usr/bin/env node\n')).toBe(true);
-    expect(readFileSync(join(root, 'dist/srt-chromium-preload.mjs'), 'utf8')).toBe(readFileSync(join(root, 'src/isolation/srt-chromium-preload.mjs'), 'utf8'));
+    expect(readFileSync(join(plugin, 'dist/orbit.mjs'), 'utf8').startsWith('#!/usr/bin/env node\n')).toBe(true);
+    expect(readFileSync(join(plugin, 'dist/srt-chromium-preload.mjs'), 'utf8')).toBe(readFileSync(join(root, 'src/isolation/srt-chromium-preload.mjs'), 'utf8'));
+    expect(existsSync(join(root, 'dist'))).toBe(false);
     expect(run('node', ['scripts/build.mjs', '--check']).status).toBe(0);
   });
 
@@ -284,15 +419,44 @@ describe.skipIf(!hasEntry)('bundle', () => {
     const home = mkTmp('orbit-home-');
     run('git', ['init', '-q'], { cwd: repo });
     const env = { ...process.env, ORBIT_HOME: home };
-    const v = run('node', [join(root, 'dist/orbit.mjs'), '--version'], { cwd: repo, env });
+    const v = run('node', [join(plugin, 'dist/orbit.mjs'), '--version'], { cwd: repo, env });
     expect(v.status, v.stderr).toBe(0);
     expect(v.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
-    const d = run('node', [join(root, 'dist/orbit.mjs'), 'doctor', '--json'], { cwd: repo, env });
+    const d = run('node', [join(plugin, 'dist/orbit.mjs'), 'doctor', '--json'], { cwd: repo, env });
     expect(() => JSON.parse(d.stdout), d.stdout + d.stderr).not.toThrow();
   });
 
+  it('runs init from the plugin layout, which has no templates/ directory', () => {
+    const repo = mkTmp('orbit-bundle-init-');
+    run('git', ['init', '-q'], { cwd: repo });
+    const r = run(join(plugin, 'bin', 'orbit'), ['init'], { cwd: repo, env: { ...process.env, ORBIT_HOME: mkTmp('orbit-home-') } });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(readFileSync(join(repo, '.orbit', 'config.yaml'), 'utf8')).toBe(readFileSync(join(root, 'templates', 'config.yaml'), 'utf8'));
+    // Through bin/orbit the next step is named in the form a plugin user can invoke.
+    expect(r.stdout).toContain('/orbit:doctor');
+  });
+
+  it('prints the open questions of a run at session start (P7)', () => {
+    const l = makeLab();
+    try {
+      const runRec = l.newRun();
+      const q = l.ask(runRec.id);
+      const env = { ...process.env };
+      delete env.ORBIT_WORKER;
+      delete env.CLAUDE_PROJECT_DIR;
+      const r = run('node', [join(plugin, 'hooks/session-start.mjs')], { cwd: l.repo, env });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stderr).toBe('');
+      expect(r.stdout).toContain('not instructions');
+      expect(r.stdout).toContain(q.id);
+      expect(r.stdout).toContain(runRec.id);
+    } finally {
+      l.close();
+    }
+  });
+
   it('runs the worker guard through the plugin hook script', () => {
-    const r = run('node', ['hooks/guard.mjs'], { env: { ...process.env, ORBIT_WORKER: '1' }, input: 'not json' });
+    const r = run('node', [join(plugin, 'hooks/guard.mjs')], { env: { ...process.env, ORBIT_WORKER: '1' }, input: 'not json' });
     // Malformed input must block (2), never pass.
     expect(r.status).toBe(2);
   });

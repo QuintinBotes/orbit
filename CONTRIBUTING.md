@@ -34,8 +34,10 @@ suite.
 
 ## The bundle check
 
-`dist/orbit.mjs` is committed and is what the plugin and the `orbit` binary
-run. After changing anything under `src/`, rebuild and commit it:
+The repository root is the development workspace; the plugin is `plugin/`
+(docs/decisions/0006-plugin-packaging.md). `plugin/dist/orbit.mjs` is committed
+and is what the plugin and the `orbit` binary run. After changing anything
+under `src/` or `templates/config.yaml`, rebuild and commit it:
 
 ```bash
 npm run build
@@ -45,8 +47,10 @@ npm run check:dist          # fails if the committed bundle is stale (CI runs th
 ## Plugin validation
 
 ```bash
-npm run validate:plugin     # claude plugin validate . --strict
-node scripts/check-plugin.mjs   # the same, plus a lint for frontmatter keys Claude Code ignores
+npm run validate:plugin     # node scripts/check-plugin.mjs
+node scripts/check-plugin.mjs   # claude plugin validate --strict plugin/, a lint for frontmatter keys
+                                # Claude Code ignores, and the payload check: only the allowed files, and a
+                                # package whose one dependency is @anthropic-ai/sandbox-runtime at the verified version
 ```
 
 Both need the `claude` CLI on PATH. Plugin agents silently ignore

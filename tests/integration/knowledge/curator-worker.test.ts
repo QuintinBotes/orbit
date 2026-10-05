@@ -67,8 +67,10 @@ describe.skipIf(!canStripTypes)('the curator is a recorded worker of the finishe
   }, 120_000);
 
   it('skips curation, and records why, when the budget reserve cannot pay for it', async () => {
-    // The Codex review reports no cost, so its ceiling is charged; a curator budget the hard cap cannot also hold is refused.
-    const l = lab((c) => void (c.knowledge.curator_budget_usd = 29));
+    // A curator budget equal to the whole cost cap: once the run has spent anything (each fake session reports a
+    // cost), the hard cap cannot also hold it, so it is refused. The Codex review is charged from its tokens, not a
+    // role ceiling (P15), so a budget just below the cap no longer exceeds what is left.
+    const l = lab((c) => void (c.knowledge.curator_budget_usd = c.scheduler.hard_limits.model_cost_usd));
     const runId = await runToEnd(l);
     expect(listWorkers(l.db(), { runId, role: 'curator' })).toEqual([]);
     expect(learningOf(l, runId).skipped).toMatch(/budget reserve cannot pay for curation/);

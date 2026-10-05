@@ -34,6 +34,7 @@ import type {
 } from './types.ts';
 import { globProblem } from './globs.ts';
 import { hostEntryCovered, hostEntryProblem } from './hosts.ts';
+import { orbitHint } from '../core/invocation.ts';
 
 /** Derived from the contract type so policy/ never imports controller/ (architecture dependency rule). */
 export type RunMode = OrbitConfig['mode'];
@@ -255,15 +256,30 @@ export function defaultUi(): UiConfig {
   };
 }
 
-/** Output token budgets per role: the architecture's token-efficiency table. */
+/**
+ * Output token budgets per role, applied to each response (the provider's own max_tokens). The count includes
+ * extended thinking, not only the structured result, which is why the earlier 4000 to 8000 values failed on a
+ * realistic goal: live demo 3's planner exceeded 4000 twice drafting a UI contract. Sizing, for a realistic unit:
+ * - planner 16000: a contract of about 12 criteria (about 300 tokens each with proof and check ids), the expected
+ *   files, risks and assumptions is 5000 to 6000, plus thinking; double that is 16000.
+ * - implementer 24000: one file write of a few hundred lines is 8000 to 12000 tokens, and a response may carry
+ *   the write, thinking and the structured summary; 24000 doubles to the 32000 ceiling on a retry.
+ * - verifier 8000: a verdict per criterion (about 200 tokens each) and its evidence references, plus thinking.
+ * - reviewer 12000: up to about 15 findings with evidence references (about 300 tokens each), plus thinking.
+ * - inquisitor 6000: a handful of questions with options and a recommendation each, plus thinking.
+ * - curator 4000: a list of short lessons with their evidence, plus thinking.
+ * - explorer 6000: structured UI findings with evidence references, plus thinking.
+ * A response that still exceeds its cap is retried once with the cap doubled, up to OUTPUT_CAP_CEILING
+ * (controller/workers.ts), so these are starting points and not walls.
+ */
 export const DEFAULT_OUTPUT_BUDGETS: Readonly<Record<BudgetRole, number>> = Object.freeze({
-  planner: 4000,
-  implementer: 8000,
-  verifier: 3000,
-  reviewer: 4000,
-  inquisitor: 3000,
-  curator: 2000,
-  explorer: 2000,
+  planner: 16000,
+  implementer: 24000,
+  verifier: 8000,
+  reviewer: 12000,
+  inquisitor: 6000,
+  curator: 4000,
+  explorer: 6000,
 });
 
 export const BUDGET_ROLES: readonly BudgetRole[] = Object.freeze(Object.keys(DEFAULT_OUTPUT_BUDGETS) as BudgetRole[]);
@@ -348,7 +364,7 @@ export function loadConfig(repoRoot: string, path?: string, opts: Omit<ConfigOpt
     text = readFileSync(file, 'utf8');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') throw new OrbitError('NOT_FOUND', `no Orbit config at ${file}; run "orbit init" to create one`, { path: file });
+    if (code === 'ENOENT') throw new OrbitError('NOT_FOUND', `no Orbit config at ${file}; run ${orbitHint('init')} to create one`, { path: file });
     throw new OrbitError('CONFIG_INVALID', `cannot read ${file}: ${(err as Error).message}`, { path: file, problems: [`cannot read file: ${code ?? 'error'}`] });
   }
   const config = parseConfig(text, { ...opts, source: file });

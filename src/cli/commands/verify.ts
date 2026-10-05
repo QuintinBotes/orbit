@@ -12,7 +12,7 @@
  * configuration, so a check that already ran for this candidate is reported
  * from its record rather than run a second time.
  */
-import { join, relative } from 'node:path';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import { OrbitError } from '../../core/errors.ts';
 import { inspectScope } from '../../policy/scope.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../../evidence/candidate.ts';
@@ -24,7 +24,7 @@ import type { GoalContract } from '../../contract/types.ts';
 import type { Args } from '../args.ts';
 import { findRunByPrefix, openState, resolveRepo, withCliLease, type CliContext } from '../context.ts';
 import { EXIT } from '../exit.ts';
-import { json, line, oneLine } from '../io.ts';
+import { flat, json, line, oneLine } from '../io.ts';
 import { cliLeaseDeps } from './control.ts';
 
 const LEASE_TTL_MS = 10 * 60_000;
@@ -115,7 +115,10 @@ export async function verifyCandidate(rc: RunContext): Promise<VerifyOutcome> {
 function print(ctx: CliContext, repo: string, asJson: boolean, o: VerifyOutcome, contractJson: string): number {
   const contract = JSON.parse(contractJson) as GoalContract;
   const statements = new Map(contract.acceptance_criteria.map((c) => [c.id, c] as const));
-  const rel = (p: string): string => {
+  // Evidence paths are relative to the run directory (evidence/report.ts); shown relative to the repository.
+  const runDir = dirname(o.run.policyPath);
+  const rel = (given: string): string => {
+    const p = isAbsolute(given) ? given : join(runDir, given);
     const r = relative(repo, p);
     return r.startsWith('..') || r === '' ? p : r;
   };
@@ -141,15 +144,15 @@ function print(ctx: CliContext, repo: string, asJson: boolean, o: VerifyOutcome,
     const c = statements.get(e.criterion_id);
     line(ctx.io, `  ${e.criterion_id}  ${e.status.padEnd(11)}${c?.mandatory === false ? ' (optional) ' : ' '}${oneLine(c?.statement ?? '', 100)}`);
     for (const a of e.artifacts) line(ctx.io, `      evidence: ${rel(a)}`);
-    if (e.note) line(ctx.io, `      note: ${oneLine(e.note, 200)}`);
+    if (e.note) line(ctx.io, `      note: ${flat(e.note)}`);
   }
   if (o.report.checks.length > 0) {
     line(ctx.io, 'checks:');
     for (const c of o.report.checks) line(ctx.io, `  ${c.id}  ${c.status}${c.exit_code === null ? '' : ` (exit ${c.exit_code})`}${c.flaky ? ' flaky' : ''}  ${rel(c.log)}`);
   }
-  for (const r of o.failReasons) line(ctx.io, `failed: ${oneLine(r, 240)}`);
-  for (const r of o.incompleteReasons) line(ctx.io, `incomplete: ${oneLine(r, 240)}`);
-  for (const u of o.report.unverified) line(ctx.io, `unverified: ${oneLine(u, 240)}`);
+  for (const r of o.failReasons) line(ctx.io, `failed: ${flat(r)}`);
+  for (const r of o.incompleteReasons) line(ctx.io, `incomplete: ${flat(r)}`);
+  for (const u of o.report.unverified) line(ctx.io, `unverified: ${flat(u)}`);
   if (o.report.verdict === 'FAIL') line(ctx.io, `hand the failure to a repair with: orbit repair ${o.run.id}`);
   return code;
 }

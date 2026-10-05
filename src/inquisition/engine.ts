@@ -672,7 +672,7 @@ function replayOf(rec: AmendmentRecord): { proposal: AmendmentProposal | HumanAm
  * choosing "Approve"; any other decision id, or a model-authored one, is
  * refused. "Reject" closes the amendment without changing the contract.
  */
-export function applyApprovedAmendment(ctx: InquisitionContext, amendmentId: string, decisionId: string): { contract: GoalContract; amendment: AmendmentRecord } {
+export function applyApprovedAmendment(ctx: Pick<InquisitionContext, 'db' | 'clock' | 'runId' | 'snapshot' | 'contract'>, amendmentId: string, decisionId: string): { contract: GoalContract; amendment: AmendmentRecord } {
   const rec = getAmendment(ctx.db, amendmentId);
   if (rec.runId !== ctx.runId) throw new OrbitError('POLICY_DENIED', `amendment ${amendmentId} belongs to another run`);
   const d = getDecision(ctx.db, decisionId);

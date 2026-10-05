@@ -2,6 +2,7 @@ import type { OrbitDb } from '../storage/db.ts';
 import type { Clock } from '../core/clock.ts';
 import { OrbitError } from '../core/errors.ts';
 import type { OrbitConfig } from '../policy/types.ts';
+import type { ModelPricing } from '../routing/types.ts';
 import {
   BUDGET_COUNTERS,
   DISCRETE_COUNTERS,
@@ -62,6 +63,19 @@ export const ROLE_COST_CEILING_USD: Readonly<Record<BudgetRole, number>> = {
   explorer: 3,
 };
 
+/**
+ * A session with no measured cost is never presumed to cost more than this fraction of the whole cost cap: the
+ * provider's own spend cap (workerSpendCapUsd) bounds it anyway, and on a $2 or $4 cap the full role ceiling
+ * ($6 for the implementer) would refuse every first session before any work.
+ */
+export const MAX_CEILING_FRACTION_OF_CAP = 0.5;
+/**
+ * The least an unmeasured session is presumed to cost, however small the cap. A cap below this (after the closing
+ * reserve) is too small for an honest session, so admission still refuses it (spec section 7: stop EXHAUSTED before
+ * spending); a $0.50 cap is refused and a $2 cap is not.
+ */
+export const MIN_SESSION_CEILING_USD = 1;
+
 export const ROLE_WALL_CEILING_MS: Readonly<Record<BudgetRole, number>> = {
   planner: 15 * 60_000,
   implementer: 30 * 60_000,
@@ -90,6 +104,26 @@ export interface ConsumeOptions {
   phase?: BudgetPhase;
   /** Required for worker_turns_per_session, which is capped per session. */
   sessionId?: string;
+}
+
+/**
+ * The dearest rate listed for each token kind across the given models: a price no known model exceeds, used to
+ * charge a session whose own model has no pricing (Codex bills by plan or API depending on the login). Null when
+ * none of them has a price.
+ */
+export function dearestPricing(all: ReadonlyArray<ModelPricing | null>): ModelPricing | null {
+  const priced = all.filter((p): p is ModelPricing => p !== null);
+  if (priced.length === 0) return null;
+  const top = (k: keyof ModelPricing): number => Math.max(...priced.map((p) => p[k]));
+  return { input: top('input'), output: top('output'), cache_write_5m: top('cache_write_5m'), cache_write_1h: top('cache_write_1h'), cache_read: top('cache_read') };
+}
+
+/** A cost priced from reported token counts, for a session whose provider reported tokens but no cost. */
+export interface TokenEstimate {
+  costUsd: number;
+  /** How the price was chosen, e.g. the model's own pricing or the dearest listed pricing. */
+  basis: string;
+  model: string | null;
 }
 
 export interface CostCharge {
@@ -199,7 +233,11 @@ export class BudgetLedger {
    * the implementer ceiling is lower, so the role ceiling alone would let the
    * ledger believe in budget that was already spent.
    */
-  consumeCost(cost: { costUsd: number | null; costSource?: string }, role: BudgetRole, opts: { phase?: BudgetPhase; ceilingUsd?: number | null } = {}): CostCharge {
+  consumeCost(
+    cost: { costUsd: number | null; costSource?: string },
+    role: BudgetRole,
+    opts: { phase?: BudgetPhase; ceilingUsd?: number | null; tokenEstimate?: TokenEstimate | null } = {},
+  ): CostCharge {
     const phase = opts.phase ?? 'work';
     if (opts.ceilingUsd !== undefined && opts.ceilingUsd !== null && !isAmount(opts.ceilingUsd)) {
       throw new OrbitError('SCHEMA_INVALID', 'consumeCost: ceilingUsd must be a non-negative number');
@@ -207,6 +245,16 @@ export class BudgetLedger {
     if (typeof cost.costUsd === 'number' && Number.isFinite(cost.costUsd) && cost.costUsd >= 0) {
       const r = this.consumeMeasured('cost_usd', cost.costUsd, phase);
       return { charged: cost.costUsd, basis: cost.costSource === 'estimated' ? 'estimated' : 'reported', state: r.state };
+    }
+    // Tokens were reported but no cost (Codex under a ChatGPT login): what the tokens would cost is a far closer
+    // charge than a ceiling several times larger, and it is still priced at or above any known model's rate.
+    const est = opts.tokenEstimate;
+    if (est && isAmount(est.costUsd)) {
+      const r = this.consumeMeasured('cost_usd', est.costUsd, phase, {
+        type: 'budget.cost-token-estimated',
+        data: { role, charged_usd: est.costUsd, basis: est.basis, model: est.model },
+      });
+      return { charged: est.costUsd, basis: 'estimated', state: r.state };
     }
     const sessionCap = isAmount(opts.ceilingUsd) ? opts.ceilingUsd : null;
     const ceiling = sessionCap ?? this.costCeiling(role);
@@ -312,6 +360,11 @@ export class BudgetLedger {
       if (r.src === 'reported' || r.src === 'estimated') counts[r.src] += r.n;
       else counts.unavailable += r.n;
     }
+    // A session charged from its tokens (no cost reported, none in the usage row) is an estimate, not unmeasured.
+    const tokenEstimated = this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND type = 'budget.cost-token-estimated'", runId)?.n ?? 0;
+    const moved = Math.min(tokenEstimated, counts.unavailable);
+    counts.unavailable -= moved;
+    counts.estimated += moved;
     let charged = 0;
     let charges = 0;
     for (const e of this.db.all<{ data_json: string | null }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'budget.cost-ceiling-charged'", runId)) {
@@ -533,10 +586,19 @@ export class BudgetLedger {
     return c.role === 'check' ? 0 : this.costCeiling(c.role ?? 'implementer');
   }
 
+  /**
+   * What a session of `role` with no measured cost is presumed to cost: the role's ceiling, but never more than
+   * half the whole cost cap (and never less than MIN_SESSION_CEILING_USD), so a small cap can still admit work.
+   */
+  roleCostCeiling(role: BudgetRole): number {
+    return this.costCeiling(role);
+  }
+
   private costCeiling(role: BudgetRole): number {
     const v = this.ceilings.costUsd[role];
     if (v === undefined) throw new OrbitError('SCHEMA_INVALID', `no cost ceiling for role ${String(role)}`);
-    return v;
+    const cap = this.state('cost_usd').hard_cap;
+    return Math.min(v, Math.max(MIN_SESSION_CEILING_USD, roundUsd(cap * MAX_CEILING_FRACTION_OF_CAP)));
   }
 
   private wallCeiling(role: BudgetRole): number {

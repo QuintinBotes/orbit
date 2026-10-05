@@ -10,11 +10,23 @@ Verify with evidence, not claims. Verification runs outside the worker that wrot
 
 User arguments, verbatim: `$ARGUMENTS`
 
+The arguments are either empty or exactly one run id matching
+`^orb-[0-9a-z-]+$`. With anything else, say so and run nothing. Never paste the
+arguments into a command line as they are.
+
+With no arguments it verifies the newest run:
+
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/dist/orbit.mjs" verify $ARGUMENTS
+"${CLAUDE_PLUGIN_ROOT}/bin/orbit" verify
 ```
 
-With no run id it verifies the newest run. It checks the run's latest candidate in a clean checkout under the run's frozen policy, takes a short lease (it refuses while a live controller owns the run) and never changes the run's state.
+With a run id, type the validated id in place of `<run-id>`:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/bin/orbit" verify <run-id>
+```
+
+It checks the run's latest candidate in a clean checkout under the run's frozen policy, takes a short lease (it refuses while a live controller owns the run) and never changes the run's state.
 
 ## Reading the result
 

@@ -219,7 +219,7 @@ export function profileForWorker(input: WorkerProfileInput): BuiltProfile {
     ownReadOnly = CODEX_HOME_READ_ONLY.map((rel) => join(own, rel));
     others = [...claudeDirs.flatMap((d) => claudeState(home, d)), ...codexDirs.filter((d) => d !== own)];
   }
-  assertProviderDirConfinable(own, home);
+  assertProviderDirConfinable(own, home, env);
 
   return {
     writablePaths: uniq([worktree, workerDir, tmp, own]),
@@ -245,6 +245,8 @@ export interface CodexReviewerProfileInput {
   /** Codex's state directory (see codexHomeFor): the one place besides the worker directory the reviewer may write. */
   codexHome: string;
   homeDir: string;
+  /** For ORBIT_HOME; defaults to process.env. */
+  env?: Readonly<Record<string, string | undefined>>;
 }
 
 /**
@@ -273,7 +275,7 @@ export function codexReviewerProfile(profile: SandboxProfile, input: CodexReview
   const checkout = canonicalPath(input.checkout);
   const workerDir = canonicalPath(input.workerDir);
   const codexHome = canonicalPath(input.codexHome);
-  assertProviderDirConfinable(codexHome, home);
+  assertProviderDirConfinable(codexHome, home, input.env ?? process.env);
   for (const [what, dir] of [['worker directory', workerDir], ['Codex state directory', codexHome]] as const) {
     if (isWithin(checkout, dir) || isWithin(dir, checkout)) {
       throw new OrbitError('ISOLATION_UNAVAILABLE', `refusing to let the reviewer write ${dir}: the ${what} overlaps the review checkout ${checkout}, which must stay read-only`, { path: dir });
@@ -462,11 +464,20 @@ function claudeState(home: string, configDir: string): string[] {
 /**
  * The provider directory is made writable, so it must be a directory of its
  * own: a CODEX_HOME or CLAUDE_CONFIG_DIR set to the home directory (or above
- * it) would hand the worker every dotfile and tool directory in it.
+ * it) would hand the worker every dotfile and tool directory in it. Nor may it
+ * be, contain or sit inside the Orbit home (~/.orbit, or ORBIT_HOME): that
+ * holds every run's state and the service launcher (bin/orbit) that the
+ * service manager executes outside any sandbox.
  */
-function assertProviderDirConfinable(dir: string, home: string): void {
+function assertProviderDirConfinable(dir: string, home: string, env: Readonly<Record<string, string | undefined>>): void {
   if (dir === '/' || isWithin(home, dir)) {
     throw new OrbitError('ISOLATION_UNAVAILABLE', `refusing to let a worker write ${dir}: a provider config directory must not be the home directory or contain it`, { path: dir });
+  }
+  const fromEnv = nonEmpty(env.ORBIT_HOME);
+  for (const orbitHome of uniq([join(home, '.orbit'), ...(fromEnv && isAbsolute(fromEnv) ? [canonicalPath(fromEnv)] : [])])) {
+    if (isWithin(dir, orbitHome) || isWithin(orbitHome, dir)) {
+      throw new OrbitError('ISOLATION_UNAVAILABLE', `refusing to let a worker write ${dir}: a provider config directory must not be, contain or sit inside the Orbit home ${orbitHome}`, { path: dir });
+    }
   }
 }
 

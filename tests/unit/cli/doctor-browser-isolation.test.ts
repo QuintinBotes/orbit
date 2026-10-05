@@ -155,10 +155,18 @@ describe('browserIsolationCheck', () => {
     expect(launched).toBe(false);
   });
 
-  it('says Linux is unverified, and needs nothing for other providers or when no UI is configured', async () => {
+  it('on Linux names the one-sandbox mode and the missing exploration, and needs nothing for other providers or when no UI is configured', async () => {
+    // Was "unverified on Linux". Since ui-single-sandbox (verified with real srt by tests/integration/ui/ui-single-sandbox-srt.test.ts),
+    // journey checks work there, and the old advice (switch to the container provider) pointed at a provider whose
+    // containers have no network at all.
     const f = fixture();
-    const linux = await browserIsolationCheck({ wanted: true, provider: srtLike({ ...verified, rules: false }).provider, available: true, repo: f.repo, env: f.env, launch: okLaunch });
-    expect(linux).toMatchObject({ status: 'warn', summary: expect.stringMatching(/^unverified on Linux: /) });
+    let launched = false;
+    const linux = await browserIsolationCheck({ wanted: true, provider: srtLike({ ...verified, rules: false }).provider, available: true, repo: f.repo, env: f.env, launch: async (argv, opts) => ((launched = true), okLaunch(argv, opts)) });
+    expect(linux).toMatchObject({ status: 'pass', summary: expect.stringMatching(/^Linux: .*own loopback.*one sandbox \(ui-single-sandbox\)/) });
+    expect(linux.summary).toMatch(/exploration is not available/);
+    expect(linux.details.join(' ')).toContain('What this widens');
+    expect(JSON.stringify(linux)).not.toMatch(/isolation\.provider: container/);
+    expect(launched).toBe(false);
     expect(await browserIsolationCheck({ wanted: false, provider: srtLike(verified).provider, available: true, repo: null, env: {}, launch: okLaunch })).toMatchObject({ status: 'pass', summary: expect.stringMatching(/^not required/) });
     expect(await browserIsolationCheck({ wanted: true, provider: new NoIsolation(), available: true, repo: null, env: {}, launch: okLaunch })).toMatchObject({ status: 'pass', summary: expect.stringMatching(/^not needed: browser checks run under none/) });
     expect(await browserIsolationCheck({ wanted: true, provider: null, available: false, repo: null, env: {}, launch: okLaunch })).toMatchObject({ status: 'warn', summary: expect.stringMatching(/isolation is unavailable/) });

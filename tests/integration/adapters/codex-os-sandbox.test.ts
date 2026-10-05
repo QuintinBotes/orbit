@@ -27,6 +27,8 @@ const srt = new SandboxRuntimeIsolation({ orbitInstallDir: ORBIT_ROOT });
 const srtStatus = await srt.available();
 const hasGit = which('git', process.env.PATH) !== null;
 const curl = which('curl', process.env.PATH);
+// How each sandbox refuses a write into the read-only checkout: Seatbelt answers EPERM, bubblewrap's read-only bind mount answers EROFS.
+const WRITE_REFUSED = process.platform === 'darwin' ? { message: /Operation not permitted/, code: 'EPERM' } : { message: /Read-only file system/, code: 'EROFS' };
 
 describe.skipIf(!srtStatus.ok)(srtStatus.ok ? 'Codex reviewer profile under real srt' : `Codex reviewer profile skipped: ${srtStatus.detail}`, () => {
   // Collection runs this body even when the suite is skipped, so only create files when it will run.
@@ -85,7 +87,7 @@ describe.skipIf(!srtStatus.ok)(srtStatus.ok ? 'Codex reviewer profile under real
     for (const target of [join(checkout, 'planted.txt'), join(checkout, 'README.md')]) {
       const r = await run('echo tampered > "$1"', target);
       expect(r.code, target).not.toBe(0);
-      expect(r.stderr, target).toMatch(/Operation not permitted/);
+      expect(r.stderr, target).toMatch(WRITE_REFUSED.message);
     }
     const mk = await run('mkdir "$1"', join(checkout, 'newdir'));
     expect(mk.code).not.toBe(0);
@@ -174,6 +176,6 @@ describe.skipIf(!srtStatus.ok)(srtStatus.ok ? 'CodexAdapter os-sandbox tier unde
     const call = JSON.parse(readFileSync(argvLog, 'utf8').trim().split('\n')[0]!) as { argv: string[] };
     expect(call.argv[call.argv.indexOf('--sandbox') + 1]).toBe('danger-full-access');
     expect(existsSync(planted)).toBe(false);
-    expect(readFileSync(join(f.workerDir, 'log.jsonl'), 'utf8')).toMatch(/"aggregated_output":"EPERM"/);
+    expect(readFileSync(join(f.workerDir, 'log.jsonl'), 'utf8')).toContain(`"aggregated_output":"${WRITE_REFUSED.code}"`);
   });
 });

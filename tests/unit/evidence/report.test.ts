@@ -271,3 +271,62 @@ describe('aggregateCheckConfigHash', () => {
     expect(aggregateCheckConfigHash(edited, ['lint'])).toBe(aggregateCheckConfigHash(snapshot, ['lint']));
   });
 });
+
+// P2: a green check proves something about the change only when the change could have turned it green.
+describe('buildEvidenceReport: green checks that prove nothing about the change', () => {
+  const passedAtBase = [
+    { checkId: 'tests', status: 'PASSED' as const },
+    { checkId: 'lint', status: 'PASSED' as const },
+  ];
+
+  it('is INCOMPLETE, with no criterion supported, when the candidate tree is the base tree', () => {
+    const e = evaluateEvidence({ contract: contract(), candidate: CANDIDATE, checkResults: [result(snapshot, 'tests'), result(snapshot, 'lint')], scope: CLEAN_SCOPE, snapshot, base: { treeHash: CANDIDATE.treeHash, checks: passedAtBase, changedPaths: [] } });
+    expect(e.report.verdict).toBe('INCOMPLETE');
+    expect(e.incompleteReasons.join('\n')).toContain('the candidate makes no change');
+    expect(e.report.acceptance_evidence.map((a) => a.status)).toEqual(['unverified', 'unverified']);
+    expect(e.report.acceptance_evidence[0]!.note).toContain('makes no change');
+  });
+
+  it('does not count a check that already passed on the base revision when the candidate adds or changes no test', () => {
+    const e = evaluateEvidence({ contract: contract(), candidate: CANDIDATE, checkResults: [result(snapshot, 'tests'), result(snapshot, 'lint')], scope: CLEAN_SCOPE, snapshot, base: { treeHash: 'tree-base', checks: passedAtBase, changedPaths: ['apps/export.mjs'] } });
+    expect(e.report.verdict).not.toBe('PASS');
+    expect(e.report.acceptance_evidence[0]).toMatchObject({ criterion_id: 'AC-1', status: 'unverified' });
+    expect(e.report.acceptance_evidence[0]!.note).toContain('already passed on the base revision');
+    expect(e.incompleteReasons.join('\n')).toContain('criterion AC-1: unverified');
+  });
+
+  it('does not count a check with no failing result recorded on the base revision either, when no test changed', () => {
+    const e = evaluateEvidence({ contract: contract(), candidate: CANDIDATE, checkResults: [result(snapshot, 'tests'), result(snapshot, 'lint')], scope: CLEAN_SCOPE, snapshot, base: { treeHash: 'tree-base', checks: null, changedPaths: ['apps/export.mjs'] } });
+    expect(e.report.verdict).toBe('INCOMPLETE');
+    expect(e.report.acceptance_evidence.every((a) => a.status === 'unverified')).toBe(true);
+    expect(e.report.acceptance_evidence[0]!.note).toContain('no failing result recorded on the base revision');
+  });
+
+  it('supports a criterion whose check failed on the base revision and passes now, with or without a test change', () => {
+    const e = evaluateEvidence({
+      contract: contract(),
+      candidate: CANDIDATE,
+      checkResults: [result(snapshot, 'tests'), result(snapshot, 'lint')],
+      scope: CLEAN_SCOPE,
+      snapshot,
+      base: { treeHash: 'tree-base', checks: [{ checkId: 'tests', status: 'FAILED' }, { checkId: 'lint', status: 'PASSED' }], changedPaths: ['apps/export.mjs'] },
+    });
+    expect(e.report.verdict).toBe('PASS');
+    expect(e.report.acceptance_evidence.map((a) => a.status)).toEqual(['supported', 'supported']);
+  });
+
+  it('supports a criterion when the candidate adds or changes a test, even though its checks passed on the base revision', () => {
+    const e = evaluateEvidence({ contract: contract(), candidate: CANDIDATE, checkResults: [result(snapshot, 'tests'), result(snapshot, 'lint')], scope: CLEAN_SCOPE, snapshot, base: { treeHash: 'tree-base', checks: passedAtBase, changedPaths: ['apps/export.mjs', 'tests/export.test.mjs'] } });
+    expect(e.report.verdict).toBe('PASS');
+    expect(e.report.acceptance_evidence.map((a) => a.status)).toEqual(['supported', 'supported']);
+  });
+});
+
+// P27: evidence names a file a person can open, not a bare log name.
+describe('buildEvidenceReport: artifact paths', () => {
+  it('gives artifacts and check logs as paths relative to the run directory when it is known', () => {
+    const r = build({ runDir: '/runs', uiResults: [] });
+    expect(r.acceptance_evidence[0]!.artifacts).toEqual(['evidence/1/tests.log']);
+    expect(r.checks.map((c) => c.log)).toEqual(['evidence/1/lint.log', 'evidence/1/tests.log']);
+  });
+});

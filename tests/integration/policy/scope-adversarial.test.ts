@@ -97,9 +97,10 @@ describe.skipIf(!gitAvailable)('inspectScope against hiding tricks (skipped when
       git('add', '-A');
       git('commit', '-q', '-m', 'base');
       const base = git('rev-parse', 'HEAD');
-      git('config', 'diff.ignoreSubmodules', 'all');
       git('update-index', '--add', '--cacheinfo', `160000,${base},apps/vendored`);
       git('commit', '-q', '-m', 'add gitlink');
+      // Set after the commit: git 2.39 (Debian 12) also applies it to `git commit`, which then finds nothing to commit.
+      git('config', 'diff.ignoreSubmodules', 'all');
       const r = await inspectScope({ repoRoot: sub, baseRev: base, candidateRev: git('rev-parse', 'HEAD'), snapshot: SNAPSHOT });
       expect(r.changed_files).toBe(1);
     } finally {

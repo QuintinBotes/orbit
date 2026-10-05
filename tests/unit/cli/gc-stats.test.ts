@@ -78,7 +78,7 @@ describe('orbit gc', () => {
   it('rejects a bad period and extra arguments', async () => {
     const l = lab();
     l.db();
-    expect((await l.cli(['gc', '--keep-days', '0'])).code).toBe(2);
+    expect((await l.cli(['gc', '--keep-days=-1'])).code).toBe(2);
     expect((await l.cli(['gc', '--keep-days', 'soon'])).code).toBe(2);
     expect((await l.cli(['gc', 'now'])).code).toBe(2);
   });

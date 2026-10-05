@@ -32,13 +32,13 @@ import { budgetAdmission } from '../../scheduling/scheduler.ts';
 import type { DifficultyClass, WorkUnit } from '../../scheduling/types.ts';
 import { CANDIDATE_EVENT, machineAdmission, schedulerFor, type RunContext } from '../context.ts';
 import { blockingQuestions } from '../gates.ts';
-import { ensureWorker, recordSpendCap, routeFor, sessionSpendCap } from '../workers.ts';
+import { ensureWorker, raiseOutputCap, recordSpendCap, routeFor, sessionSpendCap } from '../workers.ts';
 import { recordedUnits, recordUnits, runParallelUnits, serializedUnits, splitAttempt } from '../parallel-writers.ts';
 import type { WorkUnitPlan } from '../../scheduling/work-units.ts';
 import { attemptSubject, deniedWorkerOperations, grantFor, requestAttemptAuthorization, runApprovedOperation, sessionEvents, ungrantedCommands, type ApprovedRun, type GuardedOperation } from '../authorization.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
 import { assertContract, blockOnAuth, decide, finishRun, move, note, policySummary, progress, retryWait, safePoint, scheduleTransientRetry, WAIT, type StepResult } from './common.ts';
-import { latestAttempt } from './obtain.ts';
+import { attemptStart, latestAttempt } from './obtain.ts';
 
 export const ATTEMPT_EVENT = 'implementation.attempt';
 
@@ -180,7 +180,10 @@ async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable
     if (r.kind === 'done') return snapshot(ctx, n, r.workerId);
     // Some units could not be integrated in parallel: one implementer finishes their criteria on the integrated tree.
   }
-  let k = Math.max(1, latestAttempt(ctx, base));
+  // A resume after a person fixed what blocked this attempt (a login) starts a fresh session instead of replaying the stored failure.
+  const start = await attemptStart(ctx, base, `implementer (attempt ${n})`);
+  if (!start.ok) return start.step;
+  let k = start.n;
   for (;;) {
     const purpose = `${base}#${k}`;
     if (!ctx.db.get('SELECT 1 AS x FROM workers WHERE run_id = ? AND purpose = ?', ctx.run.id, purpose)) {
@@ -226,6 +229,12 @@ async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable
       // Its half-written tree is not an attempt: a new session of the same attempt continues in the same worktree.
       const stop = await restartLostImplementer(ctx, st.worker, n, `${base}#${k + 1}`, route.model);
       if (stop) return stop;
+      k++;
+      continue;
+    }
+    // A response that exceeded the output cap would fail the same way at the same cap: the next session of this
+    // attempt runs under the cap doubled (a recorded decision), once, in the same worktree.
+    if (r.status === 'failed' && raiseOutputCap(ctx, purpose, r.error) !== null) {
       k++;
       continue;
     }

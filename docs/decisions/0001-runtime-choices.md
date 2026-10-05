@@ -166,7 +166,36 @@ prototyped against the demo app's real suite and judged security first:
   plus a large image on macOS, Linux visual baselines differ). The container
   remains an explicit opt-in (`ui.isolation: container`), never an automatic
   fallback.
-- Linux has no Mach and needs no rule; whether app and tests in separate srt
-  processes share loopback there is unverified until CI runs the real-srt
-  test, and doctor says so. Upstream: propose `allowMachRegister` to srt, then
-  delete the preload.
+- Upstream: propose `allowMachRegister` to srt, then delete the preload.
+
+On Linux there is no Mach and no rule is needed, but app and tests in separate
+srt processes do not share loopback: srt always gives a bubblewrap sandbox its
+own network namespace (`allowLocalBinding` is macOS-only), so the application
+the app fixture starts is unreachable from the readiness probe, the host and a
+browser in a second srt process (ECONNREFUSED). The provider says so
+(`privateLoopback`), and each journey check then runs in one sandbox: an
+Orbit-owned launcher (`src/ui/single-sandbox.ts`, passed to node as source)
+starts the application, waits until it is ready, runs Playwright and stops the
+application, under the check's profile plus the run's application directory
+(write allowlist, credential read-deny, egress filter; loopback private to the
+sandbox). Disclosed with the evidence (`ui-single-sandbox`): the application
+gets the check's hosts and writable paths, and the journeys can see the
+application's environment and processes. macOS keeps the two-process path.
+Verified on arm64 Linux (node:22, srt 0.0.78, bubblewrap) with the demo's real
+suite (`tests/integration/ui/ui-single-sandbox-srt.test.ts`): the two-process
+path never becomes ready; in one sandbox the 6 functional and accessibility
+journeys pass on desktop and mobile, and the 2 visual journeys fail only
+because the demo's baselines are recorded for darwin (no baseline is written);
+inside, the credential canary is unreadable, HOME is read-only and egress to a
+host off the list fails. Not yet verified on x64 Linux CI. The container
+provider has the same property (every container runs with `--network none`),
+so it says `privateLoopback` too and the launcher runs with the image's
+`node`; verified on macOS with OrbStack and the official Playwright image
+(`tests/integration/ui/ui-single-container.test.ts`, skipped where that image
+is not present): before, the application never became ready; now the 6
+functional journeys pass in one container. The default check image
+(`templates/worker.Dockerfile`) has no browser, so UI checks under the
+container provider need an image with Playwright's browsers. Exploration
+(`src/ui/explore.ts`) has no one-sandbox mode: the explorer is a worker in its
+own sandbox, so under a provider with `privateLoopback` it does not start the
+application and ends `app_failed` with that reason, and doctor says so.

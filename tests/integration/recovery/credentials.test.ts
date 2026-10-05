@@ -55,7 +55,7 @@ describe.skipIf(!canStripTypes)('expired credentials produce a truthful blocker 
     const a = fakes(env);
     // Logged out: claude reports no credential.
     writeScenario(env.f, { auth: { loggedIn: false } });
-    const missing = await checkRunCredentials({ db: env.db, clock, ownerId: OWNER, runId: env.runId, adapters: a, providers: ['claude'] });
+    const missing = await checkRunCredentials({ db: env.db, clock, ownerId: OWNER, runId: env.runId, adapters: a, providers: ['claude'], env: {} });
     expect(missing.checks[0]).toMatchObject({ provider: 'claude', verdict: 'blocked', status: { state: 'missing' } });
     expect(missing.blocked?.outcome).toBe('blocked');
     const run = getRun(env.db, env.runId);

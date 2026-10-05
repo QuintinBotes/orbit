@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { listWorkers } from '../../../src/storage/workers.ts';
 import { listCandidates, listEvidenceReports } from '../../../src/evidence/store.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
-import { APPROVE, baseScenario, canStripTypes, drive, events, FIXED_PROBE, IMPLEMENTER_OUTPUT, MUL_TEST, PLANNER_OUTPUT, runState, startLabRun, tracker, writeScenario } from '../../fault-injection/helpers.ts';
+import { APPROVE, baseScenario, canStripTypes, drive, events, FIXED_PROBE, git, IMPLEMENTER_OUTPUT, MUL_TEST, PLANNER_OUTPUT, runState, startLabRun, tracker, writeScenario } from '../../fault-injection/helpers.ts';
 
 const t = tracker();
 afterEach(() => t.cleanup());
@@ -92,7 +92,8 @@ describe.skipIf(!canStripTypes)('controller: parallel writers within a run', () 
     // Still one attempt and one candidate.
     expect(l.db().get<{ used: number }>("SELECT used FROM budget_counters WHERE run_id = ? AND counter = 'implementation_attempts'", run.id)?.used).toBe(1);
     expect(listCandidates(l.db(), run.id)).toHaveLength(1);
-    expect(readFileSync(join(done.worktreePath!, 'apps/calc.mjs'), 'utf8')).toBe(CALC);
+    // The succeeded run's worktree is removed (P19); the integrated file is in the delivered branch.
+    expect(git(l.repo, 'show', `refs/heads/${done.branch}:apps/calc.mjs`)).toBe(CALC.trim());
   }, 120_000);
 
   it('keeps one writer when the policy asks for no parallelism', async () => {

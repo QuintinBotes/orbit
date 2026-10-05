@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ProviderAdapter } from '../../../src/adapters/types.ts';
 import { snapshotCandidate } from '../../../src/evidence/candidate.ts';
-import { insertQuestion } from '../../../src/inquisition/store.ts';
+import { insertLedgerEntry, insertQuestion } from '../../../src/inquisition/store.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
 import { listFindings, listReviews, recordReview } from '../../../src/review/store.ts';
 import type { IngestedFinding } from '../../../src/review/types.ts';
@@ -228,7 +228,7 @@ describe('a review that is already recorded', () => {
     expect(JSON.parse(ev!.data_json).data.trigger.summary).toContain('the contract lists "refund rounding" as material');
   });
 
-  it('a claim that needs a discriminating test goes to the inquisition once, and then the run blocks on what is open', async () => {
+  it('a claim that needs a discriminating test goes to the inquisition once, and then to a repair attempt instead of a dead-end block', async () => {
     const { cand } = await setup();
     record(cand, 'BLOCK', [finding('CLM-1', { severity: 'medium', category: 'correctness', claim: 'calc may overflow for very large operands in some environments', evidence: 'maybe' })]);
     await run();
@@ -240,7 +240,38 @@ describe('a review that is already recorded', () => {
     lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'inquisition.completed', 'x', ?)", lab.runId, JSON.stringify({ key: trigger.key }));
     lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
     await run();
-    expect(state()).toBe('BLOCKED');
+    // The inquiry is settled and neither supported nor refuted the claim: it goes to a repair attempt that runs its
+    // discriminating test, never left pending into BLOCKED (P4), and nobody's say-so accepts it.
+    expect(state()).toBe('REPAIRING');
+    expect(listFindings(lab.db, lab.runId)[0]!.status).toBe('claim_pending');
+    expect(decisions('review.finding.accepted')).toEqual([]);
+  });
+
+  /** A claim sent to the Inquisition, whose inquiry then settles with the given ledger entry. */
+  async function inquiredClaim(ledger: { claim: string; status: 'supported' | 'rejected' }): Promise<void> {
+    const { cand } = await setup();
+    record(cand, 'BLOCK', [finding('CLM-2', { severity: 'medium', category: 'correctness', claim: 'calc drops the sign of a negative zero', evidence: 'maybe' })]);
+    await run();
+    expect(state()).toBe('INQUISITION');
+    const ev = lab.db.get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'state.transition' AND to_state = 'INQUISITION'", lab.runId);
+    const trigger = JSON.parse(ev!.data_json).data.trigger;
+    insertLedgerEntry(lab.db, { runId: lab.runId, claim: ledger.claim, source: 'inquisition', confidence: 'high', consequence: null, reversibility: 'reversible', experiment: null, status: ledger.status, evidence: [{ kind: 'inspection', ref: 'apps/calc.mjs:2', at: 1 }] }, lab.ctx().clock);
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'inquisition.completed', 'x', ?)", lab.runId, JSON.stringify({ key: trigger.key }));
+    lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
+    await run();
+  }
+
+  it('a claim the inquiry supports in its ledger is accepted on that record and repaired', async () => {
+    await inquiredClaim({ claim: 'CLM-2 holds: calc returns 0 for -0', status: 'supported' });
+    expect(state()).toBe('REPAIRING');
+    expect(listFindings(lab.db, lab.runId)[0]!.status).toBe('accepted');
+    expect(decisions('review.finding.accepted').map((d) => d.summary).join(' ')).toMatch(/accepted by the Inquisition .*ledger entry \S+ supports it/);
+  });
+
+  it('a claim the inquiry rejects in its ledger on evidence is rejected and not repaired', async () => {
+    await inquiredClaim({ claim: 'CLM-2 does not hold: calc keeps -0', status: 'rejected' });
+    expect(state()).not.toBe('REPAIRING');
+    expect(listFindings(lab.db, lab.runId)[0]!.status).toBe('rejected');
   });
 
   it('a REPAIR_REQUIRED review whose findings are below the blocking severity does not force a repair', async () => {

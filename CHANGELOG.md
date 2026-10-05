@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+End-to-end test round of 2026-10-05 (a new user installing and running Orbit
+against real providers). Fixes, each with a test that failed first:
+
+- Packaging. The plugin is the `plugin/` directory (ADR 0006), so a marketplace
+  install brings only the sandbox runtime `srt` (pinned 0.0.78, with a
+  lockfile) instead of every development dependency of the repository. The
+  marketplace entry is a `git-subdir` source with path `plugin`. New skills
+  `/orbit:init` and `/orbit:doctor`; `bin/orbit` puts `orbit` on the PATH of
+  Claude Code's Bash tool, and messages name the `/orbit:<skill>` for plugin
+  users. Skills pass free text through a quoted here-document (`--goal -`,
+  `repair -`) and validate run ids; `run`, `resume` and `repair` check the
+  service, then hand the run to it (`--detach`) or drive it from the session
+  (`--foreground`); `orbit resume` gained `--detach`. The SessionStart hook now
+  prints open questions (`orbit questions --pending --quiet`).
+- Starter configuration. The starter mode is `autonomous` and the delivery
+  actions follow the mode, so the quickstart validates under every `--mode`.
+  `orbit init` derives `scope.allowed_paths` from the repository layout, and
+  `orbit doctor` warns (`scope`) when they match no tracked file.
+- Run admission. `orbit run` refuses a dirty working tree, git credentials in
+  the repository's configuration and, for a foreground run, a failing
+  environment gate, before it creates a run.
+- Verification. A PASS can no longer rest on green checks that prove nothing:
+  a candidate whose tree is the base tree is INCOMPLETE, and a criterion is
+  `unverified` unless a check failed on the base revision or the candidate adds
+  or changes a test. Evidence paths are relative to the run directory and
+  `orbit verify` shows them relative to the repository.
+- Reports. A candidate commit that was not delivered is reported as "candidate
+  commit (local, not delivered)", never as a delivered commit.
+- Run loop. A recorded Approve or Reject of a contract amendment is applied to
+  the contract. A resume after fixing a failed worker starts a fresh series of
+  attempts (spending one `recovery_attempts`) instead of replaying the stored
+  failure. An accepted reviewer claim goes to repair instead of dead-ending in
+  BLOCKED. A block that comes from the frozen policy says so and tells you to
+  start a new run; `orbit resume` refuses it (exit 5) unless `--force`. A
+  foreground resume after `kill -9` expires the dead controller's lease.
+  Block and exhaustion messages name the real cause.
+- Budgets. A session with tokens but no reported cost is charged a token-priced
+  estimate, and a session is presumed to cost at most half the cost cap (at
+  least $1), so $2 and $4 caps admit their first session. Per-role output
+  budgets are larger (planner 16000, implementer 24000, verifier 8000,
+  reviewer 12000, inquisitor 6000, curator 4000, explorer 6000), and a response
+  that exceeds its cap is retried once at double the cap, up to 32000.
+- Baseline questions. A baseline-exception question is withdrawn when the goal
+  is to make that check pass; open ones are closed when a run SUCCEEDS.
+- Cleanup. A run that ends SUCCEEDED or CANCELLED removes its worktrees;
+  `orbit gc --keep-days 0` is allowed. `orbit service uninstall` waits for the
+  service manager to release the job and reports a stop still in progress.
+- CLI. Fix and summary text is no longer truncated mid-sentence; `-v` prints the
+  version; group commands list their subcommands with `--help`; `help <unknown>`
+  exits 2; misspelled commands get a suggestion; a closed pipe exits quietly;
+  `models list` agrees with doctor about eligibility.
+- Documentation. The README quickstart is rewritten to be followed literally
+  from a marketplace install or a clone, and the install, configuration,
+  operations, troubleshooting and security documents now describe the above. The
+  live demo status is stated from the recorded reports (docs/demos/2026-10-05).
+
 - Browser journeys run under `srt` on macOS (ADR 0001, "Browsers under
   sandbox-runtime on macOS"; live demo 2). Chromium aborted at start because
   Seatbelt refused its Mach rendezvous service (`bootstrap_check_in
@@ -153,5 +209,6 @@ First release.
   heartbeats, watchdog, reattachment to workers after a controller crash.
 - A learning layer: lesson graph, calibration, prompt overlays with replay
   evaluation and rollback, JSON-LD export, publication guard.
-- The `orbit` CLI, six plugin skills, six agents and the guard hook, shipped as
-  one committed bundle (`dist/orbit.mjs`).
+- The `orbit` CLI, eight plugin skills, seven agents and two hooks (a
+  SessionStart hook and the guard hook), shipped as one committed bundle
+  (`plugin/dist/orbit.mjs`).

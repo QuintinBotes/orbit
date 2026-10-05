@@ -1,0 +1,22 @@
+#!/bin/sh
+# orbit: runs the plugin's bundle (../dist/orbit.mjs) with the node on PATH. Claude Code puts this directory on the
+# Bash tool's PATH while the plugin is enabled; it also works by absolute path or through a symbolic link.
+# ORBIT_PLUGIN_ROOT tells the CLI it was started through the plugin, so its messages name /orbit:<skill>
+# (Claude Code does not export CLAUDE_PLUGIN_ROOT to Bash tool commands).
+set -e
+self=$0
+case $self in
+  */*) ;;
+  *) self=$(command -v -- "$self") ;;
+esac
+while [ -h "$self" ]; do
+  target=$(readlink -- "$self")
+  case $target in
+    /*) self=$target ;;
+    *) self=$(dirname -- "$self")/$target ;;
+  esac
+done
+root=$(cd -P -- "$(dirname -- "$self")/.." && pwd -P)
+ORBIT_PLUGIN_ROOT=$root
+export ORBIT_PLUGIN_ROOT
+exec node "$root/dist/orbit.mjs" "$@"

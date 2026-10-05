@@ -85,6 +85,15 @@ export function table(rows: readonly (readonly string[])[], header?: readonly st
   return `${all.map(fmt).join('\n')}\n`;
 }
 
+/**
+ * One line, never cut. For text that tells a person what to do (a fix, the missing piece, why a run ended):
+ * a terminal wraps a long line by itself, but a line cut mid-sentence loses the command it was carrying.
+ */
+export function flat(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/** One line cut at `max` characters, for table cells and lists where the rest is one command away. Not for anything actionable (use flat). */
 export function oneLine(text: string, max = 120): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 3)}...` : flat;

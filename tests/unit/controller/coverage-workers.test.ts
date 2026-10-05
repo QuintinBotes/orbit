@@ -408,6 +408,31 @@ describe('accountWorker', () => {
     expect(ctx.ledger!.state('cost_usd').used - before).toBeCloseTo(1.75, 6);
   });
 
+  it('charges an estimate priced from the reported tokens, not the role ceiling, when a Codex session reports tokens but no cost (P15)', () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    lab.deps.registry.seed();
+    withLedger();
+    const ctx = lab.ctx();
+    const w = planWorker(lab.db, { id: 'wrk-cx', runId: lab.runId, role: 'implementer', purpose: 'implement:1', provider: 'codex', model: 'gpt-nobody-priced', workerDir: join(lab.base, 'w', 'cx'), cwd: lab.repo }, lab.clock, OWNER);
+    recordSpendCap(ctx, 'implement:1', 3, 1.5);
+    accountWorker(ctx, w, result({ usage: usage({ provider: 'codex', model: 'gpt-nobody-priced', inputTokens: 24763, outputTokens: 1200, cacheReadTokens: 24448, cacheWriteTokens: 0 }) }), 'work');
+    const used = ctx.ledger!.state('cost_usd').used;
+    expect(used).toBeGreaterThan(0);
+    expect(used).toBeLessThan(1);
+    expect(used).toBeLessThan(ROLE_COST_CEILING_USD.implementer);
+    expect(lab.db.all("SELECT 1 FROM events WHERE run_id = ? AND type = 'budget.cost-ceiling-charged'", lab.runId)).toEqual([]);
+  });
+
+  it('charges the registered model price for a session that reports tokens only', () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    lab.deps.registry.seed();
+    withLedger();
+    const ctx = lab.ctx();
+    // claude-sonnet-5-5: $2 in, $10 out per million tokens, no cache traffic.
+    accountWorker(ctx, active('implementer', 'implement:1'), result({ usage: usage({ model: 'claude-sonnet-5-5', inputTokens: 100_000, outputTokens: 10_000, cacheReadTokens: 0, cacheWriteTokens: 0 }) }), 'work');
+    expect(ctx.ledger!.state('cost_usd').used).toBeCloseTo(0.3, 6);
+  });
+
   it('a lost session is charged at most the role ceiling even under a larger cap', () => {
     lab = makeUnitLab({ path: ['PREFLIGHT'] });
     withLedger();

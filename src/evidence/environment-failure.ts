@@ -146,7 +146,8 @@ const CRASH_SIGNALS: ReadonlySet<string> = new Set(['SIGABRT', 'SIGSEGV', 'SIGBU
 const TRACE_HEADER = /^-{3,}\s*(Native|JavaScript) stack trace\s*-{3,}$/i;
 // Frames of the JavaScript section (process.abort() from a script prints one): "1: file:///app/main.mjs:3:9".
 const JS_FRAME = /^\d+:\s+\S/;
-const TRACE_FRAME = /^\d+:\s+0x[0-9a-f]+\s/i;
+// A frame node cannot name prints as the bare address once the line is trimmed ("2: 0x7f3a1c2e4b50"), as the Linux x64 runner does.
+const TRACE_FRAME = /^\d+:\s+0x[0-9a-f]+(?:\s|$)/i;
 const KILLED_BY_SIGNAL = /^Process killed by signal: (SIG[A-Z0-9]+)$/;
 const RUNNER_FOOTER = /^\[orbit\] check=\S+ status=\S+ exit=(\S+)/;
 

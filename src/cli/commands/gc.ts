@@ -9,20 +9,19 @@ import { loadConfig } from '../../policy/index.ts';
 import { pruneExpiredRuns } from '../../storage/retention.ts';
 import type { Args, OptionSpec } from '../args.ts';
 import { resolveRepo, withState, type CliContext } from '../context.ts';
-import { EXIT, UsageError } from '../exit.ts';
+import { EXIT } from '../exit.ts';
 import { iso, json, line, oneLine } from '../io.ts';
 
 export const GC_USAGE = 'orbit gc [--keep-days <n>] [--dry-run] [--json]';
 
 export const GC_OPTIONS: OptionSpec = {
-  'keep-days': { type: 'string', valueName: 'n', description: 'prune runs that ended more than this many days ago (default: retention.keep_runs_days from the policy)' },
+  'keep-days': { type: 'string', valueName: 'n', description: 'prune runs that ended more than this many days ago; 0 prunes every finished run now (default: retention.keep_runs_days from the policy)' },
   'dry-run': { type: 'boolean', description: 'list what would be pruned without removing anything' },
 };
 
 export async function gcCommand(args: Args, ctx: CliContext): Promise<number> {
   args.expect(0);
   const flag = args.int('keep-days');
-  if (flag !== undefined && flag < 1) throw new UsageError('--keep-days must be at least 1', GC_USAGE);
   const repo = await resolveRepo(ctx, args.str('repo'));
   const keepDays = flag ?? loadConfig(repo).retention.keep_runs_days;
   const dryRun = args.bool('dry-run');

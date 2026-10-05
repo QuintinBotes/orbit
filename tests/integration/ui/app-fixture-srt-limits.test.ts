@@ -38,7 +38,12 @@ function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: 'ignore', env: { PATH: process.env.PATH ?? '', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
 }
 
-describe.skipIf(!srtStatus.ok)(srtStatus.ok ? 'the demo app under srt with the default limits' : `the demo app under srt skipped: ${srtStatus.detail}`, () => {
+// srt's allowLocalBinding is macOS-only. On Linux every srt process gets its own network namespace, so an application started under srt
+// listens on a loopback nobody else can reach (the readiness probe, a browser, a second srt process all get ECONNREFUSED).
+// UI checks there run the application and the browser in one sandbox instead (ui-single-sandbox-srt.test.ts).
+const LOOPBACK_SHARED = process.platform !== 'linux';
+
+describe.skipIf(!srtStatus.ok || !LOOPBACK_SHARED)(srtStatus.ok ? 'the demo app under srt with the default limits' : `the demo app under srt skipped: ${srtStatus.detail}`, () => {
   it('starts through the app fixture and becomes ready, with its log under the read-denied run directory', async () => {
     // The demo's own policy: its ui.environment.start_command, its isolation section, limits at their defaults.
     const config = parseConfig(readFileSync(join(DEMO, '.orbit/config.yaml'), 'utf8'));

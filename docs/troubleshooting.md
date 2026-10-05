@@ -15,12 +15,13 @@ degraded but usable.
 | `runtime.sqlite` | `node:sqlite` is not usable | The Node build lacks `node:sqlite` or FTS5. Use Node 22.16 or newer from nodejs.org or a version manager. |
 | `git.cli` | git is missing or too old | Install git 2.5 or newer. |
 | `git.repo` | not a repository, base branch or remote missing, dirty tree | Run inside a git repository. Create the base branch, add the remote (`git remote add origin <url>`), or commit or stash changes (or set `repository.allow_dirty_start: true`). |
-| `config` | no `.orbit/config.yaml` | Run `orbit init`. |
+| `config` | no `.orbit/config.yaml` | Run `orbit init` (plugin: `/orbit:init`). |
 | `config` | configuration is invalid | Fix each listed problem; unknown keys and contradictory settings are errors. Compare with `templates/config.yaml`. |
 | `storage` | SQLite cannot use WAL | The repository is on a network share or a container bind mount. Use a local disk. |
 | `storage` | state database problem or not writable | Fix permissions on `.orbit/`. If the database is newer than this Orbit, upgrade Orbit. |
+| `scope` | `scope.allowed_paths (...) matches no tracked file` (warning) | The template's example globs match nothing in this repository, so a worker could change nothing. Set `scope.allowed_paths` to globs that match your source and test directories; the warning suggests some. |
 | `checks` | a configured check's executable or script is missing | Install it, or correct the `command` in `checks`. With no checks defined, nothing can be verified. |
-| `isolation` | sandbox-runtime unavailable | Install `srt` (`npm install --global @anthropic-ai/sandbox-runtime`); on Linux install bubblewrap. Orbit will not fall back to weaker isolation. |
+| `isolation` | sandbox-runtime unavailable | Install `srt` (`npm install --global @anthropic-ai/sandbox-runtime`); on Linux install bubblewrap. A plugin install and a clone after `npm ci` carry their own `srt`; if doctor says it is missing there, the plugin's or the clone's install did not finish (run `npm ci` in the clone, or reinstall the plugin). Orbit will not fall back to weaker isolation. |
 | `isolation` | container image not present locally | `docker pull <image>`. Containers run with `--pull never`. Make sure the Docker daemon is running. |
 | `isolation` | `none` provider warning | Workers run with your full permissions. Use `sandbox-runtime` or `container`. |
 | `isolation` | `isolation.require_resource_limits is true but ... cannot enforce isolation.limits.memory_mb` | The provider has no hard memory cap. Use `isolation.provider: container` with `container.memory_mb` no higher than `limits.memory_mb`, set `limits.memory_mb: null`, or set `require_resource_limits: false`. |
@@ -29,12 +30,12 @@ degraded but usable.
 | `claude.worker-tier` | workers use the `claude-sandbox` tier | No exported Claude credential, or not using sandbox-runtime. Export `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` and use `isolation.provider: sandbox-runtime` for the `os-sandbox` tier. |
 | `codex.worker-tier` | the Codex reviewer uses the `codex-sandbox` tier | No `CODEX_API_KEY` or `OPENAI_API_KEY` in the environment (a ChatGPT login cannot run under `srt`), or not using sandbox-runtime. Export an API key and use `isolation.provider: sandbox-runtime` for the `os-sandbox` tier. With `providers.codex.tier: os-sandbox` and no `srt` the check fails and a run is refused with `ISOLATION_UNAVAILABLE`; set the tier to `auto` or `codex-sandbox`, or fix `srt`. |
 | `codex.cli`, `codex.auth` | codex missing or logged out | Install the Codex CLI, `codex login` or export `CODEX_API_KEY`. Not required if independent review is off. |
-| `review` | independent review would block | Make a second provider usable and set `providers.<id>.data_policy_eligible: true` if sending sanitized code to it is permitted, or turn off `review.independent_provider_required` knowingly. |
+| `review` | independent review would block | Read the reason. `providers.codex.data_policy_eligible is not true`: set it to `true` if sending sanitized code to Codex is permitted. `"codex" has no model qualified for review`: run `orbit models refresh` (it reads Codex's model catalog) or set `providers.codex.model` to a model you accept. Codex logged out: `codex login`. Or turn off `review.independent_provider_required` knowingly. A run that is already frozen keeps its policy; see [A run is `BLOCKED`](#run-problems). |
 | `models` | no allowed Claude model is eligible | Allow `sonnet`, `opus` or `haiku` in `routing.allowed_models`, and upgrade `claude` if a minimum version is shown. `orbit models list` explains each model. |
 | `playwright` | `@playwright/test`, browsers or axe missing | `npm install -D @playwright/test @axe-core/playwright` in the repository, then `npx playwright install chromium`. |
 | `ui.browser-isolation` | `srt X is not 0.0.78 ... browser checks are refused` (macOS) | The Chromium preload was verified against `srt` 0.0.78 only, so UI checks raise `ISOLATION_UNAVAILABLE` with any other version. Install `@anthropic-ai/sandbox-runtime@0.0.78`. |
 | `ui.browser-isolation` | `headless Chromium did not start under srt`, or `did not render the test page` (macOS) | Run `npx playwright install chromium` in the repository. Only Playwright's bundled Chromium is supported under `srt` on macOS: not `channel: 'chrome'`, Firefox or WebKit, and not `chromiumSandbox: true`. |
-| `ui.browser-isolation` | `unverified on Linux` (warning) | No rule is needed on Linux, but whether the application and the journeys in separate `srt` processes share loopback has not been verified yet. If the journeys cannot reach the application, use `isolation.provider: container`. |
+| `ui.browser-isolation` | `Linux: ... one sandbox (ui-single-sandbox)` (pass) | Information, not a fault. Every `srt` sandbox on Linux has its own loopback, so each journey check starts the application and runs the browser in one sandbox, and the evidence says so. UI exploration (`ui.exploration`) ends `app_failed` under `srt` on Linux, because neither the explorer nor a reproduction spec could reach the application. |
 | `delivery` | `gh` not found | Install the GitHub CLI. |
 | `delivery` | `GH_TOKEN` not set | Export a fine-grained token scoped to the repository in the environment the controller runs in. A keyring login is refused. |
 | `delivery` | `gh auth status` failed | Create a new valid token and export it. |
@@ -47,14 +48,37 @@ degraded but usable.
 
 ## Run problems
 
+- **`orbit run` refuses to start.** "cannot start a run: ... No run was created and
+  no model was called". The message names the cause: uncommitted changes (commit or
+  stash them; `.orbit/` is exempt; or set `repository.allow_dirty_start`), git
+  configuration that holds credentials (remove them and use a credential helper),
+  or a failing environment check (isolation, credentials, reviewer: run
+  `orbit doctor`). Nothing needs cleaning up.
 - **A run is `BLOCKED`.** `orbit status <run-id>` and `orbit report <run-id>
   --interim` give the reason. Answer questions with `orbit decide`, fix the
-  environment, then `orbit resume <run-id>`.
-- **`resume` exits 5 (CONFLICT).** A live controller owns the run, or open
-  questions remain. Answer them, or pass `--force` if you accept the risk.
+  environment, then `orbit resume <run-id>` (with `--foreground` when no service
+  is running: without a service, `resume` clears the block and says "No controller
+  is running"). **Exception: a block that comes from the frozen policy.** If the
+  reason says "This comes from the run's frozen policy (...)", the run keeps the
+  policy it started with, so editing `.orbit/config.yaml` and resuming blocks
+  again, and `orbit resume` refuses with exit 5. Fix the config, `orbit cancel
+  <run-id>`, and start a new run with `orbit run`. If the fix was outside the
+  policy (for example `orbit models refresh`), `orbit resume <run-id> --force`
+  continues the same run. The cases are listed in
+  [operations](operations.md#pause-resume-cancel).
+- **`resume` exits 5 (CONFLICT).** A live controller owns the run, open material
+  questions remain, or the block comes from the frozen policy. Answer the
+  questions, start a new run, or pass `--force` if you accept the risk.
 - **`orbit verify` exits 14 or 15.** 14 means the evidence verdict is FAIL; hand it to
   `orbit repair <run-id>`. 15 means a mandatory criterion is unproven; treat the work as
-  not done and look at which criterion has no evidence.
+  not done and look at which criterion has no evidence. A criterion reading "no new
+  evidence" means its checks were already green on the base revision and the candidate
+  adds or changes no test, so the green result proves nothing about the change; an
+  INCOMPLETE verdict on a candidate that changes nothing means the same.
+- **A worker fails with "exceeded the N output token maximum".** The response outgrew
+  `routing.output_budgets` for its role. Orbit retries the unit once with the cap doubled
+  (up to 32000) and records `worker.output-cap-raised`; if it still overflows, raise that
+  role's budget in the config and start a new run.
 - **A release run is BLOCKED at the merge or deploy.** Read `orbit status <run-id>`. Common
   causes: the pull request is still a draft and `release.merge.mark_ready` is false; the base
   branch moved and `actions.rebase_task_branch` is false; a deploy outcome is unknown and the
@@ -91,7 +115,16 @@ degraded but usable.
 - **The service is not picking up my change to `config.yaml`.** Runs freeze the
   policy when they start. Start a new run.
 - **Stale or leftover state.** `orbit cancel <run-id>` works on blocked and
-  ownerless runs. Worktrees are under `~/.orbit/worktrees/`.
+  ownerless runs. Worktrees are under `~/.orbit/worktrees/`; a run that ends
+  `SUCCEEDED` or `CANCELLED` removes its own, and `orbit gc` removes the others
+  (`--keep-days 0` for every finished run now).
+- **`orbit service uninstall` says the service manager is "still stopping" the
+  controller.** The controller finishes its current step before it stops. Check with
+  `orbit service status`; it exits 1 and says the job is still held until it is gone.
+- **A command you ran from a plugin install says `orbit: command not found`.** The
+  plugin's `orbit` is on the PATH of Claude Code's Bash tool only. Use the skills, ask
+  Claude to run the command, or install the CLI from a clone (see
+  [installation](installation.md#install-the-cli)).
 
 ## Getting more detail
 

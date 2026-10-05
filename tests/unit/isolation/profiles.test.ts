@@ -169,6 +169,30 @@ describe('profileForWorker', () => {
     }
   });
 
+  it('refuses a provider config dir that is, contains or sits inside the Orbit home (the service launcher lives there)', () => {
+    const l = layout();
+    const orbitHome = join(l.r, 'orbit-state');
+    const refused = (dir: string, env: Record<string, string>, provider: 'claude' | 'codex'): string => {
+      try {
+        profileForWorker({ worktree: l.worktree, workerDir: l.workerDir, snapshot: snapshotFor({ repoRoot: l.repo }), provider, homeDir: l.home, env, ...(provider === 'codex' ? { codexHome: dir, claudeConfigDir: l.claudeDir } : { claudeConfigDir: dir }) });
+        return 'no error';
+      } catch (err) {
+        return isOrbitError(err, 'ISOLATION_UNAVAILABLE') ? 'ISOLATION_UNAVAILABLE' : String(err);
+      }
+    };
+    for (const provider of ['claude', 'codex'] as const) {
+      // The default Orbit home, ~/.orbit, and the launcher directory inside it.
+      expect(refused(join(l.home, '.orbit'), {}, provider), provider).toBe('ISOLATION_UNAVAILABLE');
+      expect(refused(join(l.home, '.orbit', 'bin'), {}, provider), provider).toBe('ISOLATION_UNAVAILABLE');
+      // ORBIT_HOME elsewhere: that directory, a directory inside it, and one that contains it.
+      expect(refused(orbitHome, { ORBIT_HOME: orbitHome }, provider), provider).toBe('ISOLATION_UNAVAILABLE');
+      expect(refused(join(orbitHome, 'bin'), { ORBIT_HOME: orbitHome }, provider), provider).toBe('ISOLATION_UNAVAILABLE');
+      expect(refused(join(l.r, 'state'), { ORBIT_HOME: join(l.r, 'state', 'orbit') }, provider), provider).toBe('ISOLATION_UNAVAILABLE');
+      // A directory of its own beside them is fine.
+      expect(refused(join(l.r, 'provider-own'), { ORBIT_HOME: orbitHome }, provider), provider).toBe('no error');
+    }
+  });
+
   it('denies container-engine state and keychains, which hold root-equivalent sockets and keys', () => {
     const l = layout();
     const p = profileForWorker({ worktree: l.worktree, workerDir: l.workerDir, snapshot: snapshotFor({ repoRoot: l.repo }), provider: 'claude', claudeConfigDir: l.claudeDir, homeDir: l.home, env: {} });
@@ -604,6 +628,8 @@ describe('codexReviewerProfile: the os-sandbox tier, where srt is the only sandb
     // A Codex home that is the home directory or above it would hand over every dotfile.
     expect(refused({ checkout: l.worktree, workerDir: l.workerDir, codexHome: l.home })).toBe('ISOLATION_UNAVAILABLE');
     expect(refused({ checkout: l.worktree, workerDir: l.workerDir, codexHome: l.r })).toBe('ISOLATION_UNAVAILABLE');
+    // Nor the Orbit home or anything in it: the service launcher in ~/.orbit/bin runs outside any sandbox.
+    expect(refused({ checkout: l.worktree, workerDir: l.workerDir, codexHome: join(l.home, '.orbit', 'bin') })).toBe('ISOLATION_UNAVAILABLE');
     expect(refused({ checkout: l.worktree, workerDir: l.workerDir, codexHome })).toBe('no error');
   });
 
