@@ -158,6 +158,31 @@ prototyped against the demo app's real suite and judged security first:
   widen (a sandboxed process can look up or squat another Playwright Chromium's
   rendezvous name, at worst stopping that browser from starting). Only
   Playwright's bundled Chromium is supported under srt on macOS.
+- **Downloads (added after live demo 3): an environment variable, not a
+  rule.** Every browser download was cancelled under srt, with no logged
+  denial. Bisecting the generated profile (deny default replaced with allow
+  default, then one denied operation class at a time) narrowed it to
+  `file-write-create` under `/private/var/folders/<..>/T`: Chromium writes a
+  download to a temp file (`.org.chromium.Chromium.XXXXXX`) first, and on
+  macOS its `base::GetTempDir` ignores `TMPDIR`, reading `MAC_CHROMIUM_TMPDIR`
+  and otherwise the per-user temp directory, which is outside the write
+  allowlist. For the same UI-check processes the provider sets
+  `MAC_CHROMIUM_TMPDIR` to the check's private temp directory (the child's
+  TMPDIR, `CLAUDE_CODE_TMPDIR`), only when that directory is already in the
+  allowlist, never srt's shared `/tmp/claude`. Playwright passes its own
+  environment to the browser unless a config sets `launchOptions.env`, so this
+  reaches repositories whose Playwright config Orbit does not own; Playwright
+  has no environment variable for launch arguments, and no Chromium switch
+  for the temp directory was found. Security impact: none on the boundary. The
+  Seatbelt profile still holds the two Mach rules and nothing more, no path,
+  host or service is added, and repository code could set the variable
+  itself. Rejected: allowing writes to the per-user temp directory (other
+  applications' temp files live there) and widening the profile for
+  `vfs.disk-space` or `com.apple.hiservices-xpcservice` (their denials were
+  real but did not cause the cancellation). Verified by a CSV-download
+  journey under the real srt (`tests/integration/ui/browser-isolation-srt.test.ts`,
+  case g): cancelled before, passing on desktop and mobile twice after; case
+  c checks the per-user temp directory stays unwritable inside.
 - Rejected: one browser per test in `--single-process` mode (any test needing a
   second context crashes; serial suites break); the browser outside srt with
   locked egress (page code could read `file://` paths, override the proxy per

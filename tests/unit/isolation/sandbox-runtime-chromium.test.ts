@@ -114,7 +114,38 @@ describe('wrap with chromiumMachRendezvous on macOS', () => {
     expect(CHROMIUM_MACH_RENDEZVOUS_LIMITATION).toMatch(/only boundary/);
     expect(CHROMIUM_MACH_RENDEZVOUS_LIMITATION).toMatch(/mach-register and mach-lookup/);
     expect(CHROMIUM_MACH_RENDEZVOUS_LIMITATION).toMatch(/Playwright's bundled Chromium/);
+    expect(CHROMIUM_MACH_RENDEZVOUS_LIMITATION).toMatch(/MAC_CHROMIUM_TMPDIR, an environment variable .*no rule, path or host is added/);
     w.cleanup();
+  });
+
+  it('points Chromium\'s own temp directory (MAC_CHROMIUM_TMPDIR) at the private TMPDIR the sandbox writes, and widens no path', () => {
+    const h = host();
+    const tmp = join(h.r, 'check', 'tmp');
+    mkdirSync(tmp, { recursive: true });
+    const wrap = (over: Partial<SandboxProfile>, env: Record<string, string>, platform?: NodeJS.Platform) => {
+      const w = iso(h, platform ? { platform } : {}).wrap(['npx', 'playwright', 'test'], profile({ writablePaths: [h.wt, tmp], chromiumMachRendezvous: true, ...over }), { cwd: h.wt, env: { PATH: '/usr/bin:/bin', ...env } });
+      cleanups.push(w.cleanup);
+      return w;
+    };
+    // Chromium on macOS ignores TMPDIR (base::GetTempDir) and writes a download to its temp directory first.
+    const w = wrap({}, { TMPDIR: tmp });
+    expect(w.env.MAC_CHROMIUM_TMPDIR).toBe(tmp);
+    expect(w.env.CLAUDE_CODE_TMPDIR).toBe(tmp);
+    // The Seatbelt profile is untouched: nothing beyond the check's own writable paths.
+    expect(JSON.parse(readFileSync(w.argv[5]!, 'utf8')).filesystem.allowWrite).toEqual([h.wt, tmp]);
+    // The check's temp directory wins over one the repository names.
+    expect(wrap({}, { TMPDIR: tmp, MAC_CHROMIUM_TMPDIR: join(h.r, 'elsewhere') }).env.MAC_CHROMIUM_TMPDIR).toBe(tmp);
+    // A writable CLAUDE_CODE_TMPDIR is the child's TMPDIR under srt, so Chromium's too.
+    const other = join(h.wt, 'tmp2');
+    mkdirSync(other);
+    expect(wrap({}, { TMPDIR: tmp, CLAUDE_CODE_TMPDIR: other }).env.MAC_CHROMIUM_TMPDIR).toBe(other);
+    // No private temp directory the sandbox can write (srt falls back to the shared /tmp/claude): nothing is set.
+    expect(wrap({ writablePaths: [h.wt] }, { TMPDIR: tmp }).env).not.toHaveProperty('MAC_CHROMIUM_TMPDIR');
+    expect(wrap({}, { TMPDIR: tmp, CLAUDE_CODE_TMPDIR: join(h.r, 'elsewhere') }).env).not.toHaveProperty('MAC_CHROMIUM_TMPDIR');
+    expect(wrap({}, {}).env).not.toHaveProperty('MAC_CHROMIUM_TMPDIR');
+    // Not for other commands, and not on Linux, where Chromium honours TMPDIR.
+    expect(wrap({ chromiumMachRendezvous: false }, { TMPDIR: tmp }).env).not.toHaveProperty('MAC_CHROMIUM_TMPDIR');
+    expect(wrap({}, { TMPDIR: tmp }, 'linux').env).not.toHaveProperty('MAC_CHROMIUM_TMPDIR');
   });
 
   it('leaves argv alone without the flag, and on Linux even with it', () => {

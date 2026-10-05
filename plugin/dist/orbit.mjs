@@ -30031,7 +30031,7 @@ function seccompHelperFor(srtPath, arch) {
   const rel = join15("vendor", "seccomp", vendorArch, "apply-seccomp");
   return [join15(dist, "sandbox", rel), join15(dist, "..", rel), join15(dist, rel)].find((p) => existsSync15(p)) ?? null;
 }
-function sandboxEnv(env, allowWrite) {
+function sandboxEnv(env, allowWrite, chromium) {
   const out = { ...env };
   const writable = (p) => {
     if (!p) return false;
@@ -30046,6 +30046,7 @@ function sandboxEnv(env, allowWrite) {
     if (out.CLAUDE_CODE_TMPDIR === void 0) out.CLAUDE_CODE_TMPDIR = env.TMPDIR;
     out.TMPDIR = [tmpdir7(), "/tmp"].find((candidate) => !writable(candidate)) ?? "/tmp";
   }
+  if (chromium && writable(out.CLAUDE_CODE_TMPDIR)) out.MAC_CHROMIUM_TMPDIR = out.CLAUDE_CODE_TMPDIR;
   return out;
 }
 function sandboxReach(settings, envHome) {
@@ -30168,7 +30169,7 @@ var init_sandbox_runtime = __esm({
     SRT_PACKAGE = "@anthropic-ai/sandbox-runtime";
     PRELOAD_REFUSAL_FILE = "chromium-preload-refused";
     CHROMIUM_MACH_RENDEZVOUS = "chromium-mach-rendezvous";
-    CHROMIUM_MACH_RENDEZVOUS_LIMITATION = "UI checks on macOS: Playwright's bundled Chromium runs with --no-sandbox (its own sandbox cannot start inside Seatbelt), so srt is its only boundary; srt's write allowlist, credential read-denies and egress filter still apply. For Chromium to start at all, an Orbit preload on the unmodified srt CLI adds two Seatbelt rules, mach-register and mach-lookup for names matching ^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][0-9]+$ and nothing else. This widens one thing: a sandboxed process can look up the rendezvous port of another Playwright Chromium run by the same user, or claim the name a starting one will use, which at worst stops that browser from starting. Only Playwright's bundled Chromium is supported under srt on macOS; Google Chrome, Firefox and WebKit are not.";
+    CHROMIUM_MACH_RENDEZVOUS_LIMITATION = "UI checks on macOS: Playwright's bundled Chromium runs with --no-sandbox (its own sandbox cannot start inside Seatbelt), so srt is its only boundary; srt's write allowlist, credential read-denies and egress filter still apply. For Chromium to start at all, an Orbit preload on the unmodified srt CLI adds two Seatbelt rules, mach-register and mach-lookup for names matching ^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][0-9]+$ and nothing else. This widens one thing: a sandboxed process can look up the rendezvous port of another Playwright Chromium run by the same user, or claim the name a starting one will use, which at worst stops that browser from starting. Chromium's temp files (a download is written there first) go to the check's private temp directory through MAC_CHROMIUM_TMPDIR, an environment variable set only when that directory is already writable: no rule, path or host is added for it. Only Playwright's bundled Chromium is supported under srt on macOS; Google Chrome, Firefox and WebKit are not.";
     LINUX_LIMITATION = "On Linux the mandatory write denies inside writable paths (.git/hooks, shell rc files...) are found by a scan at launch, so such files created later are not covered.";
     SECCOMP_ARCHES = { x64: "x64", arm64: "arm64" };
     SandboxRuntimeIsolation = class {
@@ -30310,7 +30311,7 @@ var init_sandbox_runtime = __esm({
             assertFileOutOfReach(browser.node, reach, `node ${browser.node}`);
             if (writableIn(reach, realpathSync5(dir))) throw new OrbitError("ISOLATION_UNAVAILABLE", `the srt settings directory ${dir} is inside a path the sandbox may write, so the Chromium preload's refusal record could be forged`, { path: dir });
           }
-          const launch = launcherEnv(sandboxEnv(opts.env, settings.filesystem.allowWrite), reach);
+          const launch = launcherEnv(sandboxEnv(opts.env, settings.filesystem.allowWrite, browser !== null), reach);
           const command = withResourceLimits(argv2, this.opts.limits, { shell: this.opts.limitShell });
           if (launch.restore.length && command[0].includes("=")) {
             throw new OrbitError("INTERNAL", `command name ${JSON.stringify(command[0])} contains "=", which /usr/bin/env would read as an assignment`);

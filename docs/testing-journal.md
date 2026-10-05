@@ -50,6 +50,13 @@ Closed in 30e6e5c: G1 to G3, G5 to G13, G16 to G23, G26, G28, G29, G31 to G36, G
 
 ---
 
+### 2026-10-06: re-test of all three live demos after the fix wave (e34bb12)
+- Tested: the live demo script with real Claude and Codex and real delivery to the private demo repository, all three goals in one run, from the plugin/ bundle.
+- Went well: the simple goal SUCCEEDED in about 2.5 minutes and the difficult goal in about 4 minutes (escalated to Opus on coupling evidence, browser journeys passed under srt, Codex cleared the tree, draft PRs opened). The UI goal now gets past planning (the raised output caps let the planner write an 8-criterion contract, graded complex), escalated to Opus, failed the browser check, was diagnosed and repaired: exactly the loop the spec asks for.
+- Went wrong: every browser download is canceled inside the sandbox, so the CSV export journey could never pass; the implementer's own diagnostic journeys (a static file and a data URL) failed the same way, and the diagnoser suspected the sandbox. The run was cancelled after the second attempt.
+- Root cause: the Seatbelt profile; outside the sandbox, and with the sandbox's exact environment but no Seatbelt, the same download succeeds. Two logged denials (disk-space query, an XPC lookup) were not the whole cause.
+- Change: under investigation (bisecting the profile for the narrowest rule or a Chromium setting Orbit controls); a download journey is being added to the real-srt test first. Proposed: classify "every journey fails the same way, including the implementer's minimal probes" as an environment failure sooner.
+
 ### 2026-10-06: end-to-end test 1: second wave and integration (P13, P14, P17d, Linux, service)
 - Tested: the adapters, Linux and service fixes; then, as CI runs them, `npx tsc --noEmit`, `npm run test:coverage` (with the per-file floor), `npm run build`, `npm run check:dist`, `node scripts/check-plugin.mjs` and `claude plugin validate --strict plugin/` on macOS, and every step of `.github/workflows/ci.yml` (with `CI=true`) on a fresh copy of the tree in a native arm64 `node:22` container (`--privileged --init`, as a non-root user with sudo).
 - Went well: macOS green throughout: 385 test files pass and 1 is skipped, 6921 tests pass and 4 are skipped; lines 99.51%, branches 95.91%, functions 99.54%, statements 98.85%; every file at least 80% lines. On Linux typecheck, unit (6121), fault, acceptance (35), dist check and plugin check pass. The container provider's UI path, never working before (the application never became ready), now passes the demo's 6 functional journeys in one container with the official Playwright image.

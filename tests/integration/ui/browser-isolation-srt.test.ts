@@ -10,11 +10,13 @@
 //   (c) inside the patched sandbox nothing else widened: other Mach names, denied reads, egress and HOME writes;
 //   (d) an srt whose profile no longer has the expected shape is refused (exit 97) and reported as an environment error;
 //   (e) orbit doctor's launch of the real headless Chromium passes with the rules and fails without them;
-//   (f) orbit doctor runs no JavaScript of the repository.
+//   (f) orbit doctor runs no JavaScript of the repository;
+//   (g) a download journey (live demo 3's CSV export) completes, twice: Chromium on macOS writes a download to its own
+//       temp directory first, which it takes from MAC_CHROMIUM_TMPDIR and never from TMPDIR.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ManualClock } from '../../../src/core/clock.ts';
@@ -69,7 +71,30 @@ let repo: string;
 let home: string;
 let candidate: Candidate;
 let snapshot: PolicySnapshot;
+let dl: { repo: string; candidate: Candidate; snapshot: PolicySnapshot };
 let n = 0;
+
+// A client-side CSV export, the way live demo 3's journey downloads one: a Blob behind an anchor with a download name.
+const CSV = 'id,status\\nR-101,open\\n';
+const DOWNLOAD_SPEC = `import { readFileSync } from 'node:fs';
+import { expect, test } from './orbit-fixtures.ts';
+
+test('reports-export-csv', async ({ page }) => {
+  await page.goto('/reports');
+  await page.evaluate((csv) => {
+    const a = document.createElement('a');
+    a.id = 'export-csv';
+    a.textContent = 'Export CSV';
+    a.download = 'reports.csv';
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    document.body.append(a);
+  }, '${CSV}');
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-csv')]);
+  expect(await download.failure()).toBeNull();
+  expect(download.suggestedFilename()).toBe('reports.csv');
+  expect(readFileSync(await download.path(), 'utf8')).toBe('${CSV}');
+});
+`;
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', env: { PATH: process.env.PATH ?? '', HOME: home, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } }).trim();
@@ -77,9 +102,36 @@ function git(cwd: string, ...args: string[]): string {
 
 const hostEnv = () => ({ PATH: process.env.PATH ?? '', HOME: home, PLAYWRIGHT_BROWSERS_PATH: BROWSERS });
 
-function runUi(isolation: IsolationProvider): Promise<UiRunResult> {
-  const ui = snapshot.config.ui!;
-  return runUiChecks({ checkoutDir: repo, snapshot, candidate, uiConfig: ui, journeyCheckIds: [...ui.journey_check_ids], isolation, outDir: join(home, '.orbit', 'runs', 'orb-browser', 'evidence', String(++n), 'ui'), homeDir: home, hostEnv: hostEnv() });
+function runUi(isolation: IsolationProvider, target: { repo: string; candidate: Candidate; snapshot: PolicySnapshot } = { repo, candidate, snapshot }): Promise<UiRunResult> {
+  const ui = target.snapshot.config.ui!;
+  return runUiChecks({ checkoutDir: target.repo, snapshot: target.snapshot, candidate: target.candidate, uiConfig: ui, journeyCheckIds: [...ui.journey_check_ids], isolation, outDir: join(home, '.orbit', 'runs', 'orb-browser', 'evidence', String(++n), 'ui'), homeDir: home, hostEnv: hostEnv() });
+}
+
+/** A git repository holding a copy of the demo app plus `extra` files, with a candidate commit on top of the base. */
+function demoRepo(dir: string, extra: Record<string, string> = {}): { repo: string; candidate: Candidate } {
+  copyExample(dir);
+  for (const [file, text] of Object.entries(extra)) writeFileSync(join(dir, file), text);
+  symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'));
+  git(dir, 'init', '-q', '-b', 'main');
+  git(dir, 'config', 'user.email', 'dev@acme.test');
+  git(dir, 'config', 'user.name', 'acme dev');
+  git(dir, 'config', 'commit.gpgsign', 'false');
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-q', '-m', 'base');
+  const parentSha = git(dir, 'rev-parse', 'HEAD');
+  writeFileSync(join(dir, 'README.md'), `${readFileSync(join(dir, 'README.md'), 'utf8')}\nA candidate.\n`);
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-q', '-m', 'candidate');
+  const commitSha = git(dir, 'rev-parse', 'HEAD');
+  return { repo: dir, candidate: { id: `cand-${commitSha.slice(0, 7)}`, runId: 'orb-browser', seq: 1, attempt: 1, commitSha, treeHash: git(dir, 'rev-parse', 'HEAD^{tree}'), parentSha } };
+}
+
+/** The demo's own policy for `dir`, on a free port, with the journey check's command changed by `command`. */
+async function demoPolicy(dir: string, command: (yaml: string) => string = (yaml) => yaml): Promise<PolicySnapshot> {
+  const yaml = readFileSync(join(DEMO, '.orbit/config.yaml'), 'utf8');
+  expect(yaml).toContain('base_url: http://127.0.0.1:4310');
+  const config = parseConfig(command(yaml).replace('base_url: http://127.0.0.1:4310', `base_url: http://127.0.0.1:${await freePort()}`));
+  return snapshotPolicy(config, { runId: 'orb-browser', repoRoot: dir, runDir: join(base, `run-${basename(dir)}`), clock: new ManualClock() }).snapshot;
 }
 
 /** The provider Orbit would use, with the UI check's request for the Chromium rules taken away. */
@@ -92,30 +144,16 @@ beforeAll(async () => {
   base = realpathSync(mkdtempSync(join(tmpdir(), 'orbit-browser-srt-')));
   // Outside base: the profile denies the repository's parent directory, and the probe and the srt copy must stay readable.
   tools = realpathSync(mkdtempSync(join(tmpdir(), 'orbit-browser-tools-')));
-  repo = join(base, 'repo');
   home = join(base, 'home');
   mkdirSync(join(home, '.ssh'), { recursive: true });
   writeFileSync(join(home, '.ssh', 'canary'), 'acme-canary\n');
-  copyExample(repo);
-  symlinkSync(join(ROOT, 'node_modules'), join(repo, 'node_modules'));
-  git(repo, 'init', '-q', '-b', 'main');
-  git(repo, 'config', 'user.email', 'dev@acme.test');
-  git(repo, 'config', 'user.name', 'acme dev');
-  git(repo, 'config', 'commit.gpgsign', 'false');
-  git(repo, 'add', '-A');
-  git(repo, 'commit', '-q', '-m', 'base');
-  const parentSha = git(repo, 'rev-parse', 'HEAD');
-  writeFileSync(join(repo, 'README.md'), `${readFileSync(join(repo, 'README.md'), 'utf8')}\nA candidate.\n`);
-  git(repo, 'add', '-A');
-  git(repo, 'commit', '-q', '-m', 'candidate');
-  const commitSha = git(repo, 'rev-parse', 'HEAD');
-  candidate = { id: `cand-${commitSha.slice(0, 7)}`, runId: 'orb-browser', seq: 1, attempt: 1, commitSha, treeHash: git(repo, 'rev-parse', 'HEAD^{tree}'), parentSha };
-
+  ({ repo, candidate } = demoRepo(join(base, 'repo')));
   // The demo's own policy, on a free port.
-  const yaml = readFileSync(join(DEMO, '.orbit/config.yaml'), 'utf8');
-  expect(yaml).toContain('base_url: http://127.0.0.1:4310');
-  const config = parseConfig(yaml.replace('base_url: http://127.0.0.1:4310', `base_url: http://127.0.0.1:${await freePort()}`));
-  snapshot = snapshotPolicy(config, { runId: 'orb-browser', repoRoot: repo, runDir: join(base, 'run'), clock: new ManualClock() }).snapshot;
+  snapshot = await demoPolicy(repo);
+  // The same demo with a download journey, which is all its journey check runs.
+  const command = 'command: [npx, --no-install, playwright, test]';
+  const dlRepo = demoRepo(join(base, 'dl-repo'), { 'tests/e2e/download.spec.ts': DOWNLOAD_SPEC });
+  dl = { ...dlRepo, snapshot: await demoPolicy(dlRepo.repo, (yaml) => (expect(yaml).toContain(command), yaml.replace(command, 'command: [npx, --no-install, playwright, test, tests/e2e/download.spec.ts]'))) };
 
   writeFileSync(join(tools, 'mach.c'), MACH_PROBE);
   execFileSync('cc', ['-o', join(tools, 'mach'), join(tools, 'mach.c')]);
@@ -204,6 +242,12 @@ describe.skipIf(!ready)(ready ? 'browser journeys of the demo app under the real
     const curl = await inside(['/usr/bin/curl', '-sS', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '15', 'https://example.com']);
     expect(curl.exitCode === 0 && curl.stdout.trim() === '200').toBe(false);
 
+    // Chromium's own temp directory is the check's (MAC_CHROMIUM_TMPDIR); the per-user one it uses otherwise stays unwritable.
+    const userTmp = execFileSync('getconf', ['DARWIN_USER_TEMP_DIR'], { encoding: 'utf8' }).trim();
+    const temp = await inside([process.execPath, '-e', `console.log(process.env.MAC_CHROMIUM_TMPDIR); try { require('fs').writeFileSync(${JSON.stringify(join(userTmp, `orbit-probe-${pid}`))}, 'x'); console.log('wrote'); } catch (e) { console.log(e.code); }`]);
+    expect(temp.stdout.trim().split('\n')).toEqual([tmp, 'EPERM']);
+    expect(existsSync(join(userTmp, `orbit-probe-${pid}`))).toBe(false);
+
     const target = join(home, 'written-from-inside');
     const write = await inside([process.execPath, '-e', `try { require('fs').writeFileSync(${JSON.stringify(target)}, 'x'); console.log('wrote'); } catch (e) { console.log(e.code); }`]);
     expect(write.stdout.trim()).toBe('EPERM');
@@ -291,4 +335,15 @@ describe.skipIf(!ready)(ready ? 'browser journeys of the demo app under the real
     expect(existsSync(ran)).toBe(false);
     expect(JSON.stringify(real)).not.toContain('acme-canary');
   }, 180_000);
+
+  it('(g) a download journey completes on desktop and mobile, twice: Chromium keeps its temp files in the check\'s private temp directory', async () => {
+    for (let round = 1; round <= 2; round++) {
+      const result = await runUi(srt, dl);
+      const failures = result.journeys.filter((j) => j.status !== 'PASSED').map((j) => `${j.id}: ${j.error?.message ?? j.status}`);
+      expect(result.verdict, `round ${round}: ${[...result.reasons, ...failures].join('\n')}`).toBe('PASS');
+      expect(result.stats).toMatchObject({ passed: 2, failed: 0, flaky: 0, skipped: 0 });
+      expect(result.journeys.map((j) => `${j.project} ${j.status}`).sort()).toEqual(['desktop PASSED', 'mobile PASSED']);
+      expect(result.checks[0]).toMatchObject({ isolation: 'sandbox-runtime', isolationAdjustments: [CHROMIUM_MACH_RENDEZVOUS] });
+    }
+  }, 600_000);
 });

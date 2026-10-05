@@ -212,6 +212,7 @@ export const CHROMIUM_MACH_RENDEZVOUS_LIMITATION =
   "UI checks on macOS: Playwright's bundled Chromium runs with --no-sandbox (its own sandbox cannot start inside Seatbelt), so srt is its only boundary; srt's write allowlist, credential read-denies and egress filter still apply. " +
   'For Chromium to start at all, an Orbit preload on the unmodified srt CLI adds two Seatbelt rules, mach-register and mach-lookup for names matching ^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][0-9]+$ and nothing else. ' +
   "This widens one thing: a sandboxed process can look up the rendezvous port of another Playwright Chromium run by the same user, or claim the name a starting one will use, which at worst stops that browser from starting. " +
+  "Chromium's temp files (a download is written there first) go to the check's private temp directory through MAC_CHROMIUM_TMPDIR, an environment variable set only when that directory is already writable: no rule, path or host is added for it. " +
   "Only Playwright's bundled Chromium is supported under srt on macOS; Google Chrome, Firefox and WebKit are not.";
 
 /** srt-chromium-preload.mjs: beside this module in the sources, beside the bundle in plugin/dist/ (scripts/build.mjs copies it there). */
@@ -402,7 +403,7 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
         // The preload records a refusal here; a sandboxed command that could write it could fake one.
         if (writableIn(reach, realpathSync(dir))) throw new OrbitError('ISOLATION_UNAVAILABLE', `the srt settings directory ${dir} is inside a path the sandbox may write, so the Chromium preload's refusal record could be forged`, { path: dir });
       }
-      const launch = launcherEnv(sandboxEnv(opts.env, settings.filesystem.allowWrite), reach);
+      const launch = launcherEnv(sandboxEnv(opts.env, settings.filesystem.allowWrite, browser !== null), reach);
       // Inside the sandbox, so the limits bind the command and its children but not srt or its proxy.
       const command = withResourceLimits(argv, this.opts.limits, { shell: this.opts.limitShell });
       if (launch.restore.length && command[0]!.includes('=')) {
@@ -508,8 +509,16 @@ export function seccompHelperFor(srtPath: string, arch: string): string | null {
  * out of every writable path: sockets there could be replaced from inside,
  * and a deep directory would overflow the socket path limit (104 bytes on
  * macOS, observed as EADDRINUSE).
+ *
+ * A third meets here for a UI check's browser on macOS (`chromium`).
+ * Chromium there ignores TMPDIR: base::GetTempDir reads MAC_CHROMIUM_TMPDIR
+ * and otherwise asks the system for the per-user temp directory
+ * (/var/folders/.../T), which the sandbox cannot write. A download is written
+ * to a temp file there first, so under srt every download was cancelled
+ * (live demo 3). The child's private temp directory is handed to Chromium as
+ * MAC_CHROMIUM_TMPDIR instead; the Seatbelt profile does not change.
  */
-function sandboxEnv(env: Record<string, string>, allowWrite: string[]): Record<string, string> {
+function sandboxEnv(env: Record<string, string>, allowWrite: string[], chromium: boolean): Record<string, string> {
   const out = { ...env };
   const writable = (p: string | undefined): boolean => {
     if (!p) return false;
@@ -524,6 +533,8 @@ function sandboxEnv(env: Record<string, string>, allowWrite: string[]): Record<s
     if (out.CLAUDE_CODE_TMPDIR === undefined) out.CLAUDE_CODE_TMPDIR = env.TMPDIR!;
     out.TMPDIR = [tmpdir(), '/tmp'].find((candidate) => !writable(candidate)) ?? '/tmp';
   }
+  // Only a private directory already in the write allowlist: never srt's shared /tmp/claude, never a new path.
+  if (chromium && writable(out.CLAUDE_CODE_TMPDIR)) out.MAC_CHROMIUM_TMPDIR = out.CLAUDE_CODE_TMPDIR!;
   return out;
 }
 

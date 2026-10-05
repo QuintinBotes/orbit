@@ -151,7 +151,15 @@ State these plainly to yourself before running unattended.
   since `srt` passes a command's own exit code through), browser checks
   require `srt` 0.0.78, and every evidence report that
   used the rules says so (`isolationAdjustments: ["chromium-mach-rendezvous"]`
-  and the `srt` version on the check run). Only Playwright's bundled Chromium is
+  and the `srt` version on the check run). Chromium on macOS ignores `TMPDIR`
+  and keeps its temp files (a download is written there first) in the
+  per-user temp directory, which the sandbox cannot write, so every download
+  was cancelled; for the same UI-check processes Orbit sets
+  `MAC_CHROMIUM_TMPDIR` to the check's private temp directory, and only when
+  that directory is already in the write allowlist. This is an environment
+  variable, not a rule: the Seatbelt profile, the allowlist, the read-denies
+  and the egress filter do not change, and repository code could set the
+  variable itself. Only Playwright's bundled Chromium is
   supported under `srt` on macOS; Google Chrome, Firefox and WebKit are not.
   `orbit doctor`'s browser check runs no repository code: it starts the
   headless Chromium binary itself, with every credential path and the
