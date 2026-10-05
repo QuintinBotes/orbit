@@ -5,9 +5,9 @@
  * the developer's own configuration, credentials or terms file.
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const ORBIT_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -95,13 +95,15 @@ export function makeSandbox(opts: { config?: string | null; fakes?: { claude?: R
     mkdirSync(join(repo, '.orbit'), { recursive: true });
     writeFileSync(join(repo, '.orbit', 'config.yaml'), opts.config ?? TEST_CONFIG);
   }
+  // `node` for the checks that run it. Node's own directory is not on PATH: a globally installed `claude` or `codex` lives beside
+  // node on CI runners, and a test that says "no claude on PATH" must not find the real one.
+  symlinkSync(process.execPath, join(tools, 'node'));
   const fakes = opts.fakes ?? {};
   if (fakes.claude !== false) writeFake(tools, 'claude', fakes.claude ?? {});
   if (fakes.codex !== false) writeFake(tools, 'codex', fakes.codex ?? {});
 
   const env = (extra: Record<string, string> = {}): Record<string, string> => ({
-    // Node's own directory, so a check that runs `node` resolves even when Node lives outside /usr/bin.
-    PATH: `${tools}:${dirname(process.execPath)}:/usr/bin:/bin`,
+    PATH: `${tools}:/usr/bin:/bin`,
     HOME: home,
     ORBIT_HOME: join(home, '.orbit'),
     USER: 'alice',

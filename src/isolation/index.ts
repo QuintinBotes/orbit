@@ -18,6 +18,7 @@ export type { MemoryWatchdogOptions } from './memory.ts';
 export {
   profileForWorker,
   profileForCheck,
+  credentialDenyPaths,
   codexReviewerProfile,
   codexHomeFor,
   prepareWorkerTmpDir,

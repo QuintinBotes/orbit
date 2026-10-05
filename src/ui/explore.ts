@@ -198,7 +198,7 @@ export function explorationConfigOf(ui: UiConfig): ExplorationConfig {
 // ---------------------------------------------------------------------------
 // Spec acceptance
 
-const ENVIRONMENT_FAILURE = /net::ERR_|ECONNREFUSED|ENOTFOUND|Cannot find (?:module|package)|SyntaxError|Transform failed|browserType\.launch|Executable doesn't exist|Target page, context or browser has been closed|ReferenceError/;
+const ENVIRONMENT_FAILURE = /net::ERR_|ECONNREFUSED|ENOTFOUND|Cannot find (?:module|package)|SyntaxError|Transform failed|browserType\.launch|Executable doesn't exist|Target page, context or browser has been closed|ReferenceError|MachPortRendezvousServer|sandbox initialization failed/;
 
 /**
  * Refuses specs that cannot show a defect in the application: they would fail
@@ -650,6 +650,8 @@ async function runSpec(p: ProveInput, a: { dir: string; configPath: string; spec
   const profile: SandboxProfile = {
     ...profileForCheck({ worktree: p.checkoutDir, check, snapshot: p.opts.snapshot, extraWritable: [a.dir, p.tmpDir], homeDir: p.opts.homeDir, env: p.opts.hostEnv }),
     allowLocalBinding: true,
+    // A browser run like a journey check's: Chromium's Mach rendezvous rules under srt on macOS.
+    chromiumMachRendezvous: true,
   };
   const wrapped = p.opts.isolation.wrap(argv, profile, { cwd: p.checkoutDir, env });
   const started = p.clock.now();
@@ -664,6 +666,7 @@ async function runSpec(p: ProveInput, a: { dir: string; configPath: string; spec
 
   if (exec.cancelled) return fail('the run was cancelled');
   if (exec.timedOut) return fail('the run exceeded its time limit');
+  if (exec.exitCode === 97 && !existsSync(reportPath) && (wrapped.adjustments ?? []).length > 0) return fail(`the browser could not start under sandbox-runtime: the srt preload refused srt's sandbox command (exit 97)`);
   if (!existsSync(reportPath)) return fail(`no Playwright report (exit ${exec.exitCode ?? 'signal'}): ${(exec.stderr || exec.stdout).trim().slice(-200)}`);
   let tests: RawTest[];
   try {

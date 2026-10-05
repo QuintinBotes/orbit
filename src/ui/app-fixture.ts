@@ -171,7 +171,8 @@ export async function startApp(opts: StartAppOptions): Promise<AppHandle> {
   const env = { ...safeBaseEnv(opts.hostEnv ?? process.env), ...(opts.env ?? {}) };
   // An application under test exists to listen on loopback, so startApp grants allowLocalBinding itself
   // rather than trusting every caller to remember it (a profile without it makes the app fail to bind under srt).
-  const profile: SandboxProfile = { ...opts.isolation.profile, allowLocalBinding: true };
+  // Chromium's Mach rules are for a UI check's browser only, never the application under test.
+  const profile: SandboxProfile = { ...opts.isolation.profile, allowLocalBinding: true, chromiumMachRendezvous: false };
   // The log is handed to the app as its stdout and stderr. It lives in the run's evidence directory, which profiles
   // read-deny, and a sandboxed node aborts at startup when it holds a descriptor it may not read (WrapOptions.stdioFiles),
   // so the file exists before the wrap and the provider is told about it.

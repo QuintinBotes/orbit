@@ -1,8 +1,8 @@
-# Orbit run orb-20261005-174507-434684: CANCELLED
+# Orbit run orb-20261005-184949-0cb748: SUCCEEDED
 
 ## Outcome
 
-CANCELLED: cancelled by request
+SUCCEEDED: all mandatory requirements hold for tree b696fbc7f0b8fc55db08c7bdb33988c166f6a246 (no CI checks were reported for the delivered commit; CI is unverified)
 
 ## Original goal
 
@@ -26,14 +26,14 @@ Follow the existing conventions. Do not change dependencies or anything outside
 
 ## Delivered behaviour
 
-Make the reports total amount cover every record matching the current filters on every page, and make every matching record reachable by paging (page count rounds up). Filtering rules, page size (10) and page wording stay unchanged. Add unit tests and a browser journey that would have caught each defect.
+Make the reports page total amount equal the sum of every record matching the current filters (identical on every page), and make every matching record reachable by paging, including when the match count is not a multiple of the page size (47 records, page size 10 gives 5 pages). Filtering rules, page size and page wording stay unchanged.
 
 ## Criterion evidence
 
-- AC-1 [supported]: The total amount shown equals the sum of amountCents over all records matching the current status and search filters, and is identical on every page of that result set. (evidence: unit.log, lint.log)
-- AC-2 [supported]: When the number of matching records is not a multiple of the page size, the page count rounds up, so the last partial page is reachable and shows the remaining records (47 records gives 5 pages, the last showing 7 rows). (evidence: unit.log, lint.log)
-- AC-3 [unsupported]: A browser journey shows that the total amount is the same across pages and that the last records are reachable. It pages through all 47 reports with All statuses, asserts #totals is unchanged on each page, reaches 'Showing 41-47 of 47 reports' and 'Page 5 of 5', and checks that Next is disabled there. It also asserts that the total under a status filter equals the filtered total on every page. (evidence: <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/a11y-reports-accessibility-desktop/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/a11y-reports-accessibility-desktop/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/a11y-reports-accessibility-mobile/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/a11y-reports-accessibility-mobile/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-filter-desktop/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-filter-desktop/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-pagination-desktop/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-pagination-desktop/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-totals-desktop/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-totals-desktop/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-filter-mobile/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-filter-mobile/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-pagination-mobile/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-pagination-mobile/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-totals-mobile/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-totals-mobile/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/visual-reports-visual-desktop/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/visual-reports-visual-desktop/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/visual-reports-visual-mobile/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/visual-reports-visual-mobile/trace.zip, lint.log)
-- AC-4 [unsupported]: Nothing else changes: filter rules, PAGE_SIZE of 10, and page wording (summary, empty message, pager and totals labels) stay as they are, and the existing tests and visual baseline still pass. (evidence: unit.log, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/a11y-reports-accessibility-desktop/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/a11y-reports-accessibility-desktop/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/a11y-reports-accessibility-mobile/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/a11y-reports-accessibility-mobile/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-filter-desktop/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-filter-desktop/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-pagination-desktop/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-pagination-desktop/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-totals-desktop/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-totals-desktop/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-filter-mobile/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-filter-mobile/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-pagination-mobile/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-pagination-mobile/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-totals-mobile/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/reports-reports-totals-mobile/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/visual-reports-visual-desktop/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/visual-reports-visual-desktop/trace.zip, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/visual-reports-visual-mobile/error-context.md, <demo-repo>/.orbit/runs/orb-20261005-174507-434684/evidence/1/ui/ui/test-results/visual-reports-visual-mobile/trace.zip, lint.log)
+- AC-1 [supported]: The Total amount is the sum of amountCents over all records matching the current status and search filters, independent of the page requested. (evidence: unit.log, lint.log)
+- AC-2 [supported]: Page count is the ceiling of matches divided by page size (minimum 1), so every matching record appears on some page. With 47 records the pages hold 10,10,10,10,7 and the last page is reachable via Next. (evidence: unit.log, lint.log)
+- AC-3 [supported]: Browser journey: with All statuses, the total shown on page 1 equals the total on every later page, including the partial last page, and equals the sum of all 47 seed amounts. The last page is reached by clicking Next and shows R-146. (evidence: <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/e54a88eb-reports-accessibility/orbit-a11y.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/e54a88eb-reports-accessibility/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/92fabd58-reports-accessibility/orbit-a11y.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/92fabd58-reports-accessibility/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/ff1db5b7-reports-filter/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/39d58d5b-reports-pagination/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/33f9f997-reports-totals/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/4953faa2-reports-filter/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/f435cd1e-reports-pagination/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/1e04d076-reports-totals/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/7d84bf44-reports-visual/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/e9afa2bd-reports-visual/orbit-diagnostics.json)
+- AC-4 [supported]: Nothing else changes: the filtering rules, PAGE_SIZE 10, and the page wording (summary, pager, totals label, empty message) are unchanged, and existing tests still pass. (evidence: unit.log, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/e54a88eb-reports-accessibility/orbit-a11y.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/e54a88eb-reports-accessibility/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/92fabd58-reports-accessibility/orbit-a11y.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/92fabd58-reports-accessibility/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/ff1db5b7-reports-filter/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/39d58d5b-reports-pagination/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/33f9f997-reports-totals/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/4953faa2-reports-filter/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/f435cd1e-reports-pagination/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/1e04d076-reports-totals/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/7d84bf44-reports-visual/orbit-diagnostics.json, <demo-repo>/.orbit/runs/orb-20261005-184949-0cb748/evidence/1/ui/ui/artifacts/e9afa2bd-reports-visual/orbit-diagnostics.json, lint.log)
 
 ## Checks
 
@@ -41,11 +41,11 @@ Make the reports total amount cover every record matching the current filters on
 - orbit-install: PASSED (exit 0), log orbit-install.log
 - unit: PASSED (exit 0), log unit.log
 
-Evidence report evr-bcdbb9140ab4: FAIL on tree 79ecba503ed3d4f8c52324884582031ed6999dd2.
+Evidence report evr-92be789befac: PASS on tree b696fbc7f0b8fc55db08c7bdb33988c166f6a246.
 
 ## Reviews
 
-- none
+- codex/gpt-6.1-sol: APPROVE on tree b696fbc7f0b8fc55db08c7bdb33988c166f6a246 (0 finding(s))
 
 ## Decisions
 
@@ -60,77 +60,74 @@ Evidence report evr-bcdbb9140ab4: FAIL on tree 79ecba503ed3d4f8c52324884582031ed
 - gate.intake: intake gate pass
 - planning.proof-map: criterion-to-proof mapping for 4 criteria
 - planning.practices: engineering practices: 4 selected, 5 omitted with a reason (input-validation-and-authorization, sensitive-data-handling, performance-hotspots, documentation, rollback-and-migration)
-- planning.difficulty: difficulty medium (score 7/20): class medium; score 7 of 20: simple up to 3, medium up to 8, complex above; acceptance_criteria +1: 4 mandatory criteria (4 total); coupling +3: subsystem coupling is high; ambiguity +1: 0 open question(s), 1 unresolved assumption(s); ui_complexity +1: UI verification needed (1 UI criteria); repo_familiarity +1: repository familiarity is medium
+- planning.difficulty: difficulty medium (score 7/20): class medium; score 7 of 20: simple up to 3, medium up to 8, complex above; acceptance_criteria +1: 4 mandatory criteria (4 total); coupling +3: subsystem coupling is high; ambiguity +1: 0 open question(s), 2 unresolved assumption(s); ui_complexity +1: UI verification needed (1 UI criteria); repo_familiarity +1: repository familiarity is medium
 - route: implement:1: route routine-code -> claude/claude-opus-5-5 (escalated from claude-sonnet-5-5)
 - gate.implementation: implementation gate pass
-- gate.ui: ui gate fail: journey desktop/a11y.spec.ts#reports-accessibility failed; journey mobile/a11y.spec.ts#reports-accessibility failed; journey desktop/reports.spec.ts#reports-filter failed; journey desktop/reports.spec.ts#reports-pagination failed; journey desktop/reports.spec.ts#reports-totals failed; journey mobile/reports.spec.ts#reports-filter failed; journey mobile/reports.spec.ts#reports-pagination failed; journey mobile/reports.spec.ts#reports-totals failed; journey desktop/visual.spec.ts#reports-visual failed; journey mobile/visual.spec.ts#reports-visual failed (notes: configured viewports never exercised: 1440x900, 390x844; accessibility is enabled but no journey ran an accessibility scan)
+- gate.ui: ui gate pass (notes: check ui ran its browser under sandbox-runtime 0.0.78 with the isolation adjustment chromium-mach-rendezvous: UI checks on macOS: Playwright's bundled Chromium runs with --no-sandbox (its own sandbox cannot start inside Seatbelt), so srt is its only boundary; srt's write allowlist, credential read-denies and egress filter still apply. For Chromium to start at all, an Orbit preload on the unmodified srt CLI adds two Seatbelt rules, mach-register and mach-lookup for names matching ^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][0-9]+$ and nothing else. This widens one thing: a sandboxed process can look up the rendezvous port of another Playwright Chromium run by the same user, or claim the name a starting one will use, which at worst stops that browser from starting. Only Playwright's bundled Chromium is supported under srt on macOS; Google Chrome, Firefox and WebKit are not.)
 - gate.static_security: static_security gate unverified (notes: static analysis (SAST) is unverified: the policy defines no SAST check)
-- gate.behaviour: behaviour gate fail: check ui: failed; criterion AC-3: failing: ui; criterion AC-4: failing: ui; journey desktop/a11y.spec.ts#reports-accessibility: failed; journey mobile/a11y.spec.ts#reports-accessibility: failed; journey desktop/reports.spec.ts#reports-filter: failed; journey desktop/reports.spec.ts#reports-pagination: failed; journey desktop/reports.spec.ts#reports-totals: failed; journey mobile/reports.spec.ts#reports-filter: failed; journey mobile/reports.spec.ts#reports-pagination: failed; journey mobile/reports.spec.ts#reports-totals: failed; journey desktop/visual.spec.ts#reports-visual: failed; journey mobile/visual.spec.ts#reports-visual: failed (notes: static analysis (SAST) is unverified: the policy defines no SAST check; configured viewports never exercised: 1440x900, 390x844; accessibility is enabled but no journey ran an accessibility scan)
-- route: diagnose:cand-3a3a6d8953a0: route focused-tests -> claude/claude-sonnet-5-5
-- policy.deny: verifier wrk-6485d4225540: Bash denied by the permission rules (permission) on git diff e2d38f6 --stat; git diff e2d38f6 -- src; ls .orbit 2>/dev/null; ls <demo-repo>/.orbit/runs/orb-20261005-174507-434684 2>&1 | head -30
-- repair.hypothesis: new: A pre-existing assertion was altered, or the diff touches something outside the allowed scope, which breaks the AC-4 gate
-- repair.brief: repair brief (diagnosis) for attempt 2: verdict:cand-3a3a6d8953a0
-- route: implement:2: route routine-code -> claude/claude-opus-5-5
-- gate.implementation: implementation gate pass
+- gate.behaviour: behaviour gate pass (notes: static analysis (SAST) is unverified: the policy defines no SAST check; check ui ran its browser under sandbox-runtime 0.0.78 with the isolation adjustment chromium-mach-rendezvous: UI checks on macOS: Playwright's bundled Chromium runs with --no-sandbox (its own sandbox cannot start inside Seatbelt), so srt is its only boundary; srt's write allowlist, credential read-denies and egress filter still apply. For Chromium to start at all, an Orbit preload on the unmodified srt CLI adds two Seatbelt rules, mach-register and mach-lookup for names matching ^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][0-9]+$ and nothing else. This widens one thing: a sandboxed process can look up the rendezvous port of another Playwright Chromium run by the same user, or claim the name a starting one will use, which at worst stops that browser from starting. Only Playwright's bundled Chromium is supported under srt on macOS; Google Chrome, Firefox and WebKit are not.)
+- review.select: reviewer codex/gpt-6.1-sol (independent)
+- gate.independent_review: independent_review gate pass
+- gate.delivery: delivery gate pass
+- delivery.completed: delivered 8803529ba92e (tree b696fbc7f0b8) to orbit/orb-20261005-184949-0cb748, PR #2
+- gate.completion: completion gate pass
 
 ## Assumptions
 
-- AS-1 [supported]: The total amount should cover all records matching the filters, not all records overall
-- AS-2 [unverified]: Unit tests run with node:test, and the ui check runs the Playwright specs under tests/e2e
-- AS-3 [supported]: The default data set has 47 records, so the journey can use it directly
-- AS-4 [supported]: The visual baseline is unaffected because it covers only the table
+- AS-1 [supported]: The total should respect both the status and search filters but not the page.
+- AS-2 [supported]: The root causes are only Math.floor in pageCountFor and sumAmounts(rows) in queryReports.
+- AS-3 [unverified]: The ui check runs tests/e2e including the new journey against the seeded 47-record server.
+- AS-4 [unverified]: The server route passes queryReports output straight to renderReportsPage with no separate total or page computation.
 
 ## Engineering practices
 
-- behavior-tests [selected]: Positive, negative, boundary and error-path cases: non-multiple of the page size (47, 25), exact multiples (10, 20), zero records, a clamped out-of-range page, filtered totals, and a unit test that every id is reachable exactly once.
-- empty-and-loading-states [selected]: Zero matches must still give pageCount 1 and a total of 0. An existing test covers the empty page and a pageCountFor(0) assertion is added. There is no loading state because the page is server-rendered.
-- input-validation-and-authorization [omitted]: No new input is accepted. parseQuery already validates status and page, and there is no authorization logic in this change.
-- sensitive-data-handling [omitted]: Only an aggregate that is already displayed is recomputed. No new fields, logs or secrets are involved.
-- compatibility-and-public-interfaces [selected]: The ReportPage shape, function signatures and URLs stay the same. Only the values of pageCount and totalAmountCents change, and the existing tests are kept as a regression check.
-- performance-hotspots [omitted]: The filtered list is already built in memory for each request, and summing it adds one linear pass over a 47-record data set. There is no material hotspot.
-- accessibility [selected]: The journey is UI-facing. The markup and labels are unchanged, and the existing a11y spec and baseline are expected to still pass under the ui check. The journey locates elements by role and id, and checks that the Next control is non-interactive on the last page.
-- documentation [omitted]: This is a bug fix with no public API or wording change. The README does not describe totals or paging.
-- rollback-and-migration [omitted]: There is no schema, data migration or deployment action. A revert of the single source file restores the old behaviour.
+- behavior-tests [selected]: unit tests cover positive, boundary (0, 1, 10, 11, 47, 50 records; non-multiples of 10), clamp, filtered-total and empty cases; a browser journey covers the totals across pages
+- empty-and-loading-states [selected]: an empty result must still give pageCount 1 and a total of 0; this is kept by the existing empty test and a boundary case for pageCountFor(0)
+- input-validation-and-authorization [omitted]: no new input or auth surface; parseQuery already sanitizes page and status, and out-of-range pages are clamped, which is covered by the clamp test
+- sensitive-data-handling [omitted]: no new fields, logging or secrets are involved; the total is an aggregate of data the page already displays
+- compatibility-and-public-interfaces [selected]: queryReports and ReportPage keep their shapes; only the values of totalAmountCents and pageCount change, and the doc comment is updated; URLs and wording are unchanged
+- performance-hotspots [omitted]: the sum runs over the already-filtered in-memory array of 47 records, one extra O(n) pass the filter already incurs
+- accessibility [selected]: the new journey drives the pager through the real links; the markup is unchanged, and the existing a11y spec still runs under the ui check
+- documentation [omitted]: a bug fix with no public behavior or API change beyond correctness; README does not describe totals or pagination, and the types.ts comment is corrected in code
+- rollback-and-migration [omitted]: no schema, data or deploy action; the change reverts with a plain git revert
 
 ## Repairs
 
-- attempt 2: diagnosis brief for verdict:cand-3a3a6d8953a0
+- none
 
 ## Revision, branch and pull request
 
 - base: e2d38f694ed26138bab984e31593e1e7c4bd6c58
-- candidate: 55329f3d88e9dba04327988223ed3bf92d466977 (tree 844360e0a0cbc0e8241083ac88aae227a38813ae)
-- branch: orbit/orb-20261005-174507-434684
-- delivered commit: none
-- pull request: none
+- candidate: 01b5a184990050d5125a16b8174b95c2f4fc3f97 (tree b696fbc7f0b8fc55db08c7bdb33988c166f6a246)
+- branch: orbit/orb-20261005-184949-0cb748
+- delivered commit: 8803529ba92ea5cf68ffbc64211a472b98f4aa0d
+- pull request: #2 https://github.com/QuintinBotes/orbit-demo/pull/2
 
 ## Budget consumption
 
-- implementation_attempts: 2 used of 3 allowed (hard cap 6)
-- diagnostic_experiments: 1 used of 6 allowed (hard cap 8)
-- review_rounds: 0 used of 3 allowed (hard cap 3)
+- implementation_attempts: 1 used of 3 allowed (hard cap 6)
+- diagnostic_experiments: 0 used of 6 allowed (hard cap 8)
+- review_rounds: 1 used of 3 allowed (hard cap 3)
 - ci_repair_cycles: 0 used of 3 allowed (hard cap 3)
 - infrastructure_retries: 0 used of 3 allowed (hard cap 3)
 - recovery_attempts: 0 used of 3 allowed (hard cap 3)
 - worker_turns_per_session: 0 used of 30 allowed (hard cap 30)
-- wall_ms: 233769 used of 3600000 allowed (hard cap 3600000)
-- cost_usd: 1.68 used of 30 allowed (hard cap 30)
-- model cost: $1.6769 (measured); spend reported by providers
-- tokens: 88 in, 31164 out, 1255490 cache read, 139444 cache write
+- wall_ms: 202917 used of 3600000 allowed (hard cap 3600000)
+- cost_usd: 4.94 used of 30 allowed (hard cap 30)
+- model cost: $0.9406 (incomplete: some usage has no cost); spend is partly unmeasured (1 usage record(s) without cost, 1 ceiling charge(s)); admission control charges conservative per-role ceilings instead, so the cost cap bounds spend but is not an exact spend guarantee
+- tokens: 97417 in, 20774 out, 632504 cache read, 77679 cache write
 
 ## Not verified
 
 - static analysis (SAST) is unverified: the policy defines no SAST check
-- configured viewports never exercised: 1440x900, 390x844
-- accessibility is enabled but no journey ran an accessibility scan
-- AC-3 is unsupported
-- AC-4 is unsupported
+- check ui ran its browser under sandbox-runtime 0.0.78 with the isolation adjustment chromium-mach-rendezvous: UI checks on macOS: Playwright's bundled Chromium runs with --no-sandbox (its own sandbox cannot start inside Seatbelt), so srt is its only boundary; srt's write allowlist, credential read-denies and egress filter still apply. For Chromium to start at all, an Orbit preload on the unmodified srt CLI adds two Seatbelt rules, mach-register and mach-lookup for names matching ^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][0-9]+$ and nothing else. This widens one thing: a sandboxed process can look up the rendezvous port of another Playwright Chromium run by the same user, or claim the name a starting one will use, which at worst stops that browser from starting. Only Playwright's bundled Chromium is supported under srt on macOS; Google Chrome, Firefox and WebKit are not.
 
 ## Residual risks
 
 - sandbox-runtime limits filesystem writes and network egress but not CPU, memory or process count
 - claude credentials are present but unverified until a request succeeds
+- model spend: spend is partly unmeasured (1 usage record(s) without cost, 1 ceiling charge(s)); admission control charges conservative per-role ceilings instead, so the cost cap bounds spend but is not an exact spend guarantee
 
 ## Next action
 
-Nothing further: the run was cancelled on request and its artifacts are preserved.
+Review pull request #2 and merge it if you accept it; Orbit does not merge.

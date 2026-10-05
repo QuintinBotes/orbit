@@ -6,9 +6,10 @@
  * calls no model except with --probe (tiny requests, a few cents), and never
  * prints a credential or a private term.
  */
-import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { randomInt } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { OrbitError } from '../../core/errors.ts';
 import { execCapture } from '../../core/exec.ts';
@@ -17,8 +18,10 @@ import { defaultConfig, loadConfig } from '../../policy/index.ts';
 import type { OrbitConfig } from '../../policy/types.ts';
 import type { CredentialStatus, ProviderAdapter, ProviderCapabilities } from '../../adapters/types.ts';
 import { CLAUDE_SANDBOX_LIMITATIONS, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, compareVersions, claudeEnvCredential, codexEnvCredential, createAdapters, decideCodexTier, providerKind, type CodexTierDecision, type CodexTierSetting } from '../../adapters/index.ts';
-import { CONTAINER_LIMITATIONS, RESOURCE_LIMIT_FIX, SRT_LIMITATIONS, getIsolation, noIsolationLimitations, resourceLimitRefusals } from '../../isolation/index.ts';
-import type { IsolationProvider } from '../../isolation/types.ts';
+import { CONTAINER_LIMITATIONS, RESOURCE_LIMIT_FIX, SRT_LIMITATIONS, credentialDenyPaths, getIsolation, noIsolationLimitations, resourceLimitRefusals } from '../../isolation/index.ts';
+import { CHROMIUM_MACH_RENDEZVOUS_LIMITATION, SRT_VERIFIED_VERSION, type SandboxRuntimeIsolation } from '../../isolation/sandbox-runtime.ts';
+import type { IsolationProvider, SandboxProfile } from '../../isolation/types.ts';
+import { safeBaseEnv } from '../../ui/env.ts';
 import { ModelRegistry, allowMatch } from '../../routing/registry.ts';
 import { selectReviewer } from '../../review/select.ts';
 import { LOGIN_COMMANDS, validateCredentials } from '../../recovery/index.ts';
@@ -584,6 +587,141 @@ function checkPlaywright(p: Probe): DoctorCheck {
   return pass('playwright', 'ui', 'Playwright and its browsers are installed', details);
 }
 
+// -- browser isolation ----------------------------------------------------------
+
+/** Runs a wrapped command and reports how it ended; the real one is execCapture, tests pass their own. */
+export type BrowserLaunch = (argv: string[], opts: { cwd: string; env: Record<string, string>; timeoutMs: number }) => Promise<{ exitCode: number | null; output: string }>;
+
+const launchWrapped: BrowserLaunch = async (argv, opts) => {
+  const r = await execCapture(argv, { ...opts, maxOutputBytes: 256 * 1024 });
+  return { exitCode: r.timedOut ? null : r.exitCode, output: `${r.stdout}\n${r.stderr}`.trim() };
+};
+
+function isExecutable(p: string): boolean {
+  try {
+    return statSync(p).isFile() && (accessSync(p, constants.X_OK), true);
+  } catch {
+    return false;
+  }
+}
+
+/** Where Playwright's headless shell keeps its binary inside chromium_headless_shell-<revision>, newest layout first. */
+function headlessShellLayouts(arch: string): string[] {
+  const cft = ['chrome-headless-shell-mac-arm64/chrome-headless-shell', 'chrome-headless-shell-mac-x64/chrome-headless-shell'];
+  const old = ['chrome-mac-arm64/headless_shell', 'chrome-mac/headless_shell'];
+  return arch === 'arm64' ? [...cft, ...old] : [cft[1]!, cft[0]!, old[1]!, old[0]!];
+}
+
+/**
+ * Playwright's headless Chromium (the headless shell its `chromium.launch()` starts) for the revision the repository's
+ * Playwright names, in the browser cache. Only files are read (package resolution and browsers.json); no code of the
+ * repository runs.
+ */
+export function headlessChromiumOf(repo: string, cache: string, arch: string = process.arch): { exe: string; revision: string } | { problem: string } {
+  let browsersJson: string;
+  try {
+    browsersJson = join(createRequire(join(repo, 'package.json')).resolve('playwright-core/package.json'), '..', 'browsers.json');
+  } catch {
+    return { problem: 'Playwright is not installed in this repository' };
+  }
+  let revision: string | undefined;
+  try {
+    const bj = JSON.parse(readFileSync(browsersJson, 'utf8')) as { browsers?: { name?: unknown; revision?: unknown }[] };
+    const rev = (name: string) => bj.browsers?.find((b) => b.name === name && typeof b.revision === 'string')?.revision as string | undefined;
+    revision = rev('chromium-headless-shell') ?? rev('chromium');
+  } catch {
+    return { problem: `Playwright's browsers.json could not be read (${browsersJson})` };
+  }
+  if (!revision) return { problem: "Playwright's browsers.json names no Chromium revision" };
+  const dir = join(cache, `chromium_headless_shell-${revision}`);
+  const exe = headlessShellLayouts(arch).map((rel) => join(dir, rel)).find((p) => isExecutable(p));
+  return exe ? { exe, revision } : { problem: `Playwright's headless Chromium (revision ${revision}) is not installed in ${cache}` };
+}
+
+/**
+ * A page whose script writes `orbit-<a>-<b>` into it. The source holds only the parts, so the joined text in what the
+ * browser prints proves a renderer ran the script.
+ */
+function noncePage(): { url: string; expect: string } {
+  const a = randomInt(100_000, 1_000_000_000);
+  const b = randomInt(100_000, 1_000_000_000);
+  const html = `<p id=o></p><script>document.getElementById('o').textContent=['orbit',${a},${b}].join('-')</script>`;
+  return { url: `data:text/html,${encodeURIComponent(html)}`, expect: `orbit-${a}-${b}` };
+}
+
+export interface BrowserIsolationInput {
+  /** A ui section or a playwright check is configured. */
+  wanted: boolean;
+  provider: IsolationProvider | null;
+  available: boolean;
+  repo: string | null;
+  env: Env;
+  /** Whose credentials are denied and where the browser cache is; env.HOME, then the account's home directory. */
+  homeDir?: string;
+  launch?: BrowserLaunch;
+}
+
+/**
+ * ui.browser-isolation: what a UI check's browser gets under sandbox-runtime (docs/decisions/0001-runtime-choices.md,
+ * "Browsers under sandbox-runtime on macOS"). On macOS, srt must be the version the Chromium preload was verified
+ * against, and Playwright's real headless Chromium must start through the preload and render a page; the limitation
+ * is stated. The launch is Orbit's own command against the browser binary: no JavaScript of the repository runs, and
+ * the profile read-denies every credential path, Orbit's state and the repository. On Linux there is no Mach and no
+ * rule, and whether the application and the tests in separate srt processes share loopback has not been verified, so
+ * it says so.
+ */
+export async function browserIsolationCheck(input: BrowserIsolationInput): Promise<DoctorCheck> {
+  const id = 'ui.browser-isolation';
+  if (!input.wanted) return pass(id, 'ui', 'not required: no ui section and no playwright check is configured');
+  const provider = input.provider;
+  if (!provider || !input.available) return warn(id, 'ui', 'not checked: isolation is unavailable (see the isolation check)', 'an available isolation provider', null);
+  if (provider.kind !== 'sandbox-runtime' || !('browserIsolation' in provider)) return pass(id, 'ui', `not needed: browser checks run under ${provider.kind}, which needs no browser rule`);
+  const info = (provider as SandboxRuntimeIsolation).browserIsolation();
+  const limitation = `limitation: ${CHROMIUM_MACH_RENDEZVOUS_LIMITATION}`;
+  if (!info.rules) {
+    return warn(id, 'ui', 'unverified on Linux: no Mach rule is needed, but whether the application and the browser run in separate srt processes share loopback has not been verified', 'a run of the real-srt browser test on Linux (tests/integration/ui/browser-isolation-srt.test.ts)', 'use isolation.provider: container if the journeys cannot reach the application', [info.detail]);
+  }
+  if (!info.verified) {
+    return fail(id, 'ui', `${info.detail}; browser checks are refused`, `srt ${SRT_VERIFIED_VERSION} (@anthropic-ai/sandbox-runtime)`, `install @anthropic-ai/sandbox-runtime@${SRT_VERIFIED_VERSION}`, [info.detail, limitation]);
+  }
+  if (!input.repo) return warn(id, 'ui', 'not launched: no repository to find Playwright in', 'a repository', null, [info.detail, limitation]);
+  const home = input.homeDir ?? input.env.HOME ?? homedir();
+  const cache = playwrightCache(input.env, home, 'darwin');
+  const browser = headlessChromiumOf(input.repo, cache);
+  if ('problem' in browser) {
+    return warn(id, 'ui', `not launched: ${browser.problem}`, "Playwright's headless Chromium for the repository's Playwright", 'npm install -D @playwright/test, then npx playwright install chromium', [info.detail, limitation]);
+  }
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'orbit-doctor-browser-')));
+  try {
+    const repo = realpathSync(input.repo);
+    const exe = realpathSync(browser.exe);
+    const denyReadPaths = [...credentialDenyPaths({ homeDir: home, env: input.env }), ...(exe.startsWith(`${repo}/`) ? [] : [repo])];
+    const profile: SandboxProfile = { writablePaths: [dir], denyReadPaths, allowedHosts: [], allowLocalBinding: false, chromiumMachRendezvous: true, limits: { timeoutMs: 90_000, memoryMb: null, cpus: null, pids: null } };
+    const env = { ...safeBaseEnv(input.env), TMPDIR: dir };
+    const page = noncePage();
+    const argv = [browser.exe, '--headless', '--no-sandbox', '--disable-gpu', '--no-first-run', `--user-data-dir=${join(dir, 'profile')}`, '--dump-dom', page.url];
+    const wrapped = provider.wrap(argv, profile, { cwd: dir, env });
+    let r: { exitCode: number | null; output: string };
+    try {
+      r = await (input.launch ?? launchWrapped)(wrapped.argv, { cwd: dir, env: wrapped.env, timeoutMs: 90_000 });
+    } finally {
+      wrapped.cleanup();
+    }
+    const details = [info.detail, `browser: ${browser.exe} (revision ${browser.revision})`, limitation];
+    if (r.exitCode !== 0) {
+      return fail(id, 'ui', `headless Chromium did not start under srt ${info.srtVersion} (exit ${r.exitCode ?? 'timeout'}): ${oneLine(redact(r.output), 240) || '(no output)'}`, "a Chromium that starts under srt (Playwright's bundled Chromium)", 'npx playwright install chromium; see docs/troubleshooting.md', details);
+    }
+    if (!r.output.includes(page.expect)) {
+      return fail(id, 'ui', `headless Chromium did not render the test page under srt ${info.srtVersion} (exit 0): ${oneLine(redact(r.output), 240) || '(no output)'}`, "a Chromium that starts under srt (Playwright's bundled Chromium)", 'npx playwright install chromium; see docs/troubleshooting.md', details);
+    }
+    return pass(id, 'ui', `Chromium starts under srt ${info.srtVersion} with the two Mach rendezvous rules`, details);
+  } catch (err) {
+    return fail(id, 'ui', `headless Chromium could not be launched under srt: ${oneLine(err instanceof Error ? err.message : String(err), 240)}`, 'a sandbox-runtime that can wrap the browser', 'see docs/troubleshooting.md', [info.detail, limitation]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // -- delivery -----------------------------------------------------------------
 
 async function checkDelivery(p: Probe): Promise<DoctorCheck> {
@@ -739,6 +877,9 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; prob
   }
 
   await safely('playwright', 'ui', () => checkPlaywright(p));
+  await safely('ui.browser-isolation', 'ui', () =>
+    browserIsolationCheck({ wanted: config.ui !== null || Object.values(config.checks).some((c) => c.kind === 'playwright'), provider: isoFacts.provider, available: isoFacts.available, repo, env: ctx.env, homeDir: ctx.homeDir }),
+  );
   await safely('delivery', 'delivery', () => checkDelivery(p));
   await safely('gitleaks', 'security', () => checkGitleaks(p));
   await safely('service', 'service', () => checkService(p));

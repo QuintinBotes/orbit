@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- Browser journeys run under `srt` on macOS (ADR 0001, "Browsers under
+  sandbox-runtime on macOS"; live demo 2). Chromium aborted at start because
+  Seatbelt refused its Mach rendezvous service (`bootstrap_check_in
+  org.chromium.Chromium.MachPortRendezvousServer.<pid>`), so every journey
+  failed. A new `SandboxProfile.chromiumMachRendezvous`, set on UI-check and
+  exploration profiles only (never the application under test or a worker),
+  makes the `srt` provider start `srt`'s unmodified CLI as `node --import
+  srt-chromium-preload.mjs cli.js`. The preload adds exactly two rules,
+  `mach-register` and `mach-lookup` for
+  `^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][0-9]+$`, after the
+  one `(allow process-exec)` of the single-quoted `sandbox-exec -p` profile,
+  and exits 97 for any other shape, any other way of running `sandbox-exec`,
+  or an exit without a patched sandbox. Browser checks require `srt` 0.0.78
+  (otherwise `ISOLATION_UNAVAILABLE`), and node and the preload must be out of
+  the sandbox's write reach. The preload ships as `dist/srt-chromium-preload.mjs`,
+  and `npm run check:dist` checks it. A browser that could not start under
+  `srt` on macOS (the rendezvous FATAL, "sandbox initialization failed", Firefox
+  or WebKit, read only from Playwright's launch errors and only when no journey
+  passed; or a preload refusal the preload recorded where the sandbox cannot
+  write) is an environment ERROR that blocks the run at once, never a journey
+  failure. A path in the profile that spells the marker or `sandbox-exec` is
+  patched around, not refused. Check runs record `isolationAdjustments` and
+  `srtVersion`, and the evidence report states the limitation (Chromium runs
+  with `--no-sandbox`, so `srt` is its only boundary). `orbit doctor` adds
+  `ui.browser-isolation`: the `srt` version, a launch of Playwright's real
+  headless Chromium binary through the preload (no repository code runs, every
+  credential path and the repository are read-denied, and only a page whose
+  script ran counts), and "unverified" on Linux. The demo app's 8 journeys
+  pass on desktop and mobile under the real `srt`.
 - The Codex reviewer's tier is chosen by login type (ADR 0001, "Second live
   finding"). Inside `srt`, Codex with a ChatGPT login fails with "workspace
   routing discovery failed", so the new `providers.codex.tier` (`auto`,

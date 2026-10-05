@@ -4,4 +4,4 @@ Repository: QuintinBotes/orbit-demo (private). Providers: Claude writes, Codex r
 
 | Goal | Run | Outcome | Pull request |
 |---|---|---|---|
-| difficult | orb-20261005-174507-434684 | CANCELLED | none |
+| ui | orb-20261005-185519-bfa362 | BLOCKED | none |

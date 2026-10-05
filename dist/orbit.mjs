@@ -24822,6 +24822,18 @@ function profileForCheck(input) {
     limits: { timeoutMs: input.check.timeout_seconds * 1e3, ...resourceLimits(input.snapshot) }
   };
 }
+function credentialDenyPaths(opts = {}) {
+  const home2 = canonicalPath(opts.homeDir ?? homedir4());
+  const env = opts.env ?? process.env;
+  const dirs = providerDirs({ homeDir: home2, env });
+  return uniq([
+    ...HOME_DENY_READ.map((rel) => join7(home2, rel)),
+    ...SYSTEM_DENY_READ.map(canonicalPath),
+    orbitTmpRoot(),
+    ...claudeLogins(home2, env, dirs.claudeConfigDir).flatMap((d) => claudeState(home2, d)),
+    ...codexHomes(home2, env, dirs.codexHome)
+  ]);
+}
 function orbitTmpRoot(uid = process.getuid?.()) {
   return canonicalPath(join7("/tmp", uid === void 0 ? "orbit" : `orbit-${uid}`));
 }
@@ -29839,6 +29851,7 @@ timer = setInterval(check, intervalMs);
 import { chmodSync as chmodSync5, existsSync as existsSync15, mkdirSync as mkdirSync8, mkdtempSync as mkdtempSync3, readFileSync as readFileSync9, realpathSync as realpathSync5, rmSync as rmSync5, writeFileSync as writeFileSync4 } from "node:fs";
 import { tmpdir as tmpdir7, userInfo } from "node:os";
 import { basename as basename9, delimiter as delimiter2, dirname as dirname13, isAbsolute as isAbsolute11, join as join15 } from "node:path";
+import { fileURLToPath as fileURLToPath3, pathToFileURL } from "node:url";
 function normalizeHost2(raw) {
   const host = raw.trim().toLowerCase();
   const match = HOST_PATTERN.exec(host) ?? IPV6_PATTERN.exec(host);
@@ -29887,6 +29900,25 @@ function buildSrtSettings(profile, opts = {}) {
       denyWrite: uniq([...denied.filter((d) => !writable.includes(d)), ...readOnly].filter(insideWritable))
     }
   };
+}
+function defaultChromiumPreloadPath() {
+  return fileURLToPath3(new URL("./srt-chromium-preload.mjs", import.meta.url));
+}
+function srtPackageOf(srtPath) {
+  let cli;
+  try {
+    cli = realpathSync5(srtPath);
+  } catch {
+    return null;
+  }
+  const dir = dirname13(cli);
+  const pkg = basename9(dir) === "dist" ? dirname13(dir) : dir;
+  try {
+    const meta = JSON.parse(readFileSync9(join15(pkg, "package.json"), "utf8"));
+    return { cli, name: typeof meta.name === "string" ? meta.name : null, version: typeof meta.version === "string" ? meta.version : null };
+  } catch {
+    return { cli, name: null, version: null };
+  }
 }
 function seccompHelperFor(srtPath, arch) {
   const vendorArch = SECCOMP_ARCHES[arch];
@@ -29943,6 +29975,21 @@ function assertLauncherOutOfReach(srtPath, reach) {
     throw new OrbitError("ISOLATION_UNAVAILABLE", `srt at ${pkg} is inside a path the sandbox may write, so a sandboxed command could replace the sandbox itself`, { path: pkg });
   }
 }
+function readPreloadRefusal(dir) {
+  let text2;
+  try {
+    text2 = readFileSync9(join15(dir, PRELOAD_REFUSAL_FILE), "utf8");
+  } catch {
+    return null;
+  }
+  const line3 = redact(text2.split("\n").find((l) => l.trim() !== "")?.trim() ?? "");
+  return line3 ? line3.slice(0, 300) : "(no reason recorded)";
+}
+function assertFileOutOfReach(file, reach, what) {
+  const dir = dirname13(file);
+  const exposed = writableIn(reach, file) || writableIn(reach, dir) || reach.writable.some((w) => isWithin(w, dir) && !reach.protectedPaths.some((d) => isWithin(w, d)));
+  if (exposed) throw new OrbitError("ISOLATION_UNAVAILABLE", `${what} is inside a path the sandbox may write, so a sandboxed command could replace it`, { path: file });
+}
 function isLoaderEnv(name) {
   return LOADER_ENV_NAMES.has(name) || LOADER_ENV_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
@@ -29996,11 +30043,12 @@ function isWsl1() {
     return false;
   }
 }
-var DENIED_RESOLVED_ADDRESSES, LABEL2, HOST_PATTERN, IPV6_PATTERN, SRT_LIMITATIONS, LINUX_LIMITATION, SECCOMP_ARCHES, SandboxRuntimeIsolation, LOADER_ENV_NAMES, LOADER_ENV_PREFIXES;
+var DENIED_RESOLVED_ADDRESSES, LABEL2, HOST_PATTERN, IPV6_PATTERN, SRT_LIMITATIONS, SRT_VERIFIED_VERSION, SRT_PACKAGE, PRELOAD_REFUSAL_FILE, CHROMIUM_MACH_RENDEZVOUS, CHROMIUM_MACH_RENDEZVOUS_LIMITATION, LINUX_LIMITATION, SECCOMP_ARCHES, SandboxRuntimeIsolation, LOADER_ENV_NAMES, LOADER_ENV_PREFIXES;
 var init_sandbox_runtime = __esm({
   "src/isolation/sandbox-runtime.ts"() {
     "use strict";
     init_errors();
+    init_redact();
     init_limits();
     init_memory();
     init_util();
@@ -30017,6 +30065,11 @@ var init_sandbox_runtime = __esm({
       "Egress is filtered by host name through a local proxy: programs that ignore HTTP_PROXY/HTTPS_PROXY get no network at all, and traffic to an allowed host is not inspected.",
       "srt, node and the shell tools that start the sandbox run outside it; they get a PATH without relative entries or directories the sandbox can write, and without loader variables (NODE_OPTIONS, LD_*, DYLD_*...). The command's own values are restored inside the sandbox through /usr/bin/env."
     ];
+    SRT_VERIFIED_VERSION = "0.0.78";
+    SRT_PACKAGE = "@anthropic-ai/sandbox-runtime";
+    PRELOAD_REFUSAL_FILE = "chromium-preload-refused";
+    CHROMIUM_MACH_RENDEZVOUS = "chromium-mach-rendezvous";
+    CHROMIUM_MACH_RENDEZVOUS_LIMITATION = "UI checks on macOS: Playwright's bundled Chromium runs with --no-sandbox (its own sandbox cannot start inside Seatbelt), so srt is its only boundary; srt's write allowlist, credential read-denies and egress filter still apply. For Chromium to start at all, an Orbit preload on the unmodified srt CLI adds two Seatbelt rules, mach-register and mach-lookup for names matching ^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][0-9]+$ and nothing else. This widens one thing: a sandboxed process can look up the rendezvous port of another Playwright Chromium run by the same user, or claim the name a starting one will use, which at worst stops that browser from starting. Only Playwright's bundled Chromium is supported under srt on macOS; Google Chrome, Firefox and WebKit are not.";
     LINUX_LIMITATION = "On Linux the mandatory write denies inside writable paths (.git/hooks, shell rc files...) are found by a scan at launch, so such files created later are not covered.";
     SECCOMP_ARCHES = { x64: "x64", arm64: "arm64" };
     SandboxRuntimeIsolation = class {
@@ -30051,7 +30104,8 @@ var init_sandbox_runtime = __esm({
        */
       platformCheck(srtPath) {
         if (this.platform === "darwin") {
-          return isExecutableFile("/usr/bin/sandbox-exec") ? { ok: true, detail: "macOS Seatbelt (/usr/bin/sandbox-exec)" } : { ok: false, detail: "/usr/bin/sandbox-exec is missing" };
+          const sandboxExec = this.opts.sandboxExecPath ?? "/usr/bin/sandbox-exec";
+          return isExecutableFile(sandboxExec) ? { ok: true, detail: `macOS Seatbelt (${sandboxExec})` } : { ok: false, detail: `${sandboxExec} is missing` };
         }
         if (this.platform === "linux") {
           if (isWsl1()) return { ok: false, detail: "WSL1 cannot run bubblewrap; use WSL2" };
@@ -30099,6 +30153,19 @@ var init_sandbox_runtime = __esm({
         }
         return { ok: true, detail: `srt ${version.stdout.trim()} (${srt.source}: ${srt.path}); ${platform3.detail}; sandbox probe passed` };
       }
+      /**
+       * What a UI check's browser run would get here: whether the Chromium Mach rules apply (macOS), and whether the srt
+       * found is the version the preload was verified against. For `orbit doctor`; wrap() enforces the same.
+       */
+      browserIsolation() {
+        const rules = this.platform === "darwin";
+        const srt = this.resolveSrt();
+        const pkg = srt ? srtPackageOf(srt.path) : null;
+        const srtVersion = pkg?.name === SRT_PACKAGE ? pkg.version : null;
+        const verified = srtVersion === SRT_VERIFIED_VERSION;
+        const detail = verified ? `srt ${srtVersion} is the version the Chromium preload was verified against` : srtVersion !== null ? `srt ${srtVersion} is not ${SRT_VERIFIED_VERSION}, the version the Chromium preload was verified against` : `the srt package and its version cannot be read (${srt ? srt.path : this.missingDetail()})`;
+        return { rules, srtVersion, verified, detail };
+      }
       wrap(argv2, profile, opts) {
         assertArgv(argv2);
         const precheck = this.platformCheck();
@@ -30107,6 +30174,8 @@ var init_sandbox_runtime = __esm({
         if (!srt) throw new OrbitError("ISOLATION_UNAVAILABLE", `sandbox-runtime unavailable: ${this.missingDetail()}`);
         const platform3 = this.platformCheck(srt.path);
         if (!platform3.ok) throw new OrbitError("ISOLATION_UNAVAILABLE", `sandbox-runtime unavailable: ${platform3.detail}`);
+        const pkg = srtPackageOf(srt.path);
+        const browser = profile.chromiumMachRendezvous === true && this.platform === "darwin" ? this.chromiumLauncher(pkg) : null;
         const dir = mkdtempSync3(join15(this.opts.settingsDir ?? tmpdir7(), "orbit-srt-"));
         let cleaned = false;
         const cleanup = () => {
@@ -30118,6 +30187,11 @@ var init_sandbox_runtime = __esm({
           const settings = buildSrtSettings(profile, { extraDenyRead: [dir], stdioFiles: opts.stdioFiles });
           const reach = sandboxReach(settings, opts.env.HOME);
           assertLauncherOutOfReach(srt.path, reach);
+          if (browser) {
+            assertFileOutOfReach(browser.preload, reach, `the Chromium preload ${browser.preload}`);
+            assertFileOutOfReach(browser.node, reach, `node ${browser.node}`);
+            if (writableIn(reach, realpathSync5(dir))) throw new OrbitError("ISOLATION_UNAVAILABLE", `the srt settings directory ${dir} is inside a path the sandbox may write, so the Chromium preload's refusal record could be forged`, { path: dir });
+          }
           const launch = launcherEnv(sandboxEnv(opts.env, settings.filesystem.allowWrite), reach);
           const command = withResourceLimits(argv2, this.opts.limits, { shell: this.opts.limitShell });
           if (launch.restore.length && command[0].includes("=")) {
@@ -30127,18 +30201,42 @@ var init_sandbox_runtime = __esm({
           writeFileSync4(file, `${JSON.stringify(settings, null, 2)}
 `, { mode: 384, flag: "wx" });
           chmodSync5(file, 384);
-          const srtArgv = [srt.path, "--settings", file, "--", ...launch.restore.length ? ["/usr/bin/env", "--", ...launch.restore] : [], ...command];
+          const launcher = browser ? [browser.node, "--import", pathToFileURL(browser.preload).href, browser.cli] : [srt.path];
+          const srtArgv = [...launcher, "--settings", file, "--", ...launch.restore.length ? ["/usr/bin/env", "--", ...launch.restore] : [], ...command];
           const memoryMb = this.opts.limits?.memory_mb ?? null;
           return {
             argv: withMemoryWatchdog(srtArgv, memoryMb, this.opts.memory),
             env: launch.env,
             cleanup,
-            limitations: limitationsFor(profile, this.platform, this.opts.limits)
+            limitations: [...limitationsFor(profile, this.platform, this.opts.limits), ...browser ? [CHROMIUM_MACH_RENDEZVOUS_LIMITATION] : []],
+            adjustments: browser ? [CHROMIUM_MACH_RENDEZVOUS] : [],
+            ...browser ? { preloadRefusal: () => readPreloadRefusal(dir) } : {},
+            runtimeVersion: pkg?.version ?? null
           };
         } catch (err) {
           cleanup();
           throw err;
         }
+      }
+      /**
+       * How a browser check's srt is started on macOS: node, the preload and srt's real CLI. Fails closed, before anything
+       * is written, when srt is not the package version the preload was verified against or the preload is missing.
+       */
+      chromiumLauncher(pkg) {
+        const unavailable = (why) => new OrbitError("ISOLATION_UNAVAILABLE", `sandbox-runtime unavailable for browser checks: ${why}`, { verified: SRT_VERIFIED_VERSION });
+        if (!pkg) throw unavailable("srt cannot be resolved");
+        const where = dirname13(pkg.cli);
+        if (pkg.name === null && pkg.version === null) throw unavailable(`srt at ${where} has an unknown version (no readable package.json), and the Chromium preload was verified against ${SRT_PACKAGE} ${SRT_VERIFIED_VERSION} only`);
+        if (pkg.name !== SRT_PACKAGE) throw unavailable(`srt at ${where} is not ${SRT_PACKAGE} (package ${String(pkg.name)})`);
+        if (pkg.version !== SRT_VERIFIED_VERSION) throw unavailable(`srt at ${where} is version ${String(pkg.version)}, and the Chromium preload was verified against ${SRT_VERIFIED_VERSION} only`);
+        const resolve20 = (path, what) => {
+          try {
+            return realpathSync5(path);
+          } catch {
+            throw unavailable(`${what} ${path} is missing`);
+          }
+        };
+        return { node: resolve20(this.opts.nodePath ?? process.execPath, "node"), preload: resolve20(this.opts.chromiumPreloadPath ?? defaultChromiumPreloadPath(), "the Chromium preload"), cli: pkg.cli };
       }
       missingDetail() {
         if (this.opts.srtPath !== void 0) return `configured srt ${this.opts.srtPath} is not an absolute path to an executable file`;
@@ -30203,7 +30301,7 @@ var init_isolation = __esm({
 import { realpathSync as realpathSync6 } from "node:fs";
 import { dirname as dirname14, join as join16, resolve as resolve6 } from "node:path";
 import { homedir as homedir6 } from "node:os";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
 function orbitDir(repoRoot) {
   return join16(repoRoot, ".orbit");
 }
@@ -30213,7 +30311,7 @@ function stateDbPath(repoRoot) {
 function defaultOrbitHome(env = process.env) {
   return env.ORBIT_HOME ?? join16(homedir6(), ".orbit");
 }
-function orbitInstallDir(here = dirname14(fileURLToPath3(import.meta.url))) {
+function orbitInstallDir(here = dirname14(fileURLToPath4(import.meta.url))) {
   return here.endsWith(join16("src", "controller")) ? resolve6(here, "..", "..") : resolve6(here, "..");
 }
 function startRun(input) {
@@ -33645,7 +33743,7 @@ async function startApp(opts) {
   const base = { command: opts.command, cwd: opts.cwd, baseUrl: opts.baseUrl, startedAt, logPath };
   atomicWriteJson(stateFile, { ...base, state: "starting", pid: null, pgid: null, start: null });
   const env = { ...safeBaseEnv(opts.hostEnv ?? process.env), ...opts.env ?? {} };
-  const profile = { ...opts.isolation.profile, allowLocalBinding: true };
+  const profile = { ...opts.isolation.profile, allowLocalBinding: true, chromiumMachRendezvous: false };
   closeSync6(openSync6(logPath, "a", 384));
   const wrapped = opts.isolation.provider.wrap(opts.command, profile, { cwd: opts.cwd, env, stdioFiles: [logPath] });
   let spawned;
@@ -49931,6 +50029,8 @@ function classifyEnvironmentFailure(input) {
   return { checkId: input.checkId, fingerprint, signals, cause: signals.map((s) => CAUSES[s]).join("; "), lines };
 }
 function classifyNotExecuted(input) {
+  const browser = input.browserIsolation?.trim();
+  if (browser) return { checkId: input.checkId, fingerprint: null, signals: ["browser-isolation"], cause: CAUSES["browser-isolation"], lines: [browser.slice(0, MAX_LINE_CHARS)] };
   const start = input.startFailure?.trim();
   if (start) return { checkId: input.checkId, fingerprint: null, signals: ["start-failed"], cause: CAUSES["start-failed"], lines: [start.slice(0, MAX_LINE_CHARS)] };
   let crash = input.signal !== void 0 && input.signal !== null && CRASH_SIGNALS.has(input.signal) ? input.signal : null;
@@ -49986,7 +50086,8 @@ var init_environment_failure = __esm({
       "operation-not-permitted": 'the operating system answered "operation not permitted"',
       "eacces-outside-worktree": "permission was denied (EACCES) on a path outside the worktree",
       "process-aborted": "the process was killed by a fatal signal before it printed anything of its own",
-      "start-failed": "the check could not be started"
+      "start-failed": "the check could not be started",
+      "browser-isolation": "the browser could not start under sandbox-runtime"
     };
     CRASH_SIGNALS = /* @__PURE__ */ new Set(["SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL", "SIGTRAP", "SIGSYS"]);
     TRACE_HEADER = /^-{3,}\s*(Native|JavaScript) stack trace\s*-{3,}$/i;
@@ -50388,6 +50489,11 @@ async function runUiChecks(input) {
   else if (failing.length > 0) verdict = "FAIL";
   else if (needsReview) verdict = "BLOCKED";
   else verdict = "PASS";
+  for (const c of checkRuns) {
+    if (!c.isolationAdjustments?.includes(CHROMIUM_MACH_RENDEZVOUS)) continue;
+    unverified.push(`check ${c.checkId} ran its browser under sandbox-runtime ${c.srtVersion ?? "of unknown version"} with the isolation adjustment ${c.isolationAdjustments.join(", ")}: ${CHROMIUM_MACH_RENDEZVOUS_LIMITATION}`);
+  }
+  const adjusted = checkRuns.some((c) => c.isolationAdjustments?.includes(CHROMIUM_MACH_RENDEZVOUS));
   const browsers = uniqueBy(journeys.flatMap((j) => j.browser ? [j.browser] : []), (b) => `${b.name}@${b.version}`);
   const viewports = coverage.observedViewports;
   const result2 = {
@@ -50418,7 +50524,7 @@ async function runUiChecks(input) {
     coverage,
     unverified,
     notExecuted,
-    limitations: [...UI_LIMITATIONS],
+    limitations: [...UI_LIMITATIONS, ...adjusted ? [CHROMIUM_MACH_RENDEZVOUS_LIMITATION] : []],
     outDir,
     startedAt,
     endedAt: clock.now()
@@ -50499,16 +50605,20 @@ async function runOneCheck(ctx) {
   };
   const profile = {
     ...profileForCheck({ worktree: checkoutDir, check, snapshot: input.snapshot, extraWritable: [checkDir, ctx.tmpDir], homeDir: input.homeDir, env: input.hostEnv }),
-    allowLocalBinding: true
+    allowLocalBinding: true,
+    // The browser run, and only it: Chromium's Mach rendezvous rules under srt on macOS (never the application or a worker).
+    chromiumMachRendezvous: true
   };
   rmSync12(reportPath2, { force: true });
   rmSync12(outputDir, { recursive: true, force: true });
   const wrapped = input.isolation.wrap(argv2, profile, { cwd, env });
   const started = clock.now();
   let exec;
+  let preloadRefusal = null;
   try {
     exec = await execCapture(wrapped.argv, { cwd, env: wrapped.env, timeoutMs: check.timeout_seconds * 1e3, abortSignal: input.abortSignal, maxOutputBytes: MAX_LOG_BYTES });
   } finally {
+    preloadRefusal = wrapped.preloadRefusal?.() ?? null;
     wrapped.cleanup();
   }
   writeFileSync7(logPath, redact(`${exec.stdout}${exec.stderr ? `
@@ -50536,6 +50646,8 @@ ${exec.stderr}` : ""}`), { mode: 384 });
     reportFound,
     isolation: input.isolation.kind,
     isolationLimitations: wrapped.limitations,
+    isolationAdjustments: wrapped.adjustments ?? [],
+    srtVersion: input.isolation.kind === "sandbox-runtime" ? wrapped.runtimeVersion ?? null : null,
     playwrightVersion: parsed2?.playwrightVersion ?? null
   };
   const reasons = [];
@@ -50548,6 +50660,19 @@ ${exec.stderr}` : ""}`), { mode: 384 });
   if (exec.timedOut) {
     reasons.push(`check ${check.id} exceeded its ${check.timeout_seconds} s limit`);
     return quiet("TIMEOUT");
+  }
+  const blocked = browserIsolationFailure({
+    output: `${exec.stdout}
+${exec.stderr}`,
+    reportFound,
+    launchErrors: [...parsed2?.errors ?? [], ...(parsed2?.tests ?? []).flatMap((t) => t.results.flatMap((r) => r.error ? [r.error.message] : []))],
+    anyPassed: (parsed2?.tests ?? []).some((t) => t.results.some((r) => r.status === "passed")),
+    preloadRefusal: exec.exitCode === PRELOAD_REFUSAL_EXIT_CODE && (wrapped.adjustments ?? []).includes(CHROMIUM_MACH_RENDEZVOUS) ? preloadRefusal : null,
+    macSrt: input.isolation.kind === "sandbox-runtime" && (input.platform ?? process.platform) === "darwin"
+  });
+  if (blocked) {
+    reasons.push(`check ${check.id}: the browser could not start under sandbox-runtime (${blocked.what}): ${blocked.line}`);
+    return { ...quiet("ERROR"), notExecuted: { stage: "journeys", checkId: check.id, logPath, signal: exec.signal, environment: `${blocked.what}: ${blocked.line}` } };
   }
   if (parsed2 === null) {
     reasons.push(parseProblem ?? `check ${check.id} produced no Playwright report (exit ${exec.exitCode ?? "signal"}): ${tail(exec.stderr || exec.stdout)}`);
@@ -50578,6 +50703,22 @@ ${exec.stderr}` : ""}`), { mode: 384 });
     return quiet("ERROR");
   }
   return { run, journeys, reasons, unverified, terminal: null };
+}
+function browserIsolationFailure(input) {
+  if (input.preloadRefusal !== null) return { what: `the srt preload refused srt's sandbox command (exit ${PRELOAD_REFUSAL_EXIT_CODE})`, line: input.preloadRefusal };
+  if (!input.macSrt || input.anyPassed) return null;
+  const text2 = (input.reportFound ? input.launchErrors : [input.output]).filter((t) => t.includes(LAUNCH_ERROR)).join("\n");
+  const lineOf = (pattern) => {
+    const found = text2.split("\n").find((l) => pattern.test(l));
+    return found === void 0 ? null : redact(found.trim()).slice(0, 300);
+  };
+  const rendezvous = lineOf(RENDEZVOUS_DENIED);
+  if (rendezvous) return { what: "Chromium could not register its Mach rendezvous service", line: rendezvous };
+  const own = lineOf(OWN_SANDBOX_FAILED);
+  if (own) return { what: "Chromium's own sandbox could not start inside srt (chromiumSandbox: true)", line: own };
+  const other = lineOf(OTHER_BROWSER_LAUNCH);
+  if (other) return { what: "only Playwright's bundled Chromium is supported under sandbox-runtime on macOS", line: other };
+  return null;
 }
 function tail(text2, max = 600) {
   const t = redact(text2).trim();
@@ -50831,7 +50972,7 @@ function changedA11yBaselines(journeys, checkoutDir, changed) {
   }
   return [...out].sort();
 }
-var FORBIDDEN_ARG, SAME_AS_ENFORCED, UI_ENFORCEMENT_VERSION, UI_RESULT_FILE, MAX_ARTIFACT_BYTES, MAX_LOG_BYTES, GIT_ENV_KEYS, UI_LIMITATIONS, UI_RUN_ENTRY, FAILED_RESULT, EXTENSIONS, TEXTUAL, JOURNEY_FILE;
+var FORBIDDEN_ARG, SAME_AS_ENFORCED, UI_ENFORCEMENT_VERSION, UI_RESULT_FILE, MAX_ARTIFACT_BYTES, MAX_LOG_BYTES, GIT_ENV_KEYS, UI_LIMITATIONS, UI_RUN_ENTRY, PRELOAD_REFUSAL_EXIT_CODE, RENDEZVOUS_DENIED, OWN_SANDBOX_FAILED, OTHER_BROWSER_LAUNCH, LAUNCH_ERROR, FAILED_RESULT, EXTENSIONS, TEXTUAL, JOURNEY_FILE;
 var init_runner2 = __esm({
   "src/ui/runner.ts"() {
     "use strict";
@@ -50842,6 +50983,7 @@ var init_runner2 = __esm({
     init_hash();
     init_redact();
     init_profiles();
+    init_sandbox_runtime();
     init_config();
     init_globs();
     init_snapshot();
@@ -50860,6 +51002,11 @@ var init_runner2 = __esm({
       "Visual checks compare pixels against stored baselines on one browser and platform; they do not judge whether a layout is usable or correct."
     ];
     UI_RUN_ENTRY = "orbit:ui-run";
+    PRELOAD_REFUSAL_EXIT_CODE = 97;
+    RENDEZVOUS_DENIED = /bootstrap_check_in\s+\S*MachPortRendezvousServer|FATAL:\S*mach_port_rendezvous/;
+    OWN_SANDBOX_FAILED = /sandbox initialization failed/;
+    OTHER_BROWSER_LAUNCH = /<launching>\s+\S*(?:firefox|webkit)\S*/i;
+    LAUNCH_ERROR = "browserType.launch";
     FAILED_RESULT = /* @__PURE__ */ new Set(["failed", "timedOut", "interrupted"]);
     EXTENSIONS = { "application/json": ".json", "text/plain": ".txt", "text/markdown": ".md", "image/png": ".png", "application/zip": ".zip", "video/webm": ".webm" };
     TEXTUAL = /^(?:text\/|application\/json)/;
@@ -51583,7 +51730,9 @@ async function runSpec(p, a) {
   const check = { ...defaultCheck("ui-exploration"), command: argv2, network_hosts: [], timeout_seconds: Math.ceil(RUN_TIMEOUT_MS / 1e3) };
   const profile = {
     ...profileForCheck({ worktree: p.checkoutDir, check, snapshot: p.opts.snapshot, extraWritable: [a.dir, p.tmpDir], homeDir: p.opts.homeDir, env: p.opts.hostEnv }),
-    allowLocalBinding: true
+    allowLocalBinding: true,
+    // A browser run like a journey check's: Chromium's Mach rendezvous rules under srt on macOS.
+    chromiumMachRendezvous: true
   };
   const wrapped = p.opts.isolation.wrap(argv2, profile, { cwd: p.checkoutDir, env });
   const started = p.clock.now();
@@ -51597,6 +51746,7 @@ async function runSpec(p, a) {
   const fail3 = (error) => ({ run: { status: "error", exitCode: exec.exitCode, durationMs, error: cleanText(error, 300) }, artifacts: [] });
   if (exec.cancelled) return fail3("the run was cancelled");
   if (exec.timedOut) return fail3("the run exceeded its time limit");
+  if (exec.exitCode === 97 && !existsSync35(reportPath2) && (wrapped.adjustments ?? []).length > 0) return fail3(`the browser could not start under sandbox-runtime: the srt preload refused srt's sandbox command (exit 97)`);
   if (!existsSync35(reportPath2)) return fail3(`no Playwright report (exit ${exec.exitCode ?? "signal"}): ${(exec.stderr || exec.stdout).trim().slice(-200)}`);
   let tests;
   try {
@@ -51667,7 +51817,7 @@ var init_explore = __esm({
     RUN_TIMEOUT_MS = 9e4;
     MAX_SPEC_CHARS = 2e4;
     SEVERITY_RANK2 = { critical: 0, high: 1, medium: 2, low: 3 };
-    ENVIRONMENT_FAILURE = /net::ERR_|ECONNREFUSED|ENOTFOUND|Cannot find (?:module|package)|SyntaxError|Transform failed|browserType\.launch|Executable doesn't exist|Target page, context or browser has been closed|ReferenceError/;
+    ENVIRONMENT_FAILURE = /net::ERR_|ECONNREFUSED|ENOTFOUND|Cannot find (?:module|package)|SyntaxError|Transform failed|browserType\.launch|Executable doesn't exist|Target page, context or browser has been closed|ReferenceError|MachPortRendezvousServer|sandbox initialization failed/;
   }
 });
 
@@ -52035,7 +52185,8 @@ function checksNotExecutedFor(ctx, cand, report2) {
       const logPath = isAbsolute16(entry.logPath) && isInside2(entry.logPath, dir) ? entry.logPath : null;
       const checkId = entry.stage === "journeys" && entry.checkId ? entry.checkId : uiIds.length > 0 ? uiIds.join(", ") : "ui";
       const output = logPath === null ? null : readCapped2(logPath);
-      const found = output === null ? null : classifyNotExecuted({ checkId, output, signal: entry.signal });
+      const browserIsolation = typeof entry.environment === "string" ? entry.environment : null;
+      const found = output === null ? null : classifyNotExecuted({ checkId, output, signal: entry.signal, browserIsolation });
       if (found && !out.some((o) => o.checkId === found.checkId)) out.push({ ...found, questionId: null, ...logPath ? { logPath } : {} });
     }
   }
@@ -52047,7 +52198,9 @@ function uiNotExecuted(resultPath) {
   try {
     const parsed2 = JSON.parse(text2);
     if (!Array.isArray(parsed2.notExecuted)) return [];
-    return parsed2.notExecuted.filter((e) => typeof e === "object" && e !== null && typeof e.logPath === "string" && (e.stage === "application" || e.stage === "journeys"));
+    return parsed2.notExecuted.filter(
+      (e) => typeof e === "object" && e !== null && typeof e.logPath === "string" && (e.stage === "application" || e.stage === "journeys") && (e.environment === void 0 || typeof e.environment === "string")
+    );
   } catch {
     return [];
   }
@@ -56230,9 +56383,10 @@ var init_service2 = __esm({
 });
 
 // src/cli/commands/doctor.ts
-import { accessSync as accessSync3, constants as constants4, existsSync as existsSync44, mkdtempSync as mkdtempSync6, readFileSync as readFileSync25, rmSync as rmSync16, statSync as statSync14 } from "node:fs";
+import { accessSync as accessSync3, constants as constants4, existsSync as existsSync44, mkdtempSync as mkdtempSync6, readFileSync as readFileSync25, realpathSync as realpathSync18, rmSync as rmSync16, statSync as statSync14 } from "node:fs";
+import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
-import { tmpdir as tmpdir12 } from "node:os";
+import { homedir as homedir12, tmpdir as tmpdir12 } from "node:os";
 import { delimiter as delimiter4, isAbsolute as isAbsolute17, join as join59, resolve as resolve16 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
@@ -56674,6 +56828,95 @@ function checkPlaywright(p) {
   if (missing.length > 0) return level("playwright", "ui", `missing: ${missing.join(", ")}`, `Playwright browsers/packages: ${missing.join(", ")}`, `npx playwright install ${missing.filter((m) => !m.startsWith("@")).join(" ")}`.trim(), details);
   return pass("playwright", "ui", "Playwright and its browsers are installed", details);
 }
+function isExecutable2(p) {
+  try {
+    return statSync14(p).isFile() && (accessSync3(p, constants4.X_OK), true);
+  } catch {
+    return false;
+  }
+}
+function headlessShellLayouts(arch) {
+  const cft = ["chrome-headless-shell-mac-arm64/chrome-headless-shell", "chrome-headless-shell-mac-x64/chrome-headless-shell"];
+  const old = ["chrome-mac-arm64/headless_shell", "chrome-mac/headless_shell"];
+  return arch === "arm64" ? [...cft, ...old] : [cft[1], cft[0], old[1], old[0]];
+}
+function headlessChromiumOf(repo, cache2, arch = process.arch) {
+  let browsersJson;
+  try {
+    browsersJson = join59(createRequire4(join59(repo, "package.json")).resolve("playwright-core/package.json"), "..", "browsers.json");
+  } catch {
+    return { problem: "Playwright is not installed in this repository" };
+  }
+  let revision;
+  try {
+    const bj = JSON.parse(readFileSync25(browsersJson, "utf8"));
+    const rev = (name) => bj.browsers?.find((b) => b.name === name && typeof b.revision === "string")?.revision;
+    revision = rev("chromium-headless-shell") ?? rev("chromium");
+  } catch {
+    return { problem: `Playwright's browsers.json could not be read (${browsersJson})` };
+  }
+  if (!revision) return { problem: "Playwright's browsers.json names no Chromium revision" };
+  const dir = join59(cache2, `chromium_headless_shell-${revision}`);
+  const exe = headlessShellLayouts(arch).map((rel) => join59(dir, rel)).find((p) => isExecutable2(p));
+  return exe ? { exe, revision } : { problem: `Playwright's headless Chromium (revision ${revision}) is not installed in ${cache2}` };
+}
+function noncePage() {
+  const a = randomInt(1e5, 1e9);
+  const b = randomInt(1e5, 1e9);
+  const html = `<p id=o></p><script>document.getElementById('o').textContent=['orbit',${a},${b}].join('-')</script>`;
+  return { url: `data:text/html,${encodeURIComponent(html)}`, expect: `orbit-${a}-${b}` };
+}
+async function browserIsolationCheck(input) {
+  const id = "ui.browser-isolation";
+  if (!input.wanted) return pass(id, "ui", "not required: no ui section and no playwright check is configured");
+  const provider = input.provider;
+  if (!provider || !input.available) return warn2(id, "ui", "not checked: isolation is unavailable (see the isolation check)", "an available isolation provider", null);
+  if (provider.kind !== "sandbox-runtime" || !("browserIsolation" in provider)) return pass(id, "ui", `not needed: browser checks run under ${provider.kind}, which needs no browser rule`);
+  const info = provider.browserIsolation();
+  const limitation = `limitation: ${CHROMIUM_MACH_RENDEZVOUS_LIMITATION}`;
+  if (!info.rules) {
+    return warn2(id, "ui", "unverified on Linux: no Mach rule is needed, but whether the application and the browser run in separate srt processes share loopback has not been verified", "a run of the real-srt browser test on Linux (tests/integration/ui/browser-isolation-srt.test.ts)", "use isolation.provider: container if the journeys cannot reach the application", [info.detail]);
+  }
+  if (!info.verified) {
+    return fail2(id, "ui", `${info.detail}; browser checks are refused`, `srt ${SRT_VERIFIED_VERSION} (@anthropic-ai/sandbox-runtime)`, `install @anthropic-ai/sandbox-runtime@${SRT_VERIFIED_VERSION}`, [info.detail, limitation]);
+  }
+  if (!input.repo) return warn2(id, "ui", "not launched: no repository to find Playwright in", "a repository", null, [info.detail, limitation]);
+  const home2 = input.homeDir ?? input.env.HOME ?? homedir12();
+  const cache2 = playwrightCache(input.env, home2, "darwin");
+  const browser = headlessChromiumOf(input.repo, cache2);
+  if ("problem" in browser) {
+    return warn2(id, "ui", `not launched: ${browser.problem}`, "Playwright's headless Chromium for the repository's Playwright", "npm install -D @playwright/test, then npx playwright install chromium", [info.detail, limitation]);
+  }
+  const dir = realpathSync18(mkdtempSync6(join59(tmpdir12(), "orbit-doctor-browser-")));
+  try {
+    const repo = realpathSync18(input.repo);
+    const exe = realpathSync18(browser.exe);
+    const denyReadPaths = [...credentialDenyPaths({ homeDir: home2, env: input.env }), ...exe.startsWith(`${repo}/`) ? [] : [repo]];
+    const profile = { writablePaths: [dir], denyReadPaths, allowedHosts: [], allowLocalBinding: false, chromiumMachRendezvous: true, limits: { timeoutMs: 9e4, memoryMb: null, cpus: null, pids: null } };
+    const env = { ...safeBaseEnv(input.env), TMPDIR: dir };
+    const page = noncePage();
+    const argv2 = [browser.exe, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", `--user-data-dir=${join59(dir, "profile")}`, "--dump-dom", page.url];
+    const wrapped = provider.wrap(argv2, profile, { cwd: dir, env });
+    let r;
+    try {
+      r = await (input.launch ?? launchWrapped)(wrapped.argv, { cwd: dir, env: wrapped.env, timeoutMs: 9e4 });
+    } finally {
+      wrapped.cleanup();
+    }
+    const details = [info.detail, `browser: ${browser.exe} (revision ${browser.revision})`, limitation];
+    if (r.exitCode !== 0) {
+      return fail2(id, "ui", `headless Chromium did not start under srt ${info.srtVersion} (exit ${r.exitCode ?? "timeout"}): ${oneLine3(redact(r.output), 240) || "(no output)"}`, "a Chromium that starts under srt (Playwright's bundled Chromium)", "npx playwright install chromium; see docs/troubleshooting.md", details);
+    }
+    if (!r.output.includes(page.expect)) {
+      return fail2(id, "ui", `headless Chromium did not render the test page under srt ${info.srtVersion} (exit 0): ${oneLine3(redact(r.output), 240) || "(no output)"}`, "a Chromium that starts under srt (Playwright's bundled Chromium)", "npx playwright install chromium; see docs/troubleshooting.md", details);
+    }
+    return pass(id, "ui", `Chromium starts under srt ${info.srtVersion} with the two Mach rendezvous rules`, details);
+  } catch (err) {
+    return fail2(id, "ui", `headless Chromium could not be launched under srt: ${oneLine3(err instanceof Error ? err.message : String(err), 240)}`, "a sandbox-runtime that can wrap the browser", "see docs/troubleshooting.md", [info.detail, limitation]);
+  } finally {
+    rmSync16(dir, { recursive: true, force: true });
+  }
+}
 async function checkDelivery(p) {
   const { config, ctx } = p;
   const delivering = config.delivery.provider === "github" && DELIVERY_MODES.has(config.mode) && (config.actions.open_pull_request || config.actions.push_task_branch || config.actions.repair_ci);
@@ -56809,6 +57052,11 @@ async function runDoctor(ctx, opts) {
     regDb?.close();
   }
   await safely("playwright", "ui", () => checkPlaywright(p));
+  await safely(
+    "ui.browser-isolation",
+    "ui",
+    () => browserIsolationCheck({ wanted: config.ui !== null || Object.values(config.checks).some((c) => c.kind === "playwright"), provider: isoFacts.provider, available: isoFacts.available, repo, env: ctx.env, homeDir: ctx.homeDir })
+  );
   await safely("delivery", "delivery", () => checkDelivery(p));
   await safely("gitleaks", "security", () => checkGitleaks(p));
   await safely("service", "service", () => checkService(p));
@@ -56839,7 +57087,7 @@ async function doctorCommand(args, ctx) {
   line2(ctx.io, `${report2.counts.pass} passed, ${report2.counts.warn} warning(s), ${report2.counts.fail} failed`);
   return report2.ok ? EXIT.OK : EXIT.FAILURE;
 }
-var DOCTOR_OPTIONS, MIN_NODE, MIN_GIT, SHELL_BUILTINS;
+var DOCTOR_OPTIONS, MIN_NODE, MIN_GIT, SHELL_BUILTINS, launchWrapped;
 var init_doctor = __esm({
   "src/cli/commands/doctor.ts"() {
     "use strict";
@@ -56849,6 +57097,8 @@ var init_doctor = __esm({
     init_policy();
     init_adapters();
     init_isolation();
+    init_sandbox_runtime();
+    init_env2();
     init_registry();
     init_select();
     init_recovery();
@@ -56868,6 +57118,11 @@ var init_doctor = __esm({
     MIN_NODE = "22.16.0";
     MIN_GIT = "2.31.0";
     SHELL_BUILTINS = /* @__PURE__ */ new Set(["cd", "export", "set", "test", "[", "true", "false", "echo", "exit", "exec", ":", "source", ".", "eval", "unset"]);
+    launchWrapped = async (argv2, opts) => {
+      const r = await execCapture(argv2, { ...opts, maxOutputBytes: 256 * 1024 });
+      return { exitCode: r.timedOut ? null : r.exitCode, output: `${r.stdout}
+${r.stderr}`.trim() };
+    };
   }
 });
 

@@ -1,7 +1,9 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir, userInfo } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { OrbitError } from '../core/errors.ts';
+import { redact } from '../core/redact.ts';
 import type { IsolationLimits } from '../policy/types.ts';
 import { describeLimits, hasLimits, hasMemoryLimit, withResourceLimits } from './limits.ts';
 import { DEFAULT_MEMORY_SAMPLE_MS, withMemoryWatchdog, type MemoryWatchdogOptions } from './memory.ts';
@@ -164,6 +166,12 @@ export interface SandboxRuntimeOptions {
   limitShell?: string | null;
   /** The memory watchdog's `ps`, node and sampling interval; tests only. */
   memory?: MemoryWatchdogOptions;
+  /** macOS's sandbox-exec; tests only. */
+  sandboxExecPath?: string;
+  /** The preload that adds Chromium's Mach rules (srt-chromium-preload.mjs); tests only. */
+  chromiumPreloadPath?: string;
+  /** The node that runs srt's CLI with that preload; process.execPath unless a test says otherwise. */
+  nodePath?: string;
 }
 
 export type SrtSource = 'configured' | 'PATH' | 'install';
@@ -181,6 +189,52 @@ export const SRT_LIMITATIONS: readonly string[] = [
   'Egress is filtered by host name through a local proxy: programs that ignore HTTP_PROXY/HTTPS_PROXY get no network at all, and traffic to an allowed host is not inspected.',
   "srt, node and the shell tools that start the sandbox run outside it; they get a PATH without relative entries or directories the sandbox can write, and without loader variables (NODE_OPTIONS, LD_*, DYLD_*...). The command's own values are restored inside the sandbox through /usr/bin/env.",
 ];
+
+/** The srt package the Chromium preload was written and verified against; browser checks on macOS require exactly it. */
+export const SRT_VERIFIED_VERSION = '0.0.78';
+const SRT_PACKAGE = '@anthropic-ai/sandbox-runtime';
+
+/**
+ * srt-chromium-preload.mjs writes why it refused into this file beside srt's settings file (its REFUSAL_FILE; the preload
+ * cannot import Orbit's modules, so the name is kept in both and a test holds them equal).
+ */
+export const PRELOAD_REFUSAL_FILE = 'chromium-preload-refused';
+
+/** The isolation adjustment recorded with the evidence when a UI check's browser ran with the two Mach rules. */
+export const CHROMIUM_MACH_RENDEZVOUS = 'chromium-mach-rendezvous';
+
+/** Stated on every wrap that applies the adjustment, so the evidence never implies Chromium kept its own sandbox. */
+export const CHROMIUM_MACH_RENDEZVOUS_LIMITATION =
+  "UI checks on macOS: Playwright's bundled Chromium runs with --no-sandbox (its own sandbox cannot start inside Seatbelt), so srt is its only boundary; srt's write allowlist, credential read-denies and egress filter still apply. " +
+  'For Chromium to start at all, an Orbit preload on the unmodified srt CLI adds two Seatbelt rules, mach-register and mach-lookup for names matching ^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][0-9]+$ and nothing else. ' +
+  "This widens one thing: a sandboxed process can look up the rendezvous port of another Playwright Chromium run by the same user, or claim the name a starting one will use, which at worst stops that browser from starting. " +
+  "Only Playwright's bundled Chromium is supported under srt on macOS; Google Chrome, Firefox and WebKit are not.";
+
+/** srt-chromium-preload.mjs: beside this module in the sources, beside dist/orbit.mjs in the bundle (scripts/build.mjs copies it there). */
+export function defaultChromiumPreloadPath(): string {
+  return fileURLToPath(new URL('./srt-chromium-preload.mjs', import.meta.url));
+}
+
+/**
+ * The srt CLI an srt binary really is (links resolved) and the package it belongs to; name and version are null when
+ * no readable package.json sits beside its dist/ directory. Null when the binary cannot be resolved.
+ */
+export function srtPackageOf(srtPath: string): { cli: string; name: string | null; version: string | null } | null {
+  let cli: string;
+  try {
+    cli = realpathSync(srtPath);
+  } catch {
+    return null;
+  }
+  const dir = dirname(cli);
+  const pkg = basename(dir) === 'dist' ? dirname(dir) : dir;
+  try {
+    const meta = JSON.parse(readFileSync(join(pkg, 'package.json'), 'utf8')) as { name?: unknown; version?: unknown };
+    return { cli, name: typeof meta.name === 'string' ? meta.name : null, version: typeof meta.version === 'string' ? meta.version : null };
+  } catch {
+    return { cli, name: null, version: null };
+  }
+}
 
 const LINUX_LIMITATION = 'On Linux the mandatory write denies inside writable paths (.git/hooks, shell rc files...) are found by a scan at launch, so such files created later are not covered.';
 
@@ -222,7 +276,8 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
    */
   platformCheck(srtPath?: string): { ok: boolean; detail: string } {
     if (this.platform === 'darwin') {
-      return isExecutableFile('/usr/bin/sandbox-exec') ? { ok: true, detail: 'macOS Seatbelt (/usr/bin/sandbox-exec)' } : { ok: false, detail: '/usr/bin/sandbox-exec is missing' };
+      const sandboxExec = this.opts.sandboxExecPath ?? '/usr/bin/sandbox-exec';
+      return isExecutableFile(sandboxExec) ? { ok: true, detail: `macOS Seatbelt (${sandboxExec})` } : { ok: false, detail: `${sandboxExec} is missing` };
     }
     if (this.platform === 'linux') {
       if (isWsl1()) return { ok: false, detail: 'WSL1 cannot run bubblewrap; use WSL2' };
@@ -274,6 +329,24 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
     return { ok: true, detail: `srt ${version.stdout.trim()} (${srt.source}: ${srt.path}); ${platform.detail}; sandbox probe passed` };
   }
 
+  /**
+   * What a UI check's browser run would get here: whether the Chromium Mach rules apply (macOS), and whether the srt
+   * found is the version the preload was verified against. For `orbit doctor`; wrap() enforces the same.
+   */
+  browserIsolation(): { rules: boolean; srtVersion: string | null; verified: boolean; detail: string } {
+    const rules = this.platform === 'darwin';
+    const srt = this.resolveSrt();
+    const pkg = srt ? srtPackageOf(srt.path) : null;
+    const srtVersion = pkg?.name === SRT_PACKAGE ? pkg.version : null;
+    const verified = srtVersion === SRT_VERIFIED_VERSION;
+    const detail = verified
+      ? `srt ${srtVersion} is the version the Chromium preload was verified against`
+      : srtVersion !== null
+        ? `srt ${srtVersion} is not ${SRT_VERIFIED_VERSION}, the version the Chromium preload was verified against`
+        : `the srt package and its version cannot be read (${srt ? srt.path : this.missingDetail()})`;
+    return { rules, srtVersion, verified, detail };
+  }
+
   wrap(argv: string[], profile: SandboxProfile, opts: WrapOptions): WrappedCommand {
     assertArgv(argv);
     const precheck = this.platformCheck();
@@ -282,6 +355,9 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
     if (!srt) throw new OrbitError('ISOLATION_UNAVAILABLE', `sandbox-runtime unavailable: ${this.missingDetail()}`);
     const platform = this.platformCheck(srt.path);
     if (!platform.ok) throw new OrbitError('ISOLATION_UNAVAILABLE', `sandbox-runtime unavailable: ${platform.detail}`);
+    const pkg = srtPackageOf(srt.path);
+    // Linux has no Mach, so the flag changes nothing there.
+    const browser = profile.chromiumMachRendezvous === true && this.platform === 'darwin' ? this.chromiumLauncher(pkg) : null;
 
     const dir = mkdtempSync(join(this.opts.settingsDir ?? tmpdir(), 'orbit-srt-'));
     let cleaned = false;
@@ -295,6 +371,12 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
       const settings = buildSrtSettings(profile, { extraDenyRead: [dir], stdioFiles: opts.stdioFiles });
       const reach = sandboxReach(settings, opts.env.HOME);
       assertLauncherOutOfReach(srt.path, reach);
+      if (browser) {
+        assertFileOutOfReach(browser.preload, reach, `the Chromium preload ${browser.preload}`);
+        assertFileOutOfReach(browser.node, reach, `node ${browser.node}`);
+        // The preload records a refusal here; a sandboxed command that could write it could fake one.
+        if (writableIn(reach, realpathSync(dir))) throw new OrbitError('ISOLATION_UNAVAILABLE', `the srt settings directory ${dir} is inside a path the sandbox may write, so the Chromium preload's refusal record could be forged`, { path: dir });
+      }
       const launch = launcherEnv(sandboxEnv(opts.env, settings.filesystem.allowWrite), reach);
       // Inside the sandbox, so the limits bind the command and its children but not srt or its proxy.
       const command = withResourceLimits(argv, this.opts.limits, { shell: this.opts.limitShell });
@@ -304,19 +386,45 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
       const file = join(dir, 'settings.json');
       writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
       chmodSync(file, 0o600);
-      const srtArgv = [srt.path, '--settings', file, '--', ...(launch.restore.length ? ['/usr/bin/env', '--', ...launch.restore] : []), ...command];
+      // With the browser adjustment, node runs srt's real CLI with the preload loaded first; srt itself is unmodified.
+      const launcher = browser ? [browser.node, '--import', pathToFileURL(browser.preload).href, browser.cli] : [srt.path];
+      const srtArgv = [...launcher, '--settings', file, '--', ...(launch.restore.length ? ['/usr/bin/env', '--', ...launch.restore] : []), ...command];
       // Outside the sandbox and in the same process group as the command, so a kill of the group stops both.
       const memoryMb = this.opts.limits?.memory_mb ?? null;
       return {
         argv: withMemoryWatchdog(srtArgv, memoryMb, this.opts.memory),
         env: launch.env,
         cleanup,
-        limitations: limitationsFor(profile, this.platform, this.opts.limits),
+        limitations: [...limitationsFor(profile, this.platform, this.opts.limits), ...(browser ? [CHROMIUM_MACH_RENDEZVOUS_LIMITATION] : [])],
+        adjustments: browser ? [CHROMIUM_MACH_RENDEZVOUS] : [],
+        ...(browser ? { preloadRefusal: () => readPreloadRefusal(dir) } : {}),
+        runtimeVersion: pkg?.version ?? null,
       };
     } catch (err) {
       cleanup();
       throw err;
     }
+  }
+
+  /**
+   * How a browser check's srt is started on macOS: node, the preload and srt's real CLI. Fails closed, before anything
+   * is written, when srt is not the package version the preload was verified against or the preload is missing.
+   */
+  private chromiumLauncher(pkg: ReturnType<typeof srtPackageOf>): { node: string; preload: string; cli: string } {
+    const unavailable = (why: string) => new OrbitError('ISOLATION_UNAVAILABLE', `sandbox-runtime unavailable for browser checks: ${why}`, { verified: SRT_VERIFIED_VERSION });
+    if (!pkg) throw unavailable('srt cannot be resolved');
+    const where = dirname(pkg.cli);
+    if (pkg.name === null && pkg.version === null) throw unavailable(`srt at ${where} has an unknown version (no readable package.json), and the Chromium preload was verified against ${SRT_PACKAGE} ${SRT_VERIFIED_VERSION} only`);
+    if (pkg.name !== SRT_PACKAGE) throw unavailable(`srt at ${where} is not ${SRT_PACKAGE} (package ${String(pkg.name)})`);
+    if (pkg.version !== SRT_VERIFIED_VERSION) throw unavailable(`srt at ${where} is version ${String(pkg.version)}, and the Chromium preload was verified against ${SRT_VERIFIED_VERSION} only`);
+    const resolve = (path: string, what: string): string => {
+      try {
+        return realpathSync(path);
+      } catch {
+        throw unavailable(`${what} ${path} is missing`);
+      }
+    };
+    return { node: resolve(this.opts.nodePath ?? process.execPath, 'node'), preload: resolve(this.opts.chromiumPreloadPath ?? defaultChromiumPreloadPath(), 'the Chromium preload'), cli: pkg.cli };
   }
 
   private missingDetail(): string {
@@ -421,6 +529,31 @@ function assertLauncherOutOfReach(srtPath: string, reach: SandboxReach): void {
   if (exposed) {
     throw new OrbitError('ISOLATION_UNAVAILABLE', `srt at ${pkg} is inside a path the sandbox may write, so a sandboxed command could replace the sandbox itself`, { path: pkg });
   }
+}
+
+/**
+ * The reason the Chromium preload recorded for refusing, or null when it recorded none (it did not refuse, or the
+ * directory is already cleaned up). Read only from Orbit's settings directory, which the sandbox cannot write.
+ */
+function readPreloadRefusal(dir: string): string | null {
+  let text: string;
+  try {
+    text = readFileSync(join(dir, PRELOAD_REFUSAL_FILE), 'utf8');
+  } catch {
+    return null;
+  }
+  const line = redact(text.split('\n').find((l) => l.trim() !== '')?.trim() ?? '');
+  return line ? line.slice(0, 300) : '(no reason recorded)';
+}
+
+/**
+ * A file node loads to start srt (node itself, the Chromium preload): neither it nor its directory may be writable
+ * from inside, or a sandboxed command could replace it and run unconfined at the next launch.
+ */
+function assertFileOutOfReach(file: string, reach: SandboxReach, what: string): void {
+  const dir = dirname(file);
+  const exposed = writableIn(reach, file) || writableIn(reach, dir) || reach.writable.some((w) => isWithin(w, dir) && !reach.protectedPaths.some((d) => isWithin(w, d)));
+  if (exposed) throw new OrbitError('ISOLATION_UNAVAILABLE', `${what} is inside a path the sandbox may write, so a sandboxed command could replace it`, { path: file });
 }
 
 // Read by the dynamic loader, node or the shell before any code of the

@@ -18,6 +18,13 @@ export interface SandboxProfile {
   allowedHosts: string[];
   /** Allow listening on loopback. UI app fixtures, and checks whose definition says `local_binding` (the default). */
   allowLocalBinding?: boolean;
+  /**
+   * A UI check's browser run, and nothing else (never the application under test or a worker). On macOS the
+   * sandbox-runtime provider then lets Chromium register and look up its Mach rendezvous service, and only that
+   * (docs/decisions/0001-runtime-choices.md, "Browsers under sandbox-runtime on macOS"). Other providers and platforms
+   * ignore it.
+   */
+  chromiumMachRendezvous?: boolean;
   limits: {
     timeoutMs: number;
     memoryMb: number | null;
@@ -33,6 +40,16 @@ export interface WrappedCommand {
   cleanup(): void;
   /** What this wrapping does not enforce, for the evidence record and `orbit doctor`. */
   limitations: string[];
+  /** Changes this wrapping made to the provider's usual confinement (`chromium-mach-rendezvous`); recorded with the evidence. */
+  adjustments?: string[];
+  /**
+   * With the chromium-mach-rendezvous adjustment: why the srt preload refused to start the sandbox, as it recorded it
+   * where the sandbox cannot write, or null. Read it before cleanup(). A command's exit code alone cannot tell, since srt
+   * passes the command's own through.
+   */
+  preloadRefusal?: () => string | null;
+  /** The sandbox runtime's version, when the provider can tell (srt's package version). */
+  runtimeVersion?: string | null;
 }
 
 export interface WrapOptions {

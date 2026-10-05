@@ -303,6 +303,16 @@ describe('checksNotExecutedFor: the UI run', () => {
     expect(checksNotExecutedFor(uiLab.ctx(), a.cand, a.report)).toEqual([expect.objectContaining({ checkId: 'ui', cause: expect.stringContaining('(SIGSEGV)') })]);
   });
 
+  it('finds a journey check whose browser the sandbox stopped, by the runner\'s finding, though Playwright printed its own output', () => {
+    const a = arrangeNotRun({ unit: null, ui: { statuses: ['ERROR'], journeyLog: 'Running 8 tests using 2 workers\n  8 failed\n' } });
+    const environment = 'Chromium could not register its Mach rendezvous service: bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer.1: Permission denied (1100)';
+    writeFileSync(join(a.uiDir, 'ui-result.json'), JSON.stringify({ verdict: 'ERROR', notExecuted: [{ stage: 'journeys', checkId: 'ui', logPath: join(a.uiDir, 'ui', 'run.log'), signal: null, environment }] }));
+    expect(checksNotExecutedFor(uiLab.ctx(), a.cand, a.report)).toEqual([expect.objectContaining({ checkId: 'ui', signals: ['browser-isolation'], cause: 'the browser could not start under sandbox-runtime', lines: [environment] })]);
+    // A finding that is not text is not trusted.
+    writeFileSync(join(a.uiDir, 'ui-result.json'), JSON.stringify({ verdict: 'ERROR', notExecuted: [{ stage: 'journeys', checkId: 'ui', logPath: join(a.uiDir, 'ui', 'run.log'), signal: null, environment: { x: 1 } }] }));
+    expect(checksNotExecutedFor(uiLab.ctx(), a.cand, a.report)).toEqual([]);
+  });
+
   it('leaves alone an application that threw while loading, and a UI run that was not an ERROR', () => {
     const threw = arrangeNotRun({ unit: null, ui: { statuses: ['ERROR'], appLog: "SyntaxError: Unexpected token '}'\n" } });
     writeFileSync(join(threw.uiDir, 'ui-result.json'), JSON.stringify({ verdict: 'ERROR', notExecuted: [appEntry(threw.uiDir)] }));

@@ -41,8 +41,9 @@ describe('a fresh copy of the example', () => {
   it('passes the unit tests offline', () => {
     const [r] = runExampleChecks(dir, ['unit']);
     expect(r!.ok, r!.out).toBe(true);
-    expect(r!.out).toMatch(/# fail 0/);
-    expect(r!.out).toMatch(/# pass [1-9]/);
+    // Node's default reporter is TAP on some versions and spec on others; both print the counts.
+    expect(r!.out).toMatch(/^(#|ℹ) fail 0$/m);
+    expect(r!.out).toMatch(/^(#|ℹ) pass [1-9]/m);
   });
 
   it.skipIf(!hasChromium)('passes the browser journeys on desktop and mobile against the committed baselines', () => {

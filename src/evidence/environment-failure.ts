@@ -22,7 +22,7 @@ import { stripAnsi } from './fingerprint.ts';
  * the repository can have caused it, and no base-revision comparison is needed.
  */
 
-export type EnvironmentSignal = 'sandbox-violation' | 'eperm' | 'operation-not-permitted' | 'eacces-outside-worktree' | 'process-aborted' | 'start-failed';
+export type EnvironmentSignal = 'sandbox-violation' | 'eperm' | 'operation-not-permitted' | 'eacces-outside-worktree' | 'process-aborted' | 'start-failed' | 'browser-isolation';
 
 export interface EnvironmentFailureInput {
   checkId: string;
@@ -73,6 +73,7 @@ const CAUSES: Record<EnvironmentSignal, string> = {
   'eacces-outside-worktree': 'permission was denied (EACCES) on a path outside the worktree',
   'process-aborted': 'the process was killed by a fatal signal before it printed anything of its own',
   'start-failed': 'the check could not be started',
+  'browser-isolation': 'the browser could not start under sandbox-runtime',
 };
 
 function within(path: string, root: string): boolean {
@@ -127,6 +128,12 @@ export interface NotExecutedInput {
   signal?: string | null;
   /** The runner's own note that the check could not be started (the command was not found, the sandbox refused to launch it). */
   startFailure?: string | null;
+  /**
+   * The UI runner's finding that the browser could not start under sandbox-runtime (Chromium's Mach rendezvous denied,
+   * the srt preload refusing, a browser other than Playwright's Chromium on macOS), with the line that shows it.
+   * Playwright prints its own output around such a failure, so the log alone cannot show that nothing ran.
+   */
+  browserIsolation?: string | null;
 }
 
 /**
@@ -150,6 +157,8 @@ const RUNNER_FOOTER = /^\[orbit\] check=\S+ status=\S+ exit=(\S+)/;
  * reporting results, an application that throws while loading, a failing assertion all keep the normal repair loop.
  */
 export function classifyNotExecuted(input: NotExecutedInput): EnvironmentFailure | null {
+  const browser = input.browserIsolation?.trim();
+  if (browser) return { checkId: input.checkId, fingerprint: null, signals: ['browser-isolation'], cause: CAUSES['browser-isolation'], lines: [browser.slice(0, MAX_LINE_CHARS)] };
   const start = input.startFailure?.trim();
   if (start) return { checkId: input.checkId, fingerprint: null, signals: ['start-failed'], cause: CAUSES['start-failed'], lines: [start.slice(0, MAX_LINE_CHARS)] };
 

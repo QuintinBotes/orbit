@@ -9,6 +9,7 @@ import { hashObject, sha256 } from '../core/hash.ts';
 import { redact, redactValue } from '../core/redact.ts';
 import type { Candidate } from '../evidence/types.ts';
 import { profileForCheck } from '../isolation/profiles.ts';
+import { CHROMIUM_MACH_RENDEZVOUS, CHROMIUM_MACH_RENDEZVOUS_LIMITATION } from '../isolation/sandbox-runtime.ts';
 import type { IsolationProvider, SandboxProfile } from '../isolation/types.ts';
 import { defaultCheck } from '../policy/config.ts';
 import { compileGlobs } from '../policy/globs.ts';
@@ -104,6 +105,8 @@ export interface UiRunInput {
   homeDir?: string;
   /** Overrides the app start used by the run (tests). */
   appPollMs?: number;
+  /** The host's platform; tests only. */
+  platform?: NodeJS.Platform;
 }
 
 export interface BaselineChange {
@@ -250,6 +253,13 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
   else if (needsReview) verdict = 'BLOCKED';
   else verdict = 'PASS';
 
+  // Disclosed with the evidence: the browser ran without its own sandbox, with srt as its only boundary and two extra rules.
+  for (const c of checkRuns) {
+    if (!c.isolationAdjustments?.includes(CHROMIUM_MACH_RENDEZVOUS)) continue;
+    unverified.push(`check ${c.checkId} ran its browser under sandbox-runtime ${c.srtVersion ?? 'of unknown version'} with the isolation adjustment ${c.isolationAdjustments.join(', ')}: ${CHROMIUM_MACH_RENDEZVOUS_LIMITATION}`);
+  }
+  const adjusted = checkRuns.some((c) => c.isolationAdjustments?.includes(CHROMIUM_MACH_RENDEZVOUS));
+
   const browsers = uniqueBy(journeys.flatMap((j) => (j.browser ? [j.browser] : [])), (b) => `${b.name}@${b.version}`);
   const viewports = coverage.observedViewports;
   const result: UiRunResult = {
@@ -280,7 +290,7 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
     coverage,
     unverified,
     notExecuted,
-    limitations: [...UI_LIMITATIONS],
+    limitations: [...UI_LIMITATIONS, ...(adjusted ? [CHROMIUM_MACH_RENDEZVOUS_LIMITATION] : [])],
     outDir,
     startedAt,
     endedAt: clock.now(),
@@ -411,6 +421,8 @@ async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
   const profile: SandboxProfile = {
     ...profileForCheck({ worktree: checkoutDir, check, snapshot: input.snapshot, extraWritable: [checkDir, ctx.tmpDir], homeDir: input.homeDir, env: input.hostEnv }),
     allowLocalBinding: true,
+    // The browser run, and only it: Chromium's Mach rendezvous rules under srt on macOS (never the application or a worker).
+    chromiumMachRendezvous: true,
   };
   // A report or results from an earlier run in this directory must never be read as this run's.
   rmSync(reportPath, { force: true });
@@ -418,9 +430,12 @@ async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
   const wrapped = input.isolation.wrap(argv, profile, { cwd, env });
   const started = clock.now();
   let exec;
+  let preloadRefusal: string | null = null;
   try {
     exec = await execCapture(wrapped.argv, { cwd, env: wrapped.env, timeoutMs: check.timeout_seconds * 1000, abortSignal: input.abortSignal, maxOutputBytes: MAX_LOG_BYTES });
   } finally {
+    // Recorded in the wrapper's own directory, which cleanup() removes.
+    preloadRefusal = wrapped.preloadRefusal?.() ?? null;
     wrapped.cleanup();
   }
   writeFileSync(logPath, redact(`${exec.stdout}${exec.stderr ? `\n--- stderr ---\n${exec.stderr}` : ''}`), { mode: 0o600 });
@@ -448,6 +463,8 @@ async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
     reportFound,
     isolation: input.isolation.kind,
     isolationLimitations: wrapped.limitations,
+    isolationAdjustments: wrapped.adjustments ?? [],
+    srtVersion: input.isolation.kind === 'sandbox-runtime' ? (wrapped.runtimeVersion ?? null) : null,
     playwrightVersion: parsed?.playwrightVersion ?? null,
   };
   const reasons: string[] = [];
@@ -461,6 +478,19 @@ async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
   if (exec.timedOut) {
     reasons.push(`check ${check.id} exceeded its ${check.timeout_seconds} s limit`);
     return quiet('TIMEOUT');
+  }
+  // A browser the sandbox stopped is the environment's, whatever the report says about the journeys it could not run.
+  const blocked = browserIsolationFailure({
+    output: `${exec.stdout}\n${exec.stderr}`,
+    reportFound,
+    launchErrors: [...(parsed?.errors ?? []), ...(parsed?.tests ?? []).flatMap((t) => t.results.flatMap((r) => (r.error ? [r.error.message] : [])))],
+    anyPassed: (parsed?.tests ?? []).some((t) => t.results.some((r) => r.status === 'passed')),
+    preloadRefusal: exec.exitCode === PRELOAD_REFUSAL_EXIT_CODE && (wrapped.adjustments ?? []).includes(CHROMIUM_MACH_RENDEZVOUS) ? preloadRefusal : null,
+    macSrt: input.isolation.kind === 'sandbox-runtime' && (input.platform ?? process.platform) === 'darwin',
+  });
+  if (blocked) {
+    reasons.push(`check ${check.id}: the browser could not start under sandbox-runtime (${blocked.what}): ${blocked.line}`);
+    return { ...quiet('ERROR'), notExecuted: { stage: 'journeys', checkId: check.id, logPath, signal: exec.signal, environment: `${blocked.what}: ${blocked.line}` } };
   }
   if (parsed === null) {
     reasons.push(parseProblem ?? `check ${check.id} produced no Playwright report (exit ${exec.exitCode ?? 'signal'}): ${tail(exec.stderr || exec.stdout)}`);
@@ -496,6 +526,43 @@ async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
     return quiet('ERROR');
   }
   return { run, journeys, reasons, unverified, terminal: null };
+}
+
+/** srt-chromium-preload.mjs exits with this when it refuses; it also records why where the sandbox cannot write. */
+const PRELOAD_REFUSAL_EXIT_CODE = 97;
+// Chromium aborting because Seatbelt refused its Mach rendezvous service (srt has no rule for it; Google Chrome's name differs).
+const RENDEZVOUS_DENIED = /bootstrap_check_in\s+\S*MachPortRendezvousServer|FATAL:\S*mach_port_rendezvous/;
+// Chromium's own sandbox cannot be applied inside srt's (a repository that sets chromiumSandbox: true).
+const OWN_SANDBOX_FAILED = /sandbox initialization failed/;
+const OTHER_BROWSER_LAUNCH = /<launching>\s+\S*(?:firefox|webkit)\S*/i;
+// Playwright's own launch error, which carries the browser's log (an assertion or the application cannot produce one by failing).
+const LAUNCH_ERROR = 'browserType.launch';
+
+/**
+ * Why the browser could not start under sandbox-runtime, or null.
+ *
+ * The preload's refusal counts only as the preload recorded it, outside the sandbox's reach (`preloadRefusal`, given
+ * only for exit 97 with the adjustment applied): srt passes a command's own exit code through, and output is the
+ * repository's to write. Everything else is read from output the repository and the application under test can write,
+ * so it is read narrowly: only for sandbox-runtime on macOS, only when no journey passed (a browser that ran one did
+ * start), and only from Playwright's launch errors (the report's errors and test errors when there is a report, the
+ * output when there is none). A match only ever turns a run into ERROR (the run blocks), never into a pass.
+ */
+export function browserIsolationFailure(input: { output: string; reportFound: boolean; launchErrors: string[]; anyPassed: boolean; preloadRefusal: string | null; macSrt: boolean }): { what: string; line: string } | null {
+  if (input.preloadRefusal !== null) return { what: `the srt preload refused srt's sandbox command (exit ${PRELOAD_REFUSAL_EXIT_CODE})`, line: input.preloadRefusal };
+  if (!input.macSrt || input.anyPassed) return null;
+  const text = (input.reportFound ? input.launchErrors : [input.output]).filter((t) => t.includes(LAUNCH_ERROR)).join('\n');
+  const lineOf = (pattern: RegExp): string | null => {
+    const found = text.split('\n').find((l) => pattern.test(l));
+    return found === undefined ? null : redact(found.trim()).slice(0, 300);
+  };
+  const rendezvous = lineOf(RENDEZVOUS_DENIED);
+  if (rendezvous) return { what: 'Chromium could not register its Mach rendezvous service', line: rendezvous };
+  const own = lineOf(OWN_SANDBOX_FAILED);
+  if (own) return { what: "Chromium's own sandbox could not start inside srt (chromiumSandbox: true)", line: own };
+  const other = lineOf(OTHER_BROWSER_LAUNCH);
+  if (other) return { what: "only Playwright's bundled Chromium is supported under sandbox-runtime on macOS", line: other };
+  return null;
 }
 
 function tail(text: string, max = 600): string {

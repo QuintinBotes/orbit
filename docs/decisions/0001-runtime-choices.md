@@ -134,3 +134,39 @@ login Codex runs in the `codex-sandbox` tier; with an API key
 was verified to reach the provider. `providers.codex.tier` (`auto`,
 `os-sandbox`, `codex-sandbox`) overrides the choice, and the evidence always
 records the tier and its limitations.
+
+## Browsers under sandbox-runtime on macOS (added after live demo 2)
+
+Chromium registers a Mach service at start
+(`bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer.<pid>`) and
+its child processes look it up. srt's Seatbelt profile allows only listed
+`mach-lookup` names and has no `mach-register` option (also not in the latest
+srt), so Chromium aborts and every browser journey fails. Four designs were
+prototyped against the demo app's real suite and judged security first:
+
+- **Chosen: two fixed Seatbelt rules.** `mach-register` and `mach-lookup` for
+  the name pattern `^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][0-9]+$`
+  only, added by an Orbit-owned preload on the unmodified srt CLI, for UI-check
+  processes only (never the app fixture or workers). Multi-process Chromium runs
+  with `--no-sandbox`; srt stays its boundary (write allowlist, credential
+  read-deny, egress filter), and a hostile repository gains nothing it lacked,
+  since it already runs arbitrary code inside the same confinement. Measured
+  8/8 on desktop and mobile across 10 runs. The preload fails closed (exit 97,
+  reported as an environment error) if srt's spawn shape differs, and browser
+  checks require the srt version the preload was verified against. Disclosed in
+  every evidence report: Chromium without its own sandbox, and what the rules
+  widen (a sandboxed process can look up or squat another Playwright Chromium's
+  rendezvous name, at worst stopping that browser from starting). Only
+  Playwright's bundled Chromium is supported under srt on macOS.
+- Rejected: one browser per test in `--single-process` mode (any test needing a
+  second context crashes; serial suites break); the browser outside srt with
+  locked egress (page code could read `file://` paths, override the proxy per
+  context, write through downloads and reach every loopback port: protocol
+  limits that flags cannot close); a Linux container as the default (Docker
+  plus a large image on macOS, Linux visual baselines differ). The container
+  remains an explicit opt-in (`ui.isolation: container`), never an automatic
+  fallback.
+- Linux has no Mach and needs no rule; whether app and tests in separate srt
+  processes share loopback there is unverified until CI runs the real-srt
+  test, and doctor says so. Upstream: propose `allowMachRegister` to srt, then
+  delete the preload.

@@ -108,6 +108,32 @@ State these plainly to yourself before running unattended.
   any file you can read may reach the provider, and the worker record says so.
   Orbit passes `danger-full-access` only together with the `srt` wrapper and
   refuses it in any other combination.
+- **Under `srt` on macOS a UI check's browser has no sandbox of its own.**
+  Chromium's sandbox cannot start inside Seatbelt, so Playwright's bundled
+  Chromium runs with `--no-sandbox` and `srt` is its only boundary: the write
+  allowlist, the credential read-denies and the egress filter still apply, and
+  page content can only come from allowlisted hosts. A hostile repository gains
+  nothing from this, since its own test code already runs inside the same
+  confinement. For Chromium to start at all, an Orbit preload on the
+  unmodified `srt` CLI adds two Seatbelt rules, for UI-check processes only
+  (never the application under test or a worker): `mach-register` and
+  `mach-lookup` for names matching
+  `^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][0-9]+$`. That
+  widens one thing: a sandboxed process can look up the rendezvous port of
+  another Playwright Chromium run by the same user, or claim the name a
+  starting one will use, which at worst stops that browser from starting. The
+  preload refuses (exit 97) any `srt` command shape it was not verified
+  against and records why in Orbit's settings directory, which the sandbox can
+  neither read nor write (only that record makes a run an environment failure,
+  since `srt` passes a command's own exit code through), browser checks
+  require `srt` 0.0.78, and every evidence report that
+  used the rules says so (`isolationAdjustments: ["chromium-mach-rendezvous"]`
+  and the `srt` version on the check run). Only Playwright's bundled Chromium is
+  supported under `srt` on macOS; Google Chrome, Firefox and WebKit are not.
+  `orbit doctor`'s browser check runs no repository code: it starts the
+  headless Chromium binary itself, with every credential path and the
+  repository read-denied, and passes only when the page's script ran.
+  See ADR 0001, "Browsers under sandbox-runtime on macOS".
 - **Verification has limited coverage.** Accessibility scans find only what
   automated rules can find and are not an accessibility audit. Visual checks
   compare pixels to a baseline and do not judge design. Orbit reports these

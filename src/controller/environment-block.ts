@@ -160,7 +160,8 @@ export function checksNotExecutedFor(ctx: RunContext, cand: CandidateRecord, rep
       const logPath = isAbsolute(entry.logPath) && isInside(entry.logPath, dir) ? entry.logPath : null;
       const checkId = entry.stage === 'journeys' && entry.checkId ? entry.checkId : uiIds.length > 0 ? uiIds.join(', ') : 'ui';
       const output = logPath === null ? null : readCapped(logPath);
-      const found = output === null ? null : classifyNotExecuted({ checkId, output, signal: entry.signal });
+      const browserIsolation = typeof entry.environment === 'string' ? entry.environment : null;
+      const found = output === null ? null : classifyNotExecuted({ checkId, output, signal: entry.signal, browserIsolation });
       if (found && !out.some((o) => o.checkId === found.checkId)) out.push({ ...found, questionId: null, ...(logPath ? { logPath } : {}) });
     }
   }
@@ -174,7 +175,14 @@ function uiNotExecuted(resultPath: string): UiNotExecuted[] {
   try {
     const parsed = JSON.parse(text) as { notExecuted?: unknown };
     if (!Array.isArray(parsed.notExecuted)) return [];
-    return parsed.notExecuted.filter((e): e is UiNotExecuted => typeof e === 'object' && e !== null && typeof (e as UiNotExecuted).logPath === 'string' && ((e as UiNotExecuted).stage === 'application' || (e as UiNotExecuted).stage === 'journeys'));
+    return parsed.notExecuted.filter(
+      (e): e is UiNotExecuted =>
+        typeof e === 'object' &&
+        e !== null &&
+        typeof (e as UiNotExecuted).logPath === 'string' &&
+        ((e as UiNotExecuted).stage === 'application' || (e as UiNotExecuted).stage === 'journeys') &&
+        ((e as UiNotExecuted).environment === undefined || typeof (e as UiNotExecuted).environment === 'string'),
+    );
   } catch {
     return [];
   }

@@ -106,11 +106,14 @@ export function killTree(pid: number): void {
   }
 }
 
-/** The run row, walked to `path` by OWNER, who holds its lease. */
+/** The run row, walked to `path` by OWNER, who holds its lease; a short `ttlMs` is how long the lease has left once the walk is done. */
 export function makeRun(env: Env, path: RunState[] = ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'], owner = OWNER, ttlMs = 60_000): RunRecord {
   let run = createRun(env.db, { id: env.runId, repoRoot: env.f.repo, goal: 'g', mode: 'autonomous', policyHash: env.f.policyHash, policyPath: env.f.policyPath }, clock);
-  acquireLease(env.db, env.runId, owner, ttlMs, clock);
+  // The walk runs under a lease that cannot expire mid-way, however slow the host: a 30 ms lease did, on a loaded runner, and the walk died with LEASE_LOST.
+  const walkTtlMs = Math.max(ttlMs, 60_000);
+  acquireLease(env.db, env.runId, owner, walkTtlMs, clock);
   for (const to of path) run = transition(env.db, { runId: env.runId, to, ownerId: owner, reason: 'test' }, clock);
+  if (ttlMs < walkTtlMs) env.db.run('UPDATE leases SET expires_at = ? WHERE run_id = ? AND owner_id = ?', clock.now() + ttlMs, env.runId, owner);
   return run;
 }
 

@@ -315,6 +315,24 @@ export function profileForCheck(input: CheckProfileInput): BuiltProfile {
 }
 
 /**
+ * What every profile read-denies whatever runs under it: the credential paths in the home directory, the
+ * container-engine sockets, Orbit's temp root and every provider login Orbit can know of. For a process that needs no
+ * repository at all (`orbit doctor`'s browser launch); profiles for checks and workers add the repository's own.
+ */
+export function credentialDenyPaths(opts: { homeDir?: string; env?: Record<string, string | undefined> } = {}): string[] {
+  const home = canonicalPath(opts.homeDir ?? homedir());
+  const env = opts.env ?? process.env;
+  const dirs = providerDirs({ homeDir: home, env });
+  return uniq([
+    ...HOME_DENY_READ.map((rel) => join(home, rel)),
+    ...SYSTEM_DENY_READ.map(canonicalPath),
+    orbitTmpRoot(),
+    ...claudeLogins(home, env, dirs.claudeConfigDir).flatMap((d) => claudeState(home, d)),
+    ...codexHomes(home, env, dirs.codexHome),
+  ]);
+}
+
+/**
  * Root of every worker's private temp directory: /tmp/orbit-<uid>, the same
  * shape Claude Code uses for its own /tmp/claude-<uid>. It is short on
  * purpose: Claude Code and srt create Unix sockets in temp directories, and a

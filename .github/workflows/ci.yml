@@ -37,6 +37,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Everything the tests exercise for real is installed before they run, so a
+      # missing tool fails here with a clear message instead of as a test failure.
+      - name: Sandbox prerequisites (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap socat ripgrep
+          # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor; bubblewrap needs them.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Playwright's Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Install the Claude Code CLI (plugin validation and the plugin tests)
+        run: npm install --global @anthropic-ai/claude-code
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -54,9 +70,6 @@ jobs:
 
       - name: Committed bundle matches the sources
         run: npm run check:dist
-
-      - name: Install the Claude Code CLI for plugin validation
-        run: npm install --global @anthropic-ai/claude-code
 
       - name: Plugin validation
         run: node scripts/check-plugin.mjs

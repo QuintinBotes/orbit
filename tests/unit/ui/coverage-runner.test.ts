@@ -7,6 +7,7 @@ import { ManualClock } from '../../../src/core/clock.ts';
 import { OrbitError } from '../../../src/core/errors.ts';
 import type { Candidate } from '../../../src/evidence/types.ts';
 import { NoIsolation } from '../../../src/isolation/none.ts';
+import { CHROMIUM_MACH_RENDEZVOUS_LIMITATION } from '../../../src/isolation/sandbox-runtime.ts';
 import type { IsolationProvider, SandboxProfile, WrappedCommand } from '../../../src/isolation/types.ts';
 import { defaultCheck, defaultConfig, defaultUi } from '../../../src/policy/config.ts';
 import { snapshotPolicy } from '../../../src/policy/snapshot.ts';
@@ -641,5 +642,153 @@ describe('collectAttachments: the cases the main tests leave', () => {
     expect(c.a11y).toHaveLength(1);
     expect(c.keyboard).toHaveLength(1);
     expect(c.errorContext).toEqual({ errorDetails: 'first', pageSnapshot: null });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Browsers under sandbox-runtime on macOS (docs/decisions/0001-runtime-choices.md): the journey check's profile, and
+// only it, asks for Chromium's Mach rendezvous rules; a browser that could not start under the sandbox is the
+// environment's ERROR, never a journey failure.
+
+const FATAL = '[pid=73671][err] [1005/200336.908127:FATAL:base/apple/mach_port_rendezvous_mac.cc:159] Check failed: kr == KERN_SUCCESS. bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer.73671: Permission denied (1100)';
+const launchFailed = (title: string, logs: string): PwTest => failed(title, { results: [{ status: 'failed', duration: 10, retry: 0, error: { message: `Error: browserType.launch: Target page, context or browser has been closed\nBrowser logs:\n\n${logs}` } }] });
+
+function srtLikePlaywright(scenario: (c: RunContext) => Scenario, wrapExtra: Partial<WrappedCommand> = { adjustments: ['chromium-mach-rendezvous'], runtimeVersion: '0.0.78', limitations: ['srt limitation', 'chromium limitation'] }, kind: IsolationProvider['kind'] = 'sandbox-runtime') {
+  const fake = fakePlaywright(scenario);
+  const profiles: { ui: boolean; profile: SandboxProfile }[] = [];
+  const provider: IsolationProvider = {
+    kind,
+    available: fake.provider.available,
+    wrap(argv, profile, opts) {
+      profiles.push({ ui: opts.env.ORBIT_UI_RUN === '1', profile });
+      const w = fake.provider.wrap(argv, profile, opts);
+      return opts.env.ORBIT_UI_RUN === '1' ? { ...w, ...wrapExtra } : w;
+    },
+  };
+  return { provider, profiles, fake };
+}
+
+describe('browsers under sandbox-runtime', () => {
+  const p = (start: string[] | null = null) => policy({ ui: (u) => { u.accessibility.enabled = false; u.environment.start_command = start; } });
+
+  it('asks for the Chromium Mach rules on the journey check\'s profile only, never the application\'s', async () => {
+    const { createServer } = await import('node:net');
+    const srv = createServer().listen(0, '127.0.0.1');
+    await new Promise((r) => srv.once('listening', r));
+    const port = (srv.address() as { port: number }).port;
+    srv.close();
+    const app = ['node', '-e', `require('http').createServer((q, s) => s.end('ok')).listen(${port}, '127.0.0.1')`];
+    const pol = policy({ baseUrl: `http://127.0.0.1:${port}`, ui: (u) => { u.accessibility.enabled = false; u.environment.start_command = app; } });
+    const s = srtLikePlaywright(() => ({ report: report([ok('x')]) }));
+    const result = await runUiChecks(input(pol, candidate(), s.provider, { appPollMs: 50 }));
+    expect(result.verdict, result.reasons.join('; ')).toBe('PASS');
+    expect(s.profiles.map((x) => [x.ui, x.profile.chromiumMachRendezvous === true])).toEqual([[false, false], [true, true]]);
+  });
+
+  it('records the adjustment, the srt version and its limitation on the check run and in what the evidence report carries', async () => {
+    const s = srtLikePlaywright(() => ({ report: report([ok('x')]) }));
+    const result = await runUiChecks(input(p(), candidate(), s.provider));
+    expect(result.verdict).toBe('PASS');
+    expect(result.checks[0]).toMatchObject({ isolation: 'sandbox-runtime', isolationAdjustments: ['chromium-mach-rendezvous'], srtVersion: '0.0.78', isolationLimitations: ['srt limitation', 'chromium limitation'] });
+    expect(result.unverified).toContain(`check ui-journeys ran its browser under sandbox-runtime 0.0.78 with the isolation adjustment chromium-mach-rendezvous: ${CHROMIUM_MACH_RENDEZVOUS_LIMITATION}`);
+    expect(result.limitations).toContain(CHROMIUM_MACH_RENDEZVOUS_LIMITATION);
+    const plain = srtLikePlaywright(() => ({ report: report([ok('x')]) }), {}, 'none');
+    const r2 = await runUiChecks(input(p(), candidate(() => put(repo, 'src/app.js', 'export const a = 9;\n')), plain.provider));
+    expect(r2.checks[0]).toMatchObject({ isolationAdjustments: [], srtVersion: null });
+    expect(r2.unverified.filter((u) => /isolation adjustment/.test(u))).toEqual([]);
+    expect(r2.limitations).not.toContain(CHROMIUM_MACH_RENDEZVOUS_LIMITATION);
+  });
+
+  it('is an environment ERROR, not a failed journey, when Chromium could not register its Mach rendezvous service', async () => {
+    const s = srtLikePlaywright(() => ({ report: report([launchFailed('x', FATAL), launchFailed('y', FATAL)]), exitCode: 1, stderr: FATAL }));
+    const result = await runUiChecks(input(p(), candidate(), s.provider, { platform: 'darwin' }));
+    expect(result.verdict).toBe('ERROR');
+    expect(result.journeys).toEqual([]);
+    expect(result.reasons).toEqual([expect.stringMatching(/^check ui-journeys: the browser could not start under sandbox-runtime \(Chromium could not register its Mach rendezvous service\): .*bootstrap_check_in org\.chromium/)]);
+    expect(result.notExecuted).toEqual([{ stage: 'journeys', checkId: 'ui-journeys', logPath: join(result.outDir, 'ui-journeys', 'run.log'), signal: null, environment: expect.stringMatching(/^Chromium could not register its Mach rendezvous service: .*bootstrap_check_in/) }]);
+    expect(toEvidenceUi(result)).toEqual([expect.objectContaining({ status: 'ERROR' })]);
+  });
+
+  it('reads the same failure from the report alone, and Chromium\'s own sandbox failing to start inside srt', async () => {
+    const fromReport = srtLikePlaywright(() => ({ report: report([launchFailed('x', FATAL)]), exitCode: 1 }));
+    expect((await runUiChecks(input(p(), candidate(), fromReport.provider, { platform: 'darwin' }))).notExecuted[0]?.environment).toMatch(/Mach rendezvous/);
+    const own = srtLikePlaywright(() => ({ report: report([launchFailed('x', '[pid=53857][err] sandbox initialization failed: Operation not permitted')]), exitCode: 1 }));
+    const r = await runUiChecks(input(p(), candidate(() => put(repo, 'src/app.js', 'export const a = 5;\n')), own.provider, { platform: 'darwin' }));
+    expect(r.verdict).toBe('ERROR');
+    expect(r.notExecuted[0]?.environment).toMatch(/^Chromium's own sandbox could not start inside srt \(chromiumSandbox: true\): .*sandbox initialization failed/);
+  });
+
+  it('is an environment ERROR when the srt preload recorded its refusal (exit 97), and an ordinary one without that record', async () => {
+    const line = 'the profile does not hold (allow process-exec) exactly once, on a line of its own';
+    const refused = srtLikePlaywright(() => ({ exitCode: 97, stderr: `orbit srt-chromium-preload: ${line}; refusing to start the sandbox (exit 97)` }), { adjustments: ['chromium-mach-rendezvous'], runtimeVersion: '0.0.78', limitations: [], preloadRefusal: () => line });
+    const r = await runUiChecks(input(p(), candidate(), refused.provider, { platform: 'darwin' }));
+    expect(r.verdict).toBe('ERROR');
+    expect(r.notExecuted[0]?.environment).toBe(`the srt preload refused srt's sandbox command (exit 97): ${line}`);
+    const plain = srtLikePlaywright(() => ({ exitCode: 97, stderr: 'something else' }), {}, 'sandbox-runtime');
+    const r2 = await runUiChecks(input(p(), candidate(() => put(repo, 'src/app.js', 'export const a = 6;\n')), plain.provider, { platform: 'darwin' }));
+    expect(r2.verdict).toBe('ERROR');
+    expect(r2.notExecuted[0]).not.toHaveProperty('environment');
+  });
+
+  it('does not take the repository\'s own exit 97, or a preload line it printed, for a preload refusal', async () => {
+    // srt passes the command's exit code through, so a globalSetup that exits 97 looks the same from outside.
+    const forged = srtLikePlaywright(() => ({ exitCode: 97, stderr: 'orbit srt-chromium-preload: srt started a second sandbox; refusing to start the sandbox (exit 97)' }), { adjustments: ['chromium-mach-rendezvous'], runtimeVersion: '0.0.78', limitations: [], preloadRefusal: () => null });
+    const r = await runUiChecks(input(p(), candidate(), forged.provider, { platform: 'darwin' }));
+    expect(r.verdict).toBe('ERROR');
+    expect(r.notExecuted).toHaveLength(1);
+    expect(r.notExecuted[0]).not.toHaveProperty('environment');
+    const bare = srtLikePlaywright(() => ({ exitCode: 97 }));
+    const r2 = await runUiChecks(input(p(), candidate(() => put(repo, 'src/app.js', 'export const a = 16;\n')), bare.provider, { platform: 'darwin' }));
+    expect(r2.notExecuted[0]).not.toHaveProperty('environment');
+  });
+
+  it('keeps a journey failure whose message quotes the browser\'s words a failure, and a passing run a pass', async () => {
+    const quoted = failed('x', { results: [{ status: 'failed', duration: 10, retry: 0, error: { message: 'Error: expect(locator).toHaveText(expected)\n\nExpected: "ready"\nReceived: "sandbox initialization failed: bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer.1"' } }] });
+    const a = srtLikePlaywright(() => ({ report: report([quoted]), exitCode: 1 }));
+    const ra = await runUiChecks(input(p(), candidate(), a.provider, { platform: 'darwin' }));
+    expect(ra.verdict).toBe('FAIL');
+    expect(ra.notExecuted).toEqual([]);
+    // Every journey passed: whatever the application or the tests printed, the browser started.
+    const printed = srtLikePlaywright(() => ({ report: report([ok('x')]), stdout: `sandbox initialization failed\n${FATAL}`, stderr: 'browserType.launch: sandbox initialization failed' }));
+    const rb = await runUiChecks(input(p(), candidate(() => put(repo, 'src/app.js', 'export const a = 17;\n')), printed.provider, { platform: 'darwin' }));
+    expect(rb.verdict, rb.reasons.join('; ')).toBe('PASS');
+    // One journey passed and another hit a launch error: the browser did start for this run.
+    const mixed = srtLikePlaywright(() => ({ report: report([ok('x'), launchFailed('y', FATAL)]), exitCode: 1 }));
+    const rc = await runUiChecks(input(p(), candidate(() => put(repo, 'src/app.js', 'export const a = 18;\n')), mixed.provider, { platform: 'darwin' }));
+    expect(rc.verdict).toBe('FAIL');
+    expect(rc.notExecuted).toEqual([]);
+  });
+
+  it('reads no browser-isolation failure off Linux or another provider, whatever the output says', async () => {
+    const own = launchFailed('x', '[pid=53857][err] sandbox initialization failed: Operation not permitted');
+    const container = srtLikePlaywright(() => ({ report: report([own]), exitCode: 1, stderr: FATAL }), {}, 'container');
+    const r = await runUiChecks(input(p(), candidate(), container.provider, { platform: 'linux' }));
+    expect(r.verdict).toBe('FAIL');
+    expect(r.notExecuted).toEqual([]);
+    const linuxSrt = srtLikePlaywright(() => ({ report: report([launchFailed('x', FATAL)]), exitCode: 1 }), {}, 'sandbox-runtime');
+    const r2 = await runUiChecks(input(p(), candidate(() => put(repo, 'src/app.js', 'export const a = 19;\n')), linuxSrt.provider, { platform: 'linux' }));
+    expect(r2.verdict).toBe('FAIL');
+    expect(r2.notExecuted).toEqual([]);
+  });
+
+  it('is an environment ERROR when Firefox or WebKit could not start under srt on macOS, and an ordinary failure elsewhere', async () => {
+    const firefox = '<launching> /Users/acme/Library/Caches/ms-playwright/firefox-1490/firefox/Nightly.app/Contents/MacOS/firefox -no-remote -headless';
+    const mac = srtLikePlaywright(() => ({ report: report([launchFailed('x', firefox)]), exitCode: 1 }));
+    const r = await runUiChecks(input(p(), candidate(), mac.provider, { platform: 'darwin' }));
+    expect(r.verdict).toBe('ERROR');
+    expect(r.notExecuted[0]?.environment).toMatch(/^only Playwright's bundled Chromium is supported under sandbox-runtime on macOS: .*firefox/);
+    const linux = srtLikePlaywright(() => ({ report: report([launchFailed('x', firefox)]), exitCode: 1 }));
+    const r2 = await runUiChecks(input(p(), candidate(() => put(repo, 'src/app.js', 'export const a = 7;\n')), linux.provider, { platform: 'linux' }));
+    expect(r2.verdict).toBe('FAIL');
+    const unsandboxed = srtLikePlaywright(() => ({ report: report([launchFailed('x', firefox)]), exitCode: 1 }), {}, 'none');
+    const r3 = await runUiChecks(input(p(), candidate(() => put(repo, 'src/app.js', 'export const a = 8;\n')), unsandboxed.provider, { platform: 'darwin' }));
+    expect(r3.verdict).toBe('FAIL');
+  });
+
+  it('keeps an ordinary failing journey a failure', async () => {
+    const s = srtLikePlaywright(() => ({ report: report([failed('x')]), exitCode: 1 }));
+    const r = await runUiChecks(input(p(), candidate(), s.provider, { platform: 'darwin' }));
+    expect(r.verdict).toBe('FAIL');
+    expect(r.notExecuted).toEqual([]);
   });
 });

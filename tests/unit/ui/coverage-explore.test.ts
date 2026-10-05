@@ -381,6 +381,28 @@ describe('proving candidates', () => {
   });
 });
 
+describe('a spec run under sandbox-runtime on macOS', () => {
+  it('asks for the Chromium Mach rules for the browser run only, and treats a refused srt preload or a denied rendezvous as no evidence about the application', async () => {
+    const seen: (boolean | undefined)[] = [];
+    const run = async (scenario: Scenario) => {
+      const { opts, fake } = options({ scenario: () => scenario });
+      const provider: IsolationProvider = {
+        ...fake.provider,
+        wrap(argv, profile, o) {
+          if (o.env.ORBIT_UI_RUN === '1') seen.push(profile.chromiumMachRendezvous);
+          return { ...fake.provider.wrap(argv, profile, o), adjustments: o.env.ORBIT_UI_RUN === '1' ? ['chromium-mach-rendezvous'] : [] };
+        },
+      };
+      return (await exploreUi({ ...opts, isolation: provider })).findings[0]!;
+    };
+    expect(await run({ exitCode: 97, stderr: 'orbit srt-chromium-preload: refusing' })).toMatchObject({ status: 'invalid_test', reason: expect.stringMatching(/srt preload refused/) });
+    const fatal = 'browserType.launch: Target page, context or browser has been closed\n[err] FATAL bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer.1: Permission denied (1100)';
+    expect(await run({ report: pwReport([pwTest([{ status: 'failed', error: { message: fatal } }])]), exitCode: 1 })).toMatchObject({ status: 'invalid_test', reason: expect.stringMatching(/not about the application/) });
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((v) => v === true)).toBe(true);
+  });
+});
+
 describe('a run of a spec that cannot be believed', () => {
   const reason = async (scenario: Scenario | ((c: RunContext) => Scenario)) => {
     const { opts } = options({ scenario: typeof scenario === 'function' ? scenario : () => scenario });

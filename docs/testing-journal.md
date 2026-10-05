@@ -50,12 +50,40 @@ Closed in 30e6e5c: G1 to G3, G5 to G13, G16 to G23, G26, G28, G29, G31 to G36, G
 
 ---
 
+### 2026-10-05: browsers under srt: adversarial review of the preload change
+- Tested: two independent reviews (Claude and Codex) of the uncommitted preload change; each finding reproduced with a failing test first (16 unit tests, 3 real-srt tests), then fixed.
+- Went well: the preload itself held (no fail-open, no injection, no flag leakage); doctor now launches Playwright's headless Chromium binary directly and passes only on a nonce the page script computed, and fails under real srt without the rules; a hostile @playwright/test never runs; deny paths that spell the marker, sandbox-exec or an apostrophe patch cleanly under real srt.
+- Went wrong: doctor's check required the repository's @playwright/test inside srt with no read-denies (credential exposure) and passed on exit 0 alone; repository text (an assertion message, stdout) or a command's own exit 97 could turn a journey failure into an environment block, also on Linux and the container provider; a path containing "(allow process-exec)" or "/usr/bin/sandbox-exec" made the preload refuse.
+- Root cause: doctor reused the repository's Playwright as a launcher; the classifier read channels the repository can write and srt passes exit codes through; the preload counted substrings instead of parsing srt's quoting.
+- Change: uncommitted. Doctor runs Orbit's own argv with credentialDenyPaths plus the repository denied; the preload parses srt's quoted words, matches the marker as a whole line, and records refusals beside srt's settings file (out of the sandbox's reach); the runner reads text only on macOS srt, only when no journey passed, only from browserType.launch errors.
+
+### 2026-10-05: live demo 2 succeeds: escalation, browser checks under srt, draft PR
+- Tested: the difficult goal with real delivery, from a build with the Chromium Mach-rule preload.
+- Went well: doctor's new ui.browser-isolation check passed; the planner graded the change medium with high subsystem coupling and the router sent the first implementation to Opus with that evidence; lint, unit and the browser journeys (desktop and mobile) passed under srt on the first attempt, with the isolation adjustment disclosed in the UI gate; Codex cleared the exact tree; Orbit pushed an orbit/* branch and opened draft PR #2; progress streamed live. About five minutes end to end.
+- Went wrong: nothing failed. CI is unverified because the demo repository has no workflow (allowed by require_ci: false and stated in the report).
+- Root cause: not applicable.
+- Change: none.
+
+### 2026-10-05: browsers under srt on macOS: the two-rule preload
+- Tested: the chosen design from ADR 0001 ("Browsers under sandbox-runtime on macOS"), tests first: preload unit tests (10, all failing before the file existed), wrap() argv tests (7), runner, classifier and environment-block tests (8), doctor tests (5), then examples/demo-app through Orbit's UI runner under the real srt 0.0.78.
+- Went well: without the rules the FATAL still appears and the run is an environment ERROR; with them 8/8 journeys pass on desktop and mobile, twice; inside the patched sandbox other Mach names (com.example.*, a non-numeric suffix) get 1100, a denied canary gives EPERM, egress off the allowlist fails and a HOME write gives EPERM; an srt copy with the marker doubled exits 97 and is classified as an environment failure; doctor launches a real headless Chromium through the preload.
+- Went wrong: the first integration run timed out the app fixture in under a second, and the first unit run of the spawn hook read a mock it had already replaced.
+- Root cause: the test passed a ManualClock to the runner, so the app fixture's readiness wait did not run on real time; the test took the mock reference after installing the hook.
+- Change: uncommitted (this round). Linux remains unverified until CI runs the real-srt test; `ui.isolation: container` from the ADR is not implemented (isolation.provider: container is the existing opt-in).
+
 ### 2026-10-05: live demo 2, second run: escalation proven, Chromium cannot start under srt
 - Tested: the difficult goal with real delivery, from a build of the fixed tree (kept in an ignored `.demo-build/`, because Orbit resolves `agents/` and `srt` relative to its bundle).
 - Went well: the model probe validated Opus, Sonnet and Haiku; the planner graded the change medium with high subsystem coupling, and the router sent the first implementation to Opus "escalated from claude-sonnet-5-5" with that evidence (spec section 8, coupled changes); the app fixture now starts and the browser journeys execute.
 - Went wrong: every journey failed at browser launch; the run treated that as a code failure and started an Opus repair, so it was cancelled. The demo script's output was block-buffered, so a running demo looked frozen.
 - Root cause: Chromium registers a Mach service (bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer.<pid>), and srt's Seatbelt profile allows only listed mach-lookup names, with no mach-register option (also absent from the latest srt). `--single-process` starts but crashes on a browser's second context (3 of 8 journeys). sed buffers when its output is not a terminal.
 - Change: four browser-under-sandbox designs are being prototyped and judged (Seatbelt rule through srt's library, one browser per test, browser outside the sandbox with locked egress, Linux container). The demo script line-buffers its filter (test failed first). Proposed: a browser that cannot launch is an environment failure, not a repair.
+
+### 2026-10-05: CI, second pass: the integration tests had never run in CI
+- Tested: CI on 55a0aaf, which fixed the three unit-test assumptions.
+- Went well: Ubuntu's unit tests passed and its jobs reached the integration tests for the first time; every remaining failure had a concrete, environment-specific cause.
+- Went wrong: the integration step failed in 10 to 11 files on Ubuntu and one unit file on macOS.
+- Root cause: CI installed the claude CLI after the tests that call it and never installed Playwright's browsers or srt's Linux prerequisites; a limits test read back with /bin/sh (dash has no `ulimit -u`); the limit tests expected the requested process count, while macOS reports at most kern.maxprocperuid and the wrapper now keeps a stricter host limit; the demo example test expected Node's TAP summary, but newer Node prints the spec format. Two Linux-only failures (fake-Claude cancellation, the environment-failure wording) are being reproduced in a Linux container.
+- Change: ci.yml installs bubblewrap, socat and ripgrep (relaxing Ubuntu's AppArmor user-namespace restriction), Playwright's Chromium and the claude CLI before any test; the tests read back with bash, compare with what the host itself reports, and accept either reporter's summary line; verified under a 1333-process hard limit.
 
 ### 2026-10-05: pre-public audit: NO-GO, then remediation
 - Tested: four independent scanners (full history terms and secrets, identity and paths, semantic content review, GitHub-side content) and an adversarial verifier that re-checked every finding and covered the gaps itself.

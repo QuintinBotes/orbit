@@ -2,8 +2,9 @@
 // Builds dist/orbit.mjs, the single-file CLI the plugin ships. The plugin has no
 // install step (--plugin-dir and local marketplaces skip dependency install), so
 // every runtime dependency is bundled.
+// Files the bundle loads at runtime but must not inline are copied beside it as they are (RUNTIME_FILES).
 //   node scripts/build.mjs            build, then smoke run --version
-//   node scripts/build.mjs --check    build in memory; fail if dist/orbit.mjs is stale
+//   node scripts/build.mjs --check    build in memory; fail if dist/orbit.mjs or a runtime file is stale
 import { build } from 'esbuild';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -14,6 +15,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const entry = process.env.ORBIT_BUILD_ENTRY ?? join(root, 'src/cli/main.ts');
 const outfile = process.env.ORBIT_BUILD_OUT ?? join(root, 'dist/orbit.mjs');
 const check = process.argv.includes('--check');
+
+// Runtime files shipped next to dist/orbit.mjs, by name in dist/ and source. The srt preload runs in its own node
+// process ahead of srt (src/isolation/sandbox-runtime.ts finds it beside the bundle), so it cannot be bundled.
+const RUNTIME_FILES = [['srt-chromium-preload.mjs', join(root, 'src/isolation/srt-chromium-preload.mjs')]];
 
 // Some dependencies (ajv) are CommonJS and call require() at load; an ESM bundle has
 // no require, so provide one. The shebang must stay on line 1.
@@ -55,19 +60,37 @@ try {
 }
 const built = result.outputFiles[0].text;
 
+// The bundle finds each runtime file beside itself through new URL(..., import.meta.url), which esbuild leaves alone.
+// Orbit's own entry must reference every one of them; another entry (tests) ships the ones it references.
+const referenced = (name) => built.includes(`new URL("./${name}", import.meta.url)`);
+const unreferenced = RUNTIME_FILES.filter(([name]) => !referenced(name)).map(([name]) => name);
+if (process.env.ORBIT_BUILD_ENTRY === undefined && unreferenced.length > 0) {
+  console.error(`build: the bundle no longer locates ${unreferenced.join(', ')} beside itself`);
+  process.exit(1);
+}
+const shipped = RUNTIME_FILES.filter(([name]) => referenced(name));
+
 if (check) {
   const current = existsSync(outfile) ? readFileSync(outfile, 'utf8') : null;
   if (current !== built) {
     console.error(`dist is stale: ${outfile} does not match a fresh build. Run npm run build.`);
     process.exit(1);
   }
-  console.log('dist/orbit.mjs is up to date');
+  for (const [name, source] of shipped) {
+    const copy = join(dirname(outfile), name);
+    if (!existsSync(copy) || readFileSync(copy, 'utf8') !== readFileSync(source, 'utf8')) {
+      console.error(`dist is stale: ${copy} does not match ${source}. Run npm run build.`);
+      process.exit(1);
+    }
+  }
+  console.log(`${[outfile, ...shipped.map(([n]) => join(dirname(outfile), n))].join(', ')} up to date`);
   process.exit(0);
 }
 
 mkdirSync(dirname(outfile), { recursive: true });
 writeFileSync(outfile, built);
 chmodSync(outfile, 0o755);
+for (const [name, source] of shipped) writeFileSync(join(dirname(outfile), name), readFileSync(source, 'utf8'), { mode: 0o644 });
 
 // Smoke run: a bundle that builds but cannot start is worse than a build failure.
 const smoke = spawnSync(process.execPath, [outfile, '--version'], { encoding: 'utf8', timeout: 20_000 });

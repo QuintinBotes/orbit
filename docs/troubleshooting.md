@@ -32,6 +32,9 @@ degraded but usable.
 | `review` | independent review would block | Make a second provider usable and set `providers.<id>.data_policy_eligible: true` if sending sanitized code to it is permitted, or turn off `review.independent_provider_required` knowingly. |
 | `models` | no allowed Claude model is eligible | Allow `sonnet`, `opus` or `haiku` in `routing.allowed_models`, and upgrade `claude` if a minimum version is shown. `orbit models list` explains each model. |
 | `playwright` | `@playwright/test`, browsers or axe missing | `npm install -D @playwright/test @axe-core/playwright` in the repository, then `npx playwright install chromium`. |
+| `ui.browser-isolation` | `srt X is not 0.0.78 ... browser checks are refused` (macOS) | The Chromium preload was verified against `srt` 0.0.78 only, so UI checks raise `ISOLATION_UNAVAILABLE` with any other version. Install `@anthropic-ai/sandbox-runtime@0.0.78`. |
+| `ui.browser-isolation` | `headless Chromium did not start under srt`, or `did not render the test page` (macOS) | Run `npx playwright install chromium` in the repository. Only Playwright's bundled Chromium is supported under `srt` on macOS: not `channel: 'chrome'`, Firefox or WebKit, and not `chromiumSandbox: true`. |
+| `ui.browser-isolation` | `unverified on Linux` (warning) | No rule is needed on Linux, but whether the application and the journeys in separate `srt` processes share loopback has not been verified yet. If the journeys cannot reach the application, use `isolation.provider: container`. |
 | `delivery` | `gh` not found | Install the GitHub CLI. |
 | `delivery` | `GH_TOKEN` not set | Export a fine-grained token scoped to the repository in the environment the controller runs in. A keyring login is refused. |
 | `delivery` | `gh auth status` failed | Create a new valid token and export it. |
@@ -56,6 +59,23 @@ degraded but usable.
   causes: the pull request is still a draft and `release.merge.mark_ready` is false; the base
   branch moved and `actions.rebase_task_branch` is false; a deploy outcome is unknown and the
   environment has no `verify_command`. See [release mode safeguards](operations.md#release-mode-safeguards).
+- **A UI check ends in ERROR with "the browser could not start under sandbox-runtime".**
+  The run blocks at once as an environment failure; no repair is spent. The
+  reason names the cause: "Chromium could not register its Mach rendezvous
+  service" (the `bootstrap_check_in ... MachPortRendezvousServer` FATAL: the
+  rules were not applied, for example an `srt` that Orbit did not start with its
+  preload); "Chromium's own sandbox could not start inside srt" (the
+  repository's Playwright config sets `chromiumSandbox: true`; remove it);
+  "only Playwright's bundled Chromium is supported" (a project uses Firefox,
+  WebKit or Google Chrome); or "the srt preload refused srt's sandbox command
+  (exit 97)" (the installed `srt` builds its sandbox command in a shape the
+  preload was not verified against; install `@anthropic-ai/sandbox-runtime@0.0.78`).
+  Only `srt` on macOS is classified this way, only when no journey passed, and
+  only from Playwright's own `browserType.launch` errors; a preload refusal
+  counts only when the preload recorded it in Orbit's settings directory (a
+  command's own exit 97 does not). Anything else stays a journey failure.
+  `orbit doctor` (`ui.browser-isolation`) launches Playwright's real headless
+  Chromium binary through the preload, with no repository code, to check this.
 - **A command is killed for memory under `sandbox-runtime`.** The resident-memory watchdog
   hit `isolation.limits.memory_mb`. Raise it, or use `isolation.provider: container`.
 - **Disk is filling with old runs.** `orbit gc --dry-run`, then `orbit gc`.

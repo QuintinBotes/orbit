@@ -77,7 +77,9 @@ describe('the wrapper under a host that is already stricter (macOS CI runners: h
     const hard = Math.min(current, 1500) - 1;
     const r = underHardLimit(hard, { ...NONE, max_processes: hard + 500 }, 'ulimit -H -u; exit 0');
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout.trim()).toBe(String(hard));
+    // macOS reports at most kern.maxprocperuid, so compare with what the host itself reads back after setting.
+    const hostSees = spawnSync('/bin/bash', ['-c', `ulimit -u ${hard} && ulimit -H -u`], { encoding: 'utf8' }).stdout.trim();
+    expect(r.stdout.trim()).toBe(hostSees);
   });
 
   it('still lowers a limit the host allows, and the command cannot raise it back', () => {

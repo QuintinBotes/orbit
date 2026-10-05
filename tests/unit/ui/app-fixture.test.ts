@@ -84,6 +84,16 @@ describe('startApp', () => {
     expect('allowLocalBinding' in plain).toBe(false);
   });
 
+  it('never asks for the Chromium Mach rules for the application, even when the caller\'s profile carries them', async () => {
+    const seen: (boolean | undefined)[] = [];
+    const none = new NoIsolation();
+    const recording = { kind: none.kind, available: () => none.available(), wrap: (argv: string[], profile: Parameters<NoIsolation['wrap']>[1], o: { cwd: string; env: Record<string, string> }) => (seen.push(profile.chromiumMachRendezvous), none.wrap(argv, profile, o)) };
+    let calls = 0;
+    const h = await startApp(opts({ isolation: { provider: recording, profile: { ...isolation.profile, chromiumMachRendezvous: true } }, probe: async () => (++calls <= 1 ? null : 200) }));
+    await stopApp(h);
+    expect(seen).toEqual([false]);
+  });
+
   it('tells the provider about the log it hands the app as stdout and stderr, and creates it first (a sandboxed node aborts at startup on a descriptor it may not read)', async () => {
     const seen: { stdioFiles: string[] | undefined; existed: boolean; mode: number }[] = [];
     const none = new NoIsolation();

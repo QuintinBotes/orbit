@@ -192,3 +192,14 @@ describe('classifyNotExecuted: a check the runner could not start', () => {
     expect(classifyNotExecuted({ checkId: 'unit', output: '', startFailure: '  ' })).toBeNull();
   });
 });
+
+describe('classifyNotExecuted: a browser the sandbox stopped', () => {
+  it('names the runner\'s finding as an environment cause even when the log holds the run\'s own output', () => {
+    const f = classifyNotExecuted({ checkId: 'ui', output: 'Running 8 tests using 2 workers\n8 failed', browserIsolation: 'Chromium could not register its Mach rendezvous service: bootstrap_check_in ...' });
+    expect(f).toEqual({ checkId: 'ui', fingerprint: null, signals: ['browser-isolation'], cause: 'the browser could not start under sandbox-runtime', lines: ['Chromium could not register its Mach rendezvous service: bootstrap_check_in ...'] });
+  });
+
+  it('ignores a blank finding', () => {
+    expect(classifyNotExecuted({ checkId: 'ui', output: '8 failed', browserIsolation: ' ' })).toBeNull();
+  });
+});

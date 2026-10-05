@@ -10,7 +10,7 @@
 | `codex` CLI | independent review | Optional only if you set `review.independent_provider_required: false`. Also set `providers.codex.data_policy_eligible: true` when sending sanitized code to it is permitted. |
 | `srt` (sandbox-runtime) | default isolation | `npm install --global @anthropic-ai/sandbox-runtime`. On Linux it needs bubblewrap; on macOS it uses Seatbelt. Orbit also finds an `srt` in its own `node_modules/.bin`. |
 | Docker | `isolation.provider: container` | Adds hard CPU, memory and pids limits. The image must already exist locally; Orbit runs containers with `--pull never`. |
-| Playwright and its browsers | UI verification | `npm install -D @playwright/test` in the target repository, then `npx playwright install chromium`. For accessibility scans also `@axe-core/playwright`. |
+| Playwright and its browsers | UI verification | `npm install -D @playwright/test` in the target repository, then `npx playwright install chromium`. For accessibility scans also `@axe-core/playwright`. Under `srt` on macOS only Playwright's bundled Chromium is supported (not Google Chrome, Firefox or WebKit), and browser checks need `srt` 0.0.78; see [Browsers under srt on macOS](#browsers-under-srt-on-macos). |
 | `gh` CLI and a `GH_TOKEN` | delivery in `autonomous-delivery` and `release` modes | Use a fine-grained token scoped to the one repository. |
 | `gitleaks` | stronger secret scan | Optional. Without it Orbit uses built-in patterns and the evidence says so. |
 
@@ -133,3 +133,24 @@ Isolation providers for checks and UI fixtures:
   are weaker than a container's kernel limits.
 - `container`: Docker with CPU, memory and pids limits and no network.
 - `none`: refused in autonomous modes unless `isolation.allow_unisolated` is true.
+
+### Browsers under srt on macOS
+
+Chromium registers a Mach service when it starts
+(`org.chromium.Chromium.MachPortRendezvousServer.<pid>`), which `srt`'s Seatbelt
+profile does not allow, so without help every browser journey fails. For UI
+checks only, Orbit starts `srt`'s own CLI under node with a preload,
+`srt-chromium-preload.mjs` (shipped beside `dist/orbit.mjs`), that adds two
+rules for that name pattern and nothing else. It applies to Playwright's
+bundled Chromium only: install it with `npx playwright install chromium`, and
+do not set `channel: 'chrome'` or `chromiumSandbox: true` in the Playwright
+config. Firefox and WebKit are not supported under `srt` on macOS.
+
+Browser checks require `@anthropic-ai/sandbox-runtime` 0.0.78, the version the
+preload was verified against; with another version they fail with
+`ISOLATION_UNAVAILABLE`, and the preload refuses (exit 97) any sandbox command
+shape it does not recognise. `orbit doctor` reports this as
+`ui.browser-isolation` and launches Playwright's headless Chromium binary
+(no repository code) to prove it. On
+Linux no rule is needed. What the rules widen is described in
+[security](security.md#what-is-not-enforced).

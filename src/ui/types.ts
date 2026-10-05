@@ -178,6 +178,10 @@ export interface UiCheckRun {
   reportFound: boolean;
   isolation: string;
   isolationLimitations: string[];
+  /** Changes the isolation provider made to its usual confinement for this check (`chromium-mach-rendezvous`); absent in results written before it existed. */
+  isolationAdjustments?: string[];
+  /** The sandbox-runtime (srt) package version that ran the check, when the provider could tell. */
+  srtVersion?: string | null;
   playwrightVersion: string | null;
 }
 
@@ -207,6 +211,11 @@ export interface UiNotExecuted {
   logPath: string;
   /** The signal that ended the process, when it is known. */
   signal: string | null;
+  /**
+   * Set when the runner found that the environment stopped the browser, not the repository's code: it could not start
+   * under sandbox-runtime (the reason and the line that shows it). The controller blocks on it without reading the log.
+   */
+  environment?: string;
 }
 
 export interface UiRunResult {

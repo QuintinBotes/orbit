@@ -239,6 +239,23 @@ describe('build script', () => {
     expect(run('node', ['scripts/build.mjs', '--check'], { env }).status).toBe(1);
   });
 
+  it('ships the srt preload beside a bundle that locates it, and treats a stale copy as a stale build', () => {
+    const dir = mkTmp('orbit-build-');
+    const entry = join(dir, 'e.mjs');
+    writeFileSync(entry, "if (process.argv[2] === '--version') console.log('9.9.9', new URL('./srt-chromium-preload.mjs', import.meta.url).pathname.length > 0);\n");
+    const out = join(dir, 'out/orbit.mjs');
+    const env = { ...process.env, ORBIT_BUILD_ENTRY: entry, ORBIT_BUILD_OUT: out };
+    const b = run('node', ['scripts/build.mjs'], { env });
+    expect(b.status, b.stdout + b.stderr).toBe(0);
+    const copy = join(dir, 'out/srt-chromium-preload.mjs');
+    expect(readFileSync(copy, 'utf8')).toBe(readFileSync(join(root, 'src/isolation/srt-chromium-preload.mjs'), 'utf8'));
+    expect(run('node', ['scripts/build.mjs', '--check'], { env }).status).toBe(0);
+    appendFileSync(copy, '// tampered\n');
+    const stale = run('node', ['scripts/build.mjs', '--check'], { env });
+    expect(stale.status).toBe(1);
+    expect(stale.stderr).toMatch(/srt-chromium-preload\.mjs does not match/);
+  });
+
   it('fails cleanly on a missing entry or a broken import', () => {
     const dir = mkTmp('orbit-build-');
     expect(run('node', ['scripts/build.mjs'], { env: { ...process.env, ORBIT_BUILD_ENTRY: join(dir, 'nope.ts'), ORBIT_BUILD_OUT: join(dir, 'o.mjs') } }).status).toBe(1);
@@ -256,8 +273,9 @@ describe.skipIf(!hasEntry)('bundle', () => {
     expect(r.status, r.stdout + r.stderr).toBe(0);
   });
 
-  it('is current and starts with a node shebang', () => {
+  it('is current and starts with a node shebang, with the srt preload beside it', () => {
     expect(readFileSync(join(root, 'dist/orbit.mjs'), 'utf8').startsWith('#!/usr/bin/env node\n')).toBe(true);
+    expect(readFileSync(join(root, 'dist/srt-chromium-preload.mjs'), 'utf8')).toBe(readFileSync(join(root, 'src/isolation/srt-chromium-preload.mjs'), 'utf8'));
     expect(run('node', ['scripts/build.mjs', '--check']).status).toBe(0);
   });
 
