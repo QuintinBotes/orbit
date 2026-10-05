@@ -1,7 +1,9 @@
 import { isAbsolute, relative, sep } from 'node:path';
 import type { OrbitDb } from '../storage/db.ts';
 import { canonicalJson, sha256 } from '../core/hash.ts';
+import { CHECK_RUN_STATUSES, FAILURE_SOURCES } from '../evidence/store.ts';
 import type { ScopeReport } from '../evidence/types.ts';
+import { RESOLVED_FINDING_STATUSES } from '../review/types.ts';
 import type { EvidenceRef, LessonKind } from './types.ts';
 import { asSha256, cleanUntrusted, truncate } from './text.ts';
 
@@ -40,10 +42,18 @@ export interface Observation {
   evidence: EvidenceRef[];
 }
 
-/** Finding statuses that mean the finding was confirmed and then addressed. */
-export const RESOLVED_FINDING_STATUSES: readonly string[] = ['resolved', 'fixed'];
+/**
+ * A member of a status vocabulary exported by the module that owns it. The type checks the spelling at
+ * compile time; the lookup fails loudly at load time if the owner ever drops or renames the value, instead
+ * of this file silently matching nothing.
+ */
+function member<const L extends readonly string[], V extends L[number]>(vocabulary: L, value: V): V {
+  if (!vocabulary.includes(value)) throw new Error(`"${value}" is not in the vocabulary [${vocabulary.join(', ')}]`);
+  return value;
+}
+
 /** failures.source value for CI breakages observed after delivery. */
-export const CI_FAILURE_SOURCE = 'ci';
+export const CI_FAILURE_SOURCE = member(FAILURE_SOURCES, 'ci');
 /**
  * Decision kinds that record a policy denial (storage/decisions.ts lists
  * 'policy.deny'). A denial is a hazard, not a convention, and needs no
@@ -83,16 +93,17 @@ interface CheckRunRow {
 }
 
 /**
- * Check statuses (evidence/types.ts CheckStatus) that mean the code under test
+ * Check statuses (evidence CHECK_RUN_STATUSES) that mean the code under test
  * failed. ERROR and CANCELLED say the check could not give a verdict
  * (infrastructure, cancellation), so a fingerprint from one is not a failure
  * the next candidate can have repaired.
  */
-const FAILING_CHECK_STATUSES: readonly string[] = ['FAILED', 'TIMEOUT'];
+const FAILING_CHECK_STATUSES: readonly string[] = [member(CHECK_RUN_STATUSES, 'FAILED'), member(CHECK_RUN_STATUSES, 'TIMEOUT')];
+const PASSED_CHECK_STATUS = member(CHECK_RUN_STATUSES, 'PASSED');
 
 /** A clean pass: PASSED without needing a rerun. A flaky pass is disclosed instability, never a clean pass (spec section 14). */
 function cleanPass(c: CheckRunRow): boolean {
-  return c.status === 'PASSED' && Number(c.flaky) === 0;
+  return c.status === PASSED_CHECK_STATUS && Number(c.flaky) === 0;
 }
 
 interface FailureRow {
@@ -297,7 +308,7 @@ function repairObservations(db: OrbitDb, runId: string, runDir: string): Observa
       if (reported.has(fp) || nextFailing.has(fp)) continue;
       const checkIds = [...new Set(seen.checkRuns.map((c) => c.check_id))].sort();
       if (checkIds.length === 0) continue;
-      if (checkIds.some((id) => curChecks.some((c) => c.check_id === id && c.status === 'PASSED'))) continue;
+      if (checkIds.some((id) => curChecks.some((c) => c.check_id === id && c.status === PASSED_CHECK_STATUS))) continue;
       const passedAgain = checkIds.map((id) => nextChecks.find((c) => c.check_id === id && cleanPass(c)));
       if (passedAgain.some((c) => c === undefined)) continue;
       // A check that also failed again at k+1 (with another fingerprint) did not pass.

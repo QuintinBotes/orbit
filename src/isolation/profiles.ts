@@ -118,7 +118,7 @@ export const CODEX_HOME_READ_ONLY: readonly string[] = ['config.toml', 'hooks.js
  * not affect (verified under srt). Any new file the controller trusts
  * belongs in this list.
  */
-export const WORKER_DIR_READ_ONLY: readonly string[] = ['prompt.md', 'settings.json', 'schema.json', 'policy.json', 'log.jsonl', 'pid.json', 'exit.json', 'result.json'];
+export const WORKER_DIR_READ_ONLY: readonly string[] = ['prompt.md', 'system.md', 'settings.json', 'schema.json', 'policy.json', 'launch.json', 'log.jsonl', 'stderr.log', 'shim.log', 'pid.json', 'exit.json', 'result.json'];
 
 export type WorkerProvider = 'claude' | 'codex';
 

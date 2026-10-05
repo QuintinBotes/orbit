@@ -146,6 +146,9 @@ delivery:
   # May not exceed scheduler.hard_limits.ci_repair_cycles.
   max_ci_repair_cycles: 3
   ci_timeout_minutes: 60
+  # When true, a delivery with no CI checks observed before the timeout cannot
+  # succeed. When false, "no CI observed" is reported as unverified.
+  require_ci: false
 
 # Checks are the only commands Orbit runs as evidence. A goal contract may
 # only name check ids defined here; a command written by a model is never
@@ -280,3 +283,9 @@ guard:
   # null means ~/.config/publish-guard/terms.txt (shared with publish-guard).
   terms_file: null
   allowed_emails: []
+
+# Verification policy.
+verification:
+  # A check that fails and then passes on a rerun is reported as flaky. When
+  # false, a flaky pass cannot make the evidence verdict PASS.
+  allow_flaky_pass: false

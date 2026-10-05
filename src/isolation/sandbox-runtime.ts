@@ -35,7 +35,7 @@ export interface SrtSettings {
     strictAllowlist: true;
     /** A permitted name must not resolve into the local network (DNS rebinding to LAN services). */
     deniedResolvedAddresses: string[];
-    allowLocalBinding: false;
+    allowLocalBinding: boolean;
   };
   filesystem: {
     denyRead: string[];
@@ -122,7 +122,7 @@ export function buildSrtSettings(profile: SandboxProfile, opts: { extraDenyRead?
       deniedDomains: [],
       strictAllowlist: true,
       deniedResolvedAddresses: [...DENIED_RESOLVED_ADDRESSES],
-      allowLocalBinding: false,
+      allowLocalBinding: profile.allowLocalBinding === true,
     },
     filesystem: {
       // Nested denies are kept on purpose: a deny inside a re-allowed path

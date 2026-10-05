@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import { isAbsolute, join, posix, resolve } from 'node:path';
 import { parseDocument } from 'yaml';
 import Ajv2020Module from 'ajv/dist/2020.js';
+import addFormatsModule from 'ajv-formats';
 import type { ErrorObject, ValidateFunction } from 'ajv/dist/2020.js';
 import configSchema from '../../schemas/config.schema.json' with { type: 'json' };
 import { OrbitError } from '../core/errors.ts';
@@ -26,6 +27,7 @@ export type RunMode = OrbitConfig['mode'];
 type AjvCtor = typeof Ajv2020Module;
 // ajv is CommonJS; under ESM the class arrives either as the default export or as the module itself.
 const Ajv2020 = ((Ajv2020Module as unknown as { default?: AjvCtor }).default ?? Ajv2020Module) as AjvCtor;
+const addFormats = ((addFormatsModule as unknown as { default?: typeof addFormatsModule }).default ?? addFormatsModule) as typeof addFormatsModule;
 
 export const CONFIG_RELATIVE_PATH = '.orbit/config.yaml';
 
@@ -152,8 +154,10 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
       preferred_provider: 'codex',
       fallback_same_provider_allowed: false,
       block_unresolved_high_impact_findings: true,
+      security: { block_severities: ['critical', 'high'], exceptions: [] },
     },
-    delivery: { provider: 'github', pull_request: 'draft', max_ci_repair_cycles: 3, ci_timeout_minutes: 60 },
+    delivery: { provider: 'github', pull_request: 'draft', max_ci_repair_cycles: 3, ci_timeout_minutes: 60, require_ci: false },
+    verification: { allow_flaky_pass: false },
     checks: {},
     ui: null,
     isolation: { provider: 'sandbox-runtime', allow_unisolated: false, container: null },
@@ -407,6 +411,8 @@ let compiled: ValidateFunction | null = null;
 function schemaValidator(): ValidateFunction {
   if (compiled) return compiled;
   const ajv = new Ajv2020({ allErrors: true, strict: true, allowUnionTypes: true });
+  // The schema uses "format": "date" (review.security.exceptions[].expires); strict mode refuses a format it does not know.
+  addFormats(ajv);
   compiled = ajv.compile(configSchema as object);
   return compiled;
 }

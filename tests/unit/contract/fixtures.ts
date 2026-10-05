@@ -93,8 +93,8 @@ export function config(t: ConfigTweaks = {}): OrbitConfig {
       final_reserve_fraction: 0.2,
     },
     agents: { default_parallelism: 1, require_independent_work_units: true, isolate_writers: true, prohibit_shared_worktree_writes: true, cancel_obsolete_workers: true },
-    review: { independent_provider_required: true, preferred_provider: 'codex', fallback_same_provider_allowed: false, block_unresolved_high_impact_findings: true },
-    delivery: { provider: 'fake', pull_request: t.pullRequest ?? 'draft', max_ci_repair_cycles: 3, ci_timeout_minutes: 30 },
+    review: { independent_provider_required: true, preferred_provider: 'codex', fallback_same_provider_allowed: false, block_unresolved_high_impact_findings: true, security: { block_severities: ['critical', 'high'], exceptions: [] } },
+    delivery: { provider: 'fake', pull_request: t.pullRequest ?? 'draft', max_ci_repair_cycles: 3, ci_timeout_minutes: 30, require_ci: false },
     checks: t.checks ?? {
       lint: check('lint', { mandatory: true }),
       typecheck: check('typecheck', { mandatory: true }),
@@ -107,6 +107,7 @@ export function config(t: ConfigTweaks = {}): OrbitConfig {
     providers: {},
     routing: { allowed_models: [], overrides: {} },
     retention: { keep_runs_days: 30, redact_patterns: [] },
+    verification: { allow_flaky_pass: false },
     knowledge: { enabled: true, share_globally: false, max_advisory_tokens: 800, curator_budget_usd: 0.25, eval_budget_usd: 0, auto_adopt_overlays: true },
     guard: { terms_file: null, allowed_emails: [] },
   };

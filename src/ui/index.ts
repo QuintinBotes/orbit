@@ -1,0 +1,10 @@
+export { startApp, stopApp, reconcileApp, assertBaseUrl, isLoopbackHost, isReadyStatus, APP_STATE_FILE, APP_LOG_FILE } from './app-fixture.ts';
+export type { AppHandle, AppIsolation, AppState, ReconcileOutcome, StartAppOptions } from './app-fixture.ts';
+export { runUiChecks, toEvidenceUi, assertCheckCommandAllowed, buildArgv, enforcedFlags, changedBetween, UI_LIMITATIONS, UI_ENFORCEMENT_VERSION } from './runner.ts';
+export type { UiRunInput, BaselineChange } from './runner.ts';
+export { uiFailureBrief, renderUiFailureBrief, journeyBrief, fingerprintOf, HYPOTHESES_SLOT, PROPOSED_REPAIR_SLOT, UNTRUSTED_NOTE } from './brief.ts';
+export type { UiFailureBrief, UiJourneyFailureBrief } from './brief.ts';
+export { parsePlaywrightReport, parseErrorContext, stripAnsi } from './report.ts';
+export { safeBaseEnv } from './env.ts';
+export { UI_JOURNEY_STATUSES, UI_RUN_VERDICTS, UI_ARTIFACT_KINDS } from './types.ts';
+export type * from './types.ts';

@@ -58,6 +58,19 @@
         }
       }
     },
+    "baseline_exceptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check_id", "fingerprint", "reason"],
+        "properties": {
+          "check_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+          "fingerprint": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        }
+      }
+    },
     "delivery": {
       "type": "object",
       "additionalProperties": false,

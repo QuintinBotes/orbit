@@ -3,7 +3,9 @@ import { openDb, type OrbitDb } from '../../../src/storage/db.ts';
 import { ManualClock } from '../../../src/core/clock.ts';
 import { canonicalJson, sha256 } from '../../../src/core/hash.ts';
 import { createRun } from '../../../src/controller/run-store.ts';
-import { extractObservations } from '../../../src/knowledge/extract.ts';
+import { CI_FAILURE_SOURCE, extractObservations } from '../../../src/knowledge/extract.ts';
+import { FAILURE_SOURCES } from '../../../src/evidence/store.ts';
+import { FINDING_STATUSES, RESOLVED_FINDING_STATUSES } from '../../../src/review/types.ts';
 
 const RUN_DIR = '/work/acme/.orbit/runs/r1';
 const TOKEN = `ghp_${'A1b2C3d4E5'.repeat(4)}`;
@@ -151,6 +153,18 @@ describe('extractObservations', () => {
     expect(obs[0]!.paths).toEqual(['src/export.ts']);
     expect(obs[0]!.evidence.map((e) => e.artifact)).toEqual(['finding:f1', 'review:rv1']);
     expect(obs[0]!.evidence[1]!.sha256).toBe('e'.repeat(64));
+  });
+
+  it('takes its status vocabulary from the owning modules: only a real resolved status counts', () => {
+    expect(FAILURE_SOURCES).toContain(CI_FAILURE_SOURCE);
+    expect(RESOLVED_FINDING_STATUSES.every((s) => (FINDING_STATUSES as readonly string[]).includes(s))).toBe(true);
+    const db = setup();
+    // "fixed" is not a review finding status; a row that says it was never produced by the review store.
+    db.run(
+      "INSERT INTO findings (id, run_id, review_id, severity, category, location, claim, evidence, suggested_validation, status, resolution, created_at, updated_at) VALUES ('f9', 'r1', 'rv1', 'high', 'authorization', 'src/export.ts:42', 'Not a real status.', 'e', 'v', 'fixed', 'r', 1, 1)",
+    );
+    const claims = extractObservations(db, 'r1', RUN_DIR).filter((o) => o.source === 'review-finding').map((o) => o.summary);
+    expect(claims).toEqual(['Export omits tenant scope.']);
   });
 
   it('groups CI failures by fingerprint and hashes the database rows it cites', () => {

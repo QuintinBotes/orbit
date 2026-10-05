@@ -96,6 +96,37 @@ describe('validateContract', () => {
     expect(problems).toContain('criterion AC-3 has an empty statement');
   });
 
+  describe('baseline_exceptions', () => {
+    const exception = (check_id: string, fingerprint = 'fp:0123456789abcdef') => ({ check_id, fingerprint, reason: 'already failing on the base revision' });
+
+    it('is optional, and accepts an exception for a required check', () => {
+      const snap = snapshot();
+      expect(contractProblems(contract(snap), snap)).toEqual([]);
+      const c = contract(snap, { baseline_exceptions: [exception('lint')] });
+      expect(contractProblems(c, snap)).toEqual([]);
+    });
+
+    it('rejects an exception for a check that is not in required_check_ids', () => {
+      const snap = snapshot();
+      const c = contract(snap, { baseline_exceptions: [exception('build')] });
+      expect(contractProblems(c, snap)).toContain('baseline exception for check "build", which is not in required_check_ids');
+    });
+
+    it('rejects two exceptions for the same check', () => {
+      const snap = snapshot();
+      const c = contract(snap, { baseline_exceptions: [exception('lint'), exception('lint', 'fp:fedcba9876543210')] });
+      expect(contractProblems(c, snap)).toContain('check "lint" has more than one baseline exception');
+    });
+
+    it('is strict about the shape of each exception', () => {
+      const snap = snapshot();
+      const extra = contract(snap, { baseline_exceptions: [{ ...exception('lint'), note: 'x' }] as never });
+      expect(contractProblems(extra, snap).some((p) => p.startsWith('schema:'))).toBe(true);
+      const missing = contract(snap, { baseline_exceptions: [{ check_id: 'lint', reason: 'r' }] as never });
+      expect(contractProblems(missing, snap).some((p) => p.startsWith('schema:'))).toBe(true);
+    });
+  });
+
   describe('allowed_paths containment', () => {
     it.each([
       ['apps/**', true],

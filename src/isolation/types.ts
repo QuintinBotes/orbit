@@ -16,6 +16,8 @@ export interface SandboxProfile {
   denyReadPaths: string[];
   /** Egress allowlist. Empty = no network. */
   allowedHosts: string[];
+  /** Allow listening on loopback. Only UI app fixtures need it. */
+  allowLocalBinding?: boolean;
   limits: {
     timeoutMs: number;
     memoryMb: number | null;

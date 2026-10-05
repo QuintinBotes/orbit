@@ -1,0 +1,12 @@
+body { font-family: Arial, Helvetica, sans-serif; margin: 0; background: #ffffff; color: #1a1a1a; }
+main { max-width: 760px; margin: 0 auto; padding: 24px 16px; }
+h1 { font-size: 1.8rem; margin: 0 0 16px; }
+.toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+select, button { font-size: 1rem; padding: 6px 10px; }
+button { background: #0b5cad; color: #ffffff; border: 0; border-radius: 4px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px; border-bottom: 1px solid #d0d0d0; }
+/* Pre-existing, known low contrast: recorded in the accessibility baseline so only new violations fail. */
+.footer-note { margin-top: 24px; color: #b5b5b5; font-size: 0.85rem; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+@media (max-width: 480px) { th:nth-child(4), td:nth-child(4) { display: none; } }

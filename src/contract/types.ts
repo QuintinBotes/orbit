@@ -25,6 +25,20 @@ export interface ContractAssumption {
   status: 'unverified' | 'supported' | 'rejected' | 'needs-decision';
 }
 
+/**
+ * A failure that already exists on the base revision and that the contract
+ * accepts. It applies only while the failing check still produces exactly the
+ * recorded fingerprint, so a different breakage of the same check is never
+ * excused by it.
+ */
+export interface BaselineException {
+  /** Must be one of the contract's required_check_ids. */
+  check_id: string;
+  /** Failure fingerprint recorded from the base revision (see evidence/fingerprint.ts). */
+  fingerprint: string;
+  reason: string;
+}
+
 export interface GoalContract {
   version: '1.0';
   task_id: string;
@@ -36,6 +50,8 @@ export interface GoalContract {
   allowed_paths: string[];
   required_check_ids: string[];
   assumptions: ContractAssumption[];
+  /** Optional: documented pre-existing failures the evidence report may accept. */
+  baseline_exceptions?: BaselineException[];
   delivery: { draft_pr: boolean; merge: boolean };
   /** Filled at run start from the policy snapshot. */
   policy_hash: string;

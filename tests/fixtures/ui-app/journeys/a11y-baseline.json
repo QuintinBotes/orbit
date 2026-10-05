@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "fingerprint": "c1e845aad7b9a2deb397a3a9",
+      "ruleId": "color-contrast",
+      "impact": "serious",
+      "target": "[\".footer-note\"]",
+      "url": "/reports",
+      "viewport": "1440x900",
+      "help": "Elements must meet minimum color contrast ratio thresholds"
+    },
+    {
+      "fingerprint": "77d0a05b4bbaef25ddd74d83",
+      "ruleId": "color-contrast",
+      "impact": "serious",
+      "target": "[\".footer-note\"]",
+      "url": "/reports",
+      "viewport": "390x844",
+      "help": "Elements must meet minimum color contrast ratio thresholds"
+    }
+  ]
+}

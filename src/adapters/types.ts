@@ -11,7 +11,7 @@
  */
 import type { SandboxProfile } from '../isolation/types.ts';
 
-export type WorkerRole = 'planner' | 'implementer' | 'verifier' | 'reviewer' | 'inquisitor';
+export type WorkerRole = 'planner' | 'implementer' | 'verifier' | 'reviewer' | 'inquisitor' | 'curator';
 
 export interface ProviderCapabilities {
   provider: string;
@@ -56,6 +56,10 @@ export interface TaskSpec {
   sandbox: SandboxProfile;
   /** Path to the frozen policy snapshot the worker's guard hook enforces. */
   policyPath: string;
+  /** Hash of the policy snapshot, passed to the guard hook; adapters derive it from the file when absent. */
+  policyHash?: string;
+  /** Provider session id, persisted on the worker row before spawn so a crash can resume rather than duplicate. */
+  sessionId?: string;
   /** Environment for the task. Adapters start from a scrubbed base and add only these. */
   env: Record<string, string>;
 }
@@ -91,6 +95,8 @@ export type TaskStatus =
   | 'transient_error'
   | 'malformed_output'
   | 'lost';
+
+export const TASK_STATUSES: readonly TaskStatus[] = ['succeeded', 'failed', 'max_turns', 'timeout', 'cancelled', 'auth_failed', 'transient_error', 'malformed_output', 'lost'];
 
 export interface TaskResult {
   status: TaskStatus;

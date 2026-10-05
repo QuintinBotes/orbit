@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import Ajv2020Module from 'ajv/dist/2020.js';
+import addFormatsModule from 'ajv-formats';
 import schema from '../../../schemas/config.schema.json' with { type: 'json' };
 import { defaultConfig, loadConfig, modelPermitted, parseConfig, validateConfig } from '../../../src/policy/config.ts';
 import { isOrbitError, type OrbitError } from '../../../src/core/errors.ts';
@@ -67,8 +68,26 @@ describe('defaults', () => {
 
   it('produces a document the published schema accepts', () => {
     const Ajv2020 = ((Ajv2020Module as unknown as { default?: typeof Ajv2020Module }).default ?? Ajv2020Module) as typeof Ajv2020Module;
-    const validate = new Ajv2020({ strict: true, allowUnionTypes: true }).compile(schema as object);
+    const ajv = new Ajv2020({ strict: true, allowUnionTypes: true });
+    // The schema's "format": "date" (security exception expiry) needs the formats the loader registers.
+    ((addFormatsModule as unknown as { default?: typeof addFormatsModule }).default ?? addFormatsModule)(ajv);
+    const validate = ajv.compile(schema as object);
     expect(validate(JSON.parse(JSON.stringify(defaultConfig())))).toBe(true);
+  });
+
+  it('accepts review.security exceptions, with a plain-date expiry and a null location', () => {
+    const c = parseConfig(
+      [
+        'version: 1',
+        'review:',
+        '  security:',
+        '    block_severities: [critical, high]',
+        '    exceptions:',
+        '      - { category: authorization, severities: [high], reason: tenant model is replaced next quarter, location: null, expires: 2026-12-31 }',
+        '',
+      ].join('\n'),
+    );
+    expect(c.review.security.exceptions).toEqual([{ category: 'authorization', severities: ['high'], reason: 'tenant model is replaced next quarter', location: null, expires: '2026-12-31' }]);
   });
 
   it('accepts the starter template and resolves it to the defaults', () => {

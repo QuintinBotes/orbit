@@ -74,6 +74,14 @@ function crossCheck(c: GoalContract, snapshot: PolicySnapshot, expectedHash: str
     seenAssumptions.add(a.id);
   }
 
+  // An exception excuses one required check's pre-existing failure; one for any other check could never be consulted.
+  const seenExceptions = new Set<string>();
+  for (const e of c.baseline_exceptions ?? []) {
+    if (!c.required_check_ids.includes(e.check_id)) problems.push(`baseline exception for check "${e.check_id}", which is not in required_check_ids`);
+    if (seenExceptions.has(e.check_id)) problems.push(`check "${e.check_id}" has more than one baseline exception`);
+    seenExceptions.add(e.check_id);
+  }
+
   for (const id of c.required_check_ids) {
     if (!isCheck(id)) problems.push(`required check "${id}" is not defined by the policy`);
   }

@@ -135,12 +135,19 @@ export interface OrbitConfig {
     preferred_provider: string;
     fallback_same_provider_allowed: boolean;
     block_unresolved_high_impact_findings: boolean;
+    /** Spec §5: explicit severity and exception rules; a warning is not automatically a defect. */
+    security: {
+      block_severities: ('critical' | 'high' | 'medium' | 'low' | 'info')[];
+      exceptions: { category: string; severities: ('critical' | 'high' | 'medium' | 'low' | 'info')[]; reason: string; location: string | null; expires: string | null }[];
+    };
   };
   delivery: {
     provider: 'github' | 'fake';
     pull_request: 'draft' | 'ready' | 'none';
     max_ci_repair_cycles: number;
     ci_timeout_minutes: number;
+    /** When true, a delivery with no CI checks observed before the timeout cannot succeed. */
+    require_ci: boolean;
   };
   checks: Record<string, CheckDefinition>;
   ui: UiConfig | null;
@@ -157,6 +164,10 @@ export interface OrbitConfig {
     overrides: Record<string, string>;
   };
   retention: { keep_runs_days: number; redact_patterns: string[] };
+  verification: {
+    /** A check that passed only on a rerun is disclosed as flaky; when false it cannot make the verdict PASS. */
+    allow_flaky_pass: boolean;
+  };
   /** Learning layer (ADR 0002). Nothing here can widen authority. */
   knowledge: {
     enabled: boolean;

@@ -367,4 +367,8 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE workers ADD COLUMN session_id TEXT;
   ALTER TABLE workers ADD COLUMN isolation_tier TEXT;
   `,
+  /* 3: review invalidation reasons; hypothesis fingerprints as a column */ `
+  ALTER TABLE reviews ADD COLUMN invalidated_reason TEXT;
+  ALTER TABLE hypotheses ADD COLUMN fingerprint TEXT;
+  `,
 ];
