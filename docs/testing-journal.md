@@ -20,6 +20,24 @@ Entry format:
 
 | Item | Area | Status |
 |---|---|---|
+| Coverage below the floor (lines 89.5%, branches 78%) and not enforced | tests | open G40 |
+| Live demo with real providers never run | demo | open G39 |
+| Impact register never produced by the Inquisition | inquisition | open G30 |
+| `final.json` written without redaction | report | open G46 |
+| Planner does not select or justify engineering practices | planning | open G25 |
+| Baseline exception has no runtime path into a contract | contract | open G27 |
+| No rebase path when the base branch moves | delivery | open G37 |
+| Supervised mode asks only about dependency changes | controller | open G15 |
+| No memory limit under srt; limits off by default | isolation | open G24 |
+| `orbit verify` judges security findings differently from VERIFYING | cli | open G47 |
+| Release mode cannot merge the default draft PR | release | open G48 |
+| Three tests flaky under full parallel load | tests | open G49 |
+| One writer per run; merge overhead not weighed | scheduler | open G14 |
+| Smaller items | various | open G4, G50 to G54 |
+
+Closed in 30e6e5c: G1 to G3, G5 to G13, G16 to G23, G26, G28, G29, G31 to G36, G38, G41 to G45 and the six acceptance and fault-injection defects.
+
+---|---|---|
 | Completion ignores criteria blocked by the Inquisition | controller | open G6 |
 | Authentication failure ends EXHAUSTED instead of BLOCKED | controller | open G7 |
 | Worker that dies under a live controller is not restarted | controller | open G8 |
@@ -31,6 +49,13 @@ Entry format:
 | Live demo with real providers never run | demo | open G39 |
 
 ---
+
+### 2026-10-05: gap-fix round: 37 spec gaps closed, five more defects found in review
+- Tested: seven fixers with disjoint file ownership, each closing gaps with a test that failed first; an adversarial verifier over the controller, release and policy changes; a fresh traceability audit that only counted a gap closed after reading its test.
+- Went well: the fake-provider lab made every controller gap reproducible end to end; all six `it.fails` defect markers flipped to passing; release mode reused the action ledger, freshness gate and isolation profiles, so `release.ts` stayed small; traceability rose from 285 to 341 of 359 requirements done.
+- Went wrong: the verifier found five defects in fresh fixes, including a release that could wait forever for a branch check that never reports, and a dependency audit that could not run being dropped from the evidence report; strict model-output schemas made a new planner field (`practices`) impossible to add without touching four other owners' fixtures; ownership boundaries left cross-file follow-ups behind (the demo app's copy of the Playwright template, `orbit verify`'s security wiring, the impact register call site); the default draft pull request makes release-mode merge impossible; three tests are flaky under full parallel load; I stopped a fixer's background test run by mistake after misidentifying it as a leftover.
+- Root cause: one scheduler limit mixed per-run settings with machine capacity; the controller trusted spend nobody measured (auth failures and lost sessions charged at the cap); parallel fixers cannot finish changes that span owners.
+- Change: fixed in 30e6e5c (37 gaps, 5 verifier defects, the template copy). Open G14, G15, G24, G25, G27, G30, G37, G39, G40, G46 to G54 (see docs/gaps.md). Process: cross-owner follow-ups now get one integrator agent after the parallel round, and I check a background task's command before stopping it.
 
 ### 2026-10-05: publication hygiene lessons
   - Tested: sanitized history rewrites, each verified offline by two scanners, commit counts and tip diffs before any force-push.
