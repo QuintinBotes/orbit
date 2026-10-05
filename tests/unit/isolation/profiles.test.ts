@@ -9,6 +9,7 @@ import {
   HOME_DENY_READ,
   PROVIDER_HOSTS,
   WORKER_DIR_READ_ONLY,
+  codexReviewerProfile,
   orbitTmpRoot,
   prepareWorkerTmpDir,
   profileForCheck,
@@ -509,5 +510,107 @@ describe('provider directories and the worker tmp dir', () => {
       caught = err;
     }
     expect(isOrbitError(caught, 'ISOLATION_UNAVAILABLE')).toBe(true);
+  });
+});
+
+describe('codexReviewerProfile: the os-sandbox tier, where srt is the only sandbox around Codex', () => {
+  function reviewerLayout(codexName = '.codex-reviewer') {
+    const l = layout();
+    const codexHome = join(l.home, codexName);
+    mkdirSync(codexHome, { recursive: true });
+    const snapshot = snapshotFor({ repoRoot: l.repo, allowedHosts: ['registry.npmjs.org'] });
+    const worker = profileForWorker({ worktree: l.worktree, workerDir: l.workerDir, snapshot, provider: 'codex', claudeConfigDir: l.claudeDir, homeDir: l.home, codexHome, env: {} });
+    const input = { checkout: l.worktree, workerDir: l.workerDir, codexHome, homeDir: l.home };
+    return { l, codexHome, worker, input, profile: codexReviewerProfile(worker, input) };
+  }
+
+  it('writes only the worker directory and Codex state, never the review checkout', () => {
+    const { l, codexHome, worker, profile } = reviewerLayout();
+    // The generic Codex worker profile may write its worktree and private tmp; the reviewer profile may not.
+    expect(worker.writablePaths).toEqual(expect.arrayContaining([l.worktree, workerTmpDir(l.workerDir)]));
+    expect(profile.writablePaths).toEqual([l.workerDir, codexHome]);
+    const srt = buildSrtSettings(profile);
+    expect(srt.filesystem.allowWrite).toEqual([l.workerDir, codexHome]);
+    expect(srt.filesystem.allowWrite.some((w) => isWithin(l.worktree, w))).toBe(false);
+  });
+
+  it('reaches only the Codex provider hosts, not the policy hosts', () => {
+    const { worker, profile } = reviewerLayout();
+    expect(worker.allowedHosts).toContain('registry.npmjs.org');
+    expect(profile.allowedHosts).toEqual(['api.openai.com', 'chatgpt.com']);
+    expect(profile.allowedHosts).toEqual([...PROVIDER_HOSTS.codex]);
+    expect(buildSrtSettings(profile).network.allowedDomains).toEqual(['api.openai.com', 'chatgpt.com']);
+    expect(profile.allowLocalBinding).toBeUndefined();
+  });
+
+  it('keeps the checkout readable although it sits under a denied directory, and unwritable', () => {
+    const { l, profile } = reviewerLayout();
+    const srt = buildSrtSettings(profile);
+    expect(srt.filesystem.denyRead).toContain(join(l.home, '.orbit'));
+    expect(srt.filesystem.allowRead).toContain(l.worktree);
+    expect(srt.filesystem.allowWrite).not.toContain(l.worktree);
+    expect(srt.filesystem.denyWrite).not.toContain(l.worktree);
+    // git still works in the linked worktree: its shared directory stays readable.
+    expect(srt.filesystem.allowRead).toContain(join(l.repo, '.git'));
+  });
+
+  it('denies every credential location except Codex own state directory, which holds the auth file it must read', () => {
+    const { l, codexHome, profile } = reviewerLayout();
+    for (const rel of ['.ssh', '.aws', '.config/gh', '.gnupg', '.netrc', '.npmrc', '.orbit']) expect(profile.denyReadPaths, rel).toContain(join(l.home, rel));
+    // Another Codex login (the default ~/.codex here), and every Claude login.
+    expect(profile.denyReadPaths).toEqual(expect.arrayContaining([join(l.home, '.codex'), l.claudeDir, join(l.home, '.claude'), join(l.home, '.claude.json')]));
+    const srt = buildSrtSettings(profile);
+    for (const p of [codexHome, join(codexHome, 'auth.json')]) {
+      expect(profile.denyReadPaths).not.toContain(p);
+      expect(srt.filesystem.denyRead).not.toContain(p);
+    }
+    // The login may be refreshed in place, so the auth file is writable; the entries that run code on the host are not.
+    expect(srt.filesystem.allowWrite).toContain(codexHome);
+    expect(srt.filesystem.denyWrite).not.toContain(join(codexHome, 'auth.json'));
+    for (const rel of CODEX_HOME_READ_ONLY) expect(srt.filesystem.denyWrite, rel).toContain(join(codexHome, rel));
+    for (const rel of WORKER_DIR_READ_ONLY) expect(srt.filesystem.denyWrite, rel).toContain(join(l.workerDir, rel));
+  });
+
+  it('uses its own Codex state directory even when the caller\'s profile counted it as another login', () => {
+    const l = layout();
+    const mine = join(l.home, '.codex-mine');
+    mkdirSync(mine, { recursive: true });
+    // The caller named another configured directory, so CODEX_HOME (the one Codex will really use) reads as another login to it.
+    const worker = profileForWorker({ worktree: l.worktree, workerDir: l.workerDir, snapshot: snapshotFor({ repoRoot: l.repo }), provider: 'codex', claudeConfigDir: l.claudeDir, homeDir: l.home, codexHome: join(l.home, '.codex-callers'), env: { CODEX_HOME: mine } });
+    expect(worker.denyReadPaths).toContain(mine);
+    const profile = codexReviewerProfile(worker, { checkout: l.worktree, workerDir: l.workerDir, codexHome: mine, homeDir: l.home });
+    expect(profile.denyReadPaths).not.toContain(mine);
+    expect(profile.denyReadPaths).toContain(join(l.home, '.codex'));
+    expect(profile.writablePaths).toEqual([l.workerDir, mine]);
+    expect(() => buildSrtSettings(profile)).not.toThrow();
+  });
+
+  it('refuses any layout in which a writable path overlaps the review checkout', () => {
+    const { l, worker, codexHome } = reviewerLayout();
+    const refused = (input: { checkout: string; workerDir: string; codexHome: string }) => {
+      try {
+        codexReviewerProfile(worker, { ...input, homeDir: l.home });
+      } catch (err) {
+        return isOrbitError(err) ? err.code : String(err);
+      }
+      return 'no error';
+    };
+    // CODEX_HOME at, inside or above the checkout; the worker directory the same.
+    expect(refused({ checkout: l.worktree, workerDir: l.workerDir, codexHome: l.worktree })).toBe('ISOLATION_UNAVAILABLE');
+    expect(refused({ checkout: l.worktree, workerDir: l.workerDir, codexHome: join(l.worktree, '.codex') })).toBe('ISOLATION_UNAVAILABLE');
+    expect(refused({ checkout: l.worktree, workerDir: join(l.worktree, 'worker'), codexHome })).toBe('ISOLATION_UNAVAILABLE');
+    expect(refused({ checkout: join(l.workerDir, 'checkout'), workerDir: l.workerDir, codexHome })).toBe('ISOLATION_UNAVAILABLE');
+    expect(refused({ checkout: join(codexHome, 'checkout'), workerDir: l.workerDir, codexHome })).toBe('ISOLATION_UNAVAILABLE');
+    // A Codex home that is the home directory or above it would hand over every dotfile.
+    expect(refused({ checkout: l.worktree, workerDir: l.workerDir, codexHome: l.home })).toBe('ISOLATION_UNAVAILABLE');
+    expect(refused({ checkout: l.worktree, workerDir: l.workerDir, codexHome: l.r })).toBe('ISOLATION_UNAVAILABLE');
+    expect(refused({ checkout: l.worktree, workerDir: l.workerDir, codexHome })).toBe('no error');
+  });
+
+  it('keeps the limits and the other read rules of the profile it narrows', () => {
+    const { worker, profile } = reviewerLayout();
+    expect(profile.limits).toEqual(worker.limits);
+    expect(profile.denyReadPaths).toEqual(expect.arrayContaining(worker.denyReadPaths));
+    expect(profile.readablePaths).toEqual(expect.arrayContaining(worker.readablePaths));
   });
 });

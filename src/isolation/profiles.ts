@@ -6,7 +6,7 @@ import { sha256 } from '../core/hash.ts';
 import { credentialGlobsOf } from '../policy/builtin.ts';
 import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
 import type { SandboxProfile } from './types.ts';
-import { canonicalPath, credentialFilesIn, gitCommonDir, isWithin, uniq } from './util.ts';
+import { canonicalPath, credentialFilesIn, gitCommonDir, isWithin, readablePathsOf, uniq } from './util.ts';
 
 /**
  * Profiles say what an untrusted process may touch; providers decide how to
@@ -189,6 +189,8 @@ function walkLimit(input: { credentialWalkLimit?: number }): { credentialWalkLim
  * allowed hosts. Every other login's state, the other provider's included,
  * is denied like any other credential.
  *
+ * A Codex reviewer gets the narrower codexReviewerProfile instead.
+ *
  * The adapter must create the temp directory with prepareWorkerTmpDir and
  * set TMPDIR to it. Verified with `claude -p` under srt against a mock API:
  * with that TMPDIR the Bash tool works and needs no write access to the
@@ -233,6 +235,57 @@ export function profileForWorker(input: WorkerProfileInput): BuiltProfile {
       timeoutMs: input.timeoutMs ?? input.snapshot.config.scheduler.hard_limits.wall_minutes * 60_000,
       ...resourceLimits(input.snapshot),
     },
+  };
+}
+
+export interface CodexReviewerProfileInput {
+  /** The review checkout: readable, never writable. */
+  checkout: string;
+  workerDir: string;
+  /** Codex's state directory (see codexHomeFor): the one place besides the worker directory the reviewer may write. */
+  codexHome: string;
+  homeDir: string;
+}
+
+/**
+ * The srt profile of a Codex reviewer in the os-sandbox tier (ADR 0001,
+ * "Codex reviewer tiers"). Codex's own sandbox cannot start inside srt on
+ * macOS (a Seatbelt profile cannot be applied from inside another:
+ * `sandbox_apply: Operation not permitted`), so Codex runs with
+ * `--sandbox danger-full-access` and this profile is the only thing that
+ * confines it. It narrows the generic Codex worker profile:
+ *
+ * - writes: the worker directory and Codex's state directory, nothing else.
+ *   Never the review checkout, and the build refuses a layout in which either
+ *   directory contains or sits inside it. The state directory holds the auth
+ *   file, which Codex refreshes in place, so it stays writable; the entries
+ *   there that run code on the host (CODEX_HOME_READ_ONLY) do not.
+ * - egress: the Codex provider hosts only, not the hosts the policy allows
+ *   implementers (a reviewer has no use for a package registry).
+ * - reads: every credential path the generic profile denies stays denied,
+ *   including another Codex login (the default ~/.codex when CODEX_HOME names
+ *   a different directory). The exception is Codex's own state directory,
+ *   which holds the auth file it must read to log in. The checkout is
+ *   re-allowed for reading, since it usually sits under the denied ~/.orbit.
+ */
+export function codexReviewerProfile(profile: SandboxProfile, input: CodexReviewerProfileInput): BuiltProfile {
+  const home = canonicalPath(input.homeDir);
+  const checkout = canonicalPath(input.checkout);
+  const workerDir = canonicalPath(input.workerDir);
+  const codexHome = canonicalPath(input.codexHome);
+  assertProviderDirConfinable(codexHome, home);
+  for (const [what, dir] of [['worker directory', workerDir], ['Codex state directory', codexHome]] as const) {
+    if (isWithin(checkout, dir) || isWithin(dir, checkout)) {
+      throw new OrbitError('ISOLATION_UNAVAILABLE', `refusing to let the reviewer write ${dir}: the ${what} overlaps the review checkout ${checkout}, which must stay read-only`, { path: dir });
+    }
+  }
+  const defaultCodexHome = join(home, '.codex');
+  return {
+    writablePaths: [workerDir, codexHome],
+    denyReadPaths: uniq([...profile.denyReadPaths.map(canonicalPath).filter((p) => p !== codexHome), ...(defaultCodexHome === codexHome ? [] : [defaultCodexHome])]),
+    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), checkout, ...CODEX_HOME_READ_ONLY.map((rel) => join(codexHome, rel))]),
+    allowedHosts: [...PROVIDER_HOSTS.codex],
+    limits: { ...profile.limits },
   };
 }
 
@@ -306,6 +359,19 @@ export function providerDirs(opts: { homeDir: string; claudeConfigDir?: string; 
   const claude = opts.claudeConfigDir ?? nonEmpty(env.CLAUDE_CONFIG_DIR) ?? join(home, '.claude');
   const codex = opts.codexHome ?? nonEmpty(env.CODEX_HOME) ?? join(home, '.codex');
   return { claudeConfigDir: canonicalPath(claude), codexHome: canonicalPath(codex) };
+}
+
+/**
+ * Where Codex keeps its state for this environment: CODEX_HOME, else
+ * ~/.codex (codex-cli.md section 8). A relative CODEX_HOME is refused, since
+ * a sandbox rule needs the one real directory.
+ */
+export function codexHomeFor(homeDir: string, env: Record<string, string | undefined>): string {
+  const configured = nonEmpty(env.CODEX_HOME);
+  if (configured !== undefined && !isAbsolute(configured)) {
+    throw new OrbitError('CONFIG_INVALID', `CODEX_HOME must be an absolute path, got ${JSON.stringify(configured)}`, { variable: 'CODEX_HOME' });
+  }
+  return canonicalPath(configured ?? join(canonicalPath(homeDir), '.codex'));
 }
 
 /**

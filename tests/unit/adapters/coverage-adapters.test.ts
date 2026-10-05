@@ -406,13 +406,14 @@ describe('CodexAdapter', () => {
     expect(readFileSync(join(f.workerDir, 'prompt.md'), 'utf8')).not.toContain('token');
 
     const g = fixture();
-    const wrapped = { argv: ['/tmp/orbit-srt-q/settings.json', 'codex'], env: { W: '1' }, cleanup() {}, limitations: ['srt'] };
-    const iso = { kind: 'sandbox-runtime' as const, wrap: vi.fn().mockReturnValue(wrapped), available: async () => ({ ok: true, detail: '' }) };
+    // wrap() puts the command it was given last, like srt does; the adapter refuses a wrapper that did not.
+    const wrap = vi.fn((argv: string[]) => ({ argv: ['/opt/srt', '--settings', '/tmp/orbit-srt-q/settings.json', '--', ...argv], env: { W: '1' }, cleanup() {}, limitations: ['srt'] }));
+    const iso = { kind: 'sandbox-runtime' as const, wrap, available: async () => ({ ok: true, detail: '' }) };
     const withIso = await adapter({ isolation: iso }).startTask(reviewSpec(g));
     expect(withIso.tier).toBe('os-sandbox');
     expect(withIso.limitations).toEqual(expect.arrayContaining(['srt']));
     expect(withIso.limitations.some((l) => l.startsWith('Output budget'))).toBe(true);
-    expect(supMock.launchShim.mock.calls[1]![0]).toMatchObject({ argv: wrapped.argv, env: wrapped.env, cleanupPaths: ['/tmp/orbit-srt-q'] });
+    expect(supMock.launchShim.mock.calls[1]![0]).toMatchObject({ argv: wrap.mock.results[0]!.value.argv, env: { W: '1' }, cleanupPaths: ['/tmp/orbit-srt-q'] });
     const none = fixture();
     const noneIso = { kind: 'none' as const, wrap: vi.fn() };
     expect((await adapter({ isolation: noneIso }).startTask(reviewSpec(none))).tier).toBe('codex-sandbox');

@@ -322,7 +322,7 @@ sometimes shortened.
 | S12.3 | Review packet: goal, criteria, policy, candidate, diff, sources, results, assumptions, questions | `review/packet.ts:buildReviewPacket` | I/review/packet.test.ts "contains every section a reviewer needs" | done |
 | S12.4 | Packet excludes secrets and unrelated content | `review/packet.ts` | I/review/packet.test.ts "leaves out unrelated repository content", "redacts recognized secret shapes..." | done |
 | S12.5 | Record provider and data-policy eligibility | `review/select.ts:selectionDecisionRecord` | U/review/select.test.ts "blocks with a record that serializes for the decision log" | done |
-| S12.6 | Reviewers run separately, read-only | `adapters/codex.ts:buildCodexArgv` | U/adapters/codex.test.ts "builds the verified read-only review argv" | done |
+| S12.6 | Reviewers run separately, read-only | `adapters/codex.ts:buildCodexArgv`, `isolation/profiles.ts:codexReviewerProfile` | U/adapters/codex.test.ts "builds the verified read-only review argv", "refuses --sandbox danger-full-access in every combination except the sandbox-runtime wrapper"; U/adapters/codex-tiers.test.ts; U/isolation/profiles.test.ts "codexReviewerProfile"; I/adapters/codex-os-sandbox.test.ts (real srt: checkout unwritable, other hosts refused) | done |
 | S12.7 | No approval deadlock without removing the sandbox | `adapters/codex.ts`, `adapters/claude.ts` (`dontAsk`) | A/credentials-and-routing.test.ts "scenario 11" | done |
 | S12.8 | Findings in the spec shape | `schemas/review-output.schema.json` | U/schemas/model-output-schemas.test.ts "matches the spec section 12 findings shape" | done |
 | S12.9 | No majority vote | `review/resolve.ts` | U/review/resolve.test.ts "is not decided by how many reviewers approved" | done |

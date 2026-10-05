@@ -36,7 +36,7 @@ mutating commands are refused inside a worker process.
 
 | Layer | Mechanism | Covers |
 |---|---|---|
-| Operating system | sandbox-runtime (Seatbelt or bubblewrap), or a Docker container | shell writes outside the worktree, network egress by host, credential reads; the container adds CPU, memory and pids limits |
+| Operating system | sandbox-runtime (Seatbelt or bubblewrap), or a Docker container; for the Codex reviewer, sandbox-runtime alone, or Codex's own read-only sandbox when it is unavailable | shell writes outside the worktree, network egress by host, credential reads; the container adds CPU, memory and pids limits |
 | Claude Code | `--settings` with permission rules, a permission mode that never prompts, the PreToolUse guard hook | Edit and Write paths, protected paths, dangerous commands |
 | Environment | scrubbed worker environment: no `GH_TOKEN`, `GITHUB_TOKEN`, `SSH_AUTH_SOCK` or cloud credentials | delivery credentials never reach a worker |
 | Controller | independent diff inspection of the candidate tree against scope, protected paths and test-weakening rules | anything the layers above missed, including indirect shell writes |
@@ -90,6 +90,18 @@ State these plainly to yourself before running unattended.
 - **The `claude-sandbox` tier is weaker than `os-sandbox`.** Edit and Write
   confinement depends on Claude Code's permission layer, not the OS. `orbit
   doctor` warns when a run would use it.
+- **The Codex reviewer's two tiers confine different things.** Codex's own
+  sandbox cannot start inside `srt` on macOS, so in the `os-sandbox` tier Codex
+  runs with `--sandbox danger-full-access` and `srt` is the only sandbox: it
+  allows writes only to the worker directory and Codex's state directory (never
+  the review checkout), egress only to the Codex provider hosts, and denies
+  credential reads except Codex's own auth file, which it must read to log in.
+  That state directory stays writable, and other reads are broad. Without
+  `srt` the `codex-sandbox` tier runs Codex unwrapped with `--sandbox
+  read-only`, which blocks writes and network for its commands but not reads:
+  any file you can read may reach the provider, and the worker record says so.
+  Orbit passes `danger-full-access` only together with the `srt` wrapper and
+  refuses it in any other combination.
 - **Verification has limited coverage.** Accessibility scans find only what
   automated rules can find and are not an accessibility audit. Visual checks
   compare pixels to a baseline and do not judge design. Orbit reports these

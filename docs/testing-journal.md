@@ -50,6 +50,13 @@ Closed in 30e6e5c: G1 to G3, G5 to G13, G16 to G23, G26, G28, G29, G31 to G36, G
 
 ---
 
+### 2026-10-05: live demo 1 re-run: verification passes, the Codex reviewer cannot start
+- Tested: demo 1 again on a fresh lab after the loopback and environment-failure fixes (9a81424).
+- Went well: graded simple; the first candidate passed every mandatory check (the unit suite now binds loopback); the run blocked honestly at review instead of skipping the mandatory independent reviewer.
+- Went wrong: the Codex reviewer exited 1 twice with `Operation not permitted (os error 1)`.
+- Root cause: in the os-sandbox tier Codex runs inside srt and also starts its own Seatbelt sandbox (`--sandbox read-only`); macOS refuses to apply a Seatbelt profile from inside another (`sandbox_apply: Operation not permitted`, reproduced directly). The interface notes had marked this combination unverified, and no test exercised a real nested sandbox.
+- Change: ADR 0001 "Codex reviewer tiers": srt is the only sandbox in the os-sandbox tier and Codex runs with `danger-full-access` inside it, the review checkout never writable; fix in progress.
+
 ### 2026-10-05: first live run with real providers (demo 1, simple goal)
 - Tested: Orbit end to end on a local copy of the demo app in autonomous mode with the real Claude CLI (subscription login, claude-sandbox tier) and Codex as reviewer, no delivery.
 - Went well: `orbit doctor` found three real bugs before any model spend (a keychain login reported as logged out because USER was dropped, `@axe-core/playwright` reported missing because its exports hide package.json, `npm run --silent lint` read as a script named "--silent"); a contradictory mode/actions config was refused with exit 4; the real planner produced a 3-criterion contract with the practices block; routing stayed on Sonnet with no unjustified escalation; the run stopped honestly at EXHAUSTED instead of claiming success.

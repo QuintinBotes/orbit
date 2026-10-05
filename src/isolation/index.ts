@@ -18,6 +18,8 @@ export type { MemoryWatchdogOptions } from './memory.ts';
 export {
   profileForWorker,
   profileForCheck,
+  codexReviewerProfile,
+  codexHomeFor,
   prepareWorkerTmpDir,
   workerTmpDir,
   orbitTmpRoot,
@@ -30,7 +32,7 @@ export {
   CODEX_HOME_READ_ONLY,
   WORKER_DIR_READ_ONLY,
 } from './profiles.ts';
-export type { BuiltProfile, CheckProfileInput, WorkerProfileInput, WorkerProvider, ProviderDirs } from './profiles.ts';
+export type { BuiltProfile, CheckProfileInput, CodexReviewerProfileInput, WorkerProfileInput, WorkerProvider, ProviderDirs } from './profiles.ts';
 export type { IsolationProfile } from './util.ts';
 
 type RunMode = OrbitConfig['mode'];

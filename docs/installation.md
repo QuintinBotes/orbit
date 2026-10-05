@@ -98,6 +98,23 @@ and in every report. Both tiers load no user, project or local Claude Code
 settings, so a repository's own hooks and MCP servers never run in a worker.
 Trusted checks always run in `srt` (or the container).
 
+The Codex reviewer follows the same two tiers (ADR 0001, "Codex reviewer
+tiers"). Codex's own sandbox cannot start inside `srt` on macOS: a Seatbelt
+profile cannot be applied from inside another (`sandbox_apply: Operation not
+permitted`, which made the reviewer exit 1 with `Operation not permitted (os
+error 1)`). So in the first tier `srt` is the only sandbox.
+
+| Tier | How | Requires | Confinement |
+|---|---|---|---|
+| `os-sandbox` (preferred) | `codex exec --sandbox danger-full-access` runs inside `srt`; the flag is passed only together with the `srt` wrapper | `isolation.provider: sandbox-runtime` and an `srt` that starts here, a Codex login kept in `$CODEX_HOME/auth.json` (the default) or `CODEX_API_KEY` | `srt`: writes only to the worker directory and Codex's state directory (`CODEX_HOME`, default `~/.codex`), never the review checkout; egress only to `api.openai.com` and `chatgpt.com`; credential paths unreadable except Codex's own auth file, which it must read to log in |
+| `codex-sandbox` | `codex exec --sandbox read-only`, no `srt` | nothing extra | writes and network blocked for Codex's commands; reads are unrestricted, recorded as a limitation on the worker |
+
+Without a working `srt` (or with the `container` provider, which is not used
+around Codex) the reviewer runs in `codex-sandbox` and says so in its
+limitations. Under `os-sandbox`, Codex's state directory is writable (it
+refreshes its login there), and a login stored in the system keychain instead
+of the auth file has not been verified to be visible inside `srt`.
+
 Isolation providers for checks and UI fixtures:
 
 - `sandbox-runtime`: filesystem write allowlist, credential read denials and an

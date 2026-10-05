@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The Codex reviewer follows two tiers (ADR 0001, "Codex reviewer tiers"). The
+  first live run showed Codex's own sandbox cannot start inside `srt` on macOS
+  (`sandbox_apply: Operation not permitted`), so the reviewer exited 1 with
+  `Operation not permitted (os error 1)`. Under `srt` (`os-sandbox`) Codex now
+  runs with `--sandbox danger-full-access` and `srt` as the only sandbox: writes
+  only to the worker directory and Codex's state directory, never the review
+  checkout; egress only to the Codex provider hosts; credential paths unreadable
+  except Codex's own auth file. Without `srt` (`codex-sandbox`) it runs unwrapped
+  with `--sandbox read-only` and records that reads are unrestricted. The
+  adapter refuses `danger-full-access` in any combination but the `srt` wrapper;
+  other isolation providers are no longer wrapped around Codex.
 - Checks may listen on loopback: `local_binding` (default true) on a check
   sets the sandbox's local binding for that check only. Outbound reach is still
   `network_hosts`. The first live run failed the demo app's `unit` check on the

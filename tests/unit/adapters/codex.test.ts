@@ -109,6 +109,30 @@ describe('codex invocation', () => {
     expect(buildCodexArgv({ command: ['codex'], model: 'm', effort: null, cwd: '/r', schemaPath: 's', lastMessagePath: 'o' }).join(' ')).not.toContain('model_reasoning_effort');
   });
 
+  it('passes --sandbox danger-full-access only for the os-sandbox tier, inside the sandbox-runtime wrapper', () => {
+    const input = { command: ['codex'], model: 'gpt-6-astra', effort: 'high', cwd: '/r', schemaPath: '/w/schema.json', lastMessagePath: '/w/last-message.json' };
+    const argv = buildCodexArgv({ ...input, tier: 'os-sandbox', wrapper: 'sandbox-runtime' });
+    expect(argv.filter((a) => a === '--sandbox')).toHaveLength(1);
+    expect(argv[argv.indexOf('--sandbox') + 1]).toBe('danger-full-access');
+    expect(argv).not.toContain('read-only');
+    // Only the sandbox mode differs from the codex-sandbox tier's argv.
+    expect(argv.map((a) => (a === 'danger-full-access' ? 'read-only' : a))).toEqual(buildCodexArgv(input));
+    expect(buildCodexArgv({ ...input, tier: 'codex-sandbox' })).toEqual(buildCodexArgv(input));
+    for (const bad of ['--full-auto', '-a', '--yolo', '--skip-git-repo-check']) expect(argv).not.toContain(bad);
+    expect(argv.some((a) => a.startsWith('--dangerously'))).toBe(false);
+  });
+
+  it('refuses --sandbox danger-full-access in every combination except the sandbox-runtime wrapper', () => {
+    const input = { command: ['codex'], model: 'm', effort: null, cwd: '/r', schemaPath: 's', lastMessagePath: 'o' };
+    for (const wrapper of [undefined, null, 'none', 'container'] as const) {
+      expect(() => buildCodexArgv({ ...input, tier: 'os-sandbox', wrapper }), String(wrapper)).toThrow(expect.objectContaining({ code: 'POLICY_DENIED', message: expect.stringContaining('danger-full-access') }));
+    }
+    // The codex-sandbox tier is read-only whatever wraps it.
+    for (const wrapper of [undefined, null, 'none', 'container', 'sandbox-runtime'] as const) {
+      expect(buildCodexArgv({ ...input, tier: 'codex-sandbox', wrapper }), String(wrapper)).toContain('read-only');
+    }
+  });
+
   it('sets only config keys verified against codex-cli 0.153.4, and no output-token cap (G53)', () => {
     // Checked for G53: `codex exec --help`, docs/interfaces/codex-cli.md and the config keys compiled into the 0.153.4 binary name no
     // setting that caps a turn's output tokens (model_context_window, model_auto_compact_token_limit and tool_output_token_limit

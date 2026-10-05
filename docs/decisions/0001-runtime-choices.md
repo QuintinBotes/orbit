@@ -107,3 +107,19 @@ of a coupled or complex causal failure. A single failed attempt gets a repair
 brief on the same tier. Once the diagnosis is solved, routine follow-up work
 routes back down. Expected cost per verified task, not worker confidence,
 drives the choice (spec §8).
+
+## Codex reviewer tiers (added after the first live run)
+
+The first live run showed that Codex's own read-only sandbox cannot start
+inside srt on macOS: applying a Seatbelt profile from inside another fails
+with `sandbox_apply: Operation not permitted` (reproduced with
+`srt -- sandbox-exec ...`). The Codex reviewer therefore follows the same
+two tiers as Claude workers:
+
+| Tier | How | Read confinement |
+|---|---|---|
+| `os-sandbox` (preferred) | srt is the only sandbox; Codex runs with `--sandbox danger-full-access` inside it; srt allows writes only to the worker directory and Codex's own state, never the review checkout, egress only to the provider's hosts, and denies credential reads | OS level |
+| `codex-sandbox` | no srt; Codex runs with `--sandbox read-only` | writes and network blocked for its commands; reads unrestricted, recorded as a limitation |
+
+`danger-full-access` is passed only together with the srt wrapper; the
+adapter refuses that flag in any other combination.

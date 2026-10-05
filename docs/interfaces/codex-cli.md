@@ -403,7 +403,7 @@ How these reach the exec JSONL (presumably a `turn.failed` message) is **UNVERIF
    - If `CODEX_API_KEY` is supplied, skip `login status`; it reports "Not logged in" even when exec works.
    - Without this preflight, a bad credential costs about 17-20 s of retries per run.
 3. **`startTask()`**
-   - Use the §0 command, with argv built as an array (no shell). Always pass `-m` (the user's default `gpt-6.1-sol` currently 400s on 0.153.4) and `--sandbox read-only`. Never pass `--yolo` or `--dangerously-*`.
+   - Use the §0 command, with argv built as an array (no shell). Always pass `-m` (the user's default `gpt-6.1-sol` currently 400s on 0.153.4) and `--sandbox <mode>`: `read-only` when Codex runs unwrapped, `danger-full-access` only when the whole process runs inside srt. **[LIVE 2026-10-05]** Codex's own sandbox cannot start inside srt on macOS: `codex exec --sandbox read-only` under `srt` exits 1 with `Error: Operation not permitted (os error 1)` (the nested Seatbelt `sandbox_apply: Operation not permitted`, reproduced with `srt -- sandbox-exec ...`). With `--sandbox danger-full-access` under srt it starts, reaches the provider through srt's proxy, and a fake API key gets the expected 401 (ADR 0001, "Codex reviewer tiers"). Never pass `--yolo` or `--dangerously-*`.
    - Pass the prompt via stdin with `-` and then end stdin, or use stdin `'ignore'`.
    - Run inside the candidate's git worktree (no `--skip-git-repo-check`). Pin `-C`.
    - Delete any stale `-o` file first.

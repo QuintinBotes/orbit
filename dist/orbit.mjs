@@ -24771,6 +24771,26 @@ function profileForWorker(input) {
     }
   };
 }
+function codexReviewerProfile(profile, input) {
+  const home2 = canonicalPath(input.homeDir);
+  const checkout = canonicalPath(input.checkout);
+  const workerDir = canonicalPath(input.workerDir);
+  const codexHome = canonicalPath(input.codexHome);
+  assertProviderDirConfinable(codexHome, home2);
+  for (const [what, dir] of [["worker directory", workerDir], ["Codex state directory", codexHome]]) {
+    if (isWithin(checkout, dir) || isWithin(dir, checkout)) {
+      throw new OrbitError("ISOLATION_UNAVAILABLE", `refusing to let the reviewer write ${dir}: the ${what} overlaps the review checkout ${checkout}, which must stay read-only`, { path: dir });
+    }
+  }
+  const defaultCodexHome = join7(home2, ".codex");
+  return {
+    writablePaths: [workerDir, codexHome],
+    denyReadPaths: uniq([...profile.denyReadPaths.map(canonicalPath).filter((p) => p !== codexHome), ...defaultCodexHome === codexHome ? [] : [defaultCodexHome]]),
+    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), checkout, ...CODEX_HOME_READ_ONLY.map((rel) => join7(codexHome, rel))]),
+    allowedHosts: [...PROVIDER_HOSTS.codex],
+    limits: { ...profile.limits }
+  };
+}
 function profileForCheck(input) {
   const home2 = canonicalPath(input.homeDir ?? homedir4());
   const worktree = canonicalPath(input.worktree);
@@ -24811,6 +24831,13 @@ function providerDirs(opts) {
   const claude = opts.claudeConfigDir ?? nonEmpty(env.CLAUDE_CONFIG_DIR) ?? join7(home2, ".claude");
   const codex = opts.codexHome ?? nonEmpty(env.CODEX_HOME) ?? join7(home2, ".codex");
   return { claudeConfigDir: canonicalPath(claude), codexHome: canonicalPath(codex) };
+}
+function codexHomeFor(homeDir, env) {
+  const configured = nonEmpty(env.CODEX_HOME);
+  if (configured !== void 0 && !isAbsolute6(configured)) {
+    throw new OrbitError("CONFIG_INVALID", `CODEX_HOME must be an absolute path, got ${JSON.stringify(configured)}`, { variable: "CODEX_HOME" });
+  }
+  return canonicalPath(configured ?? join7(canonicalPath(homeDir), ".codex"));
 }
 function repoParentDenial(repoRoot, homeDir) {
   const repo = canonicalPath(repoRoot);
@@ -28809,14 +28836,19 @@ var init_codex_events = __esm({
 });
 
 // src/adapters/codex.ts
-import { existsSync as existsSync12, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync2 } from "node:fs";
+import { chmodSync as chmodSync3, existsSync as existsSync12, mkdirSync as mkdirSync7, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync2 } from "node:fs";
+import { homedir as homedir5 } from "node:os";
 import { basename as basename6, dirname as dirname12, isAbsolute as isAbsolute10, join as join13 } from "node:path";
 function buildCodexArgv(i) {
+  const tier = i.tier ?? "codex-sandbox";
+  if (tier === "os-sandbox" && i.wrapper !== "sandbox-runtime") {
+    throw new OrbitError("POLICY_DENIED", `refusing --sandbox ${DANGER_FULL_ACCESS} unless the command runs inside the sandbox-runtime wrapper (wrapper: ${i.wrapper ?? "none"})`, { wrapper: i.wrapper ?? null });
+  }
   return [
     ...i.command,
     "exec",
     "--sandbox",
-    "read-only",
+    tier === "os-sandbox" ? DANGER_FULL_ACCESS : "read-only",
     "--ephemeral",
     "--ignore-user-config",
     "--json",
@@ -28835,6 +28867,21 @@ function buildCodexArgv(i) {
     i.cwd,
     "-"
   ];
+}
+function assertWrapped(bare, launched) {
+  const wrapped = launched.length > bare.length && bare.every((a, k) => launched[launched.length - bare.length + k] === a);
+  if (!wrapped) {
+    throw new OrbitError("POLICY_DENIED", `refusing to launch Codex with --sandbox ${DANGER_FULL_ACCESS}: the sandbox-runtime wrapper did not wrap the command`);
+  }
+}
+function reviewerTmpDir(workerDir) {
+  const dir = join13(workerDir, REVIEWER_TMP_DIR);
+  mkdirSync7(dir, { recursive: true, mode: 448 });
+  chmodSync3(dir, 448);
+  return dir;
+}
+function homeOf(env) {
+  return env.HOME && isAbsolute10(env.HOME) ? env.HOME : homedir5();
 }
 function parseHelpFlags(help) {
   const out = /* @__PURE__ */ new Set();
@@ -28870,7 +28917,7 @@ function launchModel(workerDir) {
   const meta = readJsonIfExists(join13(workerDir, LAUNCH_FILE))?.meta;
   return meta && typeof meta.model === "string" ? meta.model : null;
 }
-var CODEX_PROMPT_FILE, CODEX_SCHEMA_FILE, CODEX_LAST_MESSAGE_FILE, CODEX_RESULT_FILE, CODEX_EFFORTS, CODEX_REQUIRED_FLAGS, CODEX_EXTRA_ARGS_ALLOWED, CODEX_LIMITATIONS, NESTED_LIMITATION, CodexAdapter;
+var CODEX_PROMPT_FILE, CODEX_SCHEMA_FILE, CODEX_LAST_MESSAGE_FILE, CODEX_RESULT_FILE, CODEX_EFFORTS, CODEX_REQUIRED_FLAGS, CODEX_EXTRA_ARGS_ALLOWED, PROJECT_CONFIG_LIMITATION, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, DANGER_FULL_ACCESS, NO_OS_ISOLATION, REVIEWER_TMP_DIR, CodexAdapter;
 var init_codex = __esm({
   "src/adapters/codex.ts"() {
     "use strict";
@@ -28896,16 +28943,26 @@ var init_codex = __esm({
     CODEX_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
     CODEX_REQUIRED_FLAGS = ["--sandbox", "--ephemeral", "--ignore-user-config", "--json", "--output-schema", "--output-last-message", "--model", "--cd"];
     CODEX_EXTRA_ARGS_ALLOWED = [];
+    PROJECT_CONFIG_LIMITATION = "Project configuration (<checkout>/.codex/config.toml) still loads under --ignore-user-config, and user hooks in CODEX_HOME may still fire (unverified).";
     CODEX_LIMITATIONS = [
-      "Codex's read-only sandbox blocks writes and network for the commands it runs, not reads: any file the user can read may reach the provider.",
-      "Project configuration (<checkout>/.codex/config.toml) still loads under --ignore-user-config, and user hooks in CODEX_HOME may still fire (unverified)."
+      "Reads are unrestricted: Codex's read-only sandbox blocks writes and network for the commands it runs, not reads, so any file the user can read may reach the provider.",
+      PROJECT_CONFIG_LIMITATION
     ];
-    NESTED_LIMITATION = "Codex's own command sandbox inside srt is unverified on this platform; if it cannot start nested, the reviewer's shell commands fail closed and it reviews from the packet alone.";
+    CODEX_OS_SANDBOX_LIMITATIONS = [
+      "srt is the only sandbox around Codex in this tier: Codex runs with --sandbox danger-full-access because its own sandbox cannot start inside srt (macOS refuses to apply a Seatbelt profile from inside another). srt's profile limits writes to the worker directory and Codex's state directory (never the review checkout), egress to the provider hosts and reads of credential paths.",
+      "Codex's state directory (its login file, logs and caches) is writable by the reviewer, and reads outside the denied paths are unrestricted: any file the user can read may reach the provider.",
+      PROJECT_CONFIG_LIMITATION
+    ];
+    DANGER_FULL_ACCESS = "danger-full-access";
+    NO_OS_ISOLATION = "No OS isolation around the codex process itself; only its own read-only sandbox applies to the commands it runs.";
+    REVIEWER_TMP_DIR = "tmp";
     CodexAdapter = class {
       id;
       opts;
       command;
       clock;
+      /** Whether srt starts here: probed once, since the probe runs a sandboxed process. */
+      srtProbe = null;
       constructor(opts = {}) {
         this.opts = opts;
         this.id = opts.id ?? "codex";
@@ -28995,8 +29052,10 @@ ${status2.stderr}`;
         const outputTokens = outputBudgetFor(spec.role, { explicit: spec.outputTokens, configured: snapshot2.config.routing.output_budgets });
         const checkout = canonicalPath(spec.cwd);
         const workerDir = spec.workerDir;
-        const tmpDir = prepareWorkerTmpDir(workerDir);
+        const choice = await this.chooseTier();
+        const tmpDir = choice.srt ? reviewerTmpDir(workerDir) : prepareWorkerTmpDir(workerDir);
         const env = buildWorkerEnv({ provider: "codex", base: this.baseEnv(), policyPath: spec.policyPath, policyHash, worktree: checkout, tmpDir, extra: { ...passThrough(this.baseEnv(), this.opts.passEnv), ...spec.env } });
+        const srt = choice.srt ? { provider: choice.srt, profile: codexReviewerProfile(spec.sandbox, { checkout, workerDir, codexHome: codexHomeFor(homeOf(env), env), homeDir: homeOf(env) }) } : null;
         writeFileSync2(join13(workerDir, CODEX_PROMPT_FILE), `${spec.systemPrompt.trim()}
 
 ${spec.prompt}${outputTokens === null ? "" : `
@@ -29004,23 +29063,28 @@ ${outputBudgetInstruction(outputTokens)}
 `}`, { mode: 384 });
         atomicWriteJson(join13(workerDir, CODEX_SCHEMA_FILE), spec.outputSchema, 384);
         rmSync3(join13(workerDir, CODEX_LAST_MESSAGE_FILE), { force: true });
-        const argv2 = buildCodexArgv({ command: this.command, model: spec.model, effort: spec.effort, cwd: checkout, schemaPath: join13(workerDir, CODEX_SCHEMA_FILE), lastMessagePath: join13(workerDir, CODEX_LAST_MESSAGE_FILE) });
+        const tier = srt ? "os-sandbox" : "codex-sandbox";
+        const argv2 = buildCodexArgv({ command: this.command, model: spec.model, effort: spec.effort, cwd: checkout, schemaPath: join13(workerDir, CODEX_SCHEMA_FILE), lastMessagePath: join13(workerDir, CODEX_LAST_MESSAGE_FILE), tier, wrapper: srt?.provider.kind ?? null });
         let launchArgv = argv2;
         let launchEnv = env;
-        let tier = "codex-sandbox";
-        const limitations = [...CODEX_LIMITATIONS];
+        const limitations = [...srt ? CODEX_OS_SANDBOX_LIMITATIONS : CODEX_LIMITATIONS];
         if (outputTokens !== null) limitations.push(`Output budget of ${outputTokens} tokens is an instruction only: Codex has no verified output cap, so overruns are measured and recorded.`);
         const cleanupPaths = [];
-        const isolation = this.opts.isolation ?? null;
-        if (isolation && isolation.kind !== "none") {
-          const wrapped = isolation.wrap(argv2, readOnlyProfile(spec.sandbox, checkout, true), { cwd: checkout, env });
+        if (srt) {
+          const wrapped = srt.provider.wrap(argv2, srt.profile, { cwd: checkout, env });
+          try {
+            assertWrapped(argv2, wrapped.argv);
+          } catch (err) {
+            wrapped.cleanup();
+            throw err;
+          }
           launchArgv = wrapped.argv;
           launchEnv = wrapped.env;
-          tier = "os-sandbox";
-          limitations.push(...wrapped.limitations, NESTED_LIMITATION);
+          limitations.push(...wrapped.limitations);
           for (const a of wrapped.argv) if (isAbsolute10(a) && basename6(dirname12(a)).startsWith("orbit-srt-")) cleanupPaths.push(dirname12(a));
         } else {
-          limitations.push("No OS isolation around the codex process itself; only its own read-only sandbox applies to the commands it runs.");
+          limitations.push(NO_OS_ISOLATION);
+          if (choice.note) limitations.push(choice.note);
         }
         const handle = await launchShim({
           provider: this.id,
@@ -29080,6 +29144,22 @@ ${outputBudgetInstruction(outputTokens)}
       }
       baseEnv() {
         return this.opts.baseEnv ?? process.env;
+      }
+      /**
+       * os-sandbox needs sandbox-runtime and a probe that shows it starts here;
+       * otherwise Codex runs unwrapped under its own read-only sandbox, and `note`
+       * says why. Other isolation providers are not used around Codex: the ADR's
+       * tiers are srt or no srt, and `danger-full-access` is for srt alone.
+       */
+      async chooseTier() {
+        const isolation = this.opts.isolation ?? null;
+        if (isolation === null || isolation.kind === "none") return { srt: null, note: null };
+        if (isolation.kind !== "sandbox-runtime") {
+          return { srt: null, note: `The ${isolation.kind} isolation provider is not used around Codex (only sandbox-runtime is); Codex runs under its own read-only sandbox.` };
+        }
+        this.srtProbe ??= await isolation.available();
+        if (!this.srtProbe.ok) return { srt: null, note: `sandbox-runtime is unavailable (${this.srtProbe.detail}); Codex runs under its own read-only sandbox.` };
+        return { srt: isolation, note: null };
       }
       async run(args, timeoutMs) {
         const base = this.baseEnv();
@@ -29299,7 +29379,7 @@ var init_limits = __esm({
 
 // src/isolation/container.ts
 import { spawnSync as spawnSync3 } from "node:child_process";
-import { chmodSync as chmodSync3, existsSync as existsSync13, mkdtempSync as mkdtempSync2, rmSync as rmSync4, statSync as statSync8, writeFileSync as writeFileSync3 } from "node:fs";
+import { chmodSync as chmodSync4, existsSync as existsSync13, mkdtempSync as mkdtempSync2, rmSync as rmSync4, statSync as statSync8, writeFileSync as writeFileSync3 } from "node:fs";
 import { tmpdir as tmpdir6 } from "node:os";
 import { join as join14 } from "node:path";
 import { randomBytes as randomBytes4 } from "node:crypto";
@@ -29460,7 +29540,7 @@ var init_container = __esm({
           const envFile = join14(dir, "env");
           writeFileSync3(envFile, Object.entries(containerEnv).map(([k, v]) => `${k}=${v}
 `).join(""), { mode: 384, flag: "wx" });
-          chmodSync3(envFile, 384);
+          chmodSync4(envFile, 384);
           const labels2 = { "orbit.isolation": "container", ...this.opts.labels ?? {} };
           const args = [
             "run",
@@ -29706,7 +29786,7 @@ timer = setInterval(check, intervalMs);
 });
 
 // src/isolation/sandbox-runtime.ts
-import { chmodSync as chmodSync4, existsSync as existsSync15, mkdirSync as mkdirSync7, mkdtempSync as mkdtempSync3, readFileSync as readFileSync9, realpathSync as realpathSync5, rmSync as rmSync5, writeFileSync as writeFileSync4 } from "node:fs";
+import { chmodSync as chmodSync5, existsSync as existsSync15, mkdirSync as mkdirSync8, mkdtempSync as mkdtempSync3, readFileSync as readFileSync9, realpathSync as realpathSync5, rmSync as rmSync5, writeFileSync as writeFileSync4 } from "node:fs";
 import { tmpdir as tmpdir7, userInfo } from "node:os";
 import { basename as basename9, delimiter as delimiter2, dirname as dirname13, isAbsolute as isAbsolute11, join as join15 } from "node:path";
 function normalizeHost2(raw) {
@@ -29954,7 +30034,7 @@ var init_sandbox_runtime = __esm({
           const settings = buildSrtSettings({ writablePaths: [], denyReadPaths: [], allowedHosts: [], limits: { timeoutMs, memoryMb: null, cpus: null, pids: null } });
           writeFileSync4(file, JSON.stringify(settings), { mode: 384 });
           const canaryDir = join15(dir, "canary");
-          mkdirSync7(canaryDir);
+          mkdirSync8(canaryDir);
           const canary = join15(canaryDir, "orbit-canary");
           const probe = await runBounded(srt.path, ["--settings", file, "--", "/bin/sh", "-c", 'echo x > "$1" 2>/dev/null; exit 0', "sh", canary], { timeoutMs });
           if (probe.code !== 0) return { ok: false, detail: `srt ${version.stdout.trim()} could not start a sandboxed command (${probeFailure(probe)})` };
@@ -29991,7 +30071,7 @@ var init_sandbox_runtime = __esm({
           const file = join15(dir, "settings.json");
           writeFileSync4(file, `${JSON.stringify(settings, null, 2)}
 `, { mode: 384, flag: "wx" });
-          chmodSync4(file, 384);
+          chmodSync5(file, 384);
           const srtArgv = [srt.path, "--settings", file, "--", ...launch.restore.length ? ["/usr/bin/env", "--", ...launch.restore] : [], ...command];
           const memoryMb = this.opts.limits?.memory_mb ?? null;
           return {
@@ -30067,7 +30147,7 @@ var init_isolation = __esm({
 // src/controller/start.ts
 import { realpathSync as realpathSync6 } from "node:fs";
 import { dirname as dirname14, join as join16, resolve as resolve6 } from "node:path";
-import { homedir as homedir5 } from "node:os";
+import { homedir as homedir6 } from "node:os";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 function orbitDir(repoRoot) {
   return join16(repoRoot, ".orbit");
@@ -30076,7 +30156,7 @@ function stateDbPath(repoRoot) {
   return join16(orbitDir(repoRoot), "state.sqlite");
 }
 function defaultOrbitHome(env = process.env) {
-  return env.ORBIT_HOME ?? join16(homedir5(), ".orbit");
+  return env.ORBIT_HOME ?? join16(homedir6(), ".orbit");
 }
 function orbitInstallDir(here = dirname14(fileURLToPath3(import.meta.url))) {
   return here.endsWith(join16("src", "controller")) ? resolve6(here, "..", "..") : resolve6(here, "..");
@@ -30108,7 +30188,7 @@ function defaultControllerDeps(input) {
     adapters = createAdapters(config, { isolation, clock, baseEnv: env, ...input.adapterDeps ?? {} });
   }
   const logger = input.logger ?? createLogger({ file: join16(orbitHome, "logs", "controller.jsonl"), clock });
-  return { db, clock, logger, adapters, registry: new ModelRegistry(db, clock), orbitHome, homeDir: homedir5(), hostEnv: env, orbitInstallDir: installDir };
+  return { db, clock, logger, adapters, registry: new ModelRegistry(db, clock), orbitHome, homeDir: homedir6(), hostEnv: env, orbitInstallDir: installDir };
 }
 var init_start = __esm({
   "src/controller/start.ts"() {
@@ -30188,11 +30268,11 @@ var init_io = __esm({
 
 // src/cli/context.ts
 import { existsSync as existsSync16, realpathSync as realpathSync7 } from "node:fs";
-import { homedir as homedir6, hostname as hostname2, userInfo as userInfo2 } from "node:os";
+import { homedir as homedir7, hostname as hostname2, userInfo as userInfo2 } from "node:os";
 import { dirname as dirname15, resolve as resolve7 } from "node:path";
 function createContext(overrides = {}) {
   const env = overrides.env ?? process.env;
-  const homeDir = overrides.homeDir ?? homedir6();
+  const homeDir = overrides.homeDir ?? homedir7();
   const io = overrides.io ?? createIo(process.stdout, process.stderr, process.stdin);
   let user = env.ORBIT_USER || env.USER || env.LOGNAME || "";
   if (!user) {
@@ -34946,7 +35026,7 @@ var init_git = __esm({
 
 // src/evidence/runner.ts
 import { createHash as createHash3, randomBytes as randomBytes5 } from "node:crypto";
-import { closeSync as closeSync7, existsSync as existsSync20, lstatSync as lstatSync5, mkdirSync as mkdirSync8, openSync as openSync7, readSync as readSync4, readdirSync as readdirSync5, realpathSync as realpathSync9, rmSync as rmSync6, statSync as statSync11 } from "node:fs";
+import { closeSync as closeSync7, existsSync as existsSync20, lstatSync as lstatSync5, mkdirSync as mkdirSync9, openSync as openSync7, readSync as readSync4, readdirSync as readdirSync5, realpathSync as realpathSync9, rmSync as rmSync6, statSync as statSync11 } from "node:fs";
 import { platform } from "node:os";
 import { join as join23, resolve as resolve8, sep as sep4 } from "node:path";
 function candidateEvidenceDir(runDir2, seq2) {
@@ -35205,7 +35285,7 @@ async function launchAttempt(ctx, subject, def, configHash, rerunOf) {
   await assertCheckoutUnmodified(ctx.checkoutDir, def.id);
   const index = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: subject.candidateId, checkId: def.id }).length;
   const dirs = dirsFor(subject, def.id, index);
-  for (const d of [dirs.checkDir, dirs.artifactsDir, dirs.homeDir]) mkdirSync8(d, { recursive: true, mode: 448 });
+  for (const d of [dirs.checkDir, dirs.artifactsDir, dirs.homeDir]) mkdirSync9(d, { recursive: true, mode: 448 });
   const tmp = prepareWorkerTmpDir(dirs.checkDir);
   if (!ctx.snapshot.config.checks[def.id]) atomicWriteJson(join23(dirs.checkDir, DEFINITION_FILE), def, 384);
   const env = checkEnv(def, dirs);
@@ -36941,7 +37021,7 @@ var init_scheduler = __esm({
 
 // src/controller/context.ts
 import { dirname as dirname17, join as join24 } from "node:path";
-import { homedir as homedir7 } from "node:os";
+import { homedir as homedir8 } from "node:os";
 import { readFileSync as readFileSync14, realpathSync as realpathSync11 } from "node:fs";
 function loadRunContext(deps, runId, signal) {
   const { db } = deps;
@@ -37032,8 +37112,8 @@ function lenientContext(deps, runId, signal) {
   };
   return ctx;
 }
-function homeOf(deps) {
-  return deps.homeDir ?? homedir7();
+function homeOf2(deps) {
+  return deps.homeDir ?? homedir8();
 }
 function schedulerFor(ctx) {
   const config = ctx.snapshot.config;
@@ -37997,12 +38077,12 @@ var init_schema6 = __esm({
 
 // src/knowledge/db.ts
 import { createRequire as createRequire2 } from "node:module";
-import { mkdirSync as mkdirSync9 } from "node:fs";
+import { mkdirSync as mkdirSync10 } from "node:fs";
 import { dirname as dirname18 } from "node:path";
 function openKnowledgeDb(path, options = {}) {
   suppressSqliteExperimentalWarning();
   const { DatabaseSync: Database } = require3("node:sqlite");
-  if (path !== ":memory:") mkdirSync9(dirname18(path), { recursive: true });
+  if (path !== ":memory:") mkdirSync10(dirname18(path), { recursive: true });
   const db = new Database(path);
   db.exec(`PRAGMA busy_timeout = ${Math.trunc(options.busyTimeoutMs ?? 1e4)}`);
   if (path !== ":memory:") db.exec("PRAGMA journal_mode = WAL");
@@ -39536,7 +39616,7 @@ var init_store3 = __esm({
 });
 
 // src/controller/eval-runner.ts
-import { existsSync as existsSync21, mkdirSync as mkdirSync10, rmSync as rmSync7 } from "node:fs";
+import { existsSync as existsSync21, mkdirSync as mkdirSync11, rmSync as rmSync7 } from "node:fs";
 import { join as join25 } from "node:path";
 function measureRun(db, runId, requiredCheckIds) {
   const run = getRun(db, runId);
@@ -39695,7 +39775,7 @@ var init_eval_runner = __esm({
         if (this.spent >= budgetUsd) throw new OrbitError("BUDGET_EXHAUSTED", `the evaluation budget of $${budgetUsd.toFixed(2)} is spent after $${this.spent.toFixed(2)}; raise knowledge.eval_budget_usd to continue`);
         const dir = join25(this.o.orbitHome, "eval", repoKey(this.o.repoRoot), `${suite.id}-${c.id}-${newId("rpl")}`);
         const clone2 = join25(dir, "repo");
-        mkdirSync10(dir, { recursive: true, mode: 448 });
+        mkdirSync11(dir, { recursive: true, mode: 448 });
         let cloneWorktrees = null;
         let db = null;
         try {
@@ -39703,7 +39783,7 @@ var init_eval_runner = __esm({
           cloneWorktrees = join25(this.o.orbitHome, "worktrees", repoKey(clone2));
           this.seedOverlay(clone2, overlay);
           const config = replayConfig(this.o.config, budgetUsd - this.spent);
-          mkdirSync10(join25(clone2, ".orbit"), { recursive: true });
+          mkdirSync11(join25(clone2, ".orbit"), { recursive: true });
           db = openDb(stateDbPath(clone2));
           this.copyRegistry(db);
           const run = startRun({ db, repoRoot: clone2, goal: c.goal, config, clock: this.o.clock, actor: "eval" });
@@ -39949,7 +40029,7 @@ var init_denials = __esm({
 });
 
 // src/controller/workers.ts
-import { existsSync as existsSync23, mkdirSync as mkdirSync11 } from "node:fs";
+import { existsSync as existsSync23, mkdirSync as mkdirSync12 } from "node:fs";
 import { join as join28 } from "node:path";
 function workersFor(ctx, purpose) {
   return listWorkers(ctx.db, { runId: ctx.run.id }).filter((w) => w.purpose === purpose);
@@ -40021,7 +40101,7 @@ function assertMayStart(ctx) {
 async function spawn4(ctx, w, req) {
   assertMayStart(ctx);
   const adapter = adapterFor(ctx, w.provider);
-  mkdirSync11(w.workerDir, { recursive: true, mode: 448 });
+  mkdirSync12(w.workerDir, { recursive: true, mode: 448 });
   let spec;
   try {
     spec = taskSpec(ctx, w, req);
@@ -40053,7 +40133,7 @@ async function spawn4(ctx, w, req) {
   return { status: "running", worker: row };
 }
 function taskSpec(ctx, w, req) {
-  const home2 = homeOf(ctx.deps);
+  const home2 = homeOf2(ctx.deps);
   const env = ctx.deps.hostEnv ?? process.env;
   const provider = w.provider.startsWith("codex") ? "codex" : "claude";
   const timeoutMs = workerTimeoutMs(ctx, w.role);
@@ -41974,7 +42054,7 @@ var init_global = __esm({
 
 // src/guard/publication.ts
 import { readFileSync as readFileSync15 } from "node:fs";
-import { homedir as homedir8 } from "node:os";
+import { homedir as homedir9 } from "node:os";
 import { dirname as dirname19, isAbsolute as isAbsolute13, join as join29, resolve as resolve10 } from "node:path";
 import { inspect } from "node:util";
 function defaultGuardConfigPath(env = process.env) {
@@ -42046,7 +42126,7 @@ function sanitize(text2) {
   return text2.normalize("NFKC").replace(INVISIBLE, "");
 }
 function home(env = process.env) {
-  return env.HOME || homedir8();
+  return env.HOME || homedir9();
 }
 function expandHome(p, env = process.env) {
   if (p === "~") return home(env);
@@ -42316,8 +42396,8 @@ var init_publication = __esm({
 });
 
 // src/controller/report.ts
-import { existsSync as existsSync24, mkdirSync as mkdirSync12, readdirSync as readdirSync6, readFileSync as readFileSync16 } from "node:fs";
-import { homedir as homedir9 } from "node:os";
+import { existsSync as existsSync24, mkdirSync as mkdirSync13, readdirSync as readdirSync6, readFileSync as readFileSync16 } from "node:fs";
+import { homedir as homedir10 } from "node:os";
 import { join as join30 } from "node:path";
 function writeFinalReport(db, runId, opts) {
   const run = getRun(db, runId);
@@ -42563,9 +42643,9 @@ async function runCurator(host, task, model = curatorModelFor(host.deps.registry
   const ctx = host.recorded ?? null;
   const timeoutMs = host.timeoutMs ?? CURATOR_TIMEOUT_MS;
   const env = host.env ?? host.deps.hostEnv ?? process.env;
-  const home2 = host.homeDir ?? host.deps.homeDir ?? homedir9();
+  const home2 = host.homeDir ?? host.deps.homeDir ?? homedir10();
   const cwd = join30(host.dir, "cwd");
-  mkdirSync12(cwd, { recursive: true, mode: 448 });
+  mkdirSync13(cwd, { recursive: true, mode: 448 });
   let row = null;
   let workerId;
   let workerDir;
@@ -42575,7 +42655,7 @@ async function runCurator(host, task, model = curatorModelFor(host.deps.registry
     workerId = `${ctx.run.id}-curator-${n2}`;
     purpose = `curate:${n2}`;
     workerDir = join30(ctx.runDir, "workers", workerId);
-    mkdirSync12(workerDir, { recursive: true, mode: 448 });
+    mkdirSync13(workerDir, { recursive: true, mode: 448 });
     recordSpendCap(ctx, purpose, host.budgetUsd, 0);
     const ctxNow = ctx;
     row = ctx.db.tx(() => {
@@ -42585,7 +42665,7 @@ async function runCurator(host, task, model = curatorModelFor(host.deps.registry
   } else {
     workerId = `${host.runId}-curator`;
     workerDir = join30(host.dir, "curator");
-    mkdirSync12(workerDir, { recursive: true, mode: 448 });
+    mkdirSync13(workerDir, { recursive: true, mode: 448 });
   }
   const spec = {
     runId: host.runId,
@@ -44374,7 +44454,7 @@ var init_common = __esm({
 });
 
 // src/evidence/candidate.ts
-import { chmodSync as chmodSync5, existsSync as existsSync25, lstatSync as lstatSync6, mkdirSync as mkdirSync13, mkdtempSync as mkdtempSync4, readdirSync as readdirSync7, realpathSync as realpathSync13, rmSync as rmSync8, writeFileSync as writeFileSync5 } from "node:fs";
+import { chmodSync as chmodSync6, existsSync as existsSync25, lstatSync as lstatSync6, mkdirSync as mkdirSync14, mkdtempSync as mkdtempSync4, readdirSync as readdirSync7, realpathSync as realpathSync13, rmSync as rmSync8, writeFileSync as writeFileSync5 } from "node:fs";
 import { tmpdir as tmpdir9 } from "node:os";
 import { dirname as dirname20, join as join33, parse as parse4, sep as sep7 } from "node:path";
 function candidateRef(runId, seq2) {
@@ -44448,7 +44528,7 @@ async function materializeCandidate(repoRoot, commit, dir, opts = {}) {
   if (existsSync25(dir) && readdirSync7(dir).length > 0) {
     throw new OrbitError("GIT_FAILED", `checkout directory is not empty: ${dir}`, { dir });
   }
-  mkdirSync13(dirname20(dir), { recursive: true });
+  mkdirSync14(dirname20(dir), { recursive: true });
   await git2(repoRoot, ["worktree", "add", "--detach", "--force", dir, sha]);
   const real = realpathSync13(dir);
   if (opts.readOnly !== false) makeReadOnly(real);
@@ -44496,12 +44576,12 @@ function walk3(dir, visit3) {
   }
 }
 function makeReadOnly(dir) {
-  walk3(dir, (p, isDir) => chmodSync5(p, isDir ? 365 : lstatSync6(p).mode & 365));
-  chmodSync5(dir, 365);
+  walk3(dir, (p, isDir) => chmodSync6(p, isDir ? 365 : lstatSync6(p).mode & 365));
+  chmodSync6(dir, 365);
 }
 function makeWritable(dir) {
   try {
-    chmodSync5(dir, 493);
+    chmodSync6(dir, 493);
     const stack = [dir];
     while (stack.length) {
       const d = stack.pop();
@@ -44510,9 +44590,9 @@ function makeWritable(dir) {
         const st = lstatSync6(p);
         if (st.isSymbolicLink()) continue;
         if (st.isDirectory()) {
-          chmodSync5(p, 493);
+          chmodSync6(p, 493);
           if (name !== ".git") stack.push(p);
-        } else chmodSync5(p, st.mode | 128);
+        } else chmodSync6(p, st.mode | 128);
       }
     }
   } catch {
@@ -45207,7 +45287,7 @@ var init_deliver = __esm({
 });
 
 // src/delivery/release.ts
-import { existsSync as existsSync26, mkdirSync as mkdirSync14, rmSync as rmSync9 } from "node:fs";
+import { existsSync as existsSync26, mkdirSync as mkdirSync15, rmSync as rmSync9 } from "node:fs";
 import { platform as platform2 } from "node:os";
 import { join as join34 } from "node:path";
 function releaseConfig(snapshot2) {
@@ -45511,12 +45591,12 @@ async function runDeploy(a) {
     }
     await fetchBranchContaining({ repoRoot, remote: a.remote, token: input.token, ...input.git, branch, commit: sha, ref: `refs/orbit/release/${run.id}` });
   }
-  mkdirSync14(files.dir, { recursive: true, mode: 448 });
+  mkdirSync15(files.dir, { recursive: true, mode: 448 });
   if (existsSync26(files.checkout)) await cleanupCandidateCheckout(repoRoot, files.checkout);
   const checkout = await materializeCandidate(repoRoot, sha, files.checkout, { readOnly: false });
   try {
     const tree = (await execCapture(["git", "rev-parse", `${sha}^{tree}`], { cwd: repoRoot, env: gitEnv4(), timeoutMs: 3e4 })).stdout.trim();
-    mkdirSync14(files.home, { recursive: true, mode: 448 });
+    mkdirSync15(files.home, { recursive: true, mode: 448 });
     const tmp = prepareWorkerTmpDir(files.dir);
     const def = {
       id: `release:${envName}`,
@@ -45619,7 +45699,7 @@ async function resolveDeploy(input) {
   if (verdict === "unknown") return done(verdict, via, detail);
   if (verdict === "deployed") {
     const receipt = { environment: t.environment, branch: t.branch, sha: t.sha, tree: action.treeHash ?? "", exitCode: 0, durationMs: 0, isolation: via === "verify_command" ? "verify_command" : "person", limitations: [`resolved after an unknown outcome: ${detail}`], output: redact(detail).slice(-OUTPUT_TAIL) };
-    mkdirSync14(files.dir, { recursive: true, mode: 448 });
+    mkdirSync15(files.dir, { recursive: true, mode: 448 });
     atomicWriteJson(files.outcome, { environment: t.environment, branch: t.branch, sha: t.sha, tree: receipt.tree, attempt: action.attempts, exitCode: 0, timedOut: false, durationMs: 0, isolation: receipt.isolation, limitations: receipt.limitations, output: receipt.output }, 384);
     ledger.recordReceipt(action, receipt, "reconcile");
   } else {
@@ -45647,11 +45727,11 @@ async function runVerifyCommand(a) {
   const dir = join34(files.dir, "verify");
   const checkoutDir = join34(dir, "checkout");
   const home2 = join34(dir, "home");
-  mkdirSync14(dir, { recursive: true, mode: 448 });
+  mkdirSync15(dir, { recursive: true, mode: 448 });
   if (existsSync26(checkoutDir)) await cleanupCandidateCheckout(run.repoRoot, checkoutDir);
   const checkout = await materializeCandidate(run.repoRoot, sha, checkoutDir, { readOnly: false });
   try {
-    mkdirSync14(home2, { recursive: true, mode: 448 });
+    mkdirSync15(home2, { recursive: true, mode: 448 });
     const tmp = prepareWorkerTmpDir(dir);
     const def = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: ".", timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], local_binding: false, env: {}, mandatory: true, flaky_reruns: 0, kind: "command", category: "other" };
     const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [home2, tmp], ...input.homeDir ? { homeDir: input.homeDir } : {} });
@@ -48191,7 +48271,7 @@ var init_select = __esm({
 });
 
 // src/controller/steps/preflight.ts
-import { existsSync as existsSync29, mkdirSync as mkdirSync15, rmSync as rmSync10 } from "node:fs";
+import { existsSync as existsSync29, mkdirSync as mkdirSync16, rmSync as rmSync10 } from "node:fs";
 import { dirname as dirname21, isAbsolute as isAbsolute14, join as join36, resolve as resolve11 } from "node:path";
 async function preflightStep(ctx) {
   const stop = await safePoint(ctx);
@@ -48226,7 +48306,7 @@ async function preflightStep(ctx) {
     decide2(ctx, { id: `dec-${ctx.run.id}-dirty-start`, kind: "preflight.dirty-start", summary: `dirty start allowed by policy; ${dirty.length} uncommitted path(s) are not part of the run, which starts from ${head}`, data: { paths: dirty.slice(0, 200) } });
   }
   const wtRoot = runWorktreeRoot(ctx);
-  mkdirSync15(wtRoot, { recursive: true, mode: 448 });
+  mkdirSync16(wtRoot, { recursive: true, mode: 448 });
   const baseline = await runBaseline({
     db: ctx.db,
     run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
@@ -48239,7 +48319,7 @@ async function preflightStep(ctx) {
     signal: ctx.signal,
     pollMs: ctx.timing.checkPollMs,
     killGraceMs: ctx.timing.killGraceMs,
-    homeDir: homeOf(ctx.deps),
+    homeDir: homeOf2(ctx.deps),
     checkoutDir: join36(wtRoot, "baseline")
   });
   const after = await safePoint(ctx);
@@ -48335,7 +48415,7 @@ async function ensureWorktree(repo, path, base) {
       rmSync10(path, { recursive: true, force: true });
     }
   }
-  mkdirSync15(dirname21(path), { recursive: true, mode: 448 });
+  mkdirSync16(dirname21(path), { recursive: true, mode: 448 });
   await git2(repo, ["worktree", "prune"]);
   await git2(repo, ["worktree", "add", "--detach", "--force", path, base]);
   return (await adminDirFor(repo, path)).worktree;
@@ -48789,7 +48869,7 @@ var init_parallel_writers = __esm({
 });
 
 // src/controller/authorization.ts
-import { existsSync as existsSync31, mkdirSync as mkdirSync16 } from "node:fs";
+import { existsSync as existsSync31, mkdirSync as mkdirSync17 } from "node:fs";
 import { join as join39 } from "node:path";
 function operationKey(op) {
   return `op-${sha256(canonicalJson(op)).slice(0, 16)}`;
@@ -48959,7 +49039,7 @@ async function runApprovedOperation(ctx, n2, op, grant) {
 async function executeApproved(ctx, plan, dir, rel) {
   const worktree = ctx.run.worktreePath;
   const home2 = join39(dir, "home");
-  mkdirSync16(home2, { recursive: true, mode: 448 });
+  mkdirSync17(home2, { recursive: true, mode: 448 });
   const tmp = prepareWorkerTmpDir(dir);
   const hosts = [.../* @__PURE__ */ new Set([...ctx.snapshot.config.network.allowed_hosts, ...plan.host ? [plan.host] : []])];
   const def = { id: `approved-${rel.split("/").at(-1)}`, command: plan.argv, shell: false, cwd: ".", timeout_seconds: APPROVED_TIMEOUT_S, network_hosts: hosts, local_binding: false, env: {}, mandatory: false, flaky_reruns: 0, kind: "command" };
@@ -50138,7 +50218,7 @@ var init_report3 = __esm({
 });
 
 // src/ui/runner.ts
-import { copyFileSync, existsSync as existsSync33, mkdirSync as mkdirSync17, readFileSync as readFileSync21, realpathSync as realpathSync14, rmSync as rmSync12, statSync as statSync12, writeFileSync as writeFileSync7 } from "node:fs";
+import { copyFileSync, existsSync as existsSync33, mkdirSync as mkdirSync18, readFileSync as readFileSync21, realpathSync as realpathSync14, rmSync as rmSync12, statSync as statSync12, writeFileSync as writeFileSync7 } from "node:fs";
 import { createRequire as createRequire3 } from "node:module";
 import { basename as basename11, dirname as dirname23, isAbsolute as isAbsolute15, join as join42, relative as relative4, resolve as resolve12, sep as sep8 } from "node:path";
 async function runUiChecks(input) {
@@ -50571,13 +50651,13 @@ function collectAttachments(attachments, dirs) {
       bytes = readFileSync21(real);
       stored = real;
       if (!isInside(real, outputReal)) {
-        mkdirSync17(dirs.artifactDir, { recursive: true });
+        mkdirSync18(dirs.artifactDir, { recursive: true });
         const copy = join42(dirs.artifactDir, `${kind}-${basename11(real)}`);
         copyFileSync(real, copy);
         stored = copy;
       }
     } else if (bytes !== null) {
-      mkdirSync17(dirs.artifactDir, { recursive: true });
+      mkdirSync18(dirs.artifactDir, { recursive: true });
       const ext = EXTENSIONS[att.contentType.split(";")[0]?.trim() ?? ""] ?? ".bin";
       stored = join42(dirs.artifactDir, `${att.name.replace(/[^A-Za-z0-9._-]+/g, "_")}${ext}`);
       writeFileSync7(stored, TEXTUAL.test(att.contentType) ? redact(bytes.toString("utf8")) : bytes, { mode: 384 });
@@ -50737,7 +50817,7 @@ var init_runner2 = __esm({
 });
 
 // src/controller/security.ts
-import { accessSync as accessSync2, constants as constants3, existsSync as existsSync34, mkdirSync as mkdirSync18, readFileSync as readFileSync22, rmSync as rmSync13, statSync as statSync13 } from "node:fs";
+import { accessSync as accessSync2, constants as constants3, existsSync as existsSync34, mkdirSync as mkdirSync19, readFileSync as readFileSync22, rmSync as rmSync13, statSync as statSync13 } from "node:fs";
 import { delimiter as delimiter3, dirname as dirname24, join as join43, normalize as normalize2, sep as sep9 } from "node:path";
 import { tmpdir as tmpdir11 } from "node:os";
 import { spawn as spawn5 } from "node:child_process";
@@ -50912,8 +50992,8 @@ async function runGitleaks(bin, input, files, reportPath2) {
   const scanRoot = join43(work, "tree");
   const tree = join43(scanRoot, "files");
   const trusted = join43(work, "trusted");
-  mkdirSync18(tree, { recursive: true, mode: 448 });
-  mkdirSync18(trusted, { recursive: true, mode: 448 });
+  mkdirSync19(tree, { recursive: true, mode: 448 });
+  mkdirSync19(trusted, { recursive: true, mode: 448 });
   const config = join43(trusted, "gitleaks.toml");
   atomicWrite(config, TRUSTED_GITLEAKS_CONFIG, 292);
   let copied = 0;
@@ -50921,7 +51001,7 @@ async function runGitleaks(bin, input, files, reportPath2) {
     const target = normalize2(join43(tree, rel));
     if (!target.startsWith(tree + sep9)) continue;
     const content = await git2(input.repoRoot, ["cat-file", "blob", `${input.commit}:${rel}`]);
-    mkdirSync18(dirname24(target), { recursive: true });
+    mkdirSync19(dirname24(target), { recursive: true });
     atomicWrite(target, content, 384);
     copied++;
   }
@@ -51560,7 +51640,7 @@ async function exploreCandidate(ctx, cand, checkoutDir, outDir, opts = {}) {
     goal: contract.objective,
     clock: ctx.clock,
     hostEnv: ctx.deps.hostEnv ?? process.env,
-    homeDir: homeOf(ctx.deps),
+    homeDir: homeOf2(ctx.deps),
     abortSignal: ctx.signal,
     explore: async (task) => {
       const r = await runToEnd(ctx, {
@@ -51702,7 +51782,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
     detachSignal: ctx.signal,
     pollMs: ctx.timing.checkPollMs,
     killGraceMs: ctx.timing.killGraceMs,
-    homeDir: homeOf(ctx.deps)
+    homeDir: homeOf2(ctx.deps)
   };
   const install = await installDependencies({ ...runner, candidate: cand });
   const commandChecks = contract.required_check_ids.filter((id) => snapshot2.config.checks[id]?.kind === "command");
@@ -51716,7 +51796,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
   const uiRequired = contract.acceptance_criteria.some((c) => c.ui === true) || ui !== null && ui.required_when_ui_changes && changed.some(compileGlobs(ui.ui_paths, { nocase: false }));
   let uiResult = null;
   if (uiRequired && ui && ui.journey_check_ids.length > 0) {
-    uiResult = await runUiChecks({ checkoutDir, snapshot: snapshot2, candidate: cand, uiConfig: ui, journeyCheckIds: ui.journey_check_ids, isolation: ctx.isolation(), outDir: join46(candidateEvidenceDir(ctx.runDir, cand.seq), "ui"), clock: ctx.clock, abortSignal: ctx.signal, homeDir: homeOf(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
+    uiResult = await runUiChecks({ checkoutDir, snapshot: snapshot2, candidate: cand, uiConfig: ui, journeyCheckIds: ui.journey_check_ids, isolation: ctx.isolation(), outDir: join46(candidateEvidenceDir(ctx.runDir, cand.seq), "ui"), clock: ctx.clock, abortSignal: ctx.signal, homeDir: homeOf2(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
     const afterUi = await checkpoint();
     if (afterUi !== null) return { stopped: afterUi };
   }
@@ -52878,7 +52958,7 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
     },
     isolation: ctx.isolation(),
     workDir: ctx.runDir,
-    homeDir: homeOf(ctx.deps)
+    homeDir: homeOf2(ctx.deps)
   });
   let result2 = null;
   for (let settled = 0; result2 === null; settled++) {
@@ -52917,7 +52997,7 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
 }
 async function settleUnknownDeploy(ctx, ledger, run, environment) {
   try {
-    const r = await resolveDeploy({ run, snapshot: ctx.snapshot, ledger, clock: ctx.clock, workDir: ctx.runDir, environment, resolution: "verify", by: "controller", isolation: ctx.isolation(), homeDir: homeOf(ctx.deps) });
+    const r = await resolveDeploy({ run, snapshot: ctx.snapshot, ledger, clock: ctx.clock, workDir: ctx.runDir, environment, resolution: "verify", by: "controller", isolation: ctx.isolation(), homeDir: homeOf2(ctx.deps) });
     return { settled: r.verdict !== "unknown", detail: r.detail };
   } catch (err) {
     return { settled: false, detail: err instanceof Error ? err.message.slice(0, 300) : String(err) };
@@ -53539,7 +53619,7 @@ var init_ledger = __esm({
 });
 
 // src/inquisition/engine.ts
-import { mkdirSync as mkdirSync19 } from "node:fs";
+import { mkdirSync as mkdirSync20 } from "node:fs";
 import { join as join51 } from "node:path";
 function ledgerDraft(runId, claim, source, experiment, status2 = "unverified", reversibility2 = "costly-to-reverse") {
   return { runId, claim, source, confidence: "low", consequence: "the work ships on an unchecked belief", reversibility: reversibility2, experiment, status: status2 };
@@ -53658,7 +53738,7 @@ async function runWorker(adapter, ctx, opts, trigger, prompt, attempt, signal) {
     opts.fence?.();
     planWorker(db, { id: workerId, runId: ctx.runId, role: "inquisitor", purpose: workerPurpose(trigger), provider: opts.route.provider, model: opts.route.model, effort: opts.route.effort, workerDir, cwd: opts.cwd, attempt }, clock);
   });
-  mkdirSync19(workerDir, { recursive: true });
+  mkdirSync20(workerDir, { recursive: true });
   const spec = {
     runId: ctx.runId,
     workerId,
@@ -54213,7 +54293,7 @@ async function inquisitionStep(ctx) {
   const route2 = routeFor(ctx, `inquire:${hashObject(trigger.key).slice(7, 19)}`, "routine-code", { difficulty: ctx.run.difficulty ?? "medium", attempt: 1, repeatedFingerprints: 0 });
   const cwd = ctx.run.worktreePath;
   const env = ctx.deps.hostEnv ?? process.env;
-  const home2 = homeOf(ctx.deps);
+  const home2 = homeOf2(ctx.deps);
   const workerDir = join52(ctx.runDir, "workers");
   const supported = ctx.candidate ? currentEvidenceReport(ctx.db, ctx.run.id, ctx.candidate.id)?.report.acceptance_evidence.filter((a) => a.status === "supported").map((a) => a.criterion_id) ?? [] : [];
   const result2 = await runInquisition({
@@ -54622,7 +54702,7 @@ var init_steps = __esm({
 
 // src/storage/retention.ts
 import { existsSync as existsSync40, lstatSync as lstatSync7, realpathSync as realpathSync16, rmSync as rmSync14 } from "node:fs";
-import { homedir as homedir10 } from "node:os";
+import { homedir as homedir11 } from "node:os";
 import { dirname as dirname26, join as join54, resolve as resolve14 } from "node:path";
 function repoKeyFor(repoRoot) {
   let real = repoRoot;
@@ -54638,7 +54718,7 @@ async function pruneExpiredRuns(db, opts) {
   const cutoff = now - opts.keepDays * DAY_MS;
   const repoRoot = realOrResolved(opts.repoRoot);
   const runsRoot = join54(repoRoot, ".orbit", "runs");
-  const worktreesRoot = join54(opts.orbitHome ?? process.env.ORBIT_HOME ?? join54(homedir10(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
+  const worktreesRoot = join54(opts.orbitHome ?? process.env.ORBIT_HOME ?? join54(homedir11(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
   const placeholders = PRUNABLE_STATES.map(() => "?").join(", ");
   const rows = db.all(
     `SELECT r.id, r.state, r.policy_path, r.ended_at, r.updated_at FROM runs r
@@ -55199,7 +55279,7 @@ var init_loop = __esm({
 });
 
 // src/controller/service.ts
-import { existsSync as existsSync42, mkdirSync as mkdirSync20, rmSync as rmSync15 } from "node:fs";
+import { existsSync as existsSync42, mkdirSync as mkdirSync21, rmSync as rmSync15 } from "node:fs";
 import { join as join56 } from "node:path";
 function serviceLabel(repoRoot) {
   return `${SERVICE_LABEL_PREFIX}.${repoKey(repoRoot)}`;
@@ -55327,10 +55407,10 @@ async function must(run, argv2, ok) {
 }
 async function installService(spec, opts) {
   const run = opts.run ?? defaultRunner;
-  mkdirSync20(spec.logDir, { recursive: true, mode: 448 });
+  mkdirSync21(spec.logDir, { recursive: true, mode: 448 });
   if (opts.platform === "darwin") {
     const plist = launchdPlistPath(opts.homeDir, spec.label);
-    mkdirSync20(join56(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
+    mkdirSync21(join56(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
     atomicWrite(plist, renderLaunchdPlist(spec), 420);
     const cmd = launchctlCommands(spec.label, opts.uid, plist);
     await must(run, cmd.bootout, [0, 3]);
@@ -55340,7 +55420,7 @@ async function installService(spec, opts) {
   }
   if (opts.platform === "linux") {
     const unit = systemdUnitPath(opts.homeDir, spec.label);
-    mkdirSync20(join56(opts.homeDir, ".config", "systemd", "user"), { recursive: true });
+    mkdirSync21(join56(opts.homeDir, ".config", "systemd", "user"), { recursive: true });
     atomicWrite(unit, renderSystemdUnit(spec), 420);
     const cmd = systemctlCommands(spec.label);
     await must(run, cmd.daemonReload, [0]);
@@ -56622,7 +56702,7 @@ var init_gc = __esm({
 });
 
 // src/cli/commands/init.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync45, mkdirSync as mkdirSync21, readFileSync as readFileSync26, writeFileSync as writeFileSync9 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync45, mkdirSync as mkdirSync22, readFileSync as readFileSync26, writeFileSync as writeFileSync9 } from "node:fs";
 import { dirname as dirname29, join as join60 } from "node:path";
 function templatePath() {
   return join60(orbitInstallDir(), "templates", "config.yaml");
@@ -56641,7 +56721,7 @@ async function initCommand(args, ctx) {
   else {
     const tpl = templatePath();
     if (!existsSync45(tpl)) throw new OrbitError("NOT_FOUND", `the starter template ${tpl} is missing from this installation`);
-    mkdirSync21(dirname29(configPath), { recursive: true });
+    mkdirSync22(dirname29(configPath), { recursive: true });
     try {
       writeFileSync9(configPath, readFileSync26(tpl, "utf8"), { flag: "wx", mode: 420 });
       config = "created";
@@ -56651,7 +56731,7 @@ async function initCommand(args, ctx) {
     }
   }
   const excludePath = await excludeFile(ctx, repo);
-  mkdirSync21(dirname29(excludePath), { recursive: true });
+  mkdirSync22(dirname29(excludePath), { recursive: true });
   const current = existsSync45(excludePath) ? readFileSync26(excludePath, "utf8") : "";
   const have = new Set(current.split("\n").map((l) => l.trim()));
   const missing = EXCLUDE_RULES.filter((r) => !have.has(r));
@@ -56698,7 +56778,7 @@ var init_init = __esm({
 
 // src/cli/commands/internal.ts
 import { spawn as spawn6 } from "node:child_process";
-import { mkdirSync as mkdirSync22 } from "node:fs";
+import { mkdirSync as mkdirSync23 } from "node:fs";
 import { isAbsolute as isAbsolute17 } from "node:path";
 async function shimCommand(rawArgs) {
   return shimMain(rawArgs);
@@ -56709,7 +56789,7 @@ async function checkRunnerCommand(rawArgs, ctx) {
     ctx.io.err("usage: orbit check-runner <absolute run dir> <absolute check dir>\n");
     return EXIT.USAGE;
   }
-  mkdirSync22(runDir2, { recursive: true });
+  mkdirSync23(runDir2, { recursive: true });
   const shim = ensureShim(runDir2);
   return new Promise((resolve20) => {
     const child = spawn6(process.execPath, [shim, checkDir], { stdio: "inherit", env: process.env });
@@ -56838,7 +56918,7 @@ var init_ingest = __esm({
 });
 
 // src/cli/commands/learn.ts
-import { existsSync as existsSync46, mkdirSync as mkdirSync23, readFileSync as readFileSync27, statSync as statSync15 } from "node:fs";
+import { existsSync as existsSync46, mkdirSync as mkdirSync24, readFileSync as readFileSync27, statSync as statSync15 } from "node:fs";
 import { basename as basename12, isAbsolute as isAbsolute18, join as join61, relative as relative5, resolve as resolve17 } from "node:path";
 function knowledgePath(ctx, repo, global) {
   return global ? join61(ctx.orbitHome, "knowledge.sqlite") : join61(repo, ".orbit", "knowledge.sqlite");
@@ -56973,7 +57053,7 @@ async function runIngestCurator(ctx, repo, config, prompt) {
     deps.registry.seed();
     const id = `ingest-${ctx.clock.now().toString(36)}`;
     const dir = join61(ctx.orbitHome, "ingest", repoKey(repo), id);
-    mkdirSync23(dir, { recursive: true, mode: 448 });
+    mkdirSync24(dir, { recursive: true, mode: 448 });
     const snap = snapshotPolicy(config, { runId: id, repoRoot: repo, runDir: dir, clock: ctx.clock });
     const out = await runCurator(
       { deps, clock: ctx.clock, snapshot: snap.snapshot, policyPath: snap.path, policyHash: snap.hash, runId: id, dir, budgetUsd: config.knowledge.curator_budget_usd, env: ctx.env, homeDir: ctx.homeDir },
@@ -57008,7 +57088,7 @@ async function learnIngestCommand(args, ctx) {
     }
   } else ({ output, model } = await runIngestCurator(ctx, repo, config, task.prompt));
   const result2 = acceptIngestOutput(output, source, ctx.clock, model ? { curatorModel: model } : {});
-  mkdirSync23(join61(repo, ".orbit"), { recursive: true });
+  mkdirSync24(join61(repo, ".orbit"), { recursive: true });
   const store = KnowledgeStore.open(join61(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const created = [];
   const merged = [];
@@ -57607,7 +57687,7 @@ async function releaseResolveCommand(args, ctx) {
             ...environment === void 0 ? {} : { environment },
             resolution,
             by,
-            ...resolution === "verify" ? { isolation: rc.isolation(), homeDir: homeOf(rc.deps) } : {}
+            ...resolution === "verify" ? { isolation: rc.isolation(), homeDir: homeOf2(rc.deps) } : {}
           });
           return { result: result3 };
         } finally {

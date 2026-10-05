@@ -22,7 +22,7 @@ export { renderClaudeSettings, claudeSettingsProblems, assertClaudeSettings, abs
 export type { ClaudeSettings, ClaudeSettingsInput } from './claude-settings.ts';
 export { classifyClaudeTranscript, claudeUsage, claudeEvents, subtractUsage, sessionProblems, CLAUDE_END_REASONS, CLAUDE_AUTH_ERRORS, CLAUDE_TRANSIENT_ERRORS } from './claude-transcript.ts';
 export type { ClaudeTaskResult, ClaudeEndReason } from './claude-transcript.ts';
-export { CodexAdapter, buildCodexArgv, parseHelpFlags, parseDoctorChecks, CODEX_EFFORTS, CODEX_LIMITATIONS, CODEX_REQUIRED_FLAGS } from './codex.ts';
+export { CodexAdapter, buildCodexArgv, parseHelpFlags, parseDoctorChecks, CODEX_EFFORTS, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, CODEX_REQUIRED_FLAGS } from './codex.ts';
 export type { CodexAdapterOptions, CodexTaskHandle, CodexTaskSpec, CodexTier } from './codex.ts';
 export { classifyCodexTranscript, codexUsage, codexEvents, CODEX_END_REASONS } from './codex-events.ts';
 export type { CodexTaskResult, CodexEndReason } from './codex-events.ts';

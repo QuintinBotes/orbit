@@ -3,10 +3,20 @@
  * codex-cli.md section 10). Codex never edits: the adapter refuses a task
  * that is not read-only, and runs
  *
- *   codex exec --sandbox read-only --ephemeral --ignore-user-config --json
+ *   codex exec --sandbox <mode> --ephemeral --ignore-user-config --json
  *     --output-schema <workerDir>/schema.json -o <workerDir>/last-message.json
  *     -m <model> [-c model_reasoning_effort="<e>"] -c web_search="disabled"
  *     --disable multi_agent -C <checkout> -          (prompt on stdin)
+ *
+ * in one of two tiers (ADR 0001, "Codex reviewer tiers"). os-sandbox: inside
+ * srt, with <mode> `danger-full-access`, because Codex's own Seatbelt sandbox
+ * cannot start inside srt on macOS (`sandbox_apply: Operation not permitted`);
+ * srt's profile is then the only confinement (codexReviewerProfile: writes to
+ * the worker directory and Codex's state directory only, never the checkout).
+ * codex-sandbox: no srt, unwrapped, with <mode> `read-only`; reads are then
+ * unrestricted and the handle says so. `danger-full-access` is passed only
+ * together with the sandbox-runtime wrapper, and the adapter refuses it in any
+ * other combination.
  *
  * Always -m: a user's configured default can be one the installed CLI cannot
  * use (it returned HTTP 400 in the verified probe). Never --full-auto or -a
@@ -15,7 +25,8 @@
  * the role prompt followed by the review packet, on stdin from a file, so
  * exec reads it to EOF and starts (an open stdin pipe would hang it).
  */
-import { existsSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { systemClock } from '../core/clock.ts';
@@ -24,11 +35,11 @@ import { execCapture } from '../core/exec.ts';
 import { atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
 import { strictSchemaViolations } from '../contract/strict-schema.ts';
 import type { IsolationProvider } from '../isolation/types.ts';
-import { prepareWorkerTmpDir } from '../isolation/profiles.ts';
+import { codexHomeFor, codexReviewerProfile, prepareWorkerTmpDir } from '../isolation/profiles.ts';
 import { canonicalPath } from '../isolation/util.ts';
 import { verifySnapshot } from '../policy/snapshot.ts';
 import { parseCodexCatalog } from '../routing/registry.ts';
-import { readOnlyProfile, snapshotFileHash } from './claude.ts';
+import { snapshotFileHash } from './claude.ts';
 import { CODEX_END_REASONS, classifyCodexTranscript, codexEvents, codexUsage, type CodexTaskResult } from './codex-events.ts';
 import { defaultOrbitCommands } from './commands.ts';
 import { buildWorkerEnv, passThrough } from './env.ts';
@@ -61,7 +72,10 @@ export interface CodexTaskHandle extends TaskHandle {
 
 export interface CodexAdapterOptions {
   command?: string[];
-  /** Wraps the codex process like a Claude worker; null runs it with Codex's own read-only sandbox only. */
+  /**
+   * Only sandbox-runtime wraps the codex process (the os-sandbox tier). Anything else, null included, or an srt
+   * that cannot start here, runs it unwrapped under Codex's own read-only sandbox (the codex-sandbox tier).
+   */
   isolation?: IsolationProvider | null;
   baseEnv?: Record<string, string | undefined>;
   shimCommand?: string[];
@@ -77,18 +91,35 @@ export interface CodexAdapterOptions {
   passEnv?: string[];
 }
 
-/** What the codex-sandbox tier (no outer isolation) and Codex itself do not enforce (codex-cli.md sections 8 and 9). */
+const PROJECT_CONFIG_LIMITATION = 'Project configuration (<checkout>/.codex/config.toml) still loads under --ignore-user-config, and user hooks in CODEX_HOME may still fire (unverified).';
+
+/** What the codex-sandbox tier (no srt) and Codex itself do not enforce (codex-cli.md sections 8 and 9). */
 export const CODEX_LIMITATIONS: readonly string[] = [
-  "Codex's read-only sandbox blocks writes and network for the commands it runs, not reads: any file the user can read may reach the provider.",
-  'Project configuration (<checkout>/.codex/config.toml) still loads under --ignore-user-config, and user hooks in CODEX_HOME may still fire (unverified).',
+  "Reads are unrestricted: Codex's read-only sandbox blocks writes and network for the commands it runs, not reads, so any file the user can read may reach the provider.",
+  PROJECT_CONFIG_LIMITATION,
 ];
-const NESTED_LIMITATION = "Codex's own command sandbox inside srt is unverified on this platform; if it cannot start nested, the reviewer's shell commands fail closed and it reviews from the packet alone.";
+
+/** What the os-sandbox tier adds to srt's own limitations: srt is all there is. */
+export const CODEX_OS_SANDBOX_LIMITATIONS: readonly string[] = [
+  "srt is the only sandbox around Codex in this tier: Codex runs with --sandbox danger-full-access because its own sandbox cannot start inside srt (macOS refuses to apply a Seatbelt profile from inside another). srt's profile limits writes to the worker directory and Codex's state directory (never the review checkout), egress to the provider hosts and reads of credential paths.",
+  "Codex's state directory (its login file, logs and caches) is writable by the reviewer, and reads outside the denied paths are unrestricted: any file the user can read may reach the provider.",
+  PROJECT_CONFIG_LIMITATION,
+];
+
+const DANGER_FULL_ACCESS = 'danger-full-access';
+
+const NO_OS_ISOLATION = 'No OS isolation around the codex process itself; only its own read-only sandbox applies to the commands it runs.';
+
+/** The reviewer's temp directory under srt: inside the worker directory, which it may write anyway, so its write set stays at two directories. */
+const REVIEWER_TMP_DIR = 'tmp';
 
 export class CodexAdapter implements ProviderAdapter {
   readonly id: string;
   private readonly opts: CodexAdapterOptions;
   private readonly command: string[];
   private readonly clock: Clock;
+  /** Whether srt starts here: probed once, since the probe runs a sandboxed process. */
+  private srtProbe: { ok: boolean; detail: string } | null = null;
 
   constructor(opts: CodexAdapterOptions = {}) {
     this.opts = opts;
@@ -192,31 +223,39 @@ export class CodexAdapter implements ProviderAdapter {
     const outputTokens = outputBudgetFor(spec.role, { explicit: spec.outputTokens, configured: snapshot.config.routing.output_budgets });
     const checkout = canonicalPath(spec.cwd);
     const workerDir = spec.workerDir;
-    const tmpDir = prepareWorkerTmpDir(workerDir);
+    const choice = await this.chooseTier();
+    const tmpDir = choice.srt ? reviewerTmpDir(workerDir) : prepareWorkerTmpDir(workerDir);
     const env = buildWorkerEnv({ provider: 'codex', base: this.baseEnv(), policyPath: spec.policyPath, policyHash, worktree: checkout, tmpDir, extra: { ...passThrough(this.baseEnv(), this.opts.passEnv), ...spec.env } });
+    // Built before anything is written or launched: a layout that would make the checkout writable is refused outright.
+    const srt = choice.srt ? { provider: choice.srt, profile: codexReviewerProfile(spec.sandbox, { checkout, workerDir, codexHome: codexHomeFor(homeOf(env), env), homeDir: homeOf(env) }) } : null;
     writeFileSync(join(workerDir, CODEX_PROMPT_FILE), `${spec.systemPrompt.trim()}\n\n${spec.prompt}${outputTokens === null ? '' : `\n${outputBudgetInstruction(outputTokens)}\n`}`, { mode: 0o600 });
     atomicWriteJson(join(workerDir, CODEX_SCHEMA_FILE), spec.outputSchema, 0o600);
     // -o is written only after turn.completed; a stale file from an earlier
     // attempt must not be mistaken for this one's answer.
     rmSync(join(workerDir, CODEX_LAST_MESSAGE_FILE), { force: true });
 
-    const argv = buildCodexArgv({ command: this.command, model: spec.model, effort: spec.effort, cwd: checkout, schemaPath: join(workerDir, CODEX_SCHEMA_FILE), lastMessagePath: join(workerDir, CODEX_LAST_MESSAGE_FILE) });
+    const tier: CodexTier = srt ? 'os-sandbox' : 'codex-sandbox';
+    const argv = buildCodexArgv({ command: this.command, model: spec.model, effort: spec.effort, cwd: checkout, schemaPath: join(workerDir, CODEX_SCHEMA_FILE), lastMessagePath: join(workerDir, CODEX_LAST_MESSAGE_FILE), tier, wrapper: srt?.provider.kind ?? null });
     let launchArgv = argv;
     let launchEnv = env;
-    let tier: CodexTier = 'codex-sandbox';
-    const limitations = [...CODEX_LIMITATIONS];
+    const limitations = [...(srt ? CODEX_OS_SANDBOX_LIMITATIONS : CODEX_LIMITATIONS)];
     if (outputTokens !== null) limitations.push(`Output budget of ${outputTokens} tokens is an instruction only: Codex has no verified output cap, so overruns are measured and recorded.`);
     const cleanupPaths: string[] = [];
-    const isolation = this.opts.isolation ?? null;
-    if (isolation && isolation.kind !== 'none') {
-      const wrapped = isolation.wrap(argv, readOnlyProfile(spec.sandbox, checkout, true), { cwd: checkout, env });
+    if (srt) {
+      const wrapped = srt.provider.wrap(argv, srt.profile, { cwd: checkout, env });
+      try {
+        assertWrapped(argv, wrapped.argv);
+      } catch (err) {
+        wrapped.cleanup();
+        throw err;
+      }
       launchArgv = wrapped.argv;
       launchEnv = wrapped.env;
-      tier = 'os-sandbox';
-      limitations.push(...wrapped.limitations, NESTED_LIMITATION);
+      limitations.push(...wrapped.limitations);
       for (const a of wrapped.argv) if (isAbsolute(a) && basename(dirname(a)).startsWith('orbit-srt-')) cleanupPaths.push(dirname(a));
     } else {
-      limitations.push('No OS isolation around the codex process itself; only its own read-only sandbox applies to the commands it runs.');
+      limitations.push(NO_OS_ISOLATION);
+      if (choice.note) limitations.push(choice.note);
     }
 
     const handle = await launchShim({
@@ -286,6 +325,23 @@ export class CodexAdapter implements ProviderAdapter {
     return this.opts.baseEnv ?? process.env;
   }
 
+  /**
+   * os-sandbox needs sandbox-runtime and a probe that shows it starts here;
+   * otherwise Codex runs unwrapped under its own read-only sandbox, and `note`
+   * says why. Other isolation providers are not used around Codex: the ADR's
+   * tiers are srt or no srt, and `danger-full-access` is for srt alone.
+   */
+  private async chooseTier(): Promise<{ srt: IsolationProvider | null; note: string | null }> {
+    const isolation = this.opts.isolation ?? null;
+    if (isolation === null || isolation.kind === 'none') return { srt: null, note: null };
+    if (isolation.kind !== 'sandbox-runtime') {
+      return { srt: null, note: `The ${isolation.kind} isolation provider is not used around Codex (only sandbox-runtime is); Codex runs under its own read-only sandbox.` };
+    }
+    this.srtProbe ??= await isolation.available();
+    if (!this.srtProbe.ok) return { srt: null, note: `sandbox-runtime is unavailable (${this.srtProbe.detail}); Codex runs under its own read-only sandbox.` };
+    return { srt: isolation, note: null };
+  }
+
   private async run(args: string[], timeoutMs: number): Promise<{ ok: boolean; stdout: string; stderr: string; detail: string }> {
     const base = this.baseEnv();
     const env: Record<string, string> = {};
@@ -310,14 +366,22 @@ export interface CodexArgvInput {
   cwd: string;
   schemaPath: string;
   lastMessagePath: string;
+  /** Default 'codex-sandbox': `--sandbox read-only`. 'os-sandbox' is `--sandbox danger-full-access`, which needs `wrapper: 'sandbox-runtime'`. */
+  tier?: CodexTier;
+  /** The kind of isolation provider that will wrap this argv, or null when it runs bare. */
+  wrapper?: IsolationProvider['kind'] | null;
 }
 
 export function buildCodexArgv(i: CodexArgvInput): string[] {
+  const tier = i.tier ?? 'codex-sandbox';
+  if (tier === 'os-sandbox' && i.wrapper !== 'sandbox-runtime') {
+    throw new OrbitError('POLICY_DENIED', `refusing --sandbox ${DANGER_FULL_ACCESS} unless the command runs inside the sandbox-runtime wrapper (wrapper: ${i.wrapper ?? 'none'})`, { wrapper: i.wrapper ?? null });
+  }
   return [
     ...i.command,
     'exec',
     '--sandbox',
-    'read-only',
+    tier === 'os-sandbox' ? DANGER_FULL_ACCESS : 'read-only',
     '--ephemeral',
     '--ignore-user-config',
     '--json',
@@ -336,6 +400,32 @@ export function buildCodexArgv(i: CodexArgvInput): string[] {
     i.cwd,
     '-',
   ];
+}
+
+/**
+ * The last guard before launch: an argv that carries `danger-full-access`
+ * must really be wrapped. wrap() puts the command it was given last (srt's own
+ * flags, the ulimit shell and the memory watchdog all come before it), so the
+ * launched argv has to end with the bare one and be longer.
+ */
+function assertWrapped(bare: string[], launched: string[]): void {
+  const wrapped = launched.length > bare.length && bare.every((a, k) => launched[launched.length - bare.length + k] === a);
+  if (!wrapped) {
+    throw new OrbitError('POLICY_DENIED', `refusing to launch Codex with --sandbox ${DANGER_FULL_ACCESS}: the sandbox-runtime wrapper did not wrap the command`);
+  }
+}
+
+/** The reviewer's temp directory under srt, created owner-only inside the worker directory. */
+function reviewerTmpDir(workerDir: string): string {
+  const dir = join(workerDir, REVIEWER_TMP_DIR);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+  return dir;
+}
+
+/** The home directory the worker's HOME names, which is what Codex resolves ~/.codex against. */
+function homeOf(env: Record<string, string>): string {
+  return env.HOME && isAbsolute(env.HOME) ? env.HOME : homedir();
 }
 
 /** Long flags listed by a clap `--help` page. */
