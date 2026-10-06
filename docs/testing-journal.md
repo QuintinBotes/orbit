@@ -50,6 +50,13 @@ Closed in 30e6e5c: G1 to G3, G5 to G13, G16 to G23, G26, G28, G29, G31 to G36, G
 
 ---
 
+### 2026-10-06: v0.1.0 released; installed from the public catalog and run
+- Tested: CI on GitHub's runners for the first time (the repository is public); the signed v0.1.0 tag and release; the catalog entry (git-subdir, path plugin); a marketplace install in a fresh Claude config; init, doctor and a real run in a new repository from the installed copy; /orbit:status through Claude Code with the installed copy.
+- Went well: CI green on Ubuntu (Node 22 and 24) and macOS (Node 24), publish-guard green. The install brought 16 MB of node_modules (the sandbox runtime only), 8 skills, 7 agents and both hooks; bin/orbit and srt 0.0.78 ran from the cache. Doctor went to 0 failures after the two documented steps (a check, the Codex data-policy opt-in); the run SUCCEEDED in about a minute with Codex review. An earlier run in the same repository, whose test script was broken at baseline outside the allowed paths, stopped cleanly as non-progress after three identical attempts.
+- Went wrong: the first public CI run failed one Ubuntu test (GitHub's runners ship gh in /usr/bin, so a "no gh" PATH was not) and the publish-guard workflow ran a pinned 0.1.0 that treated subdomains of reserved domains as real addresses. In non-interactive claude -p, the status skill's own orbit command needs approval.
+- Root cause: a test PATH that assumed the host's /usr/bin; a stale workflow pin; skills without allowed-tools frontmatter.
+- Change: a git-only PATH in the test; the workflow pinned to publish-guard 0.1.2. Proposed for 0.1.1: allowed-tools frontmatter so the read-only skills (status, doctor) run their own orbit command without a prompt.
+
 ### 2026-10-06: closing re-test of all three live demos (65a03ab)
 - Tested: the live demo script, all three goals, real Claude and Codex, real delivery to the private demo repository (draft PRs #5, #6 and #7; reports in docs/demos/2026-10-06/). Then the UI goal once more on a demo branch whose config starts implementers on the cheapest tier (routing.overrides, disclosed), to try to exercise the repair loop live (draft PR #8 against that branch).
 - Went well: all four runs SUCCEEDED unattended. Simple: Sonnet, the routine tier, one attempt, about 2.5 minutes. Difficult: escalated to Opus on recorded coupling evidence, browser journeys under srt, about 4 minutes. UI: a 9-criterion contract graded complex, escalated to Opus, CSV export with download journeys on desktop and mobile passing under srt, Codex cleared the tree, about 8 minutes. The collected reports carry no local paths.
