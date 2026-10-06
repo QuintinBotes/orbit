@@ -295,6 +295,12 @@ Files on disk:
   worktrees; one that is `BLOCKED`, `EXHAUSTED` or paused keeps them until it
   finishes or `orbit gc` removes them.
 
+`<repo>` is the working tree Orbit was started in. Inside a linked worktree
+(`git worktree add`) that is the worktree, not the main working tree: its
+branch, its cleanliness and its own `.orbit/` config and state. The exclude
+rules `orbit init` adds go to the shared `.git/info/exclude` and apply in every
+worktree of the clone.
+
 Logs are redacted before they are stored. Add patterns of your own with
 `retention.redact_patterns`.
 

@@ -349,7 +349,7 @@ Behaviour checks [local: `t.mts`]:
    - **All writes go through `BEGIN IMMEDIATE`.** Deferred transactions produced immediate 5/517 errors under contention.
    - Retry 5 and 517 with bounded jittered backoff, use STRICT tables and JSON columns, and `RETURNING` for ids.
    - Keep `state.sqlite` on the local disk and **never inside a container bind mount**. WAL relies on shared-memory locking, and its behaviour across the OrbStack VM boundary is UNVERIFIED.
-   - With git worktrees, keep a single DB in the primary checkout's `.orbit/`, not one per worktree.
+   - With git worktrees, each working tree is its own repository root (`git rev-parse --show-toplevel`), with its own `.orbit/` config and DB; only what git shares (the common git directory, `info/exclude`, refs) is shared (issue #3).
 4. **Service definitions.**
    - Generate a launchd plist (macOS) or a systemd user unit (Linux) with an **absolute `process.execPath`**, because PATH holds both nvm Node 22.18 and Homebrew Node 26.8.2.
    - Use an explicit `PATH`, absolute log paths with pre-created directories, `KeepAlive={SuccessfulExit:false}` or `Restart=on-failure`, `ThrottleInterval` or `RestartSec` ≥ 5, and `ExitTimeOut` or `TimeoutStopSec` = 30.

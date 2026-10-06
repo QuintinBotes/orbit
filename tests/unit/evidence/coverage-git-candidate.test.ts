@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanupCandidateCheckout, diffStat, materializeCandidate } from '../../../src/evidence/candidate.ts';
 import { adminDirFor, git, gitEnv, resolveCommit } from '../../../src/evidence/git.ts';
-import { makeRepo, sh, tempRoot, write } from './fixtures.ts';
+import { addWorktree, makeRepo, sh, tempRoot, write } from './fixtures.ts';
 
 let t: ReturnType<typeof tempRoot>;
 beforeEach(() => {
@@ -69,6 +69,22 @@ describe('adminDirFor', () => {
     const res = await adminDirFor(r.repo, r.repo);
     expect(res.worktree).toBe(r.repo);
     expect(res.gitDir).toBe(join(r.repo, '.git'));
+  });
+
+  it('answers with the linked worktree\'s own admin directory when the repository root is itself a linked worktree (#3)', async () => {
+    const r = makeRepo(t.root);
+    const linked = addWorktree(r.repo, join(t.root, 'linked'), 'feature');
+    const res = await adminDirFor(linked, linked);
+    expect(res.worktree).toBe(linked);
+    // Not the common directory: that holds the main working tree's HEAD and index.
+    expect(res.gitDir).toBe(realpathSync(sh(linked, 'rev-parse', '--path-format=absolute', '--git-dir').trim()));
+    expect(res.gitDir).not.toBe(join(r.repo, '.git'));
+    // A worker checkout added from the linked worktree is found through the shared admin data.
+    const worker = join(t.root, 'orbit-home', 'w1');
+    await git(linked, ['worktree', 'add', '--detach', worker, 'HEAD']);
+    const w = await adminDirFor(linked, worker);
+    expect(w.worktree).toBe(realpathSync(worker));
+    expect(w.gitDir.startsWith(join(r.repo, '.git', 'worktrees') + '/')).toBe(true);
   });
 
   it('refuses a worktree path that does not exist', async () => {

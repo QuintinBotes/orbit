@@ -3,7 +3,7 @@
  * repository, SQLite state, worker shim and the fake provider CLIs.
  */
 import { EventEmitter } from 'node:events';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { main } from '../../../src/cli/cli.ts';
@@ -14,7 +14,10 @@ import { registerController } from '../../../src/storage/controllers.ts';
 import { getRun } from '../../../src/controller/run-store.ts';
 import { listWorkers } from '../../../src/storage/workers.ts';
 import { listRuns } from '../../../src/controller/run-store.ts';
-import { baseScenario, implementMul, labDeps, makeLab, seedRegistry, waitFor, writeScenario, type Lab } from '../controller/harness.ts';
+import { baseScenario, git as labGit, implementMul, labDeps, makeLab, seedRegistry, waitFor, writeScenario, type Lab } from '../controller/harness.ts';
+import { openDb } from '../../../src/storage/db.ts';
+import { stateDbPath } from '../../../src/controller/start.ts';
+import { repoKey } from '../../../src/controller/context.ts';
 
 const labs: Lab[] = [];
 function lab(opts: Parameters<typeof makeLab>[0] = {}): Lab {
@@ -129,6 +132,50 @@ describe('orbit run --foreground', () => {
     expect(r.out).toMatch(/frozen policy: fix \.orbit\/config\.yaml, then "orbit cancel orb-[^"]+" and start a new run/);
     expect(r.out).not.toMatch(/resolve the reason above, then "orbit resume/);
     expect(r.out).toMatch(/report: orbit report orb-/);
+  });
+});
+
+describe('orbit run from a linked worktree (#3)', () => {
+  it('runs in the worktree, creates its worker worktrees from it, and leaves the dirty main working tree alone', async () => {
+    const l = lab({ tweak: (c) => void (c.repository.base_branch = 'feature') });
+    // A clean linked worktree nested inside the main working tree, which is on another branch and dirty.
+    const wt = join(l.repo, '.claude', 'worktrees', 'wt');
+    labGit(l.repo, 'worktree', 'add', '-q', '-b', 'feature', wt, 'main');
+    labGit(l.repo, 'checkout', '-q', '-b', 'busy');
+    writeFileSync(join(l.repo, 'README.md'), '# acme, edited\n');
+    writeFileSync(join(l.repo, 'notes.txt'), 'scratch\n');
+    const mainStatus = labGit(l.repo, 'status', '--porcelain');
+    let db: ReturnType<Lab['db']> | null = null;
+    const w: Lab = {
+      ...l,
+      repo: wt,
+      db() {
+        db ??= openDb(stateDbPath(wt));
+        return db;
+      },
+      close() {
+        db?.close();
+      },
+    };
+    labs.push(w);
+    writeScenario(w, baseScenario({ implementer: [implementMul('*')] }));
+    const r = await cli(w, ['run', '--goal', GOAL, '--foreground', '--policy', l.configPath]);
+    expect(r.code, `${r.out}\n${r.err}`).toBe(0);
+    const id = /^run (orb-\S+) started/m.exec(r.out)?.[1];
+    const run = getRun(w.db(), id!);
+    expect(run.state).toBe('SUCCEEDED');
+    expect(run.repoRoot).toBe(wt);
+    // The implementer worked in a checkout added from the linked worktree, kept under the worktree's own key.
+    expect(run.worktreePath).toBe(join(l.orbitHome, 'worktrees', repoKey(wt), id!, 'implementer'));
+    expect(existsSync(join(wt, '.orbit', 'runs', id!, 'final.md'))).toBe(true);
+    expect(existsSync(join(l.repo, '.orbit'))).toBe(false);
+    expect(labGit(l.repo, 'branch', '--show-current')).toBe('busy');
+    expect(labGit(l.repo, 'status', '--porcelain')).toBe(mainStatus);
+    expect(labGit(wt, 'branch', '--show-current')).toBe('feature');
+    // The candidate is a commit on the base the worktree was on, and the finished run released its worker checkouts.
+    const cand = labGit(wt, 'for-each-ref', '--format=%(refname)', `refs/orbit/${id}/`);
+    expect(cand).toMatch(/candidates/);
+    expect(labGit(wt, 'worktree', 'list', '--porcelain')).not.toContain(join(l.orbitHome, 'worktrees'));
   });
 });
 

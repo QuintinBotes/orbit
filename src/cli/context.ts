@@ -5,7 +5,7 @@
  */
 import { existsSync, realpathSync } from 'node:fs';
 import { homedir, hostname, userInfo } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { systemClock, type Clock } from '../core/clock.ts';
 import { OrbitError } from '../core/errors.ts';
 import { execCapture } from '../core/exec.ts';
@@ -103,21 +103,23 @@ function safeRealpath(p: string): string {
   }
 }
 
-/** The repository root: the git toplevel of --repo or the current directory (the primary checkout when inside a linked worktree). */
+/**
+ * The repository root: the git toplevel of --repo or the current directory. Inside a linked worktree that is the
+ * worktree itself (issue #3): its branch, its cleanliness, its .orbit/ config and state. What git shares between
+ * worktrees (objects, refs, info/exclude) is reached through git from there, never by walking to the main checkout.
+ */
 export async function resolveRepo(ctx: CliContext, flag?: string): Promise<string> {
   const start = resolve(ctx.cwd, flag ?? '.');
   if (!existsSync(start)) throw new OrbitError('NOT_FOUND', `${start} does not exist`);
   let r;
   try {
-    r = await execCapture(['git', 'rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'], { cwd: start, timeoutMs: 15_000, env: gitEnv(ctx.env) });
+    r = await execCapture(['git', 'rev-parse', '--path-format=absolute', '--show-toplevel'], { cwd: start, timeoutMs: 15_000, env: gitEnv(ctx.env) });
   } catch (err) {
     throw new OrbitError('PROVIDER_UNAVAILABLE', `git is not available: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (r.exitCode !== 0) throw new OrbitError('NOT_FOUND', `${start} is not inside a git repository; run orbit from a repository or pass --repo (to make this directory one: git init, then commit at least once)`);
-  const [top, common] = r.stdout.trim().split('\n');
+  const top = r.stdout.trim().split('\n')[0];
   if (!top) throw new OrbitError('NOT_FOUND', `${start} is not inside a git repository`);
-  // A linked worktree keeps its own toplevel; Orbit's state lives with the primary checkout (platform-runtime section 7.3).
-  if (common && common.endsWith('/.git') && dirname(common) !== top) return safeRealpath(dirname(common));
   return safeRealpath(top);
 }
 

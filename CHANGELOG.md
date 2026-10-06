@@ -3,6 +3,7 @@
 ## Unreleased
 
 - `orbit init` no longer proposes folders that hold CI pipeline or build-system definitions (pipeline YAML with a top-level trigger, stages, jobs or extends template, Jenkinsfiles, GitLab CI, CircleCI) as `scope.allowed_paths`; it protects them, plus central build files such as Directory.Build.props, Directory.Packages.props, global.json, nuget.config and a root Makefile, in `scope.protected_paths`, and tells the person to narrow the scope to the goal (#4).
+- A linked git worktree is its own repository root (`git rev-parse --show-toplevel`): `orbit init` writes the worktree's `.orbit/config.yaml` with the worktree's branch as `repository.base_branch`, `doctor`, `run` and every other command use the worktree's branch, cleanliness and state, `.git/info/exclude` stays shared, and worker checkouts made from a linked worktree find its own git directory (#3).
 
 ## 0.1.0 (2026-10-06)
 
