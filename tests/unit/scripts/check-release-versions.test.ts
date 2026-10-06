@@ -1,4 +1,4 @@
-// scripts/check-release-versions.mjs: a release tag must match the three versions the release ships.
+// scripts/check-release-versions.mjs: a release tag must match the versions the release ships, including the CLI's own.
 import { afterEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -14,16 +14,18 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-function tree(versions: { root?: unknown; plugin?: unknown; manifest?: unknown }): string {
+function tree(versions: { root?: unknown; plugin?: unknown; manifest?: unknown; cli?: string }): string {
   const dir = mkdtempSync(join(tmpdir(), 'orbit-relver-'));
   dirs.push(dir);
   mkdirSync(join(dir, 'plugin', '.claude-plugin'), { recursive: true });
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'orbit-dev', version: versions.root }));
   writeFileSync(join(dir, 'plugin', 'package.json'), JSON.stringify({ name: 'orbit-plugin', version: versions.plugin }));
   writeFileSync(join(dir, 'plugin', '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'orbit', version: versions.manifest }));
+  mkdirSync(join(dir, 'src', 'cli'), { recursive: true });
+  if (versions.cli !== undefined) writeFileSync(join(dir, 'src', 'cli', 'version.ts'), `export const ORBIT_VERSION = '${versions.cli}';\n`);
   return dir;
 }
-const same = (v: string) => ({ root: v, plugin: v, manifest: v });
+const same = (v: string) => ({ root: v, plugin: v, manifest: v, cli: v });
 
 describe('release tag parsing', () => {
   it('accepts vMAJOR.MINOR.PATCH with an optional prerelease and returns the version', () => {
@@ -36,19 +38,26 @@ describe('release tag parsing', () => {
 });
 
 describe('checkReleaseVersions', () => {
-  it('has no problems when the tag and all three versions agree', () => {
+  it('names the version orbit --version reports when it differs from the tag, or cannot be found', () => {
+    expect(checkReleaseVersions('v0.2.0', tree({ ...same('0.2.0'), cli: '0.1.0' }))).toEqual(['src/cli/version.ts is 0.1.0, the tag v0.2.0 needs 0.2.0']);
+    expect(checkReleaseVersions('v0.2.0', tree({ root: '0.2.0', plugin: '0.2.0', manifest: '0.2.0' }))[0]).toMatch(/^src\/cli\/version\.ts cannot be read/);
+    const dir = tree(same('0.2.0'));
+    writeFileSync(join(dir, 'src', 'cli', 'version.ts'), 'export const ORBIT_VERSION = VERSION;\n');
+    expect(checkReleaseVersions('v0.2.0', dir)).toEqual(['src/cli/version.ts has no ORBIT_VERSION string']);
+  });
+  it('has no problems when the tag and all four versions agree', () => {
     expect(checkReleaseVersions('v0.2.0', tree(same('0.2.0')))).toEqual([]);
   });
 
   it('names each file whose version differs from the tag', () => {
-    const problems = checkReleaseVersions('v0.2.0', tree({ root: '0.1.0', plugin: '0.2.0', manifest: '0.1.9' }));
+    const problems = checkReleaseVersions('v0.2.0', tree({ root: '0.1.0', plugin: '0.2.0', manifest: '0.1.9', cli: '0.2.0' }));
     expect(problems).toHaveLength(2);
     expect(problems[0]).toMatch(/package\.json is 0\.1\.0, the tag v0\.2\.0 needs 0\.2\.0/);
     expect(problems[1]).toMatch(/plugin\/\.claude-plugin\/plugin\.json is 0\.1\.9/);
   });
 
   it('reports a missing or non-string version, an unreadable file and a malformed tag', () => {
-    expect(checkReleaseVersions('v0.2.0', tree({ root: '0.2.0', plugin: undefined, manifest: 2 }))).toEqual([
+    expect(checkReleaseVersions('v0.2.0', tree({ root: '0.2.0', plugin: undefined, manifest: 2, cli: '0.2.0' }))).toEqual([
       expect.stringMatching(/plugin\/package\.json has no version string/),
       expect.stringMatching(/plugin\/\.claude-plugin\/plugin\.json has no version string/),
     ]);

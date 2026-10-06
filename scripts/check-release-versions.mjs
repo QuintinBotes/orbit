@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// A release tag must match the version of everything the release ships: package.json, plugin/package.json and
-// plugin/.claude-plugin/plugin.json. The release workflow runs this first, so a tag on a commit that was not bumped
+// A release tag must match the version of everything the release ships: package.json, plugin/package.json,
+// plugin/.claude-plugin/plugin.json and the version `orbit --version` reports (src/cli/version.ts; the bundle has no
+// package.json to read). The release workflow runs this first, so a tag on a commit that was not bumped
 // fails before any test runs or anything is published.
 //   node scripts/check-release-versions.mjs <tag> [--root <dir>]
 import { readFileSync } from 'node:fs';
@@ -10,6 +11,8 @@ import { fileURLToPath } from 'node:url';
 const DEFAULT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const TAG = /^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(-[0-9A-Za-z][0-9A-Za-z.-]*)?)$/;
 const FILES = ['package.json', 'plugin/package.json', 'plugin/.claude-plugin/plugin.json'];
+const CLI_VERSION_FILE = 'src/cli/version.ts';
+const CLI_VERSION = /^export const ORBIT_VERSION = '([^']*)';$/m;
 
 /** `v1.2.3` or `v1.2.3-rc.1` as { version, prerelease }, or null when the text is not a release tag. */
 export function parseTag(tag) {
@@ -40,6 +43,16 @@ export function checkReleaseVersions(tag, root = DEFAULT_ROOT) {
     if (typeof json?.version !== 'string') problems.push(`${file} has no version string`);
     else if (json.version !== parsed.version) problems.push(`${file} is ${json.version}, the tag ${tag} needs ${parsed.version}`);
   }
+  let source;
+  try {
+    source = readFileSync(join(root, CLI_VERSION_FILE), 'utf8');
+  } catch (err) {
+    problems.push(`${CLI_VERSION_FILE} cannot be read: ${err instanceof Error ? err.message : String(err)}`);
+    return problems;
+  }
+  const cli = CLI_VERSION.exec(source)?.[1];
+  if (cli === undefined) problems.push(`${CLI_VERSION_FILE} has no ORBIT_VERSION string`);
+  else if (cli !== parsed.version) problems.push(`${CLI_VERSION_FILE} is ${cli}, the tag ${tag} needs ${parsed.version}`);
   return problems;
 }
 
@@ -57,7 +70,7 @@ function main(argv) {
   const problems = checkReleaseVersions(tag, root);
   for (const p of problems) console.error(`release versions: ${p}`);
   if (problems.length > 0) return 1;
-  console.log(`release versions: ${tag} matches ${FILES.join(', ')}`);
+  console.log(`release versions: ${tag} matches ${[...FILES, CLI_VERSION_FILE].join(', ')}`);
   return 0;
 }
 
