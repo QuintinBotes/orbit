@@ -68,12 +68,15 @@ export function decide(ctx: RunContext, input: { id?: string; kind: string; summ
  * then the final report and the learning hook, which never change the
  * outcome. BLOCKED keeps nothing running either: it waits for a person.
  */
-export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown> } = {}): Promise<StepResult> {
+export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown>; frozenAdvice?: string } = {}): Promise<StepResult> {
+  let advice = '';
   if (to === 'BLOCKED') {
-    // A block whose cause lives in the frozen policy cannot be cleared by editing the config and resuming: say so.
+    // A block whose cause lives in the frozen policy cannot be cleared by editing the config and resuming: say so. A block
+    // that knows better than the generic advice (a missing target, which a fix of the config may not even be) brings its own.
     const setting = frozenPolicyCause(reason, typeof opts.data?.code === 'string' ? opts.data.code : undefined);
     if (setting !== null) {
-      reason = withSentence(reason, frozenPolicyAdvice(ctx.run.id, setting));
+      advice = opts.frozenAdvice ?? frozenPolicyAdvice(ctx.run.id, setting);
+      reason = withSentence(reason, advice);
       opts = { ...opts, outcome: { ...(opts.outcome ?? {}), frozen_policy: { setting } } };
     }
   }
@@ -85,11 +88,26 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
   const target = ctx.run.cancelRequested && to !== 'CANCELLED' ? 'CANCELLED' : to;
   if (target === 'SUCCEEDED') closeMootBaselineQuestions(ctx);
   const why = target === to ? reason : `cancelled by request (the step had decided ${to}: ${reason})`;
-  const result = move(ctx, target, why, { patch: { outcomeReason: why.slice(0, 2000), outcomeJson: JSON.stringify(target === to ? outcome : { ...outcome, state: target, decided: to }) }, data: opts.data });
+  const result = move(ctx, target, why, { patch: { outcomeReason: cappedReason(why, target === to ? advice : ''), outcomeJson: JSON.stringify(target === to ? outcome : { ...outcome, state: target, decided: to }) }, data: opts.data });
   await finalizeRun(ctx);
   // The result lives in the branch and the candidate refs; a finished run does not keep a checkout (BLOCKED and EXHAUSTED do).
   if (target === 'SUCCEEDED' || target === 'CANCELLED') await releaseRunWorktrees(ctx);
   return result;
+}
+
+/** The longest outcome reason a run row keeps; outcome_json keeps the whole text. */
+const OUTCOME_REASON_MAX = 2000;
+
+/**
+ * `why` as the run row keeps it: cut to the cap, but never in the advice that ends it (the way forward of a frozen-policy
+ * block), which is what a person who reads only the row needs. Several checks with long log paths make the evidence
+ * longer than the cap, so it is the evidence that gives way.
+ */
+function cappedReason(why: string, advice: string): string {
+  if (why.length <= OUTCOME_REASON_MAX) return why;
+  if (advice === '' || !why.endsWith(advice) || advice.length > OUTCOME_REASON_MAX / 2) return why.slice(0, OUTCOME_REASON_MAX);
+  const head = why.slice(0, why.length - advice.length - 1);
+  return `${head.slice(0, OUTCOME_REASON_MAX - advice.length - 5)}... ${advice}`;
 }
 
 /**
@@ -112,6 +130,9 @@ export function frozenPolicyCause(reason: string, code?: string): string | null 
   // agents.allow_managed_plugins admits only managed plugins, so it is named only when doctor's fix line offers it.
   if (/plugin\(s\)[^.;]*\bthe policy does not allow/.test(reason)) return /agents\.allow_managed_plugins/.test(reason) ? 'agents.allowed_plugins or agents.allow_managed_plugins' : 'agents.allowed_plugins';
   if (/differs from the frozen policy mode/.test(reason)) return 'mode';
+  // A misconfigured check at PREFLIGHT or CONTRACTING (environment-block.ts baselineBlockReason, missingTargetBlockReason): its command is in the policy.
+  const misconfigured = /^[Cc]hecks? ([\w.-]+(?:, [\w.-]+)*) (?:is|are) misconfigured\b/.exec(reason);
+  if (misconfigured) return misconfigured[1]!.split(', ').map((id) => `checks.${id}.command`).join(', ');
   return null;
 }
 
@@ -121,9 +142,21 @@ export function withSentence(reason: string, next: string): string {
   return `${/[.!?]$/.test(r) ? r : `${r}.`} ${next}`;
 }
 
+/**
+ * Whether a fix outside the policy can clear a block on `setting`, so that `orbit resume --force` is a way forward. Not
+ * offered for a misconfigured check (`checks.<id>.command`): its command is the policy's, and a forced resume runs the
+ * same command again (a PREFLIGHT block leaves the baseline incomplete, so the check runs again; at CONTRACTING the
+ * recorded baseline is read and blocks again), so it blocks again unless the tool changed outside the policy. A new
+ * run, which the advice names, clears the block whatever the cause (ADR 0010).
+ */
+export function frozenPolicyForceHelps(setting: string): boolean {
+  return !/^checks\.[\w.-]+\.command(?:, checks\.[\w.-]+\.command)*$/.test(setting);
+}
+
 /** What to do about a frozen-policy block: the config change applies only to a new run. */
 export function frozenPolicyAdvice(runId: string, setting: string): string {
-  return `This comes from the run's frozen policy (${setting}): a run keeps the policy it started with, so editing .orbit/config.yaml does not change it and resuming would block again. Fix the config, then cancel this run (orbit cancel ${runId}) and start a new run with orbit run. If what you fixed is outside the policy (for example orbit models refresh), resume with orbit resume ${runId} --force.`;
+  const advice = `This comes from the run's frozen policy (${setting}): a run keeps the policy it started with, so editing .orbit/config.yaml does not change it and resuming would block again. Fix the config, then cancel this run (orbit cancel ${runId}) and start a new run with orbit run.`;
+  return frozenPolicyForceHelps(setting) ? `${advice} If what you fixed is outside the policy (for example orbit models refresh), resume with orbit resume ${runId} --force.` : advice;
 }
 
 export async function blockOnAuth(ctx: RunContext, provider: string, state: BlockedCredentialState, detail: string | null): Promise<StepResult> {

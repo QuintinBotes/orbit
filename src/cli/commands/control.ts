@@ -14,10 +14,11 @@ import { createLogger } from '../../core/log.ts';
 import { join, resolve } from 'node:path';
 import { defaultControllerDeps, orbitInstallDir } from '../../controller/index.ts';
 import { lenientContext, loadRunContext, type ControllerDeps } from '../../controller/context.ts';
-import { finishRun } from '../../controller/steps/common.ts';
+import { finishRun, frozenPolicyForceHelps } from '../../controller/steps/common.ts';
 import { getRun, requestCancel, setPaused, transition, type RunRecord } from '../../controller/run-store.ts';
 import { isTerminal } from '../../controller/states.ts';
-import { frozenPolicySetting, resumeTarget } from '../../controller/resume.ts';
+import { missingTargetAdvice } from '../../controller/environment-block.ts';
+import { frozenPolicySetting, missingTargetChecks, resumeTarget } from '../../controller/resume.ts';
 import { listQuestions } from '../../inquisition/store.ts';
 import type { Args, OptionSpec } from '../args.ts';
 import { continueCommand, findRunByPrefix, liveControllerFor, expireLeaseOfDeadOwner, liveLease, liveServiceController, openState, resolveRepo, withCliLease, withState, type CliContext } from '../context.ts';
@@ -69,9 +70,14 @@ export async function resumeCommand(args: Args, ctx: CliContext): Promise<number
       });
       const frozen = frozenPolicySetting(run);
       if (frozen !== null && !args.bool('force')) {
+        // A missing target the contract does not name is a frozen-policy block whose cause is often not the config (the goal
+        // should create the target, or a tool is not installed yet): it brings its advice by cause, and a new run in every case.
+        const missing = missingTargetChecks(run);
         throw new OrbitError(
           'TRANSITION_INVALID',
-          `run ${run.id} is BLOCKED by its frozen policy (${frozen}); a run keeps the policy it started with, so resuming would block again. Fix .orbit/config.yaml, cancel this run (orbit cancel ${run.id}) and start a new run with orbit run. If what you fixed is outside the policy (for example orbit models refresh), pass --force`,
+          missing.length > 0
+            ? `run ${run.id} is BLOCKED on a missing target the contract does not name (${frozen}). ${missingTargetAdvice({ runId: run.id, checks: missing })}`
+            : `run ${run.id} is BLOCKED by its frozen policy (${frozen}); a run keeps the policy it started with, so resuming would block again. Fix .orbit/config.yaml, cancel this run (orbit cancel ${run.id}) and start a new run with orbit run${frozenPolicyForceHelps(frozen) ? '. If what you fixed is outside the policy (for example orbit models refresh), pass --force' : ''}`,
           { frozen_policy: frozen },
         );
       }

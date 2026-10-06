@@ -21,7 +21,7 @@ import { intakeGate } from '../gates.ts';
 import { routeFor } from '../workers.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
 import { decide, finishRun, MAX_REGENERATIONS, move, policySummary, safePoint, type StepResult } from './common.ts';
-import { settleExpectedFlips } from './baseline-questions.ts';
+import { blockOnMissingTargets, missingTargetsNotExpectedToFlip, settleExpectedFlips } from './baseline-questions.ts';
 import { obtain } from './obtain.ts';
 import { recordGate } from './preflight.ts';
 
@@ -76,6 +76,11 @@ async function accept(ctx: RunContext, contract: GoalContract, plan: PlannerOutp
   const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot, contract });
   recordGate(ctx, intake);
   if (!intake.passed) return finishRun(ctx, 'BLOCKED', `intake gate rejected the contract: ${intake.reasons.join('; ')}`, { outcome: { gate: intake } });
+  // A check whose command names something the base revision does not have, and that no criterion names, is misconfigured
+  // (ADR 0010). Like a contract the intake gate rejects, this one is not the run's: the block comes before it is written
+  // or settles any other check's question.
+  const unexpected = missingTargetsNotExpectedToFlip(ctx, contract);
+  if (unexpected.length > 0) return blockOnMissingTargets(ctx, unexpected);
   atomicWriteJson(join(ctx.runDir, 'contract.json'), contract);
   // A check that fails on the base revision and is the proof of a criterion is the goal itself: expected to flip, not an exception to ask about.
   settleExpectedFlips(ctx, contract);

@@ -13,7 +13,8 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { atomicWriteJson } from '../../core/fsx.ts';
 import { isOrbitError } from '../../core/errors.ts';
 import { adminDirFor, git, resolveCommit, treeOf } from '../../evidence/git.ts';
-import { BASELINE_FILE, runBaseline, type BaselineReport } from '../../evidence/baseline.ts';
+import { BASELINE_FILE, runBaseline, type BaseFailureClassification, type BaselineReport } from '../../evidence/baseline.ts';
+import type { EnvironmentSignal } from '../../evidence/environment-failure.ts';
 import { raiseBaselineExceptionQuestions } from '../../inquisition/baseline-exception.ts';
 import { validateCredentials, type BlockedCredentialState, type CredentialCheck } from '../../recovery/credentials.ts';
 import { mandatoryReviewProvider, selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../review/select.ts';
@@ -21,7 +22,8 @@ import type { ProviderCapabilities, CredentialStatus } from '../../adapters/type
 import { homeOf, runWorktreeRoot, toolchainCacheRootFor, type RunContext } from '../context.ts';
 import { baselineGate, environmentGate, intakeGate, type GateResult } from '../gates.ts';
 import { deliveryEnvironmentProblem } from '../delivery-env.ts';
-import { baselineEnvironmentBlockReason, baselineEnvironmentFailures, type BlockedCheck } from '../environment-block.ts';
+import { baselineBlockReason, baselineEnvironmentFailures, baselineMisconfiguredChecks, misconfiguredRecord, type BlockedCheck, type MisconfiguredBlock } from '../environment-block.ts';
+import { MISSING_TARGET_KIND } from './baseline-questions.ts';
 import { blockOnAuth, decide, finishRun, move, safePoint, type StepResult } from './common.ts';
 import { workerPluginsStep } from './worker-plugins.ts';
 import { messageOf } from '../workers.ts';
@@ -91,24 +93,49 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
   });
   const after = await safePoint(ctx);
   if (after) return after;
-  const bg = baselineGate(baseline.report);
+  // Every failure of the base revision is classified before any is called pre-existing (ADR 0010), the gate included. A
+  // check whose tool rejected its command line (issue #23) or that the environment stopped (issue #10) never tested the
+  // repository's code, so it is no pre-existing failure and gets no baseline-exception question: approving one would let
+  // a run pass with a check that never ran. A check whose command names something that does not exist yet (a missing
+  // target) goes on to CONTRACTING, which expects it to flip when the contract names it and blocks on it as misconfigured
+  // when the contract does not (steps/baseline-questions.ts); it is never accepted as an exception either. Only what is
+  // left is a failure of the code.
+  const commandErrors = baselineMisconfiguredChecks(ctx, baseline.report);
+  const misconfigured = commandErrors.filter((m) => m.kind === 'argument');
+  const missingTargets = commandErrors.filter((m) => m.kind === 'missing-target');
+  const notRun = baselineEnvironmentFailures(ctx, baseline.report, join(wtRoot, 'baseline')).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId));
+  const classified = classifiedBaseline(baseline.report, notRun, misconfigured, missingTargets);
+  const bg = baselineGate(classified);
   recordGate(ctx, bg);
   if (!bg.passed && bg.status === 'fail') return finishRun(ctx, 'BLOCKED', `baseline gate: ${bg.reasons.join('; ')}`, { outcome: { gate: bg } });
-  // A check the environment stopped on the base revision never ran, so it is no pre-existing failure and gets no
-  // baseline-exception question (issue #10): approving one would let a run pass with a check that never ran.
-  const notRun = baselineEnvironmentFailures(ctx, baseline.report, join(wtRoot, 'baseline'));
-  if (notRun.length > 0) return blockOnBaselineEnvironment(ctx, baseline.report, notRun);
-  if (baseline.report.failures.length > 0) {
+  if (misconfigured.length > 0 || notRun.length > 0) return blockOnBaseline(ctx, classified, { environment: notRun, misconfigured });
+  const preExisting = classified.failures.filter((f) => f.classification === undefined);
+  if (missingTargets.length > 0) {
+    // Recorded with the baseline, so CONTRACTING and the baseline-exception guard know these checks' targets are missing.
+    atomicWriteJson(join(ctx.runDir, BASELINE_FILE), classified);
+    decide(ctx, {
+      id: `dec-${ctx.run.id}-baseline-missing-target-${classified.recordedAt}`,
+      kind: MISSING_TARGET_KIND,
+      summary: `on ${head.slice(0, 12)} the command of ${missingTargets.length > 1 ? 'checks' : 'check'} ${missingTargets.map((m) => m.checkId).join(', ')} names something that does not exist yet: expected to flip if the contract names ${missingTargets.length > 1 ? 'them' : 'it'} as the proof of a criterion, otherwise misconfigured; never a baseline exception`,
+      data: { base_revision: head, checks: missingTargets.map((m) => misconfiguredRecord(m)) },
+    });
+  }
+  if (preExisting.length > 0) {
     decide(ctx, {
       id: `dec-${ctx.run.id}-baseline-failures`,
       kind: 'baseline.failures',
-      summary: `pre-existing failures on ${head.slice(0, 12)}: ${baseline.report.failures.map((f) => f.checkId).join(', ')}`,
-      data: { failures: baseline.report.failures },
+      summary: `pre-existing failures on ${head.slice(0, 12)}: ${preExisting.map((f) => f.checkId).join(', ')}`,
+      data: { failures: preExisting },
     });
-    // Spec section 6: a run is never green while a mandatory check fails, unless the contract accepts a documented
-    // baseline exception. Only a person can accept one, so each pre-existing failure becomes a question; the run goes
-    // on, and an approved answer (`orbit decide`) adds the exception to the contract, bound to the recorded fingerprint.
-    const raised = raiseBaselineExceptionQuestions({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { failures: baseline.report.failures, baseRevision: head });
+  }
+  // Spec section 6: a run is never green while a mandatory check fails, unless the contract accepts a documented
+  // baseline exception. Only a person can accept one, so each pre-existing failure becomes a question; the run goes
+  // on, and an approved answer (`orbit decide`) adds the exception to the contract, bound to the recorded fingerprint. A
+  // missing target is asked about too, so that P18 settles it like any failure the goal may make pass: its question is
+  // withdrawn once the contract names the check, and an approval of it is refused (inquisition/baseline-exception.ts).
+  const asked = classified.failures.filter((f) => f.classification === undefined || f.classification === 'missing-target');
+  if (asked.length > 0) {
+    const raised = raiseBaselineExceptionQuestions({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { failures: asked, baseRevision: head });
     if (raised.skipped.length > 0) {
       decide(ctx, {
         id: `dec-${ctx.run.id}-baseline-exception-skipped`,
@@ -121,23 +148,48 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
 
   const worktree = await ensureWorktree(repo, join(wtRoot, 'implementer'), head);
   const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
-  return move(ctx, 'CONTRACTING', `preflight passed at ${head.slice(0, 12)}${baseline.report.failures.length ? ` with ${baseline.report.failures.length} pre-existing failure(s)` : ''}`, {
+  const found = [...(preExisting.length > 0 ? [`${preExisting.length} pre-existing failure(s)`] : []), ...(missingTargets.length > 0 ? [`${missingTargets.length} check(s) whose target does not exist yet (${missingTargets.map((m) => m.checkId).join(', ')})`] : [])];
+  return move(ctx, 'CONTRACTING', `preflight passed at ${head.slice(0, 12)}${found.length > 0 ? ` with ${found.join(' and ')}` : ''}`, {
     patch: { baseRevision: head, baseTree, worktreePath: worktree, branch },
     data: { base_revision: head, base_tree: baseTree, worktree, environment: env.gate.notes },
   });
 }
 
 /**
- * End the run BLOCKED at PREFLIGHT for checks that could not run on the base revision. The baseline is kept for the
- * record but marked incomplete, which is what it is (a check produced no result of its own), so `orbit resume` runs it
- * again once the environment is fixed instead of reusing it.
+ * The baseline report with each failure PREFLIGHT found was not the repository's code marked with its classification,
+ * and an environment failure with the signals that showed it (a candidate's denial counts only when its signal is there).
  */
-async function blockOnBaselineEnvironment(ctx: RunContext, report: BaselineReport, failures: BlockedCheck[]): Promise<StepResult> {
+function classifiedBaseline(report: BaselineReport, environment: readonly BlockedCheck[], misconfigured: readonly MisconfiguredBlock[], missingTargets: readonly MisconfiguredBlock[]): BaselineReport {
+  if (environment.length === 0 && misconfigured.length === 0 && missingTargets.length === 0) return report;
+  const marks = new Map<string, { classification: BaseFailureClassification; signals?: EnvironmentSignal[] }>([
+    ...environment.map((f) => [f.checkId, { classification: 'environment' as const, signals: f.signals }] as const),
+    ...misconfigured.map((m) => [m.checkId, { classification: 'misconfigured' as const }] as const),
+    ...missingTargets.map((m) => [m.checkId, { classification: 'missing-target' as const }] as const),
+  ]);
+  return { ...report, failures: report.failures.map((f) => ({ ...f, ...(marks.get(f.checkId) ?? {}) })) };
+}
+
+/**
+ * End the run BLOCKED at PREFLIGHT for checks that are misconfigured or could not run on the base revision. The
+ * baseline is kept for the record, each such failure marked with its classification (classifiedBaseline; which also
+ * keeps a baseline exception from ever being applied to it, inquisition/baseline-exception.ts, and makes the next
+ * baseline run it again, evidence/baseline.ts), and marked incomplete, which is what it is (a check produced no result
+ * of its own), so `orbit resume` runs the baseline again once the cause is fixed instead of reusing it. The decisions
+ * name the classification and the first error line of each check (orbit timeline shows them); their ids carry the
+ * baseline's time, so a resumed run that blocks again records the new baseline's decisions next to the old.
+ */
+async function blockOnBaseline(ctx: RunContext, report: BaselineReport, blocked: { environment: BlockedCheck[]; misconfigured: MisconfiguredBlock[] }): Promise<StepResult> {
+  const { environment, misconfigured } = blocked;
   atomicWriteJson(join(ctx.runDir, BASELINE_FILE), { ...report, complete: false } satisfies BaselineReport);
-  const reason = baselineEnvironmentBlockReason({ runId: ctx.run.id, baseRevision: report.baseRevision, failures });
-  const checks = failures.map((f) => ({ check_id: f.checkId, signals: f.signals, cause: f.cause, evidence_lines: f.lines, ...(f.logPath ? { log_path: f.logPath } : {}) }));
-  decide(ctx, { id: `dec-${ctx.run.id}-baseline-environment`, kind: 'baseline.environment-failure', summary: reason, data: { base_revision: report.baseRevision, checks } });
-  return finishRun(ctx, 'BLOCKED', reason, { outcome: { base_revision: report.baseRevision, environment_failures: checks } });
+  const reason = baselineBlockReason({ runId: ctx.run.id, baseRevision: report.baseRevision, environment, misconfigured });
+  const environmentChecks = environment.map((f) => ({ check_id: f.checkId, classification: 'environment', signals: f.signals, cause: f.cause, evidence_lines: f.lines, ...(f.logPath ? { log_path: f.logPath } : {}) }));
+  const misconfiguredChecks = misconfigured.map((m) => misconfiguredRecord(m));
+  const at = report.recordedAt;
+  if (misconfiguredChecks.length > 0) decide(ctx, { id: `dec-${ctx.run.id}-baseline-misconfigured-${at}`, kind: 'baseline.check-misconfigured', summary: reason, data: { base_revision: report.baseRevision, checks: misconfiguredChecks } });
+  if (environmentChecks.length > 0) decide(ctx, { id: `dec-${ctx.run.id}-baseline-environment-${at}`, kind: 'baseline.environment-failure', summary: reason, data: { base_revision: report.baseRevision, checks: environmentChecks } });
+  return finishRun(ctx, 'BLOCKED', reason, {
+    outcome: { base_revision: report.baseRevision, ...(environmentChecks.length > 0 ? { environment_failures: environmentChecks } : {}), ...(misconfiguredChecks.length > 0 ? { misconfigured_checks: misconfiguredChecks } : {}) },
+  });
 }
 
 export function recordGate(ctx: RunContext, g: GateResult<unknown>): void {

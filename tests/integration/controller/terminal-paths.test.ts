@@ -105,9 +105,9 @@ describe.skipIf(!canStripTypes)('controller: terminal paths', () => {
     const done = runState(l, run.id);
     expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
     // A check that could not execute at all is the environment's (or the check definition's), not a defect in the change.
-    expect(done.outcomeReason).toMatch(/^check unit could not execute on candidate 1, and the output shows an environment cause/);
+    expect(done.outcomeReason).toMatch(/^Check unit could not execute on candidate 1, and the output shows an environment cause/);
     expect(done.outcomeReason).toMatch(/the check could not be started/);
-    expect(done.outcomeReason).toMatch(/no repair attempt was spent/);
+    expect(done.outcomeReason).toMatch(/\. No repair attempt was spent/);
     const [report] = listEvidenceReports(l.db(), run.id);
     expect(report?.verdict).toBe('INCOMPLETE');
     expect(report?.report.checks.find((c) => c.id === 'unit')?.status).toBe('ERROR');

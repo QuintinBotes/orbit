@@ -6,6 +6,7 @@
  * comes from a fixed template per state, never from model prose.
  */
 import { redact } from '../core/redact.ts';
+import { frozenPolicySetting } from '../controller/resume.ts';
 import type { RunRecord } from '../controller/run-store.ts';
 
 export const PAYLOAD_SCHEMA = 'orbit.notification/1';
@@ -27,7 +28,7 @@ export interface NotificationPayload {
 
 export interface PayloadInput {
   kind: Exclude<NotificationKind, 'test'>;
-  run: Pick<RunRecord, 'id' | 'state' | 'outcomeReason' | 'branch' | 'mode'>;
+  run: Pick<RunRecord, 'id' | 'state' | 'outcomeReason' | 'branch' | 'mode'> & Partial<Pick<RunRecord, 'outcomeJson'>>;
   questionIds: readonly string[];
   /** The run's pull request, when delivery opened one. */
   pullRequest: number | null;
@@ -62,6 +63,8 @@ function nextAction(input: PayloadInput): string {
     case 'SUCCEEDED':
       return pullRequest !== null ? `Review pull request #${pullRequest} and merge it if you accept it.` : `Inspect branch ${run.branch ?? `orbit/${run.id}`} and merge it yourself if you accept it.`;
     case 'BLOCKED':
+      // A block from the frozen policy is not cleared by resuming: the report names the way forward (a new run).
+      if (frozenPolicySetting({ outcomeJson: run.outcomeJson ?? null }) !== null) return `Read orbit report ${run.id}; this block comes from the run's frozen policy, so resuming alone would only block again.`;
       return `Resolve the block, then run orbit resume ${run.id}.`;
     case 'EXHAUSTED':
       return `Read orbit report ${run.id}, then continue by hand or start a new run.`;

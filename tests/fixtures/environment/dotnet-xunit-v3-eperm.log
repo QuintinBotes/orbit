@@ -1,0 +1,19 @@
+xUnit.net v3 In-Process Runner v3.2.2+728c1dce01 (64-bit .NET 9.0.9)
+[37m  Discovering: Acme.Tests
+[0m[37m  Discovered:  Acme.Tests
+[0m[37m  Starting:    Acme.Tests
+[0m[91m    Acme.Tests.CacheTests.WritesCache [FAIL]
+[0m[37m      System.UnauthorizedAccessException : Access to the path '/System/acme-cache' is denied.
+[0m[37m      ---- System.IO.IOException : Operation not permitted
+[0m[90m      Stack Trace:
+[0m[37m           at System.IO.FileSystem.CreateDirectory(String fullPath, UnixFileMode unixCreateMode)
+[0m[37m           at System.IO.Directory.CreateDirectory(String path)
+[0m[37m        CacheTests.cs(7,0): at Acme.Tests.CacheTests.WritesCache()
+[0m[37m           at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+[0m[37m           at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[0m[37m        ----- Inner Stack Trace -----
+[0m[37m        
+[0m[37m  Finished:    Acme.Tests (ID = '0000000000000000000000000000000000000000000000000000000000000000')
+[0m[37m=== TEST EXECUTION SUMMARY ===
+[0m[37m   Acme.Tests  Total: 2, Errors: 0, Failed: 1, Skipped: 0, Not Run: 0, Time: 0,068s
+[0m[0m

@@ -1,0 +1,15 @@
+E
+======================================================================
+ERROR: test_reads_secret (test_config.ConfigTests.test_reads_secret)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/acme/checkout/tests/test_config.py", line 6, in test_reads_secret
+    with open('/etc/sudoers') as f:
+         ^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied: '/etc/sudoers'
+
+----------------------------------------------------------------------
+Ran 1 test in 0.001s
+
+FAILED (errors=1)
+[orbit] check=unit status=FAILED exit=1

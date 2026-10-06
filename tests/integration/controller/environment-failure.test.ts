@@ -61,7 +61,7 @@ describe.skipIf(!canStripTypes)('controller: environment failures are not repair
     const done = runState(l, run.id);
     expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
     const reason = done.outcomeReason ?? '';
-    expect(reason).toMatch(/check unit fails on candidate 1 exactly as on the base revision/);
+    expect(reason).toMatch(/Check unit fails on candidate 1 exactly as on the base revision/);
     expect(reason).toMatch(/environment cause/);
     expect(reason).toContain('listen EPERM: operation not permitted 127.0.0.1');
     expect(reason).toMatch(/sandbox/);
@@ -86,7 +86,7 @@ describe.skipIf(!canStripTypes)('controller: environment failures are not repair
     expect(decision?.data).toMatchObject({ checks: [expect.objectContaining({ check_id: 'unit', question_id: question!.id })] });
     const final = readFileSync(join(runDirOf(l, run.id), 'final.md'), 'utf8');
     expect(final).toMatch(/^# Orbit run \S+: BLOCKED/);
-    expect(final).toMatch(/check unit fails on candidate 1 exactly as on the base revision/);
+    expect(final).toMatch(/Check unit fails on candidate 1 exactly as on the base revision/);
     expect(final).toMatch(/environment cause/);
     expect(final).toMatch(/approve a baseline exception/);
     expect(final).not.toMatch(/[\u2013\u2014]/);
@@ -125,8 +125,8 @@ describe.skipIf(!canStripTypes)('controller: environment failures are not repair
 
     const blocked = runState(l, run.id);
     expect(blocked.state, blocked.outcomeReason ?? '').toBe('BLOCKED');
-    expect(blocked.outcomeReason).toMatch(/check legacy fails on candidate 1/);
-    expect(blocked.outcomeReason).not.toMatch(/check unit/);
+    expect(blocked.outcomeReason).toMatch(/Check legacy fails on candidate 1/);
+    expect(blocked.outcomeReason).not.toMatch(/[Cc]heck unit/);
     expect(attemptsUsed(l, run.id)).toBe(1);
 
     // What `orbit decide` and `orbit resume` do.
@@ -202,10 +202,10 @@ describe.skipIf(!canStripTypes)('controller: a check that could not execute is a
     const done = runState(l, run.id);
     expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
     const reason = done.outcomeReason ?? '';
-    expect(reason).toMatch(/^check ui could not execute on candidate 1, and the output shows an environment cause, not a defect in the change/);
+    expect(reason).toMatch(/^Check ui could not execute on candidate 1, and the output shows an environment cause, not a defect in the change/);
     expect(reason).toMatch(/killed by a fatal signal before it printed anything of its own/);
     expect(reason).toContain('app.log');
-    expect(reason).toMatch(/no repair attempt was spent/);
+    expect(reason).toMatch(/\. No repair attempt was spent/);
     expect(reason).toMatch(/fix the environment \(orbit doctor checks the isolation provider and its limits\) or the check definition and start a new run/);
 
     // Straight from the first verification to BLOCKED: no inquiry, no diagnosis, no repair, no second implementation, no brief.
@@ -221,7 +221,7 @@ describe.skipIf(!canStripTypes)('controller: a check that could not execute is a
     expect(decision?.data).toMatchObject({ checks: [expect.objectContaining({ check_id: 'ui', fingerprint: null, signals: ['process-aborted'], question_id: null, log_path: expect.stringContaining('app.log') })] });
     const final = readFileSync(join(runDirOf(l, run.id), 'final.md'), 'utf8');
     expect(final).toMatch(/^# Orbit run \S+: BLOCKED/);
-    expect(final).toMatch(/check ui could not execute on candidate 1/);
+    expect(final).toMatch(/Check ui could not execute on candidate 1/);
     expect(final).not.toMatch(/[\u2013\u2014]/);
   }, 180_000);
 
@@ -254,7 +254,7 @@ describe.skipIf(!canStripTypes)('controller: a check that could not execute is a
 
     const done = runState(l, run.id);
     expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
-    expect(done.outcomeReason).toMatch(/^check unit could not run on the base revision [0-9a-f]{12}/);
+    expect(done.outcomeReason).toMatch(/^Check unit could not run on the base revision [0-9a-f]{12}/);
     expect(done.outcomeReason).toMatch(/killed by a fatal signal/);
     const path = transitions(l, run.id);
     expect(path).not.toContain('DIAGNOSING');

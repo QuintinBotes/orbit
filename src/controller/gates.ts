@@ -229,7 +229,18 @@ export function baselineGate(report: BaselineReport): GateResult<{ failures: Bas
   const notes: string[] = [];
   const evidence = [`baseline of ${report.baseRevision} (tree ${report.baseTree}): ${report.checks.length} check(s)`];
   if (!report.install.skipped && !report.install.ok) reasons.push(`the locked dependency install failed on the base revision${report.install.reason ? `: ${report.install.reason}` : ''}`);
-  for (const f of report.failures) notes.push(`pre-existing failure on the base revision: ${f.checkId}${f.fingerprint ? ` (${f.fingerprint})` : ''}`);
+  for (const f of report.failures) {
+    // A failure PREFLIGHT classified (ADR 0010) is not the repository's code, so it is not called pre-existing.
+    const what =
+      f.classification === 'misconfigured'
+        ? 'misconfigured check on the base revision, not a pre-existing failure'
+        : f.classification === 'environment'
+          ? 'environment failure on the base revision, not a pre-existing failure'
+          : f.classification === 'missing-target'
+            ? 'missing target on the base revision (expected to flip if the contract names the check, otherwise misconfigured), not a pre-existing failure'
+            : 'pre-existing failure on the base revision';
+    notes.push(`${what}: ${f.checkId}${f.fingerprint ? ` (${f.fingerprint})` : ''}`);
+  }
   // Pre-existing vulnerabilities and license problems on the base revision, one note per finding, so the final report lists them.
   for (const n of report.auditNotes ?? []) notes.push(n);
   if (!report.complete) notes.push('the baseline is incomplete: some checks could not produce a decisive result on the base revision');

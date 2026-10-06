@@ -27,23 +27,23 @@ const dotnet: BlockedCheck = {
 describe('baselineEnvironmentBlockReason', () => {
   it('names the check, the base revision, the first error line and the log, says why no exception is offered, and gives the fix', () => {
     const reason = baselineEnvironmentBlockReason({ runId: 'orb-1', baseRevision: BASE_REV, failures: [dotnet] });
-    expect(reason).toMatch(/^check build could not run on the base revision aaaaaaaaaaaa, and the output shows an environment cause, not a pre-existing failure: build: the sandbox or the operating system refused a filesystem operation outside the check's checkout/);
+    expect(reason).toMatch(/^Check build could not run on the base revision aaaaaaaaaaaa, and the output shows an environment cause, not a pre-existing failure: the sandbox or the operating system refused a filesystem operation outside the check's checkout/);
     expect(reason).toContain('errno == EPERM;');
     expect(reason).toContain('output in /orbit/runs/acme/baseline/build.log');
-    expect(reason).toMatch(/it is not recorded as a pre-existing failure and no baseline exception is offered: the check never got as far as the repository's code, so accepting its failure would let a run pass with a check that never ran/);
-    expect(reason).toMatch(/fix: this is the \.NET runtime asking for \/tmp\/\.dotnet/);
+    expect(reason).toMatch(/\. It is not recorded as a pre-existing failure and no baseline exception is offered: the check never got as far as the repository's code, so accepting its failure would let a run pass with a check that never ran/);
+    expect(reason).toMatch(/\. Fix: this is the \.NET runtime asking for \/tmp\/\.dotnet/);
     expect(reason).toContain('docs/troubleshooting.md');
-    expect(reason).toMatch(/then orbit resume orb-1 runs the baseline again; a changed check definition needs a new run/);
+    expect(reason).toMatch(/\. Then orbit resume orb-1 runs the baseline again; a changed check definition needs a new run/);
     expect(reason).not.toMatch(/orbit decide/);
-    expect(reason).not.toMatch(/[–—]/);
+    expect(reason).not.toMatch(/[\u2013\u2014]/);
   });
 
   it('lists several checks, and falls back to orbit doctor for a cause it has no specific fix for', () => {
     const crash: BlockedCheck = { checkId: 'unit', fingerprint: null, signals: ['process-aborted'], cause: 'the process was killed by a fatal signal before it printed anything of its own (SIGABRT)', lines: [], questionId: null };
     const reason = baselineEnvironmentBlockReason({ runId: 'orb-2', baseRevision: BASE_REV, failures: [crash, { ...crash, checkId: 'lint' }] });
-    expect(reason).toMatch(/^checks unit, lint could not run on the base revision/);
-    expect(reason).toMatch(/they are not recorded as a pre-existing failure/);
-    expect(reason).toMatch(/fix: let the check run in this environment \(orbit doctor checks the isolation provider and starts each check's executable in the sandbox\), or change the check definition/);
+    expect(reason).toMatch(/^Checks unit, lint could not run on the base revision/);
+    expect(reason).toMatch(/\. They are not recorded as a pre-existing failure/);
+    expect(reason).toMatch(/\. Fix: let the check run in this environment \(orbit doctor checks the isolation provider and starts each check's executable in the sandbox\), or change the check definition/);
   });
 });
 
@@ -57,8 +57,8 @@ describe('environmentFix', () => {
 
   it('is added to the candidate reason for a check that could not execute because of a denial', () => {
     const reason = environmentBlockReason({ runId: 'orb-3', candidateSeq: 2, failures: [dotnet] });
-    expect(reason).toMatch(/^check build could not execute on candidate 2/);
-    expect(reason).toMatch(/there is no baseline exception to approve, because the check never ran\. fix: this is the \.NET runtime/);
+    expect(reason).toMatch(/^Check build could not execute on candidate 2/);
+    expect(reason).toMatch(/there is no baseline exception to approve, because the check never ran\. Fix: this is the \.NET runtime/);
   });
 });
 

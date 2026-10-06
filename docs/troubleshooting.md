@@ -68,7 +68,15 @@ degraded but usable.
   again, and `orbit resume` refuses with exit 5. Fix the config, `orbit cancel
   <run-id>`, and start a new run with `orbit run`. If the fix was outside the
   policy (for example `orbit models refresh`), `orbit resume <run-id> --force`
-  continues the same run. The cases are listed in
+  continues the same run; not for a misconfigured check, whose command is the
+  policy's: a forced resume runs the same command again, so it blocks again
+  unless the tool changed outside the policy, and the reason names only a new
+  run. A missing target the contract does not name is a frozen-policy block too
+  (`orbit resume` refuses it, exit 5), but its reason says "Check X is
+  misconfigured ... the contract does not name it as the proof of any criterion"
+  and gives advice by cause, not "fix the config" (see "A check's target does not exist yet" below);
+  a new run in every case, since even a forced resume reads the recorded baseline
+  and blocks again. The cases are listed in
   [operations](operations.md#pause-resume-cancel).
 - **`resume` exits 5 (CONFLICT).** A live controller owns the run, open material
   questions remain, or the block comes from the frozen policy. Answer the
@@ -104,24 +112,101 @@ degraded but usable.
   command's own exit 97 does not). Anything else stays a journey failure.
   `orbit doctor` (`ui.browser-isolation`) launches Playwright's real headless
   Chromium binary through the preload, with no repository code, to check this.
-- **A check cannot run in the sandbox.** The run blocks at PREFLIGHT with "check X
+- **A check cannot run in the sandbox.** The run blocks at PREFLIGHT with "Check X
   could not run on the base revision ..., and the output shows an environment
-  cause, not a pre-existing failure", the first error line, the log and a fix. The
+  cause, not a pre-existing failure", the first error line, the log and a fix
+  (checks with the same cause are named together, with their evidence once). The
   check never got as far as the repository's code: the sandbox or the operating
   system refused it a filesystem operation outside its checkout (EPERM, "Operation
-  not permitted", a Seatbelt `deny(1) file-...` line; on Linux, where `srt` mounts
-  everything outside the writable paths read-only, EROFS, "Read-only file
-  system"), or it was killed by a crash
-  signal before printing anything. Such a failure is not recorded as pre-existing
-  and no baseline exception is offered, since accepting one would let a run pass
-  with a check that never ran. The same refusal on a candidate blocks the run
-  without a repair attempt. Output that shows a compile error or a failing test
-  is never read this way: that failure stays the code's. Run `orbit doctor`
-  (`checks.sandbox`) to see what the tool is refused, then let it keep its files
-  in the check's `HOME` or `TMPDIR` (each check gets a private, empty one; set
-  the tool's variables in the check's `env`) or change the check. `orbit resume
-  <run-id>` runs the baseline again once the environment is fixed; a changed
-  check definition needs a new run.
+  not permitted", EACCES, "Permission denied", a Seatbelt `deny(1) file-...` line;
+  on Linux, where `srt` mounts everything outside the writable paths read-only,
+  EROFS, "Read-only file system"); refused MSBuild the named pipe of a worker node
+  (`MSBUILD : error MSB1025` with `System.Net.Sockets.SocketException (13):
+  Permission denied`, after about five minutes of node retries on macOS: the pipe
+  is a Unix socket under `/tmp` the sandbox does not let a check create; build on
+  one MSBuild node with `-m:1` on the check's dotnet command, for example
+  `[dotnet, test, -m:1]`, when it is one that hands its arguments to MSBuild;
+  `dotnet format` takes no `-m:1`, see ".NET checks under the sandbox");
+  refused a connection through its network proxy (`curl:
+  (56) CONNECT tunnel failed, response 403`, `X-Proxy-Error:
+  blocked-by-allowlist`, NuGet's "The proxy tunnel request ... failed with status
+  code '403'": add the host to the check's `network_hosts`, or restore
+  dependencies in the dependency install); NuGet's HTTP client could not start in
+  the sandbox (`error NU1301: The type initializer for
+  'System.Net.CookieContainer' threw an exception` with `GetDomainName: -1`:
+  restore the packages in the dependency install, `dependencies.install_command`,
+  so the check reads them from the repository's NuGet cache); the program its
+  command runs is not installed where it runs (the shell's "command not found",
+  exit 127: install it or give the check a PATH that holds it, or correct a
+  misspelled name, which needs a new run); or it was killed by a crash signal
+  before printing anything. Such a failure is not recorded as pre-existing and no
+  baseline exception is offered, since accepting one would let a run pass with a
+  check that never ran. Output that shows a compile error or a failing test is
+  never read this way (a failing test in any runner's report: TAP, Jest,
+  pytest, unittest, go, cargo, VSTest's `Failed!  - Failed: 1`,
+  Microsoft.Testing.Platform's `failed X (12ms)` and `failed: 1`, which xunit v3,
+  MSTest's runner and TUnit print, and xunit's `[FAIL]`): that failure stays the
+  code's, and so does a socket refused to the repository's own program. A
+  restore error inside `dotnet build` on the base revision is read this way even
+  though MSBuild counts it in "N Error(s)", when every error it counted is a
+  restore error (`NUxxxx`) or `MSB1025`; on a candidate that count is the
+  change's unless the base revision failed the same way. On a candidate the same
+  refusal blocks the run without a repair attempt only when the check showed it
+  on the base revision too (EACCES, a socket, the network proxy and NuGet's client
+  need the same one there); a refusal the change brought is repaired. Run `orbit
+  doctor` (`checks.sandbox`) to see what the tool is refused, then let it keep its
+  files in the check's `HOME` or `TMPDIR` (each check gets a private, empty one;
+  set the tool's variables in the check's `env`) or change the check. `orbit
+  resume <run-id>` runs those checks again once the environment is fixed; a
+  changed check definition needs a new run. The rules are in
+  [ADR 0010](decisions/0010-base-failure-classification.md).
+- **A check is misconfigured.** The run blocks at PREFLIGHT with "Check X is
+  misconfigured, not a pre-existing failure", the tool's error line, "command in
+  checks.X.command" and the log. The tool the check runs rejected the command
+  line itself: an MSBuild command-line error (`MSB1001` unknown switch, `MSB1008`
+  more than one project, `MSB1011` more than one project in the directory), a
+  pytest usage error (exit 4: unrecognized arguments), go's `flag provided but not
+  defined` or `unknown command` (exit 2), or cargo's `unexpected argument`. No
+  baseline exception is offered, and none can be approved. Run the command by
+  hand in a clean checkout, correct it in `.orbit/config.yaml` and start a new run
+  (`orbit resume` refuses, because the command is in the run's frozen policy; a
+  forced resume runs the same command again, so it blocks again unless the tool
+  changed outside the policy). pytest says "unrecognized arguments" for an
+  option of a plugin that is not installed where the check runs too (`--cov`
+  without pytest-cov): then add the plugin to what the dependency install
+  installs, not change the command. A plugin installed outside the policy is
+  picked up by `orbit resume <run-id> --force`, which runs the check again.
+  Only the check's own direct invocation of the tool is read this way: its program
+  (after a leading env assignment, `env`, an npx-style runner or `python -m`) is
+  the tool, the command is not a shell chain or pipeline, and what the error names
+  is what the command names. A usage error printed by a script of the repository
+  (`npm test` whose script runs a wrong command, or `cd client && npm test` in a
+  package with no test script: npm's `> acme@1.0.0 test` banner shows it ran the
+  check's script), a chain (`dotnet restore && npm test`) or a program the check
+  runs (`dotnet run --project build/...` printing
+  `MSB1008`) is the repository's code, so it stays a pre-existing failure; so is
+  an argument from the repository's own configuration (pytest's `addopts`, a
+  `Directory.Build.rsp`).
+- **A check's target does not exist yet.** The check's command names something
+  the base revision does not have: `MSB1003` (no project in the directory),
+  `MSB1009` (no such project), `npm error Missing script` for the script the
+  command runs, pytest's `file or directory not found` (exit 4), dotnet's "Could
+  not execute because the specified command or file was not found", cargo's `no
+  such command` (exit 101), or a script of the repository the shell cannot find
+  (exit 127). PREFLIGHT lets the run go on, because the goal may be to create it.
+  When the contract names the check as the proof of a criterion, its question is
+  withdrawn and the check is expected to pass on the candidate. When it does not,
+  the run blocks at CONTRACTING with "Check X is misconfigured, not a pre-existing
+  failure: ... the contract does not name it as the proof of any criterion" and
+  advice of its own, by cause. If the goal is meant to create what the command
+  names, start a new run whose goal says so. If a tool that is not installed or
+  restored yet provides it (a cargo plugin, a dotnet local tool), install or
+  restore it and then start a new run. If the command is wrong, correct `checks.X.command` in
+  `.orbit/config.yaml` and start a new run. Each needs a new run because
+  CONTRACTING reads the baseline PREFLIGHT recorded: `orbit resume` would read
+  the same failure and block again, so the reason does not offer `--force`. It is
+  never accepted as a baseline exception: a check whose target does not exist
+  tests nothing.
 - **.NET checks under the sandbox.** A check's `HOME` is new and empty, so every
   `dotnet` command is the SDK's first run, and its first-run NuGet migrations take
   a named mutex. The .NET runtime keeps named mutexes under `/tmp/.dotnet` (and
@@ -148,13 +233,24 @@ degraded but usable.
   information: Access to the path '.../.gitmodules' is denied". A check's own `env`
   overrides any of them. With that, `dotnet build` of a console project runs
   under `srt` (verified with the .NET 9 SDK on macOS, and the .NET 9 and 10 SDKs on
-  Linux). Two cases remain yours to decide:
+  Linux). Three cases remain yours to decide:
   code under test that creates a named `Mutex` or `Semaphore` needs
   `/tmp/.dotnet` and cannot run under `sandbox-runtime` (change the code to use
   an unnamed one or a file lock in `TMPDIR`; `isolation.provider: container`
-  gives each check its own `/tmp`, which Orbit has not verified with .NET); and a project with NuGet packages reads them
+  gives each check its own `/tmp`, which Orbit has not verified with .NET); a project with NuGet packages reads them
   from the repository's read-only NuGet cache (`NUGET_PACKAGES`), so restore them in the dependency install
   (`dependencies.install_command: [dotnet, restore, --locked-mode]`, which reaches `api.nuget.org`).
+  And `dotnet format`: it takes no `-m:1` (it reads it as the
+  project to format and fails), and it loads the projects through MSBuild and
+  its own build host, which talk over named pipes, Unix sockets the check
+  sandbox does not let a check create. Measured under Orbit's runner and `srt`
+  on macOS (.NET 9.0.305 SDK): `dotnet format --verify-no-changes` fails after
+  five minutes with "Restore operation failed", and with `--no-restore` after a
+  restore it fails after a minute with a `TimeoutException` connecting its
+  build host's pipe; neither prints a denial, so each stays a pre-existing
+  failure. `[dotnet, format, whitespace, --folder, --verify-no-changes]`, which
+  loads no project, passes in about a second; a check of code style or
+  analyzers cannot run in the check sandbox.
 - **Toolchains under the sandbox.** Each check (and worker) gets its toolchain's
   dependency cache read-only from `<orbit home>/toolchains/<repo key>/` and its
   build state in a private directory per attempt (ADR 0009; the variables are in

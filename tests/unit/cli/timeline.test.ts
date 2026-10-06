@@ -208,6 +208,59 @@ describe('orbit timeline: the readable history of a run', () => {
     expect(line(out, 4, 'decision', 'planning.difficulty')).toContain('difficulty simple');
   });
 
+  it('names the classification and the first error line of a check PREFLIGHT blocked on (issues #10 and #23)', async () => {
+    const l = lab();
+    const fx = startFixture(l);
+    const long = 'check build is misconfigured, not a pre-existing failure: ... a long reason the state line already carries';
+    fx.at(5, () =>
+      recordDecision(fx.db, fx.runDir, {
+        runId: RUN_ID,
+        kind: 'baseline.check-misconfigured',
+        summary: long,
+        data: { base_revision: 'a'.repeat(40), checks: [{ check_id: 'build', classification: 'misconfigured', signature: 'msbuild-one-project', config_key: 'checks.build.command', evidence_lines: ['MSBUILD : error MSB1008: Only one project can be specified.', 'Switch: B.csproj'] }] },
+      }, fx.clock),
+    );
+    fx.at(6, () =>
+      recordDecision(fx.db, fx.runDir, {
+        runId: RUN_ID,
+        kind: 'baseline.environment-failure',
+        summary: 'check test could not run on the base revision ...',
+        data: { base_revision: 'a'.repeat(40), checks: [{ check_id: 'test', classification: 'environment', signals: ['socket-denied'], evidence_lines: ['MSBUILD : error MSB1025: An internal failure occurred while running MSBuild.', 'System.Net.Sockets.SocketException (13): Permission denied'] }] },
+      }, fx.clock),
+    );
+    const out = (await l.cli(['timeline', RUN_ID])).out;
+    expect(line(out, 5, 'decision', 'baseline.check-misconfigured')).toContain('build classified as a misconfigured check (checks.build.command), not a pre-existing failure: "MSBUILD : error MSB1008: Only one project can be specified."');
+    expect(line(out, 5, 'decision', 'baseline.check-misconfigured')).not.toContain(long);
+    expect(line(out, 6, 'decision', 'baseline.environment-failure')).toContain('test classified as an environment failure, not a pre-existing failure: "MSBUILD : error MSB1025: An internal failure occurred while running MSBuild."');
+  });
+
+  it('names checks that share their first error line once, with that line once, and a missing target as such', async () => {
+    const l = lab();
+    const fx = startFixture(l);
+    const msb1025 = ['MSBUILD : error MSB1025: An internal failure occurred while running MSBuild.', 'System.Net.Sockets.SocketException (13): Permission denied'];
+    fx.at(5, () =>
+      recordDecision(fx.db, fx.runDir, {
+        runId: RUN_ID,
+        kind: 'baseline.environment-failure',
+        summary: 'Checks build, test, format could not run on the base revision ...',
+        data: { base_revision: 'a'.repeat(40), checks: ['build', 'test', 'format'].map((id) => ({ check_id: id, classification: 'environment', signals: ['socket-denied'], evidence_lines: msb1025 })) },
+      }, fx.clock),
+    );
+    fx.at(6, () =>
+      recordDecision(fx.db, fx.runDir, {
+        runId: RUN_ID,
+        kind: 'baseline.missing-target',
+        summary: 'on aaaaaaaaaaaa the command of check lint names something that does not exist yet ...',
+        data: { base_revision: 'a'.repeat(40), checks: [{ check_id: 'lint', classification: 'missing-target', kind: 'missing-target', config_key: 'checks.lint.command', evidence_lines: ['npm error Missing script: "lint"'] }] },
+      }, fx.clock),
+    );
+    const out = (await l.cli(['timeline', RUN_ID])).out;
+    const env = line(out, 5, 'decision', 'baseline.environment-failure');
+    expect(env).toContain('build, test, format classified as an environment failure, not a pre-existing failure: "MSBUILD : error MSB1025: An internal failure occurred while running MSBuild."');
+    expect(env.match(/MSB1025/g)).toHaveLength(1);
+    expect(line(out, 6, 'decision', 'baseline.missing-target')).toContain('lint classified as a missing target (checks.lint.command), not a pre-existing failure: "npm error Missing script: \\"lint\\""');
+  });
+
   it('resolves a run by a unique prefix, and refuses an unknown run', async () => {
     const l = lab();
     buildFullRun(l);

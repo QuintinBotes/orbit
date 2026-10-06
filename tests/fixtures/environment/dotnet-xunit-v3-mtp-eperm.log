@@ -1,0 +1,17 @@
+failed Acme.Tests.CacheTests.WritesCache (0ms)
+  Xunit.MicrosoftTestingPlatform.XunitException: System.UnauthorizedAccessException : Access to the path '/System/acme-cache' is denied.
+  ---- System.IO.IOException : Operation not permitted
+    at System.IO.FileSystem.CreateDirectory(String fullPath, UnixFileMode unixCreateMode)
+    at System.IO.Directory.CreateDirectory(String path)
+    at Acme.Tests.CacheTests.WritesCache() in /var/folders/acme/T/orbit-evidence-acme/checkout/tests/Acme.Tests/CacheTests.cs:7
+    at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+    at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+    ----- Inner Stack Trace -----
+    
+
+Test run summary: Failed! - /var/folders/acme/T/orbit-evidence-acme/checkout/tests/Acme.Tests/bin/Debug/net9.0/Acme.Tests.dll (net9.0|arm64)
+  total: 2
+  failed: 1
+  succeeded: 1
+  skipped: 0
+  duration: 130ms

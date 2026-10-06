@@ -400,7 +400,18 @@ an invalid configuration or a policy snapshot that no longer matches its hash.
 `.orbit/config.yaml`, `orbit cancel <run-id>`, and start a new run with `orbit
 run`. If what you fixed is outside the policy (for example `orbit models
 refresh`, which updates the model catalog rather than the policy), `orbit resume
-<run-id> --force` continues the same run.
+<run-id> --force` continues the same run. A misconfigured check (ADR 0010) is a
+frozen-policy block too, but its reason and the refusal name only a new run,
+which clears it whatever the cause: a forced resume runs the same command
+again, so it blocks again unless the tool changed outside the policy (a plugin
+installed).
+
+A missing target the contract does not name (ADR 0010, below) is a frozen-policy
+block as well, and `orbit resume` refuses it, but its reason, the refusal, the
+foreground summary and the notification do not say "fix the config": the config
+is the cause in one of three cases. They give the advice by cause, and a new run
+in every case, because CONTRACTING reads the baseline PREFLIGHT recorded, so even
+a forced resume reads it again and blocks again.
 
 A run that is `BLOCKED` on an environment failure (a mandatory check that fails
 on the candidate as it failed on the base revision, with a sandbox or
@@ -412,13 +423,77 @@ are frozen. Approving the baseline exception with `orbit decide <run-id>
 failure is accepted as recorded, and the next verification judges the recorded
 check results under the amended contract.
 
-PREFLIGHT asks that baseline-exception question for every mandatory check that
-already fails on the base revision. When the goal is to make that check pass (the
+PREFLIGHT first classifies every mandatory check that already fails on the base
+revision ([ADR 0010](decisions/0010-base-failure-classification.md)):
+
+- **Misconfigured check.** The tool the check's command runs rejected that
+  command line itself (`MSBUILD : error MSB1008: Only one project can be
+  specified.`, an unknown switch, pytest's unrecognized arguments with exit 4,
+  `go x: unknown command`, cargo's unexpected argument). The run ends `BLOCKED`
+  at PREFLIGHT with the check, the tool's error line and the config key,
+  `checks.<id>.command`. The command is in the run's frozen policy, so `orbit
+  resume` refuses: correct the command and start a new run.
+- **Missing target.** The check's command names something the base revision
+  does not have: no project for `dotnet build`, `npm error Missing script` for
+  the script it runs, pytest's `file or directory not found` with exit 4, a
+  dotnet or cargo command nothing provides yet, a script of the repository the
+  shell cannot find. The goal may be to create it, so the run goes on to
+  CONTRACTING. When the contract names the check as the proof of a criterion,
+  its question is withdrawn (`baseline.expected-to-flip`) and the check has to
+  pass on the candidate; when it does not, the run ends `BLOCKED` there as a
+  misconfigured check, before the contract is written or any other check's
+  question is settled against it, with advice of its own by cause: a goal meant
+  to create the target says so in a new run; a target a tool provides that is
+  not installed or restored yet (a cargo plugin, a dotnet local tool) needs a new
+  run once it is; a wrong command is corrected in `checks.<id>.command`. Each needs a
+  new run, because CONTRACTING reads the baseline PREFLIGHT recorded, so
+  `orbit resume` would read the same failure.
+- **Environment failure.** The sandbox or the host refused the check something
+  before it ran anything of the repository: a filesystem operation outside its
+  checkout (EPERM, EACCES, EROFS), a socket in the tool's own startup (MSBuild's
+  `MSB1025` on `SocketException (13): Permission denied`; fix: `-m:1` on a
+  dotnet command that hands its arguments to MSBuild, while `dotnet format`
+  takes none and only `dotnet format whitespace --folder` runs in the check
+  sandbox), a connection the sandbox's network proxy refused, or
+  NuGet's HTTP client that could not start in the sandbox; or it could not
+  execute at all, a program its command runs that is not installed where it
+  runs (exit 127) included. The run ends `BLOCKED` at PREFLIGHT with the first
+  error line and a fix; fix the environment and `orbit resume <run-id>`, which
+  runs those checks again.
+- **Pre-existing failure.** Everything else: a failure of the repository's code.
+
+Only a usage error the check's own command prints counts: its program (after a
+leading env assignment, `env`, an npx-style runner or `python -m`) is the tool,
+the command is not a shell chain or pipeline, and what the error names is what
+the command names. `npm test` whose script runs a missing `npm run lint` or
+`cd client && npm test` in a package with no test script (npm's `> acme@1.0.0
+test` banner shows it ran the check's own script), `dotnet restore && npm test`,
+and `dotnet run --project build/...` whose program
+prints `MSB1008` stay pre-existing failures: that is code of the repository.
+None of the first three categories is recorded as a pre-existing failure, and none is ever
+accepted as a baseline exception, whoever approves it and however (`orbit
+decide`, a remote answer): a check that never tested anything, or whose target
+does not exist, would let a run pass. `orbit timeline` names each check's
+classification and first error line. The rule is conservative: it needs the
+tool's own usage-error signature or a denial only the environment produces, and
+output that shows a compile error or a failing test (one whose assertion says
+"permission denied" included, and Microsoft.Testing.Platform's and xunit's
+reports, `failed X (12ms)`, `failed: 1`, `[FAIL]`) always stays a pre-existing
+failure. On a candidate, the denials ADR 0010 added count only when the same
+check showed the same one on the base revision; a denial the change brings goes
+to repair. Since PREFLIGHT blocks on any base-revision environment failure, a
+run that reaches VERIFYING has none recorded, so today those denials always go
+to repair on a candidate, as does a restore failure MSBuild counts in "N
+Error(s)".
+
+PREFLIGHT asks the baseline-exception question for every pre-existing failure
+and every missing target. When the goal is to make that check pass (the
 contract's criteria name the check as their proof), the failure is expected to
 flip and the question is withdrawn with a `baseline.expected-to-flip` decision.
-A failure that is the environment's (a sandbox refusal) keeps its question, and
-any question still open when a run `SUCCEEDED` is withdrawn, so a green run does
-not list one.
+A pre-existing failure whose output shows a sandbox refusal (EPERM, "operation
+not permitted", an `srt` violation line) keeps its question even then, because
+making the check pass cannot fix a refused operation, and any question still open
+when a run `SUCCEEDED` is withdrawn, so a green run does not list one.
 
 A run that is `BLOCKED` because a mandatory check could not execute (the UI
 application or a check's process was killed by a crash signal before it printed
@@ -439,7 +514,9 @@ through the channels in the `notifications` section of the policy
 linked issue). Each notification is sent once; a run that is resumed and blocks
 again is announced again. A notification says only the run id, its state, a
 short reason, the next action and the open question ids; never code, diffs,
-secrets or log excerpts. Delivery failures are recorded as events
+secrets or log excerpts. For a block that comes from the frozen policy the next
+action is to read `orbit report <run-id>`, not to resume: resuming alone would
+only block again. Delivery failures are recorded as events
 (`notification.failed`, visible in `orbit logs`) and never change the run.
 `ORBIT_NOTIFICATIONS=off` turns every channel off, for CI and test suites.
 

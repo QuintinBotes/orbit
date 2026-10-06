@@ -47,5 +47,7 @@ workers, orphans terminated, intents completed). If the run is still BLOCKED,
 name the blocker (unanswered question, expired credential, exhausted budget)
 and do not resume again until the person has dealt with it. A block caused by
 the frozen policy (for example a check definition or an isolation setting)
-cannot be cleared by resuming: say so and suggest a new run after the fix.
+cannot be cleared by resuming: say so and suggest a new run after the fix the
+reason names (for a check whose target does not exist, the fix may be the goal or
+an installed tool, not the config).
 Follow up with `/orbit:status <run-id>`.

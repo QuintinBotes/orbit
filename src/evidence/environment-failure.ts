@@ -21,9 +21,36 @@ import { stripAnsi } from './fingerprint.ts';
  * (node aborting at startup under the sandbox, the first live run of the demo app),
  * or the runner could not start it. Nothing of the repository ran, so no change to
  * the repository can have caused it, and no base-revision comparison is needed.
+ *
+ * A check the environment refused before it ran anything of the repository is the third
+ * (classifyCouldNotRun): a filesystem operation outside its checkout, a socket in the tool's own
+ * startup, or a connection the sandbox's proxy refused, with no compile error or failing test in
+ * its output. PREFLIGHT reads every failure of the base revision this way, and a misconfigured
+ * check (evidence/check-misconfigured.ts) next, before it may call one a pre-existing failure
+ * (docs/decisions/0010-base-failure-classification.md).
  */
 
-export type EnvironmentSignal = 'sandbox-violation' | 'eperm' | 'operation-not-permitted' | 'eacces-outside-worktree' | 'process-aborted' | 'start-failed' | 'browser-isolation' | 'filesystem-denied';
+export type EnvironmentSignal =
+  | 'sandbox-violation'
+  | 'eperm'
+  | 'operation-not-permitted'
+  | 'eacces-outside-worktree'
+  | 'process-aborted'
+  | 'start-failed'
+  | 'browser-isolation'
+  | 'filesystem-denied'
+  | 'permission-denied'
+  | 'socket-denied'
+  | 'network-denied'
+  | 'nuget-http-denied'
+  | 'program-not-found';
+
+/**
+ * The signals ADR 0010 added for the base revision. On a candidate they count only when the same check showed the same
+ * one on the base revision (CouldNotRunInput.baseSignals): a change can introduce a denial of its own (a test that opens
+ * a file it may not read, a package from a host the check may not reach), and that is a failure for the repair loop.
+ */
+export const BASE_GATED_SIGNALS: ReadonlySet<EnvironmentSignal> = new Set<EnvironmentSignal>(['permission-denied', 'socket-denied', 'network-denied', 'nuget-http-denied', 'program-not-found']);
 
 export interface EnvironmentFailureInput {
   checkId: string;
@@ -77,6 +104,11 @@ const CAUSES: Record<EnvironmentSignal, string> = {
   'start-failed': 'the check could not be started',
   'browser-isolation': 'the browser could not start under sandbox-runtime',
   'filesystem-denied': 'the sandbox or the operating system refused a filesystem operation outside the check\'s checkout (EPERM, "operation not permitted", or EROFS, "read-only file system")',
+  'permission-denied': 'the sandbox or the operating system refused a filesystem operation outside the check\'s checkout with EACCES ("permission denied")',
+  'socket-denied': 'the sandbox or the operating system refused the tool a socket (permission denied) in its own startup, before it ran anything of the repository',
+  'network-denied': "the sandbox's network proxy refused a connection to a host the check may not reach",
+  'nuget-http-denied': "NuGet's HTTP client could not start in the sandbox (the type initializer of System.Net.CookieContainer failed to read the host's domain name, GetDomainName: -1), so the restore could reach no package source",
+  'program-not-found': 'a program the check runs was not found where it runs (exit 127)',
 };
 
 function within(path: string, root: string): boolean {
@@ -213,16 +245,53 @@ export interface CouldNotRunInput {
   output: string;
   /** Directories the check may write: its checkout, as given and resolved, and its own scratch directories. A denial inside them is the code's. */
   insideRoots: readonly string[];
+  /**
+   * On a candidate: the environment signals the same check showed on the base revision (its baseline failure's
+   * classification). A signal of BASE_GATED_SIGNALS counts only when it is among them; with none recorded it does not
+   * count, and the failure goes to repair. Absent: the base revision itself is judged (or a probe), and every signal counts.
+   */
+  baseSignals?: readonly EnvironmentSignal[];
 }
 
 // A filesystem call, by the name a runtime, the C library or a shell tool gives it, or the error type that reports one.
-const FS_CALL = /\b(?:mkdir|mkdtemp|mkstemp|open|openat|creat|rename|unlink|rmdir|chmod|chown|lchown|symlink|link|copyfile|clonefile|scandir|opendir|access|stat|lstat|utimes?|truncate|shm_open|sem_open|realpath|readlink|mkfifo|bind|connect|touch|cp|mv|rm|ln|PermissionError|IOException|errno)\b/i;
+const FS_CALL = /\b(?:mkdir|mkdtemp|mkstemp|open|openat|creat|rename|unlink|rmdir|chmod|chown|lchown|symlink|link|copyfile|clonefile|scandir|opendir|access|stat|lstat|utimes?|truncate|shm_open|sem_open|realpath|readlink|mkfifo|bind|connect|listen|touch|cp|mv|rm|ln|PermissionError|IOException|errno)\b/i;
 // macOS's Seatbelt refuses a write with EPERM; srt on Linux mounts everything outside the writable paths read-only, so
 // the same write fails there with EROFS.
 const DENIAL = /\bEPERM\b|operation not permitted|\bEROFS\b|read-only file system/i;
+// A Unix socket or a file the host's permissions (or the sandbox) forbid: EACCES, "permission denied", and .NET's
+// "Access to the path '/x' is denied".
+const PERMISSION_DENIAL = /\bEACCES\b|permission denied|access to the path '[^']*' is denied/i;
 // A Seatbelt deny line, as macOS logs it ("Sandbox: dotnet(4242) deny(1) file-write-create /private/tmp/.dotnet") and as
 // srt repeats it in its violations block: the operation, then the path of a file operation.
 const SEATBELT_DENY = /\bdeny\(\d+\)\s+([a-z][\w-]*)(?:\s+(\S+))?/i;
+/**
+ * The sandbox's network proxy refusing a connection: srt's own refusal (its 403 body and X-Proxy-Error tag, which a
+ * verbose client prints) and the way clients report a proxy's 403 to the tunnel they asked for (curl and everything on
+ * libcurl, git included; .NET's HttpClient, so NuGet). Under srt every proxy a check talks to is srt's.
+ */
+const NETWORK_DENIAL = /Connection blocked by network allowlist|\bX-Proxy-Error\b|\bblocked-by-allowlist\b|\bCONNECT tunnel failed, response 403\b|\bproxy tunnel request to proxy '[^']*' failed with status code '403'/i;
+/**
+ * NuGet's HTTP client failing to start in the sandbox on macOS, before it reaches the network: the type initializer of
+ * System.Net.CookieContainer reads the host's domain name, which srt's profile does not let it read (captured under the
+ * real runner and srt 0.0.78 with the .NET 9 SDK, tests/fixtures/environment/dotnet-build-nuget-cookiecontainer.log).
+ * Counted only in NuGet's own restore error (NU1301) and with the failed read next to it.
+ */
+const NUGET_HTTP_DENIAL = /\berror NU1301:.*\bThe type initializer for 'System\.Net\.CookieContainer' threw an exception\b/;
+const DOMAIN_NAME_DENIED = /\bGetDomainName: -1\b/;
+/**
+ * A permission denial on a socket: .NET's SocketException with errno 13 (EACCES) or 1 (EPERM), or a bind, listen or
+ * connect refused with EACCES or EPERM. It names no path when the socket is a TCP one or .NET's, so on its own it cannot
+ * show whose socket it was; it counts only inside the tool's own crash (TOOL_CRASH).
+ */
+const SOCKET_DENIAL = /\bSocketException \((?:1|13)\): (?:Permission denied|Operation not permitted)\b|\b(?:bind|listen|connect)\b.*(?:\bEACCES\b|\bEPERM\b|permission denied|operation not permitted)|(?:\bEACCES\b|\bEPERM\b|permission denied|operation not permitted).*\b(?:bind|listen|connect)\b/i;
+/** MSBuild's own report of an exception it did not expect: the build engine crashed, it did not build anything. */
+const MSBUILD_INTERNAL_FAILURE = /\bMSBUILD : error MSB1025\b/;
+/**
+ * The tool's own crash, not a test's: MSBuild's internal-failure error, or a stack frame in the .NET SDK's own
+ * assemblies (MSBuild, the dotnet CLI, NuGet, the compiler server, the test platform's host). The repository's own code
+ * crashing shows its own frames (Program.Main...), and a test that fails shows the test runner's failure report.
+ */
+const TOOL_CRASH = [MSBUILD_INTERNAL_FAILURE, /^\s*at (?:Microsoft\.Build|Microsoft\.DotNet|NuGet|Microsoft\.CodeAnalysis|Microsoft\.TestPlatform|Microsoft\.VisualStudio\.TestPlatform\.(?:CommandLine|CrossPlatEngine|Client|Common|CommunicationUtilities))\./m];
 
 /**
  * Output that shows the repository's code was compiled or tested and failed: a compiler diagnostic or a test runner's
@@ -236,11 +305,59 @@ const CODE_FAILURE: readonly RegExp[] = [
   /\bAssertionError\b|\bAssert\.\w+\(\) Failure\b|\bassertion failed\b/i,
   /\bFailed!\s+-\s+Failed:\s*[1-9]/, // dotnet test
   /^\s*(?:not ok \d+|FAIL\b|--- FAIL:|FAILED\s+\S+::)/m, // TAP, Jest and Vitest, Go, pytest
+  /^FAILED \((?:failures|errors)=/m, // Python's unittest summary
+  /^ERROR: \w+ \(/m, // a test unittest reports as erroring: "ERROR: test_reads (test_config.ConfigTests.test_reads)"
   /\btest result: FAILED\b/, // cargo test
   /^\s*(?:#|ℹ)\s*fail\s+[1-9]/m, // node:test
-  /\b[1-9]\d*\s+(?:failed|failing|failures?)\b/i,
-  /\b[1-9]\d*\s+errors?\b|\b[1-9]\d* Error\(s\)/i, // compilers' and MSBuild's error counts
+  // A count and its word share a line in every runner's summary; across a line break "-1" and "Failed to restore" are no count.
+  /\b[1-9]\d*[ \t]+(?:failed|failing|failures?)\b/i,
+  // A summary that puts the word first and ends the count there: Microsoft.Testing.Platform's "  failed: 1" (the report
+  // of xunit v3, MSTest's runner and TUnit), xunit's own "Total: 2, Errors: 0, Failed: 1, ...", VSTest's "Failed:     1,
+  // Passed: ...". An errno after a failed call ("failed: 1 (Operation not permitted)") is no count.
+  /\b(?:failed|failures):[ \t]*[1-9]\d*(?:[,.]|[ \t]*\r?$)/im,
+  // Microsoft.Testing.Platform's line for each failing test, with its duration: "failed WritesCache (12ms)".
+  /^[ \t]*failed \S.*\((?:\d+(?:ms|[smhd])[ \t]?)+\)[ \t]*\r?$/m,
+  // xunit's own runner's line for each failing test: "Acme.Tests.CacheTests.WritesCache [FAIL]".
+  /\[FAIL\][ \t]*\r?$/m,
 ];
+
+/** Compilers' and MSBuild's error counts ("2 errors", "1 Error(s)"). */
+const ERROR_COUNT = /\b[1-9]\d*[ \t]+errors?\b|\b[1-9]\d* Error\(s\)/i;
+const MSBUILD_ERROR_SUMMARY = /\b[1-9]\d* Error\(s\)/;
+/** An MSBuild error line: its origin, then `error`, then its code when it has one ("Acme.csproj : error NU1301: ...", "MSBUILD : error MSB1025: ..."). */
+const MSBUILD_ERROR_LINE = /^(.*?)\s*:\s+error(?:\s+([A-Za-z]+\d+))?\s*:/;
+/** NuGet's restore: its errors (NUxxxx) and the restore task's own uncoded ones from NuGet.targets. */
+const NUGET_TARGETS = /\bNuGet\.targets\(\d+,\d+\)$/;
+
+/**
+ * Whether every error MSBuild counted is one that compiled nothing of the repository: NuGet's restore errors (NUxxxx, or
+ * the restore task's own from NuGet.targets) and MSBuild's internal failure (MSB1025). MSBuild's "N Error(s)" summary then
+ * counts a restore the sandbox or its network proxy refused, not a build that failed on the code.
+ */
+function onlyRestoreErrors(text: string): boolean {
+  if (!MSBUILD_ERROR_SUMMARY.test(text)) return false;
+  let seen = 0;
+  for (const raw of text.split('\n', MAX_SCANNED_LINES)) {
+    const m = MSBUILD_ERROR_LINE.exec(raw.trim());
+    if (!m) continue;
+    const code = m[2];
+    const restore = code !== undefined ? /^NU\d{4}$/.test(code) || code === 'MSB1025' : NUGET_TARGETS.test(m[1]!);
+    if (!restore) return false;
+    seen += 1;
+  }
+  return seen > 0;
+}
+
+/**
+ * Whether `text` shows the repository's code was compiled or tested and failed (a compiler diagnostic or a test runner's
+ * failure report). An error count shows it too, unless every error MSBuild counted is a restore error or its internal
+ * failure (onlyRestoreErrors). With `countRestoreErrors` that count shows it too, as every count did before ADR 0010:
+ * on a candidate whose base revision showed no environment failure, a change that adds a package brought the restore
+ * failure, and it goes to repair.
+ */
+export function showsCodeFailure(text: string, opts: { countRestoreErrors?: boolean } = {}): boolean {
+  return CODE_FAILURE.some((re) => re.test(text)) || (ERROR_COUNT.test(text) && (opts.countRestoreErrors === true || !onlyRestoreErrors(text)));
+}
 
 /** A line cut to MAX_LINE_CHARS that keeps position `at` in view: a runtime names the failed call at the end of a long line. */
 function excerpt(line: string, at: number): string {
@@ -251,34 +368,71 @@ function excerpt(line: string, at: number): string {
 
 /**
  * The environment cause of a check that could not run because the sandbox or the operating system refused it something
- * outside its checkout, or null. It needs no base-revision comparison, so it can judge the baseline itself. Both halves
- * are required:
+ * before it ran anything of the repository, or null. It needs no base-revision comparison, so it can judge the baseline
+ * itself (docs/decisions/0010-base-failure-classification.md). Both halves are required:
  *
- * - a denial outside `insideRoots`: EPERM or "operation not permitted" (macOS), EROFS or "read-only file system" (Linux)
- *   on a filesystem call that names such a path (the .NET runtime's `mkdir("/tmp/.dotnet/shm/...") == -1; errno ==
- *   EPERM`, node's `EPERM: operation not permitted, mkdir '/x'`, a shell tool's `mkdir: /x: Operation not permitted` or
- *   `mkdir: cannot create directory ‘/x’: Read-only file system`), or a Seatbelt deny line (one for a file operation
- *   only on such a path);
- * - and no sign that the repository's code was compiled or tested and failed (CODE_FAILURE): a compile error or a failing
- *   test next to a denial is still the code's failure, and keeps the normal path.
+ * - a refusal that is not the repository's to fix, one of:
+ *   - a denial on a filesystem call that names a path outside `insideRoots`: EPERM or "operation not permitted"
+ *     (macOS), EROFS or "read-only file system" (Linux): the .NET runtime's `mkdir("/tmp/.dotnet/shm/...") == -1;
+ *     errno == EPERM`, node's `EPERM: operation not permitted, mkdir '/x'`, a shell tool's `mkdir: /x: Operation not
+ *     permitted` or `mkdir: cannot create directory ‘/x’: Read-only file system` (filesystem-denied); or EACCES or
+ *     "permission denied" (the host's permissions, or a Unix socket the sandbox refuses: node's `listen EACCES:
+ *     permission denied /tmp/x.pipe`; permission-denied);
+ *   - a Seatbelt deny line (one for a file operation only on such a path);
+ *   - the sandbox's network proxy refusing a connection (NETWORK_DENIAL), or NuGet's HTTP client failing to start in
+ *     the sandbox (NUGET_HTTP_DENIAL);
+ *   - a permission denial on a socket (SOCKET_DENIAL) inside the tool's own crash (TOOL_CRASH): MSBuild's internal
+ *     failure on the named pipe it opens for its nodes, a Unix socket, is the tool being refused; the same denial in
+ *     the repository's own program, or with no crash of the tool around it, is not shown to be;
+ * - and no sign that the repository's code was compiled or tested and failed (showsCodeFailure): a compile error or a
+ *   failing test next to a denial is still the code's failure, and keeps the normal path. A test whose assertion message
+ *   says "permission denied" is a failing test.
+ *
+ * On a candidate (`baseSignals` given) the signals ADR 0010 added count only when the same check showed the same one on
+ * the base revision, and MSBuild's count of restore errors reads as a code failure unless the base revision showed an
+ * environment failure: a denial or a restore failure the change introduced is the change's to repair.
  */
 export function classifyCouldNotRun(input: CouldNotRunInput): EnvironmentFailure | null {
   const text = stripAnsi(input.output);
-  if (CODE_FAILURE.some((re) => re.test(text))) return null;
+  // On a candidate whose base revision showed no environment failure, MSBuild's count of restore errors is the change's.
+  if (showsCodeFailure(text, { countRestoreErrors: input.baseSignals !== undefined && input.baseSignals.length === 0 })) return null;
   const outside = (path: string): boolean => !input.insideRoots.some((root) => within(path.replace(/[.]+$/, ''), root));
+  const counts = (signal: EnvironmentSignal): boolean => input.baseSignals === undefined || !BASE_GATED_SIGNALS.has(signal) || input.baseSignals.includes(signal);
+  const toolCrashed = TOOL_CRASH.some((re) => re.test(text));
+  const domainNameDenied = DOMAIN_NAME_DENIED.test(text);
   const signals: EnvironmentSignal[] = [];
   const lines: string[] = [];
+  const show = (line: string, at: number): void => {
+    const shown = excerpt(line, at);
+    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown)) lines.push(shown);
+  };
   for (const raw of text.split('\n', MAX_SCANNED_LINES)) {
     const line = raw.replace(/\r$/, '').trim();
     const deny = SEATBELT_DENY.exec(line);
     const denial = DENIAL.exec(line);
-    let found: { signal: EnvironmentSignal; at: number } | null = null;
-    if (deny && (!deny[1]!.toLowerCase().startsWith('file-') || (deny[2] !== undefined && isAbsolute(deny[2]) && outside(deny[2])))) found = { signal: 'sandbox-violation', at: deny.index };
-    else if (denial && FS_CALL.test(line) && (line.match(ABSOLUTE_PATH) ?? []).some(outside)) found = { signal: 'filesystem-denied', at: denial.index };
-    if (found === null) continue;
+    const permission = PERMISSION_DENIAL.exec(line);
+    const network = NETWORK_DENIAL.exec(line);
+    const nuget = domainNameDenied ? NUGET_HTTP_DENIAL.exec(line) : null;
+    const socket = toolCrashed ? SOCKET_DENIAL.exec(line) : null;
+    const pathOutside = (): boolean => FS_CALL.test(line) && (line.match(ABSOLUTE_PATH) ?? []).some(outside);
+    const candidates: { signal: EnvironmentSignal; at: number }[] = [];
+    if (deny && (!deny[1]!.toLowerCase().startsWith('file-') || (deny[2] !== undefined && isAbsolute(deny[2]) && outside(deny[2])))) candidates.push({ signal: 'sandbox-violation', at: deny.index });
+    if (denial && pathOutside()) candidates.push({ signal: 'filesystem-denied', at: denial.index });
+    if (permission && pathOutside()) candidates.push({ signal: 'permission-denied', at: permission.index });
+    if (network) candidates.push({ signal: 'network-denied', at: network.index });
+    if (nuget) candidates.push({ signal: 'nuget-http-denied', at: nuget.index });
+    if (socket) candidates.push({ signal: 'socket-denied', at: socket.index });
+    const found = candidates.find((c) => counts(c.signal));
+    if (found === undefined) continue;
+    // One line shows a refused socket: the crash repeats it for every node MSBuild starts.
+    if (found.signal === 'socket-denied' && signals.includes('socket-denied')) continue;
     if (!signals.includes(found.signal)) signals.push(found.signal);
-    const shown = excerpt(line, found.at);
-    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown)) lines.push(shown);
+    // The tool's own first error line goes before the denial it reports, so the reason starts where the log does.
+    if (found.signal === 'socket-denied' && lines.length === 0) {
+      const first = text.split('\n', MAX_SCANNED_LINES).find((l) => MSBUILD_INTERNAL_FAILURE.test(l));
+      if (first !== undefined) show(first.replace(/\r$/, '').trim(), 0);
+    }
+    show(line, found.at);
   }
   if (signals.length === 0) return null;
   return { checkId: input.checkId, fingerprint: null, signals, cause: signals.map((s) => CAUSES[s]).join('; '), lines };

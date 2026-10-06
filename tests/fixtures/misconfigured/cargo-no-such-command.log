@@ -1,0 +1,6 @@
+error: no such command: `tset`
+
+help: a command with a similar name exists: `test`
+
+help: view all installed commands with `cargo --list`
+help: find a package to install `tset` with `cargo search cargo-tset`

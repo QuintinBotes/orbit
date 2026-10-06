@@ -9,6 +9,7 @@ import { hashObject } from '../../../src/core/hash.ts';
 import { startRun } from '../../../src/controller/start.ts';
 import { verifySnapshot } from '../../../src/policy/snapshot.ts';
 import { raiseBaselineExceptionQuestions } from '../../../src/inquisition/baseline-exception.ts';
+import { misconfiguredRecord, type MisconfiguredBlock } from '../../../src/controller/environment-block.ts';
 import { config as fixtureConfig, contract as fixtureContract } from '../contract/fixtures.ts';
 import { makeLab, type Lab } from './lab.ts';
 
@@ -280,5 +281,56 @@ describe('orbit resume on a block from the frozen policy (P12)', () => {
     const forced = await l.cli(['resume', run.id, '--detach', '--force']);
     expect(forced.code, forced.err).toBe(0);
     expect(getRun(l.db(), run.id).state).toBe('PREFLIGHT');
+  });
+
+  it('offers --force only for a fix outside the policy: not for a misconfigured check, whose same command a forced resume runs again', async () => {
+    const l = lab();
+    const model = l.newRun();
+    l.moveTo(model.id, ['PREFLIGHT', 'BLOCKED']);
+    l.db().run('UPDATE runs SET outcome_json = ? WHERE id = ?', JSON.stringify({ state: 'BLOCKED', reason: 'x', frozen_policy: { setting: 'providers.codex.model' } }), model.id);
+    expect((await l.cli(['resume', model.id, '--detach'])).err).toMatch(/pass --force/);
+    const check = l.newRun();
+    l.moveTo(check.id, ['PREFLIGHT', 'BLOCKED']);
+    l.db().run('UPDATE runs SET outcome_json = ? WHERE id = ?', JSON.stringify({ state: 'BLOCKED', reason: 'x', frozen_policy: { setting: 'checks.build.command, checks.lint.command' } }), check.id);
+    const refused = await l.cli(['resume', check.id, '--detach']);
+    expect(refused.code).toBe(5);
+    expect(refused.err).toMatch(/checks\.build\.command, checks\.lint\.command/);
+    expect(refused.err).toMatch(/start a new run with orbit run/);
+    expect(refused.err).not.toMatch(/--force/);
+  });
+
+  // A missing target the contract does not name (ADR 0010) is recorded as a frozen-policy block too, but a fix of the
+  // config is only one of its three causes: the goal may be meant to create the target, or a tool has to be installed.
+  const lint: MisconfiguredBlock = { checkId: 'lint', kind: 'missing-target', signature: 'cargo-no-such-command', tool: 'cargo', cause: 'cargo has no such command', lines: ['error: no such command: `nextest`'], configKey: 'checks.lint.command' };
+  const argumentError: MisconfiguredBlock = { checkId: 'build', kind: 'argument', signature: 'msbuild-one-project', tool: 'dotnet', cause: 'MSBuild rejected the command line', lines: ['MSBUILD : error MSB1008: Only one project can be specified.'], configKey: 'checks.build.command' };
+
+  it('a missing target the contract does not name is refused with the advice by cause, not with "fix .orbit/config.yaml"', async () => {
+    const l = lab();
+    const run = l.newRun();
+    l.moveTo(run.id, ['PREFLIGHT', 'CONTRACTING', 'BLOCKED']);
+    l.db().run('UPDATE runs SET outcome_json = ? WHERE id = ?', JSON.stringify({ state: 'BLOCKED', reason: 'x', frozen_policy: { setting: 'checks.lint.command' }, misconfigured_checks: [misconfiguredRecord(lint, 'misconfigured')] }), run.id);
+    const refused = await l.cli(['resume', run.id, '--detach']);
+    expect(refused.code).toBe(5);
+    expect(refused.err).toMatch(/checks\.lint\.command/);
+    // The three causes, each with what to do, and a new run for every one of them.
+    expect(refused.err).toMatch(/when the goal is meant to create what the command names, say so in the goal of a new run/);
+    expect(refused.err).toMatch(/when a tool that is not installed or restored yet provides it/);
+    expect(refused.err).toMatch(/when the command is wrong, correct checks\.lint\.command in \.orbit\/config\.yaml and start a new run/);
+    expect(refused.err).toContain(`orbit cancel ${run.id}`);
+    // The config is not what is wrong in two of the three causes, and a forced resume reads the same recorded baseline.
+    expect(refused.err).not.toMatch(/Fix \.orbit\/config\.yaml/);
+    expect(refused.err).not.toMatch(/--force/);
+    expect(getRun(l.db(), run.id).state).toBe('BLOCKED');
+  });
+
+  it('an argument error blocked at PREFLIGHT is a wrong command: the refusal still sends a person to the config', async () => {
+    const l = lab();
+    const run = l.newRun();
+    l.moveTo(run.id, ['PREFLIGHT', 'BLOCKED']);
+    l.db().run('UPDATE runs SET outcome_json = ? WHERE id = ?', JSON.stringify({ state: 'BLOCKED', reason: 'x', frozen_policy: { setting: 'checks.build.command' }, misconfigured_checks: [misconfiguredRecord(argumentError)] }), run.id);
+    const refused = await l.cli(['resume', run.id, '--detach']);
+    expect(refused.code).toBe(5);
+    expect(refused.err).toMatch(/Fix \.orbit\/config\.yaml/);
+    expect(refused.err).not.toMatch(/by cause/);
   });
 });

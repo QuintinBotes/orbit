@@ -91,6 +91,12 @@ export interface RunnerContext {
    * install step, read-only for every other check. Absent: each attempt keeps its caches in its private scratch.
    */
   toolchainCacheRoot?: string | null;
+  /**
+   * Recorded check runs (group roots) whose result must not be reused, so their check runs again. PREFLIGHT set them
+   * aside when it found the check could not run or was misconfigured on the base revision (ADR 0010): the environment
+   * or the missing program may have been fixed since, which the recorded result cannot show.
+   */
+  setAside?: ReadonlySet<string>;
 }
 
 export interface RunChecksInput extends RunnerContext {
@@ -368,7 +374,7 @@ async function executeCheckGroup(ctx: RunnerContext, subject: CheckSubject, def:
   const loadGroup = (): CheckRunRecord[] => {
     const rows = listCheckRuns(ctx.db, query);
     const root = [...rows].reverse().find((r) => r.rerunOf === null);
-    if (!root) return [];
+    if (!root || ctx.setAside?.has(root.id)) return [];
     // A group recorded under another configuration or policy says nothing about this one.
     if (root.checkConfigHash !== configHash || root.policyHash !== ctx.run.policyHash || root.treeHash !== subject.treeHash) return [];
     return rows.filter((r) => r.id === root.id || r.rerunOf === root.id);

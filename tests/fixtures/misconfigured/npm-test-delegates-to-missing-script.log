@@ -1,0 +1,9 @@
+
+> acme@1.0.0 test
+> cd client && npm test
+
+npm error Missing script: "test"
+npm error
+npm error To see a list of scripts, run:
+npm error   npm run
+npm error A complete log of this run can be found in: /home/acme/.npm/_logs/2026-10-06T19_32_17_906Z-debug-0.log

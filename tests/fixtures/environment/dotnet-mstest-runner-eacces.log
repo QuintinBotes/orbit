@@ -1,0 +1,20 @@
+failed ReadsConfig (10ms)
+  Test method Acme.Tests.CacheTests.ReadsConfig threw exception:
+  System.UnauthorizedAccessException: Access to the path '/etc/sudoers' is denied. ---> System.IO.IOException: Permission denied
+    at Interop.ThrowExceptionForIoErrno(ErrorInfo errorInfo, String path, Boolean isDirError)
+    at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String path, OpenFlags flags, Int32 mode, Boolean failForSymlink, Boolean& wasSymlink, Func`4 createOpenException)
+    at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, UnixFileMode openPermissions, Int64& fileLength, UnixFileMode& filePermissions, Boolean failForSymlink, Boolean& wasSymlink, Func`4 createOpenException)
+    at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+    at System.IO.StreamReader.ValidateArgsAndOpenPath(String path, Encoding encoding, Int32 bufferSize)
+    at System.IO.File.ReadAllText(String path, Encoding encoding)
+    at Acme.Tests.CacheTests.ReadsConfig() in /var/folders/acme/T/orbit-evidence-acme/checkout/tests/Acme.Tests/CacheTests.cs:11
+    at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+    at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+    
+
+Test run summary: Failed! - /var/folders/acme/T/orbit-evidence-acme/checkout/tests/Acme.Tests/bin/Debug/net9.0/Acme.Tests.dll (net9.0|arm64)
+  total: 2
+  failed: 1
+  succeeded: 1
+  skipped: 0
+  duration: 88ms

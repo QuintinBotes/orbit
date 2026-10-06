@@ -47,6 +47,17 @@ describe('notification payload (ADR 0008)', () => {
     expect(at('IMPLEMENTING')).toBe(`Follow it with orbit status ${RUN.id}.`);
   });
 
+  it('does not tell a person to resume a block that comes from the run\'s frozen policy: resuming alone would only block again', () => {
+    const at = (outcomeJson: string | null) => buildPayload({ kind: 'run.ended', run: { ...RUN, state: 'BLOCKED', outcomeJson }, questionIds: [], pullRequest: null, remote: null }).next_action;
+    const frozen = at(JSON.stringify({ state: 'BLOCKED', reason: 'x', frozen_policy: { setting: 'checks.lint.command' } }));
+    expect(frozen).toBe(`Read orbit report ${RUN.id}; this block comes from the run's frozen policy, so resuming alone would only block again.`);
+    expect(frozen).not.toMatch(/orbit resume/);
+    // Any other block, and a record that cannot be read, keep the resume advice.
+    expect(at(JSON.stringify({ state: 'BLOCKED', reason: 'CI was cancelled' }))).toBe(`Resolve the block, then run orbit resume ${RUN.id}.`);
+    expect(at(null)).toBe(`Resolve the block, then run orbit resume ${RUN.id}.`);
+    expect(at('{not json')).toBe(`Resolve the block, then run orbit resume ${RUN.id}.`);
+  });
+
   it('a question notification names how to answer, remotely too when remote answers are on', () => {
     const p = buildPayload({ kind: 'question.open', run: { ...RUN, state: 'BLOCKED' }, questionIds: ['q-1', 'q-2'], pullRequest: 3, remote: { where: 'pull request #3' } });
     expect(p.kind).toBe('question.open');

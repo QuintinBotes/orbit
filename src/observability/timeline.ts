@@ -212,12 +212,46 @@ function decisionCategory(kind: string): TimelineCategory {
   return 'decision';
 }
 
+/** What PREFLIGHT classified a base-revision failure as (ADR 0010), by the decision kind that records it. */
+const BASELINE_CLASSIFICATIONS: Readonly<Record<string, string>> = {
+  'baseline.environment-failure': 'an environment failure',
+  'baseline.check-misconfigured': 'a misconfigured check',
+  'baseline.missing-target': 'a missing target',
+};
+
+/**
+ * The checks PREFLIGHT (or CONTRACTING, for a missing target the contract does not expect to flip) classified, in one
+ * line per decision: the checks, their classification, the config keys that hold their commands, and the first error
+ * line, each distinct one once with the checks that share it. The full reason is on the state line already. Null for a
+ * decision recorded without its checks (an older version), which keeps the plain wording.
+ */
+function describeBaselineClassification(kind: string, data: Rec): string | null {
+  const label = BASELINE_CLASSIFICATIONS[kind];
+  const checks = Array.isArray(data.checks) ? data.checks.map(rec) : [];
+  if (label === undefined || checks.length === 0) return null;
+  const groups: { ids: string[]; keys: string[]; first: string | undefined }[] = [];
+  for (const c of checks) {
+    const first = list(c.evidence_lines)[0];
+    let g = groups.find((x) => x.first === first);
+    if (g === undefined) {
+      g = { ids: [], keys: [], first };
+      groups.push(g);
+    }
+    g.ids.push(str(c.check_id) ?? '?');
+    const key = str(c.config_key);
+    if (key) g.keys.push(key);
+  }
+  const parts = groups.map((g) => `${g.ids.join(', ')} classified as ${label}${g.keys.length > 0 ? ` (${g.keys.join(', ')})` : ''}, not a pre-existing failure${g.first ? `: ${JSON.stringify(g.first)}` : ''}`);
+  return `${kind}: ${parts.join('; ')}`;
+}
+
 function describeDecision(d: { id: string; kind: string; summary: string; data: Rec }): { category: TimelineCategory; kind: string; text: string; data: Rec } {
   if (d.kind === 'route' && typeof d.data.model === 'string') {
     const r = describeRoute(d.data);
     return { category: 'route', kind: r.kind, text: r.text, data: { decision_id: d.id, ...d.data } };
   }
-  return { category: decisionCategory(d.kind), kind: d.kind, text: `${d.kind}: ${d.summary.replace(/\s+/g, ' ').trim()}`, data: { decision_id: d.id, ...d.data } };
+  const classified = describeBaselineClassification(d.kind, d.data);
+  return { category: decisionCategory(d.kind), kind: d.kind, text: classified ?? `${d.kind}: ${d.summary.replace(/\s+/g, ' ').trim()}`, data: { decision_id: d.id, ...d.data } };
 }
 
 function categoryOfType(type: string): TimelineCategory {
