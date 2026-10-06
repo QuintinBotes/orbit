@@ -292,6 +292,8 @@ agents:
   isolate_writers: true                 # cannot be turned off
   prohibit_shared_worktree_writes: true # cannot be turned off
   cancel_obsolete_workers: true
+  allowed_plugins: []                   # exact name@marketplace ids
+  allow_managed_plugins: false          # accept every organisation-managed plugin
 
 review:
   independent_provider_required: true
@@ -303,6 +305,22 @@ review:
 If the reviewer provider is unavailable or not `data_policy_eligible`, a run
 that requires independent review stops as `BLOCKED` instead of reviewing with the
 implementer's provider.
+
+### Plugins in worker sessions
+
+Workers start with `--setting-sources ""`, so user, project and local plugins
+never load; Claude Code's built-ins and organisation-managed plugins (scope
+`managed`) still do. A plugin can add hooks and tools to every worker, so a
+session that loaded anything else is refused, and its output not used, unless
+`agents.allowed_plugins` names the plugin's exact `name@marketplace` id or the
+plugin is managed and `agents.allow_managed_plugins` is `true`. The refusal
+names each plugin and the config line that would allow it. The scope is read
+from the session's `system/init` entry when it has one; Claude Code does not
+report it there today, so it comes from `claude plugin list --json`. Every
+non-built-in plugin a worker loaded is recorded in its result and listed under
+"Worker plugins" in the final report, with a residual risk for each allowed
+one. `orbit doctor` lists, before any run, the plugins a worker would load and
+whether the policy allows them.
 
 ## static_security
 

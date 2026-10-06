@@ -250,6 +250,14 @@ export interface OrbitConfig {
     isolate_writers: true;
     prohibit_shared_worktree_writes: true;
     cancel_obsolete_workers: boolean;
+    /**
+     * Plugins a worker session may load besides Claude Code's built-ins: exact name@marketplace ids. A plugin can
+     * add hooks and tools to workers, so the default is none. Parsed configs always carry it; optional in the type
+     * so older snapshots still read (as none).
+     */
+    allowed_plugins?: string[];
+    /** Also accept every organisation-managed plugin (scope managed). Default false; absent in older snapshots reads as false. */
+    allow_managed_plugins?: boolean;
   };
   review: {
     independent_provider_required: boolean;

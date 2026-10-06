@@ -43,6 +43,7 @@ import { compileGlobs } from '../../policy/globs.ts';
 import { proposeScope, trackedFiles } from '../layout.ts';
 import { orbitHint } from '../../core/invocation.ts';
 import { reviewFix } from '../review-fix.ts';
+import { workerPluginsCheck } from './doctor-plugins.ts';
 
 export const DOCTOR_OPTIONS: OptionSpec = {
   probe: { type: 'boolean', description: 'also make tiny live requests (a few cents): one per provider that has a probe to detect expired or revoked credentials, and one per eligible Claude model' },
@@ -470,6 +471,8 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
         const why = !envCred ? 'no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in the environment (a keychain login is invisible inside srt)' : 'sandbox-runtime isolation is not in use';
         checks.push(warn(`${id}.worker-tier`, 'providers', `workers run in the claude-sandbox tier: ${why}`, 'an exported Claude credential plus sandbox-runtime for the strongest tier', 'export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)', CLAUDE_SANDBOX_LIMITATIONS.map((l) => `limitation: ${l}`)));
       }
+      const plugins = await workerPluginsCheck(id, adapters[id], config);
+      if (plugins) checks.push(plugins);
     } else checks.push(codexTierCheck(id, config.providers[id]!.tier ?? 'auto', codexEnvCredential(ctx.env), iso.available && iso.provider?.kind === 'sandbox-runtime', level));
   }
 

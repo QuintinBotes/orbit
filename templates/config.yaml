@@ -161,6 +161,13 @@ agents:
   isolate_writers: true
   prohibit_shared_worktree_writes: true
   cancel_obsolete_workers: true
+  # Plugins a worker session may load besides Claude Code's built-ins. A
+  # plugin can add hooks and tools to every worker, so none are allowed by
+  # default; `orbit doctor` lists the ones a worker would load.
+  # Exact name@marketplace ids, e.g. ["acme-guard@acme-it"]:
+  allowed_plugins: []
+  # Accept every organisation-managed plugin (scope managed):
+  allow_managed_plugins: false
 
 review:
   # Review by a provider other than the one that wrote the change.

@@ -21056,7 +21056,14 @@ var init_config_schema = __esm({
             require_independent_work_units: { const: true, description: "Parallel writers always get disjoint work units; this cannot be turned off." },
             isolate_writers: { const: true },
             prohibit_shared_worktree_writes: { const: true },
-            cancel_obsolete_workers: { type: "boolean" }
+            cancel_obsolete_workers: { type: "boolean" },
+            allowed_plugins: {
+              type: "array",
+              uniqueItems: true,
+              description: "Plugins a worker session may load besides Claude Code's built-ins, as exact name@marketplace ids. A plugin can add hooks and tools to workers.",
+              items: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$" }
+            },
+            allow_managed_plugins: { type: "boolean", description: "Also accept every plugin installed with scope managed (organisation-managed, not removable by the user)." }
           }
         },
         review: {
@@ -21552,7 +21559,9 @@ function defaultConfig(mode = DEFAULT_MODE) {
       require_independent_work_units: true,
       isolate_writers: true,
       prohibit_shared_worktree_writes: true,
-      cancel_obsolete_workers: true
+      cancel_obsolete_workers: true,
+      allowed_plugins: [],
+      allow_managed_plugins: false
     },
     review: {
       independent_provider_required: true,
@@ -25563,6 +25572,80 @@ var init_claude_settings = __esm({
   }
 });
 
+// src/adapters/claude-plugins.ts
+function pluginPolicyOf(config) {
+  const a = config.agents;
+  return { allowed: [...a.allowed_plugins ?? []], allowManaged: a.allow_managed_plugins === true };
+}
+function parsePluginList(stdout) {
+  let parsed3;
+  try {
+    parsed3 = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed3)) return null;
+  const out = [];
+  for (const e of parsed3) {
+    if (!isRecord(e) || typeof e.id !== "string") continue;
+    out.push({ id: e.id, scope: typeof e.scope === "string" ? e.scope : null, enabled: e.enabled !== false });
+  }
+  return out;
+}
+function isBuiltinPlugin(entry) {
+  return isRecord(entry) && typeof entry.source === "string" && entry.source.endsWith("@builtin");
+}
+function workerPlugins(initPlugins, check) {
+  if (initPlugins === void 0) return [];
+  const entries = Array.isArray(initPlugins) ? initPlugins : [null];
+  const out = [];
+  for (const e of entries) {
+    if (isBuiltinPlugin(e)) continue;
+    const r = isRecord(e) ? e : {};
+    const id = typeof r.source === "string" && r.source.includes("@") ? r.source : null;
+    const name = typeof r.name === "string" ? r.name : null;
+    const scope = typeof r.scope === "string" ? r.scope : id === null ? null : check.installed?.find((p) => p.id === id)?.scope ?? null;
+    out.push({ id, name, scope, allowed_by: allowance(id, scope, check.policy) });
+  }
+  return out;
+}
+function allowance(id, scope, policy) {
+  if (id === null) return null;
+  if (policy.allowed.includes(id)) return "agents.allowed_plugins";
+  if (scope === "managed" && policy.allowManaged) return "agents.allow_managed_plugins";
+  return null;
+}
+function pluginAllowLines(p) {
+  if (p.id === null) return [];
+  const lines = [`agents.allowed_plugins: ${JSON.stringify([p.id])}`];
+  if (p.scope === "managed") lines.push("agents.allow_managed_plugins: true");
+  return lines;
+}
+function describeRefusedPlugin(p) {
+  if (p.id === null) return p.name === null ? "an entry with no name@marketplace source (no config line can allow it)" : `${p.name} (no name@marketplace source; no config line can allow it)`;
+  return `${p.id} (scope ${p.scope ?? "unknown"}; allow it with ${pluginAllowLines(p).join(" or ")})`;
+}
+function pluginRefusal(plugins) {
+  const refused = plugins.filter((p) => p.allowed_by === null);
+  if (refused.length === 0) return null;
+  return `the session loaded ${refused.length} plugin(s) that are not Claude Code built-ins and that the policy does not allow: ${refused.map(describeRefusedPlugin).join("; ")}`;
+}
+function needsPluginList(initPlugins) {
+  if (!Array.isArray(initPlugins)) return false;
+  return initPlugins.some((e) => !isBuiltinPlugin(e) && isRecord(e) && typeof e.source === "string" && typeof e.scope !== "string");
+}
+function isRecord(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+var STRICT_PLUGIN_POLICY, WORKER_EXCLUDED_SCOPES;
+var init_claude_plugins = __esm({
+  "src/adapters/claude-plugins.ts"() {
+    "use strict";
+    STRICT_PLUGIN_POLICY = Object.freeze({ allowed: Object.freeze([]), allowManaged: false });
+    WORKER_EXCLUDED_SCOPES = ["user", "project", "local"];
+  }
+});
+
 // src/adapters/claude-transcript.ts
 function classifyClaudeTranscript(input) {
   const { events, exit } = input;
@@ -25570,6 +25653,7 @@ function classifyClaudeTranscript(input) {
   const init = events.find((e) => e.type === "system" && e.subtype === "init");
   const sessionId = str(result2?.session_id) ?? str(init?.session_id) ?? null;
   const usage = claudeUsage(events);
+  const plugins = workerPlugins(init?.plugins, input.plugins ?? NO_PLUGINS);
   const base = {
     structured: null,
     text: result2 ? str(result2.result) : null,
@@ -25580,7 +25664,8 @@ function classifyClaudeTranscript(input) {
     models: modelUsageKeys(result2),
     permissionDenials: denials(result2),
     numTurns: num(result2?.num_turns),
-    terminalReason: str(result2?.terminal_reason)
+    terminalReason: str(result2?.terminal_reason),
+    ...plugins.length > 0 ? { plugins } : {}
   };
   const end = (status2, reason, error, structured = null) => ({
     ...base,
@@ -25627,7 +25712,7 @@ function classifyClaudeTranscript(input) {
     if (str(result2.terminal_reason) === "api_error" || status2 !== null) return end("failed", "api_error", detail ?? "API error");
     return end("failed", "execution_error", detail ?? `exit ${exit.code}, subtype ${subtype ?? "missing"}`);
   }
-  const unsafe = sessionProblems(init, input.expectedSessionId ?? null);
+  const unsafe = sessionProblems(init, input.expectedSessionId ?? null, input.plugins);
   if (unsafe) return end("failed", "unsafe_session", unsafe);
   if (!("structured_output" in result2) || result2.structured_output === void 0) {
     return end("malformed_output", "structured_output_missing", "the result has no structured_output");
@@ -25638,17 +25723,14 @@ function classifyClaudeTranscript(input) {
   }
   return end("succeeded", "success", null, result2.structured_output);
 }
-function sessionProblems(init, expectedSessionId = null) {
+function sessionProblems(init, expectedSessionId = null, plugins = NO_PLUGINS) {
   if (!init) return "the transcript has no system/init line, so the permission mode and loaded servers cannot be checked";
   if (init.permissionMode !== "dontAsk") return `the session ran in permission mode ${String(init.permissionMode)}, not dontAsk`;
   if (!Array.isArray(init.mcp_servers) || init.mcp_servers.length > 0) {
     return Array.isArray(init.mcp_servers) ? `the session loaded ${init.mcp_servers.length} MCP server(s)` : "system/init does not list its MCP servers";
   }
-  if (init.plugins !== void 0) {
-    const plugins = Array.isArray(init.plugins) ? init.plugins : [null];
-    const foreign = plugins.filter((p) => !(isObject(p) && typeof p.source === "string" && p.source.endsWith("@builtin")));
-    if (foreign.length > 0) return `the session loaded ${foreign.length} plugin(s) that are not Claude Code built-ins`;
-  }
+  const refusal = pluginRefusal(workerPlugins(init.plugins, plugins));
+  if (refusal) return refusal;
   if (expectedSessionId !== null && init.session_id !== expectedSessionId) {
     return `the transcript is of session ${String(init.session_id)}, not ${expectedSessionId}`;
   }
@@ -25798,13 +25880,15 @@ function num(v) {
 function clip(s, n2) {
   return s.length > n2 ? `${s.slice(0, n2)}...` : s;
 }
-var CLAUDE_AUTH_ERRORS, CLAUDE_TRANSIENT_ERRORS;
+var CLAUDE_AUTH_ERRORS, CLAUDE_TRANSIENT_ERRORS, NO_PLUGINS;
 var init_claude_transcript = __esm({
   "src/adapters/claude-transcript.ts"() {
     "use strict";
     init_schema5();
+    init_claude_plugins();
     CLAUDE_AUTH_ERRORS = ["authentication_failed", "oauth_org_not_allowed", "account_on_hold"];
     CLAUDE_TRANSIENT_ERRORS = ["rate_limit", "overloaded", "server_error"];
+    NO_PLUGINS = { policy: STRICT_PLUGIN_POLICY, installed: null };
   }
 });
 
@@ -27829,6 +27913,12 @@ function compareVersions(a, b) {
   }
   return 0;
 }
+function launchPluginPolicy(workerDir) {
+  const meta = readJsonIfExists(join12(workerDir, LAUNCH_FILE))?.meta;
+  const p = meta?.pluginPolicy;
+  if (!p || !Array.isArray(p.allowed)) return STRICT_PLUGIN_POLICY;
+  return { allowed: p.allowed.filter((id) => typeof id === "string"), allowManaged: p.allowManaged === true };
+}
 var PROMPT_FILE, SYSTEM_FILE, SETTINGS_FILE, RESULT_FILE, CLAUDE_EFFORTS, PERMISSION_PROMPTS_MIN_VERSION, ALWAYS_DISALLOWED, READ_TOOLS, EDIT_TOOLS, CLAUDE_EXTRA_ARGS_ALLOWED, ClaudeAdapter, CLAUDE_ABORT_PATTERNS, CLAUDE_SANDBOX_LIMITATIONS, CLAUDE_EXTRA_ARGS_WITH_VALUE;
 var init_claude = __esm({
   "src/adapters/claude.ts"() {
@@ -27845,6 +27935,7 @@ var init_claude = __esm({
     init_snapshot();
     init_claude_settings();
     init_claude_transcript();
+    init_claude_plugins();
     init_commands();
     init_env();
     init_prompt();
@@ -28036,7 +28127,9 @@ ${outputBudgetInstruction(outputTokens)}
           stdinPath: join12(workerDir, PROMPT_FILE),
           abortOn: CLAUDE_ABORT_PATTERNS,
           cleanupPaths,
-          meta: { tier, limitations, outputBudgetTokens: outputTokens },
+          // The plugin policy the session is judged by at collection, from the verified snapshot. launch.json is
+          // read-only to the worker (WORKER_DIR_READ_ONLY), so a worker cannot widen it.
+          meta: { tier, limitations, outputBudgetTokens: outputTokens, pluginPolicy: pluginPolicyOf(snapshot2.config) },
           clock: this.clock
         });
         return { ...handle, tier, limitations, sessionId };
@@ -28071,7 +28164,10 @@ ${outputBudgetInstruction(outputTokens)}
             terminalReason: null
           };
         } else {
-          result2 = classifyClaudeTranscript({ events: log.events, malformedTail: log.malformedTail, exit: st.exit, outputSchema: spec.outputSchema, expectedSessionId: st.pid?.sessionId ?? null });
+          const init = log.events.find((e) => e.type === "system" && e.subtype === "init");
+          const listed = needsPluginList(init?.plugins) ? await this.listPlugins() : null;
+          const plugins = { policy: launchPluginPolicy(handle.workerDir), installed: listed?.ok ? listed.plugins : null };
+          result2 = classifyClaudeTranscript({ events: log.events, malformedTail: log.malformedTail, exit: st.exit, outputSchema: spec.outputSchema, expectedSessionId: st.pid?.sessionId ?? null, plugins });
           const stderr = result2.reason === "crashed" ? stderrTail(handle.workerDir) : null;
           if (stderr) result2 = { ...result2, error: `${result2.error ?? "crashed"}; stderr: ${stderr}` };
         }
@@ -28082,6 +28178,16 @@ ${outputBudgetInstruction(outputTokens)}
       async reportUsage(handle) {
         if (!existsSync11(handle.logPath)) return emptyUsage(this.id);
         return withWorkerTelemetry(claudeUsage(readLogLines(handle.logPath).events), handle.workerDir);
+      }
+      /**
+       * `claude plugin list --json` with the environment a probe gets: the installed plugins with their scope, which
+       * system/init does not report. Used to judge a session's plugins and by doctor before any run.
+       */
+      async listPlugins() {
+        const r = await this.run(["plugin", "list", "--json"], { timeoutMs: 3e4 });
+        if (!r.ok) return { ok: false, detail: `claude plugin list --json: ${r.detail}` };
+        const plugins = parsePluginList(r.stdout);
+        return plugins ? { ok: true, plugins } : { ok: false, detail: "claude plugin list --json gave no plugin list" };
       }
       /** Reattach to a worker from its directory alone (pid.json), as a restarted controller does. */
       reattach(workerDir) {
@@ -34219,17 +34325,17 @@ function spendRecoveryAttempt(db, runId, clock, opts) {
     } else {
       const row = db.get("SELECT used, allowance, hard_cap FROM budget_counters WHERE run_id = ? AND counter = 'recovery_attempts'", runId);
       let used;
-      let allowance;
+      let allowance2;
       let hardCap;
       if (row) {
-        ({ used, allowance, hard_cap: hardCap } = row);
+        ({ used, allowance: allowance2, hard_cap: hardCap } = row);
       } else {
         used = Number(db.get("SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND type = ?", runId, RECOVERY_ATTEMPT_EVENT)?.n ?? 0);
-        allowance = hardCap = opts.fallbackMax ?? DEFAULT_FALLBACK_RECOVERIES;
+        allowance2 = hardCap = opts.fallbackMax ?? DEFAULT_FALLBACK_RECOVERIES;
       }
-      if (used + 1 > allowance + EPS) {
-        appendEvent(db, runId, "budget.exhausted", opts.actor, { counter: "recovery_attempts", used, requested: 1, allowance, hard_cap: hardCap, limit: "hard_cap", ...row ? {} : { counted_from: "events" } }, now);
-        return new OrbitError("BUDGET_EXHAUSTED", `recovery_attempts exhausted at ${allowance}: used ${used}, requested 1`, { counter: "recovery_attempts", used, allowance, hard_cap: hardCap, limit: "hard_cap", extendable: false });
+      if (used + 1 > allowance2 + EPS) {
+        appendEvent(db, runId, "budget.exhausted", opts.actor, { counter: "recovery_attempts", used, requested: 1, allowance: allowance2, hard_cap: hardCap, limit: "hard_cap", ...row ? {} : { counted_from: "events" } }, now);
+        return new OrbitError("BUDGET_EXHAUSTED", `recovery_attempts exhausted at ${allowance2}: used ${used}, requested 1`, { counter: "recovery_attempts", used, allowance: allowance2, hard_cap: hardCap, limit: "hard_cap", extendable: false });
       }
       if (row) db.run("UPDATE budget_counters SET used = used + 1 WHERE run_id = ? AND counter = 'recovery_attempts'", runId);
     }
@@ -43172,6 +43278,8 @@ function assembleFinalReport(db, run, opts) {
   }
   for (const q of listQuestions(db, run.id, { status: "open" })) risks.push(`open question: ${q.question.slice(0, 200)}`);
   for (const c of ev?.report.checks.filter((x) => x.flaky) ?? []) risks.push(`check ${c.id} passed only on a rerun (flaky)`);
+  const plugins = workerPluginsOf(listWorkers(db, { runId: run.id }));
+  risks.push(...plugins.risks);
   const prNumber = delivery?.pr?.number ?? null;
   const branch = delivery?.branch ?? outcomeJson?.branch ?? run.branch;
   return {
@@ -43190,6 +43298,7 @@ function assembleFinalReport(db, run, opts) {
     assumptions: [...(contract?.assumptions ?? []).map((a) => ({ id: a.id, statement: a.statement, status: a.status })), ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))],
     practices: (contract?.practices ?? []).map((p) => ({ practice: p.practice, applicable: p.applicable, justification: p.justification })),
     repairs: repairs(opts.runDir),
+    worker_plugins: plugins.plugins,
     revision: {
       base: run.baseRevision,
       candidate: cand?.commitSha ?? null,
@@ -43206,6 +43315,30 @@ function assembleFinalReport(db, run, opts) {
     next_action: nextAction(run, branch, prNumber, listQuestions(db, run.id, { status: "open" }).filter((q) => q.material)),
     generated_at: opts.clock.now()
   };
+}
+function workerPluginsOf(workers) {
+  const lines = /* @__PURE__ */ new Map();
+  for (const w of workers) {
+    const recorded = parseJson3(w.resultJson)?.plugins;
+    if (!Array.isArray(recorded)) continue;
+    const seen = /* @__PURE__ */ new Set();
+    for (const p of recorded) {
+      const r = p !== null && typeof p === "object" ? p : {};
+      const line3 = { id: strOrNull(r.id), scope: strOrNull(r.scope), allowed_by: strOrNull(r.allowed_by) };
+      const key2 = JSON.stringify(line3);
+      if (seen.has(key2)) continue;
+      seen.add(key2);
+      const cur = lines.get(key2);
+      if (cur) cur.workers += 1;
+      else lines.set(key2, { ...line3, workers: 1 });
+    }
+  }
+  const plugins = [...lines.values()];
+  const risks = plugins.filter((p) => p.allowed_by !== null).map((p) => `worker plugin ${p.id ?? "unidentified"} (scope ${p.scope ?? "unknown"}) was allowed by ${p.allowed_by} and loaded into ${p.workers} worker session(s); a plugin can add hooks and tools to a worker`);
+  return { plugins, risks };
+}
+function strOrNull(v) {
+  return typeof v === "string" ? v : null;
 }
 function tokens(t) {
   return { input: t.inputTokens, output: t.outputTokens, cache_read: t.cacheReadTokens, cache_write: t.cacheWriteTokens };
@@ -43276,6 +43409,10 @@ function renderMarkdown(r) {
   out.push("## Decisions", "", list(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), "");
   out.push("## Assumptions", "", list(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), "");
   if (r.practices && r.practices.length > 0) out.push("## Engineering practices", "", list(r.practices.map((p) => `${p.practice} [${p.applicable ? "selected" : "omitted"}]: ${p.justification}`)), "");
+  if (r.worker_plugins && r.worker_plugins.length > 0) {
+    const named = (p) => `${p.id ?? "an unidentified plugin"} (scope ${p.scope ?? "unknown"})`;
+    out.push("## Worker plugins", "", list(r.worker_plugins.map((p) => p.allowed_by ? `${named(p)}: allowed by ${p.allowed_by}, loaded by ${p.workers} worker(s)` : `${named(p)}: refused, so the output of ${p.workers} worker(s) was not used`)), "");
+  }
   out.push("## Repairs", "", list(r.repairs.map((x) => `attempt ${x.attempt}: ${x.source} brief${x.fingerprint ? ` for ${x.fingerprint}` : ""}`)), "");
   const rv = r.revision;
   out.push("## Revision, branch and pull request", "", list([`base: ${rv.base ?? "none"}`, `candidate: ${rv.candidate ?? "none"} (tree ${rv.tree ?? "none"})`, `branch: ${rv.branch ?? "none"}`, rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? "none"}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ""}` : "none"}`]), "");
@@ -58203,6 +58340,64 @@ var init_review_fix = __esm({
   }
 });
 
+// src/cli/commands/doctor-plugins.ts
+async function workerPluginsCheck(id, adapter, config) {
+  const list = adapter?.listPlugins;
+  if (typeof list !== "function") return null;
+  const check = `${id}.plugins`;
+  const listed = await list.call(adapter);
+  if (!listed.ok) {
+    return { id: check, area: "providers", status: "warn", summary: `could not list the installed plugins (${flat(listed.detail)})`, details: [], missing: "the output of claude plugin list --json", fix: 'run "claude plugin list --json" to see why; a worker session that loads a plugin the policy does not allow is refused' };
+  }
+  const policy = pluginPolicyOf(config);
+  const loads = [];
+  const maybe = [];
+  const skipped = [];
+  for (const p of listed.plugins) {
+    if (!p.enabled) skipped.push(`not loaded by workers: ${p.id} (disabled)`);
+    else if (p.scope !== null && WORKER_EXCLUDED_SCOPES.includes(p.scope)) skipped.push(`not loaded by workers: ${p.id} (scope ${p.scope}; workers load no user, project or local settings)`);
+    else {
+      const [judged2] = workerPlugins([{ name: p.id.split("@")[0], source: p.id, scope: p.scope ?? "unknown" }], { policy, installed: null });
+      (p.scope === "managed" ? loads : maybe).push(judged2);
+    }
+  }
+  const named = (p) => `${p.id} (scope ${p.scope})`;
+  const line3 = (p) => `${named(p)}${maybe.includes(p) ? ", may load" : ""}: ${p.allowed_by ? `allowed by ${p.allowed_by}` : `refused; allow it with ${pluginAllowLines(p).join(" or ")}`}`;
+  const judged = [...loads, ...maybe];
+  const details = [...judged.map(line3), ...skipped];
+  if (judged.length === 0) return { id: check, area: "providers", status: "pass", summary: "workers load only Claude Code built-ins", details, missing: null, fix: null };
+  const refused = judged.filter((p) => p.allowed_by === null);
+  if (refused.length > 0) {
+    const managed = refused.some((p) => p.scope === "managed") ? " (or agents.allow_managed_plugins: true for every managed plugin)" : "";
+    const fix = `add to .orbit/config.yaml: agents.allowed_plugins: ${JSON.stringify(refused.map((p) => p.id))}${managed}; ${HOOKS_NOTE}`;
+    const definite = refused.filter((p) => loads.includes(p));
+    const missing = "a policy that allows each plugin a worker loads";
+    if (definite.length > 0) {
+      return { id: check, area: "providers", status: "fail", summary: `workers would load ${definite.length} plugin(s) the policy does not allow, so every worker session would be refused: ${definite.map(named).join(", ")}`, details: [...details, SCOPE_SOURCE], missing, fix };
+    }
+    return { id: check, area: "providers", status: "warn", summary: `workers may load ${refused.length} plugin(s) the policy does not allow: ${refused.map(named).join(", ")}`, details: [...details, SCOPE_SOURCE], missing, fix };
+  }
+  return {
+    id: check,
+    area: "providers",
+    status: "pass",
+    summary: `workers would load ${judged.length} plugin(s), each allowed by the policy: ${judged.map((p) => `${p.id} (scope ${p.scope}, ${p.allowed_by})`).join(", ")}`,
+    details: [...details, `${HOOKS_NOTE}; each run lists the plugins its workers loaded in its final report`, SCOPE_SOURCE],
+    missing: null,
+    fix: null
+  };
+}
+var HOOKS_NOTE, SCOPE_SOURCE;
+var init_doctor_plugins = __esm({
+  "src/cli/commands/doctor-plugins.ts"() {
+    "use strict";
+    init_claude_plugins();
+    init_io();
+    HOOKS_NOTE = "a plugin can add hooks and tools to workers";
+    SCOPE_SOURCE = "scope source: claude plugin list --json (system/init does not report a plugin's scope)";
+  }
+});
+
 // src/cli/commands/doctor.ts
 import { accessSync as accessSync3, constants as constants4, existsSync as existsSync48, mkdtempSync as mkdtempSync6, readFileSync as readFileSync30, realpathSync as realpathSync18, rmSync as rmSync17, statSync as statSync15 } from "node:fs";
 import { randomInt } from "node:crypto";
@@ -58541,6 +58736,8 @@ async function checkProviders(p, iso2, registry) {
         const why = !envCred ? "no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in the environment (a keychain login is invisible inside srt)" : "sandbox-runtime isolation is not in use";
         checks.push(warn2(`${id}.worker-tier`, "providers", `workers run in the claude-sandbox tier: ${why}`, "an exported Claude credential plus sandbox-runtime for the strongest tier", "export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)", CLAUDE_SANDBOX_LIMITATIONS.map((l) => `limitation: ${l}`)));
       }
+      const plugins = await workerPluginsCheck(id, adapters[id], config);
+      if (plugins) checks.push(plugins);
     } else checks.push(codexTierCheck(id, config.providers[id].tier ?? "auto", codexEnvCredential(ctx.env), iso2.available && iso2.provider?.kind === "sandbox-runtime", level));
   }
   if (config.review.independent_provider_required || ids.some((i) => i !== "claude")) {
@@ -58986,6 +59183,7 @@ var init_doctor = __esm({
     init_layout();
     init_invocation();
     init_review_fix();
+    init_doctor_plugins();
     DOCTOR_OPTIONS = {
       probe: { type: "boolean", description: "also make tiny live requests (a few cents): one per provider that has a probe to detect expired or revoked credentials, and one per eligible Claude model" }
     };
@@ -59206,6 +59404,13 @@ agents:
   isolate_writers: true
   prohibit_shared_worktree_writes: true
   cancel_obsolete_workers: true
+  # Plugins a worker session may load besides Claude Code's built-ins. A
+  # plugin can add hooks and tools to every worker, so none are allowed by
+  # default; \`orbit doctor\` lists the ones a worker would load.
+  # Exact name@marketplace ids, e.g. ["acme-guard@acme-it"]:
+  allowed_plugins: []
+  # Accept every organisation-managed plugin (scope managed):
+  allow_managed_plugins: false
 
 review:
   # Review by a provider other than the one that wrote the change.

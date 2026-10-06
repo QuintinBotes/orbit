@@ -229,7 +229,14 @@
         "require_independent_work_units": { "const": true, "description": "Parallel writers always get disjoint work units; this cannot be turned off." },
         "isolate_writers": { "const": true },
         "prohibit_shared_worktree_writes": { "const": true },
-        "cancel_obsolete_workers": { "type": "boolean" }
+        "cancel_obsolete_workers": { "type": "boolean" },
+        "allowed_plugins": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Plugins a worker session may load besides Claude Code's built-ins, as exact name@marketplace ids. A plugin can add hooks and tools to workers.",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$" }
+        },
+        "allow_managed_plugins": { "type": "boolean", "description": "Also accept every plugin installed with scope managed (organisation-managed, not removable by the user)." }
       }
     },
     "review": {

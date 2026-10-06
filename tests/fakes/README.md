@@ -57,6 +57,12 @@ concurrent fakes do not race). Once a role's list is exhausted its last step
 repeats. `auth` drives `claude auth status` (`loggedIn`, `authMethod`) and
 `codex login status` / `codex doctor` (`loggedIn`, `method`: `chatgpt` or
 `api_key`, `valid`; doctor also counts `CODEX_API_KEY` as present).
+`plugins` (Claude, optional) lists installed plugins as
+`[{ "id": "name@marketplace", "scope": "managed", "enabled": true }]`:
+`claude plugin list --json` answers with them, and `system/init` lists a
+built-in plus each enabled one a worker would load (with
+`--setting-sources ""`, not those of scope user, project or local), as
+`{name, path, source}` with no scope, like the real CLI.
 
 A step:
 

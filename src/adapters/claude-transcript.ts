@@ -18,6 +18,7 @@
  *     fallback model), not from `usage`, which covers the main loop only.
  */
 import { schemaErrors } from '../core/schema.ts';
+import { STRICT_PLUGIN_POLICY, pluginRefusal, workerPlugins, type PluginCheck, type WorkerPlugin } from './claude-plugins.ts';
 import type { ExitRecord } from './shim.ts';
 import type { ProviderEvent, TaskResult, TaskStatus, UsageReport } from './types.ts';
 
@@ -55,6 +56,11 @@ export interface ClaudeTaskResult extends TaskResult {
   permissionDenials: { tool_name: string; tool_use_id: string }[];
   numTurns: number | null;
   terminalReason: string | null;
+  /**
+   * Every plugin the session loaded that is not a Claude Code built-in, with the policy key that admitted it
+   * (null: refused). Absent when there was none.
+   */
+  plugins?: WorkerPlugin[];
 }
 
 export interface ClassifyInput {
@@ -64,6 +70,8 @@ export interface ClassifyInput {
   outputSchema: object;
   /** The --session-id Orbit launched with (pid.json); a transcript of another session is not this worker's. */
   expectedSessionId?: string | null;
+  /** The plugin policy the session ran under and the installed plugins; absent means the strict default. */
+  plugins?: PluginCheck;
 }
 
 export function classifyClaudeTranscript(input: ClassifyInput): ClaudeTaskResult {
@@ -72,6 +80,7 @@ export function classifyClaudeTranscript(input: ClassifyInput): ClaudeTaskResult
   const init = events.find((e) => e.type === 'system' && e.subtype === 'init');
   const sessionId = str(result?.session_id) ?? str(init?.session_id) ?? null;
   const usage = claudeUsage(events);
+  const plugins = workerPlugins(init?.plugins, input.plugins ?? NO_PLUGINS);
   const base = {
     structured: null,
     text: result ? str(result.result) : null,
@@ -83,6 +92,7 @@ export function classifyClaudeTranscript(input: ClassifyInput): ClaudeTaskResult
     permissionDenials: denials(result),
     numTurns: num(result?.num_turns),
     terminalReason: str(result?.terminal_reason),
+    ...(plugins.length > 0 ? { plugins } : {}),
   };
   const end = (status: TaskStatus, reason: ClaudeEndReason, error: string | null, structured: unknown = null): ClaudeTaskResult => ({
     ...base,
@@ -146,7 +156,7 @@ export function classifyClaudeTranscript(input: ClassifyInput): ClaudeTaskResult
   // A session that did not start the way Orbit launched it (another
   // permission mode, MCP servers loaded) ran without the intended policy;
   // its output is not accepted even when it looks fine.
-  const unsafe = sessionProblems(init, input.expectedSessionId ?? null);
+  const unsafe = sessionProblems(init, input.expectedSessionId ?? null, input.plugins);
   if (unsafe) return end('failed', 'unsafe_session', unsafe);
 
   if (!('structured_output' in result) || result.structured_output === undefined) {
@@ -159,24 +169,26 @@ export function classifyClaudeTranscript(input: ClassifyInput): ClaudeTaskResult
   return end('succeeded', 'success', null, result.structured_output);
 }
 
+const NO_PLUGINS: PluginCheck = { policy: STRICT_PLUGIN_POLICY, installed: null };
+
 /**
  * Checks on system/init from gaps-and-contradictions.md section 6.1:
  * dontAsk, no MCP servers, and no plugin other than Claude Code's built-ins
- * (whose init entries carry source "<name>@builtin", verified with 2.1.288).
+ * (whose init entries carry source "<name>@builtin", verified with 2.1.288)
+ * and the ones the policy admits (agents.allowed_plugins,
+ * agents.allow_managed_plugins; see claude-plugins.ts). A refusal names every
+ * plugin it refused and the config line that would allow it.
  * A transcript without an init line proves none of this, so it fails too,
  * as does one whose session is not the one Orbit launched.
  */
-export function sessionProblems(init: Record<string, unknown> | undefined, expectedSessionId: string | null = null): string | null {
+export function sessionProblems(init: Record<string, unknown> | undefined, expectedSessionId: string | null = null, plugins: PluginCheck = NO_PLUGINS): string | null {
   if (!init) return 'the transcript has no system/init line, so the permission mode and loaded servers cannot be checked';
   if (init.permissionMode !== 'dontAsk') return `the session ran in permission mode ${String(init.permissionMode)}, not dontAsk`;
   if (!Array.isArray(init.mcp_servers) || init.mcp_servers.length > 0) {
     return Array.isArray(init.mcp_servers) ? `the session loaded ${init.mcp_servers.length} MCP server(s)` : 'system/init does not list its MCP servers';
   }
-  if (init.plugins !== undefined) {
-    const plugins = Array.isArray(init.plugins) ? init.plugins : [null];
-    const foreign = plugins.filter((p) => !(isObject(p) && typeof (p as Record<string, unknown>).source === 'string' && ((p as Record<string, unknown>).source as string).endsWith('@builtin')));
-    if (foreign.length > 0) return `the session loaded ${foreign.length} plugin(s) that are not Claude Code built-ins`;
-  }
+  const refusal = pluginRefusal(workerPlugins(init.plugins, plugins));
+  if (refusal) return refusal;
   if (expectedSessionId !== null && init.session_id !== expectedSessionId) {
     return `the transcript is of session ${String(init.session_id)}, not ${expectedSessionId}`;
   }

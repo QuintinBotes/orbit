@@ -54,7 +54,10 @@ export interface LaunchRecord {
    */
   pid?: number;
   procStart?: string | null;
-  /** Adapter facts for reporting only (isolation tier, limitations); never used to decide anything. */
+  /**
+   * Adapter facts for reporting (isolation tier, limitations), plus the Claude adapter's launch-time plugin
+   * policy, from the verified snapshot, that judges the session's plugins at collection (claude-plugins.ts).
+   */
   meta?: Record<string, unknown>;
 }
 
