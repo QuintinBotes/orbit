@@ -35711,21 +35711,26 @@ function removeScratch(dir) {
     return;
   } catch (err) {
     const code2 = err.code;
-    if (code2 !== "EACCES" && code2 !== "EPERM") throw err;
+    if (code2 !== "EACCES" && code2 !== "EPERM" && code2 !== "ENOTEMPTY") throw err;
+  }
+  makeTreeWritable(dir);
+  remove();
+}
+function makeTreeWritable(dir) {
+  try {
+    if (!lstatSync5(dir).isDirectory()) return;
+  } catch {
+    return;
   }
   const stack = [dir];
   while (stack.length > 0) {
     const d = stack.pop();
     try {
       chmodSync6(d, 448);
-      for (const name of readdirSync4(d)) {
-        const p = join23(d, name);
-        if (lstatSync5(p).isDirectory()) stack.push(p);
-      }
+      for (const entry of readdirSync4(d, { withFileTypes: true })) if (entry.isDirectory()) stack.push(join23(d, entry.name));
     } catch {
     }
   }
-  remove();
 }
 var TOOLCHAIN_IDS, TOOLCHAIN_PROFILES, REPO_KEY;
 var init_toolchains = __esm({

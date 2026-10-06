@@ -257,7 +257,11 @@ export function prepareToolchainLayout(layout: ToolchainLayout): void {
  * Remove a private scratch tree (a check's home, temp or toolchain directory). Two things get in the way of a plain
  * recursive remove: a tool that writes read-only directories (Go's module cache, when a check points it at scratch),
  * and a helper a tool left running that still writes there for a moment (Go's telemetry sidecar under the private
- * home), which makes a directory non-empty again mid-removal. Both are retried; anything else is thrown.
+ * home), which makes a directory non-empty again mid-removal. A directory without write permission cannot have its
+ * entries unlinked, and which error that surfaces as depends on the platform's recursive remove: EACCES or EPERM from
+ * the unlink itself (Node 22), or ENOTEMPTY (Node 24 on macOS), where the failed removal of the directory's entries
+ * is overwritten by the parent's own rmdir failing. So all three mean "make the tree writable, then remove it"; any
+ * other error is thrown as it came.
  */
 export function removeScratch(dir: string): void {
   const remove = () => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -266,20 +270,31 @@ export function removeScratch(dir: string): void {
     return;
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code !== 'EACCES' && code !== 'EPERM') throw err;
+    if (code !== 'EACCES' && code !== 'EPERM' && code !== 'ENOTEMPTY') throw err;
+  }
+  makeTreeWritable(dir);
+  remove();
+}
+
+/**
+ * Give every directory under `dir` (and `dir`) owner read, write and search permission, top down, so the entries of a
+ * directory a tool made read-only can be unlinked. Symbolic links are never followed: a link is neither chmod'd nor
+ * descended into, so nothing outside the tree changes mode.
+ */
+function makeTreeWritable(dir: string): void {
+  try {
+    if (!lstatSync(dir).isDirectory()) return;
+  } catch {
+    return;
   }
   const stack = [dir];
   while (stack.length > 0) {
     const d = stack.pop()!;
     try {
       chmodSync(d, 0o700);
-      for (const name of readdirSync(d)) {
-        const p = join(d, name);
-        if (lstatSync(p).isDirectory()) stack.push(p);
-      }
+      for (const entry of readdirSync(d, { withFileTypes: true })) if (entry.isDirectory()) stack.push(join(d, entry.name));
     } catch {
       /* gone already */
     }
   }
-  remove();
 }
