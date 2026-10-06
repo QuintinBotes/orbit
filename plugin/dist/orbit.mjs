@@ -49730,7 +49730,7 @@ async function finishRun(ctx, to, reason, opts = {}) {
   if (to === "BLOCKED") {
     const setting = frozenPolicyCause(reason, typeof opts.data?.code === "string" ? opts.data.code : void 0);
     if (setting !== null) {
-      reason = `${reason} ${frozenPolicyAdvice(ctx.run.id, setting)}`;
+      reason = withSentence(reason, frozenPolicyAdvice(ctx.run.id, setting));
       opts = { ...opts, outcome: { ...opts.outcome ?? {}, frozen_policy: { setting } } };
     }
   }
@@ -49757,9 +49757,13 @@ function frozenPolicyCause(reason, code2) {
   if (noModel) return `providers.${noModel[1] ?? noModel[2]}.model (or a refreshed model catalog: orbit models refresh)`;
   if (/no proposed path lies inside the policy scope|the policy allows no paths/.test(reason)) return "scope.allowed_paths";
   if (/execution needs isolation; the policy selects none/.test(reason)) return "isolation.provider";
-  if (/plugin\(s\)[^.;]*\bthe policy does not allow/.test(reason)) return "agents.allowed_plugins or agents.allow_managed_plugins";
+  if (/plugin\(s\)[^.;]*\bthe policy does not allow/.test(reason)) return /agents\.allow_managed_plugins/.test(reason) ? "agents.allowed_plugins or agents.allow_managed_plugins" : "agents.allowed_plugins";
   if (/differs from the frozen policy mode/.test(reason)) return "mode";
   return null;
+}
+function withSentence(reason, next) {
+  const r = reason.trimEnd();
+  return `${/[.!?]$/.test(r) ? r : `${r}.`} ${next}`;
 }
 function frozenPolicyAdvice(runId, setting) {
   return `This comes from the run's frozen policy (${setting}): a run keeps the policy it started with, so editing .orbit/config.yaml does not change it and resuming would block again. Fix the config, then cancel this run (orbit cancel ${runId}) and start a new run with orbit run. If what you fixed is outside the policy (for example orbit models refresh), resume with orbit resume ${runId} --force.`;

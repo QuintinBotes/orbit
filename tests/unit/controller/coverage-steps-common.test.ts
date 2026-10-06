@@ -240,7 +240,7 @@ describe('outcomeForError', () => {
     expect(run.state).toBe('BLOCKED');
     // A tampered snapshot or invalid configuration is in the run's frozen policy: resuming cannot clear it, so the reason also names a new run (P12).
     if (code === 'POLICY_TAMPERED' || code === 'CONFIG_INVALID') {
-      expect(run.outcomeReason).toMatch(new RegExp(`^${code}: cannot proceed This comes from the run's frozen policy`));
+      expect(run.outcomeReason).toMatch(new RegExp(`^${code}: cannot proceed\. This comes from the run's frozen policy`));
       expect(run.outcomeReason).toMatch(/start a new run/);
     } else expect(run.outcomeReason).toBe(`${code}: cannot proceed`);
     lab.cleanup();

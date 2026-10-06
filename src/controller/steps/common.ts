@@ -73,7 +73,7 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
     // A block whose cause lives in the frozen policy cannot be cleared by editing the config and resuming: say so.
     const setting = frozenPolicyCause(reason, typeof opts.data?.code === 'string' ? opts.data.code : undefined);
     if (setting !== null) {
-      reason = `${reason} ${frozenPolicyAdvice(ctx.run.id, setting)}`;
+      reason = withSentence(reason, frozenPolicyAdvice(ctx.run.id, setting));
       opts = { ...opts, outcome: { ...(opts.outcome ?? {}), frozen_policy: { setting } } };
     }
   }
@@ -109,9 +109,16 @@ export function frozenPolicyCause(reason: string, code?: string): string | null 
   if (/no proposed path lies inside the policy scope|the policy allows no paths/.test(reason)) return 'scope.allowed_paths';
   if (/execution needs isolation; the policy selects none/.test(reason)) return 'isolation.provider';
   // Workers loading a plugin the policy does not allow (at run start, or a session refused after it started): the allowance is a policy key.
-  if (/plugin\(s\)[^.;]*\bthe policy does not allow/.test(reason)) return 'agents.allowed_plugins or agents.allow_managed_plugins';
+  // agents.allow_managed_plugins admits only managed plugins, so it is named only when doctor's fix line offers it.
+  if (/plugin\(s\)[^.;]*\bthe policy does not allow/.test(reason)) return /agents\.allow_managed_plugins/.test(reason) ? 'agents.allowed_plugins or agents.allow_managed_plugins' : 'agents.allowed_plugins';
   if (/differs from the frozen policy mode/.test(reason)) return 'mode';
   return null;
+}
+
+/** `next` as its own sentence after `reason`, which may or may not end with a full stop. */
+export function withSentence(reason: string, next: string): string {
+  const r = reason.trimEnd();
+  return `${/[.!?]$/.test(r) ? r : `${r}.`} ${next}`;
 }
 
 /** What to do about a frozen-policy block: the config change applies only to a new run. */

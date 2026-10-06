@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { isSessionRefusal } from '../../../src/adapters/types.ts';
 import { getRun } from '../../../src/controller/run-store.ts';
-import { frozenPolicyCause, handleWorkerFailure } from '../../../src/controller/steps/common.ts';
+import { frozenPolicyCause, withSentence, handleWorkerFailure } from '../../../src/controller/steps/common.ts';
 import { makeUnitLab, type UnitLab } from './coverage-helpers.ts';
 
 let lab: UnitLab;
@@ -76,5 +76,18 @@ describe('frozenPolicyCause for a plugin refusal', () => {
     expect(frozenPolicyCause('workers would load 2 plugin(s) the policy does not allow, so every worker session would be refused: a@m (scope managed)')).toMatch(/agents\.allowed_plugins/);
     expect(frozenPolicyCause(`the planner: ... ${REFUSAL}`)).toMatch(/agents\.allowed_plugins/);
     expect(frozenPolicyCause('the session ran in permission mode default, not dontAsk')).toBeNull();
+  });
+
+  it('names agents.allow_managed_plugins only when a refused plugin is managed: it cannot admit a synced or user plugin', () => {
+    expect(frozenPolicyCause('workers would load 1 plugin(s) the policy does not allow, so every worker session would be refused: slack@synced (scope synced); fix: add to .orbit/config.yaml: agents.allowed_plugins: ["slack@synced"]')).toBe('agents.allowed_plugins');
+    expect(frozenPolicyCause('workers would load 1 plugin(s) the policy does not allow, so every worker session would be refused: a@m (scope managed); fix: add to .orbit/config.yaml: agents.allowed_plugins: ["a@m"] (or agents.allow_managed_plugins: true for every managed plugin)')).toBe('agents.allowed_plugins or agents.allow_managed_plugins');
+  });
+});
+
+describe('withSentence', () => {
+  it('starts the advice as its own sentence whether or not the reason ends with a full stop', () => {
+    expect(withSentence('a plugin can add hooks and tools to workers', 'This comes from the policy.')).toBe('a plugin can add hooks and tools to workers. This comes from the policy.');
+    expect(withSentence('agents.allowed_plugins: ["x"])', 'This comes.')).toBe('agents.allowed_plugins: ["x"]). This comes.');
+    expect(withSentence('already ends.', 'This comes.')).toBe('already ends. This comes.');
   });
 });
