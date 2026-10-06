@@ -242,17 +242,19 @@
     "review": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "independent_provider_required",
-        "preferred_provider",
-        "fallback_same_provider_allowed",
-        "block_unresolved_high_impact_findings",
-        "security"
-      ],
+      "required": ["providers", "when_unavailable", "block_unresolved_high_impact_findings", "security"],
       "properties": {
-        "independent_provider_required": { "type": "boolean" },
-        "preferred_provider": { "$ref": "#/$defs/providerId" },
-        "fallback_same_provider_allowed": { "type": "boolean" },
+        "providers": {
+          "type": "array",
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/providerId" },
+          "description": "Independent review providers, in preference order (docs/decisions/0007-reviewer-availability.md)."
+        },
+        "when_unavailable": { "enum": ["claude", "ask", "block"], "description": "What happens when no independent reviewer is usable." },
+        "preferred_provider": { "$ref": "#/$defs/providerId", "description": "Legacy: replaced by providers." },
+        "independent_provider_required": { "type": "boolean", "description": "Legacy: mapped onto when_unavailable (true without the fallback is block)." },
+        "fallback_same_provider_allowed": { "type": "boolean", "description": "Legacy: mapped onto when_unavailable." },
         "block_unresolved_high_impact_findings": { "type": "boolean" },
         "security": {
           "type": "object",

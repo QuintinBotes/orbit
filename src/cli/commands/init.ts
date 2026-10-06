@@ -24,6 +24,13 @@ import { proposeScope, trackedFiles } from '../layout.ts';
 import { compileGlobs } from '../../policy/globs.ts';
 import { orbitHint } from '../../core/invocation.ts';
 
+/**
+ * What the starter's review policy does and how to choose otherwise (docs/decisions/0007-reviewer-availability.md):
+ * the default is written, and the person is told how to pick ask or block.
+ */
+export const REVIEW_POLICY_PROPOSAL =
+  'review: Codex reviews independently when it is usable (review.providers: [codex]); when it is not, Claude reviews in a separate session and every report says the review was not independent and why (review.when_unavailable: claude). Set review.when_unavailable to ask to be asked first, or to block to require an independent reviewer.';
+
 /** Runtime state only. config.yaml is deliberately not here: it is reviewed like code and normally committed. */
 export const EXCLUDE_RULES: readonly string[] = ['/.orbit/state.sqlite*', '/.orbit/knowledge.sqlite*', '/.orbit/runs/'];
 const EXCLUDE_HEADER = '# Orbit runtime state (added by "orbit init")';
@@ -178,7 +185,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   const models = await seedModels(ctx, repo);
 
   if (args.bool('json')) {
-    json(ctx.io, { repo, config: { path: configPath, status: config, ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, config_problems: problems, warnings, models });
+    json(ctx.io, { repo, review_policy: config === 'created' ? REVIEW_POLICY_PROPOSAL : null, config: { path: configPath, status: config, ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === 'created' ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
@@ -194,6 +201,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   } else line(ctx.io, 'The configuration validates.');
   for (const m of models) line(ctx.io, m);
   for (const w of warnings) line(ctx.io, `WARN: ${w}`);
+  if (config === 'created') line(ctx.io, REVIEW_POLICY_PROPOSAL);
   line(ctx.io, `Next: define your checks in .orbit/config.yaml, then run ${orbitHint('doctor')}.`);
   return EXIT.OK;
 }

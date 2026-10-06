@@ -24,7 +24,8 @@ import type { IsolationProvider, SandboxProfile } from '../../isolation/types.ts
 import { safeBaseEnv } from '../../ui/env.ts';
 import { UI_SINGLE_SANDBOX, UI_SINGLE_SANDBOX_LIMITATION } from '../../ui/single-sandbox.ts';
 import { ModelRegistry, allowMatch } from '../../routing/registry.ts';
-import { selectReviewer } from '../../review/select.ts';
+import { mandatoryReviewProvider, selectReviewer } from '../../review/select.ts';
+import { describeReviewPolicy, reviewFallback } from '../../policy/review.ts';
 import { LOGIN_COMMANDS, validateCredentials } from '../../recovery/index.ts';
 import { parseAuthStatus } from '../../delivery/github.ts';
 import { defaultTermsPath, loadPublicationGuard } from '../../guard/publication.ts';
@@ -423,7 +424,8 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
   facts.adapters = adapters;
   const ids = Object.keys(adapters);
   const required = new Set<string>(['claude']);
-  if (config.review.independent_provider_required) required.add(config.review.preferred_provider);
+  const mandatoryReviewer = mandatoryReviewProvider(config.review, 'claude');
+  if (mandatoryReviewer !== null) required.add(mandatoryReviewer);
   const caps = await Promise.all(
     ids.map(async (id) => {
       try {
@@ -477,27 +479,52 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
     } else checks.push(codexTierCheck(id, config.providers[id]!.tier ?? 'auto', codexEnvCredential(ctx.env), iso.available && iso.provider?.kind === 'sandbox-runtime', level));
   }
 
-  // Independent review: judged exactly as a run would judge it.
-  if (config.review.independent_provider_required || ids.some((i) => i !== 'claude')) {
-    const sel = selectReviewer({ snapshot: { config }, capabilities: facts.capabilities, credentials: facts.credentials, implementer: { provider: 'claude', model: null }, registry });
-    if (sel.decision === 'SELECT') checks.push(pass('review', 'providers', `independent review: ${sel.provider}/${sel.model ?? 'default'} (${sel.independent ? 'independent' : 'same provider'})`, sel.alternatives.map((a) => `not used: ${a.provider}: ${flat(a.reason)}`)));
-    else {
-      const mandatory = config.review.independent_provider_required;
-      // Every unmet prerequisite at once, each with its own fix (issue 7): the selector names one problem per provider.
-      const unmet = allReviewPrerequisites(sel.alternatives, (fixed, assumed) => {
-        const hypothetical: OrbitConfig = structuredClone(config);
-        const creds = { ...facts.credentials };
-        for (const id of fixed) {
-          if (assumed.dataPolicy && hypothetical.providers[id]) hypothetical.providers[id]!.data_policy_eligible = true;
-          if (assumed.login && facts.capabilities[id]?.available) creds[id] = { state: 'valid', method: null, detail: 'assumed once logged in' };
-        }
-        return selectReviewer({ snapshot: { config: hypothetical }, capabilities: facts.capabilities, credentials: creds, implementer: { provider: 'claude', model: null }, registry }).alternatives;
-      });
-      const c = (mandatory ? fail : warn)('review', 'providers', `independent review would block: ${flat(sel.reason)}`, 'a usable, data-policy-eligible reviewer from another provider', reviewFix(unmet), unmet.map((a) => `${a.provider}: ${flat(a.reason)}`));
-      checks.push(c);
-    }
-  }
+  // Who reviews: judged exactly as a run would judge it, in every review.when_unavailable mode (decision 0007).
+  checks.push(reviewCheck(config, facts, registry));
   return { checks, facts };
+}
+
+/**
+ * The reviewer a run would use. An independent reviewer passes. A same-provider review warns, saying it is not
+ * independent and why the independent reviewer is unusable (claude), or that a person is asked first (ask). A run
+ * that would block at review fails when review.when_unavailable is block, and otherwise warns: the cause (Claude
+ * itself unusable) is reported as a failure of its own.
+ *
+ * Wherever no independent reviewer is usable, the fix and the details list every unmet prerequisite at once, each
+ * with its own fix (issue 7), not only the first problem the selector finds for a provider.
+ */
+function reviewCheck(config: OrbitConfig, facts: ProviderFacts, registry: ModelRegistry): DoctorCheck {
+  const fallback = reviewFallback(config.review);
+  const policyLine = describeReviewPolicy(config.review);
+  const select = (cfg: OrbitConfig, credentials: ProviderFacts['credentials']) => selectReviewer({ snapshot: { config: cfg }, capabilities: facts.capabilities, credentials, implementer: { provider: 'claude', model: null }, registry });
+  const sel = select(config, facts.credentials);
+  const missing = 'a usable, data-policy-eligible reviewer from another provider';
+  // The selector names one problem per provider (login, then data policy, then model): re-run it as if each provider
+  // had met the prerequisite it stopped at, and keep whatever it still rejects the provider for.
+  const unmetPrerequisites = () =>
+    allReviewPrerequisites(sel.alternatives, (fixed, assumed) => {
+      const hypothetical: OrbitConfig = structuredClone(config);
+      const credentials = { ...facts.credentials };
+      for (const id of fixed) {
+        if (assumed.dataPolicy && hypothetical.providers[id]) hypothetical.providers[id]!.data_policy_eligible = true;
+        if (assumed.login && facts.capabilities[id]?.available) credentials[id] = { state: 'valid', method: null, detail: 'assumed once logged in' };
+      }
+      return select(hypothetical, credentials).alternatives;
+    });
+  if (sel.decision === 'BLOCK') {
+    const unmet = unmetPrerequisites();
+    return (fallback === 'block' ? fail : warn)('review', 'providers', `independent review would block: ${flat(sel.reason)}`, missing, reviewFix(unmet), [policyLine, ...unmet.map((a) => `${a.provider}: ${flat(a.reason)}`)]);
+  }
+  if (sel.independent) return pass('review', 'providers', `independent review: ${sel.provider}/${sel.model ?? 'default'} (independent)`, [policyLine, ...sel.alternatives.map((a) => `not used: ${a.provider}: ${flat(a.reason)}`)]);
+  const unmet = unmetPrerequisites();
+  const details = [policyLine, ...unmet.map((a) => `not used: ${a.provider}: ${flat(a.reason)}`)];
+  const who = `${sel.provider}/${sel.model ?? 'default'}`;
+  const why = flat((sel.independentUnavailable ?? 'no independent reviewer was usable').replace(/^no independent reviewer was usable: /, ''));
+  const summary =
+    sel.needsApproval === true
+      ? `same-provider review needs a person's yes: no independent reviewer is usable (${why}); a run asks a person before ${who} reviews in a separate session (review.when_unavailable: ask)`
+      : `same-provider review: no independent reviewer is usable (${why}); ${who} reviews in a separate session at the opus-class floor, and reports say the review was not independent (review.when_unavailable: ${fallback})`;
+  return warn('review', 'providers', summary, missing, `${reviewFix(unmet)}; or set review.when_unavailable to ask or block to change what happens`, details);
 }
 
 /**

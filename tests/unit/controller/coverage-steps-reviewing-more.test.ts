@@ -355,7 +355,8 @@ describe('a checkout that cannot be removed', () => {
   });
 
   it('credentials that are missing block the run on the provider', async () => {
-    await setup();
+    // review.when_unavailable: block, the default before decision 0007 (#6, #8); with claude, Claude would review.
+    await setup({ tweak: (c) => void (c.review.when_unavailable = 'block') });
     lab.deps.adapters = { claude: claude(), codex: { ...scriptedAdapter(lab, () => null), validateCredentials: async () => ({ state: 'missing', method: 'none', detail: 'not logged in' }) } as never };
     await run();
     expect(state()).toBe('BLOCKED');

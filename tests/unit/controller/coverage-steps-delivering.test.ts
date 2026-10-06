@@ -138,7 +138,8 @@ describe('a mode that takes no external action', () => {
   });
 
   it('does not succeed when the completion gate does not hold', async () => {
-    await setup();
+    // review.when_unavailable: block, the default before decision 0007 (#6, #8), requires an independent approval.
+    await setup({ tweak: (c) => void (c.review.when_unavailable = 'block') });
     // The delivery gate passes, but no independent reviewer other than the implementer's provider approved.
     lab.db.run("UPDATE reviews SET provider = 'claude'");
     await run();

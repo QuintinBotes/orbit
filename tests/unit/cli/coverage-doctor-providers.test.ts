@@ -106,6 +106,9 @@ function adapter(id: string, spec: Spec = {}): ProviderAdapter {
   return a as unknown as ProviderAdapter;
 }
 
+/** review.when_unavailable: block, the default before decision 0007 (#6, #8) made it claude. */
+const blocking = (c: OrbitConfig): void => void (c.review.when_unavailable = 'block');
+
 function cfg(over: (c: OrbitConfig) => void = () => {}): OrbitConfig {
   const c = defaultConfig('autonomous');
   c.isolation = { ...c.isolation, provider: 'none', allow_unisolated: true };
@@ -150,7 +153,8 @@ describe('provider CLIs', () => {
     expect(bad['claude.cli']).toMatchObject({ status: 'fail', summary: 'claude is not usable: claude: command not found on PATH', missing: 'the claude CLI (claude) on PATH, >= 2.1.284 for Sonnet 5.5', fix: 'install Claude Code (https://code.claude.com)' });
     expect(bad['codex.cli']).toMatchObject({ status: 'warn', summary: 'codex is not usable: codex: command not found', missing: 'the codex CLI (codex) on PATH', fix: expect.stringMatching(/codex/i) });
     expect(bad['claude.auth']).toBeUndefined();
-    const needed = await doctor(w, { claude: adapter('claude'), codex: adapter('codex', { cap: { available: false, version: null, detail: 'gone' } }) }, cfg());
+    // Codex is needed only when review.when_unavailable is block (the default before decision 0007, #6 and #8).
+    const needed = await doctor(w, { claude: adapter('claude'), codex: adapter('codex', { cap: { available: false, version: null, detail: 'gone' } }) }, cfg(blocking));
     expect(needed['codex.cli']?.status).toBe('fail');
   });
 
@@ -214,7 +218,7 @@ describe('provider credentials', () => {
     });
     const codex = await doctor(w, { claude: adapter('claude'), codex: adapter('codex', { cred: { state: 'missing', method: null, detail: 'not logged in' } }) }, cfg((x) => (x.review.independent_provider_required = false)));
     expect(codex['codex.auth']).toMatchObject({ status: 'warn', summary: 'codex credentials are missing: not logged in', missing: 'a working codex credential', fix: 'codex login or set CODEX_API_KEY' });
-    const needed = await doctor(w, { claude: adapter('claude'), codex: adapter('codex', { cred: { state: 'invalid', method: null, detail: 'revoked' } }) }, cfg());
+    const needed = await doctor(w, { claude: adapter('claude'), codex: adapter('codex', { cred: { state: 'invalid', method: null, detail: 'revoked' } }) }, cfg(blocking));
     expect(needed['codex.auth']?.status).toBe('fail');
   });
 
@@ -323,7 +327,7 @@ describe('codex worker tier', () => {
     const w = world();
     noSrt();
     const env = { ...KEYS_OFF, CODEX_API_KEY: 'sk-acme-doctor-0005' };
-    const required = await doctor(w, codex(), cfg((x) => { x.providers = { ...x.providers, codex: { ...x.providers.codex!, tier: 'os-sandbox' } }; }), { env });
+    const required = await doctor(w, codex(), cfg((x) => { blocking(x); x.providers = { ...x.providers, codex: { ...x.providers.codex!, tier: 'os-sandbox' } }; }), { env });
     expect(required['codex.worker-tier']).toMatchObject({ status: 'fail', summary: expect.stringMatching(/providers\.codex\.tier is os-sandbox but sandbox-runtime isolation is not in use/) });
     const optional = await doctor(w, codex(), cfg((x) => { x.review.independent_provider_required = false; x.providers = { ...x.providers, codex: { ...x.providers.codex!, tier: 'os-sandbox' } }; }), { env });
     expect(optional['codex.worker-tier']?.status).toBe('warn');
@@ -337,15 +341,15 @@ describe('independent review', () => {
     const c = await doctor(w, { claude: adapter('claude'), codex: adapter('codex', { cred: { state: 'valid', method: 'api_key', detail: 'ok' } }) }, cfg());
     expect(c.review).toMatchObject({ status: 'pass', summary: expect.stringMatching(/^independent review: codex\/\S+ \(independent\)$/) });
     const alternatives = await doctor(w, { claude: adapter('claude'), codex: adapter('codex', { cap: { structuredOutput: false } }) }, cfg((x) => (x.review.independent_provider_required = false)));
-    // Review by the implementer's own provider cannot be shown to use a different tier when the implementer's model is not fixed.
+    // Decision 0007: Claude reviews at the opus-class floor in a separate session, and doctor says it is not independent and why.
     expect(alternatives.review).toMatchObject({ status: 'warn' });
-    expect(alternatives.review!.summary).toContain("same-provider review is allowed, but the implementer's model tier is unknown");
+    expect(alternatives.review!.summary).toMatch(/^same-provider review: no independent reviewer is usable \(provider "codex" cannot return schema-constrained output.*\); claude\/\S+ reviews in a separate session/);
   });
 
   it('fails when an independent reviewer is required and none is usable, and only warns when it is not required', async () => {
     const w = world();
     seedRegistry(w);
-    const required = await doctor(w, { claude: adapter('claude'), codex: adapter('codex', { cap: { available: false, version: null, detail: 'codex missing' } }) }, cfg());
+    const required = await doctor(w, { claude: adapter('claude'), codex: adapter('codex', { cap: { available: false, version: null, detail: 'codex missing' } }) }, cfg(blocking));
     expect(required.review).toMatchObject({ status: 'fail', missing: 'a usable, data-policy-eligible reviewer from another provider' });
     expect(required.review!.summary).toMatch(/^independent review would block: independent review is required .*codex missing/);
     expect(required.review!.fix).toContain('data_policy_eligible: true');
@@ -356,10 +360,12 @@ describe('independent review', () => {
     expect(blocked.review!.summary).toMatch(/^independent review would block: /);
   });
 
-  it('is not judged at all when review is optional and only Claude is configured', async () => {
+  // Decision 0007: doctor states who reviews in every mode, including when only Claude is configured.
+  it('says Claude reviews, not independently, when review is optional and only Claude is configured', async () => {
     const w = world();
     const c = await doctor(w, { claude: adapter('claude') }, cfg((x) => { x.review.independent_provider_required = false; x.providers = { claude: x.providers.claude! }; }));
-    expect(c.review).toBeUndefined();
+    expect(c.review).toMatchObject({ status: 'warn' });
+    expect(c.review!.summary).toMatch(/^same-provider review: no independent reviewer is usable \(no provider other than "claude" is configured\)/);
   });
 });
 
@@ -448,5 +454,59 @@ describe('models', () => {
     expect(alias.models!.details.join('\n')).toContain('claude-sonnet-5-5: excluded, needs claude >= 2.1.284, installed 2.1.270');
     const odd = await doctor(w, { claude: adapter('claude', { cap: { provider: 'mystery', version: '1.0.0' } }) }, cfg(only));
     expect(odd.models!.details.join('\n')).not.toContain('needs claude >=');
+  });
+});
+
+describe('reviewer availability (review.when_unavailable, decision 0007)', () => {
+  const ineligible = (mode: 'claude' | 'ask' | 'block') =>
+    cfg((x) => {
+      x.review.when_unavailable = mode;
+      x.providers.codex = { ...x.providers.codex!, data_policy_eligible: false };
+    });
+  const adapters = () => ({ claude: adapter('claude'), codex: adapter('codex', { cred: { state: 'valid', method: 'api_key', detail: 'ok' } }) });
+
+  it.each(['claude', 'ask', 'block'] as const)('%s: a usable Codex reviews independently, and doctor says what happens if it is not', async (mode) => {
+    const w = world();
+    seedRegistry(w);
+    const c = await doctor(w, adapters(), cfg((x) => (x.review.when_unavailable = mode)));
+    expect(c.review).toMatchObject({ status: 'pass', summary: expect.stringMatching(/^independent review: codex\/\S+ \(independent\)$/) });
+    expect(c.review!.details.join('\n')).toContain(`review.when_unavailable: ${mode}`);
+  });
+
+  it('claude: warns that Claude will review in a separate session, not independently, and says why Codex is unusable', async () => {
+    const w = world();
+    seedRegistry(w);
+    const c = await doctor(w, adapters(), ineligible('claude'));
+    expect(c.review).toMatchObject({ status: 'warn', missing: 'a usable, data-policy-eligible reviewer from another provider' });
+    expect(c.review!.summary).toMatch(/^same-provider review: no independent reviewer is usable \(.*providers\.codex\.data_policy_eligible is not true.*\); claude\/claude-opus-5-5 reviews in a separate session at the opus-class floor, and reports say the review was not independent \(review\.when_unavailable: claude\)$/);
+    expect(c.review!.summary).not.toMatch(/\(independent\)/);
+    expect(c.review!.fix).toContain('data_policy_eligible: true');
+  });
+
+  it('ask: warns that a run will ask a person before a same-provider review', async () => {
+    const w = world();
+    seedRegistry(w);
+    const c = await doctor(w, adapters(), ineligible('ask'));
+    expect(c.review).toMatchObject({ status: 'warn' });
+    expect(c.review!.summary).toMatch(/^same-provider review needs a person's yes: no independent reviewer is usable \(.*data_policy_eligible.*\); a run asks a person before claude\/claude-opus-5-5 reviews in a separate session \(review\.when_unavailable: ask\)$/);
+  });
+
+  it('block: fails, because every run would block at review', async () => {
+    const w = world();
+    seedRegistry(w);
+    const c = await doctor(w, adapters(), ineligible('block'));
+    expect(c.review).toMatchObject({ status: 'fail' });
+    expect(c.review!.summary).toMatch(/^independent review would block: independent review is required \(review\.when_unavailable: block\).*data_policy_eligible/);
+  });
+
+  it('claude with no independent provider configured at all still says who reviews', async () => {
+    const w = world();
+    seedRegistry(w);
+    const c = await doctor(w, { claude: adapter('claude') }, cfg((x) => {
+      x.providers = { claude: x.providers.claude! };
+      x.review.providers = [];
+    }));
+    expect(c.review).toMatchObject({ status: 'warn' });
+    expect(c.review!.summary).toMatch(/^same-provider review: no independent reviewer is usable \(no independent review provider is listed in review\.providers\)/);
   });
 });

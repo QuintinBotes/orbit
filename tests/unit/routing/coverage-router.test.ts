@@ -414,7 +414,7 @@ describe('safety review selection', () => {
     const p = policy({ review: { independent_provider_required: false, preferred_provider: 'claude', fallback_same_provider_allowed: false } });
     const d = route({ workKind: 'safety-review', signals: signals(), registry: fake([opus]), policy: p });
     expect(d.model).toBe('o-1');
-    expect(d.reason).toMatch(/independent review not required and none qualified; same-provider review/);
+    expect(d.reason).toMatch(/no qualified independent reviewer; review\.when_unavailable is claude, so a same-provider review at the opus-class floor/);
   });
 
   it('blocks with a plain message when nothing at all is eligible and fallback is allowed', () => {

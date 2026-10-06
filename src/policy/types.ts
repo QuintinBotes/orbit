@@ -5,6 +5,10 @@
  * re-verifies; workers can neither read the live config's authority nor change
  * the snapshot.
  */
+import type { ReviewFallback } from './review.ts';
+
+export type { ReviewFallback } from './review.ts';
+
 export type RunMode = 'supervised' | 'autonomous' | 'autonomous-delivery' | 'release';
 
 export interface CheckDefinition {
@@ -260,9 +264,20 @@ export interface OrbitConfig {
     allow_managed_plugins?: boolean;
   };
   review: {
-    independent_provider_required: boolean;
-    preferred_provider: string;
-    fallback_same_provider_allowed: boolean;
+    /**
+     * Independent review providers, in preference order (docs/decisions/0007-reviewer-availability.md). Parsed
+     * configs always carry it; optional in the type so older snapshots, which have only preferred_provider, still
+     * read. Read it through policy/review.ts `reviewProviderOrder`.
+     */
+    providers?: string[];
+    /** What happens when no independent reviewer is usable. Parsed configs always carry it; read it through `reviewFallback`. */
+    when_unavailable?: ReviewFallback;
+    /** Legacy: the single preferred provider, replaced by `providers`. */
+    preferred_provider?: string;
+    /** Legacy: mapped onto when_unavailable (true without the fallback is block). */
+    independent_provider_required?: boolean;
+    /** Legacy: mapped onto when_unavailable. */
+    fallback_same_provider_allowed?: boolean;
     block_unresolved_high_impact_findings: boolean;
     /** Spec §5: explicit severity and exception rules; a warning is not automatically a defect. */
     security: {

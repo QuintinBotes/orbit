@@ -318,13 +318,15 @@ describe('a review that has to be run', () => {
   });
 
   it('an independent reviewer that is not usable blocks the run; credentials that cannot be used block it on the provider', async () => {
-    await setup();
+    // review.when_unavailable: block, the default before decision 0007 (#6, #8); with claude, Claude would review.
+    const blocking = (c: import('../../../src/policy/types.ts').OrbitConfig) => void (c.review.when_unavailable = 'block');
+    await setup({ tweak: blocking });
     lab.deps.adapters = { claude: claude(), codex: { ...scriptedAdapter(lab, () => null), validateCredentials: async () => ({ state: 'expired', method: 'oauth', detail: 'token expired' }), discoverCapabilities: async () => ({ provider: 'codex', available: true, version: '1', models: [], structuredOutput: true, readOnlySandbox: true, usageReporting: 'full', costReporting: true, detail: '' }) } as never };
     await run();
     expect(state()).toBe('BLOCKED');
     expect(getRun(lab.db, lab.runId).outcomeReason).toContain('codex credentials');
     cleanLab();
-    await setup();
+    await setup({ tweak: blocking });
     lab.deps.adapters = { claude: claude() };
     await run();
     expect(state()).toBe('BLOCKED');

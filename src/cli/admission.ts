@@ -23,7 +23,7 @@ import type { OrbitConfig, PolicySnapshot } from '../policy/types.ts';
 import type { ProviderCapabilities, CredentialStatus } from '../adapters/types.ts';
 import { getIsolation } from '../isolation/index.ts';
 import { validateCredentials } from '../recovery/credentials.ts';
-import { selectReviewer, type ReviewerSelection } from '../review/select.ts';
+import { mandatoryReviewProvider, selectReviewer, type ReviewerSelection } from '../review/select.ts';
 import { defaultControllerDeps, environmentGate, orbitInstallDir, stateDbPath } from '../controller/index.ts';
 import { deliveryEnvironmentProblem } from '../controller/delivery-env.ts';
 import { git } from '../evidence/git.ts';
@@ -158,18 +158,17 @@ async function environmentProblems(ctx: CliContext, input: AdmissionInput): Prom
       }
     }
     const required = new Set<string>([IMPLEMENTER_PROVIDER]);
-    if (config.review.independent_provider_required && config.review.preferred_provider !== IMPLEMENTER_PROVIDER) required.add(config.review.preferred_provider);
+    const mandatory = mandatoryReviewProvider(config.review, IMPLEMENTER_PROVIDER);
+    if (mandatory !== null) required.add(mandatory);
     const all = await validateCredentials({ adapters: deps.adapters, providers: [...new Set([...required, ...Object.keys(deps.adapters)])] });
     const credentialsById: Record<string, CredentialStatus | undefined> = {};
     for (const c of all) credentialsById[c.provider] = c.status ?? undefined;
 
-    let reviewer: ReviewerSelection | null = null;
-    if (config.review.independent_provider_required) {
-      reviewer = selectReviewer({ snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: deps.registry });
-      if (reviewer.decision === 'SELECT') {
-        required.delete(config.review.preferred_provider);
-        required.add(reviewer.provider);
-      }
+    // Judged exactly as preflight judges it (decision 0007: in every review.when_unavailable mode).
+    const reviewer: ReviewerSelection = selectReviewer({ snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: deps.registry });
+    if (mandatory !== null && reviewer.decision === 'SELECT') {
+      required.delete(mandatory);
+      required.add(reviewer.provider);
     }
     const gate = environmentGate({ snapshot, mode: config.mode, isolation, credentials: all.filter((c) => required.has(c.provider)), reviewer });
     if (gate.passed) return null;

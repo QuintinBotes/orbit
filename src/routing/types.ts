@@ -5,6 +5,7 @@
  * without this module touching the decisions store.
  */
 import type { DifficultyClass } from '../scheduling/types.ts';
+import type { ReviewAvailabilitySettings } from '../policy/review.ts';
 
 /** Execution surfaces Orbit drives. API availability does not imply CLI availability. */
 export const SURFACES = ['claude-cli', 'codex-cli'] as const;
@@ -209,7 +210,8 @@ export interface RouteSignals {
 /** The subset of trusted configuration routing reads. OrbitConfig satisfies it. */
 export interface RoutingPolicy {
   routing: { allowed_models: string[]; overrides: Record<string, string> };
-  review: { independent_provider_required: boolean; preferred_provider: string; fallback_same_provider_allowed: boolean };
+  /** review.providers and review.when_unavailable, or the legacy keys of an older snapshot (policy/review.ts). */
+  review: ReviewAvailabilitySettings;
   providers: Record<string, { model: string | null; data_policy_eligible: boolean; reasoning_effort?: string | null }>;
   scheduler?: { repeated_failure_threshold: number };
 }

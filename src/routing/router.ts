@@ -2,6 +2,7 @@ import { OrbitError } from '../core/errors.ts';
 import type { DifficultyClass } from '../scheduling/types.ts';
 import { FAMILY_TIER, tierOf } from './registry.ts';
 import { roundUsd } from './pricing.ts';
+import { reviewFallback, reviewProviderOrder } from '../policy/review.ts';
 import {
   WORK_KINDS,
   type CostBasis,
@@ -518,9 +519,12 @@ function routeSafetyReview(ctx: Ctx): RouteDecision {
     }
   }
 
+  // review.providers order: a listed provider ranks by its place in the list, any other after them.
+  const order = reviewProviderOrder(policy.review);
+  const place = (provider: string): number => (order.includes(provider) ? order.indexOf(provider) : order.length);
   const rank = (c: (typeof candidates)[number]): number[] => [
     c.entry.modelId === preferred ? 0 : 1,
-    c.entry.provider === policy.review.preferred_provider ? 0 : 1,
+    place(c.entry.provider),
     BASIS_RANK[c.basis],
     tierOf(c.entry) ?? 0,
     costOf(c.entry).total ?? Number.POSITIVE_INFINITY,
@@ -531,34 +535,35 @@ function routeSafetyReview(ctx: Ctx): RouteDecision {
   if (chosen) {
     notes.push(`independent reviewer from ${chosen.entry.provider} (implementer: ${implementer}); qualified by ${chosen.detail}`);
   } else {
-    const sameAllowed = !policy.review.independent_provider_required || policy.review.fallback_same_provider_allowed;
+    // review.when_unavailable (decision 0007): block refuses a same-provider review; claude and ask allow one at the floor.
+    const fallback = reviewFallback(policy.review);
+    const sameAllowed = fallback !== 'block';
     const same = sorted.filter((c) => !c.independent);
     if (!sameAllowed || same.length === 0) {
       throw new OrbitError(
         'PROVIDER_UNAVAILABLE',
         sameAllowed
           ? 'no qualified reviewer at or above the safety review quality floor is eligible'
-          : `independent review is required but no qualified reviewer from a provider other than ${implementer} is eligible`,
+          : `independent review is required (review.when_unavailable: block) but no qualified reviewer from a provider other than ${implementer} is eligible`,
         {
           work_kind: 'safety-review',
           implementer_provider: implementer,
-          independent_provider_required: policy.review.independent_provider_required,
-          fallback_same_provider_allowed: policy.review.fallback_same_provider_allowed,
+          when_unavailable: fallback,
           alternatives_considered: rejected,
         },
       );
     }
     chosen = same[0] as (typeof candidates)[number];
     notes.push(
-      policy.review.independent_provider_required
-        ? `no qualified independent reviewer; policy allows same-provider review at the opus-class floor (${chosen.detail})`
-        : `independent review not required and none qualified; same-provider review at the opus-class floor (${chosen.detail})`,
+      fallback === 'ask'
+        ? `no qualified independent reviewer; review.when_unavailable is ask: a person must approve a same-provider review at the opus-class floor in a separate session (not independent; ${chosen.detail})`
+        : `no qualified independent reviewer; review.when_unavailable is claude, so a same-provider review at the opus-class floor in a separate session (not independent; ${chosen.detail})`,
     );
   }
 
   for (const c of sorted) {
     if (c === chosen) continue;
-    const why = c.independent === chosen.independent ? `ranked below ${chosen.entry.modelId} (override, preferred provider, qualification basis, tier, then cost)` : 'same provider as the implementer; an independent reviewer is preferred';
+    const why = c.independent === chosen.independent ? `ranked below ${chosen.entry.modelId} (override, review.providers order, qualification basis, tier, then cost)` : 'same provider as the implementer; an independent reviewer is preferred';
     rejected.push(alternative(c.entry, true, costOf(c.entry), why));
   }
 

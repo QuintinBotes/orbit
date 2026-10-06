@@ -32,7 +32,9 @@ function registryOf(eligible: ModelEntry[], excluded: { model: ModelEntry; reaso
 describe('selectionDecisionRecord', () => {
   it('summarizes a same-provider selection with the provider default model, and an independent one with its model', () => {
     const base = { decision: 'SELECT' as const, provider: 'claude', effort: null, basis: 'tier' as const, substitutedForPreferred: false, readOnlySandbox: true, reason: 'r', alternatives: [] };
-    expect(selectionDecisionRecord({ ...base, model: null, independent: false }).summary).toBe('reviewer claude/default (same provider)');
+    // Decision 0007: a same-provider selection never reads as independent, and says why.
+    expect(selectionDecisionRecord({ ...base, model: null, independent: false }).summary).toBe('reviewer claude/default (same provider, not independent: no independent reviewer was usable)');
+    expect(selectionDecisionRecord({ ...base, model: null, independent: false, independentUnavailable: 'no independent reviewer was usable: codex is down' }).summary).toBe('reviewer claude/default (same provider, not independent: no independent reviewer was usable: codex is down)');
     expect(selectionDecisionRecord({ ...base, provider: 'codex', model: 'codex-alpha', independent: true }).summary).toBe('reviewer codex/codex-alpha (independent)');
   });
 
@@ -48,7 +50,7 @@ describe('selectionDecisionRecord', () => {
     expect(assertReviewerSelected(sel)).toBe(sel);
     const r = ready();
     r.credentials.codex = cred('expired', 'token expired');
-    const refusal = selectReviewer({ snapshot: snapshotOf(), ...r, implementer: { provider: 'claude', model: SONNET } });
+    const refusal = selectReviewer({ snapshot: snapshotOf((c) => void (c.review.when_unavailable = 'block')), ...r, implementer: { provider: 'claude', model: SONNET } });
     expect(() => assertReviewerSelected(refusal)).toThrow(expect.objectContaining({ code: 'AUTH_EXPIRED', details: { alternatives: expect.arrayContaining([expect.objectContaining({ provider: 'codex' })]) } }));
   });
 });
@@ -87,6 +89,8 @@ describe('why a provider cannot review', () => {
     const snap = snapshotOf((c) => {
       c.providers.codex!.model = null;
       c.providers.gemini = { command: 'gemini', data_policy_eligible: true, model: 'gem-1', reasoning_effort: null, extra_args: [] };
+      // Decision 0007: only providers listed in review.providers are asked, in that order.
+      c.review.providers = ['codex', 'gemini'];
     });
     const r = ready();
     const sel = selectReviewer({ snapshot: snap, capabilities: { ...r.capabilities, gemini: cap('gemini') }, credentials: { ...r.credentials, gemini: cred('valid') }, implementer: { provider: 'claude', model: SONNET } });
@@ -175,7 +179,7 @@ describe('same-provider review: the corners', () => {
     const sel = blocked(
       selectReviewer({ snapshot: snap, capabilities: { gemini: cap('gemini') }, credentials: { gemini: cred('valid') }, implementer: { provider: 'gemini', model: OPUS }, registry }),
     );
-    expect(sel.reason).toContain('"gemini" has no tiered models, so a different-tier same-provider review is not defined');
+    expect(sel.reason).toContain('"gemini" has no tiered models, so a same-provider review at the quality floor is not defined');
   });
 
   it('skips models without a tier or that the adapter does not offer, and says when nothing is left', () => {
@@ -184,7 +188,8 @@ describe('same-provider review: the corners', () => {
     const r = noIndependent();
     r.capabilities.claude = cap('claude', { models: [SONNET, 'claude-mystery'] });
     const sel = blocked(selectReviewer({ snapshot: snap, ...r, implementer: { provider: 'claude', model: SONNET }, registry }));
-    expect(sel.reason).toContain("no allowed claude model is at or above the opus-class floor and in a different tier than the implementer's sonnet");
+    // Decision 0007: the fallback needs a model at the floor; a different tier is preferred, not required.
+    expect(sel.reason).toContain('no allowed claude model is at or above the opus-class floor');
     // Fable is not offered and the mystery model has no tier: neither is listed as a rejected tier.
     expect(sel.alternatives.map((a) => a.model)).not.toContain(FABLE);
     expect(sel.alternatives.map((a) => a.model)).not.toContain('claude-mystery');
@@ -193,16 +198,19 @@ describe('same-provider review: the corners', () => {
   it('names the implementer model, not a family, when the registry entry has no family', () => {
     const snap = snapshotOf(allowSame);
     const known = entry('claude-nofamily', 'claude', null);
-    const registry: ReviewerRegistry = { assess: () => ({ eligible: [], excluded: [] }), get: (id) => (id === 'claude-nofamily' ? ({ ...known, family: 'sonnet' } as ModelEntry) : null) };
-    const sel = blocked(selectReviewer({ snapshot: snap, ...noIndependent(), implementer: { provider: 'claude', model: 'claude-nofamily' }, registry }));
-    expect(sel.reason).toContain("than the implementer's sonnet");
+    const registry: ReviewerRegistry = { assess: () => ({ eligible: [entry(OPUS, 'claude', 'opus')], excluded: [] }), get: (id) => (id === 'claude-nofamily' ? ({ ...known, family: 'sonnet' } as ModelEntry) : null) };
+    const sel = selectReviewer({ snapshot: snap, ...noIndependent(), implementer: { provider: 'claude', model: 'claude-nofamily' }, registry });
+    expect(sel).toMatchObject({ decision: 'SELECT', model: OPUS });
+    if (sel.decision === 'SELECT') expect(sel.reason).toContain("a different tier than the implementer's sonnet");
   });
 
   it('records models the registry excluded, with their reasons', () => {
     const snap = snapshotOf(allowSame);
     const excludedModel = entry('claude-opus-old', 'claude', 'opus');
     const registry = registryOf([entry(OPUS, 'claude', 'opus')], [{ model: excludedModel, reasons: ['not validated on the CLI', 'not allowed'] }, { model: entry('codex-x', 'codex', null), reasons: ['other provider'] }]);
-    const sel = blocked(selectReviewer({ snapshot: snap, ...noIndependent(), implementer: { provider: 'claude', model: OPUS }, registry }));
+    // Decision 0007: the opus implementer is reviewed by opus in a separate session; the exclusions are still recorded.
+    const sel = selectReviewer({ snapshot: snap, ...noIndependent(), implementer: { provider: 'claude', model: OPUS }, registry });
+    expect(sel.decision).toBe('SELECT');
     expect(sel.alternatives).toContainEqual({ provider: 'claude', model: 'claude-opus-old', reason: 'ineligible: not validated on the CLI; not allowed' });
     expect(sel.alternatives.some((a) => a.model === 'codex-x')).toBe(false);
   });

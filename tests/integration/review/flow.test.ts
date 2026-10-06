@@ -117,7 +117,9 @@ describe.skipIf(!gitAvailable)('review flow on a real repository and SQLite file
   }
 
   it('blocks when the mandatory independent reviewer has expired credentials, and records the block', () => {
-    const sel = selectReviewer({ snapshot: snap, capabilities: { claude: cap('claude'), codex: cap('codex') }, credentials: { claude: cred('valid'), codex: cred('expired', 'login expired') }, implementer: { provider: 'claude', model: 'claude-sonnet-5-5' } });
+    // review.when_unavailable: block, the default before decision 0007 (#6, #8) made it claude.
+    const blocking = { ...snap, config: { ...snap.config, review: { ...snap.config.review, when_unavailable: 'block' as const } } };
+    const sel = selectReviewer({ snapshot: blocking, capabilities: { claude: cap('claude'), codex: cap('codex') }, credentials: { claude: cred('valid'), codex: cred('expired', 'login expired') }, implementer: { provider: 'claude', model: 'claude-sonnet-5-5' } });
     expect(sel).toMatchObject({ decision: 'BLOCK', code: 'AUTH_EXPIRED' });
   });
 

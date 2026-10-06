@@ -21069,17 +21069,19 @@ var init_config_schema = __esm({
         review: {
           type: "object",
           additionalProperties: false,
-          required: [
-            "independent_provider_required",
-            "preferred_provider",
-            "fallback_same_provider_allowed",
-            "block_unresolved_high_impact_findings",
-            "security"
-          ],
+          required: ["providers", "when_unavailable", "block_unresolved_high_impact_findings", "security"],
           properties: {
-            independent_provider_required: { type: "boolean" },
-            preferred_provider: { $ref: "#/$defs/providerId" },
-            fallback_same_provider_allowed: { type: "boolean" },
+            providers: {
+              type: "array",
+              maxItems: 10,
+              uniqueItems: true,
+              items: { $ref: "#/$defs/providerId" },
+              description: "Independent review providers, in preference order (docs/decisions/0007-reviewer-availability.md)."
+            },
+            when_unavailable: { enum: ["claude", "ask", "block"], description: "What happens when no independent reviewer is usable." },
+            preferred_provider: { $ref: "#/$defs/providerId", description: "Legacy: replaced by providers." },
+            independent_provider_required: { type: "boolean", description: "Legacy: mapped onto when_unavailable (true without the fallback is block)." },
+            fallback_same_provider_allowed: { type: "boolean", description: "Legacy: mapped onto when_unavailable." },
             block_unresolved_high_impact_findings: { type: "boolean" },
             security: {
               type: "object",
@@ -21486,6 +21488,45 @@ var init_near_miss = __esm({
   }
 });
 
+// src/policy/review.ts
+function isSupportedReviewProvider(id) {
+  return SUPPORTED_REVIEW_PROVIDERS.some((family) => id === family || id.startsWith(`${family}-`) || id.startsWith(`${family}_`));
+}
+function legacyReviewFallback(review) {
+  const required = review.independent_provider_required;
+  const fallback = review.fallback_same_provider_allowed;
+  if (required === void 0 && fallback === void 0) return null;
+  return required === true && fallback !== true ? "block" : "claude";
+}
+function reviewFallback(review) {
+  return legacyReviewFallback(review) ?? review.when_unavailable ?? DEFAULT_REVIEW_FALLBACK;
+}
+function reviewProviderOrder(review) {
+  const list = [...review.providers ?? []];
+  const preferred = review.preferred_provider;
+  if (preferred === void 0) return list;
+  return [preferred, ...list.filter((p) => p !== preferred)];
+}
+function preferredReviewProvider(review) {
+  return reviewProviderOrder(review)[0] ?? null;
+}
+function describeReviewPolicy(review) {
+  const order = reviewProviderOrder(review);
+  const providers = order.length > 0 ? order.join(", ") : "none";
+  const fallback = reviewFallback(review);
+  const then = fallback === "claude" ? "Claude reviews in a separate session at the safety-review quality floor and the report says the review was not independent" : fallback === "ask" ? "the run asks a person before a same-provider review" : "the run blocks";
+  return `independent reviewers ${providers} (in preference order); when none is usable (review.when_unavailable: ${fallback}), ${then}`;
+}
+var REVIEW_FALLBACKS, DEFAULT_REVIEW_FALLBACK, SUPPORTED_REVIEW_PROVIDERS;
+var init_review = __esm({
+  "src/policy/review.ts"() {
+    "use strict";
+    REVIEW_FALLBACKS = Object.freeze(["claude", "ask", "block"]);
+    DEFAULT_REVIEW_FALLBACK = "claude";
+    SUPPORTED_REVIEW_PROVIDERS = Object.freeze(["codex"]);
+  }
+});
+
 // src/policy/config.ts
 import { readFileSync as readFileSync3 } from "node:fs";
 import { isAbsolute as isAbsolute2, join as join4, posix as posix2, resolve } from "node:path";
@@ -21564,9 +21605,10 @@ function defaultConfig(mode = DEFAULT_MODE) {
       allow_managed_plugins: false
     },
     review: {
-      independent_provider_required: true,
-      preferred_provider: "codex",
-      fallback_same_provider_allowed: false,
+      // Decision 0007: Codex reviews independently when it is usable; otherwise Claude reviews in a separate
+      // session and every report says the review was not independent and why.
+      providers: ["codex"],
+      when_unavailable: DEFAULT_REVIEW_FALLBACK,
       block_unresolved_high_impact_findings: true,
       security: { block_severities: ["critical", "high"], exceptions: [] }
     },
@@ -21738,6 +21780,7 @@ function mergeWithDefaults(raw, mode, problems) {
   const repo = merged.repository;
   merged.release = normalizeRelease(release, isPlainObject(repo) && typeof repo.base_branch === "string" ? repo.base_branch : "main", problems);
   merged.providers = normalizeProviders(providers, base.providers);
+  normalizeReview(raw.review, merged, problems);
   normalizeContainer(merged);
   fillNullDefaults(merged, ["dependencies", "audit", "exceptions"], ["expires"]);
   fillNullDefaults(merged, ["static_security", "exceptions"], ["path_glob", "expires"]);
@@ -21812,6 +21855,29 @@ function normalizeProviders(raw, defaults) {
     out[id] = isPlainObject(def) ? { ...defaults[id] ?? defaultProvider(id, false), ...def } : def;
   }
   return out;
+}
+function normalizeReview(raw, merged, problems) {
+  const review = merged.review;
+  if (!isPlainObject(raw) || !isPlainObject(review)) return;
+  const required = raw.independent_provider_required;
+  const fallback = raw.fallback_same_provider_allowed;
+  const typed = (v) => v === void 0 || typeof v === "boolean";
+  if (typed(required) && typed(fallback) && !(required === true && fallback === true)) {
+    const mapped = legacyReviewFallback({ independent_provider_required: required, fallback_same_provider_allowed: fallback });
+    if (mapped !== null && raw.when_unavailable === void 0) review.when_unavailable = mapped;
+    else if (mapped !== null && raw.when_unavailable !== mapped) {
+      const said = [required === void 0 ? null : `independent_provider_required: ${required}`, fallback === void 0 ? null : `fallback_same_provider_allowed: ${fallback}`].filter((s) => s !== null).join(", ");
+      problems.push(`review.when_unavailable: ${JSON.stringify(raw.when_unavailable)} contradicts the legacy setting ${said}, which means "${mapped}"; remove the legacy keys (review.when_unavailable replaces them) or make them agree`);
+    }
+  }
+  const preferred = raw.preferred_provider;
+  if (typeof preferred === "string") {
+    if (raw.providers === void 0) {
+      if (isSupportedReviewProvider(preferred)) review.providers = [preferred];
+    } else if (Array.isArray(raw.providers) && raw.providers[0] !== preferred) {
+      problems.push(`review.preferred_provider: "${preferred}" contradicts review.providers (which starts with ${JSON.stringify(raw.providers[0] ?? null)}); remove preferred_provider, which review.providers replaces`);
+    }
+  }
 }
 function normalizeContainer(merged) {
   const iso2 = merged.isolation;
@@ -21960,6 +22026,7 @@ var init_config = __esm({
     init_hosts();
     init_invocation();
     init_near_miss();
+    init_review();
     Ajv2020 = import__.default.default ?? import__.default;
     addFormats = import_ajv_formats.default.default ?? import_ajv_formats.default;
     CONFIG_RELATIVE_PATH = ".orbit/config.yaml";
@@ -22060,11 +22127,23 @@ var init_config = __esm({
         }
       },
       function reviewIsConsistent(c, problems) {
-        if (c.review.independent_provider_required && c.review.fallback_same_provider_allowed) {
+        const r = c.review;
+        if (r.independent_provider_required === true && r.fallback_same_provider_allowed === true) {
           problems.push("review: independent_provider_required and fallback_same_provider_allowed contradict each other; an independent review cannot fall back to the same provider");
         }
-        if (!Object.hasOwn(c.providers, c.review.preferred_provider)) {
-          problems.push(`review.preferred_provider: "${c.review.preferred_provider}" is not defined under providers`);
+        if (r.preferred_provider !== void 0 && !Object.hasOwn(c.providers, r.preferred_provider)) {
+          problems.push(`review.preferred_provider: "${r.preferred_provider}" is not defined under providers`);
+        }
+        const list = r.providers ?? [];
+        list.forEach((id, i) => {
+          if (!isSupportedReviewProvider(id)) {
+            problems.push(`review.providers[${i}]: "${id}" is not a supported independent review provider; supported: ${SUPPORTED_REVIEW_PROVIDERS.join(", ")} (another provider needs an Orbit adapter before it can review)`);
+          } else if (!Object.hasOwn(c.providers, id)) {
+            problems.push(`review.providers[${i}]: "${id}" is not defined under providers`);
+          }
+        });
+        if (list.length === 0 && r.when_unavailable === "block") {
+          problems.push("review.providers: is empty and review.when_unavailable is block, so every run would block at review; list an independent provider, or set review.when_unavailable to claude or ask");
         }
       },
       function providerTiers(c, problems) {
@@ -31640,6 +31719,7 @@ var init_policy = __esm({
     "use strict";
     init_builtin();
     init_config();
+    init_review();
     init_snapshot();
     init_paths();
     init_authorize();
@@ -38158,9 +38238,11 @@ function routeSafetyReview(ctx) {
       ctx.ignored.push(`routing.overrides.safety-review=${override} is not a qualified reviewer at or above the quality floor; ignored`);
     }
   }
+  const order = reviewProviderOrder(policy.review);
+  const place = (provider) => order.includes(provider) ? order.indexOf(provider) : order.length;
   const rank = (c) => [
     c.entry.modelId === preferred ? 0 : 1,
-    c.entry.provider === policy.review.preferred_provider ? 0 : 1,
+    place(c.entry.provider),
     BASIS_RANK[c.basis],
     tierOf(c.entry) ?? 0,
     costOf(c.entry).total ?? Number.POSITIVE_INFINITY
@@ -38171,29 +38253,29 @@ function routeSafetyReview(ctx) {
   if (chosen) {
     notes.push(`independent reviewer from ${chosen.entry.provider} (implementer: ${implementer}); qualified by ${chosen.detail}`);
   } else {
-    const sameAllowed = !policy.review.independent_provider_required || policy.review.fallback_same_provider_allowed;
+    const fallback = reviewFallback(policy.review);
+    const sameAllowed = fallback !== "block";
     const same = sorted.filter((c) => !c.independent);
     if (!sameAllowed || same.length === 0) {
       throw new OrbitError(
         "PROVIDER_UNAVAILABLE",
-        sameAllowed ? "no qualified reviewer at or above the safety review quality floor is eligible" : `independent review is required but no qualified reviewer from a provider other than ${implementer} is eligible`,
+        sameAllowed ? "no qualified reviewer at or above the safety review quality floor is eligible" : `independent review is required (review.when_unavailable: block) but no qualified reviewer from a provider other than ${implementer} is eligible`,
         {
           work_kind: "safety-review",
           implementer_provider: implementer,
-          independent_provider_required: policy.review.independent_provider_required,
-          fallback_same_provider_allowed: policy.review.fallback_same_provider_allowed,
+          when_unavailable: fallback,
           alternatives_considered: rejected
         }
       );
     }
     chosen = same[0];
     notes.push(
-      policy.review.independent_provider_required ? `no qualified independent reviewer; policy allows same-provider review at the opus-class floor (${chosen.detail})` : `independent review not required and none qualified; same-provider review at the opus-class floor (${chosen.detail})`
+      fallback === "ask" ? `no qualified independent reviewer; review.when_unavailable is ask: a person must approve a same-provider review at the opus-class floor in a separate session (not independent; ${chosen.detail})` : `no qualified independent reviewer; review.when_unavailable is claude, so a same-provider review at the opus-class floor in a separate session (not independent; ${chosen.detail})`
     );
   }
   for (const c of sorted) {
     if (c === chosen) continue;
-    const why = c.independent === chosen.independent ? `ranked below ${chosen.entry.modelId} (override, preferred provider, qualification basis, tier, then cost)` : "same provider as the implementer; an independent reviewer is preferred";
+    const why = c.independent === chosen.independent ? `ranked below ${chosen.entry.modelId} (override, review.providers order, qualification basis, tier, then cost)` : "same provider as the implementer; an independent reviewer is preferred";
     rejected.push(alternative(c.entry, true, costOf(c.entry), why));
   }
   const configured = policy.providers[chosen.entry.provider]?.reasoning_effort ?? null;
@@ -38413,6 +38495,7 @@ var init_router = __esm({
     init_errors();
     init_registry();
     init_pricing();
+    init_review();
     init_types();
     TIER_NAME = { 1: "haiku", 2: "sonnet", 3: "opus", 4: "fable" };
     FABLE_TIER = 4;
@@ -41587,6 +41670,206 @@ var init_resolve = __esm({
   }
 });
 
+// src/review/select.ts
+function selectionDecisionRecord(sel) {
+  return {
+    kind: "review.select",
+    summary: (sel.decision === "SELECT" ? `reviewer ${reviewerLabel(sel)}` : `review blocked: ${sel.reason}`).slice(0, 300),
+    data: sel
+  };
+}
+function reviewerLabel(sel) {
+  const who = `${sel.provider}/${sel.model ?? "default"}`;
+  if (sel.independent) return `${who} (independent)`;
+  return `${who} (same provider, not independent: ${sel.independentUnavailable ?? "no independent reviewer was usable"})`;
+}
+function selectReviewer(input) {
+  const { config } = input.snapshot;
+  const review = config.review;
+  const impl = input.implementer.provider;
+  const alternatives = [];
+  const fallback = reviewFallback(review);
+  const order = reviewProviderOrder(review);
+  const preferred = order[0] ?? null;
+  const providerProblem = (p, unverifiedOk = false) => {
+    const cap = input.capabilities[p];
+    if (!cap) return { reason: `no adapter capabilities were reported for "${p}"`, code: "PROVIDER_UNAVAILABLE" };
+    if (!cap.available) return { reason: `provider "${p}" is not available: ${cap.detail || "adapter reported unavailable"}`, code: "PROVIDER_UNAVAILABLE" };
+    if (!cap.structuredOutput) return { reason: `provider "${p}" cannot return schema-constrained output, which review findings require`, code: "PROVIDER_UNAVAILABLE" };
+    const cred = input.credentials[p];
+    if (!cred) return { reason: `credentials for "${p}" were not validated`, code: "PROVIDER_UNAVAILABLE" };
+    if (cred.state === "expired") return { reason: `credentials for "${p}" are expired${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
+    if (cred.state === "invalid") return { reason: `credentials for "${p}" are invalid${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
+    if (cred.state === "missing") return { reason: `no credentials for "${p}"${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_MISSING" };
+    if (cred.state !== "valid" && !(unverifiedOk && cred.state === "unknown")) return { reason: `credentials for "${p}" could not be validated (${cred.state})${cred.detail ? `: ${cred.detail}` : ""}`, code: "PROVIDER_UNAVAILABLE" };
+    if (p !== impl && config.providers[p]?.data_policy_eligible !== true) {
+      return { reason: `providers.${p}.data_policy_eligible is not true, so the review packet may not be sent to it`, code: "POLICY_DENIED" };
+    }
+    return null;
+  };
+  const independentIds = order.filter((p) => p !== impl && (Object.hasOwn(config.providers, p) || input.capabilities[p] !== void 0));
+  const problems = /* @__PURE__ */ new Map();
+  const unusable = /* @__PURE__ */ new Map();
+  for (const p of independentIds) {
+    const prob = providerProblem(p);
+    if (prob) {
+      problems.set(p, prob);
+      unusable.set(p, prob.reason);
+      alternatives.push({ provider: p, model: null, reason: prob.reason });
+      continue;
+    }
+    const m = qualifiedModel(p, input, alternatives);
+    if (!m) {
+      unusable.set(p, `"${p}" has no model qualified for review`);
+      continue;
+    }
+    const substituted = p !== preferred;
+    return finish3(
+      input,
+      m,
+      { independent: true, substitutedForPreferred: substituted, independentUnavailable: null, needsApproval: false },
+      alternatives,
+      substituted ? `preferred provider "${preferred}" is unusable (${problems.get(preferred ?? "")?.reason ?? "not selected"}); "${p}" is an independent, qualified provider` : `independent reviewer "${p}" (implementer: "${impl}")`
+    );
+  }
+  const detail = independentIds.length === 0 ? order.length === 0 ? "no independent review provider is listed in review.providers" : `no provider other than "${impl}" is configured` : independentIds.map((p) => unusable.get(p) ?? `"${p}" has no model qualified for review`).join("; ");
+  if (fallback === "block") {
+    const preferredProblem = preferred !== null ? problems.get(preferred) : void 0;
+    const code2 = preferred !== impl && preferredProblem ? preferredProblem.code : "PROVIDER_UNAVAILABLE";
+    return {
+      decision: "BLOCK",
+      code: code2,
+      reason: `independent review is required (review.when_unavailable: block) and no independent reviewer is usable: ${detail}. Review is not being substituted by "${impl}" or any equivalent label; verification is incomplete until an independent provider is available.`,
+      alternatives
+    };
+  }
+  const implProblem = providerProblem(impl, true);
+  if (implProblem) {
+    alternatives.push({ provider: impl, model: null, reason: implProblem.reason });
+    return {
+      decision: "BLOCK",
+      code: implProblem.code,
+      reason: `no independent reviewer is usable (${detail}) and review.when_unavailable is ${fallback}, but "${impl}" cannot review: ${implProblem.reason}`,
+      alternatives
+    };
+  }
+  const same = sameProviderModel(input, alternatives);
+  if (!same.ok) {
+    return { decision: "BLOCK", code: "PROVIDER_UNAVAILABLE", reason: `no independent reviewer is usable (${detail}) and review.when_unavailable is ${fallback}, but ${same.reason}`, alternatives };
+  }
+  const why = `no independent reviewer was usable: ${detail}`;
+  return finish3(
+    input,
+    same.usable,
+    { independent: false, substitutedForPreferred: false, independentUnavailable: why, needsApproval: fallback === "ask" },
+    alternatives,
+    `${why}; review.when_unavailable is ${fallback}, so "${impl}" reviews with ${same.usable.model} in a separate reviewer session (${same.usable.detail})${fallback === "ask" ? " once a person says yes" : ""}. This review is not independent.`
+  );
+}
+function finish3(input, u, how, alternatives, reason) {
+  const cap = input.capabilities[u.provider];
+  return {
+    decision: "SELECT",
+    provider: u.provider,
+    model: u.model,
+    effort: input.snapshot.config.providers[u.provider]?.reasoning_effort ?? null,
+    independent: how.independent,
+    independentUnavailable: how.independentUnavailable,
+    needsApproval: how.needsApproval,
+    basis: u.basis,
+    substitutedForPreferred: how.substitutedForPreferred,
+    readOnlySandbox: cap?.readOnlySandbox === true,
+    reason,
+    alternatives
+  };
+}
+function qualifiedModel(provider, input, alternatives) {
+  const cfg = input.snapshot.config;
+  const cap = input.capabilities[provider];
+  const configured = cfg.providers[provider]?.model ?? null;
+  const offered = (m) => !cap || cap.models.length === 0 || cap.models.includes(m);
+  if (configured !== null) {
+    if (!offered(configured)) {
+      alternatives.push({ provider, model: configured, reason: `providers.${provider}.model "${configured}" is not offered by the adapter` });
+      return null;
+    }
+    return { provider, model: configured, basis: "configured", detail: `providers.${provider}.model names it` };
+  }
+  const reg = input.registry;
+  const surface = PROVIDER_SURFACE2[provider];
+  if (reg && surface) {
+    const a = reg.assess({ surface, provider, allowedModels: [...cfg.routing.allowed_models, `${provider}:*`], structuredOutput: true });
+    const ranked = a.eligible.filter((e) => offered(e.modelId));
+    if (provider === "claude") {
+      const tiered = ranked.filter((e) => (tierOf(e) ?? 0) >= REVIEW_QUALITY_FLOOR_TIER && allowMatch(e, cfg.routing.allowed_models) !== null);
+      const pick = tiered[0];
+      if (pick) return { provider, model: pick.modelId, basis: "tier", detail: `${pick.family} meets the opus-class floor` };
+    } else {
+      const evaluated = ranked.find((e) => e.evaluation.qualifiedFor.includes("safety-review"));
+      if (evaluated) return { provider, model: evaluated.modelId, basis: "evaluation", detail: "a recorded safety-review evaluation" };
+      const recommended = ranked.find((e) => e.eligibility.providerDefault);
+      if (recommended) return { provider, model: recommended.modelId, basis: "provider-default", detail: `it is ${provider}'s recommended model` };
+    }
+  }
+  alternatives.push({ provider, model: null, reason: `no model of "${provider}" is qualified for review: none is named in providers.${provider}.model, evaluated for safety review, or recommended by the provider${provider === "claude" ? ", and none is opus-class or above" : ""}` });
+  return null;
+}
+function sameProviderModel(input, alternatives) {
+  const impl = input.implementer;
+  const cfg = input.snapshot.config;
+  const reg = input.registry;
+  if (!reg) return { ok: false, reason: "no model registry was supplied, so a reviewer model at the quality floor cannot be chosen" };
+  const implEntry = impl.model ? reg.get(impl.model) : null;
+  const implTier = implEntry ? tierOf(implEntry) : null;
+  const surface = PROVIDER_SURFACE2[impl.provider];
+  if (!surface) return { ok: false, reason: `"${impl.provider}" has no tiered models, so a same-provider review at the quality floor is not defined` };
+  const cap = input.capabilities[impl.provider];
+  const a = reg.assess({ surface, provider: impl.provider, allowedModels: cfg.routing.allowed_models, structuredOutput: true });
+  const unvalidated = (ex) => ex.reasons.length > 0 && ex.reasons.every((r) => /not yet validated/.test(r));
+  const pending = [];
+  for (const ex of a.excluded) {
+    if (ex.model.provider !== impl.provider) continue;
+    if (unvalidated(ex)) pending.push(ex.model);
+    else alternatives.push({ provider: impl.provider, model: ex.model.modelId, reason: `ineligible: ${ex.reasons.join("; ")}` });
+  }
+  const atFloor = [...a.eligible, ...pending].filter((e) => {
+    const t = tierOf(e);
+    if (t === null) return false;
+    if (cap && cap.models.length > 0 && !cap.models.includes(e.modelId)) return false;
+    if (t < REVIEW_QUALITY_FLOOR_TIER) {
+      alternatives.push({ provider: impl.provider, model: e.modelId, reason: `${e.family} is below the review quality floor (opus-class)` });
+      return false;
+    }
+    return true;
+  });
+  const otherTier = implTier === null ? void 0 : atFloor.find((e) => tierOf(e) !== implTier);
+  if (otherTier) {
+    for (const e of atFloor) if (tierOf(e) === implTier) alternatives.push({ provider: impl.provider, model: e.modelId, reason: `same tier (${e.family}) as the implementer's model; a different tier is preferred` });
+    return { ok: true, usable: { provider: impl.provider, model: otherTier.modelId, basis: "tier", detail: `${otherTier.family} is at or above the opus-class floor and a different tier than the implementer's ${implEntry?.family}` } };
+  }
+  const pick = atFloor[0];
+  if (!pick) return { ok: false, reason: `no allowed ${impl.provider} model is at or above the opus-class floor` };
+  const detail = implTier === null ? `${pick.family} meets the opus-class floor; the implementer's model is not known yet` : `${pick.family} is at the opus-class floor, the same tier as the implementer's model; it reviews in a separate session`;
+  return { ok: true, usable: { provider: impl.provider, model: pick.modelId, basis: "tier", detail } };
+}
+function mandatoryReviewProvider(review, implementer) {
+  if (reviewFallback(review) !== "block") return null;
+  const first = preferredReviewProvider(review);
+  return first !== null && first !== implementer ? first : null;
+}
+var SAME_PROVIDER_APPROVED_KIND, REVIEW_QUALITY_FLOOR_TIER, PROVIDER_SURFACE2;
+var init_select = __esm({
+  "src/review/select.ts"() {
+    "use strict";
+    init_errors();
+    init_review();
+    init_registry();
+    SAME_PROVIDER_APPROVED_KIND = "review.same-provider-approved";
+    REVIEW_QUALITY_FLOOR_TIER = 3;
+    PROVIDER_SURFACE2 = { claude: "claude-cli", codex: "codex-cli" };
+  }
+});
+
 // src/inquisition/store.ts
 function parseJson(text2, fallback) {
   if (text2 === null) return fallback;
@@ -43295,6 +43578,10 @@ function assembleFinalReport(db, run, opts) {
     const reason = typeof ex?.reason === "string" ? ex.reason : f.resolution ?? "no reason recorded";
     risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, excepted by policy): ${f.claim.slice(0, 120)}; exception reason: ${reason.slice(0, 160)}; expires: ${expires ?? "never"}`);
   }
+  const reviewer = reviewerOf(db, run.id, cand?.id ?? null, reviews);
+  if (reviewer && !reviewer.independent && !risks.some((r) => r.startsWith("same-provider review:"))) {
+    risks.push(`same-provider review: ${reviewer.why_not_independent ?? "no independent reviewer was usable"}; ${reviewer.provider}/${reviewer.model ?? "default"} reviewed in a separate session, so the review is not independent${reviewer.approved_by ? ` (approved by ${reviewer.approved_by})` : ""}`);
+  }
   for (const q of listQuestions(db, run.id, { status: "open" })) risks.push(`open question: ${q.question.slice(0, 200)}`);
   for (const c of ev?.report.checks.filter((x) => x.flaky) ?? []) risks.push(`check ${c.id} passed only on a rerun (flaky)`);
   const plugins = workerPluginsOf(listWorkers(db, { runId: run.id }));
@@ -43313,6 +43600,7 @@ function assembleFinalReport(db, run, opts) {
     checks: ev?.report.checks.map((c) => ({ id: c.id, status: c.status, exit_code: c.exit_code, flaky: c.flaky, log: c.log })) ?? [],
     evidence: ev ? { report_id: ev.id, verdict: ev.verdict, tree_hash: ev.treeHash, candidate_revision: ev.report.candidate_revision } : null,
     reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length })),
+    reviewer,
     decisions,
     assumptions: [...(contract?.assumptions ?? []).map((a) => ({ id: a.id, statement: a.statement, status: a.status })), ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))],
     practices: (contract?.practices ?? []).map((p) => ({ practice: p.practice, applicable: p.applicable, justification: p.justification })),
@@ -43358,6 +43646,26 @@ function workerPluginsOf(workers) {
 }
 function strOrNull(v) {
   return typeof v === "string" ? v : null;
+}
+function reviewerOf(db, runId, candidateId, reviews) {
+  const last = reviews.at(-1);
+  if (!last) return null;
+  const selections = listDecisions(db, runId, { kind: "review.select" }).filter((d) => d.data?.decision === "SELECT");
+  const recorded = selections.find((d) => candidateId !== null && d.id === `dec-${runId}-review-select-${candidateId}`) ?? selections.at(-1);
+  const sel = recorded?.data;
+  const approval = listDecisions(db, runId, { kind: SAME_PROVIDER_APPROVED_KIND }).at(-1)?.data;
+  const approvedBy = typeof approval?.approved_by === "string" ? approval.approved_by : null;
+  if (sel && sel.provider === last.provider) {
+    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : sel.independentUnavailable ?? "no independent reviewer was usable", approved_by: sel.independent ? null : approvedBy };
+  }
+  const implementer = listWorkers(db, { runId, role: "implementer" }).at(-1)?.provider ?? "claude";
+  const independent = last.provider !== implementer;
+  return { provider: last.provider, model: last.model, independent, why_not_independent: independent ? null : "no independent reviewer was usable", approved_by: independent ? null : approvedBy };
+}
+function reviewerLine(r) {
+  const who = `${r.provider}/${r.model ?? "default"}`;
+  if (r.independent) return `Reviewer: ${who} (independent)`;
+  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? "no independent reviewer was usable"}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ""})`;
 }
 function tokens(t) {
   return { input: t.inputTokens, output: t.outputTokens, cache_read: t.cacheReadTokens, cache_write: t.cacheWriteTokens };
@@ -43424,7 +43732,9 @@ function renderMarkdown(r) {
   out.push("## Criterion evidence", "", list(r.criteria.map((c) => `${c.id}${c.mandatory ? "" : " (optional)"} [${c.status}]: ${c.statement}${c.artifacts.length ? ` (evidence: ${c.artifacts.join(", ")})` : ""}`)), "");
   out.push("## Checks", "", list(r.checks.map((c) => `${c.id}: ${c.status}${c.exit_code !== null ? ` (exit ${c.exit_code})` : ""}${c.flaky ? ", flaky" : ""}, log ${c.log}`)), "");
   if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, "");
-  out.push("## Reviews", "", list(r.reviews.map((v) => `${v.provider}/${v.model ?? "default"}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))`)), "");
+  out.push("## Reviews", "");
+  if (r.reviewer) out.push(reviewerLine(r.reviewer), "");
+  out.push(list(r.reviews.map((v) => `${v.provider}/${v.model ?? "default"}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))`)), "");
   out.push("## Decisions", "", list(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), "");
   out.push("## Assumptions", "", list(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), "");
   if (r.practices && r.practices.length > 0) out.push("## Engineering practices", "", list(r.practices.map((p) => `${p.practice} [${p.applicable ? "selected" : "omitted"}]: ${p.justification}`)), "");
@@ -43654,6 +43964,7 @@ var init_report = __esm({
     init_store();
     init_store3();
     init_resolve();
+    init_select();
     init_store4();
     init_usage();
     init_budget2();
@@ -45374,10 +45685,14 @@ function reviewGate(db, input) {
     const why = lapsed.has(f.id) ? " (its policy exception has expired or no longer covers it)" : "";
     reasons.push(`finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}) blocks delivery${why}: ${f.claim.slice(0, 120)}`);
   }
-  if (config.review.independent_provider_required && cleared.length > 0 && input.implementerProvider === void 0) {
-    reasons.push("independent review is required but the implementer provider was not supplied, so independence cannot be shown");
-  } else if (config.review.independent_provider_required && cleared.length > 0 && !cleared.some((r) => r.provider !== input.implementerProvider)) {
-    reasons.push(`independent review is required but every clearing review is from "${input.implementerProvider}", the implementer's provider`);
+  const fallback = reviewFallback(config.review);
+  if (fallback !== "claude" && cleared.length > 0 && input.implementerProvider === void 0) {
+    reasons.push(`${fallback === "block" ? "independent review is required" : "a same-provider review needs a person's yes"} but the implementer provider was not supplied, so independence cannot be shown`);
+  } else if (cleared.length > 0 && !cleared.some((r) => r.provider !== input.implementerProvider)) {
+    if (fallback === "block") reasons.push(`independent review is required but every clearing review is from "${input.implementerProvider}", the implementer's provider`);
+    else if (fallback === "ask" && listDecisions(db, input.runId, { kind: SAME_PROVIDER_APPROVED_KIND }).length === 0) {
+      reasons.push(`every clearing review is from "${input.implementerProvider}", the implementer's provider, and no person approved a same-provider review (review.when_unavailable: ask)`);
+    }
   }
   if (current.length > 0 && cleared.length === 0 && reasons.length === 0) reasons.push("no review cleared this tree");
   return { ok: reasons.length === 0, reasons, cleared };
@@ -45402,6 +45717,8 @@ var init_stale = __esm({
     init_errors();
     init_hash();
     init_decisions();
+    init_review();
+    init_select();
     init_store3();
     init_resolve();
     CLEARS_REPAIR = ["rejected", "excepted", "advisory", "resolved"];
@@ -45799,7 +46116,12 @@ function environmentGate(input) {
       reasons.push(`independent review: ${input.reviewer.reason}`);
       code2 ??= input.reviewer.code;
     } else {
-      evidence.push(`reviewer ${input.reviewer.provider}/${input.reviewer.model ?? "default"} (${input.reviewer.independent ? "independent" : "same provider"})`);
+      evidence.push(`reviewer ${reviewerLabel(input.reviewer)}`);
+      if (!input.reviewer.independent) {
+        notes.push(
+          `same-provider review: ${input.reviewer.independentUnavailable ?? "no independent reviewer was usable"}; ${input.reviewer.provider} reviews in a separate session at the opus-class floor, so the review is not independent${input.reviewer.needsApproval ? ", and only after a person says yes (review.when_unavailable: ask)" : ""}`
+        );
+      }
     }
   }
   return result("environment", reasons, evidence, notes, { blockedProvider, code: code2 });
@@ -45926,6 +46248,7 @@ var FAILURE_BEHAVIOUR;
 var init_gates = __esm({
   "src/controller/gates.ts"() {
     "use strict";
+    init_select();
     init_stale();
     init_store3();
     init_validate();
@@ -50816,177 +51139,6 @@ var init_draft = __esm({
   }
 });
 
-// src/review/select.ts
-function selectionDecisionRecord(sel) {
-  return {
-    kind: "review.select",
-    summary: sel.decision === "SELECT" ? `reviewer ${sel.provider}/${sel.model ?? "default"} (${sel.independent ? "independent" : "same provider"})` : `review blocked: ${sel.reason}`.slice(0, 300),
-    data: sel
-  };
-}
-function selectReviewer(input) {
-  const { config } = input.snapshot;
-  const review = config.review;
-  const impl = input.implementer.provider;
-  const alternatives = [];
-  const ids = /* @__PURE__ */ new Set([...Object.keys(config.providers), ...Object.keys(input.capabilities), impl, review.preferred_provider]);
-  const order = [...ids].sort((a, b) => Number(b === review.preferred_provider) - Number(a === review.preferred_provider) || a.localeCompare(b));
-  const providerProblem = (p) => {
-    const cap = input.capabilities[p];
-    if (!cap) return { reason: `no adapter capabilities were reported for "${p}"`, code: "PROVIDER_UNAVAILABLE" };
-    if (!cap.available) return { reason: `provider "${p}" is not available: ${cap.detail || "adapter reported unavailable"}`, code: "PROVIDER_UNAVAILABLE" };
-    if (!cap.structuredOutput) return { reason: `provider "${p}" cannot return schema-constrained output, which review findings require`, code: "PROVIDER_UNAVAILABLE" };
-    const cred = input.credentials[p];
-    if (!cred) return { reason: `credentials for "${p}" were not validated`, code: "PROVIDER_UNAVAILABLE" };
-    if (cred.state === "expired") return { reason: `credentials for "${p}" are expired${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
-    if (cred.state === "invalid") return { reason: `credentials for "${p}" are invalid${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
-    if (cred.state === "missing") return { reason: `no credentials for "${p}"${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_MISSING" };
-    if (cred.state !== "valid") return { reason: `credentials for "${p}" could not be validated (${cred.state})${cred.detail ? `: ${cred.detail}` : ""}`, code: "PROVIDER_UNAVAILABLE" };
-    if (p !== impl && config.providers[p]?.data_policy_eligible !== true) {
-      return { reason: `providers.${p}.data_policy_eligible is not true, so the review packet may not be sent to it`, code: "POLICY_DENIED" };
-    }
-    return null;
-  };
-  const problems = /* @__PURE__ */ new Map();
-  const usableProviders = [];
-  for (const p of order) {
-    const prob = providerProblem(p);
-    if (prob) {
-      problems.set(p, prob);
-      alternatives.push({ provider: p, model: null, reason: prob.reason });
-    } else usableProviders.push(p);
-  }
-  let substituted = false;
-  for (const p of usableProviders.filter((x) => x !== impl)) {
-    const m = qualifiedModel(p, input, alternatives);
-    if (!m) continue;
-    substituted = p !== review.preferred_provider;
-    return finish3(input, m, true, substituted, alternatives, substituted ? `preferred provider "${review.preferred_provider}" is unusable (${problems.get(review.preferred_provider)?.reason ?? "not selected"}); "${p}" is an independent, qualified provider` : `independent reviewer "${p}" (implementer: "${impl}")`);
-  }
-  const sameAllowed = !review.independent_provider_required || review.fallback_same_provider_allowed;
-  if (!sameAllowed) {
-    const independentIds = order.filter((p) => p !== impl);
-    const detail = independentIds.length === 0 ? `no provider other than "${impl}" is configured` : independentIds.map((p) => problems.get(p)?.reason ?? `"${p}" has no model qualified for review`).join("; ");
-    const preferredProblem = problems.get(review.preferred_provider);
-    const code2 = review.preferred_provider !== impl && preferredProblem ? preferredProblem.code : "PROVIDER_UNAVAILABLE";
-    return {
-      decision: "BLOCK",
-      code: code2,
-      reason: `independent review is required (review.independent_provider_required=true, fallback_same_provider_allowed=false) and no independent reviewer is usable: ${detail}. Review is not being substituted by "${impl}" or any equivalent label; verification is incomplete until an independent provider is available.`,
-      alternatives
-    };
-  }
-  if (problems.has(impl)) {
-    return {
-      decision: "BLOCK",
-      code: problems.get(impl).code,
-      reason: `no independent reviewer is usable and same-provider review is allowed, but "${impl}" cannot review: ${problems.get(impl).reason}`,
-      alternatives
-    };
-  }
-  const same = sameProviderModel(input, alternatives);
-  if (!same.ok) {
-    return { decision: "BLOCK", code: "PROVIDER_UNAVAILABLE", reason: `no independent reviewer is usable and same-provider review is allowed, but ${same.reason}`, alternatives };
-  }
-  return finish3(
-    input,
-    same.usable,
-    false,
-    false,
-    alternatives,
-    `no independent reviewer is usable; policy allows same-provider review, so "${impl}" reviews with ${same.usable.model} (${same.usable.detail}) at a different tier than the implementer`
-  );
-}
-function finish3(input, u, independent, substitutedForPreferred, alternatives, reason) {
-  const cap = input.capabilities[u.provider];
-  return {
-    decision: "SELECT",
-    provider: u.provider,
-    model: u.model,
-    effort: input.snapshot.config.providers[u.provider]?.reasoning_effort ?? null,
-    independent,
-    basis: u.basis,
-    substitutedForPreferred,
-    readOnlySandbox: cap?.readOnlySandbox === true,
-    reason,
-    alternatives
-  };
-}
-function qualifiedModel(provider, input, alternatives) {
-  const cfg = input.snapshot.config;
-  const cap = input.capabilities[provider];
-  const configured = cfg.providers[provider]?.model ?? null;
-  const offered = (m) => !cap || cap.models.length === 0 || cap.models.includes(m);
-  if (configured !== null) {
-    if (!offered(configured)) {
-      alternatives.push({ provider, model: configured, reason: `providers.${provider}.model "${configured}" is not offered by the adapter` });
-      return null;
-    }
-    return { provider, model: configured, basis: "configured", detail: `providers.${provider}.model names it` };
-  }
-  const reg = input.registry;
-  const surface = PROVIDER_SURFACE2[provider];
-  if (reg && surface) {
-    const a = reg.assess({ surface, provider, allowedModels: [...cfg.routing.allowed_models, `${provider}:*`], structuredOutput: true });
-    const ranked = a.eligible.filter((e) => offered(e.modelId));
-    if (provider === "claude") {
-      const tiered = ranked.filter((e) => (tierOf(e) ?? 0) >= REVIEW_QUALITY_FLOOR_TIER && allowMatch(e, cfg.routing.allowed_models) !== null);
-      const pick = tiered[0];
-      if (pick) return { provider, model: pick.modelId, basis: "tier", detail: `${pick.family} meets the opus-class floor` };
-    } else {
-      const evaluated = ranked.find((e) => e.evaluation.qualifiedFor.includes("safety-review"));
-      if (evaluated) return { provider, model: evaluated.modelId, basis: "evaluation", detail: "a recorded safety-review evaluation" };
-      const recommended = ranked.find((e) => e.eligibility.providerDefault);
-      if (recommended) return { provider, model: recommended.modelId, basis: "provider-default", detail: `it is ${provider}'s recommended model` };
-    }
-  }
-  alternatives.push({ provider, model: null, reason: `no model of "${provider}" is qualified for review: none is named in providers.${provider}.model, evaluated for safety review, or recommended by the provider${provider === "claude" ? ", and none is opus-class or above" : ""}` });
-  return null;
-}
-function sameProviderModel(input, alternatives) {
-  const impl = input.implementer;
-  const cfg = input.snapshot.config;
-  const reg = input.registry;
-  if (!reg) return { ok: false, reason: "no model registry was supplied, so a different-tier reviewer model cannot be chosen" };
-  const implEntry = impl.model ? reg.get(impl.model) : null;
-  const implTier = implEntry ? tierOf(implEntry) : null;
-  if (implTier === null) {
-    return { ok: false, reason: `the implementer's model tier is unknown (${impl.model ?? "provider default"}), so a different-tier reviewer cannot be shown to differ` };
-  }
-  const surface = PROVIDER_SURFACE2[impl.provider];
-  if (!surface) return { ok: false, reason: `"${impl.provider}" has no tiered models, so a different-tier same-provider review is not defined` };
-  const cap = input.capabilities[impl.provider];
-  const a = reg.assess({ surface, provider: impl.provider, allowedModels: cfg.routing.allowed_models, structuredOutput: true });
-  for (const ex of a.excluded) if (ex.model.provider === impl.provider) alternatives.push({ provider: impl.provider, model: ex.model.modelId, reason: `ineligible: ${ex.reasons.join("; ")}` });
-  const candidates = a.eligible.filter((e) => {
-    const t = tierOf(e);
-    if (t === null) return false;
-    if (cap && cap.models.length > 0 && !cap.models.includes(e.modelId)) return false;
-    if (t < REVIEW_QUALITY_FLOOR_TIER) {
-      alternatives.push({ provider: impl.provider, model: e.modelId, reason: `${e.family} is below the review quality floor (opus-class)` });
-      return false;
-    }
-    if (t === implTier) {
-      alternatives.push({ provider: impl.provider, model: e.modelId, reason: `same tier (${e.family}) as the implementer's model` });
-      return false;
-    }
-    return true;
-  });
-  const pick = candidates[0];
-  if (!pick) return { ok: false, reason: `no allowed ${impl.provider} model is at or above the opus-class floor and in a different tier than the implementer's ${implEntry?.family ?? impl.model}` };
-  return { ok: true, usable: { provider: impl.provider, model: pick.modelId, basis: "tier", detail: `${pick.family} is at or above the opus-class floor and differs from the implementer's ${implEntry?.family}` } };
-}
-var REVIEW_QUALITY_FLOOR_TIER, PROVIDER_SURFACE2;
-var init_select = __esm({
-  "src/review/select.ts"() {
-    "use strict";
-    init_errors();
-    init_registry();
-    REVIEW_QUALITY_FLOOR_TIER = 3;
-    PROVIDER_SURFACE2 = { claude: "claude-cli", codex: "codex-cli" };
-  }
-});
-
 // src/controller/delivery-env.ts
 function deliversThroughGithub(config) {
   return config.delivery.provider === "github" && DELIVERY_MODES.has(config.mode) && (config.actions.open_pull_request || config.actions.push_task_branch || config.actions.repair_ci);
@@ -53554,17 +53706,15 @@ async function checkEnvironment(ctx) {
     }
   }
   const required = /* @__PURE__ */ new Set([IMPLEMENTER_PROVIDER]);
-  if (config.review.independent_provider_required && config.review.preferred_provider !== IMPLEMENTER_PROVIDER) required.add(config.review.preferred_provider);
+  const mandatory = mandatoryReviewProvider(config.review, IMPLEMENTER_PROVIDER);
+  if (mandatory !== null) required.add(mandatory);
   const all = await validateCredentials({ adapters: ctx.deps.adapters, providers: [.../* @__PURE__ */ new Set([...required, ...Object.keys(ctx.deps.adapters)])] });
   const credentialsById = {};
   for (const c of all) credentialsById[c.provider] = c.status ?? void 0;
-  let reviewer = null;
-  if (config.review.independent_provider_required) {
-    reviewer = selectReviewer({ snapshot: ctx.snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: ctx.deps.registry });
-    if (reviewer.decision === "SELECT") {
-      required.delete(config.review.preferred_provider);
-      required.add(reviewer.provider);
-    }
+  const reviewer = selectReviewer({ snapshot: ctx.snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: ctx.deps.registry });
+  if (mandatory !== null && reviewer.decision === "SELECT") {
+    required.delete(mandatory);
+    required.add(reviewer.provider);
   }
   const credentials = all.filter((c) => required.has(c.provider));
   const delivery = deliveryEnvironmentProblem(config, ctx.deps.hostEnv ?? process.env);
@@ -55162,6 +55312,78 @@ var init_diagnosing = __esm({
   }
 });
 
+// src/controller/steps/review-approval.ts
+function sameProviderQuestionId(runId) {
+  return `q-review-fallback-${hashObject({ run: runId, ask: "same-provider-review" }).slice(7, 19)}`;
+}
+function sameProviderApprovalDecisionId(runId) {
+  return `dec-${runId}-review-same-provider-approved`;
+}
+function ask2(ctx, sel) {
+  const id = sameProviderQuestionId(ctx.run.id);
+  const why = sel.independentUnavailable ?? "no independent reviewer was usable";
+  return findQuestion(ctx.db, id) ?? insertQuestion(
+    ctx.db,
+    {
+      id,
+      runId: ctx.run.id,
+      mode: "decision-record",
+      question: "No independent reviewer is usable: allow a same-provider review for this run?",
+      evidence: [why, `review.when_unavailable is ask, so the run asks before ${sel.provider}/${sel.model ?? "default"} reviews the candidate in a separate session`],
+      options: [
+        {
+          label: ALLOW_SAME_PROVIDER,
+          description: `Let ${sel.provider}/${sel.model ?? "default"} review this run's candidates in a separate reviewer session at the opus-class floor`,
+          consequences: "The run continues to review and delivery. The review is from the same provider as the implementer, so it is not independent, and every report says so and why."
+        },
+        {
+          label: REFUSE_SAME_PROVIDER,
+          description: "Do not review with the same provider; wait for an independent reviewer",
+          consequences: "The run stays blocked. Make the independent reviewer usable (orbit doctor shows why it is not) and start a new run, or cancel this one."
+        }
+      ],
+      changes: ["proof"],
+      recommendation: { option: REFUSE_SAME_PROVIDER, reason: "an independent reviewer is the stronger check; allow the same-provider review only when the change does not need one" },
+      safeDefault: { exists: true, option: REFUSE_SAME_PROVIDER, reason: "refusing keeps the run from delivering anything that only its own provider reviewed" },
+      material: true,
+      affected: ["review: same-provider review"],
+      unblocked: []
+    },
+    ctx.clock,
+    "controller"
+  );
+}
+function sameProviderApproval(ctx, sel) {
+  const q = ask2(ctx, sel);
+  if (q.status === "open") return { state: "pending", questionId: q.id };
+  const by = q.answeredBy;
+  if (q.status !== "answered" || (q.answer ?? "").trim().toLowerCase() !== ALLOW_SAME_PROVIDER || !by || !isHumanActor(by)) return { state: "declined", questionId: q.id, by };
+  const decisionId2 = sameProviderApprovalDecisionId(ctx.run.id);
+  if (!getDecision(ctx.db, decisionId2)) {
+    decide2(ctx, {
+      id: decisionId2,
+      kind: SAME_PROVIDER_APPROVED_KIND,
+      summary: `${by} approved a same-provider review for this run (question ${q.id}): ${reviewerLabel(sel)}`,
+      data: { question_id: q.id, approved_by: by, provider: sel.provider, model: sel.model, independent_unavailable: sel.independentUnavailable ?? null }
+    });
+  }
+  return { state: "approved", questionId: q.id, by, decisionId: decisionId2 };
+}
+var ALLOW_SAME_PROVIDER, REFUSE_SAME_PROVIDER;
+var init_review_approval = __esm({
+  "src/controller/steps/review-approval.ts"() {
+    "use strict";
+    init_hash();
+    init_actors();
+    init_store4();
+    init_select();
+    init_decisions();
+    init_common();
+    ALLOW_SAME_PROVIDER = "yes";
+    REFUSE_SAME_PROVIDER = "no";
+  }
+});
+
 // src/controller/steps/reviewing.ts
 import { existsSync as existsSync40, readdirSync as readdirSync10, readFileSync as readFileSync27 } from "node:fs";
 import { join as join53 } from "node:path";
@@ -55181,10 +55403,26 @@ async function reviewingStep(ctx) {
   const sel = await reviewerSelection(ctx, cand);
   if (sel.decision === "BLOCK") {
     if (sel.code === "AUTH_EXPIRED" || sel.code === "AUTH_MISSING") {
-      const provider = sel.alternatives.find((a) => /credentials/.test(a.reason))?.provider ?? ctx.snapshot.config.review.preferred_provider;
+      const provider = sel.alternatives.find((a) => /credentials/.test(a.reason))?.provider ?? preferredReviewProvider(ctx.snapshot.config.review) ?? IMPLEMENTER_PROVIDER;
       return blockOnAuth(ctx, provider, sel.code === "AUTH_MISSING" ? "missing" : "expired", sel.reason);
     }
     return finishRun(ctx, "BLOCKED", `independent review unavailable: ${sel.reason}`, { outcome: { reviewer: sel } });
+  }
+  if (sel.needsApproval === true) {
+    const approval = sameProviderApproval(ctx, sel);
+    if (approval.state === "pending") {
+      return finishRun(
+        ctx,
+        "BLOCKED",
+        `no independent reviewer is usable; review.when_unavailable is ask, so question ${approval.questionId} asks whether ${sel.provider} may review this run's candidate in a separate session (not independently). Answer with orbit decide ${ctx.run.id} ${approval.questionId} yes (or no), then orbit resume ${ctx.run.id}`,
+        { outcome: { reviewer: sel, questions: [approval.questionId] } }
+      );
+    }
+    if (approval.state === "declined") {
+      return finishRun(ctx, "BLOCKED", `${approval.by ?? "nobody"} declined a same-provider review (question ${approval.questionId}) and no independent reviewer is usable; make one usable (orbit doctor shows why it is not), then start a new run`, {
+        outcome: { reviewer: sel, questions: [approval.questionId] }
+      });
+    }
   }
   if (focuses.length > 1) return parallelReview(ctx, cand, sel, focuses);
   const round5 = listReviews(ctx.db, ctx.run.id, { includeInvalidated: true }).length + 1;
@@ -55689,7 +55927,7 @@ async function reviewerSelection(ctx, cand) {
   const prior = getDecision(ctx.db, id);
   if (prior && prior.data.decision === "SELECT") return prior.data;
   const env = await checkEnvironment(ctx);
-  const sel = env.reviewer ?? fallbackSelection(ctx, env);
+  const sel = fallbackSelection(ctx, env);
   const rec = selectionDecisionRecord(sel);
   if (sel.decision === "SELECT") decide2(ctx, { id, kind: rec.kind, summary: rec.summary, data: rec.data });
   else decide2(ctx, { kind: rec.kind, summary: rec.summary, data: rec.data });
@@ -55780,6 +56018,8 @@ var init_reviewing = __esm({
     init_budget2();
     init_diagnosing();
     init_select();
+    init_review();
+    init_review_approval();
     init_store3();
     init_store4();
     init_context2();
@@ -58938,7 +59178,8 @@ async function checkProviders(p, iso2, registry) {
   facts.adapters = adapters;
   const ids = Object.keys(adapters);
   const required = /* @__PURE__ */ new Set(["claude"]);
-  if (config.review.independent_provider_required) required.add(config.review.preferred_provider);
+  const mandatoryReviewer = mandatoryReviewProvider(config.review, "claude");
+  if (mandatoryReviewer !== null) required.add(mandatoryReviewer);
   const caps = await Promise.all(
     ids.map(async (id) => {
       try {
@@ -58989,25 +59230,35 @@ async function checkProviders(p, iso2, registry) {
       if (plugins) checks.push(plugins);
     } else checks.push(codexTierCheck(id, config.providers[id].tier ?? "auto", codexEnvCredential(ctx.env), iso2.available && iso2.provider?.kind === "sandbox-runtime", level));
   }
-  if (config.review.independent_provider_required || ids.some((i) => i !== "claude")) {
-    const sel = selectReviewer({ snapshot: { config }, capabilities: facts.capabilities, credentials: facts.credentials, implementer: { provider: "claude", model: null }, registry });
-    if (sel.decision === "SELECT") checks.push(pass("review", "providers", `independent review: ${sel.provider}/${sel.model ?? "default"} (${sel.independent ? "independent" : "same provider"})`, sel.alternatives.map((a) => `not used: ${a.provider}: ${flat(a.reason)}`)));
-    else {
-      const mandatory = config.review.independent_provider_required;
-      const unmet = allReviewPrerequisites(sel.alternatives, (fixed, assumed) => {
-        const hypothetical = structuredClone(config);
-        const creds2 = { ...facts.credentials };
-        for (const id of fixed) {
-          if (assumed.dataPolicy && hypothetical.providers[id]) hypothetical.providers[id].data_policy_eligible = true;
-          if (assumed.login && facts.capabilities[id]?.available) creds2[id] = { state: "valid", method: null, detail: "assumed once logged in" };
-        }
-        return selectReviewer({ snapshot: { config: hypothetical }, capabilities: facts.capabilities, credentials: creds2, implementer: { provider: "claude", model: null }, registry }).alternatives;
-      });
-      const c = (mandatory ? fail2 : warn2)("review", "providers", `independent review would block: ${flat(sel.reason)}`, "a usable, data-policy-eligible reviewer from another provider", reviewFix(unmet), unmet.map((a) => `${a.provider}: ${flat(a.reason)}`));
-      checks.push(c);
-    }
-  }
+  checks.push(reviewCheck(config, facts, registry));
   return { checks, facts };
+}
+function reviewCheck(config, facts, registry) {
+  const fallback = reviewFallback(config.review);
+  const policyLine = describeReviewPolicy(config.review);
+  const select = (cfg, credentials) => selectReviewer({ snapshot: { config: cfg }, capabilities: facts.capabilities, credentials, implementer: { provider: "claude", model: null }, registry });
+  const sel = select(config, facts.credentials);
+  const missing = "a usable, data-policy-eligible reviewer from another provider";
+  const unmetPrerequisites = () => allReviewPrerequisites(sel.alternatives, (fixed, assumed) => {
+    const hypothetical = structuredClone(config);
+    const credentials = { ...facts.credentials };
+    for (const id of fixed) {
+      if (assumed.dataPolicy && hypothetical.providers[id]) hypothetical.providers[id].data_policy_eligible = true;
+      if (assumed.login && facts.capabilities[id]?.available) credentials[id] = { state: "valid", method: null, detail: "assumed once logged in" };
+    }
+    return select(hypothetical, credentials).alternatives;
+  });
+  if (sel.decision === "BLOCK") {
+    const unmet2 = unmetPrerequisites();
+    return (fallback === "block" ? fail2 : warn2)("review", "providers", `independent review would block: ${flat(sel.reason)}`, missing, reviewFix(unmet2), [policyLine, ...unmet2.map((a) => `${a.provider}: ${flat(a.reason)}`)]);
+  }
+  if (sel.independent) return pass("review", "providers", `independent review: ${sel.provider}/${sel.model ?? "default"} (independent)`, [policyLine, ...sel.alternatives.map((a) => `not used: ${a.provider}: ${flat(a.reason)}`)]);
+  const unmet = unmetPrerequisites();
+  const details = [policyLine, ...unmet.map((a) => `not used: ${a.provider}: ${flat(a.reason)}`)];
+  const who = `${sel.provider}/${sel.model ?? "default"}`;
+  const why = flat((sel.independentUnavailable ?? "no independent reviewer was usable").replace(/^no independent reviewer was usable: /, ""));
+  const summary = sel.needsApproval === true ? `same-provider review needs a person's yes: no independent reviewer is usable (${why}); a run asks a person before ${who} reviews in a separate session (review.when_unavailable: ask)` : `same-provider review: no independent reviewer is usable (${why}); ${who} reviews in a separate session at the opus-class floor, and reports say the review was not independent (review.when_unavailable: ${fallback})`;
+  return warn2("review", "providers", summary, missing, `${reviewFix(unmet)}; or set review.when_unavailable to ask or block to change what happens`, details);
 }
 function codexTierCheck(id, setting, apiKeyVar, srtInUse, level) {
   const check = `${id}.worker-tier`;
@@ -59425,6 +59676,7 @@ var init_doctor = __esm({
     init_single_sandbox();
     init_registry();
     init_select();
+    init_review();
     init_recovery();
     init_github();
     init_publication();
@@ -59846,12 +60098,17 @@ agents:
   allow_managed_plugins: false
 
 review:
-  # Review by a provider other than the one that wrote the change.
-  independent_provider_required: true
-  preferred_provider: codex
-  # Must stay false while independent_provider_required is true: an
-  # independent review cannot fall back to the same provider.
-  fallback_same_provider_allowed: false
+  # Independent reviewers (a provider other than the one that wrote the
+  # change), in preference order. The first that is installed, logged in,
+  # data_policy_eligible and has a qualified model reviews. Supported: codex.
+  providers: [codex]
+  # When none of them is usable:
+  #   claude  Claude reviews in a separate session at the safety-review
+  #           quality floor; every report says the review was not
+  #           independent and why.
+  #   ask     the run asks a person first and continues only on a yes.
+  #   block   the run blocks until an independent reviewer is usable.
+  when_unavailable: claude
   block_unresolved_high_impact_findings: true
 
 # Secret-scan and SAST findings (static security gate). Findings at a listed
@@ -60210,7 +60467,7 @@ async function initCommand(args, ctx) {
   }
   const models = await seedModels(ctx, repo);
   if (args.bool("json")) {
-    json(ctx.io, { repo, config: { path: configPath, status: config, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, config_problems: problems, warnings, models });
+    json(ctx.io, { repo, review_policy: config === "created" ? REVIEW_POLICY_PROPOSAL : null, config: { path: configPath, status: config, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === "created" ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
@@ -60226,10 +60483,11 @@ async function initCommand(args, ctx) {
   } else line(ctx.io, "The configuration validates.");
   for (const m of models) line(ctx.io, m);
   for (const w of warnings) line(ctx.io, `WARN: ${w}`);
+  if (config === "created") line(ctx.io, REVIEW_POLICY_PROPOSAL);
   line(ctx.io, `Next: define your checks in .orbit/config.yaml, then run ${orbitHint("doctor")}.`);
   return EXIT.OK;
 }
-var EXCLUDE_RULES, EXCLUDE_HEADER;
+var REVIEW_POLICY_PROPOSAL, EXCLUDE_RULES, EXCLUDE_HEADER;
 var init_init = __esm({
   "src/cli/commands/init.ts"() {
     "use strict";
@@ -60249,6 +60507,7 @@ var init_init = __esm({
     init_layout();
     init_globs();
     init_invocation();
+    REVIEW_POLICY_PROPOSAL = "review: Codex reviews independently when it is usable (review.providers: [codex]); when it is not, Claude reviews in a separate session and every report says the review was not independent and why (review.when_unavailable: claude). Set review.when_unavailable to ask to be asked first, or to block to require an independent reviewer.";
     EXCLUDE_RULES = ["/.orbit/state.sqlite*", "/.orbit/knowledge.sqlite*", "/.orbit/runs/"];
     EXCLUDE_HEADER = '# Orbit runtime state (added by "orbit init")';
   }
@@ -60949,7 +61208,7 @@ async function policyShowCommand(args, ctx) {
     line(ctx.io, `isolation:   ${c.isolation.provider}${c.isolation.allow_unisolated ? " (unisolated runs allowed)" : ""}`);
     line(ctx.io, `models:      ${c.routing.allowed_models.join(", ") || "none"}`);
     line(ctx.io, `providers:   ${Object.entries(c.providers).map(([k, v]) => `${k}${v.data_policy_eligible ? "" : " (not data-policy eligible)"}`).join(", ")}`);
-    line(ctx.io, `review:      independent provider ${c.review.independent_provider_required ? "required" : "not required"}, preferred ${c.review.preferred_provider}`);
+    line(ctx.io, `review:      ${describeReviewPolicy(c.review)}`);
     line(ctx.io, `delivery:    ${c.delivery.provider}, pull request ${c.delivery.pull_request}, up to ${c.delivery.max_ci_repair_cycles} CI repair cycle(s)`);
     line(ctx.io, `checks:      ${Object.values(c.checks).map((k) => `${k.id}${k.mandatory ? "" : " (optional)"}`).join(", ") || "none defined"}`);
     const h = c.scheduler.hard_limits;
@@ -60968,6 +61227,7 @@ var init_policy2 = __esm({
     init_errors();
     init_redact();
     init_snapshot();
+    init_review();
     init_inquisition2();
     init_context();
     init_exit();
@@ -61230,17 +61490,15 @@ async function environmentProblems(ctx, input) {
       }
     }
     const required = /* @__PURE__ */ new Set([IMPLEMENTER_PROVIDER]);
-    if (config.review.independent_provider_required && config.review.preferred_provider !== IMPLEMENTER_PROVIDER) required.add(config.review.preferred_provider);
+    const mandatory = mandatoryReviewProvider(config.review, IMPLEMENTER_PROVIDER);
+    if (mandatory !== null) required.add(mandatory);
     const all = await validateCredentials({ adapters: deps.adapters, providers: [.../* @__PURE__ */ new Set([...required, ...Object.keys(deps.adapters)])] });
     const credentialsById = {};
     for (const c of all) credentialsById[c.provider] = c.status ?? void 0;
-    let reviewer = null;
-    if (config.review.independent_provider_required) {
-      reviewer = selectReviewer({ snapshot: snapshot2, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: deps.registry });
-      if (reviewer.decision === "SELECT") {
-        required.delete(config.review.preferred_provider);
-        required.add(reviewer.provider);
-      }
+    const reviewer = selectReviewer({ snapshot: snapshot2, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: deps.registry });
+    if (mandatory !== null && reviewer.decision === "SELECT") {
+      required.delete(mandatory);
+      required.add(reviewer.provider);
     }
     const gate = environmentGate({ snapshot: snapshot2, mode: config.mode, isolation, credentials: all.filter((c) => required.has(c.provider)), reviewer });
     if (gate.passed) return null;

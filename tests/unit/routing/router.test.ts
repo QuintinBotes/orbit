@@ -439,7 +439,8 @@ describe('safety review routing', () => {
     p.routing.overrides = { 'safety-review': 'haiku' };
     const d = route({ workKind: 'safety-review', signals: signals(), registry, policy: p });
     expect(d.model).toBe(OPUS);
-    expect(d.reason).toMatch(/policy allows same-provider review at the opus-class floor/);
+    // Decision 0007: the legacy pair reads as review.when_unavailable: claude, and the reason says the review is not independent.
+    expect(d.reason).toMatch(/review\.when_unavailable is claude, so a same-provider review at the opus-class floor in a separate session \(not independent/);
     expect(d.justification.ignored.join(' ')).toMatch(/routing.overrides.safety-review=haiku is not a qualified reviewer/);
     expect(d.alternatives_considered.find((a) => a.model === SONNET)?.rejected_because).toMatch(/below the safety review quality floor/);
     // No Opus-class model eligible: block, never drop to Sonnet.

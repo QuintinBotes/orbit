@@ -180,6 +180,15 @@ State these plainly to yourself before running unattended.
   A goal with no meaningful checks produces a report that says so.
 - **A reviewer model can be wrong.** Independent review by another provider
   lowers correlated error; it does not remove it.
+- **Review is not always independent.** By default
+  (`review.when_unavailable: claude`, [ADR 0007](decisions/0007-reviewer-availability.md)),
+  when no independent reviewer is usable Claude reviews its own provider's
+  change in a separate session at the opus-class floor. That review shares the
+  implementer's blind spots. It is never presented as independent: the report,
+  the decision record and `orbit doctor` say it was a same-provider review and
+  why the independent reviewer was unavailable. Set `when_unavailable: ask` to
+  approve each such run yourself, or `block` when independence must be
+  guaranteed.
 - **Data leaves the machine.** Running Orbit sends code and diffs to Claude, and
   to Codex when `providers.codex.data_policy_eligible` is true. Decide that per repository.
 - **Fable models** are excluded by default because headless Claude Code bills

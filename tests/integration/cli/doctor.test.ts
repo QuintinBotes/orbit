@@ -24,6 +24,9 @@ interface Report {
   checks: Check[];
 }
 
+/** review.when_unavailable: block, the default before decision 0007 (#6, #8): Codex is then needed and judged as such. */
+const BLOCK_CONFIG = TEST_CONFIG.replace('knowledge:', 'review:\n  when_unavailable: block\nknowledge:');
+
 const boxes: Sandbox[] = [];
 function box(opts: Parameters<typeof makeSandbox>[0] = {}): Sandbox {
   const b = makeSandbox(opts);
@@ -83,7 +86,7 @@ describe('orbit doctor with working provider CLIs', () => {
   });
 
   it('prints each failure with the exact missing capability and the fix, as text', async () => {
-    const b = box({ fakes: { codex: false } });
+    const b = box({ config: BLOCK_CONFIG, fakes: { codex: false } });
     const r = await b.run(['doctor']);
     expect(r.code).toBe(1);
     expect(r.stdout).toMatch(/^PASS {2}claude\.cli /m);
@@ -112,7 +115,7 @@ describe('orbit doctor with missing or broken capabilities', () => {
     // Both fakes read their login state from a scenario file named in their wrapper's environment.
     const scenario = join(makeScratch(), 'scenario.json');
     writeFileSync(scenario, JSON.stringify({ auth: { loggedIn: false, authMethod: 'none', method: 'chatgpt', valid: false } }));
-    const lo = box({ fakes: { claude: { ORBIT_FAKE_SCENARIO: scenario }, codex: { ORBIT_FAKE_SCENARIO: scenario } } });
+    const lo = box({ config: BLOCK_CONFIG, fakes: { claude: { ORBIT_FAKE_SCENARIO: scenario }, codex: { ORBIT_FAKE_SCENARIO: scenario } } });
     const { code, report } = await doctor(lo);
     expect(code).toBe(1);
     const claude = byId(report, 'claude.auth');

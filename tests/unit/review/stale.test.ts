@@ -203,9 +203,15 @@ describe('reviewGate', () => {
   it('requires an independent review when policy says so', () => {
     const { db, clock } = dbFixture();
     recordReview(db, mk({ provider: 'claude' }), clock);
-    const res = gate(db, TREE_A, 'claude');
+    // review.when_unavailable: block, the default before decision 0007 (#6, #8) made it claude.
+    const res = reviewGate(db, { runId: 'run-1', treeHash: TREE_A, snapshot: snapshotOf((c) => void (c.review.when_unavailable = 'block')), implementerProvider: 'claude', now: 0 });
     expect(res.ok).toBe(false);
     expect(res.reasons[0]).toContain('independent review is required but every clearing review is from "claude"');
+    // ask: a same-provider review clears only after a person's recorded yes.
+    const asked = reviewGate(db, { runId: 'run-1', treeHash: TREE_A, snapshot: snapshotOf((c) => void (c.review.when_unavailable = 'ask')), implementerProvider: 'claude', now: 0 });
+    expect(asked.ok).toBe(false);
+    expect(asked.reasons.join(' ')).toContain('no person approved a same-provider review (review.when_unavailable: ask)');
+    expect(gate(db, TREE_A, 'claude').ok).toBe(true);
     expect(reviewGate(db, { runId: 'run-1', treeHash: TREE_A, snapshot: snapshotOf((c) => { c.review.independent_provider_required = false; }), implementerProvider: 'claude', now: 0 }).ok).toBe(true);
   });
 

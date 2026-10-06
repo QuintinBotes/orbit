@@ -155,7 +155,9 @@ describe('environmentGate: remaining branches', () => {
   it('records the selected reviewer, independent or not, with its model or the default', () => {
     const base = { snapshot: snap(), mode: 'autonomous' as const, isolation: ok, credentials: [] };
     const same = environmentGate({ ...base, reviewer: { decision: 'USE', provider: 'claude', model: null, independent: false } as never });
-    expect(same.evidence).toContain('reviewer claude/default (same provider)');
+    // Decision 0007: a same-provider reviewer never reads as independent, and the gate notes it for the report.
+    expect(same.evidence).toContain('reviewer claude/default (same provider, not independent: no independent reviewer was usable)');
+    expect(same.notes.join(' ')).toMatch(/same-provider review: .*so the review is not independent/);
     const other = environmentGate({ ...base, reviewer: { decision: 'USE', provider: 'codex', model: 'gpt-x', independent: true } as never });
     expect(other.evidence).toContain('reviewer codex/gpt-x (independent)');
     const blocked = environmentGate({ ...base, reviewer: { decision: 'BLOCK', code: 'PROVIDER_UNAVAILABLE', reason: 'none', alternatives: [] } as never, credentials: [cred('x', 'error', { error: 'e' })] });

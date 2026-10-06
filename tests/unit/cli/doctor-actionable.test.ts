@@ -99,7 +99,8 @@ const byId = (r: DoctorReport): Record<string, DoctorCheck> => Object.fromEntrie
 describe('P6: the review fix matches the reason', () => {
   it('with codex eligible but no model qualified, the fix is to refresh the catalog or name a model', async () => {
     const w = world();
-    const c = byId(await report(w, cfg()));
+    // review.when_unavailable: block, the default before decision 0007 (#6, #8); with claude it is a warning.
+    const c = byId(await report(w, cfg((x) => (x.review.when_unavailable = 'block'))));
     expect(c.review).toMatchObject({ status: 'fail' });
     expect(c.review!.summary).toMatch(/"codex" has no model qualified for review/);
     expect(c.review!.fix).toContain('orbit models refresh');
@@ -117,8 +118,20 @@ describe('P6: the review fix matches the reason', () => {
 
   it('issue 7: with codex not eligible AND no model qualified, both prerequisites and both fixes are listed at once', async () => {
     const w = world();
-    const c = byId(await report(w, cfg((x) => (x.providers.codex!.data_policy_eligible = false))));
+    // review.when_unavailable: block, the default before decision 0007 (#6, #8); the warning case is pinned below.
+    const c = byId(await report(w, cfg((x) => { x.providers.codex!.data_policy_eligible = false; x.review.when_unavailable = 'block'; })));
     expect(c.review).toMatchObject({ status: 'fail' });
+    expect(c.review!.fix).toContain('providers.codex.data_policy_eligible: true');
+    expect(c.review!.fix).toContain('orbit models refresh');
+    const lines = c.review!.details.join('\n');
+    expect(lines).toMatch(/data_policy_eligible is not true/);
+    expect(lines).toMatch(/no model of "codex" is qualified for review/);
+  });
+
+  it('issue 7 under the default fallback (claude): a warning that still lists both prerequisites and both fixes', async () => {
+    const w = world();
+    const c = byId(await report(w, cfg((x) => (x.providers.codex!.data_policy_eligible = false))));
+    expect(c.review).toMatchObject({ status: 'warn' });
     expect(c.review!.fix).toContain('providers.codex.data_policy_eligible: true');
     expect(c.review!.fix).toContain('orbit models refresh');
     const lines = c.review!.details.join('\n');
@@ -165,7 +178,11 @@ describe('P8: actionable text is shown in full', () => {
     const w = world();
     const io = memoryIo();
     hooks.adapters = () => ({ claude: adapter('claude'), codex: adapter('codex') });
-    hooks.config = () => cfg((x) => (x.providers.codex!.data_policy_eligible = false));
+    hooks.config = () => cfg((x) => {
+      x.providers.codex!.data_policy_eligible = false;
+      // The block wording, which was the default before decision 0007 (#6, #8).
+      x.review.when_unavailable = 'block';
+    });
     await doctorCommand(parseCommand([], undefined, 'orbit doctor'), w.ctx(io));
     const text = io.stdout;
     expect(text).toContain('verification is incomplete until an independent provider is available.');

@@ -23,6 +23,19 @@ export {
   type ConfigOptions,
   type RunMode,
 } from './config.ts';
+export {
+  DEFAULT_REVIEW_FALLBACK,
+  REVIEW_FALLBACKS,
+  SUPPORTED_REVIEW_PROVIDERS,
+  describeReviewPolicy,
+  isSupportedReviewProvider,
+  legacyReviewFallback,
+  preferredReviewProvider,
+  reviewFallback,
+  reviewProviderOrder,
+  type ReviewAvailabilitySettings,
+  type ReviewFallback,
+} from './review.ts';
 export { POLICY_FILE, checkConfigHash, snapshotHash, snapshotPolicy, verifySnapshot, type SnapshotInput, type SnapshotResult } from './snapshot.ts';
 export { canonicalize, isCaseInsensitiveFs, resolveDetailed, resolveInside, type Resolution } from './paths.ts';
 export { authorize, type AuthorizeContext } from './authorize.ts';

@@ -296,15 +296,41 @@ agents:
   allow_managed_plugins: false          # accept every organisation-managed plugin
 
 review:
-  independent_provider_required: true
-  preferred_provider: codex
-  fallback_same_provider_allowed: false   # must stay false while the line above is true
+  providers: [codex]          # independent reviewers, in preference order
+  when_unavailable: claude    # claude | ask | block
   block_unresolved_high_impact_findings: true
 ```
 
-If the reviewer provider is unavailable or not `data_policy_eligible`, a run
-that requires independent review stops as `BLOCKED` instead of reviewing with the
-implementer's provider.
+`review.providers` lists the independent reviewers (a provider other than the
+one that wrote the change) in preference order. The first that is installed,
+logged in, `data_policy_eligible` and has a qualified model reviews. Only
+providers Orbit has an adapter for can be listed: today that is `codex` (or a
+second Codex configuration such as `codex-review` defined under `providers`).
+Any other id, such as `gemini`, is a configuration error that names the
+supported ones. Each listed id must be defined under `providers`.
+
+`review.when_unavailable` decides what happens when none of them is usable at
+run time ([ADR 0007](decisions/0007-reviewer-availability.md)):
+
+| Value | What happens |
+|---|---|
+| `claude` (default) | Claude reviews in a separate reviewer session at the safety-review quality floor (opus-class or above, never routed down). A different tier than the implementer's is preferred when one is allowed. |
+| `ask` | The run blocks on a material question ("no independent reviewer is usable: allow a same-provider review for this run?"). Only a person's `yes` (`orbit decide <run> <question> yes`, then `orbit resume <run>`) lets the Claude review run; `no` keeps the run blocked. |
+| `block` | The run blocks until an independent reviewer is usable. |
+
+Every report, the `review.select` decision, the environment gate and
+`orbit doctor` state which reviewer was used. A same-provider review is never
+presented as independent: the final report's `Reviewer:` line and its residual
+risks say it was not independent and why the independent reviewer was
+unavailable, and who approved it under `ask`. `orbit doctor` warns for `claude`
+and `ask` when no independent reviewer is usable, and fails for `block`.
+
+The keys this replaced still work and map onto `when_unavailable`:
+`independent_provider_required: true` without
+`fallback_same_provider_allowed: true` is `block`; any other combination is
+`claude`. Setting a legacy key next to a `when_unavailable` that says otherwise
+is a configuration error, and so is the legacy pair that contradicts itself. A
+legacy `preferred_provider` becomes the preference list.
 
 ### Plugins in worker sessions
 
