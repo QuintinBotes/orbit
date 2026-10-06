@@ -585,8 +585,9 @@ Consequences.
   packages itself. Checks after the install build with `--no-restore`, which
   needs no network on any SDK measured.
 - Every check, dependency install, worker and doctor probe that runs .NET
-  under `srt` on macOS can read one more sysctl, and its evidence record says
-  so (the limitation names the rule).
+  under `srt` on macOS can read one more sysctl; a check's evidence record (the
+  dependency install's included) says so, in the limitation that names the
+  rule.
 - A `dotnet format` check under `srt` is `dotnet format whitespace --folder
   --verify-no-changes`, or, with SDK 8 pinned by `global.json`, any form whose
   restore is pinned; otherwise doctor fails it (mandatory) or warns

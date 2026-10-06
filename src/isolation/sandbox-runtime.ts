@@ -215,7 +215,10 @@ export const CHROMIUM_MACH_RENDEZVOUS_LIMITATION =
   "Chromium's temp files (a download is written there first) go to the check's private temp directory through MAC_CHROMIUM_TMPDIR, an environment variable set only when that directory is already writable: no rule, path or host is added for it. " +
   "Only Playwright's bundled Chromium is supported under srt on macOS; Google Chrome, Firefox and WebKit are not.";
 
-/** The isolation adjustment recorded with the evidence when a .NET process ran with the NIS domain name rule. */
+/**
+ * The isolation adjustment a wrap reports when a .NET process runs with the NIS domain name rule. A check's evidence
+ * record keeps the wrap's limitations, not its adjustments, so there the rule is stated by NIS_DOMAINNAME_LIMITATION.
+ */
 export const NIS_DOMAINNAME_READ = 'nis-domainname-read';
 
 /**

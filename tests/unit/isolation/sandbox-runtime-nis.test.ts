@@ -56,7 +56,7 @@ function wrap(h: ReturnType<typeof host>, over: Partial<SandboxProfile>, platfor
 }
 
 describe('wrap with nisDomainName on macOS', () => {
-  it('runs srt\'s real CLI under node with the preload\'s nis-domainname set, records the adjustment and states the rule', () => {
+  it('runs srt\'s real CLI under node with the preload\'s nis-domainname set, reports the adjustment and states the rule', () => {
     const h = host();
     const w = wrap(h, { nisDomainName: true });
     expect(w.argv.slice(0, 5)).toEqual([h.node, '--import', `${pathToFileURL(h.preload).href}?rules=nis-domainname`, h.cli, '--settings']);

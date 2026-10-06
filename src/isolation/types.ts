@@ -47,7 +47,10 @@ export interface WrappedCommand {
   cleanup(): void;
   /** What this wrapping does not enforce, for the evidence record and `orbit doctor`. */
   limitations: string[];
-  /** Changes this wrapping made to the provider's usual confinement (`chromium-mach-rendezvous`, `nis-domainname-read`); recorded with the evidence. */
+  /**
+   * Changes this wrapping made to the provider's usual confinement (`chromium-mach-rendezvous`, `nis-domainname-read`).
+   * A UI run records them with its evidence; a check's record keeps the limitations, which state each change too.
+   */
   adjustments?: string[];
   /**
    * With an adjustment the srt preload makes: why the preload refused to start the sandbox, as it recorded it

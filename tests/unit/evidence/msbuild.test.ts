@@ -33,7 +33,7 @@ function report(dir: string, name: string, text: string): void {
 describe('findMsbuildNodeDenial', () => {
   it('finds the crash report of a node the sandbox refused its pipe, and names the pipe and the error', () => {
     const d = tmp();
-    report(d, 'MSBuild_pid-4242_9a2a6b744ce84a9aa91af43500684ef1.failure.txt', FAILURE);
+    report(d, 'MSBuild_pid-4242_0123456789abcdef0123456789abcdef.failure.txt', FAILURE);
     const found = findMsbuildNodeDenial(d);
     expect(found).toEqual({ pid: 4242, pipe: '/tmp/MSBuild4242', exception: 'System.Net.Sockets.SocketException (13): Permission denied' });
     expect(msbuildNodeDenialText(found!)).toBe('MSBuild node (pid 4242) could not bind its named pipe /tmp/MSBuild4242 (System.Net.Sockets.SocketException (13): Permission denied)');

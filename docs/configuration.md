@@ -517,13 +517,13 @@ repository (a denial outside its checkout, EACCES included; a socket refused in
 the tool's own startup; a .NET named pipe refused under `/tmp`, an MSBuild
 worker node's or `dotnet format`'s build host's; a connection the sandbox's
 proxy refused; a program not installed where it runs, exit 127) both end the
-run `BLOCKED` at PREFLIGHT with the first error line. A check whose command names something that does not exist
-yet (a missing target: no project, `npm error Missing script`, a missing test
-file) is expected to flip when the contract names it, and blocks at CONTRACTING
-as misconfigured, with advice of its own, when it does not (a goal meant to
-create the target says so in a new run; a target a tool provides that is not
-installed or restored yet needs a new run once it is). None of them is ever accepted
-as a baseline exception. Only the check's own direct invocation of the tool
+run `BLOCKED` at PREFLIGHT with the first error line. A check whose command
+names something that does not exist yet (a missing target: no project, `npm
+error Missing script`, a missing test file) is expected to flip when the
+contract names it, and blocks at CONTRACTING as misconfigured, with advice of
+its own, when it does not (a goal meant to create the target says so in a new
+run; a target a tool provides that is not installed or restored yet needs a new
+run once it is). None of them is ever accepted as a baseline exception. Only the check's own direct invocation of the tool
 counts: a `command` that is a shell chain or pipeline, or that runs a script of
 the repository which then fails this way, is read as a failure of the code. The
 reason of a misconfigured check blocked at PREFLIGHT names `checks.<id>.command`:

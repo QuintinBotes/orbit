@@ -320,14 +320,13 @@ check's base-revision result had the same classification with the same signal
 the change brought the denial (a test that opens a file it may not read, a
 package from a host the check may not reach, a second project under a check
 without `-m:1`) and it goes to repair. `pipe-denied` is gated although the
-runner writes the note it reads (ADR 0009, addendum, item 3). In practice a run that reaches VERIFYING has no
-such base-revision result: PREFLIGHT blocks on any environment failure, and a
-resumed baseline that passes records none. So on a candidate these signals
-always go to repair today; the gate is what keeps that so if a later decision
-lets a run go on past a base-revision environment failure. The denials that
-predate this decision (EPERM,
-EROFS, a Seatbelt deny line, a crash before any output) keep their earlier
-rule.
+runner writes the note it reads (ADR 0009, addendum, item 3). In practice a
+run that reaches VERIFYING has no such base-revision result: PREFLIGHT blocks
+on any environment failure, and a resumed baseline that passes records none.
+So on a candidate these signals always go to repair today; the gate is what
+keeps that so if a later decision lets a run go on past a base-revision
+environment failure. The denials that predate this decision (EPERM, EROFS, a
+Seatbelt deny line, a crash before any output) keep their earlier rule.
 
 ### Never an exception
 

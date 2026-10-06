@@ -275,7 +275,7 @@ describe('checkSandboxCheck: the .NET build probe (issue #10)', () => {
     const one = argv.some((a) => /^(?:--?|\/)(?:m|maxcpucount):1$/i.test(a)) || opts.env.DOTNET_PROCESSOR_COUNT === '1';
     if (one && !many) return { exitCode: 0, output: 'Build succeeded.' };
     mkdirSync(join(opts.env.TMPDIR!, 'MSBuildTempacme'), { recursive: true });
-    writeFileSync(join(opts.env.TMPDIR!, 'MSBuildTempacme', 'MSBuild_pid-4242_9a2a6b74.failure.txt'), MSBUILD_FAILURE);
+    writeFileSync(join(opts.env.TMPDIR!, 'MSBuildTempacme', 'MSBuild_pid-4242_01234567.failure.txt'), MSBUILD_FAILURE);
     return { exitCode: 1, output: '  Determining projects to restore...\n\nBuild FAILED.\n    0 Warning(s)\n    0 Error(s)' };
   }
 

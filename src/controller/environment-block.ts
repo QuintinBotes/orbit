@@ -447,9 +447,10 @@ function isInside(path: string, dir: string): boolean {
  * repository's own and a repair can address it. Needs no baseline: nothing of the repository ran.
  *
  * A command check the sandbox refused something before it compiled or tested anything is listed too (issue #10), but
- * the denials ADR 0010 added (EACCES, a socket, the network proxy, NuGet's HTTP client) only when the same check showed
- * the same one on the base revision: otherwise the change brought it (a test that opens a file it may not read, a
- * package from a host the check may not reach), and it goes to repair.
+ * the denials ADR 0010 added (EACCES, a socket, the network proxy, NuGet's HTTP client) and a .NET named pipe (ADR 0009,
+ * addendum) only when the same check showed the same one on the base revision: otherwise the change brought it (a test
+ * that opens a file it may not read, a package from a host the check may not reach, a second project under a check
+ * without -m:1), and it goes to repair.
  */
 export function checksNotExecutedFor(ctx: RunContext, cand: CandidateRecord, report: EvidenceReport): BlockedCheck[] {
   const out: BlockedCheck[] = [];
