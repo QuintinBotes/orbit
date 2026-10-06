@@ -11,6 +11,7 @@
 - A check the environment stopped on the base revision (a sandbox denial on a filesystem call outside its checkout, or a crash before any output) now blocks the run at PREFLIGHT with the first error line and a fix, and is never offered as a baseline exception; the same refusal on a candidate blocks without a repair, and a compile error or failing test in the output keeps the normal path (#10).
 - Checks get the .NET SDK's first-run settings (NuGet migrations marked done in the private home, `DOTNET_CLI_HOME`, telemetry, logo, certificate, tools path and workload check off), so `dotnet build` runs under `srt` instead of dying with EPERM on `/tmp/.dotnet` (#10).
 - `orbit doctor` (`checks.sandbox`) starts each check's executable in its sandbox with a harmless argument and reports a sandbox denial before any run (#10).
+- Linux: `dotnet build` checks run under `srt` with the .NET 9 and 10 SDKs. Checks set `EnableSourceControlManagerQueries=false`, so the build no longer reads git metadata that `srt` makes unopenable on Linux (an absent `.gitmodules`); and a write the sandbox refuses outside the checkout is recognised in its Linux form (EROFS, "Read-only file system") as well as macOS's EPERM, so `orbit doctor` and the baseline report it there too.
 - doctor lists every unmet reviewer prerequisite at once (login, data policy attestation, no qualified model), each with its own fix, and orbit init seeds the model registry and reads the Codex catalog so a fresh setup does not hit the second failure (#7).
 
 ## 0.1.0 (2026-10-06)

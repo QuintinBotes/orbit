@@ -36302,7 +36302,8 @@ var init_runner = __esm({
       DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1",
       DOTNET_GENERATE_ASPNET_CERTIFICATE: "false",
       DOTNET_ADD_GLOBAL_TOOLS_TO_PATH: "false",
-      DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK: "1"
+      DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK: "1",
+      EnableSourceControlManagerQueries: "false"
     };
     NUGET_MIGRATIONS_DIR = join24(".local", "share", "NuGet", "Migrations");
     NUGET_LATEST_MIGRATION = "1";
@@ -44284,7 +44285,7 @@ var init_environment_failure = __esm({
     EPERM = /\bEPERM\b/;
     NOT_PERMITTED = /operation not permitted/i;
     DENIED = /\bEACCES\b|permission denied/i;
-    ABSOLUTE_PATH = /(?<![\w./~<>-])\/[^\s'"`:,;()<>[\]{}|]+/g;
+    ABSOLUTE_PATH = /(?<![\w./~<>-])\/[^\s'"`\u2018\u2019\u201C\u201D:,;()<>[\]{}|]+/g;
     CAUSES = {
       "sandbox-violation": "the sandbox reported a denied operation",
       eperm: "an operation the sandbox does not permit failed with EPERM",
@@ -44293,7 +44294,7 @@ var init_environment_failure = __esm({
       "process-aborted": "the process was killed by a fatal signal before it printed anything of its own",
       "start-failed": "the check could not be started",
       "browser-isolation": "the browser could not start under sandbox-runtime",
-      "filesystem-denied": `the sandbox or the operating system refused a filesystem operation outside the check's checkout (EPERM, "operation not permitted")`
+      "filesystem-denied": `the sandbox or the operating system refused a filesystem operation outside the check's checkout (EPERM, "operation not permitted", or EROFS, "read-only file system")`
     };
     CRASH_SIGNALS = /* @__PURE__ */ new Set(["SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL", "SIGTRAP", "SIGSYS"]);
     TRACE_HEADER = /^-{3,}\s*(Native|JavaScript) stack trace\s*-{3,}$/i;
@@ -44302,7 +44303,7 @@ var init_environment_failure = __esm({
     KILLED_BY_SIGNAL = /^Process killed by signal: (SIG[A-Z0-9]+)$/;
     RUNNER_FOOTER = /^\[orbit\] check=\S+ status=\S+ exit=(\S+)/;
     FS_CALL = /\b(?:mkdir|mkdtemp|mkstemp|open|openat|creat|rename|unlink|rmdir|chmod|chown|lchown|symlink|link|copyfile|clonefile|scandir|opendir|access|stat|lstat|utimes?|truncate|shm_open|sem_open|realpath|readlink|mkfifo|bind|connect|touch|cp|mv|rm|ln|PermissionError|IOException|errno)\b/i;
-    DENIAL = /\bEPERM\b|operation not permitted/i;
+    DENIAL = /\bEPERM\b|operation not permitted|\bEROFS\b|read-only file system/i;
     SEATBELT_DENY = /\bdeny\(\d+\)\s+([a-z][\w-]*)(?:\s+(\S+))?/i;
     CODE_FAILURE = [
       /\berror (?:CS|FS|BC|TS)\d{4}\b/,

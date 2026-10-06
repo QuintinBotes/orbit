@@ -450,6 +450,13 @@ function safeCwd(checkout: string, rel: string): string {
  * may open to one check), the ASP.NET development certificate goes to the login keychain, and the tools path is
  * added to the shell profile. These turn off the parts that are optional; prepareCheckHome records the migrations as
  * done, which they are for a home that holds nothing to migrate. Other tools ignore all of them.
+ *
+ * EnableSourceControlManagerQueries=false (an MSBuild property, which MSBuild also reads from the environment) stops
+ * every build from asking git for the commit, branch and remote that SourceLink embeds. A check's verdict needs none of
+ * them, and on Linux the query cannot run: srt protects the repository files that can make git run code (.gitmodules,
+ * .gitconfig...) by binding an unopenable device over each one the checkout lacks, so reading an absent .gitmodules
+ * fails with EACCES and the build stops at "Error reading git repository information" (.NET SDK 9 and 10). Turning the
+ * query off keeps that protection and every other rule of the sandbox; a check's own env can turn it back on.
  */
 export const DOTNET_CHECK_ENV: Readonly<Record<string, string>> = {
   DOTNET_CLI_TELEMETRY_OPTOUT: '1',
@@ -458,6 +465,7 @@ export const DOTNET_CHECK_ENV: Readonly<Record<string, string>> = {
   DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false',
   DOTNET_ADD_GLOBAL_TOOLS_TO_PATH: 'false',
   DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK: '1',
+  EnableSourceControlManagerQueries: 'false',
 };
 
 /** Where NuGet records the migrations it has run, under the home directory, and the newest one's marker file. */
