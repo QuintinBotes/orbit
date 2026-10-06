@@ -25,8 +25,14 @@ if (argv[0] === 'auth' && argv[1] === 'status') {
   process.exit(auth.loggedIn ? 0 : 1);
 }
 
+if (argv[0] === 'plugin' && argv[1] === 'list' && argv.includes('--json')) {
+  // The verified shape of `claude plugin list --json` (2.1.291): one entry per installed plugin.
+  process.stdout.write(`${JSON.stringify(scenarioPlugins().map((p) => ({ id: p.id, version: p.version ?? '1.0.0', scope: p.scope, enabled: p.enabled !== false, installPath: `/opt/acme/plugins/${p.id.replace('@', '/')}` })), null, 2)}\n`);
+  process.exit(0);
+}
+
 if (!argv.includes('-p') && !argv.includes('--print')) {
-  process.stderr.write('fake-claude: only -p, --version and auth status are supported\n');
+  process.stderr.write('fake-claude: only -p, --version, auth status and plugin list are supported\n');
   process.exit(1);
 }
 if (flagValue(argv, '--output-format') === 'stream-json' && !argv.includes('--verbose')) {
@@ -88,6 +94,7 @@ out({
   mcp_servers: [],
   apiKeySource: env.ANTHROPIC_API_KEY ? 'ANTHROPIC_API_KEY' : 'none',
   claude_code_version: '2.1.288',
+  ...initPlugins(),
   timestamp: ts(),
 });
 
@@ -178,6 +185,34 @@ function resolveModel(m) {
   const aliases = { sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001', fable: 'claude-fable-5-1' };
   if (!m) return 'claude-opus-5-5';
   return aliases[m] ?? m;
+}
+
+/** The scenario's installed plugins: [{ id: "name@marketplace", scope, enabled? }]. */
+function scenarioPlugins() {
+  try {
+    const s = env.ORBIT_FAKE_SCENARIO ? JSON.parse(readFileSync(env.ORBIT_FAKE_SCENARIO, 'utf8')) : {};
+    return Array.isArray(s.plugins) ? s.plugins : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * system/init's plugins, as the real CLI lists them ({name, path, source}, no scope): a built-in, plus every enabled
+ * scenario plugin the session would load. `--setting-sources ""` leaves out user, project and local plugins; managed
+ * ones load whatever the setting sources. Without scenario plugins the key is left out, as before.
+ */
+function initPlugins() {
+  const installed = scenarioPlugins();
+  if (installed.length === 0) return {};
+  const noSources = flagValue(argv, '--setting-sources') === '';
+  const loaded = installed.filter((p) => p.enabled !== false && !(noSources && ['user', 'project', 'local'].includes(p.scope)));
+  return {
+    plugins: [
+      { name: 'cc-plugin-agents-md', path: '/opt/claude/builtin/agents-md', source: 'cc-plugin-agents-md@builtin' },
+      ...loaded.map((p) => ({ name: p.id.split('@')[0], path: `/opt/acme/plugins/${p.id.replace('@', '/')}`, source: p.id })),
+    ],
+  };
 }
 
 function scenarioAuth() {

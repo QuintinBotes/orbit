@@ -47,6 +47,7 @@ import { snapshotHash, verifySnapshot } from '../policy/snapshot.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { assertClaudeSettings, renderClaudeSettings, type ClaudeTier } from './claude-settings.ts';
 import { CLAUDE_AUTH_ERRORS, classifyClaudeTranscript, claudeEvents, claudeUsage, emptyUsage, type ClaudeTaskResult } from './claude-transcript.ts';
+import { STRICT_PLUGIN_POLICY, needsPluginList, parsePluginList, pluginPolicyOf, type InstalledPlugin, type PluginPolicy } from './claude-plugins.ts';
 import { defaultOrbitCommands } from './commands.ts';
 import { buildWorkerEnv, passThrough, claudeEnvCredential } from './env.ts';
 import { outputBudgetFor, outputBudgetInstruction } from './prompt.ts';
@@ -319,7 +320,9 @@ export class ClaudeAdapter implements ProviderAdapter {
       stdinPath: join(workerDir, PROMPT_FILE),
       abortOn: CLAUDE_ABORT_PATTERNS,
       cleanupPaths,
-      meta: { tier, limitations, outputBudgetTokens: outputTokens },
+      // The plugin policy the session is judged by at collection, from the verified snapshot. launch.json is
+      // read-only to the worker (WORKER_DIR_READ_ONLY), so a worker cannot widen it.
+      meta: { tier, limitations, outputBudgetTokens: outputTokens, pluginPolicy: pluginPolicyOf(snapshot.config) },
       clock: this.clock,
     });
     return { ...handle, tier, limitations, sessionId };
@@ -357,7 +360,11 @@ export class ClaudeAdapter implements ProviderAdapter {
         terminalReason: null,
       };
     } else {
-      result = classifyClaudeTranscript({ events: log.events, malformedTail: log.malformedTail, exit: st.exit, outputSchema: spec.outputSchema, expectedSessionId: st.pid?.sessionId ?? null });
+      const init = log.events.find((e) => e.type === 'system' && e.subtype === 'init');
+      // system/init carries no plugin scope (2.1.288-2.1.291), so a non-built-in plugin's scope comes from the plugin list.
+      const listed = needsPluginList(init?.plugins) ? await this.listPlugins() : null;
+      const plugins = { policy: launchPluginPolicy(handle.workerDir), installed: listed?.ok ? listed.plugins : null };
+      result = classifyClaudeTranscript({ events: log.events, malformedTail: log.malformedTail, exit: st.exit, outputSchema: spec.outputSchema, expectedSessionId: st.pid?.sessionId ?? null, plugins });
       // A CLI that died before its transcript says why only on stderr; without it the block reads "exited 1 without a result line".
       const stderr = result.reason === 'crashed' ? stderrTail(handle.workerDir) : null;
       if (stderr) result = { ...result, error: `${result.error ?? 'crashed'}; stderr: ${stderr}` };
@@ -370,6 +377,17 @@ export class ClaudeAdapter implements ProviderAdapter {
   async reportUsage(handle: TaskHandle): Promise<UsageReport> {
     if (!existsSync(handle.logPath)) return emptyUsage(this.id);
     return withWorkerTelemetry(claudeUsage(readLogLines(handle.logPath).events), handle.workerDir);
+  }
+
+  /**
+   * `claude plugin list --json` with the environment a probe gets: the installed plugins with their scope, which
+   * system/init does not report. Used to judge a session's plugins and by doctor before any run.
+   */
+  async listPlugins(): Promise<{ ok: true; plugins: InstalledPlugin[] } | { ok: false; detail: string }> {
+    const r = await this.run(['plugin', 'list', '--json'], { timeoutMs: 30_000 });
+    if (!r.ok) return { ok: false, detail: `claude plugin list --json: ${r.detail}` };
+    const plugins = parsePluginList(r.stdout);
+    return plugins ? { ok: true, plugins } : { ok: false, detail: 'claude plugin list --json gave no plugin list' };
   }
 
   /** Reattach to a worker from its directory alone (pid.json), as a restarted controller does. */
@@ -638,4 +656,12 @@ export function compareVersions(a: string, b: string): number {
     if (d !== 0) return d < 0 ? -1 : 1;
   }
   return 0;
+}
+
+/** The plugin policy recorded at launch; a launch without one (older, or unreadable) is judged by the strict default. */
+function launchPluginPolicy(workerDir: string): PluginPolicy {
+  const meta = readJsonIfExists<LaunchRecord>(join(workerDir, LAUNCH_FILE))?.meta as { pluginPolicy?: { allowed?: unknown; allowManaged?: unknown } } | undefined;
+  const p = meta?.pluginPolicy;
+  if (!p || !Array.isArray(p.allowed)) return STRICT_PLUGIN_POLICY;
+  return { allowed: p.allowed.filter((id): id is string => typeof id === 'string'), allowManaged: p.allowManaged === true };
 }

@@ -167,6 +167,8 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
       isolate_writers: true,
       prohibit_shared_worktree_writes: true,
       cancel_obsolete_workers: true,
+      allowed_plugins: [],
+      allow_managed_plugins: false,
     },
     review: {
       independent_provider_required: true,

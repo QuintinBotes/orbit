@@ -68,12 +68,25 @@ export interface FinalReport {
   /** The engineering practices (spec section 5) the plan selected or omitted, with the reason for each; empty for a contract that predates the selection. */
   practices?: { practice: string; applicable: boolean; justification: string }[];
   repairs: { attempt: number; source: string; fingerprint: string | null }[];
+  /**
+   * Every plugin other than Claude Code's built-ins that a worker session loaded, with the policy key that admitted
+   * it (null: refused, so that worker's output was not used) and how many workers loaded it. Absent in reports
+   * written before it existed.
+   */
+  worker_plugins?: WorkerPluginLine[];
   revision: { base: string | null; candidate: string | null; tree: string | null; branch: string | null; delivered_commit: string | null; pull_request: { number: number; url: string | null } | null };
   budget: { counters: BudgetSnapshot['counters']; cost_measurement: string; cost_usd: number; cost_complete: boolean; tokens: { input: number; output: number; cache_read: number; cache_write: number } } | null;
   unverified: string[];
   residual_risks: string[];
   next_action: string;
   generated_at: number;
+}
+
+export interface WorkerPluginLine {
+  id: string | null;
+  scope: string | null;
+  allowed_by: string | null;
+  workers: number;
 }
 
 export interface WriteReportOptions {
@@ -156,6 +169,8 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
   }
   for (const q of listQuestions(db, run.id, { status: 'open' })) risks.push(`open question: ${q.question.slice(0, 200)}`);
   for (const c of ev?.report.checks.filter((x) => x.flaky) ?? []) risks.push(`check ${c.id} passed only on a rerun (flaky)`);
+  const plugins = workerPluginsOf(listWorkers(db, { runId: run.id }));
+  risks.push(...plugins.risks);
 
   const prNumber = delivery?.pr?.number ?? null;
   const branch = delivery?.branch ?? outcomeJson?.branch ?? run.branch;
@@ -175,6 +190,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     assumptions: [...(contract?.assumptions ?? []).map((a) => ({ id: a.id, statement: a.statement, status: a.status })), ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))],
     practices: (contract?.practices ?? []).map((p) => ({ practice: p.practice, applicable: p.applicable, justification: p.justification })),
     repairs: repairs(opts.runDir),
+    worker_plugins: plugins.plugins,
     revision: {
       base: run.baseRevision,
       candidate: cand?.commitSha ?? null,
@@ -191,6 +207,38 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     next_action: nextAction(run, branch, prNumber, listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material)),
     generated_at: opts.clock.now(),
   };
+}
+
+/**
+ * The plugins recorded in the workers' results (ClaudeTaskResult.plugins), grouped by id, scope and the policy key
+ * that admitted each, with a residual risk for every allowed one: a plugin can add hooks and tools to a worker.
+ */
+export function workerPluginsOf(workers: readonly Pick<WorkerRecord, 'resultJson'>[]): { plugins: WorkerPluginLine[]; risks: string[] } {
+  const lines = new Map<string, WorkerPluginLine>();
+  for (const w of workers) {
+    const recorded = parseJson<{ plugins?: unknown }>(w.resultJson)?.plugins;
+    if (!Array.isArray(recorded)) continue;
+    const seen = new Set<string>();
+    for (const p of recorded) {
+      const r = (p !== null && typeof p === 'object' ? p : {}) as Record<string, unknown>;
+      const line = { id: strOrNull(r.id), scope: strOrNull(r.scope), allowed_by: strOrNull(r.allowed_by) };
+      const key = JSON.stringify(line);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const cur = lines.get(key);
+      if (cur) cur.workers += 1;
+      else lines.set(key, { ...line, workers: 1 });
+    }
+  }
+  const plugins = [...lines.values()];
+  const risks = plugins
+    .filter((p) => p.allowed_by !== null)
+    .map((p) => `worker plugin ${p.id ?? 'unidentified'} (scope ${p.scope ?? 'unknown'}) was allowed by ${p.allowed_by} and loaded into ${p.workers} worker session(s); a plugin can add hooks and tools to a worker`);
+  return { plugins, risks };
+}
+
+function strOrNull(v: unknown): string | null {
+  return typeof v === 'string' ? v : null;
 }
 
 function tokens(t: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }) {
@@ -283,6 +331,10 @@ export function renderMarkdown(r: FinalReport): string {
   out.push('## Decisions', '', list(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), '');
   out.push('## Assumptions', '', list(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), '');
   if (r.practices && r.practices.length > 0) out.push('## Engineering practices', '', list(r.practices.map((p) => `${p.practice} [${p.applicable ? 'selected' : 'omitted'}]: ${p.justification}`)), '');
+  if (r.worker_plugins && r.worker_plugins.length > 0) {
+    const named = (p: WorkerPluginLine) => `${p.id ?? 'an unidentified plugin'} (scope ${p.scope ?? 'unknown'})`;
+    out.push('## Worker plugins', '', list(r.worker_plugins.map((p) => (p.allowed_by ? `${named(p)}: allowed by ${p.allowed_by}, loaded by ${p.workers} worker(s)` : `${named(p)}: refused, so the output of ${p.workers} worker(s) was not used`))), '');
+  }
   out.push('## Repairs', '', list(r.repairs.map((x) => `attempt ${x.attempt}: ${x.source} brief${x.fingerprint ? ` for ${x.fingerprint}` : ''}`)), '');
   const rv = r.revision;
   out.push('## Revision, branch and pull request', '', list([`base: ${rv.base ?? 'none'}`, `candidate: ${rv.candidate ?? 'none'} (tree ${rv.tree ?? 'none'})`, `branch: ${rv.branch ?? 'none'}`, rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? 'none'}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ''}` : 'none'}`]), '');

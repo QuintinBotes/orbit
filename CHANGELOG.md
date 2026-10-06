@@ -7,6 +7,7 @@
 - Skills: `/orbit:status`, `/orbit:doctor`, `/orbit:init` and `/orbit:inquisition` are model-invocable, so an agent asked to use Orbit sees them; `run`, `resume`, `repair` and `verify` stay user-only and say that a person starts them; `scripts/check-plugin.mjs` enforces the allowlist (ADR 0006 addendum) (#2).
 - Skills: `status` and `doctor` pre-approve their own read-only `orbit` command with `allowed-tools`, so `claude -p "/orbit:status"` prints the status without a permission denial (#2).
 - Docs: README and installation say that `orbit` reaches the Bash tool's PATH only after `/reload-plugins` or in a new session, and what to use until then (#5).
+- Worker sessions with organisation-managed plugins no longer block every run (#9): `agents.allowed_plugins` (exact name@marketplace ids) and `agents.allow_managed_plugins` admit a plugin (default strict); a refusal names each plugin and the config line that allows it, every non-built-in plugin is recorded in the worker's result and the final report, and `orbit doctor` lists the plugins a worker would load.
 
 ## 0.1.0 (2026-10-06)
 
