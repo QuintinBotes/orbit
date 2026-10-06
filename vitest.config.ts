@@ -3,6 +3,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
+    // Removes the acceptance templates this run created (tests/support/global-setup.ts).
+    globalSetup: ['tests/support/global-setup.ts'],
     // Integration and fault-injection tests spawn real processes, git repos and
     // SQLite files; they share nothing, but they are heavy, so cap the pool.
     maxWorkers: 4,
