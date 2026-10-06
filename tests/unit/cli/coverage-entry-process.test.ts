@@ -152,7 +152,7 @@ describe('main.ts (the process entry)', () => {
     process.argv = ['node', '/x/orbit.mjs', '--version'];
     process.exitCode = 9;
     await import('../../../src/cli/main.ts');
-    expect(stdout).toBe('0.1.0\n');
+    expect(stdout).toBe('0.2.0\n');
     expect(process.exitCode).toBe(0);
   });
 

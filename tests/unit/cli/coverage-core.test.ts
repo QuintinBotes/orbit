@@ -102,7 +102,7 @@ describe('help and version', () => {
 
   it.each(['--version', '-V', 'version'])('%s prints the version only', async (flag) => {
     const r = await run([flag]);
-    expect(r).toEqual({ code: 0, out: '0.1.0\n', err: '' });
+    expect(r).toEqual({ code: 0, out: '0.2.0\n', err: '' });
   });
 
   it('a command accepts --help and prints its help without running', async () => {

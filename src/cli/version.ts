@@ -1,2 +1,2 @@
-/** Reported by `orbit --version`. Kept in step with package.json by the release checklist; the bundle has no package.json to read. */
-export const ORBIT_VERSION = '0.1.0';
+/** Reported by `orbit --version`. The release workflow checks it against the tag (scripts/check-release-versions.mjs); the bundle has no package.json to read. */
+export const ORBIT_VERSION = '0.2.0';

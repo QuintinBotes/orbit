@@ -1,6 +1,6 @@
 {
   "name": "orbit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "An autonomous, evidence-driven engineering loop for Claude Code: contracts, isolated workers, independent verification, and recoverable unattended runs.",
   "author": { "name": "Quintin Botes", "url": "https://github.com/QuintinBotes" },
   "homepage": "https://github.com/QuintinBotes/orbit",

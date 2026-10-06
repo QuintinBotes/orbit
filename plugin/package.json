@@ -1,6 +1,6 @@
 {
   "name": "orbit-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "The Orbit plugin payload. Its only dependency is the sandbox runtime (srt) the bundle runs workers and checks under; Claude Code installs it with the plugin.",
   "license": "MIT",
