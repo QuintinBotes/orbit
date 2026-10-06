@@ -120,11 +120,13 @@ describe('skill invocation policy (#2, ADR 0006 addendum)', () => {
     const fenceCommands = (s: string) => bashFences(skillText(s)).flatMap((f) => [...f.matchAll(/^"\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/orbit" ([^\n]+)$/gm)].map((m) => `\${CLAUDE_PLUGIN_ROOT}/bin/orbit ${m[1]!.trim()}`));
     /** Claude Code's Bash rule: exact, or a trailing " *" for any further words. */
     const matches = (rule: string, cmd: string) => rule.endsWith(' *') ? cmd.startsWith(rule.slice(0, -1)) : cmd === rule;
+    // The read-only commands each skill may pre-approve: status also shows the run's timeline.
+    const READ_ONLY: Record<string, string[]> = { status: ['status', 'timeline'], doctor: ['doctor'] };
     for (const s of ['status', 'doctor']) {
       const tools = skillMeta(s)['allowed-tools'];
       expect(Array.isArray(tools), s).toBe(true);
       const rules = (tools as string[]).map((t) => /^Bash\((.+)\)$/.exec(t)?.[1]);
-      for (const r of rules) expect(r, `${s}: ${JSON.stringify(tools)}`).toMatch(new RegExp(`^\\$\\{CLAUDE_PLUGIN_ROOT\\}/bin/orbit ${s}\\b`));
+      for (const r of rules) expect(r, `${s}: ${JSON.stringify(tools)}`).toMatch(new RegExp(`^\\$\\{CLAUDE_PLUGIN_ROOT\\}/bin/orbit (${READ_ONLY[s]!.join('|')})\\b`));
       // Every command the skill runs is covered, with <run-id> as the one further word, and every rule covers one of them.
       const cmds = fenceCommands(s).map((c) => c.replace('<run-id>', 'orb-acme-1'));
       expect(cmds.length, s).toBeGreaterThan(1);
