@@ -40,7 +40,7 @@ import { EXIT } from '../exit.ts';
 import { ago, flat, json, line, oneLine } from '../io.ts';
 import { lingerState } from './service.ts';
 import { compileGlobs } from '../../policy/globs.ts';
-import { suggestAllowedPaths, trackedFiles } from '../layout.ts';
+import { proposeScope, trackedFiles } from '../layout.ts';
 import { orbitHint } from '../../core/invocation.ts';
 import { reviewFix } from '../review-fix.ts';
 
@@ -335,7 +335,7 @@ async function checkScope(p: Probe): Promise<DoctorCheck[]> {
   const matches = compileGlobs(globs, { nocase: false });
   const hit = files.filter((f) => matches(f)).length;
   if (hit > 0) return [pass('scope', 'config', `scope.allowed_paths (${globs.join(', ')}) matches ${hit} of ${files.length} tracked file(s)`)];
-  const suggestion = suggestAllowedPaths(files);
+  const suggestion = (await proposeScope(ctx, repo, files)).allowed;
   return [
     warn(
       'scope',

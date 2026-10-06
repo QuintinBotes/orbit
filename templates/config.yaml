@@ -39,7 +39,9 @@ repository:
 scope:
   # Repository-relative globs a worker may change. Anything else is out of
   # scope and fails the run's scope gate. A goal contract can narrow this
-  # further but never widen it.
+  # further but never widen it. Narrow this to the folders your goal needs;
+  # "orbit init" proposes every source folder and leaves out folders that hold
+  # CI pipeline or build-system definitions (it adds those to protected_paths).
   allowed_paths: ["apps/**", "packages/**", "tests/**", "docs/**"]
   # Paths no worker may change even when allowed_paths matches them.
   # Protected always wins. Orbit also adds built-in protections you cannot

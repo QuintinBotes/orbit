@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `orbit init` no longer proposes folders that hold CI pipeline or build-system definitions (pipeline YAML with a top-level trigger, stages, jobs or extends template, Jenkinsfiles, GitLab CI, CircleCI) as `scope.allowed_paths`; it protects them, plus central build files such as Directory.Build.props, Directory.Packages.props, global.json, nuget.config and a root Makefile, in `scope.protected_paths`, and tells the person to narrow the scope to the goal (#4).
+
 ## 0.1.0 (2026-10-06)
 
 The first release. The entries below record what changed while testing it
