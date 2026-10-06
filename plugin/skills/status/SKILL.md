@@ -5,6 +5,7 @@ argument-hint: "[run-id]"
 allowed-tools:
   - Bash(${CLAUDE_PLUGIN_ROOT}/bin/orbit status)
   - Bash(${CLAUDE_PLUGIN_ROOT}/bin/orbit status *)
+  - Bash(${CLAUDE_PLUGIN_ROOT}/bin/orbit timeline *)
 ---
 # /orbit:status
 
