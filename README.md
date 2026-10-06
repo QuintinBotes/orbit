@@ -205,7 +205,8 @@ one ([troubleshooting](docs/troubleshooting.md#run-problems)).
 | `orbit cancel <run-id>` | Cancel durably (`--wait <seconds>`). |
 | `orbit report <run-id>` | Final or interim report (`--interim`); `orbit report --learning` shows improvement over time. |
 | `orbit questions <run-id>` | Questions a run is waiting on (`--all` includes answered ones). `orbit questions --pending` lists those of every unfinished run (`--quiet` prints nothing when there are none). |
-| `orbit decide <run-id> <question-id> <answer>` | Record your answer (`--by`). Approving a baseline-exception question puts the exception in the run's contract. |
+| `orbit decide <run-id> <question-id> <answer>` | Record your answer (`--by`). Approving a baseline-exception question puts the exception in the run's contract. With remote answers on, a `/orbit answer <question-id> <choice>` comment on the run's pull request by someone with write access does the same. |
+| `orbit notify test` | Send a test notification through the configured channels (desktop, webhook, GitHub comment). See [notifications](docs/operations.md#notifications-and-remote-answers). |
 | `orbit release resolve <run-id>` | Settle a release-mode deploy whose outcome is unknown: runs the environment's `verify_command`, or records `--deployed` / `--not-deployed`. |
 | `orbit policy show <run-id>` | The frozen policy, verified against its hash. |
 | `orbit models list` / `models refresh` | The model registry and its availability. |

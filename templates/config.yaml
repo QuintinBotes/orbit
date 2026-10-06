@@ -417,6 +417,26 @@ guard:
   terms_file: null
   allowed_emails: []
 
+# Notifications when a run ends or asks a question (docs/decisions/0008).
+# Payloads carry the run id, state, reason, next action and question ids only.
+notifications:
+  # macOS Notification Centre or Linux notify-send; skipped where neither exists.
+  desktop: true
+  # POST to a webhook (Slack-compatible "text"). Name the environment variable
+  # that holds the URL, never the URL itself; its host must be in
+  # network.allowed_hosts. Example: { url_env: ORBIT_WEBHOOK_URL }
+  webhook: null
+  # Comment on the run's pull request (or the linked issue below).
+  github_comment: false
+  # Answer an open question with a "/orbit answer <question-id> <choice>"
+  # comment. Only people with write, maintain or admin permission count,
+  # checked with the GitHub API through GH_TOKEN when the comment is read.
+  remote_answers:
+    enabled: false
+    # An issue linked to every run started under this policy (or null).
+    issue: null
+    poll_seconds: 120
+
 # Verification policy.
 verification:
   # A check that fails and then passes on a rerun is reported as flaky. When

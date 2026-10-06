@@ -16,13 +16,15 @@ import { defaultControllerDeps, orbitInstallDir } from '../../controller/index.t
 import { lenientContext, loadRunContext, type ControllerDeps } from '../../controller/context.ts';
 import { finishRun } from '../../controller/steps/common.ts';
 import { getRun, requestCancel, setPaused, transition, type RunRecord } from '../../controller/run-store.ts';
-import { canTransition, isTerminal, type RunState } from '../../controller/states.ts';
+import { isTerminal } from '../../controller/states.ts';
+import { frozenPolicySetting, resumeTarget } from '../../controller/resume.ts';
 import { listQuestions } from '../../inquisition/store.ts';
 import type { Args, OptionSpec } from '../args.ts';
 import { continueCommand, findRunByPrefix, liveControllerFor, expireLeaseOfDeadOwner, liveLease, liveServiceController, openState, resolveRepo, withCliLease, withState, type CliContext } from '../context.ts';
 import { EXIT, UsageError } from '../exit.ts';
 import { json, line } from '../io.ts';
 import { driveForeground } from './drive.ts';
+import { readRemoteAnswers } from './notify.ts';
 
 const actorOf = (ctx: CliContext) => `cli:${ctx.user}`;
 
@@ -49,36 +51,6 @@ export const RESUME_OPTIONS: OptionSpec = {
   policy: { type: 'string', description: 'policy file for the foreground controller (default: .orbit/config.yaml)', valueName: 'path' },
 };
 
-/** Where a blocked run goes back to: the stage it stopped in, or the earliest stage its durable state supports. */
-function resumeTarget(db: OrbitDb, run: RunRecord): RunState {
-  const prior = run.resumeState;
-  if (prior && canTransition('BLOCKED', prior)) {
-    // Review and delivery act only on live evidence; a decision that changed the contract while the run was blocked
-    // (an approved amendment) invalidated it, so the candidate is verified again first.
-    if ((prior === 'REVIEWING' || prior === 'DELIVERING') && !liveEvidenceForLatestCandidate(db, run.id)) return 'VERIFYING';
-    return prior;
-  }
-  if (db.get('SELECT 1 AS x FROM candidates WHERE run_id = ? LIMIT 1', run.id)) return 'VERIFYING';
-  return run.contractJson ? 'PLANNING' : 'PREFLIGHT';
-}
-
-function liveEvidenceForLatestCandidate(db: OrbitDb, runId: string): boolean {
-  const cand = db.get<{ id: string }>('SELECT id FROM candidates WHERE run_id = ? ORDER BY seq DESC LIMIT 1', runId);
-  if (!cand) return false;
-  return db.get('SELECT 1 AS x FROM evidence_reports WHERE run_id = ? AND candidate_id = ? AND invalidated_at IS NULL LIMIT 1', runId, cand.id) !== undefined;
-}
-
-/** The policy setting a block came from, when the controller recorded it as a frozen-policy block. */
-function frozenPolicySetting(run: RunRecord): string | null {
-  try {
-    const o = run.outcomeJson ? (JSON.parse(run.outcomeJson) as { frozen_policy?: { setting?: unknown } }) : null;
-    if (!o?.frozen_policy) return null;
-    return typeof o.frozen_policy.setting === 'string' ? o.frozen_policy.setting : 'a policy setting';
-  } catch {
-    return null;
-  }
-}
-
 export async function resumeCommand(args: Args, ctx: CliContext): Promise<number> {
   if (args.bool('foreground') && args.bool('detach')) throw new UsageError('--foreground and --detach cannot be combined', 'orbit resume <run-id> [--foreground | --detach] [--force]');
   const [id] = args.expect(1);
@@ -91,6 +63,10 @@ export async function resumeCommand(args: Args, ctx: CliContext): Promise<number
 
     const notes: string[] = [];
     if (run.state === 'BLOCKED') {
+      // Answers given as pull request or issue comments are taken first, by the rules of ADR 0008.
+      await readRemoteAnswers(ctx, db, run, (text) => {
+        if (!args.bool('json')) line(ctx.io, text);
+      });
       const frozen = frozenPolicySetting(run);
       if (frozen !== null && !args.bool('force')) {
         throw new OrbitError(

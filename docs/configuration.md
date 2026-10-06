@@ -667,6 +667,33 @@ verification:
 See [the learning layer](learning.md). The guard reads a private-terms list that
 Orbit never prints and never copies into a repository.
 
+## notifications
+
+```yaml
+notifications:
+  desktop: true               # macOS osascript or Linux notify-send; skipped where neither exists
+  webhook: null               # or { url_env: ORBIT_WEBHOOK_URL }
+  github_comment: false       # comment on the run's pull request, else on remote_answers.issue
+  remote_answers:
+    enabled: false            # accept "/orbit answer <question-id> <choice>" comments
+    issue: null               # an issue linked to every run started under this policy
+    poll_seconds: 120         # 30 to 3600
+```
+
+When a run ends or asks a question, Orbit notifies through these channels
+([operations](operations.md#notifications-and-remote-answers), ADR 0008). The
+payload holds the run id, state, a short redacted reason, the next action and
+the open question ids, nothing else. `webhook.url_env` names the environment
+variable that holds the URL: the URL itself is never written in this file, and
+a credential variable (`GH_TOKEN` and the like) is refused. The webhook must be
+`https` (plain `http` only to a loopback host), its host must be covered by
+`network.allowed_hosts`, and redirects are not followed. The body is JSON with
+a Slack-compatible `text` field and the payload under `orbit`. Comments and
+remote answers go through `GH_TOKEN`; with `delivery.provider: fake` they use
+`.orbit/fake-github-threads.json` instead. A run keeps the settings it started
+with, like the rest of its policy; a run whose frozen policy no longer verifies
+notifies on the desktop only.
+
 ## Environment variables
 
 | Variable | Effect |
@@ -675,3 +702,5 @@ Orbit never prints and never copies into a repository.
 | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_API_KEY` | Provider credentials, passed through to workers and nothing else. |
 | `GH_TOKEN` | Delivery credential, used by the controller only. |
 | `ORBIT_DEBUG` | Print stack traces for internal errors. |
+| `ORBIT_NOTIFICATIONS` | `off` turns every notification channel off (CI, test suites). |
+| the variable `notifications.webhook.url_env` names | The webhook URL; read by the controller only. |

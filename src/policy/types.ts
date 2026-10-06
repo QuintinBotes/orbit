@@ -185,6 +185,24 @@ export interface ProviderConfig {
   tier?: CodexTierSetting;
 }
 
+/** Where Orbit tells a person that a run ended or needs an answer, and whether comments may answer (ADR 0008). */
+export interface NotificationsConfig {
+  /** macOS Notification Centre (osascript) or Linux notify-send; skipped silently where neither exists. */
+  desktop: boolean;
+  /** POST a small JSON payload; the URL is read from the environment variable `url_env` names, never from this file. */
+  webhook: { url_env: string } | null;
+  /** A comment on the run's pull request, or on the linked issue when there is no pull request. */
+  github_comment: boolean;
+  remote_answers: {
+    /** Accept `/orbit answer <question-id> <choice>` comments from people with write access. */
+    enabled: boolean;
+    /** An issue linked to every run started under this policy; its comments may answer them too. */
+    issue: number | null;
+    /** How often the service reads the comments of a BLOCKED run with open questions. */
+    poll_seconds: number;
+  };
+}
+
 export interface OrbitConfig {
   version: 1;
   mode: RunMode;
@@ -339,6 +357,11 @@ export interface OrbitConfig {
     /** ADR 0002: adopt overlays automatically when replay evals improve with no regression. */
     auto_adopt_overlays: boolean;
   };
+  /**
+   * Notifications and remote answers (ADR 0008). Parsed configs always carry it; optional in the type so older
+   * snapshots still read (they read as the defaults: desktop on, everything else off).
+   */
+  notifications?: NotificationsConfig;
   /** Publication guard (architecture "Publication guard"). */
   guard: {
     /** Private terms file; null means ~/.config/publish-guard/terms.txt. */

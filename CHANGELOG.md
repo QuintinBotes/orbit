@@ -17,6 +17,25 @@
 - Review falls back to a disclosed Claude review by default when no independent reviewer is usable: new `review.providers` (preference order, supported ids only) and `review.when_unavailable: claude | ask | block`, with the legacy keys mapped onto it; reports, decisions and `orbit doctor` say which reviewer was used and, for a same-provider review, why it is not independent (#8, ADR 0007).
 - `review.when_unavailable: ask` raises a material question and runs the same-provider review only after a person's yes (`orbit decide`), recorded as a decision (#6, ADR 0007).
 - Release automation. Pushing a `v*` tag runs `.github/workflows/release.yml`: it checks that the tag matches `package.json`, `plugin/package.json` and `plugin/.claude-plugin/plugin.json`, that `CHANGELOG.md` has a section for it and that the commit is on `main`; runs the full gate (typecheck, unit, integration, fault and acceptance tests, `check:dist`, `check-plugin`); builds an archive of the `plugin/` payload with checksums and a GitHub artifact attestation (`actions/attest-build-provenance`); creates the GitHub release with that CHANGELOG section as the notes; and opens a pull request on `QuintinBotes/claude-plugins` that moves the orbit entry's `ref` to the tag. The last step needs the secret `CATALOG_PR_TOKEN` and is skipped with a notice without it. New scripts `scripts/release-notes.mjs`, `scripts/check-release-versions.mjs` and `scripts/bump-catalog-ref.mjs`, each with unit tests; the process is in CONTRIBUTING.md and the verification steps in docs/installation.md.
+- Notifications (ADR 0008). When a run ends or raises a question a person must
+  answer, Orbit notifies through the new `notifications` policy section: a
+  desktop notification (macOS `osascript`, Linux `notify-send`; on by default),
+  a webhook (Slack-compatible `text`; the URL is read from the environment
+  variable `notifications.webhook.url_env` names, must be `https` to a host in
+  `network.allowed_hosts`) and a comment on the run's pull request or linked
+  issue. Payloads carry the run id, state, a short redacted reason, the next
+  action and question ids only. Each notification is sent once; delivery
+  failures are recorded as events and never change the run.
+  `ORBIT_NOTIFICATIONS=off` turns every channel off. New command
+  `orbit notify test`.
+- Remote answers (ADR 0008). With `notifications.remote_answers.enabled`, a
+  `/orbit answer <question-id> <choice>` comment on the run's pull request (or
+  the linked issue) answers an open question, but only when the GitHub API says
+  its author has write, maintain or admin permission when the comment is read.
+  The answer is recorded like `orbit decide`, with the comment URL, author and
+  permission; anything else is ignored and recorded. The service polls blocked
+  runs and resumes them once no material question is open; without a service,
+  `orbit resume` reads the comments first.
 
 ## 0.1.0 (2026-10-06)
 

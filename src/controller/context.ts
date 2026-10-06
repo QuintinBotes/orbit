@@ -27,6 +27,7 @@ import { AgentScheduler, type SystemProbe } from '../scheduling/scheduler.ts';
 import type { WorkUnit } from '../scheduling/types.ts';
 import type { ModelRegistry } from '../routing/registry.ts';
 import type { GitHubClient } from '../delivery/github.ts';
+import type { NotifyDeps } from '../notify/channels.ts';
 import { getRun, type RunRecord } from './run-store.ts';
 
 /** Timing knobs. Defaults suit a real service; tests shrink them. */
@@ -78,6 +79,8 @@ export interface ControllerDeps {
   random?: () => number;
   /** The machine probe the scheduler reads (cores, free memory); defaults to node:os. */
   schedulerProbe?: SystemProbe;
+  /** Notification and comment collaborators (ADR 0008); tests replace them, the default is the real machine and gh. */
+  notify?: Partial<NotifyDeps>;
 }
 
 export interface RunContext {

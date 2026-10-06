@@ -32,6 +32,18 @@ Workers cannot modify policy or trusted code: the policy is hashed at run start,
 outside the repository, and `orbit decide`, `resume`, `cancel` and other
 mutating commands are refused inside a worker process.
 
+Remote answers (ADR 0008) are a trust boundary of their own: a pull request or
+issue comment is untrusted text. An `/orbit answer` comment counts only when the
+GitHub API, asked through `GH_TOKEN` when Orbit reads the comment, says its
+author has `write`, `maintain` or `admin` permission on the repository; nothing
+in the comment, its author association or the author's name counts, bot
+accounts are refused, Orbit's own comments are never read as commands, and
+approval questions take only their option labels. A refused comment changes
+nothing but a `remote.answer.refused` event. Notification payloads carry no
+code, diffs, secrets or log excerpts, and the webhook URL is read from an
+environment variable, never from the config file, and must be `https` to a host
+in `network.allowed_hosts`.
+
 ## Enforcement layers
 
 | Layer | Mechanism | Covers |
@@ -83,7 +95,9 @@ scratch directory, and it gets no Edit or Write allow rules.
 - `GH_TOKEN` is used by the controller for delivery and never given to a worker
   or a check. Delivery refuses a broad keyring login; use a fine-grained token
   scoped to one repository, with the minimum permissions for branches, pull
-  requests and CI.
+  requests and CI. Remote answers and `notifications.github_comment` read
+  comments and collaborator permissions, and post comments, through the same
+  token.
 - Logs, reports and artifacts are redacted before storage or before they are
   sent to a provider. `retention.redact_patterns` adds your own patterns.
 - The secret scan uses gitleaks with Orbit's own configuration and

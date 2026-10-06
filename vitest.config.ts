@@ -8,7 +8,8 @@ export default defineConfig({
     maxWorkers: 4,
     testTimeout: 60_000,
     // Times in expected output are written in UTC; a test that is about local time sets its own zone.
-    env: { TZ: 'UTC' },
+    // ORBIT_NOTIFICATIONS=off: no test run pops a desktop notification or posts anywhere; notification tests inject fakes.
+    env: { TZ: 'UTC', ORBIT_NOTIFICATIONS: 'off' },
     hookTimeout: 60_000,
     coverage: {
       provider: 'v8',
