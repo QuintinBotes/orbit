@@ -26,9 +26,7 @@ claude.ai login or subscription limits to anyone else (see
 
 ## Status
 
-Orbit 0.1.0 is pre-release. This repository becomes public at the first release;
-until then the marketplace entry and the clone URL below work only for people
-who have access to it. Where this document says what Orbit does, it describes the
+Orbit 0.1.0 is the first release. Where this document says what Orbit does, it describes the
 code in this repository. [Live runs and what is not proven yet](#live-runs-and-what-is-not-proven-yet) says
 what has been run against real providers.
 
@@ -211,21 +209,30 @@ separate command either: `orbit run --mode release`, with the `release` and
 ## Live runs and what is not proven yet
 
 `scripts/demo/run-live-demo.sh` runs three demo goals against live providers on
-a private GitHub repository (the demo repository is private; this one becomes
-public at the first release). On 2026-10-05 the three goals were run for real,
-Claude writing and Codex reviewing, and the controllers' own reports are in
-[docs/demos/2026-10-05](docs/demos/2026-10-05/README.md):
+the public demo repository [QuintinBotes/orbit-demo](https://github.com/QuintinBotes/orbit-demo),
+Claude writing and Codex reviewing. The closing run on 2026-10-06 (reports in
+[docs/demos/2026-10-06](docs/demos/2026-10-06/README.md)), unattended, with real delivery:
 
 | Goal | Outcome |
 |---|---|
-| simple | `SUCCEEDED`, branch pushed and draft pull request opened |
-| difficult | `SUCCEEDED`, with an evidence-backed escalation to a stronger model, browser checks under `srt`, branch pushed and draft pull request opened |
-| ui | `BLOCKED` at the planner: a response exceeded its output token cap. The cap has been raised and a capped response is retried once at double the cap; this goal has not been run live since |
+| simple | `SUCCEEDED` on the routine tier (Sonnet) in one attempt; draft pull request opened |
+| difficult | `SUCCEEDED` with an evidence-backed escalation to Opus (subsystem coupling), browser checks under `srt`; draft pull request opened |
+| ui | `SUCCEEDED`: CSV export with download journeys on desktop and mobile, plus the existing accessibility and visual journeys, under `srt`; escalated to Opus; draft pull request opened |
+
+The spec's third demo also asks for a UI task whose first attempt fails its
+browser checks. Current models solve the demo goal on the first attempt, even
+when the implementer starts on the cheapest tier, and Orbit does not plant
+failures. The repair path for a UI defect is proven by acceptance scenario 17
+(real Chromium with fake providers: the defect is reproduced, diagnosed,
+repaired, reverified, reviewed and delivered as a draft pull request); a live
+run on 2026-10-06 also went from a failed browser check through diagnosis to a
+repair attempt, though that failure came from a sandbox defect that is now fixed
+(see [the testing journal](docs/testing-journal.md)).
 
 No CI ran in the demo repository, so the reports say CI is unverified. These
 have **not** been run against real providers: CI observation and repair, release
 mode (merge and deploy), container isolation, the `os-sandbox` tier with a valid
-exported key, accessibility and visual UI verification, gitleaks, the learning
+exported key, gitleaks, the learning
 layer beyond curator calls, and the service on Linux. They are covered by the
 mock demo (`scripts/demo/run-mock-demo.sh`, which runs with stubbed `gh` and
 `orbit`) and the automated tests only; treat a claim about their live behaviour

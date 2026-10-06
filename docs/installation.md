@@ -14,13 +14,6 @@
 | `gh` CLI and a `GH_TOKEN` | delivery in `autonomous-delivery` and `release` modes | Use a fine-grained token scoped to the one repository. |
 | `gitleaks` | stronger secret scan | Optional. Without it Orbit uses built-in patterns and the evidence says so. |
 
-## Status of the repository
-
-Orbit 0.1.0 is pre-release. The repository becomes public at the first release.
-Until then the marketplace install and the clone URL below work only for people
-who have access to the repository, and "from a checkout" below is the way to try
-it.
-
 ## Install the plugin
 
 From the marketplace. The `claude-plugins` catalog entry is a `git-subdir`

@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 (2026-10-06)
+
+The first release. The entries below record what changed while testing it
+end to end and live; the initial implementation follows under "Initial
+implementation".
 
 End-to-end test round of 2026-10-05 (a new user installing and running Orbit
 against real providers). Fixes, each with a test that failed first:
@@ -185,9 +189,7 @@ against real providers). Fixes, each with a test that failed first:
   `isolation.limits.memory_mb` (enforced under sandbox-runtime by a
   resident-memory watchdog on the process group).
 
-## 0.1.0
-
-First release.
+### Initial implementation
 
 - Durable goal contracts, an explicit run state machine, and one owner lease
   per run in a repository-local SQLite state database.
