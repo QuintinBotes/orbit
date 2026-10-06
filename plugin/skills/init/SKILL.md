@@ -1,8 +1,7 @@
 ---
 name: init
-description: Set up Orbit in the current repository without a terminal - writes .orbit/config.yaml from the starter template and keeps run state out of git status. Invoke as /orbit:init.
+description: Set up Orbit in the current repository without a terminal - writes .orbit/config.yaml from the starter template and keeps run state out of git status. Use when asked to set up or start using Orbit in a repository that has no .orbit/config.yaml. Invoke as /orbit:init.
 argument-hint: ""
-disable-model-invocation: true
 ---
 # /orbit:init
 

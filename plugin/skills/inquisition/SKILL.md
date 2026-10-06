@@ -1,8 +1,7 @@
 ---
 name: inquisition
-description: Interactively grill a goal or plan with Orbit Inquisition. Asks the minimum high-leverage questions and records decisions. Invoke as /orbit:inquisition.
+description: Interactively grill a goal or plan with Orbit Inquisition. Asks the minimum high-leverage questions and records the decisions the person gives. Use to sharpen a goal before an Orbit run, or to answer the questions a blocked run is waiting on. Invoke as /orbit:inquisition.
 argument-hint: "<goal-or-plan> [--run <run-id>]"
-disable-model-invocation: true
 ---
 # /orbit:inquisition
 

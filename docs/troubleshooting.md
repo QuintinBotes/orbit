@@ -136,7 +136,7 @@ degraded but usable.
   controller.** The controller finishes its current step before it stops. Check with
   `orbit service status`; it exits 1 and says the job is still held until it is gone.
 - **A command you ran from a plugin install says `orbit: command not found`.** The
-  plugin's `orbit` is on the PATH of Claude Code's Bash tool only. Use the skills, ask
+  plugin's `orbit` is on the PATH of Claude Code's Bash tool only, and only after `/reload-plugins` or in a new session following the install. Use the skills, ask
   Claude to run the command, or install the CLI from a clone (see
   [installation](installation.md#install-the-cli)).
 

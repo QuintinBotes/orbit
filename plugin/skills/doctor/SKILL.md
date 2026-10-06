@@ -1,8 +1,10 @@
 ---
 name: doctor
-description: Check every capability an Orbit run depends on in this repository, with the exact fix for each failure. Invoke as /orbit:doctor.
+description: Check every capability an Orbit run depends on in this repository, with the exact fix for each failure. Use when Orbit is not set up, a run refuses to start, or before a first run. Read-only. Invoke as /orbit:doctor.
 argument-hint: "[--probe]"
-disable-model-invocation: true
+allowed-tools:
+  - Bash(${CLAUDE_PLUGIN_ROOT}/bin/orbit doctor)
+  - Bash(${CLAUDE_PLUGIN_ROOT}/bin/orbit doctor --probe)
 ---
 # /orbit:doctor
 

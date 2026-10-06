@@ -449,8 +449,8 @@ Do not list `skills: [run]` on this agent. It validates, but `run` has `disable-
    - Never write run state under `CLAUDE_PLUGIN_ROOT`. Store state in `<repo>/.orbit/` (per the spec) and caches in `CLAUDE_PLUGIN_DATA`.
 3. **Dependencies:** marketplace installs run `npm ci --ignore-scripts`-style installs, so **avoid native addons** such as `better-sqlite3`. `node:sqlite` works on local Node v22.18.0 (it prints an ExperimentalWarning). Commit `package-lock.json` (or `npm-shrinkwrap.json` for npm sources) with registry-only, exactly pinned dependencies. Better still, ship a bundled `dist/` so hooks have no runtime dependencies at all.
 4. **Skills:**
-   - Give the eight skills `disable-model-invocation: true`, an `argument-hint`, and **document only `/orbit:<name>`**. Bare `/run`, `/verify`, `/status` and `/resume` collide with bundled or built-in commands.
-   - `$ARGUMENTS` keeps the user's quotes. Pass it through to the CLI verbatim and let `orbit` parse it.
+   - Give `run`, `resume`, `repair` and `verify` `disable-model-invocation: true` (a person starts work that spends money); `status`, `doctor`, `init` and `inquisition` stay model-invocable (ADR 0006, skill invocation addendum). Give every skill an `argument-hint`, and **document only `/orbit:<name>`**. Bare `/run`, `/verify`, `/status` and `/resume` collide with bundled or built-in commands.
+   - `$ARGUMENTS` keeps the user's quotes, but never pass it to a shell as words: free text reaches the CLI through a here-document with a quoted delimiter (ADR 0006).
    - Keep the frontmatter to fields Claude Code accepts. If claude.ai portability matters later, restrict it to the six Agent-Skills fields.
 5. **Agents:**
    - Use `tools` and `disallowedTools`, `model`, `maxTurns`, `effort` and `isolation: worktree` for the writer roles.

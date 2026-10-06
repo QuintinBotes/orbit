@@ -59,3 +59,44 @@ A marketplace install brings `srt` and nothing else, so isolation works
 without a manual global install. The `node-forge` advisory reported by
 `npm audit` arrives through `srt` itself and is tracked upstream. Paths in
 tests, scripts and docs move from `dist/` to `plugin/dist/`.
+
+## Addendum (2026-10-06): who invokes which skill
+
+Context. Every skill set `disable-model-invocation: true`, which removes its
+description from the model's context, so an agent asked to use Orbit saw no
+Orbit skills at all (issue #2). In `claude -p`, the status skill's own `orbit`
+command also needed approval.
+
+Decision.
+
+1. Model-invocable (no `disable-model-invocation`): `/orbit:status`,
+   `/orbit:doctor`, `/orbit:init` and `/orbit:inquisition`. They read state,
+   check the setup, write the starter config (never over an existing one) or
+   ask questions; `inquisition` records only answers the person gave.
+2. User-only (`disable-model-invocation: true`): `/orbit:run`,
+   `/orbit:resume`, `/orbit:repair` and `/orbit:verify`. They start or drive
+   work, spend provider budget or take a lease on a run, so a person starts
+   them; an agent may prepare the goal and suggest the command. Their
+   descriptions say so.
+3. `scripts/check-plugin.mjs` holds the allowlist (`MODEL_INVOCABLE_SKILLS`,
+   exactly the four above). Any other skill without
+   `disable-model-invocation: true` fails the check, and so does a listed skill
+   that is missing or that sets it. A new skill is user-only until it is added
+   to the list.
+4. `status` and `doctor` pre-approve only their own read-only commands with
+   `allowed-tools`, in the form
+   `Bash(${CLAUDE_PLUGIN_ROOT}/bin/orbit status)` and
+   `Bash(${CLAUDE_PLUGIN_ROOT}/bin/orbit status *)` (`doctor` and
+   `doctor --probe` for doctor). Claude Code (2.1.291) substitutes
+   `${CLAUDE_PLUGIN_ROOT}` in `allowed-tools` as in the body, and the unquoted
+   rule matches the quoted command the skill runs. Proven with `claude -p
+   --plugin-dir plugin --permission-mode default "/orbit:status"` in a scratch
+   repository after `orbit init`: with the rules the status printed and
+   `permission_denials` was empty; the same plugin without them was denied
+   `"<plugin>/bin/orbit" status`. Nothing that starts work, records a decision
+   or edits config is pre-approved.
+
+Consequences. An agent can check and set up Orbit and grill a goal without a
+person typing a slash command, but cannot start, resume, repair or verify a
+run on its own. Skills with `disable-model-invocation: true` still cannot be
+preloaded into subagents; the four model-invocable ones can.

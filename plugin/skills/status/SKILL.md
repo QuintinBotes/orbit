@@ -1,8 +1,10 @@
 ---
 name: status
-description: Show the state, progress, budget and pending questions of an Orbit run, or list recent runs. Invoke as /orbit:status.
+description: Show the state, progress, budget and pending questions of an Orbit run, or list the recent runs of this repository. Use when asked how an Orbit run is going or which runs exist. Read-only. Invoke as /orbit:status.
 argument-hint: "[run-id]"
-disable-model-invocation: true
+allowed-tools:
+  - Bash(${CLAUDE_PLUGIN_ROOT}/bin/orbit status)
+  - Bash(${CLAUDE_PLUGIN_ROOT}/bin/orbit status *)
 ---
 # /orbit:status
 

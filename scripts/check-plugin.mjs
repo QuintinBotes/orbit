@@ -2,7 +2,8 @@
 // Checks the plugin payload, plugin/ (docs/decisions/0006-plugin-packaging.md):
 //   1. `claude plugin validate --strict plugin/`;
 //   2. frontmatter keys, which the validator does not flag when ignored, against the verified lists in
-//      docs/interfaces/claude-code-plugin.md;
+//      docs/interfaces/claude-code-plugin.md, and the skill invocation policy (ADR 0006 addendum): only the skills in
+//      MODEL_INVOCABLE_SKILLS may be invoked by the model, and every other skill sets disable-model-invocation: true;
 //   3. the payload holds exactly the allowed files, and its package.json and lockfile carry one registry dependency,
 //      @anthropic-ai/sandbox-runtime at the version the srt preload is verified against, and nothing a development
 //      install would add (Claude Code runs `npm ci` on a marketplace install of the plugin).
@@ -20,6 +21,11 @@ export const SKILL_KEYS = new Set([
   'user-invocable', 'allowed-tools', 'disallowed-tools', 'model', 'effort', 'context', 'agent',
   'background', 'hooks', 'paths', 'shell', 'metadata', 'license', 'compatibility',
 ]);
+/**
+ * The skills an agent may invoke by itself (ADR 0006 addendum). Every other skill is started by a person and sets
+ * disable-model-invocation: true; a new skill is user-only until it is added here.
+ */
+export const MODEL_INVOCABLE_SKILLS = new Set(['doctor', 'init', 'inquisition', 'status']);
 // Plugin agents silently ignore permissionMode, hooks, mcpServers and initialPrompt, so they are errors here.
 export const AGENT_KEYS = new Set([
   'name', 'description', 'model', 'effort', 'maxTurns', 'tools', 'disallowedTools', 'skills',
@@ -84,8 +90,19 @@ export function lint(pluginDir = PLUGIN_DIR) {
     try { fm = frontmatter(readFileSync(path, 'utf8')); } catch (e) { problems.push(`${rel}: frontmatter does not parse: ${e.message}`); continue; }
     if (!fm || typeof fm !== 'object') { problems.push(`${rel}: missing frontmatter`); continue; }
     for (const k of Object.keys(fm)) if (!allowed.has(k)) problems.push(`${rel}: ${kind} key "${k}" is ignored or unsupported`);
-    if (kind === 'skill' && fm['disable-model-invocation'] !== true) problems.push(`${rel}: Orbit skills must set disable-model-invocation: true`);
+    if (kind === 'skill') {
+      const skill = rel.split('/')[1];
+      const userOnly = fm['disable-model-invocation'] === true;
+      if (MODEL_INVOCABLE_SKILLS.has(skill)) {
+        if (userOnly) problems.push(`${rel}: listed as model-invocable (MODEL_INVOCABLE_SKILLS), so it must not set disable-model-invocation: true`);
+      } else if (!userOnly) {
+        problems.push(`${rel}: not in MODEL_INVOCABLE_SKILLS, so it must set disable-model-invocation: true`);
+      }
+    }
     if (!fm.description) problems.push(`${rel}: missing description`);
+  }
+  for (const skill of MODEL_INVOCABLE_SKILLS) {
+    if (!existsSync(join(pluginDir, 'skills', skill, 'SKILL.md'))) problems.push(`skills/${skill}/SKILL.md: missing, but listed in MODEL_INVOCABLE_SKILLS`);
   }
   return problems;
 }
