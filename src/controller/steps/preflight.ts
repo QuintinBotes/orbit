@@ -23,6 +23,7 @@ import { baselineGate, environmentGate, intakeGate, type GateResult } from '../g
 import { deliveryEnvironmentProblem } from '../delivery-env.ts';
 import { baselineEnvironmentBlockReason, baselineEnvironmentFailures, type BlockedCheck } from '../environment-block.ts';
 import { blockOnAuth, decide, finishRun, move, safePoint, type StepResult } from './common.ts';
+import { workerPluginsStep } from './worker-plugins.ts';
 import { messageOf } from '../workers.ts';
 
 /** The provider that implements. Routing only offers claude-cli models for implementation (spec section 8). */
@@ -43,6 +44,10 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
     if (auth?.status) return blockOnAuth(ctx, auth.provider, auth.status.state as BlockedCredentialState, auth.status.detail);
     return finishRun(ctx, 'BLOCKED', `environment gate: ${env.gate.reasons.join('; ')}`, { outcome: { gate: env.gate } });
   }
+  // Issue #22: workers that would load a plugin the policy does not allow are all refused after they start, so the run is
+  // refused here, before a base-revision check, a question or a worker costs anything.
+  const plugins = await workerPluginsStep(ctx);
+  if (plugins) return plugins;
 
   const repo = ctx.run.repoRoot;
   // ADR 0005: the worker may read the shared git directory, so credentials in the git configuration are refused up front.

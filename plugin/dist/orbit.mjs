@@ -29860,6 +29860,11 @@ var init_fake = __esm({
       id;
       provider;
       inner;
+      /**
+       * `claude plugin list --json` through the real Claude adapter (the fake answers it from the scenario's `plugins`), so
+       * doctor and run start judge a fake's plugins exactly as they judge the CLI's. Absent for Codex, which has no plugins.
+       */
+      listPlugins;
       constructor(opts) {
         if (fakeKind(opts.script) !== opts.provider) {
           throw new OrbitError("CONFIG_INVALID", `${opts.script} is not the ${opts.provider} fake (${FAKE_SCRIPTS[opts.provider]})`);
@@ -29870,6 +29875,10 @@ var init_fake = __esm({
         const { provider: _p, script: _s, ...rest } = opts;
         this.inner = opts.provider === "claude" ? new ClaudeAdapter({ ...rest, command, passEnv, id: opts.id ?? "claude" }) : new CodexAdapter({ ...rest, command, passEnv, id: opts.id ?? "codex" });
         this.id = this.inner.id;
+        if (this.inner instanceof ClaudeAdapter) {
+          const claude = this.inner;
+          this.listPlugins = () => claude.listPlugins();
+        }
       }
       discoverCapabilities() {
         return this.inner.discoverCapabilities();
@@ -29900,9 +29909,14 @@ var init_fake = __esm({
 });
 
 // src/adapters/types.ts
+function isSessionRefusal(result2) {
+  return result2.status === "failed" && result2.reason === SESSION_REFUSED_REASON;
+}
+var SESSION_REFUSED_REASON;
 var init_types2 = __esm({
   "src/adapters/types.ts"() {
     "use strict";
+    SESSION_REFUSED_REASON = "unsafe_session";
   }
 });
 
@@ -48384,6 +48398,7 @@ async function learnAtTerminal(ctx) {
   try {
     const admitted = curationAdmitted(ctx);
     if (run.state === "CANCELLED") summary.skipped = "cancelled runs are not curated";
+    else if (refusedWithoutOutput(ctx.db, run)) summary.skipped = "the run ended because a worker session was refused and produced nothing; the curator is a session in the same environment and would be refused the same way";
     else if (!admitted.ok) summary.skipped = admitted.why;
     else {
       const host = curatorHostFor(ctx);
@@ -48417,6 +48432,9 @@ async function learnAtTerminal(ctx) {
   }
   atomicWriteJson(join39(ctx.runDir, "learning.json"), summary);
   ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.completed", ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0 }, ctx.clock.now()));
+}
+function refusedWithoutOutput(db, run) {
+  return outcomeHas(run, "worker_refusal") && db.get("SELECT 1 AS x FROM candidates WHERE run_id = ? LIMIT 1", run.id) === void 0;
 }
 function curatorHostFor(ctx) {
   return {
@@ -49739,6 +49757,7 @@ function frozenPolicyCause(reason, code2) {
   if (noModel) return `providers.${noModel[1] ?? noModel[2]}.model (or a refreshed model catalog: orbit models refresh)`;
   if (/no proposed path lies inside the policy scope|the policy allows no paths/.test(reason)) return "scope.allowed_paths";
   if (/execution needs isolation; the policy selects none/.test(reason)) return "isolation.provider";
+  if (/plugin\(s\)[^.;]*\bthe policy does not allow/.test(reason)) return "agents.allowed_plugins or agents.allow_managed_plugins";
   if (/differs from the frozen policy mode/.test(reason)) return "mode";
   return null;
 }
@@ -49832,6 +49851,12 @@ function policySummary(ctx, opts) {
   ];
   return lines.join("\n");
 }
+async function blockOnRefusedSession(ctx, what, error) {
+  const cause = error?.trim() || "no detail was recorded";
+  return finishRun(ctx, "BLOCKED", `${what}: its session was refused after it started and was not retried (a new session would run in the same environment and be refused the same way); ${orbitHint("doctor")} shows what a worker would load and how to fix it. Cause: ${cause}`, {
+    outcome: { worker_refusal: { kind: "session", what, error: cause.slice(0, 4e3) } }
+  });
+}
 function retryRecords(ctx, base) {
   return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.base') = ? ORDER BY id", ctx.run.id, WORKER_RETRY_EVENT, base).map((r) => r.data_json ? JSON.parse(r.data_json) : null).filter((r) => r !== null && typeof r.not_before === "number");
 }
@@ -49883,6 +49908,7 @@ async function scheduleTransientRetry(ctx, failed) {
 }
 async function handleWorkerFailure(ctx, failed, opts) {
   if (failed.status === "auth_failed") return { retry: false, result: await blockOnAuth(ctx, failed.provider, "auth_failed", failed.error) };
+  if (isSessionRefusal({ status: failed.status, reason: failed.reason })) return { retry: false, result: await blockOnRefusedSession(ctx, opts.what, failed.error) };
   if (failed.status === "cancelled") {
     const stop = await safePoint(ctx);
     if (stop) return { retry: false, result: stop };
@@ -49906,6 +49932,8 @@ var init_common = __esm({
   "src/controller/steps/common.ts"() {
     "use strict";
     init_errors();
+    init_invocation();
+    init_types2();
     init_backoff();
     init_events();
     init_decisions();
@@ -51722,7 +51750,7 @@ async function obtain(ctx, opts) {
         if (!isOrbitError(err, "MALFORMED_OUTPUT") && !isOrbitError(err, "SCHEMA_INVALID")) throw err;
         failure = { status: "malformed_output", error: err.message };
       }
-    } else failure = { status: r.status, error: r.error };
+    } else failure = { status: r.status, error: r.error, reason: r.reason ?? null };
     const h = await handleWorkerFailure(ctx, { provider: st.worker.provider, ...failure }, { attemptsUsed: n2 - first + 1, maxAttempts: opts.maxAttempts, what: opts.what, base: opts.base, purpose, ...opts.exhausted ? { exhausted: opts.exhausted } : {} });
     if (!h.retry) return { ok: false, step: h.result };
     n2++;
@@ -54430,6 +54458,98 @@ var init_environment_block = __esm({
   }
 });
 
+// src/adapters/worker-plugins-check.ts
+async function judgeWorkerPlugins(adapter, config) {
+  const list2 = adapter?.listPlugins;
+  if (typeof list2 !== "function") return null;
+  const listed = await list2.call(adapter);
+  if (!listed.ok) {
+    return {
+      status: "warn",
+      summary: `could not list the installed plugins (${listed.detail.replace(/\s+/g, " ").trim()})`,
+      details: [],
+      missing: "the output of claude plugin list --json",
+      fix: 'run "claude plugin list --json" to see why; a worker session that loads a plugin the policy does not allow is refused',
+      refused: []
+    };
+  }
+  const policy = pluginPolicyOf(config);
+  const loads = [];
+  const maybe = [];
+  const skipped = [];
+  for (const p of listed.plugins) {
+    if (!p.enabled) skipped.push(`not loaded by workers: ${p.id} (disabled)`);
+    else if (p.scope !== null && WORKER_EXCLUDED_SCOPES.includes(p.scope)) skipped.push(`not loaded by workers: ${p.id} (scope ${p.scope}; workers load no user, project or local settings)`);
+    else {
+      const [judged2] = workerPlugins([{ name: p.id.split("@")[0], source: p.id, scope: p.scope ?? "unknown" }], { policy, installed: null });
+      (p.scope === "managed" ? loads : maybe).push(judged2);
+    }
+  }
+  const named = (p) => `${p.id} (scope ${p.scope})`;
+  const line3 = (p) => `${named(p)}${maybe.includes(p) ? ", may load" : ""}: ${p.allowed_by ? `allowed by ${p.allowed_by}` : `refused; allow it with ${pluginAllowLines(p).join(" or ")}`}`;
+  const judged = [...loads, ...maybe];
+  const details = [...judged.map(line3), ...skipped];
+  if (judged.length === 0) return { status: "pass", summary: "workers load only Claude Code built-ins", details, missing: null, fix: null, refused: [] };
+  const refused = judged.filter((p) => p.allowed_by === null);
+  if (refused.length > 0) {
+    const managed = refused.some((p) => p.scope === "managed") ? " (or agents.allow_managed_plugins: true for every managed plugin)" : "";
+    const fix = `add to .orbit/config.yaml: agents.allowed_plugins: ${JSON.stringify(refused.map((p) => p.id))}${managed}; ${HOOKS_NOTE}`;
+    const definite = refused.filter((p) => loads.includes(p));
+    const missing = "a policy that allows each plugin a worker loads";
+    if (definite.length > 0) {
+      return { status: "fail", summary: `workers would load ${definite.length} plugin(s) the policy does not allow, so every worker session would be refused: ${definite.map(named).join(", ")}`, details: [...details, SCOPE_SOURCE], missing, fix, refused: definite };
+    }
+    return { status: "warn", summary: `workers may load ${refused.length} plugin(s) the policy does not allow: ${refused.map(named).join(", ")}`, details: [...details, SCOPE_SOURCE], missing, fix, refused };
+  }
+  return {
+    status: "pass",
+    summary: `workers would load ${judged.length} plugin(s), each allowed by the policy: ${judged.map((p) => `${p.id} (scope ${p.scope}, ${p.allowed_by})`).join(", ")}`,
+    details: [...details, `${HOOKS_NOTE}; each run lists the plugins its workers loaded in its final report`, SCOPE_SOURCE],
+    missing: null,
+    fix: null,
+    refused: []
+  };
+}
+async function workerPluginRefusals(adapters, config) {
+  const out = [];
+  for (const [provider, adapter] of Object.entries(adapters)) {
+    let verdict = null;
+    try {
+      verdict = await judgeWorkerPlugins(adapter, config);
+    } catch {
+      verdict = null;
+    }
+    if (verdict?.status === "fail") out.push({ provider, verdict });
+  }
+  return out;
+}
+var HOOKS_NOTE, SCOPE_SOURCE;
+var init_worker_plugins_check = __esm({
+  "src/adapters/worker-plugins-check.ts"() {
+    "use strict";
+    init_claude_plugins();
+    HOOKS_NOTE = "a plugin can add hooks and tools to workers";
+    SCOPE_SOURCE = "scope source: claude plugin list --json (system/init does not report a plugin's scope)";
+  }
+});
+
+// src/controller/steps/worker-plugins.ts
+async function workerPluginsStep(ctx) {
+  const refusals = await workerPluginRefusals(ctx.deps.adapters, ctx.snapshot.config);
+  if (refusals.length === 0) return null;
+  const reason = refusals.map(({ verdict }) => `${verdict.summary}; to fix: ${verdict.fix ?? "allow each plugin in .orbit/config.yaml"}`).join("; and ");
+  const plugins = refusals.flatMap(({ verdict }) => verdict.refused.map((p) => p.id).filter((id) => id !== null));
+  decide2(ctx, { kind: "preflight.worker-plugins", summary: reason, data: { providers: refusals.map((r) => r.provider), plugins } });
+  return finishRun(ctx, "BLOCKED", reason, { outcome: { worker_refusal: { kind: "plugins", plugins, providers: refusals.map((r) => r.provider) } } });
+}
+var init_worker_plugins = __esm({
+  "src/controller/steps/worker-plugins.ts"() {
+    "use strict";
+    init_worker_plugins_check();
+    init_common();
+  }
+});
+
 // src/controller/steps/preflight.ts
 import { existsSync as existsSync36, mkdirSync as mkdirSync20, rmSync as rmSync14 } from "node:fs";
 import { dirname as dirname24, isAbsolute as isAbsolute19, join as join51, resolve as resolve13 } from "node:path";
@@ -54446,6 +54566,8 @@ async function preflightStep(ctx) {
     if (auth?.status) return blockOnAuth(ctx, auth.provider, auth.status.state, auth.status.detail);
     return finishRun(ctx, "BLOCKED", `environment gate: ${env.gate.reasons.join("; ")}`, { outcome: { gate: env.gate } });
   }
+  const plugins = await workerPluginsStep(ctx);
+  if (plugins) return plugins;
   const repo = ctx.run.repoRoot;
   const credentialProblems = await gitCredentialProblems(repo);
   if (credentialProblems.length > 0) {
@@ -54652,6 +54774,7 @@ var init_preflight = __esm({
     init_delivery_env();
     init_environment_block();
     init_common();
+    init_worker_plugins();
     init_workers2();
     IMPLEMENTER_PROVIDER = "claude";
     URL_USERINFO = /^([a-z][a-z0-9+.-]*):\/\/([^/?#@]*)@/i;
@@ -54813,6 +54936,7 @@ async function runParallelUnits(ctx, n2, units, opts) {
     if (st.status === "running") continue;
     const r = st.result;
     if (r.status === "auth_failed") return { kind: "step", result: await blockOnAuth(ctx, st.worker.provider, "auth_failed", r.error) };
+    if (isSessionRefusal(r)) return { kind: "step", result: await blockOnRefusedSession(ctx, `implementer work unit ${u.id} (attempt ${n2})`, r.error) };
     if (r.status === "cancelled") {
       const stop = await safePoint(ctx);
       if (stop) return { kind: "step", result: stop };
@@ -55029,6 +55153,7 @@ var init_parallel_writers = __esm({
     init_work_units();
     init_context2();
     init_gates();
+    init_types2();
     init_workers2();
     init_contracting();
     init_common();
@@ -55436,6 +55561,7 @@ async function continueAttempt(ctx, n2, contract) {
     if (st.status === "running") return WAIT(`implementer ${st.worker.id} (attempt ${n2}) is running`);
     const r = st.result;
     if (r.status === "auth_failed") return blockOnAuth(ctx, st.worker.provider, "auth_failed", r.error);
+    if (isSessionRefusal(r)) return blockOnRefusedSession(ctx, `implementer (attempt ${n2})`, r.error);
     const stray = r.status === "cancelled" && !ctx.refresh().cancelRequested;
     if (r.status === "transient_error" || stray) {
       if (r.status === "cancelled") {
@@ -55701,6 +55827,7 @@ var init_implementing = __esm({
     init_budget();
     init_reconcile();
     init_prompt();
+    init_types2();
     init_candidate();
     init_freshness();
     init_store();
@@ -59784,59 +59911,15 @@ var init_review_fix = __esm({
 
 // src/cli/commands/doctor-plugins.ts
 async function workerPluginsCheck(id, adapter, config) {
-  const list2 = adapter?.listPlugins;
-  if (typeof list2 !== "function") return null;
-  const check = `${id}.plugins`;
-  const listed = await list2.call(adapter);
-  if (!listed.ok) {
-    return { id: check, area: "providers", status: "warn", summary: `could not list the installed plugins (${flat(listed.detail)})`, details: [], missing: "the output of claude plugin list --json", fix: 'run "claude plugin list --json" to see why; a worker session that loads a plugin the policy does not allow is refused' };
-  }
-  const policy = pluginPolicyOf(config);
-  const loads = [];
-  const maybe = [];
-  const skipped = [];
-  for (const p of listed.plugins) {
-    if (!p.enabled) skipped.push(`not loaded by workers: ${p.id} (disabled)`);
-    else if (p.scope !== null && WORKER_EXCLUDED_SCOPES.includes(p.scope)) skipped.push(`not loaded by workers: ${p.id} (scope ${p.scope}; workers load no user, project or local settings)`);
-    else {
-      const [judged2] = workerPlugins([{ name: p.id.split("@")[0], source: p.id, scope: p.scope ?? "unknown" }], { policy, installed: null });
-      (p.scope === "managed" ? loads : maybe).push(judged2);
-    }
-  }
-  const named = (p) => `${p.id} (scope ${p.scope})`;
-  const line3 = (p) => `${named(p)}${maybe.includes(p) ? ", may load" : ""}: ${p.allowed_by ? `allowed by ${p.allowed_by}` : `refused; allow it with ${pluginAllowLines(p).join(" or ")}`}`;
-  const judged = [...loads, ...maybe];
-  const details = [...judged.map(line3), ...skipped];
-  if (judged.length === 0) return { id: check, area: "providers", status: "pass", summary: "workers load only Claude Code built-ins", details, missing: null, fix: null };
-  const refused = judged.filter((p) => p.allowed_by === null);
-  if (refused.length > 0) {
-    const managed = refused.some((p) => p.scope === "managed") ? " (or agents.allow_managed_plugins: true for every managed plugin)" : "";
-    const fix = `add to .orbit/config.yaml: agents.allowed_plugins: ${JSON.stringify(refused.map((p) => p.id))}${managed}; ${HOOKS_NOTE}`;
-    const definite = refused.filter((p) => loads.includes(p));
-    const missing = "a policy that allows each plugin a worker loads";
-    if (definite.length > 0) {
-      return { id: check, area: "providers", status: "fail", summary: `workers would load ${definite.length} plugin(s) the policy does not allow, so every worker session would be refused: ${definite.map(named).join(", ")}`, details: [...details, SCOPE_SOURCE], missing, fix };
-    }
-    return { id: check, area: "providers", status: "warn", summary: `workers may load ${refused.length} plugin(s) the policy does not allow: ${refused.map(named).join(", ")}`, details: [...details, SCOPE_SOURCE], missing, fix };
-  }
-  return {
-    id: check,
-    area: "providers",
-    status: "pass",
-    summary: `workers would load ${judged.length} plugin(s), each allowed by the policy: ${judged.map((p) => `${p.id} (scope ${p.scope}, ${p.allowed_by})`).join(", ")}`,
-    details: [...details, `${HOOKS_NOTE}; each run lists the plugins its workers loaded in its final report`, SCOPE_SOURCE],
-    missing: null,
-    fix: null
-  };
+  const verdict = await judgeWorkerPlugins(adapter, config);
+  if (verdict === null) return null;
+  const { refused: _refused, ...check } = verdict;
+  return { id: `${id}.plugins`, area: "providers", ...check };
 }
-var HOOKS_NOTE, SCOPE_SOURCE;
 var init_doctor_plugins = __esm({
   "src/cli/commands/doctor-plugins.ts"() {
     "use strict";
-    init_claude_plugins();
-    init_io();
-    HOOKS_NOTE = "a plugin can add hooks and tools to workers";
-    SCOPE_SOURCE = "scope source: claude plugin list --json (system/init does not report a plugin's scope)";
+    init_worker_plugins_check();
   }
 });
 
@@ -62937,13 +63020,16 @@ async function environmentProblems(ctx, input) {
       required.add(reviewer.provider);
     }
     const gate = environmentGate({ snapshot: snapshot2, mode: config.mode, isolation, credentials: all.filter((c) => required.has(c.provider)), reviewer });
-    if (gate.passed) return null;
     const code2 = gate.details.code;
+    const plugins = (await workerPluginRefusals(deps.adapters, config)).map(({ verdict }) => ({ summary: verdict.summary, fix: verdict.fix ?? "" }));
     return {
-      reasons: gate.reasons.map((r) => `environment gate: ${r}`),
-      code: code2 !== null && ENVIRONMENT_CODES.has(code2) ? code2 : "PROVIDER_UNAVAILABLE",
-      // The reviewer is the most common cause on a fresh setup, and its fix is specific.
-      ...reviewer?.decision === "BLOCK" ? { fix: `${reviewFix(reviewer.alternatives)}, then run again (${orbitHint("doctor")} shows every failing capability)` } : {}
+      gate: gate.passed ? null : {
+        reasons: gate.reasons.map((r) => `environment gate: ${r}`),
+        code: code2 !== null && ENVIRONMENT_CODES.has(code2) ? code2 : "PROVIDER_UNAVAILABLE",
+        // The reviewer is the most common cause on a fresh setup, and its fix is specific.
+        ...reviewer?.decision === "BLOCK" ? { fix: `${reviewFix(reviewer.alternatives)}, then run again (${orbitHint("doctor")} shows every failing capability)` } : {}
+      },
+      plugins
     };
   } finally {
     db.close();
@@ -62957,6 +63043,7 @@ var init_admission = __esm({
     init_db();
     init_isolation();
     init_credentials();
+    init_worker_plugins_check();
     init_select();
     init_controller();
     init_delivery_env();
@@ -62994,12 +63081,17 @@ var init_admission = __esm({
       }
       if (cheap.length > 0) return { reasons: cheap, code: "POLICY_DENIED", fix: fixes.join("; ") };
       if (!input.foreground) return null;
-      const gate = await environmentProblems(ctx, input);
+      const { gate, plugins } = await environmentProblems(ctx, input);
       const delivery = deliveryEnvironmentProblem(config, ctx.env);
-      if (gate === null && delivery === null) return null;
-      const reasons = [...gate?.reasons ?? [], ...delivery ? [`mode ${config.mode} delivers through GitHub, but ${delivery.summary}`] : []];
-      const fix = [gate ? gate.fix ?? `${orbitHint("doctor")} shows each failing capability with the command that fixes it; then run again` : null, delivery ? `${delivery.fix} (or set mode: autonomous to run without delivery), then run again` : null].filter((f) => f !== null).join("; and ");
-      return { reasons, code: gate?.code ?? delivery.code, fix };
+      if (gate === null && plugins.length === 0 && delivery === null) return null;
+      const reasons = [...gate?.reasons ?? [], ...plugins.map((p) => p.summary), ...delivery ? [`mode ${config.mode} delivers through GitHub, but ${delivery.summary}`] : []];
+      const fix = [
+        gate ? gate.fix ?? `${orbitHint("doctor")} shows each failing capability with the command that fixes it; then run again` : null,
+        // Workers loading a plugin the policy does not allow are all refused after they start: the exact line doctor prints.
+        ...plugins.map((p) => `${p.fix}, then run again (${orbitHint("doctor")} lists every plugin it judged)`),
+        delivery ? `${delivery.fix} (or set mode: autonomous to run without delivery), then run again` : null
+      ].filter((f) => f !== null).join("; and ");
+      return { reasons, code: gate?.code ?? (plugins.length > 0 ? "POLICY_DENIED" : delivery.code), fix };
     };
   }
 });

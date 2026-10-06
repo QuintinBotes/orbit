@@ -118,6 +118,19 @@ export interface TaskResult {
   exitCode: number | null;
   usage: UsageReport;
   durationMs: number | null;
+  /** The adapter's finer reason for how the session ended (Claude: ClaudeEndReason); `isSessionRefusal` reads one of its values. */
+  reason?: string;
+}
+
+/**
+ * The end reason of a session Orbit refused after it started: its environment broke the policy (a plugin the policy does
+ * not allow, an MCP server, another permission mode), so its output was not accepted. The next session would run in the
+ * same environment and be refused the same way, so unlike a crash or an overloaded API this is not transient.
+ */
+export const SESSION_REFUSED_REASON = 'unsafe_session';
+
+export function isSessionRefusal(result: { status: string; reason?: unknown }): boolean {
+  return result.status === 'failed' && result.reason === SESSION_REFUSED_REASON;
 }
 
 export interface UsageReport {

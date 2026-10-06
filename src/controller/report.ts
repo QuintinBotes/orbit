@@ -468,6 +468,7 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
   try {
     const admitted = curationAdmitted(ctx);
     if (run.state === 'CANCELLED') summary.skipped = 'cancelled runs are not curated';
+    else if (refusedWithoutOutput(ctx.db, run)) summary.skipped = 'the run ended because a worker session was refused and produced nothing; the curator is a session in the same environment and would be refused the same way';
     else if (!admitted.ok) summary.skipped = admitted.why;
     else {
       const host = curatorHostFor(ctx);
@@ -505,6 +506,15 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
   }
   atomicWriteJson(join(ctx.runDir, 'learning.json'), summary);
   ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.completed', ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0 }, ctx.clock.now()));
+}
+
+/**
+ * A run that ended because Orbit refused a worker session (a plugin the policy does not allow, issue #22) and left no
+ * candidate. The curator is a Claude session in that same environment, so it would be refused too: starting it would
+ * only spend a session to be told so.
+ */
+function refusedWithoutOutput(db: OrbitDb, run: RunRecord): boolean {
+  return outcomeHas(run, 'worker_refusal') && db.get('SELECT 1 AS x FROM candidates WHERE run_id = ? LIMIT 1', run.id) === undefined;
 }
 
 /** The curator for this run's learning: a recorded worker of the run, files under its learning/ directory. */

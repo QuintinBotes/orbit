@@ -38,9 +38,10 @@ import { planWorkUnits, type WorkUnitPlan } from '../scheduling/work-units.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { machineAdmission, runWorktreeRoot, schedulerFor, type RunContext } from './context.ts';
 import { blockingQuestions } from './gates.ts';
+import { isSessionRefusal } from '../adapters/types.ts';
 import { ensureWorker, recordSpendCap, sessionSpendCap, workersFor, type RouteChoice } from './workers.ts';
 import { storedPlan } from './steps/contracting.ts';
-import { blockOnAuth, decide, note, safePoint, WAIT, type StepResult } from './steps/common.ts';
+import { blockOnAuth, blockOnRefusedSession, decide, note, safePoint, WAIT, type StepResult } from './steps/common.ts';
 
 export const UNITS_EVENT = 'implementation.units';
 export const UNIT_INTEGRATING_EVENT = 'implementation.unit-integrating';
@@ -122,6 +123,8 @@ export async function runParallelUnits(ctx: RunContext, n: number, units: readon
     if (st.status === 'running') continue;
     const r = st.result;
     if (r.status === 'auth_failed') return { kind: 'step', result: await blockOnAuth(ctx, st.worker.provider, 'auth_failed', r.error) };
+    // Refused after it started: the next session would be refused the same way, so the unit is not serialized or retried.
+    if (isSessionRefusal(r)) return { kind: 'step', result: await blockOnRefusedSession(ctx, `implementer work unit ${u.id} (attempt ${n})`, r.error) };
     if (r.status === 'cancelled') {
       const stop = await safePoint(ctx);
       if (stop) return { kind: 'step', result: stop };

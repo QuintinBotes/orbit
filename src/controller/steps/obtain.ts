@@ -105,7 +105,7 @@ export async function obtain<T>(ctx: RunContext, opts: ObtainOptions<T>): Promis
     const st = await ensureWorker(ctx, opts.request(purpose, n));
     if (st.status === 'running') return { ok: false, step: WAIT(`${opts.what} (${st.worker.id}) is running`) };
     const r = st.result;
-    let failure: { status: string; error: string | null } | null = null;
+    let failure: { status: string; error: string | null; reason?: string | null } | null = null;
     if (r.status === 'succeeded') {
       try {
         return { ok: true, value: opts.accept(r, st.worker), worker: st.worker, attempt: n };
@@ -113,7 +113,7 @@ export async function obtain<T>(ctx: RunContext, opts: ObtainOptions<T>): Promis
         if (!isOrbitError(err, 'MALFORMED_OUTPUT') && !isOrbitError(err, 'SCHEMA_INVALID')) throw err;
         failure = { status: 'malformed_output', error: err.message };
       }
-    } else failure = { status: r.status, error: r.error };
+    } else failure = { status: r.status, error: r.error, reason: r.reason ?? null };
     const h = await handleWorkerFailure(ctx, { provider: st.worker.provider, ...failure }, { attemptsUsed: n - first + 1, maxAttempts: opts.maxAttempts, what: opts.what, base: opts.base, purpose, ...(opts.exhausted ? { exhausted: opts.exhausted } : {}) });
     if (!h.retry) return { ok: false, step: h.result };
     n++;
