@@ -358,6 +358,22 @@ non-built-in plugin a worker loaded is recorded in its result and listed under
 one. `orbit doctor` lists, before any run, the plugins a worker would load and
 whether the policy allows them.
 
+A run is not started when doctor would fail that check (`claude.plugins`:
+workers would load a managed plugin the policy does not allow, so every session
+would be refused). `orbit run --foreground` refuses before a run exists, with
+every plugin id and the config line that allows it, and creates no run and
+calls no model. A run handed to the service (`--detach`) is judged by its
+controller at the start of PREFLIGHT, in the service's own environment, and
+ends BLOCKED with nothing spent: no check ran on the base revision, no
+question was raised, no worker or curator was started. The policy is frozen
+with a run, so the way out is to allow the plugin in `.orbit/config.yaml` and
+start a new run (or remove the plugin from Claude Code's configuration and
+`orbit resume <run-id> --force`). A plugin whose scope doctor cannot place
+("may load", a warning) does not stop a run from starting; if its session is
+refused after it started, the refusal is not retried: the run ends BLOCKED
+after that one session, the outcome names every plugin and the line that allows
+it, and no curator is started (it would be refused the same way).
+
 ## static_security
 
 ```yaml

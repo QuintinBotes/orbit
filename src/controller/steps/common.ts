@@ -5,6 +5,8 @@
  * written report, and decisions recorded through storage/decisions.ts.
  */
 import { OrbitError, isOrbitError } from '../../core/errors.ts';
+import { orbitHint } from '../../core/invocation.ts';
+import { isSessionRefusal } from '../../adapters/types.ts';
 import { classifyFailure, decideRetry } from '../../recovery/backoff.ts';
 import { appendEvent } from '../../storage/events.ts';
 import { recordDecision, type DecisionRecord } from '../../storage/decisions.ts';
@@ -71,7 +73,7 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
     // A block whose cause lives in the frozen policy cannot be cleared by editing the config and resuming: say so.
     const setting = frozenPolicyCause(reason, typeof opts.data?.code === 'string' ? opts.data.code : undefined);
     if (setting !== null) {
-      reason = `${reason} ${frozenPolicyAdvice(ctx.run.id, setting)}`;
+      reason = withSentence(reason, frozenPolicyAdvice(ctx.run.id, setting));
       opts = { ...opts, outcome: { ...(opts.outcome ?? {}), frozen_policy: { setting } } };
     }
   }
@@ -106,8 +108,17 @@ export function frozenPolicyCause(reason: string, code?: string): string | null 
   if (noModel) return `providers.${noModel[1] ?? noModel[2]}.model (or a refreshed model catalog: orbit models refresh)`;
   if (/no proposed path lies inside the policy scope|the policy allows no paths/.test(reason)) return 'scope.allowed_paths';
   if (/execution needs isolation; the policy selects none/.test(reason)) return 'isolation.provider';
+  // Workers loading a plugin the policy does not allow (at run start, or a session refused after it started): the allowance is a policy key.
+  // agents.allow_managed_plugins admits only managed plugins, so it is named only when doctor's fix line offers it.
+  if (/plugin\(s\)[^.;]*\bthe policy does not allow/.test(reason)) return /agents\.allow_managed_plugins/.test(reason) ? 'agents.allowed_plugins or agents.allow_managed_plugins' : 'agents.allowed_plugins';
   if (/differs from the frozen policy mode/.test(reason)) return 'mode';
   return null;
+}
+
+/** `next` as its own sentence after `reason`, which may or may not end with a full stop. */
+export function withSentence(reason: string, next: string): string {
+  const r = reason.trimEnd();
+  return `${/[.!?]$/.test(r) ? r : `${r}.`} ${next}`;
 }
 
 /** What to do about a frozen-policy block: the config change applies only to a new run. */
@@ -228,6 +239,21 @@ export function policySummary(ctx: RunContext, opts: { readOnly: boolean }): str
 
 export type FailureHandling = { retry: true } | { retry: false; result: StepResult };
 
+/**
+ * A worker session Orbit refused after it started: its environment broke the policy (a plugin the policy does not allow,
+ * an MCP server, another permission mode). The next session would start in the same environment and be refused the same
+ * way, so it is not transient and not one more attempt to spend: the run ends BLOCKED now. The refusal is quoted whole
+ * (it names each plugin and the line that allows it; cut at 200 characters it ended mid-sentence), and the outcome says
+ * which command shows the cause. `worker_refusal` marks the outcome: the curator, a session in this same environment,
+ * would be refused too, so a run that ended this way and produced nothing is not curated (report.ts).
+ */
+export async function blockOnRefusedSession(ctx: RunContext, what: string, error: string | null): Promise<StepResult> {
+  const cause = error?.trim() || 'no detail was recorded';
+  return finishRun(ctx, 'BLOCKED', `${what}: its session was refused after it started and was not retried (a new session would run in the same environment and be refused the same way); ${orbitHint('doctor')} shows what a worker would load and how to fix it. Cause: ${cause}`, {
+    outcome: { worker_refusal: { kind: 'session', what, error: cause.slice(0, 4000) } },
+  });
+}
+
 export const WORKER_RETRY_EVENT = 'worker.retry';
 
 export interface RetryRecord {
@@ -315,17 +341,18 @@ export async function scheduleTransientRetry(ctx: RunContext, failed: { base: st
 
 /**
  * What to do after a worker ended without a usable result. Authentication
- * failures block at once (never retried); transient provider failures spend
+ * failures and refused sessions block at once (never retried); transient provider failures spend
  * an infrastructure retry and back off; malformed or failed output is
  * regenerated within `maxAttempts` (spec section 14); beyond that the
  * caller's `exhausted` outcome applies.
  */
 export async function handleWorkerFailure(
   ctx: RunContext,
-  failed: { provider: string; status: string; error: string | null },
+  failed: { provider: string; status: string; error: string | null; reason?: string | null },
   opts: { attemptsUsed: number; maxAttempts: number; what: string; base?: string; purpose?: string; exhausted?: () => Promise<StepResult> },
 ): Promise<FailureHandling> {
   if (failed.status === 'auth_failed') return { retry: false, result: await blockOnAuth(ctx, failed.provider, 'auth_failed', failed.error) };
+  if (isSessionRefusal({ status: failed.status, reason: failed.reason })) return { retry: false, result: await blockOnRefusedSession(ctx, opts.what, failed.error) };
   if (failed.status === 'cancelled') {
     const stop = await safePoint(ctx);
     if (stop) return { retry: false, result: stop };

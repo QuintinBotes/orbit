@@ -21,12 +21,16 @@ export class ScenarioAdapter implements ProviderAdapter {
   private readonly inner: ProviderAdapter;
   private readonly templatePath: string;
   private readonly scenarioPath: string;
+  /** `claude plugin list --json`, when the wrapped adapter can list plugins: what doctor and run start judge a worker's plugins by. */
+  readonly listPlugins?: () => Promise<unknown>;
 
   constructor(inner: ProviderAdapter, templatePath: string, scenarioPath: string) {
     this.inner = inner;
     this.id = inner.id;
     this.templatePath = templatePath;
     this.scenarioPath = scenarioPath;
+    const list = (inner as { listPlugins?: () => Promise<unknown> }).listPlugins;
+    if (typeof list === 'function') this.listPlugins = () => list.call(inner);
   }
 
   discoverCapabilities(): Promise<ProviderCapabilities> {

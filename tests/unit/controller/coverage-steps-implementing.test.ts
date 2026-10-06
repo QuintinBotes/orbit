@@ -87,6 +87,19 @@ describe('a first attempt', () => {
     expect(events('implementation.worker-ended')[0]).toMatchObject({ attempt: 1, status: 'failed', error: 'crashed after editing' });
   });
 
+  // Issue #22: a session Orbit refused after it started ran in an environment the next session shares; its edits are not
+  // verified as an attempt and no attempt is spent on a retry.
+  it('a session refused after it started blocks the run at once, in full, and is not snapshotted, retried or counted again', async () => {
+    const refusal = 'the session loaded 1 plugin(s) that are not Claude Code built-ins and that the policy does not allow: acme-guard@acme-it (scope managed; allow it with agents.allowed_plugins: ["acme-guard@acme-it"] or agents.allow_managed_plugins: true)';
+    await setup({ script: () => okResult(null, { status: 'failed', reason: 'unsafe_session', error: refusal }), onStart: (s) => edit('apps/x.mjs', 'x\n')(s.cwd) });
+    const out = await settle();
+    expect(out).toMatchObject({ done: true });
+    expect(state()).toBe('BLOCKED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toContain(refusal);
+    expect(listCandidates(lab.db, lab.runId), 'its edits were not turned into a candidate').toHaveLength(0);
+    expect(listWorkers(lab.db, { runId: lab.runId, role: 'implementer' })).toHaveLength(1);
+  });
+
   it('the same tree twice is the same candidate, and the transition says so', async () => {
     await setup();
     await settle();

@@ -21,6 +21,7 @@ import { classifyFailure, decideRetry } from '../../recovery/backoff.ts';
 import { recoveryAttemptsRemaining, spendRecoveryAttempt } from '../../recovery/budget.ts';
 import { stopRowProcess } from '../../recovery/reconcile.ts';
 import { renderWorkerPrompt, type EvidenceRef, type PromptBrief } from '../../adapters/prompt.ts';
+import { isSessionRefusal } from '../../adapters/types.ts';
 import { snapshotCandidate } from '../../evidence/candidate.ts';
 import { invalidateEvidence } from '../../evidence/freshness.ts';
 import { currentEvidenceReport, listCheckRuns, listEvidenceReports, listFailures } from '../../evidence/store.ts';
@@ -37,7 +38,7 @@ import { recordedUnits, recordUnits, runParallelUnits, serializedUnits, splitAtt
 import type { WorkUnitPlan } from '../../scheduling/work-units.ts';
 import { attemptSubject, deniedWorkerOperations, grantFor, requestAttemptAuthorization, runApprovedOperation, sessionEvents, ungrantedCommands, type ApprovedRun, type GuardedOperation } from '../authorization.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
-import { assertContract, blockOnAuth, decide, finishRun, move, note, policySummary, progress, retryWait, safePoint, scheduleTransientRetry, WAIT, type StepResult } from './common.ts';
+import { assertContract, blockOnAuth, blockOnRefusedSession, decide, finishRun, move, note, policySummary, progress, retryWait, safePoint, scheduleTransientRetry, WAIT, type StepResult } from './common.ts';
 import { attemptStart, latestAttempt } from './obtain.ts';
 
 export const ATTEMPT_EVENT = 'implementation.attempt';
@@ -209,6 +210,8 @@ async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable
     if (st.status === 'running') return WAIT(`implementer ${st.worker.id} (attempt ${n}) is running`);
     const r = st.result;
     if (r.status === 'auth_failed') return blockOnAuth(ctx, st.worker.provider, 'auth_failed', r.error);
+    // A session Orbit refused after it started (a plugin the policy does not allow, ...) would be refused again by the next: its edits are not verified as an attempt, and no attempt is spent on a retry.
+    if (isSessionRefusal(r)) return blockOnRefusedSession(ctx, `implementer (attempt ${n})`, r.error);
     const stray = r.status === 'cancelled' && !ctx.refresh().cancelRequested;
     if (r.status === 'transient_error' || stray) {
       if (r.status === 'cancelled') {

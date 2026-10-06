@@ -34,6 +34,11 @@ export class FakeAdapter implements ProviderAdapter {
   readonly id: string;
   readonly provider: FakeProvider;
   readonly inner: ClaudeAdapter | CodexAdapter;
+  /**
+   * `claude plugin list --json` through the real Claude adapter (the fake answers it from the scenario's `plugins`), so
+   * doctor and run start judge a fake's plugins exactly as they judge the CLI's. Absent for Codex, which has no plugins.
+   */
+  readonly listPlugins?: ClaudeAdapter['listPlugins'];
 
   constructor(opts: FakeAdapterOptions) {
     if (fakeKind(opts.script) !== opts.provider) {
@@ -48,6 +53,10 @@ export class FakeAdapter implements ProviderAdapter {
         ? new ClaudeAdapter({ ...(rest as Omit<ClaudeAdapterOptions, 'command'>), command, passEnv, id: opts.id ?? 'claude' })
         : new CodexAdapter({ ...(rest as Omit<CodexAdapterOptions, 'command'>), command, passEnv, id: opts.id ?? 'codex' });
     this.id = this.inner.id;
+    if (this.inner instanceof ClaudeAdapter) {
+      const claude = this.inner;
+      this.listPlugins = () => claude.listPlugins();
+    }
   }
 
   discoverCapabilities(): Promise<ProviderCapabilities> {

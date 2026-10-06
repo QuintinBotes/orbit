@@ -11,8 +11,10 @@
  * The checks that need nothing from this process's environment apply to every run, detached or not: no commits, no
  * checks defined, a UI policy without Playwright, a dirty tree, credentials in git configuration. Only a run that this
  * process will drive (`--foreground`) is judged against this process's environment (isolation, credentials, the
- * reviewer, and the gh CLI and GH_TOKEN of a delivering mode): a detached run is picked up by the service, whose
- * credentials and PATH are its own, and the controller's preflight judges those again there.
+ * reviewer, the gh CLI and GH_TOKEN of a delivering mode, and the plugins its workers would load, by the same
+ * judgement as `orbit doctor`'s claude.plugins): a detached run is picked up by the service, whose credentials, PATH
+ * and Claude Code configuration are its own, and the controller's preflight judges those again there (a BLOCKED run
+ * that cost nothing, since a run that does exist has already frozen its policy).
  */
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -23,6 +25,7 @@ import type { OrbitConfig, PolicySnapshot } from '../policy/types.ts';
 import type { ProviderCapabilities, CredentialStatus } from '../adapters/types.ts';
 import { getIsolation } from '../isolation/index.ts';
 import { validateCredentials } from '../recovery/credentials.ts';
+import { workerPluginRefusals } from '../adapters/worker-plugins-check.ts';
 import { mandatoryReviewProvider, selectReviewer, type ReviewerSelection } from '../review/select.ts';
 import { defaultControllerDeps, environmentGate, orbitInstallDir, stateDbPath } from '../controller/index.ts';
 import { deliveryEnvironmentProblem } from '../controller/delivery-env.ts';
@@ -97,13 +100,20 @@ export const checkAdmission: AdmissionCheck = async (ctx, input) => {
   if (cheap.length > 0) return { reasons: cheap, code: 'POLICY_DENIED', fix: fixes.join('; ') };
 
   if (!input.foreground) return null;
-  const gate = await environmentProblems(ctx, input);
+  const { gate, plugins } = await environmentProblems(ctx, input);
   // Delivery needs its credentials as much as the models do, and finds out only at the end, after the usage is spent.
   const delivery = deliveryEnvironmentProblem(config, ctx.env);
-  if (gate === null && delivery === null) return null;
-  const reasons = [...(gate?.reasons ?? []), ...(delivery ? [`mode ${config.mode} delivers through GitHub, but ${delivery.summary}`] : [])];
-  const fix = [gate ? (gate.fix ?? `${orbitHint('doctor')} shows each failing capability with the command that fixes it; then run again`) : null, delivery ? `${delivery.fix} (or set mode: autonomous to run without delivery), then run again` : null].filter((f): f is string => f !== null).join('; and ');
-  return { reasons, code: gate?.code ?? delivery!.code, fix };
+  if (gate === null && plugins.length === 0 && delivery === null) return null;
+  const reasons = [...(gate?.reasons ?? []), ...plugins.map((p) => p.summary), ...(delivery ? [`mode ${config.mode} delivers through GitHub, but ${delivery.summary}`] : [])];
+  const fix = [
+    gate ? (gate.fix ?? `${orbitHint('doctor')} shows each failing capability with the command that fixes it; then run again`) : null,
+    // Workers loading a plugin the policy does not allow are all refused after they start: the exact line doctor prints.
+    ...plugins.map((p) => `${p.fix}, then run again (${orbitHint('doctor')} lists every plugin it judged)`),
+    delivery ? `${delivery.fix} (or set mode: autonomous to run without delivery), then run again` : null,
+  ]
+    .filter((f): f is string => f !== null)
+    .join('; and ');
+  return { reasons, code: gate?.code ?? (plugins.length > 0 ? 'POLICY_DENIED' : delivery!.code), fix };
 };
 
 /** Whether HEAD names a commit. */
@@ -125,7 +135,14 @@ function playwrightInstalled(repo: string): boolean {
   }
 }
 
-async function environmentProblems(ctx: CliContext, input: AdmissionInput): Promise<{ reasons: string[]; code: OrbitErrorCode; fix?: string } | null> {
+interface EnvironmentProblems {
+  /** The environment gate failed: why, the code the exit status derives from, and a fix more specific than "run doctor". */
+  gate: { reasons: string[]; code: OrbitErrorCode; fix?: string } | null;
+  /** Providers whose workers would load a plugin the policy does not allow (`orbit doctor`'s claude.plugins fails): every session would be refused. */
+  plugins: { summary: string; fix: string }[];
+}
+
+async function environmentProblems(ctx: CliContext, input: AdmissionInput): Promise<EnvironmentProblems> {
   const { repo, config } = input;
   // The repository's own registry when it has one (so a refreshed Codex catalog counts), otherwise the shipped seed in memory.
   const persisted = existsSync(stateDbPath(repo));
@@ -171,13 +188,19 @@ async function environmentProblems(ctx: CliContext, input: AdmissionInput): Prom
       required.add(reviewer.provider);
     }
     const gate = environmentGate({ snapshot, mode: config.mode, isolation, credentials: all.filter((c) => required.has(c.provider)), reviewer });
-    if (gate.passed) return null;
     const code = gate.details.code;
+    // The plugins a worker session would load: judged as doctor judges them, so a run is not started whose every session is refused.
+    const plugins = (await workerPluginRefusals(deps.adapters, config)).map(({ verdict }) => ({ summary: verdict.summary, fix: verdict.fix ?? '' }));
     return {
-      reasons: gate.reasons.map((r) => `environment gate: ${r}`),
-      code: code !== null && ENVIRONMENT_CODES.has(code) ? (code as OrbitErrorCode) : 'PROVIDER_UNAVAILABLE',
-      // The reviewer is the most common cause on a fresh setup, and its fix is specific.
-      ...(reviewer?.decision === 'BLOCK' ? { fix: `${reviewFix(reviewer.alternatives)}, then run again (${orbitHint('doctor')} shows every failing capability)` } : {}),
+      gate: gate.passed
+        ? null
+        : {
+            reasons: gate.reasons.map((r) => `environment gate: ${r}`),
+            code: code !== null && ENVIRONMENT_CODES.has(code) ? (code as OrbitErrorCode) : 'PROVIDER_UNAVAILABLE',
+            // The reviewer is the most common cause on a fresh setup, and its fix is specific.
+            ...(reviewer?.decision === 'BLOCK' ? { fix: `${reviewFix(reviewer.alternatives)}, then run again (${orbitHint('doctor')} shows every failing capability)` } : {}),
+          },
+      plugins,
     };
   } finally {
     db.close();
