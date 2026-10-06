@@ -11,7 +11,7 @@ import { redact } from '../../core/redact.ts';
 import type { BaselineApplyOutcome } from '../../inquisition/baseline-exception.ts';
 import type { OrbitDb } from '../../storage/db.ts';
 import type { Args, OptionSpec } from '../args.ts';
-import { findRunByPrefix, resolveRepo, withState, type CliContext } from '../context.ts';
+import { continueCommand, findRunByPrefix, resolveRepo, withState, type CliContext } from '../context.ts';
 import { EXIT, UsageError } from '../exit.ts';
 import { json, line, oneLine } from '../io.ts';
 
@@ -31,7 +31,9 @@ function matchQuestion(db: OrbitDb, runId: string, ref: string): QuestionRecord 
   const all = listQuestions(db, runId);
   const exact = all.find((q) => q.id === ref);
   if (exact) return exact;
-  const hits = ref.length >= 3 ? all.filter((q) => q.id.startsWith(ref)) : [];
+  // Ids are lower case; "Q-8F50" typed from a screen is the same question.
+  const lower = ref.toLowerCase();
+  const hits = ref.length >= 3 ? all.filter((q) => q.id.toLowerCase().startsWith(lower)) : [];
   if (hits.length === 1) return hits[0]!;
   if (hits.length > 1) throw new OrbitError('NOT_FOUND', `"${ref}" matches more than one question of run ${runId} (${hits.map((q) => q.id).join(', ')})`);
   throw new OrbitError('NOT_FOUND', `run ${runId} has no question ${ref}${all.length ? `; its questions: ${all.map((q) => q.id).join(', ')}` : ' (it has asked none)'}`);
@@ -105,7 +107,7 @@ export async function decideCommand(args: Args, ctx: CliContext): Promise<number
     if (amendment) line(ctx.io, describeAmendment(amendment));
     if (result.unblocks.length > 0) line(ctx.io, `unblocks: ${result.unblocks.join(', ')}`);
     if (remaining.length > 0) line(ctx.io, `${remaining.length} question(s) still open: ${remaining.map((x) => x.id).join(', ')}`);
-    if (run.state === 'BLOCKED') line(ctx.io, `The run is BLOCKED. Continue it with: orbit resume ${run.id}`);
+    if (run.state === 'BLOCKED') line(ctx.io, `The run is BLOCKED. Continue it with: ${continueCommand(db, run.id, ctx.clock.now())}`);
     else line(ctx.io, 'A controller picks the answer up at the run\'s next inquiry; nothing else is needed.');
     return EXIT.OK;
   });

@@ -112,11 +112,14 @@ the independent review (by Codex) cannot run and runs that need it stop as
 [review](docs/configuration.md#agents-and-review) for turning independent review
 off knowingly. Every other setting has a working default.
 
-**3. Read the Codex model catalog once.** `orbit models refresh`
+**3. Read the Codex model catalog.** `orbit models refresh`
 (plugin: ask Claude to run it, or accept it when `/orbit:doctor` suggests it)
 
 Without it, Orbit does not know which Codex model may review, and doctor fails
-`review`. The alternative is to name a model in `providers.codex.model`.
+`review`. The catalog describes your Codex client, not one repository, so it is
+saved under `ORBIT_HOME` (`~/.orbit/models/`) and every repository of yours
+uses it for 7 days; refresh again after that, or after upgrading Codex. The
+alternative is to name a model in `providers.codex.model`.
 
 **4. Check.** `orbit doctor` (plugin: `/orbit:doctor`)
 
@@ -131,11 +134,14 @@ Any `FAIL` names what is missing and the command that fixes it.
 (plugin: `/orbit:run Add a CSV export to the reports page`)
 
 Before it creates anything, `orbit run` refuses, and says why, when the working
-tree has uncommitted changes (only `.orbit/` is exempt), the repository's git
-configuration holds credentials, or the environment gate fails. No run exists
+tree has uncommitted changes (only `.orbit/` is exempt), the repository has no
+commits, the policy defines no check, a `ui` section or Playwright check has no
+`@playwright/test` installed, the repository's git configuration holds
+credentials, or the environment gate fails (a delivering mode also needs the
+`gh` CLI and a `GH_TOKEN`). No run exists
 and no model has been called in that case. Otherwise it drives the run in your
 terminal and prints each step; Ctrl-C pauses it (`orbit resume <run-id>
---foreground` continues it). From a plugin session with no service, `/orbit:run`
+--foreground` continues it when no service is running). From a plugin session with no service, `/orbit:run`
 starts the run in the background of that session and says so.
 
 When it ends, `orbit report <run-id>` prints the final report, including the
@@ -182,8 +188,8 @@ one ([troubleshooting](docs/troubleshooting.md#run-problems)).
 | `orbit stats` | Success rate, cost, repair loops and time to green for this repository (`--since`, `--until`). |
 | `orbit gc` | Apply artifact retention to finished runs (`--keep-days`, `--dry-run`). |
 | `orbit pause <run-id>` | Pause durably. |
-| `orbit resume <run-id>` | Unpause, or continue a blocked run. Leaves the run to the service unless you pass `--foreground` (`--detach`, `--force`). |
-| `orbit cancel <run-id>` | Cancel durably (`--wait`). |
+| `orbit resume <run-id>` | Unpause, or continue a blocked run. Needs a controller: with a service it leaves the run to it; with none it refuses (changing nothing) unless you pass `--foreground`, or `--detach` to release it to a service you start later (`--force`). On a terminal with no service it drives the run itself. |
+| `orbit cancel <run-id>` | Cancel durably (`--wait <seconds>`). |
 | `orbit report <run-id>` | Final or interim report (`--interim`); `orbit report --learning` shows improvement over time. |
 | `orbit questions <run-id>` | Questions a run is waiting on (`--all` includes answered ones). `orbit questions --pending` lists those of every unfinished run (`--quiet` prints nothing when there are none). |
 | `orbit decide <run-id> <question-id> <answer>` | Record your answer (`--by`). Approving a baseline-exception question puts the exception in the run's contract. |

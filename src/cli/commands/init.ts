@@ -15,6 +15,7 @@ import { gitEnv, resolveRepo, type CliContext } from '../context.ts';
 import { EXIT } from '../exit.ts';
 import { json, line } from '../io.ts';
 import { suggestAllowedPaths, trackedFiles } from '../layout.ts';
+import { compileGlobs } from '../../policy/globs.ts';
 import { orbitHint } from '../../core/invocation.ts';
 
 /** Runtime state only. config.yaml is deliberately not here: it is reviewed like code and normally committed. */
@@ -36,6 +37,17 @@ function templateText(): string {
   return readFileSync(tpl, 'utf8');
 }
 
+/** The checked-out branch, or null when HEAD is detached or the repository has no commits to name one. */
+async function currentBranch(ctx: CliContext, repo: string): Promise<string | null> {
+  try {
+    const r = await execCapture(['git', 'symbolic-ref', '--short', '-q', 'HEAD'], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15_000 });
+    const name = r.stdout.trim();
+    return r.exitCode === 0 && name !== '' ? name : null;
+  } catch {
+    return null;
+  }
+}
+
 async function excludeFile(ctx: CliContext, repo: string): Promise<string> {
   const r = await execCapture(['git', 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15_000 });
   if (r.exitCode !== 0 || !r.stdout.trim()) throw new OrbitError('GIT_FAILED', `cannot locate .git/info/exclude: ${r.stderr.trim().slice(0, 200)}`);
@@ -49,11 +61,17 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   let config: 'created' | 'exists';
   // The paths derived from the repository's layout, when the template's own do not fit it (P24).
   let derivedPaths: string[] = [];
+  let baseBranch: string | null = null;
   if (existsSync(configPath)) config = 'exists';
   else {
     let text = templateText();
     mkdirSync(dirname(configPath), { recursive: true });
     derivedPaths = suggestAllowedPaths(await trackedFiles(ctx, repo));
+    // The branch the repository is on, not the template's "main": a master repository would otherwise start with a
+    // base branch that does not exist, which only doctor noticed.
+    baseBranch = await currentBranch(ctx, repo);
+    if (baseBranch !== null && baseBranch !== 'main') text = text.replace(/^(\s*base_branch: ).*$/m, `$1${JSON.stringify(baseBranch)}`);
+    else baseBranch = null;
     if (derivedPaths.length > 0) text = text.replace(/^(\s*allowed_paths: )\[.*\]$/m, `$1[${derivedPaths.map((x) => JSON.stringify(x)).join(', ')}]`);
     try {
       // wx: never replace a file that appeared since the check above.
@@ -83,17 +101,30 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
     problems = err instanceof OrbitError && Array.isArray(err.details?.problems) ? (err.details.problems as string[]) : [err instanceof Error ? err.message : String(err)];
   }
 
+  // Nothing to scope to is not a valid starting point either: the policy would let a worker change nothing.
+  const warnings: string[] = [];
+  if (problems.length === 0) {
+    const files = await trackedFiles(ctx, repo);
+    const globs = loadConfig(repo).scope.allowed_paths;
+    const matches = compileGlobs(globs, { nocase: false });
+    if (files.length > 0 && !files.some((f) => matches(f))) {
+      warnings.push(`scope.allowed_paths (${globs.join(', ')}) matches no tracked file, so a worker could change nothing; set scope.allowed_paths in .orbit/config.yaml to globs that match the files a worker may change`);
+    }
+  }
+
   if (args.bool('json')) {
-    json(ctx.io, { repo, config: { path: configPath, status: config, ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}) }, exclude: { path: excludePath, added: missing }, config_problems: problems });
+    json(ctx.io, { repo, config: { path: configPath, status: config, ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, config_problems: problems, warnings });
     return EXIT.OK;
   }
   line(ctx.io, config === 'created' ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
-  if (config === 'created' && derivedPaths.length > 0) line(ctx.io, `scope.allowed_paths set to ${derivedPaths.join(', ')} from the repository layout (the template's apps/, packages/ and docs/ matched nothing here); review it`);
+  if (config === 'created' && baseBranch !== null) line(ctx.io, `repository.base_branch set to ${baseBranch} from the checked-out branch (the template says main); review it`);
+  if (config === 'created' && derivedPaths.length > 0) line(ctx.io, `scope.allowed_paths set to ${derivedPaths.join(', ')} from the repository layout (the template's paths matched nothing here); review it`);
   line(ctx.io, missing.length > 0 ? `added ${missing.length} rule(s) to ${excludePath} so runtime state stays out of git status` : `${excludePath} already excludes Orbit runtime state`);
   if (problems.length > 0) {
     line(ctx.io, 'The configuration does not validate yet:');
     for (const p of problems.slice(0, 10)) line(ctx.io, `  - ${p}`);
   } else line(ctx.io, 'The configuration validates.');
+  for (const w of warnings) line(ctx.io, `WARN: ${w}`);
   line(ctx.io, `Next: define your checks in .orbit/config.yaml, then run ${orbitHint('doctor')}.`);
   return EXIT.OK;
 }

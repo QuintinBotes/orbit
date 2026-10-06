@@ -70,6 +70,18 @@ describe('buildClaudeArgv', () => {
     expect(list(argv({ tier: 'os-sandbox' }), '--allowedTools')).toContain('Bash');
   });
 
+  // NM2: a diagnosis worker is read-only but must run experiments (tests, repro scripts); only an explicit experiments grant adds Bash.
+  it('lets a read-only experiment worker run Bash in the os-sandbox tier, still without any edit tool (NM2)', () => {
+    const exp = argv({ readOnly: true, experiments: true, tier: 'os-sandbox' });
+    expect(list(exp, '--allowedTools')).toContain('Bash');
+    expect(list(exp, '--disallowedTools')).toEqual(expect.arrayContaining(['Edit', 'Write', 'NotebookEdit']));
+    expect(list(exp, '--tools')).not.toContain('Edit');
+    // No grant, no Bash: a reviewer stays read-only whatever the tier.
+    expect(list(argv({ readOnly: true, tier: 'os-sandbox' }), '--allowedTools')).not.toContain('Bash');
+    // The claude-sandbox tier auto-approves Bash through its own sandbox setting, never through a bare allow.
+    expect(list(argv({ readOnly: true, experiments: true, tier: 'claude-sandbox' }), '--allowedTools')).not.toContain('Bash');
+  });
+
   it('keeps web and MCP tools away unless policy names hosts, and then only per domain', () => {
     const none = argv();
     expect(list(none, '--disallowedTools')).toEqual(expect.arrayContaining([...ALWAYS_DISALLOWED, 'WebFetch']));
@@ -175,6 +187,20 @@ describe('renderClaudeSettings', () => {
 
   it('gives read-only roles no allow rule at all', () => {
     expect(renderClaudeSettings(input({ readOnly: true })).permissions.allow).toEqual([]);
+  });
+
+  // NM2: the experiment grant is Bash and nothing else, and every write stays inside the worker's private temp directory.
+  it('gives a read-only experiment worker Bash only: no edit rule, writes confined to its temp directory (NM2)', () => {
+    const cs = renderClaudeSettings(input({ readOnly: true, experiments: true }));
+    expect(cs.permissions.allow).toEqual([]);
+    // Claude Code's sandbox lets Bash write its cwd by default; this deny becomes denyWrite and keeps the worktree read-only.
+    expect(cs.permissions.deny).toContain('Edit(//wt/**)');
+    expect(renderClaudeSettings(input({ readOnly: true })).permissions.deny).not.toContain('Edit(//wt/**)');
+    expect(cs.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: true, filesystem: { allowWrite: ['/tmp/orbit-1/abc'] }, network: { allowedDomains: ['registry.npmjs.org'], strictAllowlist: true } });
+    const os = renderClaudeSettings(input({ readOnly: true, experiments: true, tier: 'os-sandbox' }));
+    expect(os.permissions.allow).toEqual(['Bash']);
+    expect(os.sandbox).toEqual({ enabled: false });
+    expect(renderClaudeSettings(input({ readOnly: true, tier: 'os-sandbox' })).permissions.allow).toEqual([]);
   });
 
   it('wires exactly one PreToolUse guard hook in exec form with a short timeout, and no other hooks', () => {

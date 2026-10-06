@@ -18,6 +18,7 @@ import { createAdapters, type AdapterDeps } from '../adapters/index.ts';
 import type { ProviderAdapter } from '../adapters/types.ts';
 import { getIsolation } from '../isolation/index.ts';
 import { ModelRegistry } from '../routing/registry.ts';
+import { sharedCatalogPath } from '../routing/shared-catalog.ts';
 import type { ControllerDeps } from './context.ts';
 import { createRun, type RunRecord } from './run-store.ts';
 
@@ -94,5 +95,5 @@ export function defaultControllerDeps(input: DefaultDepsInput): Omit<ControllerD
     adapters = createAdapters(config, { isolation, clock, baseEnv: env, ...(input.adapterDeps ?? {}) });
   }
   const logger = input.logger ?? createLogger({ file: join(orbitHome, 'logs', 'controller.jsonl'), clock });
-  return { db, clock, logger, adapters, registry: new ModelRegistry(db, clock), orbitHome, homeDir: homedir(), hostEnv: env, orbitInstallDir: installDir };
+  return { db, clock, logger, adapters, registry: new ModelRegistry(db, clock).useSharedCatalog(sharedCatalogPath(orbitHome)), orbitHome, homeDir: homedir(), hostEnv: env, orbitInstallDir: installDir };
 }

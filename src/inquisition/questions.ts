@@ -264,7 +264,11 @@ export function persistQuestion(db: OrbitDb, runId: string, mode: InquisitionMod
   return db.tx(() => {
     // An answered question is still the answer to that ask: re-asking it would reopen what a person already settled and block the work again.
     const all = listQuestions(db, runId);
-    const open = all.find((o) => o.status === 'open' && sameAsk(o.question, q.question) && optionKey(o.options) === optionKey(q.options));
+    // An open ask is the same question when its options match, or when it concerns a criterion the open one already
+    // blocks: inquiries reword the options each time (e2e Nm8 asked one conflict three times), and two open records
+    // would split the person's answer. An answered question stays strict (see settles).
+    const asked = new Set(q.affected_work.map((w) => w.trim()).filter((w) => AC_ID.test(w)));
+    const open = all.find((o) => o.status === 'open' && sameAsk(o.question, q.question) && (optionKey(o.options) === optionKey(q.options) || o.affected.some((a) => asked.has(a))));
     if (open) {
       // The same ask for further criteria blocks them too.
       return { question: widenQuestionAffected(db, open.id, q.affected_work.map((w) => w.trim()), clock, opts.actor ?? 'controller'), created: false, classification };

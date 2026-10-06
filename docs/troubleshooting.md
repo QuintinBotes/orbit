@@ -107,11 +107,25 @@ degraded but usable.
   validation. The message lists each problem. `orbit policy show <run-id>`
   shows what the run was frozen with.
 - **Exit 7 (ENVIRONMENT).** A provider CLI, credential or isolation capability is missing. Run `orbit doctor`.
-- **A run is `EXHAUSTED`.** A hard cap was reached; the report names which. Raise the
-  cap in `scheduler.hard_limits` only if the goal justifies it, and start a new run.
+- **A run is `EXHAUSTED`.** The report names the cause: a spent cost, time or
+  admission cap ("budget is spent"), or a stop such as non-progress or exhausted
+  repair attempts, with any material question nobody answered. Raise the cap in
+  `scheduler.hard_limits` only if a cap was the cause and the goal justifies it,
+  and start a new run. A session that failed before any model output (launch,
+  authentication, or an exit with no output) is charged $0, not its ceiling.
 - **Scope violations.** A worker changed a path outside `scope.allowed_paths` or
   inside `protected_paths`. Widen the scope in the config yourself if intended.
-  Orbit will not let a model do it.
+  Orbit will not let a model do it. After `orbit resume`, the worktree is reset to
+  the last valid candidate (or the base revision) and the implementer gets a
+  scope brief; if it produces the violating tree again, the run blocks again.
+- **A run is `BLOCKED` on an open material question during review.** A reviewer
+  finding on a criterion that an unanswered material question blocks is not
+  repaired by guessing: the run blocks naming the question. Answer it with
+  `orbit decide <run-id> <question-id> <answer>` (ids are not case-sensitive),
+  then `orbit resume <run-id>`. A review repair that reproduces the tree it was
+  sent to fix ends the loop too: `BLOCKED` while a question is open, otherwise
+  `EXHAUSTED` as non-progress, and the report names that cause instead of a
+  spent budget.
 - **The service is not picking up my change to `config.yaml`.** Runs freeze the
   policy when they start. Start a new run.
 - **Stale or leftover state.** `orbit cancel <run-id>` works on blocked and

@@ -2,6 +2,7 @@ import type { OrbitDb } from '../storage/db.ts';
 import type { Clock } from '../core/clock.ts';
 import { OrbitError } from '../core/errors.ts';
 import seedJson from '../../data/models.json' with { type: 'json' };
+import { loadSharedCatalog } from './shared-catalog.ts';
 import { estimateCost, inputIncludesCacheRead, roundUsd } from './pricing.ts';
 import {
   SURFACES,
@@ -42,14 +43,85 @@ export function tierOf(entry: Pick<ModelEntry, 'family'>): number | null {
  * 1 hour TTL), so the context is priced at the dearest prompt rate; pricing
  * it as plain input would understate the overshoot. The observed CLI request
  * cap is used when known; null without pricing or limits.
+ *
+ * With `capUsd`, the prompt is the context that session can really reach, not
+ * the whole window: every token in a request was paid for once by the session
+ * that carries it (sent as input, written to the cache or produced as output,
+ * none cheaper than the input rate), except a prefix it did not pay for
+ * (SESSION_UNPAID_PROMPT_TOKENS). A session stops starting requests once its
+ * spend reaches its cap, so its last request carries at most that prefix plus
+ * capUsd at the input rate (e2e retest NB3: a 1M-token window priced in full
+ * refused every implementer under a cap of about $7.50). With `outputTokens`,
+ * the output is the session's own per-response cap when that is smaller than
+ * the CLI's.
  */
-export function worstCaseRequestUsd(entry: Pick<ModelEntry, 'pricing' | 'limits'>): number | null {
+export function worstCaseRequestUsd(entry: Pick<ModelEntry, 'pricing' | 'limits'>, opts: { capUsd?: number | null; outputTokens?: number | null } = {}): number | null {
+  const b = requestPricing(entry, opts.outputTokens);
+  if (!b) return null;
+  return roundUsd(b.promptRate * promptTokens(b, opts.capUsd ?? null) / 1_000_000 + b.outputUsd);
+}
+
+/**
+ * Prompt tokens a session's last request may carry without its own spend having paid for them: Claude Code's
+ * system prompt and tool definitions (a cached prefix other sessions may have written), and the fresh tool results
+ * that enter with that request (Claude Code truncates each Read to about 25000 tokens and each Bash output to 30000
+ * characters, a turn carries a few of them). Deliberately generous; the whole window still bounds it.
+ */
+export const SESSION_UNPAID_PROMPT_TOKENS = 200_000;
+
+interface RequestPricing {
+  window: number;
+  promptRate: number;
+  inputRate: number;
+  outputUsd: number;
+}
+
+function requestPricing(entry: Pick<ModelEntry, 'pricing' | 'limits'>, outputTokens: number | null | undefined): RequestPricing | null {
   const p = entry.pricing;
-  const context = entry.limits?.contextTokens ?? null;
-  const output = entry.limits?.cliMaxOutputTokens ?? entry.limits?.maxOutputTokens ?? null;
-  if (!p || context === null || output === null) return null;
-  const promptRate = Math.max(p.input, p.cache_write_5m, p.cache_write_1h);
-  return roundUsd((context * promptRate + output * p.output) / 1_000_000);
+  const window = entry.limits?.contextTokens ?? null;
+  const cliOutput = entry.limits?.cliMaxOutputTokens ?? entry.limits?.maxOutputTokens ?? null;
+  if (!p || window === null || cliOutput === null) return null;
+  const output = typeof outputTokens === 'number' && Number.isFinite(outputTokens) && outputTokens > 0 ? Math.min(outputTokens, cliOutput) : cliOutput;
+  return { window, promptRate: Math.max(p.input, p.cache_write_5m, p.cache_write_1h), inputRate: p.input, outputUsd: (output * p.output) / 1_000_000 };
+}
+
+function promptTokens(b: RequestPricing, capUsd: number | null): number {
+  if (capUsd === null || !(b.inputRate > 0) || !Number.isFinite(capUsd) || capUsd < 0) return b.window;
+  return Math.min(b.window, SESSION_UNPAID_PROMPT_TOKENS + (capUsd * 1_000_000) / b.inputRate);
+}
+
+/**
+ * The largest spend cap a new session can be given out of `availableUsd` so that the cap plus the session's worst
+ * request (worstCaseRequestUsd at that cap) still fits, and that worst request. The worst request grows with the
+ * cap until the prompt reaches the whole window, so this solves for the cap rather than subtracting a fixed
+ * worst case. `minimumUsd` is the worst request of a session with no budget at all: below it, nothing can start.
+ * Null without pricing or limits.
+ */
+export function fundedSessionCap(
+  entry: Pick<ModelEntry, 'pricing' | 'limits'>,
+  availableUsd: number,
+  opts: { outputTokens?: number | null } = {},
+): { capUsd: number; worstCaseUsd: number; minimumUsd: number } | null {
+  const b = requestPricing(entry, opts.outputTokens);
+  if (!b) return null;
+  const worst = (cap: number): number => roundUsd(b.promptRate * promptTokens(b, cap) / 1_000_000 + b.outputUsd);
+  const minimumUsd = worst(0);
+  const available = Number.isFinite(availableUsd) ? Math.max(0, availableUsd) : 0;
+  const fullUsd = (b.window * b.promptRate) / 1_000_000 + b.outputUsd;
+  let cap: number;
+  if (!(b.inputRate > 0) || SESSION_UNPAID_PROMPT_TOKENS >= b.window) {
+    cap = available - fullUsd;
+  } else {
+    // Below the knee the worst request is fixed + cap * promptRate / inputRate; above it, the whole window.
+    const knee = ((b.window - SESSION_UNPAID_PROMPT_TOKENS) * b.inputRate) / 1_000_000;
+    const fixed = (SESSION_UNPAID_PROMPT_TOKENS * b.promptRate) / 1_000_000 + b.outputUsd;
+    const linear = (available - fixed) / (1 + b.promptRate / b.inputRate);
+    cap = linear <= knee ? linear : available - fullUsd;
+  }
+  // Rounded down, so cap plus its worst request never exceeds what is available.
+  cap = Math.max(0, Math.floor(cap * 1_000_000) / 1_000_000);
+  while (cap > 0 && cap + worst(cap) > available + 1e-9) cap = Math.max(0, roundUsd(cap - 0.000001));
+  return { capUsd: cap, worstCaseUsd: worst(cap), minimumUsd };
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +423,7 @@ export class ModelRegistry {
   private readonly clock: Clock;
   private readonly seedFile: SeedFile;
   private readonly runtime: RuntimeProviderSeed[];
+  private sharedCatalog: string | null = null;
 
   constructor(db: OrbitDb, clock: Clock, seedFile: SeedFile = defaultSeed()) {
     this.db = db;
@@ -403,7 +476,36 @@ export class ModelRegistry {
         (existing ? result.updated : result.inserted).push(m.model_id);
       }
     });
+    this.adoptSharedCatalog();
     return result;
+  }
+
+  /**
+   * Where the user's saved Codex catalog lives (routing/shared-catalog.ts). A registry that is given one adopts it,
+   * on seed or on request, whenever it holds no Codex model of its own.
+   */
+  useSharedCatalog(path: string): this {
+    this.sharedCatalog = path;
+    return this;
+  }
+
+  /**
+   * Take the catalog `orbit models refresh` saved for this user, when this registry has no Codex model yet: the
+   * catalog describes the user's Codex client, not a repository, so a refresh in another repository counts here too.
+   * Returns whether one was adopted. A missing, unreadable or expired catalog adopts nothing; the registry's own
+   * Codex entries, when it has any, are never replaced.
+   */
+  adoptSharedCatalog(): boolean {
+    if (this.sharedCatalog === null) return false;
+    if (this.db.get('SELECT 1 AS x FROM model_registry WHERE provider = ? LIMIT 1', 'codex')) return false;
+    const catalog = loadSharedCatalog(this.sharedCatalog, this.clock.now());
+    if (catalog === null) return false;
+    try {
+      this.registerCodexCatalog(catalog, { source: 'live' });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Runtime-resolved providers from the seed (codex), with how their models are found. */

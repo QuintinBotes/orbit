@@ -210,13 +210,13 @@ describe('orbit run --foreground and resume --foreground, with a scripted contro
     const withQ = await drive(l, ['run', '--goal', 'one', '--foreground']).result;
     expect(withQ.out).toMatch(/ended BLOCKED: waiting for a decision\n/);
     expect(withQ.out).toContain('  open question q-1: Should mul round its result?\n');
-    expect(withQ.out).toMatch(/answer with "orbit decide orb-\S+ <question-id> <answer>", then "orbit resume orb-\S+"\n$/);
+    expect(withQ.out).toMatch(/answer with "orbit decide orb-\S+ <question-id> <answer>", then "orbit resume orb-\S+ --foreground"\n$/);
 
     hooks.start = async (id) => {
       l.moveTo(id, ['PREFLIGHT', 'BLOCKED']);
     };
     const without = await drive(l, ['run', '--goal', 'two', '--foreground']).result;
-    expect(without.out).toMatch(/resolve the reason above, then "orbit resume orb-\S+"\n$/);
+    expect(without.out).toMatch(/resolve the reason above, then "orbit resume orb-\S+ --foreground"\n$/);
     expect(without.out).not.toContain('open question');
   });
 
@@ -235,8 +235,8 @@ describe('orbit run --foreground and resume --foreground, with a scripted contro
     // The poll may also notice the pause and ask for the stop once more; the Ctrl-C reason always comes first.
     expect(hooks.stops[0]).toBe('paused by Ctrl-C');
     expect(hooks.stops.slice(1).every((x) => x === 'run paused')).toBe(true);
-    expect(r.err).toMatch(/^\ninterrupt: pausing the run \(not cancelling it\)\. Workers keep running; continue with: orbit resume orb-\S+\n$/);
-    expect(r.out).toMatch(/is CREATED and paused; continue with "orbit resume orb-\S+"\n$/);
+    expect(r.err).toMatch(/^\ninterrupt: pausing the run \(not cancelling it\)\. Workers keep running; continue with: orbit resume orb-\S+ --foreground\n$/);
+    expect(r.out).toMatch(/is CREATED and paused; continue with "orbit resume orb-\S+ --foreground"\n$/);
     expect(d.signals.listenerCount('SIGINT')).toBe(0);
     expect(d.signals.listenerCount('SIGTERM')).toBe(0);
     expect(d.exits).toEqual([]);
@@ -287,7 +287,7 @@ describe('orbit run --foreground and resume --foreground, with a scripted contro
     const r = await d.result;
     expect(hooks.stops).toEqual(['received SIGTERM']);
     expect(r.code).toBe(1);
-    expect(r.out).toMatch(/run orb-\S+ is CREATED; continue with "orbit resume orb-\S+"\n$/);
+    expect(r.out).toMatch(/run orb-\S+ is CREATED; continue with "orbit resume orb-\S+ --foreground"\n$/);
     expect(r.out).not.toContain('and paused');
   });
 
@@ -388,7 +388,7 @@ describe('orbit pause, resume and cancel: the other paths', () => {
     const run = l.newRun();
     l.moveTo(run.id, ['PREFLIGHT', 'CONTRACTING', 'BLOCKED']);
     expect(getRun(l.db(), run.id).resumeState).toBe('CONTRACTING');
-    const r = await l.cli(['resume', run.id]);
+    const r = await l.cli(['resume', run.id, '--detach']);
     expect(r.code, r.err).toBe(0);
     expect(r.out).toContain('resumed BLOCKED run at CONTRACTING');
     expect(getRun(l.db(), run.id).state).toBe('CONTRACTING');
@@ -417,7 +417,7 @@ describe('orbit pause, resume and cancel: the other paths', () => {
       Date.now(),
     );
     const at = async (id: string) => {
-      const r = await l.cli(['resume', id]);
+      const r = await l.cli(['resume', id, '--detach']);
       expect(r.code, r.err).toBe(0);
       return /resumed BLOCKED run at (\w+)/.exec(r.out)![1];
     };
@@ -429,20 +429,23 @@ describe('orbit pause, resume and cancel: the other paths', () => {
   it('says there is nothing to change for a run that is already going, and whether a controller is running', async () => {
     const l = lab();
     const run = l.newRun();
-    const none = await l.cli(['resume', run.id]);
-    expect(none.out).toBe(`run ${run.id}: already running; nothing to change (CREATED)\nNo controller is running. Start one with "orbit service run", or drive this run here with: orbit resume ${run.id} --foreground\n`);
+    const none = await l.cli(['resume', run.id, '--detach']);
+    expect(none.out).toBe(`run ${run.id}: created but not started; a controller picks it up (CREATED)\nNo service is running, so nothing continues this run until one is started ("orbit service install"). To drive it here instead: orbit resume ${run.id} --foreground\n`);
     registerController(l.db(), { id: 'svc-1', pid: process.pid, host: hostname(), mode: 'service' }, systemClock);
     const served = await l.cli(['resume', run.id]);
-    expect(served.out).toBe(`run ${run.id}: already running; nothing to change (CREATED)\n`);
+    expect(served.out).toBe(`run ${run.id}: created but not started; a controller picks it up (CREATED)\n`);
     const j = await l.cli(['resume', run.id, '--json']);
-    expect(JSON.parse(j.out)).toEqual({ run_id: run.id, state: 'CREATED', paused: false, actions: ['already running; nothing to change'], service_running: true });
+    expect(JSON.parse(j.out)).toEqual({ run_id: run.id, state: 'CREATED', paused: false, actions: ['created but not started; a controller picks it up'], service_running: true });
+    // A run that is past CREATED and not paused really is already going.
+    l.moveTo(run.id, ['PREFLIGHT']);
+    expect(JSON.parse((await l.cli(['resume', run.id, '--json'])).out)).toMatchObject({ actions: ['already running; nothing to change'] });
   });
 
   it('unpauses and reports it', async () => {
     const l = lab();
     const run = l.newRun();
     await l.cli(['pause', run.id]);
-    const r = await l.cli(['resume', run.id]);
+    const r = await l.cli(['resume', run.id, '--detach']);
     expect(r.out).toContain('run ' + run.id + ': unpaused (CREATED)');
     expect(getRun(l.db(), run.id).paused).toBe(false);
   });
@@ -457,7 +460,7 @@ describe('orbit pause, resume and cancel: the other paths', () => {
     transition(l.db(), { runId: run.id, to: 'CANCELLED', ownerId: 'live-controller', reason: 'cancel honored', actor: 'live-controller' }, systemClock);
     const r = await pending;
     expect(r.code, r.err).toBe(0);
-    expect(r.out).toBe(`run ${run.id}: cancelled (CANCELLED)\n`);
+    expect(r.out).toBe(`run ${run.id}: cancelled\n`);
   });
 
   it('gives up waiting at the deadline and says the controller will end the run at its next safe point', async () => {
@@ -563,7 +566,7 @@ describe('orbit decide', () => {
     l.moveTo(run.id, ['PREFLIGHT', 'BLOCKED']);
     const r = await l.cli(['decide', run.id, q1.id, 'A']);
     expect(r.out).toContain(`1 question(s) still open: ${q2.id}\n`);
-    expect(r.out).toContain(`The run is BLOCKED. Continue it with: orbit resume ${run.id}\n`);
+    expect(r.out).toContain(`The run is BLOCKED. Continue it with: orbit resume ${run.id} --foreground\n`);
     expect(r.out).toMatch(/recorded dec-\S+: chose option A by alice\n/);
     const free = await l.cli(['decide', run.id, q2.id, 'something else entirely']);
     expect(free.out).toMatch(/free-text answer by alice/);

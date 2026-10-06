@@ -13,7 +13,7 @@ afterEach(() => t.cleanup());
 /** `orbit resume <run>` through the real CLI entry, in this process (no --foreground: it only changes the run). */
 async function resume(l: Lab, runId: string): Promise<{ code: number; out: string; err: string }> {
   const io = memoryIo('');
-  const code = await main(['resume', runId], { io, cwd: l.repo, homeDir: l.base, orbitHome: l.orbitHome, env: { ...process.env, ORBIT_HOME: l.orbitHome }, user: 'acme' });
+  const code = await main(['resume', runId, '--detach'], { io, cwd: l.repo, homeDir: l.base, orbitHome: l.orbitHome, env: { ...process.env, ORBIT_HOME: l.orbitHome }, user: 'acme' });
   return { code, out: io.stdout, err: io.stderr };
 }
 

@@ -42,6 +42,7 @@ import { strictSchemaViolations } from '../contract/strict-schema.ts';
 import type { IsolationProvider, SandboxProfile } from '../isolation/types.ts';
 import { prepareWorkerTmpDir } from '../isolation/profiles.ts';
 import { canonicalPath, isWithin, readablePathsOf } from '../isolation/util.ts';
+import { bashGrant } from '../policy/role-grants.ts';
 import { snapshotHash, verifySnapshot } from '../policy/snapshot.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { assertClaudeSettings, renderClaudeSettings, type ClaudeTier } from './claude-settings.ts';
@@ -259,6 +260,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       policyPath: canonicalPath(spec.policyPath),
       tier,
       readOnly: spec.readOnly,
+      experiments: spec.experiments ?? false,
       hookCommand,
       denyReadPaths: spec.sandbox.denyReadPaths,
       readablePaths: readablePathsOf(spec.sandbox),
@@ -278,6 +280,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       maxTurns: spec.maxTurns,
       maxBudgetUsd: spec.maxBudgetUsd ?? null,
       readOnly: spec.readOnly,
+      experiments: spec.experiments ?? false,
       tier,
       allowedHosts: snapshot.config.network.allowed_hosts,
       settingsPath: join(workerDir, SETTINGS_FILE),
@@ -452,6 +455,8 @@ export interface ClaudeArgvInput {
   maxTurns: number;
   maxBudgetUsd: number | null;
   readOnly: boolean;
+  /** A read-only experiment worker (diagnosis): Bash is granted (see bashGrant), edits never. */
+  experiments?: boolean;
   tier: ClaudeTier;
   allowedHosts: readonly string[];
   settingsPath: string;
@@ -466,10 +471,10 @@ export function buildClaudeArgv(i: ClaudeArgvInput): string[] {
   const tools = [...READ_TOOLS, ...(i.readOnly ? [] : EDIT_TOOLS), 'Bash'];
   const web = i.allowedHosts.length > 0;
   if (web) tools.push('WebFetch');
-  // Auto-approved: reading, and for writers Bash only where an OS sandbox
+  // Auto-approved: reading, and for writers and experiment workers Bash only where an OS sandbox
   // confines it. Edits are allowed per path by the settings file, never by
   // a bare `Edit` here (which would allow every path).
-  const allowed = [...READ_TOOLS, ...(!i.readOnly && i.tier === 'os-sandbox' ? ['Bash'] : []), ...i.allowedHosts.map((h) => `WebFetch(domain:${h})`)];
+  const allowed = [...READ_TOOLS, ...(bashGrant({ readOnly: i.readOnly, experiments: i.experiments ?? false, tier: i.tier }).allowRule ? ['Bash'] : []), ...i.allowedHosts.map((h) => `WebFetch(domain:${h})`)];
   const disallowed = [...ALWAYS_DISALLOWED, ...(web ? [] : ['WebFetch']), ...(i.readOnly ? EDIT_TOOLS : [])];
   const argv = [
     ...i.command,

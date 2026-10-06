@@ -35,6 +35,7 @@ import type {
 import { globProblem } from './globs.ts';
 import { hostEntryCovered, hostEntryProblem } from './hosts.ts';
 import { orbitHint } from '../core/invocation.ts';
+import { closest } from '../core/near-miss.ts';
 
 /** Derived from the contract type so policy/ never imports controller/ (architecture dependency rule). */
 export type RunMode = OrbitConfig['mode'];
@@ -267,7 +268,9 @@ export function defaultUi(): UiConfig {
  * - verifier 8000: a verdict per criterion (about 200 tokens each) and its evidence references, plus thinking.
  * - reviewer 12000: up to about 15 findings with evidence references (about 300 tokens each), plus thinking.
  * - inquisitor 6000: a handful of questions with options and a recommendation each, plus thinking.
- * - curator 4000: a list of short lessons with their evidence, plus thinking.
+ * - curator 8000: a list of short lessons with their evidence and the discarded observations, plus thinking. Live
+ *   curators used 1000 to 2900 output tokens on two or three turns and 6500 when they had to retry their structured
+ *   output, so 4000 left no room for a retry (e2e retest Nm6); 8000 is the verifier's size.
  * - explorer 6000: structured UI findings with evidence references, plus thinking.
  * A response that still exceeds its cap is retried once with the cap doubled, up to OUTPUT_CAP_CEILING
  * (controller/workers.ts), so these are starting points and not walls.
@@ -278,7 +281,7 @@ export const DEFAULT_OUTPUT_BUDGETS: Readonly<Record<BudgetRole, number>> = Obje
   verifier: 8000,
   reviewer: 12000,
   inquisitor: 6000,
-  curator: 4000,
+  curator: 8000,
   explorer: 6000,
 });
 
@@ -377,7 +380,13 @@ export function loadConfig(repoRoot: string, path?: string, opts: Omit<ConfigOpt
 export function parseConfig(text: string, opts: ConfigOptions = {}): OrbitConfig {
   const source = opts.source ?? 'config';
   const doc = parseDocument(text, { uniqueKeys: true, prettyErrors: false, strict: true });
-  const yamlProblems = [...doc.errors, ...doc.warnings].map((e) => `yaml: ${e.message.split('\n')[0]}`);
+  // Where in the file, so a person does not hunt for it: the parser reports an offset, which is turned into line and column.
+  const where = (offset: number | undefined): string => {
+    if (offset === undefined || offset < 0 || offset > text.length) return '';
+    const before = text.slice(0, offset);
+    return ` (line ${before.split('\n').length}, column ${offset - before.lastIndexOf('\n')})`;
+  };
+  const yamlProblems = [...doc.errors, ...doc.warnings].map((e) => `yaml: ${e.message.split('\n')[0]}${where(e.pos?.[0])}`);
   if (yamlProblems.length > 0) throw invalid(source, yamlProblems);
   let raw: unknown;
   try {
@@ -586,7 +595,8 @@ let compiled: ValidateFunction | null = null;
 
 function schemaValidator(): ValidateFunction {
   if (compiled) return compiled;
-  const ajv = new Ajv2020({ allErrors: true, strict: true, allowUnionTypes: true });
+  // verbose: an error carries the offending value and its schema, so a message can name the value and the nearest valid one.
+  const ajv = new Ajv2020({ allErrors: true, strict: true, allowUnionTypes: true, verbose: true });
   // The schema uses "format": "date" (review.security.exceptions[].expires); strict mode refuses a format it does not know.
   addFormats(ajv);
   compiled = ajv.compile(configSchema as object);
@@ -603,9 +613,15 @@ function describeSchemaErrors(errors: ErrorObject[] | null | undefined): string[
     if (e.keyword === 'oneOf' && meaningful.some((o) => o !== e && o.instancePath.startsWith(e.instancePath) && o.keyword !== 'oneOf')) continue;
     const where = pointerToPath(e.instancePath) || '(top level)';
     if (e.keyword === 'additionalProperties') {
-      out.push(`${where}: unknown key "${(e.params as { additionalProperty: string }).additionalProperty}"`);
+      const key = (e.params as { additionalProperty: string }).additionalProperty;
+      const known = Object.keys((e.parentSchema as { properties?: Record<string, unknown> } | undefined)?.properties ?? {});
+      const near = closest(key, known);
+      out.push(`${where}: unknown key "${key}"${near ? `; did you mean "${near}"?` : ''}`);
     } else if (e.keyword === 'enum') {
-      out.push(`${where}: must be one of ${((e.params as { allowedValues: unknown[] }).allowedValues ?? []).map((v) => JSON.stringify(v)).join(', ')}`);
+      const allowed = (e.params as { allowedValues: unknown[] }).allowedValues ?? [];
+      const given = e.data;
+      const near = typeof given === 'string' ? closest(given, allowed.filter((v): v is string => typeof v === 'string')) : null;
+      out.push(`${where}: must be one of ${allowed.map((v) => JSON.stringify(v)).join(', ')}, got ${JSON.stringify(given)}${near ? `; did you mean "${near}"?` : ''}`);
     } else if (e.keyword === 'const') {
       out.push(`${where}: must be ${JSON.stringify((e.params as { allowedValue: unknown }).allowedValue)}`);
     } else if (e.keyword === 'propertyNames') {

@@ -13,6 +13,7 @@ import { realpathSync } from 'node:fs';
 import type { OrbitDb } from '../storage/db.ts';
 import type { CredentialCheck } from '../recovery/credentials.ts';
 import type { ReviewerSelection } from '../review/select.ts';
+import type { DeliveryEnvironmentProblem } from './delivery-env.ts';
 import { reviewGate, type ReviewGateResult } from '../review/stale.ts';
 import { listReviews } from '../review/store.ts';
 import type { GoalContract } from '../contract/types.ts';
@@ -142,6 +143,8 @@ export interface EnvironmentInput {
   credentials: readonly CredentialCheck[];
   /** Reviewer selection when independent review is mandatory; null when it is not. */
   reviewer: ReviewerSelection | null;
+  /** What a delivering run lacks (the gh CLI, GH_TOKEN), from controller/delivery-env.ts; null or absent when nothing. */
+  delivery?: DeliveryEnvironmentProblem | null;
 }
 
 export function environmentGate(input: EnvironmentInput): GateResult<{ blockedProvider: string | null; code: string | null }> {
@@ -193,6 +196,11 @@ export function environmentGate(input: EnvironmentInput): GateResult<{ blockedPr
     } else if (c.verdict === 'unverified') {
       notes.push(`${c.provider} credentials are present but unverified until a request succeeds`);
     }
+  }
+
+  if (input.delivery) {
+    reasons.push(`delivery: ${input.delivery.summary}; ${input.delivery.fix}`);
+    code ??= input.delivery.code;
   }
 
   if (input.reviewer) {

@@ -30,3 +30,34 @@ describe('closed pipes', () => {
     expect(r.code).toBe(0);
   });
 });
+
+describe('the output stream error handler', () => {
+  const epipe = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }) as NodeJS.ErrnoException;
+
+  it('leaves for a command with nothing left to do, silences the stream, and rethrows every other error', async () => {
+    const { onOutputStreamError, createIo } = await import('../../../src/cli/io.ts');
+    const { PassThrough } = await import('node:stream');
+    const left: number[] = [];
+    const stream = new PassThrough();
+    onOutputStreamError(stream, epipe, (c) => left.push(c));
+    expect(left).toEqual([0]);
+    // Nothing more is written to a stream whose reader is gone.
+    const chunks: string[] = [];
+    stream.on('data', (c: Buffer) => chunks.push(c.toString()));
+    createIo(stream, new PassThrough()).out('after the reader left');
+    expect(chunks).toEqual([]);
+    expect(() => onOutputStreamError(new PassThrough(), Object.assign(new Error('boom'), { code: 'EIO' }), () => {})).toThrow('boom');
+  });
+
+  it('keeps going while a run is being driven, and leaves again once the hold is released', async () => {
+    const { onOutputStreamError, holdThroughClosedPipe } = await import('../../../src/cli/io.ts');
+    const left: number[] = [];
+    const release = holdThroughClosedPipe();
+    onOutputStreamError({}, epipe, (c) => left.push(c));
+    expect(left).toEqual([]);
+    release();
+    release();
+    onOutputStreamError({}, epipe, (c) => left.push(c));
+    expect(left).toEqual([0]);
+  });
+});

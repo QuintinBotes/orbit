@@ -20,9 +20,14 @@ export function setInvocationEnv(env: Env): void {
   invocationEnv = env;
 }
 
-/** Whether this process was started through the plugin's bin/orbit. */
+/**
+ * Whether this process was started through the plugin's bin/orbit from inside Claude Code (its Bash tool, a hook or a
+ * skill), where the slash commands exist. bin/orbit run from a plain terminal (by path or through a symbolic link) also
+ * sets ORBIT_PLUGIN_ROOT, but there the terminal command is the one that works; Claude Code marks its own children
+ * with CLAUDECODE=1.
+ */
 export function viaPlugin(env: Env = invocationEnv): boolean {
-  return typeof env.ORBIT_PLUGIN_ROOT === 'string' && env.ORBIT_PLUGIN_ROOT !== '';
+  return typeof env.ORBIT_PLUGIN_ROOT === 'string' && env.ORBIT_PLUGIN_ROOT !== '' && env.CLAUDECODE === '1';
 }
 
 /**

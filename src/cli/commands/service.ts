@@ -17,6 +17,7 @@ import { openDb } from '../../storage/db.ts';
 import type { Args, OptionSpec } from '../args.ts';
 import { controllers, openState, resolveRepo, type CliContext } from '../context.ts';
 import { EXIT } from '../exit.ts';
+import { ORBIT_VERSION } from '../version.ts';
 import { ago, json, line } from '../io.ts';
 
 export const SERVICE_INSTALL_OPTIONS: OptionSpec = {
@@ -28,6 +29,7 @@ function managerOptions(ctx: CliContext): ServiceManagerOptions {
     platform: ctx.platform,
     homeDir: ctx.homeDir,
     uid: ctx.uid,
+    orbitHome: ctx.orbitHome,
     ...(ctx.seams.serviceRunner ? { run: ctx.seams.serviceRunner } : {}),
     ...(ctx.seams.serviceStopTimeoutMs !== undefined ? { stopTimeoutMs: ctx.seams.serviceStopTimeoutMs } : {}),
   };
@@ -40,7 +42,7 @@ function managerOptions(ctx: CliContext): ServiceManagerOptions {
  */
 export function refreshServiceLauncher(ctx: CliContext): void {
   try {
-    refreshLauncher({ orbitHome: ctx.orbitHome, entry: ctx.entry, nodePath: process.execPath });
+    refreshLauncher({ orbitHome: ctx.orbitHome, entry: ctx.entry, nodePath: process.execPath, version: ORBIT_VERSION });
   } catch {
     // A launcher that cannot be refreshed is reported by `orbit service status`, which reads it.
   }
@@ -67,7 +69,7 @@ export async function serviceInstallCommand(args: Args, ctx: CliContext): Promis
   if (!entry || !existsSync(entry)) throw new OrbitError('NOT_FOUND', `the orbit entry script ${entry || '(unknown)'} does not exist; pass --entry <path to plugin/dist/orbit.mjs>`);
   const warnings: string[] = [];
   if (!entry.endsWith('.mjs')) warnings.push(`the service will run ${entry}, not a built plugin/dist/orbit.mjs; build the bundle for a durable installation`);
-  const spec = serviceSpec({ repoRoot: repo, orbitHome: ctx.orbitHome, entry, ...(ctx.env.PATH ? { path: ctx.env.PATH } : {}) });
+  const spec = serviceSpec({ repoRoot: repo, orbitHome: ctx.orbitHome, entry, version: ORBIT_VERSION, ...(ctx.env.PATH ? { path: ctx.env.PATH } : {}) });
   const status = await installService(spec, managerOptions(ctx));
   if (ctx.platform === 'linux' && (await lingerState(ctx)) === 'no') warnings.push(`lingering is off for ${ctx.user}, so the service stops when you log out; run "loginctl enable-linger ${ctx.user}" to keep it running`);
   if (args.bool('json')) json(ctx.io, { ...status, warnings });
@@ -89,6 +91,7 @@ export async function serviceUninstallCommand(args: Args, ctx: CliContext): Prom
   if (args.bool('json')) json(ctx.io, status);
   else if (status.stopPending) line(ctx.io, `service ${status.label} removed; ${ctx.platform === 'darwin' ? 'launchd' : 'the service manager'} is still stopping the controller (it finishes its current step first); runs and their state are untouched. Check with: orbit service status`);
   else line(ctx.io, `service ${status.label} uninstalled; runs and their state are untouched`);
+  if (!args.bool('json') && status.launcherRemoved) line(ctx.io, `launcher ${launcherPath(ctx.orbitHome)} removed (no other Orbit service is installed)`);
   return EXIT.OK;
 }
 

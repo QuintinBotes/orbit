@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { getRun } from '../../../src/controller/run-store.ts';
 import { orbitHint, viaPlugin } from '../../../src/core/invocation.ts';
-import { makeLab, type Lab } from './lab.ts';
+import { defineCheck, makeLab, type Lab } from './lab.ts';
 
 const labs: Lab[] = [];
 const lab = () => {
@@ -16,8 +16,8 @@ const lab = () => {
 };
 afterEach(() => labs.splice(0).forEach((l) => l.close()));
 
-/** The environment bin/orbit gives the bundle. */
-const PLUGIN_ENV = { ORBIT_PLUGIN_ROOT: '/opt/acme/plugins/orbit' };
+/** The environment bin/orbit gives the bundle inside Claude Code (which marks its children with CLAUDECODE=1). */
+const PLUGIN_ENV = { ORBIT_PLUGIN_ROOT: '/opt/acme/plugins/orbit', CLAUDECODE: '1' };
 const asPlugin = (l: Lab) => ({ env: { ...process.env, HOME: l.home, ORBIT_HOME: l.orbitHome, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', ...PLUGIN_ENV } });
 const asTerminal = (l: Lab) => {
   const env: Record<string, string | undefined> = { ...process.env, HOME: l.home, ORBIT_HOME: l.orbitHome, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
@@ -122,6 +122,7 @@ describe('free text on stdin (P25)', () => {
   it('repair - reads the failure description from stdin, shell metacharacters and all', async () => {
     const l = lab();
     await l.cli(['init']);
+    defineCheck(l);
     const text = `login fails; $(touch /tmp/acme-pwned) "quoted" \`tick\``;
     const r = await l.cli(['repair', '-', '--detach', '--json'], {}, `${text}\n`);
     expect(r.code, r.err).toBe(0);

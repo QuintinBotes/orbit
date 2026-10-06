@@ -10,6 +10,9 @@ import { gitEnv, type CliContext } from './context.ts';
 /** Top-level directories that hold generated, vendored or protected-by-default material, never a sensible default scope. */
 const NOT_SOURCE = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'vendor', 'target', 'infra', 'tmp', 'temp']);
 
+/** Extensions that mark a top-level file as source in a flat layout (configuration formats such as json and yaml are left out). */
+const SOURCE_EXTENSIONS = new Set(['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'c', 'h', 'cc', 'cpp', 'cs', 'php', 'swift', 'sh']);
+
 /** At most this many directories are written; a repository with more is better scoped by hand. */
 const MAX_DIRS = 8;
 
@@ -23,7 +26,10 @@ export async function trackedFiles(ctx: CliContext, repo: string): Promise<strin
   }
 }
 
-/** `<dir>/**` for each top-level directory of the tracked files that looks like source, tests or documentation; [] when there is none. */
+/**
+ * `<dir>/**` for each top-level directory of the tracked files that looks like source, tests or documentation; for a flat
+ * layout (no such directory) `*.<ext>` for the source extensions at the top level; [] when there is neither.
+ */
 export function suggestAllowedPaths(files: readonly string[]): string[] {
   const dirs = new Set<string>();
   for (const f of files) {
@@ -36,5 +42,15 @@ export function suggestAllowedPaths(files: readonly string[]): string[] {
     dirs.add(top);
   }
   const sorted = [...dirs].sort();
-  return sorted.length > MAX_DIRS ? [] : sorted.map((d) => `${d}/**`);
+  if (sorted.length > MAX_DIRS) return [];
+  if (sorted.length > 0) return sorted.map((d) => `${d}/**`);
+  // A flat layout has no directory to scope to: the source files sit at the top level, so scope by their extensions.
+  const exts = new Set<string>();
+  for (const f of files) {
+    if (f.includes('/') || f.startsWith('.')) continue;
+    const dot = f.lastIndexOf('.');
+    const ext = dot > 0 ? f.slice(dot + 1).toLowerCase() : '';
+    if (SOURCE_EXTENSIONS.has(ext)) exts.add(ext);
+  }
+  return [...exts].sort().map((e) => `*.${e}`);
 }

@@ -23,6 +23,7 @@ import { isAbsolute } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
 import { compileSchema, schemaErrors } from '../core/schema.ts';
 import { isWithin } from '../isolation/util.ts';
+import { bashGrant } from '../policy/role-grants.ts';
 import { HOME_CREDENTIAL_PATHS, credentialGlobsOf } from '../policy/builtin.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 
@@ -60,6 +61,8 @@ export interface ClaudeSettingsInput {
   policyPath: string;
   tier: ClaudeTier;
   readOnly: boolean;
+  /** A read-only experiment worker (diagnosis): Bash is granted (see bashGrant), edits never; writes stay in tmpDir. */
+  experiments?: boolean;
   /** argv of the guard hook, e.g. [node, <orbit>/dist/orbit.mjs, 'hook', 'pre-tool-use']. */
   hookCommand: string[];
   /** Paths the Bash sandbox must not read (the worker's isolation profile deny list); claude-sandbox tier only. */
@@ -96,8 +99,12 @@ export function renderClaudeSettings(input: ClaudeSettingsInput): ClaudeSettings
   // claude-sandbox tier Bash runs inside Claude's own sandbox
   // (autoAllowBashIfSandboxed); allowing it here as well would also allow it
   // unsandboxed.
-  if (!input.readOnly && input.tier === 'os-sandbox') allow.push('Bash');
+  const bash = bashGrant({ readOnly: input.readOnly, experiments: input.experiments ?? false, tier: input.tier });
+  if (bash.allowRule) allow.push('Bash');
 
+  // Claude Code's sandbox always lets Bash write its working directory; an experiment worker's worktree is
+  // read-only, so deny every edit there (permission Edit denies become sandbox denyWrite, which beats allowWrite).
+  if (input.readOnly && input.experiments) deny.push(absRule('Edit', worktree, '**'));
   for (const glob of snapshot.effective_protected_paths) deny.push(absRule('Edit', worktree, glob));
   for (const glob of credentialGlobs(snapshot)) deny.push(absRule('Read', worktree, glob));
   for (const rel of HOME_CREDENTIAL_PATHS) deny.push(`Read(~/${rel})`);
@@ -122,7 +129,7 @@ export function renderClaudeSettings(input: ClaudeSettingsInput): ClaudeSettings
         ? {
             enabled: true,
             failIfUnavailable: true,
-            autoAllowBashIfSandboxed: !input.readOnly,
+            autoAllowBashIfSandboxed: bash.autoAllowInSandbox,
             allowUnsandboxedCommands: false,
             filesystem: {
               allowWrite: uniq(input.readOnly ? [input.tmpDir] : [worktree, input.tmpDir]),

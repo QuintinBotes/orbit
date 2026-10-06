@@ -15,6 +15,7 @@
  * A protected-path edit is a policy violation: BLOCKED, never repaired.
  */
 import { existsSync, readdirSync } from 'node:fs';
+import { atomicWriteJson } from '../../core/fsx.ts';
 import { join } from 'node:path';
 import { sha256 } from '../../core/hash.ts';
 import { OrbitError } from '../../core/errors.ts';
@@ -24,7 +25,7 @@ import { cleanupCandidateCheckout, materializeCandidate } from '../../evidence/c
 import { git } from '../../evidence/git.ts';
 import { evaluateEvidence, saveEvidenceReport } from '../../evidence/report.ts';
 import { isFresh } from '../../evidence/freshness.ts';
-import { currentEvidenceReport, recordFailure, setCandidateScope, setCandidateStatus, type CandidateRecord, type EvidenceReportRecord } from '../../evidence/store.ts';
+import { currentEvidenceReport, listCandidates, recordFailure, setCandidateScope, setCandidateStatus, type CandidateRecord, type EvidenceReportRecord } from '../../evidence/store.ts';
 import type { ScopeReport } from '../../evidence/types.ts';
 import { detectTriggers, loadInquisitionSnapshot, PROOF_BLOCKING_TRIGGERS, thresholdsFromPolicy } from '../../inquisition/triggers.ts';
 import type { Trigger } from '../../inquisition/types.ts';
@@ -36,7 +37,8 @@ import { implementationScopeGate, behaviourGate, type ScopeGateDetails } from '.
 import { authorizedOnce, deniedDependencyOperations, grantFor, requestAuthorization, scopeWithGrants } from '../authorization.ts';
 import { collectVerificationEvidence } from '../verification.ts';
 import { storedPlan } from './contracting.ts';
-import { assertContract, decide, finishRun, move, progress, safePoint, type StepResult } from './common.ts';
+import { assertContract, decide, finishRun, move, note, progress, safePoint, type StepResult } from './common.ts';
+import { briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
 import { recordGate } from './preflight.ts';
 
 export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
@@ -50,6 +52,9 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
   const contract = assertContract(ctx);
   const cand = ctx.candidate;
   if (!cand) throw new OrbitError('INTERNAL', `run ${ctx.run.id} is VERIFYING without a candidate`);
+  // A candidate invalidated for a policy violation is never repaired in place (the implementer may not touch the
+  // protected paths it changed): after a person's resume the worktree is restored first (e2e Nm7).
+  if (cand.status === 'INVALIDATED') return violatingCandidate(ctx, cand);
   const existing = currentEvidenceReport(ctx.db, ctx.run.id, cand.id);
   if (existing && isFresh(existing.report, { candidate: cand, snapshot: ctx.snapshot })) return act(ctx, cand, existing);
 
@@ -76,7 +81,13 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
     const report = saveEvidenceReport({ db: ctx.db, runDir: ctx.runDir, candidate: cand, report: evaluateEvidence({ contract, candidate: cand, checkResults: [], scope, snapshot: ctx.snapshot }).report, clock: ctx.clock });
     if (scopeGate.details.policyViolation) {
       setCandidateStatus(ctx.db, cand.id, 'INVALIDATED');
-      return finishRun(ctx, 'BLOCKED', `policy violation in candidate ${cand.seq}: ${scopeGate.reasons.join('; ')}; the candidate is invalidated and will not be reviewed or delivered`, { outcome: { candidate_id: cand.id, scope } });
+      const target = lastValidCandidate(ctx, cand);
+      return finishRun(
+        ctx,
+        'BLOCKED',
+        `policy violation in candidate ${cand.seq}: ${scopeGate.reasons.join('; ')}; the candidate is invalidated and will not be reviewed or delivered. The run's worktree keeps the change for inspection; orbit resume ${ctx.run.id} restores the worktree to ${target ? `candidate ${target.seq}` : 'the base revision'}, without the change, and repairs from there`,
+        { outcome: { candidate_id: cand.id, scope } },
+      );
     }
     return act(ctx, cand, report);
   }
@@ -198,6 +209,64 @@ function latestImplementerClaims(ctx: RunContext): ImplementerOutput | null {
   } catch {
     return null;
   }
+}
+
+/** The newest earlier candidate the policy did not invalidate: what a restored worktree goes back to. Null: the base revision. */
+function lastValidCandidate(ctx: RunContext, cand: CandidateRecord): CandidateRecord | null {
+  return listCandidates(ctx.db, ctx.run.id).filter((c) => c.seq < cand.seq && c.status !== 'INVALIDATED' && c.status !== 'CREATING').at(-1) ?? null;
+}
+
+/**
+ * A candidate the policy invalidated (protected paths changed). Blocked again, unless a person resumed the run since
+ * the block and no attempt has started since that resume: then the run's worktree, which still holds the violating
+ * change and which the implementer may not repair, is restored to the last valid candidate (or the base revision),
+ * and the next attempt redoes the work from there with a brief that says so.
+ */
+async function violatingCandidate(ctx: RunContext, cand: CandidateRecord): Promise<StepResult> {
+  const reasons = cand.scope ? implementationScopeGate(cand.scope, ctx.snapshot).reasons : [];
+  const deny = ctx.db.get<{ id: number }>("SELECT id FROM events WHERE run_id = ? AND type = 'decision.recorded' AND json_extract(data_json, '$.decision_id') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, `dec-${ctx.run.id}-deny-${cand.id}`);
+  const resumed = ctx.db.get<{ id: number }>("SELECT id FROM events WHERE run_id = ? AND type = 'run.resumed' AND id > ? ORDER BY id DESC LIMIT 1", ctx.run.id, deny?.id ?? 0);
+  const attemptSince = resumed ? ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'implementation.attempt' AND id > ?", ctx.run.id, resumed.id) : undefined;
+  if (!resumed || attemptSince || !ctx.run.worktreePath || !ctx.run.baseRevision) {
+    return finishRun(ctx, 'BLOCKED', `policy violation in candidate ${cand.seq}: ${reasons.join('; ') || 'the policy invalidated it'}; the candidate is invalidated and will not be reviewed or delivered`, { outcome: { candidate_id: cand.id, scope: cand.scope } });
+  }
+  const target = lastValidCandidate(ctx, cand);
+  await restoreWorktree(ctx.run.worktreePath, ctx.run.baseRevision, target?.commitSha ?? null);
+  note(ctx, 'worktree.restored', { candidate_id: cand.id, restored_to: target ? target.id : 'base', commit: target?.commitSha ?? ctx.run.baseRevision, resumed_event_id: resumed.id });
+  const contract = assertContract(ctx);
+  const next = currentAttempt(ctx) + 1;
+  const fingerprint = cand.scope ? scopeFingerprint(cand.scope) : `scope:${cand.id}`;
+  const from = target ? `candidate ${target.seq} (tree ${target.treeHash.slice(0, 12)})` : `the base revision ${ctx.run.baseRevision.slice(0, 12)}`;
+  const stored: StoredBrief = {
+    attempt: next,
+    source: 'scope',
+    fingerprint,
+    brief: {
+      fingerprint,
+      evidence: [`candidate ${cand.seq} was invalidated by the policy: ${reasons.join('; ') || 'protected paths changed'}`, `the controller restored the worktree to ${from} after a person resumed the run; the violating change is gone`],
+      hypotheses: [{ statement: 'The previous attempt edited paths the policy protects, so its work cannot be verified or delivered', supporting: reasons.join('; ') || 'policy violation recorded for the candidate' }],
+      experiment: 'Compare the worktree with the contract allowed paths before changing anything and list what the task still needs',
+      expected_observation: 'No protected path differs from the base revision, and the remaining work lies inside the allowed paths',
+      scoped_fix: `Redo the work of attempt ${cand.attempt} starting from ${from}, keeping every change inside ${contract.allowed_paths.join(', ')}`,
+      post_fix_checks: contract.required_check_ids,
+      preserved_constraints: [`Never edit protected paths: ${ctx.snapshot.effective_protected_paths.join(', ')}`, 'Keep the behaviour tests that prove the acceptance criteria'],
+    },
+  };
+  if (!existsSync(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
+  return move(ctx, 'DIAGNOSING', `candidate ${cand.seq} violated the policy; the worktree was restored to ${from} and attempt ${next} repairs from there`, { data: { attempt: next, restored_to: target?.id ?? 'base' } });
+}
+
+/**
+ * The run's worktree back to `commit` (a candidate) or to the base revision: tracked files reset, files git does not
+ * ignore removed, then the candidate's content laid over the base the way an attempt leaves it (HEAD stays at the
+ * base, so the next snapshot diffs against it as before). Ignored files (dependencies, build output) are kept.
+ */
+async function restoreWorktree(worktree: string, base: string, commit: string | null): Promise<void> {
+  await git(worktree, ['reset', '-q', '--hard', base]);
+  await git(worktree, ['clean', '-q', '-fd']);
+  if (commit === null) return;
+  await git(worktree, ['read-tree', '-u', '-m', base, commit]);
+  await git(worktree, ['reset', '-q']);
 }
 
 function scopeFingerprint(scope: ScopeReport): string {

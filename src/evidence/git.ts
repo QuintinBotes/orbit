@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { OrbitError } from '../core/errors.ts';
+import { OrbitError, isOrbitError } from '../core/errors.ts';
 import { execCapture } from '../core/exec.ts';
 
 /**
@@ -59,8 +59,16 @@ const REV = /^[A-Za-z0-9._/@^~{}:-]+$/;
 /** Resolve a revision to a commit sha. A leading '-' would be read as an option, so it is refused up front. */
 export async function resolveCommit(repoRoot: string, rev: string): Promise<string> {
   if (!REV.test(rev) || rev.startsWith('-')) throw new OrbitError('GIT_FAILED', `not a usable revision: ${JSON.stringify(rev)}`, { rev });
-  const out = await git(repoRoot, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]);
-  return out.trim();
+  try {
+    const out = await git(repoRoot, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]);
+    return out.trim();
+  } catch (err) {
+    // --quiet makes git print nothing, so the plain error ends in an empty detail: say what it means instead.
+    if (isOrbitError(err) && err.code === 'GIT_FAILED' && err.details?.exitCode === 1) {
+      throw new OrbitError('GIT_FAILED', `${rev} does not name a commit in ${repoRoot}${rev === 'HEAD' ? ' (a repository with no commits has no HEAD; make an initial commit)' : ''}`, { rev, exitCode: 1 }, { cause: err });
+    }
+    throw err;
+  }
 }
 
 export async function treeOf(repoRoot: string, commit: string): Promise<string> {

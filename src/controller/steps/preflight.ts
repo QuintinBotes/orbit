@@ -20,6 +20,7 @@ import { selectReviewer, selectionDecisionRecord, type ReviewerSelection } from 
 import type { ProviderCapabilities, CredentialStatus } from '../../adapters/types.ts';
 import { homeOf, runWorktreeRoot, type RunContext } from '../context.ts';
 import { baselineGate, environmentGate, intakeGate, type GateResult } from '../gates.ts';
+import { deliveryEnvironmentProblem } from '../delivery-env.ts';
 import { blockOnAuth, decide, finishRun, move, safePoint, type StepResult } from './common.ts';
 import { messageOf } from '../workers.ts';
 
@@ -261,7 +262,9 @@ export async function checkEnvironment(ctx: RunContext): Promise<EnvironmentChec
     }
   }
   const credentials = all.filter((c) => required.has(c.provider));
-  const gate = environmentGate({ snapshot: ctx.snapshot, mode: ctx.run.mode, isolation, credentials, reviewer });
+  // A run handed to the service is judged for its delivery credentials here, in the service's own environment.
+  const delivery = deliveryEnvironmentProblem(config, ctx.deps.hostEnv ?? process.env);
+  const gate = environmentGate({ snapshot: ctx.snapshot, mode: ctx.run.mode, isolation, credentials, reviewer, delivery });
   atomicWriteJson(join(ctx.runDir, 'environment.json'), {
     checked_at: ctx.clock.now(),
     gate,

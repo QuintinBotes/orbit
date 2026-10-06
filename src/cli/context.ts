@@ -12,6 +12,7 @@ import { execCapture } from '../core/exec.ts';
 import { orbitHint } from '../core/invocation.ts';
 import { newOwnerId } from '../core/ids.ts';
 import { isAlive } from '../core/proc.ts';
+import { findController } from '../storage/controllers.ts';
 import { openDb, type OrbitDb } from '../storage/db.ts';
 import { listControllers, type ControllerRecord } from '../storage/controllers.ts';
 import { acquireLease, findRun, getLease, listRuns, releaseLease, type Lease, type RunRecord } from '../controller/run-store.ts';
@@ -112,7 +113,7 @@ export async function resolveRepo(ctx: CliContext, flag?: string): Promise<strin
   } catch (err) {
     throw new OrbitError('PROVIDER_UNAVAILABLE', `git is not available: ${err instanceof Error ? err.message : String(err)}`);
   }
-  if (r.exitCode !== 0) throw new OrbitError('NOT_FOUND', `${start} is not inside a git repository; run orbit from a repository or pass --repo`);
+  if (r.exitCode !== 0) throw new OrbitError('NOT_FOUND', `${start} is not inside a git repository; run orbit from a repository or pass --repo (to make this directory one: git init, then commit at least once)`);
   const [top, common] = r.stdout.trim().split('\n');
   if (!top) throw new OrbitError('NOT_FOUND', `${start} is not inside a git repository`);
   // A linked worktree keeps its own toplevel; Orbit's state lives with the primary checkout (platform-runtime section 7.3).
@@ -171,6 +172,18 @@ export function liveLease(db: OrbitDb, runId: string, now: number): Lease | null
   return l && l.expiresAt > now ? l : null;
 }
 
+/**
+ * Expire a lease whose owner is a controller registered on this host whose process is gone (kill -9, a closed
+ * terminal). Returns whether it did. A CLI lease, a controller of another host and a live process are left alone:
+ * their lease stands until it expires.
+ */
+export function expireLeaseOfDeadOwner(db: OrbitDb, lease: Lease, now: number): boolean {
+  const owner = findController(db, lease.ownerId);
+  if (!owner || owner.host !== hostname() || isAlive(owner.pid, owner.procStart)) return false;
+  db.run('UPDATE leases SET expires_at = ? WHERE run_id = ? AND owner_id = ? AND expires_at = ?', now, lease.runId, lease.ownerId, lease.expiresAt);
+  return true;
+}
+
 /** Heartbeats are published every few seconds; a controller silent for this long is treated as gone. */
 export const CONTROLLER_STALE_MS = 30_000;
 
@@ -196,6 +209,28 @@ export function liveServiceController(db: OrbitDb, now: number): ControllerLiven
 }
 
 /**
+ * A controller that is working on this run or would pick it up: the service (it takes any run), or the live owner of
+ * the run's lease (a foreground controller driving this run in another terminal). A foreground controller of another
+ * run does not count, and neither does a CLI lease, which is a command in flight, not a controller.
+ */
+export function liveControllerFor(db: OrbitDb, runId: string, now: number): ControllerLiveness | null {
+  const service = liveServiceController(db, now);
+  if (service) return service;
+  const lease = liveLease(db, runId, now);
+  if (!lease) return null;
+  return controllers(db, now).find((c) => c.live && c.record.id === lease.ownerId) ?? null;
+}
+
+/**
+ * The command that continues a run that has stopped: plain `orbit resume` when a service will pick it up, and
+ * `--foreground` when none is running, because without a controller a plain resume only clears a flag and leaves the
+ * run idle.
+ */
+export function continueCommand(db: OrbitDb, runId: string, now: number): string {
+  return `orbit resume ${runId}${liveServiceController(db, now) ? '' : ' --foreground'}`;
+}
+
+/**
  * Hold a run's lease for the length of `fn`, as the CLI. Used where the CLI
  * must itself change a run nobody owns (cancelling a BLOCKED run, resuming
  * one). A live owner makes this a CONCURRENT_UPDATE: the CLI never takes a
@@ -203,10 +238,14 @@ export function liveServiceController(db: OrbitDb, now: number): ControllerLiven
  */
 export async function withCliLease<T>(ctx: CliContext, db: OrbitDb, runId: string, fn: (ownerId: string) => Promise<T> | T, ttlMs = 60_000): Promise<T> {
   const ownerId = `cli-${newOwnerId()}`;
+  // A controller that was killed on this host still "holds" the run until its lease runs out; its process is gone.
+  const stale = liveLease(db, runId, ctx.clock.now());
+  if (stale) expireLeaseOfDeadOwner(db, stale, ctx.clock.now());
   const lease = acquireLease(db, runId, ownerId, ttlMs, ctx.clock);
   if (!lease) {
     const held = getLease(db, runId);
-    throw new OrbitError('CONCURRENT_UPDATE', `run ${runId} is owned by a live controller (${held?.ownerId ?? 'unknown'}); its lease expires ${held ? new Date(held.expiresAt).toISOString() : 'soon'}`, { runId });
+    const wait = held ? Math.max(1, Math.ceil((held.expiresAt - ctx.clock.now()) / 1000)) : null;
+    throw new OrbitError('CONCURRENT_UPDATE', `run ${runId} is owned by a live controller (${held?.ownerId ?? 'unknown'}); its lease expires ${held ? new Date(held.expiresAt).toISOString() : 'soon'}${wait === null ? '' : ` (in ${wait}s; retry then, or stop that controller)`}`, { runId });
   }
   try {
     return await fn(ownerId);

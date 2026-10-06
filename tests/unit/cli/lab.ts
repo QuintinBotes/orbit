@@ -1,6 +1,6 @@
 /** Shared by the in-process CLI tests: a throwaway git repository, runs written through the real controller modules, and a captured `main`. */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from '../../../src/cli/cli.ts';
@@ -103,4 +103,13 @@ export function makeLab(opts: { git?: boolean } = {}): Lab {
     },
   };
   return lab;
+}
+
+/**
+ * `orbit init` writes the starter policy with only commented example checks, and `orbit run` refuses a policy with no
+ * check (NM4), so a test that starts a run from a freshly initialised repository defines one first. Needs `init` run.
+ */
+export function defineCheck(lab: Pick<Lab, 'repo'>): void {
+  const path = join(lab.repo, '.orbit', 'config.yaml');
+  writeFileSync(path, readFileSync(path, 'utf8').replace('# example-checks:start\n', '  unit-tests:\n    command: [node, -e, "process.exit(0)"]\n# example-checks:start\n'));
 }

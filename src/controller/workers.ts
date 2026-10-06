@@ -21,20 +21,20 @@ import { getDecision, recordDecision } from '../storage/decisions.ts';
 import { finishWorker, getWorker, listActiveWorkers, listWorkers, markWorkerRunning, planWorker, type WorkerOutcome, type WorkerRecord } from '../storage/workers.ts';
 import type { ProviderAdapter, TaskHandle, TaskResult, TaskSpec, UsageReport, WorkerRole } from '../adapters/types.ts';
 import { archiveAttempt, handleFromWorkerDir, LAUNCH_FILE, readLogLines } from '../adapters/supervise.ts';
-import { LOG_FILE } from '../adapters/shim.ts';
+import { LOG_FILE, readExitRecord } from '../adapters/shim.ts';
 import { renderSystemPrompt, ROLE_OUTPUT_KIND } from '../adapters/prompt.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
 import { profileForWorker } from '../isolation/profiles.ts';
 import { stopWorker } from '../recovery/reconcile.ts';
 import { route, toDecisionRecord } from '../routing/router.ts';
-import { allowMatch, tierOf, worstCaseRequestUsd } from '../routing/registry.ts';
+import { allowMatch, fundedSessionCap, tierOf, worstCaseRequestUsd } from '../routing/registry.ts';
 import { recordUsage, routeStats } from '../routing/usage.ts';
 import type { RouteSignals, WorkKind } from '../routing/types.ts';
 import { dearestPricing, ROLE_COST_CEILING_USD, ROLE_WALL_CEILING_MS, type TokenEstimate } from '../scheduling/budget.ts';
 import { estimateCost, inputIncludesCacheRead } from '../routing/pricing.ts';
 import type { BudgetPhase } from '../scheduling/types.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
-import { DEFAULT_OUTPUT_BUDGETS } from '../policy/config.ts';
+import { DEFAULT_OUTPUT_BUDGETS, outputBudgets } from '../policy/config.ts';
 import { homeOf, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
 import { activeOverlayFor } from './knowledge-hooks.ts';
@@ -51,6 +51,8 @@ export interface WorkerRequest {
   effort: string | null;
   cwd: string;
   readOnly: boolean;
+  /** A read-only worker that runs experiments (diagnosis): Bash inside its sandbox, worktree read-only. */
+  experiments?: boolean;
   /** Built at spawn time, once the worker id exists (retrieval is recorded against it). */
   prompt: (workerId: string) => string;
   /** Spend cap for the provider's own budget flag; null when the provider has none. */
@@ -220,6 +222,7 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
     systemPrompt: systemPromptFor(ctx, w.role),
     outputSchema: req.outputSchema ?? schemaFor(w.role),
     readOnly: req.readOnly,
+    ...(req.experiments ? { experiments: true } : {}),
     maxTurns: ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session,
     timeoutMs,
     sandbox,
@@ -376,8 +379,13 @@ export function accountWorker(ctx: RunContext, w: WorkerRecord, result: TaskResu
     ctx.log.warn('could not read the worker transcript for policy denials', { worker_id: w.id, error: messageOf(err) });
   }
   let usage = result.usage ?? emptyUsage(w.provider);
-  // A session the provider refused at authentication ran no model: its spend is a measured zero, not unknown.
-  if (result.status === 'auth_failed' && usage.costUsd === null && authFailureSpentNothing(w, usage)) usage = { ...usage, costUsd: 0, costSource: 'reported' };
+  // A session that failed before any request reached a model (refused at authentication, crashed at launch, exited
+  // before any output) ran no model: its spend is a measured zero, not unknown. Charging it the session ceiling
+  // let a reviewer outage exhaust the cap on spend that never happened (e2e retest NB2).
+  if (ZERO_COST_STATUSES.has(result.status) && usage.costUsd === null && sessionSpentNothing(w, usage)) {
+    usage = { ...usage, costUsd: 0, costSource: 'reported' };
+    ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'budget.cost-zero-no-model', ctx.ownerId, { worker_id: w.id, role: w.role, status: result.status, provider: w.provider }, ctx.clock.now()));
+  }
   if (ctx.ledger) {
     const cap = spendCapOf(ctx, w.id);
     // A lost session is charged its measured usage or at most the role ceiling: the restart that replaces it runs
@@ -423,23 +431,47 @@ export function tokenEstimateFor(ctx: RunContext, w: Pick<WorkerRecord, 'provide
   return { costUsd: est.costUsd, basis: own ? 'model pricing' : 'dearest listed pricing', model };
 }
 
-/**
- * True when an auth-failed session's transcript shows no model ran: a result line reporting
- * total_cost_usd 0 with empty modelUsage, or no assistant message other than the provider's API error
- * message. Without a transcript, no reported token counts means the same.
- */
+/** Ends of a session that can come before any request reached a model; any other end may have spent. */
+const ZERO_COST_STATUSES: ReadonlySet<string> = new Set(['auth_failed', 'failed', 'transient_error']);
+
+/** Same test as sessionSpentNothing, kept under the name the authentication path has always used. */
 export function authFailureSpentNothing(w: Pick<WorkerRecord, 'workerDir'>, usage: UsageReport): boolean {
+  return sessionSpentNothing(w, usage);
+}
+
+/**
+ * True when a session's transcripts show no request reached a model: no reported tokens and, in every transcript of
+ * the worker (archived attempts included), no model output. For Claude that is no assistant message other than the
+ * provider's API error message (or a result line reporting total_cost_usd 0 with empty modelUsage); for Codex, no
+ * item other than an error and no completed turn. Without any transcript, a session whose exit record shows no
+ * output at all (or that has none, because it never launched) spent nothing either.
+ */
+export function sessionSpentNothing(w: Pick<WorkerRecord, 'workerDir'>, usage: UsageReport): boolean {
   if ((usage.inputTokens ?? 0) > 0 || (usage.outputTokens ?? 0) > 0) return false;
-  const path = join(w.workerDir, LOG_FILE);
-  if (!existsSync(path)) return true;
-  const { events } = readLogLines(path);
+  const logs = [join(w.workerDir, LOG_FILE)];
+  for (let n = 1; existsSync(join(w.workerDir, 'attempts', String(n))); n++) logs.push(join(w.workerDir, 'attempts', String(n), LOG_FILE));
+  const present = logs.filter((p) => existsSync(p));
+  if (present.length === 0) return typeof readExitRecord(w.workerDir)?.firstOutputAt !== 'number';
+  return present.every((p) => transcriptSpentNothing(readLogLines(p).events));
+}
+
+function transcriptSpentNothing(events: Record<string, unknown>[]): boolean {
   const result = events.filter((e) => e.type === 'result').at(-1);
   if (result) {
     const mu = result.modelUsage;
     const emptyUsageMap = mu === undefined || (typeof mu === 'object' && mu !== null && Object.keys(mu).length === 0);
     if (result.total_cost_usd === 0 && emptyUsageMap) return true;
+    if (typeof result.total_cost_usd === 'number' && result.total_cost_usd > 0) return false;
   }
-  return !events.some((e) => e.type === 'assistant' && e.error === undefined && (e as { is_api_error_message?: unknown }).is_api_error_message !== true);
+  return !events.some((e) => {
+    if (e.type === 'assistant') return e.error === undefined && e.is_api_error_message !== true;
+    if (e.type === 'stream_event' || e.type === 'turn.completed') return true;
+    if (typeof e.type === 'string' && e.type.startsWith('item.')) {
+      const item = e.item as { type?: unknown } | undefined;
+      return !(item && typeof item === 'object' && item.type === 'error');
+    }
+    return false;
+  });
 }
 
 /** Record a worker's spend cap before it starts, so the cost charged without a report is that cap plus one request. */
@@ -470,13 +502,61 @@ export function committedSpendUsd(ctx: RunContext): number {
 
 /**
  * The spend cap for a new session and the worst-case request it may overshoot
- * by. Zero means the budget cannot fund the session.
+ * by. Zero means the budget cannot fund the session. For a priced model the worst request is what that session
+ * can really carry (worstCaseRequestUsd at its own cap and output cap), so the cap is solved for rather than a
+ * full-window request subtracted (e2e retest NB3: that refused every implementer under a cap of about $7.50).
  */
 export function sessionSpendCap(ctx: RunContext, model: string | null, role: WorkerRole, phase: BudgetPhase = 'work'): { capUsd: number | null; worstCaseUsd: number } {
   const entry = model ? ctx.deps.registry.get(model) : null;
-  const worst = (entry ? worstCaseRequestUsd(entry) : null) ?? (ctx.ledger?.roleCostCeiling(role) ?? ROLE_COST_CEILING_USD[role]) / 4;
-  if (!ctx.ledger) return { capUsd: null, worstCaseUsd: worst };
+  const outputTokens = entry ? sessionOutputTokens(ctx, entry, role) : null;
+  if (!ctx.ledger) return { capUsd: null, worstCaseUsd: (entry ? worstCaseRequestUsd(entry, { outputTokens }) : null) ?? fallbackWorstCase(ctx, role) };
+  const available = ctx.ledger.workerSpendCapUsd(0, phase, committedSpendUsd(ctx));
+  const funded = entry ? fundedSessionCap(entry, available, { outputTokens }) : null;
+  if (funded) return { capUsd: funded.capUsd, worstCaseUsd: funded.worstCaseUsd };
+  const worst = fallbackWorstCase(ctx, role);
   return { capUsd: ctx.ledger.workerSpendCapUsd(worst, phase, committedSpendUsd(ctx)), worstCaseUsd: worst };
+}
+
+/**
+ * Why a session of `model` cannot be funded, in dollars, for the stop reason: either the cap itself is below one
+ * session's worst case (with nothing spent it could never start one), or what is left of it after spend, committed
+ * sessions and the closing reserve is.
+ */
+export function unfundedSessionReason(ctx: RunContext, model: string | null, role: WorkerRole, phase: BudgetPhase = 'work'): string {
+  const entry = model ? ctx.deps.registry.get(model) : null;
+  const funded = entry ? fundedSessionCap(entry, 0, { outputTokens: sessionOutputTokens(ctx, entry, role) }) : null;
+  const worst = funded ? funded.minimumUsd : fallbackWorstCase(ctx, role);
+  if (!ctx.ledger) return `no model budget left, below one session's worst case $${dollars(worst)}`;
+  const cost = ctx.ledger.state('cost_usd');
+  const reserve = phase === 'final' ? 0 : ctx.ledger.reserve().cost_usd;
+  const committed = committedSpendUsd(ctx);
+  const plusReserve = reserve > 0 ? ` plus the $${dollars(reserve)} closing reserve` : '';
+  if (cost.hard_cap - reserve < worst) return `cap $${dollars(cost.hard_cap)} is below one session's worst case $${dollars(worst)}${plusReserve}`;
+  const left = Math.max(0, cost.hard_cap - reserve - cost.used - committed);
+  const after = [`$${dollars(cost.used)} spent`, ...(committed > 0 ? [`$${dollars(committed)} committed to running sessions`] : []), ...(reserve > 0 ? [`the $${dollars(reserve)} closing reserve`] : [])];
+  const list = after.length > 1 ? `${after.slice(0, -1).join(', ')} and ${after.at(-1)}` : after[0];
+  return `no model budget left: $${dollars(left)} of the $${dollars(cost.hard_cap)} cap remains after ${list}, below one session's worst case $${dollars(worst)}`;
+}
+
+/** Without pricing for the model, a quarter of the role's cost ceiling stands in for one request. */
+function fallbackWorstCase(ctx: RunContext, role: WorkerRole): number {
+  return (ctx.ledger?.roleCostCeiling(role) ?? ROLE_COST_CEILING_USD[role]) / 4;
+}
+
+/**
+ * The most one response of a session of `role` may produce: its configured output budget, raised at most once (a
+ * doubled cap after an overflow, up to OUTPUT_CAP_CEILING). Claude Code enforces it per request; other providers
+ * have no verified output cap, so their model's own limit stands.
+ */
+function sessionOutputTokens(ctx: RunContext, entry: { provider: string }, role: WorkerRole): number | null {
+  if (entry.provider !== 'claude') return null;
+  const configured = outputBudgets(ctx.snapshot.config)[role];
+  if (typeof configured !== 'number' || !Number.isSafeInteger(configured) || configured < 1) return null;
+  return Math.max(configured, Math.min(configured * 2, OUTPUT_CAP_CEILING));
+}
+
+function dollars(v: number): string {
+  return v.toFixed(2);
 }
 
 /** Stop every live worker of the run (cancellation, a terminal outcome). Workers that cannot be stopped are reported, not hidden. */

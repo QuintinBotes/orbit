@@ -388,6 +388,11 @@ function detectUnsupportedConfidence(s: InquisitionSnapshot): Trigger[] {
   }
   for (const ref of claims.evidence_refs) {
     if (ref.criterion_id === null) continue;
+    // An optional criterion no check is mapped to (an amendment can add one) stays unverified whatever the tests do:
+    // rejecting green over it only sends attempt after attempt at a status no stronger test can change (e2e Nm11).
+    // The report already lists it as unverified, and it does not block the verdict.
+    const criterion = s.contract?.acceptance_criteria.find((c) => c.id === ref.criterion_id);
+    if (criterion && !criterion.mandatory && (criterion.check_ids ?? []).length === 0) continue;
     const entry = e?.acceptance.find((a) => a.criterion_id === ref.criterion_id);
     if (!entry || entry.status !== 'supported') {
       evidence.push(`claims evidence for ${ref.criterion_id} (${redact(ref.ref)}); the controller records ${entry ? entry.status : 'no entry'}`);

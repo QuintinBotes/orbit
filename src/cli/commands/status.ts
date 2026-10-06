@@ -11,6 +11,7 @@ import { listWorkers, type WorkerRecord } from '../../storage/workers.ts';
 import { listRuns, type RunRecord } from '../../controller/run-store.ts';
 import { isTerminal } from '../../controller/states.ts';
 import { stateDbPath } from '../../controller/start.ts';
+import { pruneDeadControllers } from '../../controller/service.ts';
 import { verifySnapshot } from '../../policy/snapshot.ts';
 import { BudgetLedger } from '../../scheduling/budget.ts';
 import type { CostMeasurement, CounterState, ReserveState } from '../../scheduling/types.ts';
@@ -78,8 +79,9 @@ export function buildRunStatus(ctx: Pick<CliContext, 'clock'>, db: OrbitDb, run:
   const ownerRec = lease ? findController(db, lease.ownerId) : null;
   const live = controllers(db, now, { includeStopped: true, limit: 50 });
   const owning = ownerRec ? live.find((c) => c.record.id === ownerRec.id) : undefined;
-  // A run nobody owns still has a heartbeat worth showing: the controller that could pick it up.
-  const hb = owning ?? live.find((c) => c.live) ?? null;
+  // The heartbeat of a run is its owner's. A run nobody owns, but that is still going, has the service that could pick it
+  // up; a finished run has none, and another run's foreground controller is never this run's heartbeat.
+  const hb = owning ?? (finished(run.state) ? null : (live.find((c) => c.live && c.record.mode === 'service') ?? null));
 
   let budgets: RunStatus['budgets'] = null;
   if (db.get('SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1', run.id)) {
@@ -137,7 +139,7 @@ function fmtCounter(c: CounterState): string {
 export function renderRunStatus(s: RunStatus, now: number): string {
   const out: string[] = [];
   // A finished run is not still being cancelled, whatever the request flag says.
-  const flags = [s.paused ? 'paused' : '', s.cancel_requested && !finished(s.state) ? 'cancel requested' : ''].filter(Boolean);
+  const flags = [s.paused && !finished(s.state) ? 'paused' : '', s.cancel_requested && !finished(s.state) ? 'cancel requested' : ''].filter(Boolean);
   out.push(`run ${s.id}  ${s.state}${flags.length ? `  (${flags.join(', ')})` : ''}`);
   out.push(`goal:      ${flat(s.goal)}`);
   out.push(`mode:      ${s.mode}${s.difficulty ? `   difficulty: ${s.difficulty}` : ''}${s.branch ? `   branch: ${s.branch}` : ''}`);
@@ -147,7 +149,7 @@ export function renderRunStatus(s: RunStatus, now: number): string {
   if (s.owner) out.push(`owner:     ${s.owner.owner_id} (lease until ${iso(s.owner.lease_expires_at)})`);
   else out.push('owner:     none (no controller currently owns this run)');
   if (s.heartbeat) out.push(`heartbeat: ${s.heartbeat.mode} controller ${s.heartbeat.controller_id} ${ago(now, s.heartbeat.heartbeat_at)} (${s.heartbeat.live ? 'live' : 'STALE'}), last progress ${ago(now, s.heartbeat.last_progress_at)}`);
-  else out.push('heartbeat: no controller is running (start one with "orbit service run" or "orbit resume <run-id> --foreground")');
+  else if (!finished(s.state)) out.push('heartbeat: no controller is running (start one with "orbit service run" or "orbit resume <run-id> --foreground")');
   if (s.budgets) {
     out.push(`budgets${s.budgets.verified_policy ? '' : ' (policy snapshot did not verify; stored counters shown)'}:`);
     for (const c of s.budgets.counters) out.push(`  ${fmtCounter(c)}`);
@@ -173,6 +175,8 @@ export async function statusCommand(args: Args, ctx: CliContext): Promise<number
     return EXIT.OK;
   }
   return withState(repo, (db) => {
+    // A controller that died without a stop record (Ctrl-C twice, kill -9) is gone, not "stale" for ever.
+    pruneDeadControllers(db, ctx.clock);
     const now = ctx.clock.now();
     if (id) {
       const status = buildRunStatus(ctx, db, findRunByPrefix(db, id));
@@ -190,7 +194,7 @@ export async function statusCommand(args: Args, ctx: CliContext): Promise<number
       return EXIT.OK;
     }
     if (runs.length === 0) line(ctx.io, 'no runs yet; start one with: orbit run --goal "..."');
-    else ctx.io.out(table(runs.map((r) => [r.id, r.state + (r.paused ? ' (paused)' : '') + (r.cancelRequested && !finished(r.state) ? ' (cancelling)' : ''), r.mode, ago(now, r.lastProgressAt ?? r.createdAt), oneLine(r.goal, 70)]), ['RUN', 'STATE', 'MODE', 'LAST PROGRESS', 'GOAL']));
+    else ctx.io.out(table(runs.map((r) => [r.id, r.state + (r.paused && !finished(r.state) ? ' (paused)' : '') + (r.cancelRequested && !finished(r.state) ? ' (cancelling)' : ''), r.mode, ago(now, r.lastProgressAt ?? r.createdAt), oneLine(r.goal, 70)]), ['RUN', 'STATE', 'MODE', 'LAST PROGRESS', 'GOAL']));
     const live = ctrl.filter((c) => c.live);
     line(ctx.io, live.length ? `controllers: ${live.map((c) => `${c.record.mode} pid ${c.record.pid} (heartbeat ${ago(now, c.record.heartbeatAt)})`).join('; ')}` : 'controllers: none running');
     return EXIT.OK;

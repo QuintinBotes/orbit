@@ -88,7 +88,7 @@ describe('orbit models list', () => {
     const l = lab();
     const r = await l.cli(['models', 'list']);
     expect(r.code, r.err).toBe(0);
-    expect(r.out).toMatch(/^MODEL\s+SURFACE\s+AVAILABILITY\s+POLICY\s+ELIGIBLE\n/);
+    expect(r.out).toMatch(/^MODEL\s+SURFACE\s+AVAILABILITY\s+POLICY\s+ELIGIBLE\s+REVIEW\n/);
     expect(r.out).toContain('\n(no valid .orbit/config.yaml: showing eligibility under the default allowed_models)\n');
     expect(r.out).toContain('(no state database yet: showing the shipped registry seed)\n');
     expect(r.out).toContain('unvalidated means Orbit has not yet seen the model run on that surface');

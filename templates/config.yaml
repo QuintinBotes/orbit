@@ -348,7 +348,7 @@ routing:
     verifier: 8000
     reviewer: 12000
     inquisitor: 6000
-    curator: 4000
+    curator: 8000
     explorer: 6000
 
 retention:

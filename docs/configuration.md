@@ -263,12 +263,25 @@ about $1.25 once the closing reserve is held back; $0.05 and $0.50 are) stops th
 run `EXHAUSTED` before any work starts. The ceilings are not configurable.
 
 What a session is charged afterwards, in order of preference: the cost the
-provider reported; otherwise, for a provider that reports tokens but no cost
+provider reported; a session that ended before any request reached a model (it
+failed at launch, at authentication, or exited before any model output, with no
+token counts) costs a measured $0, recorded as `budget.cost-zero-no-model`;
+otherwise, for a provider that reports tokens but no cost
 (Codex under a ChatGPT login), what those tokens would cost at the model's price
 in the registry (the dearest listed price when the model has none), recorded as
 `budget.cost-token-estimated`; otherwise, with no usable token counts, the
 ceiling. The report says how much of the spend is measured and how much is
 estimated, so the cap bounds spend but is not an exact spend guarantee.
+
+Each Claude session also gets its own spend cap (`--max-budget-usd`). The CLI
+checks it after each request, so a session can overshoot it by one request, and
+Orbit holds that request back from the budget. The request is priced from what
+the session can really carry: the context its own cap can pay for plus 200000
+tokens it did not pay for (system prompt, tools, one turn of tool results), at
+most the whole window, at the dearest prompt rate, plus the role's output budget
+doubled once (the overflow retry). A $5 cap therefore funds a Sonnet or Opus
+implementer. When even a session with no budget of its own would not fit, the
+run stops `EXHAUSTED` with "cap $X is below one session's worst case $Y".
 
 ## agents and review
 
@@ -544,7 +557,7 @@ routing:
     verifier: 8000
     reviewer: 12000
     inquisitor: 6000
-    curator: 4000
+    curator: 8000
     explorer: 6000
 
 retention:

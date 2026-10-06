@@ -65,7 +65,7 @@ async function blockedOnAmendment(): Promise<{ l: Lab; runId: string; amendmentI
 }
 
 async function resumeAndStep(l: Lab, runId: string, deps: ControllerDeps): Promise<void> {
-  const resumed = await cli(l, ['resume', runId]);
+  const resumed = await cli(l, ['resume', runId, '--detach']);
   expect(resumed.code, resumed.err).toBe(0);
   acquireLease(l.db(), runId, deps.ownerId, 3_600_000, systemClock);
   await step(deps, runId, new AbortController().signal);

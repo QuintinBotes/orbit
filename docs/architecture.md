@@ -245,7 +245,7 @@ cheapest adequate route is the default and escalation needs recorded evidence.
 | Role / work | Default route | Escalates to | Output budget |
 |---|---|---|---|
 | log classification, fingerprint triage, extraction | deterministic code first, then Haiku | Sonnet on ambiguity or security relevance | 1k tokens |
-| curator (learning layer) | Haiku | Sonnet when lessons fail validation | 4k |
+| curator (learning layer) | Haiku | Sonnet when lessons fail validation | 8k |
 | planner | Sonnet | Opus for coupled or architectural goals | 16k |
 | implementer | Sonnet | Opus after repeated equivalent failures with evidence | 24k, and the per-session turn cap |
 | verifier (diagnosis) | Sonnet | Opus for hard causal failures; back to Sonnet once the cause is localized | 8k |

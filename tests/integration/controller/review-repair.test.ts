@@ -111,6 +111,28 @@ describe.skipIf(!canStripTypes)('controller: the review repair loop', () => {
     expect(transitions(l, run.id).filter((s) => s === 'REPAIRING')).toHaveLength(1);
   }, 120_000);
 
+  it('a review repair that reproduces the reviewed tree ends EXHAUSTED as non-progress, not by spending every attempt (NB1)', async () => {
+    const l = lab();
+    // The repair attempt writes exactly what attempt 1 wrote: the same tree comes back for review, with the same finding.
+    writeScenario(l, baseScenario({ implementer: [implementMul('*'), implementMul('*')], reviewer: [REPAIR_REQUIRED] }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('EXHAUSTED');
+    expect(done.outcomeReason).toMatch(/non-progress/);
+    expect(done.outcomeReason).toMatch(/same tree/);
+    const outcome = JSON.parse(done.outcomeJson!) as { non_progress?: { terminate: boolean }; open_findings?: { external_id: string }[] };
+    expect(outcome.non_progress?.terminate).toBe(true);
+    expect(outcome.open_findings?.map((f) => f.external_id)).toContain('COR-1');
+    // One repair was tried; its tree equalled the reviewed one, so no second repair was sent.
+    expect(transitions(l, run.id).filter((s) => s === 'REPAIRING')).toHaveLength(1);
+    expect(listWorkers(l.db(), { runId: run.id, role: 'implementer' })).toHaveLength(2);
+    const report = JSON.parse(readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'final.json'), 'utf8')) as { next_action: string };
+    expect(report.next_action).toMatch(/no measurable progress/);
+    expect(report.next_action).not.toMatch(/budget is spent/);
+  }, 120_000);
+
   it('a blocking finding about financial semantics goes to the Inquisition before any repair', async () => {
     const l = lab();
     const billing = { ...FINDING, id: 'COR-2', claim: 'mul is used to compute invoice charges and rounds refunds the wrong way.', evidence: 'refund amounts lose cents', suggested_validation: 'Add a test for refund rounding.' };

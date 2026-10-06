@@ -30,4 +30,5 @@ export { BASH_CATEGORIES_BY_SEVERITY, classifyBash, type BashCategory, type Bash
 export { inspectScope, type ScopeInput } from './scope.ts';
 export { detectWeakening, isSnapshotPath, isTestPath, type WeakeningInput, type WeakeningSignal, type WeakeningSignalId } from './weakening.ts';
 export { ENV_POLICY_HASH, ENV_POLICY_PATH, ENV_WORKTREE, handlePreToolUse, runGuardHook, runGuardHookProcess, type GuardOptions, type GuardResult } from './guard-hook.ts';
+export { bashGrant, type BashGrant, type BashGrantInput } from './role-grants.ts';
 export { hostAllowed, normalizeHost } from './hosts.ts';

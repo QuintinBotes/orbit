@@ -428,12 +428,23 @@ describe.skipIf(!hasEntry)('bundle', () => {
 
   it('runs init from the plugin layout, which has no templates/ directory', () => {
     const repo = mkTmp('orbit-bundle-init-');
-    run('git', ['init', '-q'], { cwd: repo });
-    const r = run(join(plugin, 'bin', 'orbit'), ['init'], { cwd: repo, env: { ...process.env, ORBIT_HOME: mkTmp('orbit-home-') } });
+    // On main, so init keeps the template's base_branch (it adopts another checked-out branch, such as git's default master).
+    run('git', ['init', '-q', '-b', 'main'], { cwd: repo });
+    // Claude Code marks its Bash tool's commands with CLAUDECODE=1; this test may itself run inside or outside it.
+    const r = run(join(plugin, 'bin', 'orbit'), ['init'], { cwd: repo, env: { ...process.env, CLAUDECODE: '1', ORBIT_HOME: mkTmp('orbit-home-') } });
     expect(r.status, r.stdout + r.stderr).toBe(0);
     expect(readFileSync(join(repo, '.orbit', 'config.yaml'), 'utf8')).toBe(readFileSync(join(root, 'templates', 'config.yaml'), 'utf8'));
     // Through bin/orbit the next step is named in the form a plugin user can invoke.
     expect(r.stdout).toContain('/orbit:doctor');
+    // bin/orbit run from a plain terminal names the terminal command, which is the one that works there.
+    const plain = mkTmp('orbit-bundle-init-plain-');
+    run('git', ['init', '-q', '-b', 'main'], { cwd: plain });
+    const env: Record<string, string | undefined> = { ...process.env, ORBIT_HOME: mkTmp('orbit-home-') };
+    delete env.CLAUDECODE;
+    const t = run(join(plugin, 'bin', 'orbit'), ['init'], { cwd: plain, env });
+    expect(t.status, t.stdout + t.stderr).toBe(0);
+    expect(t.stdout).toContain('orbit doctor');
+    expect(t.stdout).not.toContain('/orbit:');
   });
 
   it('prints the open questions of a run at session start (P7)', () => {

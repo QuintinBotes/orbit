@@ -91,7 +91,9 @@ describe('orbit repair: argument handling', () => {
     l.moveTo(blocked.id, ['PREFLIGHT', 'BLOCKED']);
     const b = await l.cli(['repair', blocked.id]);
     expect(b.code).toBe(EXIT.CONFLICT);
-    expect(b.err).toMatch(/no verified candidate, so there is no failure to repair/);
+    // P27: a run with no contract has nothing to verify, so the guidance must not say "run orbit verify first" (verify refuses it).
+    expect(b.err).toMatch(/has no contract yet \(it is BLOCKED\), so there is nothing to verify and no failure to repair/);
+    expect(b.err).not.toMatch(/orbit verify/);
 
     const done = l.newRun('A third goal.');
     l.moveTo(done.id, ['PREFLIGHT', 'CANCELLED']);

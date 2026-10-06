@@ -10,7 +10,7 @@ import { parse } from 'yaml';
 import { loadConfig } from '../../../src/policy/index.ts';
 import { systemClock } from '../../../src/core/clock.ts';
 import { ModelRegistry } from '../../../src/routing/registry.ts';
-import { makeLab, type Lab } from './lab.ts';
+import { defineCheck, makeLab, type Lab } from './lab.ts';
 
 const labs: Lab[] = [];
 const lab = (o?: Parameters<typeof makeLab>[0]) => {
@@ -44,6 +44,7 @@ describe('P5: the starter config follows the README quickstart', () => {
   it('"orbit run --goal x --mode autonomous" is accepted on a freshly initialised repository', async () => {
     const l = lab();
     await l.cli(['init']);
+    defineCheck(l);
     const r = await l.cli(['run', '--goal', 'x', '--mode', 'autonomous', '--detach']);
     expect(r.code, r.err).toBe(0);
     expect(r.err).not.toMatch(/does not deliver/);
@@ -64,6 +65,7 @@ describe('P20: orbit run refuses cheap-to-detect problems before it creates a ru
   it('refuses a dirty working tree, creates no run and names the way out', async () => {
     const l = lab();
     await l.cli(['init']);
+    defineCheck(l);
     writeFileSync(join(l.repo, 'scratch.txt'), 'uncommitted\n');
     const r = await l.cli(['run', '--goal', 'x', '--mode', 'autonomous', '--detach']);
     expect(r.code).not.toBe(0);
@@ -78,6 +80,7 @@ describe('P20: orbit run refuses cheap-to-detect problems before it creates a ru
   it('refuses a failing environment gate in the foreground before any run or model call', async () => {
     const l = lab();
     await l.cli(['init']);
+    defineCheck(l);
     let modelCalls = 0;
     const adapter = {
       discoverCapabilities: async () => ({ provider: 'claude', available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: 'none', costReporting: false, detail: 'claude: command not found' }),
@@ -99,6 +102,7 @@ describe('P20: orbit run refuses cheap-to-detect problems before it creates a ru
   it('on a fresh setup with codex eligible but no catalog, the refusal names "orbit models refresh" (P6 at admission)', async () => {
     const l = lab();
     await l.cli(['init']);
+    defineCheck(l);
     const path = join(l.repo, '.orbit', 'config.yaml');
     writeFileSync(path, readFileSync(path, 'utf8').replace(/(  codex:\n    command: codex\n(?:    #.*\n)*    data_policy_eligible: )false/, '$1true'));
     const adapter = (id: string) => ({
@@ -119,6 +123,7 @@ describe('P20: orbit run refuses cheap-to-detect problems before it creates a ru
   it('a detached run skips the environment gate (the service has its own environment) but still checks the tree', async () => {
     const l = lab();
     await l.cli(['init']);
+    defineCheck(l);
     const ok = await l.cli(['run', '--goal', 'x', '--mode', 'autonomous', '--detach']);
     expect(ok.code, ok.err).toBe(0);
     expect(runCount(l)).toBe(1);
@@ -127,6 +132,7 @@ describe('P20: orbit run refuses cheap-to-detect problems before it creates a ru
   it('allows a dirty tree when the policy allows it', async () => {
     const l = lab();
     await l.cli(['init']);
+    defineCheck(l);
     const path = join(l.repo, '.orbit', 'config.yaml');
     writeFileSync(path, readFileSync(path, 'utf8').replace('allow_dirty_start: false', 'allow_dirty_start: true'));
     writeFileSync(join(l.repo, 'scratch.txt'), 'uncommitted\n');

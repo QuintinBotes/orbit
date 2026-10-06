@@ -32,7 +32,7 @@ import { listLedger, listQuestions } from '../inquisition/store.ts';
 import { summarizeUsage } from '../routing/usage.ts';
 import { BudgetLedger } from '../scheduling/budget.ts';
 import type { BudgetSnapshot } from '../scheduling/budget.ts';
-import { DELIVERY_MODES } from '../policy/config.ts';
+import { DELIVERY_MODES, outputBudgets } from '../policy/config.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
@@ -47,7 +47,7 @@ import type { TaskHandle, TaskResult, TaskSpec } from '../adapters/types.ts';
 import { getRun, type RunRecord } from './run-store.ts';
 import { currentCandidate, type ControllerDeps, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
-import { accountWorker, outcomeOf, recordSpendCap } from './workers.ts';
+import { accountWorker, OUTPUT_CAP_CEILING, outcomeOf, outputCapExceeded, raiseOutputCap, recordSpendCap } from './workers.ts';
 import { autoEvaluateOverlays } from './eval-runner.ts';
 import { checkLiveOverlays, globalKnowledgePath, repoKnowledgePath } from './knowledge-hooks.ts';
 
@@ -188,7 +188,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     budget,
     unverified: [...new Set(unverified)],
     residual_risks: [...new Set(risks)],
-    next_action: nextAction(run, branch, prNumber),
+    next_action: nextAction(run, branch, prNumber, listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material)),
     generated_at: opts.clock.now(),
   };
 }
@@ -217,7 +217,7 @@ function outcomeHas(run: RunRecord, key: string): boolean {
   }
 }
 
-function nextAction(run: RunRecord, branch: string | null, pr: number | null): string {
+function nextAction(run: RunRecord, branch: string | null, pr: number | null, openMaterial: readonly { id: string; question: string }[] = []): string {
   switch (run.state) {
     case 'SUCCEEDED':
       return DELIVERY_MODES.has(run.mode)
@@ -227,12 +227,15 @@ function nextAction(run: RunRecord, branch: string | null, pr: number | null): s
       const why = run.outcomeReason ?? 'The run is blocked.';
       // A frozen-policy block already names the way forward (a new run), and most others already name the resume command.
       if (outcomeHas(run, 'frozen_policy') || /orbit resume/.test(why)) return why;
-      return `${why} Resolve that, then run \`orbit resume ${run.id}\`.`;
+      // A reason recorded without a closing full stop still reads as its own sentence.
+      return `${/[.!?]$/.test(why.trim()) ? why.trim() : `${why.trim()}.`} Resolve that, then run \`orbit resume ${run.id}\`.`;
     }
-    case 'EXHAUSTED':
-      // Repeated non-progress is a stop on evidence, not on budget: saying the budget is spent would hide the cause.
-      if (outcomeHas(run, 'non_progress')) return `The run stopped because repeated attempts made no measurable progress (${run.outcomeReason ?? 'see decisions'}). More attempts would not change that; the worktree and evidence are preserved. Revise the goal or the approach and start a new run.`;
-      return `The authorized budget is spent (${run.outcomeReason ?? 'see decisions'}). The worktree and evidence are preserved; continue by hand from them or start a new run with a revised goal or limits.`;
+    case 'EXHAUSTED': {
+      const advice = exhaustedAdvice(run);
+      // A material question nobody answered may be the real obstacle: its answer is what a new run needs.
+      const asked = openMaterial.length === 0 ? '' : ` Open material question(s) were never answered: ${openMaterial.slice(0, 5).map((q) => `${q.id}: ${q.question.slice(0, 200)}`).join(' | ')}. Put the answer in the goal of the new run.`;
+      return `${advice}${asked}`;
+    }
     case 'IMPOSSIBLE':
       return `${run.outcomeReason ?? 'No authorized way to meet the contract was found.'} Revise the goal or the authorization before trying again.`;
     case 'CANCELLED':
@@ -240,6 +243,30 @@ function nextAction(run: RunRecord, branch: string | null, pr: number | null): s
     default:
       return `The run is ${run.state}; this report is provisional.`;
   }
+}
+
+/**
+ * What an EXHAUSTED run ran out of, in words a person can act on (P17). Only a stop on money or time is a spent
+ * budget; a refused extension, a failed diagnosis, a provider outage, spent recovery attempts and the attempt, review
+ * and CI repair caps each name their own cause and way forward.
+ */
+function exhaustedAdvice(run: RunRecord): string {
+  const reason = run.outcomeReason ?? 'see decisions';
+  const why = `(${reason})`;
+  const kept = 'The worktree and evidence are preserved';
+  // Repeated non-progress is a stop on evidence, not on budget: saying the budget is spent would hide the cause.
+  if (outcomeHas(run, 'non_progress')) return `The run stopped because repeated attempts made no measurable progress ${why}. More attempts would not change that; the worktree and evidence are preserved. Revise the goal or the approach and start a new run.`;
+  if (/^diagnosis produced no valid repair brief/.test(reason)) return `The diagnosis could not produce a usable repair brief ${why}: the failure is unexplained, not out of budget. ${kept}; read the failing check logs and the diagnosis attempts under the run directory, then fix it by hand or start a new run with a narrower goal.`;
+  if (outcomeHas(run, 'extension') || /\band no extension\b/.test(reason)) {
+    const denied = /no extension(?: for the review repair)?: (.*?)(?:; open findings:|$)/.exec(reason)?.[1];
+    return `The implementation attempt allowance is spent and no extension was granted${denied ? ` because ${denied}` : ''} ${why}. An extension needs measurable progress and a new hypothesis, so more of the same would not help. ${kept}; continue by hand from them, or start a new run with a revised goal or approach.`;
+  }
+  if (/provider kept failing transiently/.test(reason)) return `The model provider kept failing transiently until the infrastructure retries ran out ${why}; this is an outage, not spend. Check the provider's status and your connection, then start a new run (${kept.toLowerCase()}).`;
+  if (/^recovery(_attempts| budget) exhausted/.test(reason)) return `The recovery attempts are spent ${why}: the run was restarted after failures as often as the policy allows. Fix what keeps failing (see the run log), then start a new run; ${kept.toLowerCase()}.`;
+  if (/^review_rounds hard cap reached/.test(reason)) return `The review round cap is reached with review findings still open ${why}. ${kept}; repair the open findings by hand, or start a new run with a higher scheduler.hard_limits.review_rounds or a revised goal.`;
+  if (/^implementation attempts hard cap reached/.test(reason)) return `The implementation attempts hard cap is reached ${why}. ${kept}; continue by hand from them, or start a new run with a revised goal or a higher scheduler.hard_limits.implementation_attempts.`;
+  if (/CI repair budget is spent/.test(reason)) return `CI kept failing after the authorized CI repairs ${why}. ${kept}; read the CI logs and fix it by hand, or start a new run.`;
+  return `The authorized budget is spent ${why}. ${kept}; continue by hand from them or start a new run with a revised goal or limits.`;
 }
 
 export function renderMarkdown(r: FinalReport): string {
@@ -305,6 +332,21 @@ export async function finalizeRun(ctx: RunContext): Promise<void> {
 }
 
 const CURATOR_TIMEOUT_MS = 5 * 60_000;
+/**
+ * Live curators needed 4 turns when they retried their structured output once (a schema miss counts as a turn), and
+ * ended max_turns under the old 3 (e2e retest Nm6). Two retries plus a stray tool call still fit; the spend cap
+ * (knowledge.curator_budget_usd) bounds the session either way.
+ */
+const CURATOR_MAX_TURNS = 6;
+
+/** The doubled output cap for a curator whose response overflowed, recorded as a decision for a run's curator; null otherwise. */
+function curatorRaisedCap(host: CuratorHost, ctx: RunContext | null, purpose: string | null, error: string | null): number | null {
+  if (ctx && purpose) return raiseOutputCap(ctx, purpose, error);
+  const over = outputCapExceeded(error);
+  if (!over) return null;
+  const previous = over.cap ?? outputBudgets(host.snapshot.config).curator;
+  return previous >= OUTPUT_CAP_CEILING ? null : Math.min(previous * 2, OUTPUT_CAP_CEILING);
+}
 
 export async function learnAtTerminal(ctx: RunContext): Promise<void> {
   const k = ctx.snapshot.config.knowledge;
@@ -429,7 +471,12 @@ export function curatorModelFor(registry: ControllerDeps['registry']): string | 
  * rejected credential, PROVIDER_UNAVAILABLE otherwise); a recorded worker row
  * and its usage are written before the error leaves.
  */
-export async function runCurator(host: CuratorHost, task: { prompt: string }, model: string | null = curatorModelFor(host.deps.registry)): Promise<CuratorOutcome> {
+export async function runCurator(
+  host: CuratorHost,
+  task: { prompt: string },
+  model: string | null = curatorModelFor(host.deps.registry),
+  outputTokens?: number,
+): Promise<CuratorOutcome> {
   const adapter = host.deps.adapters.claude;
   if (!adapter) throw new OrbitError('PROVIDER_UNAVAILABLE', 'no claude provider is configured; the curator runs on Claude');
   const ctx = host.recorded ?? null;
@@ -473,13 +520,14 @@ export async function runCurator(host: CuratorHost, task: { prompt: string }, mo
     systemPrompt: renderSystemPrompt('curator', host.deps.agentsDir ? { agentsDir: host.deps.agentsDir } : {}),
     outputSchema: MODEL_OUTPUT_SCHEMAS.curator,
     readOnly: true,
-    maxTurns: 3,
+    maxTurns: CURATOR_MAX_TURNS,
     timeoutMs,
     sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: host.snapshot, provider: 'claude', claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'), homeDir: home, policyPath: host.policyPath, readablePaths: [host.deps.orbitInstallDir], env }),
     policyPath: host.policyPath,
     policyHash: host.policyHash,
     env: {},
     maxBudgetUsd: host.budgetUsd,
+    ...(outputTokens === undefined ? {} : { outputTokens }),
   };
 
   let handle: TaskHandle;
@@ -519,6 +567,9 @@ export async function runCurator(host: CuratorHost, task: { prompt: string }, mo
   }
   if (!result || timedOut) throw new OrbitError('PROVIDER_UNAVAILABLE', 'the curator timed out');
   if (result.status !== 'succeeded') {
+    // A response over its output cap fails the same way at the same cap: one more session with the cap doubled (Nm6).
+    const raised = result.status === 'failed' && outputTokens === undefined ? curatorRaisedCap(host, ctx, purpose, result.error) : null;
+    if (raised !== null) return runCurator(host, task, model, raised);
     throw new OrbitError(result.status === 'auth_failed' ? 'AUTH_EXPIRED' : 'PROVIDER_UNAVAILABLE', `the curator ended ${result.status}${result.error ? `: ${redact(result.error).slice(0, 200)}` : ''}`);
   }
   return { output: result.structured, model, workerId: ctx ? workerId : null };

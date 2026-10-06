@@ -103,14 +103,14 @@ describe('top level shape and yaml', () => {
   });
 
   it('reports yaml errors, warnings and alias bombs as problems', () => {
-    expect(problemsOf(() => parseConfig('version: 1\nversion: 2\n'))).toEqual(['yaml: Map keys must be unique']);
+    expect(problemsOf(() => parseConfig('version: 1\nversion: 2\n'))).toEqual(['yaml: Map keys must be unique (line 2, column 1)']);
     expect(problemsOf(() => parseConfig(`version: 1\na: &a [x]\nb: [${Array(60).fill('*a').join(',')}]\n`))).toEqual(['yaml: Excessive alias count indicates a resource exhaustion attack']);
     expect(problemsOf(() => parseConfig('version: 1\n%FOO\n')).every((p) => p.startsWith('yaml: '))).toBe(true);
   });
 
   it('describes schema violations by kind: unknown key, enum, const, wrong type, bad key name', () => {
     expect(bad('bogus: 1\n')).toEqual(['(top level): unknown key "bogus"']);
-    expect(bad('mode: nonsense\n')).toEqual(['mode: must be one of "supervised", "autonomous", "autonomous-delivery", "release"']);
+    expect(bad('mode: nonsense\n')).toEqual(['mode: must be one of "supervised", "autonomous", "autonomous-delivery", "release", got "nonsense"']);
     expect(problemsOf(() => parseConfig('version: 2\n'))).toEqual(['version: must be 1']);
     expect(bad('scope: 5\n')).toEqual(['scope: must be object']);
     expect(bad('checks: {"bad id!": {command: [x]}}\n')).toContain('checks: key "bad id!" is not a valid name');
@@ -118,7 +118,7 @@ describe('top level shape and yaml', () => {
 
   it('a command-line mode replaces the one in the file and an unknown file mode falls back to the default', () => {
     expect(validateConfig({ version: 1, mode: 'autonomous' }, { mode: 'supervised' }).mode).toBe('supervised');
-    expect(problemsOf(() => validateConfig({ version: 1, mode: 7 }))).toEqual(['mode: must be one of "supervised", "autonomous", "autonomous-delivery", "release"']);
+    expect(problemsOf(() => validateConfig({ version: 1, mode: 7 }))).toEqual(['mode: must be one of "supervised", "autonomous", "autonomous-delivery", "release", got 7']);
   });
 });
 

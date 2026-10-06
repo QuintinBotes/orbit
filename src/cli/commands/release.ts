@@ -12,7 +12,7 @@ import { renewLease } from '../../controller/run-store.ts';
 import { ActionLedger } from '../../delivery/actions.ts';
 import { resolveDeploy, type DeployResolutionKind } from '../../delivery/release.ts';
 import type { Args, OptionSpec } from '../args.ts';
-import { findRunByPrefix, openState, resolveRepo, withCliLease, type CliContext } from '../context.ts';
+import { continueCommand, findRunByPrefix, openState, resolveRepo, withCliLease, type CliContext } from '../context.ts';
 import { EXIT, UsageError } from '../exit.ts';
 import { json, line } from '../io.ts';
 import { cliLeaseDeps } from './control.ts';
@@ -85,7 +85,7 @@ export async function releaseResolveCommand(args: Args, ctx: CliContext): Promis
       return EXIT.FAILURE;
     }
     line(ctx.io, `${result.environment}: the deploy of ${result.sha.slice(0, 12)} is recorded as ${result.verdict === 'deployed' ? 'DEPLOYED (it will not run again)' : 'NOT DEPLOYED (the next release attempt may run it)'}; ${result.detail}`);
-    line(ctx.io, run.state === 'BLOCKED' ? `Continue the run with: orbit resume ${run.id}` : 'The controller picks this up at the run\'s next release attempt.');
+    line(ctx.io, run.state === 'BLOCKED' ? `Continue the run with: ${continueCommand(db, run.id, ctx.clock.now())}` : 'The controller picks this up at the run\'s next release attempt.');
     return EXIT.OK;
   } finally {
     db.close();

@@ -13,6 +13,7 @@ import type { OrbitDb } from '../../storage/db.ts';
 import { openDb } from '../../storage/db.ts';
 import { ClaudeAdapter, commandArgv, compareVersions, createAdapter, providerKind } from '../../adapters/index.ts';
 import { ModelRegistry, allowMatch } from '../../routing/registry.ts';
+import { saveSharedCatalog, sharedCatalogPath } from '../../routing/shared-catalog.ts';
 import type { EligibilityAssessment, ModelEntry, Surface } from '../../routing/types.ts';
 import { stateDbPath } from '../../controller/start.ts';
 import type { Args, OptionSpec } from '../args.ts';
@@ -39,12 +40,24 @@ export async function modelsListCommand(args: Args, ctx: CliContext): Promise<nu
   const persisted = existsSync(stateDbPath(repo));
   const db: OrbitDb = persisted ? openState(repo) : openDb(':memory:');
   try {
-    const registry = new ModelRegistry(db, ctx.clock);
+    const registry = new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
     // A fresh registry shows the shipped seed; an existing one is shown as it is, runtime observations and all.
     if (!persisted || registry.list().length === 0) registry.seed();
+    // The Codex catalog a refresh in any repository saved for this user counts here too (NM6).
+    registry.adoptSharedCatalog();
     const entries = registry.list();
     const assessments = new Map<Surface, EligibilityAssessment>();
     for (const surface of ['claude-cli', 'codex-cli'] as const) assessments.set(surface, registry.assess({ surface, allowedModels: config.routing.allowed_models }));
+    // Reviewer selection (review/select.ts) offers a provider's own models for review on top of routing.allowed_models,
+    // and a Claude reviewer must also be allowed by policy: the list judges the same way, so it cannot contradict doctor.
+    const reviewKey = (surface: Surface, provider: string) => `${surface}|${provider}`;
+    const reviewAssessments = new Map<string, EligibilityAssessment>();
+    for (const e of entries) {
+      for (const s of e.surfaces) {
+        const key = reviewKey(s.surface, e.provider);
+        if (!reviewAssessments.has(key)) reviewAssessments.set(key, registry.assess({ surface: s.surface, provider: e.provider, allowedModels: [...config.routing.allowed_models, `${e.provider}:*`], structuredOutput: true }));
+      }
+    }
     const rows = entries.flatMap((e) =>
       (e.surfaces.length ? e.surfaces : [{ surface: 'claude-cli' as Surface, available: null, detail: null, checkedAt: null }]).map((s) => {
         const a = assessments.get(s.surface);
@@ -53,7 +66,12 @@ export async function modelsListCommand(args: Args, ctx: CliContext): Promise<nu
         const policy = allowMatch(e, config.routing.allowed_models);
         // "Not yet validated" is not a reason to refuse a model: doctor calls it eligible, unvalidated, and so does this list.
         const onlyUnvalidated = !eligible && reasons.length > 0 && reasons.every((r) => /not yet validated$/.test(r));
+        const forReview = reviewAssessments.get(reviewKey(s.surface, e.provider));
+        const reviewEligible = (forReview?.eligible.some((x) => x.modelId === e.modelId) ?? false) && (e.provider !== 'claude' || policy !== null);
+        const reviewUnvalidated = !reviewEligible && (e.provider !== 'claude' || policy !== null) && (forReview?.excluded.find((x) => x.model.modelId === e.modelId)?.reasons ?? []).length > 0 && (forReview?.excluded.find((x) => x.model.modelId === e.modelId)?.reasons ?? []).every((r) => /not yet validated$/.test(r));
         return {
+          review_eligible: reviewEligible || reviewUnvalidated,
+          review: reviewEligible ? 'yes' : reviewUnvalidated ? 'yes, unvalidated' : 'no',
           model: e.modelId,
           provider: e.provider,
           family: e.family,
@@ -71,10 +89,11 @@ export async function modelsListCommand(args: Args, ctx: CliContext): Promise<nu
       json(ctx.io, { config_loaded: loaded, persisted, allowed_models: config.routing.allowed_models, models: rows });
       return EXIT.OK;
     }
-    ctx.io.out(table(rows.map((r) => [r.model, r.surface, r.availability, r.policy, r.status === 'eligible' ? 'yes' : r.status === 'eligible-unvalidated' ? 'yes, unvalidated' : `no: ${r.reasons.join('; ')}`]), ['MODEL', 'SURFACE', 'AVAILABILITY', 'POLICY', 'ELIGIBLE']));
+    ctx.io.out(table(rows.map((r) => [r.model, r.surface, r.availability, r.policy, r.status === 'eligible' ? 'yes' : r.status === 'eligible-unvalidated' ? 'yes, unvalidated' : `no: ${r.reasons.join('; ')}`, r.review]), ['MODEL', 'SURFACE', 'AVAILABILITY', 'POLICY', 'ELIGIBLE', 'REVIEW']));
     if (!loaded) line(ctx.io, '\n(no valid .orbit/config.yaml: showing eligibility under the default allowed_models)');
     if (!persisted) line(ctx.io, '(no state database yet: showing the shipped registry seed)');
-    line(ctx.io, '\nunvalidated means Orbit has not yet seen the model run on that surface; "orbit models refresh --probe" checks it live.');
+    line(ctx.io, '\nELIGIBLE is for implementation (routing.allowed_models); REVIEW is whether the model can be the independent reviewer, which also accepts any model of the reviewing provider.');
+    line(ctx.io, 'unvalidated means Orbit has not yet seen the model run on that surface; "orbit models refresh --probe" checks it live.');
     return EXIT.OK;
   } finally {
     db.close();
@@ -99,7 +118,7 @@ export async function modelsRefreshCommand(args: Args, ctx: CliContext): Promise
   const notes: string[] = [];
   const changes: Record<string, unknown> = {};
   try {
-    const registry = new ModelRegistry(db, ctx.clock);
+    const registry = new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
     const seeded = registry.seed();
     changes.seed = seeded;
     notes.push(`seeded the registry: ${seeded.inserted.length} added, ${seeded.updated.length} refreshed`);
@@ -153,7 +172,10 @@ export async function modelsRefreshCommand(args: Args, ctx: CliContext): Promise
           continue;
         }
         try {
-          const res = registry.registerCodexCatalog(JSON.parse(r.stdout) as unknown, { source: 'live' });
+          const catalog = JSON.parse(r.stdout) as unknown;
+          const res = registry.registerCodexCatalog(catalog, { source: 'live' });
+          // Kept for the user, so the next repository does not need its own refresh (routing/shared-catalog.ts).
+          saveSharedCatalog(sharedCatalogPath(ctx.orbitHome), catalog, ctx.clock.now());
           changes[`catalog:${id}`] = res;
           notes.push(`provider ${id}: ${res.listed.length} model(s) listed${res.hidden.length ? `, ${res.hidden.length} hidden` : ''}${res.absent.length ? `, ${res.absent.length} no longer offered` : ''}${res.providerDefault ? `; default ${res.providerDefault}` : ''}`);
         } catch (err) {

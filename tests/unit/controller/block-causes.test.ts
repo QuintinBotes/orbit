@@ -8,6 +8,7 @@ import { getRun } from '../../../src/controller/run-store.ts';
 import { finishRun, frozenPolicyCause, outcomeForError } from '../../../src/controller/steps/common.ts';
 import { OrbitError } from '../../../src/core/errors.ts';
 import { makeUnitLab, type UnitLab } from './coverage-helpers.ts';
+import { insertQuestion } from '../../../src/inquisition/store.ts';
 
 let lab: UnitLab;
 afterEach(() => lab?.cleanup());
@@ -70,5 +71,54 @@ describe('non-progress stops', () => {
     const next = nextAction(ctx.runDir);
     expect(next).not.toMatch(/budget is spent/);
     expect(next).toMatch(/no measurable progress \(same tree as attempt 1\)/);
+  });
+});
+
+describe('every EXHAUSTED cause is named in the next action (P17)', () => {
+  async function stop(reason: string, outcome: Record<string, unknown> = {}): Promise<string> {
+    lab?.cleanup();
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    const ctx = lab.ctx();
+    await finishRun(ctx, 'EXHAUSTED', reason, { outcome });
+    return nextAction(ctx.runDir);
+  }
+
+  it('a stop that is not about spend never says the authorized budget is spent, and names its real cause', async () => {
+    const cases: [string, Record<string, unknown>, RegExp][] = [
+      ['diagnosis produced no valid repair brief within 2 attempts for fp:2e034027c239accb', {}, /diagnosis could not produce a usable repair brief/i],
+      [
+        'implementation attempt allowance spent (4 of 4) and no extension for the review repair: no materially new, evidence-backed hypothesis; open findings: COR-1 (high): x',
+        { extension: { decision: 'deny_extension', denied_because: ['no materially new, evidence-backed hypothesis'] } },
+        /no extension was granted.*no materially new, evidence-backed hypothesis/i,
+      ],
+      ['implementation attempt allowance spent (3 of 3) and no extension: no measurable progress (a newly supported criterion)', { extension: { decision: 'deny_extension' } }, /no extension was granted/i],
+      ['the codex reviewer: the provider kept failing transiently and infrastructure retries are spent (last: overloaded)', {}, /provider kept failing/i],
+      ['recovery_attempts exhausted: the run was resumed after the planner failed (attempt 4), and no recovery attempt is left to start it again', {}, /recovery attempts/i],
+      ['review_rounds hard cap reached (4 of 4) with 1 open finding(s): COR-1 (high): x', {}, /review round/i],
+      ['implementation attempts hard cap reached (4 of 4); the last failure was fp:abc', {}, /implementation attempts/i],
+      ['CI failed and the CI repair budget is spent: 3 of 3 CI repairs used', {}, /CI repair/i],
+    ];
+    for (const [reason, outcome, cause] of cases) {
+      const next = await stop(reason, outcome);
+      expect(next, reason).not.toMatch(/authorized budget is spent/);
+      expect(next, reason).toMatch(cause);
+      expect(next, reason).toContain(reason.slice(0, 40));
+    }
+  });
+
+  it('a stop on money or time still says the budget is spent', async () => {
+    for (const reason of ['model cost hard cap reached (12 of 12)', 'wall time hard cap reached (3600000 of 3600000)', 'attempt 1 not started: no model budget left under the hard cap less the closing reserve', 'attempt 2 not admitted: the remaining budget cannot support an honest completion (not admitted by budget: cost exceeds)', 'cost_usd exhausted at the hard cap 12: used 12.24, requested 4']) {
+      expect(await stop(reason), reason).toContain(`The authorized budget is spent (${reason})`);
+    }
+  });
+
+  it('an EXHAUSTED run with an open material question names it, since its answer is what a new run needs', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    const ctx = lab.ctx();
+    const q = insertQuestion(lab.db, { runId: lab.runId, mode: 'clarify', question: 'Population or sample variance?', evidence: [], options: [], changes: ['implementation'], recommendation: { option: 'A', reason: 'r' }, safeDefault: { exists: false, option: null, reason: 'differs' }, material: true, affected: ['AC-2'], unblocked: [] }, lab.clock);
+    await finishRun(ctx, 'EXHAUSTED', 'implementation attempts hard cap reached (4 of 4); the last failure was fp:abc');
+    const next = nextAction(ctx.runDir);
+    expect(next).toContain(q.id);
+    expect(next).toContain('Population or sample variance?');
   });
 });

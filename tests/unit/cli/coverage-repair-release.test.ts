@@ -16,7 +16,7 @@ import { ActionLedger } from '../../../src/delivery/actions.ts';
 import { appendEvent } from '../../../src/storage/events.ts';
 import { registerController } from '../../../src/storage/controllers.ts';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { makeLab, type Lab } from './lab.ts';
+import { defineCheck, makeLab, type Lab } from './lab.ts';
 
 const hooks = vi.hoisted(() => ({ fake: false, ctor: [] as Array<Record<string, unknown>>, intervals: [] as Array<() => void> }));
 vi.mock('../../../src/controller/index.ts', async (importOriginal) => {
@@ -178,6 +178,7 @@ describe('orbit repair <description>', () => {
   it('forwards the options to a new run whose goal is "Repair: <text>"', async () => {
     const l = lab();
     await l.cli(['init']);
+    defineCheck(l);
     const r = await l.cli(['repair', 'login', 'fails', 'for', 'new', 'users', '--detach', '--json', '--mode', 'autonomous-delivery', '--repo', l.repo, '--policy', '.orbit/config.yaml']);
     expect(r.code, r.err).toBe(0);
     const { run_id, mode } = JSON.parse(r.out) as { run_id: string; mode: string };
@@ -192,6 +193,7 @@ describe('orbit repair <description>', () => {
   it('treats text that merely resembles a run id as a description only when it is not one', async () => {
     const l = lab();
     await l.cli(['init']);
+    defineCheck(l);
     const r = await l.cli(['repair', 'orbit', 'is', 'slow', '--detach', '--json']);
     expect(getRun(l.db(), (JSON.parse(r.out) as { run_id: string }).run_id).goal).toBe('Repair: orbit is slow');
     const mixed = await l.cli(['repair', 'orb-20260101-000000-abcdef', 'and', 'text']);

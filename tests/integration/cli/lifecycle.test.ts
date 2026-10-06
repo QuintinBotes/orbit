@@ -171,7 +171,7 @@ describe('decide, then resume', () => {
     const decisions = readFileSync(join(s.box.repo, '.orbit', 'runs', run.id, 'decisions.jsonl'), 'utf8');
     expect(decisions).toContain('inquisition.answer');
 
-    const resumed = await s.box.run(['resume', run.id, '--json']);
+    const resumed = await s.box.run(['resume', run.id, '--json', '--detach']);
     expect(resumed.code, resumed.stderr).toBe(0);
     expect(JSON.parse(resumed.stdout)).toMatchObject({ state: 'PREFLIGHT', paused: false, service_running: false });
     expect(getRun(s.db, run.id)).toMatchObject({ state: 'PREFLIGHT', endedAt: null });
@@ -195,7 +195,8 @@ describe('pause and resume across processes', () => {
     s.moveTo(run.id, ['PREFLIGHT']);
     expect((await s.box.run(['pause', run.id])).code).toBe(0);
     expect((JSON.parse((await s.box.run(['status', run.id, '--json'])).stdout) as { paused: boolean }).paused).toBe(true);
-    expect((await s.box.run(['resume', run.id])).code).toBe(0);
+    // No controller runs in this test, so the flag is cleared explicitly for a service that is started later.
+    expect((await s.box.run(['resume', run.id, '--detach'])).code).toBe(0);
     expect((JSON.parse((await s.box.run(['status', run.id, '--json'])).stdout) as { paused: boolean }).paused).toBe(false);
   });
 });

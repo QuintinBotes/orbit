@@ -29,6 +29,8 @@ import { LOGIN_COMMANDS, validateCredentials } from '../../recovery/index.ts';
 import { parseAuthStatus } from '../../delivery/github.ts';
 import { defaultTermsPath, loadPublicationGuard } from '../../guard/publication.ts';
 import { DELIVERY_MODES } from '../../policy/config.ts';
+import { sharedCatalogPath } from '../../routing/shared-catalog.ts';
+import { deliveryEnvironmentProblem, deliversThroughGithub } from '../../controller/delivery-env.ts';
 import { openDb, type OrbitDb } from '../../storage/db.ts';
 import { MIGRATIONS } from '../../storage/schema.ts';
 import { orbitInstallDir, serviceLabel, serviceStatus, stateDbPath } from '../../controller/index.ts';
@@ -372,7 +374,25 @@ async function checkIsolation(p: Probe): Promise<{ check: DoctorCheck; facts: Is
       return { check: fail('isolation', 'isolation', `container image ${config.isolation.container.image} is not present locally`, `the image ${config.isolation.container.image} (containers run with --pull never)`, `docker pull ${config.isolation.container.image}`, details), facts: { provider, available: false } };
     }
   }
-  if (!st.ok) return { check: fail('isolation', 'isolation', `${provider.kind} isolation is unavailable: ${flat(st.detail)}`, `${provider.kind} isolation (${provider.kind === 'sandbox-runtime' ? 'the srt binary and Seatbelt or bubblewrap' : 'a running Docker daemon'})`, isolationFix(provider.kind, st.detail), details), facts: { provider, available: false } };
+  if (!st.ok) {
+    // An offline plugin install reports success but leaves no node_modules (its `npm ci` could not run), so the sandbox
+    // runtime that ships there is missing. Say so, with the way to restore it, rather than only "srt not found".
+    const pluginRoot = ctx.env.ORBIT_PLUGIN_ROOT;
+    if (provider.kind === 'sandbox-runtime' && pluginRoot && existsSync(join(pluginRoot, 'package.json')) && !existsSync(join(pluginRoot, 'node_modules'))) {
+      return {
+        check: fail(
+          'isolation',
+          'isolation',
+          `sandbox-runtime isolation is unavailable: the plugin's node_modules is missing (${pluginRoot}); a plugin installed while offline does not get its dependencies. ${flat(st.detail)}`,
+          'the plugin\'s node_modules (it holds the sandbox runtime, srt)',
+          `reconnect and run "claude plugin update orbit" (or reinstall the plugin) to fetch it, or run "npm ci --omit=dev" in ${pluginRoot}; Orbit refuses to degrade to less isolation`,
+          details,
+        ),
+        facts: { provider, available: false },
+      };
+    }
+    return { check: fail('isolation', 'isolation', `${provider.kind} isolation is unavailable: ${flat(st.detail)}`, `${provider.kind} isolation (${provider.kind === 'sandbox-runtime' ? 'the srt binary and Seatbelt or bubblewrap' : 'a running Docker daemon'})`, isolationFix(provider.kind, st.detail), details), facts: { provider, available: false } };
+  }
   // The policy requires every configured limit to be enforced; a run would be refused at preflight, so say so here.
   const unenforced = resourceLimitRefusals(config.isolation, provider.kind);
   if (unenforced.length > 0) {
@@ -772,12 +792,12 @@ export async function browserIsolationCheck(input: BrowserIsolationInput): Promi
 
 async function checkDelivery(p: Probe): Promise<DoctorCheck> {
   const { config, ctx } = p;
-  const delivering = config.delivery.provider === 'github' && DELIVERY_MODES.has(config.mode) && (config.actions.open_pull_request || config.actions.push_task_branch || config.actions.repair_ci);
-  if (!delivering) return pass('delivery', 'delivery', `not required: ${config.delivery.provider === 'fake' ? 'delivery uses the fake provider' : `mode ${config.mode} does not deliver`}`);
-  const gh = which('gh', ctx.env);
-  if (!gh) return fail('delivery', 'delivery', 'the gh CLI was not found', 'the gh executable on PATH', 'install GitHub CLI (https://cli.github.com)');
-  const token = ctx.env.GH_TOKEN;
-  if (!token) return fail('delivery', 'delivery', 'GH_TOKEN is not set for the controller', 'a fine-grained GH_TOKEN scoped to the target repository (delivery refuses a broad keyring login)', 'export GH_TOKEN in the environment the controller or service runs in');
+  if (!deliversThroughGithub(config)) return pass('delivery', 'delivery', `not required: ${config.delivery.provider === 'fake' ? 'delivery uses the fake provider' : `mode ${config.mode} does not deliver`}`);
+  // The presence checks are the ones `orbit run` applies at admission (controller/delivery-env.ts).
+  const missing = deliveryEnvironmentProblem(config, ctx.env);
+  if (missing) return fail('delivery', 'delivery', missing.summary, missing.missing, missing.fix);
+  const gh = which('gh', ctx.env)!;
+  const token = ctx.env.GH_TOKEN!;
   const env: Record<string, string | undefined> = { ...toolEnv(ctx.env), GH_TOKEN: token, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1' };
   const r = await execCapture([gh, 'auth', 'status', '--json', 'hosts'], { env, timeoutMs: 30_000 }).catch((err: unknown) => err as Error);
   if (r instanceof Error) return fail('delivery', 'delivery', `gh could not run: ${flat(r.message)}`, 'a working gh CLI', null);
@@ -908,8 +928,9 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; prob
   try {
     const persisted = repo !== null && existsSync(stateDbPath(repo));
     regDb = persisted ? openDb(stateDbPath(repo!)) : openDb(':memory:');
-    const registry = new ModelRegistry(regDb, ctx.clock);
+    const registry = new ModelRegistry(regDb, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
     if (!persisted || registry.list().length === 0) registry.seed();
+    registry.adoptSharedCatalog();
     let facts: ProviderFacts = { capabilities: {}, credentials: {}, adapters: {} };
     await safely('providers', 'providers', async () => {
       const r = await checkProviders(p, isoFacts, registry);

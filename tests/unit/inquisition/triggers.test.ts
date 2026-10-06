@@ -318,6 +318,16 @@ describe('unsupported confidence (challenge)', () => {
     expect(t?.subjects).toEqual(['AC-1']);
   });
 
+  it('does not reject green over an optional criterion no check is mapped to: no stronger test could change its status (Nm11)', () => {
+    const e = clean();
+    // AC-3 is optional with no check_ids (an amendment can add one like that): the controller records it unverified whatever the tests do.
+    addEvidence(e.db, { checks: GREEN, acceptance: [{ criterion_id: 'AC-1', status: 'supported', artifacts: ['a'] }, { criterion_id: 'AC-3', status: 'unverified' }] });
+    const s = loadInquisitionSnapshot(e.db, RUN, { claims: claims({ evidence_refs: [{ criterion_id: 'AC-3', ref: 'tests/toast.test.ts:12', note: 'toast shown' }] }) });
+    expect(detectTriggers(s).filter((t) => t.kind === 'unsupported_confidence')).toEqual([]);
+    expect(proofAdequacy(s).triggers.map((t) => t.kind)).not.toContain('unsupported_confidence');
+    // A claim for a criterion a check is mapped to still fires (the test above): a stronger test can make that one supported.
+  });
+
   it('flags a verification request with nothing behind it', () => {
     const e = clean();
     expect(find(e, 'unsupported_confidence', { claims: claims({ next_action: { kind: 'request-verification', detail: 'ready' } }) })).toHaveLength(1);

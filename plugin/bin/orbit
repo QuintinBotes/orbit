@@ -19,4 +19,24 @@ done
 root=$(cd -P -- "$(dirname -- "$self")/.." && pwd -P)
 ORBIT_PLUGIN_ROOT=$root
 export ORBIT_PLUGIN_ROOT
-exec node "$root/dist/orbit.mjs" "$@"
+
+# A usable Node, or a message that says what is missing (instead of "exec: node: not found", or a SyntaxError from an old
+# Node loading the bundle). The minimum is package.json "engines": >=22.16.
+min_major=22
+min_minor=16
+node=$(command -v node 2>/dev/null) || {
+  echo "orbit: Orbit needs Node.js >= $min_major.$min_minor, and no node was found on PATH. Install Node $min_major.$min_minor or newer (https://nodejs.org), then run this again." >&2
+  exit 127
+}
+found=$("$node" -p 'process.versions.node' 2>/dev/null) || found=
+major=${found%%.*}
+rest=${found#*.}
+minor=${rest%%.*}
+case $major.$minor in
+  ''|*[!0-9.]*|.*|*.) echo "orbit: Orbit needs Node.js >= $min_major.$min_minor, but $node did not report a version (is it a working Node?)." >&2; exit 1 ;;
+esac
+if [ "$major" -lt "$min_major" ] || { [ "$major" -eq "$min_major" ] && [ "$minor" -lt "$min_minor" ]; }; then
+  echo "orbit: Orbit needs Node.js >= $min_major.$min_minor, but node $found is first on PATH ($node). Install a newer Node or put one first on PATH." >&2
+  exit 1
+fi
+exec "$node" "$root/dist/orbit.mjs" "$@"

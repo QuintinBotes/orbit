@@ -8,7 +8,7 @@
  */
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import type { Clock } from '../core/clock.ts';
 import { OrbitError } from '../core/errors.ts';
 import { sha256 } from '../core/hash.ts';
@@ -117,6 +117,11 @@ export interface RunContext {
 export function loadRunContext(deps: ControllerDeps, runId: string, signal: AbortSignal): RunContext {
   const { db } = deps;
   const run = getRun(db, runId);
+  // `orbit gc` removes the whole directory of a run that ended: that is retention, not a tampered policy, and nothing
+  // that needs the run's files (verify, repair) can act on it any more.
+  if (run.endedAt !== null && !existsSync(dirname(run.policyPath))) {
+    throw new OrbitError('NOT_FOUND', `run ${runId} ended and its files were removed by orbit gc (${dirname(run.policyPath)} is gone), so its candidate cannot be checked or repaired; its record remains for "orbit status" and "orbit stats". Start a new run for further work`);
+  }
   const snapshot = verifySnapshot(run.policyPath, run.policyHash);
   let contract: GoalContract | null = null;
   if (run.contractJson) {

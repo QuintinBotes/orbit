@@ -45,6 +45,12 @@ mutating commands are refused inside a worker process.
 
 The hooks assist. The controller's diff inspection is the gate.
 
+Who gets Bash is decided in one place (`src/policy/role-grants.ts`): writers
+(implementer, repair) get it; read-only workers do not, except the diagnosis
+verifier, which runs experiments (a test command, a reproduction). Its Bash runs
+in the sandbox with the worktree denied for writing, so it can write only its
+scratch directory, and it gets no Edit or Write allow rules.
+
 ## Plugin install and skills
 
 - **What the install brings.** The plugin payload is the `plugin/` directory:

@@ -132,12 +132,13 @@ describe.skipIf(!READY)('acceptance: restarts, lost responses and cancellation',
     assertRunInvariants(l, run.id);
   }, 180_000);
 
-  it('scenario 20: a cancellation recorded with `orbit cancel` while the controller is dead is carried out by the next controller, and stays final', async () => {
+  it('scenario 20: a cancellation recorded with `orbit cancel` after the controller was killed is carried out at once, stops the orphaned worker, and stays final', async () => {
     const l = lab();
     writeScenario(l, scenario({ implementer: [implementer([SRC_TEXT, TEST_TEXT], { extra: { sleepMs: 120_000 } })] }));
     const run = startLabRun(l, GOAL);
-    // A long lease: the dead controller still "owns" the run when the cancellation is recorded.
-    const a = controller(l, { mode: 'service', leaseTtlMs: 8_000 });
+    // A long lease: the killed controller still holds the run when the cancellation is recorded. Its process is gone on
+    // this host, so `orbit cancel` does not wait the lease out (Nm1): it takes the run and ends it.
+    const a = controller(l, { mode: 'service', leaseTtlMs: 60_000 });
     const impl = await waitFor(() => listWorkers(l.db(), { runId: run.id, role: 'implementer' }).find((w) => w.state === 'RUNNING' && w.pid !== null && w.pgid !== null), 90_000);
     groups.push(impl.pgid!);
     a.kill('SIGKILL');
@@ -145,17 +146,11 @@ describe.skipIf(!READY)('acceptance: restarts, lost responses and cancellation',
 
     const cancel = await orbitOnce(l, ['cancel', run.id]);
     expect(cancel.code, cancel.out).toBe(0);
-    expect(cancel.out).toMatch(/cancellation recorded/);
+    expect(cancel.out).not.toMatch(/cancellation recorded/);
     expect(runState(l, run.id).cancelRequested).toBe(true);
-    expect(runState(l, run.id).state).toBe('IMPLEMENTING');
-    // The orphaned worker is still running: only a controller can stop it.
-    expect(alive(impl.pid!)).toBe(true);
-
-    const b = controller(l, { mode: 'service', leaseTtlMs: 1_500 });
-    await waitFor(() => runState(l, run.id).state === 'CANCELLED', 60_000, 100);
+    expect(runState(l, run.id).state).toBe('CANCELLED');
+    // The orphaned worker is stopped by the cancellation, not left running behind a finished run.
     await waitFor(() => !alive(impl.pid!), 15_000);
-    b.kill('SIGTERM');
-    await b.exited();
 
     // A further restart changes nothing: no new worker, no new check, no state change.
     const workersBefore = listWorkers(l.db(), { runId: run.id }).length;

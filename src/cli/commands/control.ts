@@ -9,6 +9,7 @@ import { loadConfig } from '../../policy/index.ts';
 import { appendEvent } from '../../storage/events.ts';
 import type { OrbitDb } from '../../storage/db.ts';
 import { ModelRegistry } from '../../routing/registry.ts';
+import { sharedCatalogPath } from '../../routing/shared-catalog.ts';
 import { createLogger } from '../../core/log.ts';
 import { join, resolve } from 'node:path';
 import { defaultControllerDeps, orbitInstallDir } from '../../controller/index.ts';
@@ -18,7 +19,7 @@ import { getRun, requestCancel, setPaused, transition, type RunRecord } from '..
 import { canTransition, isTerminal, type RunState } from '../../controller/states.ts';
 import { listQuestions } from '../../inquisition/store.ts';
 import type { Args, OptionSpec } from '../args.ts';
-import { findRunByPrefix, liveLease, liveServiceController, openState, resolveRepo, withCliLease, withState, type CliContext } from '../context.ts';
+import { continueCommand, findRunByPrefix, liveControllerFor, expireLeaseOfDeadOwner, liveLease, liveServiceController, openState, resolveRepo, withCliLease, withState, type CliContext } from '../context.ts';
 import { EXIT, UsageError } from '../exit.ts';
 import { json, line } from '../io.ts';
 import { driveForeground } from './drive.ts';
@@ -35,7 +36,7 @@ export async function pauseCommand(args: Args, ctx: CliContext): Promise<number>
     else {
       line(ctx.io, `run ${after.id} paused at ${after.state}`);
       line(ctx.io, 'The controller stops working on it at its next safe point; running workers are not killed and are collected on resume.');
-      line(ctx.io, `Continue with: orbit resume ${after.id}`);
+      line(ctx.io, `Continue with: ${continueCommand(db, after.id, ctx.clock.now())}`);
     }
     return EXIT.OK;
   });
@@ -86,7 +87,7 @@ export async function resumeCommand(args: Args, ctx: CliContext): Promise<number
   try {
     const run = findRunByPrefix(db, id!);
     if (run.cancelRequested && run.state !== 'CANCELLED') throw new OrbitError('TRANSITION_INVALID', `run ${run.id} has a durable cancellation request and will end CANCELLED; it cannot be resumed`);
-    if (isTerminal(run.state) && run.state !== 'BLOCKED') throw new OrbitError('TRANSITION_INVALID', `run ${run.id} is ${run.state}; nothing to resume`);
+    if (isTerminal(run.state) && run.state !== 'BLOCKED') throw new OrbitError('TRANSITION_INVALID', `run ${run.id} is ${run.state}; nothing to resume. ${nextStepAfter(run)}`);
 
     const notes: string[] = [];
     if (run.state === 'BLOCKED') {
@@ -102,7 +103,29 @@ export async function resumeCommand(args: Args, ctx: CliContext): Promise<number
       if (open.length > 0 && !args.bool('force')) {
         throw new OrbitError('TRANSITION_INVALID', `run ${run.id} is BLOCKED with ${open.length} material question(s) still open (${open.map((q) => q.id).join(', ')}); answer them with "orbit decide ${run.id} <question-id> <answer>", or pass --force to resume without an answer`, { open: open.map((q) => q.id) });
       }
+    }
+
+    // Resuming only clears a flag or a block: a controller has to carry the run on, and without one the run would sit
+    // idle behind a success message. Decided before anything is changed, so a refusal leaves the run exactly as it was.
+    let foreground = args.bool('foreground');
+    const note = (text: string): void => {
+      if (!args.bool('json')) line(ctx.io, text);
+    };
+    if (!foreground && !args.bool('detach') && liveControllerFor(db, run.id, ctx.clock.now()) === null) {
+      if (!ctx.io.stdoutIsTty) {
+        throw new OrbitError(
+          'PROVIDER_UNAVAILABLE',
+          `no controller is running, so resuming run ${run.id} would only clear its ${run.state === 'BLOCKED' ? 'block' : 'pause'} and leave it idle. Drive it in this terminal with: orbit resume ${run.id} --foreground. Or start a service ("orbit service install"), then resume. With --detach the run is released to a service you start later`,
+          { runId: run.id },
+        );
+      }
+      foreground = true;
+      note('no service is running, so driving it here ("orbit service install" keeps runs going in the background)');
+    }
+
+    if (run.state === 'BLOCKED') {
       const target = resumeTarget(db, run);
+      const open = listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material);
       await withCliLease(ctx, db, run.id, (ownerId) => {
         db.tx(() => {
           transition(db, { runId: run.id, to: target, ownerId, reason: `resumed by ${ctx.user} after a decision or environment repair`, actor: actorOf(ctx), expectedFrom: 'BLOCKED' }, ctx.clock);
@@ -116,9 +139,10 @@ export async function resumeCommand(args: Args, ctx: CliContext): Promise<number
       notes.push('unpaused');
     }
     const after = getRun(db, run.id);
-    if (notes.length === 0) notes.push('already running; nothing to change');
+    // A run that was never started is not "already running": say what it is waiting for.
+    if (notes.length === 0) notes.push(after.state === 'CREATED' ? 'created but not started; a controller picks it up' : 'already running; nothing to change');
 
-    if (args.bool('foreground')) {
+    if (foreground) {
       if (!args.bool('json')) line(ctx.io, `run ${after.id}: ${notes.join(', ')}; driving it in the foreground (Ctrl-C pauses it)`);
       const policy = args.str('policy');
       const config = loadConfig(repo, policy ? resolve(ctx.cwd, policy) : undefined);
@@ -129,11 +153,24 @@ export async function resumeCommand(args: Args, ctx: CliContext): Promise<number
     if (args.bool('json')) json(ctx.io, { run_id: after.id, state: after.state, paused: after.paused, actions: notes, service_running: service !== null });
     else {
       line(ctx.io, `run ${after.id}: ${notes.join(', ')} (${after.state})`);
-      if (!service) line(ctx.io, `No controller is running. Start one with "orbit service run", or drive this run here with: orbit resume ${after.id} --foreground`);
+      if (!service) line(ctx.io, `No service is running, so nothing continues this run until one is started ("orbit service install"). To drive it here instead: orbit resume ${after.id} --foreground`);
     }
     return EXIT.OK;
   } finally {
     db.close();
+  }
+}
+
+/** What to do about a run that cannot be resumed because it has ended, by the way it ended. */
+function nextStepAfter(run: RunRecord): string {
+  const report = `See what happened with "orbit report ${run.id}"`;
+  switch (run.state) {
+    case 'SUCCEEDED':
+      return `${report}; the work is done. For more, start a new run with: orbit run --goal "..."`;
+    case 'CANCELLED':
+      return `A cancelled run stays cancelled. ${report}, or start a new run with: orbit run --goal "..."`;
+    default:
+      return `${report}, fix what stopped it, then start a new run with: orbit run --goal "..." (orbit repair "<failure>" starts one for a failure)`;
   }
 }
 
@@ -156,7 +193,7 @@ export function cliLeaseDeps(ctx: CliContext, repo: string, db: OrbitDb, ownerId
       ownerId,
       logger: createLogger({ file: join(ctx.orbitHome, 'logs', 'controller.jsonl'), clock: ctx.clock }),
       adapters: {},
-      registry: new ModelRegistry(db, ctx.clock),
+      registry: new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome)),
       orbitHome: ctx.orbitHome,
       hostEnv: ctx.env,
       orbitInstallDir: orbitInstallDir(),
@@ -173,14 +210,18 @@ export async function cancelCommand(args: Args, ctx: CliContext): Promise<number
     const found = findRunByPrefix(db, id!);
     const emit = (r: RunRecord, how: string): number => {
       if (args.bool('json')) json(ctx.io, { run_id: r.id, state: r.state, cancel_requested: r.cancelRequested, how });
-      else line(ctx.io, `run ${r.id}: ${how} (${r.state})`);
+      // The state in brackets, unless the words already say it ("cancelled", "already SUCCEEDED").
+      else line(ctx.io, `run ${r.id}: ${new RegExp(`\\b${r.state}\\b`, 'i').test(how) ? how : `${how} (${r.state})`}`);
       return EXIT.OK;
     };
     if (isTerminal(found.state) && found.state !== 'BLOCKED') return emit(found, `already ${found.state}; nothing to cancel`);
 
     // The request is durable first: from here no controller can move this run anywhere but CANCELLED.
     const requested = requestCancel(db, found.id, actorOf(ctx), ctx.clock);
-    if (liveLease(db, found.id, ctx.clock.now())) {
+    // A controller killed on this host leaves a lease that has not expired; its process is gone, so nobody owns the run.
+    let owned = liveLease(db, found.id, ctx.clock.now());
+    if (owned && expireLeaseOfDeadOwner(db, owned, ctx.clock.now())) owned = null;
+    if (owned) {
       if (waitS > 0) {
         const deadline = ctx.clock.now() + waitS * 1000;
         while (ctx.clock.now() < deadline && !isTerminal(getRun(db, found.id).state)) await new Promise((r) => setTimeout(r, ctx.seams.pollMs ?? 250));

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stringify } from 'yaml';
-import { defaultConfig } from '../../../src/policy/config.ts';
+import { defaultCheck, defaultConfig } from '../../../src/policy/config.ts';
 import type { OrbitConfig } from '../../../src/policy/types.ts';
 import { getRun } from '../../../src/controller/run-store.ts';
 import { makeLab, type Lab } from './lab.ts';
@@ -18,6 +18,8 @@ function releasePolicy(l: Lab): string {
   const config: OrbitConfig = defaultConfig('release');
   config.actions = { ...config.actions, merge: true, deploy_production: true };
   config.isolation = { ...config.isolation, provider: 'none', allow_unisolated: true };
+  // `orbit run` refuses a policy with no check.
+  config.checks = { unit: { ...defaultCheck('unit'), command: [node, '-e', '0'] } };
   const env = { deploy_command: [node, '-e', '0'], allowed_branches: ['main'], require_ci_green: false, network_hosts: [], timeout_seconds: 30, verify_command: null };
   config.release = { merge: { method: 'squash', require_checks: [], delete_branch: false, mark_ready: true }, environments: { staging: env, canary: env } };
   // Outside the repository: an untracked file inside it would be an uncommitted change, which `orbit run` now refuses before creating a run.

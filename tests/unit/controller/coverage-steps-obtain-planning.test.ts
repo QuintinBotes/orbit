@@ -10,6 +10,7 @@ import { planWorker } from '../../../src/storage/workers.ts';
 import { getRun, requestCancel } from '../../../src/controller/run-store.ts';
 import { START_CHARGE_EVENT, chargeOnce, latestAttempt, obtain, type ObtainOptions } from '../../../src/controller/steps/obtain.ts';
 import { planningStep } from '../../../src/controller/steps/planning.ts';
+import { spendRecoveryAttempt } from '../../../src/recovery/budget.ts';
 import { PLANNER_FILE } from '../../../src/controller/steps/contracting.ts';
 import { PLANNER_OUTPUT, plannerPractices } from '../../integration/controller/harness.ts';
 import { ENGINEERING_PRACTICES } from '../../../src/contract/practices.ts';
@@ -283,6 +284,21 @@ describe('planningStep', () => {
     expect(ledger.state('cost_usd').used).toBeCloseTo(0.5, 6);
     const ev = lab.db.get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'budget.precharged'", lab.runId);
     expect(JSON.parse(ev!.data_json)).toEqual({ usage_rows: 2, charged_usd: 0.5 });
+  });
+
+  it('counts recovery attempts spent before the budget existed, once, so the report does not say 0 used (Nm8)', async () => {
+    prepare();
+    // A resume after a block in CONTRACTING spends a recovery attempt while the run has no counters (e2e r13).
+    spendRecoveryAttempt(lab.db, lab.runId, lab.clock, { actor: OWNER, why: 'resume after a block: fresh the planner' });
+    await planningStep(lab.ctx());
+    expect(lab.ctx().ledger!.state('recovery_attempts').used).toBe(1);
+    const ev = lab.db.get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'budget.precharged'", lab.runId);
+    expect(JSON.parse(ev!.data_json)).toMatchObject({ recovery_attempts: 1 });
+    // A restarted step charges nothing twice, and an attempt spent through the counters is not counted again.
+    spendRecoveryAttempt(lab.db, lab.runId, lab.clock, { actor: OWNER, why: 'later', ledgerFor: () => lab.ctx().ledger! });
+    lab.db.run("UPDATE runs SET state = 'PLANNING' WHERE id = ?", lab.runId);
+    await planningStep(lab.ctx());
+    expect(lab.ctx().ledger!.state('recovery_attempts').used).toBe(2);
   });
 
   it('keeps the counters of a restarted step and does not charge the earlier spend again', async () => {

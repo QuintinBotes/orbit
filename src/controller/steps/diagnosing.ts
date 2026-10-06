@@ -90,6 +90,8 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
         effort: route.effort,
         cwd: ctx.run.worktreePath!,
         readOnly: true,
+        // The Diagnose mode runs experiments (tests, repro scripts): Bash inside the sandbox, worktree read-only (NM2).
+        experiments: true,
         prompt: (workerId) => diagnosisPrompt(ctx, fingerprint, failures, workerId, timeouts),
       }),
       accept: (r) => {
@@ -218,6 +220,7 @@ function diagnosisPrompt(ctx: RunContext, fingerprint: string, failures: Failure
   const priors = listHypotheses(ctx.db, ctx.run.id);
   const task = [
     'Diagnose the failure of the candidate in this checkout. Do not edit anything.',
+    'You may run commands (tests, repro scripts) to test a hypothesis. The checkout is read-only; scratch files go in $TMPDIR only.',
     `Failure fingerprint: ${fingerprint}`,
     'Return a repair brief for exactly this fingerprint: evidence, competing causal hypotheses, one discriminating experiment and what it will show,',
     'a scoped fix, post-fix checks (trusted check ids only) and the constraints the repair must preserve.',

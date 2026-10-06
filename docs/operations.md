@@ -99,7 +99,7 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 | `orbit status [run-id]` | `--all` lists every run, not the latest 10 |
 | `orbit logs <run-id>` | `--follow` / `-f`, `--lines <n>`, `--controller`, `--workers`, `--worker <id>` |
 | `orbit pause <run-id>` | none |
-| `orbit resume <run-id>` | `--foreground` or `--detach` (the default: leave it to the service), `--force`, `--policy <path>` |
+| `orbit resume <run-id>` | `--foreground`, or `--detach` (leave it to the service); with neither it needs a live controller (the service, or the foreground controller that owns the run) and otherwise refuses without changing anything, or drives the run itself on a terminal. `--force`, `--policy <path>` |
 | `orbit cancel <run-id>` | `--wait <seconds>` |
 | `orbit report <run-id>` | `--interim`; `orbit report --learning` takes no run id |
 | `orbit questions <run-id>` | `--all` includes answered and withdrawn questions |
@@ -173,6 +173,9 @@ time to green for this repository, read-only. `orbit gc` deletes the run
 directories and worktrees of finished runs that ended more than
 `retention.keep_runs_days` ago (`--keep-days 0`: every finished run now).
 Database rows stay and `BLOCKED` runs are never touched. Use `--dry-run` first.
+A pruned run keeps its record for `orbit status` and `orbit stats`, but `orbit
+verify` and `orbit repair` refuse it with "its files were removed by orbit gc":
+its policy, evidence and candidate are gone.
 Runs that end `SUCCEEDED` or `CANCELLED` already remove their own worktrees; see
 [retention](configuration.md#routing-and-retention).
 

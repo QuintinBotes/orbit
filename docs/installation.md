@@ -46,11 +46,16 @@ prints nothing when there are none and never blocks a session), and a PreToolUse
 guard hook. It also puts `orbit` on the PATH of Claude Code's Bash tool (its
 `bin/orbit`) while the plugin is enabled. It is not on the PATH of a separate
 terminal: use a clone (below), or call the plugin's `bin/orbit` by its full
-path. Messages that tell you to run `orbit <command>` name the `/orbit:<skill>`
-instead when they exist (`init`, `doctor`, `run`, `status`, `resume`, `verify`,
+path. Inside Claude Code (its Bash tool, skills and hooks), messages that tell
+you to run `orbit <command>` name the `/orbit:<skill>` instead when they exist (`init`, `doctor`, `run`, `status`, `resume`, `verify`,
 `repair`); the other commands (`models refresh`, `decide`, `questions`,
 `service install`, `report`, `logs`) run through Claude Code's Bash tool, which
-you can ask Claude to do.
+you can ask Claude to do. The plugin's `bin/orbit` run from a plain terminal
+(by path or through a symbolic link) names the terminal commands, since those
+are the ones that work there; Claude Code marks its own commands with
+`CLAUDECODE=1`, and only then are skills named. `bin/orbit` also checks for a
+usable Node first (22.16 or newer) and says what it found instead of failing
+with a raw error.
 
 A plugin alone does not give persistent execution: without the background
 service, `/orbit:run`, `/orbit:resume` and `/orbit:repair` drive the run from the
@@ -80,6 +85,7 @@ the clone:
 ```json
 {
   "name": "orbit-local",
+  "description": "A local catalog for trying Orbit from a clone",
   "owner": { "name": "you" },
   "plugins": [
     { "name": "orbit", "source": { "source": "git-subdir", "url": "file:///ABSOLUTE/PATH/TO/orbit", "path": "plugin" } }
@@ -161,6 +167,15 @@ method each one reports.
 - The starter configuration leaves Fable models out of
   `routing.allowed_models`, because headless Claude Code bills Fable usage
   credits without a consent prompt. Add `fable` yourself if you accept that.
+
+## Installing the plugin offline
+
+The plugin's install fetches its one dependency (the sandbox runtime, `srt`)
+with `npm ci`. An install made while offline reports success but leaves the
+plugin without `node_modules`; `orbit doctor` then fails `isolation` and says
+the plugin's `node_modules` is missing. Reconnect and run `claude plugin update
+orbit` (or reinstall), or run `npm ci --omit=dev` in the plugin directory it
+names.
 
 ## Isolation tiers
 

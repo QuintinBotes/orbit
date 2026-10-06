@@ -10,6 +10,7 @@ import { createContext, type CliContext } from './context.ts';
 import { EXIT, EXIT_CODE_DOCS, UsageError, exitCodeFor } from './exit.ts';
 import { ORBIT_VERSION } from './version.ts';
 import { setInvocationEnv } from '../core/invocation.ts';
+import { closest } from '../core/near-miss.ts';
 import { cancelCommand, CANCEL_OPTIONS, pauseCommand, resumeCommand, RESUME_OPTIONS } from './commands/control.ts';
 import { DECIDE_OPTIONS, decideCommand, QUESTIONS_OPTIONS, QUESTIONS_USAGE, questionsCommand } from './commands/decide.ts';
 import { DOCTOR_OPTIONS, doctorCommand } from './commands/doctor.ts';
@@ -101,6 +102,19 @@ export function helpText(): string {
   ].join('\n');
 }
 
+/** What "orbit help help" prints: help is not in COMMANDS, so it describes itself here. */
+function helpOfHelp(): string {
+  return [
+    'Usage: orbit help [<command> | <group> | exit-codes]',
+    '',
+    '  orbit help              the commands',
+    '  orbit help <command>    one command\'s usage and options (the same as "orbit <command> --help")',
+    '  orbit help <group>      the subcommands of a group, such as "orbit help models"',
+    '  orbit help exit-codes   what each exit status means',
+    '',
+  ].join('\n');
+}
+
 export function commandHelp(def: CommandDef): string {
   const opts = { ...GLOBAL_OPTIONS, ...(def.options ?? {}) };
   const rows = Object.entries(opts).map(([name, d]) => {
@@ -133,27 +147,6 @@ export function groupHelp(group: string): string {
     `Run "orbit ${group} <subcommand> --help" for a subcommand's options.`,
     '',
   ].join('\n');
-}
-
-function editDistance(a: string, b: string): number {
-  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const row = [i];
-    for (let j = 1; j <= b.length; j++) row[j] = Math.min(prev[j]! + 1, row[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
-    prev = row;
-  }
-  return prev[b.length]!;
-}
-
-/** The candidate closest to `word` when it is plausibly a typo of it (distance at most a third of the word, and at least 1 or 2). */
-function closest(word: string, candidates: readonly string[]): string | null {
-  const limit = Math.max(2, Math.floor(word.length / 3));
-  let best: { name: string; d: number } | null = null;
-  for (const name of candidates) {
-    const d = editDistance(word.toLowerCase(), name.toLowerCase());
-    if (d <= limit && (best === null || d < best.d)) best = { name, d };
-  }
-  return best?.name ?? null;
 }
 
 /** The error for words that name no command, with a suggestion when one is close and the choices when it is not. */
@@ -203,6 +196,7 @@ export async function main(argv: readonly string[], overrides: Partial<CliContex
   try {
     if (first === undefined || first === '--help' || first === '-h' || first === 'help') {
       if (first === 'help' && argv[1] === 'exit-codes') ctx.io.out(exitCodesText());
+      else if (first === 'help' && argv[1] === 'help' && argv[2] === undefined) ctx.io.out(helpOfHelp());
       else if (first === 'help' && argv[1]) {
         const found = findCommand(argv.slice(1));
         if (found) ctx.io.out(commandHelp(found.def));

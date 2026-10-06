@@ -14,7 +14,39 @@ export interface Io {
   readonly stdoutIsTty: boolean;
 }
 
+/** Streams whose reader has gone away (EPIPE): nothing more is written to them. */
+const closedStreams = new WeakSet<object>();
+/** Commands that are driving a run right now. While there is one, a closed pipe must not end the process. */
+let drivers = 0;
+
+/**
+ * A command that is working on something that outlives its output (a foreground controller) calls this first: a reader
+ * that goes away (`orbit run --foreground | head -2`) then only silences the output, it does not end the process. The
+ * returned function ends the hold.
+ */
+export function holdThroughClosedPipe(): () => void {
+  drivers++;
+  let held = true;
+  return () => {
+    if (held) drivers--;
+    held = false;
+  };
+}
+
+/**
+ * The error handler of an output stream. A reader that goes away is its own choice, not a failure of ours: a command
+ * with nothing left to do leaves quietly, but one that is driving a run discards the output and keeps driving, because
+ * ending it here would orphan the run (a lease held by a dead process, nothing logged). Any other error is real.
+ */
+export function onOutputStreamError(stream: object, err: NodeJS.ErrnoException, leave: (code: number) => void = (code) => process.exit(code)): void {
+  if (err.code !== 'EPIPE') throw err;
+  closedStreams.add(stream);
+  // The exit status the command already settled on (a run that ended while the reader was gone) is kept.
+  if (drivers === 0) leave(Number(process.exitCode ?? 0));
+}
+
 function write(stream: Writable, text: string): void {
+  if (closedStreams.has(stream)) return;
   try {
     stream.write(redact(text));
   } catch {

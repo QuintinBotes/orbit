@@ -195,12 +195,13 @@ export async function outcomeForError(ctx: RunContext, err: unknown): Promise<St
  * Criteria an open material question blocks keep the run from delivery and success (spec section 10): the
  * independent work was verified, the rest waits for a person. BLOCKED, naming the questions, or null.
  */
-export async function blockOnOpenQuestions(ctx: RunContext, stage: string): Promise<StepResult | null> {
+export async function blockOnOpenQuestions(ctx: RunContext, stage: string, opts: { detail?: string; outcome?: Record<string, unknown> } = {}): Promise<StepResult | null> {
   const { criteria, questions } = blockingQuestions(ctx.db, ctx.run.id);
   if (criteria.length === 0) return null;
   const listed = questions.slice(0, 5).map((q) => `${q.id}: ${q.question}`).join(' | ');
-  return finishRun(ctx, 'BLOCKED', `${criteria.join(', ')} ${criteria.length === 1 ? 'waits' : 'wait'} for a decision before ${stage}; open questions: ${listed}. Answer with orbit decide, then orbit resume ${ctx.run.id}`, {
-    outcome: { blocked_criteria: criteria, questions: questions.map((q) => q.id) },
+  const detail = opts.detail ? ` ${opts.detail}` : '';
+  return finishRun(ctx, 'BLOCKED', `${criteria.join(', ')} ${criteria.length === 1 ? 'waits' : 'wait'} for a decision before ${stage}; open questions: ${listed}.${detail} Answer with orbit decide ${ctx.run.id} <question-id> <answer>, then orbit resume ${ctx.run.id}`, {
+    outcome: { ...(opts.outcome ?? {}), blocked_criteria: criteria, questions: questions.map((q) => q.id) },
   });
 }
 

@@ -108,6 +108,9 @@ process.on('SIGINT', () => {
   process.exit(1);
 });
 
+// A session that dies before any request reaches the model (a broken wrapper, a crash at start): nothing on stdout.
+if (step.exitBeforeOutput) process.exit(step.exitCode ?? 1);
+
 out({ type: 'thread.started', thread_id: randomUUID() });
 out({ type: 'item.completed', item: { id: 'item_0', type: 'error', message: 'Model metadata for `fake` not found. Defaulting to fallback metadata.' } });
 out({ type: 'turn.started' });

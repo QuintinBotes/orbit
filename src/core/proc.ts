@@ -106,8 +106,14 @@ export async function terminateGroup(pgid: number, graceMs: number, options: { c
   let last: NodeJS.Signals | null = null;
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGKILL'] as const) {
     if (!isGroupAlive(pgid)) return { exited: true, signal: last };
-    if (!killGroup(pgid, signal)) return { exited: true, signal: last };
-    last = signal;
+    try {
+      if (!killGroup(pgid, signal)) return { exited: true, signal: last };
+      last = signal;
+    } catch (err) {
+      // Darwin refuses a signal to a group whose members have all exited but are not yet reaped (EPERM), while the
+      // probe above still sees the group. Nothing is left to signal: wait for it to go, as after a delivered signal.
+      if (errno((err as { cause?: unknown }).cause) !== 'EPERM') throw err;
+    }
     const deadline = clock.now() + Math.max(0, graceMs);
     while (clock.now() < deadline) {
       await clock.sleep(Math.min(pollMs, Math.max(1, deadline - clock.now())));

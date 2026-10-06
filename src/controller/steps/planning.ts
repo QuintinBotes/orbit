@@ -12,6 +12,7 @@ import { applyBaselineExceptionAnswers } from '../../inquisition/baseline-except
 import { listQuestions } from '../../inquisition/store.ts';
 import { classifyDifficulty } from '../../scheduling/difficulty.ts';
 import { BudgetLedger } from '../../scheduling/budget.ts';
+import { RECOVERY_ATTEMPT_EVENT } from '../../recovery/budget.ts';
 import type { Coupling } from '../../scheduling/types.ts';
 import type { RunContext } from '../context.ts';
 import { routeFor, tokenEstimateFor } from '../workers.ts';
@@ -80,7 +81,7 @@ export async function planningStep(ctx: RunContext): Promise<StepResult> {
 }
 
 /**
- * Charge spend recorded before the ledger existed (the contracting planner).
+ * Charge spend recorded before the ledger existed (the contracting planner, and recovery attempts).
  * Marked by an event so it happens once; a crash between the charge and the
  * mark charges again, overstating spend rather than hiding it.
  */
@@ -99,5 +100,10 @@ function prechargeUsage(ctx: RunContext): void {
     const charge = ledger.consumeCost({ costUsd: r.cost_usd, costSource: r.cost_source }, (r.role as 'planner' | null) ?? 'planner', { tokenEstimate });
     total += charge.charged;
   }
-  note(ctx, 'budget.precharged', { usage_rows: rows.length, charged_usd: Math.round(total * 1e6) / 1e6 });
+  // Recovery attempts spent before the counters existed (a resume after a block in CONTRACTING, a crash in PREFLIGHT)
+  // were bounded by counting their events; they are part of the run's recovery budget too, or the report says 0 used.
+  const init = ctx.db.get<{ id: number }>("SELECT id FROM events WHERE run_id = ? AND type = 'budget.initialized' ORDER BY id LIMIT 1", ctx.run.id);
+  const recoveries = Number(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND type = ? AND id < ?', ctx.run.id, RECOVERY_ATTEMPT_EVENT, init?.id ?? 0)?.n ?? 0);
+  if (recoveries > 0) ledger.consume('recovery_attempts', recoveries);
+  note(ctx, 'budget.precharged', { usage_rows: rows.length, charged_usd: Math.round(total * 1e6) / 1e6, ...(recoveries > 0 ? { recovery_attempts: recoveries } : {}) });
 }

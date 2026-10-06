@@ -12,7 +12,7 @@ import { registerController } from '../../../src/storage/controllers.ts';
 import { systemClock } from '../../../src/core/clock.ts';
 import { OrbitError } from '../../../src/core/errors.ts';
 import type { OrbitConfig } from '../../../src/policy/types.ts';
-import { makeLab, type Lab } from './lab.ts';
+import { defineCheck, makeLab, type Lab } from './lab.ts';
 
 const hooks = vi.hoisted(() => ({
   exec: null as null | ((argv: readonly string[]) => unknown),
@@ -342,6 +342,7 @@ describe('orbit run --detach', () => {
   it('tells a running service apart from none: no warning, and service_running in the JSON', async () => {
     const l = lab();
     await l.cli(['init']);
+    defineCheck(l);
     l.db();
     registerController(l.db(), { id: 'svc-1', pid: process.pid, host: hostname(), mode: 'service' }, systemClock);
     const quiet = await l.cli(['run', '--goal', 'Add a mul function.', '--detach']);

@@ -84,7 +84,8 @@ describe('runCurator without a run', () => {
     const out = await runCurator(host({ deps: { ...host().deps, adapters: { claude: a } } }), { prompt: 'curate this' }, 'claude-haiku-x');
     expect(out).toEqual({ output: { lessons: [] }, model: 'claude-haiku-x', workerId: null });
     const spec = a.specs[0]!;
-    expect(spec).toMatchObject({ role: 'curator', readOnly: true, maxTurns: 3, prompt: 'curate this', model: 'claude-haiku-x', maxBudgetUsd: 0.5, workerId: `${lab.runId}-curator` });
+    // 6 turns, not 3: a structured-output retry counts as a turn, and 3 ended live curators max_turns (e2e retest Nm6).
+    expect(spec).toMatchObject({ role: 'curator', readOnly: true, maxTurns: 6, prompt: 'curate this', model: 'claude-haiku-x', maxBudgetUsd: 0.5, workerId: `${lab.runId}-curator` });
     expect(spec.workerDir.endsWith(join('learning', 'curator'))).toBe(true);
     expect(listWorkers(lab.db, { runId: lab.runId })).toEqual([]);
   });

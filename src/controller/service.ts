@@ -18,11 +18,12 @@
  * Neither definition names the bundle. The plugin's bundle sits under a versioned path that changes on every plugin
  * update, so a definition that recorded it would silently break at the next update. Both start a stable launcher,
  * ~/.orbit/bin/orbit, a three-line shell script that execs the current node on the current bundle. Install writes it,
- * and the CLI refreshes it whenever it runs from a different bundle or node (refreshLauncher), so an update needs no
- * reinstall. The launcher is a sibling of worktrees/, not inside any path a worker may write, and ~/.orbit is on the
+ * and the CLI refreshes it when the installed bundle moves (a new node, or the next version of the same plugin, or a
+ * newer version; refreshLauncher), so an update needs no reinstall. Any other copy of Orbit leaves it alone, and the
+ * last `service uninstall` removes it. The launcher is a sibling of worktrees/, not inside any path a worker may write, and ~/.orbit is on the
  * read-deny list of every profile (isolation/profiles.ts HOME_DENY_READ).
  */
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync, statSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { atomicWrite } from '../core/fsx.ts';
@@ -44,6 +45,8 @@ export interface ServiceSpec {
   nodePath: string;
   /** Absolute path of the bundle (plugin/dist/orbit.mjs in a checkout, dist/orbit.mjs under the plugin root). Written into the launcher. */
   entry: string;
+  /** The version of the installation that installs the service; written into the launcher, so only it or a newer one repoints it. */
+  version?: string;
   args: string[];
   workingDirectory: string;
   logDir: string;
@@ -58,6 +61,7 @@ export interface ServiceSpecInput {
   entry: string;
   nodePath?: string;
   path?: string;
+  version?: string;
 }
 
 export function serviceLabel(repoRoot: string): string {
@@ -70,6 +74,7 @@ export function serviceSpec(input: ServiceSpecInput): ServiceSpec {
     launcher: launcherPath(input.orbitHome),
     nodePath: input.nodePath ?? process.execPath,
     entry: input.entry,
+    ...(input.version !== undefined ? { version: input.version } : {}),
     args: ['service', 'run', '--repo', input.repoRoot],
     workingDirectory: input.repoRoot,
     logDir: join(input.orbitHome, 'logs'),
@@ -96,7 +101,7 @@ function shQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-export function renderLauncher(target: { node: string; entry: string }): string {
+export function renderLauncher(target: { node: string; entry: string; version?: string }): string {
   for (const v of [target.node, target.entry]) {
     if (!isAbsolute(v) || /[\n\r\0]/.test(v)) throw new OrbitError('CONFIG_INVALID', `the launcher needs absolute paths without line breaks, got ${JSON.stringify(v)}`);
   }
@@ -106,13 +111,14 @@ export function renderLauncher(target: { node: string; entry: string }): string 
     '# Written by orbit (service install, and whenever orbit runs from another install). Do not edit: it is rewritten.',
     `# node: ${target.node}`,
     `# entry: ${target.entry}`,
+    ...(target.version && !/[\n\r\0]/.test(target.version) ? [`# version: ${target.version}`] : []),
     `exec ${shQuote(target.node)} ${shQuote(target.entry)} "$@"`,
     '',
   ].join('\n');
 }
 
 /** The node and bundle a launcher starts, or null when there is no launcher or Orbit did not write it. */
-export function readLauncher(path: string): { node: string; entry: string } | null {
+export function readLauncher(path: string): { node: string; entry: string; version?: string } | null {
   let text: string;
   try {
     text = readFileSync(path, 'utf8');
@@ -122,7 +128,8 @@ export function readLauncher(path: string): { node: string; entry: string } | nu
   if (!text.split('\n').includes(LAUNCHER_MARK)) return null;
   const node = /^# node: (.+)$/m.exec(text)?.[1];
   const entry = /^# entry: (.+)$/m.exec(text)?.[1];
-  return node && entry ? { node, entry } : null;
+  const version = /^# version: (.+)$/m.exec(text)?.[1];
+  return node && entry ? { node, entry, ...(version ? { version } : {}) } : null;
 }
 
 /**
@@ -145,7 +152,7 @@ function secureLauncherDir(orbitHome: string): void {
 }
 
 /** Write the launcher: a temporary file renamed over the old one, mode 0700, so a starting service sees the old or the new, never half. */
-export function writeLauncher(orbitHome: string, target: { node: string; entry: string }): string {
+export function writeLauncher(orbitHome: string, target: { node: string; entry: string; version?: string }): string {
   const content = renderLauncher(target);
   secureLauncherDir(orbitHome);
   const path = launcherPath(orbitHome);
@@ -153,7 +160,26 @@ export function writeLauncher(orbitHome: string, target: { node: string; entry: 
   return path;
 }
 
-export type LauncherRefresh = 'absent' | 'foreign' | 'current' | 'updated' | 'skipped';
+export type LauncherRefresh = 'absent' | 'foreign' | 'current' | 'updated' | 'skipped' | 'other-install';
+
+/** Dotted numeric versions: positive when `a` is newer than `b`. A part that is not a number counts as 0. */
+function newerVersion(a: string, b: string): boolean {
+  const pa = a.split('.').map((x) => Number.parseInt(x, 10) || 0);
+  const pb = b.split('.').map((x) => Number.parseInt(x, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return false;
+}
+
+/**
+ * Whether two bundles are versions of one installation: a plugin update changes only the version directory in
+ * `<cache>/<plugin>/<version>/dist/orbit.mjs`, so the directory three levels above the bundle is the same.
+ */
+function sameInstallation(a: string, b: string): boolean {
+  return dirname(dirname(dirname(a))) === dirname(dirname(dirname(b)));
+}
 
 /**
  * Point an existing launcher at the bundle and node that are running now. The plugin's versioned path changes on every
@@ -161,7 +187,7 @@ export type LauncherRefresh = 'absent' | 'foreign' | 'current' | 'updated' | 'sk
  * creates a launcher (no service was installed), never touches a file Orbit did not write, and never points the
  * service at a TypeScript source entry, which only a development checkout runs.
  */
-export function refreshLauncher(input: { orbitHome: string; entry: string; nodePath: string }): LauncherRefresh {
+export function refreshLauncher(input: { orbitHome: string; entry: string; nodePath: string; version?: string }): LauncherRefresh {
   const path = launcherPath(input.orbitHome);
   let st;
   try {
@@ -172,9 +198,15 @@ export function refreshLauncher(input: { orbitHome: string; entry: string; nodeP
   const current = st.isFile() ? readLauncher(path) : null;
   if (!current) return 'foreign';
   if (!input.entry.endsWith('.mjs') || !isAbsolute(input.entry) || !existsSync(input.entry) || !isAbsolute(input.nodePath) || !existsSync(input.nodePath)) return 'skipped';
-  const unchanged = current.node === input.nodePath && current.entry === input.entry && (st.mode & 0o777) === 0o700;
+  // The launcher belongs to the installation that ran `service install`. A command run from any other copy of Orbit (a
+  // stale clone, a development checkout) must not repoint a user's service at it: only the installed bundle follows
+  // itself (a new node, a new version directory of the same plugin), or a copy that says it is a newer version.
+  const ours = current.entry === input.entry || sameInstallation(current.entry, input.entry) || (input.version !== undefined && current.version !== undefined && newerVersion(input.version, current.version));
+  if (!ours) return 'other-install';
+  const version = input.version ?? current.version;
+  const unchanged = current.node === input.nodePath && current.entry === input.entry && current.version === version && (st.mode & 0o777) === 0o700;
   if (unchanged) return 'current';
-  writeLauncher(input.orbitHome, { node: input.nodePath, entry: input.entry });
+  writeLauncher(input.orbitHome, { node: input.nodePath, entry: input.entry, ...(version !== undefined ? { version } : {}) });
   return 'updated';
 }
 
@@ -312,6 +344,8 @@ export interface ServiceManagerOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Replaceable in tests. */
   now?: () => number;
+  /** Uninstall: the Orbit home, whose launcher is removed with the last service definition. */
+  orbitHome?: string;
 }
 
 /** launchd's ExitTimeOut (ServiceSpec.stopTimeoutSeconds) plus a margin for the job to disappear after it exits. */
@@ -328,6 +362,8 @@ export interface ServiceStatus {
   detail: string;
   /** Uninstall only: the definition is removed but the service manager still lists the job, so its controller is still stopping. */
   stopPending?: boolean;
+  /** Uninstall only: this was the last service definition, so the launcher Orbit wrote was removed with it. */
+  launcherRemoved?: boolean;
 }
 
 const defaultRunner: CommandRunner = async (argv) => {
@@ -353,7 +389,7 @@ export async function installService(spec: ServiceSpec, opts: ServiceManagerOpti
   mkdirSync(spec.logDir, { recursive: true, mode: 0o700 });
   if (opts.platform !== 'darwin' && opts.platform !== 'linux') return unsupported(opts.platform);
   // The definition starts the launcher, so the launcher exists (and names this bundle) before the service manager hears of it.
-  writeLauncher(dirname(dirname(spec.launcher)), { node: spec.nodePath, entry: spec.entry });
+  writeLauncher(dirname(dirname(spec.launcher)), { node: spec.nodePath, entry: spec.entry, ...(spec.version !== undefined ? { version: spec.version } : {}) });
   if (opts.platform === 'darwin') {
     const plist = launchdPlistPath(opts.homeDir, spec.label);
     mkdirSync(join(opts.homeDir, 'Library', 'LaunchAgents'), { recursive: true });
@@ -384,7 +420,7 @@ export async function uninstallService(label: string, opts: ServiceManagerOption
     const plist = launchdPlistPath(opts.homeDir, label);
     await must(run, launchctlCommands(label, opts.uid, plist).bootout, [0, 3]);
     rmSync(plist, { force: true });
-    return waitUntilGone(label, opts);
+    return withLauncherCleanup(await waitUntilGone(label, opts), opts);
   }
   if (opts.platform === 'linux') {
     const unit = systemdUnitPath(opts.homeDir, label);
@@ -392,9 +428,37 @@ export async function uninstallService(label: string, opts: ServiceManagerOption
     if (existsSync(unit)) await run(cmd.disable);
     rmSync(unit, { force: true });
     await must(run, cmd.daemonReload, [0]);
-    return waitUntilGone(label, opts);
+    return withLauncherCleanup(await waitUntilGone(label, opts), opts);
   }
   return unsupported(opts.platform);
+}
+
+/** The service definitions Orbit has installed for this user, in the service manager's own directory. */
+function installedDefinitions(opts: ServiceManagerOptions): string[] {
+  const dir = opts.platform === 'darwin' ? join(opts.homeDir, 'Library', 'LaunchAgents') : join(opts.homeDir, '.config', 'systemd', 'user');
+  try {
+    return readdirSync(dir).filter((f) => f.startsWith(`${SERVICE_LABEL_PREFIX}.`));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The launcher is shared by every repository's service (one per user), so it is removed only with the last Orbit
+ * definition, and only when Orbit wrote it: a file someone else put there is theirs. Without this, `service
+ * uninstall` left a script behind that the next command from any copy of Orbit could point at itself.
+ */
+function withLauncherCleanup(status: ServiceStatus, opts: ServiceManagerOptions): ServiceStatus {
+  if (!opts.orbitHome || installedDefinitions(opts).length > 0) return status;
+  const path = launcherPath(opts.orbitHome);
+  if (readLauncher(path) === null) return status;
+  rmSync(path, { force: true });
+  try {
+    rmdirSync(dirname(path));
+  } catch {
+    // the directory holds something else, or is already gone
+  }
+  return { ...status, launcherRemoved: true };
 }
 
 /**

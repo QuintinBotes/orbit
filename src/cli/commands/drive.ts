@@ -8,17 +8,19 @@
 import { OrbitError } from '../../core/errors.ts';
 import type { OrbitDb } from '../../storage/db.ts';
 import type { OrbitConfig } from '../../policy/types.ts';
-import { Controller, defaultControllerDeps } from '../../controller/index.ts';
+import { Controller, buildFinalReport, defaultControllerDeps } from '../../controller/index.ts';
 import { getRun, setPaused, type RunRecord } from '../../controller/run-store.ts';
 import { isTerminal } from '../../controller/states.ts';
 import { listQuestions } from '../../inquisition/store.ts';
-import { liveLease, type CliContext } from '../context.ts';
+import { continueCommand, expireLeaseOfDeadOwner, liveLease, type CliContext } from '../context.ts';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { hostname } from 'node:os';
 import { isAlive } from '../../core/proc.ts';
 import { findController } from '../../storage/controllers.ts';
 import type { Lease } from '../../controller/run-store.ts';
 import { EXIT, exitCodeForState } from '../exit.ts';
-import { flat, json, line, clockTime } from '../io.ts';
+import { flat, json, line, clockTime, holdThroughClosedPipe } from '../io.ts';
 
 interface EventRow {
   id: number;
@@ -56,16 +58,7 @@ export function formatEvent(e: EventRow): string {
   }
 }
 
-/**
- * Expire a lease whose owner is a controller registered on this host whose process is gone. Returns false when the
- * owner may still be alive (another host, a CLI lease, or a live process), and the lease stands.
- */
-export function expireLeaseOfDeadOwner(db: OrbitDb, lease: Lease, now: number): boolean {
-  const owner = findController(db, lease.ownerId);
-  if (!owner || owner.host !== hostname() || isAlive(owner.pid, owner.procStart)) return false;
-  db.run('UPDATE leases SET expires_at = ? WHERE run_id = ? AND owner_id = ? AND expires_at = ?', now, lease.runId, lease.ownerId, lease.expiresAt);
-  return true;
-}
+export { expireLeaseOfDeadOwner };
 
 export interface DriveOptions {
   repoRoot: string;
@@ -133,7 +126,7 @@ export async function driveForeground(ctx: CliContext, opts: DriveOptions): Prom
       return;
     }
     interrupted = true;
-    ctx.io.err('\ninterrupt: pausing the run (not cancelling it). Workers keep running; continue with: orbit resume ' + runId + '\n');
+    ctx.io.err(`\ninterrupt: pausing the run (not cancelling it). Workers keep running; continue with: ${safeContinue(db, runId, ctx)}\n`);
     try {
       setPaused(db, runId, true, `cli:${ctx.user}`, ctx.clock);
     } catch (err) {
@@ -161,9 +154,12 @@ export async function driveForeground(ctx: CliContext, opts: DriveOptions): Prom
     }
   }, pollMs);
 
+  // A reader that goes away (`| head -2`) must not end the process that is driving the run.
+  const releasePipeHold = holdThroughClosedPipe();
   try {
     await controller.start();
   } finally {
+    releasePipeHold();
     clearInterval(timer);
     signals.off('SIGINT', onInterrupt);
     signals.off('SIGTERM', onTerm);
@@ -178,6 +174,45 @@ export async function driveForeground(ctx: CliContext, opts: DriveOptions): Prom
   return { run, interrupted: interrupted || run.paused, exitCode };
 }
 
+/** The command that continues the run, as it is right now: with no service a plain resume would leave the run idle. */
+function safeContinue(db: OrbitDb, runId: string, ctx: CliContext): string {
+  try {
+    return continueCommand(db, runId, ctx.clock.now());
+  } catch {
+    return `orbit resume ${runId} --foreground`;
+  }
+}
+
+interface RunResult {
+  branch: string | null;
+  candidate_commit: string | null;
+  delivered_commit: string | null;
+  pull_request: { number: number; url: string | null } | null;
+}
+
+/** What the run left behind (the final report's revision section), or null when it cannot be read. */
+function resultOf(ctx: CliContext, db: OrbitDb, run: RunRecord): RunResult | null {
+  try {
+    const finalJson = join(dirname(run.policyPath), 'final.json');
+    const report = existsSync(finalJson) ? (JSON.parse(readFileSync(finalJson, 'utf8')) as { revision?: Record<string, unknown> }) : buildFinalReport(db, run, { runDir: dirname(run.policyPath), clock: ctx.clock, snapshot: null });
+    const rv = (report as { revision?: { branch?: string | null; candidate?: string | null; delivered_commit?: string | null; pull_request?: { number: number; url: string | null } | null } }).revision;
+    if (!rv) return null;
+    return { branch: rv.branch ?? null, candidate_commit: rv.candidate ?? null, delivered_commit: rv.delivered_commit ?? null, pull_request: rv.pull_request ?? null };
+  } catch {
+    return null;
+  }
+}
+
+/** The footer line that says where the work is: a pull request, a delivered commit, or a local branch (never called "delivered"). */
+function resultLine(r: RunResult): string | null {
+  const sha = (c: string | null): string => (c ?? '').slice(0, 12);
+  const branch = r.branch ? `branch ${r.branch}` : 'no branch';
+  if (r.pull_request) return `result: pull request #${r.pull_request.number}${r.pull_request.url ? ` ${r.pull_request.url}` : ''} (${branch}${r.delivered_commit ? ` at ${sha(r.delivered_commit)}` : ''})`;
+  if (r.delivered_commit) return `result: ${branch} at ${sha(r.delivered_commit)} (delivered)`;
+  if (r.candidate_commit) return `result: ${branch} at ${sha(r.candidate_commit)} (local, not delivered)`;
+  return null;
+}
+
 function json1(ctx: CliContext, value: unknown): void {
   ctx.io.out(`${JSON.stringify(value)}\n`);
 }
@@ -185,20 +220,25 @@ function json1(ctx: CliContext, value: unknown): void {
 function announceEnd(ctx: CliContext, db: OrbitDb, run: RunRecord, exitCode: number, wantJson: boolean): void {
   const open = listQuestions(db, run.id, { status: 'open' });
   if (wantJson) {
-    json1(ctx, { type: 'result', run_id: run.id, state: run.state, paused: run.paused, exit_code: exitCode, outcome_reason: run.outcomeReason, open_questions: open.map((q) => q.id) });
+    json1(ctx, { type: 'result', run_id: run.id, state: run.state, paused: run.paused, exit_code: exitCode, outcome_reason: run.outcomeReason, open_questions: open.map((q) => q.id), ...(run.state === 'SUCCEEDED' ? { result: resultOf(ctx, db, run) } : {}) });
     return;
   }
   if (isTerminal(run.state)) {
     line(ctx.io, `run ${run.id} ended ${run.state}${run.outcomeReason ? `: ${flat(run.outcomeReason)}` : ''}`);
+    // Only an accepted run has a result: a candidate of a blocked or exhausted run was not accepted.
+    const left = run.state === 'SUCCEEDED' ? resultOf(ctx, db, run) : null;
+    const where = left ? resultLine(left) : null;
+    if (where) line(ctx.io, where);
     line(ctx.io, `report: orbit report ${run.id}`);
     if (run.state === 'BLOCKED') {
       for (const q of open) line(ctx.io, `  open question ${q.id}: ${flat(q.question)}`);
       const frozen = /"frozen_policy"/.test(run.outcomeJson ?? '');
-      if (open.length > 0) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "orbit resume ${run.id}"`);
+      const next = safeContinue(db, run.id, ctx);
+      if (open.length > 0) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "${next}"`);
       else if (frozen) line(ctx.io, `this block comes from the run's frozen policy: fix .orbit/config.yaml, then "orbit cancel ${run.id}" and start a new run with "orbit run"`);
-      else line(ctx.io, `resolve the reason above, then "orbit resume ${run.id}"`);
+      else line(ctx.io, `resolve the reason above, then "${next}"`);
     }
   } else {
-    line(ctx.io, `run ${run.id} is ${run.state}${run.paused ? ' and paused' : ''}; continue with "orbit resume ${run.id}"`);
+    line(ctx.io, `run ${run.id} is ${run.state}${run.paused ? ' and paused' : ''}; continue with "${safeContinue(db, run.id, ctx)}"`);
   }
 }

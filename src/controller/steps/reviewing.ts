@@ -26,7 +26,7 @@ import { git } from '../../evidence/git.ts';
 import type { RepairBrief } from '../../evidence/types.ts';
 import { validateModelOutput, type ImplementerOutput } from '../../contract/model-outputs.ts';
 import { mentionsIrreversible, riskCategoriesInText } from '../../inquisition/heuristics.ts';
-import { progressSince } from '../../inquisition/repair.ts';
+import { progressSince, type NonProgressDecision } from '../../inquisition/repair.ts';
 import { extensionDecisionRecord } from '../../scheduling/budget.ts';
 import { attemptHistory } from './diagnosing.ts';
 import { selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../review/select.ts';
@@ -36,7 +36,7 @@ import type { IngestedReview } from '../../review/types.ts';
 import { listAmendments, listLedger, listQuestions } from '../../inquisition/store.ts';
 import type { Trigger } from '../../inquisition/types.ts';
 import { machineAdmission, runWorktreeRoot, schedulerFor, type RunContext } from '../context.ts';
-import { independentReviewGate } from '../gates.ts';
+import { blockingQuestions, independentReviewGate } from '../gates.ts';
 import { assertContract, blockOnAuth, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, move, note, policySummary, progress, safePoint, WAIT, type StepResult } from './common.ts';
 import { compileGlobs } from '../../policy/globs.ts';
 import { budgetAdmission, DEFAULT_CONTEXT_DUPLICATION } from '../../scheduling/scheduler.ts';
@@ -47,7 +47,7 @@ import { recordSpendCap, sessionSpendCap, workersFor } from '../workers.ts';
 import { runningUnits } from './implementing.ts';
 import { obtain } from './obtain.ts';
 import { checkEnvironment, IMPLEMENTER_PROVIDER, recordGate } from './preflight.ts';
-import { briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
+import { attemptCandidateId, briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
 import { handledTriggerKeys } from './verifying.ts';
 
 export async function reviewingStep(ctx: RunContext): Promise<StepResult> {
@@ -329,10 +329,36 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
     (d) => d.status === 'accepted' || undecided.has(d.findingId) || ((repairRequested || d.memberIds.some((id) => repaired.has(id))) && (d.blocking || severityRank(d.severity) <= blockRank)),
   );
   if (toRepair.length > 0) {
+    const texts = findingTexts(state);
+    // Spec section 10 and scenario 4: a finding about a criterion an open material question blocks is not repaired
+    // on a guess. It waits with its criterion for a person; only the findings it does not touch are repaired.
+    const waiting = blockingQuestions(ctx.db, ctx.run.id);
+    const held = toRepair.filter((d) => blockedCriteriaIn(d, texts.get(d.findingId), waiting.criteria).length > 0);
+    const repairable = toRepair.filter((d) => !held.includes(d));
+    if (held.length > 0) {
+      note(ctx, 'review.findings-held', { tree_hash: cand.treeHash, findings: held.map((d) => ({ id: d.findingId, external_id: d.externalId, criteria: blockedCriteriaIn(d, texts.get(d.findingId), waiting.criteria) })), questions: waiting.questions.map((q) => q.id) });
+    }
+    if (repairable.length === 0) {
+      const blocked = await blockOnOpenQuestions(ctx, 'review repair', {
+        detail: `Review finding(s) ${held.map((d) => d.externalId ?? d.findingId).join(', ')} concern ${waiting.criteria.length === 1 ? 'it' : 'them'} and are not repaired on a guess.`,
+        outcome: { held_findings: openFindings(held) },
+      });
+      if (blocked) return blocked;
+    }
+    // Repeated non-progress on this path too (scenario 6): a repair that reproduced the tree it was sent to repair
+    // brings back the same review, the same findings and the same brief, so another attempt would change nothing.
+    const stalled = stalledReviewRepair(ctx, cand);
+    if (stalled) {
+      const outcome = { non_progress: stalled, open_findings: openFindings(toRepair) };
+      // An unanswered material question may be why nothing changed: a person's answer, not another attempt, moves it.
+      const blocked = await blockOnOpenQuestions(ctx, 'another review repair', { detail: `non-progress: ${stalled.reason}.`, outcome });
+      if (blocked) return blocked;
+      decide(ctx, { id: `dec-${ctx.run.id}-non-progress-review-${currentAttempt(ctx)}`, kind: 'repair.non-progress', summary: stalled.reason, data: stalled });
+      return finishRun(ctx, 'EXHAUSTED', `non-progress: ${stalled.reason}; open findings: ${describeFindings(toRepair)}`.slice(0, 2000), { outcome });
+    }
     // Only a disagreement, or a finding about material semantics nobody may guess, needs the Inquisition first;
     // a claim it has already inquired into on this tree goes to its discriminating test instead of back to it.
-    const texts = findingTexts(state);
-    const inquire = toRepair
+    const inquire = repairable
       .filter((d) => d.status !== 'accepted' && !undecided.has(d.findingId))
       .map((d) => ({ d, why: d.disagreement ? [`disagreement (${d.disagreement.kinds.join(', ')})`] : materialSemantics(ctx, d, texts.get(d.findingId)) }))
       .filter((x) => x.why.length > 0);
@@ -348,7 +374,7 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
       };
       if (!handledTriggerKeys(ctx).has(trigger.key)) return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
     }
-    return routeToRepair(ctx, cand, toRepair, resolution, texts);
+    return routeToRepair(ctx, cand, repairable, resolution, texts, { held, criteria: waiting.criteria, questions: waiting.questions.map((q) => q.id) });
   }
 
   if (resolution.claimsToTest.length > 0) {
@@ -556,12 +582,45 @@ function openFindings(list: readonly Disposition[]): { id: string; external_id: 
   return list.map((d) => ({ id: d.findingId, external_id: d.externalId, severity: d.severity, status: d.status, claim: d.claim.slice(0, 300) }));
 }
 
+/**
+ * The criteria among `blocked` (ones an open material question blocks) a finding concerns: named by id in its claim,
+ * location, evidence or suggested validation, as reviewers cite the contract.
+ */
+export function blockedCriteriaIn(d: Pick<Disposition, 'claim' | 'location'>, t: FindingText | undefined, blocked: readonly string[]): string[] {
+  if (blocked.length === 0) return [];
+  const text = [d.claim, d.location ?? '', t?.evidence ?? '', t?.suggestedValidation ?? ''].join('\n');
+  return blocked.filter((id) => new RegExp(`(^|[^A-Za-z0-9_-])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_-])`, 'i').test(text));
+}
+
+/**
+ * A review repair that reproduced the tree it was sent to repair: the latest attempt produced the current candidate,
+ * whose tree is the one the attempt's review repair brief was written for. Nothing about the run changed, so the next
+ * pass would bring the same review, findings and brief. Null when no such repair exists, or when a person resumed the
+ * run since the brief was sent (an answer or an environment repair is new information).
+ */
+function stalledReviewRepair(ctx: RunContext, cand: CandidateRecord): NonProgressDecision | null {
+  const latest = currentAttempt(ctx);
+  if (latest === 0 || attemptCandidateId(ctx, latest) !== cand.id) return null;
+  const sent = ctx.db.get<{ id: number }>("SELECT id FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? AND json_extract(data_json, '$.tree_hash') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, REVIEW_REPAIR_EVENT, latest, cand.treeHash);
+  if (!sent) return null;
+  if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.resumed' AND id > ?", ctx.run.id, sent.id)) return null;
+  const reason = `attempt ${latest} reproduced tree ${cand.treeHash.slice(0, 12)}, the tree its review repair brief was written for: no measurable progress (same tree as attempt ${cand.attempt}); the same review, findings and brief would follow, so more attempts, tokens or lines would not change that`;
+  return { terminate: true, reason, consecutiveNoProgress: 1, threshold: 1, fingerprint: null, suggestedState: 'EXHAUSTED' };
+}
+
 function describeFindings(list: readonly Disposition[]): string {
   return list.map((d) => `${d.externalId ?? d.findingId} (${d.severity}): ${d.claim.slice(0, 120)}`).join('; ');
 }
 
 /** REVIEWING -> REPAIRING with one brief per finding, within the review round and attempt budgets. */
-async function routeToRepair(ctx: RunContext, cand: CandidateRecord, toRepair: Disposition[], resolution: Resolution, texts: Map<string, FindingText>): Promise<StepResult> {
+async function routeToRepair(
+  ctx: RunContext,
+  cand: CandidateRecord,
+  toRepair: Disposition[],
+  resolution: Resolution,
+  texts: Map<string, FindingText>,
+  waiting: { held: Disposition[]; criteria: string[]; questions: string[] } = { held: [], criteria: [], questions: [] },
+): Promise<StepResult> {
   const ledger = ctx.ledger!;
   const contract = assertContract(ctx);
   const outcome = { open_findings: openFindings(toRepair) };
@@ -598,7 +657,16 @@ async function routeToRepair(ctx: RunContext, cand: CandidateRecord, toRepair: D
   }
 
   const claims = new Map(resolution.claims.map((c) => [c.findingId, c]));
-  const briefs = toRepair.map((d) => reviewBrief(ctx, d, claims.get(d.findingId)?.proposedValidation ?? null, texts.get(d.findingId), contract));
+  const hold =
+    waiting.criteria.length === 0
+      ? []
+      : [
+          `Do not implement or guess ${waiting.criteria.join(', ')}: ${waiting.criteria.length === 1 ? 'it waits' : 'they wait'} for a person's decision (question(s) ${waiting.questions.join(', ')})${waiting.held.length > 0 ? `; review finding(s) ${waiting.held.map((d) => d.externalId ?? d.findingId).join(', ')} about ${waiting.criteria.length === 1 ? 'it are' : 'them are'} held until then` : ''}.`,
+        ];
+  const briefs = toRepair.map((d) => {
+    const b = reviewBrief(ctx, d, claims.get(d.findingId)?.proposedValidation ?? null, texts.get(d.findingId), contract);
+    return hold.length > 0 ? { ...b, preserved_constraints: [...b.preserved_constraints, ...hold] } : b;
+  });
   const stored: StoredBrief = { attempt: next, source: 'review', fingerprint: briefs[0]!.fingerprint, brief: briefs.length === 1 ? briefs[0]! : { briefs }, refs: toRepair.flatMap((d) => d.memberIds) };
   if (!existsSync(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
   const record: ReviewRepairRecord = { attempt: next, tree_hash: cand.treeHash, candidate_id: cand.id, commit: cand.commitSha, findings: toRepair.map((d) => ({ finding_id: d.findingId, member_ids: d.memberIds, fingerprint: d.fingerprint, external_id: d.externalId })) };

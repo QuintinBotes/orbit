@@ -13,13 +13,13 @@ const argv = process.argv.slice(2);
 if (argv[0] === 'hook') {
   await hookMain(argv.slice(1));
 } else {
-  // A reader that goes away early (`orbit help | head -1`) is its own choice, not a failure of ours: leave quietly.
+  // A reader that goes away early (`orbit help | head -1`) is its own choice, not a failure of ours: leave quietly,
+  // unless a foreground controller is driving a run, which keeps going with its output discarded (io.ts).
   // The hook branch above deliberately has no such handler: it fails closed on any error.
+  // Loaded here, not at the top: the hook branch above must not depend on anything but hook.ts.
+  const { onOutputStreamError } = await import('./io.ts');
   for (const stream of [process.stdout, process.stderr]) {
-    stream.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EPIPE') process.exit(0);
-      throw err;
-    });
+    stream.on('error', (err: NodeJS.ErrnoException) => onOutputStreamError(stream, err));
   }
   const { suppressSqliteExperimentalWarning } = await import('../core/warnings.ts');
   suppressSqliteExperimentalWarning();

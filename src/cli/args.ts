@@ -118,12 +118,39 @@ function plainParseError(err: unknown, usage: string, names: readonly string[]):
   return raw;
 }
 
+/**
+ * "--keep-days -1": the parser takes "-1" for an option and reports "--keep-days does not take a value", which hides the
+ * real problem. A word that is a negative number right after a string option is that option's value, so the option's
+ * own check can say what is wrong with it. "--" ends the options, as it does for the parser.
+ */
+function joinNegativeValues(argv: readonly string[], options: Record<string, { type: 'string' | 'boolean'; short?: string }>): string[] {
+  const takesValue = (word: string): boolean => {
+    if (word.startsWith('--')) return options[word.slice(2)]?.type === 'string';
+    if (/^-[^-]$/.test(word)) return Object.values(options).some((o) => o.short === word.slice(1) && o.type === 'string');
+    return false;
+  };
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const word = argv[i]!;
+    if (word === '--') {
+      out.push(...argv.slice(i));
+      break;
+    }
+    const next = argv[i + 1];
+    if (next !== undefined && takesValue(word) && /^-\d/.test(next)) {
+      out.push(`${word.startsWith('--') ? word : `--${Object.entries(options).find(([, o]) => o.short === word.slice(1))![0]}`}=${next}`);
+      i++;
+    } else out.push(word);
+  }
+  return out;
+}
+
 export function parseCommand(argv: readonly string[], spec: OptionSpec | undefined, usage: string): Args {
   const merged = { ...GLOBAL_OPTIONS, ...(spec ?? {}) };
   const options: Record<string, { type: 'string' | 'boolean'; short?: string; multiple?: boolean }> = {};
   for (const [name, d] of Object.entries(merged)) options[name] = { type: d.type, ...(d.short ? { short: d.short } : {}), ...(d.multiple ? { multiple: true } : {}) };
   try {
-    const r = parseArgs({ args: [...argv], options, allowPositionals: true, strict: true });
+    const r = parseArgs({ args: joinNegativeValues(argv, options), options, allowPositionals: true, strict: true });
     return new Args(r.values as Record<string, string | boolean | (string | boolean)[] | undefined>, r.positionals, usage);
   } catch (err) {
     throw new UsageError(plainParseError(err, usage, Object.keys(options)), usage);

@@ -19,6 +19,7 @@ import { cleanupCandidateCheckout, materializeCandidate } from '../../evidence/c
 import type { EvidenceReport } from '../../evidence/types.ts';
 import { loadRunContext, runWorktreeRoot, type RunContext } from '../../controller/context.ts';
 import { listRuns, renewLease, type RunRecord } from '../../controller/run-store.ts';
+import { isTerminal } from '../../controller/states.ts';
 import { collectVerificationEvidence } from '../../controller/verification.ts';
 import type { GoalContract } from '../../contract/types.ts';
 import type { Args } from '../args.ts';
@@ -112,6 +113,17 @@ export async function verifyCandidate(rc: RunContext): Promise<VerifyOutcome> {
   }
 }
 
+/**
+ * What to do about a failing candidate, in terms `orbit repair` will accept: it takes a run that is BLOCKED or paused, and
+ * refuses one that is running or has ended (a new run is the way forward then).
+ */
+export function repairNextStep(run: Pick<RunRecord, 'id' | 'state' | 'paused'>): string {
+  const hand = `hand the failure to a repair with: orbit repair ${run.id}`;
+  if (run.state === 'BLOCKED' || (run.paused && !isTerminal(run.state))) return hand;
+  if (isTerminal(run.state)) return `run ${run.id} ended ${run.state}, so it cannot be repaired in place; start a new run for the failure with: orbit repair "<description of the failure>"`;
+  return `pause the run with "orbit pause ${run.id}", then ${hand}`;
+}
+
 function print(ctx: CliContext, repo: string, asJson: boolean, o: VerifyOutcome, contractJson: string): number {
   const contract = JSON.parse(contractJson) as GoalContract;
   const statements = new Map(contract.acceptance_criteria.map((c) => [c.id, c] as const));
@@ -153,6 +165,6 @@ function print(ctx: CliContext, repo: string, asJson: boolean, o: VerifyOutcome,
   for (const r of o.failReasons) line(ctx.io, `failed: ${flat(r)}`);
   for (const r of o.incompleteReasons) line(ctx.io, `incomplete: ${flat(r)}`);
   for (const u of o.report.unverified) line(ctx.io, `unverified: ${flat(u)}`);
-  if (o.report.verdict === 'FAIL') line(ctx.io, `hand the failure to a repair with: orbit repair ${o.run.id}`);
+  if (o.report.verdict === 'FAIL') line(ctx.io, repairNextStep(o.run));
   return code;
 }

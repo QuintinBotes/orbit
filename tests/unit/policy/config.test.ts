@@ -405,7 +405,7 @@ describe('sections shared with the delivery, routing, UI, evidence and isolation
   it('defaults every new section so a minimal file resolves, and older-style partial overrides merge with the defaults', () => {
     const c = parseConfig('version: 1\n');
     expect(c.release).toBeNull();
-    expect(c.routing.output_budgets).toEqual({ planner: 16000, implementer: 24000, verifier: 8000, reviewer: 12000, inquisitor: 6000, curator: 4000, explorer: 6000 });
+    expect(c.routing.output_budgets).toEqual({ planner: 16000, implementer: 24000, verifier: 8000, reviewer: 12000, inquisitor: 6000, curator: 8000, explorer: 6000 });
     expect(c.dependencies.audit).toEqual({ enabled: false, fail_on: 'high', license_allowlist: null, exceptions: [] });
     expect(c.static_security).toEqual({ block_severities: ['critical', 'high'], exceptions: [] });
     expect(c.isolation.limits).toEqual({ cpu_seconds: 3600, max_processes: 2048, max_file_mb: 2048, memory_mb: 4096 });

@@ -51,6 +51,8 @@ export interface TaskSpec {
   /** JSON Schema the final structured output must satisfy. */
   outputSchema: object;
   readOnly: boolean;
+  /** A read-only experiment worker (diagnosis) may run Bash inside its sandbox; it still writes only its scratch directory. */
+  experiments?: boolean;
   maxTurns: number;
   timeoutMs: number;
   sandbox: SandboxProfile;

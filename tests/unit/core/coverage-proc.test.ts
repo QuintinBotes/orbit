@@ -260,6 +260,31 @@ describe('killGroup, isGroupAlive and terminateGroup signalling errors', () => {
     expect(await proc.terminateGroup(424242, 10, { clock: new ManualClock(0) })).toEqual({ exited: true, signal: null });
   });
 
+  it('terminateGroup waits out a group that refuses signals with EPERM because only zombies are left (macOS), instead of throwing', async () => {
+    // Darwin answers kill(-pgid, sig) with EPERM while every member of the group has exited but is not yet reaped; the
+    // probe (signal 0) still sees the group. Seen under full-suite load in I/adapters/claude-real.test.ts.
+    const proc = await load('darwin', {});
+    let probes = 0;
+    vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+      if (signal === 0) {
+        probes += 1;
+        if (probes > 2) throw Object.assign(new Error('no such'), { code: 'ESRCH' });
+        return true;
+      }
+      throw Object.assign(new Error('perm'), { code: 'EPERM' });
+    });
+    expect(await proc.terminateGroup(424242, 100, { clock: new ManualClock(0) })).toEqual({ exited: true, signal: null });
+  });
+
+  it('terminateGroup still reports a group that keeps refusing signals and never goes away', async () => {
+    const proc = await load('darwin', {});
+    vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+      if (signal === 0) return true;
+      throw Object.assign(new Error('perm'), { code: 'EPERM' });
+    });
+    expect(await proc.terminateGroup(424242, 20, { clock: new ManualClock(0), pollMs: 0 })).toEqual({ exited: false, signal: null });
+  });
+
   it('terminateGroup escalates INT, TERM, KILL and reports a group that survives KILL', async () => {
     const proc = await load('linux', {});
     const sent: Array<string | number> = [];

@@ -736,8 +736,10 @@ function progressKey(kind: string, item: string): string {
 }
 
 function exhausted(counter: string, row: CounterRow, amount: number, limit: 'allowance' | 'hard_cap' | 'reserve', phase: BudgetPhase): OrbitError {
-  const what = limit === 'allowance' ? `allowance ${row.allowance} (hard cap ${row.hard_cap})` : limit === 'reserve' ? `hard cap ${row.hard_cap} less the closing reserve` : `hard cap ${row.hard_cap}`;
-  return new OrbitError('BUDGET_EXHAUSTED', `${counter} exhausted at the ${what}: used ${row.used}, requested ${amount}`, {
+  // Dollars are summed floats; the message shows cents (the data keeps the exact values).
+  const v = (n: number): string => (counter === 'cost_usd' ? `$${usd(n)}` : String(n));
+  const what = limit === 'allowance' ? `allowance ${v(row.allowance)} (hard cap ${v(row.hard_cap)})` : limit === 'reserve' ? `hard cap ${v(row.hard_cap)} less the closing reserve` : `hard cap ${v(row.hard_cap)}`;
+  return new OrbitError('BUDGET_EXHAUSTED', `${counter} exhausted at the ${what}: used ${v(row.used)}, requested ${v(amount)}`, {
     counter,
     used: row.used,
     requested: amount,

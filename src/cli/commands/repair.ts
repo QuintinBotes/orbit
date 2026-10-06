@@ -75,7 +75,9 @@ export async function repairCommand(args: Args, ctx: CliContext): Promise<number
 
     const cand = currentCandidate(db, run.id);
     const evidence = cand ? currentEvidenceReport(db, run.id, cand.id) : null;
-    if (!cand || !evidence) throw new OrbitError('TRANSITION_INVALID', `run ${run.id} has no verified candidate, so there is no failure to repair. Run "orbit verify ${run.id}" first`);
+    // The same words as `orbit verify`, so the two never send a person round in a circle: verify needs a contract and a candidate.
+    if (!cand) throw new OrbitError('TRANSITION_INVALID', run.contractJson ? `run ${run.id} has no candidate yet (it is ${run.state}), so there is no change to verify and no failure to repair` : `run ${run.id} has no contract yet (it is ${run.state}), so there is nothing to verify and no failure to repair`);
+    if (!evidence) throw new OrbitError('TRANSITION_INVALID', `candidate ${cand.seq} of run ${run.id} has no evidence yet, so there is no failure to repair. Run "orbit verify ${run.id}" first`);
     if (evidence.verdict !== 'FAIL') throw new OrbitError('TRANSITION_INVALID', `the latest evidence for run ${run.id} (candidate ${cand.seq}) is ${evidence.verdict}, not FAIL, so there is no failure to repair. "orbit verify ${run.id}" shows what is unproven`);
     if (run.state !== 'DIAGNOSING' && !canTransition(run.state, 'DIAGNOSING')) throw new OrbitError('TRANSITION_INVALID', `run ${run.id} is ${run.state}, which cannot move to DIAGNOSING`);
     const open = listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material);

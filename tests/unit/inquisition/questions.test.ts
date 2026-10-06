@@ -168,6 +168,28 @@ describe('persistQuestion', () => {
     expect(listQuestions(env.db, RUN)).toHaveLength(1);
   });
 
+  it('a reworded repeat about the same criterion with reworded options is the same open question, not a second one (Nm8)', () => {
+    env = setup();
+    // The e2e run asked the same protected-test conflict three times, each inquiry rewording the question and its options.
+    const a = persistQuestion(env.db, RUN, 'clarify', goodQuestion(), env.clock);
+    const reworded = goodQuestion({
+      question: 'Should the export include every matching record, or the current page only?',
+      options: [
+        { label: 'All matching records', description: 'Query all pages on the server.', consequences: 'Needs separate querying and handling of large results.' },
+        { label: 'Current page', description: 'Write only the rows shown on screen.', consequences: 'Simpler, but users may be surprised.' },
+      ],
+    });
+    const b = persistQuestion(env.db, RUN, 'decision-record', reworded, env.clock);
+    const c = persistQuestion(env.db, RUN, 'reconcile', { ...reworded, options: [...reworded.options].reverse() }, env.clock);
+    expect(b.created).toBe(false);
+    expect(c.created).toBe(false);
+    expect(b.question.id).toBe(a.question.id);
+    expect(c.question.id).toBe(a.question.id);
+    expect(listQuestions(env.db, RUN)).toHaveLength(1);
+    // A different ask about the same criterion is still its own question.
+    expect(persistQuestion(env.db, RUN, 'clarify', goodQuestion({ question: 'Which delimiter should the CSV file use for European locales?' }), env.clock).created).toBe(true);
+  });
+
   it('criteriaBlockedByQuestions counts open material questions only', () => {
     env = setup();
     const a = persistQuestion(env.db, RUN, 'clarify', goodQuestion(), env.clock).question;

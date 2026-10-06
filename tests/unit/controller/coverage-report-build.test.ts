@@ -198,7 +198,7 @@ describe('what to do next', () => {
   });
 
   it('each other outcome says what a person does', () => {
-    expect(next('BLOCKED', 'autonomous', 'needs login')).toBe('needs login Resolve that, then run `orbit resume orb-unit`.');
+    expect(next('BLOCKED', 'autonomous', 'needs login')).toBe('needs login. Resolve that, then run `orbit resume orb-unit`.');
     expect(next('BLOCKED')).toBe('The run is blocked. Resolve that, then run `orbit resume orb-unit`.');
     expect(next('EXHAUSTED', 'autonomous', 'cost cap')).toContain('The authorized budget is spent (cost cap).');
     expect(next('EXHAUSTED')).toContain('(see decisions)');
