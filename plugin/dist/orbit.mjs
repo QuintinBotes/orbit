@@ -2740,19 +2740,19 @@ function isCaseInsensitiveFs(dir) {
   const cached = caseCache.get(dir);
   if (cached !== void 0) return cached;
   let result2 = false;
-  let probe = dir;
+  let probe2 = dir;
   while (true) {
-    const name = basename2(probe);
+    const name = basename2(probe2);
     const swapped = swapCase(name);
     if (swapped !== name) {
-      const a = lstatOrNull(probe);
-      const b = lstatOrNull(join3(dirname2(probe), swapped));
+      const a = lstatOrNull(probe2);
+      const b = lstatOrNull(join3(dirname2(probe2), swapped));
       result2 = a !== null && b !== null && a.ino === b.ino && a.dev === b.dev;
       break;
     }
-    const parent = dirname2(probe);
-    if (parent === probe) break;
-    probe = parent;
+    const parent = dirname2(probe2);
+    if (parent === probe2) break;
+    probe2 = parent;
   }
   caseCache.set(dir, result2);
   return result2;
@@ -15782,7 +15782,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref2];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve20.call(this, root, ref2);
+      let _sch = resolve21.call(this, root, ref2);
       if (_sch === void 0) {
         const schema4 = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref2];
         const { schemaId } = this.opts;
@@ -15809,7 +15809,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve20(root, ref2) {
+    function resolve21(root, ref2) {
       let sch;
       while (typeof (sch = this.refs[ref2]) == "string")
         ref2 = sch;
@@ -16639,7 +16639,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve20(baseURI, relativeURI, options) {
+    function resolve21(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -17008,7 +17008,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize: normalize3,
-      resolve: resolve20,
+      resolve: resolve21,
       resolveComponent,
       equal,
       serialize: serialize3,
@@ -23147,7 +23147,7 @@ var init_clock = __esm({
     "use strict";
     systemClock = {
       now: () => Date.now(),
-      sleep: (ms) => new Promise((resolve20) => setTimeout(resolve20, ms))
+      sleep: (ms) => new Promise((resolve21) => setTimeout(resolve21, ms))
     };
   }
 });
@@ -30655,8 +30655,8 @@ var init_sandbox_runtime = __esm({
           const canaryDir = join16(dir, "canary");
           mkdirSync8(canaryDir);
           const canary = join16(canaryDir, "orbit-canary");
-          const probe = await runBounded(srt.path, ["--settings", file, "--", "/bin/sh", "-c", 'echo x > "$1" 2>/dev/null; exit 0', "sh", canary], { timeoutMs });
-          if (probe.code !== 0) return { ok: false, detail: `srt ${version.stdout.trim()} could not start a sandboxed command (${probeFailure(probe)})` };
+          const probe2 = await runBounded(srt.path, ["--settings", file, "--", "/bin/sh", "-c", 'echo x > "$1" 2>/dev/null; exit 0', "sh", canary], { timeoutMs });
+          if (probe2.code !== 0) return { ok: false, detail: `srt ${version.stdout.trim()} could not start a sandboxed command (${probeFailure(probe2)})` };
           if (existsSync15(canary)) return { ok: false, detail: `srt at ${srt.path} ran a command without confining it: a write no rule allowed succeeded` };
         } finally {
           rmSync5(dir, { recursive: true, force: true });
@@ -30739,14 +30739,14 @@ var init_sandbox_runtime = __esm({
         if (pkg.name === null && pkg.version === null) throw unavailable(`srt at ${where} has an unknown version (no readable package.json), and the Chromium preload was verified against ${SRT_PACKAGE} ${SRT_VERIFIED_VERSION} only`);
         if (pkg.name !== SRT_PACKAGE) throw unavailable(`srt at ${where} is not ${SRT_PACKAGE} (package ${String(pkg.name)})`);
         if (pkg.version !== SRT_VERIFIED_VERSION) throw unavailable(`srt at ${where} is version ${String(pkg.version)}, and the Chromium preload was verified against ${SRT_VERIFIED_VERSION} only`);
-        const resolve20 = (path, what) => {
+        const resolve21 = (path, what) => {
           try {
             return realpathSync5(path);
           } catch {
             throw unavailable(`${what} ${path} is missing`);
           }
         };
-        return { node: resolve20(this.opts.nodePath ?? process.execPath, "node"), preload: resolve20(this.opts.chromiumPreloadPath ?? defaultChromiumPreloadPath(), "the Chromium preload"), cli: pkg.cli };
+        return { node: resolve21(this.opts.nodePath ?? process.execPath, "node"), preload: resolve21(this.opts.chromiumPreloadPath ?? defaultChromiumPreloadPath(), "the Chromium preload"), cli: pkg.cli };
       }
       missingDetail() {
         if (this.opts.srtPath !== void 0) return `configured srt ${this.opts.srtPath} is not an absolute path to an executable file`;
@@ -34196,7 +34196,7 @@ function logTail(path) {
 }
 async function startApp(opts) {
   const clock = opts.clock ?? systemClock;
-  const probe = opts.probe ?? fetchStatus;
+  const probe2 = opts.probe ?? fetchStatus;
   const pollMs = Math.max(10, opts.pollMs ?? 200);
   const requestTimeout = opts.requestTimeoutMs ?? 2e3;
   assertBaseUrl(opts.baseUrl, opts.isolatedTestData !== false);
@@ -34206,7 +34206,7 @@ async function startApp(opts) {
   if (outcome === "still-running") {
     throw new OrbitError("CONFIG_INVALID", `an application started by an earlier run (state ${priorState}) would not stop; refusing to start another`, { reason: "previous_app_running", stateFile: priorState });
   }
-  const existing = await probe(opts.baseUrl, requestTimeout);
+  const existing = await probe2(opts.baseUrl, requestTimeout);
   if (existing !== null) {
     throw new OrbitError("CONFIG_INVALID", `something already answers at ${opts.baseUrl} (HTTP ${existing}); refusing to test a server Orbit did not start`, { reason: "port_in_use", status: existing });
   }
@@ -34240,7 +34240,7 @@ async function startApp(opts) {
       if (!groupAlive(spawned.pgid)) {
         throw new OrbitError("INTERNAL", `the application exited before it became ready: ${logTail(logPath).trim() || "(no output)"}`, { reason: "app_exited", logPath });
       }
-      const status2 = await probe(opts.baseUrl, requestTimeout);
+      const status2 = await probe2(opts.baseUrl, requestTimeout);
       if (status2 !== null && isReadyStatus(status2)) return handle;
       if (clock.now() >= deadline) {
         throw new OrbitError("INTERNAL", `the application was not ready at ${opts.baseUrl} within ${opts.readyTimeoutMs} ms: ${logTail(logPath).trim() || "(no output)"}`, { reason: "ready_timeout", logPath });
@@ -34457,12 +34457,12 @@ async function validateCredentials(opts) {
       out.push({ provider, verdict: "error", status: null, live: false, error: `no adapter for provider ${provider}` });
       continue;
     }
-    const probe = opts.live || opts.liveProviders?.includes(provider) ? probeOf(adapter) : null;
+    const probe2 = opts.live || opts.liveProviders?.includes(provider) ? probeOf(adapter) : null;
     try {
-      const status2 = probe ? await probe({ ...opts.timeoutMs === void 0 ? {} : { timeoutMs: opts.timeoutMs } }) : await adapter.validateCredentials();
-      out.push({ provider, verdict: verdictOf(status2.state), status: status2, live: probe !== null, error: null });
+      const status2 = probe2 ? await probe2({ ...opts.timeoutMs === void 0 ? {} : { timeoutMs: opts.timeoutMs } }) : await adapter.validateCredentials();
+      out.push({ provider, verdict: verdictOf(status2.state), status: status2, live: probe2 !== null, error: null });
     } catch (err) {
-      out.push({ provider, verdict: "error", status: null, live: probe !== null, error: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) });
+      out.push({ provider, verdict: "error", status: null, live: probe2 !== null, error: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) });
     }
   }
   return out;
@@ -35564,10 +35564,10 @@ function fingerprintFailure(output, check, options = {}) {
     excerptLines.push(...lines.filter((l) => l.trim()).slice(-Math.min(maxLines, 10)).map((l) => l.slice(0, MAX_LINE)));
     if (options.timedOut) excerptLines.push("[orbit: check timed out]");
   }
-  let excerpt2 = redact(excerptLines.join("\n"));
-  if (excerpt2.length > maxChars) excerpt2 = `${excerpt2.slice(0, maxChars)}
+  let excerpt3 = redact(excerptLines.join("\n"));
+  if (excerpt3.length > maxChars) excerpt3 = `${excerpt3.slice(0, maxChars)}
 [orbit: excerpt truncated]`;
-  return { fingerprint, excerpt: excerpt2, signature };
+  return { fingerprint, excerpt: excerpt3, signature };
 }
 var DEFAULT_MAX_LINES, DEFAULT_MAX_EXCERPT, MAX_LINE, MAX_SCANNED_LINES, ANSI, RELEVANT, SUMMARY, STACK_FRAME;
 var init_fingerprint = __esm({
@@ -35908,11 +35908,18 @@ function safeCwd(checkout, rel) {
   if (real !== root && !real.startsWith(root + sep4)) throw new OrbitError("SCOPE_VIOLATION", `check cwd ${rel} resolves outside the checkout`, { cwd: rel, real });
   return real;
 }
+function prepareCheckHome(homeDir) {
+  const dir = join24(homeDir, NUGET_MIGRATIONS_DIR);
+  mkdirSync9(dir, { recursive: true, mode: 448 });
+  atomicWrite(join24(dir, NUGET_LATEST_MIGRATION), "", 384);
+}
 function checkEnv(def, dirs, hostPath = process.env.PATH) {
   return {
     PATH: hostPath ?? "/usr/bin:/bin",
     HOME: dirs.homeDir,
     TMPDIR: dirs.tmpDir,
+    ...DOTNET_CHECK_ENV,
+    DOTNET_CLI_HOME: dirs.homeDir,
     LANG: platform() === "darwin" ? "en_US.UTF-8" : "C.UTF-8",
     TERM: "dumb",
     CI: "1",
@@ -35935,6 +35942,7 @@ async function launchAttempt(ctx, subject, def, configHash, rerunOf) {
   const index = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: subject.candidateId, checkId: def.id }).length;
   const dirs = dirsFor(subject, def.id, index);
   for (const d of [dirs.checkDir, dirs.artifactsDir, dirs.homeDir]) mkdirSync9(d, { recursive: true, mode: 448 });
+  prepareCheckHome(dirs.homeDir);
   const tmp = prepareWorkerTmpDir(dirs.checkDir);
   if (!ctx.snapshot.config.checks[def.id]) atomicWriteJson(join24(dirs.checkDir, DEFINITION_FILE), def, 384);
   const env = checkEnv(def, dirs);
@@ -36163,7 +36171,7 @@ function finalize(ctx, def, row, dirs, exit, synthetic) {
   atomicWrite(dirs.logPath, log, 384);
   const logSha256 = sha256(log);
   let fingerprint = null;
-  let excerpt2 = null;
+  let excerpt3 = null;
   if (status2 !== "PASSED" && status2 !== "CANCELLED") {
     const roots = [ctx.checkoutDir, ctx.runDir, dirs.checkDir];
     try {
@@ -36174,7 +36182,7 @@ function finalize(ctx, def, row, dirs, exit, synthetic) {
 ${note3}
 ` : body, def, { exitCode, timedOut: status2 === "TIMEOUT", roots });
     fingerprint = fp.fingerprint;
-    excerpt2 = fp.excerpt;
+    excerpt3 = fp.excerpt;
   }
   const artifacts = [{ path: dirs.logPath, sha256: logSha256, kind: "log" }, ...collectArtifacts(dirs.artifactsDir)];
   return finishCheckRun(ctx.db, row.id, {
@@ -36185,7 +36193,7 @@ ${note3}
     logPath: dirs.logPath,
     logSha256,
     fingerprint,
-    excerpt: excerpt2,
+    excerpt: excerpt3,
     artifacts,
     endedAt: ctx.clock.now()
   });
@@ -36260,7 +36268,7 @@ function removeLeftovers(subject, checkId, index) {
   rmSync6(dirs.homeDir, { recursive: true, force: true });
   rmSync6(dirs.tmpDir, { recursive: true, force: true });
 }
-var DEFAULT_POLL_MS, DEFAULT_KILL_GRACE_MS2, DEFAULT_MAX_OUTPUT_BYTES2, LAUNCH_GRACE_MS, MAX_ARTIFACTS, MAX_RAW_READ, CHECK_ID, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, INSTALL_CHECK_IDS, DEFINITION_FILE;
+var DEFAULT_POLL_MS, DEFAULT_KILL_GRACE_MS2, DEFAULT_MAX_OUTPUT_BYTES2, LAUNCH_GRACE_MS, MAX_ARTIFACTS, MAX_RAW_READ, CHECK_ID, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, INSTALL_CHECK_IDS, DEFINITION_FILE, DOTNET_CHECK_ENV, NUGET_MIGRATIONS_DIR, NUGET_LATEST_MIGRATION;
 var init_runner = __esm({
   "src/evidence/runner.ts"() {
     "use strict";
@@ -36288,6 +36296,16 @@ var init_runner = __esm({
     INSTALL_SCRIPTS_CHECK_ID = "orbit-install-scripts";
     INSTALL_CHECK_IDS = [INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID];
     DEFINITION_FILE = "definition.json";
+    DOTNET_CHECK_ENV = {
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1",
+      DOTNET_NOLOGO: "1",
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1",
+      DOTNET_GENERATE_ASPNET_CERTIFICATE: "false",
+      DOTNET_ADD_GLOBAL_TOOLS_TO_PATH: "false",
+      DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK: "1"
+    };
+    NUGET_MIGRATIONS_DIR = join24(".local", "share", "NuGet", "Migrations");
+    NUGET_LATEST_MIGRATION = "1";
   }
 });
 
@@ -42062,7 +42080,7 @@ function repairObservations(db, runId, runDir2) {
         ...seen.failureRows.map((f) => rowRef(runId, "failure", f)),
         rowRef(runId, "candidate", { id: next.id, seq: next.seq, commit_sha: next.commit_sha, tree_hash: next.tree_hash, diff_stat_json: next.diff_stat_json })
       ];
-      const excerpt2 = seen.checkRuns.find((c) => c.excerpt)?.excerpt ?? seen.failureRows.find((f) => f.excerpt)?.excerpt ?? null;
+      const excerpt3 = seen.checkRuns.find((c) => c.excerpt)?.excerpt ?? seen.failureRows.find((f) => f.excerpt)?.excerpt ?? null;
       out.push({
         id: observationId(runId, "failure-repair", fp),
         run_id: runId,
@@ -42075,7 +42093,7 @@ function repairObservations(db, runId, runDir2) {
           failing_candidate: cur.seq,
           fixed_candidate: next.seq,
           persisted_candidates: cur.seq - firstSeen.seq + 1,
-          failure_excerpt: cleanUntrusted(excerpt2, TEXT_MAX),
+          failure_excerpt: cleanUntrusted(excerpt3, TEXT_MAX),
           fix_diff_stat: boundedDiffStat(stat)
         },
         fingerprints: [fp],
@@ -44156,6 +44174,7 @@ var init_baseline = __esm({
 });
 
 // src/evidence/environment-failure.ts
+import { isAbsolute as isAbsolute14 } from "node:path";
 function within2(path, root) {
   const r = root.length > 1 ? root.replace(/\/+$/, "") : root;
   return path === r || path.startsWith(`${r}/`);
@@ -44227,7 +44246,33 @@ function classifyNotExecuted(input) {
   if (crash === null && !traced || own > 0) return null;
   return { checkId: input.checkId, fingerprint: null, signals: ["process-aborted"], cause: crash === null ? CAUSES["process-aborted"] : `${CAUSES["process-aborted"]} (${crash})`, lines: [...kills, ...frames] };
 }
-var MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER;
+function excerpt2(line3, at) {
+  if (line3.length <= MAX_LINE_CHARS) return line3;
+  const start = Math.max(0, Math.min(at - (MAX_LINE_CHARS - 40), line3.length - (MAX_LINE_CHARS - 3)));
+  return start === 0 ? line3.slice(0, MAX_LINE_CHARS) : `...${line3.slice(start, start + MAX_LINE_CHARS - 3)}`;
+}
+function classifyCouldNotRun(input) {
+  const text2 = stripAnsi(input.output);
+  if (CODE_FAILURE.some((re) => re.test(text2))) return null;
+  const outside = (path) => !input.insideRoots.some((root) => within2(path.replace(/[.]+$/, ""), root));
+  const signals = [];
+  const lines = [];
+  for (const raw of text2.split("\n", MAX_SCANNED_LINES2)) {
+    const line3 = raw.replace(/\r$/, "").trim();
+    const deny2 = SEATBELT_DENY.exec(line3);
+    const denial = DENIAL.exec(line3);
+    let found = null;
+    if (deny2 && (!deny2[1].toLowerCase().startsWith("file-") || deny2[2] !== void 0 && isAbsolute14(deny2[2]) && outside(deny2[2]))) found = { signal: "sandbox-violation", at: deny2.index };
+    else if (denial && FS_CALL.test(line3) && (line3.match(ABSOLUTE_PATH) ?? []).some(outside)) found = { signal: "filesystem-denied", at: denial.index };
+    if (found === null) continue;
+    if (!signals.includes(found.signal)) signals.push(found.signal);
+    const shown = excerpt2(line3, found.at);
+    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown)) lines.push(shown);
+  }
+  if (signals.length === 0) return null;
+  return { checkId: input.checkId, fingerprint: null, signals, cause: signals.map((s) => CAUSES[s]).join("; "), lines };
+}
+var MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER, FS_CALL, DENIAL, SEATBELT_DENY, CODE_FAILURE;
 var init_environment_failure = __esm({
   "src/evidence/environment-failure.ts"() {
     "use strict";
@@ -44247,7 +44292,8 @@ var init_environment_failure = __esm({
       "eacces-outside-worktree": "permission was denied (EACCES) on a path outside the worktree",
       "process-aborted": "the process was killed by a fatal signal before it printed anything of its own",
       "start-failed": "the check could not be started",
-      "browser-isolation": "the browser could not start under sandbox-runtime"
+      "browser-isolation": "the browser could not start under sandbox-runtime",
+      "filesystem-denied": `the sandbox or the operating system refused a filesystem operation outside the check's checkout (EPERM, "operation not permitted")`
     };
     CRASH_SIGNALS = /* @__PURE__ */ new Set(["SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL", "SIGTRAP", "SIGSYS"]);
     TRACE_HEADER = /^-{3,}\s*(Native|JavaScript) stack trace\s*-{3,}$/i;
@@ -44255,11 +44301,35 @@ var init_environment_failure = __esm({
     TRACE_FRAME = /^\d+:\s+0x[0-9a-f]+(?:\s|$)/i;
     KILLED_BY_SIGNAL = /^Process killed by signal: (SIG[A-Z0-9]+)$/;
     RUNNER_FOOTER = /^\[orbit\] check=\S+ status=\S+ exit=(\S+)/;
+    FS_CALL = /\b(?:mkdir|mkdtemp|mkstemp|open|openat|creat|rename|unlink|rmdir|chmod|chown|lchown|symlink|link|copyfile|clonefile|scandir|opendir|access|stat|lstat|utimes?|truncate|shm_open|sem_open|realpath|readlink|mkfifo|bind|connect|touch|cp|mv|rm|ln|PermissionError|IOException|errno)\b/i;
+    DENIAL = /\bEPERM\b|operation not permitted/i;
+    SEATBELT_DENY = /\bdeny\(\d+\)\s+([a-z][\w-]*)(?:\s+(\S+))?/i;
+    CODE_FAILURE = [
+      /\berror (?:CS|FS|BC|TS)\d{4}\b/,
+      // C#, F#, Visual Basic, TypeScript
+      /\berror\[E\d{4}\]/,
+      // Rust
+      /:\d+(?::\d+)?: (?:fatal )?error:/,
+      // C, C++, Swift, Java
+      /\bSyntaxError\b/,
+      /\bAssertionError\b|\bAssert\.\w+\(\) Failure\b|\bassertion failed\b/i,
+      /\bFailed!\s+-\s+Failed:\s*[1-9]/,
+      // dotnet test
+      /^\s*(?:not ok \d+|FAIL\b|--- FAIL:|FAILED\s+\S+::)/m,
+      // TAP, Jest and Vitest, Go, pytest
+      /\btest result: FAILED\b/,
+      // cargo test
+      /^\s*(?:#|ℹ)\s*fail\s+[1-9]/m,
+      // node:test
+      /\b[1-9]\d*\s+(?:failed|failing|failures?)\b/i,
+      /\b[1-9]\d*\s+errors?\b|\b[1-9]\d* Error\(s\)/i
+      // compilers' and MSBuild's error counts
+    ];
   }
 });
 
 // src/evidence/report.ts
-import { basename as basename10, isAbsolute as isAbsolute14, join as join34, relative as relative3, sep as sep8 } from "node:path";
+import { basename as basename10, isAbsolute as isAbsolute15, join as join34, relative as relative3, sep as sep8 } from "node:path";
 function aggregateCheckConfigHash(snapshot2, checkIds) {
   const ids = [...new Set(checkIds)].sort();
   const map2 = {};
@@ -44314,7 +44384,7 @@ function evaluateEvidence(input) {
   const artifactPath = (p, fallback) => {
     if (runDir2 === void 0) return fallback;
     const r = relative3(runDir2, p);
-    return r === "" || r.startsWith("..") || isAbsolute14(r) ? p : r.split(sep8).join("/");
+    return r === "" || r.startsWith("..") || isAbsolute15(r) ? p : r.split(sep8).join("/");
   };
   const logName = (p) => artifactPath(p, basename10(p));
   const evidenceFor = (checkId) => {
@@ -44334,7 +44404,7 @@ function evaluateEvidence(input) {
       }
     }
     const worst = journeys.find((j) => j.status !== "PASSED");
-    const art = journeys.flatMap((j) => j.artifacts.map((a) => isAbsolute14(a) ? artifactPath(a, a) : a));
+    const art = journeys.flatMap((j) => j.artifacts.map((a) => isAbsolute15(a) ? artifactPath(a, a) : a));
     if (!worst) return { outcome: journeys.some((j) => j.flaky) ? "flaky" : "passed", status: "PASSED", artifacts: art };
     return { outcome: worst.status === "FAILED" || worst.status === "TIMEOUT" ? "failed" : "error", status: worst.status, artifacts: art };
   };
@@ -44897,10 +44967,10 @@ function baselineExceptionProposal(failure, reason) {
   if (failure.fingerprint === null || failure.fingerprint.trim() === "") {
     throw new OrbitError("CONTRACT_INVALID", `check "${failure.checkId}" failed on the base revision without a fingerprint, so it cannot be excepted`);
   }
-  const excerpt2 = failure.excerpt?.trim();
+  const excerpt3 = failure.excerpt?.trim();
   return {
     change: { op: "accept_baseline_failure", check_id: failure.checkId, fingerprint: failure.fingerprint, reason: reason?.trim() || `check ${failure.checkId} already fails on the base revision` },
-    evidence: `the baseline run of check ${failure.checkId} failed with fingerprint ${failure.fingerprint}${excerpt2 ? `: ${excerpt2.slice(0, 400)}` : ""}`,
+    evidence: `the baseline run of check ${failure.checkId} failed with fingerprint ${failure.fingerprint}${excerpt3 ? `: ${excerpt3.slice(0, 400)}` : ""}`,
     reason: reason?.trim() || `the failure predates this run; accepting it lets the run be judged on its own change, and only while the check keeps failing the same way`
   };
 }
@@ -44954,8 +45024,8 @@ function raiseBaselineExceptionQuestions(ctx, input) {
       continue;
     }
     const fingerprint = f.fingerprint;
-    const excerpt2 = f.excerpt === null ? null : redact(f.excerpt);
-    const proposal = baselineExceptionProposal({ checkId: f.checkId, fingerprint, excerpt: excerpt2 });
+    const excerpt3 = f.excerpt === null ? null : redact(f.excerpt);
+    const proposal = baselineExceptionProposal({ checkId: f.checkId, fingerprint, excerpt: excerpt3 });
     const qid = baselineQuestionId(ctx.runId, f.checkId, fingerprint);
     const question = findQuestion(ctx.db, qid) ?? insertQuestion(
       ctx.db,
@@ -47872,8 +47942,8 @@ async function collectFailures(client, failing, input) {
         text2 = forCheck(got.text, check.name) || got.steps;
       }
     }
-    const excerpt2 = text2 ? sanitizeLog(text2, { maxChars }) : "";
-    out.push({ name: check.name, runId: check.runId, logExcerpt: excerpt2, fingerprint: ciFingerprint(check.name, excerpt2), logStatus: status2 });
+    const excerpt3 = text2 ? sanitizeLog(text2, { maxChars }) : "";
+    out.push({ name: check.name, runId: check.runId, logExcerpt: excerpt3, fingerprint: ciFingerprint(check.name, excerpt3), logStatus: status2 });
   }
   return out;
 }
@@ -47904,8 +47974,8 @@ function sanitizeLog(text2, opts) {
   return `[earlier output omitted]
 ${nl > 0 && nl < 200 ? tail2.slice(nl + 1) : tail2}`;
 }
-function ciFingerprint(name, excerpt2) {
-  const lines = excerpt2.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+function ciFingerprint(name, excerpt3) {
+  const lines = excerpt3.split("\n").map((l) => l.trim()).filter((l) => l !== "");
   const signal = lines.filter((l) => SIGNAL_LINE.test(l));
   const picked = (signal.length > 0 ? signal : lines).slice(-8).map(normalizeLine2);
   return `ci:${sha256(`${name.toLowerCase()}
@@ -50943,1293 +51013,8 @@ var init_delivery_env = __esm({
   }
 });
 
-// src/controller/steps/preflight.ts
-import { existsSync as existsSync31, mkdirSync as mkdirSync17, rmSync as rmSync11 } from "node:fs";
-import { dirname as dirname20, isAbsolute as isAbsolute15, join as join41, resolve as resolve11 } from "node:path";
-async function preflightStep(ctx) {
-  const stop = await safePoint(ctx);
-  if (stop) return stop;
-  const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot });
-  recordGate(ctx, intake);
-  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
-  const env = await checkEnvironment(ctx);
-  recordGate(ctx, env.gate);
-  if (!env.gate.passed) {
-    const auth = env.credentials.find((c) => c.provider === env.gate.details.blockedProvider && c.verdict === "blocked");
-    if (auth?.status) return blockOnAuth(ctx, auth.provider, auth.status.state, auth.status.detail);
-    return finishRun(ctx, "BLOCKED", `environment gate: ${env.gate.reasons.join("; ")}`, { outcome: { gate: env.gate } });
-  }
-  const repo = ctx.run.repoRoot;
-  const credentialProblems = await gitCredentialProblems(repo);
-  if (credentialProblems.length > 0) {
-    return finishRun(
-      ctx,
-      "BLOCKED",
-      `the repository's git configuration carries credentials a worker could read (${credentialProblems.join("; ")}); remove them and authenticate through a credential helper outside the repository`,
-      { outcome: { git_credentials: credentialProblems } }
-    );
-  }
-  const head = await resolveCommit(repo, "HEAD");
-  const baseTree = await treeOf(repo, head);
-  const dirty = await dirtyPaths(repo);
-  if (dirty.length > 0) {
-    if (!ctx.snapshot.config.repository.allow_dirty_start) {
-      return finishRun(ctx, "BLOCKED", `the repository has uncommitted changes (${dirty.slice(0, 10).join(", ")}${dirty.length > 10 ? ", ..." : ""}); commit or stash them, or set repository.allow_dirty_start`, { outcome: { dirty: dirty.slice(0, 50) } });
-    }
-    decide2(ctx, { id: `dec-${ctx.run.id}-dirty-start`, kind: "preflight.dirty-start", summary: `dirty start allowed by policy; ${dirty.length} uncommitted path(s) are not part of the run, which starts from ${head}`, data: { paths: dirty.slice(0, 200) } });
-  }
-  const wtRoot = runWorktreeRoot(ctx);
-  mkdirSync17(wtRoot, { recursive: true, mode: 448 });
-  const baseline = await runBaseline({
-    db: ctx.db,
-    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
-    repoRoot: repo,
-    baseRev: head,
-    snapshot: ctx.snapshot,
-    isolation: ctx.isolation(),
-    runDir: ctx.runDir,
-    clock: ctx.clock,
-    signal: ctx.signal,
-    pollMs: ctx.timing.checkPollMs,
-    killGraceMs: ctx.timing.killGraceMs,
-    homeDir: homeOf2(ctx.deps),
-    checkoutDir: join41(wtRoot, "baseline")
-  });
-  const after = await safePoint(ctx);
-  if (after) return after;
-  const bg = baselineGate(baseline.report);
-  recordGate(ctx, bg);
-  if (!bg.passed && bg.status === "fail") return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}`, { outcome: { gate: bg } });
-  if (baseline.report.failures.length > 0) {
-    decide2(ctx, {
-      id: `dec-${ctx.run.id}-baseline-failures`,
-      kind: "baseline.failures",
-      summary: `pre-existing failures on ${head.slice(0, 12)}: ${baseline.report.failures.map((f) => f.checkId).join(", ")}`,
-      data: { failures: baseline.report.failures }
-    });
-    const raised = raiseBaselineExceptionQuestions({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { failures: baseline.report.failures, baseRevision: head });
-    if (raised.skipped.length > 0) {
-      decide2(ctx, {
-        id: `dec-${ctx.run.id}-baseline-exception-skipped`,
-        kind: "baseline.exception-unavailable",
-        summary: `no baseline exception can be offered for: ${raised.skipped.map((s) => s.checkId).join(", ")} (${raised.skipped[0].why})`,
-        data: { skipped: raised.skipped }
-      });
-    }
-  }
-  const worktree = await ensureWorktree(repo, join41(wtRoot, "implementer"), head);
-  const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
-  return move2(ctx, "CONTRACTING", `preflight passed at ${head.slice(0, 12)}${baseline.report.failures.length ? ` with ${baseline.report.failures.length} pre-existing failure(s)` : ""}`, {
-    patch: { baseRevision: head, baseTree, worktreePath: worktree, branch },
-    data: { base_revision: head, base_tree: baseTree, worktree, environment: env.gate.notes }
-  });
-}
-function recordGate(ctx, g) {
-  decide2(ctx, {
-    kind: `gate.${g.gate}`,
-    summary: `${g.gate} gate ${g.status}${g.reasons.length ? `: ${g.reasons.join("; ")}` : ""}${g.notes.length ? ` (notes: ${g.notes.join("; ")})` : ""}`,
-    data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure }
-  });
-}
-function urlCarriesCredentials(value) {
-  const m = URL_USERINFO.exec(value.trim());
-  if (!m) return false;
-  return m[2].includes(":") || /^https?$/i.test(m[1]);
-}
-async function gitCredentialProblems(repo) {
-  const entries = [];
-  for (const scope of ["--local", "--worktree"]) {
-    let out;
-    try {
-      out = await git2(repo, ["config", scope, "--list", "-z"]);
-    } catch {
-      continue;
-    }
-    for (const raw of out.split("\0")) {
-      if (!raw) continue;
-      const nl = raw.indexOf("\n");
-      entries.push(nl === -1 ? { key: raw, value: "" } : { key: raw.slice(0, nl), value: raw.slice(nl + 1) });
-    }
-  }
-  const root = resolve11(repo);
-  const problems = [];
-  const note3 = (text2) => {
-    if (!problems.includes(text2)) problems.push(text2);
-  };
-  for (const { key: key2, value } of entries) {
-    const k = key2.toLowerCase();
-    if (/^remote\..+\.(?:url|pushurl)$/.test(k) && urlCarriesCredentials(value)) note3(`${key2} has credentials in its URL`);
-    else if (/^url\..+\.(?:insteadof|pushinsteadof)$/.test(k) && (urlCarriesCredentials(value) || urlCarriesCredentials(key2.slice(4, key2.toLowerCase().lastIndexOf("."))))) note3("a url.<base>.insteadOf rewrite has credentials in a URL");
-    else if (/^http\.(?:.+\.)?extraheader$/.test(k) && AUTH_HEADER.test(value)) note3(`${key2} sets an authorization header`);
-    else if (/^credential\.(?:.+\.)?(?:password|token|secret)$/.test(k)) note3(`${key2} holds a literal credential`);
-    else if (/^credential(?:\..+)?\.helper$/.test(k)) {
-      const v = value.trim();
-      if (v.startsWith("!") && /password|token|secret/i.test(v)) note3(`${key2} embeds a credential in a shell helper`);
-      const store = /^store\b.*?--file(?:=|\s+)(\S+)/.exec(v);
-      if (store) {
-        const file = store[1].replace(/^["']|["']$/g, "");
-        const abs = isAbsolute15(file) ? resolve11(file) : resolve11(root, file);
-        if (!isAbsolute15(file) || abs === root || abs.startsWith(`${root}/`)) note3(`${key2} stores credentials in a file inside the repository`);
-      }
-    }
-  }
-  return problems;
-}
-async function dirtyPaths(repo) {
-  const out = await git2(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).orbit"]);
-  return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3));
-}
-async function ensureWorktree(repo, path, base) {
-  if (existsSync31(path)) {
-    try {
-      return (await adminDirFor(repo, path)).worktree;
-    } catch (err) {
-      if (!isOrbitError(err)) throw err;
-      rmSync11(path, { recursive: true, force: true });
-    }
-  }
-  mkdirSync17(dirname20(path), { recursive: true, mode: 448 });
-  await git2(repo, ["worktree", "prune"]);
-  await git2(repo, ["worktree", "add", "--detach", "--force", path, base]);
-  return (await adminDirFor(repo, path)).worktree;
-}
-async function checkEnvironment(ctx) {
-  const config = ctx.snapshot.config;
-  try {
-    ctx.deps.registry.seed();
-  } catch (err) {
-    ctx.log.warn("model registry seed failed", { error: messageOf(err) });
-  }
-  let isolation;
-  try {
-    const iso2 = ctx.isolation();
-    const status2 = await iso2.available();
-    isolation = { kind: iso2.kind, available: status2.ok, detail: status2.detail };
-  } catch (err) {
-    isolation = { error: messageOf(err) };
-  }
-  const capabilities = {};
-  for (const [id, adapter] of Object.entries(ctx.deps.adapters)) {
-    try {
-      capabilities[id] = await adapter.discoverCapabilities();
-    } catch (err) {
-      capabilities[id] = { provider: id, available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: "none", costReporting: false, detail: messageOf(err) };
-    }
-  }
-  const required = /* @__PURE__ */ new Set([IMPLEMENTER_PROVIDER]);
-  if (config.review.independent_provider_required && config.review.preferred_provider !== IMPLEMENTER_PROVIDER) required.add(config.review.preferred_provider);
-  const all = await validateCredentials({ adapters: ctx.deps.adapters, providers: [.../* @__PURE__ */ new Set([...required, ...Object.keys(ctx.deps.adapters)])] });
-  const credentialsById = {};
-  for (const c of all) credentialsById[c.provider] = c.status ?? void 0;
-  let reviewer = null;
-  if (config.review.independent_provider_required) {
-    reviewer = selectReviewer({ snapshot: ctx.snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: ctx.deps.registry });
-    if (reviewer.decision === "SELECT") {
-      required.delete(config.review.preferred_provider);
-      required.add(reviewer.provider);
-    }
-  }
-  const credentials = all.filter((c) => required.has(c.provider));
-  const delivery = deliveryEnvironmentProblem(config, ctx.deps.hostEnv ?? process.env);
-  const gate = environmentGate({ snapshot: ctx.snapshot, mode: ctx.run.mode, isolation, credentials, reviewer, delivery });
-  atomicWriteJson(join41(ctx.runDir, "environment.json"), {
-    checked_at: ctx.clock.now(),
-    gate,
-    capabilities,
-    credentials: all.map((c) => ({ provider: c.provider, verdict: c.verdict, state: c.status?.state ?? null, method: c.status?.method ?? null, error: c.error })),
-    reviewer: reviewer ? selectionDecisionRecord(reviewer).summary : null
-  });
-  return { gate, credentials: all, capabilities, reviewer };
-}
-var IMPLEMENTER_PROVIDER, URL_USERINFO, AUTH_HEADER;
-var init_preflight = __esm({
-  "src/controller/steps/preflight.ts"() {
-    "use strict";
-    init_fsx();
-    init_errors();
-    init_git();
-    init_baseline();
-    init_baseline_exception();
-    init_credentials();
-    init_select();
-    init_context2();
-    init_gates();
-    init_delivery_env();
-    init_common();
-    init_workers2();
-    IMPLEMENTER_PROVIDER = "claude";
-    URL_USERINFO = /^([a-z][a-z0-9+.-]*):\/\/([^/?#@]*)@/i;
-    AUTH_HEADER = /authorization|cookie|bearer|token|api[-_]?key|secret/i;
-  }
-});
-
-// src/controller/steps/contracting.ts
-import { readFileSync as readFileSync21 } from "node:fs";
-import { join as join42 } from "node:path";
-async function contractingStep(ctx) {
-  const stop = await safePoint(ctx);
-  if (stop) return stop;
-  if (ctx.contract) return accept(ctx, ctx.contract, null);
-  const route2 = routeFor(ctx, "plan", "routine-code", { difficulty: "medium", attempt: 1, repeatedFingerprints: 0 });
-  const got = await obtain(ctx, {
-    base: "plan",
-    maxAttempts: MAX_REGENERATIONS,
-    what: "the planner",
-    request: (purpose) => ({
-      role: "planner",
-      purpose,
-      provider: route2.provider,
-      model: route2.model,
-      effort: route2.effort,
-      cwd: worktreeOf(ctx),
-      readOnly: true,
-      prompt: (workerId) => plannerPrompt(ctx, workerId)
-    }),
-    accept: (r) => validateModelOutput("planner", r.structured)
-  });
-  if (!got.ok) return got.step;
-  const plan = got.value;
-  atomicWriteJson(join42(ctx.runDir, PLANNER_FILE), { worker_id: got.worker.id, output: plan });
-  let drafted;
-  try {
-    drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? "", taskId: ctx.run.id, policyHash: ctx.run.policyHash, environment: ctx.run.environment });
-  } catch (err) {
-    if (!(err instanceof OrbitError) || err.code !== "CONTRACT_INVALID") throw err;
-    return finishRun(ctx, "BLOCKED", `intake gate rejected the planner's contract: ${err.message}`, { outcome: { problems: err.details ?? null } });
-  }
-  for (const a of drafted.adjustments) {
-    decide2(ctx, { id: `dec-${ctx.run.id}-draft-${hashObject(a).slice(7, 23)}`, kind: `contract.${a.kind}`, summary: `${a.subject}: ${a.reason}`, data: a });
-  }
-  for (const [i, d] of plan.unresolved_decisions.entries()) {
-    if (d.material) continue;
-    decide2(ctx, { id: `dec-${ctx.run.id}-plan-choice-${i + 1}`, kind: "inquisition.resolve", summary: `reversible choice: ${d.question} -> ${d.recommendation ?? d.options[0] ?? "convention"}`, data: { question: d.question, options: d.options, choice: d.recommendation ?? d.options[0] ?? null, basis: "planner recommendation; reversible" } });
-  }
-  return accept(ctx, drafted.contract, plan);
-}
-async function accept(ctx, contract, plan) {
-  const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot, contract });
-  recordGate(ctx, intake);
-  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate rejected the contract: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
-  atomicWriteJson(join42(ctx.runDir, "contract.json"), contract);
-  settleExpectedFlips(ctx, contract);
-  const patch = { contractJson: JSON.stringify(contract), contractHash: hashObject(contract) };
-  const material = (plan?.unresolved_decisions ?? []).filter((d) => d.material);
-  const open2 = contract.assumptions.filter((a) => a.status === "needs-decision");
-  if (material.length > 0 || plan !== null && open2.length > 0) {
-    const keys = new Map((plan?.criteria ?? []).map((c, i) => [c.key, `AC-${i + 1}`]));
-    const subjects = [...new Set(material.flatMap((d) => d.affected_criteria.map((k) => keys.get(k) ?? k)).filter((s) => /^AC-\d+$/.test(s)))];
-    const trigger = {
-      kind: "hidden_decision",
-      mode: "clarify",
-      summary: `the planner left ${material.length || open2.length} material decision(s) unresolved`,
-      evidence: [...material.map((d) => d.question), ...open2.map((a) => `${a.id}: ${a.statement}`)].slice(0, 20),
-      subjects,
-      key: `contracting:${hashObject(material.map((d) => d.question)).slice(7, 23)}`
-    };
-    return move2(ctx, "INQUISITION", trigger.summary, { patch, data: { trigger } });
-  }
-  return move2(ctx, "PLANNING", `contract accepted: ${contract.acceptance_criteria.length} criteria, checks ${contract.required_check_ids.join(", ") || "none"}`, { patch });
-}
-function worktreeOf(ctx) {
-  if (!ctx.run.worktreePath) throw new OrbitError("INTERNAL", `run ${ctx.run.id} has no worktree; preflight did not finish`);
-  return ctx.run.worktreePath;
-}
-function plannerPrompt(ctx, workerId) {
-  const checks = Object.values(ctx.snapshot.config.checks).map((c) => `${c.id}${c.mandatory ? " (mandatory)" : ""}`);
-  const task = [
-    "Draft the goal contract for the goal below. Read the repository as needed; do not edit anything.",
-    "Return the current behaviour, criteria that are observable and testable, the proof for each, the trusted check ids that would show it,",
-    "the files you expect to change, the narrowest allowed paths, non-goals, risks, assumptions and any decision you cannot settle from evidence.",
-    `Trusted checks the policy defines: ${checks.join(", ") || "none"}. Name only these as check ids.`,
-    "",
-    `Goal (from the user): ${ctx.run.goal}`
-  ].join("\n");
-  return renderWorkerPrompt({
-    role: "planner",
-    task,
-    contract: null,
-    policySummary: policySummary(ctx, { readOnly: true }),
-    candidate: { revision: ctx.run.baseRevision, treeHash: ctx.run.baseTree, base: ctx.run.baseRevision },
-    advisoryBlock: advisoryBlockFor(ctx, { role: "planner", workerId, paths: ctx.snapshot.config.scope.allowed_paths, checkIds: Object.keys(ctx.snapshot.config.checks), fingerprints: [] })
-  });
-}
-function storedPlan(ctx) {
-  try {
-    const raw = JSON.parse(readFileSync21(join42(ctx.runDir, PLANNER_FILE), "utf8")).output;
-    return raw ? validateModelOutput("planner", raw) : null;
-  } catch {
-    return null;
-  }
-}
-var PLANNER_FILE;
-var init_contracting = __esm({
-  "src/controller/steps/contracting.ts"() {
-    "use strict";
-    init_fsx();
-    init_hash();
-    init_errors();
-    init_draft();
-    init_model_outputs();
-    init_prompt();
-    init_gates();
-    init_workers2();
-    init_knowledge_hooks();
-    init_common();
-    init_baseline_questions();
-    init_obtain();
-    init_preflight();
-    PLANNER_FILE = "planner.json";
-  }
-});
-
-// src/controller/parallel-writers.ts
-import { existsSync as existsSync32, mkdtempSync as mkdtempSync5, rmSync as rmSync12, writeFileSync as writeFileSync6 } from "node:fs";
-import { tmpdir as tmpdir10 } from "node:os";
-import { join as join43 } from "node:path";
-function splitAttempt(ctx, contract, fresh) {
-  if (!fresh || ctx.run.mode === "supervised") return null;
-  if (ctx.snapshot.config.agents.default_parallelism < 2) return null;
-  const plan = storedPlan(ctx);
-  if (!plan || plan.criteria.length !== contract.acceptance_criteria.length) return null;
-  if (blockingQuestions(ctx.db, ctx.run.id).criteria.length > 0) return null;
-  return planWorkUnits(contract.acceptance_criteria.map((c, i) => ({ id: c.id, paths: plan.criteria[i].changes.map((x) => x.path) })));
-}
-function recordedUnits(ctx, n2) {
-  const row = ctx.db.get("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id LIMIT 1", ctx.run.id, UNITS_EVENT, n2);
-  return row ? JSON.parse(row.data_json).units ?? null : null;
-}
-function serializedUnits(ctx, n2) {
-  return unitEvents(ctx, UNIT_SERIALIZED_EVENT, n2);
-}
-function unitPurpose(n2, u) {
-  return `implement:${n2}/${u.id}#1`;
-}
-function unitWorktree(ctx, n2, u) {
-  return join43(runWorktreeRoot(ctx), `unit-${n2}-${u.id}`);
-}
-async function runParallelUnits(ctx, n2, units, opts) {
-  const settled = () => /* @__PURE__ */ new Set([...unitEvents(ctx, UNIT_INTEGRATED_EVENT, n2).map((e) => e.unit), ...serializedUnits(ctx, n2).map((e) => e.unit)]);
-  for (const u of units) {
-    if (settled().has(u.id)) continue;
-    const existing = workersFor(ctx, unitPurpose(n2, u)).at(-1);
-    if (!existing) continue;
-    const st = await ensureWorker(ctx, request(ctx, n2, u, units, opts));
-    if (st.status === "running") continue;
-    const r = st.result;
-    if (r.status === "auth_failed") return { kind: "step", result: await blockOnAuth(ctx, st.worker.provider, "auth_failed", r.error) };
-    if (r.status === "cancelled") {
-      const stop = await safePoint(ctx);
-      if (stop) return { kind: "step", result: stop };
-    }
-    if (r.status === "transient_error" || r.status === "cancelled" || r.status === "lost") {
-      await serialize2(ctx, n2, u, `its session ended ${r.status}${r.error ? ` (${r.error.slice(0, 200)})` : ""}`);
-      continue;
-    }
-    await integrate(ctx, n2, u, st.worker);
-  }
-  const done = settled();
-  const waiting = units.filter((u) => !done.has(u.id) && workersFor(ctx, unitPurpose(n2, u)).length === 0);
-  const active = units.filter((u) => !done.has(u.id) && workersFor(ctx, unitPurpose(n2, u)).length > 0);
-  if (waiting.length > 0) {
-    const started = await admitAndStart(ctx, n2, units, waiting, opts);
-    if (started.count === 0 && active.length === 0) {
-      if (!started.budget) return { kind: "step", result: WAIT(`work units of attempt ${n2} deferred: ${started.why}`) };
-      for (const u of waiting) await serialize2(ctx, n2, u, `not admitted as a parallel writer: ${started.why}`);
-    }
-  }
-  const now = settled();
-  if (units.every((u) => now.has(u.id))) {
-    for (const u of units) await removeWorktree(ctx, n2, u);
-    const dropped = serializedUnits(ctx, n2);
-    if (dropped.length > 0) return { kind: "serialize", units: dropped };
-    const last = unitEvents(ctx, UNIT_INTEGRATED_EVENT, n2).at(-1);
-    return { kind: "done", workerId: last.worker_id };
-  }
-  const running = units.filter((u) => !now.has(u.id)).map((u) => u.id);
-  return { kind: "step", result: WAIT(`attempt ${n2}: work units ${running.join(", ")} are running in their own worktrees`) };
-}
-function request(ctx, n2, u, all, opts) {
-  const purpose = unitPurpose(n2, u);
-  const cap = ctx.db.get("SELECT json_extract(data_json, '$.cap_usd') AS cap FROM events WHERE run_id = ? AND type = 'worker.spend-cap' AND json_extract(data_json, '$.purpose') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, purpose);
-  return {
-    role: "implementer",
-    purpose,
-    attempt: n2,
-    provider: opts.route.provider,
-    model: opts.route.model,
-    effort: opts.route.effort,
-    cwd: unitWorktree(ctx, n2, u),
-    readOnly: false,
-    prompt: (workerId) => opts.prompt(u, all, workerId),
-    maxBudgetUsd: typeof cap?.cap === "number" ? cap.cap : null,
-    ownedPaths: u.ownedPaths
-  };
-}
-async function admitAndStart(ctx, n2, all, waiting, opts) {
-  const running = opts.running();
-  const own = running.filter((r) => r.runId === ctx.run.id).map((r) => r.unit);
-  const pending = waiting.map((u) => ({
-    id: unitPurpose(n2, u).replace(/#1$/, ""),
-    role: "implementer",
-    writer: true,
-    ownedPaths: u.ownedPaths,
-    dependsOn: [],
-    revision: null,
-    cancelWhen: [],
-    budget: { costUsd: null, wallMs: null, maxTurns: opts.maxTurns },
-    provider: opts.route.provider,
-    worktree: unitWorktree(ctx, n2, u),
-    status: "pending"
-  }));
-  const plan = schedulerFor(ctx).plan([...own, ...pending], { admit: budgetAdmission(ctx.ledger), parallelism: ctx.snapshot.config.agents.default_parallelism });
-  const admitted = plan.start.filter((s) => pending.some((p) => p.id === s.id));
-  const machine = admitted.length > 0 ? machineAdmission(ctx, running.map((r) => r.unit), admitted) : null;
-  let count3 = 0;
-  let unfunded = false;
-  const total = sessionSpendCap(ctx, opts.route.model, "implementer");
-  const share = total.capUsd === null ? null : Math.floor(total.capUsd / waiting.length * 100) / 100;
-  for (const unit of admitted) {
-    if (machine && !machine.start.has(unit.id)) continue;
-    const u = waiting.find((w) => unitPurpose(n2, w).startsWith(`${unit.id}#`));
-    const cap = { capUsd: share, worstCaseUsd: total.worstCaseUsd };
-    if (cap.capUsd !== null && cap.capUsd <= 0) {
-      unfunded = true;
-      continue;
-    }
-    const merge2 = plan.merge_overhead.find((m) => m.id === unit.id);
-    if (merge2) note2(ctx, MERGE_OVERHEAD_EVENT, { attempt: n2, unit: u.id, alongside: merge2.alongside, usd: merge2.usd });
-    if (cap.capUsd !== null) recordSpendCap(ctx, unitPurpose(n2, u), cap.capUsd, cap.worstCaseUsd);
-    const dir = unitWorktree(ctx, n2, u);
-    if (!existsSync32(dir)) await materializeCandidate(ctx.run.repoRoot, ctx.run.baseRevision, dir, { readOnly: false });
-    await ensureWorker(ctx, request(ctx, n2, u, all, opts));
-    count3++;
-  }
-  const deferred = plan.deferred.filter((d) => pending.some((p) => p.id === d.id)).map((d) => d.reason);
-  const reasons = [...deferred, ...machine ? [...machine.deferred.values()] : [], ...unfunded ? ["no model budget left for another session"] : []];
-  const budget = unfunded || deferred.some((r) => /^not admitted by budget/.test(r));
-  return { kind: "started", count: count3, why: reasons[0] ?? "not admitted", budget };
-}
-async function integrate(ctx, n2, u, w) {
-  const repoRoot = ctx.run.repoRoot;
-  const base = ctx.run.baseRevision;
-  const target = await adminDirFor(repoRoot, ctx.run.worktreePath);
-  const intent = unitEvents(ctx, UNIT_INTEGRATING_EVENT, n2).find((e) => e.unit === u.id);
-  const commit = intent?.commit ?? await commitWorktree(repoRoot, await adminDirFor(repoRoot, w.cwd), base, `orbit work unit ${u.id} of attempt ${n2}`);
-  let paths;
-  if (intent) {
-    paths = intent.paths;
-    await restoreToBase(target, base, safePaths(paths));
-  } else {
-    paths = await changedBetween(repoRoot, base, commit);
-    const escaping = await escapingLinks(ctx, base, commit);
-    if (escaping.length > 0) return reject(ctx, n2, u, `rejected: symlink leaves the repository: ${escaping.slice(0, 10).join(", ")}`);
-    const busy = new Set(await changedFiles2(target));
-    const clash = paths.filter((p) => busy.has(p));
-    if (clash.length > 0) return reject(ctx, n2, u, `conflict: ${clash.slice(0, 10).join(", ")} already changed by integrated work`);
-    note2(ctx, UNIT_INTEGRATING_EVENT, { attempt: n2, unit: u.id, worker_id: w.id, paths, commit });
-  }
-  const patch = await unitPatch(repoRoot, base, commit, safePaths(paths));
-  if (patch.length > 0) {
-    const before = await escapingLinks(ctx, base, await commitWorktree(repoRoot, target, base, "orbit integrated tree"));
-    try {
-      await applyPatch(target, patch, false);
-    } catch (err) {
-      return reject(ctx, n2, u, `conflict: git apply refused the unit's changes (${err instanceof Error ? err.message.slice(0, 200) : String(err)})`);
-    }
-    const after = await escapingLinks(ctx, base, await commitWorktree(repoRoot, target, base, "orbit integrated tree"));
-    const added = after.filter((p) => !before.includes(p));
-    if (added.length > 0) {
-      await applyPatch(target, patch, true);
-      return reject(ctx, n2, u, `rejected: symlink leaves the repository: ${added.slice(0, 10).join(", ")}`);
-    }
-  }
-  note2(ctx, UNIT_INTEGRATED_EVENT, { attempt: n2, unit: u.id, worker_id: w.id, paths });
-  invalidateEvidence(ctx.db, ctx.run.id, `work unit ${u.id} of attempt ${n2} integrated (${paths.length} file(s))`, ctx.clock);
-  await removeWorktree(ctx, n2, u);
-}
-async function reject(ctx, n2, u, reason) {
-  await serialize2(ctx, n2, u, reason);
-  await removeWorktree(ctx, n2, u);
-}
-async function serialize2(ctx, n2, u, reason) {
-  if (serializedUnits(ctx, n2).some((s) => s.unit === u.id)) return;
-  note2(ctx, UNIT_SERIALIZED_EVENT, { attempt: n2, unit: u.id, criteria: u.criteria, reason });
-  decide2(ctx, { id: `dec-${ctx.run.id}-serialize-${n2}-${u.id}`, kind: "scheduling.serialize", summary: `work unit ${u.id} (${u.criteria.join(", ")}) of attempt ${n2} goes to the serial implementer: ${reason}`, data: { attempt: n2, unit: u.id, criteria: u.criteria, reason } });
-}
-async function removeWorktree(ctx, n2, u) {
-  const dir = unitWorktree(ctx, n2, u);
-  if (existsSync32(dir)) await cleanupCandidateCheckout(ctx.run.repoRoot, dir).catch(() => {
-  });
-}
-function inCheckout(c, extra = {}) {
-  return { env: { GIT_DIR: c.gitDir, GIT_WORK_TREE: c.worktree, GIT_LITERAL_PATHSPECS: "1", ...extra } };
-}
-async function changedFiles2(c) {
-  const out = await git2(c.worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"], inCheckout(c));
-  return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3)).sort();
-}
-async function commitWorktree(repoRoot, c, base, message) {
-  const scratch = mkdtempSync5(join43(tmpdir10(), "orbit-unit-"));
-  try {
-    const excludes = join43(scratch, "exclude");
-    writeFileSync6(excludes, `${UNIT_EXCLUDES.join("\n")}
-`);
-    const opts = { ...inCheckout(c, { GIT_INDEX_FILE: join43(scratch, "index") }), config: { "core.excludesFile": excludes } };
-    await git2(c.worktree, ["read-tree", base], opts);
-    await git2(c.worktree, ["add", "-A", "--", "."], opts);
-    const tree = (await git2(c.worktree, ["write-tree"], opts)).trim();
-    const id = { GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name, GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name, GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_AUTHOR_DATE: "946684800 +0000", GIT_COMMITTER_DATE: "946684800 +0000" };
-    return (await git2(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], { env: id })).trim();
-  } finally {
-    rmSync12(scratch, { recursive: true, force: true });
-  }
-}
-async function changedBetween(repoRoot, from, to) {
-  const out = await git2(repoRoot, ["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", from, to, "--"]);
-  return out.split("\0").filter((p) => p.length > 0).sort();
-}
-async function escapingLinks(ctx, base, commit) {
-  const report2 = await inspectScope({ repoRoot: ctx.run.repoRoot, baseRev: base, candidateRev: commit, snapshot: ctx.snapshot });
-  return report2.symlinks_escaping;
-}
-function safePaths(paths) {
-  return paths.filter((p) => p.length > 0 && !p.startsWith("/") && !p.split(/[\\/]/).includes(".."));
-}
-async function unitPatch(repoRoot, base, commit, paths) {
-  if (paths.length === 0) return "";
-  return git2(repoRoot, ["diff", "--binary", "--full-index", "--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--no-color", base, commit, "--", ...paths], { env: { GIT_LITERAL_PATHSPECS: "1" } });
-}
-async function applyPatch(c, patch, reverse) {
-  const args = ["apply", "--index", "--whitespace=nowarn", ...reverse ? ["--reverse"] : [], "-"];
-  await git2(c.worktree, ["apply", "--index", "--check", "--whitespace=nowarn", ...reverse ? ["--reverse"] : [], "-"], { ...inCheckout(c), input: patch });
-  await git2(c.worktree, args, { ...inCheckout(c), input: patch });
-}
-async function restoreToBase(c, base, paths) {
-  if (paths.length === 0) return;
-  const inBase = new Set((await git2(c.worktree, ["ls-tree", "-r", "-z", "--name-only", base, "--", ...paths], inCheckout(c))).split("\0").filter((p) => p.length > 0));
-  const absent = paths.filter((p) => !inBase.has(p));
-  if (absent.length > 0) {
-    await git2(c.worktree, ["rm", "-rqf", "--ignore-unmatch", "--", ...absent], inCheckout(c));
-    await git2(c.worktree, ["clean", "-fq", "--", ...absent], inCheckout(c));
-  }
-  if (inBase.size > 0) await git2(c.worktree, ["checkout", base, "--", ...inBase], inCheckout(c));
-}
-function unitEvents(ctx, type, n2) {
-  return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id", ctx.run.id, type, n2).map((r) => JSON.parse(r.data_json));
-}
-function recordUnits(ctx, n2, units) {
-  appendEvent(ctx.db, ctx.run.id, UNITS_EVENT, ctx.ownerId, { attempt: n2, units }, ctx.clock.now());
-}
-var UNITS_EVENT, UNIT_INTEGRATING_EVENT, UNIT_INTEGRATED_EVENT, UNIT_SERIALIZED_EVENT, MERGE_OVERHEAD_EVENT, UNIT_EXCLUDES;
-var init_parallel_writers = __esm({
-  "src/controller/parallel-writers.ts"() {
-    "use strict";
-    init_events();
-    init_git();
-    init_candidate();
-    init_scope();
-    init_freshness();
-    init_scheduler();
-    init_work_units();
-    init_context2();
-    init_gates();
-    init_workers2();
-    init_contracting();
-    init_common();
-    UNITS_EVENT = "implementation.units";
-    UNIT_INTEGRATING_EVENT = "implementation.unit-integrating";
-    UNIT_INTEGRATED_EVENT = "implementation.unit-integrated";
-    UNIT_SERIALIZED_EVENT = "implementation.unit-serialized";
-    MERGE_OVERHEAD_EVENT = "scheduler.merge-overhead";
-    UNIT_EXCLUDES = [".DS_Store", "Thumbs.db", "node_modules/"];
-  }
-});
-
-// src/controller/authorization.ts
-import { existsSync as existsSync33, mkdirSync as mkdirSync18 } from "node:fs";
-import { join as join44 } from "node:path";
-function operationKey(op) {
-  return `op-${sha256(canonicalJson(op)).slice(0, 16)}`;
-}
-function deniedDependencyOperations(scope, snapshot2) {
-  const out = [];
-  const consider = (op, summary) => {
-    const d = authorize(snapshot2, op);
-    if (!d.allowed) out.push({ op, key: operationKey(op), summary, denial: `${d.rule}: ${d.reason}` });
-  };
-  if (scope.lockfile_changed) consider({ kind: "dependency", change: "change_lockfile", detail: "lockfile changed by the candidate" }, "change the dependency lockfile");
-  if (scope.dependency_manifest_changed.length > 0) {
-    const files = [...scope.dependency_manifest_changed].sort();
-    consider({ kind: "dependency", change: "add_package", detail: files.join(", ") }, `change dependencies in ${files.join(", ")}`);
-  }
-  return out;
-}
-function requests(ctx) {
-  return listDecisions(ctx.db, ctx.run.id, { kind: AUTHORIZATION_REQUEST_KIND }).map((d) => d.data);
-}
-function attemptSubject(n2) {
-  return `attempt:${n2}`;
-}
-function grantFor(ctx, op, subject) {
-  const req = requests(ctx).filter((r) => r.op_key === op.key && (r.subject ?? r.tree_hash) === subject).at(-1);
-  if (!req) return { state: "none" };
-  const q = findQuestion(ctx.db, req.question_id);
-  if (!q || q.status === "withdrawn") return { state: "none" };
-  if (q.status === "open") return { state: "pending", questionId: q.id };
-  const by = q.answeredBy;
-  if (q.answer !== APPROVE_ONCE || !by || !isHumanActor(by)) return { state: "denied", questionId: q.id, by };
-  const id = `dec-${ctx.run.id}-grant-${q.id}`;
-  if (!getDecision(ctx.db, id)) {
-    const forAttempt = req.attempt !== void 0;
-    const what = forAttempt ? `implementation attempt ${req.attempt} only` : `candidate tree ${subject.slice(0, 12)} only`;
-    const where = forAttempt ? { attempt: req.attempt, subject } : { tree_hash: subject };
-    decide2(ctx, { id, kind: AUTHORIZATION_GRANT_KIND, summary: `${by} authorized once: ${op.summary} (${what})`, data: { question_id: q.id, op_key: op.key, operation: op.op, ...where, approved_by: by, policy_denial: op.denial } });
-  }
-  return { state: "granted", decisionId: id, approvedBy: by, questionId: q.id };
-}
-function authorizedOnce(ctx, op, treeHash) {
-  if (authorize(ctx.snapshot, op.op).allowed) return true;
-  return grantFor(ctx, op, treeHash).state === "granted";
-}
-function requestAuthorization(ctx, op, cand) {
-  return ask(
-    ctx,
-    op,
-    {
-      question: `May this run ${op.summary} for candidate ${cand.seq} (tree ${cand.treeHash.slice(0, 12)}), which the policy does not authorize?`,
-      evidence: [`the policy denies it: ${op.denial}`, `operation ${op.key}: ${JSON.stringify(op.op)}`, `the implementation-scope gate found this change in candidate ${cand.seq}; supervised mode asks instead of repairing it away`],
-      approve: { description: `Authorize this one operation for candidate ${cand.seq} only`, consequences: "verification continues with the change; any other candidate or operation is asked about again" },
-      deny: "the change goes back to the implementer as a scope repair, or the run stops if no attempt is left",
-      recommendationReason: "the frozen policy does not allow it; approve only when the dependency change is intended",
-      affected: `authorization ${op.key} for tree ${cand.treeHash.slice(0, 12)}`
-    },
-    { id: `dec-${ctx.run.id}-authreq-${op.key}-${cand.treeHash.slice(0, 12)}`, summary: `asked a person to authorize once: ${op.summary} (candidate ${cand.seq})`, data: { tree_hash: cand.treeHash, subject: cand.treeHash, candidate_id: cand.id } }
-  );
-}
-function requestAttemptAuthorization(ctx, op, n2, worker) {
-  const subject = attemptSubject(n2);
-  return ask(
-    ctx,
-    op,
-    {
-      question: `May the ${worker.role} of implementation attempt ${n2} ${op.summary}, which the policy does not authorize?`,
-      evidence: [`the policy denies it: ${op.denial}`, `operation ${op.key}: ${JSON.stringify(op.op)}`, `the guard refused it inside worker ${worker.id} (attempt ${n2}); supervised mode asks instead of only denying it`],
-      approve: { description: `Authorize this one operation for implementation attempt ${n2} only`, consequences: "the attempt is retried with exactly this operation allowed; any other operation or attempt is asked about again" },
-      deny: "the attempt is retried as a scope repair: the implementer finishes the work without the operation",
-      recommendationReason: "the frozen policy does not allow it; approve only when the operation is intended and needed",
-      affected: `authorization ${op.key} for attempt ${n2}`
-    },
-    { id: `dec-${ctx.run.id}-authreq-${op.key}-a${n2}`, summary: `asked a person to authorize once: ${op.summary} (attempt ${n2})`, data: { subject, attempt: n2, worker_id: worker.id } }
-  );
-}
-function ask(ctx, op, text2, request2) {
-  const q = {
-    question: text2.question,
-    changes: ["authority"],
-    evidence: text2.evidence,
-    options: [
-      { label: APPROVE_ONCE, description: text2.approve.description, consequences: text2.approve.consequences },
-      { label: DENY2, description: "Keep the policy as it is and refuse the operation", consequences: text2.deny }
-    ],
-    recommendation: DENY2,
-    recommendation_reason: text2.recommendationReason,
-    safe_default: { exists: true, option: DENY2, reason: "denying keeps the authority the run started with" },
-    material: true,
-    affected_work: [text2.affected],
-    unblocked_work: []
-  };
-  const question = persistQuestion(ctx.db, ctx.run.id, "risk-review", q, ctx.clock, { actor: ctx.ownerId }).question;
-  const subject = request2.data.subject ?? request2.data.tree_hash;
-  const existing = requests(ctx).some((r) => r.question_id === question.id && (r.subject ?? r.tree_hash) === subject);
-  if (!existing) {
-    decide2(ctx, { id: request2.id, kind: AUTHORIZATION_REQUEST_KIND, summary: request2.summary, data: { question_id: question.id, op_key: op.key, operation: op.op, policy_denial: op.denial, ...request2.data } });
-  }
-  return question;
-}
-function scopeWithGrants(scope, granted) {
-  const lockfile = granted.some((g) => g.op.kind === "dependency" && g.op.change === "change_lockfile");
-  const manifests = granted.some((g) => g.op.kind === "dependency" && g.op.change === "add_package");
-  return { ...scope, lockfile_changed: lockfile ? false : scope.lockfile_changed, dependency_manifest_changed: manifests ? [] : scope.dependency_manifest_changed };
-}
-function deniedWorkerOperations(ctx, worker) {
-  const out = /* @__PURE__ */ new Map();
-  for (const d of listDecisions(ctx.db, ctx.run.id, { kind: "policy.deny" })) {
-    const data = d.data ?? {};
-    if (data.worker_id !== worker.id || data.source !== "guard-hook") continue;
-    const rule = data.rule ?? "";
-    if (!ASKABLE_RULE.test(rule) || NEVER_GRANTED.has(rule) || !data.target) continue;
-    const host = URL_HOST.exec(data.target)?.[1]?.toLowerCase() ?? null;
-    let op;
-    let summary;
-    if (data.tool === "Bash") {
-      if (rule.startsWith("network.") && !host) continue;
-      op = { kind: "bash", command: data.target };
-      summary = `run \`${data.target}\``;
-    } else if (rule.startsWith("network.") && host) {
-      op = { kind: "network", host };
-      summary = `reach ${host}`;
-    } else continue;
-    const now = authorize(ctx.snapshot, op, { worktreeRoot: worker.cwd });
-    if (now.allowed) continue;
-    const key2 = operationKey(op);
-    if (!out.has(key2)) out.set(key2, { op, key: key2, summary, denial: `${rule}: ${data.reason ?? now.reason}`, rule, ...op.kind === "network" ? { target: data.target } : {} });
-  }
-  return [...out.values()];
-}
-function approvedPlan(op) {
-  const network = (op.rule ?? "").startsWith("network.");
-  if (op.op.kind === "bash") return { argv: ["/bin/sh", "-c", op.op.command], shown: op.op.command, host: network ? URL_HOST.exec(op.op.command)?.[1]?.toLowerCase() ?? null : null };
-  if (op.op.kind === "network" && op.target && URL_HOST.exec(op.target)?.[1]?.toLowerCase() === op.op.host) {
-    return { argv: ["curl", "-sS", "--proto", "=http,https", "--max-time", String(APPROVED_TIMEOUT_S), "--", op.target], shown: `fetch ${op.target}`, host: op.op.host };
-  }
-  return null;
-}
-async function runApprovedOperation(ctx, n2, op, grant) {
-  const plan = approvedPlan(op);
-  const none = { key: op.key, command: plan?.shown ?? null, exit_code: null, timed_out: false, path: null, sha256: null, excerpt: null };
-  if (!plan) return { ...none, state: "NOT_RUN", note: "the approval names a host but no exact command or address, so the controller had nothing exact to run" };
-  const rel = join44("authorization", `attempt-${n2}`, op.key);
-  const dir = join44(ctx.runDir, rel);
-  const ledger = new ActionLedger(ctx.db, ctx.clock, { runDir: ctx.runDir, maxAttempts: 1, actor: ctx.ownerId });
-  const recorded = () => readJsonIfExists(join44(dir, RECEIPT_FILE));
-  try {
-    const done = await ledger.performAction(
-      { runId: ctx.run.id, kind: APPROVED_COMMAND_ACTION, idempotencyKey: `${ctx.run.id}:approved:${n2}:${op.key}`, target: { command: plan.shown, attempt: n2, op_key: op.key, grant: grant.decisionId } },
-      {
-        execute: () => executeApproved(ctx, plan, dir, rel),
-        // Only the receipt written after the command finished proves it ran; without it the command is not run again.
-        reconcile: async () => {
-          const r2 = recorded();
-          if (r2) return r2;
-          throw new OrbitError("INTERNAL", "the approved command may have started before the controller stopped; it is not run a second time", { definitive: true });
-        }
-      },
-      { authorization: { allowed: true, rule: "authorization.grant", reason: `approved once by ${grant.approvedBy} (${grant.decisionId}) for attempt ${n2}` } }
-    );
-    const r = done.receipt;
-    return { ...none, state: "SUCCEEDED", exit_code: r.exit_code, timed_out: r.timed_out, path: r.path, sha256: r.sha256, excerpt: r.excerpt, note: null };
-  } catch (err) {
-    if (isOrbitError(err, "CANCELLED") || isOrbitError(err, "LEASE_LOST") || isOrbitError(err, "CONCURRENT_UPDATE")) throw err;
-    return { ...none, state: "UNKNOWN", note: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) };
-  }
-}
-async function executeApproved(ctx, plan, dir, rel) {
-  const worktree = ctx.run.worktreePath;
-  const home2 = join44(dir, "home");
-  mkdirSync18(home2, { recursive: true, mode: 448 });
-  const tmp = prepareWorkerTmpDir(dir);
-  const hosts = [.../* @__PURE__ */ new Set([...ctx.snapshot.config.network.allowed_hosts, ...plan.host ? [plan.host] : []])];
-  const def = { id: `approved-${rel.split("/").at(-1)}`, command: plan.argv, shell: false, cwd: ".", timeout_seconds: APPROVED_TIMEOUT_S, network_hosts: hosts, local_binding: false, env: {}, mandatory: false, flaky_reruns: 0, kind: "command" };
-  const profile = profileForCheck({ worktree, check: def, snapshot: ctx.snapshot, extraWritable: [home2, tmp] });
-  const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home2, TMPDIR: tmp, LANG: "C.UTF-8", TERM: "dumb", NO_COLOR: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" };
-  const wrapped = ctx.isolation().wrap(plan.argv, profile, { cwd: worktree, env });
-  let r;
-  try {
-    r = await execCapture(wrapped.argv, { cwd: worktree, env: wrapped.env, timeoutMs: APPROVED_TIMEOUT_S * 1e3, maxOutputBytes: APPROVED_MAX_OUTPUT_BYTES, abortSignal: ctx.signal });
-  } catch (err) {
-    throw new OrbitError("INTERNAL", `the approved command could not start: ${err instanceof Error ? err.message : String(err)}`, { definitive: true }, { cause: err });
-  } finally {
-    wrapped.cleanup();
-  }
-  const text2 = redact(`$ ${plan.shown}
-[exit ${r.exitCode ?? `signal ${r.signal ?? "unknown"}`}${r.timedOut ? ", timed out" : ""}]
---- stdout ---
-${r.stdout}
---- stderr ---
-${r.stderr}
-`);
-  atomicWrite(join44(dir, OUTPUT_FILE), text2, 384);
-  const receipt = { exit_code: r.exitCode, timed_out: r.timedOut, path: join44(rel, OUTPUT_FILE), sha256: sha256(text2), excerpt: text2.slice(-APPROVED_EXCERPT_CHARS) };
-  atomicWrite(join44(dir, RECEIPT_FILE), `${JSON.stringify(receipt)}
-`, 384);
-  return receipt;
-}
-function ungrantedCommands(events, snapshot2, worktreeRoot, granted) {
-  const denied = new Set(denialsFromTranscript(events).map((d) => d.toolUseId));
-  const out = [];
-  for (const e of events) {
-    if (e.type !== "assistant") continue;
-    const message = e.message;
-    const content = Array.isArray(message?.content) ? message.content : [];
-    for (const b of content) {
-      if (!b || b.type !== "tool_use" || typeof b.id !== "string" || denied.has(b.id)) continue;
-      const input = b.input ?? {};
-      let op = null;
-      if (b.name === "Bash" && typeof input.command === "string") op = { kind: "bash", command: input.command };
-      else if (typeof input.url === "string") {
-        const host = URL_HOST.exec(input.url)?.[1]?.toLowerCase();
-        if (host) op = { kind: "network", host };
-      }
-      if (!op) continue;
-      const d = authorize(snapshot2, op, { worktreeRoot });
-      if (d.allowed || !ASKABLE_RULE.test(d.rule)) continue;
-      const shown = op.kind === "bash" ? denialTarget(op.command) : op.host;
-      const named = granted.some((g) => op.kind === "bash" && g.op.kind === "bash" && g.op.command === shown || op.kind === "network" && g.op.kind === "network" && g.op.host === op.host);
-      if (!named) out.push(shown);
-    }
-  }
-  return out;
-}
-function sessionEvents(worker) {
-  const path = join44(worker.workerDir, LOG_FILE);
-  return existsSync33(path) ? readLogLines(path).events : [];
-}
-var APPROVE_ONCE, DENY2, AUTHORIZATION_REQUEST_KIND, AUTHORIZATION_GRANT_KIND, ASKABLE_RULE, NEVER_GRANTED, URL_HOST, APPROVED_COMMAND_ACTION, APPROVED_TIMEOUT_S, APPROVED_MAX_OUTPUT_BYTES, APPROVED_EXCERPT_CHARS, OUTPUT_FILE, RECEIPT_FILE;
-var init_authorization = __esm({
-  "src/controller/authorization.ts"() {
-    "use strict";
-    init_hash();
-    init_fsx();
-    init_errors();
-    init_exec();
-    init_redact();
-    init_authorize();
-    init_profiles();
-    init_actions();
-    init_questions();
-    init_store4();
-    init_decisions();
-    init_supervise();
-    init_shim();
-    init_common();
-    init_denials();
-    APPROVE_ONCE = "approve-once";
-    DENY2 = "deny";
-    AUTHORIZATION_REQUEST_KIND = "authorization.request";
-    AUTHORIZATION_GRANT_KIND = "authorization.grant";
-    ASKABLE_RULE = /^(?:actions|network)\./;
-    NEVER_GRANTED = /* @__PURE__ */ new Set(["actions.change_secrets"]);
-    URL_HOST = /\bhttps?:\/\/([A-Za-z0-9.-]+)/;
-    APPROVED_COMMAND_ACTION = "approved_command";
-    APPROVED_TIMEOUT_S = 300;
-    APPROVED_MAX_OUTPUT_BYTES = 1024 * 1024;
-    APPROVED_EXCERPT_CHARS = 4e3;
-    OUTPUT_FILE = "output.txt";
-    RECEIPT_FILE = "receipt.json";
-  }
-});
-
-// src/controller/steps/implementing.ts
-import { existsSync as existsSync34 } from "node:fs";
-import { join as join45 } from "node:path";
-function briefPath(ctx, attempt) {
-  return join45(ctx.runDir, "briefs", `attempt-${attempt}.json`);
-}
-function currentAttempt(ctx) {
-  const row = ctx.db.get("SELECT MAX(CAST(json_extract(data_json, '$.attempt') AS INTEGER)) AS n FROM events WHERE run_id = ? AND type = ?", ctx.run.id, ATTEMPT_EVENT);
-  return Number(row?.n ?? 0);
-}
-function attemptCandidateId(ctx, attempt) {
-  const row = ctx.db.get("SELECT json_extract(data_json, '$.candidate_id') AS id FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, CANDIDATE_EVENT, attempt);
-  return row?.id ?? null;
-}
-async function implementingStep(ctx) {
-  const stop = await safePoint(ctx);
-  if (stop) return stop;
-  const contract = assertContract(ctx);
-  if (!ctx.ledger) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is ${ctx.run.state} without budget counters`);
-  if (!ctx.run.worktreePath || !ctx.run.baseRevision) throw new OrbitError("INTERNAL", `run ${ctx.run.id} has no worktree or base revision`);
-  let n2 = currentAttempt(ctx);
-  if (n2 > 0 && attemptCandidateId(ctx, n2) !== null) {
-    const cand = ctx.candidate;
-    if (cand && !currentEvidenceReport(ctx.db, ctx.run.id, cand.id)) return move2(ctx, "VERIFYING", `candidate ${cand.seq} of attempt ${n2} awaits verification`);
-    n2 = 0;
-  }
-  if (n2 === 0) {
-    const started = await startAttempt(ctx, currentAttempt(ctx) + 1);
-    if (started) return started;
-    n2 = currentAttempt(ctx);
-  }
-  return continueAttempt(ctx, n2, contract);
-}
-async function startAttempt(ctx, n2) {
-  const ledger = ctx.ledger;
-  const route2 = routeFor(ctx, `implement:${n2}`, "routine-code", routeSignals(ctx, n2));
-  const scheduler = schedulerFor(ctx);
-  const running = runningUnits(ctx);
-  const own = new Set(running.filter((u) => u.runId === ctx.run.id).map((u) => u.unit.id));
-  const cap = sessionSpendCap(ctx, route2.model, "implementer");
-  const unit = {
-    id: `implement:${n2}`,
-    role: "implementer",
-    writer: true,
-    ownedPaths: assertContract(ctx).allowed_paths,
-    dependsOn: [],
-    revision: ctx.candidate?.treeHash ?? null,
-    cancelWhen: [],
-    // Admission keeps the conservative role ceiling for the cost estimate: an attempt is more than one session.
-    budget: { costUsd: null, wallMs: null, maxTurns: ledger.maxTurnsPerSession() },
-    provider: route2.provider,
-    worktree: ctx.run.worktreePath,
-    status: "pending"
-  };
-  const plan = scheduler.plan([...running.filter((r) => own.has(r.unit.id)).map((r) => r.unit), unit], { admit: budgetAdmission(ledger) });
-  const machine = plan.start.some((u) => u.id === unit.id) ? machineAdmission(ctx, running.map((r) => r.unit), [unit]) : null;
-  if (!plan.start.some((u) => u.id === unit.id) || machine && !machine.start.has(unit.id)) {
-    const why = plan.deferred.find((d) => d.id === unit.id)?.reason ?? machine?.deferred.get(unit.id) ?? "not admitted";
-    if (/^not admitted by budget/.test(why)) return finishRun(ctx, "EXHAUSTED", `attempt ${n2} not admitted: the remaining budget cannot support an honest completion (${why})`, { data: { admission: why } });
-    return WAIT(`attempt ${n2} deferred: ${why}`);
-  }
-  if (cap.capUsd !== null && cap.capUsd <= 0) return finishRun(ctx, "EXHAUSTED", `attempt ${n2} not started: ${unfundedSessionReason(ctx, route2.model, "implementer")}`);
-  const units = splitAttempt(ctx, assertContract(ctx), n2 === 1 && !existsSync34(briefPath(ctx, n2)));
-  const counted = ctx.db.tx(() => {
-    if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, ATTEMPT_EVENT, n2)) return false;
-    ledger.consume("implementation_attempts", 1);
-    appendEvent(ctx.db, ctx.run.id, ATTEMPT_EVENT, ctx.ownerId, { attempt: n2, route: route2.decisionId, spend_cap_usd: cap.capUsd }, ctx.clock.now());
-    if (units) recordUnits(ctx, n2, units);
-    return true;
-  });
-  if (counted && units) {
-    decide2(ctx, { id: `dec-${ctx.run.id}-units-${n2}`, kind: "scheduling.work-units", summary: `attempt ${n2} runs as ${units.length} parallel writers with disjoint files: ${units.map((u) => `${u.id} (${u.criteria.join(", ")})`).join("; ")}`, data: { attempt: n2, units } });
-  }
-  if (cap.capUsd !== null) recordSpendCap(ctx, `implement:${n2}#1`, cap.capUsd, cap.worstCaseUsd);
-  return null;
-}
-function runningUnits(ctx) {
-  const out = listActiveWorkers(ctx.db).map((w) => ({
-    runId: w.runId,
-    // Another run's writer edits its own worktree, so its paths cannot collide with this run's; it still takes a slot.
-    unit: { id: w.id, role: w.role, writer: w.runId === ctx.run.id && !READ_ONLY_ROLES.has(w.role), ownedPaths: w.ownedPaths ?? [], dependsOn: [], revision: null, cancelWhen: [], budget: {}, provider: w.provider, worktree: w.cwd, status: "running" }
-  }));
-  const reserved = ctx.db.all(
-    `SELECT e.run_id, MAX(CAST(json_extract(e.data_json, '$.attempt') AS INTEGER)) AS attempt FROM events e JOIN runs r ON r.id = e.run_id
-     WHERE e.type = ? AND e.run_id <> ? AND r.state IN ('IMPLEMENTING', 'REPAIRING') GROUP BY e.run_id`,
-    ATTEMPT_EVENT,
-    ctx.run.id
-  );
-  for (const r of reserved) {
-    const planned = ctx.db.get("SELECT 1 AS x FROM workers WHERE run_id = ? AND role = 'implementer' AND attempt = ? LIMIT 1", r.run_id, r.attempt);
-    const produced = ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? LIMIT 1", r.run_id, CANDIDATE_EVENT, r.attempt);
-    if (planned || produced) continue;
-    out.push({ runId: r.run_id, unit: { id: `reserved:${r.run_id}:${r.attempt}`, role: "implementer", writer: false, ownedPaths: [], dependsOn: [], revision: null, cancelWhen: [], budget: {}, provider: null, worktree: null, status: "running" } });
-  }
-  return out;
-}
-async function continueAttempt(ctx, n2, contract) {
-  const route2 = routeFor(ctx, `implement:${n2}`, "routine-code", routeSignals(ctx, n2));
-  const base = `implement:${n2}`;
-  const units = recordedUnits(ctx, n2);
-  if (units && latestAttempt(ctx, base) === 0) {
-    const r = await runParallelUnits(ctx, n2, units, { route: route2, contract, prompt: (u, all, workerId) => implementerPrompt(ctx, n2, workerId, null, { unit: u, all }), running: () => runningUnits(ctx), maxTurns: ctx.ledger.maxTurnsPerSession() });
-    if (r.kind === "step") return r.result;
-    if (r.kind === "done") return snapshot(ctx, n2, r.workerId);
-  }
-  const start = await attemptStart(ctx, base, `implementer (attempt ${n2})`);
-  if (!start.ok) return start.step;
-  let k = start.n;
-  for (; ; ) {
-    const purpose = `${base}#${k}`;
-    if (!ctx.db.get("SELECT 1 AS x FROM workers WHERE run_id = ? AND purpose = ?", ctx.run.id, purpose)) {
-      const wait = retryWait(ctx, base);
-      if (wait) return wait;
-    }
-    const auth = authorizationFor(ctx, n2, k);
-    const st = await ensureWorker(ctx, {
-      role: "implementer",
-      purpose,
-      attempt: n2,
-      provider: route2.provider,
-      model: route2.model,
-      effort: route2.effort,
-      cwd: ctx.run.worktreePath,
-      readOnly: false,
-      prompt: (workerId) => implementerPrompt(ctx, n2, workerId, auth),
-      maxBudgetUsd: capOf(ctx, n2, purpose),
-      ownedPaths: contract.allowed_paths
-    });
-    if (st.status === "running") return WAIT(`implementer ${st.worker.id} (attempt ${n2}) is running`);
-    const r = st.result;
-    if (r.status === "auth_failed") return blockOnAuth(ctx, st.worker.provider, "auth_failed", r.error);
-    const stray = r.status === "cancelled" && !ctx.refresh().cancelRequested;
-    if (r.status === "transient_error" || stray) {
-      if (r.status === "cancelled") {
-        const stop2 = await safePoint(ctx);
-        if (stop2) return stop2;
-      }
-      const stop = await scheduleTransientRetry(ctx, { base, purpose, what: `implementer (attempt ${n2})`, status: r.status, error: r.error });
-      if (stop) return stop;
-      k++;
-      continue;
-    }
-    if (r.status === "cancelled") {
-      const stop = await safePoint(ctx);
-      if (stop) return stop;
-    }
-    if (r.status === "lost") {
-      const stop = await restartLostImplementer(ctx, st.worker, n2, `${base}#${k + 1}`, route2.model);
-      if (stop) return stop;
-      k++;
-      continue;
-    }
-    if (r.status === "failed" && raiseOutputCap(ctx, purpose, r.error) !== null) {
-      k++;
-      continue;
-    }
-    const sup = await superviseDenials(ctx, n2, k, st.worker);
-    if (sup.kind === "stop") return sup.result;
-    if (sup.kind === "retry") {
-      k++;
-      continue;
-    }
-    if (r.status !== "succeeded") note2(ctx, "implementation.worker-ended", { attempt: n2, status: r.status, error: r.error?.slice(0, 300) ?? null, note: "its edits are verified like any other" });
-    return snapshot(ctx, n2, st.worker.id);
-  }
-}
-function authorizationRetries(ctx, n2) {
-  return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id", ctx.run.id, AUTHORIZATION_RETRY_EVENT, n2).map((r) => JSON.parse(r.data_json));
-}
-function authorizationFor(ctx, n2, k) {
-  return authorizationRetries(ctx, n2).filter((r) => r.next <= k).at(-1) ?? null;
-}
-async function superviseDenials(ctx, n2, k, worker) {
-  if (ctx.run.mode !== "supervised") return { kind: "proceed" };
-  const retries = authorizationRetries(ctx, n2);
-  if (retries.some((r) => r.after === k)) return { kind: "retry" };
-  const auth = retries.filter((r) => r.next <= k).at(-1);
-  if (auth && auth.granted.length > 0) {
-    const extra = ungrantedCommands(sessionEvents(worker), ctx.snapshot, worker.cwd, []);
-    if (extra.length > 0) {
-      decide2(ctx, { id: `dec-${ctx.run.id}-deny-ungranted-${worker.id}`, kind: "policy.deny", summary: `implementer ${worker.id} ran under a one-shot grant and did what no grant names: ${extra.join("; ")}`, data: { source: "grant-check", worker_id: worker.id, attempt: n2, ungranted: extra, granted: auth.granted.map((g) => g.key) } });
-      return { kind: "stop", result: await finishRun(ctx, "BLOCKED", `policy violation in attempt ${n2}: under a one-shot grant the implementer also ran what the policy denies and no person authorized (${extra.join("; ")}); its work will not be verified or delivered`, { outcome: { attempt: n2, ungranted: extra } }) };
-    }
-  }
-  const applied = new Set(retries.flatMap((r) => [...r.granted, ...r.refused].map((g) => g.key)));
-  const ops = deniedWorkerOperations(ctx, worker).filter((o) => !applied.has(o.key));
-  if (ops.length === 0) return { kind: "proceed" };
-  const subject = attemptSubject(n2);
-  const pending = [];
-  const granted = [];
-  const grants = [];
-  const refused = [];
-  for (const op of ops) {
-    const g = grantFor(ctx, op, subject);
-    if (g.state === "granted") {
-      granted.push(op);
-      grants.push({ decisionId: g.decisionId, approvedBy: g.approvedBy });
-    } else if (g.state === "denied") refused.push(op);
-    else pending.push(`${g.state === "pending" ? g.questionId : requestAttemptAuthorization(ctx, op, n2, worker).id}: ${op.summary}`);
-  }
-  if (pending.length > 0) {
-    return { kind: "stop", result: await finishRun(ctx, "BLOCKED", `supervised mode: implementation attempt ${n2} was denied operations the policy does not authorize; a person decides each one (approve-once or deny with orbit decide, then orbit resume ${ctx.run.id}). Questions: ${pending.join(" | ")}`, { outcome: { authorization: pending } }) };
-  }
-  const executed = [];
-  for (const [i, op] of granted.entries()) executed.push(await runApprovedOperation(ctx, n2, op, grants[i]));
-  note2(ctx, AUTHORIZATION_RETRY_EVENT, { attempt: n2, after: k, next: k + 1, granted, refused, executed });
-  return { kind: "retry" };
-}
-async function restartLostImplementer(ctx, lost, n2, nextPurpose, model) {
-  const already = ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.worker_id') = ? LIMIT 1", ctx.run.id, LOST_RESTART_EVENT, lost.id);
-  if (already) return null;
-  const decision = decideRetry({
-    classification: classifyFailure({ status: "lost" }),
-    provider: lost.provider,
-    runId: ctx.run.id,
-    attempt: 1,
-    infrastructureRetriesRemaining: Number.POSITIVE_INFINITY,
-    wallRemainingMs: null,
-    costRemainingUsd: null,
-    recoveryAttemptsRemaining: recoveryAttemptsRemaining(ctx.db, ctx.run.id, void 0)
-  });
-  if (decision.action !== "restart") return finishRun(ctx, "EXHAUSTED", `recovery_attempts exhausted: lost implementer ${lost.id} (attempt ${n2}) cannot be restarted: ${decision.reason}`, { data: { counter: "recovery_attempts" } });
-  const gone = await stopRowProcess(ctx.timing.killGraceMs, lost);
-  if (gone === "unknown") return WAIT(`lost implementer ${lost.id}: its process could not be confirmed stopped; not restarting yet`);
-  try {
-    spendRecoveryAttempt(ctx.db, ctx.run.id, ctx.clock, { ledgerFor: () => ctx.ledger, actor: ctx.ownerId, why: `restart of lost implementer ${lost.id} (attempt ${n2})` });
-  } catch (err) {
-    if (isOrbitError(err, "BUDGET_EXHAUSTED")) return finishRun(ctx, "EXHAUSTED", `recovery_attempts exhausted: lost implementer ${lost.id} (attempt ${n2}) cannot be restarted: ${err.message}`, { data: { counter: "recovery_attempts" } });
-    throw err;
-  }
-  const cap = sessionSpendCap(ctx, model, "implementer");
-  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, LOST_RESTART_EVENT, ctx.ownerId, { worker_id: lost.id, attempt: n2, next_purpose: nextPurpose, cwd_preserved: lost.cwd, live_controller: true }, ctx.clock.now()));
-  if (cap.capUsd !== null) {
-    if (cap.capUsd <= 0) return finishRun(ctx, "EXHAUSTED", `lost implementer ${lost.id} not restarted: ${unfundedSessionReason(ctx, model, "implementer")}`);
-    recordSpendCap(ctx, nextPurpose, cap.capUsd, cap.worstCaseUsd);
-  }
-  return null;
-}
-async function snapshot(ctx, n2, workerId) {
-  const cand = await snapshotCandidate({ db: ctx.db, clock: ctx.clock, repoRoot: ctx.run.repoRoot, worktree: ctx.run.worktreePath, runId: ctx.run.id, baseRev: ctx.run.baseRevision, attempt: n2, workerId });
-  invalidateEvidence(ctx.db, ctx.run.id, `attempt ${n2} produced candidate ${cand.seq} (tree ${cand.treeHash})`, ctx.clock, { exceptTreeHash: cand.treeHash });
-  invalidateStaleReviews(ctx.db, { runId: ctx.run.id, runDir: ctx.runDir, current: { candidateId: cand.id, treeHash: cand.treeHash }, cause: `attempt ${n2}` }, ctx.clock);
-  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, CANDIDATE_EVENT, ctx.ownerId, { attempt: n2, candidate_id: cand.id, seq: cand.seq, tree_hash: cand.treeHash, reused: !cand.created }, ctx.clock.now()));
-  ctx.candidate = cand;
-  await cancelObsoleteWork(ctx, cand.treeHash);
-  progress(ctx, "candidate", { attempt: n2, candidate_id: cand.id, seq: cand.seq, tree_hash: cand.treeHash, reused: !cand.created });
-  return move2(ctx, "VERIFYING", `attempt ${n2} produced candidate ${cand.seq}${cand.created ? "" : " (the same tree as an earlier candidate)"}`);
-}
-function capOf(ctx, n2, purpose) {
-  const own = ctx.db.get("SELECT json_extract(data_json, '$.cap_usd') AS cap FROM events WHERE run_id = ? AND type = 'worker.spend-cap' AND json_extract(data_json, '$.purpose') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, purpose);
-  if (typeof own?.cap === "number") return own.cap;
-  const row = ctx.db.get("SELECT json_extract(data_json, '$.spend_cap_usd') AS cap FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, ATTEMPT_EVENT, n2);
-  return typeof row?.cap === "number" ? row.cap : null;
-}
-function routeSignals(ctx, n2) {
-  const difficulty = ctx.run.difficulty ?? "medium";
-  const failures = listFailures(ctx.db, ctx.run.id);
-  const prev = n2 > 1 ? ctx.db.get("SELECT data_json FROM decisions WHERE id = ?", `dec-route-${ctx.run.id}-implement_${n2 - 1}`) : void 0;
-  const prevRoute = prev ? JSON.parse(prev.data_json) : null;
-  const solved = n2 > 1 && diagnosisSolved(ctx, n2);
-  const latest = failures.at(-1) ?? null;
-  const same = latest && !solved ? failures.filter((f) => f.fingerprint === latest.fingerprint) : [];
-  const repeated = new Set(same.map((f) => f.candidateId ?? `row-${f.id}`)).size;
-  const evidence = same.map((f) => `failure:${f.id}`);
-  const security = criticalSecurity(ctx);
-  return {
-    difficulty,
-    attempt: n2,
-    repeatedFingerprints: repeated,
-    ...evidence.length > 0 ? { evidence } : {},
-    ...security ? { criticalSecurity: true } : {},
-    ...solved ? { diagnosisSolved: true } : {},
-    ...prevRoute ? { previousRoute: { provider: prevRoute.provider, model: prevRoute.model, effort: prevRoute.effort, outcome: solved ? "verified" : "failed", evidence } } : {}
-  };
-}
-function criticalSecurity(ctx) {
-  if (!ctx.run.difficultyJson) return false;
-  try {
-    const a = JSON.parse(ctx.run.difficultyJson);
-    return a.factors?.some((f) => f.factor === "security_impact" && f.value === true) ?? false;
-  } catch {
-    return false;
-  }
-}
-function diagnosisSolved(ctx, n2) {
-  let escalatedAt = 0;
-  for (let k = n2 - 1; k >= 1; k--) {
-    const row = ctx.db.get("SELECT data_json FROM decisions WHERE id = ?", `dec-route-${ctx.run.id}-implement_${k}`);
-    const d = row ? JSON.parse(row.data_json) : null;
-    if (d?.escalated_from) {
-      escalatedAt = k;
-      break;
-    }
-  }
-  if (escalatedAt === 0) return false;
-  const latestCand = attemptCandidateId(ctx, n2 - 1);
-  if (!latestCand) return false;
-  const report2 = listEvidenceReports(ctx.db, ctx.run.id).filter((r) => r.candidateId === latestCand).at(-1);
-  if (!report2) return false;
-  const failures = listFailures(ctx.db, ctx.run.id);
-  const earlier = /* @__PURE__ */ new Set();
-  for (let k = 1; k < escalatedAt; k++) {
-    const c = attemptCandidateId(ctx, k);
-    for (const f of failures) if (c !== null && f.candidateId === c) earlier.add(f.fingerprint);
-  }
-  if (earlier.size === 0) return false;
-  const now = new Set(failures.filter((f) => f.candidateId === latestCand).map((f) => f.fingerprint));
-  if ([...earlier].some((fp) => now.has(fp))) return false;
-  const history = attemptHistory(ctx);
-  const cur = history.find((h) => h.attempt === n2 - 1);
-  if (!cur) return false;
-  const before = [...history].reverse().find((h) => h.attempt < n2 - 1) ?? null;
-  const p = progressSince(before, cur);
-  return p.fixed_checks.length > 0 || p.localized_fault !== null || report2.verdict === "PASS" && p.made_progress;
-}
-function implementerPrompt(ctx, n2, workerId, auth = null, parallel = null) {
-  const contract = assertContract(ctx);
-  const blocked = blockingQuestions(ctx.db, ctx.run.id).criteria;
-  const stored = readJsonIfExists(briefPath(ctx, n2));
-  const briefs = stored ? [{ label: `${stored.source} repair brief`, content: stored.brief, ref: `briefs/attempt-${n2}.json` }] : [];
-  const refs = [];
-  const cand = ctx.candidate;
-  if (stored && cand) {
-    for (const row of listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id })) {
-      if (row.status === "PASSED" || !row.logPath || !row.logSha256) continue;
-      refs.push({ id: row.checkId, path: relative4(ctx.runDir, row.logPath), sha256: row.logSha256, summary: `${row.checkId} ${row.status} on candidate ${cand.seq}`, ...row.excerpt ? { excerpt: row.excerpt } : {} });
-    }
-  }
-  for (const e of auth?.executed ?? []) {
-    if (e.state !== "SUCCEEDED" || !e.path || !e.sha256) continue;
-    refs.push({ id: `approved-${e.key}`, path: e.path, sha256: e.sha256, summary: `output of the approved command \`${e.command}\`, run once by the controller (exit ${e.exit_code ?? "none"}${e.timed_out ? ", timed out" : ""})`, ...e.excerpt ? { excerpt: e.excerpt } : {} });
-  }
-  const task = [
-    parallel ? "Implement your work unit of the contract below in this worktree." : n2 === 1 || !stored ? "Implement the contract below in this worktree." : `Repair attempt ${n2}: act on the repair brief below; change the cause, not the tests that show it.`,
-    "Make the smallest coherent change. Add or extend behaviour tests that would fail without it. Stay inside the allowed paths.",
-    "Do not commit, push, or edit protected paths, policy, CI configuration or check definitions. The controller snapshots your worktree and runs the trusted checks itself.",
-    `Acceptance criteria: ${contract.acceptance_criteria.map((c) => `${c.id}${c.mandatory ? "" : " (optional)"}: ${c.statement}`).join(" | ")}`,
-    ...blocked.length > 0 ? [`Blocked, waiting for a person's decision (do not implement or guess them): ${blocked.join(", ")}. Implement the other criteria only.`] : [],
-    ...authorizationLines(auth),
-    ...parallelLines(ctx, n2, parallel)
-  ].join("\n");
-  return renderWorkerPrompt({
-    role: "implementer",
-    task,
-    contract,
-    policySummary: policySummary(ctx, { readOnly: false }),
-    candidate: { revision: cand?.commitSha ?? null, treeHash: cand?.treeHash ?? null, base: ctx.run.baseRevision },
-    briefs,
-    evidenceRefs: refs,
-    advisoryBlock: advisoryBlockFor(ctx, { role: "implementer", workerId, paths: contract.allowed_paths, checkIds: contract.required_check_ids, fingerprints: stored?.fingerprint ? [stored.fingerprint] : [] })
-  });
-}
-function parallelLines(ctx, n2, parallel) {
-  if (parallel) {
-    const others = parallel.all.filter((u) => u.id !== parallel.unit.id);
-    return [
-      `You are work unit ${parallel.unit.id} of ${parallel.all.length} parallel writers for this attempt, each in its own worktree. Implement only ${parallel.unit.criteria.join(", ")}; the other criteria are someone else's.`,
-      `Change only these files (plus a new behaviour test of your own for your criteria): ${parallel.unit.ownedPaths.join(", ")}.`,
-      `Do not touch what the other units own: ${others.flatMap((u) => u.ownedPaths).join(", ")}. The controller integrates the units one at a time; a unit that touches a file another unit changed is redone serially.`
-    ];
-  }
-  const dropped = serializedUnits(ctx, n2);
-  if (dropped.length === 0) return [];
-  return [
-    "Part of this attempt was implemented by parallel writers and is already in this worktree; keep it.",
-    ...dropped.map((d) => `Work unit ${d.unit} (${d.criteria.join(", ")}) could not be integrated in parallel (${d.reason}). Implement ${d.criteria.join(", ")} now, on top of the integrated work.`)
-  ];
-}
-function authorizationLines(auth) {
-  if (!auth) return [];
-  const lines = ["An earlier session of this attempt was denied operations the policy does not authorize, and a person answered. Continue from the current worktree: the earlier edits are there."];
-  for (const g of auth.granted) lines.push(`Authorized once, for this attempt only: ${g.summary}. ${approvedOutcome(auth.executed?.find((e) => e.key === g.key) ?? null)} Do not run it yourself: you are still refused it, and anything else outside the policy stops the run.`);
-  for (const g of auth.refused) lines.push(`Refused by a person: ${g.summary}. Do not try it again; finish the work inside the policy without it.`);
-  return lines;
-}
-function approvedOutcome(e) {
-  if (!e) return "The controller performs approved operations; the policy you run under is unchanged.";
-  if (e.state === "SUCCEEDED") return `The controller ran exactly this command once, in isolation, on your behalf (exit code ${e.exit_code ?? "none"}${e.timed_out ? ", timed out" : ""}); its output is the evidence artifact approved-${e.key} (${e.path}).`;
-  if (e.state === "UNKNOWN") return `The controller started it on your behalf, but its outcome is unknown (${e.note ?? "no detail"}); it is not run again.`;
-  return `Nothing was run for it: ${e.note ?? "there was no exact command to run"}.`;
-}
-function relative4(root, p) {
-  return p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p;
-}
-var ATTEMPT_EVENT, READ_ONLY_ROLES, AUTHORIZATION_RETRY_EVENT, LOST_RESTART_EVENT;
-var init_implementing = __esm({
-  "src/controller/steps/implementing.ts"() {
-    "use strict";
-    init_fsx();
-    init_errors();
-    init_events();
-    init_workers();
-    init_backoff();
-    init_budget();
-    init_reconcile();
-    init_prompt();
-    init_candidate();
-    init_freshness();
-    init_store();
-    init_repair();
-    init_diagnosing();
-    init_reviewing();
-    init_stale();
-    init_scheduler();
-    init_context2();
-    init_gates();
-    init_workers2();
-    init_parallel_writers();
-    init_authorization();
-    init_knowledge_hooks();
-    init_common();
-    init_obtain();
-    ATTEMPT_EVENT = "implementation.attempt";
-    READ_ONLY_ROLES = /* @__PURE__ */ new Set(["planner", "verifier", "reviewer", "inquisitor", "curator", "explorer"]);
-    AUTHORIZATION_RETRY_EVENT = "authorization.retry";
-    LOST_RESTART_EVENT = "recovery.worker-restart";
-  }
-});
-
 // src/ui/single-sandbox.ts
-import { readFileSync as readFileSync22 } from "node:fs";
+import { readFileSync as readFileSync21 } from "node:fs";
 function singleSandboxLimitation(kind) {
   return kind === "container" ? UI_SINGLE_CONTAINER_LIMITATION : UI_SINGLE_SANDBOX_LIMITATION;
 }
@@ -52239,7 +51024,7 @@ function launchFailed(status2) {
 function readLaunchStatus(path) {
   let parsed3;
   try {
-    parsed3 = JSON.parse(readFileSync22(path, "utf8"));
+    parsed3 = JSON.parse(readFileSync21(path, "utf8"));
   } catch {
     return null;
   }
@@ -52637,14 +51422,14 @@ var init_report3 = __esm({
 });
 
 // src/ui/runner.ts
-import { closeSync as closeSync8, copyFileSync, existsSync as existsSync35, mkdirSync as mkdirSync19, openSync as openSync8, readFileSync as readFileSync23, realpathSync as realpathSync14, rmSync as rmSync13, statSync as statSync12, writeFileSync as writeFileSync7 } from "node:fs";
+import { closeSync as closeSync8, copyFileSync, existsSync as existsSync31, mkdirSync as mkdirSync17, openSync as openSync8, readFileSync as readFileSync22, realpathSync as realpathSync14, rmSync as rmSync11, statSync as statSync12, writeFileSync as writeFileSync6 } from "node:fs";
 import { createRequire as createRequire3 } from "node:module";
-import { basename as basename11, dirname as dirname21, isAbsolute as isAbsolute16, join as join46, relative as relative5, resolve as resolve12, sep as sep9 } from "node:path";
+import { basename as basename11, dirname as dirname20, isAbsolute as isAbsolute16, join as join41, relative as relative4, resolve as resolve11, sep as sep9 } from "node:path";
 async function runUiChecks(input) {
   const clock = input.clock ?? systemClock;
   const { snapshot: snapshot2, uiConfig, candidate } = input;
   const checkoutDir = realpathSync14(input.checkoutDir);
-  const outDir = realpathSync14(ensureDir(resolve12(input.outDir)));
+  const outDir = realpathSync14(ensureDir(resolve11(input.outDir)));
   const startedAt = clock.now();
   const checks = resolveChecks(snapshot2, input.journeyCheckIds);
   for (const check of checks) assertCheckCommandAllowed(check);
@@ -52655,7 +51440,7 @@ async function runUiChecks(input) {
   }
   await assertCheckoutMatchesCandidate(checkoutDir, candidate, outDir);
   const globs = compileGlobs(uiConfig.visual.baseline_globs, { nocase: false });
-  const candidateChanges = await changedBetween2(checkoutDir, candidate.parentSha, candidate.commitSha);
+  const candidateChanges = await changedBetween(checkoutDir, candidate.parentSha, candidate.commitSha);
   const visualFromDiff = candidateChanges.filter((c) => globs(c.path)).map((c) => c.path);
   const configHash = hashObject({
     ui: uiConfig,
@@ -52663,7 +51448,7 @@ async function runUiChecks(input) {
     enforcement: UI_ENFORCEMENT_VERSION,
     projects: input.projects ?? null
   });
-  atomicWriteJson(join46(outDir, "ui-run.json"), { state: "running", candidate: candidate.id, startedAt, checks: checks.map((c) => c.id) });
+  atomicWriteJson(join41(outDir, "ui-run.json"), { state: "running", candidate: candidate.id, startedAt, checks: checks.map((c) => c.id) });
   const reasons = [];
   const unverified = [];
   const checkRuns = [];
@@ -52671,12 +51456,12 @@ async function runUiChecks(input) {
   const notExecuted = [];
   let terminal = null;
   let app = null;
-  const tmpDir = ensureDir(join46(outDir, "tmp"));
+  const tmpDir = ensureDir(join41(outDir, "tmp"));
   const baseEnv = safeBaseEnv(input.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;
   const appStart = uiConfig.environment.start_command;
   const appEnv = { ...input.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir };
-  const launch = appStart !== null && input.isolation.privateLoopback === true ? { command: appStart, env: { ...baseEnv, ...appEnv }, readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1e3, stateDir: ensureDir(join46(outDir, "app")), pollMs: input.appPollMs } : null;
+  const launch = appStart !== null && input.isolation.privateLoopback === true ? { command: appStart, env: { ...baseEnv, ...appEnv }, readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1e3, stateDir: ensureDir(join41(outDir, "app")), pollMs: input.appPollMs } : null;
   try {
     if (appStart !== null && launch === null) {
       const appCheck = { ...defaultCheck("ui-app"), command: appStart, network_hosts: [], timeout_seconds: uiConfig.environment.ready_timeout_seconds };
@@ -52690,7 +51475,7 @@ async function runUiChecks(input) {
           env: appEnv,
           isolation: { provider: input.isolation, profile },
           isolatedTestData: uiConfig.environment.isolated_test_data,
-          stateDir: join46(outDir, "app"),
+          stateDir: join41(outDir, "app"),
           clock,
           pollMs: input.appPollMs,
           hostEnv: input.hostEnv
@@ -52699,7 +51484,7 @@ async function runUiChecks(input) {
         if (err instanceof OrbitError && (err.code === "ISOLATION_UNAVAILABLE" || err.code === "POLICY_DENIED")) throw err;
         terminal = "ERROR";
         reasons.push(`the application did not start: ${err instanceof Error ? err.message : String(err)}`);
-        notExecuted.push({ stage: "application", checkId: null, logPath: join46(outDir, "app", APP_LOG_FILE), signal: null });
+        notExecuted.push({ stage: "application", checkId: null, logPath: join41(outDir, "app", APP_LOG_FILE), signal: null });
       }
     } else if (appStart === null) {
       unverified.push("ui.environment.start_command is not set: the application at base_url was started by something other than Orbit, so its build is not bound to this candidate");
@@ -52726,7 +51511,7 @@ async function runUiChecks(input) {
   const a11yBaselineChanges = [.../* @__PURE__ */ new Set([...changedA11yBaselines(journeys, checkoutDir, changedPaths2), ...[...changedPaths2].filter(looksLikeA11yBaseline)])].sort();
   if (written.length > 0) reasons.push(`the run itself wrote baseline files: ${written.join(", ")}`);
   const drift = await driftSince(checkoutDir, candidate.commitSha);
-  const outside = (p) => !isInside(resolve12(checkoutDir, p), outDir);
+  const outside = (p) => !isInside(resolve11(checkoutDir, p), outDir);
   const mutated = drift.modified.filter((p) => !globs(p) && !looksLikeA11yBaseline(p) && outside(p));
   if (mutated.length > 0) {
     reasons.push(`the run modified tracked files, so its evidence no longer describes the candidate: ${mutated.slice(0, 10).join(", ")}`);
@@ -52808,7 +51593,7 @@ async function runUiChecks(input) {
     startedAt,
     endedAt: clock.now()
   };
-  atomicWriteJson(join46(outDir, UI_RESULT_FILE), redactValue(result2));
+  atomicWriteJson(join41(outDir, UI_RESULT_FILE), redactValue(result2));
   return result2;
 }
 function toEvidenceUi(result2) {
@@ -52859,12 +51644,12 @@ function shellQuote(arg) {
 }
 async function runOneCheck(ctx) {
   const { input, check, checkoutDir, clock } = ctx;
-  const checkDir = ensureDir(join46(ctx.outDir, check.id));
-  const outputDir = join46(checkDir, "test-results");
-  const reportPath2 = join46(checkDir, "playwright-report.json");
-  const logPath = join46(checkDir, "run.log");
-  const cwd = resolve12(checkoutDir, check.cwd);
-  if (relative5(checkoutDir, cwd).startsWith("..") || isAbsolute16(relative5(checkoutDir, cwd))) {
+  const checkDir = ensureDir(join41(ctx.outDir, check.id));
+  const outputDir = join41(checkDir, "test-results");
+  const reportPath2 = join41(checkDir, "playwright-report.json");
+  const logPath = join41(checkDir, "run.log");
+  const cwd = resolve11(checkoutDir, check.cwd);
+  if (relative4(checkoutDir, cwd).startsWith("..") || isAbsolute16(relative4(checkoutDir, cwd))) {
     throw new OrbitError("POLICY_DENIED", `check ${check.id} cwd leaves the checkout`, { rule: "checks.cwd", check: check.id });
   }
   const flags = enforcedFlags(check, outputDir, input.projects);
@@ -52890,8 +51675,8 @@ async function runOneCheck(ctx) {
     // The browser run, and only it: Chromium's Mach rendezvous rules under srt on macOS (never the application or a worker).
     chromiumMachRendezvous: true
   };
-  rmSync13(reportPath2, { force: true });
-  rmSync13(outputDir, { recursive: true, force: true });
+  rmSync11(reportPath2, { force: true });
+  rmSync11(outputDir, { recursive: true, force: true });
   const spec = launch ? launchSpec(launch, { baseUrl: ctx.baseUrl, checkoutDir, argv: argv2, cwd, env }) : null;
   const wrapped = spec ? input.isolation.wrap(launcherArgv(input.isolation.launcherNode), profile, { cwd, env: { ...env, [LAUNCH_ENV]: JSON.stringify(spec) } }) : input.isolation.wrap(argv2, profile, { cwd, env });
   const started = clock.now();
@@ -52904,15 +51689,15 @@ async function runOneCheck(ctx) {
     preloadRefusal = wrapped.preloadRefusal?.() ?? null;
     wrapped.cleanup();
   }
-  writeFileSync7(logPath, redact(`${exec.stdout}${exec.stderr ? `
+  writeFileSync6(logPath, redact(`${exec.stdout}${exec.stderr ? `
 --- stderr ---
 ${exec.stderr}` : ""}`), { mode: 384 });
   let parsed3 = null;
   let parseProblem = null;
-  const reportFound = existsSync35(reportPath2);
+  const reportFound = existsSync31(reportPath2);
   if (reportFound) {
     try {
-      parsed3 = parsePlaywrightReport(JSON.parse(readFileSync23(reportPath2, "utf8")));
+      parsed3 = parsePlaywrightReport(JSON.parse(readFileSync22(reportPath2, "utf8")));
     } catch (err) {
       parseProblem = `the Playwright report could not be parsed: ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -52998,9 +51783,9 @@ ${exec.stderr}`,
   return { run, journeys, reasons, unverified, terminal: null };
 }
 function launchSpec(launch, c) {
-  const logPath = join46(launch.stateDir, APP_LOG_FILE);
-  const statusPath = join46(launch.stateDir, LAUNCH_STATUS_FILE);
-  rmSync13(statusPath, { force: true });
+  const logPath = join41(launch.stateDir, APP_LOG_FILE);
+  const statusPath = join41(launch.stateDir, LAUNCH_STATUS_FILE);
+  rmSync11(statusPath, { force: true });
   closeSync8(openSync8(logPath, "a", 384));
   return {
     baseUrl: c.baseUrl,
@@ -53042,8 +51827,8 @@ function buildJourney(test, ctx, checkDir, cwd) {
   const focus = failing[failing.length - 1] ?? test.results[test.results.length - 1];
   const status2 = journeyStatus(test);
   const slug = `${sha256(id).slice(0, 8)}-${title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}`;
-  const artifactDir = join46(checkDir, "artifacts", slug);
-  const collected = focus ? collectAttachments(focus.attachments, { checkoutDir, outputDir: join46(checkDir, "test-results"), artifactDir }) : { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
+  const artifactDir = join41(checkDir, "artifacts", slug);
+  const collected = focus ? collectAttachments(focus.attachments, { checkoutDir, outputDir: join41(checkDir, "test-results"), artifactDir }) : { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
   const firstError = (failing[0] ?? focus)?.error ?? null;
   const rootDir = checkoutDir;
   const error = firstError && status2 !== "PASSED" ? describeError(firstError, rootDir) : null;
@@ -53103,9 +51888,9 @@ function escapeRegExp3(text2) {
 function fallbackBrowser(checkoutDir, configured) {
   const name = configured[0] ?? "chromium";
   try {
-    const req = createRequire3(join46(checkoutDir, "package.json"));
-    const dir = dirname21(req.resolve("playwright-core/package.json"));
-    const parsed3 = JSON.parse(readFileSync23(join46(dir, "browsers.json"), "utf8"));
+    const req = createRequire3(join41(checkoutDir, "package.json"));
+    const dir = dirname20(req.resolve("playwright-core/package.json"));
+    const parsed3 = JSON.parse(readFileSync22(join41(dir, "browsers.json"), "utf8"));
     const list = parsed3.browsers ?? [];
     const version = list.find((b) => b.name === name)?.browserVersion;
     return version ? { name, version: `${version} (declared by playwright-core, not observed)` } : null;
@@ -53148,20 +51933,20 @@ function collectAttachments(attachments, dirs) {
         continue;
       }
       if (size > MAX_ARTIFACT_BYTES) continue;
-      bytes = readFileSync23(real);
+      bytes = readFileSync22(real);
       stored = real;
       if (!isInside(real, outputReal)) {
-        mkdirSync19(dirs.artifactDir, { recursive: true });
-        const copy = join46(dirs.artifactDir, `${kind}-${basename11(real)}`);
+        mkdirSync17(dirs.artifactDir, { recursive: true });
+        const copy = join41(dirs.artifactDir, `${kind}-${basename11(real)}`);
         copyFileSync(real, copy);
         stored = copy;
       }
     } else if (bytes !== null) {
-      mkdirSync19(dirs.artifactDir, { recursive: true });
+      mkdirSync17(dirs.artifactDir, { recursive: true });
       const ext = EXTENSIONS[att.contentType.split(";")[0]?.trim() ?? ""] ?? ".bin";
-      stored = join46(dirs.artifactDir, `${att.name.replace(/[^A-Za-z0-9._-]+/g, "_")}${ext}`);
-      writeFileSync7(stored, TEXTUAL.test(att.contentType) ? redact(bytes.toString("utf8")) : bytes, { mode: 384 });
-      bytes = readFileSync23(stored);
+      stored = join41(dirs.artifactDir, `${att.name.replace(/[^A-Za-z0-9._-]+/g, "_")}${ext}`);
+      writeFileSync6(stored, TEXTUAL.test(att.contentType) ? redact(bytes.toString("utf8")) : bytes, { mode: 384 });
+      bytes = readFileSync22(stored);
     }
     if (bytes === null || stored === null) continue;
     if (kind === "diagnostics") {
@@ -53238,7 +52023,7 @@ async function assertCheckoutMatchesCandidate(checkoutDir, candidate, outDir) {
   if (drift.length > 0) {
     throw new OrbitError("STALE_EVIDENCE", `the checkout differs from candidate ${candidate.id}; UI evidence would not describe the candidate (${drift.slice(0, 5).join(", ")})`, { candidate: candidate.id, paths: drift.slice(0, 20) });
   }
-  const stray = (await untrackedFiles(checkoutDir)).filter((p) => !isInside(resolve12(checkoutDir, p), outDir));
+  const stray = (await untrackedFiles(checkoutDir)).filter((p) => !isInside(resolve11(checkoutDir, p), outDir));
   if (stray.length > 0) {
     throw new OrbitError("STALE_EVIDENCE", `the checkout holds untracked files that are not part of candidate ${candidate.id}; UI evidence would not describe the candidate (${stray.slice(0, 5).join(", ")})`, { candidate: candidate.id, paths: stray.slice(0, 20) });
   }
@@ -53246,7 +52031,7 @@ async function assertCheckoutMatchesCandidate(checkoutDir, candidate, outDir) {
 async function untrackedFiles(cwd) {
   return (await git5(cwd, ["ls-files", "-z", "--others", "--exclude-standard"])).split("\0").filter(Boolean);
 }
-async function changedBetween2(cwd, base, head) {
+async function changedBetween(cwd, base, head) {
   const raw = await git5(cwd, ["diff", "--name-status", "-z", "--no-renames", "--no-ext-diff", "--ignore-submodules=none", base, head, "--"]);
   const tokens3 = raw.split("\0").filter((t) => t.length > 0);
   const out = [];
@@ -53273,9 +52058,9 @@ function changedA11yBaselines(journeys, checkoutDir, changed) {
   for (const j of journeys) {
     for (const scan of j.a11y) {
       if (!scan.baselinePath) continue;
-      const real = safeReal(scan.baselinePath) ?? resolve12(scan.baselinePath);
+      const real = safeReal(scan.baselinePath) ?? resolve11(scan.baselinePath);
       if (!isInside(real, root) || root === null) continue;
-      const rel = relative5(root, real).split(sep9).join("/");
+      const rel = relative4(root, real).split(sep9).join("/");
       if (changed.has(rel)) out.add(rel);
     }
   }
@@ -53326,14 +52111,14 @@ var init_runner2 = __esm({
 });
 
 // src/controller/security.ts
-import { accessSync as accessSync2, constants as constants3, existsSync as existsSync36, mkdirSync as mkdirSync20, readFileSync as readFileSync24, rmSync as rmSync14, statSync as statSync13 } from "node:fs";
-import { delimiter as delimiter3, dirname as dirname22, join as join47, normalize as normalize2, sep as sep10 } from "node:path";
-import { tmpdir as tmpdir11 } from "node:os";
+import { accessSync as accessSync2, constants as constants3, existsSync as existsSync32, mkdirSync as mkdirSync18, readFileSync as readFileSync23, rmSync as rmSync12, statSync as statSync13 } from "node:fs";
+import { delimiter as delimiter3, dirname as dirname21, join as join42, normalize as normalize2, sep as sep10 } from "node:path";
+import { tmpdir as tmpdir10 } from "node:os";
 import { spawn as spawn5 } from "node:child_process";
 function findOnPath(name, pathVar = process.env.PATH) {
   for (const dir of (pathVar ?? "").split(delimiter3)) {
     if (!dir) continue;
-    const p = join47(dir, name);
+    const p = join42(dir, name);
     try {
       accessSync2(p, constants3.X_OK);
       if (statSync13(p).isFile()) return p;
@@ -53342,18 +52127,18 @@ function findOnPath(name, pathVar = process.env.PATH) {
   }
   return null;
 }
-async function changedFiles3(repoRoot, base, commit) {
+async function changedFiles2(repoRoot, base, commit) {
   const out = await git2(repoRoot, ["diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACMRT", base, commit, "--"]);
   return out.split("\0").filter((p) => p.length > 0);
 }
 async function scanCandidateSecrets(input) {
-  const reportPath2 = join47(input.outDir, "secret-scan.json");
+  const reportPath2 = join42(input.outDir, "secret-scan.json");
   const prior = readJsonIfExists(reportPath2);
   if (prior && prior.completed && prior.commit === input.commit) {
     const { raw: raw2, commit: _commit, ...rest } = prior;
     return withPolicy({ ...rest, findings: raw2 ?? prior.findings }, input);
   }
-  const changed = await changedFiles3(input.repoRoot, input.baseRev, input.commit);
+  const changed = await changedFiles2(input.repoRoot, input.baseRev, input.commit);
   const { small: files, large, unscannable } = await partitionBySize(input, changed);
   const gitleaks = input.gitleaksPath === null ? null : input.gitleaksPath ?? findOnPath("gitleaks", input.hostPath);
   let result2 = null;
@@ -53485,7 +52270,7 @@ function judgeSastResult(result2, checkId, policy, now) {
   if (files.length === 0 || result2.status !== "PASSED" && result2.status !== "FAILED") return { checkId, status: result2.status, sarif: false, classification: null, note: null };
   const findings = [];
   try {
-    for (const f of files) findings.push(...parseSarif(readFileSync24(f, "utf8")));
+    for (const f of files) findings.push(...parseSarif(readFileSync23(f, "utf8")));
   } catch (err) {
     return { checkId, status: result2.status, sarif: false, classification: null, note: `SAST check ${checkId}: SARIF output unreadable (${err.message}); its exit status stands` };
   }
@@ -53496,36 +52281,36 @@ function judgeSastResult(result2, checkId, policy, now) {
   return { checkId, status: status2, sarif: true, classification: c, note: `SAST check ${checkId}: ${bits.join(", ")} finding(s) under static_security${waived.length ? `; waived: ${waived.join("; ")}` : ""}` };
 }
 async function runGitleaks(bin, input, files, reportPath2) {
-  const work = join47(input.outDir, "secret-scan");
-  rmSync14(work, { recursive: true, force: true });
-  const scanRoot = join47(work, "tree");
-  const tree = join47(scanRoot, "files");
-  const trusted = join47(work, "trusted");
-  mkdirSync20(tree, { recursive: true, mode: 448 });
-  mkdirSync20(trusted, { recursive: true, mode: 448 });
-  const config = join47(trusted, "gitleaks.toml");
+  const work = join42(input.outDir, "secret-scan");
+  rmSync12(work, { recursive: true, force: true });
+  const scanRoot = join42(work, "tree");
+  const tree = join42(scanRoot, "files");
+  const trusted = join42(work, "trusted");
+  mkdirSync18(tree, { recursive: true, mode: 448 });
+  mkdirSync18(trusted, { recursive: true, mode: 448 });
+  const config = join42(trusted, "gitleaks.toml");
   atomicWrite(config, TRUSTED_GITLEAKS_CONFIG, 292);
   let copied = 0;
   for (const rel of files) {
-    const target = normalize2(join47(tree, rel));
+    const target = normalize2(join42(tree, rel));
     if (!target.startsWith(tree + sep10)) continue;
     const content = await git2(input.repoRoot, ["cat-file", "blob", `${input.commit}:${rel}`]);
-    mkdirSync20(dirname22(target), { recursive: true });
+    mkdirSync18(dirname21(target), { recursive: true });
     atomicWrite(target, content, 384);
     copied++;
   }
-  const raw = join47(work, "gitleaks-report.json");
+  const raw = join42(work, "gitleaks-report.json");
   const r = await execCapture([bin, "dir", scanRoot, "-c", config, "-i", trusted, "--ignore-gitleaks-allow", "--redact", "-f", "json", "-r", raw, "--no-banner", "--exit-code", "1"], {
     // GITLEAKS_CONFIG and friends from the host would outrank nothing here (-c wins), but the scan needs nothing from it either.
-    env: { PATH: input.hostPath ?? process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir11() },
+    env: { PATH: input.hostPath ?? process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir10() },
     cwd: work,
     timeoutMs: input.timeoutMs ?? 12e4
   });
   if (r.exitCode !== 0 && r.exitCode !== 1) throw new Error(`exit ${r.exitCode ?? r.signal}: ${redact(r.stderr).slice(0, 300)}`);
-  const parsed3 = existsSync36(raw) ? readJsonIfExists(raw) ?? [] : [];
+  const parsed3 = existsSync32(raw) ? readJsonIfExists(raw) ?? [] : [];
   const findings = parsed3.map((f) => ({ file: relativeTo2(tree, f.File ?? ""), line: typeof f.StartLine === "number" ? f.StartLine : null, rule: String(f.RuleID ?? "secret") }));
   if (r.exitCode === 1 && findings.length === 0) throw new Error("reported leaks but wrote no readable report");
-  rmSync14(scanRoot, { recursive: true, force: true });
+  rmSync12(scanRoot, { recursive: true, force: true });
   return { scanner: "gitleaks", completed: true, findings, files: copied, note: "gitleaks with Orbit's trusted configuration and --ignore-gitleaks-allow", reportPath: reportPath2 };
 }
 function relativeTo2(root, p) {
@@ -53557,9 +52342,9 @@ async function scanBlobInChunks(repoRoot, commit, rel) {
     for (const m of red.matchAll(/\[REDACTED:([a-z0-9_-]+)\]/gi)) found.set(`${at}:${m[1]}`, { file: rel, line: at, rule: `builtin:${m[1]}` });
   };
   const child = spawn5("git", ["cat-file", "blob", `${commit}:${rel}`], { cwd: repoRoot, env: gitEnv3(), stdio: ["ignore", "pipe", "ignore"] });
-  const exited = new Promise((resolve20, reject2) => {
+  const exited = new Promise((resolve21, reject2) => {
     child.once("error", reject2);
-    child.once("close", (code2) => resolve20(code2));
+    child.once("close", (code2) => resolve21(code2));
   });
   const timer = setTimeout(() => child.kill("SIGKILL"), 10 * 6e4);
   try {
@@ -53649,8 +52434,8 @@ var init_security = __esm({
 });
 
 // src/ui/explore.ts
-import { existsSync as existsSync37, readFileSync as readFileSync25, realpathSync as realpathSync15, symlinkSync, writeFileSync as writeFileSync8 } from "node:fs";
-import { dirname as dirname23, join as join48, resolve as resolve13 } from "node:path";
+import { existsSync as existsSync33, readFileSync as readFileSync24, realpathSync as realpathSync15, symlinkSync, writeFileSync as writeFileSync7 } from "node:fs";
+import { dirname as dirname22, join as join43, resolve as resolve12 } from "node:path";
 function explorationConfigOf(ui) {
   const raw = ui.exploration;
   if (!raw || typeof raw !== "object") return DISABLED;
@@ -53700,7 +52485,7 @@ async function exploreUi(opts) {
   const startedAt = clock.now();
   const cfg = opts.exploration ?? explorationConfigOf(opts.uiConfig);
   const baseUrl = opts.uiConfig.environment.base_url;
-  const outDir = resolve13(opts.outDir);
+  const outDir = resolve12(opts.outDir);
   const blank = (outcome2, reasons2) => ({
     outcome: outcome2,
     findings: [],
@@ -53748,8 +52533,8 @@ async function exploreUi(opts) {
   const onAbort = () => control.abort();
   opts.abortSignal?.addEventListener("abort", onAbort, { once: true });
   if (opts.abortSignal?.aborted) control.abort();
-  atomicWriteJson(join48(outDir, "exploration.json"), { state: "running", candidate: opts.candidate.id, startedAt });
-  const tmpDir = ensureDir(join48(outDir, "tmp"));
+  atomicWriteJson(join43(outDir, "exploration.json"), { state: "running", candidate: opts.candidate.id, startedAt });
+  const tmpDir = ensureDir(join43(outDir, "tmp"));
   const baseEnv = safeBaseEnv(opts.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;
   let app = null;
@@ -53774,7 +52559,7 @@ async function exploreUi(opts) {
           env: { ...opts.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: opts.uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir },
           isolation: { provider: opts.isolation, profile },
           isolatedTestData: opts.uiConfig.environment.isolated_test_data,
-          stateDir: join48(outDir, "app"),
+          stateDir: join43(outDir, "app"),
           clock,
           pollMs: opts.appPollMs,
           hostEnv: opts.hostEnv
@@ -53834,7 +52619,7 @@ async function exploreUi(opts) {
     startedAt,
     endedAt: clock.now()
   };
-  atomicWriteJson(join48(outDir, "exploration.json"), redactValue(result2));
+  atomicWriteJson(join43(outDir, "exploration.json"), redactValue(result2));
   return result2;
 }
 async function runExplorer(a) {
@@ -53953,7 +52738,7 @@ function baseFinding(c) {
   };
 }
 async function proveOne(p, cand, base, viewport) {
-  const dir = ensureDir(join48(p.outDir, "specs", cand.id));
+  const dir = ensureDir(join43(p.outDir, "specs", cand.id));
   const fileName = `${cand.id}.spec.ts`;
   let response;
   try {
@@ -53965,8 +52750,8 @@ async function proveOne(p, cand, base, viewport) {
   p.charge(response.costUsd);
   const problems = lintExplorationSpec(response.source, p.baseUrl);
   const source = redact(response.source);
-  const specPath = join48(dir, fileName);
-  writeFileSync8(specPath, source, { mode: 384 });
+  const specPath = join43(dir, fileName);
+  writeFileSync7(specPath, source, { mode: 384 });
   const spec = { path: specPath, sha256: sha256(source), source };
   if (problems.length > 0) return { ...base, spec, status: "invalid_test", reason: `the test was refused: ${problems.join("; ")}` };
   const configPath = writePlaywrightConfig(dir, p.baseUrl, p.opts.uiConfig, viewport);
@@ -53998,7 +52783,7 @@ async function proveOne(p, cand, base, viewport) {
   };
 }
 function writePlaywrightConfig(dir, baseUrl, ui, viewport) {
-  const path = join48(dir, "playwright.config.mjs");
+  const path = join43(dir, "playwright.config.mjs");
   const config = {
     testDir: dir,
     testMatch: "**/*.spec.ts",
@@ -54009,28 +52794,28 @@ function writePlaywrightConfig(dir, baseUrl, ui, viewport) {
     expect: { timeout: 5e3 },
     use: { baseURL: baseUrl, browserName: ui.browsers[0] ?? "chromium", ...viewport ? { viewport } : {}, trace: "retain-on-failure", screenshot: "only-on-failure" }
   };
-  writeFileSync8(path, `export default ${JSON.stringify(config, null, 2)};
+  writeFileSync7(path, `export default ${JSON.stringify(config, null, 2)};
 `, { mode: 384 });
   return path;
 }
 function linkNodeModules(dir, checkoutDir) {
-  const target = join48(dir, "node_modules");
-  if (existsSync37(target)) return;
+  const target = join43(dir, "node_modules");
+  if (existsSync33(target)) return;
   let cur = checkoutDir;
   for (; ; ) {
-    const candidate = join48(cur, "node_modules");
-    if (existsSync37(candidate)) {
+    const candidate = join43(cur, "node_modules");
+    if (existsSync33(candidate)) {
       symlinkSync(realpathSync15(candidate), target);
       return;
     }
-    const up = dirname23(cur);
+    const up = dirname22(cur);
     if (up === cur) return;
     cur = up;
   }
 }
 async function runSpec(p, a) {
-  const outputDir = join48(a.dir, `run-${a.n}`);
-  const reportPath2 = join48(a.dir, `report-${a.n}.json`);
+  const outputDir = join43(a.dir, `run-${a.n}`);
+  const reportPath2 = join43(a.dir, `report-${a.n}.json`);
   const argv2 = ["npx", "--no-install", "playwright", "test", "--config", a.configPath, "--reporter=json", "--update-snapshots=none", "--retries=0", "--trace=retain-on-failure", `--output=${outputDir}`];
   const env = {
     ...p.baseEnv,
@@ -54060,11 +52845,11 @@ async function runSpec(p, a) {
   const fail3 = (error) => ({ run: { status: "error", exitCode: exec.exitCode, durationMs, error: cleanText(error, 300) }, artifacts: [] });
   if (exec.cancelled) return fail3("the run was cancelled");
   if (exec.timedOut) return fail3("the run exceeded its time limit");
-  if (exec.exitCode === 97 && !existsSync37(reportPath2) && (wrapped.adjustments ?? []).length > 0) return fail3(`the browser could not start under sandbox-runtime: the srt preload refused srt's sandbox command (exit 97)`);
-  if (!existsSync37(reportPath2)) return fail3(`no Playwright report (exit ${exec.exitCode ?? "signal"}): ${(exec.stderr || exec.stdout).trim().slice(-200)}`);
+  if (exec.exitCode === 97 && !existsSync33(reportPath2) && (wrapped.adjustments ?? []).length > 0) return fail3(`the browser could not start under sandbox-runtime: the srt preload refused srt's sandbox command (exit 97)`);
+  if (!existsSync33(reportPath2)) return fail3(`no Playwright report (exit ${exec.exitCode ?? "signal"}): ${(exec.stderr || exec.stdout).trim().slice(-200)}`);
   let tests;
   try {
-    const parsed3 = parsePlaywrightReport(JSON.parse(readFileSync25(reportPath2, "utf8")));
+    const parsed3 = parsePlaywrightReport(JSON.parse(readFileSync24(reportPath2, "utf8")));
     if (parsed3.errors.length > 0) return fail3(`Playwright reported errors: ${parsed3.errors.join("; ")}`);
     tests = parsed3.tests;
   } catch (err2) {
@@ -54136,7 +52921,7 @@ var init_explore = __esm({
 });
 
 // src/controller/exploration.ts
-import { join as join49 } from "node:path";
+import { join as join44 } from "node:path";
 function explorationEnabled(ui) {
   return ui !== null && explorationConfigOf(ui).enabled;
 }
@@ -54213,7 +52998,7 @@ async function exploreCandidate(ctx, cand, checkoutDir, outDir, opts = {}) {
       return { source: out.source, costUsd: r.usage.costUsd };
     }
   });
-  atomicWrite(join49(outDir, "exploration.md"), renderExplorationReport(result2), 384);
+  atomicWrite(join44(outDir, "exploration.md"), renderExplorationReport(result2), 384);
   for (const f of explorationFollowUps(result2)) {
     recordFailure(
       ctx.db,
@@ -54274,9 +53059,9 @@ var init_exploration = __esm({
 });
 
 // src/controller/verification.ts
-import { join as join50 } from "node:path";
+import { join as join45 } from "node:path";
 function uiEvidenceDir(runDir2, seq2) {
-  return join50(candidateEvidenceDir(runDir2, seq2), "ui");
+  return join45(candidateEvidenceDir(runDir2, seq2), "ui");
 }
 async function collectVerificationEvidence(ctx, cand, opts) {
   const contract = ctx.contract;
@@ -54323,7 +53108,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
   let exploration = null;
   const wouldExplore = uiRequired && explorationEnabled(ui);
   if (wouldExplore && opts.exploration) {
-    exploration = await exploreCandidate(ctx, cand, checkoutDir, join50(candidateEvidenceDir(ctx.runDir, cand.seq), "ui-exploration"));
+    exploration = await exploreCandidate(ctx, cand, checkoutDir, join45(candidateEvidenceDir(ctx.runDir, cand.seq), "ui-exploration"));
     const explored = await checkpoint();
     if (explored !== null) return { stopped: explored };
   }
@@ -54333,7 +53118,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
     repoRoot: ctx.run.repoRoot,
     baseRev,
     commit: cand.commitSha,
-    outDir: join50(candidateEvidenceDir(ctx.runDir, cand.seq), "security"),
+    outDir: join45(candidateEvidenceDir(ctx.runDir, cand.seq), "security"),
     ...ctx.deps.gitleaksPath === void 0 ? {} : { gitleaksPath: ctx.deps.gitleaksPath },
     hostPath: (ctx.deps.hostEnv ?? process.env).PATH,
     policy: staticPolicy,
@@ -54376,7 +53161,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
 }
 async function baseComparison(ctx, baseRev, commit) {
   const treeHash = (await git2(ctx.run.repoRoot, ["rev-parse", "--verify", `${baseRev}^{tree}`])).trim();
-  const baseline = readJsonIfExists(join50(ctx.runDir, BASELINE_FILE));
+  const baseline = readJsonIfExists(join45(ctx.runDir, BASELINE_FILE));
   const usable = baseline !== null && baseline.schema === "orbit.baseline/1" && baseline.baseTree === treeHash && baseline.policyHash === ctx.run.policyHash && Array.isArray(baseline.checks);
   const out = await git2(ctx.run.repoRoot, ["diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACMT", baseRev, commit, "--"]);
   return {
@@ -54411,22 +53196,22 @@ var init_verification = __esm({
 });
 
 // src/controller/environment-block.ts
-import { readFileSync as readFileSync26, realpathSync as realpathSync16 } from "node:fs";
-import { dirname as dirname24, isAbsolute as isAbsolute17, join as join51, relative as relative6 } from "node:path";
+import { readFileSync as readFileSync25, realpathSync as realpathSync16 } from "node:fs";
+import { dirname as dirname23, isAbsolute as isAbsolute17, join as join46, relative as relative5 } from "node:path";
 function outputOf(row) {
   if (row.logPath) {
     try {
-      return readFileSync26(row.logPath, "utf8").slice(0, MAX_LOG_BYTES2);
+      return readFileSync25(row.logPath, "utf8").slice(0, MAX_LOG_BYTES2);
     } catch {
     }
   }
   return row.excerpt ?? "";
 }
 function environmentFailuresFor(ctx, cand, report2) {
-  const baseline = readJsonIfExists(join51(ctx.runDir, BASELINE_FILE));
+  const baseline = readJsonIfExists(join46(ctx.runDir, BASELINE_FILE));
   if (!baseline || baseline.baseRevision !== ctx.run.baseRevision) return [];
   const accepted = new Map((ctx.contract?.baseline_exceptions ?? []).map((e) => [e.check_id, e.fingerprint]));
-  const checkout = join51(runWorktreeRoot(ctx), `check-${cand.seq}`);
+  const checkout = join46(runWorktreeRoot(ctx), `check-${cand.seq}`);
   const out = [];
   for (const base of baseline.failures) {
     const result2 = report2.checks.find((c) => c.id === base.checkId);
@@ -54439,7 +53224,7 @@ function environmentFailuresFor(ctx, cand, report2) {
       baselineFingerprint: base.fingerprint,
       output: outputOf(row),
       // The checkout (the check's cwd is resolved, the checkout path may not be) and the evidence directory holding its scratch HOME.
-      insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname24(row.logPath)] : []]
+      insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname23(row.logPath)] : []]
     });
     if (found) out.push({ ...found, questionId: baselineQuestionId(ctx.run.id, base.checkId, row.fingerprint) });
   }
@@ -54467,6 +53252,41 @@ function environmentBlockReason(input) {
   } else {
     sentences.push(`way forward: fix the environment (orbit doctor checks the isolation provider and its limits) or the check definition and start a new run (${frozen}); there is no baseline exception to approve, because the check never ran`);
   }
+  const fix = environmentFix(notExecuted);
+  if (fix) sentences.push(`fix: ${fix}`);
+  return sentences.join(". ");
+}
+function environmentFix(failures) {
+  const denied = failures.filter((f) => f.signals.includes("filesystem-denied") || f.signals.includes("sandbox-violation"));
+  if (denied.length === 0) return null;
+  if (denied.some((f) => f.lines.some((l) => DOTNET_DENIAL.test(l)))) {
+    return `this is the .NET runtime asking for /tmp/.dotnet, a directory it shares between processes for named mutexes and which no check sandbox may write. Orbit prepares every check for the .NET SDK's first run so the SDK itself needs none (docs/troubleshooting.md, ".NET checks under the sandbox"); upgrade Orbit if this run predates that, and if the repository's own code creates a named Mutex or Semaphore, make it use an unnamed one or a file lock in TMPDIR`;
+  }
+  return `run orbit doctor, which starts each check's executable in the sandbox and shows what it is refused, then let the tool keep its files in the check's HOME or TMPDIR (through the check's env) or change the check definition (docs/troubleshooting.md, "A check cannot run in the sandbox")`;
+}
+function baselineEnvironmentFailures(ctx, report2, checkoutDir) {
+  const out = [];
+  for (const failure of report2.failures) {
+    const row = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: null, checkId: failure.checkId, rootsOnly: true }).at(-1);
+    const logPath = row?.logPath ?? report2.checks.find((c) => c.checkId === failure.checkId)?.log ?? null;
+    const output = (logPath ? readCapped2(logPath) : null) ?? failure.excerpt ?? "";
+    const insideRoots = [checkoutDir, ...row ? [row.cwd] : [], ...logPath ? [dirname23(logPath)] : []];
+    const found = classifyNotExecuted({ checkId: failure.checkId, output }) ?? classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots });
+    if (found) out.push({ ...found, questionId: null, ...logPath ? { logPath } : {} });
+  }
+  return out;
+}
+function baselineEnvironmentBlockReason(input) {
+  const { runId, failures } = input;
+  const many = failures.length > 1;
+  const causes = failures.map((f) => `${f.checkId}: ${f.cause}${f.lines[0] ? ` (${JSON.stringify(f.lines[0])})` : ""}${f.logPath ? `, output in ${f.logPath}` : ""}`).join("; ");
+  const sentences = [
+    `${many ? "checks" : "check"} ${failures.map((f) => f.checkId).join(", ")} could not run on the base revision ${input.baseRevision.slice(0, 12)}, and the output shows an environment cause, not a pre-existing failure: ${causes}`,
+    `${many ? "they are" : "it is"} not recorded as a pre-existing failure and no baseline exception is offered: the check never got as far as the repository's code, so accepting its failure would let a run pass with a check that never ran`
+  ];
+  const fix = environmentFix(failures);
+  sentences.push(`fix: ${fix ?? "let the check run in this environment (orbit doctor checks the isolation provider and starts each check's executable in the sandbox), or change the check definition"}`);
+  sentences.push(`then orbit resume ${runId} runs the baseline again; a changed check definition needs a new run, because this run's policy is frozen`);
   return sentences.join(". ");
 }
 function mandatoryCommandChecks(ctx) {
@@ -54476,7 +53296,7 @@ function mandatoryCommandChecks(ctx) {
 }
 function readCapped2(path) {
   try {
-    return readFileSync26(path, "utf8").slice(0, MAX_LOG_BYTES2);
+    return readFileSync25(path, "utf8").slice(0, MAX_LOG_BYTES2);
   } catch {
     return null;
   }
@@ -54488,7 +53308,7 @@ function isInside2(path, dir) {
   } catch {
   }
   return roots.some((root) => {
-    const rel = relative6(root, path);
+    const rel = relative5(root, path);
     return rel !== "" && !rel.startsWith("..") && !isAbsolute17(rel);
   });
 }
@@ -54502,13 +53322,14 @@ function checksNotExecutedFor(ctx, cand, report2) {
     if (!row || row.fingerprint !== null && accepted.get(result2.id) === row.fingerprint) continue;
     const output = outputOf(row);
     const startFailure = row.status === "ERROR" ? /could not start the check:[^\n]*/.exec(output)?.[0] ?? null : null;
-    const found = classifyNotExecuted({ checkId: result2.id, output, startFailure });
+    const found = classifyNotExecuted({ checkId: result2.id, output, startFailure }) ?? // Refused a filesystem operation outside its checkout before it compiled or tested anything (issue #10).
+    (row.status === "FAILED" ? classifyCouldNotRun({ checkId: result2.id, output, insideRoots: [join46(runWorktreeRoot(ctx), `check-${cand.seq}`), row.cwd, ...row.logPath ? [dirname23(row.logPath)] : []] }) : null);
     if (found) out.push({ ...found, questionId: null, ...row.logPath ? { logPath: row.logPath } : {} });
   }
   if (report2.ui.some((u) => u.status === "ERROR")) {
     const dir = uiEvidenceDir(ctx.runDir, cand.seq);
     const uiIds = ctx.snapshot.config.ui?.journey_check_ids ?? [];
-    for (const entry of uiNotExecuted(join51(dir, UI_RESULT_FILE))) {
+    for (const entry of uiNotExecuted(join46(dir, UI_RESULT_FILE))) {
       const logPath = isAbsolute17(entry.logPath) && isInside2(entry.logPath, dir) ? entry.logPath : null;
       const checkId = entry.stage === "journeys" && entry.checkId ? entry.checkId : uiIds.length > 0 ? uiIds.join(", ") : "ui";
       const output = logPath === null ? null : readCapped2(logPath);
@@ -54532,7 +53353,7 @@ function uiNotExecuted(resultPath) {
     return [];
   }
 }
-var MAX_LOG_BYTES2;
+var MAX_LOG_BYTES2, DOTNET_DENIAL;
 var init_environment_block = __esm({
   "src/controller/environment-block.ts"() {
     "use strict";
@@ -54545,6 +53366,1302 @@ var init_environment_block = __esm({
     init_context2();
     init_verification();
     MAX_LOG_BYTES2 = 4 * 1024 * 1024;
+    DOTNET_DENIAL = /\/tmp\/\.dotnet\b|\.coreclr\.|NuGet-Migrations|System\.Threading\.(?:Mutex|Semaphore)/i;
+  }
+});
+
+// src/controller/steps/preflight.ts
+import { existsSync as existsSync34, mkdirSync as mkdirSync19, rmSync as rmSync13 } from "node:fs";
+import { dirname as dirname24, isAbsolute as isAbsolute18, join as join47, resolve as resolve13 } from "node:path";
+async function preflightStep(ctx) {
+  const stop = await safePoint(ctx);
+  if (stop) return stop;
+  const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot });
+  recordGate(ctx, intake);
+  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
+  const env = await checkEnvironment(ctx);
+  recordGate(ctx, env.gate);
+  if (!env.gate.passed) {
+    const auth = env.credentials.find((c) => c.provider === env.gate.details.blockedProvider && c.verdict === "blocked");
+    if (auth?.status) return blockOnAuth(ctx, auth.provider, auth.status.state, auth.status.detail);
+    return finishRun(ctx, "BLOCKED", `environment gate: ${env.gate.reasons.join("; ")}`, { outcome: { gate: env.gate } });
+  }
+  const repo = ctx.run.repoRoot;
+  const credentialProblems = await gitCredentialProblems(repo);
+  if (credentialProblems.length > 0) {
+    return finishRun(
+      ctx,
+      "BLOCKED",
+      `the repository's git configuration carries credentials a worker could read (${credentialProblems.join("; ")}); remove them and authenticate through a credential helper outside the repository`,
+      { outcome: { git_credentials: credentialProblems } }
+    );
+  }
+  const head = await resolveCommit(repo, "HEAD");
+  const baseTree = await treeOf(repo, head);
+  const dirty = await dirtyPaths(repo);
+  if (dirty.length > 0) {
+    if (!ctx.snapshot.config.repository.allow_dirty_start) {
+      return finishRun(ctx, "BLOCKED", `the repository has uncommitted changes (${dirty.slice(0, 10).join(", ")}${dirty.length > 10 ? ", ..." : ""}); commit or stash them, or set repository.allow_dirty_start`, { outcome: { dirty: dirty.slice(0, 50) } });
+    }
+    decide2(ctx, { id: `dec-${ctx.run.id}-dirty-start`, kind: "preflight.dirty-start", summary: `dirty start allowed by policy; ${dirty.length} uncommitted path(s) are not part of the run, which starts from ${head}`, data: { paths: dirty.slice(0, 200) } });
+  }
+  const wtRoot = runWorktreeRoot(ctx);
+  mkdirSync19(wtRoot, { recursive: true, mode: 448 });
+  const baseline = await runBaseline({
+    db: ctx.db,
+    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
+    repoRoot: repo,
+    baseRev: head,
+    snapshot: ctx.snapshot,
+    isolation: ctx.isolation(),
+    runDir: ctx.runDir,
+    clock: ctx.clock,
+    signal: ctx.signal,
+    pollMs: ctx.timing.checkPollMs,
+    killGraceMs: ctx.timing.killGraceMs,
+    homeDir: homeOf2(ctx.deps),
+    checkoutDir: join47(wtRoot, "baseline")
+  });
+  const after = await safePoint(ctx);
+  if (after) return after;
+  const bg = baselineGate(baseline.report);
+  recordGate(ctx, bg);
+  if (!bg.passed && bg.status === "fail") return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}`, { outcome: { gate: bg } });
+  const notRun = baselineEnvironmentFailures(ctx, baseline.report, join47(wtRoot, "baseline"));
+  if (notRun.length > 0) return blockOnBaselineEnvironment(ctx, baseline.report, notRun);
+  if (baseline.report.failures.length > 0) {
+    decide2(ctx, {
+      id: `dec-${ctx.run.id}-baseline-failures`,
+      kind: "baseline.failures",
+      summary: `pre-existing failures on ${head.slice(0, 12)}: ${baseline.report.failures.map((f) => f.checkId).join(", ")}`,
+      data: { failures: baseline.report.failures }
+    });
+    const raised = raiseBaselineExceptionQuestions({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { failures: baseline.report.failures, baseRevision: head });
+    if (raised.skipped.length > 0) {
+      decide2(ctx, {
+        id: `dec-${ctx.run.id}-baseline-exception-skipped`,
+        kind: "baseline.exception-unavailable",
+        summary: `no baseline exception can be offered for: ${raised.skipped.map((s) => s.checkId).join(", ")} (${raised.skipped[0].why})`,
+        data: { skipped: raised.skipped }
+      });
+    }
+  }
+  const worktree = await ensureWorktree(repo, join47(wtRoot, "implementer"), head);
+  const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
+  return move2(ctx, "CONTRACTING", `preflight passed at ${head.slice(0, 12)}${baseline.report.failures.length ? ` with ${baseline.report.failures.length} pre-existing failure(s)` : ""}`, {
+    patch: { baseRevision: head, baseTree, worktreePath: worktree, branch },
+    data: { base_revision: head, base_tree: baseTree, worktree, environment: env.gate.notes }
+  });
+}
+async function blockOnBaselineEnvironment(ctx, report2, failures) {
+  atomicWriteJson(join47(ctx.runDir, BASELINE_FILE), { ...report2, complete: false });
+  const reason = baselineEnvironmentBlockReason({ runId: ctx.run.id, baseRevision: report2.baseRevision, failures });
+  const checks = failures.map((f) => ({ check_id: f.checkId, signals: f.signals, cause: f.cause, evidence_lines: f.lines, ...f.logPath ? { log_path: f.logPath } : {} }));
+  decide2(ctx, { id: `dec-${ctx.run.id}-baseline-environment`, kind: "baseline.environment-failure", summary: reason, data: { base_revision: report2.baseRevision, checks } });
+  return finishRun(ctx, "BLOCKED", reason, { outcome: { base_revision: report2.baseRevision, environment_failures: checks } });
+}
+function recordGate(ctx, g) {
+  decide2(ctx, {
+    kind: `gate.${g.gate}`,
+    summary: `${g.gate} gate ${g.status}${g.reasons.length ? `: ${g.reasons.join("; ")}` : ""}${g.notes.length ? ` (notes: ${g.notes.join("; ")})` : ""}`,
+    data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure }
+  });
+}
+function urlCarriesCredentials(value) {
+  const m = URL_USERINFO.exec(value.trim());
+  if (!m) return false;
+  return m[2].includes(":") || /^https?$/i.test(m[1]);
+}
+async function gitCredentialProblems(repo) {
+  const entries = [];
+  for (const scope of ["--local", "--worktree"]) {
+    let out;
+    try {
+      out = await git2(repo, ["config", scope, "--list", "-z"]);
+    } catch {
+      continue;
+    }
+    for (const raw of out.split("\0")) {
+      if (!raw) continue;
+      const nl = raw.indexOf("\n");
+      entries.push(nl === -1 ? { key: raw, value: "" } : { key: raw.slice(0, nl), value: raw.slice(nl + 1) });
+    }
+  }
+  const root = resolve13(repo);
+  const problems = [];
+  const note3 = (text2) => {
+    if (!problems.includes(text2)) problems.push(text2);
+  };
+  for (const { key: key2, value } of entries) {
+    const k = key2.toLowerCase();
+    if (/^remote\..+\.(?:url|pushurl)$/.test(k) && urlCarriesCredentials(value)) note3(`${key2} has credentials in its URL`);
+    else if (/^url\..+\.(?:insteadof|pushinsteadof)$/.test(k) && (urlCarriesCredentials(value) || urlCarriesCredentials(key2.slice(4, key2.toLowerCase().lastIndexOf("."))))) note3("a url.<base>.insteadOf rewrite has credentials in a URL");
+    else if (/^http\.(?:.+\.)?extraheader$/.test(k) && AUTH_HEADER.test(value)) note3(`${key2} sets an authorization header`);
+    else if (/^credential\.(?:.+\.)?(?:password|token|secret)$/.test(k)) note3(`${key2} holds a literal credential`);
+    else if (/^credential(?:\..+)?\.helper$/.test(k)) {
+      const v = value.trim();
+      if (v.startsWith("!") && /password|token|secret/i.test(v)) note3(`${key2} embeds a credential in a shell helper`);
+      const store = /^store\b.*?--file(?:=|\s+)(\S+)/.exec(v);
+      if (store) {
+        const file = store[1].replace(/^["']|["']$/g, "");
+        const abs = isAbsolute18(file) ? resolve13(file) : resolve13(root, file);
+        if (!isAbsolute18(file) || abs === root || abs.startsWith(`${root}/`)) note3(`${key2} stores credentials in a file inside the repository`);
+      }
+    }
+  }
+  return problems;
+}
+async function dirtyPaths(repo) {
+  const out = await git2(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).orbit"]);
+  return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3));
+}
+async function ensureWorktree(repo, path, base) {
+  if (existsSync34(path)) {
+    try {
+      return (await adminDirFor(repo, path)).worktree;
+    } catch (err) {
+      if (!isOrbitError(err)) throw err;
+      rmSync13(path, { recursive: true, force: true });
+    }
+  }
+  mkdirSync19(dirname24(path), { recursive: true, mode: 448 });
+  await git2(repo, ["worktree", "prune"]);
+  await git2(repo, ["worktree", "add", "--detach", "--force", path, base]);
+  return (await adminDirFor(repo, path)).worktree;
+}
+async function checkEnvironment(ctx) {
+  const config = ctx.snapshot.config;
+  try {
+    ctx.deps.registry.seed();
+  } catch (err) {
+    ctx.log.warn("model registry seed failed", { error: messageOf(err) });
+  }
+  let isolation;
+  try {
+    const iso2 = ctx.isolation();
+    const status2 = await iso2.available();
+    isolation = { kind: iso2.kind, available: status2.ok, detail: status2.detail };
+  } catch (err) {
+    isolation = { error: messageOf(err) };
+  }
+  const capabilities = {};
+  for (const [id, adapter] of Object.entries(ctx.deps.adapters)) {
+    try {
+      capabilities[id] = await adapter.discoverCapabilities();
+    } catch (err) {
+      capabilities[id] = { provider: id, available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: "none", costReporting: false, detail: messageOf(err) };
+    }
+  }
+  const required = /* @__PURE__ */ new Set([IMPLEMENTER_PROVIDER]);
+  if (config.review.independent_provider_required && config.review.preferred_provider !== IMPLEMENTER_PROVIDER) required.add(config.review.preferred_provider);
+  const all = await validateCredentials({ adapters: ctx.deps.adapters, providers: [.../* @__PURE__ */ new Set([...required, ...Object.keys(ctx.deps.adapters)])] });
+  const credentialsById = {};
+  for (const c of all) credentialsById[c.provider] = c.status ?? void 0;
+  let reviewer = null;
+  if (config.review.independent_provider_required) {
+    reviewer = selectReviewer({ snapshot: ctx.snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: ctx.deps.registry });
+    if (reviewer.decision === "SELECT") {
+      required.delete(config.review.preferred_provider);
+      required.add(reviewer.provider);
+    }
+  }
+  const credentials = all.filter((c) => required.has(c.provider));
+  const delivery = deliveryEnvironmentProblem(config, ctx.deps.hostEnv ?? process.env);
+  const gate = environmentGate({ snapshot: ctx.snapshot, mode: ctx.run.mode, isolation, credentials, reviewer, delivery });
+  atomicWriteJson(join47(ctx.runDir, "environment.json"), {
+    checked_at: ctx.clock.now(),
+    gate,
+    capabilities,
+    credentials: all.map((c) => ({ provider: c.provider, verdict: c.verdict, state: c.status?.state ?? null, method: c.status?.method ?? null, error: c.error })),
+    reviewer: reviewer ? selectionDecisionRecord(reviewer).summary : null
+  });
+  return { gate, credentials: all, capabilities, reviewer };
+}
+var IMPLEMENTER_PROVIDER, URL_USERINFO, AUTH_HEADER;
+var init_preflight = __esm({
+  "src/controller/steps/preflight.ts"() {
+    "use strict";
+    init_fsx();
+    init_errors();
+    init_git();
+    init_baseline();
+    init_baseline_exception();
+    init_credentials();
+    init_select();
+    init_context2();
+    init_gates();
+    init_delivery_env();
+    init_environment_block();
+    init_common();
+    init_workers2();
+    IMPLEMENTER_PROVIDER = "claude";
+    URL_USERINFO = /^([a-z][a-z0-9+.-]*):\/\/([^/?#@]*)@/i;
+    AUTH_HEADER = /authorization|cookie|bearer|token|api[-_]?key|secret/i;
+  }
+});
+
+// src/controller/steps/contracting.ts
+import { readFileSync as readFileSync26 } from "node:fs";
+import { join as join48 } from "node:path";
+async function contractingStep(ctx) {
+  const stop = await safePoint(ctx);
+  if (stop) return stop;
+  if (ctx.contract) return accept(ctx, ctx.contract, null);
+  const route2 = routeFor(ctx, "plan", "routine-code", { difficulty: "medium", attempt: 1, repeatedFingerprints: 0 });
+  const got = await obtain(ctx, {
+    base: "plan",
+    maxAttempts: MAX_REGENERATIONS,
+    what: "the planner",
+    request: (purpose) => ({
+      role: "planner",
+      purpose,
+      provider: route2.provider,
+      model: route2.model,
+      effort: route2.effort,
+      cwd: worktreeOf(ctx),
+      readOnly: true,
+      prompt: (workerId) => plannerPrompt(ctx, workerId)
+    }),
+    accept: (r) => validateModelOutput("planner", r.structured)
+  });
+  if (!got.ok) return got.step;
+  const plan = got.value;
+  atomicWriteJson(join48(ctx.runDir, PLANNER_FILE), { worker_id: got.worker.id, output: plan });
+  let drafted;
+  try {
+    drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? "", taskId: ctx.run.id, policyHash: ctx.run.policyHash, environment: ctx.run.environment });
+  } catch (err) {
+    if (!(err instanceof OrbitError) || err.code !== "CONTRACT_INVALID") throw err;
+    return finishRun(ctx, "BLOCKED", `intake gate rejected the planner's contract: ${err.message}`, { outcome: { problems: err.details ?? null } });
+  }
+  for (const a of drafted.adjustments) {
+    decide2(ctx, { id: `dec-${ctx.run.id}-draft-${hashObject(a).slice(7, 23)}`, kind: `contract.${a.kind}`, summary: `${a.subject}: ${a.reason}`, data: a });
+  }
+  for (const [i, d] of plan.unresolved_decisions.entries()) {
+    if (d.material) continue;
+    decide2(ctx, { id: `dec-${ctx.run.id}-plan-choice-${i + 1}`, kind: "inquisition.resolve", summary: `reversible choice: ${d.question} -> ${d.recommendation ?? d.options[0] ?? "convention"}`, data: { question: d.question, options: d.options, choice: d.recommendation ?? d.options[0] ?? null, basis: "planner recommendation; reversible" } });
+  }
+  return accept(ctx, drafted.contract, plan);
+}
+async function accept(ctx, contract, plan) {
+  const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot, contract });
+  recordGate(ctx, intake);
+  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate rejected the contract: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
+  atomicWriteJson(join48(ctx.runDir, "contract.json"), contract);
+  settleExpectedFlips(ctx, contract);
+  const patch = { contractJson: JSON.stringify(contract), contractHash: hashObject(contract) };
+  const material = (plan?.unresolved_decisions ?? []).filter((d) => d.material);
+  const open2 = contract.assumptions.filter((a) => a.status === "needs-decision");
+  if (material.length > 0 || plan !== null && open2.length > 0) {
+    const keys = new Map((plan?.criteria ?? []).map((c, i) => [c.key, `AC-${i + 1}`]));
+    const subjects = [...new Set(material.flatMap((d) => d.affected_criteria.map((k) => keys.get(k) ?? k)).filter((s) => /^AC-\d+$/.test(s)))];
+    const trigger = {
+      kind: "hidden_decision",
+      mode: "clarify",
+      summary: `the planner left ${material.length || open2.length} material decision(s) unresolved`,
+      evidence: [...material.map((d) => d.question), ...open2.map((a) => `${a.id}: ${a.statement}`)].slice(0, 20),
+      subjects,
+      key: `contracting:${hashObject(material.map((d) => d.question)).slice(7, 23)}`
+    };
+    return move2(ctx, "INQUISITION", trigger.summary, { patch, data: { trigger } });
+  }
+  return move2(ctx, "PLANNING", `contract accepted: ${contract.acceptance_criteria.length} criteria, checks ${contract.required_check_ids.join(", ") || "none"}`, { patch });
+}
+function worktreeOf(ctx) {
+  if (!ctx.run.worktreePath) throw new OrbitError("INTERNAL", `run ${ctx.run.id} has no worktree; preflight did not finish`);
+  return ctx.run.worktreePath;
+}
+function plannerPrompt(ctx, workerId) {
+  const checks = Object.values(ctx.snapshot.config.checks).map((c) => `${c.id}${c.mandatory ? " (mandatory)" : ""}`);
+  const task = [
+    "Draft the goal contract for the goal below. Read the repository as needed; do not edit anything.",
+    "Return the current behaviour, criteria that are observable and testable, the proof for each, the trusted check ids that would show it,",
+    "the files you expect to change, the narrowest allowed paths, non-goals, risks, assumptions and any decision you cannot settle from evidence.",
+    `Trusted checks the policy defines: ${checks.join(", ") || "none"}. Name only these as check ids.`,
+    "",
+    `Goal (from the user): ${ctx.run.goal}`
+  ].join("\n");
+  return renderWorkerPrompt({
+    role: "planner",
+    task,
+    contract: null,
+    policySummary: policySummary(ctx, { readOnly: true }),
+    candidate: { revision: ctx.run.baseRevision, treeHash: ctx.run.baseTree, base: ctx.run.baseRevision },
+    advisoryBlock: advisoryBlockFor(ctx, { role: "planner", workerId, paths: ctx.snapshot.config.scope.allowed_paths, checkIds: Object.keys(ctx.snapshot.config.checks), fingerprints: [] })
+  });
+}
+function storedPlan(ctx) {
+  try {
+    const raw = JSON.parse(readFileSync26(join48(ctx.runDir, PLANNER_FILE), "utf8")).output;
+    return raw ? validateModelOutput("planner", raw) : null;
+  } catch {
+    return null;
+  }
+}
+var PLANNER_FILE;
+var init_contracting = __esm({
+  "src/controller/steps/contracting.ts"() {
+    "use strict";
+    init_fsx();
+    init_hash();
+    init_errors();
+    init_draft();
+    init_model_outputs();
+    init_prompt();
+    init_gates();
+    init_workers2();
+    init_knowledge_hooks();
+    init_common();
+    init_baseline_questions();
+    init_obtain();
+    init_preflight();
+    PLANNER_FILE = "planner.json";
+  }
+});
+
+// src/controller/parallel-writers.ts
+import { existsSync as existsSync35, mkdtempSync as mkdtempSync5, rmSync as rmSync14, writeFileSync as writeFileSync8 } from "node:fs";
+import { tmpdir as tmpdir11 } from "node:os";
+import { join as join49 } from "node:path";
+function splitAttempt(ctx, contract, fresh) {
+  if (!fresh || ctx.run.mode === "supervised") return null;
+  if (ctx.snapshot.config.agents.default_parallelism < 2) return null;
+  const plan = storedPlan(ctx);
+  if (!plan || plan.criteria.length !== contract.acceptance_criteria.length) return null;
+  if (blockingQuestions(ctx.db, ctx.run.id).criteria.length > 0) return null;
+  return planWorkUnits(contract.acceptance_criteria.map((c, i) => ({ id: c.id, paths: plan.criteria[i].changes.map((x) => x.path) })));
+}
+function recordedUnits(ctx, n2) {
+  const row = ctx.db.get("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id LIMIT 1", ctx.run.id, UNITS_EVENT, n2);
+  return row ? JSON.parse(row.data_json).units ?? null : null;
+}
+function serializedUnits(ctx, n2) {
+  return unitEvents(ctx, UNIT_SERIALIZED_EVENT, n2);
+}
+function unitPurpose(n2, u) {
+  return `implement:${n2}/${u.id}#1`;
+}
+function unitWorktree(ctx, n2, u) {
+  return join49(runWorktreeRoot(ctx), `unit-${n2}-${u.id}`);
+}
+async function runParallelUnits(ctx, n2, units, opts) {
+  const settled = () => /* @__PURE__ */ new Set([...unitEvents(ctx, UNIT_INTEGRATED_EVENT, n2).map((e) => e.unit), ...serializedUnits(ctx, n2).map((e) => e.unit)]);
+  for (const u of units) {
+    if (settled().has(u.id)) continue;
+    const existing = workersFor(ctx, unitPurpose(n2, u)).at(-1);
+    if (!existing) continue;
+    const st = await ensureWorker(ctx, request(ctx, n2, u, units, opts));
+    if (st.status === "running") continue;
+    const r = st.result;
+    if (r.status === "auth_failed") return { kind: "step", result: await blockOnAuth(ctx, st.worker.provider, "auth_failed", r.error) };
+    if (r.status === "cancelled") {
+      const stop = await safePoint(ctx);
+      if (stop) return { kind: "step", result: stop };
+    }
+    if (r.status === "transient_error" || r.status === "cancelled" || r.status === "lost") {
+      await serialize2(ctx, n2, u, `its session ended ${r.status}${r.error ? ` (${r.error.slice(0, 200)})` : ""}`);
+      continue;
+    }
+    await integrate(ctx, n2, u, st.worker);
+  }
+  const done = settled();
+  const waiting = units.filter((u) => !done.has(u.id) && workersFor(ctx, unitPurpose(n2, u)).length === 0);
+  const active = units.filter((u) => !done.has(u.id) && workersFor(ctx, unitPurpose(n2, u)).length > 0);
+  if (waiting.length > 0) {
+    const started = await admitAndStart(ctx, n2, units, waiting, opts);
+    if (started.count === 0 && active.length === 0) {
+      if (!started.budget) return { kind: "step", result: WAIT(`work units of attempt ${n2} deferred: ${started.why}`) };
+      for (const u of waiting) await serialize2(ctx, n2, u, `not admitted as a parallel writer: ${started.why}`);
+    }
+  }
+  const now = settled();
+  if (units.every((u) => now.has(u.id))) {
+    for (const u of units) await removeWorktree(ctx, n2, u);
+    const dropped = serializedUnits(ctx, n2);
+    if (dropped.length > 0) return { kind: "serialize", units: dropped };
+    const last = unitEvents(ctx, UNIT_INTEGRATED_EVENT, n2).at(-1);
+    return { kind: "done", workerId: last.worker_id };
+  }
+  const running = units.filter((u) => !now.has(u.id)).map((u) => u.id);
+  return { kind: "step", result: WAIT(`attempt ${n2}: work units ${running.join(", ")} are running in their own worktrees`) };
+}
+function request(ctx, n2, u, all, opts) {
+  const purpose = unitPurpose(n2, u);
+  const cap = ctx.db.get("SELECT json_extract(data_json, '$.cap_usd') AS cap FROM events WHERE run_id = ? AND type = 'worker.spend-cap' AND json_extract(data_json, '$.purpose') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, purpose);
+  return {
+    role: "implementer",
+    purpose,
+    attempt: n2,
+    provider: opts.route.provider,
+    model: opts.route.model,
+    effort: opts.route.effort,
+    cwd: unitWorktree(ctx, n2, u),
+    readOnly: false,
+    prompt: (workerId) => opts.prompt(u, all, workerId),
+    maxBudgetUsd: typeof cap?.cap === "number" ? cap.cap : null,
+    ownedPaths: u.ownedPaths
+  };
+}
+async function admitAndStart(ctx, n2, all, waiting, opts) {
+  const running = opts.running();
+  const own = running.filter((r) => r.runId === ctx.run.id).map((r) => r.unit);
+  const pending = waiting.map((u) => ({
+    id: unitPurpose(n2, u).replace(/#1$/, ""),
+    role: "implementer",
+    writer: true,
+    ownedPaths: u.ownedPaths,
+    dependsOn: [],
+    revision: null,
+    cancelWhen: [],
+    budget: { costUsd: null, wallMs: null, maxTurns: opts.maxTurns },
+    provider: opts.route.provider,
+    worktree: unitWorktree(ctx, n2, u),
+    status: "pending"
+  }));
+  const plan = schedulerFor(ctx).plan([...own, ...pending], { admit: budgetAdmission(ctx.ledger), parallelism: ctx.snapshot.config.agents.default_parallelism });
+  const admitted = plan.start.filter((s) => pending.some((p) => p.id === s.id));
+  const machine = admitted.length > 0 ? machineAdmission(ctx, running.map((r) => r.unit), admitted) : null;
+  let count3 = 0;
+  let unfunded = false;
+  const total = sessionSpendCap(ctx, opts.route.model, "implementer");
+  const share = total.capUsd === null ? null : Math.floor(total.capUsd / waiting.length * 100) / 100;
+  for (const unit of admitted) {
+    if (machine && !machine.start.has(unit.id)) continue;
+    const u = waiting.find((w) => unitPurpose(n2, w).startsWith(`${unit.id}#`));
+    const cap = { capUsd: share, worstCaseUsd: total.worstCaseUsd };
+    if (cap.capUsd !== null && cap.capUsd <= 0) {
+      unfunded = true;
+      continue;
+    }
+    const merge2 = plan.merge_overhead.find((m) => m.id === unit.id);
+    if (merge2) note2(ctx, MERGE_OVERHEAD_EVENT, { attempt: n2, unit: u.id, alongside: merge2.alongside, usd: merge2.usd });
+    if (cap.capUsd !== null) recordSpendCap(ctx, unitPurpose(n2, u), cap.capUsd, cap.worstCaseUsd);
+    const dir = unitWorktree(ctx, n2, u);
+    if (!existsSync35(dir)) await materializeCandidate(ctx.run.repoRoot, ctx.run.baseRevision, dir, { readOnly: false });
+    await ensureWorker(ctx, request(ctx, n2, u, all, opts));
+    count3++;
+  }
+  const deferred = plan.deferred.filter((d) => pending.some((p) => p.id === d.id)).map((d) => d.reason);
+  const reasons = [...deferred, ...machine ? [...machine.deferred.values()] : [], ...unfunded ? ["no model budget left for another session"] : []];
+  const budget = unfunded || deferred.some((r) => /^not admitted by budget/.test(r));
+  return { kind: "started", count: count3, why: reasons[0] ?? "not admitted", budget };
+}
+async function integrate(ctx, n2, u, w) {
+  const repoRoot = ctx.run.repoRoot;
+  const base = ctx.run.baseRevision;
+  const target = await adminDirFor(repoRoot, ctx.run.worktreePath);
+  const intent = unitEvents(ctx, UNIT_INTEGRATING_EVENT, n2).find((e) => e.unit === u.id);
+  const commit = intent?.commit ?? await commitWorktree(repoRoot, await adminDirFor(repoRoot, w.cwd), base, `orbit work unit ${u.id} of attempt ${n2}`);
+  let paths;
+  if (intent) {
+    paths = intent.paths;
+    await restoreToBase(target, base, safePaths(paths));
+  } else {
+    paths = await changedBetween2(repoRoot, base, commit);
+    const escaping = await escapingLinks(ctx, base, commit);
+    if (escaping.length > 0) return reject(ctx, n2, u, `rejected: symlink leaves the repository: ${escaping.slice(0, 10).join(", ")}`);
+    const busy = new Set(await changedFiles3(target));
+    const clash = paths.filter((p) => busy.has(p));
+    if (clash.length > 0) return reject(ctx, n2, u, `conflict: ${clash.slice(0, 10).join(", ")} already changed by integrated work`);
+    note2(ctx, UNIT_INTEGRATING_EVENT, { attempt: n2, unit: u.id, worker_id: w.id, paths, commit });
+  }
+  const patch = await unitPatch(repoRoot, base, commit, safePaths(paths));
+  if (patch.length > 0) {
+    const before = await escapingLinks(ctx, base, await commitWorktree(repoRoot, target, base, "orbit integrated tree"));
+    try {
+      await applyPatch(target, patch, false);
+    } catch (err) {
+      return reject(ctx, n2, u, `conflict: git apply refused the unit's changes (${err instanceof Error ? err.message.slice(0, 200) : String(err)})`);
+    }
+    const after = await escapingLinks(ctx, base, await commitWorktree(repoRoot, target, base, "orbit integrated tree"));
+    const added = after.filter((p) => !before.includes(p));
+    if (added.length > 0) {
+      await applyPatch(target, patch, true);
+      return reject(ctx, n2, u, `rejected: symlink leaves the repository: ${added.slice(0, 10).join(", ")}`);
+    }
+  }
+  note2(ctx, UNIT_INTEGRATED_EVENT, { attempt: n2, unit: u.id, worker_id: w.id, paths });
+  invalidateEvidence(ctx.db, ctx.run.id, `work unit ${u.id} of attempt ${n2} integrated (${paths.length} file(s))`, ctx.clock);
+  await removeWorktree(ctx, n2, u);
+}
+async function reject(ctx, n2, u, reason) {
+  await serialize2(ctx, n2, u, reason);
+  await removeWorktree(ctx, n2, u);
+}
+async function serialize2(ctx, n2, u, reason) {
+  if (serializedUnits(ctx, n2).some((s) => s.unit === u.id)) return;
+  note2(ctx, UNIT_SERIALIZED_EVENT, { attempt: n2, unit: u.id, criteria: u.criteria, reason });
+  decide2(ctx, { id: `dec-${ctx.run.id}-serialize-${n2}-${u.id}`, kind: "scheduling.serialize", summary: `work unit ${u.id} (${u.criteria.join(", ")}) of attempt ${n2} goes to the serial implementer: ${reason}`, data: { attempt: n2, unit: u.id, criteria: u.criteria, reason } });
+}
+async function removeWorktree(ctx, n2, u) {
+  const dir = unitWorktree(ctx, n2, u);
+  if (existsSync35(dir)) await cleanupCandidateCheckout(ctx.run.repoRoot, dir).catch(() => {
+  });
+}
+function inCheckout(c, extra = {}) {
+  return { env: { GIT_DIR: c.gitDir, GIT_WORK_TREE: c.worktree, GIT_LITERAL_PATHSPECS: "1", ...extra } };
+}
+async function changedFiles3(c) {
+  const out = await git2(c.worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"], inCheckout(c));
+  return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3)).sort();
+}
+async function commitWorktree(repoRoot, c, base, message) {
+  const scratch = mkdtempSync5(join49(tmpdir11(), "orbit-unit-"));
+  try {
+    const excludes = join49(scratch, "exclude");
+    writeFileSync8(excludes, `${UNIT_EXCLUDES.join("\n")}
+`);
+    const opts = { ...inCheckout(c, { GIT_INDEX_FILE: join49(scratch, "index") }), config: { "core.excludesFile": excludes } };
+    await git2(c.worktree, ["read-tree", base], opts);
+    await git2(c.worktree, ["add", "-A", "--", "."], opts);
+    const tree = (await git2(c.worktree, ["write-tree"], opts)).trim();
+    const id = { GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name, GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name, GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_AUTHOR_DATE: "946684800 +0000", GIT_COMMITTER_DATE: "946684800 +0000" };
+    return (await git2(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], { env: id })).trim();
+  } finally {
+    rmSync14(scratch, { recursive: true, force: true });
+  }
+}
+async function changedBetween2(repoRoot, from, to) {
+  const out = await git2(repoRoot, ["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", from, to, "--"]);
+  return out.split("\0").filter((p) => p.length > 0).sort();
+}
+async function escapingLinks(ctx, base, commit) {
+  const report2 = await inspectScope({ repoRoot: ctx.run.repoRoot, baseRev: base, candidateRev: commit, snapshot: ctx.snapshot });
+  return report2.symlinks_escaping;
+}
+function safePaths(paths) {
+  return paths.filter((p) => p.length > 0 && !p.startsWith("/") && !p.split(/[\\/]/).includes(".."));
+}
+async function unitPatch(repoRoot, base, commit, paths) {
+  if (paths.length === 0) return "";
+  return git2(repoRoot, ["diff", "--binary", "--full-index", "--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--no-color", base, commit, "--", ...paths], { env: { GIT_LITERAL_PATHSPECS: "1" } });
+}
+async function applyPatch(c, patch, reverse) {
+  const args = ["apply", "--index", "--whitespace=nowarn", ...reverse ? ["--reverse"] : [], "-"];
+  await git2(c.worktree, ["apply", "--index", "--check", "--whitespace=nowarn", ...reverse ? ["--reverse"] : [], "-"], { ...inCheckout(c), input: patch });
+  await git2(c.worktree, args, { ...inCheckout(c), input: patch });
+}
+async function restoreToBase(c, base, paths) {
+  if (paths.length === 0) return;
+  const inBase = new Set((await git2(c.worktree, ["ls-tree", "-r", "-z", "--name-only", base, "--", ...paths], inCheckout(c))).split("\0").filter((p) => p.length > 0));
+  const absent = paths.filter((p) => !inBase.has(p));
+  if (absent.length > 0) {
+    await git2(c.worktree, ["rm", "-rqf", "--ignore-unmatch", "--", ...absent], inCheckout(c));
+    await git2(c.worktree, ["clean", "-fq", "--", ...absent], inCheckout(c));
+  }
+  if (inBase.size > 0) await git2(c.worktree, ["checkout", base, "--", ...inBase], inCheckout(c));
+}
+function unitEvents(ctx, type, n2) {
+  return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id", ctx.run.id, type, n2).map((r) => JSON.parse(r.data_json));
+}
+function recordUnits(ctx, n2, units) {
+  appendEvent(ctx.db, ctx.run.id, UNITS_EVENT, ctx.ownerId, { attempt: n2, units }, ctx.clock.now());
+}
+var UNITS_EVENT, UNIT_INTEGRATING_EVENT, UNIT_INTEGRATED_EVENT, UNIT_SERIALIZED_EVENT, MERGE_OVERHEAD_EVENT, UNIT_EXCLUDES;
+var init_parallel_writers = __esm({
+  "src/controller/parallel-writers.ts"() {
+    "use strict";
+    init_events();
+    init_git();
+    init_candidate();
+    init_scope();
+    init_freshness();
+    init_scheduler();
+    init_work_units();
+    init_context2();
+    init_gates();
+    init_workers2();
+    init_contracting();
+    init_common();
+    UNITS_EVENT = "implementation.units";
+    UNIT_INTEGRATING_EVENT = "implementation.unit-integrating";
+    UNIT_INTEGRATED_EVENT = "implementation.unit-integrated";
+    UNIT_SERIALIZED_EVENT = "implementation.unit-serialized";
+    MERGE_OVERHEAD_EVENT = "scheduler.merge-overhead";
+    UNIT_EXCLUDES = [".DS_Store", "Thumbs.db", "node_modules/"];
+  }
+});
+
+// src/controller/authorization.ts
+import { existsSync as existsSync36, mkdirSync as mkdirSync20 } from "node:fs";
+import { join as join50 } from "node:path";
+function operationKey(op) {
+  return `op-${sha256(canonicalJson(op)).slice(0, 16)}`;
+}
+function deniedDependencyOperations(scope, snapshot2) {
+  const out = [];
+  const consider = (op, summary) => {
+    const d = authorize(snapshot2, op);
+    if (!d.allowed) out.push({ op, key: operationKey(op), summary, denial: `${d.rule}: ${d.reason}` });
+  };
+  if (scope.lockfile_changed) consider({ kind: "dependency", change: "change_lockfile", detail: "lockfile changed by the candidate" }, "change the dependency lockfile");
+  if (scope.dependency_manifest_changed.length > 0) {
+    const files = [...scope.dependency_manifest_changed].sort();
+    consider({ kind: "dependency", change: "add_package", detail: files.join(", ") }, `change dependencies in ${files.join(", ")}`);
+  }
+  return out;
+}
+function requests(ctx) {
+  return listDecisions(ctx.db, ctx.run.id, { kind: AUTHORIZATION_REQUEST_KIND }).map((d) => d.data);
+}
+function attemptSubject(n2) {
+  return `attempt:${n2}`;
+}
+function grantFor(ctx, op, subject) {
+  const req = requests(ctx).filter((r) => r.op_key === op.key && (r.subject ?? r.tree_hash) === subject).at(-1);
+  if (!req) return { state: "none" };
+  const q = findQuestion(ctx.db, req.question_id);
+  if (!q || q.status === "withdrawn") return { state: "none" };
+  if (q.status === "open") return { state: "pending", questionId: q.id };
+  const by = q.answeredBy;
+  if (q.answer !== APPROVE_ONCE || !by || !isHumanActor(by)) return { state: "denied", questionId: q.id, by };
+  const id = `dec-${ctx.run.id}-grant-${q.id}`;
+  if (!getDecision(ctx.db, id)) {
+    const forAttempt = req.attempt !== void 0;
+    const what = forAttempt ? `implementation attempt ${req.attempt} only` : `candidate tree ${subject.slice(0, 12)} only`;
+    const where = forAttempt ? { attempt: req.attempt, subject } : { tree_hash: subject };
+    decide2(ctx, { id, kind: AUTHORIZATION_GRANT_KIND, summary: `${by} authorized once: ${op.summary} (${what})`, data: { question_id: q.id, op_key: op.key, operation: op.op, ...where, approved_by: by, policy_denial: op.denial } });
+  }
+  return { state: "granted", decisionId: id, approvedBy: by, questionId: q.id };
+}
+function authorizedOnce(ctx, op, treeHash) {
+  if (authorize(ctx.snapshot, op.op).allowed) return true;
+  return grantFor(ctx, op, treeHash).state === "granted";
+}
+function requestAuthorization(ctx, op, cand) {
+  return ask(
+    ctx,
+    op,
+    {
+      question: `May this run ${op.summary} for candidate ${cand.seq} (tree ${cand.treeHash.slice(0, 12)}), which the policy does not authorize?`,
+      evidence: [`the policy denies it: ${op.denial}`, `operation ${op.key}: ${JSON.stringify(op.op)}`, `the implementation-scope gate found this change in candidate ${cand.seq}; supervised mode asks instead of repairing it away`],
+      approve: { description: `Authorize this one operation for candidate ${cand.seq} only`, consequences: "verification continues with the change; any other candidate or operation is asked about again" },
+      deny: "the change goes back to the implementer as a scope repair, or the run stops if no attempt is left",
+      recommendationReason: "the frozen policy does not allow it; approve only when the dependency change is intended",
+      affected: `authorization ${op.key} for tree ${cand.treeHash.slice(0, 12)}`
+    },
+    { id: `dec-${ctx.run.id}-authreq-${op.key}-${cand.treeHash.slice(0, 12)}`, summary: `asked a person to authorize once: ${op.summary} (candidate ${cand.seq})`, data: { tree_hash: cand.treeHash, subject: cand.treeHash, candidate_id: cand.id } }
+  );
+}
+function requestAttemptAuthorization(ctx, op, n2, worker) {
+  const subject = attemptSubject(n2);
+  return ask(
+    ctx,
+    op,
+    {
+      question: `May the ${worker.role} of implementation attempt ${n2} ${op.summary}, which the policy does not authorize?`,
+      evidence: [`the policy denies it: ${op.denial}`, `operation ${op.key}: ${JSON.stringify(op.op)}`, `the guard refused it inside worker ${worker.id} (attempt ${n2}); supervised mode asks instead of only denying it`],
+      approve: { description: `Authorize this one operation for implementation attempt ${n2} only`, consequences: "the attempt is retried with exactly this operation allowed; any other operation or attempt is asked about again" },
+      deny: "the attempt is retried as a scope repair: the implementer finishes the work without the operation",
+      recommendationReason: "the frozen policy does not allow it; approve only when the operation is intended and needed",
+      affected: `authorization ${op.key} for attempt ${n2}`
+    },
+    { id: `dec-${ctx.run.id}-authreq-${op.key}-a${n2}`, summary: `asked a person to authorize once: ${op.summary} (attempt ${n2})`, data: { subject, attempt: n2, worker_id: worker.id } }
+  );
+}
+function ask(ctx, op, text2, request2) {
+  const q = {
+    question: text2.question,
+    changes: ["authority"],
+    evidence: text2.evidence,
+    options: [
+      { label: APPROVE_ONCE, description: text2.approve.description, consequences: text2.approve.consequences },
+      { label: DENY2, description: "Keep the policy as it is and refuse the operation", consequences: text2.deny }
+    ],
+    recommendation: DENY2,
+    recommendation_reason: text2.recommendationReason,
+    safe_default: { exists: true, option: DENY2, reason: "denying keeps the authority the run started with" },
+    material: true,
+    affected_work: [text2.affected],
+    unblocked_work: []
+  };
+  const question = persistQuestion(ctx.db, ctx.run.id, "risk-review", q, ctx.clock, { actor: ctx.ownerId }).question;
+  const subject = request2.data.subject ?? request2.data.tree_hash;
+  const existing = requests(ctx).some((r) => r.question_id === question.id && (r.subject ?? r.tree_hash) === subject);
+  if (!existing) {
+    decide2(ctx, { id: request2.id, kind: AUTHORIZATION_REQUEST_KIND, summary: request2.summary, data: { question_id: question.id, op_key: op.key, operation: op.op, policy_denial: op.denial, ...request2.data } });
+  }
+  return question;
+}
+function scopeWithGrants(scope, granted) {
+  const lockfile = granted.some((g) => g.op.kind === "dependency" && g.op.change === "change_lockfile");
+  const manifests = granted.some((g) => g.op.kind === "dependency" && g.op.change === "add_package");
+  return { ...scope, lockfile_changed: lockfile ? false : scope.lockfile_changed, dependency_manifest_changed: manifests ? [] : scope.dependency_manifest_changed };
+}
+function deniedWorkerOperations(ctx, worker) {
+  const out = /* @__PURE__ */ new Map();
+  for (const d of listDecisions(ctx.db, ctx.run.id, { kind: "policy.deny" })) {
+    const data = d.data ?? {};
+    if (data.worker_id !== worker.id || data.source !== "guard-hook") continue;
+    const rule = data.rule ?? "";
+    if (!ASKABLE_RULE.test(rule) || NEVER_GRANTED.has(rule) || !data.target) continue;
+    const host = URL_HOST.exec(data.target)?.[1]?.toLowerCase() ?? null;
+    let op;
+    let summary;
+    if (data.tool === "Bash") {
+      if (rule.startsWith("network.") && !host) continue;
+      op = { kind: "bash", command: data.target };
+      summary = `run \`${data.target}\``;
+    } else if (rule.startsWith("network.") && host) {
+      op = { kind: "network", host };
+      summary = `reach ${host}`;
+    } else continue;
+    const now = authorize(ctx.snapshot, op, { worktreeRoot: worker.cwd });
+    if (now.allowed) continue;
+    const key2 = operationKey(op);
+    if (!out.has(key2)) out.set(key2, { op, key: key2, summary, denial: `${rule}: ${data.reason ?? now.reason}`, rule, ...op.kind === "network" ? { target: data.target } : {} });
+  }
+  return [...out.values()];
+}
+function approvedPlan(op) {
+  const network = (op.rule ?? "").startsWith("network.");
+  if (op.op.kind === "bash") return { argv: ["/bin/sh", "-c", op.op.command], shown: op.op.command, host: network ? URL_HOST.exec(op.op.command)?.[1]?.toLowerCase() ?? null : null };
+  if (op.op.kind === "network" && op.target && URL_HOST.exec(op.target)?.[1]?.toLowerCase() === op.op.host) {
+    return { argv: ["curl", "-sS", "--proto", "=http,https", "--max-time", String(APPROVED_TIMEOUT_S), "--", op.target], shown: `fetch ${op.target}`, host: op.op.host };
+  }
+  return null;
+}
+async function runApprovedOperation(ctx, n2, op, grant) {
+  const plan = approvedPlan(op);
+  const none = { key: op.key, command: plan?.shown ?? null, exit_code: null, timed_out: false, path: null, sha256: null, excerpt: null };
+  if (!plan) return { ...none, state: "NOT_RUN", note: "the approval names a host but no exact command or address, so the controller had nothing exact to run" };
+  const rel = join50("authorization", `attempt-${n2}`, op.key);
+  const dir = join50(ctx.runDir, rel);
+  const ledger = new ActionLedger(ctx.db, ctx.clock, { runDir: ctx.runDir, maxAttempts: 1, actor: ctx.ownerId });
+  const recorded = () => readJsonIfExists(join50(dir, RECEIPT_FILE));
+  try {
+    const done = await ledger.performAction(
+      { runId: ctx.run.id, kind: APPROVED_COMMAND_ACTION, idempotencyKey: `${ctx.run.id}:approved:${n2}:${op.key}`, target: { command: plan.shown, attempt: n2, op_key: op.key, grant: grant.decisionId } },
+      {
+        execute: () => executeApproved(ctx, plan, dir, rel),
+        // Only the receipt written after the command finished proves it ran; without it the command is not run again.
+        reconcile: async () => {
+          const r2 = recorded();
+          if (r2) return r2;
+          throw new OrbitError("INTERNAL", "the approved command may have started before the controller stopped; it is not run a second time", { definitive: true });
+        }
+      },
+      { authorization: { allowed: true, rule: "authorization.grant", reason: `approved once by ${grant.approvedBy} (${grant.decisionId}) for attempt ${n2}` } }
+    );
+    const r = done.receipt;
+    return { ...none, state: "SUCCEEDED", exit_code: r.exit_code, timed_out: r.timed_out, path: r.path, sha256: r.sha256, excerpt: r.excerpt, note: null };
+  } catch (err) {
+    if (isOrbitError(err, "CANCELLED") || isOrbitError(err, "LEASE_LOST") || isOrbitError(err, "CONCURRENT_UPDATE")) throw err;
+    return { ...none, state: "UNKNOWN", note: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) };
+  }
+}
+async function executeApproved(ctx, plan, dir, rel) {
+  const worktree = ctx.run.worktreePath;
+  const home2 = join50(dir, "home");
+  mkdirSync20(home2, { recursive: true, mode: 448 });
+  const tmp = prepareWorkerTmpDir(dir);
+  const hosts = [.../* @__PURE__ */ new Set([...ctx.snapshot.config.network.allowed_hosts, ...plan.host ? [plan.host] : []])];
+  const def = { id: `approved-${rel.split("/").at(-1)}`, command: plan.argv, shell: false, cwd: ".", timeout_seconds: APPROVED_TIMEOUT_S, network_hosts: hosts, local_binding: false, env: {}, mandatory: false, flaky_reruns: 0, kind: "command" };
+  const profile = profileForCheck({ worktree, check: def, snapshot: ctx.snapshot, extraWritable: [home2, tmp] });
+  const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home2, TMPDIR: tmp, LANG: "C.UTF-8", TERM: "dumb", NO_COLOR: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" };
+  const wrapped = ctx.isolation().wrap(plan.argv, profile, { cwd: worktree, env });
+  let r;
+  try {
+    r = await execCapture(wrapped.argv, { cwd: worktree, env: wrapped.env, timeoutMs: APPROVED_TIMEOUT_S * 1e3, maxOutputBytes: APPROVED_MAX_OUTPUT_BYTES, abortSignal: ctx.signal });
+  } catch (err) {
+    throw new OrbitError("INTERNAL", `the approved command could not start: ${err instanceof Error ? err.message : String(err)}`, { definitive: true }, { cause: err });
+  } finally {
+    wrapped.cleanup();
+  }
+  const text2 = redact(`$ ${plan.shown}
+[exit ${r.exitCode ?? `signal ${r.signal ?? "unknown"}`}${r.timedOut ? ", timed out" : ""}]
+--- stdout ---
+${r.stdout}
+--- stderr ---
+${r.stderr}
+`);
+  atomicWrite(join50(dir, OUTPUT_FILE), text2, 384);
+  const receipt = { exit_code: r.exitCode, timed_out: r.timedOut, path: join50(rel, OUTPUT_FILE), sha256: sha256(text2), excerpt: text2.slice(-APPROVED_EXCERPT_CHARS) };
+  atomicWrite(join50(dir, RECEIPT_FILE), `${JSON.stringify(receipt)}
+`, 384);
+  return receipt;
+}
+function ungrantedCommands(events, snapshot2, worktreeRoot, granted) {
+  const denied = new Set(denialsFromTranscript(events).map((d) => d.toolUseId));
+  const out = [];
+  for (const e of events) {
+    if (e.type !== "assistant") continue;
+    const message = e.message;
+    const content = Array.isArray(message?.content) ? message.content : [];
+    for (const b of content) {
+      if (!b || b.type !== "tool_use" || typeof b.id !== "string" || denied.has(b.id)) continue;
+      const input = b.input ?? {};
+      let op = null;
+      if (b.name === "Bash" && typeof input.command === "string") op = { kind: "bash", command: input.command };
+      else if (typeof input.url === "string") {
+        const host = URL_HOST.exec(input.url)?.[1]?.toLowerCase();
+        if (host) op = { kind: "network", host };
+      }
+      if (!op) continue;
+      const d = authorize(snapshot2, op, { worktreeRoot });
+      if (d.allowed || !ASKABLE_RULE.test(d.rule)) continue;
+      const shown = op.kind === "bash" ? denialTarget(op.command) : op.host;
+      const named = granted.some((g) => op.kind === "bash" && g.op.kind === "bash" && g.op.command === shown || op.kind === "network" && g.op.kind === "network" && g.op.host === op.host);
+      if (!named) out.push(shown);
+    }
+  }
+  return out;
+}
+function sessionEvents(worker) {
+  const path = join50(worker.workerDir, LOG_FILE);
+  return existsSync36(path) ? readLogLines(path).events : [];
+}
+var APPROVE_ONCE, DENY2, AUTHORIZATION_REQUEST_KIND, AUTHORIZATION_GRANT_KIND, ASKABLE_RULE, NEVER_GRANTED, URL_HOST, APPROVED_COMMAND_ACTION, APPROVED_TIMEOUT_S, APPROVED_MAX_OUTPUT_BYTES, APPROVED_EXCERPT_CHARS, OUTPUT_FILE, RECEIPT_FILE;
+var init_authorization = __esm({
+  "src/controller/authorization.ts"() {
+    "use strict";
+    init_hash();
+    init_fsx();
+    init_errors();
+    init_exec();
+    init_redact();
+    init_authorize();
+    init_profiles();
+    init_actions();
+    init_questions();
+    init_store4();
+    init_decisions();
+    init_supervise();
+    init_shim();
+    init_common();
+    init_denials();
+    APPROVE_ONCE = "approve-once";
+    DENY2 = "deny";
+    AUTHORIZATION_REQUEST_KIND = "authorization.request";
+    AUTHORIZATION_GRANT_KIND = "authorization.grant";
+    ASKABLE_RULE = /^(?:actions|network)\./;
+    NEVER_GRANTED = /* @__PURE__ */ new Set(["actions.change_secrets"]);
+    URL_HOST = /\bhttps?:\/\/([A-Za-z0-9.-]+)/;
+    APPROVED_COMMAND_ACTION = "approved_command";
+    APPROVED_TIMEOUT_S = 300;
+    APPROVED_MAX_OUTPUT_BYTES = 1024 * 1024;
+    APPROVED_EXCERPT_CHARS = 4e3;
+    OUTPUT_FILE = "output.txt";
+    RECEIPT_FILE = "receipt.json";
+  }
+});
+
+// src/controller/steps/implementing.ts
+import { existsSync as existsSync37 } from "node:fs";
+import { join as join51 } from "node:path";
+function briefPath(ctx, attempt) {
+  return join51(ctx.runDir, "briefs", `attempt-${attempt}.json`);
+}
+function currentAttempt(ctx) {
+  const row = ctx.db.get("SELECT MAX(CAST(json_extract(data_json, '$.attempt') AS INTEGER)) AS n FROM events WHERE run_id = ? AND type = ?", ctx.run.id, ATTEMPT_EVENT);
+  return Number(row?.n ?? 0);
+}
+function attemptCandidateId(ctx, attempt) {
+  const row = ctx.db.get("SELECT json_extract(data_json, '$.candidate_id') AS id FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, CANDIDATE_EVENT, attempt);
+  return row?.id ?? null;
+}
+async function implementingStep(ctx) {
+  const stop = await safePoint(ctx);
+  if (stop) return stop;
+  const contract = assertContract(ctx);
+  if (!ctx.ledger) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is ${ctx.run.state} without budget counters`);
+  if (!ctx.run.worktreePath || !ctx.run.baseRevision) throw new OrbitError("INTERNAL", `run ${ctx.run.id} has no worktree or base revision`);
+  let n2 = currentAttempt(ctx);
+  if (n2 > 0 && attemptCandidateId(ctx, n2) !== null) {
+    const cand = ctx.candidate;
+    if (cand && !currentEvidenceReport(ctx.db, ctx.run.id, cand.id)) return move2(ctx, "VERIFYING", `candidate ${cand.seq} of attempt ${n2} awaits verification`);
+    n2 = 0;
+  }
+  if (n2 === 0) {
+    const started = await startAttempt(ctx, currentAttempt(ctx) + 1);
+    if (started) return started;
+    n2 = currentAttempt(ctx);
+  }
+  return continueAttempt(ctx, n2, contract);
+}
+async function startAttempt(ctx, n2) {
+  const ledger = ctx.ledger;
+  const route2 = routeFor(ctx, `implement:${n2}`, "routine-code", routeSignals(ctx, n2));
+  const scheduler = schedulerFor(ctx);
+  const running = runningUnits(ctx);
+  const own = new Set(running.filter((u) => u.runId === ctx.run.id).map((u) => u.unit.id));
+  const cap = sessionSpendCap(ctx, route2.model, "implementer");
+  const unit = {
+    id: `implement:${n2}`,
+    role: "implementer",
+    writer: true,
+    ownedPaths: assertContract(ctx).allowed_paths,
+    dependsOn: [],
+    revision: ctx.candidate?.treeHash ?? null,
+    cancelWhen: [],
+    // Admission keeps the conservative role ceiling for the cost estimate: an attempt is more than one session.
+    budget: { costUsd: null, wallMs: null, maxTurns: ledger.maxTurnsPerSession() },
+    provider: route2.provider,
+    worktree: ctx.run.worktreePath,
+    status: "pending"
+  };
+  const plan = scheduler.plan([...running.filter((r) => own.has(r.unit.id)).map((r) => r.unit), unit], { admit: budgetAdmission(ledger) });
+  const machine = plan.start.some((u) => u.id === unit.id) ? machineAdmission(ctx, running.map((r) => r.unit), [unit]) : null;
+  if (!plan.start.some((u) => u.id === unit.id) || machine && !machine.start.has(unit.id)) {
+    const why = plan.deferred.find((d) => d.id === unit.id)?.reason ?? machine?.deferred.get(unit.id) ?? "not admitted";
+    if (/^not admitted by budget/.test(why)) return finishRun(ctx, "EXHAUSTED", `attempt ${n2} not admitted: the remaining budget cannot support an honest completion (${why})`, { data: { admission: why } });
+    return WAIT(`attempt ${n2} deferred: ${why}`);
+  }
+  if (cap.capUsd !== null && cap.capUsd <= 0) return finishRun(ctx, "EXHAUSTED", `attempt ${n2} not started: ${unfundedSessionReason(ctx, route2.model, "implementer")}`);
+  const units = splitAttempt(ctx, assertContract(ctx), n2 === 1 && !existsSync37(briefPath(ctx, n2)));
+  const counted = ctx.db.tx(() => {
+    if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, ATTEMPT_EVENT, n2)) return false;
+    ledger.consume("implementation_attempts", 1);
+    appendEvent(ctx.db, ctx.run.id, ATTEMPT_EVENT, ctx.ownerId, { attempt: n2, route: route2.decisionId, spend_cap_usd: cap.capUsd }, ctx.clock.now());
+    if (units) recordUnits(ctx, n2, units);
+    return true;
+  });
+  if (counted && units) {
+    decide2(ctx, { id: `dec-${ctx.run.id}-units-${n2}`, kind: "scheduling.work-units", summary: `attempt ${n2} runs as ${units.length} parallel writers with disjoint files: ${units.map((u) => `${u.id} (${u.criteria.join(", ")})`).join("; ")}`, data: { attempt: n2, units } });
+  }
+  if (cap.capUsd !== null) recordSpendCap(ctx, `implement:${n2}#1`, cap.capUsd, cap.worstCaseUsd);
+  return null;
+}
+function runningUnits(ctx) {
+  const out = listActiveWorkers(ctx.db).map((w) => ({
+    runId: w.runId,
+    // Another run's writer edits its own worktree, so its paths cannot collide with this run's; it still takes a slot.
+    unit: { id: w.id, role: w.role, writer: w.runId === ctx.run.id && !READ_ONLY_ROLES.has(w.role), ownedPaths: w.ownedPaths ?? [], dependsOn: [], revision: null, cancelWhen: [], budget: {}, provider: w.provider, worktree: w.cwd, status: "running" }
+  }));
+  const reserved = ctx.db.all(
+    `SELECT e.run_id, MAX(CAST(json_extract(e.data_json, '$.attempt') AS INTEGER)) AS attempt FROM events e JOIN runs r ON r.id = e.run_id
+     WHERE e.type = ? AND e.run_id <> ? AND r.state IN ('IMPLEMENTING', 'REPAIRING') GROUP BY e.run_id`,
+    ATTEMPT_EVENT,
+    ctx.run.id
+  );
+  for (const r of reserved) {
+    const planned = ctx.db.get("SELECT 1 AS x FROM workers WHERE run_id = ? AND role = 'implementer' AND attempt = ? LIMIT 1", r.run_id, r.attempt);
+    const produced = ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? LIMIT 1", r.run_id, CANDIDATE_EVENT, r.attempt);
+    if (planned || produced) continue;
+    out.push({ runId: r.run_id, unit: { id: `reserved:${r.run_id}:${r.attempt}`, role: "implementer", writer: false, ownedPaths: [], dependsOn: [], revision: null, cancelWhen: [], budget: {}, provider: null, worktree: null, status: "running" } });
+  }
+  return out;
+}
+async function continueAttempt(ctx, n2, contract) {
+  const route2 = routeFor(ctx, `implement:${n2}`, "routine-code", routeSignals(ctx, n2));
+  const base = `implement:${n2}`;
+  const units = recordedUnits(ctx, n2);
+  if (units && latestAttempt(ctx, base) === 0) {
+    const r = await runParallelUnits(ctx, n2, units, { route: route2, contract, prompt: (u, all, workerId) => implementerPrompt(ctx, n2, workerId, null, { unit: u, all }), running: () => runningUnits(ctx), maxTurns: ctx.ledger.maxTurnsPerSession() });
+    if (r.kind === "step") return r.result;
+    if (r.kind === "done") return snapshot(ctx, n2, r.workerId);
+  }
+  const start = await attemptStart(ctx, base, `implementer (attempt ${n2})`);
+  if (!start.ok) return start.step;
+  let k = start.n;
+  for (; ; ) {
+    const purpose = `${base}#${k}`;
+    if (!ctx.db.get("SELECT 1 AS x FROM workers WHERE run_id = ? AND purpose = ?", ctx.run.id, purpose)) {
+      const wait = retryWait(ctx, base);
+      if (wait) return wait;
+    }
+    const auth = authorizationFor(ctx, n2, k);
+    const st = await ensureWorker(ctx, {
+      role: "implementer",
+      purpose,
+      attempt: n2,
+      provider: route2.provider,
+      model: route2.model,
+      effort: route2.effort,
+      cwd: ctx.run.worktreePath,
+      readOnly: false,
+      prompt: (workerId) => implementerPrompt(ctx, n2, workerId, auth),
+      maxBudgetUsd: capOf(ctx, n2, purpose),
+      ownedPaths: contract.allowed_paths
+    });
+    if (st.status === "running") return WAIT(`implementer ${st.worker.id} (attempt ${n2}) is running`);
+    const r = st.result;
+    if (r.status === "auth_failed") return blockOnAuth(ctx, st.worker.provider, "auth_failed", r.error);
+    const stray = r.status === "cancelled" && !ctx.refresh().cancelRequested;
+    if (r.status === "transient_error" || stray) {
+      if (r.status === "cancelled") {
+        const stop2 = await safePoint(ctx);
+        if (stop2) return stop2;
+      }
+      const stop = await scheduleTransientRetry(ctx, { base, purpose, what: `implementer (attempt ${n2})`, status: r.status, error: r.error });
+      if (stop) return stop;
+      k++;
+      continue;
+    }
+    if (r.status === "cancelled") {
+      const stop = await safePoint(ctx);
+      if (stop) return stop;
+    }
+    if (r.status === "lost") {
+      const stop = await restartLostImplementer(ctx, st.worker, n2, `${base}#${k + 1}`, route2.model);
+      if (stop) return stop;
+      k++;
+      continue;
+    }
+    if (r.status === "failed" && raiseOutputCap(ctx, purpose, r.error) !== null) {
+      k++;
+      continue;
+    }
+    const sup = await superviseDenials(ctx, n2, k, st.worker);
+    if (sup.kind === "stop") return sup.result;
+    if (sup.kind === "retry") {
+      k++;
+      continue;
+    }
+    if (r.status !== "succeeded") note2(ctx, "implementation.worker-ended", { attempt: n2, status: r.status, error: r.error?.slice(0, 300) ?? null, note: "its edits are verified like any other" });
+    return snapshot(ctx, n2, st.worker.id);
+  }
+}
+function authorizationRetries(ctx, n2) {
+  return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id", ctx.run.id, AUTHORIZATION_RETRY_EVENT, n2).map((r) => JSON.parse(r.data_json));
+}
+function authorizationFor(ctx, n2, k) {
+  return authorizationRetries(ctx, n2).filter((r) => r.next <= k).at(-1) ?? null;
+}
+async function superviseDenials(ctx, n2, k, worker) {
+  if (ctx.run.mode !== "supervised") return { kind: "proceed" };
+  const retries = authorizationRetries(ctx, n2);
+  if (retries.some((r) => r.after === k)) return { kind: "retry" };
+  const auth = retries.filter((r) => r.next <= k).at(-1);
+  if (auth && auth.granted.length > 0) {
+    const extra = ungrantedCommands(sessionEvents(worker), ctx.snapshot, worker.cwd, []);
+    if (extra.length > 0) {
+      decide2(ctx, { id: `dec-${ctx.run.id}-deny-ungranted-${worker.id}`, kind: "policy.deny", summary: `implementer ${worker.id} ran under a one-shot grant and did what no grant names: ${extra.join("; ")}`, data: { source: "grant-check", worker_id: worker.id, attempt: n2, ungranted: extra, granted: auth.granted.map((g) => g.key) } });
+      return { kind: "stop", result: await finishRun(ctx, "BLOCKED", `policy violation in attempt ${n2}: under a one-shot grant the implementer also ran what the policy denies and no person authorized (${extra.join("; ")}); its work will not be verified or delivered`, { outcome: { attempt: n2, ungranted: extra } }) };
+    }
+  }
+  const applied = new Set(retries.flatMap((r) => [...r.granted, ...r.refused].map((g) => g.key)));
+  const ops = deniedWorkerOperations(ctx, worker).filter((o) => !applied.has(o.key));
+  if (ops.length === 0) return { kind: "proceed" };
+  const subject = attemptSubject(n2);
+  const pending = [];
+  const granted = [];
+  const grants = [];
+  const refused = [];
+  for (const op of ops) {
+    const g = grantFor(ctx, op, subject);
+    if (g.state === "granted") {
+      granted.push(op);
+      grants.push({ decisionId: g.decisionId, approvedBy: g.approvedBy });
+    } else if (g.state === "denied") refused.push(op);
+    else pending.push(`${g.state === "pending" ? g.questionId : requestAttemptAuthorization(ctx, op, n2, worker).id}: ${op.summary}`);
+  }
+  if (pending.length > 0) {
+    return { kind: "stop", result: await finishRun(ctx, "BLOCKED", `supervised mode: implementation attempt ${n2} was denied operations the policy does not authorize; a person decides each one (approve-once or deny with orbit decide, then orbit resume ${ctx.run.id}). Questions: ${pending.join(" | ")}`, { outcome: { authorization: pending } }) };
+  }
+  const executed = [];
+  for (const [i, op] of granted.entries()) executed.push(await runApprovedOperation(ctx, n2, op, grants[i]));
+  note2(ctx, AUTHORIZATION_RETRY_EVENT, { attempt: n2, after: k, next: k + 1, granted, refused, executed });
+  return { kind: "retry" };
+}
+async function restartLostImplementer(ctx, lost, n2, nextPurpose, model) {
+  const already = ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.worker_id') = ? LIMIT 1", ctx.run.id, LOST_RESTART_EVENT, lost.id);
+  if (already) return null;
+  const decision = decideRetry({
+    classification: classifyFailure({ status: "lost" }),
+    provider: lost.provider,
+    runId: ctx.run.id,
+    attempt: 1,
+    infrastructureRetriesRemaining: Number.POSITIVE_INFINITY,
+    wallRemainingMs: null,
+    costRemainingUsd: null,
+    recoveryAttemptsRemaining: recoveryAttemptsRemaining(ctx.db, ctx.run.id, void 0)
+  });
+  if (decision.action !== "restart") return finishRun(ctx, "EXHAUSTED", `recovery_attempts exhausted: lost implementer ${lost.id} (attempt ${n2}) cannot be restarted: ${decision.reason}`, { data: { counter: "recovery_attempts" } });
+  const gone = await stopRowProcess(ctx.timing.killGraceMs, lost);
+  if (gone === "unknown") return WAIT(`lost implementer ${lost.id}: its process could not be confirmed stopped; not restarting yet`);
+  try {
+    spendRecoveryAttempt(ctx.db, ctx.run.id, ctx.clock, { ledgerFor: () => ctx.ledger, actor: ctx.ownerId, why: `restart of lost implementer ${lost.id} (attempt ${n2})` });
+  } catch (err) {
+    if (isOrbitError(err, "BUDGET_EXHAUSTED")) return finishRun(ctx, "EXHAUSTED", `recovery_attempts exhausted: lost implementer ${lost.id} (attempt ${n2}) cannot be restarted: ${err.message}`, { data: { counter: "recovery_attempts" } });
+    throw err;
+  }
+  const cap = sessionSpendCap(ctx, model, "implementer");
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, LOST_RESTART_EVENT, ctx.ownerId, { worker_id: lost.id, attempt: n2, next_purpose: nextPurpose, cwd_preserved: lost.cwd, live_controller: true }, ctx.clock.now()));
+  if (cap.capUsd !== null) {
+    if (cap.capUsd <= 0) return finishRun(ctx, "EXHAUSTED", `lost implementer ${lost.id} not restarted: ${unfundedSessionReason(ctx, model, "implementer")}`);
+    recordSpendCap(ctx, nextPurpose, cap.capUsd, cap.worstCaseUsd);
+  }
+  return null;
+}
+async function snapshot(ctx, n2, workerId) {
+  const cand = await snapshotCandidate({ db: ctx.db, clock: ctx.clock, repoRoot: ctx.run.repoRoot, worktree: ctx.run.worktreePath, runId: ctx.run.id, baseRev: ctx.run.baseRevision, attempt: n2, workerId });
+  invalidateEvidence(ctx.db, ctx.run.id, `attempt ${n2} produced candidate ${cand.seq} (tree ${cand.treeHash})`, ctx.clock, { exceptTreeHash: cand.treeHash });
+  invalidateStaleReviews(ctx.db, { runId: ctx.run.id, runDir: ctx.runDir, current: { candidateId: cand.id, treeHash: cand.treeHash }, cause: `attempt ${n2}` }, ctx.clock);
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, CANDIDATE_EVENT, ctx.ownerId, { attempt: n2, candidate_id: cand.id, seq: cand.seq, tree_hash: cand.treeHash, reused: !cand.created }, ctx.clock.now()));
+  ctx.candidate = cand;
+  await cancelObsoleteWork(ctx, cand.treeHash);
+  progress(ctx, "candidate", { attempt: n2, candidate_id: cand.id, seq: cand.seq, tree_hash: cand.treeHash, reused: !cand.created });
+  return move2(ctx, "VERIFYING", `attempt ${n2} produced candidate ${cand.seq}${cand.created ? "" : " (the same tree as an earlier candidate)"}`);
+}
+function capOf(ctx, n2, purpose) {
+  const own = ctx.db.get("SELECT json_extract(data_json, '$.cap_usd') AS cap FROM events WHERE run_id = ? AND type = 'worker.spend-cap' AND json_extract(data_json, '$.purpose') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, purpose);
+  if (typeof own?.cap === "number") return own.cap;
+  const row = ctx.db.get("SELECT json_extract(data_json, '$.spend_cap_usd') AS cap FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, ATTEMPT_EVENT, n2);
+  return typeof row?.cap === "number" ? row.cap : null;
+}
+function routeSignals(ctx, n2) {
+  const difficulty = ctx.run.difficulty ?? "medium";
+  const failures = listFailures(ctx.db, ctx.run.id);
+  const prev = n2 > 1 ? ctx.db.get("SELECT data_json FROM decisions WHERE id = ?", `dec-route-${ctx.run.id}-implement_${n2 - 1}`) : void 0;
+  const prevRoute = prev ? JSON.parse(prev.data_json) : null;
+  const solved = n2 > 1 && diagnosisSolved(ctx, n2);
+  const latest = failures.at(-1) ?? null;
+  const same = latest && !solved ? failures.filter((f) => f.fingerprint === latest.fingerprint) : [];
+  const repeated = new Set(same.map((f) => f.candidateId ?? `row-${f.id}`)).size;
+  const evidence = same.map((f) => `failure:${f.id}`);
+  const security = criticalSecurity(ctx);
+  return {
+    difficulty,
+    attempt: n2,
+    repeatedFingerprints: repeated,
+    ...evidence.length > 0 ? { evidence } : {},
+    ...security ? { criticalSecurity: true } : {},
+    ...solved ? { diagnosisSolved: true } : {},
+    ...prevRoute ? { previousRoute: { provider: prevRoute.provider, model: prevRoute.model, effort: prevRoute.effort, outcome: solved ? "verified" : "failed", evidence } } : {}
+  };
+}
+function criticalSecurity(ctx) {
+  if (!ctx.run.difficultyJson) return false;
+  try {
+    const a = JSON.parse(ctx.run.difficultyJson);
+    return a.factors?.some((f) => f.factor === "security_impact" && f.value === true) ?? false;
+  } catch {
+    return false;
+  }
+}
+function diagnosisSolved(ctx, n2) {
+  let escalatedAt = 0;
+  for (let k = n2 - 1; k >= 1; k--) {
+    const row = ctx.db.get("SELECT data_json FROM decisions WHERE id = ?", `dec-route-${ctx.run.id}-implement_${k}`);
+    const d = row ? JSON.parse(row.data_json) : null;
+    if (d?.escalated_from) {
+      escalatedAt = k;
+      break;
+    }
+  }
+  if (escalatedAt === 0) return false;
+  const latestCand = attemptCandidateId(ctx, n2 - 1);
+  if (!latestCand) return false;
+  const report2 = listEvidenceReports(ctx.db, ctx.run.id).filter((r) => r.candidateId === latestCand).at(-1);
+  if (!report2) return false;
+  const failures = listFailures(ctx.db, ctx.run.id);
+  const earlier = /* @__PURE__ */ new Set();
+  for (let k = 1; k < escalatedAt; k++) {
+    const c = attemptCandidateId(ctx, k);
+    for (const f of failures) if (c !== null && f.candidateId === c) earlier.add(f.fingerprint);
+  }
+  if (earlier.size === 0) return false;
+  const now = new Set(failures.filter((f) => f.candidateId === latestCand).map((f) => f.fingerprint));
+  if ([...earlier].some((fp) => now.has(fp))) return false;
+  const history = attemptHistory(ctx);
+  const cur = history.find((h) => h.attempt === n2 - 1);
+  if (!cur) return false;
+  const before = [...history].reverse().find((h) => h.attempt < n2 - 1) ?? null;
+  const p = progressSince(before, cur);
+  return p.fixed_checks.length > 0 || p.localized_fault !== null || report2.verdict === "PASS" && p.made_progress;
+}
+function implementerPrompt(ctx, n2, workerId, auth = null, parallel = null) {
+  const contract = assertContract(ctx);
+  const blocked = blockingQuestions(ctx.db, ctx.run.id).criteria;
+  const stored = readJsonIfExists(briefPath(ctx, n2));
+  const briefs = stored ? [{ label: `${stored.source} repair brief`, content: stored.brief, ref: `briefs/attempt-${n2}.json` }] : [];
+  const refs = [];
+  const cand = ctx.candidate;
+  if (stored && cand) {
+    for (const row of listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id })) {
+      if (row.status === "PASSED" || !row.logPath || !row.logSha256) continue;
+      refs.push({ id: row.checkId, path: relative6(ctx.runDir, row.logPath), sha256: row.logSha256, summary: `${row.checkId} ${row.status} on candidate ${cand.seq}`, ...row.excerpt ? { excerpt: row.excerpt } : {} });
+    }
+  }
+  for (const e of auth?.executed ?? []) {
+    if (e.state !== "SUCCEEDED" || !e.path || !e.sha256) continue;
+    refs.push({ id: `approved-${e.key}`, path: e.path, sha256: e.sha256, summary: `output of the approved command \`${e.command}\`, run once by the controller (exit ${e.exit_code ?? "none"}${e.timed_out ? ", timed out" : ""})`, ...e.excerpt ? { excerpt: e.excerpt } : {} });
+  }
+  const task = [
+    parallel ? "Implement your work unit of the contract below in this worktree." : n2 === 1 || !stored ? "Implement the contract below in this worktree." : `Repair attempt ${n2}: act on the repair brief below; change the cause, not the tests that show it.`,
+    "Make the smallest coherent change. Add or extend behaviour tests that would fail without it. Stay inside the allowed paths.",
+    "Do not commit, push, or edit protected paths, policy, CI configuration or check definitions. The controller snapshots your worktree and runs the trusted checks itself.",
+    `Acceptance criteria: ${contract.acceptance_criteria.map((c) => `${c.id}${c.mandatory ? "" : " (optional)"}: ${c.statement}`).join(" | ")}`,
+    ...blocked.length > 0 ? [`Blocked, waiting for a person's decision (do not implement or guess them): ${blocked.join(", ")}. Implement the other criteria only.`] : [],
+    ...authorizationLines(auth),
+    ...parallelLines(ctx, n2, parallel)
+  ].join("\n");
+  return renderWorkerPrompt({
+    role: "implementer",
+    task,
+    contract,
+    policySummary: policySummary(ctx, { readOnly: false }),
+    candidate: { revision: cand?.commitSha ?? null, treeHash: cand?.treeHash ?? null, base: ctx.run.baseRevision },
+    briefs,
+    evidenceRefs: refs,
+    advisoryBlock: advisoryBlockFor(ctx, { role: "implementer", workerId, paths: contract.allowed_paths, checkIds: contract.required_check_ids, fingerprints: stored?.fingerprint ? [stored.fingerprint] : [] })
+  });
+}
+function parallelLines(ctx, n2, parallel) {
+  if (parallel) {
+    const others = parallel.all.filter((u) => u.id !== parallel.unit.id);
+    return [
+      `You are work unit ${parallel.unit.id} of ${parallel.all.length} parallel writers for this attempt, each in its own worktree. Implement only ${parallel.unit.criteria.join(", ")}; the other criteria are someone else's.`,
+      `Change only these files (plus a new behaviour test of your own for your criteria): ${parallel.unit.ownedPaths.join(", ")}.`,
+      `Do not touch what the other units own: ${others.flatMap((u) => u.ownedPaths).join(", ")}. The controller integrates the units one at a time; a unit that touches a file another unit changed is redone serially.`
+    ];
+  }
+  const dropped = serializedUnits(ctx, n2);
+  if (dropped.length === 0) return [];
+  return [
+    "Part of this attempt was implemented by parallel writers and is already in this worktree; keep it.",
+    ...dropped.map((d) => `Work unit ${d.unit} (${d.criteria.join(", ")}) could not be integrated in parallel (${d.reason}). Implement ${d.criteria.join(", ")} now, on top of the integrated work.`)
+  ];
+}
+function authorizationLines(auth) {
+  if (!auth) return [];
+  const lines = ["An earlier session of this attempt was denied operations the policy does not authorize, and a person answered. Continue from the current worktree: the earlier edits are there."];
+  for (const g of auth.granted) lines.push(`Authorized once, for this attempt only: ${g.summary}. ${approvedOutcome(auth.executed?.find((e) => e.key === g.key) ?? null)} Do not run it yourself: you are still refused it, and anything else outside the policy stops the run.`);
+  for (const g of auth.refused) lines.push(`Refused by a person: ${g.summary}. Do not try it again; finish the work inside the policy without it.`);
+  return lines;
+}
+function approvedOutcome(e) {
+  if (!e) return "The controller performs approved operations; the policy you run under is unchanged.";
+  if (e.state === "SUCCEEDED") return `The controller ran exactly this command once, in isolation, on your behalf (exit code ${e.exit_code ?? "none"}${e.timed_out ? ", timed out" : ""}); its output is the evidence artifact approved-${e.key} (${e.path}).`;
+  if (e.state === "UNKNOWN") return `The controller started it on your behalf, but its outcome is unknown (${e.note ?? "no detail"}); it is not run again.`;
+  return `Nothing was run for it: ${e.note ?? "there was no exact command to run"}.`;
+}
+function relative6(root, p) {
+  return p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p;
+}
+var ATTEMPT_EVENT, READ_ONLY_ROLES, AUTHORIZATION_RETRY_EVENT, LOST_RESTART_EVENT;
+var init_implementing = __esm({
+  "src/controller/steps/implementing.ts"() {
+    "use strict";
+    init_fsx();
+    init_errors();
+    init_events();
+    init_workers();
+    init_backoff();
+    init_budget();
+    init_reconcile();
+    init_prompt();
+    init_candidate();
+    init_freshness();
+    init_store();
+    init_repair();
+    init_diagnosing();
+    init_reviewing();
+    init_stale();
+    init_scheduler();
+    init_context2();
+    init_gates();
+    init_workers2();
+    init_parallel_writers();
+    init_authorization();
+    init_knowledge_hooks();
+    init_common();
+    init_obtain();
+    ATTEMPT_EVENT = "implementation.attempt";
+    READ_ONLY_ROLES = /* @__PURE__ */ new Set(["planner", "verifier", "reviewer", "inquisitor", "curator", "explorer"]);
+    AUTHORIZATION_RETRY_EVENT = "authorization.retry";
+    LOST_RESTART_EVENT = "recovery.worker-restart";
   }
 });
 
@@ -54967,7 +55084,7 @@ function diagnosisPrompt(ctx, fingerprint, failures, workerId, timeouts) {
     advisoryBlock: advisoryBlockFor(ctx, { role: "verifier", workerId, paths: contract.allowed_paths, checkIds: contract.required_check_ids, fingerprints: [fingerprint] })
   });
 }
-function timeoutContext(ctx, candidateId, probe = machineProbe(ctx)) {
+function timeoutContext(ctx, candidateId, probe2 = machineProbe(ctx)) {
   const rows = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId }).filter((r) => r.status === "TIMEOUT" || r.timedOut);
   if (rows.length === 0) return null;
   const base = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: null });
@@ -54980,12 +55097,12 @@ function timeoutContext(ctx, candidateId, probe = machineProbe(ctx)) {
       baselineMs: b && b.endedAt !== null ? b.endedAt - b.startedAt : null
     };
   });
-  return { checks, machine: probe };
+  return { checks, machine: probe2 };
 }
 function machineProbe(ctx) {
-  const probe = ctx.deps.schedulerProbe;
-  const load = probe ? void 0 : loadavg()[0];
-  return { cores: probe ? probe.availableParallelism() : availableParallelism2(), loadAvg1m: typeof load === "number" && Number.isFinite(load) && load > 0 ? Math.round(load * 100) / 100 : null, freeMemMb: Math.floor((probe ? probe.freemem() : freemem2()) / (1024 * 1024)) };
+  const probe2 = ctx.deps.schedulerProbe;
+  const load = probe2 ? void 0 : loadavg()[0];
+  return { cores: probe2 ? probe2.availableParallelism() : availableParallelism2(), loadAvg1m: typeof load === "number" && Number.isFinite(load) && load > 0 ? Math.round(load * 100) / 100 : null, freeMemMb: Math.floor((probe2 ? probe2.freemem() : freemem2()) / (1024 * 1024)) };
 }
 function describeTimeouts(t) {
   const parts = t.checks.map((c) => {
@@ -56777,8 +56894,8 @@ var init_loop = __esm({
         const timeoutMs = this.opts.stepTimeoutMs ?? 45 * 6e4;
         const graceMs = this.opts.stepAbortGraceMs ?? 6e4;
         let wedge = null;
-        const gaveUp = new Promise((resolve20) => {
-          wedge = setTimeout(() => resolve20("wedged"), timeoutMs + graceMs);
+        const gaveUp = new Promise((resolve21) => {
+          wedge = setTimeout(() => resolve21("wedged"), timeoutMs + graceMs);
           wedge.unref();
         });
         const timer = setTimeout(() => {
@@ -57093,7 +57210,7 @@ var init_loop = __esm({
 // src/controller/service.ts
 import { chmodSync as chmodSync7, existsSync as existsSync44, lstatSync as lstatSync8, mkdirSync as mkdirSync21, readFileSync as readFileSync28, readdirSync as readdirSync11, rmSync as rmSync16, rmdirSync, statSync as statSync14 } from "node:fs";
 import { hostname as hostname5 } from "node:os";
-import { dirname as dirname27, isAbsolute as isAbsolute18, join as join60 } from "node:path";
+import { dirname as dirname27, isAbsolute as isAbsolute19, join as join60 } from "node:path";
 function serviceLabel(repoRoot) {
   return `${SERVICE_LABEL_PREFIX}.${repoKey(repoRoot)}`;
 }
@@ -57124,7 +57241,7 @@ function shQuote(s) {
 }
 function renderLauncher(target) {
   for (const v of [target.node, target.entry]) {
-    if (!isAbsolute18(v) || /[\n\r\0]/.test(v)) throw new OrbitError("CONFIG_INVALID", `the launcher needs absolute paths without line breaks, got ${JSON.stringify(v)}`);
+    if (!isAbsolute19(v) || /[\n\r\0]/.test(v)) throw new OrbitError("CONFIG_INVALID", `the launcher needs absolute paths without line breaks, got ${JSON.stringify(v)}`);
   }
   return [
     "#!/bin/sh",
@@ -57192,7 +57309,7 @@ function refreshLauncher(input) {
   }
   const current = st.isFile() ? readLauncher(path) : null;
   if (!current) return "foreign";
-  if (!input.entry.endsWith(".mjs") || !isAbsolute18(input.entry) || !existsSync44(input.entry) || !isAbsolute18(input.nodePath) || !existsSync44(input.nodePath)) return "skipped";
+  if (!input.entry.endsWith(".mjs") || !isAbsolute19(input.entry) || !existsSync44(input.entry) || !isAbsolute19(input.nodePath) || !existsSync44(input.nodePath)) return "skipped";
   const ours = current.entry === input.entry || sameInstallation(current.entry, input.entry) || input.version !== void 0 && current.version !== void 0 && newerVersion(input.version, current.version);
   if (!ours) return "other-install";
   const version = input.version ?? current.version;
@@ -58398,12 +58515,127 @@ var init_doctor_plugins = __esm({
   }
 });
 
+// src/cli/commands/doctor-sandbox.ts
+import { mkdirSync as mkdirSync22, mkdtempSync as mkdtempSync6, realpathSync as realpathSync18, rmSync as rmSync17 } from "node:fs";
+import { tmpdir as tmpdir12 } from "node:os";
+import { basename as basename12, isAbsolute as isAbsolute20, join as join65, resolve as resolve16 } from "node:path";
+function checkWord(check) {
+  if (!check.shell) return check.command[0] ?? null;
+  return (check.command[0] ?? "").trim().split(/\s+/).find((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) ?? null;
+}
+async function probe(input, check, exe, args) {
+  const scratch = realpathSync18(mkdtempSync6(join65(tmpdir12(), "orbit-doctor-check-")));
+  let tmp = null;
+  try {
+    const checkout = join65(scratch, "checkout");
+    const home2 = join65(scratch, "home");
+    const artifacts = join65(scratch, "artifacts");
+    for (const d of [checkout, home2, artifacts]) mkdirSync22(d, { recursive: true, mode: 448 });
+    prepareCheckHome(home2);
+    tmp = prepareWorkerTmpDir(scratch);
+    const snapshot2 = { schema: "orbit.policy/1", run_id: "doctor", created_at: "", repo_root: input.repo ?? scratch, config: input.config, effective_protected_paths: [], check_config_hashes: {} };
+    const profile = profileForCheck({ worktree: checkout, check, snapshot: snapshot2, extraWritable: [artifacts, home2, tmp], homeDir: input.homeDir, env: { ...input.env } });
+    const env = checkEnv(check, { homeDir: home2, tmpDir: tmp, artifactsDir: artifacts }, input.env.PATH);
+    const shown = [basename12(exe), ...args].join(" ");
+    const wrapped = input.provider.wrap([exe, ...args], profile, { cwd: checkout, env });
+    let r;
+    try {
+      r = await (input.launch ?? launchWrapped)(wrapped.argv, { cwd: checkout, env: wrapped.env, timeoutMs: PROBE_TIMEOUT_MS });
+    } finally {
+      wrapped.cleanup();
+    }
+    if (r.exitCode === 0) return { kind: "ran", detail: `${check.id}: "${shown}" ran in the sandbox` };
+    const output = redact(r.output);
+    const failure = classifyNotExecuted({ checkId: check.id, output }) ?? classifyCouldNotRun({ checkId: check.id, output, insideRoots: [scratch, ...tmp ? [tmp] : []] });
+    if (failure) return { kind: "refused", failure, detail: `${check.id}: "${shown}" was refused in the sandbox: ${failure.cause}${failure.lines[0] ? ` (${JSON.stringify(failure.lines[0])})` : ""}` };
+    return { kind: "ran", detail: `${check.id}: "${shown}" ${r.exitCode === null ? "timed out" : `exited ${r.exitCode}`} in the sandbox, with no sandbox denial in its output${output ? `: ${oneLine(output, 160)}` : ""}` };
+  } finally {
+    rmSync17(scratch, { recursive: true, force: true });
+    if (tmp) rmSync17(tmp, { recursive: true, force: true });
+  }
+}
+async function checkSandboxCheck(input) {
+  const id = "checks.sandbox";
+  const result2 = (status3, summary, details2 = [], missing = null, fix = null) => ({ id, area: "checks", status: status3, summary, details: details2, missing, fix });
+  const checks = Object.values(input.config.checks).filter((c) => c.kind === "command");
+  if (checks.length === 0) return result2("pass", "not needed: no command check is defined");
+  const provider = input.provider;
+  if (!provider || !input.available) return result2("warn", "not checked: isolation is unavailable (see the isolation check)", [], "an available isolation provider");
+  if (provider.kind !== "sandbox-runtime") return result2("pass", `not needed: checks run under ${provider.kind}, not in an OS sandbox on this host`);
+  const repo = input.repo ? realpathSync18(input.repo) : null;
+  const details = [];
+  const refused = [];
+  let started = 0;
+  for (const check of checks) {
+    const word = checkWord(check);
+    if (!word || check.shell && SHELL_BUILTINS.has(word)) {
+      details.push(`${check.id}: not started (${word ? `shell builtin "${word}"` : "no command"})`);
+      continue;
+    }
+    const cwd = repo ? resolve16(repo, check.cwd) : process.cwd();
+    const found = word.includes("/") ? which(isAbsolute20(word) ? word : resolve16(cwd, word), input.env.PATH) : which(word, input.env.PATH);
+    if (!found) {
+      details.push(`${check.id}: not started ("${word}" was not found; see the checks entry)`);
+      continue;
+    }
+    const exe = realpathSync18(found);
+    if (repo && isWithin(exe, repo)) {
+      details.push(`${check.id}: not started ("${word}" is the repository's own code, which only a run executes)`);
+      continue;
+    }
+    started++;
+    try {
+      const out = await probe({ ...input, provider }, check, exe, PROBE_ARGS[basename12(exe)] ?? DEFAULT_PROBE_ARGS);
+      details.push(out.detail);
+      if (out.kind === "refused") refused.push({ check, failure: out.failure });
+    } catch (err) {
+      const why = err instanceof OrbitError ? err.message : oneLine(err instanceof Error ? err.message : String(err), 200);
+      details.push(`${check.id}: could not be started in the sandbox: ${why}`);
+      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: ["start-failed"], cause: "the check could not be started", lines: [why] } });
+    }
+  }
+  if (refused.length === 0) return result2("pass", started === 0 ? "no check executable outside the repository to start" : `${started} check executable(s) start in the sandbox`, details);
+  const status2 = refused.some((r) => r.check.mandatory) ? "fail" : "warn";
+  const ids = refused.map((r) => r.check.id).join(", ");
+  return result2(
+    status2,
+    `the sandbox refuses ${refused.length === 1 ? "the executable" : "the executables"} of ${refused.length === 1 ? "check" : "checks"} ${ids}; a run would block at its baseline`,
+    details,
+    "a check executable that can start in the check sandbox",
+    environmentFix(refused.map((r) => r.failure)) ?? 'see the line above and docs/troubleshooting.md, "A check cannot run in the sandbox"'
+  );
+}
+var launchWrapped, PROBE_TIMEOUT_MS, PROBE_ARGS, DEFAULT_PROBE_ARGS, SHELL_BUILTINS;
+var init_doctor_sandbox = __esm({
+  "src/cli/commands/doctor-sandbox.ts"() {
+    "use strict";
+    init_exec();
+    init_errors();
+    init_redact();
+    init_environment_block();
+    init_environment_failure();
+    init_runner();
+    init_profiles();
+    init_util();
+    init_io();
+    launchWrapped = async (argv2, opts) => {
+      const r = await execCapture(argv2, { ...opts, maxOutputBytes: 256 * 1024 });
+      return { exitCode: r.timedOut ? null : r.exitCode, output: `${r.stdout}
+${r.stderr}`.trim() };
+    };
+    PROBE_TIMEOUT_MS = 6e4;
+    PROBE_ARGS = { dotnet: ["help"], go: ["version"] };
+    DEFAULT_PROBE_ARGS = ["--version"];
+    SHELL_BUILTINS = /* @__PURE__ */ new Set(["cd", "export", "set", "test", "[", "true", "false", "echo", "exit", "exec", ":", "source", ".", "eval", "unset"]);
+  }
+});
+
 // src/cli/commands/doctor.ts
-import { accessSync as accessSync3, constants as constants4, existsSync as existsSync48, mkdtempSync as mkdtempSync6, readFileSync as readFileSync30, realpathSync as realpathSync18, rmSync as rmSync17, statSync as statSync15 } from "node:fs";
+import { accessSync as accessSync3, constants as constants4, existsSync as existsSync48, mkdtempSync as mkdtempSync7, readFileSync as readFileSync30, realpathSync as realpathSync19, rmSync as rmSync18, statSync as statSync15 } from "node:fs";
 import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
-import { homedir as homedir12, tmpdir as tmpdir12 } from "node:os";
-import { delimiter as delimiter4, isAbsolute as isAbsolute19, join as join65, resolve as resolve16 } from "node:path";
+import { homedir as homedir12, tmpdir as tmpdir13 } from "node:os";
+import { delimiter as delimiter4, isAbsolute as isAbsolute21, join as join66, resolve as resolve17 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
     try {
@@ -58413,12 +58645,12 @@ function which2(cmd, env, cwd = process.cwd()) {
     }
   };
   if (cmd.includes("/")) {
-    const p = isAbsolute19(cmd) ? cmd : resolve16(cwd, cmd);
+    const p = isAbsolute21(cmd) ? cmd : resolve17(cwd, cmd);
     return ok(p) ? p : null;
   }
   for (const dir of (env.PATH ?? "").split(delimiter4)) {
     if (!dir) continue;
-    const p = join65(dir, cmd);
+    const p = join66(dir, cmd);
     if (ok(p)) return p;
   }
   return null;
@@ -58522,19 +58754,19 @@ function checkStorage(p) {
   const { repo } = p;
   if (!repo) return warn2("storage", "storage", "no repository, so no state database to check", "a repository", null);
   const path = stateDbPath(repo);
-  const dir = join65(repo, ".orbit");
+  const dir = join66(repo, ".orbit");
   let db = null;
   try {
     if (!existsSync48(path)) {
-      const scratch = mkdtempSync6(join65(tmpdir12(), "orbit-doctor-"));
+      const scratch = mkdtempSync7(join66(tmpdir13(), "orbit-doctor-"));
       try {
-        db = openDb(join65(scratch, "probe.sqlite"));
+        db = openDb(join66(scratch, "probe.sqlite"));
         const mode2 = String((db.get("PRAGMA journal_mode") ?? {}).journal_mode);
         if (mode2.toLowerCase() !== "wal") return fail2("storage", "storage", `SQLite cannot use WAL on this filesystem (journal_mode=${mode2})`, "WAL journaling", "use a local disk, not a network or container bind mount");
       } finally {
         db?.close();
         db = null;
-        rmSync17(scratch, { recursive: true, force: true });
+        rmSync18(scratch, { recursive: true, force: true });
       }
       try {
         accessSync3(existsSync48(dir) ? dir : repo, constants4.W_OK);
@@ -58555,7 +58787,7 @@ function checkStorage(p) {
     db?.close();
   }
 }
-function checkWord(check) {
+function checkWord2(check) {
   if (check.shell) {
     const first = (check.command[0] ?? "").trim().split(/\s+/).find((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
     return first ?? null;
@@ -58569,8 +58801,8 @@ function checkConfiguredChecks(p) {
   const details = [];
   let status2 = "pass";
   for (const c of entries) {
-    const cwd = repo ? resolve16(repo, c.cwd) : ctx.cwd;
-    const word = checkWord(c);
+    const cwd = repo ? resolve17(repo, c.cwd) : ctx.cwd;
+    const word = checkWord2(c);
     const bump = (s) => {
       if (s === "fail" || s === "warn" && status2 === "pass") status2 = s;
     };
@@ -58580,11 +58812,11 @@ function checkConfiguredChecks(p) {
       bump(level);
       continue;
     }
-    if (c.shell && SHELL_BUILTINS.has(word)) {
+    if (c.shell && SHELL_BUILTINS2.has(word)) {
       details.push(`${c.id}: shell builtin "${word}" (not resolved)`);
       continue;
     }
-    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join65(repo, "node_modules", ".bin", word), ctx.env) : null);
+    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join66(repo, "node_modules", ".bin", word), ctx.env) : null);
     if (!found) {
       details.push(`${c.id}: "${word}" was not found${c.mandatory ? "" : " (optional check)"}${c.cwd !== "." ? ` (cwd ${c.cwd})` : ""}`);
       bump(level);
@@ -58592,7 +58824,7 @@ function checkConfiguredChecks(p) {
     }
     const script = c.shell ? void 0 : packageScriptOf(c.command);
     if (script) {
-      const pj = join65(cwd, "package.json");
+      const pj = join66(cwd, "package.json");
       let defined = false;
       try {
         defined = typeof JSON.parse(readFileSync30(pj, "utf8")).scripts?.[script] === "string";
@@ -58654,7 +58886,7 @@ async function checkIsolation(p) {
   }
   if (!st.ok) {
     const pluginRoot = ctx.env.ORBIT_PLUGIN_ROOT;
-    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync48(join65(pluginRoot, "package.json")) && !existsSync48(join65(pluginRoot, "node_modules"))) {
+    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync48(join66(pluginRoot, "package.json")) && !existsSync48(join66(pluginRoot, "node_modules"))) {
       return {
         check: fail2(
           "isolation",
@@ -58773,9 +59005,9 @@ async function checkModels(p, registry, facts) {
   const claudeVersion = Object.values(facts.capabilities).find((c) => c.provider === "claude" || providerKindSafe(c.provider) === "claude")?.version ?? null;
   const details = [];
   let usable = 0;
-  const probe = p.live ? liveProbeOf(facts.adapters.claude) : null;
+  const probe2 = p.live ? liveProbeOf(facts.adapters.claude) : null;
   const claudeCred = facts.credentials.claude;
-  const canProbe = probe !== null && claudeCred !== void 0 && claudeCred.state !== "missing" && claudeCred.state !== "invalid" && claudeCred.state !== "expired";
+  const canProbe = probe2 !== null && claudeCred !== void 0 && claudeCred.state !== "missing" && claudeCred.state !== "invalid" && claudeCred.state !== "expired";
   for (const e of registry.list().filter((m) => m.provider === "claude")) {
     const match = allowMatch(e, config.routing.allowed_models);
     const surface = e.surfaces.find((s) => s.surface === "claude-cli");
@@ -58790,7 +59022,7 @@ async function checkModels(p, registry, facts) {
       usable++;
       let live = "";
       if (canProbe) {
-        const st = await probe({ model: e.eligibility.cliAlias ?? e.modelId, timeoutMs: 9e4 }).catch((err) => ({ state: "unknown", method: null, detail: err instanceof Error ? err.message : String(err) }));
+        const st = await probe2({ model: e.eligibility.cliAlias ?? e.modelId, timeoutMs: 9e4 }).catch((err) => ({ state: "unknown", method: null, detail: err instanceof Error ? err.message : String(err) }));
         live = st.state === "valid" ? "; live probe answered" : `; live probe inconclusive (${st.state}: ${flat(st.detail)})`;
       }
       details.push(`${e.modelId}: eligible, ${state}${live}`);
@@ -58837,9 +59069,9 @@ function packageInstalled(req, name) {
 function playwrightCache(env, home2, platform3) {
   const override = env.PLAYWRIGHT_BROWSERS_PATH;
   if (override && override !== "0") return override;
-  if (platform3 === "darwin") return join65(home2, "Library", "Caches", "ms-playwright");
-  if (platform3 === "win32") return join65(env.LOCALAPPDATA ?? join65(home2, "AppData", "Local"), "ms-playwright");
-  return join65(env.XDG_CACHE_HOME ?? join65(home2, ".cache"), "ms-playwright");
+  if (platform3 === "darwin") return join66(home2, "Library", "Caches", "ms-playwright");
+  if (platform3 === "win32") return join66(env.LOCALAPPDATA ?? join66(home2, "AppData", "Local"), "ms-playwright");
+  return join66(env.XDG_CACHE_HOME ?? join66(home2, ".cache"), "ms-playwright");
 }
 function checkPlaywright(p) {
   const { config, repo, ctx } = p;
@@ -58847,7 +59079,7 @@ function checkPlaywright(p) {
   if (!wanted) return pass("playwright", "ui", "not required: no ui section and no playwright check is configured");
   const level = fail2;
   if (!repo) return level("playwright", "ui", "no repository to look for Playwright in", "a repository", null);
-  const req = createRequire4(join65(repo, "package.json"));
+  const req = createRequire4(join66(repo, "package.json"));
   let pwTest = null;
   try {
     pwTest = req.resolve("@playwright/test/package.json");
@@ -58865,7 +59097,7 @@ function checkPlaywright(p) {
   if (!core) return level("playwright", "ui", "playwright-core is missing next to @playwright/test", "playwright-core", "reinstall dependencies");
   let revisions = {};
   try {
-    const bj = JSON.parse(readFileSync30(join65(core, "..", "browsers.json"), "utf8"));
+    const bj = JSON.parse(readFileSync30(join66(core, "..", "browsers.json"), "utf8"));
     revisions = Object.fromEntries((bj.browsers ?? []).map((b) => [b.name, b.revision]));
   } catch {
     details.push("browsers.json could not be read; browser revisions are not checked");
@@ -58876,7 +59108,7 @@ function checkPlaywright(p) {
   for (const b of names) {
     const dirs = b === "chromium" ? ["chromium", "chromium_headless_shell"] : [b];
     const revs = dirs.map((d) => ({ d, rev: revisions[d] ?? revisions[b] ?? null }));
-    const present = revs.some((r) => r.rev ? existsSync48(join65(cache2, `${r.d}-${r.rev}`)) : false);
+    const present = revs.some((r) => r.rev ? existsSync48(join66(cache2, `${r.d}-${r.rev}`)) : false);
     details.push(`${b}: ${present ? `installed (${cache2})` : `not found in ${cache2}`}`);
     if (!present && revs.some((r) => r.rev)) missing.push(b);
   }
@@ -58906,7 +59138,7 @@ function headlessShellLayouts(arch) {
 function headlessChromiumOf(repo, cache2, arch = process.arch) {
   let browsersJson;
   try {
-    browsersJson = join65(createRequire4(join65(repo, "package.json")).resolve("playwright-core/package.json"), "..", "browsers.json");
+    browsersJson = join66(createRequire4(join66(repo, "package.json")).resolve("playwright-core/package.json"), "..", "browsers.json");
   } catch {
     return { problem: "Playwright is not installed in this repository" };
   }
@@ -58919,8 +59151,8 @@ function headlessChromiumOf(repo, cache2, arch = process.arch) {
     return { problem: `Playwright's browsers.json could not be read (${browsersJson})` };
   }
   if (!revision) return { problem: "Playwright's browsers.json names no Chromium revision" };
-  const dir = join65(cache2, `chromium_headless_shell-${revision}`);
-  const exe = headlessShellLayouts(arch).map((rel) => join65(dir, rel)).find((p) => isExecutable2(p));
+  const dir = join66(cache2, `chromium_headless_shell-${revision}`);
+  const exe = headlessShellLayouts(arch).map((rel) => join66(dir, rel)).find((p) => isExecutable2(p));
   return exe ? { exe, revision } : { problem: `Playwright's headless Chromium (revision ${revision}) is not installed in ${cache2}` };
 }
 function noncePage() {
@@ -58950,19 +59182,19 @@ async function browserIsolationCheck(input) {
   if ("problem" in browser) {
     return warn2(id, "ui", `not launched: ${browser.problem}`, "Playwright's headless Chromium for the repository's Playwright", "npm install -D @playwright/test, then npx playwright install chromium", [info.detail, limitation]);
   }
-  const dir = realpathSync18(mkdtempSync6(join65(tmpdir12(), "orbit-doctor-browser-")));
+  const dir = realpathSync19(mkdtempSync7(join66(tmpdir13(), "orbit-doctor-browser-")));
   try {
-    const repo = realpathSync18(input.repo);
-    const exe = realpathSync18(browser.exe);
+    const repo = realpathSync19(input.repo);
+    const exe = realpathSync19(browser.exe);
     const denyReadPaths = [...credentialDenyPaths({ homeDir: home2, env: input.env }), ...exe.startsWith(`${repo}/`) ? [] : [repo]];
     const profile = { writablePaths: [dir], denyReadPaths, allowedHosts: [], allowLocalBinding: false, chromiumMachRendezvous: true, limits: { timeoutMs: 9e4, memoryMb: null, cpus: null, pids: null } };
     const env = { ...safeBaseEnv(input.env), TMPDIR: dir };
     const page = noncePage();
-    const argv2 = [browser.exe, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", `--user-data-dir=${join65(dir, "profile")}`, "--dump-dom", page.url];
+    const argv2 = [browser.exe, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", `--user-data-dir=${join66(dir, "profile")}`, "--dump-dom", page.url];
     const wrapped = provider.wrap(argv2, profile, { cwd: dir, env });
     let r;
     try {
-      r = await (input.launch ?? launchWrapped)(wrapped.argv, { cwd: dir, env: wrapped.env, timeoutMs: 9e4 });
+      r = await (input.launch ?? launchWrapped2)(wrapped.argv, { cwd: dir, env: wrapped.env, timeoutMs: 9e4 });
     } finally {
       wrapped.cleanup();
     }
@@ -58977,7 +59209,7 @@ async function browserIsolationCheck(input) {
   } catch (err) {
     return fail2(id, "ui", `headless Chromium could not be launched under srt: ${errText(err, 240)}`, "a sandbox-runtime that can wrap the browser", "see docs/troubleshooting.md", [info.detail, limitation]);
   } finally {
-    rmSync17(dir, { recursive: true, force: true });
+    rmSync18(dir, { recursive: true, force: true });
   }
 }
 async function checkDelivery(p) {
@@ -59038,7 +59270,7 @@ async function checkService(p) {
   if (linger === "no") details.push(`lingering is off for ${ctx.user}: the service stops at logout (loginctl enable-linger ${ctx.user})`);
   if (!status2.installed) return warn2("service", "service", "no service is installed, so runs only progress while a terminal is attached", "an installed background service (survives terminal closure and restarts after failure)", orbitHint("service install", void 0, { quote: false }), details);
   if (status2.loaded !== true) return warn2("service", "service", `service installed but ${status2.loaded === false ? "not loaded" : `state unknown (${status2.detail})`}`, "a loaded service", `${orbitHint("service install", void 0, { quote: false })} (reloads it)`, details);
-  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join65(ctx.orbitHome, "logs")}, then ${orbitHint("service install", void 0, { quote: false })} to restart it`, details);
+  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join66(ctx.orbitHome, "logs")}, then ${orbitHint("service install", void 0, { quote: false })} to restart it`, details);
   if (linger === "no") return warn2("service", "service", "service is loaded; lingering is off", "systemd lingering", `loginctl enable-linger ${ctx.user}`, details);
   return pass("service", "service", live ? "service loaded and its controller heartbeat is fresh" : "service loaded; the controller has not published a heartbeat yet", details);
 }
@@ -59121,6 +59353,7 @@ async function runDoctor(ctx, opts) {
     "ui",
     () => browserIsolationCheck({ wanted: config.ui !== null || Object.values(config.checks).some((c) => c.kind === "playwright"), provider: isoFacts.provider, available: isoFacts.available, repo, env: ctx.env, homeDir: ctx.homeDir })
   );
+  await safely("checks.sandbox", "checks", () => checkSandboxCheck({ config, repo, provider: isoFacts.provider, available: isoFacts.available, env: ctx.env, homeDir: ctx.homeDir }));
   await safely("delivery", "delivery", () => checkDelivery(p));
   await safely("gitleaks", "security", () => checkGitleaks(p));
   await safely("service", "service", () => checkService(p));
@@ -59151,7 +59384,7 @@ async function doctorCommand(args, ctx) {
   line(ctx.io, `${report2.counts.pass} passed, ${report2.counts.warn} warning(s), ${report2.counts.fail} failed`);
   return report2.ok ? EXIT.OK : EXIT.FAILURE;
 }
-var DOCTOR_OPTIONS, MIN_NODE, MIN_GIT, SHELL_BUILTINS, SRT_INSTALL, launchWrapped;
+var DOCTOR_OPTIONS, MIN_NODE, MIN_GIT, SHELL_BUILTINS2, SRT_INSTALL, launchWrapped2;
 var init_doctor = __esm({
   "src/cli/commands/doctor.ts"() {
     "use strict";
@@ -59184,14 +59417,15 @@ var init_doctor = __esm({
     init_invocation();
     init_review_fix();
     init_doctor_plugins();
+    init_doctor_sandbox();
     DOCTOR_OPTIONS = {
       probe: { type: "boolean", description: "also make tiny live requests (a few cents): one per provider that has a probe to detect expired or revoked credentials, and one per eligible Claude model" }
     };
     MIN_NODE = "22.16.0";
     MIN_GIT = "2.31.0";
-    SHELL_BUILTINS = /* @__PURE__ */ new Set(["cd", "export", "set", "test", "[", "true", "false", "echo", "exit", "exec", ":", "source", ".", "eval", "unset"]);
+    SHELL_BUILTINS2 = /* @__PURE__ */ new Set(["cd", "export", "set", "test", "[", "true", "false", "echo", "exit", "exec", ":", "source", ".", "eval", "unset"]);
     SRT_INSTALL = "npm install --global @anthropic-ai/sandbox-runtime";
-    launchWrapped = async (argv2, opts) => {
+    launchWrapped2 = async (argv2, opts) => {
       const r = await execCapture(argv2, { ...opts, maxOutputBytes: 256 * 1024 });
       return { exitCode: r.timedOut ? null : r.exitCode, output: `${r.stdout}
 ${r.stderr}`.trim() };
@@ -59235,10 +59469,10 @@ var init_gc = __esm({
 });
 
 // src/cli/commands/init.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync49, mkdirSync as mkdirSync22, readFileSync as readFileSync31, writeFileSync as writeFileSync9 } from "node:fs";
-import { dirname as dirname30, join as join66 } from "node:path";
+import { appendFileSync as appendFileSync2, existsSync as existsSync49, mkdirSync as mkdirSync23, readFileSync as readFileSync31, writeFileSync as writeFileSync9 } from "node:fs";
+import { dirname as dirname30, join as join67 } from "node:path";
 function templatePath() {
-  return join66(orbitInstallDir(), "templates", "config.yaml");
+  return join67(orbitInstallDir(), "templates", "config.yaml");
 }
 function templateText() {
   if (true) return `# Orbit configuration (.orbit/config.yaml)
@@ -59682,7 +59916,7 @@ async function excludeFile(ctx, repo) {
 async function initCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
-  const configPath = join66(repo, ".orbit", "config.yaml");
+  const configPath = join67(repo, ".orbit", "config.yaml");
   let config;
   let derivedPaths = [];
   let protectedAdded = [];
@@ -59691,7 +59925,7 @@ async function initCommand(args, ctx) {
   if (existsSync49(configPath)) config = "exists";
   else {
     let text2 = templateText();
-    mkdirSync22(dirname30(configPath), { recursive: true });
+    mkdirSync23(dirname30(configPath), { recursive: true });
     const proposal = await proposeScope(ctx, repo);
     derivedPaths = proposal.allowed;
     excludedDirs = proposal.excluded;
@@ -59713,7 +59947,7 @@ async function initCommand(args, ctx) {
     }
   }
   const excludePath = await excludeFile(ctx, repo);
-  mkdirSync22(dirname30(excludePath), { recursive: true });
+  mkdirSync23(dirname30(excludePath), { recursive: true });
   const current = existsSync49(excludePath) ? readFileSync31(excludePath, "utf8") : "";
   const have = new Set(current.split("\n").map((l) => l.trim()));
   const missing = EXCLUDE_RULES.filter((r) => !have.has(r));
@@ -59778,27 +60012,27 @@ var init_init = __esm({
 
 // src/cli/commands/internal.ts
 import { spawn as spawn6 } from "node:child_process";
-import { mkdirSync as mkdirSync23 } from "node:fs";
-import { isAbsolute as isAbsolute20 } from "node:path";
+import { mkdirSync as mkdirSync24 } from "node:fs";
+import { isAbsolute as isAbsolute22 } from "node:path";
 async function shimCommand(rawArgs) {
   return shimMain(rawArgs);
 }
 async function checkRunnerCommand(rawArgs, ctx) {
   const [runDir2, checkDir, ...extra] = rawArgs;
-  if (!runDir2 || !checkDir || extra.length > 0 || !isAbsolute20(runDir2) || !isAbsolute20(checkDir)) {
+  if (!runDir2 || !checkDir || extra.length > 0 || !isAbsolute22(runDir2) || !isAbsolute22(checkDir)) {
     ctx.io.err("usage: orbit check-runner <absolute run dir> <absolute check dir>\n");
     return EXIT.USAGE;
   }
-  mkdirSync23(runDir2, { recursive: true });
+  mkdirSync24(runDir2, { recursive: true });
   const shim = ensureShim(runDir2);
-  return new Promise((resolve20) => {
+  return new Promise((resolve21) => {
     const child = spawn6(process.execPath, [shim, checkDir], { stdio: "inherit", env: process.env });
     child.on("error", (err) => {
       ctx.io.err(`check-runner: cannot start the check shim: ${err.message}
 `);
-      resolve20(EXIT.FAILURE);
+      resolve21(EXIT.FAILURE);
     });
-    child.on("exit", (code2, signal) => resolve20(code2 ?? (signal ? 128 : EXIT.FAILURE)));
+    child.on("exit", (code2, signal) => resolve21(code2 ?? (signal ? 128 : EXIT.FAILURE)));
   });
 }
 var init_internal = __esm({
@@ -59918,10 +60152,10 @@ var init_ingest = __esm({
 });
 
 // src/cli/commands/learn.ts
-import { existsSync as existsSync50, mkdirSync as mkdirSync24, readFileSync as readFileSync32, statSync as statSync16 } from "node:fs";
-import { basename as basename12, isAbsolute as isAbsolute21, join as join67, relative as relative7, resolve as resolve17 } from "node:path";
+import { existsSync as existsSync50, mkdirSync as mkdirSync25, readFileSync as readFileSync32, statSync as statSync16 } from "node:fs";
+import { basename as basename13, isAbsolute as isAbsolute23, join as join68, relative as relative7, resolve as resolve18 } from "node:path";
 function knowledgePath(ctx, repo, global) {
-  return global ? join67(ctx.orbitHome, "knowledge.sqlite") : join67(repo, ".orbit", "knowledge.sqlite");
+  return global ? join68(ctx.orbitHome, "knowledge.sqlite") : join68(repo, ".orbit", "knowledge.sqlite");
 }
 function openExisting(ctx, repo, global) {
   const path = knowledgePath(ctx, repo, global);
@@ -59994,9 +60228,9 @@ async function learnExportCommand(args, ctx) {
     const doc = JSON.stringify(store.exportJsonLd(), null, 2);
     const out = args.str("out");
     if (out) {
-      atomicWrite(resolve17(ctx.cwd, out), `${doc}
+      atomicWrite(resolve18(ctx.cwd, out), `${doc}
 `);
-      line(ctx.io, `exported ${store.count()} lesson(s) as JSON-LD to ${resolve17(ctx.cwd, out)}`);
+      line(ctx.io, `exported ${store.count()} lesson(s) as JSON-LD to ${resolve18(ctx.cwd, out)}`);
     } else ctx.io.out(`${doc}
 `);
     return EXIT.OK;
@@ -60035,13 +60269,13 @@ async function readSource(ctx, repo, ref2, label) {
     }
     return { kind: "url", ref: ref2, content: Buffer.concat(chunks).toString("utf8") };
   }
-  const path = resolve17(ctx.cwd, ref2);
+  const path = resolve18(ctx.cwd, ref2);
   if (!existsSync50(path)) throw new OrbitError("NOT_FOUND", `${path} does not exist`);
   const st = statSync16(path);
   if (!st.isFile()) throw new OrbitError("SCHEMA_INVALID", `${path} is not a regular file`);
   if (st.size > FETCH_MAX_BYTES) throw new OrbitError("SCHEMA_INVALID", `${path} is larger than ${FETCH_MAX_BYTES} bytes`);
   const rel = relative7(repo, path);
-  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute21(rel) ? rel : basename12(path), content: readFileSync32(path, "utf8") };
+  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute23(rel) ? rel : basename13(path), content: readFileSync32(path, "utf8") };
 }
 async function runIngestCurator(ctx, repo, config, prompt) {
   if (!(config.knowledge.curator_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.curator_budget_usd is 0, so no curator may run; raise it, or supply the curator output with --curator-output");
@@ -60052,8 +60286,8 @@ async function runIngestCurator(ctx, repo, config, prompt) {
     if (!deps.adapters.claude) throw new OrbitError("PROVIDER_UNAVAILABLE", "no claude provider is configured; the curator runs on Claude");
     deps.registry.seed();
     const id = `ingest-${ctx.clock.now().toString(36)}`;
-    const dir = join67(ctx.orbitHome, "ingest", repoKey(repo), id);
-    mkdirSync24(dir, { recursive: true, mode: 448 });
+    const dir = join68(ctx.orbitHome, "ingest", repoKey(repo), id);
+    mkdirSync25(dir, { recursive: true, mode: 448 });
     const snap = snapshotPolicy(config, { runId: id, repoRoot: repo, runDir: dir, clock: ctx.clock });
     const out = await runCurator(
       { deps, clock: ctx.clock, snapshot: snap.snapshot, policyPath: snap.path, policyHash: snap.hash, runId: id, dir, budgetUsd: config.knowledge.curator_budget_usd, env: ctx.env, homeDir: ctx.homeDir },
@@ -60082,14 +60316,14 @@ async function learnIngestCommand(args, ctx) {
   const prepared = args.str("curator-output");
   if (prepared) {
     try {
-      output = JSON.parse(readFileSync32(resolve17(ctx.cwd, prepared), "utf8"));
+      output = JSON.parse(readFileSync32(resolve18(ctx.cwd, prepared), "utf8"));
     } catch (err) {
       throw new OrbitError("SCHEMA_INVALID", `${prepared} is not readable JSON: ${err instanceof Error ? oneLine(err.message, 120) : "error"}`);
     }
   } else ({ output, model } = await runIngestCurator(ctx, repo, config, task.prompt));
   const result2 = acceptIngestOutput(output, source, ctx.clock, model ? { curatorModel: model } : {});
-  mkdirSync24(join67(repo, ".orbit"), { recursive: true });
-  const store = KnowledgeStore.open(join67(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
+  mkdirSync25(join68(repo, ".orbit"), { recursive: true });
+  const store = KnowledgeStore.open(join68(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const created = [];
   const merged = [];
   const rejected = [...result2.rejected];
@@ -60165,7 +60399,7 @@ async function learnEvalCommand(args, ctx) {
   if (!(config.knowledge.eval_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.eval_budget_usd is 0, which disables replay evaluations and with them automatic overlay adoption; set a budget to evaluate");
   const metricsFile = args.str("metrics");
   const db = openState(repo);
-  const store = KnowledgeStore.open(join67(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
+  const store = KnowledgeStore.open(join68(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const runner = metricsFile ? null : ctx.seams.evalRunner ? budgeted(ctx.seams.evalRunner, config.knowledge.eval_budget_usd) : new ReplayEvalRunner({
     repoRoot: repo,
     config,
@@ -60200,7 +60434,7 @@ async function learnEvalCommand(args, ctx) {
       if (metricsFile) {
         let m;
         try {
-          m = JSON.parse(readFileSync32(resolve17(ctx.cwd, metricsFile), "utf8"));
+          m = JSON.parse(readFileSync32(resolve18(ctx.cwd, metricsFile), "utf8"));
         } catch (err) {
           throw new OrbitError("SCHEMA_INVALID", `${metricsFile} is not readable JSON: ${err instanceof Error ? oneLine(err.message, 120) : "error"}`);
         }
@@ -60293,7 +60527,7 @@ var init_learn2 = __esm({
 
 // src/cli/commands/logs.ts
 import { closeSync as closeSync9, existsSync as existsSync51, fstatSync as fstatSync4, openSync as openSync9, readSync as readSync5, statSync as statSync17 } from "node:fs";
-import { dirname as dirname31, join as join68 } from "node:path";
+import { dirname as dirname31, join as join69 } from "node:path";
 function readTail(path, lines) {
   const size = statSync17(path).size;
   const fd = openSync9(path, "r");
@@ -60367,13 +60601,13 @@ async function logsCommand(args, ctx) {
         sources.push({ ...s, offset: 0 });
       };
       if (wantController) {
-        add({ label: "controller", kind: "controller", path: join68(ctx.orbitHome, "logs", "controller.jsonl"), runId: run.id });
-        add({ label: "controller", kind: "controller", path: join68(runDir2, "logs", "controller.jsonl") });
+        add({ label: "controller", kind: "controller", path: join69(ctx.orbitHome, "logs", "controller.jsonl"), runId: run.id });
+        add({ label: "controller", kind: "controller", path: join69(runDir2, "logs", "controller.jsonl") });
       }
       if (wantWorkers) {
         for (const w of listWorkers(db, { runId: run.id })) {
           if (args.str("worker") && w.id !== args.str("worker")) continue;
-          for (const f of ["log.jsonl", "stderr.log", "shim.log"]) add({ label: `${w.id}${f === "log.jsonl" ? "" : `:${f.split(".")[0]}`}`, kind: "worker", path: join68(w.workerDir, f) });
+          for (const f of ["log.jsonl", "stderr.log", "shim.log"]) add({ label: `${w.id}${f === "log.jsonl" ? "" : `:${f.split(".")[0]}`}`, kind: "worker", path: join69(w.workerDir, f) });
         }
       }
     };
@@ -60555,14 +60789,14 @@ async function modelsRefreshCommand(args, ctx) {
           }
         }
         if (args.bool("probe")) {
-          const probe = adapter.probeCredentials;
-          if (typeof probe !== "function") {
+          const probe2 = adapter.probeCredentials;
+          if (typeof probe2 !== "function") {
             notes.push(`  --probe: ${id} has no live probe`);
             continue;
           }
           for (const e of registry.list().filter((m) => m.provider === "claude" && allowMatch(m, config.routing.allowed_models) !== null)) {
             if (e.surfaces.some((s) => s.surface === "claude-cli" && s.available === false)) continue;
-            const st = await probe.call(adapter, { model: e.eligibility.cliAlias ?? e.modelId, timeoutMs: 9e4 });
+            const st = await probe2.call(adapter, { model: e.eligibility.cliAlias ?? e.modelId, timeoutMs: 9e4 });
             if (st.state === "valid") {
               registry.markAvailability(e.modelId, "claude-cli", true, `live probe succeeded (${st.method ?? "credential"})`);
               notes.push(`  ${e.modelId}: validated by a live request`);
@@ -60761,7 +60995,7 @@ var init_release2 = __esm({
 
 // src/cli/commands/report.ts
 import { existsSync as existsSync53, readFileSync as readFileSync33 } from "node:fs";
-import { dirname as dirname32, join as join69 } from "node:path";
+import { dirname as dirname32, join as join70 } from "node:path";
 async function reportCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   if (args.bool("learning")) return withState(repo, (db) => learningReport(ctx, repo, db, args.bool("json")));
@@ -60769,8 +61003,8 @@ async function reportCommand(args, ctx) {
   return withState(repo, (db) => {
     const run = findRunByPrefix(db, id);
     const runDir2 = dirname32(run.policyPath);
-    const finalMd = join69(runDir2, "final.md");
-    const finalJson = join69(runDir2, "final.json");
+    const finalMd = join70(runDir2, "final.md");
+    const finalJson = join70(runDir2, "final.json");
     const asJson = args.bool("json");
     if (isTerminal(run.state) && !args.bool("interim") && existsSync53(finalMd)) {
       if (asJson) {
@@ -60801,7 +61035,7 @@ function snapshotOrNull(path, hash) {
 function learningReport(ctx, repo, db, asJson) {
   const runs = db.all("SELECT id, state, created_at FROM runs WHERE state IN ('SUCCEEDED','EXHAUSTED','IMPOSSIBLE','BLOCKED') ORDER BY created_at");
   const windows = [{ label: "base prompt", from: 0, to: Number.POSITIVE_INFINITY }];
-  const kPath = join69(repo, ".orbit", "knowledge.sqlite");
+  const kPath = join70(repo, ".orbit", "knowledge.sqlite");
   const overlays = [];
   if (existsSync53(kPath)) {
     const store = KnowledgeStore.open(kPath, { clock: ctx.clock });
@@ -60872,7 +61106,7 @@ var init_report4 = __esm({
 // src/cli/admission.ts
 import { existsSync as existsSync54 } from "node:fs";
 import { createRequire as createRequire5 } from "node:module";
-import { join as join70 } from "node:path";
+import { join as join71 } from "node:path";
 async function admitRun(ctx, input) {
   const check = ctx.seams.admission ?? checkAdmission;
   const refusal = await check(ctx, input);
@@ -60891,7 +61125,7 @@ async function repositoryHasCommits(repo) {
 }
 function playwrightInstalled(repo) {
   try {
-    createRequire5(join70(repo, "package.json")).resolve("@playwright/test/package.json");
+    createRequire5(join71(repo, "package.json")).resolve("@playwright/test/package.json");
     return true;
   } catch {
     return false;
@@ -61008,7 +61242,7 @@ var init_admission = __esm({
 
 // src/cli/commands/run.ts
 import { existsSync as existsSync55 } from "node:fs";
-import { resolve as resolve18 } from "node:path";
+import { resolve as resolve19 } from "node:path";
 async function runCommand(args, ctx) {
   const usage = 'orbit run --goal "<goal>" [--mode <mode>] [--environment <name>] [--policy <path>] [--foreground | --detach]';
   if (args.bool("foreground") && args.bool("detach")) throw new UsageError("--foreground and --detach cannot be combined", usage);
@@ -61020,8 +61254,8 @@ async function runCommand(args, ctx) {
   if (!goal) throw new UsageError('a goal is required: orbit run --goal "..."', usage);
   const repo = await resolveRepo(ctx, args.str("repo"));
   const policy = args.str("policy");
-  if (policy !== void 0 && !existsSync55(resolve18(ctx.cwd, policy))) throw new OrbitError("NOT_FOUND", `policy file ${resolve18(ctx.cwd, policy)} does not exist; check the --policy path`);
-  const config = loadConfig(repo, policy ? resolve18(ctx.cwd, policy) : void 0, mode ? { mode } : {});
+  if (policy !== void 0 && !existsSync55(resolve19(ctx.cwd, policy))) throw new OrbitError("NOT_FOUND", `policy file ${resolve19(ctx.cwd, policy)} does not exist; check the --policy path`);
+  const config = loadConfig(repo, policy ? resolve19(ctx.cwd, policy) : void 0, mode ? { mode } : {});
   const environment = args.str("environment");
   if (environment !== void 0) {
     const why = releaseEnvironmentProblem(config, environment);
@@ -61029,11 +61263,11 @@ async function runCommand(args, ctx) {
   }
   let service = null;
   if (existsSync55(stateDbPath(repo))) {
-    const probe = openState(repo);
+    const probe2 = openState(repo);
     try {
-      service = liveServiceController(probe, ctx.clock.now());
+      service = liveServiceController(probe2, ctx.clock.now());
     } finally {
-      probe.close();
+      probe2.close();
     }
   }
   const foreground = args.bool("foreground") ? true : args.bool("detach") ? false : service === null;
@@ -61085,7 +61319,7 @@ var init_run = __esm({
 });
 
 // src/cli/commands/repair.ts
-import { resolve as resolve19 } from "node:path";
+import { resolve as resolve20 } from "node:path";
 function runArgv(args, goal) {
   const argv2 = ["--goal", goal];
   for (const name of ["repo", "mode", "policy"]) {
@@ -61147,7 +61381,7 @@ async function repairCommand(args, ctx) {
         line(ctx.io, `run ${after.id}: repairing failure ${fingerprint}; the controller writes the brief to ${brief}. Driving it in the foreground (Ctrl-C pauses it)`);
       }
       const policy = args.str("policy");
-      const config = loadConfig(repo, policy ? resolve19(ctx.cwd, policy) : void 0);
+      const config = loadConfig(repo, policy ? resolve20(ctx.cwd, policy) : void 0);
       const result2 = await driveForeground(ctx, { repoRoot: repo, config, db, runId: after.id, fromStart: false, json: args.bool("json") });
       return result2.exitCode;
     }
@@ -61682,7 +61916,7 @@ var init_status = __esm({
 });
 
 // src/cli/commands/verify.ts
-import { dirname as dirname33, isAbsolute as isAbsolute22, join as join71, relative as relative8 } from "node:path";
+import { dirname as dirname33, isAbsolute as isAbsolute24, join as join72, relative as relative8 } from "node:path";
 function exitCodeForVerdict(verdict) {
   return verdict === "PASS" ? EXIT.OK : verdict === "FAIL" ? EXIT.VERIFY_FAILED : EXIT.VERIFY_INCOMPLETE;
 }
@@ -61733,7 +61967,7 @@ async function verifyCandidate(rc) {
   if (!rc.run.baseRevision) throw new OrbitError("TRANSITION_INVALID", `run ${rc.run.id} has no base revision; preflight did not finish`);
   const snapshot2 = rc.snapshot;
   const scope = cand.scope ?? await inspectScope({ repoRoot: rc.run.repoRoot, baseRev: rc.run.baseRevision, candidateRev: cand.commitSha, snapshot: snapshot2, contractAllowedPaths: contract.allowed_paths });
-  const checkoutDir = join71(runWorktreeRoot(rc), `verify-${cand.seq}`);
+  const checkoutDir = join72(runWorktreeRoot(rc), `verify-${cand.seq}`);
   await cleanupCandidateCheckout(rc.run.repoRoot, checkoutDir).catch(() => {
   });
   await materializeCandidate(rc.run.repoRoot, cand.commitSha, checkoutDir, { readOnly: false });
@@ -61758,7 +61992,7 @@ function print(ctx, repo, asJson, o, contractJson) {
   const statements = new Map(contract.acceptance_criteria.map((c) => [c.id, c]));
   const runDir2 = dirname33(o.run.policyPath);
   const rel = (given) => {
-    const p = isAbsolute22(given) ? given : join71(runDir2, given);
+    const p = isAbsolute24(given) ? given : join72(runDir2, given);
     const r = relative8(repo, p);
     return r.startsWith("..") || r === "" ? p : r;
   };
