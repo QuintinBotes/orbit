@@ -37,9 +37,31 @@ The plugin provides the skills `/orbit:init`, `/orbit:doctor`, `/orbit:run`,
 questions of the repository's unfinished runs (`orbit questions --pending`; it
 prints nothing when there are none and never blocks a session), and a PreToolUse
 guard hook. It also puts `orbit` on the PATH of Claude Code's Bash tool (its
-`bin/orbit`) while the plugin is enabled. It is not on the PATH of a separate
-terminal: use a clone (below), or call the plugin's `bin/orbit` by its full
-path. Inside Claude Code (its Bash tool, skills and hooks), messages that tell
+`bin/orbit`) while the plugin is enabled, but not in the session that ran
+`/plugin install` (or `claude plugin install`): there it appears only after
+`/reload-plugins`, and in every new session it is there from the start. Until
+then:
+
+- the skills need nothing: they run the plugin's own CLI as
+  `"${CLAUDE_PLUGIN_ROOT}/bin/orbit"`, which Claude Code replaces with the
+  absolute path of the installed version;
+- in the Bash tool, call it by its absolute path. A marketplace install puts
+  the plugin under `~/.claude/plugins/cache/<marketplace>/orbit/<version>/`
+  (under `$CLAUDE_CONFIG_DIR/plugins/cache/` when that is set), so from this
+  catalog it is `~/.claude/plugins/cache/quintinbotes/orbit/<version>/bin/orbit`;
+  `plugins/installed_plugins.json` beside it lists the `installPath` of each
+  installed plugin. With `claude --plugin-dir ./plugin` it is
+  `./plugin/bin/orbit` of the clone.
+
+It is never on the PATH of a separate terminal: use a clone (below), or call
+the plugin's `bin/orbit` by its absolute path.
+
+Who starts which skill: `/orbit:status`, `/orbit:doctor`, `/orbit:init` and
+`/orbit:inquisition` are model-invocable, so an agent asked to use Orbit can
+use them itself (status and doctor run their own read-only `orbit` command
+without a permission prompt). `/orbit:run`, `/orbit:resume`, `/orbit:repair`
+and `/orbit:verify` are started by a person; an agent may prepare the goal and
+suggest the command (ADR 0006, addendum). Inside Claude Code (its Bash tool, skills and hooks), messages that tell
 you to run `orbit <command>` name the `/orbit:<skill>` instead when they exist (`init`, `doctor`, `run`, `status`, `resume`, `verify`,
 `repair`); the other commands (`models refresh`, `decide`, `questions`,
 `service install`, `report`, `logs`) run through Claude Code's Bash tool, which

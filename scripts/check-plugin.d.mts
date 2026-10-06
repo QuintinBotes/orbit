@@ -1,5 +1,6 @@
 // Types for check-plugin.mjs, a plain ESM script the plugin tests import.
 export declare const SKILL_KEYS: ReadonlySet<string>;
+export declare const MODEL_INVOCABLE_SKILLS: ReadonlySet<string>;
 export declare const AGENT_KEYS: ReadonlySet<string>;
 export declare const PLUGIN_DIR: string;
 export declare function frontmatter(text: string): unknown;

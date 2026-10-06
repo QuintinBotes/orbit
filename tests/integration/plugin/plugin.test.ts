@@ -3,6 +3,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 import { COMMANDS } from '../../../src/cli/cli.ts';
 import { RUN_STATES } from '../../../src/core/run-states.ts';
 import { SRT_VERIFIED_VERSION } from '../../../src/isolation/sandbox-runtime.ts';
@@ -53,6 +54,111 @@ describe('plugin manifest and components', () => {
       expect(text, s).toContain('$ARGUMENTS');
       expect(text, s).toContain(`/orbit:${s}`);
     }
+  });
+});
+
+/** The parsed frontmatter of a skill. */
+const skillMeta = (s: string) => {
+  const text = skillText(s);
+  const end = text.indexOf('\n---', 4);
+  return parseYaml(text.slice(4, end)) as Record<string, unknown>;
+};
+/** A copy of the plugin's skills and agents, for linting edited variants. */
+const copySkills = () => {
+  const d = mkTmp('orbit-skills-');
+  for (const e of ['skills', 'agents']) cpSync(join(plugin, e), join(d, e), { recursive: true });
+  return d;
+};
+const setInvocation = (dir: string, skill: string, line: string | null) => {
+  const p = join(dir, 'skills', skill, 'SKILL.md');
+  const text = readFileSync(p, 'utf8').replace(/^disable-model-invocation: .*\n/m, '');
+  writeFileSync(p, line === null ? text : text.replace(/^---\n/, `---\n${line}\n`));
+};
+
+describe('skill invocation policy (#2, ADR 0006 addendum)', () => {
+  const MODEL = ['doctor', 'init', 'inquisition', 'status'];
+  const PERSON = ['repair', 'resume', 'run', 'verify'];
+
+  it('lets an agent use status, doctor, init and inquisition, and leaves run, resume, repair and verify to a person', () => {
+    for (const s of MODEL) expect(skillMeta(s)['disable-model-invocation'] ?? false, s).toBe(false);
+    for (const s of PERSON) {
+      const meta = skillMeta(s);
+      expect(meta['disable-model-invocation'], s).toBe(true);
+      // The description says who starts it and what an agent may do instead.
+      expect(String(meta.description), s).toMatch(/a person starts/i);
+      expect(String(meta.description), s).toMatch(/an agent may prepare the goal and suggest the command/i);
+    }
+  });
+
+  it('check-plugin enforces exactly that allowlist', async () => {
+    const { lint, MODEL_INVOCABLE_SKILLS } = await import('../../../scripts/check-plugin.mjs');
+    expect([...MODEL_INVOCABLE_SKILLS].sort()).toEqual(MODEL);
+    expect(lint(plugin)).toEqual([]);
+
+    // A skill outside the allowlist without disable-model-invocation: true fails, whether the key is absent or false.
+    for (const line of [null, 'disable-model-invocation: false']) {
+      const d = copySkills();
+      setInvocation(d, 'run', line);
+      expect(lint(d).join('\n')).toMatch(/skills\/run\/SKILL\.md: .*disable-model-invocation: true/);
+    }
+    // A new skill that is not on the allowlist must opt out of model invocation too.
+    const extra = copySkills();
+    mkdirSync(join(extra, 'skills', 'acme'));
+    writeFileSync(join(extra, 'skills', 'acme', 'SKILL.md'), '---\nname: acme\ndescription: acme\n---\nbody\n');
+    expect(lint(extra).join('\n')).toMatch(/skills\/acme\/SKILL\.md: .*disable-model-invocation: true/);
+    // An allowlisted skill that is missing, or that turns model invocation off, fails.
+    const missing = copySkills();
+    rmSync(join(missing, 'skills', 'status'), { recursive: true });
+    expect(lint(missing).join('\n')).toMatch(/skills\/status\/SKILL\.md: .*missing/);
+    const off = copySkills();
+    setInvocation(off, 'doctor', 'disable-model-invocation: true');
+    expect(lint(off).join('\n')).toMatch(/skills\/doctor\/SKILL\.md: .*model-invocable/);
+  });
+
+  it('pre-approves only the read-only orbit commands that status and doctor run', () => {
+    /** The commands a skill's bash fences run through the plugin's orbit, unquoted as a permission rule spells them. */
+    const fenceCommands = (s: string) => bashFences(skillText(s)).flatMap((f) => [...f.matchAll(/^"\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/orbit" ([^\n]+)$/gm)].map((m) => `\${CLAUDE_PLUGIN_ROOT}/bin/orbit ${m[1]!.trim()}`));
+    /** Claude Code's Bash rule: exact, or a trailing " *" for any further words. */
+    const matches = (rule: string, cmd: string) => rule.endsWith(' *') ? cmd.startsWith(rule.slice(0, -1)) : cmd === rule;
+    for (const s of ['status', 'doctor']) {
+      const tools = skillMeta(s)['allowed-tools'];
+      expect(Array.isArray(tools), s).toBe(true);
+      const rules = (tools as string[]).map((t) => /^Bash\((.+)\)$/.exec(t)?.[1]);
+      for (const r of rules) expect(r, `${s}: ${JSON.stringify(tools)}`).toMatch(new RegExp(`^\\$\\{CLAUDE_PLUGIN_ROOT\\}/bin/orbit ${s}\\b`));
+      // Every command the skill runs is covered, with <run-id> as the one further word, and every rule covers one of them.
+      const cmds = fenceCommands(s).map((c) => c.replace('<run-id>', 'orb-acme-1'));
+      expect(cmds.length, s).toBeGreaterThan(1);
+      for (const c of cmds) expect(rules.some((r) => matches(r!, c)), `${s}: ${c}`).toBe(true);
+      for (const r of rules) expect(cmds.some((c) => matches(r!, c)), `${s}: ${r}`).toBe(true);
+    }
+    // Nothing that starts work, records a decision or changes config is pre-approved.
+    for (const s of ['init', 'inquisition', 'repair', 'resume', 'run', 'verify']) expect(skillMeta(s)['allowed-tools'], s).toBeUndefined();
+  });
+});
+
+describe('docs (#2, #5)', () => {
+  const readme = readFileSync(join(root, 'README.md'), 'utf8');
+  const install = readFileSync(join(root, 'docs', 'installation.md'), 'utf8');
+  const adr = readFileSync(join(root, 'docs', 'decisions', '0006-plugin-packaging.md'), 'utf8');
+
+  it('say orbit reaches the Bash tool PATH only after /reload-plugins or a new session, and what to use until then', () => {
+    for (const [name, text] of [['README.md', readme], ['docs/installation.md', install]] as const) {
+      const flat = text.replace(/\s+/g, ' ');
+      expect(flat, name).toContain('/reload-plugins');
+      expect(flat, name).toMatch(/new (Claude Code )?session/);
+      expect(flat, name).toContain('"${CLAUDE_PLUGIN_ROOT}/bin/orbit"');
+      expect(flat, name).toMatch(/absolute path/);
+      // The old claim that install alone puts orbit on the PATH is gone.
+      expect(flat, name).not.toMatch(/You get the skills [^.]*, and `orbit` on the PATH/);
+    }
+  });
+
+  it('record who invokes which skill', () => {
+    const flatAdr = adr.replace(/\s+/g, ' ');
+    expect(flatAdr).toMatch(/Addendum/);
+    for (const s of ['status', 'doctor', 'init', 'inquisition', 'run', 'resume', 'repair', 'verify']) expect(flatAdr, s).toContain(`/orbit:${s}`);
+    expect(flatAdr).toContain('scripts/check-plugin.mjs');
+    expect(readme.replace(/\s+/g, ' ')).toMatch(/An agent asked to use Orbit uses the model-invocable skills[^.]*and the `orbit` CLI[^.]*; a person starts `\/orbit:run`, `\/orbit:resume`, `\/orbit:repair` and `\/orbit:verify`/);
   });
 });
 

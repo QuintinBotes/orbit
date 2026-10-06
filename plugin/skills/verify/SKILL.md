@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Run Orbit's independent verification and evidence review for a run or the current change. Invoke as /orbit:verify.
+description: Run Orbit's independent verification and evidence review for a run or the current change. Invoke as /orbit:verify. A person starts it; an agent may prepare the goal and suggest the command.
 argument-hint: "[run-id]"
 disable-model-invocation: true
 ---

@@ -1,6 +1,6 @@
 ---
 name: repair
-description: Diagnose a failed Orbit run or a failure description and start a bounded repair, driven by the service or by this session in the background. Invoke as /orbit:repair.
+description: Diagnose a failed Orbit run or a failure description and start a bounded repair, driven by the service or by this session in the background. Invoke as /orbit:repair. A person starts it; an agent may prepare the goal and suggest the command.
 argument-hint: "<failure-or-run-id>"
 disable-model-invocation: true
 ---

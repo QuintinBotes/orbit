@@ -1,6 +1,6 @@
 ---
 name: run
-description: Start an Orbit run for a goal, driven by the background service or by this session in the background. Invoke as /orbit:run.
+description: Start an Orbit run for a goal, driven by the background service or by this session in the background. Invoke as /orbit:run. A person starts it; an agent may prepare the goal and suggest the command.
 argument-hint: "<goal> [--mode supervised|autonomous|autonomous-delivery|release]"
 disable-model-invocation: true
 ---

@@ -52,9 +52,18 @@ points at the `plugin/` directory of this repository):
 Claude Code installs the plugin's one dependency, the sandbox runtime `srt`, as
 part of the install (this needs `npm` and network access). You get the skills
 `/orbit:init`, `/orbit:doctor`, `/orbit:run`, `/orbit:status`, `/orbit:resume`,
-`/orbit:verify`, `/orbit:repair` and `/orbit:inquisition`, and `orbit` on the PATH
-of Claude Code's Bash tool. It is not on the PATH of your own terminal: for that,
-use the clone below.
+`/orbit:verify`, `/orbit:repair` and `/orbit:inquisition`. The plugin also puts
+`orbit` on the PATH of Claude Code's Bash tool, but not in the session you
+installed it from: only after `/reload-plugins` there, or in a new session.
+Until then the skills run it as `"${CLAUDE_PLUGIN_ROOT}/bin/orbit"`, and in the
+Bash tool you use the absolute path to the plugin's `bin/orbit`
+(`~/.claude/plugins/cache/quintinbotes/orbit/<version>/bin/orbit` for this
+catalog, see [installation](docs/installation.md#install-the-plugin)). It is
+never on the PATH of your own terminal: for that, use the clone below.
+
+An agent asked to use Orbit uses the model-invocable skills (`/orbit:status`,
+`/orbit:doctor`, `/orbit:init` and `/orbit:inquisition`) and the `orbit` CLI; a
+person starts `/orbit:run`, `/orbit:resume`, `/orbit:repair` and `/orbit:verify`.
 
 **From a clone** (the CLI, and a way to try the plugin before it is released):
 

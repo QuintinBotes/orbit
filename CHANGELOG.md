@@ -4,6 +4,9 @@
 
 - `orbit init` no longer proposes folders that hold CI pipeline or build-system definitions (pipeline YAML with a top-level trigger, stages, jobs or extends template, Jenkinsfiles, GitLab CI, CircleCI) as `scope.allowed_paths`; it protects them, plus central build files such as Directory.Build.props, Directory.Packages.props, global.json, nuget.config and a root Makefile, in `scope.protected_paths`, and tells the person to narrow the scope to the goal (#4).
 - A linked git worktree is its own repository root (`git rev-parse --show-toplevel`): `orbit init` writes the worktree's `.orbit/config.yaml` with the worktree's branch as `repository.base_branch`, `doctor`, `run` and every other command use the worktree's branch, cleanliness and state, `.git/info/exclude` stays shared, and worker checkouts made from a linked worktree find its own git directory (#3).
+- Skills: `/orbit:status`, `/orbit:doctor`, `/orbit:init` and `/orbit:inquisition` are model-invocable, so an agent asked to use Orbit sees them; `run`, `resume`, `repair` and `verify` stay user-only and say that a person starts them; `scripts/check-plugin.mjs` enforces the allowlist (ADR 0006 addendum) (#2).
+- Skills: `status` and `doctor` pre-approve their own read-only `orbit` command with `allowed-tools`, so `claude -p "/orbit:status"` prints the status without a permission denial (#2).
+- Docs: README and installation say that `orbit` reaches the Bash tool's PATH only after `/reload-plugins` or in a new session, and what to use until then (#5).
 
 ## 0.1.0 (2026-10-06)
 

@@ -1,6 +1,6 @@
 ---
 name: resume
-description: Resume a paused or blocked Orbit run after reconciling its workers and state, driven by the service or by this session in the background. Invoke as /orbit:resume.
+description: Resume a paused or blocked Orbit run after reconciling its workers and state, driven by the service or by this session in the background. Invoke as /orbit:resume. A person starts it; an agent may prepare the goal and suggest the command.
 argument-hint: "<run-id>"
 disable-model-invocation: true
 ---
