@@ -64,8 +64,9 @@ const VIOLATION = /<\/?sandbox_violations>|\bSandbox:.*\bdeny\(|X-Proxy-Error|Co
 const EPERM = /\bEPERM\b/;
 const NOT_PERMITTED = /operation not permitted/i;
 const DENIED = /\bEACCES\b|permission denied/i;
-// An absolute path in prose or quotes. The character before it must not be part of a word or a relative path (./x).
-const ABSOLUTE_PATH = /(?<![\w./~<>-])\/[^\s'"`:,;()<>[\]{}|]+/g;
+// An absolute path in prose or quotes, GNU's curly ones included (coreutils prints ‘/x’ under a UTF-8 locale, as checks
+// get on Linux). The character before it must not be part of a word or a relative path (./x).
+const ABSOLUTE_PATH = /(?<![\w./~<>-])\/[^\s'"`\u2018\u2019\u201C\u201D:,;()<>[\]{}|]+/g;
 
 const CAUSES: Record<EnvironmentSignal, string> = {
   'sandbox-violation': 'the sandbox reported a denied operation',
@@ -75,7 +76,7 @@ const CAUSES: Record<EnvironmentSignal, string> = {
   'process-aborted': 'the process was killed by a fatal signal before it printed anything of its own',
   'start-failed': 'the check could not be started',
   'browser-isolation': 'the browser could not start under sandbox-runtime',
-  'filesystem-denied': 'the sandbox or the operating system refused a filesystem operation outside the check\'s checkout (EPERM, "operation not permitted")',
+  'filesystem-denied': 'the sandbox or the operating system refused a filesystem operation outside the check\'s checkout (EPERM, "operation not permitted", or EROFS, "read-only file system")',
 };
 
 function within(path: string, root: string): boolean {
@@ -216,7 +217,9 @@ export interface CouldNotRunInput {
 
 // A filesystem call, by the name a runtime, the C library or a shell tool gives it, or the error type that reports one.
 const FS_CALL = /\b(?:mkdir|mkdtemp|mkstemp|open|openat|creat|rename|unlink|rmdir|chmod|chown|lchown|symlink|link|copyfile|clonefile|scandir|opendir|access|stat|lstat|utimes?|truncate|shm_open|sem_open|realpath|readlink|mkfifo|bind|connect|touch|cp|mv|rm|ln|PermissionError|IOException|errno)\b/i;
-const DENIAL = /\bEPERM\b|operation not permitted/i;
+// macOS's Seatbelt refuses a write with EPERM; srt on Linux mounts everything outside the writable paths read-only, so
+// the same write fails there with EROFS.
+const DENIAL = /\bEPERM\b|operation not permitted|\bEROFS\b|read-only file system/i;
 // A Seatbelt deny line, as macOS logs it ("Sandbox: dotnet(4242) deny(1) file-write-create /private/tmp/.dotnet") and as
 // srt repeats it in its violations block: the operation, then the path of a file operation.
 const SEATBELT_DENY = /\bdeny\(\d+\)\s+([a-z][\w-]*)(?:\s+(\S+))?/i;
@@ -251,9 +254,10 @@ function excerpt(line: string, at: number): string {
  * outside its checkout, or null. It needs no base-revision comparison, so it can judge the baseline itself. Both halves
  * are required:
  *
- * - a denial outside `insideRoots`: EPERM or "operation not permitted" on a filesystem call that names such a path (the
- *   .NET runtime's `mkdir("/tmp/.dotnet/shm/...") == -1; errno == EPERM`, node's `EPERM: operation not permitted,
- *   mkdir '/x'`, a shell tool's `mkdir: /x: Operation not permitted`), or a Seatbelt deny line (one for a file operation
+ * - a denial outside `insideRoots`: EPERM or "operation not permitted" (macOS), EROFS or "read-only file system" (Linux)
+ *   on a filesystem call that names such a path (the .NET runtime's `mkdir("/tmp/.dotnet/shm/...") == -1; errno ==
+ *   EPERM`, node's `EPERM: operation not permitted, mkdir '/x'`, a shell tool's `mkdir: /x: Operation not permitted` or
+ *   `mkdir: cannot create directory ‘/x’: Read-only file system`), or a Seatbelt deny line (one for a file operation
  *   only on such a path);
  * - and no sign that the repository's code was compiled or tested and failed (CODE_FAILURE): a compile error or a failing
  *   test next to a denial is still the code's failure, and keeps the normal path.

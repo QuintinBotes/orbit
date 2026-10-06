@@ -32,6 +32,11 @@ describe('checkEnv: the .NET SDK variables', () => {
     for (const [k, v] of Object.entries(DOTNET_CHECK_ENV)) expect(env[k], k).toBe(v);
   });
 
+  it('turns off the build\'s git query, which reads the absent .gitmodules srt makes unopenable on Linux', () => {
+    expect(checkEnv(checkDef('build'), paths, '/host').EnableSourceControlManagerQueries).toBe('false');
+    expect(checkEnv(checkDef('build', { env: { EnableSourceControlManagerQueries: 'true' } }), paths, '/host').EnableSourceControlManagerQueries).toBe('true');
+  });
+
   it('lets the check definition override any of them', () => {
     expect(checkEnv(checkDef('build', { env: { DOTNET_CLI_HOME: '/mine', DOTNET_NOLOGO: '0' } }), paths, '/host')).toMatchObject({ DOTNET_CLI_HOME: '/mine', DOTNET_NOLOGO: '0', HOME: '/h' });
   });

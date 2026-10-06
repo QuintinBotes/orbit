@@ -106,7 +106,9 @@ degraded but usable.
   cause, not a pre-existing failure", the first error line, the log and a fix. The
   check never got as far as the repository's code: the sandbox or the operating
   system refused it a filesystem operation outside its checkout (EPERM, "Operation
-  not permitted", a Seatbelt `deny(1) file-...` line), or it was killed by a crash
+  not permitted", a Seatbelt `deny(1) file-...` line; on Linux, where `srt` mounts
+  everything outside the writable paths read-only, EROFS, "Read-only file
+  system"), or it was killed by a crash
   signal before printing anything. Such a failure is not recorded as pre-existing
   and no baseline exception is offered, since accepting one would let a run pass
   with a check that never ran. The same refusal on a candidate blocks the run
@@ -133,9 +135,17 @@ degraded but usable.
   `DOTNET_CLI_TELEMETRY_OPTOUT=1`, `DOTNET_NOLOGO=1`,
   `DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1`, `DOTNET_GENERATE_ASPNET_CERTIFICATE=false`
   (no login keychain), `DOTNET_ADD_GLOBAL_TOOLS_TO_PATH=false` (no shell profile)
-  and `DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK=1` are set. A check's own `env`
+  and `DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK=1` are set, as is
+  `EnableSourceControlManagerQueries=false`, an MSBuild property MSBuild reads
+  from the environment: the build no longer asks git for the commit, branch and
+  remote that SourceLink embeds, which a check's result does not need. On Linux
+  that query cannot run: `srt` protects the files that can make git run code
+  (`.gitmodules`, `.gitconfig`...) by binding an unopenable device over each one
+  the checkout lacks, so the SDK failed with "Error reading git repository
+  information: Access to the path '.../.gitmodules' is denied". A check's own `env`
   overrides any of them. With that, `dotnet build` of a console project runs
-  under `srt` (verified with the .NET 9 SDK). Two cases remain yours to decide:
+  under `srt` (verified with the .NET 9 SDK on macOS, and the .NET 9 and 10 SDKs on
+  Linux). Two cases remain yours to decide:
   code under test that creates a named `Mutex` or `Semaphore` needs
   `/tmp/.dotnet` and cannot run under `sandbox-runtime` (change the code to use
   an unnamed one or a file lock in `TMPDIR`; `isolation.provider: container`

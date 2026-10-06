@@ -89,7 +89,8 @@ describe.skipIf(!probe.ok)(probe.ok ? 'orbit doctor reports a sandbox denial und
     const c = await doctorProbe([tool]);
     expect(c.status).toBe('fail');
     expect(c.details[0]).toMatch(/^build: "acme-tool --version" was refused in the sandbox: the sandbox or the operating system refused a filesystem operation outside the check's checkout/);
-    expect(c.details[0]).toContain('Operation not permitted');
+    // Seatbelt refuses the write with EPERM; srt on Linux mounts everything outside the writable paths read-only (EROFS).
+    expect(c.details[0]).toContain(process.platform === 'darwin' ? 'Operation not permitted' : 'Read-only file system');
     expect(existsSync(join(outside, 'cache'))).toBe(false);
   }, 120_000);
 });

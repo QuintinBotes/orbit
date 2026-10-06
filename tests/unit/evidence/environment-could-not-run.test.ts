@@ -89,6 +89,30 @@ describe('classifyCouldNotRun: other denials it reads', () => {
     }
   });
 
+  it('reads a write refused on Linux, where srt mounts everything outside the writable paths read-only (EROFS)', () => {
+    for (const output of [
+      // GNU coreutils under the C.UTF-8 locale a check gets on Linux, as srt left it in `orbit doctor`'s probe.
+      "mkdir: cannot create directory ‘/tmp/orbit-denied-acme/cache’: Read-only file system\n",
+      "Error: EROFS: read-only file system, mkdir '/home/acme/.cache/acme'\n",
+      "OSError: [Errno 30] Read-only file system: '/home/acme/.cache/acme'\n",
+    ]) {
+      const f = classifyCouldNotRun({ checkId: 'unit', output, insideRoots: ROOTS });
+      expect(f?.signals, output).toEqual(['filesystem-denied']);
+      expect(f!.cause).toContain('EROFS');
+      expect(f!.lines).toEqual([output.trim()]);
+    }
+  });
+
+  it('is null for a read-only denial inside the checkout, curly quotes and all, or next to a compile error', () => {
+    for (const output of [
+      `mkdir: cannot create directory ‘${CHECKOUT}’: Read-only file system\n`,
+      `touch: cannot touch ‘${CHECKOUT}/.git/hooks/pre-commit’: Read-only file system\n`,
+      `mkdir: cannot create directory ‘/home/acme/.cache’: Read-only file system\n${COMPILE_ERROR}`,
+    ]) {
+      expect(classifyCouldNotRun({ checkId: 'build', output, insideRoots: ROOTS }), output).toBeNull();
+    }
+  });
+
   it('reads Seatbelt deny lines: a file operation only on an absolute path outside the checkout, any other operation as it is', () => {
     const deny = (op: string, path: string) => `Sandbox: dotnet(4242) deny(1) ${op} ${path}\n`;
     expect(classifyCouldNotRun({ checkId: 'build', output: deny('file-write-create', '/private/tmp/.dotnet'), insideRoots: ROOTS })).toMatchObject({ signals: ['sandbox-violation'], lines: ['Sandbox: dotnet(4242) deny(1) file-write-create /private/tmp/.dotnet'] });
