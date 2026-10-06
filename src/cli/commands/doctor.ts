@@ -42,7 +42,7 @@ import { lingerState } from './service.ts';
 import { compileGlobs } from '../../policy/globs.ts';
 import { proposeScope, trackedFiles } from '../layout.ts';
 import { orbitHint } from '../../core/invocation.ts';
-import { reviewFix } from '../review-fix.ts';
+import { allReviewPrerequisites, reviewFix } from '../review-fix.ts';
 import { workerPluginsCheck } from './doctor-plugins.ts';
 import { checkSandboxCheck } from './doctor-sandbox.ts';
 
@@ -483,7 +483,17 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
     if (sel.decision === 'SELECT') checks.push(pass('review', 'providers', `independent review: ${sel.provider}/${sel.model ?? 'default'} (${sel.independent ? 'independent' : 'same provider'})`, sel.alternatives.map((a) => `not used: ${a.provider}: ${flat(a.reason)}`)));
     else {
       const mandatory = config.review.independent_provider_required;
-      const c = (mandatory ? fail : warn)('review', 'providers', `independent review would block: ${flat(sel.reason)}`, 'a usable, data-policy-eligible reviewer from another provider', reviewFix(sel.alternatives), sel.alternatives.map((a) => `${a.provider}: ${flat(a.reason)}`));
+      // Every unmet prerequisite at once, each with its own fix (issue 7): the selector names one problem per provider.
+      const unmet = allReviewPrerequisites(sel.alternatives, (fixed, assumed) => {
+        const hypothetical: OrbitConfig = structuredClone(config);
+        const creds = { ...facts.credentials };
+        for (const id of fixed) {
+          if (assumed.dataPolicy && hypothetical.providers[id]) hypothetical.providers[id]!.data_policy_eligible = true;
+          if (assumed.login && facts.capabilities[id]?.available) creds[id] = { state: 'valid', method: null, detail: 'assumed once logged in' };
+        }
+        return selectReviewer({ snapshot: { config: hypothetical }, capabilities: facts.capabilities, credentials: creds, implementer: { provider: 'claude', model: null }, registry }).alternatives;
+      });
+      const c = (mandatory ? fail : warn)('review', 'providers', `independent review would block: ${flat(sel.reason)}`, 'a usable, data-policy-eligible reviewer from another provider', reviewFix(unmet), unmet.map((a) => `${a.provider}: ${flat(a.reason)}`));
       checks.push(c);
     }
   }

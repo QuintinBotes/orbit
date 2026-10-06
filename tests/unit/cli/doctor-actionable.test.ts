@@ -109,9 +109,29 @@ describe('P6: the review fix matches the reason', () => {
 
   it('with codex not eligible, the fix is the data policy attestation', async () => {
     const w = world();
-    const c = byId(await report(w, cfg((x) => (x.providers.codex!.data_policy_eligible = false))));
+    // A model is named, so the data policy is the only unmet prerequisite (without one, issue 7: both are listed).
+    const c = byId(await report(w, cfg((x) => { x.providers.codex!.data_policy_eligible = false; x.providers.codex!.model = 'gpt-6-astra'; })));
     expect(c.review!.fix).toContain('providers.codex.data_policy_eligible: true');
     expect(c.review!.fix).not.toContain('orbit models refresh');
+  });
+
+  it('issue 7: with codex not eligible AND no model qualified, both prerequisites and both fixes are listed at once', async () => {
+    const w = world();
+    const c = byId(await report(w, cfg((x) => (x.providers.codex!.data_policy_eligible = false))));
+    expect(c.review).toMatchObject({ status: 'fail' });
+    expect(c.review!.fix).toContain('providers.codex.data_policy_eligible: true');
+    expect(c.review!.fix).toContain('orbit models refresh');
+    const lines = c.review!.details.join('\n');
+    expect(lines).toMatch(/data_policy_eligible is not true/);
+    expect(lines).toMatch(/no model of "codex" is qualified for review/);
+  });
+
+  it('issue 7: with codex logged out, not eligible and no model qualified, all three are listed', async () => {
+    const w = world();
+    const c = byId(await report(w, cfg((x) => (x.providers.codex!.data_policy_eligible = false)), { claude: adapter('claude'), codex: adapter('codex', {}, { state: 'missing', method: null, detail: 'not logged in' }) }));
+    expect(c.review!.fix).toMatch(/codex login/);
+    expect(c.review!.fix).toContain('providers.codex.data_policy_eligible: true');
+    expect(c.review!.fix).toContain('orbit models refresh');
   });
 
   it('with codex logged out, the fix is the login', async () => {

@@ -110,6 +110,26 @@ export function probeEnv(env: Readonly<Record<string, string | undefined>>): Rec
   return out;
 }
 
+/**
+ * Read the installed Codex CLI's model catalog (`codex debug models`: read-only, no model call) into the registry and
+ * keep it for the user. Shared by `orbit models refresh` and `orbit init`. It never throws for an unavailable CLI;
+ * `malformed` says the CLI answered with something that is not a catalog.
+ */
+export async function readCodexCatalog(registry: ModelRegistry, id: string, command: string, repo: string, ctx: CliContext, timeoutMs = 60_000): Promise<{ note: string; change?: unknown; malformed?: boolean }> {
+  const r = await execCapture([...commandArgv(command), 'debug', 'models'], { env: probeEnv(ctx.env), timeoutMs, cwd: repo }).catch((err: unknown) => err as Error);
+  if (r instanceof Error) return { note: `provider ${id}: ${flat(r.message)}` };
+  if (r.exitCode !== 0) return { note: `provider ${id}: "${command} debug models" exited ${r.exitCode ?? 'by signal'}; registry availability left as it was` };
+  try {
+    const catalog = JSON.parse(r.stdout) as unknown;
+    const res = registry.registerCodexCatalog(catalog, { source: 'live' });
+    // Kept for the user, so the next repository does not need its own refresh (routing/shared-catalog.ts).
+    saveSharedCatalog(sharedCatalogPath(ctx.orbitHome), catalog, ctx.clock.now());
+    return { change: res, note: `provider ${id}: ${res.listed.length} model(s) listed${res.hidden.length ? `, ${res.hidden.length} hidden` : ''}${res.absent.length ? `, ${res.absent.length} no longer offered` : ''}${res.providerDefault ? `; default ${res.providerDefault}` : ''}` };
+  } catch (err) {
+    return { note: `${id}: "debug models" printed something that is not a model catalog (${err instanceof Error ? flat(err.message) : 'unreadable'})`, malformed: true };
+  }
+}
+
 export async function modelsRefreshCommand(args: Args, ctx: CliContext): Promise<number> {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str('repo'));
@@ -162,25 +182,10 @@ export async function modelsRefreshCommand(args: Args, ctx: CliContext): Promise
           }
         }
       } else {
-        const r = await execCapture([...commandArgv(pc.command), 'debug', 'models'], { env: probeEnv(ctx.env), timeoutMs: 60_000, cwd: repo }).catch((err: unknown) => err as Error);
-        if (r instanceof Error) {
-          notes.push(`provider ${id}: ${flat(r.message)}`);
-          continue;
-        }
-        if (r.exitCode !== 0) {
-          notes.push(`provider ${id}: "${pc.command} debug models" exited ${r.exitCode ?? 'by signal'}; registry availability left as it was`);
-          continue;
-        }
-        try {
-          const catalog = JSON.parse(r.stdout) as unknown;
-          const res = registry.registerCodexCatalog(catalog, { source: 'live' });
-          // Kept for the user, so the next repository does not need its own refresh (routing/shared-catalog.ts).
-          saveSharedCatalog(sharedCatalogPath(ctx.orbitHome), catalog, ctx.clock.now());
-          changes[`catalog:${id}`] = res;
-          notes.push(`provider ${id}: ${res.listed.length} model(s) listed${res.hidden.length ? `, ${res.hidden.length} hidden` : ''}${res.absent.length ? `, ${res.absent.length} no longer offered` : ''}${res.providerDefault ? `; default ${res.providerDefault}` : ''}`);
-        } catch (err) {
-          throw new OrbitError('MALFORMED_OUTPUT', `${id}: "debug models" printed something that is not a model catalog (${err instanceof Error ? flat(err.message) : 'unreadable'})`);
-        }
+        const outcome = await readCodexCatalog(registry, id, pc.command, repo, ctx);
+        if (outcome.change !== undefined) changes[`catalog:${id}`] = outcome.change;
+        if (outcome.malformed) throw new OrbitError('MALFORMED_OUTPUT', outcome.note);
+        notes.push(outcome.note);
       }
     }
     if (args.bool('json')) json(ctx.io, { notes, changes, models: registry.list().map((e: ModelEntry) => ({ model: e.modelId, available: e.available })) });

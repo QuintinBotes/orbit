@@ -23,3 +23,34 @@ export function reviewFix(alternatives: readonly { provider: string; reason: str
   }
   return fixes.length > 0 ? fixes.join('; ') : REVIEW_FIX_GENERIC;
 }
+
+/** A rejection that hides what would be wrong next: the selector reports one reason per provider, the first it finds. */
+const MASKING_REASON = /^(no credentials for|credentials for) |data_policy_eligible is not true/;
+
+/** What a simulated re-selection assumes is already met: the selector checks the login, then the data policy, then the model. */
+export interface AssumedMet {
+  login: boolean;
+  dataPolicy: boolean;
+}
+
+/**
+ * Every unmet prerequisite of the reviewer check, not just the first per provider. review/select.ts stops at the
+ * first problem of a provider (login, then data policy, then model), so fixing one used to reveal the next on the
+ * following doctor run. `simulate` re-runs the selection as if the given providers had met the stated prerequisites
+ * and returns its rejections; whatever it still rejects them for is an unmet prerequisite too.
+ */
+export function allReviewPrerequisites<T extends { provider: string; reason: string }>(first: readonly T[], simulate: (providers: readonly string[], assumed: AssumedMet) => readonly T[]): T[] {
+  const masked = [...new Set(first.filter((a) => MASKING_REASON.test(a.reason)).map((a) => a.provider))];
+  if (masked.length === 0) return [...first];
+  const seen = new Set(first.map((a) => `${a.provider}\u0000${a.reason}`));
+  const out = [...first];
+  for (const assumed of [{ login: true, dataPolicy: false }, { login: true, dataPolicy: true }]) {
+    for (const a of simulate(masked, assumed)) {
+      const key = `${a.provider}\u0000${a.reason}`;
+      if (!masked.includes(a.provider) || seen.has(key)) continue;
+      seen.add(key);
+      out.push(a);
+    }
+  }
+  return out;
+}
