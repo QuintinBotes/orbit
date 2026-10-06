@@ -162,7 +162,14 @@ orbit doctor
 state files to `.git/info/exclude`, so nothing runtime-related shows in `git
 status` (the config file itself shows as untracked) and nothing is committed for
 you. The starter mode is `autonomous`: runs end on a local branch and never push.
-Review the file like code and commit it if you want it shared. The README
+Review the file like code and commit it if you want it shared. In a linked
+worktree (`git worktree add`), `.git/info/exclude` is the one file git reads for
+the whole clone, so the rules go to the common git directory (the main
+checkout's `.git`), outside your worktree, and cover every worktree at once;
+`init` prints which file that is and that every worktree of the clone shares it,
+whether it added the rules or found them, and `--json` reports it as
+`exclude_file` (`path` and `shared_across_worktrees`). A normal checkout prints
+what it always did. The README
 [quickstart](../README.md#quickstart) lists what to set before the first run:
 `scope.allowed_paths`, at least one check, `providers.codex.data_policy_eligible`,
 and `orbit models refresh`. See [configuration](configuration.md).

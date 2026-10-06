@@ -53,6 +53,37 @@ describe('a linked worktree is its own repository root (#3)', () => {
     expect(git(b.repo, 'status', '--porcelain')).toContain('README.md');
   });
 
+  // The exclude file lives in the main checkout's git directory (git reads only the common dir's info/exclude), which
+  // surprises a person who expects init in a worktree to change nothing outside it. Orbit keeps the shared write, so
+  // it says that this is what it did, as the real CLI prints it.
+  it('init in a worktree says the exclude file is shared by every worktree of the clone, whether it adds the rules or finds them', async () => {
+    const { b, wt } = linkedLab();
+    const shared = join(b.repo, '.git', 'info', 'exclude');
+    const first = await b.run(['init'], { cwd: wt });
+    expect(first.code, first.stderr).toBe(0);
+    const added = first.stdout.split('\n').find((l) => l.startsWith('added '));
+    expect(added).toMatch(/^added 3 rule\(s\) to .*\/\.git\/info\/exclude so runtime state stays out of git status; .* every worktree of this clone shares it/);
+    expect(added).toContain(shared);
+    const second = await b.run(['init'], { cwd: wt });
+    const present = second.stdout.split('\n').find((l) => l.includes('already excludes'));
+    expect(present).toMatch(/already excludes Orbit runtime state; .* every worktree of this clone shares it/);
+    expect(present).toContain(shared);
+    const j = JSON.parse((await b.run(['init', '--json'], { cwd: wt })).stdout) as { exclude: { path: string; added: string[] }; exclude_file: { path: string; shared_across_worktrees: boolean } };
+    expect(j.exclude).toEqual({ path: shared, added: [] });
+    expect(j.exclude_file).toEqual({ path: shared, shared_across_worktrees: true });
+  });
+
+  it('init in the main working tree keeps its output and reports the file as not shared', async () => {
+    const { b } = linkedLab();
+    const shared = join(b.repo, '.git', 'info', 'exclude');
+    const first = await b.run(['init'], { cwd: b.repo });
+    expect(first.code, first.stderr).toBe(0);
+    expect(first.stdout.split('\n')).toContain(`added 3 rule(s) to ${shared} so runtime state stays out of git status`);
+    expect(first.stdout).not.toMatch(/worktree/i);
+    const j = JSON.parse((await b.run(['init', '--json'], { cwd: b.repo })).stdout) as { exclude_file: unknown };
+    expect(j.exclude_file).toEqual({ path: shared, shared_across_worktrees: false });
+  });
+
   it('doctor judges the worktree: its branch, its cleanliness, its config', async () => {
     const { b, wt } = linkedLab();
     mkdirSync(join(wt, '.orbit'));

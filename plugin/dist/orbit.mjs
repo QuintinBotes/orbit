@@ -61408,7 +61408,7 @@ var init_check_detect = __esm({
 });
 
 // src/cli/commands/init.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync54, mkdirSync as mkdirSync24, readFileSync as readFileSync33, writeFileSync as writeFileSync9 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync54, mkdirSync as mkdirSync24, readFileSync as readFileSync33, realpathSync as realpathSync20, writeFileSync as writeFileSync9 } from "node:fs";
 import { dirname as dirname33, join as join72 } from "node:path";
 function templatePath() {
   return join72(orbitInstallDir(), "templates", "config.yaml");
@@ -61877,6 +61877,22 @@ async function excludeFile(ctx, repo) {
   if (r.exitCode !== 0 || !r.stdout.trim()) throw new OrbitError("GIT_FAILED", `cannot locate .git/info/exclude: ${r.stderr.trim().slice(0, 200)}`);
   return r.stdout.trim();
 }
+function realOrSame(p) {
+  try {
+    return realpathSync20(p);
+  } catch {
+    return p;
+  }
+}
+async function inLinkedWorktree(ctx, repo) {
+  try {
+    const r = await execCapture(["git", "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15e3 });
+    const [gitDir, commonDir] = r.stdout.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+    return r.exitCode === 0 && gitDir !== void 0 && commonDir !== void 0 && realOrSame(gitDir) !== realOrSame(commonDir);
+  } catch {
+    return false;
+  }
+}
 async function seedModels(ctx, repo) {
   const notes = [];
   let config;
@@ -61955,6 +61971,7 @@ ${block2}`);
     }
   }
   const excludePath = await excludeFile(ctx, repo);
+  const sharedAcrossWorktrees = await inLinkedWorktree(ctx, repo);
   mkdirSync24(dirname33(excludePath), { recursive: true });
   const current = existsSync54(excludePath) ? readFileSync33(excludePath, "utf8") : "";
   const have = new Set(current.split("\n").map((l) => l.trim()));
@@ -61982,7 +61999,7 @@ ${block2}`);
   }
   const models = await seedModels(ctx, repo);
   if (args.bool("json")) {
-    json(ctx.io, { repo, review_policy: config === "created" ? REVIEW_POLICY_PROPOSAL : null, config: { path: configPath, status: config, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, config_problems: problems, warnings, models });
+    json(ctx.io, { repo, review_policy: config === "created" ? REVIEW_POLICY_PROPOSAL : null, config: { path: configPath, status: config, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === "created" ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
@@ -61998,7 +62015,8 @@ ${block2}`);
     }
     for (const n2 of checkProposal.notProposed) line(ctx.io, `no check proposed for ${n2.ecosystem}: ${n2.reason}`);
   }
-  line(ctx.io, missing.length > 0 ? `added ${missing.length} rule(s) to ${excludePath} so runtime state stays out of git status` : `${excludePath} already excludes Orbit runtime state`);
+  if (missing.length > 0) line(ctx.io, `added ${missing.length} rule(s) to ${excludePath} so runtime state stays out of git status${sharedAcrossWorktrees ? `; ${SHARED_EXCLUDE_NOTE}, so one write covers them all` : ""}`);
+  else line(ctx.io, `${excludePath} already excludes Orbit runtime state${sharedAcrossWorktrees ? `; ${SHARED_EXCLUDE_NOTE}` : ""}`);
   if (problems.length > 0) {
     line(ctx.io, "The configuration does not validate yet:");
     for (const p of problems.slice(0, 10)) line(ctx.io, `  - ${p}`);
@@ -62009,7 +62027,7 @@ ${block2}`);
   line(ctx.io, checkProposal.proposed.length > 0 ? `Next: review the proposed checks in .orbit/config.yaml and add any that are missing, then run ${orbitHint("doctor")}.` : `Next: define your checks in .orbit/config.yaml, then run ${orbitHint("doctor")}.`);
   return EXIT.OK;
 }
-var REVIEW_POLICY_PROPOSAL, EXCLUDE_RULES, EXCLUDE_HEADER;
+var REVIEW_POLICY_PROPOSAL, EXCLUDE_RULES, EXCLUDE_HEADER, SHARED_EXCLUDE_NOTE;
 var init_init = __esm({
   "src/cli/commands/init.ts"() {
     "use strict";
@@ -62033,6 +62051,7 @@ var init_init = __esm({
     REVIEW_POLICY_PROPOSAL = "review: Codex reviews independently when it is usable (review.providers: [codex]); when it is not, Claude reviews in a separate session and every report says the review was not independent and why (review.when_unavailable: claude). Set review.when_unavailable to ask to be asked first, or to block to require an independent reviewer.";
     EXCLUDE_RULES = ["/.orbit/state.sqlite*", "/.orbit/knowledge.sqlite*", "/.orbit/runs/"];
     EXCLUDE_HEADER = '# Orbit runtime state (added by "orbit init")';
+    SHARED_EXCLUDE_NOTE = "that file is in the clone's common git directory, outside this worktree, and every worktree of this clone shares it";
   }
 });
 

@@ -1,10 +1,20 @@
 /**
  * `orbit init`: write .orbit/config.yaml from the starter template when it is
  * absent, and keep Orbit's runtime files out of `git status` through
- * .git/info/exclude (a per-clone file, so nothing is committed or shared).
- * It never overwrites anything and is safe to run repeatedly.
+ * .git/info/exclude (a per-clone file, so nothing is committed). It never
+ * overwrites anything and is safe to run repeatedly.
+ *
+ * That file is per clone, not per working tree: git reads only the common git
+ * directory's info/exclude, so in a linked worktree (`git worktree add`) the
+ * rules land in the main checkout's git directory, outside the worktree, and
+ * one write covers every worktree of the clone (issue 3). Orbit keeps that on
+ * purpose and says so: when the repository root is a linked worktree the text
+ * output states that every worktree shares the file, whether the rules were
+ * added or already there, and --json carries `exclude_file` (the path and
+ * `shared_across_worktrees`) next to the unchanged `exclude`. A normal
+ * checkout prints exactly what it always did.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { OrbitError } from '../../core/errors.ts';
 import { execCapture } from '../../core/exec.ts';
@@ -67,6 +77,32 @@ async function excludeFile(ctx: CliContext, repo: string): Promise<string> {
   if (r.exitCode !== 0 || !r.stdout.trim()) throw new OrbitError('GIT_FAILED', `cannot locate .git/info/exclude: ${r.stderr.trim().slice(0, 200)}`);
   return r.stdout.trim();
 }
+
+function realOrSame(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+/**
+ * Whether the repository root is a linked worktree: its own git directory (<common>/worktrees/<name>) is not the common
+ * one it shares with the clone's other worktrees. A normal checkout, a bare clone's main tree and a submodule (whose git
+ * directory is its own common one) are not. Only the note depends on this, so a git that cannot answer means "no".
+ */
+async function inLinkedWorktree(ctx: CliContext, repo: string): Promise<boolean> {
+  try {
+    const r = await execCapture(['git', 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15_000 });
+    const [gitDir, commonDir] = r.stdout.split('\n').map((l) => l.trim()).filter((l) => l !== '');
+    return r.exitCode === 0 && gitDir !== undefined && commonDir !== undefined && realOrSame(gitDir) !== realOrSame(commonDir);
+  } catch {
+    return false;
+  }
+}
+
+/** What init tells a person in a linked worktree about the file it names: where it is, and that it is not the worktree's own. */
+const SHARED_EXCLUDE_NOTE = "that file is in the clone's common git directory, outside this worktree, and every worktree of this clone shares it";
 
 /**
  * Seed the model registry and read the Codex catalog, so the first doctor or run does not fail on "no model qualified
@@ -162,6 +198,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   }
 
   const excludePath = await excludeFile(ctx, repo);
+  const sharedAcrossWorktrees = await inLinkedWorktree(ctx, repo);
   mkdirSync(dirname(excludePath), { recursive: true });
   const current = existsSync(excludePath) ? readFileSync(excludePath, 'utf8') : '';
   const have = new Set(current.split('\n').map((l) => l.trim()));
@@ -193,7 +230,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   const models = await seedModels(ctx, repo);
 
   if (args.bool('json')) {
-    json(ctx.io, { repo, review_policy: config === 'created' ? REVIEW_POLICY_PROPOSAL : null, config: { path: configPath, status: config, ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, config_problems: problems, warnings, models });
+    json(ctx.io, { repo, review_policy: config === 'created' ? REVIEW_POLICY_PROPOSAL : null, config: { path: configPath, status: config, ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === 'created' ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
@@ -209,7 +246,8 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
     }
     for (const n of checkProposal.notProposed) line(ctx.io, `no check proposed for ${n.ecosystem}: ${n.reason}`);
   }
-  line(ctx.io, missing.length > 0 ? `added ${missing.length} rule(s) to ${excludePath} so runtime state stays out of git status` : `${excludePath} already excludes Orbit runtime state`);
+  if (missing.length > 0) line(ctx.io, `added ${missing.length} rule(s) to ${excludePath} so runtime state stays out of git status${sharedAcrossWorktrees ? `; ${SHARED_EXCLUDE_NOTE}, so one write covers them all` : ''}`);
+  else line(ctx.io, `${excludePath} already excludes Orbit runtime state${sharedAcrossWorktrees ? `; ${SHARED_EXCLUDE_NOTE}` : ''}`);
   if (problems.length > 0) {
     line(ctx.io, 'The configuration does not validate yet:');
     for (const p of problems.slice(0, 10)) line(ctx.io, `  - ${p}`);
