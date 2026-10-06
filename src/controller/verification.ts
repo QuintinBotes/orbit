@@ -26,7 +26,7 @@ import type { CheckResult, EvidenceReport, ScopeReport } from '../evidence/types
 import { runUiChecks, toEvidenceUi } from '../ui/runner.ts';
 import type { UiRunResult } from '../ui/types.ts';
 import type { ExplorationResult } from '../ui/explore.ts';
-import { homeOf, type RunContext } from './context.ts';
+import { homeOf, toolchainCacheRootFor, type RunContext } from './context.ts';
 import { staticSecurityGate, uiGate, type GateResult } from './gates.ts';
 import { judgeSastResult, sastCheckIds, scanCandidateSecrets, type SastVerdict, type SecretScanResult } from './security.ts';
 import { exploreCandidate, explorationEnabled, explorationUnverified } from './exploration.ts';
@@ -98,6 +98,7 @@ export async function collectVerificationEvidence<S = never>(ctx: RunContext, ca
     pollMs: ctx.timing.checkPollMs,
     killGraceMs: ctx.timing.killGraceMs,
     homeDir: homeOf(ctx.deps),
+    toolchainCacheRoot: toolchainCacheRootFor(ctx),
   };
   const install = await installDependencies({ ...runner, candidate: cand });
   const commandChecks = contract.required_check_ids.filter((id) => snapshot.config.checks[id]?.kind === 'command');

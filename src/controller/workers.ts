@@ -24,7 +24,8 @@ import { archiveAttempt, handleFromWorkerDir, LAUNCH_FILE, readLogLines } from '
 import { LOG_FILE, readExitRecord } from '../adapters/shim.ts';
 import { renderSystemPrompt, ROLE_OUTPUT_KIND } from '../adapters/prompt.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
-import { profileForWorker } from '../isolation/profiles.ts';
+import { profileForWorker, workerTmpDir } from '../isolation/profiles.ts';
+import { detectToolchains, prepareToolchainLayout, toolchainLayout } from '../isolation/toolchains.ts';
 import { stopWorker } from '../recovery/reconcile.ts';
 import { route, toDecisionRecord } from '../routing/router.ts';
 import { allowMatch, fundedSessionCap, tierOf, worstCaseRequestUsd } from '../routing/registry.ts';
@@ -35,7 +36,7 @@ import { estimateCost, inputIncludesCacheRead } from '../routing/pricing.ts';
 import type { BudgetPhase } from '../scheduling/types.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { DEFAULT_OUTPUT_BUDGETS, outputBudgets } from '../policy/config.ts';
-import { homeOf, type RunContext } from './context.ts';
+import { homeOf, toolchainCacheRootFor, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
 import { activeOverlayFor } from './knowledge-hooks.ts';
 import { ingestWorkerDenials } from './denials.ts';
@@ -198,6 +199,18 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
   const outputCap = raisedOutputCap(ctx, req.purpose);
   // Every session runs under the run's frozen snapshot; nothing (an approve-once grant included) widens a worker.
   const policy = { path: ctx.run.policyPath, hash: ctx.run.policyHash, snapshot: ctx.snapshot };
+  // The toolchains the worktree uses: the repository's dependency caches read-only, build state private to the worker
+  // (docs/decisions/0009-toolchain-profiles.md). The worker keeps the real HOME its provider CLI needs.
+  const toolchains = toolchainLayout({
+    toolchains: detectToolchains({ roots: [req.cwd] }),
+    mode: 'worker',
+    cacheRoot: toolchainCacheRootFor(ctx),
+    scratchRoot: join(w.workerDir, 'toolchains'),
+    tmpDir: workerTmpDir(w.workerDir),
+    hostHome: home,
+    hostEnv: env,
+  });
+  prepareToolchainLayout(toolchains);
   const sandbox = profileForWorker({
     worktree: req.cwd,
     workerDir: w.workerDir,
@@ -206,7 +219,7 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
     claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'),
     homeDir: home,
     policyPath: policy.path,
-    readablePaths: [ctx.deps.orbitInstallDir],
+    readablePaths: [ctx.deps.orbitInstallDir, ...toolchains.readOnly],
     timeoutMs,
     env,
   });
@@ -228,7 +241,7 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
     sandbox,
     policyPath: policy.path,
     policyHash: policy.hash,
-    env: {},
+    env: toolchains.env,
     ...(outputCap === null ? {} : { outputTokens: outputCap }),
     ...(req.maxBudgetUsd === undefined ? {} : { maxBudgetUsd: req.maxBudgetUsd }),
   };

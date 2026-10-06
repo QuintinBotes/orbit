@@ -80,6 +80,19 @@ describe('planInstall', () => {
     expect(custom.skip ? [] : custom.definitions[0]!.network_hosts).toEqual(['npm.internal.acme.test']);
   });
 
+  it('lets a configured install command reach the registries of the toolchains it serves, and nothing else (ADR 0009)', () => {
+    const rust = planInstall(snap({ install_command: ['cargo', 'fetch', '--locked'] }), project(['Cargo.toml', 'Cargo.lock']));
+    expect(rust.skip ? [] : rust.definitions[0]!.network_hosts).toEqual(['registry.npmjs.org', 'index.crates.io', 'static.crates.io']);
+    // Detected from the command as well as from the repository.
+    const go = planInstall(snap({ install_command: ['go', 'mod', 'download'] }), project([]));
+    expect(go.skip ? [] : go.definitions[0]!.network_hosts).toEqual(['registry.npmjs.org', 'proxy.golang.org', 'sum.golang.org']);
+    const plain = planInstall(snap({ install_command: ['make', 'deps'] }), project([]));
+    expect(plain.skip ? [] : plain.definitions[0]!.network_hosts).toEqual(['registry.npmjs.org']);
+    // npm's own install needs no other registry.
+    const npm = planInstall(snap(), project(['package-lock.json', 'go.mod']));
+    expect(npm.skip ? [] : npm.definitions[0]!.network_hosts).toEqual(['registry.npmjs.org']);
+  });
+
   it('produces stable definitions, so their configuration hash is reproducible', () => {
     const dir = project(['package-lock.json']);
     const a = planInstall(snap(), dir);

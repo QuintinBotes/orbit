@@ -17,6 +17,7 @@ import type { OrbitDb } from '../storage/db.ts';
 import type { ProviderAdapter } from '../adapters/types.ts';
 import type { IsolationProvider } from '../isolation/types.ts';
 import { getIsolation } from '../isolation/index.ts';
+import { toolchainCacheRoot } from '../isolation/toolchains.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { verifySnapshot } from '../policy/snapshot.ts';
 import type { GoalContract } from '../contract/types.ts';
@@ -265,6 +266,11 @@ export function repoKey(repoRoot: string): string {
     /* a missing repository is reported by preflight */
   }
   return sha256(real).slice(0, 12);
+}
+
+/** ~/.orbit/toolchains/<repo-hash>: the repository's toolchain dependency caches (docs/decisions/0009-toolchain-profiles.md). */
+export function toolchainCacheRootFor(ctx: Pick<RunContext, 'deps' | 'run'>): string {
+  return toolchainCacheRoot(ctx.deps.orbitHome, repoKey(ctx.run.repoRoot));
 }
 
 /** ~/.orbit/worktrees/<repo-hash>/<run-id>: worker worktrees and candidate checkouts, outside the repository. */

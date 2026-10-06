@@ -181,6 +181,16 @@ Hosts are exact names, IPv4 addresses, or `*.example.com` (subdomains only).
 No ports, schemes or bare `*`. Everything else is blocked by the sandbox.
 `add_packages` also needs `change_lockfile`.
 
+The dependency install is `npm ci` from an npm lockfile, or
+`install_command` when set (for another ecosystem: `cargo fetch --locked`,
+`dotnet restore --locked-mode`, a virtual environment plus `pip install -r
+requirements.txt`, `./gradlew dependencies`). It reaches the npm registry and,
+for a configured command, the registries of the toolchains its command and
+the repository use (`proxy.golang.org`, `sum.golang.org`; `index.crates.io`,
+`static.crates.io`; `pypi.org`, `files.pythonhosted.org`; Maven Central and
+the Gradle portal; `api.nuget.org`). It is the only step that may write the
+repository's toolchain caches; see [Toolchain caches](#toolchain-caches-and-build-state).
+
 `dependencies.audit` is the vulnerability and license policy of the baseline
 and dependency gates (npm lockfiles). When enabled, `npm audit --json
 --package-lock-only` runs inside isolation (registry network only, no
@@ -493,6 +503,34 @@ threw while loading, or a crash after test output keeps the repair loop.
 A check that fails then passes on rerun is reported as flaky. With
 `verification.allow_flaky_pass: false` (the default) a flaky pass cannot make the
 verdict PASS.
+
+### Toolchain caches and build state
+
+A check runs with a private, empty `HOME` and `TMPDIR`. For the toolchains it
+uses (named by any word of its command, such as `go`, `cargo`, `python3`,
+`pytest`, `java`, `./gradlew`, `dotnet`, or by marker files at the checkout
+root or in its `cwd`, such as `go.mod`, `Cargo.toml`, `pyproject.toml`,
+`requirements.txt`, `pom.xml`, `build.gradle`, a `.csproj`) Orbit also sets
+where the tools keep their state (ADR 0009):
+
+| toolchain | dependency cache (read-only) | private to the check attempt |
+|---|---|---|
+| .NET | `NUGET_PACKAGES` | `NUGET_HTTP_CACHE_PATH`, `NUGET_PLUGINS_CACHE_PATH` |
+| Go | `GOMODCACHE` | `GOCACHE`, `GOPATH` |
+| JVM | `GRADLE_RO_DEP_CACHE`, `-Dmaven.repo.local.tail` in `MAVEN_OPTS` | `GRADLE_USER_HOME`, `-Dmaven.repo.local`, `JDK_JAVA_OPTIONS=-Djava.io.tmpdir=<TMPDIR>` |
+| Python | `PIP_CACHE_DIR` | `PYTHONPYCACHEPREFIX`, `PYTHONUSERBASE` (and `POETRY_VIRTUALENVS_IN_PROJECT`, `PIPENV_VENV_IN_PROJECT`) |
+| Rust | `CARGO_HOME` | `CARGO_TARGET_DIR` (and `RUSTUP_HOME` set to your rustup installation, read-only) |
+
+The dependency caches are `<orbit home>/toolchains/<repo key>/<cache>`, one
+set per repository, never your own `~/.cargo`, `~/go`, `~/.m2` or
+`~/.nuget/packages`. Only the dependency install writes them; every other
+check and every worker reads them and cannot write them. Build state is
+created for each check attempt and removed with it (a worker has its own under
+its worker directory), so `cargo build` and `cargo test` in two checks each
+compile. A check's `env` overrides any of these variables, for example
+`CARGO_TARGET_DIR: target` to build inside the checkout. `orbit doctor`
+(`checks.sandbox`) lists each toolchain, whether it starts in the sandbox and
+where its caches live.
 
 ## ui
 

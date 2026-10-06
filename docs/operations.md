@@ -181,6 +181,13 @@ its policy, evidence and candidate are gone.
 Runs that end `SUCCEEDED` or `CANCELLED` already remove their own worktrees; see
 [retention](configuration.md#routing-and-retention).
 
+`orbit gc` leaves the repository's toolchain dependency caches
+(`<orbit home>/toolchains/<repo key>/`: the Go module cache, `CARGO_HOME`, the
+pip, Maven, Gradle and NuGet caches the dependency install filled; ADR 0009)
+alone, since every later run of the repository reads them. Remove that
+directory to start clean (`chmod -R u+w` it first: Go writes its module cache
+read-only); the next dependency install fills it again.
+
 ## Using the native /goal command
 
 Claude Code has a native `/goal` command that keeps an interactive session

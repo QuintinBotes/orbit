@@ -37,6 +37,9 @@
   permission; anything else is ignored and recorded. The service polls blocked
   runs and resumes them once no material question is open; without a service,
   `orbit resume` reads the comments first.
+- Toolchain sandbox profiles (ADR 0009): checks and workers that use Go, Rust, Python, the JVM or .NET (detected from the check's command and the repository's marker files) get the repository's dependency caches (`GOMODCACHE`, `CARGO_HOME`, `PIP_CACHE_DIR`, Gradle's and Maven's repositories, `NUGET_PACKAGES`) from `<orbit home>/toolchains/<repo key>/`, read-only, and their build state (`GOCACHE`, `GOPATH`, `CARGO_TARGET_DIR`, `PYTHONPYCACHEPREFIX`, `java.io.tmpdir`) in a private directory per check attempt or per worker. Only Orbit's dependency-install step writes the caches; nothing is shared between repositories and nothing points at your own caches. A check's `env` still overrides every variable.
+- A configured `dependencies.install_command` also reaches the registries of the toolchains its command and the repository use (for example `index.crates.io` and `static.crates.io` for `cargo fetch --locked`), not only the npm registry.
+- `orbit doctor` (`checks.sandbox`) adds one line per toolchain the checks or the repository use: whether it starts in the check sandbox and where its dependency caches live.
 
 ## 0.1.0 (2026-10-06)
 

@@ -23,6 +23,7 @@ degraded but usable.
 | `checks` | a configured check's executable or script is missing | Install it, or correct the `command` in `checks`. With no checks defined, nothing can be verified. |
 | `checks` | `orbit init` proposed no check, or fewer than expected | Init proposes only for tools on `PATH` that the repository declares, and only when it writes a new config; it prints each tool it skipped and why (`checks.not_proposed` with `--json`). Install the tool, or add the check by hand; see [Checks that `orbit init` proposes](configuration.md#checks-that-orbit-init-proposes). A proposed check that fails offline needs `network_hosts` for its dependencies. |
 | `checks.sandbox` | `the sandbox refuses the executable of check X; a run would block at its baseline` | Under `sandbox-runtime`, doctor starts each check's executable (one installed outside the repository) in the sandbox that check gets, with a harmless argument (`--version`; `dotnet help`, which runs the .NET SDK's first-run steps; `go version`). The detail line shows what was refused. See [A check cannot run in the sandbox](#run-problems). A tool that exits non-zero with no denial in its output (an unknown `--version` flag) is not counted. |
+| `checks.sandbox` | `the sandbox refuses the go toolchain; checks that use it would block at their baseline` | One `toolchain <name>:` line per toolchain the checks or the repository use (Go, Rust, Python, JVM, .NET): whether its executable starts in the check sandbox with that toolchain's environment, where the repository's dependency caches live (`<orbit home>/toolchains/<repo key>/...`, "not created yet" before the first dependency install) and which build state is private to each check attempt. See [Toolchains under the sandbox](#run-problems). |
 | `isolation` | sandbox-runtime unavailable | Install `srt` (`npm install --global @anthropic-ai/sandbox-runtime`); on Linux install bubblewrap. A plugin install and a clone after `npm ci` carry their own `srt`; if doctor says it is missing there, the plugin's or the clone's install did not finish (run `npm ci` in the clone, or reinstall the plugin). Orbit will not fall back to weaker isolation. |
 | `isolation` | container image not present locally | `docker pull <image>`. Containers run with `--pull never`. Make sure the Docker daemon is running. |
 | `isolation` | `none` provider warning | Workers run with your full permissions. Use `sandbox-runtime` or `container`. |
@@ -150,9 +151,25 @@ degraded but usable.
   code under test that creates a named `Mutex` or `Semaphore` needs
   `/tmp/.dotnet` and cannot run under `sandbox-runtime` (change the code to use
   an unnamed one or a file lock in `TMPDIR`; `isolation.provider: container`
-  gives each check its own `/tmp`, which Orbit has not verified with .NET); and a project with NuGet packages restores them into
-  the check's empty home on every run, so list the feeds (`api.nuget.org` and
-  your own) in the check's `network_hosts`.
+  gives each check its own `/tmp`, which Orbit has not verified with .NET); and a project with NuGet packages reads them
+  from the repository's read-only NuGet cache (`NUGET_PACKAGES`), so restore them in the dependency install
+  (`dependencies.install_command: [dotnet, restore, --locked-mode]`, which reaches `api.nuget.org`).
+- **Toolchains under the sandbox.** Each check (and worker) gets its toolchain's
+  dependency cache read-only from `<orbit home>/toolchains/<repo key>/` and its
+  build state in a private directory per attempt (ADR 0009; the variables are in
+  [configuration](configuration.md#toolchain-caches-and-build-state)). A check
+  that needs a dependency the install did not fetch fails with the tool's own
+  "read-only" or "operation not permitted" message on a path under that
+  directory: fetch it in the install step (`dependencies.install_command`, for
+  example `[cargo, fetch, --locked]`) rather than giving the check network.
+  Go module downloads inside `srt` on macOS fail with `tls: failed to verify
+  certificate: x509: OSStatus -26276`, because Go verifies certificates through
+  the system trust service, which the sandbox does not let it reach: vendor the
+  modules (`go mod vendor`), use `isolation.provider: container`, or run on
+  Linux. A check that expects build output in the checkout (`./target/release/acme`)
+  needs `CARGO_TARGET_DIR: target` in its `env`. To start a repository's caches
+  again, remove `<orbit home>/toolchains/<repo key>` (Go writes its module cache
+  read-only: `chmod -R u+w` it first).
 - **A command is killed for memory under `sandbox-runtime`.** The resident-memory watchdog
   hit `isolation.limits.memory_mb`. Raise it, or use `isolation.provider: container`.
 - **Disk is filling with old runs.** `orbit gc --dry-run`, then `orbit gc`.

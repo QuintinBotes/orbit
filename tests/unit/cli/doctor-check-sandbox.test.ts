@@ -11,6 +11,7 @@ import { NoIsolation } from '../../../src/isolation/none.ts';
 import type { IsolationProvider, SandboxProfile, WrappedCommand } from '../../../src/isolation/types.ts';
 import { defaultCheck, defaultConfig } from '../../../src/policy/config.ts';
 import type { CheckDefinition, OrbitConfig } from '../../../src/policy/types.ts';
+import { repoKeyFor } from '../../../src/storage/retention.ts';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -156,5 +157,69 @@ describe('checkSandboxCheck', () => {
     expect(down).toMatchObject({ status: 'warn', summary: 'not checked: isolation is unavailable (see the isolation check)' });
     const noRepo = await checkSandboxCheck({ config: cfg, repo: null, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, launch: async () => ({ exitCode: 0, output: '' }) });
     expect(noRepo.status).toBe('pass');
+  });
+});
+
+describe('checkSandboxCheck: toolchains (ADR 0009)', () => {
+  it('starts each detected toolchain in the check sandbox and says where its caches live, writing nothing outside its scratch', async () => {
+    const w = world(['go', 'make']);
+    writeFileSync(join(w.repo, 'go.mod'), 'module acme\n');
+    const orbitHome = temp('orbit-doctor-orbit-');
+    const s = srtLike();
+    const seen: string[][] = [];
+    const launch: ProbeLaunch = async (argv) => (seen.push(argv), { exitCode: 0, output: 'ok' });
+    const c = await checkSandboxCheck({ config: config([{ id: 'unit', command: ['make', 'test'] }]), repo: w.repo, provider: s.provider, available: true, env: w.env, homeDir: w.home, orbitHome, launch });
+    const cache = join(orbitHome, 'toolchains', repoKeyFor(w.repo), 'gomod');
+    expect(c.status).toBe('pass');
+    expect(c.details).toEqual([
+      'unit: "make --version" ran in the sandbox',
+      `toolchain go: "go version" ran in the sandbox; dependency cache ${cache} (not created yet; the first dependency install creates it); private per check attempt: GOCACHE, GOPATH`,
+    ]);
+    expect(seen).toEqual([[join(w.bin, 'make'), '--version'], [join(w.bin, 'go'), 'version']]);
+    // The check's probe gets the check's toolchain environment: a stand-in cache, read-only, and private build state.
+    const [unit, go] = s.wraps;
+    for (const x of [unit!, go!]) {
+      expect(x.env.GOMODCACHE).toBeDefined();
+      expect((x.profile as { readablePaths?: string[] }).readablePaths).toContain(x.env.GOMODCACHE);
+      expect(x.profile.writablePaths).not.toContain(x.env.GOMODCACHE);
+      expect(x.profile.writablePaths.some((p) => x.env.GOCACHE!.startsWith(`${p}/`))).toBe(true);
+    }
+    // Doctor created no cache.
+    expect(existsSync(join(orbitHome, 'toolchains'))).toBe(false);
+  });
+
+  it('mounts an existing repository cache read-only and says so', async () => {
+    const w = world(['cargo']);
+    writeFileSync(join(w.repo, 'Cargo.toml'), '[package]\nname = "acme"\n');
+    const orbitHome = temp('orbit-doctor-orbit-');
+    const cache = join(orbitHome, 'toolchains', repoKeyFor(w.repo), 'cargo');
+    mkdirSync(cache, { recursive: true });
+    const s = srtLike();
+    const c = await checkSandboxCheck({ config: config([{ id: 'unit', command: ['cargo', 'test'] }]), repo: w.repo, provider: s.provider, available: true, env: w.env, homeDir: w.home, orbitHome, launch: async () => ({ exitCode: 0, output: '' }) });
+    expect(c.details).toContain(`toolchain rust: "cargo --version" ran in the sandbox; dependency cache ${cache} (read-only for checks and workers, written by the dependency install); private per check attempt: CARGO_TARGET_DIR`);
+    expect(s.wraps[0]!.env.CARGO_HOME).toBe(cache);
+    expect((s.wraps[0]!.profile as { readablePaths?: string[] }).readablePaths).toContain(cache);
+    expect(s.wraps[0]!.profile.writablePaths).not.toContain(cache);
+  });
+
+  it('warns when the sandbox refuses a toolchain, and reports one it cannot find', async () => {
+    const w = world(['make', 'python3']);
+    writeFileSync(join(w.repo, 'pyproject.toml'), '');
+    writeFileSync(join(w.repo, 'go.mod'), 'module acme\n');
+    const launch: ProbeLaunch = async (argv) => (argv[0]!.endsWith('python3') ? { exitCode: 1, output: 'mkdir /Users/acme/.cache: Operation not permitted' } : { exitCode: 0, output: '' });
+    const c = await checkSandboxCheck({ config: config([{ id: 'unit', command: ['make', 'test'], mandatory: true }]), repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, orbitHome: temp('orbit-doctor-orbit-'), launch });
+    expect(c.status).toBe('warn');
+    expect(c.summary).toBe('the sandbox refuses the python toolchain; checks that use it would block at their baseline');
+    expect(c.details.find((d) => d.startsWith('toolchain go:'))).toMatch(/^toolchain go: not started \("go" was not found\); dependency cache /);
+    expect(c.details.find((d) => d.startsWith('toolchain python:'))).toMatch(/^toolchain python: "python3 --version" was refused in the sandbox: the sandbox or the operating system refused a filesystem operation outside the check's checkout/);
+  });
+
+  it('reports toolchains only with an Orbit home, where their caches live; the check probe still gets their environment', async () => {
+    const w = world(['go']);
+    const s = srtLike();
+    const c = await checkSandboxCheck({ config: config([{ id: 'unit', command: ['go', 'test', './...'] }]), repo: w.repo, provider: s.provider, available: true, env: w.env, homeDir: w.home, launch: async () => ({ exitCode: 0, output: '' }) });
+    expect(c.details).toEqual(['unit: "go version" ran in the sandbox']);
+    expect(s.wraps[0]!.env.GOCACHE).toBeDefined();
+    expect(s.wraps[0]!.profile.writablePaths.some((p) => s.wraps[0]!.env.GOMODCACHE!.startsWith(`${p}/`))).toBe(true);
   });
 });

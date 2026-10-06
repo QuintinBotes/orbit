@@ -185,6 +185,19 @@ State these plainly to yourself before running unattended.
   headless Chromium binary itself, with every credential path and the
   repository read-denied, and passes only when the page's script ran.
   See ADR 0001, "Browsers under sandbox-runtime on macOS".
+- **Toolchain dependency caches are shared within one repository.** Go,
+  Rust, Python, JVM and .NET dependency caches live under
+  `<orbit home>/toolchains/<repo key>/`, one set per repository and never the
+  user's own (`~/.cargo`, `~/go`, `~/.m2`, `~/.nuget/packages`). Only Orbit's
+  dependency-install step may write them; every other check and every worker
+  gets them read-only, and a write is refused by the sandbox. Build state
+  (`GOCACHE`, `CARGO_TARGET_DIR`, `__pycache__`) is private to each check
+  attempt, so a cached object or test result from one candidate never reaches
+  another's evidence. The install step trusts its command: a configured
+  `dependencies.install_command` that evaluates repository code (MSBuild during
+  `dotnet restore`, a Gradle build script, a Python sdist build) runs a
+  candidate's code with that repository's cache writable. Remove the
+  directory to start clean. See ADR 0009.
 - **Verification has limited coverage.** Accessibility scans find only what
   automated rules can find and are not an accessibility audit. Visual checks
   compare pixels to a baseline and do not judge design. Orbit reports these
