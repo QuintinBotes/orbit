@@ -1069,10 +1069,10 @@ var require_utils = __commonJS({
       REGEX_SPECIAL_CHARS_GLOBAL
     } = require_constants();
     exports.isObject = (val) => val !== null && typeof val === "object" && !Array.isArray(val);
-    exports.hasRegexChars = (str6) => REGEX_SPECIAL_CHARS.test(str6);
-    exports.isRegexChar = (str6) => str6.length === 1 && exports.hasRegexChars(str6);
-    exports.escapeRegex = (str6) => str6.replace(REGEX_SPECIAL_CHARS_GLOBAL, "\\$1");
-    exports.toPosixSlashes = (str6) => str6.replace(REGEX_BACKSLASH, "/");
+    exports.hasRegexChars = (str7) => REGEX_SPECIAL_CHARS.test(str7);
+    exports.isRegexChar = (str7) => str7.length === 1 && exports.hasRegexChars(str7);
+    exports.escapeRegex = (str7) => str7.replace(REGEX_SPECIAL_CHARS_GLOBAL, "\\$1");
+    exports.toPosixSlashes = (str7) => str7.replace(REGEX_BACKSLASH, "/");
     exports.isWindows = () => {
       if (typeof navigator !== "undefined" && navigator.platform) {
         const platform3 = navigator.platform.toLowerCase();
@@ -1083,8 +1083,8 @@ var require_utils = __commonJS({
       }
       return false;
     };
-    exports.removeBackslashes = (str6) => {
-      return str6.replace(REGEX_REMOVE_BACKSLASH, (match) => {
+    exports.removeBackslashes = (str7) => {
+      return str7.replace(REGEX_REMOVE_BACKSLASH, (match) => {
         return match === "\\" ? "" : match;
       });
     };
@@ -1174,7 +1174,7 @@ var require_scan = __commonJS({
       const slashes = [];
       const tokens3 = [];
       const parts = [];
-      let str6 = input;
+      let str7 = input;
       let index = -1;
       let start = 0;
       let lastIndex2 = 0;
@@ -1193,10 +1193,10 @@ var require_scan = __commonJS({
       let code2;
       let token = { value: "", depth: 0, isGlob: false };
       const eos = () => index >= length;
-      const peek = () => str6.charCodeAt(index + 1);
+      const peek = () => str7.charCodeAt(index + 1);
       const advance = () => {
         prev = code2;
-        return str6.charCodeAt(++index);
+        return str7.charCodeAt(++index);
       };
       while (index < length) {
         code2 = advance();
@@ -1373,24 +1373,24 @@ var require_scan = __commonJS({
         isExtglob = false;
         isGlob = false;
       }
-      let base = str6;
+      let base = str7;
       let prefix = "";
       let glob = "";
       if (start > 0) {
-        prefix = str6.slice(0, start);
-        str6 = str6.slice(start);
+        prefix = str7.slice(0, start);
+        str7 = str7.slice(start);
         lastIndex2 -= start;
       }
       if (base && isGlob === true && lastIndex2 > 0) {
-        base = str6.slice(0, lastIndex2);
-        glob = str6.slice(lastIndex2);
+        base = str7.slice(0, lastIndex2);
+        glob = str7.slice(lastIndex2);
       } else if (isGlob === true) {
         base = "";
-        glob = str6;
+        glob = str7;
       } else {
-        base = str6;
+        base = str7;
       }
-      if (base && base !== "" && base !== "/" && base !== str6) {
+      if (base && base !== "" && base !== "/" && base !== str7) {
         if (isPathSeparator(base.charCodeAt(base.length - 1))) {
           base = base.slice(0, -1);
         }
@@ -1713,7 +1713,7 @@ var require_parse = __commonJS({
       }
       return { risky: false };
     };
-    var parse5 = (input, options) => {
+    var parse6 = (input, options) => {
       if (typeof input !== "string") {
         throw new TypeError("Expected a string");
       }
@@ -1783,9 +1783,9 @@ var require_parse = __commonJS({
       const peek = state.peek = (n2 = 1) => input[state.index + n2];
       const advance = state.advance = () => input[++state.index] || "";
       const remaining = () => input.slice(state.index + 1);
-      const consume = (value2 = "", num5 = 0) => {
+      const consume = (value2 = "", num6 = 0) => {
         state.consumed += value2;
-        state.index += num5;
+        state.index += num6;
       };
       const append = (token) => {
         state.output += token.output != null ? token.output : token.value;
@@ -1883,7 +1883,7 @@ var require_parse = __commonJS({
             output = token.close = `)$))${extglobStar}`;
           }
           if (token.inner.includes("*") && (rest = remaining()) && /^\.[^\\/.]+$/.test(rest)) {
-            const expression = parse5(rest, { ...options, fastpaths: false }).output;
+            const expression = parse6(rest, { ...options, fastpaths: false }).output;
             output = token.close = `)${expression})${extglobStar})`;
           }
           if (token.prev.type === "bos") {
@@ -2406,7 +2406,7 @@ var require_parse = __commonJS({
       }
       return state;
     };
-    parse5.fastpaths = (input, options) => {
+    parse6.fastpaths = (input, options) => {
       const opts = { ...options };
       const max = typeof opts.maxLength === "number" ? Math.min(MAX_LENGTH, opts.maxLength) : MAX_LENGTH;
       const len = input.length;
@@ -2437,8 +2437,8 @@ var require_parse = __commonJS({
         if (opts2.noglobstar === true) return star;
         return `(${capture}(?:(?!${START_ANCHOR}${opts2.dot ? DOTS_SLASH : DOT_LITERAL}).)*?)`;
       };
-      const create = (str6) => {
-        switch (str6) {
+      const create = (str7) => {
+        switch (str7) {
           case "*":
             return `${nodot}${ONE_CHAR}${star}`;
           case ".*":
@@ -2456,7 +2456,7 @@ var require_parse = __commonJS({
           case "**/.*":
             return `(?:${nodot}${globstar(opts)}${SLASH_LITERAL})?${DOT_LITERAL}${ONE_CHAR}${star}`;
           default: {
-            const match = /^(.*?)\.(\w+)$/.exec(str6);
+            const match = /^(.*?)\.(\w+)$/.exec(str7);
             if (!match) return;
             const source2 = create(match[1]);
             if (!source2) return;
@@ -2471,7 +2471,7 @@ var require_parse = __commonJS({
       }
       return source;
     };
-    module.exports = parse5;
+    module.exports = parse6;
   }
 });
 
@@ -2480,16 +2480,16 @@ var require_picomatch = __commonJS({
   "node_modules/picomatch/lib/picomatch.js"(exports, module) {
     "use strict";
     var scan = require_scan();
-    var parse5 = require_parse();
+    var parse6 = require_parse();
     var utils = require_utils();
     var constants5 = require_constants();
     var isObject5 = (val) => val && typeof val === "object" && !Array.isArray(val);
     var picomatch9 = (glob, options, returnState = false) => {
       if (Array.isArray(glob)) {
         const fns = glob.map((input) => picomatch9(input, options, returnState));
-        const arrayMatcher = (str6) => {
+        const arrayMatcher = (str7) => {
           for (const isMatch of fns) {
-            const state2 = isMatch(str6);
+            const state2 = isMatch(str7);
             if (state2) return state2;
           }
           return false;
@@ -2565,10 +2565,10 @@ var require_picomatch = __commonJS({
       const regex = glob instanceof RegExp ? glob : picomatch9.makeRe(glob, options);
       return regex.test(utils.basename(input, { windows: posix5 }));
     };
-    picomatch9.isMatch = (str6, patterns, options) => picomatch9(patterns, options)(str6);
+    picomatch9.isMatch = (str7, patterns, options) => picomatch9(patterns, options)(str7);
     picomatch9.parse = (pattern, options) => {
       if (Array.isArray(pattern)) return pattern.map((p) => picomatch9.parse(p, options));
-      return parse5(pattern, { ...options, fastpaths: false });
+      return parse6(pattern, { ...options, fastpaths: false });
     };
     picomatch9.scan = (input, options) => scan(input, options);
     picomatch9.compileRe = (state, options, returnOutput = false, returnState = false) => {
@@ -2594,10 +2594,10 @@ var require_picomatch = __commonJS({
       }
       let parsed3 = { negated: false, fastpaths: true };
       if (options.fastpaths !== false && (input[0] === "." || input[0] === "*")) {
-        parsed3.output = parse5.fastpaths(input, options);
+        parsed3.output = parse6.fastpaths(input, options);
       }
       if (!parsed3.output) {
-        parsed3 = parse5(input, options);
+        parsed3 = parse6(input, options);
       }
       return picomatch9.compileRe(parsed3, options, returnOutput, returnState);
     };
@@ -3506,14 +3506,14 @@ function findBraceGroup(m) {
   return null;
 }
 function sequence(inner) {
-  const num5 = /^(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?$/.exec(inner);
-  if (num5) {
-    const a = Number(num5[1]);
-    const b = Number(num5[2]);
-    const step2 = Math.abs(Number(num5[3] ?? 1)) || 1;
+  const num6 = /^(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?$/.exec(inner);
+  if (num6) {
+    const a = Number(num6[1]);
+    const b = Number(num6[2]);
+    const step2 = Math.abs(Number(num6[3] ?? 1)) || 1;
     const count3 = Math.floor(Math.abs(b - a) / step2) + 1;
     if (count3 > MAX_BRACE_RESULTS) return Array.from({ length: MAX_BRACE_RESULTS + 1 }, () => "");
-    const width = /^-?0\d/.test(num5[1]) || /^-?0\d/.test(num5[2]) ? Math.max(num5[1].length, num5[2].length) : 0;
+    const width = /^-?0\d/.test(num6[1]) || /^-?0\d/.test(num6[2]) ? Math.max(num6[1].length, num6[2].length) : 0;
     const out = [];
     for (let k = 0, v = a; k < count3; k++, v += a <= b ? step2 : -step2) {
       const digits = String(Math.abs(v)).padStart(width - (v < 0 ? 1 : 0), "0");
@@ -3609,9 +3609,9 @@ function classifySource(src, state, depth, base) {
   const cwdByScope = /* @__PURE__ */ new Map([["", base]]);
   const pipelines = /* @__PURE__ */ new Map();
   for (const cmd of parsed3.commands) {
-    const list = pipelines.get(cmd.pipeline) ?? [];
-    list.push(cmd);
-    pipelines.set(cmd.pipeline, list);
+    const list2 = pipelines.get(cmd.pipeline) ?? [];
+    list2.push(cmd);
+    pipelines.set(cmd.pipeline, list2);
   }
   for (const cmd of parsed3.commands) {
     const here = lookupBase(cwdByScope, cmd.scope);
@@ -4009,9 +4009,9 @@ function targetPath(word, base, state) {
 function outsideRoot(word, base, state) {
   const p = targetPath(word, base, state);
   if (p === null) return null;
-  const norm2 = posix.resolve(p);
+  const norm3 = posix.resolve(p);
   const root = posix.resolve(state.root);
-  return !(norm2 === root || norm2.startsWith(`${root}/`));
+  return !(norm3 === root || norm3.startsWith(`${root}/`));
 }
 function handlerFor(name) {
   return Object.hasOwn(HANDLERS, name) ? HANDLERS[name] : void 0;
@@ -6920,8 +6920,8 @@ function indentComment(comment, indent) {
 var stringifyComment, lineComment;
 var init_stringifyComment = __esm({
   "node_modules/yaml/browser/dist/stringify/stringifyComment.js"() {
-    stringifyComment = (str6) => str6.replace(/^(?!$)(?: $)?/gm, "#");
-    lineComment = (str6, indent, comment) => str6.endsWith("\n") ? indentComment(comment, indent) : comment.includes("\n") ? "\n" + indentComment(comment, indent) : (str6.endsWith(" ") ? "" : " ") + comment;
+    stringifyComment = (str7) => str7.replace(/^(?!$)(?: $)?/gm, "#");
+    lineComment = (str7, indent, comment) => str7.endsWith("\n") ? indentComment(comment, indent) : comment.includes("\n") ? "\n" + indentComment(comment, indent) : (str7.endsWith(" ") ? "" : " ") + comment;
   }
 });
 
@@ -7058,15 +7058,15 @@ var init_foldFlowLines = __esm({
 });
 
 // node_modules/yaml/browser/dist/stringify/stringifyString.js
-function lineLengthOverLimit(str6, lineWidth, indentLength) {
+function lineLengthOverLimit(str7, lineWidth, indentLength) {
   if (!lineWidth || lineWidth < 0)
     return false;
   const limit = lineWidth - indentLength;
-  const strLen = str6.length;
+  const strLen = str7.length;
   if (strLen <= limit)
     return false;
   for (let i = 0, start = 0; i < strLen; ++i) {
-    if (str6[i] === "\n") {
+    if (str7[i] === "\n") {
       if (i - start > limit)
         return true;
       start = i + 1;
@@ -7083,11 +7083,11 @@ function doubleQuotedString(value, ctx) {
   const { implicitKey } = ctx;
   const minMultiLineLength = ctx.options.doubleQuotedMinMultiLineLength;
   const indent = ctx.indent || (containsDocumentMarker(value) ? "  " : "");
-  let str6 = "";
+  let str7 = "";
   let start = 0;
   for (let i = 0, ch = json3[i]; ch; ch = json3[++i]) {
     if (ch === " " && json3[i + 1] === "\\" && json3[i + 2] === "n") {
-      str6 += json3.slice(start, i) + "\\ ";
+      str7 += json3.slice(start, i) + "\\ ";
       i += 1;
       start = i;
       ch = "\\";
@@ -7096,38 +7096,38 @@ function doubleQuotedString(value, ctx) {
       switch (json3[i + 1]) {
         case "u":
           {
-            str6 += json3.slice(start, i);
+            str7 += json3.slice(start, i);
             const code2 = json3.substr(i + 2, 4);
             switch (code2) {
               case "0000":
-                str6 += "\\0";
+                str7 += "\\0";
                 break;
               case "0007":
-                str6 += "\\a";
+                str7 += "\\a";
                 break;
               case "000b":
-                str6 += "\\v";
+                str7 += "\\v";
                 break;
               case "001b":
-                str6 += "\\e";
+                str7 += "\\e";
                 break;
               case "0085":
-                str6 += "\\N";
+                str7 += "\\N";
                 break;
               case "00a0":
-                str6 += "\\_";
+                str7 += "\\_";
                 break;
               case "2028":
-                str6 += "\\L";
+                str7 += "\\L";
                 break;
               case "2029":
-                str6 += "\\P";
+                str7 += "\\P";
                 break;
               default:
                 if (code2.substr(0, 2) === "00")
-                  str6 += "\\x" + code2.substr(2);
+                  str7 += "\\x" + code2.substr(2);
                 else
-                  str6 += json3.substr(i, 6);
+                  str7 += json3.substr(i, 6);
             }
             i += 5;
             start = i + 1;
@@ -7137,14 +7137,14 @@ function doubleQuotedString(value, ctx) {
           if (implicitKey || json3[i + 2] === '"' || json3.length < minMultiLineLength) {
             i += 1;
           } else {
-            str6 += json3.slice(start, i) + "\n\n";
+            str7 += json3.slice(start, i) + "\n\n";
             while (json3[i + 2] === "\\" && json3[i + 3] === "n" && json3[i + 4] !== '"') {
-              str6 += "\n";
+              str7 += "\n";
               i += 2;
             }
-            str6 += indent;
+            str7 += indent;
             if (json3[i + 2] === " ")
-              str6 += "\\";
+              str7 += "\\";
             i += 1;
             start = i + 1;
           }
@@ -7153,8 +7153,8 @@ function doubleQuotedString(value, ctx) {
           i += 1;
       }
   }
-  str6 = start ? str6 + json3.slice(start) : json3;
-  return implicitKey ? str6 : foldFlowLines(str6, indent, FOLD_QUOTED, getFoldOptions(ctx, false));
+  str7 = start ? str7 + json3.slice(start) : json3;
+  return implicitKey ? str7 : foldFlowLines(str7, indent, FOLD_QUOTED, getFoldOptions(ctx, false));
 }
 function singleQuotedString(value, ctx) {
   if (ctx.options.singleQuote === false || ctx.implicitKey && value.includes("\n") || /[ \t]\n|\n[ \t]/.test(value))
@@ -7276,15 +7276,15 @@ function plainString(item, ctx, onComment, onChompKeep) {
       return quotedString(value, ctx);
     }
   }
-  const str6 = value.replace(/\n+/g, `$&
+  const str7 = value.replace(/\n+/g, `$&
 ${indent}`);
   if (actualString) {
-    const test = (tag2) => tag2.default && tag2.tag !== "tag:yaml.org,2002:str" && tag2.test?.test(str6);
+    const test = (tag2) => tag2.default && tag2.tag !== "tag:yaml.org,2002:str" && tag2.test?.test(str7);
     const { compat, tags } = ctx.doc.schema;
     if (tags.some(test) || compat?.some(test))
       return quotedString(value, ctx);
   }
-  return implicitKey ? str6 : foldFlowLines(str6, indent, FOLD_FLOW, getFoldOptions(ctx, false));
+  return implicitKey ? str7 : foldFlowLines(str7, indent, FOLD_FLOW, getFoldOptions(ctx, false));
 }
 function stringifyString(item, ctx, onComment, onChompKeep) {
   const { implicitKey, inFlow } = ctx;
@@ -7329,7 +7329,7 @@ var init_stringifyString = __esm({
       lineWidth: ctx.options.lineWidth,
       minContentWidth: ctx.options.minContentWidth
     });
-    containsDocumentMarker = (str6) => /^(%|---|\.\.\.)/m.test(str6);
+    containsDocumentMarker = (str7) => /^(%|---|\.\.\.)/m.test(str7);
     try {
       blockEndNewlines = new RegExp("(^|(?<!\n))\n+(?!\n|$)", "g");
     } catch {
@@ -7444,11 +7444,11 @@ function stringify(item, ctx, onComment, onChompKeep) {
   const props = stringifyProps(node, tagObj, ctx);
   if (props.length > 0)
     ctx.indentAtStart = (ctx.indentAtStart ?? 0) + props.length + 1;
-  const str6 = typeof tagObj.stringify === "function" ? tagObj.stringify(node, ctx, onComment, onChompKeep) : isScalar(node) ? stringifyString(node, ctx, onComment, onChompKeep) : node.toString(ctx, onComment, onChompKeep);
+  const str7 = typeof tagObj.stringify === "function" ? tagObj.stringify(node, ctx, onComment, onChompKeep) : isScalar(node) ? stringifyString(node, ctx, onComment, onChompKeep) : node.toString(ctx, onComment, onChompKeep);
   if (!props)
-    return str6;
-  return isScalar(node) || str6[0] === "{" || str6[0] === "[" ? `${props} ${str6}` : `${props}
-${ctx.indent}${str6}`;
+    return str7;
+  return isScalar(node) || str7[0] === "{" || str7[0] === "[" ? `${props} ${str7}` : `${props}
+${ctx.indent}${str7}`;
 }
 var init_stringify = __esm({
   "node_modules/yaml/browser/dist/stringify/stringify.js"() {
@@ -7480,8 +7480,8 @@ function stringifyPair({ key: key2, value }, ctx, onComment, onChompKeep) {
   });
   let keyCommentDone = false;
   let chompKeep = false;
-  let str6 = stringify(key2, ctx, () => keyCommentDone = true, () => chompKeep = true);
-  if (!explicitKey && !ctx.inFlow && str6.length > 1024) {
+  let str7 = stringify(key2, ctx, () => keyCommentDone = true, () => chompKeep = true);
+  if (!explicitKey && !ctx.inFlow && str7.length > 1024) {
     if (simpleKeys)
       throw new Error("With simple keys, single line scalar must not span more than 1024 characters");
     explicitKey = true;
@@ -7490,27 +7490,27 @@ function stringifyPair({ key: key2, value }, ctx, onComment, onChompKeep) {
     if (allNullValues || value == null) {
       if (keyCommentDone && onComment)
         onComment();
-      return str6 === "" ? "?" : explicitKey ? `? ${str6}` : str6;
+      return str7 === "" ? "?" : explicitKey ? `? ${str7}` : str7;
     }
   } else if (allNullValues && !simpleKeys || value == null && explicitKey) {
-    str6 = `? ${str6}`;
+    str7 = `? ${str7}`;
     if (keyComment && !keyCommentDone) {
-      str6 += lineComment(str6, ctx.indent, commentString(keyComment));
+      str7 += lineComment(str7, ctx.indent, commentString(keyComment));
     } else if (chompKeep && onChompKeep)
       onChompKeep();
-    return str6;
+    return str7;
   }
   if (keyCommentDone)
     keyComment = null;
   if (explicitKey) {
     if (keyComment)
-      str6 += lineComment(str6, ctx.indent, commentString(keyComment));
-    str6 = `? ${str6}
+      str7 += lineComment(str7, ctx.indent, commentString(keyComment));
+    str7 = `? ${str7}
 ${indent}:`;
   } else {
-    str6 = `${str6}:`;
+    str7 = `${str7}:`;
     if (keyComment)
-      str6 += lineComment(str6, ctx.indent, commentString(keyComment));
+      str7 += lineComment(str7, ctx.indent, commentString(keyComment));
   }
   let vsb, vcb, valueComment;
   if (isNode(value)) {
@@ -7526,7 +7526,7 @@ ${indent}:`;
   }
   ctx.implicitKey = false;
   if (!explicitKey && !keyComment && isScalar(value))
-    ctx.indentAtStart = str6.length + 1;
+    ctx.indentAtStart = str7.length + 1;
   chompKeep = false;
   if (!indentSeq && indentStep.length >= 2 && !ctx.inFlow && !explicitKey && isSeq(value) && !value.flow && !value.tag && !value.anchor) {
     ctx.indent = ctx.indent.substring(2);
@@ -7570,16 +7570,16 @@ ${ctx.indent}`;
   } else if (valueStr === "" || valueStr[0] === "\n") {
     ws = "";
   }
-  str6 += ws + valueStr;
+  str7 += ws + valueStr;
   if (ctx.inFlow) {
     if (valueCommentDone && onComment)
       onComment();
   } else if (valueComment && !valueCommentDone) {
-    str6 += lineComment(str6, ctx.indent, commentString(valueComment));
+    str7 += lineComment(str7, ctx.indent, commentString(valueComment));
   } else if (chompKeep && onChompKeep) {
     onChompKeep();
   }
-  return str6;
+  return str7;
 }
 var init_stringifyPair = __esm({
   "node_modules/yaml/browser/dist/stringify/stringifyPair.js"() {
@@ -7787,31 +7787,31 @@ function stringifyBlockCollection({ comment, items }, ctx, { blockItemPrefix, fl
       }
     }
     chompKeep = false;
-    let str7 = stringify(item, itemCtx, () => comment2 = null, () => chompKeep = true);
+    let str8 = stringify(item, itemCtx, () => comment2 = null, () => chompKeep = true);
     if (comment2)
-      str7 += lineComment(str7, itemIndent, commentString(comment2));
+      str8 += lineComment(str8, itemIndent, commentString(comment2));
     if (chompKeep && comment2)
       chompKeep = false;
-    lines.push(blockItemPrefix + str7);
+    lines.push(blockItemPrefix + str8);
   }
-  let str6;
+  let str7;
   if (lines.length === 0) {
-    str6 = flowChars.start + flowChars.end;
+    str7 = flowChars.start + flowChars.end;
   } else {
-    str6 = lines[0];
+    str7 = lines[0];
     for (let i = 1; i < lines.length; ++i) {
       const line3 = lines[i];
-      str6 += line3 ? `
+      str7 += line3 ? `
 ${indent}${line3}` : "\n";
     }
   }
   if (comment) {
-    str6 += "\n" + indentComment(commentString(comment), indent);
+    str7 += "\n" + indentComment(commentString(comment), indent);
     if (onComment)
       onComment();
   } else if (chompKeep && onChompKeep)
     onChompKeep();
-  return str6;
+  return str7;
 }
 function stringifyFlowCollection({ items }, ctx, { flowChars, itemIndent }) {
   const { indent, indentStep, flowCollectionPadding: fcPadding, options: { commentString } } = ctx;
@@ -7854,21 +7854,21 @@ function stringifyFlowCollection({ items }, ctx, { flowChars, itemIndent }) {
     }
     if (comment)
       reqNewline = true;
-    let str6 = stringify(item, itemCtx, () => comment = null);
-    reqNewline || (reqNewline = lines.length > linesAtValue || str6.includes("\n"));
+    let str7 = stringify(item, itemCtx, () => comment = null);
+    reqNewline || (reqNewline = lines.length > linesAtValue || str7.includes("\n"));
     if (i < items.length - 1) {
-      str6 += ",";
+      str7 += ",";
     } else if (ctx.options.trailingComma) {
       if (ctx.options.lineWidth > 0) {
-        reqNewline || (reqNewline = lines.reduce((sum, line3) => sum + line3.length + 2, 2) + (str6.length + 2) > ctx.options.lineWidth);
+        reqNewline || (reqNewline = lines.reduce((sum, line3) => sum + line3.length + 2, 2) + (str7.length + 2) > ctx.options.lineWidth);
       }
       if (reqNewline) {
-        str6 += ",";
+        str7 += ",";
       }
     }
     if (comment)
-      str6 += lineComment(str6, itemIndent, commentString(comment));
-    lines.push(str6);
+      str7 += lineComment(str7, itemIndent, commentString(comment));
+    lines.push(str7);
     linesAtValue = lines.length;
   }
   const { start, end } = flowChars;
@@ -7880,11 +7880,11 @@ function stringifyFlowCollection({ items }, ctx, { flowChars, itemIndent }) {
       reqNewline = ctx.options.lineWidth > 0 && len > ctx.options.lineWidth;
     }
     if (reqNewline) {
-      let str6 = start;
+      let str7 = start;
       for (const line3 of lines)
-        str6 += line3 ? `
+        str7 += line3 ? `
 ${indentStep}${indent}${line3}` : "\n";
-      return `${str6}
+      return `${str7}
 ${indent}${end}`;
     } else {
       return `${start}${fcPadding}${lines.join(" ")}${fcPadding}${end}`;
@@ -8215,7 +8215,7 @@ var init_string = __esm({
       identify: (value) => typeof value === "string",
       default: true,
       tag: "tag:yaml.org,2002:str",
-      resolve: (str6) => str6,
+      resolve: (str7) => str7,
       stringify(item, ctx, onComment, onChompKeep) {
         ctx = Object.assign({ actualString: true }, ctx);
         return stringifyString(item, ctx, onComment, onChompKeep);
@@ -8251,7 +8251,7 @@ var init_bool = __esm({
       default: true,
       tag: "tag:yaml.org,2002:bool",
       test: /^(?:[Tt]rue|TRUE|[Ff]alse|FALSE)$/,
-      resolve: (str6) => new Scalar(str6[0] === "t" || str6[0] === "T"),
+      resolve: (str7) => new Scalar(str7[0] === "t" || str7[0] === "T"),
       stringify({ source, value }, ctx) {
         if (source && boolTag.test.test(source)) {
           const sv = source[0] === "t" || source[0] === "T";
@@ -8268,9 +8268,9 @@ var init_bool = __esm({
 function stringifyNumber({ format, minFractionDigits, tag: tag2, value }) {
   if (typeof value === "bigint")
     return String(value);
-  const num5 = typeof value === "number" ? value : Number(value);
-  if (!isFinite(num5))
-    return isNaN(num5) ? ".nan" : num5 < 0 ? "-.inf" : ".inf";
+  const num6 = typeof value === "number" ? value : Number(value);
+  if (!isFinite(num6))
+    return isNaN(num6) ? ".nan" : num6 < 0 ? "-.inf" : ".inf";
   let n2 = Object.is(value, -0) ? "-0" : JSON.stringify(value);
   if (!format && minFractionDigits && (!tag2 || tag2 === "tag:yaml.org,2002:float") && /^-?\d/.test(n2) && !n2.includes("e")) {
     let i = n2.indexOf(".");
@@ -8300,7 +8300,7 @@ var init_float = __esm({
       default: true,
       tag: "tag:yaml.org,2002:float",
       test: /^(?:[-+]?\.(?:inf|Inf|INF)|\.nan|\.NaN|\.NAN)$/,
-      resolve: (str6) => str6.slice(-3).toLowerCase() === "nan" ? NaN : str6[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
+      resolve: (str7) => str7.slice(-3).toLowerCase() === "nan" ? NaN : str7[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
       stringify: stringifyNumber
     };
     floatExp = {
@@ -8309,10 +8309,10 @@ var init_float = __esm({
       tag: "tag:yaml.org,2002:float",
       format: "EXP",
       test: /^[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)[eE][-+]?[0-9]+$/,
-      resolve: (str6) => parseFloat(str6),
+      resolve: (str7) => parseFloat(str7),
       stringify(node) {
-        const num5 = Number(node.value);
-        return isFinite(num5) ? num5.toExponential() : stringifyNumber(node);
+        const num6 = Number(node.value);
+        return isFinite(num6) ? num6.toExponential() : stringifyNumber(node);
       }
     };
     float = {
@@ -8320,11 +8320,11 @@ var init_float = __esm({
       default: true,
       tag: "tag:yaml.org,2002:float",
       test: /^[-+]?(?:\.[0-9]+|[0-9]+\.[0-9]*)$/,
-      resolve(str6) {
-        const node = new Scalar(parseFloat(str6));
-        const dot = str6.indexOf(".");
-        if (dot !== -1 && str6[str6.length - 1] === "0")
-          node.minFractionDigits = str6.length - dot - 1;
+      resolve(str7) {
+        const node = new Scalar(parseFloat(str7));
+        const dot = str7.indexOf(".");
+        if (dot !== -1 && str7[str7.length - 1] === "0")
+          node.minFractionDigits = str7.length - dot - 1;
         return node;
       },
       stringify: stringifyNumber
@@ -8344,14 +8344,14 @@ var init_int = __esm({
   "node_modules/yaml/browser/dist/schema/core/int.js"() {
     init_stringifyNumber();
     intIdentify = (value) => typeof value === "bigint" || Number.isInteger(value);
-    intResolve = (str6, offset, radix, { intAsBigInt }) => intAsBigInt ? BigInt(str6) : parseInt(str6.substring(offset), radix);
+    intResolve = (str7, offset, radix, { intAsBigInt }) => intAsBigInt ? BigInt(str7) : parseInt(str7.substring(offset), radix);
     intOct = {
       identify: (value) => intIdentify(value) && value >= 0,
       default: true,
       tag: "tag:yaml.org,2002:int",
       format: "OCT",
       test: /^0o[0-7]+$/,
-      resolve: (str6, _onError, opt) => intResolve(str6, 2, 8, opt),
+      resolve: (str7, _onError, opt) => intResolve(str7, 2, 8, opt),
       stringify: (node) => intStringify(node, 8, "0o")
     };
     int = {
@@ -8359,7 +8359,7 @@ var init_int = __esm({
       default: true,
       tag: "tag:yaml.org,2002:int",
       test: /^[-+]?[0-9]+$/,
-      resolve: (str6, _onError, opt) => intResolve(str6, 0, 10, opt),
+      resolve: (str7, _onError, opt) => intResolve(str7, 0, 10, opt),
       stringify: stringifyNumber
     };
     intHex = {
@@ -8368,7 +8368,7 @@ var init_int = __esm({
       tag: "tag:yaml.org,2002:int",
       format: "HEX",
       test: /^0x[0-9a-fA-F]+$/,
-      resolve: (str6, _onError, opt) => intResolve(str6, 2, 16, opt),
+      resolve: (str7, _onError, opt) => intResolve(str7, 2, 16, opt),
       stringify: (node) => intStringify(node, 16, "0x")
     };
   }
@@ -8417,7 +8417,7 @@ var init_schema2 = __esm({
         identify: (value) => typeof value === "string",
         default: true,
         tag: "tag:yaml.org,2002:str",
-        resolve: (str6) => str6,
+        resolve: (str7) => str7,
         stringify: stringifyJSON
       },
       {
@@ -8434,7 +8434,7 @@ var init_schema2 = __esm({
         default: true,
         tag: "tag:yaml.org,2002:bool",
         test: /^true$|^false$/,
-        resolve: (str6) => str6 === "true",
+        resolve: (str7) => str7 === "true",
         stringify: stringifyJSON
       },
       {
@@ -8442,7 +8442,7 @@ var init_schema2 = __esm({
         default: true,
         tag: "tag:yaml.org,2002:int",
         test: /^-?(?:0|[1-9][0-9]*)$/,
-        resolve: (str6, _onError, { intAsBigInt }) => intAsBigInt ? BigInt(str6) : parseInt(str6, 10),
+        resolve: (str7, _onError, { intAsBigInt }) => intAsBigInt ? BigInt(str7) : parseInt(str7, 10),
         stringify: ({ value }) => intIdentify2(value) ? value.toString() : JSON.stringify(value)
       },
       {
@@ -8450,7 +8450,7 @@ var init_schema2 = __esm({
         default: true,
         tag: "tag:yaml.org,2002:float",
         test: /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*)?(?:[eE][-+]?[0-9]+)?$/,
-        resolve: (str6) => parseFloat(str6),
+        resolve: (str7) => parseFloat(str7),
         stringify: stringifyJSON
       }
     ];
@@ -8458,9 +8458,9 @@ var init_schema2 = __esm({
       default: true,
       tag: "",
       test: /^/,
-      resolve(str6, onError) {
-        onError(`Unresolved plain scalar ${JSON.stringify(str6)}`);
-        return str6;
+      resolve(str7, onError) {
+        onError(`Unresolved plain scalar ${JSON.stringify(str7)}`);
+        return str7;
       }
     };
     schema2 = [map, seq].concat(jsonScalars, jsonError);
@@ -8488,10 +8488,10 @@ var init_binary = __esm({
        */
       resolve(src, onError) {
         if (typeof atob === "function") {
-          const str6 = atob(src.replace(/[\n\r]/g, ""));
-          const buffer = new Uint8Array(str6.length);
-          for (let i = 0; i < str6.length; ++i)
-            buffer[i] = str6.charCodeAt(i);
+          const str7 = atob(src.replace(/[\n\r]/g, ""));
+          const buffer = new Uint8Array(str7.length);
+          for (let i = 0; i < str7.length; ++i)
+            buffer[i] = str7.charCodeAt(i);
           return buffer;
         } else {
           onError("This environment does not support reading binary tags; either Buffer or atob is required");
@@ -8502,26 +8502,26 @@ var init_binary = __esm({
         if (!value)
           return "";
         const buf = value;
-        let str6;
+        let str7;
         if (typeof btoa === "function") {
           let s = "";
           for (let i = 0; i < buf.length; ++i)
             s += String.fromCharCode(buf[i]);
-          str6 = btoa(s);
+          str7 = btoa(s);
         } else {
           throw new Error("This environment does not support writing binary tags; either Buffer or btoa is required");
         }
         type ?? (type = Scalar.BLOCK_LITERAL);
         if (type !== Scalar.QUOTE_DOUBLE) {
           const lineWidth = Math.max(ctx.options.lineWidth - ctx.indent.length, ctx.options.minContentWidth);
-          const n2 = Math.ceil(str6.length / lineWidth);
+          const n2 = Math.ceil(str7.length / lineWidth);
           const lines = new Array(n2);
           for (let i = 0, o = 0; i < n2; ++i, o += lineWidth) {
-            lines[i] = str6.substr(o, lineWidth);
+            lines[i] = str7.substr(o, lineWidth);
           }
-          str6 = lines.join(type === Scalar.BLOCK_LITERAL ? "\n" : " ");
+          str7 = lines.join(type === Scalar.BLOCK_LITERAL ? "\n" : " ");
         }
-        return stringifyString({ comment, type, value: str6 }, ctx, onComment, onChompKeep);
+        return stringifyString({ comment, type, value: str7 }, ctx, onComment, onChompKeep);
       }
     };
   }
@@ -8719,7 +8719,7 @@ var init_float2 = __esm({
       default: true,
       tag: "tag:yaml.org,2002:float",
       test: /^(?:[-+]?\.(?:inf|Inf|INF)|\.nan|\.NaN|\.NAN)$/,
-      resolve: (str6) => str6.slice(-3).toLowerCase() === "nan" ? NaN : str6[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
+      resolve: (str7) => str7.slice(-3).toLowerCase() === "nan" ? NaN : str7[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
       stringify: stringifyNumber
     };
     floatExp2 = {
@@ -8728,10 +8728,10 @@ var init_float2 = __esm({
       tag: "tag:yaml.org,2002:float",
       format: "EXP",
       test: /^[-+]?(?:[0-9][0-9_]*)?(?:\.[0-9_]*)?[eE][-+]?[0-9]+$/,
-      resolve: (str6) => parseFloat(str6.replace(/_/g, "")),
+      resolve: (str7) => parseFloat(str7.replace(/_/g, "")),
       stringify(node) {
-        const num5 = Number(node.value);
-        return isFinite(num5) ? num5.toExponential() : stringifyNumber(node);
+        const num6 = Number(node.value);
+        return isFinite(num6) ? num6.toExponential() : stringifyNumber(node);
       }
     };
     float2 = {
@@ -8739,11 +8739,11 @@ var init_float2 = __esm({
       default: true,
       tag: "tag:yaml.org,2002:float",
       test: /^[-+]?(?:[0-9][0-9_]*)?\.[0-9_]*$/,
-      resolve(str6) {
-        const node = new Scalar(parseFloat(str6.replace(/_/g, "")));
-        const dot = str6.indexOf(".");
+      resolve(str7) {
+        const node = new Scalar(parseFloat(str7.replace(/_/g, "")));
+        const dot = str7.indexOf(".");
         if (dot !== -1) {
-          const f = str6.substring(dot + 1).replace(/_/g, "");
+          const f = str7.substring(dot + 1).replace(/_/g, "");
           if (f[f.length - 1] === "0")
             node.minFractionDigits = f.length;
         }
@@ -8755,34 +8755,34 @@ var init_float2 = __esm({
 });
 
 // node_modules/yaml/browser/dist/schema/yaml-1.1/int.js
-function intResolve2(str6, offset, radix, { intAsBigInt }) {
-  const sign = str6[0];
+function intResolve2(str7, offset, radix, { intAsBigInt }) {
+  const sign = str7[0];
   if (sign === "-" || sign === "+")
     offset += 1;
-  str6 = str6.substring(offset).replace(/_/g, "");
+  str7 = str7.substring(offset).replace(/_/g, "");
   if (intAsBigInt) {
     switch (radix) {
       case 2:
-        str6 = `0b${str6}`;
+        str7 = `0b${str7}`;
         break;
       case 8:
-        str6 = `0o${str6}`;
+        str7 = `0o${str7}`;
         break;
       case 16:
-        str6 = `0x${str6}`;
+        str7 = `0x${str7}`;
         break;
     }
-    const n3 = BigInt(str6);
+    const n3 = BigInt(str7);
     return sign === "-" ? BigInt(-1) * n3 : n3;
   }
-  const n2 = parseInt(str6, radix);
+  const n2 = parseInt(str7, radix);
   return sign === "-" ? -1 * n2 : n2;
 }
 function intStringify2(node, radix, prefix) {
   const { value } = node;
   if (intIdentify3(value)) {
-    const str6 = value.toString(radix);
-    return value < 0 ? "-" + prefix + str6.substr(1) : prefix + str6;
+    const str7 = value.toString(radix);
+    return value < 0 ? "-" + prefix + str7.substr(1) : prefix + str7;
   }
   return stringifyNumber(node);
 }
@@ -8797,7 +8797,7 @@ var init_int2 = __esm({
       tag: "tag:yaml.org,2002:int",
       format: "BIN",
       test: /^[-+]?0b[0-1_]+$/,
-      resolve: (str6, _onError, opt) => intResolve2(str6, 2, 2, opt),
+      resolve: (str7, _onError, opt) => intResolve2(str7, 2, 2, opt),
       stringify: (node) => intStringify2(node, 2, "0b")
     };
     intOct2 = {
@@ -8806,7 +8806,7 @@ var init_int2 = __esm({
       tag: "tag:yaml.org,2002:int",
       format: "OCT",
       test: /^[-+]?0[0-7_]+$/,
-      resolve: (str6, _onError, opt) => intResolve2(str6, 1, 8, opt),
+      resolve: (str7, _onError, opt) => intResolve2(str7, 1, 8, opt),
       stringify: (node) => intStringify2(node, 8, "0")
     };
     int2 = {
@@ -8814,7 +8814,7 @@ var init_int2 = __esm({
       default: true,
       tag: "tag:yaml.org,2002:int",
       test: /^[-+]?[0-9][0-9_]*$/,
-      resolve: (str6, _onError, opt) => intResolve2(str6, 0, 10, opt),
+      resolve: (str7, _onError, opt) => intResolve2(str7, 0, 10, opt),
       stringify: stringifyNumber
     };
     intHex2 = {
@@ -8823,7 +8823,7 @@ var init_int2 = __esm({
       tag: "tag:yaml.org,2002:int",
       format: "HEX",
       test: /^[-+]?0x[0-9a-fA-F_]+$/,
-      resolve: (str6, _onError, opt) => intResolve2(str6, 2, 16, opt),
+      resolve: (str7, _onError, opt) => intResolve2(str7, 2, 16, opt),
       stringify: (node) => intStringify2(node, 16, "0x")
     };
   }
@@ -8917,26 +8917,26 @@ var init_set = __esm({
 });
 
 // node_modules/yaml/browser/dist/schema/yaml-1.1/timestamp.js
-function parseSexagesimal(str6, asBigInt) {
-  const sign = str6[0];
-  const parts = sign === "-" || sign === "+" ? str6.substring(1) : str6;
-  const num5 = (n2) => asBigInt ? BigInt(n2) : Number(n2);
-  const res = parts.replace(/_/g, "").split(":").reduce((res2, p) => res2 * num5(60) + num5(p), num5(0));
-  return sign === "-" ? num5(-1) * res : res;
+function parseSexagesimal(str7, asBigInt) {
+  const sign = str7[0];
+  const parts = sign === "-" || sign === "+" ? str7.substring(1) : str7;
+  const num6 = (n2) => asBigInt ? BigInt(n2) : Number(n2);
+  const res = parts.replace(/_/g, "").split(":").reduce((res2, p) => res2 * num6(60) + num6(p), num6(0));
+  return sign === "-" ? num6(-1) * res : res;
 }
 function stringifySexagesimal(node) {
   let { value } = node;
-  let num5 = (n2) => n2;
+  let num6 = (n2) => n2;
   if (typeof value === "bigint")
-    num5 = (n2) => BigInt(n2);
+    num6 = (n2) => BigInt(n2);
   else if (isNaN(value) || !isFinite(value))
     return stringifyNumber(node);
   let sign = "";
   if (value < 0) {
     sign = "-";
-    value *= num5(-1);
+    value *= num6(-1);
   }
-  const _60 = num5(60);
+  const _60 = num6(60);
   const parts = [value % _60];
   if (value < 60) {
     parts.unshift(0);
@@ -8960,7 +8960,7 @@ var init_timestamp = __esm({
       tag: "tag:yaml.org,2002:int",
       format: "TIME",
       test: /^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+$/,
-      resolve: (str6, _onError, { intAsBigInt }) => parseSexagesimal(str6, intAsBigInt),
+      resolve: (str7, _onError, { intAsBigInt }) => parseSexagesimal(str7, intAsBigInt),
       stringify: stringifySexagesimal
     };
     floatTime = {
@@ -8969,7 +8969,7 @@ var init_timestamp = __esm({
       tag: "tag:yaml.org,2002:float",
       format: "TIME",
       test: /^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*$/,
-      resolve: (str6) => parseSexagesimal(str6, false),
+      resolve: (str7) => parseSexagesimal(str7, false),
       stringify: stringifySexagesimal
     };
     timestamp = {
@@ -8980,8 +8980,8 @@ var init_timestamp = __esm({
       // may be omitted altogether, resulting in a date format. In such a case, the time part is
       // assumed to be 00:00:00Z (start of day, UTC).
       test: RegExp("^([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})(?:(?:t|T|[ \\t]+)([0-9]{1,2}):([0-9]{1,2}):([0-9]{1,2}(\\.[0-9]+)?)(?:[ \\t]*(Z|[-+][012]?[0-9](?::[0-9]{2})?))?)?$"),
-      resolve(str6) {
-        const match = str6.match(timestamp.test);
+      resolve(str7) {
+        const match = str7.match(timestamp.test);
         if (!match)
           throw new Error("!!timestamp expects a date, starting with yyyy-mm-dd");
         const [, year, month, day, hour, minute, second] = match.map(Number);
@@ -11895,15 +11895,15 @@ var init_line_counter = __esm({
 });
 
 // node_modules/yaml/browser/dist/parse/parser.js
-function includesToken(list, type) {
-  for (let i = 0; i < list.length; ++i)
-    if (list[i].type === type)
+function includesToken(list2, type) {
+  for (let i = 0; i < list2.length; ++i)
+    if (list2[i].type === type)
       return true;
   return false;
 }
-function findNonEmptyIndex(list) {
-  for (let i = 0; i < list.length; ++i) {
-    switch (list[i].type) {
+function findNonEmptyIndex(list2) {
+  for (let i = 0; i < list2.length; ++i) {
+    switch (list2[i].type) {
       case "space":
       case "comment":
       case "newline":
@@ -12899,7 +12899,7 @@ var require_code = __commonJS({
     }
     exports._ = _;
     var plus = new _Code("+");
-    function str6(strs, ...args) {
+    function str7(strs, ...args) {
       const expr = [safeStringify(strs[0])];
       let i = 0;
       while (i < args.length) {
@@ -12910,7 +12910,7 @@ var require_code = __commonJS({
       optimize(expr);
       return new _Code(expr);
     }
-    exports.str = str6;
+    exports.str = str7;
     function addCodeArg(code2, arg) {
       if (arg instanceof _Code)
         code2.push(...arg._items);
@@ -12953,7 +12953,7 @@ var require_code = __commonJS({
       return;
     }
     function strConcat(c1, c2) {
-      return c2.emptyStr() ? c1 : c1.emptyStr() ? c2 : str6`${c1}${c2}`;
+      return c2.emptyStr() ? c1 : c1.emptyStr() ? c2 : str7`${c1}${c2}`;
     }
     exports.strConcat = strConcat;
     function interpolate(x) {
@@ -13915,22 +13915,22 @@ var require_util = __commonJS({
       return (0, codegen_1._)`${topSchemaRef}${schemaPath}${(0, codegen_1.getProperty)(keyword)}`;
     }
     exports.schemaRefOrVal = schemaRefOrVal;
-    function unescapeFragment(str6) {
-      return unescapeJsonPointer(decodeURIComponent(str6));
+    function unescapeFragment(str7) {
+      return unescapeJsonPointer(decodeURIComponent(str7));
     }
     exports.unescapeFragment = unescapeFragment;
-    function escapeFragment(str6) {
-      return encodeURIComponent(escapeJsonPointer(str6));
+    function escapeFragment(str7) {
+      return encodeURIComponent(escapeJsonPointer(str7));
     }
     exports.escapeFragment = escapeFragment;
-    function escapeJsonPointer(str6) {
-      if (typeof str6 == "number")
-        return `${str6}`;
-      return str6.replace(/~/g, "~0").replace(/\//g, "~1");
+    function escapeJsonPointer(str7) {
+      if (typeof str7 == "number")
+        return `${str7}`;
+      return str7.replace(/~/g, "~0").replace(/\//g, "~1");
     }
     exports.escapeJsonPointer = escapeJsonPointer;
-    function unescapeJsonPointer(str6) {
-      return str6.replace(/~1/g, "/").replace(/~0/g, "~");
+    function unescapeJsonPointer(str7) {
+      return str7.replace(/~1/g, "/").replace(/~0/g, "~");
     }
     exports.unescapeJsonPointer = unescapeJsonPointer;
     function eachItem(xs, f) {
@@ -14955,8 +14955,8 @@ var require_json_schema_traverse = __commonJS({
         post(schema4, jsonPtr, rootSchema, parentJsonPtr, parentKeyword, parentSchema, keyIndex);
       }
     }
-    function escapeJsonPtr(str6) {
-      return str6.replace(/~/g, "~0").replace(/\//g, "~1");
+    function escapeJsonPtr(str7) {
+      return str7.replace(/~/g, "~0").replace(/\//g, "~1");
     }
   }
 });
@@ -15782,7 +15782,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref2];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve21.call(this, root, ref2);
+      let _sch = resolve22.call(this, root, ref2);
       if (_sch === void 0) {
         const schema4 = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref2];
         const { schemaId } = this.opts;
@@ -15809,7 +15809,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve21(root, ref2) {
+    function resolve22(root, ref2) {
       let sch;
       while (typeof (sch = this.refs[ref2]) == "string")
         ref2 = sch;
@@ -16053,10 +16053,10 @@ var require_utils2 = __commonJS({
         isIPV6: true
       };
     }
-    function findToken(str6, token) {
+    function findToken(str7, token) {
       let ind = 0;
-      for (let i = 0; i < str6.length; i++) {
-        if (str6[i] === token) ind++;
+      for (let i = 0; i < str7.length; i++) {
+        if (str7[i] === token) ind++;
       }
       return ind;
     }
@@ -16635,11 +16635,11 @@ var require_fast_uri = __commonJS({
         normalizeString(uri, options);
       } else if (typeof uri === "object") {
         uri = /** @type {T} */
-        parse5(serialize3(uri, options), options);
+        parse6(serialize3(uri, options), options);
       }
       return uri;
     }
-    function resolve21(baseURI, relativeURI, options) {
+    function resolve22(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -16675,8 +16675,8 @@ var require_fast_uri = __commonJS({
     function resolveComponent(base, relative9, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
-        base = parse5(serialize3(base, options), options);
-        relative9 = parse5(serialize3(relative9, options), options);
+        base = parse6(serialize3(base, options), options);
+        relative9 = parse6(serialize3(relative9, options), options);
       }
       options = options || {};
       if (!options.tolerant && relative9.scheme) {
@@ -16975,7 +16975,7 @@ var require_fast_uri = __commonJS({
       }
       return { parsed: parsed3, malformedAuthorityOrPort, malformedPercentEncoding, malformedSchemeSpecific, malformedHost, malformedScheme };
     }
-    function parse5(uri, opts) {
+    function parse6(uri, opts) {
       return parseWithStatus(uri, opts).parsed;
     }
     function normalizeString(uri, opts) {
@@ -17008,11 +17008,11 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize: normalize3,
-      resolve: resolve21,
+      resolve: resolve22,
       resolveComponent,
       equal,
       serialize: serialize3,
-      parse: parse5
+      parse: parse6
     };
     module.exports = fastUri;
     module.exports.default = fastUri;
@@ -17070,7 +17070,7 @@ var require_core = __commonJS({
     var util_1 = require_util();
     var $dataRefSchema = require_data();
     var uri_1 = require_uri();
-    var defaultRegExp = (str6, flags) => new RegExp(str6, flags);
+    var defaultRegExp = (str7, flags) => new RegExp(str7, flags);
     defaultRegExp.code = "new RegExp";
     var META_IGNORE_OPTIONS = ["removeAdditional", "useDefaults", "coerceTypes"];
     var EXT_SCOPE_NAMES = /* @__PURE__ */ new Set([
@@ -17865,16 +17865,16 @@ var require_ucs2length = __commonJS({
   "node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
-    function ucs2length(str6) {
-      const len = str6.length;
+    function ucs2length(str7) {
+      const len = str7.length;
       let length = 0;
       let pos = 0;
       let value;
       while (pos < len) {
         length++;
-        value = str6.charCodeAt(pos++);
+        value = str7.charCodeAt(pos++);
         if (value >= 55296 && value <= 56319 && pos < len) {
-          value = str6.charCodeAt(pos);
+          value = str7.charCodeAt(pos);
           if ((value & 64512) === 56320)
             pos++;
         }
@@ -20332,8 +20332,8 @@ var require_formats = __commonJS({
     }
     var DATE = /^(\d\d\d\d)-(\d\d)-(\d\d)$/;
     var DAYS = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    function date(str6) {
-      const matches = DATE.exec(str6);
+    function date(str7) {
+      const matches = DATE.exec(str7);
       if (!matches)
         return false;
       const year = +matches[1];
@@ -20352,8 +20352,8 @@ var require_formats = __commonJS({
     }
     var TIME = /^(\d\d):(\d\d):(\d\d(?:\.\d+)?)(z|([+-])(\d\d)(?::?(\d\d))?)?$/i;
     function getTime(strictTimeZone) {
-      return function time(str6) {
-        const matches = TIME.exec(str6);
+      return function time(str7) {
+        const matches = TIME.exec(str7);
         if (!matches)
           return false;
         const hr = +matches[1];
@@ -20399,8 +20399,8 @@ var require_formats = __commonJS({
     var DATE_TIME_SEPARATOR = /t|\s/i;
     function getDateTime(strictTimeZone) {
       const time = getTime(strictTimeZone);
-      return function date_time(str6) {
-        const dateTime = str6.split(DATE_TIME_SEPARATOR);
+      return function date_time(str7) {
+        const dateTime = str7.split(DATE_TIME_SEPARATOR);
         return dateTime.length === 2 && date(dateTime[0]) && time(dateTime[1]);
       };
     }
@@ -20425,13 +20425,13 @@ var require_formats = __commonJS({
     }
     var NOT_URI_FRAGMENT = /\/|:/;
     var URI = /^(?:[a-z][a-z0-9+\-.]*:)(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)|(?:[a-z0-9\-._~!$&'()*+,;=]|%[0-9a-f]{2})*)(?::\d*)?(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)(?:\?(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?$/i;
-    function uri(str6) {
-      return NOT_URI_FRAGMENT.test(str6) && URI.test(str6);
+    function uri(str7) {
+      return NOT_URI_FRAGMENT.test(str7) && URI.test(str7);
     }
     var BYTE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/gm;
-    function byte(str6) {
+    function byte(str7) {
       BYTE.lastIndex = 0;
-      return BYTE.test(str6);
+      return BYTE.test(str7);
     }
     var MIN_INT32 = -(2 ** 31);
     var MAX_INT32 = 2 ** 31 - 1;
@@ -20445,11 +20445,11 @@ var require_formats = __commonJS({
       return true;
     }
     var Z_ANCHOR = /[^\\]\\Z/;
-    function regex(str6) {
-      if (Z_ANCHOR.test(str6))
+    function regex(str7) {
+      if (Z_ANCHOR.test(str7))
         return false;
       try {
-        new RegExp(str6);
+        new RegExp(str7);
         return true;
       } catch (e) {
         return false;
@@ -20795,8 +20795,8 @@ var require_dist = __commonJS({
         return ajv3;
       }
       const [formats, exportName] = opts.mode === "fast" ? [formats_1.fastFormats, fastName] : [formats_1.fullFormats, fullName];
-      const list = opts.formats || formats_1.formatNames;
-      addFormats4(ajv3, list, formats, exportName);
+      const list2 = opts.formats || formats_1.formatNames;
+      addFormats4(ajv3, list2, formats, exportName);
       if (opts.keywords)
         (0, limit_1.default)(ajv3);
       return ajv3;
@@ -20808,11 +20808,11 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats4(ajv3, list, fs, exportName) {
+    function addFormats4(ajv3, list2, fs, exportName) {
       var _a;
       var _b;
       (_a = (_b = ajv3.opts.code).formats) !== null && _a !== void 0 ? _a : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
-      for (const f of list)
+      for (const f of list2)
         ajv3.addFormat(f, fs[f]);
     }
     module.exports = exports = formatsPlugin;
@@ -21069,17 +21069,19 @@ var init_config_schema = __esm({
         review: {
           type: "object",
           additionalProperties: false,
-          required: [
-            "independent_provider_required",
-            "preferred_provider",
-            "fallback_same_provider_allowed",
-            "block_unresolved_high_impact_findings",
-            "security"
-          ],
+          required: ["providers", "when_unavailable", "block_unresolved_high_impact_findings", "security"],
           properties: {
-            independent_provider_required: { type: "boolean" },
-            preferred_provider: { $ref: "#/$defs/providerId" },
-            fallback_same_provider_allowed: { type: "boolean" },
+            providers: {
+              type: "array",
+              maxItems: 10,
+              uniqueItems: true,
+              items: { $ref: "#/$defs/providerId" },
+              description: "Independent review providers, in preference order (docs/decisions/0007-reviewer-availability.md)."
+            },
+            when_unavailable: { enum: ["claude", "ask", "block"], description: "What happens when no independent reviewer is usable." },
+            preferred_provider: { $ref: "#/$defs/providerId", description: "Legacy: replaced by providers." },
+            independent_provider_required: { type: "boolean", description: "Legacy: mapped onto when_unavailable (true without the fallback is block)." },
+            fallback_same_provider_allowed: { type: "boolean", description: "Legacy: mapped onto when_unavailable." },
             block_unresolved_high_impact_findings: { type: "boolean" },
             security: {
               type: "object",
@@ -21239,6 +21241,36 @@ var init_config_schema = __esm({
           properties: {
             terms_file: { type: ["string", "null"], minLength: 1, maxLength: 1024 },
             allowed_emails: { type: "array", maxItems: 50, items: { type: "string", minLength: 3, maxLength: 320 } }
+          }
+        },
+        notifications: {
+          type: "object",
+          additionalProperties: false,
+          required: ["desktop", "webhook", "github_comment", "remote_answers"],
+          properties: {
+            desktop: { type: "boolean" },
+            webhook: {
+              oneOf: [
+                { type: "null" },
+                {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["url_env"],
+                  properties: { url_env: { type: "string", pattern: "^[A-Z_][A-Z0-9_]{0,127}$" } }
+                }
+              ]
+            },
+            github_comment: { type: "boolean" },
+            remote_answers: {
+              type: "object",
+              additionalProperties: false,
+              required: ["enabled", "issue", "poll_seconds"],
+              properties: {
+                enabled: { type: "boolean" },
+                issue: { type: ["integer", "null"], minimum: 1 },
+                poll_seconds: { type: "integer", minimum: 30, maximum: 3600 }
+              }
+            }
           }
         },
         static_security: {
@@ -21486,6 +21518,45 @@ var init_near_miss = __esm({
   }
 });
 
+// src/policy/review.ts
+function isSupportedReviewProvider(id) {
+  return SUPPORTED_REVIEW_PROVIDERS.some((family) => id === family || id.startsWith(`${family}-`) || id.startsWith(`${family}_`));
+}
+function legacyReviewFallback(review) {
+  const required = review.independent_provider_required;
+  const fallback = review.fallback_same_provider_allowed;
+  if (required === void 0 && fallback === void 0) return null;
+  return required === true && fallback !== true ? "block" : "claude";
+}
+function reviewFallback(review) {
+  return legacyReviewFallback(review) ?? review.when_unavailable ?? DEFAULT_REVIEW_FALLBACK;
+}
+function reviewProviderOrder(review) {
+  const list2 = [...review.providers ?? []];
+  const preferred = review.preferred_provider;
+  if (preferred === void 0) return list2;
+  return [preferred, ...list2.filter((p) => p !== preferred)];
+}
+function preferredReviewProvider(review) {
+  return reviewProviderOrder(review)[0] ?? null;
+}
+function describeReviewPolicy(review) {
+  const order = reviewProviderOrder(review);
+  const providers = order.length > 0 ? order.join(", ") : "none";
+  const fallback = reviewFallback(review);
+  const then = fallback === "claude" ? "Claude reviews in a separate session at the safety-review quality floor and the report says the review was not independent" : fallback === "ask" ? "the run asks a person before a same-provider review" : "the run blocks";
+  return `independent reviewers ${providers} (in preference order); when none is usable (review.when_unavailable: ${fallback}), ${then}`;
+}
+var REVIEW_FALLBACKS, DEFAULT_REVIEW_FALLBACK, SUPPORTED_REVIEW_PROVIDERS;
+var init_review = __esm({
+  "src/policy/review.ts"() {
+    "use strict";
+    REVIEW_FALLBACKS = Object.freeze(["claude", "ask", "block"]);
+    DEFAULT_REVIEW_FALLBACK = "claude";
+    SUPPORTED_REVIEW_PROVIDERS = Object.freeze(["codex"]);
+  }
+});
+
 // src/policy/config.ts
 import { readFileSync as readFileSync3 } from "node:fs";
 import { isAbsolute as isAbsolute2, join as join4, posix as posix2, resolve } from "node:path";
@@ -21564,9 +21635,10 @@ function defaultConfig(mode = DEFAULT_MODE) {
       allow_managed_plugins: false
     },
     review: {
-      independent_provider_required: true,
-      preferred_provider: "codex",
-      fallback_same_provider_allowed: false,
+      // Decision 0007: Codex reviews independently when it is usable; otherwise Claude reviews in a separate
+      // session and every report says the review was not independent and why.
+      providers: ["codex"],
+      when_unavailable: DEFAULT_REVIEW_FALLBACK,
       block_unresolved_high_impact_findings: true,
       security: { block_severities: ["critical", "high"], exceptions: [] }
     },
@@ -21587,8 +21659,18 @@ function defaultConfig(mode = DEFAULT_MODE) {
     release: null,
     retention: { keep_runs_days: 30, redact_patterns: [] },
     knowledge: { enabled: true, share_globally: false, max_advisory_tokens: 800, curator_budget_usd: 0.25, eval_budget_usd: 0, auto_adopt_overlays: true },
-    guard: { terms_file: null, allowed_emails: [] }
+    guard: { terms_file: null, allowed_emails: [] },
+    notifications: defaultNotifications()
   };
+}
+function defaultNotifications() {
+  return { desktop: true, webhook: null, github_comment: false, remote_answers: { enabled: false, issue: null, poll_seconds: 120 } };
+}
+function notificationsPolicy(config) {
+  const d = defaultNotifications();
+  const n2 = config.notifications;
+  if (!n2) return d;
+  return { ...d, ...n2, remote_answers: { ...d.remote_answers, ...n2.remote_answers ?? {} } };
 }
 function defaultCheck(id) {
   return {
@@ -21690,12 +21772,12 @@ function loadConfig(repoRoot, path, opts = {}) {
 function parseConfig(text2, opts = {}) {
   const source = opts.source ?? "config";
   const doc = parseDocument(text2, { uniqueKeys: true, prettyErrors: false, strict: true });
-  const where = (offset) => {
+  const where2 = (offset) => {
     if (offset === void 0 || offset < 0 || offset > text2.length) return "";
     const before = text2.slice(0, offset);
     return ` (line ${before.split("\n").length}, column ${offset - before.lastIndexOf("\n")})`;
   };
-  const yamlProblems = [...doc.errors, ...doc.warnings].map((e) => `yaml: ${e.message.split("\n")[0]}${where(e.pos?.[0])}`);
+  const yamlProblems = [...doc.errors, ...doc.warnings].map((e) => `yaml: ${e.message.split("\n")[0]}${where2(e.pos?.[0])}`);
   if (yamlProblems.length > 0) throw invalid(source, yamlProblems);
   let raw;
   try {
@@ -21738,6 +21820,7 @@ function mergeWithDefaults(raw, mode, problems) {
   const repo = merged.repository;
   merged.release = normalizeRelease(release, isPlainObject(repo) && typeof repo.base_branch === "string" ? repo.base_branch : "main", problems);
   merged.providers = normalizeProviders(providers, base.providers);
+  normalizeReview(raw.review, merged, problems);
   normalizeContainer(merged);
   fillNullDefaults(merged, ["dependencies", "audit", "exceptions"], ["expires"]);
   fillNullDefaults(merged, ["static_security", "exceptions"], ["path_glob", "expires"]);
@@ -21753,19 +21836,19 @@ function normalizeChecks(raw, problems) {
       out[id] = def;
       continue;
     }
-    const where = `checks.${id}`;
-    if (def.id !== void 0 && def.id !== id) problems.push(`${where}.id: must equal the key "${id}" (got ${JSON.stringify(def.id)})`);
+    const where2 = `checks.${id}`;
+    if (def.id !== void 0 && def.id !== id) problems.push(`${where2}.id: must equal the key "${id}" (got ${JSON.stringify(def.id)})`);
     let command = def.command;
     const shell = def.shell === true;
     if (typeof command === "string") {
       if (!shell) {
-        problems.push(`${where}.command: a string command would need a shell; give an argv array, or set "shell: true" to run it through /bin/sh -c`);
+        problems.push(`${where2}.command: a string command would need a shell; give an argv array, or set "shell: true" to run it through /bin/sh -c`);
       }
       command = [command];
     } else if (Array.isArray(command) && shell && command.length !== 1) {
-      problems.push(`${where}.command: with "shell: true" the command must be one string (the script for /bin/sh -c)`);
+      problems.push(`${where2}.command: with "shell: true" the command must be one string (the script for /bin/sh -c)`);
     }
-    if (command === void 0) problems.push(`${where}.command: required`);
+    if (command === void 0) problems.push(`${where2}.command: required`);
     const category = def.category ?? (def.kind === "playwright" ? "ui" : "test");
     out[id] = { ...defaultCheck(id), ...def, command: command ?? [], category };
   }
@@ -21813,19 +21896,42 @@ function normalizeProviders(raw, defaults) {
   }
   return out;
 }
+function normalizeReview(raw, merged, problems) {
+  const review = merged.review;
+  if (!isPlainObject(raw) || !isPlainObject(review)) return;
+  const required = raw.independent_provider_required;
+  const fallback = raw.fallback_same_provider_allowed;
+  const typed = (v) => v === void 0 || typeof v === "boolean";
+  if (typed(required) && typed(fallback) && !(required === true && fallback === true)) {
+    const mapped = legacyReviewFallback({ independent_provider_required: required, fallback_same_provider_allowed: fallback });
+    if (mapped !== null && raw.when_unavailable === void 0) review.when_unavailable = mapped;
+    else if (mapped !== null && raw.when_unavailable !== mapped) {
+      const said = [required === void 0 ? null : `independent_provider_required: ${required}`, fallback === void 0 ? null : `fallback_same_provider_allowed: ${fallback}`].filter((s) => s !== null).join(", ");
+      problems.push(`review.when_unavailable: ${JSON.stringify(raw.when_unavailable)} contradicts the legacy setting ${said}, which means "${mapped}"; remove the legacy keys (review.when_unavailable replaces them) or make them agree`);
+    }
+  }
+  const preferred = raw.preferred_provider;
+  if (typeof preferred === "string") {
+    if (raw.providers === void 0) {
+      if (isSupportedReviewProvider(preferred)) review.providers = [preferred];
+    } else if (Array.isArray(raw.providers) && raw.providers[0] !== preferred) {
+      problems.push(`review.preferred_provider: "${preferred}" contradicts review.providers (which starts with ${JSON.stringify(raw.providers[0] ?? null)}); remove preferred_provider, which review.providers replaces`);
+    }
+  }
+}
 function normalizeContainer(merged) {
   const iso2 = merged.isolation;
   if (isPlainObject(iso2) && isPlainObject(iso2.container)) iso2.container = { ...CONTAINER_DEFAULTS, ...iso2.container };
 }
 function fillNullDefaults(obj3, path, keys) {
-  let list = obj3;
-  for (const key2 of path) list = isPlainObject(list) ? list[key2] : void 0;
-  if (!Array.isArray(list)) return;
-  list.forEach((entry, i) => {
+  let list2 = obj3;
+  for (const key2 of path) list2 = isPlainObject(list2) ? list2[key2] : void 0;
+  if (!Array.isArray(list2)) return;
+  list2.forEach((entry, i) => {
     if (!isPlainObject(entry)) return;
     const filled = { ...entry };
     for (const k of keys) if (filled[k] === void 0) filled[k] = null;
-    list[i] = filled;
+    list2[i] = filled;
   });
 }
 function normalizeArgvField(obj3, path, label, problems) {
@@ -21877,28 +21983,28 @@ function schemaValidator() {
   return compiled;
 }
 function describeSchemaErrors(errors) {
-  const list = errors ?? [];
-  const meaningful = list.filter((e) => !(e.keyword === "type" && e.params.type === "null"));
+  const list2 = errors ?? [];
+  const meaningful = list2.filter((e) => !(e.keyword === "type" && e.params.type === "null"));
   const out = [];
   for (const e of meaningful) {
     if (e.keyword === "oneOf" && meaningful.some((o) => o !== e && o.instancePath.startsWith(e.instancePath) && o.keyword !== "oneOf")) continue;
-    const where = pointerToPath(e.instancePath) || "(top level)";
+    const where2 = pointerToPath(e.instancePath) || "(top level)";
     if (e.keyword === "additionalProperties") {
       const key2 = e.params.additionalProperty;
       const known = Object.keys(e.parentSchema?.properties ?? {});
       const near = closest(key2, known);
-      out.push(`${where}: unknown key "${key2}"${near ? `; did you mean "${near}"?` : ""}`);
+      out.push(`${where2}: unknown key "${key2}"${near ? `; did you mean "${near}"?` : ""}`);
     } else if (e.keyword === "enum") {
       const allowed = e.params.allowedValues ?? [];
       const given = e.data;
       const near = typeof given === "string" ? closest(given, allowed.filter((v) => typeof v === "string")) : null;
-      out.push(`${where}: must be one of ${allowed.map((v) => JSON.stringify(v)).join(", ")}, got ${JSON.stringify(given)}${near ? `; did you mean "${near}"?` : ""}`);
+      out.push(`${where2}: must be one of ${allowed.map((v) => JSON.stringify(v)).join(", ")}, got ${JSON.stringify(given)}${near ? `; did you mean "${near}"?` : ""}`);
     } else if (e.keyword === "const") {
-      out.push(`${where}: must be ${JSON.stringify(e.params.allowedValue)}`);
+      out.push(`${where2}: must be ${JSON.stringify(e.params.allowedValue)}`);
     } else if (e.keyword === "propertyNames") {
-      out.push(`${where}: key ${JSON.stringify(e.params.propertyName)} is not a valid name`);
+      out.push(`${where2}: key ${JSON.stringify(e.params.propertyName)} is not a valid name`);
     } else {
-      out.push(`${where}: ${e.message ?? e.keyword}`);
+      out.push(`${where2}: ${e.message ?? e.keyword}`);
     }
   }
   return out;
@@ -21915,18 +22021,18 @@ function applySemanticRules(rules, config, shapeOk, problems) {
     }
   }
 }
-function globList(globs, where, problems) {
+function globList(globs, where2, problems) {
   globs.forEach((g, i) => {
     const p = globProblem(g);
-    if (p) problems.push(`${where}[${i}]: ${JSON.stringify(g)} ${p}`);
+    if (p) problems.push(`${where2}[${i}]: ${JSON.stringify(g)} ${p}`);
   });
 }
 function relativeDirProblem(dir) {
   if (dir.includes("\0")) return "contains a NUL byte";
   if (dir.includes("\\")) return "must use forward slashes";
   if (posix2.isAbsolute(dir) || dir.startsWith("~")) return "must be relative to the worktree root";
-  const norm2 = posix2.normalize(dir);
-  if (norm2 === ".." || norm2.startsWith("../")) return "must stay inside the worktree";
+  const norm3 = posix2.normalize(dir);
+  if (norm3 === ".." || norm3.startsWith("../")) return "must stay inside the worktree";
   return null;
 }
 function modelPermitted(model, allowed) {
@@ -21960,6 +22066,7 @@ var init_config = __esm({
     init_hosts();
     init_invocation();
     init_near_miss();
+    init_review();
     Ajv2020 = import__.default.default ?? import__.default;
     addFormats = import_ajv_formats.default.default ?? import_ajv_formats.default;
     CONFIG_RELATIVE_PATH = ".orbit/config.yaml";
@@ -22021,15 +22128,15 @@ var init_config = __esm({
           problems.push("release.environments: actions.deploy_production is true but no environment is defined to deploy to");
         }
         for (const [name, env] of envs) {
-          const where = `release.environments.${name}`;
-          if (env.deploy_command.length > 0 && env.deploy_command[0].trim() === "") problems.push(`${where}.deploy_command: the program must not be empty`);
-          if (env.verify_command && env.verify_command[0].trim() === "") problems.push(`${where}.verify_command: the program must not be empty`);
+          const where2 = `release.environments.${name}`;
+          if (env.deploy_command.length > 0 && env.deploy_command[0].trim() === "") problems.push(`${where2}.deploy_command: the program must not be empty`);
+          if (env.verify_command && env.verify_command[0].trim() === "") problems.push(`${where2}.verify_command: the program must not be empty`);
           env.network_hosts.forEach((h, i) => {
             const p = hostEntryProblem(h);
-            if (p) problems.push(`${where}.network_hosts[${i}]: ${JSON.stringify(h)} ${p}`);
-            else if (!hostEntryCovered(h, c.network.allowed_hosts)) problems.push(`${where}.network_hosts[${i}]: ${JSON.stringify(h)} is not covered by network.allowed_hosts`);
+            if (p) problems.push(`${where2}.network_hosts[${i}]: ${JSON.stringify(h)} ${p}`);
+            else if (!hostEntryCovered(h, c.network.allowed_hosts)) problems.push(`${where2}.network_hosts[${i}]: ${JSON.stringify(h)} is not covered by network.allowed_hosts`);
           });
-          if (env.allowed_branches.length === 0) problems.push(`${where}.allowed_branches: is empty, so nothing could ever be deployed to ${name}`);
+          if (env.allowed_branches.length === 0) problems.push(`${where2}.allowed_branches: is empty, so nothing could ever be deployed to ${name}`);
         }
       },
       function staticSecurityRules(c, problems) {
@@ -22060,11 +22167,23 @@ var init_config = __esm({
         }
       },
       function reviewIsConsistent(c, problems) {
-        if (c.review.independent_provider_required && c.review.fallback_same_provider_allowed) {
+        const r = c.review;
+        if (r.independent_provider_required === true && r.fallback_same_provider_allowed === true) {
           problems.push("review: independent_provider_required and fallback_same_provider_allowed contradict each other; an independent review cannot fall back to the same provider");
         }
-        if (!Object.hasOwn(c.providers, c.review.preferred_provider)) {
-          problems.push(`review.preferred_provider: "${c.review.preferred_provider}" is not defined under providers`);
+        if (r.preferred_provider !== void 0 && !Object.hasOwn(c.providers, r.preferred_provider)) {
+          problems.push(`review.preferred_provider: "${r.preferred_provider}" is not defined under providers`);
+        }
+        const list2 = r.providers ?? [];
+        list2.forEach((id, i) => {
+          if (!isSupportedReviewProvider(id)) {
+            problems.push(`review.providers[${i}]: "${id}" is not a supported independent review provider; supported: ${SUPPORTED_REVIEW_PROVIDERS.join(", ")} (another provider needs an Orbit adapter before it can review)`);
+          } else if (!Object.hasOwn(c.providers, id)) {
+            problems.push(`review.providers[${i}]: "${id}" is not defined under providers`);
+          }
+        });
+        if (list2.length === 0 && r.when_unavailable === "block") {
+          problems.push("review.providers: is empty and review.when_unavailable is block, so every run would block at review; list an independent provider, or set review.when_unavailable to claude or ask");
         }
       },
       function providerTiers(c, problems) {
@@ -22093,17 +22212,17 @@ var init_config = __esm({
       },
       function checkDefinitions(c, problems) {
         for (const [id, check] of Object.entries(c.checks)) {
-          const where = `checks.${id}`;
+          const where2 = `checks.${id}`;
           const cwdProblem = relativeDirProblem(check.cwd);
-          if (cwdProblem) problems.push(`${where}.cwd: ${cwdProblem}`);
-          if (check.command.length > 0 && check.command[0].trim() === "") problems.push(`${where}.command: the program must not be empty`);
+          if (cwdProblem) problems.push(`${where2}.cwd: ${cwdProblem}`);
+          if (check.command.length > 0 && check.command[0].trim() === "") problems.push(`${where2}.command: the program must not be empty`);
           check.network_hosts.forEach((h, i) => {
             const p = hostEntryProblem(h);
-            if (p) problems.push(`${where}.network_hosts[${i}]: ${JSON.stringify(h)} ${p}`);
-            else if (!hostEntryCovered(h, c.network.allowed_hosts)) problems.push(`${where}.network_hosts[${i}]: ${JSON.stringify(h)} is not covered by network.allowed_hosts`);
+            if (p) problems.push(`${where2}.network_hosts[${i}]: ${JSON.stringify(h)} ${p}`);
+            else if (!hostEntryCovered(h, c.network.allowed_hosts)) problems.push(`${where2}.network_hosts[${i}]: ${JSON.stringify(h)} is not covered by network.allowed_hosts`);
           });
           for (const name of Object.keys(check.env)) {
-            if (FORBIDDEN_CHECK_ENV.has(name)) problems.push(`${where}.env.${name}: delivery and publishing credentials must not be given to checks`);
+            if (FORBIDDEN_CHECK_ENV.has(name)) problems.push(`${where2}.env.${name}: delivery and publishing credentials must not be given to checks`);
           }
         }
       },
@@ -22133,6 +22252,10 @@ var init_config = __esm({
           }
           if (re.test("")) problems.push(`retention.redact_patterns[${i}]: matches the empty string, so it cannot be applied; require at least one character (for example + instead of *)`);
         });
+      },
+      function notificationRules(c, problems) {
+        const env = c.notifications?.webhook?.url_env;
+        if (env !== void 0 && FORBIDDEN_CHECK_ENV.has(env)) problems.push(`notifications.webhook.url_env: ${env} holds a credential, not a webhook URL; name a variable that holds only the URL (for example ORBIT_WEBHOOK_URL)`);
       },
       function repositoryBranches(c, problems) {
         const { base_branch, branch_prefix } = c.repository;
@@ -23147,7 +23270,7 @@ var init_clock = __esm({
     "use strict";
     systemClock = {
       now: () => Date.now(),
-      sleep: (ms) => new Promise((resolve21) => setTimeout(resolve21, ms))
+      sleep: (ms) => new Promise((resolve22) => setTimeout(resolve22, ms))
     };
   }
 });
@@ -23629,8 +23752,8 @@ function findController(db, id) {
   return row ? toRecord(row) : null;
 }
 function listControllers(db, opts = {}) {
-  const where = opts.includeStopped ? "" : "WHERE stopped_at IS NULL";
-  return db.all(`SELECT * FROM controllers ${where} ORDER BY heartbeat_at DESC, rowid DESC LIMIT ?`, opts.limit ?? -1).map(toRecord);
+  const where2 = opts.includeStopped ? "" : "WHERE stopped_at IS NULL";
+  return db.all(`SELECT * FROM controllers ${where2} ORDER BY heartbeat_at DESC, rowid DESC LIMIT ?`, opts.limit ?? -1).map(toRecord);
 }
 function listStaleControllers(db, staleAfterMs, clock) {
   const cutoff = clock.now() - staleAfterMs;
@@ -24752,13 +24875,13 @@ function readTypes(type, path, out) {
     out.push(`${path}: every subschema needs a type, anyOf or $ref`);
     return [];
   }
-  const list = Array.isArray(type) ? type : [type];
-  if (list.length === 0) {
+  const list2 = Array.isArray(type) ? type : [type];
+  if (list2.length === 0) {
     out.push(`${path}: type must not be empty`);
     return [];
   }
   const types2 = [];
-  for (const t of list) {
+  for (const t of list2) {
     if (typeof t !== "string" || !JSON_TYPES.has(t)) out.push(`${path}: unknown type ${JSON.stringify(t)}`);
     else if (types2.includes(t)) out.push(`${path}: duplicate type "${t}"`);
     else types2.push(t);
@@ -25861,8 +25984,8 @@ function modelUsageKeys(result2) {
   return result2 && isObject(result2.modelUsage) ? Object.keys(result2.modelUsage) : [];
 }
 function denials(result2) {
-  const list = result2 && Array.isArray(result2.permission_denials) ? result2.permission_denials : [];
-  return list.filter(isObject).map((d) => ({ tool_name: String(d.tool_name ?? ""), tool_use_id: String(d.tool_use_id ?? "") }));
+  const list2 = result2 && Array.isArray(result2.permission_denials) ? result2.permission_denials : [];
+  return list2.filter(isObject).map((d) => ({ tool_name: String(d.tool_name ?? ""), tool_use_id: String(d.tool_use_id ?? "") }));
 }
 function lastOf(items, pred) {
   for (let i = items.length - 1; i >= 0; i--) if (pred(items[i])) return items[i];
@@ -26901,13 +27024,13 @@ function readFrom(path, offset, max = 4 * 1024 * 1024) {
     const size = fstatSync2(fd).size;
     const len = Math.max(0, Math.min(size - offset, max));
     const buf = Buffer.alloc(len);
-    let read = 0;
-    while (read < len) {
-      const n2 = readSync(fd, buf, read, len - read, offset + read);
+    let read2 = 0;
+    while (read2 < len) {
+      const n2 = readSync(fd, buf, read2, len - read2, offset + read2);
       if (n2 === 0) break;
-      read += n2;
+      read2 += n2;
     }
-    return buf.subarray(0, read);
+    return buf.subarray(0, read2);
   } catch {
     return null;
   } finally {
@@ -27297,13 +27420,13 @@ var init_shim = __esm({
       killGroupAndFinish(code2, signal, providerKilled = false) {
         this.escalation.push("SIGKILL");
         this.closeOutput();
-        const rec = this.record(code2, providerKilled ? "SIGKILL" : signal, null);
-        this.persist(rec);
+        const rec2 = this.record(code2, providerKilled ? "SIGKILL" : signal, null);
+        this.persist(rec2);
         try {
           this.host.signalGroup(this.pgid, "SIGKILL");
         } catch {
         }
-        this.finish(rec, false);
+        this.finish(rec2, false);
       }
       /** The provider never started. pid.json is still written, so every reader finds the shim the same way. */
       finishWithoutChild(error) {
@@ -27340,17 +27463,17 @@ var init_shim = __esm({
           endedAt: this.clock.now()
         };
       }
-      persist(rec) {
-        atomicWriteJson(join10(this.workerDir, EXIT_FILE), rec, 384);
+      persist(rec2) {
+        atomicWriteJson(join10(this.workerDir, EXIT_FILE), rec2, 384);
         this.cleanup();
       }
-      finish(rec, write2 = true) {
+      finish(rec2, write2 = true) {
         if (this.finished) return;
         this.finished = true;
         for (const t of this.timers) clearTimeout(t);
         this.timers.clear();
-        if (write2) this.persist(rec);
-        this.settle?.(rec);
+        if (write2) this.persist(rec2);
+        this.settle?.(rec2);
       }
       cleanup() {
         for (const p of this.o.cleanupPaths ?? []) {
@@ -28536,9 +28659,9 @@ function estimateCost(usage, pricing, opts = {}) {
   const ttl = opts.cacheWriteTtl ?? "1h";
   const uncached = opts.inputIncludesCacheRead ? Math.max(0, input - cacheRead) : input;
   const writeRate = ttl === "5m" ? pricing.cache_write_5m : pricing.cache_write_1h;
-  const usd3 = (uncached * pricing.input + output * pricing.output + cacheRead * pricing.cache_read + cacheWrite * writeRate) / 1e6;
+  const usd4 = (uncached * pricing.input + output * pricing.output + cacheRead * pricing.cache_read + cacheWrite * writeRate) / 1e6;
   const assumptions = cacheWrite > 0 ? [`cache writes priced at the ${ttl} rate because the TTL is not reported`] : [];
-  return { costUsd: roundUsd(usd3), costSource: "estimated", missing, assumptions };
+  return { costUsd: roundUsd(usd4), costSource: "estimated", missing, assumptions };
 }
 function roundUsd(value) {
   return Math.round(value * 1e6) / 1e6;
@@ -28725,10 +28848,10 @@ function emptyEval() {
   return { observed_cost: null, qualified_for: [], justified_work_kinds: [], latency_samples_ms: [] };
 }
 function parseCodexCatalog(raw) {
-  const list = Array.isArray(raw) ? raw : isObject2(raw) && Array.isArray(raw.models) ? raw.models : null;
-  if (!list) throw new OrbitError("MALFORMED_OUTPUT", "codex model catalog: expected an array of models or an object with a models array");
+  const list2 = Array.isArray(raw) ? raw : isObject2(raw) && Array.isArray(raw.models) ? raw.models : null;
+  if (!list2) throw new OrbitError("MALFORMED_OUTPUT", "codex model catalog: expected an array of models or an object with a models array");
   const out = [];
-  for (const item of list) {
+  for (const item of list2) {
     if (!isObject2(item) || typeof item.slug !== "string" || !item.slug.trim()) continue;
     const levels = Array.isArray(item.supported_reasoning_levels) ? item.supported_reasoning_levels : [];
     const efforts = levels.map((l) => typeof l === "string" ? l : isObject2(l) && typeof l.effort === "string" ? l.effort : null).filter((e) => e !== null);
@@ -30735,24 +30858,24 @@ var init_sandbox_runtime = __esm({
       chromiumLauncher(pkg) {
         const unavailable = (why) => new OrbitError("ISOLATION_UNAVAILABLE", `sandbox-runtime unavailable for browser checks: ${why}`, { verified: SRT_VERIFIED_VERSION });
         if (!pkg) throw unavailable("srt cannot be resolved");
-        const where = dirname13(pkg.cli);
-        if (pkg.name === null && pkg.version === null) throw unavailable(`srt at ${where} has an unknown version (no readable package.json), and the Chromium preload was verified against ${SRT_PACKAGE} ${SRT_VERIFIED_VERSION} only`);
-        if (pkg.name !== SRT_PACKAGE) throw unavailable(`srt at ${where} is not ${SRT_PACKAGE} (package ${String(pkg.name)})`);
-        if (pkg.version !== SRT_VERIFIED_VERSION) throw unavailable(`srt at ${where} is version ${String(pkg.version)}, and the Chromium preload was verified against ${SRT_VERIFIED_VERSION} only`);
-        const resolve21 = (path, what) => {
+        const where2 = dirname13(pkg.cli);
+        if (pkg.name === null && pkg.version === null) throw unavailable(`srt at ${where2} has an unknown version (no readable package.json), and the Chromium preload was verified against ${SRT_PACKAGE} ${SRT_VERIFIED_VERSION} only`);
+        if (pkg.name !== SRT_PACKAGE) throw unavailable(`srt at ${where2} is not ${SRT_PACKAGE} (package ${String(pkg.name)})`);
+        if (pkg.version !== SRT_VERIFIED_VERSION) throw unavailable(`srt at ${where2} is version ${String(pkg.version)}, and the Chromium preload was verified against ${SRT_VERIFIED_VERSION} only`);
+        const resolve22 = (path, what) => {
           try {
             return realpathSync5(path);
           } catch {
             throw unavailable(`${what} ${path} is missing`);
           }
         };
-        return { node: resolve21(this.opts.nodePath ?? process.execPath, "node"), preload: resolve21(this.opts.chromiumPreloadPath ?? defaultChromiumPreloadPath(), "the Chromium preload"), cli: pkg.cli };
+        return { node: resolve22(this.opts.nodePath ?? process.execPath, "node"), preload: resolve22(this.opts.chromiumPreloadPath ?? defaultChromiumPreloadPath(), "the Chromium preload"), cli: pkg.cli };
       }
       missingDetail() {
         if (this.opts.srtPath !== void 0) return `configured srt ${this.opts.srtPath} is not an absolute path to an executable file`;
         const bins = this.installBinDirs();
-        const where = bins.length ? ` or in ${bins.join(" or ")}` : "";
-        return `srt not found on PATH${where}; install @anthropic-ai/sandbox-runtime`;
+        const where2 = bins.length ? ` or in ${bins.join(" or ")}` : "";
+        return `srt not found on PATH${where2}; install @anthropic-ai/sandbox-runtime`;
       }
     };
     DEVELOPMENT_PACKAGE = "orbit-dev";
@@ -31171,10 +31294,10 @@ function numbersByKey(lines, re, normalizeKey) {
   return out;
 }
 function compareTimeouts(d, add, introduced) {
-  const norm2 = (k) => k.toLowerCase().replace(/^.*\./, "");
-  const before = numbersByKey(code(d.removed), TIMEOUT_RE, norm2);
-  const after = numbersByKey(code(d.added), TIMEOUT_RE, norm2);
-  const unchanged = numbersByKey(code(d.context), TIMEOUT_RE, norm2);
+  const norm3 = (k) => k.toLowerCase().replace(/^.*\./, "");
+  const before = numbersByKey(code(d.removed), TIMEOUT_RE, norm3);
+  const after = numbersByKey(code(d.added), TIMEOUT_RE, norm3);
+  const unchanged = numbersByKey(code(d.context), TIMEOUT_RE, norm3);
   for (const [key2, value] of after) {
     const old = before.get(key2);
     if (old !== void 0 && value > old) add("timeout-raised", `${key2} ${old} -> ${value}`);
@@ -31380,9 +31503,9 @@ function parseNameStatus(buf) {
 }
 function parseNumstat(buf) {
   const out = [];
-  for (const rec of buf.toString("utf8").split("\0")) {
-    if (!rec) continue;
-    const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(rec);
+  for (const rec2 of buf.toString("utf8").split("\0")) {
+    if (!rec2) continue;
+    const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(rec2);
     if (!m) continue;
     const binary2 = m[1] === "-" || m[2] === "-";
     out.push({ path: m[3], added: binary2 ? 0 : Number(m[1]), deleted: binary2 ? 0 : Number(m[2]), binary: binary2 });
@@ -31487,8 +31610,8 @@ function stripJsonComments(text2) {
 async function escapingSymlinks(repoRoot, cand, changes, isProtected) {
   const tree = (await git(repoRoot, ["ls-tree", "-r", "-z", "--full-tree", cand])).toString("utf8");
   const links = /* @__PURE__ */ new Map();
-  for (const rec of tree.split("\0")) {
-    const m = /^120000 blob ([0-9a-f]+)\t(.*)$/s.exec(rec);
+  for (const rec2 of tree.split("\0")) {
+    const m = /^120000 blob ([0-9a-f]+)\t(.*)$/s.exec(rec2);
     if (m) links.set(m[2], m[1]);
   }
   const targets = /* @__PURE__ */ new Map();
@@ -31640,6 +31763,7 @@ var init_policy = __esm({
     "use strict";
     init_builtin();
     init_config();
+    init_review();
     init_snapshot();
     init_paths();
     init_authorize();
@@ -31724,22 +31848,22 @@ function getWorker(db, id) {
   return toRecord3(row);
 }
 function listWorkers(db, query = {}) {
-  const where = [];
+  const where2 = [];
   const params = [];
   if (query.runId !== void 0) {
-    where.push("run_id = ?");
+    where2.push("run_id = ?");
     params.push(query.runId);
   }
   if (query.states) {
     if (query.states.length === 0) return [];
-    where.push(`state IN (${query.states.map(() => "?").join(",")})`);
+    where2.push(`state IN (${query.states.map(() => "?").join(",")})`);
     params.push(...query.states);
   }
   if (query.role !== void 0) {
-    where.push("role = ?");
+    where2.push("role = ?");
     params.push(query.role);
   }
-  const sql = `SELECT * FROM workers ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at, rowid LIMIT ?`;
+  const sql = `SELECT * FROM workers ${where2.length ? `WHERE ${where2.join(" AND ")}` : ""} ORDER BY created_at, rowid LIMIT ?`;
   return db.all(sql, ...params, query.limit ?? -1).map(toRecord3);
 }
 function listActiveWorkers(db, runId) {
@@ -33800,19 +33924,19 @@ function getCheckRun(db, id) {
   return toCheckRun(row);
 }
 function listCheckRuns(db, q) {
-  const where = ["run_id = ?"];
+  const where2 = ["run_id = ?"];
   const params = [q.runId];
-  if (q.candidateId === null) where.push("candidate_id IS NULL");
+  if (q.candidateId === null) where2.push("candidate_id IS NULL");
   else if (q.candidateId !== void 0) {
-    where.push("candidate_id = ?");
+    where2.push("candidate_id = ?");
     params.push(q.candidateId);
   }
   if (q.checkId !== void 0) {
-    where.push("check_id = ?");
+    where2.push("check_id = ?");
     params.push(q.checkId);
   }
-  if (q.rootsOnly) where.push("rerun_of IS NULL");
-  return db.all(`SELECT * FROM check_runs WHERE ${where.join(" AND ")} ORDER BY rowid`, ...params).map(toCheckRun);
+  if (q.rootsOnly) where2.push("rerun_of IS NULL");
+  return db.all(`SELECT * FROM check_runs WHERE ${where2.join(" AND ")} ORDER BY rowid`, ...params).map(toCheckRun);
 }
 function checkRunToResult(r, binding) {
   if (!isFinalCheckStatus(r.status)) throw new OrbitError("INTERNAL", `check run ${r.id} is ${r.status}, not final`);
@@ -34728,10 +34852,10 @@ function startToEpochMs(start, btimeSeconds = bootTimeSeconds(), platform3 = pro
   const ms = Date.parse(`${start} UTC`);
   return Number.isFinite(ms) ? ms : null;
 }
-function bootTimeSeconds(platform3 = process.platform, read = (p) => readFileSync14(p, "utf8")) {
+function bootTimeSeconds(platform3 = process.platform, read2 = (p) => readFileSync14(p, "utf8")) {
   if (platform3 !== "linux") return null;
   try {
-    const m = /^btime\s+(\d+)/m.exec(read("/proc/stat"));
+    const m = /^btime\s+(\d+)/m.exec(read2("/proc/stat"));
     return m ? Number(m[1]) : null;
   } catch {
     return null;
@@ -36221,7 +36345,7 @@ function checkToolchains(ctx, def, cwd, dirs, tmpDir) {
 }
 async function assertCheckoutUnmodified(dir, nextCheck) {
   const out = await git2(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--ignore-submodules=none"]);
-  const changed = out.split("\0").filter(Boolean).map((rec) => rec.slice(3));
+  const changed = out.split("\0").filter(Boolean).map((rec2) => rec2.slice(3));
   if (changed.length > 0) {
     const shown = changed.slice(0, 10).join(", ") + (changed.length > 10 ? `, and ${changed.length - 10} more` : "");
     throw new OrbitError("STALE_EVIDENCE", `the checkout no longer holds the candidate tree (tracked files changed: ${shown}); check ${nextCheck} was not started`, { checkout: dir, changed: changed.slice(0, 50), checkId: nextCheck });
@@ -36503,7 +36627,8 @@ var init_runner = __esm({
       DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1",
       DOTNET_GENERATE_ASPNET_CERTIFICATE: "false",
       DOTNET_ADD_GLOBAL_TOOLS_TO_PATH: "false",
-      DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK: "1"
+      DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK: "1",
+      EnableSourceControlManagerQueries: "false"
     };
     NUGET_MIGRATIONS_DIR = join25(".local", "share", "NuGet", "Migrations");
     NUGET_LATEST_MIGRATION = "1";
@@ -37600,8 +37725,8 @@ function duplicationUnit(unit, fraction) {
 function overheadUnit(unit, fraction, suffix) {
   const role = unit.role === "check" ? null : unit.role;
   const base = unit.budget.costUsd ?? (role === null ? 0 : ROLE_COST_CEILING_USD[role]);
-  const usd3 = Math.round(base * fraction * 1e6) / 1e6;
-  return { id: `${unit.id}${suffix}`, role: unit.role, writer: false, ownedPaths: [], dependsOn: [], revision: unit.revision, cancelWhen: [], budget: { costUsd: usd3 }, provider: null, worktree: null, status: "running" };
+  const usd4 = Math.round(base * fraction * 1e6) / 1e6;
+  return { id: `${unit.id}${suffix}`, role: unit.role, writer: false, ownedPaths: [], dependsOn: [], revision: unit.revision, cancelWhen: [], budget: { costUsd: usd4 }, provider: null, worktree: null, status: "running" };
 }
 function isDuplication(u) {
   return u.id.endsWith(DUPLICATION_SUFFIX) || u.id.endsWith(MERGE_SUFFIX);
@@ -38024,8 +38149,8 @@ function machineAdmission(ctx, running, pending) {
     { agents: { default_parallelism: UNBOUNDED, cancel_obsolete_workers: ctx.snapshot.config.agents.cancel_obsolete_workers }, scheduler: { hard_limits: { parallel_workers: UNBOUNDED } } },
     { clock: ctx.clock, ...ctx.deps.schedulerProbe ? { system: ctx.deps.schedulerProbe } : {} }
   );
-  const strip = (u) => ({ ...u, writer: false, worktree: null, ownedPaths: [] });
-  const plan = machine.plan([...running.map(strip), ...pending.map(strip)], { parallelism: UNBOUNDED, contextDuplication: 0 });
+  const strip2 = (u) => ({ ...u, writer: false, worktree: null, ownedPaths: [] });
+  const plan = machine.plan([...running.map(strip2), ...pending.map(strip2)], { parallelism: UNBOUNDED, contextDuplication: 0 });
   return { start: new Set(plan.start.map((u) => u.id)), deferred: new Map(plan.deferred.map((d) => [d.id, `machine ${d.reason}`])) };
 }
 function repoKey(repoRoot) {
@@ -38173,7 +38298,7 @@ function routeLadder(ctx) {
     if (rising && tier <= base) effortBump += 1;
   }
   const estimates = /* @__PURE__ */ new Map();
-  const costOf = (m) => {
+  const costOf2 = (m) => {
     let c = estimates.get(m.modelId);
     if (!c) {
       c = estimateRoute(m, ctx);
@@ -38181,28 +38306,28 @@ function routeLadder(ctx) {
     }
     return c;
   };
-  let chosen = pickInTier(byTier.get(tier) ?? [], preferred, costOf);
+  let chosen = pickInTier(byTier.get(tier) ?? [], preferred, costOf2);
   const justification = { signals: active.map((t) => ({ ...t })), evidence: [...ctx.evidence], ignored: ctx.ignored };
   if (ctx.workKind === "screenshot" && active.length === 0 && tier < FABLE_TIER - 1) {
     const stat = statFor(ctx, chosen);
     const judged = stat ? stat.verified + stat.failed + stat.rejected : 0;
     if (stat && judged >= MIN_MEASURED_SAMPLES && stat.successRate !== null && stat.successRate < ACCURACY_FLOOR) {
-      const up = pickInTier(byTier.get(tier + 1) ?? [], null, costOf);
+      const up = pickInTier(byTier.get(tier + 1) ?? [], null, costOf2);
       if (up) {
         justification.signals.push({ signal: "measured-accuracy", detail: `measured accuracy ${pct(stat.successRate)} over ${judged} outcomes is below ${pct(ACCURACY_FLOOR)}`, evidence: [] });
         notes.push(`measured screenshot accuracy of ${chosen.modelId} is below the floor`);
-        return finish2(ctx, startTier, up, chosen, profile.baseEffort, effortBump, notes, justification, assessment, costOf, ref(chosen), downRoutedFrom);
+        return finish2(ctx, startTier, up, chosen, profile.baseEffort, effortBump, notes, justification, assessment, costOf2, ref(chosen), downRoutedFrom);
       }
     }
   }
   if (active.length === 0 && !downRoutedFrom) {
-    const mine = costOf(chosen);
+    const mine = costOf2(chosen);
     if (mine.basis === "measured" && mine.total !== null) {
       let best = null;
       for (const t of [tier - 1, tier + 1]) {
         if (t < 1 || t >= FABLE_TIER) continue;
         for (const m of byTier.get(t) ?? []) {
-          const c = costOf(m);
+          const c = costOf2(m);
           if (c.basis !== "measured" || c.total === null) continue;
           if (c.total < mine.total * (1 - CALIBRATION_MARGIN) && (!best || best.c.total > c.total)) best = { m, c };
         }
@@ -38215,8 +38340,8 @@ function routeLadder(ctx) {
       }
     }
   }
-  const escalatedFrom = rising && (tierOf(chosen) ?? 0) > base ? escalationOrigin(ctx, byTier, base, costOf) : void 0;
-  return finish2(ctx, startTier, chosen, null, profile.baseEffort, effortBump, notes, justification, assessment, costOf, escalatedFrom, downRoutedFrom);
+  const escalatedFrom = rising && (tierOf(chosen) ?? 0) > base ? escalationOrigin(ctx, byTier, base, costOf2) : void 0;
+  return finish2(ctx, startTier, chosen, null, profile.baseEffort, effortBump, notes, justification, assessment, costOf2, escalatedFrom, downRoutedFrom);
 }
 function observedDifficulty(ctx, startTier) {
   const s = ctx.signals;
@@ -38299,11 +38424,11 @@ function fableGate(ctx, byTier, assessment) {
     why: "no recorded evidence justifies the added expense (needs a failed opus-class attempt with evidence, a recorded evaluation, or measured outcomes)"
   };
 }
-function escalationOrigin(ctx, byTier, base, costOf) {
+function escalationOrigin(ctx, byTier, base, costOf2) {
   if (ctx.previous && ctx.previousTier === base) return ref(ctx.previous);
   if (ctx.signals.previousRoute) return { provider: ctx.signals.previousRoute.provider, model: ctx.signals.previousRoute.model, family: ctx.previous?.family ?? null };
   const at = byTier.get(base);
-  if (at?.length) return ref(pickInTier(at, null, costOf));
+  if (at?.length) return ref(pickInTier(at, null, costOf2));
   return { provider: "claude", model: TIER_NAME[base] ?? String(base), family: TIER_NAME[base] ?? null };
 }
 function routeSafetyReview(ctx) {
@@ -38312,7 +38437,7 @@ function routeSafetyReview(ctx) {
   const notes = [];
   const rejected = [];
   const candidates = [];
-  const costOf = (m) => estimateRoute(m, ctx);
+  const costOf2 = (m) => estimateRoute(m, ctx);
   let fableGateResult = null;
   const configuredReviewers = Object.entries(policy.providers).filter(([p, cfg]) => p !== "claude" && cfg.data_policy_eligible === true && typeof cfg.model === "string" && cfg.model.length > 0).map(([, cfg]) => cfg.model);
   const allowedModels = [...policy.routing.allowed_models, ...configuredReviewers];
@@ -38323,19 +38448,19 @@ function routeSafetyReview(ctx) {
     }
     for (const e of a.eligible) {
       if (provider !== "claude" && policy.providers[provider]?.data_policy_eligible !== true) {
-        rejected.push(alternative(e, true, costOf(e), `data policy: providers.${provider}.data_policy_eligible is not true`));
+        rejected.push(alternative(e, true, costOf2(e), `data policy: providers.${provider}.data_policy_eligible is not true`));
         continue;
       }
       const tier = tierOf(e);
       if (tier !== null) {
         if (tier < SAFETY_FLOOR_TIER) {
-          rejected.push(alternative(e, true, costOf(e), `${e.family} is below the safety review quality floor (opus-class)`));
+          rejected.push(alternative(e, true, costOf2(e), `${e.family} is below the safety review quality floor (opus-class)`));
           continue;
         }
         if (tier === FABLE_TIER) {
           fableGateResult ??= fableGate(ctx, groupByTier(a.eligible), a);
           if (!fableGateResult.ok) {
-            rejected.push(alternative(e, true, costOf(e), `Fable not chosen: ${fableGateResult.why}`));
+            rejected.push(alternative(e, true, costOf2(e), `Fable not chosen: ${fableGateResult.why}`));
             continue;
           }
         }
@@ -38344,7 +38469,7 @@ function routeSafetyReview(ctx) {
       }
       const q = qualifyOtherProvider(e, policy);
       if (!q) {
-        rejected.push(alternative(e, true, costOf(e), "not qualified for safety review: no recorded evaluation, not configured in providers, not the provider default"));
+        rejected.push(alternative(e, true, costOf2(e), "not qualified for safety review: no recorded evaluation, not configured in providers, not the provider default"));
         continue;
       }
       candidates.push({ entry: e, basis: q.basis, detail: q.detail, independent: provider !== implementer });
@@ -38362,12 +38487,14 @@ function routeSafetyReview(ctx) {
       ctx.ignored.push(`routing.overrides.safety-review=${override} is not a qualified reviewer at or above the quality floor; ignored`);
     }
   }
+  const order = reviewProviderOrder(policy.review);
+  const place = (provider) => order.includes(provider) ? order.indexOf(provider) : order.length;
   const rank = (c) => [
     c.entry.modelId === preferred ? 0 : 1,
-    c.entry.provider === policy.review.preferred_provider ? 0 : 1,
+    place(c.entry.provider),
     BASIS_RANK[c.basis],
     tierOf(c.entry) ?? 0,
-    costOf(c.entry).total ?? Number.POSITIVE_INFINITY
+    costOf2(c.entry).total ?? Number.POSITIVE_INFINITY
   ];
   const sorted = [...candidates].sort((x, y) => compareTuples(rank(x), rank(y)) || x.entry.modelId.localeCompare(y.entry.modelId));
   const independent = sorted.filter((c) => c.independent);
@@ -38375,37 +38502,37 @@ function routeSafetyReview(ctx) {
   if (chosen) {
     notes.push(`independent reviewer from ${chosen.entry.provider} (implementer: ${implementer}); qualified by ${chosen.detail}`);
   } else {
-    const sameAllowed = !policy.review.independent_provider_required || policy.review.fallback_same_provider_allowed;
+    const fallback = reviewFallback(policy.review);
+    const sameAllowed = fallback !== "block";
     const same = sorted.filter((c) => !c.independent);
     if (!sameAllowed || same.length === 0) {
       throw new OrbitError(
         "PROVIDER_UNAVAILABLE",
-        sameAllowed ? "no qualified reviewer at or above the safety review quality floor is eligible" : `independent review is required but no qualified reviewer from a provider other than ${implementer} is eligible`,
+        sameAllowed ? "no qualified reviewer at or above the safety review quality floor is eligible" : `independent review is required (review.when_unavailable: block) but no qualified reviewer from a provider other than ${implementer} is eligible`,
         {
           work_kind: "safety-review",
           implementer_provider: implementer,
-          independent_provider_required: policy.review.independent_provider_required,
-          fallback_same_provider_allowed: policy.review.fallback_same_provider_allowed,
+          when_unavailable: fallback,
           alternatives_considered: rejected
         }
       );
     }
     chosen = same[0];
     notes.push(
-      policy.review.independent_provider_required ? `no qualified independent reviewer; policy allows same-provider review at the opus-class floor (${chosen.detail})` : `independent review not required and none qualified; same-provider review at the opus-class floor (${chosen.detail})`
+      fallback === "ask" ? `no qualified independent reviewer; review.when_unavailable is ask: a person must approve a same-provider review at the opus-class floor in a separate session (not independent; ${chosen.detail})` : `no qualified independent reviewer; review.when_unavailable is claude, so a same-provider review at the opus-class floor in a separate session (not independent; ${chosen.detail})`
     );
   }
   for (const c of sorted) {
     if (c === chosen) continue;
-    const why = c.independent === chosen.independent ? `ranked below ${chosen.entry.modelId} (override, preferred provider, qualification basis, tier, then cost)` : "same provider as the implementer; an independent reviewer is preferred";
-    rejected.push(alternative(c.entry, true, costOf(c.entry), why));
+    const why = c.independent === chosen.independent ? `ranked below ${chosen.entry.modelId} (override, review.providers order, qualification basis, tier, then cost)` : "same provider as the implementer; an independent reviewer is preferred";
+    rejected.push(alternative(c.entry, true, costOf2(c.entry), why));
   }
   const configured = policy.providers[chosen.entry.provider]?.reasoning_effort ?? null;
   const effortSteps = signals.criticalSecurity ? 1 : 0;
   let effort = chooseEffort(chosen.entry, ctx.profile.baseEffort, effortSteps);
   if (configured && effort !== null && chosen.entry.capabilities.effortLevels.includes(configured) && effortRank(configured) > effortRank(effort)) effort = configured;
   if (signals.criticalSecurity) notes.push("critical security impact raises review effort");
-  const cost = costOf(chosen.entry);
+  const cost = costOf2(chosen.entry);
   const decision = {
     kind: "route",
     summary: `route safety-review -> ${chosen.entry.provider}/${chosen.entry.modelId}`,
@@ -38465,7 +38592,7 @@ function priceProfile(t, p) {
 function statFor(ctx, m) {
   return ctx.outcomes.find((s) => s.workKind === ctx.workKind && s.modelId === m.modelId && s.provider === m.provider);
 }
-function finish2(ctx, startTier, chosen, displaced, baseEffort, effortBump, notes, justification, assessment, costOf, escalatedFrom, downRoutedFrom) {
+function finish2(ctx, startTier, chosen, displaced, baseEffort, effortBump, notes, justification, assessment, costOf2, escalatedFrom, downRoutedFrom) {
   const s = ctx.signals;
   let steps = effortBump;
   if (s.difficulty === "complex" && ctx.profile.output !== "interpretation") {
@@ -38489,10 +38616,10 @@ function finish2(ctx, startTier, chosen, displaced, baseEffort, effortBump, note
     else if (t < chosenTier && t < startTier) why = `below the ${TIER_NAME[startTier] ?? "starting"} tier this work starts at`;
     else if (t < chosenTier) why = escalatedFrom ? "escalated past this tier on observed difficulty" : `below the ${TIER_NAME[chosenTier] ?? "chosen"} tier chosen for this work`;
     else why = `higher expected cost per verified task than ${chosen.modelId}`;
-    alternatives.push(alternative(m, true, costOf(m), why));
+    alternatives.push(alternative(m, true, costOf2(m), why));
   }
   for (const ex of assessment.excluded) alternatives.push(alternative(ex.model, false, null, `ineligible: ${ex.reasons.join("; ")}`));
-  const cost = costOf(chosen);
+  const cost = costOf2(chosen);
   const start = `${ctx.workKind} starts at ${TIER_NAME[ctx.profile.startTier]} (spec section 8)`;
   const trig2 = justification.signals.length ? `observed difficulty: ${justification.signals.map((t) => `${t.signal} (${t.detail})`).join(", ")}` : "no observed difficulty";
   const reason = [start, trig2, ...notes, `chose ${chosen.modelId} at effort ${effort ?? "n/a"}`, costText(cost)].join("; ");
@@ -38535,9 +38662,9 @@ function groupByTier(models) {
   for (const m of models) {
     const t = tierOf(m);
     if (t === null) continue;
-    const list = out.get(t) ?? [];
-    list.push(m);
-    out.set(t, list);
+    const list2 = out.get(t) ?? [];
+    list2.push(m);
+    out.set(t, list2);
   }
   return out;
 }
@@ -38549,12 +38676,12 @@ function nearestTier(target, byTier, allowFable) {
   for (const t of order) if ((byTier.get(t) ?? []).length > 0) return t;
   return null;
 }
-function pickInTier(models, preferred, costOf) {
+function pickInTier(models, preferred, costOf2) {
   const hit = preferred ? models.find((m) => m.modelId === preferred) : void 0;
   if (hit) return hit;
   const sorted = [...models].sort((a, b) => {
-    const ca = costOf(a).total ?? Number.POSITIVE_INFINITY;
-    const cb = costOf(b).total ?? Number.POSITIVE_INFINITY;
+    const ca = costOf2(a).total ?? Number.POSITIVE_INFINITY;
+    const cb = costOf2(b).total ?? Number.POSITIVE_INFINITY;
     return ca - cb || a.modelId.localeCompare(b.modelId);
   });
   return sorted[0];
@@ -38617,6 +38744,7 @@ var init_router = __esm({
     init_errors();
     init_registry();
     init_pricing();
+    init_review();
     init_types();
     TIER_NAME = { 1: "haiku", 2: "sonnet", 3: "opus", 4: "fable" };
     FABLE_TIER = 4;
@@ -38803,22 +38931,22 @@ function count(v) {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 }
 function routeStats(db, filter = {}) {
-  const where = [];
+  const where2 = [];
   const params = [];
   if (filter.workKind) {
-    where.push("work_kind = ?");
+    where2.push("work_kind = ?");
     params.push(filter.workKind);
   }
   if (filter.provider) {
-    where.push("provider = ?");
+    where2.push("provider = ?");
     params.push(filter.provider);
   }
   if (filter.modelId) {
-    where.push("model_id = ?");
+    where2.push("model_id = ?");
     params.push(filter.modelId);
   }
   if (filter.sinceMs !== void 0) {
-    where.push("ts >= ?");
+    where2.push("ts >= ?");
     params.push(filter.sinceMs);
   }
   const rows = db.all(
@@ -38828,7 +38956,7 @@ function routeStats(db, filter = {}) {
             SUM(CASE WHEN outcome = 'rejected' THEN 1 ELSE 0 END) AS rejected,
             SUM(CASE WHEN outcome IN ('error', 'cancelled') THEN 1 ELSE 0 END) AS errors,
             AVG(cost_usd) AS mean_cost, COUNT(cost_usd) AS cost_samples, AVG(tokens) AS mean_tokens
-       FROM route_outcomes ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+       FROM route_outcomes ${where2.length ? `WHERE ${where2.join(" AND ")}` : ""}
       GROUP BY work_kind, provider, model_id
       ORDER BY work_kind, provider, model_id`,
     ...params
@@ -39676,8 +39804,8 @@ var init_store2 = __esm({
         return row ? parseLesson(row.lesson_json) : null;
       }
       listLessons(filters = {}) {
-        const { where, params } = filterSql(filters);
-        const rows = this.db.all(`SELECT id, lesson_json FROM nodes n ${where} ORDER BY n.id`, ...params);
+        const { where: where2, params } = filterSql(filters);
+        const rows = this.db.all(`SELECT id, lesson_json FROM nodes n ${where2} ORDER BY n.id`, ...params);
         const lessons = rows.map((r) => parseLesson(r.lesson_json)).filter((l) => roleMatches(l, filters.roles));
         return filters.limit === void 0 ? lessons : lessons.slice(0, filters.limit);
       }
@@ -39693,12 +39821,12 @@ var init_store2 = __esm({
         const terms = searchTerms(text2);
         if (terms.length === 0) return [];
         const match = terms.map((t) => `"${t}"`).join(" OR ");
-        const { where, params } = filterSql(filters, "AND");
+        const { where: where2, params } = filterSql(filters, "AND");
         const limit = Math.max(1, Math.min(filters.limit ?? 50, 500));
         const rows = this.db.all(
           `SELECT n.lesson_json AS lesson_json, bm25(fts, 0.0, 4.0, 1.0, 2.0, 1.0) AS rank
        FROM fts JOIN nodes n ON n.id = fts.lesson_id
-       WHERE fts MATCH ? ${where}
+       WHERE fts MATCH ? ${where2}
        ORDER BY rank ASC, n.id ASC
        LIMIT ?`,
           match,
@@ -39762,8 +39890,8 @@ var init_store2 = __esm({
           clauses.push("type = ?");
           params.push(query.type);
         }
-        const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-        return this.db.all(`SELECT src, dst, type, run_id, data_json FROM edges ${where} ORDER BY src, type, dst`, ...params).map((r) => ({ src: r.src, dst: r.dst, type: r.type, run_id: r.run_id, data: r.data_json ? JSON.parse(r.data_json) : null }));
+        const where2 = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+        return this.db.all(`SELECT src, dst, type, run_id, data_json FROM edges ${where2} ORDER BY src, type, dst`, ...params).map((r) => ({ src: r.src, dst: r.dst, type: r.type, run_id: r.run_id, data: r.data_json ? JSON.parse(r.data_json) : null }));
       }
       events(lessonId) {
         return this.db.all("SELECT lesson_id, ts, type, data_json FROM lesson_events WHERE lesson_id = ? ORDER BY id", lessonId).map((r) => ({ lesson_id: r.lesson_id, ts: r.ts, type: r.type, data: r.data_json ? JSON.parse(r.data_json) : null }));
@@ -39877,8 +40005,8 @@ var init_store2 = __esm({
           clauses.push("scope = ?");
           params.push(filter.scope);
         }
-        const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-        return this.db.all(`SELECT * FROM overlays ${where} ORDER BY role, scope, version`, ...params).map(toOverlay);
+        const where2 = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+        return this.db.all(`SELECT * FROM overlays ${where2} ORDER BY role, scope, version`, ...params).map(toOverlay);
       }
       activeOverlay(role, scope) {
         const row = this.db.get("SELECT * FROM overlays WHERE role = ? AND scope = ? AND status = 'active' ORDER BY version DESC LIMIT 1", role, scope);
@@ -41291,8 +41419,8 @@ function unfundedSessionReason(ctx, model, role, phase = "work") {
   if (cost.hard_cap - reserve < worst) return `cap $${dollars(cost.hard_cap)} is below one session's worst case $${dollars(worst)}${plusReserve}`;
   const left = Math.max(0, cost.hard_cap - reserve - cost.used - committed);
   const after = [`$${dollars(cost.used)} spent`, ...committed > 0 ? [`$${dollars(committed)} committed to running sessions`] : [], ...reserve > 0 ? [`the $${dollars(reserve)} closing reserve`] : []];
-  const list = after.length > 1 ? `${after.slice(0, -1).join(", ")} and ${after.at(-1)}` : after[0];
-  return `no model budget left: $${dollars(left)} of the $${dollars(cost.hard_cap)} cap remains after ${list}, below one session's worst case $${dollars(worst)}`;
+  const list2 = after.length > 1 ? `${after.slice(0, -1).join(", ")} and ${after.at(-1)}` : after[0];
+  return `no model budget left: $${dollars(left)} of the $${dollars(cost.hard_cap)} cap remains after ${list2}, below one session's worst case $${dollars(worst)}`;
 }
 function fallbackWorstCase(ctx, role) {
   return (ctx.ledger?.roleCostCeiling(role) ?? ROLE_COST_CEILING_USD[role]) / 4;
@@ -41327,8 +41455,8 @@ function routeFor(ctx, purpose, workKind, signals) {
   const config = ctx.snapshot.config;
   try {
     const decision = route({ workKind, signals, registry: ctx.deps.registry, policy: config, outcomes: routeStats(ctx.db, { workKind }) });
-    const rec = toDecisionRecord(decision);
-    recordDecision(ctx.db, ctx.runDir, { id: decisionId2, runId: ctx.run.id, kind: rec.kind, summary: `${purpose}: ${rec.summary}`.slice(0, 500), data: { ...rec.data, purpose } }, ctx.clock);
+    const rec2 = toDecisionRecord(decision);
+    recordDecision(ctx.db, ctx.runDir, { id: decisionId2, runId: ctx.run.id, kind: rec2.kind, summary: `${purpose}: ${rec2.summary}`.slice(0, 500), data: { ...rec2.data, purpose } }, ctx.clock);
     return { provider: decision.provider, model: decision.model, effort: decision.effort, workKind, decisionId: decisionId2 };
   } catch (err) {
     if (!isOrbitError(err, "PROVIDER_UNAVAILABLE")) throw err;
@@ -41596,7 +41724,7 @@ function resolveFindings(input) {
     }
     const disagreement = detectDisagreement(group, reviews, input.disputes ?? [], fp, refutes.length > 0 && confirms.length > 0);
     const exceptionMatch = sec ? matchException({ category: rep.f.category, location: rep.f.location, severity }, security, input.now) : null;
-    const refs = (list) => list.map(describeEvidence);
+    const refs = (list2) => list2.map(describeEvidence);
     let status2;
     let reason;
     let evidenceRefs = [];
@@ -41799,6 +41927,206 @@ var init_resolve = __esm({
     MACHINE_EVIDENCE_KINDS = ["new_test", "existing_check", "reproduction", "static_analysis"];
     PRIOR_OPEN = UNRESOLVED_FINDING_STATUSES;
     MAX_QUOTED = 300;
+  }
+});
+
+// src/review/select.ts
+function selectionDecisionRecord(sel) {
+  return {
+    kind: "review.select",
+    summary: (sel.decision === "SELECT" ? `reviewer ${reviewerLabel(sel)}` : `review blocked: ${sel.reason}`).slice(0, 300),
+    data: sel
+  };
+}
+function reviewerLabel(sel) {
+  const who = `${sel.provider}/${sel.model ?? "default"}`;
+  if (sel.independent) return `${who} (independent)`;
+  return `${who} (same provider, not independent: ${sel.independentUnavailable ?? "no independent reviewer was usable"})`;
+}
+function selectReviewer(input) {
+  const { config } = input.snapshot;
+  const review = config.review;
+  const impl = input.implementer.provider;
+  const alternatives = [];
+  const fallback = reviewFallback(review);
+  const order = reviewProviderOrder(review);
+  const preferred = order[0] ?? null;
+  const providerProblem = (p, unverifiedOk = false) => {
+    const cap = input.capabilities[p];
+    if (!cap) return { reason: `no adapter capabilities were reported for "${p}"`, code: "PROVIDER_UNAVAILABLE" };
+    if (!cap.available) return { reason: `provider "${p}" is not available: ${cap.detail || "adapter reported unavailable"}`, code: "PROVIDER_UNAVAILABLE" };
+    if (!cap.structuredOutput) return { reason: `provider "${p}" cannot return schema-constrained output, which review findings require`, code: "PROVIDER_UNAVAILABLE" };
+    const cred = input.credentials[p];
+    if (!cred) return { reason: `credentials for "${p}" were not validated`, code: "PROVIDER_UNAVAILABLE" };
+    if (cred.state === "expired") return { reason: `credentials for "${p}" are expired${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
+    if (cred.state === "invalid") return { reason: `credentials for "${p}" are invalid${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
+    if (cred.state === "missing") return { reason: `no credentials for "${p}"${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_MISSING" };
+    if (cred.state !== "valid" && !(unverifiedOk && cred.state === "unknown")) return { reason: `credentials for "${p}" could not be validated (${cred.state})${cred.detail ? `: ${cred.detail}` : ""}`, code: "PROVIDER_UNAVAILABLE" };
+    if (p !== impl && config.providers[p]?.data_policy_eligible !== true) {
+      return { reason: `providers.${p}.data_policy_eligible is not true, so the review packet may not be sent to it`, code: "POLICY_DENIED" };
+    }
+    return null;
+  };
+  const independentIds = order.filter((p) => p !== impl && (Object.hasOwn(config.providers, p) || input.capabilities[p] !== void 0));
+  const problems = /* @__PURE__ */ new Map();
+  const unusable = /* @__PURE__ */ new Map();
+  for (const p of independentIds) {
+    const prob = providerProblem(p);
+    if (prob) {
+      problems.set(p, prob);
+      unusable.set(p, prob.reason);
+      alternatives.push({ provider: p, model: null, reason: prob.reason });
+      continue;
+    }
+    const m = qualifiedModel(p, input, alternatives);
+    if (!m) {
+      unusable.set(p, `"${p}" has no model qualified for review`);
+      continue;
+    }
+    const substituted = p !== preferred;
+    return finish3(
+      input,
+      m,
+      { independent: true, substitutedForPreferred: substituted, independentUnavailable: null, needsApproval: false },
+      alternatives,
+      substituted ? `preferred provider "${preferred}" is unusable (${problems.get(preferred ?? "")?.reason ?? "not selected"}); "${p}" is an independent, qualified provider` : `independent reviewer "${p}" (implementer: "${impl}")`
+    );
+  }
+  const detail = independentIds.length === 0 ? order.length === 0 ? "no independent review provider is listed in review.providers" : `no provider other than "${impl}" is configured` : independentIds.map((p) => unusable.get(p) ?? `"${p}" has no model qualified for review`).join("; ");
+  if (fallback === "block") {
+    const preferredProblem = preferred !== null ? problems.get(preferred) : void 0;
+    const code2 = preferred !== impl && preferredProblem ? preferredProblem.code : "PROVIDER_UNAVAILABLE";
+    return {
+      decision: "BLOCK",
+      code: code2,
+      reason: `independent review is required (review.when_unavailable: block) and no independent reviewer is usable: ${detail}. Review is not being substituted by "${impl}" or any equivalent label; verification is incomplete until an independent provider is available.`,
+      alternatives
+    };
+  }
+  const implProblem = providerProblem(impl, true);
+  if (implProblem) {
+    alternatives.push({ provider: impl, model: null, reason: implProblem.reason });
+    return {
+      decision: "BLOCK",
+      code: implProblem.code,
+      reason: `no independent reviewer is usable (${detail}) and review.when_unavailable is ${fallback}, but "${impl}" cannot review: ${implProblem.reason}`,
+      alternatives
+    };
+  }
+  const same = sameProviderModel(input, alternatives);
+  if (!same.ok) {
+    return { decision: "BLOCK", code: "PROVIDER_UNAVAILABLE", reason: `no independent reviewer is usable (${detail}) and review.when_unavailable is ${fallback}, but ${same.reason}`, alternatives };
+  }
+  const why = `no independent reviewer was usable: ${detail}`;
+  return finish3(
+    input,
+    same.usable,
+    { independent: false, substitutedForPreferred: false, independentUnavailable: why, needsApproval: fallback === "ask" },
+    alternatives,
+    `${why}; review.when_unavailable is ${fallback}, so "${impl}" reviews with ${same.usable.model} in a separate reviewer session (${same.usable.detail})${fallback === "ask" ? " once a person says yes" : ""}. This review is not independent.`
+  );
+}
+function finish3(input, u, how, alternatives, reason) {
+  const cap = input.capabilities[u.provider];
+  return {
+    decision: "SELECT",
+    provider: u.provider,
+    model: u.model,
+    effort: input.snapshot.config.providers[u.provider]?.reasoning_effort ?? null,
+    independent: how.independent,
+    independentUnavailable: how.independentUnavailable,
+    needsApproval: how.needsApproval,
+    basis: u.basis,
+    substitutedForPreferred: how.substitutedForPreferred,
+    readOnlySandbox: cap?.readOnlySandbox === true,
+    reason,
+    alternatives
+  };
+}
+function qualifiedModel(provider, input, alternatives) {
+  const cfg = input.snapshot.config;
+  const cap = input.capabilities[provider];
+  const configured = cfg.providers[provider]?.model ?? null;
+  const offered = (m) => !cap || cap.models.length === 0 || cap.models.includes(m);
+  if (configured !== null) {
+    if (!offered(configured)) {
+      alternatives.push({ provider, model: configured, reason: `providers.${provider}.model "${configured}" is not offered by the adapter` });
+      return null;
+    }
+    return { provider, model: configured, basis: "configured", detail: `providers.${provider}.model names it` };
+  }
+  const reg = input.registry;
+  const surface = PROVIDER_SURFACE2[provider];
+  if (reg && surface) {
+    const a = reg.assess({ surface, provider, allowedModels: [...cfg.routing.allowed_models, `${provider}:*`], structuredOutput: true });
+    const ranked = a.eligible.filter((e) => offered(e.modelId));
+    if (provider === "claude") {
+      const tiered = ranked.filter((e) => (tierOf(e) ?? 0) >= REVIEW_QUALITY_FLOOR_TIER && allowMatch(e, cfg.routing.allowed_models) !== null);
+      const pick = tiered[0];
+      if (pick) return { provider, model: pick.modelId, basis: "tier", detail: `${pick.family} meets the opus-class floor` };
+    } else {
+      const evaluated = ranked.find((e) => e.evaluation.qualifiedFor.includes("safety-review"));
+      if (evaluated) return { provider, model: evaluated.modelId, basis: "evaluation", detail: "a recorded safety-review evaluation" };
+      const recommended = ranked.find((e) => e.eligibility.providerDefault);
+      if (recommended) return { provider, model: recommended.modelId, basis: "provider-default", detail: `it is ${provider}'s recommended model` };
+    }
+  }
+  alternatives.push({ provider, model: null, reason: `no model of "${provider}" is qualified for review: none is named in providers.${provider}.model, evaluated for safety review, or recommended by the provider${provider === "claude" ? ", and none is opus-class or above" : ""}` });
+  return null;
+}
+function sameProviderModel(input, alternatives) {
+  const impl = input.implementer;
+  const cfg = input.snapshot.config;
+  const reg = input.registry;
+  if (!reg) return { ok: false, reason: "no model registry was supplied, so a reviewer model at the quality floor cannot be chosen" };
+  const implEntry = impl.model ? reg.get(impl.model) : null;
+  const implTier = implEntry ? tierOf(implEntry) : null;
+  const surface = PROVIDER_SURFACE2[impl.provider];
+  if (!surface) return { ok: false, reason: `"${impl.provider}" has no tiered models, so a same-provider review at the quality floor is not defined` };
+  const cap = input.capabilities[impl.provider];
+  const a = reg.assess({ surface, provider: impl.provider, allowedModels: cfg.routing.allowed_models, structuredOutput: true });
+  const unvalidated = (ex) => ex.reasons.length > 0 && ex.reasons.every((r) => /not yet validated/.test(r));
+  const pending = [];
+  for (const ex of a.excluded) {
+    if (ex.model.provider !== impl.provider) continue;
+    if (unvalidated(ex)) pending.push(ex.model);
+    else alternatives.push({ provider: impl.provider, model: ex.model.modelId, reason: `ineligible: ${ex.reasons.join("; ")}` });
+  }
+  const atFloor = [...a.eligible, ...pending].filter((e) => {
+    const t = tierOf(e);
+    if (t === null) return false;
+    if (cap && cap.models.length > 0 && !cap.models.includes(e.modelId)) return false;
+    if (t < REVIEW_QUALITY_FLOOR_TIER) {
+      alternatives.push({ provider: impl.provider, model: e.modelId, reason: `${e.family} is below the review quality floor (opus-class)` });
+      return false;
+    }
+    return true;
+  });
+  const otherTier = implTier === null ? void 0 : atFloor.find((e) => tierOf(e) !== implTier);
+  if (otherTier) {
+    for (const e of atFloor) if (tierOf(e) === implTier) alternatives.push({ provider: impl.provider, model: e.modelId, reason: `same tier (${e.family}) as the implementer's model; a different tier is preferred` });
+    return { ok: true, usable: { provider: impl.provider, model: otherTier.modelId, basis: "tier", detail: `${otherTier.family} is at or above the opus-class floor and a different tier than the implementer's ${implEntry?.family}` } };
+  }
+  const pick = atFloor[0];
+  if (!pick) return { ok: false, reason: `no allowed ${impl.provider} model is at or above the opus-class floor` };
+  const detail = implTier === null ? `${pick.family} meets the opus-class floor; the implementer's model is not known yet` : `${pick.family} is at the opus-class floor, the same tier as the implementer's model; it reviews in a separate session`;
+  return { ok: true, usable: { provider: impl.provider, model: pick.modelId, basis: "tier", detail } };
+}
+function mandatoryReviewProvider(review, implementer) {
+  if (reviewFallback(review) !== "block") return null;
+  const first = preferredReviewProvider(review);
+  return first !== null && first !== implementer ? first : null;
+}
+var SAME_PROVIDER_APPROVED_KIND, REVIEW_QUALITY_FLOOR_TIER, PROVIDER_SURFACE2;
+var init_select = __esm({
+  "src/review/select.ts"() {
+    "use strict";
+    init_errors();
+    init_review();
+    init_registry();
+    SAME_PROVIDER_APPROVED_KIND = "review.same-provider-approved";
+    REVIEW_QUALITY_FLOOR_TIER = 3;
+    PROVIDER_SURFACE2 = { claude: "claude-cli", codex: "codex-cli" };
   }
 });
 
@@ -42178,9 +42506,9 @@ function parseJson2(text2) {
 function diffStatPaths(stat) {
   if (!stat || typeof stat !== "object") return [];
   const s = stat;
-  const list = Array.isArray(s.files) ? s.files : Array.isArray(s.paths) ? s.paths : [];
+  const list2 = Array.isArray(s.files) ? s.files : Array.isArray(s.paths) ? s.paths : [];
   const out = [];
-  for (const f of list) {
+  for (const f of list2) {
     if (typeof f === "string") out.push(f);
     else if (f && typeof f === "object" && typeof f.path === "string") out.push(f.path);
   }
@@ -42438,8 +42766,8 @@ function scopeObservations(db, runId) {
       ["out-of-scope", scope.out_of_scope_paths_changed],
       ["symlink-escape", scope.symlinks_escaping]
     ];
-    for (const [category, list] of categories) {
-      const paths = (list ?? []).filter((p) => typeof p === "string").sort().slice(0, PATHS_MAX);
+    for (const [category, list2] of categories) {
+      const paths = (list2 ?? []).filter((p) => typeof p === "string").sort().slice(0, PATHS_MAX);
       if (paths.length === 0) continue;
       const key2 = `${category}\0${paths.join("\0")}`;
       const ref2 = rowRef(runId, "candidate", { id: c.id, seq: c.seq, tree_hash: c.tree_hash, scope_json: c.scope_json });
@@ -43450,1106 +43778,1454 @@ var init_publication = __esm({
   }
 });
 
-// src/controller/report.ts
-import { existsSync as existsSync26, mkdirSync as mkdirSync14, readdirSync as readdirSync7, readFileSync as readFileSync18 } from "node:fs";
-import { homedir as homedir10 } from "node:os";
-import { join as join32 } from "node:path";
-function writeFinalReport(db, runId, opts) {
-  const run = getRun(db, runId);
-  const report2 = buildFinalReport(db, run, opts);
-  atomicWriteJson(join32(opts.runDir, "final.json"), report2);
-  atomicWrite(join32(opts.runDir, "final.md"), renderMarkdown(report2));
-  return report2;
+// src/delivery/git.ts
+function isObjectId(value) {
+  return typeof value === "string" && OBJECT_ID.test(value);
 }
-function buildFinalReport(db, run, opts) {
-  return redactValue(assembleFinalReport(db, run, opts));
+function assertTaskBranch(branch, rules) {
+  const deny2 = (why) => {
+    throw new OrbitError("POLICY_DENIED", `refusing to push ${JSON.stringify(branch)}: ${why}`, { branch, definitive: true });
+  };
+  if (typeof branch !== "string" || branch.length === 0) deny2("the branch name is empty");
+  if (branch.startsWith("refs/")) deny2("give the branch name, not a ref");
+  if (!rules.branchPrefix) deny2("no branch prefix is configured");
+  if (!branch.startsWith(rules.branchPrefix) || branch.length === rules.branchPrefix.length) deny2(`task branches start with ${rules.branchPrefix}`);
+  if (branch === rules.baseBranch) deny2("the base branch is never a push target");
+  if (branch.startsWith("-") || REF_FORBIDDEN2.test(branch)) deny2("it is not a valid branch name");
 }
-function assembleFinalReport(db, run, opts) {
-  const contract = parseContract(run.contractJson);
-  const cand = currentCandidate(db, run.id);
-  const reports = listEvidenceReports(db, run.id);
-  const ev = (cand ? reports.filter((r) => r.candidateId === cand.id).at(-1) : null) ?? reports.at(-1) ?? null;
-  const criteria = (contract?.acceptance_criteria ?? []).map((c) => {
-    const e = ev?.report.acceptance_evidence.find((a) => a.criterion_id === c.id);
-    return { id: c.id, statement: c.statement, mandatory: c.mandatory, status: e?.status ?? "unverified", artifacts: e?.artifacts ?? [] };
+function branchRef(branch) {
+  return `refs/heads/${branch}`;
+}
+function gitEnv4(extra = {}, base = process.env) {
+  const keep = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "SystemRoot"];
+  const env = {};
+  for (const k of keep) if (base[k] !== void 0) env[k] = base[k];
+  return {
+    ...env,
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "",
+    GIT_OPTIONAL_LOCKS: "0",
+    // Transports Orbit uses; excludes ext:: and friends.
+    GIT_ALLOW_PROTOCOL: "file:https:http:git:ssh",
+    ...extra
+  };
+}
+async function git3(repoRoot, args, opts = {}) {
+  return execCapture(["git", ...args], { cwd: repoRoot, env: opts.env ?? gitEnv4(), timeoutMs: opts.timeoutMs ?? 12e4, input: opts.input, maxOutputBytes: 4 * 1024 * 1024 });
+}
+function fail(what, res, extra = {}) {
+  const text2 = redact(`${res.stderr}${res.stdout}`.trim()).slice(0, 2e3);
+  return new OrbitError("GIT_FAILED", `${what} failed (exit ${res.exitCode ?? res.signal ?? "unknown"}): ${text2}`, { exitCode: res.exitCode, ...extra });
+}
+async function objectExists(repoRoot, spec, opts) {
+  const res = await git3(repoRoot, ["cat-file", "-e", spec], opts);
+  return res.exitCode === 0;
+}
+async function readControllerIdentity(repoRoot, opts = {}) {
+  const read2 = async (key2) => {
+    const res = await git3(repoRoot, ["config", "--get", key2], opts);
+    return res.exitCode === 0 ? res.stdout.trim() : "";
+  };
+  const [name, email] = await Promise.all([read2("user.name"), read2("user.email")]);
+  if (!name || !email) {
+    throw new OrbitError("CONFIG_INVALID", "the controller has no git identity (user.name and user.email); delivery commits never take an identity from a worker", { definitive: true });
+  }
+  return { name, email };
+}
+async function createDeliveryCommit(input) {
+  const { repoRoot, tree, parent, message, identity } = input;
+  if (!isObjectId(tree)) throw new OrbitError("GIT_FAILED", "the tree is not a full object id", { tree });
+  if (!isObjectId(parent)) throw new OrbitError("GIT_FAILED", "the parent is not a full object id", { parent });
+  if (!message.trim()) throw new OrbitError("GIT_FAILED", "a delivery commit needs a message");
+  if (!identity.name || !identity.email) throw new OrbitError("CONFIG_INVALID", "a delivery commit needs an identity", { definitive: true });
+  if (!await objectExists(repoRoot, `${tree}^{tree}`, input)) throw new OrbitError("GIT_FAILED", `tree ${tree} is not in the repository`);
+  if (!await objectExists(repoRoot, `${parent}^{commit}`, input)) throw new OrbitError("GIT_FAILED", `parent ${parent} is not a commit in the repository`);
+  const when = `${Math.floor(input.timeMs / 1e3)} +0000`;
+  const env = gitEnv4({
+    // Reproducible: no user or system configuration can influence the result.
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: identity.name,
+    GIT_AUTHOR_EMAIL: identity.email,
+    GIT_AUTHOR_DATE: when,
+    GIT_COMMITTER_NAME: identity.name,
+    GIT_COMMITTER_EMAIL: identity.email,
+    GIT_COMMITTER_DATE: when
   });
-  const reviews = listReviews(db, run.id, { includeInvalidated: true });
-  const findings = listFindings(db, run.id);
-  const decisions = listDecisions(db, run.id).map((d) => ({ kind: d.kind, summary: d.summary, at: d.createdAt }));
-  const delivery = readJsonIfExists(join32(opts.runDir, "delivery.json"));
-  const outcomeJson = parseJson3(run.outcomeJson);
-  let budget = null;
-  const usage = summarizeUsage(db, run.id);
-  if (opts.snapshot && db.get("SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1", run.id)) {
+  const res = await git3(repoRoot, ["commit-tree", tree, "-p", parent, "-F", "-"], { ...input, env, input: message.endsWith("\n") ? message : `${message}
+` });
+  if (res.exitCode !== 0) throw fail("git commit-tree", res);
+  const commit = res.stdout.trim();
+  if (!isObjectId(commit)) throw new OrbitError("GIT_FAILED", `commit-tree printed an unexpected value: ${res.stdout.trim().slice(0, 80)}`);
+  const check = await git3(repoRoot, ["rev-parse", `${commit}^{tree}`], input);
+  if (check.exitCode !== 0 || check.stdout.trim() !== tree) {
+    throw new OrbitError("GIT_FAILED", `the delivery commit ${commit} has tree ${check.stdout.trim()}, not the reviewed tree ${tree}`, { commit, tree, definitive: true });
+  }
+  if (input.ref) {
+    const up = await git3(repoRoot, ["update-ref", input.ref, commit], input);
+    if (up.exitCode !== 0) throw fail("git update-ref", up);
+  }
+  return commit;
+}
+function deliveryRef(runId, tree, parent) {
+  return `refs/orbit/${runId}/delivery/${parent}/${tree}`;
+}
+async function findDeliveryCommit(repoRoot, runId, tree, parent, opts = {}) {
+  const res = await git3(repoRoot, ["rev-parse", "--verify", "--quiet", `${deliveryRef(runId, tree, parent)}^{commit}`], opts);
+  if (res.exitCode !== 0) return null;
+  const commit = res.stdout.trim();
+  const t = await git3(repoRoot, ["rev-parse", `${commit}^{tree}`, `${commit}^`], opts);
+  const [commitTree, commitParent] = t.stdout.trim().split("\n");
+  return t.exitCode === 0 && commitTree === tree && commitParent === parent ? commit : null;
+}
+function assertRemote(remote) {
+  if (typeof remote !== "string" || remote.length === 0 || remote.startsWith("-") || /[\0\n\r]/.test(remote)) {
+    throw new OrbitError("CONFIG_INVALID", `the remote ${JSON.stringify(remote)} is not usable`, { definitive: true });
+  }
+}
+function remoteHost2(address) {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(address)) {
+    let url;
     try {
-      const snap = new BudgetLedger(db, opts.clock).attach(run.id, opts.snapshot).snapshot();
-      budget = { counters: snap.counters, cost_measurement: snap.cost_measurement.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals) };
+      url = new URL(address);
     } catch {
-      budget = null;
+      throw new OrbitError("CONFIG_INVALID", "the remote URL cannot be parsed", { remote: redact(address), definitive: true });
     }
+    if (url.protocol === "file:") return null;
+    const host = url.hostname.replace(/^\[|\]$/g, "");
+    if (!host) throw new OrbitError("CONFIG_INVALID", "the remote URL names no host", { remote: redact(address), definitive: true });
+    return host;
   }
-  if (!budget) budget = { counters: [], cost_measurement: usage.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals) };
-  const unverified = [...ev?.report.unverified ?? []];
-  for (const c of criteria) if (c.mandatory && c.status !== "supported") unverified.push(`${c.id} is ${c.status}`);
-  const risks = [];
-  const env = readJsonIfExists(join32(opts.runDir, "environment.json"));
-  risks.push(...env?.gate?.notes ?? []);
-  if (!usage.costComplete || budget.cost_measurement.includes("unmeasured")) risks.push(`model spend: ${budget.cost_measurement}`);
-  for (const f of findings.filter((x) => x.status === "advisory" || x.status === "open" || x.status === "claim_pending")) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}): ${f.claim.slice(0, 160)}`);
-  for (const f of findings.filter((x) => x.status === "accepted")) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, accepted, unresolved, blocking): ${f.claim.slice(0, 160)}`);
-  let exceptions = [];
-  try {
-    if (opts.snapshot) exceptions = readSecurityPolicy(opts.snapshot).exceptions;
-  } catch {
-    exceptions = [];
-  }
-  for (const f of findings.filter((x) => x.status === "excepted")) {
-    const ex = f.resolutionJson?.exception;
-    const index = typeof ex?.index === "number" ? ex.index : -1;
-    const expires = exceptions[index]?.expires;
-    const reason = typeof ex?.reason === "string" ? ex.reason : f.resolution ?? "no reason recorded";
-    risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, excepted by policy): ${f.claim.slice(0, 120)}; exception reason: ${reason.slice(0, 160)}; expires: ${expires ?? "never"}`);
-  }
-  for (const q of listQuestions(db, run.id, { status: "open" })) risks.push(`open question: ${q.question.slice(0, 200)}`);
-  for (const c of ev?.report.checks.filter((x) => x.flaky) ?? []) risks.push(`check ${c.id} passed only on a rerun (flaky)`);
-  const plugins = workerPluginsOf(listWorkers(db, { runId: run.id }));
-  risks.push(...plugins.risks);
-  const prNumber = delivery?.pr?.number ?? null;
-  const branch = delivery?.branch ?? outcomeJson?.branch ?? run.branch;
-  return {
-    schema: "orbit.final/1",
-    run_id: run.id,
-    outcome: run.state,
-    outcome_reason: run.outcomeReason,
-    mode: run.mode,
-    original_goal: run.goal,
-    objective: contract?.objective ?? null,
-    criteria,
-    checks: ev?.report.checks.map((c) => ({ id: c.id, status: c.status, exit_code: c.exit_code, flaky: c.flaky, log: c.log })) ?? [],
-    evidence: ev ? { report_id: ev.id, verdict: ev.verdict, tree_hash: ev.treeHash, candidate_revision: ev.report.candidate_revision } : null,
-    reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length })),
-    decisions,
-    assumptions: [...(contract?.assumptions ?? []).map((a) => ({ id: a.id, statement: a.statement, status: a.status })), ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))],
-    practices: (contract?.practices ?? []).map((p) => ({ practice: p.practice, applicable: p.applicable, justification: p.justification })),
-    repairs: repairs(opts.runDir),
-    worker_plugins: plugins.plugins,
-    revision: {
-      base: run.baseRevision,
-      candidate: cand?.commitSha ?? null,
-      tree: cand?.treeHash ?? null,
-      branch,
-      // Only a delivery action delivers. A local mode leaves the candidate commit on a local branch: that is the
-      // `candidate` above, never a delivered commit.
-      delivered_commit: delivery?.commit ?? (DELIVERY_MODES.has(run.mode) ? outcomeJson?.commit ?? null : null),
-      pull_request: prNumber === null ? null : { number: prNumber, url: delivery?.pr?.url ?? null }
-    },
-    budget,
-    unverified: [...new Set(unverified)],
-    residual_risks: [...new Set(risks)],
-    next_action: nextAction(run, branch, prNumber, listQuestions(db, run.id, { status: "open" }).filter((q) => q.material)),
-    generated_at: opts.clock.now()
-  };
-}
-function workerPluginsOf(workers) {
-  const lines = /* @__PURE__ */ new Map();
-  for (const w of workers) {
-    const recorded = parseJson3(w.resultJson)?.plugins;
-    if (!Array.isArray(recorded)) continue;
-    const seen = /* @__PURE__ */ new Set();
-    for (const p of recorded) {
-      const r = p !== null && typeof p === "object" ? p : {};
-      const line3 = { id: strOrNull(r.id), scope: strOrNull(r.scope), allowed_by: strOrNull(r.allowed_by) };
-      const key2 = JSON.stringify(line3);
-      if (seen.has(key2)) continue;
-      seen.add(key2);
-      const cur = lines.get(key2);
-      if (cur) cur.workers += 1;
-      else lines.set(key2, { ...line3, workers: 1 });
-    }
-  }
-  const plugins = [...lines.values()];
-  const risks = plugins.filter((p) => p.allowed_by !== null).map((p) => `worker plugin ${p.id ?? "unidentified"} (scope ${p.scope ?? "unknown"}) was allowed by ${p.allowed_by} and loaded into ${p.workers} worker session(s); a plugin can add hooks and tools to a worker`);
-  return { plugins, risks };
-}
-function strOrNull(v) {
-  return typeof v === "string" ? v : null;
-}
-function tokens(t) {
-  return { input: t.inputTokens, output: t.outputTokens, cache_read: t.cacheReadTokens, cache_write: t.cacheWriteTokens };
-}
-function repairs(runDir2) {
-  const dir = join32(runDir2, "briefs");
-  if (!existsSync26(dir)) return [];
-  return readdirSync7(dir).filter((f) => /^attempt-\d+\.json$/.test(f)).map((f) => readJsonIfExists(join32(dir, f))).filter((b) => b !== null).map((b) => ({ attempt: b.attempt, source: b.source, fingerprint: b.fingerprint })).sort((a, b) => a.attempt - b.attempt);
-}
-function outcomeHas(run, key2) {
-  try {
-    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
-    return o !== null && typeof o === "object" && key2 in o;
-  } catch {
-    return false;
-  }
-}
-function nextAction(run, branch, pr, openMaterial = []) {
-  switch (run.state) {
-    case "SUCCEEDED":
-      return DELIVERY_MODES.has(run.mode) ? `Review${pr !== null ? ` pull request #${pr}` : ` branch ${branch ?? "orbit/<run>"}`} and merge it if you accept it; Orbit does not merge.` : `Inspect the local branch ${branch ?? `orbit/${run.id}`} (the reviewed candidate) and merge it yourself if you accept it.`;
-    case "BLOCKED": {
-      const why = run.outcomeReason ?? "The run is blocked.";
-      if (outcomeHas(run, "frozen_policy") || /orbit resume/.test(why)) return why;
-      return `${/[.!?]$/.test(why.trim()) ? why.trim() : `${why.trim()}.`} Resolve that, then run \`orbit resume ${run.id}\`.`;
-    }
-    case "EXHAUSTED": {
-      const advice = exhaustedAdvice(run);
-      const asked = openMaterial.length === 0 ? "" : ` Open material question(s) were never answered: ${openMaterial.slice(0, 5).map((q) => `${q.id}: ${q.question.slice(0, 200)}`).join(" | ")}. Put the answer in the goal of the new run.`;
-      return `${advice}${asked}`;
-    }
-    case "IMPOSSIBLE":
-      return `${run.outcomeReason ?? "No authorized way to meet the contract was found."} Revise the goal or the authorization before trying again.`;
-    case "CANCELLED":
-      return "Nothing further: the run was cancelled on request and its artifacts are preserved.";
-    default:
-      return `The run is ${run.state}; this report is provisional.`;
-  }
-}
-function exhaustedAdvice(run) {
-  const reason = run.outcomeReason ?? "see decisions";
-  const why = `(${reason})`;
-  const kept = "The worktree and evidence are preserved";
-  if (outcomeHas(run, "non_progress")) return `The run stopped because repeated attempts made no measurable progress ${why}. More attempts would not change that; the worktree and evidence are preserved. Revise the goal or the approach and start a new run.`;
-  if (/^diagnosis produced no valid repair brief/.test(reason)) return `The diagnosis could not produce a usable repair brief ${why}: the failure is unexplained, not out of budget. ${kept}; read the failing check logs and the diagnosis attempts under the run directory, then fix it by hand or start a new run with a narrower goal.`;
-  if (outcomeHas(run, "extension") || /\band no extension\b/.test(reason)) {
-    const denied = /no extension(?: for the review repair)?: (.*?)(?:; open findings:|$)/.exec(reason)?.[1];
-    return `The implementation attempt allowance is spent and no extension was granted${denied ? ` because ${denied}` : ""} ${why}. An extension needs measurable progress and a new hypothesis, so more of the same would not help. ${kept}; continue by hand from them, or start a new run with a revised goal or approach.`;
-  }
-  if (/provider kept failing transiently/.test(reason)) return `The model provider kept failing transiently until the infrastructure retries ran out ${why}; this is an outage, not spend. Check the provider's status and your connection, then start a new run (${kept.toLowerCase()}).`;
-  if (/^recovery(_attempts| budget) exhausted/.test(reason)) return `The recovery attempts are spent ${why}: the run was restarted after failures as often as the policy allows. Fix what keeps failing (see the run log), then start a new run; ${kept.toLowerCase()}.`;
-  if (/^review_rounds hard cap reached/.test(reason)) return `The review round cap is reached with review findings still open ${why}. ${kept}; repair the open findings by hand, or start a new run with a higher scheduler.hard_limits.review_rounds or a revised goal.`;
-  if (/^implementation attempts hard cap reached/.test(reason)) return `The implementation attempts hard cap is reached ${why}. ${kept}; continue by hand from them, or start a new run with a revised goal or a higher scheduler.hard_limits.implementation_attempts.`;
-  if (/CI repair budget is spent/.test(reason)) return `CI kept failing after the authorized CI repairs ${why}. ${kept}; read the CI logs and fix it by hand, or start a new run.`;
-  return `The authorized budget is spent ${why}. ${kept}; continue by hand from them or start a new run with a revised goal or limits.`;
-}
-function renderMarkdown(r) {
-  const out = [];
-  const list = (items) => items.length ? items.map((i) => `- ${i}`).join("\n") : "- none";
-  out.push(`# Orbit run ${r.run_id}: ${r.outcome}`, "");
-  out.push("## Outcome", "", `${r.outcome}${r.outcome_reason ? `: ${r.outcome_reason}` : ""}`, "");
-  out.push("## Original goal", "", r.original_goal, "");
-  if (r.objective) out.push("## Delivered behaviour", "", r.objective, "");
-  out.push("## Criterion evidence", "", list(r.criteria.map((c) => `${c.id}${c.mandatory ? "" : " (optional)"} [${c.status}]: ${c.statement}${c.artifacts.length ? ` (evidence: ${c.artifacts.join(", ")})` : ""}`)), "");
-  out.push("## Checks", "", list(r.checks.map((c) => `${c.id}: ${c.status}${c.exit_code !== null ? ` (exit ${c.exit_code})` : ""}${c.flaky ? ", flaky" : ""}, log ${c.log}`)), "");
-  if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, "");
-  out.push("## Reviews", "", list(r.reviews.map((v) => `${v.provider}/${v.model ?? "default"}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))`)), "");
-  out.push("## Decisions", "", list(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), "");
-  out.push("## Assumptions", "", list(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), "");
-  if (r.practices && r.practices.length > 0) out.push("## Engineering practices", "", list(r.practices.map((p) => `${p.practice} [${p.applicable ? "selected" : "omitted"}]: ${p.justification}`)), "");
-  if (r.worker_plugins && r.worker_plugins.length > 0) {
-    const named = (p) => `${p.id ?? "an unidentified plugin"} (scope ${p.scope ?? "unknown"})`;
-    out.push("## Worker plugins", "", list(r.worker_plugins.map((p) => p.allowed_by ? `${named(p)}: allowed by ${p.allowed_by}, loaded by ${p.workers} worker(s)` : `${named(p)}: refused, so the output of ${p.workers} worker(s) was not used`)), "");
-  }
-  out.push("## Repairs", "", list(r.repairs.map((x) => `attempt ${x.attempt}: ${x.source} brief${x.fingerprint ? ` for ${x.fingerprint}` : ""}`)), "");
-  const rv = r.revision;
-  out.push("## Revision, branch and pull request", "", list([`base: ${rv.base ?? "none"}`, `candidate: ${rv.candidate ?? "none"} (tree ${rv.tree ?? "none"})`, `branch: ${rv.branch ?? "none"}`, rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? "none"}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ""}` : "none"}`]), "");
-  if (r.budget) {
-    const b = r.budget;
-    out.push("## Budget consumption", "", list([...b.counters.map((c) => `${c.counter}: ${round2(c.used)} used of ${round2(c.allowance)} allowed (hard cap ${round2(c.hard_cap)})`), `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? "measured" : "incomplete: some usage has no cost"}); ${b.cost_measurement}`, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), "");
-  }
-  out.push("## Not verified", "", list(r.unverified), "");
-  out.push("## Residual risks", "", list(r.residual_risks), "");
-  out.push("## Next action", "", r.next_action, "");
-  return redact(`${out.join("\n")}`);
-}
-function round2(n2) {
-  return Number.isInteger(n2) ? String(n2) : n2.toFixed(2);
-}
-function parseContract(json3) {
-  return parseJson3(json3);
-}
-function parseJson3(json3) {
-  if (!json3) return null;
-  try {
-    return JSON.parse(json3);
-  } catch {
-    return null;
-  }
-}
-async function finalizeRun(ctx) {
-  try {
-    writeFinalReport(ctx.db, ctx.run.id, { runDir: ctx.runDir, clock: ctx.clock, snapshot: ctx.policyVerified ? ctx.snapshot : null });
-  } catch (err) {
-    ctx.log.error("final report failed", { error: err instanceof Error ? err.message : String(err) });
-  }
-  if (!ctx.policyVerified) return;
-  try {
-    await learnAtTerminal(ctx);
-  } catch (err) {
-    ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.failed", ctx.ownerId, { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, ctx.clock.now()));
-  }
-}
-function curatorRaisedCap(host, ctx, purpose, error) {
-  if (ctx && purpose) return raiseOutputCap(ctx, purpose, error);
-  const over = outputCapExceeded(error);
-  if (!over) return null;
-  const previous = over.cap ?? outputBudgets(host.snapshot.config).curator;
-  return previous >= OUTPUT_CAP_CEILING ? null : Math.min(previous * 2, OUTPUT_CAP_CEILING);
-}
-async function learnAtTerminal(ctx) {
-  const k = ctx.snapshot.config.knowledge;
-  if (!k?.enabled) return;
-  const run = ctx.refresh();
-  const store = KnowledgeStore.open(repoKnowledgePath(ctx), { clock: ctx.clock });
-  const summary = { learn: null, skipped: null, settled: null, promoted: null, overlays: null };
-  try {
-    const admitted = curationAdmitted(ctx);
-    if (run.state === "CANCELLED") summary.skipped = "cancelled runs are not curated";
-    else if (!admitted.ok) summary.skipped = admitted.why;
-    else {
-      const host = curatorHostFor(ctx);
-      summary.learn = await learnFromRun({ store, runDb: ctx.db, runId: run.id, runDir: ctx.runDir, clock: ctx.clock, curatorModel: admitted.model ?? "claude-default", runCurator: async (task) => (await runCurator(host, task, admitted.model)).output });
-    }
-    if (summary.skipped !== null) ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.curation-skipped", ctx.ownerId, { reason: summary.skipped }, ctx.clock.now()));
-    const ev = listEvidenceReports(ctx.db, run.id).at(-1);
-    summary.settled = settleRun(store, run.id, {
-      succeeded: run.state === "SUCCEEDED",
-      attempts: listWorkers(ctx.db, { runId: run.id, role: "implementer" }).length,
-      verifiedCriteria: ev?.report.acceptance_evidence.filter((a) => a.status === "supported").map((a) => a.criterion_id) ?? [],
-      contradictedLessonIds: [],
-      artifact: existsSync26(join32(ctx.runDir, "final.md")) ? { path: "final.md", sha256: sha256(readFileSync18(join32(ctx.runDir, "final.md"))) } : { path: "final.md", sha256: null }
-    });
-    if (k.share_globally) {
-      const guard = loadPublicationGuard(ctx.snapshot.config.guard.terms_file ? { termsPath: ctx.snapshot.config.guard.terms_file } : {});
-      const global = KnowledgeStore.open(globalKnowledgePath(ctx), { clock: ctx.clock });
-      try {
-        summary.promoted = await promoteToGlobal(store, global, { shareGlobally: true, guard: (text2) => checkPublication(text2, { ...guard.options, allowedEmails: [...guard.options.allowedEmails ?? [], ...ctx.snapshot.config.guard.allowed_emails] }) });
-      } finally {
-        global.close();
-      }
-    }
-    if (run.state !== "CANCELLED") {
-      const live = checkLiveOverlays(ctx, store);
-      const evaluated = await autoEvaluateOverlays(ctx, store);
-      summary.overlays = { live, evaluated };
-    }
-  } finally {
-    store.close();
-  }
-  atomicWriteJson(join32(ctx.runDir, "learning.json"), summary);
-  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.completed", ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0 }, ctx.clock.now()));
-}
-function curatorHostFor(ctx) {
-  return {
-    deps: ctx.deps,
-    clock: ctx.clock,
-    snapshot: ctx.snapshot,
-    policyPath: ctx.run.policyPath,
-    policyHash: ctx.run.policyHash,
-    runId: ctx.run.id,
-    dir: join32(ctx.runDir, "learning"),
-    budgetUsd: ctx.snapshot.config.knowledge.curator_budget_usd,
-    recorded: ctx
-  };
-}
-function curationAdmitted(ctx) {
-  const k = ctx.snapshot.config.knowledge;
-  if (!(k.curator_budget_usd > 0)) return { ok: false, why: "knowledge.curator_budget_usd is 0" };
-  if (!ctx.deps.adapters.claude) return { ok: false, why: "no claude adapter for the curator" };
-  const ledger = ctx.ledger ?? (ctx.db.get("SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1", ctx.run.id) ? new BudgetLedger(ctx.db, ctx.clock).attach(ctx.run.id, ctx.snapshot) : null);
-  if (ledger) {
-    const d = ledger.admit({ role: "curator", estimatedCostUsd: k.curator_budget_usd, phase: "final" });
-    if (!d.admitted) return { ok: false, why: `the budget reserve cannot pay for curation: ${d.reasons.join("; ")}` };
-  }
-  return { ok: true, model: curatorModelFor(ctx.deps.registry) };
-}
-function curatorModelFor(registry) {
-  return registry.list().find((e) => e.provider === "claude" && e.family === "haiku" && e.surfaces.some((s) => s.surface === "claude-cli" && s.available !== false))?.modelId ?? null;
-}
-async function runCurator(host, task, model = curatorModelFor(host.deps.registry), outputTokens) {
-  const adapter = host.deps.adapters.claude;
-  if (!adapter) throw new OrbitError("PROVIDER_UNAVAILABLE", "no claude provider is configured; the curator runs on Claude");
-  const ctx = host.recorded ?? null;
-  const timeoutMs = host.timeoutMs ?? CURATOR_TIMEOUT_MS;
-  const env = host.env ?? host.deps.hostEnv ?? process.env;
-  const home2 = host.homeDir ?? host.deps.homeDir ?? homedir10();
-  const cwd = join32(host.dir, "cwd");
-  mkdirSync14(cwd, { recursive: true, mode: 448 });
-  let row = null;
-  let workerId;
-  let workerDir;
-  let purpose = null;
-  if (ctx) {
-    const n2 = listWorkers(ctx.db, { runId: ctx.run.id, role: "curator" }).length + 1;
-    workerId = `${ctx.run.id}-curator-${n2}`;
-    purpose = `curate:${n2}`;
-    workerDir = join32(ctx.runDir, "workers", workerId);
-    mkdirSync14(workerDir, { recursive: true, mode: 448 });
-    recordSpendCap(ctx, purpose, host.budgetUsd, 0);
-    const ctxNow = ctx;
-    row = ctx.db.tx(() => {
-      assertLeaseHeld(ctxNow.db, ctxNow.run.id, ctxNow.ownerId, ctxNow.clock.now());
-      return planWorker(ctxNow.db, { id: workerId, runId: ctxNow.run.id, role: "curator", purpose, provider: adapter.id, model, effort: null, workerDir, cwd }, ctxNow.clock, ctxNow.ownerId);
-    });
-  } else {
-    workerId = `${host.runId}-curator`;
-    workerDir = join32(host.dir, "curator");
-    mkdirSync14(workerDir, { recursive: true, mode: 448 });
-  }
-  const spec = {
-    runId: host.runId,
-    workerId,
-    role: "curator",
-    model,
-    effort: null,
-    cwd,
-    workerDir,
-    prompt: task.prompt,
-    systemPrompt: renderSystemPrompt("curator", host.deps.agentsDir ? { agentsDir: host.deps.agentsDir } : {}),
-    outputSchema: MODEL_OUTPUT_SCHEMAS.curator,
-    readOnly: true,
-    maxTurns: CURATOR_MAX_TURNS,
-    timeoutMs,
-    sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: host.snapshot, provider: "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join32(home2, ".claude"), homeDir: home2, policyPath: host.policyPath, readablePaths: [host.deps.orbitInstallDir], env }),
-    policyPath: host.policyPath,
-    policyHash: host.policyHash,
-    env: {},
-    maxBudgetUsd: host.budgetUsd,
-    ...outputTokens === void 0 ? {} : { outputTokens }
-  };
-  let handle;
-  try {
-    handle = await adapter.startTask(spec);
-  } catch (err) {
-    if (ctx && row) finishWorker(ctx.db, row.id, { state: "FAILED", resultStatus: "failed", error: redact(err instanceof Error ? err.message : String(err)).slice(0, 2e3) }, ctx.clock, ctx.ownerId);
-    throw err;
-  }
-  if (ctx && row) row = markWorkerRunning(ctx.db, row.id, { pid: handle.pid, pgid: handle.pgid, procStart: handle.procStart }, ctx.clock, ctx.ownerId);
-  const deadline = Date.now() + timeoutMs + 3e4;
-  let result2 = null;
-  let timedOut = false;
-  for (; ; ) {
-    result2 = await adapter.collectResult(handle, { outputSchema: MODEL_OUTPUT_SCHEMAS.curator });
-    if (result2) break;
-    if (Date.now() > deadline) {
-      timedOut = true;
-      await adapter.cancelTask(handle);
-      const stop = Date.now() + 5e3;
-      while (!(result2 = await adapter.collectResult(handle, { outputSchema: MODEL_OUTPUT_SCHEMAS.curator })) && Date.now() < stop) await new Promise((res) => setTimeout(res, 100));
-      break;
-    }
-    await new Promise((res) => setTimeout(res, 200));
-  }
-  if (ctx && row) {
-    const done = finishWorker(ctx.db, row.id, result2 ? outcomeOf2(result2) : { state: "LOST", resultStatus: "lost", error: "the curator did not stop after it timed out" }, ctx.clock, ctx.ownerId);
-    if (result2) {
-      try {
-        accountWorker(ctx, done, result2, "final");
-      } catch (err) {
-        ctx.log.warn("curator cost could not be charged", { error: err instanceof Error ? err.message : String(err) });
-      }
-    }
-  }
-  if (!result2 || timedOut) throw new OrbitError("PROVIDER_UNAVAILABLE", "the curator timed out");
-  if (result2.status !== "succeeded") {
-    const raised = result2.status === "failed" && outputTokens === void 0 ? curatorRaisedCap(host, ctx, purpose, result2.error) : null;
-    if (raised !== null) return runCurator(host, task, model, raised);
-    throw new OrbitError(result2.status === "auth_failed" ? "AUTH_EXPIRED" : "PROVIDER_UNAVAILABLE", `the curator ended ${result2.status}${result2.error ? `: ${redact(result2.error).slice(0, 200)}` : ""}`);
-  }
-  return { output: result2.structured, model, workerId: ctx ? workerId : null };
-}
-var CURATOR_TIMEOUT_MS, CURATOR_MAX_TURNS;
-var init_report = __esm({
-  "src/controller/report.ts"() {
-    "use strict";
-    init_errors();
-    init_fsx();
-    init_hash();
-    init_redact();
-    init_events();
-    init_decisions();
-    init_workers();
-    init_store();
-    init_store3();
-    init_resolve();
-    init_store4();
-    init_usage();
-    init_budget2();
-    init_config();
-    init_model_outputs();
-    init_store2();
-    init_learn();
-    init_feedback();
-    init_global();
-    init_publication();
-    init_profiles();
-    init_prompt();
-    init_run_store();
-    init_context2();
-    init_run_store();
-    init_workers2();
-    init_eval_runner();
-    init_knowledge_hooks();
-    CURATOR_TIMEOUT_MS = 5 * 6e4;
-    CURATOR_MAX_TURNS = 6;
-  }
-});
-
-// src/evidence/candidate.ts
-import { chmodSync as chmodSync7, existsSync as existsSync27, lstatSync as lstatSync7, mkdirSync as mkdirSync15, mkdtempSync as mkdtempSync4, readdirSync as readdirSync8, realpathSync as realpathSync12, rmSync as rmSync9, writeFileSync as writeFileSync5 } from "node:fs";
-import { tmpdir as tmpdir9 } from "node:os";
-import { dirname as dirname19, join as join33, parse as parse4, sep as sep7 } from "node:path";
-function candidateRef(runId, seq2) {
-  return `refs/orbit/${runId}/candidates/${seq2}`;
-}
-async function snapshotCandidate(input) {
-  const { db, clock, repoRoot, runId } = input;
-  if (!RUN_ID.test(runId)) throw new OrbitError("INTERNAL", `run id is not safe in a ref name: ${JSON.stringify(runId)}`);
-  const base = await resolveCommit(repoRoot, input.baseRev);
-  const { gitDir, worktree } = await adminDirFor(repoRoot, input.worktree);
-  const tree = await stageTree({ gitDir, worktree, base, extraExcludes: input.extraExcludes ?? [] });
-  const row = reserveCandidate(db, { runId, attempt: input.attempt, workerId: input.workerId, treeHash: tree, parentSha: base }, clock);
-  if (row.status !== "CREATING") return { ...row, created: false };
-  const message = `orbit candidate ${runId}/${row.seq}
-
-attempt: ${row.attempt}
-worker: ${row.workerId ?? "none"}
-tree: ${tree}
-`;
-  const when = `${Math.floor(row.createdAt / 1e3)} +0000`;
-  const commit = (await git2(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], {
-    env: {
-      GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name,
-      GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email,
-      GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name,
-      GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email,
-      GIT_AUTHOR_DATE: when,
-      GIT_COMMITTER_DATE: when
-    }
-  })).trim();
-  await git2(repoRoot, ["update-ref", candidateRef(runId, row.seq), commit]);
-  const stat = await diffStat(repoRoot, await treeOf(repoRoot, base), tree);
-  const done = finalizeCandidate(db, row.id, commit, stat, clock);
-  return { ...done, created: true };
-}
-async function stageTree(o) {
-  const scratch = mkdtempSync4(join33(tmpdir9(), "orbit-index-"));
-  try {
-    const excludes = join33(scratch, "exclude");
-    writeFileSync5(excludes, `${[...BUILTIN_EXCLUDES, ...o.extraExcludes].join("\n")}
-`);
-    const env = { GIT_DIR: o.gitDir, GIT_WORK_TREE: o.worktree, GIT_INDEX_FILE: join33(scratch, "index") };
-    const opts = { env, config: { "core.excludesFile": excludes } };
-    await git2(o.worktree, ["read-tree", o.base], opts);
-    await git2(o.worktree, ["add", "-A", "--", "."], opts);
-    return (await git2(o.worktree, ["write-tree"], opts)).trim();
-  } finally {
-    rmSync9(scratch, { recursive: true, force: true });
-  }
-}
-async function diffStat(repoRoot, fromTree, toTree) {
-  const out = await git2(repoRoot, ["diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", fromTree, toTree, "--"]);
-  const stat = { files: 0, insertions: 0, deletions: 0, binaryFiles: 0, paths: [], truncated: false };
-  for (const rec of out.split("\0")) {
-    if (!rec) continue;
-    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(rec);
-    if (!m) continue;
-    stat.files++;
-    if (m[1] === "-") stat.binaryFiles++;
-    else {
-      stat.insertions += Number(m[1]);
-      stat.deletions += Number(m[2]);
-    }
-    if (stat.paths.length < MAX_DIFF_PATHS) stat.paths.push(m[3]);
-    else stat.truncated = true;
-  }
-  return stat;
-}
-async function materializeCandidate(repoRoot, commit, dir, opts = {}) {
-  const sha = await resolveCommit(repoRoot, commit);
-  if (existsSync27(dir) && readdirSync8(dir).length > 0) {
-    throw new OrbitError("GIT_FAILED", `checkout directory is not empty: ${dir}`, { dir });
-  }
-  mkdirSync15(dirname19(dir), { recursive: true });
-  await git2(repoRoot, ["worktree", "add", "--detach", "--force", dir, sha]);
-  const real = realpathSync12(dir);
-  if (opts.readOnly !== false) makeReadOnly(real);
-  return real;
-}
-async function cleanupCandidateCheckout(repoRoot, dir) {
-  assertDisposableCheckout(repoRoot, dir);
-  if (existsSync27(dir)) makeWritable(dir);
-  try {
-    await git2(repoRoot, ["worktree", "remove", "--force", dir]);
-  } catch {
-    rmSync9(dir, { recursive: true, force: true });
-  }
-  rmSync9(dir, { recursive: true, force: true });
-  await git2(repoRoot, ["worktree", "prune"]).catch(() => {
-  });
-}
-function assertDisposableCheckout(repoRoot, dir) {
-  if (!existsSync27(dir)) return;
-  const target = realpathSync12(dir);
-  const root = realpathSync12(repoRoot);
-  const refuse = (why) => {
-    throw new OrbitError("GIT_FAILED", `refusing to remove ${dir}: ${why}`, { dir, repoRoot });
-  };
-  if (target === root || root.startsWith(target.endsWith(sep7) ? target : target + sep7)) refuse("it is or contains the repository");
-  if (target === parse4(target).root) refuse("it is a filesystem root");
-  let dotGit;
-  try {
-    dotGit = lstatSync7(join33(target, ".git"));
-  } catch {
-    return;
-  }
-  if (dotGit.isDirectory()) refuse("it holds its own .git directory, so it is a repository, not a checkout");
-}
-function walk3(dir, visit3) {
-  for (const name of readdirSync8(dir)) {
-    const p = join33(dir, name);
-    const st = lstatSync7(p);
-    if (st.isSymbolicLink()) continue;
-    if (st.isDirectory()) {
-      if (name === ".git") continue;
-      walk3(p, visit3);
-      visit3(p, true);
-    } else visit3(p, false);
-  }
-}
-function makeReadOnly(dir) {
-  walk3(dir, (p, isDir) => chmodSync7(p, isDir ? 365 : lstatSync7(p).mode & 365));
-  chmodSync7(dir, 365);
-}
-function makeWritable(dir) {
-  try {
-    chmodSync7(dir, 493);
-    const stack = [dir];
-    while (stack.length) {
-      const d = stack.pop();
-      for (const name of readdirSync8(d)) {
-        const p = join33(d, name);
-        const st = lstatSync7(p);
-        if (st.isSymbolicLink()) continue;
-        if (st.isDirectory()) {
-          chmodSync7(p, 493);
-          if (name !== ".git") stack.push(p);
-        } else chmodSync7(p, st.mode | 128);
-      }
-    }
-  } catch {
-  }
-}
-var ORBIT_GIT_IDENTITY, BUILTIN_EXCLUDES, RUN_ID, MAX_DIFF_PATHS;
-var init_candidate = __esm({
-  "src/evidence/candidate.ts"() {
-    "use strict";
-    init_errors();
-    init_git();
-    init_store();
-    ORBIT_GIT_IDENTITY = { name: "Orbit", email: "orbit@orbit.invalid" };
-    BUILTIN_EXCLUDES = [".DS_Store", "Thumbs.db", "node_modules/"];
-    RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-    MAX_DIFF_PATHS = 200;
-  }
-});
-
-// src/evidence/baseline.ts
-import { existsSync as existsSync28, readFileSync as readFileSync19 } from "node:fs";
-import { join as join34 } from "node:path";
-function planInstall(snapshot2, checkoutDir, opts = {}) {
-  const deps = snapshot2.config.dependencies;
-  if (!deps.install_existing_lockfile) return { skip: true, reason: "policy does not allow installing dependencies from the existing lockfile" };
-  const hosts = [...opts.registryHosts ?? NPM_REGISTRY_HOSTS];
-  const base = { shell: false, cwd: ".", timeout_seconds: INSTALL_TIMEOUT_SECONDS, network_hosts: hosts, local_binding: false, mandatory: false, flaky_reruns: 1, kind: "command" };
-  const quiet = { npm_config_fund: "false", npm_config_audit: "false", npm_config_progress: "false", npm_config_update_notifier: "false" };
-  const scriptsDenied = deps.install_scripts !== "allow";
-  if (deps.install_command) {
-    const toolchainHosts = toolchainRegistryHosts(detectToolchains({ command: deps.install_command, roots: [checkoutDir] }));
-    return {
-      skip: false,
-      definitions: [
-        {
-          ...base,
-          network_hosts: [.../* @__PURE__ */ new Set([...hosts, ...toolchainHosts])],
-          id: INSTALL_CHECK_ID,
-          command: [...deps.install_command],
-          // A configured command cannot be given a flag blindly, so scripts are denied through the package managers' own environment switches.
-          env: { ...quiet, ...scriptsDenied ? { npm_config_ignore_scripts: "true", YARN_ENABLE_SCRIPTS: "false" } : {} }
-        }
-      ]
-    };
-  }
-  const hasNpmLock = existsSync28(join34(checkoutDir, "package-lock.json")) || existsSync28(join34(checkoutDir, "npm-shrinkwrap.json"));
-  if (!hasNpmLock) {
-    const other = OTHER_LOCKFILES.find((f) => existsSync28(join34(checkoutDir, f)));
-    return {
-      skip: true,
-      reason: other ? `found ${other}, which Orbit does not install by itself; set dependencies.install_command to install from it` : "no lockfile to install from; Orbit never creates one"
-    };
-  }
-  const defs = [{ ...base, id: INSTALL_CHECK_ID, command: scriptsDenied ? ["npm", "ci", "--ignore-scripts"] : ["npm", "ci"], env: quiet }];
-  if (deps.install_scripts === "deny-unless-allowlisted" && deps.install_script_allowlist.length > 0) {
-    defs.push({ ...base, id: INSTALL_SCRIPTS_CHECK_ID, command: ["npm", "rebuild", ...deps.install_script_allowlist], env: quiet, flaky_reruns: 0 });
-  }
-  return { skip: false, definitions: defs };
-}
-async function installDependencies(ctx) {
-  const plan = planInstall(ctx.snapshot, ctx.checkoutDir, { registryHosts: ctx.registryHosts });
-  if (plan.skip) {
-    const audit2 = ctx.candidate ? await auditCandidate({ ...ctx, candidate: ctx.candidate }) : null;
-    if (audit2 && audit2.blocking.length > 0) return { skipped: false, reason: audit2.summary, ok: false, results: [], audit: audit2 };
-    return { skipped: true, reason: plan.reason, ok: false, results: [], audit: audit2 };
-  }
-  const definitions = { ...ctx.definitions, ...Object.fromEntries(plan.definitions.map((d) => [d.id, d])) };
-  let subject;
-  if (ctx.candidate) subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: "install" };
-  else if (ctx.baseTree) subject = baselineSubject(ctx.runDir, ctx.baseTree, "install");
-  else throw new OrbitError("INTERNAL", "installDependencies needs a candidate or a base tree to bind to");
-  const results = [];
-  for (const def of plan.definitions) {
-    const [r] = await runCheckSet({ ...ctx, definitions }, subject, [def]);
-    if (!r) break;
-    results.push(r);
-    if (r.status !== "PASSED") break;
-  }
-  const ok = results.length === plan.definitions.length && results.every((r) => r.status === "PASSED");
-  if (!ok || !ctx.candidate) return { skipped: false, reason: null, ok, results };
-  const audit = await auditCandidate({ ...ctx, candidate: ctx.candidate });
-  if (audit && audit.blocking.length > 0) return { skipped: false, reason: audit.summary, ok: false, results, audit };
-  return { skipped: false, reason: null, ok, results, audit };
-}
-function manifestHash(dir) {
-  const parts = [];
-  for (const f of MANIFEST_FILES) {
-    const p = join34(dir, f);
-    if (existsSync28(p)) parts.push(`${f}\0${sha256(readFileSync19(p))}`);
-  }
-  return parts.length > 0 ? sha256(parts.join("\n")) : null;
-}
-function parseNpmAudit(text2) {
-  let doc;
-  try {
-    doc = JSON.parse(text2);
-  } catch {
-    throw new Error("npm audit did not write a JSON report");
-  }
-  const d = doc;
-  if (d.error) throw new Error(`npm audit failed: ${redact(String(d.error.summary ?? d.error.code ?? "error")).slice(0, 200)}`);
-  if (!d.vulnerabilities || typeof d.vulnerabilities !== "object") throw new Error("the npm audit report has no vulnerabilities section (npm 7 or later is needed)");
-  const out = /* @__PURE__ */ new Map();
-  for (const [name, v] of Object.entries(d.vulnerabilities)) {
-    if (!Array.isArray(v?.via)) continue;
-    for (const via of v.via) {
-      if (!via || typeof via !== "object") continue;
-      const a = via;
-      const ghsa = typeof a.url === "string" ? /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/.exec(a.url)?.[0] : void 0;
-      const id = ghsa ?? (typeof a.source === "number" || typeof a.source === "string" ? `npm:${a.source}` : null);
-      const severity = typeof a.severity === "string" && Object.hasOwn(SEVERITY_RANK, a.severity) ? a.severity : null;
-      if (!id || !severity) continue;
-      const pkg = typeof a.name === "string" ? a.name : name;
-      out.set(`${id}\0${pkg}`, { id, kind: "vulnerability", package: pkg, severity, detail: redact(typeof a.title === "string" ? a.title : "").slice(0, 200) });
-    }
-  }
-  return [...out.values()].sort((x, y) => x.id.localeCompare(y.id) || x.package.localeCompare(y.package));
-}
-function disallowedLicenses(lockText, allowlist) {
-  let lock;
-  try {
-    lock = JSON.parse(lockText);
-  } catch {
-    throw new Error("the lockfile is not valid JSON");
-  }
-  if (!lock.packages || typeof lock.packages !== "object") throw new Error("the lockfile has no packages section (lockfileVersion 2 or later records licenses)");
-  const allowed = new Set(allowlist.map((l) => l.toLowerCase()));
-  const out = /* @__PURE__ */ new Map();
-  for (const [key2, entry] of Object.entries(lock.packages)) {
-    if (key2 === "" || !entry || typeof entry !== "object" || entry.link === true) continue;
-    const name = typeof entry.name === "string" ? entry.name : key2.slice(key2.lastIndexOf("node_modules/") + "node_modules/".length);
-    const version = typeof entry.version === "string" ? entry.version : "0.0.0";
-    const license = typeof entry.license === "string" ? entry.license : null;
-    if (license !== null && licenseAllowed(license, allowed)) continue;
-    const id = `license:${name}@${version}`;
-    out.set(id, { id, kind: "license", package: name, severity: null, detail: license ?? "no license recorded" });
-  }
-  return [...out.values()].sort((a, b) => a.id.localeCompare(b.id));
-}
-function licenseAllowed(expr, allowed) {
-  const e = expr.replace(/[()]/g, " ").trim().toLowerCase();
-  return e.split(/\s+or\s+/).some((alt) => alt.split(/\s+and\s+/).every((part) => allowed.has(part.trim())));
-}
-function lockfileIn(dir) {
-  for (const f of ["npm-shrinkwrap.json", "package-lock.json"]) if (existsSync28(join34(dir, f))) return join34(dir, f);
+  const scp = /^(?:[^@/]*@)?(\[[^\]]+\]|[^:/]+):/.exec(address);
+  if (scp) return scp[1].replace(/^\[|\]$/g, "");
   return null;
 }
-async function runDependencyAudit(ctx, subject) {
-  const policy = dependencyAuditPolicy(ctx.snapshot.config);
-  if (!policy.enabled) return null;
-  const hash = manifestHash(ctx.checkoutDir);
-  const lock = lockfileIn(ctx.checkoutDir);
-  if (!lock) return { ran: false, reason: "no npm lockfile (package-lock.json or npm-shrinkwrap.json); the dependency audit supports npm lockfiles only", manifestHash: hash, vulnerabilities: [], licenses: [], logPath: null };
-  const problems = [];
-  let licenses = [];
-  if (policy.license_allowlist !== null) {
-    try {
-      licenses = disallowedLicenses(readFileSync19(lock, "utf8"), policy.license_allowlist);
-    } catch (err) {
-      problems.push(`license policy not checked: ${err.message}`);
-    }
+async function resolveRemoteUrl(repoRoot, remote, opts = {}) {
+  assertRemote(remote);
+  const res = await git3(repoRoot, ["remote", "get-url", "--push", "--all", remote], opts);
+  let url;
+  if (res.exitCode === 0) {
+    const urls = res.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (urls.length !== 1) throw new OrbitError("CONFIG_INVALID", `remote ${remote} has ${urls.length} push URLs; delivery needs exactly one`, { definitive: true });
+    url = urls[0];
+  } else if (/[/:]/.test(remote)) {
+    url = remote;
+  } else {
+    throw new OrbitError("CONFIG_INVALID", `no git remote named ${JSON.stringify(remote)} in the repository`, { definitive: true });
   }
-  const def = {
-    id: AUDIT_CHECK_ID,
-    // The report goes to a file, so warnings on stderr cannot corrupt it; a written report is success even when it lists vulnerabilities.
-    command: [`npm audit --json --package-lock-only > "$ORBIT_ARTIFACTS_DIR/${AUDIT_REPORT}"; s=$?; if [ -s "$ORBIT_ARTIFACTS_DIR/${AUDIT_REPORT}" ]; then exit 0; fi; exit $s`],
-    shell: true,
-    cwd: ".",
-    timeout_seconds: AUDIT_TIMEOUT_SECONDS,
-    network_hosts: [...ctx.registryHosts ?? NPM_REGISTRY_HOSTS],
-    local_binding: false,
-    env: { npm_config_fund: "false", npm_config_progress: "false", npm_config_update_notifier: "false" },
-    mandatory: false,
-    flaky_reruns: 0,
-    kind: "command"
-  };
-  const [r] = await runCheckSet({ ...ctx, definitions: { ...ctx.definitions, [AUDIT_CHECK_ID]: def } }, subject, [def]);
-  let vulnerabilities = [];
-  let ran = false;
-  if (!r) problems.push("npm audit did not start (cancelled)");
-  else if (r.status !== "PASSED") problems.push(`npm audit ${r.status === "TIMEOUT" ? "timed out" : `could not produce a report (${r.status})`}`);
-  else {
-    const report2 = r.artifacts.find((a) => a.path.endsWith(`/${AUDIT_REPORT}`));
-    try {
-      if (!report2) throw new Error("npm audit wrote no report");
-      vulnerabilities = parseNpmAudit(readFileSync19(report2.path, "utf8"));
-      ran = true;
-    } catch (err) {
-      problems.push(err.message);
-    }
-  }
-  return { ran, reason: problems.length ? problems.join("; ") : null, manifestHash: hash, vulnerabilities, licenses, logPath: r?.logPath ?? null };
+  assertRemote(url);
+  await assertNotRewritten(repoRoot, url, opts);
+  return url;
 }
-function evaluateDependencyAudit(base, candidate, policy, now) {
-  const known = new Set(base?.ran ? [...base.vulnerabilities, ...base.licenses].map(key) : base ? base.licenses.map(key) : []);
-  const out = { blocking: [], advisory: [], excepted: [], expired: [], preexisting: [] };
-  for (const f of [...candidate.vulnerabilities, ...candidate.licenses]) {
-    if (known.has(key(f))) {
-      out.preexisting.push(f);
-      continue;
+async function assertNotRewritten(repoRoot, url, opts) {
+  const res = await git3(repoRoot, ["config", "-z", "--get-regexp", "^url\\..*\\.(insteadof|pushinsteadof)$"], opts);
+  if (res.exitCode === 1 && res.stdout === "") return;
+  if (res.exitCode !== 0) throw fail("git config --get-regexp url.*.insteadOf", res);
+  for (const entry of res.stdout.split("\0")) {
+    const nl = entry.indexOf("\n");
+    const prefix = nl < 0 ? "" : entry.slice(nl + 1);
+    if (prefix !== "" && url.startsWith(prefix)) {
+      throw new OrbitError("CONFIG_INVALID", `the push URL ${redact(url)} matches a url.<base>.${/pushinsteadof$/i.test(entry.slice(0, nl)) ? "pushInsteadOf" : "insteadOf"} rule, so git would rewrite it to another destination; remove the rule or name the final URL`, { definitive: true });
     }
-    const exception = policy.exceptions.find((e) => e.id === f.id || f.kind === "license" && e.id === `license:${f.package}`);
-    if (exception) {
-      if (exception.expires !== null && (now === void 0 || now > exceptionExpiryMs(exception.expires))) {
-        if (!out.expired.some((x) => x.id === exception.id)) out.expired.push({ id: exception.id, expires: exception.expires });
-      } else {
-        out.excepted.push({ finding: f, reason: exception.reason, expires: exception.expires });
-        continue;
-      }
-    }
-    if (f.kind === "license" || SEVERITY_RANK[f.severity] >= SEVERITY_RANK[policy.fail_on]) out.blocking.push(f);
-    else out.advisory.push(f);
+  }
+}
+function remoteEnvAndArgs(o) {
+  if (!o.token) return { env: o.env ?? gitEnv4(), pre: [] };
+  const helper = `!${o.ghPath ?? "gh"} auth git-credential`;
+  return {
+    env: { ...o.env ?? gitEnv4(), GH_TOKEN: o.token },
+    pre: ["-c", "credential.helper=", "-c", `credential.helper=${helper}`]
+  };
+}
+function classifyRemoteFailure(what, res) {
+  const text2 = `${res.stderr}
+${res.stdout}`;
+  if (AUTH_PATTERN.test(text2)) {
+    return new OrbitError("AUTH_EXPIRED", `${what} was refused for lack of valid credentials: ${redact(text2.trim()).slice(0, 500)}`, { exitCode: res.exitCode, definitive: true });
+  }
+  if (res.timedOut || TRANSIENT_PATTERN.test(text2)) {
+    return new OrbitError("PROVIDER_TRANSIENT", `${what} failed transiently: ${redact(text2.trim()).slice(0, 500)}`, { exitCode: res.exitCode });
+  }
+  return fail(what, res);
+}
+async function lsRemoteBranch(o) {
+  assertRemote(o.remote);
+  const ref2 = branchRef(o.branch);
+  const { env, pre } = remoteEnvAndArgs(o);
+  const res = await git3(o.repoRoot, [...pre, "ls-remote", "--", o.remote, ref2], { ...o, env });
+  if (res.exitCode !== 0) throw classifyRemoteFailure("git ls-remote", res);
+  for (const line3 of res.stdout.split("\n")) {
+    const [sha, name] = line3.split("	");
+    if (name === ref2 && isObjectId(sha)) return sha;
+  }
+  return null;
+}
+function parsePushPorcelain(stdout) {
+  const out = [];
+  for (const line3 of stdout.split("\n")) {
+    const m = /^([ +\-*!=])\t([^\t:]*):(\S+)\t(.*)$/.exec(line3);
+    if (m) out.push({ flag: m[1], from: m[2], to: m[3], summary: m[4] });
   }
   return out;
 }
-function key(f) {
-  return `${f.id}\0${f.package}`;
-}
-function describeFinding(f) {
-  return f.kind === "license" ? `${f.package} is licensed ${f.detail}, which is not on the license allowlist` : `${f.package}: ${f.id} (${f.severity})${f.detail ? ` ${f.detail}` : ""}`;
-}
-function baselineAuditNotes(audit, policy) {
-  if (!policy.enabled || !audit?.ran) return [];
-  const listed = [...audit.vulnerabilities.filter((f) => SEVERITY_RANK[f.severity ?? "low"] >= SEVERITY_RANK[policy.fail_on]), ...audit.licenses];
-  const notes = listed.slice(0, MAX_BASELINE_AUDIT_NOTES).map((f) => `pre-existing ${f.kind === "license" ? "license problem" : "vulnerability"} on the base revision: ${describeFinding(f)}`);
-  if (listed.length > MAX_BASELINE_AUDIT_NOTES) notes.push(`and ${listed.length - MAX_BASELINE_AUDIT_NOTES} more pre-existing dependency audit finding(s) on the base revision`);
-  return notes;
-}
-async function auditCandidate(ctx) {
-  const policy = dependencyAuditPolicy(ctx.snapshot.config);
-  if (!policy.enabled) return null;
-  const baseline = readJsonIfExists(join34(ctx.runDir, BASELINE_FILE));
-  const baseAudit = baseline?.audit ?? null;
-  const empty = { blocking: [], advisory: [], excepted: [], expired: [], preexisting: [] };
-  if (baseAudit && baseAudit.manifestHash !== null && baseAudit.manifestHash === manifestHash(ctx.checkoutDir)) {
-    return { audited: false, candidate: null, ...empty, summary: null };
+async function pushBranch(input) {
+  assertRemote(input.remote);
+  assertTaskBranch(input.branch, input);
+  if (!isObjectId(input.commit)) throw new OrbitError("GIT_FAILED", "the commit to push is not a full object id", { commit: input.commit });
+  if (input.force && !isObjectId(input.leaseSha)) {
+    throw new OrbitError("POLICY_DENIED", "a forced push needs --force-with-lease against the previously delivered commit", { definitive: true });
   }
-  const subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: "install" };
-  const audit = await runDependencyAudit(ctx, subject);
-  if (!audit) return null;
-  const judged = evaluateDependencyAudit(baseAudit, audit, policy, ctx.clock.now());
-  const summary = judged.blocking.length ? `dependency audit: the candidate introduces ${judged.blocking.length} finding(s) the policy blocks: ${judged.blocking.slice(0, 5).map(describeFinding).join("; ")}` : audit.ran ? null : `dependency audit unverified: ${audit.reason ?? "npm audit did not run"}`;
-  for (const f of judged.blocking) {
-    recordFailure(ctx.db, { runId: ctx.run.id, candidateId: ctx.candidate.id, source: "install", sourceId: `dependency-audit:${ctx.candidate.id}:${f.id}:${f.package}`, fingerprint: `dependency-audit:${f.id}`, excerpt: describeFinding(f) }, ctx.clock);
+  if (!await objectExists(input.repoRoot, `${input.commit}^{commit}`, input)) {
+    throw new OrbitError("GIT_FAILED", `commit ${input.commit} is not in the repository`);
   }
-  ctx.db.tx(
-    () => appendEvent(ctx.db, ctx.run.id, "dependency.audit", "controller", {
-      candidate_id: ctx.candidate.id,
-      ran: audit.ran,
-      reason: audit.reason,
-      blocking: judged.blocking.map((f) => f.id),
-      advisory: judged.advisory.map((f) => f.id),
-      excepted: judged.excepted.map((e) => ({ id: e.finding.id, reason: e.reason })),
-      expired: judged.expired,
-      preexisting: judged.preexisting.length
-    }, ctx.clock.now())
-  );
-  return { audited: true, candidate: audit, ...judged, summary };
+  const ref2 = branchRef(input.branch);
+  const { env, pre } = remoteEnvAndArgs(input);
+  const args = [...pre, "push", "--porcelain", "--no-verify"];
+  if (input.force) args.push(`--force-with-lease=${ref2}:${input.leaseSha}`);
+  args.push("--", input.remote, `${input.commit}:${ref2}`);
+  const res = await git3(input.repoRoot, args, { ...input, env });
+  const lines = parsePushPorcelain(res.stdout);
+  const mine = lines.find((l) => l.to === ref2);
+  if (mine && mine.flag === "!") {
+    if (AUTH_PATTERN.test(`${res.stderr}
+${res.stdout}`)) throw classifyRemoteFailure("git push", res);
+    throw new OrbitError("GIT_FAILED", `the remote rejected the push of ${input.branch}: ${mine.summary}`, { definitive: true, rejected: mine.summary, ref: ref2 });
+  }
+  if (res.exitCode !== 0) throw classifyRemoteFailure("git push", res);
+  if (!mine) throw new OrbitError("GIT_FAILED", `git push reported success but no result for ${ref2}`, { stdout: redact(res.stdout).slice(0, 500) });
+  const outcome = mine.flag === "*" ? "created" : mine.flag === "+" ? "forced" : mine.flag === "=" ? "up-to-date" : "updated";
+  return { remote: redact(input.remote), ref: ref2, sha: input.commit, outcome };
 }
-async function runBaseline(input) {
-  const { db, run, snapshot: snapshot2, runDir: runDir2, clock } = input;
-  assertRunPolicy(db, run, snapshot2);
-  const baseRevision = await resolveCommit(input.repoRoot, input.baseRev);
-  const baseTree = await treeOf(input.repoRoot, baseRevision);
-  const ids = input.checkIds ?? Object.values(snapshot2.config.checks).filter((c) => c.mandatory && c.kind === "command").map((c) => c.id);
-  for (const id of ids) {
-    if (!snapshot2.config.checks[id]) throw new OrbitError("POLICY_DENIED", `baseline check ${JSON.stringify(id)} is not defined in the policy snapshot`, { checkId: id });
-  }
-  const defs = [...new Set(ids)].map((id) => snapshot2.config.checks[id]).filter((d) => d.kind === "command");
-  const checkIds = defs.map((d) => d.id).sort();
-  const file = join34(runDir2, BASELINE_FILE);
-  const prior = readJsonIfExists(file);
-  if (prior && prior.schema === "orbit.baseline/1" && prior.complete && prior.baseRevision === baseRevision && prior.policyHash === run.policyHash && Array.isArray(prior.checkIds) && prior.checkIds.join("\0") === checkIds.join("\0")) {
-    return { report: prior, results: [], reused: true };
-  }
-  const checkoutDir = input.checkoutDir ?? join34(prepareWorkerTmpDir(join34(runDir2, "baseline-checkout")), `base-${sha256(run.id).slice(0, 8)}`);
-  await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
-  await materializeCandidate(input.repoRoot, baseRevision, checkoutDir, { readOnly: false });
-  try {
-    const ctx = {
-      db,
-      run,
-      snapshot: snapshot2,
-      isolation: input.isolation,
-      checkoutDir,
-      runDir: runDir2,
-      clock,
-      signal: input.signal,
-      parallelism: input.parallelism,
-      pollMs: input.pollMs,
-      killGraceMs: input.killGraceMs,
-      homeDir: input.homeDir,
-      toolchainCacheRoot: input.toolchainCacheRoot ?? null
-    };
-    const install = await installDependencies({ ...ctx, baseTree, registryHosts: input.registryHosts });
-    const results = install.skipped || install.ok ? await runCheckSet(ctx, baselineSubject(runDir2, baseTree), defs) : [];
-    const audit = await runDependencyAudit({ ...ctx, registryHosts: input.registryHosts }, baselineSubject(runDir2, baseTree, "install"));
-    const entries = results.map((r) => ({
-      checkId: r.checkId,
-      mandatory: snapshot2.config.checks[r.checkId]?.mandatory === true,
-      status: r.status,
-      exitCode: r.exitCode,
-      flaky: r.flaky,
-      fingerprint: r.fingerprint,
-      excerpt: r.excerpt,
-      log: r.logPath
-    }));
-    const report2 = {
-      schema: "orbit.baseline/1",
-      runId: run.id,
-      baseRevision,
-      baseTree,
-      policyHash: run.policyHash,
-      checkIds,
-      install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
-      ...audit ? { audit } : {},
-      auditNotes: baselineAuditNotes(audit, dependencyAuditPolicy(snapshot2.config)),
-      checks: entries,
-      failures: entries.filter((e) => e.mandatory && (e.status === "FAILED" || e.status === "TIMEOUT")).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
-      // Every requested check produced a decisive result (no ERROR, no CANCELLED, none skipped).
-      complete: (install.skipped || install.ok) && entries.length === defs.length && entries.every((e) => e.status === "PASSED" || e.status === "FAILED" || e.status === "TIMEOUT"),
-      recordedAt: clock.now()
-    };
-    atomicWriteJson(file, report2);
-    const auditSummary = audit ? { ran: audit.ran, reason: audit.reason, vulnerabilities: audit.vulnerabilities.length, disallowed_licenses: audit.licenses.length } : null;
-    db.tx(() => appendEvent(db, run.id, "baseline.recorded", "controller", { base_revision: baseRevision, base_tree: baseTree, failures: report2.failures.map((f) => f.checkId), complete: report2.complete, audit: auditSummary }, clock.now()));
-    return { report: report2, results, reused: false };
-  } finally {
-    await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
-  }
+async function reconcilePush(o) {
+  const sha = await lsRemoteBranch(o);
+  if (sha !== o.commit) return null;
+  return { remote: redact(o.remote), ref: branchRef(o.branch), sha, outcome: "up-to-date" };
 }
-var BASELINE_FILE, NPM_REGISTRY_HOSTS, INSTALL_TIMEOUT_SECONDS, OTHER_LOCKFILES, AUDIT_CHECK_ID, AUDIT_TIMEOUT_SECONDS, AUDIT_REPORT, MANIFEST_FILES, SEVERITY_RANK, MAX_BASELINE_AUDIT_NOTES;
-var init_baseline = __esm({
-  "src/evidence/baseline.ts"() {
+async function fetchBranchContaining(o) {
+  assertRemote(o.remote);
+  if (!isObjectId(o.commit)) throw new OrbitError("INTERNAL", `not a full commit sha: ${o.commit}`);
+  if (!o.ref.startsWith("refs/orbit/") || REF_FORBIDDEN2.test(o.ref.slice("refs/".length))) throw new OrbitError("INTERNAL", `fetch target must be a private refs/orbit/ ref: ${o.ref}`);
+  if (o.branch.startsWith("-") || REF_FORBIDDEN2.test(o.branch)) throw new OrbitError("CONFIG_INVALID", `not a valid branch name: ${JSON.stringify(o.branch)}`, { definitive: true });
+  const { env, pre } = remoteEnvAndArgs(o);
+  const res = await git3(o.repoRoot, [...pre, "fetch", "--no-tags", "--no-write-fetch-head", "--", o.remote, `+${branchRef(o.branch)}:${o.ref}`], { ...o, env });
+  if (res.exitCode !== 0) throw classifyRemoteFailure("git fetch", res);
+  const tip = (await git3(o.repoRoot, ["rev-parse", "--verify", "--quiet", `${o.ref}^{commit}`], o)).stdout.trim();
+  if (!isObjectId(tip)) throw new OrbitError("GIT_FAILED", `git fetch of ${o.branch} produced no commit at ${o.ref}`);
+  const onBranch = tip === o.commit || (await git3(o.repoRoot, ["merge-base", "--is-ancestor", o.commit, tip], o)).exitCode === 0;
+  if (!onBranch) {
+    throw new OrbitError("DELIVERY_FAILED", `commit ${o.commit.slice(0, 12)} is not on ${o.branch} at ${o.remote}`, { branch: o.branch, commit: o.commit, tip, definitive: true });
+  }
+  return tip;
+}
+async function hasCommit(repoRoot, commit, opts = {}) {
+  return isObjectId(commit) && await objectExists(repoRoot, `${commit}^{commit}`, opts);
+}
+var OBJECT_ID, REF_FORBIDDEN2, AUTH_PATTERN, TRANSIENT_PATTERN;
+var init_git2 = __esm({
+  "src/delivery/git.ts"() {
     "use strict";
+    init_exec();
+    init_errors();
+    init_redact();
+    OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+    REF_FORBIDDEN2 = /(\.\.|@\{|[\s~^:?*[\\\x00-\x1f\x7f]|\/\/|\/\.|\.lock$|\.lock\/|\/$|\.$)/;
+    AUTH_PATTERN = /Authentication failed|could not read (?:Username|Password)|Permission denied|invalid credentials|Bad credentials|error: 40[13]|HTTP 40[13]|requires authentication|Invalid username or token|not permitted to push/i;
+    TRANSIENT_PATTERN = /Could not resolve host|Connection (?:timed out|reset|refused)|timed out|unable to access|early EOF|remote end hung up|error: 5\d\d|HTTP 5\d\d|RPC failed|Temporary failure/i;
+  }
+});
+
+// src/notify/payload.ts
+function sanitizeReason(text2) {
+  if (text2 === null || text2 === void 0) return null;
+  let s = text2.replace(/\r/g, "");
+  for (const re of CODE_MARKERS) {
+    const m = re.exec(s);
+    if (m) s = s.slice(0, m.index);
+  }
+  s = redact(s).replace(/\s+/g, " ").trim().replace(/[\s:;,]+$/, "");
+  if (s === "") return null;
+  return s.length > REASON_MAX ? s.slice(0, REASON_MAX) : s;
+}
+function nextAction(input) {
+  const { run, questionIds, pullRequest, remote } = input;
+  const [first] = questionIds;
+  if (first !== void 0) {
+    const local = `Answer with orbit decide ${run.id} ${first} <answer>`;
+    return remote ? `${local}, or comment "/orbit answer ${first} <choice>" on ${remote.where}.` : `${local}, then run orbit resume ${run.id}.`;
+  }
+  switch (run.state) {
+    case "SUCCEEDED":
+      return pullRequest !== null ? `Review pull request #${pullRequest} and merge it if you accept it.` : `Inspect branch ${run.branch ?? `orbit/${run.id}`} and merge it yourself if you accept it.`;
+    case "BLOCKED":
+      return `Resolve the block, then run orbit resume ${run.id}.`;
+    case "EXHAUSTED":
+      return `Read orbit report ${run.id}, then continue by hand or start a new run.`;
+    case "IMPOSSIBLE":
+      return `Read orbit report ${run.id}; revise the goal or the authorization before trying again.`;
+    case "CANCELLED":
+      return "Nothing further: the run was cancelled.";
+    default:
+      return `Follow it with orbit status ${run.id}.`;
+  }
+}
+function buildPayload(input) {
+  return {
+    schema: PAYLOAD_SCHEMA,
+    kind: input.kind,
+    run_id: input.run.id,
+    state: input.run.state,
+    reason: input.kind === "question.open" ? "a question needs your answer" : sanitizeReason(input.run.outcomeReason),
+    next_action: nextAction(input),
+    question_ids: [...input.questionIds]
+  };
+}
+function testPayload() {
+  return { schema: PAYLOAD_SCHEMA, kind: "test", run_id: null, state: null, reason: null, next_action: "Nothing: this is a test.", question_ids: [] };
+}
+function payloadTitle(p) {
+  return p.run_id === null ? "Orbit" : `Orbit: run ${p.run_id} ${p.kind === "question.open" ? "has a question" : p.state ?? ""}`.trim();
+}
+function payloadText(p) {
+  if (p.kind === "test") return "Orbit test notification: notifications reach you here.";
+  const reason = p.reason ? `: ${p.reason.replace(/[.!?]+$/, "")}` : "";
+  const head = p.kind === "question.open" ? `Orbit run ${p.run_id} (${p.state}) has a question for you` : `Orbit run ${p.run_id} is ${p.state}${reason}`;
+  const questions = p.question_ids.length > 0 ? ` Open questions: ${p.question_ids.join(", ")}.` : "";
+  return `${head}. ${p.next_action}${questions}`;
+}
+function commentBody(p) {
+  const lines = [COMMENT_MARKER, `**${payloadText(p)}**`];
+  if (p.question_ids.length > 0) {
+    lines.push("", `Questions: ${p.question_ids.map((q) => `\`${q}\``).join(", ")}. Details: \`orbit questions ${p.run_id}\`.`);
+  }
+  return lines.join("\n");
+}
+var PAYLOAD_SCHEMA, REASON_MAX, COMMENT_MARKER, CODE_MARKERS;
+var init_payload = __esm({
+  "src/notify/payload.ts"() {
+    "use strict";
+    init_redact();
+    PAYLOAD_SCHEMA = "orbit.notification/1";
+    REASON_MAX = 160;
+    COMMENT_MARKER = "<!-- orbit:notification -->";
+    CODE_MARKERS = [/```/, /`[^`]*[;{}()=][^`]*`/, /\bdiff --git\b/, /@@ -\d/, /^\s*[+-]{1,3}\s/, /\n/, /\bat \S+ \(/, /\bTraceback\b/];
+  }
+});
+
+// src/delivery/github.ts
+import { execFileSync } from "node:child_process";
+import { existsSync as existsSync26, readFileSync as readFileSync18 } from "node:fs";
+function malformed(what, detail) {
+  return new OrbitError("MALFORMED_OUTPUT", `gh ${what}: ${detail}`);
+}
+function parseJson3(what, text2) {
+  try {
+    return JSON.parse(text2);
+  } catch {
+    throw malformed(what, `output is not JSON (${redact(text2.slice(0, 120))})`);
+  }
+}
+function obj2(what, v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw malformed(what, "expected an object");
+  return v;
+}
+function str4(what, o, key2, optional = false) {
+  const v = o[key2];
+  if (typeof v === "string") return v;
+  if (optional && (v === void 0 || v === null)) return "";
+  throw malformed(what, `field ${key2} is missing or not a string`);
+}
+function parsePullRequest(value) {
+  const o = obj2("pr", value);
+  const state = str4("pr", o, "state").toUpperCase();
+  if (state !== "OPEN" && state !== "CLOSED" && state !== "MERGED") throw malformed("pr", `unknown state ${JSON.stringify(state)}`);
+  const number = o.number;
+  if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) throw malformed("pr", "field number is missing or not a positive integer");
+  return {
+    number,
+    url: str4("pr", o, "url"),
+    headRefName: str4("pr", o, "headRefName"),
+    headRefOid: str4("pr", o, "headRefOid"),
+    baseRefName: str4("pr", o, "baseRefName"),
+    isDraft: o.isDraft === true,
+    state,
+    title: str4("pr", o, "title", true),
+    body: str4("pr", o, "body", true)
+  };
+}
+function parsePullRequestList(text2) {
+  const v = parseJson3("pr list", text2);
+  if (!Array.isArray(v)) throw malformed("pr list", "expected an array");
+  return v.map(parsePullRequest);
+}
+function parseMergeState(value) {
+  const o = obj2("pr view", value);
+  const state = str4("pr view", o, "state").toUpperCase();
+  if (state !== "OPEN" && state !== "CLOSED" && state !== "MERGED") throw malformed("pr view", `unknown state ${JSON.stringify(state)}`);
+  const number = o.number;
+  if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) throw malformed("pr view", "field number is missing or not a positive integer");
+  const mc = o.mergeCommit;
+  const oid = mc && typeof mc === "object" && typeof mc.oid === "string" ? mc.oid : null;
+  return {
+    number,
+    state,
+    headRefOid: str4("pr view", o, "headRefOid"),
+    baseRefName: str4("pr view", o, "baseRefName"),
+    mergeCommitSha: state === "MERGED" && oid ? oid : null,
+    mergedAt: typeof o.mergedAt === "string" && o.mergedAt !== "" ? o.mergedAt : null
+  };
+}
+function isCheckBucket(v) {
+  return typeof v === "string" && CHECK_BUCKETS.includes(v);
+}
+function parseChecks(text2) {
+  const v = parseJson3("pr checks", text2);
+  if (!Array.isArray(v)) throw malformed("pr checks", "expected an array");
+  return v.map((raw) => {
+    const o = obj2("pr checks", raw);
+    const bucket = o.bucket;
+    if (!isCheckBucket(bucket)) throw malformed("pr checks", `unknown bucket ${JSON.stringify(bucket)}`);
+    const link = typeof o.link === "string" && o.link !== "" ? o.link : null;
+    const m = link ? RUN_LINK.exec(link) : null;
+    const opt = (k) => typeof o[k] === "string" && o[k] !== "" ? o[k] : null;
+    return {
+      name: str4("pr checks", o, "name"),
+      bucket,
+      state: typeof o.state === "string" ? o.state : "",
+      link,
+      workflow: opt("workflow"),
+      runId: m?.[1] ?? null,
+      jobId: m?.[2] ?? null,
+      startedAt: opt("startedAt"),
+      completedAt: opt("completedAt"),
+      description: opt("description")
+    };
+  });
+}
+function parseRunListAsChecks(text2) {
+  const v = parseJson3("run list", text2);
+  if (!Array.isArray(v)) throw malformed("run list", "expected an array");
+  return v.map((raw) => {
+    const o = obj2("run list", raw);
+    const id = o.databaseId;
+    if (typeof id !== "number") throw malformed("run list", "field databaseId is missing or not a number");
+    const status2 = typeof o.status === "string" ? o.status : "";
+    const conclusion = typeof o.conclusion === "string" ? o.conclusion : "";
+    const name = typeof o.workflowName === "string" && o.workflowName || typeof o.name === "string" && o.name || `run ${id}`;
+    return {
+      name,
+      bucket: runBucket(status2, conclusion),
+      state: (conclusion || status2).toUpperCase(),
+      link: typeof o.url === "string" ? o.url : null,
+      workflow: typeof o.workflowName === "string" ? o.workflowName : null,
+      runId: String(id),
+      jobId: null,
+      startedAt: typeof o.startedAt === "string" ? o.startedAt : null,
+      completedAt: typeof o.updatedAt === "string" && status2 === "completed" ? o.updatedAt : null,
+      description: null
+    };
+  });
+}
+function runBucket(status2, conclusion) {
+  if (status2 !== "completed") return "pending";
+  switch (conclusion) {
+    case "success":
+      return "pass";
+    case "cancelled":
+      return "cancel";
+    case "skipped":
+    case "neutral":
+    case "stale":
+      return "skipping";
+    default:
+      return "fail";
+  }
+}
+function parseCheckRuns(text2) {
+  const o = obj2("check runs", parseJson3("check runs", text2));
+  const total = o.total_count;
+  if (typeof total !== "number" || !Number.isInteger(total) || total < 0) throw malformed("check runs", "field total_count is missing or not a count");
+  if (!Array.isArray(o.check_runs)) throw malformed("check runs", "field check_runs is missing or not an array");
+  const runs = o.check_runs.map((raw) => {
+    const r = obj2("check runs", raw);
+    const status2 = str4("check runs", r, "status");
+    const conclusion = typeof r.conclusion === "string" ? r.conclusion : "";
+    const opt = (k) => typeof r[k] === "string" && r[k] !== "" ? r[k] : null;
+    const link = opt("html_url") ?? opt("details_url");
+    const m = link ? RUN_LINK.exec(link) : null;
+    const output = r.output && typeof r.output === "object" ? r.output : {};
+    return {
+      name: str4("check runs", r, "name"),
+      headSha: str4("check runs", r, "head_sha"),
+      bucket: runBucket(status2, conclusion),
+      state: (conclusion || status2).toUpperCase(),
+      link,
+      workflow: null,
+      runId: m?.[1] ?? null,
+      jobId: m?.[2] ?? null,
+      startedAt: opt("started_at"),
+      completedAt: opt("completed_at"),
+      description: typeof output.title === "string" && output.title !== "" ? output.title : null
+    };
+  });
+  return { total, runs };
+}
+function statusBucket(state) {
+  switch (state) {
+    case "success":
+      return "pass";
+    case "pending":
+      return "pending";
+    default:
+      return "fail";
+  }
+}
+function parseCombinedStatus(text2) {
+  const o = obj2("commit status", parseJson3("commit status", text2));
+  const sha = str4("commit status", o, "sha");
+  const statuses = Array.isArray(o.statuses) ? o.statuses : [];
+  const checks = statuses.map((raw) => {
+    const st = obj2("commit status", raw);
+    const state2 = str4("commit status", st, "state");
+    const opt = (k) => typeof st[k] === "string" && st[k] !== "" ? st[k] : null;
+    return {
+      name: str4("commit status", st, "context"),
+      bucket: statusBucket(state2),
+      state: state2.toUpperCase(),
+      link: opt("target_url"),
+      workflow: null,
+      runId: null,
+      jobId: null,
+      startedAt: opt("created_at"),
+      completedAt: state2 === "pending" ? null : opt("updated_at"),
+      description: opt("description")
+    };
+  });
+  const state = typeof o.state === "string" && o.state !== "" ? o.state.toLowerCase() : void 0;
+  const total = typeof o.total_count === "number" && Number.isInteger(o.total_count) && o.total_count >= 0 ? o.total_count : void 0;
+  return { sha, checks, ...state === void 0 ? {} : { state }, ...total === void 0 ? {} : { total } };
+}
+function readNote(name, bucket, description) {
+  return { name, bucket, state: bucket === "fail" ? "FAILURE" : "PENDING", link: null, workflow: null, runId: null, jobId: null, startedAt: null, completedAt: null, description };
+}
+function statusReadNotes(status2, read2, everything) {
+  const total = status2.total ?? read2.length;
+  if (status2.state === "failure" || status2.state === "error") {
+    return everything.some((c) => c.bucket === "fail") ? [] : [readNote("commit status (combined)", "fail", `the combined commit status is ${status2.state}`)];
+  }
+  if (read2.length < total) return [readNote("commit status (incomplete)", "pending", `read ${read2.length} of ${total} commit status contexts`)];
+  if (status2.state !== void 0 && status2.state !== "success" && total > 0 && !read2.some((c) => c.bucket === "pending")) {
+    return [readNote("commit status (combined)", "pending", `the combined commit status is ${status2.state}, but no status context is pending`)];
+  }
+  return [];
+}
+function parseFailedSteps(text2) {
+  const o = obj2("run view", parseJson3("run view", text2));
+  const jobs = Array.isArray(o.jobs) ? o.jobs : [];
+  const out = [];
+  for (const j of jobs) {
+    const job = obj2("run view", j);
+    const name = typeof job.name === "string" ? job.name : "";
+    const steps = Array.isArray(job.steps) ? job.steps : [];
+    const failed = steps.filter((s) => s && typeof s === "object" && s.conclusion === "failure");
+    if (failed.length === 0 && job.conclusion === "failure") out.push({ job: name, step: "" });
+    for (const s of failed) out.push({ job: name, step: String(s.name ?? "") });
+  }
+  return out;
+}
+function parseAuthStatus(text2, host, requireScopedToken) {
+  const o = obj2("auth status", parseJson3("auth status", text2));
+  const hosts = obj2("auth status", o.hosts ?? {});
+  const entries = Array.isArray(hosts[host]) ? hosts[host] : [];
+  const active = entries.map((e) => obj2("auth status", e)).find((e) => e.active === true);
+  if (!active) return { ok: false, login: null, tokenSource: null, scopes: null, error: `no active account for ${host}` };
+  const tokenSource = typeof active.tokenSource === "string" ? active.tokenSource : null;
+  const login = typeof active.login === "string" && active.login !== "" ? active.login : null;
+  const scopes = typeof active.scopes === "string" ? active.scopes : null;
+  if (active.state !== "success") {
+    const error = typeof active.error === "string" && active.error ? redact(active.error).slice(0, 300) : `state ${String(active.state)}`;
+    return { ok: false, login, tokenSource, scopes, error };
+  }
+  if (requireScopedToken && tokenSource !== "GH_TOKEN") {
+    return { ok: false, login, tokenSource, scopes, error: `the active credential comes from ${tokenSource ?? "an unknown source"}, not a scoped GH_TOKEN` };
+  }
+  return { ok: true, login, tokenSource, scopes, error: null };
+}
+function classifyGhFailure(what, exitCode, stderrText) {
+  const text2 = redact(stderrText.trim()).slice(0, 800);
+  const msg = `gh ${what} failed (exit ${exitCode ?? "signal"}): ${text2}`;
+  if (/rate limit|secondary rate|HTTP 429|abuse detection/i.test(text2)) {
+    const m = /retry[- ]after[:= ]+(\d+)/i.exec(text2) ?? /in (\d+) (?:second|sec)/i.exec(text2);
+    const retryAfterMs = m ? Math.min(Number(m[1]) * 1e3, 15 * 6e4) : 6e4;
+    return new OrbitError("PROVIDER_TRANSIENT", msg, { retryAfterMs, rateLimited: true });
+  }
+  if (exitCode === 4 || /HTTP 401|Bad credentials|gh auth login|authentication required|requires authentication|token .*(?:expired|invalid|revoked)/i.test(text2)) {
+    return new OrbitError("AUTH_EXPIRED", msg, { definitive: true });
+  }
+  if (/Resource not accessible|HTTP 403/i.test(text2)) {
+    return new OrbitError("AUTH_MISSING", `${msg} (the delivery token lacks a permission this action needs)`, { definitive: true });
+  }
+  if (/HTTP 5\d\d|timeout|timed out|connection (?:reset|refused)|EOF|no such host|could not resolve host|temporary failure/i.test(text2)) {
+    return new OrbitError("PROVIDER_TRANSIENT", msg);
+  }
+  if (/HTTP 404|Could not resolve to a (?:Repository|PullRequest)/i.test(text2)) {
+    return new OrbitError("NOT_FOUND", msg, { definitive: true });
+  }
+  return new OrbitError("DELIVERY_FAILED", msg);
+}
+function assertMergeInput(input) {
+  if (!Number.isInteger(input.number) || input.number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(input.headSha)) throw new OrbitError("INTERNAL", `not a full commit sha: ${JSON.stringify(input.headSha)}`);
+  if (!MERGE_METHODS.includes(input.method)) throw new OrbitError("CONFIG_INVALID", `unknown merge method ${JSON.stringify(input.method)}`, { definitive: true });
+}
+function assertSha(sha) {
+  if (!/^[0-9a-f]{7,64}$/.test(sha)) throw new OrbitError("INTERNAL", `not a commit sha: ${sha}`);
+}
+function sameCommit(reported, asked) {
+  const r = reported.toLowerCase();
+  const a = asked.toLowerCase();
+  return a.length >= 40 ? r === a : r.startsWith(a);
+}
+function assertHead(head) {
+  if (typeof head !== "string" || head === "" || head.startsWith("-") || /[\s\0]/.test(head)) {
+    throw new OrbitError("INTERNAL", `not a usable head branch: ${JSON.stringify(head)}`);
+  }
+}
+function emptyState() {
+  return {
+    nextNumber: 1,
+    prs: [],
+    ci: {},
+    logs: {},
+    heads: {},
+    faults: { loseCreateResponse: 0, rateLimit: 0, rateLimitRetryAfterMs: 1e3, authExpired: false, loseMergeResponse: 0, loseReadyResponse: 0 },
+    calls: [],
+    creates: 0,
+    updates: 0,
+    merges: 0
+  };
+}
+var CHECK_BUCKETS, MERGE_METHODS, RUN_LINK, PR_FIELDS, MERGE_FIELDS, MERGE_REFUSED, CHECK_FIELDS, RUN_FIELDS, CHECK_RUNS_PER_PAGE, CHECK_RUNS_MAX_PAGES, STATUS_PER_PAGE, STATUS_MAX_PAGES, GhCliClient, FakeGitHub;
+var init_github = __esm({
+  "src/delivery/github.ts"() {
+    "use strict";
+    init_exec();
     init_errors();
     init_fsx();
     init_hash();
     init_redact();
-    init_profiles();
-    init_toolchains();
-    init_config();
-    init_resolve();
-    init_events();
-    init_candidate();
-    init_git();
-    init_runner();
-    init_store();
-    BASELINE_FILE = "baseline.json";
-    NPM_REGISTRY_HOSTS = ["registry.npmjs.org"];
-    INSTALL_TIMEOUT_SECONDS = 900;
-    OTHER_LOCKFILES = ["yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "deno.lock"];
-    AUDIT_CHECK_ID = "orbit-dependency-audit";
-    AUDIT_TIMEOUT_SECONDS = 300;
-    AUDIT_REPORT = "npm-audit.json";
-    MANIFEST_FILES = ["package.json", "package-lock.json", "npm-shrinkwrap.json"];
-    SEVERITY_RANK = { critical: 4, high: 3, moderate: 2, low: 1 };
-    MAX_BASELINE_AUDIT_NOTES = 50;
+    CHECK_BUCKETS = ["pass", "fail", "pending", "skipping", "cancel"];
+    MERGE_METHODS = ["squash", "merge", "rebase"];
+    RUN_LINK = /\/actions\/runs\/(\d+)(?:\/job\/(\d+))?/;
+    PR_FIELDS = "number,url,headRefName,headRefOid,baseRefName,isDraft,state,title,body";
+    MERGE_FIELDS = "number,state,headRefOid,baseRefName,mergeCommit,mergedAt";
+    MERGE_REFUSED = /Head branch was modified|not mergeable|merge conflict|required status check|review is required|reviews? required|base branch policy|protected branch|Merge method .* not allowed|not allowed on this repository|HTTP 405|HTTP 409|HTTP 422/i;
+    CHECK_FIELDS = "name,state,bucket,link,workflow,event,startedAt,completedAt,description";
+    RUN_FIELDS = "databaseId,status,conclusion,headSha,headBranch,event,workflowName,name,attempt,url,startedAt,updatedAt";
+    CHECK_RUNS_PER_PAGE = 100;
+    CHECK_RUNS_MAX_PAGES = 10;
+    STATUS_PER_PAGE = 100;
+    STATUS_MAX_PAGES = 10;
+    GhCliClient = class {
+      token;
+      gh;
+      runner;
+      requireScoped;
+      timeoutMs;
+      baseEnv;
+      opts;
+      constructor(opts) {
+        this.opts = opts;
+        if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(opts.repo)) throw new OrbitError("CONFIG_INVALID", `repository ${JSON.stringify(opts.repo)} is not OWNER/REPO`, { definitive: true });
+        this.baseEnv = opts.env ?? process.env;
+        this.token = this.baseEnv.GH_TOKEN || void 0;
+        this.gh = opts.ghPath ?? "gh";
+        this.requireScoped = opts.requireScopedToken ?? true;
+        this.timeoutMs = opts.timeoutMs ?? 6e4;
+        this.runner = opts.runner ?? ((argv2, o) => execCapture(argv2, { env: o.env, cwd: o.cwd, input: o.input, timeoutMs: o.timeoutMs, maxOutputBytes: 8 * 1024 * 1024 }));
+      }
+      /** Minimal environment: the token the controller holds, and nothing a worker could have left around. */
+      env() {
+        const e = {};
+        for (const k of ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"]) if (this.baseEnv[k] !== void 0) e[k] = this.baseEnv[k];
+        if (this.token) e.GH_TOKEN = this.token;
+        e.GH_PROMPT_DISABLED = "1";
+        e.GH_NO_UPDATE_NOTIFIER = "1";
+        e.GH_TELEMETRY = "false";
+        e.NO_COLOR = "1";
+        e.GH_PAGER = "cat";
+        return e;
+      }
+      assertToken() {
+        if (this.requireScoped && !this.token) {
+          throw new OrbitError("AUTH_MISSING", "no GH_TOKEN in the controller environment; delivery needs a fine-grained token scoped to the target repository", { definitive: true });
+        }
+      }
+      async exec(argv2, input) {
+        return this.runner([this.gh, ...argv2], { env: this.env(), cwd: this.opts.cwd, input, timeoutMs: this.timeoutMs });
+      }
+      async ok(what, argv2, input) {
+        this.assertToken();
+        const res = await this.exec(argv2, input);
+        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", `gh ${what} timed out`);
+        if (res.exitCode !== 0) throw classifyGhFailure(what, res.exitCode, `${res.stderr}
+${res.stdout}`);
+        return res.stdout;
+      }
+      async findPullRequest(head) {
+        assertHead(head);
+        const out = await this.ok("pr list", ["pr", "list", "-R", this.opts.repo, "--head", head, "--state", "all", "-L", "30", "--json", PR_FIELDS]);
+        const mine = parsePullRequestList(out).filter((p) => p.headRefName === head);
+        mine.sort((a, b) => Number(b.state === "OPEN") - Number(a.state === "OPEN") || b.number - a.number);
+        return mine[0] ?? null;
+      }
+      async createPullRequest(input) {
+        assertHead(input.head);
+        this.assertToken();
+        const argv2 = ["pr", "create", "-R", this.opts.repo, "--head", input.head, "--base", input.base, "--title", input.title, "--body-file", "-"];
+        if (input.draft) argv2.push("--draft");
+        const res = await this.exec(argv2, input.body);
+        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh pr create timed out");
+        if (res.exitCode !== 0) {
+          if (/already exists/i.test(res.stderr)) {
+            const found2 = await this.findPullRequest(input.head);
+            if (found2) return found2;
+          }
+          throw classifyGhFailure("pr create", res.exitCode, `${res.stderr}
+${res.stdout}`);
+        }
+        const url = res.stdout.split("\n").map((l) => l.trim()).reverse().find((l) => /^https?:\/\/\S+\/pull\/\d+/.test(l));
+        const number = url ? Number(/\/pull\/(\d+)/.exec(url)[1]) : NaN;
+        if (Number.isInteger(number)) return this.viewPullRequest(number);
+        const found = await this.findPullRequest(input.head);
+        if (found) return found;
+        throw new OrbitError("DELIVERY_FAILED", "gh pr create exited 0 but no pull request URL was printed and none is listed for the head branch");
+      }
+      async updatePullRequest(number, changes) {
+        if (!Number.isInteger(number) || number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
+        const argv2 = ["pr", "edit", String(number), "-R", this.opts.repo];
+        if (changes.title !== void 0) argv2.push("--title", changes.title);
+        if (changes.body !== void 0) argv2.push("--body-file", "-");
+        if (argv2.length > 5) await this.ok("pr edit", argv2, changes.body);
+        return this.viewPullRequest(number);
+      }
+      async markPullRequestReady(number) {
+        if (!Number.isInteger(number) || number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
+        this.assertToken();
+        await this.ok("pr ready", ["pr", "ready", String(number), "-R", this.opts.repo]);
+        return this.viewPullRequest(number);
+      }
+      async viewPullRequest(number) {
+        const out = await this.ok("pr view", ["pr", "view", String(number), "-R", this.opts.repo, "--json", PR_FIELDS]);
+        return parsePullRequest(parseJson3("pr view", out));
+      }
+      async mergePullRequest(input) {
+        assertMergeInput(input);
+        this.assertToken();
+        const argv2 = ["pr", "merge", String(input.number), "-R", this.opts.repo, `--${input.method}`, "--match-head-commit", input.headSha];
+        if (input.deleteBranch) argv2.push("--delete-branch");
+        const res = await this.exec(argv2);
+        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh pr merge timed out");
+        if (res.exitCode !== 0) {
+          const text2 = `${res.stderr}
+${res.stdout}`;
+          if (/already (?:been )?merged/i.test(text2)) return this.getMergeState(input.number);
+          const err = classifyGhFailure("pr merge", res.exitCode, text2);
+          if (err.code === "DELIVERY_FAILED" && MERGE_REFUSED.test(text2)) throw new OrbitError("DELIVERY_FAILED", err.message, { definitive: true, refused: true });
+          throw err;
+        }
+        const state = await this.getMergeState(input.number);
+        if (state.state !== "MERGED") throw new OrbitError("DELIVERY_FAILED", `gh pr merge exited 0 but pull request #${input.number} is ${state.state}; a merge queue or auto-merge is not supported`, { definitive: true, state: state.state });
+        return state;
+      }
+      async getMergeState(number) {
+        if (!Number.isInteger(number) || number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
+        const out = await this.ok("pr view", ["pr", "view", String(number), "-R", this.opts.repo, "--json", MERGE_FIELDS]);
+        return parseMergeState(parseJson3("pr view", out));
+      }
+      /**
+       * Checks for a commit are read per commit (its check runs and its combined status) and labelled with the
+       * commit the responses report, so checks of another revision (the PR head after the branch moved) can never
+       * be attributed to the commit asked about. Only a PR query without a commit uses the PR's current checks,
+       * and those are labelled with no commit at all.
+       */
+      async listChecks(query) {
+        this.assertToken();
+        if (query.sha !== void 0) return this.checksForCommit(query.sha);
+        const pr = query.pr;
+        const res = await this.exec(["pr", "checks", String(pr), "-R", this.opts.repo, "--json", CHECK_FIELDS]);
+        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh pr checks timed out");
+        if (res.exitCode === 0) {
+          const checks = parseChecks(res.stdout);
+          return { checks, absent: checks.length === 0, headSha: null };
+        }
+        const text2 = `${res.stderr}
+${res.stdout}`;
+        if (/no checks reported/i.test(text2)) return { checks: [], absent: true, headSha: null };
+        throw classifyGhFailure("pr checks", res.exitCode, text2);
+      }
+      async api(what, path) {
+        const argv2 = ["api", "-H", "Accept: application/vnd.github+json"];
+        if (this.opts.host) argv2.push("--hostname", this.opts.host);
+        argv2.push(path);
+        return this.ok(what, argv2);
+      }
+      async checksForCommit(sha) {
+        assertSha(sha);
+        let runs;
+        let runsTotal;
+        try {
+          ({ runs, total: runsTotal } = await this.checkRuns(sha));
+        } catch (err) {
+          const code2 = err.code;
+          if (code2 === "AUTH_MISSING") return this.checksFromRuns(sha);
+          if (/No commit found/i.test(err.message ?? "")) return { checks: [], absent: true, headSha: sha };
+          throw err;
+        }
+        let status2 = null;
+        try {
+          status2 = await this.combinedStatus(sha);
+        } catch (err) {
+          if (err.code !== "AUTH_MISSING") throw err;
+        }
+        const reported = [.../* @__PURE__ */ new Set([...runs.map((r) => r.headSha.toLowerCase()), ...status2 ? [status2.sha.toLowerCase()] : []])];
+        const other = reported.find((r) => !sameCommit(r, sha));
+        if (other !== void 0) return { checks: [], absent: false, headSha: other };
+        const checks = [...runs.map(({ headSha: _sha, ...c }) => c), ...status2?.checks ?? []];
+        if (runs.length < runsTotal) checks.push(readNote("check runs (incomplete)", "pending", `read ${runs.length} of ${runsTotal} check runs`));
+        if (status2) checks.push(...statusReadNotes(status2, status2.checks, checks));
+        if (checks.length === 0) return this.checksFromRuns(sha);
+        return { checks, absent: false, headSha: reported[0] ?? sha };
+      }
+      /** Every page of the combined status; aggregate state and total_count are those of the first page. */
+      async combinedStatus(sha) {
+        let first = null;
+        const checks = [];
+        for (let page = 1; page <= STATUS_MAX_PAGES; page++) {
+          const got = parseCombinedStatus(await this.api("commit status", `repos/${this.opts.repo}/commits/${sha}/status?per_page=${STATUS_PER_PAGE}&page=${page}`));
+          if (first === null) first = got;
+          else if (got.sha.toLowerCase() !== first.sha.toLowerCase()) throw malformed("commit status", "pages report different commits");
+          checks.push(...got.checks);
+          if (got.checks.length < STATUS_PER_PAGE || first.total !== void 0 && checks.length >= first.total) break;
+        }
+        return { ...first, checks };
+      }
+      async checkRuns(sha) {
+        const all = [];
+        for (let page = 1; page <= CHECK_RUNS_MAX_PAGES; page++) {
+          const { total, runs } = parseCheckRuns(await this.api("check runs", `repos/${this.opts.repo}/commits/${sha}/check-runs?per_page=${CHECK_RUNS_PER_PAGE}&page=${page}`));
+          all.push(...runs);
+          if (runs.length < CHECK_RUNS_PER_PAGE || all.length >= total) return { runs: all, total };
+        }
+        throw new OrbitError("DELIVERY_FAILED", `commit ${sha.slice(0, 12)} has more than ${CHECK_RUNS_PER_PAGE * CHECK_RUNS_MAX_PAGES} check runs; Orbit does not judge CI on a partial list`, { definitive: true });
+      }
+      async checksFromRuns(sha) {
+        assertSha(sha);
+        const out = await this.ok("run list", ["run", "list", "-R", this.opts.repo, "--commit", sha, "-L", "50", "--json", RUN_FIELDS]);
+        const rows = parseJson3("run list", out);
+        const reported = Array.isArray(rows) ? rows.map((r) => r && typeof r === "object" && typeof r.headSha === "string" ? r.headSha.toLowerCase() : null) : [];
+        const checks = parseRunListAsChecks(out).filter((_, i) => reported[i] == null || sameCommit(reported[i], sha));
+        const labelled = reported.find((r) => r != null && sameCommit(r, sha));
+        return { checks, absent: checks.length === 0, headSha: labelled ?? sha };
+      }
+      async failedLogs(runId) {
+        if (!/^\d+$/.test(runId)) throw new OrbitError("INTERNAL", `not a run id: ${runId}`);
+        this.assertToken();
+        const res = await this.exec(["run", "view", runId, "-R", this.opts.repo, "--log-failed"]);
+        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh run view timed out");
+        if (res.exitCode === 0) return { status: "ok", text: res.stdout, failedSteps: [] };
+        const text2 = `${res.stderr}
+${res.stdout}`;
+        const status2 = /HTTP 410/.test(text2) ? "expired" : /log not found/i.test(text2) ? "not-found" : null;
+        if (status2 === null) throw classifyGhFailure("run view --log-failed", res.exitCode, text2);
+        let failedSteps = [];
+        try {
+          failedSteps = parseFailedSteps(await this.ok("run view", ["run", "view", runId, "-R", this.opts.repo, "--json", "jobs"]));
+        } catch (err) {
+          if (err.code === "AUTH_EXPIRED") throw err;
+        }
+        return { status: status2, text: "", failedSteps };
+      }
+      async authStatus() {
+        const host = this.opts.host ?? "github.com";
+        if (this.requireScoped && !this.token) {
+          return { ok: false, login: null, tokenSource: null, scopes: null, error: "no GH_TOKEN in the controller environment" };
+        }
+        const res = await this.exec(["auth", "status", "--json", "hosts"]);
+        if (res.exitCode !== 0) return { ok: false, login: null, tokenSource: null, scopes: null, error: redact(`${res.stderr}${res.stdout}`.trim()).slice(0, 300) || `gh exited ${res.exitCode}` };
+        return parseAuthStatus(res.stdout, host, this.requireScoped);
+      }
+    };
+    FakeGitHub = class {
+      opts;
+      constructor(opts) {
+        this.opts = opts;
+      }
+      // -- test controls
+      get state() {
+        return this.load();
+      }
+      setFaults(faults) {
+        this.mutate((s) => void Object.assign(s.faults, faults));
+      }
+      /** Script CI for a commit: each listChecks call for it returns the next snapshot (the last repeats). */
+      scriptCi(sha, script) {
+        this.mutate((s) => {
+          s.ci[sha] = { script, cursor: 0 };
+        });
+      }
+      scriptLog(runId, log) {
+        this.mutate((s) => {
+          s.logs[runId] = { status: log.status ?? "ok", text: log.text ?? "", failedSteps: log.failedSteps ?? [] };
+        });
+      }
+      /** Pin a branch's head sha when no remote is attached. */
+      setHead(branch, sha) {
+        this.mutate((s) => {
+          s.heads[branch] = sha;
+        });
+      }
+      setPullRequestState(number, state) {
+        this.mutate((s) => {
+          const pr = s.prs.find((p) => p.number === number);
+          if (pr) pr.state = state;
+        });
+      }
+      // -- GitHubClient
+      async findPullRequest(head) {
+        this.enter("findPullRequest");
+        const state = this.load();
+        const mine = state.prs.filter((p) => p.headRefName === head).sort((a, b) => Number(b.state === "OPEN") - Number(a.state === "OPEN") || b.number - a.number);
+        return mine[0] ? this.view(state, mine[0]) : null;
+      }
+      async createPullRequest(input) {
+        this.enter("createPullRequest");
+        let created = null;
+        let lose = false;
+        this.mutate((s) => {
+          if (s.prs.some((p) => p.headRefName === input.head && p.state === "OPEN")) {
+            throw new OrbitError("DELIVERY_FAILED", `a pull request for branch "${input.head}" into branch "${input.base}" already exists`);
+          }
+          const number = s.nextNumber++;
+          const pr = {
+            number,
+            url: `https://github.example/${this.opts.repo ?? "acme/app"}/pull/${number}`,
+            headRefName: input.head,
+            headRefOid: "",
+            baseRefName: input.base,
+            isDraft: input.draft,
+            state: "OPEN",
+            title: input.title,
+            body: input.body
+          };
+          s.prs.push(pr);
+          s.creates++;
+          created = this.view(s, pr);
+          if (s.faults.loseCreateResponse > 0) {
+            s.faults.loseCreateResponse--;
+            lose = true;
+          }
+        });
+        if (lose) throw new OrbitError("PROVIDER_TRANSIENT", "connection reset while waiting for the create response");
+        return created;
+      }
+      async updatePullRequest(number, changes) {
+        this.enter("updatePullRequest");
+        let out = null;
+        this.mutate((s) => {
+          const pr = s.prs.find((p) => p.number === number);
+          if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${number}`, { definitive: true });
+          if (changes.title !== void 0) pr.title = changes.title;
+          if (changes.body !== void 0) pr.body = changes.body;
+          s.updates++;
+          out = this.view(s, pr);
+        });
+        return out;
+      }
+      async markPullRequestReady(number) {
+        this.enter("markPullRequestReady");
+        let out = null;
+        let lose = false;
+        this.mutate((s) => {
+          const pr = s.prs.find((p) => p.number === number);
+          if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${number}`, { definitive: true });
+          if (pr.state !== "OPEN") throw new OrbitError("DELIVERY_FAILED", `gh pr ready failed: pull request #${number} is ${pr.state.toLowerCase()}`, { definitive: true });
+          if (pr.isDraft) s.readies = (s.readies ?? 0) + 1;
+          pr.isDraft = false;
+          out = this.view(s, pr);
+          if ((s.faults.loseReadyResponse ?? 0) > 0) {
+            s.faults.loseReadyResponse--;
+            lose = true;
+          }
+        });
+        if (lose) throw new OrbitError("PROVIDER_TRANSIENT", "connection reset while waiting for the ready response");
+        return out;
+      }
+      /**
+       * Like the real service: refused unless the PR is open, not a draft and its
+       * head is still `headSha`. With a remote attached, the base branch really
+       * moves (a squash or rebase onto an unmoved base, or a two-parent merge
+       * commit); a base that moved since the head was cut is refused as not
+       * mergeable, since the fake does not do three-way merges.
+       */
+      async mergePullRequest(input) {
+        this.enter("mergePullRequest");
+        assertMergeInput(input);
+        let out = null;
+        let lose = false;
+        this.mutate((s) => {
+          const pr = s.prs.find((p) => p.number === input.number);
+          if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${input.number}`, { definitive: true });
+          if (pr.state === "MERGED") {
+            out = this.mergeView(s, pr);
+            return;
+          }
+          if (pr.state !== "OPEN") throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: pull request #${pr.number} is closed`, { definitive: true, refused: true });
+          if (pr.isDraft) throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: pull request #${pr.number} is still a draft`, { definitive: true, refused: true });
+          const head = this.headOid(s, pr) ?? pr.fixedHeadOid ?? "";
+          if (head !== input.headSha) {
+            throw new OrbitError("DELIVERY_FAILED", "gh pr merge failed: Head branch was modified. Review and try the merge again.", { definitive: true, refused: true, head });
+          }
+          const mergeCommit = this.mergeOnRemote(pr, head, input.method, s.nextNumber);
+          pr.state = "MERGED";
+          pr.fixedHeadOid = head;
+          pr.mergeCommitOid = mergeCommit;
+          pr.mergedAt = (/* @__PURE__ */ new Date(0)).toISOString();
+          if (input.deleteBranch && this.opts.remoteGitDir) this.git(["update-ref", "-d", `refs/heads/${pr.headRefName}`, head]);
+          s.merges = (s.merges ?? 0) + 1;
+          out = this.mergeView(s, pr);
+          if (s.faults.loseMergeResponse > 0) {
+            s.faults.loseMergeResponse--;
+            lose = true;
+          }
+        });
+        if (lose) throw new OrbitError("PROVIDER_TRANSIENT", "connection reset while waiting for the merge response");
+        return out;
+      }
+      async getMergeState(number) {
+        this.enter("getMergeState");
+        const s = this.load();
+        const pr = s.prs.find((p) => p.number === number);
+        if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${number}`, { definitive: true });
+        return this.mergeView(s, pr);
+      }
+      async listChecks(query) {
+        this.enter("listChecks");
+        let sha = query.sha;
+        let result2 = { checks: [], absent: true, headSha: sha ?? null };
+        this.mutate((s) => {
+          if ("pr" in query) {
+            const pr = s.prs.find((p) => p.number === query.pr);
+            if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${query.pr}`, { definitive: true });
+            sha = this.view(s, pr).headRefOid || void 0;
+            result2 = { checks: [], absent: true, headSha: sha ?? null };
+          }
+          const entry = sha ? s.ci[sha] : void 0;
+          if (!entry || entry.script.length === 0) return;
+          const snapshot2 = entry.script[Math.min(entry.cursor, entry.script.length - 1)];
+          entry.cursor++;
+          const checks = snapshot2.map((c) => ({
+            name: c.name,
+            bucket: c.bucket,
+            state: c.bucket === "pass" ? "SUCCESS" : c.bucket === "fail" ? "FAILURE" : c.bucket === "cancel" ? "CANCELLED" : c.bucket === "skipping" ? "SKIPPED" : "IN_PROGRESS",
+            link: c.runId ? `https://github.example/${this.opts.repo ?? "acme/app"}/actions/runs/${c.runId}/job/1` : null,
+            workflow: "ci",
+            runId: c.runId ?? null,
+            jobId: c.runId ? "1" : null,
+            startedAt: null,
+            completedAt: null,
+            description: null
+          }));
+          result2 = { checks, absent: checks.length === 0, headSha: sha ?? null };
+        });
+        return result2;
+      }
+      async failedLogs(runId) {
+        this.enter("failedLogs");
+        const entry = this.load().logs[runId];
+        return entry ? { ...entry } : { status: "not-found", text: "", failedSteps: [] };
+      }
+      async authStatus() {
+        this.mutate((s) => void s.calls.push("authStatus"));
+        if (this.load().faults.authExpired) {
+          return { ok: false, login: null, tokenSource: "GH_TOKEN", scopes: null, error: "non-200 OK status code: 401 Unauthorized" };
+        }
+        return { ok: true, login: "orbit-bot", tokenSource: "GH_TOKEN", scopes: null, error: null };
+      }
+      // -- internals
+      /** Record the call, then apply the call-level faults. */
+      enter(name) {
+        let fault = null;
+        this.mutate((s) => {
+          s.calls.push(name);
+          if (s.faults.authExpired) {
+            fault = new OrbitError("AUTH_EXPIRED", `gh ${name} failed (exit 4): HTTP 401: Bad credentials`, { definitive: true });
+          } else if (s.faults.rateLimit > 0) {
+            s.faults.rateLimit--;
+            fault = new OrbitError("PROVIDER_TRANSIENT", `gh ${name} failed: API rate limit exceeded`, { retryAfterMs: s.faults.rateLimitRetryAfterMs, rateLimited: true });
+          }
+        });
+        if (fault) throw fault;
+      }
+      view(state, pr) {
+        const { fixedHeadOid, mergeCommitOid: _m, mergedAt: _a, ...info } = pr;
+        const head = pr.state === "MERGED" && fixedHeadOid ? fixedHeadOid : this.headOid(state, pr) ?? fixedHeadOid ?? "";
+        return { ...info, headRefOid: head };
+      }
+      mergeView(state, pr) {
+        const v = this.view(state, pr);
+        return { number: v.number, state: v.state, headRefOid: v.headRefOid, baseRefName: v.baseRefName, mergeCommitSha: pr.state === "MERGED" ? pr.mergeCommitOid ?? null : null, mergedAt: pr.state === "MERGED" ? pr.mergedAt ?? null : null };
+      }
+      /** Move the base branch on the attached remote; without one, a stable synthetic merge commit id. */
+      mergeOnRemote(pr, head, method, salt) {
+        if (!this.opts.remoteGitDir) return sha256(`fake-merge:${pr.number}:${head}:${method}:${salt}`).slice(-40);
+        const baseRef = `refs/heads/${pr.baseRefName}`;
+        const base = this.git(["rev-parse", "--verify", "--quiet", baseRef]);
+        if (!base) throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: base branch ${pr.baseRefName} does not exist`, { definitive: true, refused: true });
+        if (this.git(["merge-base", base, head]) !== base) {
+          throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: Pull Request is not mergeable (base ${pr.baseRefName} moved)`, { definitive: true, refused: true });
+        }
+        let commit;
+        if (method === "rebase") commit = head;
+        else {
+          const tree = this.git(["rev-parse", `${head}^{tree}`]);
+          const parents = method === "merge" ? ["-p", base, "-p", head] : ["-p", base];
+          commit = this.git(["commit-tree", tree, ...parents, "-m", `${pr.title} (#${pr.number})`]);
+        }
+        this.git(["update-ref", baseRef, commit, base]);
+        return commit;
+      }
+      git(args) {
+        try {
+          return execFileSync("git", ["--git-dir", this.opts.remoteGitDir, ...args], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            env: { PATH: process.env.PATH ?? "/usr/bin:/bin", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "Fake GitHub", GIT_AUTHOR_EMAIL: "noreply@example.com", GIT_COMMITTER_NAME: "Fake GitHub", GIT_COMMITTER_EMAIL: "noreply@example.com", GIT_AUTHOR_DATE: "1700000000 +0000", GIT_COMMITTER_DATE: "1700000000 +0000" }
+          }).trim();
+        } catch (err) {
+          if (args[0] === "rev-parse") return "";
+          throw new OrbitError("DELIVERY_FAILED", `fake remote: git ${args[0]} failed: ${err.message}`);
+        }
+      }
+      headOid(state, pr) {
+        if (state.heads[pr.headRefName]) return state.heads[pr.headRefName];
+        if (!this.opts.remoteGitDir) return null;
+        try {
+          return execFileSync("git", ["--git-dir", this.opts.remoteGitDir, "rev-parse", "--verify", "--quiet", `refs/heads/${pr.headRefName}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
+        } catch {
+          return null;
+        }
+      }
+      load() {
+        if (!existsSync26(this.opts.statePath)) return emptyState();
+        return JSON.parse(readFileSync18(this.opts.statePath, "utf8"));
+      }
+      mutate(fn) {
+        const s = this.load();
+        fn(s);
+        atomicWriteJson(this.opts.statePath, s);
+      }
+    };
   }
 });
 
-// src/evidence/environment-failure.ts
-import { isAbsolute as isAbsolute15 } from "node:path";
-function within2(path, root) {
-  const r = root.length > 1 ? root.replace(/\/+$/, "") : root;
-  return path === r || path.startsWith(`${r}/`);
+// src/notify/threads.ts
+import { existsSync as existsSync27, readFileSync as readFileSync19 } from "node:fs";
+function malformed2(what, detail) {
+  return new OrbitError("MALFORMED_OUTPUT", `gh api ${what}: ${detail}`);
 }
-function deniedOutside(line3, roots) {
-  if (!DENIED.test(line3)) return false;
-  const paths = line3.match(ABSOLUTE_PATH) ?? [];
-  return paths.some((p) => !roots.some((root) => within2(p.replace(/[.]+$/, ""), root)));
-}
-function classifyEnvironmentFailure(input) {
-  const { fingerprint, baselineFingerprint } = input;
-  if (!fingerprint || !baselineFingerprint || fingerprint !== baselineFingerprint) return null;
-  const signals = [];
-  const lines = [];
-  const see = (signal) => {
-    if (!signals.includes(signal)) signals.push(signal);
-  };
-  for (const raw of stripAnsi(input.output).split("\n", MAX_SCANNED_LINES2)) {
-    const line3 = raw.replace(/\r$/, "");
-    const found = [];
-    if (VIOLATION.test(line3)) found.push("sandbox-violation");
-    if (EPERM.test(line3)) found.push("eperm");
-    if (NOT_PERMITTED.test(line3)) found.push("operation-not-permitted");
-    if (deniedOutside(line3, input.insideRoots)) found.push("eacces-outside-worktree");
-    if (found.length === 0) continue;
-    for (const s of found) see(s);
-    const shown = line3.trim().slice(0, MAX_LINE_CHARS);
-    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown)) lines.push(shown);
+function parseJson4(what, text2) {
+  try {
+    return JSON.parse(text2);
+  } catch {
+    throw malformed2(what, `output is not JSON (${redact(text2.slice(0, 120))})`);
   }
-  if (signals.length === 0) return null;
-  return { checkId: input.checkId, fingerprint, signals, cause: signals.map((s) => CAUSES[s]).join("; "), lines };
 }
-function classifyNotExecuted(input) {
-  const browser = input.browserIsolation?.trim();
-  if (browser) return { checkId: input.checkId, fingerprint: null, signals: ["browser-isolation"], cause: CAUSES["browser-isolation"], lines: [browser.slice(0, MAX_LINE_CHARS)] };
-  const start = input.startFailure?.trim();
-  if (start) return { checkId: input.checkId, fingerprint: null, signals: ["start-failed"], cause: CAUSES["start-failed"], lines: [start.slice(0, MAX_LINE_CHARS)] };
-  let crash = input.signal !== void 0 && input.signal !== null && CRASH_SIGNALS.has(input.signal) ? input.signal : null;
-  const kills = [];
-  const frames = [];
-  let traced = false;
-  let own = 0;
-  let inJsTrace = false;
-  for (const raw of stripAnsi(input.output).split("\n", MAX_SCANNED_LINES2)) {
-    const line3 = raw.trim();
-    if (line3 === "") continue;
-    const killed = KILLED_BY_SIGNAL.exec(line3);
-    const footer = RUNNER_FOOTER.exec(line3);
-    const header2 = TRACE_HEADER.exec(line3);
-    if (header2) {
-      inJsTrace = header2[1].toLowerCase() === "javascript";
-      traced = true;
-    } else if (inJsTrace && JS_FRAME.test(line3)) {
-    } else if (TRACE_FRAME.test(line3)) {
-      if (frames.length === 0) frames.push(line3.slice(0, MAX_LINE_CHARS));
-    } else if (killed) {
-      if (CRASH_SIGNALS.has(killed[1])) {
-        crash = killed[1];
-        if (kills.length === 0) kills.push(line3);
-      } else {
-        own += 1;
-      }
-    } else if (footer) {
-      if (CRASH_SIGNALS.has(footer[1])) crash = footer[1];
-    } else {
-      own += 1;
-    }
-  }
-  if (crash === null && !traced || own > 0) return null;
-  return { checkId: input.checkId, fingerprint: null, signals: ["process-aborted"], cause: crash === null ? CAUSES["process-aborted"] : `${CAUSES["process-aborted"]} (${crash})`, lines: [...kills, ...frames] };
-}
-function excerpt2(line3, at) {
-  if (line3.length <= MAX_LINE_CHARS) return line3;
-  const start = Math.max(0, Math.min(at - (MAX_LINE_CHARS - 40), line3.length - (MAX_LINE_CHARS - 3)));
-  return start === 0 ? line3.slice(0, MAX_LINE_CHARS) : `...${line3.slice(start, start + MAX_LINE_CHARS - 3)}`;
-}
-function classifyCouldNotRun(input) {
-  const text2 = stripAnsi(input.output);
-  if (CODE_FAILURE.some((re) => re.test(text2))) return null;
-  const outside = (path) => !input.insideRoots.some((root) => within2(path.replace(/[.]+$/, ""), root));
-  const signals = [];
-  const lines = [];
-  for (const raw of text2.split("\n", MAX_SCANNED_LINES2)) {
-    const line3 = raw.replace(/\r$/, "").trim();
-    const deny2 = SEATBELT_DENY.exec(line3);
-    const denial = DENIAL.exec(line3);
-    let found = null;
-    if (deny2 && (!deny2[1].toLowerCase().startsWith("file-") || deny2[2] !== void 0 && isAbsolute15(deny2[2]) && outside(deny2[2]))) found = { signal: "sandbox-violation", at: deny2.index };
-    else if (denial && FS_CALL.test(line3) && (line3.match(ABSOLUTE_PATH) ?? []).some(outside)) found = { signal: "filesystem-denied", at: denial.index };
-    if (found === null) continue;
-    if (!signals.includes(found.signal)) signals.push(found.signal);
-    const shown = excerpt2(line3, found.at);
-    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown)) lines.push(shown);
-  }
-  if (signals.length === 0) return null;
-  return { checkId: input.checkId, fingerprint: null, signals, cause: signals.map((s) => CAUSES[s]).join("; "), lines };
-}
-var MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER, FS_CALL, DENIAL, SEATBELT_DENY, CODE_FAILURE;
-var init_environment_failure = __esm({
-  "src/evidence/environment-failure.ts"() {
-    "use strict";
-    init_fingerprint();
-    MAX_EVIDENCE_LINES = 3;
-    MAX_LINE_CHARS = 200;
-    MAX_SCANNED_LINES2 = 2e5;
-    VIOLATION = /<\/?sandbox_violations>|\bSandbox:.*\bdeny\(|X-Proxy-Error|Connection blocked by network allowlist/i;
-    EPERM = /\bEPERM\b/;
-    NOT_PERMITTED = /operation not permitted/i;
-    DENIED = /\bEACCES\b|permission denied/i;
-    ABSOLUTE_PATH = /(?<![\w./~<>-])\/[^\s'"`:,;()<>[\]{}|]+/g;
-    CAUSES = {
-      "sandbox-violation": "the sandbox reported a denied operation",
-      eperm: "an operation the sandbox does not permit failed with EPERM",
-      "operation-not-permitted": 'the operating system answered "operation not permitted"',
-      "eacces-outside-worktree": "permission was denied (EACCES) on a path outside the worktree",
-      "process-aborted": "the process was killed by a fatal signal before it printed anything of its own",
-      "start-failed": "the check could not be started",
-      "browser-isolation": "the browser could not start under sandbox-runtime",
-      "filesystem-denied": `the sandbox or the operating system refused a filesystem operation outside the check's checkout (EPERM, "operation not permitted")`
+function parseComments(text2) {
+  const v = parseJson4("comments", text2);
+  if (!Array.isArray(v)) throw malformed2("comments", "expected an array");
+  return v.map((c) => {
+    const o = c && typeof c === "object" ? c : {};
+    if (typeof o.id !== "number" || !Number.isInteger(o.id)) throw malformed2("comments", "a comment has no integer id");
+    const user = o.user && typeof o.user === "object" ? o.user : null;
+    return {
+      id: o.id,
+      url: typeof o.html_url === "string" ? o.html_url : "",
+      author: typeof user?.login === "string" ? user.login : "",
+      body: typeof o.body === "string" ? o.body : "",
+      createdAt: typeof o.created_at === "string" ? o.created_at : ""
     };
-    CRASH_SIGNALS = /* @__PURE__ */ new Set(["SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL", "SIGTRAP", "SIGSYS"]);
-    TRACE_HEADER = /^-{3,}\s*(Native|JavaScript) stack trace\s*-{3,}$/i;
-    JS_FRAME = /^\d+:\s+\S/;
-    TRACE_FRAME = /^\d+:\s+0x[0-9a-f]+(?:\s|$)/i;
-    KILLED_BY_SIGNAL = /^Process killed by signal: (SIG[A-Z0-9]+)$/;
-    RUNNER_FOOTER = /^\[orbit\] check=\S+ status=\S+ exit=(\S+)/;
-    FS_CALL = /\b(?:mkdir|mkdtemp|mkstemp|open|openat|creat|rename|unlink|rmdir|chmod|chown|lchown|symlink|link|copyfile|clonefile|scandir|opendir|access|stat|lstat|utimes?|truncate|shm_open|sem_open|realpath|readlink|mkfifo|bind|connect|touch|cp|mv|rm|ln|PermissionError|IOException|errno)\b/i;
-    DENIAL = /\bEPERM\b|operation not permitted/i;
-    SEATBELT_DENY = /\bdeny\(\d+\)\s+([a-z][\w-]*)(?:\s+(\S+))?/i;
-    CODE_FAILURE = [
-      /\berror (?:CS|FS|BC|TS)\d{4}\b/,
-      // C#, F#, Visual Basic, TypeScript
-      /\berror\[E\d{4}\]/,
-      // Rust
-      /:\d+(?::\d+)?: (?:fatal )?error:/,
-      // C, C++, Swift, Java
-      /\bSyntaxError\b/,
-      /\bAssertionError\b|\bAssert\.\w+\(\) Failure\b|\bassertion failed\b/i,
-      /\bFailed!\s+-\s+Failed:\s*[1-9]/,
-      // dotnet test
-      /^\s*(?:not ok \d+|FAIL\b|--- FAIL:|FAILED\s+\S+::)/m,
-      // TAP, Jest and Vitest, Go, pytest
-      /\btest result: FAILED\b/,
-      // cargo test
-      /^\s*(?:#|ℹ)\s*fail\s+[1-9]/m,
-      // node:test
-      /\b[1-9]\d*\s+(?:failed|failing|failures?)\b/i,
-      /\b[1-9]\d*\s+errors?\b|\b[1-9]\d* Error\(s\)/i
-      // compilers' and MSBuild's error counts
-    ];
+  });
+}
+function parsePermission(text2) {
+  const v = parseJson4("permission", text2);
+  const o = v && typeof v === "object" ? v : {};
+  const role = typeof o.role_name === "string" && o.role_name !== "" ? o.role_name : typeof o.permission === "string" && o.permission !== "" ? o.permission : "unknown";
+  return role.toLowerCase();
+}
+function assertNumber(n2) {
+  if (!Number.isInteger(n2) || n2 <= 0) throw new OrbitError("INTERNAL", "an issue or pull request number must be a positive integer");
+}
+function assertLogin(login) {
+  if (!LOGIN.test(login)) throw new OrbitError("SCHEMA_INVALID", `${JSON.stringify(login.slice(0, 60))} is not a GitHub login`);
+}
+function strip(c) {
+  return { id: c.id, url: c.url, author: c.author, body: c.body, createdAt: c.createdAt };
+}
+var ANSWERING_ROLES, LOGIN, PER_PAGE, MAX_PAGES, ACCEPT, GhThreadClient, FAKE_ORBIT_AUTHOR, FakeThreadClient;
+var init_threads = __esm({
+  "src/notify/threads.ts"() {
+    "use strict";
+    init_exec();
+    init_errors();
+    init_fsx();
+    init_github();
+    init_redact();
+    ANSWERING_ROLES = /* @__PURE__ */ new Set(["admin", "maintain", "write"]);
+    LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+    PER_PAGE = 100;
+    MAX_PAGES = 10;
+    ACCEPT = ["-H", "Accept: application/vnd.github+json"];
+    GhThreadClient = class {
+      opts;
+      token;
+      baseEnv;
+      runner;
+      constructor(opts) {
+        if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(opts.repo)) throw new OrbitError("CONFIG_INVALID", `repository ${JSON.stringify(opts.repo)} is not OWNER/REPO`, { definitive: true });
+        this.opts = opts;
+        this.baseEnv = opts.env ?? process.env;
+        this.token = this.baseEnv.GH_TOKEN || void 0;
+        this.runner = opts.runner ?? ((argv2, o) => execCapture(argv2, { env: o.env, cwd: o.cwd, input: o.input, timeoutMs: o.timeoutMs, maxOutputBytes: 8 * 1024 * 1024 }));
+      }
+      env() {
+        const e = {};
+        for (const k of ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"]) if (this.baseEnv[k] !== void 0) e[k] = this.baseEnv[k];
+        e.GH_TOKEN = this.token;
+        e.GH_PROMPT_DISABLED = "1";
+        e.GH_NO_UPDATE_NOTIFIER = "1";
+        e.GH_TELEMETRY = "false";
+        e.NO_COLOR = "1";
+        e.GH_PAGER = "cat";
+        return e;
+      }
+      async exec(what, args, input) {
+        if (!this.token) throw new OrbitError("AUTH_MISSING", "no GH_TOKEN in the controller environment; comments and remote answers need a token scoped to the repository", { definitive: true });
+        const res = await this.runner([this.opts.ghPath ?? "gh", "api", ...ACCEPT, ...args], { env: this.env(), ...this.opts.cwd ? { cwd: this.opts.cwd } : {}, ...input !== void 0 ? { input } : {}, timeoutMs: this.opts.timeoutMs ?? 3e4 });
+        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", `gh api ${what} timed out`);
+        return res;
+      }
+      async ok(what, args, input) {
+        const res = await this.exec(what, args, input);
+        if (res.exitCode !== 0) throw classifyGhFailure(`api ${what}`, res.exitCode, `${res.stderr}
+${res.stdout}`);
+        return res.stdout;
+      }
+      async listComments(number, since) {
+        assertNumber(number);
+        const out = [];
+        for (let page = 1; page <= MAX_PAGES; page++) {
+          const q = new URLSearchParams({ per_page: String(PER_PAGE), ...since ? { since } : {}, page: String(page) });
+          const batch = parseComments(await this.ok("comments", [`repos/${this.opts.repo}/issues/${number}/comments?${q.toString()}`]));
+          out.push(...batch);
+          if (batch.length < PER_PAGE) break;
+        }
+        return out;
+      }
+      async permission(login) {
+        assertLogin(login);
+        const res = await this.exec("permission", [`repos/${this.opts.repo}/collaborators/${login}/permission`]);
+        if (res.exitCode !== 0) {
+          const err = classifyGhFailure("api permission", res.exitCode, `${res.stderr}
+${res.stdout}`);
+          if (err.code === "NOT_FOUND") return "none";
+          throw err;
+        }
+        return parsePermission(res.stdout);
+      }
+      async createComment(number, body) {
+        assertNumber(number);
+        const out = await this.ok("create comment", ["-X", "POST", `repos/${this.opts.repo}/issues/${number}/comments`, "--input", "-"], JSON.stringify({ body }));
+        const v = parseJson4("create comment", out);
+        return { url: typeof v?.html_url === "string" ? v.html_url : "" };
+      }
+    };
+    FAKE_ORBIT_AUTHOR = "orbit-bot";
+    FakeThreadClient = class {
+      statePath;
+      constructor(opts) {
+        this.statePath = opts.statePath;
+      }
+      read() {
+        if (!existsSync27(this.statePath)) return { comments: [], permissions: {} };
+        const s = JSON.parse(readFileSync19(this.statePath, "utf8"));
+        return { comments: s.comments ?? [], permissions: s.permissions ?? {}, fail: s.fail ?? null, failNext: s.failNext ?? {} };
+      }
+      write(s) {
+        atomicWriteJson(this.statePath, s);
+      }
+      gate(op) {
+        const s = this.read();
+        if (s.fail) throw new OrbitError(s.fail, `fake GitHub: ${op} failed (scripted)`);
+        const once = s.failNext?.[op];
+        if (once) {
+          delete s.failNext[op];
+          this.write(s);
+          throw new OrbitError(once, `fake GitHub: ${op} failed once (scripted)`);
+        }
+      }
+      /** A comment by `author`, as a person would write it on the thread. */
+      addComment(thread, author, body) {
+        const s = this.read();
+        const id = s.comments.reduce((m, c2) => Math.max(m, c2.id), 0) + 1;
+        const c = { thread, id, url: `https://github.test/acme/app/issues/${thread}#issuecomment-${id}`, author, body, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+        s.comments.push(c);
+        this.write(s);
+        return strip(c);
+      }
+      setPermission(login, role) {
+        const s = this.read();
+        s.permissions[login] = role;
+        this.write(s);
+      }
+      failNext(op, code2) {
+        const s = this.read();
+        s.failNext = { ...s.failNext ?? {}, [op]: code2 };
+        this.write(s);
+      }
+      comments(thread) {
+        return this.read().comments.filter((c) => c.thread === thread).map(strip);
+      }
+      async listComments(number, since) {
+        this.gate("listComments");
+        return this.comments(number).filter((c) => since === null || c.createdAt >= since);
+      }
+      async permission(login) {
+        this.gate("permission");
+        return this.read().permissions[login] ?? "none";
+      }
+      async createComment(number, body) {
+        this.gate("createComment");
+        return { url: this.addComment(number, FAKE_ORBIT_AUTHOR, body).url };
+      }
+    };
+  }
+});
+
+// src/notify/channels.ts
+import { join as join32 } from "node:path";
+function notificationsOff(env) {
+  return (env.ORBIT_NOTIFICATIONS ?? "").trim().toLowerCase() === "off";
+}
+function defaultThreads(env) {
+  return async (repoRoot, config) => {
+    if (config.delivery.provider === "fake") return new FakeThreadClient({ statePath: join32(repoRoot, ".orbit", FAKE_THREADS_FILE) });
+    const url = await resolveRemoteUrl(repoRoot, config.repository.remote);
+    const m = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url);
+    if (!m) throw new OrbitError("CONFIG_INVALID", `remote ${config.repository.remote} is not a GitHub repository`);
+    return new GhThreadClient({ repo: `${m[1]}/${m[2]}`, env, cwd: repoRoot });
+  };
+}
+function defaultNotifyDeps(env = process.env) {
+  return { env, platform: process.platform, exec: defaultExec, fetch: defaultFetch, threads: defaultThreads(env) };
+}
+function messageOf2(err) {
+  const text2 = isOrbitError(err) ? `${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
+  return redact(text2).replace(/\s+/g, " ").slice(0, 300);
+}
+async function sendDesktop(p, deps) {
+  const title = payloadTitle(p);
+  const body = payloadText(p);
+  let argv2;
+  if (deps.platform === "darwin") argv2 = ["osascript", ...OSASCRIPT, "--", title, body];
+  else if (deps.platform === "linux") argv2 = ["notify-send", "--app-name=Orbit", "--", title, body];
+  else return { channel: "desktop", status: "skipped", detail: `no desktop notifier on ${deps.platform}` };
+  const program = argv2[0];
+  try {
+    const r = await deps.exec(argv2, DESKTOP_TIMEOUT_MS);
+    if (r.notFound) return { channel: "desktop", status: "skipped", detail: `${program} is not available` };
+    if (r.exitCode !== 0) return { channel: "desktop", status: "failed", detail: `${program} exited ${r.exitCode ?? "by signal"}: ${redact(r.stderr).trim().slice(0, 200)}`.trim() };
+    return { channel: "desktop", status: "sent", detail: program };
+  } catch (err) {
+    return { channel: "desktop", status: "failed", detail: messageOf2(err) };
+  }
+}
+async function sendWebhook(p, config, deps) {
+  const hook = notificationsPolicy(config).webhook;
+  if (!hook) return { channel: "webhook", status: "skipped", detail: "notifications.webhook is off" };
+  const raw = deps.env[hook.url_env];
+  if (!raw) return { channel: "webhook", status: "skipped", detail: `${hook.url_env} is not set` };
+  let url;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return { channel: "webhook", status: "failed", detail: `${hook.url_env} does not hold a valid URL` };
+  }
+  const host = url.hostname.toLowerCase();
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && LOOPBACK.has(host))) {
+    return { channel: "webhook", status: "failed", detail: "the webhook URL must use https (plain http only to a loopback host)" };
+  }
+  if (!hostAllowed(host, config.network.allowed_hosts)) return { channel: "webhook", status: "failed", detail: `${host} is not in network.allowed_hosts` };
+  try {
+    const r = await deps.fetch(url.toString(), {
+      method: "POST",
+      headers: { "content-type": "application/json", "user-agent": "orbit-notify" },
+      body: JSON.stringify({ text: payloadText(p), orbit: p }),
+      // A redirect could take the payload to a host the allowlist never saw.
+      redirect: "error",
+      signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS)
+    });
+    return { channel: "webhook", status: r.ok ? "sent" : "failed", detail: `${host} answered ${r.status}` };
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "Error";
+    return { channel: "webhook", status: "failed", detail: `${host} could not be reached (${name})` };
+  }
+}
+async function sendGithubComment(p, target, client) {
+  if (!target) return { channel: "github_comment", status: "skipped", detail: "the run has no pull request and no linked issue" };
+  try {
+    await (await client()).createComment(target.number, commentBody(p));
+    return { channel: "github_comment", status: "sent", detail: `${target.kind} #${target.number}` };
+  } catch (err) {
+    return { channel: "github_comment", status: "failed", detail: messageOf2(err) };
+  }
+}
+var DESKTOP_TIMEOUT_MS, WEBHOOK_TIMEOUT_MS, FAKE_THREADS_FILE, defaultExec, defaultFetch, OSASCRIPT, LOOPBACK;
+var init_channels = __esm({
+  "src/notify/channels.ts"() {
+    "use strict";
+    init_errors();
+    init_exec();
+    init_redact();
+    init_git2();
+    init_config();
+    init_hosts();
+    init_payload();
+    init_threads();
+    DESKTOP_TIMEOUT_MS = 1e4;
+    WEBHOOK_TIMEOUT_MS = 1e4;
+    FAKE_THREADS_FILE = "fake-github-threads.json";
+    defaultExec = async (argv2, timeoutMs) => {
+      try {
+        const r = await execCapture(argv2, { timeoutMs, maxOutputBytes: 64 * 1024 });
+        return { exitCode: r.timedOut ? null : r.exitCode, notFound: false, stderr: r.timedOut ? `timed out after ${timeoutMs} ms` : r.stderr };
+      } catch (err) {
+        if (isOrbitError(err, "NOT_FOUND")) return { exitCode: null, notFound: true, stderr: "" };
+        throw err;
+      }
+    };
+    defaultFetch = async (url, init) => {
+      const r = await fetch(url, init);
+      await r.body?.cancel().catch(() => {
+      });
+      return { status: r.status, ok: r.ok };
+    };
+    OSASCRIPT = ["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run"];
+    LOOPBACK = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
   }
 });
 
 // src/evidence/report.ts
-import { basename as basename11, isAbsolute as isAbsolute16, join as join35, relative as relative3, sep as sep8 } from "node:path";
+import { basename as basename11, isAbsolute as isAbsolute15, join as join33, relative as relative3, sep as sep7 } from "node:path";
 function aggregateCheckConfigHash(snapshot2, checkIds) {
   const ids = [...new Set(checkIds)].sort();
   const map2 = {};
@@ -44563,8 +45239,8 @@ function evaluateEvidence(input) {
   const fail3 = [];
   const incomplete = [];
   const unverified = [];
-  const note3 = (list, text2) => {
-    if (!list.includes(text2)) list.push(text2);
+  const note3 = (list2, text2) => {
+    if (!list2.includes(text2)) list2.push(text2);
   };
   const valid = /* @__PURE__ */ new Map();
   const failedAt = /* @__PURE__ */ new Map();
@@ -44604,7 +45280,7 @@ function evaluateEvidence(input) {
   const artifactPath = (p, fallback) => {
     if (runDir2 === void 0) return fallback;
     const r = relative3(runDir2, p);
-    return r === "" || r.startsWith("..") || isAbsolute16(r) ? p : r.split(sep8).join("/");
+    return r === "" || r.startsWith("..") || isAbsolute15(r) ? p : r.split(sep7).join("/");
   };
   const logName = (p) => artifactPath(p, basename11(p));
   const evidenceFor = (checkId) => {
@@ -44624,7 +45300,7 @@ function evaluateEvidence(input) {
       }
     }
     const worst = journeys.find((j) => j.status !== "PASSED");
-    const art = journeys.flatMap((j) => j.artifacts.map((a) => isAbsolute16(a) ? artifactPath(a, a) : a));
+    const art = journeys.flatMap((j) => j.artifacts.map((a) => isAbsolute15(a) ? artifactPath(a, a) : a));
     if (!worst) return { outcome: journeys.some((j) => j.flaky) ? "flaky" : "passed", status: "PASSED", artifacts: art };
     return { outcome: worst.status === "FAILED" || worst.status === "TIMEOUT" ? "failed" : "error", status: worst.status, artifacts: art };
   };
@@ -44760,14 +45436,14 @@ function evaluateEvidence(input) {
   return { report: report2, failReasons: fail3, incompleteReasons: incomplete };
 }
 function reportPath(runDir2, candidate) {
-  return join35(candidateEvidenceDir(runDir2, candidate.seq), "report.json");
+  return join33(candidateEvidenceDir(runDir2, candidate.seq), "report.json");
 }
 function saveEvidenceReport(opts) {
   const path = reportPath(opts.runDir, opts.candidate);
   atomicWriteJson(path, opts.report, 420);
   return insertEvidenceReport(opts.db, { candidateId: opts.candidate.id, report: opts.report, reportPath: path }, opts.clock);
 }
-var init_report2 = __esm({
+var init_report = __esm({
   "src/evidence/report.ts"() {
     "use strict";
     init_fsx();
@@ -44832,7 +45508,24 @@ var init_freshness = __esm({
     init_errors();
     init_snapshot();
     init_events();
-    init_report2();
+    init_report();
+  }
+});
+
+// src/inquisition/actors.ts
+function isHumanActor(by) {
+  const trimmed = by.trim();
+  return trimmed !== "" && !NON_HUMAN.test(trimmed);
+}
+function answerDecisionId(questionId) {
+  return `dec-answer-${questionId}`;
+}
+var NON_HUMAN, ANSWER_DECISION_KIND;
+var init_actors = __esm({
+  "src/inquisition/actors.ts"() {
+    "use strict";
+    NON_HUMAN = /^(planner|implementer|verifier|reviewer|inquisitor|inquisition|curator|worker|wrk|model|agent|subagent|assistant|claude|codex|gpt|gemini|controller|scheduler|recovery|delivery|evidence|routing|orbit|system|service|daemon|shim|hook|llm|ai|bot|fake)([:\-_/ ].*)?$/i;
+    ANSWER_DECISION_KIND = "inquisition.answer";
   }
 });
 
@@ -45207,25 +45900,61 @@ var init_amend = __esm({
   }
 });
 
-// src/inquisition/actors.ts
-function isHumanActor(by) {
-  const trimmed = by.trim();
-  return trimmed !== "" && !NON_HUMAN.test(trimmed);
+// src/inquisition/heuristics.ts
+function riskCategoriesInText(text2) {
+  return RISK_CATEGORIES.filter((c) => TEXT[c].test(text2));
 }
-function answerDecisionId(questionId) {
-  return `dec-answer-${questionId}`;
+function riskCategoriesInPaths(paths) {
+  const out = /* @__PURE__ */ new Map();
+  for (const p of paths) {
+    for (const c of RISK_CATEGORIES) {
+      if (PATH[c].test(p)) out.set(c, [...out.get(c) ?? [], p]);
+    }
+  }
+  return out;
 }
-var NON_HUMAN, ANSWER_DECISION_KIND;
-var init_actors = __esm({
-  "src/inquisition/actors.ts"() {
+function riskCategoriesInDiff(diff) {
+  const out = /* @__PURE__ */ new Map();
+  for (const line3 of diff.split("\n")) {
+    if (!line3.startsWith("+") || line3.startsWith("+++")) continue;
+    const body = line3.slice(1);
+    const words = body.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_+/g, " ");
+    for (const c of riskCategoriesInText(words)) {
+      const hits = out.get(c) ?? [];
+      if (hits.length < 5) hits.push(redact(body.trim()).slice(0, 120));
+      out.set(c, hits);
+    }
+  }
+  return out;
+}
+function mentionsIrreversible(text2) {
+  return /\b(irreversibl\w*|cannot be undone|can't be undone|permanent(?:ly)?|hard[- ]delete\w*|drop table|data loss|destroy\w*|purge\w*)\b/i.test(text2);
+}
+var RISK_CATEGORIES, TEXT, PATH;
+var init_heuristics = __esm({
+  "src/inquisition/heuristics.ts"() {
     "use strict";
-    NON_HUMAN = /^(planner|implementer|verifier|reviewer|inquisitor|inquisition|curator|worker|wrk|model|agent|subagent|assistant|claude|codex|gpt|gemini|controller|scheduler|recovery|delivery|evidence|routing|orbit|system|service|daemon|shim|hook|llm|ai|bot|fake)([:\-_/ ].*)?$/i;
-    ANSWER_DECISION_KIND = "inquisition.answer";
+    init_redact();
+    RISK_CATEGORIES = ["security", "privacy", "billing", "data", "compatibility"];
+    TEXT = {
+      security: /\b(authn|authz|authenticat\w*|authoriz\w*|oauth|jwt|passwords?|passwd|secrets?|credentials?|api[ _-]?keys?|permissions?|acl|rbac|crypto\w*|encrypt\w*|decrypt\w*|cors|csrf|xss|sql injection|sessions?|cookies?|sanitiz\w*|tls|certificates?|access tokens?|bearer|log[- ]?in|log[- ]?out|sign[- ]?in|sign[- ]?out|privileges?|privilege escalation)\b/i,
+      privacy: /\b(pii|personal (?:data|information)|gdpr|ccpa|consent|anonymi[sz]\w*|pseudonymi[sz]\w*|data subjects?|email addresses?|phone numbers?|date of birth|ssn|tracking|telemetry|analytics|geolocation|ip addresses?)\b/i,
+      billing: /\b(billing|invoices?|payments?|charges?|charged|pric(?:e|es|ing)|subscriptions?|refunds?|currency|currencies|taxes|tax rates?|checkout|credit cards?|payouts?|proration|quotas?|metering|overages?|fees?)\b/i,
+      data: /\b(migrations?|schema changes?|alter table|drop column|rename column|drop table|delete from|truncate|backfill\w*|irreversible|data loss|hard[- ]delete\w*|purge\w*|destructive|retention polic\w*|cascade delete)\b/i,
+      compatibility: /\b(breaking changes?|backwards?[- ]compat\w*|public api|deprecat\w*|api versions?|semver|wire format|on-disk format|file format|rename[sd]? exports?)\b/i
+    };
+    PATH = {
+      security: /(^|\/)(auth|authn|authz|security|crypto|permissions?|acl|rbac|secrets?|iam)(\/|\.|-|_|$)/i,
+      privacy: /(^|\/)[^/]*(privacy|gdpr|consent|pii)[^/]*(\/|$)/i,
+      billing: /(^|\/)[^/]*(billing|payments?|invoices?|checkout|subscriptions?|pricing)[^/]*(\/|$)/i,
+      data: /(^|\/)(migrations?|seeds?)(\/|$)|\.sql$|(^|\/)schema\.[a-z]+$/i,
+      compatibility: /\.proto$|(^|\/)(openapi|swagger)[^/]*\.(ya?ml|json)$|(^|\/)api\/v\d+(\/|$)/i
+    };
   }
 });
 
 // src/inquisition/baseline-exception.ts
-import { join as join36 } from "node:path";
+import { join as join34 } from "node:path";
 function keyOf(runId, checkId, fingerprint) {
   return hashObject({ run: runId, check: checkId, fingerprint }).slice(7, 19);
 }
@@ -45348,7 +46077,7 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
         outcome("refused", `the policy snapshot could not be verified: ${err instanceof Error ? err.message : String(err)}`);
         break;
       }
-      const baseline = readJsonIfExists(join36(ctx.runDir, BASELINE_FILE2));
+      const baseline = readJsonIfExists(join34(ctx.runDir, BASELINE_FILE));
       const proposal = data.proposal;
       let next;
       let record;
@@ -45411,10 +46140,10 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
   }
   const row = load();
   const contract = row.contract_json === null ? null : JSON.parse(row.contract_json);
-  if (contract && outcomes.some((o) => o.status === "applied" || o.status === "already-applied")) atomicWriteJson(join36(ctx.runDir, "contract.json"), contract);
+  if (contract && outcomes.some((o) => o.status === "applied" || o.status === "already-applied")) atomicWriteJson(join34(ctx.runDir, "contract.json"), contract);
   return { contract, outcomes };
 }
-var BASELINE_EXCEPTION_REQUEST_KIND, BASELINE_APPROVE, BASELINE_REJECT, BASELINE_FILE2, MAX_CAS_ATTEMPTS;
+var BASELINE_EXCEPTION_REQUEST_KIND, BASELINE_APPROVE, BASELINE_REJECT, BASELINE_FILE, MAX_CAS_ATTEMPTS;
 var init_baseline_exception = __esm({
   "src/inquisition/baseline-exception.ts"() {
     "use strict";
@@ -45432,252 +46161,8 @@ var init_baseline_exception = __esm({
     BASELINE_EXCEPTION_REQUEST_KIND = "baseline.exception-request";
     BASELINE_APPROVE = "Approve";
     BASELINE_REJECT = "Reject";
-    BASELINE_FILE2 = "baseline.json";
+    BASELINE_FILE = "baseline.json";
     MAX_CAS_ATTEMPTS = 4;
-  }
-});
-
-// src/controller/steps/baseline-questions.ts
-import { join as join37 } from "node:path";
-function openBaselineRequests(ctx) {
-  const out = [];
-  for (const d of listDecisions(ctx.db, ctx.run.id, { kind: BASELINE_EXCEPTION_REQUEST_KIND })) {
-    const req = d.data;
-    if (findQuestion(ctx.db, req.question_id)?.status === "open") out.push(req);
-  }
-  return out;
-}
-function isEnvironmentFailure(ctx, req) {
-  const failure = readJsonIfExists(join37(ctx.runDir, BASELINE_FILE))?.failures.find((f) => f.checkId === req.check_id);
-  return classifyEnvironmentFailure({ checkId: req.check_id, fingerprint: req.fingerprint, baselineFingerprint: req.fingerprint, output: failure?.excerpt ?? "", insideRoots: [] }) !== null;
-}
-function settleExpectedFlips(ctx, contract) {
-  const flipped = [];
-  for (const req of openBaselineRequests(ctx)) {
-    const criteria = contract.acceptance_criteria.filter((c) => (c.check_ids ?? []).includes(req.check_id)).map((c) => c.id);
-    if (criteria.length === 0 || isEnvironmentFailure(ctx, req)) continue;
-    withdrawQuestion(ctx.db, req.question_id, `check ${req.check_id} is the proof of ${criteria.join(", ")}: it is expected to flip to passing, not to be excepted`, ctx.clock);
-    decide2(ctx, {
-      id: `dec-${ctx.run.id}-baseline-flip-${req.question_id}`,
-      kind: EXPECTED_TO_FLIP_KIND,
-      summary: `check ${req.check_id} fails on the base revision and is the proof of ${criteria.join(", ")}: expected to flip to passing, so no baseline exception is asked about`,
-      data: { check_id: req.check_id, fingerprint: req.fingerprint, base_revision: req.base_revision, criteria, question_id: req.question_id }
-    });
-    flipped.push(req.check_id);
-  }
-  return flipped;
-}
-function closeMootBaselineQuestions(ctx) {
-  for (const req of openBaselineRequests(ctx)) {
-    withdrawQuestion(ctx.db, req.question_id, `the run succeeded without a baseline exception for check ${req.check_id}: the question is moot`, ctx.clock);
-  }
-}
-var EXPECTED_TO_FLIP_KIND;
-var init_baseline_questions = __esm({
-  "src/controller/steps/baseline-questions.ts"() {
-    "use strict";
-    init_fsx();
-    init_baseline();
-    init_environment_failure();
-    init_baseline_exception();
-    init_store4();
-    init_decisions();
-    init_common();
-    EXPECTED_TO_FLIP_KIND = "baseline.expected-to-flip";
-  }
-});
-
-// src/controller/worktree-cleanup.ts
-import { existsSync as existsSync29, readdirSync as readdirSync9, rmSync as rmSync10 } from "node:fs";
-import { join as join38 } from "node:path";
-async function hasUnsavedEdits(worktree, repoRoot) {
-  const admin = await adminDirFor(repoRoot, worktree);
-  const out = await git2(admin.worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"], { env: { GIT_DIR: admin.gitDir, GIT_WORK_TREE: admin.worktree, GIT_LITERAL_PATHSPECS: "1" } });
-  return out.split("\0").some((e) => e.length > 3 && !/(^|\/)(\.DS_Store|Thumbs\.db)$/.test(e.slice(3)) && !e.slice(3).startsWith("node_modules/"));
-}
-async function releaseRunWorktrees(ctx) {
-  const root = runWorktreeRoot(ctx);
-  if (!existsSync29(root)) return;
-  const repoRoot = ctx.run.repoRoot;
-  const kept = [];
-  const removed = [];
-  const implementer = ctx.run.worktreePath;
-  for (const name of readdirSync9(root)) {
-    const dir = join38(root, name);
-    try {
-      if (implementer && dir === implementer && ctx.run.baseRevision) {
-        if (await hasUnsavedEdits(dir, repoRoot)) {
-          await snapshotCandidate({ db: ctx.db, clock: ctx.clock, repoRoot, worktree: dir, runId: ctx.run.id, baseRev: ctx.run.baseRevision, attempt: Math.max(1, ctx.ledger?.state("implementation_attempts").used ?? 1), workerId: null });
-        }
-      }
-      await cleanupCandidateCheckout(repoRoot, dir);
-      removed.push(name);
-    } catch (err) {
-      kept.push(name);
-      ctx.log.warn("could not remove a finished run's worktree; it is kept", { run_id: ctx.run.id, worktree: name, error: messageOf(err) });
-    }
-  }
-  if (kept.length === 0) rmSync10(root, { recursive: true, force: true });
-  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, WORKTREES_RELEASED_EVENT, ctx.ownerId, { removed, kept }, ctx.clock.now()));
-}
-var WORKTREES_RELEASED_EVENT;
-var init_worktree_cleanup = __esm({
-  "src/controller/worktree-cleanup.ts"() {
-    "use strict";
-    init_candidate();
-    init_git();
-    init_context2();
-    init_workers2();
-    init_events();
-    WORKTREES_RELEASED_EVENT = "worktrees.released";
-  }
-});
-
-// src/review/stale.ts
-function findStaleReviews(db, runId, current) {
-  return listReviews(db, runId).filter((r) => r.treeHash !== current.treeHash);
-}
-function invalidateStaleReviews(db, input, clock) {
-  const reason = `candidate tree is now ${input.current.treeHash}${input.cause ? ` (${input.cause})` : ""}; a review of another tree authorizes nothing`;
-  const stale = findStaleReviews(db, input.runId, input.current);
-  if (stale.length === 0) return [];
-  const ids = stale.map((r) => r.id).sort();
-  recordDecision(
-    db,
-    input.runDir,
-    {
-      id: `dec-review-invalidated-${sha256(canonicalJson([input.runId, input.current.treeHash, ids])).slice(0, 12)}`,
-      runId: input.runId,
-      kind: "review.invalidated",
-      summary: `${stale.length} review(s) invalidated: ${reason}`.slice(0, 500),
-      data: { reviews: stale.map((r) => ({ id: r.id, provider: r.provider, tree_hash: r.treeHash, verdict: r.verdict })), current_tree: input.current.treeHash, cause: input.cause ?? null }
-    },
-    clock
-  );
-  const invalidated = db.tx(() => {
-    const out = [];
-    for (const r of stale) if (markReviewInvalidated(db, r.id, reason, clock)) out.push(r);
-    return out;
-  });
-  return invalidated;
-}
-function reviewGate(db, input) {
-  const reasons = [];
-  const { config } = input.snapshot;
-  const current = listReviews(db, input.runId, { treeHash: input.treeHash });
-  const security = input.security ?? readSecurityPolicy(input.snapshot);
-  const lapsed = /* @__PURE__ */ new Set();
-  const all = listFindings(db, input.runId).map((f) => {
-    if (f.status !== "excepted" || exceptionStillApplies(f, security, input.now)) return f;
-    lapsed.add(f.id);
-    return { ...f, status: "open" };
-  });
-  if (current.length === 0) {
-    const stale = findStaleReviews(db, input.runId, { treeHash: input.treeHash });
-    reasons.push(stale.length > 0 ? `no review of tree ${input.treeHash}; ${stale.length} review(s) exist only for other trees and authorize nothing` : `no review of tree ${input.treeHash}`);
-  }
-  const cleared = [];
-  for (const r of current) {
-    if (r.verdict === "APPROVE") {
-      cleared.push(r);
-      continue;
-    }
-    const own = all.filter((f) => f.reviewId === r.id);
-    const closers = r.verdict === "BLOCK" ? CLEARS_BLOCK : CLEARS_REPAIR;
-    const open2 = own.filter((f) => !closers.includes(f.status));
-    if (own.length === 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} with no findings to resolve`);
-    else if (open2.length > 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} and ${open2.length} of its finding(s) are unresolved (${open2.map((f) => `${f.externalId ?? f.id} ${f.status}`).join(", ")})`);
-    else cleared.push(r);
-  }
-  for (const f of blockingUnresolved(all, input.snapshot, security, lapsed)) {
-    const why = lapsed.has(f.id) ? " (its policy exception has expired or no longer covers it)" : "";
-    reasons.push(`finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}) blocks delivery${why}: ${f.claim.slice(0, 120)}`);
-  }
-  if (config.review.independent_provider_required && cleared.length > 0 && input.implementerProvider === void 0) {
-    reasons.push("independent review is required but the implementer provider was not supplied, so independence cannot be shown");
-  } else if (config.review.independent_provider_required && cleared.length > 0 && !cleared.some((r) => r.provider !== input.implementerProvider)) {
-    reasons.push(`independent review is required but every clearing review is from "${input.implementerProvider}", the implementer's provider`);
-  }
-  if (current.length > 0 && cleared.length === 0 && reasons.length === 0) reasons.push("no review cleared this tree");
-  return { ok: reasons.length === 0, reasons, cleared };
-}
-function exceptionStillApplies(f, security, now) {
-  const index = f.resolutionJson?.exception?.index;
-  const exception = typeof index === "number" ? security.exceptions[index] : void 0;
-  return exception !== void 0 && exceptionApplies(exception, f, now);
-}
-function blockingUnresolved(findings, snapshot2, security, lapsed) {
-  return findings.filter((f) => {
-    if (f.status !== "open" && f.status !== "claim_pending" && f.status !== "accepted") return false;
-    const flag = f.resolutionJson?.blocking;
-    if (typeof flag === "boolean" && !lapsed.has(f.id)) return flag;
-    return severityBlocks(snapshot2, f.severity, isSecurityFinding({ category: f.category, externalId: f.externalId }), security);
-  });
-}
-var CLEARS_REPAIR, CLEARS_BLOCK;
-var init_stale = __esm({
-  "src/review/stale.ts"() {
-    "use strict";
-    init_errors();
-    init_hash();
-    init_decisions();
-    init_store3();
-    init_resolve();
-    CLEARS_REPAIR = ["rejected", "excepted", "advisory", "resolved"];
-    CLEARS_BLOCK = ["rejected", "excepted", "resolved"];
-  }
-});
-
-// src/inquisition/heuristics.ts
-function riskCategoriesInText(text2) {
-  return RISK_CATEGORIES.filter((c) => TEXT[c].test(text2));
-}
-function riskCategoriesInPaths(paths) {
-  const out = /* @__PURE__ */ new Map();
-  for (const p of paths) {
-    for (const c of RISK_CATEGORIES) {
-      if (PATH[c].test(p)) out.set(c, [...out.get(c) ?? [], p]);
-    }
-  }
-  return out;
-}
-function riskCategoriesInDiff(diff) {
-  const out = /* @__PURE__ */ new Map();
-  for (const line3 of diff.split("\n")) {
-    if (!line3.startsWith("+") || line3.startsWith("+++")) continue;
-    const body = line3.slice(1);
-    const words = body.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_+/g, " ");
-    for (const c of riskCategoriesInText(words)) {
-      const hits = out.get(c) ?? [];
-      if (hits.length < 5) hits.push(redact(body.trim()).slice(0, 120));
-      out.set(c, hits);
-    }
-  }
-  return out;
-}
-function mentionsIrreversible(text2) {
-  return /\b(irreversibl\w*|cannot be undone|can't be undone|permanent(?:ly)?|hard[- ]delete\w*|drop table|data loss|destroy\w*|purge\w*)\b/i.test(text2);
-}
-var RISK_CATEGORIES, TEXT, PATH;
-var init_heuristics = __esm({
-  "src/inquisition/heuristics.ts"() {
-    "use strict";
-    init_redact();
-    RISK_CATEGORIES = ["security", "privacy", "billing", "data", "compatibility"];
-    TEXT = {
-      security: /\b(authn|authz|authenticat\w*|authoriz\w*|oauth|jwt|passwords?|passwd|secrets?|credentials?|api[ _-]?keys?|permissions?|acl|rbac|crypto\w*|encrypt\w*|decrypt\w*|cors|csrf|xss|sql injection|sessions?|cookies?|sanitiz\w*|tls|certificates?|access tokens?|bearer|log[- ]?in|log[- ]?out|sign[- ]?in|sign[- ]?out|privileges?|privilege escalation)\b/i,
-      privacy: /\b(pii|personal (?:data|information)|gdpr|ccpa|consent|anonymi[sz]\w*|pseudonymi[sz]\w*|data subjects?|email addresses?|phone numbers?|date of birth|ssn|tracking|telemetry|analytics|geolocation|ip addresses?)\b/i,
-      billing: /\b(billing|invoices?|payments?|charges?|charged|pric(?:e|es|ing)|subscriptions?|refunds?|currency|currencies|taxes|tax rates?|checkout|credit cards?|payouts?|proration|quotas?|metering|overages?|fees?)\b/i,
-      data: /\b(migrations?|schema changes?|alter table|drop column|rename column|drop table|delete from|truncate|backfill\w*|irreversible|data loss|hard[- ]delete\w*|purge\w*|destructive|retention polic\w*|cascade delete)\b/i,
-      compatibility: /\b(breaking changes?|backwards?[- ]compat\w*|public api|deprecat\w*|api versions?|semver|wire format|on-disk format|file format|rename[sd]? exports?)\b/i
-    };
-    PATH = {
-      security: /(^|\/)(auth|authn|authz|security|crypto|permissions?|acl|rbac|secrets?|iam)(\/|\.|-|_|$)/i,
-      privacy: /(^|\/)[^/]*(privacy|gdpr|consent|pii)[^/]*(\/|$)/i,
-      billing: /(^|\/)[^/]*(billing|payments?|invoices?|checkout|subscriptions?|pricing)[^/]*(\/|$)/i,
-      data: /(^|\/)(migrations?|seeds?)(\/|$)|\.sql$|(^|\/)schema\.[a-z]+$/i,
-      compatibility: /\.proto$|(^|\/)(openapi|swagger)[^/]*\.(ya?ml|json)$|(^|\/)api\/v\d+(\/|$)/i
-    };
   }
 });
 
@@ -45838,7 +46323,7 @@ function persistQuestion(db, runId, mode, q, clock, opts = {}) {
     return { question, created: true, classification };
   });
 }
-function answerQuestion(db, runDir2, id, answer, by, clock) {
+function answerQuestion(db, runDir2, id, answer, by, clock, opts = {}) {
   if (!isHumanActor(by)) throw new OrbitError("POLICY_DENIED", `"${by}" cannot answer a question: decisions come from a person, not a model or worker`, { by });
   const text2 = answer.trim();
   if (text2 === "") throw new OrbitError("SCHEMA_INVALID", "an answer cannot be empty");
@@ -45854,7 +46339,7 @@ function answerQuestion(db, runDir2, id, answer, by, clock) {
       runId: question.runId,
       kind: ANSWER_DECISION_KIND,
       summary: `${matched ? `chose "${matched.label}"` : "answered"}: ${question.question}`,
-      data: { question_id: id, answer: stored, chosen_option: matched?.label ?? null, free_text: matched === null, answered_by: by.trim(), material: question.material, affected: question.affected }
+      data: { question_id: id, answer: stored, chosen_option: matched?.label ?? null, free_text: matched === null, answered_by: by.trim(), material: question.material, affected: question.affected, ...opts.provenance ? { provenance: opts.provenance } : {} }
     },
     clock,
     { actor: by.trim() }
@@ -45912,261 +46397,6 @@ var init_questions = __esm({
     ];
     NO_EVIDENCE = /^\s*(none|n\/a|na|nothing|unknown|tbd|todo|-+|\.+)\s*\.?\s*$/i;
     AC_ID = /^AC-[0-9]+$/;
-  }
-});
-
-// src/controller/gates.ts
-import { realpathSync as realpathSync13 } from "node:fs";
-function result(gate, reasons, evidence, notes, details, unverified = false) {
-  const status2 = reasons.length > 0 ? "fail" : unverified ? "unverified" : "pass";
-  return { gate, status: status2, passed: status2 === "pass", reasons, evidence, notes, onFailure: FAILURE_BEHAVIOUR[gate], details };
-}
-function intakeGate(input) {
-  const { snapshot: snapshot2, run } = input;
-  const reasons = [];
-  const evidence = [`policy ${run.policyHash}`];
-  let repo;
-  try {
-    repo = realpathSync13(run.repoRoot);
-  } catch {
-    repo = run.repoRoot;
-    reasons.push(`repository ${run.repoRoot} does not exist`);
-  }
-  if (repo !== snapshot2.repo_root) reasons.push(`the run's repository ${repo} is not the repository the policy authorizes (${snapshot2.repo_root})`);
-  if (run.mode !== snapshot2.config.mode) reasons.push(`the run's mode ${run.mode} differs from the frozen policy mode ${snapshot2.config.mode}`);
-  if (snapshotHash(snapshot2) !== run.policyHash) reasons.push("the policy snapshot does not match the hash recorded for the run");
-  const limits = snapshot2.config.scheduler.hard_limits;
-  for (const [k, v] of Object.entries(limits)) if (!(typeof v === "number" && v > 0)) reasons.push(`hard limit ${k} must be positive`);
-  if (snapshot2.config.scope.allowed_paths.length === 0) reasons.push("the policy allows no paths, so no implementation is authorized");
-  const environment = input.run.environment ?? null;
-  if (environment !== null) {
-    const why = releaseEnvironmentProblem(snapshot2.config, environment);
-    if (why) reasons.push(`the run names release environment ${JSON.stringify(environment)}, which cannot be used: ${why}`);
-    else evidence.push(`release environment ${environment}`);
-  }
-  const problems = input.contract === void 0 ? [] : contractProblems(input.contract, snapshot2, { policyHash: run.policyHash });
-  reasons.push(...problems.map((p) => `contract: ${p}`));
-  if (input.contract !== void 0 && problems.length === 0) {
-    const c = input.contract;
-    evidence.push(`contract ${c.task_id}: ${c.acceptance_criteria.length} criteria, ${c.required_check_ids.length} required checks, scope ${c.allowed_paths.join(", ")}`);
-    const mandatory = c.acceptance_criteria.filter((a) => a.mandatory);
-    if (mandatory.length === 0) reasons.push("the contract has no mandatory acceptance criterion, so success could not be measured");
-    for (const a of mandatory) {
-      if (a.proof.length === 0) reasons.push(`${a.id} names no proof`);
-      const byCheck = (a.check_ids ?? []).length > 0;
-      const byUi = a.ui === true && (snapshot2.config.ui?.journey_check_ids.length ?? 0) > 0;
-      if (!byCheck && !byUi) reasons.push(`${a.id} is not measurable: it cites no trusted check${a.ui ? " and the policy defines no UI journeys" : ""}`);
-    }
-    if (c.allowed_paths.length === 0) reasons.push("the contract allows no paths");
-    if ((c.delivery.environment ?? null) !== environment) {
-      reasons.push(`the contract's delivery.environment (${c.delivery.environment ?? "none"}) is not the release environment the run names (${environment ?? "none"})`);
-    }
-  }
-  return result("intake", reasons, evidence, [], { problems });
-}
-function environmentGate(input) {
-  const reasons = [];
-  const evidence = [];
-  const notes = [];
-  let blockedProvider = null;
-  let code2 = null;
-  const unattended = UNATTENDED_MODES.has(input.mode);
-  if ("error" in input.isolation) {
-    reasons.push(`isolation is unavailable: ${input.isolation.error}`);
-    code2 = "ISOLATION_UNAVAILABLE";
-  } else {
-    const iso2 = input.isolation;
-    evidence.push(`isolation ${iso2.kind}: ${iso2.detail}`);
-    if (iso2.kind === "none") {
-      if (unattended && input.snapshot.config.isolation.allow_unisolated !== true) {
-        reasons.push(`unattended ${input.mode} execution needs isolation; the policy selects none`);
-        code2 = "ISOLATION_UNAVAILABLE";
-      } else {
-        notes.push("no isolation: workers and checks run without an OS sandbox and without network egress controls (isolation.allow_unisolated)");
-      }
-    } else if (!iso2.available) {
-      reasons.push(`${iso2.kind} isolation is unavailable: ${iso2.detail}`);
-      code2 = "ISOLATION_UNAVAILABLE";
-    } else if (iso2.kind === "sandbox-runtime") {
-      notes.push("sandbox-runtime limits filesystem writes and network egress but not CPU, memory or process count");
-    }
-    const unenforced = resourceLimitRefusals(input.snapshot.config.isolation, iso2.kind);
-    if (unenforced.length > 0) {
-      reasons.push(...unenforced.map((u) => `${u}; ${RESOURCE_LIMIT_FIX}`));
-      code2 ??= "ISOLATION_UNAVAILABLE";
-    }
-  }
-  for (const c of input.credentials) {
-    evidence.push(`credentials ${c.provider}: ${c.verdict}${c.status ? ` (${c.status.state}${c.status.method ? `, ${c.status.method}` : ""})` : ""}`);
-    if (c.verdict === "blocked") {
-      reasons.push(`${c.provider} credentials are ${c.status?.state ?? "not usable"}${c.status?.detail ? `: ${c.status.detail}` : ""}`);
-      blockedProvider ??= c.provider;
-      code2 ??= c.status?.state === "missing" ? "AUTH_MISSING" : "AUTH_EXPIRED";
-    } else if (c.verdict === "error") {
-      reasons.push(`${c.provider} could not be checked: ${c.error ?? "unknown error"}`);
-      code2 ??= "PROVIDER_UNAVAILABLE";
-    } else if (c.verdict === "unverified") {
-      notes.push(`${c.provider} credentials are present but unverified until a request succeeds`);
-    }
-  }
-  if (input.delivery) {
-    reasons.push(`delivery: ${input.delivery.summary}; ${input.delivery.fix}`);
-    code2 ??= input.delivery.code;
-  }
-  if (input.reviewer) {
-    if (input.reviewer.decision === "BLOCK") {
-      reasons.push(`independent review: ${input.reviewer.reason}`);
-      code2 ??= input.reviewer.code;
-    } else {
-      evidence.push(`reviewer ${input.reviewer.provider}/${input.reviewer.model ?? "default"} (${input.reviewer.independent ? "independent" : "same provider"})`);
-    }
-  }
-  return result("environment", reasons, evidence, notes, { blockedProvider, code: code2 });
-}
-function baselineGate(report2) {
-  const reasons = [];
-  const notes = [];
-  const evidence = [`baseline of ${report2.baseRevision} (tree ${report2.baseTree}): ${report2.checks.length} check(s)`];
-  if (!report2.install.skipped && !report2.install.ok) reasons.push(`the locked dependency install failed on the base revision${report2.install.reason ? `: ${report2.install.reason}` : ""}`);
-  for (const f of report2.failures) notes.push(`pre-existing failure on the base revision: ${f.checkId}${f.fingerprint ? ` (${f.fingerprint})` : ""}`);
-  for (const n2 of report2.auditNotes ?? []) notes.push(n2);
-  if (!report2.complete) notes.push("the baseline is incomplete: some checks could not produce a decisive result on the base revision");
-  return result("baseline", reasons, evidence, notes, { failures: report2.failures }, !report2.complete && reasons.length === 0);
-}
-function implementationScopeGate(scope, snapshot2) {
-  const reasons = [];
-  const repairable = [];
-  const deps = snapshot2.config.dependencies;
-  if (scope.forbidden_paths_changed.length > 0) reasons.push(`protected paths changed: ${scope.forbidden_paths_changed.join(", ")}`);
-  if (scope.symlinks_escaping.length > 0) reasons.push(`symlinks escape the worktree: ${scope.symlinks_escaping.join(", ")}`);
-  const policyViolation = reasons.length > 0;
-  const add = (why) => {
-    reasons.push(why);
-    repairable.push(why);
-  };
-  if (scope.out_of_scope_paths_changed.length > 0) add(`paths outside the authorized scope changed: ${scope.out_of_scope_paths_changed.join(", ")}`);
-  if (!scope.within_size_limits) add(`the change is over the size limits (${scope.changed_files} files, ${scope.changed_lines} lines)`);
-  if (scope.lockfile_changed && !deps.change_lockfile) add("a lockfile changed, which the policy does not allow");
-  if (scope.dependency_manifest_changed.length > 0 && !deps.add_packages) add(`dependency manifests changed: ${scope.dependency_manifest_changed.join(", ")}`);
-  const evidence = [`${scope.changed_files} file(s), ${scope.changed_lines} line(s) changed`];
-  const notes = scope.weakening_signals.map((w) => `possible oracle weakening in ${w.path}: ${w.signal} (${w.detail})`);
-  return result("implementation", reasons, evidence, notes, { policyViolation, repairable });
-}
-function staticSecurityGate(input) {
-  const reasons = [];
-  const notes = [];
-  const evidence = [`secret scan: ${input.scan.note}; ${input.scan.files} file(s) scanned (${input.scan.reportPath})`];
-  if (!input.scan.completed) notes.push("the secret scan did not complete");
-  if (input.scan.findings.length > 0) {
-    reasons.push(`the secret scan found ${input.scan.findings.length} potential secret(s): ${input.scan.findings.slice(0, 10).map((f) => `${f.file}${f.line ? `:${f.line}` : ""} (${f.rule})`).join(", ")}`);
-  }
-  if (input.scan.scanner === "builtin") notes.push(`secret scan used built-in patterns only: ${input.scan.note}`);
-  if (input.sast.length === 0) {
-    notes.push("static analysis (SAST) is unverified: the policy defines no SAST check");
-  } else {
-    for (const s of input.sast) {
-      evidence.push(`SAST ${s.checkId}: ${s.status ?? "not run"}`);
-      if (s.status === "FAILED") reasons.push(`SAST check ${s.checkId} failed`);
-      else if (s.status !== "PASSED") notes.push(`SAST check ${s.checkId} is unverified (${s.status ?? "not run"})`);
-    }
-  }
-  const unverified = input.sast.length === 0 || !input.scan.completed || input.sast.some((s) => s.status !== "PASSED");
-  return result("static_security", reasons, evidence, notes, { secrets: input.scan.findings.length, sastDefined: input.sast.length > 0 }, unverified);
-}
-function behaviourGate(evaluation) {
-  const r = evaluation.report;
-  const evidence = r.checks.map((c) => `${c.id}: ${c.status}${c.flaky ? " (flaky)" : ""} (${c.log})`);
-  evidence.push(...r.acceptance_evidence.map((a) => `${a.criterion_id}: ${a.status}`));
-  if (r.verdict === "FAIL") return result("behaviour", evaluation.failReasons.length > 0 ? evaluation.failReasons : ["the evidence verdict is FAIL"], evidence, r.unverified, { verdict: r.verdict });
-  return result("behaviour", [], evidence, [...evaluation.incompleteReasons, ...r.unverified], { verdict: r.verdict }, r.verdict !== "PASS");
-}
-function uiGate(input) {
-  if (!input.required) return result("ui", [], ["no UI path changed and no criterion needs UI evidence"], [], { verdict: null });
-  if (!input.configured) return result("ui", ["UI evidence is required but the policy configures no UI journeys"], [], [], { verdict: null });
-  const r = input.result;
-  if (!r) return result("ui", [], [], ["UI checks did not run"], { verdict: null }, true);
-  const evidence = r.journeys.map((j) => `${j.id}: ${j.status}`);
-  if (r.verdict === "PASS") return result("ui", [], evidence, r.unverified, { verdict: r.verdict });
-  if (r.verdict === "FAIL" || r.verdict === "BLOCKED") return result("ui", r.reasons.length > 0 ? r.reasons : [`UI verdict ${r.verdict}`], evidence, r.unverified, { verdict: r.verdict });
-  return result("ui", [], evidence, [...r.reasons, ...r.unverified], { verdict: r.verdict }, true);
-}
-function independentReviewGate(db, input) {
-  const g = reviewGate(db, { runId: input.runId, treeHash: input.treeHash, snapshot: input.snapshot, implementerProvider: input.implementerProvider, now: input.now });
-  const approved = g.cleared.some((r) => r.verdict === "APPROVE");
-  const evidence = g.cleared.map((r) => `review ${r.id} by ${r.provider}: ${r.verdict} on tree ${r.treeHash}`);
-  return result("independent_review", g.reasons, evidence, [], { gate: g, approved });
-}
-function deliveryGate(input) {
-  try {
-    assertDeliverable({
-      report: input.evidence.report,
-      review: input.review,
-      deliveryCommitTree: input.deliveryCommitTree,
-      invalidatedReason: input.evidence.invalidatedReason,
-      current: { candidate: input.candidate, snapshot: input.snapshot }
-    });
-    return result("delivery", [], [`evidence ${input.evidence.id} and review on tree ${input.candidate.treeHash}; delivery tree ${input.deliveryCommitTree}`], [], { code: null });
-  } catch (err) {
-    if (!isOrbitError(err)) throw err;
-    return result("delivery", [err.message], [], [], { code: err.code });
-  }
-}
-function blockingQuestions(db, runId) {
-  const waiting = openQuestions(db, runId).filter((q) => q.material);
-  const criteria = criteriaBlockedByQuestions(waiting);
-  return { criteria, questions: waiting.filter((q) => q.affected.some((a) => criteria.includes(a))) };
-}
-function completionGate(db, input) {
-  const reasons = [];
-  const evidence = [];
-  const c = input.candidate;
-  if (!c) return result("completion", ["there is no candidate"], [], [], { evidenceId: null, reviewId: null, blockedCriteria: [] });
-  const report2 = currentEvidenceReport(db, input.run.id, c.id);
-  if (!report2) reasons.push(`no live evidence report for candidate ${c.id}`);
-  else {
-    evidence.push(`evidence ${report2.id}: ${report2.verdict} on tree ${report2.treeHash}`);
-    if (report2.verdict !== "PASS") reasons.push(`the evidence verdict is ${report2.verdict}, not PASS`);
-    const stale = staleReasons(report2.report, { candidate: c, snapshot: input.snapshot });
-    if (stale.length > 0) reasons.push(`the evidence is stale: ${stale.join("; ")}`);
-  }
-  const g = reviewGate(db, { runId: input.run.id, treeHash: c.treeHash, snapshot: input.snapshot, implementerProvider: input.implementerProvider, now: input.now });
-  const approve = listReviews(db, input.run.id, { treeHash: c.treeHash }).find((r) => r.verdict === "APPROVE" && r.invalidatedAt === null) ?? null;
-  if (!approve) reasons.push(`no APPROVE review of tree ${c.treeHash}`);
-  else evidence.push(`review ${approve.id} by ${approve.provider}: APPROVE on tree ${approve.treeHash}`);
-  if (!g.ok) reasons.push(...g.reasons);
-  const { criteria: blocked, questions: waiting } = blockingQuestions(db, input.run.id);
-  if (blocked.length > 0) reasons.push(`${blocked.join(", ")} ${blocked.length === 1 ? "is" : "are"} blocked by open question(s) ${waiting.map((q) => q.id).join(", ")} waiting for a person`);
-  if (input.deliveredTree === null) reasons.push("no delivered commit to compare with the reviewed tree");
-  else if (input.deliveredTree !== c.treeHash) reasons.push(`the delivered tree ${input.deliveredTree} is not the reviewed tree ${c.treeHash}`);
-  else evidence.push(`delivered tree ${input.deliveredTree}`);
-  return result("completion", reasons, evidence, [], { evidenceId: report2?.id ?? null, reviewId: approve?.id ?? null, blockedCriteria: blocked });
-}
-var FAILURE_BEHAVIOUR;
-var init_gates = __esm({
-  "src/controller/gates.ts"() {
-    "use strict";
-    init_stale();
-    init_store3();
-    init_validate();
-    init_config();
-    init_limits();
-    init_snapshot();
-    init_freshness();
-    init_store();
-    init_errors();
-    init_questions();
-    FAILURE_BEHAVIOUR = {
-      intake: "reject-contract",
-      environment: "block-unattended",
-      baseline: "record-baseline",
-      implementation: "deny-and-record",
-      static_security: "repair-or-block",
-      behaviour: "repair-brief",
-      ui: "repair-or-block",
-      independent_review: "resolve-findings",
-      delivery: "refuse-delivery",
-      completion: "no-success"
-    };
   }
 });
 
@@ -46814,8 +47044,8 @@ var init_triggers = __esm({
 });
 
 // src/inquisition/engine.ts
-import { mkdirSync as mkdirSync16 } from "node:fs";
-import { join as join39 } from "node:path";
+import { mkdirSync as mkdirSync14 } from "node:fs";
+import { join as join35 } from "node:path";
 function ledgerDraft(runId, claim, source, experiment, status2 = "unverified", reversibility2 = "costly-to-reverse") {
   return { runId, claim, source, confidence: "low", consequence: "the work ships on an unchecked belief", reversibility: reversibility2, experiment, status: status2 };
 }
@@ -46928,12 +47158,12 @@ async function runWorker(adapter, ctx, opts, trigger, prompt, attempt, signal) {
   const { db, clock } = ctx;
   signal?.throwIfAborted();
   const workerId = opts.workerIdFor?.(attempt) ?? newId("wrk");
-  const workerDir = join39(opts.workerDir, workerId);
+  const workerDir = join35(opts.workerDir, workerId);
   db.tx(() => {
     opts.fence?.();
     planWorker(db, { id: workerId, runId: ctx.runId, role: "inquisitor", purpose: workerPurpose(trigger), provider: opts.route.provider, model: opts.route.model, effort: opts.route.effort, workerDir, cwd: opts.cwd, attempt }, clock);
   });
-  mkdirSync16(workerDir, { recursive: true });
+  mkdirSync14(workerDir, { recursive: true });
   const spec = {
     runId: ctx.runId,
     workerId,
@@ -47090,27 +47320,27 @@ function sameClaim(a, b) {
 function approvalQuestionId(amendmentId) {
   return `q-amd-${amendmentId}`;
 }
-function approvalQuestion(ctx, mode, rec, reasons) {
-  const existing = findQuestion(ctx.db, approvalQuestionId(rec.id));
+function approvalQuestion(ctx, mode, rec2, reasons) {
+  const existing = findQuestion(ctx.db, approvalQuestionId(rec2.id));
   if (existing) return existing;
-  const ids = acIds(rec.record.affected_verification, ctx.contract);
+  const ids = acIds(rec2.record.affected_verification, ctx.contract);
   return insertQuestion(
     ctx.db,
     {
-      id: approvalQuestionId(rec.id),
+      id: approvalQuestionId(rec2.id),
       runId: ctx.runId,
       mode,
-      question: `Should the contract change "${rec.record.field}" be approved?`,
-      evidence: [`${rec.record.evidence}`, `It needs a human decision because it ${reasons.join("; ")}.`],
+      question: `Should the contract change "${rec2.record.field}" be approved?`,
+      evidence: [`${rec2.record.evidence}`, `It needs a human decision because it ${reasons.join("; ")}.`],
       options: [
-        { label: APPROVE, description: `Apply the change to ${rec.record.field}.`, consequences: "The contract changes; evidence for the affected criteria is invalidated and must be rerun." },
+        { label: APPROVE, description: `Apply the change to ${rec2.record.field}.`, consequences: "The contract changes; evidence for the affected criteria is invalidated and must be rerun." },
         { label: REJECT, description: "Keep the contract as it is.", consequences: "The affected work proceeds under the current contract; the proposal is dropped." }
       ],
       changes: ["authority"],
       recommendation: { option: REJECT, reason: "a model proposed this change and nothing outside its own reasoning supports it yet" },
       safeDefault: { exists: true, option: REJECT, reason: "rejecting leaves the contract exactly as the person approved it" },
       material: true,
-      affected: ids.length > 0 ? ids : [`contract amendment ${rec.id}`],
+      affected: ids.length > 0 ? ids : [`contract amendment ${rec2.id}`],
       unblocked: []
     },
     ctx.clock,
@@ -47150,9 +47380,9 @@ function processAmendments(ctx, mode, proposals) {
       assessed.approvalReasons.push(`sets an assumption to ${p.change.status}; an assumption is settled by evidence or a person's decision, and a proposal is not evidence`);
     }
     if (assessed.approvalReasons.length > 0) {
-      const rec = insertAmendment(ctx.db, { runId: ctx.runId, record: assessed.record, change: p.change, status: "pending-approval", note: assessed.approvalReasons.join("; ") }, ctx.clock, "inquisition");
-      outcomes.pending.push(rec);
-      questions.push(approvalQuestion(ctx, mode, rec, assessed.approvalReasons));
+      const rec2 = insertAmendment(ctx.db, { runId: ctx.runId, record: assessed.record, change: p.change, status: "pending-approval", note: assessed.approvalReasons.join("; ") }, ctx.clock, "inquisition");
+      outcomes.pending.push(rec2);
+      questions.push(approvalQuestion(ctx, mode, rec2, assessed.approvalReasons));
       continue;
     }
     try {
@@ -47169,14 +47399,14 @@ function processAmendments(ctx, mode, proposals) {
   }
   return { contract, outcomes, questions, refused };
 }
-function replayOf(rec) {
-  const change = rec.change;
-  const proposal = { change, evidence: rec.record.evidence, reason: rec.record.reason };
+function replayOf(rec2) {
+  const change = rec2.change;
+  const proposal = { change, evidence: rec2.record.evidence, reason: rec2.record.reason };
   return change.op === "accept_baseline_failure" ? { proposal, baselineFailures: [{ checkId: change.check_id, fingerprint: change.fingerprint }] } : { proposal };
 }
 function applyApprovedAmendment(ctx, amendmentId, decisionId2) {
-  const rec = getAmendment(ctx.db, amendmentId);
-  if (rec.runId !== ctx.runId) throw new OrbitError("POLICY_DENIED", `amendment ${amendmentId} belongs to another run`);
+  const rec2 = getAmendment(ctx.db, amendmentId);
+  if (rec2.runId !== ctx.runId) throw new OrbitError("POLICY_DENIED", `amendment ${amendmentId} belongs to another run`);
   const d = getDecision(ctx.db, decisionId2);
   const data = d?.data ?? {};
   if (!d || d.runId !== ctx.runId || d.kind !== ANSWER_DECISION_KIND || data.question_id !== approvalQuestionId(amendmentId) || typeof data.answered_by !== "string" || !isHumanActor(data.answered_by)) {
@@ -47185,10 +47415,10 @@ function applyApprovedAmendment(ctx, amendmentId, decisionId2) {
   const contract = syncContract(ctx, ctx.contract);
   if (data.chosen_option === REJECT) return { contract, amendment: resolveAmendment(ctx.db, amendmentId, "rejected", decisionId2, ctx.clock) };
   if (data.chosen_option !== APPROVE) throw new OrbitError("POLICY_DENIED", `decision ${decisionId2} neither approves nor rejects amendment ${amendmentId}`);
-  if (rec.status === "applied" && rec.approvedBy === decisionId2) return { contract, amendment: rec };
-  if (rec.status !== "pending-approval") throw new OrbitError("TRANSITION_INVALID", `amendment ${amendmentId} is ${rec.status}, not pending approval`);
-  if (!rec.change) throw new OrbitError("INTERNAL", `amendment ${amendmentId} has no stored change to apply`);
-  const replay = replayOf(rec);
+  if (rec2.status === "applied" && rec2.approvedBy === decisionId2) return { contract, amendment: rec2 };
+  if (rec2.status !== "pending-approval") throw new OrbitError("TRANSITION_INVALID", `amendment ${amendmentId} is ${rec2.status}, not pending approval`);
+  if (!rec2.change) throw new OrbitError("INTERNAL", `amendment ${amendmentId} has no stored change to apply`);
+  const replay = replayOf(rec2);
   const res = applyAmendment(contract, replay.proposal, { snapshot: ctx.snapshot, approvedBy: decisionId2, history: amendmentHistory(ctx.db, ctx.runId), ...replay.baselineFailures ? { baselineFailures: replay.baselineFailures } : {} });
   return { contract: res.contract, amendment: resolveAmendment(ctx.db, amendmentId, "applied", decisionId2, ctx.clock, "controller", { before: hashObject(contract), after: hashObject(res.contract) }) };
 }
@@ -47198,7 +47428,7 @@ function appliedInOrder(db, runId) {
     const amendmentId = JSON.parse(e.data_json ?? "{}").amendment_id;
     if (amendmentId) appliedAt.set(amendmentId, e.id);
   }
-  return listAmendments(db, runId, { status: "applied" }).map((rec, i) => ({ rec, at: appliedAt.get(rec.id) ?? Number.MAX_SAFE_INTEGER, i })).sort((a, b) => a.at - b.at || a.i - b.i).map((x) => x.rec);
+  return listAmendments(db, runId, { status: "applied" }).map((rec2, i) => ({ rec: rec2, at: appliedAt.get(rec2.id) ?? Number.MAX_SAFE_INTEGER, i })).sort((a, b) => a.at - b.at || a.i - b.i).map((x) => x.rec);
 }
 function syncContract(ctx, contract) {
   const applied = appliedInOrder(ctx.db, ctx.runId);
@@ -47215,10 +47445,10 @@ function syncContract(ctx, contract) {
   if (from < 0 || from >= applied.length) return contract;
   const history = applied.slice(0, from).map((a) => a.record);
   let current = contract;
-  for (const rec of applied.slice(from)) {
-    if (!rec.change) continue;
-    const replay = replayOf(rec);
-    const res = applyAmendment(current, replay.proposal, { snapshot: ctx.snapshot, approvedBy: rec.approvedBy, history, ...replay.baselineFailures ? { baselineFailures: replay.baselineFailures } : {} });
+  for (const rec2 of applied.slice(from)) {
+    if (!rec2.change) continue;
+    const replay = replayOf(rec2);
+    const res = applyAmendment(current, replay.proposal, { snapshot: ctx.snapshot, approvedBy: rec2.approvedBy, history, ...replay.baselineFailures ? { baselineFailures: replay.baselineFailures } : {} });
     current = res.contract;
     history.push(res.record);
   }
@@ -47260,9 +47490,9 @@ function commitPlan(ctx, input) {
       ledger.push(dup);
     } else {
       const evidence = derived ? [...e.evidence ?? [], { kind: "inspection", ref: marker, note: `raised by ${input.trigger.kind}`, at: clock.now() }] : e.evidence;
-      const rec = insertLedgerEntry(db, { ...e, ...evidence === void 0 ? {} : { evidence } }, clock, "inquisition");
-      existing.push(rec);
-      ledger.push(rec);
+      const rec2 = insertLedgerEntry(db, { ...e, ...evidence === void 0 ? {} : { evidence } }, clock, "inquisition");
+      existing.push(rec2);
+      ledger.push(rec2);
     }
   }
   const am = processAmendments(ctx, input.trigger.mode, input.proposals);
@@ -47492,7 +47722,7 @@ var init_engine = __esm({
 });
 
 // src/inquisition/amendment-answers.ts
-import { join as join40 } from "node:path";
+import { join as join36 } from "node:path";
 function amendmentIdOfQuestion(questionId) {
   return questionId.startsWith(AMENDMENT_QUESTION_PREFIX) ? questionId.slice(AMENDMENT_QUESTION_PREFIX.length) : null;
 }
@@ -47506,11 +47736,11 @@ function applyAmendmentAnswers(ctx, opts = {}) {
   const outcomes = [];
   let changed = false;
   if (opts.questionId !== void 0 && only === null) return { contract: parsed2(load()), outcomes, changed };
-  for (const rec of listAmendments(ctx.db, ctx.runId, { status: "pending-approval" })) {
-    if (only !== null && rec.id !== only) continue;
-    const questionId = `${AMENDMENT_QUESTION_PREFIX}${rec.id}`;
+  for (const rec2 of listAmendments(ctx.db, ctx.runId, { status: "pending-approval" })) {
+    if (only !== null && rec2.id !== only) continue;
+    const questionId = `${AMENDMENT_QUESTION_PREFIX}${rec2.id}`;
     const outcome = (status2, detail = null) => {
-      outcomes.push({ amendmentId: rec.id, questionId, status: status2, detail });
+      outcomes.push({ amendmentId: rec2.id, questionId, status: status2, detail });
     };
     const q = findQuestion(ctx.db, questionId);
     if (!q || q.status !== "answered") {
@@ -47526,7 +47756,7 @@ function applyAmendmentAnswers(ctx, opts = {}) {
     }
     if (data.chosen_option !== "Approve") {
       ctx.db.tx(() => {
-        resolveAmendment(ctx.db, rec.id, "rejected", decisionId2, ctx.clock);
+        resolveAmendment(ctx.db, rec2.id, "rejected", decisionId2, ctx.clock);
       });
       outcome("rejected", data.chosen_option === "Reject" ? null : 'the answer does not choose "Approve", so the contract is unchanged');
       continue;
@@ -47550,13 +47780,13 @@ function applyAmendmentAnswers(ctx, opts = {}) {
       const current = JSON.parse(row.contract_json);
       try {
         const wrote = ctx.db.tx(() => {
-          const res = applyApprovedAmendment({ db: ctx.db, clock: ctx.clock, runId: ctx.runId, snapshot: snapshot2, contract: current }, rec.id, decisionId2);
+          const res = applyApprovedAmendment({ db: ctx.db, clock: ctx.clock, runId: ctx.runId, snapshot: snapshot2, contract: current }, rec2.id, decisionId2);
           const json3 = JSON.stringify(res.contract);
           if (json3 === row.contract_json) return true;
           const upd = ctx.db.run("UPDATE runs SET contract_json = ?, contract_hash = ? WHERE id = ? AND contract_json = ?", json3, hashObject(res.contract), ctx.runId, row.contract_json);
-          if (upd.changes !== 1) throw new OrbitError("CONCURRENT_UPDATE", `the contract of run ${ctx.runId} changed while amendment ${rec.id} was applied`);
-          invalidateEvidence(ctx.db, ctx.runId, `the contract changed: amendment ${rec.id} (${res.amendment.record.field}) was approved in ${decisionId2}`, ctx.clock);
-          appendEvent(ctx.db, ctx.runId, "contract.amended", "controller", { field: res.amendment.record.field, amendment_id: rec.id, approved_by: decisionId2 }, ctx.clock.now());
+          if (upd.changes !== 1) throw new OrbitError("CONCURRENT_UPDATE", `the contract of run ${ctx.runId} changed while amendment ${rec2.id} was applied`);
+          invalidateEvidence(ctx.db, ctx.runId, `the contract changed: amendment ${rec2.id} (${res.amendment.record.field}) was approved in ${decisionId2}`, ctx.clock);
+          appendEvent(ctx.db, ctx.runId, "contract.amended", "controller", { field: res.amendment.record.field, amendment_id: rec2.id, approved_by: decisionId2 }, ctx.clock.now());
           changed = true;
           return true;
         });
@@ -47568,20 +47798,20 @@ function applyAmendmentAnswers(ctx, opts = {}) {
         if (isOrbitError(err, "CONCURRENT_UPDATE")) continue;
         if (!isOrbitError(err)) throw err;
         const why = redact(err.message).slice(0, 500);
-        if (getAmendment(ctx.db, rec.id).status === "pending-approval") {
+        if (getAmendment(ctx.db, rec2.id).status === "pending-approval") {
           ctx.db.tx(() => {
-            resolveAmendment(ctx.db, rec.id, "rejected", decisionId2, ctx.clock);
-            appendEvent(ctx.db, ctx.runId, "amendment.apply-refused", "controller", { amendment_id: rec.id, approved_by: decisionId2, error: why }, ctx.clock.now());
+            resolveAmendment(ctx.db, rec2.id, "rejected", decisionId2, ctx.clock);
+            appendEvent(ctx.db, ctx.runId, "amendment.apply-refused", "controller", { amendment_id: rec2.id, approved_by: decisionId2, error: why }, ctx.clock.now());
           });
         }
         outcome("refused", why);
         done = true;
       }
     }
-    if (!done) throw new OrbitError("CONCURRENT_UPDATE", `the contract of run ${ctx.runId} kept changing while amendment ${rec.id} was applied`, { amendmentId: rec.id });
+    if (!done) throw new OrbitError("CONCURRENT_UPDATE", `the contract of run ${ctx.runId} kept changing while amendment ${rec2.id} was applied`, { amendmentId: rec2.id });
   }
   const contract = parsed2(load());
-  if (contract && changed) atomicWriteJson(join40(ctx.runDir, "contract.json"), contract);
+  if (contract && changed) atomicWriteJson(join36(ctx.runDir, "contract.json"), contract);
   return { contract, outcomes, changed };
 }
 function parsed2(row) {
@@ -47604,6 +47834,1844 @@ var init_amendment_answers = __esm({
     init_store4();
     AMENDMENT_QUESTION_PREFIX = "q-amd-";
     MAX_CAS_ATTEMPTS2 = 4;
+  }
+});
+
+// src/notify/remote-answers.ts
+import { join as join37 } from "node:path";
+function parseAnswerCommands(body) {
+  if (body.includes(COMMENT_MARKER)) return [];
+  const out = [];
+  for (const line3 of body.split(/\r?\n/)) {
+    const m = COMMAND.exec(line3);
+    if (m) out.push({ questionId: m[1], choice: m[2] });
+  }
+  return out;
+}
+function commentTargets(runDir2, config) {
+  const out = [];
+  const delivery = readJsonIfExists(join37(runDir2, "delivery.json"));
+  const pr = delivery?.pr?.number;
+  if (typeof pr === "number" && Number.isInteger(pr) && pr > 0) out.push({ number: pr, kind: "pull request" });
+  const issue = notificationsPolicy(config).remote_answers.issue;
+  if (issue !== null && !out.some((t) => t.number === issue)) out.push({ number: issue, kind: "issue" });
+  return out;
+}
+function answerThreads(runDir2, config) {
+  return notificationsPolicy(config).remote_answers.enabled ? commentTargets(runDir2, config) : [];
+}
+function allowsFreeText(q) {
+  return amendmentIdOfQuestion(q.id) === null && !q.id.startsWith("q-baseline-");
+}
+function norm2(s) {
+  return s.trim().replace(/\s+/g, " ").toLowerCase();
+}
+function validChoice(q, choice) {
+  if (choice.length > MAX_CHOICE_CHARS) return false;
+  if (q.options.some((o) => norm2(o.label) === norm2(choice) || norm2(o.description) === norm2(choice))) return true;
+  return allowsFreeText(q);
+}
+function processedComments(db, runId) {
+  const rows = db.all("SELECT data_json FROM events WHERE run_id = ? AND type IN ('remote.answer.accepted', 'remote.answer.refused')", runId);
+  const out = /* @__PURE__ */ new Set();
+  for (const r of rows) {
+    try {
+      const id = JSON.parse(r.data_json ?? "{}").comment_id;
+      if (typeof id === "number") out.add(id);
+    } catch {
+    }
+  }
+  return out;
+}
+function errorText2(err) {
+  return redact(isOrbitError(err) ? `${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err)).slice(0, 300);
+}
+async function pollRemoteAnswers(input) {
+  const { db, clock, run, runDir: runDir2, config, client, actor } = input;
+  const report2 = { accepted: [], refused: [], errors: [] };
+  const threads = answerThreads(runDir2, config);
+  if (threads.length === 0) return report2;
+  const note3 = (type, data) => db.tx(() => appendEvent(db, run.id, type, actor, data, clock.now()));
+  const done = processedComments(db, run.id);
+  const since = new Date(run.createdAt).toISOString();
+  for (const thread of threads) {
+    const where2 = `${thread.kind} #${thread.number}`;
+    let comments;
+    try {
+      comments = await client.listComments(thread.number, since);
+    } catch (err) {
+      report2.errors.push(`${where2}: ${errorText2(err)}`);
+      note3("remote.poll-failed", { thread: where2, error: errorText2(err) });
+      continue;
+    }
+    for (const c of comments) {
+      if (done.has(c.id)) continue;
+      const commands = parseAnswerCommands(c.body);
+      if (commands.length === 0) continue;
+      const handled = await handleComment({ ...input, thread, where: where2, comment: c, commands, report: report2, note: note3 });
+      if (handled) done.add(c.id);
+    }
+  }
+  return report2;
+}
+async function handleComment(ci) {
+  const { db, run, comment: c, commands, report: report2, note: note3, where: where2 } = ci;
+  const base = { comment_id: c.id, comment_url: c.url, author: c.author, thread: where2 };
+  const refuse = (questionId, reason, permission2) => {
+    report2.refused.push({ commentId: c.id, thread: where2, questionId, author: c.author, reason, ...permission2 !== void 0 ? { permission: permission2 } : {} });
+    note3("remote.answer.refused", { ...base, question_id: questionId, reason, ...permission2 !== void 0 ? { permission: permission2 } : {} });
+  };
+  const own = new Map(listQuestions(db, run.id).map((q) => [q.id.toLowerCase(), q]));
+  const mine = commands.filter((cmd) => own.has(cmd.questionId.toLowerCase()) || ci.thread.kind === "pull request" || foreignOwner(db, cmd.questionId, run.id) === null);
+  if (mine.length === 0) return false;
+  if (c.author === "" || /\[bot\]$/i.test(c.author)) {
+    for (const cmd of mine) refuse(cmd.questionId, "bot");
+    return true;
+  }
+  let permission;
+  try {
+    permission = (await ci.client.permission(c.author)).toLowerCase();
+  } catch (err) {
+    report2.errors.push(`${where2}: permission of ${c.author}: ${errorText2(err)}`);
+    note3("remote.poll-failed", { thread: where2, comment_id: c.id, error: errorText2(err) });
+    return false;
+  }
+  for (const cmd of mine) {
+    if (!ANSWERING_ROLES.has(permission)) {
+      refuse(cmd.questionId, "permission", permission);
+      continue;
+    }
+    const q = own.get(cmd.questionId.toLowerCase());
+    if (!q) {
+      refuse(cmd.questionId, "unknown-question", permission);
+      continue;
+    }
+    const current = findQuestion(db, q.id);
+    if (!current || current.status !== "open") {
+      refuse(q.id, "question-not-open", permission);
+      continue;
+    }
+    if (!validChoice(current, cmd.choice)) {
+      refuse(q.id, "invalid-choice", permission);
+      continue;
+    }
+    try {
+      accept(ci, current, cmd.choice, permission);
+      report2.accepted.push({ commentId: c.id, thread: where2, questionId: q.id, author: c.author, permission });
+      note3("remote.answer.accepted", { ...base, question_id: q.id, permission });
+    } catch (err) {
+      report2.errors.push(`${where2}: answer to ${q.id}: ${errorText2(err)}`);
+      refuse(q.id, "rejected", permission);
+    }
+  }
+  return true;
+}
+function foreignOwner(db, questionId, runId) {
+  const row = db.get("SELECT run_id FROM questions WHERE lower(id) = lower(?) LIMIT 1", questionId);
+  return row && row.run_id !== runId ? row.run_id : null;
+}
+function accept(ci, q, choice, permission) {
+  const { db, clock, run, runDir: runDir2, comment: c, where: where2 } = ci;
+  answerQuestion(db, runDir2, q.id, choice, `github:${c.author}`, clock, {
+    provenance: { source: "github-comment", comment_url: c.url, comment_id: c.id, author: c.author, permission, thread: where2 }
+  });
+  if (amendmentIdOfQuestion(q.id) === null) return;
+  try {
+    applyAmendmentAnswers({ db, clock, runId: run.id, runDir: runDir2 }, { questionId: q.id });
+  } catch (err) {
+    ci.note("amendment.apply-failed", { question_id: q.id, error: errorText2(err) });
+  }
+}
+var COMMAND, MAX_CHOICE_CHARS;
+var init_remote_answers = __esm({
+  "src/notify/remote-answers.ts"() {
+    "use strict";
+    init_fsx();
+    init_errors();
+    init_redact();
+    init_amendment_answers();
+    init_questions();
+    init_store4();
+    init_config();
+    init_events();
+    init_payload();
+    init_threads();
+    COMMAND = /^\s*\/orbit\s+answer\s+([A-Za-z0-9][A-Za-z0-9_-]{0,127})\s+(\S.*?)\s*$/;
+    MAX_CHOICE_CHARS = 2e3;
+  }
+});
+
+// src/notify/notify.ts
+import { join as join38 } from "node:path";
+function resolveNotifyDeps(d) {
+  const env = d.notify?.env ?? { ...process.env, ...d.hostEnv ?? {} };
+  return { ...defaultNotifyDeps(env), ...d.notify ?? {}, env };
+}
+function dispatched(db, runId) {
+  return db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ?", runId, DISPATCHED).flatMap((r) => {
+    try {
+      const d = JSON.parse(r.data_json ?? "{}");
+      return typeof d.key === "string" ? [{ key: d.key, questions: Array.isArray(d.questions) ? d.questions.filter((q) => typeof q === "string") : [] }] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+function pullRequestOf(runDir2) {
+  const pr = readJsonIfExists(join38(runDir2, "delivery.json"))?.pr?.number;
+  return typeof pr === "number" && Number.isInteger(pr) && pr > 0 ? pr : null;
+}
+function where(t) {
+  return `${t.kind} #${t.number}`;
+}
+async function sendAll(p, n2, config, target, repoRoot, deps) {
+  const off = (channel) => ({ channel, status: "skipped", detail: `notifications.${channel} is off` });
+  return Promise.all([
+    n2.desktop ? sendDesktop(p, deps) : off("desktop"),
+    n2.webhook && config ? sendWebhook(p, config, deps) : off("webhook"),
+    n2.github_comment && config ? sendGithubComment(p, target, () => deps.threads(repoRoot, config)) : off("github_comment")
+  ]);
+}
+async function dispatch(input, kind, key2, questionIds) {
+  const { db, clock, run, runDir: runDir2, config, deps, actor } = input;
+  if (notificationsOff(deps.env)) return null;
+  if (dispatched(db, run.id).some((d) => d.key === key2)) return null;
+  const n2 = config ? notificationsPolicy(config) : defaultNotifications();
+  const pr = pullRequestOf(runDir2);
+  const targets = config ? commentTargets(runDir2, config) : [];
+  const answerable = config && questionIds.length > 0 ? answerThreads(runDir2, config) : [];
+  const payload = buildPayload({ kind, run, questionIds, pullRequest: pr, remote: answerable[0] ? { where: where(answerable[0]) } : null });
+  db.tx(() => appendEvent(db, run.id, DISPATCHED, actor, { key: key2, kind, state: run.state, questions: questionIds }, clock.now()));
+  const outcomes = await sendAll(payload, n2, config, targets[0] ?? null, run.repoRoot, deps);
+  db.tx(() => {
+    for (const o of outcomes) appendEvent(db, run.id, `notification.${o.status}`, actor, { key: key2, channel: o.channel, detail: o.detail }, clock.now());
+  });
+  return outcomes;
+}
+async function notifyRunEnded(input) {
+  const { run } = input;
+  if (!TERMINAL_STATES.has(run.state)) return null;
+  const questions = run.state === "BLOCKED" ? listQuestions(input.db, run.id, { status: "open" }).map((q) => q.id) : [];
+  return dispatch(input, "run.ended", `ended:${run.state}:${run.endedAt ?? 0}`, questions);
+}
+async function notifyOpenQuestions(input) {
+  const { db, run } = input;
+  if (TERMINAL_STATES.has(run.state) && run.state !== "BLOCKED") return null;
+  const named = new Set(dispatched(db, run.id).flatMap((d) => d.questions));
+  const fresh = listQuestions(db, run.id, { status: "open" }).map((q) => q.id).filter((id) => !named.has(id));
+  if (fresh.length === 0) return null;
+  return dispatch(input, "question.open", `question:${fresh.join(",")}`, fresh);
+}
+async function sendTestNotification(input) {
+  const { config, repoRoot, deps } = input;
+  if (notificationsOff(deps.env)) return ["desktop", "webhook", "github_comment"].map((channel) => ({ channel, status: "skipped", detail: "ORBIT_NOTIFICATIONS=off" }));
+  const n2 = notificationsPolicy(config);
+  const issue = n2.remote_answers.issue;
+  return sendAll(testPayload(), n2, config, issue !== null ? { number: issue, kind: "issue" } : null, repoRoot, deps);
+}
+var DISPATCHED;
+var init_notify = __esm({
+  "src/notify/notify.ts"() {
+    "use strict";
+    init_fsx();
+    init_run_states();
+    init_store4();
+    init_config();
+    init_events();
+    init_channels();
+    init_payload();
+    init_remote_answers();
+    DISPATCHED = "notification.dispatched";
+  }
+});
+
+// src/controller/report.ts
+import { existsSync as existsSync28, mkdirSync as mkdirSync15, readdirSync as readdirSync7, readFileSync as readFileSync20 } from "node:fs";
+import { homedir as homedir10 } from "node:os";
+import { join as join39 } from "node:path";
+function writeFinalReport(db, runId, opts) {
+  const run = getRun(db, runId);
+  const report2 = buildFinalReport(db, run, opts);
+  atomicWriteJson(join39(opts.runDir, "final.json"), report2);
+  atomicWrite(join39(opts.runDir, "final.md"), renderMarkdown(report2));
+  return report2;
+}
+function buildFinalReport(db, run, opts) {
+  return redactValue(assembleFinalReport(db, run, opts));
+}
+function assembleFinalReport(db, run, opts) {
+  const contract = parseContract(run.contractJson);
+  const cand = currentCandidate(db, run.id);
+  const reports = listEvidenceReports(db, run.id);
+  const ev = (cand ? reports.filter((r) => r.candidateId === cand.id).at(-1) : null) ?? reports.at(-1) ?? null;
+  const criteria = (contract?.acceptance_criteria ?? []).map((c) => {
+    const e = ev?.report.acceptance_evidence.find((a) => a.criterion_id === c.id);
+    return { id: c.id, statement: c.statement, mandatory: c.mandatory, status: e?.status ?? "unverified", artifacts: e?.artifacts ?? [] };
+  });
+  const reviews = listReviews(db, run.id, { includeInvalidated: true });
+  const findings = listFindings(db, run.id);
+  const decisions = listDecisions(db, run.id).map((d) => ({ kind: d.kind, summary: d.summary, at: d.createdAt }));
+  const delivery = readJsonIfExists(join39(opts.runDir, "delivery.json"));
+  const outcomeJson = parseJson5(run.outcomeJson);
+  let budget = null;
+  const usage = summarizeUsage(db, run.id);
+  if (opts.snapshot && db.get("SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1", run.id)) {
+    try {
+      const snap = new BudgetLedger(db, opts.clock).attach(run.id, opts.snapshot).snapshot();
+      budget = { counters: snap.counters, cost_measurement: snap.cost_measurement.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals) };
+    } catch {
+      budget = null;
+    }
+  }
+  if (!budget) budget = { counters: [], cost_measurement: usage.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals) };
+  const unverified = [...ev?.report.unverified ?? []];
+  for (const c of criteria) if (c.mandatory && c.status !== "supported") unverified.push(`${c.id} is ${c.status}`);
+  const risks = [];
+  const env = readJsonIfExists(join39(opts.runDir, "environment.json"));
+  risks.push(...env?.gate?.notes ?? []);
+  if (!usage.costComplete || budget.cost_measurement.includes("unmeasured")) risks.push(`model spend: ${budget.cost_measurement}`);
+  for (const f of findings.filter((x) => x.status === "advisory" || x.status === "open" || x.status === "claim_pending")) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}): ${f.claim.slice(0, 160)}`);
+  for (const f of findings.filter((x) => x.status === "accepted")) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, accepted, unresolved, blocking): ${f.claim.slice(0, 160)}`);
+  let exceptions = [];
+  try {
+    if (opts.snapshot) exceptions = readSecurityPolicy(opts.snapshot).exceptions;
+  } catch {
+    exceptions = [];
+  }
+  for (const f of findings.filter((x) => x.status === "excepted")) {
+    const ex = f.resolutionJson?.exception;
+    const index = typeof ex?.index === "number" ? ex.index : -1;
+    const expires = exceptions[index]?.expires;
+    const reason = typeof ex?.reason === "string" ? ex.reason : f.resolution ?? "no reason recorded";
+    risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, excepted by policy): ${f.claim.slice(0, 120)}; exception reason: ${reason.slice(0, 160)}; expires: ${expires ?? "never"}`);
+  }
+  const reviewer = reviewerOf(db, run.id, cand?.id ?? null, reviews);
+  if (reviewer && !reviewer.independent && !risks.some((r) => r.startsWith("same-provider review:"))) {
+    risks.push(`same-provider review: ${reviewer.why_not_independent ?? "no independent reviewer was usable"}; ${reviewer.provider}/${reviewer.model ?? "default"} reviewed in a separate session, so the review is not independent${reviewer.approved_by ? ` (approved by ${reviewer.approved_by})` : ""}`);
+  }
+  for (const q of listQuestions(db, run.id, { status: "open" })) risks.push(`open question: ${q.question.slice(0, 200)}`);
+  for (const c of ev?.report.checks.filter((x) => x.flaky) ?? []) risks.push(`check ${c.id} passed only on a rerun (flaky)`);
+  const plugins = workerPluginsOf(listWorkers(db, { runId: run.id }));
+  risks.push(...plugins.risks);
+  const prNumber = delivery?.pr?.number ?? null;
+  const branch = delivery?.branch ?? outcomeJson?.branch ?? run.branch;
+  return {
+    schema: "orbit.final/1",
+    run_id: run.id,
+    outcome: run.state,
+    outcome_reason: run.outcomeReason,
+    mode: run.mode,
+    original_goal: run.goal,
+    objective: contract?.objective ?? null,
+    criteria,
+    checks: ev?.report.checks.map((c) => ({ id: c.id, status: c.status, exit_code: c.exit_code, flaky: c.flaky, log: c.log })) ?? [],
+    evidence: ev ? { report_id: ev.id, verdict: ev.verdict, tree_hash: ev.treeHash, candidate_revision: ev.report.candidate_revision } : null,
+    reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length })),
+    reviewer,
+    decisions,
+    assumptions: [...(contract?.assumptions ?? []).map((a) => ({ id: a.id, statement: a.statement, status: a.status })), ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))],
+    practices: (contract?.practices ?? []).map((p) => ({ practice: p.practice, applicable: p.applicable, justification: p.justification })),
+    repairs: repairs(opts.runDir),
+    worker_plugins: plugins.plugins,
+    revision: {
+      base: run.baseRevision,
+      candidate: cand?.commitSha ?? null,
+      tree: cand?.treeHash ?? null,
+      branch,
+      // Only a delivery action delivers. A local mode leaves the candidate commit on a local branch: that is the
+      // `candidate` above, never a delivered commit.
+      delivered_commit: delivery?.commit ?? (DELIVERY_MODES.has(run.mode) ? outcomeJson?.commit ?? null : null),
+      pull_request: prNumber === null ? null : { number: prNumber, url: delivery?.pr?.url ?? null }
+    },
+    budget,
+    unverified: [...new Set(unverified)],
+    residual_risks: [...new Set(risks)],
+    next_action: nextAction2(run, branch, prNumber, listQuestions(db, run.id, { status: "open" }).filter((q) => q.material)),
+    generated_at: opts.clock.now()
+  };
+}
+function workerPluginsOf(workers) {
+  const lines = /* @__PURE__ */ new Map();
+  for (const w of workers) {
+    const recorded = parseJson5(w.resultJson)?.plugins;
+    if (!Array.isArray(recorded)) continue;
+    const seen = /* @__PURE__ */ new Set();
+    for (const p of recorded) {
+      const r = p !== null && typeof p === "object" ? p : {};
+      const line3 = { id: strOrNull(r.id), scope: strOrNull(r.scope), allowed_by: strOrNull(r.allowed_by) };
+      const key2 = JSON.stringify(line3);
+      if (seen.has(key2)) continue;
+      seen.add(key2);
+      const cur = lines.get(key2);
+      if (cur) cur.workers += 1;
+      else lines.set(key2, { ...line3, workers: 1 });
+    }
+  }
+  const plugins = [...lines.values()];
+  const risks = plugins.filter((p) => p.allowed_by !== null).map((p) => `worker plugin ${p.id ?? "unidentified"} (scope ${p.scope ?? "unknown"}) was allowed by ${p.allowed_by} and loaded into ${p.workers} worker session(s); a plugin can add hooks and tools to a worker`);
+  return { plugins, risks };
+}
+function strOrNull(v) {
+  return typeof v === "string" ? v : null;
+}
+function reviewerOf(db, runId, candidateId, reviews) {
+  const last = reviews.at(-1);
+  if (!last) return null;
+  const selections = listDecisions(db, runId, { kind: "review.select" }).filter((d) => d.data?.decision === "SELECT");
+  const recorded = selections.find((d) => candidateId !== null && d.id === `dec-${runId}-review-select-${candidateId}`) ?? selections.at(-1);
+  const sel = recorded?.data;
+  const approval = listDecisions(db, runId, { kind: SAME_PROVIDER_APPROVED_KIND }).at(-1)?.data;
+  const approvedBy = typeof approval?.approved_by === "string" ? approval.approved_by : null;
+  if (sel && sel.provider === last.provider) {
+    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : sel.independentUnavailable ?? "no independent reviewer was usable", approved_by: sel.independent ? null : approvedBy };
+  }
+  const implementer = listWorkers(db, { runId, role: "implementer" }).at(-1)?.provider ?? "claude";
+  const independent = last.provider !== implementer;
+  return { provider: last.provider, model: last.model, independent, why_not_independent: independent ? null : "no independent reviewer was usable", approved_by: independent ? null : approvedBy };
+}
+function reviewerLine(r) {
+  const who = `${r.provider}/${r.model ?? "default"}`;
+  if (r.independent) return `Reviewer: ${who} (independent)`;
+  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? "no independent reviewer was usable"}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ""})`;
+}
+function tokens(t) {
+  return { input: t.inputTokens, output: t.outputTokens, cache_read: t.cacheReadTokens, cache_write: t.cacheWriteTokens };
+}
+function repairs(runDir2) {
+  const dir = join39(runDir2, "briefs");
+  if (!existsSync28(dir)) return [];
+  return readdirSync7(dir).filter((f) => /^attempt-\d+\.json$/.test(f)).map((f) => readJsonIfExists(join39(dir, f))).filter((b) => b !== null).map((b) => ({ attempt: b.attempt, source: b.source, fingerprint: b.fingerprint })).sort((a, b) => a.attempt - b.attempt);
+}
+function outcomeHas(run, key2) {
+  try {
+    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
+    return o !== null && typeof o === "object" && key2 in o;
+  } catch {
+    return false;
+  }
+}
+function nextAction2(run, branch, pr, openMaterial = []) {
+  switch (run.state) {
+    case "SUCCEEDED":
+      return DELIVERY_MODES.has(run.mode) ? `Review${pr !== null ? ` pull request #${pr}` : ` branch ${branch ?? "orbit/<run>"}`} and merge it if you accept it; Orbit does not merge.` : `Inspect the local branch ${branch ?? `orbit/${run.id}`} (the reviewed candidate) and merge it yourself if you accept it.`;
+    case "BLOCKED": {
+      const why = run.outcomeReason ?? "The run is blocked.";
+      if (outcomeHas(run, "frozen_policy") || /orbit resume/.test(why)) return why;
+      return `${/[.!?]$/.test(why.trim()) ? why.trim() : `${why.trim()}.`} Resolve that, then run \`orbit resume ${run.id}\`.`;
+    }
+    case "EXHAUSTED": {
+      const advice = exhaustedAdvice(run);
+      const asked = openMaterial.length === 0 ? "" : ` Open material question(s) were never answered: ${openMaterial.slice(0, 5).map((q) => `${q.id}: ${q.question.slice(0, 200)}`).join(" | ")}. Put the answer in the goal of the new run.`;
+      return `${advice}${asked}`;
+    }
+    case "IMPOSSIBLE":
+      return `${run.outcomeReason ?? "No authorized way to meet the contract was found."} Revise the goal or the authorization before trying again.`;
+    case "CANCELLED":
+      return "Nothing further: the run was cancelled on request and its artifacts are preserved.";
+    default:
+      return `The run is ${run.state}; this report is provisional.`;
+  }
+}
+function exhaustedAdvice(run) {
+  const reason = run.outcomeReason ?? "see decisions";
+  const why = `(${reason})`;
+  const kept = "The worktree and evidence are preserved";
+  if (outcomeHas(run, "non_progress")) return `The run stopped because repeated attempts made no measurable progress ${why}. More attempts would not change that; the worktree and evidence are preserved. Revise the goal or the approach and start a new run.`;
+  if (/^diagnosis produced no valid repair brief/.test(reason)) return `The diagnosis could not produce a usable repair brief ${why}: the failure is unexplained, not out of budget. ${kept}; read the failing check logs and the diagnosis attempts under the run directory, then fix it by hand or start a new run with a narrower goal.`;
+  if (outcomeHas(run, "extension") || /\band no extension\b/.test(reason)) {
+    const denied = /no extension(?: for the review repair)?: (.*?)(?:; open findings:|$)/.exec(reason)?.[1];
+    return `The implementation attempt allowance is spent and no extension was granted${denied ? ` because ${denied}` : ""} ${why}. An extension needs measurable progress and a new hypothesis, so more of the same would not help. ${kept}; continue by hand from them, or start a new run with a revised goal or approach.`;
+  }
+  if (/provider kept failing transiently/.test(reason)) return `The model provider kept failing transiently until the infrastructure retries ran out ${why}; this is an outage, not spend. Check the provider's status and your connection, then start a new run (${kept.toLowerCase()}).`;
+  if (/^recovery(_attempts| budget) exhausted/.test(reason)) return `The recovery attempts are spent ${why}: the run was restarted after failures as often as the policy allows. Fix what keeps failing (see the run log), then start a new run; ${kept.toLowerCase()}.`;
+  if (/^review_rounds hard cap reached/.test(reason)) return `The review round cap is reached with review findings still open ${why}. ${kept}; repair the open findings by hand, or start a new run with a higher scheduler.hard_limits.review_rounds or a revised goal.`;
+  if (/^implementation attempts hard cap reached/.test(reason)) return `The implementation attempts hard cap is reached ${why}. ${kept}; continue by hand from them, or start a new run with a revised goal or a higher scheduler.hard_limits.implementation_attempts.`;
+  if (/CI repair budget is spent/.test(reason)) return `CI kept failing after the authorized CI repairs ${why}. ${kept}; read the CI logs and fix it by hand, or start a new run.`;
+  return `The authorized budget is spent ${why}. ${kept}; continue by hand from them or start a new run with a revised goal or limits.`;
+}
+function renderMarkdown(r) {
+  const out = [];
+  const list2 = (items) => items.length ? items.map((i) => `- ${i}`).join("\n") : "- none";
+  out.push(`# Orbit run ${r.run_id}: ${r.outcome}`, "");
+  out.push("## Outcome", "", `${r.outcome}${r.outcome_reason ? `: ${r.outcome_reason}` : ""}`, "");
+  out.push("## Original goal", "", r.original_goal, "");
+  if (r.objective) out.push("## Delivered behaviour", "", r.objective, "");
+  out.push("## Criterion evidence", "", list2(r.criteria.map((c) => `${c.id}${c.mandatory ? "" : " (optional)"} [${c.status}]: ${c.statement}${c.artifacts.length ? ` (evidence: ${c.artifacts.join(", ")})` : ""}`)), "");
+  out.push("## Checks", "", list2(r.checks.map((c) => `${c.id}: ${c.status}${c.exit_code !== null ? ` (exit ${c.exit_code})` : ""}${c.flaky ? ", flaky" : ""}, log ${c.log}`)), "");
+  if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, "");
+  out.push("## Reviews", "");
+  if (r.reviewer) out.push(reviewerLine(r.reviewer), "");
+  out.push(list2(r.reviews.map((v) => `${v.provider}/${v.model ?? "default"}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))`)), "");
+  out.push("## Decisions", "", list2(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), "");
+  out.push("## Assumptions", "", list2(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), "");
+  if (r.practices && r.practices.length > 0) out.push("## Engineering practices", "", list2(r.practices.map((p) => `${p.practice} [${p.applicable ? "selected" : "omitted"}]: ${p.justification}`)), "");
+  if (r.worker_plugins && r.worker_plugins.length > 0) {
+    const named = (p) => `${p.id ?? "an unidentified plugin"} (scope ${p.scope ?? "unknown"})`;
+    out.push("## Worker plugins", "", list2(r.worker_plugins.map((p) => p.allowed_by ? `${named(p)}: allowed by ${p.allowed_by}, loaded by ${p.workers} worker(s)` : `${named(p)}: refused, so the output of ${p.workers} worker(s) was not used`)), "");
+  }
+  out.push("## Repairs", "", list2(r.repairs.map((x) => `attempt ${x.attempt}: ${x.source} brief${x.fingerprint ? ` for ${x.fingerprint}` : ""}`)), "");
+  const rv = r.revision;
+  out.push("## Revision, branch and pull request", "", list2([`base: ${rv.base ?? "none"}`, `candidate: ${rv.candidate ?? "none"} (tree ${rv.tree ?? "none"})`, `branch: ${rv.branch ?? "none"}`, rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? "none"}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ""}` : "none"}`]), "");
+  if (r.budget) {
+    const b = r.budget;
+    out.push("## Budget consumption", "", list2([...b.counters.map((c) => `${c.counter}: ${round2(c.used)} used of ${round2(c.allowance)} allowed (hard cap ${round2(c.hard_cap)})`), `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? "measured" : "incomplete: some usage has no cost"}); ${b.cost_measurement}`, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), "");
+  }
+  out.push("## Not verified", "", list2(r.unverified), "");
+  out.push("## Residual risks", "", list2(r.residual_risks), "");
+  out.push("## Next action", "", r.next_action, "");
+  return redact(`${out.join("\n")}`);
+}
+function round2(n2) {
+  return Number.isInteger(n2) ? String(n2) : n2.toFixed(2);
+}
+function parseContract(json3) {
+  return parseJson5(json3);
+}
+function parseJson5(json3) {
+  if (!json3) return null;
+  try {
+    return JSON.parse(json3);
+  } catch {
+    return null;
+  }
+}
+async function finalizeRun(ctx) {
+  try {
+    writeFinalReport(ctx.db, ctx.run.id, { runDir: ctx.runDir, clock: ctx.clock, snapshot: ctx.policyVerified ? ctx.snapshot : null });
+  } catch (err) {
+    ctx.log.error("final report failed", { error: err instanceof Error ? err.message : String(err) });
+  }
+  try {
+    await notifyRunEnded({ db: ctx.db, clock: ctx.clock, run: ctx.refresh(), runDir: ctx.runDir, config: ctx.policyVerified ? ctx.snapshot.config : null, deps: resolveNotifyDeps(ctx.deps), actor: ctx.ownerId });
+  } catch (err) {
+    ctx.log.warn("notification failed", { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) });
+  }
+  if (!ctx.policyVerified) return;
+  try {
+    await learnAtTerminal(ctx);
+  } catch (err) {
+    ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.failed", ctx.ownerId, { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, ctx.clock.now()));
+  }
+}
+function curatorRaisedCap(host, ctx, purpose, error) {
+  if (ctx && purpose) return raiseOutputCap(ctx, purpose, error);
+  const over = outputCapExceeded(error);
+  if (!over) return null;
+  const previous = over.cap ?? outputBudgets(host.snapshot.config).curator;
+  return previous >= OUTPUT_CAP_CEILING ? null : Math.min(previous * 2, OUTPUT_CAP_CEILING);
+}
+async function learnAtTerminal(ctx) {
+  const k = ctx.snapshot.config.knowledge;
+  if (!k?.enabled) return;
+  const run = ctx.refresh();
+  const store = KnowledgeStore.open(repoKnowledgePath(ctx), { clock: ctx.clock });
+  const summary = { learn: null, skipped: null, settled: null, promoted: null, overlays: null };
+  try {
+    const admitted = curationAdmitted(ctx);
+    if (run.state === "CANCELLED") summary.skipped = "cancelled runs are not curated";
+    else if (!admitted.ok) summary.skipped = admitted.why;
+    else {
+      const host = curatorHostFor(ctx);
+      summary.learn = await learnFromRun({ store, runDb: ctx.db, runId: run.id, runDir: ctx.runDir, clock: ctx.clock, curatorModel: admitted.model ?? "claude-default", runCurator: async (task) => (await runCurator(host, task, admitted.model)).output });
+    }
+    if (summary.skipped !== null) ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.curation-skipped", ctx.ownerId, { reason: summary.skipped }, ctx.clock.now()));
+    const ev = listEvidenceReports(ctx.db, run.id).at(-1);
+    summary.settled = settleRun(store, run.id, {
+      succeeded: run.state === "SUCCEEDED",
+      attempts: listWorkers(ctx.db, { runId: run.id, role: "implementer" }).length,
+      verifiedCriteria: ev?.report.acceptance_evidence.filter((a) => a.status === "supported").map((a) => a.criterion_id) ?? [],
+      contradictedLessonIds: [],
+      artifact: existsSync28(join39(ctx.runDir, "final.md")) ? { path: "final.md", sha256: sha256(readFileSync20(join39(ctx.runDir, "final.md"))) } : { path: "final.md", sha256: null }
+    });
+    if (k.share_globally) {
+      const guard = loadPublicationGuard(ctx.snapshot.config.guard.terms_file ? { termsPath: ctx.snapshot.config.guard.terms_file } : {});
+      const global = KnowledgeStore.open(globalKnowledgePath(ctx), { clock: ctx.clock });
+      try {
+        summary.promoted = await promoteToGlobal(store, global, { shareGlobally: true, guard: (text2) => checkPublication(text2, { ...guard.options, allowedEmails: [...guard.options.allowedEmails ?? [], ...ctx.snapshot.config.guard.allowed_emails] }) });
+      } finally {
+        global.close();
+      }
+    }
+    if (run.state !== "CANCELLED") {
+      const live = checkLiveOverlays(ctx, store);
+      const evaluated = await autoEvaluateOverlays(ctx, store);
+      summary.overlays = { live, evaluated };
+    }
+  } finally {
+    store.close();
+  }
+  atomicWriteJson(join39(ctx.runDir, "learning.json"), summary);
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.completed", ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0 }, ctx.clock.now()));
+}
+function curatorHostFor(ctx) {
+  return {
+    deps: ctx.deps,
+    clock: ctx.clock,
+    snapshot: ctx.snapshot,
+    policyPath: ctx.run.policyPath,
+    policyHash: ctx.run.policyHash,
+    runId: ctx.run.id,
+    dir: join39(ctx.runDir, "learning"),
+    budgetUsd: ctx.snapshot.config.knowledge.curator_budget_usd,
+    recorded: ctx
+  };
+}
+function curationAdmitted(ctx) {
+  const k = ctx.snapshot.config.knowledge;
+  if (!(k.curator_budget_usd > 0)) return { ok: false, why: "knowledge.curator_budget_usd is 0" };
+  if (!ctx.deps.adapters.claude) return { ok: false, why: "no claude adapter for the curator" };
+  const ledger = ctx.ledger ?? (ctx.db.get("SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1", ctx.run.id) ? new BudgetLedger(ctx.db, ctx.clock).attach(ctx.run.id, ctx.snapshot) : null);
+  if (ledger) {
+    const d = ledger.admit({ role: "curator", estimatedCostUsd: k.curator_budget_usd, phase: "final" });
+    if (!d.admitted) return { ok: false, why: `the budget reserve cannot pay for curation: ${d.reasons.join("; ")}` };
+  }
+  return { ok: true, model: curatorModelFor(ctx.deps.registry) };
+}
+function curatorModelFor(registry) {
+  return registry.list().find((e) => e.provider === "claude" && e.family === "haiku" && e.surfaces.some((s) => s.surface === "claude-cli" && s.available !== false))?.modelId ?? null;
+}
+async function runCurator(host, task, model = curatorModelFor(host.deps.registry), outputTokens) {
+  const adapter = host.deps.adapters.claude;
+  if (!adapter) throw new OrbitError("PROVIDER_UNAVAILABLE", "no claude provider is configured; the curator runs on Claude");
+  const ctx = host.recorded ?? null;
+  const timeoutMs = host.timeoutMs ?? CURATOR_TIMEOUT_MS;
+  const env = host.env ?? host.deps.hostEnv ?? process.env;
+  const home2 = host.homeDir ?? host.deps.homeDir ?? homedir10();
+  const cwd = join39(host.dir, "cwd");
+  mkdirSync15(cwd, { recursive: true, mode: 448 });
+  let row = null;
+  let workerId;
+  let workerDir;
+  let purpose = null;
+  if (ctx) {
+    const n2 = listWorkers(ctx.db, { runId: ctx.run.id, role: "curator" }).length + 1;
+    workerId = `${ctx.run.id}-curator-${n2}`;
+    purpose = `curate:${n2}`;
+    workerDir = join39(ctx.runDir, "workers", workerId);
+    mkdirSync15(workerDir, { recursive: true, mode: 448 });
+    recordSpendCap(ctx, purpose, host.budgetUsd, 0);
+    const ctxNow = ctx;
+    row = ctx.db.tx(() => {
+      assertLeaseHeld(ctxNow.db, ctxNow.run.id, ctxNow.ownerId, ctxNow.clock.now());
+      return planWorker(ctxNow.db, { id: workerId, runId: ctxNow.run.id, role: "curator", purpose, provider: adapter.id, model, effort: null, workerDir, cwd }, ctxNow.clock, ctxNow.ownerId);
+    });
+  } else {
+    workerId = `${host.runId}-curator`;
+    workerDir = join39(host.dir, "curator");
+    mkdirSync15(workerDir, { recursive: true, mode: 448 });
+  }
+  const spec = {
+    runId: host.runId,
+    workerId,
+    role: "curator",
+    model,
+    effort: null,
+    cwd,
+    workerDir,
+    prompt: task.prompt,
+    systemPrompt: renderSystemPrompt("curator", host.deps.agentsDir ? { agentsDir: host.deps.agentsDir } : {}),
+    outputSchema: MODEL_OUTPUT_SCHEMAS.curator,
+    readOnly: true,
+    maxTurns: CURATOR_MAX_TURNS,
+    timeoutMs,
+    sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: host.snapshot, provider: "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join39(home2, ".claude"), homeDir: home2, policyPath: host.policyPath, readablePaths: [host.deps.orbitInstallDir], env }),
+    policyPath: host.policyPath,
+    policyHash: host.policyHash,
+    env: {},
+    maxBudgetUsd: host.budgetUsd,
+    ...outputTokens === void 0 ? {} : { outputTokens }
+  };
+  let handle;
+  try {
+    handle = await adapter.startTask(spec);
+  } catch (err) {
+    if (ctx && row) finishWorker(ctx.db, row.id, { state: "FAILED", resultStatus: "failed", error: redact(err instanceof Error ? err.message : String(err)).slice(0, 2e3) }, ctx.clock, ctx.ownerId);
+    throw err;
+  }
+  if (ctx && row) row = markWorkerRunning(ctx.db, row.id, { pid: handle.pid, pgid: handle.pgid, procStart: handle.procStart }, ctx.clock, ctx.ownerId);
+  const deadline = Date.now() + timeoutMs + 3e4;
+  let result2 = null;
+  let timedOut = false;
+  for (; ; ) {
+    result2 = await adapter.collectResult(handle, { outputSchema: MODEL_OUTPUT_SCHEMAS.curator });
+    if (result2) break;
+    if (Date.now() > deadline) {
+      timedOut = true;
+      await adapter.cancelTask(handle);
+      const stop = Date.now() + 5e3;
+      while (!(result2 = await adapter.collectResult(handle, { outputSchema: MODEL_OUTPUT_SCHEMAS.curator })) && Date.now() < stop) await new Promise((res) => setTimeout(res, 100));
+      break;
+    }
+    await new Promise((res) => setTimeout(res, 200));
+  }
+  if (ctx && row) {
+    const done = finishWorker(ctx.db, row.id, result2 ? outcomeOf2(result2) : { state: "LOST", resultStatus: "lost", error: "the curator did not stop after it timed out" }, ctx.clock, ctx.ownerId);
+    if (result2) {
+      try {
+        accountWorker(ctx, done, result2, "final");
+      } catch (err) {
+        ctx.log.warn("curator cost could not be charged", { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+  }
+  if (!result2 || timedOut) throw new OrbitError("PROVIDER_UNAVAILABLE", "the curator timed out");
+  if (result2.status !== "succeeded") {
+    const raised = result2.status === "failed" && outputTokens === void 0 ? curatorRaisedCap(host, ctx, purpose, result2.error) : null;
+    if (raised !== null) return runCurator(host, task, model, raised);
+    throw new OrbitError(result2.status === "auth_failed" ? "AUTH_EXPIRED" : "PROVIDER_UNAVAILABLE", `the curator ended ${result2.status}${result2.error ? `: ${redact(result2.error).slice(0, 200)}` : ""}`);
+  }
+  return { output: result2.structured, model, workerId: ctx ? workerId : null };
+}
+var CURATOR_TIMEOUT_MS, CURATOR_MAX_TURNS;
+var init_report2 = __esm({
+  "src/controller/report.ts"() {
+    "use strict";
+    init_errors();
+    init_fsx();
+    init_hash();
+    init_redact();
+    init_events();
+    init_decisions();
+    init_workers();
+    init_store();
+    init_store3();
+    init_resolve();
+    init_select();
+    init_store4();
+    init_usage();
+    init_budget2();
+    init_config();
+    init_model_outputs();
+    init_store2();
+    init_learn();
+    init_feedback();
+    init_global();
+    init_publication();
+    init_profiles();
+    init_prompt();
+    init_run_store();
+    init_context2();
+    init_run_store();
+    init_workers2();
+    init_eval_runner();
+    init_notify();
+    init_knowledge_hooks();
+    CURATOR_TIMEOUT_MS = 5 * 6e4;
+    CURATOR_MAX_TURNS = 6;
+  }
+});
+
+// src/evidence/candidate.ts
+import { chmodSync as chmodSync7, existsSync as existsSync29, lstatSync as lstatSync7, mkdirSync as mkdirSync16, mkdtempSync as mkdtempSync4, readdirSync as readdirSync8, realpathSync as realpathSync12, rmSync as rmSync9, writeFileSync as writeFileSync5 } from "node:fs";
+import { tmpdir as tmpdir9 } from "node:os";
+import { dirname as dirname19, join as join40, parse as parse4, sep as sep8 } from "node:path";
+function candidateRef(runId, seq2) {
+  return `refs/orbit/${runId}/candidates/${seq2}`;
+}
+async function snapshotCandidate(input) {
+  const { db, clock, repoRoot, runId } = input;
+  if (!RUN_ID.test(runId)) throw new OrbitError("INTERNAL", `run id is not safe in a ref name: ${JSON.stringify(runId)}`);
+  const base = await resolveCommit(repoRoot, input.baseRev);
+  const { gitDir, worktree } = await adminDirFor(repoRoot, input.worktree);
+  const tree = await stageTree({ gitDir, worktree, base, extraExcludes: input.extraExcludes ?? [] });
+  const row = reserveCandidate(db, { runId, attempt: input.attempt, workerId: input.workerId, treeHash: tree, parentSha: base }, clock);
+  if (row.status !== "CREATING") return { ...row, created: false };
+  const message = `orbit candidate ${runId}/${row.seq}
+
+attempt: ${row.attempt}
+worker: ${row.workerId ?? "none"}
+tree: ${tree}
+`;
+  const when = `${Math.floor(row.createdAt / 1e3)} +0000`;
+  const commit = (await git2(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], {
+    env: {
+      GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name,
+      GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email,
+      GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name,
+      GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email,
+      GIT_AUTHOR_DATE: when,
+      GIT_COMMITTER_DATE: when
+    }
+  })).trim();
+  await git2(repoRoot, ["update-ref", candidateRef(runId, row.seq), commit]);
+  const stat = await diffStat(repoRoot, await treeOf(repoRoot, base), tree);
+  const done = finalizeCandidate(db, row.id, commit, stat, clock);
+  return { ...done, created: true };
+}
+async function stageTree(o) {
+  const scratch = mkdtempSync4(join40(tmpdir9(), "orbit-index-"));
+  try {
+    const excludes = join40(scratch, "exclude");
+    writeFileSync5(excludes, `${[...BUILTIN_EXCLUDES, ...o.extraExcludes].join("\n")}
+`);
+    const env = { GIT_DIR: o.gitDir, GIT_WORK_TREE: o.worktree, GIT_INDEX_FILE: join40(scratch, "index") };
+    const opts = { env, config: { "core.excludesFile": excludes } };
+    await git2(o.worktree, ["read-tree", o.base], opts);
+    await git2(o.worktree, ["add", "-A", "--", "."], opts);
+    return (await git2(o.worktree, ["write-tree"], opts)).trim();
+  } finally {
+    rmSync9(scratch, { recursive: true, force: true });
+  }
+}
+async function diffStat(repoRoot, fromTree, toTree) {
+  const out = await git2(repoRoot, ["diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", fromTree, toTree, "--"]);
+  const stat = { files: 0, insertions: 0, deletions: 0, binaryFiles: 0, paths: [], truncated: false };
+  for (const rec2 of out.split("\0")) {
+    if (!rec2) continue;
+    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(rec2);
+    if (!m) continue;
+    stat.files++;
+    if (m[1] === "-") stat.binaryFiles++;
+    else {
+      stat.insertions += Number(m[1]);
+      stat.deletions += Number(m[2]);
+    }
+    if (stat.paths.length < MAX_DIFF_PATHS) stat.paths.push(m[3]);
+    else stat.truncated = true;
+  }
+  return stat;
+}
+async function materializeCandidate(repoRoot, commit, dir, opts = {}) {
+  const sha = await resolveCommit(repoRoot, commit);
+  if (existsSync29(dir) && readdirSync8(dir).length > 0) {
+    throw new OrbitError("GIT_FAILED", `checkout directory is not empty: ${dir}`, { dir });
+  }
+  mkdirSync16(dirname19(dir), { recursive: true });
+  await git2(repoRoot, ["worktree", "add", "--detach", "--force", dir, sha]);
+  const real = realpathSync12(dir);
+  if (opts.readOnly !== false) makeReadOnly(real);
+  return real;
+}
+async function cleanupCandidateCheckout(repoRoot, dir) {
+  assertDisposableCheckout(repoRoot, dir);
+  if (existsSync29(dir)) makeWritable(dir);
+  try {
+    await git2(repoRoot, ["worktree", "remove", "--force", dir]);
+  } catch {
+    rmSync9(dir, { recursive: true, force: true });
+  }
+  rmSync9(dir, { recursive: true, force: true });
+  await git2(repoRoot, ["worktree", "prune"]).catch(() => {
+  });
+}
+function assertDisposableCheckout(repoRoot, dir) {
+  if (!existsSync29(dir)) return;
+  const target = realpathSync12(dir);
+  const root = realpathSync12(repoRoot);
+  const refuse = (why) => {
+    throw new OrbitError("GIT_FAILED", `refusing to remove ${dir}: ${why}`, { dir, repoRoot });
+  };
+  if (target === root || root.startsWith(target.endsWith(sep8) ? target : target + sep8)) refuse("it is or contains the repository");
+  if (target === parse4(target).root) refuse("it is a filesystem root");
+  let dotGit;
+  try {
+    dotGit = lstatSync7(join40(target, ".git"));
+  } catch {
+    return;
+  }
+  if (dotGit.isDirectory()) refuse("it holds its own .git directory, so it is a repository, not a checkout");
+}
+function walk3(dir, visit3) {
+  for (const name of readdirSync8(dir)) {
+    const p = join40(dir, name);
+    const st = lstatSync7(p);
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) {
+      if (name === ".git") continue;
+      walk3(p, visit3);
+      visit3(p, true);
+    } else visit3(p, false);
+  }
+}
+function makeReadOnly(dir) {
+  walk3(dir, (p, isDir) => chmodSync7(p, isDir ? 365 : lstatSync7(p).mode & 365));
+  chmodSync7(dir, 365);
+}
+function makeWritable(dir) {
+  try {
+    chmodSync7(dir, 493);
+    const stack = [dir];
+    while (stack.length) {
+      const d = stack.pop();
+      for (const name of readdirSync8(d)) {
+        const p = join40(d, name);
+        const st = lstatSync7(p);
+        if (st.isSymbolicLink()) continue;
+        if (st.isDirectory()) {
+          chmodSync7(p, 493);
+          if (name !== ".git") stack.push(p);
+        } else chmodSync7(p, st.mode | 128);
+      }
+    }
+  } catch {
+  }
+}
+var ORBIT_GIT_IDENTITY, BUILTIN_EXCLUDES, RUN_ID, MAX_DIFF_PATHS;
+var init_candidate = __esm({
+  "src/evidence/candidate.ts"() {
+    "use strict";
+    init_errors();
+    init_git();
+    init_store();
+    ORBIT_GIT_IDENTITY = { name: "Orbit", email: "orbit@orbit.invalid" };
+    BUILTIN_EXCLUDES = [".DS_Store", "Thumbs.db", "node_modules/"];
+    RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+    MAX_DIFF_PATHS = 200;
+  }
+});
+
+// src/evidence/baseline.ts
+import { existsSync as existsSync30, readFileSync as readFileSync21 } from "node:fs";
+import { join as join41 } from "node:path";
+function planInstall(snapshot2, checkoutDir, opts = {}) {
+  const deps = snapshot2.config.dependencies;
+  if (!deps.install_existing_lockfile) return { skip: true, reason: "policy does not allow installing dependencies from the existing lockfile" };
+  const hosts = [...opts.registryHosts ?? NPM_REGISTRY_HOSTS];
+  const base = { shell: false, cwd: ".", timeout_seconds: INSTALL_TIMEOUT_SECONDS, network_hosts: hosts, local_binding: false, mandatory: false, flaky_reruns: 1, kind: "command" };
+  const quiet = { npm_config_fund: "false", npm_config_audit: "false", npm_config_progress: "false", npm_config_update_notifier: "false" };
+  const scriptsDenied = deps.install_scripts !== "allow";
+  if (deps.install_command) {
+    const toolchainHosts = toolchainRegistryHosts(detectToolchains({ command: deps.install_command, roots: [checkoutDir] }));
+    return {
+      skip: false,
+      definitions: [
+        {
+          ...base,
+          network_hosts: [.../* @__PURE__ */ new Set([...hosts, ...toolchainHosts])],
+          id: INSTALL_CHECK_ID,
+          command: [...deps.install_command],
+          // A configured command cannot be given a flag blindly, so scripts are denied through the package managers' own environment switches.
+          env: { ...quiet, ...scriptsDenied ? { npm_config_ignore_scripts: "true", YARN_ENABLE_SCRIPTS: "false" } : {} }
+        }
+      ]
+    };
+  }
+  const hasNpmLock = existsSync30(join41(checkoutDir, "package-lock.json")) || existsSync30(join41(checkoutDir, "npm-shrinkwrap.json"));
+  if (!hasNpmLock) {
+    const other = OTHER_LOCKFILES.find((f) => existsSync30(join41(checkoutDir, f)));
+    return {
+      skip: true,
+      reason: other ? `found ${other}, which Orbit does not install by itself; set dependencies.install_command to install from it` : "no lockfile to install from; Orbit never creates one"
+    };
+  }
+  const defs = [{ ...base, id: INSTALL_CHECK_ID, command: scriptsDenied ? ["npm", "ci", "--ignore-scripts"] : ["npm", "ci"], env: quiet }];
+  if (deps.install_scripts === "deny-unless-allowlisted" && deps.install_script_allowlist.length > 0) {
+    defs.push({ ...base, id: INSTALL_SCRIPTS_CHECK_ID, command: ["npm", "rebuild", ...deps.install_script_allowlist], env: quiet, flaky_reruns: 0 });
+  }
+  return { skip: false, definitions: defs };
+}
+async function installDependencies(ctx) {
+  const plan = planInstall(ctx.snapshot, ctx.checkoutDir, { registryHosts: ctx.registryHosts });
+  if (plan.skip) {
+    const audit2 = ctx.candidate ? await auditCandidate({ ...ctx, candidate: ctx.candidate }) : null;
+    if (audit2 && audit2.blocking.length > 0) return { skipped: false, reason: audit2.summary, ok: false, results: [], audit: audit2 };
+    return { skipped: true, reason: plan.reason, ok: false, results: [], audit: audit2 };
+  }
+  const definitions = { ...ctx.definitions, ...Object.fromEntries(plan.definitions.map((d) => [d.id, d])) };
+  let subject;
+  if (ctx.candidate) subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: "install" };
+  else if (ctx.baseTree) subject = baselineSubject(ctx.runDir, ctx.baseTree, "install");
+  else throw new OrbitError("INTERNAL", "installDependencies needs a candidate or a base tree to bind to");
+  const results = [];
+  for (const def of plan.definitions) {
+    const [r] = await runCheckSet({ ...ctx, definitions }, subject, [def]);
+    if (!r) break;
+    results.push(r);
+    if (r.status !== "PASSED") break;
+  }
+  const ok = results.length === plan.definitions.length && results.every((r) => r.status === "PASSED");
+  if (!ok || !ctx.candidate) return { skipped: false, reason: null, ok, results };
+  const audit = await auditCandidate({ ...ctx, candidate: ctx.candidate });
+  if (audit && audit.blocking.length > 0) return { skipped: false, reason: audit.summary, ok: false, results, audit };
+  return { skipped: false, reason: null, ok, results, audit };
+}
+function manifestHash(dir) {
+  const parts = [];
+  for (const f of MANIFEST_FILES) {
+    const p = join41(dir, f);
+    if (existsSync30(p)) parts.push(`${f}\0${sha256(readFileSync21(p))}`);
+  }
+  return parts.length > 0 ? sha256(parts.join("\n")) : null;
+}
+function parseNpmAudit(text2) {
+  let doc;
+  try {
+    doc = JSON.parse(text2);
+  } catch {
+    throw new Error("npm audit did not write a JSON report");
+  }
+  const d = doc;
+  if (d.error) throw new Error(`npm audit failed: ${redact(String(d.error.summary ?? d.error.code ?? "error")).slice(0, 200)}`);
+  if (!d.vulnerabilities || typeof d.vulnerabilities !== "object") throw new Error("the npm audit report has no vulnerabilities section (npm 7 or later is needed)");
+  const out = /* @__PURE__ */ new Map();
+  for (const [name, v] of Object.entries(d.vulnerabilities)) {
+    if (!Array.isArray(v?.via)) continue;
+    for (const via of v.via) {
+      if (!via || typeof via !== "object") continue;
+      const a = via;
+      const ghsa = typeof a.url === "string" ? /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/.exec(a.url)?.[0] : void 0;
+      const id = ghsa ?? (typeof a.source === "number" || typeof a.source === "string" ? `npm:${a.source}` : null);
+      const severity = typeof a.severity === "string" && Object.hasOwn(SEVERITY_RANK, a.severity) ? a.severity : null;
+      if (!id || !severity) continue;
+      const pkg = typeof a.name === "string" ? a.name : name;
+      out.set(`${id}\0${pkg}`, { id, kind: "vulnerability", package: pkg, severity, detail: redact(typeof a.title === "string" ? a.title : "").slice(0, 200) });
+    }
+  }
+  return [...out.values()].sort((x, y) => x.id.localeCompare(y.id) || x.package.localeCompare(y.package));
+}
+function disallowedLicenses(lockText, allowlist) {
+  let lock;
+  try {
+    lock = JSON.parse(lockText);
+  } catch {
+    throw new Error("the lockfile is not valid JSON");
+  }
+  if (!lock.packages || typeof lock.packages !== "object") throw new Error("the lockfile has no packages section (lockfileVersion 2 or later records licenses)");
+  const allowed = new Set(allowlist.map((l) => l.toLowerCase()));
+  const out = /* @__PURE__ */ new Map();
+  for (const [key2, entry] of Object.entries(lock.packages)) {
+    if (key2 === "" || !entry || typeof entry !== "object" || entry.link === true) continue;
+    const name = typeof entry.name === "string" ? entry.name : key2.slice(key2.lastIndexOf("node_modules/") + "node_modules/".length);
+    const version = typeof entry.version === "string" ? entry.version : "0.0.0";
+    const license = typeof entry.license === "string" ? entry.license : null;
+    if (license !== null && licenseAllowed(license, allowed)) continue;
+    const id = `license:${name}@${version}`;
+    out.set(id, { id, kind: "license", package: name, severity: null, detail: license ?? "no license recorded" });
+  }
+  return [...out.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+function licenseAllowed(expr, allowed) {
+  const e = expr.replace(/[()]/g, " ").trim().toLowerCase();
+  return e.split(/\s+or\s+/).some((alt) => alt.split(/\s+and\s+/).every((part) => allowed.has(part.trim())));
+}
+function lockfileIn(dir) {
+  for (const f of ["npm-shrinkwrap.json", "package-lock.json"]) if (existsSync30(join41(dir, f))) return join41(dir, f);
+  return null;
+}
+async function runDependencyAudit(ctx, subject) {
+  const policy = dependencyAuditPolicy(ctx.snapshot.config);
+  if (!policy.enabled) return null;
+  const hash = manifestHash(ctx.checkoutDir);
+  const lock = lockfileIn(ctx.checkoutDir);
+  if (!lock) return { ran: false, reason: "no npm lockfile (package-lock.json or npm-shrinkwrap.json); the dependency audit supports npm lockfiles only", manifestHash: hash, vulnerabilities: [], licenses: [], logPath: null };
+  const problems = [];
+  let licenses = [];
+  if (policy.license_allowlist !== null) {
+    try {
+      licenses = disallowedLicenses(readFileSync21(lock, "utf8"), policy.license_allowlist);
+    } catch (err) {
+      problems.push(`license policy not checked: ${err.message}`);
+    }
+  }
+  const def = {
+    id: AUDIT_CHECK_ID,
+    // The report goes to a file, so warnings on stderr cannot corrupt it; a written report is success even when it lists vulnerabilities.
+    command: [`npm audit --json --package-lock-only > "$ORBIT_ARTIFACTS_DIR/${AUDIT_REPORT}"; s=$?; if [ -s "$ORBIT_ARTIFACTS_DIR/${AUDIT_REPORT}" ]; then exit 0; fi; exit $s`],
+    shell: true,
+    cwd: ".",
+    timeout_seconds: AUDIT_TIMEOUT_SECONDS,
+    network_hosts: [...ctx.registryHosts ?? NPM_REGISTRY_HOSTS],
+    local_binding: false,
+    env: { npm_config_fund: "false", npm_config_progress: "false", npm_config_update_notifier: "false" },
+    mandatory: false,
+    flaky_reruns: 0,
+    kind: "command"
+  };
+  const [r] = await runCheckSet({ ...ctx, definitions: { ...ctx.definitions, [AUDIT_CHECK_ID]: def } }, subject, [def]);
+  let vulnerabilities = [];
+  let ran = false;
+  if (!r) problems.push("npm audit did not start (cancelled)");
+  else if (r.status !== "PASSED") problems.push(`npm audit ${r.status === "TIMEOUT" ? "timed out" : `could not produce a report (${r.status})`}`);
+  else {
+    const report2 = r.artifacts.find((a) => a.path.endsWith(`/${AUDIT_REPORT}`));
+    try {
+      if (!report2) throw new Error("npm audit wrote no report");
+      vulnerabilities = parseNpmAudit(readFileSync21(report2.path, "utf8"));
+      ran = true;
+    } catch (err) {
+      problems.push(err.message);
+    }
+  }
+  return { ran, reason: problems.length ? problems.join("; ") : null, manifestHash: hash, vulnerabilities, licenses, logPath: r?.logPath ?? null };
+}
+function evaluateDependencyAudit(base, candidate, policy, now) {
+  const known = new Set(base?.ran ? [...base.vulnerabilities, ...base.licenses].map(key) : base ? base.licenses.map(key) : []);
+  const out = { blocking: [], advisory: [], excepted: [], expired: [], preexisting: [] };
+  for (const f of [...candidate.vulnerabilities, ...candidate.licenses]) {
+    if (known.has(key(f))) {
+      out.preexisting.push(f);
+      continue;
+    }
+    const exception = policy.exceptions.find((e) => e.id === f.id || f.kind === "license" && e.id === `license:${f.package}`);
+    if (exception) {
+      if (exception.expires !== null && (now === void 0 || now > exceptionExpiryMs(exception.expires))) {
+        if (!out.expired.some((x) => x.id === exception.id)) out.expired.push({ id: exception.id, expires: exception.expires });
+      } else {
+        out.excepted.push({ finding: f, reason: exception.reason, expires: exception.expires });
+        continue;
+      }
+    }
+    if (f.kind === "license" || SEVERITY_RANK[f.severity] >= SEVERITY_RANK[policy.fail_on]) out.blocking.push(f);
+    else out.advisory.push(f);
+  }
+  return out;
+}
+function key(f) {
+  return `${f.id}\0${f.package}`;
+}
+function describeFinding(f) {
+  return f.kind === "license" ? `${f.package} is licensed ${f.detail}, which is not on the license allowlist` : `${f.package}: ${f.id} (${f.severity})${f.detail ? ` ${f.detail}` : ""}`;
+}
+function baselineAuditNotes(audit, policy) {
+  if (!policy.enabled || !audit?.ran) return [];
+  const listed = [...audit.vulnerabilities.filter((f) => SEVERITY_RANK[f.severity ?? "low"] >= SEVERITY_RANK[policy.fail_on]), ...audit.licenses];
+  const notes = listed.slice(0, MAX_BASELINE_AUDIT_NOTES).map((f) => `pre-existing ${f.kind === "license" ? "license problem" : "vulnerability"} on the base revision: ${describeFinding(f)}`);
+  if (listed.length > MAX_BASELINE_AUDIT_NOTES) notes.push(`and ${listed.length - MAX_BASELINE_AUDIT_NOTES} more pre-existing dependency audit finding(s) on the base revision`);
+  return notes;
+}
+async function auditCandidate(ctx) {
+  const policy = dependencyAuditPolicy(ctx.snapshot.config);
+  if (!policy.enabled) return null;
+  const baseline = readJsonIfExists(join41(ctx.runDir, BASELINE_FILE2));
+  const baseAudit = baseline?.audit ?? null;
+  const empty = { blocking: [], advisory: [], excepted: [], expired: [], preexisting: [] };
+  if (baseAudit && baseAudit.manifestHash !== null && baseAudit.manifestHash === manifestHash(ctx.checkoutDir)) {
+    return { audited: false, candidate: null, ...empty, summary: null };
+  }
+  const subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: "install" };
+  const audit = await runDependencyAudit(ctx, subject);
+  if (!audit) return null;
+  const judged = evaluateDependencyAudit(baseAudit, audit, policy, ctx.clock.now());
+  const summary = judged.blocking.length ? `dependency audit: the candidate introduces ${judged.blocking.length} finding(s) the policy blocks: ${judged.blocking.slice(0, 5).map(describeFinding).join("; ")}` : audit.ran ? null : `dependency audit unverified: ${audit.reason ?? "npm audit did not run"}`;
+  for (const f of judged.blocking) {
+    recordFailure(ctx.db, { runId: ctx.run.id, candidateId: ctx.candidate.id, source: "install", sourceId: `dependency-audit:${ctx.candidate.id}:${f.id}:${f.package}`, fingerprint: `dependency-audit:${f.id}`, excerpt: describeFinding(f) }, ctx.clock);
+  }
+  ctx.db.tx(
+    () => appendEvent(ctx.db, ctx.run.id, "dependency.audit", "controller", {
+      candidate_id: ctx.candidate.id,
+      ran: audit.ran,
+      reason: audit.reason,
+      blocking: judged.blocking.map((f) => f.id),
+      advisory: judged.advisory.map((f) => f.id),
+      excepted: judged.excepted.map((e) => ({ id: e.finding.id, reason: e.reason })),
+      expired: judged.expired,
+      preexisting: judged.preexisting.length
+    }, ctx.clock.now())
+  );
+  return { audited: true, candidate: audit, ...judged, summary };
+}
+async function runBaseline(input) {
+  const { db, run, snapshot: snapshot2, runDir: runDir2, clock } = input;
+  assertRunPolicy(db, run, snapshot2);
+  const baseRevision = await resolveCommit(input.repoRoot, input.baseRev);
+  const baseTree = await treeOf(input.repoRoot, baseRevision);
+  const ids = input.checkIds ?? Object.values(snapshot2.config.checks).filter((c) => c.mandatory && c.kind === "command").map((c) => c.id);
+  for (const id of ids) {
+    if (!snapshot2.config.checks[id]) throw new OrbitError("POLICY_DENIED", `baseline check ${JSON.stringify(id)} is not defined in the policy snapshot`, { checkId: id });
+  }
+  const defs = [...new Set(ids)].map((id) => snapshot2.config.checks[id]).filter((d) => d.kind === "command");
+  const checkIds = defs.map((d) => d.id).sort();
+  const file = join41(runDir2, BASELINE_FILE2);
+  const prior = readJsonIfExists(file);
+  if (prior && prior.schema === "orbit.baseline/1" && prior.complete && prior.baseRevision === baseRevision && prior.policyHash === run.policyHash && Array.isArray(prior.checkIds) && prior.checkIds.join("\0") === checkIds.join("\0")) {
+    return { report: prior, results: [], reused: true };
+  }
+  const checkoutDir = input.checkoutDir ?? join41(prepareWorkerTmpDir(join41(runDir2, "baseline-checkout")), `base-${sha256(run.id).slice(0, 8)}`);
+  await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
+  await materializeCandidate(input.repoRoot, baseRevision, checkoutDir, { readOnly: false });
+  try {
+    const ctx = {
+      db,
+      run,
+      snapshot: snapshot2,
+      isolation: input.isolation,
+      checkoutDir,
+      runDir: runDir2,
+      clock,
+      signal: input.signal,
+      parallelism: input.parallelism,
+      pollMs: input.pollMs,
+      killGraceMs: input.killGraceMs,
+      homeDir: input.homeDir,
+      toolchainCacheRoot: input.toolchainCacheRoot ?? null
+    };
+    const install = await installDependencies({ ...ctx, baseTree, registryHosts: input.registryHosts });
+    const results = install.skipped || install.ok ? await runCheckSet(ctx, baselineSubject(runDir2, baseTree), defs) : [];
+    const audit = await runDependencyAudit({ ...ctx, registryHosts: input.registryHosts }, baselineSubject(runDir2, baseTree, "install"));
+    const entries = results.map((r) => ({
+      checkId: r.checkId,
+      mandatory: snapshot2.config.checks[r.checkId]?.mandatory === true,
+      status: r.status,
+      exitCode: r.exitCode,
+      flaky: r.flaky,
+      fingerprint: r.fingerprint,
+      excerpt: r.excerpt,
+      log: r.logPath
+    }));
+    const report2 = {
+      schema: "orbit.baseline/1",
+      runId: run.id,
+      baseRevision,
+      baseTree,
+      policyHash: run.policyHash,
+      checkIds,
+      install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
+      ...audit ? { audit } : {},
+      auditNotes: baselineAuditNotes(audit, dependencyAuditPolicy(snapshot2.config)),
+      checks: entries,
+      failures: entries.filter((e) => e.mandatory && (e.status === "FAILED" || e.status === "TIMEOUT")).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
+      // Every requested check produced a decisive result (no ERROR, no CANCELLED, none skipped).
+      complete: (install.skipped || install.ok) && entries.length === defs.length && entries.every((e) => e.status === "PASSED" || e.status === "FAILED" || e.status === "TIMEOUT"),
+      recordedAt: clock.now()
+    };
+    atomicWriteJson(file, report2);
+    const auditSummary = audit ? { ran: audit.ran, reason: audit.reason, vulnerabilities: audit.vulnerabilities.length, disallowed_licenses: audit.licenses.length } : null;
+    db.tx(() => appendEvent(db, run.id, "baseline.recorded", "controller", { base_revision: baseRevision, base_tree: baseTree, failures: report2.failures.map((f) => f.checkId), complete: report2.complete, audit: auditSummary }, clock.now()));
+    return { report: report2, results, reused: false };
+  } finally {
+    await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
+  }
+}
+var BASELINE_FILE2, NPM_REGISTRY_HOSTS, INSTALL_TIMEOUT_SECONDS, OTHER_LOCKFILES, AUDIT_CHECK_ID, AUDIT_TIMEOUT_SECONDS, AUDIT_REPORT, MANIFEST_FILES, SEVERITY_RANK, MAX_BASELINE_AUDIT_NOTES;
+var init_baseline = __esm({
+  "src/evidence/baseline.ts"() {
+    "use strict";
+    init_errors();
+    init_fsx();
+    init_hash();
+    init_redact();
+    init_profiles();
+    init_toolchains();
+    init_config();
+    init_resolve();
+    init_events();
+    init_candidate();
+    init_git();
+    init_runner();
+    init_store();
+    BASELINE_FILE2 = "baseline.json";
+    NPM_REGISTRY_HOSTS = ["registry.npmjs.org"];
+    INSTALL_TIMEOUT_SECONDS = 900;
+    OTHER_LOCKFILES = ["yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "deno.lock"];
+    AUDIT_CHECK_ID = "orbit-dependency-audit";
+    AUDIT_TIMEOUT_SECONDS = 300;
+    AUDIT_REPORT = "npm-audit.json";
+    MANIFEST_FILES = ["package.json", "package-lock.json", "npm-shrinkwrap.json"];
+    SEVERITY_RANK = { critical: 4, high: 3, moderate: 2, low: 1 };
+    MAX_BASELINE_AUDIT_NOTES = 50;
+  }
+});
+
+// src/evidence/environment-failure.ts
+import { isAbsolute as isAbsolute16 } from "node:path";
+function within2(path, root) {
+  const r = root.length > 1 ? root.replace(/\/+$/, "") : root;
+  return path === r || path.startsWith(`${r}/`);
+}
+function deniedOutside(line3, roots) {
+  if (!DENIED.test(line3)) return false;
+  const paths = line3.match(ABSOLUTE_PATH) ?? [];
+  return paths.some((p) => !roots.some((root) => within2(p.replace(/[.]+$/, ""), root)));
+}
+function classifyEnvironmentFailure(input) {
+  const { fingerprint, baselineFingerprint } = input;
+  if (!fingerprint || !baselineFingerprint || fingerprint !== baselineFingerprint) return null;
+  const signals = [];
+  const lines = [];
+  const see = (signal) => {
+    if (!signals.includes(signal)) signals.push(signal);
+  };
+  for (const raw of stripAnsi(input.output).split("\n", MAX_SCANNED_LINES2)) {
+    const line3 = raw.replace(/\r$/, "");
+    const found = [];
+    if (VIOLATION.test(line3)) found.push("sandbox-violation");
+    if (EPERM.test(line3)) found.push("eperm");
+    if (NOT_PERMITTED.test(line3)) found.push("operation-not-permitted");
+    if (deniedOutside(line3, input.insideRoots)) found.push("eacces-outside-worktree");
+    if (found.length === 0) continue;
+    for (const s of found) see(s);
+    const shown = line3.trim().slice(0, MAX_LINE_CHARS);
+    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown)) lines.push(shown);
+  }
+  if (signals.length === 0) return null;
+  return { checkId: input.checkId, fingerprint, signals, cause: signals.map((s) => CAUSES[s]).join("; "), lines };
+}
+function classifyNotExecuted(input) {
+  const browser = input.browserIsolation?.trim();
+  if (browser) return { checkId: input.checkId, fingerprint: null, signals: ["browser-isolation"], cause: CAUSES["browser-isolation"], lines: [browser.slice(0, MAX_LINE_CHARS)] };
+  const start = input.startFailure?.trim();
+  if (start) return { checkId: input.checkId, fingerprint: null, signals: ["start-failed"], cause: CAUSES["start-failed"], lines: [start.slice(0, MAX_LINE_CHARS)] };
+  let crash = input.signal !== void 0 && input.signal !== null && CRASH_SIGNALS.has(input.signal) ? input.signal : null;
+  const kills = [];
+  const frames = [];
+  let traced = false;
+  let own = 0;
+  let inJsTrace = false;
+  for (const raw of stripAnsi(input.output).split("\n", MAX_SCANNED_LINES2)) {
+    const line3 = raw.trim();
+    if (line3 === "") continue;
+    const killed = KILLED_BY_SIGNAL.exec(line3);
+    const footer = RUNNER_FOOTER.exec(line3);
+    const header2 = TRACE_HEADER.exec(line3);
+    if (header2) {
+      inJsTrace = header2[1].toLowerCase() === "javascript";
+      traced = true;
+    } else if (inJsTrace && JS_FRAME.test(line3)) {
+    } else if (TRACE_FRAME.test(line3)) {
+      if (frames.length === 0) frames.push(line3.slice(0, MAX_LINE_CHARS));
+    } else if (killed) {
+      if (CRASH_SIGNALS.has(killed[1])) {
+        crash = killed[1];
+        if (kills.length === 0) kills.push(line3);
+      } else {
+        own += 1;
+      }
+    } else if (footer) {
+      if (CRASH_SIGNALS.has(footer[1])) crash = footer[1];
+    } else {
+      own += 1;
+    }
+  }
+  if (crash === null && !traced || own > 0) return null;
+  return { checkId: input.checkId, fingerprint: null, signals: ["process-aborted"], cause: crash === null ? CAUSES["process-aborted"] : `${CAUSES["process-aborted"]} (${crash})`, lines: [...kills, ...frames] };
+}
+function excerpt2(line3, at) {
+  if (line3.length <= MAX_LINE_CHARS) return line3;
+  const start = Math.max(0, Math.min(at - (MAX_LINE_CHARS - 40), line3.length - (MAX_LINE_CHARS - 3)));
+  return start === 0 ? line3.slice(0, MAX_LINE_CHARS) : `...${line3.slice(start, start + MAX_LINE_CHARS - 3)}`;
+}
+function classifyCouldNotRun(input) {
+  const text2 = stripAnsi(input.output);
+  if (CODE_FAILURE.some((re) => re.test(text2))) return null;
+  const outside = (path) => !input.insideRoots.some((root) => within2(path.replace(/[.]+$/, ""), root));
+  const signals = [];
+  const lines = [];
+  for (const raw of text2.split("\n", MAX_SCANNED_LINES2)) {
+    const line3 = raw.replace(/\r$/, "").trim();
+    const deny2 = SEATBELT_DENY.exec(line3);
+    const denial = DENIAL.exec(line3);
+    let found = null;
+    if (deny2 && (!deny2[1].toLowerCase().startsWith("file-") || deny2[2] !== void 0 && isAbsolute16(deny2[2]) && outside(deny2[2]))) found = { signal: "sandbox-violation", at: deny2.index };
+    else if (denial && FS_CALL.test(line3) && (line3.match(ABSOLUTE_PATH) ?? []).some(outside)) found = { signal: "filesystem-denied", at: denial.index };
+    if (found === null) continue;
+    if (!signals.includes(found.signal)) signals.push(found.signal);
+    const shown = excerpt2(line3, found.at);
+    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown)) lines.push(shown);
+  }
+  if (signals.length === 0) return null;
+  return { checkId: input.checkId, fingerprint: null, signals, cause: signals.map((s) => CAUSES[s]).join("; "), lines };
+}
+var MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER, FS_CALL, DENIAL, SEATBELT_DENY, CODE_FAILURE;
+var init_environment_failure = __esm({
+  "src/evidence/environment-failure.ts"() {
+    "use strict";
+    init_fingerprint();
+    MAX_EVIDENCE_LINES = 3;
+    MAX_LINE_CHARS = 200;
+    MAX_SCANNED_LINES2 = 2e5;
+    VIOLATION = /<\/?sandbox_violations>|\bSandbox:.*\bdeny\(|X-Proxy-Error|Connection blocked by network allowlist/i;
+    EPERM = /\bEPERM\b/;
+    NOT_PERMITTED = /operation not permitted/i;
+    DENIED = /\bEACCES\b|permission denied/i;
+    ABSOLUTE_PATH = /(?<![\w./~<>-])\/[^\s'"`\u2018\u2019\u201C\u201D:,;()<>[\]{}|]+/g;
+    CAUSES = {
+      "sandbox-violation": "the sandbox reported a denied operation",
+      eperm: "an operation the sandbox does not permit failed with EPERM",
+      "operation-not-permitted": 'the operating system answered "operation not permitted"',
+      "eacces-outside-worktree": "permission was denied (EACCES) on a path outside the worktree",
+      "process-aborted": "the process was killed by a fatal signal before it printed anything of its own",
+      "start-failed": "the check could not be started",
+      "browser-isolation": "the browser could not start under sandbox-runtime",
+      "filesystem-denied": `the sandbox or the operating system refused a filesystem operation outside the check's checkout (EPERM, "operation not permitted", or EROFS, "read-only file system")`
+    };
+    CRASH_SIGNALS = /* @__PURE__ */ new Set(["SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL", "SIGTRAP", "SIGSYS"]);
+    TRACE_HEADER = /^-{3,}\s*(Native|JavaScript) stack trace\s*-{3,}$/i;
+    JS_FRAME = /^\d+:\s+\S/;
+    TRACE_FRAME = /^\d+:\s+0x[0-9a-f]+(?:\s|$)/i;
+    KILLED_BY_SIGNAL = /^Process killed by signal: (SIG[A-Z0-9]+)$/;
+    RUNNER_FOOTER = /^\[orbit\] check=\S+ status=\S+ exit=(\S+)/;
+    FS_CALL = /\b(?:mkdir|mkdtemp|mkstemp|open|openat|creat|rename|unlink|rmdir|chmod|chown|lchown|symlink|link|copyfile|clonefile|scandir|opendir|access|stat|lstat|utimes?|truncate|shm_open|sem_open|realpath|readlink|mkfifo|bind|connect|touch|cp|mv|rm|ln|PermissionError|IOException|errno)\b/i;
+    DENIAL = /\bEPERM\b|operation not permitted|\bEROFS\b|read-only file system/i;
+    SEATBELT_DENY = /\bdeny\(\d+\)\s+([a-z][\w-]*)(?:\s+(\S+))?/i;
+    CODE_FAILURE = [
+      /\berror (?:CS|FS|BC|TS)\d{4}\b/,
+      // C#, F#, Visual Basic, TypeScript
+      /\berror\[E\d{4}\]/,
+      // Rust
+      /:\d+(?::\d+)?: (?:fatal )?error:/,
+      // C, C++, Swift, Java
+      /\bSyntaxError\b/,
+      /\bAssertionError\b|\bAssert\.\w+\(\) Failure\b|\bassertion failed\b/i,
+      /\bFailed!\s+-\s+Failed:\s*[1-9]/,
+      // dotnet test
+      /^\s*(?:not ok \d+|FAIL\b|--- FAIL:|FAILED\s+\S+::)/m,
+      // TAP, Jest and Vitest, Go, pytest
+      /\btest result: FAILED\b/,
+      // cargo test
+      /^\s*(?:#|ℹ)\s*fail\s+[1-9]/m,
+      // node:test
+      /\b[1-9]\d*\s+(?:failed|failing|failures?)\b/i,
+      /\b[1-9]\d*\s+errors?\b|\b[1-9]\d* Error\(s\)/i
+      // compilers' and MSBuild's error counts
+    ];
+  }
+});
+
+// src/controller/steps/baseline-questions.ts
+import { join as join42 } from "node:path";
+function openBaselineRequests(ctx) {
+  const out = [];
+  for (const d of listDecisions(ctx.db, ctx.run.id, { kind: BASELINE_EXCEPTION_REQUEST_KIND })) {
+    const req = d.data;
+    if (findQuestion(ctx.db, req.question_id)?.status === "open") out.push(req);
+  }
+  return out;
+}
+function isEnvironmentFailure(ctx, req) {
+  const failure = readJsonIfExists(join42(ctx.runDir, BASELINE_FILE2))?.failures.find((f) => f.checkId === req.check_id);
+  return classifyEnvironmentFailure({ checkId: req.check_id, fingerprint: req.fingerprint, baselineFingerprint: req.fingerprint, output: failure?.excerpt ?? "", insideRoots: [] }) !== null;
+}
+function settleExpectedFlips(ctx, contract) {
+  const flipped = [];
+  for (const req of openBaselineRequests(ctx)) {
+    const criteria = contract.acceptance_criteria.filter((c) => (c.check_ids ?? []).includes(req.check_id)).map((c) => c.id);
+    if (criteria.length === 0 || isEnvironmentFailure(ctx, req)) continue;
+    withdrawQuestion(ctx.db, req.question_id, `check ${req.check_id} is the proof of ${criteria.join(", ")}: it is expected to flip to passing, not to be excepted`, ctx.clock);
+    decide2(ctx, {
+      id: `dec-${ctx.run.id}-baseline-flip-${req.question_id}`,
+      kind: EXPECTED_TO_FLIP_KIND,
+      summary: `check ${req.check_id} fails on the base revision and is the proof of ${criteria.join(", ")}: expected to flip to passing, so no baseline exception is asked about`,
+      data: { check_id: req.check_id, fingerprint: req.fingerprint, base_revision: req.base_revision, criteria, question_id: req.question_id }
+    });
+    flipped.push(req.check_id);
+  }
+  return flipped;
+}
+function closeMootBaselineQuestions(ctx) {
+  for (const req of openBaselineRequests(ctx)) {
+    withdrawQuestion(ctx.db, req.question_id, `the run succeeded without a baseline exception for check ${req.check_id}: the question is moot`, ctx.clock);
+  }
+}
+var EXPECTED_TO_FLIP_KIND;
+var init_baseline_questions = __esm({
+  "src/controller/steps/baseline-questions.ts"() {
+    "use strict";
+    init_fsx();
+    init_baseline();
+    init_environment_failure();
+    init_baseline_exception();
+    init_store4();
+    init_decisions();
+    init_common();
+    EXPECTED_TO_FLIP_KIND = "baseline.expected-to-flip";
+  }
+});
+
+// src/controller/worktree-cleanup.ts
+import { existsSync as existsSync31, readdirSync as readdirSync9, rmSync as rmSync10 } from "node:fs";
+import { join as join43 } from "node:path";
+async function hasUnsavedEdits(worktree, repoRoot) {
+  const admin = await adminDirFor(repoRoot, worktree);
+  const out = await git2(admin.worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"], { env: { GIT_DIR: admin.gitDir, GIT_WORK_TREE: admin.worktree, GIT_LITERAL_PATHSPECS: "1" } });
+  return out.split("\0").some((e) => e.length > 3 && !/(^|\/)(\.DS_Store|Thumbs\.db)$/.test(e.slice(3)) && !e.slice(3).startsWith("node_modules/"));
+}
+async function releaseRunWorktrees(ctx) {
+  const root = runWorktreeRoot(ctx);
+  if (!existsSync31(root)) return;
+  const repoRoot = ctx.run.repoRoot;
+  const kept = [];
+  const removed = [];
+  const implementer = ctx.run.worktreePath;
+  for (const name of readdirSync9(root)) {
+    const dir = join43(root, name);
+    try {
+      if (implementer && dir === implementer && ctx.run.baseRevision) {
+        if (await hasUnsavedEdits(dir, repoRoot)) {
+          await snapshotCandidate({ db: ctx.db, clock: ctx.clock, repoRoot, worktree: dir, runId: ctx.run.id, baseRev: ctx.run.baseRevision, attempt: Math.max(1, ctx.ledger?.state("implementation_attempts").used ?? 1), workerId: null });
+        }
+      }
+      await cleanupCandidateCheckout(repoRoot, dir);
+      removed.push(name);
+    } catch (err) {
+      kept.push(name);
+      ctx.log.warn("could not remove a finished run's worktree; it is kept", { run_id: ctx.run.id, worktree: name, error: messageOf(err) });
+    }
+  }
+  if (kept.length === 0) rmSync10(root, { recursive: true, force: true });
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, WORKTREES_RELEASED_EVENT, ctx.ownerId, { removed, kept }, ctx.clock.now()));
+}
+var WORKTREES_RELEASED_EVENT;
+var init_worktree_cleanup = __esm({
+  "src/controller/worktree-cleanup.ts"() {
+    "use strict";
+    init_candidate();
+    init_git();
+    init_context2();
+    init_workers2();
+    init_events();
+    WORKTREES_RELEASED_EVENT = "worktrees.released";
+  }
+});
+
+// src/review/stale.ts
+function findStaleReviews(db, runId, current) {
+  return listReviews(db, runId).filter((r) => r.treeHash !== current.treeHash);
+}
+function invalidateStaleReviews(db, input, clock) {
+  const reason = `candidate tree is now ${input.current.treeHash}${input.cause ? ` (${input.cause})` : ""}; a review of another tree authorizes nothing`;
+  const stale = findStaleReviews(db, input.runId, input.current);
+  if (stale.length === 0) return [];
+  const ids = stale.map((r) => r.id).sort();
+  recordDecision(
+    db,
+    input.runDir,
+    {
+      id: `dec-review-invalidated-${sha256(canonicalJson([input.runId, input.current.treeHash, ids])).slice(0, 12)}`,
+      runId: input.runId,
+      kind: "review.invalidated",
+      summary: `${stale.length} review(s) invalidated: ${reason}`.slice(0, 500),
+      data: { reviews: stale.map((r) => ({ id: r.id, provider: r.provider, tree_hash: r.treeHash, verdict: r.verdict })), current_tree: input.current.treeHash, cause: input.cause ?? null }
+    },
+    clock
+  );
+  const invalidated = db.tx(() => {
+    const out = [];
+    for (const r of stale) if (markReviewInvalidated(db, r.id, reason, clock)) out.push(r);
+    return out;
+  });
+  return invalidated;
+}
+function reviewGate(db, input) {
+  const reasons = [];
+  const { config } = input.snapshot;
+  const current = listReviews(db, input.runId, { treeHash: input.treeHash });
+  const security = input.security ?? readSecurityPolicy(input.snapshot);
+  const lapsed = /* @__PURE__ */ new Set();
+  const all = listFindings(db, input.runId).map((f) => {
+    if (f.status !== "excepted" || exceptionStillApplies(f, security, input.now)) return f;
+    lapsed.add(f.id);
+    return { ...f, status: "open" };
+  });
+  if (current.length === 0) {
+    const stale = findStaleReviews(db, input.runId, { treeHash: input.treeHash });
+    reasons.push(stale.length > 0 ? `no review of tree ${input.treeHash}; ${stale.length} review(s) exist only for other trees and authorize nothing` : `no review of tree ${input.treeHash}`);
+  }
+  const cleared = [];
+  for (const r of current) {
+    if (r.verdict === "APPROVE") {
+      cleared.push(r);
+      continue;
+    }
+    const own = all.filter((f) => f.reviewId === r.id);
+    const closers = r.verdict === "BLOCK" ? CLEARS_BLOCK : CLEARS_REPAIR;
+    const open2 = own.filter((f) => !closers.includes(f.status));
+    if (own.length === 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} with no findings to resolve`);
+    else if (open2.length > 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} and ${open2.length} of its finding(s) are unresolved (${open2.map((f) => `${f.externalId ?? f.id} ${f.status}`).join(", ")})`);
+    else cleared.push(r);
+  }
+  for (const f of blockingUnresolved(all, input.snapshot, security, lapsed)) {
+    const why = lapsed.has(f.id) ? " (its policy exception has expired or no longer covers it)" : "";
+    reasons.push(`finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}) blocks delivery${why}: ${f.claim.slice(0, 120)}`);
+  }
+  const fallback = reviewFallback(config.review);
+  if (fallback !== "claude" && cleared.length > 0 && input.implementerProvider === void 0) {
+    reasons.push(`${fallback === "block" ? "independent review is required" : "a same-provider review needs a person's yes"} but the implementer provider was not supplied, so independence cannot be shown`);
+  } else if (cleared.length > 0 && !cleared.some((r) => r.provider !== input.implementerProvider)) {
+    if (fallback === "block") reasons.push(`independent review is required but every clearing review is from "${input.implementerProvider}", the implementer's provider`);
+    else if (fallback === "ask" && listDecisions(db, input.runId, { kind: SAME_PROVIDER_APPROVED_KIND }).length === 0) {
+      reasons.push(`every clearing review is from "${input.implementerProvider}", the implementer's provider, and no person approved a same-provider review (review.when_unavailable: ask)`);
+    }
+  }
+  if (current.length > 0 && cleared.length === 0 && reasons.length === 0) reasons.push("no review cleared this tree");
+  return { ok: reasons.length === 0, reasons, cleared };
+}
+function exceptionStillApplies(f, security, now) {
+  const index = f.resolutionJson?.exception?.index;
+  const exception = typeof index === "number" ? security.exceptions[index] : void 0;
+  return exception !== void 0 && exceptionApplies(exception, f, now);
+}
+function blockingUnresolved(findings, snapshot2, security, lapsed) {
+  return findings.filter((f) => {
+    if (f.status !== "open" && f.status !== "claim_pending" && f.status !== "accepted") return false;
+    const flag = f.resolutionJson?.blocking;
+    if (typeof flag === "boolean" && !lapsed.has(f.id)) return flag;
+    return severityBlocks(snapshot2, f.severity, isSecurityFinding({ category: f.category, externalId: f.externalId }), security);
+  });
+}
+var CLEARS_REPAIR, CLEARS_BLOCK;
+var init_stale = __esm({
+  "src/review/stale.ts"() {
+    "use strict";
+    init_errors();
+    init_hash();
+    init_decisions();
+    init_review();
+    init_select();
+    init_store3();
+    init_resolve();
+    CLEARS_REPAIR = ["rejected", "excepted", "advisory", "resolved"];
+    CLEARS_BLOCK = ["rejected", "excepted", "resolved"];
+  }
+});
+
+// src/controller/gates.ts
+import { realpathSync as realpathSync13 } from "node:fs";
+function result(gate, reasons, evidence, notes, details, unverified = false) {
+  const status2 = reasons.length > 0 ? "fail" : unverified ? "unverified" : "pass";
+  return { gate, status: status2, passed: status2 === "pass", reasons, evidence, notes, onFailure: FAILURE_BEHAVIOUR[gate], details };
+}
+function intakeGate(input) {
+  const { snapshot: snapshot2, run } = input;
+  const reasons = [];
+  const evidence = [`policy ${run.policyHash}`];
+  let repo;
+  try {
+    repo = realpathSync13(run.repoRoot);
+  } catch {
+    repo = run.repoRoot;
+    reasons.push(`repository ${run.repoRoot} does not exist`);
+  }
+  if (repo !== snapshot2.repo_root) reasons.push(`the run's repository ${repo} is not the repository the policy authorizes (${snapshot2.repo_root})`);
+  if (run.mode !== snapshot2.config.mode) reasons.push(`the run's mode ${run.mode} differs from the frozen policy mode ${snapshot2.config.mode}`);
+  if (snapshotHash(snapshot2) !== run.policyHash) reasons.push("the policy snapshot does not match the hash recorded for the run");
+  const limits = snapshot2.config.scheduler.hard_limits;
+  for (const [k, v] of Object.entries(limits)) if (!(typeof v === "number" && v > 0)) reasons.push(`hard limit ${k} must be positive`);
+  if (snapshot2.config.scope.allowed_paths.length === 0) reasons.push("the policy allows no paths, so no implementation is authorized");
+  const environment = input.run.environment ?? null;
+  if (environment !== null) {
+    const why = releaseEnvironmentProblem(snapshot2.config, environment);
+    if (why) reasons.push(`the run names release environment ${JSON.stringify(environment)}, which cannot be used: ${why}`);
+    else evidence.push(`release environment ${environment}`);
+  }
+  const problems = input.contract === void 0 ? [] : contractProblems(input.contract, snapshot2, { policyHash: run.policyHash });
+  reasons.push(...problems.map((p) => `contract: ${p}`));
+  if (input.contract !== void 0 && problems.length === 0) {
+    const c = input.contract;
+    evidence.push(`contract ${c.task_id}: ${c.acceptance_criteria.length} criteria, ${c.required_check_ids.length} required checks, scope ${c.allowed_paths.join(", ")}`);
+    const mandatory = c.acceptance_criteria.filter((a) => a.mandatory);
+    if (mandatory.length === 0) reasons.push("the contract has no mandatory acceptance criterion, so success could not be measured");
+    for (const a of mandatory) {
+      if (a.proof.length === 0) reasons.push(`${a.id} names no proof`);
+      const byCheck = (a.check_ids ?? []).length > 0;
+      const byUi = a.ui === true && (snapshot2.config.ui?.journey_check_ids.length ?? 0) > 0;
+      if (!byCheck && !byUi) reasons.push(`${a.id} is not measurable: it cites no trusted check${a.ui ? " and the policy defines no UI journeys" : ""}`);
+    }
+    if (c.allowed_paths.length === 0) reasons.push("the contract allows no paths");
+    if ((c.delivery.environment ?? null) !== environment) {
+      reasons.push(`the contract's delivery.environment (${c.delivery.environment ?? "none"}) is not the release environment the run names (${environment ?? "none"})`);
+    }
+  }
+  return result("intake", reasons, evidence, [], { problems });
+}
+function environmentGate(input) {
+  const reasons = [];
+  const evidence = [];
+  const notes = [];
+  let blockedProvider = null;
+  let code2 = null;
+  const unattended = UNATTENDED_MODES.has(input.mode);
+  if ("error" in input.isolation) {
+    reasons.push(`isolation is unavailable: ${input.isolation.error}`);
+    code2 = "ISOLATION_UNAVAILABLE";
+  } else {
+    const iso2 = input.isolation;
+    evidence.push(`isolation ${iso2.kind}: ${iso2.detail}`);
+    if (iso2.kind === "none") {
+      if (unattended && input.snapshot.config.isolation.allow_unisolated !== true) {
+        reasons.push(`unattended ${input.mode} execution needs isolation; the policy selects none`);
+        code2 = "ISOLATION_UNAVAILABLE";
+      } else {
+        notes.push("no isolation: workers and checks run without an OS sandbox and without network egress controls (isolation.allow_unisolated)");
+      }
+    } else if (!iso2.available) {
+      reasons.push(`${iso2.kind} isolation is unavailable: ${iso2.detail}`);
+      code2 = "ISOLATION_UNAVAILABLE";
+    } else if (iso2.kind === "sandbox-runtime") {
+      notes.push("sandbox-runtime limits filesystem writes and network egress but not CPU, memory or process count");
+    }
+    const unenforced = resourceLimitRefusals(input.snapshot.config.isolation, iso2.kind);
+    if (unenforced.length > 0) {
+      reasons.push(...unenforced.map((u) => `${u}; ${RESOURCE_LIMIT_FIX}`));
+      code2 ??= "ISOLATION_UNAVAILABLE";
+    }
+  }
+  for (const c of input.credentials) {
+    evidence.push(`credentials ${c.provider}: ${c.verdict}${c.status ? ` (${c.status.state}${c.status.method ? `, ${c.status.method}` : ""})` : ""}`);
+    if (c.verdict === "blocked") {
+      reasons.push(`${c.provider} credentials are ${c.status?.state ?? "not usable"}${c.status?.detail ? `: ${c.status.detail}` : ""}`);
+      blockedProvider ??= c.provider;
+      code2 ??= c.status?.state === "missing" ? "AUTH_MISSING" : "AUTH_EXPIRED";
+    } else if (c.verdict === "error") {
+      reasons.push(`${c.provider} could not be checked: ${c.error ?? "unknown error"}`);
+      code2 ??= "PROVIDER_UNAVAILABLE";
+    } else if (c.verdict === "unverified") {
+      notes.push(`${c.provider} credentials are present but unverified until a request succeeds`);
+    }
+  }
+  if (input.delivery) {
+    reasons.push(`delivery: ${input.delivery.summary}; ${input.delivery.fix}`);
+    code2 ??= input.delivery.code;
+  }
+  if (input.reviewer) {
+    if (input.reviewer.decision === "BLOCK") {
+      reasons.push(`independent review: ${input.reviewer.reason}`);
+      code2 ??= input.reviewer.code;
+    } else {
+      evidence.push(`reviewer ${reviewerLabel(input.reviewer)}`);
+      if (!input.reviewer.independent) {
+        notes.push(
+          `same-provider review: ${input.reviewer.independentUnavailable ?? "no independent reviewer was usable"}; ${input.reviewer.provider} reviews in a separate session at the opus-class floor, so the review is not independent${input.reviewer.needsApproval ? ", and only after a person says yes (review.when_unavailable: ask)" : ""}`
+        );
+      }
+    }
+  }
+  return result("environment", reasons, evidence, notes, { blockedProvider, code: code2 });
+}
+function baselineGate(report2) {
+  const reasons = [];
+  const notes = [];
+  const evidence = [`baseline of ${report2.baseRevision} (tree ${report2.baseTree}): ${report2.checks.length} check(s)`];
+  if (!report2.install.skipped && !report2.install.ok) reasons.push(`the locked dependency install failed on the base revision${report2.install.reason ? `: ${report2.install.reason}` : ""}`);
+  for (const f of report2.failures) notes.push(`pre-existing failure on the base revision: ${f.checkId}${f.fingerprint ? ` (${f.fingerprint})` : ""}`);
+  for (const n2 of report2.auditNotes ?? []) notes.push(n2);
+  if (!report2.complete) notes.push("the baseline is incomplete: some checks could not produce a decisive result on the base revision");
+  return result("baseline", reasons, evidence, notes, { failures: report2.failures }, !report2.complete && reasons.length === 0);
+}
+function implementationScopeGate(scope, snapshot2) {
+  const reasons = [];
+  const repairable = [];
+  const deps = snapshot2.config.dependencies;
+  if (scope.forbidden_paths_changed.length > 0) reasons.push(`protected paths changed: ${scope.forbidden_paths_changed.join(", ")}`);
+  if (scope.symlinks_escaping.length > 0) reasons.push(`symlinks escape the worktree: ${scope.symlinks_escaping.join(", ")}`);
+  const policyViolation = reasons.length > 0;
+  const add = (why) => {
+    reasons.push(why);
+    repairable.push(why);
+  };
+  if (scope.out_of_scope_paths_changed.length > 0) add(`paths outside the authorized scope changed: ${scope.out_of_scope_paths_changed.join(", ")}`);
+  if (!scope.within_size_limits) add(`the change is over the size limits (${scope.changed_files} files, ${scope.changed_lines} lines)`);
+  if (scope.lockfile_changed && !deps.change_lockfile) add("a lockfile changed, which the policy does not allow");
+  if (scope.dependency_manifest_changed.length > 0 && !deps.add_packages) add(`dependency manifests changed: ${scope.dependency_manifest_changed.join(", ")}`);
+  const evidence = [`${scope.changed_files} file(s), ${scope.changed_lines} line(s) changed`];
+  const notes = scope.weakening_signals.map((w) => `possible oracle weakening in ${w.path}: ${w.signal} (${w.detail})`);
+  return result("implementation", reasons, evidence, notes, { policyViolation, repairable });
+}
+function staticSecurityGate(input) {
+  const reasons = [];
+  const notes = [];
+  const evidence = [`secret scan: ${input.scan.note}; ${input.scan.files} file(s) scanned (${input.scan.reportPath})`];
+  if (!input.scan.completed) notes.push("the secret scan did not complete");
+  if (input.scan.findings.length > 0) {
+    reasons.push(`the secret scan found ${input.scan.findings.length} potential secret(s): ${input.scan.findings.slice(0, 10).map((f) => `${f.file}${f.line ? `:${f.line}` : ""} (${f.rule})`).join(", ")}`);
+  }
+  if (input.scan.scanner === "builtin") notes.push(`secret scan used built-in patterns only: ${input.scan.note}`);
+  if (input.sast.length === 0) {
+    notes.push("static analysis (SAST) is unverified: the policy defines no SAST check");
+  } else {
+    for (const s of input.sast) {
+      evidence.push(`SAST ${s.checkId}: ${s.status ?? "not run"}`);
+      if (s.status === "FAILED") reasons.push(`SAST check ${s.checkId} failed`);
+      else if (s.status !== "PASSED") notes.push(`SAST check ${s.checkId} is unverified (${s.status ?? "not run"})`);
+    }
+  }
+  const unverified = input.sast.length === 0 || !input.scan.completed || input.sast.some((s) => s.status !== "PASSED");
+  return result("static_security", reasons, evidence, notes, { secrets: input.scan.findings.length, sastDefined: input.sast.length > 0 }, unverified);
+}
+function behaviourGate(evaluation) {
+  const r = evaluation.report;
+  const evidence = r.checks.map((c) => `${c.id}: ${c.status}${c.flaky ? " (flaky)" : ""} (${c.log})`);
+  evidence.push(...r.acceptance_evidence.map((a) => `${a.criterion_id}: ${a.status}`));
+  if (r.verdict === "FAIL") return result("behaviour", evaluation.failReasons.length > 0 ? evaluation.failReasons : ["the evidence verdict is FAIL"], evidence, r.unverified, { verdict: r.verdict });
+  return result("behaviour", [], evidence, [...evaluation.incompleteReasons, ...r.unverified], { verdict: r.verdict }, r.verdict !== "PASS");
+}
+function uiGate(input) {
+  if (!input.required) return result("ui", [], ["no UI path changed and no criterion needs UI evidence"], [], { verdict: null });
+  if (!input.configured) return result("ui", ["UI evidence is required but the policy configures no UI journeys"], [], [], { verdict: null });
+  const r = input.result;
+  if (!r) return result("ui", [], [], ["UI checks did not run"], { verdict: null }, true);
+  const evidence = r.journeys.map((j) => `${j.id}: ${j.status}`);
+  if (r.verdict === "PASS") return result("ui", [], evidence, r.unverified, { verdict: r.verdict });
+  if (r.verdict === "FAIL" || r.verdict === "BLOCKED") return result("ui", r.reasons.length > 0 ? r.reasons : [`UI verdict ${r.verdict}`], evidence, r.unverified, { verdict: r.verdict });
+  return result("ui", [], evidence, [...r.reasons, ...r.unverified], { verdict: r.verdict }, true);
+}
+function independentReviewGate(db, input) {
+  const g = reviewGate(db, { runId: input.runId, treeHash: input.treeHash, snapshot: input.snapshot, implementerProvider: input.implementerProvider, now: input.now });
+  const approved = g.cleared.some((r) => r.verdict === "APPROVE");
+  const evidence = g.cleared.map((r) => `review ${r.id} by ${r.provider}: ${r.verdict} on tree ${r.treeHash}`);
+  return result("independent_review", g.reasons, evidence, [], { gate: g, approved });
+}
+function deliveryGate(input) {
+  try {
+    assertDeliverable({
+      report: input.evidence.report,
+      review: input.review,
+      deliveryCommitTree: input.deliveryCommitTree,
+      invalidatedReason: input.evidence.invalidatedReason,
+      current: { candidate: input.candidate, snapshot: input.snapshot }
+    });
+    return result("delivery", [], [`evidence ${input.evidence.id} and review on tree ${input.candidate.treeHash}; delivery tree ${input.deliveryCommitTree}`], [], { code: null });
+  } catch (err) {
+    if (!isOrbitError(err)) throw err;
+    return result("delivery", [err.message], [], [], { code: err.code });
+  }
+}
+function blockingQuestions(db, runId) {
+  const waiting = openQuestions(db, runId).filter((q) => q.material);
+  const criteria = criteriaBlockedByQuestions(waiting);
+  return { criteria, questions: waiting.filter((q) => q.affected.some((a) => criteria.includes(a))) };
+}
+function completionGate(db, input) {
+  const reasons = [];
+  const evidence = [];
+  const c = input.candidate;
+  if (!c) return result("completion", ["there is no candidate"], [], [], { evidenceId: null, reviewId: null, blockedCriteria: [] });
+  const report2 = currentEvidenceReport(db, input.run.id, c.id);
+  if (!report2) reasons.push(`no live evidence report for candidate ${c.id}`);
+  else {
+    evidence.push(`evidence ${report2.id}: ${report2.verdict} on tree ${report2.treeHash}`);
+    if (report2.verdict !== "PASS") reasons.push(`the evidence verdict is ${report2.verdict}, not PASS`);
+    const stale = staleReasons(report2.report, { candidate: c, snapshot: input.snapshot });
+    if (stale.length > 0) reasons.push(`the evidence is stale: ${stale.join("; ")}`);
+  }
+  const g = reviewGate(db, { runId: input.run.id, treeHash: c.treeHash, snapshot: input.snapshot, implementerProvider: input.implementerProvider, now: input.now });
+  const approve = listReviews(db, input.run.id, { treeHash: c.treeHash }).find((r) => r.verdict === "APPROVE" && r.invalidatedAt === null) ?? null;
+  if (!approve) reasons.push(`no APPROVE review of tree ${c.treeHash}`);
+  else evidence.push(`review ${approve.id} by ${approve.provider}: APPROVE on tree ${approve.treeHash}`);
+  if (!g.ok) reasons.push(...g.reasons);
+  const { criteria: blocked, questions: waiting } = blockingQuestions(db, input.run.id);
+  if (blocked.length > 0) reasons.push(`${blocked.join(", ")} ${blocked.length === 1 ? "is" : "are"} blocked by open question(s) ${waiting.map((q) => q.id).join(", ")} waiting for a person`);
+  if (input.deliveredTree === null) reasons.push("no delivered commit to compare with the reviewed tree");
+  else if (input.deliveredTree !== c.treeHash) reasons.push(`the delivered tree ${input.deliveredTree} is not the reviewed tree ${c.treeHash}`);
+  else evidence.push(`delivered tree ${input.deliveredTree}`);
+  return result("completion", reasons, evidence, [], { evidenceId: report2?.id ?? null, reviewId: approve?.id ?? null, blockedCriteria: blocked });
+}
+var FAILURE_BEHAVIOUR;
+var init_gates = __esm({
+  "src/controller/gates.ts"() {
+    "use strict";
+    init_select();
+    init_stale();
+    init_store3();
+    init_validate();
+    init_config();
+    init_limits();
+    init_snapshot();
+    init_freshness();
+    init_store();
+    init_errors();
+    init_questions();
+    FAILURE_BEHAVIOUR = {
+      intake: "reject-contract",
+      environment: "block-unattended",
+      baseline: "record-baseline",
+      implementation: "deny-and-record",
+      static_security: "repair-or-block",
+      behaviour: "repair-brief",
+      ui: "repair-or-block",
+      independent_review: "resolve-findings",
+      delivery: "refuse-delivery",
+      completion: "no-success"
+    };
   }
 });
 
@@ -47833,7 +49901,7 @@ var init_common = __esm({
     init_workers2();
     init_baseline_questions();
     init_worktree_cleanup();
-    init_report();
+    init_report2();
     init_gates();
     init_amendment_answers();
     WAIT = (why) => ({ progressed: false, waiting: why });
@@ -47841,262 +49909,6 @@ var init_common = __esm({
     DONE = { progressed: true, done: true };
     WORKER_RETRY_EVENT = "worker.retry";
     MAX_REGENERATIONS = 2;
-  }
-});
-
-// src/delivery/git.ts
-function isObjectId(value) {
-  return typeof value === "string" && OBJECT_ID.test(value);
-}
-function assertTaskBranch(branch, rules) {
-  const deny2 = (why) => {
-    throw new OrbitError("POLICY_DENIED", `refusing to push ${JSON.stringify(branch)}: ${why}`, { branch, definitive: true });
-  };
-  if (typeof branch !== "string" || branch.length === 0) deny2("the branch name is empty");
-  if (branch.startsWith("refs/")) deny2("give the branch name, not a ref");
-  if (!rules.branchPrefix) deny2("no branch prefix is configured");
-  if (!branch.startsWith(rules.branchPrefix) || branch.length === rules.branchPrefix.length) deny2(`task branches start with ${rules.branchPrefix}`);
-  if (branch === rules.baseBranch) deny2("the base branch is never a push target");
-  if (branch.startsWith("-") || REF_FORBIDDEN2.test(branch)) deny2("it is not a valid branch name");
-}
-function branchRef(branch) {
-  return `refs/heads/${branch}`;
-}
-function gitEnv4(extra = {}, base = process.env) {
-  const keep = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "SystemRoot"];
-  const env = {};
-  for (const k of keep) if (base[k] !== void 0) env[k] = base[k];
-  return {
-    ...env,
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_ASKPASS: "",
-    GIT_OPTIONAL_LOCKS: "0",
-    // Transports Orbit uses; excludes ext:: and friends.
-    GIT_ALLOW_PROTOCOL: "file:https:http:git:ssh",
-    ...extra
-  };
-}
-async function git3(repoRoot, args, opts = {}) {
-  return execCapture(["git", ...args], { cwd: repoRoot, env: opts.env ?? gitEnv4(), timeoutMs: opts.timeoutMs ?? 12e4, input: opts.input, maxOutputBytes: 4 * 1024 * 1024 });
-}
-function fail(what, res, extra = {}) {
-  const text2 = redact(`${res.stderr}${res.stdout}`.trim()).slice(0, 2e3);
-  return new OrbitError("GIT_FAILED", `${what} failed (exit ${res.exitCode ?? res.signal ?? "unknown"}): ${text2}`, { exitCode: res.exitCode, ...extra });
-}
-async function objectExists(repoRoot, spec, opts) {
-  const res = await git3(repoRoot, ["cat-file", "-e", spec], opts);
-  return res.exitCode === 0;
-}
-async function readControllerIdentity(repoRoot, opts = {}) {
-  const read = async (key2) => {
-    const res = await git3(repoRoot, ["config", "--get", key2], opts);
-    return res.exitCode === 0 ? res.stdout.trim() : "";
-  };
-  const [name, email] = await Promise.all([read("user.name"), read("user.email")]);
-  if (!name || !email) {
-    throw new OrbitError("CONFIG_INVALID", "the controller has no git identity (user.name and user.email); delivery commits never take an identity from a worker", { definitive: true });
-  }
-  return { name, email };
-}
-async function createDeliveryCommit(input) {
-  const { repoRoot, tree, parent, message, identity } = input;
-  if (!isObjectId(tree)) throw new OrbitError("GIT_FAILED", "the tree is not a full object id", { tree });
-  if (!isObjectId(parent)) throw new OrbitError("GIT_FAILED", "the parent is not a full object id", { parent });
-  if (!message.trim()) throw new OrbitError("GIT_FAILED", "a delivery commit needs a message");
-  if (!identity.name || !identity.email) throw new OrbitError("CONFIG_INVALID", "a delivery commit needs an identity", { definitive: true });
-  if (!await objectExists(repoRoot, `${tree}^{tree}`, input)) throw new OrbitError("GIT_FAILED", `tree ${tree} is not in the repository`);
-  if (!await objectExists(repoRoot, `${parent}^{commit}`, input)) throw new OrbitError("GIT_FAILED", `parent ${parent} is not a commit in the repository`);
-  const when = `${Math.floor(input.timeMs / 1e3)} +0000`;
-  const env = gitEnv4({
-    // Reproducible: no user or system configuration can influence the result.
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_AUTHOR_NAME: identity.name,
-    GIT_AUTHOR_EMAIL: identity.email,
-    GIT_AUTHOR_DATE: when,
-    GIT_COMMITTER_NAME: identity.name,
-    GIT_COMMITTER_EMAIL: identity.email,
-    GIT_COMMITTER_DATE: when
-  });
-  const res = await git3(repoRoot, ["commit-tree", tree, "-p", parent, "-F", "-"], { ...input, env, input: message.endsWith("\n") ? message : `${message}
-` });
-  if (res.exitCode !== 0) throw fail("git commit-tree", res);
-  const commit = res.stdout.trim();
-  if (!isObjectId(commit)) throw new OrbitError("GIT_FAILED", `commit-tree printed an unexpected value: ${res.stdout.trim().slice(0, 80)}`);
-  const check = await git3(repoRoot, ["rev-parse", `${commit}^{tree}`], input);
-  if (check.exitCode !== 0 || check.stdout.trim() !== tree) {
-    throw new OrbitError("GIT_FAILED", `the delivery commit ${commit} has tree ${check.stdout.trim()}, not the reviewed tree ${tree}`, { commit, tree, definitive: true });
-  }
-  if (input.ref) {
-    const up = await git3(repoRoot, ["update-ref", input.ref, commit], input);
-    if (up.exitCode !== 0) throw fail("git update-ref", up);
-  }
-  return commit;
-}
-function deliveryRef(runId, tree, parent) {
-  return `refs/orbit/${runId}/delivery/${parent}/${tree}`;
-}
-async function findDeliveryCommit(repoRoot, runId, tree, parent, opts = {}) {
-  const res = await git3(repoRoot, ["rev-parse", "--verify", "--quiet", `${deliveryRef(runId, tree, parent)}^{commit}`], opts);
-  if (res.exitCode !== 0) return null;
-  const commit = res.stdout.trim();
-  const t = await git3(repoRoot, ["rev-parse", `${commit}^{tree}`, `${commit}^`], opts);
-  const [commitTree, commitParent] = t.stdout.trim().split("\n");
-  return t.exitCode === 0 && commitTree === tree && commitParent === parent ? commit : null;
-}
-function assertRemote(remote) {
-  if (typeof remote !== "string" || remote.length === 0 || remote.startsWith("-") || /[\0\n\r]/.test(remote)) {
-    throw new OrbitError("CONFIG_INVALID", `the remote ${JSON.stringify(remote)} is not usable`, { definitive: true });
-  }
-}
-function remoteHost2(address) {
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(address)) {
-    let url;
-    try {
-      url = new URL(address);
-    } catch {
-      throw new OrbitError("CONFIG_INVALID", "the remote URL cannot be parsed", { remote: redact(address), definitive: true });
-    }
-    if (url.protocol === "file:") return null;
-    const host = url.hostname.replace(/^\[|\]$/g, "");
-    if (!host) throw new OrbitError("CONFIG_INVALID", "the remote URL names no host", { remote: redact(address), definitive: true });
-    return host;
-  }
-  const scp = /^(?:[^@/]*@)?(\[[^\]]+\]|[^:/]+):/.exec(address);
-  if (scp) return scp[1].replace(/^\[|\]$/g, "");
-  return null;
-}
-async function resolveRemoteUrl(repoRoot, remote, opts = {}) {
-  assertRemote(remote);
-  const res = await git3(repoRoot, ["remote", "get-url", "--push", "--all", remote], opts);
-  let url;
-  if (res.exitCode === 0) {
-    const urls = res.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
-    if (urls.length !== 1) throw new OrbitError("CONFIG_INVALID", `remote ${remote} has ${urls.length} push URLs; delivery needs exactly one`, { definitive: true });
-    url = urls[0];
-  } else if (/[/:]/.test(remote)) {
-    url = remote;
-  } else {
-    throw new OrbitError("CONFIG_INVALID", `no git remote named ${JSON.stringify(remote)} in the repository`, { definitive: true });
-  }
-  assertRemote(url);
-  await assertNotRewritten(repoRoot, url, opts);
-  return url;
-}
-async function assertNotRewritten(repoRoot, url, opts) {
-  const res = await git3(repoRoot, ["config", "-z", "--get-regexp", "^url\\..*\\.(insteadof|pushinsteadof)$"], opts);
-  if (res.exitCode === 1 && res.stdout === "") return;
-  if (res.exitCode !== 0) throw fail("git config --get-regexp url.*.insteadOf", res);
-  for (const entry of res.stdout.split("\0")) {
-    const nl = entry.indexOf("\n");
-    const prefix = nl < 0 ? "" : entry.slice(nl + 1);
-    if (prefix !== "" && url.startsWith(prefix)) {
-      throw new OrbitError("CONFIG_INVALID", `the push URL ${redact(url)} matches a url.<base>.${/pushinsteadof$/i.test(entry.slice(0, nl)) ? "pushInsteadOf" : "insteadOf"} rule, so git would rewrite it to another destination; remove the rule or name the final URL`, { definitive: true });
-    }
-  }
-}
-function remoteEnvAndArgs(o) {
-  if (!o.token) return { env: o.env ?? gitEnv4(), pre: [] };
-  const helper = `!${o.ghPath ?? "gh"} auth git-credential`;
-  return {
-    env: { ...o.env ?? gitEnv4(), GH_TOKEN: o.token },
-    pre: ["-c", "credential.helper=", "-c", `credential.helper=${helper}`]
-  };
-}
-function classifyRemoteFailure(what, res) {
-  const text2 = `${res.stderr}
-${res.stdout}`;
-  if (AUTH_PATTERN.test(text2)) {
-    return new OrbitError("AUTH_EXPIRED", `${what} was refused for lack of valid credentials: ${redact(text2.trim()).slice(0, 500)}`, { exitCode: res.exitCode, definitive: true });
-  }
-  if (res.timedOut || TRANSIENT_PATTERN.test(text2)) {
-    return new OrbitError("PROVIDER_TRANSIENT", `${what} failed transiently: ${redact(text2.trim()).slice(0, 500)}`, { exitCode: res.exitCode });
-  }
-  return fail(what, res);
-}
-async function lsRemoteBranch(o) {
-  assertRemote(o.remote);
-  const ref2 = branchRef(o.branch);
-  const { env, pre } = remoteEnvAndArgs(o);
-  const res = await git3(o.repoRoot, [...pre, "ls-remote", "--", o.remote, ref2], { ...o, env });
-  if (res.exitCode !== 0) throw classifyRemoteFailure("git ls-remote", res);
-  for (const line3 of res.stdout.split("\n")) {
-    const [sha, name] = line3.split("	");
-    if (name === ref2 && isObjectId(sha)) return sha;
-  }
-  return null;
-}
-function parsePushPorcelain(stdout) {
-  const out = [];
-  for (const line3 of stdout.split("\n")) {
-    const m = /^([ +\-*!=])\t([^\t:]*):(\S+)\t(.*)$/.exec(line3);
-    if (m) out.push({ flag: m[1], from: m[2], to: m[3], summary: m[4] });
-  }
-  return out;
-}
-async function pushBranch(input) {
-  assertRemote(input.remote);
-  assertTaskBranch(input.branch, input);
-  if (!isObjectId(input.commit)) throw new OrbitError("GIT_FAILED", "the commit to push is not a full object id", { commit: input.commit });
-  if (input.force && !isObjectId(input.leaseSha)) {
-    throw new OrbitError("POLICY_DENIED", "a forced push needs --force-with-lease against the previously delivered commit", { definitive: true });
-  }
-  if (!await objectExists(input.repoRoot, `${input.commit}^{commit}`, input)) {
-    throw new OrbitError("GIT_FAILED", `commit ${input.commit} is not in the repository`);
-  }
-  const ref2 = branchRef(input.branch);
-  const { env, pre } = remoteEnvAndArgs(input);
-  const args = [...pre, "push", "--porcelain", "--no-verify"];
-  if (input.force) args.push(`--force-with-lease=${ref2}:${input.leaseSha}`);
-  args.push("--", input.remote, `${input.commit}:${ref2}`);
-  const res = await git3(input.repoRoot, args, { ...input, env });
-  const lines = parsePushPorcelain(res.stdout);
-  const mine = lines.find((l) => l.to === ref2);
-  if (mine && mine.flag === "!") {
-    if (AUTH_PATTERN.test(`${res.stderr}
-${res.stdout}`)) throw classifyRemoteFailure("git push", res);
-    throw new OrbitError("GIT_FAILED", `the remote rejected the push of ${input.branch}: ${mine.summary}`, { definitive: true, rejected: mine.summary, ref: ref2 });
-  }
-  if (res.exitCode !== 0) throw classifyRemoteFailure("git push", res);
-  if (!mine) throw new OrbitError("GIT_FAILED", `git push reported success but no result for ${ref2}`, { stdout: redact(res.stdout).slice(0, 500) });
-  const outcome = mine.flag === "*" ? "created" : mine.flag === "+" ? "forced" : mine.flag === "=" ? "up-to-date" : "updated";
-  return { remote: redact(input.remote), ref: ref2, sha: input.commit, outcome };
-}
-async function reconcilePush(o) {
-  const sha = await lsRemoteBranch(o);
-  if (sha !== o.commit) return null;
-  return { remote: redact(o.remote), ref: branchRef(o.branch), sha, outcome: "up-to-date" };
-}
-async function fetchBranchContaining(o) {
-  assertRemote(o.remote);
-  if (!isObjectId(o.commit)) throw new OrbitError("INTERNAL", `not a full commit sha: ${o.commit}`);
-  if (!o.ref.startsWith("refs/orbit/") || REF_FORBIDDEN2.test(o.ref.slice("refs/".length))) throw new OrbitError("INTERNAL", `fetch target must be a private refs/orbit/ ref: ${o.ref}`);
-  if (o.branch.startsWith("-") || REF_FORBIDDEN2.test(o.branch)) throw new OrbitError("CONFIG_INVALID", `not a valid branch name: ${JSON.stringify(o.branch)}`, { definitive: true });
-  const { env, pre } = remoteEnvAndArgs(o);
-  const res = await git3(o.repoRoot, [...pre, "fetch", "--no-tags", "--no-write-fetch-head", "--", o.remote, `+${branchRef(o.branch)}:${o.ref}`], { ...o, env });
-  if (res.exitCode !== 0) throw classifyRemoteFailure("git fetch", res);
-  const tip = (await git3(o.repoRoot, ["rev-parse", "--verify", "--quiet", `${o.ref}^{commit}`], o)).stdout.trim();
-  if (!isObjectId(tip)) throw new OrbitError("GIT_FAILED", `git fetch of ${o.branch} produced no commit at ${o.ref}`);
-  const onBranch = tip === o.commit || (await git3(o.repoRoot, ["merge-base", "--is-ancestor", o.commit, tip], o)).exitCode === 0;
-  if (!onBranch) {
-    throw new OrbitError("DELIVERY_FAILED", `commit ${o.commit.slice(0, 12)} is not on ${o.branch} at ${o.remote}`, { branch: o.branch, commit: o.commit, tip, definitive: true });
-  }
-  return tip;
-}
-async function hasCommit(repoRoot, commit, opts = {}) {
-  return isObjectId(commit) && await objectExists(repoRoot, `${commit}^{commit}`, opts);
-}
-var OBJECT_ID, REF_FORBIDDEN2, AUTH_PATTERN, TRANSIENT_PATTERN;
-var init_git2 = __esm({
-  "src/delivery/git.ts"() {
-    "use strict";
-    init_exec();
-    init_errors();
-    init_redact();
-    OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-    REF_FORBIDDEN2 = /(\.\.|@\{|[\s~^:?*[\\\x00-\x1f\x7f]|\/\/|\/\.|\.lock$|\.lock\/|\/$|\.$)/;
-    AUTH_PATTERN = /Authentication failed|could not read (?:Username|Password)|Permission denied|invalid credentials|Bad credentials|error: 40[13]|HTTP 40[13]|requires authentication|Invalid username or token|not permitted to push/i;
-    TRANSIENT_PATTERN = /Could not resolve host|Connection (?:timed out|reset|refused)|timed out|unable to access|early EOF|remote end hung up|error: 5\d\d|HTTP 5\d\d|RPC failed|Temporary failure/i;
   }
 });
 
@@ -48519,9 +50331,9 @@ var init_deliver = __esm({
 });
 
 // src/delivery/release.ts
-import { existsSync as existsSync30, mkdirSync as mkdirSync17, rmSync as rmSync11 } from "node:fs";
+import { existsSync as existsSync32, mkdirSync as mkdirSync17, rmSync as rmSync11 } from "node:fs";
 import { platform as platform2 } from "node:os";
-import { join as join41 } from "node:path";
+import { join as join44 } from "node:path";
 function releaseConfig(snapshot2) {
   return snapshot2.config.release ?? null;
 }
@@ -48786,8 +50598,8 @@ function verdictOf2(result2, sha, required, requireAny) {
   return { state: "passed", detail: `${result2.checks.length} check(s) green` };
 }
 function deployFiles(workDir, envName, sha) {
-  const dir = join41(workDir, "release", `deploy-${envName}-${sha.slice(0, 12)}`);
-  return { dir, checkout: join41(dir, "checkout"), home: join41(dir, "home"), started: join41(dir, "started.json"), outcome: join41(dir, "outcome.json") };
+  const dir = join44(workDir, "release", `deploy-${envName}-${sha.slice(0, 12)}`);
+  return { dir, checkout: join44(dir, "checkout"), home: join44(dir, "home"), started: join44(dir, "started.json"), outcome: join44(dir, "outcome.json") };
 }
 function readDeployOutcome(files, sha, envName) {
   const outcome = readJsonIfExists(files.outcome);
@@ -48795,7 +50607,7 @@ function readDeployOutcome(files, sha, envName) {
     if (outcome.exitCode === 0 && !outcome.timedOut) return receiptOf(outcome);
     throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} to ${outcome.environment} ${outcome.timedOut ? "timed out, so whether it took effect is unknown" : `exited ${outcome.exitCode ?? "by signal"}`}; it is not retried automatically`, { definitive: true, ...outcome.timedOut ? unknownDetails(envName, sha) : {} });
   }
-  if (existsSync30(files.started)) {
+  if (existsSync32(files.started)) {
     throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} started but recorded no outcome (the controller stopped while it ran); check the environment, then run "orbit release resolve <run-id>" (the environment's verify_command) or pass --deployed or --not-deployed`, { definitive: true, outcomeUnknown: true, environment: envName, sha });
   }
   return null;
@@ -48824,7 +50636,7 @@ async function runDeploy(a) {
     await fetchBranchContaining({ repoRoot, remote: a.remote, token: input.token, ...input.git, branch, commit: sha, ref: `refs/orbit/release/${run.id}` });
   }
   mkdirSync17(files.dir, { recursive: true, mode: 448 });
-  if (existsSync30(files.checkout)) await cleanupCandidateCheckout(repoRoot, files.checkout);
+  if (existsSync32(files.checkout)) await cleanupCandidateCheckout(repoRoot, files.checkout);
   const checkout = await materializeCandidate(repoRoot, sha, files.checkout, { readOnly: false });
   try {
     const tree = (await execCapture(["git", "rev-parse", `${sha}^{tree}`], { cwd: repoRoot, env: gitEnv4(), timeoutMs: 3e4 })).stdout.trim();
@@ -48956,11 +50768,11 @@ async function runVerifyCommand(a) {
     if (!d.allowed) throw new OrbitError("POLICY_DENIED", `verifying the deploy needs network access to ${host}: ${d.reason}`, { rule: d.rule, definitive: true });
   }
   if (!await hasCommit(run.repoRoot, sha, input.git)) return { verdict: "unknown", detail: `commit ${sha.slice(0, 12)} is not in the repository, so the verify_command has nothing to run on` };
-  const dir = join41(files.dir, "verify");
-  const checkoutDir = join41(dir, "checkout");
-  const home2 = join41(dir, "home");
+  const dir = join44(files.dir, "verify");
+  const checkoutDir = join44(dir, "checkout");
+  const home2 = join44(dir, "home");
   mkdirSync17(dir, { recursive: true, mode: 448 });
-  if (existsSync30(checkoutDir)) await cleanupCandidateCheckout(run.repoRoot, checkoutDir);
+  if (existsSync32(checkoutDir)) await cleanupCandidateCheckout(run.repoRoot, checkoutDir);
   const checkout = await materializeCandidate(run.repoRoot, sha, checkoutDir, { readOnly: false });
   try {
     mkdirSync17(home2, { recursive: true, mode: 448 });
@@ -49007,823 +50819,6 @@ var init_release = __esm({
   }
 });
 
-// src/delivery/github.ts
-import { execFileSync } from "node:child_process";
-import { existsSync as existsSync31, readFileSync as readFileSync20 } from "node:fs";
-function malformed(what, detail) {
-  return new OrbitError("MALFORMED_OUTPUT", `gh ${what}: ${detail}`);
-}
-function parseJson4(what, text2) {
-  try {
-    return JSON.parse(text2);
-  } catch {
-    throw malformed(what, `output is not JSON (${redact(text2.slice(0, 120))})`);
-  }
-}
-function obj2(what, v) {
-  if (!v || typeof v !== "object" || Array.isArray(v)) throw malformed(what, "expected an object");
-  return v;
-}
-function str4(what, o, key2, optional = false) {
-  const v = o[key2];
-  if (typeof v === "string") return v;
-  if (optional && (v === void 0 || v === null)) return "";
-  throw malformed(what, `field ${key2} is missing or not a string`);
-}
-function parsePullRequest(value) {
-  const o = obj2("pr", value);
-  const state = str4("pr", o, "state").toUpperCase();
-  if (state !== "OPEN" && state !== "CLOSED" && state !== "MERGED") throw malformed("pr", `unknown state ${JSON.stringify(state)}`);
-  const number = o.number;
-  if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) throw malformed("pr", "field number is missing or not a positive integer");
-  return {
-    number,
-    url: str4("pr", o, "url"),
-    headRefName: str4("pr", o, "headRefName"),
-    headRefOid: str4("pr", o, "headRefOid"),
-    baseRefName: str4("pr", o, "baseRefName"),
-    isDraft: o.isDraft === true,
-    state,
-    title: str4("pr", o, "title", true),
-    body: str4("pr", o, "body", true)
-  };
-}
-function parsePullRequestList(text2) {
-  const v = parseJson4("pr list", text2);
-  if (!Array.isArray(v)) throw malformed("pr list", "expected an array");
-  return v.map(parsePullRequest);
-}
-function parseMergeState(value) {
-  const o = obj2("pr view", value);
-  const state = str4("pr view", o, "state").toUpperCase();
-  if (state !== "OPEN" && state !== "CLOSED" && state !== "MERGED") throw malformed("pr view", `unknown state ${JSON.stringify(state)}`);
-  const number = o.number;
-  if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) throw malformed("pr view", "field number is missing or not a positive integer");
-  const mc = o.mergeCommit;
-  const oid = mc && typeof mc === "object" && typeof mc.oid === "string" ? mc.oid : null;
-  return {
-    number,
-    state,
-    headRefOid: str4("pr view", o, "headRefOid"),
-    baseRefName: str4("pr view", o, "baseRefName"),
-    mergeCommitSha: state === "MERGED" && oid ? oid : null,
-    mergedAt: typeof o.mergedAt === "string" && o.mergedAt !== "" ? o.mergedAt : null
-  };
-}
-function isCheckBucket(v) {
-  return typeof v === "string" && CHECK_BUCKETS.includes(v);
-}
-function parseChecks(text2) {
-  const v = parseJson4("pr checks", text2);
-  if (!Array.isArray(v)) throw malformed("pr checks", "expected an array");
-  return v.map((raw) => {
-    const o = obj2("pr checks", raw);
-    const bucket = o.bucket;
-    if (!isCheckBucket(bucket)) throw malformed("pr checks", `unknown bucket ${JSON.stringify(bucket)}`);
-    const link = typeof o.link === "string" && o.link !== "" ? o.link : null;
-    const m = link ? RUN_LINK.exec(link) : null;
-    const opt = (k) => typeof o[k] === "string" && o[k] !== "" ? o[k] : null;
-    return {
-      name: str4("pr checks", o, "name"),
-      bucket,
-      state: typeof o.state === "string" ? o.state : "",
-      link,
-      workflow: opt("workflow"),
-      runId: m?.[1] ?? null,
-      jobId: m?.[2] ?? null,
-      startedAt: opt("startedAt"),
-      completedAt: opt("completedAt"),
-      description: opt("description")
-    };
-  });
-}
-function parseRunListAsChecks(text2) {
-  const v = parseJson4("run list", text2);
-  if (!Array.isArray(v)) throw malformed("run list", "expected an array");
-  return v.map((raw) => {
-    const o = obj2("run list", raw);
-    const id = o.databaseId;
-    if (typeof id !== "number") throw malformed("run list", "field databaseId is missing or not a number");
-    const status2 = typeof o.status === "string" ? o.status : "";
-    const conclusion = typeof o.conclusion === "string" ? o.conclusion : "";
-    const name = typeof o.workflowName === "string" && o.workflowName || typeof o.name === "string" && o.name || `run ${id}`;
-    return {
-      name,
-      bucket: runBucket(status2, conclusion),
-      state: (conclusion || status2).toUpperCase(),
-      link: typeof o.url === "string" ? o.url : null,
-      workflow: typeof o.workflowName === "string" ? o.workflowName : null,
-      runId: String(id),
-      jobId: null,
-      startedAt: typeof o.startedAt === "string" ? o.startedAt : null,
-      completedAt: typeof o.updatedAt === "string" && status2 === "completed" ? o.updatedAt : null,
-      description: null
-    };
-  });
-}
-function runBucket(status2, conclusion) {
-  if (status2 !== "completed") return "pending";
-  switch (conclusion) {
-    case "success":
-      return "pass";
-    case "cancelled":
-      return "cancel";
-    case "skipped":
-    case "neutral":
-    case "stale":
-      return "skipping";
-    default:
-      return "fail";
-  }
-}
-function parseCheckRuns(text2) {
-  const o = obj2("check runs", parseJson4("check runs", text2));
-  const total = o.total_count;
-  if (typeof total !== "number" || !Number.isInteger(total) || total < 0) throw malformed("check runs", "field total_count is missing or not a count");
-  if (!Array.isArray(o.check_runs)) throw malformed("check runs", "field check_runs is missing or not an array");
-  const runs = o.check_runs.map((raw) => {
-    const r = obj2("check runs", raw);
-    const status2 = str4("check runs", r, "status");
-    const conclusion = typeof r.conclusion === "string" ? r.conclusion : "";
-    const opt = (k) => typeof r[k] === "string" && r[k] !== "" ? r[k] : null;
-    const link = opt("html_url") ?? opt("details_url");
-    const m = link ? RUN_LINK.exec(link) : null;
-    const output = r.output && typeof r.output === "object" ? r.output : {};
-    return {
-      name: str4("check runs", r, "name"),
-      headSha: str4("check runs", r, "head_sha"),
-      bucket: runBucket(status2, conclusion),
-      state: (conclusion || status2).toUpperCase(),
-      link,
-      workflow: null,
-      runId: m?.[1] ?? null,
-      jobId: m?.[2] ?? null,
-      startedAt: opt("started_at"),
-      completedAt: opt("completed_at"),
-      description: typeof output.title === "string" && output.title !== "" ? output.title : null
-    };
-  });
-  return { total, runs };
-}
-function statusBucket(state) {
-  switch (state) {
-    case "success":
-      return "pass";
-    case "pending":
-      return "pending";
-    default:
-      return "fail";
-  }
-}
-function parseCombinedStatus(text2) {
-  const o = obj2("commit status", parseJson4("commit status", text2));
-  const sha = str4("commit status", o, "sha");
-  const statuses = Array.isArray(o.statuses) ? o.statuses : [];
-  const checks = statuses.map((raw) => {
-    const st = obj2("commit status", raw);
-    const state2 = str4("commit status", st, "state");
-    const opt = (k) => typeof st[k] === "string" && st[k] !== "" ? st[k] : null;
-    return {
-      name: str4("commit status", st, "context"),
-      bucket: statusBucket(state2),
-      state: state2.toUpperCase(),
-      link: opt("target_url"),
-      workflow: null,
-      runId: null,
-      jobId: null,
-      startedAt: opt("created_at"),
-      completedAt: state2 === "pending" ? null : opt("updated_at"),
-      description: opt("description")
-    };
-  });
-  const state = typeof o.state === "string" && o.state !== "" ? o.state.toLowerCase() : void 0;
-  const total = typeof o.total_count === "number" && Number.isInteger(o.total_count) && o.total_count >= 0 ? o.total_count : void 0;
-  return { sha, checks, ...state === void 0 ? {} : { state }, ...total === void 0 ? {} : { total } };
-}
-function readNote(name, bucket, description) {
-  return { name, bucket, state: bucket === "fail" ? "FAILURE" : "PENDING", link: null, workflow: null, runId: null, jobId: null, startedAt: null, completedAt: null, description };
-}
-function statusReadNotes(status2, read, everything) {
-  const total = status2.total ?? read.length;
-  if (status2.state === "failure" || status2.state === "error") {
-    return everything.some((c) => c.bucket === "fail") ? [] : [readNote("commit status (combined)", "fail", `the combined commit status is ${status2.state}`)];
-  }
-  if (read.length < total) return [readNote("commit status (incomplete)", "pending", `read ${read.length} of ${total} commit status contexts`)];
-  if (status2.state !== void 0 && status2.state !== "success" && total > 0 && !read.some((c) => c.bucket === "pending")) {
-    return [readNote("commit status (combined)", "pending", `the combined commit status is ${status2.state}, but no status context is pending`)];
-  }
-  return [];
-}
-function parseFailedSteps(text2) {
-  const o = obj2("run view", parseJson4("run view", text2));
-  const jobs = Array.isArray(o.jobs) ? o.jobs : [];
-  const out = [];
-  for (const j of jobs) {
-    const job = obj2("run view", j);
-    const name = typeof job.name === "string" ? job.name : "";
-    const steps = Array.isArray(job.steps) ? job.steps : [];
-    const failed = steps.filter((s) => s && typeof s === "object" && s.conclusion === "failure");
-    if (failed.length === 0 && job.conclusion === "failure") out.push({ job: name, step: "" });
-    for (const s of failed) out.push({ job: name, step: String(s.name ?? "") });
-  }
-  return out;
-}
-function parseAuthStatus(text2, host, requireScopedToken) {
-  const o = obj2("auth status", parseJson4("auth status", text2));
-  const hosts = obj2("auth status", o.hosts ?? {});
-  const entries = Array.isArray(hosts[host]) ? hosts[host] : [];
-  const active = entries.map((e) => obj2("auth status", e)).find((e) => e.active === true);
-  if (!active) return { ok: false, login: null, tokenSource: null, scopes: null, error: `no active account for ${host}` };
-  const tokenSource = typeof active.tokenSource === "string" ? active.tokenSource : null;
-  const login = typeof active.login === "string" && active.login !== "" ? active.login : null;
-  const scopes = typeof active.scopes === "string" ? active.scopes : null;
-  if (active.state !== "success") {
-    const error = typeof active.error === "string" && active.error ? redact(active.error).slice(0, 300) : `state ${String(active.state)}`;
-    return { ok: false, login, tokenSource, scopes, error };
-  }
-  if (requireScopedToken && tokenSource !== "GH_TOKEN") {
-    return { ok: false, login, tokenSource, scopes, error: `the active credential comes from ${tokenSource ?? "an unknown source"}, not a scoped GH_TOKEN` };
-  }
-  return { ok: true, login, tokenSource, scopes, error: null };
-}
-function classifyGhFailure(what, exitCode, stderrText) {
-  const text2 = redact(stderrText.trim()).slice(0, 800);
-  const msg = `gh ${what} failed (exit ${exitCode ?? "signal"}): ${text2}`;
-  if (/rate limit|secondary rate|HTTP 429|abuse detection/i.test(text2)) {
-    const m = /retry[- ]after[:= ]+(\d+)/i.exec(text2) ?? /in (\d+) (?:second|sec)/i.exec(text2);
-    const retryAfterMs = m ? Math.min(Number(m[1]) * 1e3, 15 * 6e4) : 6e4;
-    return new OrbitError("PROVIDER_TRANSIENT", msg, { retryAfterMs, rateLimited: true });
-  }
-  if (exitCode === 4 || /HTTP 401|Bad credentials|gh auth login|authentication required|requires authentication|token .*(?:expired|invalid|revoked)/i.test(text2)) {
-    return new OrbitError("AUTH_EXPIRED", msg, { definitive: true });
-  }
-  if (/Resource not accessible|HTTP 403/i.test(text2)) {
-    return new OrbitError("AUTH_MISSING", `${msg} (the delivery token lacks a permission this action needs)`, { definitive: true });
-  }
-  if (/HTTP 5\d\d|timeout|timed out|connection (?:reset|refused)|EOF|no such host|could not resolve host|temporary failure/i.test(text2)) {
-    return new OrbitError("PROVIDER_TRANSIENT", msg);
-  }
-  if (/HTTP 404|Could not resolve to a (?:Repository|PullRequest)/i.test(text2)) {
-    return new OrbitError("NOT_FOUND", msg, { definitive: true });
-  }
-  return new OrbitError("DELIVERY_FAILED", msg);
-}
-function assertMergeInput(input) {
-  if (!Number.isInteger(input.number) || input.number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
-  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(input.headSha)) throw new OrbitError("INTERNAL", `not a full commit sha: ${JSON.stringify(input.headSha)}`);
-  if (!MERGE_METHODS.includes(input.method)) throw new OrbitError("CONFIG_INVALID", `unknown merge method ${JSON.stringify(input.method)}`, { definitive: true });
-}
-function assertSha(sha) {
-  if (!/^[0-9a-f]{7,64}$/.test(sha)) throw new OrbitError("INTERNAL", `not a commit sha: ${sha}`);
-}
-function sameCommit(reported, asked) {
-  const r = reported.toLowerCase();
-  const a = asked.toLowerCase();
-  return a.length >= 40 ? r === a : r.startsWith(a);
-}
-function assertHead(head) {
-  if (typeof head !== "string" || head === "" || head.startsWith("-") || /[\s\0]/.test(head)) {
-    throw new OrbitError("INTERNAL", `not a usable head branch: ${JSON.stringify(head)}`);
-  }
-}
-function emptyState() {
-  return {
-    nextNumber: 1,
-    prs: [],
-    ci: {},
-    logs: {},
-    heads: {},
-    faults: { loseCreateResponse: 0, rateLimit: 0, rateLimitRetryAfterMs: 1e3, authExpired: false, loseMergeResponse: 0, loseReadyResponse: 0 },
-    calls: [],
-    creates: 0,
-    updates: 0,
-    merges: 0
-  };
-}
-var CHECK_BUCKETS, MERGE_METHODS, RUN_LINK, PR_FIELDS, MERGE_FIELDS, MERGE_REFUSED, CHECK_FIELDS, RUN_FIELDS, CHECK_RUNS_PER_PAGE, CHECK_RUNS_MAX_PAGES, STATUS_PER_PAGE, STATUS_MAX_PAGES, GhCliClient, FakeGitHub;
-var init_github = __esm({
-  "src/delivery/github.ts"() {
-    "use strict";
-    init_exec();
-    init_errors();
-    init_fsx();
-    init_hash();
-    init_redact();
-    CHECK_BUCKETS = ["pass", "fail", "pending", "skipping", "cancel"];
-    MERGE_METHODS = ["squash", "merge", "rebase"];
-    RUN_LINK = /\/actions\/runs\/(\d+)(?:\/job\/(\d+))?/;
-    PR_FIELDS = "number,url,headRefName,headRefOid,baseRefName,isDraft,state,title,body";
-    MERGE_FIELDS = "number,state,headRefOid,baseRefName,mergeCommit,mergedAt";
-    MERGE_REFUSED = /Head branch was modified|not mergeable|merge conflict|required status check|review is required|reviews? required|base branch policy|protected branch|Merge method .* not allowed|not allowed on this repository|HTTP 405|HTTP 409|HTTP 422/i;
-    CHECK_FIELDS = "name,state,bucket,link,workflow,event,startedAt,completedAt,description";
-    RUN_FIELDS = "databaseId,status,conclusion,headSha,headBranch,event,workflowName,name,attempt,url,startedAt,updatedAt";
-    CHECK_RUNS_PER_PAGE = 100;
-    CHECK_RUNS_MAX_PAGES = 10;
-    STATUS_PER_PAGE = 100;
-    STATUS_MAX_PAGES = 10;
-    GhCliClient = class {
-      token;
-      gh;
-      runner;
-      requireScoped;
-      timeoutMs;
-      baseEnv;
-      opts;
-      constructor(opts) {
-        this.opts = opts;
-        if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(opts.repo)) throw new OrbitError("CONFIG_INVALID", `repository ${JSON.stringify(opts.repo)} is not OWNER/REPO`, { definitive: true });
-        this.baseEnv = opts.env ?? process.env;
-        this.token = this.baseEnv.GH_TOKEN || void 0;
-        this.gh = opts.ghPath ?? "gh";
-        this.requireScoped = opts.requireScopedToken ?? true;
-        this.timeoutMs = opts.timeoutMs ?? 6e4;
-        this.runner = opts.runner ?? ((argv2, o) => execCapture(argv2, { env: o.env, cwd: o.cwd, input: o.input, timeoutMs: o.timeoutMs, maxOutputBytes: 8 * 1024 * 1024 }));
-      }
-      /** Minimal environment: the token the controller holds, and nothing a worker could have left around. */
-      env() {
-        const e = {};
-        for (const k of ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"]) if (this.baseEnv[k] !== void 0) e[k] = this.baseEnv[k];
-        if (this.token) e.GH_TOKEN = this.token;
-        e.GH_PROMPT_DISABLED = "1";
-        e.GH_NO_UPDATE_NOTIFIER = "1";
-        e.GH_TELEMETRY = "false";
-        e.NO_COLOR = "1";
-        e.GH_PAGER = "cat";
-        return e;
-      }
-      assertToken() {
-        if (this.requireScoped && !this.token) {
-          throw new OrbitError("AUTH_MISSING", "no GH_TOKEN in the controller environment; delivery needs a fine-grained token scoped to the target repository", { definitive: true });
-        }
-      }
-      async exec(argv2, input) {
-        return this.runner([this.gh, ...argv2], { env: this.env(), cwd: this.opts.cwd, input, timeoutMs: this.timeoutMs });
-      }
-      async ok(what, argv2, input) {
-        this.assertToken();
-        const res = await this.exec(argv2, input);
-        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", `gh ${what} timed out`);
-        if (res.exitCode !== 0) throw classifyGhFailure(what, res.exitCode, `${res.stderr}
-${res.stdout}`);
-        return res.stdout;
-      }
-      async findPullRequest(head) {
-        assertHead(head);
-        const out = await this.ok("pr list", ["pr", "list", "-R", this.opts.repo, "--head", head, "--state", "all", "-L", "30", "--json", PR_FIELDS]);
-        const mine = parsePullRequestList(out).filter((p) => p.headRefName === head);
-        mine.sort((a, b) => Number(b.state === "OPEN") - Number(a.state === "OPEN") || b.number - a.number);
-        return mine[0] ?? null;
-      }
-      async createPullRequest(input) {
-        assertHead(input.head);
-        this.assertToken();
-        const argv2 = ["pr", "create", "-R", this.opts.repo, "--head", input.head, "--base", input.base, "--title", input.title, "--body-file", "-"];
-        if (input.draft) argv2.push("--draft");
-        const res = await this.exec(argv2, input.body);
-        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh pr create timed out");
-        if (res.exitCode !== 0) {
-          if (/already exists/i.test(res.stderr)) {
-            const found2 = await this.findPullRequest(input.head);
-            if (found2) return found2;
-          }
-          throw classifyGhFailure("pr create", res.exitCode, `${res.stderr}
-${res.stdout}`);
-        }
-        const url = res.stdout.split("\n").map((l) => l.trim()).reverse().find((l) => /^https?:\/\/\S+\/pull\/\d+/.test(l));
-        const number = url ? Number(/\/pull\/(\d+)/.exec(url)[1]) : NaN;
-        if (Number.isInteger(number)) return this.viewPullRequest(number);
-        const found = await this.findPullRequest(input.head);
-        if (found) return found;
-        throw new OrbitError("DELIVERY_FAILED", "gh pr create exited 0 but no pull request URL was printed and none is listed for the head branch");
-      }
-      async updatePullRequest(number, changes) {
-        if (!Number.isInteger(number) || number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
-        const argv2 = ["pr", "edit", String(number), "-R", this.opts.repo];
-        if (changes.title !== void 0) argv2.push("--title", changes.title);
-        if (changes.body !== void 0) argv2.push("--body-file", "-");
-        if (argv2.length > 5) await this.ok("pr edit", argv2, changes.body);
-        return this.viewPullRequest(number);
-      }
-      async markPullRequestReady(number) {
-        if (!Number.isInteger(number) || number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
-        this.assertToken();
-        await this.ok("pr ready", ["pr", "ready", String(number), "-R", this.opts.repo]);
-        return this.viewPullRequest(number);
-      }
-      async viewPullRequest(number) {
-        const out = await this.ok("pr view", ["pr", "view", String(number), "-R", this.opts.repo, "--json", PR_FIELDS]);
-        return parsePullRequest(parseJson4("pr view", out));
-      }
-      async mergePullRequest(input) {
-        assertMergeInput(input);
-        this.assertToken();
-        const argv2 = ["pr", "merge", String(input.number), "-R", this.opts.repo, `--${input.method}`, "--match-head-commit", input.headSha];
-        if (input.deleteBranch) argv2.push("--delete-branch");
-        const res = await this.exec(argv2);
-        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh pr merge timed out");
-        if (res.exitCode !== 0) {
-          const text2 = `${res.stderr}
-${res.stdout}`;
-          if (/already (?:been )?merged/i.test(text2)) return this.getMergeState(input.number);
-          const err = classifyGhFailure("pr merge", res.exitCode, text2);
-          if (err.code === "DELIVERY_FAILED" && MERGE_REFUSED.test(text2)) throw new OrbitError("DELIVERY_FAILED", err.message, { definitive: true, refused: true });
-          throw err;
-        }
-        const state = await this.getMergeState(input.number);
-        if (state.state !== "MERGED") throw new OrbitError("DELIVERY_FAILED", `gh pr merge exited 0 but pull request #${input.number} is ${state.state}; a merge queue or auto-merge is not supported`, { definitive: true, state: state.state });
-        return state;
-      }
-      async getMergeState(number) {
-        if (!Number.isInteger(number) || number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
-        const out = await this.ok("pr view", ["pr", "view", String(number), "-R", this.opts.repo, "--json", MERGE_FIELDS]);
-        return parseMergeState(parseJson4("pr view", out));
-      }
-      /**
-       * Checks for a commit are read per commit (its check runs and its combined status) and labelled with the
-       * commit the responses report, so checks of another revision (the PR head after the branch moved) can never
-       * be attributed to the commit asked about. Only a PR query without a commit uses the PR's current checks,
-       * and those are labelled with no commit at all.
-       */
-      async listChecks(query) {
-        this.assertToken();
-        if (query.sha !== void 0) return this.checksForCommit(query.sha);
-        const pr = query.pr;
-        const res = await this.exec(["pr", "checks", String(pr), "-R", this.opts.repo, "--json", CHECK_FIELDS]);
-        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh pr checks timed out");
-        if (res.exitCode === 0) {
-          const checks = parseChecks(res.stdout);
-          return { checks, absent: checks.length === 0, headSha: null };
-        }
-        const text2 = `${res.stderr}
-${res.stdout}`;
-        if (/no checks reported/i.test(text2)) return { checks: [], absent: true, headSha: null };
-        throw classifyGhFailure("pr checks", res.exitCode, text2);
-      }
-      async api(what, path) {
-        const argv2 = ["api", "-H", "Accept: application/vnd.github+json"];
-        if (this.opts.host) argv2.push("--hostname", this.opts.host);
-        argv2.push(path);
-        return this.ok(what, argv2);
-      }
-      async checksForCommit(sha) {
-        assertSha(sha);
-        let runs;
-        let runsTotal;
-        try {
-          ({ runs, total: runsTotal } = await this.checkRuns(sha));
-        } catch (err) {
-          const code2 = err.code;
-          if (code2 === "AUTH_MISSING") return this.checksFromRuns(sha);
-          if (/No commit found/i.test(err.message ?? "")) return { checks: [], absent: true, headSha: sha };
-          throw err;
-        }
-        let status2 = null;
-        try {
-          status2 = await this.combinedStatus(sha);
-        } catch (err) {
-          if (err.code !== "AUTH_MISSING") throw err;
-        }
-        const reported = [.../* @__PURE__ */ new Set([...runs.map((r) => r.headSha.toLowerCase()), ...status2 ? [status2.sha.toLowerCase()] : []])];
-        const other = reported.find((r) => !sameCommit(r, sha));
-        if (other !== void 0) return { checks: [], absent: false, headSha: other };
-        const checks = [...runs.map(({ headSha: _sha, ...c }) => c), ...status2?.checks ?? []];
-        if (runs.length < runsTotal) checks.push(readNote("check runs (incomplete)", "pending", `read ${runs.length} of ${runsTotal} check runs`));
-        if (status2) checks.push(...statusReadNotes(status2, status2.checks, checks));
-        if (checks.length === 0) return this.checksFromRuns(sha);
-        return { checks, absent: false, headSha: reported[0] ?? sha };
-      }
-      /** Every page of the combined status; aggregate state and total_count are those of the first page. */
-      async combinedStatus(sha) {
-        let first = null;
-        const checks = [];
-        for (let page = 1; page <= STATUS_MAX_PAGES; page++) {
-          const got = parseCombinedStatus(await this.api("commit status", `repos/${this.opts.repo}/commits/${sha}/status?per_page=${STATUS_PER_PAGE}&page=${page}`));
-          if (first === null) first = got;
-          else if (got.sha.toLowerCase() !== first.sha.toLowerCase()) throw malformed("commit status", "pages report different commits");
-          checks.push(...got.checks);
-          if (got.checks.length < STATUS_PER_PAGE || first.total !== void 0 && checks.length >= first.total) break;
-        }
-        return { ...first, checks };
-      }
-      async checkRuns(sha) {
-        const all = [];
-        for (let page = 1; page <= CHECK_RUNS_MAX_PAGES; page++) {
-          const { total, runs } = parseCheckRuns(await this.api("check runs", `repos/${this.opts.repo}/commits/${sha}/check-runs?per_page=${CHECK_RUNS_PER_PAGE}&page=${page}`));
-          all.push(...runs);
-          if (runs.length < CHECK_RUNS_PER_PAGE || all.length >= total) return { runs: all, total };
-        }
-        throw new OrbitError("DELIVERY_FAILED", `commit ${sha.slice(0, 12)} has more than ${CHECK_RUNS_PER_PAGE * CHECK_RUNS_MAX_PAGES} check runs; Orbit does not judge CI on a partial list`, { definitive: true });
-      }
-      async checksFromRuns(sha) {
-        assertSha(sha);
-        const out = await this.ok("run list", ["run", "list", "-R", this.opts.repo, "--commit", sha, "-L", "50", "--json", RUN_FIELDS]);
-        const rows = parseJson4("run list", out);
-        const reported = Array.isArray(rows) ? rows.map((r) => r && typeof r === "object" && typeof r.headSha === "string" ? r.headSha.toLowerCase() : null) : [];
-        const checks = parseRunListAsChecks(out).filter((_, i) => reported[i] == null || sameCommit(reported[i], sha));
-        const labelled = reported.find((r) => r != null && sameCommit(r, sha));
-        return { checks, absent: checks.length === 0, headSha: labelled ?? sha };
-      }
-      async failedLogs(runId) {
-        if (!/^\d+$/.test(runId)) throw new OrbitError("INTERNAL", `not a run id: ${runId}`);
-        this.assertToken();
-        const res = await this.exec(["run", "view", runId, "-R", this.opts.repo, "--log-failed"]);
-        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh run view timed out");
-        if (res.exitCode === 0) return { status: "ok", text: res.stdout, failedSteps: [] };
-        const text2 = `${res.stderr}
-${res.stdout}`;
-        const status2 = /HTTP 410/.test(text2) ? "expired" : /log not found/i.test(text2) ? "not-found" : null;
-        if (status2 === null) throw classifyGhFailure("run view --log-failed", res.exitCode, text2);
-        let failedSteps = [];
-        try {
-          failedSteps = parseFailedSteps(await this.ok("run view", ["run", "view", runId, "-R", this.opts.repo, "--json", "jobs"]));
-        } catch (err) {
-          if (err.code === "AUTH_EXPIRED") throw err;
-        }
-        return { status: status2, text: "", failedSteps };
-      }
-      async authStatus() {
-        const host = this.opts.host ?? "github.com";
-        if (this.requireScoped && !this.token) {
-          return { ok: false, login: null, tokenSource: null, scopes: null, error: "no GH_TOKEN in the controller environment" };
-        }
-        const res = await this.exec(["auth", "status", "--json", "hosts"]);
-        if (res.exitCode !== 0) return { ok: false, login: null, tokenSource: null, scopes: null, error: redact(`${res.stderr}${res.stdout}`.trim()).slice(0, 300) || `gh exited ${res.exitCode}` };
-        return parseAuthStatus(res.stdout, host, this.requireScoped);
-      }
-    };
-    FakeGitHub = class {
-      opts;
-      constructor(opts) {
-        this.opts = opts;
-      }
-      // -- test controls
-      get state() {
-        return this.load();
-      }
-      setFaults(faults) {
-        this.mutate((s) => void Object.assign(s.faults, faults));
-      }
-      /** Script CI for a commit: each listChecks call for it returns the next snapshot (the last repeats). */
-      scriptCi(sha, script) {
-        this.mutate((s) => {
-          s.ci[sha] = { script, cursor: 0 };
-        });
-      }
-      scriptLog(runId, log) {
-        this.mutate((s) => {
-          s.logs[runId] = { status: log.status ?? "ok", text: log.text ?? "", failedSteps: log.failedSteps ?? [] };
-        });
-      }
-      /** Pin a branch's head sha when no remote is attached. */
-      setHead(branch, sha) {
-        this.mutate((s) => {
-          s.heads[branch] = sha;
-        });
-      }
-      setPullRequestState(number, state) {
-        this.mutate((s) => {
-          const pr = s.prs.find((p) => p.number === number);
-          if (pr) pr.state = state;
-        });
-      }
-      // -- GitHubClient
-      async findPullRequest(head) {
-        this.enter("findPullRequest");
-        const state = this.load();
-        const mine = state.prs.filter((p) => p.headRefName === head).sort((a, b) => Number(b.state === "OPEN") - Number(a.state === "OPEN") || b.number - a.number);
-        return mine[0] ? this.view(state, mine[0]) : null;
-      }
-      async createPullRequest(input) {
-        this.enter("createPullRequest");
-        let created = null;
-        let lose = false;
-        this.mutate((s) => {
-          if (s.prs.some((p) => p.headRefName === input.head && p.state === "OPEN")) {
-            throw new OrbitError("DELIVERY_FAILED", `a pull request for branch "${input.head}" into branch "${input.base}" already exists`);
-          }
-          const number = s.nextNumber++;
-          const pr = {
-            number,
-            url: `https://github.example/${this.opts.repo ?? "acme/app"}/pull/${number}`,
-            headRefName: input.head,
-            headRefOid: "",
-            baseRefName: input.base,
-            isDraft: input.draft,
-            state: "OPEN",
-            title: input.title,
-            body: input.body
-          };
-          s.prs.push(pr);
-          s.creates++;
-          created = this.view(s, pr);
-          if (s.faults.loseCreateResponse > 0) {
-            s.faults.loseCreateResponse--;
-            lose = true;
-          }
-        });
-        if (lose) throw new OrbitError("PROVIDER_TRANSIENT", "connection reset while waiting for the create response");
-        return created;
-      }
-      async updatePullRequest(number, changes) {
-        this.enter("updatePullRequest");
-        let out = null;
-        this.mutate((s) => {
-          const pr = s.prs.find((p) => p.number === number);
-          if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${number}`, { definitive: true });
-          if (changes.title !== void 0) pr.title = changes.title;
-          if (changes.body !== void 0) pr.body = changes.body;
-          s.updates++;
-          out = this.view(s, pr);
-        });
-        return out;
-      }
-      async markPullRequestReady(number) {
-        this.enter("markPullRequestReady");
-        let out = null;
-        let lose = false;
-        this.mutate((s) => {
-          const pr = s.prs.find((p) => p.number === number);
-          if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${number}`, { definitive: true });
-          if (pr.state !== "OPEN") throw new OrbitError("DELIVERY_FAILED", `gh pr ready failed: pull request #${number} is ${pr.state.toLowerCase()}`, { definitive: true });
-          if (pr.isDraft) s.readies = (s.readies ?? 0) + 1;
-          pr.isDraft = false;
-          out = this.view(s, pr);
-          if ((s.faults.loseReadyResponse ?? 0) > 0) {
-            s.faults.loseReadyResponse--;
-            lose = true;
-          }
-        });
-        if (lose) throw new OrbitError("PROVIDER_TRANSIENT", "connection reset while waiting for the ready response");
-        return out;
-      }
-      /**
-       * Like the real service: refused unless the PR is open, not a draft and its
-       * head is still `headSha`. With a remote attached, the base branch really
-       * moves (a squash or rebase onto an unmoved base, or a two-parent merge
-       * commit); a base that moved since the head was cut is refused as not
-       * mergeable, since the fake does not do three-way merges.
-       */
-      async mergePullRequest(input) {
-        this.enter("mergePullRequest");
-        assertMergeInput(input);
-        let out = null;
-        let lose = false;
-        this.mutate((s) => {
-          const pr = s.prs.find((p) => p.number === input.number);
-          if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${input.number}`, { definitive: true });
-          if (pr.state === "MERGED") {
-            out = this.mergeView(s, pr);
-            return;
-          }
-          if (pr.state !== "OPEN") throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: pull request #${pr.number} is closed`, { definitive: true, refused: true });
-          if (pr.isDraft) throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: pull request #${pr.number} is still a draft`, { definitive: true, refused: true });
-          const head = this.headOid(s, pr) ?? pr.fixedHeadOid ?? "";
-          if (head !== input.headSha) {
-            throw new OrbitError("DELIVERY_FAILED", "gh pr merge failed: Head branch was modified. Review and try the merge again.", { definitive: true, refused: true, head });
-          }
-          const mergeCommit = this.mergeOnRemote(pr, head, input.method, s.nextNumber);
-          pr.state = "MERGED";
-          pr.fixedHeadOid = head;
-          pr.mergeCommitOid = mergeCommit;
-          pr.mergedAt = (/* @__PURE__ */ new Date(0)).toISOString();
-          if (input.deleteBranch && this.opts.remoteGitDir) this.git(["update-ref", "-d", `refs/heads/${pr.headRefName}`, head]);
-          s.merges = (s.merges ?? 0) + 1;
-          out = this.mergeView(s, pr);
-          if (s.faults.loseMergeResponse > 0) {
-            s.faults.loseMergeResponse--;
-            lose = true;
-          }
-        });
-        if (lose) throw new OrbitError("PROVIDER_TRANSIENT", "connection reset while waiting for the merge response");
-        return out;
-      }
-      async getMergeState(number) {
-        this.enter("getMergeState");
-        const s = this.load();
-        const pr = s.prs.find((p) => p.number === number);
-        if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${number}`, { definitive: true });
-        return this.mergeView(s, pr);
-      }
-      async listChecks(query) {
-        this.enter("listChecks");
-        let sha = query.sha;
-        let result2 = { checks: [], absent: true, headSha: sha ?? null };
-        this.mutate((s) => {
-          if ("pr" in query) {
-            const pr = s.prs.find((p) => p.number === query.pr);
-            if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${query.pr}`, { definitive: true });
-            sha = this.view(s, pr).headRefOid || void 0;
-            result2 = { checks: [], absent: true, headSha: sha ?? null };
-          }
-          const entry = sha ? s.ci[sha] : void 0;
-          if (!entry || entry.script.length === 0) return;
-          const snapshot2 = entry.script[Math.min(entry.cursor, entry.script.length - 1)];
-          entry.cursor++;
-          const checks = snapshot2.map((c) => ({
-            name: c.name,
-            bucket: c.bucket,
-            state: c.bucket === "pass" ? "SUCCESS" : c.bucket === "fail" ? "FAILURE" : c.bucket === "cancel" ? "CANCELLED" : c.bucket === "skipping" ? "SKIPPED" : "IN_PROGRESS",
-            link: c.runId ? `https://github.example/${this.opts.repo ?? "acme/app"}/actions/runs/${c.runId}/job/1` : null,
-            workflow: "ci",
-            runId: c.runId ?? null,
-            jobId: c.runId ? "1" : null,
-            startedAt: null,
-            completedAt: null,
-            description: null
-          }));
-          result2 = { checks, absent: checks.length === 0, headSha: sha ?? null };
-        });
-        return result2;
-      }
-      async failedLogs(runId) {
-        this.enter("failedLogs");
-        const entry = this.load().logs[runId];
-        return entry ? { ...entry } : { status: "not-found", text: "", failedSteps: [] };
-      }
-      async authStatus() {
-        this.mutate((s) => void s.calls.push("authStatus"));
-        if (this.load().faults.authExpired) {
-          return { ok: false, login: null, tokenSource: "GH_TOKEN", scopes: null, error: "non-200 OK status code: 401 Unauthorized" };
-        }
-        return { ok: true, login: "orbit-bot", tokenSource: "GH_TOKEN", scopes: null, error: null };
-      }
-      // -- internals
-      /** Record the call, then apply the call-level faults. */
-      enter(name) {
-        let fault = null;
-        this.mutate((s) => {
-          s.calls.push(name);
-          if (s.faults.authExpired) {
-            fault = new OrbitError("AUTH_EXPIRED", `gh ${name} failed (exit 4): HTTP 401: Bad credentials`, { definitive: true });
-          } else if (s.faults.rateLimit > 0) {
-            s.faults.rateLimit--;
-            fault = new OrbitError("PROVIDER_TRANSIENT", `gh ${name} failed: API rate limit exceeded`, { retryAfterMs: s.faults.rateLimitRetryAfterMs, rateLimited: true });
-          }
-        });
-        if (fault) throw fault;
-      }
-      view(state, pr) {
-        const { fixedHeadOid, mergeCommitOid: _m, mergedAt: _a, ...info } = pr;
-        const head = pr.state === "MERGED" && fixedHeadOid ? fixedHeadOid : this.headOid(state, pr) ?? fixedHeadOid ?? "";
-        return { ...info, headRefOid: head };
-      }
-      mergeView(state, pr) {
-        const v = this.view(state, pr);
-        return { number: v.number, state: v.state, headRefOid: v.headRefOid, baseRefName: v.baseRefName, mergeCommitSha: pr.state === "MERGED" ? pr.mergeCommitOid ?? null : null, mergedAt: pr.state === "MERGED" ? pr.mergedAt ?? null : null };
-      }
-      /** Move the base branch on the attached remote; without one, a stable synthetic merge commit id. */
-      mergeOnRemote(pr, head, method, salt) {
-        if (!this.opts.remoteGitDir) return sha256(`fake-merge:${pr.number}:${head}:${method}:${salt}`).slice(-40);
-        const baseRef = `refs/heads/${pr.baseRefName}`;
-        const base = this.git(["rev-parse", "--verify", "--quiet", baseRef]);
-        if (!base) throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: base branch ${pr.baseRefName} does not exist`, { definitive: true, refused: true });
-        if (this.git(["merge-base", base, head]) !== base) {
-          throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: Pull Request is not mergeable (base ${pr.baseRefName} moved)`, { definitive: true, refused: true });
-        }
-        let commit;
-        if (method === "rebase") commit = head;
-        else {
-          const tree = this.git(["rev-parse", `${head}^{tree}`]);
-          const parents = method === "merge" ? ["-p", base, "-p", head] : ["-p", base];
-          commit = this.git(["commit-tree", tree, ...parents, "-m", `${pr.title} (#${pr.number})`]);
-        }
-        this.git(["update-ref", baseRef, commit, base]);
-        return commit;
-      }
-      git(args) {
-        try {
-          return execFileSync("git", ["--git-dir", this.opts.remoteGitDir, ...args], {
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-            env: { PATH: process.env.PATH ?? "/usr/bin:/bin", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "Fake GitHub", GIT_AUTHOR_EMAIL: "noreply@example.com", GIT_COMMITTER_NAME: "Fake GitHub", GIT_COMMITTER_EMAIL: "noreply@example.com", GIT_AUTHOR_DATE: "1700000000 +0000", GIT_COMMITTER_DATE: "1700000000 +0000" }
-          }).trim();
-        } catch (err) {
-          if (args[0] === "rev-parse") return "";
-          throw new OrbitError("DELIVERY_FAILED", `fake remote: git ${args[0]} failed: ${err.message}`);
-        }
-      }
-      headOid(state, pr) {
-        if (state.heads[pr.headRefName]) return state.heads[pr.headRefName];
-        if (!this.opts.remoteGitDir) return null;
-        try {
-          return execFileSync("git", ["--git-dir", this.opts.remoteGitDir, "rev-parse", "--verify", "--quiet", `refs/heads/${pr.headRefName}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
-        } catch {
-          return null;
-        }
-      }
-      load() {
-        if (!existsSync31(this.opts.statePath)) return emptyState();
-        return JSON.parse(readFileSync20(this.opts.statePath, "utf8"));
-      }
-      mutate(fn) {
-        const s = this.load();
-        fn(s);
-        atomicWriteJson(this.opts.statePath, s);
-      }
-    };
-  }
-});
-
 // src/review/packet.ts
 function assertProviderEligible(snapshot2, provider) {
   const cfg = snapshot2.config.providers[provider];
@@ -49867,8 +50862,8 @@ async function changedFiles(repoRoot, base, cand) {
   const ns = (await git4(repoRoot, ["diff", "--name-status", "-z", "--no-renames", "--no-ext-diff", base, cand])).split("\0");
   const stat = (await git4(repoRoot, ["diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", base, cand])).split("\0");
   const counts = /* @__PURE__ */ new Map();
-  for (const rec of stat) {
-    const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(rec);
+  for (const rec2 of stat) {
+    const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(rec2);
     if (!m) continue;
     const binary2 = m[1] === "-" || m[2] === "-";
     counts.set(m[3], { added: binary2 ? 0 : Number(m[1]), deleted: binary2 ? 0 : Number(m[2]), binary: binary2 });
@@ -50870,9 +51865,9 @@ function draftContract(input) {
   const checks = config.checks ?? {};
   const isCheck = (id) => Object.prototype.hasOwnProperty.call(checks, id);
   const adjustments = [];
-  const dropCheck = (id, where) => {
+  const dropCheck = (id, where2) => {
     if (!adjustments.some((a) => a.kind === "check-dropped" && a.subject === id)) {
-      adjustments.push({ kind: "check-dropped", subject: id, reason: `${where} names check "${id}", which the policy does not define` });
+      adjustments.push({ kind: "check-dropped", subject: id, reason: `${where2} names check "${id}", which the policy does not define` });
     }
   };
   const criteria = plan.criteria.map((c, i) => {
@@ -51035,177 +52030,6 @@ var init_draft = __esm({
   }
 });
 
-// src/review/select.ts
-function selectionDecisionRecord(sel) {
-  return {
-    kind: "review.select",
-    summary: sel.decision === "SELECT" ? `reviewer ${sel.provider}/${sel.model ?? "default"} (${sel.independent ? "independent" : "same provider"})` : `review blocked: ${sel.reason}`.slice(0, 300),
-    data: sel
-  };
-}
-function selectReviewer(input) {
-  const { config } = input.snapshot;
-  const review = config.review;
-  const impl = input.implementer.provider;
-  const alternatives = [];
-  const ids = /* @__PURE__ */ new Set([...Object.keys(config.providers), ...Object.keys(input.capabilities), impl, review.preferred_provider]);
-  const order = [...ids].sort((a, b) => Number(b === review.preferred_provider) - Number(a === review.preferred_provider) || a.localeCompare(b));
-  const providerProblem = (p) => {
-    const cap = input.capabilities[p];
-    if (!cap) return { reason: `no adapter capabilities were reported for "${p}"`, code: "PROVIDER_UNAVAILABLE" };
-    if (!cap.available) return { reason: `provider "${p}" is not available: ${cap.detail || "adapter reported unavailable"}`, code: "PROVIDER_UNAVAILABLE" };
-    if (!cap.structuredOutput) return { reason: `provider "${p}" cannot return schema-constrained output, which review findings require`, code: "PROVIDER_UNAVAILABLE" };
-    const cred = input.credentials[p];
-    if (!cred) return { reason: `credentials for "${p}" were not validated`, code: "PROVIDER_UNAVAILABLE" };
-    if (cred.state === "expired") return { reason: `credentials for "${p}" are expired${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
-    if (cred.state === "invalid") return { reason: `credentials for "${p}" are invalid${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
-    if (cred.state === "missing") return { reason: `no credentials for "${p}"${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_MISSING" };
-    if (cred.state !== "valid") return { reason: `credentials for "${p}" could not be validated (${cred.state})${cred.detail ? `: ${cred.detail}` : ""}`, code: "PROVIDER_UNAVAILABLE" };
-    if (p !== impl && config.providers[p]?.data_policy_eligible !== true) {
-      return { reason: `providers.${p}.data_policy_eligible is not true, so the review packet may not be sent to it`, code: "POLICY_DENIED" };
-    }
-    return null;
-  };
-  const problems = /* @__PURE__ */ new Map();
-  const usableProviders = [];
-  for (const p of order) {
-    const prob = providerProblem(p);
-    if (prob) {
-      problems.set(p, prob);
-      alternatives.push({ provider: p, model: null, reason: prob.reason });
-    } else usableProviders.push(p);
-  }
-  let substituted = false;
-  for (const p of usableProviders.filter((x) => x !== impl)) {
-    const m = qualifiedModel(p, input, alternatives);
-    if (!m) continue;
-    substituted = p !== review.preferred_provider;
-    return finish3(input, m, true, substituted, alternatives, substituted ? `preferred provider "${review.preferred_provider}" is unusable (${problems.get(review.preferred_provider)?.reason ?? "not selected"}); "${p}" is an independent, qualified provider` : `independent reviewer "${p}" (implementer: "${impl}")`);
-  }
-  const sameAllowed = !review.independent_provider_required || review.fallback_same_provider_allowed;
-  if (!sameAllowed) {
-    const independentIds = order.filter((p) => p !== impl);
-    const detail = independentIds.length === 0 ? `no provider other than "${impl}" is configured` : independentIds.map((p) => problems.get(p)?.reason ?? `"${p}" has no model qualified for review`).join("; ");
-    const preferredProblem = problems.get(review.preferred_provider);
-    const code2 = review.preferred_provider !== impl && preferredProblem ? preferredProblem.code : "PROVIDER_UNAVAILABLE";
-    return {
-      decision: "BLOCK",
-      code: code2,
-      reason: `independent review is required (review.independent_provider_required=true, fallback_same_provider_allowed=false) and no independent reviewer is usable: ${detail}. Review is not being substituted by "${impl}" or any equivalent label; verification is incomplete until an independent provider is available.`,
-      alternatives
-    };
-  }
-  if (problems.has(impl)) {
-    return {
-      decision: "BLOCK",
-      code: problems.get(impl).code,
-      reason: `no independent reviewer is usable and same-provider review is allowed, but "${impl}" cannot review: ${problems.get(impl).reason}`,
-      alternatives
-    };
-  }
-  const same = sameProviderModel(input, alternatives);
-  if (!same.ok) {
-    return { decision: "BLOCK", code: "PROVIDER_UNAVAILABLE", reason: `no independent reviewer is usable and same-provider review is allowed, but ${same.reason}`, alternatives };
-  }
-  return finish3(
-    input,
-    same.usable,
-    false,
-    false,
-    alternatives,
-    `no independent reviewer is usable; policy allows same-provider review, so "${impl}" reviews with ${same.usable.model} (${same.usable.detail}) at a different tier than the implementer`
-  );
-}
-function finish3(input, u, independent, substitutedForPreferred, alternatives, reason) {
-  const cap = input.capabilities[u.provider];
-  return {
-    decision: "SELECT",
-    provider: u.provider,
-    model: u.model,
-    effort: input.snapshot.config.providers[u.provider]?.reasoning_effort ?? null,
-    independent,
-    basis: u.basis,
-    substitutedForPreferred,
-    readOnlySandbox: cap?.readOnlySandbox === true,
-    reason,
-    alternatives
-  };
-}
-function qualifiedModel(provider, input, alternatives) {
-  const cfg = input.snapshot.config;
-  const cap = input.capabilities[provider];
-  const configured = cfg.providers[provider]?.model ?? null;
-  const offered = (m) => !cap || cap.models.length === 0 || cap.models.includes(m);
-  if (configured !== null) {
-    if (!offered(configured)) {
-      alternatives.push({ provider, model: configured, reason: `providers.${provider}.model "${configured}" is not offered by the adapter` });
-      return null;
-    }
-    return { provider, model: configured, basis: "configured", detail: `providers.${provider}.model names it` };
-  }
-  const reg = input.registry;
-  const surface = PROVIDER_SURFACE2[provider];
-  if (reg && surface) {
-    const a = reg.assess({ surface, provider, allowedModels: [...cfg.routing.allowed_models, `${provider}:*`], structuredOutput: true });
-    const ranked = a.eligible.filter((e) => offered(e.modelId));
-    if (provider === "claude") {
-      const tiered = ranked.filter((e) => (tierOf(e) ?? 0) >= REVIEW_QUALITY_FLOOR_TIER && allowMatch(e, cfg.routing.allowed_models) !== null);
-      const pick = tiered[0];
-      if (pick) return { provider, model: pick.modelId, basis: "tier", detail: `${pick.family} meets the opus-class floor` };
-    } else {
-      const evaluated = ranked.find((e) => e.evaluation.qualifiedFor.includes("safety-review"));
-      if (evaluated) return { provider, model: evaluated.modelId, basis: "evaluation", detail: "a recorded safety-review evaluation" };
-      const recommended = ranked.find((e) => e.eligibility.providerDefault);
-      if (recommended) return { provider, model: recommended.modelId, basis: "provider-default", detail: `it is ${provider}'s recommended model` };
-    }
-  }
-  alternatives.push({ provider, model: null, reason: `no model of "${provider}" is qualified for review: none is named in providers.${provider}.model, evaluated for safety review, or recommended by the provider${provider === "claude" ? ", and none is opus-class or above" : ""}` });
-  return null;
-}
-function sameProviderModel(input, alternatives) {
-  const impl = input.implementer;
-  const cfg = input.snapshot.config;
-  const reg = input.registry;
-  if (!reg) return { ok: false, reason: "no model registry was supplied, so a different-tier reviewer model cannot be chosen" };
-  const implEntry = impl.model ? reg.get(impl.model) : null;
-  const implTier = implEntry ? tierOf(implEntry) : null;
-  if (implTier === null) {
-    return { ok: false, reason: `the implementer's model tier is unknown (${impl.model ?? "provider default"}), so a different-tier reviewer cannot be shown to differ` };
-  }
-  const surface = PROVIDER_SURFACE2[impl.provider];
-  if (!surface) return { ok: false, reason: `"${impl.provider}" has no tiered models, so a different-tier same-provider review is not defined` };
-  const cap = input.capabilities[impl.provider];
-  const a = reg.assess({ surface, provider: impl.provider, allowedModels: cfg.routing.allowed_models, structuredOutput: true });
-  for (const ex of a.excluded) if (ex.model.provider === impl.provider) alternatives.push({ provider: impl.provider, model: ex.model.modelId, reason: `ineligible: ${ex.reasons.join("; ")}` });
-  const candidates = a.eligible.filter((e) => {
-    const t = tierOf(e);
-    if (t === null) return false;
-    if (cap && cap.models.length > 0 && !cap.models.includes(e.modelId)) return false;
-    if (t < REVIEW_QUALITY_FLOOR_TIER) {
-      alternatives.push({ provider: impl.provider, model: e.modelId, reason: `${e.family} is below the review quality floor (opus-class)` });
-      return false;
-    }
-    if (t === implTier) {
-      alternatives.push({ provider: impl.provider, model: e.modelId, reason: `same tier (${e.family}) as the implementer's model` });
-      return false;
-    }
-    return true;
-  });
-  const pick = candidates[0];
-  if (!pick) return { ok: false, reason: `no allowed ${impl.provider} model is at or above the opus-class floor and in a different tier than the implementer's ${implEntry?.family ?? impl.model}` };
-  return { ok: true, usable: { provider: impl.provider, model: pick.modelId, basis: "tier", detail: `${pick.family} is at or above the opus-class floor and differs from the implementer's ${implEntry?.family}` } };
-}
-var REVIEW_QUALITY_FLOOR_TIER, PROVIDER_SURFACE2;
-var init_select = __esm({
-  "src/review/select.ts"() {
-    "use strict";
-    init_errors();
-    init_registry();
-    REVIEW_QUALITY_FLOOR_TIER = 3;
-    PROVIDER_SURFACE2 = { claude: "claude-cli", codex: "codex-cli" };
-  }
-});
-
 // src/controller/delivery-env.ts
 function deliversThroughGithub(config) {
   return config.delivery.provider === "github" && DELIVERY_MODES.has(config.mode) && (config.actions.open_pull_request || config.actions.push_task_branch || config.actions.repair_ci);
@@ -51234,7 +52058,7 @@ var init_delivery_env = __esm({
 });
 
 // src/ui/single-sandbox.ts
-import { readFileSync as readFileSync21 } from "node:fs";
+import { readFileSync as readFileSync22 } from "node:fs";
 function singleSandboxLimitation(kind) {
   return kind === "container" ? UI_SINGLE_CONTAINER_LIMITATION : UI_SINGLE_SANDBOX_LIMITATION;
 }
@@ -51244,21 +52068,21 @@ function launchFailed(status2) {
 function readLaunchStatus(path) {
   let parsed3;
   try {
-    parsed3 = JSON.parse(readFileSync21(path, "utf8"));
+    parsed3 = JSON.parse(readFileSync22(path, "utf8"));
   } catch {
     return null;
   }
   if (typeof parsed3 !== "object" || parsed3 === null || Array.isArray(parsed3)) return null;
   const r = parsed3;
   if (typeof r.app !== "string" || !STATES.has(r.app)) return null;
-  const num5 = (v) => typeof v === "number" && Number.isFinite(v) ? v : void 0;
-  const str6 = (v, max) => typeof v === "string" ? v.slice(0, max) : void 0;
+  const num6 = (v) => typeof v === "number" && Number.isFinite(v) ? v : void 0;
+  const str7 = (v, max) => typeof v === "string" ? v.slice(0, max) : void 0;
   const out = { app: r.app };
-  if (num5(r.status) !== void 0) out.status = num5(r.status);
-  if (r.code === null || num5(r.code) !== void 0) out.code = r.code === null ? null : num5(r.code);
-  if (r.signal === null || typeof r.signal === "string") out.signal = r.signal === null ? null : str6(r.signal, 20);
-  if (str6(r.detail, 300) !== void 0) out.detail = str6(r.detail, 300);
-  if (num5(r.readyMs) !== void 0) out.readyMs = num5(r.readyMs);
+  if (num6(r.status) !== void 0) out.status = num6(r.status);
+  if (r.code === null || num6(r.code) !== void 0) out.code = r.code === null ? null : num6(r.code);
+  if (r.signal === null || typeof r.signal === "string") out.signal = r.signal === null ? null : str7(r.signal, 20);
+  if (str7(r.detail, 300) !== void 0) out.detail = str7(r.detail, 300);
+  if (num6(r.readyMs) !== void 0) out.readyMs = num6(r.readyMs);
   if (typeof r.exitedDuringCheck === "boolean") out.exitedDuringCheck = r.exitedDuringCheck;
   return out;
 }
@@ -51487,9 +52311,9 @@ function failedStepPath(steps) {
 function describeError(err, rootDir) {
   const message = err.message;
   const exp = EXPECTED.exec(message)?.[1]?.trim() ?? null;
-  const rec = RECEIVED.exec(message)?.[1]?.trim() ?? null;
+  const rec2 = RECEIVED.exec(message)?.[1]?.trim() ?? null;
   let diff = null;
-  if (exp === null && rec === null && /^[-+] (Expected|Received)\b/m.test(message)) {
+  if (exp === null && rec2 === null && /^[-+] (Expected|Received)\b/m.test(message)) {
     const lines = message.split("\n");
     const start = lines.findIndex((l) => /^- Expected\b/.test(l));
     if (start >= 0) diff = lines.slice(start, start + MAX_DIFF_LINES).join("\n").trimEnd();
@@ -51500,7 +52324,7 @@ function describeError(err, rootDir) {
     location: loc ? { file: relativeTo(loc.file, rootDir), line: loc.line, column: loc.column } : null,
     snippet: err.snippet,
     expected: exp,
-    observed: rec,
+    observed: rec2,
     diff
   };
 }
@@ -51539,15 +52363,15 @@ function parseErrorContext(markdown) {
 function parseDiagnostics(body) {
   const j = safeJson(body);
   if (!isObj(j)) return null;
-  const list = (v, pick) => arr(v).slice(0, MAX_ENTRIES).flatMap((e) => {
+  const list2 = (v, pick) => arr(v).slice(0, MAX_ENTRIES).flatMap((e) => {
     const p = isObj(e) ? pick(e) : null;
     return p === null ? [] : [p];
   });
   return {
-    consoleErrors: list(j.consoleErrors, (e) => ({ type: str5(e.type) ?? "error", text: cleanText(str5(e.text) ?? "", 1e3), url: str5(e.url) ?? "", line: num4(e.line) })),
-    pageErrors: list(j.pageErrors, (e) => ({ name: str5(e.name) ?? "Error", message: cleanText(str5(e.message) ?? "", 1e3) })),
-    failedRequests: list(j.failedRequests, (e) => ({ url: cleanText(str5(e.url) ?? "", 500), method: str5(e.method) ?? "GET", failure: str5(e.failure) ?? "unknown" })),
-    badResponses: list(j.badResponses, (e) => ({ url: cleanText(str5(e.url) ?? "", 500), method: str5(e.method) ?? "GET", status: num4(e.status) })),
+    consoleErrors: list2(j.consoleErrors, (e) => ({ type: str5(e.type) ?? "error", text: cleanText(str5(e.text) ?? "", 1e3), url: str5(e.url) ?? "", line: num4(e.line) })),
+    pageErrors: list2(j.pageErrors, (e) => ({ name: str5(e.name) ?? "Error", message: cleanText(str5(e.message) ?? "", 1e3) })),
+    failedRequests: list2(j.failedRequests, (e) => ({ url: cleanText(str5(e.url) ?? "", 500), method: str5(e.method) ?? "GET", failure: str5(e.failure) ?? "unknown" })),
+    badResponses: list2(j.badResponses, (e) => ({ url: cleanText(str5(e.url) ?? "", 500), method: str5(e.method) ?? "GET", status: num4(e.status) })),
     finalUrl: str5(j.finalUrl),
     dropped: num4(j.dropped)
   };
@@ -51642,9 +52466,9 @@ var init_report3 = __esm({
 });
 
 // src/ui/runner.ts
-import { closeSync as closeSync8, copyFileSync, existsSync as existsSync32, mkdirSync as mkdirSync18, openSync as openSync8, readFileSync as readFileSync22, realpathSync as realpathSync14, rmSync as rmSync12, statSync as statSync12, writeFileSync as writeFileSync6 } from "node:fs";
+import { closeSync as closeSync8, copyFileSync, existsSync as existsSync33, mkdirSync as mkdirSync18, openSync as openSync8, readFileSync as readFileSync23, realpathSync as realpathSync14, rmSync as rmSync12, statSync as statSync12, writeFileSync as writeFileSync6 } from "node:fs";
 import { createRequire as createRequire3 } from "node:module";
-import { basename as basename12, dirname as dirname20, isAbsolute as isAbsolute17, join as join42, relative as relative4, resolve as resolve11, sep as sep9 } from "node:path";
+import { basename as basename12, dirname as dirname20, isAbsolute as isAbsolute17, join as join45, relative as relative4, resolve as resolve11, sep as sep9 } from "node:path";
 async function runUiChecks(input) {
   const clock = input.clock ?? systemClock;
   const { snapshot: snapshot2, uiConfig, candidate } = input;
@@ -51668,7 +52492,7 @@ async function runUiChecks(input) {
     enforcement: UI_ENFORCEMENT_VERSION,
     projects: input.projects ?? null
   });
-  atomicWriteJson(join42(outDir, "ui-run.json"), { state: "running", candidate: candidate.id, startedAt, checks: checks.map((c) => c.id) });
+  atomicWriteJson(join45(outDir, "ui-run.json"), { state: "running", candidate: candidate.id, startedAt, checks: checks.map((c) => c.id) });
   const reasons = [];
   const unverified = [];
   const checkRuns = [];
@@ -51676,12 +52500,12 @@ async function runUiChecks(input) {
   const notExecuted = [];
   let terminal = null;
   let app = null;
-  const tmpDir = ensureDir(join42(outDir, "tmp"));
+  const tmpDir = ensureDir(join45(outDir, "tmp"));
   const baseEnv = safeBaseEnv(input.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;
   const appStart = uiConfig.environment.start_command;
   const appEnv = { ...input.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir };
-  const launch = appStart !== null && input.isolation.privateLoopback === true ? { command: appStart, env: { ...baseEnv, ...appEnv }, readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1e3, stateDir: ensureDir(join42(outDir, "app")), pollMs: input.appPollMs } : null;
+  const launch = appStart !== null && input.isolation.privateLoopback === true ? { command: appStart, env: { ...baseEnv, ...appEnv }, readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1e3, stateDir: ensureDir(join45(outDir, "app")), pollMs: input.appPollMs } : null;
   try {
     if (appStart !== null && launch === null) {
       const appCheck = { ...defaultCheck("ui-app"), command: appStart, network_hosts: [], timeout_seconds: uiConfig.environment.ready_timeout_seconds };
@@ -51695,7 +52519,7 @@ async function runUiChecks(input) {
           env: appEnv,
           isolation: { provider: input.isolation, profile },
           isolatedTestData: uiConfig.environment.isolated_test_data,
-          stateDir: join42(outDir, "app"),
+          stateDir: join45(outDir, "app"),
           clock,
           pollMs: input.appPollMs,
           hostEnv: input.hostEnv
@@ -51704,7 +52528,7 @@ async function runUiChecks(input) {
         if (err instanceof OrbitError && (err.code === "ISOLATION_UNAVAILABLE" || err.code === "POLICY_DENIED")) throw err;
         terminal = "ERROR";
         reasons.push(`the application did not start: ${err instanceof Error ? err.message : String(err)}`);
-        notExecuted.push({ stage: "application", checkId: null, logPath: join42(outDir, "app", APP_LOG_FILE), signal: null });
+        notExecuted.push({ stage: "application", checkId: null, logPath: join45(outDir, "app", APP_LOG_FILE), signal: null });
       }
     } else if (appStart === null) {
       unverified.push("ui.environment.start_command is not set: the application at base_url was started by something other than Orbit, so its build is not bound to this candidate");
@@ -51813,7 +52637,7 @@ async function runUiChecks(input) {
     startedAt,
     endedAt: clock.now()
   };
-  atomicWriteJson(join42(outDir, UI_RESULT_FILE), redactValue(result2));
+  atomicWriteJson(join45(outDir, UI_RESULT_FILE), redactValue(result2));
   return result2;
 }
 function toEvidenceUi(result2) {
@@ -51864,10 +52688,10 @@ function shellQuote(arg) {
 }
 async function runOneCheck(ctx) {
   const { input, check, checkoutDir, clock } = ctx;
-  const checkDir = ensureDir(join42(ctx.outDir, check.id));
-  const outputDir = join42(checkDir, "test-results");
-  const reportPath2 = join42(checkDir, "playwright-report.json");
-  const logPath = join42(checkDir, "run.log");
+  const checkDir = ensureDir(join45(ctx.outDir, check.id));
+  const outputDir = join45(checkDir, "test-results");
+  const reportPath2 = join45(checkDir, "playwright-report.json");
+  const logPath = join45(checkDir, "run.log");
   const cwd = resolve11(checkoutDir, check.cwd);
   if (relative4(checkoutDir, cwd).startsWith("..") || isAbsolute17(relative4(checkoutDir, cwd))) {
     throw new OrbitError("POLICY_DENIED", `check ${check.id} cwd leaves the checkout`, { rule: "checks.cwd", check: check.id });
@@ -51914,10 +52738,10 @@ async function runOneCheck(ctx) {
 ${exec.stderr}` : ""}`), { mode: 384 });
   let parsed3 = null;
   let parseProblem = null;
-  const reportFound = existsSync32(reportPath2);
+  const reportFound = existsSync33(reportPath2);
   if (reportFound) {
     try {
-      parsed3 = parsePlaywrightReport(JSON.parse(readFileSync22(reportPath2, "utf8")));
+      parsed3 = parsePlaywrightReport(JSON.parse(readFileSync23(reportPath2, "utf8")));
     } catch (err) {
       parseProblem = `the Playwright report could not be parsed: ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -52003,8 +52827,8 @@ ${exec.stderr}`,
   return { run, journeys, reasons, unverified, terminal: null };
 }
 function launchSpec(launch, c) {
-  const logPath = join42(launch.stateDir, APP_LOG_FILE);
-  const statusPath = join42(launch.stateDir, LAUNCH_STATUS_FILE);
+  const logPath = join45(launch.stateDir, APP_LOG_FILE);
+  const statusPath = join45(launch.stateDir, LAUNCH_STATUS_FILE);
   rmSync12(statusPath, { force: true });
   closeSync8(openSync8(logPath, "a", 384));
   return {
@@ -52046,9 +52870,9 @@ function buildJourney(test, ctx, checkDir, cwd) {
   const failing = test.results.filter((r) => FAILED_RESULT.has(r.status));
   const focus = failing[failing.length - 1] ?? test.results[test.results.length - 1];
   const status2 = journeyStatus(test);
-  const slug = `${sha256(id).slice(0, 8)}-${title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}`;
-  const artifactDir = join42(checkDir, "artifacts", slug);
-  const collected = focus ? collectAttachments(focus.attachments, { checkoutDir, outputDir: join42(checkDir, "test-results"), artifactDir }) : { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
+  const slug2 = `${sha256(id).slice(0, 8)}-${title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}`;
+  const artifactDir = join45(checkDir, "artifacts", slug2);
+  const collected = focus ? collectAttachments(focus.attachments, { checkoutDir, outputDir: join45(checkDir, "test-results"), artifactDir }) : { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
   const firstError = (failing[0] ?? focus)?.error ?? null;
   const rootDir = checkoutDir;
   const error = firstError && status2 !== "PASSED" ? describeError(firstError, rootDir) : null;
@@ -52108,11 +52932,11 @@ function escapeRegExp3(text2) {
 function fallbackBrowser(checkoutDir, configured) {
   const name = configured[0] ?? "chromium";
   try {
-    const req = createRequire3(join42(checkoutDir, "package.json"));
+    const req = createRequire3(join45(checkoutDir, "package.json"));
     const dir = dirname20(req.resolve("playwright-core/package.json"));
-    const parsed3 = JSON.parse(readFileSync22(join42(dir, "browsers.json"), "utf8"));
-    const list = parsed3.browsers ?? [];
-    const version = list.find((b) => b.name === name)?.browserVersion;
+    const parsed3 = JSON.parse(readFileSync23(join45(dir, "browsers.json"), "utf8"));
+    const list2 = parsed3.browsers ?? [];
+    const version = list2.find((b) => b.name === name)?.browserVersion;
     return version ? { name, version: `${version} (declared by playwright-core, not observed)` } : null;
   } catch {
     return null;
@@ -52153,20 +52977,20 @@ function collectAttachments(attachments, dirs) {
         continue;
       }
       if (size > MAX_ARTIFACT_BYTES) continue;
-      bytes = readFileSync22(real);
+      bytes = readFileSync23(real);
       stored = real;
       if (!isInside(real, outputReal)) {
         mkdirSync18(dirs.artifactDir, { recursive: true });
-        const copy = join42(dirs.artifactDir, `${kind}-${basename12(real)}`);
+        const copy = join45(dirs.artifactDir, `${kind}-${basename12(real)}`);
         copyFileSync(real, copy);
         stored = copy;
       }
     } else if (bytes !== null) {
       mkdirSync18(dirs.artifactDir, { recursive: true });
       const ext = EXTENSIONS[att.contentType.split(";")[0]?.trim() ?? ""] ?? ".bin";
-      stored = join42(dirs.artifactDir, `${att.name.replace(/[^A-Za-z0-9._-]+/g, "_")}${ext}`);
+      stored = join45(dirs.artifactDir, `${att.name.replace(/[^A-Za-z0-9._-]+/g, "_")}${ext}`);
       writeFileSync6(stored, TEXTUAL.test(att.contentType) ? redact(bytes.toString("utf8")) : bytes, { mode: 384 });
-      bytes = readFileSync22(stored);
+      bytes = readFileSync23(stored);
     }
     if (bytes === null || stored === null) continue;
     if (kind === "diagnostics") {
@@ -52331,14 +53155,14 @@ var init_runner2 = __esm({
 });
 
 // src/controller/security.ts
-import { accessSync as accessSync2, constants as constants3, existsSync as existsSync33, mkdirSync as mkdirSync19, readFileSync as readFileSync23, rmSync as rmSync13, statSync as statSync13 } from "node:fs";
-import { delimiter as delimiter3, dirname as dirname21, join as join43, normalize as normalize2, sep as sep10 } from "node:path";
+import { accessSync as accessSync2, constants as constants3, existsSync as existsSync34, mkdirSync as mkdirSync19, readFileSync as readFileSync24, rmSync as rmSync13, statSync as statSync13 } from "node:fs";
+import { delimiter as delimiter3, dirname as dirname21, join as join46, normalize as normalize2, sep as sep10 } from "node:path";
 import { tmpdir as tmpdir10 } from "node:os";
 import { spawn as spawn5 } from "node:child_process";
 function findOnPath(name, pathVar = process.env.PATH) {
   for (const dir of (pathVar ?? "").split(delimiter3)) {
     if (!dir) continue;
-    const p = join43(dir, name);
+    const p = join46(dir, name);
     try {
       accessSync2(p, constants3.X_OK);
       if (statSync13(p).isFile()) return p;
@@ -52352,7 +53176,7 @@ async function changedFiles2(repoRoot, base, commit) {
   return out.split("\0").filter((p) => p.length > 0);
 }
 async function scanCandidateSecrets(input) {
-  const reportPath2 = join43(input.outDir, "secret-scan.json");
+  const reportPath2 = join46(input.outDir, "secret-scan.json");
   const prior = readJsonIfExists(reportPath2);
   if (prior && prior.completed && prior.commit === input.commit) {
     const { raw: raw2, commit: _commit, ...rest } = prior;
@@ -52490,7 +53314,7 @@ function judgeSastResult(result2, checkId, policy, now) {
   if (files.length === 0 || result2.status !== "PASSED" && result2.status !== "FAILED") return { checkId, status: result2.status, sarif: false, classification: null, note: null };
   const findings = [];
   try {
-    for (const f of files) findings.push(...parseSarif(readFileSync23(f, "utf8")));
+    for (const f of files) findings.push(...parseSarif(readFileSync24(f, "utf8")));
   } catch (err) {
     return { checkId, status: result2.status, sarif: false, classification: null, note: `SAST check ${checkId}: SARIF output unreadable (${err.message}); its exit status stands` };
   }
@@ -52501,25 +53325,25 @@ function judgeSastResult(result2, checkId, policy, now) {
   return { checkId, status: status2, sarif: true, classification: c, note: `SAST check ${checkId}: ${bits.join(", ")} finding(s) under static_security${waived.length ? `; waived: ${waived.join("; ")}` : ""}` };
 }
 async function runGitleaks(bin, input, files, reportPath2) {
-  const work = join43(input.outDir, "secret-scan");
+  const work = join46(input.outDir, "secret-scan");
   rmSync13(work, { recursive: true, force: true });
-  const scanRoot = join43(work, "tree");
-  const tree = join43(scanRoot, "files");
-  const trusted = join43(work, "trusted");
+  const scanRoot = join46(work, "tree");
+  const tree = join46(scanRoot, "files");
+  const trusted = join46(work, "trusted");
   mkdirSync19(tree, { recursive: true, mode: 448 });
   mkdirSync19(trusted, { recursive: true, mode: 448 });
-  const config = join43(trusted, "gitleaks.toml");
+  const config = join46(trusted, "gitleaks.toml");
   atomicWrite(config, TRUSTED_GITLEAKS_CONFIG, 292);
   let copied = 0;
   for (const rel of files) {
-    const target = normalize2(join43(tree, rel));
+    const target = normalize2(join46(tree, rel));
     if (!target.startsWith(tree + sep10)) continue;
     const content = await git2(input.repoRoot, ["cat-file", "blob", `${input.commit}:${rel}`]);
     mkdirSync19(dirname21(target), { recursive: true });
     atomicWrite(target, content, 384);
     copied++;
   }
-  const raw = join43(work, "gitleaks-report.json");
+  const raw = join46(work, "gitleaks-report.json");
   const r = await execCapture([bin, "dir", scanRoot, "-c", config, "-i", trusted, "--ignore-gitleaks-allow", "--redact", "-f", "json", "-r", raw, "--no-banner", "--exit-code", "1"], {
     // GITLEAKS_CONFIG and friends from the host would outrank nothing here (-c wins), but the scan needs nothing from it either.
     env: { PATH: input.hostPath ?? process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir10() },
@@ -52527,7 +53351,7 @@ async function runGitleaks(bin, input, files, reportPath2) {
     timeoutMs: input.timeoutMs ?? 12e4
   });
   if (r.exitCode !== 0 && r.exitCode !== 1) throw new Error(`exit ${r.exitCode ?? r.signal}: ${redact(r.stderr).slice(0, 300)}`);
-  const parsed3 = existsSync33(raw) ? readJsonIfExists(raw) ?? [] : [];
+  const parsed3 = existsSync34(raw) ? readJsonIfExists(raw) ?? [] : [];
   const findings = parsed3.map((f) => ({ file: relativeTo2(tree, f.File ?? ""), line: typeof f.StartLine === "number" ? f.StartLine : null, rule: String(f.RuleID ?? "secret") }));
   if (r.exitCode === 1 && findings.length === 0) throw new Error("reported leaks but wrote no readable report");
   rmSync13(scanRoot, { recursive: true, force: true });
@@ -52562,9 +53386,9 @@ async function scanBlobInChunks(repoRoot, commit, rel) {
     for (const m of red.matchAll(/\[REDACTED:([a-z0-9_-]+)\]/gi)) found.set(`${at}:${m[1]}`, { file: rel, line: at, rule: `builtin:${m[1]}` });
   };
   const child = spawn5("git", ["cat-file", "blob", `${commit}:${rel}`], { cwd: repoRoot, env: gitEnv3(), stdio: ["ignore", "pipe", "ignore"] });
-  const exited = new Promise((resolve21, reject2) => {
+  const exited = new Promise((resolve22, reject2) => {
     child.once("error", reject2);
-    child.once("close", (code2) => resolve21(code2));
+    child.once("close", (code2) => resolve22(code2));
   });
   const timer = setTimeout(() => child.kill("SIGKILL"), 10 * 6e4);
   try {
@@ -52654,8 +53478,8 @@ var init_security = __esm({
 });
 
 // src/ui/explore.ts
-import { existsSync as existsSync34, readFileSync as readFileSync24, realpathSync as realpathSync15, symlinkSync, writeFileSync as writeFileSync7 } from "node:fs";
-import { dirname as dirname22, join as join44, resolve as resolve12 } from "node:path";
+import { existsSync as existsSync35, readFileSync as readFileSync25, realpathSync as realpathSync15, symlinkSync, writeFileSync as writeFileSync7 } from "node:fs";
+import { dirname as dirname22, join as join47, resolve as resolve12 } from "node:path";
 function explorationConfigOf(ui) {
   const raw = ui.exploration;
   if (!raw || typeof raw !== "object") return DISABLED;
@@ -52753,8 +53577,8 @@ async function exploreUi(opts) {
   const onAbort = () => control.abort();
   opts.abortSignal?.addEventListener("abort", onAbort, { once: true });
   if (opts.abortSignal?.aborted) control.abort();
-  atomicWriteJson(join44(outDir, "exploration.json"), { state: "running", candidate: opts.candidate.id, startedAt });
-  const tmpDir = ensureDir(join44(outDir, "tmp"));
+  atomicWriteJson(join47(outDir, "exploration.json"), { state: "running", candidate: opts.candidate.id, startedAt });
+  const tmpDir = ensureDir(join47(outDir, "tmp"));
   const baseEnv = safeBaseEnv(opts.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;
   let app = null;
@@ -52779,7 +53603,7 @@ async function exploreUi(opts) {
           env: { ...opts.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: opts.uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir },
           isolation: { provider: opts.isolation, profile },
           isolatedTestData: opts.uiConfig.environment.isolated_test_data,
-          stateDir: join44(outDir, "app"),
+          stateDir: join47(outDir, "app"),
           clock,
           pollMs: opts.appPollMs,
           hostEnv: opts.hostEnv
@@ -52839,7 +53663,7 @@ async function exploreUi(opts) {
     startedAt,
     endedAt: clock.now()
   };
-  atomicWriteJson(join44(outDir, "exploration.json"), redactValue(result2));
+  atomicWriteJson(join47(outDir, "exploration.json"), redactValue(result2));
   return result2;
 }
 async function runExplorer(a) {
@@ -52898,9 +53722,9 @@ function explorerWorkUnit(task, cfg, harness) {
     ...harness ? ["", `Exploration harness: ${harness.trim()}`] : []
   ].join("\n");
 }
-function sanitizeCandidates(list) {
+function sanitizeCandidates(list2) {
   const seen = /* @__PURE__ */ new Set();
-  return list.map((f, i) => {
+  return list2.map((f, i) => {
     let id = f.id.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || `F-${i + 1}`;
     if (seen.has(id)) id = `${id}-${i + 1}`;
     seen.add(id);
@@ -52958,7 +53782,7 @@ function baseFinding(c) {
   };
 }
 async function proveOne(p, cand, base, viewport) {
-  const dir = ensureDir(join44(p.outDir, "specs", cand.id));
+  const dir = ensureDir(join47(p.outDir, "specs", cand.id));
   const fileName = `${cand.id}.spec.ts`;
   let response;
   try {
@@ -52970,7 +53794,7 @@ async function proveOne(p, cand, base, viewport) {
   p.charge(response.costUsd);
   const problems = lintExplorationSpec(response.source, p.baseUrl);
   const source = redact(response.source);
-  const specPath = join44(dir, fileName);
+  const specPath = join47(dir, fileName);
   writeFileSync7(specPath, source, { mode: 384 });
   const spec = { path: specPath, sha256: sha256(source), source };
   if (problems.length > 0) return { ...base, spec, status: "invalid_test", reason: `the test was refused: ${problems.join("; ")}` };
@@ -53003,7 +53827,7 @@ async function proveOne(p, cand, base, viewport) {
   };
 }
 function writePlaywrightConfig(dir, baseUrl, ui, viewport) {
-  const path = join44(dir, "playwright.config.mjs");
+  const path = join47(dir, "playwright.config.mjs");
   const config = {
     testDir: dir,
     testMatch: "**/*.spec.ts",
@@ -53019,12 +53843,12 @@ function writePlaywrightConfig(dir, baseUrl, ui, viewport) {
   return path;
 }
 function linkNodeModules(dir, checkoutDir) {
-  const target = join44(dir, "node_modules");
-  if (existsSync34(target)) return;
+  const target = join47(dir, "node_modules");
+  if (existsSync35(target)) return;
   let cur = checkoutDir;
   for (; ; ) {
-    const candidate = join44(cur, "node_modules");
-    if (existsSync34(candidate)) {
+    const candidate = join47(cur, "node_modules");
+    if (existsSync35(candidate)) {
       symlinkSync(realpathSync15(candidate), target);
       return;
     }
@@ -53034,8 +53858,8 @@ function linkNodeModules(dir, checkoutDir) {
   }
 }
 async function runSpec(p, a) {
-  const outputDir = join44(a.dir, `run-${a.n}`);
-  const reportPath2 = join44(a.dir, `report-${a.n}.json`);
+  const outputDir = join47(a.dir, `run-${a.n}`);
+  const reportPath2 = join47(a.dir, `report-${a.n}.json`);
   const argv2 = ["npx", "--no-install", "playwright", "test", "--config", a.configPath, "--reporter=json", "--update-snapshots=none", "--retries=0", "--trace=retain-on-failure", `--output=${outputDir}`];
   const env = {
     ...p.baseEnv,
@@ -53065,11 +53889,11 @@ async function runSpec(p, a) {
   const fail3 = (error) => ({ run: { status: "error", exitCode: exec.exitCode, durationMs, error: cleanText(error, 300) }, artifacts: [] });
   if (exec.cancelled) return fail3("the run was cancelled");
   if (exec.timedOut) return fail3("the run exceeded its time limit");
-  if (exec.exitCode === 97 && !existsSync34(reportPath2) && (wrapped.adjustments ?? []).length > 0) return fail3(`the browser could not start under sandbox-runtime: the srt preload refused srt's sandbox command (exit 97)`);
-  if (!existsSync34(reportPath2)) return fail3(`no Playwright report (exit ${exec.exitCode ?? "signal"}): ${(exec.stderr || exec.stdout).trim().slice(-200)}`);
+  if (exec.exitCode === 97 && !existsSync35(reportPath2) && (wrapped.adjustments ?? []).length > 0) return fail3(`the browser could not start under sandbox-runtime: the srt preload refused srt's sandbox command (exit 97)`);
+  if (!existsSync35(reportPath2)) return fail3(`no Playwright report (exit ${exec.exitCode ?? "signal"}): ${(exec.stderr || exec.stdout).trim().slice(-200)}`);
   let tests;
   try {
-    const parsed3 = parsePlaywrightReport(JSON.parse(readFileSync24(reportPath2, "utf8")));
+    const parsed3 = parsePlaywrightReport(JSON.parse(readFileSync25(reportPath2, "utf8")));
     if (parsed3.errors.length > 0) return fail3(`Playwright reported errors: ${parsed3.errors.join("; ")}`);
     tests = parsed3.tests;
   } catch (err2) {
@@ -53141,7 +53965,7 @@ var init_explore = __esm({
 });
 
 // src/controller/exploration.ts
-import { join as join45 } from "node:path";
+import { join as join48 } from "node:path";
 function explorationEnabled(ui) {
   return ui !== null && explorationConfigOf(ui).enabled;
 }
@@ -53218,7 +54042,7 @@ async function exploreCandidate(ctx, cand, checkoutDir, outDir, opts = {}) {
       return { source: out.source, costUsd: r.usage.costUsd };
     }
   });
-  atomicWrite(join45(outDir, "exploration.md"), renderExplorationReport(result2), 384);
+  atomicWrite(join48(outDir, "exploration.md"), renderExplorationReport(result2), 384);
   for (const f of explorationFollowUps(result2)) {
     recordFailure(
       ctx.db,
@@ -53279,9 +54103,9 @@ var init_exploration = __esm({
 });
 
 // src/controller/verification.ts
-import { join as join46 } from "node:path";
+import { join as join49 } from "node:path";
 function uiEvidenceDir(runDir2, seq2) {
-  return join46(candidateEvidenceDir(runDir2, seq2), "ui");
+  return join49(candidateEvidenceDir(runDir2, seq2), "ui");
 }
 async function collectVerificationEvidence(ctx, cand, opts) {
   const contract = ctx.contract;
@@ -53329,7 +54153,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
   let exploration = null;
   const wouldExplore = uiRequired && explorationEnabled(ui);
   if (wouldExplore && opts.exploration) {
-    exploration = await exploreCandidate(ctx, cand, checkoutDir, join46(candidateEvidenceDir(ctx.runDir, cand.seq), "ui-exploration"));
+    exploration = await exploreCandidate(ctx, cand, checkoutDir, join49(candidateEvidenceDir(ctx.runDir, cand.seq), "ui-exploration"));
     const explored = await checkpoint();
     if (explored !== null) return { stopped: explored };
   }
@@ -53339,7 +54163,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
     repoRoot: ctx.run.repoRoot,
     baseRev,
     commit: cand.commitSha,
-    outDir: join46(candidateEvidenceDir(ctx.runDir, cand.seq), "security"),
+    outDir: join49(candidateEvidenceDir(ctx.runDir, cand.seq), "security"),
     ...ctx.deps.gitleaksPath === void 0 ? {} : { gitleaksPath: ctx.deps.gitleaksPath },
     hostPath: (ctx.deps.hostEnv ?? process.env).PATH,
     policy: staticPolicy,
@@ -53382,7 +54206,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
 }
 async function baseComparison(ctx, baseRev, commit) {
   const treeHash = (await git2(ctx.run.repoRoot, ["rev-parse", "--verify", `${baseRev}^{tree}`])).trim();
-  const baseline = readJsonIfExists(join46(ctx.runDir, BASELINE_FILE));
+  const baseline = readJsonIfExists(join49(ctx.runDir, BASELINE_FILE2));
   const usable = baseline !== null && baseline.schema === "orbit.baseline/1" && baseline.baseTree === treeHash && baseline.policyHash === ctx.run.policyHash && Array.isArray(baseline.checks);
   const out = await git2(ctx.run.repoRoot, ["diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACMT", baseRev, commit, "--"]);
   return {
@@ -53406,7 +54230,7 @@ var init_verification = __esm({
     init_git();
     init_baseline();
     init_runner();
-    init_report2();
+    init_report();
     init_runner2();
     init_context2();
     init_gates();
@@ -53417,22 +54241,22 @@ var init_verification = __esm({
 });
 
 // src/controller/environment-block.ts
-import { readFileSync as readFileSync25, realpathSync as realpathSync16 } from "node:fs";
-import { dirname as dirname23, isAbsolute as isAbsolute18, join as join47, relative as relative5 } from "node:path";
+import { readFileSync as readFileSync26, realpathSync as realpathSync16 } from "node:fs";
+import { dirname as dirname23, isAbsolute as isAbsolute18, join as join50, relative as relative5 } from "node:path";
 function outputOf(row) {
   if (row.logPath) {
     try {
-      return readFileSync25(row.logPath, "utf8").slice(0, MAX_LOG_BYTES2);
+      return readFileSync26(row.logPath, "utf8").slice(0, MAX_LOG_BYTES2);
     } catch {
     }
   }
   return row.excerpt ?? "";
 }
 function environmentFailuresFor(ctx, cand, report2) {
-  const baseline = readJsonIfExists(join47(ctx.runDir, BASELINE_FILE));
+  const baseline = readJsonIfExists(join50(ctx.runDir, BASELINE_FILE2));
   if (!baseline || baseline.baseRevision !== ctx.run.baseRevision) return [];
   const accepted = new Map((ctx.contract?.baseline_exceptions ?? []).map((e) => [e.check_id, e.fingerprint]));
-  const checkout = join47(runWorktreeRoot(ctx), `check-${cand.seq}`);
+  const checkout = join50(runWorktreeRoot(ctx), `check-${cand.seq}`);
   const out = [];
   for (const base of baseline.failures) {
     const result2 = report2.checks.find((c) => c.id === base.checkId);
@@ -53517,7 +54341,7 @@ function mandatoryCommandChecks(ctx) {
 }
 function readCapped2(path) {
   try {
-    return readFileSync25(path, "utf8").slice(0, MAX_LOG_BYTES2);
+    return readFileSync26(path, "utf8").slice(0, MAX_LOG_BYTES2);
   } catch {
     return null;
   }
@@ -53544,13 +54368,13 @@ function checksNotExecutedFor(ctx, cand, report2) {
     const output = outputOf(row);
     const startFailure = row.status === "ERROR" ? /could not start the check:[^\n]*/.exec(output)?.[0] ?? null : null;
     const found = classifyNotExecuted({ checkId: result2.id, output, startFailure }) ?? // Refused a filesystem operation outside its checkout before it compiled or tested anything (issue #10).
-    (row.status === "FAILED" ? classifyCouldNotRun({ checkId: result2.id, output, insideRoots: [join47(runWorktreeRoot(ctx), `check-${cand.seq}`), row.cwd, ...row.logPath ? [dirname23(row.logPath)] : []] }) : null);
+    (row.status === "FAILED" ? classifyCouldNotRun({ checkId: result2.id, output, insideRoots: [join50(runWorktreeRoot(ctx), `check-${cand.seq}`), row.cwd, ...row.logPath ? [dirname23(row.logPath)] : []] }) : null);
     if (found) out.push({ ...found, questionId: null, ...row.logPath ? { logPath: row.logPath } : {} });
   }
   if (report2.ui.some((u) => u.status === "ERROR")) {
     const dir = uiEvidenceDir(ctx.runDir, cand.seq);
     const uiIds = ctx.snapshot.config.ui?.journey_check_ids ?? [];
-    for (const entry of uiNotExecuted(join47(dir, UI_RESULT_FILE))) {
+    for (const entry of uiNotExecuted(join50(dir, UI_RESULT_FILE))) {
       const logPath = isAbsolute18(entry.logPath) && isInside2(entry.logPath, dir) ? entry.logPath : null;
       const checkId = entry.stage === "journeys" && entry.checkId ? entry.checkId : uiIds.length > 0 ? uiIds.join(", ") : "ui";
       const output = logPath === null ? null : readCapped2(logPath);
@@ -53592,8 +54416,8 @@ var init_environment_block = __esm({
 });
 
 // src/controller/steps/preflight.ts
-import { existsSync as existsSync35, mkdirSync as mkdirSync20, rmSync as rmSync14 } from "node:fs";
-import { dirname as dirname24, isAbsolute as isAbsolute19, join as join48, resolve as resolve13 } from "node:path";
+import { existsSync as existsSync36, mkdirSync as mkdirSync20, rmSync as rmSync14 } from "node:fs";
+import { dirname as dirname24, isAbsolute as isAbsolute19, join as join51, resolve as resolve13 } from "node:path";
 async function preflightStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -53641,7 +54465,7 @@ async function preflightStep(ctx) {
     pollMs: ctx.timing.checkPollMs,
     killGraceMs: ctx.timing.killGraceMs,
     homeDir: homeOf2(ctx.deps),
-    checkoutDir: join48(wtRoot, "baseline"),
+    checkoutDir: join51(wtRoot, "baseline"),
     toolchainCacheRoot: toolchainCacheRootFor(ctx)
   });
   const after = await safePoint(ctx);
@@ -53649,7 +54473,7 @@ async function preflightStep(ctx) {
   const bg = baselineGate(baseline.report);
   recordGate(ctx, bg);
   if (!bg.passed && bg.status === "fail") return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}`, { outcome: { gate: bg } });
-  const notRun = baselineEnvironmentFailures(ctx, baseline.report, join48(wtRoot, "baseline"));
+  const notRun = baselineEnvironmentFailures(ctx, baseline.report, join51(wtRoot, "baseline"));
   if (notRun.length > 0) return blockOnBaselineEnvironment(ctx, baseline.report, notRun);
   if (baseline.report.failures.length > 0) {
     decide2(ctx, {
@@ -53668,7 +54492,7 @@ async function preflightStep(ctx) {
       });
     }
   }
-  const worktree = await ensureWorktree(repo, join48(wtRoot, "implementer"), head);
+  const worktree = await ensureWorktree(repo, join51(wtRoot, "implementer"), head);
   const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
   return move2(ctx, "CONTRACTING", `preflight passed at ${head.slice(0, 12)}${baseline.report.failures.length ? ` with ${baseline.report.failures.length} pre-existing failure(s)` : ""}`, {
     patch: { baseRevision: head, baseTree, worktreePath: worktree, branch },
@@ -53676,7 +54500,7 @@ async function preflightStep(ctx) {
   });
 }
 async function blockOnBaselineEnvironment(ctx, report2, failures) {
-  atomicWriteJson(join48(ctx.runDir, BASELINE_FILE), { ...report2, complete: false });
+  atomicWriteJson(join51(ctx.runDir, BASELINE_FILE2), { ...report2, complete: false });
   const reason = baselineEnvironmentBlockReason({ runId: ctx.run.id, baseRevision: report2.baseRevision, failures });
   const checks = failures.map((f) => ({ check_id: f.checkId, signals: f.signals, cause: f.cause, evidence_lines: f.lines, ...f.logPath ? { log_path: f.logPath } : {} }));
   decide2(ctx, { id: `dec-${ctx.run.id}-baseline-environment`, kind: "baseline.environment-failure", summary: reason, data: { base_revision: report2.baseRevision, checks } });
@@ -53738,7 +54562,7 @@ async function dirtyPaths(repo) {
   return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3));
 }
 async function ensureWorktree(repo, path, base) {
-  if (existsSync35(path)) {
+  if (existsSync36(path)) {
     try {
       return (await adminDirFor(repo, path)).worktree;
     } catch (err) {
@@ -53775,22 +54599,20 @@ async function checkEnvironment(ctx) {
     }
   }
   const required = /* @__PURE__ */ new Set([IMPLEMENTER_PROVIDER]);
-  if (config.review.independent_provider_required && config.review.preferred_provider !== IMPLEMENTER_PROVIDER) required.add(config.review.preferred_provider);
+  const mandatory = mandatoryReviewProvider(config.review, IMPLEMENTER_PROVIDER);
+  if (mandatory !== null) required.add(mandatory);
   const all = await validateCredentials({ adapters: ctx.deps.adapters, providers: [.../* @__PURE__ */ new Set([...required, ...Object.keys(ctx.deps.adapters)])] });
   const credentialsById = {};
   for (const c of all) credentialsById[c.provider] = c.status ?? void 0;
-  let reviewer = null;
-  if (config.review.independent_provider_required) {
-    reviewer = selectReviewer({ snapshot: ctx.snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: ctx.deps.registry });
-    if (reviewer.decision === "SELECT") {
-      required.delete(config.review.preferred_provider);
-      required.add(reviewer.provider);
-    }
+  const reviewer = selectReviewer({ snapshot: ctx.snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: ctx.deps.registry });
+  if (mandatory !== null && reviewer.decision === "SELECT") {
+    required.delete(mandatory);
+    required.add(reviewer.provider);
   }
   const credentials = all.filter((c) => required.has(c.provider));
   const delivery = deliveryEnvironmentProblem(config, ctx.deps.hostEnv ?? process.env);
   const gate = environmentGate({ snapshot: ctx.snapshot, mode: ctx.run.mode, isolation, credentials, reviewer, delivery });
-  atomicWriteJson(join48(ctx.runDir, "environment.json"), {
+  atomicWriteJson(join51(ctx.runDir, "environment.json"), {
     checked_at: ctx.clock.now(),
     gate,
     capabilities,
@@ -53823,12 +54645,12 @@ var init_preflight = __esm({
 });
 
 // src/controller/steps/contracting.ts
-import { readFileSync as readFileSync26 } from "node:fs";
-import { join as join49 } from "node:path";
+import { readFileSync as readFileSync27 } from "node:fs";
+import { join as join52 } from "node:path";
 async function contractingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
-  if (ctx.contract) return accept(ctx, ctx.contract, null);
+  if (ctx.contract) return accept2(ctx, ctx.contract, null);
   const route2 = routeFor(ctx, "plan", "routine-code", { difficulty: "medium", attempt: 1, repeatedFingerprints: 0 });
   const got = await obtain(ctx, {
     base: "plan",
@@ -53848,7 +54670,7 @@ async function contractingStep(ctx) {
   });
   if (!got.ok) return got.step;
   const plan = got.value;
-  atomicWriteJson(join49(ctx.runDir, PLANNER_FILE), { worker_id: got.worker.id, output: plan });
+  atomicWriteJson(join52(ctx.runDir, PLANNER_FILE), { worker_id: got.worker.id, output: plan });
   let drafted;
   try {
     drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? "", taskId: ctx.run.id, policyHash: ctx.run.policyHash, environment: ctx.run.environment });
@@ -53863,13 +54685,13 @@ async function contractingStep(ctx) {
     if (d.material) continue;
     decide2(ctx, { id: `dec-${ctx.run.id}-plan-choice-${i + 1}`, kind: "inquisition.resolve", summary: `reversible choice: ${d.question} -> ${d.recommendation ?? d.options[0] ?? "convention"}`, data: { question: d.question, options: d.options, choice: d.recommendation ?? d.options[0] ?? null, basis: "planner recommendation; reversible" } });
   }
-  return accept(ctx, drafted.contract, plan);
+  return accept2(ctx, drafted.contract, plan);
 }
-async function accept(ctx, contract, plan) {
+async function accept2(ctx, contract, plan) {
   const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot, contract });
   recordGate(ctx, intake);
   if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate rejected the contract: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
-  atomicWriteJson(join49(ctx.runDir, "contract.json"), contract);
+  atomicWriteJson(join52(ctx.runDir, "contract.json"), contract);
   settleExpectedFlips(ctx, contract);
   const patch = { contractJson: JSON.stringify(contract), contractHash: hashObject(contract) };
   const material = (plan?.unresolved_decisions ?? []).filter((d) => d.material);
@@ -53914,7 +54736,7 @@ function plannerPrompt(ctx, workerId) {
 }
 function storedPlan(ctx) {
   try {
-    const raw = JSON.parse(readFileSync26(join49(ctx.runDir, PLANNER_FILE), "utf8")).output;
+    const raw = JSON.parse(readFileSync27(join52(ctx.runDir, PLANNER_FILE), "utf8")).output;
     return raw ? validateModelOutput("planner", raw) : null;
   } catch {
     return null;
@@ -53942,9 +54764,9 @@ var init_contracting = __esm({
 });
 
 // src/controller/parallel-writers.ts
-import { existsSync as existsSync36, mkdtempSync as mkdtempSync5, rmSync as rmSync15, writeFileSync as writeFileSync8 } from "node:fs";
+import { existsSync as existsSync37, mkdtempSync as mkdtempSync5, rmSync as rmSync15, writeFileSync as writeFileSync8 } from "node:fs";
 import { tmpdir as tmpdir11 } from "node:os";
-import { join as join50 } from "node:path";
+import { join as join53 } from "node:path";
 function splitAttempt(ctx, contract, fresh) {
   if (!fresh || ctx.run.mode === "supervised") return null;
   if (ctx.snapshot.config.agents.default_parallelism < 2) return null;
@@ -53964,7 +54786,7 @@ function unitPurpose(n2, u) {
   return `implement:${n2}/${u.id}#1`;
 }
 function unitWorktree(ctx, n2, u) {
-  return join50(runWorktreeRoot(ctx), `unit-${n2}-${u.id}`);
+  return join53(runWorktreeRoot(ctx), `unit-${n2}-${u.id}`);
 }
 async function runParallelUnits(ctx, n2, units, opts) {
   const settled = () => /* @__PURE__ */ new Set([...unitEvents(ctx, UNIT_INTEGRATED_EVENT, n2).map((e) => e.unit), ...serializedUnits(ctx, n2).map((e) => e.unit)]);
@@ -54059,7 +54881,7 @@ async function admitAndStart(ctx, n2, all, waiting, opts) {
     if (merge2) note2(ctx, MERGE_OVERHEAD_EVENT, { attempt: n2, unit: u.id, alongside: merge2.alongside, usd: merge2.usd });
     if (cap.capUsd !== null) recordSpendCap(ctx, unitPurpose(n2, u), cap.capUsd, cap.worstCaseUsd);
     const dir = unitWorktree(ctx, n2, u);
-    if (!existsSync36(dir)) await materializeCandidate(ctx.run.repoRoot, ctx.run.baseRevision, dir, { readOnly: false });
+    if (!existsSync37(dir)) await materializeCandidate(ctx.run.repoRoot, ctx.run.baseRevision, dir, { readOnly: false });
     await ensureWorker(ctx, request(ctx, n2, u, all, opts));
     count3++;
   }
@@ -54117,7 +54939,7 @@ async function serialize2(ctx, n2, u, reason) {
 }
 async function removeWorktree(ctx, n2, u) {
   const dir = unitWorktree(ctx, n2, u);
-  if (existsSync36(dir)) await cleanupCandidateCheckout(ctx.run.repoRoot, dir).catch(() => {
+  if (existsSync37(dir)) await cleanupCandidateCheckout(ctx.run.repoRoot, dir).catch(() => {
   });
 }
 function inCheckout(c, extra = {}) {
@@ -54128,12 +54950,12 @@ async function changedFiles3(c) {
   return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3)).sort();
 }
 async function commitWorktree(repoRoot, c, base, message) {
-  const scratch = mkdtempSync5(join50(tmpdir11(), "orbit-unit-"));
+  const scratch = mkdtempSync5(join53(tmpdir11(), "orbit-unit-"));
   try {
-    const excludes = join50(scratch, "exclude");
+    const excludes = join53(scratch, "exclude");
     writeFileSync8(excludes, `${UNIT_EXCLUDES.join("\n")}
 `);
-    const opts = { ...inCheckout(c, { GIT_INDEX_FILE: join50(scratch, "index") }), config: { "core.excludesFile": excludes } };
+    const opts = { ...inCheckout(c, { GIT_INDEX_FILE: join53(scratch, "index") }), config: { "core.excludesFile": excludes } };
     await git2(c.worktree, ["read-tree", base], opts);
     await git2(c.worktree, ["add", "-A", "--", "."], opts);
     const tree = (await git2(c.worktree, ["write-tree"], opts)).trim();
@@ -54205,8 +55027,8 @@ var init_parallel_writers = __esm({
 });
 
 // src/controller/authorization.ts
-import { existsSync as existsSync37, mkdirSync as mkdirSync21 } from "node:fs";
-import { join as join51 } from "node:path";
+import { existsSync as existsSync38, mkdirSync as mkdirSync21 } from "node:fs";
+import { join as join54 } from "node:path";
 function operationKey(op) {
   return `op-${sha256(canonicalJson(op)).slice(0, 16)}`;
 }
@@ -54241,8 +55063,8 @@ function grantFor(ctx, op, subject) {
   if (!getDecision(ctx.db, id)) {
     const forAttempt = req.attempt !== void 0;
     const what = forAttempt ? `implementation attempt ${req.attempt} only` : `candidate tree ${subject.slice(0, 12)} only`;
-    const where = forAttempt ? { attempt: req.attempt, subject } : { tree_hash: subject };
-    decide2(ctx, { id, kind: AUTHORIZATION_GRANT_KIND, summary: `${by} authorized once: ${op.summary} (${what})`, data: { question_id: q.id, op_key: op.key, operation: op.op, ...where, approved_by: by, policy_denial: op.denial } });
+    const where2 = forAttempt ? { attempt: req.attempt, subject } : { tree_hash: subject };
+    decide2(ctx, { id, kind: AUTHORIZATION_GRANT_KIND, summary: `${by} authorized once: ${op.summary} (${what})`, data: { question_id: q.id, op_key: op.key, operation: op.op, ...where2, approved_by: by, policy_denial: op.denial } });
   }
   return { state: "granted", decisionId: id, approvedBy: by, questionId: q.id };
 }
@@ -54347,10 +55169,10 @@ async function runApprovedOperation(ctx, n2, op, grant) {
   const plan = approvedPlan(op);
   const none = { key: op.key, command: plan?.shown ?? null, exit_code: null, timed_out: false, path: null, sha256: null, excerpt: null };
   if (!plan) return { ...none, state: "NOT_RUN", note: "the approval names a host but no exact command or address, so the controller had nothing exact to run" };
-  const rel = join51("authorization", `attempt-${n2}`, op.key);
-  const dir = join51(ctx.runDir, rel);
+  const rel = join54("authorization", `attempt-${n2}`, op.key);
+  const dir = join54(ctx.runDir, rel);
   const ledger = new ActionLedger(ctx.db, ctx.clock, { runDir: ctx.runDir, maxAttempts: 1, actor: ctx.ownerId });
-  const recorded = () => readJsonIfExists(join51(dir, RECEIPT_FILE));
+  const recorded = () => readJsonIfExists(join54(dir, RECEIPT_FILE));
   try {
     const done = await ledger.performAction(
       { runId: ctx.run.id, kind: APPROVED_COMMAND_ACTION, idempotencyKey: `${ctx.run.id}:approved:${n2}:${op.key}`, target: { command: plan.shown, attempt: n2, op_key: op.key, grant: grant.decisionId } },
@@ -54374,7 +55196,7 @@ async function runApprovedOperation(ctx, n2, op, grant) {
 }
 async function executeApproved(ctx, plan, dir, rel) {
   const worktree = ctx.run.worktreePath;
-  const home2 = join51(dir, "home");
+  const home2 = join54(dir, "home");
   mkdirSync21(home2, { recursive: true, mode: 448 });
   const tmp = prepareWorkerTmpDir(dir);
   const hosts = [.../* @__PURE__ */ new Set([...ctx.snapshot.config.network.allowed_hosts, ...plan.host ? [plan.host] : []])];
@@ -54397,9 +55219,9 @@ ${r.stdout}
 --- stderr ---
 ${r.stderr}
 `);
-  atomicWrite(join51(dir, OUTPUT_FILE), text2, 384);
-  const receipt = { exit_code: r.exitCode, timed_out: r.timedOut, path: join51(rel, OUTPUT_FILE), sha256: sha256(text2), excerpt: text2.slice(-APPROVED_EXCERPT_CHARS) };
-  atomicWrite(join51(dir, RECEIPT_FILE), `${JSON.stringify(receipt)}
+  atomicWrite(join54(dir, OUTPUT_FILE), text2, 384);
+  const receipt = { exit_code: r.exitCode, timed_out: r.timedOut, path: join54(rel, OUTPUT_FILE), sha256: sha256(text2), excerpt: text2.slice(-APPROVED_EXCERPT_CHARS) };
+  atomicWrite(join54(dir, RECEIPT_FILE), `${JSON.stringify(receipt)}
 `, 384);
   return receipt;
 }
@@ -54430,8 +55252,8 @@ function ungrantedCommands(events, snapshot2, worktreeRoot, granted) {
   return out;
 }
 function sessionEvents(worker) {
-  const path = join51(worker.workerDir, LOG_FILE);
-  return existsSync37(path) ? readLogLines(path).events : [];
+  const path = join54(worker.workerDir, LOG_FILE);
+  return existsSync38(path) ? readLogLines(path).events : [];
 }
 var APPROVE_ONCE, DENY2, AUTHORIZATION_REQUEST_KIND, AUTHORIZATION_GRANT_KIND, ASKABLE_RULE, NEVER_GRANTED, URL_HOST, APPROVED_COMMAND_ACTION, APPROVED_TIMEOUT_S, APPROVED_MAX_OUTPUT_BYTES, APPROVED_EXCERPT_CHARS, OUTPUT_FILE, RECEIPT_FILE;
 var init_authorization = __esm({
@@ -54469,10 +55291,10 @@ var init_authorization = __esm({
 });
 
 // src/controller/steps/implementing.ts
-import { existsSync as existsSync38 } from "node:fs";
-import { join as join52 } from "node:path";
+import { existsSync as existsSync39 } from "node:fs";
+import { join as join55 } from "node:path";
 function briefPath(ctx, attempt) {
-  return join52(ctx.runDir, "briefs", `attempt-${attempt}.json`);
+  return join55(ctx.runDir, "briefs", `attempt-${attempt}.json`);
 }
 function currentAttempt(ctx) {
   const row = ctx.db.get("SELECT MAX(CAST(json_extract(data_json, '$.attempt') AS INTEGER)) AS n FROM events WHERE run_id = ? AND type = ?", ctx.run.id, ATTEMPT_EVENT);
@@ -54530,7 +55352,7 @@ async function startAttempt(ctx, n2) {
     return WAIT(`attempt ${n2} deferred: ${why}`);
   }
   if (cap.capUsd !== null && cap.capUsd <= 0) return finishRun(ctx, "EXHAUSTED", `attempt ${n2} not started: ${unfundedSessionReason(ctx, route2.model, "implementer")}`);
-  const units = splitAttempt(ctx, assertContract(ctx), n2 === 1 && !existsSync38(briefPath(ctx, n2)));
+  const units = splitAttempt(ctx, assertContract(ctx), n2 === 1 && !existsSync39(briefPath(ctx, n2)));
   const counted = ctx.db.tx(() => {
     if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, ATTEMPT_EVENT, n2)) return false;
     ledger.consume("implementation_attempts", 1);
@@ -54888,8 +55710,8 @@ var init_implementing = __esm({
 });
 
 // src/controller/steps/verifying.ts
-import { existsSync as existsSync39, readdirSync as readdirSync10 } from "node:fs";
-import { join as join53 } from "node:path";
+import { existsSync as existsSync40, readdirSync as readdirSync10 } from "node:fs";
+import { join as join56 } from "node:path";
 async function verifyingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -54932,7 +55754,7 @@ async function verifyingStep(ctx) {
     }
     return act(ctx, cand, report2);
   }
-  const checkoutDir = join53(runWorktreeRoot(ctx), `check-${cand.seq}`);
+  const checkoutDir = join56(runWorktreeRoot(ctx), `check-${cand.seq}`);
   await ensureCheckout(ctx, cand, checkoutDir);
   try {
     const collected = await collectVerificationEvidence(ctx, cand, { checkoutDir, scope, notes: authorizedOnceNotes, checkpoint: () => safePoint(ctx), onGate: (g) => recordGate(ctx, g), exploration: true });
@@ -55062,7 +55884,7 @@ async function violatingCandidate(ctx, cand) {
       preserved_constraints: [`Never edit protected paths: ${ctx.snapshot.effective_protected_paths.join(", ")}`, "Keep the behaviour tests that prove the acceptance criteria"]
     }
   };
-  if (!existsSync39(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
+  if (!existsSync40(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
   return move2(ctx, "DIAGNOSING", `candidate ${cand.seq} violated the policy; the worktree was restored to ${from} and attempt ${next} repairs from there`, { data: { attempt: next, restored_to: target?.id ?? "base" } });
 }
 async function restoreWorktree(worktree, base, commit) {
@@ -55076,7 +55898,7 @@ function scopeFingerprint(scope) {
   return `scope:${sha256(JSON.stringify([[...scope.forbidden_paths_changed].sort(), [...scope.out_of_scope_paths_changed].sort(), scope.within_size_limits, scope.lockfile_changed, [...scope.symlinks_escaping].sort()])).slice(0, 16)}`;
 }
 async function ensureCheckout(ctx, cand, dir) {
-  if (existsSync39(dir) && readdirSync10(dir).length > 0) {
+  if (existsSync40(dir) && readdirSync10(dir).length > 0) {
     try {
       const tree = (await git2(dir, ["rev-parse", "HEAD^{tree}"])).trim();
       if (tree === cand.treeHash && (await git2(dir, ["status", "--porcelain", "--untracked-files=no"])).trim() === "") return;
@@ -55096,7 +55918,7 @@ var init_verifying = __esm({
     init_scope();
     init_candidate();
     init_git();
-    init_report2();
+    init_report();
     init_freshness();
     init_store();
     init_triggers();
@@ -55115,7 +55937,7 @@ var init_verifying = __esm({
 });
 
 // src/controller/steps/diagnosing.ts
-import { existsSync as existsSync40 } from "node:fs";
+import { existsSync as existsSync41 } from "node:fs";
 import { availableParallelism as availableParallelism2, freemem as freemem2, loadavg } from "node:os";
 async function diagnosingStep(ctx) {
   const stop = await safePoint(ctx);
@@ -55217,13 +56039,13 @@ async function diagnosingStep(ctx) {
       reason: `failure ${fingerprint} remains after attempt ${next - 1}`,
       role: "implementer"
     });
-    const rec = extensionDecisionRecord(decision);
-    decide2(ctx, { id: `dec-${ctx.run.id}-extension-${next}`, kind: rec.kind, summary: rec.summary, data: rec.data });
+    const rec2 = extensionDecisionRecord(decision);
+    decide2(ctx, { id: `dec-${ctx.run.id}-extension-${next}`, kind: rec2.kind, summary: rec2.summary, data: rec2.data });
     if (decision.decision === "deny_extension") {
       return finishRun(ctx, "EXHAUSTED", `implementation attempt allowance spent (${att.used} of ${att.allowance}) and no extension: ${decision.denied_because.join("; ")}`, { outcome: { extension: decision } });
     }
   }
-  if (!existsSync40(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
+  if (!existsSync41(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
   decide2(ctx, { id: `dec-${ctx.run.id}-brief-${next}`, kind: "repair.brief", summary: `repair brief (${stored.source}) for attempt ${next}: ${fingerprint}`, data: { attempt: next, source: stored.source, fingerprint, path: `briefs/attempt-${next}.json` } });
   return move2(ctx, "REPAIRING", `repair brief for attempt ${next} (${stored.source})`, { data: { attempt: next, fingerprint } });
 }
@@ -55383,9 +56205,81 @@ var init_diagnosing = __esm({
   }
 });
 
+// src/controller/steps/review-approval.ts
+function sameProviderQuestionId(runId) {
+  return `q-review-fallback-${hashObject({ run: runId, ask: "same-provider-review" }).slice(7, 19)}`;
+}
+function sameProviderApprovalDecisionId(runId) {
+  return `dec-${runId}-review-same-provider-approved`;
+}
+function ask2(ctx, sel) {
+  const id = sameProviderQuestionId(ctx.run.id);
+  const why = sel.independentUnavailable ?? "no independent reviewer was usable";
+  return findQuestion(ctx.db, id) ?? insertQuestion(
+    ctx.db,
+    {
+      id,
+      runId: ctx.run.id,
+      mode: "decision-record",
+      question: "No independent reviewer is usable: allow a same-provider review for this run?",
+      evidence: [why, `review.when_unavailable is ask, so the run asks before ${sel.provider}/${sel.model ?? "default"} reviews the candidate in a separate session`],
+      options: [
+        {
+          label: ALLOW_SAME_PROVIDER,
+          description: `Let ${sel.provider}/${sel.model ?? "default"} review this run's candidates in a separate reviewer session at the opus-class floor`,
+          consequences: "The run continues to review and delivery. The review is from the same provider as the implementer, so it is not independent, and every report says so and why."
+        },
+        {
+          label: REFUSE_SAME_PROVIDER,
+          description: "Do not review with the same provider; wait for an independent reviewer",
+          consequences: "The run stays blocked. Make the independent reviewer usable (orbit doctor shows why it is not) and start a new run, or cancel this one."
+        }
+      ],
+      changes: ["proof"],
+      recommendation: { option: REFUSE_SAME_PROVIDER, reason: "an independent reviewer is the stronger check; allow the same-provider review only when the change does not need one" },
+      safeDefault: { exists: true, option: REFUSE_SAME_PROVIDER, reason: "refusing keeps the run from delivering anything that only its own provider reviewed" },
+      material: true,
+      affected: ["review: same-provider review"],
+      unblocked: []
+    },
+    ctx.clock,
+    "controller"
+  );
+}
+function sameProviderApproval(ctx, sel) {
+  const q = ask2(ctx, sel);
+  if (q.status === "open") return { state: "pending", questionId: q.id };
+  const by = q.answeredBy;
+  if (q.status !== "answered" || (q.answer ?? "").trim().toLowerCase() !== ALLOW_SAME_PROVIDER || !by || !isHumanActor(by)) return { state: "declined", questionId: q.id, by };
+  const decisionId2 = sameProviderApprovalDecisionId(ctx.run.id);
+  if (!getDecision(ctx.db, decisionId2)) {
+    decide2(ctx, {
+      id: decisionId2,
+      kind: SAME_PROVIDER_APPROVED_KIND,
+      summary: `${by} approved a same-provider review for this run (question ${q.id}): ${reviewerLabel(sel)}`,
+      data: { question_id: q.id, approved_by: by, provider: sel.provider, model: sel.model, independent_unavailable: sel.independentUnavailable ?? null }
+    });
+  }
+  return { state: "approved", questionId: q.id, by, decisionId: decisionId2 };
+}
+var ALLOW_SAME_PROVIDER, REFUSE_SAME_PROVIDER;
+var init_review_approval = __esm({
+  "src/controller/steps/review-approval.ts"() {
+    "use strict";
+    init_hash();
+    init_actors();
+    init_store4();
+    init_select();
+    init_decisions();
+    init_common();
+    ALLOW_SAME_PROVIDER = "yes";
+    REFUSE_SAME_PROVIDER = "no";
+  }
+});
+
 // src/controller/steps/reviewing.ts
-import { existsSync as existsSync41, readdirSync as readdirSync11, readFileSync as readFileSync27 } from "node:fs";
-import { join as join54 } from "node:path";
+import { existsSync as existsSync42, readdirSync as readdirSync11, readFileSync as readFileSync28 } from "node:fs";
+import { join as join57 } from "node:path";
 async function reviewingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -55402,10 +56296,26 @@ async function reviewingStep(ctx) {
   const sel = await reviewerSelection(ctx, cand);
   if (sel.decision === "BLOCK") {
     if (sel.code === "AUTH_EXPIRED" || sel.code === "AUTH_MISSING") {
-      const provider = sel.alternatives.find((a) => /credentials/.test(a.reason))?.provider ?? ctx.snapshot.config.review.preferred_provider;
+      const provider = sel.alternatives.find((a) => /credentials/.test(a.reason))?.provider ?? preferredReviewProvider(ctx.snapshot.config.review) ?? IMPLEMENTER_PROVIDER;
       return blockOnAuth(ctx, provider, sel.code === "AUTH_MISSING" ? "missing" : "expired", sel.reason);
     }
     return finishRun(ctx, "BLOCKED", `independent review unavailable: ${sel.reason}`, { outcome: { reviewer: sel } });
+  }
+  if (sel.needsApproval === true) {
+    const approval = sameProviderApproval(ctx, sel);
+    if (approval.state === "pending") {
+      return finishRun(
+        ctx,
+        "BLOCKED",
+        `no independent reviewer is usable; review.when_unavailable is ask, so question ${approval.questionId} asks whether ${sel.provider} may review this run's candidate in a separate session (not independently). Answer with orbit decide ${ctx.run.id} ${approval.questionId} yes (or no), then orbit resume ${ctx.run.id}`,
+        { outcome: { reviewer: sel, questions: [approval.questionId] } }
+      );
+    }
+    if (approval.state === "declined") {
+      return finishRun(ctx, "BLOCKED", `${approval.by ?? "nobody"} declined a same-provider review (question ${approval.questionId}) and no independent reviewer is usable; make one usable (orbit doctor shows why it is not), then start a new run`, {
+        outcome: { reviewer: sel, questions: [approval.questionId] }
+      });
+    }
   }
   if (focuses.length > 1) return parallelReview(ctx, cand, sel, focuses);
   const round5 = listReviews(ctx.db, ctx.run.id, { includeInvalidated: true }).length + 1;
@@ -55801,16 +56711,16 @@ ${a.record.reason}`));
 function markRepaired(resolution, repaired) {
   for (const d of resolution.dispositions) {
     if (d.status !== "rejected" || d.evidenceRefs.length === 0) continue;
-    const rec = d.memberIds.map((id) => repaired.get(id)).find((x) => x !== void 0);
-    if (!rec) continue;
+    const rec2 = d.memberIds.map((id) => repaired.get(id)).find((x) => x !== void 0);
+    if (!rec2) continue;
     d.status = "resolved";
-    d.reason = `repaired in attempt ${rec.attempt}: a test exercising the claim passes on tree ${resolution.treeHash.slice(0, 12)} (${d.evidenceRefs.join("; ")})`;
+    d.reason = `repaired in attempt ${rec2.attempt}: a test exercising the claim passes on tree ${resolution.treeHash.slice(0, 12)} (${d.evidenceRefs.join("; ")})`;
   }
   resolution.rejected = resolution.dispositions.filter((d) => d.status === "rejected");
   resolution.resolved = resolution.dispositions.filter((d) => d.status === "resolved");
 }
-function openFindings(list) {
-  return list.map((d) => ({ id: d.findingId, external_id: d.externalId, severity: d.severity, status: d.status, claim: d.claim.slice(0, 300) }));
+function openFindings(list2) {
+  return list2.map((d) => ({ id: d.findingId, external_id: d.externalId, severity: d.severity, status: d.status, claim: d.claim.slice(0, 300) }));
 }
 function blockedCriteriaIn(d, t, blocked) {
   if (blocked.length === 0) return [];
@@ -55826,8 +56736,8 @@ function stalledReviewRepair(ctx, cand) {
   const reason = `attempt ${latest} reproduced tree ${cand.treeHash.slice(0, 12)}, the tree its review repair brief was written for: no measurable progress (same tree as attempt ${cand.attempt}); the same review, findings and brief would follow, so more attempts, tokens or lines would not change that`;
   return { terminate: true, reason, consecutiveNoProgress: 1, threshold: 1, fingerprint: null, suggestedState: "EXHAUSTED" };
 }
-function describeFindings(list) {
-  return list.map((d) => `${d.externalId ?? d.findingId} (${d.severity}): ${d.claim.slice(0, 120)}`).join("; ");
+function describeFindings(list2) {
+  return list2.map((d) => `${d.externalId ?? d.findingId} (${d.severity}): ${d.claim.slice(0, 120)}`).join("; ");
 }
 async function routeToRepair(ctx, cand, toRepair, resolution, texts, waiting = { held: [], criteria: [], questions: [] }) {
   const ledger = ctx.ledger;
@@ -55857,8 +56767,8 @@ async function routeToRepair(ctx, cand, toRepair, resolution, texts, waiting = {
       reason: `${toRepair.length} review finding(s) remain on tree ${cand.treeHash.slice(0, 12)}`,
       role: "implementer"
     });
-    const rec = extensionDecisionRecord(decision);
-    decide2(ctx, { id: `dec-${ctx.run.id}-extension-${next}`, kind: rec.kind, summary: rec.summary, data: rec.data });
+    const rec2 = extensionDecisionRecord(decision);
+    decide2(ctx, { id: `dec-${ctx.run.id}-extension-${next}`, kind: rec2.kind, summary: rec2.summary, data: rec2.data });
     if (decision.decision === "deny_extension") {
       return finishRun(ctx, "EXHAUSTED", `implementation attempt allowance spent (${att.used} of ${att.allowance}) and no extension for the review repair: ${decision.denied_because.join("; ")}; open findings: ${describeFindings(toRepair)}`.slice(0, 2e3), { outcome: { ...outcome, extension: decision } });
     }
@@ -55872,7 +56782,7 @@ async function routeToRepair(ctx, cand, toRepair, resolution, texts, waiting = {
     return hold.length > 0 ? { ...b, preserved_constraints: [...b.preserved_constraints, ...hold] } : b;
   });
   const stored = { attempt: next, source: "review", fingerprint: briefs[0].fingerprint, brief: briefs.length === 1 ? briefs[0] : { briefs }, refs: toRepair.flatMap((d) => d.memberIds) };
-  if (!existsSync41(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
+  if (!existsSync42(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
   const record = { attempt: next, tree_hash: cand.treeHash, candidate_id: cand.id, commit: cand.commitSha, findings: toRepair.map((d) => ({ finding_id: d.findingId, member_ids: d.memberIds, fingerprint: d.fingerprint, external_id: d.externalId })) };
   ctx.db.tx(() => {
     if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, REVIEW_REPAIR_EVENT, next)) return;
@@ -55910,10 +56820,10 @@ async function reviewerSelection(ctx, cand) {
   const prior = getDecision(ctx.db, id);
   if (prior && prior.data.decision === "SELECT") return prior.data;
   const env = await checkEnvironment(ctx);
-  const sel = env.reviewer ?? fallbackSelection(ctx, env);
-  const rec = selectionDecisionRecord(sel);
-  if (sel.decision === "SELECT") decide2(ctx, { id, kind: rec.kind, summary: rec.summary, data: rec.data });
-  else decide2(ctx, { kind: rec.kind, summary: rec.summary, data: rec.data });
+  const sel = fallbackSelection(ctx, env);
+  const rec2 = selectionDecisionRecord(sel);
+  if (sel.decision === "SELECT") decide2(ctx, { id, kind: rec2.kind, summary: rec2.summary, data: rec2.data });
+  else decide2(ctx, { kind: rec2.kind, summary: rec2.summary, data: rec2.data });
   return sel;
 }
 function fallbackSelection(ctx, env) {
@@ -55937,21 +56847,21 @@ async function preparePacket(ctx, cand, reviewDir, provider) {
     questions: listQuestions(ctx.db, ctx.run.id, { status: "open" }).map((q) => q.question),
     provider
   });
-  atomicWrite(join54(reviewDir, "packet.md"), packet.text, 384);
-  atomicWriteJson(join54(reviewDir, "packet.json"), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
+  atomicWrite(join57(reviewDir, "packet.md"), packet.text, 384);
+  atomicWriteJson(join57(reviewDir, "packet.json"), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
 }
 function packetShaOf(reviewDir) {
   try {
-    return JSON.parse(readText(join54(reviewDir, "packet.json"))).sha256;
+    return JSON.parse(readText(join57(reviewDir, "packet.json"))).sha256;
   } catch {
     return "";
   }
 }
 function readText(p) {
-  return readFileSync27(p, "utf8");
+  return readFileSync28(p, "utf8");
 }
 function reviewerPrompt(ctx, cand, reviewDir, focus = "general") {
-  const text2 = readText(join54(reviewDir, "packet.md"));
+  const text2 = readText(join57(reviewDir, "packet.md"));
   const contract = assertContract(ctx);
   const task = [
     "Review the exact candidate in this read-only checkout against the contract and the bound evidence in the packet. Do not edit anything and do not ask questions.",
@@ -55971,10 +56881,10 @@ function reviewerPrompt(ctx, cand, reviewDir, focus = "general") {
   });
 }
 async function prepareReview(ctx, cand, provider) {
-  const reviewDir = join54(ctx.runDir, "reviews", String(cand.seq));
-  const checkout = join54(runWorktreeRoot(ctx), `review-${cand.seq}`);
-  if (!existsSync41(join54(reviewDir, "packet.md"))) await preparePacket(ctx, cand, reviewDir, provider);
-  if (!existsSync41(checkout) || readdirSync11(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
+  const reviewDir = join57(ctx.runDir, "reviews", String(cand.seq));
+  const checkout = join57(runWorktreeRoot(ctx), `review-${cand.seq}`);
+  if (!existsSync42(join57(reviewDir, "packet.md"))) await preparePacket(ctx, cand, reviewDir, provider);
+  if (!existsSync42(checkout) || readdirSync11(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
 var FOCUS_TEXT, REVIEW_REPAIR_EVENT, UNDECIDED;
@@ -56001,6 +56911,8 @@ var init_reviewing = __esm({
     init_budget2();
     init_diagnosing();
     init_select();
+    init_review();
+    init_review_approval();
     init_store3();
     init_store4();
     init_context2();
@@ -56026,7 +56938,7 @@ var init_reviewing = __esm({
 });
 
 // src/controller/steps/delivering.ts
-import { join as join55 } from "node:path";
+import { join as join58 } from "node:path";
 async function deliveringStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -56074,7 +56986,7 @@ async function deliveringStep(ctx) {
   }
   const refused = await deliveryGateOrBlock(ctx, ev, review, result2.tree);
   if (refused) return refused;
-  atomicWriteJson(join55(ctx.runDir, DELIVERY_FILE), { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr ? { number: result2.pr.number, url: result2.pr.url, state: result2.pr.state, isDraft: result2.pr.isDraft } : null, pr_skipped: result2.prSkipped, warnings: result2.warnings, delivered_at: ctx.clock.now() });
+  atomicWriteJson(join58(ctx.runDir, DELIVERY_FILE), { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr ? { number: result2.pr.number, url: result2.pr.url, state: result2.pr.state, isDraft: result2.pr.isDraft } : null, pr_skipped: result2.prSkipped, warnings: result2.warnings, delivered_at: ctx.clock.now() });
   setCandidateStatus(ctx.db, cand.id, "DELIVERED");
   decide2(ctx, { id: `dec-${ctx.run.id}-delivered-${result2.commit}`, kind: "delivery.completed", summary: `delivered ${result2.commit.slice(0, 12)} (tree ${result2.tree.slice(0, 12)}) to ${result2.branch}${result2.pr ? `, PR #${result2.pr.number}` : ""}`, data: { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr?.number ?? null, pr_skipped: result2.prSkipped } });
   return move2(ctx, "AWAITING_CI", `delivered ${result2.commit.slice(0, 12)} to ${result2.branch}`, { patch: { branch: result2.branch }, data: { commit: result2.commit, pr: result2.pr?.number ?? null } });
@@ -56144,7 +57056,7 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
     deploys: result2.deploys.map((x) => ({ environment: x.environment, sha: x.sha, branch: x.branch })),
     deploy_skipped: result2.deploySkipped
   };
-  atomicWriteJson(join55(ctx.runDir, RELEASE_FILE), { ...summary, released_at: ctx.clock.now() });
+  atomicWriteJson(join58(ctx.runDir, RELEASE_FILE), { ...summary, released_at: ctx.clock.now() });
   const deployed = summary.deploys.length > 0 ? `deployed to ${summary.deploys.map((x) => x.environment).join(", ")}${summary.deploy_skipped ? ` (not: ${summary.deploy_skipped})` : ""}` : `no deploy (${summary.deploy_skipped})`;
   decide2(ctx, { id: `dec-${ctx.run.id}-released-${d.commit}`, kind: "release.completed", summary: `release of ${d.commit.slice(0, 12)}: ${summary.merge ? `merged PR #${summary.merge.pr}` : `no merge (${summary.merge_skipped})`}; ${deployed}`, data: summary });
   return complete(ctx, d.tree, { ...outcome, release: summary }, notes);
@@ -56205,7 +57117,7 @@ async function githubClient(ctx) {
   if (config.delivery.provider === "fake") {
     const url = await resolveRemoteUrl(ctx.run.repoRoot, remote).catch(() => null);
     const local = url !== null && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !/^[^/]+@[^:]+:/.test(url) ? url : void 0;
-    return new FakeGitHub({ statePath: join55(ctx.run.repoRoot, ".orbit", "fake-github.json"), ...local ? { remoteGitDir: local } : {} });
+    return new FakeGitHub({ statePath: join58(ctx.run.repoRoot, ".orbit", "fake-github.json"), ...local ? { remoteGitDir: local } : {} });
   }
   return githubClientFor(ctx.run.repoRoot, remote, ctx.deps.hostEnv ?? process.env);
 }
@@ -56244,12 +57156,12 @@ var init_delivering = __esm({
 });
 
 // src/controller/steps/awaiting-ci.ts
-import { existsSync as existsSync42 } from "node:fs";
-import { join as join56 } from "node:path";
+import { existsSync as existsSync43 } from "node:fs";
+import { join as join59 } from "node:path";
 async function awaitingCiStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
-  const d = readJsonIfExists(join56(ctx.runDir, DELIVERY_FILE));
+  const d = readJsonIfExists(join59(ctx.runDir, DELIVERY_FILE));
   if (!d || !ctx.ledger) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is AWAITING_CI without a delivery record`);
   const config = ctx.snapshot.config;
   const client = await githubClient(ctx);
@@ -56330,28 +57242,28 @@ async function handleMovedBase(ctx, d, base) {
   if (!m) return null;
   const decision = authorize(ctx.snapshot, { kind: "action", action: "rebase_task_branch" });
   const conflict = m.conflicts.length > 0;
-  const short2 = (sha) => sha.slice(0, 12);
-  const where = `${m.baseBranch} moved (${short2(m.from)} to ${short2(m.to)})`;
+  const short3 = (sha) => sha.slice(0, 12);
+  const where2 = `${m.baseBranch} moved (${short3(m.from)} to ${short3(m.to)})`;
   const paths = m.conflicts.slice(0, 10).join(", ");
   if (!decision.allowed) {
     if (!conflict) return null;
-    return blockOnConflict(ctx, d, base, m, `the base branch ${where} and the delivered commit ${short2(d.commit)} no longer merges cleanly: conflicts in ${m.conflicts[0] === "(unknown paths)" ? "unknown paths" : paths}. Rebasing the task branch is not authorized (actions.rebase_task_branch: ${decision.reason}); rebase it yourself or close the pull request, then start a new run`);
+    return blockOnConflict(ctx, d, base, m, `the base branch ${where2} and the delivered commit ${short3(d.commit)} no longer merges cleanly: conflicts in ${m.conflicts[0] === "(unknown paths)" ? "unknown paths" : paths}. Rebasing the task branch is not authorized (actions.rebase_task_branch: ${decision.reason}); rebase it yourself or close the pull request, then start a new run`);
   }
   if (conflict) {
-    return blockOnConflict(ctx, d, base, m, `the base branch ${where} and rebasing the task branch onto it conflicts in ${m.conflicts[0] === "(unknown paths)" ? "unknown paths" : paths}; resolve the conflict by hand or close the pull request, then start a new run`);
+    return blockOnConflict(ctx, d, base, m, `the base branch ${where2} and rebasing the task branch onto it conflicts in ${m.conflicts[0] === "(unknown paths)" ? "unknown paths" : paths}; resolve the conflict by hand or close the pull request, then start a new run`);
   }
   const done = ctx.db.all(`SELECT json_extract(data_json, '$.to') AS "to" FROM events WHERE run_id = ? AND type = ?`, ctx.run.id, REBASE_EVENT).map((r) => r.to);
   if (done.length >= MAX_REBASES && !done.includes(m.to)) {
-    return blockOnConflict(ctx, d, base, m, `the base branch ${where} and this run already rebased onto a moved base ${done.length} times; it will not rebase again. Merge or close the pull request, or start a new run`);
+    return blockOnConflict(ctx, d, base, m, `the base branch ${where2} and this run already rebased onto a moved base ${done.length} times; it will not rebase again. Merge or close the pull request, or start a new run`);
   }
   const cand = ctx.candidate;
   if (!cand) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is AWAITING_CI without a candidate`);
   const rebased = await rebaseCandidate(ctx, cand, m.to);
   if (rebased.kind === "conflict") {
-    return blockOnConflict(ctx, d, base, { ...m, conflicts: rebased.files }, `the base branch ${where} and rebasing the task branch onto it conflicts in ${rebased.files.join(", ") || "unknown paths"}; resolve the conflict by hand or close the pull request, then start a new run`);
+    return blockOnConflict(ctx, d, base, { ...m, conflicts: rebased.files }, `the base branch ${where2} and rebasing the task branch onto it conflicts in ${rebased.files.join(", ") || "unknown paths"}; resolve the conflict by hand or close the pull request, then start a new run`);
   }
   const next = rebased.candidate;
-  const reason = `rebased candidate ${cand.seq} onto ${m.baseBranch} ${short2(m.to)}: new candidate ${next.seq} (tree ${next.treeHash})`;
+  const reason = `rebased candidate ${cand.seq} onto ${m.baseBranch} ${short3(m.to)}: new candidate ${next.seq} (tree ${next.treeHash})`;
   invalidateEvidence(ctx.db, ctx.run.id, reason, ctx.clock, { exceptTreeHash: next.treeHash });
   invalidateStaleReviews(ctx.db, { runId: ctx.run.id, runDir: ctx.runDir, current: { candidateId: next.id, treeHash: next.treeHash }, cause: "rebase onto the moved base branch" }, ctx.clock);
   ctx.db.tx(() => {
@@ -56359,7 +57271,7 @@ async function handleMovedBase(ctx, d, base) {
     appendEvent(ctx.db, ctx.run.id, CANDIDATE_EVENT, ctx.ownerId, { attempt: currentAttempt(ctx), candidate_id: next.id, seq: next.seq, tree_hash: next.treeHash, reused: !next.created, rebase: true }, ctx.clock.now());
   });
   ctx.candidate = next;
-  decide2(ctx, { id: `dec-${ctx.run.id}-rebase-${m.to}`, kind: "delivery.rebased", summary: `${m.baseBranch} moved from ${short2(m.from)} to ${short2(m.to)}; rebased the reviewed candidate (${short2(cand.commitSha)}) onto it as ${short2(next.commitSha)}, evidence and reviews invalidated`, data: { from: m.from, to: m.to, old_commit: cand.commitSha, commit: next.commitSha, tree: next.treeHash } });
+  decide2(ctx, { id: `dec-${ctx.run.id}-rebase-${m.to}`, kind: "delivery.rebased", summary: `${m.baseBranch} moved from ${short3(m.from)} to ${short3(m.to)}; rebased the reviewed candidate (${short3(cand.commitSha)}) onto it as ${short3(next.commitSha)}, evidence and reviews invalidated`, data: { from: m.from, to: m.to, old_commit: cand.commitSha, commit: next.commitSha, tree: next.treeHash } });
   const baseTree = (await execCapture(["git", "rev-parse", `${m.to}^{tree}`], { cwd: ctx.run.repoRoot, env: gitEnv4({}, ctx.deps.hostEnv ?? process.env), timeoutMs: 3e4 })).stdout.trim();
   return move2(ctx, "VERIFYING", `${reason}; verifying again`, { patch: { baseRevision: m.to, ...baseTree ? { baseTree } : {} }, data: { rebase: { from: m.from, to: m.to } } });
 }
@@ -56369,7 +57281,7 @@ async function blockOnConflict(ctx, d, base, m, reason) {
   return finishRun(ctx, "BLOCKED", reason, { outcome: { ...base, base_conflict: { baseBranch: m.baseBranch, from: m.from, to: m.to, files } } });
 }
 async function rebaseCandidate(ctx, cand, tip) {
-  const checkoutDir = join56(runWorktreeRoot(ctx), `rebase-${tip.slice(0, 12)}`);
+  const checkoutDir = join59(runWorktreeRoot(ctx), `rebase-${tip.slice(0, 12)}`);
   const env = { ...gitEnv4({}, ctx.deps.hostEnv ?? process.env), GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name, GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name, GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email };
   await cleanupCandidateCheckout(ctx.run.repoRoot, checkoutDir).catch(() => {
   });
@@ -56385,7 +57297,7 @@ async function rebaseCandidate(ctx, cand, tip) {
     }
     const attempt = currentAttempt(ctx);
     const next = await snapshotCandidate({ db: ctx.db, clock: ctx.clock, repoRoot: ctx.run.repoRoot, worktree: checkoutDir, runId: ctx.run.id, baseRev: tip, attempt, workerId: null });
-    if (ctx.run.worktreePath && existsSync42(ctx.run.worktreePath)) {
+    if (ctx.run.worktreePath && existsSync43(ctx.run.worktreePath)) {
       try {
         await git2(ctx.run.worktreePath, ["reset", "--hard", next.commitSha]);
       } catch (err) {
@@ -56425,7 +57337,7 @@ var init_awaiting_ci = __esm({
 });
 
 // src/controller/steps/inquisition.ts
-import { join as join57 } from "node:path";
+import { join as join60 } from "node:path";
 async function inquisitionStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -56440,7 +57352,7 @@ async function inquisitionStep(ctx) {
   const cwd = ctx.run.worktreePath;
   const env = ctx.deps.hostEnv ?? process.env;
   const home2 = homeOf2(ctx.deps);
-  const workerDir = join57(ctx.runDir, "workers");
+  const workerDir = join60(ctx.runDir, "workers");
   const supported = ctx.candidate ? currentEvidenceReport(ctx.db, ctx.run.id, ctx.candidate.id)?.report.acceptance_evidence.filter((a) => a.status === "supported").map((a) => a.criterion_id) ?? [] : [];
   const result2 = await runInquisition({
     trigger,
@@ -56458,7 +57370,7 @@ async function inquisitionStep(ctx) {
         route: { provider: route2.provider, model: route2.model, effort: route2.effort },
         workerDir,
         cwd,
-        sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: ctx.snapshot, provider: route2.provider.startsWith("codex") ? "codex" : "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join57(home2, ".claude"), homeDir: home2, policyPath: ctx.run.policyPath, readablePaths: [ctx.deps.orbitInstallDir], env }),
+        sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: ctx.snapshot, provider: route2.provider.startsWith("codex") ? "codex" : "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join60(home2, ".claude"), homeDir: home2, policyPath: ctx.run.policyPath, readablePaths: [ctx.deps.orbitInstallDir], env }),
         policyPath: ctx.run.policyPath,
         systemPrompt: systemPromptFor(ctx, "inquisitor"),
         maxTurns: ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session,
@@ -56469,7 +57381,7 @@ async function inquisitionStep(ctx) {
     signal: ctx.signal
   });
   const patch = hashObject(result2.contract) !== hashObject(contract) ? { contractJson: JSON.stringify(result2.contract), contractHash: hashObject(result2.contract) } : void 0;
-  if (patch) atomicWriteJson(join57(ctx.runDir, "contract.json"), result2.contract);
+  if (patch) atomicWriteJson(join60(ctx.runDir, "contract.json"), result2.contract);
   const after = await safePoint(ctx);
   if (after) return after;
   if (result2.disposition === "ask" || result2.disposition === "block") {
@@ -56653,14 +57565,14 @@ var init_difficulty = __esm({
 });
 
 // src/controller/steps/planning.ts
-import { join as join58 } from "node:path";
+import { join as join61 } from "node:path";
 async function planningStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
   const exceptions = applyBaselineExceptionAnswers({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { snapshot: ctx.snapshot });
   const contract = exceptions.contract ?? assertContract(ctx);
   const plan = storedPlan(ctx);
-  const baseline = readJsonIfExists(join58(ctx.runDir, BASELINE_FILE));
+  const baseline = readJsonIfExists(join61(ctx.runDir, BASELINE_FILE2));
   if (plan) {
     decide2(ctx, {
       id: `dec-${ctx.run.id}-proof-map`,
@@ -56818,7 +57730,7 @@ var init_steps = __esm({
     init_context2();
     init_states();
     init_run_store();
-    init_report();
+    init_report2();
     init_common();
     init_awaiting_ci();
     init_contracting();
@@ -56852,9 +57764,9 @@ var init_steps = __esm({
 });
 
 // src/storage/retention.ts
-import { existsSync as existsSync43, lstatSync as lstatSync8, realpathSync as realpathSync17, rmSync as rmSync16 } from "node:fs";
+import { existsSync as existsSync44, lstatSync as lstatSync8, realpathSync as realpathSync17, rmSync as rmSync16 } from "node:fs";
 import { homedir as homedir11 } from "node:os";
-import { dirname as dirname25, join as join59, resolve as resolve14 } from "node:path";
+import { dirname as dirname25, join as join62, resolve as resolve14 } from "node:path";
 function repoKeyFor(repoRoot) {
   let real = repoRoot;
   try {
@@ -56868,8 +57780,8 @@ async function pruneExpiredRuns(db, opts) {
   const now = opts.clock.now();
   const cutoff = now - opts.keepDays * DAY_MS;
   const repoRoot = realOrResolved(opts.repoRoot);
-  const runsRoot = join59(repoRoot, ".orbit", "runs");
-  const worktreesRoot = join59(opts.orbitHome ?? process.env.ORBIT_HOME ?? join59(homedir11(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
+  const runsRoot = join62(repoRoot, ".orbit", "runs");
+  const worktreesRoot = join62(opts.orbitHome ?? process.env.ORBIT_HOME ?? join62(homedir11(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
   const placeholders = PRUNABLE_STATES.map(() => "?").join(", ");
   const rows = db.all(
     `SELECT r.id, r.state, r.policy_path, r.ended_at, r.updated_at FROM runs r
@@ -56892,14 +57804,14 @@ async function pruneExpiredRuns(db, opts) {
       result2.skipped.push({ runId: row.id, reason: "a controller still holds its lease" });
       continue;
     }
-    const runDir2 = join59(runsRoot, row.id);
+    const runDir2 = join62(runsRoot, row.id);
     const recorded = dirname25(row.policy_path);
-    const literalRunDir = join59(resolve14(opts.repoRoot), ".orbit", "runs", row.id);
+    const literalRunDir = join62(resolve14(opts.repoRoot), ".orbit", "runs", row.id);
     if (![runDir2, literalRunDir].includes(resolve14(recorded)) && realOrResolved(recorded) !== runDir2) {
       result2.skipped.push({ runId: row.id, reason: `its recorded run directory ${recorded} is not ${runDir2}` });
       continue;
     }
-    const targets = [runDir2, join59(worktreesRoot, row.id)].filter((p) => isRealDirectory(p));
+    const targets = [runDir2, join62(worktreesRoot, row.id)].filter((p) => isRealDirectory(p));
     if (!opts.dryRun) {
       for (const t of targets) rmSync16(t, { recursive: true, force: true });
       db.tx(() => appendEvent(db, row.id, ARTIFACTS_PRUNED_EVENT, "gc", { keep_runs_days: opts.keepDays, removed: targets }, now));
@@ -56907,7 +57819,7 @@ async function pruneExpiredRuns(db, opts) {
     }
     result2.pruned.push({ runId: row.id, state: row.state, endedAt: row.ended_at ?? row.updated_at, removed: targets });
   }
-  if (removedWorktree && existsSync43(join59(repoRoot, ".git"))) {
+  if (removedWorktree && existsSync44(join62(repoRoot, ".git"))) {
     await execCapture(["git", "worktree", "prune"], { cwd: repoRoot, timeoutMs: 3e4 }).catch(() => void 0);
   }
   return result2;
@@ -56940,18 +57852,68 @@ var init_retention = __esm({
   }
 });
 
+// src/controller/resume.ts
+function resumeTarget(db, run) {
+  const prior = run.resumeState;
+  if (prior && canTransition("BLOCKED", prior)) {
+    if ((prior === "REVIEWING" || prior === "DELIVERING") && !liveEvidenceForLatestCandidate(db, run.id)) return "VERIFYING";
+    return prior;
+  }
+  if (db.get("SELECT 1 AS x FROM candidates WHERE run_id = ? LIMIT 1", run.id)) return "VERIFYING";
+  return run.contractJson ? "PLANNING" : "PREFLIGHT";
+}
+function liveEvidenceForLatestCandidate(db, runId) {
+  const cand = db.get("SELECT id FROM candidates WHERE run_id = ? ORDER BY seq DESC LIMIT 1", runId);
+  if (!cand) return false;
+  return db.get("SELECT 1 AS x FROM evidence_reports WHERE run_id = ? AND candidate_id = ? AND invalidated_at IS NULL LIMIT 1", runId, cand.id) !== void 0;
+}
+function frozenPolicySetting(run) {
+  try {
+    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
+    if (!o?.frozen_policy) return null;
+    return typeof o.frozen_policy.setting === "string" ? o.frozen_policy.setting : "a policy setting";
+  } catch {
+    return null;
+  }
+}
+function resumeAnsweredRun(db, clock, runId, ownerId, actor, reason) {
+  const run = getRun(db, runId);
+  if (run.state !== "BLOCKED" || run.cancelRequested || frozenPolicySetting(run) !== null) return null;
+  if (listQuestions(db, run.id, { status: "open" }).some((q) => q.material)) return null;
+  if (!acquireLease(db, run.id, ownerId, 6e4, clock)) return null;
+  try {
+    const target = resumeTarget(db, run);
+    db.tx(() => {
+      transition(db, { runId: run.id, to: target, ownerId, reason, actor, expectedFrom: "BLOCKED" }, clock);
+      appendEvent(db, run.id, "run.resumed", actor, { from: "BLOCKED", to: target, forced: false, by: "remote-answer" }, clock.now());
+    });
+    return target;
+  } finally {
+    releaseLease(db, run.id, ownerId);
+  }
+}
+var init_resume = __esm({
+  "src/controller/resume.ts"() {
+    "use strict";
+    init_store4();
+    init_events();
+    init_run_store();
+    init_states();
+  }
+});
+
 // src/controller/loop.ts
 var loop_exports = {};
 __export(loop_exports, {
   Controller: () => Controller
 });
-import { existsSync as existsSync44 } from "node:fs";
+import { existsSync as existsSync45 } from "node:fs";
 import { hostname as hostname4 } from "node:os";
-import { dirname as dirname26, join as join60 } from "node:path";
+import { dirname as dirname26, join as join63 } from "node:path";
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
-function messageOf2(err) {
+function messageOf3(err) {
   return redact(err instanceof Error ? err.message : String(err)).slice(0, 500);
 }
 var DAY_MS2, NON_TERMINAL, Controller;
@@ -56977,8 +57939,13 @@ var init_loop = __esm({
     init_run_store();
     init_states();
     init_steps();
-    init_report();
+    init_report2();
     init_retention();
+    init_store4();
+    init_config();
+    init_notify();
+    init_remote_answers();
+    init_resume();
     DAY_MS2 = 24 * 60 * 6e4;
     NON_TERMINAL = RUN_STATES.filter((s) => !isTerminal(s));
     Controller = class {
@@ -56999,6 +57966,9 @@ var init_loop = __esm({
       signalHandler = null;
       watching = false;
       pruning = false;
+      polling = false;
+      /** When each run's comments were last read for remote answers (service mode). */
+      remotePolledAt = /* @__PURE__ */ new Map();
       lastReconcile = null;
       constructor(opts) {
         this.opts = opts;
@@ -57026,6 +57996,8 @@ var init_loop = __esm({
         this.timers.push(setInterval(() => this.renewAll(), this.opts.leaseRenewMs ?? Math.max(250, Math.floor(this.ttl / 4))));
         const watchdogMs = this.opts.watchdogMs ?? 3e4;
         if (this.opts.mode === "service" && watchdogMs > 0) this.timers.push(setInterval(() => void this.watchdog(), watchdogMs));
+        const remoteMs = this.opts.remoteAnswersMs ?? 3e4;
+        if (this.opts.mode === "service" && remoteMs > 0) this.timers.push(setInterval(() => void this.remoteAnswers(), remoteMs));
         for (const t of this.timers) t.unref();
         await this.reconcile(this.opts.mode === "foreground" ? [this.opts.runId] : void 0);
         this.ensureFinalReports();
@@ -57068,7 +58040,7 @@ var init_loop = __esm({
             releaseLease(db, runId, this.ownerId);
             db.tx(() => appendEvent(db, runId, "lease.released", this.ownerId, { reason }, clock.now()));
           } catch (err) {
-            this.log.warn("lease release failed", { run_id: runId, error: messageOf2(err) });
+            this.log.warn("lease release failed", { run_id: runId, error: messageOf3(err) });
           }
         }
         this.owned.clear();
@@ -57076,7 +58048,7 @@ var init_loop = __esm({
           try {
             markControllerStopped(db, this.ownerId, reason, clock);
           } catch (err) {
-            this.log.warn("could not record the stop", { error: messageOf2(err) });
+            this.log.warn("could not record the stop", { error: messageOf3(err) });
           }
         }
         this.log.info("controller stopped", { reason });
@@ -57116,8 +58088,8 @@ var init_loop = __esm({
         const timeoutMs = this.opts.stepTimeoutMs ?? 45 * 6e4;
         const graceMs = this.opts.stepAbortGraceMs ?? 6e4;
         let wedge = null;
-        const gaveUp = new Promise((resolve21) => {
-          wedge = setTimeout(() => resolve21("wedged"), timeoutMs + graceMs);
+        const gaveUp = new Promise((resolve22) => {
+          wedge = setTimeout(() => resolve22("wedged"), timeoutMs + graceMs);
           wedge.unref();
         });
         const timer = setTimeout(() => {
@@ -57134,15 +58106,16 @@ var init_loop = __esm({
             }
             const result2 = await step(this.deps, runId, ac.signal);
             report2.steps.push({ runId, state, result: result2 });
+            await this.announceQuestions(runId);
             if (result2.done && this.owned.get(runId) === slot) {
               const run = getRun(this.deps.db, runId);
               if (isTerminal(run.state) || run.paused) this.drop(runId, isTerminal(run.state) ? `run ${run.state}` : "run paused");
             }
           } catch (err) {
-            report2.steps.push({ runId, state, result: { error: messageOf2(err) } });
+            report2.steps.push({ runId, state, result: { error: messageOf3(err) } });
             if (isOrbitError(err, "LEASE_LOST")) {
               if (this.owned.get(runId) === slot) this.forget(runId, "lease lost");
-            } else if (!ac.signal.aborted) this.log.error("step crashed", { run_id: runId, state, error: messageOf2(err) });
+            } else if (!ac.signal.aborted) this.log.error("step crashed", { run_id: runId, state, error: messageOf3(err) });
           } finally {
             clearTimeout(timer);
             if (wedge) clearTimeout(wedge);
@@ -57194,7 +58167,7 @@ var init_loop = __esm({
           });
           for (const e of this.lastReconcile.errors) this.log.warn("reconcile error", { run_id: e.runId, error: e.message });
         } catch (err) {
-          this.log.error("reconcile failed", { error: messageOf2(err) });
+          this.log.error("reconcile failed", { error: messageOf3(err) });
           this.lastReconcile = null;
         }
         const reconciled = new Set((this.lastReconcile?.runs ?? []).filter((r) => r.skipped === null).map((r) => r.runId));
@@ -57241,11 +58214,11 @@ var init_loop = __esm({
               try {
                 await reattachCheck(runner, c.checkRunId);
               } catch (err) {
-                if (!isOrbitError(err, "CANCELLED")) this.log.warn("could not collect a finished check", { run_id: r.runId, check_run: c.checkRunId, error: messageOf2(err) });
+                if (!isOrbitError(err, "CANCELLED")) this.log.warn("could not collect a finished check", { run_id: r.runId, check_run: c.checkRunId, error: messageOf3(err) });
               }
             }
           } catch (err) {
-            this.log.warn("could not collect finished checks", { run_id: r.runId, error: messageOf2(err) });
+            this.log.warn("could not collect finished checks", { run_id: r.runId, error: messageOf3(err) });
           }
         }
       }
@@ -57272,7 +58245,7 @@ var init_loop = __esm({
           }
           if (ended) this.ensureFinalReports();
         } catch (err) {
-          this.log.warn("watchdog failed", { error: messageOf2(err) });
+          this.log.warn("watchdog failed", { error: messageOf3(err) });
         } finally {
           this.watching = false;
         }
@@ -57306,6 +58279,65 @@ var init_loop = __esm({
         await finalizeRun(ctx);
         return true;
       }
+      /** Questions a step raised are announced once (ADR 0008); a notification never fails the step. */
+      async announceQuestions(runId) {
+        const { db, clock } = this.deps;
+        try {
+          if (listQuestions(db, runId, { status: "open" }).length === 0) return;
+          const run = getRun(db, runId);
+          let config = null;
+          try {
+            config = verifySnapshot(run.policyPath, run.policyHash).config;
+          } catch {
+            config = null;
+          }
+          await notifyOpenQuestions({ db, clock, run, runDir: dirname26(run.policyPath), config, deps: resolveNotifyDeps(this.deps), actor: this.ownerId });
+        } catch (err) {
+          this.log.warn("question notification failed", { run_id: runId, error: messageOf3(err) });
+        }
+      }
+      /**
+       * One remote-answer pass (service mode, ADR 0008): the comments of every BLOCKED run with open questions whose
+       * policy turns remote answers on, read at most once per its poll interval; a run left with no open material
+       * question is resumed through the same rules as `orbit resume`, and this controller then picks it up.
+       */
+      async remoteAnswers() {
+        if (this.polling || this.stopped) return;
+        this.polling = true;
+        const { db, clock } = this.deps;
+        try {
+          for (const run of listRuns(db, { states: ["BLOCKED"], limit: 200 })) {
+            if (this.stopped) break;
+            if (run.cancelRequested || listQuestions(db, run.id, { status: "open" }).length === 0) continue;
+            let config;
+            try {
+              config = verifySnapshot(run.policyPath, run.policyHash).config;
+            } catch {
+              continue;
+            }
+            const n2 = notificationsPolicy(config).remote_answers;
+            if (!n2.enabled) continue;
+            const last = this.remotePolledAt.get(run.id);
+            if (last !== void 0 && clock.now() - last < n2.poll_seconds * 1e3) continue;
+            this.remotePolledAt.set(run.id, clock.now());
+            try {
+              const notify = resolveNotifyDeps(this.deps);
+              const client = await notify.threads(run.repoRoot, config);
+              const rep = await pollRemoteAnswers({ db, clock, run, runDir: dirname26(run.policyPath), config, client, actor: this.ownerId });
+              for (const e of rep.errors) this.log.warn("remote answers", { run_id: run.id, error: e });
+              if (rep.accepted.length === 0) continue;
+              const to = resumeAnsweredRun(db, clock, run.id, this.ownerId, this.ownerId, `resumed after a remote answer by ${rep.accepted.map((a) => a.author).join(", ")}`);
+              if (to) this.log.info("run resumed by a remote answer", { run_id: run.id, to });
+            } catch (err) {
+              this.note(run.id, "remote.poll-failed", { error: messageOf3(err) });
+            }
+          }
+        } catch (err) {
+          this.log.warn("remote answers pass failed", { error: messageOf3(err) });
+        } finally {
+          this.polling = false;
+        }
+      }
       ledgerFor(runId) {
         const { db, clock } = this.deps;
         if (!db.get("SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1", runId)) return null;
@@ -57323,7 +58355,7 @@ var init_loop = __esm({
           try {
             ok = renewLease(db, runId, this.ownerId, this.ttl, clock);
           } catch (err) {
-            this.log.warn("lease renewal failed", { run_id: runId, error: messageOf2(err) });
+            this.log.warn("lease renewal failed", { run_id: runId, error: messageOf3(err) });
           }
           if (!ok) {
             slot.abort?.abort(new Error("lease lost"));
@@ -57335,7 +58367,7 @@ var init_loop = __esm({
         try {
           if (!heartbeatController(this.deps.db, this.ownerId, this.deps.clock)) void this.stop("this controller was marked stopped by another process");
         } catch (err) {
-          this.log.warn("heartbeat failed", { error: messageOf2(err) });
+          this.log.warn("heartbeat failed", { error: messageOf3(err) });
         }
       }
       drop(runId, why) {
@@ -57369,7 +58401,7 @@ var init_loop = __esm({
           try {
             const run = getRun(db, row.id);
             const runDir2 = dirname26(run.policyPath);
-            if (existsSync44(join60(runDir2, "final.md"))) continue;
+            if (existsSync45(join63(runDir2, "final.md"))) continue;
             let snapshot2 = null;
             try {
               snapshot2 = verifySnapshot(run.policyPath, run.policyHash);
@@ -57378,7 +58410,7 @@ var init_loop = __esm({
             }
             writeFinalReport(db, run.id, { runDir: runDir2, clock, snapshot: snapshot2 });
           } catch (err) {
-            this.log.warn("final report repair failed", { run_id: row.id, error: messageOf2(err) });
+            this.log.warn("final report repair failed", { run_id: row.id, error: messageOf3(err) });
           }
         }
       }
@@ -57401,7 +58433,7 @@ var init_loop = __esm({
               out.push(r);
               if (r.pruned.length > 0 || r.skipped.length > 0) this.log.info("retention pass", { repo: repoRoot, keep_days: keepDays, pruned: r.pruned.map((p) => p.runId), skipped: r.skipped.length });
             } catch (err) {
-              this.log.warn("retention pass failed", { repo: repoRoot, error: messageOf2(err) });
+              this.log.warn("retention pass failed", { repo: repoRoot, error: messageOf3(err) });
             }
           }
         } finally {
@@ -57430,9 +58462,9 @@ var init_loop = __esm({
 });
 
 // src/controller/service.ts
-import { chmodSync as chmodSync8, existsSync as existsSync45, lstatSync as lstatSync9, mkdirSync as mkdirSync22, readFileSync as readFileSync28, readdirSync as readdirSync12, rmSync as rmSync17, rmdirSync, statSync as statSync14 } from "node:fs";
+import { chmodSync as chmodSync8, existsSync as existsSync46, lstatSync as lstatSync9, mkdirSync as mkdirSync22, readFileSync as readFileSync29, readdirSync as readdirSync12, rmSync as rmSync17, rmdirSync, statSync as statSync14 } from "node:fs";
 import { hostname as hostname5 } from "node:os";
-import { dirname as dirname27, isAbsolute as isAbsolute20, join as join61 } from "node:path";
+import { dirname as dirname27, isAbsolute as isAbsolute20, join as join64 } from "node:path";
 function serviceLabel(repoRoot) {
   return `${SERVICE_LABEL_PREFIX}.${repoKey(repoRoot)}`;
 }
@@ -57445,7 +58477,7 @@ function serviceSpec(input) {
     ...input.version !== void 0 ? { version: input.version } : {},
     args: ["service", "run", "--repo", input.repoRoot],
     workingDirectory: input.repoRoot,
-    logDir: join61(input.orbitHome, "logs"),
+    logDir: join64(input.orbitHome, "logs"),
     env: {
       PATH: input.path ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
       NODE_OPTIONS: "--disable-warning=ExperimentalWarning",
@@ -57456,7 +58488,7 @@ function serviceSpec(input) {
   };
 }
 function launcherPath(orbitHome) {
-  return join61(orbitHome, "bin", "orbit");
+  return join64(orbitHome, "bin", "orbit");
 }
 function shQuote(s) {
   return `'${s.replace(/'/g, `'\\''`)}'`;
@@ -57479,7 +58511,7 @@ function renderLauncher(target) {
 function readLauncher(path) {
   let text2;
   try {
-    text2 = readFileSync28(path, "utf8");
+    text2 = readFileSync29(path, "utf8");
   } catch {
     return null;
   }
@@ -57495,7 +58527,7 @@ function secureLauncherDir(orbitHome) {
   const home2 = statSync14(orbitHome);
   if (uid !== void 0 && home2.uid !== uid) throw new OrbitError("CONFIG_INVALID", `${orbitHome} is not owned by this user; refusing to put the service launcher in it`, { path: orbitHome });
   if ((home2.mode & 18) !== 0) chmodSync8(orbitHome, home2.mode & 493 & ~18);
-  const bin = join61(orbitHome, "bin");
+  const bin = join64(orbitHome, "bin");
   mkdirSync22(bin, { recursive: true, mode: 448 });
   const st = lstatSync9(bin);
   if (st.isSymbolicLink() || !st.isDirectory()) throw new OrbitError("CONFIG_INVALID", `${bin} must be a real directory, not a link or a file; refusing to put the service launcher in it`, { path: bin });
@@ -57531,7 +58563,7 @@ function refreshLauncher(input) {
   }
   const current = st.isFile() ? readLauncher(path) : null;
   if (!current) return "foreign";
-  if (!input.entry.endsWith(".mjs") || !isAbsolute20(input.entry) || !existsSync45(input.entry) || !isAbsolute20(input.nodePath) || !existsSync45(input.nodePath)) return "skipped";
+  if (!input.entry.endsWith(".mjs") || !isAbsolute20(input.entry) || !existsSync46(input.entry) || !isAbsolute20(input.nodePath) || !existsSync46(input.nodePath)) return "skipped";
   const ours = current.entry === input.entry || sameInstallation(current.entry, input.entry) || input.version !== void 0 && current.version !== void 0 && newerVersion(input.version, current.version);
   if (!ours) return "other-install";
   const version = input.version ?? current.version;
@@ -57541,26 +58573,26 @@ function refreshLauncher(input) {
   return "updated";
 }
 function logPaths(spec) {
-  return { out: join61(spec.logDir, `${spec.label}.out.log`), err: join61(spec.logDir, `${spec.label}.err.log`) };
+  return { out: join64(spec.logDir, `${spec.label}.out.log`), err: join64(spec.logDir, `${spec.label}.err.log`) };
 }
 function xml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 function renderLaunchdPlist(spec) {
   const logs = logPaths(spec);
-  const str6 = (v) => `<string>${xml(v)}</string>`;
-  const env = Object.entries(spec.env).map(([k, v]) => `      <key>${xml(k)}</key>${str6(v)}`).join("\n");
+  const str7 = (v) => `<string>${xml(v)}</string>`;
+  const env = Object.entries(spec.env).map(([k, v]) => `      <key>${xml(k)}</key>${str7(v)}`).join("\n");
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
     '<plist version="1.0">',
     "<dict>",
-    `  <key>Label</key>${str6(spec.label)}`,
+    `  <key>Label</key>${str7(spec.label)}`,
     "  <key>ProgramArguments</key>",
     "  <array>",
-    ...[spec.launcher, ...spec.args].map((a) => `    ${str6(a)}`),
+    ...[spec.launcher, ...spec.args].map((a) => `    ${str7(a)}`),
     "  </array>",
-    `  <key>WorkingDirectory</key>${str6(spec.workingDirectory)}`,
+    `  <key>WorkingDirectory</key>${str7(spec.workingDirectory)}`,
     "  <key>EnvironmentVariables</key>",
     "  <dict>",
     env,
@@ -57573,16 +58605,16 @@ function renderLaunchdPlist(spec) {
     "  </dict>",
     `  <key>ThrottleInterval</key><integer>${spec.throttleSeconds}</integer>`,
     `  <key>ExitTimeOut</key><integer>${spec.stopTimeoutSeconds}</integer>`,
-    `  <key>ProcessType</key>${str6("Background")}`,
-    `  <key>StandardOutPath</key>${str6(logs.out)}`,
-    `  <key>StandardErrorPath</key>${str6(logs.err)}`,
+    `  <key>ProcessType</key>${str7("Background")}`,
+    `  <key>StandardOutPath</key>${str7(logs.out)}`,
+    `  <key>StandardErrorPath</key>${str7(logs.err)}`,
     "</dict>",
     "</plist>",
     ""
   ].join("\n");
 }
 function launchdPlistPath(homeDir, label) {
-  return join61(homeDir, "Library", "LaunchAgents", `${label}.plist`);
+  return join64(homeDir, "Library", "LaunchAgents", `${label}.plist`);
 }
 function launchctlCommands(label, uid, plistPath) {
   const domain = `gui/${uid}`;
@@ -57623,7 +58655,7 @@ function renderSystemdUnit(spec) {
   ].join("\n");
 }
 function systemdUnitPath(homeDir, label) {
-  return join61(homeDir, ".config", "systemd", "user", `${label}.service`);
+  return join64(homeDir, ".config", "systemd", "user", `${label}.service`);
 }
 function systemctlCommands(label) {
   const unit = `${label}.service`;
@@ -57651,7 +58683,7 @@ async function installService(spec, opts) {
   writeLauncher(dirname27(dirname27(spec.launcher)), { node: spec.nodePath, entry: spec.entry, ...spec.version !== void 0 ? { version: spec.version } : {} });
   if (opts.platform === "darwin") {
     const plist = launchdPlistPath(opts.homeDir, spec.label);
-    mkdirSync22(join61(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
+    mkdirSync22(join64(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
     atomicWrite(plist, renderLaunchdPlist(spec), 420);
     const cmd = launchctlCommands(spec.label, opts.uid, plist);
     await must(run, cmd.bootout, [0, 3]);
@@ -57661,7 +58693,7 @@ async function installService(spec, opts) {
   }
   if (opts.platform === "linux") {
     const unit = systemdUnitPath(opts.homeDir, spec.label);
-    mkdirSync22(join61(opts.homeDir, ".config", "systemd", "user"), { recursive: true });
+    mkdirSync22(join64(opts.homeDir, ".config", "systemd", "user"), { recursive: true });
     atomicWrite(unit, renderSystemdUnit(spec), 420);
     const cmd = systemctlCommands(spec.label);
     await must(run, cmd.daemonReload, [0]);
@@ -57681,7 +58713,7 @@ async function uninstallService(label, opts) {
   if (opts.platform === "linux") {
     const unit = systemdUnitPath(opts.homeDir, label);
     const cmd = systemctlCommands(label);
-    if (existsSync45(unit)) await run(cmd.disable);
+    if (existsSync46(unit)) await run(cmd.disable);
     rmSync17(unit, { force: true });
     await must(run, cmd.daemonReload, [0]);
     return withLauncherCleanup(await waitUntilGone(label, opts), opts);
@@ -57689,7 +58721,7 @@ async function uninstallService(label, opts) {
   return unsupported(opts.platform);
 }
 function installedDefinitions(opts) {
-  const dir = opts.platform === "darwin" ? join61(opts.homeDir, "Library", "LaunchAgents") : join61(opts.homeDir, ".config", "systemd", "user");
+  const dir = opts.platform === "darwin" ? join64(opts.homeDir, "Library", "LaunchAgents") : join64(opts.homeDir, ".config", "systemd", "user");
   try {
     return readdirSync12(dir).filter((f) => f.startsWith(`${SERVICE_LABEL_PREFIX}.`));
   } catch {
@@ -57737,14 +58769,14 @@ async function serviceStatus(label, opts) {
     const path = launchdPlistPath(opts.homeDir, label);
     const r = await run(launchctlCommands(label, opts.uid, path).print);
     const loaded = r.exitCode === 0 ? true : r.exitCode === 113 ? false : null;
-    return { label, platform: opts.platform, definitionPath: path, installed: existsSync45(path), loaded, detail: loaded === null ? `launchctl print exited ${r.exitCode ?? "by signal"}` : loaded ? "loaded" : "not loaded" };
+    return { label, platform: opts.platform, definitionPath: path, installed: existsSync46(path), loaded, detail: loaded === null ? `launchctl print exited ${r.exitCode ?? "by signal"}` : loaded ? "loaded" : "not loaded" };
   }
   if (opts.platform === "linux") {
     const path = systemdUnitPath(opts.homeDir, label);
     const r = await run(systemctlCommands(label).isActive);
     const word = r.stdout.trim();
     const loaded = word === "active" || word === "activating" || word === "reloading" ? true : word === "inactive" || word === "failed" ? false : null;
-    return { label, platform: opts.platform, definitionPath: path, installed: existsSync45(path), loaded, detail: word || `systemctl exited ${r.exitCode ?? "by signal"}` };
+    return { label, platform: opts.platform, definitionPath: path, installed: existsSync46(path), loaded, detail: word || `systemctl exited ${r.exitCode ?? "by signal"}` };
   }
   return unsupported(opts.platform);
 }
@@ -57778,7 +58810,7 @@ var init_controller = __esm({
     init_context2();
     init_gates();
     init_security();
-    init_report();
+    init_report2();
     init_service();
     init_start();
     init_delivering();
@@ -57786,8 +58818,8 @@ var init_controller = __esm({
 });
 
 // src/cli/commands/drive.ts
-import { existsSync as existsSync46, readFileSync as readFileSync29 } from "node:fs";
-import { dirname as dirname28, join as join62 } from "node:path";
+import { existsSync as existsSync47, readFileSync as readFileSync30 } from "node:fs";
+import { dirname as dirname28, join as join65 } from "node:path";
 function formatEvent(e) {
   const at = clockTime(e.ts);
   let data = {};
@@ -57907,8 +58939,8 @@ function safeContinue(db, runId, ctx) {
 }
 function resultOf(ctx, db, run) {
   try {
-    const finalJson = join62(dirname28(run.policyPath), "final.json");
-    const report2 = existsSync46(finalJson) ? JSON.parse(readFileSync29(finalJson, "utf8")) : buildFinalReport(db, run, { runDir: dirname28(run.policyPath), clock: ctx.clock, snapshot: null });
+    const finalJson = join65(dirname28(run.policyPath), "final.json");
+    const report2 = existsSync47(finalJson) ? JSON.parse(readFileSync30(finalJson, "utf8")) : buildFinalReport(db, run, { runDir: dirname28(run.policyPath), clock: ctx.clock, snapshot: null });
     const rv = report2.revision;
     if (!rv) return null;
     return { branch: rv.branch ?? null, candidate_commit: rv.candidate ?? null, delivered_commit: rv.delivered_commit ?? null, pull_request: rv.pull_request ?? null };
@@ -57937,8 +58969,8 @@ function announceEnd(ctx, db, run, exitCode, wantJson) {
   if (isTerminal(run.state)) {
     line(ctx.io, `run ${run.id} ended ${run.state}${run.outcomeReason ? `: ${flat(run.outcomeReason)}` : ""}`);
     const left = run.state === "SUCCEEDED" ? resultOf(ctx, db, run) : null;
-    const where = left ? resultLine(left) : null;
-    if (where) line(ctx.io, where);
+    const where2 = left ? resultLine(left) : null;
+    if (where2) line(ctx.io, where2);
     line(ctx.io, `report: orbit report ${run.id}`);
     if (run.state === "BLOCKED") {
       for (const q of open2) line(ctx.io, `  open question ${q.id}: ${flat(q.question)}`);
@@ -57970,8 +59002,66 @@ var init_drive = __esm({
   }
 });
 
+// src/cli/commands/notify.ts
+import { dirname as dirname29, resolve as resolve15 } from "node:path";
+function depsOf(ctx) {
+  return resolveNotifyDeps({ hostEnv: ctx.env, ...ctx.seams.notify ? { notify: ctx.seams.notify } : {} });
+}
+async function notifyTestCommand(args, ctx) {
+  args.expect(0);
+  const repo = await resolveRepo(ctx, args.str("repo"));
+  const policy = args.str("policy");
+  const config = loadConfig(repo, policy ? resolve15(ctx.cwd, policy) : void 0);
+  const outcomes = await sendTestNotification({ config, repoRoot: repo, deps: depsOf(ctx) });
+  if (args.bool("json")) json(ctx.io, { outcomes });
+  else for (const o of outcomes) line(ctx.io, `${o.channel}: ${o.status} (${o.detail})`);
+  return outcomes.some((o) => o.status === "failed") ? EXIT.FAILURE : EXIT.OK;
+}
+function errorText3(err) {
+  return redact(isOrbitError(err) ? `${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err)).slice(0, 300);
+}
+async function readRemoteAnswers(ctx, db, run, say) {
+  if (run.state !== "BLOCKED" || listQuestions(db, run.id, { status: "open" }).length === 0) return;
+  let config;
+  try {
+    config = verifySnapshot(run.policyPath, run.policyHash).config;
+  } catch {
+    return;
+  }
+  if (!notificationsPolicy(config).remote_answers.enabled) return;
+  try {
+    const client = await depsOf(ctx).threads(run.repoRoot, config);
+    const report2 = await pollRemoteAnswers({ db, clock: ctx.clock, run, runDir: dirname29(run.policyPath), config, client, actor: `cli:${ctx.user}` });
+    for (const a of report2.accepted) say(`recorded the answer to ${a.questionId} by ${a.author} (${a.permission}) from ${a.thread}`);
+    for (const r of report2.refused) say(`ignored a comment by ${r.author} on ${r.thread} (${r.reason})`);
+    for (const e of report2.errors) say(`could not read remote answers: ${e}`);
+  } catch (err) {
+    say(`could not read remote answers: ${errorText3(err)}`);
+  }
+}
+var NOTIFY_TEST_OPTIONS, NOTIFY_TEST_USAGE;
+var init_notify2 = __esm({
+  "src/cli/commands/notify.ts"() {
+    "use strict";
+    init_errors();
+    init_redact();
+    init_store4();
+    init_config();
+    init_snapshot();
+    init_notify();
+    init_remote_answers();
+    init_context();
+    init_exit();
+    init_io();
+    NOTIFY_TEST_OPTIONS = {
+      policy: { type: "string", description: "policy file to read the notifications section from (default: .orbit/config.yaml)", valueName: "path" }
+    };
+    NOTIFY_TEST_USAGE = "orbit notify test [--policy path] [--json]";
+  }
+});
+
 // src/cli/commands/control.ts
-import { join as join63, resolve as resolve15 } from "node:path";
+import { join as join66, resolve as resolve16 } from "node:path";
 async function pauseCommand(args, ctx) {
   const [id] = args.expect(1);
   const repo = await resolveRepo(ctx, args.str("repo"));
@@ -57987,29 +59077,6 @@ async function pauseCommand(args, ctx) {
     return EXIT.OK;
   });
 }
-function resumeTarget(db, run) {
-  const prior = run.resumeState;
-  if (prior && canTransition("BLOCKED", prior)) {
-    if ((prior === "REVIEWING" || prior === "DELIVERING") && !liveEvidenceForLatestCandidate(db, run.id)) return "VERIFYING";
-    return prior;
-  }
-  if (db.get("SELECT 1 AS x FROM candidates WHERE run_id = ? LIMIT 1", run.id)) return "VERIFYING";
-  return run.contractJson ? "PLANNING" : "PREFLIGHT";
-}
-function liveEvidenceForLatestCandidate(db, runId) {
-  const cand = db.get("SELECT id FROM candidates WHERE run_id = ? ORDER BY seq DESC LIMIT 1", runId);
-  if (!cand) return false;
-  return db.get("SELECT 1 AS x FROM evidence_reports WHERE run_id = ? AND candidate_id = ? AND invalidated_at IS NULL LIMIT 1", runId, cand.id) !== void 0;
-}
-function frozenPolicySetting(run) {
-  try {
-    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
-    if (!o?.frozen_policy) return null;
-    return typeof o.frozen_policy.setting === "string" ? o.frozen_policy.setting : "a policy setting";
-  } catch {
-    return null;
-  }
-}
 async function resumeCommand(args, ctx) {
   if (args.bool("foreground") && args.bool("detach")) throw new UsageError("--foreground and --detach cannot be combined", "orbit resume <run-id> [--foreground | --detach] [--force]");
   const [id] = args.expect(1);
@@ -58021,6 +59088,9 @@ async function resumeCommand(args, ctx) {
     if (isTerminal(run.state) && run.state !== "BLOCKED") throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is ${run.state}; nothing to resume. ${nextStepAfter(run)}`);
     const notes = [];
     if (run.state === "BLOCKED") {
+      await readRemoteAnswers(ctx, db, run, (text2) => {
+        if (!args.bool("json")) line(ctx.io, text2);
+      });
       const frozen = frozenPolicySetting(run);
       if (frozen !== null && !args.bool("force")) {
         throw new OrbitError(
@@ -58069,7 +59139,7 @@ async function resumeCommand(args, ctx) {
     if (foreground) {
       if (!args.bool("json")) line(ctx.io, `run ${after.id}: ${notes.join(", ")}; driving it in the foreground (Ctrl-C pauses it)`);
       const policy = args.str("policy");
-      const config = loadConfig(repo, policy ? resolve15(ctx.cwd, policy) : void 0);
+      const config = loadConfig(repo, policy ? resolve16(ctx.cwd, policy) : void 0);
       const result2 = await driveForeground(ctx, { repoRoot: repo, config, db, runId: after.id, fromStart: false, json: args.bool("json") });
       return result2.exitCode;
     }
@@ -58104,7 +59174,7 @@ function cliLeaseDeps(ctx, repo, db, ownerId) {
       db,
       clock: ctx.clock,
       ownerId,
-      logger: createLogger({ file: join63(ctx.orbitHome, "logs", "controller.jsonl"), clock: ctx.clock }),
+      logger: createLogger({ file: join66(ctx.orbitHome, "logs", "controller.jsonl"), clock: ctx.clock }),
       adapters: {},
       registry: new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome)),
       orbitHome: ctx.orbitHome,
@@ -58174,11 +59244,13 @@ var init_control = __esm({
     init_common();
     init_run_store();
     init_states();
+    init_resume();
     init_store4();
     init_context();
     init_exit();
     init_io();
     init_drive();
+    init_notify2();
     actorOf = (ctx) => `cli:${ctx.user}`;
     RESUME_OPTIONS = {
       foreground: { type: "boolean", description: "drive the run in this terminal instead of leaving it to the service" },
@@ -58213,8 +59285,8 @@ var init_inquisition2 = __esm({
 });
 
 // src/cli/commands/decide.ts
-import { existsSync as existsSync47 } from "node:fs";
-import { dirname as dirname29 } from "node:path";
+import { existsSync as existsSync48 } from "node:fs";
+import { dirname as dirname30 } from "node:path";
 function matchQuestion(db, runId, ref2) {
   const all = listQuestions(db, runId);
   const exact = all.find((q) => q.id === ref2);
@@ -58267,7 +59339,7 @@ async function decideCommand(args, ctx) {
     const run = findRunByPrefix(db, runRef);
     if (isTerminal(run.state) && run.state !== "BLOCKED") throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is ${run.state}; its questions can no longer change anything`);
     const q = matchQuestion(db, run.id, qRef);
-    const runDir2 = dirname29(run.policyPath);
+    const runDir2 = dirname30(run.policyPath);
     const result2 = answerQuestion(db, runDir2, q.id, answer, by, ctx.clock);
     let amendment = null;
     if (amendmentIdOfQuestion(q.id) !== null) {
@@ -58328,7 +59400,7 @@ async function pendingQuestions(args, ctx) {
   const quiet = args.bool("quiet");
   const repo = await resolveRepo(ctx, args.str("repo"));
   const pending = [];
-  if (existsSync47(stateDbPath(repo))) {
+  if (existsSync48(stateDbPath(repo))) {
     await withState(repo, (db) => {
       for (const run of listRuns(db, { limit: 200 })) {
         if (isTerminal(run.state) && run.state !== "BLOCKED") continue;
@@ -58396,8 +59468,8 @@ var init_recovery = __esm({
 });
 
 // src/cli/commands/service.ts
-import { existsSync as existsSync48 } from "node:fs";
-import { join as join64 } from "node:path";
+import { existsSync as existsSync49 } from "node:fs";
+import { join as join67 } from "node:path";
 function managerOptions(ctx) {
   return {
     platform: ctx.platform,
@@ -58429,7 +59501,7 @@ async function serviceInstallCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   loadConfig(repo);
   const entry = args.str("entry") ?? ctx.entry;
-  if (!entry || !existsSync48(entry)) throw new OrbitError("NOT_FOUND", `the orbit entry script ${entry || "(unknown)"} does not exist; pass --entry <path to plugin/dist/orbit.mjs>`);
+  if (!entry || !existsSync49(entry)) throw new OrbitError("NOT_FOUND", `the orbit entry script ${entry || "(unknown)"} does not exist; pass --entry <path to plugin/dist/orbit.mjs>`);
   const warnings = [];
   if (!entry.endsWith(".mjs")) warnings.push(`the service will run ${entry}, not a built plugin/dist/orbit.mjs; build the bundle for a durable installation`);
   const spec = serviceSpec({ repoRoot: repo, orbitHome: ctx.orbitHome, entry, version: ORBIT_VERSION, ...ctx.env.PATH ? { path: ctx.env.PATH } : {} });
@@ -58440,7 +59512,7 @@ async function serviceInstallCommand(args, ctx) {
     line(ctx.io, `service ${status2.label} installed (${status2.platform}): ${status2.loaded ? "loaded" : status2.detail}`);
     line(ctx.io, `definition: ${status2.definitionPath}`);
     line(ctx.io, `launcher: ${spec.launcher} (runs ${entry}; it follows plugin updates, so the service never needs reinstalling for one)`);
-    line(ctx.io, `logs: ${join64(ctx.orbitHome, "logs")}`);
+    line(ctx.io, `logs: ${join67(ctx.orbitHome, "logs")}`);
     line(ctx.io, "No credentials were written to the definition. For unattended runs export ANTHROPIC_API_KEY (and CODEX_API_KEY) where the service can see them; see docs/decisions/0003-authentication.md.");
     for (const w of warnings) ctx.io.err(`warning: ${w}
 `);
@@ -58460,14 +59532,14 @@ async function serviceUninstallCommand(args, ctx) {
 function launcherState(ctx) {
   const path = launcherPath(ctx.orbitHome);
   const target = readLauncher(path);
-  return { path, exists: existsSync48(path), node: target?.node ?? null, entry: target?.entry ?? null, bundleExists: target ? existsSync48(target.entry) && existsSync48(target.node) : false };
+  return { path, exists: existsSync49(path), node: target?.node ?? null, entry: target?.entry ?? null, bundleExists: target ? existsSync49(target.entry) && existsSync49(target.node) : false };
 }
 async function serviceStatusCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
   const status2 = await serviceStatus(serviceLabel(repo), managerOptions(ctx));
   let heartbeats = [];
-  if (existsSync48(stateDbPath(repo))) {
+  if (existsSync49(stateDbPath(repo))) {
     const db = openState(repo);
     try {
       pruneDeadControllers(db, ctx.clock);
@@ -58499,7 +59571,7 @@ async function serviceRunCommand(args, ctx) {
   const config = loadConfig(repo);
   const db = openDb(stateDbPath(repo));
   try {
-    const logger = createLogger({ file: join64(ctx.orbitHome, "logs", "controller.jsonl"), stderr: true, clock: ctx.clock });
+    const logger = createLogger({ file: join67(ctx.orbitHome, "logs", "controller.jsonl"), stderr: true, clock: ctx.clock });
     const factory = ctx.seams.controllerDeps ?? defaultControllerDeps;
     const deps = factory({ repoRoot: repo, db, clock: ctx.clock, config, env: ctx.env, orbitHome: ctx.orbitHome, logger });
     const controller = new Controller({ deps, mode: "service", handleSignals: true, ...ctx.seams.controller ?? {} });
@@ -58533,7 +59605,7 @@ var init_service2 = __esm({
 
 // src/cli/layout.ts
 import { open } from "node:fs/promises";
-import { join as join65 } from "node:path";
+import { join as join68 } from "node:path";
 async function trackedFiles(ctx, repo) {
   try {
     const r = await execCapture(["git", "ls-files", "-z"], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 3e4 });
@@ -58607,7 +59679,7 @@ async function pipelineYaml(repo, files) {
   const candidates = files.filter((f) => /\.ya?ml$/i.test(f) && !f.startsWith(".") && !f.split("/").includes("node_modules")).slice(0, MAX_YAML_READS);
   for (const f of candidates) {
     try {
-      if (isPipelineYaml(await readHead(join65(repo, f)))) found.add(f);
+      if (isPipelineYaml(await readHead(join68(repo, f)))) found.add(f);
     } catch {
     }
   }
@@ -58670,21 +59742,37 @@ function reviewFix(alternatives) {
   }
   return fixes.length > 0 ? fixes.join("; ") : REVIEW_FIX_GENERIC;
 }
-var REVIEW_FIX_GENERIC;
+function allReviewPrerequisites(first, simulate) {
+  const masked = [...new Set(first.filter((a) => MASKING_REASON.test(a.reason)).map((a) => a.provider))];
+  if (masked.length === 0) return [...first];
+  const seen = new Set(first.map((a) => `${a.provider}\0${a.reason}`));
+  const out = [...first];
+  for (const assumed of [{ login: true, dataPolicy: false }, { login: true, dataPolicy: true }]) {
+    for (const a of simulate(masked, assumed)) {
+      const key2 = `${a.provider}\0${a.reason}`;
+      if (!masked.includes(a.provider) || seen.has(key2)) continue;
+      seen.add(key2);
+      out.push(a);
+    }
+  }
+  return out;
+}
+var REVIEW_FIX_GENERIC, MASKING_REASON;
 var init_review_fix = __esm({
   "src/cli/review-fix.ts"() {
     "use strict";
     init_recovery();
     REVIEW_FIX_GENERIC = "log in to the reviewer provider and set providers.<id>.data_policy_eligible: true if sending sanitized code to it is permitted";
+    MASKING_REASON = /^(no credentials for|credentials for) |data_policy_eligible is not true/;
   }
 });
 
 // src/cli/commands/doctor-plugins.ts
 async function workerPluginsCheck(id, adapter, config) {
-  const list = adapter?.listPlugins;
-  if (typeof list !== "function") return null;
+  const list2 = adapter?.listPlugins;
+  if (typeof list2 !== "function") return null;
   const check = `${id}.plugins`;
-  const listed = await list.call(adapter);
+  const listed = await list2.call(adapter);
   if (!listed.ok) {
     return { id: check, area: "providers", status: "warn", summary: `could not list the installed plugins (${flat(listed.detail)})`, details: [], missing: "the output of claude plugin list --json", fix: 'run "claude plugin list --json" to see why; a worker session that loads a plugin the policy does not allow is refused' };
   }
@@ -58738,9 +59826,9 @@ var init_doctor_plugins = __esm({
 });
 
 // src/cli/commands/doctor-sandbox.ts
-import { existsSync as existsSync49, mkdirSync as mkdirSync23, mkdtempSync as mkdtempSync6, realpathSync as realpathSync18 } from "node:fs";
+import { existsSync as existsSync50, mkdirSync as mkdirSync23, mkdtempSync as mkdtempSync6, realpathSync as realpathSync18 } from "node:fs";
 import { tmpdir as tmpdir12 } from "node:os";
-import { basename as basename13, isAbsolute as isAbsolute21, join as join66, resolve as resolve16 } from "node:path";
+import { basename as basename13, isAbsolute as isAbsolute21, join as join69, resolve as resolve17 } from "node:path";
 function checkWord(check) {
   if (!check.shell) return check.command[0] ?? null;
   return (check.command[0] ?? "").trim().split(/\s+/).find((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) ?? null;
@@ -58748,23 +59836,23 @@ function checkWord(check) {
 function probeCacheRoot(input, toolchains, scratch) {
   if (!input.orbitHome || !input.repo) return null;
   const real = toolchainCacheRoot(input.orbitHome, repoKeyFor(input.repo));
-  const all = toolchains.every((id) => TOOLCHAIN_PROFILES[id].caches.every((c) => existsSync49(join66(real, c))));
-  return all ? real : join66(scratch, "cache-stand-in");
+  const all = toolchains.every((id) => TOOLCHAIN_PROFILES[id].caches.every((c) => existsSync50(join69(real, c))));
+  return all ? real : join69(scratch, "cache-stand-in");
 }
 async function probe(input, check, exe, args, cwd) {
-  const scratch = realpathSync18(mkdtempSync6(join66(tmpdir12(), "orbit-doctor-check-")));
+  const scratch = realpathSync18(mkdtempSync6(join69(tmpdir12(), "orbit-doctor-check-")));
   let tmp = null;
   try {
-    const checkout = join66(scratch, "checkout");
-    const home2 = join66(scratch, "home");
-    const artifacts = join66(scratch, "artifacts");
+    const checkout = join69(scratch, "checkout");
+    const home2 = join69(scratch, "home");
+    const artifacts = join69(scratch, "artifacts");
     for (const d of [checkout, home2, artifacts]) mkdirSync23(d, { recursive: true, mode: 448 });
     prepareCheckHome(home2);
     tmp = prepareWorkerTmpDir(scratch);
     const snapshot2 = { schema: "orbit.policy/1", run_id: "doctor", created_at: "", repo_root: input.repo ?? scratch, config: input.config, effective_protected_paths: [], check_config_hashes: {} };
     const ids = detectToolchains({ command: check.command, shell: check.shell, roots: [...input.repo ? [input.repo] : [], ...cwd ? [cwd] : []] });
-    const toolchains = toolchainLayout({ toolchains: ids, mode: "check", cacheRoot: probeCacheRoot(input, ids, scratch), scratchRoot: join66(scratch, "toolchains"), tmpDir: tmp, hostHome: input.homeDir, hostEnv: input.env });
-    for (const d of toolchains.directories) if (!existsSync49(d)) mkdirSync23(d, { recursive: true, mode: 448 });
+    const toolchains = toolchainLayout({ toolchains: ids, mode: "check", cacheRoot: probeCacheRoot(input, ids, scratch), scratchRoot: join69(scratch, "toolchains"), tmpDir: tmp, hostHome: input.homeDir, hostEnv: input.env });
+    for (const d of toolchains.directories) if (!existsSync50(d)) mkdirSync23(d, { recursive: true, mode: 448 });
     const profile = profileForCheck({ worktree: checkout, check, snapshot: snapshot2, extraWritable: [artifacts, home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, homeDir: input.homeDir, env: { ...input.env } });
     const env = checkEnv(check, { homeDir: home2, tmpDir: tmp, artifactsDir: artifacts }, input.env.PATH, toolchains.env);
     const shown = [basename13(exe), ...args].join(" ");
@@ -58800,14 +59888,14 @@ async function checkSandboxCheck(input) {
   let started = 0;
   const used = new Set(repo ? detectToolchains({ roots: [repo] }) : []);
   for (const check of checks) {
-    if (repo) for (const id2 of detectToolchains({ command: check.command, shell: check.shell, roots: [resolve16(repo, check.cwd)] })) used.add(id2);
+    if (repo) for (const id2 of detectToolchains({ command: check.command, shell: check.shell, roots: [resolve17(repo, check.cwd)] })) used.add(id2);
     const word = checkWord(check);
     if (!word || check.shell && SHELL_BUILTINS.has(word)) {
       details.push(`${check.id}: not started (${word ? `shell builtin "${word}"` : "no command"})`);
       continue;
     }
-    const cwd = repo ? resolve16(repo, check.cwd) : process.cwd();
-    const found = word.includes("/") ? which(isAbsolute21(word) ? word : resolve16(cwd, word), input.env.PATH) : which(word, input.env.PATH);
+    const cwd = repo ? resolve17(repo, check.cwd) : process.cwd();
+    const found = word.includes("/") ? which(isAbsolute21(word) ? word : resolve17(cwd, word), input.env.PATH) : which(word, input.env.PATH);
     if (!found) {
       details.push(`${check.id}: not started ("${word}" was not found; see the checks entry)`);
       continue;
@@ -58818,7 +59906,7 @@ async function checkSandboxCheck(input) {
       continue;
     }
     started++;
-    const out = await probeOrRefuse(probeInput, check, exe, PROBE_ARGS[basename13(exe)] ?? DEFAULT_PROBE_ARGS, repo ? resolve16(repo, check.cwd) : null);
+    const out = await probeOrRefuse(probeInput, check, exe, PROBE_ARGS[basename13(exe)] ?? DEFAULT_PROBE_ARGS, repo ? resolve17(repo, check.cwd) : null);
     details.push(`${check.id}: ${out.detail}`);
     if (out.kind === "refused") refused.push({ check, failure: out.failure });
   }
@@ -58858,17 +59946,17 @@ async function probeOrRefuse(input, check, exe, args, cwd) {
 async function toolchainLine(input, orbitHome, id) {
   const p = TOOLCHAIN_PROFILES[id];
   const root = toolchainCacheRoot(orbitHome, repoKeyFor(input.repo));
-  const caches = p.caches.map((c) => join66(root, c));
-  const state = caches.every((c) => existsSync49(c)) ? "read-only for checks and workers, written by the dependency install" : "not created yet; the first dependency install creates it";
-  const where = `${caches.length === 1 ? "dependency cache" : "dependency caches"} ${caches.join(", ")} (${state}); private per check attempt: ${p.scratchVars.join(", ")}`;
+  const caches = p.caches.map((c) => join69(root, c));
+  const state = caches.every((c) => existsSync50(c)) ? "read-only for checks and workers, written by the dependency install" : "not created yet; the first dependency install creates it";
+  const where2 = `${caches.length === 1 ? "dependency cache" : "dependency caches"} ${caches.join(", ")} (${state}); private per check attempt: ${p.scratchVars.join(", ")}`;
   const label = `toolchain ${id}`;
   const found = p.probe.executables.map((e) => which(e, input.env.PATH)).find((x) => x !== null);
-  if (!found) return { detail: `${label}: not started ("${p.probe.executables[0]}" was not found); ${where}`, failure: null };
+  if (!found) return { detail: `${label}: not started ("${p.probe.executables[0]}" was not found); ${where2}`, failure: null };
   const exe = realpathSync18(found);
-  if (isWithin(exe, input.repo)) return { detail: `${label}: not started ("${basename13(found)}" is the repository's own code, which only a run executes); ${where}`, failure: null };
+  if (isWithin(exe, input.repo)) return { detail: `${label}: not started ("${basename13(found)}" is the repository's own code, which only a run executes); ${where2}`, failure: null };
   const check = { ...defaultCheck(`toolchain-${id}`), command: [exe, ...p.probe.args], mandatory: false };
   const out = await probeOrRefuse(input, check, exe, p.probe.args, null);
-  return { detail: `${label}: ${out.detail}; ${where}`, failure: out.kind === "refused" ? out.failure : null };
+  return { detail: `${label}: ${out.detail}; ${where2}`, failure: out.kind === "refused" ? out.failure : null };
 }
 var launchWrapped, PROBE_TIMEOUT_MS, PROBE_ARGS, DEFAULT_PROBE_ARGS, SHELL_BUILTINS;
 var init_doctor_sandbox = __esm({
@@ -58899,11 +59987,11 @@ ${r.stderr}`.trim() };
 });
 
 // src/cli/commands/doctor.ts
-import { accessSync as accessSync3, constants as constants4, existsSync as existsSync50, mkdtempSync as mkdtempSync7, readFileSync as readFileSync30, realpathSync as realpathSync19, rmSync as rmSync18, statSync as statSync15 } from "node:fs";
+import { accessSync as accessSync3, constants as constants4, existsSync as existsSync51, mkdtempSync as mkdtempSync7, readFileSync as readFileSync31, realpathSync as realpathSync19, rmSync as rmSync18, statSync as statSync15 } from "node:fs";
 import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
 import { homedir as homedir12, tmpdir as tmpdir13 } from "node:os";
-import { delimiter as delimiter4, isAbsolute as isAbsolute22, join as join67, resolve as resolve17 } from "node:path";
+import { delimiter as delimiter4, isAbsolute as isAbsolute22, join as join70, resolve as resolve18 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
     try {
@@ -58913,12 +60001,12 @@ function which2(cmd, env, cwd = process.cwd()) {
     }
   };
   if (cmd.includes("/")) {
-    const p = isAbsolute22(cmd) ? cmd : resolve17(cwd, cmd);
+    const p = isAbsolute22(cmd) ? cmd : resolve18(cwd, cmd);
     return ok(p) ? p : null;
   }
   for (const dir of (env.PATH ?? "").split(delimiter4)) {
     if (!dir) continue;
-    const p = join67(dir, cmd);
+    const p = join70(dir, cmd);
     if (ok(p)) return p;
   }
   return null;
@@ -59022,13 +60110,13 @@ function checkStorage(p) {
   const { repo } = p;
   if (!repo) return warn2("storage", "storage", "no repository, so no state database to check", "a repository", null);
   const path = stateDbPath(repo);
-  const dir = join67(repo, ".orbit");
+  const dir = join70(repo, ".orbit");
   let db = null;
   try {
-    if (!existsSync50(path)) {
-      const scratch = mkdtempSync7(join67(tmpdir13(), "orbit-doctor-"));
+    if (!existsSync51(path)) {
+      const scratch = mkdtempSync7(join70(tmpdir13(), "orbit-doctor-"));
       try {
-        db = openDb(join67(scratch, "probe.sqlite"));
+        db = openDb(join70(scratch, "probe.sqlite"));
         const mode2 = String((db.get("PRAGMA journal_mode") ?? {}).journal_mode);
         if (mode2.toLowerCase() !== "wal") return fail2("storage", "storage", `SQLite cannot use WAL on this filesystem (journal_mode=${mode2})`, "WAL journaling", "use a local disk, not a network or container bind mount");
       } finally {
@@ -59037,9 +60125,9 @@ function checkStorage(p) {
         rmSync18(scratch, { recursive: true, force: true });
       }
       try {
-        accessSync3(existsSync50(dir) ? dir : repo, constants4.W_OK);
+        accessSync3(existsSync51(dir) ? dir : repo, constants4.W_OK);
       } catch {
-        return fail2("storage", "storage", `${existsSync50(dir) ? dir : repo} is not writable`, "a writable .orbit directory", "fix permissions");
+        return fail2("storage", "storage", `${existsSync51(dir) ? dir : repo} is not writable`, "a writable .orbit directory", "fix permissions");
       }
       return pass("storage", "storage", "no state database yet; it will be created in .orbit/ (WAL works, directory writable)");
     }
@@ -59069,7 +60157,7 @@ function checkConfiguredChecks(p) {
   const details = [];
   let status2 = "pass";
   for (const c of entries) {
-    const cwd = repo ? resolve17(repo, c.cwd) : ctx.cwd;
+    const cwd = repo ? resolve18(repo, c.cwd) : ctx.cwd;
     const word = checkWord2(c);
     const bump = (s) => {
       if (s === "fail" || s === "warn" && status2 === "pass") status2 = s;
@@ -59084,7 +60172,7 @@ function checkConfiguredChecks(p) {
       details.push(`${c.id}: shell builtin "${word}" (not resolved)`);
       continue;
     }
-    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join67(repo, "node_modules", ".bin", word), ctx.env) : null);
+    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join70(repo, "node_modules", ".bin", word), ctx.env) : null);
     if (!found) {
       details.push(`${c.id}: "${word}" was not found${c.mandatory ? "" : " (optional check)"}${c.cwd !== "." ? ` (cwd ${c.cwd})` : ""}`);
       bump(level);
@@ -59092,10 +60180,10 @@ function checkConfiguredChecks(p) {
     }
     const script = c.shell ? void 0 : packageScriptOf(c.command);
     if (script) {
-      const pj = join67(cwd, "package.json");
+      const pj = join70(cwd, "package.json");
       let defined = false;
       try {
-        defined = typeof JSON.parse(readFileSync30(pj, "utf8")).scripts?.[script] === "string";
+        defined = typeof JSON.parse(readFileSync31(pj, "utf8")).scripts?.[script] === "string";
       } catch {
         defined = false;
       }
@@ -59154,7 +60242,7 @@ async function checkIsolation(p) {
   }
   if (!st.ok) {
     const pluginRoot = ctx.env.ORBIT_PLUGIN_ROOT;
-    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync50(join67(pluginRoot, "package.json")) && !existsSync50(join67(pluginRoot, "node_modules"))) {
+    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync51(join70(pluginRoot, "package.json")) && !existsSync51(join70(pluginRoot, "node_modules"))) {
       return {
         check: fail2(
           "isolation",
@@ -59189,7 +60277,8 @@ async function checkProviders(p, iso2, registry) {
   facts.adapters = adapters;
   const ids = Object.keys(adapters);
   const required = /* @__PURE__ */ new Set(["claude"]);
-  if (config.review.independent_provider_required) required.add(config.review.preferred_provider);
+  const mandatoryReviewer = mandatoryReviewProvider(config.review, "claude");
+  if (mandatoryReviewer !== null) required.add(mandatoryReviewer);
   const caps = await Promise.all(
     ids.map(async (id) => {
       try {
@@ -59240,16 +60329,35 @@ async function checkProviders(p, iso2, registry) {
       if (plugins) checks.push(plugins);
     } else checks.push(codexTierCheck(id, config.providers[id].tier ?? "auto", codexEnvCredential(ctx.env), iso2.available && iso2.provider?.kind === "sandbox-runtime", level));
   }
-  if (config.review.independent_provider_required || ids.some((i) => i !== "claude")) {
-    const sel = selectReviewer({ snapshot: { config }, capabilities: facts.capabilities, credentials: facts.credentials, implementer: { provider: "claude", model: null }, registry });
-    if (sel.decision === "SELECT") checks.push(pass("review", "providers", `independent review: ${sel.provider}/${sel.model ?? "default"} (${sel.independent ? "independent" : "same provider"})`, sel.alternatives.map((a) => `not used: ${a.provider}: ${flat(a.reason)}`)));
-    else {
-      const mandatory = config.review.independent_provider_required;
-      const c = (mandatory ? fail2 : warn2)("review", "providers", `independent review would block: ${flat(sel.reason)}`, "a usable, data-policy-eligible reviewer from another provider", reviewFix(sel.alternatives), sel.alternatives.map((a) => `${a.provider}: ${flat(a.reason)}`));
-      checks.push(c);
-    }
-  }
+  checks.push(reviewCheck(config, facts, registry));
   return { checks, facts };
+}
+function reviewCheck(config, facts, registry) {
+  const fallback = reviewFallback(config.review);
+  const policyLine = describeReviewPolicy(config.review);
+  const select = (cfg, credentials) => selectReviewer({ snapshot: { config: cfg }, capabilities: facts.capabilities, credentials, implementer: { provider: "claude", model: null }, registry });
+  const sel = select(config, facts.credentials);
+  const missing = "a usable, data-policy-eligible reviewer from another provider";
+  const unmetPrerequisites = () => allReviewPrerequisites(sel.alternatives, (fixed, assumed) => {
+    const hypothetical = structuredClone(config);
+    const credentials = { ...facts.credentials };
+    for (const id of fixed) {
+      if (assumed.dataPolicy && hypothetical.providers[id]) hypothetical.providers[id].data_policy_eligible = true;
+      if (assumed.login && facts.capabilities[id]?.available) credentials[id] = { state: "valid", method: null, detail: "assumed once logged in" };
+    }
+    return select(hypothetical, credentials).alternatives;
+  });
+  if (sel.decision === "BLOCK") {
+    const unmet2 = unmetPrerequisites();
+    return (fallback === "block" ? fail2 : warn2)("review", "providers", `independent review would block: ${flat(sel.reason)}`, missing, reviewFix(unmet2), [policyLine, ...unmet2.map((a) => `${a.provider}: ${flat(a.reason)}`)]);
+  }
+  if (sel.independent) return pass("review", "providers", `independent review: ${sel.provider}/${sel.model ?? "default"} (independent)`, [policyLine, ...sel.alternatives.map((a) => `not used: ${a.provider}: ${flat(a.reason)}`)]);
+  const unmet = unmetPrerequisites();
+  const details = [policyLine, ...unmet.map((a) => `not used: ${a.provider}: ${flat(a.reason)}`)];
+  const who = `${sel.provider}/${sel.model ?? "default"}`;
+  const why = flat((sel.independentUnavailable ?? "no independent reviewer was usable").replace(/^no independent reviewer was usable: /, ""));
+  const summary = sel.needsApproval === true ? `same-provider review needs a person's yes: no independent reviewer is usable (${why}); a run asks a person before ${who} reviews in a separate session (review.when_unavailable: ask)` : `same-provider review: no independent reviewer is usable (${why}); ${who} reviews in a separate session at the opus-class floor, and reports say the review was not independent (review.when_unavailable: ${fallback})`;
+  return warn2("review", "providers", summary, missing, `${reviewFix(unmet)}; or set review.when_unavailable to ask or block to change what happens`, details);
 }
 function codexTierCheck(id, setting, apiKeyVar, srtInUse, level) {
   const check = `${id}.worker-tier`;
@@ -59337,9 +60445,9 @@ function packageInstalled(req, name) {
 function playwrightCache(env, home2, platform3) {
   const override = env.PLAYWRIGHT_BROWSERS_PATH;
   if (override && override !== "0") return override;
-  if (platform3 === "darwin") return join67(home2, "Library", "Caches", "ms-playwright");
-  if (platform3 === "win32") return join67(env.LOCALAPPDATA ?? join67(home2, "AppData", "Local"), "ms-playwright");
-  return join67(env.XDG_CACHE_HOME ?? join67(home2, ".cache"), "ms-playwright");
+  if (platform3 === "darwin") return join70(home2, "Library", "Caches", "ms-playwright");
+  if (platform3 === "win32") return join70(env.LOCALAPPDATA ?? join70(home2, "AppData", "Local"), "ms-playwright");
+  return join70(env.XDG_CACHE_HOME ?? join70(home2, ".cache"), "ms-playwright");
 }
 function checkPlaywright(p) {
   const { config, repo, ctx } = p;
@@ -59347,7 +60455,7 @@ function checkPlaywright(p) {
   if (!wanted) return pass("playwright", "ui", "not required: no ui section and no playwright check is configured");
   const level = fail2;
   if (!repo) return level("playwright", "ui", "no repository to look for Playwright in", "a repository", null);
-  const req = createRequire4(join67(repo, "package.json"));
+  const req = createRequire4(join70(repo, "package.json"));
   let pwTest = null;
   try {
     pwTest = req.resolve("@playwright/test/package.json");
@@ -59365,7 +60473,7 @@ function checkPlaywright(p) {
   if (!core) return level("playwright", "ui", "playwright-core is missing next to @playwright/test", "playwright-core", "reinstall dependencies");
   let revisions = {};
   try {
-    const bj = JSON.parse(readFileSync30(join67(core, "..", "browsers.json"), "utf8"));
+    const bj = JSON.parse(readFileSync31(join70(core, "..", "browsers.json"), "utf8"));
     revisions = Object.fromEntries((bj.browsers ?? []).map((b) => [b.name, b.revision]));
   } catch {
     details.push("browsers.json could not be read; browser revisions are not checked");
@@ -59376,7 +60484,7 @@ function checkPlaywright(p) {
   for (const b of names) {
     const dirs = b === "chromium" ? ["chromium", "chromium_headless_shell"] : [b];
     const revs = dirs.map((d) => ({ d, rev: revisions[d] ?? revisions[b] ?? null }));
-    const present = revs.some((r) => r.rev ? existsSync50(join67(cache2, `${r.d}-${r.rev}`)) : false);
+    const present = revs.some((r) => r.rev ? existsSync51(join70(cache2, `${r.d}-${r.rev}`)) : false);
     details.push(`${b}: ${present ? `installed (${cache2})` : `not found in ${cache2}`}`);
     if (!present && revs.some((r) => r.rev)) missing.push(b);
   }
@@ -59406,21 +60514,21 @@ function headlessShellLayouts(arch) {
 function headlessChromiumOf(repo, cache2, arch = process.arch) {
   let browsersJson;
   try {
-    browsersJson = join67(createRequire4(join67(repo, "package.json")).resolve("playwright-core/package.json"), "..", "browsers.json");
+    browsersJson = join70(createRequire4(join70(repo, "package.json")).resolve("playwright-core/package.json"), "..", "browsers.json");
   } catch {
     return { problem: "Playwright is not installed in this repository" };
   }
   let revision;
   try {
-    const bj = JSON.parse(readFileSync30(browsersJson, "utf8"));
+    const bj = JSON.parse(readFileSync31(browsersJson, "utf8"));
     const rev = (name) => bj.browsers?.find((b) => b.name === name && typeof b.revision === "string")?.revision;
     revision = rev("chromium-headless-shell") ?? rev("chromium");
   } catch {
     return { problem: `Playwright's browsers.json could not be read (${browsersJson})` };
   }
   if (!revision) return { problem: "Playwright's browsers.json names no Chromium revision" };
-  const dir = join67(cache2, `chromium_headless_shell-${revision}`);
-  const exe = headlessShellLayouts(arch).map((rel) => join67(dir, rel)).find((p) => isExecutable2(p));
+  const dir = join70(cache2, `chromium_headless_shell-${revision}`);
+  const exe = headlessShellLayouts(arch).map((rel) => join70(dir, rel)).find((p) => isExecutable2(p));
   return exe ? { exe, revision } : { problem: `Playwright's headless Chromium (revision ${revision}) is not installed in ${cache2}` };
 }
 function noncePage() {
@@ -59450,7 +60558,7 @@ async function browserIsolationCheck(input) {
   if ("problem" in browser) {
     return warn2(id, "ui", `not launched: ${browser.problem}`, "Playwright's headless Chromium for the repository's Playwright", "npm install -D @playwright/test, then npx playwright install chromium", [info.detail, limitation]);
   }
-  const dir = realpathSync19(mkdtempSync7(join67(tmpdir13(), "orbit-doctor-browser-")));
+  const dir = realpathSync19(mkdtempSync7(join70(tmpdir13(), "orbit-doctor-browser-")));
   try {
     const repo = realpathSync19(input.repo);
     const exe = realpathSync19(browser.exe);
@@ -59458,7 +60566,7 @@ async function browserIsolationCheck(input) {
     const profile = { writablePaths: [dir], denyReadPaths, allowedHosts: [], allowLocalBinding: false, chromiumMachRendezvous: true, limits: { timeoutMs: 9e4, memoryMb: null, cpus: null, pids: null } };
     const env = { ...safeBaseEnv(input.env), TMPDIR: dir };
     const page = noncePage();
-    const argv2 = [browser.exe, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", `--user-data-dir=${join67(dir, "profile")}`, "--dump-dom", page.url];
+    const argv2 = [browser.exe, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", `--user-data-dir=${join70(dir, "profile")}`, "--dump-dom", page.url];
     const wrapped = provider.wrap(argv2, profile, { cwd: dir, env });
     let r;
     try {
@@ -59518,7 +60626,7 @@ async function checkService(p) {
   let beat = "no controller has registered in this repository";
   let stale = false;
   let live = false;
-  if (existsSync50(stateDbPath(repo))) {
+  if (existsSync51(stateDbPath(repo))) {
     let db = null;
     try {
       db = openDb(stateDbPath(repo));
@@ -59538,7 +60646,7 @@ async function checkService(p) {
   if (linger === "no") details.push(`lingering is off for ${ctx.user}: the service stops at logout (loginctl enable-linger ${ctx.user})`);
   if (!status2.installed) return warn2("service", "service", "no service is installed, so runs only progress while a terminal is attached", "an installed background service (survives terminal closure and restarts after failure)", orbitHint("service install", void 0, { quote: false }), details);
   if (status2.loaded !== true) return warn2("service", "service", `service installed but ${status2.loaded === false ? "not loaded" : `state unknown (${status2.detail})`}`, "a loaded service", `${orbitHint("service install", void 0, { quote: false })} (reloads it)`, details);
-  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join67(ctx.orbitHome, "logs")}, then ${orbitHint("service install", void 0, { quote: false })} to restart it`, details);
+  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join70(ctx.orbitHome, "logs")}, then ${orbitHint("service install", void 0, { quote: false })} to restart it`, details);
   if (linger === "no") return warn2("service", "service", "service is loaded; lingering is off", "systemd lingering", `loginctl enable-linger ${ctx.user}`, details);
   return pass("service", "service", live ? "service loaded and its controller heartbeat is fresh" : "service loaded; the controller has not published a heartbeat yet", details);
 }
@@ -59598,7 +60706,7 @@ async function runDoctor(ctx, opts) {
   });
   let regDb = null;
   try {
-    const persisted = repo !== null && existsSync50(stateDbPath(repo));
+    const persisted = repo !== null && existsSync51(stateDbPath(repo));
     regDb = persisted ? openDb(stateDbPath(repo)) : openDb(":memory:");
     const registry = new ModelRegistry(regDb, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
     if (!persisted || registry.list().length === 0) registry.seed();
@@ -59667,6 +60775,7 @@ var init_doctor = __esm({
     init_single_sandbox();
     init_registry();
     init_select();
+    init_review();
     init_recovery();
     init_github();
     init_publication();
@@ -59736,11 +60845,465 @@ var init_gc = __esm({
   }
 });
 
+// src/cli/commands/models.ts
+import { existsSync as existsSync52 } from "node:fs";
+function configOrDefault(repo) {
+  try {
+    return { config: loadConfig(repo), loaded: true };
+  } catch {
+    return { config: defaultConfig(), loaded: false };
+  }
+}
+async function modelsListCommand(args, ctx) {
+  args.expect(0);
+  const repo = await resolveRepo(ctx, args.str("repo"));
+  const { config, loaded } = configOrDefault(repo);
+  const persisted = existsSync52(stateDbPath(repo));
+  const db = persisted ? openState(repo) : openDb(":memory:");
+  try {
+    const registry = new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
+    if (!persisted || registry.list().length === 0) registry.seed();
+    registry.adoptSharedCatalog();
+    const entries = registry.list();
+    const assessments = /* @__PURE__ */ new Map();
+    for (const surface of ["claude-cli", "codex-cli"]) assessments.set(surface, registry.assess({ surface, allowedModels: config.routing.allowed_models }));
+    const reviewKey = (surface, provider) => `${surface}|${provider}`;
+    const reviewAssessments = /* @__PURE__ */ new Map();
+    for (const e of entries) {
+      for (const s of e.surfaces) {
+        const key2 = reviewKey(s.surface, e.provider);
+        if (!reviewAssessments.has(key2)) reviewAssessments.set(key2, registry.assess({ surface: s.surface, provider: e.provider, allowedModels: [...config.routing.allowed_models, `${e.provider}:*`], structuredOutput: true }));
+      }
+    }
+    const rows = entries.flatMap(
+      (e) => (e.surfaces.length ? e.surfaces : [{ surface: "claude-cli", available: null, detail: null, checkedAt: null }]).map((s) => {
+        const a = assessments.get(s.surface);
+        const reasons = a?.excluded.find((x) => x.model.modelId === e.modelId)?.reasons ?? [];
+        const eligible = a?.eligible.some((x) => x.modelId === e.modelId) ?? false;
+        const policy = allowMatch(e, config.routing.allowed_models);
+        const onlyUnvalidated = !eligible && reasons.length > 0 && reasons.every((r) => /not yet validated$/.test(r));
+        const forReview = reviewAssessments.get(reviewKey(s.surface, e.provider));
+        const reviewEligible = (forReview?.eligible.some((x) => x.modelId === e.modelId) ?? false) && (e.provider !== "claude" || policy !== null);
+        const reviewUnvalidated = !reviewEligible && (e.provider !== "claude" || policy !== null) && (forReview?.excluded.find((x) => x.model.modelId === e.modelId)?.reasons ?? []).length > 0 && (forReview?.excluded.find((x) => x.model.modelId === e.modelId)?.reasons ?? []).every((r) => /not yet validated$/.test(r));
+        return {
+          review_eligible: reviewEligible || reviewUnvalidated,
+          review: reviewEligible ? "yes" : reviewUnvalidated ? "yes, unvalidated" : "no",
+          model: e.modelId,
+          provider: e.provider,
+          family: e.family,
+          surface: s.surface,
+          availability: s.available === true ? "available" : s.available === false ? "unavailable" : "unvalidated",
+          availability_detail: s.detail,
+          policy: policy === "explicit" ? "allowed" : policy === "wildcard" ? "wildcard" : "not allowed",
+          eligible,
+          status: eligible ? "eligible" : onlyUnvalidated ? "eligible-unvalidated" : "excluded",
+          reasons
+        };
+      })
+    );
+    if (args.bool("json")) {
+      json(ctx.io, { config_loaded: loaded, persisted, allowed_models: config.routing.allowed_models, models: rows });
+      return EXIT.OK;
+    }
+    ctx.io.out(table(rows.map((r) => [r.model, r.surface, r.availability, r.policy, r.status === "eligible" ? "yes" : r.status === "eligible-unvalidated" ? "yes, unvalidated" : `no: ${r.reasons.join("; ")}`, r.review]), ["MODEL", "SURFACE", "AVAILABILITY", "POLICY", "ELIGIBLE", "REVIEW"]));
+    if (!loaded) line(ctx.io, "\n(no valid .orbit/config.yaml: showing eligibility under the default allowed_models)");
+    if (!persisted) line(ctx.io, "(no state database yet: showing the shipped registry seed)");
+    line(ctx.io, "\nELIGIBLE is for implementation (routing.allowed_models); REVIEW is whether the model can be the independent reviewer, which also accepts any model of the reviewing provider.");
+    line(ctx.io, 'unvalidated means Orbit has not yet seen the model run on that surface; "orbit models refresh --probe" checks it live.');
+    return EXIT.OK;
+  } finally {
+    db.close();
+  }
+}
+function probeEnv(env) {
+  const out = {};
+  for (const k of ["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "CODEX_HOME", "CODEX_API_KEY", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]) if (env[k] !== void 0) out[k] = env[k];
+  return out;
+}
+async function readCodexCatalog(registry, id, command, repo, ctx, timeoutMs = 6e4) {
+  const r = await execCapture([...commandArgv(command), "debug", "models"], { env: probeEnv(ctx.env), timeoutMs, cwd: repo }).catch((err) => err);
+  if (r instanceof Error) return { note: `provider ${id}: ${flat(r.message)}` };
+  if (r.exitCode !== 0) return { note: `provider ${id}: "${command} debug models" exited ${r.exitCode ?? "by signal"}; registry availability left as it was` };
+  try {
+    const catalog = JSON.parse(r.stdout);
+    const res = registry.registerCodexCatalog(catalog, { source: "live" });
+    saveSharedCatalog(sharedCatalogPath(ctx.orbitHome), catalog, ctx.clock.now());
+    return { change: res, note: `provider ${id}: ${res.listed.length} model(s) listed${res.hidden.length ? `, ${res.hidden.length} hidden` : ""}${res.absent.length ? `, ${res.absent.length} no longer offered` : ""}${res.providerDefault ? `; default ${res.providerDefault}` : ""}` };
+  } catch (err) {
+    return { note: `${id}: "debug models" printed something that is not a model catalog (${err instanceof Error ? flat(err.message) : "unreadable"})`, malformed: true };
+  }
+}
+async function modelsRefreshCommand(args, ctx) {
+  args.expect(0);
+  const repo = await resolveRepo(ctx, args.str("repo"));
+  const { config } = configOrDefault(repo);
+  const db = openState(repo, { create: true });
+  const notes = [];
+  const changes = {};
+  try {
+    const registry = new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
+    const seeded = registry.seed();
+    changes.seed = seeded;
+    notes.push(`seeded the registry: ${seeded.inserted.length} added, ${seeded.updated.length} refreshed`);
+    for (const [id, pc] of Object.entries(config.providers)) {
+      let kind;
+      try {
+        kind = providerKind(id);
+      } catch (err) {
+        notes.push(`provider ${id}: skipped (${err instanceof Error ? err.message : String(err)})`);
+        continue;
+      }
+      if (kind === "claude") {
+        const adapter = createAdapter(id, pc, { baseEnv: { ...probeEnv(ctx.env) }, clock: ctx.clock });
+        const caps = await adapter.discoverCapabilities();
+        if (!caps.available || !caps.version) {
+          notes.push(`provider ${id}: claude CLI unavailable (${flat(caps.detail)}); registry availability left as it was`);
+          continue;
+        }
+        notes.push(`provider ${id}: claude ${caps.version}`);
+        for (const e of registry.list().filter((m) => m.provider === "claude")) {
+          const min = e.eligibility.minCliVersion;
+          if (min && compareVersions(caps.version, min) < 0) {
+            registry.markAvailability(e.modelId, "claude-cli", false, `installed claude ${caps.version} is older than ${min}, which ${e.modelId} needs`);
+            notes.push(`  ${e.modelId}: unavailable (needs claude >= ${min})`);
+          }
+        }
+        if (args.bool("probe")) {
+          const probe2 = adapter.probeCredentials;
+          if (typeof probe2 !== "function") {
+            notes.push(`  --probe: ${id} has no live probe`);
+            continue;
+          }
+          for (const e of registry.list().filter((m) => m.provider === "claude" && allowMatch(m, config.routing.allowed_models) !== null)) {
+            if (e.surfaces.some((s) => s.surface === "claude-cli" && s.available === false)) continue;
+            const st = await probe2.call(adapter, { model: e.eligibility.cliAlias ?? e.modelId, timeoutMs: 9e4 });
+            if (st.state === "valid") {
+              registry.markAvailability(e.modelId, "claude-cli", true, `live probe succeeded (${st.method ?? "credential"})`);
+              notes.push(`  ${e.modelId}: validated by a live request`);
+            } else notes.push(`  ${e.modelId}: probe inconclusive (${st.state}: ${flat(st.detail)}); not marked`);
+          }
+        }
+      } else {
+        const outcome = await readCodexCatalog(registry, id, pc.command, repo, ctx);
+        if (outcome.change !== void 0) changes[`catalog:${id}`] = outcome.change;
+        if (outcome.malformed) throw new OrbitError("MALFORMED_OUTPUT", outcome.note);
+        notes.push(outcome.note);
+      }
+    }
+    if (args.bool("json")) json(ctx.io, { notes, changes, models: registry.list().map((e) => ({ model: e.modelId, available: e.available })) });
+    else for (const n2 of notes) line(ctx.io, n2);
+    return EXIT.OK;
+  } finally {
+    db.close();
+  }
+}
+var MODELS_REFRESH_OPTIONS;
+var init_models2 = __esm({
+  "src/cli/commands/models.ts"() {
+    "use strict";
+    init_errors();
+    init_exec();
+    init_policy();
+    init_db();
+    init_adapters();
+    init_registry();
+    init_shared_catalog();
+    init_start();
+    init_context();
+    init_exit();
+    init_io();
+    MODELS_REFRESH_OPTIONS = {
+      probe: { type: "boolean", description: "also make one tiny live request per allowed Claude model to validate it (costs a few cents)" }
+    };
+  }
+});
+
+// src/cli/check-detect.ts
+import { existsSync as existsSync53, readFileSync as readFileSync32 } from "node:fs";
+import { basename as basename14, dirname as dirname31, join as join71 } from "node:path";
+function read(path) {
+  try {
+    return readFileSync32(path, "utf8").slice(0, MAX_READ_BYTES);
+  } catch {
+    return null;
+  }
+}
+function slug(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "x";
+}
+function nodeDrafts(input, out) {
+  const { repo, files, pathEnv } = input;
+  const manifest = read(join71(repo, "package.json"));
+  if (manifest === null) return [];
+  let pkg;
+  try {
+    const parsed3 = JSON.parse(manifest);
+    if (typeof parsed3 !== "object" || parsed3 === null || Array.isArray(parsed3)) return [];
+    pkg = parsed3;
+  } catch {
+    out.skip("node", "package.json is not valid JSON");
+    return [];
+  }
+  const scripts = typeof pkg.scripts === "object" && pkg.scripts !== null ? pkg.scripts : {};
+  const has = (name) => typeof scripts[name] === "string" && scripts[name].trim() !== "";
+  let pm = "npm";
+  let pmFrom = "no lockfile, so npm";
+  if (existsSync53(join71(repo, "pnpm-lock.yaml"))) [pm, pmFrom] = ["pnpm", "pnpm-lock.yaml"];
+  else if (existsSync53(join71(repo, "yarn.lock"))) [pm, pmFrom] = ["yarn", "yarn.lock"];
+  else if (existsSync53(join71(repo, "package-lock.json")) || existsSync53(join71(repo, "npm-shrinkwrap.json"))) pmFrom = "package-lock.json";
+  else {
+    const declared = typeof pkg.packageManager === "string" ? /^(npm|pnpm|yarn)@/.exec(pkg.packageManager)?.[1] : void 0;
+    if (declared === "pnpm" || declared === "yarn") [pm, pmFrom] = [declared, "package.json packageManager"];
+  }
+  if (which(pm, pathEnv) === null) {
+    out.skip("node", `package.json declares checks, but ${pm} (chosen from ${pmFrom}) was not found on PATH`);
+    return [];
+  }
+  const workspaceDeclared = Array.isArray(pkg.workspaces) || typeof pkg.workspaces === "object" && pkg.workspaces !== null || existsSync53(join71(repo, "pnpm-workspace.yaml"));
+  const nestedManifests = files.filter((f) => f.endsWith("package.json") && f !== "package.json" && !f.split("/").includes("node_modules"));
+  const nestedHas = (name) => nestedManifests.some((f) => {
+    const t = read(join71(repo, f));
+    if (t === null) return false;
+    try {
+      const s = JSON.parse(t).scripts;
+      return typeof s?.[name] === "string";
+    } catch {
+      return false;
+    }
+  });
+  const run = (script2) => script2 === "test" ? [pm, "test"] : [pm, "run", script2];
+  const fanOut = (script2) => {
+    if (!workspaceDeclared || !nestedHas(script2)) return null;
+    if (pm === "npm") return ["npm", "run", script2, "--workspaces", "--if-present"];
+    if (pm === "pnpm") return ["pnpm", "-r", "--if-present", "run", script2];
+    return null;
+  };
+  const drafts = [];
+  const script = (name, scriptNames, category, timeout) => {
+    const found = scriptNames.find(has);
+    if (found !== void 0) {
+      drafts.push({ name, command: run(found), category, timeout_seconds: timeout, reason: `package.json declares a ${found} script (${pm}, from ${pmFrom})` });
+      return true;
+    }
+    const fan = scriptNames.map(fanOut).find((c) => c !== null);
+    if (fan) {
+      drafts.push({ name, command: fan, category, timeout_seconds: timeout, reason: `workspace packages declare a ${scriptNames[0]} script and the root declares none, so one root command runs them (${pm}, from ${pmFrom})` });
+      return true;
+    }
+    return false;
+  };
+  script("lint", ["lint"], "lint", TIMEOUT.lint);
+  const typed = script("typecheck", ["typecheck", "type-check", "check-types"], "typecheck", TIMEOUT.typecheck);
+  if (!typed) {
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    if (existsSync53(join71(repo, "tsconfig.json")) && "typescript" in deps) {
+      const tsc = pm === "npm" ? ["npx", "--no-install", "tsc", "--noEmit"] : pm === "pnpm" ? ["pnpm", "exec", "tsc", "--noEmit"] : ["yarn", "tsc", "--noEmit"];
+      drafts.push({ name: "typecheck", command: tsc, category: "typecheck", timeout_seconds: TIMEOUT.typecheck, reason: `tsconfig.json and the typescript dependency (${pm}, from ${pmFrom})` });
+    }
+  }
+  if (has("test") && /no test specified/i.test(scripts.test)) {
+    out.skip("node", 'the test script is the npm placeholder ("no test specified"), so no test check was proposed');
+  } else script("unit-tests", ["test"], "test", TIMEOUT.nodeTest);
+  script("build", ["build"], "build", TIMEOUT.nodeBuild);
+  return drafts;
+}
+function dotnetTestProjects(repo, projects) {
+  const found = [];
+  for (const p of projects.slice(0, MAX_PROJECT_READS)) {
+    const text2 = read(join71(repo, p)) ?? "";
+    if (/Microsoft\.NET\.Test\.Sdk/i.test(text2) || /<IsTestProject>\s*true/i.test(text2) || /tests?\.[cfv]sproj$/i.test(basename14(p))) found.push(p);
+  }
+  return found;
+}
+function dotnetDrafts(input, out) {
+  const { repo, files, pathEnv } = input;
+  const solutions = files.filter((f) => /\.(sln|slnx)$/i.test(f));
+  const projects = files.filter((f) => /\.(cs|fs|vb)proj$/i.test(f));
+  if (solutions.length === 0 && projects.length === 0) return [];
+  if (which("dotnet", pathEnv) === null) {
+    out.skip("dotnet", "the repository has .NET projects, but dotnet was not found on PATH");
+    return [];
+  }
+  const depth = (f) => f.split("/").length;
+  let targets;
+  let what;
+  if (solutions.length > 0) {
+    const shallowest = Math.min(...solutions.map(depth));
+    targets = solutions.filter((f) => depth(f) === shallowest).sort();
+    what = "solution";
+  } else {
+    targets = [...projects].sort();
+    what = "project";
+  }
+  if (targets.length > MAX_TARGETS) {
+    out.skip("dotnet", `${targets.length} ${what} files and no single solution to build, so none was proposed; add a solution file or define the checks by hand`);
+    return [];
+  }
+  const testProjects = dotnetTestProjects(repo, projects);
+  const drafts = [];
+  for (const target of targets) {
+    const t = target.startsWith("-") ? `./${target}` : target;
+    const suffix = targets.length > 1 ? `-${slug(basename14(target).replace(/\.[^.]+$/, ""))}` : "";
+    drafts.push({ name: `build${suffix}`, command: ["dotnet", "build", t], category: "build", timeout_seconds: TIMEOUT.compile, reason: `${what} file ${t}` });
+    const testable = what === "solution" ? testProjects.length > 0 : testProjects.includes(t);
+    if (testable) drafts.push({ name: `unit-tests${suffix}`, command: ["dotnet", "test", t], category: "test", timeout_seconds: TIMEOUT.nodeTest, reason: `${what} file ${t} with ${what === "solution" ? "a test project" : "a test project of its own"} (Microsoft.NET.Test.Sdk)` });
+  }
+  return drafts;
+}
+function pythonDrafts(input, out) {
+  const { repo, files, pathEnv } = input;
+  const pyproject = read(join71(repo, "pyproject.toml"));
+  const setupCfg = read(join71(repo, "setup.cfg"));
+  const toxIni = read(join71(repo, "tox.ini"));
+  const rootFiles = files.filter((f) => !f.includes("/"));
+  const requirements = rootFiles.filter((f) => /^requirements.*\.(txt|in)$/i.test(f)).map((f) => read(join71(repo, f)) ?? "");
+  const markers = ["pyproject.toml", "setup.cfg", "tox.ini", "pytest.ini", "mypy.ini", "ruff.toml", ".flake8"];
+  if (!markers.some((m) => existsSync53(join71(repo, m)))) return [];
+  const listed = (name) => {
+    const re = new RegExp(`(^|[^\\w-])${name}([^\\w-]|$)`, "im");
+    return [pyproject, setupCfg, toxIni, ...requirements].some((t) => t !== null && re.test(t));
+  };
+  const section = (text2, re) => text2 !== null && re.test(text2);
+  const exists = (f) => existsSync53(join71(repo, f));
+  const declared = {
+    pytest: exists("pytest.ini") ? "pytest.ini" : section(pyproject, /^\[tool\.pytest/m) ? "pyproject.toml" : section(setupCfg, /^\[tool:pytest\]/m) ? "setup.cfg" : section(toxIni, /^\[pytest\]/m) ? "tox.ini" : listed("pytest") ? "the declared dependencies" : null,
+    ruff: exists("ruff.toml") ? "ruff.toml" : exists(".ruff.toml") ? ".ruff.toml" : section(pyproject, /^\[tool\.ruff/m) ? "pyproject.toml" : listed("ruff") ? "the declared dependencies" : null,
+    flake8: exists(".flake8") ? ".flake8" : section(setupCfg, /^\[flake8\]/m) ? "setup.cfg" : section(toxIni, /^\[flake8\]/m) ? "tox.ini" : listed("flake8") ? "the declared dependencies" : null,
+    mypy: exists("mypy.ini") ? "mypy.ini" : exists(".mypy.ini") ? ".mypy.ini" : section(pyproject, /^\[tool\.mypy/m) ? "pyproject.toml" : section(setupCfg, /^\[mypy/m) ? "setup.cfg" : listed("mypy") ? "the declared dependencies" : null
+  };
+  const present = (tool) => which(tool, pathEnv) !== null;
+  const drafts = [];
+  const need = (tool) => {
+    if (declared[tool] === null) return false;
+    if (present(tool)) return true;
+    out.skip("python", `${tool} is declared in ${declared[tool]}, but was not found on PATH`);
+    return false;
+  };
+  if (need("pytest")) drafts.push({ name: "unit-tests", command: ["pytest"], category: "test", timeout_seconds: TIMEOUT.nodeTest, reason: `pytest is configured in ${declared.pytest}` });
+  if (declared.ruff !== null && present("ruff")) drafts.push({ name: "lint", command: ["ruff", "check", "."], category: "lint", timeout_seconds: TIMEOUT.lint, reason: `ruff is configured in ${declared.ruff}` });
+  else if (declared.flake8 !== null && present("flake8")) drafts.push({ name: "lint", command: ["flake8"], category: "lint", timeout_seconds: TIMEOUT.lint, reason: `flake8 is configured in ${declared.flake8}` });
+  else if (declared.ruff !== null) out.skip("python", `ruff is declared in ${declared.ruff}, but was not found on PATH`);
+  else if (declared.flake8 !== null) out.skip("python", `flake8 is declared in ${declared.flake8}, but was not found on PATH`);
+  if (need("mypy")) drafts.push({ name: "typecheck", command: ["mypy", "."], category: "typecheck", timeout_seconds: TIMEOUT.pyType, reason: `mypy is configured in ${declared.mypy}` });
+  return drafts;
+}
+function goWorkModules(text2) {
+  const dirs = [];
+  const clean = text2.replace(/\/\/.*$/gm, "");
+  for (const m of clean.matchAll(/^\s*use\s*\(([^)]*)\)/gm)) for (const l of (m[1] ?? "").split("\n")) dirs.push(l.trim());
+  for (const m of clean.matchAll(/^\s*use\s+([^\s(][^\s]*)\s*$/gm)) dirs.push(m[1] ?? "");
+  const norm3 = dirs.map((d) => d.replace(/^"|"$/g, "").replace(/^\.\//, "").replace(/\/$/, "")).filter((d) => d !== "");
+  return [...new Set(norm3)].filter((d) => d !== "." && !d.startsWith("/") && !d.includes(".."));
+}
+function goDrafts(input, out) {
+  const { repo, pathEnv } = input;
+  const work = read(join71(repo, "go.work"));
+  if (!existsSync53(join71(repo, "go.mod")) && work === null) return [];
+  if (which("go", pathEnv) === null) {
+    out.skip("go", "the repository has a Go module, but go was not found on PATH");
+    return [];
+  }
+  const modules = work === null ? [] : goWorkModules(work);
+  const patterns = modules.length > 0 ? modules.map((m) => `./${m}/...`) : ["./..."];
+  const reason = modules.length > 0 ? `go.work lists ${modules.length} module(s), so one root command covers them` : "go.mod";
+  if (modules.length === 0 && !existsSync53(join71(repo, "go.mod"))) {
+    out.skip("go", "go.work names no module directory and there is no root go.mod");
+    return [];
+  }
+  return [
+    { name: "build", command: ["go", "build", ...patterns], category: "build", timeout_seconds: TIMEOUT.compile, reason },
+    { name: "vet", command: ["go", "vet", ...patterns], category: "lint", timeout_seconds: TIMEOUT.lint, reason },
+    { name: "unit-tests", command: ["go", "test", ...patterns], category: "test", timeout_seconds: TIMEOUT.nodeTest, reason }
+  ];
+}
+async function rustDrafts(input, out) {
+  const { repo, pathEnv } = input;
+  const manifest = read(join71(repo, "Cargo.toml"));
+  if (manifest === null) return [];
+  const cargo = which("cargo", pathEnv);
+  if (cargo === null) {
+    out.skip("rust", "the repository has a Cargo.toml, but cargo was not found on PATH");
+    return [];
+  }
+  const ws = /^\[workspace\]/m.test(manifest) ? ["--workspace"] : [];
+  const reason = ws.length > 0 ? "Cargo.toml declares a workspace, so one root command covers its members" : "Cargo.toml";
+  const drafts = [
+    { name: "build", command: ["cargo", "build", ...ws], category: "build", timeout_seconds: TIMEOUT.rustBuild, reason },
+    { name: "unit-tests", command: ["cargo", "test", ...ws], category: "test", timeout_seconds: TIMEOUT.rustTest, reason }
+  ];
+  const clippy = await (input.clippyAvailable ?? realClippyProbe)(cargo);
+  if (clippy) drafts.push({ name: "clippy", command: ["cargo", "clippy", ...ws, "--all-targets", "--", "-D", "warnings"], category: "lint", timeout_seconds: TIMEOUT.rustLint, reason: `${reason}; cargo clippy is installed` });
+  else out.skip("rust", "cargo clippy is not installed (rustup component add clippy), so no clippy check was proposed");
+  return drafts;
+}
+async function realClippyProbe(cargo) {
+  try {
+    const r = await execCapture([cargo, "clippy", "--version"], { cwd: dirname31(cargo), timeoutMs: 2e4, maxOutputBytes: 16 * 1024 });
+    return r.exitCode === 0 && !r.timedOut;
+  } catch {
+    return false;
+  }
+}
+async function detectChecks(input) {
+  const out = new Collector();
+  const groups = [
+    ["node", nodeDrafts(input, out)],
+    ["dotnet", dotnetDrafts(input, out)],
+    ["python", pythonDrafts(input, out)],
+    ["go", goDrafts(input, out)],
+    ["rust", await rustDrafts(input, out)]
+  ];
+  const active = groups.filter(([, d]) => d.length > 0);
+  const mixed = active.length > 1;
+  for (const [ecosystem, drafts] of active) {
+    for (const { name, ...rest } of drafts) out.add({ id: mixed ? `${ecosystem}-${name}` : name, ecosystem, ...rest });
+  }
+  return { proposed: out.proposed, notProposed: out.notProposed };
+}
+function renderChecksYaml(proposed) {
+  let text2 = "";
+  for (const c of proposed) {
+    text2 += `  # Proposed by "orbit init" (${c.reason.replace(/[\r\n]+/g, " ")}). Review it before the first run.
+`;
+    text2 += `  ${c.id}:
+`;
+    text2 += `    command: [${c.command.map((x) => JSON.stringify(x)).join(", ")}]
+`;
+    text2 += `    category: ${c.category}
+`;
+    text2 += `    timeout_seconds: ${c.timeout_seconds}
+`;
+  }
+  return text2;
+}
+var TIMEOUT, MAX_READ_BYTES, MAX_PROJECT_READS, MAX_TARGETS, Collector;
+var init_check_detect = __esm({
+  "src/cli/check-detect.ts"() {
+    "use strict";
+    init_exec();
+    init_util();
+    TIMEOUT = { lint: 300, typecheck: 300, nodeTest: 900, nodeBuild: 600, compile: 900, rustBuild: 1200, rustTest: 1200, rustLint: 900, pyType: 600 };
+    MAX_READ_BYTES = 256 * 1024;
+    MAX_PROJECT_READS = 200;
+    MAX_TARGETS = 3;
+    Collector = class {
+      proposed = [];
+      notProposed = [];
+      add(c) {
+        this.proposed.push(c);
+      }
+      skip(ecosystem, reason) {
+        this.notProposed.push({ ecosystem, reason });
+      }
+    };
+  }
+});
+
 // src/cli/commands/init.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync51, mkdirSync as mkdirSync24, readFileSync as readFileSync31, writeFileSync as writeFileSync9 } from "node:fs";
-import { dirname as dirname30, join as join68 } from "node:path";
+import { appendFileSync as appendFileSync2, existsSync as existsSync54, mkdirSync as mkdirSync24, readFileSync as readFileSync33, writeFileSync as writeFileSync9 } from "node:fs";
+import { dirname as dirname32, join as join72 } from "node:path";
 function templatePath() {
-  return join68(orbitInstallDir(), "templates", "config.yaml");
+  return join72(orbitInstallDir(), "templates", "config.yaml");
 }
 function templateText() {
   if (true) return `# Orbit configuration (.orbit/config.yaml)
@@ -59915,12 +61478,17 @@ agents:
   allow_managed_plugins: false
 
 review:
-  # Review by a provider other than the one that wrote the change.
-  independent_provider_required: true
-  preferred_provider: codex
-  # Must stay false while independent_provider_required is true: an
-  # independent review cannot fall back to the same provider.
-  fallback_same_provider_allowed: false
+  # Independent reviewers (a provider other than the one that wrote the
+  # change), in preference order. The first that is installed, logged in,
+  # data_policy_eligible and has a qualified model reviews. Supported: codex.
+  providers: [codex]
+  # When none of them is usable:
+  #   claude  Claude reviews in a separate session at the safety-review
+  #           quality floor; every report says the review was not
+  #           independent and why.
+  #   ask     the run asks a person first and continues only on a yes.
+  #   block   the run blocks until an independent reviewer is usable.
+  when_unavailable: claude
   block_unresolved_high_impact_findings: true
 
 # Secret-scan and SAST findings (static security gate). Findings at a listed
@@ -60157,6 +61725,26 @@ guard:
   terms_file: null
   allowed_emails: []
 
+# Notifications when a run ends or asks a question (docs/decisions/0008).
+# Payloads carry the run id, state, reason, next action and question ids only.
+notifications:
+  # macOS Notification Centre or Linux notify-send; skipped where neither exists.
+  desktop: true
+  # POST to a webhook (Slack-compatible "text"). Name the environment variable
+  # that holds the URL, never the URL itself; its host must be in
+  # network.allowed_hosts. Example: { url_env: ORBIT_WEBHOOK_URL }
+  webhook: null
+  # Comment on the run's pull request (or the linked issue below).
+  github_comment: false
+  # Answer an open question with a "/orbit answer <question-id> <choice>"
+  # comment. Only people with write, maintain or admin permission count,
+  # checked with the GitHub API through GH_TOKEN when the comment is read.
+  remote_answers:
+    enabled: false
+    # An issue linked to every run started under this policy (or null).
+    issue: null
+    poll_seconds: 120
+
 # Verification policy.
 verification:
   # A check that fails and then passes on a rerun is reported as flaky. When
@@ -60164,8 +61752,8 @@ verification:
   allow_flaky_pass: false
 `;
   const tpl = templatePath();
-  if (!existsSync51(tpl)) throw new OrbitError("NOT_FOUND", `the starter template ${tpl} is missing from this installation`);
-  return readFileSync31(tpl, "utf8");
+  if (!existsSync54(tpl)) throw new OrbitError("NOT_FOUND", `the starter template ${tpl} is missing from this installation`);
+  return readFileSync33(tpl, "utf8");
 }
 async function currentBranch(ctx, repo) {
   try {
@@ -60181,19 +61769,57 @@ async function excludeFile(ctx, repo) {
   if (r.exitCode !== 0 || !r.stdout.trim()) throw new OrbitError("GIT_FAILED", `cannot locate .git/info/exclude: ${r.stderr.trim().slice(0, 200)}`);
   return r.stdout.trim();
 }
+async function seedModels(ctx, repo) {
+  const notes = [];
+  let config;
+  try {
+    config = loadConfig(repo);
+  } catch {
+    config = defaultConfig();
+  }
+  const persisted = existsSync54(stateDbPath(repo));
+  let db;
+  try {
+    db = openDb(persisted ? stateDbPath(repo) : ":memory:");
+  } catch (err) {
+    return [`model registry not seeded (${err instanceof Error ? err.message.replace(/\s+/g, " ").slice(0, 160) : "unreadable state database"}); run ${orbitHint("models refresh")}`];
+  }
+  try {
+    const registry = new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
+    const seeded = registry.seed();
+    notes.push(`model registry seeded with ${seeded.inserted.length + seeded.updated.length} shipped model(s)`);
+    for (const [id, pc] of Object.entries(config.providers)) {
+      let kind;
+      try {
+        kind = providerKind(id);
+      } catch {
+        continue;
+      }
+      if (kind !== "codex") continue;
+      const outcome = await readCodexCatalog(registry, id, pc.command, repo, ctx, 3e4);
+      notes.push(outcome.change !== void 0 ? outcome.note : `${outcome.note}; run ${orbitHint("models refresh")} once it works`);
+    }
+  } catch (err) {
+    notes.push(`model registry not seeded (${err instanceof Error ? err.message.replace(/\s+/g, " ").slice(0, 160) : "unknown error"}); run ${orbitHint("models refresh")}`);
+  } finally {
+    db.close();
+  }
+  return notes;
+}
 async function initCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
-  const configPath = join68(repo, ".orbit", "config.yaml");
+  const configPath = join72(repo, ".orbit", "config.yaml");
   let config;
   let derivedPaths = [];
   let protectedAdded = [];
   let excludedDirs = [];
   let baseBranch = null;
-  if (existsSync51(configPath)) config = "exists";
+  let checkProposal = { proposed: [], notProposed: [] };
+  if (existsSync54(configPath)) config = "exists";
   else {
     let text2 = templateText();
-    mkdirSync24(dirname30(configPath), { recursive: true });
+    mkdirSync24(dirname32(configPath), { recursive: true });
     const proposal = await proposeScope(ctx, repo);
     derivedPaths = proposal.allowed;
     excludedDirs = proposal.excluded;
@@ -60206,6 +61832,12 @@ async function initCommand(args, ctx) {
     if (protectedAdded.length > 0) {
       text2 = text2.replace(/^(\s*protected_paths: \[.*?)\]$/m, (_m, head) => `${head}, ${protectedAdded.map((x) => JSON.stringify(x)).join(", ")}]`);
     }
+    checkProposal = await detectChecks({ repo, files: await trackedFiles(ctx, repo), pathEnv: ctx.env.PATH });
+    if (checkProposal.proposed.length > 0) {
+      const block2 = renderChecksYaml(checkProposal.proposed);
+      text2 = text2.replace(/^checks:\n/m, () => `checks:
+${block2}`);
+    }
     try {
       writeFileSync9(configPath, text2, { flag: "wx", mode: 420 });
       config = "created";
@@ -60215,8 +61847,8 @@ async function initCommand(args, ctx) {
     }
   }
   const excludePath = await excludeFile(ctx, repo);
-  mkdirSync24(dirname30(excludePath), { recursive: true });
-  const current = existsSync51(excludePath) ? readFileSync31(excludePath, "utf8") : "";
+  mkdirSync24(dirname32(excludePath), { recursive: true });
+  const current = existsSync54(excludePath) ? readFileSync33(excludePath, "utf8") : "";
   const have = new Set(current.split("\n").map((l) => l.trim()));
   const missing = EXCLUDE_RULES.filter((r) => !have.has(r));
   if (missing.length > 0) {
@@ -60240,8 +61872,9 @@ async function initCommand(args, ctx) {
       warnings.push(`scope.allowed_paths (${globs.join(", ")}) matches no tracked file, so a worker could change nothing; set scope.allowed_paths in .orbit/config.yaml to globs that match the files a worker may change`);
     }
   }
+  const models = await seedModels(ctx, repo);
   if (args.bool("json")) {
-    json(ctx.io, { repo, config: { path: configPath, status: config, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, config_problems: problems, warnings });
+    json(ctx.io, { repo, review_policy: config === "created" ? REVIEW_POLICY_PROPOSAL : null, config: { path: configPath, status: config, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === "created" ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
@@ -60250,22 +61883,37 @@ async function initCommand(args, ctx) {
   if (config === "created" && excludedDirs.length > 0) line(ctx.io, `left out of scope.allowed_paths because they hold CI or build definitions: ${excludedDirs.join(", ")}`);
   if (config === "created" && protectedAdded.length > 0) line(ctx.io, `scope.protected_paths gained ${protectedAdded.join(", ")} (CI pipeline and build-system definitions found in the repository)`);
   if (config === "created" && derivedPaths.length > 0) line(ctx.io, "Narrow scope.allowed_paths to the folders your goal needs: the proposal covers every source folder, and a smaller scope is safer and cheaper to review.");
+  if (config === "created") {
+    if (checkProposal.proposed.length > 0) {
+      line(ctx.io, `checks proposed from what the repository declares (each is commented in the config; review them, they are the evidence every run is judged by):`);
+      for (const c of checkProposal.proposed) line(ctx.io, `  ${c.id}: ${c.command.join(" ")} (${c.category}, ${c.timeout_seconds}s): ${c.reason}`);
+    }
+    for (const n2 of checkProposal.notProposed) line(ctx.io, `no check proposed for ${n2.ecosystem}: ${n2.reason}`);
+  }
   line(ctx.io, missing.length > 0 ? `added ${missing.length} rule(s) to ${excludePath} so runtime state stays out of git status` : `${excludePath} already excludes Orbit runtime state`);
   if (problems.length > 0) {
     line(ctx.io, "The configuration does not validate yet:");
     for (const p of problems.slice(0, 10)) line(ctx.io, `  - ${p}`);
   } else line(ctx.io, "The configuration validates.");
+  for (const m of models) line(ctx.io, m);
   for (const w of warnings) line(ctx.io, `WARN: ${w}`);
-  line(ctx.io, `Next: define your checks in .orbit/config.yaml, then run ${orbitHint("doctor")}.`);
+  if (config === "created") line(ctx.io, REVIEW_POLICY_PROPOSAL);
+  line(ctx.io, checkProposal.proposed.length > 0 ? `Next: review the proposed checks in .orbit/config.yaml and add any that are missing, then run ${orbitHint("doctor")}.` : `Next: define your checks in .orbit/config.yaml, then run ${orbitHint("doctor")}.`);
   return EXIT.OK;
 }
-var EXCLUDE_RULES, EXCLUDE_HEADER;
+var REVIEW_POLICY_PROPOSAL, EXCLUDE_RULES, EXCLUDE_HEADER;
 var init_init = __esm({
   "src/cli/commands/init.ts"() {
     "use strict";
     init_errors();
     init_exec();
     init_policy();
+    init_db();
+    init_adapters();
+    init_registry();
+    init_shared_catalog();
+    init_start();
+    init_models2();
     init_controller();
     init_context();
     init_exit();
@@ -60273,6 +61921,8 @@ var init_init = __esm({
     init_layout();
     init_globs();
     init_invocation();
+    init_check_detect();
+    REVIEW_POLICY_PROPOSAL = "review: Codex reviews independently when it is usable (review.providers: [codex]); when it is not, Claude reviews in a separate session and every report says the review was not independent and why (review.when_unavailable: claude). Set review.when_unavailable to ask to be asked first, or to block to require an independent reviewer.";
     EXCLUDE_RULES = ["/.orbit/state.sqlite*", "/.orbit/knowledge.sqlite*", "/.orbit/runs/"];
     EXCLUDE_HEADER = '# Orbit runtime state (added by "orbit init")';
   }
@@ -60293,14 +61943,14 @@ async function checkRunnerCommand(rawArgs, ctx) {
   }
   mkdirSync25(runDir2, { recursive: true });
   const shim = ensureShim(runDir2);
-  return new Promise((resolve21) => {
+  return new Promise((resolve22) => {
     const child = spawn6(process.execPath, [shim, checkDir], { stdio: "inherit", env: process.env });
     child.on("error", (err) => {
       ctx.io.err(`check-runner: cannot start the check shim: ${err.message}
 `);
-      resolve21(EXIT.FAILURE);
+      resolve22(EXIT.FAILURE);
     });
-    child.on("exit", (code2, signal) => resolve21(code2 ?? (signal ? 128 : EXIT.FAILURE)));
+    child.on("exit", (code2, signal) => resolve22(code2 ?? (signal ? 128 : EXIT.FAILURE)));
   });
 }
 var init_internal = __esm({
@@ -60420,14 +62070,14 @@ var init_ingest = __esm({
 });
 
 // src/cli/commands/learn.ts
-import { existsSync as existsSync52, mkdirSync as mkdirSync26, readFileSync as readFileSync32, statSync as statSync16 } from "node:fs";
-import { basename as basename14, isAbsolute as isAbsolute24, join as join69, relative as relative7, resolve as resolve18 } from "node:path";
+import { existsSync as existsSync55, mkdirSync as mkdirSync26, readFileSync as readFileSync34, statSync as statSync16 } from "node:fs";
+import { basename as basename15, isAbsolute as isAbsolute24, join as join73, relative as relative7, resolve as resolve19 } from "node:path";
 function knowledgePath(ctx, repo, global) {
-  return global ? join69(ctx.orbitHome, "knowledge.sqlite") : join69(repo, ".orbit", "knowledge.sqlite");
+  return global ? join73(ctx.orbitHome, "knowledge.sqlite") : join73(repo, ".orbit", "knowledge.sqlite");
 }
 function openExisting(ctx, repo, global) {
   const path = knowledgePath(ctx, repo, global);
-  if (!existsSync52(path)) throw new OrbitError("NOT_FOUND", `no ${global ? "global" : "repository"} knowledge graph at ${path}; it is created by the first run that learns something, or by "orbit learn ingest"`);
+  if (!existsSync55(path)) throw new OrbitError("NOT_FOUND", `no ${global ? "global" : "repository"} knowledge graph at ${path}; it is created by the first run that learns something, or by "orbit learn ingest"`);
   return KnowledgeStore.open(path, { clock: ctx.clock });
 }
 function lessonRow(l, support, contradict) {
@@ -60496,9 +62146,9 @@ async function learnExportCommand(args, ctx) {
     const doc = JSON.stringify(store.exportJsonLd(), null, 2);
     const out = args.str("out");
     if (out) {
-      atomicWrite(resolve18(ctx.cwd, out), `${doc}
+      atomicWrite(resolve19(ctx.cwd, out), `${doc}
 `);
-      line(ctx.io, `exported ${store.count()} lesson(s) as JSON-LD to ${resolve18(ctx.cwd, out)}`);
+      line(ctx.io, `exported ${store.count()} lesson(s) as JSON-LD to ${resolve19(ctx.cwd, out)}`);
     } else ctx.io.out(`${doc}
 `);
     return EXIT.OK;
@@ -60537,13 +62187,13 @@ async function readSource(ctx, repo, ref2, label) {
     }
     return { kind: "url", ref: ref2, content: Buffer.concat(chunks).toString("utf8") };
   }
-  const path = resolve18(ctx.cwd, ref2);
-  if (!existsSync52(path)) throw new OrbitError("NOT_FOUND", `${path} does not exist`);
+  const path = resolve19(ctx.cwd, ref2);
+  if (!existsSync55(path)) throw new OrbitError("NOT_FOUND", `${path} does not exist`);
   const st = statSync16(path);
   if (!st.isFile()) throw new OrbitError("SCHEMA_INVALID", `${path} is not a regular file`);
   if (st.size > FETCH_MAX_BYTES) throw new OrbitError("SCHEMA_INVALID", `${path} is larger than ${FETCH_MAX_BYTES} bytes`);
   const rel = relative7(repo, path);
-  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute24(rel) ? rel : basename14(path), content: readFileSync32(path, "utf8") };
+  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute24(rel) ? rel : basename15(path), content: readFileSync34(path, "utf8") };
 }
 async function runIngestCurator(ctx, repo, config, prompt) {
   if (!(config.knowledge.curator_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.curator_budget_usd is 0, so no curator may run; raise it, or supply the curator output with --curator-output");
@@ -60554,7 +62204,7 @@ async function runIngestCurator(ctx, repo, config, prompt) {
     if (!deps.adapters.claude) throw new OrbitError("PROVIDER_UNAVAILABLE", "no claude provider is configured; the curator runs on Claude");
     deps.registry.seed();
     const id = `ingest-${ctx.clock.now().toString(36)}`;
-    const dir = join69(ctx.orbitHome, "ingest", repoKey(repo), id);
+    const dir = join73(ctx.orbitHome, "ingest", repoKey(repo), id);
     mkdirSync26(dir, { recursive: true, mode: 448 });
     const snap = snapshotPolicy(config, { runId: id, repoRoot: repo, runDir: dir, clock: ctx.clock });
     const out = await runCurator(
@@ -60584,14 +62234,14 @@ async function learnIngestCommand(args, ctx) {
   const prepared = args.str("curator-output");
   if (prepared) {
     try {
-      output = JSON.parse(readFileSync32(resolve18(ctx.cwd, prepared), "utf8"));
+      output = JSON.parse(readFileSync34(resolve19(ctx.cwd, prepared), "utf8"));
     } catch (err) {
       throw new OrbitError("SCHEMA_INVALID", `${prepared} is not readable JSON: ${err instanceof Error ? oneLine(err.message, 120) : "error"}`);
     }
   } else ({ output, model } = await runIngestCurator(ctx, repo, config, task.prompt));
   const result2 = acceptIngestOutput(output, source, ctx.clock, model ? { curatorModel: model } : {});
-  mkdirSync26(join69(repo, ".orbit"), { recursive: true });
-  const store = KnowledgeStore.open(join69(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
+  mkdirSync26(join73(repo, ".orbit"), { recursive: true });
+  const store = KnowledgeStore.open(join73(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const created = [];
   const merged = [];
   const rejected = [...result2.rejected];
@@ -60667,7 +62317,7 @@ async function learnEvalCommand(args, ctx) {
   if (!(config.knowledge.eval_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.eval_budget_usd is 0, which disables replay evaluations and with them automatic overlay adoption; set a budget to evaluate");
   const metricsFile = args.str("metrics");
   const db = openState(repo);
-  const store = KnowledgeStore.open(join69(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
+  const store = KnowledgeStore.open(join73(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const runner = metricsFile ? null : ctx.seams.evalRunner ? budgeted(ctx.seams.evalRunner, config.knowledge.eval_budget_usd) : new ReplayEvalRunner({
     repoRoot: repo,
     config,
@@ -60702,7 +62352,7 @@ async function learnEvalCommand(args, ctx) {
       if (metricsFile) {
         let m;
         try {
-          m = JSON.parse(readFileSync32(resolve18(ctx.cwd, metricsFile), "utf8"));
+          m = JSON.parse(readFileSync34(resolve19(ctx.cwd, metricsFile), "utf8"));
         } catch (err) {
           throw new OrbitError("SCHEMA_INVALID", `${metricsFile} is not readable JSON: ${err instanceof Error ? oneLine(err.message, 120) : "error"}`);
         }
@@ -60745,7 +62395,7 @@ var init_learn2 = __esm({
     init_policy();
     init_snapshot();
     init_controller();
-    init_report();
+    init_report2();
     init_eval_runner();
     init_store2();
     init_types4();
@@ -60794,8 +62444,8 @@ var init_learn2 = __esm({
 });
 
 // src/cli/commands/logs.ts
-import { closeSync as closeSync9, existsSync as existsSync53, fstatSync as fstatSync4, openSync as openSync9, readSync as readSync5, statSync as statSync17 } from "node:fs";
-import { dirname as dirname31, join as join70 } from "node:path";
+import { closeSync as closeSync9, existsSync as existsSync56, fstatSync as fstatSync4, openSync as openSync9, readSync as readSync5, statSync as statSync17 } from "node:fs";
+import { dirname as dirname33, join as join74 } from "node:path";
 function readTail(path, lines) {
   const size = statSync17(path).size;
   const fd = openSync9(path, "r");
@@ -60857,25 +62507,25 @@ async function logsCommand(args, ctx) {
   const asJson = args.bool("json");
   return withState(repo, async (db) => {
     const run = findRunByPrefix(db, runRef);
-    const runDir2 = dirname31(run.policyPath);
+    const runDir2 = dirname33(run.policyPath);
     const wantController = !args.bool("workers") && !args.str("worker");
     const wantWorkers = !args.bool("controller");
     const sources = [];
     const known = /* @__PURE__ */ new Set();
     const discover = () => {
       const add = (s) => {
-        if (known.has(s.path) || !existsSync53(s.path)) return;
+        if (known.has(s.path) || !existsSync56(s.path)) return;
         known.add(s.path);
         sources.push({ ...s, offset: 0 });
       };
       if (wantController) {
-        add({ label: "controller", kind: "controller", path: join70(ctx.orbitHome, "logs", "controller.jsonl"), runId: run.id });
-        add({ label: "controller", kind: "controller", path: join70(runDir2, "logs", "controller.jsonl") });
+        add({ label: "controller", kind: "controller", path: join74(ctx.orbitHome, "logs", "controller.jsonl"), runId: run.id });
+        add({ label: "controller", kind: "controller", path: join74(runDir2, "logs", "controller.jsonl") });
       }
       if (wantWorkers) {
         for (const w of listWorkers(db, { runId: run.id })) {
           if (args.str("worker") && w.id !== args.str("worker")) continue;
-          for (const f of ["log.jsonl", "stderr.log", "shim.log"]) add({ label: `${w.id}${f === "log.jsonl" ? "" : `:${f.split(".")[0]}`}`, kind: "worker", path: join70(w.workerDir, f) });
+          for (const f of ["log.jsonl", "stderr.log", "shim.log"]) add({ label: `${w.id}${f === "log.jsonl" ? "" : `:${f.split(".")[0]}`}`, kind: "worker", path: join74(w.workerDir, f) });
         }
       }
     };
@@ -60946,180 +62596,6 @@ var init_logs = __esm({
   }
 });
 
-// src/cli/commands/models.ts
-import { existsSync as existsSync54 } from "node:fs";
-function configOrDefault(repo) {
-  try {
-    return { config: loadConfig(repo), loaded: true };
-  } catch {
-    return { config: defaultConfig(), loaded: false };
-  }
-}
-async function modelsListCommand(args, ctx) {
-  args.expect(0);
-  const repo = await resolveRepo(ctx, args.str("repo"));
-  const { config, loaded } = configOrDefault(repo);
-  const persisted = existsSync54(stateDbPath(repo));
-  const db = persisted ? openState(repo) : openDb(":memory:");
-  try {
-    const registry = new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
-    if (!persisted || registry.list().length === 0) registry.seed();
-    registry.adoptSharedCatalog();
-    const entries = registry.list();
-    const assessments = /* @__PURE__ */ new Map();
-    for (const surface of ["claude-cli", "codex-cli"]) assessments.set(surface, registry.assess({ surface, allowedModels: config.routing.allowed_models }));
-    const reviewKey = (surface, provider) => `${surface}|${provider}`;
-    const reviewAssessments = /* @__PURE__ */ new Map();
-    for (const e of entries) {
-      for (const s of e.surfaces) {
-        const key2 = reviewKey(s.surface, e.provider);
-        if (!reviewAssessments.has(key2)) reviewAssessments.set(key2, registry.assess({ surface: s.surface, provider: e.provider, allowedModels: [...config.routing.allowed_models, `${e.provider}:*`], structuredOutput: true }));
-      }
-    }
-    const rows = entries.flatMap(
-      (e) => (e.surfaces.length ? e.surfaces : [{ surface: "claude-cli", available: null, detail: null, checkedAt: null }]).map((s) => {
-        const a = assessments.get(s.surface);
-        const reasons = a?.excluded.find((x) => x.model.modelId === e.modelId)?.reasons ?? [];
-        const eligible = a?.eligible.some((x) => x.modelId === e.modelId) ?? false;
-        const policy = allowMatch(e, config.routing.allowed_models);
-        const onlyUnvalidated = !eligible && reasons.length > 0 && reasons.every((r) => /not yet validated$/.test(r));
-        const forReview = reviewAssessments.get(reviewKey(s.surface, e.provider));
-        const reviewEligible = (forReview?.eligible.some((x) => x.modelId === e.modelId) ?? false) && (e.provider !== "claude" || policy !== null);
-        const reviewUnvalidated = !reviewEligible && (e.provider !== "claude" || policy !== null) && (forReview?.excluded.find((x) => x.model.modelId === e.modelId)?.reasons ?? []).length > 0 && (forReview?.excluded.find((x) => x.model.modelId === e.modelId)?.reasons ?? []).every((r) => /not yet validated$/.test(r));
-        return {
-          review_eligible: reviewEligible || reviewUnvalidated,
-          review: reviewEligible ? "yes" : reviewUnvalidated ? "yes, unvalidated" : "no",
-          model: e.modelId,
-          provider: e.provider,
-          family: e.family,
-          surface: s.surface,
-          availability: s.available === true ? "available" : s.available === false ? "unavailable" : "unvalidated",
-          availability_detail: s.detail,
-          policy: policy === "explicit" ? "allowed" : policy === "wildcard" ? "wildcard" : "not allowed",
-          eligible,
-          status: eligible ? "eligible" : onlyUnvalidated ? "eligible-unvalidated" : "excluded",
-          reasons
-        };
-      })
-    );
-    if (args.bool("json")) {
-      json(ctx.io, { config_loaded: loaded, persisted, allowed_models: config.routing.allowed_models, models: rows });
-      return EXIT.OK;
-    }
-    ctx.io.out(table(rows.map((r) => [r.model, r.surface, r.availability, r.policy, r.status === "eligible" ? "yes" : r.status === "eligible-unvalidated" ? "yes, unvalidated" : `no: ${r.reasons.join("; ")}`, r.review]), ["MODEL", "SURFACE", "AVAILABILITY", "POLICY", "ELIGIBLE", "REVIEW"]));
-    if (!loaded) line(ctx.io, "\n(no valid .orbit/config.yaml: showing eligibility under the default allowed_models)");
-    if (!persisted) line(ctx.io, "(no state database yet: showing the shipped registry seed)");
-    line(ctx.io, "\nELIGIBLE is for implementation (routing.allowed_models); REVIEW is whether the model can be the independent reviewer, which also accepts any model of the reviewing provider.");
-    line(ctx.io, 'unvalidated means Orbit has not yet seen the model run on that surface; "orbit models refresh --probe" checks it live.');
-    return EXIT.OK;
-  } finally {
-    db.close();
-  }
-}
-function probeEnv(env) {
-  const out = {};
-  for (const k of ["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "CODEX_HOME", "CODEX_API_KEY", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]) if (env[k] !== void 0) out[k] = env[k];
-  return out;
-}
-async function modelsRefreshCommand(args, ctx) {
-  args.expect(0);
-  const repo = await resolveRepo(ctx, args.str("repo"));
-  const { config } = configOrDefault(repo);
-  const db = openState(repo, { create: true });
-  const notes = [];
-  const changes = {};
-  try {
-    const registry = new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
-    const seeded = registry.seed();
-    changes.seed = seeded;
-    notes.push(`seeded the registry: ${seeded.inserted.length} added, ${seeded.updated.length} refreshed`);
-    for (const [id, pc] of Object.entries(config.providers)) {
-      let kind;
-      try {
-        kind = providerKind(id);
-      } catch (err) {
-        notes.push(`provider ${id}: skipped (${err instanceof Error ? err.message : String(err)})`);
-        continue;
-      }
-      if (kind === "claude") {
-        const adapter = createAdapter(id, pc, { baseEnv: { ...probeEnv(ctx.env) }, clock: ctx.clock });
-        const caps = await adapter.discoverCapabilities();
-        if (!caps.available || !caps.version) {
-          notes.push(`provider ${id}: claude CLI unavailable (${flat(caps.detail)}); registry availability left as it was`);
-          continue;
-        }
-        notes.push(`provider ${id}: claude ${caps.version}`);
-        for (const e of registry.list().filter((m) => m.provider === "claude")) {
-          const min = e.eligibility.minCliVersion;
-          if (min && compareVersions(caps.version, min) < 0) {
-            registry.markAvailability(e.modelId, "claude-cli", false, `installed claude ${caps.version} is older than ${min}, which ${e.modelId} needs`);
-            notes.push(`  ${e.modelId}: unavailable (needs claude >= ${min})`);
-          }
-        }
-        if (args.bool("probe")) {
-          const probe2 = adapter.probeCredentials;
-          if (typeof probe2 !== "function") {
-            notes.push(`  --probe: ${id} has no live probe`);
-            continue;
-          }
-          for (const e of registry.list().filter((m) => m.provider === "claude" && allowMatch(m, config.routing.allowed_models) !== null)) {
-            if (e.surfaces.some((s) => s.surface === "claude-cli" && s.available === false)) continue;
-            const st = await probe2.call(adapter, { model: e.eligibility.cliAlias ?? e.modelId, timeoutMs: 9e4 });
-            if (st.state === "valid") {
-              registry.markAvailability(e.modelId, "claude-cli", true, `live probe succeeded (${st.method ?? "credential"})`);
-              notes.push(`  ${e.modelId}: validated by a live request`);
-            } else notes.push(`  ${e.modelId}: probe inconclusive (${st.state}: ${flat(st.detail)}); not marked`);
-          }
-        }
-      } else {
-        const r = await execCapture([...commandArgv(pc.command), "debug", "models"], { env: probeEnv(ctx.env), timeoutMs: 6e4, cwd: repo }).catch((err) => err);
-        if (r instanceof Error) {
-          notes.push(`provider ${id}: ${flat(r.message)}`);
-          continue;
-        }
-        if (r.exitCode !== 0) {
-          notes.push(`provider ${id}: "${pc.command} debug models" exited ${r.exitCode ?? "by signal"}; registry availability left as it was`);
-          continue;
-        }
-        try {
-          const catalog = JSON.parse(r.stdout);
-          const res = registry.registerCodexCatalog(catalog, { source: "live" });
-          saveSharedCatalog(sharedCatalogPath(ctx.orbitHome), catalog, ctx.clock.now());
-          changes[`catalog:${id}`] = res;
-          notes.push(`provider ${id}: ${res.listed.length} model(s) listed${res.hidden.length ? `, ${res.hidden.length} hidden` : ""}${res.absent.length ? `, ${res.absent.length} no longer offered` : ""}${res.providerDefault ? `; default ${res.providerDefault}` : ""}`);
-        } catch (err) {
-          throw new OrbitError("MALFORMED_OUTPUT", `${id}: "debug models" printed something that is not a model catalog (${err instanceof Error ? flat(err.message) : "unreadable"})`);
-        }
-      }
-    }
-    if (args.bool("json")) json(ctx.io, { notes, changes, models: registry.list().map((e) => ({ model: e.modelId, available: e.available })) });
-    else for (const n2 of notes) line(ctx.io, n2);
-    return EXIT.OK;
-  } finally {
-    db.close();
-  }
-}
-var MODELS_REFRESH_OPTIONS;
-var init_models2 = __esm({
-  "src/cli/commands/models.ts"() {
-    "use strict";
-    init_errors();
-    init_exec();
-    init_policy();
-    init_db();
-    init_adapters();
-    init_registry();
-    init_shared_catalog();
-    init_start();
-    init_context();
-    init_exit();
-    init_io();
-    MODELS_REFRESH_OPTIONS = {
-      probe: { type: "boolean", description: "also make one tiny live request per allowed Claude model to validate it (costs a few cents)" }
-    };
-  }
-});
-
 // src/cli/commands/policy.ts
 async function policyShowCommand(args, ctx) {
   const [id] = args.expect(1);
@@ -61147,7 +62623,7 @@ async function policyShowCommand(args, ctx) {
     line(ctx.io, `isolation:   ${c.isolation.provider}${c.isolation.allow_unisolated ? " (unisolated runs allowed)" : ""}`);
     line(ctx.io, `models:      ${c.routing.allowed_models.join(", ") || "none"}`);
     line(ctx.io, `providers:   ${Object.entries(c.providers).map(([k, v]) => `${k}${v.data_policy_eligible ? "" : " (not data-policy eligible)"}`).join(", ")}`);
-    line(ctx.io, `review:      independent provider ${c.review.independent_provider_required ? "required" : "not required"}, preferred ${c.review.preferred_provider}`);
+    line(ctx.io, `review:      ${describeReviewPolicy(c.review)}`);
     line(ctx.io, `delivery:    ${c.delivery.provider}, pull request ${c.delivery.pull_request}, up to ${c.delivery.max_ci_repair_cycles} CI repair cycle(s)`);
     line(ctx.io, `checks:      ${Object.values(c.checks).map((k) => `${k.id}${k.mandatory ? "" : " (optional)"}`).join(", ") || "none defined"}`);
     const h = c.scheduler.hard_limits;
@@ -61166,6 +62642,7 @@ var init_policy2 = __esm({
     init_errors();
     init_redact();
     init_snapshot();
+    init_review();
     init_inquisition2();
     init_context();
     init_exit();
@@ -61262,23 +62739,23 @@ var init_release2 = __esm({
 });
 
 // src/cli/commands/report.ts
-import { existsSync as existsSync55, readFileSync as readFileSync33 } from "node:fs";
-import { dirname as dirname32, join as join71 } from "node:path";
+import { existsSync as existsSync57, readFileSync as readFileSync35 } from "node:fs";
+import { dirname as dirname34, join as join75 } from "node:path";
 async function reportCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   if (args.bool("learning")) return withState(repo, (db) => learningReport(ctx, repo, db, args.bool("json")));
   const [id] = args.expect(1);
   return withState(repo, (db) => {
     const run = findRunByPrefix(db, id);
-    const runDir2 = dirname32(run.policyPath);
-    const finalMd = join71(runDir2, "final.md");
-    const finalJson = join71(runDir2, "final.json");
+    const runDir2 = dirname34(run.policyPath);
+    const finalMd = join75(runDir2, "final.md");
+    const finalJson = join75(runDir2, "final.json");
     const asJson = args.bool("json");
-    if (isTerminal(run.state) && !args.bool("interim") && existsSync55(finalMd)) {
+    if (isTerminal(run.state) && !args.bool("interim") && existsSync57(finalMd)) {
       if (asJson) {
-        if (existsSync55(finalJson)) ctx.io.out(readFileSync33(finalJson, "utf8"));
+        if (existsSync57(finalJson)) ctx.io.out(readFileSync35(finalJson, "utf8"));
         else json(ctx.io, buildFinalReport(db, run, { runDir: runDir2, clock: ctx.clock, snapshot: snapshotOrNull(run.policyPath, run.policyHash) }));
-      } else ctx.io.out(readFileSync33(finalMd, "utf8"));
+      } else ctx.io.out(readFileSync35(finalMd, "utf8"));
       return EXIT.OK;
     }
     const report2 = buildFinalReport(db, run, { runDir: runDir2, clock: ctx.clock, snapshot: snapshotOrNull(run.policyPath, run.policyHash) });
@@ -61303,9 +62780,9 @@ function snapshotOrNull(path, hash) {
 function learningReport(ctx, repo, db, asJson) {
   const runs = db.all("SELECT id, state, created_at FROM runs WHERE state IN ('SUCCEEDED','EXHAUSTED','IMPOSSIBLE','BLOCKED') ORDER BY created_at");
   const windows = [{ label: "base prompt", from: 0, to: Number.POSITIVE_INFINITY }];
-  const kPath = join71(repo, ".orbit", "knowledge.sqlite");
+  const kPath = join75(repo, ".orbit", "knowledge.sqlite");
   const overlays = [];
-  if (existsSync55(kPath)) {
+  if (existsSync57(kPath)) {
     const store = KnowledgeStore.open(kPath, { clock: ctx.clock });
     try {
       for (const o of store.listOverlays({ scope: "repo" })) {
@@ -61372,9 +62849,9 @@ var init_report4 = __esm({
 });
 
 // src/cli/admission.ts
-import { existsSync as existsSync56 } from "node:fs";
+import { existsSync as existsSync58 } from "node:fs";
 import { createRequire as createRequire5 } from "node:module";
-import { join as join72 } from "node:path";
+import { join as join76 } from "node:path";
 async function admitRun(ctx, input) {
   const check = ctx.seams.admission ?? checkAdmission;
   const refusal = await check(ctx, input);
@@ -61393,7 +62870,7 @@ async function repositoryHasCommits(repo) {
 }
 function playwrightInstalled(repo) {
   try {
-    createRequire5(join72(repo, "package.json")).resolve("@playwright/test/package.json");
+    createRequire5(join76(repo, "package.json")).resolve("@playwright/test/package.json");
     return true;
   } catch {
     return false;
@@ -61401,7 +62878,7 @@ function playwrightInstalled(repo) {
 }
 async function environmentProblems(ctx, input) {
   const { repo, config } = input;
-  const persisted = existsSync56(stateDbPath(repo));
+  const persisted = existsSync58(stateDbPath(repo));
   const db = persisted ? openDb(stateDbPath(repo)) : openDb(":memory:");
   try {
     const factory = ctx.seams.controllerDeps ?? defaultControllerDeps;
@@ -61428,17 +62905,15 @@ async function environmentProblems(ctx, input) {
       }
     }
     const required = /* @__PURE__ */ new Set([IMPLEMENTER_PROVIDER]);
-    if (config.review.independent_provider_required && config.review.preferred_provider !== IMPLEMENTER_PROVIDER) required.add(config.review.preferred_provider);
+    const mandatory = mandatoryReviewProvider(config.review, IMPLEMENTER_PROVIDER);
+    if (mandatory !== null) required.add(mandatory);
     const all = await validateCredentials({ adapters: deps.adapters, providers: [.../* @__PURE__ */ new Set([...required, ...Object.keys(deps.adapters)])] });
     const credentialsById = {};
     for (const c of all) credentialsById[c.provider] = c.status ?? void 0;
-    let reviewer = null;
-    if (config.review.independent_provider_required) {
-      reviewer = selectReviewer({ snapshot: snapshot2, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: deps.registry });
-      if (reviewer.decision === "SELECT") {
-        required.delete(config.review.preferred_provider);
-        required.add(reviewer.provider);
-      }
+    const reviewer = selectReviewer({ snapshot: snapshot2, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: deps.registry });
+    if (mandatory !== null && reviewer.decision === "SELECT") {
+      required.delete(mandatory);
+      required.add(reviewer.provider);
     }
     const gate = environmentGate({ snapshot: snapshot2, mode: config.mode, isolation, credentials: all.filter((c) => required.has(c.provider)), reviewer });
     if (gate.passed) return null;
@@ -61509,8 +62984,8 @@ var init_admission = __esm({
 });
 
 // src/cli/commands/run.ts
-import { existsSync as existsSync57 } from "node:fs";
-import { resolve as resolve19 } from "node:path";
+import { existsSync as existsSync59 } from "node:fs";
+import { resolve as resolve20 } from "node:path";
 async function runCommand(args, ctx) {
   const usage = 'orbit run --goal "<goal>" [--mode <mode>] [--environment <name>] [--policy <path>] [--foreground | --detach]';
   if (args.bool("foreground") && args.bool("detach")) throw new UsageError("--foreground and --detach cannot be combined", usage);
@@ -61522,15 +62997,15 @@ async function runCommand(args, ctx) {
   if (!goal) throw new UsageError('a goal is required: orbit run --goal "..."', usage);
   const repo = await resolveRepo(ctx, args.str("repo"));
   const policy = args.str("policy");
-  if (policy !== void 0 && !existsSync57(resolve19(ctx.cwd, policy))) throw new OrbitError("NOT_FOUND", `policy file ${resolve19(ctx.cwd, policy)} does not exist; check the --policy path`);
-  const config = loadConfig(repo, policy ? resolve19(ctx.cwd, policy) : void 0, mode ? { mode } : {});
+  if (policy !== void 0 && !existsSync59(resolve20(ctx.cwd, policy))) throw new OrbitError("NOT_FOUND", `policy file ${resolve20(ctx.cwd, policy)} does not exist; check the --policy path`);
+  const config = loadConfig(repo, policy ? resolve20(ctx.cwd, policy) : void 0, mode ? { mode } : {});
   const environment = args.str("environment");
   if (environment !== void 0) {
     const why = releaseEnvironmentProblem(config, environment);
     if (why) throw new UsageError(`--environment ${environment}: ${why}`, usage);
   }
   let service = null;
-  if (existsSync57(stateDbPath(repo))) {
+  if (existsSync59(stateDbPath(repo))) {
     const probe2 = openState(repo);
     try {
       service = liveServiceController(probe2, ctx.clock.now());
@@ -61587,7 +63062,7 @@ var init_run = __esm({
 });
 
 // src/cli/commands/repair.ts
-import { resolve as resolve20 } from "node:path";
+import { resolve as resolve21 } from "node:path";
 function runArgv(args, goal) {
   const argv2 = ["--goal", goal];
   for (const name of ["repo", "mode", "policy"]) {
@@ -61649,7 +63124,7 @@ async function repairCommand(args, ctx) {
         line(ctx.io, `run ${after.id}: repairing failure ${fingerprint}; the controller writes the brief to ${brief}. Driving it in the foreground (Ctrl-C pauses it)`);
       }
       const policy = args.str("policy");
-      const config = loadConfig(repo, policy ? resolve20(ctx.cwd, policy) : void 0);
+      const config = loadConfig(repo, policy ? resolve21(ctx.cwd, policy) : void 0);
       const result2 = await driveForeground(ctx, { repoRoot: repo, config, db, runId: after.id, fromStart: false, json: args.bool("json") });
       return result2.exitCode;
     }
@@ -61703,11 +63178,11 @@ var init_repair2 = __esm({
 function metricsFor(db, window = {}) {
   const from = window.from ?? null;
   const to = window.to ?? null;
-  const where = `created_at >= ${from === null ? "0" : "?"} AND created_at < ${to === null ? "9223372036854775807" : "?"}`;
+  const where2 = `created_at >= ${from === null ? "0" : "?"} AND created_at < ${to === null ? "9223372036854775807" : "?"}`;
   const params = [...from === null ? [] : [from], ...to === null ? [] : [to]];
-  const inWindow = `run_id IN (SELECT id FROM runs WHERE ${where})`;
+  const inWindow = `run_id IN (SELECT id FROM runs WHERE ${where2})`;
   const missing = [];
-  const runRows = db.all(`SELECT id, state, created_at, started_at FROM runs WHERE ${where} ORDER BY created_at`, ...params);
+  const runRows = db.all(`SELECT id, state, created_at, started_at FROM runs WHERE ${where2} ORDER BY created_at`, ...params);
   const byState = {};
   for (const r of runRows) byState[r.state] = (byState[r.state] ?? 0) + 1;
   const finished2 = runRows.filter((r) => FINISHED_STATES.includes(r.state));
@@ -61728,7 +63203,7 @@ function metricsFor(db, window = {}) {
   const escalation = escalationQuality(db, inWindow, params);
   const duplicates = duplicateFailures(db, inWindow, params);
   const green = timeToGreen(db, runRows);
-  const spend = spendPerAccepted(db, where, params, accepted.length, missing);
+  const spend = spendPerAccepted(db, where2, params, accepted.length, missing);
   const tokens3 = tokenUsage(db, inWindow, params, missing);
   const overhead = concurrencyOverhead(db, inWindow, params, missing);
   const evidenceInvalidated = count2(db, `SELECT COUNT(*) AS n FROM events WHERE type = 'evidence.invalidated' AND ${inWindow}`, params);
@@ -61845,10 +63320,10 @@ function duplicateFailures(db, inWindow, params) {
   const dups = rows.reduce((a, r) => a + (r.candidates - 1), 0);
   return { ...rate(dups, total), distinct_fingerprints: rows.length, duplicates: dups };
 }
-function spendPerAccepted(db, where, params, accepted, missing) {
+function spendPerAccepted(db, where2, params, accepted, missing) {
   const marks = TERMINAL2.map(() => "?").join(", ");
   const rows = db.all(
-    `SELECT cost_usd, cost_source FROM usage WHERE run_id IN (SELECT id FROM runs WHERE ${where} AND state IN (${marks}))`,
+    `SELECT cost_usd, cost_source FROM usage WHERE run_id IN (SELECT id FROM runs WHERE ${where2} AND state IN (${marks}))`,
     ...params,
     ...TERMINAL2
   );
@@ -62037,7 +63512,7 @@ var init_stats = __esm({
 });
 
 // src/cli/commands/status.ts
-import { existsSync as existsSync58 } from "node:fs";
+import { existsSync as existsSync60 } from "node:fs";
 function finished(state) {
   return state !== "BLOCKED" && isTerminal(state);
 }
@@ -62130,7 +63605,7 @@ function renderRunStatus(s, now) {
 async function statusCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   const [id] = args.expect(0, 1);
-  if (id === void 0 && !existsSync58(stateDbPath(repo)) && initialised(repo)) {
+  if (id === void 0 && !existsSync60(stateDbPath(repo)) && initialised(repo)) {
     if (args.bool("json")) json(ctx.io, { runs: [], controllers: [] });
     else line(ctx.io, 'no runs yet; start one with: orbit run --goal "..."');
     return EXIT.OK;
@@ -62183,8 +63658,528 @@ var init_status = __esm({
   }
 });
 
+// src/observability/timeline.ts
+function parse5(json3) {
+  if (json3 === null) return {};
+  try {
+    return rec(JSON.parse(json3));
+  } catch {
+    return {};
+  }
+}
+function usd3(n2) {
+  return n2 > 0 && n2 < 0.01 ? `$${n2.toFixed(4)}` : `$${n2.toFixed(2)}`;
+}
+function duration(ms) {
+  if (ms < 1e3) return `${Math.max(0, Math.round(ms))}ms`;
+  const s = Math.round(ms / 1e3);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+function loadLookups(db, runId) {
+  const l = { candidates: /* @__PURE__ */ new Map(), checks: /* @__PURE__ */ new Map(), workers: /* @__PURE__ */ new Map(), questions: /* @__PURE__ */ new Map(), reviews: /* @__PURE__ */ new Map(), decisions: /* @__PURE__ */ new Map(), evidence: /* @__PURE__ */ new Map() };
+  for (const r of db.all("SELECT id, seq, attempt, tree_hash FROM candidates WHERE run_id = ?", runId)) l.candidates.set(r.id, { seq: r.seq, attempt: r.attempt, tree: r.tree_hash });
+  for (const r of db.all(
+    "SELECT id, check_id, status, exit_code, candidate_id, started_at, ended_at, flaky, timed_out, fingerprint FROM check_runs WHERE run_id = ?",
+    runId
+  ))
+    l.checks.set(r.id, { check_id: r.check_id, status: r.status, exit_code: r.exit_code, candidate_id: r.candidate_id, started_at: r.started_at, ended_at: r.ended_at, flaky: r.flaky === 1, timed_out: r.timed_out === 1, fingerprint: r.fingerprint });
+  for (const r of db.all(
+    "SELECT id, role, provider, model, attempt, state, spawned_at, ended_at, exit_code, signal, result_status, error FROM workers WHERE run_id = ?",
+    runId
+  ))
+    l.workers.set(r.id, r);
+  for (const r of db.all("SELECT id, question, material, affected_json, answer, answered_by FROM questions WHERE run_id = ?", runId))
+    l.questions.set(r.id, { id: r.id, question: r.question, material: r.material === 1, affected: list(parse5(r.affected_json).affected), answer: r.answer, answered_by: r.answered_by });
+  const findings = db.all("SELECT review_id, severity, COUNT(*) AS n FROM findings WHERE run_id = ? GROUP BY review_id, severity", runId);
+  for (const r of db.all("SELECT id, candidate_id, round, provider, model, verdict FROM reviews WHERE run_id = ?", runId)) {
+    const counts = {};
+    for (const f of findings) if (f.review_id === r.id) counts[f.severity] = f.n;
+    l.reviews.set(r.id, { ...r, counts });
+  }
+  for (const r of db.all("SELECT id, kind, summary, data_json, created_at FROM decisions WHERE run_id = ?", runId))
+    l.decisions.set(r.id, { id: r.id, kind: r.kind, summary: r.summary, data: parse5(r.data_json), created_at: r.created_at });
+  for (const r of db.all("SELECT id, report_json FROM evidence_reports WHERE run_id = ?", runId)) l.evidence.set(r.id, { report: parse5(r.report_json) });
+  return l;
+}
+function describeRoute(d) {
+  const workKind = str6(d.work_kind) ?? "work";
+  const to = `${str6(d.provider) ?? "?"}/${str6(d.model) ?? "?"}`;
+  const effort = str6(d.effort);
+  const ref2 = (v) => {
+    const r = rec(v);
+    return `${str6(r.provider) ?? "?"}/${str6(r.model) ?? "?"}`;
+  };
+  const escalated = d.escalated_from !== void 0 ? ref2(d.escalated_from) : null;
+  const down = d.down_routed_from !== void 0 ? ref2(d.down_routed_from) : null;
+  const just = rec(d.justification);
+  const signals = (Array.isArray(just.signals) ? just.signals : []).map((s) => {
+    const x = rec(s);
+    return `${str6(x.signal) ?? "signal"}${str6(x.detail) ? ` (${str6(x.detail)})` : ""}`;
+  });
+  const evidence = list(just.evidence);
+  const reason = str6(d.reason);
+  const parts = [];
+  const head = escalated ? `${workKind}: escalated ${escalated} -> ${to}` : down ? `${workKind}: down-routed ${down} -> ${to}` : `${workKind} -> ${to}`;
+  if (reason) parts.push(reason);
+  if (evidence.length > 0) parts.push(`evidence: ${evidence.join(", ")}`);
+  if (signals.length > 0) parts.push(`signals: ${signals.join(", ")}`);
+  const cost = num5(d.expected_cost_per_verified_task);
+  if (cost !== null) parts.push(`expected ${usd3(cost)} per verified task`);
+  const alternatives = Array.isArray(d.alternatives_considered) ? d.alternatives_considered.length : 0;
+  if (alternatives > 0) parts.push(`${plural(alternatives, "alternative")} considered`);
+  if (d.unvalidated === true) parts.push("model not yet validated on this CLI");
+  return { kind: escalated ? "route.escalation" : down ? "route.down-route" : "route", text: `${head}${effort ? ` (${effort})` : ""}${parts.length ? `: ${parts.join("; ")}` : ""}` };
+}
+function decisionCategory(kind) {
+  if (kind === "route") return "route";
+  if (kind.startsWith("policy.")) return "policy";
+  if (kind.startsWith("delivery.") || kind.startsWith("release.")) return "delivery";
+  if (kind.startsWith("review.")) return "review";
+  return "decision";
+}
+function describeDecision(d) {
+  if (d.kind === "route" && typeof d.data.model === "string") {
+    const r = describeRoute(d.data);
+    return { category: "route", kind: r.kind, text: r.text, data: { decision_id: d.id, ...d.data } };
+  }
+  return { category: decisionCategory(d.kind), kind: d.kind, text: `${d.kind}: ${d.summary.replace(/\s+/g, " ").trim()}`, data: { decision_id: d.id, ...d.data } };
+}
+function categoryOfType(type) {
+  const p = type.split(".")[0];
+  switch (p) {
+    case "action":
+    case "delivery":
+    case "ci":
+    case "release":
+      return "delivery";
+    case "check":
+      return "check";
+    case "worker":
+    case "authorization":
+      return "worker";
+    case "budget":
+      return "budget";
+    case "question":
+      return "question";
+    case "review":
+    case "finding":
+      return "review";
+    case "evidence":
+      return "verdict";
+    case "implementation":
+      return "attempt";
+    case "recovery":
+    case "watchdog":
+    case "credentials":
+      return "recovery";
+    case "step":
+      return "error";
+    case "run":
+    case "state":
+      return "state";
+    default:
+      return "event";
+  }
+}
+function generic(type, data) {
+  const pairs2 = Object.entries(data).filter(([, v]) => v !== null && v !== void 0).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join(" ");
+  const flat2 = pairs2.replace(/\s+/g, " ").trim();
+  return flat2 ? `${type}  ${flat2.length > 240 ? `${flat2.slice(0, 237)}...` : flat2}` : type;
+}
+function renderEvent(e, data, l) {
+  const candidateSeq = (id) => {
+    const c = typeof id === "string" ? l.candidates.get(id) : void 0;
+    return c ? String(c.seq) : "?";
+  };
+  switch (e.type) {
+    case "run.created":
+      return { text: `run created in ${str6(data.mode) ?? "?"} mode${str6(data.environment) ? ` for environment ${str6(data.environment)}` : ""}` };
+    case "state.transition":
+      return { text: `${e.from_state ?? "?"} -> ${e.to_state ?? "?"}${str6(data.reason) ? `: ${str6(data.reason).replace(/\s+/g, " ").trim()}` : ""}` };
+    case "run.paused":
+      return { text: `run paused by ${e.actor}` };
+    case "run.unpaused":
+      return { text: `run unpaused by ${e.actor}` };
+    case "run.cancel-requested":
+      return { text: `cancellation requested by ${e.actor}` };
+    case "run.resumed":
+      return { text: `run resumed from ${str6(data.from) ?? "?"} to ${str6(data.to) ?? "?"} by ${e.actor}${data.forced === true ? " (forced past open questions)" : ""}` };
+    case "run.repair-requested":
+      return { text: `repair requested by ${e.actor} from ${str6(data.from) ?? "?"}${str6(data.fingerprint) ? `, failure ${str6(data.fingerprint)}` : ""}` };
+    case "lease.takeover":
+      return { category: "recovery", text: `${e.actor} took over the run from ${str6(data.previous_owner) ?? "a previous owner"} (its lease had expired)` };
+    case "recovery.crash-handled":
+      return { text: `crash handled: ${str6(data.outcome) ?? "recovered"}${str6(data.resume_state) ? `, resuming at ${str6(data.resume_state)}` : ""}` };
+    case "watchdog.stall":
+      return { category: "recovery", text: `stall detected in ${str6(data.state) ?? "?"}: no activity for ${duration(num5(data.idle_ms) ?? 0)}` };
+    case "step.error":
+      return { text: `step error in ${str6(data.state) ?? "?"}${str6(data.code) ? ` (${str6(data.code)})` : ""}: ${str6(data.message) ?? "unknown error"}` };
+    case "budget.exhausted":
+      return { text: `budget exhausted: ${str6(data.counter) ?? "?"} ${num5(data.used) ?? "?"} of ${num5(data.allowance) ?? "?"}${str6(data.limit) ? ` (${str6(data.limit)})` : ""}` };
+    case "budget.cost-ceiling-charged": {
+      const c = num5(data.ceiling_usd);
+      return { category: "cost", text: `charged a ceiling of ${c === null ? "?" : usd3(c)} for ${str6(data.role) ?? "a session"}: no cost was reported` };
+    }
+    case "budget.cost-token-estimated": {
+      const c = num5(data.charged_usd);
+      return { category: "cost", text: `charged ${c === null ? "?" : usd3(c)} for ${str6(data.role) ?? "a session"}, estimated from its tokens${str6(data.model) ? ` at ${str6(data.model)} list pricing` : ""}` };
+    }
+    case "implementation.attempt": {
+      const cap = num5(data.spend_cap_usd);
+      return { text: `attempt ${num5(data.attempt) ?? "?"} started${str6(data.route) ? ` (route ${str6(data.route)}${cap !== null ? `, spend cap ${usd3(cap)}` : ""})` : cap !== null ? ` (spend cap ${usd3(cap)})` : ""}` };
+    }
+    case "implementation.candidate":
+      if (data.reused === true) return { category: "candidate", text: `attempt ${num5(data.attempt) ?? "?"} ended on the tree of candidate ${num5(data.seq) ?? "?"}, which already existed` };
+      if (data.rebase === true) return { category: "candidate", text: `candidate ${num5(data.seq) ?? "?"} is the rebased tree of attempt ${num5(data.attempt) ?? "?"}` };
+      return null;
+    case "candidate.created":
+      return { category: "candidate", text: `candidate ${num5(data.seq) ?? "?"} created for attempt ${num5(data.attempt) ?? "?"} (tree ${short2(str6(data.tree_hash))}${str6(data.worker_id) ? `, by ${str6(data.worker_id)}` : ""})` };
+    case "worker.started": {
+      const w = l.workers.get(str6(data.worker_id) ?? "");
+      return w ? { text: `${w.id} ${w.role} ${w.provider}/${w.model ?? "default"} started${w.attempt !== null ? ` (attempt ${w.attempt})` : ""}`, data: { ...data, role: w.role, provider: w.provider, model: w.model, attempt: w.attempt } } : { text: `${str6(data.worker_id) ?? "a worker"} started` };
+    }
+    case "worker.finished": {
+      const id = str6(data.worker_id) ?? "a worker";
+      const w = l.workers.get(id);
+      const state = str6(data.state) ?? w?.state ?? "?";
+      const status2 = str6(data.result_status) ?? w?.result_status ?? null;
+      const exit = num5(data.exit_code) ?? w?.exit_code ?? null;
+      const signal = str6(data.signal) ?? w?.signal ?? null;
+      const detail = [status2 && status2 !== "succeeded" ? status2 : null, signal ? `signal ${signal}` : null, exit !== null ? `exit ${exit}` : null].filter(Boolean).join(", ");
+      const took = w && w.spawned_at !== null && w.ended_at !== null ? ` after ${duration(w.ended_at - w.spawned_at)}` : "";
+      return { text: `${id} ${state}${took}${detail ? ` (${detail})` : ""}${w?.error ? `: ${w.error.replace(/\s+/g, " ").trim()}` : ""}`, data: { ...data, ...w ? { role: w.role, provider: w.provider, model: w.model } : {} } };
+    }
+    case "worker.cancel-requested":
+      return { text: `${str6(data.worker_id) ?? "a worker"} cancellation requested${str6(data.reason) ? `: ${str6(data.reason)}` : ""}` };
+    case "worker.restart-planned":
+      return { text: `${str6(data.worker_id) ?? "a worker"} restart planned (restart ${num5(data.restart_count) ?? "?"})` };
+    case "check.finished": {
+      const c = l.checks.get(str6(data.check_run_id) ?? "");
+      const status2 = str6(data.status) ?? c?.status ?? "?";
+      const exit = num5(data.exit_code) ?? c?.exit_code ?? null;
+      const took = c && c.ended_at !== null ? ` in ${duration(c.ended_at - c.started_at)}` : "";
+      const cand = c?.candidate_id ? ` on candidate ${candidateSeq(c.candidate_id)}` : "";
+      const fp = str6(data.fingerprint) ?? c?.fingerprint ?? null;
+      return { text: `${str6(data.check_id) ?? c?.check_id ?? "check"} ${status2}${exit !== null ? ` (exit ${exit})` : ""}${cand}${took}${c?.flaky ? " (flaky)" : ""}${fp && status2 !== "PASSED" ? `; fingerprint ${fp}` : ""}` };
+    }
+    case "evidence.report": {
+      const verdict = str6(data.verdict) ?? "?";
+      const report2 = l.evidence.get(str6(data.report_id) ?? "")?.report ?? {};
+      const failing = (Array.isArray(report2.checks) ? report2.checks : []).map(rec).filter((c) => c.status !== "PASSED").map((c) => str6(c.id) ?? "?");
+      const unverified = num5(data.unverified) ?? 0;
+      const more = [failing.length > 0 ? `failing checks: ${failing.join(", ")}` : null, unverified > 0 ? `${unverified} unverified` : null].filter(Boolean).join("; ");
+      return { category: "verdict", text: `candidate ${candidateSeq(data.candidate_id)} ${verdict}${more ? `: ${more}` : ""}` };
+    }
+    case "evidence.invalidated":
+      return { category: "verdict", text: `evidence invalidated: ${str6(data.reason) ?? "the candidate changed"}` };
+    case "review.recorded": {
+      const r = l.reviews.get(str6(data.review_id) ?? "");
+      const provider = r?.provider ?? str6(data.provider) ?? "?";
+      const model = r ? r.model : str6(data.model);
+      const verdict = r?.verdict ?? str6(data.verdict) ?? "?";
+      const counts = r?.counts ?? {};
+      const total = Object.values(counts).reduce((a, b) => a + b, 0) || (num5(data.findings) ?? 0);
+      const bySeverity = SEVERITY_ORDER.filter((s) => counts[s]).map((s) => `${counts[s]} ${s}`).join(", ");
+      const extra = r ? { verdict, provider, model, round: r.round, candidate_seq: Number(candidateSeq(r.candidate_id)) || null, finding_counts: counts } : {};
+      return { category: "review", text: `round ${r?.round ?? num5(data.round) ?? "?"} ${verdict} by ${provider}/${model ?? "default"} on candidate ${r ? candidateSeq(r.candidate_id) : "?"} (${plural(total, "finding")}${bySeverity ? `: ${bySeverity}` : ""})`, data: { ...data, ...extra } };
+    }
+    case "review.invalidated":
+      return { category: "review", text: `review ${str6(data.review_id) ?? "?"} no longer counts: ${str6(data.reason) ?? "the candidate changed"}` };
+    case "finding.status":
+      return { category: "review", text: `finding ${str6(data.finding_id) ?? "?"} ${str6(data.from) ?? "?"} -> ${str6(data.to) ?? "?"}${str6(data.reason) ? `: ${str6(data.reason)}` : ""}` };
+    case "question.created": {
+      const q = l.questions.get(str6(data.question_id) ?? "");
+      const id = str6(data.question_id) ?? "?";
+      const material = q ? q.material : data.material === true;
+      const affected = q ? q.affected : list(data.affected);
+      return { category: "question", text: `${id} asked${material ? " [material]" : ""}: ${(q?.question ?? "a question").replace(/\s+/g, " ").trim()}${affected.length ? ` (affects ${affected.join(", ")})` : ""}`, data: { ...data, ...q ? { question: q.question } : {} } };
+    }
+    case "question.answered": {
+      const q = l.questions.get(str6(data.question_id) ?? "");
+      return { category: "question", text: `${str6(data.question_id) ?? "?"} answered by ${q?.answered_by ?? e.actor}: ${(q?.answer ?? "").replace(/\s+/g, " ").trim()}`, data: { ...data, ...q ? { answer: q.answer, answered_by: q.answered_by } : {} } };
+    }
+    case "question.withdrawn":
+      return { category: "question", text: `${str6(data.question_id) ?? "?"} withdrawn${str6(data.reason) ? `: ${str6(data.reason)}` : ""}` };
+    case "action.intent":
+      return { category: "delivery", text: `${str6(data.kind) ?? "action"}: intent recorded${str6(data.commit_sha) ? ` for ${short2(str6(data.commit_sha))}` : ""}` };
+    case "action.executing":
+      return { category: "delivery", text: `${str6(data.kind) ?? "action"}: executing (attempt ${num5(data.attempt) ?? "?"})` };
+    case "action.succeeded": {
+      const attempts = num5(data.attempts) ?? 1;
+      return { category: "delivery", text: `${str6(data.kind) ?? "action"}: succeeded${attempts > 1 ? ` after ${attempts} attempts` : ""}${str6(data.via) && data.via !== "execute" ? ` (${str6(data.via)})` : ""}` };
+    }
+    case "action.denied":
+      return { category: "delivery", text: `${str6(data.kind) ?? "action"}: denied${str6(data.rule) ? ` by ${str6(data.rule)}` : ""}${str6(data.reason) ? `: ${str6(data.reason)}` : ""}` };
+    case "action.reconciled":
+      return { category: "delivery", text: `${str6(data.kind) ?? "action"}: reconciled with the remote (${data.found === true ? "the effect was there" : "no effect found"})` };
+    default:
+      if (e.type.startsWith("action.")) return { category: "delivery", text: `${str6(data.kind) ?? "action"}: ${e.type.slice("action.".length)}${num5(data.attempts) !== null ? ` (attempt ${num5(data.attempts)})` : ""}${str6(data.error) ? `: ${str6(data.error)}` : ""}` };
+      return { text: generic(e.type, data) };
+  }
+}
+function costOf(db, runId) {
+  const usage = db.all(
+    "SELECT id, ts, worker_id, provider, model, input_tokens, output_tokens, cost_usd, cost_source FROM usage WHERE run_id = ? ORDER BY id",
+    runId
+  );
+  let measured = 0;
+  let estimated = 0;
+  let reported = 0;
+  let estimatedRecords = 0;
+  let unavailable = 0;
+  for (const u of usage) {
+    if (u.cost_usd === null) unavailable++;
+    else if (u.cost_source === "estimated") {
+      estimated += u.cost_usd;
+      estimatedRecords++;
+    } else {
+      measured += u.cost_usd;
+      reported++;
+    }
+  }
+  let tokenEstimates = 0;
+  let ceiling = 0;
+  let ceilingCharges = 0;
+  for (const e of db.all("SELECT type, data_json FROM events WHERE run_id = ? AND type IN ('budget.cost-token-estimated', 'budget.cost-ceiling-charged')", runId)) {
+    const d = parse5(e.data_json);
+    if (e.type === "budget.cost-token-estimated") {
+      tokenEstimates++;
+      estimated += num5(d.charged_usd) ?? 0;
+    } else {
+      ceiling += num5(d.ceiling_usd) ?? 0;
+      ceilingCharges++;
+    }
+  }
+  const moved = Math.min(tokenEstimates, unavailable);
+  unavailable -= moved;
+  estimatedRecords += moved;
+  const row = db.get("SELECT used FROM budget_counters WHERE run_id = ? AND counter = 'cost_usd'", runId);
+  const cost = {
+    measured_usd: round6(measured),
+    estimated_usd: round6(estimated),
+    charged_usd: row ? round6(row.used) : null,
+    reported_records: reported,
+    estimated_records: estimatedRecords,
+    unavailable_records: unavailable,
+    ceiling_charged_usd: round6(ceiling),
+    note: ""
+  };
+  cost.note = costNote(cost, ceilingCharges);
+  return { cost, usage };
+}
+function costNote(c, ceilingCharges) {
+  if (c.reported_records + c.estimated_records + c.unavailable_records === 0 && c.charged_usd === null && ceilingCharges === 0) return "no usage recorded yet";
+  const records = [c.reported_records > 0 ? `${c.reported_records} reported` : null, c.estimated_records > 0 ? `${c.estimated_records} estimated from tokens` : null].filter(Boolean).join(", ");
+  const parts = [`measured ${usd3(c.measured_usd)}${records ? ` (${records})` : ""}`];
+  if (c.estimated_usd > 0) parts.push(`estimated ${usd3(c.estimated_usd)}`);
+  parts.push(c.charged_usd === null ? "nothing charged to the cost budget yet" : `charged ${usd3(c.charged_usd)} to the cost budget`);
+  if (c.unavailable_records > 0) {
+    parts.push(c.ceiling_charged_usd > 0 ? `${usd3(c.ceiling_charged_usd)} of that stands in for ${plural(c.unavailable_records, "session")} with no reported cost` : `${plural(c.unavailable_records, "session")} with no reported cost`);
+  }
+  return parts.join("; ");
+}
+function asEntry(at, key2, category, kind, text2, eventId, data) {
+  return { key: key2, at, time: new Date(at).toISOString(), category, kind, text: text2, event_id: eventId, data };
+}
+function buildTimeline(db, run, opts = {}) {
+  const l = loadLookups(db, run.id);
+  const { cost, usage } = costOf(db, run.id);
+  const spine = [];
+  const mirrored = /* @__PURE__ */ new Set();
+  for (const e of db.all("SELECT id, ts, type, from_state, to_state, actor, data_json FROM events WHERE run_id = ? ORDER BY id", run.id)) {
+    const data = parse5(e.data_json);
+    if (e.type === "decision.recorded") {
+      const id = str6(data.decision_id);
+      const d = id ? l.decisions.get(id) : void 0;
+      if (!d) continue;
+      mirrored.add(d.id);
+      const r2 = describeDecision(d);
+      spine.push(asEntry(e.ts, `event:${e.id}`, r2.category, r2.kind, r2.text, e.id, r2.data));
+      continue;
+    }
+    if (HOUSEKEEPING.has(e.type) && !opts.all) continue;
+    const r = renderEvent(e, data, l);
+    if (r === null) {
+      if (!opts.all) continue;
+      spine.push(asEntry(e.ts, `event:${e.id}`, categoryOfType(e.type), e.type, generic(e.type, data), e.id, data));
+      continue;
+    }
+    spine.push(asEntry(e.ts, `event:${e.id}`, r.category ?? categoryOfType(e.type), r.kind ?? e.type, r.text, e.id, r.data ?? data));
+  }
+  const extras = [];
+  for (const d of l.decisions.values()) {
+    if (mirrored.has(d.id)) continue;
+    const r = describeDecision(d);
+    extras.push(asEntry(d.created_at, `decision:${d.id}`, r.category, r.kind, r.text, null, r.data));
+  }
+  let running = 0;
+  for (const u of usage) {
+    const who = `${u.worker_id ?? "a session"} ${u.provider}/${u.model ?? "default"}`;
+    const tokens3 = u.input_tokens !== null || u.output_tokens !== null ? ` (${u.input_tokens ?? "?"} in, ${u.output_tokens ?? "?"} out tokens)` : "";
+    let text2;
+    if (u.cost_usd === null) text2 = `${who}: no cost reported${tokens3}`;
+    else {
+      if (u.cost_source !== "estimated") running += u.cost_usd;
+      text2 = `${who} ${usd3(u.cost_usd)} ${u.cost_source === "estimated" ? "estimated" : "reported"}${tokens3}; measured so far ${usd3(round6(running))}`;
+    }
+    extras.push(asEntry(u.ts, `usage:${u.id}`, "cost", "usage", text2, null, { worker_id: u.worker_id, provider: u.provider, model: u.model, input_tokens: u.input_tokens, output_tokens: u.output_tokens, cost_usd: u.cost_usd, cost_source: u.cost_source }));
+  }
+  extras.sort((a, b) => a.at - b.at);
+  const entries = [];
+  let x = 0;
+  for (const s of spine) {
+    while (x < extras.length && extras[x].at < s.at) entries.push(extras[x++]);
+    entries.push(s);
+  }
+  while (x < extras.length) entries.push(extras[x++]);
+  return {
+    run: {
+      id: run.id,
+      goal: run.goal,
+      mode: run.mode,
+      state: run.state,
+      paused: run.paused,
+      cancel_requested: run.cancelRequested,
+      outcome_reason: run.outcomeReason,
+      branch: run.branch,
+      created_at: run.createdAt,
+      started_at: run.startedAt,
+      ended_at: run.endedAt
+    },
+    entries,
+    cost
+  };
+}
+var HOUSEKEEPING, str6, num5, rec, list, plural, short2, round6, SEVERITY_ORDER;
+var init_timeline = __esm({
+  "src/observability/timeline.ts"() {
+    "use strict";
+    HOUSEKEEPING = /* @__PURE__ */ new Set(["progress", "lease.acquired", "lease.released", "check.planned", "check.started", "worker.planned", "worker.start-charged"]);
+    str6 = (v) => typeof v === "string" && v.length > 0 ? v : null;
+    num5 = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
+    rec = (v) => v !== null && typeof v === "object" && !Array.isArray(v) ? v : {};
+    list = (v) => Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+    plural = (n2, one, many = `${one}s`) => `${n2} ${n2 === 1 ? one : many}`;
+    short2 = (hash) => hash ? hash.slice(0, 12) : "?";
+    round6 = (n2) => Math.round(n2 * 1e6) / 1e6;
+    SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
+  }
+});
+
+// src/cli/commands/timeline.ts
+function localDate(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function renderEntry2(e) {
+  return `${clockTime(e.at)}  ${e.category.padEnd(9)} ${flat(e.text)}`;
+}
+function renderHeader(t) {
+  const lines = [`run ${t.run.id}  ${t.run.state}`, `goal:      ${flat(t.run.goal)}`];
+  if (t.run.outcome_reason) lines.push(`outcome:   ${flat(t.run.outcome_reason)}`);
+  return `${lines.join("\n")}
+`;
+}
+function renderEntries(entries, lastDate) {
+  let out = "";
+  for (const e of entries) {
+    const day = localDate(e.at);
+    if (day !== lastDate.value) {
+      out += `-- ${day} --
+`;
+      lastDate.value = day;
+    }
+    out += `${renderEntry2(e)}
+`;
+  }
+  return out;
+}
+function renderTimeline(t) {
+  return `${renderHeader(t)}${renderEntries(t.entries, { value: null })}cost so far: ${t.cost.note}
+`;
+}
+async function timelineCommand(args, ctx) {
+  const [runRef] = args.expect(1);
+  const last = args.int("last");
+  const all = args.bool("all");
+  const asJson = args.bool("json");
+  const repo = await resolveRepo(ctx, args.str("repo"));
+  return withState(repo, async (db) => {
+    const run = findRunByPrefix(db, runRef);
+    const build = () => buildTimeline(db, getRun(db, run.id), { all });
+    const tail2 = (entries) => last === void 0 ? entries : last === 0 ? [] : entries.slice(-last);
+    if (!args.bool("follow")) {
+      const t2 = build();
+      const shown = { ...t2, entries: tail2(t2.entries) };
+      if (asJson) json(ctx.io, shown);
+      else ctx.io.out(renderTimeline(shown));
+      return EXIT.OK;
+    }
+    let t = build();
+    const printed = /* @__PURE__ */ new Set();
+    const date = { value: null };
+    if (!asJson) ctx.io.out(renderHeader(t));
+    const emit2 = (entries) => {
+      const fresh = entries.filter((e) => !printed.has(e.key));
+      for (const e of fresh) printed.add(e.key);
+      if (asJson) for (const e of fresh) ctx.io.out(`${JSON.stringify(e)}
+`);
+      else ctx.io.out(renderEntries(fresh, date));
+      return fresh.length;
+    };
+    const backlog = tail2(t.entries);
+    const shownNow = new Set(backlog.map((e) => e.key));
+    for (const e of t.entries) if (!shownNow.has(e.key)) printed.add(e.key);
+    emit2(backlog);
+    let stop = false;
+    const signals = ctx.seams.signals ?? process;
+    const onInt = () => {
+      stop = true;
+    };
+    signals.on("SIGINT", onInt);
+    signals.on("SIGTERM", onInt);
+    try {
+      let quietPasses = isTerminal(getRun(db, run.id).state) ? 1 : 0;
+      while (!stop) {
+        const over = isTerminal(getRun(db, run.id).state);
+        if (over && quietPasses >= 1) break;
+        await new Promise((r) => setTimeout(r, ctx.seams.pollMs ?? 500));
+        t = build();
+        const n2 = emit2(t.entries);
+        if (over) quietPasses = n2 === 0 ? quietPasses + 1 : 0;
+      }
+    } finally {
+      signals.off("SIGINT", onInt);
+      signals.off("SIGTERM", onInt);
+    }
+    if (!asJson) ctx.io.out(`cost so far: ${t.cost.note}
+`);
+    return EXIT.OK;
+  });
+}
+var TIMELINE_OPTIONS, TIMELINE_USAGE;
+var init_timeline2 = __esm({
+  "src/cli/commands/timeline.ts"() {
+    "use strict";
+    init_states();
+    init_run_store();
+    init_timeline();
+    init_context();
+    init_exit();
+    init_io();
+    TIMELINE_OPTIONS = {
+      follow: { type: "boolean", short: "f", description: "keep printing new steps until the run ends or blocks" },
+      last: { type: "string", description: "only the last n steps (default: all)", valueName: "n" },
+      all: { type: "boolean", description: "include housekeeping events (heartbeats, lease bookkeeping, planned checks and workers)" }
+    };
+    TIMELINE_USAGE = "orbit timeline <run-id> [--follow] [--last n] [--all] [--json]";
+  }
+});
+
 // src/cli/commands/verify.ts
-import { dirname as dirname33, isAbsolute as isAbsolute25, join as join73, relative as relative8 } from "node:path";
+import { dirname as dirname35, isAbsolute as isAbsolute25, join as join77, relative as relative8 } from "node:path";
 function exitCodeForVerdict(verdict) {
   return verdict === "PASS" ? EXIT.OK : verdict === "FAIL" ? EXIT.VERIFY_FAILED : EXIT.VERIFY_INCOMPLETE;
 }
@@ -62235,7 +64230,7 @@ async function verifyCandidate(rc) {
   if (!rc.run.baseRevision) throw new OrbitError("TRANSITION_INVALID", `run ${rc.run.id} has no base revision; preflight did not finish`);
   const snapshot2 = rc.snapshot;
   const scope = cand.scope ?? await inspectScope({ repoRoot: rc.run.repoRoot, baseRev: rc.run.baseRevision, candidateRev: cand.commitSha, snapshot: snapshot2, contractAllowedPaths: contract.allowed_paths });
-  const checkoutDir = join73(runWorktreeRoot(rc), `verify-${cand.seq}`);
+  const checkoutDir = join77(runWorktreeRoot(rc), `verify-${cand.seq}`);
   await cleanupCandidateCheckout(rc.run.repoRoot, checkoutDir).catch(() => {
   });
   await materializeCandidate(rc.run.repoRoot, cand.commitSha, checkoutDir, { readOnly: false });
@@ -62258,9 +64253,9 @@ function repairNextStep(run) {
 function print(ctx, repo, asJson, o, contractJson) {
   const contract = JSON.parse(contractJson);
   const statements = new Map(contract.acceptance_criteria.map((c) => [c.id, c]));
-  const runDir2 = dirname33(o.run.policyPath);
+  const runDir2 = dirname35(o.run.policyPath);
   const rel = (given) => {
-    const p = isAbsolute25(given) ? given : join73(runDir2, given);
+    const p = isAbsolute25(given) ? given : join77(runDir2, given);
     const r = relative8(repo, p);
     return r.startsWith("..") || r === "" ? p : r;
   };
@@ -62507,6 +64502,7 @@ var init_cli = __esm({
     init_learn2();
     init_logs();
     init_models2();
+    init_notify2();
     init_policy2();
     init_release2();
     init_report4();
@@ -62515,13 +64511,15 @@ var init_cli = __esm({
     init_repair2();
     init_stats();
     init_status();
+    init_timeline2();
     init_verify();
     COMMANDS = [
       { name: "doctor", summary: "check every capability a run depends on, with the exact missing piece for each failure", usage: "orbit doctor [--probe] [--json]", options: DOCTOR_OPTIONS, run: doctorCommand },
       { name: "init", summary: "write .orbit/config.yaml from the starter template and keep runtime state out of git status", usage: "orbit init", run: initCommand },
       { name: "run", summary: "start a run: freeze the policy, then drive it here or hand it to the service", usage: 'orbit run --goal "<goal>" [--mode <mode>] [--environment <name>] [--policy <path>] [--foreground | --detach]', options: RUN_OPTIONS, run: runCommand },
       { name: "status", summary: "state, stage, attempts, budgets, workers, open questions and heartbeat of a run (or the recent runs)", usage: "orbit status [run-id] [--all] [--json]", options: STATUS_OPTIONS, run: statusCommand },
-      { name: "logs", summary: "controller and worker logs of a run, redacted", usage: "orbit logs <run-id> [--follow] [--lines n] [--controller | --workers | --worker id]", options: LOGS_OPTIONS, run: logsCommand },
+      { name: "timeline", summary: "what happened in a run, one readable line per step: state changes, routing, attempts, checks, review, questions, delivery, cost", usage: TIMELINE_USAGE, options: TIMELINE_OPTIONS, run: timelineCommand },
+      { name: "logs", summary: 'raw controller and worker logs of a run, redacted (for a readable history use "orbit timeline")', usage: "orbit logs <run-id> [--follow] [--lines n] [--controller | --workers | --worker id]", options: LOGS_OPTIONS, run: logsCommand },
       { name: "pause", summary: "pause a run durably; workers keep running and are collected on resume", usage: "orbit pause <run-id>", run: pauseCommand },
       { name: "resume", summary: "unpause a run, or resume a BLOCKED one after a decision or an environment repair", usage: "orbit resume <run-id> [--foreground | --detach] [--force]", options: RESUME_OPTIONS, run: resumeCommand },
       { name: "cancel", summary: "cancel a run durably (works for blocked or ownerless runs too)", usage: "orbit cancel <run-id> [--wait seconds]", options: CANCEL_OPTIONS, run: cancelCommand },
@@ -62545,10 +64543,11 @@ var init_cli = __esm({
       { name: "stats", summary: "the spec section 16 metrics for this repository's runs (success, cost, repair loops, time to green), optionally in a time window", usage: STATS_USAGE, options: STATS_OPTIONS, run: statsCommand },
       { name: "release resolve", summary: "settle a deploy whose outcome is unknown: run the environment's verify_command, or record --deployed / --not-deployed", usage: RELEASE_RESOLVE_USAGE, options: RELEASE_RESOLVE_OPTIONS, run: releaseResolveCommand },
       { name: "gc", summary: "apply artifact retention: delete the run directories and worktrees of finished runs older than retention.keep_runs_days", usage: GC_USAGE, options: GC_OPTIONS, run: gcCommand },
+      { name: "notify test", summary: "send a test notification through the configured channels (desktop, webhook, GitHub comment) and print each outcome", usage: NOTIFY_TEST_USAGE, options: NOTIFY_TEST_OPTIONS, run: notifyTestCommand },
       { name: "policy show", summary: "the frozen policy a run acts under, verified against its hash", usage: "orbit policy show <run-id> [--json]", run: policyShowCommand }
     ];
     HIDDEN = ["shim", "hook", "check-runner"];
-    WORKER_SAFE = /* @__PURE__ */ new Set(["status", "logs", "report", "questions", "policy show", "models list", "learn list", "learn show", "stats"]);
+    WORKER_SAFE = /* @__PURE__ */ new Set(["status", "timeline", "logs", "report", "questions", "policy show", "models list", "learn list", "learn show", "stats"]);
   }
 });
 
