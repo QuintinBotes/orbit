@@ -3,6 +3,7 @@
 ## Unreleased
 
 - New `orbit timeline <run-id>`: the readable history of a run, one line per significant step in order with the local time. It shows state transitions with their reasons, routing and escalation decisions with their evidence, each attempt and candidate with its verification verdict, check results, the review outcome and reviewer, questions asked and answered, delivery actions, and the cost so far as measured and as charged. `--follow` streams a running run, `--last <n>` cuts it, `--all` adds housekeeping events and `--json` is for machines. `orbit logs` stays the raw output and its help now points to the timeline; `/orbit:status <run-id>` shows the status and then the last steps of the timeline.
+- `orbit init` proposes checks from what the repository declares, for the tools found on PATH: Node (package.json scripts lint, typecheck or a tsc config, test, build; npm, pnpm or yarn from the lockfile), .NET (`dotnet build` and `dotnet test` on the solution or the projects), Python (pytest, ruff or flake8, mypy when configured), Go (`build`, `vet`, `test` over `./...`) and Rust (`cargo build`, `test`, `clippy` when installed). Each has a category, a timeout and a comment asking for review; a mixed repository gets all of them, a monorepo gets root-level commands, an existing config is never touched, and init prints what it proposed and why (`checks.proposed` and `checks.not_proposed` in `--json`).
 - `orbit init` no longer proposes folders that hold CI pipeline or build-system definitions (pipeline YAML with a top-level trigger, stages, jobs or extends template, Jenkinsfiles, GitLab CI, CircleCI) as `scope.allowed_paths`; it protects them, plus central build files such as Directory.Build.props, Directory.Packages.props, global.json, nuget.config and a root Makefile, in `scope.protected_paths`, and tells the person to narrow the scope to the goal (#4).
 - A linked git worktree is its own repository root (`git rev-parse --show-toplevel`): `orbit init` writes the worktree's `.orbit/config.yaml` with the worktree's branch as `repository.base_branch`, `doctor`, `run` and every other command use the worktree's branch, cleanliness and state, `.git/info/exclude` stays shared, and worker checkouts made from a linked worktree find its own git directory (#3).
 - Skills: `/orbit:status`, `/orbit:doctor`, `/orbit:init` and `/orbit:inquisition` are model-invocable, so an agent asked to use Orbit sees them; `run`, `resume`, `repair` and `verify` stay user-only and say that a person starts them; `scripts/check-plugin.mjs` enforces the allowlist (ADR 0006 addendum) (#2).
@@ -16,6 +17,29 @@
 - doctor lists every unmet reviewer prerequisite at once (login, data policy attestation, no qualified model), each with its own fix, and orbit init seeds the model registry and reads the Codex catalog so a fresh setup does not hit the second failure (#7).
 - Review falls back to a disclosed Claude review by default when no independent reviewer is usable: new `review.providers` (preference order, supported ids only) and `review.when_unavailable: claude | ask | block`, with the legacy keys mapped onto it; reports, decisions and `orbit doctor` say which reviewer was used and, for a same-provider review, why it is not independent (#8, ADR 0007).
 - `review.when_unavailable: ask` raises a material question and runs the same-provider review only after a person's yes (`orbit decide`), recorded as a decision (#6, ADR 0007).
+- Release automation. Pushing a `v*` tag runs `.github/workflows/release.yml`: it checks that the tag matches `package.json`, `plugin/package.json` and `plugin/.claude-plugin/plugin.json`, that `CHANGELOG.md` has a section for it and that the commit is on `main`; runs the full gate (typecheck, unit, integration, fault and acceptance tests, `check:dist`, `check-plugin`); builds an archive of the `plugin/` payload with checksums and a GitHub artifact attestation (`actions/attest-build-provenance`); creates the GitHub release with that CHANGELOG section as the notes; and opens a pull request on `QuintinBotes/claude-plugins` that moves the orbit entry's `ref` to the tag. The last step needs the secret `CATALOG_PR_TOKEN` and is skipped with a notice without it. New scripts `scripts/release-notes.mjs`, `scripts/check-release-versions.mjs` and `scripts/bump-catalog-ref.mjs`, each with unit tests; the process is in CONTRIBUTING.md and the verification steps in docs/installation.md.
+- Notifications (ADR 0008). When a run ends or raises a question a person must
+  answer, Orbit notifies through the new `notifications` policy section: a
+  desktop notification (macOS `osascript`, Linux `notify-send`; on by default),
+  a webhook (Slack-compatible `text`; the URL is read from the environment
+  variable `notifications.webhook.url_env` names, must be `https` to a host in
+  `network.allowed_hosts`) and a comment on the run's pull request or linked
+  issue. Payloads carry the run id, state, a short redacted reason, the next
+  action and question ids only. Each notification is sent once; delivery
+  failures are recorded as events and never change the run.
+  `ORBIT_NOTIFICATIONS=off` turns every channel off. New command
+  `orbit notify test`.
+- Remote answers (ADR 0008). With `notifications.remote_answers.enabled`, a
+  `/orbit answer <question-id> <choice>` comment on the run's pull request (or
+  the linked issue) answers an open question, but only when the GitHub API says
+  its author has write, maintain or admin permission when the comment is read.
+  The answer is recorded like `orbit decide`, with the comment URL, author and
+  permission; anything else is ignored and recorded. The service polls blocked
+  runs and resumes them once no material question is open; without a service,
+  `orbit resume` reads the comments first.
+- Toolchain sandbox profiles (ADR 0009): checks and workers that use Go, Rust, Python, the JVM or .NET (detected from the check's command and the repository's marker files) get the repository's dependency caches (`GOMODCACHE`, `CARGO_HOME`, `PIP_CACHE_DIR`, Gradle's and Maven's repositories, `NUGET_PACKAGES`) from `<orbit home>/toolchains/<repo key>/`, read-only, and their build state (`GOCACHE`, `GOPATH`, `CARGO_TARGET_DIR`, `PYTHONPYCACHEPREFIX`, `java.io.tmpdir`) in a private directory per check attempt or per worker. Only Orbit's dependency-install step writes the caches; nothing is shared between repositories and nothing points at your own caches. A check's `env` still overrides every variable.
+- A configured `dependencies.install_command` also reaches the registries of the toolchains its command and the repository use (for example `index.crates.io` and `static.crates.io` for `cargo fetch --locked`), not only the npm registry.
+- `orbit doctor` (`checks.sandbox`) adds one line per toolchain the checks or the repository use: whether it starts in the check sandbox and where its dependency caches live.
 
 ## 0.1.0 (2026-10-06)
 

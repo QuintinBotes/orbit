@@ -111,6 +111,23 @@ the clone:
 Save it as `.claude-plugin/marketplace.json` in an empty directory, then
 `/plugin marketplace add <that directory>` and `/plugin install orbit@orbit-local`.
 
+## Verify a release archive
+
+Each GitHub release carries `orbit-plugin-X.Y.Z.tar.gz` (the committed `plugin/`
+tree of the tag), a `SHA256SUMS` file and a GitHub artifact attestation (build
+provenance) for the archive, created by the release workflow from the tagged
+commit after the full test gate passed. To check one you downloaded:
+
+```bash
+sha256sum --check SHA256SUMS            # shasum -a 256 -c SHA256SUMS on macOS
+gh attestation verify orbit-plugin-X.Y.Z.tar.gz --repo QuintinBotes/orbit
+```
+
+A marketplace install does not need this: it reads the `plugin/` directory at
+the catalog's `ref`, which the release workflow points at the new tag through a
+pull request on `QuintinBotes/claude-plugins`. How a release is made is in
+[CONTRIBUTING.md](../CONTRIBUTING.md#releasing).
+
 ## Install the CLI
 
 ```bash

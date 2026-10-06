@@ -18,7 +18,7 @@ import { raiseBaselineExceptionQuestions } from '../../inquisition/baseline-exce
 import { validateCredentials, type BlockedCredentialState, type CredentialCheck } from '../../recovery/credentials.ts';
 import { mandatoryReviewProvider, selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../review/select.ts';
 import type { ProviderCapabilities, CredentialStatus } from '../../adapters/types.ts';
-import { homeOf, runWorktreeRoot, type RunContext } from '../context.ts';
+import { homeOf, runWorktreeRoot, toolchainCacheRootFor, type RunContext } from '../context.ts';
 import { baselineGate, environmentGate, intakeGate, type GateResult } from '../gates.ts';
 import { deliveryEnvironmentProblem } from '../delivery-env.ts';
 import { baselineEnvironmentBlockReason, baselineEnvironmentFailures, type BlockedCheck } from '../environment-block.ts';
@@ -82,6 +82,7 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
     killGraceMs: ctx.timing.killGraceMs,
     homeDir: homeOf(ctx.deps),
     checkoutDir: join(wtRoot, 'baseline'),
+    toolchainCacheRoot: toolchainCacheRootFor(ctx),
   });
   const after = await safePoint(ctx);
   if (after) return after;

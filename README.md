@@ -99,11 +99,15 @@ This writes `.orbit/config.yaml` from the starter template and adds rules to
 itself shows up as untracked: commit it if you want it shared). The starter mode
 is `autonomous`: Orbit works on a local branch `orbit/<run-id>` and never
 pushes. `init` also replaces the template's example `scope.allowed_paths` with
-globs that match your layout, and tells you so.
+globs that match your layout, and tells you so. It also proposes checks from
+what the repository declares (package.json scripts, a solution, pytest, ruff
+or mypy configuration, go.mod, Cargo.toml) for the tools found on your `PATH`,
+each under a comment asking you to review it
+([which and how](docs/configuration.md#checks-that-orbit-init-proposes)).
 
 **2. Edit `.orbit/config.yaml`.** Three edits are needed before a run can pass.
-Each key below already exists in the file (`checks:` has only commented
-examples), so change it in place rather than pasting a second copy:
+Each key below already exists in the file (`checks:` holds the checks init
+proposed, or only commented examples), so change it in place rather than pasting a second copy:
 
 ```yaml
 scope:
@@ -191,7 +195,7 @@ one ([troubleshooting](docs/troubleshooting.md#run-problems)).
 | Command | Purpose |
 |---|---|
 | `orbit doctor [--probe]` | Check every capability a run depends on. `--probe` makes live requests. |
-| `orbit init` | Write `.orbit/config.yaml` from the starter template. |
+| `orbit init` | Write `.orbit/config.yaml` from the starter template, with checks proposed from what the repository declares. |
 | `orbit run --goal <text>` | Freeze the policy and start a run (`--mode`, `--environment`, `--policy`, `--foreground`, `--detach`). |
 | `orbit status [run-id]` | State, stage, attempts, budgets, workers, questions, heartbeat. |
 | `orbit timeline <run-id>` | What happened in a run, one readable line per step in order, with local time: state changes and their reasons, routing and escalation with the evidence, each attempt and candidate with its verification verdict, check results, review outcome and reviewer, questions asked and answered, delivery actions, and the cost so far (measured against charged). `--follow` streams a running run, `--last <n>` cuts it, `--all` adds housekeeping, `--json` is for machines. |
@@ -205,7 +209,8 @@ one ([troubleshooting](docs/troubleshooting.md#run-problems)).
 | `orbit cancel <run-id>` | Cancel durably (`--wait <seconds>`). |
 | `orbit report <run-id>` | Final or interim report (`--interim`); `orbit report --learning` shows improvement over time. |
 | `orbit questions <run-id>` | Questions a run is waiting on (`--all` includes answered ones). `orbit questions --pending` lists those of every unfinished run (`--quiet` prints nothing when there are none). |
-| `orbit decide <run-id> <question-id> <answer>` | Record your answer (`--by`). Approving a baseline-exception question puts the exception in the run's contract. |
+| `orbit decide <run-id> <question-id> <answer>` | Record your answer (`--by`). Approving a baseline-exception question puts the exception in the run's contract. With remote answers on, a `/orbit answer <question-id> <choice>` comment on the run's pull request by someone with write access does the same. |
+| `orbit notify test` | Send a test notification through the configured channels (desktop, webhook, GitHub comment). See [notifications](docs/operations.md#notifications-and-remote-answers). |
 | `orbit release resolve <run-id>` | Settle a release-mode deploy whose outcome is unknown: runs the environment's `verify_command`, or records `--deployed` / `--not-deployed`. |
 | `orbit policy show <run-id>` | The frozen policy, verified against its hash. |
 | `orbit models list` / `models refresh` | The model registry and its availability. |
@@ -220,6 +225,12 @@ Claude Code, and the controller runs it for unclear goals. Release mode has no
 separate command either: `orbit run --mode release`, with the `release` and
 `actions` sections of the policy. See
 [release mode](docs/operations.md#release-mode-safeguards).
+
+Releasing Orbit itself is not an `orbit` command: pushing a `v*` tag runs the
+release workflow, which gates the tag, publishes the GitHub release with an
+attested plugin archive and opens the catalog pull request. See
+[Releasing](CONTRIBUTING.md#releasing) and
+[verifying a release archive](docs/installation.md#verify-a-release-archive).
 
 ## Live runs and what is not proven yet
 

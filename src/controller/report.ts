@@ -50,6 +50,7 @@ import { currentCandidate, type ControllerDeps, type RunContext } from './contex
 import { assertLeaseHeld } from './run-store.ts';
 import { accountWorker, OUTPUT_CAP_CEILING, outcomeOf, outputCapExceeded, raiseOutputCap, recordSpendCap } from './workers.ts';
 import { autoEvaluateOverlays } from './eval-runner.ts';
+import { notifyRunEnded, resolveNotifyDeps } from '../notify/notify.ts';
 import { checkLiveOverlays, globalKnowledgePath, repoKnowledgePath } from './knowledge-hooks.ts';
 
 export interface FinalReport {
@@ -420,12 +421,18 @@ function parseJson<T>(json: string | null): T | null {
 // ---------------------------------------------------------------------------
 // Terminal hook
 
-/** Report, then learning. Neither may change the outcome or throw past this point. */
+/** Report, notification, then learning. None of them may change the outcome or throw past this point. */
 export async function finalizeRun(ctx: RunContext): Promise<void> {
   try {
     writeFinalReport(ctx.db, ctx.run.id, { runDir: ctx.runDir, clock: ctx.clock, snapshot: ctx.policyVerified ? ctx.snapshot : null });
   } catch (err) {
     ctx.log.error('final report failed', { error: err instanceof Error ? err.message : String(err) });
+  }
+  // Before learning, which can take minutes: the person hears about the outcome as soon as it is recorded.
+  try {
+    await notifyRunEnded({ db: ctx.db, clock: ctx.clock, run: ctx.refresh(), runDir: ctx.runDir, config: ctx.policyVerified ? ctx.snapshot.config : null, deps: resolveNotifyDeps(ctx.deps), actor: ctx.ownerId });
+  } catch (err) {
+    ctx.log.warn('notification failed', { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) });
   }
   if (!ctx.policyVerified) return;
   try {

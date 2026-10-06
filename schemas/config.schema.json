@@ -416,6 +416,36 @@
         "allowed_emails": { "type": "array", "maxItems": 50, "items": { "type": "string", "minLength": 3, "maxLength": 320 } }
       }
     },
+    "notifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["desktop", "webhook", "github_comment", "remote_answers"],
+      "properties": {
+        "desktop": { "type": "boolean" },
+        "webhook": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["url_env"],
+              "properties": { "url_env": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]{0,127}$" } }
+            }
+          ]
+        },
+        "github_comment": { "type": "boolean" },
+        "remote_answers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "issue", "poll_seconds"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "issue": { "type": ["integer", "null"], "minimum": 1 },
+            "poll_seconds": { "type": "integer", "minimum": 30, "maximum": 3600 }
+          }
+        }
+      }
+    },
     "static_security": {
       "type": "object",
       "additionalProperties": false,

@@ -7,6 +7,7 @@ import { sha256 } from '../core/hash.ts';
 import { redact } from '../core/redact.ts';
 import type { IsolationProvider } from '../isolation/types.ts';
 import { prepareWorkerTmpDir } from '../isolation/profiles.ts';
+import { detectToolchains, toolchainRegistryHosts } from '../isolation/toolchains.ts';
 import { dependencyAuditPolicy } from '../policy/config.ts';
 import type { AuditSeverity, CheckDefinition, DependencyAuditConfig, PolicySnapshot } from '../policy/types.ts';
 import { exceptionExpiryMs } from '../review/resolve.ts';
@@ -64,11 +65,15 @@ export function planInstall(snapshot: PolicySnapshot, checkoutDir: string, opts:
   const scriptsDenied = deps.install_scripts !== 'allow';
 
   if (deps.install_command) {
+    // A configured command may fill another ecosystem's cache (cargo fetch, a pip download): it also reaches the
+    // registries of the toolchains its command and the checkout name (docs/decisions/0009-toolchain-profiles.md).
+    const toolchainHosts = toolchainRegistryHosts(detectToolchains({ command: deps.install_command, roots: [checkoutDir] }));
     return {
       skip: false,
       definitions: [
         {
           ...base,
+          network_hosts: [...new Set([...hosts, ...toolchainHosts])],
           id: INSTALL_CHECK_ID,
           command: [...deps.install_command],
           // A configured command cannot be given a flag blindly, so scripts are denied through the package managers' own environment switches.
@@ -465,6 +470,8 @@ export interface RunBaselineInput {
   /** Where to check out the base revision; default is a private temp directory. */
   checkoutDir?: string;
   registryHosts?: readonly string[];
+  /** The repository's toolchain dependency caches (RunnerContext.toolchainCacheRoot). */
+  toolchainCacheRoot?: string | null;
 }
 
 export interface BaselineOutcome {
@@ -519,6 +526,7 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
       pollMs: input.pollMs,
       killGraceMs: input.killGraceMs,
       homeDir: input.homeDir,
+      toolchainCacheRoot: input.toolchainCacheRoot ?? null,
     };
     const install = await installDependencies({ ...ctx, baseTree, registryHosts: input.registryHosts });
     const results = install.skipped || install.ok ? await runCheckSet(ctx, baselineSubject(runDir, baseTree), defs) : [];

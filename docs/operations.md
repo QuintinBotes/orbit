@@ -112,6 +112,7 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 | `orbit gc` | `--keep-days <n>` (0 prunes every finished run now; default `retention.keep_runs_days`), `--dry-run` |
 | `orbit release resolve <run-id>` | `--deployed`, `--not-deployed`, `--environment <name>`, `--by <name>`; see [Release mode safeguards](#release-mode-safeguards) |
 | `orbit policy show <run-id>` | none |
+| `orbit notify test` | `--policy <path>`; sends a test notification through each configured channel and prints each outcome (exit 1 when one failed). See [Notifications and remote answers](#notifications-and-remote-answers) |
 | `orbit models list` / `models refresh` | `--probe` on refresh |
 | `orbit learn list` | `--status`, `--kind`, `--search <text>`, `--global`, `--limit <n>` (default 50); the other `learn` commands are in [the learning layer](learning.md) |
 | `orbit service install / uninstall / status / run` | `--entry <path>` on install |
@@ -179,6 +180,13 @@ verify` and `orbit repair` refuse it with "its files were removed by orbit gc":
 its policy, evidence and candidate are gone.
 Runs that end `SUCCEEDED` or `CANCELLED` already remove their own worktrees; see
 [retention](configuration.md#routing-and-retention).
+
+`orbit gc` leaves the repository's toolchain dependency caches
+(`<orbit home>/toolchains/<repo key>/`: the Go module cache, `CARGO_HOME`, the
+pip, Maven, Gradle and NuGet caches the dependency install filled; ADR 0009)
+alone, since every later run of the repository reads them. Remove that
+directory to start clean (`chmod -R u+w` it first: Go writes its module cache
+read-only); the next dependency install fills it again.
 
 ## Using the native /goal command
 
@@ -413,6 +421,52 @@ Its reason names the check, the cause and the log (the application's
 baseline exception to approve, because the check never ran: fix the
 environment (`orbit doctor` checks the isolation provider and its limits) or the
 check definition, then start a new run.
+
+## Notifications and remote answers
+
+Orbit tells you when a run ends (`SUCCEEDED`, `BLOCKED`, `EXHAUSTED`,
+`IMPOSSIBLE`, `CANCELLED`) and when it raises a question a person must answer,
+through the channels in the `notifications` section of the policy
+([configuration](configuration.md#notifications)): a desktop notification
+(on by default), a webhook, and a comment on the run's pull request (or on the
+linked issue). Each notification is sent once; a run that is resumed and blocks
+again is announced again. A notification says only the run id, its state, a
+short reason, the next action and the open question ids; never code, diffs,
+secrets or log excerpts. Delivery failures are recorded as events
+(`notification.failed`, visible in `orbit logs`) and never change the run.
+`ORBIT_NOTIFICATIONS=off` turns every channel off, for CI and test suites.
+
+```bash
+orbit notify test     # desktop: sent (osascript) / webhook: skipped (...) / ...
+```
+
+**Remote answers.** With `notifications.remote_answers.enabled`, an open
+question of a `BLOCKED` run can be answered from GitHub: comment on the run's
+pull request, or on the issue `remote_answers.issue` names, with a line that
+starts with
+
+```text
+/orbit answer <question-id> <choice>
+```
+
+where the choice is an option label (`A`, `Approve`) or, for an ordinary
+question, free text. Approval questions (contract amendments, baseline
+exceptions) take only their option labels. A comment counts only when the
+GitHub API says, when Orbit reads it, that its author has `write`, `maintain`
+or `admin` permission on the repository; `triage`, `read`, no access, a role
+Orbit does not know, and bot accounts are refused, and nothing written in the
+comment counts as permission. The question must be one of that run's and still
+open. Everything else is ignored and recorded as `remote.answer.refused` with
+the reason. An accepted answer is recorded exactly like `orbit decide`, by
+`github:<login>`, with the comment URL, author and permission in the decision.
+
+The service reads the comments of each `BLOCKED` run with open questions every
+`remote_answers.poll_seconds` (default 120) through `GH_TOKEN`, and resumes the
+run once no material question is open, unless its block came from the frozen
+policy. Without a service, `orbit resume <run-id>` reads the comments first and
+says what it recorded or ignored. The token needs read access to issues and
+pull requests (and write access for `github_comment`); a collaborator
+permission is read through the same token.
 
 ## Heartbeats and the watchdog
 

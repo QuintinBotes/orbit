@@ -62,7 +62,8 @@ function cleanEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
 let template: string | null = null;
 const templateRoot = (): string => {
   if (template) return template;
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'orbit-acc-template-')));
+  // Named with the run's id, so the global teardown removes it even when this worker never sees 'exit'.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), `orbit-acc-template-${process.env.ORBIT_TEST_RUN ?? 'norun'}-`)));
   const dir = join(root, 'demo-app');
   cpSync(DEMO_DIR, dir, { recursive: true, filter: (src) => !SKIP.has(src.split('/').at(-1) ?? '') });
   const flags = ['--ignore-scripts', '--no-audit', '--no-fund'];

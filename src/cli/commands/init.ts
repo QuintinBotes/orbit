@@ -23,6 +23,7 @@ import { json, line } from '../io.ts';
 import { proposeScope, trackedFiles } from '../layout.ts';
 import { compileGlobs } from '../../policy/globs.ts';
 import { orbitHint } from '../../core/invocation.ts';
+import { detectChecks, renderChecksYaml, type CheckProposal } from '../check-detect.ts';
 
 /**
  * What the starter's review policy does and how to choose otherwise (docs/decisions/0007-reviewer-availability.md):
@@ -123,6 +124,8 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   let protectedAdded: string[] = [];
   let excludedDirs: string[] = [];
   let baseBranch: string | null = null;
+  // Checks proposed from what the repository declares; only for a config init writes, never for an existing one.
+  let checkProposal: CheckProposal = { proposed: [], notProposed: [] };
   if (existsSync(configPath)) config = 'exists';
   else {
     let text = templateText();
@@ -142,6 +145,11 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
     if (protectedAdded.length > 0) {
       // Appended to the template's own list, so its defaults (.github/**, infra/**, env files) stay.
       text = text.replace(/^(\s*protected_paths: \[.*?)\]$/m, (_m, head: string) => `${head}, ${protectedAdded.map((x) => JSON.stringify(x)).join(', ')}]`);
+    }
+    checkProposal = await detectChecks({ repo, files: await trackedFiles(ctx, repo), pathEnv: ctx.env.PATH });
+    if (checkProposal.proposed.length > 0) {
+      const block = renderChecksYaml(checkProposal.proposed);
+      text = text.replace(/^checks:\n/m, () => `checks:\n${block}`);
     }
     try {
       // wx: never replace a file that appeared since the check above.
@@ -185,7 +193,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   const models = await seedModels(ctx, repo);
 
   if (args.bool('json')) {
-    json(ctx.io, { repo, review_policy: config === 'created' ? REVIEW_POLICY_PROPOSAL : null, config: { path: configPath, status: config, ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, config_problems: problems, warnings, models });
+    json(ctx.io, { repo, review_policy: config === 'created' ? REVIEW_POLICY_PROPOSAL : null, config: { path: configPath, status: config, ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === 'created' ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
@@ -194,6 +202,13 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   if (config === 'created' && excludedDirs.length > 0) line(ctx.io, `left out of scope.allowed_paths because they hold CI or build definitions: ${excludedDirs.join(', ')}`);
   if (config === 'created' && protectedAdded.length > 0) line(ctx.io, `scope.protected_paths gained ${protectedAdded.join(', ')} (CI pipeline and build-system definitions found in the repository)`);
   if (config === 'created' && derivedPaths.length > 0) line(ctx.io, 'Narrow scope.allowed_paths to the folders your goal needs: the proposal covers every source folder, and a smaller scope is safer and cheaper to review.');
+  if (config === 'created') {
+    if (checkProposal.proposed.length > 0) {
+      line(ctx.io, `checks proposed from what the repository declares (each is commented in the config; review them, they are the evidence every run is judged by):`);
+      for (const c of checkProposal.proposed) line(ctx.io, `  ${c.id}: ${c.command.join(' ')} (${c.category}, ${c.timeout_seconds}s): ${c.reason}`);
+    }
+    for (const n of checkProposal.notProposed) line(ctx.io, `no check proposed for ${n.ecosystem}: ${n.reason}`);
+  }
   line(ctx.io, missing.length > 0 ? `added ${missing.length} rule(s) to ${excludePath} so runtime state stays out of git status` : `${excludePath} already excludes Orbit runtime state`);
   if (problems.length > 0) {
     line(ctx.io, 'The configuration does not validate yet:');
@@ -202,6 +217,6 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   for (const m of models) line(ctx.io, m);
   for (const w of warnings) line(ctx.io, `WARN: ${w}`);
   if (config === 'created') line(ctx.io, REVIEW_POLICY_PROPOSAL);
-  line(ctx.io, `Next: define your checks in .orbit/config.yaml, then run ${orbitHint('doctor')}.`);
+  line(ctx.io, checkProposal.proposed.length > 0 ? `Next: review the proposed checks in .orbit/config.yaml and add any that are missing, then run ${orbitHint('doctor')}.` : `Next: define your checks in .orbit/config.yaml, then run ${orbitHint('doctor')}.`);
   return EXIT.OK;
 }

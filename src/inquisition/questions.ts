@@ -318,9 +318,11 @@ export { ANSWER_DECISION_KIND };
  * `orbit decide`: record a person's answer. The answer lands on the question
  * row and as a decision record (the id a human-approved amendment cites).
  * Idempotent: repeating the same answer repairs a missing decision after a
- * crash and changes nothing else.
+ * crash and changes nothing else. `provenance` says where an answer that did
+ * not come from the repository's shell came from (a pull request comment: its
+ * URL, author and the permission GitHub reported); it is kept in the decision.
  */
-export function answerQuestion(db: OrbitDb, runDir: string, id: string, answer: string, by: string, clock: Clock): AnsweredQuestion {
+export function answerQuestion(db: OrbitDb, runDir: string, id: string, answer: string, by: string, clock: Clock, opts: { provenance?: Record<string, unknown> } = {}): AnsweredQuestion {
   if (!isHumanActor(by)) throw new OrbitError('POLICY_DENIED', `"${by}" cannot answer a question: decisions come from a person, not a model or worker`, { by });
   const text = answer.trim();
   if (text === '') throw new OrbitError('SCHEMA_INVALID', 'an answer cannot be empty');
@@ -338,7 +340,7 @@ export function answerQuestion(db: OrbitDb, runDir: string, id: string, answer: 
       runId: question.runId,
       kind: ANSWER_DECISION_KIND,
       summary: `${matched ? `chose "${matched.label}"` : 'answered'}: ${question.question}`,
-      data: { question_id: id, answer: stored, chosen_option: matched?.label ?? null, free_text: matched === null, answered_by: by.trim(), material: question.material, affected: question.affected },
+      data: { question_id: id, answer: stored, chosen_option: matched?.label ?? null, free_text: matched === null, answered_by: by.trim(), material: question.material, affected: question.affected, ...(opts.provenance ? { provenance: opts.provenance } : {}) },
     },
     clock,
     { actor: by.trim() },

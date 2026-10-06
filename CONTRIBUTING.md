@@ -82,6 +82,59 @@ opens weekly update pull requests; a bump of the sandbox runtime in
 `plugin/package.json` also needs the browser checks re-verified
 (docs/decisions/0001).
 
+## Releasing
+
+A release is a tag. Pushing a tag named `v*` runs
+`.github/workflows/release.yml`; nobody builds or uploads anything by hand.
+
+1. Bump the version to the new one in all three places, in a pull request:
+   `package.json`, `plugin/package.json` and `plugin/.claude-plugin/plugin.json`
+   (and the matching `version` lines in the two lockfiles).
+2. In `CHANGELOG.md`, rename `## Unreleased` to `## X.Y.Z (YYYY-MM-DD)` and
+   start a fresh `## Unreleased` above it. That section is the text of the
+   release notes, so write it for readers of the release page.
+3. Rebuild the bundle (`npm run build`) if anything under `src/` changed, and merge.
+4. Tag the merge commit on `main` and push the tag:
+
+   ```bash
+   git tag -s vX.Y.Z -m "Orbit X.Y.Z"
+   git push origin vX.Y.Z
+   ```
+
+   `vX.Y.Z-rc.1` style tags make a GitHub prerelease and never touch the catalog.
+
+The workflow then, in order, and stops at the first failure with nothing
+published:
+
+1. checks the tag against the three versions, checks that `CHANGELOG.md` has a
+   section for it, and checks that the tagged commit is on `main`
+   (`scripts/check-release-versions.mjs`, `scripts/release-notes.mjs`);
+2. runs the full gate on Ubuntu with Node 24 and the prerequisites of `ci.yml`:
+   typecheck, unit, integration, fault-injection and acceptance tests,
+   `npm run check:dist` and `node scripts/check-plugin.mjs`;
+3. builds `orbit-plugin-X.Y.Z.tar.gz` from the committed `plugin/` tree, with a
+   `SHA256SUMS` file, and creates a GitHub artifact attestation (build
+   provenance) for the archive;
+4. creates the GitHub release with the archive, the checksums and the
+   `CHANGELOG.md` section as its notes;
+5. opens a pull request on `QuintinBotes/claude-plugins` that sets the `ref` of
+   the `orbit` entry in `.claude-plugin/marketplace.json` to the tag
+   (`scripts/bump-catalog-ref.mjs` changes that one line).
+
+Step 5 needs the repository secret `CATALOG_PR_TOKEN`: a fine-grained personal
+access token with access to `QuintinBotes/claude-plugins` and the permissions
+Contents (read and write) and Pull requests (read and write). Set it once with
+`gh secret set CATALOG_PR_TOKEN --repo QuintinBotes/orbit`. Without it the
+release still completes; the job prints a notice and a step summary saying the
+catalog was not updated, and you set the ref by hand or re-run the job after
+adding the secret.
+
+If the gate fails, fix the problem on `main`, delete the tag (`git push --delete
+origin vX.Y.Z` and `git tag -d vX.Y.Z`) and tag again. Every action in the
+workflow is pinned by commit SHA with a version comment; Dependabot proposes
+the bumps. To check a downloaded archive:
+`gh attestation verify orbit-plugin-X.Y.Z.tar.gz --repo QuintinBotes/orbit`.
+
 ## No private information
 
 Nothing in this repository may contain an employer or client name, a real

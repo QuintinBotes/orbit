@@ -41,6 +41,11 @@ import { step } from './steps/index.ts';
 import type { StepResult } from './steps/common.ts';
 import { finalizeRun, writeFinalReport } from './report.ts';
 import { pruneExpiredRuns, type PruneResult } from '../storage/retention.ts';
+import { listQuestions } from '../inquisition/store.ts';
+import { notificationsPolicy } from '../policy/config.ts';
+import { notifyOpenQuestions, resolveNotifyDeps } from '../notify/notify.ts';
+import { pollRemoteAnswers } from '../notify/remote-answers.ts';
+import { resumeAnsweredRun } from './resume.ts';
 
 const DAY_MS = 24 * 60 * 60_000;
 
@@ -86,6 +91,11 @@ export interface ControllerOptions {
    * value read from the newest run's frozen policy.
    */
   retention?: { keepDays?: number; intervalMs?: number };
+  /**
+   * Service mode: how often BLOCKED runs with open questions are considered for remote answers (ADR 0008). Each run
+   * is read at most every `notifications.remote_answers.poll_seconds` of its own policy. Default 30 s; 0 turns it off.
+   */
+  remoteAnswersMs?: number;
 }
 
 export interface TickReport {
@@ -118,6 +128,9 @@ export class Controller {
   private signalHandler: ((sig: NodeJS.Signals) => void) | null = null;
   private watching = false;
   private pruning = false;
+  private polling = false;
+  /** When each run's comments were last read for remote answers (service mode). */
+  private readonly remotePolledAt = new Map<string, number>();
   lastReconcile: ReconcileReport | null = null;
 
   constructor(opts: ControllerOptions) {
@@ -148,6 +161,8 @@ export class Controller {
     this.timers.push(setInterval(() => this.renewAll(), this.opts.leaseRenewMs ?? Math.max(250, Math.floor(this.ttl / 4))));
     const watchdogMs = this.opts.watchdogMs ?? 30_000;
     if (this.opts.mode === 'service' && watchdogMs > 0) this.timers.push(setInterval(() => void this.watchdog(), watchdogMs));
+    const remoteMs = this.opts.remoteAnswersMs ?? 30_000;
+    if (this.opts.mode === 'service' && remoteMs > 0) this.timers.push(setInterval(() => void this.remoteAnswers(), remoteMs));
     for (const t of this.timers) t.unref();
 
     await this.reconcile(this.opts.mode === 'foreground' ? [this.opts.runId!] : undefined);
@@ -263,6 +278,7 @@ export class Controller {
         }
         const result = await step(this.deps, runId, ac.signal);
         report.steps.push({ runId, state, result });
+        await this.announceQuestions(runId);
         if (result.done && this.owned.get(runId) === slot) {
           const run = getRun(this.deps.db, runId);
           if (isTerminal(run.state) || run.paused) this.drop(runId, isTerminal(run.state) ? `run ${run.state}` : 'run paused');
@@ -446,6 +462,67 @@ export class Controller {
     if (unstoppable.length > 0) this.note(runId, 'workers.stop-failed', { workers: unstoppable });
     await finalizeRun(ctx);
     return true;
+  }
+
+  /** Questions a step raised are announced once (ADR 0008); a notification never fails the step. */
+  private async announceQuestions(runId: string): Promise<void> {
+    const { db, clock } = this.deps;
+    try {
+      if (listQuestions(db, runId, { status: 'open' }).length === 0) return;
+      const run = getRun(db, runId);
+      let config = null;
+      try {
+        config = verifySnapshot(run.policyPath, run.policyHash).config;
+      } catch {
+        config = null;
+      }
+      await notifyOpenQuestions({ db, clock, run, runDir: dirname(run.policyPath), config, deps: resolveNotifyDeps(this.deps), actor: this.ownerId });
+    } catch (err) {
+      this.log.warn('question notification failed', { run_id: runId, error: messageOf(err) });
+    }
+  }
+
+  /**
+   * One remote-answer pass (service mode, ADR 0008): the comments of every BLOCKED run with open questions whose
+   * policy turns remote answers on, read at most once per its poll interval; a run left with no open material
+   * question is resumed through the same rules as `orbit resume`, and this controller then picks it up.
+   */
+  private async remoteAnswers(): Promise<void> {
+    if (this.polling || this.stopped) return;
+    this.polling = true;
+    const { db, clock } = this.deps;
+    try {
+      for (const run of listRuns(db, { states: ['BLOCKED'], limit: 200 })) {
+        if (this.stopped) break;
+        if (run.cancelRequested || listQuestions(db, run.id, { status: 'open' }).length === 0) continue;
+        let config;
+        try {
+          config = verifySnapshot(run.policyPath, run.policyHash).config;
+        } catch {
+          continue;
+        }
+        const n = notificationsPolicy(config).remote_answers;
+        if (!n.enabled) continue;
+        const last = this.remotePolledAt.get(run.id);
+        if (last !== undefined && clock.now() - last < n.poll_seconds * 1000) continue;
+        this.remotePolledAt.set(run.id, clock.now());
+        try {
+          const notify = resolveNotifyDeps(this.deps);
+          const client = await notify.threads(run.repoRoot, config);
+          const rep = await pollRemoteAnswers({ db, clock, run, runDir: dirname(run.policyPath), config, client, actor: this.ownerId });
+          for (const e of rep.errors) this.log.warn('remote answers', { run_id: run.id, error: e });
+          if (rep.accepted.length === 0) continue;
+          const to = resumeAnsweredRun(db, clock, run.id, this.ownerId, this.ownerId, `resumed after a remote answer by ${rep.accepted.map((a) => a.author).join(', ')}`);
+          if (to) this.log.info('run resumed by a remote answer', { run_id: run.id, to });
+        } catch (err) {
+          this.note(run.id, 'remote.poll-failed', { error: messageOf(err) });
+        }
+      }
+    } catch (err) {
+      this.log.warn('remote answers pass failed', { error: messageOf(err) });
+    } finally {
+      this.polling = false;
+    }
   }
 
   private ledgerFor(runId: string): BudgetLedger | null {

@@ -11,6 +11,7 @@ import { isAlive, killGroup, processStartTime } from '../core/proc.ts';
 import { isSecretEnvName, redact } from '../core/redact.ts';
 import { RESOURCE_LIMIT_EXIT_CODE, resourceLimitNote } from '../isolation/memory.ts';
 import { prepareWorkerTmpDir, profileForCheck, workerTmpDir } from '../isolation/profiles.ts';
+import { detectToolchains, prepareToolchainLayout, removeScratch, toolchainLayout, type ToolchainLayout } from '../isolation/toolchains.ts';
 import type { IsolationProvider, WrappedCommand } from '../isolation/types.ts';
 import { checkConfigHash, snapshotHash } from '../policy/snapshot.ts';
 import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
@@ -81,10 +82,15 @@ export interface RunnerContext {
   pollMs?: number;
   killGraceMs?: number;
   maxOutputBytes?: number;
-  /** Real home directory, used only to compute what the sandbox must hide. */
+  /** Real home directory, used only to compute what the sandbox must hide and to find a rustup installation. */
   homeDir?: string;
   /** Orbit-generated definitions (dependency install) that are not in the snapshot's checks, by id. */
   definitions?: Readonly<Record<string, CheckDefinition>>;
+  /**
+   * The repository's toolchain dependency caches (isolation/toolchains.ts toolchainCacheRoot): writable for Orbit's
+   * install step, read-only for every other check. Absent: each attempt keeps its caches in its private scratch.
+   */
+  toolchainCacheRoot?: string | null;
 }
 
 export interface RunChecksInput extends RunnerContext {
@@ -326,6 +332,8 @@ interface AttemptDirs {
   artifactsDir: string;
   homeDir: string;
   tmpDir: string;
+  /** Private build state of the attempt's toolchains (isolation/toolchains.ts). */
+  toolchainsDir: string;
 }
 
 function attemptName(checkId: string, index: number): string {
@@ -348,6 +356,7 @@ function dirsFor(subject: CheckSubject, checkId: string, index: number): Attempt
     homeDir: join(checkDir, 'home'),
     // Short and private: socket paths inside deep run directories exceed the OS limit.
     tmpDir: workerTmpDir(checkDir),
+    toolchainsDir: join(checkDir, 'toolchains'),
   };
 }
 
@@ -483,9 +492,13 @@ export function prepareCheckHome(homeDir: string): void {
   atomicWrite(join(dir, NUGET_LATEST_MIGRATION), '', 0o600);
 }
 
-/** The fixed environment a check starts with. The host environment is not inherited beyond PATH. */
-export function checkEnv(def: CheckDefinition, dirs: Pick<AttemptDirs, 'homeDir' | 'tmpDir' | 'artifactsDir'>, hostPath: string | undefined = process.env.PATH): Record<string, string> {
+/**
+ * The fixed environment a check starts with. The host environment is not inherited beyond PATH. `toolchainEnv` (a
+ * ToolchainLayout's env) cannot replace what the runner fixes here; the check's own env overrides everything.
+ */
+export function checkEnv(def: CheckDefinition, dirs: Pick<AttemptDirs, 'homeDir' | 'tmpDir' | 'artifactsDir'>, hostPath: string | undefined = process.env.PATH, toolchainEnv: Readonly<Record<string, string>> = {}): Record<string, string> {
   return {
+    ...toolchainEnv,
     PATH: hostPath ?? '/usr/bin:/bin',
     HOME: dirs.homeDir,
     TMPDIR: dirs.tmpDir,
@@ -519,12 +532,15 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
   // Before the intent row: a restarted controller must find the generated definition of every row it can see.
   if (!ctx.snapshot.config.checks[def.id]) atomicWriteJson(join(dirs.checkDir, DEFINITION_FILE), def, 0o600);
 
-  const env = checkEnv(def, dirs);
+  const toolchains = checkToolchains(ctx, def, cwd, dirs, tmp);
+  prepareToolchainLayout(toolchains);
+  const env = checkEnv(def, dirs, process.env.PATH, toolchains.env);
   const profile = profileForCheck({
     worktree: ctx.checkoutDir,
     check: def,
     snapshot: ctx.snapshot,
-    extraWritable: [dirs.artifactsDir, dirs.homeDir, tmp],
+    extraWritable: [dirs.artifactsDir, dirs.homeDir, tmp, ...toolchains.writable],
+    readablePaths: toolchains.readOnly,
     homeDir: ctx.homeDir,
   });
   const wrapped: WrappedCommand = ctx.isolation.wrap(argv, profile, { cwd, env });
@@ -595,6 +611,25 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
     throw err;
   }
   return superviseAttempt(ctx, subject, def, row, wrapped);
+}
+
+/**
+ * The toolchains a check uses (its command, the checkout root and its cwd) and where their state goes
+ * (docs/decisions/0009-toolchain-profiles.md): the repository's dependency caches are writable only for Orbit's own
+ * install step (a generated definition, never a policy check that borrows its id) and read-only for every other
+ * check; build state is private to the attempt.
+ */
+export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutDir' | 'toolchainCacheRoot' | 'homeDir' | 'isolation'>, def: CheckDefinition, cwd: string, dirs: Pick<AttemptDirs, 'toolchainsDir'>, tmpDir: string): ToolchainLayout {
+  const install = INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
+  return toolchainLayout({
+    toolchains: detectToolchains({ command: def.command, shell: def.shell, roots: [ctx.checkoutDir, cwd] }),
+    mode: install ? 'install' : 'check',
+    cacheRoot: ctx.toolchainCacheRoot ?? null,
+    scratchRoot: dirs.toolchainsDir,
+    tmpDir,
+    // A container brings its own toolchain installation; the host's rustup and JDK are neither mounted nor wanted there.
+    ...(ctx.isolation.kind === 'container' ? { hostEnv: {} } : { hostEnv: process.env, ...(ctx.homeDir ? { hostHome: ctx.homeDir } : {}) }),
+  });
 }
 
 /**
@@ -895,7 +930,5 @@ function hashFile(path: string): string {
 function removeLeftovers(subject: CheckSubject, checkId: string, index: number): void {
   const dirs = dirsFor(subject, checkId, index);
   rmSync(shimPath(dirs.checkDir, 'output'), { force: true });
-  rmSync(dirs.homeDir, { recursive: true, force: true });
-  rmSync(dirs.tmpDir, { recursive: true, force: true });
+  for (const d of [dirs.homeDir, dirs.tmpDir, dirs.toolchainsDir]) removeScratch(d);
 }
-

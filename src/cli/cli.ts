@@ -33,6 +33,7 @@ import {
 } from './commands/learn.ts';
 import { LOGS_OPTIONS, logsCommand } from './commands/logs.ts';
 import { MODELS_REFRESH_OPTIONS, modelsListCommand, modelsRefreshCommand } from './commands/models.ts';
+import { NOTIFY_TEST_OPTIONS, NOTIFY_TEST_USAGE, notifyTestCommand } from './commands/notify.ts';
 import { policyShowCommand } from './commands/policy.ts';
 import { RELEASE_RESOLVE_OPTIONS, RELEASE_RESOLVE_USAGE, releaseResolveCommand } from './commands/release.ts';
 import { REPORT_OPTIONS, reportCommand } from './commands/report.ts';
@@ -83,6 +84,7 @@ export const COMMANDS: readonly CommandDef[] = [
   { name: 'stats', summary: 'the spec section 16 metrics for this repository\'s runs (success, cost, repair loops, time to green), optionally in a time window', usage: STATS_USAGE, options: STATS_OPTIONS, run: statsCommand },
   { name: 'release resolve', summary: 'settle a deploy whose outcome is unknown: run the environment\'s verify_command, or record --deployed / --not-deployed', usage: RELEASE_RESOLVE_USAGE, options: RELEASE_RESOLVE_OPTIONS, run: releaseResolveCommand },
   { name: 'gc', summary: 'apply artifact retention: delete the run directories and worktrees of finished runs older than retention.keep_runs_days', usage: GC_USAGE, options: GC_OPTIONS, run: gcCommand },
+  { name: 'notify test', summary: 'send a test notification through the configured channels (desktop, webhook, GitHub comment) and print each outcome', usage: NOTIFY_TEST_USAGE, options: NOTIFY_TEST_OPTIONS, run: notifyTestCommand },
   { name: 'policy show', summary: 'the frozen policy a run acts under, verified against its hash', usage: 'orbit policy show <run-id> [--json]', run: policyShowCommand },
 ];
 

@@ -21,6 +21,7 @@ import type { ControllerDeps } from '../controller/context.ts';
 import type { ControllerOptions } from '../controller/loop.ts';
 import type { CommandRunner } from '../controller/service.ts';
 import type { EvalRunner } from '../knowledge/evals.ts';
+import type { NotifyDeps } from '../notify/channels.ts';
 import { createIo, type Io } from './io.ts';
 import type { AdmissionCheck } from './admission.ts';
 
@@ -49,6 +50,8 @@ export interface CliSeams {
   exit?: (code: number) => never;
   /** Judges whether `orbit run` may start (dirty tree, environment gate) before it creates a run; tests that script the controller replace it. */
   admission?: AdmissionCheck;
+  /** Notification and comment collaborators for `orbit notify test` and the remote answers `orbit resume` reads; tests inject fakes. */
+  notify?: Partial<NotifyDeps>;
 }
 
 export interface CliContext {

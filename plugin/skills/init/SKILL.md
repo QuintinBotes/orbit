@@ -22,8 +22,9 @@ User arguments, verbatim: `$ARGUMENTS`
 
 Report whether the config was created or already existed, the
 `scope.allowed_paths` it derived from the repository layout (if it printed
-any), and every problem listed under "The configuration does not validate
-yet". The starter is a template, not a working policy: the person must review
+any), the checks it proposed from what the repository declares (each is commented in the
+config for review) and the tools it skipped, and every problem listed under "The
+configuration does not validate yet". The starter is a template, not a working policy: the person must review
 it, define the checks that prove a change, and set the provider settings it
 asks for. Offer to help edit `.orbit/config.yaml`, then suggest `/orbit:doctor`.
 

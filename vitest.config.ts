@@ -3,12 +3,15 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
+    // Removes the acceptance templates this run created (tests/support/global-setup.ts).
+    globalSetup: ['tests/support/global-setup.ts'],
     // Integration and fault-injection tests spawn real processes, git repos and
     // SQLite files; they share nothing, but they are heavy, so cap the pool.
     maxWorkers: 4,
     testTimeout: 60_000,
     // Times in expected output are written in UTC; a test that is about local time sets its own zone.
-    env: { TZ: 'UTC' },
+    // ORBIT_NOTIFICATIONS=off: no test run pops a desktop notification or posts anywhere; notification tests inject fakes.
+    env: { TZ: 'UTC', ORBIT_NOTIFICATIONS: 'off' },
     hookTimeout: 60_000,
     coverage: {
       provider: 'v8',

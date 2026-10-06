@@ -24,6 +24,7 @@ import type {
   CheckDefinition,
   DependencyAuditConfig,
   IsolationLimits,
+  NotificationsConfig,
   OrbitConfig,
   ProviderConfig,
   ReleaseConfig,
@@ -197,7 +198,21 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
     retention: { keep_runs_days: 30, redact_patterns: [] },
     knowledge: { enabled: true, share_globally: false, max_advisory_tokens: 800, curator_budget_usd: 0.25, eval_budget_usd: 0, auto_adopt_overlays: true },
     guard: { terms_file: null, allowed_emails: [] },
+    notifications: defaultNotifications(),
   };
+}
+
+/** ADR 0008: desktop notifications on; webhook, pull request comments and remote answers off. */
+export function defaultNotifications(): NotificationsConfig {
+  return { desktop: true, webhook: null, github_comment: false, remote_answers: { enabled: false, issue: null, poll_seconds: 120 } };
+}
+
+/** The notification settings of a config; a snapshot written before the section existed reads the defaults. */
+export function notificationsPolicy(config: Pick<OrbitConfig, 'notifications'>): NotificationsConfig {
+  const d = defaultNotifications();
+  const n = config.notifications;
+  if (!n) return d;
+  return { ...d, ...n, remote_answers: { ...d.remote_answers, ...(n.remote_answers ?? {}) } };
 }
 
 export function defaultCheck(id: string): CheckDefinition {
@@ -841,6 +856,11 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
       // core/redact skips such a pattern (it would tag every position), so accepting it would leave the user's secrets unredacted.
       if (re.test('')) problems.push(`retention.redact_patterns[${i}]: matches the empty string, so it cannot be applied; require at least one character (for example + instead of *)`);
     });
+  },
+  function notificationRules(c, problems) {
+    const env = c.notifications?.webhook?.url_env;
+    // The webhook URL is read from this variable and posted to; a credential's variable would send the credential away.
+    if (env !== undefined && FORBIDDEN_CHECK_ENV.has(env)) problems.push(`notifications.webhook.url_env: ${env} holds a credential, not a webhook URL; name a variable that holds only the URL (for example ORBIT_WEBHOOK_URL)`);
   },
   function repositoryBranches(c, problems) {
     const { base_branch, branch_prefix } = c.repository;

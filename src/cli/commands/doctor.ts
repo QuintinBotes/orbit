@@ -989,7 +989,7 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; prob
   await safely('ui.browser-isolation', 'ui', () =>
     browserIsolationCheck({ wanted: config.ui !== null || Object.values(config.checks).some((c) => c.kind === 'playwright'), provider: isoFacts.provider, available: isoFacts.available, repo, env: ctx.env, homeDir: ctx.homeDir }),
   );
-  await safely('checks.sandbox', 'checks', () => checkSandboxCheck({ config, repo, provider: isoFacts.provider, available: isoFacts.available, env: ctx.env, homeDir: ctx.homeDir }));
+  await safely('checks.sandbox', 'checks', () => checkSandboxCheck({ config, repo, provider: isoFacts.provider, available: isoFacts.available, env: ctx.env, homeDir: ctx.homeDir, orbitHome: ctx.orbitHome }));
   await safely('delivery', 'delivery', () => checkDelivery(p));
   await safely('gitleaks', 'security', () => checkGitleaks(p));
   await safely('service', 'service', () => checkService(p));
