@@ -173,7 +173,7 @@ request.
 orbit service install
 orbit run --goal "..." --detach
 orbit status                       # recent runs
-orbit logs <run-id> --follow
+orbit timeline <run-id> --follow   # what it is doing, one readable line per step
 ```
 
 Plugin skills need the service for runs that outlive the Claude Code session.
@@ -194,7 +194,8 @@ one ([troubleshooting](docs/troubleshooting.md#run-problems)).
 | `orbit init` | Write `.orbit/config.yaml` from the starter template. |
 | `orbit run --goal <text>` | Freeze the policy and start a run (`--mode`, `--environment`, `--policy`, `--foreground`, `--detach`). |
 | `orbit status [run-id]` | State, stage, attempts, budgets, workers, questions, heartbeat. |
-| `orbit logs <run-id>` | Controller and worker logs, redacted (`--follow`, `--lines`, `--controller`, `--workers`, `--worker`). |
+| `orbit timeline <run-id>` | What happened in a run, one readable line per step in order, with local time: state changes and their reasons, routing and escalation with the evidence, each attempt and candidate with its verification verdict, check results, review outcome and reviewer, questions asked and answered, delivery actions, and the cost so far (measured against charged). `--follow` streams a running run, `--last <n>` cuts it, `--all` adds housekeeping, `--json` is for machines. |
+| `orbit logs <run-id>` | The raw controller and worker logs, redacted (`--follow`, `--lines`, `--controller`, `--workers`, `--worker`). For a readable history use `orbit timeline`. |
 | `orbit verify [run-id]` | Independent verification of a run's latest candidate: a verdict per criterion with its evidence. Exit 14 for FAIL, 15 for INCOMPLETE. |
 | `orbit repair <run-id \| description \| ->` | Repair a failed run (BLOCKED or paused with FAIL evidence), or start a run to repair a described failure (`--foreground`, `--detach`, `--mode`, `--policy`). `-` reads the description from stdin. |
 | `orbit stats` | Success rate, cost, repair loops and time to green for this repository (`--since`, `--until`). |
@@ -212,8 +213,8 @@ one ([troubleshooting](docs/troubleshooting.md#run-problems)).
 | `orbit service install / uninstall / status / run` | The background service. |
 
 Every command accepts `--repo <dir>`, `--json` and `--help`. Exit codes are
-printed by `orbit help exit-codes`. `orbit status` takes `--all`, `orbit logs`
-takes `-f` for `--follow`, and `orbit run --goal -` reads the goal from stdin.
+printed by `orbit help exit-codes`. `orbit status` takes `--all`, `orbit logs` and
+`orbit timeline` take `-f` for `--follow`, and `orbit run --goal -` reads the goal from stdin.
 Orbit Inquisition has no separate command: `/orbit:inquisition` runs it inside
 Claude Code, and the controller runs it for unclear goals. Release mode has no
 separate command either: `orbit run --mode release`, with the `release` and

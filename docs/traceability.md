@@ -119,6 +119,7 @@ sometimes shortened.
 | S4.8 | `orbit init` | `cli/commands/init.ts:initCommand` | U/cli/init.test.ts | done |
 | S4.9 | `orbit run --goal --mode --policy` | `cli/commands/run.ts:runCommand` | I/cli/run.test.ts, U/cli/cli.test.ts "requires a goal and refuses contradictory run flags" | done |
 | S4.10 | `orbit status <run-id>` | `cli/commands/status.ts` | U/cli/status.test.ts | done |
+| S4.10a | `orbit timeline <run-id>`: one readable line per step from the run's events, decisions and worker records; `--follow`, `--json` | `cli/commands/timeline.ts`, `observability/timeline.ts` | U/cli/timeline.test.ts | done |
 | S4.11 | `orbit logs <run-id>` | `cli/commands/logs.ts` | U/cli/inspect.test.ts "prints only this run's controller lines, and redacts..." | done |
 | S4.12 | `orbit pause <run-id>` | `cli/commands/control.ts:pauseCommand` | U/cli/control.test.ts "pauses and unpauses durably" | done |
 | S4.13 | `orbit resume <run-id>` | `cli/commands/control.ts:resumeCommand` | U/cli/control.test.ts "resumes a BLOCKED run at the stage it stopped in" | done |

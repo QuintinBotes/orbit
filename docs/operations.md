@@ -97,6 +97,7 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 | `orbit init` | none |
 | `orbit run` | `--goal <text>` (or `-` for stdin), `--mode supervised\|autonomous\|autonomous-delivery\|release`, `--environment <name>` (release mode: deploy only there), `--policy <path>`, `--foreground`, `--detach` |
 | `orbit status [run-id]` | `--all` lists every run, not the latest 10 |
+| `orbit timeline <run-id>` | `--follow` / `-f`, `--last <n>`, `--all` |
 | `orbit logs <run-id>` | `--follow` / `-f`, `--lines <n>`, `--controller`, `--workers`, `--worker <id>` |
 | `orbit pause <run-id>` | none |
 | `orbit resume <run-id>` | `--foreground`, or `--detach` (leave it to the service); with neither it needs a live controller (the service, or the foreground controller that owns the run) and otherwise refuses without changing anything, or drives the run itself on a terminal. `--force`, `--policy <path>` |
@@ -274,6 +275,52 @@ that is set (today only `memory_mb`: `sandbox-runtime` and `none` cannot hard-ca
 it, `container` can when `container.memory_mb` is no higher); the message
 names the limit and the fix. `none` is refused in
 autonomous modes unless `isolation.allow_unisolated` is true.
+
+## Timeline
+
+`orbit timeline <run-id>` is the reading copy of a run: one line per
+significant step, in the order it happened, with the local time:
+
+```
+12:01:11  route     implementation -> claude/claude-sonnet-4-6 (high): implementation starts at the sonnet tier
+12:02:02  check     unit-tests FAILED (exit 1) on candidate 1 in 5s; fingerprint fp-mul-undefined
+12:02:05  verdict   candidate 1 FAIL: failing checks: unit-tests
+12:02:09  route     implementation: escalated claude/claude-sonnet-4-6 -> claude/claude-opus-4-8 (high): repeated failure ...; evidence: chk:unit-tests, cand:1
+12:03:46  review    round 1 APPROVE by codex/gpt-6.1-sol on candidate 2 (1 finding: 1 low)
+cost so far: measured $0.17 (2 reported); charged $1.17 to the cost budget; $1.00 of that stands in for 1 session with no reported cost
+```
+
+It reads only durable state (the events, the decisions and the worker and usage
+records), so it gives the same answer whether a controller is running or not.
+The category column says what kind of step a line is: `state` (every transition
+with its reason), `route` (routing decisions; an escalation or down-route names
+both models and the evidence and signals that justified it), `attempt`,
+`worker`, `candidate`, `check`, `verdict` (the verification verdict of a
+candidate), `review` (round, verdict, reviewer and findings), `question` (when
+asked, when answered and by whom), `delivery` (each action's intent, execution
+and outcome), `policy`, `cost`, `budget`, `recovery` and `error`. An event the
+timeline has no wording for is still shown, as its type and data.
+
+The last line is the cost so far. "Measured" is what the providers reported
+(plus, separately, what Orbit estimated from tokens); "charged" is what the
+budget ledger has counted against the cost cap, which includes a conservative
+ceiling for every session that reported no cost, so it can be higher than what
+was measured. Before the run has a ledger, nothing is charged yet.
+
+- `--follow` (`-f`) keeps printing new steps until the run reaches a final or
+  BLOCKED state (a blocked run waits for a decision, not for more output) or
+  you interrupt it. With `--json` it prints one JSON object per step per line.
+- `--last <n>` shows only the last n steps (and, with `--follow`, starts there).
+- `--all` adds housekeeping events: heartbeat progress, lease bookkeeping,
+  planned checks and workers.
+- `--json` prints `{ run, entries, cost }`. Each entry has `at` (epoch
+  milliseconds), `time` (ISO 8601 UTC), `category`, `kind` (the event type or
+  decision kind), `text`, `event_id` and `data` (the structured facts behind the
+  line). Times are shown in the local time zone in text and in UTC in JSON.
+
+`orbit logs` stays the raw output (controller log lines and worker transcripts);
+`/orbit:status <run-id>` shows the status and then the last steps of the
+timeline.
 
 ## Logs
 

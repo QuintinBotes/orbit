@@ -41,6 +41,7 @@ import { SERVICE_INSTALL_OPTIONS, refreshServiceLauncher, serviceInstallCommand,
 import { REPAIR_OPTIONS, repairCommand } from './commands/repair.ts';
 import { STATS_OPTIONS, STATS_USAGE, statsCommand } from './commands/stats.ts';
 import { STATUS_OPTIONS, statusCommand } from './commands/status.ts';
+import { TIMELINE_OPTIONS, TIMELINE_USAGE, timelineCommand } from './commands/timeline.ts';
 import { verifyCommand } from './commands/verify.ts';
 
 export interface CommandDef {
@@ -57,7 +58,8 @@ export const COMMANDS: readonly CommandDef[] = [
   { name: 'init', summary: 'write .orbit/config.yaml from the starter template and keep runtime state out of git status', usage: 'orbit init', run: initCommand },
   { name: 'run', summary: 'start a run: freeze the policy, then drive it here or hand it to the service', usage: 'orbit run --goal "<goal>" [--mode <mode>] [--environment <name>] [--policy <path>] [--foreground | --detach]', options: RUN_OPTIONS, run: runCommand },
   { name: 'status', summary: 'state, stage, attempts, budgets, workers, open questions and heartbeat of a run (or the recent runs)', usage: 'orbit status [run-id] [--all] [--json]', options: STATUS_OPTIONS, run: statusCommand },
-  { name: 'logs', summary: 'controller and worker logs of a run, redacted', usage: 'orbit logs <run-id> [--follow] [--lines n] [--controller | --workers | --worker id]', options: LOGS_OPTIONS, run: logsCommand },
+  { name: 'timeline', summary: 'what happened in a run, one readable line per step: state changes, routing, attempts, checks, review, questions, delivery, cost', usage: TIMELINE_USAGE, options: TIMELINE_OPTIONS, run: timelineCommand },
+  { name: 'logs', summary: 'raw controller and worker logs of a run, redacted (for a readable history use "orbit timeline")', usage: 'orbit logs <run-id> [--follow] [--lines n] [--controller | --workers | --worker id]', options: LOGS_OPTIONS, run: logsCommand },
   { name: 'pause', summary: 'pause a run durably; workers keep running and are collected on resume', usage: 'orbit pause <run-id>', run: pauseCommand },
   { name: 'resume', summary: 'unpause a run, or resume a BLOCKED one after a decision or an environment repair', usage: 'orbit resume <run-id> [--foreground | --detach] [--force]', options: RESUME_OPTIONS, run: resumeCommand },
   { name: 'cancel', summary: 'cancel a run durably (works for blocked or ownerless runs too)', usage: 'orbit cancel <run-id> [--wait seconds]', options: CANCEL_OPTIONS, run: cancelCommand },
@@ -171,7 +173,7 @@ function unknownCommand(words: readonly string[]): UsageError {
  * could run `orbit decide`, `resume --force` or `learn eval` from its shell
  * would be authorizing its own decisions.
  */
-const WORKER_SAFE = new Set(['status', 'logs', 'report', 'questions', 'policy show', 'models list', 'learn list', 'learn show', 'stats']);
+const WORKER_SAFE = new Set(['status', 'timeline', 'logs', 'report', 'questions', 'policy show', 'models list', 'learn list', 'learn show', 'stats']);
 
 function inWorker(env: Readonly<Record<string, string | undefined>>): boolean {
   return env.ORBIT_WORKER === '1' || Boolean(env.ORBIT_POLICY_HASH) || Boolean(env.ORBIT_POLICY_PATH);
