@@ -1857,16 +1857,16 @@ var require_parse = __commonJS({
         const analysis = analyzeRepeatedExtglob(body, opts);
         if ((token.type === "plus" || token.type === "star") && analysis.risky) {
           const safeOutput = analysis.safeOutput ? (token.output ? "" : ONE_CHAR) + (opts.capture ? `(${analysis.safeOutput})` : analysis.safeOutput) : void 0;
-          const open = tokens3[token.tokensIndex];
-          open.type = "text";
-          open.value = literal2;
-          open.output = safeOutput || utils.escapeRegex(literal2);
+          const open2 = tokens3[token.tokensIndex];
+          open2.type = "text";
+          open2.value = literal2;
+          open2.output = safeOutput || utils.escapeRegex(literal2);
           for (let i = token.tokensIndex + 1; i < tokens3.length; i++) {
             tokens3[i].value = "";
             tokens3[i].output = "";
             delete tokens3[i].suffix;
           }
-          state.output = token.output + open.output;
+          state.output = token.output + open2.output;
           state.backtrack = true;
           push({ type: "paren", extglob: true, value, output: "" });
           decrement("parens");
@@ -2086,15 +2086,15 @@ var require_parse = __commonJS({
         }
         if (value === "{" && opts.nobrace !== true) {
           increment("braces");
-          const open = {
+          const open2 = {
             type: "brace",
             value,
             output: "(",
             outputIndex: state.output.length,
             tokensIndex: state.tokens.length
           };
-          braces.push(open);
-          push(open);
+          braces.push(open2);
+          push(open2);
           continue;
         }
         if (value === "}") {
@@ -3458,8 +3458,8 @@ function expandText(m, depth) {
   if (depth > 32) return null;
   const group = findBraceGroup(m);
   if (group === null) return [m];
-  const { open, close, alternatives } = group;
-  const pre = { text: m.text.slice(0, open), active: m.active.slice(0, open) };
+  const { open: open2, close, alternatives } = group;
+  const pre = { text: m.text.slice(0, open2), active: m.active.slice(0, open2) };
   const post = { text: m.text.slice(close + 1), active: m.active.slice(close + 1) };
   const out = [];
   for (const alt of alternatives) {
@@ -3472,12 +3472,12 @@ function expandText(m, depth) {
 }
 function findBraceGroup(m) {
   const { text: text2, active } = m;
-  for (let open = 0; open < text2.length; open++) {
-    if (text2[open] !== "{" || active[open] !== "1") continue;
+  for (let open2 = 0; open2 < text2.length; open2++) {
+    if (text2[open2] !== "{" || active[open2] !== "1") continue;
     let depth = 0;
     const commas = [];
     let close = -1;
-    for (let k = open; k < text2.length; k++) {
+    for (let k = open2; k < text2.length; k++) {
       if (active[k] !== "1") continue;
       const ch = text2[k];
       if (ch === "{") depth++;
@@ -3492,16 +3492,16 @@ function findBraceGroup(m) {
     if (close < 0) continue;
     if (commas.length > 0) {
       const alternatives = [];
-      let from = open + 1;
+      let from = open2 + 1;
       for (const c of [...commas, close]) {
         alternatives.push({ text: text2.slice(from, c), active: active.slice(from, c) });
         from = c + 1;
       }
-      return { open, close, alternatives };
+      return { open: open2, close, alternatives };
     }
-    const inner = text2.slice(open + 1, close);
-    const seq2 = active.slice(open + 1, close).includes("0") ? null : sequence(inner);
-    if (seq2 !== null) return { open, close, alternatives: seq2.map((t) => ({ text: t, active: "0".repeat(t.length) })) };
+    const inner = text2.slice(open2 + 1, close);
+    const seq2 = active.slice(open2 + 1, close).includes("0") ? null : sequence(inner);
+    if (seq2 !== null) return { open: open2, close, alternatives: seq2.map((t) => ({ text: t, active: "0".repeat(t.length) })) };
   }
   return null;
 }
@@ -26364,11 +26364,11 @@ ${OVERLAY_FENCE_OPEN}
 `;
   const closeMarker = `
 ${OVERLAY_FENCE_CLOSE}`;
-  const open = content.indexOf(openMarker);
-  const rest = open === -1 ? "" : content.slice(open + openMarker.length);
-  const prefix = open === -1 ? "" : content.slice(0, open);
+  const open2 = content.indexOf(openMarker);
+  const rest = open2 === -1 ? "" : content.slice(open2 + openMarker.length);
+  const prefix = open2 === -1 ? "" : content.slice(0, open2);
   const body = rest.endsWith(closeMarker) ? rest.slice(0, rest.length - closeMarker.length) : null;
-  if (open === -1 || body === null || !body.trim() || FENCE_MARKERS.test(body) || FENCE_MARKERS.test(prefix)) {
+  if (open2 === -1 || body === null || !body.trim() || FENCE_MARKERS.test(body) || FENCE_MARKERS.test(prefix)) {
     throw new OrbitError("SCHEMA_INVALID", "overlay content must be one advisory fence, with nothing after it and no fence marker inside");
   }
   if (role !== void 0 && prefix !== header(role)) {
@@ -35083,12 +35083,12 @@ function safeDirs(dir) {
 }
 async function reconcileChecks(ctx, run) {
   const { db } = ctx;
-  const open = db.all("SELECT id, check_id, status FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING') ORDER BY started_at, rowid", run.id);
-  if (open.length === 0) return [];
+  const open2 = db.all("SELECT id, check_id, status FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING') ORDER BY started_at, rowid", run.id);
+  if (open2.length === 0) return [];
   const ended = isRunTerminal(run.state) || run.cancelRequested;
   const dirs = findCheckDirs(runDir(ctx, run));
   const out = [];
-  for (const row of open) {
+  for (const row of open2) {
     const rep = { checkRunId: row.id, runId: run.id, checkId: row.check_id, observation: "running", closed: false, terminated: false, detail: null };
     const found = dirs.get(row.id);
     if (!found) {
@@ -36305,15 +36305,15 @@ var init_contract_schema = __esm({
 
 // src/contract/globs.ts
 function expandBraces2(glob) {
-  const open = glob.indexOf("{");
-  if (open === -1) return glob.includes("}") ? null : [glob];
-  const close = glob.indexOf("}", open);
+  const open2 = glob.indexOf("{");
+  if (open2 === -1) return glob.includes("}") ? null : [glob];
+  const close = glob.indexOf("}", open2);
   if (close === -1) return null;
-  const body = glob.slice(open + 1, close);
+  const body = glob.slice(open2 + 1, close);
   if (body.includes("{") || !body.includes(",") || body.includes("..")) return null;
   const alternatives = body.split(",");
   if (!alternatives.every((alt) => LITERAL_ALTERNATIVE.test(alt))) return null;
-  const head = glob.slice(0, open);
+  const head = glob.slice(0, open2);
   const tails = expandBraces2(glob.slice(close + 1));
   if (!tails) return null;
   const out = [];
@@ -45159,9 +45159,9 @@ function reviewGate(db, input) {
     }
     const own = all.filter((f) => f.reviewId === r.id);
     const closers = r.verdict === "BLOCK" ? CLEARS_BLOCK : CLEARS_REPAIR;
-    const open = own.filter((f) => !closers.includes(f.status));
+    const open2 = own.filter((f) => !closers.includes(f.status));
     if (own.length === 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} with no findings to resolve`);
-    else if (open.length > 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} and ${open.length} of its finding(s) are unresolved (${open.map((f) => `${f.externalId ?? f.id} ${f.status}`).join(", ")})`);
+    else if (open2.length > 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} and ${open2.length} of its finding(s) are unresolved (${open2.map((f) => `${f.externalId ?? f.id} ${f.status}`).join(", ")})`);
     else cleared.push(r);
   }
   for (const f of blockingUnresolved(all, input.snapshot, security, lapsed)) {
@@ -45385,9 +45385,9 @@ function persistQuestion(db, runId, mode, q, clock, opts = {}) {
   return db.tx(() => {
     const all = listQuestions(db, runId);
     const asked = new Set(q.affected_work.map((w) => w.trim()).filter((w) => AC_ID.test(w)));
-    const open = all.find((o) => o.status === "open" && sameAsk(o.question, q.question) && (optionKey(o.options) === optionKey(q.options) || o.affected.some((a) => asked.has(a))));
-    if (open) {
-      return { question: widenQuestionAffected(db, open.id, q.affected_work.map((w) => w.trim()), clock, opts.actor ?? "controller"), created: false, classification };
+    const open2 = all.find((o) => o.status === "open" && sameAsk(o.question, q.question) && (optionKey(o.options) === optionKey(q.options) || o.affected.some((a) => asked.has(a))));
+    if (open2) {
+      return { question: widenQuestionAffected(db, open2.id, q.affected_work.map((w) => w.trim()), clock, opts.actor ?? "controller"), created: false, classification };
     }
     const settled = all.find((o) => o.status === "answered" && settles(o, q));
     if (settled) return { question: settled, created: false, classification };
@@ -46264,9 +46264,9 @@ function topicCovers(topic, category) {
 function detectHiddenDecisions(s) {
   const out = [];
   const c = s.contract;
-  const open = c?.assumptions.filter((a) => a.status === "needs-decision") ?? [];
-  if (open.length > 0) {
-    out.push(trig("hidden_decision", "decision-record", "assumptions are waiting for a decision", open.map((a) => `${a.id}: ${a.statement}`), [], { open: open.map((a) => a.id) }));
+  const open2 = c?.assumptions.filter((a) => a.status === "needs-decision") ?? [];
+  if (open2.length > 0) {
+    out.push(trig("hidden_decision", "decision-record", "assumptions are waiting for a decision", open2.map((a) => `${a.id}: ${a.statement}`), [], { open: open2.map((a) => a.id) }));
   }
   const fromPaths = riskCategoriesInPaths(s.changedFiles);
   const fromDiff = s.diff ? riskCategoriesInDiff(s.diff) : /* @__PURE__ */ new Map();
@@ -46461,7 +46461,7 @@ function renderInquisitorPrompt(trigger, ctx) {
   for (const f of listFailures2(ctx.db, ctx.runId)) fingerprints.set(f.fingerprint, f.excerpt);
   const failures = [...fingerprints].slice(-5).map(([fp, ex]) => ({ fingerprint: fp, excerpt: ex ? redact(ex).slice(0, 300) : null }));
   const hypotheses = listHypotheses(ctx.db, ctx.runId).map((h) => ({ id: h.id, statement: h.statement, status: h.status, fingerprint: h.fingerprint }));
-  const open = openQuestions(ctx.db, ctx.runId).map((q) => q.question);
+  const open2 = openQuestions(ctx.db, ctx.runId).map((q) => q.question);
   const parts = [
     `# Orbit Inquisition: ${trigger.mode}`,
     `Trigger (${trigger.kind}): ${trigger.summary}`,
@@ -46475,7 +46475,7 @@ function renderInquisitorPrompt(trigger, ctx) {
   }
   if (failures.length > 0) parts.push(block("failures", JSON.stringify(failures, null, 1)));
   if (hypotheses.length > 0) parts.push(block("hypotheses-already-tried", JSON.stringify(hypotheses, null, 1)));
-  if (open.length > 0) parts.push(block("questions-already-open", open.join("\n")));
+  if (open2.length > 0) parts.push(block("questions-already-open", open2.join("\n")));
   return redactForProvider(parts.join("\n\n"));
 }
 function workerPurpose(trigger) {
@@ -51079,15 +51079,15 @@ async function accept(ctx, contract, plan) {
   settleExpectedFlips(ctx, contract);
   const patch = { contractJson: JSON.stringify(contract), contractHash: hashObject(contract) };
   const material = (plan?.unresolved_decisions ?? []).filter((d) => d.material);
-  const open = contract.assumptions.filter((a) => a.status === "needs-decision");
-  if (material.length > 0 || plan !== null && open.length > 0) {
+  const open2 = contract.assumptions.filter((a) => a.status === "needs-decision");
+  if (material.length > 0 || plan !== null && open2.length > 0) {
     const keys = new Map((plan?.criteria ?? []).map((c, i) => [c.key, `AC-${i + 1}`]));
     const subjects = [...new Set(material.flatMap((d) => d.affected_criteria.map((k) => keys.get(k) ?? k)).filter((s) => /^AC-\d+$/.test(s)))];
     const trigger = {
       kind: "hidden_decision",
       mode: "clarify",
-      summary: `the planner left ${material.length || open.length} material decision(s) unresolved`,
-      evidence: [...material.map((d) => d.question), ...open.map((a) => `${a.id}: ${a.statement}`)].slice(0, 20),
+      summary: `the planner left ${material.length || open2.length} material decision(s) unresolved`,
+      evidence: [...material.map((d) => d.question), ...open2.map((a) => `${a.id}: ${a.statement}`)].slice(0, 20),
       subjects,
       key: `contracting:${hashObject(material.map((d) => d.question)).slice(7, 23)}`
     };
@@ -55148,8 +55148,8 @@ async function resolveAndDecide(ctx, cand) {
   }
   const repairRequested = state.reviews.some((r) => r.verdict === "REPAIR_REQUIRED");
   const blockRank = blockSeverityRank(ctx);
-  const open = resolution.dispositions.filter((d) => d.status === "accepted" || d.status === "claim_pending" || d.status === "open");
-  const toRepair = open.filter(
+  const open2 = resolution.dispositions.filter((d) => d.status === "accepted" || d.status === "claim_pending" || d.status === "open");
+  const toRepair = open2.filter(
     (d) => d.status === "accepted" || undecided.has(d.findingId) || (repairRequested || d.memberIds.some((id) => repaired.has(id))) && (d.blocking || severityRank(d.severity) <= blockRank)
   );
   if (toRepair.length > 0) {
@@ -55201,7 +55201,7 @@ async function resolveAndDecide(ctx, cand) {
     };
     if (!handledTriggerKeys(ctx).has(trigger.key)) return move2(ctx, "INQUISITION", trigger.summary, { data: { trigger } });
   }
-  return finishRun(ctx, "BLOCKED", `independent review does not clear tree ${cand.treeHash}: ${gate.reasons.join("; ") || "no approving review"}`, { outcome: { review_gate: gate.reasons, open_findings: openFindings(open) } });
+  return finishRun(ctx, "BLOCKED", `independent review does not clear tree ${cand.treeHash}: ${gate.reasons.join("; ") || "no approving review"}`, { outcome: { review_gate: gate.reasons, open_findings: openFindings(open2) } });
 }
 function reviewRepairs(ctx) {
   return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id", ctx.run.id, REVIEW_REPAIR_EVENT).map((r) => r.data_json ? JSON.parse(r.data_json) : null).filter((r) => r !== null && Array.isArray(r.findings));
@@ -57455,9 +57455,9 @@ function json1(ctx, value) {
 `);
 }
 function announceEnd(ctx, db, run, exitCode, wantJson) {
-  const open = listQuestions(db, run.id, { status: "open" });
+  const open2 = listQuestions(db, run.id, { status: "open" });
   if (wantJson) {
-    json1(ctx, { type: "result", run_id: run.id, state: run.state, paused: run.paused, exit_code: exitCode, outcome_reason: run.outcomeReason, open_questions: open.map((q) => q.id), ...run.state === "SUCCEEDED" ? { result: resultOf(ctx, db, run) } : {} });
+    json1(ctx, { type: "result", run_id: run.id, state: run.state, paused: run.paused, exit_code: exitCode, outcome_reason: run.outcomeReason, open_questions: open2.map((q) => q.id), ...run.state === "SUCCEEDED" ? { result: resultOf(ctx, db, run) } : {} });
     return;
   }
   if (isTerminal(run.state)) {
@@ -57467,10 +57467,10 @@ function announceEnd(ctx, db, run, exitCode, wantJson) {
     if (where) line(ctx.io, where);
     line(ctx.io, `report: orbit report ${run.id}`);
     if (run.state === "BLOCKED") {
-      for (const q of open) line(ctx.io, `  open question ${q.id}: ${flat(q.question)}`);
+      for (const q of open2) line(ctx.io, `  open question ${q.id}: ${flat(q.question)}`);
       const frozen = /"frozen_policy"/.test(run.outcomeJson ?? "");
       const next = safeContinue(db, run.id, ctx);
-      if (open.length > 0) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "${next}"`);
+      if (open2.length > 0) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "${next}"`);
       else if (frozen) line(ctx.io, `this block comes from the run's frozen policy: fix .orbit/config.yaml, then "orbit cancel ${run.id}" and start a new run with "orbit run"`);
       else line(ctx.io, `resolve the reason above, then "${next}"`);
     }
@@ -57555,9 +57555,9 @@ async function resumeCommand(args, ctx) {
           { frozen_policy: frozen }
         );
       }
-      const open = listQuestions(db, run.id, { status: "open" }).filter((q) => q.material);
-      if (open.length > 0 && !args.bool("force")) {
-        throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is BLOCKED with ${open.length} material question(s) still open (${open.map((q) => q.id).join(", ")}); answer them with "orbit decide ${run.id} <question-id> <answer>", or pass --force to resume without an answer`, { open: open.map((q) => q.id) });
+      const open2 = listQuestions(db, run.id, { status: "open" }).filter((q) => q.material);
+      if (open2.length > 0 && !args.bool("force")) {
+        throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is BLOCKED with ${open2.length} material question(s) still open (${open2.map((q) => q.id).join(", ")}); answer them with "orbit decide ${run.id} <question-id> <answer>", or pass --force to resume without an answer`, { open: open2.map((q) => q.id) });
       }
     }
     let foreground = args.bool("foreground");
@@ -57577,11 +57577,11 @@ async function resumeCommand(args, ctx) {
     }
     if (run.state === "BLOCKED") {
       const target = resumeTarget(db, run);
-      const open = listQuestions(db, run.id, { status: "open" }).filter((q) => q.material);
+      const open2 = listQuestions(db, run.id, { status: "open" }).filter((q) => q.material);
       await withCliLease(ctx, db, run.id, (ownerId) => {
         db.tx(() => {
           transition(db, { runId: run.id, to: target, ownerId, reason: `resumed by ${ctx.user} after a decision or environment repair`, actor: actorOf(ctx), expectedFrom: "BLOCKED" }, ctx.clock);
-          appendEvent(db, run.id, "run.resumed", actorOf(ctx), { from: "BLOCKED", to: target, forced: open.length > 0 }, ctx.clock.now());
+          appendEvent(db, run.id, "run.resumed", actorOf(ctx), { from: "BLOCKED", to: target, forced: open2.length > 0 }, ctx.clock.now());
         });
       });
       notes.push(`resumed BLOCKED run at ${target}`);
@@ -58058,6 +58058,8 @@ var init_service2 = __esm({
 });
 
 // src/cli/layout.ts
+import { open } from "node:fs/promises";
+import { join as join64 } from "node:path";
 async function trackedFiles(ctx, repo) {
   try {
     const r = await execCapture(["git", "ls-files", "-z"], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 3e4 });
@@ -58067,13 +58069,89 @@ async function trackedFiles(ctx, repo) {
     return [];
   }
 }
-function suggestAllowedPaths(files) {
+function isPipelineYaml(text2) {
+  if (/^(trigger|stages|jobs):/m.test(text2)) return true;
+  return /^extends:[ \t]*(\r?\n[ \t]+template:|\{[^}\n]*\btemplate:|template:)/m.test(text2);
+}
+function isCiPath(file) {
+  const base = file.slice(file.lastIndexOf("/") + 1);
+  if (base === ".gitlab-ci.yml" || base.startsWith("Jenkinsfile")) return true;
+  return file.startsWith(".circleci/") || file.startsWith(".github/workflows/");
+}
+function isCentralBuildFile(file) {
+  const base = file.slice(file.lastIndexOf("/") + 1);
+  return CENTRAL_BUILD_FILES.has(base.toLowerCase()) || file === "Makefile";
+}
+function classifyCiDefinitions(files, isPipeline = () => false) {
+  const protectedPaths = /* @__PURE__ */ new Set();
+  const defsByTop = /* @__PURE__ */ new Map();
+  const definitionFiles = /* @__PURE__ */ new Set();
+  for (const f of files) {
+    if (isCentralBuildFile(f)) protectedPaths.add(f);
+    const isYaml = /\.ya?ml$/i.test(f);
+    if (isCiPath(f) || isYaml && isPipeline(f)) {
+      definitionFiles.add(f);
+      const slash = f.indexOf("/");
+      const top = slash > 0 ? f.slice(0, slash) : "";
+      if (top === "" || top.startsWith(".")) {
+        protectedPaths.add(top === ".circleci" ? ".circleci/**" : top === ".github" ? ".github/**" : f);
+      } else defsByTop.set(top, [...defsByTop.get(top) ?? [], f]);
+    }
+  }
+  const excludedDirs = [];
+  for (const [top, defs] of [...defsByTop].sort(([a], [b]) => a.localeCompare(b))) {
+    const holdsSource = files.some((f) => {
+      if (!f.startsWith(`${top}/`) || definitionFiles.has(f)) return false;
+      const dot = f.lastIndexOf(".");
+      const ext = dot > 0 ? f.slice(dot + 1).toLowerCase() : "";
+      return ext !== "sh" && SOURCE_EXTENSIONS.has(ext);
+    });
+    if (!holdsSource) {
+      excludedDirs.push(top);
+      protectedPaths.add(`${top}/**`);
+      continue;
+    }
+    for (const d of defs) {
+      const dir = d.slice(0, d.lastIndexOf("/"));
+      protectedPaths.add(dir === top ? d : `${dir}/**`);
+    }
+  }
+  return { protectedPaths: [...protectedPaths].sort(), excludedDirs };
+}
+async function readHead(path) {
+  const h = await open(path, "r");
+  try {
+    const buf = Buffer.alloc(YAML_READ_BYTES);
+    const { bytesRead } = await h.read(buf, 0, buf.length, 0);
+    return buf.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await h.close();
+  }
+}
+async function pipelineYaml(repo, files) {
+  const found = /* @__PURE__ */ new Set();
+  const candidates = files.filter((f) => /\.ya?ml$/i.test(f) && !f.startsWith(".") && !f.split("/").includes("node_modules")).slice(0, MAX_YAML_READS);
+  for (const f of candidates) {
+    try {
+      if (isPipelineYaml(await readHead(join64(repo, f)))) found.add(f);
+    } catch {
+    }
+  }
+  return found;
+}
+async function proposeScope(ctx, repo, files) {
+  const tracked = files ?? await trackedFiles(ctx, repo);
+  const pipelines = await pipelineYaml(repo, tracked);
+  const ci = classifyCiDefinitions(tracked, (f) => pipelines.has(f));
+  return { allowed: suggestAllowedPaths(tracked, ci.excludedDirs), protectedExtra: ci.protectedPaths, excluded: ci.excludedDirs };
+}
+function suggestAllowedPaths(files, excludedDirs = []) {
   const dirs = /* @__PURE__ */ new Set();
   for (const f of files) {
     const slash = f.indexOf("/");
     if (slash <= 0) continue;
     const top = f.slice(0, slash);
-    if (top.startsWith(".") || NOT_SOURCE.has(top)) continue;
+    if (top.startsWith(".") || NOT_SOURCE.has(top) || excludedDirs.includes(top)) continue;
     if (/[*?[\]{}()!\\]/.test(top)) continue;
     dirs.add(top);
   }
@@ -58089,7 +58167,7 @@ function suggestAllowedPaths(files) {
   }
   return [...exts].sort().map((e) => `*.${e}`);
 }
-var NOT_SOURCE, SOURCE_EXTENSIONS, MAX_DIRS;
+var NOT_SOURCE, SOURCE_EXTENSIONS, CENTRAL_BUILD_FILES, MAX_YAML_READS, YAML_READ_BYTES, MAX_DIRS;
 var init_layout = __esm({
   "src/cli/layout.ts"() {
     "use strict";
@@ -58097,6 +58175,9 @@ var init_layout = __esm({
     init_context();
     NOT_SOURCE = /* @__PURE__ */ new Set(["node_modules", "dist", "build", "out", "coverage", "vendor", "target", "infra", "tmp", "temp"]);
     SOURCE_EXTENSIONS = /* @__PURE__ */ new Set(["js", "mjs", "cjs", "jsx", "ts", "tsx", "py", "rb", "go", "rs", "java", "kt", "c", "h", "cc", "cpp", "cs", "php", "swift", "sh"]);
+    CENTRAL_BUILD_FILES = /* @__PURE__ */ new Set(["directory.build.props", "directory.build.targets", "directory.packages.props", "global.json", "nuget.config"]);
+    MAX_YAML_READS = 2e3;
+    YAML_READ_BYTES = 64 * 1024;
     MAX_DIRS = 8;
   }
 });
@@ -58129,7 +58210,7 @@ import { accessSync as accessSync3, constants as constants4, existsSync as exist
 import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
 import { homedir as homedir12, tmpdir as tmpdir12 } from "node:os";
-import { delimiter as delimiter4, isAbsolute as isAbsolute19, join as join64, resolve as resolve16 } from "node:path";
+import { delimiter as delimiter4, isAbsolute as isAbsolute19, join as join65, resolve as resolve16 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
     try {
@@ -58144,7 +58225,7 @@ function which2(cmd, env, cwd = process.cwd()) {
   }
   for (const dir of (env.PATH ?? "").split(delimiter4)) {
     if (!dir) continue;
-    const p = join64(dir, cmd);
+    const p = join65(dir, cmd);
     if (ok(p)) return p;
   }
   return null;
@@ -58248,13 +58329,13 @@ function checkStorage(p) {
   const { repo } = p;
   if (!repo) return warn2("storage", "storage", "no repository, so no state database to check", "a repository", null);
   const path = stateDbPath(repo);
-  const dir = join64(repo, ".orbit");
+  const dir = join65(repo, ".orbit");
   let db = null;
   try {
     if (!existsSync48(path)) {
-      const scratch = mkdtempSync6(join64(tmpdir12(), "orbit-doctor-"));
+      const scratch = mkdtempSync6(join65(tmpdir12(), "orbit-doctor-"));
       try {
-        db = openDb(join64(scratch, "probe.sqlite"));
+        db = openDb(join65(scratch, "probe.sqlite"));
         const mode2 = String((db.get("PRAGMA journal_mode") ?? {}).journal_mode);
         if (mode2.toLowerCase() !== "wal") return fail2("storage", "storage", `SQLite cannot use WAL on this filesystem (journal_mode=${mode2})`, "WAL journaling", "use a local disk, not a network or container bind mount");
       } finally {
@@ -58310,7 +58391,7 @@ function checkConfiguredChecks(p) {
       details.push(`${c.id}: shell builtin "${word}" (not resolved)`);
       continue;
     }
-    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join64(repo, "node_modules", ".bin", word), ctx.env) : null);
+    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join65(repo, "node_modules", ".bin", word), ctx.env) : null);
     if (!found) {
       details.push(`${c.id}: "${word}" was not found${c.mandatory ? "" : " (optional check)"}${c.cwd !== "." ? ` (cwd ${c.cwd})` : ""}`);
       bump(level);
@@ -58318,7 +58399,7 @@ function checkConfiguredChecks(p) {
     }
     const script = c.shell ? void 0 : packageScriptOf(c.command);
     if (script) {
-      const pj = join64(cwd, "package.json");
+      const pj = join65(cwd, "package.json");
       let defined = false;
       try {
         defined = typeof JSON.parse(readFileSync30(pj, "utf8")).scripts?.[script] === "string";
@@ -58350,7 +58431,7 @@ async function checkScope(p) {
   const matches = compileGlobs(globs, { nocase: false });
   const hit = files.filter((f) => matches(f)).length;
   if (hit > 0) return [pass("scope", "config", `scope.allowed_paths (${globs.join(", ")}) matches ${hit} of ${files.length} tracked file(s)`)];
-  const suggestion = suggestAllowedPaths(files);
+  const suggestion = (await proposeScope(ctx, repo, files)).allowed;
   return [
     warn2(
       "scope",
@@ -58380,7 +58461,7 @@ async function checkIsolation(p) {
   }
   if (!st.ok) {
     const pluginRoot = ctx.env.ORBIT_PLUGIN_ROOT;
-    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync48(join64(pluginRoot, "package.json")) && !existsSync48(join64(pluginRoot, "node_modules"))) {
+    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync48(join65(pluginRoot, "package.json")) && !existsSync48(join65(pluginRoot, "node_modules"))) {
       return {
         check: fail2(
           "isolation",
@@ -58561,9 +58642,9 @@ function packageInstalled(req, name) {
 function playwrightCache(env, home2, platform3) {
   const override = env.PLAYWRIGHT_BROWSERS_PATH;
   if (override && override !== "0") return override;
-  if (platform3 === "darwin") return join64(home2, "Library", "Caches", "ms-playwright");
-  if (platform3 === "win32") return join64(env.LOCALAPPDATA ?? join64(home2, "AppData", "Local"), "ms-playwright");
-  return join64(env.XDG_CACHE_HOME ?? join64(home2, ".cache"), "ms-playwright");
+  if (platform3 === "darwin") return join65(home2, "Library", "Caches", "ms-playwright");
+  if (platform3 === "win32") return join65(env.LOCALAPPDATA ?? join65(home2, "AppData", "Local"), "ms-playwright");
+  return join65(env.XDG_CACHE_HOME ?? join65(home2, ".cache"), "ms-playwright");
 }
 function checkPlaywright(p) {
   const { config, repo, ctx } = p;
@@ -58571,7 +58652,7 @@ function checkPlaywright(p) {
   if (!wanted) return pass("playwright", "ui", "not required: no ui section and no playwright check is configured");
   const level = fail2;
   if (!repo) return level("playwright", "ui", "no repository to look for Playwright in", "a repository", null);
-  const req = createRequire4(join64(repo, "package.json"));
+  const req = createRequire4(join65(repo, "package.json"));
   let pwTest = null;
   try {
     pwTest = req.resolve("@playwright/test/package.json");
@@ -58589,7 +58670,7 @@ function checkPlaywright(p) {
   if (!core) return level("playwright", "ui", "playwright-core is missing next to @playwright/test", "playwright-core", "reinstall dependencies");
   let revisions = {};
   try {
-    const bj = JSON.parse(readFileSync30(join64(core, "..", "browsers.json"), "utf8"));
+    const bj = JSON.parse(readFileSync30(join65(core, "..", "browsers.json"), "utf8"));
     revisions = Object.fromEntries((bj.browsers ?? []).map((b) => [b.name, b.revision]));
   } catch {
     details.push("browsers.json could not be read; browser revisions are not checked");
@@ -58600,7 +58681,7 @@ function checkPlaywright(p) {
   for (const b of names) {
     const dirs = b === "chromium" ? ["chromium", "chromium_headless_shell"] : [b];
     const revs = dirs.map((d) => ({ d, rev: revisions[d] ?? revisions[b] ?? null }));
-    const present = revs.some((r) => r.rev ? existsSync48(join64(cache2, `${r.d}-${r.rev}`)) : false);
+    const present = revs.some((r) => r.rev ? existsSync48(join65(cache2, `${r.d}-${r.rev}`)) : false);
     details.push(`${b}: ${present ? `installed (${cache2})` : `not found in ${cache2}`}`);
     if (!present && revs.some((r) => r.rev)) missing.push(b);
   }
@@ -58630,7 +58711,7 @@ function headlessShellLayouts(arch) {
 function headlessChromiumOf(repo, cache2, arch = process.arch) {
   let browsersJson;
   try {
-    browsersJson = join64(createRequire4(join64(repo, "package.json")).resolve("playwright-core/package.json"), "..", "browsers.json");
+    browsersJson = join65(createRequire4(join65(repo, "package.json")).resolve("playwright-core/package.json"), "..", "browsers.json");
   } catch {
     return { problem: "Playwright is not installed in this repository" };
   }
@@ -58643,8 +58724,8 @@ function headlessChromiumOf(repo, cache2, arch = process.arch) {
     return { problem: `Playwright's browsers.json could not be read (${browsersJson})` };
   }
   if (!revision) return { problem: "Playwright's browsers.json names no Chromium revision" };
-  const dir = join64(cache2, `chromium_headless_shell-${revision}`);
-  const exe = headlessShellLayouts(arch).map((rel) => join64(dir, rel)).find((p) => isExecutable2(p));
+  const dir = join65(cache2, `chromium_headless_shell-${revision}`);
+  const exe = headlessShellLayouts(arch).map((rel) => join65(dir, rel)).find((p) => isExecutable2(p));
   return exe ? { exe, revision } : { problem: `Playwright's headless Chromium (revision ${revision}) is not installed in ${cache2}` };
 }
 function noncePage() {
@@ -58674,7 +58755,7 @@ async function browserIsolationCheck(input) {
   if ("problem" in browser) {
     return warn2(id, "ui", `not launched: ${browser.problem}`, "Playwright's headless Chromium for the repository's Playwright", "npm install -D @playwright/test, then npx playwright install chromium", [info.detail, limitation]);
   }
-  const dir = realpathSync18(mkdtempSync6(join64(tmpdir12(), "orbit-doctor-browser-")));
+  const dir = realpathSync18(mkdtempSync6(join65(tmpdir12(), "orbit-doctor-browser-")));
   try {
     const repo = realpathSync18(input.repo);
     const exe = realpathSync18(browser.exe);
@@ -58682,7 +58763,7 @@ async function browserIsolationCheck(input) {
     const profile = { writablePaths: [dir], denyReadPaths, allowedHosts: [], allowLocalBinding: false, chromiumMachRendezvous: true, limits: { timeoutMs: 9e4, memoryMb: null, cpus: null, pids: null } };
     const env = { ...safeBaseEnv(input.env), TMPDIR: dir };
     const page = noncePage();
-    const argv2 = [browser.exe, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", `--user-data-dir=${join64(dir, "profile")}`, "--dump-dom", page.url];
+    const argv2 = [browser.exe, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", `--user-data-dir=${join65(dir, "profile")}`, "--dump-dom", page.url];
     const wrapped = provider.wrap(argv2, profile, { cwd: dir, env });
     let r;
     try {
@@ -58762,7 +58843,7 @@ async function checkService(p) {
   if (linger === "no") details.push(`lingering is off for ${ctx.user}: the service stops at logout (loginctl enable-linger ${ctx.user})`);
   if (!status2.installed) return warn2("service", "service", "no service is installed, so runs only progress while a terminal is attached", "an installed background service (survives terminal closure and restarts after failure)", orbitHint("service install", void 0, { quote: false }), details);
   if (status2.loaded !== true) return warn2("service", "service", `service installed but ${status2.loaded === false ? "not loaded" : `state unknown (${status2.detail})`}`, "a loaded service", `${orbitHint("service install", void 0, { quote: false })} (reloads it)`, details);
-  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join64(ctx.orbitHome, "logs")}, then ${orbitHint("service install", void 0, { quote: false })} to restart it`, details);
+  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join65(ctx.orbitHome, "logs")}, then ${orbitHint("service install", void 0, { quote: false })} to restart it`, details);
   if (linger === "no") return warn2("service", "service", "service is loaded; lingering is off", "systemd lingering", `loginctl enable-linger ${ctx.user}`, details);
   return pass("service", "service", live ? "service loaded and its controller heartbeat is fresh" : "service loaded; the controller has not published a heartbeat yet", details);
 }
@@ -58959,9 +59040,9 @@ var init_gc = __esm({
 
 // src/cli/commands/init.ts
 import { appendFileSync as appendFileSync2, existsSync as existsSync49, mkdirSync as mkdirSync22, readFileSync as readFileSync31, writeFileSync as writeFileSync9 } from "node:fs";
-import { dirname as dirname31, join as join65 } from "node:path";
+import { dirname as dirname31, join as join66 } from "node:path";
 function templatePath() {
-  return join65(orbitInstallDir(), "templates", "config.yaml");
+  return join66(orbitInstallDir(), "templates", "config.yaml");
 }
 function templateText() {
   if (true) return `# Orbit configuration (.orbit/config.yaml)
@@ -59005,7 +59086,9 @@ repository:
 scope:
   # Repository-relative globs a worker may change. Anything else is out of
   # scope and fails the run's scope gate. A goal contract can narrow this
-  # further but never widen it.
+  # further but never widen it. Narrow this to the folders your goal needs;
+  # "orbit init" proposes every source folder and leaves out folders that hold
+  # CI pipeline or build-system definitions (it adds those to protected_paths).
   allowed_paths: ["apps/**", "packages/**", "tests/**", "docs/**"]
   # Paths no worker may change even when allowed_paths matches them.
   # Protected always wins. Orbit also adds built-in protections you cannot
@@ -59396,19 +59479,28 @@ async function excludeFile(ctx, repo) {
 async function initCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
-  const configPath = join65(repo, ".orbit", "config.yaml");
+  const configPath = join66(repo, ".orbit", "config.yaml");
   let config;
   let derivedPaths = [];
+  let protectedAdded = [];
+  let excludedDirs = [];
   let baseBranch = null;
   if (existsSync49(configPath)) config = "exists";
   else {
     let text2 = templateText();
     mkdirSync22(dirname31(configPath), { recursive: true });
-    derivedPaths = suggestAllowedPaths(await trackedFiles(ctx, repo));
+    const proposal = await proposeScope(ctx, repo);
+    derivedPaths = proposal.allowed;
+    excludedDirs = proposal.excluded;
+    const have2 = text2.match(/^\s*protected_paths: \[(.*)\]$/m)?.[1] ?? "";
+    protectedAdded = proposal.protectedExtra.filter((g) => !have2.includes(JSON.stringify(g)));
     baseBranch = await currentBranch(ctx, repo);
     if (baseBranch !== null && baseBranch !== "main") text2 = text2.replace(/^(\s*base_branch: ).*$/m, `$1${JSON.stringify(baseBranch)}`);
     else baseBranch = null;
     if (derivedPaths.length > 0) text2 = text2.replace(/^(\s*allowed_paths: )\[.*\]$/m, `$1[${derivedPaths.map((x) => JSON.stringify(x)).join(", ")}]`);
+    if (protectedAdded.length > 0) {
+      text2 = text2.replace(/^(\s*protected_paths: \[.*?)\]$/m, (_m, head) => `${head}, ${protectedAdded.map((x) => JSON.stringify(x)).join(", ")}]`);
+    }
     try {
       writeFileSync9(configPath, text2, { flag: "wx", mode: 420 });
       config = "created";
@@ -59444,12 +59536,15 @@ async function initCommand(args, ctx) {
     }
   }
   if (args.bool("json")) {
-    json(ctx.io, { repo, config: { path: configPath, status: config, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, config_problems: problems, warnings });
+    json(ctx.io, { repo, config: { path: configPath, status: config, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, config_problems: problems, warnings });
     return EXIT.OK;
   }
   line(ctx.io, config === "created" ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
   if (config === "created" && baseBranch !== null) line(ctx.io, `repository.base_branch set to ${baseBranch} from the checked-out branch (the template says main); review it`);
   if (config === "created" && derivedPaths.length > 0) line(ctx.io, `scope.allowed_paths set to ${derivedPaths.join(", ")} from the repository layout (the template's paths matched nothing here); review it`);
+  if (config === "created" && excludedDirs.length > 0) line(ctx.io, `left out of scope.allowed_paths because they hold CI or build definitions: ${excludedDirs.join(", ")}`);
+  if (config === "created" && protectedAdded.length > 0) line(ctx.io, `scope.protected_paths gained ${protectedAdded.join(", ")} (CI pipeline and build-system definitions found in the repository)`);
+  if (config === "created" && derivedPaths.length > 0) line(ctx.io, "Narrow scope.allowed_paths to the folders your goal needs: the proposal covers every source folder, and a smaller scope is safer and cheaper to review.");
   line(ctx.io, missing.length > 0 ? `added ${missing.length} rule(s) to ${excludePath} so runtime state stays out of git status` : `${excludePath} already excludes Orbit runtime state`);
   if (problems.length > 0) {
     line(ctx.io, "The configuration does not validate yet:");
@@ -59621,9 +59716,9 @@ var init_ingest = __esm({
 
 // src/cli/commands/learn.ts
 import { existsSync as existsSync50, mkdirSync as mkdirSync24, readFileSync as readFileSync32, statSync as statSync16 } from "node:fs";
-import { basename as basename12, isAbsolute as isAbsolute21, join as join66, relative as relative7, resolve as resolve17 } from "node:path";
+import { basename as basename12, isAbsolute as isAbsolute21, join as join67, relative as relative7, resolve as resolve17 } from "node:path";
 function knowledgePath(ctx, repo, global) {
-  return global ? join66(ctx.orbitHome, "knowledge.sqlite") : join66(repo, ".orbit", "knowledge.sqlite");
+  return global ? join67(ctx.orbitHome, "knowledge.sqlite") : join67(repo, ".orbit", "knowledge.sqlite");
 }
 function openExisting(ctx, repo, global) {
   const path = knowledgePath(ctx, repo, global);
@@ -59754,7 +59849,7 @@ async function runIngestCurator(ctx, repo, config, prompt) {
     if (!deps.adapters.claude) throw new OrbitError("PROVIDER_UNAVAILABLE", "no claude provider is configured; the curator runs on Claude");
     deps.registry.seed();
     const id = `ingest-${ctx.clock.now().toString(36)}`;
-    const dir = join66(ctx.orbitHome, "ingest", repoKey(repo), id);
+    const dir = join67(ctx.orbitHome, "ingest", repoKey(repo), id);
     mkdirSync24(dir, { recursive: true, mode: 448 });
     const snap = snapshotPolicy(config, { runId: id, repoRoot: repo, runDir: dir, clock: ctx.clock });
     const out = await runCurator(
@@ -59790,8 +59885,8 @@ async function learnIngestCommand(args, ctx) {
     }
   } else ({ output, model } = await runIngestCurator(ctx, repo, config, task.prompt));
   const result2 = acceptIngestOutput(output, source, ctx.clock, model ? { curatorModel: model } : {});
-  mkdirSync24(join66(repo, ".orbit"), { recursive: true });
-  const store = KnowledgeStore.open(join66(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
+  mkdirSync24(join67(repo, ".orbit"), { recursive: true });
+  const store = KnowledgeStore.open(join67(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const created = [];
   const merged = [];
   const rejected = [...result2.rejected];
@@ -59867,7 +59962,7 @@ async function learnEvalCommand(args, ctx) {
   if (!(config.knowledge.eval_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.eval_budget_usd is 0, which disables replay evaluations and with them automatic overlay adoption; set a budget to evaluate");
   const metricsFile = args.str("metrics");
   const db = openState(repo);
-  const store = KnowledgeStore.open(join66(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
+  const store = KnowledgeStore.open(join67(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const runner = metricsFile ? null : ctx.seams.evalRunner ? budgeted(ctx.seams.evalRunner, config.knowledge.eval_budget_usd) : new ReplayEvalRunner({
     repoRoot: repo,
     config,
@@ -59995,7 +60090,7 @@ var init_learn2 = __esm({
 
 // src/cli/commands/logs.ts
 import { closeSync as closeSync9, existsSync as existsSync51, fstatSync as fstatSync4, openSync as openSync9, readSync as readSync5, statSync as statSync17 } from "node:fs";
-import { dirname as dirname32, join as join67 } from "node:path";
+import { dirname as dirname32, join as join68 } from "node:path";
 function readTail(path, lines) {
   const size = statSync17(path).size;
   const fd = openSync9(path, "r");
@@ -60069,13 +60164,13 @@ async function logsCommand(args, ctx) {
         sources.push({ ...s, offset: 0 });
       };
       if (wantController) {
-        add({ label: "controller", kind: "controller", path: join67(ctx.orbitHome, "logs", "controller.jsonl"), runId: run.id });
-        add({ label: "controller", kind: "controller", path: join67(runDir2, "logs", "controller.jsonl") });
+        add({ label: "controller", kind: "controller", path: join68(ctx.orbitHome, "logs", "controller.jsonl"), runId: run.id });
+        add({ label: "controller", kind: "controller", path: join68(runDir2, "logs", "controller.jsonl") });
       }
       if (wantWorkers) {
         for (const w of listWorkers(db, { runId: run.id })) {
           if (args.str("worker") && w.id !== args.str("worker")) continue;
-          for (const f of ["log.jsonl", "stderr.log", "shim.log"]) add({ label: `${w.id}${f === "log.jsonl" ? "" : `:${f.split(".")[0]}`}`, kind: "worker", path: join67(w.workerDir, f) });
+          for (const f of ["log.jsonl", "stderr.log", "shim.log"]) add({ label: `${w.id}${f === "log.jsonl" ? "" : `:${f.split(".")[0]}`}`, kind: "worker", path: join68(w.workerDir, f) });
         }
       }
     };
@@ -60463,7 +60558,7 @@ var init_release2 = __esm({
 
 // src/cli/commands/report.ts
 import { existsSync as existsSync53, readFileSync as readFileSync33 } from "node:fs";
-import { dirname as dirname33, join as join68 } from "node:path";
+import { dirname as dirname33, join as join69 } from "node:path";
 async function reportCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   if (args.bool("learning")) return withState(repo, (db) => learningReport(ctx, repo, db, args.bool("json")));
@@ -60471,8 +60566,8 @@ async function reportCommand(args, ctx) {
   return withState(repo, (db) => {
     const run = findRunByPrefix(db, id);
     const runDir2 = dirname33(run.policyPath);
-    const finalMd = join68(runDir2, "final.md");
-    const finalJson = join68(runDir2, "final.json");
+    const finalMd = join69(runDir2, "final.md");
+    const finalJson = join69(runDir2, "final.json");
     const asJson = args.bool("json");
     if (isTerminal(run.state) && !args.bool("interim") && existsSync53(finalMd)) {
       if (asJson) {
@@ -60503,7 +60598,7 @@ function snapshotOrNull(path, hash) {
 function learningReport(ctx, repo, db, asJson) {
   const runs = db.all("SELECT id, state, created_at FROM runs WHERE state IN ('SUCCEEDED','EXHAUSTED','IMPOSSIBLE','BLOCKED') ORDER BY created_at");
   const windows = [{ label: "base prompt", from: 0, to: Number.POSITIVE_INFINITY }];
-  const kPath = join68(repo, ".orbit", "knowledge.sqlite");
+  const kPath = join69(repo, ".orbit", "knowledge.sqlite");
   const overlays = [];
   if (existsSync53(kPath)) {
     const store = KnowledgeStore.open(kPath, { clock: ctx.clock });
@@ -60574,7 +60669,7 @@ var init_report4 = __esm({
 // src/cli/admission.ts
 import { existsSync as existsSync54 } from "node:fs";
 import { createRequire as createRequire5 } from "node:module";
-import { join as join69 } from "node:path";
+import { join as join70 } from "node:path";
 async function admitRun(ctx, input) {
   const check = ctx.seams.admission ?? checkAdmission;
   const refusal = await check(ctx, input);
@@ -60593,7 +60688,7 @@ async function repositoryHasCommits(repo) {
 }
 function playwrightInstalled(repo) {
   try {
-    createRequire5(join69(repo, "package.json")).resolve("@playwright/test/package.json");
+    createRequire5(join70(repo, "package.json")).resolve("@playwright/test/package.json");
     return true;
   } catch {
     return false;
@@ -60825,8 +60920,8 @@ async function repairCommand(args, ctx) {
     if (!evidence) throw new OrbitError("TRANSITION_INVALID", `candidate ${cand.seq} of run ${run.id} has no evidence yet, so there is no failure to repair. Run "orbit verify ${run.id}" first`);
     if (evidence.verdict !== "FAIL") throw new OrbitError("TRANSITION_INVALID", `the latest evidence for run ${run.id} (candidate ${cand.seq}) is ${evidence.verdict}, not FAIL, so there is no failure to repair. "orbit verify ${run.id}" shows what is unproven`);
     if (run.state !== "DIAGNOSING" && !canTransition(run.state, "DIAGNOSING")) throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is ${run.state}, which cannot move to DIAGNOSING`);
-    const open = listQuestions(db, run.id, { status: "open" }).filter((q) => q.material);
-    if (open.length > 0) throw new OrbitError("TRANSITION_INVALID", `run ${run.id} still has ${open.length} material question(s) open (${open.map((q) => q.id).join(", ")}); answer them with "orbit decide ${run.id} <question-id> <answer>" before a repair, or use /orbit:inquisition`, { open: open.map((q) => q.id) });
+    const open2 = listQuestions(db, run.id, { status: "open" }).filter((q) => q.material);
+    if (open2.length > 0) throw new OrbitError("TRANSITION_INVALID", `run ${run.id} still has ${open2.length} material question(s) open (${open2.map((q) => q.id).join(", ")}); answer them with "orbit decide ${run.id} <question-id> <answer>" before a repair, or use /orbit:inquisition`, { open: open2.map((q) => q.id) });
     const failures = listFailures(db, run.id).filter((f) => f.candidateId === cand.id);
     const primary = failures.find((f) => f.source !== "flaky_check") ?? failures[0] ?? null;
     const fingerprint = primary?.fingerprint ?? `verdict:${cand.id}`;
@@ -61384,7 +61479,7 @@ var init_status = __esm({
 });
 
 // src/cli/commands/verify.ts
-import { dirname as dirname34, isAbsolute as isAbsolute22, join as join70, relative as relative8 } from "node:path";
+import { dirname as dirname34, isAbsolute as isAbsolute22, join as join71, relative as relative8 } from "node:path";
 function exitCodeForVerdict(verdict) {
   return verdict === "PASS" ? EXIT.OK : verdict === "FAIL" ? EXIT.VERIFY_FAILED : EXIT.VERIFY_INCOMPLETE;
 }
@@ -61435,7 +61530,7 @@ async function verifyCandidate(rc) {
   if (!rc.run.baseRevision) throw new OrbitError("TRANSITION_INVALID", `run ${rc.run.id} has no base revision; preflight did not finish`);
   const snapshot2 = rc.snapshot;
   const scope = cand.scope ?? await inspectScope({ repoRoot: rc.run.repoRoot, baseRev: rc.run.baseRevision, candidateRev: cand.commitSha, snapshot: snapshot2, contractAllowedPaths: contract.allowed_paths });
-  const checkoutDir = join70(runWorktreeRoot(rc), `verify-${cand.seq}`);
+  const checkoutDir = join71(runWorktreeRoot(rc), `verify-${cand.seq}`);
   await cleanupCandidateCheckout(rc.run.repoRoot, checkoutDir).catch(() => {
   });
   await materializeCandidate(rc.run.repoRoot, cand.commitSha, checkoutDir, { readOnly: false });
@@ -61460,7 +61555,7 @@ function print(ctx, repo, asJson, o, contractJson) {
   const statements = new Map(contract.acceptance_criteria.map((c) => [c.id, c]));
   const runDir2 = dirname34(o.run.policyPath);
   const rel = (given) => {
-    const p = isAbsolute22(given) ? given : join70(runDir2, given);
+    const p = isAbsolute22(given) ? given : join71(runDir2, given);
     const r = relative8(repo, p);
     return r.startsWith("..") || r === "" ? p : r;
   };

@@ -14,7 +14,7 @@ import type { Args } from '../args.ts';
 import { gitEnv, resolveRepo, type CliContext } from '../context.ts';
 import { EXIT } from '../exit.ts';
 import { json, line } from '../io.ts';
-import { suggestAllowedPaths, trackedFiles } from '../layout.ts';
+import { proposeScope, trackedFiles } from '../layout.ts';
 import { compileGlobs } from '../../policy/globs.ts';
 import { orbitHint } from '../../core/invocation.ts';
 
@@ -61,18 +61,30 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   let config: 'created' | 'exists';
   // The paths derived from the repository's layout, when the template's own do not fit it (P24).
   let derivedPaths: string[] = [];
+  // CI pipeline and build-system definitions found in the repository, protected in the proposal; and the folders left out of scope for holding them.
+  let protectedAdded: string[] = [];
+  let excludedDirs: string[] = [];
   let baseBranch: string | null = null;
   if (existsSync(configPath)) config = 'exists';
   else {
     let text = templateText();
     mkdirSync(dirname(configPath), { recursive: true });
-    derivedPaths = suggestAllowedPaths(await trackedFiles(ctx, repo));
+    const proposal = await proposeScope(ctx, repo);
+    derivedPaths = proposal.allowed;
+    excludedDirs = proposal.excluded;
+    // The template's own protections (.github/**, infra/**, env files) are not repeated.
+    const have = text.match(/^\s*protected_paths: \[(.*)\]$/m)?.[1] ?? '';
+    protectedAdded = proposal.protectedExtra.filter((g) => !have.includes(JSON.stringify(g)));
     // The branch the repository is on, not the template's "main": a master repository would otherwise start with a
     // base branch that does not exist, which only doctor noticed.
     baseBranch = await currentBranch(ctx, repo);
     if (baseBranch !== null && baseBranch !== 'main') text = text.replace(/^(\s*base_branch: ).*$/m, `$1${JSON.stringify(baseBranch)}`);
     else baseBranch = null;
     if (derivedPaths.length > 0) text = text.replace(/^(\s*allowed_paths: )\[.*\]$/m, `$1[${derivedPaths.map((x) => JSON.stringify(x)).join(', ')}]`);
+    if (protectedAdded.length > 0) {
+      // Appended to the template's own list, so its defaults (.github/**, infra/**, env files) stay.
+      text = text.replace(/^(\s*protected_paths: \[.*?)\]$/m, (_m, head: string) => `${head}, ${protectedAdded.map((x) => JSON.stringify(x)).join(', ')}]`);
+    }
     try {
       // wx: never replace a file that appeared since the check above.
       writeFileSync(configPath, text, { flag: 'wx', mode: 0o644 });
@@ -113,12 +125,15 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   }
 
   if (args.bool('json')) {
-    json(ctx.io, { repo, config: { path: configPath, status: config, ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, config_problems: problems, warnings });
+    json(ctx.io, { repo, config: { path: configPath, status: config, ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, config_problems: problems, warnings });
     return EXIT.OK;
   }
   line(ctx.io, config === 'created' ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
   if (config === 'created' && baseBranch !== null) line(ctx.io, `repository.base_branch set to ${baseBranch} from the checked-out branch (the template says main); review it`);
   if (config === 'created' && derivedPaths.length > 0) line(ctx.io, `scope.allowed_paths set to ${derivedPaths.join(', ')} from the repository layout (the template's paths matched nothing here); review it`);
+  if (config === 'created' && excludedDirs.length > 0) line(ctx.io, `left out of scope.allowed_paths because they hold CI or build definitions: ${excludedDirs.join(', ')}`);
+  if (config === 'created' && protectedAdded.length > 0) line(ctx.io, `scope.protected_paths gained ${protectedAdded.join(', ')} (CI pipeline and build-system definitions found in the repository)`);
+  if (config === 'created' && derivedPaths.length > 0) line(ctx.io, 'Narrow scope.allowed_paths to the folders your goal needs: the proposal covers every source folder, and a smaller scope is safer and cheaper to review.');
   line(ctx.io, missing.length > 0 ? `added ${missing.length} rule(s) to ${excludePath} so runtime state stays out of git status` : `${excludePath} already excludes Orbit runtime state`);
   if (problems.length > 0) {
     line(ctx.io, 'The configuration does not validate yet:');
