@@ -99,11 +99,15 @@ This writes `.orbit/config.yaml` from the starter template and adds rules to
 itself shows up as untracked: commit it if you want it shared). The starter mode
 is `autonomous`: Orbit works on a local branch `orbit/<run-id>` and never
 pushes. `init` also replaces the template's example `scope.allowed_paths` with
-globs that match your layout, and tells you so.
+globs that match your layout, and tells you so. It also proposes checks from
+what the repository declares (package.json scripts, a solution, pytest, ruff
+or mypy configuration, go.mod, Cargo.toml) for the tools found on your `PATH`,
+each under a comment asking you to review it
+([which and how](docs/configuration.md#checks-that-orbit-init-proposes)).
 
 **2. Edit `.orbit/config.yaml`.** Three edits are needed before a run can pass.
-Each key below already exists in the file (`checks:` has only commented
-examples), so change it in place rather than pasting a second copy:
+Each key below already exists in the file (`checks:` holds the checks init
+proposed, or only commented examples), so change it in place rather than pasting a second copy:
 
 ```yaml
 scope:
@@ -191,7 +195,7 @@ one ([troubleshooting](docs/troubleshooting.md#run-problems)).
 | Command | Purpose |
 |---|---|
 | `orbit doctor [--probe]` | Check every capability a run depends on. `--probe` makes live requests. |
-| `orbit init` | Write `.orbit/config.yaml` from the starter template. |
+| `orbit init` | Write `.orbit/config.yaml` from the starter template, with checks proposed from what the repository declares. |
 | `orbit run --goal <text>` | Freeze the policy and start a run (`--mode`, `--environment`, `--policy`, `--foreground`, `--detach`). |
 | `orbit status [run-id]` | State, stage, attempts, budgets, workers, questions, heartbeat. |
 | `orbit timeline <run-id>` | What happened in a run, one readable line per step in order, with local time: state changes and their reasons, routing and escalation with the evidence, each attempt and candidate with its verification verdict, check results, review outcome and reviewer, questions asked and answered, delivery actions, and the cost so far (measured against charged). `--follow` streams a running run, `--last <n>` cuts it, `--all` adds housekeeping, `--json` is for machines. |

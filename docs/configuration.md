@@ -427,6 +427,48 @@ checks:
 | `flaky_reruns` | 0 to 5; reruns are used only to classify flakiness |
 | `kind` | `command` (default) or `playwright` |
 
+### Checks that `orbit init` proposes
+
+A new repository does not need its checks written by hand. When `orbit init`
+creates `.orbit/config.yaml` it reads what the repository declares and writes
+a check for each tool that is on `PATH`, each under a comment that says init
+proposed it and that the person should review it before the first run. It
+prints what it proposed and why, and `--json` carries the same in
+`checks.proposed` (id, ecosystem, command, category, timeout_seconds, reason)
+and `checks.not_proposed` (a declared tool that was not found, for example).
+An existing config is never touched: init proposes only for a config it
+writes, so checks you wrote or edited stay exactly as they are.
+
+| Ecosystem | Declared by | Proposed (id, command, category) |
+|---|---|---|
+| Node | root `package.json` scripts; the package manager comes from `pnpm-lock.yaml`, `yarn.lock` or `package-lock.json` (else the `packageManager` field, else npm) | `lint` (script `lint`), `typecheck` (script `typecheck`, `type-check` or `check-types`; else `tsc --noEmit` when there is a root `tsconfig.json` and a `typescript` dependency), `unit-tests` (script `test`, never the `npm init` placeholder), `build` (script `build`) |
+| .NET | a solution (`.sln`, `.slnx`), else the project files | `build`: `dotnet build <solution>`; `unit-tests`: `dotnet test <solution>` when a project references `Microsoft.NET.Test.Sdk` |
+| Python | pytest in `pytest.ini`, `pyproject.toml`, `setup.cfg` or `tox.ini`; ruff or flake8 by their config files; mypy by `mypy.ini`, `pyproject.toml` or `setup.cfg`; any of them listed as a dependency | `unit-tests` (`pytest`), `lint` (`ruff check .`, else `flake8`), `typecheck` (`mypy .`) |
+| Go | `go.mod`, or `go.work` | `build` (`go build ./...`), `vet` (`go vet ./...`, category lint), `unit-tests` (`go test ./...`) |
+| Rust | `Cargo.toml` | `build` (`cargo build`), `unit-tests` (`cargo test`), `clippy` (`cargo clippy --all-targets -- -D warnings`, category lint, only when `cargo clippy` works) |
+
+Timeouts are 300 seconds for lint and typecheck (600 for mypy), 600 for a Node
+build, 900 for tests, clippy and Go and .NET builds, and 1200 for a Rust build
+or test.
+A repository with several ecosystems gets checks for each, with the ecosystem
+in the id (`node-unit-tests`, `go-build`) so they cannot collide; with one
+ecosystem the ids are the plain names above. A monorepo gets root-level
+commands, never one check per package: a root script when the root declares
+one, else for an npm or pnpm workspace one command that runs the script in
+every package that has it (`npm run test --workspaces --if-present`,
+`pnpm -r --if-present run test`), a solution rather than its projects, a Cargo
+workspace as `--workspace`, and a `go.work` as one command over its modules.
+A repository with many .NET projects and no solution gets no .NET check.
+
+A tool that is not on `PATH` is never proposed; init says so instead. The
+proposals are root-level, run without a shell, and ask for no network, so a
+Go, Rust or .NET project whose dependencies are not already available to the
+check (vendored or cached) needs `network_hosts` added, with the host also in
+`network.allowed_hosts`. `orbit doctor` already starts each configured check's
+tool in the sandbox it would get (`checks.sandbox`), so a tool the sandbox
+refuses shows there before the first run. Proposals are a starting point:
+change a command, tighten a timeout or delete a check as you would any other.
+
 A check that fails on a candidate exactly as it failed on the base revision,
 with a sandbox or environment denial in its output (`EPERM`, "operation not
 permitted", an srt violation marker, or `EACCES` on a path outside the

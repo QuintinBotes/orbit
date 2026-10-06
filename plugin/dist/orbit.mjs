@@ -1857,16 +1857,16 @@ var require_parse = __commonJS({
         const analysis = analyzeRepeatedExtglob(body, opts);
         if ((token.type === "plus" || token.type === "star") && analysis.risky) {
           const safeOutput = analysis.safeOutput ? (token.output ? "" : ONE_CHAR) + (opts.capture ? `(${analysis.safeOutput})` : analysis.safeOutput) : void 0;
-          const open = tokens3[token.tokensIndex];
-          open.type = "text";
-          open.value = literal2;
-          open.output = safeOutput || utils.escapeRegex(literal2);
+          const open2 = tokens3[token.tokensIndex];
+          open2.type = "text";
+          open2.value = literal2;
+          open2.output = safeOutput || utils.escapeRegex(literal2);
           for (let i = token.tokensIndex + 1; i < tokens3.length; i++) {
             tokens3[i].value = "";
             tokens3[i].output = "";
             delete tokens3[i].suffix;
           }
-          state.output = token.output + open.output;
+          state.output = token.output + open2.output;
           state.backtrack = true;
           push({ type: "paren", extglob: true, value, output: "" });
           decrement("parens");
@@ -2086,15 +2086,15 @@ var require_parse = __commonJS({
         }
         if (value === "{" && opts.nobrace !== true) {
           increment("braces");
-          const open = {
+          const open2 = {
             type: "brace",
             value,
             output: "(",
             outputIndex: state.output.length,
             tokensIndex: state.tokens.length
           };
-          braces.push(open);
-          push(open);
+          braces.push(open2);
+          push(open2);
           continue;
         }
         if (value === "}") {
@@ -2740,19 +2740,19 @@ function isCaseInsensitiveFs(dir) {
   const cached = caseCache.get(dir);
   if (cached !== void 0) return cached;
   let result2 = false;
-  let probe = dir;
+  let probe2 = dir;
   while (true) {
-    const name = basename2(probe);
+    const name = basename2(probe2);
     const swapped = swapCase(name);
     if (swapped !== name) {
-      const a = lstatOrNull(probe);
-      const b = lstatOrNull(join3(dirname2(probe), swapped));
+      const a = lstatOrNull(probe2);
+      const b = lstatOrNull(join3(dirname2(probe2), swapped));
       result2 = a !== null && b !== null && a.ino === b.ino && a.dev === b.dev;
       break;
     }
-    const parent = dirname2(probe);
-    if (parent === probe) break;
-    probe = parent;
+    const parent = dirname2(probe2);
+    if (parent === probe2) break;
+    probe2 = parent;
   }
   caseCache.set(dir, result2);
   return result2;
@@ -3458,8 +3458,8 @@ function expandText(m, depth) {
   if (depth > 32) return null;
   const group = findBraceGroup(m);
   if (group === null) return [m];
-  const { open, close, alternatives } = group;
-  const pre = { text: m.text.slice(0, open), active: m.active.slice(0, open) };
+  const { open: open2, close, alternatives } = group;
+  const pre = { text: m.text.slice(0, open2), active: m.active.slice(0, open2) };
   const post = { text: m.text.slice(close + 1), active: m.active.slice(close + 1) };
   const out = [];
   for (const alt of alternatives) {
@@ -3472,12 +3472,12 @@ function expandText(m, depth) {
 }
 function findBraceGroup(m) {
   const { text: text2, active } = m;
-  for (let open = 0; open < text2.length; open++) {
-    if (text2[open] !== "{" || active[open] !== "1") continue;
+  for (let open2 = 0; open2 < text2.length; open2++) {
+    if (text2[open2] !== "{" || active[open2] !== "1") continue;
     let depth = 0;
     const commas = [];
     let close = -1;
-    for (let k = open; k < text2.length; k++) {
+    for (let k = open2; k < text2.length; k++) {
       if (active[k] !== "1") continue;
       const ch = text2[k];
       if (ch === "{") depth++;
@@ -3492,16 +3492,16 @@ function findBraceGroup(m) {
     if (close < 0) continue;
     if (commas.length > 0) {
       const alternatives = [];
-      let from = open + 1;
+      let from = open2 + 1;
       for (const c of [...commas, close]) {
         alternatives.push({ text: text2.slice(from, c), active: active.slice(from, c) });
         from = c + 1;
       }
-      return { open, close, alternatives };
+      return { open: open2, close, alternatives };
     }
-    const inner = text2.slice(open + 1, close);
-    const seq2 = active.slice(open + 1, close).includes("0") ? null : sequence(inner);
-    if (seq2 !== null) return { open, close, alternatives: seq2.map((t) => ({ text: t, active: "0".repeat(t.length) })) };
+    const inner = text2.slice(open2 + 1, close);
+    const seq2 = active.slice(open2 + 1, close).includes("0") ? null : sequence(inner);
+    if (seq2 !== null) return { open: open2, close, alternatives: seq2.map((t) => ({ text: t, active: "0".repeat(t.length) })) };
   }
   return null;
 }
@@ -4009,9 +4009,9 @@ function targetPath(word, base, state) {
 function outsideRoot(word, base, state) {
   const p = targetPath(word, base, state);
   if (p === null) return null;
-  const norm3 = posix.resolve(p);
+  const norm2 = posix.resolve(p);
   const root = posix.resolve(state.root);
-  return !(norm3 === root || norm3.startsWith(`${root}/`));
+  return !(norm2 === root || norm2.startsWith(`${root}/`));
 }
 function handlerFor(name) {
   return Object.hasOwn(HANDLERS, name) ? HANDLERS[name] : void 0;
@@ -21056,7 +21056,14 @@ var init_config_schema = __esm({
             require_independent_work_units: { const: true, description: "Parallel writers always get disjoint work units; this cannot be turned off." },
             isolate_writers: { const: true },
             prohibit_shared_worktree_writes: { const: true },
-            cancel_obsolete_workers: { type: "boolean" }
+            cancel_obsolete_workers: { type: "boolean" },
+            allowed_plugins: {
+              type: "array",
+              uniqueItems: true,
+              description: "Plugins a worker session may load besides Claude Code's built-ins, as exact name@marketplace ids. A plugin can add hooks and tools to workers.",
+              items: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$" }
+            },
+            allow_managed_plugins: { type: "boolean", description: "Also accept every plugin installed with scope managed (organisation-managed, not removable by the user)." }
           }
         },
         review: {
@@ -21232,36 +21239,6 @@ var init_config_schema = __esm({
           properties: {
             terms_file: { type: ["string", "null"], minLength: 1, maxLength: 1024 },
             allowed_emails: { type: "array", maxItems: 50, items: { type: "string", minLength: 3, maxLength: 320 } }
-          }
-        },
-        notifications: {
-          type: "object",
-          additionalProperties: false,
-          required: ["desktop", "webhook", "github_comment", "remote_answers"],
-          properties: {
-            desktop: { type: "boolean" },
-            webhook: {
-              oneOf: [
-                { type: "null" },
-                {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["url_env"],
-                  properties: { url_env: { type: "string", pattern: "^[A-Z_][A-Z0-9_]{0,127}$" } }
-                }
-              ]
-            },
-            github_comment: { type: "boolean" },
-            remote_answers: {
-              type: "object",
-              additionalProperties: false,
-              required: ["enabled", "issue", "poll_seconds"],
-              properties: {
-                enabled: { type: "boolean" },
-                issue: { type: ["integer", "null"], minimum: 1 },
-                poll_seconds: { type: "integer", minimum: 30, maximum: 3600 }
-              }
-            }
           }
         },
         static_security: {
@@ -21582,7 +21559,9 @@ function defaultConfig(mode = DEFAULT_MODE) {
       require_independent_work_units: true,
       isolate_writers: true,
       prohibit_shared_worktree_writes: true,
-      cancel_obsolete_workers: true
+      cancel_obsolete_workers: true,
+      allowed_plugins: [],
+      allow_managed_plugins: false
     },
     review: {
       independent_provider_required: true,
@@ -21608,18 +21587,8 @@ function defaultConfig(mode = DEFAULT_MODE) {
     release: null,
     retention: { keep_runs_days: 30, redact_patterns: [] },
     knowledge: { enabled: true, share_globally: false, max_advisory_tokens: 800, curator_budget_usd: 0.25, eval_budget_usd: 0, auto_adopt_overlays: true },
-    guard: { terms_file: null, allowed_emails: [] },
-    notifications: defaultNotifications()
+    guard: { terms_file: null, allowed_emails: [] }
   };
-}
-function defaultNotifications() {
-  return { desktop: true, webhook: null, github_comment: false, remote_answers: { enabled: false, issue: null, poll_seconds: 120 } };
-}
-function notificationsPolicy(config) {
-  const d = defaultNotifications();
-  const n2 = config.notifications;
-  if (!n2) return d;
-  return { ...d, ...n2, remote_answers: { ...d.remote_answers, ...n2.remote_answers ?? {} } };
 }
 function defaultCheck(id) {
   return {
@@ -21721,12 +21690,12 @@ function loadConfig(repoRoot, path, opts = {}) {
 function parseConfig(text2, opts = {}) {
   const source = opts.source ?? "config";
   const doc = parseDocument(text2, { uniqueKeys: true, prettyErrors: false, strict: true });
-  const where2 = (offset) => {
+  const where = (offset) => {
     if (offset === void 0 || offset < 0 || offset > text2.length) return "";
     const before = text2.slice(0, offset);
     return ` (line ${before.split("\n").length}, column ${offset - before.lastIndexOf("\n")})`;
   };
-  const yamlProblems = [...doc.errors, ...doc.warnings].map((e) => `yaml: ${e.message.split("\n")[0]}${where2(e.pos?.[0])}`);
+  const yamlProblems = [...doc.errors, ...doc.warnings].map((e) => `yaml: ${e.message.split("\n")[0]}${where(e.pos?.[0])}`);
   if (yamlProblems.length > 0) throw invalid(source, yamlProblems);
   let raw;
   try {
@@ -21784,19 +21753,19 @@ function normalizeChecks(raw, problems) {
       out[id] = def;
       continue;
     }
-    const where2 = `checks.${id}`;
-    if (def.id !== void 0 && def.id !== id) problems.push(`${where2}.id: must equal the key "${id}" (got ${JSON.stringify(def.id)})`);
+    const where = `checks.${id}`;
+    if (def.id !== void 0 && def.id !== id) problems.push(`${where}.id: must equal the key "${id}" (got ${JSON.stringify(def.id)})`);
     let command = def.command;
     const shell = def.shell === true;
     if (typeof command === "string") {
       if (!shell) {
-        problems.push(`${where2}.command: a string command would need a shell; give an argv array, or set "shell: true" to run it through /bin/sh -c`);
+        problems.push(`${where}.command: a string command would need a shell; give an argv array, or set "shell: true" to run it through /bin/sh -c`);
       }
       command = [command];
     } else if (Array.isArray(command) && shell && command.length !== 1) {
-      problems.push(`${where2}.command: with "shell: true" the command must be one string (the script for /bin/sh -c)`);
+      problems.push(`${where}.command: with "shell: true" the command must be one string (the script for /bin/sh -c)`);
     }
-    if (command === void 0) problems.push(`${where2}.command: required`);
+    if (command === void 0) problems.push(`${where}.command: required`);
     const category = def.category ?? (def.kind === "playwright" ? "ui" : "test");
     out[id] = { ...defaultCheck(id), ...def, command: command ?? [], category };
   }
@@ -21913,23 +21882,23 @@ function describeSchemaErrors(errors) {
   const out = [];
   for (const e of meaningful) {
     if (e.keyword === "oneOf" && meaningful.some((o) => o !== e && o.instancePath.startsWith(e.instancePath) && o.keyword !== "oneOf")) continue;
-    const where2 = pointerToPath(e.instancePath) || "(top level)";
+    const where = pointerToPath(e.instancePath) || "(top level)";
     if (e.keyword === "additionalProperties") {
       const key2 = e.params.additionalProperty;
       const known = Object.keys(e.parentSchema?.properties ?? {});
       const near = closest(key2, known);
-      out.push(`${where2}: unknown key "${key2}"${near ? `; did you mean "${near}"?` : ""}`);
+      out.push(`${where}: unknown key "${key2}"${near ? `; did you mean "${near}"?` : ""}`);
     } else if (e.keyword === "enum") {
       const allowed = e.params.allowedValues ?? [];
       const given = e.data;
       const near = typeof given === "string" ? closest(given, allowed.filter((v) => typeof v === "string")) : null;
-      out.push(`${where2}: must be one of ${allowed.map((v) => JSON.stringify(v)).join(", ")}, got ${JSON.stringify(given)}${near ? `; did you mean "${near}"?` : ""}`);
+      out.push(`${where}: must be one of ${allowed.map((v) => JSON.stringify(v)).join(", ")}, got ${JSON.stringify(given)}${near ? `; did you mean "${near}"?` : ""}`);
     } else if (e.keyword === "const") {
-      out.push(`${where2}: must be ${JSON.stringify(e.params.allowedValue)}`);
+      out.push(`${where}: must be ${JSON.stringify(e.params.allowedValue)}`);
     } else if (e.keyword === "propertyNames") {
-      out.push(`${where2}: key ${JSON.stringify(e.params.propertyName)} is not a valid name`);
+      out.push(`${where}: key ${JSON.stringify(e.params.propertyName)} is not a valid name`);
     } else {
-      out.push(`${where2}: ${e.message ?? e.keyword}`);
+      out.push(`${where}: ${e.message ?? e.keyword}`);
     }
   }
   return out;
@@ -21946,18 +21915,18 @@ function applySemanticRules(rules, config, shapeOk, problems) {
     }
   }
 }
-function globList(globs, where2, problems) {
+function globList(globs, where, problems) {
   globs.forEach((g, i) => {
     const p = globProblem(g);
-    if (p) problems.push(`${where2}[${i}]: ${JSON.stringify(g)} ${p}`);
+    if (p) problems.push(`${where}[${i}]: ${JSON.stringify(g)} ${p}`);
   });
 }
 function relativeDirProblem(dir) {
   if (dir.includes("\0")) return "contains a NUL byte";
   if (dir.includes("\\")) return "must use forward slashes";
   if (posix2.isAbsolute(dir) || dir.startsWith("~")) return "must be relative to the worktree root";
-  const norm3 = posix2.normalize(dir);
-  if (norm3 === ".." || norm3.startsWith("../")) return "must stay inside the worktree";
+  const norm2 = posix2.normalize(dir);
+  if (norm2 === ".." || norm2.startsWith("../")) return "must stay inside the worktree";
   return null;
 }
 function modelPermitted(model, allowed) {
@@ -22052,15 +22021,15 @@ var init_config = __esm({
           problems.push("release.environments: actions.deploy_production is true but no environment is defined to deploy to");
         }
         for (const [name, env] of envs) {
-          const where2 = `release.environments.${name}`;
-          if (env.deploy_command.length > 0 && env.deploy_command[0].trim() === "") problems.push(`${where2}.deploy_command: the program must not be empty`);
-          if (env.verify_command && env.verify_command[0].trim() === "") problems.push(`${where2}.verify_command: the program must not be empty`);
+          const where = `release.environments.${name}`;
+          if (env.deploy_command.length > 0 && env.deploy_command[0].trim() === "") problems.push(`${where}.deploy_command: the program must not be empty`);
+          if (env.verify_command && env.verify_command[0].trim() === "") problems.push(`${where}.verify_command: the program must not be empty`);
           env.network_hosts.forEach((h, i) => {
             const p = hostEntryProblem(h);
-            if (p) problems.push(`${where2}.network_hosts[${i}]: ${JSON.stringify(h)} ${p}`);
-            else if (!hostEntryCovered(h, c.network.allowed_hosts)) problems.push(`${where2}.network_hosts[${i}]: ${JSON.stringify(h)} is not covered by network.allowed_hosts`);
+            if (p) problems.push(`${where}.network_hosts[${i}]: ${JSON.stringify(h)} ${p}`);
+            else if (!hostEntryCovered(h, c.network.allowed_hosts)) problems.push(`${where}.network_hosts[${i}]: ${JSON.stringify(h)} is not covered by network.allowed_hosts`);
           });
-          if (env.allowed_branches.length === 0) problems.push(`${where2}.allowed_branches: is empty, so nothing could ever be deployed to ${name}`);
+          if (env.allowed_branches.length === 0) problems.push(`${where}.allowed_branches: is empty, so nothing could ever be deployed to ${name}`);
         }
       },
       function staticSecurityRules(c, problems) {
@@ -22124,17 +22093,17 @@ var init_config = __esm({
       },
       function checkDefinitions(c, problems) {
         for (const [id, check] of Object.entries(c.checks)) {
-          const where2 = `checks.${id}`;
+          const where = `checks.${id}`;
           const cwdProblem = relativeDirProblem(check.cwd);
-          if (cwdProblem) problems.push(`${where2}.cwd: ${cwdProblem}`);
-          if (check.command.length > 0 && check.command[0].trim() === "") problems.push(`${where2}.command: the program must not be empty`);
+          if (cwdProblem) problems.push(`${where}.cwd: ${cwdProblem}`);
+          if (check.command.length > 0 && check.command[0].trim() === "") problems.push(`${where}.command: the program must not be empty`);
           check.network_hosts.forEach((h, i) => {
             const p = hostEntryProblem(h);
-            if (p) problems.push(`${where2}.network_hosts[${i}]: ${JSON.stringify(h)} ${p}`);
-            else if (!hostEntryCovered(h, c.network.allowed_hosts)) problems.push(`${where2}.network_hosts[${i}]: ${JSON.stringify(h)} is not covered by network.allowed_hosts`);
+            if (p) problems.push(`${where}.network_hosts[${i}]: ${JSON.stringify(h)} ${p}`);
+            else if (!hostEntryCovered(h, c.network.allowed_hosts)) problems.push(`${where}.network_hosts[${i}]: ${JSON.stringify(h)} is not covered by network.allowed_hosts`);
           });
           for (const name of Object.keys(check.env)) {
-            if (FORBIDDEN_CHECK_ENV.has(name)) problems.push(`${where2}.env.${name}: delivery and publishing credentials must not be given to checks`);
+            if (FORBIDDEN_CHECK_ENV.has(name)) problems.push(`${where}.env.${name}: delivery and publishing credentials must not be given to checks`);
           }
         }
       },
@@ -22164,10 +22133,6 @@ var init_config = __esm({
           }
           if (re.test("")) problems.push(`retention.redact_patterns[${i}]: matches the empty string, so it cannot be applied; require at least one character (for example + instead of *)`);
         });
-      },
-      function notificationRules(c, problems) {
-        const env = c.notifications?.webhook?.url_env;
-        if (env !== void 0 && FORBIDDEN_CHECK_ENV.has(env)) problems.push(`notifications.webhook.url_env: ${env} holds a credential, not a webhook URL; name a variable that holds only the URL (for example ORBIT_WEBHOOK_URL)`);
       },
       function repositoryBranches(c, problems) {
         const { base_branch, branch_prefix } = c.repository;
@@ -23664,8 +23629,8 @@ function findController(db, id) {
   return row ? toRecord(row) : null;
 }
 function listControllers(db, opts = {}) {
-  const where2 = opts.includeStopped ? "" : "WHERE stopped_at IS NULL";
-  return db.all(`SELECT * FROM controllers ${where2} ORDER BY heartbeat_at DESC, rowid DESC LIMIT ?`, opts.limit ?? -1).map(toRecord);
+  const where = opts.includeStopped ? "" : "WHERE stopped_at IS NULL";
+  return db.all(`SELECT * FROM controllers ${where} ORDER BY heartbeat_at DESC, rowid DESC LIMIT ?`, opts.limit ?? -1).map(toRecord);
 }
 function listStaleControllers(db, staleAfterMs, clock) {
   const cutoff = clock.now() - staleAfterMs;
@@ -25607,6 +25572,80 @@ var init_claude_settings = __esm({
   }
 });
 
+// src/adapters/claude-plugins.ts
+function pluginPolicyOf(config) {
+  const a = config.agents;
+  return { allowed: [...a.allowed_plugins ?? []], allowManaged: a.allow_managed_plugins === true };
+}
+function parsePluginList(stdout) {
+  let parsed3;
+  try {
+    parsed3 = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed3)) return null;
+  const out = [];
+  for (const e of parsed3) {
+    if (!isRecord(e) || typeof e.id !== "string") continue;
+    out.push({ id: e.id, scope: typeof e.scope === "string" ? e.scope : null, enabled: e.enabled !== false });
+  }
+  return out;
+}
+function isBuiltinPlugin(entry) {
+  return isRecord(entry) && typeof entry.source === "string" && entry.source.endsWith("@builtin");
+}
+function workerPlugins(initPlugins, check) {
+  if (initPlugins === void 0) return [];
+  const entries = Array.isArray(initPlugins) ? initPlugins : [null];
+  const out = [];
+  for (const e of entries) {
+    if (isBuiltinPlugin(e)) continue;
+    const r = isRecord(e) ? e : {};
+    const id = typeof r.source === "string" && r.source.includes("@") ? r.source : null;
+    const name = typeof r.name === "string" ? r.name : null;
+    const scope = typeof r.scope === "string" ? r.scope : id === null ? null : check.installed?.find((p) => p.id === id)?.scope ?? null;
+    out.push({ id, name, scope, allowed_by: allowance(id, scope, check.policy) });
+  }
+  return out;
+}
+function allowance(id, scope, policy) {
+  if (id === null) return null;
+  if (policy.allowed.includes(id)) return "agents.allowed_plugins";
+  if (scope === "managed" && policy.allowManaged) return "agents.allow_managed_plugins";
+  return null;
+}
+function pluginAllowLines(p) {
+  if (p.id === null) return [];
+  const lines = [`agents.allowed_plugins: ${JSON.stringify([p.id])}`];
+  if (p.scope === "managed") lines.push("agents.allow_managed_plugins: true");
+  return lines;
+}
+function describeRefusedPlugin(p) {
+  if (p.id === null) return p.name === null ? "an entry with no name@marketplace source (no config line can allow it)" : `${p.name} (no name@marketplace source; no config line can allow it)`;
+  return `${p.id} (scope ${p.scope ?? "unknown"}; allow it with ${pluginAllowLines(p).join(" or ")})`;
+}
+function pluginRefusal(plugins) {
+  const refused = plugins.filter((p) => p.allowed_by === null);
+  if (refused.length === 0) return null;
+  return `the session loaded ${refused.length} plugin(s) that are not Claude Code built-ins and that the policy does not allow: ${refused.map(describeRefusedPlugin).join("; ")}`;
+}
+function needsPluginList(initPlugins) {
+  if (!Array.isArray(initPlugins)) return false;
+  return initPlugins.some((e) => !isBuiltinPlugin(e) && isRecord(e) && typeof e.source === "string" && typeof e.scope !== "string");
+}
+function isRecord(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+var STRICT_PLUGIN_POLICY, WORKER_EXCLUDED_SCOPES;
+var init_claude_plugins = __esm({
+  "src/adapters/claude-plugins.ts"() {
+    "use strict";
+    STRICT_PLUGIN_POLICY = Object.freeze({ allowed: Object.freeze([]), allowManaged: false });
+    WORKER_EXCLUDED_SCOPES = ["user", "project", "local"];
+  }
+});
+
 // src/adapters/claude-transcript.ts
 function classifyClaudeTranscript(input) {
   const { events, exit } = input;
@@ -25614,6 +25653,7 @@ function classifyClaudeTranscript(input) {
   const init = events.find((e) => e.type === "system" && e.subtype === "init");
   const sessionId = str(result2?.session_id) ?? str(init?.session_id) ?? null;
   const usage = claudeUsage(events);
+  const plugins = workerPlugins(init?.plugins, input.plugins ?? NO_PLUGINS);
   const base = {
     structured: null,
     text: result2 ? str(result2.result) : null,
@@ -25624,7 +25664,8 @@ function classifyClaudeTranscript(input) {
     models: modelUsageKeys(result2),
     permissionDenials: denials(result2),
     numTurns: num(result2?.num_turns),
-    terminalReason: str(result2?.terminal_reason)
+    terminalReason: str(result2?.terminal_reason),
+    ...plugins.length > 0 ? { plugins } : {}
   };
   const end = (status2, reason, error, structured = null) => ({
     ...base,
@@ -25671,7 +25712,7 @@ function classifyClaudeTranscript(input) {
     if (str(result2.terminal_reason) === "api_error" || status2 !== null) return end("failed", "api_error", detail ?? "API error");
     return end("failed", "execution_error", detail ?? `exit ${exit.code}, subtype ${subtype ?? "missing"}`);
   }
-  const unsafe = sessionProblems(init, input.expectedSessionId ?? null);
+  const unsafe = sessionProblems(init, input.expectedSessionId ?? null, input.plugins);
   if (unsafe) return end("failed", "unsafe_session", unsafe);
   if (!("structured_output" in result2) || result2.structured_output === void 0) {
     return end("malformed_output", "structured_output_missing", "the result has no structured_output");
@@ -25682,17 +25723,14 @@ function classifyClaudeTranscript(input) {
   }
   return end("succeeded", "success", null, result2.structured_output);
 }
-function sessionProblems(init, expectedSessionId = null) {
+function sessionProblems(init, expectedSessionId = null, plugins = NO_PLUGINS) {
   if (!init) return "the transcript has no system/init line, so the permission mode and loaded servers cannot be checked";
   if (init.permissionMode !== "dontAsk") return `the session ran in permission mode ${String(init.permissionMode)}, not dontAsk`;
   if (!Array.isArray(init.mcp_servers) || init.mcp_servers.length > 0) {
     return Array.isArray(init.mcp_servers) ? `the session loaded ${init.mcp_servers.length} MCP server(s)` : "system/init does not list its MCP servers";
   }
-  if (init.plugins !== void 0) {
-    const plugins = Array.isArray(init.plugins) ? init.plugins : [null];
-    const foreign = plugins.filter((p) => !(isObject(p) && typeof p.source === "string" && p.source.endsWith("@builtin")));
-    if (foreign.length > 0) return `the session loaded ${foreign.length} plugin(s) that are not Claude Code built-ins`;
-  }
+  const refusal = pluginRefusal(workerPlugins(init.plugins, plugins));
+  if (refusal) return refusal;
   if (expectedSessionId !== null && init.session_id !== expectedSessionId) {
     return `the transcript is of session ${String(init.session_id)}, not ${expectedSessionId}`;
   }
@@ -25842,13 +25880,15 @@ function num(v) {
 function clip(s, n2) {
   return s.length > n2 ? `${s.slice(0, n2)}...` : s;
 }
-var CLAUDE_AUTH_ERRORS, CLAUDE_TRANSIENT_ERRORS;
+var CLAUDE_AUTH_ERRORS, CLAUDE_TRANSIENT_ERRORS, NO_PLUGINS;
 var init_claude_transcript = __esm({
   "src/adapters/claude-transcript.ts"() {
     "use strict";
     init_schema5();
+    init_claude_plugins();
     CLAUDE_AUTH_ERRORS = ["authentication_failed", "oauth_org_not_allowed", "account_on_hold"];
     CLAUDE_TRANSIENT_ERRORS = ["rate_limit", "overloaded", "server_error"];
+    NO_PLUGINS = { policy: STRICT_PLUGIN_POLICY, installed: null };
   }
 });
 
@@ -26408,11 +26448,11 @@ ${OVERLAY_FENCE_OPEN}
 `;
   const closeMarker = `
 ${OVERLAY_FENCE_CLOSE}`;
-  const open = content.indexOf(openMarker);
-  const rest = open === -1 ? "" : content.slice(open + openMarker.length);
-  const prefix = open === -1 ? "" : content.slice(0, open);
+  const open2 = content.indexOf(openMarker);
+  const rest = open2 === -1 ? "" : content.slice(open2 + openMarker.length);
+  const prefix = open2 === -1 ? "" : content.slice(0, open2);
   const body = rest.endsWith(closeMarker) ? rest.slice(0, rest.length - closeMarker.length) : null;
-  if (open === -1 || body === null || !body.trim() || FENCE_MARKERS.test(body) || FENCE_MARKERS.test(prefix)) {
+  if (open2 === -1 || body === null || !body.trim() || FENCE_MARKERS.test(body) || FENCE_MARKERS.test(prefix)) {
     throw new OrbitError("SCHEMA_INVALID", "overlay content must be one advisory fence, with nothing after it and no fence marker inside");
   }
   if (role !== void 0 && prefix !== header(role)) {
@@ -26861,13 +26901,13 @@ function readFrom(path, offset, max = 4 * 1024 * 1024) {
     const size = fstatSync2(fd).size;
     const len = Math.max(0, Math.min(size - offset, max));
     const buf = Buffer.alloc(len);
-    let read = 0;
-    while (read < len) {
-      const n2 = readSync(fd, buf, read, len - read, offset + read);
+    let read2 = 0;
+    while (read2 < len) {
+      const n2 = readSync(fd, buf, read2, len - read2, offset + read2);
       if (n2 === 0) break;
-      read += n2;
+      read2 += n2;
     }
-    return buf.subarray(0, read);
+    return buf.subarray(0, read2);
   } catch {
     return null;
   } finally {
@@ -27873,6 +27913,12 @@ function compareVersions(a, b) {
   }
   return 0;
 }
+function launchPluginPolicy(workerDir) {
+  const meta = readJsonIfExists(join12(workerDir, LAUNCH_FILE))?.meta;
+  const p = meta?.pluginPolicy;
+  if (!p || !Array.isArray(p.allowed)) return STRICT_PLUGIN_POLICY;
+  return { allowed: p.allowed.filter((id) => typeof id === "string"), allowManaged: p.allowManaged === true };
+}
 var PROMPT_FILE, SYSTEM_FILE, SETTINGS_FILE, RESULT_FILE, CLAUDE_EFFORTS, PERMISSION_PROMPTS_MIN_VERSION, ALWAYS_DISALLOWED, READ_TOOLS, EDIT_TOOLS, CLAUDE_EXTRA_ARGS_ALLOWED, ClaudeAdapter, CLAUDE_ABORT_PATTERNS, CLAUDE_SANDBOX_LIMITATIONS, CLAUDE_EXTRA_ARGS_WITH_VALUE;
 var init_claude = __esm({
   "src/adapters/claude.ts"() {
@@ -27889,6 +27935,7 @@ var init_claude = __esm({
     init_snapshot();
     init_claude_settings();
     init_claude_transcript();
+    init_claude_plugins();
     init_commands();
     init_env();
     init_prompt();
@@ -28080,7 +28127,9 @@ ${outputBudgetInstruction(outputTokens)}
           stdinPath: join12(workerDir, PROMPT_FILE),
           abortOn: CLAUDE_ABORT_PATTERNS,
           cleanupPaths,
-          meta: { tier, limitations, outputBudgetTokens: outputTokens },
+          // The plugin policy the session is judged by at collection, from the verified snapshot. launch.json is
+          // read-only to the worker (WORKER_DIR_READ_ONLY), so a worker cannot widen it.
+          meta: { tier, limitations, outputBudgetTokens: outputTokens, pluginPolicy: pluginPolicyOf(snapshot2.config) },
           clock: this.clock
         });
         return { ...handle, tier, limitations, sessionId };
@@ -28115,7 +28164,10 @@ ${outputBudgetInstruction(outputTokens)}
             terminalReason: null
           };
         } else {
-          result2 = classifyClaudeTranscript({ events: log.events, malformedTail: log.malformedTail, exit: st.exit, outputSchema: spec.outputSchema, expectedSessionId: st.pid?.sessionId ?? null });
+          const init = log.events.find((e) => e.type === "system" && e.subtype === "init");
+          const listed = needsPluginList(init?.plugins) ? await this.listPlugins() : null;
+          const plugins = { policy: launchPluginPolicy(handle.workerDir), installed: listed?.ok ? listed.plugins : null };
+          result2 = classifyClaudeTranscript({ events: log.events, malformedTail: log.malformedTail, exit: st.exit, outputSchema: spec.outputSchema, expectedSessionId: st.pid?.sessionId ?? null, plugins });
           const stderr = result2.reason === "crashed" ? stderrTail(handle.workerDir) : null;
           if (stderr) result2 = { ...result2, error: `${result2.error ?? "crashed"}; stderr: ${stderr}` };
         }
@@ -28126,6 +28178,16 @@ ${outputBudgetInstruction(outputTokens)}
       async reportUsage(handle) {
         if (!existsSync11(handle.logPath)) return emptyUsage(this.id);
         return withWorkerTelemetry(claudeUsage(readLogLines(handle.logPath).events), handle.workerDir);
+      }
+      /**
+       * `claude plugin list --json` with the environment a probe gets: the installed plugins with their scope, which
+       * system/init does not report. Used to judge a session's plugins and by doctor before any run.
+       */
+      async listPlugins() {
+        const r = await this.run(["plugin", "list", "--json"], { timeoutMs: 3e4 });
+        if (!r.ok) return { ok: false, detail: `claude plugin list --json: ${r.detail}` };
+        const plugins = parsePluginList(r.stdout);
+        return plugins ? { ok: true, plugins } : { ok: false, detail: "claude plugin list --json gave no plugin list" };
       }
       /** Reattach to a worker from its directory alone (pid.json), as a restarted controller does. */
       reattach(workerDir) {
@@ -30593,8 +30655,8 @@ var init_sandbox_runtime = __esm({
           const canaryDir = join16(dir, "canary");
           mkdirSync8(canaryDir);
           const canary = join16(canaryDir, "orbit-canary");
-          const probe = await runBounded(srt.path, ["--settings", file, "--", "/bin/sh", "-c", 'echo x > "$1" 2>/dev/null; exit 0', "sh", canary], { timeoutMs });
-          if (probe.code !== 0) return { ok: false, detail: `srt ${version.stdout.trim()} could not start a sandboxed command (${probeFailure(probe)})` };
+          const probe2 = await runBounded(srt.path, ["--settings", file, "--", "/bin/sh", "-c", 'echo x > "$1" 2>/dev/null; exit 0', "sh", canary], { timeoutMs });
+          if (probe2.code !== 0) return { ok: false, detail: `srt ${version.stdout.trim()} could not start a sandboxed command (${probeFailure(probe2)})` };
           if (existsSync15(canary)) return { ok: false, detail: `srt at ${srt.path} ran a command without confining it: a write no rule allowed succeeded` };
         } finally {
           rmSync5(dir, { recursive: true, force: true });
@@ -30673,10 +30735,10 @@ var init_sandbox_runtime = __esm({
       chromiumLauncher(pkg) {
         const unavailable = (why) => new OrbitError("ISOLATION_UNAVAILABLE", `sandbox-runtime unavailable for browser checks: ${why}`, { verified: SRT_VERIFIED_VERSION });
         if (!pkg) throw unavailable("srt cannot be resolved");
-        const where2 = dirname13(pkg.cli);
-        if (pkg.name === null && pkg.version === null) throw unavailable(`srt at ${where2} has an unknown version (no readable package.json), and the Chromium preload was verified against ${SRT_PACKAGE} ${SRT_VERIFIED_VERSION} only`);
-        if (pkg.name !== SRT_PACKAGE) throw unavailable(`srt at ${where2} is not ${SRT_PACKAGE} (package ${String(pkg.name)})`);
-        if (pkg.version !== SRT_VERIFIED_VERSION) throw unavailable(`srt at ${where2} is version ${String(pkg.version)}, and the Chromium preload was verified against ${SRT_VERIFIED_VERSION} only`);
+        const where = dirname13(pkg.cli);
+        if (pkg.name === null && pkg.version === null) throw unavailable(`srt at ${where} has an unknown version (no readable package.json), and the Chromium preload was verified against ${SRT_PACKAGE} ${SRT_VERIFIED_VERSION} only`);
+        if (pkg.name !== SRT_PACKAGE) throw unavailable(`srt at ${where} is not ${SRT_PACKAGE} (package ${String(pkg.name)})`);
+        if (pkg.version !== SRT_VERIFIED_VERSION) throw unavailable(`srt at ${where} is version ${String(pkg.version)}, and the Chromium preload was verified against ${SRT_VERIFIED_VERSION} only`);
         const resolve21 = (path, what) => {
           try {
             return realpathSync5(path);
@@ -30689,8 +30751,8 @@ var init_sandbox_runtime = __esm({
       missingDetail() {
         if (this.opts.srtPath !== void 0) return `configured srt ${this.opts.srtPath} is not an absolute path to an executable file`;
         const bins = this.installBinDirs();
-        const where2 = bins.length ? ` or in ${bins.join(" or ")}` : "";
-        return `srt not found on PATH${where2}; install @anthropic-ai/sandbox-runtime`;
+        const where = bins.length ? ` or in ${bins.join(" or ")}` : "";
+        return `srt not found on PATH${where}; install @anthropic-ai/sandbox-runtime`;
       }
     };
     DEVELOPMENT_PACKAGE = "orbit-dev";
@@ -30813,7 +30875,7 @@ var init_start = __esm({
 // src/cli/context.ts
 import { existsSync as existsSync16, realpathSync as realpathSync7 } from "node:fs";
 import { homedir as homedir7, hostname as hostname2, userInfo as userInfo2 } from "node:os";
-import { dirname as dirname15, resolve as resolve7 } from "node:path";
+import { resolve as resolve7 } from "node:path";
 function createContext(overrides = {}) {
   const env = overrides.env ?? process.env;
   const homeDir = overrides.homeDir ?? homedir7();
@@ -30853,14 +30915,13 @@ async function resolveRepo(ctx, flag) {
   if (!existsSync16(start)) throw new OrbitError("NOT_FOUND", `${start} does not exist`);
   let r;
   try {
-    r = await execCapture(["git", "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"], { cwd: start, timeoutMs: 15e3, env: gitEnv(ctx.env) });
+    r = await execCapture(["git", "rev-parse", "--path-format=absolute", "--show-toplevel"], { cwd: start, timeoutMs: 15e3, env: gitEnv(ctx.env) });
   } catch (err) {
     throw new OrbitError("PROVIDER_UNAVAILABLE", `git is not available: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (r.exitCode !== 0) throw new OrbitError("NOT_FOUND", `${start} is not inside a git repository; run orbit from a repository or pass --repo (to make this directory one: git init, then commit at least once)`);
-  const [top, common] = r.stdout.trim().split("\n");
+  const top = r.stdout.trim().split("\n")[0];
   if (!top) throw new OrbitError("NOT_FOUND", `${start} is not inside a git repository`);
-  if (common && common.endsWith("/.git") && dirname15(common) !== top) return safeRealpath(dirname15(common));
   return safeRealpath(top);
 }
 function gitEnv(env) {
@@ -31110,10 +31171,10 @@ function numbersByKey(lines, re, normalizeKey) {
   return out;
 }
 function compareTimeouts(d, add, introduced) {
-  const norm3 = (k) => k.toLowerCase().replace(/^.*\./, "");
-  const before = numbersByKey(code(d.removed), TIMEOUT_RE, norm3);
-  const after = numbersByKey(code(d.added), TIMEOUT_RE, norm3);
-  const unchanged = numbersByKey(code(d.context), TIMEOUT_RE, norm3);
+  const norm2 = (k) => k.toLowerCase().replace(/^.*\./, "");
+  const before = numbersByKey(code(d.removed), TIMEOUT_RE, norm2);
+  const after = numbersByKey(code(d.added), TIMEOUT_RE, norm2);
+  const unchanged = numbersByKey(code(d.context), TIMEOUT_RE, norm2);
   for (const [key2, value] of after) {
     const old = before.get(key2);
     if (old !== void 0 && value > old) add("timeout-raised", `${key2} ${old} -> ${value}`);
@@ -31663,22 +31724,22 @@ function getWorker(db, id) {
   return toRecord3(row);
 }
 function listWorkers(db, query = {}) {
-  const where2 = [];
+  const where = [];
   const params = [];
   if (query.runId !== void 0) {
-    where2.push("run_id = ?");
+    where.push("run_id = ?");
     params.push(query.runId);
   }
   if (query.states) {
     if (query.states.length === 0) return [];
-    where2.push(`state IN (${query.states.map(() => "?").join(",")})`);
+    where.push(`state IN (${query.states.map(() => "?").join(",")})`);
     params.push(...query.states);
   }
   if (query.role !== void 0) {
-    where2.push("role = ?");
+    where.push("role = ?");
     params.push(query.role);
   }
-  const sql = `SELECT * FROM workers ${where2.length ? `WHERE ${where2.join(" AND ")}` : ""} ORDER BY created_at, rowid LIMIT ?`;
+  const sql = `SELECT * FROM workers ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at, rowid LIMIT ?`;
   return db.all(sql, ...params, query.limit ?? -1).map(toRecord3);
 }
 function listActiveWorkers(db, runId) {
@@ -33739,19 +33800,19 @@ function getCheckRun(db, id) {
   return toCheckRun(row);
 }
 function listCheckRuns(db, q) {
-  const where2 = ["run_id = ?"];
+  const where = ["run_id = ?"];
   const params = [q.runId];
-  if (q.candidateId === null) where2.push("candidate_id IS NULL");
+  if (q.candidateId === null) where.push("candidate_id IS NULL");
   else if (q.candidateId !== void 0) {
-    where2.push("candidate_id = ?");
+    where.push("candidate_id = ?");
     params.push(q.candidateId);
   }
   if (q.checkId !== void 0) {
-    where2.push("check_id = ?");
+    where.push("check_id = ?");
     params.push(q.checkId);
   }
-  if (q.rootsOnly) where2.push("rerun_of IS NULL");
-  return db.all(`SELECT * FROM check_runs WHERE ${where2.join(" AND ")} ORDER BY rowid`, ...params).map(toCheckRun);
+  if (q.rootsOnly) where.push("rerun_of IS NULL");
+  return db.all(`SELECT * FROM check_runs WHERE ${where.join(" AND ")} ORDER BY rowid`, ...params).map(toCheckRun);
 }
 function checkRunToResult(r, binding) {
   if (!isFinalCheckStatus(r.status)) throw new OrbitError("INTERNAL", `check run ${r.id} is ${r.status}, not final`);
@@ -34135,7 +34196,7 @@ function logTail(path) {
 }
 async function startApp(opts) {
   const clock = opts.clock ?? systemClock;
-  const probe = opts.probe ?? fetchStatus;
+  const probe2 = opts.probe ?? fetchStatus;
   const pollMs = Math.max(10, opts.pollMs ?? 200);
   const requestTimeout = opts.requestTimeoutMs ?? 2e3;
   assertBaseUrl(opts.baseUrl, opts.isolatedTestData !== false);
@@ -34145,7 +34206,7 @@ async function startApp(opts) {
   if (outcome === "still-running") {
     throw new OrbitError("CONFIG_INVALID", `an application started by an earlier run (state ${priorState}) would not stop; refusing to start another`, { reason: "previous_app_running", stateFile: priorState });
   }
-  const existing = await probe(opts.baseUrl, requestTimeout);
+  const existing = await probe2(opts.baseUrl, requestTimeout);
   if (existing !== null) {
     throw new OrbitError("CONFIG_INVALID", `something already answers at ${opts.baseUrl} (HTTP ${existing}); refusing to test a server Orbit did not start`, { reason: "port_in_use", status: existing });
   }
@@ -34179,7 +34240,7 @@ async function startApp(opts) {
       if (!groupAlive(spawned.pgid)) {
         throw new OrbitError("INTERNAL", `the application exited before it became ready: ${logTail(logPath).trim() || "(no output)"}`, { reason: "app_exited", logPath });
       }
-      const status2 = await probe(opts.baseUrl, requestTimeout);
+      const status2 = await probe2(opts.baseUrl, requestTimeout);
       if (status2 !== null && isReadyStatus(status2)) return handle;
       if (clock.now() >= deadline) {
         throw new OrbitError("INTERNAL", `the application was not ready at ${opts.baseUrl} within ${opts.readyTimeoutMs} ms: ${logTail(logPath).trim() || "(no output)"}`, { reason: "ready_timeout", logPath });
@@ -34264,17 +34325,17 @@ function spendRecoveryAttempt(db, runId, clock, opts) {
     } else {
       const row = db.get("SELECT used, allowance, hard_cap FROM budget_counters WHERE run_id = ? AND counter = 'recovery_attempts'", runId);
       let used;
-      let allowance;
+      let allowance2;
       let hardCap;
       if (row) {
-        ({ used, allowance, hard_cap: hardCap } = row);
+        ({ used, allowance: allowance2, hard_cap: hardCap } = row);
       } else {
         used = Number(db.get("SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND type = ?", runId, RECOVERY_ATTEMPT_EVENT)?.n ?? 0);
-        allowance = hardCap = opts.fallbackMax ?? DEFAULT_FALLBACK_RECOVERIES;
+        allowance2 = hardCap = opts.fallbackMax ?? DEFAULT_FALLBACK_RECOVERIES;
       }
-      if (used + 1 > allowance + EPS) {
-        appendEvent(db, runId, "budget.exhausted", opts.actor, { counter: "recovery_attempts", used, requested: 1, allowance, hard_cap: hardCap, limit: "hard_cap", ...row ? {} : { counted_from: "events" } }, now);
-        return new OrbitError("BUDGET_EXHAUSTED", `recovery_attempts exhausted at ${allowance}: used ${used}, requested 1`, { counter: "recovery_attempts", used, allowance, hard_cap: hardCap, limit: "hard_cap", extendable: false });
+      if (used + 1 > allowance2 + EPS) {
+        appendEvent(db, runId, "budget.exhausted", opts.actor, { counter: "recovery_attempts", used, requested: 1, allowance: allowance2, hard_cap: hardCap, limit: "hard_cap", ...row ? {} : { counted_from: "events" } }, now);
+        return new OrbitError("BUDGET_EXHAUSTED", `recovery_attempts exhausted at ${allowance2}: used ${used}, requested 1`, { counter: "recovery_attempts", used, allowance: allowance2, hard_cap: hardCap, limit: "hard_cap", extendable: false });
       }
       if (row) db.run("UPDATE budget_counters SET used = used + 1 WHERE run_id = ? AND counter = 'recovery_attempts'", runId);
     }
@@ -34396,12 +34457,12 @@ async function validateCredentials(opts) {
       out.push({ provider, verdict: "error", status: null, live: false, error: `no adapter for provider ${provider}` });
       continue;
     }
-    const probe = opts.live || opts.liveProviders?.includes(provider) ? probeOf(adapter) : null;
+    const probe2 = opts.live || opts.liveProviders?.includes(provider) ? probeOf(adapter) : null;
     try {
-      const status2 = probe ? await probe({ ...opts.timeoutMs === void 0 ? {} : { timeoutMs: opts.timeoutMs } }) : await adapter.validateCredentials();
-      out.push({ provider, verdict: verdictOf(status2.state), status: status2, live: probe !== null, error: null });
+      const status2 = probe2 ? await probe2({ ...opts.timeoutMs === void 0 ? {} : { timeoutMs: opts.timeoutMs } }) : await adapter.validateCredentials();
+      out.push({ provider, verdict: verdictOf(status2.state), status: status2, live: probe2 !== null, error: null });
     } catch (err) {
-      out.push({ provider, verdict: "error", status: null, live: probe !== null, error: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) });
+      out.push({ provider, verdict: "error", status: null, live: probe2 !== null, error: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) });
     }
   }
   return out;
@@ -34667,10 +34728,10 @@ function startToEpochMs(start, btimeSeconds = bootTimeSeconds(), platform3 = pro
   const ms = Date.parse(`${start} UTC`);
   return Number.isFinite(ms) ? ms : null;
 }
-function bootTimeSeconds(platform3 = process.platform, read = (p) => readFileSync14(p, "utf8")) {
+function bootTimeSeconds(platform3 = process.platform, read2 = (p) => readFileSync14(p, "utf8")) {
   if (platform3 !== "linux") return null;
   try {
-    const m = /^btime\s+(\d+)/m.exec(read("/proc/stat"));
+    const m = /^btime\s+(\d+)/m.exec(read2("/proc/stat"));
     return m ? Number(m[1]) : null;
   } catch {
     return null;
@@ -34712,7 +34773,7 @@ var init_identity2 = __esm({
 
 // src/recovery/reconcile.ts
 import { existsSync as existsSync19, readdirSync as readdirSync3 } from "node:fs";
-import { dirname as dirname16, join as join21 } from "node:path";
+import { dirname as dirname15, join as join21 } from "node:path";
 async function reconcileOnStart(opts) {
   const ctx = {
     db: opts.db,
@@ -34780,7 +34841,7 @@ function nonTerminalStates() {
   return ["CREATED", "PREFLIGHT", "CONTRACTING", "PLANNING", "IMPLEMENTING", "VERIFYING", "REVIEWING", "DELIVERING", "AWAITING_CI", "INQUISITION", "DIAGNOSING", "REPAIRING", "RECOVERING"];
 }
 function runDir(ctx, run) {
-  return ctx.opts.runDirFor ? ctx.opts.runDirFor(run) : dirname16(run.policyPath);
+  return ctx.opts.runDirFor ? ctx.opts.runDirFor(run) : dirname15(run.policyPath);
 }
 function note(ctx, runId, type, data) {
   const now = ctx.clock.now();
@@ -35127,12 +35188,12 @@ function safeDirs(dir) {
 }
 async function reconcileChecks(ctx, run) {
   const { db } = ctx;
-  const open = db.all("SELECT id, check_id, status FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING') ORDER BY started_at, rowid", run.id);
-  if (open.length === 0) return [];
+  const open2 = db.all("SELECT id, check_id, status FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING') ORDER BY started_at, rowid", run.id);
+  if (open2.length === 0) return [];
   const ended = isRunTerminal(run.state) || run.cancelRequested;
   const dirs = findCheckDirs(runDir(ctx, run));
   const out = [];
-  for (const row of open) {
+  for (const row of open2) {
     const rep = { checkRunId: row.id, runId: run.id, checkId: row.check_id, observation: "running", closed: false, terminated: false, detail: null };
     const found = dirs.get(row.id);
     if (!found) {
@@ -35503,10 +35564,10 @@ function fingerprintFailure(output, check, options = {}) {
     excerptLines.push(...lines.filter((l) => l.trim()).slice(-Math.min(maxLines, 10)).map((l) => l.slice(0, MAX_LINE)));
     if (options.timedOut) excerptLines.push("[orbit: check timed out]");
   }
-  let excerpt2 = redact(excerptLines.join("\n"));
-  if (excerpt2.length > maxChars) excerpt2 = `${excerpt2.slice(0, maxChars)}
+  let excerpt3 = redact(excerptLines.join("\n"));
+  if (excerpt3.length > maxChars) excerpt3 = `${excerpt3.slice(0, maxChars)}
 [orbit: excerpt truncated]`;
-  return { fingerprint, excerpt: excerpt2, signature };
+  return { fingerprint, excerpt: excerpt3, signature };
 }
 var DEFAULT_MAX_LINES, DEFAULT_MAX_EXCERPT, MAX_LINE, MAX_SCANNED_LINES, ANSI, RELEVANT, SUMMARY, STACK_FRAME;
 var init_fingerprint = __esm({
@@ -35575,9 +35636,8 @@ async function treeOf(repoRoot, commit) {
   return (await git2(repoRoot, ["rev-parse", "--verify", `${commit}^{tree}`])).trim();
 }
 async function adminDirFor(repoRoot, worktree) {
-  const common = realpathSync8(
-    (await git2(repoRoot, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).trim()
-  );
+  const [commonOut, ownOut] = (await git2(repoRoot, ["rev-parse", "--path-format=absolute", "--git-common-dir", "--git-dir"])).trim().split("\n");
+  const common = realpathSync8(commonOut.trim());
   let wt;
   let root;
   try {
@@ -35586,7 +35646,7 @@ async function adminDirFor(repoRoot, worktree) {
   } catch (err) {
     throw new OrbitError("NOT_FOUND", `worktree or repository does not exist: ${worktree}`, { worktree }, { cause: err });
   }
-  if (wt === root) return { gitDir: common, worktree: wt };
+  if (wt === root) return { gitDir: realpathSync8((ownOut ?? commonOut).trim()), worktree: wt };
   const admin = join23(common, "worktrees");
   let names = [];
   try {
@@ -35848,11 +35908,18 @@ function safeCwd(checkout, rel) {
   if (real !== root && !real.startsWith(root + sep4)) throw new OrbitError("SCOPE_VIOLATION", `check cwd ${rel} resolves outside the checkout`, { cwd: rel, real });
   return real;
 }
+function prepareCheckHome(homeDir) {
+  const dir = join24(homeDir, NUGET_MIGRATIONS_DIR);
+  mkdirSync9(dir, { recursive: true, mode: 448 });
+  atomicWrite(join24(dir, NUGET_LATEST_MIGRATION), "", 384);
+}
 function checkEnv(def, dirs, hostPath = process.env.PATH) {
   return {
     PATH: hostPath ?? "/usr/bin:/bin",
     HOME: dirs.homeDir,
     TMPDIR: dirs.tmpDir,
+    ...DOTNET_CHECK_ENV,
+    DOTNET_CLI_HOME: dirs.homeDir,
     LANG: platform() === "darwin" ? "en_US.UTF-8" : "C.UTF-8",
     TERM: "dumb",
     CI: "1",
@@ -35875,6 +35942,7 @@ async function launchAttempt(ctx, subject, def, configHash, rerunOf) {
   const index = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: subject.candidateId, checkId: def.id }).length;
   const dirs = dirsFor(subject, def.id, index);
   for (const d of [dirs.checkDir, dirs.artifactsDir, dirs.homeDir]) mkdirSync9(d, { recursive: true, mode: 448 });
+  prepareCheckHome(dirs.homeDir);
   const tmp = prepareWorkerTmpDir(dirs.checkDir);
   if (!ctx.snapshot.config.checks[def.id]) atomicWriteJson(join24(dirs.checkDir, DEFINITION_FILE), def, 384);
   const env = checkEnv(def, dirs);
@@ -36103,7 +36171,7 @@ function finalize(ctx, def, row, dirs, exit, synthetic) {
   atomicWrite(dirs.logPath, log, 384);
   const logSha256 = sha256(log);
   let fingerprint = null;
-  let excerpt2 = null;
+  let excerpt3 = null;
   if (status2 !== "PASSED" && status2 !== "CANCELLED") {
     const roots = [ctx.checkoutDir, ctx.runDir, dirs.checkDir];
     try {
@@ -36114,7 +36182,7 @@ function finalize(ctx, def, row, dirs, exit, synthetic) {
 ${note3}
 ` : body, def, { exitCode, timedOut: status2 === "TIMEOUT", roots });
     fingerprint = fp.fingerprint;
-    excerpt2 = fp.excerpt;
+    excerpt3 = fp.excerpt;
   }
   const artifacts = [{ path: dirs.logPath, sha256: logSha256, kind: "log" }, ...collectArtifacts(dirs.artifactsDir)];
   return finishCheckRun(ctx.db, row.id, {
@@ -36125,7 +36193,7 @@ ${note3}
     logPath: dirs.logPath,
     logSha256,
     fingerprint,
-    excerpt: excerpt2,
+    excerpt: excerpt3,
     artifacts,
     endedAt: ctx.clock.now()
   });
@@ -36200,7 +36268,7 @@ function removeLeftovers(subject, checkId, index) {
   rmSync6(dirs.homeDir, { recursive: true, force: true });
   rmSync6(dirs.tmpDir, { recursive: true, force: true });
 }
-var DEFAULT_POLL_MS, DEFAULT_KILL_GRACE_MS2, DEFAULT_MAX_OUTPUT_BYTES2, LAUNCH_GRACE_MS, MAX_ARTIFACTS, MAX_RAW_READ, CHECK_ID, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, INSTALL_CHECK_IDS, DEFINITION_FILE;
+var DEFAULT_POLL_MS, DEFAULT_KILL_GRACE_MS2, DEFAULT_MAX_OUTPUT_BYTES2, LAUNCH_GRACE_MS, MAX_ARTIFACTS, MAX_RAW_READ, CHECK_ID, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, INSTALL_CHECK_IDS, DEFINITION_FILE, DOTNET_CHECK_ENV, NUGET_MIGRATIONS_DIR, NUGET_LATEST_MIGRATION;
 var init_runner = __esm({
   "src/evidence/runner.ts"() {
     "use strict";
@@ -36228,6 +36296,16 @@ var init_runner = __esm({
     INSTALL_SCRIPTS_CHECK_ID = "orbit-install-scripts";
     INSTALL_CHECK_IDS = [INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID];
     DEFINITION_FILE = "definition.json";
+    DOTNET_CHECK_ENV = {
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1",
+      DOTNET_NOLOGO: "1",
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1",
+      DOTNET_GENERATE_ASPNET_CERTIFICATE: "false",
+      DOTNET_ADD_GLOBAL_TOOLS_TO_PATH: "false",
+      DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK: "1"
+    };
+    NUGET_MIGRATIONS_DIR = join24(".local", "share", "NuGet", "Migrations");
+    NUGET_LATEST_MIGRATION = "1";
   }
 });
 
@@ -36349,15 +36427,15 @@ var init_contract_schema = __esm({
 
 // src/contract/globs.ts
 function expandBraces2(glob) {
-  const open = glob.indexOf("{");
-  if (open === -1) return glob.includes("}") ? null : [glob];
-  const close = glob.indexOf("}", open);
+  const open2 = glob.indexOf("{");
+  if (open2 === -1) return glob.includes("}") ? null : [glob];
+  const close = glob.indexOf("}", open2);
   if (close === -1) return null;
-  const body = glob.slice(open + 1, close);
+  const body = glob.slice(open2 + 1, close);
   if (body.includes("{") || !body.includes(",") || body.includes("..")) return null;
   const alternatives = body.split(",");
   if (!alternatives.every((alt) => LITERAL_ALTERNATIVE.test(alt))) return null;
-  const head = glob.slice(0, open);
+  const head = glob.slice(0, open2);
   const tails = expandBraces2(glob.slice(close + 1));
   if (!tails) return null;
   const out = [];
@@ -37638,14 +37716,14 @@ var init_scheduler = __esm({
 });
 
 // src/controller/context.ts
-import { dirname as dirname17, join as join25 } from "node:path";
+import { dirname as dirname16, join as join25 } from "node:path";
 import { homedir as homedir8 } from "node:os";
 import { existsSync as existsSync21, readFileSync as readFileSync16, realpathSync as realpathSync11 } from "node:fs";
 function loadRunContext(deps, runId, signal) {
   const { db } = deps;
   const run = getRun(db, runId);
-  if (run.endedAt !== null && !existsSync21(dirname17(run.policyPath))) {
-    throw new OrbitError("NOT_FOUND", `run ${runId} ended and its files were removed by orbit gc (${dirname17(run.policyPath)} is gone), so its candidate cannot be checked or repaired; its record remains for "orbit status" and "orbit stats". Start a new run for further work`);
+  if (run.endedAt !== null && !existsSync21(dirname16(run.policyPath))) {
+    throw new OrbitError("NOT_FOUND", `run ${runId} ended and its files were removed by orbit gc (${dirname16(run.policyPath)} is gone), so its candidate cannot be checked or repaired; its record remains for "orbit status" and "orbit stats". Start a new run for further work`);
   }
   const snapshot2 = verifySnapshot(run.policyPath, run.policyHash);
   let contract = null;
@@ -37661,7 +37739,7 @@ function loadRunContext(deps, runId, signal) {
   const candidate = currentCandidate(db, runId);
   let ledger = null;
   if (db.get("SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1", runId)) ledger = new BudgetLedger(db, deps.clock).attach(runId, snapshot2);
-  const runDir2 = dirname17(run.policyPath);
+  const runDir2 = dirname16(run.policyPath);
   const log = (deps.logger ?? nullLogger).child({ run_id: runId });
   let isolation = null;
   const ctx = {
@@ -37719,7 +37797,7 @@ function lenientContext(deps, runId, signal) {
     contract: null,
     candidate: currentCandidate(deps.db, runId),
     ledger: null,
-    runDir: dirname17(run.policyPath),
+    runDir: dirname16(run.policyPath),
     signal,
     timing: { ...DEFAULT_TIMING, ...deps.timing ?? {} },
     policyVerified: false,
@@ -37745,8 +37823,8 @@ function machineAdmission(ctx, running, pending) {
     { agents: { default_parallelism: UNBOUNDED, cancel_obsolete_workers: ctx.snapshot.config.agents.cancel_obsolete_workers }, scheduler: { hard_limits: { parallel_workers: UNBOUNDED } } },
     { clock: ctx.clock, ...ctx.deps.schedulerProbe ? { system: ctx.deps.schedulerProbe } : {} }
   );
-  const strip2 = (u) => ({ ...u, writer: false, worktree: null, ownedPaths: [] });
-  const plan = machine.plan([...running.map(strip2), ...pending.map(strip2)], { parallelism: UNBOUNDED, contextDuplication: 0 });
+  const strip = (u) => ({ ...u, writer: false, worktree: null, ownedPaths: [] });
+  const plan = machine.plan([...running.map(strip), ...pending.map(strip)], { parallelism: UNBOUNDED, contextDuplication: 0 });
   return { start: new Set(plan.start.map((u) => u.id)), deferred: new Map(plan.deferred.map((d) => [d.id, `machine ${d.reason}`])) };
 }
 function repoKey(repoRoot) {
@@ -38520,22 +38598,22 @@ function count(v) {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 }
 function routeStats(db, filter = {}) {
-  const where2 = [];
+  const where = [];
   const params = [];
   if (filter.workKind) {
-    where2.push("work_kind = ?");
+    where.push("work_kind = ?");
     params.push(filter.workKind);
   }
   if (filter.provider) {
-    where2.push("provider = ?");
+    where.push("provider = ?");
     params.push(filter.provider);
   }
   if (filter.modelId) {
-    where2.push("model_id = ?");
+    where.push("model_id = ?");
     params.push(filter.modelId);
   }
   if (filter.sinceMs !== void 0) {
-    where2.push("ts >= ?");
+    where.push("ts >= ?");
     params.push(filter.sinceMs);
   }
   const rows = db.all(
@@ -38545,7 +38623,7 @@ function routeStats(db, filter = {}) {
             SUM(CASE WHEN outcome = 'rejected' THEN 1 ELSE 0 END) AS rejected,
             SUM(CASE WHEN outcome IN ('error', 'cancelled') THEN 1 ELSE 0 END) AS errors,
             AVG(cost_usd) AS mean_cost, COUNT(cost_usd) AS cost_samples, AVG(tokens) AS mean_tokens
-       FROM route_outcomes ${where2.length ? `WHERE ${where2.join(" AND ")}` : ""}
+       FROM route_outcomes ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       GROUP BY work_kind, provider, model_id
       ORDER BY work_kind, provider, model_id`,
     ...params
@@ -38699,11 +38777,11 @@ var init_schema6 = __esm({
 // src/knowledge/db.ts
 import { createRequire as createRequire2 } from "node:module";
 import { mkdirSync as mkdirSync10 } from "node:fs";
-import { dirname as dirname18 } from "node:path";
+import { dirname as dirname17 } from "node:path";
 function openKnowledgeDb(path, options = {}) {
   suppressSqliteExperimentalWarning();
   const { DatabaseSync: Database } = require3("node:sqlite");
-  if (path !== ":memory:") mkdirSync10(dirname18(path), { recursive: true });
+  if (path !== ":memory:") mkdirSync10(dirname17(path), { recursive: true });
   const db = new Database(path);
   db.exec(`PRAGMA busy_timeout = ${Math.trunc(options.busyTimeoutMs ?? 1e4)}`);
   if (path !== ":memory:") db.exec("PRAGMA journal_mode = WAL");
@@ -39393,8 +39471,8 @@ var init_store2 = __esm({
         return row ? parseLesson(row.lesson_json) : null;
       }
       listLessons(filters = {}) {
-        const { where: where2, params } = filterSql(filters);
-        const rows = this.db.all(`SELECT id, lesson_json FROM nodes n ${where2} ORDER BY n.id`, ...params);
+        const { where, params } = filterSql(filters);
+        const rows = this.db.all(`SELECT id, lesson_json FROM nodes n ${where} ORDER BY n.id`, ...params);
         const lessons = rows.map((r) => parseLesson(r.lesson_json)).filter((l) => roleMatches(l, filters.roles));
         return filters.limit === void 0 ? lessons : lessons.slice(0, filters.limit);
       }
@@ -39410,12 +39488,12 @@ var init_store2 = __esm({
         const terms = searchTerms(text2);
         if (terms.length === 0) return [];
         const match = terms.map((t) => `"${t}"`).join(" OR ");
-        const { where: where2, params } = filterSql(filters, "AND");
+        const { where, params } = filterSql(filters, "AND");
         const limit = Math.max(1, Math.min(filters.limit ?? 50, 500));
         const rows = this.db.all(
           `SELECT n.lesson_json AS lesson_json, bm25(fts, 0.0, 4.0, 1.0, 2.0, 1.0) AS rank
        FROM fts JOIN nodes n ON n.id = fts.lesson_id
-       WHERE fts MATCH ? ${where2}
+       WHERE fts MATCH ? ${where}
        ORDER BY rank ASC, n.id ASC
        LIMIT ?`,
           match,
@@ -39479,8 +39557,8 @@ var init_store2 = __esm({
           clauses.push("type = ?");
           params.push(query.type);
         }
-        const where2 = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-        return this.db.all(`SELECT src, dst, type, run_id, data_json FROM edges ${where2} ORDER BY src, type, dst`, ...params).map((r) => ({ src: r.src, dst: r.dst, type: r.type, run_id: r.run_id, data: r.data_json ? JSON.parse(r.data_json) : null }));
+        const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+        return this.db.all(`SELECT src, dst, type, run_id, data_json FROM edges ${where} ORDER BY src, type, dst`, ...params).map((r) => ({ src: r.src, dst: r.dst, type: r.type, run_id: r.run_id, data: r.data_json ? JSON.parse(r.data_json) : null }));
       }
       events(lessonId) {
         return this.db.all("SELECT lesson_id, ts, type, data_json FROM lesson_events WHERE lesson_id = ? ORDER BY id", lessonId).map((r) => ({ lesson_id: r.lesson_id, ts: r.ts, type: r.type, data: r.data_json ? JSON.parse(r.data_json) : null }));
@@ -39594,8 +39672,8 @@ var init_store2 = __esm({
           clauses.push("scope = ?");
           params.push(filter.scope);
         }
-        const where2 = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-        return this.db.all(`SELECT * FROM overlays ${where2} ORDER BY role, scope, version`, ...params).map(toOverlay);
+        const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+        return this.db.all(`SELECT * FROM overlays ${where} ORDER BY role, scope, version`, ...params).map(toOverlay);
       }
       activeOverlay(role, scope) {
         const row = this.db.get("SELECT * FROM overlays WHERE role = ? AND scope = ? AND status = 'active' ORDER BY version DESC LIMIT 1", role, scope);
@@ -42002,7 +42080,7 @@ function repairObservations(db, runId, runDir2) {
         ...seen.failureRows.map((f) => rowRef(runId, "failure", f)),
         rowRef(runId, "candidate", { id: next.id, seq: next.seq, commit_sha: next.commit_sha, tree_hash: next.tree_hash, diff_stat_json: next.diff_stat_json })
       ];
-      const excerpt2 = seen.checkRuns.find((c) => c.excerpt)?.excerpt ?? seen.failureRows.find((f) => f.excerpt)?.excerpt ?? null;
+      const excerpt3 = seen.checkRuns.find((c) => c.excerpt)?.excerpt ?? seen.failureRows.find((f) => f.excerpt)?.excerpt ?? null;
       out.push({
         id: observationId(runId, "failure-repair", fp),
         run_id: runId,
@@ -42015,7 +42093,7 @@ function repairObservations(db, runId, runDir2) {
           failing_candidate: cur.seq,
           fixed_candidate: next.seq,
           persisted_candidates: cur.seq - firstSeen.seq + 1,
-          failure_excerpt: cleanUntrusted(excerpt2, TEXT_MAX),
+          failure_excerpt: cleanUntrusted(excerpt3, TEXT_MAX),
           fix_diff_stat: boundedDiffStat(stat)
         },
         fingerprints: [fp],
@@ -42816,7 +42894,7 @@ var init_global = __esm({
 // src/guard/publication.ts
 import { readFileSync as readFileSync17 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
-import { dirname as dirname19, isAbsolute as isAbsolute13, join as join30, resolve as resolve10 } from "node:path";
+import { dirname as dirname18, isAbsolute as isAbsolute13, join as join30, resolve as resolve10 } from "node:path";
 import { inspect } from "node:util";
 function defaultGuardConfigPath(env = process.env) {
   const override = env.PUBLISH_GUARD_CONFIG;
@@ -42825,7 +42903,7 @@ function defaultGuardConfigPath(env = process.env) {
   return join30(base, "publish-guard", "config.json");
 }
 function defaultTermsPath(env = process.env) {
-  return join30(dirname19(defaultGuardConfigPath(env)), "terms.txt");
+  return join30(dirname18(defaultGuardConfigPath(env)), "terms.txt");
 }
 function loadTerms(path = defaultTermsPath()) {
   const resolved = expandHome(path);
@@ -43045,7 +43123,7 @@ function loadGuardSettings(configPath = defaultGuardConfigPath(), env = process.
   const settings = {
     configPath: resolved,
     configFound: false,
-    termsPath: join30(dirname19(resolved), "terms.txt"),
+    termsPath: join30(dirname18(resolved), "terms.txt"),
     allowedEmails: [],
     allowedEmailPatterns: [],
     warnings: []
@@ -43072,7 +43150,7 @@ function loadGuardSettings(configPath = defaultGuardConfigPath(), env = process.
     if (typeof obj3.terms_file !== "string" || obj3.terms_file.trim() === "") {
       throw new OrbitError("CONFIG_INVALID", `publication guard: terms_file in ${resolved} must be a non-empty string`, { path: resolved });
     }
-    settings.termsPath = resolveFrom(dirname19(resolved), obj3.terms_file.trim(), env);
+    settings.termsPath = resolveFrom(dirname18(resolved), obj3.terms_file.trim(), env);
   }
   settings.allowedEmails = stringList(obj3.allowed_emails, "allowed_emails", settings.warnings);
   settings.allowedEmailPatterns = stringList(obj3.allowed_email_patterns, "allowed_email_patterns", settings.warnings);
@@ -43156,1454 +43234,1102 @@ var init_publication = __esm({
   }
 });
 
-// src/delivery/git.ts
-function isObjectId(value) {
-  return typeof value === "string" && OBJECT_ID.test(value);
+// src/controller/report.ts
+import { existsSync as existsSync25, mkdirSync as mkdirSync13, readdirSync as readdirSync6, readFileSync as readFileSync18 } from "node:fs";
+import { homedir as homedir10 } from "node:os";
+import { join as join31 } from "node:path";
+function writeFinalReport(db, runId, opts) {
+  const run = getRun(db, runId);
+  const report2 = buildFinalReport(db, run, opts);
+  atomicWriteJson(join31(opts.runDir, "final.json"), report2);
+  atomicWrite(join31(opts.runDir, "final.md"), renderMarkdown(report2));
+  return report2;
 }
-function assertTaskBranch(branch, rules) {
-  const deny2 = (why) => {
-    throw new OrbitError("POLICY_DENIED", `refusing to push ${JSON.stringify(branch)}: ${why}`, { branch, definitive: true });
-  };
-  if (typeof branch !== "string" || branch.length === 0) deny2("the branch name is empty");
-  if (branch.startsWith("refs/")) deny2("give the branch name, not a ref");
-  if (!rules.branchPrefix) deny2("no branch prefix is configured");
-  if (!branch.startsWith(rules.branchPrefix) || branch.length === rules.branchPrefix.length) deny2(`task branches start with ${rules.branchPrefix}`);
-  if (branch === rules.baseBranch) deny2("the base branch is never a push target");
-  if (branch.startsWith("-") || REF_FORBIDDEN2.test(branch)) deny2("it is not a valid branch name");
+function buildFinalReport(db, run, opts) {
+  return redactValue(assembleFinalReport(db, run, opts));
 }
-function branchRef(branch) {
-  return `refs/heads/${branch}`;
-}
-function gitEnv4(extra = {}, base = process.env) {
-  const keep = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "SystemRoot"];
-  const env = {};
-  for (const k of keep) if (base[k] !== void 0) env[k] = base[k];
-  return {
-    ...env,
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_ASKPASS: "",
-    GIT_OPTIONAL_LOCKS: "0",
-    // Transports Orbit uses; excludes ext:: and friends.
-    GIT_ALLOW_PROTOCOL: "file:https:http:git:ssh",
-    ...extra
-  };
-}
-async function git3(repoRoot, args, opts = {}) {
-  return execCapture(["git", ...args], { cwd: repoRoot, env: opts.env ?? gitEnv4(), timeoutMs: opts.timeoutMs ?? 12e4, input: opts.input, maxOutputBytes: 4 * 1024 * 1024 });
-}
-function fail(what, res, extra = {}) {
-  const text2 = redact(`${res.stderr}${res.stdout}`.trim()).slice(0, 2e3);
-  return new OrbitError("GIT_FAILED", `${what} failed (exit ${res.exitCode ?? res.signal ?? "unknown"}): ${text2}`, { exitCode: res.exitCode, ...extra });
-}
-async function objectExists(repoRoot, spec, opts) {
-  const res = await git3(repoRoot, ["cat-file", "-e", spec], opts);
-  return res.exitCode === 0;
-}
-async function readControllerIdentity(repoRoot, opts = {}) {
-  const read = async (key2) => {
-    const res = await git3(repoRoot, ["config", "--get", key2], opts);
-    return res.exitCode === 0 ? res.stdout.trim() : "";
-  };
-  const [name, email] = await Promise.all([read("user.name"), read("user.email")]);
-  if (!name || !email) {
-    throw new OrbitError("CONFIG_INVALID", "the controller has no git identity (user.name and user.email); delivery commits never take an identity from a worker", { definitive: true });
-  }
-  return { name, email };
-}
-async function createDeliveryCommit(input) {
-  const { repoRoot, tree, parent, message, identity } = input;
-  if (!isObjectId(tree)) throw new OrbitError("GIT_FAILED", "the tree is not a full object id", { tree });
-  if (!isObjectId(parent)) throw new OrbitError("GIT_FAILED", "the parent is not a full object id", { parent });
-  if (!message.trim()) throw new OrbitError("GIT_FAILED", "a delivery commit needs a message");
-  if (!identity.name || !identity.email) throw new OrbitError("CONFIG_INVALID", "a delivery commit needs an identity", { definitive: true });
-  if (!await objectExists(repoRoot, `${tree}^{tree}`, input)) throw new OrbitError("GIT_FAILED", `tree ${tree} is not in the repository`);
-  if (!await objectExists(repoRoot, `${parent}^{commit}`, input)) throw new OrbitError("GIT_FAILED", `parent ${parent} is not a commit in the repository`);
-  const when = `${Math.floor(input.timeMs / 1e3)} +0000`;
-  const env = gitEnv4({
-    // Reproducible: no user or system configuration can influence the result.
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_AUTHOR_NAME: identity.name,
-    GIT_AUTHOR_EMAIL: identity.email,
-    GIT_AUTHOR_DATE: when,
-    GIT_COMMITTER_NAME: identity.name,
-    GIT_COMMITTER_EMAIL: identity.email,
-    GIT_COMMITTER_DATE: when
+function assembleFinalReport(db, run, opts) {
+  const contract = parseContract(run.contractJson);
+  const cand = currentCandidate(db, run.id);
+  const reports = listEvidenceReports(db, run.id);
+  const ev = (cand ? reports.filter((r) => r.candidateId === cand.id).at(-1) : null) ?? reports.at(-1) ?? null;
+  const criteria = (contract?.acceptance_criteria ?? []).map((c) => {
+    const e = ev?.report.acceptance_evidence.find((a) => a.criterion_id === c.id);
+    return { id: c.id, statement: c.statement, mandatory: c.mandatory, status: e?.status ?? "unverified", artifacts: e?.artifacts ?? [] };
   });
-  const res = await git3(repoRoot, ["commit-tree", tree, "-p", parent, "-F", "-"], { ...input, env, input: message.endsWith("\n") ? message : `${message}
-` });
-  if (res.exitCode !== 0) throw fail("git commit-tree", res);
-  const commit = res.stdout.trim();
-  if (!isObjectId(commit)) throw new OrbitError("GIT_FAILED", `commit-tree printed an unexpected value: ${res.stdout.trim().slice(0, 80)}`);
-  const check = await git3(repoRoot, ["rev-parse", `${commit}^{tree}`], input);
-  if (check.exitCode !== 0 || check.stdout.trim() !== tree) {
-    throw new OrbitError("GIT_FAILED", `the delivery commit ${commit} has tree ${check.stdout.trim()}, not the reviewed tree ${tree}`, { commit, tree, definitive: true });
-  }
-  if (input.ref) {
-    const up = await git3(repoRoot, ["update-ref", input.ref, commit], input);
-    if (up.exitCode !== 0) throw fail("git update-ref", up);
-  }
-  return commit;
-}
-function deliveryRef(runId, tree, parent) {
-  return `refs/orbit/${runId}/delivery/${parent}/${tree}`;
-}
-async function findDeliveryCommit(repoRoot, runId, tree, parent, opts = {}) {
-  const res = await git3(repoRoot, ["rev-parse", "--verify", "--quiet", `${deliveryRef(runId, tree, parent)}^{commit}`], opts);
-  if (res.exitCode !== 0) return null;
-  const commit = res.stdout.trim();
-  const t = await git3(repoRoot, ["rev-parse", `${commit}^{tree}`, `${commit}^`], opts);
-  const [commitTree, commitParent] = t.stdout.trim().split("\n");
-  return t.exitCode === 0 && commitTree === tree && commitParent === parent ? commit : null;
-}
-function assertRemote(remote) {
-  if (typeof remote !== "string" || remote.length === 0 || remote.startsWith("-") || /[\0\n\r]/.test(remote)) {
-    throw new OrbitError("CONFIG_INVALID", `the remote ${JSON.stringify(remote)} is not usable`, { definitive: true });
-  }
-}
-function remoteHost2(address) {
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(address)) {
-    let url;
+  const reviews = listReviews(db, run.id, { includeInvalidated: true });
+  const findings = listFindings(db, run.id);
+  const decisions = listDecisions(db, run.id).map((d) => ({ kind: d.kind, summary: d.summary, at: d.createdAt }));
+  const delivery = readJsonIfExists(join31(opts.runDir, "delivery.json"));
+  const outcomeJson = parseJson3(run.outcomeJson);
+  let budget = null;
+  const usage = summarizeUsage(db, run.id);
+  if (opts.snapshot && db.get("SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1", run.id)) {
     try {
-      url = new URL(address);
+      const snap = new BudgetLedger(db, opts.clock).attach(run.id, opts.snapshot).snapshot();
+      budget = { counters: snap.counters, cost_measurement: snap.cost_measurement.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals) };
     } catch {
-      throw new OrbitError("CONFIG_INVALID", "the remote URL cannot be parsed", { remote: redact(address), definitive: true });
-    }
-    if (url.protocol === "file:") return null;
-    const host = url.hostname.replace(/^\[|\]$/g, "");
-    if (!host) throw new OrbitError("CONFIG_INVALID", "the remote URL names no host", { remote: redact(address), definitive: true });
-    return host;
-  }
-  const scp = /^(?:[^@/]*@)?(\[[^\]]+\]|[^:/]+):/.exec(address);
-  if (scp) return scp[1].replace(/^\[|\]$/g, "");
-  return null;
-}
-async function resolveRemoteUrl(repoRoot, remote, opts = {}) {
-  assertRemote(remote);
-  const res = await git3(repoRoot, ["remote", "get-url", "--push", "--all", remote], opts);
-  let url;
-  if (res.exitCode === 0) {
-    const urls = res.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
-    if (urls.length !== 1) throw new OrbitError("CONFIG_INVALID", `remote ${remote} has ${urls.length} push URLs; delivery needs exactly one`, { definitive: true });
-    url = urls[0];
-  } else if (/[/:]/.test(remote)) {
-    url = remote;
-  } else {
-    throw new OrbitError("CONFIG_INVALID", `no git remote named ${JSON.stringify(remote)} in the repository`, { definitive: true });
-  }
-  assertRemote(url);
-  await assertNotRewritten(repoRoot, url, opts);
-  return url;
-}
-async function assertNotRewritten(repoRoot, url, opts) {
-  const res = await git3(repoRoot, ["config", "-z", "--get-regexp", "^url\\..*\\.(insteadof|pushinsteadof)$"], opts);
-  if (res.exitCode === 1 && res.stdout === "") return;
-  if (res.exitCode !== 0) throw fail("git config --get-regexp url.*.insteadOf", res);
-  for (const entry of res.stdout.split("\0")) {
-    const nl = entry.indexOf("\n");
-    const prefix = nl < 0 ? "" : entry.slice(nl + 1);
-    if (prefix !== "" && url.startsWith(prefix)) {
-      throw new OrbitError("CONFIG_INVALID", `the push URL ${redact(url)} matches a url.<base>.${/pushinsteadof$/i.test(entry.slice(0, nl)) ? "pushInsteadOf" : "insteadOf"} rule, so git would rewrite it to another destination; remove the rule or name the final URL`, { definitive: true });
+      budget = null;
     }
   }
-}
-function remoteEnvAndArgs(o) {
-  if (!o.token) return { env: o.env ?? gitEnv4(), pre: [] };
-  const helper = `!${o.ghPath ?? "gh"} auth git-credential`;
+  if (!budget) budget = { counters: [], cost_measurement: usage.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals) };
+  const unverified = [...ev?.report.unverified ?? []];
+  for (const c of criteria) if (c.mandatory && c.status !== "supported") unverified.push(`${c.id} is ${c.status}`);
+  const risks = [];
+  const env = readJsonIfExists(join31(opts.runDir, "environment.json"));
+  risks.push(...env?.gate?.notes ?? []);
+  if (!usage.costComplete || budget.cost_measurement.includes("unmeasured")) risks.push(`model spend: ${budget.cost_measurement}`);
+  for (const f of findings.filter((x) => x.status === "advisory" || x.status === "open" || x.status === "claim_pending")) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}): ${f.claim.slice(0, 160)}`);
+  for (const f of findings.filter((x) => x.status === "accepted")) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, accepted, unresolved, blocking): ${f.claim.slice(0, 160)}`);
+  let exceptions = [];
+  try {
+    if (opts.snapshot) exceptions = readSecurityPolicy(opts.snapshot).exceptions;
+  } catch {
+    exceptions = [];
+  }
+  for (const f of findings.filter((x) => x.status === "excepted")) {
+    const ex = f.resolutionJson?.exception;
+    const index = typeof ex?.index === "number" ? ex.index : -1;
+    const expires = exceptions[index]?.expires;
+    const reason = typeof ex?.reason === "string" ? ex.reason : f.resolution ?? "no reason recorded";
+    risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, excepted by policy): ${f.claim.slice(0, 120)}; exception reason: ${reason.slice(0, 160)}; expires: ${expires ?? "never"}`);
+  }
+  for (const q of listQuestions(db, run.id, { status: "open" })) risks.push(`open question: ${q.question.slice(0, 200)}`);
+  for (const c of ev?.report.checks.filter((x) => x.flaky) ?? []) risks.push(`check ${c.id} passed only on a rerun (flaky)`);
+  const plugins = workerPluginsOf(listWorkers(db, { runId: run.id }));
+  risks.push(...plugins.risks);
+  const prNumber = delivery?.pr?.number ?? null;
+  const branch = delivery?.branch ?? outcomeJson?.branch ?? run.branch;
   return {
-    env: { ...o.env ?? gitEnv4(), GH_TOKEN: o.token },
-    pre: ["-c", "credential.helper=", "-c", `credential.helper=${helper}`]
+    schema: "orbit.final/1",
+    run_id: run.id,
+    outcome: run.state,
+    outcome_reason: run.outcomeReason,
+    mode: run.mode,
+    original_goal: run.goal,
+    objective: contract?.objective ?? null,
+    criteria,
+    checks: ev?.report.checks.map((c) => ({ id: c.id, status: c.status, exit_code: c.exit_code, flaky: c.flaky, log: c.log })) ?? [],
+    evidence: ev ? { report_id: ev.id, verdict: ev.verdict, tree_hash: ev.treeHash, candidate_revision: ev.report.candidate_revision } : null,
+    reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length })),
+    decisions,
+    assumptions: [...(contract?.assumptions ?? []).map((a) => ({ id: a.id, statement: a.statement, status: a.status })), ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))],
+    practices: (contract?.practices ?? []).map((p) => ({ practice: p.practice, applicable: p.applicable, justification: p.justification })),
+    repairs: repairs(opts.runDir),
+    worker_plugins: plugins.plugins,
+    revision: {
+      base: run.baseRevision,
+      candidate: cand?.commitSha ?? null,
+      tree: cand?.treeHash ?? null,
+      branch,
+      // Only a delivery action delivers. A local mode leaves the candidate commit on a local branch: that is the
+      // `candidate` above, never a delivered commit.
+      delivered_commit: delivery?.commit ?? (DELIVERY_MODES.has(run.mode) ? outcomeJson?.commit ?? null : null),
+      pull_request: prNumber === null ? null : { number: prNumber, url: delivery?.pr?.url ?? null }
+    },
+    budget,
+    unverified: [...new Set(unverified)],
+    residual_risks: [...new Set(risks)],
+    next_action: nextAction(run, branch, prNumber, listQuestions(db, run.id, { status: "open" }).filter((q) => q.material)),
+    generated_at: opts.clock.now()
   };
 }
-function classifyRemoteFailure(what, res) {
-  const text2 = `${res.stderr}
-${res.stdout}`;
-  if (AUTH_PATTERN.test(text2)) {
-    return new OrbitError("AUTH_EXPIRED", `${what} was refused for lack of valid credentials: ${redact(text2.trim()).slice(0, 500)}`, { exitCode: res.exitCode, definitive: true });
+function workerPluginsOf(workers) {
+  const lines = /* @__PURE__ */ new Map();
+  for (const w of workers) {
+    const recorded = parseJson3(w.resultJson)?.plugins;
+    if (!Array.isArray(recorded)) continue;
+    const seen = /* @__PURE__ */ new Set();
+    for (const p of recorded) {
+      const r = p !== null && typeof p === "object" ? p : {};
+      const line3 = { id: strOrNull(r.id), scope: strOrNull(r.scope), allowed_by: strOrNull(r.allowed_by) };
+      const key2 = JSON.stringify(line3);
+      if (seen.has(key2)) continue;
+      seen.add(key2);
+      const cur = lines.get(key2);
+      if (cur) cur.workers += 1;
+      else lines.set(key2, { ...line3, workers: 1 });
+    }
   }
-  if (res.timedOut || TRANSIENT_PATTERN.test(text2)) {
-    return new OrbitError("PROVIDER_TRANSIENT", `${what} failed transiently: ${redact(text2.trim()).slice(0, 500)}`, { exitCode: res.exitCode });
-  }
-  return fail(what, res);
+  const plugins = [...lines.values()];
+  const risks = plugins.filter((p) => p.allowed_by !== null).map((p) => `worker plugin ${p.id ?? "unidentified"} (scope ${p.scope ?? "unknown"}) was allowed by ${p.allowed_by} and loaded into ${p.workers} worker session(s); a plugin can add hooks and tools to a worker`);
+  return { plugins, risks };
 }
-async function lsRemoteBranch(o) {
-  assertRemote(o.remote);
-  const ref2 = branchRef(o.branch);
-  const { env, pre } = remoteEnvAndArgs(o);
-  const res = await git3(o.repoRoot, [...pre, "ls-remote", "--", o.remote, ref2], { ...o, env });
-  if (res.exitCode !== 0) throw classifyRemoteFailure("git ls-remote", res);
-  for (const line3 of res.stdout.split("\n")) {
-    const [sha, name] = line3.split("	");
-    if (name === ref2 && isObjectId(sha)) return sha;
-  }
-  return null;
+function strOrNull(v) {
+  return typeof v === "string" ? v : null;
 }
-function parsePushPorcelain(stdout) {
-  const out = [];
-  for (const line3 of stdout.split("\n")) {
-    const m = /^([ +\-*!=])\t([^\t:]*):(\S+)\t(.*)$/.exec(line3);
-    if (m) out.push({ flag: m[1], from: m[2], to: m[3], summary: m[4] });
-  }
-  return out;
+function tokens(t) {
+  return { input: t.inputTokens, output: t.outputTokens, cache_read: t.cacheReadTokens, cache_write: t.cacheWriteTokens };
 }
-async function pushBranch(input) {
-  assertRemote(input.remote);
-  assertTaskBranch(input.branch, input);
-  if (!isObjectId(input.commit)) throw new OrbitError("GIT_FAILED", "the commit to push is not a full object id", { commit: input.commit });
-  if (input.force && !isObjectId(input.leaseSha)) {
-    throw new OrbitError("POLICY_DENIED", "a forced push needs --force-with-lease against the previously delivered commit", { definitive: true });
-  }
-  if (!await objectExists(input.repoRoot, `${input.commit}^{commit}`, input)) {
-    throw new OrbitError("GIT_FAILED", `commit ${input.commit} is not in the repository`);
-  }
-  const ref2 = branchRef(input.branch);
-  const { env, pre } = remoteEnvAndArgs(input);
-  const args = [...pre, "push", "--porcelain", "--no-verify"];
-  if (input.force) args.push(`--force-with-lease=${ref2}:${input.leaseSha}`);
-  args.push("--", input.remote, `${input.commit}:${ref2}`);
-  const res = await git3(input.repoRoot, args, { ...input, env });
-  const lines = parsePushPorcelain(res.stdout);
-  const mine = lines.find((l) => l.to === ref2);
-  if (mine && mine.flag === "!") {
-    if (AUTH_PATTERN.test(`${res.stderr}
-${res.stdout}`)) throw classifyRemoteFailure("git push", res);
-    throw new OrbitError("GIT_FAILED", `the remote rejected the push of ${input.branch}: ${mine.summary}`, { definitive: true, rejected: mine.summary, ref: ref2 });
-  }
-  if (res.exitCode !== 0) throw classifyRemoteFailure("git push", res);
-  if (!mine) throw new OrbitError("GIT_FAILED", `git push reported success but no result for ${ref2}`, { stdout: redact(res.stdout).slice(0, 500) });
-  const outcome = mine.flag === "*" ? "created" : mine.flag === "+" ? "forced" : mine.flag === "=" ? "up-to-date" : "updated";
-  return { remote: redact(input.remote), ref: ref2, sha: input.commit, outcome };
+function repairs(runDir2) {
+  const dir = join31(runDir2, "briefs");
+  if (!existsSync25(dir)) return [];
+  return readdirSync6(dir).filter((f) => /^attempt-\d+\.json$/.test(f)).map((f) => readJsonIfExists(join31(dir, f))).filter((b) => b !== null).map((b) => ({ attempt: b.attempt, source: b.source, fingerprint: b.fingerprint })).sort((a, b) => a.attempt - b.attempt);
 }
-async function reconcilePush(o) {
-  const sha = await lsRemoteBranch(o);
-  if (sha !== o.commit) return null;
-  return { remote: redact(o.remote), ref: branchRef(o.branch), sha, outcome: "up-to-date" };
-}
-async function fetchBranchContaining(o) {
-  assertRemote(o.remote);
-  if (!isObjectId(o.commit)) throw new OrbitError("INTERNAL", `not a full commit sha: ${o.commit}`);
-  if (!o.ref.startsWith("refs/orbit/") || REF_FORBIDDEN2.test(o.ref.slice("refs/".length))) throw new OrbitError("INTERNAL", `fetch target must be a private refs/orbit/ ref: ${o.ref}`);
-  if (o.branch.startsWith("-") || REF_FORBIDDEN2.test(o.branch)) throw new OrbitError("CONFIG_INVALID", `not a valid branch name: ${JSON.stringify(o.branch)}`, { definitive: true });
-  const { env, pre } = remoteEnvAndArgs(o);
-  const res = await git3(o.repoRoot, [...pre, "fetch", "--no-tags", "--no-write-fetch-head", "--", o.remote, `+${branchRef(o.branch)}:${o.ref}`], { ...o, env });
-  if (res.exitCode !== 0) throw classifyRemoteFailure("git fetch", res);
-  const tip = (await git3(o.repoRoot, ["rev-parse", "--verify", "--quiet", `${o.ref}^{commit}`], o)).stdout.trim();
-  if (!isObjectId(tip)) throw new OrbitError("GIT_FAILED", `git fetch of ${o.branch} produced no commit at ${o.ref}`);
-  const onBranch = tip === o.commit || (await git3(o.repoRoot, ["merge-base", "--is-ancestor", o.commit, tip], o)).exitCode === 0;
-  if (!onBranch) {
-    throw new OrbitError("DELIVERY_FAILED", `commit ${o.commit.slice(0, 12)} is not on ${o.branch} at ${o.remote}`, { branch: o.branch, commit: o.commit, tip, definitive: true });
+function outcomeHas(run, key2) {
+  try {
+    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
+    return o !== null && typeof o === "object" && key2 in o;
+  } catch {
+    return false;
   }
-  return tip;
 }
-async function hasCommit(repoRoot, commit, opts = {}) {
-  return isObjectId(commit) && await objectExists(repoRoot, `${commit}^{commit}`, opts);
-}
-var OBJECT_ID, REF_FORBIDDEN2, AUTH_PATTERN, TRANSIENT_PATTERN;
-var init_git2 = __esm({
-  "src/delivery/git.ts"() {
-    "use strict";
-    init_exec();
-    init_errors();
-    init_redact();
-    OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-    REF_FORBIDDEN2 = /(\.\.|@\{|[\s~^:?*[\\\x00-\x1f\x7f]|\/\/|\/\.|\.lock$|\.lock\/|\/$|\.$)/;
-    AUTH_PATTERN = /Authentication failed|could not read (?:Username|Password)|Permission denied|invalid credentials|Bad credentials|error: 40[13]|HTTP 40[13]|requires authentication|Invalid username or token|not permitted to push/i;
-    TRANSIENT_PATTERN = /Could not resolve host|Connection (?:timed out|reset|refused)|timed out|unable to access|early EOF|remote end hung up|error: 5\d\d|HTTP 5\d\d|RPC failed|Temporary failure/i;
-  }
-});
-
-// src/notify/payload.ts
-function sanitizeReason(text2) {
-  if (text2 === null || text2 === void 0) return null;
-  let s = text2.replace(/\r/g, "");
-  for (const re of CODE_MARKERS) {
-    const m = re.exec(s);
-    if (m) s = s.slice(0, m.index);
-  }
-  s = redact(s).replace(/\s+/g, " ").trim().replace(/[\s:;,]+$/, "");
-  if (s === "") return null;
-  return s.length > REASON_MAX ? s.slice(0, REASON_MAX) : s;
-}
-function nextAction(input) {
-  const { run, questionIds, pullRequest, remote } = input;
-  const [first] = questionIds;
-  if (first !== void 0) {
-    const local = `Answer with orbit decide ${run.id} ${first} <answer>`;
-    return remote ? `${local}, or comment "/orbit answer ${first} <choice>" on ${remote.where}.` : `${local}, then run orbit resume ${run.id}.`;
-  }
+function nextAction(run, branch, pr, openMaterial = []) {
   switch (run.state) {
     case "SUCCEEDED":
-      return pullRequest !== null ? `Review pull request #${pullRequest} and merge it if you accept it.` : `Inspect branch ${run.branch ?? `orbit/${run.id}`} and merge it yourself if you accept it.`;
-    case "BLOCKED":
-      return `Resolve the block, then run orbit resume ${run.id}.`;
-    case "EXHAUSTED":
-      return `Read orbit report ${run.id}, then continue by hand or start a new run.`;
+      return DELIVERY_MODES.has(run.mode) ? `Review${pr !== null ? ` pull request #${pr}` : ` branch ${branch ?? "orbit/<run>"}`} and merge it if you accept it; Orbit does not merge.` : `Inspect the local branch ${branch ?? `orbit/${run.id}`} (the reviewed candidate) and merge it yourself if you accept it.`;
+    case "BLOCKED": {
+      const why = run.outcomeReason ?? "The run is blocked.";
+      if (outcomeHas(run, "frozen_policy") || /orbit resume/.test(why)) return why;
+      return `${/[.!?]$/.test(why.trim()) ? why.trim() : `${why.trim()}.`} Resolve that, then run \`orbit resume ${run.id}\`.`;
+    }
+    case "EXHAUSTED": {
+      const advice = exhaustedAdvice(run);
+      const asked = openMaterial.length === 0 ? "" : ` Open material question(s) were never answered: ${openMaterial.slice(0, 5).map((q) => `${q.id}: ${q.question.slice(0, 200)}`).join(" | ")}. Put the answer in the goal of the new run.`;
+      return `${advice}${asked}`;
+    }
     case "IMPOSSIBLE":
-      return `Read orbit report ${run.id}; revise the goal or the authorization before trying again.`;
+      return `${run.outcomeReason ?? "No authorized way to meet the contract was found."} Revise the goal or the authorization before trying again.`;
     case "CANCELLED":
-      return "Nothing further: the run was cancelled.";
+      return "Nothing further: the run was cancelled on request and its artifacts are preserved.";
     default:
-      return `Follow it with orbit status ${run.id}.`;
+      return `The run is ${run.state}; this report is provisional.`;
   }
 }
-function buildPayload(input) {
-  return {
-    schema: PAYLOAD_SCHEMA,
-    kind: input.kind,
-    run_id: input.run.id,
-    state: input.run.state,
-    reason: input.kind === "question.open" ? "a question needs your answer" : sanitizeReason(input.run.outcomeReason),
-    next_action: nextAction(input),
-    question_ids: [...input.questionIds]
-  };
-}
-function testPayload() {
-  return { schema: PAYLOAD_SCHEMA, kind: "test", run_id: null, state: null, reason: null, next_action: "Nothing: this is a test.", question_ids: [] };
-}
-function payloadTitle(p) {
-  return p.run_id === null ? "Orbit" : `Orbit: run ${p.run_id} ${p.kind === "question.open" ? "has a question" : p.state ?? ""}`.trim();
-}
-function payloadText(p) {
-  if (p.kind === "test") return "Orbit test notification: notifications reach you here.";
-  const reason = p.reason ? `: ${p.reason.replace(/[.!?]+$/, "")}` : "";
-  const head = p.kind === "question.open" ? `Orbit run ${p.run_id} (${p.state}) has a question for you` : `Orbit run ${p.run_id} is ${p.state}${reason}`;
-  const questions = p.question_ids.length > 0 ? ` Open questions: ${p.question_ids.join(", ")}.` : "";
-  return `${head}. ${p.next_action}${questions}`;
-}
-function commentBody(p) {
-  const lines = [COMMENT_MARKER, `**${payloadText(p)}**`];
-  if (p.question_ids.length > 0) {
-    lines.push("", `Questions: ${p.question_ids.map((q) => `\`${q}\``).join(", ")}. Details: \`orbit questions ${p.run_id}\`.`);
+function exhaustedAdvice(run) {
+  const reason = run.outcomeReason ?? "see decisions";
+  const why = `(${reason})`;
+  const kept = "The worktree and evidence are preserved";
+  if (outcomeHas(run, "non_progress")) return `The run stopped because repeated attempts made no measurable progress ${why}. More attempts would not change that; the worktree and evidence are preserved. Revise the goal or the approach and start a new run.`;
+  if (/^diagnosis produced no valid repair brief/.test(reason)) return `The diagnosis could not produce a usable repair brief ${why}: the failure is unexplained, not out of budget. ${kept}; read the failing check logs and the diagnosis attempts under the run directory, then fix it by hand or start a new run with a narrower goal.`;
+  if (outcomeHas(run, "extension") || /\band no extension\b/.test(reason)) {
+    const denied = /no extension(?: for the review repair)?: (.*?)(?:; open findings:|$)/.exec(reason)?.[1];
+    return `The implementation attempt allowance is spent and no extension was granted${denied ? ` because ${denied}` : ""} ${why}. An extension needs measurable progress and a new hypothesis, so more of the same would not help. ${kept}; continue by hand from them, or start a new run with a revised goal or approach.`;
   }
-  return lines.join("\n");
+  if (/provider kept failing transiently/.test(reason)) return `The model provider kept failing transiently until the infrastructure retries ran out ${why}; this is an outage, not spend. Check the provider's status and your connection, then start a new run (${kept.toLowerCase()}).`;
+  if (/^recovery(_attempts| budget) exhausted/.test(reason)) return `The recovery attempts are spent ${why}: the run was restarted after failures as often as the policy allows. Fix what keeps failing (see the run log), then start a new run; ${kept.toLowerCase()}.`;
+  if (/^review_rounds hard cap reached/.test(reason)) return `The review round cap is reached with review findings still open ${why}. ${kept}; repair the open findings by hand, or start a new run with a higher scheduler.hard_limits.review_rounds or a revised goal.`;
+  if (/^implementation attempts hard cap reached/.test(reason)) return `The implementation attempts hard cap is reached ${why}. ${kept}; continue by hand from them, or start a new run with a revised goal or a higher scheduler.hard_limits.implementation_attempts.`;
+  if (/CI repair budget is spent/.test(reason)) return `CI kept failing after the authorized CI repairs ${why}. ${kept}; read the CI logs and fix it by hand, or start a new run.`;
+  return `The authorized budget is spent ${why}. ${kept}; continue by hand from them or start a new run with a revised goal or limits.`;
 }
-var PAYLOAD_SCHEMA, REASON_MAX, COMMENT_MARKER, CODE_MARKERS;
-var init_payload = __esm({
-  "src/notify/payload.ts"() {
-    "use strict";
-    init_redact();
-    PAYLOAD_SCHEMA = "orbit.notification/1";
-    REASON_MAX = 160;
-    COMMENT_MARKER = "<!-- orbit:notification -->";
-    CODE_MARKERS = [/```/, /`[^`]*[;{}()=][^`]*`/, /\bdiff --git\b/, /@@ -\d/, /^\s*[+-]{1,3}\s/, /\n/, /\bat \S+ \(/, /\bTraceback\b/];
-  }
-});
-
-// src/delivery/github.ts
-import { execFileSync } from "node:child_process";
-import { existsSync as existsSync25, readFileSync as readFileSync18 } from "node:fs";
-function malformed(what, detail) {
-  return new OrbitError("MALFORMED_OUTPUT", `gh ${what}: ${detail}`);
-}
-function parseJson3(what, text2) {
-  try {
-    return JSON.parse(text2);
-  } catch {
-    throw malformed(what, `output is not JSON (${redact(text2.slice(0, 120))})`);
-  }
-}
-function obj2(what, v) {
-  if (!v || typeof v !== "object" || Array.isArray(v)) throw malformed(what, "expected an object");
-  return v;
-}
-function str4(what, o, key2, optional = false) {
-  const v = o[key2];
-  if (typeof v === "string") return v;
-  if (optional && (v === void 0 || v === null)) return "";
-  throw malformed(what, `field ${key2} is missing or not a string`);
-}
-function parsePullRequest(value) {
-  const o = obj2("pr", value);
-  const state = str4("pr", o, "state").toUpperCase();
-  if (state !== "OPEN" && state !== "CLOSED" && state !== "MERGED") throw malformed("pr", `unknown state ${JSON.stringify(state)}`);
-  const number = o.number;
-  if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) throw malformed("pr", "field number is missing or not a positive integer");
-  return {
-    number,
-    url: str4("pr", o, "url"),
-    headRefName: str4("pr", o, "headRefName"),
-    headRefOid: str4("pr", o, "headRefOid"),
-    baseRefName: str4("pr", o, "baseRefName"),
-    isDraft: o.isDraft === true,
-    state,
-    title: str4("pr", o, "title", true),
-    body: str4("pr", o, "body", true)
-  };
-}
-function parsePullRequestList(text2) {
-  const v = parseJson3("pr list", text2);
-  if (!Array.isArray(v)) throw malformed("pr list", "expected an array");
-  return v.map(parsePullRequest);
-}
-function parseMergeState(value) {
-  const o = obj2("pr view", value);
-  const state = str4("pr view", o, "state").toUpperCase();
-  if (state !== "OPEN" && state !== "CLOSED" && state !== "MERGED") throw malformed("pr view", `unknown state ${JSON.stringify(state)}`);
-  const number = o.number;
-  if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) throw malformed("pr view", "field number is missing or not a positive integer");
-  const mc = o.mergeCommit;
-  const oid = mc && typeof mc === "object" && typeof mc.oid === "string" ? mc.oid : null;
-  return {
-    number,
-    state,
-    headRefOid: str4("pr view", o, "headRefOid"),
-    baseRefName: str4("pr view", o, "baseRefName"),
-    mergeCommitSha: state === "MERGED" && oid ? oid : null,
-    mergedAt: typeof o.mergedAt === "string" && o.mergedAt !== "" ? o.mergedAt : null
-  };
-}
-function isCheckBucket(v) {
-  return typeof v === "string" && CHECK_BUCKETS.includes(v);
-}
-function parseChecks(text2) {
-  const v = parseJson3("pr checks", text2);
-  if (!Array.isArray(v)) throw malformed("pr checks", "expected an array");
-  return v.map((raw) => {
-    const o = obj2("pr checks", raw);
-    const bucket = o.bucket;
-    if (!isCheckBucket(bucket)) throw malformed("pr checks", `unknown bucket ${JSON.stringify(bucket)}`);
-    const link = typeof o.link === "string" && o.link !== "" ? o.link : null;
-    const m = link ? RUN_LINK.exec(link) : null;
-    const opt = (k) => typeof o[k] === "string" && o[k] !== "" ? o[k] : null;
-    return {
-      name: str4("pr checks", o, "name"),
-      bucket,
-      state: typeof o.state === "string" ? o.state : "",
-      link,
-      workflow: opt("workflow"),
-      runId: m?.[1] ?? null,
-      jobId: m?.[2] ?? null,
-      startedAt: opt("startedAt"),
-      completedAt: opt("completedAt"),
-      description: opt("description")
-    };
-  });
-}
-function parseRunListAsChecks(text2) {
-  const v = parseJson3("run list", text2);
-  if (!Array.isArray(v)) throw malformed("run list", "expected an array");
-  return v.map((raw) => {
-    const o = obj2("run list", raw);
-    const id = o.databaseId;
-    if (typeof id !== "number") throw malformed("run list", "field databaseId is missing or not a number");
-    const status2 = typeof o.status === "string" ? o.status : "";
-    const conclusion = typeof o.conclusion === "string" ? o.conclusion : "";
-    const name = typeof o.workflowName === "string" && o.workflowName || typeof o.name === "string" && o.name || `run ${id}`;
-    return {
-      name,
-      bucket: runBucket(status2, conclusion),
-      state: (conclusion || status2).toUpperCase(),
-      link: typeof o.url === "string" ? o.url : null,
-      workflow: typeof o.workflowName === "string" ? o.workflowName : null,
-      runId: String(id),
-      jobId: null,
-      startedAt: typeof o.startedAt === "string" ? o.startedAt : null,
-      completedAt: typeof o.updatedAt === "string" && status2 === "completed" ? o.updatedAt : null,
-      description: null
-    };
-  });
-}
-function runBucket(status2, conclusion) {
-  if (status2 !== "completed") return "pending";
-  switch (conclusion) {
-    case "success":
-      return "pass";
-    case "cancelled":
-      return "cancel";
-    case "skipped":
-    case "neutral":
-    case "stale":
-      return "skipping";
-    default:
-      return "fail";
-  }
-}
-function parseCheckRuns(text2) {
-  const o = obj2("check runs", parseJson3("check runs", text2));
-  const total = o.total_count;
-  if (typeof total !== "number" || !Number.isInteger(total) || total < 0) throw malformed("check runs", "field total_count is missing or not a count");
-  if (!Array.isArray(o.check_runs)) throw malformed("check runs", "field check_runs is missing or not an array");
-  const runs = o.check_runs.map((raw) => {
-    const r = obj2("check runs", raw);
-    const status2 = str4("check runs", r, "status");
-    const conclusion = typeof r.conclusion === "string" ? r.conclusion : "";
-    const opt = (k) => typeof r[k] === "string" && r[k] !== "" ? r[k] : null;
-    const link = opt("html_url") ?? opt("details_url");
-    const m = link ? RUN_LINK.exec(link) : null;
-    const output = r.output && typeof r.output === "object" ? r.output : {};
-    return {
-      name: str4("check runs", r, "name"),
-      headSha: str4("check runs", r, "head_sha"),
-      bucket: runBucket(status2, conclusion),
-      state: (conclusion || status2).toUpperCase(),
-      link,
-      workflow: null,
-      runId: m?.[1] ?? null,
-      jobId: m?.[2] ?? null,
-      startedAt: opt("started_at"),
-      completedAt: opt("completed_at"),
-      description: typeof output.title === "string" && output.title !== "" ? output.title : null
-    };
-  });
-  return { total, runs };
-}
-function statusBucket(state) {
-  switch (state) {
-    case "success":
-      return "pass";
-    case "pending":
-      return "pending";
-    default:
-      return "fail";
-  }
-}
-function parseCombinedStatus(text2) {
-  const o = obj2("commit status", parseJson3("commit status", text2));
-  const sha = str4("commit status", o, "sha");
-  const statuses = Array.isArray(o.statuses) ? o.statuses : [];
-  const checks = statuses.map((raw) => {
-    const st = obj2("commit status", raw);
-    const state2 = str4("commit status", st, "state");
-    const opt = (k) => typeof st[k] === "string" && st[k] !== "" ? st[k] : null;
-    return {
-      name: str4("commit status", st, "context"),
-      bucket: statusBucket(state2),
-      state: state2.toUpperCase(),
-      link: opt("target_url"),
-      workflow: null,
-      runId: null,
-      jobId: null,
-      startedAt: opt("created_at"),
-      completedAt: state2 === "pending" ? null : opt("updated_at"),
-      description: opt("description")
-    };
-  });
-  const state = typeof o.state === "string" && o.state !== "" ? o.state.toLowerCase() : void 0;
-  const total = typeof o.total_count === "number" && Number.isInteger(o.total_count) && o.total_count >= 0 ? o.total_count : void 0;
-  return { sha, checks, ...state === void 0 ? {} : { state }, ...total === void 0 ? {} : { total } };
-}
-function readNote(name, bucket, description) {
-  return { name, bucket, state: bucket === "fail" ? "FAILURE" : "PENDING", link: null, workflow: null, runId: null, jobId: null, startedAt: null, completedAt: null, description };
-}
-function statusReadNotes(status2, read, everything) {
-  const total = status2.total ?? read.length;
-  if (status2.state === "failure" || status2.state === "error") {
-    return everything.some((c) => c.bucket === "fail") ? [] : [readNote("commit status (combined)", "fail", `the combined commit status is ${status2.state}`)];
-  }
-  if (read.length < total) return [readNote("commit status (incomplete)", "pending", `read ${read.length} of ${total} commit status contexts`)];
-  if (status2.state !== void 0 && status2.state !== "success" && total > 0 && !read.some((c) => c.bucket === "pending")) {
-    return [readNote("commit status (combined)", "pending", `the combined commit status is ${status2.state}, but no status context is pending`)];
-  }
-  return [];
-}
-function parseFailedSteps(text2) {
-  const o = obj2("run view", parseJson3("run view", text2));
-  const jobs = Array.isArray(o.jobs) ? o.jobs : [];
+function renderMarkdown(r) {
   const out = [];
-  for (const j of jobs) {
-    const job = obj2("run view", j);
-    const name = typeof job.name === "string" ? job.name : "";
-    const steps = Array.isArray(job.steps) ? job.steps : [];
-    const failed = steps.filter((s) => s && typeof s === "object" && s.conclusion === "failure");
-    if (failed.length === 0 && job.conclusion === "failure") out.push({ job: name, step: "" });
-    for (const s of failed) out.push({ job: name, step: String(s.name ?? "") });
+  const list = (items) => items.length ? items.map((i) => `- ${i}`).join("\n") : "- none";
+  out.push(`# Orbit run ${r.run_id}: ${r.outcome}`, "");
+  out.push("## Outcome", "", `${r.outcome}${r.outcome_reason ? `: ${r.outcome_reason}` : ""}`, "");
+  out.push("## Original goal", "", r.original_goal, "");
+  if (r.objective) out.push("## Delivered behaviour", "", r.objective, "");
+  out.push("## Criterion evidence", "", list(r.criteria.map((c) => `${c.id}${c.mandatory ? "" : " (optional)"} [${c.status}]: ${c.statement}${c.artifacts.length ? ` (evidence: ${c.artifacts.join(", ")})` : ""}`)), "");
+  out.push("## Checks", "", list(r.checks.map((c) => `${c.id}: ${c.status}${c.exit_code !== null ? ` (exit ${c.exit_code})` : ""}${c.flaky ? ", flaky" : ""}, log ${c.log}`)), "");
+  if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, "");
+  out.push("## Reviews", "", list(r.reviews.map((v) => `${v.provider}/${v.model ?? "default"}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))`)), "");
+  out.push("## Decisions", "", list(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), "");
+  out.push("## Assumptions", "", list(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), "");
+  if (r.practices && r.practices.length > 0) out.push("## Engineering practices", "", list(r.practices.map((p) => `${p.practice} [${p.applicable ? "selected" : "omitted"}]: ${p.justification}`)), "");
+  if (r.worker_plugins && r.worker_plugins.length > 0) {
+    const named = (p) => `${p.id ?? "an unidentified plugin"} (scope ${p.scope ?? "unknown"})`;
+    out.push("## Worker plugins", "", list(r.worker_plugins.map((p) => p.allowed_by ? `${named(p)}: allowed by ${p.allowed_by}, loaded by ${p.workers} worker(s)` : `${named(p)}: refused, so the output of ${p.workers} worker(s) was not used`)), "");
   }
-  return out;
+  out.push("## Repairs", "", list(r.repairs.map((x) => `attempt ${x.attempt}: ${x.source} brief${x.fingerprint ? ` for ${x.fingerprint}` : ""}`)), "");
+  const rv = r.revision;
+  out.push("## Revision, branch and pull request", "", list([`base: ${rv.base ?? "none"}`, `candidate: ${rv.candidate ?? "none"} (tree ${rv.tree ?? "none"})`, `branch: ${rv.branch ?? "none"}`, rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? "none"}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ""}` : "none"}`]), "");
+  if (r.budget) {
+    const b = r.budget;
+    out.push("## Budget consumption", "", list([...b.counters.map((c) => `${c.counter}: ${round2(c.used)} used of ${round2(c.allowance)} allowed (hard cap ${round2(c.hard_cap)})`), `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? "measured" : "incomplete: some usage has no cost"}); ${b.cost_measurement}`, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), "");
+  }
+  out.push("## Not verified", "", list(r.unverified), "");
+  out.push("## Residual risks", "", list(r.residual_risks), "");
+  out.push("## Next action", "", r.next_action, "");
+  return redact(`${out.join("\n")}`);
 }
-function parseAuthStatus(text2, host, requireScopedToken) {
-  const o = obj2("auth status", parseJson3("auth status", text2));
-  const hosts = obj2("auth status", o.hosts ?? {});
-  const entries = Array.isArray(hosts[host]) ? hosts[host] : [];
-  const active = entries.map((e) => obj2("auth status", e)).find((e) => e.active === true);
-  if (!active) return { ok: false, login: null, tokenSource: null, scopes: null, error: `no active account for ${host}` };
-  const tokenSource = typeof active.tokenSource === "string" ? active.tokenSource : null;
-  const login = typeof active.login === "string" && active.login !== "" ? active.login : null;
-  const scopes = typeof active.scopes === "string" ? active.scopes : null;
-  if (active.state !== "success") {
-    const error = typeof active.error === "string" && active.error ? redact(active.error).slice(0, 300) : `state ${String(active.state)}`;
-    return { ok: false, login, tokenSource, scopes, error };
-  }
-  if (requireScopedToken && tokenSource !== "GH_TOKEN") {
-    return { ok: false, login, tokenSource, scopes, error: `the active credential comes from ${tokenSource ?? "an unknown source"}, not a scoped GH_TOKEN` };
-  }
-  return { ok: true, login, tokenSource, scopes, error: null };
+function round2(n2) {
+  return Number.isInteger(n2) ? String(n2) : n2.toFixed(2);
 }
-function classifyGhFailure(what, exitCode, stderrText) {
-  const text2 = redact(stderrText.trim()).slice(0, 800);
-  const msg = `gh ${what} failed (exit ${exitCode ?? "signal"}): ${text2}`;
-  if (/rate limit|secondary rate|HTTP 429|abuse detection/i.test(text2)) {
-    const m = /retry[- ]after[:= ]+(\d+)/i.exec(text2) ?? /in (\d+) (?:second|sec)/i.exec(text2);
-    const retryAfterMs = m ? Math.min(Number(m[1]) * 1e3, 15 * 6e4) : 6e4;
-    return new OrbitError("PROVIDER_TRANSIENT", msg, { retryAfterMs, rateLimited: true });
-  }
-  if (exitCode === 4 || /HTTP 401|Bad credentials|gh auth login|authentication required|requires authentication|token .*(?:expired|invalid|revoked)/i.test(text2)) {
-    return new OrbitError("AUTH_EXPIRED", msg, { definitive: true });
-  }
-  if (/Resource not accessible|HTTP 403/i.test(text2)) {
-    return new OrbitError("AUTH_MISSING", `${msg} (the delivery token lacks a permission this action needs)`, { definitive: true });
-  }
-  if (/HTTP 5\d\d|timeout|timed out|connection (?:reset|refused)|EOF|no such host|could not resolve host|temporary failure/i.test(text2)) {
-    return new OrbitError("PROVIDER_TRANSIENT", msg);
-  }
-  if (/HTTP 404|Could not resolve to a (?:Repository|PullRequest)/i.test(text2)) {
-    return new OrbitError("NOT_FOUND", msg, { definitive: true });
-  }
-  return new OrbitError("DELIVERY_FAILED", msg);
+function parseContract(json3) {
+  return parseJson3(json3);
 }
-function assertMergeInput(input) {
-  if (!Number.isInteger(input.number) || input.number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
-  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(input.headSha)) throw new OrbitError("INTERNAL", `not a full commit sha: ${JSON.stringify(input.headSha)}`);
-  if (!MERGE_METHODS.includes(input.method)) throw new OrbitError("CONFIG_INVALID", `unknown merge method ${JSON.stringify(input.method)}`, { definitive: true });
-}
-function assertSha(sha) {
-  if (!/^[0-9a-f]{7,64}$/.test(sha)) throw new OrbitError("INTERNAL", `not a commit sha: ${sha}`);
-}
-function sameCommit(reported, asked) {
-  const r = reported.toLowerCase();
-  const a = asked.toLowerCase();
-  return a.length >= 40 ? r === a : r.startsWith(a);
-}
-function assertHead(head) {
-  if (typeof head !== "string" || head === "" || head.startsWith("-") || /[\s\0]/.test(head)) {
-    throw new OrbitError("INTERNAL", `not a usable head branch: ${JSON.stringify(head)}`);
+function parseJson3(json3) {
+  if (!json3) return null;
+  try {
+    return JSON.parse(json3);
+  } catch {
+    return null;
   }
 }
-function emptyState() {
+async function finalizeRun(ctx) {
+  try {
+    writeFinalReport(ctx.db, ctx.run.id, { runDir: ctx.runDir, clock: ctx.clock, snapshot: ctx.policyVerified ? ctx.snapshot : null });
+  } catch (err) {
+    ctx.log.error("final report failed", { error: err instanceof Error ? err.message : String(err) });
+  }
+  if (!ctx.policyVerified) return;
+  try {
+    await learnAtTerminal(ctx);
+  } catch (err) {
+    ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.failed", ctx.ownerId, { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, ctx.clock.now()));
+  }
+}
+function curatorRaisedCap(host, ctx, purpose, error) {
+  if (ctx && purpose) return raiseOutputCap(ctx, purpose, error);
+  const over = outputCapExceeded(error);
+  if (!over) return null;
+  const previous = over.cap ?? outputBudgets(host.snapshot.config).curator;
+  return previous >= OUTPUT_CAP_CEILING ? null : Math.min(previous * 2, OUTPUT_CAP_CEILING);
+}
+async function learnAtTerminal(ctx) {
+  const k = ctx.snapshot.config.knowledge;
+  if (!k?.enabled) return;
+  const run = ctx.refresh();
+  const store = KnowledgeStore.open(repoKnowledgePath(ctx), { clock: ctx.clock });
+  const summary = { learn: null, skipped: null, settled: null, promoted: null, overlays: null };
+  try {
+    const admitted = curationAdmitted(ctx);
+    if (run.state === "CANCELLED") summary.skipped = "cancelled runs are not curated";
+    else if (!admitted.ok) summary.skipped = admitted.why;
+    else {
+      const host = curatorHostFor(ctx);
+      summary.learn = await learnFromRun({ store, runDb: ctx.db, runId: run.id, runDir: ctx.runDir, clock: ctx.clock, curatorModel: admitted.model ?? "claude-default", runCurator: async (task) => (await runCurator(host, task, admitted.model)).output });
+    }
+    if (summary.skipped !== null) ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.curation-skipped", ctx.ownerId, { reason: summary.skipped }, ctx.clock.now()));
+    const ev = listEvidenceReports(ctx.db, run.id).at(-1);
+    summary.settled = settleRun(store, run.id, {
+      succeeded: run.state === "SUCCEEDED",
+      attempts: listWorkers(ctx.db, { runId: run.id, role: "implementer" }).length,
+      verifiedCriteria: ev?.report.acceptance_evidence.filter((a) => a.status === "supported").map((a) => a.criterion_id) ?? [],
+      contradictedLessonIds: [],
+      artifact: existsSync25(join31(ctx.runDir, "final.md")) ? { path: "final.md", sha256: sha256(readFileSync18(join31(ctx.runDir, "final.md"))) } : { path: "final.md", sha256: null }
+    });
+    if (k.share_globally) {
+      const guard = loadPublicationGuard(ctx.snapshot.config.guard.terms_file ? { termsPath: ctx.snapshot.config.guard.terms_file } : {});
+      const global = KnowledgeStore.open(globalKnowledgePath(ctx), { clock: ctx.clock });
+      try {
+        summary.promoted = await promoteToGlobal(store, global, { shareGlobally: true, guard: (text2) => checkPublication(text2, { ...guard.options, allowedEmails: [...guard.options.allowedEmails ?? [], ...ctx.snapshot.config.guard.allowed_emails] }) });
+      } finally {
+        global.close();
+      }
+    }
+    if (run.state !== "CANCELLED") {
+      const live = checkLiveOverlays(ctx, store);
+      const evaluated = await autoEvaluateOverlays(ctx, store);
+      summary.overlays = { live, evaluated };
+    }
+  } finally {
+    store.close();
+  }
+  atomicWriteJson(join31(ctx.runDir, "learning.json"), summary);
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.completed", ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0 }, ctx.clock.now()));
+}
+function curatorHostFor(ctx) {
   return {
-    nextNumber: 1,
-    prs: [],
-    ci: {},
-    logs: {},
-    heads: {},
-    faults: { loseCreateResponse: 0, rateLimit: 0, rateLimitRetryAfterMs: 1e3, authExpired: false, loseMergeResponse: 0, loseReadyResponse: 0 },
-    calls: [],
-    creates: 0,
-    updates: 0,
-    merges: 0
+    deps: ctx.deps,
+    clock: ctx.clock,
+    snapshot: ctx.snapshot,
+    policyPath: ctx.run.policyPath,
+    policyHash: ctx.run.policyHash,
+    runId: ctx.run.id,
+    dir: join31(ctx.runDir, "learning"),
+    budgetUsd: ctx.snapshot.config.knowledge.curator_budget_usd,
+    recorded: ctx
   };
 }
-var CHECK_BUCKETS, MERGE_METHODS, RUN_LINK, PR_FIELDS, MERGE_FIELDS, MERGE_REFUSED, CHECK_FIELDS, RUN_FIELDS, CHECK_RUNS_PER_PAGE, CHECK_RUNS_MAX_PAGES, STATUS_PER_PAGE, STATUS_MAX_PAGES, GhCliClient, FakeGitHub;
-var init_github = __esm({
-  "src/delivery/github.ts"() {
+function curationAdmitted(ctx) {
+  const k = ctx.snapshot.config.knowledge;
+  if (!(k.curator_budget_usd > 0)) return { ok: false, why: "knowledge.curator_budget_usd is 0" };
+  if (!ctx.deps.adapters.claude) return { ok: false, why: "no claude adapter for the curator" };
+  const ledger = ctx.ledger ?? (ctx.db.get("SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1", ctx.run.id) ? new BudgetLedger(ctx.db, ctx.clock).attach(ctx.run.id, ctx.snapshot) : null);
+  if (ledger) {
+    const d = ledger.admit({ role: "curator", estimatedCostUsd: k.curator_budget_usd, phase: "final" });
+    if (!d.admitted) return { ok: false, why: `the budget reserve cannot pay for curation: ${d.reasons.join("; ")}` };
+  }
+  return { ok: true, model: curatorModelFor(ctx.deps.registry) };
+}
+function curatorModelFor(registry) {
+  return registry.list().find((e) => e.provider === "claude" && e.family === "haiku" && e.surfaces.some((s) => s.surface === "claude-cli" && s.available !== false))?.modelId ?? null;
+}
+async function runCurator(host, task, model = curatorModelFor(host.deps.registry), outputTokens) {
+  const adapter = host.deps.adapters.claude;
+  if (!adapter) throw new OrbitError("PROVIDER_UNAVAILABLE", "no claude provider is configured; the curator runs on Claude");
+  const ctx = host.recorded ?? null;
+  const timeoutMs = host.timeoutMs ?? CURATOR_TIMEOUT_MS;
+  const env = host.env ?? host.deps.hostEnv ?? process.env;
+  const home2 = host.homeDir ?? host.deps.homeDir ?? homedir10();
+  const cwd = join31(host.dir, "cwd");
+  mkdirSync13(cwd, { recursive: true, mode: 448 });
+  let row = null;
+  let workerId;
+  let workerDir;
+  let purpose = null;
+  if (ctx) {
+    const n2 = listWorkers(ctx.db, { runId: ctx.run.id, role: "curator" }).length + 1;
+    workerId = `${ctx.run.id}-curator-${n2}`;
+    purpose = `curate:${n2}`;
+    workerDir = join31(ctx.runDir, "workers", workerId);
+    mkdirSync13(workerDir, { recursive: true, mode: 448 });
+    recordSpendCap(ctx, purpose, host.budgetUsd, 0);
+    const ctxNow = ctx;
+    row = ctx.db.tx(() => {
+      assertLeaseHeld(ctxNow.db, ctxNow.run.id, ctxNow.ownerId, ctxNow.clock.now());
+      return planWorker(ctxNow.db, { id: workerId, runId: ctxNow.run.id, role: "curator", purpose, provider: adapter.id, model, effort: null, workerDir, cwd }, ctxNow.clock, ctxNow.ownerId);
+    });
+  } else {
+    workerId = `${host.runId}-curator`;
+    workerDir = join31(host.dir, "curator");
+    mkdirSync13(workerDir, { recursive: true, mode: 448 });
+  }
+  const spec = {
+    runId: host.runId,
+    workerId,
+    role: "curator",
+    model,
+    effort: null,
+    cwd,
+    workerDir,
+    prompt: task.prompt,
+    systemPrompt: renderSystemPrompt("curator", host.deps.agentsDir ? { agentsDir: host.deps.agentsDir } : {}),
+    outputSchema: MODEL_OUTPUT_SCHEMAS.curator,
+    readOnly: true,
+    maxTurns: CURATOR_MAX_TURNS,
+    timeoutMs,
+    sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: host.snapshot, provider: "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join31(home2, ".claude"), homeDir: home2, policyPath: host.policyPath, readablePaths: [host.deps.orbitInstallDir], env }),
+    policyPath: host.policyPath,
+    policyHash: host.policyHash,
+    env: {},
+    maxBudgetUsd: host.budgetUsd,
+    ...outputTokens === void 0 ? {} : { outputTokens }
+  };
+  let handle;
+  try {
+    handle = await adapter.startTask(spec);
+  } catch (err) {
+    if (ctx && row) finishWorker(ctx.db, row.id, { state: "FAILED", resultStatus: "failed", error: redact(err instanceof Error ? err.message : String(err)).slice(0, 2e3) }, ctx.clock, ctx.ownerId);
+    throw err;
+  }
+  if (ctx && row) row = markWorkerRunning(ctx.db, row.id, { pid: handle.pid, pgid: handle.pgid, procStart: handle.procStart }, ctx.clock, ctx.ownerId);
+  const deadline = Date.now() + timeoutMs + 3e4;
+  let result2 = null;
+  let timedOut = false;
+  for (; ; ) {
+    result2 = await adapter.collectResult(handle, { outputSchema: MODEL_OUTPUT_SCHEMAS.curator });
+    if (result2) break;
+    if (Date.now() > deadline) {
+      timedOut = true;
+      await adapter.cancelTask(handle);
+      const stop = Date.now() + 5e3;
+      while (!(result2 = await adapter.collectResult(handle, { outputSchema: MODEL_OUTPUT_SCHEMAS.curator })) && Date.now() < stop) await new Promise((res) => setTimeout(res, 100));
+      break;
+    }
+    await new Promise((res) => setTimeout(res, 200));
+  }
+  if (ctx && row) {
+    const done = finishWorker(ctx.db, row.id, result2 ? outcomeOf2(result2) : { state: "LOST", resultStatus: "lost", error: "the curator did not stop after it timed out" }, ctx.clock, ctx.ownerId);
+    if (result2) {
+      try {
+        accountWorker(ctx, done, result2, "final");
+      } catch (err) {
+        ctx.log.warn("curator cost could not be charged", { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+  }
+  if (!result2 || timedOut) throw new OrbitError("PROVIDER_UNAVAILABLE", "the curator timed out");
+  if (result2.status !== "succeeded") {
+    const raised = result2.status === "failed" && outputTokens === void 0 ? curatorRaisedCap(host, ctx, purpose, result2.error) : null;
+    if (raised !== null) return runCurator(host, task, model, raised);
+    throw new OrbitError(result2.status === "auth_failed" ? "AUTH_EXPIRED" : "PROVIDER_UNAVAILABLE", `the curator ended ${result2.status}${result2.error ? `: ${redact(result2.error).slice(0, 200)}` : ""}`);
+  }
+  return { output: result2.structured, model, workerId: ctx ? workerId : null };
+}
+var CURATOR_TIMEOUT_MS, CURATOR_MAX_TURNS;
+var init_report = __esm({
+  "src/controller/report.ts"() {
     "use strict";
-    init_exec();
     init_errors();
     init_fsx();
     init_hash();
     init_redact();
-    CHECK_BUCKETS = ["pass", "fail", "pending", "skipping", "cancel"];
-    MERGE_METHODS = ["squash", "merge", "rebase"];
-    RUN_LINK = /\/actions\/runs\/(\d+)(?:\/job\/(\d+))?/;
-    PR_FIELDS = "number,url,headRefName,headRefOid,baseRefName,isDraft,state,title,body";
-    MERGE_FIELDS = "number,state,headRefOid,baseRefName,mergeCommit,mergedAt";
-    MERGE_REFUSED = /Head branch was modified|not mergeable|merge conflict|required status check|review is required|reviews? required|base branch policy|protected branch|Merge method .* not allowed|not allowed on this repository|HTTP 405|HTTP 409|HTTP 422/i;
-    CHECK_FIELDS = "name,state,bucket,link,workflow,event,startedAt,completedAt,description";
-    RUN_FIELDS = "databaseId,status,conclusion,headSha,headBranch,event,workflowName,name,attempt,url,startedAt,updatedAt";
-    CHECK_RUNS_PER_PAGE = 100;
-    CHECK_RUNS_MAX_PAGES = 10;
-    STATUS_PER_PAGE = 100;
-    STATUS_MAX_PAGES = 10;
-    GhCliClient = class {
-      token;
-      gh;
-      runner;
-      requireScoped;
-      timeoutMs;
-      baseEnv;
-      opts;
-      constructor(opts) {
-        this.opts = opts;
-        if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(opts.repo)) throw new OrbitError("CONFIG_INVALID", `repository ${JSON.stringify(opts.repo)} is not OWNER/REPO`, { definitive: true });
-        this.baseEnv = opts.env ?? process.env;
-        this.token = this.baseEnv.GH_TOKEN || void 0;
-        this.gh = opts.ghPath ?? "gh";
-        this.requireScoped = opts.requireScopedToken ?? true;
-        this.timeoutMs = opts.timeoutMs ?? 6e4;
-        this.runner = opts.runner ?? ((argv2, o) => execCapture(argv2, { env: o.env, cwd: o.cwd, input: o.input, timeoutMs: o.timeoutMs, maxOutputBytes: 8 * 1024 * 1024 }));
-      }
-      /** Minimal environment: the token the controller holds, and nothing a worker could have left around. */
-      env() {
-        const e = {};
-        for (const k of ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"]) if (this.baseEnv[k] !== void 0) e[k] = this.baseEnv[k];
-        if (this.token) e.GH_TOKEN = this.token;
-        e.GH_PROMPT_DISABLED = "1";
-        e.GH_NO_UPDATE_NOTIFIER = "1";
-        e.GH_TELEMETRY = "false";
-        e.NO_COLOR = "1";
-        e.GH_PAGER = "cat";
-        return e;
-      }
-      assertToken() {
-        if (this.requireScoped && !this.token) {
-          throw new OrbitError("AUTH_MISSING", "no GH_TOKEN in the controller environment; delivery needs a fine-grained token scoped to the target repository", { definitive: true });
-        }
-      }
-      async exec(argv2, input) {
-        return this.runner([this.gh, ...argv2], { env: this.env(), cwd: this.opts.cwd, input, timeoutMs: this.timeoutMs });
-      }
-      async ok(what, argv2, input) {
-        this.assertToken();
-        const res = await this.exec(argv2, input);
-        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", `gh ${what} timed out`);
-        if (res.exitCode !== 0) throw classifyGhFailure(what, res.exitCode, `${res.stderr}
-${res.stdout}`);
-        return res.stdout;
-      }
-      async findPullRequest(head) {
-        assertHead(head);
-        const out = await this.ok("pr list", ["pr", "list", "-R", this.opts.repo, "--head", head, "--state", "all", "-L", "30", "--json", PR_FIELDS]);
-        const mine = parsePullRequestList(out).filter((p) => p.headRefName === head);
-        mine.sort((a, b) => Number(b.state === "OPEN") - Number(a.state === "OPEN") || b.number - a.number);
-        return mine[0] ?? null;
-      }
-      async createPullRequest(input) {
-        assertHead(input.head);
-        this.assertToken();
-        const argv2 = ["pr", "create", "-R", this.opts.repo, "--head", input.head, "--base", input.base, "--title", input.title, "--body-file", "-"];
-        if (input.draft) argv2.push("--draft");
-        const res = await this.exec(argv2, input.body);
-        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh pr create timed out");
-        if (res.exitCode !== 0) {
-          if (/already exists/i.test(res.stderr)) {
-            const found2 = await this.findPullRequest(input.head);
-            if (found2) return found2;
-          }
-          throw classifyGhFailure("pr create", res.exitCode, `${res.stderr}
-${res.stdout}`);
-        }
-        const url = res.stdout.split("\n").map((l) => l.trim()).reverse().find((l) => /^https?:\/\/\S+\/pull\/\d+/.test(l));
-        const number = url ? Number(/\/pull\/(\d+)/.exec(url)[1]) : NaN;
-        if (Number.isInteger(number)) return this.viewPullRequest(number);
-        const found = await this.findPullRequest(input.head);
-        if (found) return found;
-        throw new OrbitError("DELIVERY_FAILED", "gh pr create exited 0 but no pull request URL was printed and none is listed for the head branch");
-      }
-      async updatePullRequest(number, changes) {
-        if (!Number.isInteger(number) || number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
-        const argv2 = ["pr", "edit", String(number), "-R", this.opts.repo];
-        if (changes.title !== void 0) argv2.push("--title", changes.title);
-        if (changes.body !== void 0) argv2.push("--body-file", "-");
-        if (argv2.length > 5) await this.ok("pr edit", argv2, changes.body);
-        return this.viewPullRequest(number);
-      }
-      async markPullRequestReady(number) {
-        if (!Number.isInteger(number) || number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
-        this.assertToken();
-        await this.ok("pr ready", ["pr", "ready", String(number), "-R", this.opts.repo]);
-        return this.viewPullRequest(number);
-      }
-      async viewPullRequest(number) {
-        const out = await this.ok("pr view", ["pr", "view", String(number), "-R", this.opts.repo, "--json", PR_FIELDS]);
-        return parsePullRequest(parseJson3("pr view", out));
-      }
-      async mergePullRequest(input) {
-        assertMergeInput(input);
-        this.assertToken();
-        const argv2 = ["pr", "merge", String(input.number), "-R", this.opts.repo, `--${input.method}`, "--match-head-commit", input.headSha];
-        if (input.deleteBranch) argv2.push("--delete-branch");
-        const res = await this.exec(argv2);
-        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh pr merge timed out");
-        if (res.exitCode !== 0) {
-          const text2 = `${res.stderr}
-${res.stdout}`;
-          if (/already (?:been )?merged/i.test(text2)) return this.getMergeState(input.number);
-          const err = classifyGhFailure("pr merge", res.exitCode, text2);
-          if (err.code === "DELIVERY_FAILED" && MERGE_REFUSED.test(text2)) throw new OrbitError("DELIVERY_FAILED", err.message, { definitive: true, refused: true });
-          throw err;
-        }
-        const state = await this.getMergeState(input.number);
-        if (state.state !== "MERGED") throw new OrbitError("DELIVERY_FAILED", `gh pr merge exited 0 but pull request #${input.number} is ${state.state}; a merge queue or auto-merge is not supported`, { definitive: true, state: state.state });
-        return state;
-      }
-      async getMergeState(number) {
-        if (!Number.isInteger(number) || number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
-        const out = await this.ok("pr view", ["pr", "view", String(number), "-R", this.opts.repo, "--json", MERGE_FIELDS]);
-        return parseMergeState(parseJson3("pr view", out));
-      }
-      /**
-       * Checks for a commit are read per commit (its check runs and its combined status) and labelled with the
-       * commit the responses report, so checks of another revision (the PR head after the branch moved) can never
-       * be attributed to the commit asked about. Only a PR query without a commit uses the PR's current checks,
-       * and those are labelled with no commit at all.
-       */
-      async listChecks(query) {
-        this.assertToken();
-        if (query.sha !== void 0) return this.checksForCommit(query.sha);
-        const pr = query.pr;
-        const res = await this.exec(["pr", "checks", String(pr), "-R", this.opts.repo, "--json", CHECK_FIELDS]);
-        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh pr checks timed out");
-        if (res.exitCode === 0) {
-          const checks = parseChecks(res.stdout);
-          return { checks, absent: checks.length === 0, headSha: null };
-        }
-        const text2 = `${res.stderr}
-${res.stdout}`;
-        if (/no checks reported/i.test(text2)) return { checks: [], absent: true, headSha: null };
-        throw classifyGhFailure("pr checks", res.exitCode, text2);
-      }
-      async api(what, path) {
-        const argv2 = ["api", "-H", "Accept: application/vnd.github+json"];
-        if (this.opts.host) argv2.push("--hostname", this.opts.host);
-        argv2.push(path);
-        return this.ok(what, argv2);
-      }
-      async checksForCommit(sha) {
-        assertSha(sha);
-        let runs;
-        let runsTotal;
-        try {
-          ({ runs, total: runsTotal } = await this.checkRuns(sha));
-        } catch (err) {
-          const code2 = err.code;
-          if (code2 === "AUTH_MISSING") return this.checksFromRuns(sha);
-          if (/No commit found/i.test(err.message ?? "")) return { checks: [], absent: true, headSha: sha };
-          throw err;
-        }
-        let status2 = null;
-        try {
-          status2 = await this.combinedStatus(sha);
-        } catch (err) {
-          if (err.code !== "AUTH_MISSING") throw err;
-        }
-        const reported = [.../* @__PURE__ */ new Set([...runs.map((r) => r.headSha.toLowerCase()), ...status2 ? [status2.sha.toLowerCase()] : []])];
-        const other = reported.find((r) => !sameCommit(r, sha));
-        if (other !== void 0) return { checks: [], absent: false, headSha: other };
-        const checks = [...runs.map(({ headSha: _sha, ...c }) => c), ...status2?.checks ?? []];
-        if (runs.length < runsTotal) checks.push(readNote("check runs (incomplete)", "pending", `read ${runs.length} of ${runsTotal} check runs`));
-        if (status2) checks.push(...statusReadNotes(status2, status2.checks, checks));
-        if (checks.length === 0) return this.checksFromRuns(sha);
-        return { checks, absent: false, headSha: reported[0] ?? sha };
-      }
-      /** Every page of the combined status; aggregate state and total_count are those of the first page. */
-      async combinedStatus(sha) {
-        let first = null;
-        const checks = [];
-        for (let page = 1; page <= STATUS_MAX_PAGES; page++) {
-          const got = parseCombinedStatus(await this.api("commit status", `repos/${this.opts.repo}/commits/${sha}/status?per_page=${STATUS_PER_PAGE}&page=${page}`));
-          if (first === null) first = got;
-          else if (got.sha.toLowerCase() !== first.sha.toLowerCase()) throw malformed("commit status", "pages report different commits");
-          checks.push(...got.checks);
-          if (got.checks.length < STATUS_PER_PAGE || first.total !== void 0 && checks.length >= first.total) break;
-        }
-        return { ...first, checks };
-      }
-      async checkRuns(sha) {
-        const all = [];
-        for (let page = 1; page <= CHECK_RUNS_MAX_PAGES; page++) {
-          const { total, runs } = parseCheckRuns(await this.api("check runs", `repos/${this.opts.repo}/commits/${sha}/check-runs?per_page=${CHECK_RUNS_PER_PAGE}&page=${page}`));
-          all.push(...runs);
-          if (runs.length < CHECK_RUNS_PER_PAGE || all.length >= total) return { runs: all, total };
-        }
-        throw new OrbitError("DELIVERY_FAILED", `commit ${sha.slice(0, 12)} has more than ${CHECK_RUNS_PER_PAGE * CHECK_RUNS_MAX_PAGES} check runs; Orbit does not judge CI on a partial list`, { definitive: true });
-      }
-      async checksFromRuns(sha) {
-        assertSha(sha);
-        const out = await this.ok("run list", ["run", "list", "-R", this.opts.repo, "--commit", sha, "-L", "50", "--json", RUN_FIELDS]);
-        const rows = parseJson3("run list", out);
-        const reported = Array.isArray(rows) ? rows.map((r) => r && typeof r === "object" && typeof r.headSha === "string" ? r.headSha.toLowerCase() : null) : [];
-        const checks = parseRunListAsChecks(out).filter((_, i) => reported[i] == null || sameCommit(reported[i], sha));
-        const labelled = reported.find((r) => r != null && sameCommit(r, sha));
-        return { checks, absent: checks.length === 0, headSha: labelled ?? sha };
-      }
-      async failedLogs(runId) {
-        if (!/^\d+$/.test(runId)) throw new OrbitError("INTERNAL", `not a run id: ${runId}`);
-        this.assertToken();
-        const res = await this.exec(["run", "view", runId, "-R", this.opts.repo, "--log-failed"]);
-        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh run view timed out");
-        if (res.exitCode === 0) return { status: "ok", text: res.stdout, failedSteps: [] };
-        const text2 = `${res.stderr}
-${res.stdout}`;
-        const status2 = /HTTP 410/.test(text2) ? "expired" : /log not found/i.test(text2) ? "not-found" : null;
-        if (status2 === null) throw classifyGhFailure("run view --log-failed", res.exitCode, text2);
-        let failedSteps = [];
-        try {
-          failedSteps = parseFailedSteps(await this.ok("run view", ["run", "view", runId, "-R", this.opts.repo, "--json", "jobs"]));
-        } catch (err) {
-          if (err.code === "AUTH_EXPIRED") throw err;
-        }
-        return { status: status2, text: "", failedSteps };
-      }
-      async authStatus() {
-        const host = this.opts.host ?? "github.com";
-        if (this.requireScoped && !this.token) {
-          return { ok: false, login: null, tokenSource: null, scopes: null, error: "no GH_TOKEN in the controller environment" };
-        }
-        const res = await this.exec(["auth", "status", "--json", "hosts"]);
-        if (res.exitCode !== 0) return { ok: false, login: null, tokenSource: null, scopes: null, error: redact(`${res.stderr}${res.stdout}`.trim()).slice(0, 300) || `gh exited ${res.exitCode}` };
-        return parseAuthStatus(res.stdout, host, this.requireScoped);
-      }
-    };
-    FakeGitHub = class {
-      opts;
-      constructor(opts) {
-        this.opts = opts;
-      }
-      // -- test controls
-      get state() {
-        return this.load();
-      }
-      setFaults(faults) {
-        this.mutate((s) => void Object.assign(s.faults, faults));
-      }
-      /** Script CI for a commit: each listChecks call for it returns the next snapshot (the last repeats). */
-      scriptCi(sha, script) {
-        this.mutate((s) => {
-          s.ci[sha] = { script, cursor: 0 };
-        });
-      }
-      scriptLog(runId, log) {
-        this.mutate((s) => {
-          s.logs[runId] = { status: log.status ?? "ok", text: log.text ?? "", failedSteps: log.failedSteps ?? [] };
-        });
-      }
-      /** Pin a branch's head sha when no remote is attached. */
-      setHead(branch, sha) {
-        this.mutate((s) => {
-          s.heads[branch] = sha;
-        });
-      }
-      setPullRequestState(number, state) {
-        this.mutate((s) => {
-          const pr = s.prs.find((p) => p.number === number);
-          if (pr) pr.state = state;
-        });
-      }
-      // -- GitHubClient
-      async findPullRequest(head) {
-        this.enter("findPullRequest");
-        const state = this.load();
-        const mine = state.prs.filter((p) => p.headRefName === head).sort((a, b) => Number(b.state === "OPEN") - Number(a.state === "OPEN") || b.number - a.number);
-        return mine[0] ? this.view(state, mine[0]) : null;
-      }
-      async createPullRequest(input) {
-        this.enter("createPullRequest");
-        let created = null;
-        let lose = false;
-        this.mutate((s) => {
-          if (s.prs.some((p) => p.headRefName === input.head && p.state === "OPEN")) {
-            throw new OrbitError("DELIVERY_FAILED", `a pull request for branch "${input.head}" into branch "${input.base}" already exists`);
-          }
-          const number = s.nextNumber++;
-          const pr = {
-            number,
-            url: `https://github.example/${this.opts.repo ?? "acme/app"}/pull/${number}`,
-            headRefName: input.head,
-            headRefOid: "",
-            baseRefName: input.base,
-            isDraft: input.draft,
-            state: "OPEN",
-            title: input.title,
-            body: input.body
-          };
-          s.prs.push(pr);
-          s.creates++;
-          created = this.view(s, pr);
-          if (s.faults.loseCreateResponse > 0) {
-            s.faults.loseCreateResponse--;
-            lose = true;
-          }
-        });
-        if (lose) throw new OrbitError("PROVIDER_TRANSIENT", "connection reset while waiting for the create response");
-        return created;
-      }
-      async updatePullRequest(number, changes) {
-        this.enter("updatePullRequest");
-        let out = null;
-        this.mutate((s) => {
-          const pr = s.prs.find((p) => p.number === number);
-          if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${number}`, { definitive: true });
-          if (changes.title !== void 0) pr.title = changes.title;
-          if (changes.body !== void 0) pr.body = changes.body;
-          s.updates++;
-          out = this.view(s, pr);
-        });
-        return out;
-      }
-      async markPullRequestReady(number) {
-        this.enter("markPullRequestReady");
-        let out = null;
-        let lose = false;
-        this.mutate((s) => {
-          const pr = s.prs.find((p) => p.number === number);
-          if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${number}`, { definitive: true });
-          if (pr.state !== "OPEN") throw new OrbitError("DELIVERY_FAILED", `gh pr ready failed: pull request #${number} is ${pr.state.toLowerCase()}`, { definitive: true });
-          if (pr.isDraft) s.readies = (s.readies ?? 0) + 1;
-          pr.isDraft = false;
-          out = this.view(s, pr);
-          if ((s.faults.loseReadyResponse ?? 0) > 0) {
-            s.faults.loseReadyResponse--;
-            lose = true;
-          }
-        });
-        if (lose) throw new OrbitError("PROVIDER_TRANSIENT", "connection reset while waiting for the ready response");
-        return out;
-      }
-      /**
-       * Like the real service: refused unless the PR is open, not a draft and its
-       * head is still `headSha`. With a remote attached, the base branch really
-       * moves (a squash or rebase onto an unmoved base, or a two-parent merge
-       * commit); a base that moved since the head was cut is refused as not
-       * mergeable, since the fake does not do three-way merges.
-       */
-      async mergePullRequest(input) {
-        this.enter("mergePullRequest");
-        assertMergeInput(input);
-        let out = null;
-        let lose = false;
-        this.mutate((s) => {
-          const pr = s.prs.find((p) => p.number === input.number);
-          if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${input.number}`, { definitive: true });
-          if (pr.state === "MERGED") {
-            out = this.mergeView(s, pr);
-            return;
-          }
-          if (pr.state !== "OPEN") throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: pull request #${pr.number} is closed`, { definitive: true, refused: true });
-          if (pr.isDraft) throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: pull request #${pr.number} is still a draft`, { definitive: true, refused: true });
-          const head = this.headOid(s, pr) ?? pr.fixedHeadOid ?? "";
-          if (head !== input.headSha) {
-            throw new OrbitError("DELIVERY_FAILED", "gh pr merge failed: Head branch was modified. Review and try the merge again.", { definitive: true, refused: true, head });
-          }
-          const mergeCommit = this.mergeOnRemote(pr, head, input.method, s.nextNumber);
-          pr.state = "MERGED";
-          pr.fixedHeadOid = head;
-          pr.mergeCommitOid = mergeCommit;
-          pr.mergedAt = (/* @__PURE__ */ new Date(0)).toISOString();
-          if (input.deleteBranch && this.opts.remoteGitDir) this.git(["update-ref", "-d", `refs/heads/${pr.headRefName}`, head]);
-          s.merges = (s.merges ?? 0) + 1;
-          out = this.mergeView(s, pr);
-          if (s.faults.loseMergeResponse > 0) {
-            s.faults.loseMergeResponse--;
-            lose = true;
-          }
-        });
-        if (lose) throw new OrbitError("PROVIDER_TRANSIENT", "connection reset while waiting for the merge response");
-        return out;
-      }
-      async getMergeState(number) {
-        this.enter("getMergeState");
-        const s = this.load();
-        const pr = s.prs.find((p) => p.number === number);
-        if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${number}`, { definitive: true });
-        return this.mergeView(s, pr);
-      }
-      async listChecks(query) {
-        this.enter("listChecks");
-        let sha = query.sha;
-        let result2 = { checks: [], absent: true, headSha: sha ?? null };
-        this.mutate((s) => {
-          if ("pr" in query) {
-            const pr = s.prs.find((p) => p.number === query.pr);
-            if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${query.pr}`, { definitive: true });
-            sha = this.view(s, pr).headRefOid || void 0;
-            result2 = { checks: [], absent: true, headSha: sha ?? null };
-          }
-          const entry = sha ? s.ci[sha] : void 0;
-          if (!entry || entry.script.length === 0) return;
-          const snapshot2 = entry.script[Math.min(entry.cursor, entry.script.length - 1)];
-          entry.cursor++;
-          const checks = snapshot2.map((c) => ({
-            name: c.name,
-            bucket: c.bucket,
-            state: c.bucket === "pass" ? "SUCCESS" : c.bucket === "fail" ? "FAILURE" : c.bucket === "cancel" ? "CANCELLED" : c.bucket === "skipping" ? "SKIPPED" : "IN_PROGRESS",
-            link: c.runId ? `https://github.example/${this.opts.repo ?? "acme/app"}/actions/runs/${c.runId}/job/1` : null,
-            workflow: "ci",
-            runId: c.runId ?? null,
-            jobId: c.runId ? "1" : null,
-            startedAt: null,
-            completedAt: null,
-            description: null
-          }));
-          result2 = { checks, absent: checks.length === 0, headSha: sha ?? null };
-        });
-        return result2;
-      }
-      async failedLogs(runId) {
-        this.enter("failedLogs");
-        const entry = this.load().logs[runId];
-        return entry ? { ...entry } : { status: "not-found", text: "", failedSteps: [] };
-      }
-      async authStatus() {
-        this.mutate((s) => void s.calls.push("authStatus"));
-        if (this.load().faults.authExpired) {
-          return { ok: false, login: null, tokenSource: "GH_TOKEN", scopes: null, error: "non-200 OK status code: 401 Unauthorized" };
-        }
-        return { ok: true, login: "orbit-bot", tokenSource: "GH_TOKEN", scopes: null, error: null };
-      }
-      // -- internals
-      /** Record the call, then apply the call-level faults. */
-      enter(name) {
-        let fault = null;
-        this.mutate((s) => {
-          s.calls.push(name);
-          if (s.faults.authExpired) {
-            fault = new OrbitError("AUTH_EXPIRED", `gh ${name} failed (exit 4): HTTP 401: Bad credentials`, { definitive: true });
-          } else if (s.faults.rateLimit > 0) {
-            s.faults.rateLimit--;
-            fault = new OrbitError("PROVIDER_TRANSIENT", `gh ${name} failed: API rate limit exceeded`, { retryAfterMs: s.faults.rateLimitRetryAfterMs, rateLimited: true });
-          }
-        });
-        if (fault) throw fault;
-      }
-      view(state, pr) {
-        const { fixedHeadOid, mergeCommitOid: _m, mergedAt: _a, ...info } = pr;
-        const head = pr.state === "MERGED" && fixedHeadOid ? fixedHeadOid : this.headOid(state, pr) ?? fixedHeadOid ?? "";
-        return { ...info, headRefOid: head };
-      }
-      mergeView(state, pr) {
-        const v = this.view(state, pr);
-        return { number: v.number, state: v.state, headRefOid: v.headRefOid, baseRefName: v.baseRefName, mergeCommitSha: pr.state === "MERGED" ? pr.mergeCommitOid ?? null : null, mergedAt: pr.state === "MERGED" ? pr.mergedAt ?? null : null };
-      }
-      /** Move the base branch on the attached remote; without one, a stable synthetic merge commit id. */
-      mergeOnRemote(pr, head, method, salt) {
-        if (!this.opts.remoteGitDir) return sha256(`fake-merge:${pr.number}:${head}:${method}:${salt}`).slice(-40);
-        const baseRef = `refs/heads/${pr.baseRefName}`;
-        const base = this.git(["rev-parse", "--verify", "--quiet", baseRef]);
-        if (!base) throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: base branch ${pr.baseRefName} does not exist`, { definitive: true, refused: true });
-        if (this.git(["merge-base", base, head]) !== base) {
-          throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: Pull Request is not mergeable (base ${pr.baseRefName} moved)`, { definitive: true, refused: true });
-        }
-        let commit;
-        if (method === "rebase") commit = head;
-        else {
-          const tree = this.git(["rev-parse", `${head}^{tree}`]);
-          const parents = method === "merge" ? ["-p", base, "-p", head] : ["-p", base];
-          commit = this.git(["commit-tree", tree, ...parents, "-m", `${pr.title} (#${pr.number})`]);
-        }
-        this.git(["update-ref", baseRef, commit, base]);
-        return commit;
-      }
-      git(args) {
-        try {
-          return execFileSync("git", ["--git-dir", this.opts.remoteGitDir, ...args], {
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-            env: { PATH: process.env.PATH ?? "/usr/bin:/bin", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "Fake GitHub", GIT_AUTHOR_EMAIL: "noreply@example.com", GIT_COMMITTER_NAME: "Fake GitHub", GIT_COMMITTER_EMAIL: "noreply@example.com", GIT_AUTHOR_DATE: "1700000000 +0000", GIT_COMMITTER_DATE: "1700000000 +0000" }
-          }).trim();
-        } catch (err) {
-          if (args[0] === "rev-parse") return "";
-          throw new OrbitError("DELIVERY_FAILED", `fake remote: git ${args[0]} failed: ${err.message}`);
-        }
-      }
-      headOid(state, pr) {
-        if (state.heads[pr.headRefName]) return state.heads[pr.headRefName];
-        if (!this.opts.remoteGitDir) return null;
-        try {
-          return execFileSync("git", ["--git-dir", this.opts.remoteGitDir, "rev-parse", "--verify", "--quiet", `refs/heads/${pr.headRefName}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
-        } catch {
-          return null;
-        }
-      }
-      load() {
-        if (!existsSync25(this.opts.statePath)) return emptyState();
-        return JSON.parse(readFileSync18(this.opts.statePath, "utf8"));
-      }
-      mutate(fn) {
-        const s = this.load();
-        fn(s);
-        atomicWriteJson(this.opts.statePath, s);
-      }
-    };
+    init_events();
+    init_decisions();
+    init_workers();
+    init_store();
+    init_store3();
+    init_resolve();
+    init_store4();
+    init_usage();
+    init_budget2();
+    init_config();
+    init_model_outputs();
+    init_store2();
+    init_learn();
+    init_feedback();
+    init_global();
+    init_publication();
+    init_profiles();
+    init_prompt();
+    init_run_store();
+    init_context2();
+    init_run_store();
+    init_workers2();
+    init_eval_runner();
+    init_knowledge_hooks();
+    CURATOR_TIMEOUT_MS = 5 * 6e4;
+    CURATOR_MAX_TURNS = 6;
   }
 });
 
-// src/notify/threads.ts
-import { existsSync as existsSync26, readFileSync as readFileSync19 } from "node:fs";
-function malformed2(what, detail) {
-  return new OrbitError("MALFORMED_OUTPUT", `gh api ${what}: ${detail}`);
+// src/evidence/candidate.ts
+import { chmodSync as chmodSync6, existsSync as existsSync26, lstatSync as lstatSync6, mkdirSync as mkdirSync14, mkdtempSync as mkdtempSync4, readdirSync as readdirSync7, realpathSync as realpathSync12, rmSync as rmSync8, writeFileSync as writeFileSync5 } from "node:fs";
+import { tmpdir as tmpdir9 } from "node:os";
+import { dirname as dirname19, join as join32, parse as parse4, sep as sep7 } from "node:path";
+function candidateRef(runId, seq2) {
+  return `refs/orbit/${runId}/candidates/${seq2}`;
 }
-function parseJson4(what, text2) {
+async function snapshotCandidate(input) {
+  const { db, clock, repoRoot, runId } = input;
+  if (!RUN_ID.test(runId)) throw new OrbitError("INTERNAL", `run id is not safe in a ref name: ${JSON.stringify(runId)}`);
+  const base = await resolveCommit(repoRoot, input.baseRev);
+  const { gitDir, worktree } = await adminDirFor(repoRoot, input.worktree);
+  const tree = await stageTree({ gitDir, worktree, base, extraExcludes: input.extraExcludes ?? [] });
+  const row = reserveCandidate(db, { runId, attempt: input.attempt, workerId: input.workerId, treeHash: tree, parentSha: base }, clock);
+  if (row.status !== "CREATING") return { ...row, created: false };
+  const message = `orbit candidate ${runId}/${row.seq}
+
+attempt: ${row.attempt}
+worker: ${row.workerId ?? "none"}
+tree: ${tree}
+`;
+  const when = `${Math.floor(row.createdAt / 1e3)} +0000`;
+  const commit = (await git2(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], {
+    env: {
+      GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name,
+      GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email,
+      GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name,
+      GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email,
+      GIT_AUTHOR_DATE: when,
+      GIT_COMMITTER_DATE: when
+    }
+  })).trim();
+  await git2(repoRoot, ["update-ref", candidateRef(runId, row.seq), commit]);
+  const stat = await diffStat(repoRoot, await treeOf(repoRoot, base), tree);
+  const done = finalizeCandidate(db, row.id, commit, stat, clock);
+  return { ...done, created: true };
+}
+async function stageTree(o) {
+  const scratch = mkdtempSync4(join32(tmpdir9(), "orbit-index-"));
   try {
-    return JSON.parse(text2);
-  } catch {
-    throw malformed2(what, `output is not JSON (${redact(text2.slice(0, 120))})`);
+    const excludes = join32(scratch, "exclude");
+    writeFileSync5(excludes, `${[...BUILTIN_EXCLUDES, ...o.extraExcludes].join("\n")}
+`);
+    const env = { GIT_DIR: o.gitDir, GIT_WORK_TREE: o.worktree, GIT_INDEX_FILE: join32(scratch, "index") };
+    const opts = { env, config: { "core.excludesFile": excludes } };
+    await git2(o.worktree, ["read-tree", o.base], opts);
+    await git2(o.worktree, ["add", "-A", "--", "."], opts);
+    return (await git2(o.worktree, ["write-tree"], opts)).trim();
+  } finally {
+    rmSync8(scratch, { recursive: true, force: true });
   }
 }
-function parseComments(text2) {
-  const v = parseJson4("comments", text2);
-  if (!Array.isArray(v)) throw malformed2("comments", "expected an array");
-  return v.map((c) => {
-    const o = c && typeof c === "object" ? c : {};
-    if (typeof o.id !== "number" || !Number.isInteger(o.id)) throw malformed2("comments", "a comment has no integer id");
-    const user = o.user && typeof o.user === "object" ? o.user : null;
-    return {
-      id: o.id,
-      url: typeof o.html_url === "string" ? o.html_url : "",
-      author: typeof user?.login === "string" ? user.login : "",
-      body: typeof o.body === "string" ? o.body : "",
-      createdAt: typeof o.created_at === "string" ? o.created_at : ""
-    };
+async function diffStat(repoRoot, fromTree, toTree) {
+  const out = await git2(repoRoot, ["diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", fromTree, toTree, "--"]);
+  const stat = { files: 0, insertions: 0, deletions: 0, binaryFiles: 0, paths: [], truncated: false };
+  for (const rec of out.split("\0")) {
+    if (!rec) continue;
+    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(rec);
+    if (!m) continue;
+    stat.files++;
+    if (m[1] === "-") stat.binaryFiles++;
+    else {
+      stat.insertions += Number(m[1]);
+      stat.deletions += Number(m[2]);
+    }
+    if (stat.paths.length < MAX_DIFF_PATHS) stat.paths.push(m[3]);
+    else stat.truncated = true;
+  }
+  return stat;
+}
+async function materializeCandidate(repoRoot, commit, dir, opts = {}) {
+  const sha = await resolveCommit(repoRoot, commit);
+  if (existsSync26(dir) && readdirSync7(dir).length > 0) {
+    throw new OrbitError("GIT_FAILED", `checkout directory is not empty: ${dir}`, { dir });
+  }
+  mkdirSync14(dirname19(dir), { recursive: true });
+  await git2(repoRoot, ["worktree", "add", "--detach", "--force", dir, sha]);
+  const real = realpathSync12(dir);
+  if (opts.readOnly !== false) makeReadOnly(real);
+  return real;
+}
+async function cleanupCandidateCheckout(repoRoot, dir) {
+  assertDisposableCheckout(repoRoot, dir);
+  if (existsSync26(dir)) makeWritable(dir);
+  try {
+    await git2(repoRoot, ["worktree", "remove", "--force", dir]);
+  } catch {
+    rmSync8(dir, { recursive: true, force: true });
+  }
+  rmSync8(dir, { recursive: true, force: true });
+  await git2(repoRoot, ["worktree", "prune"]).catch(() => {
   });
 }
-function parsePermission(text2) {
-  const v = parseJson4("permission", text2);
-  const o = v && typeof v === "object" ? v : {};
-  const role = typeof o.role_name === "string" && o.role_name !== "" ? o.role_name : typeof o.permission === "string" && o.permission !== "" ? o.permission : "unknown";
-  return role.toLowerCase();
+function assertDisposableCheckout(repoRoot, dir) {
+  if (!existsSync26(dir)) return;
+  const target = realpathSync12(dir);
+  const root = realpathSync12(repoRoot);
+  const refuse = (why) => {
+    throw new OrbitError("GIT_FAILED", `refusing to remove ${dir}: ${why}`, { dir, repoRoot });
+  };
+  if (target === root || root.startsWith(target.endsWith(sep7) ? target : target + sep7)) refuse("it is or contains the repository");
+  if (target === parse4(target).root) refuse("it is a filesystem root");
+  let dotGit;
+  try {
+    dotGit = lstatSync6(join32(target, ".git"));
+  } catch {
+    return;
+  }
+  if (dotGit.isDirectory()) refuse("it holds its own .git directory, so it is a repository, not a checkout");
 }
-function assertNumber(n2) {
-  if (!Number.isInteger(n2) || n2 <= 0) throw new OrbitError("INTERNAL", "an issue or pull request number must be a positive integer");
+function walk3(dir, visit3) {
+  for (const name of readdirSync7(dir)) {
+    const p = join32(dir, name);
+    const st = lstatSync6(p);
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) {
+      if (name === ".git") continue;
+      walk3(p, visit3);
+      visit3(p, true);
+    } else visit3(p, false);
+  }
 }
-function assertLogin(login) {
-  if (!LOGIN.test(login)) throw new OrbitError("SCHEMA_INVALID", `${JSON.stringify(login.slice(0, 60))} is not a GitHub login`);
+function makeReadOnly(dir) {
+  walk3(dir, (p, isDir) => chmodSync6(p, isDir ? 365 : lstatSync6(p).mode & 365));
+  chmodSync6(dir, 365);
 }
-function strip(c) {
-  return { id: c.id, url: c.url, author: c.author, body: c.body, createdAt: c.createdAt };
+function makeWritable(dir) {
+  try {
+    chmodSync6(dir, 493);
+    const stack = [dir];
+    while (stack.length) {
+      const d = stack.pop();
+      for (const name of readdirSync7(d)) {
+        const p = join32(d, name);
+        const st = lstatSync6(p);
+        if (st.isSymbolicLink()) continue;
+        if (st.isDirectory()) {
+          chmodSync6(p, 493);
+          if (name !== ".git") stack.push(p);
+        } else chmodSync6(p, st.mode | 128);
+      }
+    }
+  } catch {
+  }
 }
-var ANSWERING_ROLES, LOGIN, PER_PAGE, MAX_PAGES, ACCEPT, GhThreadClient, FAKE_ORBIT_AUTHOR, FakeThreadClient;
-var init_threads = __esm({
-  "src/notify/threads.ts"() {
+var ORBIT_GIT_IDENTITY, BUILTIN_EXCLUDES, RUN_ID, MAX_DIFF_PATHS;
+var init_candidate = __esm({
+  "src/evidence/candidate.ts"() {
     "use strict";
-    init_exec();
     init_errors();
-    init_fsx();
-    init_github();
-    init_redact();
-    ANSWERING_ROLES = /* @__PURE__ */ new Set(["admin", "maintain", "write"]);
-    LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
-    PER_PAGE = 100;
-    MAX_PAGES = 10;
-    ACCEPT = ["-H", "Accept: application/vnd.github+json"];
-    GhThreadClient = class {
-      opts;
-      token;
-      baseEnv;
-      runner;
-      constructor(opts) {
-        if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(opts.repo)) throw new OrbitError("CONFIG_INVALID", `repository ${JSON.stringify(opts.repo)} is not OWNER/REPO`, { definitive: true });
-        this.opts = opts;
-        this.baseEnv = opts.env ?? process.env;
-        this.token = this.baseEnv.GH_TOKEN || void 0;
-        this.runner = opts.runner ?? ((argv2, o) => execCapture(argv2, { env: o.env, cwd: o.cwd, input: o.input, timeoutMs: o.timeoutMs, maxOutputBytes: 8 * 1024 * 1024 }));
-      }
-      env() {
-        const e = {};
-        for (const k of ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"]) if (this.baseEnv[k] !== void 0) e[k] = this.baseEnv[k];
-        e.GH_TOKEN = this.token;
-        e.GH_PROMPT_DISABLED = "1";
-        e.GH_NO_UPDATE_NOTIFIER = "1";
-        e.GH_TELEMETRY = "false";
-        e.NO_COLOR = "1";
-        e.GH_PAGER = "cat";
-        return e;
-      }
-      async exec(what, args, input) {
-        if (!this.token) throw new OrbitError("AUTH_MISSING", "no GH_TOKEN in the controller environment; comments and remote answers need a token scoped to the repository", { definitive: true });
-        const res = await this.runner([this.opts.ghPath ?? "gh", "api", ...ACCEPT, ...args], { env: this.env(), ...this.opts.cwd ? { cwd: this.opts.cwd } : {}, ...input !== void 0 ? { input } : {}, timeoutMs: this.opts.timeoutMs ?? 3e4 });
-        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", `gh api ${what} timed out`);
-        return res;
-      }
-      async ok(what, args, input) {
-        const res = await this.exec(what, args, input);
-        if (res.exitCode !== 0) throw classifyGhFailure(`api ${what}`, res.exitCode, `${res.stderr}
-${res.stdout}`);
-        return res.stdout;
-      }
-      async listComments(number, since) {
-        assertNumber(number);
-        const out = [];
-        for (let page = 1; page <= MAX_PAGES; page++) {
-          const q = new URLSearchParams({ per_page: String(PER_PAGE), ...since ? { since } : {}, page: String(page) });
-          const batch = parseComments(await this.ok("comments", [`repos/${this.opts.repo}/issues/${number}/comments?${q.toString()}`]));
-          out.push(...batch);
-          if (batch.length < PER_PAGE) break;
-        }
-        return out;
-      }
-      async permission(login) {
-        assertLogin(login);
-        const res = await this.exec("permission", [`repos/${this.opts.repo}/collaborators/${login}/permission`]);
-        if (res.exitCode !== 0) {
-          const err = classifyGhFailure("api permission", res.exitCode, `${res.stderr}
-${res.stdout}`);
-          if (err.code === "NOT_FOUND") return "none";
-          throw err;
-        }
-        return parsePermission(res.stdout);
-      }
-      async createComment(number, body) {
-        assertNumber(number);
-        const out = await this.ok("create comment", ["-X", "POST", `repos/${this.opts.repo}/issues/${number}/comments`, "--input", "-"], JSON.stringify({ body }));
-        const v = parseJson4("create comment", out);
-        return { url: typeof v?.html_url === "string" ? v.html_url : "" };
-      }
-    };
-    FAKE_ORBIT_AUTHOR = "orbit-bot";
-    FakeThreadClient = class {
-      statePath;
-      constructor(opts) {
-        this.statePath = opts.statePath;
-      }
-      read() {
-        if (!existsSync26(this.statePath)) return { comments: [], permissions: {} };
-        const s = JSON.parse(readFileSync19(this.statePath, "utf8"));
-        return { comments: s.comments ?? [], permissions: s.permissions ?? {}, fail: s.fail ?? null, failNext: s.failNext ?? {} };
-      }
-      write(s) {
-        atomicWriteJson(this.statePath, s);
-      }
-      gate(op) {
-        const s = this.read();
-        if (s.fail) throw new OrbitError(s.fail, `fake GitHub: ${op} failed (scripted)`);
-        const once = s.failNext?.[op];
-        if (once) {
-          delete s.failNext[op];
-          this.write(s);
-          throw new OrbitError(once, `fake GitHub: ${op} failed once (scripted)`);
-        }
-      }
-      /** A comment by `author`, as a person would write it on the thread. */
-      addComment(thread, author, body) {
-        const s = this.read();
-        const id = s.comments.reduce((m, c2) => Math.max(m, c2.id), 0) + 1;
-        const c = { thread, id, url: `https://github.test/acme/app/issues/${thread}#issuecomment-${id}`, author, body, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
-        s.comments.push(c);
-        this.write(s);
-        return strip(c);
-      }
-      setPermission(login, role) {
-        const s = this.read();
-        s.permissions[login] = role;
-        this.write(s);
-      }
-      failNext(op, code2) {
-        const s = this.read();
-        s.failNext = { ...s.failNext ?? {}, [op]: code2 };
-        this.write(s);
-      }
-      comments(thread) {
-        return this.read().comments.filter((c) => c.thread === thread).map(strip);
-      }
-      async listComments(number, since) {
-        this.gate("listComments");
-        return this.comments(number).filter((c) => since === null || c.createdAt >= since);
-      }
-      async permission(login) {
-        this.gate("permission");
-        return this.read().permissions[login] ?? "none";
-      }
-      async createComment(number, body) {
-        this.gate("createComment");
-        return { url: this.addComment(number, FAKE_ORBIT_AUTHOR, body).url };
-      }
-    };
+    init_git();
+    init_store();
+    ORBIT_GIT_IDENTITY = { name: "Orbit", email: "orbit@orbit.invalid" };
+    BUILTIN_EXCLUDES = [".DS_Store", "Thumbs.db", "node_modules/"];
+    RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+    MAX_DIFF_PATHS = 200;
   }
 });
 
-// src/notify/channels.ts
-import { join as join31 } from "node:path";
-function notificationsOff(env) {
-  return (env.ORBIT_NOTIFICATIONS ?? "").trim().toLowerCase() === "off";
-}
-function defaultThreads(env) {
-  return async (repoRoot, config) => {
-    if (config.delivery.provider === "fake") return new FakeThreadClient({ statePath: join31(repoRoot, ".orbit", FAKE_THREADS_FILE) });
-    const url = await resolveRemoteUrl(repoRoot, config.repository.remote);
-    const m = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url);
-    if (!m) throw new OrbitError("CONFIG_INVALID", `remote ${config.repository.remote} is not a GitHub repository`);
-    return new GhThreadClient({ repo: `${m[1]}/${m[2]}`, env, cwd: repoRoot });
-  };
-}
-function defaultNotifyDeps(env = process.env) {
-  return { env, platform: process.platform, exec: defaultExec, fetch: defaultFetch, threads: defaultThreads(env) };
-}
-function messageOf2(err) {
-  const text2 = isOrbitError(err) ? `${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
-  return redact(text2).replace(/\s+/g, " ").slice(0, 300);
-}
-async function sendDesktop(p, deps) {
-  const title = payloadTitle(p);
-  const body = payloadText(p);
-  let argv2;
-  if (deps.platform === "darwin") argv2 = ["osascript", ...OSASCRIPT, "--", title, body];
-  else if (deps.platform === "linux") argv2 = ["notify-send", "--app-name=Orbit", "--", title, body];
-  else return { channel: "desktop", status: "skipped", detail: `no desktop notifier on ${deps.platform}` };
-  const program = argv2[0];
-  try {
-    const r = await deps.exec(argv2, DESKTOP_TIMEOUT_MS);
-    if (r.notFound) return { channel: "desktop", status: "skipped", detail: `${program} is not available` };
-    if (r.exitCode !== 0) return { channel: "desktop", status: "failed", detail: `${program} exited ${r.exitCode ?? "by signal"}: ${redact(r.stderr).trim().slice(0, 200)}`.trim() };
-    return { channel: "desktop", status: "sent", detail: program };
-  } catch (err) {
-    return { channel: "desktop", status: "failed", detail: messageOf2(err) };
+// src/evidence/baseline.ts
+import { existsSync as existsSync27, readFileSync as readFileSync19 } from "node:fs";
+import { join as join33 } from "node:path";
+function planInstall(snapshot2, checkoutDir, opts = {}) {
+  const deps = snapshot2.config.dependencies;
+  if (!deps.install_existing_lockfile) return { skip: true, reason: "policy does not allow installing dependencies from the existing lockfile" };
+  const hosts = [...opts.registryHosts ?? NPM_REGISTRY_HOSTS];
+  const base = { shell: false, cwd: ".", timeout_seconds: INSTALL_TIMEOUT_SECONDS, network_hosts: hosts, local_binding: false, mandatory: false, flaky_reruns: 1, kind: "command" };
+  const quiet = { npm_config_fund: "false", npm_config_audit: "false", npm_config_progress: "false", npm_config_update_notifier: "false" };
+  const scriptsDenied = deps.install_scripts !== "allow";
+  if (deps.install_command) {
+    return {
+      skip: false,
+      definitions: [
+        {
+          ...base,
+          id: INSTALL_CHECK_ID,
+          command: [...deps.install_command],
+          // A configured command cannot be given a flag blindly, so scripts are denied through the package managers' own environment switches.
+          env: { ...quiet, ...scriptsDenied ? { npm_config_ignore_scripts: "true", YARN_ENABLE_SCRIPTS: "false" } : {} }
+        }
+      ]
+    };
   }
+  const hasNpmLock = existsSync27(join33(checkoutDir, "package-lock.json")) || existsSync27(join33(checkoutDir, "npm-shrinkwrap.json"));
+  if (!hasNpmLock) {
+    const other = OTHER_LOCKFILES.find((f) => existsSync27(join33(checkoutDir, f)));
+    return {
+      skip: true,
+      reason: other ? `found ${other}, which Orbit does not install by itself; set dependencies.install_command to install from it` : "no lockfile to install from; Orbit never creates one"
+    };
+  }
+  const defs = [{ ...base, id: INSTALL_CHECK_ID, command: scriptsDenied ? ["npm", "ci", "--ignore-scripts"] : ["npm", "ci"], env: quiet }];
+  if (deps.install_scripts === "deny-unless-allowlisted" && deps.install_script_allowlist.length > 0) {
+    defs.push({ ...base, id: INSTALL_SCRIPTS_CHECK_ID, command: ["npm", "rebuild", ...deps.install_script_allowlist], env: quiet, flaky_reruns: 0 });
+  }
+  return { skip: false, definitions: defs };
 }
-async function sendWebhook(p, config, deps) {
-  const hook = notificationsPolicy(config).webhook;
-  if (!hook) return { channel: "webhook", status: "skipped", detail: "notifications.webhook is off" };
-  const raw = deps.env[hook.url_env];
-  if (!raw) return { channel: "webhook", status: "skipped", detail: `${hook.url_env} is not set` };
-  let url;
+async function installDependencies(ctx) {
+  const plan = planInstall(ctx.snapshot, ctx.checkoutDir, { registryHosts: ctx.registryHosts });
+  if (plan.skip) {
+    const audit2 = ctx.candidate ? await auditCandidate({ ...ctx, candidate: ctx.candidate }) : null;
+    if (audit2 && audit2.blocking.length > 0) return { skipped: false, reason: audit2.summary, ok: false, results: [], audit: audit2 };
+    return { skipped: true, reason: plan.reason, ok: false, results: [], audit: audit2 };
+  }
+  const definitions = { ...ctx.definitions, ...Object.fromEntries(plan.definitions.map((d) => [d.id, d])) };
+  let subject;
+  if (ctx.candidate) subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: "install" };
+  else if (ctx.baseTree) subject = baselineSubject(ctx.runDir, ctx.baseTree, "install");
+  else throw new OrbitError("INTERNAL", "installDependencies needs a candidate or a base tree to bind to");
+  const results = [];
+  for (const def of plan.definitions) {
+    const [r] = await runCheckSet({ ...ctx, definitions }, subject, [def]);
+    if (!r) break;
+    results.push(r);
+    if (r.status !== "PASSED") break;
+  }
+  const ok = results.length === plan.definitions.length && results.every((r) => r.status === "PASSED");
+  if (!ok || !ctx.candidate) return { skipped: false, reason: null, ok, results };
+  const audit = await auditCandidate({ ...ctx, candidate: ctx.candidate });
+  if (audit && audit.blocking.length > 0) return { skipped: false, reason: audit.summary, ok: false, results, audit };
+  return { skipped: false, reason: null, ok, results, audit };
+}
+function manifestHash(dir) {
+  const parts = [];
+  for (const f of MANIFEST_FILES) {
+    const p = join33(dir, f);
+    if (existsSync27(p)) parts.push(`${f}\0${sha256(readFileSync19(p))}`);
+  }
+  return parts.length > 0 ? sha256(parts.join("\n")) : null;
+}
+function parseNpmAudit(text2) {
+  let doc;
   try {
-    url = new URL(raw.trim());
+    doc = JSON.parse(text2);
   } catch {
-    return { channel: "webhook", status: "failed", detail: `${hook.url_env} does not hold a valid URL` };
+    throw new Error("npm audit did not write a JSON report");
   }
-  const host = url.hostname.toLowerCase();
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && LOOPBACK.has(host))) {
-    return { channel: "webhook", status: "failed", detail: "the webhook URL must use https (plain http only to a loopback host)" };
+  const d = doc;
+  if (d.error) throw new Error(`npm audit failed: ${redact(String(d.error.summary ?? d.error.code ?? "error")).slice(0, 200)}`);
+  if (!d.vulnerabilities || typeof d.vulnerabilities !== "object") throw new Error("the npm audit report has no vulnerabilities section (npm 7 or later is needed)");
+  const out = /* @__PURE__ */ new Map();
+  for (const [name, v] of Object.entries(d.vulnerabilities)) {
+    if (!Array.isArray(v?.via)) continue;
+    for (const via of v.via) {
+      if (!via || typeof via !== "object") continue;
+      const a = via;
+      const ghsa = typeof a.url === "string" ? /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/.exec(a.url)?.[0] : void 0;
+      const id = ghsa ?? (typeof a.source === "number" || typeof a.source === "string" ? `npm:${a.source}` : null);
+      const severity = typeof a.severity === "string" && Object.hasOwn(SEVERITY_RANK, a.severity) ? a.severity : null;
+      if (!id || !severity) continue;
+      const pkg = typeof a.name === "string" ? a.name : name;
+      out.set(`${id}\0${pkg}`, { id, kind: "vulnerability", package: pkg, severity, detail: redact(typeof a.title === "string" ? a.title : "").slice(0, 200) });
+    }
   }
-  if (!hostAllowed(host, config.network.allowed_hosts)) return { channel: "webhook", status: "failed", detail: `${host} is not in network.allowed_hosts` };
+  return [...out.values()].sort((x, y) => x.id.localeCompare(y.id) || x.package.localeCompare(y.package));
+}
+function disallowedLicenses(lockText, allowlist) {
+  let lock;
   try {
-    const r = await deps.fetch(url.toString(), {
-      method: "POST",
-      headers: { "content-type": "application/json", "user-agent": "orbit-notify" },
-      body: JSON.stringify({ text: payloadText(p), orbit: p }),
-      // A redirect could take the payload to a host the allowlist never saw.
-      redirect: "error",
-      signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS)
-    });
-    return { channel: "webhook", status: r.ok ? "sent" : "failed", detail: `${host} answered ${r.status}` };
-  } catch (err) {
-    const name = err instanceof Error ? err.name : "Error";
-    return { channel: "webhook", status: "failed", detail: `${host} could not be reached (${name})` };
+    lock = JSON.parse(lockText);
+  } catch {
+    throw new Error("the lockfile is not valid JSON");
+  }
+  if (!lock.packages || typeof lock.packages !== "object") throw new Error("the lockfile has no packages section (lockfileVersion 2 or later records licenses)");
+  const allowed = new Set(allowlist.map((l) => l.toLowerCase()));
+  const out = /* @__PURE__ */ new Map();
+  for (const [key2, entry] of Object.entries(lock.packages)) {
+    if (key2 === "" || !entry || typeof entry !== "object" || entry.link === true) continue;
+    const name = typeof entry.name === "string" ? entry.name : key2.slice(key2.lastIndexOf("node_modules/") + "node_modules/".length);
+    const version = typeof entry.version === "string" ? entry.version : "0.0.0";
+    const license = typeof entry.license === "string" ? entry.license : null;
+    if (license !== null && licenseAllowed(license, allowed)) continue;
+    const id = `license:${name}@${version}`;
+    out.set(id, { id, kind: "license", package: name, severity: null, detail: license ?? "no license recorded" });
+  }
+  return [...out.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+function licenseAllowed(expr, allowed) {
+  const e = expr.replace(/[()]/g, " ").trim().toLowerCase();
+  return e.split(/\s+or\s+/).some((alt) => alt.split(/\s+and\s+/).every((part) => allowed.has(part.trim())));
+}
+function lockfileIn(dir) {
+  for (const f of ["npm-shrinkwrap.json", "package-lock.json"]) if (existsSync27(join33(dir, f))) return join33(dir, f);
+  return null;
+}
+async function runDependencyAudit(ctx, subject) {
+  const policy = dependencyAuditPolicy(ctx.snapshot.config);
+  if (!policy.enabled) return null;
+  const hash = manifestHash(ctx.checkoutDir);
+  const lock = lockfileIn(ctx.checkoutDir);
+  if (!lock) return { ran: false, reason: "no npm lockfile (package-lock.json or npm-shrinkwrap.json); the dependency audit supports npm lockfiles only", manifestHash: hash, vulnerabilities: [], licenses: [], logPath: null };
+  const problems = [];
+  let licenses = [];
+  if (policy.license_allowlist !== null) {
+    try {
+      licenses = disallowedLicenses(readFileSync19(lock, "utf8"), policy.license_allowlist);
+    } catch (err) {
+      problems.push(`license policy not checked: ${err.message}`);
+    }
+  }
+  const def = {
+    id: AUDIT_CHECK_ID,
+    // The report goes to a file, so warnings on stderr cannot corrupt it; a written report is success even when it lists vulnerabilities.
+    command: [`npm audit --json --package-lock-only > "$ORBIT_ARTIFACTS_DIR/${AUDIT_REPORT}"; s=$?; if [ -s "$ORBIT_ARTIFACTS_DIR/${AUDIT_REPORT}" ]; then exit 0; fi; exit $s`],
+    shell: true,
+    cwd: ".",
+    timeout_seconds: AUDIT_TIMEOUT_SECONDS,
+    network_hosts: [...ctx.registryHosts ?? NPM_REGISTRY_HOSTS],
+    local_binding: false,
+    env: { npm_config_fund: "false", npm_config_progress: "false", npm_config_update_notifier: "false" },
+    mandatory: false,
+    flaky_reruns: 0,
+    kind: "command"
+  };
+  const [r] = await runCheckSet({ ...ctx, definitions: { ...ctx.definitions, [AUDIT_CHECK_ID]: def } }, subject, [def]);
+  let vulnerabilities = [];
+  let ran = false;
+  if (!r) problems.push("npm audit did not start (cancelled)");
+  else if (r.status !== "PASSED") problems.push(`npm audit ${r.status === "TIMEOUT" ? "timed out" : `could not produce a report (${r.status})`}`);
+  else {
+    const report2 = r.artifacts.find((a) => a.path.endsWith(`/${AUDIT_REPORT}`));
+    try {
+      if (!report2) throw new Error("npm audit wrote no report");
+      vulnerabilities = parseNpmAudit(readFileSync19(report2.path, "utf8"));
+      ran = true;
+    } catch (err) {
+      problems.push(err.message);
+    }
+  }
+  return { ran, reason: problems.length ? problems.join("; ") : null, manifestHash: hash, vulnerabilities, licenses, logPath: r?.logPath ?? null };
+}
+function evaluateDependencyAudit(base, candidate, policy, now) {
+  const known = new Set(base?.ran ? [...base.vulnerabilities, ...base.licenses].map(key) : base ? base.licenses.map(key) : []);
+  const out = { blocking: [], advisory: [], excepted: [], expired: [], preexisting: [] };
+  for (const f of [...candidate.vulnerabilities, ...candidate.licenses]) {
+    if (known.has(key(f))) {
+      out.preexisting.push(f);
+      continue;
+    }
+    const exception = policy.exceptions.find((e) => e.id === f.id || f.kind === "license" && e.id === `license:${f.package}`);
+    if (exception) {
+      if (exception.expires !== null && (now === void 0 || now > exceptionExpiryMs(exception.expires))) {
+        if (!out.expired.some((x) => x.id === exception.id)) out.expired.push({ id: exception.id, expires: exception.expires });
+      } else {
+        out.excepted.push({ finding: f, reason: exception.reason, expires: exception.expires });
+        continue;
+      }
+    }
+    if (f.kind === "license" || SEVERITY_RANK[f.severity] >= SEVERITY_RANK[policy.fail_on]) out.blocking.push(f);
+    else out.advisory.push(f);
+  }
+  return out;
+}
+function key(f) {
+  return `${f.id}\0${f.package}`;
+}
+function describeFinding(f) {
+  return f.kind === "license" ? `${f.package} is licensed ${f.detail}, which is not on the license allowlist` : `${f.package}: ${f.id} (${f.severity})${f.detail ? ` ${f.detail}` : ""}`;
+}
+function baselineAuditNotes(audit, policy) {
+  if (!policy.enabled || !audit?.ran) return [];
+  const listed = [...audit.vulnerabilities.filter((f) => SEVERITY_RANK[f.severity ?? "low"] >= SEVERITY_RANK[policy.fail_on]), ...audit.licenses];
+  const notes = listed.slice(0, MAX_BASELINE_AUDIT_NOTES).map((f) => `pre-existing ${f.kind === "license" ? "license problem" : "vulnerability"} on the base revision: ${describeFinding(f)}`);
+  if (listed.length > MAX_BASELINE_AUDIT_NOTES) notes.push(`and ${listed.length - MAX_BASELINE_AUDIT_NOTES} more pre-existing dependency audit finding(s) on the base revision`);
+  return notes;
+}
+async function auditCandidate(ctx) {
+  const policy = dependencyAuditPolicy(ctx.snapshot.config);
+  if (!policy.enabled) return null;
+  const baseline = readJsonIfExists(join33(ctx.runDir, BASELINE_FILE));
+  const baseAudit = baseline?.audit ?? null;
+  const empty = { blocking: [], advisory: [], excepted: [], expired: [], preexisting: [] };
+  if (baseAudit && baseAudit.manifestHash !== null && baseAudit.manifestHash === manifestHash(ctx.checkoutDir)) {
+    return { audited: false, candidate: null, ...empty, summary: null };
+  }
+  const subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: "install" };
+  const audit = await runDependencyAudit(ctx, subject);
+  if (!audit) return null;
+  const judged = evaluateDependencyAudit(baseAudit, audit, policy, ctx.clock.now());
+  const summary = judged.blocking.length ? `dependency audit: the candidate introduces ${judged.blocking.length} finding(s) the policy blocks: ${judged.blocking.slice(0, 5).map(describeFinding).join("; ")}` : audit.ran ? null : `dependency audit unverified: ${audit.reason ?? "npm audit did not run"}`;
+  for (const f of judged.blocking) {
+    recordFailure(ctx.db, { runId: ctx.run.id, candidateId: ctx.candidate.id, source: "install", sourceId: `dependency-audit:${ctx.candidate.id}:${f.id}:${f.package}`, fingerprint: `dependency-audit:${f.id}`, excerpt: describeFinding(f) }, ctx.clock);
+  }
+  ctx.db.tx(
+    () => appendEvent(ctx.db, ctx.run.id, "dependency.audit", "controller", {
+      candidate_id: ctx.candidate.id,
+      ran: audit.ran,
+      reason: audit.reason,
+      blocking: judged.blocking.map((f) => f.id),
+      advisory: judged.advisory.map((f) => f.id),
+      excepted: judged.excepted.map((e) => ({ id: e.finding.id, reason: e.reason })),
+      expired: judged.expired,
+      preexisting: judged.preexisting.length
+    }, ctx.clock.now())
+  );
+  return { audited: true, candidate: audit, ...judged, summary };
+}
+async function runBaseline(input) {
+  const { db, run, snapshot: snapshot2, runDir: runDir2, clock } = input;
+  assertRunPolicy(db, run, snapshot2);
+  const baseRevision = await resolveCommit(input.repoRoot, input.baseRev);
+  const baseTree = await treeOf(input.repoRoot, baseRevision);
+  const ids = input.checkIds ?? Object.values(snapshot2.config.checks).filter((c) => c.mandatory && c.kind === "command").map((c) => c.id);
+  for (const id of ids) {
+    if (!snapshot2.config.checks[id]) throw new OrbitError("POLICY_DENIED", `baseline check ${JSON.stringify(id)} is not defined in the policy snapshot`, { checkId: id });
+  }
+  const defs = [...new Set(ids)].map((id) => snapshot2.config.checks[id]).filter((d) => d.kind === "command");
+  const checkIds = defs.map((d) => d.id).sort();
+  const file = join33(runDir2, BASELINE_FILE);
+  const prior = readJsonIfExists(file);
+  if (prior && prior.schema === "orbit.baseline/1" && prior.complete && prior.baseRevision === baseRevision && prior.policyHash === run.policyHash && Array.isArray(prior.checkIds) && prior.checkIds.join("\0") === checkIds.join("\0")) {
+    return { report: prior, results: [], reused: true };
+  }
+  const checkoutDir = input.checkoutDir ?? join33(prepareWorkerTmpDir(join33(runDir2, "baseline-checkout")), `base-${sha256(run.id).slice(0, 8)}`);
+  await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
+  await materializeCandidate(input.repoRoot, baseRevision, checkoutDir, { readOnly: false });
+  try {
+    const ctx = {
+      db,
+      run,
+      snapshot: snapshot2,
+      isolation: input.isolation,
+      checkoutDir,
+      runDir: runDir2,
+      clock,
+      signal: input.signal,
+      parallelism: input.parallelism,
+      pollMs: input.pollMs,
+      killGraceMs: input.killGraceMs,
+      homeDir: input.homeDir
+    };
+    const install = await installDependencies({ ...ctx, baseTree, registryHosts: input.registryHosts });
+    const results = install.skipped || install.ok ? await runCheckSet(ctx, baselineSubject(runDir2, baseTree), defs) : [];
+    const audit = await runDependencyAudit({ ...ctx, registryHosts: input.registryHosts }, baselineSubject(runDir2, baseTree, "install"));
+    const entries = results.map((r) => ({
+      checkId: r.checkId,
+      mandatory: snapshot2.config.checks[r.checkId]?.mandatory === true,
+      status: r.status,
+      exitCode: r.exitCode,
+      flaky: r.flaky,
+      fingerprint: r.fingerprint,
+      excerpt: r.excerpt,
+      log: r.logPath
+    }));
+    const report2 = {
+      schema: "orbit.baseline/1",
+      runId: run.id,
+      baseRevision,
+      baseTree,
+      policyHash: run.policyHash,
+      checkIds,
+      install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
+      ...audit ? { audit } : {},
+      auditNotes: baselineAuditNotes(audit, dependencyAuditPolicy(snapshot2.config)),
+      checks: entries,
+      failures: entries.filter((e) => e.mandatory && (e.status === "FAILED" || e.status === "TIMEOUT")).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
+      // Every requested check produced a decisive result (no ERROR, no CANCELLED, none skipped).
+      complete: (install.skipped || install.ok) && entries.length === defs.length && entries.every((e) => e.status === "PASSED" || e.status === "FAILED" || e.status === "TIMEOUT"),
+      recordedAt: clock.now()
+    };
+    atomicWriteJson(file, report2);
+    const auditSummary = audit ? { ran: audit.ran, reason: audit.reason, vulnerabilities: audit.vulnerabilities.length, disallowed_licenses: audit.licenses.length } : null;
+    db.tx(() => appendEvent(db, run.id, "baseline.recorded", "controller", { base_revision: baseRevision, base_tree: baseTree, failures: report2.failures.map((f) => f.checkId), complete: report2.complete, audit: auditSummary }, clock.now()));
+    return { report: report2, results, reused: false };
+  } finally {
+    await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
   }
 }
-async function sendGithubComment(p, target, client) {
-  if (!target) return { channel: "github_comment", status: "skipped", detail: "the run has no pull request and no linked issue" };
-  try {
-    await (await client()).createComment(target.number, commentBody(p));
-    return { channel: "github_comment", status: "sent", detail: `${target.kind} #${target.number}` };
-  } catch (err) {
-    return { channel: "github_comment", status: "failed", detail: messageOf2(err) };
-  }
-}
-var DESKTOP_TIMEOUT_MS, WEBHOOK_TIMEOUT_MS, FAKE_THREADS_FILE, defaultExec, defaultFetch, OSASCRIPT, LOOPBACK;
-var init_channels = __esm({
-  "src/notify/channels.ts"() {
+var BASELINE_FILE, NPM_REGISTRY_HOSTS, INSTALL_TIMEOUT_SECONDS, OTHER_LOCKFILES, AUDIT_CHECK_ID, AUDIT_TIMEOUT_SECONDS, AUDIT_REPORT, MANIFEST_FILES, SEVERITY_RANK, MAX_BASELINE_AUDIT_NOTES;
+var init_baseline = __esm({
+  "src/evidence/baseline.ts"() {
     "use strict";
     init_errors();
-    init_exec();
+    init_fsx();
+    init_hash();
     init_redact();
-    init_git2();
+    init_profiles();
     init_config();
-    init_hosts();
-    init_payload();
-    init_threads();
-    DESKTOP_TIMEOUT_MS = 1e4;
-    WEBHOOK_TIMEOUT_MS = 1e4;
-    FAKE_THREADS_FILE = "fake-github-threads.json";
-    defaultExec = async (argv2, timeoutMs) => {
-      try {
-        const r = await execCapture(argv2, { timeoutMs, maxOutputBytes: 64 * 1024 });
-        return { exitCode: r.timedOut ? null : r.exitCode, notFound: false, stderr: r.timedOut ? `timed out after ${timeoutMs} ms` : r.stderr };
-      } catch (err) {
-        if (isOrbitError(err, "NOT_FOUND")) return { exitCode: null, notFound: true, stderr: "" };
-        throw err;
+    init_resolve();
+    init_events();
+    init_candidate();
+    init_git();
+    init_runner();
+    init_store();
+    BASELINE_FILE = "baseline.json";
+    NPM_REGISTRY_HOSTS = ["registry.npmjs.org"];
+    INSTALL_TIMEOUT_SECONDS = 900;
+    OTHER_LOCKFILES = ["yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "deno.lock"];
+    AUDIT_CHECK_ID = "orbit-dependency-audit";
+    AUDIT_TIMEOUT_SECONDS = 300;
+    AUDIT_REPORT = "npm-audit.json";
+    MANIFEST_FILES = ["package.json", "package-lock.json", "npm-shrinkwrap.json"];
+    SEVERITY_RANK = { critical: 4, high: 3, moderate: 2, low: 1 };
+    MAX_BASELINE_AUDIT_NOTES = 50;
+  }
+});
+
+// src/evidence/environment-failure.ts
+import { isAbsolute as isAbsolute14 } from "node:path";
+function within2(path, root) {
+  const r = root.length > 1 ? root.replace(/\/+$/, "") : root;
+  return path === r || path.startsWith(`${r}/`);
+}
+function deniedOutside(line3, roots) {
+  if (!DENIED.test(line3)) return false;
+  const paths = line3.match(ABSOLUTE_PATH) ?? [];
+  return paths.some((p) => !roots.some((root) => within2(p.replace(/[.]+$/, ""), root)));
+}
+function classifyEnvironmentFailure(input) {
+  const { fingerprint, baselineFingerprint } = input;
+  if (!fingerprint || !baselineFingerprint || fingerprint !== baselineFingerprint) return null;
+  const signals = [];
+  const lines = [];
+  const see = (signal) => {
+    if (!signals.includes(signal)) signals.push(signal);
+  };
+  for (const raw of stripAnsi(input.output).split("\n", MAX_SCANNED_LINES2)) {
+    const line3 = raw.replace(/\r$/, "");
+    const found = [];
+    if (VIOLATION.test(line3)) found.push("sandbox-violation");
+    if (EPERM.test(line3)) found.push("eperm");
+    if (NOT_PERMITTED.test(line3)) found.push("operation-not-permitted");
+    if (deniedOutside(line3, input.insideRoots)) found.push("eacces-outside-worktree");
+    if (found.length === 0) continue;
+    for (const s of found) see(s);
+    const shown = line3.trim().slice(0, MAX_LINE_CHARS);
+    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown)) lines.push(shown);
+  }
+  if (signals.length === 0) return null;
+  return { checkId: input.checkId, fingerprint, signals, cause: signals.map((s) => CAUSES[s]).join("; "), lines };
+}
+function classifyNotExecuted(input) {
+  const browser = input.browserIsolation?.trim();
+  if (browser) return { checkId: input.checkId, fingerprint: null, signals: ["browser-isolation"], cause: CAUSES["browser-isolation"], lines: [browser.slice(0, MAX_LINE_CHARS)] };
+  const start = input.startFailure?.trim();
+  if (start) return { checkId: input.checkId, fingerprint: null, signals: ["start-failed"], cause: CAUSES["start-failed"], lines: [start.slice(0, MAX_LINE_CHARS)] };
+  let crash = input.signal !== void 0 && input.signal !== null && CRASH_SIGNALS.has(input.signal) ? input.signal : null;
+  const kills = [];
+  const frames = [];
+  let traced = false;
+  let own = 0;
+  let inJsTrace = false;
+  for (const raw of stripAnsi(input.output).split("\n", MAX_SCANNED_LINES2)) {
+    const line3 = raw.trim();
+    if (line3 === "") continue;
+    const killed = KILLED_BY_SIGNAL.exec(line3);
+    const footer = RUNNER_FOOTER.exec(line3);
+    const header2 = TRACE_HEADER.exec(line3);
+    if (header2) {
+      inJsTrace = header2[1].toLowerCase() === "javascript";
+      traced = true;
+    } else if (inJsTrace && JS_FRAME.test(line3)) {
+    } else if (TRACE_FRAME.test(line3)) {
+      if (frames.length === 0) frames.push(line3.slice(0, MAX_LINE_CHARS));
+    } else if (killed) {
+      if (CRASH_SIGNALS.has(killed[1])) {
+        crash = killed[1];
+        if (kills.length === 0) kills.push(line3);
+      } else {
+        own += 1;
       }
+    } else if (footer) {
+      if (CRASH_SIGNALS.has(footer[1])) crash = footer[1];
+    } else {
+      own += 1;
+    }
+  }
+  if (crash === null && !traced || own > 0) return null;
+  return { checkId: input.checkId, fingerprint: null, signals: ["process-aborted"], cause: crash === null ? CAUSES["process-aborted"] : `${CAUSES["process-aborted"]} (${crash})`, lines: [...kills, ...frames] };
+}
+function excerpt2(line3, at) {
+  if (line3.length <= MAX_LINE_CHARS) return line3;
+  const start = Math.max(0, Math.min(at - (MAX_LINE_CHARS - 40), line3.length - (MAX_LINE_CHARS - 3)));
+  return start === 0 ? line3.slice(0, MAX_LINE_CHARS) : `...${line3.slice(start, start + MAX_LINE_CHARS - 3)}`;
+}
+function classifyCouldNotRun(input) {
+  const text2 = stripAnsi(input.output);
+  if (CODE_FAILURE.some((re) => re.test(text2))) return null;
+  const outside = (path) => !input.insideRoots.some((root) => within2(path.replace(/[.]+$/, ""), root));
+  const signals = [];
+  const lines = [];
+  for (const raw of text2.split("\n", MAX_SCANNED_LINES2)) {
+    const line3 = raw.replace(/\r$/, "").trim();
+    const deny2 = SEATBELT_DENY.exec(line3);
+    const denial = DENIAL.exec(line3);
+    let found = null;
+    if (deny2 && (!deny2[1].toLowerCase().startsWith("file-") || deny2[2] !== void 0 && isAbsolute14(deny2[2]) && outside(deny2[2]))) found = { signal: "sandbox-violation", at: deny2.index };
+    else if (denial && FS_CALL.test(line3) && (line3.match(ABSOLUTE_PATH) ?? []).some(outside)) found = { signal: "filesystem-denied", at: denial.index };
+    if (found === null) continue;
+    if (!signals.includes(found.signal)) signals.push(found.signal);
+    const shown = excerpt2(line3, found.at);
+    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown)) lines.push(shown);
+  }
+  if (signals.length === 0) return null;
+  return { checkId: input.checkId, fingerprint: null, signals, cause: signals.map((s) => CAUSES[s]).join("; "), lines };
+}
+var MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER, FS_CALL, DENIAL, SEATBELT_DENY, CODE_FAILURE;
+var init_environment_failure = __esm({
+  "src/evidence/environment-failure.ts"() {
+    "use strict";
+    init_fingerprint();
+    MAX_EVIDENCE_LINES = 3;
+    MAX_LINE_CHARS = 200;
+    MAX_SCANNED_LINES2 = 2e5;
+    VIOLATION = /<\/?sandbox_violations>|\bSandbox:.*\bdeny\(|X-Proxy-Error|Connection blocked by network allowlist/i;
+    EPERM = /\bEPERM\b/;
+    NOT_PERMITTED = /operation not permitted/i;
+    DENIED = /\bEACCES\b|permission denied/i;
+    ABSOLUTE_PATH = /(?<![\w./~<>-])\/[^\s'"`:,;()<>[\]{}|]+/g;
+    CAUSES = {
+      "sandbox-violation": "the sandbox reported a denied operation",
+      eperm: "an operation the sandbox does not permit failed with EPERM",
+      "operation-not-permitted": 'the operating system answered "operation not permitted"',
+      "eacces-outside-worktree": "permission was denied (EACCES) on a path outside the worktree",
+      "process-aborted": "the process was killed by a fatal signal before it printed anything of its own",
+      "start-failed": "the check could not be started",
+      "browser-isolation": "the browser could not start under sandbox-runtime",
+      "filesystem-denied": `the sandbox or the operating system refused a filesystem operation outside the check's checkout (EPERM, "operation not permitted")`
     };
-    defaultFetch = async (url, init) => {
-      const r = await fetch(url, init);
-      await r.body?.cancel().catch(() => {
-      });
-      return { status: r.status, ok: r.ok };
-    };
-    OSASCRIPT = ["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run"];
-    LOOPBACK = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
+    CRASH_SIGNALS = /* @__PURE__ */ new Set(["SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL", "SIGTRAP", "SIGSYS"]);
+    TRACE_HEADER = /^-{3,}\s*(Native|JavaScript) stack trace\s*-{3,}$/i;
+    JS_FRAME = /^\d+:\s+\S/;
+    TRACE_FRAME = /^\d+:\s+0x[0-9a-f]+(?:\s|$)/i;
+    KILLED_BY_SIGNAL = /^Process killed by signal: (SIG[A-Z0-9]+)$/;
+    RUNNER_FOOTER = /^\[orbit\] check=\S+ status=\S+ exit=(\S+)/;
+    FS_CALL = /\b(?:mkdir|mkdtemp|mkstemp|open|openat|creat|rename|unlink|rmdir|chmod|chown|lchown|symlink|link|copyfile|clonefile|scandir|opendir|access|stat|lstat|utimes?|truncate|shm_open|sem_open|realpath|readlink|mkfifo|bind|connect|touch|cp|mv|rm|ln|PermissionError|IOException|errno)\b/i;
+    DENIAL = /\bEPERM\b|operation not permitted/i;
+    SEATBELT_DENY = /\bdeny\(\d+\)\s+([a-z][\w-]*)(?:\s+(\S+))?/i;
+    CODE_FAILURE = [
+      /\berror (?:CS|FS|BC|TS)\d{4}\b/,
+      // C#, F#, Visual Basic, TypeScript
+      /\berror\[E\d{4}\]/,
+      // Rust
+      /:\d+(?::\d+)?: (?:fatal )?error:/,
+      // C, C++, Swift, Java
+      /\bSyntaxError\b/,
+      /\bAssertionError\b|\bAssert\.\w+\(\) Failure\b|\bassertion failed\b/i,
+      /\bFailed!\s+-\s+Failed:\s*[1-9]/,
+      // dotnet test
+      /^\s*(?:not ok \d+|FAIL\b|--- FAIL:|FAILED\s+\S+::)/m,
+      // TAP, Jest and Vitest, Go, pytest
+      /\btest result: FAILED\b/,
+      // cargo test
+      /^\s*(?:#|ℹ)\s*fail\s+[1-9]/m,
+      // node:test
+      /\b[1-9]\d*\s+(?:failed|failing|failures?)\b/i,
+      /\b[1-9]\d*\s+errors?\b|\b[1-9]\d* Error\(s\)/i
+      // compilers' and MSBuild's error counts
+    ];
   }
 });
 
 // src/evidence/report.ts
-import { basename as basename10, isAbsolute as isAbsolute14, join as join32, relative as relative3, sep as sep7 } from "node:path";
+import { basename as basename10, isAbsolute as isAbsolute15, join as join34, relative as relative3, sep as sep8 } from "node:path";
 function aggregateCheckConfigHash(snapshot2, checkIds) {
   const ids = [...new Set(checkIds)].sort();
   const map2 = {};
@@ -44658,7 +44384,7 @@ function evaluateEvidence(input) {
   const artifactPath = (p, fallback) => {
     if (runDir2 === void 0) return fallback;
     const r = relative3(runDir2, p);
-    return r === "" || r.startsWith("..") || isAbsolute14(r) ? p : r.split(sep7).join("/");
+    return r === "" || r.startsWith("..") || isAbsolute15(r) ? p : r.split(sep8).join("/");
   };
   const logName = (p) => artifactPath(p, basename10(p));
   const evidenceFor = (checkId) => {
@@ -44678,7 +44404,7 @@ function evaluateEvidence(input) {
       }
     }
     const worst = journeys.find((j) => j.status !== "PASSED");
-    const art = journeys.flatMap((j) => j.artifacts.map((a) => isAbsolute14(a) ? artifactPath(a, a) : a));
+    const art = journeys.flatMap((j) => j.artifacts.map((a) => isAbsolute15(a) ? artifactPath(a, a) : a));
     if (!worst) return { outcome: journeys.some((j) => j.flaky) ? "flaky" : "passed", status: "PASSED", artifacts: art };
     return { outcome: worst.status === "FAILED" || worst.status === "TIMEOUT" ? "failed" : "error", status: worst.status, artifacts: art };
   };
@@ -44814,14 +44540,14 @@ function evaluateEvidence(input) {
   return { report: report2, failReasons: fail3, incompleteReasons: incomplete };
 }
 function reportPath(runDir2, candidate) {
-  return join32(candidateEvidenceDir(runDir2, candidate.seq), "report.json");
+  return join34(candidateEvidenceDir(runDir2, candidate.seq), "report.json");
 }
 function saveEvidenceReport(opts) {
   const path = reportPath(opts.runDir, opts.candidate);
   atomicWriteJson(path, opts.report, 420);
   return insertEvidenceReport(opts.db, { candidateId: opts.candidate.id, report: opts.report, reportPath: path }, opts.clock);
 }
-var init_report = __esm({
+var init_report2 = __esm({
   "src/evidence/report.ts"() {
     "use strict";
     init_fsx();
@@ -44886,24 +44612,7 @@ var init_freshness = __esm({
     init_errors();
     init_snapshot();
     init_events();
-    init_report();
-  }
-});
-
-// src/inquisition/actors.ts
-function isHumanActor(by) {
-  const trimmed = by.trim();
-  return trimmed !== "" && !NON_HUMAN.test(trimmed);
-}
-function answerDecisionId(questionId) {
-  return `dec-answer-${questionId}`;
-}
-var NON_HUMAN, ANSWER_DECISION_KIND;
-var init_actors = __esm({
-  "src/inquisition/actors.ts"() {
-    "use strict";
-    NON_HUMAN = /^(planner|implementer|verifier|reviewer|inquisitor|inquisition|curator|worker|wrk|model|agent|subagent|assistant|claude|codex|gpt|gemini|controller|scheduler|recovery|delivery|evidence|routing|orbit|system|service|daemon|shim|hook|llm|ai|bot|fake)([:\-_/ ].*)?$/i;
-    ANSWER_DECISION_KIND = "inquisition.answer";
+    init_report2();
   }
 });
 
@@ -45258,10 +44967,10 @@ function baselineExceptionProposal(failure, reason) {
   if (failure.fingerprint === null || failure.fingerprint.trim() === "") {
     throw new OrbitError("CONTRACT_INVALID", `check "${failure.checkId}" failed on the base revision without a fingerprint, so it cannot be excepted`);
   }
-  const excerpt2 = failure.excerpt?.trim();
+  const excerpt3 = failure.excerpt?.trim();
   return {
     change: { op: "accept_baseline_failure", check_id: failure.checkId, fingerprint: failure.fingerprint, reason: reason?.trim() || `check ${failure.checkId} already fails on the base revision` },
-    evidence: `the baseline run of check ${failure.checkId} failed with fingerprint ${failure.fingerprint}${excerpt2 ? `: ${excerpt2.slice(0, 400)}` : ""}`,
+    evidence: `the baseline run of check ${failure.checkId} failed with fingerprint ${failure.fingerprint}${excerpt3 ? `: ${excerpt3.slice(0, 400)}` : ""}`,
     reason: reason?.trim() || `the failure predates this run; accepting it lets the run be judged on its own change, and only while the check keeps failing the same way`
   };
 }
@@ -45278,61 +44987,25 @@ var init_amend = __esm({
   }
 });
 
-// src/inquisition/heuristics.ts
-function riskCategoriesInText(text2) {
-  return RISK_CATEGORIES.filter((c) => TEXT[c].test(text2));
+// src/inquisition/actors.ts
+function isHumanActor(by) {
+  const trimmed = by.trim();
+  return trimmed !== "" && !NON_HUMAN.test(trimmed);
 }
-function riskCategoriesInPaths(paths) {
-  const out = /* @__PURE__ */ new Map();
-  for (const p of paths) {
-    for (const c of RISK_CATEGORIES) {
-      if (PATH[c].test(p)) out.set(c, [...out.get(c) ?? [], p]);
-    }
-  }
-  return out;
+function answerDecisionId(questionId) {
+  return `dec-answer-${questionId}`;
 }
-function riskCategoriesInDiff(diff) {
-  const out = /* @__PURE__ */ new Map();
-  for (const line3 of diff.split("\n")) {
-    if (!line3.startsWith("+") || line3.startsWith("+++")) continue;
-    const body = line3.slice(1);
-    const words = body.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_+/g, " ");
-    for (const c of riskCategoriesInText(words)) {
-      const hits = out.get(c) ?? [];
-      if (hits.length < 5) hits.push(redact(body.trim()).slice(0, 120));
-      out.set(c, hits);
-    }
-  }
-  return out;
-}
-function mentionsIrreversible(text2) {
-  return /\b(irreversibl\w*|cannot be undone|can't be undone|permanent(?:ly)?|hard[- ]delete\w*|drop table|data loss|destroy\w*|purge\w*)\b/i.test(text2);
-}
-var RISK_CATEGORIES, TEXT, PATH;
-var init_heuristics = __esm({
-  "src/inquisition/heuristics.ts"() {
+var NON_HUMAN, ANSWER_DECISION_KIND;
+var init_actors = __esm({
+  "src/inquisition/actors.ts"() {
     "use strict";
-    init_redact();
-    RISK_CATEGORIES = ["security", "privacy", "billing", "data", "compatibility"];
-    TEXT = {
-      security: /\b(authn|authz|authenticat\w*|authoriz\w*|oauth|jwt|passwords?|passwd|secrets?|credentials?|api[ _-]?keys?|permissions?|acl|rbac|crypto\w*|encrypt\w*|decrypt\w*|cors|csrf|xss|sql injection|sessions?|cookies?|sanitiz\w*|tls|certificates?|access tokens?|bearer|log[- ]?in|log[- ]?out|sign[- ]?in|sign[- ]?out|privileges?|privilege escalation)\b/i,
-      privacy: /\b(pii|personal (?:data|information)|gdpr|ccpa|consent|anonymi[sz]\w*|pseudonymi[sz]\w*|data subjects?|email addresses?|phone numbers?|date of birth|ssn|tracking|telemetry|analytics|geolocation|ip addresses?)\b/i,
-      billing: /\b(billing|invoices?|payments?|charges?|charged|pric(?:e|es|ing)|subscriptions?|refunds?|currency|currencies|taxes|tax rates?|checkout|credit cards?|payouts?|proration|quotas?|metering|overages?|fees?)\b/i,
-      data: /\b(migrations?|schema changes?|alter table|drop column|rename column|drop table|delete from|truncate|backfill\w*|irreversible|data loss|hard[- ]delete\w*|purge\w*|destructive|retention polic\w*|cascade delete)\b/i,
-      compatibility: /\b(breaking changes?|backwards?[- ]compat\w*|public api|deprecat\w*|api versions?|semver|wire format|on-disk format|file format|rename[sd]? exports?)\b/i
-    };
-    PATH = {
-      security: /(^|\/)(auth|authn|authz|security|crypto|permissions?|acl|rbac|secrets?|iam)(\/|\.|-|_|$)/i,
-      privacy: /(^|\/)[^/]*(privacy|gdpr|consent|pii)[^/]*(\/|$)/i,
-      billing: /(^|\/)[^/]*(billing|payments?|invoices?|checkout|subscriptions?|pricing)[^/]*(\/|$)/i,
-      data: /(^|\/)(migrations?|seeds?)(\/|$)|\.sql$|(^|\/)schema\.[a-z]+$/i,
-      compatibility: /\.proto$|(^|\/)(openapi|swagger)[^/]*\.(ya?ml|json)$|(^|\/)api\/v\d+(\/|$)/i
-    };
+    NON_HUMAN = /^(planner|implementer|verifier|reviewer|inquisitor|inquisition|curator|worker|wrk|model|agent|subagent|assistant|claude|codex|gpt|gemini|controller|scheduler|recovery|delivery|evidence|routing|orbit|system|service|daemon|shim|hook|llm|ai|bot|fake)([:\-_/ ].*)?$/i;
+    ANSWER_DECISION_KIND = "inquisition.answer";
   }
 });
 
 // src/inquisition/baseline-exception.ts
-import { join as join33 } from "node:path";
+import { join as join35 } from "node:path";
 function keyOf(runId, checkId, fingerprint) {
   return hashObject({ run: runId, check: checkId, fingerprint }).slice(7, 19);
 }
@@ -45351,8 +45024,8 @@ function raiseBaselineExceptionQuestions(ctx, input) {
       continue;
     }
     const fingerprint = f.fingerprint;
-    const excerpt2 = f.excerpt === null ? null : redact(f.excerpt);
-    const proposal = baselineExceptionProposal({ checkId: f.checkId, fingerprint, excerpt: excerpt2 });
+    const excerpt3 = f.excerpt === null ? null : redact(f.excerpt);
+    const proposal = baselineExceptionProposal({ checkId: f.checkId, fingerprint, excerpt: excerpt3 });
     const qid = baselineQuestionId(ctx.runId, f.checkId, fingerprint);
     const question = findQuestion(ctx.db, qid) ?? insertQuestion(
       ctx.db,
@@ -45455,7 +45128,7 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
         outcome("refused", `the policy snapshot could not be verified: ${err instanceof Error ? err.message : String(err)}`);
         break;
       }
-      const baseline = readJsonIfExists(join33(ctx.runDir, BASELINE_FILE));
+      const baseline = readJsonIfExists(join35(ctx.runDir, BASELINE_FILE2));
       const proposal = data.proposal;
       let next;
       let record;
@@ -45518,10 +45191,10 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
   }
   const row = load();
   const contract = row.contract_json === null ? null : JSON.parse(row.contract_json);
-  if (contract && outcomes.some((o) => o.status === "applied" || o.status === "already-applied")) atomicWriteJson(join33(ctx.runDir, "contract.json"), contract);
+  if (contract && outcomes.some((o) => o.status === "applied" || o.status === "already-applied")) atomicWriteJson(join35(ctx.runDir, "contract.json"), contract);
   return { contract, outcomes };
 }
-var BASELINE_EXCEPTION_REQUEST_KIND, BASELINE_APPROVE, BASELINE_REJECT, BASELINE_FILE, MAX_CAS_ATTEMPTS;
+var BASELINE_EXCEPTION_REQUEST_KIND, BASELINE_APPROVE, BASELINE_REJECT, BASELINE_FILE2, MAX_CAS_ATTEMPTS;
 var init_baseline_exception = __esm({
   "src/inquisition/baseline-exception.ts"() {
     "use strict";
@@ -45539,8 +45212,252 @@ var init_baseline_exception = __esm({
     BASELINE_EXCEPTION_REQUEST_KIND = "baseline.exception-request";
     BASELINE_APPROVE = "Approve";
     BASELINE_REJECT = "Reject";
-    BASELINE_FILE = "baseline.json";
+    BASELINE_FILE2 = "baseline.json";
     MAX_CAS_ATTEMPTS = 4;
+  }
+});
+
+// src/controller/steps/baseline-questions.ts
+import { join as join36 } from "node:path";
+function openBaselineRequests(ctx) {
+  const out = [];
+  for (const d of listDecisions(ctx.db, ctx.run.id, { kind: BASELINE_EXCEPTION_REQUEST_KIND })) {
+    const req = d.data;
+    if (findQuestion(ctx.db, req.question_id)?.status === "open") out.push(req);
+  }
+  return out;
+}
+function isEnvironmentFailure(ctx, req) {
+  const failure = readJsonIfExists(join36(ctx.runDir, BASELINE_FILE))?.failures.find((f) => f.checkId === req.check_id);
+  return classifyEnvironmentFailure({ checkId: req.check_id, fingerprint: req.fingerprint, baselineFingerprint: req.fingerprint, output: failure?.excerpt ?? "", insideRoots: [] }) !== null;
+}
+function settleExpectedFlips(ctx, contract) {
+  const flipped = [];
+  for (const req of openBaselineRequests(ctx)) {
+    const criteria = contract.acceptance_criteria.filter((c) => (c.check_ids ?? []).includes(req.check_id)).map((c) => c.id);
+    if (criteria.length === 0 || isEnvironmentFailure(ctx, req)) continue;
+    withdrawQuestion(ctx.db, req.question_id, `check ${req.check_id} is the proof of ${criteria.join(", ")}: it is expected to flip to passing, not to be excepted`, ctx.clock);
+    decide2(ctx, {
+      id: `dec-${ctx.run.id}-baseline-flip-${req.question_id}`,
+      kind: EXPECTED_TO_FLIP_KIND,
+      summary: `check ${req.check_id} fails on the base revision and is the proof of ${criteria.join(", ")}: expected to flip to passing, so no baseline exception is asked about`,
+      data: { check_id: req.check_id, fingerprint: req.fingerprint, base_revision: req.base_revision, criteria, question_id: req.question_id }
+    });
+    flipped.push(req.check_id);
+  }
+  return flipped;
+}
+function closeMootBaselineQuestions(ctx) {
+  for (const req of openBaselineRequests(ctx)) {
+    withdrawQuestion(ctx.db, req.question_id, `the run succeeded without a baseline exception for check ${req.check_id}: the question is moot`, ctx.clock);
+  }
+}
+var EXPECTED_TO_FLIP_KIND;
+var init_baseline_questions = __esm({
+  "src/controller/steps/baseline-questions.ts"() {
+    "use strict";
+    init_fsx();
+    init_baseline();
+    init_environment_failure();
+    init_baseline_exception();
+    init_store4();
+    init_decisions();
+    init_common();
+    EXPECTED_TO_FLIP_KIND = "baseline.expected-to-flip";
+  }
+});
+
+// src/controller/worktree-cleanup.ts
+import { existsSync as existsSync28, readdirSync as readdirSync8, rmSync as rmSync9 } from "node:fs";
+import { join as join37 } from "node:path";
+async function hasUnsavedEdits(worktree, repoRoot) {
+  const admin = await adminDirFor(repoRoot, worktree);
+  const out = await git2(admin.worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"], { env: { GIT_DIR: admin.gitDir, GIT_WORK_TREE: admin.worktree, GIT_LITERAL_PATHSPECS: "1" } });
+  return out.split("\0").some((e) => e.length > 3 && !/(^|\/)(\.DS_Store|Thumbs\.db)$/.test(e.slice(3)) && !e.slice(3).startsWith("node_modules/"));
+}
+async function releaseRunWorktrees(ctx) {
+  const root = runWorktreeRoot(ctx);
+  if (!existsSync28(root)) return;
+  const repoRoot = ctx.run.repoRoot;
+  const kept = [];
+  const removed = [];
+  const implementer = ctx.run.worktreePath;
+  for (const name of readdirSync8(root)) {
+    const dir = join37(root, name);
+    try {
+      if (implementer && dir === implementer && ctx.run.baseRevision) {
+        if (await hasUnsavedEdits(dir, repoRoot)) {
+          await snapshotCandidate({ db: ctx.db, clock: ctx.clock, repoRoot, worktree: dir, runId: ctx.run.id, baseRev: ctx.run.baseRevision, attempt: Math.max(1, ctx.ledger?.state("implementation_attempts").used ?? 1), workerId: null });
+        }
+      }
+      await cleanupCandidateCheckout(repoRoot, dir);
+      removed.push(name);
+    } catch (err) {
+      kept.push(name);
+      ctx.log.warn("could not remove a finished run's worktree; it is kept", { run_id: ctx.run.id, worktree: name, error: messageOf(err) });
+    }
+  }
+  if (kept.length === 0) rmSync9(root, { recursive: true, force: true });
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, WORKTREES_RELEASED_EVENT, ctx.ownerId, { removed, kept }, ctx.clock.now()));
+}
+var WORKTREES_RELEASED_EVENT;
+var init_worktree_cleanup = __esm({
+  "src/controller/worktree-cleanup.ts"() {
+    "use strict";
+    init_candidate();
+    init_git();
+    init_context2();
+    init_workers2();
+    init_events();
+    WORKTREES_RELEASED_EVENT = "worktrees.released";
+  }
+});
+
+// src/review/stale.ts
+function findStaleReviews(db, runId, current) {
+  return listReviews(db, runId).filter((r) => r.treeHash !== current.treeHash);
+}
+function invalidateStaleReviews(db, input, clock) {
+  const reason = `candidate tree is now ${input.current.treeHash}${input.cause ? ` (${input.cause})` : ""}; a review of another tree authorizes nothing`;
+  const stale = findStaleReviews(db, input.runId, input.current);
+  if (stale.length === 0) return [];
+  const ids = stale.map((r) => r.id).sort();
+  recordDecision(
+    db,
+    input.runDir,
+    {
+      id: `dec-review-invalidated-${sha256(canonicalJson([input.runId, input.current.treeHash, ids])).slice(0, 12)}`,
+      runId: input.runId,
+      kind: "review.invalidated",
+      summary: `${stale.length} review(s) invalidated: ${reason}`.slice(0, 500),
+      data: { reviews: stale.map((r) => ({ id: r.id, provider: r.provider, tree_hash: r.treeHash, verdict: r.verdict })), current_tree: input.current.treeHash, cause: input.cause ?? null }
+    },
+    clock
+  );
+  const invalidated = db.tx(() => {
+    const out = [];
+    for (const r of stale) if (markReviewInvalidated(db, r.id, reason, clock)) out.push(r);
+    return out;
+  });
+  return invalidated;
+}
+function reviewGate(db, input) {
+  const reasons = [];
+  const { config } = input.snapshot;
+  const current = listReviews(db, input.runId, { treeHash: input.treeHash });
+  const security = input.security ?? readSecurityPolicy(input.snapshot);
+  const lapsed = /* @__PURE__ */ new Set();
+  const all = listFindings(db, input.runId).map((f) => {
+    if (f.status !== "excepted" || exceptionStillApplies(f, security, input.now)) return f;
+    lapsed.add(f.id);
+    return { ...f, status: "open" };
+  });
+  if (current.length === 0) {
+    const stale = findStaleReviews(db, input.runId, { treeHash: input.treeHash });
+    reasons.push(stale.length > 0 ? `no review of tree ${input.treeHash}; ${stale.length} review(s) exist only for other trees and authorize nothing` : `no review of tree ${input.treeHash}`);
+  }
+  const cleared = [];
+  for (const r of current) {
+    if (r.verdict === "APPROVE") {
+      cleared.push(r);
+      continue;
+    }
+    const own = all.filter((f) => f.reviewId === r.id);
+    const closers = r.verdict === "BLOCK" ? CLEARS_BLOCK : CLEARS_REPAIR;
+    const open2 = own.filter((f) => !closers.includes(f.status));
+    if (own.length === 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} with no findings to resolve`);
+    else if (open2.length > 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} and ${open2.length} of its finding(s) are unresolved (${open2.map((f) => `${f.externalId ?? f.id} ${f.status}`).join(", ")})`);
+    else cleared.push(r);
+  }
+  for (const f of blockingUnresolved(all, input.snapshot, security, lapsed)) {
+    const why = lapsed.has(f.id) ? " (its policy exception has expired or no longer covers it)" : "";
+    reasons.push(`finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}) blocks delivery${why}: ${f.claim.slice(0, 120)}`);
+  }
+  if (config.review.independent_provider_required && cleared.length > 0 && input.implementerProvider === void 0) {
+    reasons.push("independent review is required but the implementer provider was not supplied, so independence cannot be shown");
+  } else if (config.review.independent_provider_required && cleared.length > 0 && !cleared.some((r) => r.provider !== input.implementerProvider)) {
+    reasons.push(`independent review is required but every clearing review is from "${input.implementerProvider}", the implementer's provider`);
+  }
+  if (current.length > 0 && cleared.length === 0 && reasons.length === 0) reasons.push("no review cleared this tree");
+  return { ok: reasons.length === 0, reasons, cleared };
+}
+function exceptionStillApplies(f, security, now) {
+  const index = f.resolutionJson?.exception?.index;
+  const exception = typeof index === "number" ? security.exceptions[index] : void 0;
+  return exception !== void 0 && exceptionApplies(exception, f, now);
+}
+function blockingUnresolved(findings, snapshot2, security, lapsed) {
+  return findings.filter((f) => {
+    if (f.status !== "open" && f.status !== "claim_pending" && f.status !== "accepted") return false;
+    const flag = f.resolutionJson?.blocking;
+    if (typeof flag === "boolean" && !lapsed.has(f.id)) return flag;
+    return severityBlocks(snapshot2, f.severity, isSecurityFinding({ category: f.category, externalId: f.externalId }), security);
+  });
+}
+var CLEARS_REPAIR, CLEARS_BLOCK;
+var init_stale = __esm({
+  "src/review/stale.ts"() {
+    "use strict";
+    init_errors();
+    init_hash();
+    init_decisions();
+    init_store3();
+    init_resolve();
+    CLEARS_REPAIR = ["rejected", "excepted", "advisory", "resolved"];
+    CLEARS_BLOCK = ["rejected", "excepted", "resolved"];
+  }
+});
+
+// src/inquisition/heuristics.ts
+function riskCategoriesInText(text2) {
+  return RISK_CATEGORIES.filter((c) => TEXT[c].test(text2));
+}
+function riskCategoriesInPaths(paths) {
+  const out = /* @__PURE__ */ new Map();
+  for (const p of paths) {
+    for (const c of RISK_CATEGORIES) {
+      if (PATH[c].test(p)) out.set(c, [...out.get(c) ?? [], p]);
+    }
+  }
+  return out;
+}
+function riskCategoriesInDiff(diff) {
+  const out = /* @__PURE__ */ new Map();
+  for (const line3 of diff.split("\n")) {
+    if (!line3.startsWith("+") || line3.startsWith("+++")) continue;
+    const body = line3.slice(1);
+    const words = body.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_+/g, " ");
+    for (const c of riskCategoriesInText(words)) {
+      const hits = out.get(c) ?? [];
+      if (hits.length < 5) hits.push(redact(body.trim()).slice(0, 120));
+      out.set(c, hits);
+    }
+  }
+  return out;
+}
+function mentionsIrreversible(text2) {
+  return /\b(irreversibl\w*|cannot be undone|can't be undone|permanent(?:ly)?|hard[- ]delete\w*|drop table|data loss|destroy\w*|purge\w*)\b/i.test(text2);
+}
+var RISK_CATEGORIES, TEXT, PATH;
+var init_heuristics = __esm({
+  "src/inquisition/heuristics.ts"() {
+    "use strict";
+    init_redact();
+    RISK_CATEGORIES = ["security", "privacy", "billing", "data", "compatibility"];
+    TEXT = {
+      security: /\b(authn|authz|authenticat\w*|authoriz\w*|oauth|jwt|passwords?|passwd|secrets?|credentials?|api[ _-]?keys?|permissions?|acl|rbac|crypto\w*|encrypt\w*|decrypt\w*|cors|csrf|xss|sql injection|sessions?|cookies?|sanitiz\w*|tls|certificates?|access tokens?|bearer|log[- ]?in|log[- ]?out|sign[- ]?in|sign[- ]?out|privileges?|privilege escalation)\b/i,
+      privacy: /\b(pii|personal (?:data|information)|gdpr|ccpa|consent|anonymi[sz]\w*|pseudonymi[sz]\w*|data subjects?|email addresses?|phone numbers?|date of birth|ssn|tracking|telemetry|analytics|geolocation|ip addresses?)\b/i,
+      billing: /\b(billing|invoices?|payments?|charges?|charged|pric(?:e|es|ing)|subscriptions?|refunds?|currency|currencies|taxes|tax rates?|checkout|credit cards?|payouts?|proration|quotas?|metering|overages?|fees?)\b/i,
+      data: /\b(migrations?|schema changes?|alter table|drop column|rename column|drop table|delete from|truncate|backfill\w*|irreversible|data loss|hard[- ]delete\w*|purge\w*|destructive|retention polic\w*|cascade delete)\b/i,
+      compatibility: /\b(breaking changes?|backwards?[- ]compat\w*|public api|deprecat\w*|api versions?|semver|wire format|on-disk format|file format|rename[sd]? exports?)\b/i
+    };
+    PATH = {
+      security: /(^|\/)(auth|authn|authz|security|crypto|permissions?|acl|rbac|secrets?|iam)(\/|\.|-|_|$)/i,
+      privacy: /(^|\/)[^/]*(privacy|gdpr|consent|pii)[^/]*(\/|$)/i,
+      billing: /(^|\/)[^/]*(billing|payments?|invoices?|checkout|subscriptions?|pricing)[^/]*(\/|$)/i,
+      data: /(^|\/)(migrations?|seeds?)(\/|$)|\.sql$|(^|\/)schema\.[a-z]+$/i,
+      compatibility: /\.proto$|(^|\/)(openapi|swagger)[^/]*\.(ya?ml|json)$|(^|\/)api\/v\d+(\/|$)/i
+    };
   }
 });
 
@@ -45673,9 +45590,9 @@ function persistQuestion(db, runId, mode, q, clock, opts = {}) {
   return db.tx(() => {
     const all = listQuestions(db, runId);
     const asked = new Set(q.affected_work.map((w) => w.trim()).filter((w) => AC_ID.test(w)));
-    const open = all.find((o) => o.status === "open" && sameAsk(o.question, q.question) && (optionKey(o.options) === optionKey(q.options) || o.affected.some((a) => asked.has(a))));
-    if (open) {
-      return { question: widenQuestionAffected(db, open.id, q.affected_work.map((w) => w.trim()), clock, opts.actor ?? "controller"), created: false, classification };
+    const open2 = all.find((o) => o.status === "open" && sameAsk(o.question, q.question) && (optionKey(o.options) === optionKey(q.options) || o.affected.some((a) => asked.has(a))));
+    if (open2) {
+      return { question: widenQuestionAffected(db, open2.id, q.affected_work.map((w) => w.trim()), clock, opts.actor ?? "controller"), created: false, classification };
     }
     const settled = all.find((o) => o.status === "answered" && settles(o, q));
     if (settled) return { question: settled, created: false, classification };
@@ -45701,7 +45618,7 @@ function persistQuestion(db, runId, mode, q, clock, opts = {}) {
     return { question, created: true, classification };
   });
 }
-function answerQuestion(db, runDir2, id, answer, by, clock, opts = {}) {
+function answerQuestion(db, runDir2, id, answer, by, clock) {
   if (!isHumanActor(by)) throw new OrbitError("POLICY_DENIED", `"${by}" cannot answer a question: decisions come from a person, not a model or worker`, { by });
   const text2 = answer.trim();
   if (text2 === "") throw new OrbitError("SCHEMA_INVALID", "an answer cannot be empty");
@@ -45717,7 +45634,7 @@ function answerQuestion(db, runDir2, id, answer, by, clock, opts = {}) {
       runId: question.runId,
       kind: ANSWER_DECISION_KIND,
       summary: `${matched ? `chose "${matched.label}"` : "answered"}: ${question.question}`,
-      data: { question_id: id, answer: stored, chosen_option: matched?.label ?? null, free_text: matched === null, answered_by: by.trim(), material: question.material, affected: question.affected, ...opts.provenance ? { provenance: opts.provenance } : {} }
+      data: { question_id: id, answer: stored, chosen_option: matched?.label ?? null, free_text: matched === null, answered_by: by.trim(), material: question.material, affected: question.affected }
     },
     clock,
     { actor: by.trim() }
@@ -45775,6 +45692,261 @@ var init_questions = __esm({
     ];
     NO_EVIDENCE = /^\s*(none|n\/a|na|nothing|unknown|tbd|todo|-+|\.+)\s*\.?\s*$/i;
     AC_ID = /^AC-[0-9]+$/;
+  }
+});
+
+// src/controller/gates.ts
+import { realpathSync as realpathSync13 } from "node:fs";
+function result(gate, reasons, evidence, notes, details, unverified = false) {
+  const status2 = reasons.length > 0 ? "fail" : unverified ? "unverified" : "pass";
+  return { gate, status: status2, passed: status2 === "pass", reasons, evidence, notes, onFailure: FAILURE_BEHAVIOUR[gate], details };
+}
+function intakeGate(input) {
+  const { snapshot: snapshot2, run } = input;
+  const reasons = [];
+  const evidence = [`policy ${run.policyHash}`];
+  let repo;
+  try {
+    repo = realpathSync13(run.repoRoot);
+  } catch {
+    repo = run.repoRoot;
+    reasons.push(`repository ${run.repoRoot} does not exist`);
+  }
+  if (repo !== snapshot2.repo_root) reasons.push(`the run's repository ${repo} is not the repository the policy authorizes (${snapshot2.repo_root})`);
+  if (run.mode !== snapshot2.config.mode) reasons.push(`the run's mode ${run.mode} differs from the frozen policy mode ${snapshot2.config.mode}`);
+  if (snapshotHash(snapshot2) !== run.policyHash) reasons.push("the policy snapshot does not match the hash recorded for the run");
+  const limits = snapshot2.config.scheduler.hard_limits;
+  for (const [k, v] of Object.entries(limits)) if (!(typeof v === "number" && v > 0)) reasons.push(`hard limit ${k} must be positive`);
+  if (snapshot2.config.scope.allowed_paths.length === 0) reasons.push("the policy allows no paths, so no implementation is authorized");
+  const environment = input.run.environment ?? null;
+  if (environment !== null) {
+    const why = releaseEnvironmentProblem(snapshot2.config, environment);
+    if (why) reasons.push(`the run names release environment ${JSON.stringify(environment)}, which cannot be used: ${why}`);
+    else evidence.push(`release environment ${environment}`);
+  }
+  const problems = input.contract === void 0 ? [] : contractProblems(input.contract, snapshot2, { policyHash: run.policyHash });
+  reasons.push(...problems.map((p) => `contract: ${p}`));
+  if (input.contract !== void 0 && problems.length === 0) {
+    const c = input.contract;
+    evidence.push(`contract ${c.task_id}: ${c.acceptance_criteria.length} criteria, ${c.required_check_ids.length} required checks, scope ${c.allowed_paths.join(", ")}`);
+    const mandatory = c.acceptance_criteria.filter((a) => a.mandatory);
+    if (mandatory.length === 0) reasons.push("the contract has no mandatory acceptance criterion, so success could not be measured");
+    for (const a of mandatory) {
+      if (a.proof.length === 0) reasons.push(`${a.id} names no proof`);
+      const byCheck = (a.check_ids ?? []).length > 0;
+      const byUi = a.ui === true && (snapshot2.config.ui?.journey_check_ids.length ?? 0) > 0;
+      if (!byCheck && !byUi) reasons.push(`${a.id} is not measurable: it cites no trusted check${a.ui ? " and the policy defines no UI journeys" : ""}`);
+    }
+    if (c.allowed_paths.length === 0) reasons.push("the contract allows no paths");
+    if ((c.delivery.environment ?? null) !== environment) {
+      reasons.push(`the contract's delivery.environment (${c.delivery.environment ?? "none"}) is not the release environment the run names (${environment ?? "none"})`);
+    }
+  }
+  return result("intake", reasons, evidence, [], { problems });
+}
+function environmentGate(input) {
+  const reasons = [];
+  const evidence = [];
+  const notes = [];
+  let blockedProvider = null;
+  let code2 = null;
+  const unattended = UNATTENDED_MODES.has(input.mode);
+  if ("error" in input.isolation) {
+    reasons.push(`isolation is unavailable: ${input.isolation.error}`);
+    code2 = "ISOLATION_UNAVAILABLE";
+  } else {
+    const iso2 = input.isolation;
+    evidence.push(`isolation ${iso2.kind}: ${iso2.detail}`);
+    if (iso2.kind === "none") {
+      if (unattended && input.snapshot.config.isolation.allow_unisolated !== true) {
+        reasons.push(`unattended ${input.mode} execution needs isolation; the policy selects none`);
+        code2 = "ISOLATION_UNAVAILABLE";
+      } else {
+        notes.push("no isolation: workers and checks run without an OS sandbox and without network egress controls (isolation.allow_unisolated)");
+      }
+    } else if (!iso2.available) {
+      reasons.push(`${iso2.kind} isolation is unavailable: ${iso2.detail}`);
+      code2 = "ISOLATION_UNAVAILABLE";
+    } else if (iso2.kind === "sandbox-runtime") {
+      notes.push("sandbox-runtime limits filesystem writes and network egress but not CPU, memory or process count");
+    }
+    const unenforced = resourceLimitRefusals(input.snapshot.config.isolation, iso2.kind);
+    if (unenforced.length > 0) {
+      reasons.push(...unenforced.map((u) => `${u}; ${RESOURCE_LIMIT_FIX}`));
+      code2 ??= "ISOLATION_UNAVAILABLE";
+    }
+  }
+  for (const c of input.credentials) {
+    evidence.push(`credentials ${c.provider}: ${c.verdict}${c.status ? ` (${c.status.state}${c.status.method ? `, ${c.status.method}` : ""})` : ""}`);
+    if (c.verdict === "blocked") {
+      reasons.push(`${c.provider} credentials are ${c.status?.state ?? "not usable"}${c.status?.detail ? `: ${c.status.detail}` : ""}`);
+      blockedProvider ??= c.provider;
+      code2 ??= c.status?.state === "missing" ? "AUTH_MISSING" : "AUTH_EXPIRED";
+    } else if (c.verdict === "error") {
+      reasons.push(`${c.provider} could not be checked: ${c.error ?? "unknown error"}`);
+      code2 ??= "PROVIDER_UNAVAILABLE";
+    } else if (c.verdict === "unverified") {
+      notes.push(`${c.provider} credentials are present but unverified until a request succeeds`);
+    }
+  }
+  if (input.delivery) {
+    reasons.push(`delivery: ${input.delivery.summary}; ${input.delivery.fix}`);
+    code2 ??= input.delivery.code;
+  }
+  if (input.reviewer) {
+    if (input.reviewer.decision === "BLOCK") {
+      reasons.push(`independent review: ${input.reviewer.reason}`);
+      code2 ??= input.reviewer.code;
+    } else {
+      evidence.push(`reviewer ${input.reviewer.provider}/${input.reviewer.model ?? "default"} (${input.reviewer.independent ? "independent" : "same provider"})`);
+    }
+  }
+  return result("environment", reasons, evidence, notes, { blockedProvider, code: code2 });
+}
+function baselineGate(report2) {
+  const reasons = [];
+  const notes = [];
+  const evidence = [`baseline of ${report2.baseRevision} (tree ${report2.baseTree}): ${report2.checks.length} check(s)`];
+  if (!report2.install.skipped && !report2.install.ok) reasons.push(`the locked dependency install failed on the base revision${report2.install.reason ? `: ${report2.install.reason}` : ""}`);
+  for (const f of report2.failures) notes.push(`pre-existing failure on the base revision: ${f.checkId}${f.fingerprint ? ` (${f.fingerprint})` : ""}`);
+  for (const n2 of report2.auditNotes ?? []) notes.push(n2);
+  if (!report2.complete) notes.push("the baseline is incomplete: some checks could not produce a decisive result on the base revision");
+  return result("baseline", reasons, evidence, notes, { failures: report2.failures }, !report2.complete && reasons.length === 0);
+}
+function implementationScopeGate(scope, snapshot2) {
+  const reasons = [];
+  const repairable = [];
+  const deps = snapshot2.config.dependencies;
+  if (scope.forbidden_paths_changed.length > 0) reasons.push(`protected paths changed: ${scope.forbidden_paths_changed.join(", ")}`);
+  if (scope.symlinks_escaping.length > 0) reasons.push(`symlinks escape the worktree: ${scope.symlinks_escaping.join(", ")}`);
+  const policyViolation = reasons.length > 0;
+  const add = (why) => {
+    reasons.push(why);
+    repairable.push(why);
+  };
+  if (scope.out_of_scope_paths_changed.length > 0) add(`paths outside the authorized scope changed: ${scope.out_of_scope_paths_changed.join(", ")}`);
+  if (!scope.within_size_limits) add(`the change is over the size limits (${scope.changed_files} files, ${scope.changed_lines} lines)`);
+  if (scope.lockfile_changed && !deps.change_lockfile) add("a lockfile changed, which the policy does not allow");
+  if (scope.dependency_manifest_changed.length > 0 && !deps.add_packages) add(`dependency manifests changed: ${scope.dependency_manifest_changed.join(", ")}`);
+  const evidence = [`${scope.changed_files} file(s), ${scope.changed_lines} line(s) changed`];
+  const notes = scope.weakening_signals.map((w) => `possible oracle weakening in ${w.path}: ${w.signal} (${w.detail})`);
+  return result("implementation", reasons, evidence, notes, { policyViolation, repairable });
+}
+function staticSecurityGate(input) {
+  const reasons = [];
+  const notes = [];
+  const evidence = [`secret scan: ${input.scan.note}; ${input.scan.files} file(s) scanned (${input.scan.reportPath})`];
+  if (!input.scan.completed) notes.push("the secret scan did not complete");
+  if (input.scan.findings.length > 0) {
+    reasons.push(`the secret scan found ${input.scan.findings.length} potential secret(s): ${input.scan.findings.slice(0, 10).map((f) => `${f.file}${f.line ? `:${f.line}` : ""} (${f.rule})`).join(", ")}`);
+  }
+  if (input.scan.scanner === "builtin") notes.push(`secret scan used built-in patterns only: ${input.scan.note}`);
+  if (input.sast.length === 0) {
+    notes.push("static analysis (SAST) is unverified: the policy defines no SAST check");
+  } else {
+    for (const s of input.sast) {
+      evidence.push(`SAST ${s.checkId}: ${s.status ?? "not run"}`);
+      if (s.status === "FAILED") reasons.push(`SAST check ${s.checkId} failed`);
+      else if (s.status !== "PASSED") notes.push(`SAST check ${s.checkId} is unverified (${s.status ?? "not run"})`);
+    }
+  }
+  const unverified = input.sast.length === 0 || !input.scan.completed || input.sast.some((s) => s.status !== "PASSED");
+  return result("static_security", reasons, evidence, notes, { secrets: input.scan.findings.length, sastDefined: input.sast.length > 0 }, unverified);
+}
+function behaviourGate(evaluation) {
+  const r = evaluation.report;
+  const evidence = r.checks.map((c) => `${c.id}: ${c.status}${c.flaky ? " (flaky)" : ""} (${c.log})`);
+  evidence.push(...r.acceptance_evidence.map((a) => `${a.criterion_id}: ${a.status}`));
+  if (r.verdict === "FAIL") return result("behaviour", evaluation.failReasons.length > 0 ? evaluation.failReasons : ["the evidence verdict is FAIL"], evidence, r.unverified, { verdict: r.verdict });
+  return result("behaviour", [], evidence, [...evaluation.incompleteReasons, ...r.unverified], { verdict: r.verdict }, r.verdict !== "PASS");
+}
+function uiGate(input) {
+  if (!input.required) return result("ui", [], ["no UI path changed and no criterion needs UI evidence"], [], { verdict: null });
+  if (!input.configured) return result("ui", ["UI evidence is required but the policy configures no UI journeys"], [], [], { verdict: null });
+  const r = input.result;
+  if (!r) return result("ui", [], [], ["UI checks did not run"], { verdict: null }, true);
+  const evidence = r.journeys.map((j) => `${j.id}: ${j.status}`);
+  if (r.verdict === "PASS") return result("ui", [], evidence, r.unverified, { verdict: r.verdict });
+  if (r.verdict === "FAIL" || r.verdict === "BLOCKED") return result("ui", r.reasons.length > 0 ? r.reasons : [`UI verdict ${r.verdict}`], evidence, r.unverified, { verdict: r.verdict });
+  return result("ui", [], evidence, [...r.reasons, ...r.unverified], { verdict: r.verdict }, true);
+}
+function independentReviewGate(db, input) {
+  const g = reviewGate(db, { runId: input.runId, treeHash: input.treeHash, snapshot: input.snapshot, implementerProvider: input.implementerProvider, now: input.now });
+  const approved = g.cleared.some((r) => r.verdict === "APPROVE");
+  const evidence = g.cleared.map((r) => `review ${r.id} by ${r.provider}: ${r.verdict} on tree ${r.treeHash}`);
+  return result("independent_review", g.reasons, evidence, [], { gate: g, approved });
+}
+function deliveryGate(input) {
+  try {
+    assertDeliverable({
+      report: input.evidence.report,
+      review: input.review,
+      deliveryCommitTree: input.deliveryCommitTree,
+      invalidatedReason: input.evidence.invalidatedReason,
+      current: { candidate: input.candidate, snapshot: input.snapshot }
+    });
+    return result("delivery", [], [`evidence ${input.evidence.id} and review on tree ${input.candidate.treeHash}; delivery tree ${input.deliveryCommitTree}`], [], { code: null });
+  } catch (err) {
+    if (!isOrbitError(err)) throw err;
+    return result("delivery", [err.message], [], [], { code: err.code });
+  }
+}
+function blockingQuestions(db, runId) {
+  const waiting = openQuestions(db, runId).filter((q) => q.material);
+  const criteria = criteriaBlockedByQuestions(waiting);
+  return { criteria, questions: waiting.filter((q) => q.affected.some((a) => criteria.includes(a))) };
+}
+function completionGate(db, input) {
+  const reasons = [];
+  const evidence = [];
+  const c = input.candidate;
+  if (!c) return result("completion", ["there is no candidate"], [], [], { evidenceId: null, reviewId: null, blockedCriteria: [] });
+  const report2 = currentEvidenceReport(db, input.run.id, c.id);
+  if (!report2) reasons.push(`no live evidence report for candidate ${c.id}`);
+  else {
+    evidence.push(`evidence ${report2.id}: ${report2.verdict} on tree ${report2.treeHash}`);
+    if (report2.verdict !== "PASS") reasons.push(`the evidence verdict is ${report2.verdict}, not PASS`);
+    const stale = staleReasons(report2.report, { candidate: c, snapshot: input.snapshot });
+    if (stale.length > 0) reasons.push(`the evidence is stale: ${stale.join("; ")}`);
+  }
+  const g = reviewGate(db, { runId: input.run.id, treeHash: c.treeHash, snapshot: input.snapshot, implementerProvider: input.implementerProvider, now: input.now });
+  const approve = listReviews(db, input.run.id, { treeHash: c.treeHash }).find((r) => r.verdict === "APPROVE" && r.invalidatedAt === null) ?? null;
+  if (!approve) reasons.push(`no APPROVE review of tree ${c.treeHash}`);
+  else evidence.push(`review ${approve.id} by ${approve.provider}: APPROVE on tree ${approve.treeHash}`);
+  if (!g.ok) reasons.push(...g.reasons);
+  const { criteria: blocked, questions: waiting } = blockingQuestions(db, input.run.id);
+  if (blocked.length > 0) reasons.push(`${blocked.join(", ")} ${blocked.length === 1 ? "is" : "are"} blocked by open question(s) ${waiting.map((q) => q.id).join(", ")} waiting for a person`);
+  if (input.deliveredTree === null) reasons.push("no delivered commit to compare with the reviewed tree");
+  else if (input.deliveredTree !== c.treeHash) reasons.push(`the delivered tree ${input.deliveredTree} is not the reviewed tree ${c.treeHash}`);
+  else evidence.push(`delivered tree ${input.deliveredTree}`);
+  return result("completion", reasons, evidence, [], { evidenceId: report2?.id ?? null, reviewId: approve?.id ?? null, blockedCriteria: blocked });
+}
+var FAILURE_BEHAVIOUR;
+var init_gates = __esm({
+  "src/controller/gates.ts"() {
+    "use strict";
+    init_stale();
+    init_store3();
+    init_validate();
+    init_config();
+    init_limits();
+    init_snapshot();
+    init_freshness();
+    init_store();
+    init_errors();
+    init_questions();
+    FAILURE_BEHAVIOUR = {
+      intake: "reject-contract",
+      environment: "block-unattended",
+      baseline: "record-baseline",
+      implementation: "deny-and-record",
+      static_security: "repair-or-block",
+      behaviour: "repair-brief",
+      ui: "repair-or-block",
+      independent_review: "resolve-findings",
+      delivery: "refuse-delivery",
+      completion: "no-success"
+    };
   }
 });
 
@@ -46297,9 +46469,9 @@ function topicCovers(topic, category) {
 function detectHiddenDecisions(s) {
   const out = [];
   const c = s.contract;
-  const open = c?.assumptions.filter((a) => a.status === "needs-decision") ?? [];
-  if (open.length > 0) {
-    out.push(trig("hidden_decision", "decision-record", "assumptions are waiting for a decision", open.map((a) => `${a.id}: ${a.statement}`), [], { open: open.map((a) => a.id) }));
+  const open2 = c?.assumptions.filter((a) => a.status === "needs-decision") ?? [];
+  if (open2.length > 0) {
+    out.push(trig("hidden_decision", "decision-record", "assumptions are waiting for a decision", open2.map((a) => `${a.id}: ${a.statement}`), [], { open: open2.map((a) => a.id) }));
   }
   const fromPaths = riskCategoriesInPaths(s.changedFiles);
   const fromDiff = s.diff ? riskCategoriesInDiff(s.diff) : /* @__PURE__ */ new Map();
@@ -46422,8 +46594,8 @@ var init_triggers = __esm({
 });
 
 // src/inquisition/engine.ts
-import { mkdirSync as mkdirSync13 } from "node:fs";
-import { join as join34 } from "node:path";
+import { mkdirSync as mkdirSync15 } from "node:fs";
+import { join as join38 } from "node:path";
 function ledgerDraft(runId, claim, source, experiment, status2 = "unverified", reversibility2 = "costly-to-reverse") {
   return { runId, claim, source, confidence: "low", consequence: "the work ships on an unchecked belief", reversibility: reversibility2, experiment, status: status2 };
 }
@@ -46494,7 +46666,7 @@ function renderInquisitorPrompt(trigger, ctx) {
   for (const f of listFailures2(ctx.db, ctx.runId)) fingerprints.set(f.fingerprint, f.excerpt);
   const failures = [...fingerprints].slice(-5).map(([fp, ex]) => ({ fingerprint: fp, excerpt: ex ? redact(ex).slice(0, 300) : null }));
   const hypotheses = listHypotheses(ctx.db, ctx.runId).map((h) => ({ id: h.id, statement: h.statement, status: h.status, fingerprint: h.fingerprint }));
-  const open = openQuestions(ctx.db, ctx.runId).map((q) => q.question);
+  const open2 = openQuestions(ctx.db, ctx.runId).map((q) => q.question);
   const parts = [
     `# Orbit Inquisition: ${trigger.mode}`,
     `Trigger (${trigger.kind}): ${trigger.summary}`,
@@ -46508,7 +46680,7 @@ function renderInquisitorPrompt(trigger, ctx) {
   }
   if (failures.length > 0) parts.push(block("failures", JSON.stringify(failures, null, 1)));
   if (hypotheses.length > 0) parts.push(block("hypotheses-already-tried", JSON.stringify(hypotheses, null, 1)));
-  if (open.length > 0) parts.push(block("questions-already-open", open.join("\n")));
+  if (open2.length > 0) parts.push(block("questions-already-open", open2.join("\n")));
   return redactForProvider(parts.join("\n\n"));
 }
 function workerPurpose(trigger) {
@@ -46536,12 +46708,12 @@ async function runWorker(adapter, ctx, opts, trigger, prompt, attempt, signal) {
   const { db, clock } = ctx;
   signal?.throwIfAborted();
   const workerId = opts.workerIdFor?.(attempt) ?? newId("wrk");
-  const workerDir = join34(opts.workerDir, workerId);
+  const workerDir = join38(opts.workerDir, workerId);
   db.tx(() => {
     opts.fence?.();
     planWorker(db, { id: workerId, runId: ctx.runId, role: "inquisitor", purpose: workerPurpose(trigger), provider: opts.route.provider, model: opts.route.model, effort: opts.route.effort, workerDir, cwd: opts.cwd, attempt }, clock);
   });
-  mkdirSync13(workerDir, { recursive: true });
+  mkdirSync15(workerDir, { recursive: true });
   const spec = {
     runId: ctx.runId,
     workerId,
@@ -47100,7 +47272,7 @@ var init_engine = __esm({
 });
 
 // src/inquisition/amendment-answers.ts
-import { join as join35 } from "node:path";
+import { join as join39 } from "node:path";
 function amendmentIdOfQuestion(questionId) {
   return questionId.startsWith(AMENDMENT_QUESTION_PREFIX) ? questionId.slice(AMENDMENT_QUESTION_PREFIX.length) : null;
 }
@@ -47189,7 +47361,7 @@ function applyAmendmentAnswers(ctx, opts = {}) {
     if (!done) throw new OrbitError("CONCURRENT_UPDATE", `the contract of run ${ctx.runId} kept changing while amendment ${rec.id} was applied`, { amendmentId: rec.id });
   }
   const contract = parsed2(load());
-  if (contract && changed) atomicWriteJson(join35(ctx.runDir, "contract.json"), contract);
+  if (contract && changed) atomicWriteJson(join39(ctx.runDir, "contract.json"), contract);
   return { contract, outcomes, changed };
 }
 function parsed2(row) {
@@ -47212,1717 +47384,6 @@ var init_amendment_answers = __esm({
     init_store4();
     AMENDMENT_QUESTION_PREFIX = "q-amd-";
     MAX_CAS_ATTEMPTS2 = 4;
-  }
-});
-
-// src/notify/remote-answers.ts
-import { join as join36 } from "node:path";
-function parseAnswerCommands(body) {
-  if (body.includes(COMMENT_MARKER)) return [];
-  const out = [];
-  for (const line3 of body.split(/\r?\n/)) {
-    const m = COMMAND.exec(line3);
-    if (m) out.push({ questionId: m[1], choice: m[2] });
-  }
-  return out;
-}
-function commentTargets(runDir2, config) {
-  const out = [];
-  const delivery = readJsonIfExists(join36(runDir2, "delivery.json"));
-  const pr = delivery?.pr?.number;
-  if (typeof pr === "number" && Number.isInteger(pr) && pr > 0) out.push({ number: pr, kind: "pull request" });
-  const issue = notificationsPolicy(config).remote_answers.issue;
-  if (issue !== null && !out.some((t) => t.number === issue)) out.push({ number: issue, kind: "issue" });
-  return out;
-}
-function answerThreads(runDir2, config) {
-  return notificationsPolicy(config).remote_answers.enabled ? commentTargets(runDir2, config) : [];
-}
-function allowsFreeText(q) {
-  return amendmentIdOfQuestion(q.id) === null && !q.id.startsWith("q-baseline-");
-}
-function norm2(s) {
-  return s.trim().replace(/\s+/g, " ").toLowerCase();
-}
-function validChoice(q, choice) {
-  if (choice.length > MAX_CHOICE_CHARS) return false;
-  if (q.options.some((o) => norm2(o.label) === norm2(choice) || norm2(o.description) === norm2(choice))) return true;
-  return allowsFreeText(q);
-}
-function processedComments(db, runId) {
-  const rows = db.all("SELECT data_json FROM events WHERE run_id = ? AND type IN ('remote.answer.accepted', 'remote.answer.refused')", runId);
-  const out = /* @__PURE__ */ new Set();
-  for (const r of rows) {
-    try {
-      const id = JSON.parse(r.data_json ?? "{}").comment_id;
-      if (typeof id === "number") out.add(id);
-    } catch {
-    }
-  }
-  return out;
-}
-function errorText2(err) {
-  return redact(isOrbitError(err) ? `${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err)).slice(0, 300);
-}
-async function pollRemoteAnswers(input) {
-  const { db, clock, run, runDir: runDir2, config, client, actor } = input;
-  const report2 = { accepted: [], refused: [], errors: [] };
-  const threads = answerThreads(runDir2, config);
-  if (threads.length === 0) return report2;
-  const note3 = (type, data) => db.tx(() => appendEvent(db, run.id, type, actor, data, clock.now()));
-  const done = processedComments(db, run.id);
-  const since = new Date(run.createdAt).toISOString();
-  for (const thread of threads) {
-    const where2 = `${thread.kind} #${thread.number}`;
-    let comments;
-    try {
-      comments = await client.listComments(thread.number, since);
-    } catch (err) {
-      report2.errors.push(`${where2}: ${errorText2(err)}`);
-      note3("remote.poll-failed", { thread: where2, error: errorText2(err) });
-      continue;
-    }
-    for (const c of comments) {
-      if (done.has(c.id)) continue;
-      const commands = parseAnswerCommands(c.body);
-      if (commands.length === 0) continue;
-      const handled = await handleComment({ ...input, thread, where: where2, comment: c, commands, report: report2, note: note3 });
-      if (handled) done.add(c.id);
-    }
-  }
-  return report2;
-}
-async function handleComment(ci) {
-  const { db, run, comment: c, commands, report: report2, note: note3, where: where2 } = ci;
-  const base = { comment_id: c.id, comment_url: c.url, author: c.author, thread: where2 };
-  const refuse = (questionId, reason, permission2) => {
-    report2.refused.push({ commentId: c.id, thread: where2, questionId, author: c.author, reason, ...permission2 !== void 0 ? { permission: permission2 } : {} });
-    note3("remote.answer.refused", { ...base, question_id: questionId, reason, ...permission2 !== void 0 ? { permission: permission2 } : {} });
-  };
-  const own = new Map(listQuestions(db, run.id).map((q) => [q.id.toLowerCase(), q]));
-  const mine = commands.filter((cmd) => own.has(cmd.questionId.toLowerCase()) || ci.thread.kind === "pull request" || foreignOwner(db, cmd.questionId, run.id) === null);
-  if (mine.length === 0) return false;
-  if (c.author === "" || /\[bot\]$/i.test(c.author)) {
-    for (const cmd of mine) refuse(cmd.questionId, "bot");
-    return true;
-  }
-  let permission;
-  try {
-    permission = (await ci.client.permission(c.author)).toLowerCase();
-  } catch (err) {
-    report2.errors.push(`${where2}: permission of ${c.author}: ${errorText2(err)}`);
-    note3("remote.poll-failed", { thread: where2, comment_id: c.id, error: errorText2(err) });
-    return false;
-  }
-  for (const cmd of mine) {
-    if (!ANSWERING_ROLES.has(permission)) {
-      refuse(cmd.questionId, "permission", permission);
-      continue;
-    }
-    const q = own.get(cmd.questionId.toLowerCase());
-    if (!q) {
-      refuse(cmd.questionId, "unknown-question", permission);
-      continue;
-    }
-    const current = findQuestion(db, q.id);
-    if (!current || current.status !== "open") {
-      refuse(q.id, "question-not-open", permission);
-      continue;
-    }
-    if (!validChoice(current, cmd.choice)) {
-      refuse(q.id, "invalid-choice", permission);
-      continue;
-    }
-    try {
-      accept(ci, current, cmd.choice, permission);
-      report2.accepted.push({ commentId: c.id, thread: where2, questionId: q.id, author: c.author, permission });
-      note3("remote.answer.accepted", { ...base, question_id: q.id, permission });
-    } catch (err) {
-      report2.errors.push(`${where2}: answer to ${q.id}: ${errorText2(err)}`);
-      refuse(q.id, "rejected", permission);
-    }
-  }
-  return true;
-}
-function foreignOwner(db, questionId, runId) {
-  const row = db.get("SELECT run_id FROM questions WHERE lower(id) = lower(?) LIMIT 1", questionId);
-  return row && row.run_id !== runId ? row.run_id : null;
-}
-function accept(ci, q, choice, permission) {
-  const { db, clock, run, runDir: runDir2, comment: c, where: where2 } = ci;
-  answerQuestion(db, runDir2, q.id, choice, `github:${c.author}`, clock, {
-    provenance: { source: "github-comment", comment_url: c.url, comment_id: c.id, author: c.author, permission, thread: where2 }
-  });
-  if (amendmentIdOfQuestion(q.id) === null) return;
-  try {
-    applyAmendmentAnswers({ db, clock, runId: run.id, runDir: runDir2 }, { questionId: q.id });
-  } catch (err) {
-    ci.note("amendment.apply-failed", { question_id: q.id, error: errorText2(err) });
-  }
-}
-var COMMAND, MAX_CHOICE_CHARS;
-var init_remote_answers = __esm({
-  "src/notify/remote-answers.ts"() {
-    "use strict";
-    init_fsx();
-    init_errors();
-    init_redact();
-    init_amendment_answers();
-    init_questions();
-    init_store4();
-    init_config();
-    init_events();
-    init_payload();
-    init_threads();
-    COMMAND = /^\s*\/orbit\s+answer\s+([A-Za-z0-9][A-Za-z0-9_-]{0,127})\s+(\S.*?)\s*$/;
-    MAX_CHOICE_CHARS = 2e3;
-  }
-});
-
-// src/notify/notify.ts
-import { join as join37 } from "node:path";
-function resolveNotifyDeps(d) {
-  const env = d.notify?.env ?? { ...process.env, ...d.hostEnv ?? {} };
-  return { ...defaultNotifyDeps(env), ...d.notify ?? {}, env };
-}
-function dispatched(db, runId) {
-  return db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ?", runId, DISPATCHED).flatMap((r) => {
-    try {
-      const d = JSON.parse(r.data_json ?? "{}");
-      return typeof d.key === "string" ? [{ key: d.key, questions: Array.isArray(d.questions) ? d.questions.filter((q) => typeof q === "string") : [] }] : [];
-    } catch {
-      return [];
-    }
-  });
-}
-function pullRequestOf(runDir2) {
-  const pr = readJsonIfExists(join37(runDir2, "delivery.json"))?.pr?.number;
-  return typeof pr === "number" && Number.isInteger(pr) && pr > 0 ? pr : null;
-}
-function where(t) {
-  return `${t.kind} #${t.number}`;
-}
-async function sendAll(p, n2, config, target, repoRoot, deps) {
-  const off = (channel) => ({ channel, status: "skipped", detail: `notifications.${channel} is off` });
-  return Promise.all([
-    n2.desktop ? sendDesktop(p, deps) : off("desktop"),
-    n2.webhook && config ? sendWebhook(p, config, deps) : off("webhook"),
-    n2.github_comment && config ? sendGithubComment(p, target, () => deps.threads(repoRoot, config)) : off("github_comment")
-  ]);
-}
-async function dispatch(input, kind, key2, questionIds) {
-  const { db, clock, run, runDir: runDir2, config, deps, actor } = input;
-  if (notificationsOff(deps.env)) return null;
-  if (dispatched(db, run.id).some((d) => d.key === key2)) return null;
-  const n2 = config ? notificationsPolicy(config) : defaultNotifications();
-  const pr = pullRequestOf(runDir2);
-  const targets = config ? commentTargets(runDir2, config) : [];
-  const answerable = config && questionIds.length > 0 ? answerThreads(runDir2, config) : [];
-  const payload = buildPayload({ kind, run, questionIds, pullRequest: pr, remote: answerable[0] ? { where: where(answerable[0]) } : null });
-  db.tx(() => appendEvent(db, run.id, DISPATCHED, actor, { key: key2, kind, state: run.state, questions: questionIds }, clock.now()));
-  const outcomes = await sendAll(payload, n2, config, targets[0] ?? null, run.repoRoot, deps);
-  db.tx(() => {
-    for (const o of outcomes) appendEvent(db, run.id, `notification.${o.status}`, actor, { key: key2, channel: o.channel, detail: o.detail }, clock.now());
-  });
-  return outcomes;
-}
-async function notifyRunEnded(input) {
-  const { run } = input;
-  if (!TERMINAL_STATES.has(run.state)) return null;
-  const questions = run.state === "BLOCKED" ? listQuestions(input.db, run.id, { status: "open" }).map((q) => q.id) : [];
-  return dispatch(input, "run.ended", `ended:${run.state}:${run.endedAt ?? 0}`, questions);
-}
-async function notifyOpenQuestions(input) {
-  const { db, run } = input;
-  if (TERMINAL_STATES.has(run.state) && run.state !== "BLOCKED") return null;
-  const named = new Set(dispatched(db, run.id).flatMap((d) => d.questions));
-  const fresh = listQuestions(db, run.id, { status: "open" }).map((q) => q.id).filter((id) => !named.has(id));
-  if (fresh.length === 0) return null;
-  return dispatch(input, "question.open", `question:${fresh.join(",")}`, fresh);
-}
-async function sendTestNotification(input) {
-  const { config, repoRoot, deps } = input;
-  if (notificationsOff(deps.env)) return ["desktop", "webhook", "github_comment"].map((channel) => ({ channel, status: "skipped", detail: "ORBIT_NOTIFICATIONS=off" }));
-  const n2 = notificationsPolicy(config);
-  const issue = n2.remote_answers.issue;
-  return sendAll(testPayload(), n2, config, issue !== null ? { number: issue, kind: "issue" } : null, repoRoot, deps);
-}
-var DISPATCHED;
-var init_notify = __esm({
-  "src/notify/notify.ts"() {
-    "use strict";
-    init_fsx();
-    init_run_states();
-    init_store4();
-    init_config();
-    init_events();
-    init_channels();
-    init_payload();
-    init_remote_answers();
-    DISPATCHED = "notification.dispatched";
-  }
-});
-
-// src/controller/report.ts
-import { existsSync as existsSync27, mkdirSync as mkdirSync14, readdirSync as readdirSync6, readFileSync as readFileSync20 } from "node:fs";
-import { homedir as homedir10 } from "node:os";
-import { join as join38 } from "node:path";
-function writeFinalReport(db, runId, opts) {
-  const run = getRun(db, runId);
-  const report2 = buildFinalReport(db, run, opts);
-  atomicWriteJson(join38(opts.runDir, "final.json"), report2);
-  atomicWrite(join38(opts.runDir, "final.md"), renderMarkdown(report2));
-  return report2;
-}
-function buildFinalReport(db, run, opts) {
-  return redactValue(assembleFinalReport(db, run, opts));
-}
-function assembleFinalReport(db, run, opts) {
-  const contract = parseContract(run.contractJson);
-  const cand = currentCandidate(db, run.id);
-  const reports = listEvidenceReports(db, run.id);
-  const ev = (cand ? reports.filter((r) => r.candidateId === cand.id).at(-1) : null) ?? reports.at(-1) ?? null;
-  const criteria = (contract?.acceptance_criteria ?? []).map((c) => {
-    const e = ev?.report.acceptance_evidence.find((a) => a.criterion_id === c.id);
-    return { id: c.id, statement: c.statement, mandatory: c.mandatory, status: e?.status ?? "unverified", artifacts: e?.artifacts ?? [] };
-  });
-  const reviews = listReviews(db, run.id, { includeInvalidated: true });
-  const findings = listFindings(db, run.id);
-  const decisions = listDecisions(db, run.id).map((d) => ({ kind: d.kind, summary: d.summary, at: d.createdAt }));
-  const delivery = readJsonIfExists(join38(opts.runDir, "delivery.json"));
-  const outcomeJson = parseJson5(run.outcomeJson);
-  let budget = null;
-  const usage = summarizeUsage(db, run.id);
-  if (opts.snapshot && db.get("SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1", run.id)) {
-    try {
-      const snap = new BudgetLedger(db, opts.clock).attach(run.id, opts.snapshot).snapshot();
-      budget = { counters: snap.counters, cost_measurement: snap.cost_measurement.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals) };
-    } catch {
-      budget = null;
-    }
-  }
-  if (!budget) budget = { counters: [], cost_measurement: usage.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals) };
-  const unverified = [...ev?.report.unverified ?? []];
-  for (const c of criteria) if (c.mandatory && c.status !== "supported") unverified.push(`${c.id} is ${c.status}`);
-  const risks = [];
-  const env = readJsonIfExists(join38(opts.runDir, "environment.json"));
-  risks.push(...env?.gate?.notes ?? []);
-  if (!usage.costComplete || budget.cost_measurement.includes("unmeasured")) risks.push(`model spend: ${budget.cost_measurement}`);
-  for (const f of findings.filter((x) => x.status === "advisory" || x.status === "open" || x.status === "claim_pending")) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}): ${f.claim.slice(0, 160)}`);
-  for (const f of findings.filter((x) => x.status === "accepted")) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, accepted, unresolved, blocking): ${f.claim.slice(0, 160)}`);
-  let exceptions = [];
-  try {
-    if (opts.snapshot) exceptions = readSecurityPolicy(opts.snapshot).exceptions;
-  } catch {
-    exceptions = [];
-  }
-  for (const f of findings.filter((x) => x.status === "excepted")) {
-    const ex = f.resolutionJson?.exception;
-    const index = typeof ex?.index === "number" ? ex.index : -1;
-    const expires = exceptions[index]?.expires;
-    const reason = typeof ex?.reason === "string" ? ex.reason : f.resolution ?? "no reason recorded";
-    risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, excepted by policy): ${f.claim.slice(0, 120)}; exception reason: ${reason.slice(0, 160)}; expires: ${expires ?? "never"}`);
-  }
-  for (const q of listQuestions(db, run.id, { status: "open" })) risks.push(`open question: ${q.question.slice(0, 200)}`);
-  for (const c of ev?.report.checks.filter((x) => x.flaky) ?? []) risks.push(`check ${c.id} passed only on a rerun (flaky)`);
-  const prNumber = delivery?.pr?.number ?? null;
-  const branch = delivery?.branch ?? outcomeJson?.branch ?? run.branch;
-  return {
-    schema: "orbit.final/1",
-    run_id: run.id,
-    outcome: run.state,
-    outcome_reason: run.outcomeReason,
-    mode: run.mode,
-    original_goal: run.goal,
-    objective: contract?.objective ?? null,
-    criteria,
-    checks: ev?.report.checks.map((c) => ({ id: c.id, status: c.status, exit_code: c.exit_code, flaky: c.flaky, log: c.log })) ?? [],
-    evidence: ev ? { report_id: ev.id, verdict: ev.verdict, tree_hash: ev.treeHash, candidate_revision: ev.report.candidate_revision } : null,
-    reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length })),
-    decisions,
-    assumptions: [...(contract?.assumptions ?? []).map((a) => ({ id: a.id, statement: a.statement, status: a.status })), ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))],
-    practices: (contract?.practices ?? []).map((p) => ({ practice: p.practice, applicable: p.applicable, justification: p.justification })),
-    repairs: repairs(opts.runDir),
-    revision: {
-      base: run.baseRevision,
-      candidate: cand?.commitSha ?? null,
-      tree: cand?.treeHash ?? null,
-      branch,
-      // Only a delivery action delivers. A local mode leaves the candidate commit on a local branch: that is the
-      // `candidate` above, never a delivered commit.
-      delivered_commit: delivery?.commit ?? (DELIVERY_MODES.has(run.mode) ? outcomeJson?.commit ?? null : null),
-      pull_request: prNumber === null ? null : { number: prNumber, url: delivery?.pr?.url ?? null }
-    },
-    budget,
-    unverified: [...new Set(unverified)],
-    residual_risks: [...new Set(risks)],
-    next_action: nextAction2(run, branch, prNumber, listQuestions(db, run.id, { status: "open" }).filter((q) => q.material)),
-    generated_at: opts.clock.now()
-  };
-}
-function tokens(t) {
-  return { input: t.inputTokens, output: t.outputTokens, cache_read: t.cacheReadTokens, cache_write: t.cacheWriteTokens };
-}
-function repairs(runDir2) {
-  const dir = join38(runDir2, "briefs");
-  if (!existsSync27(dir)) return [];
-  return readdirSync6(dir).filter((f) => /^attempt-\d+\.json$/.test(f)).map((f) => readJsonIfExists(join38(dir, f))).filter((b) => b !== null).map((b) => ({ attempt: b.attempt, source: b.source, fingerprint: b.fingerprint })).sort((a, b) => a.attempt - b.attempt);
-}
-function outcomeHas(run, key2) {
-  try {
-    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
-    return o !== null && typeof o === "object" && key2 in o;
-  } catch {
-    return false;
-  }
-}
-function nextAction2(run, branch, pr, openMaterial = []) {
-  switch (run.state) {
-    case "SUCCEEDED":
-      return DELIVERY_MODES.has(run.mode) ? `Review${pr !== null ? ` pull request #${pr}` : ` branch ${branch ?? "orbit/<run>"}`} and merge it if you accept it; Orbit does not merge.` : `Inspect the local branch ${branch ?? `orbit/${run.id}`} (the reviewed candidate) and merge it yourself if you accept it.`;
-    case "BLOCKED": {
-      const why = run.outcomeReason ?? "The run is blocked.";
-      if (outcomeHas(run, "frozen_policy") || /orbit resume/.test(why)) return why;
-      return `${/[.!?]$/.test(why.trim()) ? why.trim() : `${why.trim()}.`} Resolve that, then run \`orbit resume ${run.id}\`.`;
-    }
-    case "EXHAUSTED": {
-      const advice = exhaustedAdvice(run);
-      const asked = openMaterial.length === 0 ? "" : ` Open material question(s) were never answered: ${openMaterial.slice(0, 5).map((q) => `${q.id}: ${q.question.slice(0, 200)}`).join(" | ")}. Put the answer in the goal of the new run.`;
-      return `${advice}${asked}`;
-    }
-    case "IMPOSSIBLE":
-      return `${run.outcomeReason ?? "No authorized way to meet the contract was found."} Revise the goal or the authorization before trying again.`;
-    case "CANCELLED":
-      return "Nothing further: the run was cancelled on request and its artifacts are preserved.";
-    default:
-      return `The run is ${run.state}; this report is provisional.`;
-  }
-}
-function exhaustedAdvice(run) {
-  const reason = run.outcomeReason ?? "see decisions";
-  const why = `(${reason})`;
-  const kept = "The worktree and evidence are preserved";
-  if (outcomeHas(run, "non_progress")) return `The run stopped because repeated attempts made no measurable progress ${why}. More attempts would not change that; the worktree and evidence are preserved. Revise the goal or the approach and start a new run.`;
-  if (/^diagnosis produced no valid repair brief/.test(reason)) return `The diagnosis could not produce a usable repair brief ${why}: the failure is unexplained, not out of budget. ${kept}; read the failing check logs and the diagnosis attempts under the run directory, then fix it by hand or start a new run with a narrower goal.`;
-  if (outcomeHas(run, "extension") || /\band no extension\b/.test(reason)) {
-    const denied = /no extension(?: for the review repair)?: (.*?)(?:; open findings:|$)/.exec(reason)?.[1];
-    return `The implementation attempt allowance is spent and no extension was granted${denied ? ` because ${denied}` : ""} ${why}. An extension needs measurable progress and a new hypothesis, so more of the same would not help. ${kept}; continue by hand from them, or start a new run with a revised goal or approach.`;
-  }
-  if (/provider kept failing transiently/.test(reason)) return `The model provider kept failing transiently until the infrastructure retries ran out ${why}; this is an outage, not spend. Check the provider's status and your connection, then start a new run (${kept.toLowerCase()}).`;
-  if (/^recovery(_attempts| budget) exhausted/.test(reason)) return `The recovery attempts are spent ${why}: the run was restarted after failures as often as the policy allows. Fix what keeps failing (see the run log), then start a new run; ${kept.toLowerCase()}.`;
-  if (/^review_rounds hard cap reached/.test(reason)) return `The review round cap is reached with review findings still open ${why}. ${kept}; repair the open findings by hand, or start a new run with a higher scheduler.hard_limits.review_rounds or a revised goal.`;
-  if (/^implementation attempts hard cap reached/.test(reason)) return `The implementation attempts hard cap is reached ${why}. ${kept}; continue by hand from them, or start a new run with a revised goal or a higher scheduler.hard_limits.implementation_attempts.`;
-  if (/CI repair budget is spent/.test(reason)) return `CI kept failing after the authorized CI repairs ${why}. ${kept}; read the CI logs and fix it by hand, or start a new run.`;
-  return `The authorized budget is spent ${why}. ${kept}; continue by hand from them or start a new run with a revised goal or limits.`;
-}
-function renderMarkdown(r) {
-  const out = [];
-  const list = (items) => items.length ? items.map((i) => `- ${i}`).join("\n") : "- none";
-  out.push(`# Orbit run ${r.run_id}: ${r.outcome}`, "");
-  out.push("## Outcome", "", `${r.outcome}${r.outcome_reason ? `: ${r.outcome_reason}` : ""}`, "");
-  out.push("## Original goal", "", r.original_goal, "");
-  if (r.objective) out.push("## Delivered behaviour", "", r.objective, "");
-  out.push("## Criterion evidence", "", list(r.criteria.map((c) => `${c.id}${c.mandatory ? "" : " (optional)"} [${c.status}]: ${c.statement}${c.artifacts.length ? ` (evidence: ${c.artifacts.join(", ")})` : ""}`)), "");
-  out.push("## Checks", "", list(r.checks.map((c) => `${c.id}: ${c.status}${c.exit_code !== null ? ` (exit ${c.exit_code})` : ""}${c.flaky ? ", flaky" : ""}, log ${c.log}`)), "");
-  if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, "");
-  out.push("## Reviews", "", list(r.reviews.map((v) => `${v.provider}/${v.model ?? "default"}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))`)), "");
-  out.push("## Decisions", "", list(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), "");
-  out.push("## Assumptions", "", list(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), "");
-  if (r.practices && r.practices.length > 0) out.push("## Engineering practices", "", list(r.practices.map((p) => `${p.practice} [${p.applicable ? "selected" : "omitted"}]: ${p.justification}`)), "");
-  out.push("## Repairs", "", list(r.repairs.map((x) => `attempt ${x.attempt}: ${x.source} brief${x.fingerprint ? ` for ${x.fingerprint}` : ""}`)), "");
-  const rv = r.revision;
-  out.push("## Revision, branch and pull request", "", list([`base: ${rv.base ?? "none"}`, `candidate: ${rv.candidate ?? "none"} (tree ${rv.tree ?? "none"})`, `branch: ${rv.branch ?? "none"}`, rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? "none"}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ""}` : "none"}`]), "");
-  if (r.budget) {
-    const b = r.budget;
-    out.push("## Budget consumption", "", list([...b.counters.map((c) => `${c.counter}: ${round2(c.used)} used of ${round2(c.allowance)} allowed (hard cap ${round2(c.hard_cap)})`), `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? "measured" : "incomplete: some usage has no cost"}); ${b.cost_measurement}`, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), "");
-  }
-  out.push("## Not verified", "", list(r.unverified), "");
-  out.push("## Residual risks", "", list(r.residual_risks), "");
-  out.push("## Next action", "", r.next_action, "");
-  return redact(`${out.join("\n")}`);
-}
-function round2(n2) {
-  return Number.isInteger(n2) ? String(n2) : n2.toFixed(2);
-}
-function parseContract(json3) {
-  return parseJson5(json3);
-}
-function parseJson5(json3) {
-  if (!json3) return null;
-  try {
-    return JSON.parse(json3);
-  } catch {
-    return null;
-  }
-}
-async function finalizeRun(ctx) {
-  try {
-    writeFinalReport(ctx.db, ctx.run.id, { runDir: ctx.runDir, clock: ctx.clock, snapshot: ctx.policyVerified ? ctx.snapshot : null });
-  } catch (err) {
-    ctx.log.error("final report failed", { error: err instanceof Error ? err.message : String(err) });
-  }
-  try {
-    await notifyRunEnded({ db: ctx.db, clock: ctx.clock, run: ctx.refresh(), runDir: ctx.runDir, config: ctx.policyVerified ? ctx.snapshot.config : null, deps: resolveNotifyDeps(ctx.deps), actor: ctx.ownerId });
-  } catch (err) {
-    ctx.log.warn("notification failed", { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) });
-  }
-  if (!ctx.policyVerified) return;
-  try {
-    await learnAtTerminal(ctx);
-  } catch (err) {
-    ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.failed", ctx.ownerId, { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, ctx.clock.now()));
-  }
-}
-function curatorRaisedCap(host, ctx, purpose, error) {
-  if (ctx && purpose) return raiseOutputCap(ctx, purpose, error);
-  const over = outputCapExceeded(error);
-  if (!over) return null;
-  const previous = over.cap ?? outputBudgets(host.snapshot.config).curator;
-  return previous >= OUTPUT_CAP_CEILING ? null : Math.min(previous * 2, OUTPUT_CAP_CEILING);
-}
-async function learnAtTerminal(ctx) {
-  const k = ctx.snapshot.config.knowledge;
-  if (!k?.enabled) return;
-  const run = ctx.refresh();
-  const store = KnowledgeStore.open(repoKnowledgePath(ctx), { clock: ctx.clock });
-  const summary = { learn: null, skipped: null, settled: null, promoted: null, overlays: null };
-  try {
-    const admitted = curationAdmitted(ctx);
-    if (run.state === "CANCELLED") summary.skipped = "cancelled runs are not curated";
-    else if (!admitted.ok) summary.skipped = admitted.why;
-    else {
-      const host = curatorHostFor(ctx);
-      summary.learn = await learnFromRun({ store, runDb: ctx.db, runId: run.id, runDir: ctx.runDir, clock: ctx.clock, curatorModel: admitted.model ?? "claude-default", runCurator: async (task) => (await runCurator(host, task, admitted.model)).output });
-    }
-    if (summary.skipped !== null) ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.curation-skipped", ctx.ownerId, { reason: summary.skipped }, ctx.clock.now()));
-    const ev = listEvidenceReports(ctx.db, run.id).at(-1);
-    summary.settled = settleRun(store, run.id, {
-      succeeded: run.state === "SUCCEEDED",
-      attempts: listWorkers(ctx.db, { runId: run.id, role: "implementer" }).length,
-      verifiedCriteria: ev?.report.acceptance_evidence.filter((a) => a.status === "supported").map((a) => a.criterion_id) ?? [],
-      contradictedLessonIds: [],
-      artifact: existsSync27(join38(ctx.runDir, "final.md")) ? { path: "final.md", sha256: sha256(readFileSync20(join38(ctx.runDir, "final.md"))) } : { path: "final.md", sha256: null }
-    });
-    if (k.share_globally) {
-      const guard = loadPublicationGuard(ctx.snapshot.config.guard.terms_file ? { termsPath: ctx.snapshot.config.guard.terms_file } : {});
-      const global = KnowledgeStore.open(globalKnowledgePath(ctx), { clock: ctx.clock });
-      try {
-        summary.promoted = await promoteToGlobal(store, global, { shareGlobally: true, guard: (text2) => checkPublication(text2, { ...guard.options, allowedEmails: [...guard.options.allowedEmails ?? [], ...ctx.snapshot.config.guard.allowed_emails] }) });
-      } finally {
-        global.close();
-      }
-    }
-    if (run.state !== "CANCELLED") {
-      const live = checkLiveOverlays(ctx, store);
-      const evaluated = await autoEvaluateOverlays(ctx, store);
-      summary.overlays = { live, evaluated };
-    }
-  } finally {
-    store.close();
-  }
-  atomicWriteJson(join38(ctx.runDir, "learning.json"), summary);
-  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.completed", ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0 }, ctx.clock.now()));
-}
-function curatorHostFor(ctx) {
-  return {
-    deps: ctx.deps,
-    clock: ctx.clock,
-    snapshot: ctx.snapshot,
-    policyPath: ctx.run.policyPath,
-    policyHash: ctx.run.policyHash,
-    runId: ctx.run.id,
-    dir: join38(ctx.runDir, "learning"),
-    budgetUsd: ctx.snapshot.config.knowledge.curator_budget_usd,
-    recorded: ctx
-  };
-}
-function curationAdmitted(ctx) {
-  const k = ctx.snapshot.config.knowledge;
-  if (!(k.curator_budget_usd > 0)) return { ok: false, why: "knowledge.curator_budget_usd is 0" };
-  if (!ctx.deps.adapters.claude) return { ok: false, why: "no claude adapter for the curator" };
-  const ledger = ctx.ledger ?? (ctx.db.get("SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1", ctx.run.id) ? new BudgetLedger(ctx.db, ctx.clock).attach(ctx.run.id, ctx.snapshot) : null);
-  if (ledger) {
-    const d = ledger.admit({ role: "curator", estimatedCostUsd: k.curator_budget_usd, phase: "final" });
-    if (!d.admitted) return { ok: false, why: `the budget reserve cannot pay for curation: ${d.reasons.join("; ")}` };
-  }
-  return { ok: true, model: curatorModelFor(ctx.deps.registry) };
-}
-function curatorModelFor(registry) {
-  return registry.list().find((e) => e.provider === "claude" && e.family === "haiku" && e.surfaces.some((s) => s.surface === "claude-cli" && s.available !== false))?.modelId ?? null;
-}
-async function runCurator(host, task, model = curatorModelFor(host.deps.registry), outputTokens) {
-  const adapter = host.deps.adapters.claude;
-  if (!adapter) throw new OrbitError("PROVIDER_UNAVAILABLE", "no claude provider is configured; the curator runs on Claude");
-  const ctx = host.recorded ?? null;
-  const timeoutMs = host.timeoutMs ?? CURATOR_TIMEOUT_MS;
-  const env = host.env ?? host.deps.hostEnv ?? process.env;
-  const home2 = host.homeDir ?? host.deps.homeDir ?? homedir10();
-  const cwd = join38(host.dir, "cwd");
-  mkdirSync14(cwd, { recursive: true, mode: 448 });
-  let row = null;
-  let workerId;
-  let workerDir;
-  let purpose = null;
-  if (ctx) {
-    const n2 = listWorkers(ctx.db, { runId: ctx.run.id, role: "curator" }).length + 1;
-    workerId = `${ctx.run.id}-curator-${n2}`;
-    purpose = `curate:${n2}`;
-    workerDir = join38(ctx.runDir, "workers", workerId);
-    mkdirSync14(workerDir, { recursive: true, mode: 448 });
-    recordSpendCap(ctx, purpose, host.budgetUsd, 0);
-    const ctxNow = ctx;
-    row = ctx.db.tx(() => {
-      assertLeaseHeld(ctxNow.db, ctxNow.run.id, ctxNow.ownerId, ctxNow.clock.now());
-      return planWorker(ctxNow.db, { id: workerId, runId: ctxNow.run.id, role: "curator", purpose, provider: adapter.id, model, effort: null, workerDir, cwd }, ctxNow.clock, ctxNow.ownerId);
-    });
-  } else {
-    workerId = `${host.runId}-curator`;
-    workerDir = join38(host.dir, "curator");
-    mkdirSync14(workerDir, { recursive: true, mode: 448 });
-  }
-  const spec = {
-    runId: host.runId,
-    workerId,
-    role: "curator",
-    model,
-    effort: null,
-    cwd,
-    workerDir,
-    prompt: task.prompt,
-    systemPrompt: renderSystemPrompt("curator", host.deps.agentsDir ? { agentsDir: host.deps.agentsDir } : {}),
-    outputSchema: MODEL_OUTPUT_SCHEMAS.curator,
-    readOnly: true,
-    maxTurns: CURATOR_MAX_TURNS,
-    timeoutMs,
-    sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: host.snapshot, provider: "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join38(home2, ".claude"), homeDir: home2, policyPath: host.policyPath, readablePaths: [host.deps.orbitInstallDir], env }),
-    policyPath: host.policyPath,
-    policyHash: host.policyHash,
-    env: {},
-    maxBudgetUsd: host.budgetUsd,
-    ...outputTokens === void 0 ? {} : { outputTokens }
-  };
-  let handle;
-  try {
-    handle = await adapter.startTask(spec);
-  } catch (err) {
-    if (ctx && row) finishWorker(ctx.db, row.id, { state: "FAILED", resultStatus: "failed", error: redact(err instanceof Error ? err.message : String(err)).slice(0, 2e3) }, ctx.clock, ctx.ownerId);
-    throw err;
-  }
-  if (ctx && row) row = markWorkerRunning(ctx.db, row.id, { pid: handle.pid, pgid: handle.pgid, procStart: handle.procStart }, ctx.clock, ctx.ownerId);
-  const deadline = Date.now() + timeoutMs + 3e4;
-  let result2 = null;
-  let timedOut = false;
-  for (; ; ) {
-    result2 = await adapter.collectResult(handle, { outputSchema: MODEL_OUTPUT_SCHEMAS.curator });
-    if (result2) break;
-    if (Date.now() > deadline) {
-      timedOut = true;
-      await adapter.cancelTask(handle);
-      const stop = Date.now() + 5e3;
-      while (!(result2 = await adapter.collectResult(handle, { outputSchema: MODEL_OUTPUT_SCHEMAS.curator })) && Date.now() < stop) await new Promise((res) => setTimeout(res, 100));
-      break;
-    }
-    await new Promise((res) => setTimeout(res, 200));
-  }
-  if (ctx && row) {
-    const done = finishWorker(ctx.db, row.id, result2 ? outcomeOf2(result2) : { state: "LOST", resultStatus: "lost", error: "the curator did not stop after it timed out" }, ctx.clock, ctx.ownerId);
-    if (result2) {
-      try {
-        accountWorker(ctx, done, result2, "final");
-      } catch (err) {
-        ctx.log.warn("curator cost could not be charged", { error: err instanceof Error ? err.message : String(err) });
-      }
-    }
-  }
-  if (!result2 || timedOut) throw new OrbitError("PROVIDER_UNAVAILABLE", "the curator timed out");
-  if (result2.status !== "succeeded") {
-    const raised = result2.status === "failed" && outputTokens === void 0 ? curatorRaisedCap(host, ctx, purpose, result2.error) : null;
-    if (raised !== null) return runCurator(host, task, model, raised);
-    throw new OrbitError(result2.status === "auth_failed" ? "AUTH_EXPIRED" : "PROVIDER_UNAVAILABLE", `the curator ended ${result2.status}${result2.error ? `: ${redact(result2.error).slice(0, 200)}` : ""}`);
-  }
-  return { output: result2.structured, model, workerId: ctx ? workerId : null };
-}
-var CURATOR_TIMEOUT_MS, CURATOR_MAX_TURNS;
-var init_report2 = __esm({
-  "src/controller/report.ts"() {
-    "use strict";
-    init_errors();
-    init_fsx();
-    init_hash();
-    init_redact();
-    init_events();
-    init_decisions();
-    init_workers();
-    init_store();
-    init_store3();
-    init_resolve();
-    init_store4();
-    init_usage();
-    init_budget2();
-    init_config();
-    init_model_outputs();
-    init_store2();
-    init_learn();
-    init_feedback();
-    init_global();
-    init_publication();
-    init_profiles();
-    init_prompt();
-    init_run_store();
-    init_context2();
-    init_run_store();
-    init_workers2();
-    init_eval_runner();
-    init_notify();
-    init_knowledge_hooks();
-    CURATOR_TIMEOUT_MS = 5 * 6e4;
-    CURATOR_MAX_TURNS = 6;
-  }
-});
-
-// src/evidence/candidate.ts
-import { chmodSync as chmodSync6, existsSync as existsSync28, lstatSync as lstatSync6, mkdirSync as mkdirSync15, mkdtempSync as mkdtempSync4, readdirSync as readdirSync7, realpathSync as realpathSync12, rmSync as rmSync8, writeFileSync as writeFileSync5 } from "node:fs";
-import { tmpdir as tmpdir9 } from "node:os";
-import { dirname as dirname20, join as join39, parse as parse4, sep as sep8 } from "node:path";
-function candidateRef(runId, seq2) {
-  return `refs/orbit/${runId}/candidates/${seq2}`;
-}
-async function snapshotCandidate(input) {
-  const { db, clock, repoRoot, runId } = input;
-  if (!RUN_ID.test(runId)) throw new OrbitError("INTERNAL", `run id is not safe in a ref name: ${JSON.stringify(runId)}`);
-  const base = await resolveCommit(repoRoot, input.baseRev);
-  const { gitDir, worktree } = await adminDirFor(repoRoot, input.worktree);
-  const tree = await stageTree({ gitDir, worktree, base, extraExcludes: input.extraExcludes ?? [] });
-  const row = reserveCandidate(db, { runId, attempt: input.attempt, workerId: input.workerId, treeHash: tree, parentSha: base }, clock);
-  if (row.status !== "CREATING") return { ...row, created: false };
-  const message = `orbit candidate ${runId}/${row.seq}
-
-attempt: ${row.attempt}
-worker: ${row.workerId ?? "none"}
-tree: ${tree}
-`;
-  const when = `${Math.floor(row.createdAt / 1e3)} +0000`;
-  const commit = (await git2(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], {
-    env: {
-      GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name,
-      GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email,
-      GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name,
-      GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email,
-      GIT_AUTHOR_DATE: when,
-      GIT_COMMITTER_DATE: when
-    }
-  })).trim();
-  await git2(repoRoot, ["update-ref", candidateRef(runId, row.seq), commit]);
-  const stat = await diffStat(repoRoot, await treeOf(repoRoot, base), tree);
-  const done = finalizeCandidate(db, row.id, commit, stat, clock);
-  return { ...done, created: true };
-}
-async function stageTree(o) {
-  const scratch = mkdtempSync4(join39(tmpdir9(), "orbit-index-"));
-  try {
-    const excludes = join39(scratch, "exclude");
-    writeFileSync5(excludes, `${[...BUILTIN_EXCLUDES, ...o.extraExcludes].join("\n")}
-`);
-    const env = { GIT_DIR: o.gitDir, GIT_WORK_TREE: o.worktree, GIT_INDEX_FILE: join39(scratch, "index") };
-    const opts = { env, config: { "core.excludesFile": excludes } };
-    await git2(o.worktree, ["read-tree", o.base], opts);
-    await git2(o.worktree, ["add", "-A", "--", "."], opts);
-    return (await git2(o.worktree, ["write-tree"], opts)).trim();
-  } finally {
-    rmSync8(scratch, { recursive: true, force: true });
-  }
-}
-async function diffStat(repoRoot, fromTree, toTree) {
-  const out = await git2(repoRoot, ["diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", fromTree, toTree, "--"]);
-  const stat = { files: 0, insertions: 0, deletions: 0, binaryFiles: 0, paths: [], truncated: false };
-  for (const rec of out.split("\0")) {
-    if (!rec) continue;
-    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(rec);
-    if (!m) continue;
-    stat.files++;
-    if (m[1] === "-") stat.binaryFiles++;
-    else {
-      stat.insertions += Number(m[1]);
-      stat.deletions += Number(m[2]);
-    }
-    if (stat.paths.length < MAX_DIFF_PATHS) stat.paths.push(m[3]);
-    else stat.truncated = true;
-  }
-  return stat;
-}
-async function materializeCandidate(repoRoot, commit, dir, opts = {}) {
-  const sha = await resolveCommit(repoRoot, commit);
-  if (existsSync28(dir) && readdirSync7(dir).length > 0) {
-    throw new OrbitError("GIT_FAILED", `checkout directory is not empty: ${dir}`, { dir });
-  }
-  mkdirSync15(dirname20(dir), { recursive: true });
-  await git2(repoRoot, ["worktree", "add", "--detach", "--force", dir, sha]);
-  const real = realpathSync12(dir);
-  if (opts.readOnly !== false) makeReadOnly(real);
-  return real;
-}
-async function cleanupCandidateCheckout(repoRoot, dir) {
-  assertDisposableCheckout(repoRoot, dir);
-  if (existsSync28(dir)) makeWritable(dir);
-  try {
-    await git2(repoRoot, ["worktree", "remove", "--force", dir]);
-  } catch {
-    rmSync8(dir, { recursive: true, force: true });
-  }
-  rmSync8(dir, { recursive: true, force: true });
-  await git2(repoRoot, ["worktree", "prune"]).catch(() => {
-  });
-}
-function assertDisposableCheckout(repoRoot, dir) {
-  if (!existsSync28(dir)) return;
-  const target = realpathSync12(dir);
-  const root = realpathSync12(repoRoot);
-  const refuse = (why) => {
-    throw new OrbitError("GIT_FAILED", `refusing to remove ${dir}: ${why}`, { dir, repoRoot });
-  };
-  if (target === root || root.startsWith(target.endsWith(sep8) ? target : target + sep8)) refuse("it is or contains the repository");
-  if (target === parse4(target).root) refuse("it is a filesystem root");
-  let dotGit;
-  try {
-    dotGit = lstatSync6(join39(target, ".git"));
-  } catch {
-    return;
-  }
-  if (dotGit.isDirectory()) refuse("it holds its own .git directory, so it is a repository, not a checkout");
-}
-function walk3(dir, visit3) {
-  for (const name of readdirSync7(dir)) {
-    const p = join39(dir, name);
-    const st = lstatSync6(p);
-    if (st.isSymbolicLink()) continue;
-    if (st.isDirectory()) {
-      if (name === ".git") continue;
-      walk3(p, visit3);
-      visit3(p, true);
-    } else visit3(p, false);
-  }
-}
-function makeReadOnly(dir) {
-  walk3(dir, (p, isDir) => chmodSync6(p, isDir ? 365 : lstatSync6(p).mode & 365));
-  chmodSync6(dir, 365);
-}
-function makeWritable(dir) {
-  try {
-    chmodSync6(dir, 493);
-    const stack = [dir];
-    while (stack.length) {
-      const d = stack.pop();
-      for (const name of readdirSync7(d)) {
-        const p = join39(d, name);
-        const st = lstatSync6(p);
-        if (st.isSymbolicLink()) continue;
-        if (st.isDirectory()) {
-          chmodSync6(p, 493);
-          if (name !== ".git") stack.push(p);
-        } else chmodSync6(p, st.mode | 128);
-      }
-    }
-  } catch {
-  }
-}
-var ORBIT_GIT_IDENTITY, BUILTIN_EXCLUDES, RUN_ID, MAX_DIFF_PATHS;
-var init_candidate = __esm({
-  "src/evidence/candidate.ts"() {
-    "use strict";
-    init_errors();
-    init_git();
-    init_store();
-    ORBIT_GIT_IDENTITY = { name: "Orbit", email: "orbit@orbit.invalid" };
-    BUILTIN_EXCLUDES = [".DS_Store", "Thumbs.db", "node_modules/"];
-    RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-    MAX_DIFF_PATHS = 200;
-  }
-});
-
-// src/evidence/baseline.ts
-import { existsSync as existsSync29, readFileSync as readFileSync21 } from "node:fs";
-import { join as join40 } from "node:path";
-function planInstall(snapshot2, checkoutDir, opts = {}) {
-  const deps = snapshot2.config.dependencies;
-  if (!deps.install_existing_lockfile) return { skip: true, reason: "policy does not allow installing dependencies from the existing lockfile" };
-  const hosts = [...opts.registryHosts ?? NPM_REGISTRY_HOSTS];
-  const base = { shell: false, cwd: ".", timeout_seconds: INSTALL_TIMEOUT_SECONDS, network_hosts: hosts, local_binding: false, mandatory: false, flaky_reruns: 1, kind: "command" };
-  const quiet = { npm_config_fund: "false", npm_config_audit: "false", npm_config_progress: "false", npm_config_update_notifier: "false" };
-  const scriptsDenied = deps.install_scripts !== "allow";
-  if (deps.install_command) {
-    return {
-      skip: false,
-      definitions: [
-        {
-          ...base,
-          id: INSTALL_CHECK_ID,
-          command: [...deps.install_command],
-          // A configured command cannot be given a flag blindly, so scripts are denied through the package managers' own environment switches.
-          env: { ...quiet, ...scriptsDenied ? { npm_config_ignore_scripts: "true", YARN_ENABLE_SCRIPTS: "false" } : {} }
-        }
-      ]
-    };
-  }
-  const hasNpmLock = existsSync29(join40(checkoutDir, "package-lock.json")) || existsSync29(join40(checkoutDir, "npm-shrinkwrap.json"));
-  if (!hasNpmLock) {
-    const other = OTHER_LOCKFILES.find((f) => existsSync29(join40(checkoutDir, f)));
-    return {
-      skip: true,
-      reason: other ? `found ${other}, which Orbit does not install by itself; set dependencies.install_command to install from it` : "no lockfile to install from; Orbit never creates one"
-    };
-  }
-  const defs = [{ ...base, id: INSTALL_CHECK_ID, command: scriptsDenied ? ["npm", "ci", "--ignore-scripts"] : ["npm", "ci"], env: quiet }];
-  if (deps.install_scripts === "deny-unless-allowlisted" && deps.install_script_allowlist.length > 0) {
-    defs.push({ ...base, id: INSTALL_SCRIPTS_CHECK_ID, command: ["npm", "rebuild", ...deps.install_script_allowlist], env: quiet, flaky_reruns: 0 });
-  }
-  return { skip: false, definitions: defs };
-}
-async function installDependencies(ctx) {
-  const plan = planInstall(ctx.snapshot, ctx.checkoutDir, { registryHosts: ctx.registryHosts });
-  if (plan.skip) {
-    const audit2 = ctx.candidate ? await auditCandidate({ ...ctx, candidate: ctx.candidate }) : null;
-    if (audit2 && audit2.blocking.length > 0) return { skipped: false, reason: audit2.summary, ok: false, results: [], audit: audit2 };
-    return { skipped: true, reason: plan.reason, ok: false, results: [], audit: audit2 };
-  }
-  const definitions = { ...ctx.definitions, ...Object.fromEntries(plan.definitions.map((d) => [d.id, d])) };
-  let subject;
-  if (ctx.candidate) subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: "install" };
-  else if (ctx.baseTree) subject = baselineSubject(ctx.runDir, ctx.baseTree, "install");
-  else throw new OrbitError("INTERNAL", "installDependencies needs a candidate or a base tree to bind to");
-  const results = [];
-  for (const def of plan.definitions) {
-    const [r] = await runCheckSet({ ...ctx, definitions }, subject, [def]);
-    if (!r) break;
-    results.push(r);
-    if (r.status !== "PASSED") break;
-  }
-  const ok = results.length === plan.definitions.length && results.every((r) => r.status === "PASSED");
-  if (!ok || !ctx.candidate) return { skipped: false, reason: null, ok, results };
-  const audit = await auditCandidate({ ...ctx, candidate: ctx.candidate });
-  if (audit && audit.blocking.length > 0) return { skipped: false, reason: audit.summary, ok: false, results, audit };
-  return { skipped: false, reason: null, ok, results, audit };
-}
-function manifestHash(dir) {
-  const parts = [];
-  for (const f of MANIFEST_FILES) {
-    const p = join40(dir, f);
-    if (existsSync29(p)) parts.push(`${f}\0${sha256(readFileSync21(p))}`);
-  }
-  return parts.length > 0 ? sha256(parts.join("\n")) : null;
-}
-function parseNpmAudit(text2) {
-  let doc;
-  try {
-    doc = JSON.parse(text2);
-  } catch {
-    throw new Error("npm audit did not write a JSON report");
-  }
-  const d = doc;
-  if (d.error) throw new Error(`npm audit failed: ${redact(String(d.error.summary ?? d.error.code ?? "error")).slice(0, 200)}`);
-  if (!d.vulnerabilities || typeof d.vulnerabilities !== "object") throw new Error("the npm audit report has no vulnerabilities section (npm 7 or later is needed)");
-  const out = /* @__PURE__ */ new Map();
-  for (const [name, v] of Object.entries(d.vulnerabilities)) {
-    if (!Array.isArray(v?.via)) continue;
-    for (const via of v.via) {
-      if (!via || typeof via !== "object") continue;
-      const a = via;
-      const ghsa = typeof a.url === "string" ? /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/.exec(a.url)?.[0] : void 0;
-      const id = ghsa ?? (typeof a.source === "number" || typeof a.source === "string" ? `npm:${a.source}` : null);
-      const severity = typeof a.severity === "string" && Object.hasOwn(SEVERITY_RANK, a.severity) ? a.severity : null;
-      if (!id || !severity) continue;
-      const pkg = typeof a.name === "string" ? a.name : name;
-      out.set(`${id}\0${pkg}`, { id, kind: "vulnerability", package: pkg, severity, detail: redact(typeof a.title === "string" ? a.title : "").slice(0, 200) });
-    }
-  }
-  return [...out.values()].sort((x, y) => x.id.localeCompare(y.id) || x.package.localeCompare(y.package));
-}
-function disallowedLicenses(lockText, allowlist) {
-  let lock;
-  try {
-    lock = JSON.parse(lockText);
-  } catch {
-    throw new Error("the lockfile is not valid JSON");
-  }
-  if (!lock.packages || typeof lock.packages !== "object") throw new Error("the lockfile has no packages section (lockfileVersion 2 or later records licenses)");
-  const allowed = new Set(allowlist.map((l) => l.toLowerCase()));
-  const out = /* @__PURE__ */ new Map();
-  for (const [key2, entry] of Object.entries(lock.packages)) {
-    if (key2 === "" || !entry || typeof entry !== "object" || entry.link === true) continue;
-    const name = typeof entry.name === "string" ? entry.name : key2.slice(key2.lastIndexOf("node_modules/") + "node_modules/".length);
-    const version = typeof entry.version === "string" ? entry.version : "0.0.0";
-    const license = typeof entry.license === "string" ? entry.license : null;
-    if (license !== null && licenseAllowed(license, allowed)) continue;
-    const id = `license:${name}@${version}`;
-    out.set(id, { id, kind: "license", package: name, severity: null, detail: license ?? "no license recorded" });
-  }
-  return [...out.values()].sort((a, b) => a.id.localeCompare(b.id));
-}
-function licenseAllowed(expr, allowed) {
-  const e = expr.replace(/[()]/g, " ").trim().toLowerCase();
-  return e.split(/\s+or\s+/).some((alt) => alt.split(/\s+and\s+/).every((part) => allowed.has(part.trim())));
-}
-function lockfileIn(dir) {
-  for (const f of ["npm-shrinkwrap.json", "package-lock.json"]) if (existsSync29(join40(dir, f))) return join40(dir, f);
-  return null;
-}
-async function runDependencyAudit(ctx, subject) {
-  const policy = dependencyAuditPolicy(ctx.snapshot.config);
-  if (!policy.enabled) return null;
-  const hash = manifestHash(ctx.checkoutDir);
-  const lock = lockfileIn(ctx.checkoutDir);
-  if (!lock) return { ran: false, reason: "no npm lockfile (package-lock.json or npm-shrinkwrap.json); the dependency audit supports npm lockfiles only", manifestHash: hash, vulnerabilities: [], licenses: [], logPath: null };
-  const problems = [];
-  let licenses = [];
-  if (policy.license_allowlist !== null) {
-    try {
-      licenses = disallowedLicenses(readFileSync21(lock, "utf8"), policy.license_allowlist);
-    } catch (err) {
-      problems.push(`license policy not checked: ${err.message}`);
-    }
-  }
-  const def = {
-    id: AUDIT_CHECK_ID,
-    // The report goes to a file, so warnings on stderr cannot corrupt it; a written report is success even when it lists vulnerabilities.
-    command: [`npm audit --json --package-lock-only > "$ORBIT_ARTIFACTS_DIR/${AUDIT_REPORT}"; s=$?; if [ -s "$ORBIT_ARTIFACTS_DIR/${AUDIT_REPORT}" ]; then exit 0; fi; exit $s`],
-    shell: true,
-    cwd: ".",
-    timeout_seconds: AUDIT_TIMEOUT_SECONDS,
-    network_hosts: [...ctx.registryHosts ?? NPM_REGISTRY_HOSTS],
-    local_binding: false,
-    env: { npm_config_fund: "false", npm_config_progress: "false", npm_config_update_notifier: "false" },
-    mandatory: false,
-    flaky_reruns: 0,
-    kind: "command"
-  };
-  const [r] = await runCheckSet({ ...ctx, definitions: { ...ctx.definitions, [AUDIT_CHECK_ID]: def } }, subject, [def]);
-  let vulnerabilities = [];
-  let ran = false;
-  if (!r) problems.push("npm audit did not start (cancelled)");
-  else if (r.status !== "PASSED") problems.push(`npm audit ${r.status === "TIMEOUT" ? "timed out" : `could not produce a report (${r.status})`}`);
-  else {
-    const report2 = r.artifacts.find((a) => a.path.endsWith(`/${AUDIT_REPORT}`));
-    try {
-      if (!report2) throw new Error("npm audit wrote no report");
-      vulnerabilities = parseNpmAudit(readFileSync21(report2.path, "utf8"));
-      ran = true;
-    } catch (err) {
-      problems.push(err.message);
-    }
-  }
-  return { ran, reason: problems.length ? problems.join("; ") : null, manifestHash: hash, vulnerabilities, licenses, logPath: r?.logPath ?? null };
-}
-function evaluateDependencyAudit(base, candidate, policy, now) {
-  const known = new Set(base?.ran ? [...base.vulnerabilities, ...base.licenses].map(key) : base ? base.licenses.map(key) : []);
-  const out = { blocking: [], advisory: [], excepted: [], expired: [], preexisting: [] };
-  for (const f of [...candidate.vulnerabilities, ...candidate.licenses]) {
-    if (known.has(key(f))) {
-      out.preexisting.push(f);
-      continue;
-    }
-    const exception = policy.exceptions.find((e) => e.id === f.id || f.kind === "license" && e.id === `license:${f.package}`);
-    if (exception) {
-      if (exception.expires !== null && (now === void 0 || now > exceptionExpiryMs(exception.expires))) {
-        if (!out.expired.some((x) => x.id === exception.id)) out.expired.push({ id: exception.id, expires: exception.expires });
-      } else {
-        out.excepted.push({ finding: f, reason: exception.reason, expires: exception.expires });
-        continue;
-      }
-    }
-    if (f.kind === "license" || SEVERITY_RANK[f.severity] >= SEVERITY_RANK[policy.fail_on]) out.blocking.push(f);
-    else out.advisory.push(f);
-  }
-  return out;
-}
-function key(f) {
-  return `${f.id}\0${f.package}`;
-}
-function describeFinding(f) {
-  return f.kind === "license" ? `${f.package} is licensed ${f.detail}, which is not on the license allowlist` : `${f.package}: ${f.id} (${f.severity})${f.detail ? ` ${f.detail}` : ""}`;
-}
-function baselineAuditNotes(audit, policy) {
-  if (!policy.enabled || !audit?.ran) return [];
-  const listed = [...audit.vulnerabilities.filter((f) => SEVERITY_RANK[f.severity ?? "low"] >= SEVERITY_RANK[policy.fail_on]), ...audit.licenses];
-  const notes = listed.slice(0, MAX_BASELINE_AUDIT_NOTES).map((f) => `pre-existing ${f.kind === "license" ? "license problem" : "vulnerability"} on the base revision: ${describeFinding(f)}`);
-  if (listed.length > MAX_BASELINE_AUDIT_NOTES) notes.push(`and ${listed.length - MAX_BASELINE_AUDIT_NOTES} more pre-existing dependency audit finding(s) on the base revision`);
-  return notes;
-}
-async function auditCandidate(ctx) {
-  const policy = dependencyAuditPolicy(ctx.snapshot.config);
-  if (!policy.enabled) return null;
-  const baseline = readJsonIfExists(join40(ctx.runDir, BASELINE_FILE2));
-  const baseAudit = baseline?.audit ?? null;
-  const empty = { blocking: [], advisory: [], excepted: [], expired: [], preexisting: [] };
-  if (baseAudit && baseAudit.manifestHash !== null && baseAudit.manifestHash === manifestHash(ctx.checkoutDir)) {
-    return { audited: false, candidate: null, ...empty, summary: null };
-  }
-  const subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: "install" };
-  const audit = await runDependencyAudit(ctx, subject);
-  if (!audit) return null;
-  const judged = evaluateDependencyAudit(baseAudit, audit, policy, ctx.clock.now());
-  const summary = judged.blocking.length ? `dependency audit: the candidate introduces ${judged.blocking.length} finding(s) the policy blocks: ${judged.blocking.slice(0, 5).map(describeFinding).join("; ")}` : audit.ran ? null : `dependency audit unverified: ${audit.reason ?? "npm audit did not run"}`;
-  for (const f of judged.blocking) {
-    recordFailure(ctx.db, { runId: ctx.run.id, candidateId: ctx.candidate.id, source: "install", sourceId: `dependency-audit:${ctx.candidate.id}:${f.id}:${f.package}`, fingerprint: `dependency-audit:${f.id}`, excerpt: describeFinding(f) }, ctx.clock);
-  }
-  ctx.db.tx(
-    () => appendEvent(ctx.db, ctx.run.id, "dependency.audit", "controller", {
-      candidate_id: ctx.candidate.id,
-      ran: audit.ran,
-      reason: audit.reason,
-      blocking: judged.blocking.map((f) => f.id),
-      advisory: judged.advisory.map((f) => f.id),
-      excepted: judged.excepted.map((e) => ({ id: e.finding.id, reason: e.reason })),
-      expired: judged.expired,
-      preexisting: judged.preexisting.length
-    }, ctx.clock.now())
-  );
-  return { audited: true, candidate: audit, ...judged, summary };
-}
-async function runBaseline(input) {
-  const { db, run, snapshot: snapshot2, runDir: runDir2, clock } = input;
-  assertRunPolicy(db, run, snapshot2);
-  const baseRevision = await resolveCommit(input.repoRoot, input.baseRev);
-  const baseTree = await treeOf(input.repoRoot, baseRevision);
-  const ids = input.checkIds ?? Object.values(snapshot2.config.checks).filter((c) => c.mandatory && c.kind === "command").map((c) => c.id);
-  for (const id of ids) {
-    if (!snapshot2.config.checks[id]) throw new OrbitError("POLICY_DENIED", `baseline check ${JSON.stringify(id)} is not defined in the policy snapshot`, { checkId: id });
-  }
-  const defs = [...new Set(ids)].map((id) => snapshot2.config.checks[id]).filter((d) => d.kind === "command");
-  const checkIds = defs.map((d) => d.id).sort();
-  const file = join40(runDir2, BASELINE_FILE2);
-  const prior = readJsonIfExists(file);
-  if (prior && prior.schema === "orbit.baseline/1" && prior.complete && prior.baseRevision === baseRevision && prior.policyHash === run.policyHash && Array.isArray(prior.checkIds) && prior.checkIds.join("\0") === checkIds.join("\0")) {
-    return { report: prior, results: [], reused: true };
-  }
-  const checkoutDir = input.checkoutDir ?? join40(prepareWorkerTmpDir(join40(runDir2, "baseline-checkout")), `base-${sha256(run.id).slice(0, 8)}`);
-  await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
-  await materializeCandidate(input.repoRoot, baseRevision, checkoutDir, { readOnly: false });
-  try {
-    const ctx = {
-      db,
-      run,
-      snapshot: snapshot2,
-      isolation: input.isolation,
-      checkoutDir,
-      runDir: runDir2,
-      clock,
-      signal: input.signal,
-      parallelism: input.parallelism,
-      pollMs: input.pollMs,
-      killGraceMs: input.killGraceMs,
-      homeDir: input.homeDir
-    };
-    const install = await installDependencies({ ...ctx, baseTree, registryHosts: input.registryHosts });
-    const results = install.skipped || install.ok ? await runCheckSet(ctx, baselineSubject(runDir2, baseTree), defs) : [];
-    const audit = await runDependencyAudit({ ...ctx, registryHosts: input.registryHosts }, baselineSubject(runDir2, baseTree, "install"));
-    const entries = results.map((r) => ({
-      checkId: r.checkId,
-      mandatory: snapshot2.config.checks[r.checkId]?.mandatory === true,
-      status: r.status,
-      exitCode: r.exitCode,
-      flaky: r.flaky,
-      fingerprint: r.fingerprint,
-      excerpt: r.excerpt,
-      log: r.logPath
-    }));
-    const report2 = {
-      schema: "orbit.baseline/1",
-      runId: run.id,
-      baseRevision,
-      baseTree,
-      policyHash: run.policyHash,
-      checkIds,
-      install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
-      ...audit ? { audit } : {},
-      auditNotes: baselineAuditNotes(audit, dependencyAuditPolicy(snapshot2.config)),
-      checks: entries,
-      failures: entries.filter((e) => e.mandatory && (e.status === "FAILED" || e.status === "TIMEOUT")).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
-      // Every requested check produced a decisive result (no ERROR, no CANCELLED, none skipped).
-      complete: (install.skipped || install.ok) && entries.length === defs.length && entries.every((e) => e.status === "PASSED" || e.status === "FAILED" || e.status === "TIMEOUT"),
-      recordedAt: clock.now()
-    };
-    atomicWriteJson(file, report2);
-    const auditSummary = audit ? { ran: audit.ran, reason: audit.reason, vulnerabilities: audit.vulnerabilities.length, disallowed_licenses: audit.licenses.length } : null;
-    db.tx(() => appendEvent(db, run.id, "baseline.recorded", "controller", { base_revision: baseRevision, base_tree: baseTree, failures: report2.failures.map((f) => f.checkId), complete: report2.complete, audit: auditSummary }, clock.now()));
-    return { report: report2, results, reused: false };
-  } finally {
-    await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
-  }
-}
-var BASELINE_FILE2, NPM_REGISTRY_HOSTS, INSTALL_TIMEOUT_SECONDS, OTHER_LOCKFILES, AUDIT_CHECK_ID, AUDIT_TIMEOUT_SECONDS, AUDIT_REPORT, MANIFEST_FILES, SEVERITY_RANK, MAX_BASELINE_AUDIT_NOTES;
-var init_baseline = __esm({
-  "src/evidence/baseline.ts"() {
-    "use strict";
-    init_errors();
-    init_fsx();
-    init_hash();
-    init_redact();
-    init_profiles();
-    init_config();
-    init_resolve();
-    init_events();
-    init_candidate();
-    init_git();
-    init_runner();
-    init_store();
-    BASELINE_FILE2 = "baseline.json";
-    NPM_REGISTRY_HOSTS = ["registry.npmjs.org"];
-    INSTALL_TIMEOUT_SECONDS = 900;
-    OTHER_LOCKFILES = ["yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "deno.lock"];
-    AUDIT_CHECK_ID = "orbit-dependency-audit";
-    AUDIT_TIMEOUT_SECONDS = 300;
-    AUDIT_REPORT = "npm-audit.json";
-    MANIFEST_FILES = ["package.json", "package-lock.json", "npm-shrinkwrap.json"];
-    SEVERITY_RANK = { critical: 4, high: 3, moderate: 2, low: 1 };
-    MAX_BASELINE_AUDIT_NOTES = 50;
-  }
-});
-
-// src/evidence/environment-failure.ts
-function within2(path, root) {
-  const r = root.length > 1 ? root.replace(/\/+$/, "") : root;
-  return path === r || path.startsWith(`${r}/`);
-}
-function deniedOutside(line3, roots) {
-  if (!DENIED.test(line3)) return false;
-  const paths = line3.match(ABSOLUTE_PATH) ?? [];
-  return paths.some((p) => !roots.some((root) => within2(p.replace(/[.]+$/, ""), root)));
-}
-function classifyEnvironmentFailure(input) {
-  const { fingerprint, baselineFingerprint } = input;
-  if (!fingerprint || !baselineFingerprint || fingerprint !== baselineFingerprint) return null;
-  const signals = [];
-  const lines = [];
-  const see = (signal) => {
-    if (!signals.includes(signal)) signals.push(signal);
-  };
-  for (const raw of stripAnsi(input.output).split("\n", MAX_SCANNED_LINES2)) {
-    const line3 = raw.replace(/\r$/, "");
-    const found = [];
-    if (VIOLATION.test(line3)) found.push("sandbox-violation");
-    if (EPERM.test(line3)) found.push("eperm");
-    if (NOT_PERMITTED.test(line3)) found.push("operation-not-permitted");
-    if (deniedOutside(line3, input.insideRoots)) found.push("eacces-outside-worktree");
-    if (found.length === 0) continue;
-    for (const s of found) see(s);
-    const shown = line3.trim().slice(0, MAX_LINE_CHARS);
-    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown)) lines.push(shown);
-  }
-  if (signals.length === 0) return null;
-  return { checkId: input.checkId, fingerprint, signals, cause: signals.map((s) => CAUSES[s]).join("; "), lines };
-}
-function classifyNotExecuted(input) {
-  const browser = input.browserIsolation?.trim();
-  if (browser) return { checkId: input.checkId, fingerprint: null, signals: ["browser-isolation"], cause: CAUSES["browser-isolation"], lines: [browser.slice(0, MAX_LINE_CHARS)] };
-  const start = input.startFailure?.trim();
-  if (start) return { checkId: input.checkId, fingerprint: null, signals: ["start-failed"], cause: CAUSES["start-failed"], lines: [start.slice(0, MAX_LINE_CHARS)] };
-  let crash = input.signal !== void 0 && input.signal !== null && CRASH_SIGNALS.has(input.signal) ? input.signal : null;
-  const kills = [];
-  const frames = [];
-  let traced = false;
-  let own = 0;
-  let inJsTrace = false;
-  for (const raw of stripAnsi(input.output).split("\n", MAX_SCANNED_LINES2)) {
-    const line3 = raw.trim();
-    if (line3 === "") continue;
-    const killed = KILLED_BY_SIGNAL.exec(line3);
-    const footer = RUNNER_FOOTER.exec(line3);
-    const header2 = TRACE_HEADER.exec(line3);
-    if (header2) {
-      inJsTrace = header2[1].toLowerCase() === "javascript";
-      traced = true;
-    } else if (inJsTrace && JS_FRAME.test(line3)) {
-    } else if (TRACE_FRAME.test(line3)) {
-      if (frames.length === 0) frames.push(line3.slice(0, MAX_LINE_CHARS));
-    } else if (killed) {
-      if (CRASH_SIGNALS.has(killed[1])) {
-        crash = killed[1];
-        if (kills.length === 0) kills.push(line3);
-      } else {
-        own += 1;
-      }
-    } else if (footer) {
-      if (CRASH_SIGNALS.has(footer[1])) crash = footer[1];
-    } else {
-      own += 1;
-    }
-  }
-  if (crash === null && !traced || own > 0) return null;
-  return { checkId: input.checkId, fingerprint: null, signals: ["process-aborted"], cause: crash === null ? CAUSES["process-aborted"] : `${CAUSES["process-aborted"]} (${crash})`, lines: [...kills, ...frames] };
-}
-var MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER;
-var init_environment_failure = __esm({
-  "src/evidence/environment-failure.ts"() {
-    "use strict";
-    init_fingerprint();
-    MAX_EVIDENCE_LINES = 3;
-    MAX_LINE_CHARS = 200;
-    MAX_SCANNED_LINES2 = 2e5;
-    VIOLATION = /<\/?sandbox_violations>|\bSandbox:.*\bdeny\(|X-Proxy-Error|Connection blocked by network allowlist/i;
-    EPERM = /\bEPERM\b/;
-    NOT_PERMITTED = /operation not permitted/i;
-    DENIED = /\bEACCES\b|permission denied/i;
-    ABSOLUTE_PATH = /(?<![\w./~<>-])\/[^\s'"`:,;()<>[\]{}|]+/g;
-    CAUSES = {
-      "sandbox-violation": "the sandbox reported a denied operation",
-      eperm: "an operation the sandbox does not permit failed with EPERM",
-      "operation-not-permitted": 'the operating system answered "operation not permitted"',
-      "eacces-outside-worktree": "permission was denied (EACCES) on a path outside the worktree",
-      "process-aborted": "the process was killed by a fatal signal before it printed anything of its own",
-      "start-failed": "the check could not be started",
-      "browser-isolation": "the browser could not start under sandbox-runtime"
-    };
-    CRASH_SIGNALS = /* @__PURE__ */ new Set(["SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL", "SIGTRAP", "SIGSYS"]);
-    TRACE_HEADER = /^-{3,}\s*(Native|JavaScript) stack trace\s*-{3,}$/i;
-    JS_FRAME = /^\d+:\s+\S/;
-    TRACE_FRAME = /^\d+:\s+0x[0-9a-f]+(?:\s|$)/i;
-    KILLED_BY_SIGNAL = /^Process killed by signal: (SIG[A-Z0-9]+)$/;
-    RUNNER_FOOTER = /^\[orbit\] check=\S+ status=\S+ exit=(\S+)/;
-  }
-});
-
-// src/controller/steps/baseline-questions.ts
-import { join as join41 } from "node:path";
-function openBaselineRequests(ctx) {
-  const out = [];
-  for (const d of listDecisions(ctx.db, ctx.run.id, { kind: BASELINE_EXCEPTION_REQUEST_KIND })) {
-    const req = d.data;
-    if (findQuestion(ctx.db, req.question_id)?.status === "open") out.push(req);
-  }
-  return out;
-}
-function isEnvironmentFailure(ctx, req) {
-  const failure = readJsonIfExists(join41(ctx.runDir, BASELINE_FILE2))?.failures.find((f) => f.checkId === req.check_id);
-  return classifyEnvironmentFailure({ checkId: req.check_id, fingerprint: req.fingerprint, baselineFingerprint: req.fingerprint, output: failure?.excerpt ?? "", insideRoots: [] }) !== null;
-}
-function settleExpectedFlips(ctx, contract) {
-  const flipped = [];
-  for (const req of openBaselineRequests(ctx)) {
-    const criteria = contract.acceptance_criteria.filter((c) => (c.check_ids ?? []).includes(req.check_id)).map((c) => c.id);
-    if (criteria.length === 0 || isEnvironmentFailure(ctx, req)) continue;
-    withdrawQuestion(ctx.db, req.question_id, `check ${req.check_id} is the proof of ${criteria.join(", ")}: it is expected to flip to passing, not to be excepted`, ctx.clock);
-    decide2(ctx, {
-      id: `dec-${ctx.run.id}-baseline-flip-${req.question_id}`,
-      kind: EXPECTED_TO_FLIP_KIND,
-      summary: `check ${req.check_id} fails on the base revision and is the proof of ${criteria.join(", ")}: expected to flip to passing, so no baseline exception is asked about`,
-      data: { check_id: req.check_id, fingerprint: req.fingerprint, base_revision: req.base_revision, criteria, question_id: req.question_id }
-    });
-    flipped.push(req.check_id);
-  }
-  return flipped;
-}
-function closeMootBaselineQuestions(ctx) {
-  for (const req of openBaselineRequests(ctx)) {
-    withdrawQuestion(ctx.db, req.question_id, `the run succeeded without a baseline exception for check ${req.check_id}: the question is moot`, ctx.clock);
-  }
-}
-var EXPECTED_TO_FLIP_KIND;
-var init_baseline_questions = __esm({
-  "src/controller/steps/baseline-questions.ts"() {
-    "use strict";
-    init_fsx();
-    init_baseline();
-    init_environment_failure();
-    init_baseline_exception();
-    init_store4();
-    init_decisions();
-    init_common();
-    EXPECTED_TO_FLIP_KIND = "baseline.expected-to-flip";
-  }
-});
-
-// src/controller/worktree-cleanup.ts
-import { existsSync as existsSync30, readdirSync as readdirSync8, rmSync as rmSync9 } from "node:fs";
-import { join as join42 } from "node:path";
-async function hasUnsavedEdits(worktree, repoRoot) {
-  const admin = await adminDirFor(repoRoot, worktree);
-  const out = await git2(admin.worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"], { env: { GIT_DIR: admin.gitDir, GIT_WORK_TREE: admin.worktree, GIT_LITERAL_PATHSPECS: "1" } });
-  return out.split("\0").some((e) => e.length > 3 && !/(^|\/)(\.DS_Store|Thumbs\.db)$/.test(e.slice(3)) && !e.slice(3).startsWith("node_modules/"));
-}
-async function releaseRunWorktrees(ctx) {
-  const root = runWorktreeRoot(ctx);
-  if (!existsSync30(root)) return;
-  const repoRoot = ctx.run.repoRoot;
-  const kept = [];
-  const removed = [];
-  const implementer = ctx.run.worktreePath;
-  for (const name of readdirSync8(root)) {
-    const dir = join42(root, name);
-    try {
-      if (implementer && dir === implementer && ctx.run.baseRevision) {
-        if (await hasUnsavedEdits(dir, repoRoot)) {
-          await snapshotCandidate({ db: ctx.db, clock: ctx.clock, repoRoot, worktree: dir, runId: ctx.run.id, baseRev: ctx.run.baseRevision, attempt: Math.max(1, ctx.ledger?.state("implementation_attempts").used ?? 1), workerId: null });
-        }
-      }
-      await cleanupCandidateCheckout(repoRoot, dir);
-      removed.push(name);
-    } catch (err) {
-      kept.push(name);
-      ctx.log.warn("could not remove a finished run's worktree; it is kept", { run_id: ctx.run.id, worktree: name, error: messageOf(err) });
-    }
-  }
-  if (kept.length === 0) rmSync9(root, { recursive: true, force: true });
-  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, WORKTREES_RELEASED_EVENT, ctx.ownerId, { removed, kept }, ctx.clock.now()));
-}
-var WORKTREES_RELEASED_EVENT;
-var init_worktree_cleanup = __esm({
-  "src/controller/worktree-cleanup.ts"() {
-    "use strict";
-    init_candidate();
-    init_git();
-    init_context2();
-    init_workers2();
-    init_events();
-    WORKTREES_RELEASED_EVENT = "worktrees.released";
-  }
-});
-
-// src/review/stale.ts
-function findStaleReviews(db, runId, current) {
-  return listReviews(db, runId).filter((r) => r.treeHash !== current.treeHash);
-}
-function invalidateStaleReviews(db, input, clock) {
-  const reason = `candidate tree is now ${input.current.treeHash}${input.cause ? ` (${input.cause})` : ""}; a review of another tree authorizes nothing`;
-  const stale = findStaleReviews(db, input.runId, input.current);
-  if (stale.length === 0) return [];
-  const ids = stale.map((r) => r.id).sort();
-  recordDecision(
-    db,
-    input.runDir,
-    {
-      id: `dec-review-invalidated-${sha256(canonicalJson([input.runId, input.current.treeHash, ids])).slice(0, 12)}`,
-      runId: input.runId,
-      kind: "review.invalidated",
-      summary: `${stale.length} review(s) invalidated: ${reason}`.slice(0, 500),
-      data: { reviews: stale.map((r) => ({ id: r.id, provider: r.provider, tree_hash: r.treeHash, verdict: r.verdict })), current_tree: input.current.treeHash, cause: input.cause ?? null }
-    },
-    clock
-  );
-  const invalidated = db.tx(() => {
-    const out = [];
-    for (const r of stale) if (markReviewInvalidated(db, r.id, reason, clock)) out.push(r);
-    return out;
-  });
-  return invalidated;
-}
-function reviewGate(db, input) {
-  const reasons = [];
-  const { config } = input.snapshot;
-  const current = listReviews(db, input.runId, { treeHash: input.treeHash });
-  const security = input.security ?? readSecurityPolicy(input.snapshot);
-  const lapsed = /* @__PURE__ */ new Set();
-  const all = listFindings(db, input.runId).map((f) => {
-    if (f.status !== "excepted" || exceptionStillApplies(f, security, input.now)) return f;
-    lapsed.add(f.id);
-    return { ...f, status: "open" };
-  });
-  if (current.length === 0) {
-    const stale = findStaleReviews(db, input.runId, { treeHash: input.treeHash });
-    reasons.push(stale.length > 0 ? `no review of tree ${input.treeHash}; ${stale.length} review(s) exist only for other trees and authorize nothing` : `no review of tree ${input.treeHash}`);
-  }
-  const cleared = [];
-  for (const r of current) {
-    if (r.verdict === "APPROVE") {
-      cleared.push(r);
-      continue;
-    }
-    const own = all.filter((f) => f.reviewId === r.id);
-    const closers = r.verdict === "BLOCK" ? CLEARS_BLOCK : CLEARS_REPAIR;
-    const open = own.filter((f) => !closers.includes(f.status));
-    if (own.length === 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} with no findings to resolve`);
-    else if (open.length > 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} and ${open.length} of its finding(s) are unresolved (${open.map((f) => `${f.externalId ?? f.id} ${f.status}`).join(", ")})`);
-    else cleared.push(r);
-  }
-  for (const f of blockingUnresolved(all, input.snapshot, security, lapsed)) {
-    const why = lapsed.has(f.id) ? " (its policy exception has expired or no longer covers it)" : "";
-    reasons.push(`finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}) blocks delivery${why}: ${f.claim.slice(0, 120)}`);
-  }
-  if (config.review.independent_provider_required && cleared.length > 0 && input.implementerProvider === void 0) {
-    reasons.push("independent review is required but the implementer provider was not supplied, so independence cannot be shown");
-  } else if (config.review.independent_provider_required && cleared.length > 0 && !cleared.some((r) => r.provider !== input.implementerProvider)) {
-    reasons.push(`independent review is required but every clearing review is from "${input.implementerProvider}", the implementer's provider`);
-  }
-  if (current.length > 0 && cleared.length === 0 && reasons.length === 0) reasons.push("no review cleared this tree");
-  return { ok: reasons.length === 0, reasons, cleared };
-}
-function exceptionStillApplies(f, security, now) {
-  const index = f.resolutionJson?.exception?.index;
-  const exception = typeof index === "number" ? security.exceptions[index] : void 0;
-  return exception !== void 0 && exceptionApplies(exception, f, now);
-}
-function blockingUnresolved(findings, snapshot2, security, lapsed) {
-  return findings.filter((f) => {
-    if (f.status !== "open" && f.status !== "claim_pending" && f.status !== "accepted") return false;
-    const flag = f.resolutionJson?.blocking;
-    if (typeof flag === "boolean" && !lapsed.has(f.id)) return flag;
-    return severityBlocks(snapshot2, f.severity, isSecurityFinding({ category: f.category, externalId: f.externalId }), security);
-  });
-}
-var CLEARS_REPAIR, CLEARS_BLOCK;
-var init_stale = __esm({
-  "src/review/stale.ts"() {
-    "use strict";
-    init_errors();
-    init_hash();
-    init_decisions();
-    init_store3();
-    init_resolve();
-    CLEARS_REPAIR = ["rejected", "excepted", "advisory", "resolved"];
-    CLEARS_BLOCK = ["rejected", "excepted", "resolved"];
-  }
-});
-
-// src/controller/gates.ts
-import { realpathSync as realpathSync13 } from "node:fs";
-function result(gate, reasons, evidence, notes, details, unverified = false) {
-  const status2 = reasons.length > 0 ? "fail" : unverified ? "unverified" : "pass";
-  return { gate, status: status2, passed: status2 === "pass", reasons, evidence, notes, onFailure: FAILURE_BEHAVIOUR[gate], details };
-}
-function intakeGate(input) {
-  const { snapshot: snapshot2, run } = input;
-  const reasons = [];
-  const evidence = [`policy ${run.policyHash}`];
-  let repo;
-  try {
-    repo = realpathSync13(run.repoRoot);
-  } catch {
-    repo = run.repoRoot;
-    reasons.push(`repository ${run.repoRoot} does not exist`);
-  }
-  if (repo !== snapshot2.repo_root) reasons.push(`the run's repository ${repo} is not the repository the policy authorizes (${snapshot2.repo_root})`);
-  if (run.mode !== snapshot2.config.mode) reasons.push(`the run's mode ${run.mode} differs from the frozen policy mode ${snapshot2.config.mode}`);
-  if (snapshotHash(snapshot2) !== run.policyHash) reasons.push("the policy snapshot does not match the hash recorded for the run");
-  const limits = snapshot2.config.scheduler.hard_limits;
-  for (const [k, v] of Object.entries(limits)) if (!(typeof v === "number" && v > 0)) reasons.push(`hard limit ${k} must be positive`);
-  if (snapshot2.config.scope.allowed_paths.length === 0) reasons.push("the policy allows no paths, so no implementation is authorized");
-  const environment = input.run.environment ?? null;
-  if (environment !== null) {
-    const why = releaseEnvironmentProblem(snapshot2.config, environment);
-    if (why) reasons.push(`the run names release environment ${JSON.stringify(environment)}, which cannot be used: ${why}`);
-    else evidence.push(`release environment ${environment}`);
-  }
-  const problems = input.contract === void 0 ? [] : contractProblems(input.contract, snapshot2, { policyHash: run.policyHash });
-  reasons.push(...problems.map((p) => `contract: ${p}`));
-  if (input.contract !== void 0 && problems.length === 0) {
-    const c = input.contract;
-    evidence.push(`contract ${c.task_id}: ${c.acceptance_criteria.length} criteria, ${c.required_check_ids.length} required checks, scope ${c.allowed_paths.join(", ")}`);
-    const mandatory = c.acceptance_criteria.filter((a) => a.mandatory);
-    if (mandatory.length === 0) reasons.push("the contract has no mandatory acceptance criterion, so success could not be measured");
-    for (const a of mandatory) {
-      if (a.proof.length === 0) reasons.push(`${a.id} names no proof`);
-      const byCheck = (a.check_ids ?? []).length > 0;
-      const byUi = a.ui === true && (snapshot2.config.ui?.journey_check_ids.length ?? 0) > 0;
-      if (!byCheck && !byUi) reasons.push(`${a.id} is not measurable: it cites no trusted check${a.ui ? " and the policy defines no UI journeys" : ""}`);
-    }
-    if (c.allowed_paths.length === 0) reasons.push("the contract allows no paths");
-    if ((c.delivery.environment ?? null) !== environment) {
-      reasons.push(`the contract's delivery.environment (${c.delivery.environment ?? "none"}) is not the release environment the run names (${environment ?? "none"})`);
-    }
-  }
-  return result("intake", reasons, evidence, [], { problems });
-}
-function environmentGate(input) {
-  const reasons = [];
-  const evidence = [];
-  const notes = [];
-  let blockedProvider = null;
-  let code2 = null;
-  const unattended = UNATTENDED_MODES.has(input.mode);
-  if ("error" in input.isolation) {
-    reasons.push(`isolation is unavailable: ${input.isolation.error}`);
-    code2 = "ISOLATION_UNAVAILABLE";
-  } else {
-    const iso2 = input.isolation;
-    evidence.push(`isolation ${iso2.kind}: ${iso2.detail}`);
-    if (iso2.kind === "none") {
-      if (unattended && input.snapshot.config.isolation.allow_unisolated !== true) {
-        reasons.push(`unattended ${input.mode} execution needs isolation; the policy selects none`);
-        code2 = "ISOLATION_UNAVAILABLE";
-      } else {
-        notes.push("no isolation: workers and checks run without an OS sandbox and without network egress controls (isolation.allow_unisolated)");
-      }
-    } else if (!iso2.available) {
-      reasons.push(`${iso2.kind} isolation is unavailable: ${iso2.detail}`);
-      code2 = "ISOLATION_UNAVAILABLE";
-    } else if (iso2.kind === "sandbox-runtime") {
-      notes.push("sandbox-runtime limits filesystem writes and network egress but not CPU, memory or process count");
-    }
-    const unenforced = resourceLimitRefusals(input.snapshot.config.isolation, iso2.kind);
-    if (unenforced.length > 0) {
-      reasons.push(...unenforced.map((u) => `${u}; ${RESOURCE_LIMIT_FIX}`));
-      code2 ??= "ISOLATION_UNAVAILABLE";
-    }
-  }
-  for (const c of input.credentials) {
-    evidence.push(`credentials ${c.provider}: ${c.verdict}${c.status ? ` (${c.status.state}${c.status.method ? `, ${c.status.method}` : ""})` : ""}`);
-    if (c.verdict === "blocked") {
-      reasons.push(`${c.provider} credentials are ${c.status?.state ?? "not usable"}${c.status?.detail ? `: ${c.status.detail}` : ""}`);
-      blockedProvider ??= c.provider;
-      code2 ??= c.status?.state === "missing" ? "AUTH_MISSING" : "AUTH_EXPIRED";
-    } else if (c.verdict === "error") {
-      reasons.push(`${c.provider} could not be checked: ${c.error ?? "unknown error"}`);
-      code2 ??= "PROVIDER_UNAVAILABLE";
-    } else if (c.verdict === "unverified") {
-      notes.push(`${c.provider} credentials are present but unverified until a request succeeds`);
-    }
-  }
-  if (input.delivery) {
-    reasons.push(`delivery: ${input.delivery.summary}; ${input.delivery.fix}`);
-    code2 ??= input.delivery.code;
-  }
-  if (input.reviewer) {
-    if (input.reviewer.decision === "BLOCK") {
-      reasons.push(`independent review: ${input.reviewer.reason}`);
-      code2 ??= input.reviewer.code;
-    } else {
-      evidence.push(`reviewer ${input.reviewer.provider}/${input.reviewer.model ?? "default"} (${input.reviewer.independent ? "independent" : "same provider"})`);
-    }
-  }
-  return result("environment", reasons, evidence, notes, { blockedProvider, code: code2 });
-}
-function baselineGate(report2) {
-  const reasons = [];
-  const notes = [];
-  const evidence = [`baseline of ${report2.baseRevision} (tree ${report2.baseTree}): ${report2.checks.length} check(s)`];
-  if (!report2.install.skipped && !report2.install.ok) reasons.push(`the locked dependency install failed on the base revision${report2.install.reason ? `: ${report2.install.reason}` : ""}`);
-  for (const f of report2.failures) notes.push(`pre-existing failure on the base revision: ${f.checkId}${f.fingerprint ? ` (${f.fingerprint})` : ""}`);
-  for (const n2 of report2.auditNotes ?? []) notes.push(n2);
-  if (!report2.complete) notes.push("the baseline is incomplete: some checks could not produce a decisive result on the base revision");
-  return result("baseline", reasons, evidence, notes, { failures: report2.failures }, !report2.complete && reasons.length === 0);
-}
-function implementationScopeGate(scope, snapshot2) {
-  const reasons = [];
-  const repairable = [];
-  const deps = snapshot2.config.dependencies;
-  if (scope.forbidden_paths_changed.length > 0) reasons.push(`protected paths changed: ${scope.forbidden_paths_changed.join(", ")}`);
-  if (scope.symlinks_escaping.length > 0) reasons.push(`symlinks escape the worktree: ${scope.symlinks_escaping.join(", ")}`);
-  const policyViolation = reasons.length > 0;
-  const add = (why) => {
-    reasons.push(why);
-    repairable.push(why);
-  };
-  if (scope.out_of_scope_paths_changed.length > 0) add(`paths outside the authorized scope changed: ${scope.out_of_scope_paths_changed.join(", ")}`);
-  if (!scope.within_size_limits) add(`the change is over the size limits (${scope.changed_files} files, ${scope.changed_lines} lines)`);
-  if (scope.lockfile_changed && !deps.change_lockfile) add("a lockfile changed, which the policy does not allow");
-  if (scope.dependency_manifest_changed.length > 0 && !deps.add_packages) add(`dependency manifests changed: ${scope.dependency_manifest_changed.join(", ")}`);
-  const evidence = [`${scope.changed_files} file(s), ${scope.changed_lines} line(s) changed`];
-  const notes = scope.weakening_signals.map((w) => `possible oracle weakening in ${w.path}: ${w.signal} (${w.detail})`);
-  return result("implementation", reasons, evidence, notes, { policyViolation, repairable });
-}
-function staticSecurityGate(input) {
-  const reasons = [];
-  const notes = [];
-  const evidence = [`secret scan: ${input.scan.note}; ${input.scan.files} file(s) scanned (${input.scan.reportPath})`];
-  if (!input.scan.completed) notes.push("the secret scan did not complete");
-  if (input.scan.findings.length > 0) {
-    reasons.push(`the secret scan found ${input.scan.findings.length} potential secret(s): ${input.scan.findings.slice(0, 10).map((f) => `${f.file}${f.line ? `:${f.line}` : ""} (${f.rule})`).join(", ")}`);
-  }
-  if (input.scan.scanner === "builtin") notes.push(`secret scan used built-in patterns only: ${input.scan.note}`);
-  if (input.sast.length === 0) {
-    notes.push("static analysis (SAST) is unverified: the policy defines no SAST check");
-  } else {
-    for (const s of input.sast) {
-      evidence.push(`SAST ${s.checkId}: ${s.status ?? "not run"}`);
-      if (s.status === "FAILED") reasons.push(`SAST check ${s.checkId} failed`);
-      else if (s.status !== "PASSED") notes.push(`SAST check ${s.checkId} is unverified (${s.status ?? "not run"})`);
-    }
-  }
-  const unverified = input.sast.length === 0 || !input.scan.completed || input.sast.some((s) => s.status !== "PASSED");
-  return result("static_security", reasons, evidence, notes, { secrets: input.scan.findings.length, sastDefined: input.sast.length > 0 }, unverified);
-}
-function behaviourGate(evaluation) {
-  const r = evaluation.report;
-  const evidence = r.checks.map((c) => `${c.id}: ${c.status}${c.flaky ? " (flaky)" : ""} (${c.log})`);
-  evidence.push(...r.acceptance_evidence.map((a) => `${a.criterion_id}: ${a.status}`));
-  if (r.verdict === "FAIL") return result("behaviour", evaluation.failReasons.length > 0 ? evaluation.failReasons : ["the evidence verdict is FAIL"], evidence, r.unverified, { verdict: r.verdict });
-  return result("behaviour", [], evidence, [...evaluation.incompleteReasons, ...r.unverified], { verdict: r.verdict }, r.verdict !== "PASS");
-}
-function uiGate(input) {
-  if (!input.required) return result("ui", [], ["no UI path changed and no criterion needs UI evidence"], [], { verdict: null });
-  if (!input.configured) return result("ui", ["UI evidence is required but the policy configures no UI journeys"], [], [], { verdict: null });
-  const r = input.result;
-  if (!r) return result("ui", [], [], ["UI checks did not run"], { verdict: null }, true);
-  const evidence = r.journeys.map((j) => `${j.id}: ${j.status}`);
-  if (r.verdict === "PASS") return result("ui", [], evidence, r.unverified, { verdict: r.verdict });
-  if (r.verdict === "FAIL" || r.verdict === "BLOCKED") return result("ui", r.reasons.length > 0 ? r.reasons : [`UI verdict ${r.verdict}`], evidence, r.unverified, { verdict: r.verdict });
-  return result("ui", [], evidence, [...r.reasons, ...r.unverified], { verdict: r.verdict }, true);
-}
-function independentReviewGate(db, input) {
-  const g = reviewGate(db, { runId: input.runId, treeHash: input.treeHash, snapshot: input.snapshot, implementerProvider: input.implementerProvider, now: input.now });
-  const approved = g.cleared.some((r) => r.verdict === "APPROVE");
-  const evidence = g.cleared.map((r) => `review ${r.id} by ${r.provider}: ${r.verdict} on tree ${r.treeHash}`);
-  return result("independent_review", g.reasons, evidence, [], { gate: g, approved });
-}
-function deliveryGate(input) {
-  try {
-    assertDeliverable({
-      report: input.evidence.report,
-      review: input.review,
-      deliveryCommitTree: input.deliveryCommitTree,
-      invalidatedReason: input.evidence.invalidatedReason,
-      current: { candidate: input.candidate, snapshot: input.snapshot }
-    });
-    return result("delivery", [], [`evidence ${input.evidence.id} and review on tree ${input.candidate.treeHash}; delivery tree ${input.deliveryCommitTree}`], [], { code: null });
-  } catch (err) {
-    if (!isOrbitError(err)) throw err;
-    return result("delivery", [err.message], [], [], { code: err.code });
-  }
-}
-function blockingQuestions(db, runId) {
-  const waiting = openQuestions(db, runId).filter((q) => q.material);
-  const criteria = criteriaBlockedByQuestions(waiting);
-  return { criteria, questions: waiting.filter((q) => q.affected.some((a) => criteria.includes(a))) };
-}
-function completionGate(db, input) {
-  const reasons = [];
-  const evidence = [];
-  const c = input.candidate;
-  if (!c) return result("completion", ["there is no candidate"], [], [], { evidenceId: null, reviewId: null, blockedCriteria: [] });
-  const report2 = currentEvidenceReport(db, input.run.id, c.id);
-  if (!report2) reasons.push(`no live evidence report for candidate ${c.id}`);
-  else {
-    evidence.push(`evidence ${report2.id}: ${report2.verdict} on tree ${report2.treeHash}`);
-    if (report2.verdict !== "PASS") reasons.push(`the evidence verdict is ${report2.verdict}, not PASS`);
-    const stale = staleReasons(report2.report, { candidate: c, snapshot: input.snapshot });
-    if (stale.length > 0) reasons.push(`the evidence is stale: ${stale.join("; ")}`);
-  }
-  const g = reviewGate(db, { runId: input.run.id, treeHash: c.treeHash, snapshot: input.snapshot, implementerProvider: input.implementerProvider, now: input.now });
-  const approve = listReviews(db, input.run.id, { treeHash: c.treeHash }).find((r) => r.verdict === "APPROVE" && r.invalidatedAt === null) ?? null;
-  if (!approve) reasons.push(`no APPROVE review of tree ${c.treeHash}`);
-  else evidence.push(`review ${approve.id} by ${approve.provider}: APPROVE on tree ${approve.treeHash}`);
-  if (!g.ok) reasons.push(...g.reasons);
-  const { criteria: blocked, questions: waiting } = blockingQuestions(db, input.run.id);
-  if (blocked.length > 0) reasons.push(`${blocked.join(", ")} ${blocked.length === 1 ? "is" : "are"} blocked by open question(s) ${waiting.map((q) => q.id).join(", ")} waiting for a person`);
-  if (input.deliveredTree === null) reasons.push("no delivered commit to compare with the reviewed tree");
-  else if (input.deliveredTree !== c.treeHash) reasons.push(`the delivered tree ${input.deliveredTree} is not the reviewed tree ${c.treeHash}`);
-  else evidence.push(`delivered tree ${input.deliveredTree}`);
-  return result("completion", reasons, evidence, [], { evidenceId: report2?.id ?? null, reviewId: approve?.id ?? null, blockedCriteria: blocked });
-}
-var FAILURE_BEHAVIOUR;
-var init_gates = __esm({
-  "src/controller/gates.ts"() {
-    "use strict";
-    init_stale();
-    init_store3();
-    init_validate();
-    init_config();
-    init_limits();
-    init_snapshot();
-    init_freshness();
-    init_store();
-    init_errors();
-    init_questions();
-    FAILURE_BEHAVIOUR = {
-      intake: "reject-contract",
-      environment: "block-unattended",
-      baseline: "record-baseline",
-      implementation: "deny-and-record",
-      static_security: "repair-or-block",
-      behaviour: "repair-brief",
-      ui: "repair-or-block",
-      independent_review: "resolve-findings",
-      delivery: "refuse-delivery",
-      completion: "no-success"
-    };
   }
 });
 
@@ -49152,7 +47613,7 @@ var init_common = __esm({
     init_workers2();
     init_baseline_questions();
     init_worktree_cleanup();
-    init_report2();
+    init_report();
     init_gates();
     init_amendment_answers();
     WAIT = (why) => ({ progressed: false, waiting: why });
@@ -49160,6 +47621,262 @@ var init_common = __esm({
     DONE = { progressed: true, done: true };
     WORKER_RETRY_EVENT = "worker.retry";
     MAX_REGENERATIONS = 2;
+  }
+});
+
+// src/delivery/git.ts
+function isObjectId(value) {
+  return typeof value === "string" && OBJECT_ID.test(value);
+}
+function assertTaskBranch(branch, rules) {
+  const deny2 = (why) => {
+    throw new OrbitError("POLICY_DENIED", `refusing to push ${JSON.stringify(branch)}: ${why}`, { branch, definitive: true });
+  };
+  if (typeof branch !== "string" || branch.length === 0) deny2("the branch name is empty");
+  if (branch.startsWith("refs/")) deny2("give the branch name, not a ref");
+  if (!rules.branchPrefix) deny2("no branch prefix is configured");
+  if (!branch.startsWith(rules.branchPrefix) || branch.length === rules.branchPrefix.length) deny2(`task branches start with ${rules.branchPrefix}`);
+  if (branch === rules.baseBranch) deny2("the base branch is never a push target");
+  if (branch.startsWith("-") || REF_FORBIDDEN2.test(branch)) deny2("it is not a valid branch name");
+}
+function branchRef(branch) {
+  return `refs/heads/${branch}`;
+}
+function gitEnv4(extra = {}, base = process.env) {
+  const keep = ["PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "SystemRoot"];
+  const env = {};
+  for (const k of keep) if (base[k] !== void 0) env[k] = base[k];
+  return {
+    ...env,
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "",
+    GIT_OPTIONAL_LOCKS: "0",
+    // Transports Orbit uses; excludes ext:: and friends.
+    GIT_ALLOW_PROTOCOL: "file:https:http:git:ssh",
+    ...extra
+  };
+}
+async function git3(repoRoot, args, opts = {}) {
+  return execCapture(["git", ...args], { cwd: repoRoot, env: opts.env ?? gitEnv4(), timeoutMs: opts.timeoutMs ?? 12e4, input: opts.input, maxOutputBytes: 4 * 1024 * 1024 });
+}
+function fail(what, res, extra = {}) {
+  const text2 = redact(`${res.stderr}${res.stdout}`.trim()).slice(0, 2e3);
+  return new OrbitError("GIT_FAILED", `${what} failed (exit ${res.exitCode ?? res.signal ?? "unknown"}): ${text2}`, { exitCode: res.exitCode, ...extra });
+}
+async function objectExists(repoRoot, spec, opts) {
+  const res = await git3(repoRoot, ["cat-file", "-e", spec], opts);
+  return res.exitCode === 0;
+}
+async function readControllerIdentity(repoRoot, opts = {}) {
+  const read2 = async (key2) => {
+    const res = await git3(repoRoot, ["config", "--get", key2], opts);
+    return res.exitCode === 0 ? res.stdout.trim() : "";
+  };
+  const [name, email] = await Promise.all([read2("user.name"), read2("user.email")]);
+  if (!name || !email) {
+    throw new OrbitError("CONFIG_INVALID", "the controller has no git identity (user.name and user.email); delivery commits never take an identity from a worker", { definitive: true });
+  }
+  return { name, email };
+}
+async function createDeliveryCommit(input) {
+  const { repoRoot, tree, parent, message, identity } = input;
+  if (!isObjectId(tree)) throw new OrbitError("GIT_FAILED", "the tree is not a full object id", { tree });
+  if (!isObjectId(parent)) throw new OrbitError("GIT_FAILED", "the parent is not a full object id", { parent });
+  if (!message.trim()) throw new OrbitError("GIT_FAILED", "a delivery commit needs a message");
+  if (!identity.name || !identity.email) throw new OrbitError("CONFIG_INVALID", "a delivery commit needs an identity", { definitive: true });
+  if (!await objectExists(repoRoot, `${tree}^{tree}`, input)) throw new OrbitError("GIT_FAILED", `tree ${tree} is not in the repository`);
+  if (!await objectExists(repoRoot, `${parent}^{commit}`, input)) throw new OrbitError("GIT_FAILED", `parent ${parent} is not a commit in the repository`);
+  const when = `${Math.floor(input.timeMs / 1e3)} +0000`;
+  const env = gitEnv4({
+    // Reproducible: no user or system configuration can influence the result.
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: identity.name,
+    GIT_AUTHOR_EMAIL: identity.email,
+    GIT_AUTHOR_DATE: when,
+    GIT_COMMITTER_NAME: identity.name,
+    GIT_COMMITTER_EMAIL: identity.email,
+    GIT_COMMITTER_DATE: when
+  });
+  const res = await git3(repoRoot, ["commit-tree", tree, "-p", parent, "-F", "-"], { ...input, env, input: message.endsWith("\n") ? message : `${message}
+` });
+  if (res.exitCode !== 0) throw fail("git commit-tree", res);
+  const commit = res.stdout.trim();
+  if (!isObjectId(commit)) throw new OrbitError("GIT_FAILED", `commit-tree printed an unexpected value: ${res.stdout.trim().slice(0, 80)}`);
+  const check = await git3(repoRoot, ["rev-parse", `${commit}^{tree}`], input);
+  if (check.exitCode !== 0 || check.stdout.trim() !== tree) {
+    throw new OrbitError("GIT_FAILED", `the delivery commit ${commit} has tree ${check.stdout.trim()}, not the reviewed tree ${tree}`, { commit, tree, definitive: true });
+  }
+  if (input.ref) {
+    const up = await git3(repoRoot, ["update-ref", input.ref, commit], input);
+    if (up.exitCode !== 0) throw fail("git update-ref", up);
+  }
+  return commit;
+}
+function deliveryRef(runId, tree, parent) {
+  return `refs/orbit/${runId}/delivery/${parent}/${tree}`;
+}
+async function findDeliveryCommit(repoRoot, runId, tree, parent, opts = {}) {
+  const res = await git3(repoRoot, ["rev-parse", "--verify", "--quiet", `${deliveryRef(runId, tree, parent)}^{commit}`], opts);
+  if (res.exitCode !== 0) return null;
+  const commit = res.stdout.trim();
+  const t = await git3(repoRoot, ["rev-parse", `${commit}^{tree}`, `${commit}^`], opts);
+  const [commitTree, commitParent] = t.stdout.trim().split("\n");
+  return t.exitCode === 0 && commitTree === tree && commitParent === parent ? commit : null;
+}
+function assertRemote(remote) {
+  if (typeof remote !== "string" || remote.length === 0 || remote.startsWith("-") || /[\0\n\r]/.test(remote)) {
+    throw new OrbitError("CONFIG_INVALID", `the remote ${JSON.stringify(remote)} is not usable`, { definitive: true });
+  }
+}
+function remoteHost2(address) {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(address)) {
+    let url;
+    try {
+      url = new URL(address);
+    } catch {
+      throw new OrbitError("CONFIG_INVALID", "the remote URL cannot be parsed", { remote: redact(address), definitive: true });
+    }
+    if (url.protocol === "file:") return null;
+    const host = url.hostname.replace(/^\[|\]$/g, "");
+    if (!host) throw new OrbitError("CONFIG_INVALID", "the remote URL names no host", { remote: redact(address), definitive: true });
+    return host;
+  }
+  const scp = /^(?:[^@/]*@)?(\[[^\]]+\]|[^:/]+):/.exec(address);
+  if (scp) return scp[1].replace(/^\[|\]$/g, "");
+  return null;
+}
+async function resolveRemoteUrl(repoRoot, remote, opts = {}) {
+  assertRemote(remote);
+  const res = await git3(repoRoot, ["remote", "get-url", "--push", "--all", remote], opts);
+  let url;
+  if (res.exitCode === 0) {
+    const urls = res.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (urls.length !== 1) throw new OrbitError("CONFIG_INVALID", `remote ${remote} has ${urls.length} push URLs; delivery needs exactly one`, { definitive: true });
+    url = urls[0];
+  } else if (/[/:]/.test(remote)) {
+    url = remote;
+  } else {
+    throw new OrbitError("CONFIG_INVALID", `no git remote named ${JSON.stringify(remote)} in the repository`, { definitive: true });
+  }
+  assertRemote(url);
+  await assertNotRewritten(repoRoot, url, opts);
+  return url;
+}
+async function assertNotRewritten(repoRoot, url, opts) {
+  const res = await git3(repoRoot, ["config", "-z", "--get-regexp", "^url\\..*\\.(insteadof|pushinsteadof)$"], opts);
+  if (res.exitCode === 1 && res.stdout === "") return;
+  if (res.exitCode !== 0) throw fail("git config --get-regexp url.*.insteadOf", res);
+  for (const entry of res.stdout.split("\0")) {
+    const nl = entry.indexOf("\n");
+    const prefix = nl < 0 ? "" : entry.slice(nl + 1);
+    if (prefix !== "" && url.startsWith(prefix)) {
+      throw new OrbitError("CONFIG_INVALID", `the push URL ${redact(url)} matches a url.<base>.${/pushinsteadof$/i.test(entry.slice(0, nl)) ? "pushInsteadOf" : "insteadOf"} rule, so git would rewrite it to another destination; remove the rule or name the final URL`, { definitive: true });
+    }
+  }
+}
+function remoteEnvAndArgs(o) {
+  if (!o.token) return { env: o.env ?? gitEnv4(), pre: [] };
+  const helper = `!${o.ghPath ?? "gh"} auth git-credential`;
+  return {
+    env: { ...o.env ?? gitEnv4(), GH_TOKEN: o.token },
+    pre: ["-c", "credential.helper=", "-c", `credential.helper=${helper}`]
+  };
+}
+function classifyRemoteFailure(what, res) {
+  const text2 = `${res.stderr}
+${res.stdout}`;
+  if (AUTH_PATTERN.test(text2)) {
+    return new OrbitError("AUTH_EXPIRED", `${what} was refused for lack of valid credentials: ${redact(text2.trim()).slice(0, 500)}`, { exitCode: res.exitCode, definitive: true });
+  }
+  if (res.timedOut || TRANSIENT_PATTERN.test(text2)) {
+    return new OrbitError("PROVIDER_TRANSIENT", `${what} failed transiently: ${redact(text2.trim()).slice(0, 500)}`, { exitCode: res.exitCode });
+  }
+  return fail(what, res);
+}
+async function lsRemoteBranch(o) {
+  assertRemote(o.remote);
+  const ref2 = branchRef(o.branch);
+  const { env, pre } = remoteEnvAndArgs(o);
+  const res = await git3(o.repoRoot, [...pre, "ls-remote", "--", o.remote, ref2], { ...o, env });
+  if (res.exitCode !== 0) throw classifyRemoteFailure("git ls-remote", res);
+  for (const line3 of res.stdout.split("\n")) {
+    const [sha, name] = line3.split("	");
+    if (name === ref2 && isObjectId(sha)) return sha;
+  }
+  return null;
+}
+function parsePushPorcelain(stdout) {
+  const out = [];
+  for (const line3 of stdout.split("\n")) {
+    const m = /^([ +\-*!=])\t([^\t:]*):(\S+)\t(.*)$/.exec(line3);
+    if (m) out.push({ flag: m[1], from: m[2], to: m[3], summary: m[4] });
+  }
+  return out;
+}
+async function pushBranch(input) {
+  assertRemote(input.remote);
+  assertTaskBranch(input.branch, input);
+  if (!isObjectId(input.commit)) throw new OrbitError("GIT_FAILED", "the commit to push is not a full object id", { commit: input.commit });
+  if (input.force && !isObjectId(input.leaseSha)) {
+    throw new OrbitError("POLICY_DENIED", "a forced push needs --force-with-lease against the previously delivered commit", { definitive: true });
+  }
+  if (!await objectExists(input.repoRoot, `${input.commit}^{commit}`, input)) {
+    throw new OrbitError("GIT_FAILED", `commit ${input.commit} is not in the repository`);
+  }
+  const ref2 = branchRef(input.branch);
+  const { env, pre } = remoteEnvAndArgs(input);
+  const args = [...pre, "push", "--porcelain", "--no-verify"];
+  if (input.force) args.push(`--force-with-lease=${ref2}:${input.leaseSha}`);
+  args.push("--", input.remote, `${input.commit}:${ref2}`);
+  const res = await git3(input.repoRoot, args, { ...input, env });
+  const lines = parsePushPorcelain(res.stdout);
+  const mine = lines.find((l) => l.to === ref2);
+  if (mine && mine.flag === "!") {
+    if (AUTH_PATTERN.test(`${res.stderr}
+${res.stdout}`)) throw classifyRemoteFailure("git push", res);
+    throw new OrbitError("GIT_FAILED", `the remote rejected the push of ${input.branch}: ${mine.summary}`, { definitive: true, rejected: mine.summary, ref: ref2 });
+  }
+  if (res.exitCode !== 0) throw classifyRemoteFailure("git push", res);
+  if (!mine) throw new OrbitError("GIT_FAILED", `git push reported success but no result for ${ref2}`, { stdout: redact(res.stdout).slice(0, 500) });
+  const outcome = mine.flag === "*" ? "created" : mine.flag === "+" ? "forced" : mine.flag === "=" ? "up-to-date" : "updated";
+  return { remote: redact(input.remote), ref: ref2, sha: input.commit, outcome };
+}
+async function reconcilePush(o) {
+  const sha = await lsRemoteBranch(o);
+  if (sha !== o.commit) return null;
+  return { remote: redact(o.remote), ref: branchRef(o.branch), sha, outcome: "up-to-date" };
+}
+async function fetchBranchContaining(o) {
+  assertRemote(o.remote);
+  if (!isObjectId(o.commit)) throw new OrbitError("INTERNAL", `not a full commit sha: ${o.commit}`);
+  if (!o.ref.startsWith("refs/orbit/") || REF_FORBIDDEN2.test(o.ref.slice("refs/".length))) throw new OrbitError("INTERNAL", `fetch target must be a private refs/orbit/ ref: ${o.ref}`);
+  if (o.branch.startsWith("-") || REF_FORBIDDEN2.test(o.branch)) throw new OrbitError("CONFIG_INVALID", `not a valid branch name: ${JSON.stringify(o.branch)}`, { definitive: true });
+  const { env, pre } = remoteEnvAndArgs(o);
+  const res = await git3(o.repoRoot, [...pre, "fetch", "--no-tags", "--no-write-fetch-head", "--", o.remote, `+${branchRef(o.branch)}:${o.ref}`], { ...o, env });
+  if (res.exitCode !== 0) throw classifyRemoteFailure("git fetch", res);
+  const tip = (await git3(o.repoRoot, ["rev-parse", "--verify", "--quiet", `${o.ref}^{commit}`], o)).stdout.trim();
+  if (!isObjectId(tip)) throw new OrbitError("GIT_FAILED", `git fetch of ${o.branch} produced no commit at ${o.ref}`);
+  const onBranch = tip === o.commit || (await git3(o.repoRoot, ["merge-base", "--is-ancestor", o.commit, tip], o)).exitCode === 0;
+  if (!onBranch) {
+    throw new OrbitError("DELIVERY_FAILED", `commit ${o.commit.slice(0, 12)} is not on ${o.branch} at ${o.remote}`, { branch: o.branch, commit: o.commit, tip, definitive: true });
+  }
+  return tip;
+}
+async function hasCommit(repoRoot, commit, opts = {}) {
+  return isObjectId(commit) && await objectExists(repoRoot, `${commit}^{commit}`, opts);
+}
+var OBJECT_ID, REF_FORBIDDEN2, AUTH_PATTERN, TRANSIENT_PATTERN;
+var init_git2 = __esm({
+  "src/delivery/git.ts"() {
+    "use strict";
+    init_exec();
+    init_errors();
+    init_redact();
+    OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+    REF_FORBIDDEN2 = /(\.\.|@\{|[\s~^:?*[\\\x00-\x1f\x7f]|\/\/|\/\.|\.lock$|\.lock\/|\/$|\.$)/;
+    AUTH_PATTERN = /Authentication failed|could not read (?:Username|Password)|Permission denied|invalid credentials|Bad credentials|error: 40[13]|HTTP 40[13]|requires authentication|Invalid username or token|not permitted to push/i;
+    TRANSIENT_PATTERN = /Could not resolve host|Connection (?:timed out|reset|refused)|timed out|unable to access|early EOF|remote end hung up|error: 5\d\d|HTTP 5\d\d|RPC failed|Temporary failure/i;
   }
 });
 
@@ -49225,8 +47942,8 @@ async function collectFailures(client, failing, input) {
         text2 = forCheck(got.text, check.name) || got.steps;
       }
     }
-    const excerpt2 = text2 ? sanitizeLog(text2, { maxChars }) : "";
-    out.push({ name: check.name, runId: check.runId, logExcerpt: excerpt2, fingerprint: ciFingerprint(check.name, excerpt2), logStatus: status2 });
+    const excerpt3 = text2 ? sanitizeLog(text2, { maxChars }) : "";
+    out.push({ name: check.name, runId: check.runId, logExcerpt: excerpt3, fingerprint: ciFingerprint(check.name, excerpt3), logStatus: status2 });
   }
   return out;
 }
@@ -49257,8 +47974,8 @@ function sanitizeLog(text2, opts) {
   return `[earlier output omitted]
 ${nl > 0 && nl < 200 ? tail2.slice(nl + 1) : tail2}`;
 }
-function ciFingerprint(name, excerpt2) {
-  const lines = excerpt2.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+function ciFingerprint(name, excerpt3) {
+  const lines = excerpt3.split("\n").map((l) => l.trim()).filter((l) => l !== "");
   const signal = lines.filter((l) => SIGNAL_LINE.test(l));
   const picked = (signal.length > 0 ? signal : lines).slice(-8).map(normalizeLine2);
   return `ci:${sha256(`${name.toLowerCase()}
@@ -49582,9 +48299,9 @@ var init_deliver = __esm({
 });
 
 // src/delivery/release.ts
-import { existsSync as existsSync31, mkdirSync as mkdirSync16, rmSync as rmSync10 } from "node:fs";
+import { existsSync as existsSync29, mkdirSync as mkdirSync16, rmSync as rmSync10 } from "node:fs";
 import { platform as platform2 } from "node:os";
-import { join as join43 } from "node:path";
+import { join as join40 } from "node:path";
 function releaseConfig(snapshot2) {
   return snapshot2.config.release ?? null;
 }
@@ -49849,8 +48566,8 @@ function verdictOf2(result2, sha, required, requireAny) {
   return { state: "passed", detail: `${result2.checks.length} check(s) green` };
 }
 function deployFiles(workDir, envName, sha) {
-  const dir = join43(workDir, "release", `deploy-${envName}-${sha.slice(0, 12)}`);
-  return { dir, checkout: join43(dir, "checkout"), home: join43(dir, "home"), started: join43(dir, "started.json"), outcome: join43(dir, "outcome.json") };
+  const dir = join40(workDir, "release", `deploy-${envName}-${sha.slice(0, 12)}`);
+  return { dir, checkout: join40(dir, "checkout"), home: join40(dir, "home"), started: join40(dir, "started.json"), outcome: join40(dir, "outcome.json") };
 }
 function readDeployOutcome(files, sha, envName) {
   const outcome = readJsonIfExists(files.outcome);
@@ -49858,7 +48575,7 @@ function readDeployOutcome(files, sha, envName) {
     if (outcome.exitCode === 0 && !outcome.timedOut) return receiptOf(outcome);
     throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} to ${outcome.environment} ${outcome.timedOut ? "timed out, so whether it took effect is unknown" : `exited ${outcome.exitCode ?? "by signal"}`}; it is not retried automatically`, { definitive: true, ...outcome.timedOut ? unknownDetails(envName, sha) : {} });
   }
-  if (existsSync31(files.started)) {
+  if (existsSync29(files.started)) {
     throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} started but recorded no outcome (the controller stopped while it ran); check the environment, then run "orbit release resolve <run-id>" (the environment's verify_command) or pass --deployed or --not-deployed`, { definitive: true, outcomeUnknown: true, environment: envName, sha });
   }
   return null;
@@ -49887,7 +48604,7 @@ async function runDeploy(a) {
     await fetchBranchContaining({ repoRoot, remote: a.remote, token: input.token, ...input.git, branch, commit: sha, ref: `refs/orbit/release/${run.id}` });
   }
   mkdirSync16(files.dir, { recursive: true, mode: 448 });
-  if (existsSync31(files.checkout)) await cleanupCandidateCheckout(repoRoot, files.checkout);
+  if (existsSync29(files.checkout)) await cleanupCandidateCheckout(repoRoot, files.checkout);
   const checkout = await materializeCandidate(repoRoot, sha, files.checkout, { readOnly: false });
   try {
     const tree = (await execCapture(["git", "rev-parse", `${sha}^{tree}`], { cwd: repoRoot, env: gitEnv4(), timeoutMs: 3e4 })).stdout.trim();
@@ -50019,11 +48736,11 @@ async function runVerifyCommand(a) {
     if (!d.allowed) throw new OrbitError("POLICY_DENIED", `verifying the deploy needs network access to ${host}: ${d.reason}`, { rule: d.rule, definitive: true });
   }
   if (!await hasCommit(run.repoRoot, sha, input.git)) return { verdict: "unknown", detail: `commit ${sha.slice(0, 12)} is not in the repository, so the verify_command has nothing to run on` };
-  const dir = join43(files.dir, "verify");
-  const checkoutDir = join43(dir, "checkout");
-  const home2 = join43(dir, "home");
+  const dir = join40(files.dir, "verify");
+  const checkoutDir = join40(dir, "checkout");
+  const home2 = join40(dir, "home");
   mkdirSync16(dir, { recursive: true, mode: 448 });
-  if (existsSync31(checkoutDir)) await cleanupCandidateCheckout(run.repoRoot, checkoutDir);
+  if (existsSync29(checkoutDir)) await cleanupCandidateCheckout(run.repoRoot, checkoutDir);
   const checkout = await materializeCandidate(run.repoRoot, sha, checkoutDir, { readOnly: false });
   try {
     mkdirSync16(home2, { recursive: true, mode: 448 });
@@ -50067,6 +48784,823 @@ var init_release = __esm({
     init_git2();
     OUTPUT_TAIL = 4e3;
     ENV_NAME2 = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+  }
+});
+
+// src/delivery/github.ts
+import { execFileSync } from "node:child_process";
+import { existsSync as existsSync30, readFileSync as readFileSync20 } from "node:fs";
+function malformed(what, detail) {
+  return new OrbitError("MALFORMED_OUTPUT", `gh ${what}: ${detail}`);
+}
+function parseJson4(what, text2) {
+  try {
+    return JSON.parse(text2);
+  } catch {
+    throw malformed(what, `output is not JSON (${redact(text2.slice(0, 120))})`);
+  }
+}
+function obj2(what, v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw malformed(what, "expected an object");
+  return v;
+}
+function str4(what, o, key2, optional = false) {
+  const v = o[key2];
+  if (typeof v === "string") return v;
+  if (optional && (v === void 0 || v === null)) return "";
+  throw malformed(what, `field ${key2} is missing or not a string`);
+}
+function parsePullRequest(value) {
+  const o = obj2("pr", value);
+  const state = str4("pr", o, "state").toUpperCase();
+  if (state !== "OPEN" && state !== "CLOSED" && state !== "MERGED") throw malformed("pr", `unknown state ${JSON.stringify(state)}`);
+  const number = o.number;
+  if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) throw malformed("pr", "field number is missing or not a positive integer");
+  return {
+    number,
+    url: str4("pr", o, "url"),
+    headRefName: str4("pr", o, "headRefName"),
+    headRefOid: str4("pr", o, "headRefOid"),
+    baseRefName: str4("pr", o, "baseRefName"),
+    isDraft: o.isDraft === true,
+    state,
+    title: str4("pr", o, "title", true),
+    body: str4("pr", o, "body", true)
+  };
+}
+function parsePullRequestList(text2) {
+  const v = parseJson4("pr list", text2);
+  if (!Array.isArray(v)) throw malformed("pr list", "expected an array");
+  return v.map(parsePullRequest);
+}
+function parseMergeState(value) {
+  const o = obj2("pr view", value);
+  const state = str4("pr view", o, "state").toUpperCase();
+  if (state !== "OPEN" && state !== "CLOSED" && state !== "MERGED") throw malformed("pr view", `unknown state ${JSON.stringify(state)}`);
+  const number = o.number;
+  if (typeof number !== "number" || !Number.isInteger(number) || number <= 0) throw malformed("pr view", "field number is missing or not a positive integer");
+  const mc = o.mergeCommit;
+  const oid = mc && typeof mc === "object" && typeof mc.oid === "string" ? mc.oid : null;
+  return {
+    number,
+    state,
+    headRefOid: str4("pr view", o, "headRefOid"),
+    baseRefName: str4("pr view", o, "baseRefName"),
+    mergeCommitSha: state === "MERGED" && oid ? oid : null,
+    mergedAt: typeof o.mergedAt === "string" && o.mergedAt !== "" ? o.mergedAt : null
+  };
+}
+function isCheckBucket(v) {
+  return typeof v === "string" && CHECK_BUCKETS.includes(v);
+}
+function parseChecks(text2) {
+  const v = parseJson4("pr checks", text2);
+  if (!Array.isArray(v)) throw malformed("pr checks", "expected an array");
+  return v.map((raw) => {
+    const o = obj2("pr checks", raw);
+    const bucket = o.bucket;
+    if (!isCheckBucket(bucket)) throw malformed("pr checks", `unknown bucket ${JSON.stringify(bucket)}`);
+    const link = typeof o.link === "string" && o.link !== "" ? o.link : null;
+    const m = link ? RUN_LINK.exec(link) : null;
+    const opt = (k) => typeof o[k] === "string" && o[k] !== "" ? o[k] : null;
+    return {
+      name: str4("pr checks", o, "name"),
+      bucket,
+      state: typeof o.state === "string" ? o.state : "",
+      link,
+      workflow: opt("workflow"),
+      runId: m?.[1] ?? null,
+      jobId: m?.[2] ?? null,
+      startedAt: opt("startedAt"),
+      completedAt: opt("completedAt"),
+      description: opt("description")
+    };
+  });
+}
+function parseRunListAsChecks(text2) {
+  const v = parseJson4("run list", text2);
+  if (!Array.isArray(v)) throw malformed("run list", "expected an array");
+  return v.map((raw) => {
+    const o = obj2("run list", raw);
+    const id = o.databaseId;
+    if (typeof id !== "number") throw malformed("run list", "field databaseId is missing or not a number");
+    const status2 = typeof o.status === "string" ? o.status : "";
+    const conclusion = typeof o.conclusion === "string" ? o.conclusion : "";
+    const name = typeof o.workflowName === "string" && o.workflowName || typeof o.name === "string" && o.name || `run ${id}`;
+    return {
+      name,
+      bucket: runBucket(status2, conclusion),
+      state: (conclusion || status2).toUpperCase(),
+      link: typeof o.url === "string" ? o.url : null,
+      workflow: typeof o.workflowName === "string" ? o.workflowName : null,
+      runId: String(id),
+      jobId: null,
+      startedAt: typeof o.startedAt === "string" ? o.startedAt : null,
+      completedAt: typeof o.updatedAt === "string" && status2 === "completed" ? o.updatedAt : null,
+      description: null
+    };
+  });
+}
+function runBucket(status2, conclusion) {
+  if (status2 !== "completed") return "pending";
+  switch (conclusion) {
+    case "success":
+      return "pass";
+    case "cancelled":
+      return "cancel";
+    case "skipped":
+    case "neutral":
+    case "stale":
+      return "skipping";
+    default:
+      return "fail";
+  }
+}
+function parseCheckRuns(text2) {
+  const o = obj2("check runs", parseJson4("check runs", text2));
+  const total = o.total_count;
+  if (typeof total !== "number" || !Number.isInteger(total) || total < 0) throw malformed("check runs", "field total_count is missing or not a count");
+  if (!Array.isArray(o.check_runs)) throw malformed("check runs", "field check_runs is missing or not an array");
+  const runs = o.check_runs.map((raw) => {
+    const r = obj2("check runs", raw);
+    const status2 = str4("check runs", r, "status");
+    const conclusion = typeof r.conclusion === "string" ? r.conclusion : "";
+    const opt = (k) => typeof r[k] === "string" && r[k] !== "" ? r[k] : null;
+    const link = opt("html_url") ?? opt("details_url");
+    const m = link ? RUN_LINK.exec(link) : null;
+    const output = r.output && typeof r.output === "object" ? r.output : {};
+    return {
+      name: str4("check runs", r, "name"),
+      headSha: str4("check runs", r, "head_sha"),
+      bucket: runBucket(status2, conclusion),
+      state: (conclusion || status2).toUpperCase(),
+      link,
+      workflow: null,
+      runId: m?.[1] ?? null,
+      jobId: m?.[2] ?? null,
+      startedAt: opt("started_at"),
+      completedAt: opt("completed_at"),
+      description: typeof output.title === "string" && output.title !== "" ? output.title : null
+    };
+  });
+  return { total, runs };
+}
+function statusBucket(state) {
+  switch (state) {
+    case "success":
+      return "pass";
+    case "pending":
+      return "pending";
+    default:
+      return "fail";
+  }
+}
+function parseCombinedStatus(text2) {
+  const o = obj2("commit status", parseJson4("commit status", text2));
+  const sha = str4("commit status", o, "sha");
+  const statuses = Array.isArray(o.statuses) ? o.statuses : [];
+  const checks = statuses.map((raw) => {
+    const st = obj2("commit status", raw);
+    const state2 = str4("commit status", st, "state");
+    const opt = (k) => typeof st[k] === "string" && st[k] !== "" ? st[k] : null;
+    return {
+      name: str4("commit status", st, "context"),
+      bucket: statusBucket(state2),
+      state: state2.toUpperCase(),
+      link: opt("target_url"),
+      workflow: null,
+      runId: null,
+      jobId: null,
+      startedAt: opt("created_at"),
+      completedAt: state2 === "pending" ? null : opt("updated_at"),
+      description: opt("description")
+    };
+  });
+  const state = typeof o.state === "string" && o.state !== "" ? o.state.toLowerCase() : void 0;
+  const total = typeof o.total_count === "number" && Number.isInteger(o.total_count) && o.total_count >= 0 ? o.total_count : void 0;
+  return { sha, checks, ...state === void 0 ? {} : { state }, ...total === void 0 ? {} : { total } };
+}
+function readNote(name, bucket, description) {
+  return { name, bucket, state: bucket === "fail" ? "FAILURE" : "PENDING", link: null, workflow: null, runId: null, jobId: null, startedAt: null, completedAt: null, description };
+}
+function statusReadNotes(status2, read2, everything) {
+  const total = status2.total ?? read2.length;
+  if (status2.state === "failure" || status2.state === "error") {
+    return everything.some((c) => c.bucket === "fail") ? [] : [readNote("commit status (combined)", "fail", `the combined commit status is ${status2.state}`)];
+  }
+  if (read2.length < total) return [readNote("commit status (incomplete)", "pending", `read ${read2.length} of ${total} commit status contexts`)];
+  if (status2.state !== void 0 && status2.state !== "success" && total > 0 && !read2.some((c) => c.bucket === "pending")) {
+    return [readNote("commit status (combined)", "pending", `the combined commit status is ${status2.state}, but no status context is pending`)];
+  }
+  return [];
+}
+function parseFailedSteps(text2) {
+  const o = obj2("run view", parseJson4("run view", text2));
+  const jobs = Array.isArray(o.jobs) ? o.jobs : [];
+  const out = [];
+  for (const j of jobs) {
+    const job = obj2("run view", j);
+    const name = typeof job.name === "string" ? job.name : "";
+    const steps = Array.isArray(job.steps) ? job.steps : [];
+    const failed = steps.filter((s) => s && typeof s === "object" && s.conclusion === "failure");
+    if (failed.length === 0 && job.conclusion === "failure") out.push({ job: name, step: "" });
+    for (const s of failed) out.push({ job: name, step: String(s.name ?? "") });
+  }
+  return out;
+}
+function parseAuthStatus(text2, host, requireScopedToken) {
+  const o = obj2("auth status", parseJson4("auth status", text2));
+  const hosts = obj2("auth status", o.hosts ?? {});
+  const entries = Array.isArray(hosts[host]) ? hosts[host] : [];
+  const active = entries.map((e) => obj2("auth status", e)).find((e) => e.active === true);
+  if (!active) return { ok: false, login: null, tokenSource: null, scopes: null, error: `no active account for ${host}` };
+  const tokenSource = typeof active.tokenSource === "string" ? active.tokenSource : null;
+  const login = typeof active.login === "string" && active.login !== "" ? active.login : null;
+  const scopes = typeof active.scopes === "string" ? active.scopes : null;
+  if (active.state !== "success") {
+    const error = typeof active.error === "string" && active.error ? redact(active.error).slice(0, 300) : `state ${String(active.state)}`;
+    return { ok: false, login, tokenSource, scopes, error };
+  }
+  if (requireScopedToken && tokenSource !== "GH_TOKEN") {
+    return { ok: false, login, tokenSource, scopes, error: `the active credential comes from ${tokenSource ?? "an unknown source"}, not a scoped GH_TOKEN` };
+  }
+  return { ok: true, login, tokenSource, scopes, error: null };
+}
+function classifyGhFailure(what, exitCode, stderrText) {
+  const text2 = redact(stderrText.trim()).slice(0, 800);
+  const msg = `gh ${what} failed (exit ${exitCode ?? "signal"}): ${text2}`;
+  if (/rate limit|secondary rate|HTTP 429|abuse detection/i.test(text2)) {
+    const m = /retry[- ]after[:= ]+(\d+)/i.exec(text2) ?? /in (\d+) (?:second|sec)/i.exec(text2);
+    const retryAfterMs = m ? Math.min(Number(m[1]) * 1e3, 15 * 6e4) : 6e4;
+    return new OrbitError("PROVIDER_TRANSIENT", msg, { retryAfterMs, rateLimited: true });
+  }
+  if (exitCode === 4 || /HTTP 401|Bad credentials|gh auth login|authentication required|requires authentication|token .*(?:expired|invalid|revoked)/i.test(text2)) {
+    return new OrbitError("AUTH_EXPIRED", msg, { definitive: true });
+  }
+  if (/Resource not accessible|HTTP 403/i.test(text2)) {
+    return new OrbitError("AUTH_MISSING", `${msg} (the delivery token lacks a permission this action needs)`, { definitive: true });
+  }
+  if (/HTTP 5\d\d|timeout|timed out|connection (?:reset|refused)|EOF|no such host|could not resolve host|temporary failure/i.test(text2)) {
+    return new OrbitError("PROVIDER_TRANSIENT", msg);
+  }
+  if (/HTTP 404|Could not resolve to a (?:Repository|PullRequest)/i.test(text2)) {
+    return new OrbitError("NOT_FOUND", msg, { definitive: true });
+  }
+  return new OrbitError("DELIVERY_FAILED", msg);
+}
+function assertMergeInput(input) {
+  if (!Number.isInteger(input.number) || input.number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(input.headSha)) throw new OrbitError("INTERNAL", `not a full commit sha: ${JSON.stringify(input.headSha)}`);
+  if (!MERGE_METHODS.includes(input.method)) throw new OrbitError("CONFIG_INVALID", `unknown merge method ${JSON.stringify(input.method)}`, { definitive: true });
+}
+function assertSha(sha) {
+  if (!/^[0-9a-f]{7,64}$/.test(sha)) throw new OrbitError("INTERNAL", `not a commit sha: ${sha}`);
+}
+function sameCommit(reported, asked) {
+  const r = reported.toLowerCase();
+  const a = asked.toLowerCase();
+  return a.length >= 40 ? r === a : r.startsWith(a);
+}
+function assertHead(head) {
+  if (typeof head !== "string" || head === "" || head.startsWith("-") || /[\s\0]/.test(head)) {
+    throw new OrbitError("INTERNAL", `not a usable head branch: ${JSON.stringify(head)}`);
+  }
+}
+function emptyState() {
+  return {
+    nextNumber: 1,
+    prs: [],
+    ci: {},
+    logs: {},
+    heads: {},
+    faults: { loseCreateResponse: 0, rateLimit: 0, rateLimitRetryAfterMs: 1e3, authExpired: false, loseMergeResponse: 0, loseReadyResponse: 0 },
+    calls: [],
+    creates: 0,
+    updates: 0,
+    merges: 0
+  };
+}
+var CHECK_BUCKETS, MERGE_METHODS, RUN_LINK, PR_FIELDS, MERGE_FIELDS, MERGE_REFUSED, CHECK_FIELDS, RUN_FIELDS, CHECK_RUNS_PER_PAGE, CHECK_RUNS_MAX_PAGES, STATUS_PER_PAGE, STATUS_MAX_PAGES, GhCliClient, FakeGitHub;
+var init_github = __esm({
+  "src/delivery/github.ts"() {
+    "use strict";
+    init_exec();
+    init_errors();
+    init_fsx();
+    init_hash();
+    init_redact();
+    CHECK_BUCKETS = ["pass", "fail", "pending", "skipping", "cancel"];
+    MERGE_METHODS = ["squash", "merge", "rebase"];
+    RUN_LINK = /\/actions\/runs\/(\d+)(?:\/job\/(\d+))?/;
+    PR_FIELDS = "number,url,headRefName,headRefOid,baseRefName,isDraft,state,title,body";
+    MERGE_FIELDS = "number,state,headRefOid,baseRefName,mergeCommit,mergedAt";
+    MERGE_REFUSED = /Head branch was modified|not mergeable|merge conflict|required status check|review is required|reviews? required|base branch policy|protected branch|Merge method .* not allowed|not allowed on this repository|HTTP 405|HTTP 409|HTTP 422/i;
+    CHECK_FIELDS = "name,state,bucket,link,workflow,event,startedAt,completedAt,description";
+    RUN_FIELDS = "databaseId,status,conclusion,headSha,headBranch,event,workflowName,name,attempt,url,startedAt,updatedAt";
+    CHECK_RUNS_PER_PAGE = 100;
+    CHECK_RUNS_MAX_PAGES = 10;
+    STATUS_PER_PAGE = 100;
+    STATUS_MAX_PAGES = 10;
+    GhCliClient = class {
+      token;
+      gh;
+      runner;
+      requireScoped;
+      timeoutMs;
+      baseEnv;
+      opts;
+      constructor(opts) {
+        this.opts = opts;
+        if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(opts.repo)) throw new OrbitError("CONFIG_INVALID", `repository ${JSON.stringify(opts.repo)} is not OWNER/REPO`, { definitive: true });
+        this.baseEnv = opts.env ?? process.env;
+        this.token = this.baseEnv.GH_TOKEN || void 0;
+        this.gh = opts.ghPath ?? "gh";
+        this.requireScoped = opts.requireScopedToken ?? true;
+        this.timeoutMs = opts.timeoutMs ?? 6e4;
+        this.runner = opts.runner ?? ((argv2, o) => execCapture(argv2, { env: o.env, cwd: o.cwd, input: o.input, timeoutMs: o.timeoutMs, maxOutputBytes: 8 * 1024 * 1024 }));
+      }
+      /** Minimal environment: the token the controller holds, and nothing a worker could have left around. */
+      env() {
+        const e = {};
+        for (const k of ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"]) if (this.baseEnv[k] !== void 0) e[k] = this.baseEnv[k];
+        if (this.token) e.GH_TOKEN = this.token;
+        e.GH_PROMPT_DISABLED = "1";
+        e.GH_NO_UPDATE_NOTIFIER = "1";
+        e.GH_TELEMETRY = "false";
+        e.NO_COLOR = "1";
+        e.GH_PAGER = "cat";
+        return e;
+      }
+      assertToken() {
+        if (this.requireScoped && !this.token) {
+          throw new OrbitError("AUTH_MISSING", "no GH_TOKEN in the controller environment; delivery needs a fine-grained token scoped to the target repository", { definitive: true });
+        }
+      }
+      async exec(argv2, input) {
+        return this.runner([this.gh, ...argv2], { env: this.env(), cwd: this.opts.cwd, input, timeoutMs: this.timeoutMs });
+      }
+      async ok(what, argv2, input) {
+        this.assertToken();
+        const res = await this.exec(argv2, input);
+        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", `gh ${what} timed out`);
+        if (res.exitCode !== 0) throw classifyGhFailure(what, res.exitCode, `${res.stderr}
+${res.stdout}`);
+        return res.stdout;
+      }
+      async findPullRequest(head) {
+        assertHead(head);
+        const out = await this.ok("pr list", ["pr", "list", "-R", this.opts.repo, "--head", head, "--state", "all", "-L", "30", "--json", PR_FIELDS]);
+        const mine = parsePullRequestList(out).filter((p) => p.headRefName === head);
+        mine.sort((a, b) => Number(b.state === "OPEN") - Number(a.state === "OPEN") || b.number - a.number);
+        return mine[0] ?? null;
+      }
+      async createPullRequest(input) {
+        assertHead(input.head);
+        this.assertToken();
+        const argv2 = ["pr", "create", "-R", this.opts.repo, "--head", input.head, "--base", input.base, "--title", input.title, "--body-file", "-"];
+        if (input.draft) argv2.push("--draft");
+        const res = await this.exec(argv2, input.body);
+        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh pr create timed out");
+        if (res.exitCode !== 0) {
+          if (/already exists/i.test(res.stderr)) {
+            const found2 = await this.findPullRequest(input.head);
+            if (found2) return found2;
+          }
+          throw classifyGhFailure("pr create", res.exitCode, `${res.stderr}
+${res.stdout}`);
+        }
+        const url = res.stdout.split("\n").map((l) => l.trim()).reverse().find((l) => /^https?:\/\/\S+\/pull\/\d+/.test(l));
+        const number = url ? Number(/\/pull\/(\d+)/.exec(url)[1]) : NaN;
+        if (Number.isInteger(number)) return this.viewPullRequest(number);
+        const found = await this.findPullRequest(input.head);
+        if (found) return found;
+        throw new OrbitError("DELIVERY_FAILED", "gh pr create exited 0 but no pull request URL was printed and none is listed for the head branch");
+      }
+      async updatePullRequest(number, changes) {
+        if (!Number.isInteger(number) || number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
+        const argv2 = ["pr", "edit", String(number), "-R", this.opts.repo];
+        if (changes.title !== void 0) argv2.push("--title", changes.title);
+        if (changes.body !== void 0) argv2.push("--body-file", "-");
+        if (argv2.length > 5) await this.ok("pr edit", argv2, changes.body);
+        return this.viewPullRequest(number);
+      }
+      async markPullRequestReady(number) {
+        if (!Number.isInteger(number) || number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
+        this.assertToken();
+        await this.ok("pr ready", ["pr", "ready", String(number), "-R", this.opts.repo]);
+        return this.viewPullRequest(number);
+      }
+      async viewPullRequest(number) {
+        const out = await this.ok("pr view", ["pr", "view", String(number), "-R", this.opts.repo, "--json", PR_FIELDS]);
+        return parsePullRequest(parseJson4("pr view", out));
+      }
+      async mergePullRequest(input) {
+        assertMergeInput(input);
+        this.assertToken();
+        const argv2 = ["pr", "merge", String(input.number), "-R", this.opts.repo, `--${input.method}`, "--match-head-commit", input.headSha];
+        if (input.deleteBranch) argv2.push("--delete-branch");
+        const res = await this.exec(argv2);
+        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh pr merge timed out");
+        if (res.exitCode !== 0) {
+          const text2 = `${res.stderr}
+${res.stdout}`;
+          if (/already (?:been )?merged/i.test(text2)) return this.getMergeState(input.number);
+          const err = classifyGhFailure("pr merge", res.exitCode, text2);
+          if (err.code === "DELIVERY_FAILED" && MERGE_REFUSED.test(text2)) throw new OrbitError("DELIVERY_FAILED", err.message, { definitive: true, refused: true });
+          throw err;
+        }
+        const state = await this.getMergeState(input.number);
+        if (state.state !== "MERGED") throw new OrbitError("DELIVERY_FAILED", `gh pr merge exited 0 but pull request #${input.number} is ${state.state}; a merge queue or auto-merge is not supported`, { definitive: true, state: state.state });
+        return state;
+      }
+      async getMergeState(number) {
+        if (!Number.isInteger(number) || number <= 0) throw new OrbitError("INTERNAL", "pull request number must be a positive integer");
+        const out = await this.ok("pr view", ["pr", "view", String(number), "-R", this.opts.repo, "--json", MERGE_FIELDS]);
+        return parseMergeState(parseJson4("pr view", out));
+      }
+      /**
+       * Checks for a commit are read per commit (its check runs and its combined status) and labelled with the
+       * commit the responses report, so checks of another revision (the PR head after the branch moved) can never
+       * be attributed to the commit asked about. Only a PR query without a commit uses the PR's current checks,
+       * and those are labelled with no commit at all.
+       */
+      async listChecks(query) {
+        this.assertToken();
+        if (query.sha !== void 0) return this.checksForCommit(query.sha);
+        const pr = query.pr;
+        const res = await this.exec(["pr", "checks", String(pr), "-R", this.opts.repo, "--json", CHECK_FIELDS]);
+        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh pr checks timed out");
+        if (res.exitCode === 0) {
+          const checks = parseChecks(res.stdout);
+          return { checks, absent: checks.length === 0, headSha: null };
+        }
+        const text2 = `${res.stderr}
+${res.stdout}`;
+        if (/no checks reported/i.test(text2)) return { checks: [], absent: true, headSha: null };
+        throw classifyGhFailure("pr checks", res.exitCode, text2);
+      }
+      async api(what, path) {
+        const argv2 = ["api", "-H", "Accept: application/vnd.github+json"];
+        if (this.opts.host) argv2.push("--hostname", this.opts.host);
+        argv2.push(path);
+        return this.ok(what, argv2);
+      }
+      async checksForCommit(sha) {
+        assertSha(sha);
+        let runs;
+        let runsTotal;
+        try {
+          ({ runs, total: runsTotal } = await this.checkRuns(sha));
+        } catch (err) {
+          const code2 = err.code;
+          if (code2 === "AUTH_MISSING") return this.checksFromRuns(sha);
+          if (/No commit found/i.test(err.message ?? "")) return { checks: [], absent: true, headSha: sha };
+          throw err;
+        }
+        let status2 = null;
+        try {
+          status2 = await this.combinedStatus(sha);
+        } catch (err) {
+          if (err.code !== "AUTH_MISSING") throw err;
+        }
+        const reported = [.../* @__PURE__ */ new Set([...runs.map((r) => r.headSha.toLowerCase()), ...status2 ? [status2.sha.toLowerCase()] : []])];
+        const other = reported.find((r) => !sameCommit(r, sha));
+        if (other !== void 0) return { checks: [], absent: false, headSha: other };
+        const checks = [...runs.map(({ headSha: _sha, ...c }) => c), ...status2?.checks ?? []];
+        if (runs.length < runsTotal) checks.push(readNote("check runs (incomplete)", "pending", `read ${runs.length} of ${runsTotal} check runs`));
+        if (status2) checks.push(...statusReadNotes(status2, status2.checks, checks));
+        if (checks.length === 0) return this.checksFromRuns(sha);
+        return { checks, absent: false, headSha: reported[0] ?? sha };
+      }
+      /** Every page of the combined status; aggregate state and total_count are those of the first page. */
+      async combinedStatus(sha) {
+        let first = null;
+        const checks = [];
+        for (let page = 1; page <= STATUS_MAX_PAGES; page++) {
+          const got = parseCombinedStatus(await this.api("commit status", `repos/${this.opts.repo}/commits/${sha}/status?per_page=${STATUS_PER_PAGE}&page=${page}`));
+          if (first === null) first = got;
+          else if (got.sha.toLowerCase() !== first.sha.toLowerCase()) throw malformed("commit status", "pages report different commits");
+          checks.push(...got.checks);
+          if (got.checks.length < STATUS_PER_PAGE || first.total !== void 0 && checks.length >= first.total) break;
+        }
+        return { ...first, checks };
+      }
+      async checkRuns(sha) {
+        const all = [];
+        for (let page = 1; page <= CHECK_RUNS_MAX_PAGES; page++) {
+          const { total, runs } = parseCheckRuns(await this.api("check runs", `repos/${this.opts.repo}/commits/${sha}/check-runs?per_page=${CHECK_RUNS_PER_PAGE}&page=${page}`));
+          all.push(...runs);
+          if (runs.length < CHECK_RUNS_PER_PAGE || all.length >= total) return { runs: all, total };
+        }
+        throw new OrbitError("DELIVERY_FAILED", `commit ${sha.slice(0, 12)} has more than ${CHECK_RUNS_PER_PAGE * CHECK_RUNS_MAX_PAGES} check runs; Orbit does not judge CI on a partial list`, { definitive: true });
+      }
+      async checksFromRuns(sha) {
+        assertSha(sha);
+        const out = await this.ok("run list", ["run", "list", "-R", this.opts.repo, "--commit", sha, "-L", "50", "--json", RUN_FIELDS]);
+        const rows = parseJson4("run list", out);
+        const reported = Array.isArray(rows) ? rows.map((r) => r && typeof r === "object" && typeof r.headSha === "string" ? r.headSha.toLowerCase() : null) : [];
+        const checks = parseRunListAsChecks(out).filter((_, i) => reported[i] == null || sameCommit(reported[i], sha));
+        const labelled = reported.find((r) => r != null && sameCommit(r, sha));
+        return { checks, absent: checks.length === 0, headSha: labelled ?? sha };
+      }
+      async failedLogs(runId) {
+        if (!/^\d+$/.test(runId)) throw new OrbitError("INTERNAL", `not a run id: ${runId}`);
+        this.assertToken();
+        const res = await this.exec(["run", "view", runId, "-R", this.opts.repo, "--log-failed"]);
+        if (res.timedOut) throw new OrbitError("PROVIDER_TRANSIENT", "gh run view timed out");
+        if (res.exitCode === 0) return { status: "ok", text: res.stdout, failedSteps: [] };
+        const text2 = `${res.stderr}
+${res.stdout}`;
+        const status2 = /HTTP 410/.test(text2) ? "expired" : /log not found/i.test(text2) ? "not-found" : null;
+        if (status2 === null) throw classifyGhFailure("run view --log-failed", res.exitCode, text2);
+        let failedSteps = [];
+        try {
+          failedSteps = parseFailedSteps(await this.ok("run view", ["run", "view", runId, "-R", this.opts.repo, "--json", "jobs"]));
+        } catch (err) {
+          if (err.code === "AUTH_EXPIRED") throw err;
+        }
+        return { status: status2, text: "", failedSteps };
+      }
+      async authStatus() {
+        const host = this.opts.host ?? "github.com";
+        if (this.requireScoped && !this.token) {
+          return { ok: false, login: null, tokenSource: null, scopes: null, error: "no GH_TOKEN in the controller environment" };
+        }
+        const res = await this.exec(["auth", "status", "--json", "hosts"]);
+        if (res.exitCode !== 0) return { ok: false, login: null, tokenSource: null, scopes: null, error: redact(`${res.stderr}${res.stdout}`.trim()).slice(0, 300) || `gh exited ${res.exitCode}` };
+        return parseAuthStatus(res.stdout, host, this.requireScoped);
+      }
+    };
+    FakeGitHub = class {
+      opts;
+      constructor(opts) {
+        this.opts = opts;
+      }
+      // -- test controls
+      get state() {
+        return this.load();
+      }
+      setFaults(faults) {
+        this.mutate((s) => void Object.assign(s.faults, faults));
+      }
+      /** Script CI for a commit: each listChecks call for it returns the next snapshot (the last repeats). */
+      scriptCi(sha, script) {
+        this.mutate((s) => {
+          s.ci[sha] = { script, cursor: 0 };
+        });
+      }
+      scriptLog(runId, log) {
+        this.mutate((s) => {
+          s.logs[runId] = { status: log.status ?? "ok", text: log.text ?? "", failedSteps: log.failedSteps ?? [] };
+        });
+      }
+      /** Pin a branch's head sha when no remote is attached. */
+      setHead(branch, sha) {
+        this.mutate((s) => {
+          s.heads[branch] = sha;
+        });
+      }
+      setPullRequestState(number, state) {
+        this.mutate((s) => {
+          const pr = s.prs.find((p) => p.number === number);
+          if (pr) pr.state = state;
+        });
+      }
+      // -- GitHubClient
+      async findPullRequest(head) {
+        this.enter("findPullRequest");
+        const state = this.load();
+        const mine = state.prs.filter((p) => p.headRefName === head).sort((a, b) => Number(b.state === "OPEN") - Number(a.state === "OPEN") || b.number - a.number);
+        return mine[0] ? this.view(state, mine[0]) : null;
+      }
+      async createPullRequest(input) {
+        this.enter("createPullRequest");
+        let created = null;
+        let lose = false;
+        this.mutate((s) => {
+          if (s.prs.some((p) => p.headRefName === input.head && p.state === "OPEN")) {
+            throw new OrbitError("DELIVERY_FAILED", `a pull request for branch "${input.head}" into branch "${input.base}" already exists`);
+          }
+          const number = s.nextNumber++;
+          const pr = {
+            number,
+            url: `https://github.example/${this.opts.repo ?? "acme/app"}/pull/${number}`,
+            headRefName: input.head,
+            headRefOid: "",
+            baseRefName: input.base,
+            isDraft: input.draft,
+            state: "OPEN",
+            title: input.title,
+            body: input.body
+          };
+          s.prs.push(pr);
+          s.creates++;
+          created = this.view(s, pr);
+          if (s.faults.loseCreateResponse > 0) {
+            s.faults.loseCreateResponse--;
+            lose = true;
+          }
+        });
+        if (lose) throw new OrbitError("PROVIDER_TRANSIENT", "connection reset while waiting for the create response");
+        return created;
+      }
+      async updatePullRequest(number, changes) {
+        this.enter("updatePullRequest");
+        let out = null;
+        this.mutate((s) => {
+          const pr = s.prs.find((p) => p.number === number);
+          if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${number}`, { definitive: true });
+          if (changes.title !== void 0) pr.title = changes.title;
+          if (changes.body !== void 0) pr.body = changes.body;
+          s.updates++;
+          out = this.view(s, pr);
+        });
+        return out;
+      }
+      async markPullRequestReady(number) {
+        this.enter("markPullRequestReady");
+        let out = null;
+        let lose = false;
+        this.mutate((s) => {
+          const pr = s.prs.find((p) => p.number === number);
+          if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${number}`, { definitive: true });
+          if (pr.state !== "OPEN") throw new OrbitError("DELIVERY_FAILED", `gh pr ready failed: pull request #${number} is ${pr.state.toLowerCase()}`, { definitive: true });
+          if (pr.isDraft) s.readies = (s.readies ?? 0) + 1;
+          pr.isDraft = false;
+          out = this.view(s, pr);
+          if ((s.faults.loseReadyResponse ?? 0) > 0) {
+            s.faults.loseReadyResponse--;
+            lose = true;
+          }
+        });
+        if (lose) throw new OrbitError("PROVIDER_TRANSIENT", "connection reset while waiting for the ready response");
+        return out;
+      }
+      /**
+       * Like the real service: refused unless the PR is open, not a draft and its
+       * head is still `headSha`. With a remote attached, the base branch really
+       * moves (a squash or rebase onto an unmoved base, or a two-parent merge
+       * commit); a base that moved since the head was cut is refused as not
+       * mergeable, since the fake does not do three-way merges.
+       */
+      async mergePullRequest(input) {
+        this.enter("mergePullRequest");
+        assertMergeInput(input);
+        let out = null;
+        let lose = false;
+        this.mutate((s) => {
+          const pr = s.prs.find((p) => p.number === input.number);
+          if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${input.number}`, { definitive: true });
+          if (pr.state === "MERGED") {
+            out = this.mergeView(s, pr);
+            return;
+          }
+          if (pr.state !== "OPEN") throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: pull request #${pr.number} is closed`, { definitive: true, refused: true });
+          if (pr.isDraft) throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: pull request #${pr.number} is still a draft`, { definitive: true, refused: true });
+          const head = this.headOid(s, pr) ?? pr.fixedHeadOid ?? "";
+          if (head !== input.headSha) {
+            throw new OrbitError("DELIVERY_FAILED", "gh pr merge failed: Head branch was modified. Review and try the merge again.", { definitive: true, refused: true, head });
+          }
+          const mergeCommit = this.mergeOnRemote(pr, head, input.method, s.nextNumber);
+          pr.state = "MERGED";
+          pr.fixedHeadOid = head;
+          pr.mergeCommitOid = mergeCommit;
+          pr.mergedAt = (/* @__PURE__ */ new Date(0)).toISOString();
+          if (input.deleteBranch && this.opts.remoteGitDir) this.git(["update-ref", "-d", `refs/heads/${pr.headRefName}`, head]);
+          s.merges = (s.merges ?? 0) + 1;
+          out = this.mergeView(s, pr);
+          if (s.faults.loseMergeResponse > 0) {
+            s.faults.loseMergeResponse--;
+            lose = true;
+          }
+        });
+        if (lose) throw new OrbitError("PROVIDER_TRANSIENT", "connection reset while waiting for the merge response");
+        return out;
+      }
+      async getMergeState(number) {
+        this.enter("getMergeState");
+        const s = this.load();
+        const pr = s.prs.find((p) => p.number === number);
+        if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${number}`, { definitive: true });
+        return this.mergeView(s, pr);
+      }
+      async listChecks(query) {
+        this.enter("listChecks");
+        let sha = query.sha;
+        let result2 = { checks: [], absent: true, headSha: sha ?? null };
+        this.mutate((s) => {
+          if ("pr" in query) {
+            const pr = s.prs.find((p) => p.number === query.pr);
+            if (!pr) throw new OrbitError("NOT_FOUND", `no pull request #${query.pr}`, { definitive: true });
+            sha = this.view(s, pr).headRefOid || void 0;
+            result2 = { checks: [], absent: true, headSha: sha ?? null };
+          }
+          const entry = sha ? s.ci[sha] : void 0;
+          if (!entry || entry.script.length === 0) return;
+          const snapshot2 = entry.script[Math.min(entry.cursor, entry.script.length - 1)];
+          entry.cursor++;
+          const checks = snapshot2.map((c) => ({
+            name: c.name,
+            bucket: c.bucket,
+            state: c.bucket === "pass" ? "SUCCESS" : c.bucket === "fail" ? "FAILURE" : c.bucket === "cancel" ? "CANCELLED" : c.bucket === "skipping" ? "SKIPPED" : "IN_PROGRESS",
+            link: c.runId ? `https://github.example/${this.opts.repo ?? "acme/app"}/actions/runs/${c.runId}/job/1` : null,
+            workflow: "ci",
+            runId: c.runId ?? null,
+            jobId: c.runId ? "1" : null,
+            startedAt: null,
+            completedAt: null,
+            description: null
+          }));
+          result2 = { checks, absent: checks.length === 0, headSha: sha ?? null };
+        });
+        return result2;
+      }
+      async failedLogs(runId) {
+        this.enter("failedLogs");
+        const entry = this.load().logs[runId];
+        return entry ? { ...entry } : { status: "not-found", text: "", failedSteps: [] };
+      }
+      async authStatus() {
+        this.mutate((s) => void s.calls.push("authStatus"));
+        if (this.load().faults.authExpired) {
+          return { ok: false, login: null, tokenSource: "GH_TOKEN", scopes: null, error: "non-200 OK status code: 401 Unauthorized" };
+        }
+        return { ok: true, login: "orbit-bot", tokenSource: "GH_TOKEN", scopes: null, error: null };
+      }
+      // -- internals
+      /** Record the call, then apply the call-level faults. */
+      enter(name) {
+        let fault = null;
+        this.mutate((s) => {
+          s.calls.push(name);
+          if (s.faults.authExpired) {
+            fault = new OrbitError("AUTH_EXPIRED", `gh ${name} failed (exit 4): HTTP 401: Bad credentials`, { definitive: true });
+          } else if (s.faults.rateLimit > 0) {
+            s.faults.rateLimit--;
+            fault = new OrbitError("PROVIDER_TRANSIENT", `gh ${name} failed: API rate limit exceeded`, { retryAfterMs: s.faults.rateLimitRetryAfterMs, rateLimited: true });
+          }
+        });
+        if (fault) throw fault;
+      }
+      view(state, pr) {
+        const { fixedHeadOid, mergeCommitOid: _m, mergedAt: _a, ...info } = pr;
+        const head = pr.state === "MERGED" && fixedHeadOid ? fixedHeadOid : this.headOid(state, pr) ?? fixedHeadOid ?? "";
+        return { ...info, headRefOid: head };
+      }
+      mergeView(state, pr) {
+        const v = this.view(state, pr);
+        return { number: v.number, state: v.state, headRefOid: v.headRefOid, baseRefName: v.baseRefName, mergeCommitSha: pr.state === "MERGED" ? pr.mergeCommitOid ?? null : null, mergedAt: pr.state === "MERGED" ? pr.mergedAt ?? null : null };
+      }
+      /** Move the base branch on the attached remote; without one, a stable synthetic merge commit id. */
+      mergeOnRemote(pr, head, method, salt) {
+        if (!this.opts.remoteGitDir) return sha256(`fake-merge:${pr.number}:${head}:${method}:${salt}`).slice(-40);
+        const baseRef = `refs/heads/${pr.baseRefName}`;
+        const base = this.git(["rev-parse", "--verify", "--quiet", baseRef]);
+        if (!base) throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: base branch ${pr.baseRefName} does not exist`, { definitive: true, refused: true });
+        if (this.git(["merge-base", base, head]) !== base) {
+          throw new OrbitError("DELIVERY_FAILED", `gh pr merge failed: Pull Request is not mergeable (base ${pr.baseRefName} moved)`, { definitive: true, refused: true });
+        }
+        let commit;
+        if (method === "rebase") commit = head;
+        else {
+          const tree = this.git(["rev-parse", `${head}^{tree}`]);
+          const parents = method === "merge" ? ["-p", base, "-p", head] : ["-p", base];
+          commit = this.git(["commit-tree", tree, ...parents, "-m", `${pr.title} (#${pr.number})`]);
+        }
+        this.git(["update-ref", baseRef, commit, base]);
+        return commit;
+      }
+      git(args) {
+        try {
+          return execFileSync("git", ["--git-dir", this.opts.remoteGitDir, ...args], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            env: { PATH: process.env.PATH ?? "/usr/bin:/bin", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "Fake GitHub", GIT_AUTHOR_EMAIL: "noreply@example.com", GIT_COMMITTER_NAME: "Fake GitHub", GIT_COMMITTER_EMAIL: "noreply@example.com", GIT_AUTHOR_DATE: "1700000000 +0000", GIT_COMMITTER_DATE: "1700000000 +0000" }
+          }).trim();
+        } catch (err) {
+          if (args[0] === "rev-parse") return "";
+          throw new OrbitError("DELIVERY_FAILED", `fake remote: git ${args[0]} failed: ${err.message}`);
+        }
+      }
+      headOid(state, pr) {
+        if (state.heads[pr.headRefName]) return state.heads[pr.headRefName];
+        if (!this.opts.remoteGitDir) return null;
+        try {
+          return execFileSync("git", ["--git-dir", this.opts.remoteGitDir, "rev-parse", "--verify", "--quiet", `refs/heads/${pr.headRefName}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
+        } catch {
+          return null;
+        }
+      }
+      load() {
+        if (!existsSync30(this.opts.statePath)) return emptyState();
+        return JSON.parse(readFileSync20(this.opts.statePath, "utf8"));
+      }
+      mutate(fn) {
+        const s = this.load();
+        fn(s);
+        atomicWriteJson(this.opts.statePath, s);
+      }
+    };
   }
 });
 
@@ -51116,9 +50650,9 @@ function draftContract(input) {
   const checks = config.checks ?? {};
   const isCheck = (id) => Object.prototype.hasOwnProperty.call(checks, id);
   const adjustments = [];
-  const dropCheck = (id, where2) => {
+  const dropCheck = (id, where) => {
     if (!adjustments.some((a) => a.kind === "check-dropped" && a.subject === id)) {
-      adjustments.push({ kind: "check-dropped", subject: id, reason: `${where2} names check "${id}", which the policy does not define` });
+      adjustments.push({ kind: "check-dropped", subject: id, reason: `${where} names check "${id}", which the policy does not define` });
     }
   };
   const criteria = plan.criteria.map((c, i) => {
@@ -51479,1293 +51013,8 @@ var init_delivery_env = __esm({
   }
 });
 
-// src/controller/steps/preflight.ts
-import { existsSync as existsSync32, mkdirSync as mkdirSync17, rmSync as rmSync11 } from "node:fs";
-import { dirname as dirname21, isAbsolute as isAbsolute15, join as join44, resolve as resolve11 } from "node:path";
-async function preflightStep(ctx) {
-  const stop = await safePoint(ctx);
-  if (stop) return stop;
-  const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot });
-  recordGate(ctx, intake);
-  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
-  const env = await checkEnvironment(ctx);
-  recordGate(ctx, env.gate);
-  if (!env.gate.passed) {
-    const auth = env.credentials.find((c) => c.provider === env.gate.details.blockedProvider && c.verdict === "blocked");
-    if (auth?.status) return blockOnAuth(ctx, auth.provider, auth.status.state, auth.status.detail);
-    return finishRun(ctx, "BLOCKED", `environment gate: ${env.gate.reasons.join("; ")}`, { outcome: { gate: env.gate } });
-  }
-  const repo = ctx.run.repoRoot;
-  const credentialProblems = await gitCredentialProblems(repo);
-  if (credentialProblems.length > 0) {
-    return finishRun(
-      ctx,
-      "BLOCKED",
-      `the repository's git configuration carries credentials a worker could read (${credentialProblems.join("; ")}); remove them and authenticate through a credential helper outside the repository`,
-      { outcome: { git_credentials: credentialProblems } }
-    );
-  }
-  const head = await resolveCommit(repo, "HEAD");
-  const baseTree = await treeOf(repo, head);
-  const dirty = await dirtyPaths(repo);
-  if (dirty.length > 0) {
-    if (!ctx.snapshot.config.repository.allow_dirty_start) {
-      return finishRun(ctx, "BLOCKED", `the repository has uncommitted changes (${dirty.slice(0, 10).join(", ")}${dirty.length > 10 ? ", ..." : ""}); commit or stash them, or set repository.allow_dirty_start`, { outcome: { dirty: dirty.slice(0, 50) } });
-    }
-    decide2(ctx, { id: `dec-${ctx.run.id}-dirty-start`, kind: "preflight.dirty-start", summary: `dirty start allowed by policy; ${dirty.length} uncommitted path(s) are not part of the run, which starts from ${head}`, data: { paths: dirty.slice(0, 200) } });
-  }
-  const wtRoot = runWorktreeRoot(ctx);
-  mkdirSync17(wtRoot, { recursive: true, mode: 448 });
-  const baseline = await runBaseline({
-    db: ctx.db,
-    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
-    repoRoot: repo,
-    baseRev: head,
-    snapshot: ctx.snapshot,
-    isolation: ctx.isolation(),
-    runDir: ctx.runDir,
-    clock: ctx.clock,
-    signal: ctx.signal,
-    pollMs: ctx.timing.checkPollMs,
-    killGraceMs: ctx.timing.killGraceMs,
-    homeDir: homeOf2(ctx.deps),
-    checkoutDir: join44(wtRoot, "baseline")
-  });
-  const after = await safePoint(ctx);
-  if (after) return after;
-  const bg = baselineGate(baseline.report);
-  recordGate(ctx, bg);
-  if (!bg.passed && bg.status === "fail") return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}`, { outcome: { gate: bg } });
-  if (baseline.report.failures.length > 0) {
-    decide2(ctx, {
-      id: `dec-${ctx.run.id}-baseline-failures`,
-      kind: "baseline.failures",
-      summary: `pre-existing failures on ${head.slice(0, 12)}: ${baseline.report.failures.map((f) => f.checkId).join(", ")}`,
-      data: { failures: baseline.report.failures }
-    });
-    const raised = raiseBaselineExceptionQuestions({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { failures: baseline.report.failures, baseRevision: head });
-    if (raised.skipped.length > 0) {
-      decide2(ctx, {
-        id: `dec-${ctx.run.id}-baseline-exception-skipped`,
-        kind: "baseline.exception-unavailable",
-        summary: `no baseline exception can be offered for: ${raised.skipped.map((s) => s.checkId).join(", ")} (${raised.skipped[0].why})`,
-        data: { skipped: raised.skipped }
-      });
-    }
-  }
-  const worktree = await ensureWorktree(repo, join44(wtRoot, "implementer"), head);
-  const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
-  return move2(ctx, "CONTRACTING", `preflight passed at ${head.slice(0, 12)}${baseline.report.failures.length ? ` with ${baseline.report.failures.length} pre-existing failure(s)` : ""}`, {
-    patch: { baseRevision: head, baseTree, worktreePath: worktree, branch },
-    data: { base_revision: head, base_tree: baseTree, worktree, environment: env.gate.notes }
-  });
-}
-function recordGate(ctx, g) {
-  decide2(ctx, {
-    kind: `gate.${g.gate}`,
-    summary: `${g.gate} gate ${g.status}${g.reasons.length ? `: ${g.reasons.join("; ")}` : ""}${g.notes.length ? ` (notes: ${g.notes.join("; ")})` : ""}`,
-    data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure }
-  });
-}
-function urlCarriesCredentials(value) {
-  const m = URL_USERINFO.exec(value.trim());
-  if (!m) return false;
-  return m[2].includes(":") || /^https?$/i.test(m[1]);
-}
-async function gitCredentialProblems(repo) {
-  const entries = [];
-  for (const scope of ["--local", "--worktree"]) {
-    let out;
-    try {
-      out = await git2(repo, ["config", scope, "--list", "-z"]);
-    } catch {
-      continue;
-    }
-    for (const raw of out.split("\0")) {
-      if (!raw) continue;
-      const nl = raw.indexOf("\n");
-      entries.push(nl === -1 ? { key: raw, value: "" } : { key: raw.slice(0, nl), value: raw.slice(nl + 1) });
-    }
-  }
-  const root = resolve11(repo);
-  const problems = [];
-  const note3 = (text2) => {
-    if (!problems.includes(text2)) problems.push(text2);
-  };
-  for (const { key: key2, value } of entries) {
-    const k = key2.toLowerCase();
-    if (/^remote\..+\.(?:url|pushurl)$/.test(k) && urlCarriesCredentials(value)) note3(`${key2} has credentials in its URL`);
-    else if (/^url\..+\.(?:insteadof|pushinsteadof)$/.test(k) && (urlCarriesCredentials(value) || urlCarriesCredentials(key2.slice(4, key2.toLowerCase().lastIndexOf("."))))) note3("a url.<base>.insteadOf rewrite has credentials in a URL");
-    else if (/^http\.(?:.+\.)?extraheader$/.test(k) && AUTH_HEADER.test(value)) note3(`${key2} sets an authorization header`);
-    else if (/^credential\.(?:.+\.)?(?:password|token|secret)$/.test(k)) note3(`${key2} holds a literal credential`);
-    else if (/^credential(?:\..+)?\.helper$/.test(k)) {
-      const v = value.trim();
-      if (v.startsWith("!") && /password|token|secret/i.test(v)) note3(`${key2} embeds a credential in a shell helper`);
-      const store = /^store\b.*?--file(?:=|\s+)(\S+)/.exec(v);
-      if (store) {
-        const file = store[1].replace(/^["']|["']$/g, "");
-        const abs = isAbsolute15(file) ? resolve11(file) : resolve11(root, file);
-        if (!isAbsolute15(file) || abs === root || abs.startsWith(`${root}/`)) note3(`${key2} stores credentials in a file inside the repository`);
-      }
-    }
-  }
-  return problems;
-}
-async function dirtyPaths(repo) {
-  const out = await git2(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).orbit"]);
-  return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3));
-}
-async function ensureWorktree(repo, path, base) {
-  if (existsSync32(path)) {
-    try {
-      return (await adminDirFor(repo, path)).worktree;
-    } catch (err) {
-      if (!isOrbitError(err)) throw err;
-      rmSync11(path, { recursive: true, force: true });
-    }
-  }
-  mkdirSync17(dirname21(path), { recursive: true, mode: 448 });
-  await git2(repo, ["worktree", "prune"]);
-  await git2(repo, ["worktree", "add", "--detach", "--force", path, base]);
-  return (await adminDirFor(repo, path)).worktree;
-}
-async function checkEnvironment(ctx) {
-  const config = ctx.snapshot.config;
-  try {
-    ctx.deps.registry.seed();
-  } catch (err) {
-    ctx.log.warn("model registry seed failed", { error: messageOf(err) });
-  }
-  let isolation;
-  try {
-    const iso2 = ctx.isolation();
-    const status2 = await iso2.available();
-    isolation = { kind: iso2.kind, available: status2.ok, detail: status2.detail };
-  } catch (err) {
-    isolation = { error: messageOf(err) };
-  }
-  const capabilities = {};
-  for (const [id, adapter] of Object.entries(ctx.deps.adapters)) {
-    try {
-      capabilities[id] = await adapter.discoverCapabilities();
-    } catch (err) {
-      capabilities[id] = { provider: id, available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: "none", costReporting: false, detail: messageOf(err) };
-    }
-  }
-  const required = /* @__PURE__ */ new Set([IMPLEMENTER_PROVIDER]);
-  if (config.review.independent_provider_required && config.review.preferred_provider !== IMPLEMENTER_PROVIDER) required.add(config.review.preferred_provider);
-  const all = await validateCredentials({ adapters: ctx.deps.adapters, providers: [.../* @__PURE__ */ new Set([...required, ...Object.keys(ctx.deps.adapters)])] });
-  const credentialsById = {};
-  for (const c of all) credentialsById[c.provider] = c.status ?? void 0;
-  let reviewer = null;
-  if (config.review.independent_provider_required) {
-    reviewer = selectReviewer({ snapshot: ctx.snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: ctx.deps.registry });
-    if (reviewer.decision === "SELECT") {
-      required.delete(config.review.preferred_provider);
-      required.add(reviewer.provider);
-    }
-  }
-  const credentials = all.filter((c) => required.has(c.provider));
-  const delivery = deliveryEnvironmentProblem(config, ctx.deps.hostEnv ?? process.env);
-  const gate = environmentGate({ snapshot: ctx.snapshot, mode: ctx.run.mode, isolation, credentials, reviewer, delivery });
-  atomicWriteJson(join44(ctx.runDir, "environment.json"), {
-    checked_at: ctx.clock.now(),
-    gate,
-    capabilities,
-    credentials: all.map((c) => ({ provider: c.provider, verdict: c.verdict, state: c.status?.state ?? null, method: c.status?.method ?? null, error: c.error })),
-    reviewer: reviewer ? selectionDecisionRecord(reviewer).summary : null
-  });
-  return { gate, credentials: all, capabilities, reviewer };
-}
-var IMPLEMENTER_PROVIDER, URL_USERINFO, AUTH_HEADER;
-var init_preflight = __esm({
-  "src/controller/steps/preflight.ts"() {
-    "use strict";
-    init_fsx();
-    init_errors();
-    init_git();
-    init_baseline();
-    init_baseline_exception();
-    init_credentials();
-    init_select();
-    init_context2();
-    init_gates();
-    init_delivery_env();
-    init_common();
-    init_workers2();
-    IMPLEMENTER_PROVIDER = "claude";
-    URL_USERINFO = /^([a-z][a-z0-9+.-]*):\/\/([^/?#@]*)@/i;
-    AUTH_HEADER = /authorization|cookie|bearer|token|api[-_]?key|secret/i;
-  }
-});
-
-// src/controller/steps/contracting.ts
-import { readFileSync as readFileSync22 } from "node:fs";
-import { join as join45 } from "node:path";
-async function contractingStep(ctx) {
-  const stop = await safePoint(ctx);
-  if (stop) return stop;
-  if (ctx.contract) return accept2(ctx, ctx.contract, null);
-  const route2 = routeFor(ctx, "plan", "routine-code", { difficulty: "medium", attempt: 1, repeatedFingerprints: 0 });
-  const got = await obtain(ctx, {
-    base: "plan",
-    maxAttempts: MAX_REGENERATIONS,
-    what: "the planner",
-    request: (purpose) => ({
-      role: "planner",
-      purpose,
-      provider: route2.provider,
-      model: route2.model,
-      effort: route2.effort,
-      cwd: worktreeOf(ctx),
-      readOnly: true,
-      prompt: (workerId) => plannerPrompt(ctx, workerId)
-    }),
-    accept: (r) => validateModelOutput("planner", r.structured)
-  });
-  if (!got.ok) return got.step;
-  const plan = got.value;
-  atomicWriteJson(join45(ctx.runDir, PLANNER_FILE), { worker_id: got.worker.id, output: plan });
-  let drafted;
-  try {
-    drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? "", taskId: ctx.run.id, policyHash: ctx.run.policyHash, environment: ctx.run.environment });
-  } catch (err) {
-    if (!(err instanceof OrbitError) || err.code !== "CONTRACT_INVALID") throw err;
-    return finishRun(ctx, "BLOCKED", `intake gate rejected the planner's contract: ${err.message}`, { outcome: { problems: err.details ?? null } });
-  }
-  for (const a of drafted.adjustments) {
-    decide2(ctx, { id: `dec-${ctx.run.id}-draft-${hashObject(a).slice(7, 23)}`, kind: `contract.${a.kind}`, summary: `${a.subject}: ${a.reason}`, data: a });
-  }
-  for (const [i, d] of plan.unresolved_decisions.entries()) {
-    if (d.material) continue;
-    decide2(ctx, { id: `dec-${ctx.run.id}-plan-choice-${i + 1}`, kind: "inquisition.resolve", summary: `reversible choice: ${d.question} -> ${d.recommendation ?? d.options[0] ?? "convention"}`, data: { question: d.question, options: d.options, choice: d.recommendation ?? d.options[0] ?? null, basis: "planner recommendation; reversible" } });
-  }
-  return accept2(ctx, drafted.contract, plan);
-}
-async function accept2(ctx, contract, plan) {
-  const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot, contract });
-  recordGate(ctx, intake);
-  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate rejected the contract: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
-  atomicWriteJson(join45(ctx.runDir, "contract.json"), contract);
-  settleExpectedFlips(ctx, contract);
-  const patch = { contractJson: JSON.stringify(contract), contractHash: hashObject(contract) };
-  const material = (plan?.unresolved_decisions ?? []).filter((d) => d.material);
-  const open = contract.assumptions.filter((a) => a.status === "needs-decision");
-  if (material.length > 0 || plan !== null && open.length > 0) {
-    const keys = new Map((plan?.criteria ?? []).map((c, i) => [c.key, `AC-${i + 1}`]));
-    const subjects = [...new Set(material.flatMap((d) => d.affected_criteria.map((k) => keys.get(k) ?? k)).filter((s) => /^AC-\d+$/.test(s)))];
-    const trigger = {
-      kind: "hidden_decision",
-      mode: "clarify",
-      summary: `the planner left ${material.length || open.length} material decision(s) unresolved`,
-      evidence: [...material.map((d) => d.question), ...open.map((a) => `${a.id}: ${a.statement}`)].slice(0, 20),
-      subjects,
-      key: `contracting:${hashObject(material.map((d) => d.question)).slice(7, 23)}`
-    };
-    return move2(ctx, "INQUISITION", trigger.summary, { patch, data: { trigger } });
-  }
-  return move2(ctx, "PLANNING", `contract accepted: ${contract.acceptance_criteria.length} criteria, checks ${contract.required_check_ids.join(", ") || "none"}`, { patch });
-}
-function worktreeOf(ctx) {
-  if (!ctx.run.worktreePath) throw new OrbitError("INTERNAL", `run ${ctx.run.id} has no worktree; preflight did not finish`);
-  return ctx.run.worktreePath;
-}
-function plannerPrompt(ctx, workerId) {
-  const checks = Object.values(ctx.snapshot.config.checks).map((c) => `${c.id}${c.mandatory ? " (mandatory)" : ""}`);
-  const task = [
-    "Draft the goal contract for the goal below. Read the repository as needed; do not edit anything.",
-    "Return the current behaviour, criteria that are observable and testable, the proof for each, the trusted check ids that would show it,",
-    "the files you expect to change, the narrowest allowed paths, non-goals, risks, assumptions and any decision you cannot settle from evidence.",
-    `Trusted checks the policy defines: ${checks.join(", ") || "none"}. Name only these as check ids.`,
-    "",
-    `Goal (from the user): ${ctx.run.goal}`
-  ].join("\n");
-  return renderWorkerPrompt({
-    role: "planner",
-    task,
-    contract: null,
-    policySummary: policySummary(ctx, { readOnly: true }),
-    candidate: { revision: ctx.run.baseRevision, treeHash: ctx.run.baseTree, base: ctx.run.baseRevision },
-    advisoryBlock: advisoryBlockFor(ctx, { role: "planner", workerId, paths: ctx.snapshot.config.scope.allowed_paths, checkIds: Object.keys(ctx.snapshot.config.checks), fingerprints: [] })
-  });
-}
-function storedPlan(ctx) {
-  try {
-    const raw = JSON.parse(readFileSync22(join45(ctx.runDir, PLANNER_FILE), "utf8")).output;
-    return raw ? validateModelOutput("planner", raw) : null;
-  } catch {
-    return null;
-  }
-}
-var PLANNER_FILE;
-var init_contracting = __esm({
-  "src/controller/steps/contracting.ts"() {
-    "use strict";
-    init_fsx();
-    init_hash();
-    init_errors();
-    init_draft();
-    init_model_outputs();
-    init_prompt();
-    init_gates();
-    init_workers2();
-    init_knowledge_hooks();
-    init_common();
-    init_baseline_questions();
-    init_obtain();
-    init_preflight();
-    PLANNER_FILE = "planner.json";
-  }
-});
-
-// src/controller/parallel-writers.ts
-import { existsSync as existsSync33, mkdtempSync as mkdtempSync5, rmSync as rmSync12, writeFileSync as writeFileSync6 } from "node:fs";
-import { tmpdir as tmpdir10 } from "node:os";
-import { join as join46 } from "node:path";
-function splitAttempt(ctx, contract, fresh) {
-  if (!fresh || ctx.run.mode === "supervised") return null;
-  if (ctx.snapshot.config.agents.default_parallelism < 2) return null;
-  const plan = storedPlan(ctx);
-  if (!plan || plan.criteria.length !== contract.acceptance_criteria.length) return null;
-  if (blockingQuestions(ctx.db, ctx.run.id).criteria.length > 0) return null;
-  return planWorkUnits(contract.acceptance_criteria.map((c, i) => ({ id: c.id, paths: plan.criteria[i].changes.map((x) => x.path) })));
-}
-function recordedUnits(ctx, n2) {
-  const row = ctx.db.get("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id LIMIT 1", ctx.run.id, UNITS_EVENT, n2);
-  return row ? JSON.parse(row.data_json).units ?? null : null;
-}
-function serializedUnits(ctx, n2) {
-  return unitEvents(ctx, UNIT_SERIALIZED_EVENT, n2);
-}
-function unitPurpose(n2, u) {
-  return `implement:${n2}/${u.id}#1`;
-}
-function unitWorktree(ctx, n2, u) {
-  return join46(runWorktreeRoot(ctx), `unit-${n2}-${u.id}`);
-}
-async function runParallelUnits(ctx, n2, units, opts) {
-  const settled = () => /* @__PURE__ */ new Set([...unitEvents(ctx, UNIT_INTEGRATED_EVENT, n2).map((e) => e.unit), ...serializedUnits(ctx, n2).map((e) => e.unit)]);
-  for (const u of units) {
-    if (settled().has(u.id)) continue;
-    const existing = workersFor(ctx, unitPurpose(n2, u)).at(-1);
-    if (!existing) continue;
-    const st = await ensureWorker(ctx, request(ctx, n2, u, units, opts));
-    if (st.status === "running") continue;
-    const r = st.result;
-    if (r.status === "auth_failed") return { kind: "step", result: await blockOnAuth(ctx, st.worker.provider, "auth_failed", r.error) };
-    if (r.status === "cancelled") {
-      const stop = await safePoint(ctx);
-      if (stop) return { kind: "step", result: stop };
-    }
-    if (r.status === "transient_error" || r.status === "cancelled" || r.status === "lost") {
-      await serialize2(ctx, n2, u, `its session ended ${r.status}${r.error ? ` (${r.error.slice(0, 200)})` : ""}`);
-      continue;
-    }
-    await integrate(ctx, n2, u, st.worker);
-  }
-  const done = settled();
-  const waiting = units.filter((u) => !done.has(u.id) && workersFor(ctx, unitPurpose(n2, u)).length === 0);
-  const active = units.filter((u) => !done.has(u.id) && workersFor(ctx, unitPurpose(n2, u)).length > 0);
-  if (waiting.length > 0) {
-    const started = await admitAndStart(ctx, n2, units, waiting, opts);
-    if (started.count === 0 && active.length === 0) {
-      if (!started.budget) return { kind: "step", result: WAIT(`work units of attempt ${n2} deferred: ${started.why}`) };
-      for (const u of waiting) await serialize2(ctx, n2, u, `not admitted as a parallel writer: ${started.why}`);
-    }
-  }
-  const now = settled();
-  if (units.every((u) => now.has(u.id))) {
-    for (const u of units) await removeWorktree(ctx, n2, u);
-    const dropped = serializedUnits(ctx, n2);
-    if (dropped.length > 0) return { kind: "serialize", units: dropped };
-    const last = unitEvents(ctx, UNIT_INTEGRATED_EVENT, n2).at(-1);
-    return { kind: "done", workerId: last.worker_id };
-  }
-  const running = units.filter((u) => !now.has(u.id)).map((u) => u.id);
-  return { kind: "step", result: WAIT(`attempt ${n2}: work units ${running.join(", ")} are running in their own worktrees`) };
-}
-function request(ctx, n2, u, all, opts) {
-  const purpose = unitPurpose(n2, u);
-  const cap = ctx.db.get("SELECT json_extract(data_json, '$.cap_usd') AS cap FROM events WHERE run_id = ? AND type = 'worker.spend-cap' AND json_extract(data_json, '$.purpose') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, purpose);
-  return {
-    role: "implementer",
-    purpose,
-    attempt: n2,
-    provider: opts.route.provider,
-    model: opts.route.model,
-    effort: opts.route.effort,
-    cwd: unitWorktree(ctx, n2, u),
-    readOnly: false,
-    prompt: (workerId) => opts.prompt(u, all, workerId),
-    maxBudgetUsd: typeof cap?.cap === "number" ? cap.cap : null,
-    ownedPaths: u.ownedPaths
-  };
-}
-async function admitAndStart(ctx, n2, all, waiting, opts) {
-  const running = opts.running();
-  const own = running.filter((r) => r.runId === ctx.run.id).map((r) => r.unit);
-  const pending = waiting.map((u) => ({
-    id: unitPurpose(n2, u).replace(/#1$/, ""),
-    role: "implementer",
-    writer: true,
-    ownedPaths: u.ownedPaths,
-    dependsOn: [],
-    revision: null,
-    cancelWhen: [],
-    budget: { costUsd: null, wallMs: null, maxTurns: opts.maxTurns },
-    provider: opts.route.provider,
-    worktree: unitWorktree(ctx, n2, u),
-    status: "pending"
-  }));
-  const plan = schedulerFor(ctx).plan([...own, ...pending], { admit: budgetAdmission(ctx.ledger), parallelism: ctx.snapshot.config.agents.default_parallelism });
-  const admitted = plan.start.filter((s) => pending.some((p) => p.id === s.id));
-  const machine = admitted.length > 0 ? machineAdmission(ctx, running.map((r) => r.unit), admitted) : null;
-  let count3 = 0;
-  let unfunded = false;
-  const total = sessionSpendCap(ctx, opts.route.model, "implementer");
-  const share = total.capUsd === null ? null : Math.floor(total.capUsd / waiting.length * 100) / 100;
-  for (const unit of admitted) {
-    if (machine && !machine.start.has(unit.id)) continue;
-    const u = waiting.find((w) => unitPurpose(n2, w).startsWith(`${unit.id}#`));
-    const cap = { capUsd: share, worstCaseUsd: total.worstCaseUsd };
-    if (cap.capUsd !== null && cap.capUsd <= 0) {
-      unfunded = true;
-      continue;
-    }
-    const merge2 = plan.merge_overhead.find((m) => m.id === unit.id);
-    if (merge2) note2(ctx, MERGE_OVERHEAD_EVENT, { attempt: n2, unit: u.id, alongside: merge2.alongside, usd: merge2.usd });
-    if (cap.capUsd !== null) recordSpendCap(ctx, unitPurpose(n2, u), cap.capUsd, cap.worstCaseUsd);
-    const dir = unitWorktree(ctx, n2, u);
-    if (!existsSync33(dir)) await materializeCandidate(ctx.run.repoRoot, ctx.run.baseRevision, dir, { readOnly: false });
-    await ensureWorker(ctx, request(ctx, n2, u, all, opts));
-    count3++;
-  }
-  const deferred = plan.deferred.filter((d) => pending.some((p) => p.id === d.id)).map((d) => d.reason);
-  const reasons = [...deferred, ...machine ? [...machine.deferred.values()] : [], ...unfunded ? ["no model budget left for another session"] : []];
-  const budget = unfunded || deferred.some((r) => /^not admitted by budget/.test(r));
-  return { kind: "started", count: count3, why: reasons[0] ?? "not admitted", budget };
-}
-async function integrate(ctx, n2, u, w) {
-  const repoRoot = ctx.run.repoRoot;
-  const base = ctx.run.baseRevision;
-  const target = await adminDirFor(repoRoot, ctx.run.worktreePath);
-  const intent = unitEvents(ctx, UNIT_INTEGRATING_EVENT, n2).find((e) => e.unit === u.id);
-  const commit = intent?.commit ?? await commitWorktree(repoRoot, await adminDirFor(repoRoot, w.cwd), base, `orbit work unit ${u.id} of attempt ${n2}`);
-  let paths;
-  if (intent) {
-    paths = intent.paths;
-    await restoreToBase(target, base, safePaths(paths));
-  } else {
-    paths = await changedBetween(repoRoot, base, commit);
-    const escaping = await escapingLinks(ctx, base, commit);
-    if (escaping.length > 0) return reject(ctx, n2, u, `rejected: symlink leaves the repository: ${escaping.slice(0, 10).join(", ")}`);
-    const busy = new Set(await changedFiles2(target));
-    const clash = paths.filter((p) => busy.has(p));
-    if (clash.length > 0) return reject(ctx, n2, u, `conflict: ${clash.slice(0, 10).join(", ")} already changed by integrated work`);
-    note2(ctx, UNIT_INTEGRATING_EVENT, { attempt: n2, unit: u.id, worker_id: w.id, paths, commit });
-  }
-  const patch = await unitPatch(repoRoot, base, commit, safePaths(paths));
-  if (patch.length > 0) {
-    const before = await escapingLinks(ctx, base, await commitWorktree(repoRoot, target, base, "orbit integrated tree"));
-    try {
-      await applyPatch(target, patch, false);
-    } catch (err) {
-      return reject(ctx, n2, u, `conflict: git apply refused the unit's changes (${err instanceof Error ? err.message.slice(0, 200) : String(err)})`);
-    }
-    const after = await escapingLinks(ctx, base, await commitWorktree(repoRoot, target, base, "orbit integrated tree"));
-    const added = after.filter((p) => !before.includes(p));
-    if (added.length > 0) {
-      await applyPatch(target, patch, true);
-      return reject(ctx, n2, u, `rejected: symlink leaves the repository: ${added.slice(0, 10).join(", ")}`);
-    }
-  }
-  note2(ctx, UNIT_INTEGRATED_EVENT, { attempt: n2, unit: u.id, worker_id: w.id, paths });
-  invalidateEvidence(ctx.db, ctx.run.id, `work unit ${u.id} of attempt ${n2} integrated (${paths.length} file(s))`, ctx.clock);
-  await removeWorktree(ctx, n2, u);
-}
-async function reject(ctx, n2, u, reason) {
-  await serialize2(ctx, n2, u, reason);
-  await removeWorktree(ctx, n2, u);
-}
-async function serialize2(ctx, n2, u, reason) {
-  if (serializedUnits(ctx, n2).some((s) => s.unit === u.id)) return;
-  note2(ctx, UNIT_SERIALIZED_EVENT, { attempt: n2, unit: u.id, criteria: u.criteria, reason });
-  decide2(ctx, { id: `dec-${ctx.run.id}-serialize-${n2}-${u.id}`, kind: "scheduling.serialize", summary: `work unit ${u.id} (${u.criteria.join(", ")}) of attempt ${n2} goes to the serial implementer: ${reason}`, data: { attempt: n2, unit: u.id, criteria: u.criteria, reason } });
-}
-async function removeWorktree(ctx, n2, u) {
-  const dir = unitWorktree(ctx, n2, u);
-  if (existsSync33(dir)) await cleanupCandidateCheckout(ctx.run.repoRoot, dir).catch(() => {
-  });
-}
-function inCheckout(c, extra = {}) {
-  return { env: { GIT_DIR: c.gitDir, GIT_WORK_TREE: c.worktree, GIT_LITERAL_PATHSPECS: "1", ...extra } };
-}
-async function changedFiles2(c) {
-  const out = await git2(c.worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"], inCheckout(c));
-  return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3)).sort();
-}
-async function commitWorktree(repoRoot, c, base, message) {
-  const scratch = mkdtempSync5(join46(tmpdir10(), "orbit-unit-"));
-  try {
-    const excludes = join46(scratch, "exclude");
-    writeFileSync6(excludes, `${UNIT_EXCLUDES.join("\n")}
-`);
-    const opts = { ...inCheckout(c, { GIT_INDEX_FILE: join46(scratch, "index") }), config: { "core.excludesFile": excludes } };
-    await git2(c.worktree, ["read-tree", base], opts);
-    await git2(c.worktree, ["add", "-A", "--", "."], opts);
-    const tree = (await git2(c.worktree, ["write-tree"], opts)).trim();
-    const id = { GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name, GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name, GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_AUTHOR_DATE: "946684800 +0000", GIT_COMMITTER_DATE: "946684800 +0000" };
-    return (await git2(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], { env: id })).trim();
-  } finally {
-    rmSync12(scratch, { recursive: true, force: true });
-  }
-}
-async function changedBetween(repoRoot, from, to) {
-  const out = await git2(repoRoot, ["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", from, to, "--"]);
-  return out.split("\0").filter((p) => p.length > 0).sort();
-}
-async function escapingLinks(ctx, base, commit) {
-  const report2 = await inspectScope({ repoRoot: ctx.run.repoRoot, baseRev: base, candidateRev: commit, snapshot: ctx.snapshot });
-  return report2.symlinks_escaping;
-}
-function safePaths(paths) {
-  return paths.filter((p) => p.length > 0 && !p.startsWith("/") && !p.split(/[\\/]/).includes(".."));
-}
-async function unitPatch(repoRoot, base, commit, paths) {
-  if (paths.length === 0) return "";
-  return git2(repoRoot, ["diff", "--binary", "--full-index", "--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--no-color", base, commit, "--", ...paths], { env: { GIT_LITERAL_PATHSPECS: "1" } });
-}
-async function applyPatch(c, patch, reverse) {
-  const args = ["apply", "--index", "--whitespace=nowarn", ...reverse ? ["--reverse"] : [], "-"];
-  await git2(c.worktree, ["apply", "--index", "--check", "--whitespace=nowarn", ...reverse ? ["--reverse"] : [], "-"], { ...inCheckout(c), input: patch });
-  await git2(c.worktree, args, { ...inCheckout(c), input: patch });
-}
-async function restoreToBase(c, base, paths) {
-  if (paths.length === 0) return;
-  const inBase = new Set((await git2(c.worktree, ["ls-tree", "-r", "-z", "--name-only", base, "--", ...paths], inCheckout(c))).split("\0").filter((p) => p.length > 0));
-  const absent = paths.filter((p) => !inBase.has(p));
-  if (absent.length > 0) {
-    await git2(c.worktree, ["rm", "-rqf", "--ignore-unmatch", "--", ...absent], inCheckout(c));
-    await git2(c.worktree, ["clean", "-fq", "--", ...absent], inCheckout(c));
-  }
-  if (inBase.size > 0) await git2(c.worktree, ["checkout", base, "--", ...inBase], inCheckout(c));
-}
-function unitEvents(ctx, type, n2) {
-  return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id", ctx.run.id, type, n2).map((r) => JSON.parse(r.data_json));
-}
-function recordUnits(ctx, n2, units) {
-  appendEvent(ctx.db, ctx.run.id, UNITS_EVENT, ctx.ownerId, { attempt: n2, units }, ctx.clock.now());
-}
-var UNITS_EVENT, UNIT_INTEGRATING_EVENT, UNIT_INTEGRATED_EVENT, UNIT_SERIALIZED_EVENT, MERGE_OVERHEAD_EVENT, UNIT_EXCLUDES;
-var init_parallel_writers = __esm({
-  "src/controller/parallel-writers.ts"() {
-    "use strict";
-    init_events();
-    init_git();
-    init_candidate();
-    init_scope();
-    init_freshness();
-    init_scheduler();
-    init_work_units();
-    init_context2();
-    init_gates();
-    init_workers2();
-    init_contracting();
-    init_common();
-    UNITS_EVENT = "implementation.units";
-    UNIT_INTEGRATING_EVENT = "implementation.unit-integrating";
-    UNIT_INTEGRATED_EVENT = "implementation.unit-integrated";
-    UNIT_SERIALIZED_EVENT = "implementation.unit-serialized";
-    MERGE_OVERHEAD_EVENT = "scheduler.merge-overhead";
-    UNIT_EXCLUDES = [".DS_Store", "Thumbs.db", "node_modules/"];
-  }
-});
-
-// src/controller/authorization.ts
-import { existsSync as existsSync34, mkdirSync as mkdirSync18 } from "node:fs";
-import { join as join47 } from "node:path";
-function operationKey(op) {
-  return `op-${sha256(canonicalJson(op)).slice(0, 16)}`;
-}
-function deniedDependencyOperations(scope, snapshot2) {
-  const out = [];
-  const consider = (op, summary) => {
-    const d = authorize(snapshot2, op);
-    if (!d.allowed) out.push({ op, key: operationKey(op), summary, denial: `${d.rule}: ${d.reason}` });
-  };
-  if (scope.lockfile_changed) consider({ kind: "dependency", change: "change_lockfile", detail: "lockfile changed by the candidate" }, "change the dependency lockfile");
-  if (scope.dependency_manifest_changed.length > 0) {
-    const files = [...scope.dependency_manifest_changed].sort();
-    consider({ kind: "dependency", change: "add_package", detail: files.join(", ") }, `change dependencies in ${files.join(", ")}`);
-  }
-  return out;
-}
-function requests(ctx) {
-  return listDecisions(ctx.db, ctx.run.id, { kind: AUTHORIZATION_REQUEST_KIND }).map((d) => d.data);
-}
-function attemptSubject(n2) {
-  return `attempt:${n2}`;
-}
-function grantFor(ctx, op, subject) {
-  const req = requests(ctx).filter((r) => r.op_key === op.key && (r.subject ?? r.tree_hash) === subject).at(-1);
-  if (!req) return { state: "none" };
-  const q = findQuestion(ctx.db, req.question_id);
-  if (!q || q.status === "withdrawn") return { state: "none" };
-  if (q.status === "open") return { state: "pending", questionId: q.id };
-  const by = q.answeredBy;
-  if (q.answer !== APPROVE_ONCE || !by || !isHumanActor(by)) return { state: "denied", questionId: q.id, by };
-  const id = `dec-${ctx.run.id}-grant-${q.id}`;
-  if (!getDecision(ctx.db, id)) {
-    const forAttempt = req.attempt !== void 0;
-    const what = forAttempt ? `implementation attempt ${req.attempt} only` : `candidate tree ${subject.slice(0, 12)} only`;
-    const where2 = forAttempt ? { attempt: req.attempt, subject } : { tree_hash: subject };
-    decide2(ctx, { id, kind: AUTHORIZATION_GRANT_KIND, summary: `${by} authorized once: ${op.summary} (${what})`, data: { question_id: q.id, op_key: op.key, operation: op.op, ...where2, approved_by: by, policy_denial: op.denial } });
-  }
-  return { state: "granted", decisionId: id, approvedBy: by, questionId: q.id };
-}
-function authorizedOnce(ctx, op, treeHash) {
-  if (authorize(ctx.snapshot, op.op).allowed) return true;
-  return grantFor(ctx, op, treeHash).state === "granted";
-}
-function requestAuthorization(ctx, op, cand) {
-  return ask(
-    ctx,
-    op,
-    {
-      question: `May this run ${op.summary} for candidate ${cand.seq} (tree ${cand.treeHash.slice(0, 12)}), which the policy does not authorize?`,
-      evidence: [`the policy denies it: ${op.denial}`, `operation ${op.key}: ${JSON.stringify(op.op)}`, `the implementation-scope gate found this change in candidate ${cand.seq}; supervised mode asks instead of repairing it away`],
-      approve: { description: `Authorize this one operation for candidate ${cand.seq} only`, consequences: "verification continues with the change; any other candidate or operation is asked about again" },
-      deny: "the change goes back to the implementer as a scope repair, or the run stops if no attempt is left",
-      recommendationReason: "the frozen policy does not allow it; approve only when the dependency change is intended",
-      affected: `authorization ${op.key} for tree ${cand.treeHash.slice(0, 12)}`
-    },
-    { id: `dec-${ctx.run.id}-authreq-${op.key}-${cand.treeHash.slice(0, 12)}`, summary: `asked a person to authorize once: ${op.summary} (candidate ${cand.seq})`, data: { tree_hash: cand.treeHash, subject: cand.treeHash, candidate_id: cand.id } }
-  );
-}
-function requestAttemptAuthorization(ctx, op, n2, worker) {
-  const subject = attemptSubject(n2);
-  return ask(
-    ctx,
-    op,
-    {
-      question: `May the ${worker.role} of implementation attempt ${n2} ${op.summary}, which the policy does not authorize?`,
-      evidence: [`the policy denies it: ${op.denial}`, `operation ${op.key}: ${JSON.stringify(op.op)}`, `the guard refused it inside worker ${worker.id} (attempt ${n2}); supervised mode asks instead of only denying it`],
-      approve: { description: `Authorize this one operation for implementation attempt ${n2} only`, consequences: "the attempt is retried with exactly this operation allowed; any other operation or attempt is asked about again" },
-      deny: "the attempt is retried as a scope repair: the implementer finishes the work without the operation",
-      recommendationReason: "the frozen policy does not allow it; approve only when the operation is intended and needed",
-      affected: `authorization ${op.key} for attempt ${n2}`
-    },
-    { id: `dec-${ctx.run.id}-authreq-${op.key}-a${n2}`, summary: `asked a person to authorize once: ${op.summary} (attempt ${n2})`, data: { subject, attempt: n2, worker_id: worker.id } }
-  );
-}
-function ask(ctx, op, text2, request2) {
-  const q = {
-    question: text2.question,
-    changes: ["authority"],
-    evidence: text2.evidence,
-    options: [
-      { label: APPROVE_ONCE, description: text2.approve.description, consequences: text2.approve.consequences },
-      { label: DENY2, description: "Keep the policy as it is and refuse the operation", consequences: text2.deny }
-    ],
-    recommendation: DENY2,
-    recommendation_reason: text2.recommendationReason,
-    safe_default: { exists: true, option: DENY2, reason: "denying keeps the authority the run started with" },
-    material: true,
-    affected_work: [text2.affected],
-    unblocked_work: []
-  };
-  const question = persistQuestion(ctx.db, ctx.run.id, "risk-review", q, ctx.clock, { actor: ctx.ownerId }).question;
-  const subject = request2.data.subject ?? request2.data.tree_hash;
-  const existing = requests(ctx).some((r) => r.question_id === question.id && (r.subject ?? r.tree_hash) === subject);
-  if (!existing) {
-    decide2(ctx, { id: request2.id, kind: AUTHORIZATION_REQUEST_KIND, summary: request2.summary, data: { question_id: question.id, op_key: op.key, operation: op.op, policy_denial: op.denial, ...request2.data } });
-  }
-  return question;
-}
-function scopeWithGrants(scope, granted) {
-  const lockfile = granted.some((g) => g.op.kind === "dependency" && g.op.change === "change_lockfile");
-  const manifests = granted.some((g) => g.op.kind === "dependency" && g.op.change === "add_package");
-  return { ...scope, lockfile_changed: lockfile ? false : scope.lockfile_changed, dependency_manifest_changed: manifests ? [] : scope.dependency_manifest_changed };
-}
-function deniedWorkerOperations(ctx, worker) {
-  const out = /* @__PURE__ */ new Map();
-  for (const d of listDecisions(ctx.db, ctx.run.id, { kind: "policy.deny" })) {
-    const data = d.data ?? {};
-    if (data.worker_id !== worker.id || data.source !== "guard-hook") continue;
-    const rule = data.rule ?? "";
-    if (!ASKABLE_RULE.test(rule) || NEVER_GRANTED.has(rule) || !data.target) continue;
-    const host = URL_HOST.exec(data.target)?.[1]?.toLowerCase() ?? null;
-    let op;
-    let summary;
-    if (data.tool === "Bash") {
-      if (rule.startsWith("network.") && !host) continue;
-      op = { kind: "bash", command: data.target };
-      summary = `run \`${data.target}\``;
-    } else if (rule.startsWith("network.") && host) {
-      op = { kind: "network", host };
-      summary = `reach ${host}`;
-    } else continue;
-    const now = authorize(ctx.snapshot, op, { worktreeRoot: worker.cwd });
-    if (now.allowed) continue;
-    const key2 = operationKey(op);
-    if (!out.has(key2)) out.set(key2, { op, key: key2, summary, denial: `${rule}: ${data.reason ?? now.reason}`, rule, ...op.kind === "network" ? { target: data.target } : {} });
-  }
-  return [...out.values()];
-}
-function approvedPlan(op) {
-  const network = (op.rule ?? "").startsWith("network.");
-  if (op.op.kind === "bash") return { argv: ["/bin/sh", "-c", op.op.command], shown: op.op.command, host: network ? URL_HOST.exec(op.op.command)?.[1]?.toLowerCase() ?? null : null };
-  if (op.op.kind === "network" && op.target && URL_HOST.exec(op.target)?.[1]?.toLowerCase() === op.op.host) {
-    return { argv: ["curl", "-sS", "--proto", "=http,https", "--max-time", String(APPROVED_TIMEOUT_S), "--", op.target], shown: `fetch ${op.target}`, host: op.op.host };
-  }
-  return null;
-}
-async function runApprovedOperation(ctx, n2, op, grant) {
-  const plan = approvedPlan(op);
-  const none = { key: op.key, command: plan?.shown ?? null, exit_code: null, timed_out: false, path: null, sha256: null, excerpt: null };
-  if (!plan) return { ...none, state: "NOT_RUN", note: "the approval names a host but no exact command or address, so the controller had nothing exact to run" };
-  const rel = join47("authorization", `attempt-${n2}`, op.key);
-  const dir = join47(ctx.runDir, rel);
-  const ledger = new ActionLedger(ctx.db, ctx.clock, { runDir: ctx.runDir, maxAttempts: 1, actor: ctx.ownerId });
-  const recorded = () => readJsonIfExists(join47(dir, RECEIPT_FILE));
-  try {
-    const done = await ledger.performAction(
-      { runId: ctx.run.id, kind: APPROVED_COMMAND_ACTION, idempotencyKey: `${ctx.run.id}:approved:${n2}:${op.key}`, target: { command: plan.shown, attempt: n2, op_key: op.key, grant: grant.decisionId } },
-      {
-        execute: () => executeApproved(ctx, plan, dir, rel),
-        // Only the receipt written after the command finished proves it ran; without it the command is not run again.
-        reconcile: async () => {
-          const r2 = recorded();
-          if (r2) return r2;
-          throw new OrbitError("INTERNAL", "the approved command may have started before the controller stopped; it is not run a second time", { definitive: true });
-        }
-      },
-      { authorization: { allowed: true, rule: "authorization.grant", reason: `approved once by ${grant.approvedBy} (${grant.decisionId}) for attempt ${n2}` } }
-    );
-    const r = done.receipt;
-    return { ...none, state: "SUCCEEDED", exit_code: r.exit_code, timed_out: r.timed_out, path: r.path, sha256: r.sha256, excerpt: r.excerpt, note: null };
-  } catch (err) {
-    if (isOrbitError(err, "CANCELLED") || isOrbitError(err, "LEASE_LOST") || isOrbitError(err, "CONCURRENT_UPDATE")) throw err;
-    return { ...none, state: "UNKNOWN", note: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) };
-  }
-}
-async function executeApproved(ctx, plan, dir, rel) {
-  const worktree = ctx.run.worktreePath;
-  const home2 = join47(dir, "home");
-  mkdirSync18(home2, { recursive: true, mode: 448 });
-  const tmp = prepareWorkerTmpDir(dir);
-  const hosts = [.../* @__PURE__ */ new Set([...ctx.snapshot.config.network.allowed_hosts, ...plan.host ? [plan.host] : []])];
-  const def = { id: `approved-${rel.split("/").at(-1)}`, command: plan.argv, shell: false, cwd: ".", timeout_seconds: APPROVED_TIMEOUT_S, network_hosts: hosts, local_binding: false, env: {}, mandatory: false, flaky_reruns: 0, kind: "command" };
-  const profile = profileForCheck({ worktree, check: def, snapshot: ctx.snapshot, extraWritable: [home2, tmp] });
-  const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home2, TMPDIR: tmp, LANG: "C.UTF-8", TERM: "dumb", NO_COLOR: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" };
-  const wrapped = ctx.isolation().wrap(plan.argv, profile, { cwd: worktree, env });
-  let r;
-  try {
-    r = await execCapture(wrapped.argv, { cwd: worktree, env: wrapped.env, timeoutMs: APPROVED_TIMEOUT_S * 1e3, maxOutputBytes: APPROVED_MAX_OUTPUT_BYTES, abortSignal: ctx.signal });
-  } catch (err) {
-    throw new OrbitError("INTERNAL", `the approved command could not start: ${err instanceof Error ? err.message : String(err)}`, { definitive: true }, { cause: err });
-  } finally {
-    wrapped.cleanup();
-  }
-  const text2 = redact(`$ ${plan.shown}
-[exit ${r.exitCode ?? `signal ${r.signal ?? "unknown"}`}${r.timedOut ? ", timed out" : ""}]
---- stdout ---
-${r.stdout}
---- stderr ---
-${r.stderr}
-`);
-  atomicWrite(join47(dir, OUTPUT_FILE), text2, 384);
-  const receipt = { exit_code: r.exitCode, timed_out: r.timedOut, path: join47(rel, OUTPUT_FILE), sha256: sha256(text2), excerpt: text2.slice(-APPROVED_EXCERPT_CHARS) };
-  atomicWrite(join47(dir, RECEIPT_FILE), `${JSON.stringify(receipt)}
-`, 384);
-  return receipt;
-}
-function ungrantedCommands(events, snapshot2, worktreeRoot, granted) {
-  const denied = new Set(denialsFromTranscript(events).map((d) => d.toolUseId));
-  const out = [];
-  for (const e of events) {
-    if (e.type !== "assistant") continue;
-    const message = e.message;
-    const content = Array.isArray(message?.content) ? message.content : [];
-    for (const b of content) {
-      if (!b || b.type !== "tool_use" || typeof b.id !== "string" || denied.has(b.id)) continue;
-      const input = b.input ?? {};
-      let op = null;
-      if (b.name === "Bash" && typeof input.command === "string") op = { kind: "bash", command: input.command };
-      else if (typeof input.url === "string") {
-        const host = URL_HOST.exec(input.url)?.[1]?.toLowerCase();
-        if (host) op = { kind: "network", host };
-      }
-      if (!op) continue;
-      const d = authorize(snapshot2, op, { worktreeRoot });
-      if (d.allowed || !ASKABLE_RULE.test(d.rule)) continue;
-      const shown = op.kind === "bash" ? denialTarget(op.command) : op.host;
-      const named = granted.some((g) => op.kind === "bash" && g.op.kind === "bash" && g.op.command === shown || op.kind === "network" && g.op.kind === "network" && g.op.host === op.host);
-      if (!named) out.push(shown);
-    }
-  }
-  return out;
-}
-function sessionEvents(worker) {
-  const path = join47(worker.workerDir, LOG_FILE);
-  return existsSync34(path) ? readLogLines(path).events : [];
-}
-var APPROVE_ONCE, DENY2, AUTHORIZATION_REQUEST_KIND, AUTHORIZATION_GRANT_KIND, ASKABLE_RULE, NEVER_GRANTED, URL_HOST, APPROVED_COMMAND_ACTION, APPROVED_TIMEOUT_S, APPROVED_MAX_OUTPUT_BYTES, APPROVED_EXCERPT_CHARS, OUTPUT_FILE, RECEIPT_FILE;
-var init_authorization = __esm({
-  "src/controller/authorization.ts"() {
-    "use strict";
-    init_hash();
-    init_fsx();
-    init_errors();
-    init_exec();
-    init_redact();
-    init_authorize();
-    init_profiles();
-    init_actions();
-    init_questions();
-    init_store4();
-    init_decisions();
-    init_supervise();
-    init_shim();
-    init_common();
-    init_denials();
-    APPROVE_ONCE = "approve-once";
-    DENY2 = "deny";
-    AUTHORIZATION_REQUEST_KIND = "authorization.request";
-    AUTHORIZATION_GRANT_KIND = "authorization.grant";
-    ASKABLE_RULE = /^(?:actions|network)\./;
-    NEVER_GRANTED = /* @__PURE__ */ new Set(["actions.change_secrets"]);
-    URL_HOST = /\bhttps?:\/\/([A-Za-z0-9.-]+)/;
-    APPROVED_COMMAND_ACTION = "approved_command";
-    APPROVED_TIMEOUT_S = 300;
-    APPROVED_MAX_OUTPUT_BYTES = 1024 * 1024;
-    APPROVED_EXCERPT_CHARS = 4e3;
-    OUTPUT_FILE = "output.txt";
-    RECEIPT_FILE = "receipt.json";
-  }
-});
-
-// src/controller/steps/implementing.ts
-import { existsSync as existsSync35 } from "node:fs";
-import { join as join48 } from "node:path";
-function briefPath(ctx, attempt) {
-  return join48(ctx.runDir, "briefs", `attempt-${attempt}.json`);
-}
-function currentAttempt(ctx) {
-  const row = ctx.db.get("SELECT MAX(CAST(json_extract(data_json, '$.attempt') AS INTEGER)) AS n FROM events WHERE run_id = ? AND type = ?", ctx.run.id, ATTEMPT_EVENT);
-  return Number(row?.n ?? 0);
-}
-function attemptCandidateId(ctx, attempt) {
-  const row = ctx.db.get("SELECT json_extract(data_json, '$.candidate_id') AS id FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, CANDIDATE_EVENT, attempt);
-  return row?.id ?? null;
-}
-async function implementingStep(ctx) {
-  const stop = await safePoint(ctx);
-  if (stop) return stop;
-  const contract = assertContract(ctx);
-  if (!ctx.ledger) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is ${ctx.run.state} without budget counters`);
-  if (!ctx.run.worktreePath || !ctx.run.baseRevision) throw new OrbitError("INTERNAL", `run ${ctx.run.id} has no worktree or base revision`);
-  let n2 = currentAttempt(ctx);
-  if (n2 > 0 && attemptCandidateId(ctx, n2) !== null) {
-    const cand = ctx.candidate;
-    if (cand && !currentEvidenceReport(ctx.db, ctx.run.id, cand.id)) return move2(ctx, "VERIFYING", `candidate ${cand.seq} of attempt ${n2} awaits verification`);
-    n2 = 0;
-  }
-  if (n2 === 0) {
-    const started = await startAttempt(ctx, currentAttempt(ctx) + 1);
-    if (started) return started;
-    n2 = currentAttempt(ctx);
-  }
-  return continueAttempt(ctx, n2, contract);
-}
-async function startAttempt(ctx, n2) {
-  const ledger = ctx.ledger;
-  const route2 = routeFor(ctx, `implement:${n2}`, "routine-code", routeSignals(ctx, n2));
-  const scheduler = schedulerFor(ctx);
-  const running = runningUnits(ctx);
-  const own = new Set(running.filter((u) => u.runId === ctx.run.id).map((u) => u.unit.id));
-  const cap = sessionSpendCap(ctx, route2.model, "implementer");
-  const unit = {
-    id: `implement:${n2}`,
-    role: "implementer",
-    writer: true,
-    ownedPaths: assertContract(ctx).allowed_paths,
-    dependsOn: [],
-    revision: ctx.candidate?.treeHash ?? null,
-    cancelWhen: [],
-    // Admission keeps the conservative role ceiling for the cost estimate: an attempt is more than one session.
-    budget: { costUsd: null, wallMs: null, maxTurns: ledger.maxTurnsPerSession() },
-    provider: route2.provider,
-    worktree: ctx.run.worktreePath,
-    status: "pending"
-  };
-  const plan = scheduler.plan([...running.filter((r) => own.has(r.unit.id)).map((r) => r.unit), unit], { admit: budgetAdmission(ledger) });
-  const machine = plan.start.some((u) => u.id === unit.id) ? machineAdmission(ctx, running.map((r) => r.unit), [unit]) : null;
-  if (!plan.start.some((u) => u.id === unit.id) || machine && !machine.start.has(unit.id)) {
-    const why = plan.deferred.find((d) => d.id === unit.id)?.reason ?? machine?.deferred.get(unit.id) ?? "not admitted";
-    if (/^not admitted by budget/.test(why)) return finishRun(ctx, "EXHAUSTED", `attempt ${n2} not admitted: the remaining budget cannot support an honest completion (${why})`, { data: { admission: why } });
-    return WAIT(`attempt ${n2} deferred: ${why}`);
-  }
-  if (cap.capUsd !== null && cap.capUsd <= 0) return finishRun(ctx, "EXHAUSTED", `attempt ${n2} not started: ${unfundedSessionReason(ctx, route2.model, "implementer")}`);
-  const units = splitAttempt(ctx, assertContract(ctx), n2 === 1 && !existsSync35(briefPath(ctx, n2)));
-  const counted = ctx.db.tx(() => {
-    if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, ATTEMPT_EVENT, n2)) return false;
-    ledger.consume("implementation_attempts", 1);
-    appendEvent(ctx.db, ctx.run.id, ATTEMPT_EVENT, ctx.ownerId, { attempt: n2, route: route2.decisionId, spend_cap_usd: cap.capUsd }, ctx.clock.now());
-    if (units) recordUnits(ctx, n2, units);
-    return true;
-  });
-  if (counted && units) {
-    decide2(ctx, { id: `dec-${ctx.run.id}-units-${n2}`, kind: "scheduling.work-units", summary: `attempt ${n2} runs as ${units.length} parallel writers with disjoint files: ${units.map((u) => `${u.id} (${u.criteria.join(", ")})`).join("; ")}`, data: { attempt: n2, units } });
-  }
-  if (cap.capUsd !== null) recordSpendCap(ctx, `implement:${n2}#1`, cap.capUsd, cap.worstCaseUsd);
-  return null;
-}
-function runningUnits(ctx) {
-  const out = listActiveWorkers(ctx.db).map((w) => ({
-    runId: w.runId,
-    // Another run's writer edits its own worktree, so its paths cannot collide with this run's; it still takes a slot.
-    unit: { id: w.id, role: w.role, writer: w.runId === ctx.run.id && !READ_ONLY_ROLES.has(w.role), ownedPaths: w.ownedPaths ?? [], dependsOn: [], revision: null, cancelWhen: [], budget: {}, provider: w.provider, worktree: w.cwd, status: "running" }
-  }));
-  const reserved = ctx.db.all(
-    `SELECT e.run_id, MAX(CAST(json_extract(e.data_json, '$.attempt') AS INTEGER)) AS attempt FROM events e JOIN runs r ON r.id = e.run_id
-     WHERE e.type = ? AND e.run_id <> ? AND r.state IN ('IMPLEMENTING', 'REPAIRING') GROUP BY e.run_id`,
-    ATTEMPT_EVENT,
-    ctx.run.id
-  );
-  for (const r of reserved) {
-    const planned = ctx.db.get("SELECT 1 AS x FROM workers WHERE run_id = ? AND role = 'implementer' AND attempt = ? LIMIT 1", r.run_id, r.attempt);
-    const produced = ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? LIMIT 1", r.run_id, CANDIDATE_EVENT, r.attempt);
-    if (planned || produced) continue;
-    out.push({ runId: r.run_id, unit: { id: `reserved:${r.run_id}:${r.attempt}`, role: "implementer", writer: false, ownedPaths: [], dependsOn: [], revision: null, cancelWhen: [], budget: {}, provider: null, worktree: null, status: "running" } });
-  }
-  return out;
-}
-async function continueAttempt(ctx, n2, contract) {
-  const route2 = routeFor(ctx, `implement:${n2}`, "routine-code", routeSignals(ctx, n2));
-  const base = `implement:${n2}`;
-  const units = recordedUnits(ctx, n2);
-  if (units && latestAttempt(ctx, base) === 0) {
-    const r = await runParallelUnits(ctx, n2, units, { route: route2, contract, prompt: (u, all, workerId) => implementerPrompt(ctx, n2, workerId, null, { unit: u, all }), running: () => runningUnits(ctx), maxTurns: ctx.ledger.maxTurnsPerSession() });
-    if (r.kind === "step") return r.result;
-    if (r.kind === "done") return snapshot(ctx, n2, r.workerId);
-  }
-  const start = await attemptStart(ctx, base, `implementer (attempt ${n2})`);
-  if (!start.ok) return start.step;
-  let k = start.n;
-  for (; ; ) {
-    const purpose = `${base}#${k}`;
-    if (!ctx.db.get("SELECT 1 AS x FROM workers WHERE run_id = ? AND purpose = ?", ctx.run.id, purpose)) {
-      const wait = retryWait(ctx, base);
-      if (wait) return wait;
-    }
-    const auth = authorizationFor(ctx, n2, k);
-    const st = await ensureWorker(ctx, {
-      role: "implementer",
-      purpose,
-      attempt: n2,
-      provider: route2.provider,
-      model: route2.model,
-      effort: route2.effort,
-      cwd: ctx.run.worktreePath,
-      readOnly: false,
-      prompt: (workerId) => implementerPrompt(ctx, n2, workerId, auth),
-      maxBudgetUsd: capOf(ctx, n2, purpose),
-      ownedPaths: contract.allowed_paths
-    });
-    if (st.status === "running") return WAIT(`implementer ${st.worker.id} (attempt ${n2}) is running`);
-    const r = st.result;
-    if (r.status === "auth_failed") return blockOnAuth(ctx, st.worker.provider, "auth_failed", r.error);
-    const stray = r.status === "cancelled" && !ctx.refresh().cancelRequested;
-    if (r.status === "transient_error" || stray) {
-      if (r.status === "cancelled") {
-        const stop2 = await safePoint(ctx);
-        if (stop2) return stop2;
-      }
-      const stop = await scheduleTransientRetry(ctx, { base, purpose, what: `implementer (attempt ${n2})`, status: r.status, error: r.error });
-      if (stop) return stop;
-      k++;
-      continue;
-    }
-    if (r.status === "cancelled") {
-      const stop = await safePoint(ctx);
-      if (stop) return stop;
-    }
-    if (r.status === "lost") {
-      const stop = await restartLostImplementer(ctx, st.worker, n2, `${base}#${k + 1}`, route2.model);
-      if (stop) return stop;
-      k++;
-      continue;
-    }
-    if (r.status === "failed" && raiseOutputCap(ctx, purpose, r.error) !== null) {
-      k++;
-      continue;
-    }
-    const sup = await superviseDenials(ctx, n2, k, st.worker);
-    if (sup.kind === "stop") return sup.result;
-    if (sup.kind === "retry") {
-      k++;
-      continue;
-    }
-    if (r.status !== "succeeded") note2(ctx, "implementation.worker-ended", { attempt: n2, status: r.status, error: r.error?.slice(0, 300) ?? null, note: "its edits are verified like any other" });
-    return snapshot(ctx, n2, st.worker.id);
-  }
-}
-function authorizationRetries(ctx, n2) {
-  return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id", ctx.run.id, AUTHORIZATION_RETRY_EVENT, n2).map((r) => JSON.parse(r.data_json));
-}
-function authorizationFor(ctx, n2, k) {
-  return authorizationRetries(ctx, n2).filter((r) => r.next <= k).at(-1) ?? null;
-}
-async function superviseDenials(ctx, n2, k, worker) {
-  if (ctx.run.mode !== "supervised") return { kind: "proceed" };
-  const retries = authorizationRetries(ctx, n2);
-  if (retries.some((r) => r.after === k)) return { kind: "retry" };
-  const auth = retries.filter((r) => r.next <= k).at(-1);
-  if (auth && auth.granted.length > 0) {
-    const extra = ungrantedCommands(sessionEvents(worker), ctx.snapshot, worker.cwd, []);
-    if (extra.length > 0) {
-      decide2(ctx, { id: `dec-${ctx.run.id}-deny-ungranted-${worker.id}`, kind: "policy.deny", summary: `implementer ${worker.id} ran under a one-shot grant and did what no grant names: ${extra.join("; ")}`, data: { source: "grant-check", worker_id: worker.id, attempt: n2, ungranted: extra, granted: auth.granted.map((g) => g.key) } });
-      return { kind: "stop", result: await finishRun(ctx, "BLOCKED", `policy violation in attempt ${n2}: under a one-shot grant the implementer also ran what the policy denies and no person authorized (${extra.join("; ")}); its work will not be verified or delivered`, { outcome: { attempt: n2, ungranted: extra } }) };
-    }
-  }
-  const applied = new Set(retries.flatMap((r) => [...r.granted, ...r.refused].map((g) => g.key)));
-  const ops = deniedWorkerOperations(ctx, worker).filter((o) => !applied.has(o.key));
-  if (ops.length === 0) return { kind: "proceed" };
-  const subject = attemptSubject(n2);
-  const pending = [];
-  const granted = [];
-  const grants = [];
-  const refused = [];
-  for (const op of ops) {
-    const g = grantFor(ctx, op, subject);
-    if (g.state === "granted") {
-      granted.push(op);
-      grants.push({ decisionId: g.decisionId, approvedBy: g.approvedBy });
-    } else if (g.state === "denied") refused.push(op);
-    else pending.push(`${g.state === "pending" ? g.questionId : requestAttemptAuthorization(ctx, op, n2, worker).id}: ${op.summary}`);
-  }
-  if (pending.length > 0) {
-    return { kind: "stop", result: await finishRun(ctx, "BLOCKED", `supervised mode: implementation attempt ${n2} was denied operations the policy does not authorize; a person decides each one (approve-once or deny with orbit decide, then orbit resume ${ctx.run.id}). Questions: ${pending.join(" | ")}`, { outcome: { authorization: pending } }) };
-  }
-  const executed = [];
-  for (const [i, op] of granted.entries()) executed.push(await runApprovedOperation(ctx, n2, op, grants[i]));
-  note2(ctx, AUTHORIZATION_RETRY_EVENT, { attempt: n2, after: k, next: k + 1, granted, refused, executed });
-  return { kind: "retry" };
-}
-async function restartLostImplementer(ctx, lost, n2, nextPurpose, model) {
-  const already = ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.worker_id') = ? LIMIT 1", ctx.run.id, LOST_RESTART_EVENT, lost.id);
-  if (already) return null;
-  const decision = decideRetry({
-    classification: classifyFailure({ status: "lost" }),
-    provider: lost.provider,
-    runId: ctx.run.id,
-    attempt: 1,
-    infrastructureRetriesRemaining: Number.POSITIVE_INFINITY,
-    wallRemainingMs: null,
-    costRemainingUsd: null,
-    recoveryAttemptsRemaining: recoveryAttemptsRemaining(ctx.db, ctx.run.id, void 0)
-  });
-  if (decision.action !== "restart") return finishRun(ctx, "EXHAUSTED", `recovery_attempts exhausted: lost implementer ${lost.id} (attempt ${n2}) cannot be restarted: ${decision.reason}`, { data: { counter: "recovery_attempts" } });
-  const gone = await stopRowProcess(ctx.timing.killGraceMs, lost);
-  if (gone === "unknown") return WAIT(`lost implementer ${lost.id}: its process could not be confirmed stopped; not restarting yet`);
-  try {
-    spendRecoveryAttempt(ctx.db, ctx.run.id, ctx.clock, { ledgerFor: () => ctx.ledger, actor: ctx.ownerId, why: `restart of lost implementer ${lost.id} (attempt ${n2})` });
-  } catch (err) {
-    if (isOrbitError(err, "BUDGET_EXHAUSTED")) return finishRun(ctx, "EXHAUSTED", `recovery_attempts exhausted: lost implementer ${lost.id} (attempt ${n2}) cannot be restarted: ${err.message}`, { data: { counter: "recovery_attempts" } });
-    throw err;
-  }
-  const cap = sessionSpendCap(ctx, model, "implementer");
-  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, LOST_RESTART_EVENT, ctx.ownerId, { worker_id: lost.id, attempt: n2, next_purpose: nextPurpose, cwd_preserved: lost.cwd, live_controller: true }, ctx.clock.now()));
-  if (cap.capUsd !== null) {
-    if (cap.capUsd <= 0) return finishRun(ctx, "EXHAUSTED", `lost implementer ${lost.id} not restarted: ${unfundedSessionReason(ctx, model, "implementer")}`);
-    recordSpendCap(ctx, nextPurpose, cap.capUsd, cap.worstCaseUsd);
-  }
-  return null;
-}
-async function snapshot(ctx, n2, workerId) {
-  const cand = await snapshotCandidate({ db: ctx.db, clock: ctx.clock, repoRoot: ctx.run.repoRoot, worktree: ctx.run.worktreePath, runId: ctx.run.id, baseRev: ctx.run.baseRevision, attempt: n2, workerId });
-  invalidateEvidence(ctx.db, ctx.run.id, `attempt ${n2} produced candidate ${cand.seq} (tree ${cand.treeHash})`, ctx.clock, { exceptTreeHash: cand.treeHash });
-  invalidateStaleReviews(ctx.db, { runId: ctx.run.id, runDir: ctx.runDir, current: { candidateId: cand.id, treeHash: cand.treeHash }, cause: `attempt ${n2}` }, ctx.clock);
-  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, CANDIDATE_EVENT, ctx.ownerId, { attempt: n2, candidate_id: cand.id, seq: cand.seq, tree_hash: cand.treeHash, reused: !cand.created }, ctx.clock.now()));
-  ctx.candidate = cand;
-  await cancelObsoleteWork(ctx, cand.treeHash);
-  progress(ctx, "candidate", { attempt: n2, candidate_id: cand.id, seq: cand.seq, tree_hash: cand.treeHash, reused: !cand.created });
-  return move2(ctx, "VERIFYING", `attempt ${n2} produced candidate ${cand.seq}${cand.created ? "" : " (the same tree as an earlier candidate)"}`);
-}
-function capOf(ctx, n2, purpose) {
-  const own = ctx.db.get("SELECT json_extract(data_json, '$.cap_usd') AS cap FROM events WHERE run_id = ? AND type = 'worker.spend-cap' AND json_extract(data_json, '$.purpose') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, purpose);
-  if (typeof own?.cap === "number") return own.cap;
-  const row = ctx.db.get("SELECT json_extract(data_json, '$.spend_cap_usd') AS cap FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, ATTEMPT_EVENT, n2);
-  return typeof row?.cap === "number" ? row.cap : null;
-}
-function routeSignals(ctx, n2) {
-  const difficulty = ctx.run.difficulty ?? "medium";
-  const failures = listFailures(ctx.db, ctx.run.id);
-  const prev = n2 > 1 ? ctx.db.get("SELECT data_json FROM decisions WHERE id = ?", `dec-route-${ctx.run.id}-implement_${n2 - 1}`) : void 0;
-  const prevRoute = prev ? JSON.parse(prev.data_json) : null;
-  const solved = n2 > 1 && diagnosisSolved(ctx, n2);
-  const latest = failures.at(-1) ?? null;
-  const same = latest && !solved ? failures.filter((f) => f.fingerprint === latest.fingerprint) : [];
-  const repeated = new Set(same.map((f) => f.candidateId ?? `row-${f.id}`)).size;
-  const evidence = same.map((f) => `failure:${f.id}`);
-  const security = criticalSecurity(ctx);
-  return {
-    difficulty,
-    attempt: n2,
-    repeatedFingerprints: repeated,
-    ...evidence.length > 0 ? { evidence } : {},
-    ...security ? { criticalSecurity: true } : {},
-    ...solved ? { diagnosisSolved: true } : {},
-    ...prevRoute ? { previousRoute: { provider: prevRoute.provider, model: prevRoute.model, effort: prevRoute.effort, outcome: solved ? "verified" : "failed", evidence } } : {}
-  };
-}
-function criticalSecurity(ctx) {
-  if (!ctx.run.difficultyJson) return false;
-  try {
-    const a = JSON.parse(ctx.run.difficultyJson);
-    return a.factors?.some((f) => f.factor === "security_impact" && f.value === true) ?? false;
-  } catch {
-    return false;
-  }
-}
-function diagnosisSolved(ctx, n2) {
-  let escalatedAt = 0;
-  for (let k = n2 - 1; k >= 1; k--) {
-    const row = ctx.db.get("SELECT data_json FROM decisions WHERE id = ?", `dec-route-${ctx.run.id}-implement_${k}`);
-    const d = row ? JSON.parse(row.data_json) : null;
-    if (d?.escalated_from) {
-      escalatedAt = k;
-      break;
-    }
-  }
-  if (escalatedAt === 0) return false;
-  const latestCand = attemptCandidateId(ctx, n2 - 1);
-  if (!latestCand) return false;
-  const report2 = listEvidenceReports(ctx.db, ctx.run.id).filter((r) => r.candidateId === latestCand).at(-1);
-  if (!report2) return false;
-  const failures = listFailures(ctx.db, ctx.run.id);
-  const earlier = /* @__PURE__ */ new Set();
-  for (let k = 1; k < escalatedAt; k++) {
-    const c = attemptCandidateId(ctx, k);
-    for (const f of failures) if (c !== null && f.candidateId === c) earlier.add(f.fingerprint);
-  }
-  if (earlier.size === 0) return false;
-  const now = new Set(failures.filter((f) => f.candidateId === latestCand).map((f) => f.fingerprint));
-  if ([...earlier].some((fp) => now.has(fp))) return false;
-  const history = attemptHistory(ctx);
-  const cur = history.find((h) => h.attempt === n2 - 1);
-  if (!cur) return false;
-  const before = [...history].reverse().find((h) => h.attempt < n2 - 1) ?? null;
-  const p = progressSince(before, cur);
-  return p.fixed_checks.length > 0 || p.localized_fault !== null || report2.verdict === "PASS" && p.made_progress;
-}
-function implementerPrompt(ctx, n2, workerId, auth = null, parallel = null) {
-  const contract = assertContract(ctx);
-  const blocked = blockingQuestions(ctx.db, ctx.run.id).criteria;
-  const stored = readJsonIfExists(briefPath(ctx, n2));
-  const briefs = stored ? [{ label: `${stored.source} repair brief`, content: stored.brief, ref: `briefs/attempt-${n2}.json` }] : [];
-  const refs = [];
-  const cand = ctx.candidate;
-  if (stored && cand) {
-    for (const row of listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id })) {
-      if (row.status === "PASSED" || !row.logPath || !row.logSha256) continue;
-      refs.push({ id: row.checkId, path: relative4(ctx.runDir, row.logPath), sha256: row.logSha256, summary: `${row.checkId} ${row.status} on candidate ${cand.seq}`, ...row.excerpt ? { excerpt: row.excerpt } : {} });
-    }
-  }
-  for (const e of auth?.executed ?? []) {
-    if (e.state !== "SUCCEEDED" || !e.path || !e.sha256) continue;
-    refs.push({ id: `approved-${e.key}`, path: e.path, sha256: e.sha256, summary: `output of the approved command \`${e.command}\`, run once by the controller (exit ${e.exit_code ?? "none"}${e.timed_out ? ", timed out" : ""})`, ...e.excerpt ? { excerpt: e.excerpt } : {} });
-  }
-  const task = [
-    parallel ? "Implement your work unit of the contract below in this worktree." : n2 === 1 || !stored ? "Implement the contract below in this worktree." : `Repair attempt ${n2}: act on the repair brief below; change the cause, not the tests that show it.`,
-    "Make the smallest coherent change. Add or extend behaviour tests that would fail without it. Stay inside the allowed paths.",
-    "Do not commit, push, or edit protected paths, policy, CI configuration or check definitions. The controller snapshots your worktree and runs the trusted checks itself.",
-    `Acceptance criteria: ${contract.acceptance_criteria.map((c) => `${c.id}${c.mandatory ? "" : " (optional)"}: ${c.statement}`).join(" | ")}`,
-    ...blocked.length > 0 ? [`Blocked, waiting for a person's decision (do not implement or guess them): ${blocked.join(", ")}. Implement the other criteria only.`] : [],
-    ...authorizationLines(auth),
-    ...parallelLines(ctx, n2, parallel)
-  ].join("\n");
-  return renderWorkerPrompt({
-    role: "implementer",
-    task,
-    contract,
-    policySummary: policySummary(ctx, { readOnly: false }),
-    candidate: { revision: cand?.commitSha ?? null, treeHash: cand?.treeHash ?? null, base: ctx.run.baseRevision },
-    briefs,
-    evidenceRefs: refs,
-    advisoryBlock: advisoryBlockFor(ctx, { role: "implementer", workerId, paths: contract.allowed_paths, checkIds: contract.required_check_ids, fingerprints: stored?.fingerprint ? [stored.fingerprint] : [] })
-  });
-}
-function parallelLines(ctx, n2, parallel) {
-  if (parallel) {
-    const others = parallel.all.filter((u) => u.id !== parallel.unit.id);
-    return [
-      `You are work unit ${parallel.unit.id} of ${parallel.all.length} parallel writers for this attempt, each in its own worktree. Implement only ${parallel.unit.criteria.join(", ")}; the other criteria are someone else's.`,
-      `Change only these files (plus a new behaviour test of your own for your criteria): ${parallel.unit.ownedPaths.join(", ")}.`,
-      `Do not touch what the other units own: ${others.flatMap((u) => u.ownedPaths).join(", ")}. The controller integrates the units one at a time; a unit that touches a file another unit changed is redone serially.`
-    ];
-  }
-  const dropped = serializedUnits(ctx, n2);
-  if (dropped.length === 0) return [];
-  return [
-    "Part of this attempt was implemented by parallel writers and is already in this worktree; keep it.",
-    ...dropped.map((d) => `Work unit ${d.unit} (${d.criteria.join(", ")}) could not be integrated in parallel (${d.reason}). Implement ${d.criteria.join(", ")} now, on top of the integrated work.`)
-  ];
-}
-function authorizationLines(auth) {
-  if (!auth) return [];
-  const lines = ["An earlier session of this attempt was denied operations the policy does not authorize, and a person answered. Continue from the current worktree: the earlier edits are there."];
-  for (const g of auth.granted) lines.push(`Authorized once, for this attempt only: ${g.summary}. ${approvedOutcome(auth.executed?.find((e) => e.key === g.key) ?? null)} Do not run it yourself: you are still refused it, and anything else outside the policy stops the run.`);
-  for (const g of auth.refused) lines.push(`Refused by a person: ${g.summary}. Do not try it again; finish the work inside the policy without it.`);
-  return lines;
-}
-function approvedOutcome(e) {
-  if (!e) return "The controller performs approved operations; the policy you run under is unchanged.";
-  if (e.state === "SUCCEEDED") return `The controller ran exactly this command once, in isolation, on your behalf (exit code ${e.exit_code ?? "none"}${e.timed_out ? ", timed out" : ""}); its output is the evidence artifact approved-${e.key} (${e.path}).`;
-  if (e.state === "UNKNOWN") return `The controller started it on your behalf, but its outcome is unknown (${e.note ?? "no detail"}); it is not run again.`;
-  return `Nothing was run for it: ${e.note ?? "there was no exact command to run"}.`;
-}
-function relative4(root, p) {
-  return p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p;
-}
-var ATTEMPT_EVENT, READ_ONLY_ROLES, AUTHORIZATION_RETRY_EVENT, LOST_RESTART_EVENT;
-var init_implementing = __esm({
-  "src/controller/steps/implementing.ts"() {
-    "use strict";
-    init_fsx();
-    init_errors();
-    init_events();
-    init_workers();
-    init_backoff();
-    init_budget();
-    init_reconcile();
-    init_prompt();
-    init_candidate();
-    init_freshness();
-    init_store();
-    init_repair();
-    init_diagnosing();
-    init_reviewing();
-    init_stale();
-    init_scheduler();
-    init_context2();
-    init_gates();
-    init_workers2();
-    init_parallel_writers();
-    init_authorization();
-    init_knowledge_hooks();
-    init_common();
-    init_obtain();
-    ATTEMPT_EVENT = "implementation.attempt";
-    READ_ONLY_ROLES = /* @__PURE__ */ new Set(["planner", "verifier", "reviewer", "inquisitor", "curator", "explorer"]);
-    AUTHORIZATION_RETRY_EVENT = "authorization.retry";
-    LOST_RESTART_EVENT = "recovery.worker-restart";
-  }
-});
-
 // src/ui/single-sandbox.ts
-import { readFileSync as readFileSync23 } from "node:fs";
+import { readFileSync as readFileSync21 } from "node:fs";
 function singleSandboxLimitation(kind) {
   return kind === "container" ? UI_SINGLE_CONTAINER_LIMITATION : UI_SINGLE_SANDBOX_LIMITATION;
 }
@@ -52775,7 +51024,7 @@ function launchFailed(status2) {
 function readLaunchStatus(path) {
   let parsed3;
   try {
-    parsed3 = JSON.parse(readFileSync23(path, "utf8"));
+    parsed3 = JSON.parse(readFileSync21(path, "utf8"));
   } catch {
     return null;
   }
@@ -53173,14 +51422,14 @@ var init_report3 = __esm({
 });
 
 // src/ui/runner.ts
-import { closeSync as closeSync8, copyFileSync, existsSync as existsSync36, mkdirSync as mkdirSync19, openSync as openSync8, readFileSync as readFileSync24, realpathSync as realpathSync14, rmSync as rmSync13, statSync as statSync12, writeFileSync as writeFileSync7 } from "node:fs";
+import { closeSync as closeSync8, copyFileSync, existsSync as existsSync31, mkdirSync as mkdirSync17, openSync as openSync8, readFileSync as readFileSync22, realpathSync as realpathSync14, rmSync as rmSync11, statSync as statSync12, writeFileSync as writeFileSync6 } from "node:fs";
 import { createRequire as createRequire3 } from "node:module";
-import { basename as basename11, dirname as dirname22, isAbsolute as isAbsolute16, join as join49, relative as relative5, resolve as resolve12, sep as sep9 } from "node:path";
+import { basename as basename11, dirname as dirname20, isAbsolute as isAbsolute16, join as join41, relative as relative4, resolve as resolve11, sep as sep9 } from "node:path";
 async function runUiChecks(input) {
   const clock = input.clock ?? systemClock;
   const { snapshot: snapshot2, uiConfig, candidate } = input;
   const checkoutDir = realpathSync14(input.checkoutDir);
-  const outDir = realpathSync14(ensureDir(resolve12(input.outDir)));
+  const outDir = realpathSync14(ensureDir(resolve11(input.outDir)));
   const startedAt = clock.now();
   const checks = resolveChecks(snapshot2, input.journeyCheckIds);
   for (const check of checks) assertCheckCommandAllowed(check);
@@ -53191,7 +51440,7 @@ async function runUiChecks(input) {
   }
   await assertCheckoutMatchesCandidate(checkoutDir, candidate, outDir);
   const globs = compileGlobs(uiConfig.visual.baseline_globs, { nocase: false });
-  const candidateChanges = await changedBetween2(checkoutDir, candidate.parentSha, candidate.commitSha);
+  const candidateChanges = await changedBetween(checkoutDir, candidate.parentSha, candidate.commitSha);
   const visualFromDiff = candidateChanges.filter((c) => globs(c.path)).map((c) => c.path);
   const configHash = hashObject({
     ui: uiConfig,
@@ -53199,7 +51448,7 @@ async function runUiChecks(input) {
     enforcement: UI_ENFORCEMENT_VERSION,
     projects: input.projects ?? null
   });
-  atomicWriteJson(join49(outDir, "ui-run.json"), { state: "running", candidate: candidate.id, startedAt, checks: checks.map((c) => c.id) });
+  atomicWriteJson(join41(outDir, "ui-run.json"), { state: "running", candidate: candidate.id, startedAt, checks: checks.map((c) => c.id) });
   const reasons = [];
   const unverified = [];
   const checkRuns = [];
@@ -53207,12 +51456,12 @@ async function runUiChecks(input) {
   const notExecuted = [];
   let terminal = null;
   let app = null;
-  const tmpDir = ensureDir(join49(outDir, "tmp"));
+  const tmpDir = ensureDir(join41(outDir, "tmp"));
   const baseEnv = safeBaseEnv(input.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;
   const appStart = uiConfig.environment.start_command;
   const appEnv = { ...input.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir };
-  const launch = appStart !== null && input.isolation.privateLoopback === true ? { command: appStart, env: { ...baseEnv, ...appEnv }, readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1e3, stateDir: ensureDir(join49(outDir, "app")), pollMs: input.appPollMs } : null;
+  const launch = appStart !== null && input.isolation.privateLoopback === true ? { command: appStart, env: { ...baseEnv, ...appEnv }, readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1e3, stateDir: ensureDir(join41(outDir, "app")), pollMs: input.appPollMs } : null;
   try {
     if (appStart !== null && launch === null) {
       const appCheck = { ...defaultCheck("ui-app"), command: appStart, network_hosts: [], timeout_seconds: uiConfig.environment.ready_timeout_seconds };
@@ -53226,7 +51475,7 @@ async function runUiChecks(input) {
           env: appEnv,
           isolation: { provider: input.isolation, profile },
           isolatedTestData: uiConfig.environment.isolated_test_data,
-          stateDir: join49(outDir, "app"),
+          stateDir: join41(outDir, "app"),
           clock,
           pollMs: input.appPollMs,
           hostEnv: input.hostEnv
@@ -53235,7 +51484,7 @@ async function runUiChecks(input) {
         if (err instanceof OrbitError && (err.code === "ISOLATION_UNAVAILABLE" || err.code === "POLICY_DENIED")) throw err;
         terminal = "ERROR";
         reasons.push(`the application did not start: ${err instanceof Error ? err.message : String(err)}`);
-        notExecuted.push({ stage: "application", checkId: null, logPath: join49(outDir, "app", APP_LOG_FILE), signal: null });
+        notExecuted.push({ stage: "application", checkId: null, logPath: join41(outDir, "app", APP_LOG_FILE), signal: null });
       }
     } else if (appStart === null) {
       unverified.push("ui.environment.start_command is not set: the application at base_url was started by something other than Orbit, so its build is not bound to this candidate");
@@ -53262,7 +51511,7 @@ async function runUiChecks(input) {
   const a11yBaselineChanges = [.../* @__PURE__ */ new Set([...changedA11yBaselines(journeys, checkoutDir, changedPaths2), ...[...changedPaths2].filter(looksLikeA11yBaseline)])].sort();
   if (written.length > 0) reasons.push(`the run itself wrote baseline files: ${written.join(", ")}`);
   const drift = await driftSince(checkoutDir, candidate.commitSha);
-  const outside = (p) => !isInside(resolve12(checkoutDir, p), outDir);
+  const outside = (p) => !isInside(resolve11(checkoutDir, p), outDir);
   const mutated = drift.modified.filter((p) => !globs(p) && !looksLikeA11yBaseline(p) && outside(p));
   if (mutated.length > 0) {
     reasons.push(`the run modified tracked files, so its evidence no longer describes the candidate: ${mutated.slice(0, 10).join(", ")}`);
@@ -53344,7 +51593,7 @@ async function runUiChecks(input) {
     startedAt,
     endedAt: clock.now()
   };
-  atomicWriteJson(join49(outDir, UI_RESULT_FILE), redactValue(result2));
+  atomicWriteJson(join41(outDir, UI_RESULT_FILE), redactValue(result2));
   return result2;
 }
 function toEvidenceUi(result2) {
@@ -53395,12 +51644,12 @@ function shellQuote(arg) {
 }
 async function runOneCheck(ctx) {
   const { input, check, checkoutDir, clock } = ctx;
-  const checkDir = ensureDir(join49(ctx.outDir, check.id));
-  const outputDir = join49(checkDir, "test-results");
-  const reportPath2 = join49(checkDir, "playwright-report.json");
-  const logPath = join49(checkDir, "run.log");
-  const cwd = resolve12(checkoutDir, check.cwd);
-  if (relative5(checkoutDir, cwd).startsWith("..") || isAbsolute16(relative5(checkoutDir, cwd))) {
+  const checkDir = ensureDir(join41(ctx.outDir, check.id));
+  const outputDir = join41(checkDir, "test-results");
+  const reportPath2 = join41(checkDir, "playwright-report.json");
+  const logPath = join41(checkDir, "run.log");
+  const cwd = resolve11(checkoutDir, check.cwd);
+  if (relative4(checkoutDir, cwd).startsWith("..") || isAbsolute16(relative4(checkoutDir, cwd))) {
     throw new OrbitError("POLICY_DENIED", `check ${check.id} cwd leaves the checkout`, { rule: "checks.cwd", check: check.id });
   }
   const flags = enforcedFlags(check, outputDir, input.projects);
@@ -53426,8 +51675,8 @@ async function runOneCheck(ctx) {
     // The browser run, and only it: Chromium's Mach rendezvous rules under srt on macOS (never the application or a worker).
     chromiumMachRendezvous: true
   };
-  rmSync13(reportPath2, { force: true });
-  rmSync13(outputDir, { recursive: true, force: true });
+  rmSync11(reportPath2, { force: true });
+  rmSync11(outputDir, { recursive: true, force: true });
   const spec = launch ? launchSpec(launch, { baseUrl: ctx.baseUrl, checkoutDir, argv: argv2, cwd, env }) : null;
   const wrapped = spec ? input.isolation.wrap(launcherArgv(input.isolation.launcherNode), profile, { cwd, env: { ...env, [LAUNCH_ENV]: JSON.stringify(spec) } }) : input.isolation.wrap(argv2, profile, { cwd, env });
   const started = clock.now();
@@ -53440,15 +51689,15 @@ async function runOneCheck(ctx) {
     preloadRefusal = wrapped.preloadRefusal?.() ?? null;
     wrapped.cleanup();
   }
-  writeFileSync7(logPath, redact(`${exec.stdout}${exec.stderr ? `
+  writeFileSync6(logPath, redact(`${exec.stdout}${exec.stderr ? `
 --- stderr ---
 ${exec.stderr}` : ""}`), { mode: 384 });
   let parsed3 = null;
   let parseProblem = null;
-  const reportFound = existsSync36(reportPath2);
+  const reportFound = existsSync31(reportPath2);
   if (reportFound) {
     try {
-      parsed3 = parsePlaywrightReport(JSON.parse(readFileSync24(reportPath2, "utf8")));
+      parsed3 = parsePlaywrightReport(JSON.parse(readFileSync22(reportPath2, "utf8")));
     } catch (err) {
       parseProblem = `the Playwright report could not be parsed: ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -53534,9 +51783,9 @@ ${exec.stderr}`,
   return { run, journeys, reasons, unverified, terminal: null };
 }
 function launchSpec(launch, c) {
-  const logPath = join49(launch.stateDir, APP_LOG_FILE);
-  const statusPath = join49(launch.stateDir, LAUNCH_STATUS_FILE);
-  rmSync13(statusPath, { force: true });
+  const logPath = join41(launch.stateDir, APP_LOG_FILE);
+  const statusPath = join41(launch.stateDir, LAUNCH_STATUS_FILE);
+  rmSync11(statusPath, { force: true });
   closeSync8(openSync8(logPath, "a", 384));
   return {
     baseUrl: c.baseUrl,
@@ -53577,9 +51826,9 @@ function buildJourney(test, ctx, checkDir, cwd) {
   const failing = test.results.filter((r) => FAILED_RESULT.has(r.status));
   const focus = failing[failing.length - 1] ?? test.results[test.results.length - 1];
   const status2 = journeyStatus(test);
-  const slug = `${sha256(id).slice(0, 8)}-${title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}`;
-  const artifactDir = join49(checkDir, "artifacts", slug);
-  const collected = focus ? collectAttachments(focus.attachments, { checkoutDir, outputDir: join49(checkDir, "test-results"), artifactDir }) : { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
+  const slug2 = `${sha256(id).slice(0, 8)}-${title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}`;
+  const artifactDir = join41(checkDir, "artifacts", slug2);
+  const collected = focus ? collectAttachments(focus.attachments, { checkoutDir, outputDir: join41(checkDir, "test-results"), artifactDir }) : { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
   const firstError = (failing[0] ?? focus)?.error ?? null;
   const rootDir = checkoutDir;
   const error = firstError && status2 !== "PASSED" ? describeError(firstError, rootDir) : null;
@@ -53639,9 +51888,9 @@ function escapeRegExp3(text2) {
 function fallbackBrowser(checkoutDir, configured) {
   const name = configured[0] ?? "chromium";
   try {
-    const req = createRequire3(join49(checkoutDir, "package.json"));
-    const dir = dirname22(req.resolve("playwright-core/package.json"));
-    const parsed3 = JSON.parse(readFileSync24(join49(dir, "browsers.json"), "utf8"));
+    const req = createRequire3(join41(checkoutDir, "package.json"));
+    const dir = dirname20(req.resolve("playwright-core/package.json"));
+    const parsed3 = JSON.parse(readFileSync22(join41(dir, "browsers.json"), "utf8"));
     const list = parsed3.browsers ?? [];
     const version = list.find((b) => b.name === name)?.browserVersion;
     return version ? { name, version: `${version} (declared by playwright-core, not observed)` } : null;
@@ -53684,20 +51933,20 @@ function collectAttachments(attachments, dirs) {
         continue;
       }
       if (size > MAX_ARTIFACT_BYTES) continue;
-      bytes = readFileSync24(real);
+      bytes = readFileSync22(real);
       stored = real;
       if (!isInside(real, outputReal)) {
-        mkdirSync19(dirs.artifactDir, { recursive: true });
-        const copy = join49(dirs.artifactDir, `${kind}-${basename11(real)}`);
+        mkdirSync17(dirs.artifactDir, { recursive: true });
+        const copy = join41(dirs.artifactDir, `${kind}-${basename11(real)}`);
         copyFileSync(real, copy);
         stored = copy;
       }
     } else if (bytes !== null) {
-      mkdirSync19(dirs.artifactDir, { recursive: true });
+      mkdirSync17(dirs.artifactDir, { recursive: true });
       const ext = EXTENSIONS[att.contentType.split(";")[0]?.trim() ?? ""] ?? ".bin";
-      stored = join49(dirs.artifactDir, `${att.name.replace(/[^A-Za-z0-9._-]+/g, "_")}${ext}`);
-      writeFileSync7(stored, TEXTUAL.test(att.contentType) ? redact(bytes.toString("utf8")) : bytes, { mode: 384 });
-      bytes = readFileSync24(stored);
+      stored = join41(dirs.artifactDir, `${att.name.replace(/[^A-Za-z0-9._-]+/g, "_")}${ext}`);
+      writeFileSync6(stored, TEXTUAL.test(att.contentType) ? redact(bytes.toString("utf8")) : bytes, { mode: 384 });
+      bytes = readFileSync22(stored);
     }
     if (bytes === null || stored === null) continue;
     if (kind === "diagnostics") {
@@ -53774,7 +52023,7 @@ async function assertCheckoutMatchesCandidate(checkoutDir, candidate, outDir) {
   if (drift.length > 0) {
     throw new OrbitError("STALE_EVIDENCE", `the checkout differs from candidate ${candidate.id}; UI evidence would not describe the candidate (${drift.slice(0, 5).join(", ")})`, { candidate: candidate.id, paths: drift.slice(0, 20) });
   }
-  const stray = (await untrackedFiles(checkoutDir)).filter((p) => !isInside(resolve12(checkoutDir, p), outDir));
+  const stray = (await untrackedFiles(checkoutDir)).filter((p) => !isInside(resolve11(checkoutDir, p), outDir));
   if (stray.length > 0) {
     throw new OrbitError("STALE_EVIDENCE", `the checkout holds untracked files that are not part of candidate ${candidate.id}; UI evidence would not describe the candidate (${stray.slice(0, 5).join(", ")})`, { candidate: candidate.id, paths: stray.slice(0, 20) });
   }
@@ -53782,7 +52031,7 @@ async function assertCheckoutMatchesCandidate(checkoutDir, candidate, outDir) {
 async function untrackedFiles(cwd) {
   return (await git5(cwd, ["ls-files", "-z", "--others", "--exclude-standard"])).split("\0").filter(Boolean);
 }
-async function changedBetween2(cwd, base, head) {
+async function changedBetween(cwd, base, head) {
   const raw = await git5(cwd, ["diff", "--name-status", "-z", "--no-renames", "--no-ext-diff", "--ignore-submodules=none", base, head, "--"]);
   const tokens3 = raw.split("\0").filter((t) => t.length > 0);
   const out = [];
@@ -53809,9 +52058,9 @@ function changedA11yBaselines(journeys, checkoutDir, changed) {
   for (const j of journeys) {
     for (const scan of j.a11y) {
       if (!scan.baselinePath) continue;
-      const real = safeReal(scan.baselinePath) ?? resolve12(scan.baselinePath);
+      const real = safeReal(scan.baselinePath) ?? resolve11(scan.baselinePath);
       if (!isInside(real, root) || root === null) continue;
-      const rel = relative5(root, real).split(sep9).join("/");
+      const rel = relative4(root, real).split(sep9).join("/");
       if (changed.has(rel)) out.add(rel);
     }
   }
@@ -53862,14 +52111,14 @@ var init_runner2 = __esm({
 });
 
 // src/controller/security.ts
-import { accessSync as accessSync2, constants as constants3, existsSync as existsSync37, mkdirSync as mkdirSync20, readFileSync as readFileSync25, rmSync as rmSync14, statSync as statSync13 } from "node:fs";
-import { delimiter as delimiter3, dirname as dirname23, join as join50, normalize as normalize2, sep as sep10 } from "node:path";
-import { tmpdir as tmpdir11 } from "node:os";
+import { accessSync as accessSync2, constants as constants3, existsSync as existsSync32, mkdirSync as mkdirSync18, readFileSync as readFileSync23, rmSync as rmSync12, statSync as statSync13 } from "node:fs";
+import { delimiter as delimiter3, dirname as dirname21, join as join42, normalize as normalize2, sep as sep10 } from "node:path";
+import { tmpdir as tmpdir10 } from "node:os";
 import { spawn as spawn5 } from "node:child_process";
 function findOnPath(name, pathVar = process.env.PATH) {
   for (const dir of (pathVar ?? "").split(delimiter3)) {
     if (!dir) continue;
-    const p = join50(dir, name);
+    const p = join42(dir, name);
     try {
       accessSync2(p, constants3.X_OK);
       if (statSync13(p).isFile()) return p;
@@ -53878,18 +52127,18 @@ function findOnPath(name, pathVar = process.env.PATH) {
   }
   return null;
 }
-async function changedFiles3(repoRoot, base, commit) {
+async function changedFiles2(repoRoot, base, commit) {
   const out = await git2(repoRoot, ["diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACMRT", base, commit, "--"]);
   return out.split("\0").filter((p) => p.length > 0);
 }
 async function scanCandidateSecrets(input) {
-  const reportPath2 = join50(input.outDir, "secret-scan.json");
+  const reportPath2 = join42(input.outDir, "secret-scan.json");
   const prior = readJsonIfExists(reportPath2);
   if (prior && prior.completed && prior.commit === input.commit) {
     const { raw: raw2, commit: _commit, ...rest } = prior;
     return withPolicy({ ...rest, findings: raw2 ?? prior.findings }, input);
   }
-  const changed = await changedFiles3(input.repoRoot, input.baseRev, input.commit);
+  const changed = await changedFiles2(input.repoRoot, input.baseRev, input.commit);
   const { small: files, large, unscannable } = await partitionBySize(input, changed);
   const gitleaks = input.gitleaksPath === null ? null : input.gitleaksPath ?? findOnPath("gitleaks", input.hostPath);
   let result2 = null;
@@ -54021,7 +52270,7 @@ function judgeSastResult(result2, checkId, policy, now) {
   if (files.length === 0 || result2.status !== "PASSED" && result2.status !== "FAILED") return { checkId, status: result2.status, sarif: false, classification: null, note: null };
   const findings = [];
   try {
-    for (const f of files) findings.push(...parseSarif(readFileSync25(f, "utf8")));
+    for (const f of files) findings.push(...parseSarif(readFileSync23(f, "utf8")));
   } catch (err) {
     return { checkId, status: result2.status, sarif: false, classification: null, note: `SAST check ${checkId}: SARIF output unreadable (${err.message}); its exit status stands` };
   }
@@ -54032,36 +52281,36 @@ function judgeSastResult(result2, checkId, policy, now) {
   return { checkId, status: status2, sarif: true, classification: c, note: `SAST check ${checkId}: ${bits.join(", ")} finding(s) under static_security${waived.length ? `; waived: ${waived.join("; ")}` : ""}` };
 }
 async function runGitleaks(bin, input, files, reportPath2) {
-  const work = join50(input.outDir, "secret-scan");
-  rmSync14(work, { recursive: true, force: true });
-  const scanRoot = join50(work, "tree");
-  const tree = join50(scanRoot, "files");
-  const trusted = join50(work, "trusted");
-  mkdirSync20(tree, { recursive: true, mode: 448 });
-  mkdirSync20(trusted, { recursive: true, mode: 448 });
-  const config = join50(trusted, "gitleaks.toml");
+  const work = join42(input.outDir, "secret-scan");
+  rmSync12(work, { recursive: true, force: true });
+  const scanRoot = join42(work, "tree");
+  const tree = join42(scanRoot, "files");
+  const trusted = join42(work, "trusted");
+  mkdirSync18(tree, { recursive: true, mode: 448 });
+  mkdirSync18(trusted, { recursive: true, mode: 448 });
+  const config = join42(trusted, "gitleaks.toml");
   atomicWrite(config, TRUSTED_GITLEAKS_CONFIG, 292);
   let copied = 0;
   for (const rel of files) {
-    const target = normalize2(join50(tree, rel));
+    const target = normalize2(join42(tree, rel));
     if (!target.startsWith(tree + sep10)) continue;
     const content = await git2(input.repoRoot, ["cat-file", "blob", `${input.commit}:${rel}`]);
-    mkdirSync20(dirname23(target), { recursive: true });
+    mkdirSync18(dirname21(target), { recursive: true });
     atomicWrite(target, content, 384);
     copied++;
   }
-  const raw = join50(work, "gitleaks-report.json");
+  const raw = join42(work, "gitleaks-report.json");
   const r = await execCapture([bin, "dir", scanRoot, "-c", config, "-i", trusted, "--ignore-gitleaks-allow", "--redact", "-f", "json", "-r", raw, "--no-banner", "--exit-code", "1"], {
     // GITLEAKS_CONFIG and friends from the host would outrank nothing here (-c wins), but the scan needs nothing from it either.
-    env: { PATH: input.hostPath ?? process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir11() },
+    env: { PATH: input.hostPath ?? process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir10() },
     cwd: work,
     timeoutMs: input.timeoutMs ?? 12e4
   });
   if (r.exitCode !== 0 && r.exitCode !== 1) throw new Error(`exit ${r.exitCode ?? r.signal}: ${redact(r.stderr).slice(0, 300)}`);
-  const parsed3 = existsSync37(raw) ? readJsonIfExists(raw) ?? [] : [];
+  const parsed3 = existsSync32(raw) ? readJsonIfExists(raw) ?? [] : [];
   const findings = parsed3.map((f) => ({ file: relativeTo2(tree, f.File ?? ""), line: typeof f.StartLine === "number" ? f.StartLine : null, rule: String(f.RuleID ?? "secret") }));
   if (r.exitCode === 1 && findings.length === 0) throw new Error("reported leaks but wrote no readable report");
-  rmSync14(scanRoot, { recursive: true, force: true });
+  rmSync12(scanRoot, { recursive: true, force: true });
   return { scanner: "gitleaks", completed: true, findings, files: copied, note: "gitleaks with Orbit's trusted configuration and --ignore-gitleaks-allow", reportPath: reportPath2 };
 }
 function relativeTo2(root, p) {
@@ -54185,8 +52434,8 @@ var init_security = __esm({
 });
 
 // src/ui/explore.ts
-import { existsSync as existsSync38, readFileSync as readFileSync26, realpathSync as realpathSync15, symlinkSync, writeFileSync as writeFileSync8 } from "node:fs";
-import { dirname as dirname24, join as join51, resolve as resolve13 } from "node:path";
+import { existsSync as existsSync33, readFileSync as readFileSync24, realpathSync as realpathSync15, symlinkSync, writeFileSync as writeFileSync7 } from "node:fs";
+import { dirname as dirname22, join as join43, resolve as resolve12 } from "node:path";
 function explorationConfigOf(ui) {
   const raw = ui.exploration;
   if (!raw || typeof raw !== "object") return DISABLED;
@@ -54236,7 +52485,7 @@ async function exploreUi(opts) {
   const startedAt = clock.now();
   const cfg = opts.exploration ?? explorationConfigOf(opts.uiConfig);
   const baseUrl = opts.uiConfig.environment.base_url;
-  const outDir = resolve13(opts.outDir);
+  const outDir = resolve12(opts.outDir);
   const blank = (outcome2, reasons2) => ({
     outcome: outcome2,
     findings: [],
@@ -54284,8 +52533,8 @@ async function exploreUi(opts) {
   const onAbort = () => control.abort();
   opts.abortSignal?.addEventListener("abort", onAbort, { once: true });
   if (opts.abortSignal?.aborted) control.abort();
-  atomicWriteJson(join51(outDir, "exploration.json"), { state: "running", candidate: opts.candidate.id, startedAt });
-  const tmpDir = ensureDir(join51(outDir, "tmp"));
+  atomicWriteJson(join43(outDir, "exploration.json"), { state: "running", candidate: opts.candidate.id, startedAt });
+  const tmpDir = ensureDir(join43(outDir, "tmp"));
   const baseEnv = safeBaseEnv(opts.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;
   let app = null;
@@ -54310,7 +52559,7 @@ async function exploreUi(opts) {
           env: { ...opts.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: opts.uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir },
           isolation: { provider: opts.isolation, profile },
           isolatedTestData: opts.uiConfig.environment.isolated_test_data,
-          stateDir: join51(outDir, "app"),
+          stateDir: join43(outDir, "app"),
           clock,
           pollMs: opts.appPollMs,
           hostEnv: opts.hostEnv
@@ -54370,7 +52619,7 @@ async function exploreUi(opts) {
     startedAt,
     endedAt: clock.now()
   };
-  atomicWriteJson(join51(outDir, "exploration.json"), redactValue(result2));
+  atomicWriteJson(join43(outDir, "exploration.json"), redactValue(result2));
   return result2;
 }
 async function runExplorer(a) {
@@ -54489,7 +52738,7 @@ function baseFinding(c) {
   };
 }
 async function proveOne(p, cand, base, viewport) {
-  const dir = ensureDir(join51(p.outDir, "specs", cand.id));
+  const dir = ensureDir(join43(p.outDir, "specs", cand.id));
   const fileName = `${cand.id}.spec.ts`;
   let response;
   try {
@@ -54501,8 +52750,8 @@ async function proveOne(p, cand, base, viewport) {
   p.charge(response.costUsd);
   const problems = lintExplorationSpec(response.source, p.baseUrl);
   const source = redact(response.source);
-  const specPath = join51(dir, fileName);
-  writeFileSync8(specPath, source, { mode: 384 });
+  const specPath = join43(dir, fileName);
+  writeFileSync7(specPath, source, { mode: 384 });
   const spec = { path: specPath, sha256: sha256(source), source };
   if (problems.length > 0) return { ...base, spec, status: "invalid_test", reason: `the test was refused: ${problems.join("; ")}` };
   const configPath = writePlaywrightConfig(dir, p.baseUrl, p.opts.uiConfig, viewport);
@@ -54534,7 +52783,7 @@ async function proveOne(p, cand, base, viewport) {
   };
 }
 function writePlaywrightConfig(dir, baseUrl, ui, viewport) {
-  const path = join51(dir, "playwright.config.mjs");
+  const path = join43(dir, "playwright.config.mjs");
   const config = {
     testDir: dir,
     testMatch: "**/*.spec.ts",
@@ -54545,28 +52794,28 @@ function writePlaywrightConfig(dir, baseUrl, ui, viewport) {
     expect: { timeout: 5e3 },
     use: { baseURL: baseUrl, browserName: ui.browsers[0] ?? "chromium", ...viewport ? { viewport } : {}, trace: "retain-on-failure", screenshot: "only-on-failure" }
   };
-  writeFileSync8(path, `export default ${JSON.stringify(config, null, 2)};
+  writeFileSync7(path, `export default ${JSON.stringify(config, null, 2)};
 `, { mode: 384 });
   return path;
 }
 function linkNodeModules(dir, checkoutDir) {
-  const target = join51(dir, "node_modules");
-  if (existsSync38(target)) return;
+  const target = join43(dir, "node_modules");
+  if (existsSync33(target)) return;
   let cur = checkoutDir;
   for (; ; ) {
-    const candidate = join51(cur, "node_modules");
-    if (existsSync38(candidate)) {
+    const candidate = join43(cur, "node_modules");
+    if (existsSync33(candidate)) {
       symlinkSync(realpathSync15(candidate), target);
       return;
     }
-    const up = dirname24(cur);
+    const up = dirname22(cur);
     if (up === cur) return;
     cur = up;
   }
 }
 async function runSpec(p, a) {
-  const outputDir = join51(a.dir, `run-${a.n}`);
-  const reportPath2 = join51(a.dir, `report-${a.n}.json`);
+  const outputDir = join43(a.dir, `run-${a.n}`);
+  const reportPath2 = join43(a.dir, `report-${a.n}.json`);
   const argv2 = ["npx", "--no-install", "playwright", "test", "--config", a.configPath, "--reporter=json", "--update-snapshots=none", "--retries=0", "--trace=retain-on-failure", `--output=${outputDir}`];
   const env = {
     ...p.baseEnv,
@@ -54596,11 +52845,11 @@ async function runSpec(p, a) {
   const fail3 = (error) => ({ run: { status: "error", exitCode: exec.exitCode, durationMs, error: cleanText(error, 300) }, artifacts: [] });
   if (exec.cancelled) return fail3("the run was cancelled");
   if (exec.timedOut) return fail3("the run exceeded its time limit");
-  if (exec.exitCode === 97 && !existsSync38(reportPath2) && (wrapped.adjustments ?? []).length > 0) return fail3(`the browser could not start under sandbox-runtime: the srt preload refused srt's sandbox command (exit 97)`);
-  if (!existsSync38(reportPath2)) return fail3(`no Playwright report (exit ${exec.exitCode ?? "signal"}): ${(exec.stderr || exec.stdout).trim().slice(-200)}`);
+  if (exec.exitCode === 97 && !existsSync33(reportPath2) && (wrapped.adjustments ?? []).length > 0) return fail3(`the browser could not start under sandbox-runtime: the srt preload refused srt's sandbox command (exit 97)`);
+  if (!existsSync33(reportPath2)) return fail3(`no Playwright report (exit ${exec.exitCode ?? "signal"}): ${(exec.stderr || exec.stdout).trim().slice(-200)}`);
   let tests;
   try {
-    const parsed3 = parsePlaywrightReport(JSON.parse(readFileSync26(reportPath2, "utf8")));
+    const parsed3 = parsePlaywrightReport(JSON.parse(readFileSync24(reportPath2, "utf8")));
     if (parsed3.errors.length > 0) return fail3(`Playwright reported errors: ${parsed3.errors.join("; ")}`);
     tests = parsed3.tests;
   } catch (err2) {
@@ -54672,7 +52921,7 @@ var init_explore = __esm({
 });
 
 // src/controller/exploration.ts
-import { join as join52 } from "node:path";
+import { join as join44 } from "node:path";
 function explorationEnabled(ui) {
   return ui !== null && explorationConfigOf(ui).enabled;
 }
@@ -54749,7 +52998,7 @@ async function exploreCandidate(ctx, cand, checkoutDir, outDir, opts = {}) {
       return { source: out.source, costUsd: r.usage.costUsd };
     }
   });
-  atomicWrite(join52(outDir, "exploration.md"), renderExplorationReport(result2), 384);
+  atomicWrite(join44(outDir, "exploration.md"), renderExplorationReport(result2), 384);
   for (const f of explorationFollowUps(result2)) {
     recordFailure(
       ctx.db,
@@ -54810,9 +53059,9 @@ var init_exploration = __esm({
 });
 
 // src/controller/verification.ts
-import { join as join53 } from "node:path";
+import { join as join45 } from "node:path";
 function uiEvidenceDir(runDir2, seq2) {
-  return join53(candidateEvidenceDir(runDir2, seq2), "ui");
+  return join45(candidateEvidenceDir(runDir2, seq2), "ui");
 }
 async function collectVerificationEvidence(ctx, cand, opts) {
   const contract = ctx.contract;
@@ -54859,7 +53108,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
   let exploration = null;
   const wouldExplore = uiRequired && explorationEnabled(ui);
   if (wouldExplore && opts.exploration) {
-    exploration = await exploreCandidate(ctx, cand, checkoutDir, join53(candidateEvidenceDir(ctx.runDir, cand.seq), "ui-exploration"));
+    exploration = await exploreCandidate(ctx, cand, checkoutDir, join45(candidateEvidenceDir(ctx.runDir, cand.seq), "ui-exploration"));
     const explored = await checkpoint();
     if (explored !== null) return { stopped: explored };
   }
@@ -54869,7 +53118,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
     repoRoot: ctx.run.repoRoot,
     baseRev,
     commit: cand.commitSha,
-    outDir: join53(candidateEvidenceDir(ctx.runDir, cand.seq), "security"),
+    outDir: join45(candidateEvidenceDir(ctx.runDir, cand.seq), "security"),
     ...ctx.deps.gitleaksPath === void 0 ? {} : { gitleaksPath: ctx.deps.gitleaksPath },
     hostPath: (ctx.deps.hostEnv ?? process.env).PATH,
     policy: staticPolicy,
@@ -54912,7 +53161,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
 }
 async function baseComparison(ctx, baseRev, commit) {
   const treeHash = (await git2(ctx.run.repoRoot, ["rev-parse", "--verify", `${baseRev}^{tree}`])).trim();
-  const baseline = readJsonIfExists(join53(ctx.runDir, BASELINE_FILE2));
+  const baseline = readJsonIfExists(join45(ctx.runDir, BASELINE_FILE));
   const usable = baseline !== null && baseline.schema === "orbit.baseline/1" && baseline.baseTree === treeHash && baseline.policyHash === ctx.run.policyHash && Array.isArray(baseline.checks);
   const out = await git2(ctx.run.repoRoot, ["diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACMT", baseRev, commit, "--"]);
   return {
@@ -54936,7 +53185,7 @@ var init_verification = __esm({
     init_git();
     init_baseline();
     init_runner();
-    init_report();
+    init_report2();
     init_runner2();
     init_context2();
     init_gates();
@@ -54947,22 +53196,22 @@ var init_verification = __esm({
 });
 
 // src/controller/environment-block.ts
-import { readFileSync as readFileSync27, realpathSync as realpathSync16 } from "node:fs";
-import { dirname as dirname25, isAbsolute as isAbsolute17, join as join54, relative as relative6 } from "node:path";
+import { readFileSync as readFileSync25, realpathSync as realpathSync16 } from "node:fs";
+import { dirname as dirname23, isAbsolute as isAbsolute17, join as join46, relative as relative5 } from "node:path";
 function outputOf(row) {
   if (row.logPath) {
     try {
-      return readFileSync27(row.logPath, "utf8").slice(0, MAX_LOG_BYTES2);
+      return readFileSync25(row.logPath, "utf8").slice(0, MAX_LOG_BYTES2);
     } catch {
     }
   }
   return row.excerpt ?? "";
 }
 function environmentFailuresFor(ctx, cand, report2) {
-  const baseline = readJsonIfExists(join54(ctx.runDir, BASELINE_FILE2));
+  const baseline = readJsonIfExists(join46(ctx.runDir, BASELINE_FILE));
   if (!baseline || baseline.baseRevision !== ctx.run.baseRevision) return [];
   const accepted = new Map((ctx.contract?.baseline_exceptions ?? []).map((e) => [e.check_id, e.fingerprint]));
-  const checkout = join54(runWorktreeRoot(ctx), `check-${cand.seq}`);
+  const checkout = join46(runWorktreeRoot(ctx), `check-${cand.seq}`);
   const out = [];
   for (const base of baseline.failures) {
     const result2 = report2.checks.find((c) => c.id === base.checkId);
@@ -54975,7 +53224,7 @@ function environmentFailuresFor(ctx, cand, report2) {
       baselineFingerprint: base.fingerprint,
       output: outputOf(row),
       // The checkout (the check's cwd is resolved, the checkout path may not be) and the evidence directory holding its scratch HOME.
-      insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname25(row.logPath)] : []]
+      insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname23(row.logPath)] : []]
     });
     if (found) out.push({ ...found, questionId: baselineQuestionId(ctx.run.id, base.checkId, row.fingerprint) });
   }
@@ -55003,6 +53252,41 @@ function environmentBlockReason(input) {
   } else {
     sentences.push(`way forward: fix the environment (orbit doctor checks the isolation provider and its limits) or the check definition and start a new run (${frozen}); there is no baseline exception to approve, because the check never ran`);
   }
+  const fix = environmentFix(notExecuted);
+  if (fix) sentences.push(`fix: ${fix}`);
+  return sentences.join(". ");
+}
+function environmentFix(failures) {
+  const denied = failures.filter((f) => f.signals.includes("filesystem-denied") || f.signals.includes("sandbox-violation"));
+  if (denied.length === 0) return null;
+  if (denied.some((f) => f.lines.some((l) => DOTNET_DENIAL.test(l)))) {
+    return `this is the .NET runtime asking for /tmp/.dotnet, a directory it shares between processes for named mutexes and which no check sandbox may write. Orbit prepares every check for the .NET SDK's first run so the SDK itself needs none (docs/troubleshooting.md, ".NET checks under the sandbox"); upgrade Orbit if this run predates that, and if the repository's own code creates a named Mutex or Semaphore, make it use an unnamed one or a file lock in TMPDIR`;
+  }
+  return `run orbit doctor, which starts each check's executable in the sandbox and shows what it is refused, then let the tool keep its files in the check's HOME or TMPDIR (through the check's env) or change the check definition (docs/troubleshooting.md, "A check cannot run in the sandbox")`;
+}
+function baselineEnvironmentFailures(ctx, report2, checkoutDir) {
+  const out = [];
+  for (const failure of report2.failures) {
+    const row = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: null, checkId: failure.checkId, rootsOnly: true }).at(-1);
+    const logPath = row?.logPath ?? report2.checks.find((c) => c.checkId === failure.checkId)?.log ?? null;
+    const output = (logPath ? readCapped2(logPath) : null) ?? failure.excerpt ?? "";
+    const insideRoots = [checkoutDir, ...row ? [row.cwd] : [], ...logPath ? [dirname23(logPath)] : []];
+    const found = classifyNotExecuted({ checkId: failure.checkId, output }) ?? classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots });
+    if (found) out.push({ ...found, questionId: null, ...logPath ? { logPath } : {} });
+  }
+  return out;
+}
+function baselineEnvironmentBlockReason(input) {
+  const { runId, failures } = input;
+  const many = failures.length > 1;
+  const causes = failures.map((f) => `${f.checkId}: ${f.cause}${f.lines[0] ? ` (${JSON.stringify(f.lines[0])})` : ""}${f.logPath ? `, output in ${f.logPath}` : ""}`).join("; ");
+  const sentences = [
+    `${many ? "checks" : "check"} ${failures.map((f) => f.checkId).join(", ")} could not run on the base revision ${input.baseRevision.slice(0, 12)}, and the output shows an environment cause, not a pre-existing failure: ${causes}`,
+    `${many ? "they are" : "it is"} not recorded as a pre-existing failure and no baseline exception is offered: the check never got as far as the repository's code, so accepting its failure would let a run pass with a check that never ran`
+  ];
+  const fix = environmentFix(failures);
+  sentences.push(`fix: ${fix ?? "let the check run in this environment (orbit doctor checks the isolation provider and starts each check's executable in the sandbox), or change the check definition"}`);
+  sentences.push(`then orbit resume ${runId} runs the baseline again; a changed check definition needs a new run, because this run's policy is frozen`);
   return sentences.join(". ");
 }
 function mandatoryCommandChecks(ctx) {
@@ -55012,7 +53296,7 @@ function mandatoryCommandChecks(ctx) {
 }
 function readCapped2(path) {
   try {
-    return readFileSync27(path, "utf8").slice(0, MAX_LOG_BYTES2);
+    return readFileSync25(path, "utf8").slice(0, MAX_LOG_BYTES2);
   } catch {
     return null;
   }
@@ -55024,7 +53308,7 @@ function isInside2(path, dir) {
   } catch {
   }
   return roots.some((root) => {
-    const rel = relative6(root, path);
+    const rel = relative5(root, path);
     return rel !== "" && !rel.startsWith("..") && !isAbsolute17(rel);
   });
 }
@@ -55038,13 +53322,14 @@ function checksNotExecutedFor(ctx, cand, report2) {
     if (!row || row.fingerprint !== null && accepted.get(result2.id) === row.fingerprint) continue;
     const output = outputOf(row);
     const startFailure = row.status === "ERROR" ? /could not start the check:[^\n]*/.exec(output)?.[0] ?? null : null;
-    const found = classifyNotExecuted({ checkId: result2.id, output, startFailure });
+    const found = classifyNotExecuted({ checkId: result2.id, output, startFailure }) ?? // Refused a filesystem operation outside its checkout before it compiled or tested anything (issue #10).
+    (row.status === "FAILED" ? classifyCouldNotRun({ checkId: result2.id, output, insideRoots: [join46(runWorktreeRoot(ctx), `check-${cand.seq}`), row.cwd, ...row.logPath ? [dirname23(row.logPath)] : []] }) : null);
     if (found) out.push({ ...found, questionId: null, ...row.logPath ? { logPath: row.logPath } : {} });
   }
   if (report2.ui.some((u) => u.status === "ERROR")) {
     const dir = uiEvidenceDir(ctx.runDir, cand.seq);
     const uiIds = ctx.snapshot.config.ui?.journey_check_ids ?? [];
-    for (const entry of uiNotExecuted(join54(dir, UI_RESULT_FILE))) {
+    for (const entry of uiNotExecuted(join46(dir, UI_RESULT_FILE))) {
       const logPath = isAbsolute17(entry.logPath) && isInside2(entry.logPath, dir) ? entry.logPath : null;
       const checkId = entry.stage === "journeys" && entry.checkId ? entry.checkId : uiIds.length > 0 ? uiIds.join(", ") : "ui";
       const output = logPath === null ? null : readCapped2(logPath);
@@ -55068,7 +53353,7 @@ function uiNotExecuted(resultPath) {
     return [];
   }
 }
-var MAX_LOG_BYTES2;
+var MAX_LOG_BYTES2, DOTNET_DENIAL;
 var init_environment_block = __esm({
   "src/controller/environment-block.ts"() {
     "use strict";
@@ -55081,12 +53366,1308 @@ var init_environment_block = __esm({
     init_context2();
     init_verification();
     MAX_LOG_BYTES2 = 4 * 1024 * 1024;
+    DOTNET_DENIAL = /\/tmp\/\.dotnet\b|\.coreclr\.|NuGet-Migrations|System\.Threading\.(?:Mutex|Semaphore)/i;
+  }
+});
+
+// src/controller/steps/preflight.ts
+import { existsSync as existsSync34, mkdirSync as mkdirSync19, rmSync as rmSync13 } from "node:fs";
+import { dirname as dirname24, isAbsolute as isAbsolute18, join as join47, resolve as resolve13 } from "node:path";
+async function preflightStep(ctx) {
+  const stop = await safePoint(ctx);
+  if (stop) return stop;
+  const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot });
+  recordGate(ctx, intake);
+  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
+  const env = await checkEnvironment(ctx);
+  recordGate(ctx, env.gate);
+  if (!env.gate.passed) {
+    const auth = env.credentials.find((c) => c.provider === env.gate.details.blockedProvider && c.verdict === "blocked");
+    if (auth?.status) return blockOnAuth(ctx, auth.provider, auth.status.state, auth.status.detail);
+    return finishRun(ctx, "BLOCKED", `environment gate: ${env.gate.reasons.join("; ")}`, { outcome: { gate: env.gate } });
+  }
+  const repo = ctx.run.repoRoot;
+  const credentialProblems = await gitCredentialProblems(repo);
+  if (credentialProblems.length > 0) {
+    return finishRun(
+      ctx,
+      "BLOCKED",
+      `the repository's git configuration carries credentials a worker could read (${credentialProblems.join("; ")}); remove them and authenticate through a credential helper outside the repository`,
+      { outcome: { git_credentials: credentialProblems } }
+    );
+  }
+  const head = await resolveCommit(repo, "HEAD");
+  const baseTree = await treeOf(repo, head);
+  const dirty = await dirtyPaths(repo);
+  if (dirty.length > 0) {
+    if (!ctx.snapshot.config.repository.allow_dirty_start) {
+      return finishRun(ctx, "BLOCKED", `the repository has uncommitted changes (${dirty.slice(0, 10).join(", ")}${dirty.length > 10 ? ", ..." : ""}); commit or stash them, or set repository.allow_dirty_start`, { outcome: { dirty: dirty.slice(0, 50) } });
+    }
+    decide2(ctx, { id: `dec-${ctx.run.id}-dirty-start`, kind: "preflight.dirty-start", summary: `dirty start allowed by policy; ${dirty.length} uncommitted path(s) are not part of the run, which starts from ${head}`, data: { paths: dirty.slice(0, 200) } });
+  }
+  const wtRoot = runWorktreeRoot(ctx);
+  mkdirSync19(wtRoot, { recursive: true, mode: 448 });
+  const baseline = await runBaseline({
+    db: ctx.db,
+    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
+    repoRoot: repo,
+    baseRev: head,
+    snapshot: ctx.snapshot,
+    isolation: ctx.isolation(),
+    runDir: ctx.runDir,
+    clock: ctx.clock,
+    signal: ctx.signal,
+    pollMs: ctx.timing.checkPollMs,
+    killGraceMs: ctx.timing.killGraceMs,
+    homeDir: homeOf2(ctx.deps),
+    checkoutDir: join47(wtRoot, "baseline")
+  });
+  const after = await safePoint(ctx);
+  if (after) return after;
+  const bg = baselineGate(baseline.report);
+  recordGate(ctx, bg);
+  if (!bg.passed && bg.status === "fail") return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}`, { outcome: { gate: bg } });
+  const notRun = baselineEnvironmentFailures(ctx, baseline.report, join47(wtRoot, "baseline"));
+  if (notRun.length > 0) return blockOnBaselineEnvironment(ctx, baseline.report, notRun);
+  if (baseline.report.failures.length > 0) {
+    decide2(ctx, {
+      id: `dec-${ctx.run.id}-baseline-failures`,
+      kind: "baseline.failures",
+      summary: `pre-existing failures on ${head.slice(0, 12)}: ${baseline.report.failures.map((f) => f.checkId).join(", ")}`,
+      data: { failures: baseline.report.failures }
+    });
+    const raised = raiseBaselineExceptionQuestions({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { failures: baseline.report.failures, baseRevision: head });
+    if (raised.skipped.length > 0) {
+      decide2(ctx, {
+        id: `dec-${ctx.run.id}-baseline-exception-skipped`,
+        kind: "baseline.exception-unavailable",
+        summary: `no baseline exception can be offered for: ${raised.skipped.map((s) => s.checkId).join(", ")} (${raised.skipped[0].why})`,
+        data: { skipped: raised.skipped }
+      });
+    }
+  }
+  const worktree = await ensureWorktree(repo, join47(wtRoot, "implementer"), head);
+  const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
+  return move2(ctx, "CONTRACTING", `preflight passed at ${head.slice(0, 12)}${baseline.report.failures.length ? ` with ${baseline.report.failures.length} pre-existing failure(s)` : ""}`, {
+    patch: { baseRevision: head, baseTree, worktreePath: worktree, branch },
+    data: { base_revision: head, base_tree: baseTree, worktree, environment: env.gate.notes }
+  });
+}
+async function blockOnBaselineEnvironment(ctx, report2, failures) {
+  atomicWriteJson(join47(ctx.runDir, BASELINE_FILE), { ...report2, complete: false });
+  const reason = baselineEnvironmentBlockReason({ runId: ctx.run.id, baseRevision: report2.baseRevision, failures });
+  const checks = failures.map((f) => ({ check_id: f.checkId, signals: f.signals, cause: f.cause, evidence_lines: f.lines, ...f.logPath ? { log_path: f.logPath } : {} }));
+  decide2(ctx, { id: `dec-${ctx.run.id}-baseline-environment`, kind: "baseline.environment-failure", summary: reason, data: { base_revision: report2.baseRevision, checks } });
+  return finishRun(ctx, "BLOCKED", reason, { outcome: { base_revision: report2.baseRevision, environment_failures: checks } });
+}
+function recordGate(ctx, g) {
+  decide2(ctx, {
+    kind: `gate.${g.gate}`,
+    summary: `${g.gate} gate ${g.status}${g.reasons.length ? `: ${g.reasons.join("; ")}` : ""}${g.notes.length ? ` (notes: ${g.notes.join("; ")})` : ""}`,
+    data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure }
+  });
+}
+function urlCarriesCredentials(value) {
+  const m = URL_USERINFO.exec(value.trim());
+  if (!m) return false;
+  return m[2].includes(":") || /^https?$/i.test(m[1]);
+}
+async function gitCredentialProblems(repo) {
+  const entries = [];
+  for (const scope of ["--local", "--worktree"]) {
+    let out;
+    try {
+      out = await git2(repo, ["config", scope, "--list", "-z"]);
+    } catch {
+      continue;
+    }
+    for (const raw of out.split("\0")) {
+      if (!raw) continue;
+      const nl = raw.indexOf("\n");
+      entries.push(nl === -1 ? { key: raw, value: "" } : { key: raw.slice(0, nl), value: raw.slice(nl + 1) });
+    }
+  }
+  const root = resolve13(repo);
+  const problems = [];
+  const note3 = (text2) => {
+    if (!problems.includes(text2)) problems.push(text2);
+  };
+  for (const { key: key2, value } of entries) {
+    const k = key2.toLowerCase();
+    if (/^remote\..+\.(?:url|pushurl)$/.test(k) && urlCarriesCredentials(value)) note3(`${key2} has credentials in its URL`);
+    else if (/^url\..+\.(?:insteadof|pushinsteadof)$/.test(k) && (urlCarriesCredentials(value) || urlCarriesCredentials(key2.slice(4, key2.toLowerCase().lastIndexOf("."))))) note3("a url.<base>.insteadOf rewrite has credentials in a URL");
+    else if (/^http\.(?:.+\.)?extraheader$/.test(k) && AUTH_HEADER.test(value)) note3(`${key2} sets an authorization header`);
+    else if (/^credential\.(?:.+\.)?(?:password|token|secret)$/.test(k)) note3(`${key2} holds a literal credential`);
+    else if (/^credential(?:\..+)?\.helper$/.test(k)) {
+      const v = value.trim();
+      if (v.startsWith("!") && /password|token|secret/i.test(v)) note3(`${key2} embeds a credential in a shell helper`);
+      const store = /^store\b.*?--file(?:=|\s+)(\S+)/.exec(v);
+      if (store) {
+        const file = store[1].replace(/^["']|["']$/g, "");
+        const abs = isAbsolute18(file) ? resolve13(file) : resolve13(root, file);
+        if (!isAbsolute18(file) || abs === root || abs.startsWith(`${root}/`)) note3(`${key2} stores credentials in a file inside the repository`);
+      }
+    }
+  }
+  return problems;
+}
+async function dirtyPaths(repo) {
+  const out = await git2(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).orbit"]);
+  return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3));
+}
+async function ensureWorktree(repo, path, base) {
+  if (existsSync34(path)) {
+    try {
+      return (await adminDirFor(repo, path)).worktree;
+    } catch (err) {
+      if (!isOrbitError(err)) throw err;
+      rmSync13(path, { recursive: true, force: true });
+    }
+  }
+  mkdirSync19(dirname24(path), { recursive: true, mode: 448 });
+  await git2(repo, ["worktree", "prune"]);
+  await git2(repo, ["worktree", "add", "--detach", "--force", path, base]);
+  return (await adminDirFor(repo, path)).worktree;
+}
+async function checkEnvironment(ctx) {
+  const config = ctx.snapshot.config;
+  try {
+    ctx.deps.registry.seed();
+  } catch (err) {
+    ctx.log.warn("model registry seed failed", { error: messageOf(err) });
+  }
+  let isolation;
+  try {
+    const iso2 = ctx.isolation();
+    const status2 = await iso2.available();
+    isolation = { kind: iso2.kind, available: status2.ok, detail: status2.detail };
+  } catch (err) {
+    isolation = { error: messageOf(err) };
+  }
+  const capabilities = {};
+  for (const [id, adapter] of Object.entries(ctx.deps.adapters)) {
+    try {
+      capabilities[id] = await adapter.discoverCapabilities();
+    } catch (err) {
+      capabilities[id] = { provider: id, available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: "none", costReporting: false, detail: messageOf(err) };
+    }
+  }
+  const required = /* @__PURE__ */ new Set([IMPLEMENTER_PROVIDER]);
+  if (config.review.independent_provider_required && config.review.preferred_provider !== IMPLEMENTER_PROVIDER) required.add(config.review.preferred_provider);
+  const all = await validateCredentials({ adapters: ctx.deps.adapters, providers: [.../* @__PURE__ */ new Set([...required, ...Object.keys(ctx.deps.adapters)])] });
+  const credentialsById = {};
+  for (const c of all) credentialsById[c.provider] = c.status ?? void 0;
+  let reviewer = null;
+  if (config.review.independent_provider_required) {
+    reviewer = selectReviewer({ snapshot: ctx.snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: ctx.deps.registry });
+    if (reviewer.decision === "SELECT") {
+      required.delete(config.review.preferred_provider);
+      required.add(reviewer.provider);
+    }
+  }
+  const credentials = all.filter((c) => required.has(c.provider));
+  const delivery = deliveryEnvironmentProblem(config, ctx.deps.hostEnv ?? process.env);
+  const gate = environmentGate({ snapshot: ctx.snapshot, mode: ctx.run.mode, isolation, credentials, reviewer, delivery });
+  atomicWriteJson(join47(ctx.runDir, "environment.json"), {
+    checked_at: ctx.clock.now(),
+    gate,
+    capabilities,
+    credentials: all.map((c) => ({ provider: c.provider, verdict: c.verdict, state: c.status?.state ?? null, method: c.status?.method ?? null, error: c.error })),
+    reviewer: reviewer ? selectionDecisionRecord(reviewer).summary : null
+  });
+  return { gate, credentials: all, capabilities, reviewer };
+}
+var IMPLEMENTER_PROVIDER, URL_USERINFO, AUTH_HEADER;
+var init_preflight = __esm({
+  "src/controller/steps/preflight.ts"() {
+    "use strict";
+    init_fsx();
+    init_errors();
+    init_git();
+    init_baseline();
+    init_baseline_exception();
+    init_credentials();
+    init_select();
+    init_context2();
+    init_gates();
+    init_delivery_env();
+    init_environment_block();
+    init_common();
+    init_workers2();
+    IMPLEMENTER_PROVIDER = "claude";
+    URL_USERINFO = /^([a-z][a-z0-9+.-]*):\/\/([^/?#@]*)@/i;
+    AUTH_HEADER = /authorization|cookie|bearer|token|api[-_]?key|secret/i;
+  }
+});
+
+// src/controller/steps/contracting.ts
+import { readFileSync as readFileSync26 } from "node:fs";
+import { join as join48 } from "node:path";
+async function contractingStep(ctx) {
+  const stop = await safePoint(ctx);
+  if (stop) return stop;
+  if (ctx.contract) return accept(ctx, ctx.contract, null);
+  const route2 = routeFor(ctx, "plan", "routine-code", { difficulty: "medium", attempt: 1, repeatedFingerprints: 0 });
+  const got = await obtain(ctx, {
+    base: "plan",
+    maxAttempts: MAX_REGENERATIONS,
+    what: "the planner",
+    request: (purpose) => ({
+      role: "planner",
+      purpose,
+      provider: route2.provider,
+      model: route2.model,
+      effort: route2.effort,
+      cwd: worktreeOf(ctx),
+      readOnly: true,
+      prompt: (workerId) => plannerPrompt(ctx, workerId)
+    }),
+    accept: (r) => validateModelOutput("planner", r.structured)
+  });
+  if (!got.ok) return got.step;
+  const plan = got.value;
+  atomicWriteJson(join48(ctx.runDir, PLANNER_FILE), { worker_id: got.worker.id, output: plan });
+  let drafted;
+  try {
+    drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? "", taskId: ctx.run.id, policyHash: ctx.run.policyHash, environment: ctx.run.environment });
+  } catch (err) {
+    if (!(err instanceof OrbitError) || err.code !== "CONTRACT_INVALID") throw err;
+    return finishRun(ctx, "BLOCKED", `intake gate rejected the planner's contract: ${err.message}`, { outcome: { problems: err.details ?? null } });
+  }
+  for (const a of drafted.adjustments) {
+    decide2(ctx, { id: `dec-${ctx.run.id}-draft-${hashObject(a).slice(7, 23)}`, kind: `contract.${a.kind}`, summary: `${a.subject}: ${a.reason}`, data: a });
+  }
+  for (const [i, d] of plan.unresolved_decisions.entries()) {
+    if (d.material) continue;
+    decide2(ctx, { id: `dec-${ctx.run.id}-plan-choice-${i + 1}`, kind: "inquisition.resolve", summary: `reversible choice: ${d.question} -> ${d.recommendation ?? d.options[0] ?? "convention"}`, data: { question: d.question, options: d.options, choice: d.recommendation ?? d.options[0] ?? null, basis: "planner recommendation; reversible" } });
+  }
+  return accept(ctx, drafted.contract, plan);
+}
+async function accept(ctx, contract, plan) {
+  const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot, contract });
+  recordGate(ctx, intake);
+  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate rejected the contract: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
+  atomicWriteJson(join48(ctx.runDir, "contract.json"), contract);
+  settleExpectedFlips(ctx, contract);
+  const patch = { contractJson: JSON.stringify(contract), contractHash: hashObject(contract) };
+  const material = (plan?.unresolved_decisions ?? []).filter((d) => d.material);
+  const open2 = contract.assumptions.filter((a) => a.status === "needs-decision");
+  if (material.length > 0 || plan !== null && open2.length > 0) {
+    const keys = new Map((plan?.criteria ?? []).map((c, i) => [c.key, `AC-${i + 1}`]));
+    const subjects = [...new Set(material.flatMap((d) => d.affected_criteria.map((k) => keys.get(k) ?? k)).filter((s) => /^AC-\d+$/.test(s)))];
+    const trigger = {
+      kind: "hidden_decision",
+      mode: "clarify",
+      summary: `the planner left ${material.length || open2.length} material decision(s) unresolved`,
+      evidence: [...material.map((d) => d.question), ...open2.map((a) => `${a.id}: ${a.statement}`)].slice(0, 20),
+      subjects,
+      key: `contracting:${hashObject(material.map((d) => d.question)).slice(7, 23)}`
+    };
+    return move2(ctx, "INQUISITION", trigger.summary, { patch, data: { trigger } });
+  }
+  return move2(ctx, "PLANNING", `contract accepted: ${contract.acceptance_criteria.length} criteria, checks ${contract.required_check_ids.join(", ") || "none"}`, { patch });
+}
+function worktreeOf(ctx) {
+  if (!ctx.run.worktreePath) throw new OrbitError("INTERNAL", `run ${ctx.run.id} has no worktree; preflight did not finish`);
+  return ctx.run.worktreePath;
+}
+function plannerPrompt(ctx, workerId) {
+  const checks = Object.values(ctx.snapshot.config.checks).map((c) => `${c.id}${c.mandatory ? " (mandatory)" : ""}`);
+  const task = [
+    "Draft the goal contract for the goal below. Read the repository as needed; do not edit anything.",
+    "Return the current behaviour, criteria that are observable and testable, the proof for each, the trusted check ids that would show it,",
+    "the files you expect to change, the narrowest allowed paths, non-goals, risks, assumptions and any decision you cannot settle from evidence.",
+    `Trusted checks the policy defines: ${checks.join(", ") || "none"}. Name only these as check ids.`,
+    "",
+    `Goal (from the user): ${ctx.run.goal}`
+  ].join("\n");
+  return renderWorkerPrompt({
+    role: "planner",
+    task,
+    contract: null,
+    policySummary: policySummary(ctx, { readOnly: true }),
+    candidate: { revision: ctx.run.baseRevision, treeHash: ctx.run.baseTree, base: ctx.run.baseRevision },
+    advisoryBlock: advisoryBlockFor(ctx, { role: "planner", workerId, paths: ctx.snapshot.config.scope.allowed_paths, checkIds: Object.keys(ctx.snapshot.config.checks), fingerprints: [] })
+  });
+}
+function storedPlan(ctx) {
+  try {
+    const raw = JSON.parse(readFileSync26(join48(ctx.runDir, PLANNER_FILE), "utf8")).output;
+    return raw ? validateModelOutput("planner", raw) : null;
+  } catch {
+    return null;
+  }
+}
+var PLANNER_FILE;
+var init_contracting = __esm({
+  "src/controller/steps/contracting.ts"() {
+    "use strict";
+    init_fsx();
+    init_hash();
+    init_errors();
+    init_draft();
+    init_model_outputs();
+    init_prompt();
+    init_gates();
+    init_workers2();
+    init_knowledge_hooks();
+    init_common();
+    init_baseline_questions();
+    init_obtain();
+    init_preflight();
+    PLANNER_FILE = "planner.json";
+  }
+});
+
+// src/controller/parallel-writers.ts
+import { existsSync as existsSync35, mkdtempSync as mkdtempSync5, rmSync as rmSync14, writeFileSync as writeFileSync8 } from "node:fs";
+import { tmpdir as tmpdir11 } from "node:os";
+import { join as join49 } from "node:path";
+function splitAttempt(ctx, contract, fresh) {
+  if (!fresh || ctx.run.mode === "supervised") return null;
+  if (ctx.snapshot.config.agents.default_parallelism < 2) return null;
+  const plan = storedPlan(ctx);
+  if (!plan || plan.criteria.length !== contract.acceptance_criteria.length) return null;
+  if (blockingQuestions(ctx.db, ctx.run.id).criteria.length > 0) return null;
+  return planWorkUnits(contract.acceptance_criteria.map((c, i) => ({ id: c.id, paths: plan.criteria[i].changes.map((x) => x.path) })));
+}
+function recordedUnits(ctx, n2) {
+  const row = ctx.db.get("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id LIMIT 1", ctx.run.id, UNITS_EVENT, n2);
+  return row ? JSON.parse(row.data_json).units ?? null : null;
+}
+function serializedUnits(ctx, n2) {
+  return unitEvents(ctx, UNIT_SERIALIZED_EVENT, n2);
+}
+function unitPurpose(n2, u) {
+  return `implement:${n2}/${u.id}#1`;
+}
+function unitWorktree(ctx, n2, u) {
+  return join49(runWorktreeRoot(ctx), `unit-${n2}-${u.id}`);
+}
+async function runParallelUnits(ctx, n2, units, opts) {
+  const settled = () => /* @__PURE__ */ new Set([...unitEvents(ctx, UNIT_INTEGRATED_EVENT, n2).map((e) => e.unit), ...serializedUnits(ctx, n2).map((e) => e.unit)]);
+  for (const u of units) {
+    if (settled().has(u.id)) continue;
+    const existing = workersFor(ctx, unitPurpose(n2, u)).at(-1);
+    if (!existing) continue;
+    const st = await ensureWorker(ctx, request(ctx, n2, u, units, opts));
+    if (st.status === "running") continue;
+    const r = st.result;
+    if (r.status === "auth_failed") return { kind: "step", result: await blockOnAuth(ctx, st.worker.provider, "auth_failed", r.error) };
+    if (r.status === "cancelled") {
+      const stop = await safePoint(ctx);
+      if (stop) return { kind: "step", result: stop };
+    }
+    if (r.status === "transient_error" || r.status === "cancelled" || r.status === "lost") {
+      await serialize2(ctx, n2, u, `its session ended ${r.status}${r.error ? ` (${r.error.slice(0, 200)})` : ""}`);
+      continue;
+    }
+    await integrate(ctx, n2, u, st.worker);
+  }
+  const done = settled();
+  const waiting = units.filter((u) => !done.has(u.id) && workersFor(ctx, unitPurpose(n2, u)).length === 0);
+  const active = units.filter((u) => !done.has(u.id) && workersFor(ctx, unitPurpose(n2, u)).length > 0);
+  if (waiting.length > 0) {
+    const started = await admitAndStart(ctx, n2, units, waiting, opts);
+    if (started.count === 0 && active.length === 0) {
+      if (!started.budget) return { kind: "step", result: WAIT(`work units of attempt ${n2} deferred: ${started.why}`) };
+      for (const u of waiting) await serialize2(ctx, n2, u, `not admitted as a parallel writer: ${started.why}`);
+    }
+  }
+  const now = settled();
+  if (units.every((u) => now.has(u.id))) {
+    for (const u of units) await removeWorktree(ctx, n2, u);
+    const dropped = serializedUnits(ctx, n2);
+    if (dropped.length > 0) return { kind: "serialize", units: dropped };
+    const last = unitEvents(ctx, UNIT_INTEGRATED_EVENT, n2).at(-1);
+    return { kind: "done", workerId: last.worker_id };
+  }
+  const running = units.filter((u) => !now.has(u.id)).map((u) => u.id);
+  return { kind: "step", result: WAIT(`attempt ${n2}: work units ${running.join(", ")} are running in their own worktrees`) };
+}
+function request(ctx, n2, u, all, opts) {
+  const purpose = unitPurpose(n2, u);
+  const cap = ctx.db.get("SELECT json_extract(data_json, '$.cap_usd') AS cap FROM events WHERE run_id = ? AND type = 'worker.spend-cap' AND json_extract(data_json, '$.purpose') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, purpose);
+  return {
+    role: "implementer",
+    purpose,
+    attempt: n2,
+    provider: opts.route.provider,
+    model: opts.route.model,
+    effort: opts.route.effort,
+    cwd: unitWorktree(ctx, n2, u),
+    readOnly: false,
+    prompt: (workerId) => opts.prompt(u, all, workerId),
+    maxBudgetUsd: typeof cap?.cap === "number" ? cap.cap : null,
+    ownedPaths: u.ownedPaths
+  };
+}
+async function admitAndStart(ctx, n2, all, waiting, opts) {
+  const running = opts.running();
+  const own = running.filter((r) => r.runId === ctx.run.id).map((r) => r.unit);
+  const pending = waiting.map((u) => ({
+    id: unitPurpose(n2, u).replace(/#1$/, ""),
+    role: "implementer",
+    writer: true,
+    ownedPaths: u.ownedPaths,
+    dependsOn: [],
+    revision: null,
+    cancelWhen: [],
+    budget: { costUsd: null, wallMs: null, maxTurns: opts.maxTurns },
+    provider: opts.route.provider,
+    worktree: unitWorktree(ctx, n2, u),
+    status: "pending"
+  }));
+  const plan = schedulerFor(ctx).plan([...own, ...pending], { admit: budgetAdmission(ctx.ledger), parallelism: ctx.snapshot.config.agents.default_parallelism });
+  const admitted = plan.start.filter((s) => pending.some((p) => p.id === s.id));
+  const machine = admitted.length > 0 ? machineAdmission(ctx, running.map((r) => r.unit), admitted) : null;
+  let count3 = 0;
+  let unfunded = false;
+  const total = sessionSpendCap(ctx, opts.route.model, "implementer");
+  const share = total.capUsd === null ? null : Math.floor(total.capUsd / waiting.length * 100) / 100;
+  for (const unit of admitted) {
+    if (machine && !machine.start.has(unit.id)) continue;
+    const u = waiting.find((w) => unitPurpose(n2, w).startsWith(`${unit.id}#`));
+    const cap = { capUsd: share, worstCaseUsd: total.worstCaseUsd };
+    if (cap.capUsd !== null && cap.capUsd <= 0) {
+      unfunded = true;
+      continue;
+    }
+    const merge2 = plan.merge_overhead.find((m) => m.id === unit.id);
+    if (merge2) note2(ctx, MERGE_OVERHEAD_EVENT, { attempt: n2, unit: u.id, alongside: merge2.alongside, usd: merge2.usd });
+    if (cap.capUsd !== null) recordSpendCap(ctx, unitPurpose(n2, u), cap.capUsd, cap.worstCaseUsd);
+    const dir = unitWorktree(ctx, n2, u);
+    if (!existsSync35(dir)) await materializeCandidate(ctx.run.repoRoot, ctx.run.baseRevision, dir, { readOnly: false });
+    await ensureWorker(ctx, request(ctx, n2, u, all, opts));
+    count3++;
+  }
+  const deferred = plan.deferred.filter((d) => pending.some((p) => p.id === d.id)).map((d) => d.reason);
+  const reasons = [...deferred, ...machine ? [...machine.deferred.values()] : [], ...unfunded ? ["no model budget left for another session"] : []];
+  const budget = unfunded || deferred.some((r) => /^not admitted by budget/.test(r));
+  return { kind: "started", count: count3, why: reasons[0] ?? "not admitted", budget };
+}
+async function integrate(ctx, n2, u, w) {
+  const repoRoot = ctx.run.repoRoot;
+  const base = ctx.run.baseRevision;
+  const target = await adminDirFor(repoRoot, ctx.run.worktreePath);
+  const intent = unitEvents(ctx, UNIT_INTEGRATING_EVENT, n2).find((e) => e.unit === u.id);
+  const commit = intent?.commit ?? await commitWorktree(repoRoot, await adminDirFor(repoRoot, w.cwd), base, `orbit work unit ${u.id} of attempt ${n2}`);
+  let paths;
+  if (intent) {
+    paths = intent.paths;
+    await restoreToBase(target, base, safePaths(paths));
+  } else {
+    paths = await changedBetween2(repoRoot, base, commit);
+    const escaping = await escapingLinks(ctx, base, commit);
+    if (escaping.length > 0) return reject(ctx, n2, u, `rejected: symlink leaves the repository: ${escaping.slice(0, 10).join(", ")}`);
+    const busy = new Set(await changedFiles3(target));
+    const clash = paths.filter((p) => busy.has(p));
+    if (clash.length > 0) return reject(ctx, n2, u, `conflict: ${clash.slice(0, 10).join(", ")} already changed by integrated work`);
+    note2(ctx, UNIT_INTEGRATING_EVENT, { attempt: n2, unit: u.id, worker_id: w.id, paths, commit });
+  }
+  const patch = await unitPatch(repoRoot, base, commit, safePaths(paths));
+  if (patch.length > 0) {
+    const before = await escapingLinks(ctx, base, await commitWorktree(repoRoot, target, base, "orbit integrated tree"));
+    try {
+      await applyPatch(target, patch, false);
+    } catch (err) {
+      return reject(ctx, n2, u, `conflict: git apply refused the unit's changes (${err instanceof Error ? err.message.slice(0, 200) : String(err)})`);
+    }
+    const after = await escapingLinks(ctx, base, await commitWorktree(repoRoot, target, base, "orbit integrated tree"));
+    const added = after.filter((p) => !before.includes(p));
+    if (added.length > 0) {
+      await applyPatch(target, patch, true);
+      return reject(ctx, n2, u, `rejected: symlink leaves the repository: ${added.slice(0, 10).join(", ")}`);
+    }
+  }
+  note2(ctx, UNIT_INTEGRATED_EVENT, { attempt: n2, unit: u.id, worker_id: w.id, paths });
+  invalidateEvidence(ctx.db, ctx.run.id, `work unit ${u.id} of attempt ${n2} integrated (${paths.length} file(s))`, ctx.clock);
+  await removeWorktree(ctx, n2, u);
+}
+async function reject(ctx, n2, u, reason) {
+  await serialize2(ctx, n2, u, reason);
+  await removeWorktree(ctx, n2, u);
+}
+async function serialize2(ctx, n2, u, reason) {
+  if (serializedUnits(ctx, n2).some((s) => s.unit === u.id)) return;
+  note2(ctx, UNIT_SERIALIZED_EVENT, { attempt: n2, unit: u.id, criteria: u.criteria, reason });
+  decide2(ctx, { id: `dec-${ctx.run.id}-serialize-${n2}-${u.id}`, kind: "scheduling.serialize", summary: `work unit ${u.id} (${u.criteria.join(", ")}) of attempt ${n2} goes to the serial implementer: ${reason}`, data: { attempt: n2, unit: u.id, criteria: u.criteria, reason } });
+}
+async function removeWorktree(ctx, n2, u) {
+  const dir = unitWorktree(ctx, n2, u);
+  if (existsSync35(dir)) await cleanupCandidateCheckout(ctx.run.repoRoot, dir).catch(() => {
+  });
+}
+function inCheckout(c, extra = {}) {
+  return { env: { GIT_DIR: c.gitDir, GIT_WORK_TREE: c.worktree, GIT_LITERAL_PATHSPECS: "1", ...extra } };
+}
+async function changedFiles3(c) {
+  const out = await git2(c.worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"], inCheckout(c));
+  return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3)).sort();
+}
+async function commitWorktree(repoRoot, c, base, message) {
+  const scratch = mkdtempSync5(join49(tmpdir11(), "orbit-unit-"));
+  try {
+    const excludes = join49(scratch, "exclude");
+    writeFileSync8(excludes, `${UNIT_EXCLUDES.join("\n")}
+`);
+    const opts = { ...inCheckout(c, { GIT_INDEX_FILE: join49(scratch, "index") }), config: { "core.excludesFile": excludes } };
+    await git2(c.worktree, ["read-tree", base], opts);
+    await git2(c.worktree, ["add", "-A", "--", "."], opts);
+    const tree = (await git2(c.worktree, ["write-tree"], opts)).trim();
+    const id = { GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name, GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name, GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_AUTHOR_DATE: "946684800 +0000", GIT_COMMITTER_DATE: "946684800 +0000" };
+    return (await git2(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], { env: id })).trim();
+  } finally {
+    rmSync14(scratch, { recursive: true, force: true });
+  }
+}
+async function changedBetween2(repoRoot, from, to) {
+  const out = await git2(repoRoot, ["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", from, to, "--"]);
+  return out.split("\0").filter((p) => p.length > 0).sort();
+}
+async function escapingLinks(ctx, base, commit) {
+  const report2 = await inspectScope({ repoRoot: ctx.run.repoRoot, baseRev: base, candidateRev: commit, snapshot: ctx.snapshot });
+  return report2.symlinks_escaping;
+}
+function safePaths(paths) {
+  return paths.filter((p) => p.length > 0 && !p.startsWith("/") && !p.split(/[\\/]/).includes(".."));
+}
+async function unitPatch(repoRoot, base, commit, paths) {
+  if (paths.length === 0) return "";
+  return git2(repoRoot, ["diff", "--binary", "--full-index", "--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--no-color", base, commit, "--", ...paths], { env: { GIT_LITERAL_PATHSPECS: "1" } });
+}
+async function applyPatch(c, patch, reverse) {
+  const args = ["apply", "--index", "--whitespace=nowarn", ...reverse ? ["--reverse"] : [], "-"];
+  await git2(c.worktree, ["apply", "--index", "--check", "--whitespace=nowarn", ...reverse ? ["--reverse"] : [], "-"], { ...inCheckout(c), input: patch });
+  await git2(c.worktree, args, { ...inCheckout(c), input: patch });
+}
+async function restoreToBase(c, base, paths) {
+  if (paths.length === 0) return;
+  const inBase = new Set((await git2(c.worktree, ["ls-tree", "-r", "-z", "--name-only", base, "--", ...paths], inCheckout(c))).split("\0").filter((p) => p.length > 0));
+  const absent = paths.filter((p) => !inBase.has(p));
+  if (absent.length > 0) {
+    await git2(c.worktree, ["rm", "-rqf", "--ignore-unmatch", "--", ...absent], inCheckout(c));
+    await git2(c.worktree, ["clean", "-fq", "--", ...absent], inCheckout(c));
+  }
+  if (inBase.size > 0) await git2(c.worktree, ["checkout", base, "--", ...inBase], inCheckout(c));
+}
+function unitEvents(ctx, type, n2) {
+  return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id", ctx.run.id, type, n2).map((r) => JSON.parse(r.data_json));
+}
+function recordUnits(ctx, n2, units) {
+  appendEvent(ctx.db, ctx.run.id, UNITS_EVENT, ctx.ownerId, { attempt: n2, units }, ctx.clock.now());
+}
+var UNITS_EVENT, UNIT_INTEGRATING_EVENT, UNIT_INTEGRATED_EVENT, UNIT_SERIALIZED_EVENT, MERGE_OVERHEAD_EVENT, UNIT_EXCLUDES;
+var init_parallel_writers = __esm({
+  "src/controller/parallel-writers.ts"() {
+    "use strict";
+    init_events();
+    init_git();
+    init_candidate();
+    init_scope();
+    init_freshness();
+    init_scheduler();
+    init_work_units();
+    init_context2();
+    init_gates();
+    init_workers2();
+    init_contracting();
+    init_common();
+    UNITS_EVENT = "implementation.units";
+    UNIT_INTEGRATING_EVENT = "implementation.unit-integrating";
+    UNIT_INTEGRATED_EVENT = "implementation.unit-integrated";
+    UNIT_SERIALIZED_EVENT = "implementation.unit-serialized";
+    MERGE_OVERHEAD_EVENT = "scheduler.merge-overhead";
+    UNIT_EXCLUDES = [".DS_Store", "Thumbs.db", "node_modules/"];
+  }
+});
+
+// src/controller/authorization.ts
+import { existsSync as existsSync36, mkdirSync as mkdirSync20 } from "node:fs";
+import { join as join50 } from "node:path";
+function operationKey(op) {
+  return `op-${sha256(canonicalJson(op)).slice(0, 16)}`;
+}
+function deniedDependencyOperations(scope, snapshot2) {
+  const out = [];
+  const consider = (op, summary) => {
+    const d = authorize(snapshot2, op);
+    if (!d.allowed) out.push({ op, key: operationKey(op), summary, denial: `${d.rule}: ${d.reason}` });
+  };
+  if (scope.lockfile_changed) consider({ kind: "dependency", change: "change_lockfile", detail: "lockfile changed by the candidate" }, "change the dependency lockfile");
+  if (scope.dependency_manifest_changed.length > 0) {
+    const files = [...scope.dependency_manifest_changed].sort();
+    consider({ kind: "dependency", change: "add_package", detail: files.join(", ") }, `change dependencies in ${files.join(", ")}`);
+  }
+  return out;
+}
+function requests(ctx) {
+  return listDecisions(ctx.db, ctx.run.id, { kind: AUTHORIZATION_REQUEST_KIND }).map((d) => d.data);
+}
+function attemptSubject(n2) {
+  return `attempt:${n2}`;
+}
+function grantFor(ctx, op, subject) {
+  const req = requests(ctx).filter((r) => r.op_key === op.key && (r.subject ?? r.tree_hash) === subject).at(-1);
+  if (!req) return { state: "none" };
+  const q = findQuestion(ctx.db, req.question_id);
+  if (!q || q.status === "withdrawn") return { state: "none" };
+  if (q.status === "open") return { state: "pending", questionId: q.id };
+  const by = q.answeredBy;
+  if (q.answer !== APPROVE_ONCE || !by || !isHumanActor(by)) return { state: "denied", questionId: q.id, by };
+  const id = `dec-${ctx.run.id}-grant-${q.id}`;
+  if (!getDecision(ctx.db, id)) {
+    const forAttempt = req.attempt !== void 0;
+    const what = forAttempt ? `implementation attempt ${req.attempt} only` : `candidate tree ${subject.slice(0, 12)} only`;
+    const where = forAttempt ? { attempt: req.attempt, subject } : { tree_hash: subject };
+    decide2(ctx, { id, kind: AUTHORIZATION_GRANT_KIND, summary: `${by} authorized once: ${op.summary} (${what})`, data: { question_id: q.id, op_key: op.key, operation: op.op, ...where, approved_by: by, policy_denial: op.denial } });
+  }
+  return { state: "granted", decisionId: id, approvedBy: by, questionId: q.id };
+}
+function authorizedOnce(ctx, op, treeHash) {
+  if (authorize(ctx.snapshot, op.op).allowed) return true;
+  return grantFor(ctx, op, treeHash).state === "granted";
+}
+function requestAuthorization(ctx, op, cand) {
+  return ask(
+    ctx,
+    op,
+    {
+      question: `May this run ${op.summary} for candidate ${cand.seq} (tree ${cand.treeHash.slice(0, 12)}), which the policy does not authorize?`,
+      evidence: [`the policy denies it: ${op.denial}`, `operation ${op.key}: ${JSON.stringify(op.op)}`, `the implementation-scope gate found this change in candidate ${cand.seq}; supervised mode asks instead of repairing it away`],
+      approve: { description: `Authorize this one operation for candidate ${cand.seq} only`, consequences: "verification continues with the change; any other candidate or operation is asked about again" },
+      deny: "the change goes back to the implementer as a scope repair, or the run stops if no attempt is left",
+      recommendationReason: "the frozen policy does not allow it; approve only when the dependency change is intended",
+      affected: `authorization ${op.key} for tree ${cand.treeHash.slice(0, 12)}`
+    },
+    { id: `dec-${ctx.run.id}-authreq-${op.key}-${cand.treeHash.slice(0, 12)}`, summary: `asked a person to authorize once: ${op.summary} (candidate ${cand.seq})`, data: { tree_hash: cand.treeHash, subject: cand.treeHash, candidate_id: cand.id } }
+  );
+}
+function requestAttemptAuthorization(ctx, op, n2, worker) {
+  const subject = attemptSubject(n2);
+  return ask(
+    ctx,
+    op,
+    {
+      question: `May the ${worker.role} of implementation attempt ${n2} ${op.summary}, which the policy does not authorize?`,
+      evidence: [`the policy denies it: ${op.denial}`, `operation ${op.key}: ${JSON.stringify(op.op)}`, `the guard refused it inside worker ${worker.id} (attempt ${n2}); supervised mode asks instead of only denying it`],
+      approve: { description: `Authorize this one operation for implementation attempt ${n2} only`, consequences: "the attempt is retried with exactly this operation allowed; any other operation or attempt is asked about again" },
+      deny: "the attempt is retried as a scope repair: the implementer finishes the work without the operation",
+      recommendationReason: "the frozen policy does not allow it; approve only when the operation is intended and needed",
+      affected: `authorization ${op.key} for attempt ${n2}`
+    },
+    { id: `dec-${ctx.run.id}-authreq-${op.key}-a${n2}`, summary: `asked a person to authorize once: ${op.summary} (attempt ${n2})`, data: { subject, attempt: n2, worker_id: worker.id } }
+  );
+}
+function ask(ctx, op, text2, request2) {
+  const q = {
+    question: text2.question,
+    changes: ["authority"],
+    evidence: text2.evidence,
+    options: [
+      { label: APPROVE_ONCE, description: text2.approve.description, consequences: text2.approve.consequences },
+      { label: DENY2, description: "Keep the policy as it is and refuse the operation", consequences: text2.deny }
+    ],
+    recommendation: DENY2,
+    recommendation_reason: text2.recommendationReason,
+    safe_default: { exists: true, option: DENY2, reason: "denying keeps the authority the run started with" },
+    material: true,
+    affected_work: [text2.affected],
+    unblocked_work: []
+  };
+  const question = persistQuestion(ctx.db, ctx.run.id, "risk-review", q, ctx.clock, { actor: ctx.ownerId }).question;
+  const subject = request2.data.subject ?? request2.data.tree_hash;
+  const existing = requests(ctx).some((r) => r.question_id === question.id && (r.subject ?? r.tree_hash) === subject);
+  if (!existing) {
+    decide2(ctx, { id: request2.id, kind: AUTHORIZATION_REQUEST_KIND, summary: request2.summary, data: { question_id: question.id, op_key: op.key, operation: op.op, policy_denial: op.denial, ...request2.data } });
+  }
+  return question;
+}
+function scopeWithGrants(scope, granted) {
+  const lockfile = granted.some((g) => g.op.kind === "dependency" && g.op.change === "change_lockfile");
+  const manifests = granted.some((g) => g.op.kind === "dependency" && g.op.change === "add_package");
+  return { ...scope, lockfile_changed: lockfile ? false : scope.lockfile_changed, dependency_manifest_changed: manifests ? [] : scope.dependency_manifest_changed };
+}
+function deniedWorkerOperations(ctx, worker) {
+  const out = /* @__PURE__ */ new Map();
+  for (const d of listDecisions(ctx.db, ctx.run.id, { kind: "policy.deny" })) {
+    const data = d.data ?? {};
+    if (data.worker_id !== worker.id || data.source !== "guard-hook") continue;
+    const rule = data.rule ?? "";
+    if (!ASKABLE_RULE.test(rule) || NEVER_GRANTED.has(rule) || !data.target) continue;
+    const host = URL_HOST.exec(data.target)?.[1]?.toLowerCase() ?? null;
+    let op;
+    let summary;
+    if (data.tool === "Bash") {
+      if (rule.startsWith("network.") && !host) continue;
+      op = { kind: "bash", command: data.target };
+      summary = `run \`${data.target}\``;
+    } else if (rule.startsWith("network.") && host) {
+      op = { kind: "network", host };
+      summary = `reach ${host}`;
+    } else continue;
+    const now = authorize(ctx.snapshot, op, { worktreeRoot: worker.cwd });
+    if (now.allowed) continue;
+    const key2 = operationKey(op);
+    if (!out.has(key2)) out.set(key2, { op, key: key2, summary, denial: `${rule}: ${data.reason ?? now.reason}`, rule, ...op.kind === "network" ? { target: data.target } : {} });
+  }
+  return [...out.values()];
+}
+function approvedPlan(op) {
+  const network = (op.rule ?? "").startsWith("network.");
+  if (op.op.kind === "bash") return { argv: ["/bin/sh", "-c", op.op.command], shown: op.op.command, host: network ? URL_HOST.exec(op.op.command)?.[1]?.toLowerCase() ?? null : null };
+  if (op.op.kind === "network" && op.target && URL_HOST.exec(op.target)?.[1]?.toLowerCase() === op.op.host) {
+    return { argv: ["curl", "-sS", "--proto", "=http,https", "--max-time", String(APPROVED_TIMEOUT_S), "--", op.target], shown: `fetch ${op.target}`, host: op.op.host };
+  }
+  return null;
+}
+async function runApprovedOperation(ctx, n2, op, grant) {
+  const plan = approvedPlan(op);
+  const none = { key: op.key, command: plan?.shown ?? null, exit_code: null, timed_out: false, path: null, sha256: null, excerpt: null };
+  if (!plan) return { ...none, state: "NOT_RUN", note: "the approval names a host but no exact command or address, so the controller had nothing exact to run" };
+  const rel = join50("authorization", `attempt-${n2}`, op.key);
+  const dir = join50(ctx.runDir, rel);
+  const ledger = new ActionLedger(ctx.db, ctx.clock, { runDir: ctx.runDir, maxAttempts: 1, actor: ctx.ownerId });
+  const recorded = () => readJsonIfExists(join50(dir, RECEIPT_FILE));
+  try {
+    const done = await ledger.performAction(
+      { runId: ctx.run.id, kind: APPROVED_COMMAND_ACTION, idempotencyKey: `${ctx.run.id}:approved:${n2}:${op.key}`, target: { command: plan.shown, attempt: n2, op_key: op.key, grant: grant.decisionId } },
+      {
+        execute: () => executeApproved(ctx, plan, dir, rel),
+        // Only the receipt written after the command finished proves it ran; without it the command is not run again.
+        reconcile: async () => {
+          const r2 = recorded();
+          if (r2) return r2;
+          throw new OrbitError("INTERNAL", "the approved command may have started before the controller stopped; it is not run a second time", { definitive: true });
+        }
+      },
+      { authorization: { allowed: true, rule: "authorization.grant", reason: `approved once by ${grant.approvedBy} (${grant.decisionId}) for attempt ${n2}` } }
+    );
+    const r = done.receipt;
+    return { ...none, state: "SUCCEEDED", exit_code: r.exit_code, timed_out: r.timed_out, path: r.path, sha256: r.sha256, excerpt: r.excerpt, note: null };
+  } catch (err) {
+    if (isOrbitError(err, "CANCELLED") || isOrbitError(err, "LEASE_LOST") || isOrbitError(err, "CONCURRENT_UPDATE")) throw err;
+    return { ...none, state: "UNKNOWN", note: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) };
+  }
+}
+async function executeApproved(ctx, plan, dir, rel) {
+  const worktree = ctx.run.worktreePath;
+  const home2 = join50(dir, "home");
+  mkdirSync20(home2, { recursive: true, mode: 448 });
+  const tmp = prepareWorkerTmpDir(dir);
+  const hosts = [.../* @__PURE__ */ new Set([...ctx.snapshot.config.network.allowed_hosts, ...plan.host ? [plan.host] : []])];
+  const def = { id: `approved-${rel.split("/").at(-1)}`, command: plan.argv, shell: false, cwd: ".", timeout_seconds: APPROVED_TIMEOUT_S, network_hosts: hosts, local_binding: false, env: {}, mandatory: false, flaky_reruns: 0, kind: "command" };
+  const profile = profileForCheck({ worktree, check: def, snapshot: ctx.snapshot, extraWritable: [home2, tmp] });
+  const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home2, TMPDIR: tmp, LANG: "C.UTF-8", TERM: "dumb", NO_COLOR: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" };
+  const wrapped = ctx.isolation().wrap(plan.argv, profile, { cwd: worktree, env });
+  let r;
+  try {
+    r = await execCapture(wrapped.argv, { cwd: worktree, env: wrapped.env, timeoutMs: APPROVED_TIMEOUT_S * 1e3, maxOutputBytes: APPROVED_MAX_OUTPUT_BYTES, abortSignal: ctx.signal });
+  } catch (err) {
+    throw new OrbitError("INTERNAL", `the approved command could not start: ${err instanceof Error ? err.message : String(err)}`, { definitive: true }, { cause: err });
+  } finally {
+    wrapped.cleanup();
+  }
+  const text2 = redact(`$ ${plan.shown}
+[exit ${r.exitCode ?? `signal ${r.signal ?? "unknown"}`}${r.timedOut ? ", timed out" : ""}]
+--- stdout ---
+${r.stdout}
+--- stderr ---
+${r.stderr}
+`);
+  atomicWrite(join50(dir, OUTPUT_FILE), text2, 384);
+  const receipt = { exit_code: r.exitCode, timed_out: r.timedOut, path: join50(rel, OUTPUT_FILE), sha256: sha256(text2), excerpt: text2.slice(-APPROVED_EXCERPT_CHARS) };
+  atomicWrite(join50(dir, RECEIPT_FILE), `${JSON.stringify(receipt)}
+`, 384);
+  return receipt;
+}
+function ungrantedCommands(events, snapshot2, worktreeRoot, granted) {
+  const denied = new Set(denialsFromTranscript(events).map((d) => d.toolUseId));
+  const out = [];
+  for (const e of events) {
+    if (e.type !== "assistant") continue;
+    const message = e.message;
+    const content = Array.isArray(message?.content) ? message.content : [];
+    for (const b of content) {
+      if (!b || b.type !== "tool_use" || typeof b.id !== "string" || denied.has(b.id)) continue;
+      const input = b.input ?? {};
+      let op = null;
+      if (b.name === "Bash" && typeof input.command === "string") op = { kind: "bash", command: input.command };
+      else if (typeof input.url === "string") {
+        const host = URL_HOST.exec(input.url)?.[1]?.toLowerCase();
+        if (host) op = { kind: "network", host };
+      }
+      if (!op) continue;
+      const d = authorize(snapshot2, op, { worktreeRoot });
+      if (d.allowed || !ASKABLE_RULE.test(d.rule)) continue;
+      const shown = op.kind === "bash" ? denialTarget(op.command) : op.host;
+      const named = granted.some((g) => op.kind === "bash" && g.op.kind === "bash" && g.op.command === shown || op.kind === "network" && g.op.kind === "network" && g.op.host === op.host);
+      if (!named) out.push(shown);
+    }
+  }
+  return out;
+}
+function sessionEvents(worker) {
+  const path = join50(worker.workerDir, LOG_FILE);
+  return existsSync36(path) ? readLogLines(path).events : [];
+}
+var APPROVE_ONCE, DENY2, AUTHORIZATION_REQUEST_KIND, AUTHORIZATION_GRANT_KIND, ASKABLE_RULE, NEVER_GRANTED, URL_HOST, APPROVED_COMMAND_ACTION, APPROVED_TIMEOUT_S, APPROVED_MAX_OUTPUT_BYTES, APPROVED_EXCERPT_CHARS, OUTPUT_FILE, RECEIPT_FILE;
+var init_authorization = __esm({
+  "src/controller/authorization.ts"() {
+    "use strict";
+    init_hash();
+    init_fsx();
+    init_errors();
+    init_exec();
+    init_redact();
+    init_authorize();
+    init_profiles();
+    init_actions();
+    init_questions();
+    init_store4();
+    init_decisions();
+    init_supervise();
+    init_shim();
+    init_common();
+    init_denials();
+    APPROVE_ONCE = "approve-once";
+    DENY2 = "deny";
+    AUTHORIZATION_REQUEST_KIND = "authorization.request";
+    AUTHORIZATION_GRANT_KIND = "authorization.grant";
+    ASKABLE_RULE = /^(?:actions|network)\./;
+    NEVER_GRANTED = /* @__PURE__ */ new Set(["actions.change_secrets"]);
+    URL_HOST = /\bhttps?:\/\/([A-Za-z0-9.-]+)/;
+    APPROVED_COMMAND_ACTION = "approved_command";
+    APPROVED_TIMEOUT_S = 300;
+    APPROVED_MAX_OUTPUT_BYTES = 1024 * 1024;
+    APPROVED_EXCERPT_CHARS = 4e3;
+    OUTPUT_FILE = "output.txt";
+    RECEIPT_FILE = "receipt.json";
+  }
+});
+
+// src/controller/steps/implementing.ts
+import { existsSync as existsSync37 } from "node:fs";
+import { join as join51 } from "node:path";
+function briefPath(ctx, attempt) {
+  return join51(ctx.runDir, "briefs", `attempt-${attempt}.json`);
+}
+function currentAttempt(ctx) {
+  const row = ctx.db.get("SELECT MAX(CAST(json_extract(data_json, '$.attempt') AS INTEGER)) AS n FROM events WHERE run_id = ? AND type = ?", ctx.run.id, ATTEMPT_EVENT);
+  return Number(row?.n ?? 0);
+}
+function attemptCandidateId(ctx, attempt) {
+  const row = ctx.db.get("SELECT json_extract(data_json, '$.candidate_id') AS id FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, CANDIDATE_EVENT, attempt);
+  return row?.id ?? null;
+}
+async function implementingStep(ctx) {
+  const stop = await safePoint(ctx);
+  if (stop) return stop;
+  const contract = assertContract(ctx);
+  if (!ctx.ledger) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is ${ctx.run.state} without budget counters`);
+  if (!ctx.run.worktreePath || !ctx.run.baseRevision) throw new OrbitError("INTERNAL", `run ${ctx.run.id} has no worktree or base revision`);
+  let n2 = currentAttempt(ctx);
+  if (n2 > 0 && attemptCandidateId(ctx, n2) !== null) {
+    const cand = ctx.candidate;
+    if (cand && !currentEvidenceReport(ctx.db, ctx.run.id, cand.id)) return move2(ctx, "VERIFYING", `candidate ${cand.seq} of attempt ${n2} awaits verification`);
+    n2 = 0;
+  }
+  if (n2 === 0) {
+    const started = await startAttempt(ctx, currentAttempt(ctx) + 1);
+    if (started) return started;
+    n2 = currentAttempt(ctx);
+  }
+  return continueAttempt(ctx, n2, contract);
+}
+async function startAttempt(ctx, n2) {
+  const ledger = ctx.ledger;
+  const route2 = routeFor(ctx, `implement:${n2}`, "routine-code", routeSignals(ctx, n2));
+  const scheduler = schedulerFor(ctx);
+  const running = runningUnits(ctx);
+  const own = new Set(running.filter((u) => u.runId === ctx.run.id).map((u) => u.unit.id));
+  const cap = sessionSpendCap(ctx, route2.model, "implementer");
+  const unit = {
+    id: `implement:${n2}`,
+    role: "implementer",
+    writer: true,
+    ownedPaths: assertContract(ctx).allowed_paths,
+    dependsOn: [],
+    revision: ctx.candidate?.treeHash ?? null,
+    cancelWhen: [],
+    // Admission keeps the conservative role ceiling for the cost estimate: an attempt is more than one session.
+    budget: { costUsd: null, wallMs: null, maxTurns: ledger.maxTurnsPerSession() },
+    provider: route2.provider,
+    worktree: ctx.run.worktreePath,
+    status: "pending"
+  };
+  const plan = scheduler.plan([...running.filter((r) => own.has(r.unit.id)).map((r) => r.unit), unit], { admit: budgetAdmission(ledger) });
+  const machine = plan.start.some((u) => u.id === unit.id) ? machineAdmission(ctx, running.map((r) => r.unit), [unit]) : null;
+  if (!plan.start.some((u) => u.id === unit.id) || machine && !machine.start.has(unit.id)) {
+    const why = plan.deferred.find((d) => d.id === unit.id)?.reason ?? machine?.deferred.get(unit.id) ?? "not admitted";
+    if (/^not admitted by budget/.test(why)) return finishRun(ctx, "EXHAUSTED", `attempt ${n2} not admitted: the remaining budget cannot support an honest completion (${why})`, { data: { admission: why } });
+    return WAIT(`attempt ${n2} deferred: ${why}`);
+  }
+  if (cap.capUsd !== null && cap.capUsd <= 0) return finishRun(ctx, "EXHAUSTED", `attempt ${n2} not started: ${unfundedSessionReason(ctx, route2.model, "implementer")}`);
+  const units = splitAttempt(ctx, assertContract(ctx), n2 === 1 && !existsSync37(briefPath(ctx, n2)));
+  const counted = ctx.db.tx(() => {
+    if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, ATTEMPT_EVENT, n2)) return false;
+    ledger.consume("implementation_attempts", 1);
+    appendEvent(ctx.db, ctx.run.id, ATTEMPT_EVENT, ctx.ownerId, { attempt: n2, route: route2.decisionId, spend_cap_usd: cap.capUsd }, ctx.clock.now());
+    if (units) recordUnits(ctx, n2, units);
+    return true;
+  });
+  if (counted && units) {
+    decide2(ctx, { id: `dec-${ctx.run.id}-units-${n2}`, kind: "scheduling.work-units", summary: `attempt ${n2} runs as ${units.length} parallel writers with disjoint files: ${units.map((u) => `${u.id} (${u.criteria.join(", ")})`).join("; ")}`, data: { attempt: n2, units } });
+  }
+  if (cap.capUsd !== null) recordSpendCap(ctx, `implement:${n2}#1`, cap.capUsd, cap.worstCaseUsd);
+  return null;
+}
+function runningUnits(ctx) {
+  const out = listActiveWorkers(ctx.db).map((w) => ({
+    runId: w.runId,
+    // Another run's writer edits its own worktree, so its paths cannot collide with this run's; it still takes a slot.
+    unit: { id: w.id, role: w.role, writer: w.runId === ctx.run.id && !READ_ONLY_ROLES.has(w.role), ownedPaths: w.ownedPaths ?? [], dependsOn: [], revision: null, cancelWhen: [], budget: {}, provider: w.provider, worktree: w.cwd, status: "running" }
+  }));
+  const reserved = ctx.db.all(
+    `SELECT e.run_id, MAX(CAST(json_extract(e.data_json, '$.attempt') AS INTEGER)) AS attempt FROM events e JOIN runs r ON r.id = e.run_id
+     WHERE e.type = ? AND e.run_id <> ? AND r.state IN ('IMPLEMENTING', 'REPAIRING') GROUP BY e.run_id`,
+    ATTEMPT_EVENT,
+    ctx.run.id
+  );
+  for (const r of reserved) {
+    const planned = ctx.db.get("SELECT 1 AS x FROM workers WHERE run_id = ? AND role = 'implementer' AND attempt = ? LIMIT 1", r.run_id, r.attempt);
+    const produced = ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? LIMIT 1", r.run_id, CANDIDATE_EVENT, r.attempt);
+    if (planned || produced) continue;
+    out.push({ runId: r.run_id, unit: { id: `reserved:${r.run_id}:${r.attempt}`, role: "implementer", writer: false, ownedPaths: [], dependsOn: [], revision: null, cancelWhen: [], budget: {}, provider: null, worktree: null, status: "running" } });
+  }
+  return out;
+}
+async function continueAttempt(ctx, n2, contract) {
+  const route2 = routeFor(ctx, `implement:${n2}`, "routine-code", routeSignals(ctx, n2));
+  const base = `implement:${n2}`;
+  const units = recordedUnits(ctx, n2);
+  if (units && latestAttempt(ctx, base) === 0) {
+    const r = await runParallelUnits(ctx, n2, units, { route: route2, contract, prompt: (u, all, workerId) => implementerPrompt(ctx, n2, workerId, null, { unit: u, all }), running: () => runningUnits(ctx), maxTurns: ctx.ledger.maxTurnsPerSession() });
+    if (r.kind === "step") return r.result;
+    if (r.kind === "done") return snapshot(ctx, n2, r.workerId);
+  }
+  const start = await attemptStart(ctx, base, `implementer (attempt ${n2})`);
+  if (!start.ok) return start.step;
+  let k = start.n;
+  for (; ; ) {
+    const purpose = `${base}#${k}`;
+    if (!ctx.db.get("SELECT 1 AS x FROM workers WHERE run_id = ? AND purpose = ?", ctx.run.id, purpose)) {
+      const wait = retryWait(ctx, base);
+      if (wait) return wait;
+    }
+    const auth = authorizationFor(ctx, n2, k);
+    const st = await ensureWorker(ctx, {
+      role: "implementer",
+      purpose,
+      attempt: n2,
+      provider: route2.provider,
+      model: route2.model,
+      effort: route2.effort,
+      cwd: ctx.run.worktreePath,
+      readOnly: false,
+      prompt: (workerId) => implementerPrompt(ctx, n2, workerId, auth),
+      maxBudgetUsd: capOf(ctx, n2, purpose),
+      ownedPaths: contract.allowed_paths
+    });
+    if (st.status === "running") return WAIT(`implementer ${st.worker.id} (attempt ${n2}) is running`);
+    const r = st.result;
+    if (r.status === "auth_failed") return blockOnAuth(ctx, st.worker.provider, "auth_failed", r.error);
+    const stray = r.status === "cancelled" && !ctx.refresh().cancelRequested;
+    if (r.status === "transient_error" || stray) {
+      if (r.status === "cancelled") {
+        const stop2 = await safePoint(ctx);
+        if (stop2) return stop2;
+      }
+      const stop = await scheduleTransientRetry(ctx, { base, purpose, what: `implementer (attempt ${n2})`, status: r.status, error: r.error });
+      if (stop) return stop;
+      k++;
+      continue;
+    }
+    if (r.status === "cancelled") {
+      const stop = await safePoint(ctx);
+      if (stop) return stop;
+    }
+    if (r.status === "lost") {
+      const stop = await restartLostImplementer(ctx, st.worker, n2, `${base}#${k + 1}`, route2.model);
+      if (stop) return stop;
+      k++;
+      continue;
+    }
+    if (r.status === "failed" && raiseOutputCap(ctx, purpose, r.error) !== null) {
+      k++;
+      continue;
+    }
+    const sup = await superviseDenials(ctx, n2, k, st.worker);
+    if (sup.kind === "stop") return sup.result;
+    if (sup.kind === "retry") {
+      k++;
+      continue;
+    }
+    if (r.status !== "succeeded") note2(ctx, "implementation.worker-ended", { attempt: n2, status: r.status, error: r.error?.slice(0, 300) ?? null, note: "its edits are verified like any other" });
+    return snapshot(ctx, n2, st.worker.id);
+  }
+}
+function authorizationRetries(ctx, n2) {
+  return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id", ctx.run.id, AUTHORIZATION_RETRY_EVENT, n2).map((r) => JSON.parse(r.data_json));
+}
+function authorizationFor(ctx, n2, k) {
+  return authorizationRetries(ctx, n2).filter((r) => r.next <= k).at(-1) ?? null;
+}
+async function superviseDenials(ctx, n2, k, worker) {
+  if (ctx.run.mode !== "supervised") return { kind: "proceed" };
+  const retries = authorizationRetries(ctx, n2);
+  if (retries.some((r) => r.after === k)) return { kind: "retry" };
+  const auth = retries.filter((r) => r.next <= k).at(-1);
+  if (auth && auth.granted.length > 0) {
+    const extra = ungrantedCommands(sessionEvents(worker), ctx.snapshot, worker.cwd, []);
+    if (extra.length > 0) {
+      decide2(ctx, { id: `dec-${ctx.run.id}-deny-ungranted-${worker.id}`, kind: "policy.deny", summary: `implementer ${worker.id} ran under a one-shot grant and did what no grant names: ${extra.join("; ")}`, data: { source: "grant-check", worker_id: worker.id, attempt: n2, ungranted: extra, granted: auth.granted.map((g) => g.key) } });
+      return { kind: "stop", result: await finishRun(ctx, "BLOCKED", `policy violation in attempt ${n2}: under a one-shot grant the implementer also ran what the policy denies and no person authorized (${extra.join("; ")}); its work will not be verified or delivered`, { outcome: { attempt: n2, ungranted: extra } }) };
+    }
+  }
+  const applied = new Set(retries.flatMap((r) => [...r.granted, ...r.refused].map((g) => g.key)));
+  const ops = deniedWorkerOperations(ctx, worker).filter((o) => !applied.has(o.key));
+  if (ops.length === 0) return { kind: "proceed" };
+  const subject = attemptSubject(n2);
+  const pending = [];
+  const granted = [];
+  const grants = [];
+  const refused = [];
+  for (const op of ops) {
+    const g = grantFor(ctx, op, subject);
+    if (g.state === "granted") {
+      granted.push(op);
+      grants.push({ decisionId: g.decisionId, approvedBy: g.approvedBy });
+    } else if (g.state === "denied") refused.push(op);
+    else pending.push(`${g.state === "pending" ? g.questionId : requestAttemptAuthorization(ctx, op, n2, worker).id}: ${op.summary}`);
+  }
+  if (pending.length > 0) {
+    return { kind: "stop", result: await finishRun(ctx, "BLOCKED", `supervised mode: implementation attempt ${n2} was denied operations the policy does not authorize; a person decides each one (approve-once or deny with orbit decide, then orbit resume ${ctx.run.id}). Questions: ${pending.join(" | ")}`, { outcome: { authorization: pending } }) };
+  }
+  const executed = [];
+  for (const [i, op] of granted.entries()) executed.push(await runApprovedOperation(ctx, n2, op, grants[i]));
+  note2(ctx, AUTHORIZATION_RETRY_EVENT, { attempt: n2, after: k, next: k + 1, granted, refused, executed });
+  return { kind: "retry" };
+}
+async function restartLostImplementer(ctx, lost, n2, nextPurpose, model) {
+  const already = ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.worker_id') = ? LIMIT 1", ctx.run.id, LOST_RESTART_EVENT, lost.id);
+  if (already) return null;
+  const decision = decideRetry({
+    classification: classifyFailure({ status: "lost" }),
+    provider: lost.provider,
+    runId: ctx.run.id,
+    attempt: 1,
+    infrastructureRetriesRemaining: Number.POSITIVE_INFINITY,
+    wallRemainingMs: null,
+    costRemainingUsd: null,
+    recoveryAttemptsRemaining: recoveryAttemptsRemaining(ctx.db, ctx.run.id, void 0)
+  });
+  if (decision.action !== "restart") return finishRun(ctx, "EXHAUSTED", `recovery_attempts exhausted: lost implementer ${lost.id} (attempt ${n2}) cannot be restarted: ${decision.reason}`, { data: { counter: "recovery_attempts" } });
+  const gone = await stopRowProcess(ctx.timing.killGraceMs, lost);
+  if (gone === "unknown") return WAIT(`lost implementer ${lost.id}: its process could not be confirmed stopped; not restarting yet`);
+  try {
+    spendRecoveryAttempt(ctx.db, ctx.run.id, ctx.clock, { ledgerFor: () => ctx.ledger, actor: ctx.ownerId, why: `restart of lost implementer ${lost.id} (attempt ${n2})` });
+  } catch (err) {
+    if (isOrbitError(err, "BUDGET_EXHAUSTED")) return finishRun(ctx, "EXHAUSTED", `recovery_attempts exhausted: lost implementer ${lost.id} (attempt ${n2}) cannot be restarted: ${err.message}`, { data: { counter: "recovery_attempts" } });
+    throw err;
+  }
+  const cap = sessionSpendCap(ctx, model, "implementer");
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, LOST_RESTART_EVENT, ctx.ownerId, { worker_id: lost.id, attempt: n2, next_purpose: nextPurpose, cwd_preserved: lost.cwd, live_controller: true }, ctx.clock.now()));
+  if (cap.capUsd !== null) {
+    if (cap.capUsd <= 0) return finishRun(ctx, "EXHAUSTED", `lost implementer ${lost.id} not restarted: ${unfundedSessionReason(ctx, model, "implementer")}`);
+    recordSpendCap(ctx, nextPurpose, cap.capUsd, cap.worstCaseUsd);
+  }
+  return null;
+}
+async function snapshot(ctx, n2, workerId) {
+  const cand = await snapshotCandidate({ db: ctx.db, clock: ctx.clock, repoRoot: ctx.run.repoRoot, worktree: ctx.run.worktreePath, runId: ctx.run.id, baseRev: ctx.run.baseRevision, attempt: n2, workerId });
+  invalidateEvidence(ctx.db, ctx.run.id, `attempt ${n2} produced candidate ${cand.seq} (tree ${cand.treeHash})`, ctx.clock, { exceptTreeHash: cand.treeHash });
+  invalidateStaleReviews(ctx.db, { runId: ctx.run.id, runDir: ctx.runDir, current: { candidateId: cand.id, treeHash: cand.treeHash }, cause: `attempt ${n2}` }, ctx.clock);
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, CANDIDATE_EVENT, ctx.ownerId, { attempt: n2, candidate_id: cand.id, seq: cand.seq, tree_hash: cand.treeHash, reused: !cand.created }, ctx.clock.now()));
+  ctx.candidate = cand;
+  await cancelObsoleteWork(ctx, cand.treeHash);
+  progress(ctx, "candidate", { attempt: n2, candidate_id: cand.id, seq: cand.seq, tree_hash: cand.treeHash, reused: !cand.created });
+  return move2(ctx, "VERIFYING", `attempt ${n2} produced candidate ${cand.seq}${cand.created ? "" : " (the same tree as an earlier candidate)"}`);
+}
+function capOf(ctx, n2, purpose) {
+  const own = ctx.db.get("SELECT json_extract(data_json, '$.cap_usd') AS cap FROM events WHERE run_id = ? AND type = 'worker.spend-cap' AND json_extract(data_json, '$.purpose') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, purpose);
+  if (typeof own?.cap === "number") return own.cap;
+  const row = ctx.db.get("SELECT json_extract(data_json, '$.spend_cap_usd') AS cap FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, ATTEMPT_EVENT, n2);
+  return typeof row?.cap === "number" ? row.cap : null;
+}
+function routeSignals(ctx, n2) {
+  const difficulty = ctx.run.difficulty ?? "medium";
+  const failures = listFailures(ctx.db, ctx.run.id);
+  const prev = n2 > 1 ? ctx.db.get("SELECT data_json FROM decisions WHERE id = ?", `dec-route-${ctx.run.id}-implement_${n2 - 1}`) : void 0;
+  const prevRoute = prev ? JSON.parse(prev.data_json) : null;
+  const solved = n2 > 1 && diagnosisSolved(ctx, n2);
+  const latest = failures.at(-1) ?? null;
+  const same = latest && !solved ? failures.filter((f) => f.fingerprint === latest.fingerprint) : [];
+  const repeated = new Set(same.map((f) => f.candidateId ?? `row-${f.id}`)).size;
+  const evidence = same.map((f) => `failure:${f.id}`);
+  const security = criticalSecurity(ctx);
+  return {
+    difficulty,
+    attempt: n2,
+    repeatedFingerprints: repeated,
+    ...evidence.length > 0 ? { evidence } : {},
+    ...security ? { criticalSecurity: true } : {},
+    ...solved ? { diagnosisSolved: true } : {},
+    ...prevRoute ? { previousRoute: { provider: prevRoute.provider, model: prevRoute.model, effort: prevRoute.effort, outcome: solved ? "verified" : "failed", evidence } } : {}
+  };
+}
+function criticalSecurity(ctx) {
+  if (!ctx.run.difficultyJson) return false;
+  try {
+    const a = JSON.parse(ctx.run.difficultyJson);
+    return a.factors?.some((f) => f.factor === "security_impact" && f.value === true) ?? false;
+  } catch {
+    return false;
+  }
+}
+function diagnosisSolved(ctx, n2) {
+  let escalatedAt = 0;
+  for (let k = n2 - 1; k >= 1; k--) {
+    const row = ctx.db.get("SELECT data_json FROM decisions WHERE id = ?", `dec-route-${ctx.run.id}-implement_${k}`);
+    const d = row ? JSON.parse(row.data_json) : null;
+    if (d?.escalated_from) {
+      escalatedAt = k;
+      break;
+    }
+  }
+  if (escalatedAt === 0) return false;
+  const latestCand = attemptCandidateId(ctx, n2 - 1);
+  if (!latestCand) return false;
+  const report2 = listEvidenceReports(ctx.db, ctx.run.id).filter((r) => r.candidateId === latestCand).at(-1);
+  if (!report2) return false;
+  const failures = listFailures(ctx.db, ctx.run.id);
+  const earlier = /* @__PURE__ */ new Set();
+  for (let k = 1; k < escalatedAt; k++) {
+    const c = attemptCandidateId(ctx, k);
+    for (const f of failures) if (c !== null && f.candidateId === c) earlier.add(f.fingerprint);
+  }
+  if (earlier.size === 0) return false;
+  const now = new Set(failures.filter((f) => f.candidateId === latestCand).map((f) => f.fingerprint));
+  if ([...earlier].some((fp) => now.has(fp))) return false;
+  const history = attemptHistory(ctx);
+  const cur = history.find((h) => h.attempt === n2 - 1);
+  if (!cur) return false;
+  const before = [...history].reverse().find((h) => h.attempt < n2 - 1) ?? null;
+  const p = progressSince(before, cur);
+  return p.fixed_checks.length > 0 || p.localized_fault !== null || report2.verdict === "PASS" && p.made_progress;
+}
+function implementerPrompt(ctx, n2, workerId, auth = null, parallel = null) {
+  const contract = assertContract(ctx);
+  const blocked = blockingQuestions(ctx.db, ctx.run.id).criteria;
+  const stored = readJsonIfExists(briefPath(ctx, n2));
+  const briefs = stored ? [{ label: `${stored.source} repair brief`, content: stored.brief, ref: `briefs/attempt-${n2}.json` }] : [];
+  const refs = [];
+  const cand = ctx.candidate;
+  if (stored && cand) {
+    for (const row of listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id })) {
+      if (row.status === "PASSED" || !row.logPath || !row.logSha256) continue;
+      refs.push({ id: row.checkId, path: relative6(ctx.runDir, row.logPath), sha256: row.logSha256, summary: `${row.checkId} ${row.status} on candidate ${cand.seq}`, ...row.excerpt ? { excerpt: row.excerpt } : {} });
+    }
+  }
+  for (const e of auth?.executed ?? []) {
+    if (e.state !== "SUCCEEDED" || !e.path || !e.sha256) continue;
+    refs.push({ id: `approved-${e.key}`, path: e.path, sha256: e.sha256, summary: `output of the approved command \`${e.command}\`, run once by the controller (exit ${e.exit_code ?? "none"}${e.timed_out ? ", timed out" : ""})`, ...e.excerpt ? { excerpt: e.excerpt } : {} });
+  }
+  const task = [
+    parallel ? "Implement your work unit of the contract below in this worktree." : n2 === 1 || !stored ? "Implement the contract below in this worktree." : `Repair attempt ${n2}: act on the repair brief below; change the cause, not the tests that show it.`,
+    "Make the smallest coherent change. Add or extend behaviour tests that would fail without it. Stay inside the allowed paths.",
+    "Do not commit, push, or edit protected paths, policy, CI configuration or check definitions. The controller snapshots your worktree and runs the trusted checks itself.",
+    `Acceptance criteria: ${contract.acceptance_criteria.map((c) => `${c.id}${c.mandatory ? "" : " (optional)"}: ${c.statement}`).join(" | ")}`,
+    ...blocked.length > 0 ? [`Blocked, waiting for a person's decision (do not implement or guess them): ${blocked.join(", ")}. Implement the other criteria only.`] : [],
+    ...authorizationLines(auth),
+    ...parallelLines(ctx, n2, parallel)
+  ].join("\n");
+  return renderWorkerPrompt({
+    role: "implementer",
+    task,
+    contract,
+    policySummary: policySummary(ctx, { readOnly: false }),
+    candidate: { revision: cand?.commitSha ?? null, treeHash: cand?.treeHash ?? null, base: ctx.run.baseRevision },
+    briefs,
+    evidenceRefs: refs,
+    advisoryBlock: advisoryBlockFor(ctx, { role: "implementer", workerId, paths: contract.allowed_paths, checkIds: contract.required_check_ids, fingerprints: stored?.fingerprint ? [stored.fingerprint] : [] })
+  });
+}
+function parallelLines(ctx, n2, parallel) {
+  if (parallel) {
+    const others = parallel.all.filter((u) => u.id !== parallel.unit.id);
+    return [
+      `You are work unit ${parallel.unit.id} of ${parallel.all.length} parallel writers for this attempt, each in its own worktree. Implement only ${parallel.unit.criteria.join(", ")}; the other criteria are someone else's.`,
+      `Change only these files (plus a new behaviour test of your own for your criteria): ${parallel.unit.ownedPaths.join(", ")}.`,
+      `Do not touch what the other units own: ${others.flatMap((u) => u.ownedPaths).join(", ")}. The controller integrates the units one at a time; a unit that touches a file another unit changed is redone serially.`
+    ];
+  }
+  const dropped = serializedUnits(ctx, n2);
+  if (dropped.length === 0) return [];
+  return [
+    "Part of this attempt was implemented by parallel writers and is already in this worktree; keep it.",
+    ...dropped.map((d) => `Work unit ${d.unit} (${d.criteria.join(", ")}) could not be integrated in parallel (${d.reason}). Implement ${d.criteria.join(", ")} now, on top of the integrated work.`)
+  ];
+}
+function authorizationLines(auth) {
+  if (!auth) return [];
+  const lines = ["An earlier session of this attempt was denied operations the policy does not authorize, and a person answered. Continue from the current worktree: the earlier edits are there."];
+  for (const g of auth.granted) lines.push(`Authorized once, for this attempt only: ${g.summary}. ${approvedOutcome(auth.executed?.find((e) => e.key === g.key) ?? null)} Do not run it yourself: you are still refused it, and anything else outside the policy stops the run.`);
+  for (const g of auth.refused) lines.push(`Refused by a person: ${g.summary}. Do not try it again; finish the work inside the policy without it.`);
+  return lines;
+}
+function approvedOutcome(e) {
+  if (!e) return "The controller performs approved operations; the policy you run under is unchanged.";
+  if (e.state === "SUCCEEDED") return `The controller ran exactly this command once, in isolation, on your behalf (exit code ${e.exit_code ?? "none"}${e.timed_out ? ", timed out" : ""}); its output is the evidence artifact approved-${e.key} (${e.path}).`;
+  if (e.state === "UNKNOWN") return `The controller started it on your behalf, but its outcome is unknown (${e.note ?? "no detail"}); it is not run again.`;
+  return `Nothing was run for it: ${e.note ?? "there was no exact command to run"}.`;
+}
+function relative6(root, p) {
+  return p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p;
+}
+var ATTEMPT_EVENT, READ_ONLY_ROLES, AUTHORIZATION_RETRY_EVENT, LOST_RESTART_EVENT;
+var init_implementing = __esm({
+  "src/controller/steps/implementing.ts"() {
+    "use strict";
+    init_fsx();
+    init_errors();
+    init_events();
+    init_workers();
+    init_backoff();
+    init_budget();
+    init_reconcile();
+    init_prompt();
+    init_candidate();
+    init_freshness();
+    init_store();
+    init_repair();
+    init_diagnosing();
+    init_reviewing();
+    init_stale();
+    init_scheduler();
+    init_context2();
+    init_gates();
+    init_workers2();
+    init_parallel_writers();
+    init_authorization();
+    init_knowledge_hooks();
+    init_common();
+    init_obtain();
+    ATTEMPT_EVENT = "implementation.attempt";
+    READ_ONLY_ROLES = /* @__PURE__ */ new Set(["planner", "verifier", "reviewer", "inquisitor", "curator", "explorer"]);
+    AUTHORIZATION_RETRY_EVENT = "authorization.retry";
+    LOST_RESTART_EVENT = "recovery.worker-restart";
   }
 });
 
 // src/controller/steps/verifying.ts
-import { existsSync as existsSync39, readdirSync as readdirSync9 } from "node:fs";
-import { join as join55 } from "node:path";
+import { existsSync as existsSync38, readdirSync as readdirSync9 } from "node:fs";
+import { join as join52 } from "node:path";
 async function verifyingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -55129,7 +54710,7 @@ async function verifyingStep(ctx) {
     }
     return act(ctx, cand, report2);
   }
-  const checkoutDir = join55(runWorktreeRoot(ctx), `check-${cand.seq}`);
+  const checkoutDir = join52(runWorktreeRoot(ctx), `check-${cand.seq}`);
   await ensureCheckout(ctx, cand, checkoutDir);
   try {
     const collected = await collectVerificationEvidence(ctx, cand, { checkoutDir, scope, notes: authorizedOnceNotes, checkpoint: () => safePoint(ctx), onGate: (g) => recordGate(ctx, g), exploration: true });
@@ -55259,7 +54840,7 @@ async function violatingCandidate(ctx, cand) {
       preserved_constraints: [`Never edit protected paths: ${ctx.snapshot.effective_protected_paths.join(", ")}`, "Keep the behaviour tests that prove the acceptance criteria"]
     }
   };
-  if (!existsSync39(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
+  if (!existsSync38(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
   return move2(ctx, "DIAGNOSING", `candidate ${cand.seq} violated the policy; the worktree was restored to ${from} and attempt ${next} repairs from there`, { data: { attempt: next, restored_to: target?.id ?? "base" } });
 }
 async function restoreWorktree(worktree, base, commit) {
@@ -55273,7 +54854,7 @@ function scopeFingerprint(scope) {
   return `scope:${sha256(JSON.stringify([[...scope.forbidden_paths_changed].sort(), [...scope.out_of_scope_paths_changed].sort(), scope.within_size_limits, scope.lockfile_changed, [...scope.symlinks_escaping].sort()])).slice(0, 16)}`;
 }
 async function ensureCheckout(ctx, cand, dir) {
-  if (existsSync39(dir) && readdirSync9(dir).length > 0) {
+  if (existsSync38(dir) && readdirSync9(dir).length > 0) {
     try {
       const tree = (await git2(dir, ["rev-parse", "HEAD^{tree}"])).trim();
       if (tree === cand.treeHash && (await git2(dir, ["status", "--porcelain", "--untracked-files=no"])).trim() === "") return;
@@ -55293,7 +54874,7 @@ var init_verifying = __esm({
     init_scope();
     init_candidate();
     init_git();
-    init_report();
+    init_report2();
     init_freshness();
     init_store();
     init_triggers();
@@ -55312,7 +54893,7 @@ var init_verifying = __esm({
 });
 
 // src/controller/steps/diagnosing.ts
-import { existsSync as existsSync40 } from "node:fs";
+import { existsSync as existsSync39 } from "node:fs";
 import { availableParallelism as availableParallelism2, freemem as freemem2, loadavg } from "node:os";
 async function diagnosingStep(ctx) {
   const stop = await safePoint(ctx);
@@ -55420,7 +55001,7 @@ async function diagnosingStep(ctx) {
       return finishRun(ctx, "EXHAUSTED", `implementation attempt allowance spent (${att.used} of ${att.allowance}) and no extension: ${decision.denied_because.join("; ")}`, { outcome: { extension: decision } });
     }
   }
-  if (!existsSync40(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
+  if (!existsSync39(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
   decide2(ctx, { id: `dec-${ctx.run.id}-brief-${next}`, kind: "repair.brief", summary: `repair brief (${stored.source}) for attempt ${next}: ${fingerprint}`, data: { attempt: next, source: stored.source, fingerprint, path: `briefs/attempt-${next}.json` } });
   return move2(ctx, "REPAIRING", `repair brief for attempt ${next} (${stored.source})`, { data: { attempt: next, fingerprint } });
 }
@@ -55503,7 +55084,7 @@ function diagnosisPrompt(ctx, fingerprint, failures, workerId, timeouts) {
     advisoryBlock: advisoryBlockFor(ctx, { role: "verifier", workerId, paths: contract.allowed_paths, checkIds: contract.required_check_ids, fingerprints: [fingerprint] })
   });
 }
-function timeoutContext(ctx, candidateId, probe = machineProbe(ctx)) {
+function timeoutContext(ctx, candidateId, probe2 = machineProbe(ctx)) {
   const rows = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId }).filter((r) => r.status === "TIMEOUT" || r.timedOut);
   if (rows.length === 0) return null;
   const base = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: null });
@@ -55516,12 +55097,12 @@ function timeoutContext(ctx, candidateId, probe = machineProbe(ctx)) {
       baselineMs: b && b.endedAt !== null ? b.endedAt - b.startedAt : null
     };
   });
-  return { checks, machine: probe };
+  return { checks, machine: probe2 };
 }
 function machineProbe(ctx) {
-  const probe = ctx.deps.schedulerProbe;
-  const load = probe ? void 0 : loadavg()[0];
-  return { cores: probe ? probe.availableParallelism() : availableParallelism2(), loadAvg1m: typeof load === "number" && Number.isFinite(load) && load > 0 ? Math.round(load * 100) / 100 : null, freeMemMb: Math.floor((probe ? probe.freemem() : freemem2()) / (1024 * 1024)) };
+  const probe2 = ctx.deps.schedulerProbe;
+  const load = probe2 ? void 0 : loadavg()[0];
+  return { cores: probe2 ? probe2.availableParallelism() : availableParallelism2(), loadAvg1m: typeof load === "number" && Number.isFinite(load) && load > 0 ? Math.round(load * 100) / 100 : null, freeMemMb: Math.floor((probe2 ? probe2.freemem() : freemem2()) / (1024 * 1024)) };
 }
 function describeTimeouts(t) {
   const parts = t.checks.map((c) => {
@@ -55581,8 +55162,8 @@ var init_diagnosing = __esm({
 });
 
 // src/controller/steps/reviewing.ts
-import { existsSync as existsSync41, readdirSync as readdirSync10, readFileSync as readFileSync28 } from "node:fs";
-import { join as join56 } from "node:path";
+import { existsSync as existsSync40, readdirSync as readdirSync10, readFileSync as readFileSync27 } from "node:fs";
+import { join as join53 } from "node:path";
 async function reviewingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -55819,8 +55400,8 @@ async function resolveAndDecide(ctx, cand) {
   }
   const repairRequested = state.reviews.some((r) => r.verdict === "REPAIR_REQUIRED");
   const blockRank = blockSeverityRank(ctx);
-  const open = resolution.dispositions.filter((d) => d.status === "accepted" || d.status === "claim_pending" || d.status === "open");
-  const toRepair = open.filter(
+  const open2 = resolution.dispositions.filter((d) => d.status === "accepted" || d.status === "claim_pending" || d.status === "open");
+  const toRepair = open2.filter(
     (d) => d.status === "accepted" || undecided.has(d.findingId) || (repairRequested || d.memberIds.some((id) => repaired.has(id))) && (d.blocking || severityRank(d.severity) <= blockRank)
   );
   if (toRepair.length > 0) {
@@ -55872,7 +55453,7 @@ async function resolveAndDecide(ctx, cand) {
     };
     if (!handledTriggerKeys(ctx).has(trigger.key)) return move2(ctx, "INQUISITION", trigger.summary, { data: { trigger } });
   }
-  return finishRun(ctx, "BLOCKED", `independent review does not clear tree ${cand.treeHash}: ${gate.reasons.join("; ") || "no approving review"}`, { outcome: { review_gate: gate.reasons, open_findings: openFindings(open) } });
+  return finishRun(ctx, "BLOCKED", `independent review does not clear tree ${cand.treeHash}: ${gate.reasons.join("; ") || "no approving review"}`, { outcome: { review_gate: gate.reasons, open_findings: openFindings(open2) } });
 }
 function reviewRepairs(ctx) {
   return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id", ctx.run.id, REVIEW_REPAIR_EVENT).map((r) => r.data_json ? JSON.parse(r.data_json) : null).filter((r) => r !== null && Array.isArray(r.findings));
@@ -56069,7 +55650,7 @@ async function routeToRepair(ctx, cand, toRepair, resolution, texts, waiting = {
     return hold.length > 0 ? { ...b, preserved_constraints: [...b.preserved_constraints, ...hold] } : b;
   });
   const stored = { attempt: next, source: "review", fingerprint: briefs[0].fingerprint, brief: briefs.length === 1 ? briefs[0] : { briefs }, refs: toRepair.flatMap((d) => d.memberIds) };
-  if (!existsSync41(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
+  if (!existsSync40(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
   const record = { attempt: next, tree_hash: cand.treeHash, candidate_id: cand.id, commit: cand.commitSha, findings: toRepair.map((d) => ({ finding_id: d.findingId, member_ids: d.memberIds, fingerprint: d.fingerprint, external_id: d.externalId })) };
   ctx.db.tx(() => {
     if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, REVIEW_REPAIR_EVENT, next)) return;
@@ -56134,21 +55715,21 @@ async function preparePacket(ctx, cand, reviewDir, provider) {
     questions: listQuestions(ctx.db, ctx.run.id, { status: "open" }).map((q) => q.question),
     provider
   });
-  atomicWrite(join56(reviewDir, "packet.md"), packet.text, 384);
-  atomicWriteJson(join56(reviewDir, "packet.json"), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
+  atomicWrite(join53(reviewDir, "packet.md"), packet.text, 384);
+  atomicWriteJson(join53(reviewDir, "packet.json"), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
 }
 function packetShaOf(reviewDir) {
   try {
-    return JSON.parse(readText(join56(reviewDir, "packet.json"))).sha256;
+    return JSON.parse(readText(join53(reviewDir, "packet.json"))).sha256;
   } catch {
     return "";
   }
 }
 function readText(p) {
-  return readFileSync28(p, "utf8");
+  return readFileSync27(p, "utf8");
 }
 function reviewerPrompt(ctx, cand, reviewDir, focus = "general") {
-  const text2 = readText(join56(reviewDir, "packet.md"));
+  const text2 = readText(join53(reviewDir, "packet.md"));
   const contract = assertContract(ctx);
   const task = [
     "Review the exact candidate in this read-only checkout against the contract and the bound evidence in the packet. Do not edit anything and do not ask questions.",
@@ -56168,10 +55749,10 @@ function reviewerPrompt(ctx, cand, reviewDir, focus = "general") {
   });
 }
 async function prepareReview(ctx, cand, provider) {
-  const reviewDir = join56(ctx.runDir, "reviews", String(cand.seq));
-  const checkout = join56(runWorktreeRoot(ctx), `review-${cand.seq}`);
-  if (!existsSync41(join56(reviewDir, "packet.md"))) await preparePacket(ctx, cand, reviewDir, provider);
-  if (!existsSync41(checkout) || readdirSync10(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
+  const reviewDir = join53(ctx.runDir, "reviews", String(cand.seq));
+  const checkout = join53(runWorktreeRoot(ctx), `review-${cand.seq}`);
+  if (!existsSync40(join53(reviewDir, "packet.md"))) await preparePacket(ctx, cand, reviewDir, provider);
+  if (!existsSync40(checkout) || readdirSync10(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
 var FOCUS_TEXT, REVIEW_REPAIR_EVENT, UNDECIDED;
@@ -56223,7 +55804,7 @@ var init_reviewing = __esm({
 });
 
 // src/controller/steps/delivering.ts
-import { join as join57 } from "node:path";
+import { join as join54 } from "node:path";
 async function deliveringStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -56271,7 +55852,7 @@ async function deliveringStep(ctx) {
   }
   const refused = await deliveryGateOrBlock(ctx, ev, review, result2.tree);
   if (refused) return refused;
-  atomicWriteJson(join57(ctx.runDir, DELIVERY_FILE), { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr ? { number: result2.pr.number, url: result2.pr.url, state: result2.pr.state, isDraft: result2.pr.isDraft } : null, pr_skipped: result2.prSkipped, warnings: result2.warnings, delivered_at: ctx.clock.now() });
+  atomicWriteJson(join54(ctx.runDir, DELIVERY_FILE), { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr ? { number: result2.pr.number, url: result2.pr.url, state: result2.pr.state, isDraft: result2.pr.isDraft } : null, pr_skipped: result2.prSkipped, warnings: result2.warnings, delivered_at: ctx.clock.now() });
   setCandidateStatus(ctx.db, cand.id, "DELIVERED");
   decide2(ctx, { id: `dec-${ctx.run.id}-delivered-${result2.commit}`, kind: "delivery.completed", summary: `delivered ${result2.commit.slice(0, 12)} (tree ${result2.tree.slice(0, 12)}) to ${result2.branch}${result2.pr ? `, PR #${result2.pr.number}` : ""}`, data: { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr?.number ?? null, pr_skipped: result2.prSkipped } });
   return move2(ctx, "AWAITING_CI", `delivered ${result2.commit.slice(0, 12)} to ${result2.branch}`, { patch: { branch: result2.branch }, data: { commit: result2.commit, pr: result2.pr?.number ?? null } });
@@ -56341,7 +55922,7 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
     deploys: result2.deploys.map((x) => ({ environment: x.environment, sha: x.sha, branch: x.branch })),
     deploy_skipped: result2.deploySkipped
   };
-  atomicWriteJson(join57(ctx.runDir, RELEASE_FILE), { ...summary, released_at: ctx.clock.now() });
+  atomicWriteJson(join54(ctx.runDir, RELEASE_FILE), { ...summary, released_at: ctx.clock.now() });
   const deployed = summary.deploys.length > 0 ? `deployed to ${summary.deploys.map((x) => x.environment).join(", ")}${summary.deploy_skipped ? ` (not: ${summary.deploy_skipped})` : ""}` : `no deploy (${summary.deploy_skipped})`;
   decide2(ctx, { id: `dec-${ctx.run.id}-released-${d.commit}`, kind: "release.completed", summary: `release of ${d.commit.slice(0, 12)}: ${summary.merge ? `merged PR #${summary.merge.pr}` : `no merge (${summary.merge_skipped})`}; ${deployed}`, data: summary });
   return complete(ctx, d.tree, { ...outcome, release: summary }, notes);
@@ -56402,7 +55983,7 @@ async function githubClient(ctx) {
   if (config.delivery.provider === "fake") {
     const url = await resolveRemoteUrl(ctx.run.repoRoot, remote).catch(() => null);
     const local = url !== null && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !/^[^/]+@[^:]+:/.test(url) ? url : void 0;
-    return new FakeGitHub({ statePath: join57(ctx.run.repoRoot, ".orbit", "fake-github.json"), ...local ? { remoteGitDir: local } : {} });
+    return new FakeGitHub({ statePath: join54(ctx.run.repoRoot, ".orbit", "fake-github.json"), ...local ? { remoteGitDir: local } : {} });
   }
   return githubClientFor(ctx.run.repoRoot, remote, ctx.deps.hostEnv ?? process.env);
 }
@@ -56441,12 +56022,12 @@ var init_delivering = __esm({
 });
 
 // src/controller/steps/awaiting-ci.ts
-import { existsSync as existsSync42 } from "node:fs";
-import { join as join58 } from "node:path";
+import { existsSync as existsSync41 } from "node:fs";
+import { join as join55 } from "node:path";
 async function awaitingCiStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
-  const d = readJsonIfExists(join58(ctx.runDir, DELIVERY_FILE));
+  const d = readJsonIfExists(join55(ctx.runDir, DELIVERY_FILE));
   if (!d || !ctx.ledger) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is AWAITING_CI without a delivery record`);
   const config = ctx.snapshot.config;
   const client = await githubClient(ctx);
@@ -56528,24 +56109,24 @@ async function handleMovedBase(ctx, d, base) {
   const decision = authorize(ctx.snapshot, { kind: "action", action: "rebase_task_branch" });
   const conflict = m.conflicts.length > 0;
   const short2 = (sha) => sha.slice(0, 12);
-  const where2 = `${m.baseBranch} moved (${short2(m.from)} to ${short2(m.to)})`;
+  const where = `${m.baseBranch} moved (${short2(m.from)} to ${short2(m.to)})`;
   const paths = m.conflicts.slice(0, 10).join(", ");
   if (!decision.allowed) {
     if (!conflict) return null;
-    return blockOnConflict(ctx, d, base, m, `the base branch ${where2} and the delivered commit ${short2(d.commit)} no longer merges cleanly: conflicts in ${m.conflicts[0] === "(unknown paths)" ? "unknown paths" : paths}. Rebasing the task branch is not authorized (actions.rebase_task_branch: ${decision.reason}); rebase it yourself or close the pull request, then start a new run`);
+    return blockOnConflict(ctx, d, base, m, `the base branch ${where} and the delivered commit ${short2(d.commit)} no longer merges cleanly: conflicts in ${m.conflicts[0] === "(unknown paths)" ? "unknown paths" : paths}. Rebasing the task branch is not authorized (actions.rebase_task_branch: ${decision.reason}); rebase it yourself or close the pull request, then start a new run`);
   }
   if (conflict) {
-    return blockOnConflict(ctx, d, base, m, `the base branch ${where2} and rebasing the task branch onto it conflicts in ${m.conflicts[0] === "(unknown paths)" ? "unknown paths" : paths}; resolve the conflict by hand or close the pull request, then start a new run`);
+    return blockOnConflict(ctx, d, base, m, `the base branch ${where} and rebasing the task branch onto it conflicts in ${m.conflicts[0] === "(unknown paths)" ? "unknown paths" : paths}; resolve the conflict by hand or close the pull request, then start a new run`);
   }
   const done = ctx.db.all(`SELECT json_extract(data_json, '$.to') AS "to" FROM events WHERE run_id = ? AND type = ?`, ctx.run.id, REBASE_EVENT).map((r) => r.to);
   if (done.length >= MAX_REBASES && !done.includes(m.to)) {
-    return blockOnConflict(ctx, d, base, m, `the base branch ${where2} and this run already rebased onto a moved base ${done.length} times; it will not rebase again. Merge or close the pull request, or start a new run`);
+    return blockOnConflict(ctx, d, base, m, `the base branch ${where} and this run already rebased onto a moved base ${done.length} times; it will not rebase again. Merge or close the pull request, or start a new run`);
   }
   const cand = ctx.candidate;
   if (!cand) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is AWAITING_CI without a candidate`);
   const rebased = await rebaseCandidate(ctx, cand, m.to);
   if (rebased.kind === "conflict") {
-    return blockOnConflict(ctx, d, base, { ...m, conflicts: rebased.files }, `the base branch ${where2} and rebasing the task branch onto it conflicts in ${rebased.files.join(", ") || "unknown paths"}; resolve the conflict by hand or close the pull request, then start a new run`);
+    return blockOnConflict(ctx, d, base, { ...m, conflicts: rebased.files }, `the base branch ${where} and rebasing the task branch onto it conflicts in ${rebased.files.join(", ") || "unknown paths"}; resolve the conflict by hand or close the pull request, then start a new run`);
   }
   const next = rebased.candidate;
   const reason = `rebased candidate ${cand.seq} onto ${m.baseBranch} ${short2(m.to)}: new candidate ${next.seq} (tree ${next.treeHash})`;
@@ -56566,7 +56147,7 @@ async function blockOnConflict(ctx, d, base, m, reason) {
   return finishRun(ctx, "BLOCKED", reason, { outcome: { ...base, base_conflict: { baseBranch: m.baseBranch, from: m.from, to: m.to, files } } });
 }
 async function rebaseCandidate(ctx, cand, tip) {
-  const checkoutDir = join58(runWorktreeRoot(ctx), `rebase-${tip.slice(0, 12)}`);
+  const checkoutDir = join55(runWorktreeRoot(ctx), `rebase-${tip.slice(0, 12)}`);
   const env = { ...gitEnv4({}, ctx.deps.hostEnv ?? process.env), GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name, GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name, GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email };
   await cleanupCandidateCheckout(ctx.run.repoRoot, checkoutDir).catch(() => {
   });
@@ -56582,7 +56163,7 @@ async function rebaseCandidate(ctx, cand, tip) {
     }
     const attempt = currentAttempt(ctx);
     const next = await snapshotCandidate({ db: ctx.db, clock: ctx.clock, repoRoot: ctx.run.repoRoot, worktree: checkoutDir, runId: ctx.run.id, baseRev: tip, attempt, workerId: null });
-    if (ctx.run.worktreePath && existsSync42(ctx.run.worktreePath)) {
+    if (ctx.run.worktreePath && existsSync41(ctx.run.worktreePath)) {
       try {
         await git2(ctx.run.worktreePath, ["reset", "--hard", next.commitSha]);
       } catch (err) {
@@ -56622,7 +56203,7 @@ var init_awaiting_ci = __esm({
 });
 
 // src/controller/steps/inquisition.ts
-import { join as join59 } from "node:path";
+import { join as join56 } from "node:path";
 async function inquisitionStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -56637,7 +56218,7 @@ async function inquisitionStep(ctx) {
   const cwd = ctx.run.worktreePath;
   const env = ctx.deps.hostEnv ?? process.env;
   const home2 = homeOf2(ctx.deps);
-  const workerDir = join59(ctx.runDir, "workers");
+  const workerDir = join56(ctx.runDir, "workers");
   const supported = ctx.candidate ? currentEvidenceReport(ctx.db, ctx.run.id, ctx.candidate.id)?.report.acceptance_evidence.filter((a) => a.status === "supported").map((a) => a.criterion_id) ?? [] : [];
   const result2 = await runInquisition({
     trigger,
@@ -56655,7 +56236,7 @@ async function inquisitionStep(ctx) {
         route: { provider: route2.provider, model: route2.model, effort: route2.effort },
         workerDir,
         cwd,
-        sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: ctx.snapshot, provider: route2.provider.startsWith("codex") ? "codex" : "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join59(home2, ".claude"), homeDir: home2, policyPath: ctx.run.policyPath, readablePaths: [ctx.deps.orbitInstallDir], env }),
+        sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: ctx.snapshot, provider: route2.provider.startsWith("codex") ? "codex" : "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join56(home2, ".claude"), homeDir: home2, policyPath: ctx.run.policyPath, readablePaths: [ctx.deps.orbitInstallDir], env }),
         policyPath: ctx.run.policyPath,
         systemPrompt: systemPromptFor(ctx, "inquisitor"),
         maxTurns: ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session,
@@ -56666,7 +56247,7 @@ async function inquisitionStep(ctx) {
     signal: ctx.signal
   });
   const patch = hashObject(result2.contract) !== hashObject(contract) ? { contractJson: JSON.stringify(result2.contract), contractHash: hashObject(result2.contract) } : void 0;
-  if (patch) atomicWriteJson(join59(ctx.runDir, "contract.json"), result2.contract);
+  if (patch) atomicWriteJson(join56(ctx.runDir, "contract.json"), result2.contract);
   const after = await safePoint(ctx);
   if (after) return after;
   if (result2.disposition === "ask" || result2.disposition === "block") {
@@ -56850,14 +56431,14 @@ var init_difficulty = __esm({
 });
 
 // src/controller/steps/planning.ts
-import { join as join60 } from "node:path";
+import { join as join57 } from "node:path";
 async function planningStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
   const exceptions = applyBaselineExceptionAnswers({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { snapshot: ctx.snapshot });
   const contract = exceptions.contract ?? assertContract(ctx);
   const plan = storedPlan(ctx);
-  const baseline = readJsonIfExists(join60(ctx.runDir, BASELINE_FILE2));
+  const baseline = readJsonIfExists(join57(ctx.runDir, BASELINE_FILE));
   if (plan) {
     decide2(ctx, {
       id: `dec-${ctx.run.id}-proof-map`,
@@ -57015,7 +56596,7 @@ var init_steps = __esm({
     init_context2();
     init_states();
     init_run_store();
-    init_report2();
+    init_report();
     init_common();
     init_awaiting_ci();
     init_contracting();
@@ -57049,9 +56630,9 @@ var init_steps = __esm({
 });
 
 // src/storage/retention.ts
-import { existsSync as existsSync43, lstatSync as lstatSync7, realpathSync as realpathSync17, rmSync as rmSync15 } from "node:fs";
+import { existsSync as existsSync42, lstatSync as lstatSync7, realpathSync as realpathSync17, rmSync as rmSync15 } from "node:fs";
 import { homedir as homedir11 } from "node:os";
-import { dirname as dirname26, join as join61, resolve as resolve14 } from "node:path";
+import { dirname as dirname25, join as join58, resolve as resolve14 } from "node:path";
 function repoKeyFor(repoRoot) {
   let real = repoRoot;
   try {
@@ -57065,8 +56646,8 @@ async function pruneExpiredRuns(db, opts) {
   const now = opts.clock.now();
   const cutoff = now - opts.keepDays * DAY_MS;
   const repoRoot = realOrResolved(opts.repoRoot);
-  const runsRoot = join61(repoRoot, ".orbit", "runs");
-  const worktreesRoot = join61(opts.orbitHome ?? process.env.ORBIT_HOME ?? join61(homedir11(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
+  const runsRoot = join58(repoRoot, ".orbit", "runs");
+  const worktreesRoot = join58(opts.orbitHome ?? process.env.ORBIT_HOME ?? join58(homedir11(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
   const placeholders = PRUNABLE_STATES.map(() => "?").join(", ");
   const rows = db.all(
     `SELECT r.id, r.state, r.policy_path, r.ended_at, r.updated_at FROM runs r
@@ -57089,14 +56670,14 @@ async function pruneExpiredRuns(db, opts) {
       result2.skipped.push({ runId: row.id, reason: "a controller still holds its lease" });
       continue;
     }
-    const runDir2 = join61(runsRoot, row.id);
-    const recorded = dirname26(row.policy_path);
-    const literalRunDir = join61(resolve14(opts.repoRoot), ".orbit", "runs", row.id);
+    const runDir2 = join58(runsRoot, row.id);
+    const recorded = dirname25(row.policy_path);
+    const literalRunDir = join58(resolve14(opts.repoRoot), ".orbit", "runs", row.id);
     if (![runDir2, literalRunDir].includes(resolve14(recorded)) && realOrResolved(recorded) !== runDir2) {
       result2.skipped.push({ runId: row.id, reason: `its recorded run directory ${recorded} is not ${runDir2}` });
       continue;
     }
-    const targets = [runDir2, join61(worktreesRoot, row.id)].filter((p) => isRealDirectory(p));
+    const targets = [runDir2, join58(worktreesRoot, row.id)].filter((p) => isRealDirectory(p));
     if (!opts.dryRun) {
       for (const t of targets) rmSync15(t, { recursive: true, force: true });
       db.tx(() => appendEvent(db, row.id, ARTIFACTS_PRUNED_EVENT, "gc", { keep_runs_days: opts.keepDays, removed: targets }, now));
@@ -57104,7 +56685,7 @@ async function pruneExpiredRuns(db, opts) {
     }
     result2.pruned.push({ runId: row.id, state: row.state, endedAt: row.ended_at ?? row.updated_at, removed: targets });
   }
-  if (removedWorktree && existsSync43(join61(repoRoot, ".git"))) {
+  if (removedWorktree && existsSync42(join58(repoRoot, ".git"))) {
     await execCapture(["git", "worktree", "prune"], { cwd: repoRoot, timeoutMs: 3e4 }).catch(() => void 0);
   }
   return result2;
@@ -57137,68 +56718,18 @@ var init_retention = __esm({
   }
 });
 
-// src/controller/resume.ts
-function resumeTarget(db, run) {
-  const prior = run.resumeState;
-  if (prior && canTransition("BLOCKED", prior)) {
-    if ((prior === "REVIEWING" || prior === "DELIVERING") && !liveEvidenceForLatestCandidate(db, run.id)) return "VERIFYING";
-    return prior;
-  }
-  if (db.get("SELECT 1 AS x FROM candidates WHERE run_id = ? LIMIT 1", run.id)) return "VERIFYING";
-  return run.contractJson ? "PLANNING" : "PREFLIGHT";
-}
-function liveEvidenceForLatestCandidate(db, runId) {
-  const cand = db.get("SELECT id FROM candidates WHERE run_id = ? ORDER BY seq DESC LIMIT 1", runId);
-  if (!cand) return false;
-  return db.get("SELECT 1 AS x FROM evidence_reports WHERE run_id = ? AND candidate_id = ? AND invalidated_at IS NULL LIMIT 1", runId, cand.id) !== void 0;
-}
-function frozenPolicySetting(run) {
-  try {
-    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
-    if (!o?.frozen_policy) return null;
-    return typeof o.frozen_policy.setting === "string" ? o.frozen_policy.setting : "a policy setting";
-  } catch {
-    return null;
-  }
-}
-function resumeAnsweredRun(db, clock, runId, ownerId, actor, reason) {
-  const run = getRun(db, runId);
-  if (run.state !== "BLOCKED" || run.cancelRequested || frozenPolicySetting(run) !== null) return null;
-  if (listQuestions(db, run.id, { status: "open" }).some((q) => q.material)) return null;
-  if (!acquireLease(db, run.id, ownerId, 6e4, clock)) return null;
-  try {
-    const target = resumeTarget(db, run);
-    db.tx(() => {
-      transition(db, { runId: run.id, to: target, ownerId, reason, actor, expectedFrom: "BLOCKED" }, clock);
-      appendEvent(db, run.id, "run.resumed", actor, { from: "BLOCKED", to: target, forced: false, by: "remote-answer" }, clock.now());
-    });
-    return target;
-  } finally {
-    releaseLease(db, run.id, ownerId);
-  }
-}
-var init_resume = __esm({
-  "src/controller/resume.ts"() {
-    "use strict";
-    init_store4();
-    init_events();
-    init_run_store();
-    init_states();
-  }
-});
-
 // src/controller/loop.ts
 var loop_exports = {};
 __export(loop_exports, {
   Controller: () => Controller
 });
-import { existsSync as existsSync44 } from "node:fs";
+import { existsSync as existsSync43 } from "node:fs";
 import { hostname as hostname4 } from "node:os";
-import { dirname as dirname27, join as join62 } from "node:path";
+import { dirname as dirname26, join as join59 } from "node:path";
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
-function messageOf3(err) {
+function messageOf2(err) {
   return redact(err instanceof Error ? err.message : String(err)).slice(0, 500);
 }
 var DAY_MS2, NON_TERMINAL, Controller;
@@ -57224,13 +56755,8 @@ var init_loop = __esm({
     init_run_store();
     init_states();
     init_steps();
-    init_report2();
+    init_report();
     init_retention();
-    init_store4();
-    init_config();
-    init_notify();
-    init_remote_answers();
-    init_resume();
     DAY_MS2 = 24 * 60 * 6e4;
     NON_TERMINAL = RUN_STATES.filter((s) => !isTerminal(s));
     Controller = class {
@@ -57251,9 +56777,6 @@ var init_loop = __esm({
       signalHandler = null;
       watching = false;
       pruning = false;
-      polling = false;
-      /** When each run's comments were last read for remote answers (service mode). */
-      remotePolledAt = /* @__PURE__ */ new Map();
       lastReconcile = null;
       constructor(opts) {
         this.opts = opts;
@@ -57281,8 +56804,6 @@ var init_loop = __esm({
         this.timers.push(setInterval(() => this.renewAll(), this.opts.leaseRenewMs ?? Math.max(250, Math.floor(this.ttl / 4))));
         const watchdogMs = this.opts.watchdogMs ?? 3e4;
         if (this.opts.mode === "service" && watchdogMs > 0) this.timers.push(setInterval(() => void this.watchdog(), watchdogMs));
-        const remoteMs = this.opts.remoteAnswersMs ?? 3e4;
-        if (this.opts.mode === "service" && remoteMs > 0) this.timers.push(setInterval(() => void this.remoteAnswers(), remoteMs));
         for (const t of this.timers) t.unref();
         await this.reconcile(this.opts.mode === "foreground" ? [this.opts.runId] : void 0);
         this.ensureFinalReports();
@@ -57325,7 +56846,7 @@ var init_loop = __esm({
             releaseLease(db, runId, this.ownerId);
             db.tx(() => appendEvent(db, runId, "lease.released", this.ownerId, { reason }, clock.now()));
           } catch (err) {
-            this.log.warn("lease release failed", { run_id: runId, error: messageOf3(err) });
+            this.log.warn("lease release failed", { run_id: runId, error: messageOf2(err) });
           }
         }
         this.owned.clear();
@@ -57333,7 +56854,7 @@ var init_loop = __esm({
           try {
             markControllerStopped(db, this.ownerId, reason, clock);
           } catch (err) {
-            this.log.warn("could not record the stop", { error: messageOf3(err) });
+            this.log.warn("could not record the stop", { error: messageOf2(err) });
           }
         }
         this.log.info("controller stopped", { reason });
@@ -57391,16 +56912,15 @@ var init_loop = __esm({
             }
             const result2 = await step(this.deps, runId, ac.signal);
             report2.steps.push({ runId, state, result: result2 });
-            await this.announceQuestions(runId);
             if (result2.done && this.owned.get(runId) === slot) {
               const run = getRun(this.deps.db, runId);
               if (isTerminal(run.state) || run.paused) this.drop(runId, isTerminal(run.state) ? `run ${run.state}` : "run paused");
             }
           } catch (err) {
-            report2.steps.push({ runId, state, result: { error: messageOf3(err) } });
+            report2.steps.push({ runId, state, result: { error: messageOf2(err) } });
             if (isOrbitError(err, "LEASE_LOST")) {
               if (this.owned.get(runId) === slot) this.forget(runId, "lease lost");
-            } else if (!ac.signal.aborted) this.log.error("step crashed", { run_id: runId, state, error: messageOf3(err) });
+            } else if (!ac.signal.aborted) this.log.error("step crashed", { run_id: runId, state, error: messageOf2(err) });
           } finally {
             clearTimeout(timer);
             if (wedge) clearTimeout(wedge);
@@ -57452,7 +56972,7 @@ var init_loop = __esm({
           });
           for (const e of this.lastReconcile.errors) this.log.warn("reconcile error", { run_id: e.runId, error: e.message });
         } catch (err) {
-          this.log.error("reconcile failed", { error: messageOf3(err) });
+          this.log.error("reconcile failed", { error: messageOf2(err) });
           this.lastReconcile = null;
         }
         const reconciled = new Set((this.lastReconcile?.runs ?? []).filter((r) => r.skipped === null).map((r) => r.runId));
@@ -57499,11 +57019,11 @@ var init_loop = __esm({
               try {
                 await reattachCheck(runner, c.checkRunId);
               } catch (err) {
-                if (!isOrbitError(err, "CANCELLED")) this.log.warn("could not collect a finished check", { run_id: r.runId, check_run: c.checkRunId, error: messageOf3(err) });
+                if (!isOrbitError(err, "CANCELLED")) this.log.warn("could not collect a finished check", { run_id: r.runId, check_run: c.checkRunId, error: messageOf2(err) });
               }
             }
           } catch (err) {
-            this.log.warn("could not collect finished checks", { run_id: r.runId, error: messageOf3(err) });
+            this.log.warn("could not collect finished checks", { run_id: r.runId, error: messageOf2(err) });
           }
         }
       }
@@ -57530,7 +57050,7 @@ var init_loop = __esm({
           }
           if (ended) this.ensureFinalReports();
         } catch (err) {
-          this.log.warn("watchdog failed", { error: messageOf3(err) });
+          this.log.warn("watchdog failed", { error: messageOf2(err) });
         } finally {
           this.watching = false;
         }
@@ -57564,65 +57084,6 @@ var init_loop = __esm({
         await finalizeRun(ctx);
         return true;
       }
-      /** Questions a step raised are announced once (ADR 0008); a notification never fails the step. */
-      async announceQuestions(runId) {
-        const { db, clock } = this.deps;
-        try {
-          if (listQuestions(db, runId, { status: "open" }).length === 0) return;
-          const run = getRun(db, runId);
-          let config = null;
-          try {
-            config = verifySnapshot(run.policyPath, run.policyHash).config;
-          } catch {
-            config = null;
-          }
-          await notifyOpenQuestions({ db, clock, run, runDir: dirname27(run.policyPath), config, deps: resolveNotifyDeps(this.deps), actor: this.ownerId });
-        } catch (err) {
-          this.log.warn("question notification failed", { run_id: runId, error: messageOf3(err) });
-        }
-      }
-      /**
-       * One remote-answer pass (service mode, ADR 0008): the comments of every BLOCKED run with open questions whose
-       * policy turns remote answers on, read at most once per its poll interval; a run left with no open material
-       * question is resumed through the same rules as `orbit resume`, and this controller then picks it up.
-       */
-      async remoteAnswers() {
-        if (this.polling || this.stopped) return;
-        this.polling = true;
-        const { db, clock } = this.deps;
-        try {
-          for (const run of listRuns(db, { states: ["BLOCKED"], limit: 200 })) {
-            if (this.stopped) break;
-            if (run.cancelRequested || listQuestions(db, run.id, { status: "open" }).length === 0) continue;
-            let config;
-            try {
-              config = verifySnapshot(run.policyPath, run.policyHash).config;
-            } catch {
-              continue;
-            }
-            const n2 = notificationsPolicy(config).remote_answers;
-            if (!n2.enabled) continue;
-            const last = this.remotePolledAt.get(run.id);
-            if (last !== void 0 && clock.now() - last < n2.poll_seconds * 1e3) continue;
-            this.remotePolledAt.set(run.id, clock.now());
-            try {
-              const notify = resolveNotifyDeps(this.deps);
-              const client = await notify.threads(run.repoRoot, config);
-              const rep = await pollRemoteAnswers({ db, clock, run, runDir: dirname27(run.policyPath), config, client, actor: this.ownerId });
-              for (const e of rep.errors) this.log.warn("remote answers", { run_id: run.id, error: e });
-              if (rep.accepted.length === 0) continue;
-              const to = resumeAnsweredRun(db, clock, run.id, this.ownerId, this.ownerId, `resumed after a remote answer by ${rep.accepted.map((a) => a.author).join(", ")}`);
-              if (to) this.log.info("run resumed by a remote answer", { run_id: run.id, to });
-            } catch (err) {
-              this.note(run.id, "remote.poll-failed", { error: messageOf3(err) });
-            }
-          }
-        } catch (err) {
-          this.log.warn("remote answers pass failed", { error: messageOf3(err) });
-        } finally {
-          this.polling = false;
-        }
-      }
       ledgerFor(runId) {
         const { db, clock } = this.deps;
         if (!db.get("SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1", runId)) return null;
@@ -57640,7 +57101,7 @@ var init_loop = __esm({
           try {
             ok = renewLease(db, runId, this.ownerId, this.ttl, clock);
           } catch (err) {
-            this.log.warn("lease renewal failed", { run_id: runId, error: messageOf3(err) });
+            this.log.warn("lease renewal failed", { run_id: runId, error: messageOf2(err) });
           }
           if (!ok) {
             slot.abort?.abort(new Error("lease lost"));
@@ -57652,7 +57113,7 @@ var init_loop = __esm({
         try {
           if (!heartbeatController(this.deps.db, this.ownerId, this.deps.clock)) void this.stop("this controller was marked stopped by another process");
         } catch (err) {
-          this.log.warn("heartbeat failed", { error: messageOf3(err) });
+          this.log.warn("heartbeat failed", { error: messageOf2(err) });
         }
       }
       drop(runId, why) {
@@ -57685,8 +57146,8 @@ var init_loop = __esm({
         for (const row of db.all("SELECT id FROM runs WHERE ended_at IS NOT NULL AND ended_at >= ?", since)) {
           try {
             const run = getRun(db, row.id);
-            const runDir2 = dirname27(run.policyPath);
-            if (existsSync44(join62(runDir2, "final.md"))) continue;
+            const runDir2 = dirname26(run.policyPath);
+            if (existsSync43(join59(runDir2, "final.md"))) continue;
             let snapshot2 = null;
             try {
               snapshot2 = verifySnapshot(run.policyPath, run.policyHash);
@@ -57695,7 +57156,7 @@ var init_loop = __esm({
             }
             writeFinalReport(db, run.id, { runDir: runDir2, clock, snapshot: snapshot2 });
           } catch (err) {
-            this.log.warn("final report repair failed", { run_id: row.id, error: messageOf3(err) });
+            this.log.warn("final report repair failed", { run_id: row.id, error: messageOf2(err) });
           }
         }
       }
@@ -57718,7 +57179,7 @@ var init_loop = __esm({
               out.push(r);
               if (r.pruned.length > 0 || r.skipped.length > 0) this.log.info("retention pass", { repo: repoRoot, keep_days: keepDays, pruned: r.pruned.map((p) => p.runId), skipped: r.skipped.length });
             } catch (err) {
-              this.log.warn("retention pass failed", { repo: repoRoot, error: messageOf3(err) });
+              this.log.warn("retention pass failed", { repo: repoRoot, error: messageOf2(err) });
             }
           }
         } finally {
@@ -57747,9 +57208,9 @@ var init_loop = __esm({
 });
 
 // src/controller/service.ts
-import { chmodSync as chmodSync7, existsSync as existsSync45, lstatSync as lstatSync8, mkdirSync as mkdirSync21, readFileSync as readFileSync29, readdirSync as readdirSync11, rmSync as rmSync16, rmdirSync, statSync as statSync14 } from "node:fs";
+import { chmodSync as chmodSync7, existsSync as existsSync44, lstatSync as lstatSync8, mkdirSync as mkdirSync21, readFileSync as readFileSync28, readdirSync as readdirSync11, rmSync as rmSync16, rmdirSync, statSync as statSync14 } from "node:fs";
 import { hostname as hostname5 } from "node:os";
-import { dirname as dirname28, isAbsolute as isAbsolute18, join as join63 } from "node:path";
+import { dirname as dirname27, isAbsolute as isAbsolute19, join as join60 } from "node:path";
 function serviceLabel(repoRoot) {
   return `${SERVICE_LABEL_PREFIX}.${repoKey(repoRoot)}`;
 }
@@ -57762,7 +57223,7 @@ function serviceSpec(input) {
     ...input.version !== void 0 ? { version: input.version } : {},
     args: ["service", "run", "--repo", input.repoRoot],
     workingDirectory: input.repoRoot,
-    logDir: join63(input.orbitHome, "logs"),
+    logDir: join60(input.orbitHome, "logs"),
     env: {
       PATH: input.path ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
       NODE_OPTIONS: "--disable-warning=ExperimentalWarning",
@@ -57773,14 +57234,14 @@ function serviceSpec(input) {
   };
 }
 function launcherPath(orbitHome) {
-  return join63(orbitHome, "bin", "orbit");
+  return join60(orbitHome, "bin", "orbit");
 }
 function shQuote(s) {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 function renderLauncher(target) {
   for (const v of [target.node, target.entry]) {
-    if (!isAbsolute18(v) || /[\n\r\0]/.test(v)) throw new OrbitError("CONFIG_INVALID", `the launcher needs absolute paths without line breaks, got ${JSON.stringify(v)}`);
+    if (!isAbsolute19(v) || /[\n\r\0]/.test(v)) throw new OrbitError("CONFIG_INVALID", `the launcher needs absolute paths without line breaks, got ${JSON.stringify(v)}`);
   }
   return [
     "#!/bin/sh",
@@ -57796,7 +57257,7 @@ function renderLauncher(target) {
 function readLauncher(path) {
   let text2;
   try {
-    text2 = readFileSync29(path, "utf8");
+    text2 = readFileSync28(path, "utf8");
   } catch {
     return null;
   }
@@ -57812,7 +57273,7 @@ function secureLauncherDir(orbitHome) {
   const home2 = statSync14(orbitHome);
   if (uid !== void 0 && home2.uid !== uid) throw new OrbitError("CONFIG_INVALID", `${orbitHome} is not owned by this user; refusing to put the service launcher in it`, { path: orbitHome });
   if ((home2.mode & 18) !== 0) chmodSync7(orbitHome, home2.mode & 493 & ~18);
-  const bin = join63(orbitHome, "bin");
+  const bin = join60(orbitHome, "bin");
   mkdirSync21(bin, { recursive: true, mode: 448 });
   const st = lstatSync8(bin);
   if (st.isSymbolicLink() || !st.isDirectory()) throw new OrbitError("CONFIG_INVALID", `${bin} must be a real directory, not a link or a file; refusing to put the service launcher in it`, { path: bin });
@@ -57836,7 +57297,7 @@ function newerVersion(a, b) {
   return false;
 }
 function sameInstallation(a, b) {
-  return dirname28(dirname28(dirname28(a))) === dirname28(dirname28(dirname28(b)));
+  return dirname27(dirname27(dirname27(a))) === dirname27(dirname27(dirname27(b)));
 }
 function refreshLauncher(input) {
   const path = launcherPath(input.orbitHome);
@@ -57848,7 +57309,7 @@ function refreshLauncher(input) {
   }
   const current = st.isFile() ? readLauncher(path) : null;
   if (!current) return "foreign";
-  if (!input.entry.endsWith(".mjs") || !isAbsolute18(input.entry) || !existsSync45(input.entry) || !isAbsolute18(input.nodePath) || !existsSync45(input.nodePath)) return "skipped";
+  if (!input.entry.endsWith(".mjs") || !isAbsolute19(input.entry) || !existsSync44(input.entry) || !isAbsolute19(input.nodePath) || !existsSync44(input.nodePath)) return "skipped";
   const ours = current.entry === input.entry || sameInstallation(current.entry, input.entry) || input.version !== void 0 && current.version !== void 0 && newerVersion(input.version, current.version);
   if (!ours) return "other-install";
   const version = input.version ?? current.version;
@@ -57858,7 +57319,7 @@ function refreshLauncher(input) {
   return "updated";
 }
 function logPaths(spec) {
-  return { out: join63(spec.logDir, `${spec.label}.out.log`), err: join63(spec.logDir, `${spec.label}.err.log`) };
+  return { out: join60(spec.logDir, `${spec.label}.out.log`), err: join60(spec.logDir, `${spec.label}.err.log`) };
 }
 function xml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -57899,7 +57360,7 @@ function renderLaunchdPlist(spec) {
   ].join("\n");
 }
 function launchdPlistPath(homeDir, label) {
-  return join63(homeDir, "Library", "LaunchAgents", `${label}.plist`);
+  return join60(homeDir, "Library", "LaunchAgents", `${label}.plist`);
 }
 function launchctlCommands(label, uid, plistPath) {
   const domain = `gui/${uid}`;
@@ -57940,7 +57401,7 @@ function renderSystemdUnit(spec) {
   ].join("\n");
 }
 function systemdUnitPath(homeDir, label) {
-  return join63(homeDir, ".config", "systemd", "user", `${label}.service`);
+  return join60(homeDir, ".config", "systemd", "user", `${label}.service`);
 }
 function systemctlCommands(label) {
   const unit = `${label}.service`;
@@ -57965,10 +57426,10 @@ async function installService(spec, opts) {
   const run = opts.run ?? defaultRunner;
   mkdirSync21(spec.logDir, { recursive: true, mode: 448 });
   if (opts.platform !== "darwin" && opts.platform !== "linux") return unsupported(opts.platform);
-  writeLauncher(dirname28(dirname28(spec.launcher)), { node: spec.nodePath, entry: spec.entry, ...spec.version !== void 0 ? { version: spec.version } : {} });
+  writeLauncher(dirname27(dirname27(spec.launcher)), { node: spec.nodePath, entry: spec.entry, ...spec.version !== void 0 ? { version: spec.version } : {} });
   if (opts.platform === "darwin") {
     const plist = launchdPlistPath(opts.homeDir, spec.label);
-    mkdirSync21(join63(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
+    mkdirSync21(join60(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
     atomicWrite(plist, renderLaunchdPlist(spec), 420);
     const cmd = launchctlCommands(spec.label, opts.uid, plist);
     await must(run, cmd.bootout, [0, 3]);
@@ -57978,7 +57439,7 @@ async function installService(spec, opts) {
   }
   if (opts.platform === "linux") {
     const unit = systemdUnitPath(opts.homeDir, spec.label);
-    mkdirSync21(join63(opts.homeDir, ".config", "systemd", "user"), { recursive: true });
+    mkdirSync21(join60(opts.homeDir, ".config", "systemd", "user"), { recursive: true });
     atomicWrite(unit, renderSystemdUnit(spec), 420);
     const cmd = systemctlCommands(spec.label);
     await must(run, cmd.daemonReload, [0]);
@@ -57998,7 +57459,7 @@ async function uninstallService(label, opts) {
   if (opts.platform === "linux") {
     const unit = systemdUnitPath(opts.homeDir, label);
     const cmd = systemctlCommands(label);
-    if (existsSync45(unit)) await run(cmd.disable);
+    if (existsSync44(unit)) await run(cmd.disable);
     rmSync16(unit, { force: true });
     await must(run, cmd.daemonReload, [0]);
     return withLauncherCleanup(await waitUntilGone(label, opts), opts);
@@ -58006,7 +57467,7 @@ async function uninstallService(label, opts) {
   return unsupported(opts.platform);
 }
 function installedDefinitions(opts) {
-  const dir = opts.platform === "darwin" ? join63(opts.homeDir, "Library", "LaunchAgents") : join63(opts.homeDir, ".config", "systemd", "user");
+  const dir = opts.platform === "darwin" ? join60(opts.homeDir, "Library", "LaunchAgents") : join60(opts.homeDir, ".config", "systemd", "user");
   try {
     return readdirSync11(dir).filter((f) => f.startsWith(`${SERVICE_LABEL_PREFIX}.`));
   } catch {
@@ -58019,7 +57480,7 @@ function withLauncherCleanup(status2, opts) {
   if (readLauncher(path) === null) return status2;
   rmSync16(path, { force: true });
   try {
-    rmdirSync(dirname28(path));
+    rmdirSync(dirname27(path));
   } catch {
   }
   return { ...status2, launcherRemoved: true };
@@ -58054,14 +57515,14 @@ async function serviceStatus(label, opts) {
     const path = launchdPlistPath(opts.homeDir, label);
     const r = await run(launchctlCommands(label, opts.uid, path).print);
     const loaded = r.exitCode === 0 ? true : r.exitCode === 113 ? false : null;
-    return { label, platform: opts.platform, definitionPath: path, installed: existsSync45(path), loaded, detail: loaded === null ? `launchctl print exited ${r.exitCode ?? "by signal"}` : loaded ? "loaded" : "not loaded" };
+    return { label, platform: opts.platform, definitionPath: path, installed: existsSync44(path), loaded, detail: loaded === null ? `launchctl print exited ${r.exitCode ?? "by signal"}` : loaded ? "loaded" : "not loaded" };
   }
   if (opts.platform === "linux") {
     const path = systemdUnitPath(opts.homeDir, label);
     const r = await run(systemctlCommands(label).isActive);
     const word = r.stdout.trim();
     const loaded = word === "active" || word === "activating" || word === "reloading" ? true : word === "inactive" || word === "failed" ? false : null;
-    return { label, platform: opts.platform, definitionPath: path, installed: existsSync45(path), loaded, detail: word || `systemctl exited ${r.exitCode ?? "by signal"}` };
+    return { label, platform: opts.platform, definitionPath: path, installed: existsSync44(path), loaded, detail: word || `systemctl exited ${r.exitCode ?? "by signal"}` };
   }
   return unsupported(opts.platform);
 }
@@ -58095,7 +57556,7 @@ var init_controller = __esm({
     init_context2();
     init_gates();
     init_security();
-    init_report2();
+    init_report();
     init_service();
     init_start();
     init_delivering();
@@ -58103,8 +57564,8 @@ var init_controller = __esm({
 });
 
 // src/cli/commands/drive.ts
-import { existsSync as existsSync46, readFileSync as readFileSync30 } from "node:fs";
-import { dirname as dirname29, join as join64 } from "node:path";
+import { existsSync as existsSync45, readFileSync as readFileSync29 } from "node:fs";
+import { dirname as dirname28, join as join61 } from "node:path";
 function formatEvent(e) {
   const at = clockTime(e.ts);
   let data = {};
@@ -58224,8 +57685,8 @@ function safeContinue(db, runId, ctx) {
 }
 function resultOf(ctx, db, run) {
   try {
-    const finalJson = join64(dirname29(run.policyPath), "final.json");
-    const report2 = existsSync46(finalJson) ? JSON.parse(readFileSync30(finalJson, "utf8")) : buildFinalReport(db, run, { runDir: dirname29(run.policyPath), clock: ctx.clock, snapshot: null });
+    const finalJson = join61(dirname28(run.policyPath), "final.json");
+    const report2 = existsSync45(finalJson) ? JSON.parse(readFileSync29(finalJson, "utf8")) : buildFinalReport(db, run, { runDir: dirname28(run.policyPath), clock: ctx.clock, snapshot: null });
     const rv = report2.revision;
     if (!rv) return null;
     return { branch: rv.branch ?? null, candidate_commit: rv.candidate ?? null, delivered_commit: rv.delivered_commit ?? null, pull_request: rv.pull_request ?? null };
@@ -58246,22 +57707,22 @@ function json1(ctx, value) {
 `);
 }
 function announceEnd(ctx, db, run, exitCode, wantJson) {
-  const open = listQuestions(db, run.id, { status: "open" });
+  const open2 = listQuestions(db, run.id, { status: "open" });
   if (wantJson) {
-    json1(ctx, { type: "result", run_id: run.id, state: run.state, paused: run.paused, exit_code: exitCode, outcome_reason: run.outcomeReason, open_questions: open.map((q) => q.id), ...run.state === "SUCCEEDED" ? { result: resultOf(ctx, db, run) } : {} });
+    json1(ctx, { type: "result", run_id: run.id, state: run.state, paused: run.paused, exit_code: exitCode, outcome_reason: run.outcomeReason, open_questions: open2.map((q) => q.id), ...run.state === "SUCCEEDED" ? { result: resultOf(ctx, db, run) } : {} });
     return;
   }
   if (isTerminal(run.state)) {
     line(ctx.io, `run ${run.id} ended ${run.state}${run.outcomeReason ? `: ${flat(run.outcomeReason)}` : ""}`);
     const left = run.state === "SUCCEEDED" ? resultOf(ctx, db, run) : null;
-    const where2 = left ? resultLine(left) : null;
-    if (where2) line(ctx.io, where2);
+    const where = left ? resultLine(left) : null;
+    if (where) line(ctx.io, where);
     line(ctx.io, `report: orbit report ${run.id}`);
     if (run.state === "BLOCKED") {
-      for (const q of open) line(ctx.io, `  open question ${q.id}: ${flat(q.question)}`);
+      for (const q of open2) line(ctx.io, `  open question ${q.id}: ${flat(q.question)}`);
       const frozen = /"frozen_policy"/.test(run.outcomeJson ?? "");
       const next = safeContinue(db, run.id, ctx);
-      if (open.length > 0) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "${next}"`);
+      if (open2.length > 0) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "${next}"`);
       else if (frozen) line(ctx.io, `this block comes from the run's frozen policy: fix .orbit/config.yaml, then "orbit cancel ${run.id}" and start a new run with "orbit run"`);
       else line(ctx.io, `resolve the reason above, then "${next}"`);
     }
@@ -58287,66 +57748,8 @@ var init_drive = __esm({
   }
 });
 
-// src/cli/commands/notify.ts
-import { dirname as dirname30, resolve as resolve15 } from "node:path";
-function depsOf(ctx) {
-  return resolveNotifyDeps({ hostEnv: ctx.env, ...ctx.seams.notify ? { notify: ctx.seams.notify } : {} });
-}
-async function notifyTestCommand(args, ctx) {
-  args.expect(0);
-  const repo = await resolveRepo(ctx, args.str("repo"));
-  const policy = args.str("policy");
-  const config = loadConfig(repo, policy ? resolve15(ctx.cwd, policy) : void 0);
-  const outcomes = await sendTestNotification({ config, repoRoot: repo, deps: depsOf(ctx) });
-  if (args.bool("json")) json(ctx.io, { outcomes });
-  else for (const o of outcomes) line(ctx.io, `${o.channel}: ${o.status} (${o.detail})`);
-  return outcomes.some((o) => o.status === "failed") ? EXIT.FAILURE : EXIT.OK;
-}
-function errorText3(err) {
-  return redact(isOrbitError(err) ? `${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err)).slice(0, 300);
-}
-async function readRemoteAnswers(ctx, db, run, say) {
-  if (run.state !== "BLOCKED" || listQuestions(db, run.id, { status: "open" }).length === 0) return;
-  let config;
-  try {
-    config = verifySnapshot(run.policyPath, run.policyHash).config;
-  } catch {
-    return;
-  }
-  if (!notificationsPolicy(config).remote_answers.enabled) return;
-  try {
-    const client = await depsOf(ctx).threads(run.repoRoot, config);
-    const report2 = await pollRemoteAnswers({ db, clock: ctx.clock, run, runDir: dirname30(run.policyPath), config, client, actor: `cli:${ctx.user}` });
-    for (const a of report2.accepted) say(`recorded the answer to ${a.questionId} by ${a.author} (${a.permission}) from ${a.thread}`);
-    for (const r of report2.refused) say(`ignored a comment by ${r.author} on ${r.thread} (${r.reason})`);
-    for (const e of report2.errors) say(`could not read remote answers: ${e}`);
-  } catch (err) {
-    say(`could not read remote answers: ${errorText3(err)}`);
-  }
-}
-var NOTIFY_TEST_OPTIONS, NOTIFY_TEST_USAGE;
-var init_notify2 = __esm({
-  "src/cli/commands/notify.ts"() {
-    "use strict";
-    init_errors();
-    init_redact();
-    init_store4();
-    init_config();
-    init_snapshot();
-    init_notify();
-    init_remote_answers();
-    init_context();
-    init_exit();
-    init_io();
-    NOTIFY_TEST_OPTIONS = {
-      policy: { type: "string", description: "policy file to read the notifications section from (default: .orbit/config.yaml)", valueName: "path" }
-    };
-    NOTIFY_TEST_USAGE = "orbit notify test [--policy path] [--json]";
-  }
-});
-
 // src/cli/commands/control.ts
-import { join as join65, resolve as resolve16 } from "node:path";
+import { join as join62, resolve as resolve15 } from "node:path";
 async function pauseCommand(args, ctx) {
   const [id] = args.expect(1);
   const repo = await resolveRepo(ctx, args.str("repo"));
@@ -58362,6 +57765,29 @@ async function pauseCommand(args, ctx) {
     return EXIT.OK;
   });
 }
+function resumeTarget(db, run) {
+  const prior = run.resumeState;
+  if (prior && canTransition("BLOCKED", prior)) {
+    if ((prior === "REVIEWING" || prior === "DELIVERING") && !liveEvidenceForLatestCandidate(db, run.id)) return "VERIFYING";
+    return prior;
+  }
+  if (db.get("SELECT 1 AS x FROM candidates WHERE run_id = ? LIMIT 1", run.id)) return "VERIFYING";
+  return run.contractJson ? "PLANNING" : "PREFLIGHT";
+}
+function liveEvidenceForLatestCandidate(db, runId) {
+  const cand = db.get("SELECT id FROM candidates WHERE run_id = ? ORDER BY seq DESC LIMIT 1", runId);
+  if (!cand) return false;
+  return db.get("SELECT 1 AS x FROM evidence_reports WHERE run_id = ? AND candidate_id = ? AND invalidated_at IS NULL LIMIT 1", runId, cand.id) !== void 0;
+}
+function frozenPolicySetting(run) {
+  try {
+    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
+    if (!o?.frozen_policy) return null;
+    return typeof o.frozen_policy.setting === "string" ? o.frozen_policy.setting : "a policy setting";
+  } catch {
+    return null;
+  }
+}
 async function resumeCommand(args, ctx) {
   if (args.bool("foreground") && args.bool("detach")) throw new UsageError("--foreground and --detach cannot be combined", "orbit resume <run-id> [--foreground | --detach] [--force]");
   const [id] = args.expect(1);
@@ -58373,9 +57799,6 @@ async function resumeCommand(args, ctx) {
     if (isTerminal(run.state) && run.state !== "BLOCKED") throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is ${run.state}; nothing to resume. ${nextStepAfter(run)}`);
     const notes = [];
     if (run.state === "BLOCKED") {
-      await readRemoteAnswers(ctx, db, run, (text2) => {
-        if (!args.bool("json")) line(ctx.io, text2);
-      });
       const frozen = frozenPolicySetting(run);
       if (frozen !== null && !args.bool("force")) {
         throw new OrbitError(
@@ -58384,9 +57807,9 @@ async function resumeCommand(args, ctx) {
           { frozen_policy: frozen }
         );
       }
-      const open = listQuestions(db, run.id, { status: "open" }).filter((q) => q.material);
-      if (open.length > 0 && !args.bool("force")) {
-        throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is BLOCKED with ${open.length} material question(s) still open (${open.map((q) => q.id).join(", ")}); answer them with "orbit decide ${run.id} <question-id> <answer>", or pass --force to resume without an answer`, { open: open.map((q) => q.id) });
+      const open2 = listQuestions(db, run.id, { status: "open" }).filter((q) => q.material);
+      if (open2.length > 0 && !args.bool("force")) {
+        throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is BLOCKED with ${open2.length} material question(s) still open (${open2.map((q) => q.id).join(", ")}); answer them with "orbit decide ${run.id} <question-id> <answer>", or pass --force to resume without an answer`, { open: open2.map((q) => q.id) });
       }
     }
     let foreground = args.bool("foreground");
@@ -58406,11 +57829,11 @@ async function resumeCommand(args, ctx) {
     }
     if (run.state === "BLOCKED") {
       const target = resumeTarget(db, run);
-      const open = listQuestions(db, run.id, { status: "open" }).filter((q) => q.material);
+      const open2 = listQuestions(db, run.id, { status: "open" }).filter((q) => q.material);
       await withCliLease(ctx, db, run.id, (ownerId) => {
         db.tx(() => {
           transition(db, { runId: run.id, to: target, ownerId, reason: `resumed by ${ctx.user} after a decision or environment repair`, actor: actorOf(ctx), expectedFrom: "BLOCKED" }, ctx.clock);
-          appendEvent(db, run.id, "run.resumed", actorOf(ctx), { from: "BLOCKED", to: target, forced: open.length > 0 }, ctx.clock.now());
+          appendEvent(db, run.id, "run.resumed", actorOf(ctx), { from: "BLOCKED", to: target, forced: open2.length > 0 }, ctx.clock.now());
         });
       });
       notes.push(`resumed BLOCKED run at ${target}`);
@@ -58424,7 +57847,7 @@ async function resumeCommand(args, ctx) {
     if (foreground) {
       if (!args.bool("json")) line(ctx.io, `run ${after.id}: ${notes.join(", ")}; driving it in the foreground (Ctrl-C pauses it)`);
       const policy = args.str("policy");
-      const config = loadConfig(repo, policy ? resolve16(ctx.cwd, policy) : void 0);
+      const config = loadConfig(repo, policy ? resolve15(ctx.cwd, policy) : void 0);
       const result2 = await driveForeground(ctx, { repoRoot: repo, config, db, runId: after.id, fromStart: false, json: args.bool("json") });
       return result2.exitCode;
     }
@@ -58459,7 +57882,7 @@ function cliLeaseDeps(ctx, repo, db, ownerId) {
       db,
       clock: ctx.clock,
       ownerId,
-      logger: createLogger({ file: join65(ctx.orbitHome, "logs", "controller.jsonl"), clock: ctx.clock }),
+      logger: createLogger({ file: join62(ctx.orbitHome, "logs", "controller.jsonl"), clock: ctx.clock }),
       adapters: {},
       registry: new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome)),
       orbitHome: ctx.orbitHome,
@@ -58529,13 +57952,11 @@ var init_control = __esm({
     init_common();
     init_run_store();
     init_states();
-    init_resume();
     init_store4();
     init_context();
     init_exit();
     init_io();
     init_drive();
-    init_notify2();
     actorOf = (ctx) => `cli:${ctx.user}`;
     RESUME_OPTIONS = {
       foreground: { type: "boolean", description: "drive the run in this terminal instead of leaving it to the service" },
@@ -58570,8 +57991,8 @@ var init_inquisition2 = __esm({
 });
 
 // src/cli/commands/decide.ts
-import { existsSync as existsSync47 } from "node:fs";
-import { dirname as dirname31 } from "node:path";
+import { existsSync as existsSync46 } from "node:fs";
+import { dirname as dirname29 } from "node:path";
 function matchQuestion(db, runId, ref2) {
   const all = listQuestions(db, runId);
   const exact = all.find((q) => q.id === ref2);
@@ -58624,7 +58045,7 @@ async function decideCommand(args, ctx) {
     const run = findRunByPrefix(db, runRef);
     if (isTerminal(run.state) && run.state !== "BLOCKED") throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is ${run.state}; its questions can no longer change anything`);
     const q = matchQuestion(db, run.id, qRef);
-    const runDir2 = dirname31(run.policyPath);
+    const runDir2 = dirname29(run.policyPath);
     const result2 = answerQuestion(db, runDir2, q.id, answer, by, ctx.clock);
     let amendment = null;
     if (amendmentIdOfQuestion(q.id) !== null) {
@@ -58685,7 +58106,7 @@ async function pendingQuestions(args, ctx) {
   const quiet = args.bool("quiet");
   const repo = await resolveRepo(ctx, args.str("repo"));
   const pending = [];
-  if (existsSync47(stateDbPath(repo))) {
+  if (existsSync46(stateDbPath(repo))) {
     await withState(repo, (db) => {
       for (const run of listRuns(db, { limit: 200 })) {
         if (isTerminal(run.state) && run.state !== "BLOCKED") continue;
@@ -58753,8 +58174,8 @@ var init_recovery = __esm({
 });
 
 // src/cli/commands/service.ts
-import { existsSync as existsSync48 } from "node:fs";
-import { join as join66 } from "node:path";
+import { existsSync as existsSync47 } from "node:fs";
+import { join as join63 } from "node:path";
 function managerOptions(ctx) {
   return {
     platform: ctx.platform,
@@ -58786,7 +58207,7 @@ async function serviceInstallCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   loadConfig(repo);
   const entry = args.str("entry") ?? ctx.entry;
-  if (!entry || !existsSync48(entry)) throw new OrbitError("NOT_FOUND", `the orbit entry script ${entry || "(unknown)"} does not exist; pass --entry <path to plugin/dist/orbit.mjs>`);
+  if (!entry || !existsSync47(entry)) throw new OrbitError("NOT_FOUND", `the orbit entry script ${entry || "(unknown)"} does not exist; pass --entry <path to plugin/dist/orbit.mjs>`);
   const warnings = [];
   if (!entry.endsWith(".mjs")) warnings.push(`the service will run ${entry}, not a built plugin/dist/orbit.mjs; build the bundle for a durable installation`);
   const spec = serviceSpec({ repoRoot: repo, orbitHome: ctx.orbitHome, entry, version: ORBIT_VERSION, ...ctx.env.PATH ? { path: ctx.env.PATH } : {} });
@@ -58797,7 +58218,7 @@ async function serviceInstallCommand(args, ctx) {
     line(ctx.io, `service ${status2.label} installed (${status2.platform}): ${status2.loaded ? "loaded" : status2.detail}`);
     line(ctx.io, `definition: ${status2.definitionPath}`);
     line(ctx.io, `launcher: ${spec.launcher} (runs ${entry}; it follows plugin updates, so the service never needs reinstalling for one)`);
-    line(ctx.io, `logs: ${join66(ctx.orbitHome, "logs")}`);
+    line(ctx.io, `logs: ${join63(ctx.orbitHome, "logs")}`);
     line(ctx.io, "No credentials were written to the definition. For unattended runs export ANTHROPIC_API_KEY (and CODEX_API_KEY) where the service can see them; see docs/decisions/0003-authentication.md.");
     for (const w of warnings) ctx.io.err(`warning: ${w}
 `);
@@ -58817,14 +58238,14 @@ async function serviceUninstallCommand(args, ctx) {
 function launcherState(ctx) {
   const path = launcherPath(ctx.orbitHome);
   const target = readLauncher(path);
-  return { path, exists: existsSync48(path), node: target?.node ?? null, entry: target?.entry ?? null, bundleExists: target ? existsSync48(target.entry) && existsSync48(target.node) : false };
+  return { path, exists: existsSync47(path), node: target?.node ?? null, entry: target?.entry ?? null, bundleExists: target ? existsSync47(target.entry) && existsSync47(target.node) : false };
 }
 async function serviceStatusCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
   const status2 = await serviceStatus(serviceLabel(repo), managerOptions(ctx));
   let heartbeats = [];
-  if (existsSync48(stateDbPath(repo))) {
+  if (existsSync47(stateDbPath(repo))) {
     const db = openState(repo);
     try {
       pruneDeadControllers(db, ctx.clock);
@@ -58856,7 +58277,7 @@ async function serviceRunCommand(args, ctx) {
   const config = loadConfig(repo);
   const db = openDb(stateDbPath(repo));
   try {
-    const logger = createLogger({ file: join66(ctx.orbitHome, "logs", "controller.jsonl"), stderr: true, clock: ctx.clock });
+    const logger = createLogger({ file: join63(ctx.orbitHome, "logs", "controller.jsonl"), stderr: true, clock: ctx.clock });
     const factory = ctx.seams.controllerDeps ?? defaultControllerDeps;
     const deps = factory({ repoRoot: repo, db, clock: ctx.clock, config, env: ctx.env, orbitHome: ctx.orbitHome, logger });
     const controller = new Controller({ deps, mode: "service", handleSignals: true, ...ctx.seams.controller ?? {} });
@@ -58889,6 +58310,8 @@ var init_service2 = __esm({
 });
 
 // src/cli/layout.ts
+import { open } from "node:fs/promises";
+import { join as join64 } from "node:path";
 async function trackedFiles(ctx, repo) {
   try {
     const r = await execCapture(["git", "ls-files", "-z"], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 3e4 });
@@ -58898,13 +58321,89 @@ async function trackedFiles(ctx, repo) {
     return [];
   }
 }
-function suggestAllowedPaths(files) {
+function isPipelineYaml(text2) {
+  if (/^(trigger|stages|jobs):/m.test(text2)) return true;
+  return /^extends:[ \t]*(\r?\n[ \t]+template:|\{[^}\n]*\btemplate:|template:)/m.test(text2);
+}
+function isCiPath(file) {
+  const base = file.slice(file.lastIndexOf("/") + 1);
+  if (base === ".gitlab-ci.yml" || base.startsWith("Jenkinsfile")) return true;
+  return file.startsWith(".circleci/") || file.startsWith(".github/workflows/");
+}
+function isCentralBuildFile(file) {
+  const base = file.slice(file.lastIndexOf("/") + 1);
+  return CENTRAL_BUILD_FILES.has(base.toLowerCase()) || file === "Makefile";
+}
+function classifyCiDefinitions(files, isPipeline = () => false) {
+  const protectedPaths = /* @__PURE__ */ new Set();
+  const defsByTop = /* @__PURE__ */ new Map();
+  const definitionFiles = /* @__PURE__ */ new Set();
+  for (const f of files) {
+    if (isCentralBuildFile(f)) protectedPaths.add(f);
+    const isYaml = /\.ya?ml$/i.test(f);
+    if (isCiPath(f) || isYaml && isPipeline(f)) {
+      definitionFiles.add(f);
+      const slash = f.indexOf("/");
+      const top = slash > 0 ? f.slice(0, slash) : "";
+      if (top === "" || top.startsWith(".")) {
+        protectedPaths.add(top === ".circleci" ? ".circleci/**" : top === ".github" ? ".github/**" : f);
+      } else defsByTop.set(top, [...defsByTop.get(top) ?? [], f]);
+    }
+  }
+  const excludedDirs = [];
+  for (const [top, defs] of [...defsByTop].sort(([a], [b]) => a.localeCompare(b))) {
+    const holdsSource = files.some((f) => {
+      if (!f.startsWith(`${top}/`) || definitionFiles.has(f)) return false;
+      const dot = f.lastIndexOf(".");
+      const ext = dot > 0 ? f.slice(dot + 1).toLowerCase() : "";
+      return ext !== "sh" && SOURCE_EXTENSIONS.has(ext);
+    });
+    if (!holdsSource) {
+      excludedDirs.push(top);
+      protectedPaths.add(`${top}/**`);
+      continue;
+    }
+    for (const d of defs) {
+      const dir = d.slice(0, d.lastIndexOf("/"));
+      protectedPaths.add(dir === top ? d : `${dir}/**`);
+    }
+  }
+  return { protectedPaths: [...protectedPaths].sort(), excludedDirs };
+}
+async function readHead(path) {
+  const h = await open(path, "r");
+  try {
+    const buf = Buffer.alloc(YAML_READ_BYTES);
+    const { bytesRead } = await h.read(buf, 0, buf.length, 0);
+    return buf.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await h.close();
+  }
+}
+async function pipelineYaml(repo, files) {
+  const found = /* @__PURE__ */ new Set();
+  const candidates = files.filter((f) => /\.ya?ml$/i.test(f) && !f.startsWith(".") && !f.split("/").includes("node_modules")).slice(0, MAX_YAML_READS);
+  for (const f of candidates) {
+    try {
+      if (isPipelineYaml(await readHead(join64(repo, f)))) found.add(f);
+    } catch {
+    }
+  }
+  return found;
+}
+async function proposeScope(ctx, repo, files) {
+  const tracked = files ?? await trackedFiles(ctx, repo);
+  const pipelines = await pipelineYaml(repo, tracked);
+  const ci = classifyCiDefinitions(tracked, (f) => pipelines.has(f));
+  return { allowed: suggestAllowedPaths(tracked, ci.excludedDirs), protectedExtra: ci.protectedPaths, excluded: ci.excludedDirs };
+}
+function suggestAllowedPaths(files, excludedDirs = []) {
   const dirs = /* @__PURE__ */ new Set();
   for (const f of files) {
     const slash = f.indexOf("/");
     if (slash <= 0) continue;
     const top = f.slice(0, slash);
-    if (top.startsWith(".") || NOT_SOURCE.has(top)) continue;
+    if (top.startsWith(".") || NOT_SOURCE.has(top) || excludedDirs.includes(top)) continue;
     if (/[*?[\]{}()!\\]/.test(top)) continue;
     dirs.add(top);
   }
@@ -58920,7 +58419,7 @@ function suggestAllowedPaths(files) {
   }
   return [...exts].sort().map((e) => `*.${e}`);
 }
-var NOT_SOURCE, SOURCE_EXTENSIONS, MAX_DIRS;
+var NOT_SOURCE, SOURCE_EXTENSIONS, CENTRAL_BUILD_FILES, MAX_YAML_READS, YAML_READ_BYTES, MAX_DIRS;
 var init_layout = __esm({
   "src/cli/layout.ts"() {
     "use strict";
@@ -58928,6 +58427,9 @@ var init_layout = __esm({
     init_context();
     NOT_SOURCE = /* @__PURE__ */ new Set(["node_modules", "dist", "build", "out", "coverage", "vendor", "target", "infra", "tmp", "temp"]);
     SOURCE_EXTENSIONS = /* @__PURE__ */ new Set(["js", "mjs", "cjs", "jsx", "ts", "tsx", "py", "rb", "go", "rs", "java", "kt", "c", "h", "cc", "cpp", "cs", "php", "swift", "sh"]);
+    CENTRAL_BUILD_FILES = /* @__PURE__ */ new Set(["directory.build.props", "directory.build.targets", "directory.packages.props", "global.json", "nuget.config"]);
+    MAX_YAML_READS = 2e3;
+    YAML_READ_BYTES = 64 * 1024;
     MAX_DIRS = 8;
   }
 });
@@ -58955,12 +58457,185 @@ var init_review_fix = __esm({
   }
 });
 
+// src/cli/commands/doctor-plugins.ts
+async function workerPluginsCheck(id, adapter, config) {
+  const list = adapter?.listPlugins;
+  if (typeof list !== "function") return null;
+  const check = `${id}.plugins`;
+  const listed = await list.call(adapter);
+  if (!listed.ok) {
+    return { id: check, area: "providers", status: "warn", summary: `could not list the installed plugins (${flat(listed.detail)})`, details: [], missing: "the output of claude plugin list --json", fix: 'run "claude plugin list --json" to see why; a worker session that loads a plugin the policy does not allow is refused' };
+  }
+  const policy = pluginPolicyOf(config);
+  const loads = [];
+  const maybe = [];
+  const skipped = [];
+  for (const p of listed.plugins) {
+    if (!p.enabled) skipped.push(`not loaded by workers: ${p.id} (disabled)`);
+    else if (p.scope !== null && WORKER_EXCLUDED_SCOPES.includes(p.scope)) skipped.push(`not loaded by workers: ${p.id} (scope ${p.scope}; workers load no user, project or local settings)`);
+    else {
+      const [judged2] = workerPlugins([{ name: p.id.split("@")[0], source: p.id, scope: p.scope ?? "unknown" }], { policy, installed: null });
+      (p.scope === "managed" ? loads : maybe).push(judged2);
+    }
+  }
+  const named = (p) => `${p.id} (scope ${p.scope})`;
+  const line3 = (p) => `${named(p)}${maybe.includes(p) ? ", may load" : ""}: ${p.allowed_by ? `allowed by ${p.allowed_by}` : `refused; allow it with ${pluginAllowLines(p).join(" or ")}`}`;
+  const judged = [...loads, ...maybe];
+  const details = [...judged.map(line3), ...skipped];
+  if (judged.length === 0) return { id: check, area: "providers", status: "pass", summary: "workers load only Claude Code built-ins", details, missing: null, fix: null };
+  const refused = judged.filter((p) => p.allowed_by === null);
+  if (refused.length > 0) {
+    const managed = refused.some((p) => p.scope === "managed") ? " (or agents.allow_managed_plugins: true for every managed plugin)" : "";
+    const fix = `add to .orbit/config.yaml: agents.allowed_plugins: ${JSON.stringify(refused.map((p) => p.id))}${managed}; ${HOOKS_NOTE}`;
+    const definite = refused.filter((p) => loads.includes(p));
+    const missing = "a policy that allows each plugin a worker loads";
+    if (definite.length > 0) {
+      return { id: check, area: "providers", status: "fail", summary: `workers would load ${definite.length} plugin(s) the policy does not allow, so every worker session would be refused: ${definite.map(named).join(", ")}`, details: [...details, SCOPE_SOURCE], missing, fix };
+    }
+    return { id: check, area: "providers", status: "warn", summary: `workers may load ${refused.length} plugin(s) the policy does not allow: ${refused.map(named).join(", ")}`, details: [...details, SCOPE_SOURCE], missing, fix };
+  }
+  return {
+    id: check,
+    area: "providers",
+    status: "pass",
+    summary: `workers would load ${judged.length} plugin(s), each allowed by the policy: ${judged.map((p) => `${p.id} (scope ${p.scope}, ${p.allowed_by})`).join(", ")}`,
+    details: [...details, `${HOOKS_NOTE}; each run lists the plugins its workers loaded in its final report`, SCOPE_SOURCE],
+    missing: null,
+    fix: null
+  };
+}
+var HOOKS_NOTE, SCOPE_SOURCE;
+var init_doctor_plugins = __esm({
+  "src/cli/commands/doctor-plugins.ts"() {
+    "use strict";
+    init_claude_plugins();
+    init_io();
+    HOOKS_NOTE = "a plugin can add hooks and tools to workers";
+    SCOPE_SOURCE = "scope source: claude plugin list --json (system/init does not report a plugin's scope)";
+  }
+});
+
+// src/cli/commands/doctor-sandbox.ts
+import { mkdirSync as mkdirSync22, mkdtempSync as mkdtempSync6, realpathSync as realpathSync18, rmSync as rmSync17 } from "node:fs";
+import { tmpdir as tmpdir12 } from "node:os";
+import { basename as basename12, isAbsolute as isAbsolute20, join as join65, resolve as resolve16 } from "node:path";
+function checkWord(check) {
+  if (!check.shell) return check.command[0] ?? null;
+  return (check.command[0] ?? "").trim().split(/\s+/).find((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) ?? null;
+}
+async function probe(input, check, exe, args) {
+  const scratch = realpathSync18(mkdtempSync6(join65(tmpdir12(), "orbit-doctor-check-")));
+  let tmp = null;
+  try {
+    const checkout = join65(scratch, "checkout");
+    const home2 = join65(scratch, "home");
+    const artifacts = join65(scratch, "artifacts");
+    for (const d of [checkout, home2, artifacts]) mkdirSync22(d, { recursive: true, mode: 448 });
+    prepareCheckHome(home2);
+    tmp = prepareWorkerTmpDir(scratch);
+    const snapshot2 = { schema: "orbit.policy/1", run_id: "doctor", created_at: "", repo_root: input.repo ?? scratch, config: input.config, effective_protected_paths: [], check_config_hashes: {} };
+    const profile = profileForCheck({ worktree: checkout, check, snapshot: snapshot2, extraWritable: [artifacts, home2, tmp], homeDir: input.homeDir, env: { ...input.env } });
+    const env = checkEnv(check, { homeDir: home2, tmpDir: tmp, artifactsDir: artifacts }, input.env.PATH);
+    const shown = [basename12(exe), ...args].join(" ");
+    const wrapped = input.provider.wrap([exe, ...args], profile, { cwd: checkout, env });
+    let r;
+    try {
+      r = await (input.launch ?? launchWrapped)(wrapped.argv, { cwd: checkout, env: wrapped.env, timeoutMs: PROBE_TIMEOUT_MS });
+    } finally {
+      wrapped.cleanup();
+    }
+    if (r.exitCode === 0) return { kind: "ran", detail: `${check.id}: "${shown}" ran in the sandbox` };
+    const output = redact(r.output);
+    const failure = classifyNotExecuted({ checkId: check.id, output }) ?? classifyCouldNotRun({ checkId: check.id, output, insideRoots: [scratch, ...tmp ? [tmp] : []] });
+    if (failure) return { kind: "refused", failure, detail: `${check.id}: "${shown}" was refused in the sandbox: ${failure.cause}${failure.lines[0] ? ` (${JSON.stringify(failure.lines[0])})` : ""}` };
+    return { kind: "ran", detail: `${check.id}: "${shown}" ${r.exitCode === null ? "timed out" : `exited ${r.exitCode}`} in the sandbox, with no sandbox denial in its output${output ? `: ${oneLine(output, 160)}` : ""}` };
+  } finally {
+    rmSync17(scratch, { recursive: true, force: true });
+    if (tmp) rmSync17(tmp, { recursive: true, force: true });
+  }
+}
+async function checkSandboxCheck(input) {
+  const id = "checks.sandbox";
+  const result2 = (status3, summary, details2 = [], missing = null, fix = null) => ({ id, area: "checks", status: status3, summary, details: details2, missing, fix });
+  const checks = Object.values(input.config.checks).filter((c) => c.kind === "command");
+  if (checks.length === 0) return result2("pass", "not needed: no command check is defined");
+  const provider = input.provider;
+  if (!provider || !input.available) return result2("warn", "not checked: isolation is unavailable (see the isolation check)", [], "an available isolation provider");
+  if (provider.kind !== "sandbox-runtime") return result2("pass", `not needed: checks run under ${provider.kind}, not in an OS sandbox on this host`);
+  const repo = input.repo ? realpathSync18(input.repo) : null;
+  const details = [];
+  const refused = [];
+  let started = 0;
+  for (const check of checks) {
+    const word = checkWord(check);
+    if (!word || check.shell && SHELL_BUILTINS.has(word)) {
+      details.push(`${check.id}: not started (${word ? `shell builtin "${word}"` : "no command"})`);
+      continue;
+    }
+    const cwd = repo ? resolve16(repo, check.cwd) : process.cwd();
+    const found = word.includes("/") ? which(isAbsolute20(word) ? word : resolve16(cwd, word), input.env.PATH) : which(word, input.env.PATH);
+    if (!found) {
+      details.push(`${check.id}: not started ("${word}" was not found; see the checks entry)`);
+      continue;
+    }
+    const exe = realpathSync18(found);
+    if (repo && isWithin(exe, repo)) {
+      details.push(`${check.id}: not started ("${word}" is the repository's own code, which only a run executes)`);
+      continue;
+    }
+    started++;
+    try {
+      const out = await probe({ ...input, provider }, check, exe, PROBE_ARGS[basename12(exe)] ?? DEFAULT_PROBE_ARGS);
+      details.push(out.detail);
+      if (out.kind === "refused") refused.push({ check, failure: out.failure });
+    } catch (err) {
+      const why = err instanceof OrbitError ? err.message : oneLine(err instanceof Error ? err.message : String(err), 200);
+      details.push(`${check.id}: could not be started in the sandbox: ${why}`);
+      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: ["start-failed"], cause: "the check could not be started", lines: [why] } });
+    }
+  }
+  if (refused.length === 0) return result2("pass", started === 0 ? "no check executable outside the repository to start" : `${started} check executable(s) start in the sandbox`, details);
+  const status2 = refused.some((r) => r.check.mandatory) ? "fail" : "warn";
+  const ids = refused.map((r) => r.check.id).join(", ");
+  return result2(
+    status2,
+    `the sandbox refuses ${refused.length === 1 ? "the executable" : "the executables"} of ${refused.length === 1 ? "check" : "checks"} ${ids}; a run would block at its baseline`,
+    details,
+    "a check executable that can start in the check sandbox",
+    environmentFix(refused.map((r) => r.failure)) ?? 'see the line above and docs/troubleshooting.md, "A check cannot run in the sandbox"'
+  );
+}
+var launchWrapped, PROBE_TIMEOUT_MS, PROBE_ARGS, DEFAULT_PROBE_ARGS, SHELL_BUILTINS;
+var init_doctor_sandbox = __esm({
+  "src/cli/commands/doctor-sandbox.ts"() {
+    "use strict";
+    init_exec();
+    init_errors();
+    init_redact();
+    init_environment_block();
+    init_environment_failure();
+    init_runner();
+    init_profiles();
+    init_util();
+    init_io();
+    launchWrapped = async (argv2, opts) => {
+      const r = await execCapture(argv2, { ...opts, maxOutputBytes: 256 * 1024 });
+      return { exitCode: r.timedOut ? null : r.exitCode, output: `${r.stdout}
+${r.stderr}`.trim() };
+    };
+    PROBE_TIMEOUT_MS = 6e4;
+    PROBE_ARGS = { dotnet: ["help"], go: ["version"] };
+    DEFAULT_PROBE_ARGS = ["--version"];
+    SHELL_BUILTINS = /* @__PURE__ */ new Set(["cd", "export", "set", "test", "[", "true", "false", "echo", "exit", "exec", ":", "source", ".", "eval", "unset"]);
+  }
+});
+
 // src/cli/commands/doctor.ts
-import { accessSync as accessSync3, constants as constants4, existsSync as existsSync49, mkdtempSync as mkdtempSync6, readFileSync as readFileSync31, realpathSync as realpathSync18, rmSync as rmSync17, statSync as statSync15 } from "node:fs";
+import { accessSync as accessSync3, constants as constants4, existsSync as existsSync48, mkdtempSync as mkdtempSync7, readFileSync as readFileSync30, realpathSync as realpathSync19, rmSync as rmSync18, statSync as statSync15 } from "node:fs";
 import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
-import { homedir as homedir12, tmpdir as tmpdir12 } from "node:os";
-import { delimiter as delimiter4, isAbsolute as isAbsolute19, join as join67, resolve as resolve17 } from "node:path";
+import { homedir as homedir12, tmpdir as tmpdir13 } from "node:os";
+import { delimiter as delimiter4, isAbsolute as isAbsolute21, join as join66, resolve as resolve17 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
     try {
@@ -58970,12 +58645,12 @@ function which2(cmd, env, cwd = process.cwd()) {
     }
   };
   if (cmd.includes("/")) {
-    const p = isAbsolute19(cmd) ? cmd : resolve17(cwd, cmd);
+    const p = isAbsolute21(cmd) ? cmd : resolve17(cwd, cmd);
     return ok(p) ? p : null;
   }
   for (const dir of (env.PATH ?? "").split(delimiter4)) {
     if (!dir) continue;
-    const p = join67(dir, cmd);
+    const p = join66(dir, cmd);
     if (ok(p)) return p;
   }
   return null;
@@ -59079,24 +58754,24 @@ function checkStorage(p) {
   const { repo } = p;
   if (!repo) return warn2("storage", "storage", "no repository, so no state database to check", "a repository", null);
   const path = stateDbPath(repo);
-  const dir = join67(repo, ".orbit");
+  const dir = join66(repo, ".orbit");
   let db = null;
   try {
-    if (!existsSync49(path)) {
-      const scratch = mkdtempSync6(join67(tmpdir12(), "orbit-doctor-"));
+    if (!existsSync48(path)) {
+      const scratch = mkdtempSync7(join66(tmpdir13(), "orbit-doctor-"));
       try {
-        db = openDb(join67(scratch, "probe.sqlite"));
+        db = openDb(join66(scratch, "probe.sqlite"));
         const mode2 = String((db.get("PRAGMA journal_mode") ?? {}).journal_mode);
         if (mode2.toLowerCase() !== "wal") return fail2("storage", "storage", `SQLite cannot use WAL on this filesystem (journal_mode=${mode2})`, "WAL journaling", "use a local disk, not a network or container bind mount");
       } finally {
         db?.close();
         db = null;
-        rmSync17(scratch, { recursive: true, force: true });
+        rmSync18(scratch, { recursive: true, force: true });
       }
       try {
-        accessSync3(existsSync49(dir) ? dir : repo, constants4.W_OK);
+        accessSync3(existsSync48(dir) ? dir : repo, constants4.W_OK);
       } catch {
-        return fail2("storage", "storage", `${existsSync49(dir) ? dir : repo} is not writable`, "a writable .orbit directory", "fix permissions");
+        return fail2("storage", "storage", `${existsSync48(dir) ? dir : repo} is not writable`, "a writable .orbit directory", "fix permissions");
       }
       return pass("storage", "storage", "no state database yet; it will be created in .orbit/ (WAL works, directory writable)");
     }
@@ -59112,7 +58787,7 @@ function checkStorage(p) {
     db?.close();
   }
 }
-function checkWord(check) {
+function checkWord2(check) {
   if (check.shell) {
     const first = (check.command[0] ?? "").trim().split(/\s+/).find((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
     return first ?? null;
@@ -59127,7 +58802,7 @@ function checkConfiguredChecks(p) {
   let status2 = "pass";
   for (const c of entries) {
     const cwd = repo ? resolve17(repo, c.cwd) : ctx.cwd;
-    const word = checkWord(c);
+    const word = checkWord2(c);
     const bump = (s) => {
       if (s === "fail" || s === "warn" && status2 === "pass") status2 = s;
     };
@@ -59137,11 +58812,11 @@ function checkConfiguredChecks(p) {
       bump(level);
       continue;
     }
-    if (c.shell && SHELL_BUILTINS.has(word)) {
+    if (c.shell && SHELL_BUILTINS2.has(word)) {
       details.push(`${c.id}: shell builtin "${word}" (not resolved)`);
       continue;
     }
-    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join67(repo, "node_modules", ".bin", word), ctx.env) : null);
+    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join66(repo, "node_modules", ".bin", word), ctx.env) : null);
     if (!found) {
       details.push(`${c.id}: "${word}" was not found${c.mandatory ? "" : " (optional check)"}${c.cwd !== "." ? ` (cwd ${c.cwd})` : ""}`);
       bump(level);
@@ -59149,10 +58824,10 @@ function checkConfiguredChecks(p) {
     }
     const script = c.shell ? void 0 : packageScriptOf(c.command);
     if (script) {
-      const pj = join67(cwd, "package.json");
+      const pj = join66(cwd, "package.json");
       let defined = false;
       try {
-        defined = typeof JSON.parse(readFileSync31(pj, "utf8")).scripts?.[script] === "string";
+        defined = typeof JSON.parse(readFileSync30(pj, "utf8")).scripts?.[script] === "string";
       } catch {
         defined = false;
       }
@@ -59181,7 +58856,7 @@ async function checkScope(p) {
   const matches = compileGlobs(globs, { nocase: false });
   const hit = files.filter((f) => matches(f)).length;
   if (hit > 0) return [pass("scope", "config", `scope.allowed_paths (${globs.join(", ")}) matches ${hit} of ${files.length} tracked file(s)`)];
-  const suggestion = suggestAllowedPaths(files);
+  const suggestion = (await proposeScope(ctx, repo, files)).allowed;
   return [
     warn2(
       "scope",
@@ -59211,7 +58886,7 @@ async function checkIsolation(p) {
   }
   if (!st.ok) {
     const pluginRoot = ctx.env.ORBIT_PLUGIN_ROOT;
-    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync49(join67(pluginRoot, "package.json")) && !existsSync49(join67(pluginRoot, "node_modules"))) {
+    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync48(join66(pluginRoot, "package.json")) && !existsSync48(join66(pluginRoot, "node_modules"))) {
       return {
         check: fail2(
           "isolation",
@@ -59293,6 +58968,8 @@ async function checkProviders(p, iso2, registry) {
         const why = !envCred ? "no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in the environment (a keychain login is invisible inside srt)" : "sandbox-runtime isolation is not in use";
         checks.push(warn2(`${id}.worker-tier`, "providers", `workers run in the claude-sandbox tier: ${why}`, "an exported Claude credential plus sandbox-runtime for the strongest tier", "export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)", CLAUDE_SANDBOX_LIMITATIONS.map((l) => `limitation: ${l}`)));
       }
+      const plugins = await workerPluginsCheck(id, adapters[id], config);
+      if (plugins) checks.push(plugins);
     } else checks.push(codexTierCheck(id, config.providers[id].tier ?? "auto", codexEnvCredential(ctx.env), iso2.available && iso2.provider?.kind === "sandbox-runtime", level));
   }
   if (config.review.independent_provider_required || ids.some((i) => i !== "claude")) {
@@ -59328,9 +59005,9 @@ async function checkModels(p, registry, facts) {
   const claudeVersion = Object.values(facts.capabilities).find((c) => c.provider === "claude" || providerKindSafe(c.provider) === "claude")?.version ?? null;
   const details = [];
   let usable = 0;
-  const probe = p.live ? liveProbeOf(facts.adapters.claude) : null;
+  const probe2 = p.live ? liveProbeOf(facts.adapters.claude) : null;
   const claudeCred = facts.credentials.claude;
-  const canProbe = probe !== null && claudeCred !== void 0 && claudeCred.state !== "missing" && claudeCred.state !== "invalid" && claudeCred.state !== "expired";
+  const canProbe = probe2 !== null && claudeCred !== void 0 && claudeCred.state !== "missing" && claudeCred.state !== "invalid" && claudeCred.state !== "expired";
   for (const e of registry.list().filter((m) => m.provider === "claude")) {
     const match = allowMatch(e, config.routing.allowed_models);
     const surface = e.surfaces.find((s) => s.surface === "claude-cli");
@@ -59345,7 +59022,7 @@ async function checkModels(p, registry, facts) {
       usable++;
       let live = "";
       if (canProbe) {
-        const st = await probe({ model: e.eligibility.cliAlias ?? e.modelId, timeoutMs: 9e4 }).catch((err) => ({ state: "unknown", method: null, detail: err instanceof Error ? err.message : String(err) }));
+        const st = await probe2({ model: e.eligibility.cliAlias ?? e.modelId, timeoutMs: 9e4 }).catch((err) => ({ state: "unknown", method: null, detail: err instanceof Error ? err.message : String(err) }));
         live = st.state === "valid" ? "; live probe answered" : `; live probe inconclusive (${st.state}: ${flat(st.detail)})`;
       }
       details.push(`${e.modelId}: eligible, ${state}${live}`);
@@ -59392,9 +59069,9 @@ function packageInstalled(req, name) {
 function playwrightCache(env, home2, platform3) {
   const override = env.PLAYWRIGHT_BROWSERS_PATH;
   if (override && override !== "0") return override;
-  if (platform3 === "darwin") return join67(home2, "Library", "Caches", "ms-playwright");
-  if (platform3 === "win32") return join67(env.LOCALAPPDATA ?? join67(home2, "AppData", "Local"), "ms-playwright");
-  return join67(env.XDG_CACHE_HOME ?? join67(home2, ".cache"), "ms-playwright");
+  if (platform3 === "darwin") return join66(home2, "Library", "Caches", "ms-playwright");
+  if (platform3 === "win32") return join66(env.LOCALAPPDATA ?? join66(home2, "AppData", "Local"), "ms-playwright");
+  return join66(env.XDG_CACHE_HOME ?? join66(home2, ".cache"), "ms-playwright");
 }
 function checkPlaywright(p) {
   const { config, repo, ctx } = p;
@@ -59402,7 +59079,7 @@ function checkPlaywright(p) {
   if (!wanted) return pass("playwright", "ui", "not required: no ui section and no playwright check is configured");
   const level = fail2;
   if (!repo) return level("playwright", "ui", "no repository to look for Playwright in", "a repository", null);
-  const req = createRequire4(join67(repo, "package.json"));
+  const req = createRequire4(join66(repo, "package.json"));
   let pwTest = null;
   try {
     pwTest = req.resolve("@playwright/test/package.json");
@@ -59420,7 +59097,7 @@ function checkPlaywright(p) {
   if (!core) return level("playwright", "ui", "playwright-core is missing next to @playwright/test", "playwright-core", "reinstall dependencies");
   let revisions = {};
   try {
-    const bj = JSON.parse(readFileSync31(join67(core, "..", "browsers.json"), "utf8"));
+    const bj = JSON.parse(readFileSync30(join66(core, "..", "browsers.json"), "utf8"));
     revisions = Object.fromEntries((bj.browsers ?? []).map((b) => [b.name, b.revision]));
   } catch {
     details.push("browsers.json could not be read; browser revisions are not checked");
@@ -59431,7 +59108,7 @@ function checkPlaywright(p) {
   for (const b of names) {
     const dirs = b === "chromium" ? ["chromium", "chromium_headless_shell"] : [b];
     const revs = dirs.map((d) => ({ d, rev: revisions[d] ?? revisions[b] ?? null }));
-    const present = revs.some((r) => r.rev ? existsSync49(join67(cache2, `${r.d}-${r.rev}`)) : false);
+    const present = revs.some((r) => r.rev ? existsSync48(join66(cache2, `${r.d}-${r.rev}`)) : false);
     details.push(`${b}: ${present ? `installed (${cache2})` : `not found in ${cache2}`}`);
     if (!present && revs.some((r) => r.rev)) missing.push(b);
   }
@@ -59461,21 +59138,21 @@ function headlessShellLayouts(arch) {
 function headlessChromiumOf(repo, cache2, arch = process.arch) {
   let browsersJson;
   try {
-    browsersJson = join67(createRequire4(join67(repo, "package.json")).resolve("playwright-core/package.json"), "..", "browsers.json");
+    browsersJson = join66(createRequire4(join66(repo, "package.json")).resolve("playwright-core/package.json"), "..", "browsers.json");
   } catch {
     return { problem: "Playwright is not installed in this repository" };
   }
   let revision;
   try {
-    const bj = JSON.parse(readFileSync31(browsersJson, "utf8"));
+    const bj = JSON.parse(readFileSync30(browsersJson, "utf8"));
     const rev = (name) => bj.browsers?.find((b) => b.name === name && typeof b.revision === "string")?.revision;
     revision = rev("chromium-headless-shell") ?? rev("chromium");
   } catch {
     return { problem: `Playwright's browsers.json could not be read (${browsersJson})` };
   }
   if (!revision) return { problem: "Playwright's browsers.json names no Chromium revision" };
-  const dir = join67(cache2, `chromium_headless_shell-${revision}`);
-  const exe = headlessShellLayouts(arch).map((rel) => join67(dir, rel)).find((p) => isExecutable2(p));
+  const dir = join66(cache2, `chromium_headless_shell-${revision}`);
+  const exe = headlessShellLayouts(arch).map((rel) => join66(dir, rel)).find((p) => isExecutable2(p));
   return exe ? { exe, revision } : { problem: `Playwright's headless Chromium (revision ${revision}) is not installed in ${cache2}` };
 }
 function noncePage() {
@@ -59505,19 +59182,19 @@ async function browserIsolationCheck(input) {
   if ("problem" in browser) {
     return warn2(id, "ui", `not launched: ${browser.problem}`, "Playwright's headless Chromium for the repository's Playwright", "npm install -D @playwright/test, then npx playwright install chromium", [info.detail, limitation]);
   }
-  const dir = realpathSync18(mkdtempSync6(join67(tmpdir12(), "orbit-doctor-browser-")));
+  const dir = realpathSync19(mkdtempSync7(join66(tmpdir13(), "orbit-doctor-browser-")));
   try {
-    const repo = realpathSync18(input.repo);
-    const exe = realpathSync18(browser.exe);
+    const repo = realpathSync19(input.repo);
+    const exe = realpathSync19(browser.exe);
     const denyReadPaths = [...credentialDenyPaths({ homeDir: home2, env: input.env }), ...exe.startsWith(`${repo}/`) ? [] : [repo]];
     const profile = { writablePaths: [dir], denyReadPaths, allowedHosts: [], allowLocalBinding: false, chromiumMachRendezvous: true, limits: { timeoutMs: 9e4, memoryMb: null, cpus: null, pids: null } };
     const env = { ...safeBaseEnv(input.env), TMPDIR: dir };
     const page = noncePage();
-    const argv2 = [browser.exe, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", `--user-data-dir=${join67(dir, "profile")}`, "--dump-dom", page.url];
+    const argv2 = [browser.exe, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", `--user-data-dir=${join66(dir, "profile")}`, "--dump-dom", page.url];
     const wrapped = provider.wrap(argv2, profile, { cwd: dir, env });
     let r;
     try {
-      r = await (input.launch ?? launchWrapped)(wrapped.argv, { cwd: dir, env: wrapped.env, timeoutMs: 9e4 });
+      r = await (input.launch ?? launchWrapped2)(wrapped.argv, { cwd: dir, env: wrapped.env, timeoutMs: 9e4 });
     } finally {
       wrapped.cleanup();
     }
@@ -59532,7 +59209,7 @@ async function browserIsolationCheck(input) {
   } catch (err) {
     return fail2(id, "ui", `headless Chromium could not be launched under srt: ${errText(err, 240)}`, "a sandbox-runtime that can wrap the browser", "see docs/troubleshooting.md", [info.detail, limitation]);
   } finally {
-    rmSync17(dir, { recursive: true, force: true });
+    rmSync18(dir, { recursive: true, force: true });
   }
 }
 async function checkDelivery(p) {
@@ -59573,7 +59250,7 @@ async function checkService(p) {
   let beat = "no controller has registered in this repository";
   let stale = false;
   let live = false;
-  if (existsSync49(stateDbPath(repo))) {
+  if (existsSync48(stateDbPath(repo))) {
     let db = null;
     try {
       db = openDb(stateDbPath(repo));
@@ -59593,7 +59270,7 @@ async function checkService(p) {
   if (linger === "no") details.push(`lingering is off for ${ctx.user}: the service stops at logout (loginctl enable-linger ${ctx.user})`);
   if (!status2.installed) return warn2("service", "service", "no service is installed, so runs only progress while a terminal is attached", "an installed background service (survives terminal closure and restarts after failure)", orbitHint("service install", void 0, { quote: false }), details);
   if (status2.loaded !== true) return warn2("service", "service", `service installed but ${status2.loaded === false ? "not loaded" : `state unknown (${status2.detail})`}`, "a loaded service", `${orbitHint("service install", void 0, { quote: false })} (reloads it)`, details);
-  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join67(ctx.orbitHome, "logs")}, then ${orbitHint("service install", void 0, { quote: false })} to restart it`, details);
+  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join66(ctx.orbitHome, "logs")}, then ${orbitHint("service install", void 0, { quote: false })} to restart it`, details);
   if (linger === "no") return warn2("service", "service", "service is loaded; lingering is off", "systemd lingering", `loginctl enable-linger ${ctx.user}`, details);
   return pass("service", "service", live ? "service loaded and its controller heartbeat is fresh" : "service loaded; the controller has not published a heartbeat yet", details);
 }
@@ -59653,7 +59330,7 @@ async function runDoctor(ctx, opts) {
   });
   let regDb = null;
   try {
-    const persisted = repo !== null && existsSync49(stateDbPath(repo));
+    const persisted = repo !== null && existsSync48(stateDbPath(repo));
     regDb = persisted ? openDb(stateDbPath(repo)) : openDb(":memory:");
     const registry = new ModelRegistry(regDb, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
     if (!persisted || registry.list().length === 0) registry.seed();
@@ -59676,6 +59353,7 @@ async function runDoctor(ctx, opts) {
     "ui",
     () => browserIsolationCheck({ wanted: config.ui !== null || Object.values(config.checks).some((c) => c.kind === "playwright"), provider: isoFacts.provider, available: isoFacts.available, repo, env: ctx.env, homeDir: ctx.homeDir })
   );
+  await safely("checks.sandbox", "checks", () => checkSandboxCheck({ config, repo, provider: isoFacts.provider, available: isoFacts.available, env: ctx.env, homeDir: ctx.homeDir }));
   await safely("delivery", "delivery", () => checkDelivery(p));
   await safely("gitleaks", "security", () => checkGitleaks(p));
   await safely("service", "service", () => checkService(p));
@@ -59706,7 +59384,7 @@ async function doctorCommand(args, ctx) {
   line(ctx.io, `${report2.counts.pass} passed, ${report2.counts.warn} warning(s), ${report2.counts.fail} failed`);
   return report2.ok ? EXIT.OK : EXIT.FAILURE;
 }
-var DOCTOR_OPTIONS, MIN_NODE, MIN_GIT, SHELL_BUILTINS, SRT_INSTALL, launchWrapped;
+var DOCTOR_OPTIONS, MIN_NODE, MIN_GIT, SHELL_BUILTINS2, SRT_INSTALL, launchWrapped2;
 var init_doctor = __esm({
   "src/cli/commands/doctor.ts"() {
     "use strict";
@@ -59738,14 +59416,16 @@ var init_doctor = __esm({
     init_layout();
     init_invocation();
     init_review_fix();
+    init_doctor_plugins();
+    init_doctor_sandbox();
     DOCTOR_OPTIONS = {
       probe: { type: "boolean", description: "also make tiny live requests (a few cents): one per provider that has a probe to detect expired or revoked credentials, and one per eligible Claude model" }
     };
     MIN_NODE = "22.16.0";
     MIN_GIT = "2.31.0";
-    SHELL_BUILTINS = /* @__PURE__ */ new Set(["cd", "export", "set", "test", "[", "true", "false", "echo", "exit", "exec", ":", "source", ".", "eval", "unset"]);
+    SHELL_BUILTINS2 = /* @__PURE__ */ new Set(["cd", "export", "set", "test", "[", "true", "false", "echo", "exit", "exec", ":", "source", ".", "eval", "unset"]);
     SRT_INSTALL = "npm install --global @anthropic-ai/sandbox-runtime";
-    launchWrapped = async (argv2, opts) => {
+    launchWrapped2 = async (argv2, opts) => {
       const r = await execCapture(argv2, { ...opts, maxOutputBytes: 256 * 1024 });
       return { exitCode: r.timedOut ? null : r.exitCode, output: `${r.stdout}
 ${r.stderr}`.trim() };
@@ -59788,9 +59468,290 @@ var init_gc = __esm({
   }
 });
 
+// src/cli/check-detect.ts
+import { existsSync as existsSync49, readFileSync as readFileSync31 } from "node:fs";
+import { basename as basename13, dirname as dirname30, join as join67 } from "node:path";
+function read(path) {
+  try {
+    return readFileSync31(path, "utf8").slice(0, MAX_READ_BYTES);
+  } catch {
+    return null;
+  }
+}
+function slug(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "x";
+}
+function nodeDrafts(input, out) {
+  const { repo, files, pathEnv } = input;
+  const manifest = read(join67(repo, "package.json"));
+  if (manifest === null) return [];
+  let pkg;
+  try {
+    const parsed3 = JSON.parse(manifest);
+    if (typeof parsed3 !== "object" || parsed3 === null || Array.isArray(parsed3)) return [];
+    pkg = parsed3;
+  } catch {
+    out.skip("node", "package.json is not valid JSON");
+    return [];
+  }
+  const scripts = typeof pkg.scripts === "object" && pkg.scripts !== null ? pkg.scripts : {};
+  const has = (name) => typeof scripts[name] === "string" && scripts[name].trim() !== "";
+  let pm = "npm";
+  let pmFrom = "no lockfile, so npm";
+  if (existsSync49(join67(repo, "pnpm-lock.yaml"))) [pm, pmFrom] = ["pnpm", "pnpm-lock.yaml"];
+  else if (existsSync49(join67(repo, "yarn.lock"))) [pm, pmFrom] = ["yarn", "yarn.lock"];
+  else if (existsSync49(join67(repo, "package-lock.json")) || existsSync49(join67(repo, "npm-shrinkwrap.json"))) pmFrom = "package-lock.json";
+  else {
+    const declared = typeof pkg.packageManager === "string" ? /^(npm|pnpm|yarn)@/.exec(pkg.packageManager)?.[1] : void 0;
+    if (declared === "pnpm" || declared === "yarn") [pm, pmFrom] = [declared, "package.json packageManager"];
+  }
+  if (which(pm, pathEnv) === null) {
+    out.skip("node", `package.json declares checks, but ${pm} (chosen from ${pmFrom}) was not found on PATH`);
+    return [];
+  }
+  const workspaceDeclared = Array.isArray(pkg.workspaces) || typeof pkg.workspaces === "object" && pkg.workspaces !== null || existsSync49(join67(repo, "pnpm-workspace.yaml"));
+  const nestedManifests = files.filter((f) => f.endsWith("package.json") && f !== "package.json" && !f.split("/").includes("node_modules"));
+  const nestedHas = (name) => nestedManifests.some((f) => {
+    const t = read(join67(repo, f));
+    if (t === null) return false;
+    try {
+      const s = JSON.parse(t).scripts;
+      return typeof s?.[name] === "string";
+    } catch {
+      return false;
+    }
+  });
+  const run = (script2) => script2 === "test" ? [pm, "test"] : [pm, "run", script2];
+  const fanOut = (script2) => {
+    if (!workspaceDeclared || !nestedHas(script2)) return null;
+    if (pm === "npm") return ["npm", "run", script2, "--workspaces", "--if-present"];
+    if (pm === "pnpm") return ["pnpm", "-r", "--if-present", "run", script2];
+    return null;
+  };
+  const drafts = [];
+  const script = (name, scriptNames, category, timeout) => {
+    const found = scriptNames.find(has);
+    if (found !== void 0) {
+      drafts.push({ name, command: run(found), category, timeout_seconds: timeout, reason: `package.json declares a ${found} script (${pm}, from ${pmFrom})` });
+      return true;
+    }
+    const fan = scriptNames.map(fanOut).find((c) => c !== null);
+    if (fan) {
+      drafts.push({ name, command: fan, category, timeout_seconds: timeout, reason: `workspace packages declare a ${scriptNames[0]} script and the root declares none, so one root command runs them (${pm}, from ${pmFrom})` });
+      return true;
+    }
+    return false;
+  };
+  script("lint", ["lint"], "lint", TIMEOUT.lint);
+  const typed = script("typecheck", ["typecheck", "type-check", "check-types"], "typecheck", TIMEOUT.typecheck);
+  if (!typed) {
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    if (existsSync49(join67(repo, "tsconfig.json")) && "typescript" in deps) {
+      const tsc = pm === "npm" ? ["npx", "--no-install", "tsc", "--noEmit"] : pm === "pnpm" ? ["pnpm", "exec", "tsc", "--noEmit"] : ["yarn", "tsc", "--noEmit"];
+      drafts.push({ name: "typecheck", command: tsc, category: "typecheck", timeout_seconds: TIMEOUT.typecheck, reason: `tsconfig.json and the typescript dependency (${pm}, from ${pmFrom})` });
+    }
+  }
+  if (has("test") && /no test specified/i.test(scripts.test)) {
+    out.skip("node", 'the test script is the npm placeholder ("no test specified"), so no test check was proposed');
+  } else script("unit-tests", ["test"], "test", TIMEOUT.nodeTest);
+  script("build", ["build"], "build", TIMEOUT.nodeBuild);
+  return drafts;
+}
+function dotnetTestProjects(repo, projects) {
+  const found = [];
+  for (const p of projects.slice(0, MAX_PROJECT_READS)) {
+    const text2 = read(join67(repo, p)) ?? "";
+    if (/Microsoft\.NET\.Test\.Sdk/i.test(text2) || /<IsTestProject>\s*true/i.test(text2) || /tests?\.[cfv]sproj$/i.test(basename13(p))) found.push(p);
+  }
+  return found;
+}
+function dotnetDrafts(input, out) {
+  const { repo, files, pathEnv } = input;
+  const solutions = files.filter((f) => /\.(sln|slnx)$/i.test(f));
+  const projects = files.filter((f) => /\.(cs|fs|vb)proj$/i.test(f));
+  if (solutions.length === 0 && projects.length === 0) return [];
+  if (which("dotnet", pathEnv) === null) {
+    out.skip("dotnet", "the repository has .NET projects, but dotnet was not found on PATH");
+    return [];
+  }
+  const depth = (f) => f.split("/").length;
+  let targets;
+  let what;
+  if (solutions.length > 0) {
+    const shallowest = Math.min(...solutions.map(depth));
+    targets = solutions.filter((f) => depth(f) === shallowest).sort();
+    what = "solution";
+  } else {
+    targets = [...projects].sort();
+    what = "project";
+  }
+  if (targets.length > MAX_TARGETS) {
+    out.skip("dotnet", `${targets.length} ${what} files and no single solution to build, so none was proposed; add a solution file or define the checks by hand`);
+    return [];
+  }
+  const testProjects = dotnetTestProjects(repo, projects);
+  const drafts = [];
+  for (const target of targets) {
+    const t = target.startsWith("-") ? `./${target}` : target;
+    const suffix = targets.length > 1 ? `-${slug(basename13(target).replace(/\.[^.]+$/, ""))}` : "";
+    drafts.push({ name: `build${suffix}`, command: ["dotnet", "build", t], category: "build", timeout_seconds: TIMEOUT.compile, reason: `${what} file ${t}` });
+    const testable = what === "solution" ? testProjects.length > 0 : testProjects.includes(t);
+    if (testable) drafts.push({ name: `unit-tests${suffix}`, command: ["dotnet", "test", t], category: "test", timeout_seconds: TIMEOUT.nodeTest, reason: `${what} file ${t} with ${what === "solution" ? "a test project" : "a test project of its own"} (Microsoft.NET.Test.Sdk)` });
+  }
+  return drafts;
+}
+function pythonDrafts(input, out) {
+  const { repo, files, pathEnv } = input;
+  const pyproject = read(join67(repo, "pyproject.toml"));
+  const setupCfg = read(join67(repo, "setup.cfg"));
+  const toxIni = read(join67(repo, "tox.ini"));
+  const rootFiles = files.filter((f) => !f.includes("/"));
+  const requirements = rootFiles.filter((f) => /^requirements.*\.(txt|in)$/i.test(f)).map((f) => read(join67(repo, f)) ?? "");
+  const markers = ["pyproject.toml", "setup.cfg", "tox.ini", "pytest.ini", "mypy.ini", "ruff.toml", ".flake8"];
+  if (!markers.some((m) => existsSync49(join67(repo, m)))) return [];
+  const listed = (name) => {
+    const re = new RegExp(`(^|[^\\w-])${name}([^\\w-]|$)`, "im");
+    return [pyproject, setupCfg, toxIni, ...requirements].some((t) => t !== null && re.test(t));
+  };
+  const section = (text2, re) => text2 !== null && re.test(text2);
+  const exists = (f) => existsSync49(join67(repo, f));
+  const declared = {
+    pytest: exists("pytest.ini") ? "pytest.ini" : section(pyproject, /^\[tool\.pytest/m) ? "pyproject.toml" : section(setupCfg, /^\[tool:pytest\]/m) ? "setup.cfg" : section(toxIni, /^\[pytest\]/m) ? "tox.ini" : listed("pytest") ? "the declared dependencies" : null,
+    ruff: exists("ruff.toml") ? "ruff.toml" : exists(".ruff.toml") ? ".ruff.toml" : section(pyproject, /^\[tool\.ruff/m) ? "pyproject.toml" : listed("ruff") ? "the declared dependencies" : null,
+    flake8: exists(".flake8") ? ".flake8" : section(setupCfg, /^\[flake8\]/m) ? "setup.cfg" : section(toxIni, /^\[flake8\]/m) ? "tox.ini" : listed("flake8") ? "the declared dependencies" : null,
+    mypy: exists("mypy.ini") ? "mypy.ini" : exists(".mypy.ini") ? ".mypy.ini" : section(pyproject, /^\[tool\.mypy/m) ? "pyproject.toml" : section(setupCfg, /^\[mypy/m) ? "setup.cfg" : listed("mypy") ? "the declared dependencies" : null
+  };
+  const present = (tool) => which(tool, pathEnv) !== null;
+  const drafts = [];
+  const need = (tool) => {
+    if (declared[tool] === null) return false;
+    if (present(tool)) return true;
+    out.skip("python", `${tool} is declared in ${declared[tool]}, but was not found on PATH`);
+    return false;
+  };
+  if (need("pytest")) drafts.push({ name: "unit-tests", command: ["pytest"], category: "test", timeout_seconds: TIMEOUT.nodeTest, reason: `pytest is configured in ${declared.pytest}` });
+  if (declared.ruff !== null && present("ruff")) drafts.push({ name: "lint", command: ["ruff", "check", "."], category: "lint", timeout_seconds: TIMEOUT.lint, reason: `ruff is configured in ${declared.ruff}` });
+  else if (declared.flake8 !== null && present("flake8")) drafts.push({ name: "lint", command: ["flake8"], category: "lint", timeout_seconds: TIMEOUT.lint, reason: `flake8 is configured in ${declared.flake8}` });
+  else if (declared.ruff !== null) out.skip("python", `ruff is declared in ${declared.ruff}, but was not found on PATH`);
+  else if (declared.flake8 !== null) out.skip("python", `flake8 is declared in ${declared.flake8}, but was not found on PATH`);
+  if (need("mypy")) drafts.push({ name: "typecheck", command: ["mypy", "."], category: "typecheck", timeout_seconds: TIMEOUT.pyType, reason: `mypy is configured in ${declared.mypy}` });
+  return drafts;
+}
+function goWorkModules(text2) {
+  const dirs = [];
+  const clean = text2.replace(/\/\/.*$/gm, "");
+  for (const m of clean.matchAll(/^\s*use\s*\(([^)]*)\)/gm)) for (const l of (m[1] ?? "").split("\n")) dirs.push(l.trim());
+  for (const m of clean.matchAll(/^\s*use\s+([^\s(][^\s]*)\s*$/gm)) dirs.push(m[1] ?? "");
+  const norm2 = dirs.map((d) => d.replace(/^"|"$/g, "").replace(/^\.\//, "").replace(/\/$/, "")).filter((d) => d !== "");
+  return [...new Set(norm2)].filter((d) => d !== "." && !d.startsWith("/") && !d.includes(".."));
+}
+function goDrafts(input, out) {
+  const { repo, pathEnv } = input;
+  const work = read(join67(repo, "go.work"));
+  if (!existsSync49(join67(repo, "go.mod")) && work === null) return [];
+  if (which("go", pathEnv) === null) {
+    out.skip("go", "the repository has a Go module, but go was not found on PATH");
+    return [];
+  }
+  const modules = work === null ? [] : goWorkModules(work);
+  const patterns = modules.length > 0 ? modules.map((m) => `./${m}/...`) : ["./..."];
+  const reason = modules.length > 0 ? `go.work lists ${modules.length} module(s), so one root command covers them` : "go.mod";
+  if (modules.length === 0 && !existsSync49(join67(repo, "go.mod"))) {
+    out.skip("go", "go.work names no module directory and there is no root go.mod");
+    return [];
+  }
+  return [
+    { name: "build", command: ["go", "build", ...patterns], category: "build", timeout_seconds: TIMEOUT.compile, reason },
+    { name: "vet", command: ["go", "vet", ...patterns], category: "lint", timeout_seconds: TIMEOUT.lint, reason },
+    { name: "unit-tests", command: ["go", "test", ...patterns], category: "test", timeout_seconds: TIMEOUT.nodeTest, reason }
+  ];
+}
+async function rustDrafts(input, out) {
+  const { repo, pathEnv } = input;
+  const manifest = read(join67(repo, "Cargo.toml"));
+  if (manifest === null) return [];
+  const cargo = which("cargo", pathEnv);
+  if (cargo === null) {
+    out.skip("rust", "the repository has a Cargo.toml, but cargo was not found on PATH");
+    return [];
+  }
+  const ws = /^\[workspace\]/m.test(manifest) ? ["--workspace"] : [];
+  const reason = ws.length > 0 ? "Cargo.toml declares a workspace, so one root command covers its members" : "Cargo.toml";
+  const drafts = [
+    { name: "build", command: ["cargo", "build", ...ws], category: "build", timeout_seconds: TIMEOUT.rustBuild, reason },
+    { name: "unit-tests", command: ["cargo", "test", ...ws], category: "test", timeout_seconds: TIMEOUT.rustTest, reason }
+  ];
+  const clippy = await (input.clippyAvailable ?? realClippyProbe)(cargo);
+  if (clippy) drafts.push({ name: "clippy", command: ["cargo", "clippy", ...ws, "--all-targets", "--", "-D", "warnings"], category: "lint", timeout_seconds: TIMEOUT.rustLint, reason: `${reason}; cargo clippy is installed` });
+  else out.skip("rust", "cargo clippy is not installed (rustup component add clippy), so no clippy check was proposed");
+  return drafts;
+}
+async function realClippyProbe(cargo) {
+  try {
+    const r = await execCapture([cargo, "clippy", "--version"], { cwd: dirname30(cargo), timeoutMs: 2e4, maxOutputBytes: 16 * 1024 });
+    return r.exitCode === 0 && !r.timedOut;
+  } catch {
+    return false;
+  }
+}
+async function detectChecks(input) {
+  const out = new Collector();
+  const groups = [
+    ["node", nodeDrafts(input, out)],
+    ["dotnet", dotnetDrafts(input, out)],
+    ["python", pythonDrafts(input, out)],
+    ["go", goDrafts(input, out)],
+    ["rust", await rustDrafts(input, out)]
+  ];
+  const active = groups.filter(([, d]) => d.length > 0);
+  const mixed = active.length > 1;
+  for (const [ecosystem, drafts] of active) {
+    for (const { name, ...rest } of drafts) out.add({ id: mixed ? `${ecosystem}-${name}` : name, ecosystem, ...rest });
+  }
+  return { proposed: out.proposed, notProposed: out.notProposed };
+}
+function renderChecksYaml(proposed) {
+  let text2 = "";
+  for (const c of proposed) {
+    text2 += `  # Proposed by "orbit init" (${c.reason.replace(/[\r\n]+/g, " ")}). Review it before the first run.
+`;
+    text2 += `  ${c.id}:
+`;
+    text2 += `    command: [${c.command.map((x) => JSON.stringify(x)).join(", ")}]
+`;
+    text2 += `    category: ${c.category}
+`;
+    text2 += `    timeout_seconds: ${c.timeout_seconds}
+`;
+  }
+  return text2;
+}
+var TIMEOUT, MAX_READ_BYTES, MAX_PROJECT_READS, MAX_TARGETS, Collector;
+var init_check_detect = __esm({
+  "src/cli/check-detect.ts"() {
+    "use strict";
+    init_exec();
+    init_util();
+    TIMEOUT = { lint: 300, typecheck: 300, nodeTest: 900, nodeBuild: 600, compile: 900, rustBuild: 1200, rustTest: 1200, rustLint: 900, pyType: 600 };
+    MAX_READ_BYTES = 256 * 1024;
+    MAX_PROJECT_READS = 200;
+    MAX_TARGETS = 3;
+    Collector = class {
+      proposed = [];
+      notProposed = [];
+      add(c) {
+        this.proposed.push(c);
+      }
+      skip(ecosystem, reason) {
+        this.notProposed.push({ ecosystem, reason });
+      }
+    };
+  }
+});
+
 // src/cli/commands/init.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync50, mkdirSync as mkdirSync22, readFileSync as readFileSync32, writeFileSync as writeFileSync9 } from "node:fs";
-import { dirname as dirname32, join as join68 } from "node:path";
+import { appendFileSync as appendFileSync2, existsSync as existsSync50, mkdirSync as mkdirSync23, readFileSync as readFileSync32, writeFileSync as writeFileSync9 } from "node:fs";
+import { dirname as dirname31, join as join68 } from "node:path";
 function templatePath() {
   return join68(orbitInstallDir(), "templates", "config.yaml");
 }
@@ -59836,7 +59797,9 @@ repository:
 scope:
   # Repository-relative globs a worker may change. Anything else is out of
   # scope and fails the run's scope gate. A goal contract can narrow this
-  # further but never widen it.
+  # further but never widen it. Narrow this to the folders your goal needs;
+  # "orbit init" proposes every source folder and leaves out folders that hold
+  # CI pipeline or build-system definitions (it adds those to protected_paths).
   allowed_paths: ["apps/**", "packages/**", "tests/**", "docs/**"]
   # Paths no worker may change even when allowed_paths matches them.
   # Protected always wins. Orbit also adds built-in protections you cannot
@@ -59956,6 +59919,13 @@ agents:
   isolate_writers: true
   prohibit_shared_worktree_writes: true
   cancel_obsolete_workers: true
+  # Plugins a worker session may load besides Claude Code's built-ins. A
+  # plugin can add hooks and tools to every worker, so none are allowed by
+  # default; \`orbit doctor\` lists the ones a worker would load.
+  # Exact name@marketplace ids, e.g. ["acme-guard@acme-it"]:
+  allowed_plugins: []
+  # Accept every organisation-managed plugin (scope managed):
+  allow_managed_plugins: false
 
 review:
   # Review by a provider other than the one that wrote the change.
@@ -60200,26 +60170,6 @@ guard:
   terms_file: null
   allowed_emails: []
 
-# Notifications when a run ends or asks a question (docs/decisions/0008).
-# Payloads carry the run id, state, reason, next action and question ids only.
-notifications:
-  # macOS Notification Centre or Linux notify-send; skipped where neither exists.
-  desktop: true
-  # POST to a webhook (Slack-compatible "text"). Name the environment variable
-  # that holds the URL, never the URL itself; its host must be in
-  # network.allowed_hosts. Example: { url_env: ORBIT_WEBHOOK_URL }
-  webhook: null
-  # Comment on the run's pull request (or the linked issue below).
-  github_comment: false
-  # Answer an open question with a "/orbit answer <question-id> <choice>"
-  # comment. Only people with write, maintain or admin permission count,
-  # checked with the GitHub API through GH_TOKEN when the comment is read.
-  remote_answers:
-    enabled: false
-    # An issue linked to every run started under this policy (or null).
-    issue: null
-    poll_seconds: 120
-
 # Verification policy.
 verification:
   # A check that fails and then passes on a rerun is reported as flaky. When
@@ -60250,16 +60200,32 @@ async function initCommand(args, ctx) {
   const configPath = join68(repo, ".orbit", "config.yaml");
   let config;
   let derivedPaths = [];
+  let protectedAdded = [];
+  let excludedDirs = [];
   let baseBranch = null;
+  let checkProposal = { proposed: [], notProposed: [] };
   if (existsSync50(configPath)) config = "exists";
   else {
     let text2 = templateText();
-    mkdirSync22(dirname32(configPath), { recursive: true });
-    derivedPaths = suggestAllowedPaths(await trackedFiles(ctx, repo));
+    mkdirSync23(dirname31(configPath), { recursive: true });
+    const proposal = await proposeScope(ctx, repo);
+    derivedPaths = proposal.allowed;
+    excludedDirs = proposal.excluded;
+    const have2 = text2.match(/^\s*protected_paths: \[(.*)\]$/m)?.[1] ?? "";
+    protectedAdded = proposal.protectedExtra.filter((g) => !have2.includes(JSON.stringify(g)));
     baseBranch = await currentBranch(ctx, repo);
     if (baseBranch !== null && baseBranch !== "main") text2 = text2.replace(/^(\s*base_branch: ).*$/m, `$1${JSON.stringify(baseBranch)}`);
     else baseBranch = null;
     if (derivedPaths.length > 0) text2 = text2.replace(/^(\s*allowed_paths: )\[.*\]$/m, `$1[${derivedPaths.map((x) => JSON.stringify(x)).join(", ")}]`);
+    if (protectedAdded.length > 0) {
+      text2 = text2.replace(/^(\s*protected_paths: \[.*?)\]$/m, (_m, head) => `${head}, ${protectedAdded.map((x) => JSON.stringify(x)).join(", ")}]`);
+    }
+    checkProposal = await detectChecks({ repo, files: await trackedFiles(ctx, repo), pathEnv: ctx.env.PATH });
+    if (checkProposal.proposed.length > 0) {
+      const block2 = renderChecksYaml(checkProposal.proposed);
+      text2 = text2.replace(/^checks:\n/m, () => `checks:
+${block2}`);
+    }
     try {
       writeFileSync9(configPath, text2, { flag: "wx", mode: 420 });
       config = "created";
@@ -60269,7 +60235,7 @@ async function initCommand(args, ctx) {
     }
   }
   const excludePath = await excludeFile(ctx, repo);
-  mkdirSync22(dirname32(excludePath), { recursive: true });
+  mkdirSync23(dirname31(excludePath), { recursive: true });
   const current = existsSync50(excludePath) ? readFileSync32(excludePath, "utf8") : "";
   const have = new Set(current.split("\n").map((l) => l.trim()));
   const missing = EXCLUDE_RULES.filter((r) => !have.has(r));
@@ -60295,19 +60261,29 @@ async function initCommand(args, ctx) {
     }
   }
   if (args.bool("json")) {
-    json(ctx.io, { repo, config: { path: configPath, status: config, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, config_problems: problems, warnings });
+    json(ctx.io, { repo, config: { path: configPath, status: config, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, config_problems: problems, warnings });
     return EXIT.OK;
   }
   line(ctx.io, config === "created" ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
   if (config === "created" && baseBranch !== null) line(ctx.io, `repository.base_branch set to ${baseBranch} from the checked-out branch (the template says main); review it`);
   if (config === "created" && derivedPaths.length > 0) line(ctx.io, `scope.allowed_paths set to ${derivedPaths.join(", ")} from the repository layout (the template's paths matched nothing here); review it`);
+  if (config === "created" && excludedDirs.length > 0) line(ctx.io, `left out of scope.allowed_paths because they hold CI or build definitions: ${excludedDirs.join(", ")}`);
+  if (config === "created" && protectedAdded.length > 0) line(ctx.io, `scope.protected_paths gained ${protectedAdded.join(", ")} (CI pipeline and build-system definitions found in the repository)`);
+  if (config === "created" && derivedPaths.length > 0) line(ctx.io, "Narrow scope.allowed_paths to the folders your goal needs: the proposal covers every source folder, and a smaller scope is safer and cheaper to review.");
+  if (config === "created") {
+    if (checkProposal.proposed.length > 0) {
+      line(ctx.io, `checks proposed from what the repository declares (each is commented in the config; review them, they are the evidence every run is judged by):`);
+      for (const c of checkProposal.proposed) line(ctx.io, `  ${c.id}: ${c.command.join(" ")} (${c.category}, ${c.timeout_seconds}s): ${c.reason}`);
+    }
+    for (const n2 of checkProposal.notProposed) line(ctx.io, `no check proposed for ${n2.ecosystem}: ${n2.reason}`);
+  }
   line(ctx.io, missing.length > 0 ? `added ${missing.length} rule(s) to ${excludePath} so runtime state stays out of git status` : `${excludePath} already excludes Orbit runtime state`);
   if (problems.length > 0) {
     line(ctx.io, "The configuration does not validate yet:");
     for (const p of problems.slice(0, 10)) line(ctx.io, `  - ${p}`);
   } else line(ctx.io, "The configuration validates.");
   for (const w of warnings) line(ctx.io, `WARN: ${w}`);
-  line(ctx.io, `Next: define your checks in .orbit/config.yaml, then run ${orbitHint("doctor")}.`);
+  line(ctx.io, checkProposal.proposed.length > 0 ? `Next: review the proposed checks in .orbit/config.yaml and add any that are missing, then run ${orbitHint("doctor")}.` : `Next: define your checks in .orbit/config.yaml, then run ${orbitHint("doctor")}.`);
   return EXIT.OK;
 }
 var EXCLUDE_RULES, EXCLUDE_HEADER;
@@ -60324,6 +60300,7 @@ var init_init = __esm({
     init_layout();
     init_globs();
     init_invocation();
+    init_check_detect();
     EXCLUDE_RULES = ["/.orbit/state.sqlite*", "/.orbit/knowledge.sqlite*", "/.orbit/runs/"];
     EXCLUDE_HEADER = '# Orbit runtime state (added by "orbit init")';
   }
@@ -60331,18 +60308,18 @@ var init_init = __esm({
 
 // src/cli/commands/internal.ts
 import { spawn as spawn6 } from "node:child_process";
-import { mkdirSync as mkdirSync23 } from "node:fs";
-import { isAbsolute as isAbsolute20 } from "node:path";
+import { mkdirSync as mkdirSync24 } from "node:fs";
+import { isAbsolute as isAbsolute22 } from "node:path";
 async function shimCommand(rawArgs) {
   return shimMain(rawArgs);
 }
 async function checkRunnerCommand(rawArgs, ctx) {
   const [runDir2, checkDir, ...extra] = rawArgs;
-  if (!runDir2 || !checkDir || extra.length > 0 || !isAbsolute20(runDir2) || !isAbsolute20(checkDir)) {
+  if (!runDir2 || !checkDir || extra.length > 0 || !isAbsolute22(runDir2) || !isAbsolute22(checkDir)) {
     ctx.io.err("usage: orbit check-runner <absolute run dir> <absolute check dir>\n");
     return EXIT.USAGE;
   }
-  mkdirSync23(runDir2, { recursive: true });
+  mkdirSync24(runDir2, { recursive: true });
   const shim = ensureShim(runDir2);
   return new Promise((resolve21) => {
     const child = spawn6(process.execPath, [shim, checkDir], { stdio: "inherit", env: process.env });
@@ -60471,8 +60448,8 @@ var init_ingest = __esm({
 });
 
 // src/cli/commands/learn.ts
-import { existsSync as existsSync51, mkdirSync as mkdirSync24, readFileSync as readFileSync33, statSync as statSync16 } from "node:fs";
-import { basename as basename12, isAbsolute as isAbsolute21, join as join69, relative as relative7, resolve as resolve18 } from "node:path";
+import { existsSync as existsSync51, mkdirSync as mkdirSync25, readFileSync as readFileSync33, statSync as statSync16 } from "node:fs";
+import { basename as basename14, isAbsolute as isAbsolute23, join as join69, relative as relative7, resolve as resolve18 } from "node:path";
 function knowledgePath(ctx, repo, global) {
   return global ? join69(ctx.orbitHome, "knowledge.sqlite") : join69(repo, ".orbit", "knowledge.sqlite");
 }
@@ -60594,7 +60571,7 @@ async function readSource(ctx, repo, ref2, label) {
   if (!st.isFile()) throw new OrbitError("SCHEMA_INVALID", `${path} is not a regular file`);
   if (st.size > FETCH_MAX_BYTES) throw new OrbitError("SCHEMA_INVALID", `${path} is larger than ${FETCH_MAX_BYTES} bytes`);
   const rel = relative7(repo, path);
-  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute21(rel) ? rel : basename12(path), content: readFileSync33(path, "utf8") };
+  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute23(rel) ? rel : basename14(path), content: readFileSync33(path, "utf8") };
 }
 async function runIngestCurator(ctx, repo, config, prompt) {
   if (!(config.knowledge.curator_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.curator_budget_usd is 0, so no curator may run; raise it, or supply the curator output with --curator-output");
@@ -60606,7 +60583,7 @@ async function runIngestCurator(ctx, repo, config, prompt) {
     deps.registry.seed();
     const id = `ingest-${ctx.clock.now().toString(36)}`;
     const dir = join69(ctx.orbitHome, "ingest", repoKey(repo), id);
-    mkdirSync24(dir, { recursive: true, mode: 448 });
+    mkdirSync25(dir, { recursive: true, mode: 448 });
     const snap = snapshotPolicy(config, { runId: id, repoRoot: repo, runDir: dir, clock: ctx.clock });
     const out = await runCurator(
       { deps, clock: ctx.clock, snapshot: snap.snapshot, policyPath: snap.path, policyHash: snap.hash, runId: id, dir, budgetUsd: config.knowledge.curator_budget_usd, env: ctx.env, homeDir: ctx.homeDir },
@@ -60641,7 +60618,7 @@ async function learnIngestCommand(args, ctx) {
     }
   } else ({ output, model } = await runIngestCurator(ctx, repo, config, task.prompt));
   const result2 = acceptIngestOutput(output, source, ctx.clock, model ? { curatorModel: model } : {});
-  mkdirSync24(join69(repo, ".orbit"), { recursive: true });
+  mkdirSync25(join69(repo, ".orbit"), { recursive: true });
   const store = KnowledgeStore.open(join69(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const created = [];
   const merged = [];
@@ -60796,7 +60773,7 @@ var init_learn2 = __esm({
     init_policy();
     init_snapshot();
     init_controller();
-    init_report2();
+    init_report();
     init_eval_runner();
     init_store2();
     init_types4();
@@ -60846,7 +60823,7 @@ var init_learn2 = __esm({
 
 // src/cli/commands/logs.ts
 import { closeSync as closeSync9, existsSync as existsSync52, fstatSync as fstatSync4, openSync as openSync9, readSync as readSync5, statSync as statSync17 } from "node:fs";
-import { dirname as dirname33, join as join70 } from "node:path";
+import { dirname as dirname32, join as join70 } from "node:path";
 function readTail(path, lines) {
   const size = statSync17(path).size;
   const fd = openSync9(path, "r");
@@ -60908,7 +60885,7 @@ async function logsCommand(args, ctx) {
   const asJson = args.bool("json");
   return withState(repo, async (db) => {
     const run = findRunByPrefix(db, runRef);
-    const runDir2 = dirname33(run.policyPath);
+    const runDir2 = dirname32(run.policyPath);
     const wantController = !args.bool("workers") && !args.str("worker");
     const wantWorkers = !args.bool("controller");
     const sources = [];
@@ -61108,14 +61085,14 @@ async function modelsRefreshCommand(args, ctx) {
           }
         }
         if (args.bool("probe")) {
-          const probe = adapter.probeCredentials;
-          if (typeof probe !== "function") {
+          const probe2 = adapter.probeCredentials;
+          if (typeof probe2 !== "function") {
             notes.push(`  --probe: ${id} has no live probe`);
             continue;
           }
           for (const e of registry.list().filter((m) => m.provider === "claude" && allowMatch(m, config.routing.allowed_models) !== null)) {
             if (e.surfaces.some((s) => s.surface === "claude-cli" && s.available === false)) continue;
-            const st = await probe.call(adapter, { model: e.eligibility.cliAlias ?? e.modelId, timeoutMs: 9e4 });
+            const st = await probe2.call(adapter, { model: e.eligibility.cliAlias ?? e.modelId, timeoutMs: 9e4 });
             if (st.state === "valid") {
               registry.markAvailability(e.modelId, "claude-cli", true, `live probe succeeded (${st.method ?? "credential"})`);
               notes.push(`  ${e.modelId}: validated by a live request`);
@@ -61314,14 +61291,14 @@ var init_release2 = __esm({
 
 // src/cli/commands/report.ts
 import { existsSync as existsSync54, readFileSync as readFileSync34 } from "node:fs";
-import { dirname as dirname34, join as join71 } from "node:path";
+import { dirname as dirname33, join as join71 } from "node:path";
 async function reportCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   if (args.bool("learning")) return withState(repo, (db) => learningReport(ctx, repo, db, args.bool("json")));
   const [id] = args.expect(1);
   return withState(repo, (db) => {
     const run = findRunByPrefix(db, id);
-    const runDir2 = dirname34(run.policyPath);
+    const runDir2 = dirname33(run.policyPath);
     const finalMd = join71(runDir2, "final.md");
     const finalJson = join71(runDir2, "final.json");
     const asJson = args.bool("json");
@@ -61582,11 +61559,11 @@ async function runCommand(args, ctx) {
   }
   let service = null;
   if (existsSync56(stateDbPath(repo))) {
-    const probe = openState(repo);
+    const probe2 = openState(repo);
     try {
-      service = liveServiceController(probe, ctx.clock.now());
+      service = liveServiceController(probe2, ctx.clock.now());
     } finally {
-      probe.close();
+      probe2.close();
     }
   }
   const foreground = args.bool("foreground") ? true : args.bool("detach") ? false : service === null;
@@ -61676,8 +61653,8 @@ async function repairCommand(args, ctx) {
     if (!evidence) throw new OrbitError("TRANSITION_INVALID", `candidate ${cand.seq} of run ${run.id} has no evidence yet, so there is no failure to repair. Run "orbit verify ${run.id}" first`);
     if (evidence.verdict !== "FAIL") throw new OrbitError("TRANSITION_INVALID", `the latest evidence for run ${run.id} (candidate ${cand.seq}) is ${evidence.verdict}, not FAIL, so there is no failure to repair. "orbit verify ${run.id}" shows what is unproven`);
     if (run.state !== "DIAGNOSING" && !canTransition(run.state, "DIAGNOSING")) throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is ${run.state}, which cannot move to DIAGNOSING`);
-    const open = listQuestions(db, run.id, { status: "open" }).filter((q) => q.material);
-    if (open.length > 0) throw new OrbitError("TRANSITION_INVALID", `run ${run.id} still has ${open.length} material question(s) open (${open.map((q) => q.id).join(", ")}); answer them with "orbit decide ${run.id} <question-id> <answer>" before a repair, or use /orbit:inquisition`, { open: open.map((q) => q.id) });
+    const open2 = listQuestions(db, run.id, { status: "open" }).filter((q) => q.material);
+    if (open2.length > 0) throw new OrbitError("TRANSITION_INVALID", `run ${run.id} still has ${open2.length} material question(s) open (${open2.map((q) => q.id).join(", ")}); answer them with "orbit decide ${run.id} <question-id> <answer>" before a repair, or use /orbit:inquisition`, { open: open2.map((q) => q.id) });
     const failures = listFailures(db, run.id).filter((f) => f.candidateId === cand.id);
     const primary = failures.find((f) => f.source !== "flaky_check") ?? failures[0] ?? null;
     const fingerprint = primary?.fingerprint ?? `verdict:${cand.id}`;
@@ -61754,11 +61731,11 @@ var init_repair2 = __esm({
 function metricsFor(db, window = {}) {
   const from = window.from ?? null;
   const to = window.to ?? null;
-  const where2 = `created_at >= ${from === null ? "0" : "?"} AND created_at < ${to === null ? "9223372036854775807" : "?"}`;
+  const where = `created_at >= ${from === null ? "0" : "?"} AND created_at < ${to === null ? "9223372036854775807" : "?"}`;
   const params = [...from === null ? [] : [from], ...to === null ? [] : [to]];
-  const inWindow = `run_id IN (SELECT id FROM runs WHERE ${where2})`;
+  const inWindow = `run_id IN (SELECT id FROM runs WHERE ${where})`;
   const missing = [];
-  const runRows = db.all(`SELECT id, state, created_at, started_at FROM runs WHERE ${where2} ORDER BY created_at`, ...params);
+  const runRows = db.all(`SELECT id, state, created_at, started_at FROM runs WHERE ${where} ORDER BY created_at`, ...params);
   const byState = {};
   for (const r of runRows) byState[r.state] = (byState[r.state] ?? 0) + 1;
   const finished2 = runRows.filter((r) => FINISHED_STATES.includes(r.state));
@@ -61779,7 +61756,7 @@ function metricsFor(db, window = {}) {
   const escalation = escalationQuality(db, inWindow, params);
   const duplicates = duplicateFailures(db, inWindow, params);
   const green = timeToGreen(db, runRows);
-  const spend = spendPerAccepted(db, where2, params, accepted.length, missing);
+  const spend = spendPerAccepted(db, where, params, accepted.length, missing);
   const tokens3 = tokenUsage(db, inWindow, params, missing);
   const overhead = concurrencyOverhead(db, inWindow, params, missing);
   const evidenceInvalidated = count2(db, `SELECT COUNT(*) AS n FROM events WHERE type = 'evidence.invalidated' AND ${inWindow}`, params);
@@ -61896,10 +61873,10 @@ function duplicateFailures(db, inWindow, params) {
   const dups = rows.reduce((a, r) => a + (r.candidates - 1), 0);
   return { ...rate(dups, total), distinct_fingerprints: rows.length, duplicates: dups };
 }
-function spendPerAccepted(db, where2, params, accepted, missing) {
+function spendPerAccepted(db, where, params, accepted, missing) {
   const marks = TERMINAL2.map(() => "?").join(", ");
   const rows = db.all(
-    `SELECT cost_usd, cost_source FROM usage WHERE run_id IN (SELECT id FROM runs WHERE ${where2} AND state IN (${marks}))`,
+    `SELECT cost_usd, cost_source FROM usage WHERE run_id IN (SELECT id FROM runs WHERE ${where} AND state IN (${marks}))`,
     ...params,
     ...TERMINAL2
   );
@@ -62235,7 +62212,7 @@ var init_status = __esm({
 });
 
 // src/cli/commands/verify.ts
-import { dirname as dirname35, isAbsolute as isAbsolute22, join as join73, relative as relative8 } from "node:path";
+import { dirname as dirname34, isAbsolute as isAbsolute24, join as join73, relative as relative8 } from "node:path";
 function exitCodeForVerdict(verdict) {
   return verdict === "PASS" ? EXIT.OK : verdict === "FAIL" ? EXIT.VERIFY_FAILED : EXIT.VERIFY_INCOMPLETE;
 }
@@ -62309,9 +62286,9 @@ function repairNextStep(run) {
 function print(ctx, repo, asJson, o, contractJson) {
   const contract = JSON.parse(contractJson);
   const statements = new Map(contract.acceptance_criteria.map((c) => [c.id, c]));
-  const runDir2 = dirname35(o.run.policyPath);
+  const runDir2 = dirname34(o.run.policyPath);
   const rel = (given) => {
-    const p = isAbsolute22(given) ? given : join73(runDir2, given);
+    const p = isAbsolute24(given) ? given : join73(runDir2, given);
     const r = relative8(repo, p);
     return r.startsWith("..") || r === "" ? p : r;
   };
@@ -62558,7 +62535,6 @@ var init_cli = __esm({
     init_learn2();
     init_logs();
     init_models2();
-    init_notify2();
     init_policy2();
     init_release2();
     init_report4();
@@ -62597,7 +62573,6 @@ var init_cli = __esm({
       { name: "stats", summary: "the spec section 16 metrics for this repository's runs (success, cost, repair loops, time to green), optionally in a time window", usage: STATS_USAGE, options: STATS_OPTIONS, run: statsCommand },
       { name: "release resolve", summary: "settle a deploy whose outcome is unknown: run the environment's verify_command, or record --deployed / --not-deployed", usage: RELEASE_RESOLVE_USAGE, options: RELEASE_RESOLVE_OPTIONS, run: releaseResolveCommand },
       { name: "gc", summary: "apply artifact retention: delete the run directories and worktrees of finished runs older than retention.keep_runs_days", usage: GC_USAGE, options: GC_OPTIONS, run: gcCommand },
-      { name: "notify test", summary: "send a test notification through the configured channels (desktop, webhook, GitHub comment) and print each outcome", usage: NOTIFY_TEST_USAGE, options: NOTIFY_TEST_OPTIONS, run: notifyTestCommand },
       { name: "policy show", summary: "the frozen policy a run acts under, verified against its hash", usage: "orbit policy show <run-id> [--json]", run: policyShowCommand }
     ];
     HIDDEN = ["shim", "hook", "check-runner"];
