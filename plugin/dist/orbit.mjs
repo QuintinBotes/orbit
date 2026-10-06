@@ -30769,7 +30769,7 @@ var init_start = __esm({
 // src/cli/context.ts
 import { existsSync as existsSync16, realpathSync as realpathSync7 } from "node:fs";
 import { homedir as homedir7, hostname as hostname2, userInfo as userInfo2 } from "node:os";
-import { dirname as dirname15, resolve as resolve7 } from "node:path";
+import { resolve as resolve7 } from "node:path";
 function createContext(overrides = {}) {
   const env = overrides.env ?? process.env;
   const homeDir = overrides.homeDir ?? homedir7();
@@ -30809,14 +30809,13 @@ async function resolveRepo(ctx, flag) {
   if (!existsSync16(start)) throw new OrbitError("NOT_FOUND", `${start} does not exist`);
   let r;
   try {
-    r = await execCapture(["git", "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"], { cwd: start, timeoutMs: 15e3, env: gitEnv(ctx.env) });
+    r = await execCapture(["git", "rev-parse", "--path-format=absolute", "--show-toplevel"], { cwd: start, timeoutMs: 15e3, env: gitEnv(ctx.env) });
   } catch (err) {
     throw new OrbitError("PROVIDER_UNAVAILABLE", `git is not available: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (r.exitCode !== 0) throw new OrbitError("NOT_FOUND", `${start} is not inside a git repository; run orbit from a repository or pass --repo (to make this directory one: git init, then commit at least once)`);
-  const [top, common] = r.stdout.trim().split("\n");
+  const top = r.stdout.trim().split("\n")[0];
   if (!top) throw new OrbitError("NOT_FOUND", `${start} is not inside a git repository`);
-  if (common && common.endsWith("/.git") && dirname15(common) !== top) return safeRealpath(dirname15(common));
   return safeRealpath(top);
 }
 function gitEnv(env) {
@@ -34668,7 +34667,7 @@ var init_identity2 = __esm({
 
 // src/recovery/reconcile.ts
 import { existsSync as existsSync19, readdirSync as readdirSync3 } from "node:fs";
-import { dirname as dirname16, join as join21 } from "node:path";
+import { dirname as dirname15, join as join21 } from "node:path";
 async function reconcileOnStart(opts) {
   const ctx = {
     db: opts.db,
@@ -34736,7 +34735,7 @@ function nonTerminalStates() {
   return ["CREATED", "PREFLIGHT", "CONTRACTING", "PLANNING", "IMPLEMENTING", "VERIFYING", "REVIEWING", "DELIVERING", "AWAITING_CI", "INQUISITION", "DIAGNOSING", "REPAIRING", "RECOVERING"];
 }
 function runDir(ctx, run) {
-  return ctx.opts.runDirFor ? ctx.opts.runDirFor(run) : dirname16(run.policyPath);
+  return ctx.opts.runDirFor ? ctx.opts.runDirFor(run) : dirname15(run.policyPath);
 }
 function note(ctx, runId, type, data) {
   const now = ctx.clock.now();
@@ -35531,9 +35530,8 @@ async function treeOf(repoRoot, commit) {
   return (await git2(repoRoot, ["rev-parse", "--verify", `${commit}^{tree}`])).trim();
 }
 async function adminDirFor(repoRoot, worktree) {
-  const common = realpathSync8(
-    (await git2(repoRoot, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).trim()
-  );
+  const [commonOut, ownOut] = (await git2(repoRoot, ["rev-parse", "--path-format=absolute", "--git-common-dir", "--git-dir"])).trim().split("\n");
+  const common = realpathSync8(commonOut.trim());
   let wt;
   let root;
   try {
@@ -35542,7 +35540,7 @@ async function adminDirFor(repoRoot, worktree) {
   } catch (err) {
     throw new OrbitError("NOT_FOUND", `worktree or repository does not exist: ${worktree}`, { worktree }, { cause: err });
   }
-  if (wt === root) return { gitDir: common, worktree: wt };
+  if (wt === root) return { gitDir: realpathSync8((ownOut ?? commonOut).trim()), worktree: wt };
   const admin = join23(common, "worktrees");
   let names = [];
   try {
@@ -37594,14 +37592,14 @@ var init_scheduler = __esm({
 });
 
 // src/controller/context.ts
-import { dirname as dirname17, join as join25 } from "node:path";
+import { dirname as dirname16, join as join25 } from "node:path";
 import { homedir as homedir8 } from "node:os";
 import { existsSync as existsSync21, readFileSync as readFileSync16, realpathSync as realpathSync11 } from "node:fs";
 function loadRunContext(deps, runId, signal) {
   const { db } = deps;
   const run = getRun(db, runId);
-  if (run.endedAt !== null && !existsSync21(dirname17(run.policyPath))) {
-    throw new OrbitError("NOT_FOUND", `run ${runId} ended and its files were removed by orbit gc (${dirname17(run.policyPath)} is gone), so its candidate cannot be checked or repaired; its record remains for "orbit status" and "orbit stats". Start a new run for further work`);
+  if (run.endedAt !== null && !existsSync21(dirname16(run.policyPath))) {
+    throw new OrbitError("NOT_FOUND", `run ${runId} ended and its files were removed by orbit gc (${dirname16(run.policyPath)} is gone), so its candidate cannot be checked or repaired; its record remains for "orbit status" and "orbit stats". Start a new run for further work`);
   }
   const snapshot2 = verifySnapshot(run.policyPath, run.policyHash);
   let contract = null;
@@ -37617,7 +37615,7 @@ function loadRunContext(deps, runId, signal) {
   const candidate = currentCandidate(db, runId);
   let ledger = null;
   if (db.get("SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1", runId)) ledger = new BudgetLedger(db, deps.clock).attach(runId, snapshot2);
-  const runDir2 = dirname17(run.policyPath);
+  const runDir2 = dirname16(run.policyPath);
   const log = (deps.logger ?? nullLogger).child({ run_id: runId });
   let isolation = null;
   const ctx = {
@@ -37675,7 +37673,7 @@ function lenientContext(deps, runId, signal) {
     contract: null,
     candidate: currentCandidate(deps.db, runId),
     ledger: null,
-    runDir: dirname17(run.policyPath),
+    runDir: dirname16(run.policyPath),
     signal,
     timing: { ...DEFAULT_TIMING, ...deps.timing ?? {} },
     policyVerified: false,
@@ -38655,11 +38653,11 @@ var init_schema6 = __esm({
 // src/knowledge/db.ts
 import { createRequire as createRequire2 } from "node:module";
 import { mkdirSync as mkdirSync10 } from "node:fs";
-import { dirname as dirname18 } from "node:path";
+import { dirname as dirname17 } from "node:path";
 function openKnowledgeDb(path, options = {}) {
   suppressSqliteExperimentalWarning();
   const { DatabaseSync: Database } = require3("node:sqlite");
-  if (path !== ":memory:") mkdirSync10(dirname18(path), { recursive: true });
+  if (path !== ":memory:") mkdirSync10(dirname17(path), { recursive: true });
   const db = new Database(path);
   db.exec(`PRAGMA busy_timeout = ${Math.trunc(options.busyTimeoutMs ?? 1e4)}`);
   if (path !== ":memory:") db.exec("PRAGMA journal_mode = WAL");
@@ -42772,7 +42770,7 @@ var init_global = __esm({
 // src/guard/publication.ts
 import { readFileSync as readFileSync17 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
-import { dirname as dirname19, isAbsolute as isAbsolute13, join as join30, resolve as resolve10 } from "node:path";
+import { dirname as dirname18, isAbsolute as isAbsolute13, join as join30, resolve as resolve10 } from "node:path";
 import { inspect } from "node:util";
 function defaultGuardConfigPath(env = process.env) {
   const override = env.PUBLISH_GUARD_CONFIG;
@@ -42781,7 +42779,7 @@ function defaultGuardConfigPath(env = process.env) {
   return join30(base, "publish-guard", "config.json");
 }
 function defaultTermsPath(env = process.env) {
-  return join30(dirname19(defaultGuardConfigPath(env)), "terms.txt");
+  return join30(dirname18(defaultGuardConfigPath(env)), "terms.txt");
 }
 function loadTerms(path = defaultTermsPath()) {
   const resolved = expandHome(path);
@@ -43001,7 +42999,7 @@ function loadGuardSettings(configPath = defaultGuardConfigPath(), env = process.
   const settings = {
     configPath: resolved,
     configFound: false,
-    termsPath: join30(dirname19(resolved), "terms.txt"),
+    termsPath: join30(dirname18(resolved), "terms.txt"),
     allowedEmails: [],
     allowedEmailPatterns: [],
     warnings: []
@@ -43028,7 +43026,7 @@ function loadGuardSettings(configPath = defaultGuardConfigPath(), env = process.
     if (typeof obj3.terms_file !== "string" || obj3.terms_file.trim() === "") {
       throw new OrbitError("CONFIG_INVALID", `publication guard: terms_file in ${resolved} must be a non-empty string`, { path: resolved });
     }
-    settings.termsPath = resolveFrom(dirname19(resolved), obj3.terms_file.trim(), env);
+    settings.termsPath = resolveFrom(dirname18(resolved), obj3.terms_file.trim(), env);
   }
   settings.allowedEmails = stringList(obj3.allowed_emails, "allowed_emails", settings.warnings);
   settings.allowedEmailPatterns = stringList(obj3.allowed_email_patterns, "allowed_email_patterns", settings.warnings);
@@ -43526,7 +43524,7 @@ var init_report = __esm({
 // src/evidence/candidate.ts
 import { chmodSync as chmodSync6, existsSync as existsSync26, lstatSync as lstatSync6, mkdirSync as mkdirSync14, mkdtempSync as mkdtempSync4, readdirSync as readdirSync7, realpathSync as realpathSync12, rmSync as rmSync8, writeFileSync as writeFileSync5 } from "node:fs";
 import { tmpdir as tmpdir9 } from "node:os";
-import { dirname as dirname20, join as join32, parse as parse4, sep as sep7 } from "node:path";
+import { dirname as dirname19, join as join32, parse as parse4, sep as sep7 } from "node:path";
 function candidateRef(runId, seq2) {
   return `refs/orbit/${runId}/candidates/${seq2}`;
 }
@@ -43598,7 +43596,7 @@ async function materializeCandidate(repoRoot, commit, dir, opts = {}) {
   if (existsSync26(dir) && readdirSync7(dir).length > 0) {
     throw new OrbitError("GIT_FAILED", `checkout directory is not empty: ${dir}`, { dir });
   }
-  mkdirSync14(dirname20(dir), { recursive: true });
+  mkdirSync14(dirname19(dir), { recursive: true });
   await git2(repoRoot, ["worktree", "add", "--detach", "--force", dir, sha]);
   const real = realpathSync12(dir);
   if (opts.readOnly !== false) makeReadOnly(real);
@@ -50810,7 +50808,7 @@ var init_delivery_env = __esm({
 
 // src/controller/steps/preflight.ts
 import { existsSync as existsSync31, mkdirSync as mkdirSync17, rmSync as rmSync11 } from "node:fs";
-import { dirname as dirname21, isAbsolute as isAbsolute15, join as join41, resolve as resolve11 } from "node:path";
+import { dirname as dirname20, isAbsolute as isAbsolute15, join as join41, resolve as resolve11 } from "node:path";
 async function preflightStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -50953,7 +50951,7 @@ async function ensureWorktree(repo, path, base) {
       rmSync11(path, { recursive: true, force: true });
     }
   }
-  mkdirSync17(dirname21(path), { recursive: true, mode: 448 });
+  mkdirSync17(dirname20(path), { recursive: true, mode: 448 });
   await git2(repo, ["worktree", "prune"]);
   await git2(repo, ["worktree", "add", "--detach", "--force", path, base]);
   return (await adminDirFor(repo, path)).worktree;
@@ -52504,7 +52502,7 @@ var init_report3 = __esm({
 // src/ui/runner.ts
 import { closeSync as closeSync8, copyFileSync, existsSync as existsSync35, mkdirSync as mkdirSync19, openSync as openSync8, readFileSync as readFileSync23, realpathSync as realpathSync14, rmSync as rmSync13, statSync as statSync12, writeFileSync as writeFileSync7 } from "node:fs";
 import { createRequire as createRequire3 } from "node:module";
-import { basename as basename11, dirname as dirname22, isAbsolute as isAbsolute16, join as join46, relative as relative5, resolve as resolve12, sep as sep9 } from "node:path";
+import { basename as basename11, dirname as dirname21, isAbsolute as isAbsolute16, join as join46, relative as relative5, resolve as resolve12, sep as sep9 } from "node:path";
 async function runUiChecks(input) {
   const clock = input.clock ?? systemClock;
   const { snapshot: snapshot2, uiConfig, candidate } = input;
@@ -52969,7 +52967,7 @@ function fallbackBrowser(checkoutDir, configured) {
   const name = configured[0] ?? "chromium";
   try {
     const req = createRequire3(join46(checkoutDir, "package.json"));
-    const dir = dirname22(req.resolve("playwright-core/package.json"));
+    const dir = dirname21(req.resolve("playwright-core/package.json"));
     const parsed3 = JSON.parse(readFileSync23(join46(dir, "browsers.json"), "utf8"));
     const list = parsed3.browsers ?? [];
     const version = list.find((b) => b.name === name)?.browserVersion;
@@ -53192,7 +53190,7 @@ var init_runner2 = __esm({
 
 // src/controller/security.ts
 import { accessSync as accessSync2, constants as constants3, existsSync as existsSync36, mkdirSync as mkdirSync20, readFileSync as readFileSync24, rmSync as rmSync14, statSync as statSync13 } from "node:fs";
-import { delimiter as delimiter3, dirname as dirname23, join as join47, normalize as normalize2, sep as sep10 } from "node:path";
+import { delimiter as delimiter3, dirname as dirname22, join as join47, normalize as normalize2, sep as sep10 } from "node:path";
 import { tmpdir as tmpdir11 } from "node:os";
 import { spawn as spawn5 } from "node:child_process";
 function findOnPath(name, pathVar = process.env.PATH) {
@@ -53375,7 +53373,7 @@ async function runGitleaks(bin, input, files, reportPath2) {
     const target = normalize2(join47(tree, rel));
     if (!target.startsWith(tree + sep10)) continue;
     const content = await git2(input.repoRoot, ["cat-file", "blob", `${input.commit}:${rel}`]);
-    mkdirSync20(dirname23(target), { recursive: true });
+    mkdirSync20(dirname22(target), { recursive: true });
     atomicWrite(target, content, 384);
     copied++;
   }
@@ -53515,7 +53513,7 @@ var init_security = __esm({
 
 // src/ui/explore.ts
 import { existsSync as existsSync37, readFileSync as readFileSync25, realpathSync as realpathSync15, symlinkSync, writeFileSync as writeFileSync8 } from "node:fs";
-import { dirname as dirname24, join as join48, resolve as resolve13 } from "node:path";
+import { dirname as dirname23, join as join48, resolve as resolve13 } from "node:path";
 function explorationConfigOf(ui) {
   const raw = ui.exploration;
   if (!raw || typeof raw !== "object") return DISABLED;
@@ -53888,7 +53886,7 @@ function linkNodeModules(dir, checkoutDir) {
       symlinkSync(realpathSync15(candidate), target);
       return;
     }
-    const up = dirname24(cur);
+    const up = dirname23(cur);
     if (up === cur) return;
     cur = up;
   }
@@ -54277,7 +54275,7 @@ var init_verification = __esm({
 
 // src/controller/environment-block.ts
 import { readFileSync as readFileSync26, realpathSync as realpathSync16 } from "node:fs";
-import { dirname as dirname25, isAbsolute as isAbsolute17, join as join51, relative as relative6 } from "node:path";
+import { dirname as dirname24, isAbsolute as isAbsolute17, join as join51, relative as relative6 } from "node:path";
 function outputOf(row) {
   if (row.logPath) {
     try {
@@ -54304,7 +54302,7 @@ function environmentFailuresFor(ctx, cand, report2) {
       baselineFingerprint: base.fingerprint,
       output: outputOf(row),
       // The checkout (the check's cwd is resolved, the checkout path may not be) and the evidence directory holding its scratch HOME.
-      insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname25(row.logPath)] : []]
+      insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname24(row.logPath)] : []]
     });
     if (found) out.push({ ...found, questionId: baselineQuestionId(ctx.run.id, base.checkId, row.fingerprint) });
   }
@@ -56380,7 +56378,7 @@ var init_steps = __esm({
 // src/storage/retention.ts
 import { existsSync as existsSync42, lstatSync as lstatSync7, realpathSync as realpathSync17, rmSync as rmSync15 } from "node:fs";
 import { homedir as homedir11 } from "node:os";
-import { dirname as dirname26, join as join58, resolve as resolve14 } from "node:path";
+import { dirname as dirname25, join as join58, resolve as resolve14 } from "node:path";
 function repoKeyFor(repoRoot) {
   let real = repoRoot;
   try {
@@ -56419,7 +56417,7 @@ async function pruneExpiredRuns(db, opts) {
       continue;
     }
     const runDir2 = join58(runsRoot, row.id);
-    const recorded = dirname26(row.policy_path);
+    const recorded = dirname25(row.policy_path);
     const literalRunDir = join58(resolve14(opts.repoRoot), ".orbit", "runs", row.id);
     if (![runDir2, literalRunDir].includes(resolve14(recorded)) && realOrResolved(recorded) !== runDir2) {
       result2.skipped.push({ runId: row.id, reason: `its recorded run directory ${recorded} is not ${runDir2}` });
@@ -56473,7 +56471,7 @@ __export(loop_exports, {
 });
 import { existsSync as existsSync43 } from "node:fs";
 import { hostname as hostname4 } from "node:os";
-import { dirname as dirname27, join as join59 } from "node:path";
+import { dirname as dirname26, join as join59 } from "node:path";
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -56894,7 +56892,7 @@ var init_loop = __esm({
         for (const row of db.all("SELECT id FROM runs WHERE ended_at IS NOT NULL AND ended_at >= ?", since)) {
           try {
             const run = getRun(db, row.id);
-            const runDir2 = dirname27(run.policyPath);
+            const runDir2 = dirname26(run.policyPath);
             if (existsSync43(join59(runDir2, "final.md"))) continue;
             let snapshot2 = null;
             try {
@@ -56958,7 +56956,7 @@ var init_loop = __esm({
 // src/controller/service.ts
 import { chmodSync as chmodSync7, existsSync as existsSync44, lstatSync as lstatSync8, mkdirSync as mkdirSync21, readFileSync as readFileSync28, readdirSync as readdirSync11, rmSync as rmSync16, rmdirSync, statSync as statSync14 } from "node:fs";
 import { hostname as hostname5 } from "node:os";
-import { dirname as dirname28, isAbsolute as isAbsolute18, join as join60 } from "node:path";
+import { dirname as dirname27, isAbsolute as isAbsolute18, join as join60 } from "node:path";
 function serviceLabel(repoRoot) {
   return `${SERVICE_LABEL_PREFIX}.${repoKey(repoRoot)}`;
 }
@@ -57045,7 +57043,7 @@ function newerVersion(a, b) {
   return false;
 }
 function sameInstallation(a, b) {
-  return dirname28(dirname28(dirname28(a))) === dirname28(dirname28(dirname28(b)));
+  return dirname27(dirname27(dirname27(a))) === dirname27(dirname27(dirname27(b)));
 }
 function refreshLauncher(input) {
   const path = launcherPath(input.orbitHome);
@@ -57174,7 +57172,7 @@ async function installService(spec, opts) {
   const run = opts.run ?? defaultRunner;
   mkdirSync21(spec.logDir, { recursive: true, mode: 448 });
   if (opts.platform !== "darwin" && opts.platform !== "linux") return unsupported(opts.platform);
-  writeLauncher(dirname28(dirname28(spec.launcher)), { node: spec.nodePath, entry: spec.entry, ...spec.version !== void 0 ? { version: spec.version } : {} });
+  writeLauncher(dirname27(dirname27(spec.launcher)), { node: spec.nodePath, entry: spec.entry, ...spec.version !== void 0 ? { version: spec.version } : {} });
   if (opts.platform === "darwin") {
     const plist = launchdPlistPath(opts.homeDir, spec.label);
     mkdirSync21(join60(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
@@ -57228,7 +57226,7 @@ function withLauncherCleanup(status2, opts) {
   if (readLauncher(path) === null) return status2;
   rmSync16(path, { force: true });
   try {
-    rmdirSync(dirname28(path));
+    rmdirSync(dirname27(path));
   } catch {
   }
   return { ...status2, launcherRemoved: true };
@@ -57313,7 +57311,7 @@ var init_controller = __esm({
 
 // src/cli/commands/drive.ts
 import { existsSync as existsSync45, readFileSync as readFileSync29 } from "node:fs";
-import { dirname as dirname29, join as join61 } from "node:path";
+import { dirname as dirname28, join as join61 } from "node:path";
 function formatEvent(e) {
   const at = clockTime(e.ts);
   let data = {};
@@ -57433,8 +57431,8 @@ function safeContinue(db, runId, ctx) {
 }
 function resultOf(ctx, db, run) {
   try {
-    const finalJson = join61(dirname29(run.policyPath), "final.json");
-    const report2 = existsSync45(finalJson) ? JSON.parse(readFileSync29(finalJson, "utf8")) : buildFinalReport(db, run, { runDir: dirname29(run.policyPath), clock: ctx.clock, snapshot: null });
+    const finalJson = join61(dirname28(run.policyPath), "final.json");
+    const report2 = existsSync45(finalJson) ? JSON.parse(readFileSync29(finalJson, "utf8")) : buildFinalReport(db, run, { runDir: dirname28(run.policyPath), clock: ctx.clock, snapshot: null });
     const rv = report2.revision;
     if (!rv) return null;
     return { branch: rv.branch ?? null, candidate_commit: rv.candidate ?? null, delivered_commit: rv.delivered_commit ?? null, pull_request: rv.pull_request ?? null };
@@ -57740,7 +57738,7 @@ var init_inquisition2 = __esm({
 
 // src/cli/commands/decide.ts
 import { existsSync as existsSync46 } from "node:fs";
-import { dirname as dirname30 } from "node:path";
+import { dirname as dirname29 } from "node:path";
 function matchQuestion(db, runId, ref2) {
   const all = listQuestions(db, runId);
   const exact = all.find((q) => q.id === ref2);
@@ -57793,7 +57791,7 @@ async function decideCommand(args, ctx) {
     const run = findRunByPrefix(db, runRef);
     if (isTerminal(run.state) && run.state !== "BLOCKED") throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is ${run.state}; its questions can no longer change anything`);
     const q = matchQuestion(db, run.id, qRef);
-    const runDir2 = dirname30(run.policyPath);
+    const runDir2 = dirname29(run.policyPath);
     const result2 = answerQuestion(db, runDir2, q.id, answer, by, ctx.clock);
     let amendment = null;
     if (amendmentIdOfQuestion(q.id) !== null) {
@@ -59040,7 +59038,7 @@ var init_gc = __esm({
 
 // src/cli/commands/init.ts
 import { appendFileSync as appendFileSync2, existsSync as existsSync49, mkdirSync as mkdirSync22, readFileSync as readFileSync31, writeFileSync as writeFileSync9 } from "node:fs";
-import { dirname as dirname31, join as join66 } from "node:path";
+import { dirname as dirname30, join as join66 } from "node:path";
 function templatePath() {
   return join66(orbitInstallDir(), "templates", "config.yaml");
 }
@@ -59488,7 +59486,7 @@ async function initCommand(args, ctx) {
   if (existsSync49(configPath)) config = "exists";
   else {
     let text2 = templateText();
-    mkdirSync22(dirname31(configPath), { recursive: true });
+    mkdirSync22(dirname30(configPath), { recursive: true });
     const proposal = await proposeScope(ctx, repo);
     derivedPaths = proposal.allowed;
     excludedDirs = proposal.excluded;
@@ -59510,7 +59508,7 @@ async function initCommand(args, ctx) {
     }
   }
   const excludePath = await excludeFile(ctx, repo);
-  mkdirSync22(dirname31(excludePath), { recursive: true });
+  mkdirSync22(dirname30(excludePath), { recursive: true });
   const current = existsSync49(excludePath) ? readFileSync31(excludePath, "utf8") : "";
   const have = new Set(current.split("\n").map((l) => l.trim()));
   const missing = EXCLUDE_RULES.filter((r) => !have.has(r));
@@ -60090,7 +60088,7 @@ var init_learn2 = __esm({
 
 // src/cli/commands/logs.ts
 import { closeSync as closeSync9, existsSync as existsSync51, fstatSync as fstatSync4, openSync as openSync9, readSync as readSync5, statSync as statSync17 } from "node:fs";
-import { dirname as dirname32, join as join68 } from "node:path";
+import { dirname as dirname31, join as join68 } from "node:path";
 function readTail(path, lines) {
   const size = statSync17(path).size;
   const fd = openSync9(path, "r");
@@ -60152,7 +60150,7 @@ async function logsCommand(args, ctx) {
   const asJson = args.bool("json");
   return withState(repo, async (db) => {
     const run = findRunByPrefix(db, runRef);
-    const runDir2 = dirname32(run.policyPath);
+    const runDir2 = dirname31(run.policyPath);
     const wantController = !args.bool("workers") && !args.str("worker");
     const wantWorkers = !args.bool("controller");
     const sources = [];
@@ -60558,14 +60556,14 @@ var init_release2 = __esm({
 
 // src/cli/commands/report.ts
 import { existsSync as existsSync53, readFileSync as readFileSync33 } from "node:fs";
-import { dirname as dirname33, join as join69 } from "node:path";
+import { dirname as dirname32, join as join69 } from "node:path";
 async function reportCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   if (args.bool("learning")) return withState(repo, (db) => learningReport(ctx, repo, db, args.bool("json")));
   const [id] = args.expect(1);
   return withState(repo, (db) => {
     const run = findRunByPrefix(db, id);
-    const runDir2 = dirname33(run.policyPath);
+    const runDir2 = dirname32(run.policyPath);
     const finalMd = join69(runDir2, "final.md");
     const finalJson = join69(runDir2, "final.json");
     const asJson = args.bool("json");
@@ -61479,7 +61477,7 @@ var init_status = __esm({
 });
 
 // src/cli/commands/verify.ts
-import { dirname as dirname34, isAbsolute as isAbsolute22, join as join71, relative as relative8 } from "node:path";
+import { dirname as dirname33, isAbsolute as isAbsolute22, join as join71, relative as relative8 } from "node:path";
 function exitCodeForVerdict(verdict) {
   return verdict === "PASS" ? EXIT.OK : verdict === "FAIL" ? EXIT.VERIFY_FAILED : EXIT.VERIFY_INCOMPLETE;
 }
@@ -61553,7 +61551,7 @@ function repairNextStep(run) {
 function print(ctx, repo, asJson, o, contractJson) {
   const contract = JSON.parse(contractJson);
   const statements = new Map(contract.acceptance_criteria.map((c) => [c.id, c]));
-  const runDir2 = dirname34(o.run.policyPath);
+  const runDir2 = dirname33(o.run.policyPath);
   const rel = (given) => {
     const p = isAbsolute22(given) ? given : join71(runDir2, given);
     const r = relative8(repo, p);
