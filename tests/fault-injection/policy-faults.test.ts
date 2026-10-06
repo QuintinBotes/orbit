@@ -55,6 +55,9 @@ describe.skipIf(!canStripTypes)('fault: policy edits', () => {
     const driving = drive(l, run.id);
     const impl = await waitFor(() => listWorkers(l.db(), { runId: run.id, role: 'implementer' }).find((w) => w.state === 'RUNNING' && w.pid !== null), 30_000);
     t.group(impl.pgid);
+    // A RUNNING row with a pid means the shim has spawned the provider, not that the provider has started:
+    // on a slow runner the tamper below could stop it before it records its call. Wait for the call first.
+    await waitFor(() => (calls(l, 'implementer').length === 1 ? true : undefined), 30_000);
 
     // Widen the frozen scope in place and put the read-only mode back, as a worker or a script might.
     const path = runState(l, run.id).policyPath;
