@@ -221,6 +221,12 @@ separate command either: `orbit run --mode release`, with the `release` and
 `actions` sections of the policy. See
 [release mode](docs/operations.md#release-mode-safeguards).
 
+Releasing Orbit itself is not an `orbit` command: pushing a `v*` tag runs the
+release workflow, which gates the tag, publishes the GitHub release with an
+attested plugin archive and opens the catalog pull request. See
+[Releasing](CONTRIBUTING.md#releasing) and
+[verifying a release archive](docs/installation.md#verify-a-release-archive).
+
 ## Live runs and what is not proven yet
 
 `scripts/demo/run-live-demo.sh` runs three demo goals against live providers on

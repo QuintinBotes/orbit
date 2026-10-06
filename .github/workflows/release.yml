@@ -1,0 +1,189 @@
+name: Release
+
+# Pushing a tag named v* releases Orbit. The tag is checked out, the full gate of
+# ci.yml runs on it, and only then is anything published:
+#   1. the tag must match package.json, plugin/package.json and
+#      plugin/.claude-plugin/plugin.json, CHANGELOG.md must have a section for it,
+#      and the tagged commit must be on main;
+#   2. an archive of the plugin/ payload is built from the tagged commit and a
+#      GitHub artifact attestation (build provenance) is created for it;
+#   3. the GitHub release is created with that CHANGELOG section as its notes;
+#   4. a pull request on QuintinBotes/claude-plugins points the orbit entry's ref at
+#      the tag. It needs the repository secret CATALOG_PR_TOKEN (a token that can
+#      push a branch and open a pull request there); without it the step says so
+#      and is skipped. A prerelease tag (v1.2.3-rc.1) skips the catalog entirely.
+# The process is described in CONTRIBUTING.md ("Releasing").
+
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: gate on the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The whole history, so "is the tagged commit on main" can be answered.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      # The tag name only reaches the shell as an environment variable.
+      - name: The tag matches the versions, the CHANGELOG and main
+        run: |
+          node scripts/check-release-versions.mjs "$GITHUB_REF_NAME"
+          node scripts/release-notes.mjs "$GITHUB_REF_NAME" > /dev/null
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME points at a commit that is not on main; merge it first, then tag main"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The same prerequisites as ci.yml, so a missing tool fails here with a clear
+      # message instead of as a test failure.
+      - name: Sandbox prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap socat ripgrep
+          # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor; bubblewrap needs them.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Playwright's Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Install the Claude Code CLI (plugin validation and the plugin tests)
+        run: npm install --global @anthropic-ai/claude-code
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Integration tests
+        run: npm run test:integration
+
+      - name: Fault-injection tests
+        run: npm run test:fault
+
+      - name: Acceptance tests (mock providers)
+        run: npm run test:acceptance
+
+      - name: Committed bundle matches the sources
+        run: npm run check:dist
+
+      - name: Plugin validation
+        run: node scripts/check-plugin.mjs
+
+  release:
+    name: archive, attest and publish
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # create the release
+      id-token: write # sign the attestation
+      attestations: write # store the attestation
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+
+      # git archive packs the committed plugin/ tree only: no node_modules, no untracked file.
+      - name: Build the plugin archive
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir release-assets
+          git archive --format=tar.gz --prefix="orbit-plugin-$version/" \
+            --output="release-assets/orbit-plugin-$version.tar.gz" HEAD:plugin
+          (cd release-assets && sha256sum "orbit-plugin-$version.tar.gz" > SHA256SUMS)
+          node scripts/release-notes.mjs "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-notes.md"
+
+      - name: Attest the archive (build provenance)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release-assets/orbit-plugin-*.tar.gz
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          flags=()
+          case "$GITHUB_REF_NAME" in
+            *-*) flags+=(--prerelease) ;; # a prerelease is not "latest"
+          esac
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --title "Orbit ${GITHUB_REF_NAME#v}" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            --verify-tag "${flags[@]}"
+
+  catalog:
+    name: point the plugin catalog at the tag
+    needs: release
+    # A prerelease is never offered to the catalog.
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+
+      - name: Open the catalog pull request
+        env:
+          CATALOG_PR_TOKEN: ${{ secrets.CATALOG_PR_TOKEN }}
+          GH_TOKEN: ${{ secrets.CATALOG_PR_TOKEN }}
+        run: |
+          if [ -z "$CATALOG_PR_TOKEN" ]; then
+            msg="Catalog pull request skipped: the CATALOG_PR_TOKEN secret is not set, so nothing was opened on QuintinBotes/claude-plugins. Set the orbit entry's ref to $GITHUB_REF_NAME there by hand, or add the secret (CONTRIBUTING.md, Releasing) and re-run this job."
+            echo "::notice::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh auth setup-git
+          gh repo clone QuintinBotes/claude-plugins "$RUNNER_TEMP/catalog" -- --depth 1
+          cd "$RUNNER_TEMP/catalog"
+          branch="orbit-release-$GITHUB_REF_NAME"
+          git checkout -b "$branch"
+          node "$GITHUB_WORKSPACE/scripts/bump-catalog-ref.mjs" .claude-plugin/marketplace.json "$GITHUB_REF_NAME"
+          if git diff --quiet; then
+            echo "::notice::The catalog already points orbit at $GITHUB_REF_NAME; no pull request needed."
+            exit 0
+          fi
+          git -c user.name="Quintin Botes" -c user.email=quintinbotes@outlook.com \
+            commit --all --message "orbit: release $GITHUB_REF_NAME" \
+            --message "Points the orbit entry at the $GITHUB_REF_NAME tag of QuintinBotes/orbit."
+          git push --force origin "$branch"
+          open="$(gh pr list --repo QuintinBotes/claude-plugins --head "$branch" --state open --json number --jq 'length')"
+          if [ "$open" = "0" ]; then
+            gh pr create --repo QuintinBotes/claude-plugins --base main --head "$branch" \
+              --title "orbit: release $GITHUB_REF_NAME" \
+              --body "Points the orbit entry's ref at $GITHUB_REF_NAME, released at https://github.com/QuintinBotes/orbit/releases/tag/$GITHUB_REF_NAME. Opened by the release workflow of QuintinBotes/orbit."
+          fi
