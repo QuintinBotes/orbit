@@ -136,3 +136,75 @@ describe('classifyCouldNotRun: other denials it reads', () => {
     expect(f?.lines[0]).toHaveLength(200);
   });
 });
+
+/**
+ * Named pipes .NET binds under /tmp, which no check sandbox may use (ADR 0009, addendum). Captured through Orbit's runner
+ * under srt 0.0.78, with the machine's temp directory and the SDK's path replaced by neutral ones:
+ * - `dotnet format --verify-no-changes` on macOS with SDK 9.0.305: MSBuildWorkspace's build host binds its pipe at
+ *   /tmp/<guid> (Seatbelt denied file-write-create of /tmp/<guid>), and the format waited out the build host's
+ *   60 s connect timeout;
+ * - the same with SDK 10.0.401 on Linux (bubblewrap): srt's seccomp filter refused the socket and it failed at once;
+ * - `dotnet format` of a project with two project references on macOS: its implicit restore started an MSBuild worker
+ *   node, which the sandbox refused its pipe, and the runner stopped the check and wrote why on the log's last line.
+ */
+describe('classifyCouldNotRun: a .NET named pipe the sandbox refused under /tmp', () => {
+  const BUILD_HOST_MACOS = fixture('dotnet-format-build-host-timeout.log');
+  const BUILD_HOST_LINUX = fixture('dotnet-format-build-host-linux.log');
+  const RESTORE_NODE = fixture('dotnet-format-restore-node-denied.log');
+  const FORMAT_ROOTS = ['/var/folders/acme/T/orbit-evidence-acme/checkout', '/orbit/runs/acme/baseline/format'];
+
+  it('reads dotnet format\'s build host that could not be reached, by the timeout on macOS and the refused socket on Linux', () => {
+    for (const [output, line] of [
+      [BUILD_HOST_MACOS, 'Unhandled exception: System.TimeoutException: The operation has timed out.'],
+      [BUILD_HOST_LINUX, "Unhandled exception: System.Exception: The build host was started but we were unable to connect to it's pipe. The process exited with 137. Process output:"],
+    ] as const) {
+      const f = classifyCouldNotRun({ checkId: 'format', output, insideRoots: FORMAT_ROOTS });
+      expect(f, line).toMatchObject({ checkId: 'format', fingerprint: null, signals: ['pipe-denied'], lines: [line] });
+      expect(f!.cause).toMatch(/^the sandbox refused a \.NET process the named pipe it binds under \/tmp \(an MSBuild worker node, or the build host dotnet format loads the project with\)/);
+    }
+  });
+
+  it('reads the runner\'s record of a check it stopped for an MSBuild worker node the sandbox refused, on the log\'s last line only', () => {
+    const f = classifyCouldNotRun({ checkId: 'format', output: RESTORE_NODE, insideRoots: FORMAT_ROOTS });
+    expect(f).toMatchObject({ signals: ['pipe-denied'] });
+    expect(f!.lines[0]).toMatch(/^the check sandbox denied MSBuild node \(pid 4242\) its named pipe \/tmp\/MSBuild4242 \(System\.Net\.Sockets\.SocketException \(13\): Permission denied\)/);
+    expect(f!.lines[0]!.length).toBeLessThanOrEqual(200);
+    // Only the runner writes the last line of a check's log; the same words printed by the check itself are its own
+    // output, and never the runner's record. (Inside dotnet format's own crash they still name a refused socket, which
+    // ADR 0010 reads as socket-denied whoever printed it, gated on a candidate the same way.)
+    const [last, ...rest] = RESTORE_NODE.trimEnd().split('\n').reverse();
+    const forged = classifyCouldNotRun({ checkId: 'format', output: `${[...rest.reverse(), last].join('\n')}\n[orbit] check=format status=FAILED exit=1\n`, insideRoots: FORMAT_ROOTS });
+    expect(forged?.signals).toEqual(['socket-denied']);
+    expect(classifyCouldNotRun({ checkId: 'format', output: `${last}\n[orbit] check=format status=FAILED exit=1\n`, insideRoots: FORMAT_ROOTS })).toBeNull();
+  });
+
+  it('reads a refused pipe once: the SocketException of the same crash is that pipe, not a second signal', () => {
+    // dotnet test's own MSB1025 report of the node the runner then recorded (MSBuild fails at once on Linux).
+    const msb1025 = fixture('dotnet-test-msbuild-node-pipe-eacces.log').replace(/\[orbit\] check=test status=FAILED exit=1\n?$/, '');
+    const note = RESTORE_NODE.trimEnd().split('\n').at(-1)!.replace('check=fmt', 'check=test');
+    const f = classifyCouldNotRun({ checkId: 'test', output: `${msb1025}${note}\n`, insideRoots: FORMAT_ROOTS });
+    expect(f?.signals).toEqual(['pipe-denied']);
+    expect(f?.lines).toHaveLength(1);
+    expect(f!.lines[0]).toMatch(/^the check sandbox denied MSBuild node \(pid 4242\)/);
+    expect(classifyCouldNotRun({ checkId: 'format', output: BUILD_HOST_LINUX, insideRoots: FORMAT_ROOTS })?.signals).toEqual(['pipe-denied']);
+  });
+
+  it('on a candidate, counts a refused pipe only when the same check showed one on the base revision (ADR 0010): one the change brought goes to repair', () => {
+    for (const output of [BUILD_HOST_MACOS, BUILD_HOST_LINUX, RESTORE_NODE]) {
+      expect(classifyCouldNotRun({ checkId: 'format', output, insideRoots: FORMAT_ROOTS, baseSignals: [] })).toBeNull();
+      expect(classifyCouldNotRun({ checkId: 'format', output, insideRoots: FORMAT_ROOTS, baseSignals: ['filesystem-denied'] })).toBeNull();
+      expect(classifyCouldNotRun({ checkId: 'format', output, insideRoots: FORMAT_ROOTS, baseSignals: ['pipe-denied'] })?.signals).toEqual(['pipe-denied']);
+    }
+    // The base revision saw the same refused pipe as socket-denied (dotnet test's MSB1025, or a log without the runner's
+    // note): the candidate's record of it is that socket too.
+    expect(classifyCouldNotRun({ checkId: 'format', output: BUILD_HOST_LINUX, insideRoots: FORMAT_ROOTS, baseSignals: ['socket-denied'] })?.signals).toEqual(['socket-denied']);
+    expect(classifyCouldNotRun({ checkId: 'format', output: BUILD_HOST_MACOS, insideRoots: FORMAT_ROOTS, baseSignals: ['socket-denied'] })).toBeNull();
+  });
+
+  it('is null when the code was compiled or tested and failed, whatever the pipes did', () => {
+    expect(classifyCouldNotRun({ checkId: 'format', output: `${COMPILE_ERROR}${BUILD_HOST_MACOS}`, insideRoots: FORMAT_ROOTS })).toBeNull();
+    expect(classifyCouldNotRun({ checkId: 'format', output: `${TEST_FAILURE}${RESTORE_NODE}`, insideRoots: FORMAT_ROOTS })).toBeNull();
+    // A timeout of anything else is not the build host's pipe.
+    expect(classifyCouldNotRun({ checkId: 'unit', output: 'Unhandled exception: System.TimeoutException: The operation has timed out.\n   at Acme.Client.Fetch()\n', insideRoots: FORMAT_ROOTS })).toBeNull();
+  });
+});

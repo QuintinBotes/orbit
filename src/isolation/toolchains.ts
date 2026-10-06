@@ -50,10 +50,34 @@ export interface ToolchainProfile {
   scratchVars: readonly string[];
   /** Registries the dependency install reaches for this toolchain. */
   registryHosts: readonly string[];
-  /** What `orbit doctor` starts: the first executable found on PATH, with these arguments. */
-  probe: { executables: readonly string[]; args: readonly string[] };
+  /**
+   * What `orbit doctor` starts: the first executable found on PATH, with these arguments, in an empty scratch checkout,
+   * or one holding `files` (a generated project, `about` says what it is) when starting the tool proves too little.
+   */
+  probe: { executables: readonly string[]; args: readonly string[]; files?: Readonly<Record<string, string>>; about?: string };
   env(d: ToolchainEnvDirs): Record<string, string>;
 }
+
+/**
+ * The project `orbit doctor` builds for .NET (issue #10, reopened): a library referencing two others, so its restore and
+ * build have two projects to work on at once, which is where MSBuild starts worker nodes, as a real solution's build
+ * does. No package references, so it restores and builds offline from the SDK alone; the target framework is the
+ * newest one the SDK in use ships. The empty Directory.Build files stop MSBuild from importing any it finds above the
+ * scratch directory.
+ */
+const PROBE_TFM = '<TargetFramework>net$(NETCoreAppMaximumVersion)</TargetFramework>';
+const probeLibrary = (refs: readonly string[] = []) =>
+  `<Project Sdk="Microsoft.NET.Sdk">\n  <PropertyGroup>${PROBE_TFM}</PropertyGroup>\n${refs.length ? `  <ItemGroup>${refs.map((r) => `<ProjectReference Include="../${r}/${r}.csproj" />`).join('')}</ItemGroup>\n` : ''}</Project>\n`;
+export const DOTNET_PROBE_PROJECT: Readonly<Record<string, string>> = {
+  'Directory.Build.props': '<Project />\n',
+  'Directory.Build.targets': '<Project />\n',
+  'Probe.Left/Probe.Left.csproj': probeLibrary(),
+  'Probe.Left/Left.cs': 'namespace Probe;\npublic static class Left { public static int One => 1; }\n',
+  'Probe.Right/Probe.Right.csproj': probeLibrary(),
+  'Probe.Right/Right.cs': 'namespace Probe;\npublic static class Right { public static int Two => 2; }\n',
+  'Probe.App/Probe.App.csproj': probeLibrary(['Probe.Left', 'Probe.Right']),
+  'Probe.App/App.cs': 'namespace Probe;\npublic static class App { public static int Three => Left.One + Right.Two; }\n',
+};
 
 export const TOOLCHAIN_PROFILES: Readonly<Record<ToolchainId, ToolchainProfile>> = {
   dotnet: {
@@ -64,9 +88,27 @@ export const TOOLCHAIN_PROFILES: Readonly<Record<ToolchainId, ToolchainProfile>>
     scratch: ['nuget-http', 'nuget-plugins'],
     scratchVars: ['NUGET_HTTP_CACHE_PATH', 'NUGET_PLUGINS_CACHE_PATH'],
     registryHosts: ['api.nuget.org'],
-    // `dotnet --version` skips the SDK's first-run steps, where the sandbox stopped it (#10); `dotnet help` runs them.
-    probe: { executables: ['dotnet'], args: ['help'] },
-    env: (d) => ({ NUGET_PACKAGES: d.cache('nuget'), NUGET_HTTP_CACHE_PATH: d.scratch('nuget-http'), NUGET_PLUGINS_CACHE_PATH: d.scratch('nuget-plugins') }),
+    // A real build: `dotnet help` started the SDK and ran its first-run steps (#10) but passed where every build of two
+    // projects was denied an MSBuild worker node (#10, reopened). A build runs the first-run steps too.
+    probe: {
+      executables: ['dotnet'],
+      args: ['build', 'Probe.App/Probe.App.csproj'],
+      files: DOTNET_PROBE_PROJECT,
+      about: 'three generated projects with no packages, one referencing the other two: their restore and build start MSBuild as a real build does',
+    },
+    env: (d) => ({
+      NUGET_PACKAGES: d.cache('nuget'),
+      NUGET_HTTP_CACHE_PATH: d.scratch('nuget-http'),
+      NUGET_PLUGINS_CACHE_PATH: d.scratch('nuget-plugins'),
+      // NuGet's vulnerability audit (an MSBuild property, which MSBuild also reads from the environment) fetches from the
+      // package source at every restore, which nothing in the sandbox can reach on macOS (.NET cannot verify
+      // nuget.org's certificate there) and a check or worker cannot reach on Linux (no network, unless a check lists
+      // the host). It could only add warning NU1900, after a wait, and a repository that treats warnings as errors
+      // fails its restore on it, the install step and every restoring check alike, after its cache was filled (#10).
+      // The same in every mode, so a check's restore matches the install's. A check's own env, or a project that
+      // sets NuGetAudit itself, wins (orbit doctor's checks.dotnet-audit names the second on macOS).
+      NuGetAudit: 'false',
+    }),
   },
   go: {
     id: 'go',
@@ -215,6 +257,11 @@ export interface ToolchainLayout {
   /** Every cache and scratch directory, to create before the process starts. */
   directories: string[];
   caches: { toolchain: ToolchainId; name: string; path: string }[];
+  /**
+   * The process runs .NET, whose CookieContainer reads the NIS domain name: every .NET HTTP client (NuGet's restore
+   * included) needs it, and srt's Seatbelt profile does not allow it (SandboxProfile.nisDomainName; ADR 0009, addendum).
+   */
+  nisDomainName: boolean;
 }
 
 function rustupHomeOf(input: ToolchainLayoutInput): string | null {
@@ -256,6 +303,7 @@ export function toolchainLayout(input: ToolchainLayoutInput): ToolchainLayout {
     readOnly: shared && input.mode !== 'install' ? cachePaths : [],
     directories,
     caches,
+    nisDomainName: ids.includes('dotnet'),
   };
 }
 

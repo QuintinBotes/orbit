@@ -75,6 +75,7 @@ describe('the toolchain profile table', () => {
       NUGET_PACKAGES: `${cacheRoot}/nuget`,
       NUGET_HTTP_CACHE_PATH: `${scratch}/nuget-http`,
       NUGET_PLUGINS_CACHE_PATH: `${scratch}/nuget-plugins`,
+      NuGetAudit: 'false',
       GOMODCACHE: `${cacheRoot}/gomod`,
       GOCACHE: `${scratch}/gocache`,
       GOPATH: `${scratch}/gopath`,
@@ -109,6 +110,16 @@ describe('the toolchain profile table', () => {
     const l = toolchainLayout({ toolchains: ['go'], mode: 'worker', cacheRoot: '/c', scratchRoot: '/w/toolchains', tmpDir: '/t', hostEnv: {} });
     expect(l.writable).toEqual(['/w/toolchains']);
     expect(l.readOnly).toEqual(['/c/gomod']);
+  });
+
+  // NuGet's vulnerability audit cannot reach nuget.org from the sandbox (on macOS .NET cannot verify its certificate
+  // there; a check has no network unless it lists the host), so it could only add warning NU1900, which a repository
+  // that treats warnings as errors turns into a failed restore after the cache was filled (#10).
+  it('turns NuGet\'s vulnerability audit off for every .NET process in the sandbox: the install step, a check and a worker', () => {
+    for (const mode of ['install', 'check', 'worker'] as const) {
+      expect(toolchainLayout({ toolchains: ['dotnet'], mode, cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostEnv: {} }).env.NuGetAudit, mode).toBe('false');
+    }
+    expect(toolchainLayout({ toolchains: ['go'], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostEnv: {} }).env).not.toHaveProperty('NuGetAudit');
   });
 
   it('without an Orbit home, puts the caches in the private scratch too (writable, per attempt)', () => {

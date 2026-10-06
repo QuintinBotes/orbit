@@ -31,5 +31,21 @@ describe('worker toolchain profiles', () => {
     expect(sandbox.writablePaths).not.toContain(cache);
     expect(sandbox.writablePaths.some((p) => join(spec.workerDir, 'toolchains').startsWith(p))).toBe(true);
     expect(existsSync(cache)).toBe(true);
+    // Not a .NET repository: no NIS domain name rule.
+    expect(spec.sandbox.nisDomainName).toBeFalsy();
+  });
+
+  // .NET's CookieContainer reads the NIS domain name, which srt's Seatbelt profile does not allow, so every .NET HTTP
+  // client failed under srt on macOS (ADR 0009, addendum). A worker in a .NET repository may run its tests itself.
+  it('lets an implementer in a .NET repository read the NIS domain name', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'], deps: { schedulerProbe: { availableParallelism: () => 16, freemem: () => 64_000 * 1024 * 1024 } } });
+    const adapter = scriptedAdapter(lab, () => okResult(IMPL));
+    lab.deps.adapters = { claude: adapter };
+    validateModels(lab);
+    const repo = await giveRepository(lab, { 'acme.sln': '', 'apps/Acme.cs': 'namespace Acme;\n' });
+    setContract(lab, { baseline_revision: repo.base });
+    initLedger(lab);
+    await implementingStep(lab.ctx());
+    expect(adapter.specs[0]!.sandbox.nisDomainName).toBe(true);
   });
 });

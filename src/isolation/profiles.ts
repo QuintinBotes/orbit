@@ -152,6 +152,8 @@ export interface WorkerProfileInput {
   policyPath?: string;
   /** Paths the worker may read and never write, such as Orbit's install directory for its guard hook. */
   readablePaths?: string[];
+  /** The worker's worktree uses .NET (ToolchainLayout.nisDomainName): see SandboxProfile.nisDomainName. */
+  nisDomainName?: boolean;
   /** Defaults to the run's wall-clock hard limit. */
   timeoutMs?: number;
   /** The environment Orbit runs with, for CLAUDE_CONFIG_DIR and CODEX_HOME; defaults to process.env. */
@@ -167,6 +169,8 @@ export interface CheckProfileInput {
   /** For example an evidence output directory or a private temp directory. */
   extraWritable?: string[];
   readablePaths?: string[];
+  /** The check runs .NET (ToolchainLayout.nisDomainName): see SandboxProfile.nisDomainName. */
+  nisDomainName?: boolean;
   homeDir?: string;
   claudeConfigDir?: string;
   codexHome?: string;
@@ -231,6 +235,7 @@ export function profileForWorker(input: WorkerProfileInput): BuiltProfile {
       ...ownReadOnly,
     ]),
     allowedHosts: uniq([...PROVIDER_HOSTS[input.provider], ...input.snapshot.config.network.allowed_hosts]),
+    ...(input.nisDomainName ? { nisDomainName: true } : {}),
     limits: {
       timeoutMs: input.timeoutMs ?? input.snapshot.config.scheduler.hard_limits.wall_minutes * 60_000,
       ...resourceLimits(input.snapshot),
@@ -312,6 +317,7 @@ export function profileForCheck(input: CheckProfileInput): BuiltProfile {
     allowedHosts: uniq(input.check.network_hosts),
     // `!== false`: a definition frozen into an older snapshot has no key and reads as the default.
     allowLocalBinding: input.check.local_binding !== false,
+    ...(input.nisDomainName ? { nisDomainName: true } : {}),
     limits: { timeoutMs: input.check.timeout_seconds * 1000, ...resourceLimits(input.snapshot) },
   };
 }

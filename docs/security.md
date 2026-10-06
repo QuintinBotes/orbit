@@ -185,6 +185,45 @@ State these plainly to yourself before running unattended.
   headless Chromium binary itself, with every credential path and the
   repository read-denied, and passes only when the page's script ran.
   See ADR 0001, "Browsers under sandbox-runtime on macOS".
+- **Under `srt` on macOS a process that runs .NET may read the NIS domain
+  name.** .NET's HTTP clients read it when they start, so without it every one
+  failed in the sandbox, NuGet's restore included. The same preload adds one
+  read-only Seatbelt rule, `sysctl-read` of `kern.nisdomainname`, to the checks,
+  dependency install, workers and doctor probes that use .NET, and to nothing
+  else. The name is empty unless the machine is bound to NIS, is no secret, and
+  says less than the host name, which `srt` already lets every process read.
+  Every evidence record that used the rule says so. The system trust service
+  (`com.apple.trustd.agent`), which .NET also needs for HTTPS, stays out of
+  reach: a sandboxed process that could ask it to evaluate a certificate could
+  make it fetch from any host, outside the egress allowlist. So on macOS a
+  repository's NuGet packages are restored into its cache outside the sandbox,
+  by the person, with the command `orbit doctor` prints
+  (`checks.dotnet-packages`). That command is an ordinary `dotnet restore`: it
+  evaluates the repository's MSBuild files with the person's own permissions
+  and NuGet configuration, so run it on a tree you trust (your checkout), not on
+  a candidate's. See ADR 0009, addendum.
+- **NuGet's vulnerability audit does not run in the sandbox.** Every .NET
+  process there gets `NuGetAudit=false`: the audit cannot reach nuget.org from
+  the sandbox (on macOS nothing can verify its certificate; on Linux a check
+  has no network unless it lists the host), so it could only warn `NU1900`,
+  which fails every restore of a repository that treats warnings as errors.
+  Orbit's checks therefore say nothing about vulnerable packages; the
+  repository's CI, or a restore outside Orbit, still does. A check's own `env`
+  can set it back. See ADR 0009, addendum, item 12.
+- **No Unix socket is allowed in a sandbox, so .NET's named pipes under `/tmp`
+  stay refused.** MSBuild's worker nodes (`/tmp/MSBuild<pid>`) and the build
+  host `dotnet format` loads a project with (`/tmp/<guid>`) bind their pipes at
+  paths .NET fixes under `/tmp`, which every process of the user shares, so a
+  check that could bind or connect there could also reach the user's own,
+  unsandboxed MSBuild and Roslyn servers. Orbit opens none: a dotnet check pins
+  one MSBuild node with `-m:1`, a format check uses `dotnet format whitespace
+  --folder`, which loads no project, and `orbit doctor` refuses what it can see
+  of the rest; a check that meets the refusal anyway is recorded as an
+  environment failure. Allowing Unix sockets only under a check's private temp
+  directory on macOS (`srt`'s `allowUnixSockets`) was evaluated and not
+  adopted, because these pipes are not there; on Linux `srt` can only allow
+  every Unix socket, the Docker socket and SSH agent included. See ADR 0009,
+  addendum.
 - **Toolchain dependency caches are shared within one repository.** Go,
   Rust, Python, JVM and .NET dependency caches live under
   `<orbit home>/toolchains/<repo key>/`, one set per repository and never the

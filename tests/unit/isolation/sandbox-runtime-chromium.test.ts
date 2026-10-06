@@ -102,7 +102,7 @@ describe('wrap with chromiumMachRendezvous on macOS', () => {
   it('runs srt\'s real CLI under node with the preload, records the adjustment and the srt version, and states the limitation', () => {
     const h = host();
     const w = iso(h).wrap(['npx', 'playwright', 'test'], profile({ writablePaths: [h.wt], chromiumMachRendezvous: true }), { cwd: h.wt, env: { PATH: '/usr/bin:/bin' } });
-    expect(w.argv.slice(0, 5)).toEqual([h.node, '--import', pathToFileURL(h.preload).href, h.cli, '--settings']);
+    expect(w.argv.slice(0, 5)).toEqual([h.node, '--import', `${pathToFileURL(h.preload).href}?rules=chromium`, h.cli, '--settings']);
     expect(w.argv.slice(6)).toEqual(['--', 'npx', 'playwright', 'test']);
     expect(JSON.parse(readFileSync(w.argv[5]!, 'utf8')).filesystem.allowWrite).toEqual([h.wt]);
     expect(w.adjustments).toEqual([CHROMIUM_MACH_RENDEZVOUS]);

@@ -272,7 +272,7 @@ describe('classifyCouldNotRun on a candidate: the denials ADR 0010 added count o
   });
 
   it('keeps the denials that predate ADR 0010 (EPERM, EROFS, a Seatbelt deny line) as they were on a candidate', () => {
-    expect([...BASE_GATED_SIGNALS].sort()).toEqual(['network-denied', 'nuget-http-denied', 'permission-denied', 'program-not-found', 'socket-denied']);
+    expect([...BASE_GATED_SIGNALS].sort()).toEqual(['network-denied', 'nuget-http-denied', 'permission-denied', 'pipe-denied', 'program-not-found', 'socket-denied']);
     expect(classifyCouldNotRun({ checkId: 'unit', output: "Error: EPERM: operation not permitted, mkdir '/usr/local/var/acme'\n", insideRoots: ROOTS, baseSignals: [] })?.signals).toEqual(['filesystem-denied']);
     expect(classifyCouldNotRun({ checkId: 'unit', output: 'Sandbox: make(1) deny(1) file-write-create /usr/local/var/acme\n', insideRoots: ROOTS, baseSignals: [] })?.signals).toEqual(['sandbox-violation']);
   });

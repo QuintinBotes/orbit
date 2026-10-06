@@ -104,6 +104,22 @@ describe('the runner and toolchain profiles', () => {
     expect(checkToolchains(ctx('container'), def, e.checkoutDir, { toolchainsDir: '/s' }, '/t').env).not.toHaveProperty('JAVA_HOME');
   });
 
+  // .NET's CookieContainer reads the NIS domain name, which srt's Seatbelt profile does not allow, so every .NET HTTP
+  // client failed under srt on macOS, NuGet's restore in the install step included (ADR 0009, addendum).
+  it('lets a check and the install step of a .NET repository read the NIS domain name, and no other check', async () => {
+    const isolation = recordingIsolation();
+    const e = await runnerEnv([nodeCheck('unit', PRINT_ENV)], { isolation, files: { 'acme.sln': '', 'README.md': 'acme\n' } });
+    envs.push(e);
+    await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['unit'] });
+    const install = nodeCheck(INSTALL_CHECK_ID, PRINT_ENV);
+    const subject = { ...candidateSubject(e.ctx.runDir, e.candidate), source: 'install' as const };
+    await runCheckSet({ ...e.ctx, definitions: { [INSTALL_CHECK_ID]: install } }, subject, [install]);
+    expect(isolation.profiles.map((p) => p.nisDomainName)).toEqual([true, true]);
+    const go = await goEnv();
+    await runChecks({ ...go.ctx, candidate: go.e.candidate, checkIds: ['unit'] });
+    expect(go.isolation.profiles[0]!.nisDomainName).toBeFalsy();
+  });
+
   it('sets nothing for a toolchain the check and repository do not use', async () => {
     const isolation = recordingIsolation();
     const e = await runnerEnv([nodeCheck('unit', PRINT_ENV)], { isolation });

@@ -1,0 +1,17 @@
+UNHANDLED EXCEPTIONS FROM PROCESS 4242:
+=====================
+10/6/2026 5:51:29 PM
+System.Net.Sockets.SocketException (13): Permission denied
+   at System.Net.Sockets.Socket.DoBind(EndPoint endPointSnapshot, SocketAddress socketAddress)
+   at System.Net.Sockets.Socket.Bind(EndPoint localEP)
+   at System.IO.Pipes.NamedPipeServerStream.SharedServer..ctor(String path, Int32 maxCount, Boolean isFirstPipeInstance)
+   at System.IO.Pipes.NamedPipeServerStream.SharedServer.Get(String path, Int32 maxCount, PipeOptions pipeOptions)
+   at System.IO.Pipes.NamedPipeServerStream.Create(String pipeName, PipeDirection direction, Int32 maxNumberOfServerInstances, PipeTransmissionMode transmissionMode, PipeOptions options, Int32 inBufferSize, Int32 outBufferSize, HandleInheritability inheritability)
+   at System.IO.Pipes.NamedPipeServerStream..ctor(String pipeName, PipeDirection direction, Int32 maxNumberOfServerInstances, PipeTransmissionMode transmissionMode, PipeOptions options, Int32 inBufferSize, Int32 outBufferSize)
+   at Microsoft.Build.BackEnd.NodeEndpointOutOfProcBase.InternalConstruct(String pipeName)
+   at Microsoft.Build.Execution.OutOfProcNode.Run(Boolean enableReuse, Boolean lowPriority, Exception& shutdownException)
+   at Microsoft.Build.CommandLine.MSBuildApp.StartLocalNode(CommandLineSwitches commandLineSwitches, Boolean lowpriority)
+   at Microsoft.Build.CommandLine.MSBuildApp.ProcessCommandLineSwitches(CommandLineSwitches switchesFromAutoResponseFile, CommandLineSwitches switchesNotFromAutoResponseFile, String& projectFile, String[]& targets, String& toolsVersion, Dictionary`2& globalProperties, ILogger[]& loggers, LoggerVerbosity& verbosity, LoggerVerbosity& originalVerbosity, List`1& distributedLoggerRecords, Int32& cpuCount, Boolean& enableNodeReuse, TextWriter& preprocessWriter, TextWriter& targetsWriter, Boolean& detailedSummary, ISet`1& warningsAsErrors, ISet`1& warningsNotAsErrors, ISet`1& warningsAsMessages, Boolean& enableRestore, Boolean& interactive, ProfilerLogger& profilerLogger, Boolean& enableProfiler, Dictionary`2& restoreProperties, ProjectIsolationMode& isolateProjects, GraphBuildOptions& graphBuild, String[]& inputResultsCaches, String& outputResultsCache, Boolean& lowPriority, Boolean& question, Boolean& isBuildCheckEnabled, String[]& getProperty, String[]& getItem, String[]& getTargetResult, String& getResultOutputFile, Boolean recursing, String commandLine)
+   at Microsoft.Build.CommandLine.MSBuildApp.Execute(String[] commandLine)
+   at Microsoft.Build.CommandLine.MSBuildApp.Main(String[] args)
+===================

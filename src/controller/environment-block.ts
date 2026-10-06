@@ -27,7 +27,9 @@ import { readJsonIfExists } from '../core/fsx.ts';
 import { BASELINE_FILE, type BaselineReport } from '../evidence/baseline.ts';
 import { directInvocation } from '../evidence/check-command.ts';
 import { classifyMisconfigured, classifyProgramNotFound, type MisconfiguredCheck } from '../evidence/check-misconfigured.ts';
+import { dotnetFormatFix, formatLoadsProject } from '../evidence/dotnet-format.ts';
 import { classifyCouldNotRun, classifyEnvironmentFailure, classifyNotExecuted, type EnvironmentFailure, type EnvironmentSignal } from '../evidence/environment-failure.ts';
+import type { JudgedCheck } from '../evidence/msbuild.ts';
 import { listCheckRuns, type CandidateRecord, type CheckRunRecord } from '../evidence/store.ts';
 import type { EvidenceReport } from '../evidence/types.ts';
 import { baselineQuestionId } from '../inquisition/baseline-exception.ts';
@@ -189,41 +191,72 @@ function runsDotnetFormat(f: FailureWithCommand): boolean {
 /** What a .NET runtime refused prints: its shared-memory directory, the runtime itself, or the NuGet step that asked. */
 const DOTNET_DENIAL = /\/tmp\/\.dotnet\b|\.coreclr\.|NuGet-Migrations|System\.Threading\.(?:Mutex|Semaphore)/i;
 
+/** The runner's note on a check it stopped for an MSBuild worker node the sandbox refused (evidence/runner.ts). */
+const MSBUILD_NODE_DENIAL = /^the check sandbox denied MSBuild node /;
+
+/** The check's own definition as the .NET fixes read it (evidence/dotnet-format.ts), when the frozen policy shows it. */
+function definitionOf(f: FailureWithCommand): (JudgedCheck & { id: string }) | null {
+  return f.command ? { id: f.checkId, command: [...f.command.argv], shell: f.command.shell } : null;
+}
+
+/**
+ * The fix for a dotnet format check whose build host the sandbox refused its named pipe: the form that loads no project,
+ * as the check's command with it in place of the dotnet format that loads one when the definition shows it (the folder of
+ * the solution or project it names, its --include and --exclude kept, as doctor names it: evidence/dotnet-format.ts), else
+ * that form said in words. A format whose build host failed ran SDK 9 or later: SDK 8 loads the project in its own process.
+ */
+function formatFix(f: FailureWithCommand): string {
+  const def = definitionOf(f);
+  return def !== null && formatLoadsProject(def) !== null ? dotnetFormatFix(def) : `in checks.${f.checkId}.command, dotnet format whitespace --folder --verify-no-changes in place of its dotnet format, in the folder of the solution or project it formats and with its --include and --exclude`;
+}
+
 /**
  * How to fix a check the sandbox or the operating system refused (issue #10): the .NET cases by name, any other denial
  * through `orbit doctor`, which starts each check's executable in the sandbox, a refused connection through the check's
  * network_hosts or the dependency install, and a program that is not installed where the check runs. Null for a crash or
  * a check that could not be started, whose way forward is already said.
+ *
+ * A .NET named pipe the sandbox refused under /tmp (ADR 0009, addendum) has three fixes: an MSBuild worker node seen in
+ * `dotnet test`'s own crash (MSB1025, socket-denied) is pinned with -m:1 on the check's command; one the runner stopped
+ * the check for (pipe-denied) has the exact fix for the check's command at the end of its log, where the runner wrote it
+ * knowing the SDK the checkout pins; dotnet format's build host (pipe-denied, or socket-denied in a dotnet format check)
+ * takes the form that loads no project.
  */
 export function environmentFix(failures: readonly FailureWithCommand[]): string | null {
   const fixes: string[] = [];
   const has = (signal: EnvironmentSignal): FailureWithCommand[] => failures.filter((f) => f.signals.includes(signal));
-  const denied = failures.filter((f) => f.signals.includes('filesystem-denied') || f.signals.includes('permission-denied') || f.signals.includes('sandbox-violation'));
+  // A refused pipe can also leave a Seatbelt line for its fixed path under /tmp, which the tool's TMPDIR does not move.
+  const denied = failures.filter((f) => !f.signals.includes('pipe-denied') && (f.signals.includes('filesystem-denied') || f.signals.includes('permission-denied') || f.signals.includes('sandbox-violation')));
   if (denied.some((f) => f.lines.some((l) => DOTNET_DENIAL.test(l)))) {
     fixes.push('this is the .NET runtime asking for /tmp/.dotnet, a directory it shares between processes for named mutexes and which no check sandbox may write. Orbit prepares every check for the .NET SDK\'s first run so the SDK itself needs none (docs/troubleshooting.md, ".NET checks under the sandbox"); upgrade Orbit if this run predates that, and if the repository\'s own code creates a named Mutex or Semaphore, make it use an unnamed one or a file lock in TMPDIR');
   } else if (denied.length > 0) {
     fixes.push('run orbit doctor, which starts each check\'s executable in the sandbox and shows what it is refused, then let the tool keep its files in the check\'s HOME or TMPDIR (through the check\'s env) or change the check definition (docs/troubleshooting.md, "A check cannot run in the sandbox")');
   }
   const sockets = has('socket-denied');
-  if (sockets.length > 0) {
-    const format = sockets.filter(runsDotnetFormat);
-    const msbuild = sockets.filter((f) => !runsDotnetFormat(f));
-    // With both kinds, the MSBuild fix names its checks; the dotnet format fix always does.
-    const forChecks = (group: readonly EnvironmentFailure[]): string => (format.length > 0 ? `for ${group.length > 1 ? 'checks' : 'check'} ${group.map((f) => f.checkId).join(', ')}: ` : '');
-    // MSBuild's worker nodes each bind a named pipe, a Unix socket under /tmp the check sandbox refuses; on one node it
-    // starts none. Verified under Orbit's runner and srt on macOS: the dotnet test that failed with MSB1025 after five
-    // minutes passes with -m:1 (ADR 0010), the fix the .NET sandbox work settled on (issue #10).
-    if (msbuild.length > 0) fixes.push(`${forChecks(msbuild)}this is MSBuild starting a worker node, whose named pipe .NET makes a Unix socket under /tmp, and the check sandbox does not let a check create one: build on one MSBuild node, with -m:1 on the check's dotnet command (for example [dotnet, test, -m:1]), then run orbit doctor, which starts each check's executable in the sandbox (docs/troubleshooting.md, ".NET checks under the sandbox")`);
-    // dotnet format reads -m:1 as the project to format and fails. Measured under Orbit's runner and srt on macOS (the .NET
-    // 9.0.305 SDK): its own restore fails after five minutes, and with --no-restore its project loader times out
-    // connecting to its build host over a named pipe; only `dotnet format whitespace --folder`, which loads no project, runs.
-    if (format.length > 0) fixes.push(`dotnet format (${format.length > 1 ? 'checks' : 'check'} ${format.map((f) => f.checkId).join(', ')}) takes no -m:1, which it reads as the project to format, and it loads the projects through MSBuild and its own build host, which talk over named pipes the check sandbox refuses (its restore, and with --no-restore its project loader): whitespace formatting of the files alone loads no project and runs in the sandbox, [dotnet, format, whitespace, --folder, --verify-no-changes], while a check of code style or analyzers needs the projects loaded and so cannot run in the check sandbox (docs/troubleshooting.md, ".NET checks under the sandbox")`);
+  const pipes = has('pipe-denied');
+  const msbuild = sockets.filter((f) => !runsDotnetFormat(f));
+  const stopped = pipes.filter((f) => f.lines.some((l) => MSBUILD_NODE_DENIAL.test(l)));
+  const format = [...sockets.filter(runsDotnetFormat), ...pipes.filter((f) => f.lines.some((l) => !MSBUILD_NODE_DENIAL.test(l)))];
+  // With more than one kind, each fix names the checks it is for; the dotnet format fix always does.
+  const kinds = [msbuild, stopped, format].filter((g) => g.length > 0).length;
+  const forChecks = (group: readonly EnvironmentFailure[]): string => (kinds > 1 ? `for ${group.length > 1 ? 'checks' : 'check'} ${group.map((f) => f.checkId).join(', ')}: ` : '');
+  // MSBuild's worker nodes each bind a named pipe, a Unix socket under /tmp the check sandbox refuses; on one node it
+  // starts none. Verified under Orbit's runner and srt on macOS: the dotnet test that failed with MSB1025 after five
+  // minutes passes with -m:1 (ADR 0010; ADR 0009, addendum).
+  if (msbuild.length > 0) fixes.push(`${forChecks(msbuild)}this is MSBuild starting a worker node, whose named pipe .NET makes a Unix socket under /tmp, and the check sandbox does not let a check create one: build on one MSBuild node, with -m:1 on the check's dotnet command (for example [dotnet, test, -m:1]), which orbit doctor prints for the check's own command (docs/troubleshooting.md, ".NET builds and MSBuild worker nodes")`);
+  if (stopped.length > 0) fixes.push(`${forChecks(stopped)}the sandbox refuses MSBuild worker nodes their named pipe under /tmp: the check's log ends with the fix for its command (docs/troubleshooting.md, ".NET builds and MSBuild worker nodes")`);
+  // dotnet format reads -m:1 as the project to format and fails, and every form of it but whitespace --folder loads the
+  // project through a build host whose pipe the sandbox refuses (measured under Orbit's runner and srt: SDK 9 on macOS,
+  // SDK 10 on Linux).
+  if (format.length > 0) {
+    const ids = format.map((f) => f.checkId);
+    fixes.push(`dotnet format (${ids.length > 1 ? 'checks' : 'check'} ${ids.join(', ')}) takes no -m:1, which it reads as the project to format, and it loads the project through a build host whose named pipe .NET binds under /tmp, which no check sandbox may use: check whitespace with the form that loads no project, ${format.map(formatFix).join('; ')}, and run the style and analyzer checks outside Orbit, in CI (docs/troubleshooting.md, "dotnet format under the sandbox")`);
   }
   if (has('network-denied').length > 0) {
     fixes.push('the check reached for a host its policy does not let it reach, and the sandbox\'s network proxy refused it: add the host to the check\'s network_hosts (it must also be covered by network.allowed_hosts), or let the check work offline, with its dependencies restored by the dependency install (dependencies.install_command)');
   }
   if (has('nuget-http-denied').length > 0) {
-    fixes.push('NuGet\'s HTTP client does not start in the check sandbox, so a check cannot restore a package it does not already have: restore the packages in the dependency install (dependencies.install_command, for example [dotnet, restore]), which fills the repository\'s NuGet cache the check reads (docs/troubleshooting.md, ".NET checks under the sandbox")');
+    fixes.push('NuGet\'s HTTP client could not start because it may not read the machine\'s NIS domain name: Orbit adds the one rule that allows it only with the srt it ships, and the check\'s record says when it was not added, so run with that srt; and since nuget.org\'s certificate cannot be verified inside the sandbox on macOS, fill the repository\'s NuGet cache outside it with the command orbit doctor prints (checks.dotnet-packages), from which the dependency install and the checks restore (docs/troubleshooting.md, ".NET HTTP clients and NuGet restore on macOS")');
   }
   const missing = has('program-not-found');
   if (missing.length > 0) {

@@ -35,8 +35,9 @@ const RULES: readonly Rule[] = [
   { name: 'a home directory of a real user', pattern: /\/Users\/|\/home\/(?!acme\/)|\\Users\\|\/root\//g },
   // `/var/folders/<two characters>/<hash>/T` is where macOS keeps a user's temporary files; `/private` precedes it in a real path.
   { name: 'the temporary directory of a real machine', pattern: /\/var\/folders\/(?!acme\/T\/)/g },
-  // Seatbelt logs `Sandbox: dotnet(4242) deny(1) ...`: the number between the parentheses is a pid, and 4242 is the neutral one.
-  { name: 'a process id', pattern: /\b(?:pid|process id)\b|\w\((?!4242\))\d+\) deny\(/gi },
+  // Seatbelt logs `Sandbox: dotnet(4242) deny(1) ...`: the number between the parentheses is a pid, and 4242 is the neutral
+  // one. The runner's note on a check it stopped names the MSBuild node as `(pid 4242)` (evidence/msbuild.ts).
+  { name: 'a process id', pattern: /\b(?:pid|process id)\b(?! 4242\b)|\w\((?!4242\))\d+\) deny\(/gi },
   // xunit v3 prints the unique id of the assembly it runs, a hash of what the machine holds.
   { name: 'a long hexadecimal id (a hash of the capturing machine)', pattern: /(?<![0-9a-f])[0-9a-f]{32,}(?![0-9a-f])/gi, allowed: (m) => /^(.)\1*$/.test(m) },
 ];
@@ -110,6 +111,7 @@ describe('the classification fixtures carry nothing of the machine or the person
       ['temporary directory', '/private/var/folders/zz/x1y2z3w4v5u6t7s8r9/T/x'],
       ['process id', 'Sandbox: dotnet(31337) deny(1) file-write-create /System/acme'],
       ['process id', 'child pid 1234 exited'],
+      ['process id', 'note=the check sandbox denied MSBuild node (pid 31337) its named pipe'],
       ['hexadecimal id', `Finished:    Acme.Tests (ID = '${'ab'.repeat(32)}')`],
     ];
     for (const [what, text] of caught) expect(traces(text), `${what}: ${text}`).not.toEqual([]);
@@ -120,6 +122,7 @@ describe('the classification fixtures carry nothing of the machine or the person
       '/var/folders/acme/T/orbit-evidence-acme/checkout/src/Acme/Acme.csproj : error NU1301: x',
       '/private/var/folders/acme/T/orbit-evidence-acme/checkout/test.mjs:1:72',
       'Sandbox: dotnet(4242) deny(1) file-write-create /System/acme',
+      'note=the check sandbox denied MSBuild node (pid 4242) its named pipe /tmp/MSBuild4242',
       "Finished:    Acme.Tests (ID = '0000000000000000000000000000000000000000000000000000000000000000')",
       'Failed to restore /usr/local/share/dotnet/sdk/9.0.305/NuGet.targets(186,5)',
     ];

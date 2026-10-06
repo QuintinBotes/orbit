@@ -194,7 +194,7 @@ export const SRT_LIMITATIONS: readonly string[] = [
   "srt, node and the shell tools that start the sandbox run outside it; they get a PATH without relative entries or directories the sandbox can write, and without loader variables (NODE_OPTIONS, LD_*, DYLD_*...). The command's own values are restored inside the sandbox through /usr/bin/env.",
 ];
 
-/** The srt package the Chromium preload was written and verified against; browser checks on macOS require exactly it. */
+/** The srt package the preload was written and verified against: browser checks on macOS require exactly it, and .NET processes get the NIS domain name rule only with it. */
 export const SRT_VERIFIED_VERSION = '0.0.78';
 const SRT_PACKAGE = '@anthropic-ai/sandbox-runtime';
 
@@ -214,6 +214,22 @@ export const CHROMIUM_MACH_RENDEZVOUS_LIMITATION =
   "This widens one thing: a sandboxed process can look up the rendezvous port of another Playwright Chromium run by the same user, or claim the name a starting one will use, which at worst stops that browser from starting. " +
   "Chromium's temp files (a download is written there first) go to the check's private temp directory through MAC_CHROMIUM_TMPDIR, an environment variable set only when that directory is already writable: no rule, path or host is added for it. " +
   "Only Playwright's bundled Chromium is supported under srt on macOS; Google Chrome, Firefox and WebKit are not.";
+
+/** The isolation adjustment recorded with the evidence when a .NET process ran with the NIS domain name rule. */
+export const NIS_DOMAINNAME_READ = 'nis-domainname-read';
+
+/**
+ * Stated on every wrap that applies it (docs/decisions/0009-toolchain-profiles.md, addendum). The NIS domain name is the
+ * YP domain a machine bound to NIS belongs to, empty on any Mac that is not; it is no secret (NIS clients announce it on
+ * their network) and says less than the host name, which srt already lets every process read.
+ */
+export const NIS_DOMAINNAME_LIMITATION =
+  '.NET on macOS: an Orbit preload on the unmodified srt CLI adds one Seatbelt rule, sysctl-read of kern.nisdomainname (the NIS domain name, empty unless the machine is bound to NIS) and nothing else, ' +
+  "since .NET's CookieContainer reads it and every .NET HTTP client, NuGet's restore included, failed without it. It is read-only and reveals less than the host name srt already allows.";
+
+/** Stated when the rule was wanted and not added: the srt found is not the one the preload was verified against. */
+export const NIS_DOMAINNAME_SKIPPED =
+  ".NET on macOS: the NIS domain name rule was not added, because the srt found is not the version Orbit's preload was verified against, so a .NET HTTP client (NuGet's restore included) fails with \"GetDomainName: -1\"; use the srt that ships with Orbit";
 
 /** srt-chromium-preload.mjs: beside this module in the sources, beside the bundle in plugin/dist/ (scripts/build.mjs copies it there). */
 export function defaultChromiumPreloadPath(): string {
@@ -382,8 +398,15 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
     const platform = this.platformCheck(srt.path);
     if (!platform.ok) throw new OrbitError('ISOLATION_UNAVAILABLE', `sandbox-runtime unavailable: ${platform.detail}`);
     const pkg = srtPackageOf(srt.path);
-    // Linux has no Mach, so the flag changes nothing there.
-    const browser = profile.chromiumMachRendezvous === true && this.platform === 'darwin' ? this.chromiumLauncher(pkg) : null;
+    // Seatbelt rules exist on macOS only: on Linux both flags change nothing.
+    const darwin = this.platform === 'darwin';
+    const browser = profile.chromiumMachRendezvous === true && darwin;
+    // A browser run needs its rules to start at all, so an unverified srt stops it; the NIS rule only lets .NET's HTTP
+    // clients start, so without a verified srt the command runs as srt alone runs it, and says so.
+    const nisWanted = profile.nisDomainName === true && darwin;
+    const nis = nisWanted && this.preloadVerified(pkg);
+    const sets = [...(browser ? ['chromium'] : []), ...(nis ? ['nis-domainname'] : [])];
+    const preloaded = sets.length > 0 ? this.preloadLauncher(pkg, browser ? 'browser checks' : '.NET processes') : null;
 
     const dir = mkdtempSync(join(this.opts.settingsDir ?? tmpdir(), 'orbit-srt-'));
     let cleaned = false;
@@ -397,13 +420,13 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
       const settings = buildSrtSettings(profile, { extraDenyRead: [dir], stdioFiles: opts.stdioFiles });
       const reach = sandboxReach(settings, opts.env.HOME);
       assertLauncherOutOfReach(srt.path, reach);
-      if (browser) {
-        assertFileOutOfReach(browser.preload, reach, `the Chromium preload ${browser.preload}`);
-        assertFileOutOfReach(browser.node, reach, `node ${browser.node}`);
+      if (preloaded) {
+        assertFileOutOfReach(preloaded.preload, reach, `the srt preload ${preloaded.preload}`);
+        assertFileOutOfReach(preloaded.node, reach, `node ${preloaded.node}`);
         // The preload records a refusal here; a sandboxed command that could write it could fake one.
-        if (writableIn(reach, realpathSync(dir))) throw new OrbitError('ISOLATION_UNAVAILABLE', `the srt settings directory ${dir} is inside a path the sandbox may write, so the Chromium preload's refusal record could be forged`, { path: dir });
+        if (writableIn(reach, realpathSync(dir))) throw new OrbitError('ISOLATION_UNAVAILABLE', `the srt settings directory ${dir} is inside a path the sandbox may write, so the srt preload's refusal record could be forged`, { path: dir });
       }
-      const launch = launcherEnv(sandboxEnv(opts.env, settings.filesystem.allowWrite, browser !== null), reach);
+      const launch = launcherEnv(sandboxEnv(opts.env, settings.filesystem.allowWrite, browser), reach);
       // Inside the sandbox, so the limits bind the command and its children but not srt or its proxy.
       const command = withResourceLimits(argv, this.opts.limits, { shell: this.opts.limitShell });
       if (launch.restore.length && command[0]!.includes('=')) {
@@ -412,8 +435,9 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
       const file = join(dir, 'settings.json');
       writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
       chmodSync(file, 0o600);
-      // With the browser adjustment, node runs srt's real CLI with the preload loaded first; srt itself is unmodified.
-      const launcher = browser ? [browser.node, '--import', pathToFileURL(browser.preload).href, browser.cli] : [srt.path];
+      // With Seatbelt rules to add, node runs srt's real CLI with the preload loaded first, its URL naming the rule sets;
+      // srt itself is unmodified.
+      const launcher = preloaded ? [preloaded.node, '--import', `${pathToFileURL(preloaded.preload).href}?rules=${sets.join(',')}`, preloaded.cli] : [srt.path];
       const srtArgv = [...launcher, '--settings', file, '--', ...(launch.restore.length ? ['/usr/bin/env', '--', ...launch.restore] : []), ...command];
       // Outside the sandbox and in the same process group as the command, so a kill of the group stops both.
       const memoryMb = this.opts.limits?.memory_mb ?? null;
@@ -421,9 +445,13 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
         argv: withMemoryWatchdog(srtArgv, memoryMb, this.opts.memory),
         env: launch.env,
         cleanup,
-        limitations: [...limitationsFor(profile, this.platform, this.opts.limits), ...(browser ? [CHROMIUM_MACH_RENDEZVOUS_LIMITATION] : [])],
-        adjustments: browser ? [CHROMIUM_MACH_RENDEZVOUS] : [],
-        ...(browser ? { preloadRefusal: () => readPreloadRefusal(dir) } : {}),
+        limitations: [
+          ...limitationsFor(profile, this.platform, this.opts.limits),
+          ...(browser ? [CHROMIUM_MACH_RENDEZVOUS_LIMITATION] : []),
+          ...(nis ? [NIS_DOMAINNAME_LIMITATION] : nisWanted ? [NIS_DOMAINNAME_SKIPPED] : []),
+        ],
+        adjustments: [...(browser ? [CHROMIUM_MACH_RENDEZVOUS] : []), ...(nis ? [NIS_DOMAINNAME_READ] : [])],
+        ...(preloaded ? { preloadRefusal: () => readPreloadRefusal(dir) } : {}),
         runtimeVersion: pkg?.version ?? null,
       };
     } catch (err) {
@@ -432,17 +460,23 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
     }
   }
 
+  /** Whether the srt found is the package and version the preload was verified against. */
+  private preloadVerified(pkg: ReturnType<typeof srtPackageOf>): boolean {
+    return pkg !== null && pkg.name === SRT_PACKAGE && pkg.version === SRT_VERIFIED_VERSION;
+  }
+
   /**
-   * How a browser check's srt is started on macOS: node, the preload and srt's real CLI. Fails closed, before anything
-   * is written, when srt is not the package version the preload was verified against or the preload is missing.
+   * How srt is started on macOS when the preload adds Seatbelt rules: node, the preload and srt's real CLI. Fails closed,
+   * before anything is written, when srt is not the package version the preload was verified against or the preload is
+   * missing (a browser run; a .NET process asks only when preloadVerified).
    */
-  private chromiumLauncher(pkg: ReturnType<typeof srtPackageOf>): { node: string; preload: string; cli: string } {
-    const unavailable = (why: string) => new OrbitError('ISOLATION_UNAVAILABLE', `sandbox-runtime unavailable for browser checks: ${why}`, { verified: SRT_VERIFIED_VERSION });
+  private preloadLauncher(pkg: ReturnType<typeof srtPackageOf>, forWhat: string): { node: string; preload: string; cli: string } {
+    const unavailable = (why: string) => new OrbitError('ISOLATION_UNAVAILABLE', `sandbox-runtime unavailable for ${forWhat}: ${why}`, { verified: SRT_VERIFIED_VERSION });
     if (!pkg) throw unavailable('srt cannot be resolved');
     const where = dirname(pkg.cli);
-    if (pkg.name === null && pkg.version === null) throw unavailable(`srt at ${where} has an unknown version (no readable package.json), and the Chromium preload was verified against ${SRT_PACKAGE} ${SRT_VERIFIED_VERSION} only`);
+    if (pkg.name === null && pkg.version === null) throw unavailable(`srt at ${where} has an unknown version (no readable package.json), and the srt preload was verified against ${SRT_PACKAGE} ${SRT_VERIFIED_VERSION} only`);
     if (pkg.name !== SRT_PACKAGE) throw unavailable(`srt at ${where} is not ${SRT_PACKAGE} (package ${String(pkg.name)})`);
-    if (pkg.version !== SRT_VERIFIED_VERSION) throw unavailable(`srt at ${where} is version ${String(pkg.version)}, and the Chromium preload was verified against ${SRT_VERIFIED_VERSION} only`);
+    if (pkg.version !== SRT_VERIFIED_VERSION) throw unavailable(`srt at ${where} is version ${String(pkg.version)}, and the srt preload was verified against ${SRT_VERIFIED_VERSION} only`);
     const resolve = (path: string, what: string): string => {
       try {
         return realpathSync(path);
@@ -450,7 +484,7 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
         throw unavailable(`${what} ${path} is missing`);
       }
     };
-    return { node: resolve(this.opts.nodePath ?? process.execPath, 'node'), preload: resolve(this.opts.chromiumPreloadPath ?? defaultChromiumPreloadPath(), 'the Chromium preload'), cli: pkg.cli };
+    return { node: resolve(this.opts.nodePath ?? process.execPath, 'node'), preload: resolve(this.opts.chromiumPreloadPath ?? defaultChromiumPreloadPath(), 'the srt preload'), cli: pkg.cli };
   }
 
   private missingDetail(): string {

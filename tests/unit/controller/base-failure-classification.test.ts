@@ -265,7 +265,8 @@ describe('environmentFix for a refused socket, network connection or NuGet clien
     const format = environmentFix([{ ...socket, checkId: 'format', command: { argv: ['dotnet', 'format', '--verify-no-changes'], shell: false } }])!;
     expect(format).not.toMatch(/-m:1 on the check's dotnet command/);
     expect(format).toMatch(/dotnet format \(check format\) takes no -m:1/);
-    expect(format).toMatch(/\[dotnet, format, whitespace, --folder, --verify-no-changes\]/);
+    // The check's own command in the form that loads no project, as doctor and the runner name it (ADR 0009, addendum).
+    expect(format).toContain('checks.format.command: ["dotnet", "format", "whitespace", "--folder", "--verify-no-changes"]');
     const test = environmentFix([{ ...socket, command: { argv: ['dotnet', 'test', 'tests/Acme.Tests/Acme.Tests.csproj'], shell: false } }])!;
     expect(test).toMatch(/-m:1 on the check's dotnet command \(for example \[dotnet, test, -m:1\]\)/);
     expect(test).not.toMatch(/dotnet format/);
@@ -280,9 +281,14 @@ describe('environmentFix for a refused socket, network connection or NuGet clien
     expect(three.match(/-m:1 on the check's dotnet command/g)).toHaveLength(1);
   });
 
-  it('names the network allowlist for a refused connection, the dependency install for NuGet, and the PATH for a program not found', () => {
+  it('names the network allowlist for a refused connection, the NIS rule and the filled NuGet cache for NuGet, and the PATH for a program not found', () => {
     expect(environmentFix([{ ...socket, signals: ['network-denied'], lines: ['curl: (56) CONNECT tunnel failed, response 403'] }])).toMatch(/network_hosts/);
-    expect(environmentFix([{ ...socket, signals: ['nuget-http-denied'] }])).toMatch(/restore the packages in the dependency install \(dependencies\.install_command/);
+    // ADR 0009, addendum: Orbit lets .NET read the NIS domain name with the srt it ships, and on macOS the repository's
+    // NuGet cache is filled outside the sandbox with doctor's command, from which the install and the checks restore.
+    const nuget = environmentFix([{ ...socket, signals: ['nuget-http-denied'] }])!;
+    expect(nuget).toMatch(/^NuGet's HTTP client could not start because it may not read the machine's NIS domain name/);
+    expect(nuget).toContain('orbit doctor prints (checks.dotnet-packages)');
+    expect(nuget).not.toMatch(/\[dotnet, restore\]/);
     const missing = environmentFix([{ ...socket, checkId: 'build', signals: ['program-not-found'], lines: ['/bin/sh: dotnett: command not found'] }])!;
     expect(missing).toMatch(/^install the program where the check runs, or give the check a PATH that holds it/);
     expect(missing).toContain('correct checks.build.command in .orbit/config.yaml, which needs a new run');
@@ -376,6 +382,19 @@ describe('checksNotExecutedFor: a denial the change introduced goes to repair', 
       expect(checksNotExecutedFor(lab.ctx(), cand, report), name).toEqual([]);
       lab.cleanup();
     }
+  });
+
+  it('a refused .NET named pipe the runner recorded follows the same rule: repair unless the base revision showed it (ADR 0009, addendum)', () => {
+    // The runner stopped the check for an MSBuild node the sandbox refused; the base revision started none.
+    const stopped = environment('dotnet-format-restore-node-denied.log');
+    const fresh = candidateWith(stopped, []);
+    expect(checksNotExecutedFor(lab.ctx(), fresh.cand, fresh.report)).toEqual([]);
+    lab.cleanup();
+    const host = candidateWith(environment('dotnet-format-build-host-timeout.log'), [{ checkId: 'unit', fingerprint: FP, excerpt: null }]);
+    expect(checksNotExecutedFor(lab.ctx(), host.cand, host.report)).toEqual([]);
+    lab.cleanup();
+    const same = candidateWith(stopped, [{ checkId: 'unit', fingerprint: FP, excerpt: null, classification: 'environment', signals: ['pipe-denied'] }]);
+    expect(checksNotExecutedFor(lab.ctx(), same.cand, same.report)).toEqual([expect.objectContaining({ checkId: 'unit', signals: ['pipe-denied'] })]);
   });
 
   it('keeps the denials that predate ADR 0010 on a candidate as before', () => {

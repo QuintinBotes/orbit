@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { OrbitError } from '../../../src/core/errors.ts';
 import { insertQuestion } from '../../../src/inquisition/store.ts';
@@ -310,6 +310,23 @@ describe('contract and policy helpers', () => {
     expect(rw).not.toContain('read-only');
     ctx.contract = { allowed_paths: ['apps/calc.mjs'] } as never;
     expect(policySummary(ctx, { readOnly: false })).toContain('you may edit only: apps/calc.mjs');
+  });
+
+  // Workers run dotnet themselves, in an srt sandbox like the checks' (ADR 0009, addendum), where a build without -m:1
+  // is refused its MSBuild worker nodes: on macOS it waits out MSBuild's node retries, about five minutes, first. Every
+  // worker of a .NET repository under srt is told, as it is that dotnet format cannot load a project there (its build
+  // host's pipe is refused too); nothing changes for other repositories or providers.
+  it('tells a worker in a .NET repository under srt to pass -m:1 to dotnet, and nobody else', () => {
+    const NOTE = '- .NET: pass -m:1 to every dotnet build, test, publish, pack, restore, clean or msbuild you start, and run a project with dotnet run --no-build after such a build (dotnet run hands -m:1 to the program); this sandbox refuses MSBuild worker nodes, so without -m:1 such a command fails, on macOS only after about five minutes; dotnet format loads the project through a build host whose named pipe this sandbox refuses too, so of dotnet format only dotnet format whitespace --folder runs here';
+    lab = makeUnitLab({ path: ['PREFLIGHT'], tweak: (c) => (c.isolation = { ...c.isolation, provider: 'sandbox-runtime' }) });
+    expect(policySummary(lab.ctx(), { readOnly: false })).not.toContain('-m:1');
+    writeFileSync(join(lab.repo, 'acme.sln'), '');
+    expect(policySummary(lab.ctx(), { readOnly: false }).split('\n')).toContain(NOTE);
+    expect(policySummary(lab.ctx(), { readOnly: true }).split('\n')).toContain(NOTE);
+    lab.cleanup();
+    lab = makeUnitLab({ path: ['PREFLIGHT'], tweak: (c) => (c.isolation = { ...c.isolation, provider: 'container' }) });
+    writeFileSync(join(lab.repo, 'acme.sln'), '');
+    expect(policySummary(lab.ctx(), { readOnly: false })).not.toContain('-m:1');
   });
 
   it('says there is no network and lists every check when the policy has them', () => {

@@ -20,6 +20,7 @@ import { closeMootBaselineQuestions } from './baseline-questions.ts';
 import { releaseRunWorktrees } from '../worktree-cleanup.ts';
 import { finalizeRun } from '../report.ts';
 import { blockingQuestions } from '../gates.ts';
+import { detectToolchains } from '../../isolation/toolchains.ts';
 import { applyAmendmentAnswers } from '../../inquisition/amendment-answers.ts';
 
 export interface StepResult {
@@ -254,6 +255,17 @@ export function assertContract(ctx: RunContext): NonNullable<RunContext['contrac
   return ctx.contract;
 }
 
+/**
+ * What a worker running dotnet itself must know about its sandbox (docs/decisions/0009-toolchain-profiles.md, addendum):
+ * srt refuses MSBuild worker nodes their named pipe under /tmp, as it does a check's, and the dotnet CLI asks for one
+ * node per processor, so a build without -m:1 fails, on macOS only after MSBuild's ten 30 s node retries. Orbit does not
+ * change the worker's processor count (DOTNET_PROCESSOR_COUNT would reach the test host), so the worker is told. dotnet
+ * format meets the same refusal through the build host it loads the project with (evidence/dotnet-format.ts), which no
+ * switch avoids, so the worker is told which form of it runs.
+ */
+export const DOTNET_WORKER_NOTE =
+  '- .NET: pass -m:1 to every dotnet build, test, publish, pack, restore, clean or msbuild you start, and run a project with dotnet run --no-build after such a build (dotnet run hands -m:1 to the program); this sandbox refuses MSBuild worker nodes, so without -m:1 such a command fails, on macOS only after about five minutes; dotnet format loads the project through a build host whose named pipe this sandbox refuses too, so of dotnet format only dotnet format whitespace --folder runs here';
+
 /** The controller-written summary of a worker's authority (spec section 21: "policy summary"). */
 export function policySummary(ctx: RunContext, opts: { readOnly: boolean }): string {
   const c = ctx.snapshot.config;
@@ -266,6 +278,8 @@ export function policySummary(ctx: RunContext, opts: { readOnly: boolean }): str
     `- network: ${c.network.allowed_hosts.length > 0 ? c.network.allowed_hosts.join(', ') : 'none'}`,
     `- trusted checks (run by the controller, not you): ${Object.keys(c.checks).join(', ') || 'none'}`,
     '- you cannot commit, push, open pull requests, change policy, or decide completion',
+    // A worker's toolchains are its worktree's markers, the repository's tracked files (controller/workers.ts).
+    ...(c.isolation.provider === 'sandbox-runtime' && detectToolchains({ roots: [ctx.snapshot.repo_root] }).includes('dotnet') ? [DOTNET_WORKER_NOTE] : []),
   ];
   return lines.join('\n');
 }

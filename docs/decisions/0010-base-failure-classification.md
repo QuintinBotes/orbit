@@ -283,10 +283,18 @@ reads as the change's, as every count did before this decision. Then one of:
   restore fails after five minutes ("Restore operation failed"), and with
   `--no-restore` after a restore its project loader times out connecting to its
   build host over a named pipe; `dotnet format whitespace --folder
-  --verify-no-changes`, which loads no project, passes in about a second. A
-  style or analyzer check needs the projects loaded, which the check sandbox
-  does not allow. Neither of those two `dotnet format` failures prints a denial,
-  so neither is classified: each stays a pre-existing failure with its question.
+  --verify-no-changes`, which loads no project, passes in about a second. The
+  fix is the check's command in that form, reading the folder of the solution
+  or project it names and keeping its `--include` and `--exclude`, as
+  `orbit doctor` names it. A style or analyzer check needs the projects loaded,
+  which the check sandbox does not allow with SDK 9 and later (SDK 8, pinned by
+  `global.json`, loads them in its own process). Neither of those two `dotnet
+  format` failures prints a denial; ADR 0009's addendum reads both as
+  `pipe-denied`: the build host's failure from its own output, and the refused
+  restore from the note the runner writes when it stops the check for the
+  MSBuild node it records. When that reading finds the refused pipe, the
+  `SocketException` in the same crash is the same pipe and is not read again
+  as `socket-denied`.
 
 Not evidence of an environment failure: the same `SocketException (13)` from
 the repository's own program (its stack is in its own code; captured under
@@ -305,12 +313,14 @@ is never applied to a candidate: the same error there is the change's (a
 candidate that deletes the project the check builds), and the repair loop keeps
 it. When VERIFYING applies `classifyCouldNotRun` to a candidate
 (`checksNotExecutedFor`), the signals this decision added (`permission-denied`,
-`socket-denied`, `network-denied`, `nuget-http-denied`, `program-not-found`;
-`BASE_GATED_SIGNALS`) count only when the same check's base-revision result had
-the same classification with the same signal (the baseline report records
-each environment failure's signals). Otherwise the change brought the denial (a
-test that opens a file it may not read, a package from a host the check may not
-reach) and it goes to repair. In practice a run that reaches VERIFYING has no
+`socket-denied`, `network-denied`, `nuget-http-denied`, `program-not-found`)
+and ADR 0009's `pipe-denied` (`BASE_GATED_SIGNALS`) count only when the same
+check's base-revision result had the same classification with the same signal
+(the baseline report records each environment failure's signals). Otherwise
+the change brought the denial (a test that opens a file it may not read, a
+package from a host the check may not reach, a second project under a check
+without `-m:1`) and it goes to repair. `pipe-denied` is gated although the
+runner writes the note it reads (ADR 0009, addendum, item 3). In practice a run that reaches VERIFYING has no
 such base-revision result: PREFLIGHT blocks on any environment failure, and a
 resumed baseline that passes records none. So on a candidate these signals
 always go to repair today; the gate is what keeps that so if a later decision

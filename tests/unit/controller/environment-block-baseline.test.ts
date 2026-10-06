@@ -12,6 +12,8 @@ import { addCandidate, addEvidence, BASE_REV, makeUnitLab, setContract, type Uni
 const fixture = (name: string): string => readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../fixtures/environment', name), 'utf8');
 const DOTNET_CRASH = fixture('dotnet-build-eperm-shm.log');
 const COMPILE_ERROR = fixture('dotnet-build-compile-error.log');
+const FORMAT_BUILD_HOST = fixture('dotnet-format-build-host-timeout.log');
+const FORMAT_RESTORE_NODE = fixture('dotnet-format-restore-node-denied.log');
 const FP = 'fp:0123456789abcdef';
 
 const dotnet: BlockedCheck = {
@@ -53,6 +55,26 @@ describe('environmentFix', () => {
     expect(environmentFix([{ ...dotnet, signals: ['sandbox-violation'], lines: ['Sandbox: make(1) deny(1) file-write-create /usr/local/var/acme'] }])).toMatch(/^run orbit doctor, which starts each check's executable in the sandbox/);
     expect(environmentFix([{ ...dotnet, signals: ['process-aborted'] }])).toBeNull();
     expect(environmentFix([])).toBeNull();
+  });
+
+  it('names the fix for a .NET named pipe the sandbox refused: the check\'s own fix in its log for a worker node, whitespace --folder for dotnet format', () => {
+    const pipe = (line: string): BlockedCheck => ({ ...dotnet, signals: ['pipe-denied'], lines: [line] });
+    const node = 'the check sandbox denied MSBuild node (pid 4242) its named pipe /tmp/MSBuild4242 (System.Net.Sockets.SocketException (13): Permission denied)';
+    const host = 'Unhandled exception: System.TimeoutException: The operation has timed out.';
+    expect(environmentFix([pipe(node)])).toMatch(
+      /^the sandbox refuses MSBuild worker nodes their named pipe under \/tmp: the check's log ends with the fix for its command \(docs\/troubleshooting\.md, "\.NET builds and MSBuild worker nodes"\)$/,
+    );
+    const format = environmentFix([pipe(host)]);
+    expect(format).toMatch(/^dotnet format \(check build\) takes no -m:1, which it reads as the project to format, and it loads the project through a build host whose named pipe \.NET binds under \/tmp, which no check sandbox may use: check whitespace with the form that loads no project/);
+    expect(format).toContain('dotnet format whitespace --folder --verify-no-changes in place of its dotnet format, in the folder of the solution or project it formats and with its --include and --exclude');
+    expect(format).toContain('docs/troubleshooting.md, "dotnet format under the sandbox"');
+    // With the check's command known, the fix is that command in the form that loads no project, as doctor names it: the
+    // folder of the solution it formats, and its --exclude, kept.
+    const exact = environmentFix([{ ...pipe(host), checkId: 'fmt', command: { argv: ['dotnet', 'format', 'src/Acme.sln', '--verify-no-changes', '--exclude', 'gen'], shell: false } }]);
+    expect(exact).toContain('checks.fmt.command: ["dotnet", "format", "whitespace", "src", "--folder", "--verify-no-changes", "--exclude", "gen"]');
+    // Both kinds: each fix names its checks, and neither says -m:1 to dotnet format.
+    const both = environmentFix([pipe(node), { ...pipe(host), checkId: 'fmt' }])!;
+    expect(both).toMatch(/^for check build: the sandbox refuses MSBuild worker nodes .*; and dotnet format \(check fmt\) takes no -m:1/);
   });
 
   it('is added to the candidate reason for a check that could not execute because of a denial', () => {
@@ -113,6 +135,18 @@ describe('baselineEnvironmentFailures', () => {
     lab.cleanup();
     const nothing = baselineWith({ build: null }, { excerpt: null });
     expect(baselineEnvironmentFailures(lab.ctx(), nothing.report, nothing.checkout)).toEqual([]);
+  });
+
+  it('finds a dotnet format check whose build host or implicit restore the sandbox refused its named pipe: no baseline exception for it', () => {
+    const { report, checkout } = baselineWith({ format: FORMAT_BUILD_HOST, lint: FORMAT_RESTORE_NODE });
+    const found = baselineEnvironmentFailures(lab.ctx(), report, checkout);
+    expect(found.map((f) => [f.checkId, f.signals, f.questionId])).toEqual([
+      ['format', ['pipe-denied'], null],
+      ['lint', ['pipe-denied'], null],
+    ]);
+    expect(baselineEnvironmentBlockReason({ runId: 'orb-4', baseRevision: BASE_REV, failures: found })).toMatch(
+      /no baseline exception is offered.*Fix: for check lint: the sandbox refuses MSBuild worker nodes their named pipe under \/tmp: the check's log ends with the fix for its command .*; and dotnet format \(check format\) takes no -m:1, which it reads as the project to format, and it loads the project through a build host/,
+    );
   });
 
   it('reads a denial inside the baseline checkout as the code\'s', () => {

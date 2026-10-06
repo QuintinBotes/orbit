@@ -220,6 +220,7 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
     homeDir: home,
     policyPath: policy.path,
     readablePaths: [ctx.deps.orbitInstallDir, ...toolchains.readOnly],
+    nisDomainName: toolchains.nisDomainName,
     timeoutMs,
     env,
   });

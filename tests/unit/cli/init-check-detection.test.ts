@@ -141,11 +141,15 @@ describe('init proposes checks: .NET', () => {
   const lib = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>\n';
   const tests = '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.0.0" /></ItemGroup></Project>\n';
 
-  it('builds and tests the solution, however many projects it holds', async () => {
+  // MSBuild worker nodes cannot run in the check sandbox (ADR 0009, addendum), so every proposed dotnet command pins one
+  // node itself, and the proposal says why in the comment above the check.
+  it('builds and tests the solution on one MSBuild node, however many projects it holds, and says why', async () => {
     const r = await init(repoWith({ 'Acme.sln': sln, 'src/Acme.Core/Acme.Core.csproj': lib, 'src/Acme.Web/Acme.Web.csproj': lib, 'tests/Acme.Core.Tests/Acme.Core.Tests.csproj': tests }), ['dotnet']);
     expect(r.ids).toEqual(['build', 'unit-tests']);
-    expect(r.checks.build).toMatchObject({ command: ['dotnet', 'build', 'Acme.sln'], category: 'build', timeout_seconds: 900 });
-    expect(r.checks['unit-tests']).toMatchObject({ command: ['dotnet', 'test', 'Acme.sln'], category: 'test' });
+    expect(r.checks.build).toMatchObject({ command: ['dotnet', 'build', 'Acme.sln', '-m:1'], category: 'build', timeout_seconds: 900 });
+    expect(r.checks['unit-tests']).toMatchObject({ command: ['dotnet', 'test', 'Acme.sln', '-m:1'], category: 'test' });
+    const why = '-m:1 keeps MSBuild on one node, since the check sandbox refuses worker nodes their named pipe';
+    expect(r.json.checks.proposed.map((c) => c.reason)).toEqual([`solution file Acme.sln; ${why}`, `solution file Acme.sln with a test project (Microsoft.NET.Test.Sdk); ${why}`]);
     expect(r.json.config_problems).toEqual([]);
   });
 
@@ -156,7 +160,7 @@ describe('init proposes checks: .NET', () => {
 
   it('uses the projects when there is no solution, and a test check only for a test project', async () => {
     const r = await init(repoWith({ 'src/Acme.csproj': lib, 'tests/Acme.Tests.csproj': tests }), ['dotnet']);
-    expect(r.json.checks.proposed.map((c) => c.command.join(' '))).toEqual(['dotnet build src/Acme.csproj', 'dotnet build tests/Acme.Tests.csproj', 'dotnet test tests/Acme.Tests.csproj']);
+    expect(r.json.checks.proposed.map((c) => c.command.join(' '))).toEqual(['dotnet build src/Acme.csproj -m:1', 'dotnet build tests/Acme.Tests.csproj -m:1', 'dotnet test tests/Acme.Tests.csproj -m:1']);
     expect(r.ids).toEqual(['build-acme', 'build-acme-tests', 'unit-tests-acme-tests']);
   });
 
@@ -385,7 +389,7 @@ describe('init proposes checks: with the real tools', () => {
   it.skipIf(!hasTool('dotnet'))('dotnet: the proposal for a project names a build that the SDK accepts', async () => {
     const l = repoWith({ 'Acme.csproj': '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>\n', 'Program.cs': 'System.Console.WriteLine("acme");\n' });
     const json = await initReal(l);
-    expect(json.checks.proposed.map((c) => c.command.join(' '))).toEqual(['dotnet build Acme.csproj']);
+    expect(json.checks.proposed.map((c) => c.command.join(' '))).toEqual(['dotnet build Acme.csproj -m:1']);
     // The command is only started (its help), not built: a restore may need the network and a framework this SDK lacks.
     execFileSync('dotnet', ['build', '--help'], { cwd: l.repo, stdio: 'pipe', timeout: 120_000, env: { ...process.env, DOTNET_NOLOGO: '1', DOTNET_CLI_TELEMETRY_OPTOUT: '1' } });
   }, 180_000);

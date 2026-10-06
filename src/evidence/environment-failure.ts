@@ -24,10 +24,10 @@ import { stripAnsi } from './fingerprint.ts';
  *
  * A check the environment refused before it ran anything of the repository is the third
  * (classifyCouldNotRun): a filesystem operation outside its checkout, a socket in the tool's own
- * startup, or a connection the sandbox's proxy refused, with no compile error or failing test in
- * its output. PREFLIGHT reads every failure of the base revision this way, and a misconfigured
- * check (evidence/check-misconfigured.ts) next, before it may call one a pre-existing failure
- * (docs/decisions/0010-base-failure-classification.md).
+ * startup, a .NET named pipe under /tmp, or a connection the sandbox's proxy refused, with no
+ * compile error or failing test in its output. PREFLIGHT reads every failure of the base
+ * revision this way, and a misconfigured check (evidence/check-misconfigured.ts) next, before it
+ * may call one a pre-existing failure (docs/decisions/0010-base-failure-classification.md).
  */
 
 export type EnvironmentSignal =
@@ -43,14 +43,19 @@ export type EnvironmentSignal =
   | 'socket-denied'
   | 'network-denied'
   | 'nuget-http-denied'
-  | 'program-not-found';
+  | 'program-not-found'
+  | 'pipe-denied';
 
 /**
- * The signals ADR 0010 added for the base revision. On a candidate they count only when the same check showed the same
- * one on the base revision (CouldNotRunInput.baseSignals): a change can introduce a denial of its own (a test that opens
- * a file it may not read, a package from a host the check may not reach), and that is a failure for the repair loop.
+ * The signals added for the base revision by ADR 0010 and by ADR 0009's addendum (`pipe-denied`). On a candidate they
+ * count only when the same check showed the same one on the base revision (CouldNotRunInput.baseSignals): a change can
+ * introduce a denial of its own (a test that opens a file it may not read, a package from a host the check may not
+ * reach, a second project under a check whose command has no -m:1, a test that runs dotnet build), and that is a
+ * failure for the repair loop. `pipe-denied` is gated although the runner writes the note it is read from: the note
+ * relays MSBuild's crash report from the check's own temp directory, about a node the repository's projects or tests
+ * made MSBuild start, and it is the same refusal `socket-denied` reads from `dotnet test`'s MSB1025, so both get one rule.
  */
-export const BASE_GATED_SIGNALS: ReadonlySet<EnvironmentSignal> = new Set<EnvironmentSignal>(['permission-denied', 'socket-denied', 'network-denied', 'nuget-http-denied', 'program-not-found']);
+export const BASE_GATED_SIGNALS: ReadonlySet<EnvironmentSignal> = new Set<EnvironmentSignal>(['permission-denied', 'socket-denied', 'network-denied', 'nuget-http-denied', 'program-not-found', 'pipe-denied']);
 
 export interface EnvironmentFailureInput {
   checkId: string;
@@ -109,6 +114,7 @@ const CAUSES: Record<EnvironmentSignal, string> = {
   'network-denied': "the sandbox's network proxy refused a connection to a host the check may not reach",
   'nuget-http-denied': "NuGet's HTTP client could not start in the sandbox (the type initializer of System.Net.CookieContainer failed to read the host's domain name, GetDomainName: -1), so the restore could reach no package source",
   'program-not-found': 'a program the check runs was not found where it runs (exit 127)',
+  'pipe-denied': 'the sandbox refused a .NET process the named pipe it binds under /tmp (an MSBuild worker node, or the build host dotnet format loads the project with), so nothing was built or formatted',
 };
 
 function within(path: string, root: string): boolean {
@@ -367,6 +373,34 @@ function excerpt(line: string, at: number): string {
 }
 
 /**
+ * The runner's record of a check it stopped because MSBuild recorded a worker node the sandbox refused its named pipe
+ * (evidence/runner.ts): the note on the footer it writes as the log's last line, which no output of the check can follow.
+ */
+const RUNNER_NODE_DENIAL = /^\[orbit\] check=\S+ status=FAILED exit=\S+ note=(the check sandbox denied MSBuild node \(pid \d+\) its named pipe .*)$/;
+/**
+ * dotnet format's MSBuildWorkspace that could not reach its build host, whose named pipe Roslyn binds under /tmp
+ * (evidence/dotnet-format.ts): a frame of its build host manager, and a pipe connect that timed out (macOS, SDK 9) or was
+ * refused ("unable to connect to it's pipe", Linux, SDK 10). The line shown is the unhandled exception's.
+ */
+const BUILD_HOST_FRAME = /\bMicrosoft\.CodeAnalysis\.MSBuild\.BuildHostProcessManager\b/;
+const BUILD_HOST_PIPE = /\bSystem\.IO\.Pipes\.NamedPipeClientStream\.(?:ConnectInternal|TryConnect)\b|unable to connect to it'?s pipe/;
+const UNHANDLED = /^Unhandled exception[.:]\s/;
+
+/** The lines that show a .NET named pipe the sandbox refused under /tmp, at most one per kind; empty when there is none. */
+function pipeDenials(lines: readonly string[]): string[] {
+  const out: string[] = [];
+  const last = [...lines].reverse().find((l) => l.trim() !== '')?.trim() ?? '';
+  const node = RUNNER_NODE_DENIAL.exec(last);
+  if (node) out.push(node[1]!.slice(0, MAX_LINE_CHARS));
+  const text = lines.join('\n');
+  if (BUILD_HOST_FRAME.test(text) && BUILD_HOST_PIPE.test(text)) {
+    const shown = lines.map((l) => l.trim()).find((l) => UNHANDLED.test(l)) ?? lines.map((l) => l.trim()).find((l) => BUILD_HOST_PIPE.test(l));
+    if (shown) out.push(shown.slice(0, MAX_LINE_CHARS));
+  }
+  return out;
+}
+
+/**
  * The environment cause of a check that could not run because the sandbox or the operating system refused it something
  * before it ran anything of the repository, or null. It needs no base-revision comparison, so it can judge the baseline
  * itself (docs/decisions/0010-base-failure-classification.md). Both halves are required:
@@ -381,16 +415,19 @@ function excerpt(line: string, at: number): string {
  *   - a Seatbelt deny line (one for a file operation only on such a path);
  *   - the sandbox's network proxy refusing a connection (NETWORK_DENIAL), or NuGet's HTTP client failing to start in
  *     the sandbox (NUGET_HTTP_DENIAL);
+ *   - a .NET named pipe the sandbox refused under /tmp (pipeDenials, pipe-denied): the runner's note on a check it
+ *     stopped for a refused MSBuild worker node, or dotnet format's build host that could not be reached;
  *   - a permission denial on a socket (SOCKET_DENIAL) inside the tool's own crash (TOOL_CRASH): MSBuild's internal
  *     failure on the named pipe it opens for its nodes, a Unix socket, is the tool being refused; the same denial in
- *     the repository's own program, or with no crash of the tool around it, is not shown to be;
+ *     the repository's own program, or with no crash of the tool around it, is not shown to be. When pipeDenials has
+ *     read the refusal, the socket denial in the same crash is that pipe, and is not read again;
  * - and no sign that the repository's code was compiled or tested and failed (showsCodeFailure): a compile error or a
  *   failing test next to a denial is still the code's failure, and keeps the normal path. A test whose assertion message
  *   says "permission denied" is a failing test.
  *
- * On a candidate (`baseSignals` given) the signals ADR 0010 added count only when the same check showed the same one on
- * the base revision, and MSBuild's count of restore errors reads as a code failure unless the base revision showed an
- * environment failure: a denial or a restore failure the change introduced is the change's to repair.
+ * On a candidate (`baseSignals` given) the signals of BASE_GATED_SIGNALS count only when the same check showed the same
+ * one on the base revision, and MSBuild's count of restore errors reads as a code failure unless the base revision showed
+ * an environment failure: a denial or a restore failure the change introduced is the change's to repair.
  */
 export function classifyCouldNotRun(input: CouldNotRunInput): EnvironmentFailure | null {
   const text = stripAnsi(input.output);
@@ -398,16 +435,20 @@ export function classifyCouldNotRun(input: CouldNotRunInput): EnvironmentFailure
   if (showsCodeFailure(text, { countRestoreErrors: input.baseSignals !== undefined && input.baseSignals.length === 0 })) return null;
   const outside = (path: string): boolean => !input.insideRoots.some((root) => within(path.replace(/[.]+$/, ''), root));
   const counts = (signal: EnvironmentSignal): boolean => input.baseSignals === undefined || !BASE_GATED_SIGNALS.has(signal) || input.baseSignals.includes(signal);
-  const toolCrashed = TOOL_CRASH.some((re) => re.test(text));
+  const all = text.split('\n', MAX_SCANNED_LINES).map((raw) => raw.replace(/\r$/, ''));
+  const pipes = counts('pipe-denied') ? pipeDenials(all) : [];
+  // A .NET named pipe is a Unix socket: once pipeDenials has read the refusal, a SocketException in the same crash is it.
+  const toolCrashed = pipes.length === 0 && TOOL_CRASH.some((re) => re.test(text));
   const domainNameDenied = DOMAIN_NAME_DENIED.test(text);
-  const signals: EnvironmentSignal[] = [];
+  const signals: EnvironmentSignal[] = pipes.length > 0 ? ['pipe-denied'] : [];
   const lines: string[] = [];
   const show = (line: string, at: number): void => {
     const shown = excerpt(line, at);
     if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown)) lines.push(shown);
   };
-  for (const raw of text.split('\n', MAX_SCANNED_LINES)) {
-    const line = raw.replace(/\r$/, '').trim();
+  for (const pipe of pipes) show(pipe, 0);
+  for (const raw of all) {
+    const line = raw.trim();
     const deny = SEATBELT_DENY.exec(line);
     const denial = DENIAL.exec(line);
     const permission = PERMISSION_DENIAL.exec(line);

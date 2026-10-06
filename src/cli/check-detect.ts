@@ -171,6 +171,14 @@ function dotnetTestProjects(repo: string, projects: readonly string[]): string[]
   return found;
 }
 
+/**
+ * Every proposed dotnet command pins one MSBuild node: the dotnet CLI asks MSBuild for one node per processor, and a
+ * worker node binds a named pipe under /tmp that the check sandbox refuses (docs/decisions/0009-toolchain-profiles.md,
+ * addendum). `orbit doctor` fails a dotnet check without it.
+ */
+const ONE_MSBUILD_NODE = '-m:1';
+const ONE_NODE_REASON = '-m:1 keeps MSBuild on one node, since the check sandbox refuses worker nodes their named pipe';
+
 function dotnetDrafts(input: DetectInput, out: Collector): Draft[] {
   const { repo, files, pathEnv } = input;
   const solutions = files.filter((f) => /\.(sln|slnx)$/i.test(f));
@@ -201,9 +209,9 @@ function dotnetDrafts(input: DetectInput, out: Collector): Draft[] {
     // A file name starting with a dash must not read as an option.
     const t = target.startsWith('-') ? `./${target}` : target;
     const suffix = targets.length > 1 ? `-${slug(basename(target).replace(/\.[^.]+$/, ''))}` : '';
-    drafts.push({ name: `build${suffix}`, command: ['dotnet', 'build', t], category: 'build', timeout_seconds: TIMEOUT.compile, reason: `${what} file ${t}` });
+    drafts.push({ name: `build${suffix}`, command: ['dotnet', 'build', t, ONE_MSBUILD_NODE], category: 'build', timeout_seconds: TIMEOUT.compile, reason: `${what} file ${t}; ${ONE_NODE_REASON}` });
     const testable = what === 'solution' ? testProjects.length > 0 : testProjects.includes(t);
-    if (testable) drafts.push({ name: `unit-tests${suffix}`, command: ['dotnet', 'test', t], category: 'test', timeout_seconds: TIMEOUT.nodeTest, reason: `${what} file ${t} with ${what === 'solution' ? 'a test project' : 'a test project of its own'} (Microsoft.NET.Test.Sdk)` });
+    if (testable) drafts.push({ name: `unit-tests${suffix}`, command: ['dotnet', 'test', t, ONE_MSBUILD_NODE], category: 'test', timeout_seconds: TIMEOUT.nodeTest, reason: `${what} file ${t} with ${what === 'solution' ? 'a test project' : 'a test project of its own'} (Microsoft.NET.Test.Sdk); ${ONE_NODE_REASON}` });
   }
   return drafts;
 }

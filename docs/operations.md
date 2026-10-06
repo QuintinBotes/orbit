@@ -451,10 +451,12 @@ revision ([ADR 0010](decisions/0010-base-failure-classification.md)):
 - **Environment failure.** The sandbox or the host refused the check something
   before it ran anything of the repository: a filesystem operation outside its
   checkout (EPERM, EACCES, EROFS), a socket in the tool's own startup (MSBuild's
-  `MSB1025` on `SocketException (13): Permission denied`; fix: `-m:1` on a
-  dotnet command that hands its arguments to MSBuild, while `dotnet format`
-  takes none and only `dotnet format whitespace --folder` runs in the check
-  sandbox), a connection the sandbox's network proxy refused, or
+  `MSB1025` on `SocketException (13): Permission denied`), a .NET named pipe
+  under `/tmp` (an MSBuild worker node the runner stopped the check for, or
+  `dotnet format`'s build host; fix: `-m:1` on a dotnet command that hands its
+  arguments to MSBuild, while `dotnet format` takes none and, with SDK 9 and
+  later, only `dotnet format whitespace --folder` runs in the check sandbox;
+  ADR 0009, addendum), a connection the sandbox's network proxy refused, or
   NuGet's HTTP client that could not start in the sandbox; or it could not
   execute at all, a program its command runs that is not installed where it
   runs (exit 127) included. The run ends `BLOCKED` at PREFLIGHT with the first
