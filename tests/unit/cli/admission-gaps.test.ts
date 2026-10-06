@@ -4,7 +4,7 @@
  * run that ends well: each is refused with the exact fix, before a run row or a model call exists.
  */
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { makeLab, type Lab } from './lab.ts';
@@ -70,7 +70,11 @@ describe('NM3: a delivery-mode run is refused at admission without delivery cred
   it('names the missing gh CLI when there is none on PATH', async () => {
     const l = lab();
     await initWithCheck(l, withoutMandatoryReview);
-    const env = { ...envWithGh(l, { GH_TOKEN: 'ghp_acme' }), PATH: '/usr/bin:/bin' };
+    // A PATH with git and nothing else: GitHub's Ubuntu runners ship gh in /usr/bin, so '/usr/bin:/bin' is not "no gh".
+    const bin = join(l.base, 'git-only-bin');
+    mkdirSync(bin, { recursive: true });
+    symlinkSync(execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim(), join(bin, 'git'));
+    const env = { ...envWithGh(l, { GH_TOKEN: 'ghp_acme' }), PATH: bin };
     const r = await l.cli(['run', '--goal', 'x', '--mode', 'autonomous-delivery', '--foreground'], { env, seams: { controllerDeps: healthyEnvironment({ n: 0 }) } });
     expect(r.code, r.err).toBe(7);
     expect(r.err).toMatch(/the gh CLI was not found/);

@@ -26,7 +26,7 @@ jobs:
   guard:
     permissions:
       contents: read
-    uses: QuintinBotes/claude-plugins/.github/workflows/publish-guard.yml@5993581d07f39e5f1f27d87af8fb449f8f770887 # v0.1.0 (publish-guard)
+    uses: QuintinBotes/claude-plugins/.github/workflows/publish-guard.yml@108272e5b0faaf1a84ea7e0cc1d1fc309692d792 # v0.1.2 (publish-guard)
     with:
       allowed-emails: ${{ vars.PUBLISH_GUARD_ALLOWED_EMAILS }}
       allowed-email-patterns: '^noreply@anthropic\.com$'
