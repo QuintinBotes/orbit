@@ -44,6 +44,7 @@ import { proposeScope, trackedFiles } from '../layout.ts';
 import { orbitHint } from '../../core/invocation.ts';
 import { reviewFix } from '../review-fix.ts';
 import { workerPluginsCheck } from './doctor-plugins.ts';
+import { checkSandboxCheck } from './doctor-sandbox.ts';
 
 export const DOCTOR_OPTIONS: OptionSpec = {
   probe: { type: 'boolean', description: 'also make tiny live requests (a few cents): one per provider that has a probe to detect expired or revoked credentials, and one per eligible Claude model' },
@@ -951,6 +952,7 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; prob
   await safely('ui.browser-isolation', 'ui', () =>
     browserIsolationCheck({ wanted: config.ui !== null || Object.values(config.checks).some((c) => c.kind === 'playwright'), provider: isoFacts.provider, available: isoFacts.available, repo, env: ctx.env, homeDir: ctx.homeDir }),
   );
+  await safely('checks.sandbox', 'checks', () => checkSandboxCheck({ config, repo, provider: isoFacts.provider, available: isoFacts.available, env: ctx.env, homeDir: ctx.homeDir }));
   await safely('delivery', 'delivery', () => checkDelivery(p));
   await safely('gitleaks', 'security', () => checkGitleaks(p));
   await safely('service', 'service', () => checkService(p));

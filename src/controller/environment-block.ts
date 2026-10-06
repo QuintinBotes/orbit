@@ -6,13 +6,18 @@
  *
  * So does a mandatory check that could not execute at all: the UI application or a check's process was killed by a
  * crash signal before it printed anything, or the runner could not start the check. Nothing of the repository ran,
- * so there is no failure for a repair to address, and the run would only come back to the same tree.
+ * so there is no failure for a repair to address, and the run would only come back to the same tree. The same holds
+ * for a check the sandbox or the operating system refused a filesystem operation outside its checkout before it
+ * compiled or tested anything (issue #10, evidence/environment-failure.ts classifyCouldNotRun).
+ *
+ * PREFLIGHT applies the same judgement to the base revision (baselineEnvironmentFailures): a check that could not run
+ * there is not a pre-existing failure, so the run blocks before any attempt and no baseline exception is offered.
  */
 import { readFileSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { readJsonIfExists } from '../core/fsx.ts';
 import { BASELINE_FILE, type BaselineReport } from '../evidence/baseline.ts';
-import { classifyEnvironmentFailure, classifyNotExecuted, type EnvironmentFailure } from '../evidence/environment-failure.ts';
+import { classifyCouldNotRun, classifyEnvironmentFailure, classifyNotExecuted, type EnvironmentFailure } from '../evidence/environment-failure.ts';
 import { listCheckRuns, type CandidateRecord, type CheckRunRecord } from '../evidence/store.ts';
 import type { EvidenceReport } from '../evidence/types.ts';
 import { baselineQuestionId } from '../inquisition/baseline-exception.ts';
@@ -100,6 +105,60 @@ export function environmentBlockReason(input: { runId: string; candidateSeq: num
   } else {
     sentences.push(`way forward: fix the environment (orbit doctor checks the isolation provider and its limits) or the check definition and start a new run (${frozen}); there is no baseline exception to approve, because the check never ran`);
   }
+  const fix = environmentFix(notExecuted);
+  if (fix) sentences.push(`fix: ${fix}`);
+  return sentences.join('. ');
+}
+
+/** What a .NET runtime refused prints: its shared-memory directory, the runtime itself, or the NuGet step that asked. */
+const DOTNET_DENIAL = /\/tmp\/\.dotnet\b|\.coreclr\.|NuGet-Migrations|System\.Threading\.(?:Mutex|Semaphore)/i;
+
+/**
+ * How to fix a check the sandbox or the operating system refused (issue #10): the .NET case by name, any other denial
+ * through `orbit doctor`, which starts each check's executable in the sandbox. Null for a crash or a check that could not
+ * be started, whose way forward is already said.
+ */
+export function environmentFix(failures: readonly EnvironmentFailure[]): string | null {
+  const denied = failures.filter((f) => f.signals.includes('filesystem-denied') || f.signals.includes('sandbox-violation'));
+  if (denied.length === 0) return null;
+  if (denied.some((f) => f.lines.some((l) => DOTNET_DENIAL.test(l)))) {
+    return 'this is the .NET runtime asking for /tmp/.dotnet, a directory it shares between processes for named mutexes and which no check sandbox may write. Orbit prepares every check for the .NET SDK\'s first run so the SDK itself needs none (docs/troubleshooting.md, ".NET checks under the sandbox"); upgrade Orbit if this run predates that, and if the repository\'s own code creates a named Mutex or Semaphore, make it use an unnamed one or a file lock in TMPDIR';
+  }
+  return 'run orbit doctor, which starts each check\'s executable in the sandbox and shows what it is refused, then let the tool keep its files in the check\'s HOME or TMPDIR (through the check\'s env) or change the check definition (docs/troubleshooting.md, "A check cannot run in the sandbox")';
+}
+
+/**
+ * The mandatory checks that failed on the base revision because they could not run there (issue #10): the process was
+ * killed by a crash signal before it printed anything, or the sandbox or the operating system refused it a filesystem
+ * operation outside its checkout with no compile error or failing test in its output (evidence/environment-failure.ts).
+ * Such a check never got as far as the repository's code, so it is not a pre-existing failure: no baseline exception
+ * may be offered for it, since approving one would let a run pass with a check that never ran.
+ */
+export function baselineEnvironmentFailures(ctx: RunContext, report: BaselineReport, checkoutDir: string): BlockedCheck[] {
+  const out: BlockedCheck[] = [];
+  for (const failure of report.failures) {
+    const row = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: null, checkId: failure.checkId, rootsOnly: true }).at(-1);
+    const logPath = row?.logPath ?? report.checks.find((c) => c.checkId === failure.checkId)?.log ?? null;
+    const output = (logPath ? readCapped(logPath) : null) ?? failure.excerpt ?? '';
+    const insideRoots = [checkoutDir, ...(row ? [row.cwd] : []), ...(logPath ? [dirname(logPath)] : [])];
+    const found = classifyNotExecuted({ checkId: failure.checkId, output }) ?? classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots });
+    if (found) out.push({ ...found, questionId: null, ...(logPath ? { logPath } : {}) });
+  }
+  return out;
+}
+
+/** The outcome reason of a run blocked at PREFLIGHT because a check could not run on the base revision: which check, the first error line, why no exception is offered, and the fix. */
+export function baselineEnvironmentBlockReason(input: { runId: string; baseRevision: string; failures: readonly BlockedCheck[] }): string {
+  const { runId, failures } = input;
+  const many = failures.length > 1;
+  const causes = failures.map((f) => `${f.checkId}: ${f.cause}${f.lines[0] ? ` (${JSON.stringify(f.lines[0])})` : ''}${f.logPath ? `, output in ${f.logPath}` : ''}`).join('; ');
+  const sentences = [
+    `${many ? 'checks' : 'check'} ${failures.map((f) => f.checkId).join(', ')} could not run on the base revision ${input.baseRevision.slice(0, 12)}, and the output shows an environment cause, not a pre-existing failure: ${causes}`,
+    `${many ? 'they are' : 'it is'} not recorded as a pre-existing failure and no baseline exception is offered: the check never got as far as the repository's code, so accepting its failure would let a run pass with a check that never ran`,
+  ];
+  const fix = environmentFix(failures);
+  sentences.push(`fix: ${fix ?? 'let the check run in this environment (orbit doctor checks the isolation provider and starts each check\'s executable in the sandbox), or change the check definition'}`);
+  sentences.push(`then orbit resume ${runId} runs the baseline again; a changed check definition needs a new run, because this run's policy is frozen`);
   return sentences.join('. ');
 }
 
@@ -149,7 +208,10 @@ export function checksNotExecutedFor(ctx: RunContext, cand: CandidateRecord, rep
     if (!row || (row.fingerprint !== null && accepted.get(result.id) === row.fingerprint)) continue;
     const output = outputOf(row);
     const startFailure = row.status === 'ERROR' ? /could not start the check:[^\n]*/.exec(output)?.[0] ?? null : null;
-    const found = classifyNotExecuted({ checkId: result.id, output, startFailure });
+    const found =
+      classifyNotExecuted({ checkId: result.id, output, startFailure }) ??
+      // Refused a filesystem operation outside its checkout before it compiled or tested anything (issue #10).
+      (row.status === 'FAILED' ? classifyCouldNotRun({ checkId: result.id, output, insideRoots: [join(runWorktreeRoot(ctx), `check-${cand.seq}`), row.cwd, ...(row.logPath ? [dirname(row.logPath)] : [])] }) : null);
     if (found) out.push({ ...found, questionId: null, ...(row.logPath ? { logPath: row.logPath } : {}) });
   }
 

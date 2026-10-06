@@ -238,7 +238,10 @@ describe.skipIf(!canStripTypes)('controller: a check that could not execute is a
     expect(runState(l, run.id).outcomeReason ?? '').not.toMatch(/could not execute/);
   }, 240_000);
 
-  it('a command check whose process aborts before it runs, on every revision, ends BLOCKED after zero repair attempts', async () => {
+  // Issue #10 moved this block earlier: the check aborts on the base revision too, where it now ends the run at PREFLIGHT
+  // (it never ran, so it is no pre-existing failure and gets no baseline-exception question), before any implementation
+  // attempt. It used to block at the first candidate, after one attempt.
+  it('a command check whose process aborts before it runs, on every revision, ends BLOCKED at PREFLIGHT before any attempt', async () => {
     const l = lab({
       files: { 'tools/unit-abort.mjs': NATIVE_ABORT },
       tweak: (c) => {
@@ -251,12 +254,13 @@ describe.skipIf(!canStripTypes)('controller: a check that could not execute is a
 
     const done = runState(l, run.id);
     expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
-    expect(done.outcomeReason).toMatch(/^check unit could not execute on candidate 1/);
+    expect(done.outcomeReason).toMatch(/^check unit could not run on the base revision [0-9a-f]{12}/);
     expect(done.outcomeReason).toMatch(/killed by a fatal signal/);
     const path = transitions(l, run.id);
     expect(path).not.toContain('DIAGNOSING');
     expect(path).not.toContain('REPAIRING');
     expect(path).not.toContain('INQUISITION');
-    expect(attemptsUsed(l, run.id)).toBe(1);
+    expect(path).toEqual(['PREFLIGHT', 'BLOCKED']);
+    expect(listQuestions(l.db(), run.id)).toEqual([]);
   }, 180_000);
 });

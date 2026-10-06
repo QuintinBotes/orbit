@@ -443,12 +443,46 @@ function safeCwd(checkout: string, rel: string): string {
   return real;
 }
 
+/**
+ * The .NET SDK in a check's sandbox (issue #10). A check's HOME is a new, empty directory, so every `dotnet` command
+ * is the SDK's first run, and its first-run steps reach outside the sandbox: the NuGet migrations take a named mutex,
+ * which the runtime keeps under /tmp/.dotnet (a path compiled into it, ignoring TMPDIR and HOME, that no sandbox rule
+ * may open to one check), the ASP.NET development certificate goes to the login keychain, and the tools path is
+ * added to the shell profile. These turn off the parts that are optional; prepareCheckHome records the migrations as
+ * done, which they are for a home that holds nothing to migrate. Other tools ignore all of them.
+ */
+export const DOTNET_CHECK_ENV: Readonly<Record<string, string>> = {
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1',
+  DOTNET_NOLOGO: '1',
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1',
+  DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false',
+  DOTNET_ADD_GLOBAL_TOOLS_TO_PATH: 'false',
+  DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK: '1',
+};
+
+/** Where NuGet records the migrations it has run, under the home directory, and the newest one's marker file. */
+export const NUGET_MIGRATIONS_DIR = join('.local', 'share', 'NuGet', 'Migrations');
+const NUGET_LATEST_MIGRATION = '1';
+
+/**
+ * Ready a check's private home before the check starts: the NuGet migrations are marked done, so the .NET SDK does not
+ * take the named mutex the sandbox cannot allow (see DOTNET_CHECK_ENV). The home starts empty, so there is nothing for
+ * them to migrate. Harmless to every other tool.
+ */
+export function prepareCheckHome(homeDir: string): void {
+  const dir = join(homeDir, NUGET_MIGRATIONS_DIR);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  atomicWrite(join(dir, NUGET_LATEST_MIGRATION), '', 0o600);
+}
+
 /** The fixed environment a check starts with. The host environment is not inherited beyond PATH. */
 export function checkEnv(def: CheckDefinition, dirs: Pick<AttemptDirs, 'homeDir' | 'tmpDir' | 'artifactsDir'>, hostPath: string | undefined = process.env.PATH): Record<string, string> {
   return {
     PATH: hostPath ?? '/usr/bin:/bin',
     HOME: dirs.homeDir,
     TMPDIR: dirs.tmpDir,
+    ...DOTNET_CHECK_ENV,
+    DOTNET_CLI_HOME: dirs.homeDir,
     LANG: platform() === 'darwin' ? 'en_US.UTF-8' : 'C.UTF-8',
     TERM: 'dumb',
     CI: '1',
@@ -472,6 +506,7 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
   const index = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: subject.candidateId, checkId: def.id }).length;
   const dirs = dirsFor(subject, def.id, index);
   for (const d of [dirs.checkDir, dirs.artifactsDir, dirs.homeDir]) mkdirSync(d, { recursive: true, mode: 0o700 });
+  prepareCheckHome(dirs.homeDir);
   const tmp = prepareWorkerTmpDir(dirs.checkDir);
   // Before the intent row: a restarted controller must find the generated definition of every row it can see.
   if (!ctx.snapshot.config.checks[def.id]) atomicWriteJson(join(dirs.checkDir, DEFINITION_FILE), def, 0o600);
