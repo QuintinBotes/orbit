@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -23,15 +24,29 @@ import { runnerEnv, type RunnerEnv } from './harness.ts';
 const installDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const provider = new SandboxRuntimeIsolation({ orbitInstallDir: installDir });
 const probe = await provider.available();
-const tool = (name: string, ...fallbacks: string[]): string | null => which(name, process.env.PATH) ?? fallbacks.find((p) => existsSync(p)) ?? null;
+const absent: Record<string, string> = {};
+/**
+ * A tool the host has: found on PATH (or at a fallback) and starting there with its version argument, outside any
+ * sandbox. Being on PATH is not enough: every Mac has /usr/bin/java, a stub that only starts a JDK installed elsewhere.
+ */
+function tool(name: string, args: string[], ...fallbacks: string[]): string | null {
+  const found = which(name, process.env.PATH) ?? fallbacks.find((p) => existsSync(p)) ?? null;
+  if (found === null) {
+    absent[name] = `${name} is not installed`;
+    return null;
+  }
+  if (spawnSync(found, args, { stdio: 'ignore', timeout: 60_000 }).status === 0) return found;
+  absent[name] = `${name} is not installed: "${found} ${args.join(' ')}" fails outside the sandbox`;
+  return null;
+}
 const tools = {
-  python3: tool('python3'),
-  go: tool('go'),
-  cargo: tool('cargo'),
-  java: tool('java'),
-  dotnet: tool('dotnet', join(homedir(), '.dotnet', 'dotnet')),
+  python3: tool('python3', ['--version']),
+  go: tool('go', ['version']),
+  cargo: tool('cargo', ['--version']),
+  java: tool('java', ['-version']),
+  dotnet: tool('dotnet', ['--version'], join(homedir(), '.dotnet', 'dotnet')),
 };
-const skipFor = (name: keyof typeof tools): string | null => (!probe.ok ? `srt unavailable: ${probe.detail}` : tools[name] === null ? `${name} is not installed` : null);
+const skipFor = (name: keyof typeof tools): string | null => (!probe.ok ? `srt unavailable: ${probe.detail}` : tools[name] === null ? absent[name]! : null);
 const title = (what: string, skip: string | null) => (skip === null ? what : `${what} skipped: ${skip}`);
 
 /**
