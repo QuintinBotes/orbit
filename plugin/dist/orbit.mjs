@@ -1069,10 +1069,10 @@ var require_utils = __commonJS({
       REGEX_SPECIAL_CHARS_GLOBAL
     } = require_constants();
     exports.isObject = (val) => val !== null && typeof val === "object" && !Array.isArray(val);
-    exports.hasRegexChars = (str6) => REGEX_SPECIAL_CHARS.test(str6);
-    exports.isRegexChar = (str6) => str6.length === 1 && exports.hasRegexChars(str6);
-    exports.escapeRegex = (str6) => str6.replace(REGEX_SPECIAL_CHARS_GLOBAL, "\\$1");
-    exports.toPosixSlashes = (str6) => str6.replace(REGEX_BACKSLASH, "/");
+    exports.hasRegexChars = (str7) => REGEX_SPECIAL_CHARS.test(str7);
+    exports.isRegexChar = (str7) => str7.length === 1 && exports.hasRegexChars(str7);
+    exports.escapeRegex = (str7) => str7.replace(REGEX_SPECIAL_CHARS_GLOBAL, "\\$1");
+    exports.toPosixSlashes = (str7) => str7.replace(REGEX_BACKSLASH, "/");
     exports.isWindows = () => {
       if (typeof navigator !== "undefined" && navigator.platform) {
         const platform3 = navigator.platform.toLowerCase();
@@ -1083,8 +1083,8 @@ var require_utils = __commonJS({
       }
       return false;
     };
-    exports.removeBackslashes = (str6) => {
-      return str6.replace(REGEX_REMOVE_BACKSLASH, (match) => {
+    exports.removeBackslashes = (str7) => {
+      return str7.replace(REGEX_REMOVE_BACKSLASH, (match) => {
         return match === "\\" ? "" : match;
       });
     };
@@ -1174,7 +1174,7 @@ var require_scan = __commonJS({
       const slashes = [];
       const tokens3 = [];
       const parts = [];
-      let str6 = input;
+      let str7 = input;
       let index = -1;
       let start = 0;
       let lastIndex2 = 0;
@@ -1193,10 +1193,10 @@ var require_scan = __commonJS({
       let code2;
       let token = { value: "", depth: 0, isGlob: false };
       const eos = () => index >= length;
-      const peek = () => str6.charCodeAt(index + 1);
+      const peek = () => str7.charCodeAt(index + 1);
       const advance = () => {
         prev = code2;
-        return str6.charCodeAt(++index);
+        return str7.charCodeAt(++index);
       };
       while (index < length) {
         code2 = advance();
@@ -1373,24 +1373,24 @@ var require_scan = __commonJS({
         isExtglob = false;
         isGlob = false;
       }
-      let base = str6;
+      let base = str7;
       let prefix = "";
       let glob = "";
       if (start > 0) {
-        prefix = str6.slice(0, start);
-        str6 = str6.slice(start);
+        prefix = str7.slice(0, start);
+        str7 = str7.slice(start);
         lastIndex2 -= start;
       }
       if (base && isGlob === true && lastIndex2 > 0) {
-        base = str6.slice(0, lastIndex2);
-        glob = str6.slice(lastIndex2);
+        base = str7.slice(0, lastIndex2);
+        glob = str7.slice(lastIndex2);
       } else if (isGlob === true) {
         base = "";
-        glob = str6;
+        glob = str7;
       } else {
-        base = str6;
+        base = str7;
       }
-      if (base && base !== "" && base !== "/" && base !== str6) {
+      if (base && base !== "" && base !== "/" && base !== str7) {
         if (isPathSeparator(base.charCodeAt(base.length - 1))) {
           base = base.slice(0, -1);
         }
@@ -1713,7 +1713,7 @@ var require_parse = __commonJS({
       }
       return { risky: false };
     };
-    var parse5 = (input, options) => {
+    var parse6 = (input, options) => {
       if (typeof input !== "string") {
         throw new TypeError("Expected a string");
       }
@@ -1783,9 +1783,9 @@ var require_parse = __commonJS({
       const peek = state.peek = (n2 = 1) => input[state.index + n2];
       const advance = state.advance = () => input[++state.index] || "";
       const remaining = () => input.slice(state.index + 1);
-      const consume = (value2 = "", num5 = 0) => {
+      const consume = (value2 = "", num6 = 0) => {
         state.consumed += value2;
-        state.index += num5;
+        state.index += num6;
       };
       const append = (token) => {
         state.output += token.output != null ? token.output : token.value;
@@ -1883,7 +1883,7 @@ var require_parse = __commonJS({
             output = token.close = `)$))${extglobStar}`;
           }
           if (token.inner.includes("*") && (rest = remaining()) && /^\.[^\\/.]+$/.test(rest)) {
-            const expression = parse5(rest, { ...options, fastpaths: false }).output;
+            const expression = parse6(rest, { ...options, fastpaths: false }).output;
             output = token.close = `)${expression})${extglobStar})`;
           }
           if (token.prev.type === "bos") {
@@ -2406,7 +2406,7 @@ var require_parse = __commonJS({
       }
       return state;
     };
-    parse5.fastpaths = (input, options) => {
+    parse6.fastpaths = (input, options) => {
       const opts = { ...options };
       const max = typeof opts.maxLength === "number" ? Math.min(MAX_LENGTH, opts.maxLength) : MAX_LENGTH;
       const len = input.length;
@@ -2437,8 +2437,8 @@ var require_parse = __commonJS({
         if (opts2.noglobstar === true) return star;
         return `(${capture}(?:(?!${START_ANCHOR}${opts2.dot ? DOTS_SLASH : DOT_LITERAL}).)*?)`;
       };
-      const create = (str6) => {
-        switch (str6) {
+      const create = (str7) => {
+        switch (str7) {
           case "*":
             return `${nodot}${ONE_CHAR}${star}`;
           case ".*":
@@ -2456,7 +2456,7 @@ var require_parse = __commonJS({
           case "**/.*":
             return `(?:${nodot}${globstar(opts)}${SLASH_LITERAL})?${DOT_LITERAL}${ONE_CHAR}${star}`;
           default: {
-            const match = /^(.*?)\.(\w+)$/.exec(str6);
+            const match = /^(.*?)\.(\w+)$/.exec(str7);
             if (!match) return;
             const source2 = create(match[1]);
             if (!source2) return;
@@ -2471,7 +2471,7 @@ var require_parse = __commonJS({
       }
       return source;
     };
-    module.exports = parse5;
+    module.exports = parse6;
   }
 });
 
@@ -2480,16 +2480,16 @@ var require_picomatch = __commonJS({
   "node_modules/picomatch/lib/picomatch.js"(exports, module) {
     "use strict";
     var scan = require_scan();
-    var parse5 = require_parse();
+    var parse6 = require_parse();
     var utils = require_utils();
     var constants5 = require_constants();
     var isObject5 = (val) => val && typeof val === "object" && !Array.isArray(val);
     var picomatch9 = (glob, options, returnState = false) => {
       if (Array.isArray(glob)) {
         const fns = glob.map((input) => picomatch9(input, options, returnState));
-        const arrayMatcher = (str6) => {
+        const arrayMatcher = (str7) => {
           for (const isMatch of fns) {
-            const state2 = isMatch(str6);
+            const state2 = isMatch(str7);
             if (state2) return state2;
           }
           return false;
@@ -2565,10 +2565,10 @@ var require_picomatch = __commonJS({
       const regex = glob instanceof RegExp ? glob : picomatch9.makeRe(glob, options);
       return regex.test(utils.basename(input, { windows: posix5 }));
     };
-    picomatch9.isMatch = (str6, patterns, options) => picomatch9(patterns, options)(str6);
+    picomatch9.isMatch = (str7, patterns, options) => picomatch9(patterns, options)(str7);
     picomatch9.parse = (pattern, options) => {
       if (Array.isArray(pattern)) return pattern.map((p) => picomatch9.parse(p, options));
-      return parse5(pattern, { ...options, fastpaths: false });
+      return parse6(pattern, { ...options, fastpaths: false });
     };
     picomatch9.scan = (input, options) => scan(input, options);
     picomatch9.compileRe = (state, options, returnOutput = false, returnState = false) => {
@@ -2594,10 +2594,10 @@ var require_picomatch = __commonJS({
       }
       let parsed3 = { negated: false, fastpaths: true };
       if (options.fastpaths !== false && (input[0] === "." || input[0] === "*")) {
-        parsed3.output = parse5.fastpaths(input, options);
+        parsed3.output = parse6.fastpaths(input, options);
       }
       if (!parsed3.output) {
-        parsed3 = parse5(input, options);
+        parsed3 = parse6(input, options);
       }
       return picomatch9.compileRe(parsed3, options, returnOutput, returnState);
     };
@@ -3506,14 +3506,14 @@ function findBraceGroup(m) {
   return null;
 }
 function sequence(inner) {
-  const num5 = /^(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?$/.exec(inner);
-  if (num5) {
-    const a = Number(num5[1]);
-    const b = Number(num5[2]);
-    const step2 = Math.abs(Number(num5[3] ?? 1)) || 1;
+  const num6 = /^(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?$/.exec(inner);
+  if (num6) {
+    const a = Number(num6[1]);
+    const b = Number(num6[2]);
+    const step2 = Math.abs(Number(num6[3] ?? 1)) || 1;
     const count3 = Math.floor(Math.abs(b - a) / step2) + 1;
     if (count3 > MAX_BRACE_RESULTS) return Array.from({ length: MAX_BRACE_RESULTS + 1 }, () => "");
-    const width = /^-?0\d/.test(num5[1]) || /^-?0\d/.test(num5[2]) ? Math.max(num5[1].length, num5[2].length) : 0;
+    const width = /^-?0\d/.test(num6[1]) || /^-?0\d/.test(num6[2]) ? Math.max(num6[1].length, num6[2].length) : 0;
     const out = [];
     for (let k = 0, v = a; k < count3; k++, v += a <= b ? step2 : -step2) {
       const digits = String(Math.abs(v)).padStart(width - (v < 0 ? 1 : 0), "0");
@@ -3609,9 +3609,9 @@ function classifySource(src, state, depth, base) {
   const cwdByScope = /* @__PURE__ */ new Map([["", base]]);
   const pipelines = /* @__PURE__ */ new Map();
   for (const cmd of parsed3.commands) {
-    const list = pipelines.get(cmd.pipeline) ?? [];
-    list.push(cmd);
-    pipelines.set(cmd.pipeline, list);
+    const list2 = pipelines.get(cmd.pipeline) ?? [];
+    list2.push(cmd);
+    pipelines.set(cmd.pipeline, list2);
   }
   for (const cmd of parsed3.commands) {
     const here = lookupBase(cwdByScope, cmd.scope);
@@ -6920,8 +6920,8 @@ function indentComment(comment, indent) {
 var stringifyComment, lineComment;
 var init_stringifyComment = __esm({
   "node_modules/yaml/browser/dist/stringify/stringifyComment.js"() {
-    stringifyComment = (str6) => str6.replace(/^(?!$)(?: $)?/gm, "#");
-    lineComment = (str6, indent, comment) => str6.endsWith("\n") ? indentComment(comment, indent) : comment.includes("\n") ? "\n" + indentComment(comment, indent) : (str6.endsWith(" ") ? "" : " ") + comment;
+    stringifyComment = (str7) => str7.replace(/^(?!$)(?: $)?/gm, "#");
+    lineComment = (str7, indent, comment) => str7.endsWith("\n") ? indentComment(comment, indent) : comment.includes("\n") ? "\n" + indentComment(comment, indent) : (str7.endsWith(" ") ? "" : " ") + comment;
   }
 });
 
@@ -7058,15 +7058,15 @@ var init_foldFlowLines = __esm({
 });
 
 // node_modules/yaml/browser/dist/stringify/stringifyString.js
-function lineLengthOverLimit(str6, lineWidth, indentLength) {
+function lineLengthOverLimit(str7, lineWidth, indentLength) {
   if (!lineWidth || lineWidth < 0)
     return false;
   const limit = lineWidth - indentLength;
-  const strLen = str6.length;
+  const strLen = str7.length;
   if (strLen <= limit)
     return false;
   for (let i = 0, start = 0; i < strLen; ++i) {
-    if (str6[i] === "\n") {
+    if (str7[i] === "\n") {
       if (i - start > limit)
         return true;
       start = i + 1;
@@ -7083,11 +7083,11 @@ function doubleQuotedString(value, ctx) {
   const { implicitKey } = ctx;
   const minMultiLineLength = ctx.options.doubleQuotedMinMultiLineLength;
   const indent = ctx.indent || (containsDocumentMarker(value) ? "  " : "");
-  let str6 = "";
+  let str7 = "";
   let start = 0;
   for (let i = 0, ch = json3[i]; ch; ch = json3[++i]) {
     if (ch === " " && json3[i + 1] === "\\" && json3[i + 2] === "n") {
-      str6 += json3.slice(start, i) + "\\ ";
+      str7 += json3.slice(start, i) + "\\ ";
       i += 1;
       start = i;
       ch = "\\";
@@ -7096,38 +7096,38 @@ function doubleQuotedString(value, ctx) {
       switch (json3[i + 1]) {
         case "u":
           {
-            str6 += json3.slice(start, i);
+            str7 += json3.slice(start, i);
             const code2 = json3.substr(i + 2, 4);
             switch (code2) {
               case "0000":
-                str6 += "\\0";
+                str7 += "\\0";
                 break;
               case "0007":
-                str6 += "\\a";
+                str7 += "\\a";
                 break;
               case "000b":
-                str6 += "\\v";
+                str7 += "\\v";
                 break;
               case "001b":
-                str6 += "\\e";
+                str7 += "\\e";
                 break;
               case "0085":
-                str6 += "\\N";
+                str7 += "\\N";
                 break;
               case "00a0":
-                str6 += "\\_";
+                str7 += "\\_";
                 break;
               case "2028":
-                str6 += "\\L";
+                str7 += "\\L";
                 break;
               case "2029":
-                str6 += "\\P";
+                str7 += "\\P";
                 break;
               default:
                 if (code2.substr(0, 2) === "00")
-                  str6 += "\\x" + code2.substr(2);
+                  str7 += "\\x" + code2.substr(2);
                 else
-                  str6 += json3.substr(i, 6);
+                  str7 += json3.substr(i, 6);
             }
             i += 5;
             start = i + 1;
@@ -7137,14 +7137,14 @@ function doubleQuotedString(value, ctx) {
           if (implicitKey || json3[i + 2] === '"' || json3.length < minMultiLineLength) {
             i += 1;
           } else {
-            str6 += json3.slice(start, i) + "\n\n";
+            str7 += json3.slice(start, i) + "\n\n";
             while (json3[i + 2] === "\\" && json3[i + 3] === "n" && json3[i + 4] !== '"') {
-              str6 += "\n";
+              str7 += "\n";
               i += 2;
             }
-            str6 += indent;
+            str7 += indent;
             if (json3[i + 2] === " ")
-              str6 += "\\";
+              str7 += "\\";
             i += 1;
             start = i + 1;
           }
@@ -7153,8 +7153,8 @@ function doubleQuotedString(value, ctx) {
           i += 1;
       }
   }
-  str6 = start ? str6 + json3.slice(start) : json3;
-  return implicitKey ? str6 : foldFlowLines(str6, indent, FOLD_QUOTED, getFoldOptions(ctx, false));
+  str7 = start ? str7 + json3.slice(start) : json3;
+  return implicitKey ? str7 : foldFlowLines(str7, indent, FOLD_QUOTED, getFoldOptions(ctx, false));
 }
 function singleQuotedString(value, ctx) {
   if (ctx.options.singleQuote === false || ctx.implicitKey && value.includes("\n") || /[ \t]\n|\n[ \t]/.test(value))
@@ -7276,15 +7276,15 @@ function plainString(item, ctx, onComment, onChompKeep) {
       return quotedString(value, ctx);
     }
   }
-  const str6 = value.replace(/\n+/g, `$&
+  const str7 = value.replace(/\n+/g, `$&
 ${indent}`);
   if (actualString) {
-    const test = (tag2) => tag2.default && tag2.tag !== "tag:yaml.org,2002:str" && tag2.test?.test(str6);
+    const test = (tag2) => tag2.default && tag2.tag !== "tag:yaml.org,2002:str" && tag2.test?.test(str7);
     const { compat, tags } = ctx.doc.schema;
     if (tags.some(test) || compat?.some(test))
       return quotedString(value, ctx);
   }
-  return implicitKey ? str6 : foldFlowLines(str6, indent, FOLD_FLOW, getFoldOptions(ctx, false));
+  return implicitKey ? str7 : foldFlowLines(str7, indent, FOLD_FLOW, getFoldOptions(ctx, false));
 }
 function stringifyString(item, ctx, onComment, onChompKeep) {
   const { implicitKey, inFlow } = ctx;
@@ -7329,7 +7329,7 @@ var init_stringifyString = __esm({
       lineWidth: ctx.options.lineWidth,
       minContentWidth: ctx.options.minContentWidth
     });
-    containsDocumentMarker = (str6) => /^(%|---|\.\.\.)/m.test(str6);
+    containsDocumentMarker = (str7) => /^(%|---|\.\.\.)/m.test(str7);
     try {
       blockEndNewlines = new RegExp("(^|(?<!\n))\n+(?!\n|$)", "g");
     } catch {
@@ -7444,11 +7444,11 @@ function stringify(item, ctx, onComment, onChompKeep) {
   const props = stringifyProps(node, tagObj, ctx);
   if (props.length > 0)
     ctx.indentAtStart = (ctx.indentAtStart ?? 0) + props.length + 1;
-  const str6 = typeof tagObj.stringify === "function" ? tagObj.stringify(node, ctx, onComment, onChompKeep) : isScalar(node) ? stringifyString(node, ctx, onComment, onChompKeep) : node.toString(ctx, onComment, onChompKeep);
+  const str7 = typeof tagObj.stringify === "function" ? tagObj.stringify(node, ctx, onComment, onChompKeep) : isScalar(node) ? stringifyString(node, ctx, onComment, onChompKeep) : node.toString(ctx, onComment, onChompKeep);
   if (!props)
-    return str6;
-  return isScalar(node) || str6[0] === "{" || str6[0] === "[" ? `${props} ${str6}` : `${props}
-${ctx.indent}${str6}`;
+    return str7;
+  return isScalar(node) || str7[0] === "{" || str7[0] === "[" ? `${props} ${str7}` : `${props}
+${ctx.indent}${str7}`;
 }
 var init_stringify = __esm({
   "node_modules/yaml/browser/dist/stringify/stringify.js"() {
@@ -7480,8 +7480,8 @@ function stringifyPair({ key: key2, value }, ctx, onComment, onChompKeep) {
   });
   let keyCommentDone = false;
   let chompKeep = false;
-  let str6 = stringify(key2, ctx, () => keyCommentDone = true, () => chompKeep = true);
-  if (!explicitKey && !ctx.inFlow && str6.length > 1024) {
+  let str7 = stringify(key2, ctx, () => keyCommentDone = true, () => chompKeep = true);
+  if (!explicitKey && !ctx.inFlow && str7.length > 1024) {
     if (simpleKeys)
       throw new Error("With simple keys, single line scalar must not span more than 1024 characters");
     explicitKey = true;
@@ -7490,27 +7490,27 @@ function stringifyPair({ key: key2, value }, ctx, onComment, onChompKeep) {
     if (allNullValues || value == null) {
       if (keyCommentDone && onComment)
         onComment();
-      return str6 === "" ? "?" : explicitKey ? `? ${str6}` : str6;
+      return str7 === "" ? "?" : explicitKey ? `? ${str7}` : str7;
     }
   } else if (allNullValues && !simpleKeys || value == null && explicitKey) {
-    str6 = `? ${str6}`;
+    str7 = `? ${str7}`;
     if (keyComment && !keyCommentDone) {
-      str6 += lineComment(str6, ctx.indent, commentString(keyComment));
+      str7 += lineComment(str7, ctx.indent, commentString(keyComment));
     } else if (chompKeep && onChompKeep)
       onChompKeep();
-    return str6;
+    return str7;
   }
   if (keyCommentDone)
     keyComment = null;
   if (explicitKey) {
     if (keyComment)
-      str6 += lineComment(str6, ctx.indent, commentString(keyComment));
-    str6 = `? ${str6}
+      str7 += lineComment(str7, ctx.indent, commentString(keyComment));
+    str7 = `? ${str7}
 ${indent}:`;
   } else {
-    str6 = `${str6}:`;
+    str7 = `${str7}:`;
     if (keyComment)
-      str6 += lineComment(str6, ctx.indent, commentString(keyComment));
+      str7 += lineComment(str7, ctx.indent, commentString(keyComment));
   }
   let vsb, vcb, valueComment;
   if (isNode(value)) {
@@ -7526,7 +7526,7 @@ ${indent}:`;
   }
   ctx.implicitKey = false;
   if (!explicitKey && !keyComment && isScalar(value))
-    ctx.indentAtStart = str6.length + 1;
+    ctx.indentAtStart = str7.length + 1;
   chompKeep = false;
   if (!indentSeq && indentStep.length >= 2 && !ctx.inFlow && !explicitKey && isSeq(value) && !value.flow && !value.tag && !value.anchor) {
     ctx.indent = ctx.indent.substring(2);
@@ -7570,16 +7570,16 @@ ${ctx.indent}`;
   } else if (valueStr === "" || valueStr[0] === "\n") {
     ws = "";
   }
-  str6 += ws + valueStr;
+  str7 += ws + valueStr;
   if (ctx.inFlow) {
     if (valueCommentDone && onComment)
       onComment();
   } else if (valueComment && !valueCommentDone) {
-    str6 += lineComment(str6, ctx.indent, commentString(valueComment));
+    str7 += lineComment(str7, ctx.indent, commentString(valueComment));
   } else if (chompKeep && onChompKeep) {
     onChompKeep();
   }
-  return str6;
+  return str7;
 }
 var init_stringifyPair = __esm({
   "node_modules/yaml/browser/dist/stringify/stringifyPair.js"() {
@@ -7787,31 +7787,31 @@ function stringifyBlockCollection({ comment, items }, ctx, { blockItemPrefix, fl
       }
     }
     chompKeep = false;
-    let str7 = stringify(item, itemCtx, () => comment2 = null, () => chompKeep = true);
+    let str8 = stringify(item, itemCtx, () => comment2 = null, () => chompKeep = true);
     if (comment2)
-      str7 += lineComment(str7, itemIndent, commentString(comment2));
+      str8 += lineComment(str8, itemIndent, commentString(comment2));
     if (chompKeep && comment2)
       chompKeep = false;
-    lines.push(blockItemPrefix + str7);
+    lines.push(blockItemPrefix + str8);
   }
-  let str6;
+  let str7;
   if (lines.length === 0) {
-    str6 = flowChars.start + flowChars.end;
+    str7 = flowChars.start + flowChars.end;
   } else {
-    str6 = lines[0];
+    str7 = lines[0];
     for (let i = 1; i < lines.length; ++i) {
       const line3 = lines[i];
-      str6 += line3 ? `
+      str7 += line3 ? `
 ${indent}${line3}` : "\n";
     }
   }
   if (comment) {
-    str6 += "\n" + indentComment(commentString(comment), indent);
+    str7 += "\n" + indentComment(commentString(comment), indent);
     if (onComment)
       onComment();
   } else if (chompKeep && onChompKeep)
     onChompKeep();
-  return str6;
+  return str7;
 }
 function stringifyFlowCollection({ items }, ctx, { flowChars, itemIndent }) {
   const { indent, indentStep, flowCollectionPadding: fcPadding, options: { commentString } } = ctx;
@@ -7854,21 +7854,21 @@ function stringifyFlowCollection({ items }, ctx, { flowChars, itemIndent }) {
     }
     if (comment)
       reqNewline = true;
-    let str6 = stringify(item, itemCtx, () => comment = null);
-    reqNewline || (reqNewline = lines.length > linesAtValue || str6.includes("\n"));
+    let str7 = stringify(item, itemCtx, () => comment = null);
+    reqNewline || (reqNewline = lines.length > linesAtValue || str7.includes("\n"));
     if (i < items.length - 1) {
-      str6 += ",";
+      str7 += ",";
     } else if (ctx.options.trailingComma) {
       if (ctx.options.lineWidth > 0) {
-        reqNewline || (reqNewline = lines.reduce((sum, line3) => sum + line3.length + 2, 2) + (str6.length + 2) > ctx.options.lineWidth);
+        reqNewline || (reqNewline = lines.reduce((sum, line3) => sum + line3.length + 2, 2) + (str7.length + 2) > ctx.options.lineWidth);
       }
       if (reqNewline) {
-        str6 += ",";
+        str7 += ",";
       }
     }
     if (comment)
-      str6 += lineComment(str6, itemIndent, commentString(comment));
-    lines.push(str6);
+      str7 += lineComment(str7, itemIndent, commentString(comment));
+    lines.push(str7);
     linesAtValue = lines.length;
   }
   const { start, end } = flowChars;
@@ -7880,11 +7880,11 @@ function stringifyFlowCollection({ items }, ctx, { flowChars, itemIndent }) {
       reqNewline = ctx.options.lineWidth > 0 && len > ctx.options.lineWidth;
     }
     if (reqNewline) {
-      let str6 = start;
+      let str7 = start;
       for (const line3 of lines)
-        str6 += line3 ? `
+        str7 += line3 ? `
 ${indentStep}${indent}${line3}` : "\n";
-      return `${str6}
+      return `${str7}
 ${indent}${end}`;
     } else {
       return `${start}${fcPadding}${lines.join(" ")}${fcPadding}${end}`;
@@ -8215,7 +8215,7 @@ var init_string = __esm({
       identify: (value) => typeof value === "string",
       default: true,
       tag: "tag:yaml.org,2002:str",
-      resolve: (str6) => str6,
+      resolve: (str7) => str7,
       stringify(item, ctx, onComment, onChompKeep) {
         ctx = Object.assign({ actualString: true }, ctx);
         return stringifyString(item, ctx, onComment, onChompKeep);
@@ -8251,7 +8251,7 @@ var init_bool = __esm({
       default: true,
       tag: "tag:yaml.org,2002:bool",
       test: /^(?:[Tt]rue|TRUE|[Ff]alse|FALSE)$/,
-      resolve: (str6) => new Scalar(str6[0] === "t" || str6[0] === "T"),
+      resolve: (str7) => new Scalar(str7[0] === "t" || str7[0] === "T"),
       stringify({ source, value }, ctx) {
         if (source && boolTag.test.test(source)) {
           const sv = source[0] === "t" || source[0] === "T";
@@ -8268,9 +8268,9 @@ var init_bool = __esm({
 function stringifyNumber({ format, minFractionDigits, tag: tag2, value }) {
   if (typeof value === "bigint")
     return String(value);
-  const num5 = typeof value === "number" ? value : Number(value);
-  if (!isFinite(num5))
-    return isNaN(num5) ? ".nan" : num5 < 0 ? "-.inf" : ".inf";
+  const num6 = typeof value === "number" ? value : Number(value);
+  if (!isFinite(num6))
+    return isNaN(num6) ? ".nan" : num6 < 0 ? "-.inf" : ".inf";
   let n2 = Object.is(value, -0) ? "-0" : JSON.stringify(value);
   if (!format && minFractionDigits && (!tag2 || tag2 === "tag:yaml.org,2002:float") && /^-?\d/.test(n2) && !n2.includes("e")) {
     let i = n2.indexOf(".");
@@ -8300,7 +8300,7 @@ var init_float = __esm({
       default: true,
       tag: "tag:yaml.org,2002:float",
       test: /^(?:[-+]?\.(?:inf|Inf|INF)|\.nan|\.NaN|\.NAN)$/,
-      resolve: (str6) => str6.slice(-3).toLowerCase() === "nan" ? NaN : str6[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
+      resolve: (str7) => str7.slice(-3).toLowerCase() === "nan" ? NaN : str7[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
       stringify: stringifyNumber
     };
     floatExp = {
@@ -8309,10 +8309,10 @@ var init_float = __esm({
       tag: "tag:yaml.org,2002:float",
       format: "EXP",
       test: /^[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)[eE][-+]?[0-9]+$/,
-      resolve: (str6) => parseFloat(str6),
+      resolve: (str7) => parseFloat(str7),
       stringify(node) {
-        const num5 = Number(node.value);
-        return isFinite(num5) ? num5.toExponential() : stringifyNumber(node);
+        const num6 = Number(node.value);
+        return isFinite(num6) ? num6.toExponential() : stringifyNumber(node);
       }
     };
     float = {
@@ -8320,11 +8320,11 @@ var init_float = __esm({
       default: true,
       tag: "tag:yaml.org,2002:float",
       test: /^[-+]?(?:\.[0-9]+|[0-9]+\.[0-9]*)$/,
-      resolve(str6) {
-        const node = new Scalar(parseFloat(str6));
-        const dot = str6.indexOf(".");
-        if (dot !== -1 && str6[str6.length - 1] === "0")
-          node.minFractionDigits = str6.length - dot - 1;
+      resolve(str7) {
+        const node = new Scalar(parseFloat(str7));
+        const dot = str7.indexOf(".");
+        if (dot !== -1 && str7[str7.length - 1] === "0")
+          node.minFractionDigits = str7.length - dot - 1;
         return node;
       },
       stringify: stringifyNumber
@@ -8344,14 +8344,14 @@ var init_int = __esm({
   "node_modules/yaml/browser/dist/schema/core/int.js"() {
     init_stringifyNumber();
     intIdentify = (value) => typeof value === "bigint" || Number.isInteger(value);
-    intResolve = (str6, offset, radix, { intAsBigInt }) => intAsBigInt ? BigInt(str6) : parseInt(str6.substring(offset), radix);
+    intResolve = (str7, offset, radix, { intAsBigInt }) => intAsBigInt ? BigInt(str7) : parseInt(str7.substring(offset), radix);
     intOct = {
       identify: (value) => intIdentify(value) && value >= 0,
       default: true,
       tag: "tag:yaml.org,2002:int",
       format: "OCT",
       test: /^0o[0-7]+$/,
-      resolve: (str6, _onError, opt) => intResolve(str6, 2, 8, opt),
+      resolve: (str7, _onError, opt) => intResolve(str7, 2, 8, opt),
       stringify: (node) => intStringify(node, 8, "0o")
     };
     int = {
@@ -8359,7 +8359,7 @@ var init_int = __esm({
       default: true,
       tag: "tag:yaml.org,2002:int",
       test: /^[-+]?[0-9]+$/,
-      resolve: (str6, _onError, opt) => intResolve(str6, 0, 10, opt),
+      resolve: (str7, _onError, opt) => intResolve(str7, 0, 10, opt),
       stringify: stringifyNumber
     };
     intHex = {
@@ -8368,7 +8368,7 @@ var init_int = __esm({
       tag: "tag:yaml.org,2002:int",
       format: "HEX",
       test: /^0x[0-9a-fA-F]+$/,
-      resolve: (str6, _onError, opt) => intResolve(str6, 2, 16, opt),
+      resolve: (str7, _onError, opt) => intResolve(str7, 2, 16, opt),
       stringify: (node) => intStringify(node, 16, "0x")
     };
   }
@@ -8417,7 +8417,7 @@ var init_schema2 = __esm({
         identify: (value) => typeof value === "string",
         default: true,
         tag: "tag:yaml.org,2002:str",
-        resolve: (str6) => str6,
+        resolve: (str7) => str7,
         stringify: stringifyJSON
       },
       {
@@ -8434,7 +8434,7 @@ var init_schema2 = __esm({
         default: true,
         tag: "tag:yaml.org,2002:bool",
         test: /^true$|^false$/,
-        resolve: (str6) => str6 === "true",
+        resolve: (str7) => str7 === "true",
         stringify: stringifyJSON
       },
       {
@@ -8442,7 +8442,7 @@ var init_schema2 = __esm({
         default: true,
         tag: "tag:yaml.org,2002:int",
         test: /^-?(?:0|[1-9][0-9]*)$/,
-        resolve: (str6, _onError, { intAsBigInt }) => intAsBigInt ? BigInt(str6) : parseInt(str6, 10),
+        resolve: (str7, _onError, { intAsBigInt }) => intAsBigInt ? BigInt(str7) : parseInt(str7, 10),
         stringify: ({ value }) => intIdentify2(value) ? value.toString() : JSON.stringify(value)
       },
       {
@@ -8450,7 +8450,7 @@ var init_schema2 = __esm({
         default: true,
         tag: "tag:yaml.org,2002:float",
         test: /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*)?(?:[eE][-+]?[0-9]+)?$/,
-        resolve: (str6) => parseFloat(str6),
+        resolve: (str7) => parseFloat(str7),
         stringify: stringifyJSON
       }
     ];
@@ -8458,9 +8458,9 @@ var init_schema2 = __esm({
       default: true,
       tag: "",
       test: /^/,
-      resolve(str6, onError) {
-        onError(`Unresolved plain scalar ${JSON.stringify(str6)}`);
-        return str6;
+      resolve(str7, onError) {
+        onError(`Unresolved plain scalar ${JSON.stringify(str7)}`);
+        return str7;
       }
     };
     schema2 = [map, seq].concat(jsonScalars, jsonError);
@@ -8488,10 +8488,10 @@ var init_binary = __esm({
        */
       resolve(src, onError) {
         if (typeof atob === "function") {
-          const str6 = atob(src.replace(/[\n\r]/g, ""));
-          const buffer = new Uint8Array(str6.length);
-          for (let i = 0; i < str6.length; ++i)
-            buffer[i] = str6.charCodeAt(i);
+          const str7 = atob(src.replace(/[\n\r]/g, ""));
+          const buffer = new Uint8Array(str7.length);
+          for (let i = 0; i < str7.length; ++i)
+            buffer[i] = str7.charCodeAt(i);
           return buffer;
         } else {
           onError("This environment does not support reading binary tags; either Buffer or atob is required");
@@ -8502,26 +8502,26 @@ var init_binary = __esm({
         if (!value)
           return "";
         const buf = value;
-        let str6;
+        let str7;
         if (typeof btoa === "function") {
           let s = "";
           for (let i = 0; i < buf.length; ++i)
             s += String.fromCharCode(buf[i]);
-          str6 = btoa(s);
+          str7 = btoa(s);
         } else {
           throw new Error("This environment does not support writing binary tags; either Buffer or btoa is required");
         }
         type ?? (type = Scalar.BLOCK_LITERAL);
         if (type !== Scalar.QUOTE_DOUBLE) {
           const lineWidth = Math.max(ctx.options.lineWidth - ctx.indent.length, ctx.options.minContentWidth);
-          const n2 = Math.ceil(str6.length / lineWidth);
+          const n2 = Math.ceil(str7.length / lineWidth);
           const lines = new Array(n2);
           for (let i = 0, o = 0; i < n2; ++i, o += lineWidth) {
-            lines[i] = str6.substr(o, lineWidth);
+            lines[i] = str7.substr(o, lineWidth);
           }
-          str6 = lines.join(type === Scalar.BLOCK_LITERAL ? "\n" : " ");
+          str7 = lines.join(type === Scalar.BLOCK_LITERAL ? "\n" : " ");
         }
-        return stringifyString({ comment, type, value: str6 }, ctx, onComment, onChompKeep);
+        return stringifyString({ comment, type, value: str7 }, ctx, onComment, onChompKeep);
       }
     };
   }
@@ -8719,7 +8719,7 @@ var init_float2 = __esm({
       default: true,
       tag: "tag:yaml.org,2002:float",
       test: /^(?:[-+]?\.(?:inf|Inf|INF)|\.nan|\.NaN|\.NAN)$/,
-      resolve: (str6) => str6.slice(-3).toLowerCase() === "nan" ? NaN : str6[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
+      resolve: (str7) => str7.slice(-3).toLowerCase() === "nan" ? NaN : str7[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
       stringify: stringifyNumber
     };
     floatExp2 = {
@@ -8728,10 +8728,10 @@ var init_float2 = __esm({
       tag: "tag:yaml.org,2002:float",
       format: "EXP",
       test: /^[-+]?(?:[0-9][0-9_]*)?(?:\.[0-9_]*)?[eE][-+]?[0-9]+$/,
-      resolve: (str6) => parseFloat(str6.replace(/_/g, "")),
+      resolve: (str7) => parseFloat(str7.replace(/_/g, "")),
       stringify(node) {
-        const num5 = Number(node.value);
-        return isFinite(num5) ? num5.toExponential() : stringifyNumber(node);
+        const num6 = Number(node.value);
+        return isFinite(num6) ? num6.toExponential() : stringifyNumber(node);
       }
     };
     float2 = {
@@ -8739,11 +8739,11 @@ var init_float2 = __esm({
       default: true,
       tag: "tag:yaml.org,2002:float",
       test: /^[-+]?(?:[0-9][0-9_]*)?\.[0-9_]*$/,
-      resolve(str6) {
-        const node = new Scalar(parseFloat(str6.replace(/_/g, "")));
-        const dot = str6.indexOf(".");
+      resolve(str7) {
+        const node = new Scalar(parseFloat(str7.replace(/_/g, "")));
+        const dot = str7.indexOf(".");
         if (dot !== -1) {
-          const f = str6.substring(dot + 1).replace(/_/g, "");
+          const f = str7.substring(dot + 1).replace(/_/g, "");
           if (f[f.length - 1] === "0")
             node.minFractionDigits = f.length;
         }
@@ -8755,34 +8755,34 @@ var init_float2 = __esm({
 });
 
 // node_modules/yaml/browser/dist/schema/yaml-1.1/int.js
-function intResolve2(str6, offset, radix, { intAsBigInt }) {
-  const sign = str6[0];
+function intResolve2(str7, offset, radix, { intAsBigInt }) {
+  const sign = str7[0];
   if (sign === "-" || sign === "+")
     offset += 1;
-  str6 = str6.substring(offset).replace(/_/g, "");
+  str7 = str7.substring(offset).replace(/_/g, "");
   if (intAsBigInt) {
     switch (radix) {
       case 2:
-        str6 = `0b${str6}`;
+        str7 = `0b${str7}`;
         break;
       case 8:
-        str6 = `0o${str6}`;
+        str7 = `0o${str7}`;
         break;
       case 16:
-        str6 = `0x${str6}`;
+        str7 = `0x${str7}`;
         break;
     }
-    const n3 = BigInt(str6);
+    const n3 = BigInt(str7);
     return sign === "-" ? BigInt(-1) * n3 : n3;
   }
-  const n2 = parseInt(str6, radix);
+  const n2 = parseInt(str7, radix);
   return sign === "-" ? -1 * n2 : n2;
 }
 function intStringify2(node, radix, prefix) {
   const { value } = node;
   if (intIdentify3(value)) {
-    const str6 = value.toString(radix);
-    return value < 0 ? "-" + prefix + str6.substr(1) : prefix + str6;
+    const str7 = value.toString(radix);
+    return value < 0 ? "-" + prefix + str7.substr(1) : prefix + str7;
   }
   return stringifyNumber(node);
 }
@@ -8797,7 +8797,7 @@ var init_int2 = __esm({
       tag: "tag:yaml.org,2002:int",
       format: "BIN",
       test: /^[-+]?0b[0-1_]+$/,
-      resolve: (str6, _onError, opt) => intResolve2(str6, 2, 2, opt),
+      resolve: (str7, _onError, opt) => intResolve2(str7, 2, 2, opt),
       stringify: (node) => intStringify2(node, 2, "0b")
     };
     intOct2 = {
@@ -8806,7 +8806,7 @@ var init_int2 = __esm({
       tag: "tag:yaml.org,2002:int",
       format: "OCT",
       test: /^[-+]?0[0-7_]+$/,
-      resolve: (str6, _onError, opt) => intResolve2(str6, 1, 8, opt),
+      resolve: (str7, _onError, opt) => intResolve2(str7, 1, 8, opt),
       stringify: (node) => intStringify2(node, 8, "0")
     };
     int2 = {
@@ -8814,7 +8814,7 @@ var init_int2 = __esm({
       default: true,
       tag: "tag:yaml.org,2002:int",
       test: /^[-+]?[0-9][0-9_]*$/,
-      resolve: (str6, _onError, opt) => intResolve2(str6, 0, 10, opt),
+      resolve: (str7, _onError, opt) => intResolve2(str7, 0, 10, opt),
       stringify: stringifyNumber
     };
     intHex2 = {
@@ -8823,7 +8823,7 @@ var init_int2 = __esm({
       tag: "tag:yaml.org,2002:int",
       format: "HEX",
       test: /^[-+]?0x[0-9a-fA-F_]+$/,
-      resolve: (str6, _onError, opt) => intResolve2(str6, 2, 16, opt),
+      resolve: (str7, _onError, opt) => intResolve2(str7, 2, 16, opt),
       stringify: (node) => intStringify2(node, 16, "0x")
     };
   }
@@ -8917,26 +8917,26 @@ var init_set = __esm({
 });
 
 // node_modules/yaml/browser/dist/schema/yaml-1.1/timestamp.js
-function parseSexagesimal(str6, asBigInt) {
-  const sign = str6[0];
-  const parts = sign === "-" || sign === "+" ? str6.substring(1) : str6;
-  const num5 = (n2) => asBigInt ? BigInt(n2) : Number(n2);
-  const res = parts.replace(/_/g, "").split(":").reduce((res2, p) => res2 * num5(60) + num5(p), num5(0));
-  return sign === "-" ? num5(-1) * res : res;
+function parseSexagesimal(str7, asBigInt) {
+  const sign = str7[0];
+  const parts = sign === "-" || sign === "+" ? str7.substring(1) : str7;
+  const num6 = (n2) => asBigInt ? BigInt(n2) : Number(n2);
+  const res = parts.replace(/_/g, "").split(":").reduce((res2, p) => res2 * num6(60) + num6(p), num6(0));
+  return sign === "-" ? num6(-1) * res : res;
 }
 function stringifySexagesimal(node) {
   let { value } = node;
-  let num5 = (n2) => n2;
+  let num6 = (n2) => n2;
   if (typeof value === "bigint")
-    num5 = (n2) => BigInt(n2);
+    num6 = (n2) => BigInt(n2);
   else if (isNaN(value) || !isFinite(value))
     return stringifyNumber(node);
   let sign = "";
   if (value < 0) {
     sign = "-";
-    value *= num5(-1);
+    value *= num6(-1);
   }
-  const _60 = num5(60);
+  const _60 = num6(60);
   const parts = [value % _60];
   if (value < 60) {
     parts.unshift(0);
@@ -8960,7 +8960,7 @@ var init_timestamp = __esm({
       tag: "tag:yaml.org,2002:int",
       format: "TIME",
       test: /^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+$/,
-      resolve: (str6, _onError, { intAsBigInt }) => parseSexagesimal(str6, intAsBigInt),
+      resolve: (str7, _onError, { intAsBigInt }) => parseSexagesimal(str7, intAsBigInt),
       stringify: stringifySexagesimal
     };
     floatTime = {
@@ -8969,7 +8969,7 @@ var init_timestamp = __esm({
       tag: "tag:yaml.org,2002:float",
       format: "TIME",
       test: /^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*$/,
-      resolve: (str6) => parseSexagesimal(str6, false),
+      resolve: (str7) => parseSexagesimal(str7, false),
       stringify: stringifySexagesimal
     };
     timestamp = {
@@ -8980,8 +8980,8 @@ var init_timestamp = __esm({
       // may be omitted altogether, resulting in a date format. In such a case, the time part is
       // assumed to be 00:00:00Z (start of day, UTC).
       test: RegExp("^([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})(?:(?:t|T|[ \\t]+)([0-9]{1,2}):([0-9]{1,2}):([0-9]{1,2}(\\.[0-9]+)?)(?:[ \\t]*(Z|[-+][012]?[0-9](?::[0-9]{2})?))?)?$"),
-      resolve(str6) {
-        const match = str6.match(timestamp.test);
+      resolve(str7) {
+        const match = str7.match(timestamp.test);
         if (!match)
           throw new Error("!!timestamp expects a date, starting with yyyy-mm-dd");
         const [, year, month, day, hour, minute, second] = match.map(Number);
@@ -11895,15 +11895,15 @@ var init_line_counter = __esm({
 });
 
 // node_modules/yaml/browser/dist/parse/parser.js
-function includesToken(list, type) {
-  for (let i = 0; i < list.length; ++i)
-    if (list[i].type === type)
+function includesToken(list2, type) {
+  for (let i = 0; i < list2.length; ++i)
+    if (list2[i].type === type)
       return true;
   return false;
 }
-function findNonEmptyIndex(list) {
-  for (let i = 0; i < list.length; ++i) {
-    switch (list[i].type) {
+function findNonEmptyIndex(list2) {
+  for (let i = 0; i < list2.length; ++i) {
+    switch (list2[i].type) {
       case "space":
       case "comment":
       case "newline":
@@ -12899,7 +12899,7 @@ var require_code = __commonJS({
     }
     exports._ = _;
     var plus = new _Code("+");
-    function str6(strs, ...args) {
+    function str7(strs, ...args) {
       const expr = [safeStringify(strs[0])];
       let i = 0;
       while (i < args.length) {
@@ -12910,7 +12910,7 @@ var require_code = __commonJS({
       optimize(expr);
       return new _Code(expr);
     }
-    exports.str = str6;
+    exports.str = str7;
     function addCodeArg(code2, arg) {
       if (arg instanceof _Code)
         code2.push(...arg._items);
@@ -12953,7 +12953,7 @@ var require_code = __commonJS({
       return;
     }
     function strConcat(c1, c2) {
-      return c2.emptyStr() ? c1 : c1.emptyStr() ? c2 : str6`${c1}${c2}`;
+      return c2.emptyStr() ? c1 : c1.emptyStr() ? c2 : str7`${c1}${c2}`;
     }
     exports.strConcat = strConcat;
     function interpolate(x) {
@@ -13915,22 +13915,22 @@ var require_util = __commonJS({
       return (0, codegen_1._)`${topSchemaRef}${schemaPath}${(0, codegen_1.getProperty)(keyword)}`;
     }
     exports.schemaRefOrVal = schemaRefOrVal;
-    function unescapeFragment(str6) {
-      return unescapeJsonPointer(decodeURIComponent(str6));
+    function unescapeFragment(str7) {
+      return unescapeJsonPointer(decodeURIComponent(str7));
     }
     exports.unescapeFragment = unescapeFragment;
-    function escapeFragment(str6) {
-      return encodeURIComponent(escapeJsonPointer(str6));
+    function escapeFragment(str7) {
+      return encodeURIComponent(escapeJsonPointer(str7));
     }
     exports.escapeFragment = escapeFragment;
-    function escapeJsonPointer(str6) {
-      if (typeof str6 == "number")
-        return `${str6}`;
-      return str6.replace(/~/g, "~0").replace(/\//g, "~1");
+    function escapeJsonPointer(str7) {
+      if (typeof str7 == "number")
+        return `${str7}`;
+      return str7.replace(/~/g, "~0").replace(/\//g, "~1");
     }
     exports.escapeJsonPointer = escapeJsonPointer;
-    function unescapeJsonPointer(str6) {
-      return str6.replace(/~1/g, "/").replace(/~0/g, "~");
+    function unescapeJsonPointer(str7) {
+      return str7.replace(/~1/g, "/").replace(/~0/g, "~");
     }
     exports.unescapeJsonPointer = unescapeJsonPointer;
     function eachItem(xs, f) {
@@ -14955,8 +14955,8 @@ var require_json_schema_traverse = __commonJS({
         post(schema4, jsonPtr, rootSchema, parentJsonPtr, parentKeyword, parentSchema, keyIndex);
       }
     }
-    function escapeJsonPtr(str6) {
-      return str6.replace(/~/g, "~0").replace(/\//g, "~1");
+    function escapeJsonPtr(str7) {
+      return str7.replace(/~/g, "~0").replace(/\//g, "~1");
     }
   }
 });
@@ -16053,10 +16053,10 @@ var require_utils2 = __commonJS({
         isIPV6: true
       };
     }
-    function findToken(str6, token) {
+    function findToken(str7, token) {
       let ind = 0;
-      for (let i = 0; i < str6.length; i++) {
-        if (str6[i] === token) ind++;
+      for (let i = 0; i < str7.length; i++) {
+        if (str7[i] === token) ind++;
       }
       return ind;
     }
@@ -16635,7 +16635,7 @@ var require_fast_uri = __commonJS({
         normalizeString(uri, options);
       } else if (typeof uri === "object") {
         uri = /** @type {T} */
-        parse5(serialize3(uri, options), options);
+        parse6(serialize3(uri, options), options);
       }
       return uri;
     }
@@ -16675,8 +16675,8 @@ var require_fast_uri = __commonJS({
     function resolveComponent(base, relative9, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
-        base = parse5(serialize3(base, options), options);
-        relative9 = parse5(serialize3(relative9, options), options);
+        base = parse6(serialize3(base, options), options);
+        relative9 = parse6(serialize3(relative9, options), options);
       }
       options = options || {};
       if (!options.tolerant && relative9.scheme) {
@@ -16975,7 +16975,7 @@ var require_fast_uri = __commonJS({
       }
       return { parsed: parsed3, malformedAuthorityOrPort, malformedPercentEncoding, malformedSchemeSpecific, malformedHost, malformedScheme };
     }
-    function parse5(uri, opts) {
+    function parse6(uri, opts) {
       return parseWithStatus(uri, opts).parsed;
     }
     function normalizeString(uri, opts) {
@@ -17012,7 +17012,7 @@ var require_fast_uri = __commonJS({
       resolveComponent,
       equal,
       serialize: serialize3,
-      parse: parse5
+      parse: parse6
     };
     module.exports = fastUri;
     module.exports.default = fastUri;
@@ -17070,7 +17070,7 @@ var require_core = __commonJS({
     var util_1 = require_util();
     var $dataRefSchema = require_data();
     var uri_1 = require_uri();
-    var defaultRegExp = (str6, flags) => new RegExp(str6, flags);
+    var defaultRegExp = (str7, flags) => new RegExp(str7, flags);
     defaultRegExp.code = "new RegExp";
     var META_IGNORE_OPTIONS = ["removeAdditional", "useDefaults", "coerceTypes"];
     var EXT_SCOPE_NAMES = /* @__PURE__ */ new Set([
@@ -17865,16 +17865,16 @@ var require_ucs2length = __commonJS({
   "node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
-    function ucs2length(str6) {
-      const len = str6.length;
+    function ucs2length(str7) {
+      const len = str7.length;
       let length = 0;
       let pos = 0;
       let value;
       while (pos < len) {
         length++;
-        value = str6.charCodeAt(pos++);
+        value = str7.charCodeAt(pos++);
         if (value >= 55296 && value <= 56319 && pos < len) {
-          value = str6.charCodeAt(pos);
+          value = str7.charCodeAt(pos);
           if ((value & 64512) === 56320)
             pos++;
         }
@@ -20332,8 +20332,8 @@ var require_formats = __commonJS({
     }
     var DATE = /^(\d\d\d\d)-(\d\d)-(\d\d)$/;
     var DAYS = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    function date(str6) {
-      const matches = DATE.exec(str6);
+    function date(str7) {
+      const matches = DATE.exec(str7);
       if (!matches)
         return false;
       const year = +matches[1];
@@ -20352,8 +20352,8 @@ var require_formats = __commonJS({
     }
     var TIME = /^(\d\d):(\d\d):(\d\d(?:\.\d+)?)(z|([+-])(\d\d)(?::?(\d\d))?)?$/i;
     function getTime(strictTimeZone) {
-      return function time(str6) {
-        const matches = TIME.exec(str6);
+      return function time(str7) {
+        const matches = TIME.exec(str7);
         if (!matches)
           return false;
         const hr = +matches[1];
@@ -20399,8 +20399,8 @@ var require_formats = __commonJS({
     var DATE_TIME_SEPARATOR = /t|\s/i;
     function getDateTime(strictTimeZone) {
       const time = getTime(strictTimeZone);
-      return function date_time(str6) {
-        const dateTime = str6.split(DATE_TIME_SEPARATOR);
+      return function date_time(str7) {
+        const dateTime = str7.split(DATE_TIME_SEPARATOR);
         return dateTime.length === 2 && date(dateTime[0]) && time(dateTime[1]);
       };
     }
@@ -20425,13 +20425,13 @@ var require_formats = __commonJS({
     }
     var NOT_URI_FRAGMENT = /\/|:/;
     var URI = /^(?:[a-z][a-z0-9+\-.]*:)(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)|(?:[a-z0-9\-._~!$&'()*+,;=]|%[0-9a-f]{2})*)(?::\d*)?(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)(?:\?(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?$/i;
-    function uri(str6) {
-      return NOT_URI_FRAGMENT.test(str6) && URI.test(str6);
+    function uri(str7) {
+      return NOT_URI_FRAGMENT.test(str7) && URI.test(str7);
     }
     var BYTE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/gm;
-    function byte(str6) {
+    function byte(str7) {
       BYTE.lastIndex = 0;
-      return BYTE.test(str6);
+      return BYTE.test(str7);
     }
     var MIN_INT32 = -(2 ** 31);
     var MAX_INT32 = 2 ** 31 - 1;
@@ -20445,11 +20445,11 @@ var require_formats = __commonJS({
       return true;
     }
     var Z_ANCHOR = /[^\\]\\Z/;
-    function regex(str6) {
-      if (Z_ANCHOR.test(str6))
+    function regex(str7) {
+      if (Z_ANCHOR.test(str7))
         return false;
       try {
-        new RegExp(str6);
+        new RegExp(str7);
         return true;
       } catch (e) {
         return false;
@@ -20795,8 +20795,8 @@ var require_dist = __commonJS({
         return ajv3;
       }
       const [formats, exportName] = opts.mode === "fast" ? [formats_1.fastFormats, fastName] : [formats_1.fullFormats, fullName];
-      const list = opts.formats || formats_1.formatNames;
-      addFormats4(ajv3, list, formats, exportName);
+      const list2 = opts.formats || formats_1.formatNames;
+      addFormats4(ajv3, list2, formats, exportName);
       if (opts.keywords)
         (0, limit_1.default)(ajv3);
       return ajv3;
@@ -20808,11 +20808,11 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats4(ajv3, list, fs, exportName) {
+    function addFormats4(ajv3, list2, fs, exportName) {
       var _a;
       var _b;
       (_a = (_b = ajv3.opts.code).formats) !== null && _a !== void 0 ? _a : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
-      for (const f of list)
+      for (const f of list2)
         ajv3.addFormat(f, fs[f]);
     }
     module.exports = exports = formatsPlugin;
@@ -21502,10 +21502,10 @@ function reviewFallback(review) {
   return legacyReviewFallback(review) ?? review.when_unavailable ?? DEFAULT_REVIEW_FALLBACK;
 }
 function reviewProviderOrder(review) {
-  const list = [...review.providers ?? []];
+  const list2 = [...review.providers ?? []];
   const preferred = review.preferred_provider;
-  if (preferred === void 0) return list;
-  return [preferred, ...list.filter((p) => p !== preferred)];
+  if (preferred === void 0) return list2;
+  return [preferred, ...list2.filter((p) => p !== preferred)];
 }
 function preferredReviewProvider(review) {
   return reviewProviderOrder(review)[0] ?? null;
@@ -21884,14 +21884,14 @@ function normalizeContainer(merged) {
   if (isPlainObject(iso2) && isPlainObject(iso2.container)) iso2.container = { ...CONTAINER_DEFAULTS, ...iso2.container };
 }
 function fillNullDefaults(obj3, path, keys) {
-  let list = obj3;
-  for (const key2 of path) list = isPlainObject(list) ? list[key2] : void 0;
-  if (!Array.isArray(list)) return;
-  list.forEach((entry, i) => {
+  let list2 = obj3;
+  for (const key2 of path) list2 = isPlainObject(list2) ? list2[key2] : void 0;
+  if (!Array.isArray(list2)) return;
+  list2.forEach((entry, i) => {
     if (!isPlainObject(entry)) return;
     const filled = { ...entry };
     for (const k of keys) if (filled[k] === void 0) filled[k] = null;
-    list[i] = filled;
+    list2[i] = filled;
   });
 }
 function normalizeArgvField(obj3, path, label, problems) {
@@ -21943,8 +21943,8 @@ function schemaValidator() {
   return compiled;
 }
 function describeSchemaErrors(errors) {
-  const list = errors ?? [];
-  const meaningful = list.filter((e) => !(e.keyword === "type" && e.params.type === "null"));
+  const list2 = errors ?? [];
+  const meaningful = list2.filter((e) => !(e.keyword === "type" && e.params.type === "null"));
   const out = [];
   for (const e of meaningful) {
     if (e.keyword === "oneOf" && meaningful.some((o) => o !== e && o.instancePath.startsWith(e.instancePath) && o.keyword !== "oneOf")) continue;
@@ -22134,15 +22134,15 @@ var init_config = __esm({
         if (r.preferred_provider !== void 0 && !Object.hasOwn(c.providers, r.preferred_provider)) {
           problems.push(`review.preferred_provider: "${r.preferred_provider}" is not defined under providers`);
         }
-        const list = r.providers ?? [];
-        list.forEach((id, i) => {
+        const list2 = r.providers ?? [];
+        list2.forEach((id, i) => {
           if (!isSupportedReviewProvider(id)) {
             problems.push(`review.providers[${i}]: "${id}" is not a supported independent review provider; supported: ${SUPPORTED_REVIEW_PROVIDERS.join(", ")} (another provider needs an Orbit adapter before it can review)`);
           } else if (!Object.hasOwn(c.providers, id)) {
             problems.push(`review.providers[${i}]: "${id}" is not defined under providers`);
           }
         });
-        if (list.length === 0 && r.when_unavailable === "block") {
+        if (list2.length === 0 && r.when_unavailable === "block") {
           problems.push("review.providers: is empty and review.when_unavailable is block, so every run would block at review; list an independent provider, or set review.when_unavailable to claude or ask");
         }
       },
@@ -24831,13 +24831,13 @@ function readTypes(type, path, out) {
     out.push(`${path}: every subschema needs a type, anyOf or $ref`);
     return [];
   }
-  const list = Array.isArray(type) ? type : [type];
-  if (list.length === 0) {
+  const list2 = Array.isArray(type) ? type : [type];
+  if (list2.length === 0) {
     out.push(`${path}: type must not be empty`);
     return [];
   }
   const types2 = [];
-  for (const t of list) {
+  for (const t of list2) {
     if (typeof t !== "string" || !JSON_TYPES.has(t)) out.push(`${path}: unknown type ${JSON.stringify(t)}`);
     else if (types2.includes(t)) out.push(`${path}: duplicate type "${t}"`);
     else types2.push(t);
@@ -25940,8 +25940,8 @@ function modelUsageKeys(result2) {
   return result2 && isObject(result2.modelUsage) ? Object.keys(result2.modelUsage) : [];
 }
 function denials(result2) {
-  const list = result2 && Array.isArray(result2.permission_denials) ? result2.permission_denials : [];
-  return list.filter(isObject).map((d) => ({ tool_name: String(d.tool_name ?? ""), tool_use_id: String(d.tool_use_id ?? "") }));
+  const list2 = result2 && Array.isArray(result2.permission_denials) ? result2.permission_denials : [];
+  return list2.filter(isObject).map((d) => ({ tool_name: String(d.tool_name ?? ""), tool_use_id: String(d.tool_use_id ?? "") }));
 }
 function lastOf(items, pred) {
   for (let i = items.length - 1; i >= 0; i--) if (pred(items[i])) return items[i];
@@ -27376,13 +27376,13 @@ var init_shim = __esm({
       killGroupAndFinish(code2, signal, providerKilled = false) {
         this.escalation.push("SIGKILL");
         this.closeOutput();
-        const rec = this.record(code2, providerKilled ? "SIGKILL" : signal, null);
-        this.persist(rec);
+        const rec2 = this.record(code2, providerKilled ? "SIGKILL" : signal, null);
+        this.persist(rec2);
         try {
           this.host.signalGroup(this.pgid, "SIGKILL");
         } catch {
         }
-        this.finish(rec, false);
+        this.finish(rec2, false);
       }
       /** The provider never started. pid.json is still written, so every reader finds the shim the same way. */
       finishWithoutChild(error) {
@@ -27419,17 +27419,17 @@ var init_shim = __esm({
           endedAt: this.clock.now()
         };
       }
-      persist(rec) {
-        atomicWriteJson(join10(this.workerDir, EXIT_FILE), rec, 384);
+      persist(rec2) {
+        atomicWriteJson(join10(this.workerDir, EXIT_FILE), rec2, 384);
         this.cleanup();
       }
-      finish(rec, write2 = true) {
+      finish(rec2, write2 = true) {
         if (this.finished) return;
         this.finished = true;
         for (const t of this.timers) clearTimeout(t);
         this.timers.clear();
-        if (write2) this.persist(rec);
-        this.settle?.(rec);
+        if (write2) this.persist(rec2);
+        this.settle?.(rec2);
       }
       cleanup() {
         for (const p of this.o.cleanupPaths ?? []) {
@@ -28615,9 +28615,9 @@ function estimateCost(usage, pricing, opts = {}) {
   const ttl = opts.cacheWriteTtl ?? "1h";
   const uncached = opts.inputIncludesCacheRead ? Math.max(0, input - cacheRead) : input;
   const writeRate = ttl === "5m" ? pricing.cache_write_5m : pricing.cache_write_1h;
-  const usd3 = (uncached * pricing.input + output * pricing.output + cacheRead * pricing.cache_read + cacheWrite * writeRate) / 1e6;
+  const usd4 = (uncached * pricing.input + output * pricing.output + cacheRead * pricing.cache_read + cacheWrite * writeRate) / 1e6;
   const assumptions = cacheWrite > 0 ? [`cache writes priced at the ${ttl} rate because the TTL is not reported`] : [];
-  return { costUsd: roundUsd(usd3), costSource: "estimated", missing, assumptions };
+  return { costUsd: roundUsd(usd4), costSource: "estimated", missing, assumptions };
 }
 function roundUsd(value) {
   return Math.round(value * 1e6) / 1e6;
@@ -28804,10 +28804,10 @@ function emptyEval() {
   return { observed_cost: null, qualified_for: [], justified_work_kinds: [], latency_samples_ms: [] };
 }
 function parseCodexCatalog(raw) {
-  const list = Array.isArray(raw) ? raw : isObject2(raw) && Array.isArray(raw.models) ? raw.models : null;
-  if (!list) throw new OrbitError("MALFORMED_OUTPUT", "codex model catalog: expected an array of models or an object with a models array");
+  const list2 = Array.isArray(raw) ? raw : isObject2(raw) && Array.isArray(raw.models) ? raw.models : null;
+  if (!list2) throw new OrbitError("MALFORMED_OUTPUT", "codex model catalog: expected an array of models or an object with a models array");
   const out = [];
-  for (const item of list) {
+  for (const item of list2) {
     if (!isObject2(item) || typeof item.slug !== "string" || !item.slug.trim()) continue;
     const levels = Array.isArray(item.supported_reasoning_levels) ? item.supported_reasoning_levels : [];
     const efforts = levels.map((l) => typeof l === "string" ? l : isObject2(l) && typeof l.effort === "string" ? l.effort : null).filter((e) => e !== null);
@@ -31459,9 +31459,9 @@ function parseNameStatus(buf) {
 }
 function parseNumstat(buf) {
   const out = [];
-  for (const rec of buf.toString("utf8").split("\0")) {
-    if (!rec) continue;
-    const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(rec);
+  for (const rec2 of buf.toString("utf8").split("\0")) {
+    if (!rec2) continue;
+    const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(rec2);
     if (!m) continue;
     const binary2 = m[1] === "-" || m[2] === "-";
     out.push({ path: m[3], added: binary2 ? 0 : Number(m[1]), deleted: binary2 ? 0 : Number(m[2]), binary: binary2 });
@@ -31566,8 +31566,8 @@ function stripJsonComments(text2) {
 async function escapingSymlinks(repoRoot, cand, changes, isProtected) {
   const tree = (await git(repoRoot, ["ls-tree", "-r", "-z", "--full-tree", cand])).toString("utf8");
   const links = /* @__PURE__ */ new Map();
-  for (const rec of tree.split("\0")) {
-    const m = /^120000 blob ([0-9a-f]+)\t(.*)$/s.exec(rec);
+  for (const rec2 of tree.split("\0")) {
+    const m = /^120000 blob ([0-9a-f]+)\t(.*)$/s.exec(rec2);
     if (m) links.set(m[2], m[1]);
   }
   const targets = /* @__PURE__ */ new Map();
@@ -36100,7 +36100,7 @@ async function launchAttempt(ctx, subject, def, configHash, rerunOf) {
 }
 async function assertCheckoutUnmodified(dir, nextCheck) {
   const out = await git2(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--ignore-submodules=none"]);
-  const changed = out.split("\0").filter(Boolean).map((rec) => rec.slice(3));
+  const changed = out.split("\0").filter(Boolean).map((rec2) => rec2.slice(3));
   if (changed.length > 0) {
     const shown = changed.slice(0, 10).join(", ") + (changed.length > 10 ? `, and ${changed.length - 10} more` : "");
     throw new OrbitError("STALE_EVIDENCE", `the checkout no longer holds the candidate tree (tracked files changed: ${shown}); check ${nextCheck} was not started`, { checkout: dir, changed: changed.slice(0, 50), checkId: nextCheck });
@@ -37480,8 +37480,8 @@ function duplicationUnit(unit, fraction) {
 function overheadUnit(unit, fraction, suffix) {
   const role = unit.role === "check" ? null : unit.role;
   const base = unit.budget.costUsd ?? (role === null ? 0 : ROLE_COST_CEILING_USD[role]);
-  const usd3 = Math.round(base * fraction * 1e6) / 1e6;
-  return { id: `${unit.id}${suffix}`, role: unit.role, writer: false, ownedPaths: [], dependsOn: [], revision: unit.revision, cancelWhen: [], budget: { costUsd: usd3 }, provider: null, worktree: null, status: "running" };
+  const usd4 = Math.round(base * fraction * 1e6) / 1e6;
+  return { id: `${unit.id}${suffix}`, role: unit.role, writer: false, ownedPaths: [], dependsOn: [], revision: unit.revision, cancelWhen: [], budget: { costUsd: usd4 }, provider: null, worktree: null, status: "running" };
 }
 function isDuplication(u) {
   return u.id.endsWith(DUPLICATION_SUFFIX) || u.id.endsWith(MERGE_SUFFIX);
@@ -38049,7 +38049,7 @@ function routeLadder(ctx) {
     if (rising && tier <= base) effortBump += 1;
   }
   const estimates = /* @__PURE__ */ new Map();
-  const costOf = (m) => {
+  const costOf2 = (m) => {
     let c = estimates.get(m.modelId);
     if (!c) {
       c = estimateRoute(m, ctx);
@@ -38057,28 +38057,28 @@ function routeLadder(ctx) {
     }
     return c;
   };
-  let chosen = pickInTier(byTier.get(tier) ?? [], preferred, costOf);
+  let chosen = pickInTier(byTier.get(tier) ?? [], preferred, costOf2);
   const justification = { signals: active.map((t) => ({ ...t })), evidence: [...ctx.evidence], ignored: ctx.ignored };
   if (ctx.workKind === "screenshot" && active.length === 0 && tier < FABLE_TIER - 1) {
     const stat = statFor(ctx, chosen);
     const judged = stat ? stat.verified + stat.failed + stat.rejected : 0;
     if (stat && judged >= MIN_MEASURED_SAMPLES && stat.successRate !== null && stat.successRate < ACCURACY_FLOOR) {
-      const up = pickInTier(byTier.get(tier + 1) ?? [], null, costOf);
+      const up = pickInTier(byTier.get(tier + 1) ?? [], null, costOf2);
       if (up) {
         justification.signals.push({ signal: "measured-accuracy", detail: `measured accuracy ${pct(stat.successRate)} over ${judged} outcomes is below ${pct(ACCURACY_FLOOR)}`, evidence: [] });
         notes.push(`measured screenshot accuracy of ${chosen.modelId} is below the floor`);
-        return finish2(ctx, startTier, up, chosen, profile.baseEffort, effortBump, notes, justification, assessment, costOf, ref(chosen), downRoutedFrom);
+        return finish2(ctx, startTier, up, chosen, profile.baseEffort, effortBump, notes, justification, assessment, costOf2, ref(chosen), downRoutedFrom);
       }
     }
   }
   if (active.length === 0 && !downRoutedFrom) {
-    const mine = costOf(chosen);
+    const mine = costOf2(chosen);
     if (mine.basis === "measured" && mine.total !== null) {
       let best = null;
       for (const t of [tier - 1, tier + 1]) {
         if (t < 1 || t >= FABLE_TIER) continue;
         for (const m of byTier.get(t) ?? []) {
-          const c = costOf(m);
+          const c = costOf2(m);
           if (c.basis !== "measured" || c.total === null) continue;
           if (c.total < mine.total * (1 - CALIBRATION_MARGIN) && (!best || best.c.total > c.total)) best = { m, c };
         }
@@ -38091,8 +38091,8 @@ function routeLadder(ctx) {
       }
     }
   }
-  const escalatedFrom = rising && (tierOf(chosen) ?? 0) > base ? escalationOrigin(ctx, byTier, base, costOf) : void 0;
-  return finish2(ctx, startTier, chosen, null, profile.baseEffort, effortBump, notes, justification, assessment, costOf, escalatedFrom, downRoutedFrom);
+  const escalatedFrom = rising && (tierOf(chosen) ?? 0) > base ? escalationOrigin(ctx, byTier, base, costOf2) : void 0;
+  return finish2(ctx, startTier, chosen, null, profile.baseEffort, effortBump, notes, justification, assessment, costOf2, escalatedFrom, downRoutedFrom);
 }
 function observedDifficulty(ctx, startTier) {
   const s = ctx.signals;
@@ -38175,11 +38175,11 @@ function fableGate(ctx, byTier, assessment) {
     why: "no recorded evidence justifies the added expense (needs a failed opus-class attempt with evidence, a recorded evaluation, or measured outcomes)"
   };
 }
-function escalationOrigin(ctx, byTier, base, costOf) {
+function escalationOrigin(ctx, byTier, base, costOf2) {
   if (ctx.previous && ctx.previousTier === base) return ref(ctx.previous);
   if (ctx.signals.previousRoute) return { provider: ctx.signals.previousRoute.provider, model: ctx.signals.previousRoute.model, family: ctx.previous?.family ?? null };
   const at = byTier.get(base);
-  if (at?.length) return ref(pickInTier(at, null, costOf));
+  if (at?.length) return ref(pickInTier(at, null, costOf2));
   return { provider: "claude", model: TIER_NAME[base] ?? String(base), family: TIER_NAME[base] ?? null };
 }
 function routeSafetyReview(ctx) {
@@ -38188,7 +38188,7 @@ function routeSafetyReview(ctx) {
   const notes = [];
   const rejected = [];
   const candidates = [];
-  const costOf = (m) => estimateRoute(m, ctx);
+  const costOf2 = (m) => estimateRoute(m, ctx);
   let fableGateResult = null;
   const configuredReviewers = Object.entries(policy.providers).filter(([p, cfg]) => p !== "claude" && cfg.data_policy_eligible === true && typeof cfg.model === "string" && cfg.model.length > 0).map(([, cfg]) => cfg.model);
   const allowedModels = [...policy.routing.allowed_models, ...configuredReviewers];
@@ -38199,19 +38199,19 @@ function routeSafetyReview(ctx) {
     }
     for (const e of a.eligible) {
       if (provider !== "claude" && policy.providers[provider]?.data_policy_eligible !== true) {
-        rejected.push(alternative(e, true, costOf(e), `data policy: providers.${provider}.data_policy_eligible is not true`));
+        rejected.push(alternative(e, true, costOf2(e), `data policy: providers.${provider}.data_policy_eligible is not true`));
         continue;
       }
       const tier = tierOf(e);
       if (tier !== null) {
         if (tier < SAFETY_FLOOR_TIER) {
-          rejected.push(alternative(e, true, costOf(e), `${e.family} is below the safety review quality floor (opus-class)`));
+          rejected.push(alternative(e, true, costOf2(e), `${e.family} is below the safety review quality floor (opus-class)`));
           continue;
         }
         if (tier === FABLE_TIER) {
           fableGateResult ??= fableGate(ctx, groupByTier(a.eligible), a);
           if (!fableGateResult.ok) {
-            rejected.push(alternative(e, true, costOf(e), `Fable not chosen: ${fableGateResult.why}`));
+            rejected.push(alternative(e, true, costOf2(e), `Fable not chosen: ${fableGateResult.why}`));
             continue;
           }
         }
@@ -38220,7 +38220,7 @@ function routeSafetyReview(ctx) {
       }
       const q = qualifyOtherProvider(e, policy);
       if (!q) {
-        rejected.push(alternative(e, true, costOf(e), "not qualified for safety review: no recorded evaluation, not configured in providers, not the provider default"));
+        rejected.push(alternative(e, true, costOf2(e), "not qualified for safety review: no recorded evaluation, not configured in providers, not the provider default"));
         continue;
       }
       candidates.push({ entry: e, basis: q.basis, detail: q.detail, independent: provider !== implementer });
@@ -38245,7 +38245,7 @@ function routeSafetyReview(ctx) {
     place(c.entry.provider),
     BASIS_RANK[c.basis],
     tierOf(c.entry) ?? 0,
-    costOf(c.entry).total ?? Number.POSITIVE_INFINITY
+    costOf2(c.entry).total ?? Number.POSITIVE_INFINITY
   ];
   const sorted = [...candidates].sort((x, y) => compareTuples(rank(x), rank(y)) || x.entry.modelId.localeCompare(y.entry.modelId));
   const independent = sorted.filter((c) => c.independent);
@@ -38276,14 +38276,14 @@ function routeSafetyReview(ctx) {
   for (const c of sorted) {
     if (c === chosen) continue;
     const why = c.independent === chosen.independent ? `ranked below ${chosen.entry.modelId} (override, review.providers order, qualification basis, tier, then cost)` : "same provider as the implementer; an independent reviewer is preferred";
-    rejected.push(alternative(c.entry, true, costOf(c.entry), why));
+    rejected.push(alternative(c.entry, true, costOf2(c.entry), why));
   }
   const configured = policy.providers[chosen.entry.provider]?.reasoning_effort ?? null;
   const effortSteps = signals.criticalSecurity ? 1 : 0;
   let effort = chooseEffort(chosen.entry, ctx.profile.baseEffort, effortSteps);
   if (configured && effort !== null && chosen.entry.capabilities.effortLevels.includes(configured) && effortRank(configured) > effortRank(effort)) effort = configured;
   if (signals.criticalSecurity) notes.push("critical security impact raises review effort");
-  const cost = costOf(chosen.entry);
+  const cost = costOf2(chosen.entry);
   const decision = {
     kind: "route",
     summary: `route safety-review -> ${chosen.entry.provider}/${chosen.entry.modelId}`,
@@ -38343,7 +38343,7 @@ function priceProfile(t, p) {
 function statFor(ctx, m) {
   return ctx.outcomes.find((s) => s.workKind === ctx.workKind && s.modelId === m.modelId && s.provider === m.provider);
 }
-function finish2(ctx, startTier, chosen, displaced, baseEffort, effortBump, notes, justification, assessment, costOf, escalatedFrom, downRoutedFrom) {
+function finish2(ctx, startTier, chosen, displaced, baseEffort, effortBump, notes, justification, assessment, costOf2, escalatedFrom, downRoutedFrom) {
   const s = ctx.signals;
   let steps = effortBump;
   if (s.difficulty === "complex" && ctx.profile.output !== "interpretation") {
@@ -38367,10 +38367,10 @@ function finish2(ctx, startTier, chosen, displaced, baseEffort, effortBump, note
     else if (t < chosenTier && t < startTier) why = `below the ${TIER_NAME[startTier] ?? "starting"} tier this work starts at`;
     else if (t < chosenTier) why = escalatedFrom ? "escalated past this tier on observed difficulty" : `below the ${TIER_NAME[chosenTier] ?? "chosen"} tier chosen for this work`;
     else why = `higher expected cost per verified task than ${chosen.modelId}`;
-    alternatives.push(alternative(m, true, costOf(m), why));
+    alternatives.push(alternative(m, true, costOf2(m), why));
   }
   for (const ex of assessment.excluded) alternatives.push(alternative(ex.model, false, null, `ineligible: ${ex.reasons.join("; ")}`));
-  const cost = costOf(chosen);
+  const cost = costOf2(chosen);
   const start = `${ctx.workKind} starts at ${TIER_NAME[ctx.profile.startTier]} (spec section 8)`;
   const trig2 = justification.signals.length ? `observed difficulty: ${justification.signals.map((t) => `${t.signal} (${t.detail})`).join(", ")}` : "no observed difficulty";
   const reason = [start, trig2, ...notes, `chose ${chosen.modelId} at effort ${effort ?? "n/a"}`, costText(cost)].join("; ");
@@ -38413,9 +38413,9 @@ function groupByTier(models) {
   for (const m of models) {
     const t = tierOf(m);
     if (t === null) continue;
-    const list = out.get(t) ?? [];
-    list.push(m);
-    out.set(t, list);
+    const list2 = out.get(t) ?? [];
+    list2.push(m);
+    out.set(t, list2);
   }
   return out;
 }
@@ -38427,12 +38427,12 @@ function nearestTier(target, byTier, allowFable) {
   for (const t of order) if ((byTier.get(t) ?? []).length > 0) return t;
   return null;
 }
-function pickInTier(models, preferred, costOf) {
+function pickInTier(models, preferred, costOf2) {
   const hit = preferred ? models.find((m) => m.modelId === preferred) : void 0;
   if (hit) return hit;
   const sorted = [...models].sort((a, b) => {
-    const ca = costOf(a).total ?? Number.POSITIVE_INFINITY;
-    const cb = costOf(b).total ?? Number.POSITIVE_INFINITY;
+    const ca = costOf2(a).total ?? Number.POSITIVE_INFINITY;
+    const cb = costOf2(b).total ?? Number.POSITIVE_INFINITY;
     return ca - cb || a.modelId.localeCompare(b.modelId);
   });
   return sorted[0];
@@ -41160,8 +41160,8 @@ function unfundedSessionReason(ctx, model, role, phase = "work") {
   if (cost.hard_cap - reserve < worst) return `cap $${dollars(cost.hard_cap)} is below one session's worst case $${dollars(worst)}${plusReserve}`;
   const left = Math.max(0, cost.hard_cap - reserve - cost.used - committed);
   const after = [`$${dollars(cost.used)} spent`, ...committed > 0 ? [`$${dollars(committed)} committed to running sessions`] : [], ...reserve > 0 ? [`the $${dollars(reserve)} closing reserve`] : []];
-  const list = after.length > 1 ? `${after.slice(0, -1).join(", ")} and ${after.at(-1)}` : after[0];
-  return `no model budget left: $${dollars(left)} of the $${dollars(cost.hard_cap)} cap remains after ${list}, below one session's worst case $${dollars(worst)}`;
+  const list2 = after.length > 1 ? `${after.slice(0, -1).join(", ")} and ${after.at(-1)}` : after[0];
+  return `no model budget left: $${dollars(left)} of the $${dollars(cost.hard_cap)} cap remains after ${list2}, below one session's worst case $${dollars(worst)}`;
 }
 function fallbackWorstCase(ctx, role) {
   return (ctx.ledger?.roleCostCeiling(role) ?? ROLE_COST_CEILING_USD[role]) / 4;
@@ -41196,8 +41196,8 @@ function routeFor(ctx, purpose, workKind, signals) {
   const config = ctx.snapshot.config;
   try {
     const decision = route({ workKind, signals, registry: ctx.deps.registry, policy: config, outcomes: routeStats(ctx.db, { workKind }) });
-    const rec = toDecisionRecord(decision);
-    recordDecision(ctx.db, ctx.runDir, { id: decisionId2, runId: ctx.run.id, kind: rec.kind, summary: `${purpose}: ${rec.summary}`.slice(0, 500), data: { ...rec.data, purpose } }, ctx.clock);
+    const rec2 = toDecisionRecord(decision);
+    recordDecision(ctx.db, ctx.runDir, { id: decisionId2, runId: ctx.run.id, kind: rec2.kind, summary: `${purpose}: ${rec2.summary}`.slice(0, 500), data: { ...rec2.data, purpose } }, ctx.clock);
     return { provider: decision.provider, model: decision.model, effort: decision.effort, workKind, decisionId: decisionId2 };
   } catch (err) {
     if (!isOrbitError(err, "PROVIDER_UNAVAILABLE")) throw err;
@@ -41464,7 +41464,7 @@ function resolveFindings(input) {
     }
     const disagreement = detectDisagreement(group, reviews, input.disputes ?? [], fp, refutes.length > 0 && confirms.length > 0);
     const exceptionMatch = sec ? matchException({ category: rep.f.category, location: rep.f.location, severity }, security, input.now) : null;
-    const refs = (list) => list.map(describeEvidence);
+    const refs = (list2) => list2.map(describeEvidence);
     let status2;
     let reason;
     let evidenceRefs = [];
@@ -42246,9 +42246,9 @@ function parseJson2(text2) {
 function diffStatPaths(stat) {
   if (!stat || typeof stat !== "object") return [];
   const s = stat;
-  const list = Array.isArray(s.files) ? s.files : Array.isArray(s.paths) ? s.paths : [];
+  const list2 = Array.isArray(s.files) ? s.files : Array.isArray(s.paths) ? s.paths : [];
   const out = [];
-  for (const f of list) {
+  for (const f of list2) {
     if (typeof f === "string") out.push(f);
     else if (f && typeof f === "object" && typeof f.path === "string") out.push(f.path);
   }
@@ -42506,8 +42506,8 @@ function scopeObservations(db, runId) {
       ["out-of-scope", scope.out_of_scope_paths_changed],
       ["symlink-escape", scope.symlinks_escaping]
     ];
-    for (const [category, list] of categories) {
-      const paths = (list ?? []).filter((p) => typeof p === "string").sort().slice(0, PATHS_MAX);
+    for (const [category, list2] of categories) {
+      const paths = (list2 ?? []).filter((p) => typeof p === "string").sort().slice(0, PATHS_MAX);
       if (paths.length === 0) continue;
       const key2 = `${category}\0${paths.join("\0")}`;
       const ref2 = rowRef(runId, "candidate", { id: c.id, seq: c.seq, tree_hash: c.tree_hash, scope_json: c.scope_json });
@@ -43724,33 +43724,33 @@ function exhaustedAdvice(run) {
 }
 function renderMarkdown(r) {
   const out = [];
-  const list = (items) => items.length ? items.map((i) => `- ${i}`).join("\n") : "- none";
+  const list2 = (items) => items.length ? items.map((i) => `- ${i}`).join("\n") : "- none";
   out.push(`# Orbit run ${r.run_id}: ${r.outcome}`, "");
   out.push("## Outcome", "", `${r.outcome}${r.outcome_reason ? `: ${r.outcome_reason}` : ""}`, "");
   out.push("## Original goal", "", r.original_goal, "");
   if (r.objective) out.push("## Delivered behaviour", "", r.objective, "");
-  out.push("## Criterion evidence", "", list(r.criteria.map((c) => `${c.id}${c.mandatory ? "" : " (optional)"} [${c.status}]: ${c.statement}${c.artifacts.length ? ` (evidence: ${c.artifacts.join(", ")})` : ""}`)), "");
-  out.push("## Checks", "", list(r.checks.map((c) => `${c.id}: ${c.status}${c.exit_code !== null ? ` (exit ${c.exit_code})` : ""}${c.flaky ? ", flaky" : ""}, log ${c.log}`)), "");
+  out.push("## Criterion evidence", "", list2(r.criteria.map((c) => `${c.id}${c.mandatory ? "" : " (optional)"} [${c.status}]: ${c.statement}${c.artifacts.length ? ` (evidence: ${c.artifacts.join(", ")})` : ""}`)), "");
+  out.push("## Checks", "", list2(r.checks.map((c) => `${c.id}: ${c.status}${c.exit_code !== null ? ` (exit ${c.exit_code})` : ""}${c.flaky ? ", flaky" : ""}, log ${c.log}`)), "");
   if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, "");
   out.push("## Reviews", "");
   if (r.reviewer) out.push(reviewerLine(r.reviewer), "");
-  out.push(list(r.reviews.map((v) => `${v.provider}/${v.model ?? "default"}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))`)), "");
-  out.push("## Decisions", "", list(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), "");
-  out.push("## Assumptions", "", list(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), "");
-  if (r.practices && r.practices.length > 0) out.push("## Engineering practices", "", list(r.practices.map((p) => `${p.practice} [${p.applicable ? "selected" : "omitted"}]: ${p.justification}`)), "");
+  out.push(list2(r.reviews.map((v) => `${v.provider}/${v.model ?? "default"}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))`)), "");
+  out.push("## Decisions", "", list2(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), "");
+  out.push("## Assumptions", "", list2(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), "");
+  if (r.practices && r.practices.length > 0) out.push("## Engineering practices", "", list2(r.practices.map((p) => `${p.practice} [${p.applicable ? "selected" : "omitted"}]: ${p.justification}`)), "");
   if (r.worker_plugins && r.worker_plugins.length > 0) {
     const named = (p) => `${p.id ?? "an unidentified plugin"} (scope ${p.scope ?? "unknown"})`;
-    out.push("## Worker plugins", "", list(r.worker_plugins.map((p) => p.allowed_by ? `${named(p)}: allowed by ${p.allowed_by}, loaded by ${p.workers} worker(s)` : `${named(p)}: refused, so the output of ${p.workers} worker(s) was not used`)), "");
+    out.push("## Worker plugins", "", list2(r.worker_plugins.map((p) => p.allowed_by ? `${named(p)}: allowed by ${p.allowed_by}, loaded by ${p.workers} worker(s)` : `${named(p)}: refused, so the output of ${p.workers} worker(s) was not used`)), "");
   }
-  out.push("## Repairs", "", list(r.repairs.map((x) => `attempt ${x.attempt}: ${x.source} brief${x.fingerprint ? ` for ${x.fingerprint}` : ""}`)), "");
+  out.push("## Repairs", "", list2(r.repairs.map((x) => `attempt ${x.attempt}: ${x.source} brief${x.fingerprint ? ` for ${x.fingerprint}` : ""}`)), "");
   const rv = r.revision;
-  out.push("## Revision, branch and pull request", "", list([`base: ${rv.base ?? "none"}`, `candidate: ${rv.candidate ?? "none"} (tree ${rv.tree ?? "none"})`, `branch: ${rv.branch ?? "none"}`, rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? "none"}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ""}` : "none"}`]), "");
+  out.push("## Revision, branch and pull request", "", list2([`base: ${rv.base ?? "none"}`, `candidate: ${rv.candidate ?? "none"} (tree ${rv.tree ?? "none"})`, `branch: ${rv.branch ?? "none"}`, rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? "none"}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ""}` : "none"}`]), "");
   if (r.budget) {
     const b = r.budget;
-    out.push("## Budget consumption", "", list([...b.counters.map((c) => `${c.counter}: ${round2(c.used)} used of ${round2(c.allowance)} allowed (hard cap ${round2(c.hard_cap)})`), `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? "measured" : "incomplete: some usage has no cost"}); ${b.cost_measurement}`, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), "");
+    out.push("## Budget consumption", "", list2([...b.counters.map((c) => `${c.counter}: ${round2(c.used)} used of ${round2(c.allowance)} allowed (hard cap ${round2(c.hard_cap)})`), `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? "measured" : "incomplete: some usage has no cost"}); ${b.cost_measurement}`, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), "");
   }
-  out.push("## Not verified", "", list(r.unverified), "");
-  out.push("## Residual risks", "", list(r.residual_risks), "");
+  out.push("## Not verified", "", list2(r.unverified), "");
+  out.push("## Residual risks", "", list2(r.residual_risks), "");
   out.push("## Next action", "", r.next_action, "");
   return redact(`${out.join("\n")}`);
 }
@@ -44043,9 +44043,9 @@ async function stageTree(o) {
 async function diffStat(repoRoot, fromTree, toTree) {
   const out = await git2(repoRoot, ["diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", fromTree, toTree, "--"]);
   const stat = { files: 0, insertions: 0, deletions: 0, binaryFiles: 0, paths: [], truncated: false };
-  for (const rec of out.split("\0")) {
-    if (!rec) continue;
-    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(rec);
+  for (const rec2 of out.split("\0")) {
+    if (!rec2) continue;
+    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(rec2);
     if (!m) continue;
     stat.files++;
     if (m[1] === "-") stat.binaryFiles++;
@@ -44655,8 +44655,8 @@ function evaluateEvidence(input) {
   const fail3 = [];
   const incomplete = [];
   const unverified = [];
-  const note3 = (list, text2) => {
-    if (!list.includes(text2)) list.push(text2);
+  const note3 = (list2, text2) => {
+    if (!list2.includes(text2)) list2.push(text2);
   };
   const valid = /* @__PURE__ */ new Map();
   const failedAt = /* @__PURE__ */ new Map();
@@ -47194,27 +47194,27 @@ function sameClaim(a, b) {
 function approvalQuestionId(amendmentId) {
   return `q-amd-${amendmentId}`;
 }
-function approvalQuestion(ctx, mode, rec, reasons) {
-  const existing = findQuestion(ctx.db, approvalQuestionId(rec.id));
+function approvalQuestion(ctx, mode, rec2, reasons) {
+  const existing = findQuestion(ctx.db, approvalQuestionId(rec2.id));
   if (existing) return existing;
-  const ids = acIds(rec.record.affected_verification, ctx.contract);
+  const ids = acIds(rec2.record.affected_verification, ctx.contract);
   return insertQuestion(
     ctx.db,
     {
-      id: approvalQuestionId(rec.id),
+      id: approvalQuestionId(rec2.id),
       runId: ctx.runId,
       mode,
-      question: `Should the contract change "${rec.record.field}" be approved?`,
-      evidence: [`${rec.record.evidence}`, `It needs a human decision because it ${reasons.join("; ")}.`],
+      question: `Should the contract change "${rec2.record.field}" be approved?`,
+      evidence: [`${rec2.record.evidence}`, `It needs a human decision because it ${reasons.join("; ")}.`],
       options: [
-        { label: APPROVE, description: `Apply the change to ${rec.record.field}.`, consequences: "The contract changes; evidence for the affected criteria is invalidated and must be rerun." },
+        { label: APPROVE, description: `Apply the change to ${rec2.record.field}.`, consequences: "The contract changes; evidence for the affected criteria is invalidated and must be rerun." },
         { label: REJECT, description: "Keep the contract as it is.", consequences: "The affected work proceeds under the current contract; the proposal is dropped." }
       ],
       changes: ["authority"],
       recommendation: { option: REJECT, reason: "a model proposed this change and nothing outside its own reasoning supports it yet" },
       safeDefault: { exists: true, option: REJECT, reason: "rejecting leaves the contract exactly as the person approved it" },
       material: true,
-      affected: ids.length > 0 ? ids : [`contract amendment ${rec.id}`],
+      affected: ids.length > 0 ? ids : [`contract amendment ${rec2.id}`],
       unblocked: []
     },
     ctx.clock,
@@ -47254,9 +47254,9 @@ function processAmendments(ctx, mode, proposals) {
       assessed.approvalReasons.push(`sets an assumption to ${p.change.status}; an assumption is settled by evidence or a person's decision, and a proposal is not evidence`);
     }
     if (assessed.approvalReasons.length > 0) {
-      const rec = insertAmendment(ctx.db, { runId: ctx.runId, record: assessed.record, change: p.change, status: "pending-approval", note: assessed.approvalReasons.join("; ") }, ctx.clock, "inquisition");
-      outcomes.pending.push(rec);
-      questions.push(approvalQuestion(ctx, mode, rec, assessed.approvalReasons));
+      const rec2 = insertAmendment(ctx.db, { runId: ctx.runId, record: assessed.record, change: p.change, status: "pending-approval", note: assessed.approvalReasons.join("; ") }, ctx.clock, "inquisition");
+      outcomes.pending.push(rec2);
+      questions.push(approvalQuestion(ctx, mode, rec2, assessed.approvalReasons));
       continue;
     }
     try {
@@ -47273,14 +47273,14 @@ function processAmendments(ctx, mode, proposals) {
   }
   return { contract, outcomes, questions, refused };
 }
-function replayOf(rec) {
-  const change = rec.change;
-  const proposal = { change, evidence: rec.record.evidence, reason: rec.record.reason };
+function replayOf(rec2) {
+  const change = rec2.change;
+  const proposal = { change, evidence: rec2.record.evidence, reason: rec2.record.reason };
   return change.op === "accept_baseline_failure" ? { proposal, baselineFailures: [{ checkId: change.check_id, fingerprint: change.fingerprint }] } : { proposal };
 }
 function applyApprovedAmendment(ctx, amendmentId, decisionId2) {
-  const rec = getAmendment(ctx.db, amendmentId);
-  if (rec.runId !== ctx.runId) throw new OrbitError("POLICY_DENIED", `amendment ${amendmentId} belongs to another run`);
+  const rec2 = getAmendment(ctx.db, amendmentId);
+  if (rec2.runId !== ctx.runId) throw new OrbitError("POLICY_DENIED", `amendment ${amendmentId} belongs to another run`);
   const d = getDecision(ctx.db, decisionId2);
   const data = d?.data ?? {};
   if (!d || d.runId !== ctx.runId || d.kind !== ANSWER_DECISION_KIND || data.question_id !== approvalQuestionId(amendmentId) || typeof data.answered_by !== "string" || !isHumanActor(data.answered_by)) {
@@ -47289,10 +47289,10 @@ function applyApprovedAmendment(ctx, amendmentId, decisionId2) {
   const contract = syncContract(ctx, ctx.contract);
   if (data.chosen_option === REJECT) return { contract, amendment: resolveAmendment(ctx.db, amendmentId, "rejected", decisionId2, ctx.clock) };
   if (data.chosen_option !== APPROVE) throw new OrbitError("POLICY_DENIED", `decision ${decisionId2} neither approves nor rejects amendment ${amendmentId}`);
-  if (rec.status === "applied" && rec.approvedBy === decisionId2) return { contract, amendment: rec };
-  if (rec.status !== "pending-approval") throw new OrbitError("TRANSITION_INVALID", `amendment ${amendmentId} is ${rec.status}, not pending approval`);
-  if (!rec.change) throw new OrbitError("INTERNAL", `amendment ${amendmentId} has no stored change to apply`);
-  const replay = replayOf(rec);
+  if (rec2.status === "applied" && rec2.approvedBy === decisionId2) return { contract, amendment: rec2 };
+  if (rec2.status !== "pending-approval") throw new OrbitError("TRANSITION_INVALID", `amendment ${amendmentId} is ${rec2.status}, not pending approval`);
+  if (!rec2.change) throw new OrbitError("INTERNAL", `amendment ${amendmentId} has no stored change to apply`);
+  const replay = replayOf(rec2);
   const res = applyAmendment(contract, replay.proposal, { snapshot: ctx.snapshot, approvedBy: decisionId2, history: amendmentHistory(ctx.db, ctx.runId), ...replay.baselineFailures ? { baselineFailures: replay.baselineFailures } : {} });
   return { contract: res.contract, amendment: resolveAmendment(ctx.db, amendmentId, "applied", decisionId2, ctx.clock, "controller", { before: hashObject(contract), after: hashObject(res.contract) }) };
 }
@@ -47302,7 +47302,7 @@ function appliedInOrder(db, runId) {
     const amendmentId = JSON.parse(e.data_json ?? "{}").amendment_id;
     if (amendmentId) appliedAt.set(amendmentId, e.id);
   }
-  return listAmendments(db, runId, { status: "applied" }).map((rec, i) => ({ rec, at: appliedAt.get(rec.id) ?? Number.MAX_SAFE_INTEGER, i })).sort((a, b) => a.at - b.at || a.i - b.i).map((x) => x.rec);
+  return listAmendments(db, runId, { status: "applied" }).map((rec2, i) => ({ rec: rec2, at: appliedAt.get(rec2.id) ?? Number.MAX_SAFE_INTEGER, i })).sort((a, b) => a.at - b.at || a.i - b.i).map((x) => x.rec);
 }
 function syncContract(ctx, contract) {
   const applied = appliedInOrder(ctx.db, ctx.runId);
@@ -47319,10 +47319,10 @@ function syncContract(ctx, contract) {
   if (from < 0 || from >= applied.length) return contract;
   const history = applied.slice(0, from).map((a) => a.record);
   let current = contract;
-  for (const rec of applied.slice(from)) {
-    if (!rec.change) continue;
-    const replay = replayOf(rec);
-    const res = applyAmendment(current, replay.proposal, { snapshot: ctx.snapshot, approvedBy: rec.approvedBy, history, ...replay.baselineFailures ? { baselineFailures: replay.baselineFailures } : {} });
+  for (const rec2 of applied.slice(from)) {
+    if (!rec2.change) continue;
+    const replay = replayOf(rec2);
+    const res = applyAmendment(current, replay.proposal, { snapshot: ctx.snapshot, approvedBy: rec2.approvedBy, history, ...replay.baselineFailures ? { baselineFailures: replay.baselineFailures } : {} });
     current = res.contract;
     history.push(res.record);
   }
@@ -47364,9 +47364,9 @@ function commitPlan(ctx, input) {
       ledger.push(dup);
     } else {
       const evidence = derived ? [...e.evidence ?? [], { kind: "inspection", ref: marker, note: `raised by ${input.trigger.kind}`, at: clock.now() }] : e.evidence;
-      const rec = insertLedgerEntry(db, { ...e, ...evidence === void 0 ? {} : { evidence } }, clock, "inquisition");
-      existing.push(rec);
-      ledger.push(rec);
+      const rec2 = insertLedgerEntry(db, { ...e, ...evidence === void 0 ? {} : { evidence } }, clock, "inquisition");
+      existing.push(rec2);
+      ledger.push(rec2);
     }
   }
   const am = processAmendments(ctx, input.trigger.mode, input.proposals);
@@ -47610,11 +47610,11 @@ function applyAmendmentAnswers(ctx, opts = {}) {
   const outcomes = [];
   let changed = false;
   if (opts.questionId !== void 0 && only === null) return { contract: parsed2(load()), outcomes, changed };
-  for (const rec of listAmendments(ctx.db, ctx.runId, { status: "pending-approval" })) {
-    if (only !== null && rec.id !== only) continue;
-    const questionId = `${AMENDMENT_QUESTION_PREFIX}${rec.id}`;
+  for (const rec2 of listAmendments(ctx.db, ctx.runId, { status: "pending-approval" })) {
+    if (only !== null && rec2.id !== only) continue;
+    const questionId = `${AMENDMENT_QUESTION_PREFIX}${rec2.id}`;
     const outcome = (status2, detail = null) => {
-      outcomes.push({ amendmentId: rec.id, questionId, status: status2, detail });
+      outcomes.push({ amendmentId: rec2.id, questionId, status: status2, detail });
     };
     const q = findQuestion(ctx.db, questionId);
     if (!q || q.status !== "answered") {
@@ -47630,7 +47630,7 @@ function applyAmendmentAnswers(ctx, opts = {}) {
     }
     if (data.chosen_option !== "Approve") {
       ctx.db.tx(() => {
-        resolveAmendment(ctx.db, rec.id, "rejected", decisionId2, ctx.clock);
+        resolveAmendment(ctx.db, rec2.id, "rejected", decisionId2, ctx.clock);
       });
       outcome("rejected", data.chosen_option === "Reject" ? null : 'the answer does not choose "Approve", so the contract is unchanged');
       continue;
@@ -47654,13 +47654,13 @@ function applyAmendmentAnswers(ctx, opts = {}) {
       const current = JSON.parse(row.contract_json);
       try {
         const wrote = ctx.db.tx(() => {
-          const res = applyApprovedAmendment({ db: ctx.db, clock: ctx.clock, runId: ctx.runId, snapshot: snapshot2, contract: current }, rec.id, decisionId2);
+          const res = applyApprovedAmendment({ db: ctx.db, clock: ctx.clock, runId: ctx.runId, snapshot: snapshot2, contract: current }, rec2.id, decisionId2);
           const json3 = JSON.stringify(res.contract);
           if (json3 === row.contract_json) return true;
           const upd = ctx.db.run("UPDATE runs SET contract_json = ?, contract_hash = ? WHERE id = ? AND contract_json = ?", json3, hashObject(res.contract), ctx.runId, row.contract_json);
-          if (upd.changes !== 1) throw new OrbitError("CONCURRENT_UPDATE", `the contract of run ${ctx.runId} changed while amendment ${rec.id} was applied`);
-          invalidateEvidence(ctx.db, ctx.runId, `the contract changed: amendment ${rec.id} (${res.amendment.record.field}) was approved in ${decisionId2}`, ctx.clock);
-          appendEvent(ctx.db, ctx.runId, "contract.amended", "controller", { field: res.amendment.record.field, amendment_id: rec.id, approved_by: decisionId2 }, ctx.clock.now());
+          if (upd.changes !== 1) throw new OrbitError("CONCURRENT_UPDATE", `the contract of run ${ctx.runId} changed while amendment ${rec2.id} was applied`);
+          invalidateEvidence(ctx.db, ctx.runId, `the contract changed: amendment ${rec2.id} (${res.amendment.record.field}) was approved in ${decisionId2}`, ctx.clock);
+          appendEvent(ctx.db, ctx.runId, "contract.amended", "controller", { field: res.amendment.record.field, amendment_id: rec2.id, approved_by: decisionId2 }, ctx.clock.now());
           changed = true;
           return true;
         });
@@ -47672,17 +47672,17 @@ function applyAmendmentAnswers(ctx, opts = {}) {
         if (isOrbitError(err, "CONCURRENT_UPDATE")) continue;
         if (!isOrbitError(err)) throw err;
         const why = redact(err.message).slice(0, 500);
-        if (getAmendment(ctx.db, rec.id).status === "pending-approval") {
+        if (getAmendment(ctx.db, rec2.id).status === "pending-approval") {
           ctx.db.tx(() => {
-            resolveAmendment(ctx.db, rec.id, "rejected", decisionId2, ctx.clock);
-            appendEvent(ctx.db, ctx.runId, "amendment.apply-refused", "controller", { amendment_id: rec.id, approved_by: decisionId2, error: why }, ctx.clock.now());
+            resolveAmendment(ctx.db, rec2.id, "rejected", decisionId2, ctx.clock);
+            appendEvent(ctx.db, ctx.runId, "amendment.apply-refused", "controller", { amendment_id: rec2.id, approved_by: decisionId2, error: why }, ctx.clock.now());
           });
         }
         outcome("refused", why);
         done = true;
       }
     }
-    if (!done) throw new OrbitError("CONCURRENT_UPDATE", `the contract of run ${ctx.runId} kept changing while amendment ${rec.id} was applied`, { amendmentId: rec.id });
+    if (!done) throw new OrbitError("CONCURRENT_UPDATE", `the contract of run ${ctx.runId} kept changing while amendment ${rec2.id} was applied`, { amendmentId: rec2.id });
   }
   const contract = parsed2(load());
   if (contract && changed) atomicWriteJson(join39(ctx.runDir, "contract.json"), contract);
@@ -49971,8 +49971,8 @@ async function changedFiles(repoRoot, base, cand) {
   const ns = (await git4(repoRoot, ["diff", "--name-status", "-z", "--no-renames", "--no-ext-diff", base, cand])).split("\0");
   const stat = (await git4(repoRoot, ["diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", base, cand])).split("\0");
   const counts = /* @__PURE__ */ new Map();
-  for (const rec of stat) {
-    const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(rec);
+  for (const rec2 of stat) {
+    const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(rec2);
     if (!m) continue;
     const binary2 = m[1] === "-" || m[2] === "-";
     counts.set(m[3], { added: binary2 ? 0 : Number(m[1]), deleted: binary2 ? 0 : Number(m[2]), binary: binary2 });
@@ -51184,14 +51184,14 @@ function readLaunchStatus(path) {
   if (typeof parsed3 !== "object" || parsed3 === null || Array.isArray(parsed3)) return null;
   const r = parsed3;
   if (typeof r.app !== "string" || !STATES.has(r.app)) return null;
-  const num5 = (v) => typeof v === "number" && Number.isFinite(v) ? v : void 0;
-  const str6 = (v, max) => typeof v === "string" ? v.slice(0, max) : void 0;
+  const num6 = (v) => typeof v === "number" && Number.isFinite(v) ? v : void 0;
+  const str7 = (v, max) => typeof v === "string" ? v.slice(0, max) : void 0;
   const out = { app: r.app };
-  if (num5(r.status) !== void 0) out.status = num5(r.status);
-  if (r.code === null || num5(r.code) !== void 0) out.code = r.code === null ? null : num5(r.code);
-  if (r.signal === null || typeof r.signal === "string") out.signal = r.signal === null ? null : str6(r.signal, 20);
-  if (str6(r.detail, 300) !== void 0) out.detail = str6(r.detail, 300);
-  if (num5(r.readyMs) !== void 0) out.readyMs = num5(r.readyMs);
+  if (num6(r.status) !== void 0) out.status = num6(r.status);
+  if (r.code === null || num6(r.code) !== void 0) out.code = r.code === null ? null : num6(r.code);
+  if (r.signal === null || typeof r.signal === "string") out.signal = r.signal === null ? null : str7(r.signal, 20);
+  if (str7(r.detail, 300) !== void 0) out.detail = str7(r.detail, 300);
+  if (num6(r.readyMs) !== void 0) out.readyMs = num6(r.readyMs);
   if (typeof r.exitedDuringCheck === "boolean") out.exitedDuringCheck = r.exitedDuringCheck;
   return out;
 }
@@ -51420,9 +51420,9 @@ function failedStepPath(steps) {
 function describeError(err, rootDir) {
   const message = err.message;
   const exp = EXPECTED.exec(message)?.[1]?.trim() ?? null;
-  const rec = RECEIVED.exec(message)?.[1]?.trim() ?? null;
+  const rec2 = RECEIVED.exec(message)?.[1]?.trim() ?? null;
   let diff = null;
-  if (exp === null && rec === null && /^[-+] (Expected|Received)\b/m.test(message)) {
+  if (exp === null && rec2 === null && /^[-+] (Expected|Received)\b/m.test(message)) {
     const lines = message.split("\n");
     const start = lines.findIndex((l) => /^- Expected\b/.test(l));
     if (start >= 0) diff = lines.slice(start, start + MAX_DIFF_LINES).join("\n").trimEnd();
@@ -51433,7 +51433,7 @@ function describeError(err, rootDir) {
     location: loc ? { file: relativeTo(loc.file, rootDir), line: loc.line, column: loc.column } : null,
     snippet: err.snippet,
     expected: exp,
-    observed: rec,
+    observed: rec2,
     diff
   };
 }
@@ -51472,15 +51472,15 @@ function parseErrorContext(markdown) {
 function parseDiagnostics(body) {
   const j = safeJson(body);
   if (!isObj(j)) return null;
-  const list = (v, pick) => arr(v).slice(0, MAX_ENTRIES).flatMap((e) => {
+  const list2 = (v, pick) => arr(v).slice(0, MAX_ENTRIES).flatMap((e) => {
     const p = isObj(e) ? pick(e) : null;
     return p === null ? [] : [p];
   });
   return {
-    consoleErrors: list(j.consoleErrors, (e) => ({ type: str5(e.type) ?? "error", text: cleanText(str5(e.text) ?? "", 1e3), url: str5(e.url) ?? "", line: num4(e.line) })),
-    pageErrors: list(j.pageErrors, (e) => ({ name: str5(e.name) ?? "Error", message: cleanText(str5(e.message) ?? "", 1e3) })),
-    failedRequests: list(j.failedRequests, (e) => ({ url: cleanText(str5(e.url) ?? "", 500), method: str5(e.method) ?? "GET", failure: str5(e.failure) ?? "unknown" })),
-    badResponses: list(j.badResponses, (e) => ({ url: cleanText(str5(e.url) ?? "", 500), method: str5(e.method) ?? "GET", status: num4(e.status) })),
+    consoleErrors: list2(j.consoleErrors, (e) => ({ type: str5(e.type) ?? "error", text: cleanText(str5(e.text) ?? "", 1e3), url: str5(e.url) ?? "", line: num4(e.line) })),
+    pageErrors: list2(j.pageErrors, (e) => ({ name: str5(e.name) ?? "Error", message: cleanText(str5(e.message) ?? "", 1e3) })),
+    failedRequests: list2(j.failedRequests, (e) => ({ url: cleanText(str5(e.url) ?? "", 500), method: str5(e.method) ?? "GET", failure: str5(e.failure) ?? "unknown" })),
+    badResponses: list2(j.badResponses, (e) => ({ url: cleanText(str5(e.url) ?? "", 500), method: str5(e.method) ?? "GET", status: num4(e.status) })),
     finalUrl: str5(j.finalUrl),
     dropped: num4(j.dropped)
   };
@@ -52044,8 +52044,8 @@ function fallbackBrowser(checkoutDir, configured) {
     const req = createRequire3(join41(checkoutDir, "package.json"));
     const dir = dirname20(req.resolve("playwright-core/package.json"));
     const parsed3 = JSON.parse(readFileSync22(join41(dir, "browsers.json"), "utf8"));
-    const list = parsed3.browsers ?? [];
-    const version = list.find((b) => b.name === name)?.browserVersion;
+    const list2 = parsed3.browsers ?? [];
+    const version = list2.find((b) => b.name === name)?.browserVersion;
     return version ? { name, version: `${version} (declared by playwright-core, not observed)` } : null;
   } catch {
     return null;
@@ -52831,9 +52831,9 @@ function explorerWorkUnit(task, cfg, harness) {
     ...harness ? ["", `Exploration harness: ${harness.trim()}`] : []
   ].join("\n");
 }
-function sanitizeCandidates(list) {
+function sanitizeCandidates(list2) {
   const seen = /* @__PURE__ */ new Set();
-  return list.map((f, i) => {
+  return list2.map((f, i) => {
     let id = f.id.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || `F-${i + 1}`;
     if (seen.has(id)) id = `${id}-${i + 1}`;
     seen.add(id);
@@ -55146,8 +55146,8 @@ async function diagnosingStep(ctx) {
       reason: `failure ${fingerprint} remains after attempt ${next - 1}`,
       role: "implementer"
     });
-    const rec = extensionDecisionRecord(decision);
-    decide2(ctx, { id: `dec-${ctx.run.id}-extension-${next}`, kind: rec.kind, summary: rec.summary, data: rec.data });
+    const rec2 = extensionDecisionRecord(decision);
+    decide2(ctx, { id: `dec-${ctx.run.id}-extension-${next}`, kind: rec2.kind, summary: rec2.summary, data: rec2.data });
     if (decision.decision === "deny_extension") {
       return finishRun(ctx, "EXHAUSTED", `implementation attempt allowance spent (${att.used} of ${att.allowance}) and no extension: ${decision.denied_because.join("; ")}`, { outcome: { extension: decision } });
     }
@@ -55818,16 +55818,16 @@ ${a.record.reason}`));
 function markRepaired(resolution, repaired) {
   for (const d of resolution.dispositions) {
     if (d.status !== "rejected" || d.evidenceRefs.length === 0) continue;
-    const rec = d.memberIds.map((id) => repaired.get(id)).find((x) => x !== void 0);
-    if (!rec) continue;
+    const rec2 = d.memberIds.map((id) => repaired.get(id)).find((x) => x !== void 0);
+    if (!rec2) continue;
     d.status = "resolved";
-    d.reason = `repaired in attempt ${rec.attempt}: a test exercising the claim passes on tree ${resolution.treeHash.slice(0, 12)} (${d.evidenceRefs.join("; ")})`;
+    d.reason = `repaired in attempt ${rec2.attempt}: a test exercising the claim passes on tree ${resolution.treeHash.slice(0, 12)} (${d.evidenceRefs.join("; ")})`;
   }
   resolution.rejected = resolution.dispositions.filter((d) => d.status === "rejected");
   resolution.resolved = resolution.dispositions.filter((d) => d.status === "resolved");
 }
-function openFindings(list) {
-  return list.map((d) => ({ id: d.findingId, external_id: d.externalId, severity: d.severity, status: d.status, claim: d.claim.slice(0, 300) }));
+function openFindings(list2) {
+  return list2.map((d) => ({ id: d.findingId, external_id: d.externalId, severity: d.severity, status: d.status, claim: d.claim.slice(0, 300) }));
 }
 function blockedCriteriaIn(d, t, blocked) {
   if (blocked.length === 0) return [];
@@ -55843,8 +55843,8 @@ function stalledReviewRepair(ctx, cand) {
   const reason = `attempt ${latest} reproduced tree ${cand.treeHash.slice(0, 12)}, the tree its review repair brief was written for: no measurable progress (same tree as attempt ${cand.attempt}); the same review, findings and brief would follow, so more attempts, tokens or lines would not change that`;
   return { terminate: true, reason, consecutiveNoProgress: 1, threshold: 1, fingerprint: null, suggestedState: "EXHAUSTED" };
 }
-function describeFindings(list) {
-  return list.map((d) => `${d.externalId ?? d.findingId} (${d.severity}): ${d.claim.slice(0, 120)}`).join("; ");
+function describeFindings(list2) {
+  return list2.map((d) => `${d.externalId ?? d.findingId} (${d.severity}): ${d.claim.slice(0, 120)}`).join("; ");
 }
 async function routeToRepair(ctx, cand, toRepair, resolution, texts, waiting = { held: [], criteria: [], questions: [] }) {
   const ledger = ctx.ledger;
@@ -55874,8 +55874,8 @@ async function routeToRepair(ctx, cand, toRepair, resolution, texts, waiting = {
       reason: `${toRepair.length} review finding(s) remain on tree ${cand.treeHash.slice(0, 12)}`,
       role: "implementer"
     });
-    const rec = extensionDecisionRecord(decision);
-    decide2(ctx, { id: `dec-${ctx.run.id}-extension-${next}`, kind: rec.kind, summary: rec.summary, data: rec.data });
+    const rec2 = extensionDecisionRecord(decision);
+    decide2(ctx, { id: `dec-${ctx.run.id}-extension-${next}`, kind: rec2.kind, summary: rec2.summary, data: rec2.data });
     if (decision.decision === "deny_extension") {
       return finishRun(ctx, "EXHAUSTED", `implementation attempt allowance spent (${att.used} of ${att.allowance}) and no extension for the review repair: ${decision.denied_because.join("; ")}; open findings: ${describeFindings(toRepair)}`.slice(0, 2e3), { outcome: { ...outcome, extension: decision } });
     }
@@ -55928,9 +55928,9 @@ async function reviewerSelection(ctx, cand) {
   if (prior && prior.data.decision === "SELECT") return prior.data;
   const env = await checkEnvironment(ctx);
   const sel = fallbackSelection(ctx, env);
-  const rec = selectionDecisionRecord(sel);
-  if (sel.decision === "SELECT") decide2(ctx, { id, kind: rec.kind, summary: rec.summary, data: rec.data });
-  else decide2(ctx, { kind: rec.kind, summary: rec.summary, data: rec.data });
+  const rec2 = selectionDecisionRecord(sel);
+  if (sel.decision === "SELECT") decide2(ctx, { id, kind: rec2.kind, summary: rec2.summary, data: rec2.data });
+  else decide2(ctx, { kind: rec2.kind, summary: rec2.summary, data: rec2.data });
   return sel;
 }
 function fallbackSelection(ctx, env) {
@@ -56349,12 +56349,12 @@ async function handleMovedBase(ctx, d, base) {
   if (!m) return null;
   const decision = authorize(ctx.snapshot, { kind: "action", action: "rebase_task_branch" });
   const conflict = m.conflicts.length > 0;
-  const short2 = (sha) => sha.slice(0, 12);
-  const where = `${m.baseBranch} moved (${short2(m.from)} to ${short2(m.to)})`;
+  const short3 = (sha) => sha.slice(0, 12);
+  const where = `${m.baseBranch} moved (${short3(m.from)} to ${short3(m.to)})`;
   const paths = m.conflicts.slice(0, 10).join(", ");
   if (!decision.allowed) {
     if (!conflict) return null;
-    return blockOnConflict(ctx, d, base, m, `the base branch ${where} and the delivered commit ${short2(d.commit)} no longer merges cleanly: conflicts in ${m.conflicts[0] === "(unknown paths)" ? "unknown paths" : paths}. Rebasing the task branch is not authorized (actions.rebase_task_branch: ${decision.reason}); rebase it yourself or close the pull request, then start a new run`);
+    return blockOnConflict(ctx, d, base, m, `the base branch ${where} and the delivered commit ${short3(d.commit)} no longer merges cleanly: conflicts in ${m.conflicts[0] === "(unknown paths)" ? "unknown paths" : paths}. Rebasing the task branch is not authorized (actions.rebase_task_branch: ${decision.reason}); rebase it yourself or close the pull request, then start a new run`);
   }
   if (conflict) {
     return blockOnConflict(ctx, d, base, m, `the base branch ${where} and rebasing the task branch onto it conflicts in ${m.conflicts[0] === "(unknown paths)" ? "unknown paths" : paths}; resolve the conflict by hand or close the pull request, then start a new run`);
@@ -56370,7 +56370,7 @@ async function handleMovedBase(ctx, d, base) {
     return blockOnConflict(ctx, d, base, { ...m, conflicts: rebased.files }, `the base branch ${where} and rebasing the task branch onto it conflicts in ${rebased.files.join(", ") || "unknown paths"}; resolve the conflict by hand or close the pull request, then start a new run`);
   }
   const next = rebased.candidate;
-  const reason = `rebased candidate ${cand.seq} onto ${m.baseBranch} ${short2(m.to)}: new candidate ${next.seq} (tree ${next.treeHash})`;
+  const reason = `rebased candidate ${cand.seq} onto ${m.baseBranch} ${short3(m.to)}: new candidate ${next.seq} (tree ${next.treeHash})`;
   invalidateEvidence(ctx.db, ctx.run.id, reason, ctx.clock, { exceptTreeHash: next.treeHash });
   invalidateStaleReviews(ctx.db, { runId: ctx.run.id, runDir: ctx.runDir, current: { candidateId: next.id, treeHash: next.treeHash }, cause: "rebase onto the moved base branch" }, ctx.clock);
   ctx.db.tx(() => {
@@ -56378,7 +56378,7 @@ async function handleMovedBase(ctx, d, base) {
     appendEvent(ctx.db, ctx.run.id, CANDIDATE_EVENT, ctx.ownerId, { attempt: currentAttempt(ctx), candidate_id: next.id, seq: next.seq, tree_hash: next.treeHash, reused: !next.created, rebase: true }, ctx.clock.now());
   });
   ctx.candidate = next;
-  decide2(ctx, { id: `dec-${ctx.run.id}-rebase-${m.to}`, kind: "delivery.rebased", summary: `${m.baseBranch} moved from ${short2(m.from)} to ${short2(m.to)}; rebased the reviewed candidate (${short2(cand.commitSha)}) onto it as ${short2(next.commitSha)}, evidence and reviews invalidated`, data: { from: m.from, to: m.to, old_commit: cand.commitSha, commit: next.commitSha, tree: next.treeHash } });
+  decide2(ctx, { id: `dec-${ctx.run.id}-rebase-${m.to}`, kind: "delivery.rebased", summary: `${m.baseBranch} moved from ${short3(m.from)} to ${short3(m.to)}; rebased the reviewed candidate (${short3(cand.commitSha)}) onto it as ${short3(next.commitSha)}, evidence and reviews invalidated`, data: { from: m.from, to: m.to, old_commit: cand.commitSha, commit: next.commitSha, tree: next.treeHash } });
   const baseTree = (await execCapture(["git", "rev-parse", `${m.to}^{tree}`], { cwd: ctx.run.repoRoot, env: gitEnv4({}, ctx.deps.hostEnv ?? process.env), timeoutMs: 3e4 })).stdout.trim();
   return move2(ctx, "VERIFYING", `${reason}; verifying again`, { patch: { baseRevision: m.to, ...baseTree ? { baseTree } : {} }, data: { rebase: { from: m.from, to: m.to } } });
 }
@@ -57567,19 +57567,19 @@ function xml(s) {
 }
 function renderLaunchdPlist(spec) {
   const logs = logPaths(spec);
-  const str6 = (v) => `<string>${xml(v)}</string>`;
-  const env = Object.entries(spec.env).map(([k, v]) => `      <key>${xml(k)}</key>${str6(v)}`).join("\n");
+  const str7 = (v) => `<string>${xml(v)}</string>`;
+  const env = Object.entries(spec.env).map(([k, v]) => `      <key>${xml(k)}</key>${str7(v)}`).join("\n");
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
     '<plist version="1.0">',
     "<dict>",
-    `  <key>Label</key>${str6(spec.label)}`,
+    `  <key>Label</key>${str7(spec.label)}`,
     "  <key>ProgramArguments</key>",
     "  <array>",
-    ...[spec.launcher, ...spec.args].map((a) => `    ${str6(a)}`),
+    ...[spec.launcher, ...spec.args].map((a) => `    ${str7(a)}`),
     "  </array>",
-    `  <key>WorkingDirectory</key>${str6(spec.workingDirectory)}`,
+    `  <key>WorkingDirectory</key>${str7(spec.workingDirectory)}`,
     "  <key>EnvironmentVariables</key>",
     "  <dict>",
     env,
@@ -57592,9 +57592,9 @@ function renderLaunchdPlist(spec) {
     "  </dict>",
     `  <key>ThrottleInterval</key><integer>${spec.throttleSeconds}</integer>`,
     `  <key>ExitTimeOut</key><integer>${spec.stopTimeoutSeconds}</integer>`,
-    `  <key>ProcessType</key>${str6("Background")}`,
-    `  <key>StandardOutPath</key>${str6(logs.out)}`,
-    `  <key>StandardErrorPath</key>${str6(logs.err)}`,
+    `  <key>ProcessType</key>${str7("Background")}`,
+    `  <key>StandardOutPath</key>${str7(logs.out)}`,
+    `  <key>StandardErrorPath</key>${str7(logs.err)}`,
     "</dict>",
     "</plist>",
     ""
@@ -58716,10 +58716,10 @@ var init_review_fix = __esm({
 
 // src/cli/commands/doctor-plugins.ts
 async function workerPluginsCheck(id, adapter, config) {
-  const list = adapter?.listPlugins;
-  if (typeof list !== "function") return null;
+  const list2 = adapter?.listPlugins;
+  if (typeof list2 !== "function") return null;
   const check = `${id}.plugins`;
-  const listed = await list.call(adapter);
+  const listed = await list2.call(adapter);
   if (!listed.ok) {
     return { id: check, area: "providers", status: "warn", summary: `could not list the installed plugins (${flat(listed.detail)})`, details: [], missing: "the output of claude plugin list --json", fix: 'run "claude plugin list --json" to see why; a worker session that loads a plugin the policy does not allow is refused' };
   }
@@ -62243,6 +62243,526 @@ var init_status = __esm({
   }
 });
 
+// src/observability/timeline.ts
+function parse5(json3) {
+  if (json3 === null) return {};
+  try {
+    return rec(JSON.parse(json3));
+  } catch {
+    return {};
+  }
+}
+function usd3(n2) {
+  return n2 > 0 && n2 < 0.01 ? `$${n2.toFixed(4)}` : `$${n2.toFixed(2)}`;
+}
+function duration(ms) {
+  if (ms < 1e3) return `${Math.max(0, Math.round(ms))}ms`;
+  const s = Math.round(ms / 1e3);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+function loadLookups(db, runId) {
+  const l = { candidates: /* @__PURE__ */ new Map(), checks: /* @__PURE__ */ new Map(), workers: /* @__PURE__ */ new Map(), questions: /* @__PURE__ */ new Map(), reviews: /* @__PURE__ */ new Map(), decisions: /* @__PURE__ */ new Map(), evidence: /* @__PURE__ */ new Map() };
+  for (const r of db.all("SELECT id, seq, attempt, tree_hash FROM candidates WHERE run_id = ?", runId)) l.candidates.set(r.id, { seq: r.seq, attempt: r.attempt, tree: r.tree_hash });
+  for (const r of db.all(
+    "SELECT id, check_id, status, exit_code, candidate_id, started_at, ended_at, flaky, timed_out, fingerprint FROM check_runs WHERE run_id = ?",
+    runId
+  ))
+    l.checks.set(r.id, { check_id: r.check_id, status: r.status, exit_code: r.exit_code, candidate_id: r.candidate_id, started_at: r.started_at, ended_at: r.ended_at, flaky: r.flaky === 1, timed_out: r.timed_out === 1, fingerprint: r.fingerprint });
+  for (const r of db.all(
+    "SELECT id, role, provider, model, attempt, state, spawned_at, ended_at, exit_code, signal, result_status, error FROM workers WHERE run_id = ?",
+    runId
+  ))
+    l.workers.set(r.id, r);
+  for (const r of db.all("SELECT id, question, material, affected_json, answer, answered_by FROM questions WHERE run_id = ?", runId))
+    l.questions.set(r.id, { id: r.id, question: r.question, material: r.material === 1, affected: list(parse5(r.affected_json).affected), answer: r.answer, answered_by: r.answered_by });
+  const findings = db.all("SELECT review_id, severity, COUNT(*) AS n FROM findings WHERE run_id = ? GROUP BY review_id, severity", runId);
+  for (const r of db.all("SELECT id, candidate_id, round, provider, model, verdict FROM reviews WHERE run_id = ?", runId)) {
+    const counts = {};
+    for (const f of findings) if (f.review_id === r.id) counts[f.severity] = f.n;
+    l.reviews.set(r.id, { ...r, counts });
+  }
+  for (const r of db.all("SELECT id, kind, summary, data_json, created_at FROM decisions WHERE run_id = ?", runId))
+    l.decisions.set(r.id, { id: r.id, kind: r.kind, summary: r.summary, data: parse5(r.data_json), created_at: r.created_at });
+  for (const r of db.all("SELECT id, report_json FROM evidence_reports WHERE run_id = ?", runId)) l.evidence.set(r.id, { report: parse5(r.report_json) });
+  return l;
+}
+function describeRoute(d) {
+  const workKind = str6(d.work_kind) ?? "work";
+  const to = `${str6(d.provider) ?? "?"}/${str6(d.model) ?? "?"}`;
+  const effort = str6(d.effort);
+  const ref2 = (v) => {
+    const r = rec(v);
+    return `${str6(r.provider) ?? "?"}/${str6(r.model) ?? "?"}`;
+  };
+  const escalated = d.escalated_from !== void 0 ? ref2(d.escalated_from) : null;
+  const down = d.down_routed_from !== void 0 ? ref2(d.down_routed_from) : null;
+  const just = rec(d.justification);
+  const signals = (Array.isArray(just.signals) ? just.signals : []).map((s) => {
+    const x = rec(s);
+    return `${str6(x.signal) ?? "signal"}${str6(x.detail) ? ` (${str6(x.detail)})` : ""}`;
+  });
+  const evidence = list(just.evidence);
+  const reason = str6(d.reason);
+  const parts = [];
+  const head = escalated ? `${workKind}: escalated ${escalated} -> ${to}` : down ? `${workKind}: down-routed ${down} -> ${to}` : `${workKind} -> ${to}`;
+  if (reason) parts.push(reason);
+  if (evidence.length > 0) parts.push(`evidence: ${evidence.join(", ")}`);
+  if (signals.length > 0) parts.push(`signals: ${signals.join(", ")}`);
+  const cost = num5(d.expected_cost_per_verified_task);
+  if (cost !== null) parts.push(`expected ${usd3(cost)} per verified task`);
+  const alternatives = Array.isArray(d.alternatives_considered) ? d.alternatives_considered.length : 0;
+  if (alternatives > 0) parts.push(`${plural(alternatives, "alternative")} considered`);
+  if (d.unvalidated === true) parts.push("model not yet validated on this CLI");
+  return { kind: escalated ? "route.escalation" : down ? "route.down-route" : "route", text: `${head}${effort ? ` (${effort})` : ""}${parts.length ? `: ${parts.join("; ")}` : ""}` };
+}
+function decisionCategory(kind) {
+  if (kind === "route") return "route";
+  if (kind.startsWith("policy.")) return "policy";
+  if (kind.startsWith("delivery.") || kind.startsWith("release.")) return "delivery";
+  if (kind.startsWith("review.")) return "review";
+  return "decision";
+}
+function describeDecision(d) {
+  if (d.kind === "route" && typeof d.data.model === "string") {
+    const r = describeRoute(d.data);
+    return { category: "route", kind: r.kind, text: r.text, data: { decision_id: d.id, ...d.data } };
+  }
+  return { category: decisionCategory(d.kind), kind: d.kind, text: `${d.kind}: ${d.summary.replace(/\s+/g, " ").trim()}`, data: { decision_id: d.id, ...d.data } };
+}
+function categoryOfType(type) {
+  const p = type.split(".")[0];
+  switch (p) {
+    case "action":
+    case "delivery":
+    case "ci":
+    case "release":
+      return "delivery";
+    case "check":
+      return "check";
+    case "worker":
+    case "authorization":
+      return "worker";
+    case "budget":
+      return "budget";
+    case "question":
+      return "question";
+    case "review":
+    case "finding":
+      return "review";
+    case "evidence":
+      return "verdict";
+    case "implementation":
+      return "attempt";
+    case "recovery":
+    case "watchdog":
+    case "credentials":
+      return "recovery";
+    case "step":
+      return "error";
+    case "run":
+    case "state":
+      return "state";
+    default:
+      return "event";
+  }
+}
+function generic(type, data) {
+  const pairs2 = Object.entries(data).filter(([, v]) => v !== null && v !== void 0).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join(" ");
+  const flat2 = pairs2.replace(/\s+/g, " ").trim();
+  return flat2 ? `${type}  ${flat2.length > 240 ? `${flat2.slice(0, 237)}...` : flat2}` : type;
+}
+function renderEvent(e, data, l) {
+  const candidateSeq = (id) => {
+    const c = typeof id === "string" ? l.candidates.get(id) : void 0;
+    return c ? String(c.seq) : "?";
+  };
+  switch (e.type) {
+    case "run.created":
+      return { text: `run created in ${str6(data.mode) ?? "?"} mode${str6(data.environment) ? ` for environment ${str6(data.environment)}` : ""}` };
+    case "state.transition":
+      return { text: `${e.from_state ?? "?"} -> ${e.to_state ?? "?"}${str6(data.reason) ? `: ${str6(data.reason).replace(/\s+/g, " ").trim()}` : ""}` };
+    case "run.paused":
+      return { text: `run paused by ${e.actor}` };
+    case "run.unpaused":
+      return { text: `run unpaused by ${e.actor}` };
+    case "run.cancel-requested":
+      return { text: `cancellation requested by ${e.actor}` };
+    case "run.resumed":
+      return { text: `run resumed from ${str6(data.from) ?? "?"} to ${str6(data.to) ?? "?"} by ${e.actor}${data.forced === true ? " (forced past open questions)" : ""}` };
+    case "run.repair-requested":
+      return { text: `repair requested by ${e.actor} from ${str6(data.from) ?? "?"}${str6(data.fingerprint) ? `, failure ${str6(data.fingerprint)}` : ""}` };
+    case "lease.takeover":
+      return { category: "recovery", text: `${e.actor} took over the run from ${str6(data.previous_owner) ?? "a previous owner"} (its lease had expired)` };
+    case "recovery.crash-handled":
+      return { text: `crash handled: ${str6(data.outcome) ?? "recovered"}${str6(data.resume_state) ? `, resuming at ${str6(data.resume_state)}` : ""}` };
+    case "watchdog.stall":
+      return { category: "recovery", text: `stall detected in ${str6(data.state) ?? "?"}: no activity for ${duration(num5(data.idle_ms) ?? 0)}` };
+    case "step.error":
+      return { text: `step error in ${str6(data.state) ?? "?"}${str6(data.code) ? ` (${str6(data.code)})` : ""}: ${str6(data.message) ?? "unknown error"}` };
+    case "budget.exhausted":
+      return { text: `budget exhausted: ${str6(data.counter) ?? "?"} ${num5(data.used) ?? "?"} of ${num5(data.allowance) ?? "?"}${str6(data.limit) ? ` (${str6(data.limit)})` : ""}` };
+    case "budget.cost-ceiling-charged": {
+      const c = num5(data.ceiling_usd);
+      return { category: "cost", text: `charged a ceiling of ${c === null ? "?" : usd3(c)} for ${str6(data.role) ?? "a session"}: no cost was reported` };
+    }
+    case "budget.cost-token-estimated": {
+      const c = num5(data.charged_usd);
+      return { category: "cost", text: `charged ${c === null ? "?" : usd3(c)} for ${str6(data.role) ?? "a session"}, estimated from its tokens${str6(data.model) ? ` at ${str6(data.model)} list pricing` : ""}` };
+    }
+    case "implementation.attempt": {
+      const cap = num5(data.spend_cap_usd);
+      return { text: `attempt ${num5(data.attempt) ?? "?"} started${str6(data.route) ? ` (route ${str6(data.route)}${cap !== null ? `, spend cap ${usd3(cap)}` : ""})` : cap !== null ? ` (spend cap ${usd3(cap)})` : ""}` };
+    }
+    case "implementation.candidate":
+      if (data.reused === true) return { category: "candidate", text: `attempt ${num5(data.attempt) ?? "?"} ended on the tree of candidate ${num5(data.seq) ?? "?"}, which already existed` };
+      if (data.rebase === true) return { category: "candidate", text: `candidate ${num5(data.seq) ?? "?"} is the rebased tree of attempt ${num5(data.attempt) ?? "?"}` };
+      return null;
+    case "candidate.created":
+      return { category: "candidate", text: `candidate ${num5(data.seq) ?? "?"} created for attempt ${num5(data.attempt) ?? "?"} (tree ${short2(str6(data.tree_hash))}${str6(data.worker_id) ? `, by ${str6(data.worker_id)}` : ""})` };
+    case "worker.started": {
+      const w = l.workers.get(str6(data.worker_id) ?? "");
+      return w ? { text: `${w.id} ${w.role} ${w.provider}/${w.model ?? "default"} started${w.attempt !== null ? ` (attempt ${w.attempt})` : ""}`, data: { ...data, role: w.role, provider: w.provider, model: w.model, attempt: w.attempt } } : { text: `${str6(data.worker_id) ?? "a worker"} started` };
+    }
+    case "worker.finished": {
+      const id = str6(data.worker_id) ?? "a worker";
+      const w = l.workers.get(id);
+      const state = str6(data.state) ?? w?.state ?? "?";
+      const status2 = str6(data.result_status) ?? w?.result_status ?? null;
+      const exit = num5(data.exit_code) ?? w?.exit_code ?? null;
+      const signal = str6(data.signal) ?? w?.signal ?? null;
+      const detail = [status2 && status2 !== "succeeded" ? status2 : null, signal ? `signal ${signal}` : null, exit !== null ? `exit ${exit}` : null].filter(Boolean).join(", ");
+      const took = w && w.spawned_at !== null && w.ended_at !== null ? ` after ${duration(w.ended_at - w.spawned_at)}` : "";
+      return { text: `${id} ${state}${took}${detail ? ` (${detail})` : ""}${w?.error ? `: ${w.error.replace(/\s+/g, " ").trim()}` : ""}`, data: { ...data, ...w ? { role: w.role, provider: w.provider, model: w.model } : {} } };
+    }
+    case "worker.cancel-requested":
+      return { text: `${str6(data.worker_id) ?? "a worker"} cancellation requested${str6(data.reason) ? `: ${str6(data.reason)}` : ""}` };
+    case "worker.restart-planned":
+      return { text: `${str6(data.worker_id) ?? "a worker"} restart planned (restart ${num5(data.restart_count) ?? "?"})` };
+    case "check.finished": {
+      const c = l.checks.get(str6(data.check_run_id) ?? "");
+      const status2 = str6(data.status) ?? c?.status ?? "?";
+      const exit = num5(data.exit_code) ?? c?.exit_code ?? null;
+      const took = c && c.ended_at !== null ? ` in ${duration(c.ended_at - c.started_at)}` : "";
+      const cand = c?.candidate_id ? ` on candidate ${candidateSeq(c.candidate_id)}` : "";
+      const fp = str6(data.fingerprint) ?? c?.fingerprint ?? null;
+      return { text: `${str6(data.check_id) ?? c?.check_id ?? "check"} ${status2}${exit !== null ? ` (exit ${exit})` : ""}${cand}${took}${c?.flaky ? " (flaky)" : ""}${fp && status2 !== "PASSED" ? `; fingerprint ${fp}` : ""}` };
+    }
+    case "evidence.report": {
+      const verdict = str6(data.verdict) ?? "?";
+      const report2 = l.evidence.get(str6(data.report_id) ?? "")?.report ?? {};
+      const failing = (Array.isArray(report2.checks) ? report2.checks : []).map(rec).filter((c) => c.status !== "PASSED").map((c) => str6(c.id) ?? "?");
+      const unverified = num5(data.unverified) ?? 0;
+      const more = [failing.length > 0 ? `failing checks: ${failing.join(", ")}` : null, unverified > 0 ? `${unverified} unverified` : null].filter(Boolean).join("; ");
+      return { category: "verdict", text: `candidate ${candidateSeq(data.candidate_id)} ${verdict}${more ? `: ${more}` : ""}` };
+    }
+    case "evidence.invalidated":
+      return { category: "verdict", text: `evidence invalidated: ${str6(data.reason) ?? "the candidate changed"}` };
+    case "review.recorded": {
+      const r = l.reviews.get(str6(data.review_id) ?? "");
+      const provider = r?.provider ?? str6(data.provider) ?? "?";
+      const model = r ? r.model : str6(data.model);
+      const verdict = r?.verdict ?? str6(data.verdict) ?? "?";
+      const counts = r?.counts ?? {};
+      const total = Object.values(counts).reduce((a, b) => a + b, 0) || (num5(data.findings) ?? 0);
+      const bySeverity = SEVERITY_ORDER.filter((s) => counts[s]).map((s) => `${counts[s]} ${s}`).join(", ");
+      const extra = r ? { verdict, provider, model, round: r.round, candidate_seq: Number(candidateSeq(r.candidate_id)) || null, finding_counts: counts } : {};
+      return { category: "review", text: `round ${r?.round ?? num5(data.round) ?? "?"} ${verdict} by ${provider}/${model ?? "default"} on candidate ${r ? candidateSeq(r.candidate_id) : "?"} (${plural(total, "finding")}${bySeverity ? `: ${bySeverity}` : ""})`, data: { ...data, ...extra } };
+    }
+    case "review.invalidated":
+      return { category: "review", text: `review ${str6(data.review_id) ?? "?"} no longer counts: ${str6(data.reason) ?? "the candidate changed"}` };
+    case "finding.status":
+      return { category: "review", text: `finding ${str6(data.finding_id) ?? "?"} ${str6(data.from) ?? "?"} -> ${str6(data.to) ?? "?"}${str6(data.reason) ? `: ${str6(data.reason)}` : ""}` };
+    case "question.created": {
+      const q = l.questions.get(str6(data.question_id) ?? "");
+      const id = str6(data.question_id) ?? "?";
+      const material = q ? q.material : data.material === true;
+      const affected = q ? q.affected : list(data.affected);
+      return { category: "question", text: `${id} asked${material ? " [material]" : ""}: ${(q?.question ?? "a question").replace(/\s+/g, " ").trim()}${affected.length ? ` (affects ${affected.join(", ")})` : ""}`, data: { ...data, ...q ? { question: q.question } : {} } };
+    }
+    case "question.answered": {
+      const q = l.questions.get(str6(data.question_id) ?? "");
+      return { category: "question", text: `${str6(data.question_id) ?? "?"} answered by ${q?.answered_by ?? e.actor}: ${(q?.answer ?? "").replace(/\s+/g, " ").trim()}`, data: { ...data, ...q ? { answer: q.answer, answered_by: q.answered_by } : {} } };
+    }
+    case "question.withdrawn":
+      return { category: "question", text: `${str6(data.question_id) ?? "?"} withdrawn${str6(data.reason) ? `: ${str6(data.reason)}` : ""}` };
+    case "action.intent":
+      return { category: "delivery", text: `${str6(data.kind) ?? "action"}: intent recorded${str6(data.commit_sha) ? ` for ${short2(str6(data.commit_sha))}` : ""}` };
+    case "action.executing":
+      return { category: "delivery", text: `${str6(data.kind) ?? "action"}: executing (attempt ${num5(data.attempt) ?? "?"})` };
+    case "action.succeeded": {
+      const attempts = num5(data.attempts) ?? 1;
+      return { category: "delivery", text: `${str6(data.kind) ?? "action"}: succeeded${attempts > 1 ? ` after ${attempts} attempts` : ""}${str6(data.via) && data.via !== "execute" ? ` (${str6(data.via)})` : ""}` };
+    }
+    case "action.denied":
+      return { category: "delivery", text: `${str6(data.kind) ?? "action"}: denied${str6(data.rule) ? ` by ${str6(data.rule)}` : ""}${str6(data.reason) ? `: ${str6(data.reason)}` : ""}` };
+    case "action.reconciled":
+      return { category: "delivery", text: `${str6(data.kind) ?? "action"}: reconciled with the remote (${data.found === true ? "the effect was there" : "no effect found"})` };
+    default:
+      if (e.type.startsWith("action.")) return { category: "delivery", text: `${str6(data.kind) ?? "action"}: ${e.type.slice("action.".length)}${num5(data.attempts) !== null ? ` (attempt ${num5(data.attempts)})` : ""}${str6(data.error) ? `: ${str6(data.error)}` : ""}` };
+      return { text: generic(e.type, data) };
+  }
+}
+function costOf(db, runId) {
+  const usage = db.all(
+    "SELECT id, ts, worker_id, provider, model, input_tokens, output_tokens, cost_usd, cost_source FROM usage WHERE run_id = ? ORDER BY id",
+    runId
+  );
+  let measured = 0;
+  let estimated = 0;
+  let reported = 0;
+  let estimatedRecords = 0;
+  let unavailable = 0;
+  for (const u of usage) {
+    if (u.cost_usd === null) unavailable++;
+    else if (u.cost_source === "estimated") {
+      estimated += u.cost_usd;
+      estimatedRecords++;
+    } else {
+      measured += u.cost_usd;
+      reported++;
+    }
+  }
+  let tokenEstimates = 0;
+  let ceiling = 0;
+  let ceilingCharges = 0;
+  for (const e of db.all("SELECT type, data_json FROM events WHERE run_id = ? AND type IN ('budget.cost-token-estimated', 'budget.cost-ceiling-charged')", runId)) {
+    const d = parse5(e.data_json);
+    if (e.type === "budget.cost-token-estimated") {
+      tokenEstimates++;
+      estimated += num5(d.charged_usd) ?? 0;
+    } else {
+      ceiling += num5(d.ceiling_usd) ?? 0;
+      ceilingCharges++;
+    }
+  }
+  const moved = Math.min(tokenEstimates, unavailable);
+  unavailable -= moved;
+  estimatedRecords += moved;
+  const row = db.get("SELECT used FROM budget_counters WHERE run_id = ? AND counter = 'cost_usd'", runId);
+  const cost = {
+    measured_usd: round6(measured),
+    estimated_usd: round6(estimated),
+    charged_usd: row ? round6(row.used) : null,
+    reported_records: reported,
+    estimated_records: estimatedRecords,
+    unavailable_records: unavailable,
+    ceiling_charged_usd: round6(ceiling),
+    note: ""
+  };
+  cost.note = costNote(cost, ceilingCharges);
+  return { cost, usage };
+}
+function costNote(c, ceilingCharges) {
+  if (c.reported_records + c.estimated_records + c.unavailable_records === 0 && c.charged_usd === null && ceilingCharges === 0) return "no usage recorded yet";
+  const records = [c.reported_records > 0 ? `${c.reported_records} reported` : null, c.estimated_records > 0 ? `${c.estimated_records} estimated from tokens` : null].filter(Boolean).join(", ");
+  const parts = [`measured ${usd3(c.measured_usd)}${records ? ` (${records})` : ""}`];
+  if (c.estimated_usd > 0) parts.push(`estimated ${usd3(c.estimated_usd)}`);
+  parts.push(c.charged_usd === null ? "nothing charged to the cost budget yet" : `charged ${usd3(c.charged_usd)} to the cost budget`);
+  if (c.unavailable_records > 0) {
+    parts.push(c.ceiling_charged_usd > 0 ? `${usd3(c.ceiling_charged_usd)} of that stands in for ${plural(c.unavailable_records, "session")} with no reported cost` : `${plural(c.unavailable_records, "session")} with no reported cost`);
+  }
+  return parts.join("; ");
+}
+function asEntry(at, key2, category, kind, text2, eventId, data) {
+  return { key: key2, at, time: new Date(at).toISOString(), category, kind, text: text2, event_id: eventId, data };
+}
+function buildTimeline(db, run, opts = {}) {
+  const l = loadLookups(db, run.id);
+  const { cost, usage } = costOf(db, run.id);
+  const spine = [];
+  const mirrored = /* @__PURE__ */ new Set();
+  for (const e of db.all("SELECT id, ts, type, from_state, to_state, actor, data_json FROM events WHERE run_id = ? ORDER BY id", run.id)) {
+    const data = parse5(e.data_json);
+    if (e.type === "decision.recorded") {
+      const id = str6(data.decision_id);
+      const d = id ? l.decisions.get(id) : void 0;
+      if (!d) continue;
+      mirrored.add(d.id);
+      const r2 = describeDecision(d);
+      spine.push(asEntry(e.ts, `event:${e.id}`, r2.category, r2.kind, r2.text, e.id, r2.data));
+      continue;
+    }
+    if (HOUSEKEEPING.has(e.type) && !opts.all) continue;
+    const r = renderEvent(e, data, l);
+    if (r === null) {
+      if (!opts.all) continue;
+      spine.push(asEntry(e.ts, `event:${e.id}`, categoryOfType(e.type), e.type, generic(e.type, data), e.id, data));
+      continue;
+    }
+    spine.push(asEntry(e.ts, `event:${e.id}`, r.category ?? categoryOfType(e.type), r.kind ?? e.type, r.text, e.id, r.data ?? data));
+  }
+  const extras = [];
+  for (const d of l.decisions.values()) {
+    if (mirrored.has(d.id)) continue;
+    const r = describeDecision(d);
+    extras.push(asEntry(d.created_at, `decision:${d.id}`, r.category, r.kind, r.text, null, r.data));
+  }
+  let running = 0;
+  for (const u of usage) {
+    const who = `${u.worker_id ?? "a session"} ${u.provider}/${u.model ?? "default"}`;
+    const tokens3 = u.input_tokens !== null || u.output_tokens !== null ? ` (${u.input_tokens ?? "?"} in, ${u.output_tokens ?? "?"} out tokens)` : "";
+    let text2;
+    if (u.cost_usd === null) text2 = `${who}: no cost reported${tokens3}`;
+    else {
+      if (u.cost_source !== "estimated") running += u.cost_usd;
+      text2 = `${who} ${usd3(u.cost_usd)} ${u.cost_source === "estimated" ? "estimated" : "reported"}${tokens3}; measured so far ${usd3(round6(running))}`;
+    }
+    extras.push(asEntry(u.ts, `usage:${u.id}`, "cost", "usage", text2, null, { worker_id: u.worker_id, provider: u.provider, model: u.model, input_tokens: u.input_tokens, output_tokens: u.output_tokens, cost_usd: u.cost_usd, cost_source: u.cost_source }));
+  }
+  extras.sort((a, b) => a.at - b.at);
+  const entries = [];
+  let x = 0;
+  for (const s of spine) {
+    while (x < extras.length && extras[x].at < s.at) entries.push(extras[x++]);
+    entries.push(s);
+  }
+  while (x < extras.length) entries.push(extras[x++]);
+  return {
+    run: {
+      id: run.id,
+      goal: run.goal,
+      mode: run.mode,
+      state: run.state,
+      paused: run.paused,
+      cancel_requested: run.cancelRequested,
+      outcome_reason: run.outcomeReason,
+      branch: run.branch,
+      created_at: run.createdAt,
+      started_at: run.startedAt,
+      ended_at: run.endedAt
+    },
+    entries,
+    cost
+  };
+}
+var HOUSEKEEPING, str6, num5, rec, list, plural, short2, round6, SEVERITY_ORDER;
+var init_timeline = __esm({
+  "src/observability/timeline.ts"() {
+    "use strict";
+    HOUSEKEEPING = /* @__PURE__ */ new Set(["progress", "lease.acquired", "lease.released", "check.planned", "check.started", "worker.planned", "worker.start-charged"]);
+    str6 = (v) => typeof v === "string" && v.length > 0 ? v : null;
+    num5 = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
+    rec = (v) => v !== null && typeof v === "object" && !Array.isArray(v) ? v : {};
+    list = (v) => Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+    plural = (n2, one, many = `${one}s`) => `${n2} ${n2 === 1 ? one : many}`;
+    short2 = (hash) => hash ? hash.slice(0, 12) : "?";
+    round6 = (n2) => Math.round(n2 * 1e6) / 1e6;
+    SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
+  }
+});
+
+// src/cli/commands/timeline.ts
+function localDate(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function renderEntry2(e) {
+  return `${clockTime(e.at)}  ${e.category.padEnd(9)} ${flat(e.text)}`;
+}
+function renderHeader(t) {
+  const lines = [`run ${t.run.id}  ${t.run.state}`, `goal:      ${flat(t.run.goal)}`];
+  if (t.run.outcome_reason) lines.push(`outcome:   ${flat(t.run.outcome_reason)}`);
+  return `${lines.join("\n")}
+`;
+}
+function renderEntries(entries, lastDate) {
+  let out = "";
+  for (const e of entries) {
+    const day = localDate(e.at);
+    if (day !== lastDate.value) {
+      out += `-- ${day} --
+`;
+      lastDate.value = day;
+    }
+    out += `${renderEntry2(e)}
+`;
+  }
+  return out;
+}
+function renderTimeline(t) {
+  return `${renderHeader(t)}${renderEntries(t.entries, { value: null })}cost so far: ${t.cost.note}
+`;
+}
+async function timelineCommand(args, ctx) {
+  const [runRef] = args.expect(1);
+  const last = args.int("last");
+  const all = args.bool("all");
+  const asJson = args.bool("json");
+  const repo = await resolveRepo(ctx, args.str("repo"));
+  return withState(repo, async (db) => {
+    const run = findRunByPrefix(db, runRef);
+    const build = () => buildTimeline(db, getRun(db, run.id), { all });
+    const tail2 = (entries) => last === void 0 ? entries : last === 0 ? [] : entries.slice(-last);
+    if (!args.bool("follow")) {
+      const t2 = build();
+      const shown = { ...t2, entries: tail2(t2.entries) };
+      if (asJson) json(ctx.io, shown);
+      else ctx.io.out(renderTimeline(shown));
+      return EXIT.OK;
+    }
+    let t = build();
+    const printed = /* @__PURE__ */ new Set();
+    const date = { value: null };
+    if (!asJson) ctx.io.out(renderHeader(t));
+    const emit2 = (entries) => {
+      const fresh = entries.filter((e) => !printed.has(e.key));
+      for (const e of fresh) printed.add(e.key);
+      if (asJson) for (const e of fresh) ctx.io.out(`${JSON.stringify(e)}
+`);
+      else ctx.io.out(renderEntries(fresh, date));
+      return fresh.length;
+    };
+    const backlog = tail2(t.entries);
+    const shownNow = new Set(backlog.map((e) => e.key));
+    for (const e of t.entries) if (!shownNow.has(e.key)) printed.add(e.key);
+    emit2(backlog);
+    let stop = false;
+    const signals = ctx.seams.signals ?? process;
+    const onInt = () => {
+      stop = true;
+    };
+    signals.on("SIGINT", onInt);
+    signals.on("SIGTERM", onInt);
+    try {
+      let quietPasses = isTerminal(getRun(db, run.id).state) ? 1 : 0;
+      while (!stop) {
+        const over = isTerminal(getRun(db, run.id).state);
+        if (over && quietPasses >= 1) break;
+        await new Promise((r) => setTimeout(r, ctx.seams.pollMs ?? 500));
+        t = build();
+        const n2 = emit2(t.entries);
+        if (over) quietPasses = n2 === 0 ? quietPasses + 1 : 0;
+      }
+    } finally {
+      signals.off("SIGINT", onInt);
+      signals.off("SIGTERM", onInt);
+    }
+    if (!asJson) ctx.io.out(`cost so far: ${t.cost.note}
+`);
+    return EXIT.OK;
+  });
+}
+var TIMELINE_OPTIONS, TIMELINE_USAGE;
+var init_timeline2 = __esm({
+  "src/cli/commands/timeline.ts"() {
+    "use strict";
+    init_states();
+    init_run_store();
+    init_timeline();
+    init_context();
+    init_exit();
+    init_io();
+    TIMELINE_OPTIONS = {
+      follow: { type: "boolean", short: "f", description: "keep printing new steps until the run ends or blocks" },
+      last: { type: "string", description: "only the last n steps (default: all)", valueName: "n" },
+      all: { type: "boolean", description: "include housekeeping events (heartbeats, lease bookkeeping, planned checks and workers)" }
+    };
+    TIMELINE_USAGE = "orbit timeline <run-id> [--follow] [--last n] [--all] [--json]";
+  }
+});
+
 // src/cli/commands/verify.ts
 import { dirname as dirname33, isAbsolute as isAbsolute24, join as join72, relative as relative8 } from "node:path";
 function exitCodeForVerdict(verdict) {
@@ -62575,13 +63095,15 @@ var init_cli = __esm({
     init_repair2();
     init_stats();
     init_status();
+    init_timeline2();
     init_verify();
     COMMANDS = [
       { name: "doctor", summary: "check every capability a run depends on, with the exact missing piece for each failure", usage: "orbit doctor [--probe] [--json]", options: DOCTOR_OPTIONS, run: doctorCommand },
       { name: "init", summary: "write .orbit/config.yaml from the starter template and keep runtime state out of git status", usage: "orbit init", run: initCommand },
       { name: "run", summary: "start a run: freeze the policy, then drive it here or hand it to the service", usage: 'orbit run --goal "<goal>" [--mode <mode>] [--environment <name>] [--policy <path>] [--foreground | --detach]', options: RUN_OPTIONS, run: runCommand },
       { name: "status", summary: "state, stage, attempts, budgets, workers, open questions and heartbeat of a run (or the recent runs)", usage: "orbit status [run-id] [--all] [--json]", options: STATUS_OPTIONS, run: statusCommand },
-      { name: "logs", summary: "controller and worker logs of a run, redacted", usage: "orbit logs <run-id> [--follow] [--lines n] [--controller | --workers | --worker id]", options: LOGS_OPTIONS, run: logsCommand },
+      { name: "timeline", summary: "what happened in a run, one readable line per step: state changes, routing, attempts, checks, review, questions, delivery, cost", usage: TIMELINE_USAGE, options: TIMELINE_OPTIONS, run: timelineCommand },
+      { name: "logs", summary: 'raw controller and worker logs of a run, redacted (for a readable history use "orbit timeline")', usage: "orbit logs <run-id> [--follow] [--lines n] [--controller | --workers | --worker id]", options: LOGS_OPTIONS, run: logsCommand },
       { name: "pause", summary: "pause a run durably; workers keep running and are collected on resume", usage: "orbit pause <run-id>", run: pauseCommand },
       { name: "resume", summary: "unpause a run, or resume a BLOCKED one after a decision or an environment repair", usage: "orbit resume <run-id> [--foreground | --detach] [--force]", options: RESUME_OPTIONS, run: resumeCommand },
       { name: "cancel", summary: "cancel a run durably (works for blocked or ownerless runs too)", usage: "orbit cancel <run-id> [--wait seconds]", options: CANCEL_OPTIONS, run: cancelCommand },
@@ -62608,7 +63130,7 @@ var init_cli = __esm({
       { name: "policy show", summary: "the frozen policy a run acts under, verified against its hash", usage: "orbit policy show <run-id> [--json]", run: policyShowCommand }
     ];
     HIDDEN = ["shim", "hook", "check-runner"];
-    WORKER_SAFE = /* @__PURE__ */ new Set(["status", "logs", "report", "questions", "policy show", "models list", "learn list", "learn show", "stats"]);
+    WORKER_SAFE = /* @__PURE__ */ new Set(["status", "timeline", "logs", "report", "questions", "policy show", "models list", "learn list", "learn show", "stats"]);
   }
 });
 
