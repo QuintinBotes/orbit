@@ -8,6 +8,10 @@ updates:
     groups:
       dev-tooling:
         update-types: [minor, patch]
+    ignore:
+      # Types must match the oldest supported Node (engines: >=22.16), or code could use APIs that do not exist there.
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
   # The plugin payload: its only dependency is the sandbox runtime, pinned to the version the
   # Chromium preload is verified against (docs/decisions/0001), so a bump needs that re-verified.
   - package-ecosystem: npm
