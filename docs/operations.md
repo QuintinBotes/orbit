@@ -354,7 +354,14 @@ Files on disk:
 (`git worktree add`) that is the worktree, not the main working tree: its
 branch, its cleanliness and its own `.orbit/` config and state. The exclude
 rules `orbit init` adds go to the shared `.git/info/exclude` and apply in every
-worktree of the clone.
+worktree of the clone. That file lives in the common git directory (the main
+checkout's `.git`), outside the worktree, because git reads no other exclude
+file; Orbit keeps it there on purpose, since one write covers every worktree and
+nothing is committed. In a linked worktree `orbit init` names the file and says
+that every worktree of the clone shares it, whether it added the rules or found
+them already there, and `orbit init --json` reports `exclude_file` with its
+`path` and `shared_across_worktrees` (`true` in a linked worktree, `false` in a
+normal checkout; `exclude` keeps its `path` and `added`).
 
 Logs are redacted before they are stored. Add patterns of your own with
 `retention.redact_patterns`.

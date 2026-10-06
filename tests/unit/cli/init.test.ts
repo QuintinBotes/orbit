@@ -88,6 +88,98 @@ describe('orbit init', () => {
     expect(j.exclude).toEqual({ path: join(l.repo, '.git', 'info', 'exclude'), added: [] });
   });
 
+  // Issue #3 follow-up: git reads only the common git directory's info/exclude, so init in a linked worktree writes into
+  // the main checkout's git directory. The maintainers keep that (one write covers every worktree, nothing is committed)
+  // and init says so, so the write does not surprise a person who expects a worktree to change nothing outside it.
+  describe('in a linked worktree the exclude file is shared, and init says so (#3)', () => {
+    const SHARED = "that file is in the clone's common git directory, outside this worktree, and every worktree of this clone shares it";
+    const excludeOf = (l: Lab) => join(l.repo, '.git', 'info', 'exclude');
+    const linked = (l: Lab): string => {
+      const wt = join(l.base, 'wt');
+      git(l.repo, 'worktree', 'add', '-q', '--detach', wt);
+      return wt;
+    };
+    const lineAbout = (out: string, path: string): string => out.split('\n').find((x) => x.includes(path)) ?? '';
+
+    it('names the shared file and says every worktree shares it when it adds the rules', async () => {
+      const l = lab();
+      const wt = linked(l);
+      const r = await l.cli(['init'], { cwd: wt });
+      expect(r.code, r.err).toBe(0);
+      const ex = excludeOf(l);
+      expect(lineAbout(r.out, ex)).toBe(`added 3 rule(s) to ${ex} so runtime state stays out of git status; ${SHARED}, so one write covers them all`);
+      expect(readFileSync(ex, 'utf8')).toContain('/.orbit/state.sqlite*');
+    });
+
+    it('says the same when the rules are already there', async () => {
+      const l = lab();
+      expect((await l.cli(['init'])).code).toBe(0);
+      const wt = linked(l);
+      const r = await l.cli(['init'], { cwd: wt });
+      expect(r.code, r.err).toBe(0);
+      const ex = excludeOf(l);
+      expect(lineAbout(r.out, ex)).toBe(`${ex} already excludes Orbit runtime state; ${SHARED}`);
+      // A second run in the same worktree is the same case: the rules exist and the note stays.
+      expect(lineAbout((await l.cli(['init'], { cwd: wt })).out, ex)).toBe(`${ex} already excludes Orbit runtime state; ${SHARED}`);
+    });
+
+    it('reports the file and whether it is shared in --json, and keeps every existing field', async () => {
+      const l = lab();
+      const wt = linked(l);
+      const first = JSON.parse((await l.cli(['init', '--json'], { cwd: wt })).out) as Record<string, unknown>;
+      const ex = excludeOf(l);
+      expect(first.exclude_file).toEqual({ path: ex, shared_across_worktrees: true });
+      expect(first.exclude).toEqual({ path: ex, added: [...EXCLUDE_RULES] });
+      for (const k of ['repo', 'review_policy', 'config', 'checks', 'config_problems', 'warnings', 'models']) expect(first, k).toHaveProperty(k);
+      const again = JSON.parse((await l.cli(['init', '--json'], { cwd: wt })).out) as Record<string, unknown>;
+      expect(again.exclude_file).toEqual({ path: ex, shared_across_worktrees: true });
+      expect(again.exclude).toEqual({ path: ex, added: [] });
+    });
+
+    it('works from a subdirectory of the worktree', async () => {
+      const l = lab();
+      const wt = linked(l);
+      mkdirSync(join(wt, 'sub'));
+      const r = await l.cli(['init'], { cwd: join(wt, 'sub') });
+      expect(r.code, r.err).toBe(0);
+      expect(lineAbout(r.out, excludeOf(l))).toContain('every worktree of this clone shares it');
+    });
+
+    it('says nothing about worktrees in a normal checkout, even one that has linked worktrees, and flags it unshared in --json', async () => {
+      const l = lab();
+      linked(l);
+      const ex = excludeOf(l);
+      const r = await l.cli(['init'], { cwd: l.repo });
+      expect(r.code, r.err).toBe(0);
+      expect(lineAbout(r.out, ex)).toBe(`added 3 rule(s) to ${ex} so runtime state stays out of git status`);
+      expect(r.out).not.toMatch(/worktree/i);
+      const again = await l.cli(['init'], { cwd: l.repo });
+      expect(lineAbout(again.out, ex)).toBe(`${ex} already excludes Orbit runtime state`);
+      expect(again.out).not.toMatch(/worktree/i);
+      const j = JSON.parse((await l.cli(['init', '--json'], { cwd: l.repo })).out) as { exclude: unknown; exclude_file: unknown };
+      expect(j.exclude_file).toEqual({ path: ex, shared_across_worktrees: false });
+      expect(j.exclude).toEqual({ path: ex, added: [] });
+    });
+
+    it('does not take a submodule for a linked worktree (its git directory is not the superproject\'s but is its own common one)', async () => {
+      const l = lab();
+      const sub = join(l.base, 'sub-origin');
+      mkdirSync(sub);
+      git(sub, 'init', '-q', '-b', 'main');
+      writeFileSync(join(sub, 'lib.txt'), 'lib\n');
+      git(sub, 'add', '-A');
+      git(sub, '-c', 'user.name=acme', '-c', 'user.email=dev@acme.test', 'commit', '-q', '-m', 'lib');
+      git(l.repo, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'vendor/lib');
+      const inSub = join(l.repo, 'vendor', 'lib');
+      const r = await l.cli(['init', '--json'], { cwd: inSub });
+      expect(r.code, r.err).toBe(0);
+      const j = JSON.parse(r.out) as { repo: string; exclude: { path: string }; exclude_file: { path: string; shared_across_worktrees: boolean } };
+      expect(j.repo).toBe(inSub);
+      expect(j.exclude_file).toEqual({ path: j.exclude.path, shared_across_worktrees: false });
+      expect((await l.cli(['init'], { cwd: inSub })).out).not.toMatch(/worktree/i);
+    });
+  });
+
   it('refuses outside a git repository', async () => {
     const l = lab({ git: false });
     const r = await l.cli(['init']);

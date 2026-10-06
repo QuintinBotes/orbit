@@ -98,8 +98,12 @@ This writes `.orbit/config.yaml` from the starter template and adds rules to
 `.git/info/exclude`, so run state stays out of `git status` (the config file
 itself shows up as untracked: commit it if you want it shared). The starter mode
 is `autonomous`: Orbit works on a local branch `orbit/<run-id>` and never
-pushes. `init` also replaces the template's example `scope.allowed_paths` with
-globs that match your layout, and tells you so. It also proposes checks from
+pushes. In a linked worktree (`git worktree add`) that file is shared by every
+worktree of the clone and lives in the main checkout's git directory, outside
+your worktree; `init` writes it there once and says so, in its text and as
+`exclude_file` in `--json`. `init` also replaces the template's example
+`scope.allowed_paths` with globs that match your layout, and tells you so. It
+also proposes checks from
 what the repository declares (package.json scripts, a solution, pytest, ruff
 or mypy configuration, go.mod, Cargo.toml) for the tools found on your `PATH`,
 each under a comment asking you to review it

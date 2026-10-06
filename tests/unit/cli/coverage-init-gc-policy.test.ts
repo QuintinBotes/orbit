@@ -1,4 +1,5 @@
 /** `orbit init`, `orbit gc`, `orbit policy show` and `orbit run --detach`: the paths the main tests do not take. */
+import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -102,6 +103,25 @@ describe('orbit init', () => {
     expect(r.err).toBe('orbit: cannot locate .git/info/exclude: fatal: not a git repository (or any parent)\n');
     hooks.exec = (argv) => (argv.includes('info/exclude') ? { exitCode: 0, signal: null, stdout: '  \n', stderr: '' } : undefined);
     expect((await l.cli(['init'])).err).toBe('orbit: cannot locate .git/info/exclude: \n');
+  });
+
+  it('still initialises, with the plain exclude line, when git cannot say whether this is a linked worktree', async () => {
+    const answers: Array<() => unknown> = [
+      () => ({ exitCode: 128, signal: null, stdout: '', stderr: 'fatal: nope\n' }),
+      () => ({ exitCode: 0, signal: null, stdout: '\n', stderr: '' }),
+      () => ({ exitCode: 0, signal: null, stdout: `${join(tmpdir(), 'only-one-line')}\n`, stderr: '' }),
+      () => Promise.reject(new Error('spawn git ENOENT')),
+    ];
+    for (const answer of answers) {
+      const l = lab();
+      const wt = join(l.base, 'wt');
+      execFileSync('git', ['worktree', 'add', '-q', '--detach', wt], { cwd: l.repo, stdio: 'pipe', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null' } });
+      hooks.exec = (argv) => (argv.includes('--git-common-dir') ? answer() : undefined);
+      const r = await l.cli(['init'], { cwd: wt });
+      expect(r.code, r.err).toBe(0);
+      expect(r.out).toContain(`added 3 rule(s) to ${excludePath(l)} so runtime state stays out of git status\n`);
+      expect(r.out).not.toMatch(/every worktree/);
+    }
   });
 
   it('starts a new line before its rules when the exclude file does not end in one, and reuses its own header', async () => {
