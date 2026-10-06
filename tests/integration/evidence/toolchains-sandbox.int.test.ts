@@ -173,7 +173,8 @@ describe.skipIf(!probe.ok)(title('orbit doctor reports each installed toolchain 
       const line = c.details.find((d) => d.startsWith(`toolchain ${id}:`));
       expect(line, id).toBeDefined();
       if (tools[exe] === null) continue;
-      expect(line, id).toMatch(new RegExp(`^toolchain ${id}: "\\S+[^"]*" ran in the sandbox; dependency caches? `));
+      // Started by its own name: rustup's cargo is a link to rustup, whose `--version` runs where cargo cannot.
+      expect(line, id).toMatch(new RegExp(`^toolchain ${id}: "${exe} [^"]*" ran in the sandbox; dependency caches? `));
       expect(line, id).toContain(join(orbitHome, 'toolchains', key, cache));
     }
     expect(c.status).toBe('pass');

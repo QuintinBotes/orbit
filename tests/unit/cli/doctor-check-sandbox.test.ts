@@ -1,6 +1,6 @@
 // `orbit doctor`'s checks.sandbox (issue #10): each command check's executable started in the sandbox the check would
 // get, with a harmless argument, so a denial shows before any run instead of as a failure of the base revision.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -201,6 +201,23 @@ describe('checkSandboxCheck: toolchains (ADR 0009)', () => {
     expect(s.wraps[0]!.env.CARGO_HOME).toBe(cache);
     expect((s.wraps[0]!.profile as { readablePaths?: string[] }).readablePaths).toContain(cache);
     expect(s.wraps[0]!.profile.writablePaths).not.toContain(cache);
+  });
+
+  it('starts a linked tool by its own name, as a multi-call binary needs (rustup\'s cargo is a link to rustup)', async () => {
+    const w = world(['rustup']);
+    symlinkSync('rustup', join(w.bin, 'cargo'));
+    writeFileSync(join(w.repo, 'Cargo.toml'), '[package]\nname = "acme"\n');
+    // A link on PATH into the repository is the repository's code, whatever its name.
+    writeFileSync(join(w.repo, 'acme-lint'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    symlinkSync(join(w.repo, 'acme-lint'), join(w.bin, 'acme-lint'));
+    const seen: string[][] = [];
+    const launch: ProbeLaunch = async (argv) => (seen.push(argv), { exitCode: 0, output: '' });
+    const cfg = config([{ id: 'unit', command: ['cargo', 'test'] }, { id: 'lint', command: ['acme-lint'] }]);
+    const c = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, orbitHome: temp('orbit-doctor-orbit-'), launch });
+    expect(seen).toEqual([[join(w.bin, 'cargo'), '--version'], [join(w.bin, 'cargo'), '--version']]);
+    expect(c.details[0]).toBe('unit: "cargo --version" ran in the sandbox');
+    expect(c.details[1]).toBe('lint: not started ("acme-lint" is the repository\'s own code, which only a run executes)');
+    expect(c.details[2]).toMatch(/^toolchain rust: "cargo --version" ran in the sandbox; /);
   });
 
   it('warns when the sandbox refuses a toolchain, and reports one it cannot find', async () => {

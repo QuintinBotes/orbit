@@ -119,7 +119,9 @@ Maven and Gradle were not installed where this was measured.
    environment and paths, and adds one line per detected toolchain: whether
    its executable starts in the check sandbox, where its dependency caches
    live (or that the first install creates them), and which build state is
-   per attempt. Doctor writes nothing outside its scratch directory: a cache
+   per attempt. A tool starts by the name `PATH` gives it, not by a link's
+   target: rustup's `cargo` is a link to `rustup`, whose `--version`
+   succeeds where `cargo` cannot choose a toolchain. Doctor writes nothing outside its scratch directory: a cache
    that does not exist yet is replaced by an empty scratch stand-in.
 
 ## Consequences

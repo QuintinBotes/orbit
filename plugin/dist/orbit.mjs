@@ -59843,7 +59843,7 @@ var init_doctor_plugins = __esm({
 // src/cli/commands/doctor-sandbox.ts
 import { existsSync as existsSync50, mkdirSync as mkdirSync23, mkdtempSync as mkdtempSync6, realpathSync as realpathSync18 } from "node:fs";
 import { tmpdir as tmpdir12 } from "node:os";
-import { basename as basename13, isAbsolute as isAbsolute21, join as join69, resolve as resolve17 } from "node:path";
+import { basename as basename13, dirname as dirname31, isAbsolute as isAbsolute21, join as join69, resolve as resolve17 } from "node:path";
 function checkWord(check) {
   if (!check.shell) return check.command[0] ?? null;
   return (check.command[0] ?? "").trim().split(/\s+/).find((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) ?? null;
@@ -59915,8 +59915,8 @@ async function checkSandboxCheck(input) {
       details.push(`${check.id}: not started ("${word}" was not found; see the checks entry)`);
       continue;
     }
-    const exe = realpathSync18(found);
-    if (repo && isWithin(exe, repo)) {
+    const exe = launchPath(found, repo);
+    if (!exe) {
       details.push(`${check.id}: not started ("${word}" is the repository's own code, which only a run executes)`);
       continue;
     }
@@ -59950,6 +59950,12 @@ async function checkSandboxCheck(input) {
     fixFor([...refused, ...refusedToolchains].map((r) => r.failure))
   );
 }
+function launchPath(found, repo) {
+  const target = realpathSync18(found);
+  if (repo && isWithin(target, repo)) return null;
+  const named = join69(realpathSync18(dirname31(found)), basename13(found));
+  return repo && isWithin(named, repo) ? target : named;
+}
 async function probeOrRefuse(input, check, exe, args, cwd) {
   try {
     return await probe(input, check, exe, args, cwd);
@@ -59967,8 +59973,8 @@ async function toolchainLine(input, orbitHome, id) {
   const label = `toolchain ${id}`;
   const found = p.probe.executables.map((e) => which(e, input.env.PATH)).find((x) => x !== null);
   if (!found) return { detail: `${label}: not started ("${p.probe.executables[0]}" was not found); ${where2}`, failure: null };
-  const exe = realpathSync18(found);
-  if (isWithin(exe, input.repo)) return { detail: `${label}: not started ("${basename13(found)}" is the repository's own code, which only a run executes); ${where2}`, failure: null };
+  const exe = launchPath(found, input.repo);
+  if (!exe) return { detail: `${label}: not started ("${basename13(found)}" is the repository's own code, which only a run executes); ${where2}`, failure: null };
   const check = { ...defaultCheck(`toolchain-${id}`), command: [exe, ...p.probe.args], mandatory: false };
   const out = await probeOrRefuse(input, check, exe, p.probe.args, null);
   return { detail: `${label}: ${out.detail}; ${where2}`, failure: out.kind === "refused" ? out.failure : null };
@@ -61035,7 +61041,7 @@ var init_models2 = __esm({
 
 // src/cli/check-detect.ts
 import { existsSync as existsSync53, readFileSync as readFileSync32 } from "node:fs";
-import { basename as basename14, dirname as dirname31, join as join71 } from "node:path";
+import { basename as basename14, dirname as dirname32, join as join71 } from "node:path";
 function read(path) {
   try {
     return readFileSync32(path, "utf8").slice(0, MAX_READ_BYTES);
@@ -61253,7 +61259,7 @@ async function rustDrafts(input, out) {
 }
 async function realClippyProbe(cargo) {
   try {
-    const r = await execCapture([cargo, "clippy", "--version"], { cwd: dirname31(cargo), timeoutMs: 2e4, maxOutputBytes: 16 * 1024 });
+    const r = await execCapture([cargo, "clippy", "--version"], { cwd: dirname32(cargo), timeoutMs: 2e4, maxOutputBytes: 16 * 1024 });
     return r.exitCode === 0 && !r.timedOut;
   } catch {
     return false;
@@ -61316,7 +61322,7 @@ var init_check_detect = __esm({
 
 // src/cli/commands/init.ts
 import { appendFileSync as appendFileSync2, existsSync as existsSync54, mkdirSync as mkdirSync24, readFileSync as readFileSync33, writeFileSync as writeFileSync9 } from "node:fs";
-import { dirname as dirname32, join as join72 } from "node:path";
+import { dirname as dirname33, join as join72 } from "node:path";
 function templatePath() {
   return join72(orbitInstallDir(), "templates", "config.yaml");
 }
@@ -61834,7 +61840,7 @@ async function initCommand(args, ctx) {
   if (existsSync54(configPath)) config = "exists";
   else {
     let text2 = templateText();
-    mkdirSync24(dirname32(configPath), { recursive: true });
+    mkdirSync24(dirname33(configPath), { recursive: true });
     const proposal = await proposeScope(ctx, repo);
     derivedPaths = proposal.allowed;
     excludedDirs = proposal.excluded;
@@ -61862,7 +61868,7 @@ ${block2}`);
     }
   }
   const excludePath = await excludeFile(ctx, repo);
-  mkdirSync24(dirname32(excludePath), { recursive: true });
+  mkdirSync24(dirname33(excludePath), { recursive: true });
   const current = existsSync54(excludePath) ? readFileSync33(excludePath, "utf8") : "";
   const have = new Set(current.split("\n").map((l) => l.trim()));
   const missing = EXCLUDE_RULES.filter((r) => !have.has(r));
@@ -62460,7 +62466,7 @@ var init_learn2 = __esm({
 
 // src/cli/commands/logs.ts
 import { closeSync as closeSync9, existsSync as existsSync56, fstatSync as fstatSync4, openSync as openSync9, readSync as readSync5, statSync as statSync17 } from "node:fs";
-import { dirname as dirname33, join as join74 } from "node:path";
+import { dirname as dirname34, join as join74 } from "node:path";
 function readTail(path, lines) {
   const size = statSync17(path).size;
   const fd = openSync9(path, "r");
@@ -62522,7 +62528,7 @@ async function logsCommand(args, ctx) {
   const asJson = args.bool("json");
   return withState(repo, async (db) => {
     const run = findRunByPrefix(db, runRef);
-    const runDir2 = dirname33(run.policyPath);
+    const runDir2 = dirname34(run.policyPath);
     const wantController = !args.bool("workers") && !args.str("worker");
     const wantWorkers = !args.bool("controller");
     const sources = [];
@@ -62755,14 +62761,14 @@ var init_release2 = __esm({
 
 // src/cli/commands/report.ts
 import { existsSync as existsSync57, readFileSync as readFileSync35 } from "node:fs";
-import { dirname as dirname34, join as join75 } from "node:path";
+import { dirname as dirname35, join as join75 } from "node:path";
 async function reportCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   if (args.bool("learning")) return withState(repo, (db) => learningReport(ctx, repo, db, args.bool("json")));
   const [id] = args.expect(1);
   return withState(repo, (db) => {
     const run = findRunByPrefix(db, id);
-    const runDir2 = dirname34(run.policyPath);
+    const runDir2 = dirname35(run.policyPath);
     const finalMd = join75(runDir2, "final.md");
     const finalJson = join75(runDir2, "final.json");
     const asJson = args.bool("json");
@@ -64194,7 +64200,7 @@ var init_timeline2 = __esm({
 });
 
 // src/cli/commands/verify.ts
-import { dirname as dirname35, isAbsolute as isAbsolute25, join as join77, relative as relative8 } from "node:path";
+import { dirname as dirname36, isAbsolute as isAbsolute25, join as join77, relative as relative8 } from "node:path";
 function exitCodeForVerdict(verdict) {
   return verdict === "PASS" ? EXIT.OK : verdict === "FAIL" ? EXIT.VERIFY_FAILED : EXIT.VERIFY_INCOMPLETE;
 }
@@ -64268,7 +64274,7 @@ function repairNextStep(run) {
 function print(ctx, repo, asJson, o, contractJson) {
   const contract = JSON.parse(contractJson);
   const statements = new Map(contract.acceptance_criteria.map((c) => [c.id, c]));
-  const runDir2 = dirname35(o.run.policyPath);
+  const runDir2 = dirname36(o.run.policyPath);
   const rel = (given) => {
     const p = isAbsolute25(given) ? given : join77(runDir2, given);
     const r = relative8(repo, p);

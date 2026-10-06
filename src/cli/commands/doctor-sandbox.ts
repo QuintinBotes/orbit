@@ -16,7 +16,7 @@
  */
 import { existsSync, mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { execCapture } from '../../core/exec.ts';
 import { OrbitError } from '../../core/errors.ts';
 import { redact } from '../../core/redact.ts';
@@ -152,8 +152,8 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
       details.push(`${check.id}: not started ("${word}" was not found; see the checks entry)`);
       continue;
     }
-    const exe = realpathSync(found);
-    if (repo && isWithin(exe, repo)) {
+    const exe = launchPath(found, repo);
+    if (!exe) {
       details.push(`${check.id}: not started ("${word}" is the repository's own code, which only a run executes)`);
       continue;
     }
@@ -188,6 +188,20 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
   );
 }
 
+/**
+ * The path to start a found executable by, or null when it is the repository's own code (it, or the file a link
+ * resolves to, is inside the repository). An installed tool starts by the name PATH gave it, not by its link's target:
+ * a multi-call binary picks the tool it runs from that name, and rustup's proxies (cargo, rustc) are links to rustup
+ * itself, where `rustup --version` succeeds although `cargo` cannot choose a toolchain. A link inside the repository
+ * starts by its target, which is outside it.
+ */
+function launchPath(found: string, repo: string | null): string | null {
+  const target = realpathSync(found);
+  if (repo && isWithin(target, repo)) return null;
+  const named = join(realpathSync(dirname(found)), basename(found));
+  return repo && isWithin(named, repo) ? target : named;
+}
+
 /** A probe, with a provider that could not even wrap the command counted as a refusal. */
 async function probeOrRefuse(input: CheckSandboxInput & { provider: IsolationProvider }, check: CheckDefinition, exe: string, args: readonly string[], cwd: string | null): Promise<Outcome> {
   try {
@@ -208,8 +222,8 @@ async function toolchainLine(input: CheckSandboxInput & { provider: IsolationPro
   const label = `toolchain ${id}`;
   const found = p.probe.executables.map((e) => which(e, input.env.PATH)).find((x): x is string => x !== null);
   if (!found) return { detail: `${label}: not started ("${p.probe.executables[0]}" was not found); ${where}`, failure: null };
-  const exe = realpathSync(found);
-  if (isWithin(exe, input.repo)) return { detail: `${label}: not started ("${basename(found)}" is the repository's own code, which only a run executes); ${where}`, failure: null };
+  const exe = launchPath(found, input.repo);
+  if (!exe) return { detail: `${label}: not started ("${basename(found)}" is the repository's own code, which only a run executes); ${where}`, failure: null };
   const check: CheckDefinition = { ...defaultCheck(`toolchain-${id}`), command: [exe, ...p.probe.args], mandatory: false };
   const out = await probeOrRefuse(input, check, exe, p.probe.args, null);
   return { detail: `${label}: ${out.detail}; ${where}`, failure: out.kind === 'refused' ? out.failure : null };
