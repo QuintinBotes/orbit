@@ -58448,12 +58448,28 @@ function reviewFix(alternatives) {
   }
   return fixes.length > 0 ? fixes.join("; ") : REVIEW_FIX_GENERIC;
 }
-var REVIEW_FIX_GENERIC;
+function allReviewPrerequisites(first, simulate) {
+  const masked = [...new Set(first.filter((a) => MASKING_REASON.test(a.reason)).map((a) => a.provider))];
+  if (masked.length === 0) return [...first];
+  const seen = new Set(first.map((a) => `${a.provider}\0${a.reason}`));
+  const out = [...first];
+  for (const assumed of [{ login: true, dataPolicy: false }, { login: true, dataPolicy: true }]) {
+    for (const a of simulate(masked, assumed)) {
+      const key2 = `${a.provider}\0${a.reason}`;
+      if (!masked.includes(a.provider) || seen.has(key2)) continue;
+      seen.add(key2);
+      out.push(a);
+    }
+  }
+  return out;
+}
+var REVIEW_FIX_GENERIC, MASKING_REASON;
 var init_review_fix = __esm({
   "src/cli/review-fix.ts"() {
     "use strict";
     init_recovery();
     REVIEW_FIX_GENERIC = "log in to the reviewer provider and set providers.<id>.data_policy_eligible: true if sending sanitized code to it is permitted";
+    MASKING_REASON = /^(no credentials for|credentials for) |data_policy_eligible is not true/;
   }
 });
 
@@ -58977,7 +58993,16 @@ async function checkProviders(p, iso2, registry) {
     if (sel.decision === "SELECT") checks.push(pass("review", "providers", `independent review: ${sel.provider}/${sel.model ?? "default"} (${sel.independent ? "independent" : "same provider"})`, sel.alternatives.map((a) => `not used: ${a.provider}: ${flat(a.reason)}`)));
     else {
       const mandatory = config.review.independent_provider_required;
-      const c = (mandatory ? fail2 : warn2)("review", "providers", `independent review would block: ${flat(sel.reason)}`, "a usable, data-policy-eligible reviewer from another provider", reviewFix(sel.alternatives), sel.alternatives.map((a) => `${a.provider}: ${flat(a.reason)}`));
+      const unmet = allReviewPrerequisites(sel.alternatives, (fixed, assumed) => {
+        const hypothetical = structuredClone(config);
+        const creds2 = { ...facts.credentials };
+        for (const id of fixed) {
+          if (assumed.dataPolicy && hypothetical.providers[id]) hypothetical.providers[id].data_policy_eligible = true;
+          if (assumed.login && facts.capabilities[id]?.available) creds2[id] = { state: "valid", method: null, detail: "assumed once logged in" };
+        }
+        return selectReviewer({ snapshot: { config: hypothetical }, capabilities: facts.capabilities, credentials: creds2, implementer: { provider: "claude", model: null }, registry }).alternatives;
+      });
+      const c = (mandatory ? fail2 : warn2)("review", "providers", `independent review would block: ${flat(sel.reason)}`, "a usable, data-policy-eligible reviewer from another provider", reviewFix(unmet), unmet.map((a) => `${a.provider}: ${flat(a.reason)}`));
       checks.push(c);
     }
   }
@@ -59468,8 +59493,181 @@ var init_gc = __esm({
   }
 });
 
+// src/cli/commands/models.ts
+import { existsSync as existsSync49 } from "node:fs";
+function configOrDefault(repo) {
+  try {
+    return { config: loadConfig(repo), loaded: true };
+  } catch {
+    return { config: defaultConfig(), loaded: false };
+  }
+}
+async function modelsListCommand(args, ctx) {
+  args.expect(0);
+  const repo = await resolveRepo(ctx, args.str("repo"));
+  const { config, loaded } = configOrDefault(repo);
+  const persisted = existsSync49(stateDbPath(repo));
+  const db = persisted ? openState(repo) : openDb(":memory:");
+  try {
+    const registry = new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
+    if (!persisted || registry.list().length === 0) registry.seed();
+    registry.adoptSharedCatalog();
+    const entries = registry.list();
+    const assessments = /* @__PURE__ */ new Map();
+    for (const surface of ["claude-cli", "codex-cli"]) assessments.set(surface, registry.assess({ surface, allowedModels: config.routing.allowed_models }));
+    const reviewKey = (surface, provider) => `${surface}|${provider}`;
+    const reviewAssessments = /* @__PURE__ */ new Map();
+    for (const e of entries) {
+      for (const s of e.surfaces) {
+        const key2 = reviewKey(s.surface, e.provider);
+        if (!reviewAssessments.has(key2)) reviewAssessments.set(key2, registry.assess({ surface: s.surface, provider: e.provider, allowedModels: [...config.routing.allowed_models, `${e.provider}:*`], structuredOutput: true }));
+      }
+    }
+    const rows = entries.flatMap(
+      (e) => (e.surfaces.length ? e.surfaces : [{ surface: "claude-cli", available: null, detail: null, checkedAt: null }]).map((s) => {
+        const a = assessments.get(s.surface);
+        const reasons = a?.excluded.find((x) => x.model.modelId === e.modelId)?.reasons ?? [];
+        const eligible = a?.eligible.some((x) => x.modelId === e.modelId) ?? false;
+        const policy = allowMatch(e, config.routing.allowed_models);
+        const onlyUnvalidated = !eligible && reasons.length > 0 && reasons.every((r) => /not yet validated$/.test(r));
+        const forReview = reviewAssessments.get(reviewKey(s.surface, e.provider));
+        const reviewEligible = (forReview?.eligible.some((x) => x.modelId === e.modelId) ?? false) && (e.provider !== "claude" || policy !== null);
+        const reviewUnvalidated = !reviewEligible && (e.provider !== "claude" || policy !== null) && (forReview?.excluded.find((x) => x.model.modelId === e.modelId)?.reasons ?? []).length > 0 && (forReview?.excluded.find((x) => x.model.modelId === e.modelId)?.reasons ?? []).every((r) => /not yet validated$/.test(r));
+        return {
+          review_eligible: reviewEligible || reviewUnvalidated,
+          review: reviewEligible ? "yes" : reviewUnvalidated ? "yes, unvalidated" : "no",
+          model: e.modelId,
+          provider: e.provider,
+          family: e.family,
+          surface: s.surface,
+          availability: s.available === true ? "available" : s.available === false ? "unavailable" : "unvalidated",
+          availability_detail: s.detail,
+          policy: policy === "explicit" ? "allowed" : policy === "wildcard" ? "wildcard" : "not allowed",
+          eligible,
+          status: eligible ? "eligible" : onlyUnvalidated ? "eligible-unvalidated" : "excluded",
+          reasons
+        };
+      })
+    );
+    if (args.bool("json")) {
+      json(ctx.io, { config_loaded: loaded, persisted, allowed_models: config.routing.allowed_models, models: rows });
+      return EXIT.OK;
+    }
+    ctx.io.out(table(rows.map((r) => [r.model, r.surface, r.availability, r.policy, r.status === "eligible" ? "yes" : r.status === "eligible-unvalidated" ? "yes, unvalidated" : `no: ${r.reasons.join("; ")}`, r.review]), ["MODEL", "SURFACE", "AVAILABILITY", "POLICY", "ELIGIBLE", "REVIEW"]));
+    if (!loaded) line(ctx.io, "\n(no valid .orbit/config.yaml: showing eligibility under the default allowed_models)");
+    if (!persisted) line(ctx.io, "(no state database yet: showing the shipped registry seed)");
+    line(ctx.io, "\nELIGIBLE is for implementation (routing.allowed_models); REVIEW is whether the model can be the independent reviewer, which also accepts any model of the reviewing provider.");
+    line(ctx.io, 'unvalidated means Orbit has not yet seen the model run on that surface; "orbit models refresh --probe" checks it live.');
+    return EXIT.OK;
+  } finally {
+    db.close();
+  }
+}
+function probeEnv(env) {
+  const out = {};
+  for (const k of ["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "CODEX_HOME", "CODEX_API_KEY", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]) if (env[k] !== void 0) out[k] = env[k];
+  return out;
+}
+async function readCodexCatalog(registry, id, command, repo, ctx, timeoutMs = 6e4) {
+  const r = await execCapture([...commandArgv(command), "debug", "models"], { env: probeEnv(ctx.env), timeoutMs, cwd: repo }).catch((err) => err);
+  if (r instanceof Error) return { note: `provider ${id}: ${flat(r.message)}` };
+  if (r.exitCode !== 0) return { note: `provider ${id}: "${command} debug models" exited ${r.exitCode ?? "by signal"}; registry availability left as it was` };
+  try {
+    const catalog = JSON.parse(r.stdout);
+    const res = registry.registerCodexCatalog(catalog, { source: "live" });
+    saveSharedCatalog(sharedCatalogPath(ctx.orbitHome), catalog, ctx.clock.now());
+    return { change: res, note: `provider ${id}: ${res.listed.length} model(s) listed${res.hidden.length ? `, ${res.hidden.length} hidden` : ""}${res.absent.length ? `, ${res.absent.length} no longer offered` : ""}${res.providerDefault ? `; default ${res.providerDefault}` : ""}` };
+  } catch (err) {
+    return { note: `${id}: "debug models" printed something that is not a model catalog (${err instanceof Error ? flat(err.message) : "unreadable"})`, malformed: true };
+  }
+}
+async function modelsRefreshCommand(args, ctx) {
+  args.expect(0);
+  const repo = await resolveRepo(ctx, args.str("repo"));
+  const { config } = configOrDefault(repo);
+  const db = openState(repo, { create: true });
+  const notes = [];
+  const changes = {};
+  try {
+    const registry = new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
+    const seeded = registry.seed();
+    changes.seed = seeded;
+    notes.push(`seeded the registry: ${seeded.inserted.length} added, ${seeded.updated.length} refreshed`);
+    for (const [id, pc] of Object.entries(config.providers)) {
+      let kind;
+      try {
+        kind = providerKind(id);
+      } catch (err) {
+        notes.push(`provider ${id}: skipped (${err instanceof Error ? err.message : String(err)})`);
+        continue;
+      }
+      if (kind === "claude") {
+        const adapter = createAdapter(id, pc, { baseEnv: { ...probeEnv(ctx.env) }, clock: ctx.clock });
+        const caps = await adapter.discoverCapabilities();
+        if (!caps.available || !caps.version) {
+          notes.push(`provider ${id}: claude CLI unavailable (${flat(caps.detail)}); registry availability left as it was`);
+          continue;
+        }
+        notes.push(`provider ${id}: claude ${caps.version}`);
+        for (const e of registry.list().filter((m) => m.provider === "claude")) {
+          const min = e.eligibility.minCliVersion;
+          if (min && compareVersions(caps.version, min) < 0) {
+            registry.markAvailability(e.modelId, "claude-cli", false, `installed claude ${caps.version} is older than ${min}, which ${e.modelId} needs`);
+            notes.push(`  ${e.modelId}: unavailable (needs claude >= ${min})`);
+          }
+        }
+        if (args.bool("probe")) {
+          const probe2 = adapter.probeCredentials;
+          if (typeof probe2 !== "function") {
+            notes.push(`  --probe: ${id} has no live probe`);
+            continue;
+          }
+          for (const e of registry.list().filter((m) => m.provider === "claude" && allowMatch(m, config.routing.allowed_models) !== null)) {
+            if (e.surfaces.some((s) => s.surface === "claude-cli" && s.available === false)) continue;
+            const st = await probe2.call(adapter, { model: e.eligibility.cliAlias ?? e.modelId, timeoutMs: 9e4 });
+            if (st.state === "valid") {
+              registry.markAvailability(e.modelId, "claude-cli", true, `live probe succeeded (${st.method ?? "credential"})`);
+              notes.push(`  ${e.modelId}: validated by a live request`);
+            } else notes.push(`  ${e.modelId}: probe inconclusive (${st.state}: ${flat(st.detail)}); not marked`);
+          }
+        }
+      } else {
+        const outcome = await readCodexCatalog(registry, id, pc.command, repo, ctx);
+        if (outcome.change !== void 0) changes[`catalog:${id}`] = outcome.change;
+        if (outcome.malformed) throw new OrbitError("MALFORMED_OUTPUT", outcome.note);
+        notes.push(outcome.note);
+      }
+    }
+    if (args.bool("json")) json(ctx.io, { notes, changes, models: registry.list().map((e) => ({ model: e.modelId, available: e.available })) });
+    else for (const n2 of notes) line(ctx.io, n2);
+    return EXIT.OK;
+  } finally {
+    db.close();
+  }
+}
+var MODELS_REFRESH_OPTIONS;
+var init_models2 = __esm({
+  "src/cli/commands/models.ts"() {
+    "use strict";
+    init_errors();
+    init_exec();
+    init_policy();
+    init_db();
+    init_adapters();
+    init_registry();
+    init_shared_catalog();
+    init_start();
+    init_context();
+    init_exit();
+    init_io();
+    MODELS_REFRESH_OPTIONS = {
+      probe: { type: "boolean", description: "also make one tiny live request per allowed Claude model to validate it (costs a few cents)" }
+    };
+  }
+});
+
 // src/cli/commands/init.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync49, mkdirSync as mkdirSync23, readFileSync as readFileSync31, writeFileSync as writeFileSync9 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync50, mkdirSync as mkdirSync23, readFileSync as readFileSync31, writeFileSync as writeFileSync9 } from "node:fs";
 import { dirname as dirname30, join as join67 } from "node:path";
 function templatePath() {
   return join67(orbitInstallDir(), "templates", "config.yaml");
@@ -59896,7 +60094,7 @@ verification:
   allow_flaky_pass: false
 `;
   const tpl = templatePath();
-  if (!existsSync49(tpl)) throw new OrbitError("NOT_FOUND", `the starter template ${tpl} is missing from this installation`);
+  if (!existsSync50(tpl)) throw new OrbitError("NOT_FOUND", `the starter template ${tpl} is missing from this installation`);
   return readFileSync31(tpl, "utf8");
 }
 async function currentBranch(ctx, repo) {
@@ -59913,6 +60111,43 @@ async function excludeFile(ctx, repo) {
   if (r.exitCode !== 0 || !r.stdout.trim()) throw new OrbitError("GIT_FAILED", `cannot locate .git/info/exclude: ${r.stderr.trim().slice(0, 200)}`);
   return r.stdout.trim();
 }
+async function seedModels(ctx, repo) {
+  const notes = [];
+  let config;
+  try {
+    config = loadConfig(repo);
+  } catch {
+    config = defaultConfig();
+  }
+  const persisted = existsSync50(stateDbPath(repo));
+  let db;
+  try {
+    db = openDb(persisted ? stateDbPath(repo) : ":memory:");
+  } catch (err) {
+    return [`model registry not seeded (${err instanceof Error ? err.message.replace(/\s+/g, " ").slice(0, 160) : "unreadable state database"}); run ${orbitHint("models refresh")}`];
+  }
+  try {
+    const registry = new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
+    const seeded = registry.seed();
+    notes.push(`model registry seeded with ${seeded.inserted.length + seeded.updated.length} shipped model(s)`);
+    for (const [id, pc] of Object.entries(config.providers)) {
+      let kind;
+      try {
+        kind = providerKind(id);
+      } catch {
+        continue;
+      }
+      if (kind !== "codex") continue;
+      const outcome = await readCodexCatalog(registry, id, pc.command, repo, ctx, 3e4);
+      notes.push(outcome.change !== void 0 ? outcome.note : `${outcome.note}; run ${orbitHint("models refresh")} once it works`);
+    }
+  } catch (err) {
+    notes.push(`model registry not seeded (${err instanceof Error ? err.message.replace(/\s+/g, " ").slice(0, 160) : "unknown error"}); run ${orbitHint("models refresh")}`);
+  } finally {
+    db.close();
+  }
+  return notes;
+}
 async function initCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
@@ -59922,7 +60157,7 @@ async function initCommand(args, ctx) {
   let protectedAdded = [];
   let excludedDirs = [];
   let baseBranch = null;
-  if (existsSync49(configPath)) config = "exists";
+  if (existsSync50(configPath)) config = "exists";
   else {
     let text2 = templateText();
     mkdirSync23(dirname30(configPath), { recursive: true });
@@ -59948,7 +60183,7 @@ async function initCommand(args, ctx) {
   }
   const excludePath = await excludeFile(ctx, repo);
   mkdirSync23(dirname30(excludePath), { recursive: true });
-  const current = existsSync49(excludePath) ? readFileSync31(excludePath, "utf8") : "";
+  const current = existsSync50(excludePath) ? readFileSync31(excludePath, "utf8") : "";
   const have = new Set(current.split("\n").map((l) => l.trim()));
   const missing = EXCLUDE_RULES.filter((r) => !have.has(r));
   if (missing.length > 0) {
@@ -59972,8 +60207,9 @@ async function initCommand(args, ctx) {
       warnings.push(`scope.allowed_paths (${globs.join(", ")}) matches no tracked file, so a worker could change nothing; set scope.allowed_paths in .orbit/config.yaml to globs that match the files a worker may change`);
     }
   }
+  const models = await seedModels(ctx, repo);
   if (args.bool("json")) {
-    json(ctx.io, { repo, config: { path: configPath, status: config, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, config_problems: problems, warnings });
+    json(ctx.io, { repo, config: { path: configPath, status: config, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === "created" ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
@@ -59987,6 +60223,7 @@ async function initCommand(args, ctx) {
     line(ctx.io, "The configuration does not validate yet:");
     for (const p of problems.slice(0, 10)) line(ctx.io, `  - ${p}`);
   } else line(ctx.io, "The configuration validates.");
+  for (const m of models) line(ctx.io, m);
   for (const w of warnings) line(ctx.io, `WARN: ${w}`);
   line(ctx.io, `Next: define your checks in .orbit/config.yaml, then run ${orbitHint("doctor")}.`);
   return EXIT.OK;
@@ -59998,6 +60235,12 @@ var init_init = __esm({
     init_errors();
     init_exec();
     init_policy();
+    init_db();
+    init_adapters();
+    init_registry();
+    init_shared_catalog();
+    init_start();
+    init_models2();
     init_controller();
     init_context();
     init_exit();
@@ -60152,14 +60395,14 @@ var init_ingest = __esm({
 });
 
 // src/cli/commands/learn.ts
-import { existsSync as existsSync50, mkdirSync as mkdirSync25, readFileSync as readFileSync32, statSync as statSync16 } from "node:fs";
+import { existsSync as existsSync51, mkdirSync as mkdirSync25, readFileSync as readFileSync32, statSync as statSync16 } from "node:fs";
 import { basename as basename13, isAbsolute as isAbsolute23, join as join68, relative as relative7, resolve as resolve18 } from "node:path";
 function knowledgePath(ctx, repo, global) {
   return global ? join68(ctx.orbitHome, "knowledge.sqlite") : join68(repo, ".orbit", "knowledge.sqlite");
 }
 function openExisting(ctx, repo, global) {
   const path = knowledgePath(ctx, repo, global);
-  if (!existsSync50(path)) throw new OrbitError("NOT_FOUND", `no ${global ? "global" : "repository"} knowledge graph at ${path}; it is created by the first run that learns something, or by "orbit learn ingest"`);
+  if (!existsSync51(path)) throw new OrbitError("NOT_FOUND", `no ${global ? "global" : "repository"} knowledge graph at ${path}; it is created by the first run that learns something, or by "orbit learn ingest"`);
   return KnowledgeStore.open(path, { clock: ctx.clock });
 }
 function lessonRow(l, support, contradict) {
@@ -60270,7 +60513,7 @@ async function readSource(ctx, repo, ref2, label) {
     return { kind: "url", ref: ref2, content: Buffer.concat(chunks).toString("utf8") };
   }
   const path = resolve18(ctx.cwd, ref2);
-  if (!existsSync50(path)) throw new OrbitError("NOT_FOUND", `${path} does not exist`);
+  if (!existsSync51(path)) throw new OrbitError("NOT_FOUND", `${path} does not exist`);
   const st = statSync16(path);
   if (!st.isFile()) throw new OrbitError("SCHEMA_INVALID", `${path} is not a regular file`);
   if (st.size > FETCH_MAX_BYTES) throw new OrbitError("SCHEMA_INVALID", `${path} is larger than ${FETCH_MAX_BYTES} bytes`);
@@ -60526,7 +60769,7 @@ var init_learn2 = __esm({
 });
 
 // src/cli/commands/logs.ts
-import { closeSync as closeSync9, existsSync as existsSync51, fstatSync as fstatSync4, openSync as openSync9, readSync as readSync5, statSync as statSync17 } from "node:fs";
+import { closeSync as closeSync9, existsSync as existsSync52, fstatSync as fstatSync4, openSync as openSync9, readSync as readSync5, statSync as statSync17 } from "node:fs";
 import { dirname as dirname31, join as join69 } from "node:path";
 function readTail(path, lines) {
   const size = statSync17(path).size;
@@ -60596,7 +60839,7 @@ async function logsCommand(args, ctx) {
     const known = /* @__PURE__ */ new Set();
     const discover = () => {
       const add = (s) => {
-        if (known.has(s.path) || !existsSync51(s.path)) return;
+        if (known.has(s.path) || !existsSync52(s.path)) return;
         known.add(s.path);
         sources.push({ ...s, offset: 0 });
       };
@@ -60675,180 +60918,6 @@ var init_logs = __esm({
       worker: { type: "string", description: "only this worker id", valueName: "id" }
     };
     TAIL_BYTES = 512 * 1024;
-  }
-});
-
-// src/cli/commands/models.ts
-import { existsSync as existsSync52 } from "node:fs";
-function configOrDefault(repo) {
-  try {
-    return { config: loadConfig(repo), loaded: true };
-  } catch {
-    return { config: defaultConfig(), loaded: false };
-  }
-}
-async function modelsListCommand(args, ctx) {
-  args.expect(0);
-  const repo = await resolveRepo(ctx, args.str("repo"));
-  const { config, loaded } = configOrDefault(repo);
-  const persisted = existsSync52(stateDbPath(repo));
-  const db = persisted ? openState(repo) : openDb(":memory:");
-  try {
-    const registry = new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
-    if (!persisted || registry.list().length === 0) registry.seed();
-    registry.adoptSharedCatalog();
-    const entries = registry.list();
-    const assessments = /* @__PURE__ */ new Map();
-    for (const surface of ["claude-cli", "codex-cli"]) assessments.set(surface, registry.assess({ surface, allowedModels: config.routing.allowed_models }));
-    const reviewKey = (surface, provider) => `${surface}|${provider}`;
-    const reviewAssessments = /* @__PURE__ */ new Map();
-    for (const e of entries) {
-      for (const s of e.surfaces) {
-        const key2 = reviewKey(s.surface, e.provider);
-        if (!reviewAssessments.has(key2)) reviewAssessments.set(key2, registry.assess({ surface: s.surface, provider: e.provider, allowedModels: [...config.routing.allowed_models, `${e.provider}:*`], structuredOutput: true }));
-      }
-    }
-    const rows = entries.flatMap(
-      (e) => (e.surfaces.length ? e.surfaces : [{ surface: "claude-cli", available: null, detail: null, checkedAt: null }]).map((s) => {
-        const a = assessments.get(s.surface);
-        const reasons = a?.excluded.find((x) => x.model.modelId === e.modelId)?.reasons ?? [];
-        const eligible = a?.eligible.some((x) => x.modelId === e.modelId) ?? false;
-        const policy = allowMatch(e, config.routing.allowed_models);
-        const onlyUnvalidated = !eligible && reasons.length > 0 && reasons.every((r) => /not yet validated$/.test(r));
-        const forReview = reviewAssessments.get(reviewKey(s.surface, e.provider));
-        const reviewEligible = (forReview?.eligible.some((x) => x.modelId === e.modelId) ?? false) && (e.provider !== "claude" || policy !== null);
-        const reviewUnvalidated = !reviewEligible && (e.provider !== "claude" || policy !== null) && (forReview?.excluded.find((x) => x.model.modelId === e.modelId)?.reasons ?? []).length > 0 && (forReview?.excluded.find((x) => x.model.modelId === e.modelId)?.reasons ?? []).every((r) => /not yet validated$/.test(r));
-        return {
-          review_eligible: reviewEligible || reviewUnvalidated,
-          review: reviewEligible ? "yes" : reviewUnvalidated ? "yes, unvalidated" : "no",
-          model: e.modelId,
-          provider: e.provider,
-          family: e.family,
-          surface: s.surface,
-          availability: s.available === true ? "available" : s.available === false ? "unavailable" : "unvalidated",
-          availability_detail: s.detail,
-          policy: policy === "explicit" ? "allowed" : policy === "wildcard" ? "wildcard" : "not allowed",
-          eligible,
-          status: eligible ? "eligible" : onlyUnvalidated ? "eligible-unvalidated" : "excluded",
-          reasons
-        };
-      })
-    );
-    if (args.bool("json")) {
-      json(ctx.io, { config_loaded: loaded, persisted, allowed_models: config.routing.allowed_models, models: rows });
-      return EXIT.OK;
-    }
-    ctx.io.out(table(rows.map((r) => [r.model, r.surface, r.availability, r.policy, r.status === "eligible" ? "yes" : r.status === "eligible-unvalidated" ? "yes, unvalidated" : `no: ${r.reasons.join("; ")}`, r.review]), ["MODEL", "SURFACE", "AVAILABILITY", "POLICY", "ELIGIBLE", "REVIEW"]));
-    if (!loaded) line(ctx.io, "\n(no valid .orbit/config.yaml: showing eligibility under the default allowed_models)");
-    if (!persisted) line(ctx.io, "(no state database yet: showing the shipped registry seed)");
-    line(ctx.io, "\nELIGIBLE is for implementation (routing.allowed_models); REVIEW is whether the model can be the independent reviewer, which also accepts any model of the reviewing provider.");
-    line(ctx.io, 'unvalidated means Orbit has not yet seen the model run on that surface; "orbit models refresh --probe" checks it live.');
-    return EXIT.OK;
-  } finally {
-    db.close();
-  }
-}
-function probeEnv(env) {
-  const out = {};
-  for (const k of ["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "CODEX_HOME", "CODEX_API_KEY", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]) if (env[k] !== void 0) out[k] = env[k];
-  return out;
-}
-async function modelsRefreshCommand(args, ctx) {
-  args.expect(0);
-  const repo = await resolveRepo(ctx, args.str("repo"));
-  const { config } = configOrDefault(repo);
-  const db = openState(repo, { create: true });
-  const notes = [];
-  const changes = {};
-  try {
-    const registry = new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
-    const seeded = registry.seed();
-    changes.seed = seeded;
-    notes.push(`seeded the registry: ${seeded.inserted.length} added, ${seeded.updated.length} refreshed`);
-    for (const [id, pc] of Object.entries(config.providers)) {
-      let kind;
-      try {
-        kind = providerKind(id);
-      } catch (err) {
-        notes.push(`provider ${id}: skipped (${err instanceof Error ? err.message : String(err)})`);
-        continue;
-      }
-      if (kind === "claude") {
-        const adapter = createAdapter(id, pc, { baseEnv: { ...probeEnv(ctx.env) }, clock: ctx.clock });
-        const caps = await adapter.discoverCapabilities();
-        if (!caps.available || !caps.version) {
-          notes.push(`provider ${id}: claude CLI unavailable (${flat(caps.detail)}); registry availability left as it was`);
-          continue;
-        }
-        notes.push(`provider ${id}: claude ${caps.version}`);
-        for (const e of registry.list().filter((m) => m.provider === "claude")) {
-          const min = e.eligibility.minCliVersion;
-          if (min && compareVersions(caps.version, min) < 0) {
-            registry.markAvailability(e.modelId, "claude-cli", false, `installed claude ${caps.version} is older than ${min}, which ${e.modelId} needs`);
-            notes.push(`  ${e.modelId}: unavailable (needs claude >= ${min})`);
-          }
-        }
-        if (args.bool("probe")) {
-          const probe2 = adapter.probeCredentials;
-          if (typeof probe2 !== "function") {
-            notes.push(`  --probe: ${id} has no live probe`);
-            continue;
-          }
-          for (const e of registry.list().filter((m) => m.provider === "claude" && allowMatch(m, config.routing.allowed_models) !== null)) {
-            if (e.surfaces.some((s) => s.surface === "claude-cli" && s.available === false)) continue;
-            const st = await probe2.call(adapter, { model: e.eligibility.cliAlias ?? e.modelId, timeoutMs: 9e4 });
-            if (st.state === "valid") {
-              registry.markAvailability(e.modelId, "claude-cli", true, `live probe succeeded (${st.method ?? "credential"})`);
-              notes.push(`  ${e.modelId}: validated by a live request`);
-            } else notes.push(`  ${e.modelId}: probe inconclusive (${st.state}: ${flat(st.detail)}); not marked`);
-          }
-        }
-      } else {
-        const r = await execCapture([...commandArgv(pc.command), "debug", "models"], { env: probeEnv(ctx.env), timeoutMs: 6e4, cwd: repo }).catch((err) => err);
-        if (r instanceof Error) {
-          notes.push(`provider ${id}: ${flat(r.message)}`);
-          continue;
-        }
-        if (r.exitCode !== 0) {
-          notes.push(`provider ${id}: "${pc.command} debug models" exited ${r.exitCode ?? "by signal"}; registry availability left as it was`);
-          continue;
-        }
-        try {
-          const catalog = JSON.parse(r.stdout);
-          const res = registry.registerCodexCatalog(catalog, { source: "live" });
-          saveSharedCatalog(sharedCatalogPath(ctx.orbitHome), catalog, ctx.clock.now());
-          changes[`catalog:${id}`] = res;
-          notes.push(`provider ${id}: ${res.listed.length} model(s) listed${res.hidden.length ? `, ${res.hidden.length} hidden` : ""}${res.absent.length ? `, ${res.absent.length} no longer offered` : ""}${res.providerDefault ? `; default ${res.providerDefault}` : ""}`);
-        } catch (err) {
-          throw new OrbitError("MALFORMED_OUTPUT", `${id}: "debug models" printed something that is not a model catalog (${err instanceof Error ? flat(err.message) : "unreadable"})`);
-        }
-      }
-    }
-    if (args.bool("json")) json(ctx.io, { notes, changes, models: registry.list().map((e) => ({ model: e.modelId, available: e.available })) });
-    else for (const n2 of notes) line(ctx.io, n2);
-    return EXIT.OK;
-  } finally {
-    db.close();
-  }
-}
-var MODELS_REFRESH_OPTIONS;
-var init_models2 = __esm({
-  "src/cli/commands/models.ts"() {
-    "use strict";
-    init_errors();
-    init_exec();
-    init_policy();
-    init_db();
-    init_adapters();
-    init_registry();
-    init_shared_catalog();
-    init_start();
-    init_context();
-    init_exit();
-    init_io();
-    MODELS_REFRESH_OPTIONS = {
-      probe: { type: "boolean", description: "also make one tiny live request per allowed Claude model to validate it (costs a few cents)" }
-    };
   }
 });
 
