@@ -1,5 +1,10 @@
 # Orbit
 
+[![CI](https://github.com/QuintinBotes/orbit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/QuintinBotes/orbit/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/QuintinBotes/orbit/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/QuintinBotes/orbit/actions/workflows/codeql.yml)
+[![Release](https://img.shields.io/github/v/release/QuintinBotes/orbit)](https://github.com/QuintinBotes/orbit/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Orbit is a Claude Code plugin and a companion command line runtime for
 autonomous, evidence-driven software engineering. You give it a goal and a
 policy you wrote beforehand. It turns the goal into a durable contract, runs
@@ -243,6 +248,12 @@ provider usage):
 scripts/demo/run-live-demo.sh --repo OWNER/NAME --dry-run   # prints the plan, runs nothing
 scripts/demo/run-live-demo.sh --repo OWNER/NAME
 ```
+
+## Contributing
+
+Contributions are welcome: read [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[code of conduct](CODE_OF_CONDUCT.md). Report security problems privately as
+described in [SECURITY.md](SECURITY.md).
 
 ## Documentation
 

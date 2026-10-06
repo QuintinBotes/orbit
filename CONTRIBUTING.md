@@ -62,6 +62,26 @@ Both need the `claude` CLI on PATH. Plugin agents silently ignore
 npm run verify
 ```
 
+Every change, including a bug fix, comes with a test that fails before the
+change and passes after it; never loosen or delete an assertion to make a test
+pass. Design decisions get a short record under `docs/decisions/`.
+
+## Pull requests
+
+`main` is protected. Changes land through a pull request that:
+
+- passes the required checks: CI on Ubuntu (Node 22 and 24) and macOS (Node 24),
+  and the publish guard;
+- keeps a linear history (pull requests are squash-merged or rebased);
+- has every review conversation resolved.
+
+Commits on `main` are signed; GitHub signs the squash merge, so your own
+commits do not need to be. Fork the repository, work on a branch, and open the
+pull request against `main`; the template lists what to check. Dependabot
+opens weekly update pull requests; a bump of the sandbox runtime in
+`plugin/package.json` also needs the browser checks re-verified
+(docs/decisions/0001).
+
 ## No private information
 
 Nothing in this repository may contain an employer or client name, a real

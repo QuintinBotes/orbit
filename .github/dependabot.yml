@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Development workspace (build and test tooling).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      dev-tooling:
+        update-types: [minor, patch]
+  # The plugin payload: its only dependency is the sandbox runtime, pinned to the version the
+  # Chromium preload is verified against (docs/decisions/0001), so a bump needs that re-verified.
+  - package-ecosystem: npm
+    directory: /plugin
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

@@ -1,0 +1,62 @@
+name: Bug report
+description: Something in Orbit does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Security problems** (a worker escaping its sandbox, credentials reaching a log, and so on) must not be filed here: use the Security tab and choose "Report a vulnerability".
+        Redact logs before pasting them: no credentials, no private code, no personal data.
+  - type: input
+    id: version
+    attributes:
+      label: Orbit version
+      description: Output of `orbit --version` (or `/orbit:doctor` in Claude Code).
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: orbit doctor
+      description: The output of `orbit doctor` (redacted). It shows the isolation provider, the worker tier and the model registry.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest steps that reproduce the problem, including the goal you gave and the mode.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Include the run's final state and reason, and the relevant part of `.orbit/runs/<run-id>/final.md` (redacted).
+    validations:
+      required: true
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed credentials, private code and personal data from everything above.
+          required: true

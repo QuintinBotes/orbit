@@ -3,6 +3,14 @@
   "private": true,
   "version": "0.1.0",
   "description": "Development workspace for Orbit, an autonomous, evidence-driven engineering loop for Claude Code. The plugin is plugin/: a single bundle plus the sandbox runtime (srt) as its only dependency.",
+  "homepage": "https://github.com/QuintinBotes/orbit#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/QuintinBotes/orbit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/QuintinBotes/orbit/issues"
+  },
   "type": "module",
   "license": "MIT",
   "engines": {

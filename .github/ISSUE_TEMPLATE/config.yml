@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/QuintinBotes/orbit/security/advisories/new
+    about: Report vulnerabilities privately; never in a public issue.
+  - name: Installation and usage questions
+    url: https://github.com/QuintinBotes/orbit/blob/main/docs/troubleshooting.md
+    about: Check the troubleshooting guide and `orbit doctor` first.
