@@ -64,6 +64,12 @@ async function install(s: Awaited<ReturnType<typeof sandboxed>>, command: string
 }
 
 const GO_MOD = { 'go.mod': 'module acme\n\ngo 1.22\n' };
+/**
+ * How the sandbox refuses a write to a path it allows only for reading, as Node reports it: Seatbelt on macOS denies
+ * the call (EPERM, "operation not permitted", or EACCES), bubblewrap on Linux mounts the path read-only (EROFS,
+ * "read-only file system"). Either way the write is refused; only the words differ.
+ */
+const WRITE_DENIED = process.platform === 'darwin' ? /\b(EPERM|EACCES)\b|operation not permitted|permission denied/i : /\bEROFS\b|read-only file system/i;
 const WRITE_CACHE = 'const fs=require("fs"),p=require("path");fs.writeFileSync(p.join(process.env.GOMODCACHE,"planted"),"x");console.log("wrote the cache")';
 
 describe.skipIf(!probe.ok)(title('the dependency cache under srt', probe.ok ? null : `srt unavailable: ${probe.detail}`), () => {
@@ -72,7 +78,7 @@ describe.skipIf(!probe.ok)(title('the dependency cache under srt', probe.ok ? nu
     const [r] = await runChecks({ ...s.ctx, candidate: s.e.candidate, checkIds: ['unit'] });
     const log = readFileSync(r!.logPath, 'utf8');
     expect(r!.status).toBe('FAILED');
-    expect(log).toMatch(/EPERM|operation not permitted/i);
+    expect(log).toMatch(WRITE_DENIED);
     expect(existsSync(join(s.cacheRoot, 'gomod', 'planted'))).toBe(false);
 
     const i = await install(s, [process.execPath, '-e', WRITE_CACHE]);
