@@ -34,7 +34,8 @@ function world(tools: string[] = ['dotnet']) {
   for (const t of tools) writeFileSync(join(bin, t), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   mkdirSync(join(repo, 'scripts'), { recursive: true });
   writeFileSync(join(repo, 'scripts', 'check.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  return { repo, home, bin, env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home } };
+  // PATH is the bin directory alone: a tool the test did not list is not found on any host, whatever the host has installed.
+  return { repo, home, bin, env: { PATH: bin, HOME: home } };
 }
 
 function config(checks: Partial<CheckDefinition>[]): OrbitConfig {
