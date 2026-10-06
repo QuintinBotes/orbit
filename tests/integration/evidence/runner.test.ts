@@ -377,6 +377,9 @@ describe('reattach after the controller dies', () => {
     const controller = startController(e, ['survivor']);
     const exited = new Promise((r) => controller.on('exit', r));
     await waitFor(() => existsSync(join(checkDirOf(e, 'survivor'), 'pid.json')) && readText(m) === 'x');
+    // The shim writes pid.json before the controller records RUNNING; on a slow runner a kill in between leaves
+    // PLANNED (a crash window the fault-injection suite covers). This scenario is the controller dying after RUNNING.
+    await waitFor(() => listCheckRuns(e.run.db, { runId: e.run.runId })[0]?.status === 'RUNNING');
     controller.kill('SIGKILL');
     await exited;
 
