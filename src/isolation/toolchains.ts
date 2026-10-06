@@ -32,6 +32,8 @@ export interface ToolchainEnvDirs {
   tmpDir: string;
   /** An existing rustup installation, or null. */
   rustupHome: string | null;
+  /** The JDK the host's JAVA_HOME names, or null. */
+  javaHome: string | null;
 }
 
 export interface ToolchainProfile {
@@ -99,6 +101,11 @@ export const TOOLCHAIN_PROFILES: Readonly<Record<ToolchainId, ToolchainProfile>>
       // The JVM ignores TMPDIR on macOS; srt sets JAVA_TOOL_OPTIONS for its own proxy agent, so this goes in the
       // launcher's variable (java 9 and later).
       JDK_JAVA_OPTIONS: `-Djava.io.tmpdir=${d.tmpDir}`,
+      // The host's JDK, read-only: a check inherits nothing else of the host's environment, and macOS's /usr/bin/java
+      // (a stub that finds the runtime through JAVA_HOME, else a JDK registered under /Library/Java) and the Maven and
+      // Gradle launchers find the JDK through it. Without it a JDK outside /Library/Java (GitHub's macOS runners keep
+      // theirs in the tool cache) is "Unable to locate a Java Runtime".
+      ...(d.javaHome ? { JAVA_HOME: d.javaHome } : {}),
     }),
   },
   python: {
@@ -193,7 +200,7 @@ export interface ToolchainLayoutInput {
   tmpDir: string;
   /** The account's real home, only to find an existing rustup installation. */
   hostHome?: string;
-  /** For RUSTUP_HOME; defaults to process.env. */
+  /** For RUSTUP_HOME and JAVA_HOME; defaults to process.env. */
   hostEnv?: Readonly<Record<string, string | undefined>>;
 }
 
@@ -218,6 +225,12 @@ function rustupHomeOf(input: ToolchainLayoutInput): string | null {
   return existsSync(dflt) ? dflt : null;
 }
 
+/** The host's JAVA_HOME when it is an absolute path; a relative one would name a directory under the check's cwd. */
+function javaHomeOf(input: ToolchainLayoutInput): string | null {
+  const configured = (input.hostEnv ?? process.env).JAVA_HOME;
+  return configured && configured.trim() !== '' && isAbsolute(configured) ? configured : null;
+}
+
 /** Where each detected toolchain's caches and scratch go for one process, and what its sandbox must allow. */
 export function toolchainLayout(input: ToolchainLayoutInput): ToolchainLayout {
   const ids = ordered(input.toolchains);
@@ -225,12 +238,13 @@ export function toolchainLayout(input: ToolchainLayoutInput): ToolchainLayout {
   const cachePath = (name: string) => (input.cacheRoot !== null ? join(input.cacheRoot, name) : join(input.scratchRoot, 'cache', name));
   const scratchPath = (name: string) => join(input.scratchRoot, name);
   const rustupHome = ids.includes('rust') ? rustupHomeOf(input) : null;
+  const javaHome = ids.includes('jvm') ? javaHomeOf(input) : null;
   const env: Record<string, string> = {};
   const directories: string[] = [];
   const caches: ToolchainLayout['caches'] = [];
   for (const id of ids) {
     const p = TOOLCHAIN_PROFILES[id];
-    Object.assign(env, p.env({ mode: input.mode, cache: cachePath, scratch: scratchPath, tmpDir: input.tmpDir, rustupHome }));
+    Object.assign(env, p.env({ mode: input.mode, cache: cachePath, scratch: scratchPath, tmpDir: input.tmpDir, rustupHome, javaHome }));
     for (const name of p.caches) caches.push({ toolchain: id, name, path: cachePath(name) });
     directories.push(...p.caches.map(cachePath), ...p.scratch.map(scratchPath));
   }

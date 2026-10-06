@@ -627,7 +627,7 @@ export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutD
     cacheRoot: ctx.toolchainCacheRoot ?? null,
     scratchRoot: dirs.toolchainsDir,
     tmpDir,
-    // A container brings its own toolchain installation; the host's rustup is neither mounted nor wanted there.
+    // A container brings its own toolchain installation; the host's rustup and JDK are neither mounted nor wanted there.
     ...(ctx.isolation.kind === 'container' ? { hostEnv: {} } : { hostEnv: process.env, ...(ctx.homeDir ? { hostHome: ctx.homeDir } : {}) }),
   });
 }

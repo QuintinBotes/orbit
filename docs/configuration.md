@@ -517,7 +517,7 @@ where the tools keep their state (ADR 0009):
 |---|---|---|
 | .NET | `NUGET_PACKAGES` | `NUGET_HTTP_CACHE_PATH`, `NUGET_PLUGINS_CACHE_PATH` |
 | Go | `GOMODCACHE` | `GOCACHE`, `GOPATH` |
-| JVM | `GRADLE_RO_DEP_CACHE`, `-Dmaven.repo.local.tail` in `MAVEN_OPTS` | `GRADLE_USER_HOME`, `-Dmaven.repo.local`, `JDK_JAVA_OPTIONS=-Djava.io.tmpdir=<TMPDIR>` |
+| JVM | `GRADLE_RO_DEP_CACHE`, `-Dmaven.repo.local.tail` in `MAVEN_OPTS` | `GRADLE_USER_HOME`, `-Dmaven.repo.local`, `JDK_JAVA_OPTIONS=-Djava.io.tmpdir=<TMPDIR>` (and `JAVA_HOME` set to your JDK, read-only) |
 | Python | `PIP_CACHE_DIR` | `PYTHONPYCACHEPREFIX`, `PYTHONUSERBASE` (and `POETRY_VIRTUALENVS_IN_PROJECT`, `PIPENV_VENV_IN_PROJECT`) |
 | Rust | `CARGO_HOME` | `CARGO_TARGET_DIR` (and `RUSTUP_HOME` set to your rustup installation, read-only) |
 

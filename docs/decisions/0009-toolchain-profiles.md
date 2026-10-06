@@ -42,6 +42,10 @@ Measured under `srt` 0.0.78 on macOS (Seatbelt), with the profile below:
   fails with "Operation not permitted" unless `java.io.tmpdir` is the check's
   `TMPDIR` (the JVM ignores `TMPDIR` on macOS). `srt` already sets
   `JAVA_TOOL_OPTIONS` for its proxy agent, so Orbit uses `JDK_JAVA_OPTIONS`.
+  On GitHub's macOS runners `java` on `PATH` is Apple's `/usr/bin/java`
+  stub and the JDK sits in the runner's tool cache, named only by
+  `JAVA_HOME`; in a check environment without it the stub printed "Unable
+  to locate a Java Runtime". With the host's `JAVA_HOME` it runs.
 - .NET 9: `dotnet build` of a console project passes with `NUGET_PACKAGES`
   read-only and empty (it has no package references).
 
@@ -101,7 +105,7 @@ Maven and Gradle were not installed where this was measured.
    |---|---|---|
    | dotnet | `NUGET_PACKAGES` | `NUGET_HTTP_CACHE_PATH`, `NUGET_PLUGINS_CACHE_PATH` (and `DOTNET_CLI_HOME`, the private home) |
    | go | `GOMODCACHE` | `GOCACHE`, `GOPATH` |
-   | jvm | Gradle `GRADLE_RO_DEP_CACHE`; Maven `-Dmaven.repo.local.tail` (in `MAVEN_OPTS`) | `GRADLE_USER_HOME`, `-Dmaven.repo.local`, `JDK_JAVA_OPTIONS=-Djava.io.tmpdir=<TMPDIR>` |
+   | jvm | Gradle `GRADLE_RO_DEP_CACHE`; Maven `-Dmaven.repo.local.tail` (in `MAVEN_OPTS`) | `GRADLE_USER_HOME`, `-Dmaven.repo.local`, `JDK_JAVA_OPTIONS=-Djava.io.tmpdir=<TMPDIR>` (and `JAVA_HOME` set to the host's, read-only, so macOS's `/usr/bin/java` stub and the Maven and Gradle launchers find the JDK; not under the container provider) |
    | python | `PIP_CACHE_DIR` | `PYTHONPYCACHEPREFIX`, `PYTHONUSERBASE` |
    | rust | `CARGO_HOME` | `CARGO_TARGET_DIR` (and `RUSTUP_HOME` pointed at the existing rustup installation, read-only, so rustup's proxies find their toolchains under a private `HOME`; not under the container provider, whose image brings its own) |
 

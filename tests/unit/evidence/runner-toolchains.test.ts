@@ -2,7 +2,7 @@
 // and the check for a detected toolchain, and that the check's own env still wins.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { candidateSubject, checkEnv, checkToolchains, INSTALL_CHECK_ID, runCheckSet, runChecks } from '../../../src/evidence/runner.ts';
 import { toolchainCacheRoot } from '../../../src/isolation/toolchains.ts';
 import { checkDef, nodeCheck } from './fixtures.ts';
@@ -10,6 +10,7 @@ import { checkDirOf, recordingIsolation, runnerEnv, type RunnerEnv } from '../..
 
 const envs: RunnerEnv[] = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const e of envs.splice(0)) await e.close();
 });
 
@@ -92,6 +93,15 @@ describe('the runner and toolchain profiles', () => {
     const sandboxed = checkToolchains(ctx('sandbox-runtime'), def, e.checkoutDir, { toolchainsDir: '/s' }, '/t');
     if (process.env.RUSTUP_HOME === undefined) expect(sandboxed.env.RUSTUP_HOME).toBe(join(home, '.rustup'));
     expect(checkToolchains(ctx('container'), def, e.checkoutDir, { toolchainsDir: '/s' }, '/t').env).not.toHaveProperty('RUSTUP_HOME');
+  });
+
+  it('points a JVM check at the host\'s JAVA_HOME in an OS sandbox, never in a container, which brings its own JDK', async () => {
+    const { e } = await goEnv([]);
+    vi.stubEnv('JAVA_HOME', '/opt/acme-jdk');
+    const def = checkDef('unit', { command: ['java', 'Acme.java'] });
+    const ctx = (kind: 'sandbox-runtime' | 'container') => ({ ...e.ctx, isolation: { ...e.ctx.isolation, kind } as typeof e.ctx.isolation });
+    expect(checkToolchains(ctx('sandbox-runtime'), def, e.checkoutDir, { toolchainsDir: '/s' }, '/t').env.JAVA_HOME).toBe('/opt/acme-jdk');
+    expect(checkToolchains(ctx('container'), def, e.checkoutDir, { toolchainsDir: '/s' }, '/t').env).not.toHaveProperty('JAVA_HOME');
   });
 
   it('sets nothing for a toolchain the check and repository do not use', async () => {

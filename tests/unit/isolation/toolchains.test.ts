@@ -136,6 +136,21 @@ describe('the toolchain profile table', () => {
     expect(toolchainLayout({ toolchains: ['rust'], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostHome: '/nonexistent', hostEnv: { RUSTUP_HOME: 'rel' } }).env).not.toHaveProperty('RUSTUP_HOME');
   });
 
+  it('points a JVM toolchain at the host\'s JDK through JAVA_HOME, in every mode, and nothing else at it', () => {
+    const jdk = '/opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21/arm64/Contents/Home';
+    for (const mode of ['install', 'check', 'worker'] as const) {
+      const l = toolchainLayout({ toolchains: ['jvm'], mode, cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostEnv: { JAVA_HOME: jdk } });
+      expect(l.env.JAVA_HOME, mode).toBe(jdk);
+      // The JDK is read where it is: never made writable, never re-allowed inside a denied directory.
+      expect(l.writable.concat(l.readOnly).some((p) => p.startsWith(jdk)), mode).toBe(false);
+    }
+    // Only for a JVM check; a relative or empty JAVA_HOME names no JDK.
+    expect(toolchainLayout({ toolchains: ['go'], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostEnv: { JAVA_HOME: jdk } }).env).not.toHaveProperty('JAVA_HOME');
+    for (const JAVA_HOME of ['jdk', ' ', '']) {
+      expect(toolchainLayout({ toolchains: ['jvm'], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostEnv: { JAVA_HOME } }).env, JSON.stringify(JAVA_HOME)).not.toHaveProperty('JAVA_HOME');
+    }
+  });
+
   it('keys the caches by repository under the Orbit home, so nothing is shared between repositories', () => {
     expect(toolchainCacheRoot('/home/acme/.orbit', 'aaaaaaaaaaaa')).toBe('/home/acme/.orbit/toolchains/aaaaaaaaaaaa');
     expect(toolchainCacheRoot('/home/acme/.orbit', 'aaaaaaaaaaaa')).not.toBe(toolchainCacheRoot('/home/acme/.orbit', 'bbbbbbbbbbbb'));

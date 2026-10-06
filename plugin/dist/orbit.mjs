@@ -35673,18 +35673,23 @@ function rustupHomeOf(input) {
   const dflt = join23(input.hostHome, ".rustup");
   return existsSync20(dflt) ? dflt : null;
 }
+function javaHomeOf(input) {
+  const configured = (input.hostEnv ?? process.env).JAVA_HOME;
+  return configured && configured.trim() !== "" && isAbsolute12(configured) ? configured : null;
+}
 function toolchainLayout(input) {
   const ids = ordered(input.toolchains);
   const shared = input.cacheRoot !== null;
   const cachePath = (name) => input.cacheRoot !== null ? join23(input.cacheRoot, name) : join23(input.scratchRoot, "cache", name);
   const scratchPath = (name) => join23(input.scratchRoot, name);
   const rustupHome = ids.includes("rust") ? rustupHomeOf(input) : null;
+  const javaHome = ids.includes("jvm") ? javaHomeOf(input) : null;
   const env = {};
   const directories = [];
   const caches = [];
   for (const id of ids) {
     const p = TOOLCHAIN_PROFILES[id];
-    Object.assign(env, p.env({ mode: input.mode, cache: cachePath, scratch: scratchPath, tmpDir: input.tmpDir, rustupHome }));
+    Object.assign(env, p.env({ mode: input.mode, cache: cachePath, scratch: scratchPath, tmpDir: input.tmpDir, rustupHome, javaHome }));
     for (const name of p.caches) caches.push({ toolchain: id, name, path: cachePath(name) });
     directories.push(...p.caches.map(cachePath), ...p.scratch.map(scratchPath));
   }
@@ -35780,7 +35785,12 @@ var init_toolchains = __esm({
           },
           // The JVM ignores TMPDIR on macOS; srt sets JAVA_TOOL_OPTIONS for its own proxy agent, so this goes in the
           // launcher's variable (java 9 and later).
-          JDK_JAVA_OPTIONS: `-Djava.io.tmpdir=${d.tmpDir}`
+          JDK_JAVA_OPTIONS: `-Djava.io.tmpdir=${d.tmpDir}`,
+          // The host's JDK, read-only: a check inherits nothing else of the host's environment, and macOS's /usr/bin/java
+          // (a stub that finds the runtime through JAVA_HOME, else a JDK registered under /Library/Java) and the Maven and
+          // Gradle launchers find the JDK through it. Without it a JDK outside /Library/Java (GitHub's macOS runners keep
+          // theirs in the tool cache) is "Unable to locate a Java Runtime".
+          ...d.javaHome ? { JAVA_HOME: d.javaHome } : {}
         })
       },
       python: {
@@ -36344,7 +36354,7 @@ function checkToolchains(ctx, def, cwd, dirs, tmpDir) {
     cacheRoot: ctx.toolchainCacheRoot ?? null,
     scratchRoot: dirs.toolchainsDir,
     tmpDir,
-    // A container brings its own toolchain installation; the host's rustup is neither mounted nor wanted there.
+    // A container brings its own toolchain installation; the host's rustup and JDK are neither mounted nor wanted there.
     ...ctx.isolation.kind === "container" ? { hostEnv: {} } : { hostEnv: process.env, ...ctx.homeDir ? { hostHome: ctx.homeDir } : {} }
   });
 }
