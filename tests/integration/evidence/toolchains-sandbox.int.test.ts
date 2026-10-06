@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSyn
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { checkSandboxCheck } from '../../../src/cli/commands/doctor-sandbox.ts';
 import { candidateSubject, INSTALL_CHECK_ID, runCheckSet, runChecks } from '../../../src/evidence/runner.ts';
 import { SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.ts';
@@ -33,6 +33,14 @@ const tools = {
 };
 const skipFor = (name: keyof typeof tools): string | null => (!probe.ok ? `srt unavailable: ${probe.detail}` : tools[name] === null ? `${name} is not installed` : null);
 const title = (what: string, skip: string | null) => (skip === null ? what : `${what} skipped: ${skip}`);
+
+/**
+ * The host's rustup installation: RUSTUP_HOME, else ~/.rustup of the real home. A cargo that is a rustup proxy (a link
+ * to rustup in ~/.cargo/bin, as on GitHub's runners) finds its toolchains only there. The runner looks for it under the
+ * run's home, which in these tests is a scratch directory, so the cargo test passes it in RUSTUP_HOME, as a host that
+ * sets the variable would. Null where there is none (Homebrew's cargo is not a proxy and needs none).
+ */
+const hostRustupHome = process.env.RUSTUP_HOME?.trim() || (existsSync(join(homedir(), '.rustup')) ? join(homedir(), '.rustup') : null);
 
 const envs: RunnerEnv[] = [];
 const dirs: string[] = [];
@@ -118,6 +126,13 @@ describe.skipIf(skipFor('go') !== null)(title('a go test check under srt', skipF
 });
 
 describe.skipIf(skipFor('cargo') !== null)(title('a cargo test check under srt', skipFor('cargo')), () => {
+  beforeEach(() => {
+    if (hostRustupHome) vi.stubEnv('RUSTUP_HOME', hostRustupHome);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('fills CARGO_HOME in the install step, then tests with it read-only and the target directory private', async () => {
     const files = {
       'Cargo.toml': '[package]\nname = "acme"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n',
@@ -126,7 +141,7 @@ describe.skipIf(skipFor('cargo') !== null)(title('a cargo test check under srt',
     };
     const s = await sandboxed([checkDef('unit', { command: [tools.cargo!, 'test', '--locked'], timeout_seconds: 300 })], files);
     const i = await install(s, [tools.cargo!, 'fetch', '--locked']);
-    expect(i.r.status).toBe('PASSED');
+    expect(i.r.status, i.log).toBe('PASSED');
     expect(readdirSync(join(s.cacheRoot, 'cargo')).length).toBeGreaterThan(0);
     const [r] = await runChecks({ ...s.ctx, candidate: s.e.candidate, checkIds: ['unit'] });
     expect(readFileSync(r!.logPath, 'utf8')).toMatch(/test tests::adds \.\.\. ok/);
