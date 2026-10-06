@@ -80,11 +80,13 @@ export async function treeOf(repoRoot: string, commit: string): Promise<string> 
  * own admin data and never from the worktree's `.git` file, which a worker
  * can rewrite to point anywhere. For a linked worktree it is
  * `<common>/worktrees/<name>`, located by the back pointer git stores there.
+ * The repository root may itself be a linked worktree (issue #3); its own
+ * git directory is then the one git reports for it, not the common one,
+ * which holds the main working tree's HEAD and index.
  */
 export async function adminDirFor(repoRoot: string, worktree: string): Promise<{ gitDir: string; worktree: string }> {
-  const common = realpathSync(
-    (await git(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim(),
-  );
+  const [commonOut, ownOut] = (await git(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir', '--git-dir'])).trim().split('\n');
+  const common = realpathSync(commonOut!.trim());
   let wt: string;
   let root: string;
   try {
@@ -93,7 +95,7 @@ export async function adminDirFor(repoRoot: string, worktree: string): Promise<{
   } catch (err) {
     throw new OrbitError('NOT_FOUND', `worktree or repository does not exist: ${worktree}`, { worktree }, { cause: err });
   }
-  if (wt === root) return { gitDir: common, worktree: wt };
+  if (wt === root) return { gitDir: realpathSync((ownOut ?? commonOut!).trim()), worktree: wt };
   const admin = join(common, 'worktrees');
   let names: string[] = [];
   try {

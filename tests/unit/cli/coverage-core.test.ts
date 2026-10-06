@@ -500,12 +500,19 @@ describe('resolveRepo', () => {
     expect(await resolveRepo(ctx, '../..')).toBe(l.repo);
   });
 
-  it('answers the primary checkout from inside a linked worktree', async () => {
+  // Issue #3: this used to answer the primary checkout. A linked worktree is its own repository root (git rev-parse
+  // --show-toplevel), so init, doctor and run work on the tree they were started in, not on the main working tree.
+  it('answers the linked worktree itself from inside it, from a subdirectory of it and from --repo', async () => {
     const l = lab();
     const wt = join(l.base, 'wt');
     execFileSync('git', ['worktree', 'add', '-q', '-b', 'side', wt], { cwd: l.repo, stdio: 'pipe', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null' } });
+    mkdirSync(join(wt, 'sub'));
     const ctx = createContext({ io: memoryIo(), cwd: wt, env: { PATH: process.env.PATH } });
-    expect(await resolveRepo(ctx)).toBe(l.repo);
+    expect(await resolveRepo(ctx)).toBe(wt);
+    expect(await resolveRepo({ ...ctx, cwd: join(wt, 'sub') })).toBe(wt);
+    expect(await resolveRepo({ ...ctx, cwd: '/' }, wt)).toBe(wt);
+    // The main working tree still answers itself.
+    expect(await resolveRepo({ ...ctx, cwd: l.repo })).toBe(l.repo);
   });
 
   it('says NOT_FOUND for a missing directory and for a directory outside any repository', async () => {

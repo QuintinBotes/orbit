@@ -69,7 +69,9 @@ describe('orbit init', () => {
     expect(git(l.repo, 'status', '--porcelain')).toContain('.orbit/config.yaml');
   });
 
-  it('works from a subdirectory and from a linked worktree (state lives with the primary checkout)', async () => {
+  // Issue #3: a linked worktree used to resolve to the primary checkout, so init there reported the main tree's config
+  // as "exists". The worktree is its own repository root now; only the exclude file is shared through the common dir.
+  it('works from a subdirectory, and from a linked worktree writes the worktree\'s own config', async () => {
     const l = lab();
     mkdirSync(join(l.repo, 'sub'));
     const sub = await l.cli(['init'], { cwd: join(l.repo, 'sub') });
@@ -79,7 +81,11 @@ describe('orbit init', () => {
     git(l.repo, 'worktree', 'add', '-q', '--detach', wt);
     const inWt = await l.cli(['init', '--json'], { cwd: wt });
     expect(inWt.code, inWt.err).toBe(0);
-    expect((JSON.parse(inWt.out) as { config: { status: string; path: string } }).config).toEqual({ status: 'exists', path: join(l.repo, '.orbit', 'config.yaml') });
+    const j = JSON.parse(inWt.out) as { config: { status: string; path: string }; exclude: { path: string; added: string[] } };
+    expect(j.config).toMatchObject({ status: 'created', path: join(wt, '.orbit', 'config.yaml') });
+    expect(existsSync(join(wt, '.orbit', 'config.yaml'))).toBe(true);
+    // The exclude rules live in the shared .git/info/exclude, which the first init already filled.
+    expect(j.exclude).toEqual({ path: join(l.repo, '.git', 'info', 'exclude'), added: [] });
   });
 
   it('refuses outside a git repository', async () => {
