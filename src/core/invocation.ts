@@ -1,6 +1,6 @@
 /**
  * How a message names an Orbit command so the reader can act on it (docs/decisions/0006-plugin-packaging.md).
- * A plugin user has no `orbit` in their terminal: the plugin's bin/orbit is on the PATH of Claude Code's Bash tool
+ * A plugin user has no `orbit` in their terminal: the plugin's bin/orbit is on the PATH of Claude Code's Bash tool (after /reload-plugins or in a new session following the install)
  * only, and the common steps are skills. bin/orbit marks that by setting ORBIT_PLUGIN_ROOT, since Claude Code does not
  * export CLAUDE_PLUGIN_ROOT to Bash tool commands.
  *
