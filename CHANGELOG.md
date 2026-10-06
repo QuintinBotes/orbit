@@ -13,6 +13,8 @@
 - `orbit doctor` (`checks.sandbox`) starts each check's executable in its sandbox with a harmless argument and reports a sandbox denial before any run (#10).
 - Linux: `dotnet build` checks run under `srt` with the .NET 9 and 10 SDKs. Checks set `EnableSourceControlManagerQueries=false`, so the build no longer reads git metadata that `srt` makes unopenable on Linux (an absent `.gitmodules`); and a write the sandbox refuses outside the checkout is recognised in its Linux form (EROFS, "Read-only file system") as well as macOS's EPERM, so `orbit doctor` and the baseline report it there too.
 - doctor lists every unmet reviewer prerequisite at once (login, data policy attestation, no qualified model), each with its own fix, and orbit init seeds the model registry and reads the Codex catalog so a fresh setup does not hit the second failure (#7).
+- Review falls back to a disclosed Claude review by default when no independent reviewer is usable: new `review.providers` (preference order, supported ids only) and `review.when_unavailable: claude | ask | block`, with the legacy keys mapped onto it; reports, decisions and `orbit doctor` say which reviewer was used and, for a same-provider review, why it is not independent (#8, ADR 0007).
+- `review.when_unavailable: ask` raises a material question and runs the same-provider review only after a person's yes (`orbit decide`), recorded as a decision (#6, ADR 0007).
 
 ## 0.1.0 (2026-10-06)
 

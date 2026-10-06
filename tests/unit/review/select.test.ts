@@ -3,6 +3,7 @@ import { isOrbitError } from '../../../src/core/errors.ts';
 import { assertReviewerSelected, selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../../src/review/select.ts';
 import { FABLE, HAIKU, OPUS, SONNET, setup } from '../routing/fixtures.ts';
 import { cap, cred, snapshotOf } from './fixtures.ts';
+import type { OrbitConfig } from '../../../src/policy/types.ts';
 
 const IMPL = { provider: 'claude', model: SONNET };
 
@@ -11,6 +12,14 @@ function ready() {
     capabilities: { claude: cap('claude'), codex: cap('codex') },
     credentials: { claude: cred('valid'), codex: cred('valid') },
   };
+}
+
+/** review.when_unavailable: block, which was the default before decision 0007 (#6, #8) made it claude. */
+function blocking(patch: (c: OrbitConfig) => void = () => {}) {
+  return snapshotOf((c) => {
+    c.review.when_unavailable = 'block';
+    patch(c);
+  });
 }
 
 function blocked(sel: ReviewerSelection) {
@@ -58,7 +67,7 @@ describe('selectReviewer: a mandatory independent reviewer is unusable (spec sce
   it('blocks on expired credentials and does not substitute the implementer provider', () => {
     const r = ready();
     r.credentials.codex = cred('expired', 'token expired yesterday');
-    const sel = blocked(selectReviewer({ snapshot: snapshotOf(), ...r, implementer: IMPL }));
+    const sel = blocked(selectReviewer({ snapshot: blocking(), ...r, implementer: IMPL }));
     expect(sel.code).toBe('AUTH_EXPIRED');
     expect(sel.reason).toContain('credentials for "codex" are expired (token expired yesterday)');
     expect(sel.reason).toContain('independent review is required');
@@ -73,7 +82,7 @@ describe('selectReviewer: a mandatory independent reviewer is unusable (spec sce
   ] as const)('credential state %s maps to %s', (state, code, text) => {
     const r = ready();
     r.credentials.codex = cred(state);
-    const sel = blocked(selectReviewer({ snapshot: snapshotOf(), ...r, implementer: IMPL }));
+    const sel = blocked(selectReviewer({ snapshot: blocking(), ...r, implementer: IMPL }));
     expect(sel.code).toBe(code);
     expect(sel.reason).toMatch(text);
   });
@@ -81,24 +90,24 @@ describe('selectReviewer: a mandatory independent reviewer is unusable (spec sce
   it('blocks when the adapter reports the provider unavailable', () => {
     const r = ready();
     r.capabilities.codex = cap('codex', { available: false, detail: 'codex binary not found' });
-    const sel = blocked(selectReviewer({ snapshot: snapshotOf(), ...r, implementer: IMPL }));
+    const sel = blocked(selectReviewer({ snapshot: blocking(), ...r, implementer: IMPL }));
     expect(sel.code).toBe('PROVIDER_UNAVAILABLE');
     expect(sel.reason).toContain('codex binary not found');
   });
 
   it('blocks when no capabilities were reported for the provider at all', () => {
-    const sel = blocked(selectReviewer({ snapshot: snapshotOf(), capabilities: { claude: cap('claude') }, credentials: { claude: cred('valid') }, implementer: IMPL }));
+    const sel = blocked(selectReviewer({ snapshot: blocking(), capabilities: { claude: cap('claude') }, credentials: { claude: cred('valid') }, implementer: IMPL }));
     expect(sel.reason).toContain('no adapter capabilities were reported for "codex"');
   });
 
   it('blocks when the provider cannot return structured output', () => {
     const r = ready();
     r.capabilities.codex = cap('codex', { structuredOutput: false });
-    expect(blocked(selectReviewer({ snapshot: snapshotOf(), ...r, implementer: IMPL })).reason).toContain('schema-constrained output');
+    expect(blocked(selectReviewer({ snapshot: blocking(), ...r, implementer: IMPL })).reason).toContain('schema-constrained output');
   });
 
   it('blocks when the provider is not attested for data handling', () => {
-    const snap = snapshotOf((c) => {
+    const snap = blocking((c) => {
       c.providers.codex!.data_policy_eligible = false;
     });
     const sel = blocked(selectReviewer({ snapshot: snap, ...ready(), implementer: IMPL }));
@@ -107,7 +116,7 @@ describe('selectReviewer: a mandatory independent reviewer is unusable (spec sce
   });
 
   it('blocks when the only configured provider is the implementer itself', () => {
-    const snap = snapshotOf((c) => {
+    const snap = blocking((c) => {
       delete c.providers.codex;
       c.review.preferred_provider = 'claude';
     });
@@ -118,7 +127,7 @@ describe('selectReviewer: a mandatory independent reviewer is unusable (spec sce
   it('blocks with a record that serializes for the decision log', () => {
     const r = ready();
     r.credentials.codex = cred('expired');
-    const sel = selectReviewer({ snapshot: snapshotOf(), ...r, implementer: IMPL });
+    const sel = selectReviewer({ snapshot: blocking(), ...r, implementer: IMPL });
     const rec = selectionDecisionRecord(sel);
     expect(rec.kind).toBe('review.select');
     expect(rec.summary).toMatch(/^review blocked: independent review is required/);
@@ -129,7 +138,7 @@ describe('selectReviewer: a mandatory independent reviewer is unusable (spec sce
     const r = ready();
     r.credentials.codex = cred('missing');
     try {
-      assertReviewerSelected(selectReviewer({ snapshot: snapshotOf(), ...r, implementer: IMPL }));
+      assertReviewerSelected(selectReviewer({ snapshot: blocking(), ...r, implementer: IMPL }));
       expect.unreachable();
     } catch (err) {
       expect(isOrbitError(err, 'AUTH_MISSING')).toBe(true);
@@ -143,6 +152,8 @@ describe('selectReviewer: other independent providers', () => {
     return {
       snapshot: snapshotOf((c) => {
         c.providers.gemini = { command: 'gemini', data_policy_eligible: true, model: 'gem-1', reasoning_effort: null, extra_args: [] };
+        // Decision 0007: only providers listed in review.providers are asked, in that order.
+        c.review.providers = ['codex', 'gemini'];
       }),
       capabilities: { ...r.capabilities, gemini: cap('gemini') },
       credentials: { ...r.credentials, gemini: cred('valid') },
@@ -171,7 +182,7 @@ describe('selectReviewer: same-provider review', () => {
 
   it('is not allowed while an independent reviewer is required and fallback is off', () => {
     const { registry } = setup();
-    expect(blocked(selectReviewer({ snapshot: snapshotOf(), ...expired(), implementer: IMPL, registry })).code).toBe('AUTH_EXPIRED');
+    expect(blocked(selectReviewer({ snapshot: blocking(), ...expired(), implementer: IMPL, registry })).code).toBe('AUTH_EXPIRED');
   });
 
   it('uses a different tier at or above the floor when policy allows the fallback', () => {
@@ -192,14 +203,16 @@ describe('selectReviewer: same-provider review', () => {
     expect(selectReviewer({ snapshot: snap, ...expired(), implementer: IMPL, registry })).toMatchObject({ decision: 'SELECT', provider: 'claude', independent: false });
   });
 
-  it('never picks the implementer tier: an opus implementer cannot be reviewed by opus', () => {
+  // Decision 0007: the fallback is a separate reviewer session at the quality floor. A different tier is preferred,
+  // but an opus implementer is no longer left without a reviewer when opus is the only tier at the floor.
+  it('prefers a different tier, and reviews an opus implementer with opus in a separate session when no other tier is allowed', () => {
     const { registry } = setup();
     const snap = snapshotOf((c) => {
       c.review.fallback_same_provider_allowed = true;
     });
-    const sel = blocked(selectReviewer({ snapshot: snap, ...expired(), implementer: { provider: 'claude', model: OPUS }, registry }));
-    expect(sel.reason).toMatch(/no allowed claude model is at or above the opus-class floor and in a different tier/);
-    expect(sel.alternatives.some((a) => a.model === OPUS && /same tier/.test(a.reason))).toBe(true);
+    const sel = selectReviewer({ snapshot: snap, ...expired(), implementer: { provider: 'claude', model: OPUS }, registry });
+    expect(sel).toMatchObject({ decision: 'SELECT', provider: 'claude', model: OPUS, independent: false });
+    if (sel.decision === 'SELECT') expect(sel.reason).toMatch(/same tier as the implementer's model; it reviews in a separate session/);
   });
 
   it('may use fable only when policy lists it explicitly', () => {
@@ -221,12 +234,15 @@ describe('selectReviewer: same-provider review', () => {
     expect(sel.alternatives.some((a) => a.model === SONNET && /below the review quality floor/.test(a.reason))).toBe(true);
   });
 
-  it('blocks when the implementer model tier is unknown, since a difference cannot be shown', () => {
+  // Decision 0007: before the implementer's model is known (preflight), the best model at the floor is named.
+  it('names a model at the floor when the implementer model tier is unknown', () => {
     const { registry } = setup();
     const snap = snapshotOf((c) => {
       c.review.fallback_same_provider_allowed = true;
     });
-    expect(blocked(selectReviewer({ snapshot: snap, ...expired(), implementer: { provider: 'claude', model: null }, registry })).reason).toContain('tier is unknown');
+    const sel = selectReviewer({ snapshot: snap, ...expired(), implementer: { provider: 'claude', model: null }, registry });
+    expect(sel).toMatchObject({ decision: 'SELECT', provider: 'claude', model: OPUS, independent: false });
+    if (sel.decision === 'SELECT') expect(sel.reason).toContain("the implementer's model is not known yet");
   });
 
   it('blocks without a registry', () => {

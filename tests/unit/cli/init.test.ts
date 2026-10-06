@@ -101,4 +101,17 @@ describe('orbit init', () => {
     const j = JSON.parse(r.out) as { config_problems: string[] };
     expect(Array.isArray(j.config_problems)).toBe(true);
   });
+
+  // Decision 0007 (#6, #8): init writes the claude fallback and says how to choose ask or block.
+  it('writes the review policy default and says how to choose ask or block', async () => {
+    const l = lab();
+    const r = await l.cli(['init']);
+    expect(r.code, r.err).toBe(0);
+    const cfg = readFileSync(join(l.repo, '.orbit', 'config.yaml'), 'utf8');
+    expect(cfg).toMatch(/^ {2}providers: \[codex\]$/m);
+    expect(cfg).toMatch(/^ {2}when_unavailable: claude$/m);
+    expect(r.out).toMatch(/review: Codex reviews independently when it is usable.*Claude reviews in a separate session and every report says the review was not independent.*review\.when_unavailable: claude.*Set review\.when_unavailable to ask to be asked first, or to block to require an independent reviewer/);
+    const again = JSON.parse((await l.cli(['init', '--json'])).out) as { review_policy: string | null };
+    expect(again.review_policy).toBeNull();
+  });
 });

@@ -21,7 +21,8 @@ function secondRepo(b: Sandbox): string {
   git(repo, 'init', '-q', '-b', 'main');
   writeFileSync(join(repo, 'README.md'), '# acme b\n');
   // No pinned reviewer model: which one is used depends on the catalog, which is what this is about.
-  writeFileSync(join(repo, '.orbit', 'config.yaml'), TEST_CONFIG.replace(', model: gpt-6-astra', ''));
+  // review.when_unavailable: block (the default before decision 0007, #6 and #8), so admission needs the Codex reviewer.
+  writeFileSync(join(repo, '.orbit', 'config.yaml'), TEST_CONFIG.replace(', model: gpt-6-astra', '').replace('knowledge:', 'review:\n  when_unavailable: block\nknowledge:'));
   git(repo, 'add', 'README.md');
   git(repo, 'commit', '-q', '-m', 'base');
   return repo;

@@ -224,13 +224,15 @@ describe('checkEnvironment', () => {
     expect(env.capabilities.claude).toMatchObject({ available: false, detail: 'cli missing' });
   });
 
-  it('without a mandatory independent review no reviewer is selected, and a preferred provider that is the implementer is not required twice', async () => {
+  // Decision 0007: who would review is judged in every mode, so the gate and the report can say it; only the
+  // providers a run cannot do without have their credentials judged.
+  it('without a mandatory independent review the reviewer is still judged, and a preferred provider that is the implementer is not required twice', async () => {
     setup((c) => {
       c.review.independent_provider_required = false;
       c.review.fallback_same_provider_allowed = true;
     });
     const env = await checkEnvironment(lab.ctx());
-    expect(env.reviewer).toBeNull();
+    expect(env.reviewer).not.toBeNull();
     // Every provider is probed, but only the implementer's credentials are judged.
     expect(env.gate.evidence.filter((e) => e.startsWith('credentials ')).map((e) => e.split(' ')[1]!.replace(':', ''))).toEqual(['claude']);
     lab.cleanup();
@@ -240,7 +242,8 @@ describe('checkEnvironment', () => {
   });
 
   it('an unusable independent reviewer is an environment problem with its reason', async () => {
-    setup(undefined, { claude: claude(), codex: { ...codex(), validateCredentials: async () => ({ state: 'expired', method: 'oauth', detail: 'token expired' }) } as ProviderAdapter });
+    // review.when_unavailable: block, the default before decision 0007 (#6, #8).
+    setup((c) => void (c.review.when_unavailable = 'block'), { claude: claude(), codex: { ...codex(), validateCredentials: async () => ({ state: 'expired', method: 'oauth', detail: 'token expired' }) } as ProviderAdapter });
     const env = await checkEnvironment(lab.ctx());
     expect(env.reviewer?.decision).toBe('BLOCK');
     expect(env.gate.passed).toBe(false);

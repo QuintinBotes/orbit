@@ -170,12 +170,17 @@ agents:
   allow_managed_plugins: false
 
 review:
-  # Review by a provider other than the one that wrote the change.
-  independent_provider_required: true
-  preferred_provider: codex
-  # Must stay false while independent_provider_required is true: an
-  # independent review cannot fall back to the same provider.
-  fallback_same_provider_allowed: false
+  # Independent reviewers (a provider other than the one that wrote the
+  # change), in preference order. The first that is installed, logged in,
+  # data_policy_eligible and has a qualified model reviews. Supported: codex.
+  providers: [codex]
+  # When none of them is usable:
+  #   claude  Claude reviews in a separate session at the safety-review
+  #           quality floor; every report says the review was not
+  #           independent and why.
+  #   ask     the run asks a person first and continues only on a yes.
+  #   block   the run blocks until an independent reviewer is usable.
+  when_unavailable: claude
   block_unresolved_high_impact_findings: true
 
 # Secret-scan and SAST findings (static security gate). Findings at a listed

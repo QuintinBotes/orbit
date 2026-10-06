@@ -30,6 +30,8 @@ import { progressSince, type NonProgressDecision } from '../../inquisition/repai
 import { extensionDecisionRecord } from '../../scheduling/budget.ts';
 import { attemptHistory } from './diagnosing.ts';
 import { selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../review/select.ts';
+import { preferredReviewProvider } from '../../policy/review.ts';
+import { sameProviderApproval } from './review-approval.ts';
 import type { CredentialStatus } from '../../adapters/types.ts';
 import { listReviews, loadResolverState, persistResolution, recordReview } from '../../review/store.ts';
 import type { IngestedReview } from '../../review/types.ts';
@@ -70,10 +72,28 @@ export async function reviewingStep(ctx: RunContext): Promise<StepResult> {
   const sel = await reviewerSelection(ctx, cand);
   if (sel.decision === 'BLOCK') {
     if (sel.code === 'AUTH_EXPIRED' || sel.code === 'AUTH_MISSING') {
-      const provider = sel.alternatives.find((a) => /credentials/.test(a.reason))?.provider ?? ctx.snapshot.config.review.preferred_provider;
+      const provider = sel.alternatives.find((a) => /credentials/.test(a.reason))?.provider ?? preferredReviewProvider(ctx.snapshot.config.review) ?? IMPLEMENTER_PROVIDER;
       return blockOnAuth(ctx, provider, sel.code === 'AUTH_MISSING' ? 'missing' : 'expired', sel.reason);
     }
     return finishRun(ctx, 'BLOCKED', `independent review unavailable: ${sel.reason}`, { outcome: { reviewer: sel } });
+  }
+  // review.when_unavailable: ask (decision 0007): the same-provider review runs only on a person's yes.
+  if (sel.needsApproval === true) {
+    const approval = sameProviderApproval(ctx, sel);
+    // The reason names no policy setting on purpose: a person's answer clears this block, so resuming must not be refused as a frozen-policy block.
+    if (approval.state === 'pending') {
+      return finishRun(
+        ctx,
+        'BLOCKED',
+        `no independent reviewer is usable; review.when_unavailable is ask, so question ${approval.questionId} asks whether ${sel.provider} may review this run's candidate in a separate session (not independently). Answer with orbit decide ${ctx.run.id} ${approval.questionId} yes (or no), then orbit resume ${ctx.run.id}`,
+        { outcome: { reviewer: sel, questions: [approval.questionId] } },
+      );
+    }
+    if (approval.state === 'declined') {
+      return finishRun(ctx, 'BLOCKED', `${approval.by ?? 'nobody'} declined a same-provider review (question ${approval.questionId}) and no independent reviewer is usable; make one usable (orbit doctor shows why it is not), then start a new run`, {
+        outcome: { reviewer: sel, questions: [approval.questionId] },
+      });
+    }
   }
 
   if (focuses.length > 1) return parallelReview(ctx, cand, sel, focuses);
@@ -712,7 +732,8 @@ async function reviewerSelection(ctx: RunContext, cand: CandidateRecord): Promis
   if (prior && (prior.data as ReviewerSelection).decision === 'SELECT') return prior.data as ReviewerSelection;
   // Credentials can expire during a run: the environment is checked again before review.
   const env = await checkEnvironment(ctx);
-  const sel: ReviewerSelection = env.reviewer ?? fallbackSelection(ctx, env);
+  // Judged again with the implementer's actual model, so a same-provider review can prefer a different tier.
+  const sel: ReviewerSelection = fallbackSelection(ctx, env);
   const rec = selectionDecisionRecord(sel);
   if (sel.decision === 'SELECT') decide(ctx, { id, kind: rec.kind, summary: rec.summary, data: rec.data });
   else decide(ctx, { kind: rec.kind, summary: rec.summary, data: rec.data });

@@ -2,6 +2,7 @@
 import { OrbitError } from '../../core/errors.ts';
 import { redactValue } from '../../core/redact.ts';
 import { verifySnapshot } from '../../policy/snapshot.ts';
+import { describeReviewPolicy } from '../../policy/review.ts';
 import { listAmendments } from '../../inquisition/index.ts';
 import type { Args } from '../args.ts';
 import { findRunByPrefix, resolveRepo, withState, type CliContext } from '../context.ts';
@@ -35,7 +36,7 @@ export async function policyShowCommand(args: Args, ctx: CliContext): Promise<nu
     line(ctx.io, `isolation:   ${c.isolation.provider}${c.isolation.allow_unisolated ? ' (unisolated runs allowed)' : ''}`);
     line(ctx.io, `models:      ${c.routing.allowed_models.join(', ') || 'none'}`);
     line(ctx.io, `providers:   ${Object.entries(c.providers).map(([k, v]) => `${k}${v.data_policy_eligible ? '' : ' (not data-policy eligible)'}`).join(', ')}`);
-    line(ctx.io, `review:      independent provider ${c.review.independent_provider_required ? 'required' : 'not required'}, preferred ${c.review.preferred_provider}`);
+    line(ctx.io, `review:      ${describeReviewPolicy(c.review)}`);
     line(ctx.io, `delivery:    ${c.delivery.provider}, pull request ${c.delivery.pull_request}, up to ${c.delivery.max_ci_repair_cycles} CI repair cycle(s)`);
     line(ctx.io, `checks:      ${Object.values(c.checks).map((k) => `${k.id}${k.mandatory ? '' : ' (optional)'}`).join(', ') || 'none defined'}`);
     const h = c.scheduler.hard_limits;

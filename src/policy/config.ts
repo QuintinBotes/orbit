@@ -36,6 +36,7 @@ import { globProblem } from './globs.ts';
 import { hostEntryCovered, hostEntryProblem } from './hosts.ts';
 import { orbitHint } from '../core/invocation.ts';
 import { closest } from '../core/near-miss.ts';
+import { DEFAULT_REVIEW_FALLBACK, isSupportedReviewProvider, legacyReviewFallback, SUPPORTED_REVIEW_PROVIDERS } from './review.ts';
 
 /** Derived from the contract type so policy/ never imports controller/ (architecture dependency rule). */
 export type RunMode = OrbitConfig['mode'];
@@ -171,9 +172,10 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
       allow_managed_plugins: false,
     },
     review: {
-      independent_provider_required: true,
-      preferred_provider: 'codex',
-      fallback_same_provider_allowed: false,
+      // Decision 0007: Codex reviews independently when it is usable; otherwise Claude reviews in a separate
+      // session and every report says the review was not independent and why.
+      providers: ['codex'],
+      when_unavailable: DEFAULT_REVIEW_FALLBACK,
       block_unresolved_high_impact_findings: true,
       security: { block_severities: ['critical', 'high'], exceptions: [] },
     },
@@ -444,6 +446,7 @@ function mergeWithDefaults(raw: Record<string, unknown>, mode: RunMode, problems
   const repo = merged.repository;
   merged.release = normalizeRelease(release, isPlainObject(repo) && typeof repo.base_branch === 'string' ? repo.base_branch : 'main', problems);
   merged.providers = normalizeProviders(providers, base.providers as Record<string, ProviderConfig>);
+  normalizeReview(raw.review, merged, problems);
   normalizeContainer(merged);
   fillNullDefaults(merged, ['dependencies', 'audit', 'exceptions'], ['expires']);
   fillNullDefaults(merged, ['static_security', 'exceptions'], ['path_glob', 'expires']);
@@ -524,6 +527,37 @@ function normalizeProviders(raw: unknown, defaults: Record<string, ProviderConfi
     out[id] = isPlainObject(def) ? { ...(defaults[id] ?? defaultProvider(id, false)), ...def } : def;
   }
   return out;
+}
+
+/**
+ * Decision 0007: the legacy review keys map onto the new ones. independent_provider_required and
+ * fallback_same_provider_allowed become review.when_unavailable, and a when_unavailable written next to them that
+ * says otherwise is refused; a legacy preferred_provider naming a supported independent provider becomes the
+ * preference list. The legacy keys stay in the resolved config, so the file still reads back as written.
+ */
+function normalizeReview(raw: unknown, merged: Record<string, unknown>, problems: string[]): void {
+  const review = merged.review;
+  if (!isPlainObject(raw) || !isPlainObject(review)) return;
+  const required = raw.independent_provider_required;
+  const fallback = raw.fallback_same_provider_allowed;
+  const typed = (v: unknown): v is boolean | undefined => v === undefined || typeof v === 'boolean';
+  // The pair that contradicts itself is reported by the semantic rules; there is nothing sound to map it to.
+  if (typed(required) && typed(fallback) && !(required === true && fallback === true)) {
+    const mapped = legacyReviewFallback({ independent_provider_required: required, fallback_same_provider_allowed: fallback });
+    if (mapped !== null && raw.when_unavailable === undefined) review.when_unavailable = mapped;
+    else if (mapped !== null && raw.when_unavailable !== mapped) {
+      const said = [required === undefined ? null : `independent_provider_required: ${required}`, fallback === undefined ? null : `fallback_same_provider_allowed: ${fallback}`].filter((s) => s !== null).join(', ');
+      problems.push(`review.when_unavailable: ${JSON.stringify(raw.when_unavailable)} contradicts the legacy setting ${said}, which means "${mapped}"; remove the legacy keys (review.when_unavailable replaces them) or make them agree`);
+    }
+  }
+  const preferred = raw.preferred_provider;
+  if (typeof preferred === 'string') {
+    if (raw.providers === undefined) {
+      if (isSupportedReviewProvider(preferred)) review.providers = [preferred];
+    } else if (Array.isArray(raw.providers) && raw.providers[0] !== preferred) {
+      problems.push(`review.preferred_provider: "${preferred}" contradicts review.providers (which starts with ${JSON.stringify(raw.providers[0] ?? null)}); remove preferred_provider, which review.providers replaces`);
+    }
+  }
 }
 
 function normalizeContainer(merged: Record<string, unknown>): void {
@@ -719,11 +753,23 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
     }
   },
   function reviewIsConsistent(c, problems) {
-    if (c.review.independent_provider_required && c.review.fallback_same_provider_allowed) {
+    const r = c.review;
+    if (r.independent_provider_required === true && r.fallback_same_provider_allowed === true) {
       problems.push('review: independent_provider_required and fallback_same_provider_allowed contradict each other; an independent review cannot fall back to the same provider');
     }
-    if (!Object.hasOwn(c.providers, c.review.preferred_provider)) {
-      problems.push(`review.preferred_provider: "${c.review.preferred_provider}" is not defined under providers`);
+    if (r.preferred_provider !== undefined && !Object.hasOwn(c.providers, r.preferred_provider)) {
+      problems.push(`review.preferred_provider: "${r.preferred_provider}" is not defined under providers`);
+    }
+    const list = r.providers ?? [];
+    list.forEach((id, i) => {
+      if (!isSupportedReviewProvider(id)) {
+        problems.push(`review.providers[${i}]: "${id}" is not a supported independent review provider; supported: ${SUPPORTED_REVIEW_PROVIDERS.join(', ')} (another provider needs an Orbit adapter before it can review)`);
+      } else if (!Object.hasOwn(c.providers, id)) {
+        problems.push(`review.providers[${i}]: "${id}" is not defined under providers`);
+      }
+    });
+    if (list.length === 0 && r.when_unavailable === 'block') {
+      problems.push('review.providers: is empty and review.when_unavailable is block, so every run would block at review; list an independent provider, or set review.when_unavailable to claude or ask');
     }
   },
   function providerTiers(c, problems) {

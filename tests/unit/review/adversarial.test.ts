@@ -29,7 +29,8 @@ describe('adversarial: the review gate cannot show independence it does not know
   it('fails when independent review is required and the implementer provider is not supplied', () => {
     const { db, clock } = dbFixture();
     recordReview(db, mk(), clock);
-    const res = reviewGate(db, { runId: 'run-1', treeHash: TREE_A, snapshot: snapshotOf(), now: clock.now() });
+    // review.when_unavailable: block, the default before decision 0007 (#6, #8) made it claude.
+    const res = reviewGate(db, { runId: 'run-1', treeHash: TREE_A, snapshot: snapshotOf((c) => void (c.review.when_unavailable = 'block')), now: clock.now() });
     expect(res.ok).toBe(false);
     expect(res.reasons.join(' ')).toMatch(/implementer provider was not supplied/);
   });

@@ -16,7 +16,7 @@ import { adminDirFor, git, resolveCommit, treeOf } from '../../evidence/git.ts';
 import { BASELINE_FILE, runBaseline, type BaselineReport } from '../../evidence/baseline.ts';
 import { raiseBaselineExceptionQuestions } from '../../inquisition/baseline-exception.ts';
 import { validateCredentials, type BlockedCredentialState, type CredentialCheck } from '../../recovery/credentials.ts';
-import { selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../review/select.ts';
+import { mandatoryReviewProvider, selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../review/select.ts';
 import type { ProviderCapabilities, CredentialStatus } from '../../adapters/types.ts';
 import { homeOf, runWorktreeRoot, type RunContext } from '../context.ts';
 import { baselineGate, environmentGate, intakeGate, type GateResult } from '../gates.ts';
@@ -265,19 +265,19 @@ export async function checkEnvironment(ctx: RunContext): Promise<EnvironmentChec
     }
   }
   const required = new Set<string>([IMPLEMENTER_PROVIDER]);
-  if (config.review.independent_provider_required && config.review.preferred_provider !== IMPLEMENTER_PROVIDER) required.add(config.review.preferred_provider);
+  const mandatory = mandatoryReviewProvider(config.review, IMPLEMENTER_PROVIDER);
+  if (mandatory !== null) required.add(mandatory);
   const all = await validateCredentials({ adapters: ctx.deps.adapters, providers: [...new Set([...required, ...Object.keys(ctx.deps.adapters)])] });
   const credentialsById: Record<string, CredentialStatus | undefined> = {};
   for (const c of all) credentialsById[c.provider] = c.status ?? undefined;
 
-  let reviewer: ReviewerSelection | null = null;
-  if (config.review.independent_provider_required) {
-    reviewer = selectReviewer({ snapshot: ctx.snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: ctx.deps.registry });
-    // With independent review mandatory, any usable independent provider is enough; the preferred one need not be.
-    if (reviewer.decision === 'SELECT') {
-      required.delete(config.review.preferred_provider);
-      required.add(reviewer.provider);
-    }
+  // Who would review, judged in every mode (decision 0007): an independent reviewer, a same-provider review that
+  // review.when_unavailable allows (stated in the gate and the report), or a block.
+  const reviewer: ReviewerSelection = selectReviewer({ snapshot: ctx.snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: ctx.deps.registry });
+  // With independent review mandatory, any usable independent provider is enough; the preferred one need not be.
+  if (mandatory !== null && reviewer.decision === 'SELECT') {
+    required.delete(mandatory);
+    required.add(reviewer.provider);
   }
   const credentials = all.filter((c) => required.has(c.provider));
   // A run handed to the service is judged for its delivery credentials here, in the service's own environment.

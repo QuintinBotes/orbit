@@ -12,7 +12,7 @@
 import { realpathSync } from 'node:fs';
 import type { OrbitDb } from '../storage/db.ts';
 import type { CredentialCheck } from '../recovery/credentials.ts';
-import type { ReviewerSelection } from '../review/select.ts';
+import { reviewerLabel, type ReviewerSelection } from '../review/select.ts';
 import type { DeliveryEnvironmentProblem } from './delivery-env.ts';
 import { reviewGate, type ReviewGateResult } from '../review/stale.ts';
 import { listReviews } from '../review/store.ts';
@@ -141,7 +141,7 @@ export interface EnvironmentInput {
   isolation: { kind: 'sandbox-runtime' | 'container' | 'none'; available: boolean; detail: string } | { error: string };
   /** Credential checks of the providers the run cannot do without. */
   credentials: readonly CredentialCheck[];
-  /** Reviewer selection when independent review is mandatory; null when it is not. */
+  /** Who would review (decision 0007: judged in every review.when_unavailable mode); null when it was not judged. */
   reviewer: ReviewerSelection | null;
   /** What a delivering run lacks (the gh CLI, GH_TOKEN), from controller/delivery-env.ts; null or absent when nothing. */
   delivery?: DeliveryEnvironmentProblem | null;
@@ -208,7 +208,13 @@ export function environmentGate(input: EnvironmentInput): GateResult<{ blockedPr
       reasons.push(`independent review: ${input.reviewer.reason}`);
       code ??= input.reviewer.code;
     } else {
-      evidence.push(`reviewer ${input.reviewer.provider}/${input.reviewer.model ?? 'default'} (${input.reviewer.independent ? 'independent' : 'same provider'})`);
+      evidence.push(`reviewer ${reviewerLabel(input.reviewer)}`);
+      // Stated in every report (the notes are residual risks): a same-provider review is never presented as independent.
+      if (!input.reviewer.independent) {
+        notes.push(
+          `same-provider review: ${input.reviewer.independentUnavailable ?? 'no independent reviewer was usable'}; ${input.reviewer.provider} reviews in a separate session at the opus-class floor, so the review is not independent${input.reviewer.needsApproval ? ', and only after a person says yes (review.when_unavailable: ask)' : ''}`,
+        );
+      }
     }
   }
   return result('environment', reasons, evidence, notes, { blockedProvider, code });

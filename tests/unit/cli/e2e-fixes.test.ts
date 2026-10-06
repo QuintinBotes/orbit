@@ -104,7 +104,9 @@ describe('P20: orbit run refuses cheap-to-detect problems before it creates a ru
     await l.cli(['init']);
     defineCheck(l);
     const path = join(l.repo, '.orbit', 'config.yaml');
-    writeFileSync(path, readFileSync(path, 'utf8').replace(/(  codex:\n    command: codex\n(?:    #.*\n)*    data_policy_eligible: )false/, '$1true'));
+    // review.when_unavailable: block, which was the starter's behaviour before decision 0007 (#6, #8); with the new
+    // default (claude) admission lets Claude review instead of refusing.
+    writeFileSync(path, readFileSync(path, 'utf8').replace(/(  codex:\n    command: codex\n(?:    #.*\n)*    data_policy_eligible: )false/, '$1true').replace(/^  when_unavailable: claude$/m, '  when_unavailable: block'));
     const adapter = (id: string) => ({
       discoverCapabilities: async () => ({ provider: id, available: true, version: '2.1.300', models: [], structuredOutput: true, readOnlySandbox: true, usageReporting: 'exact', costReporting: true, detail: 'ok' }),
       validateCredentials: async () => ({ state: 'valid', method: 'api_key', detail: 'ok' }),

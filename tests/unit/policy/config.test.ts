@@ -44,7 +44,9 @@ describe('defaults', () => {
     expect(c.network.allowed_hosts).toEqual(['github.com', 'api.github.com', 'registry.npmjs.org']);
     expect(c.checks).toEqual({});
     expect(c.ui).toBeNull();
-    expect(c.review.fallback_same_provider_allowed).toBe(false);
+    // Decision 0007 (#6, #8): the default is a disclosed Claude review when no independent reviewer is usable, not a block.
+    expect(c.review).toMatchObject({ providers: ['codex'], when_unavailable: 'claude' });
+    expect(c.review.fallback_same_provider_allowed).toBeUndefined();
   });
 
   it('keeps fable out of the default routing allowlist', () => {

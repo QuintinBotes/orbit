@@ -293,7 +293,8 @@ describe('orbit policy show', () => {
     expect(r.code, r.err).toBe(0);
     expect(r.out).toContain('checks:      unit, lint (optional)');
     expect(r.out).toContain('knowledge:   on, shares code-free lessons globally');
-    expect(r.out).toContain('independent provider not required');
+    // Decision 0007: the legacy independent_provider_required: false now reads as review.when_unavailable: claude.
+    expect(r.out).toContain('review:      independent reviewers codex (in preference order); when none is usable (review.when_unavailable: claude), Claude reviews in a separate session');
     expect(r.out).toContain('amendments:  amd-1 [pending-approval] verification.AC-1');
     const j = JSON.parse((await l.cli(['policy', 'show', run.id, '--json'])).out) as { amendments: unknown[] };
     expect(j.amendments).toEqual([{ id: 'amd-1', status: 'pending-approval', field: 'verification.AC-1', reason: 'because', approved_by: null }]);

@@ -3,7 +3,9 @@ import type { Clock } from '../core/clock.ts';
 import { OrbitError } from '../core/errors.ts';
 import { canonicalJson, sha256 } from '../core/hash.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
-import { recordDecision } from '../storage/decisions.ts';
+import { listDecisions, recordDecision } from '../storage/decisions.ts';
+import { reviewFallback } from '../policy/review.ts';
+import { SAME_PROVIDER_APPROVED_KIND } from './select.ts';
 import { listFindings, listReviews, markReviewInvalidated } from './store.ts';
 import { exceptionApplies, isSecurityFinding, readSecurityPolicy, severityBlocks, type SecurityPolicy } from './resolve.ts';
 import type { FindingRecord, FindingStatus, ReviewRecord } from './types.ts';
@@ -104,8 +106,9 @@ const CLEARS_BLOCK: readonly FindingStatus[] = ['rejected', 'excepted', 'resolve
  * REPAIR_REQUIRED or BLOCK whose findings are all closed by recorded
  * resolutions (BLOCK is not cleared by advisory findings, and never by having
  * none). No second reviewer's approval outvotes a first reviewer's open claim.
- * With independent review required, at least one cleared review must come from
- * a provider other than the implementer's. Unresolved blocking findings from
+ * With review.when_unavailable block, at least one cleared review must come from
+ * a provider other than the implementer's; with ask, a same-provider one counts
+ * only after a person's recorded yes. Unresolved blocking findings from
  * any round also stop it.
  */
 export function reviewGate(db: OrbitDb, input: ReviewGateInput): ReviewGateResult {
@@ -145,11 +148,17 @@ export function reviewGate(db: OrbitDb, input: ReviewGateInput): ReviewGateResul
     reasons.push(`finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}) blocks delivery${why}: ${f.claim.slice(0, 120)}`);
   }
 
-  if (config.review.independent_provider_required && cleared.length > 0 && input.implementerProvider === undefined) {
+  // review.when_unavailable (decision 0007): block requires an independent clearing review; ask accepts a
+  // same-provider one only with a person's recorded yes; claude accepts it (and the report says it is not independent).
+  const fallback = reviewFallback(config.review);
+  if (fallback !== 'claude' && cleared.length > 0 && input.implementerProvider === undefined) {
     // Independence cannot be shown without knowing who implemented; passing would fail open.
-    reasons.push('independent review is required but the implementer provider was not supplied, so independence cannot be shown');
-  } else if (config.review.independent_provider_required && cleared.length > 0 && !cleared.some((r) => r.provider !== input.implementerProvider)) {
-    reasons.push(`independent review is required but every clearing review is from "${input.implementerProvider}", the implementer's provider`);
+    reasons.push(`${fallback === 'block' ? 'independent review is required' : 'a same-provider review needs a person\'s yes'} but the implementer provider was not supplied, so independence cannot be shown`);
+  } else if (cleared.length > 0 && !cleared.some((r) => r.provider !== input.implementerProvider)) {
+    if (fallback === 'block') reasons.push(`independent review is required but every clearing review is from "${input.implementerProvider}", the implementer's provider`);
+    else if (fallback === 'ask' && listDecisions(db, input.runId, { kind: SAME_PROVIDER_APPROVED_KIND }).length === 0) {
+      reasons.push(`every clearing review is from "${input.implementerProvider}", the implementer's provider, and no person approved a same-provider review (review.when_unavailable: ask)`);
+    }
   }
   if (current.length > 0 && cleared.length === 0 && reasons.length === 0) reasons.push('no review cleared this tree');
   return { ok: reasons.length === 0, reasons, cleared };

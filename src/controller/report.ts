@@ -28,6 +28,7 @@ import type { Clock } from '../core/clock.ts';
 import { listEvidenceReports } from '../evidence/store.ts';
 import { listFindings, listReviews } from '../review/store.ts';
 import { readSecurityPolicy } from '../review/resolve.ts';
+import { SAME_PROVIDER_APPROVED_KIND, type ReviewerSelection } from '../review/select.ts';
 import { listLedger, listQuestions } from '../inquisition/store.ts';
 import { summarizeUsage } from '../routing/usage.ts';
 import { BudgetLedger } from '../scheduling/budget.ts';
@@ -63,6 +64,12 @@ export interface FinalReport {
   checks: { id: string; status: string; exit_code: number | null; flaky: boolean; log: string }[];
   evidence: { report_id: string; verdict: string; tree_hash: string; candidate_revision: string } | null;
   reviews: { id: string; provider: string; model: string | null; verdict: string; tree_hash: string; findings: number }[];
+  /**
+   * Who reviewed (docs/decisions/0007-reviewer-availability.md). A same-provider review is never presented as
+   * independent: it carries why the independent reviewer was unavailable, and who approved it when a person was
+   * asked. Null when nothing was reviewed; absent in reports written before decision 0007.
+   */
+  reviewer?: ReportReviewer | null;
   decisions: { kind: string; summary: string; at: number }[];
   assumptions: { id: string; statement: string; status: string }[];
   /** The engineering practices (spec section 5) the plan selected or omitted, with the reason for each; empty for a contract that predates the selection. */
@@ -87,6 +94,16 @@ export interface WorkerPluginLine {
   scope: string | null;
   allowed_by: string | null;
   workers: number;
+}
+
+export interface ReportReviewer {
+  provider: string;
+  model: string | null;
+  independent: boolean;
+  /** For a same-provider review: why no independent reviewer could be used. */
+  why_not_independent: string | null;
+  /** review.when_unavailable: ask: the person who said yes. */
+  approved_by: string | null;
 }
 
 export interface WriteReportOptions {
@@ -167,6 +184,10 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     const reason = typeof ex?.reason === 'string' ? ex.reason : (f.resolution ?? 'no reason recorded');
     risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, excepted by policy): ${f.claim.slice(0, 120)}; exception reason: ${reason.slice(0, 160)}; expires: ${expires ?? 'never'}`);
   }
+  const reviewer = reviewerOf(db, run.id, cand?.id ?? null, reviews);
+  if (reviewer && !reviewer.independent && !risks.some((r) => r.startsWith('same-provider review:'))) {
+    risks.push(`same-provider review: ${reviewer.why_not_independent ?? 'no independent reviewer was usable'}; ${reviewer.provider}/${reviewer.model ?? 'default'} reviewed in a separate session, so the review is not independent${reviewer.approved_by ? ` (approved by ${reviewer.approved_by})` : ''}`);
+  }
   for (const q of listQuestions(db, run.id, { status: 'open' })) risks.push(`open question: ${q.question.slice(0, 200)}`);
   for (const c of ev?.report.checks.filter((x) => x.flaky) ?? []) risks.push(`check ${c.id} passed only on a rerun (flaky)`);
   const plugins = workerPluginsOf(listWorkers(db, { runId: run.id }));
@@ -186,6 +207,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     checks: ev?.report.checks.map((c) => ({ id: c.id, status: c.status, exit_code: c.exit_code, flaky: c.flaky, log: c.log })) ?? [],
     evidence: ev ? { report_id: ev.id, verdict: ev.verdict, tree_hash: ev.treeHash, candidate_revision: ev.report.candidate_revision } : null,
     reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length })),
+    reviewer,
     decisions,
     assumptions: [...(contract?.assumptions ?? []).map((a) => ({ id: a.id, statement: a.statement, status: a.status })), ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))],
     practices: (contract?.practices ?? []).map((p) => ({ practice: p.practice, applicable: p.applicable, justification: p.justification })),
@@ -239,6 +261,34 @@ export function workerPluginsOf(workers: readonly Pick<WorkerRecord, 'resultJson
 
 function strOrNull(v: unknown): string | null {
   return typeof v === 'string' ? v : null;
+}
+
+/**
+ * The reviewer selection behind the reviews: the one recorded for the current candidate, else the latest. Its
+ * provider must be the one that reviewed, so a selection that never led to a review is not reported as one.
+ */
+function reviewerOf(db: OrbitDb, runId: string, candidateId: string | null, reviews: readonly { provider: string; model: string | null }[]): ReportReviewer | null {
+  const last = reviews.at(-1);
+  if (!last) return null;
+  const selections = listDecisions(db, runId, { kind: 'review.select' }).filter((d) => (d.data as ReviewerSelection | null)?.decision === 'SELECT');
+  const recorded = selections.find((d) => candidateId !== null && d.id === `dec-${runId}-review-select-${candidateId}`) ?? selections.at(-1);
+  const sel = recorded?.data as Extract<ReviewerSelection, { decision: 'SELECT' }> | undefined;
+  const approval = listDecisions(db, runId, { kind: SAME_PROVIDER_APPROVED_KIND }).at(-1)?.data as { approved_by?: unknown } | undefined;
+  const approvedBy = typeof approval?.approved_by === 'string' ? approval.approved_by : null;
+  if (sel && sel.provider === last.provider) {
+    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : (sel.independentUnavailable ?? 'no independent reviewer was usable'), approved_by: sel.independent ? null : approvedBy };
+  }
+  // No selection on record for this reviewer: independence is judged from who implemented, never assumed.
+  const implementer = listWorkers(db, { runId, role: 'implementer' }).at(-1)?.provider ?? 'claude';
+  const independent = last.provider !== implementer;
+  return { provider: last.provider, model: last.model, independent, why_not_independent: independent ? null : 'no independent reviewer was usable', approved_by: independent ? null : approvedBy };
+}
+
+/** `codex/model (independent)`, or the same-provider disclosure. */
+export function reviewerLine(r: ReportReviewer): string {
+  const who = `${r.provider}/${r.model ?? 'default'}`;
+  if (r.independent) return `Reviewer: ${who} (independent)`;
+  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? 'no independent reviewer was usable'}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ''})`;
 }
 
 function tokens(t: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }) {
@@ -327,7 +377,9 @@ export function renderMarkdown(r: FinalReport): string {
   out.push('## Criterion evidence', '', list(r.criteria.map((c) => `${c.id}${c.mandatory ? '' : ' (optional)'} [${c.status}]: ${c.statement}${c.artifacts.length ? ` (evidence: ${c.artifacts.join(', ')})` : ''}`)), '');
   out.push('## Checks', '', list(r.checks.map((c) => `${c.id}: ${c.status}${c.exit_code !== null ? ` (exit ${c.exit_code})` : ''}${c.flaky ? ', flaky' : ''}, log ${c.log}`)), '');
   if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, '');
-  out.push('## Reviews', '', list(r.reviews.map((v) => `${v.provider}/${v.model ?? 'default'}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))`)), '');
+  out.push('## Reviews', '');
+  if (r.reviewer) out.push(reviewerLine(r.reviewer), '');
+  out.push(list(r.reviews.map((v) => `${v.provider}/${v.model ?? 'default'}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))`)), '');
   out.push('## Decisions', '', list(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), '');
   out.push('## Assumptions', '', list(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), '');
   if (r.practices && r.practices.length > 0) out.push('## Engineering practices', '', list(r.practices.map((p) => `${p.practice} [${p.applicable ? 'selected' : 'omitted'}]: ${p.justification}`)), '');
