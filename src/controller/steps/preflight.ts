@@ -13,7 +13,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { atomicWriteJson } from '../../core/fsx.ts';
 import { isOrbitError } from '../../core/errors.ts';
 import { adminDirFor, git, resolveCommit, treeOf } from '../../evidence/git.ts';
-import { runBaseline } from '../../evidence/baseline.ts';
+import { BASELINE_FILE, runBaseline, type BaselineReport } from '../../evidence/baseline.ts';
 import { raiseBaselineExceptionQuestions } from '../../inquisition/baseline-exception.ts';
 import { validateCredentials, type BlockedCredentialState, type CredentialCheck } from '../../recovery/credentials.ts';
 import { selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../review/select.ts';
@@ -21,6 +21,7 @@ import type { ProviderCapabilities, CredentialStatus } from '../../adapters/type
 import { homeOf, runWorktreeRoot, type RunContext } from '../context.ts';
 import { baselineGate, environmentGate, intakeGate, type GateResult } from '../gates.ts';
 import { deliveryEnvironmentProblem } from '../delivery-env.ts';
+import { baselineEnvironmentBlockReason, baselineEnvironmentFailures, type BlockedCheck } from '../environment-block.ts';
 import { blockOnAuth, decide, finishRun, move, safePoint, type StepResult } from './common.ts';
 import { messageOf } from '../workers.ts';
 
@@ -87,6 +88,10 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
   const bg = baselineGate(baseline.report);
   recordGate(ctx, bg);
   if (!bg.passed && bg.status === 'fail') return finishRun(ctx, 'BLOCKED', `baseline gate: ${bg.reasons.join('; ')}`, { outcome: { gate: bg } });
+  // A check the environment stopped on the base revision never ran, so it is no pre-existing failure and gets no
+  // baseline-exception question (issue #10): approving one would let a run pass with a check that never ran.
+  const notRun = baselineEnvironmentFailures(ctx, baseline.report, join(wtRoot, 'baseline'));
+  if (notRun.length > 0) return blockOnBaselineEnvironment(ctx, baseline.report, notRun);
   if (baseline.report.failures.length > 0) {
     decide(ctx, {
       id: `dec-${ctx.run.id}-baseline-failures`,
@@ -114,6 +119,19 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
     patch: { baseRevision: head, baseTree, worktreePath: worktree, branch },
     data: { base_revision: head, base_tree: baseTree, worktree, environment: env.gate.notes },
   });
+}
+
+/**
+ * End the run BLOCKED at PREFLIGHT for checks that could not run on the base revision. The baseline is kept for the
+ * record but marked incomplete, which is what it is (a check produced no result of its own), so `orbit resume` runs it
+ * again once the environment is fixed instead of reusing it.
+ */
+async function blockOnBaselineEnvironment(ctx: RunContext, report: BaselineReport, failures: BlockedCheck[]): Promise<StepResult> {
+  atomicWriteJson(join(ctx.runDir, BASELINE_FILE), { ...report, complete: false } satisfies BaselineReport);
+  const reason = baselineEnvironmentBlockReason({ runId: ctx.run.id, baseRevision: report.baseRevision, failures });
+  const checks = failures.map((f) => ({ check_id: f.checkId, signals: f.signals, cause: f.cause, evidence_lines: f.lines, ...(f.logPath ? { log_path: f.logPath } : {}) }));
+  decide(ctx, { id: `dec-${ctx.run.id}-baseline-environment`, kind: 'baseline.environment-failure', summary: reason, data: { base_revision: report.baseRevision, checks } });
+  return finishRun(ctx, 'BLOCKED', reason, { outcome: { base_revision: report.baseRevision, environment_failures: checks } });
 }
 
 export function recordGate(ctx: RunContext, g: GateResult<unknown>): void {

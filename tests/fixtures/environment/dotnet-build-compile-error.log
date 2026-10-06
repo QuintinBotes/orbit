@@ -1,0 +1,12 @@
+  Determining projects to restore...
+  Restored /private/var/folders/acme/T/orbit-evidence-acme/checkout/acme.csproj (in 95 ms).
+/private/var/folders/acme/T/orbit-evidence-acme/checkout/Program.cs(1,39): error CS1002: ; expected [/private/var/folders/acme/T/orbit-evidence-acme/checkout/acme.csproj]
+
+Build FAILED.
+
+/private/var/folders/acme/T/orbit-evidence-acme/checkout/Program.cs(1,39): error CS1002: ; expected [/private/var/folders/acme/T/orbit-evidence-acme/checkout/acme.csproj]
+    0 Warning(s)
+    1 Error(s)
+
+Time Elapsed 00:00:08.22
+[orbit] check=build status=FAILED exit=1

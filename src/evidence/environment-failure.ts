@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import { stripAnsi } from './fingerprint.ts';
 
 /**
@@ -22,7 +23,7 @@ import { stripAnsi } from './fingerprint.ts';
  * the repository can have caused it, and no base-revision comparison is needed.
  */
 
-export type EnvironmentSignal = 'sandbox-violation' | 'eperm' | 'operation-not-permitted' | 'eacces-outside-worktree' | 'process-aborted' | 'start-failed' | 'browser-isolation';
+export type EnvironmentSignal = 'sandbox-violation' | 'eperm' | 'operation-not-permitted' | 'eacces-outside-worktree' | 'process-aborted' | 'start-failed' | 'browser-isolation' | 'filesystem-denied';
 
 export interface EnvironmentFailureInput {
   checkId: string;
@@ -74,6 +75,7 @@ const CAUSES: Record<EnvironmentSignal, string> = {
   'process-aborted': 'the process was killed by a fatal signal before it printed anything of its own',
   'start-failed': 'the check could not be started',
   'browser-isolation': 'the browser could not start under sandbox-runtime',
+  'filesystem-denied': 'the sandbox or the operating system refused a filesystem operation outside the check\'s checkout (EPERM, "operation not permitted")',
 };
 
 function within(path: string, root: string): boolean {
@@ -199,4 +201,81 @@ export function classifyNotExecuted(input: NotExecutedInput): EnvironmentFailure
   }
   if ((crash === null && !traced) || own > 0) return null;
   return { checkId: input.checkId, fingerprint: null, signals: ['process-aborted'], cause: crash === null ? CAUSES['process-aborted'] : `${CAUSES['process-aborted']} (${crash})`, lines: [...kills, ...frames] };
+}
+
+// ---------------------------------------------------------------------------
+// A check the environment refused before it ran anything of the repository
+
+export interface CouldNotRunInput {
+  checkId: string;
+  /** The check's output, as logged (already redacted). */
+  output: string;
+  /** Directories the check may write: its checkout, as given and resolved, and its own scratch directories. A denial inside them is the code's. */
+  insideRoots: readonly string[];
+}
+
+// A filesystem call, by the name a runtime, the C library or a shell tool gives it, or the error type that reports one.
+const FS_CALL = /\b(?:mkdir|mkdtemp|mkstemp|open|openat|creat|rename|unlink|rmdir|chmod|chown|lchown|symlink|link|copyfile|clonefile|scandir|opendir|access|stat|lstat|utimes?|truncate|shm_open|sem_open|realpath|readlink|mkfifo|bind|connect|touch|cp|mv|rm|ln|PermissionError|IOException|errno)\b/i;
+const DENIAL = /\bEPERM\b|operation not permitted/i;
+// A Seatbelt deny line, as macOS logs it ("Sandbox: dotnet(4242) deny(1) file-write-create /private/tmp/.dotnet") and as
+// srt repeats it in its violations block: the operation, then the path of a file operation.
+const SEATBELT_DENY = /\bdeny\(\d+\)\s+([a-z][\w-]*)(?:\s+(\S+))?/i;
+
+/**
+ * Output that shows the repository's code was compiled or tested and failed: a compiler diagnostic or a test runner's
+ * failure report. A denial next to it does not show that the check could not run, so the failure stays the code's.
+ */
+const CODE_FAILURE: readonly RegExp[] = [
+  /\berror (?:CS|FS|BC|TS)\d{4}\b/, // C#, F#, Visual Basic, TypeScript
+  /\berror\[E\d{4}\]/, // Rust
+  /:\d+(?::\d+)?: (?:fatal )?error:/, // C, C++, Swift, Java
+  /\bSyntaxError\b/,
+  /\bAssertionError\b|\bAssert\.\w+\(\) Failure\b|\bassertion failed\b/i,
+  /\bFailed!\s+-\s+Failed:\s*[1-9]/, // dotnet test
+  /^\s*(?:not ok \d+|FAIL\b|--- FAIL:|FAILED\s+\S+::)/m, // TAP, Jest and Vitest, Go, pytest
+  /\btest result: FAILED\b/, // cargo test
+  /^\s*(?:#|ℹ)\s*fail\s+[1-9]/m, // node:test
+  /\b[1-9]\d*\s+(?:failed|failing|failures?)\b/i,
+  /\b[1-9]\d*\s+errors?\b|\b[1-9]\d* Error\(s\)/i, // compilers' and MSBuild's error counts
+];
+
+/** A line cut to MAX_LINE_CHARS that keeps position `at` in view: a runtime names the failed call at the end of a long line. */
+function excerpt(line: string, at: number): string {
+  if (line.length <= MAX_LINE_CHARS) return line;
+  const start = Math.max(0, Math.min(at - (MAX_LINE_CHARS - 40), line.length - (MAX_LINE_CHARS - 3)));
+  return start === 0 ? line.slice(0, MAX_LINE_CHARS) : `...${line.slice(start, start + MAX_LINE_CHARS - 3)}`;
+}
+
+/**
+ * The environment cause of a check that could not run because the sandbox or the operating system refused it something
+ * outside its checkout, or null. It needs no base-revision comparison, so it can judge the baseline itself. Both halves
+ * are required:
+ *
+ * - a denial outside `insideRoots`: EPERM or "operation not permitted" on a filesystem call that names such a path (the
+ *   .NET runtime's `mkdir("/tmp/.dotnet/shm/...") == -1; errno == EPERM`, node's `EPERM: operation not permitted,
+ *   mkdir '/x'`, a shell tool's `mkdir: /x: Operation not permitted`), or a Seatbelt deny line (one for a file operation
+ *   only on such a path);
+ * - and no sign that the repository's code was compiled or tested and failed (CODE_FAILURE): a compile error or a failing
+ *   test next to a denial is still the code's failure, and keeps the normal path.
+ */
+export function classifyCouldNotRun(input: CouldNotRunInput): EnvironmentFailure | null {
+  const text = stripAnsi(input.output);
+  if (CODE_FAILURE.some((re) => re.test(text))) return null;
+  const outside = (path: string): boolean => !input.insideRoots.some((root) => within(path.replace(/[.]+$/, ''), root));
+  const signals: EnvironmentSignal[] = [];
+  const lines: string[] = [];
+  for (const raw of text.split('\n', MAX_SCANNED_LINES)) {
+    const line = raw.replace(/\r$/, '').trim();
+    const deny = SEATBELT_DENY.exec(line);
+    const denial = DENIAL.exec(line);
+    let found: { signal: EnvironmentSignal; at: number } | null = null;
+    if (deny && (!deny[1]!.toLowerCase().startsWith('file-') || (deny[2] !== undefined && isAbsolute(deny[2]) && outside(deny[2])))) found = { signal: 'sandbox-violation', at: deny.index };
+    else if (denial && FS_CALL.test(line) && (line.match(ABSOLUTE_PATH) ?? []).some(outside)) found = { signal: 'filesystem-denied', at: denial.index };
+    if (found === null) continue;
+    if (!signals.includes(found.signal)) signals.push(found.signal);
+    const shown = excerpt(line, found.at);
+    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown)) lines.push(shown);
+  }
+  if (signals.length === 0) return null;
+  return { checkId: input.checkId, fingerprint: null, signals, cause: signals.map((s) => CAUSES[s]).join('; '), lines };
 }

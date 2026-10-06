@@ -21,6 +21,7 @@ degraded but usable.
 | `storage` | state database problem or not writable | Fix permissions on `.orbit/`. If the database is newer than this Orbit, upgrade Orbit. |
 | `scope` | `scope.allowed_paths (...) matches no tracked file` (warning) | The template's example globs match nothing in this repository, so a worker could change nothing. Set `scope.allowed_paths` to globs that match your source and test directories; the warning suggests some. |
 | `checks` | a configured check's executable or script is missing | Install it, or correct the `command` in `checks`. With no checks defined, nothing can be verified. |
+| `checks.sandbox` | `the sandbox refuses the executable of check X; a run would block at its baseline` | Under `sandbox-runtime`, doctor starts each check's executable (one installed outside the repository) in the sandbox that check gets, with a harmless argument (`--version`; `dotnet help`, which runs the .NET SDK's first-run steps; `go version`). The detail line shows what was refused. See [A check cannot run in the sandbox](#run-problems). A tool that exits non-zero with no denial in its output (an unknown `--version` flag) is not counted. |
 | `isolation` | sandbox-runtime unavailable | Install `srt` (`npm install --global @anthropic-ai/sandbox-runtime`); on Linux install bubblewrap. A plugin install and a clone after `npm ci` carry their own `srt`; if doctor says it is missing there, the plugin's or the clone's install did not finish (run `npm ci` in the clone, or reinstall the plugin). Orbit will not fall back to weaker isolation. |
 | `isolation` | container image not present locally | `docker pull <image>`. Containers run with `--pull never`. Make sure the Docker daemon is running. |
 | `isolation` | `none` provider warning | Workers run with your full permissions. Use `sandbox-runtime` or `container`. |
@@ -100,6 +101,47 @@ degraded but usable.
   command's own exit 97 does not). Anything else stays a journey failure.
   `orbit doctor` (`ui.browser-isolation`) launches Playwright's real headless
   Chromium binary through the preload, with no repository code, to check this.
+- **A check cannot run in the sandbox.** The run blocks at PREFLIGHT with "check X
+  could not run on the base revision ..., and the output shows an environment
+  cause, not a pre-existing failure", the first error line, the log and a fix. The
+  check never got as far as the repository's code: the sandbox or the operating
+  system refused it a filesystem operation outside its checkout (EPERM, "Operation
+  not permitted", a Seatbelt `deny(1) file-...` line), or it was killed by a crash
+  signal before printing anything. Such a failure is not recorded as pre-existing
+  and no baseline exception is offered, since accepting one would let a run pass
+  with a check that never ran. The same refusal on a candidate blocks the run
+  without a repair attempt. Output that shows a compile error or a failing test
+  is never read this way: that failure stays the code's. Run `orbit doctor`
+  (`checks.sandbox`) to see what the tool is refused, then let it keep its files
+  in the check's `HOME` or `TMPDIR` (each check gets a private, empty one; set
+  the tool's variables in the check's `env`) or change the check. `orbit resume
+  <run-id>` runs the baseline again once the environment is fixed; a changed
+  check definition needs a new run.
+- **.NET checks under the sandbox.** A check's `HOME` is new and empty, so every
+  `dotnet` command is the SDK's first run, and its first-run NuGet migrations take
+  a named mutex. The .NET runtime keeps named mutexes under `/tmp/.dotnet` (and
+  creates it through `/tmp/.coreclr.XXXXXX`): a path compiled into the runtime that
+  ignores `TMPDIR` and `HOME`, and that no check's sandbox may write, because it is
+  shared by every .NET process on the machine. The only override,
+  `DOTNET_SANDBOX_APPLICATION_GROUP_ID`, points at an existing macOS app group
+  container under the real home directory, not at the check's temp directory.
+  Without help the check died in about two seconds with `mkdir("/tmp/.dotnet/shm/session...")
+  == -1; errno == EPERM` (or `mkdtemp("/tmp/.coreclr...")`) before building
+  anything. Orbit now prepares every check for it: the check's home records the
+  NuGet migrations as done (`~/.local/share/NuGet/Migrations/1`; a new home has
+  nothing to migrate), `DOTNET_CLI_HOME` is the check's private home, and
+  `DOTNET_CLI_TELEMETRY_OPTOUT=1`, `DOTNET_NOLOGO=1`,
+  `DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1`, `DOTNET_GENERATE_ASPNET_CERTIFICATE=false`
+  (no login keychain), `DOTNET_ADD_GLOBAL_TOOLS_TO_PATH=false` (no shell profile)
+  and `DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK=1` are set. A check's own `env`
+  overrides any of them. With that, `dotnet build` of a console project runs
+  under `srt` (verified with the .NET 9 SDK). Two cases remain yours to decide:
+  code under test that creates a named `Mutex` or `Semaphore` needs
+  `/tmp/.dotnet` and cannot run under `sandbox-runtime` (change the code to use
+  an unnamed one or a file lock in `TMPDIR`; `isolation.provider: container`
+  gives each check its own `/tmp`, which Orbit has not verified with .NET); and a project with NuGet packages restores them into
+  the check's empty home on every run, so list the feeds (`api.nuget.org` and
+  your own) in the check's `network_hosts`.
 - **A command is killed for memory under `sandbox-runtime`.** The resident-memory watchdog
   hit `isolation.limits.memory_mb`. Raise it, or use `isolation.provider: container`.
 - **Disk is filling with old runs.** `orbit gc --dry-run`, then `orbit gc`.
