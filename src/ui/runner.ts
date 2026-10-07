@@ -7,8 +7,10 @@ import { execCapture } from '../core/exec.ts';
 import { atomicWriteJson, ensureDir } from '../core/fsx.ts';
 import { hashObject, sha256 } from '../core/hash.ts';
 import { redact, redactValue } from '../core/redact.ts';
+import { findMsbuildNodeDenial } from '../evidence/msbuild.ts';
 import type { Candidate } from '../evidence/types.ts';
 import { profileForCheck } from '../isolation/profiles.ts';
+import { removeScratch } from '../isolation/toolchains.ts';
 import { CHROMIUM_MACH_RENDEZVOUS, CHROMIUM_MACH_RENDEZVOUS_LIMITATION } from '../isolation/sandbox-runtime.ts';
 import type { IsolationProvider, SandboxProfile } from '../isolation/types.ts';
 import { defaultCheck } from '../policy/config.ts';
@@ -16,6 +18,7 @@ import { compileGlobs } from '../policy/globs.ts';
 import { snapshotHash } from '../policy/snapshot.ts';
 import type { CheckDefinition, PolicySnapshot, UiConfig } from '../policy/types.ts';
 import { APP_LOG_FILE, assertBaseUrl, logTail, startApp, stopApp, type AppHandle } from './app-fixture.ts';
+import { appNodeDenialNote, appNodeDenialWatch, appToolchains, type AppToolchains } from './app-toolchains.ts';
 import { safeBaseEnv } from './env.ts';
 import { LAUNCH_ENV, LAUNCH_STATUS_FILE, UI_SINGLE_SANDBOX, describeLaunchFailure, singleSandboxLimitation, launchFailed, launcherArgv, readLaunchStatus, type LaunchSpec } from './single-sandbox.ts';
 import {
@@ -104,6 +107,11 @@ export interface UiRunInput {
   projects?: string[];
   abortSignal?: AbortSignal;
   homeDir?: string;
+  /**
+   * The repository's toolchain dependency caches (isolation/toolchains.ts toolchainCacheRoot), read-only for the
+   * application under test (ui/app-toolchains.ts). Absent: the application keeps its caches in the run's private scratch.
+   */
+  toolchainCacheRoot?: string | null;
   /** Overrides the app start used by the run (tests). */
   appPollMs?: number;
   /** The host's platform; tests only. */
@@ -152,36 +160,47 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
   const notExecuted: UiNotExecuted[] = [];
   let terminal: UiRunVerdict | null = null;
   let app: AppHandle | null = null;
+  // Emptied first: the directory is under the candidate's evidence, which a later UI run of the candidate reuses, and an
+  // MSBuild failure report an earlier one left there would stop the application at its first look (a review of #26).
+  removeScratch(join(outDir, 'tmp'));
   const tmpDir = ensureDir(join(outDir, 'tmp'));
   const baseEnv = safeBaseEnv(input.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;
   const appStart = uiConfig.environment.start_command;
   const appEnv: Record<string, string> = { ...(input.appEnv ?? {}), ORBIT_UI_BASE_URL: baseUrl, ...(port ? { PORT: port, ORBIT_UI_PORT: port } : {}), ORBIT_UI_ISOLATED_TEST_DATA: uiConfig.environment.isolated_test_data ? '1' : '0', TMPDIR: tmpDir };
+  // The application's toolchain profile (ui/app-toolchains.ts): the repository's caches read-only, build state private
+  // to this run (removed with it), and for .NET the check's settings and the NIS rule, for the hosts its sandbox allows.
+  const appScratch = join(outDir, 'toolchains');
+  const toolchainsFor = (command: readonly string[], networkHosts: readonly string[]): AppToolchains =>
+    appToolchains({ command, checkoutDir, cacheRoot: input.toolchainCacheRoot ?? null, scratchRoot: appScratch, tmpDir, isolation: input.isolation.kind, networkHosts, ...(input.homeDir ? { homeDir: input.homeDir } : {}), hostEnv: input.hostEnv ?? process.env });
   // A provider whose every sandbox has its own loopback (srt on Linux, containers): an application started in one is
   // unreachable from a browser in another, so each journey check starts it inside its own sandbox (single-sandbox.ts).
   const launch: AppLaunch | null =
     appStart !== null && input.isolation.privateLoopback === true
-      ? { command: appStart, env: { ...baseEnv, ...appEnv }, readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1000, stateDir: ensureDir(join(outDir, 'app')), pollMs: input.appPollMs }
+      ? { command: appStart, env: { ...baseEnv, ...appEnv }, readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1000, stateDir: ensureDir(join(outDir, 'app')), pollMs: input.appPollMs, toolchains: (hosts) => toolchainsFor(appStart, hosts) }
       : null;
 
   try {
     if (appStart !== null && launch === null) {
       const appCheck: CheckDefinition = { ...defaultCheck('ui-app'), command: appStart, network_hosts: [], timeout_seconds: uiConfig.environment.ready_timeout_seconds };
+      const tc = toolchainsFor(appStart, appCheck.network_hosts);
       // startApp adds allowLocalBinding: the application is the one process here that must listen on loopback.
-      const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot, extraWritable: [tmpDir], homeDir: input.homeDir, env: input.hostEnv });
+      const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot, extraWritable: [tmpDir, ...tc.extraWritable], readablePaths: tc.readablePaths, nisDomainName: tc.nisDomainName, homeDir: input.homeDir, env: input.hostEnv });
       try {
         app = await startApp({
           command: appStart,
           cwd: checkoutDir,
           baseUrl,
           readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1000,
-          env: appEnv,
+          // The application's own variables win over its toolchains'.
+          env: { ...tc.env, ...appEnv },
           isolation: { provider: input.isolation, profile },
           isolatedTestData: uiConfig.environment.isolated_test_data,
           stateDir: join(outDir, 'app'),
           clock,
           pollMs: input.appPollMs,
           hostEnv: input.hostEnv,
+          stopWhen: appNodeDenialWatch(appStart, tmpDir),
         });
       } catch (err) {
         // Isolation that is missing or a policy refusal must stop the run; a server that will not start is a failed run.
@@ -210,6 +229,7 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
     }
   } finally {
     if (app) await stopApp(app, { clock });
+    removeScratch(appScratch);
   }
 
   const written = await baselineFilesWrittenDuringRun(checkoutDir, candidate.commitSha, globs);
@@ -395,6 +415,8 @@ interface AppLaunch {
   /** The run's application directory: app.log and the launcher's record. */
   stateDir: string;
   pollMs?: number;
+  /** The application's toolchain profile in a journey check's sandbox, which allows that check's hosts. */
+  toolchains: (networkHosts: readonly string[]) => AppToolchains;
 }
 
 /** Each stop signal's grace period inside the launcher, and the time the check's limit is extended by for stopping. */
@@ -449,10 +471,21 @@ async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
     ORBIT_A11Y_FAIL_ON: a11yFailOn(input.uiConfig),
     PLAYWRIGHT_JSON_OUTPUT_FILE: reportPath,
   };
-  const launch = ctx.launch;
+  // Single-sandbox mode: the application shares the check's sandbox, so the sandbox gets the application's toolchain
+  // paths and rules too, and its toolchain variables reach the application alone (its own variables win over them).
+  const tc = ctx.launch ? ctx.launch.toolchains(check.network_hosts) : null;
+  const launch = ctx.launch && tc ? { ...ctx.launch, env: { ...tc.env, ...ctx.launch.env } } : ctx.launch;
   const profile: SandboxProfile = {
-    // Single-sandbox mode: the application shares the check's sandbox and writes its log and the launcher's record there.
-    ...profileForCheck({ worktree: checkoutDir, check, snapshot: input.snapshot, extraWritable: [checkDir, ctx.tmpDir, ...(launch ? [launch.stateDir] : [])], homeDir: input.homeDir, env: input.hostEnv }),
+    // Single-sandbox mode: the application writes its log and the launcher's record in the check's sandbox.
+    ...profileForCheck({
+      worktree: checkoutDir,
+      check,
+      snapshot: input.snapshot,
+      extraWritable: [checkDir, ctx.tmpDir, ...(launch ? [launch.stateDir] : []), ...(tc?.extraWritable ?? [])],
+      ...(tc ? { readablePaths: tc.readablePaths, nisDomainName: tc.nisDomainName } : {}),
+      homeDir: input.homeDir,
+      env: input.hostEnv,
+    }),
     allowLocalBinding: true,
     // The browser run, and only it: Chromium's Mach rendezvous rules under srt on macOS (never the application or a worker).
     chromiumMachRendezvous: true,
@@ -518,7 +551,10 @@ async function runOneCheck(ctx: CheckContext): Promise<CheckOutcome> {
     // Written from inside the sandbox, so it can only turn this check into an error, never into a pass.
     const status = readLaunchStatus(spec.statusPath);
     if (status !== null && launchFailed(status)) {
-      reasons.push(`the application did not start: ${describeLaunchFailure(status, spec)}: ${logTail(spec.app.logPath).trim() || '(no output)'}`);
+      // A worker node MSBuild recorded as refused (on Linux its build fails at once, before any look): the reason and the fix.
+      const refused = launch ? findMsbuildNodeDenial(ctx.tmpDir) : null;
+      const note = refused && launch ? `; ${appNodeDenialNote(launch.command, refused, false)}` : '';
+      reasons.push(`the application did not start: ${describeLaunchFailure(status, spec)}: ${logTail(spec.app.logPath).trim() || '(no output)'}${note}`);
       return { ...quiet('ERROR'), notExecuted: { stage: 'application', checkId: null, logPath: spec.app.logPath, signal: null }, appFailed: true };
     }
     if (status?.app === 'stopped' && status.exitedDuringCheck === true) {

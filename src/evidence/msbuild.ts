@@ -164,15 +164,65 @@ export function msbuildNodeDenialText(d: MsbuildNodeDenial): string {
   return `MSBuild node (pid ${d.pid}) could not bind its named pipe${d.pipe ? ` ${d.pipe}` : ''} (${d.exception})`;
 }
 
+/** What a denial note names: the sandbox that refused the node, and the process Orbit stopped or that failed on it. */
+export interface NodeDenialSubject {
+  sandbox: string;
+  process: string;
+  /** Who looks for the record: the check runner, or Orbit for the other commands it starts. */
+  looker: string;
+}
+
+const CHECK_SUBJECT: NodeDenialSubject = { sandbox: 'the check sandbox', process: 'the check', looker: "the runner's" };
+
+/** The subject of a note for a command Orbit starts besides a check (`what`: "the approved command", "the application"). */
+export function nodeDenialSubject(what: string): NodeDenialSubject {
+  return { sandbox: `the sandbox of ${what}`, process: what, looker: "Orbit's" };
+}
+
 /**
  * The note on the record of a check the runner stopped for a denied node, with the fix for that check (msbuildNodeFix).
  * `stopped` false: the check had failed on its own before the runner's next look found the record (MSBuild fails at
- * once on Linux), so the note does not say Orbit stopped it.
+ * once on Linux), so the note does not say Orbit stopped it. `subject`: another process than a check (an approved
+ * command, the application under test, a release command), stopped the same way (runStoppingRefusedNodes).
  */
-export function msbuildNodeDenialNote(d: MsbuildNodeDenial, fix: string, stopped = true): string {
+export function msbuildNodeDenialNote(d: MsbuildNodeDenial, fix: string, stopped = true, subject: NodeDenialSubject = CHECK_SUBJECT): string {
   const pipe = d.pipe ? ` ${d.pipe}` : '';
-  const how = stopped ? '; MSBuild waits 30 s for each of ten node starts before it fails, so Orbit stopped the check' : ", and the check failed on it before the runner's next look";
-  return `the check sandbox denied MSBuild node (pid ${d.pid}) its named pipe${pipe} (${d.exception})${how}. Fix: ${fix}`;
+  const how = stopped ? `; MSBuild waits 30 s for each of ten node starts before it fails, so Orbit stopped ${subject.process}` : `, and ${subject.process} failed on it before ${subject.looker} next look`;
+  return `${subject.sandbox} denied MSBuild node (pid ${d.pid}) its named pipe${pipe} (${d.exception})${how}. Fix: ${fix}`;
+}
+
+/** How often runStoppingRefusedNodes looks, as the check runner does. */
+const NODE_SCAN_MS = 1_000;
+
+/**
+ * Run a command that Orbit starts outside the check runner (an approved operation, the application under test, a release
+ * command), looking in its private temp directory once a second for a worker node MSBuild recorded as refused, as the
+ * runner does for a check (ADR 0009, addendum, item 3): once there is one the build cannot succeed, so `run`'s signal is
+ * aborted, which stops the command, instead of MSBuild waiting 30 s for each of ten node starts. `outer` aborts it too
+ * (a cancellation). After it ends the directory is looked at once more, since on Linux MSBuild fails at once, usually
+ * before a look. `stopped`: whether Orbit stopped it for the denial, which `run`'s result says by `cancelled` (an
+ * abort that reached a command still running, as execCapture reports it). A command that had exited on its own before
+ * the look, or that a cancellation had already stopped, was not stopped for the denial: a review of #26 found such a
+ * command read as stopped, its own exit code replaced by null.
+ */
+export async function runStoppingRefusedNodes<T extends { cancelled: boolean }>(tmpDir: string, run: (signal: AbortSignal) => Promise<T>, outer?: AbortSignal, everyMs = NODE_SCAN_MS): Promise<{ result: T; denial: MsbuildNodeDenial | null; stopped: boolean }> {
+  const stop = new AbortController();
+  let denial: MsbuildNodeDenial | null = null;
+  let stoppedForIt = false;
+  const timer = setInterval(() => {
+    if (denial !== null) return;
+    denial = findMsbuildNodeDenial(tmpDir);
+    if (denial === null) return;
+    stoppedForIt = outer?.aborted !== true;
+    stop.abort();
+  }, everyMs);
+  try {
+    const result = await run(outer ? AbortSignal.any([outer, stop.signal]) : stop.signal);
+    const found = denial as MsbuildNodeDenial | null;
+    return { result, denial: found ?? findMsbuildNodeDenial(tmpDir), stopped: stoppedForIt && result.cancelled };
+  } finally {
+    clearInterval(timer);
+  }
 }
 
 // -m, -m:4, /m:4, -maxcpucount:4, --maxCpuCount:4; MSBuild switches are case-insensitive.
@@ -478,7 +528,23 @@ export function shown(command: readonly string[]): string {
   return `[${command.map((w) => JSON.stringify(w)).join(', ')}]`;
 }
 
-/** Where a command is configured, for a fix that names it: a check's `checks.<id>.command` and `.env`, or the install's. */
+/**
+ * A fixed command as its field takes it, ready to paste. `line`: the fix is a shell line (`[line]`) where the command was
+ * an argv. A check's `checks.<id>.command` then needs `checks.<id>.shell: true` beside it; a field that is only ever an
+ * argv, never run through a shell (`dependencies.install_command`, `ui.environment.start_command`, a release
+ * environment's `deploy_command` and `verify_command`), takes the line as a `sh -c` script.
+ */
+export function pasted(field: string, command: readonly string[], line: boolean): string {
+  if (!line) return `${field}: ${shown(command)}`;
+  if (field.endsWith('.command')) return `${field}: ${shown(command)} with ${field.slice(0, -'.command'.length)}.shell: true`;
+  return `${field}: ${shown(['sh', '-c', command.join(' ')])}`;
+}
+
+/**
+ * Where a command is configured, for a fix that names it: a check's `checks.<id>.command` and `.env`, the install's, or
+ * another command Orbit starts in a sandbox built from the check profile (`ui.environment.start_command`,
+ * `release.environments.<name>.deploy_command`).
+ */
 export interface MsbuildFixWhere {
   command: string;
   /** Where DOTNET_PROCESSOR_COUNT could be set instead; null for Orbit's dependency install, which has no env of its own. */
@@ -505,10 +571,9 @@ export function msbuildFix(check: (JudgedCheck & Pick<CheckDefinition, 'id'>) | 
   const field = where?.command ?? `checks.${check.id}.command`;
   const fixed = withOneNode(check);
   if (fixed) {
-    // A check's `shell` sits beside its `command`; the dependency install has no shell form.
-    const shellToo = fixed.shell && !check.shell && field.endsWith('.command') ? ` with ${field.slice(0, -'.command'.length)}.shell: true` : '';
+    // A check's `shell` sits beside its `command`; the dependency install and the other argv fields take a `sh -c` script.
     const why = fixed.run ? ' (dotnet run hands -m:1 to the program, so build with it first, with the same configuration and framework, and run without building)' : '';
-    return { change: `${field}: ${shown(fixed.command)}${shellToo}${why}`, env };
+    return { change: `${pasted(field, fixed.command, fixed.shell && !check.shell)}${why}`, env };
   }
   const current = shown(check.command);
   const cut = current.length > MAX_SHOWN_CHARS ? `${current.slice(0, MAX_SHOWN_CHARS - 3)}...` : current;

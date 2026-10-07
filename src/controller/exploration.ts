@@ -24,7 +24,7 @@ import type { CandidateRecord } from '../evidence/store.ts';
 import { recordFailure } from '../evidence/store.ts';
 import { exploreUi, explorationConfigOf, explorationFollowUps, renderExplorationReport, type ExplorationResult, type ExplorerRun, type SpecResponse } from '../ui/explore.ts';
 import type { UiConfig } from '../policy/types.ts';
-import { homeOf, type RunContext } from './context.ts';
+import { homeOf, toolchainCacheRootFor, type RunContext } from './context.ts';
 import { accountWorker, ensureWorker, routeFor, storedResult, type WorkerRequest } from './workers.ts';
 import { stopWorker } from '../recovery/reconcile.ts';
 import { assertContract, decide, policySummary } from './steps/common.ts';
@@ -65,6 +65,7 @@ export async function exploreCandidate(ctx: RunContext, cand: CandidateRecord, c
     clock: ctx.clock,
     hostEnv: ctx.deps.hostEnv ?? process.env,
     homeDir: homeOf(ctx.deps),
+    toolchainCacheRoot: toolchainCacheRootFor(ctx),
     abortSignal: ctx.signal,
     explore: async (task): Promise<ExplorerRun> => {
       const r = await runToEnd(ctx, {

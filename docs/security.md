@@ -189,7 +189,8 @@ State these plainly to yourself before running unattended.
   name.** .NET's HTTP clients read it when they start, so without it every one
   failed in the sandbox, NuGet's restore included. The same preload adds one
   read-only Seatbelt rule, `sysctl-read` of `kern.nisdomainname`, to the checks,
-  dependency install, workers and doctor probes that use .NET, and to nothing
+  dependency install, workers, doctor probes, approved operations, the
+  application under test and release commands that use .NET, and to nothing
   else. The name is empty unless the machine is bound to NIS, is no secret, and
   says less than the host name, which `srt` already lets every process read.
   A check's evidence record says when it ran with the rule (a limitation names
@@ -203,6 +204,13 @@ State these plainly to yourself before running unattended.
   evaluates the repository's MSBuild files with the person's own permissions
   and NuGet configuration, so run it on a tree you trust (your checkout), not on
   a candidate's. See ADR 0009, addendum.
+- **The FSEvents service stays out of reach; .NET's file watchers poll.** A
+  native file watcher on macOS asks the FSEvents service, which `srt` does not
+  let a sandboxed process look up, and an ASP.NET Core host hung at startup on
+  it. Rather than open that service, a process that runs .NET under `srt` on
+  macOS gets `DOTNET_USE_POLLING_FILE_WATCHER=1` (unless it sets the variable
+  itself), which the sandbox already allows; no Seatbelt rule changes. See ADR
+  0009, addendum, item 15.
 - **NuGet's vulnerability audit is off only where it cannot run.** A .NET
   process gets `NuGetAudit=false` when its sandbox does not let it reach
   nuget.org (`api.nuget.org` is not among its allowed hosts: a check that does
@@ -243,15 +251,28 @@ State these plainly to yourself before running unattended.
   Rust, Python, JVM and .NET dependency caches live under
   `<orbit home>/toolchains/<repo key>/`, one set per repository and never the
   user's own (`~/.cargo`, `~/go`, `~/.m2`, `~/.nuget/packages`). Only Orbit's
-  dependency-install step may write them; every other check and every worker
-  gets them read-only, and a write is refused by the sandbox. Build state
+  dependency-install step may write them; every other check, every worker, the
+  application under test, the release commands and approved operations get them
+  read-only, and a write is refused by the sandbox. A release command and an
+  approved operation, which may fetch on their own hosts, write dependency
+  caches of their own instead, private to that command and removed after it,
+  with the repository's read-only beneath them (NuGet's fallback folder, a Go
+  module proxy, Gradle's read-only cache, Maven's tail repository). Build state
   (`GOCACHE`, `CARGO_TARGET_DIR`, `__pycache__`) is private to each check
-  attempt, so a cached object or test result from one candidate never reaches
-  another's evidence. The install step trusts its command: a configured
+  attempt (and to each of those other commands), so a cached object or test
+  result from one candidate never reaches another's evidence. The install step
+  trusts its command: a configured
   `dependencies.install_command` that evaluates repository code (MSBuild during
   `dotnet restore`, a Gradle build script, a Python sdist build) runs a
-  candidate's code with that repository's cache writable. Remove the
-  directory to start clean. See ADR 0009.
+  candidate's code with that repository's cache writable. One other command may
+  write them: an operation a person approved once in a supervised run when it is
+  itself a package install with a toolchain it uses (`dotnet add package`,
+  `cargo add`, `pip install`), which then is the install for that toolchain. It
+  runs in the attempt's worktree, with that repository's cache of that toolchain
+  writable (no other toolchain's, and never another repository's), on the
+  policy's hosts plus the one approved, and its output says whose cache was
+  writable; approve it as you would configure an install command. Remove the
+  directory to start clean. See ADR 0009 and its addendum, items 14 and 16.
 - **Verification has limited coverage.** Accessibility scans find only what
   automated rules can find and are not an accessibility audit. Visual checks
   compare pixels to a baseline and do not judge design. Orbit reports these

@@ -11,14 +11,14 @@ import { isAlive, killGroup, processStartTime } from '../core/proc.ts';
 import { isSecretEnvName, redact } from '../core/redact.ts';
 import { RESOURCE_LIMIT_EXIT_CODE, resourceLimitNote } from '../isolation/memory.ts';
 import { checkoutBelowDenied, prepareWorkerTmpDir, profileForCheck, workerTmpDir } from '../isolation/profiles.ts';
-import { detectToolchains, NUGET_AUDIT_LIMITATION, prepareToolchainLayout, removeScratch, toolchainLayout, type ToolchainLayout } from '../isolation/toolchains.ts';
+import { commandToolchains, NUGET_AUDIT_LIMITATION, prepareToolchainLayout, removeScratch, type ToolchainLayout } from '../isolation/toolchains.ts';
 import type { IsolationProvider, WrappedCommand } from '../isolation/types.ts';
 import { checkConfigHash, snapshotHash } from '../policy/snapshot.ts';
 import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { fingerprintFailure } from './fingerprint.ts';
 import { git } from './git.ts';
-import { nodeDenialFix, sdkFormatsInProcess } from './dotnet-format.ts';
+import { buildHostDenialNote, buildHostFix, formatLoadedNoProject, nodeDenialFix, sdkFormatsInProcess } from './dotnet-format.ts';
 import { findMsbuildNodeDenial, msbuildNodeDenialNote, type MsbuildFixWhere, type MsbuildNodeDenial } from './msbuild.ts';
 import {
   checkRunToResult,
@@ -507,6 +507,18 @@ export function prepareCheckHome(homeDir: string): void {
 }
 
 /**
+ * The .NET settings of a check's private home (DOTNET_CHECK_ENV, DOTNET_CLI_HOME) for another command Orbit runs with a
+ * private home of its own (an approved operation, a release command), the home prepared as a check's (prepareCheckHome).
+ * With a new, empty home every dotnet command is the SDK's first run, whose NuGet migrations take the named mutex the
+ * sandbox refuses: measured under srt on macOS, a dotnet build with such a home died with "The system cannot open the
+ * device or file specified. : 'NuGet-Migrations'" (issue #26). Harmless to every other tool.
+ */
+export function privateHomeDotnetEnv(homeDir: string): Record<string, string> {
+  prepareCheckHome(homeDir);
+  return { ...DOTNET_CHECK_ENV, DOTNET_CLI_HOME: homeDir };
+}
+
+/**
  * The fixed environment a check starts with. The host environment is not inherited beyond PATH. `toolchainEnv` (a
  * ToolchainLayout's env) cannot replace what the runner fixes here; the check's own env overrides everything.
  */
@@ -639,16 +651,19 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
  */
 export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutDir' | 'toolchainCacheRoot' | 'homeDir' | 'isolation'>, def: CheckDefinition, cwd: string, dirs: Pick<AttemptDirs, 'toolchainsDir'>, tmpDir: string, platform: NodeJS.Platform = process.platform): ToolchainLayout {
   const install = INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
-  return toolchainLayout({
-    toolchains: detectToolchains({ command: def.command, shell: def.shell, roots: [ctx.checkoutDir, cwd] }),
+  return commandToolchains({
+    command: def.command,
+    shell: def.shell,
+    roots: [ctx.checkoutDir, cwd],
     mode: install ? 'install' : 'check',
     cacheRoot: ctx.toolchainCacheRoot ?? null,
     scratchRoot: dirs.toolchainsDir,
     tmpDir,
-    platform: ctx.isolation.kind === 'container' ? 'linux' : platform,
+    isolation: ctx.isolation.kind,
     networkHosts: def.network_hosts,
-    // A container brings its own toolchain installation; the host's rustup and JDK are neither mounted nor wanted there.
-    ...(ctx.isolation.kind === 'container' ? { hostEnv: {} } : { hostEnv: process.env, ...(ctx.homeDir ? { hostHome: ctx.homeDir } : {}) }),
+    platform,
+    hostEnv: process.env,
+    ...(ctx.homeDir ? { hostHome: ctx.homeDir } : {}),
   });
 }
 
@@ -747,6 +762,19 @@ interface DenialRecord {
 function denialNote(ctx: RunnerContext, def: CheckDefinition, denial: MsbuildNodeDenial, stopped = true): string {
   const inProcess = sdkFormatsInProcess(resolve(ctx.checkoutDir, def.cwd), ctx.checkoutDir);
   return redact(msbuildNodeDenialNote(denial, nodeDenialFix(def, msbuildFixWhere(ctx, def), inProcess, folderFormRuns(ctx)), stopped));
+}
+
+/**
+ * The note on a check that exited 0 although its dotnet format loaded no project (evidence/dotnet-format.ts
+ * formatLoadedNoProject), or null. Under srt, the provider that refuses the build host its pipe, that is the build host's
+ * refusal, and a check that checked nothing must not read as passed: it is FAILED with the fix for its command, and read
+ * as the environment's failure. Not where the checkout pins SDK 8, whose dotnet format loads the project in its own
+ * process, and not under another provider: there the report is the project's own, as it would be outside Orbit.
+ */
+function loadedNoProjectNote(ctx: RunnerContext, def: CheckDefinition, output: string): string | null {
+  if (ctx.isolation.kind !== 'sandbox-runtime' || !formatLoadedNoProject(output)) return null;
+  if (sdkFormatsInProcess(resolve(ctx.checkoutDir, def.cwd), ctx.checkoutDir)) return null;
+  return redact(buildHostDenialNote(buildHostFix(def, msbuildFixWhere(ctx, def), folderFormRuns(ctx))));
 }
 
 /** Whether dotnet format whitespace --folder can list the folders above this checkout in the check sandbox (evidence/dotnet-format.ts). */
@@ -928,6 +956,13 @@ function finalize(ctx: RunnerContext, def: CheckDefinition, row: CheckRunRecord,
     // MSBuild can record a refused node and fail before the next scan (at once on Linux): look once more.
     const late = findMsbuildNodeDenial(dirs.tmpDir);
     if (late) note = denialNote(ctx, def, late, false);
+  } else if (status === 'PASSED') {
+    // dotnet format can exit 0 having loaded no project when its build host was refused (on Linux): it checked nothing.
+    const unloaded = loadedNoProjectNote(ctx, def, body);
+    if (unloaded !== null) {
+      status = 'FAILED';
+      note = unloaded;
+    }
   }
 
   const exitCode = exit?.exitCode ?? null;

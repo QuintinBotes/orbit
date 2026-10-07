@@ -1,7 +1,7 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, posix, relative, isAbsolute } from 'node:path';
 import type { CheckDefinition } from '../policy/types.ts';
-import { chainOf, commandsOf, isDotnet, type JudgedCheck, msbuildFix, type MsbuildFix, msbuildFixReason, msbuildNodeFix, msbuildNodes, type MsbuildFixWhere, onOneProcessor, shellLine, shellWord, shown, simple, type Simple, verbOf, words } from './msbuild.ts';
+import { chainOf, commandsOf, isDotnet, type JudgedCheck, msbuildFix, type MsbuildFix, msbuildFixReason, msbuildNodeFix, msbuildNodes, type MsbuildFixWhere, onOneProcessor, pasted, shellLine, shellWord, shown, simple, type Simple, verbOf, words } from './msbuild.ts';
 
 /**
  * dotnet format under the check sandbox (issue #10; docs/decisions/0009-toolchain-profiles.md, addendum). Every form of
@@ -70,8 +70,13 @@ export const FORMAT_OUTSIDE_REASON =
   "with SDK 8 pinned by global.json, which loads the project in dotnet format's own process, a dotnet restore -m:1 first and dotnet format with --no-restore run; " +
   'docs/troubleshooting.md, "dotnet format under the sandbox")';
 
-/** The fix for a dotnet format check that cannot run in the check sandbox (FORMAT_OUTSIDE_REASON): run it outside Orbit. */
-export function formatOutsideFix(check: Pick<CheckDefinition, 'id'>): string {
+/**
+ * The fix for a dotnet format check that cannot run in the check sandbox (FORMAT_OUTSIDE_REASON): run it outside Orbit.
+ * For another command Orbit starts in such a sandbox (`where`: a release environment's deploy_command, say), dotnet
+ * format comes out of that command.
+ */
+export function formatOutsideFix(check: Pick<CheckDefinition, 'id'>, where: MsbuildFixWhere | null = null): string {
+  if (where) return `remove dotnet format from ${where.command} and run it in CI`;
   return `remove checks.${check.id} from .orbit/config.yaml, or set checks.${check.id}.mandatory: false, and run dotnet format in CI`;
 }
 
@@ -291,11 +296,12 @@ const withRestoreFirst = (check: JudgedCheck) =>
  * with the folder form in place of each such dotnet format, ready to paste (an argv keeps its program and what `env`
  * sets; a chain, or `sh -c`, is rewritten in place), or, for a shell line doctor cannot split, the form to run instead.
  * The folder form reads the folder of the solution or project the check formats, with its --include and --exclude.
+ * `where` names another field than the check's command (a release environment's deploy_command, say).
  */
-export function dotnetFormatFix(check: JudgedCheck & Pick<CheckDefinition, 'id'>): string {
-  const field = `checks.${check.id}.command`;
+export function dotnetFormatFix(check: JudgedCheck & Pick<CheckDefinition, 'id'>, where: MsbuildFixWhere | null = null): string {
+  const field = where?.command ?? `checks.${check.id}.command`;
   const fixed = withFolderForm(check);
-  return fixed ? `${field}: ${shown(fixed.command)}` : `in ${field}, run "${FOLDER_TEXT}" in place of its dotnet format command`;
+  return fixed ? pasted(field, fixed.command, fixed.shell && !check.shell) : `in ${field}, run "${FOLDER_TEXT}" in place of its dotnet format command`;
 }
 
 /**
@@ -319,7 +325,7 @@ export function formatRestoreFix(check: JudgedCheck & Pick<CheckDefinition, 'id'
   if (fixed?.shell) {
     // An argv, now a shell line of its own restore, pinned, and its format: nothing else to pin, and its words quoted.
     const field = where?.command ?? `checks.${check.id}.command`;
-    return { change: `${field}: ${shown(fixed.command)} with ${field.slice(0, -'.command'.length)}.shell: true ${RESTORE_FIRST}`, env: msbuildFix(check, where).env };
+    return { change: `${pasted(field, fixed.command, true)} ${RESTORE_FIRST}`, env: msbuildFix(check, where).env };
   }
   const fix = msbuildFix(fixed ? { ...check, command: fixed.command } : check, where);
   return { ...fix, change: `${fix.change} ${RESTORE_FIRST}` };
@@ -346,4 +352,37 @@ export function nodeDenialFix(check: JudgedCheck & Pick<CheckDefinition, 'id'>, 
   if (msbuildNodes(check, true)?.kind !== 'unpinned') return `${dotnetFormatFix(check)} ${DOTNET_FORMAT_REASON}`;
   const fix = formatAndNodeFix(check, where);
   return `${fix.change} ${msbuildFixReason([fix])} ${DOTNET_FORMAT_REASON}`;
+}
+
+/**
+ * dotnet format's own report of a project it could not load: it catches MSBuildWorkspace's error and says the project's
+ * language is unsupported, of a C# or Visual Basic project file, and exits 0. Measured under the runner and srt on Linux
+ * (arm64 Ubuntu 24.04, SDK 10.0.401, verbosity diagnostic included): with the build host's pipe refused, `dotnet format
+ * --verify-no-changes --no-restore` of a console project failed with the build host's unhandled exception in most runs,
+ * and in 8 of 40 (more often with other tests running beside it) printed "Could not format '<checkout>/acme.csproj'.
+ * Format currently supports only C# and Visual Basic projects." and exited 0, having loaded no project and checked
+ * nothing (CI of #26 found it as a pass).
+ */
+const LOADED_NO_PROJECT = /^\s*Could not format '[^'\r\n]+\.(?:cs|vb)proj'\. Format currently supports only C# and Visual Basic projects\.\s*$/m;
+
+/** Whether a check's output shows a dotnet format that loaded no project of the C# or Visual Basic project file it named. */
+export function formatLoadedNoProject(output: string): boolean {
+  return LOADED_NO_PROJECT.test(output);
+}
+
+/**
+ * The note on a check the runner records as FAILED although it exited 0: its dotnet format loaded no project
+ * (formatLoadedNoProject) because the check sandbox refused the build host's pipe, so it checked nothing. PREFLIGHT reads
+ * it as the environment's failure (evidence/environment-failure.ts, pipe-denied), as it reads the build host's crash.
+ */
+export function buildHostDenialNote(fix: string): string {
+  return `the check sandbox denied dotnet format's build host its named pipe under /tmp, so dotnet format loaded no project and checked nothing, though it exited 0 (it reports a project it could not load as "Format currently supports only C# and Visual Basic projects"). Fix: ${fix}`;
+}
+
+/**
+ * The fix for a check whose dotnet format could not reach its build host: the form that loads no project, or, where that
+ * form cannot list the folders above the checkout (`folderForm` false: macOS, a run's checkout), running it outside Orbit.
+ */
+export function buildHostFix(check: JudgedCheck & Pick<CheckDefinition, 'id'>, where: MsbuildFixWhere | null, folderForm = true): string {
+  return folderForm ? `${dotnetFormatFix(check, where)} ${DOTNET_FORMAT_REASON}` : `${formatOutsideFix(check, where)} ${FORMAT_OUTSIDE_REASON}`;
 }

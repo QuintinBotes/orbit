@@ -20,9 +20,10 @@ import { runnerEnv, type RunnerEnv } from './harness.ts';
  * Every form but `dotnet format whitespace --folder` loads the project through MSBuildWorkspace's build host, whose named
  * pipe Roslyn binds at /tmp/<guid> whatever TMPDIR says, and the sandbox refuses it: measured on macOS with SDK 9.0.305
  * (Seatbelt denied file-write-create of /tmp/<guid>; the format waited out the build host's 60 s connect
- * timeout), and on Linux with SDK 10.0.401 (the socket refused at once). Before this, such a check failed its baseline
- * after a minute, or after MSBuild's five minutes of node retries when its implicit restore had two projects to walk,
- * and became a pre-existing failure with a baseline exception question. Now doctor fails it before any probe, and the
+ * timeout), and on Linux with SDK 10.0.401 (the socket refused at once; or, in 8 runs of 40, dotnet format said the
+ * C# project was in no language it supports and exited 0, which the runner records as the same failure).
+ * Before this, such a check failed its baseline after a minute, or after MSBuild's five minutes of node retries when
+ * its implicit restore had two projects to walk, and became a pre-existing failure with a baseline exception question. Now doctor fails it before any probe, and the
  * runner's record of the failure reads as the environment's. SDK 8.0.303's dotnet format evaluates projects in its own
  * process and runs once its restore is pinned (a global.json pins it here). Skipped where srt or dotnet is missing.
  */
@@ -87,10 +88,15 @@ describe.skipIf(skip !== null)(skip === null ? 'dotnet format under the srt chec
       expect(r.status, log).toBe('PASSED');
       return;
     }
-    expect(r.status).toBe('FAILED');
+    expect(r.status, log).toBe('FAILED');
     // The build host's connect timeout on macOS (60 s), at once on Linux; never MSBuild's five minutes.
     expect(ms).toBeLessThan(120_000);
-    expect(log).toMatch(/BuildHostProcessManager/);
+    // The build host's crash, or (Linux, SDK 10.0.401: 8 runs of 40, and once in CI of #26) dotnet format's report
+    // that the C# project is in no language it supports, exit 0, which the runner records as this failure.
+    if (!/BuildHostProcessManager/.test(log)) {
+      expect(log).toMatch(/^Could not format '.+\/acme\.csproj'\. Format currently supports only C# and Visual Basic projects\.$/m);
+      expect(log).toMatch(/ status=FAILED exit=0 note=the check sandbox denied dotnet format's build host its named pipe under \/tmp, so dotnet format loaded no project and checked nothing, .+ Fix: checks\.format\.command: /);
+    }
     expect(classifyCouldNotRun({ checkId: 'format', output: log, insideRoots: roots })?.signals).toEqual(['pipe-denied']);
   }, 300_000);
 

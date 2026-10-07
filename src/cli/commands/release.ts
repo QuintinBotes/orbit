@@ -7,7 +7,7 @@
  */
 import { OrbitError } from '../../core/errors.ts';
 import { isTerminal } from '../../controller/states.ts';
-import { homeOf, loadRunContext } from '../../controller/context.ts';
+import { homeOf, loadRunContext, toolchainCacheRootFor } from '../../controller/context.ts';
 import { renewLease } from '../../controller/run-store.ts';
 import { ActionLedger } from '../../delivery/actions.ts';
 import { resolveDeploy, type DeployResolutionKind } from '../../delivery/release.ts';
@@ -65,7 +65,7 @@ export async function releaseResolveCommand(args: Args, ctx: CliContext): Promis
             ...(environment === undefined ? {} : { environment }),
             resolution,
             by,
-            ...(resolution === 'verify' ? { isolation: rc.isolation(), homeDir: homeOf(rc.deps) } : {}),
+            ...(resolution === 'verify' ? { isolation: rc.isolation(), homeDir: homeOf(rc.deps), hostEnv: rc.deps.hostEnv ?? ctx.env, toolchainCacheRoot: toolchainCacheRootFor(rc) } : {}),
           });
           return { result };
         } finally {

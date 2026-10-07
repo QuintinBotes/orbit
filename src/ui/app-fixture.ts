@@ -42,6 +42,12 @@ export interface StartAppOptions {
   probe?: (url: string, timeoutMs: number) => Promise<number | null>;
   /** Source of the safe base environment; defaults to process.env. */
   hostEnv?: Readonly<Record<string, string | undefined>>;
+  /**
+   * Asked on every look while the application is not ready yet: a reason to stop it now, or null. For a sandbox denial
+   * its toolchain would otherwise wait out (an MSBuild worker node refused its named pipe, ui/app-toolchains.ts), which no
+   * readiness probe can see. Asked once more, with `exited`, when it exited before it was ready, for the reason's sake.
+   */
+  stopWhen?: (exited: boolean) => string | null;
 }
 
 export interface AppState {
@@ -199,8 +205,11 @@ export async function startApp(opts: StartAppOptions): Promise<AppHandle> {
   try {
     for (;;) {
       if (!groupAlive(spawned.pgid)) {
-        throw new OrbitError('INTERNAL', `the application exited before it became ready: ${logTail(logPath).trim() || '(no output)'}`, { reason: 'app_exited', logPath });
+        const why = opts.stopWhen?.(true) ?? null;
+        throw new OrbitError('INTERNAL', `the application exited before it became ready: ${logTail(logPath).trim() || '(no output)'}${why ? `; ${why}` : ''}`, { reason: 'app_exited', logPath });
       }
+      const stop = opts.stopWhen?.(false) ?? null;
+      if (stop !== null) throw new OrbitError('INTERNAL', `the application was stopped before it became ready: ${stop}`, { reason: 'app_stopped', logPath });
       const status = await probe(opts.baseUrl, requestTimeout);
       if (status !== null && isReadyStatus(status)) return handle;
       if (clock.now() >= deadline) {

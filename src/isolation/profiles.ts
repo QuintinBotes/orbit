@@ -1,10 +1,11 @@
-import { chmodSync, lstatSync, mkdirSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, unlinkSync, type Stats } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
 import { sha256 } from '../core/hash.ts';
 import { credentialGlobsOf } from '../policy/builtin.ts';
 import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
+import { removeScratch } from './toolchains.ts';
 import type { SandboxProfile } from './types.ts';
 import { canonicalPath, credentialFilesIn, gitCommonDir, isWithin, readablePathsOf, uniq } from './util.ts';
 
@@ -382,9 +383,41 @@ export function prepareWorkerTmpDir(workerDir: string, root: string = orbitTmpRo
     throw new OrbitError('ISOLATION_UNAVAILABLE', `${root} is not a private directory owned by this user; refusing to put worker temp files there`, { path: root });
   }
   const dir = workerTmpDir(workerDir, root);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // A sandboxed process can write its temp directory's entry, so a reused one may now be a link or a file. Never follow
+  // it: the sandbox's write rule resolves the path, so a link would make its target writable, and chmod would follow it
+  // (found in the #26 review). A link or file is removed; a directory that is not this user's is refused.
+  const existing = lstatOrNull(dir);
+  if (existing !== null && (existing.isSymbolicLink() || !existing.isDirectory())) unlinkSync(dir);
+  else if (existing !== null && uid !== undefined && existing.uid !== uid) {
+    throw new OrbitError('ISOLATION_UNAVAILABLE', `${dir} is not owned by this user; refusing to put worker temp files there`, { path: dir });
+  }
+  if (existing === null || existing.isSymbolicLink() || !existing.isDirectory()) mkdirSync(dir, { mode: 0o700 });
+  const made = lstatSync(dir);
+  if (made.isSymbolicLink() || !made.isDirectory()) {
+    throw new OrbitError('ISOLATION_UNAVAILABLE', `${dir} changed while it was being prepared; refusing to put worker temp files there`, { path: dir });
+  }
   chmodSync(dir, 0o700);
   return dir;
+}
+
+function lstatOrNull(p: string): Stats | null {
+  try {
+    return lstatSync(p);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+/**
+ * prepareWorkerTmpDir, emptied: for a command that runs again in the same directory (a release environment's deploy or
+ * verify command), whose temp directory is derived from it. Nothing an earlier invocation left there reaches this one:
+ * a review of #26 found that an MSBuild failure report an earlier verify command left made every later verify of that
+ * deploy UNKNOWN, since a refused node recorded there stops a command at its first look.
+ */
+export function prepareFreshTmpDir(dir: string, root: string = orbitTmpRoot()): string {
+  removeScratch(prepareWorkerTmpDir(dir, root));
+  return prepareWorkerTmpDir(dir, root);
 }
 
 export function providerDirs(opts: { homeDir: string; claudeConfigDir?: string; codexHome?: string; env?: Record<string, string | undefined> }): ProviderDirs {

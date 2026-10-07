@@ -22546,7 +22546,7 @@ function tempRoots() {
   return tempRootsCache;
 }
 function judgeRead(c, r, root, home2) {
-  const denied = (shown2) => deny("bash.credential-read", `${r.via} reads ${shown2}, which holds credentials`);
+  const denied = (shown3) => deny("bash.credential-read", `${r.via} reads ${shown3}, which holds credentials`);
   if (r.abs === null) {
     return c.credential(stripDotSlash(toPosix(posix3.normalize(r.path.replace(/^\/+/, ""))))) ? denied(r.path) : null;
   }
@@ -24914,10 +24914,310 @@ var init_strict_schema = __esm({
   }
 });
 
+// src/isolation/toolchains.ts
+import { chmodSync as chmodSync2, existsSync as existsSync5, lstatSync as lstatSync3, mkdirSync as mkdirSync5, readdirSync as readdirSync2, rmSync } from "node:fs";
+import { basename as basename3, isAbsolute as isAbsolute5, join as join6 } from "node:path";
+import { pathToFileURL } from "node:url";
+function nugetAuditRuns(d) {
+  return d.platform !== "darwin" && NUGET_HOSTS.every((h) => hostAllowed(h, d.networkHosts));
+}
+function goProxyUrl(dir) {
+  return pathToFileURL(dir).href.replaceAll(",", "%2C").replaceAll("|", "%7C");
+}
+function nonNull(name, value) {
+  return value === null ? {} : { [name]: value };
+}
+function toolchainCacheRoot(orbitHome, repoKey2) {
+  if (!REPO_KEY.test(repoKey2)) throw new Error(`invalid repository key ${JSON.stringify(repoKey2)}`);
+  return join6(orbitHome, "toolchains", repoKey2);
+}
+function toolchainRegistryHosts(ids) {
+  return [...new Set(ordered(ids).flatMap((id) => TOOLCHAIN_PROFILES[id].registryHosts))];
+}
+function ordered(ids) {
+  return TOOLCHAIN_IDS.filter((id) => ids.includes(id));
+}
+function commandWords(command) {
+  return command.flatMap((part) => part.split(/[\s;&|()<>`]+/)).filter((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)).map((w) => basename3(w));
+}
+function hasMarker(dir, markers) {
+  let names;
+  try {
+    names = readdirSync2(dir);
+  } catch {
+    return false;
+  }
+  return markers.some((m) => m.startsWith("*.") ? names.some((n2) => n2.endsWith(m.slice(1)) && n2.length > m.length - 1) : names.includes(m));
+}
+function detectToolchains(input) {
+  const words2 = commandWords(input.command ?? []);
+  return TOOLCHAIN_IDS.filter((id) => {
+    const p = TOOLCHAIN_PROFILES[id];
+    return words2.some((w) => p.executables.test(w)) || (input.roots ?? []).some((r) => hasMarker(r, p.markers));
+  });
+}
+function rustupHomeOf(input) {
+  const configured = (input.hostEnv ?? process.env).RUSTUP_HOME;
+  if (configured && configured.trim() !== "") return isAbsolute5(configured) ? configured : null;
+  if (!input.hostHome) return null;
+  const dflt = join6(input.hostHome, ".rustup");
+  return existsSync5(dflt) ? dflt : null;
+}
+function javaHomeOf(input) {
+  const configured = (input.hostEnv ?? process.env).JAVA_HOME;
+  return configured && configured.trim() !== "" && isAbsolute5(configured) ? configured : null;
+}
+function toolchainLayout(input) {
+  const ids = ordered(input.toolchains);
+  const shared = input.cacheRoot !== null;
+  const cachePath = (name) => input.cacheRoot !== null ? join6(input.cacheRoot, name) : join6(input.scratchRoot, "cache", name);
+  const ownPath = (name) => join6(input.scratchRoot, "cache", name);
+  const scratchPath = (name) => join6(input.scratchRoot, name);
+  const modeOf = (id) => input.installs?.includes(id) ? "install" : input.mode;
+  const rustupHome = ids.includes("rust") ? rustupHomeOf(input) : null;
+  const javaHome = ids.includes("jvm") ? javaHomeOf(input) : null;
+  const platform3 = input.platform ?? process.platform;
+  const env = {};
+  const directories = [];
+  const caches = [];
+  const writableCaches = [];
+  const readOnly = [];
+  for (const id of ids) {
+    const p = TOOLCHAIN_PROFILES[id];
+    const mode = modeOf(id);
+    const fetch2 = mode === "fetch";
+    const dirs = {
+      mode,
+      cache: cachePath,
+      own: (name) => fetch2 ? ownPath(name) : cachePath(name),
+      beneath: (name) => fetch2 && shared ? cachePath(name) : null,
+      scratch: scratchPath,
+      tmpDir: input.tmpDir,
+      rustupHome,
+      javaHome,
+      platform: platform3,
+      networkHosts: input.networkHosts
+    };
+    Object.assign(env, p.env(dirs));
+    for (const name of p.caches) caches.push({ toolchain: id, name, path: cachePath(name) });
+    if (shared) (mode === "install" ? writableCaches : readOnly).push(...p.caches.map(cachePath));
+    directories.push(...p.caches.map(cachePath), ...fetch2 ? p.caches.map(ownPath) : [], ...p.scratch.map(scratchPath));
+  }
+  return {
+    toolchains: ids,
+    env,
+    writable: ids.length === 0 ? [] : [input.scratchRoot, ...writableCaches],
+    readOnly,
+    directories: [...new Set(directories)],
+    caches,
+    nisDomainName: ids.includes("dotnet")
+  };
+}
+function commandToolchains(input) {
+  const container = input.isolation === "container";
+  return toolchainLayout({
+    toolchains: detectToolchains({ command: input.command, ...input.shell === void 0 ? {} : { shell: input.shell }, roots: input.roots }),
+    mode: input.mode,
+    ...input.installs ? { installs: input.installs } : {},
+    cacheRoot: input.cacheRoot,
+    scratchRoot: input.scratchRoot,
+    tmpDir: input.tmpDir,
+    platform: container ? "linux" : input.platform ?? process.platform,
+    networkHosts: input.networkHosts,
+    ...container ? { hostEnv: {} } : { hostEnv: input.hostEnv ?? process.env, ...input.hostHome ? { hostHome: input.hostHome } : {} }
+  });
+}
+function prepareToolchainLayout(layout) {
+  for (const d of layout.directories) {
+    mkdirSync5(d, { recursive: true, mode: 448 });
+    chmodSync2(d, 448);
+  }
+}
+function removeScratch(dir) {
+  const remove = () => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  try {
+    remove();
+    return;
+  } catch (err) {
+    const code2 = err.code;
+    if (code2 !== "EACCES" && code2 !== "EPERM" && code2 !== "ENOTEMPTY") throw err;
+  }
+  makeTreeWritable(dir);
+  remove();
+}
+function makeTreeWritable(dir) {
+  try {
+    if (!lstatSync3(dir).isDirectory()) return;
+  } catch {
+    return;
+  }
+  const stack = [dir];
+  while (stack.length > 0) {
+    const d = stack.pop();
+    try {
+      chmodSync2(d, 448);
+      for (const entry of readdirSync2(d, { withFileTypes: true })) if (entry.isDirectory()) stack.push(join6(d, entry.name));
+    } catch {
+    }
+  }
+}
+var TOOLCHAIN_IDS, PROBE_TFM, probeLibrary, DOTNET_PROBE_PROJECT, NUGET_AUDIT_LIMITATION, NUGET_HOSTS, TOOLCHAIN_PROFILES, GO_DEFAULT_PROXY, REPO_KEY;
+var init_toolchains = __esm({
+  "src/isolation/toolchains.ts"() {
+    "use strict";
+    init_hosts();
+    TOOLCHAIN_IDS = ["dotnet", "go", "jvm", "python", "rust"];
+    PROBE_TFM = "<TargetFramework>net$(NETCoreAppMaximumVersion)</TargetFramework>";
+    probeLibrary = (refs = []) => `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>${PROBE_TFM}</PropertyGroup>
+${refs.length ? `  <ItemGroup>${refs.map((r) => `<ProjectReference Include="../${r}/${r}.csproj" />`).join("")}</ItemGroup>
+` : ""}</Project>
+`;
+    DOTNET_PROBE_PROJECT = {
+      "Directory.Build.props": "<Project />\n",
+      "Directory.Build.targets": "<Project />\n",
+      "Probe.Left/Probe.Left.csproj": probeLibrary(),
+      "Probe.Left/Left.cs": "namespace Probe;\npublic static class Left { public static int One => 1; }\n",
+      "Probe.Right/Probe.Right.csproj": probeLibrary(),
+      "Probe.Right/Right.cs": "namespace Probe;\npublic static class Right { public static int Two => 2; }\n",
+      "Probe.App/Probe.App.csproj": probeLibrary(["Probe.Left", "Probe.Right"]),
+      "Probe.App/App.cs": "namespace Probe;\npublic static class App { public static int Three => Left.One + Right.Two; }\n"
+    };
+    NUGET_AUDIT_LIMITATION = "NuGet's vulnerability audit was off (NuGetAudit=false in Orbit's .NET profile, which turns it off where it cannot reach the package source from the sandbox), so a package with a known vulnerability does not fail this restore, even where such warnings are errors; the repository's CI still runs it";
+    NUGET_HOSTS = ["api.nuget.org"];
+    TOOLCHAIN_PROFILES = {
+      dotnet: {
+        id: "dotnet",
+        executables: /^dotnet$/,
+        markers: ["*.sln", "*.slnx", "*.csproj", "*.fsproj", "*.vbproj", "global.json", "Directory.Build.props"],
+        caches: ["nuget"],
+        scratch: ["nuget-http", "nuget-plugins"],
+        scratchVars: ["NUGET_HTTP_CACHE_PATH", "NUGET_PLUGINS_CACHE_PATH"],
+        registryHosts: NUGET_HOSTS,
+        // A real build: `dotnet help` started the SDK and ran its first-run steps (#10) but passed where every build of two
+        // projects was denied an MSBuild worker node (#10, reopened). A build runs the first-run steps too.
+        probe: {
+          executables: ["dotnet"],
+          args: ["build", "Probe.App/Probe.App.csproj"],
+          files: DOTNET_PROBE_PROJECT,
+          about: "three generated projects with no packages, one referencing the other two: their restore and build start MSBuild as a real build does"
+        },
+        env: (d) => ({
+          NUGET_PACKAGES: d.own("nuget"),
+          // A fallback folder: NuGet resolves a package found there in place, read-only, and extracts only the others into
+          // NUGET_PACKAGES (measured with SDK 9.0.305: a restore with no package source resolved from it, the packages
+          // folder left empty).
+          ...nonNull("NUGET_FALLBACK_PACKAGES", d.beneath("nuget")),
+          NUGET_HTTP_CACHE_PATH: d.scratch("nuget-http"),
+          NUGET_PLUGINS_CACHE_PATH: d.scratch("nuget-plugins"),
+          // NuGet's vulnerability audit (an MSBuild property, which MSBuild also reads from the environment) fetches from the
+          // package source at every restore. Off only where it cannot run (nugetAuditRuns): anything on macOS under srt,
+          // and any process whose network lacks the host (a check or worker that does not list it). There it could only
+          // add warning NU1900, after a wait, and a repository that treats warnings as errors fails its restore on it,
+          // after its cache was filled (#10). Elsewhere (the dependency install on Linux or in a container, a Linux check
+          // that lists the host) it stays as the repository configures it, so Orbit does not pass a restore the
+          // repository's CI fails on NU1903. A check's own env, or a project that sets NuGetAudit itself, wins (orbit
+          // doctor's checks.dotnet-audit names the second on macOS).
+          ...nugetAuditRuns(d) ? {} : { NuGetAudit: "false" }
+        })
+      },
+      go: {
+        id: "go",
+        executables: /^(go|gofmt)$/,
+        markers: ["go.mod", "go.work"],
+        caches: ["gomod"],
+        scratch: ["gocache", "gopath"],
+        scratchVars: ["GOCACHE", "GOPATH"],
+        registryHosts: ["proxy.golang.org", "sum.golang.org"],
+        probe: { executables: ["go"], args: ["version"] },
+        env: (d) => {
+          const beneath = d.beneath("gomod");
+          return {
+            GOMODCACHE: d.own("gomod"),
+            // The module cache's download directory is laid out as a module proxy (`go help goproxy`): Go copies a module
+            // found there into its own cache and asks its default proxies for the others (a missing file is "not found",
+            // which a comma passes over). A command that sets GOPROXY itself replaces the list.
+            ...beneath === null ? {} : { GOPROXY: `${goProxyUrl(join6(beneath, "cache", "download"))},${GO_DEFAULT_PROXY}` },
+            GOCACHE: d.scratch("gocache"),
+            GOPATH: d.scratch("gopath")
+          };
+        }
+      },
+      jvm: {
+        id: "jvm",
+        executables: /^(java|javac|jar|jshell|kotlinc|mvn|mvnw|gradle|gradlew)$/,
+        markers: ["pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew", "mvnw"],
+        caches: ["gradle", "maven"],
+        scratch: ["gradle-home", "maven-repo"],
+        scratchVars: ["GRADLE_USER_HOME", "maven.repo.local"],
+        registryHosts: ["repo.maven.apache.org", "repo1.maven.org", "plugins.gradle.org", "services.gradle.org"],
+        probe: { executables: ["java"], args: ["--version"] },
+        env: (d) => ({
+          // The install fills Gradle's and Maven's own homes; everyone else reads them as Gradle's read-only dependency
+          // cache (the directory holding modules-2) and Maven's read-only tail repository, writing only private copies, into
+          // which a command in `fetch` mode also downloads what they do not hold.
+          ...d.mode === "install" ? { GRADLE_USER_HOME: d.cache("gradle"), MAVEN_OPTS: `-Dmaven.repo.local=${d.cache("maven")}` } : {
+            GRADLE_USER_HOME: d.scratch("gradle-home"),
+            GRADLE_RO_DEP_CACHE: join6(d.cache("gradle"), "caches"),
+            MAVEN_OPTS: `-Dmaven.repo.local=${d.scratch("maven-repo")} -Dmaven.repo.local.tail=${d.cache("maven")}`
+          },
+          // The JVM ignores TMPDIR on macOS; srt sets JAVA_TOOL_OPTIONS for its own proxy agent, so this goes in the
+          // launcher's variable (java 9 and later).
+          JDK_JAVA_OPTIONS: `-Djava.io.tmpdir=${d.tmpDir}`,
+          // The host's JDK, read-only: a check inherits nothing else of the host's environment, and macOS's /usr/bin/java
+          // (a stub that finds the runtime through JAVA_HOME, else a JDK registered under /Library/Java) and the Maven and
+          // Gradle launchers find the JDK through it. Without it a JDK outside /Library/Java (GitHub's macOS runners keep
+          // theirs in the tool cache) is "Unable to locate a Java Runtime".
+          ...d.javaHome ? { JAVA_HOME: d.javaHome } : {}
+        })
+      },
+      python: {
+        id: "python",
+        executables: /^(python[0-9.]*|pip[0-9.]*|pytest|py\.test|tox|nox|poetry|pipenv|hatch|pdm)$/,
+        markers: ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "Pipfile", "poetry.lock", "tox.ini"],
+        caches: ["pip"],
+        scratch: ["pycache", "python-user"],
+        scratchVars: ["PYTHONPYCACHEPREFIX", "PYTHONUSERBASE"],
+        registryHosts: ["pypi.org", "files.pythonhosted.org"],
+        probe: { executables: ["python3", "python"], args: ["--version"] },
+        env: (d) => ({
+          // pip reads no second cache (a read-only one it turns off): in `fetch` mode its own starts empty.
+          PIP_CACHE_DIR: d.own("pip"),
+          PIP_DISABLE_PIP_VERSION_CHECK: "1",
+          PYTHONPYCACHEPREFIX: d.scratch("pycache"),
+          PYTHONUSERBASE: d.scratch("python-user"),
+          // Virtual environments belong in the checkout (per run), never in a tool's cache directory.
+          POETRY_VIRTUALENVS_IN_PROJECT: "true",
+          PIPENV_VENV_IN_PROJECT: "1"
+        })
+      },
+      rust: {
+        id: "rust",
+        executables: /^(cargo|rustc|rustup|rustfmt|rustdoc)$/,
+        markers: ["Cargo.toml", "Cargo.lock", "rust-toolchain", "rust-toolchain.toml"],
+        caches: ["cargo"],
+        scratch: ["cargo-target"],
+        scratchVars: ["CARGO_TARGET_DIR"],
+        registryHosts: ["index.crates.io", "static.crates.io"],
+        probe: { executables: ["cargo"], args: ["--version"] },
+        env: (d) => ({
+          // Cargo reads no second registry cache: in `fetch` mode its own home starts empty.
+          CARGO_HOME: d.own("cargo"),
+          CARGO_TARGET_DIR: d.scratch("cargo-target"),
+          // rustup's proxies find their toolchains through RUSTUP_HOME, else under HOME, which is private in a check.
+          ...d.rustupHome ? { RUSTUP_HOME: d.rustupHome } : {}
+        })
+      }
+    };
+    GO_DEFAULT_PROXY = "https://proxy.golang.org,direct";
+    REPO_KEY = /^[A-Za-z0-9_-]{1,64}$/;
+  }
+});
+
 // src/isolation/util.ts
 import { spawn as spawn2 } from "node:child_process";
-import { accessSync, constants as constants2, existsSync as existsSync5, lstatSync as lstatSync3, readdirSync as readdirSync2, readFileSync as readFileSync5, realpathSync as realpathSync4, statSync as statSync2 } from "node:fs";
-import { basename as basename3, delimiter, dirname as dirname6, isAbsolute as isAbsolute5, join as join6, resolve as resolve3, sep as sep3 } from "node:path";
+import { accessSync, constants as constants2, existsSync as existsSync6, lstatSync as lstatSync4, readdirSync as readdirSync3, readFileSync as readFileSync5, realpathSync as realpathSync4, statSync as statSync2 } from "node:fs";
+import { basename as basename4, delimiter, dirname as dirname6, isAbsolute as isAbsolute6, join as join7, resolve as resolve3, sep as sep3 } from "node:path";
 function readablePathsOf(profile) {
   const extra = profile.readablePaths;
   return Array.isArray(extra) ? extra : [];
@@ -24928,18 +25228,18 @@ function isWithin(child, parent) {
   return child.startsWith(prefix);
 }
 function canonicalPath(p) {
-  if (!isAbsolute5(p)) throw new OrbitError("INTERNAL", `isolation paths must be absolute, got ${JSON.stringify(p)}`);
+  if (!isAbsolute6(p)) throw new OrbitError("INTERNAL", `isolation paths must be absolute, got ${JSON.stringify(p)}`);
   const normalized = resolve3(p);
   const tail2 = [];
   let current = normalized;
   for (; ; ) {
     try {
       const real = realpathSync4.native(current);
-      return tail2.length ? join6(real, ...tail2.reverse()) : real;
+      return tail2.length ? join7(real, ...tail2.reverse()) : real;
     } catch {
       const parent = dirname6(current);
       if (parent === current) return normalized;
-      tail2.push(basename3(current));
+      tail2.push(basename4(current));
       current = parent;
     }
   }
@@ -24961,23 +25261,23 @@ function isExecutableFile(p) {
   }
 }
 function which(name, pathEnv) {
-  if (name.includes("/")) return isAbsolute5(name) && isExecutableFile(name) ? name : null;
+  if (name.includes("/")) return isAbsolute6(name) && isExecutableFile(name) ? name : null;
   for (const dir of (pathEnv ?? "").split(delimiter)) {
-    if (!dir || !isAbsolute5(dir)) continue;
-    const candidate = join6(dir, name);
+    if (!dir || !isAbsolute6(dir)) continue;
+    const candidate = join7(dir, name);
     if (isExecutableFile(candidate)) return candidate;
   }
   return null;
 }
 function gitCommonDir(worktree) {
-  const dotGit = join6(worktree, ".git");
+  const dotGit = join7(worktree, ".git");
   try {
     if (!statSync2(dotGit).isFile()) return null;
     const match = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync5(dotGit, "utf8"));
     if (!match?.[1]) return null;
     const gitdir = resolve3(worktree, match[1]);
-    const commondirFile = join6(gitdir, "commondir");
-    const common = existsSync5(commondirFile) ? resolve3(gitdir, readFileSync5(commondirFile, "utf8").trim()) : gitdir;
+    const commondirFile = join7(gitdir, "commondir");
+    const common = existsSync6(commondirFile) ? resolve3(gitdir, readFileSync5(commondirFile, "utf8").trim()) : gitdir;
     return canonicalPath(common);
   } catch {
     return null;
@@ -25048,7 +25348,7 @@ function credentialFilesIn(worktree, globs = BUILTIN_CREDENTIAL_PATHS, opts = {}
     const dir = stack.pop();
     let entries;
     try {
-      entries = readdirSync2(dir, { withFileTypes: true });
+      entries = readdirSync3(dir, { withFileTypes: true });
     } catch {
       continue;
     }
@@ -25060,13 +25360,13 @@ function credentialFilesIn(worktree, globs = BUILTIN_CREDENTIAL_PATHS, opts = {}
           { worktree: root, limit }
         );
       }
-      const abs = join6(dir, entry.name);
+      const abs = join7(dir, entry.name);
       const rel = abs.slice(root.length + 1);
       let isDir = entry.isDirectory();
       let isLink = entry.isSymbolicLink();
       if (!isDir && !isLink && !entry.isFile()) {
         try {
-          const st = lstatSync3(abs);
+          const st = lstatSync4(abs);
           isDir = st.isDirectory();
           isLink = st.isSymbolicLink();
         } catch {
@@ -25103,9 +25403,9 @@ var init_util = __esm({
 });
 
 // src/isolation/profiles.ts
-import { chmodSync as chmodSync2, lstatSync as lstatSync4, mkdirSync as mkdirSync5 } from "node:fs";
+import { chmodSync as chmodSync3, lstatSync as lstatSync5, mkdirSync as mkdirSync6, unlinkSync } from "node:fs";
 import { homedir as homedir4, tmpdir as tmpdir3 } from "node:os";
-import { dirname as dirname7, isAbsolute as isAbsolute6, join as join7 } from "node:path";
+import { dirname as dirname7, isAbsolute as isAbsolute7, join as join8 } from "node:path";
 function walkLimit(input) {
   return input.credentialWalkLimit === void 0 ? {} : { credentialWalkLimit: input.credentialWalkLimit };
 }
@@ -25126,11 +25426,11 @@ function profileForWorker(input) {
   let others;
   if (input.provider === "claude") {
     own = dirs.claudeConfigDir;
-    ownReadOnly = [...CLAUDE_CONFIG_READ_ONLY.map((rel) => join7(own, rel)), claudeGlobalConfig(home2, own)];
+    ownReadOnly = [...CLAUDE_CONFIG_READ_ONLY.map((rel) => join8(own, rel)), claudeGlobalConfig(home2, own)];
     others = [...claudeDirs.filter((d) => d !== own).flatMap((d) => claudeState(home2, d)), ...codexDirs];
   } else {
     own = dirs.codexHome;
-    ownReadOnly = CODEX_HOME_READ_ONLY.map((rel) => join7(own, rel));
+    ownReadOnly = CODEX_HOME_READ_ONLY.map((rel) => join8(own, rel));
     others = [...claudeDirs.flatMap((d) => claudeState(home2, d)), ...codexDirs.filter((d) => d !== own)];
   }
   assertProviderDirConfinable(own, home2, env);
@@ -25140,7 +25440,7 @@ function profileForWorker(input) {
     readablePaths: uniq([
       ...readableFor(worktree, input.readablePaths),
       ...input.policyPath ? [canonicalPath(input.policyPath)] : [],
-      ...WORKER_DIR_READ_ONLY.map((rel) => join7(workerDir, rel)),
+      ...WORKER_DIR_READ_ONLY.map((rel) => join8(workerDir, rel)),
       ...ownReadOnly
     ]),
     allowedHosts: workerAllowedHosts(input.provider, input.snapshot),
@@ -25162,11 +25462,11 @@ function codexReviewerProfile(profile, input) {
       throw new OrbitError("ISOLATION_UNAVAILABLE", `refusing to let the reviewer write ${dir}: the ${what} overlaps the review checkout ${checkout}, which must stay read-only`, { path: dir });
     }
   }
-  const defaultCodexHome = join7(home2, ".codex");
+  const defaultCodexHome = join8(home2, ".codex");
   return {
     writablePaths: [workerDir, codexHome],
     denyReadPaths: uniq([...profile.denyReadPaths.map(canonicalPath).filter((p) => p !== codexHome), ...defaultCodexHome === codexHome ? [] : [defaultCodexHome]]),
-    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), checkout, ...CODEX_HOME_READ_ONLY.map((rel) => join7(codexHome, rel))]),
+    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), checkout, ...CODEX_HOME_READ_ONLY.map((rel) => join8(codexHome, rel))]),
     allowedHosts: [...PROVIDER_HOSTS.codex],
     limits: { ...profile.limits }
   };
@@ -25193,7 +25493,7 @@ function credentialDenyPaths(opts = {}) {
   const env = opts.env ?? process.env;
   const dirs = providerDirs({ homeDir: home2, env });
   return uniq([
-    ...HOME_DENY_READ.map((rel) => join7(home2, rel)),
+    ...HOME_DENY_READ.map((rel) => join8(home2, rel)),
     ...SYSTEM_DENY_READ.map(canonicalPath),
     orbitTmpRoot(),
     ...claudeLogins(home2, env, dirs.claudeConfigDir).flatMap((d) => claudeState(home2, d)),
@@ -25201,36 +25501,57 @@ function credentialDenyPaths(opts = {}) {
   ]);
 }
 function orbitTmpRoot(uid = process.getuid?.()) {
-  return canonicalPath(join7("/tmp", uid === void 0 ? "orbit" : `orbit-${uid}`));
+  return canonicalPath(join8("/tmp", uid === void 0 ? "orbit" : `orbit-${uid}`));
 }
 function workerTmpDir(workerDir, root = orbitTmpRoot()) {
-  return join7(root, sha256(canonicalPath(workerDir)).slice(0, 12));
+  return join8(root, sha256(canonicalPath(workerDir)).slice(0, 12));
 }
 function prepareWorkerTmpDir(workerDir, root = orbitTmpRoot()) {
-  mkdirSync5(root, { recursive: true, mode: 448 });
-  const st = lstatSync4(root);
+  mkdirSync6(root, { recursive: true, mode: 448 });
+  const st = lstatSync5(root);
   const uid = process.getuid?.();
   if (!st.isDirectory() || st.isSymbolicLink() || uid !== void 0 && st.uid !== uid || (st.mode & 63) !== 0) {
     throw new OrbitError("ISOLATION_UNAVAILABLE", `${root} is not a private directory owned by this user; refusing to put worker temp files there`, { path: root });
   }
   const dir = workerTmpDir(workerDir, root);
-  mkdirSync5(dir, { recursive: true, mode: 448 });
-  chmodSync2(dir, 448);
+  const existing = lstatOrNull2(dir);
+  if (existing !== null && (existing.isSymbolicLink() || !existing.isDirectory())) unlinkSync(dir);
+  else if (existing !== null && uid !== void 0 && existing.uid !== uid) {
+    throw new OrbitError("ISOLATION_UNAVAILABLE", `${dir} is not owned by this user; refusing to put worker temp files there`, { path: dir });
+  }
+  if (existing === null || existing.isSymbolicLink() || !existing.isDirectory()) mkdirSync6(dir, { mode: 448 });
+  const made = lstatSync5(dir);
+  if (made.isSymbolicLink() || !made.isDirectory()) {
+    throw new OrbitError("ISOLATION_UNAVAILABLE", `${dir} changed while it was being prepared; refusing to put worker temp files there`, { path: dir });
+  }
+  chmodSync3(dir, 448);
   return dir;
+}
+function lstatOrNull2(p) {
+  try {
+    return lstatSync5(p);
+  } catch (err) {
+    if (err.code === "ENOENT") return null;
+    throw err;
+  }
+}
+function prepareFreshTmpDir(dir, root = orbitTmpRoot()) {
+  removeScratch(prepareWorkerTmpDir(dir, root));
+  return prepareWorkerTmpDir(dir, root);
 }
 function providerDirs(opts) {
   const env = opts.env ?? process.env;
   const home2 = canonicalPath(opts.homeDir);
-  const claude = opts.claudeConfigDir ?? nonEmpty(env.CLAUDE_CONFIG_DIR) ?? join7(home2, ".claude");
-  const codex = opts.codexHome ?? nonEmpty(env.CODEX_HOME) ?? join7(home2, ".codex");
+  const claude = opts.claudeConfigDir ?? nonEmpty(env.CLAUDE_CONFIG_DIR) ?? join8(home2, ".claude");
+  const codex = opts.codexHome ?? nonEmpty(env.CODEX_HOME) ?? join8(home2, ".codex");
   return { claudeConfigDir: canonicalPath(claude), codexHome: canonicalPath(codex) };
 }
 function codexHomeFor(homeDir, env) {
   const configured = nonEmpty(env.CODEX_HOME);
-  if (configured !== void 0 && !isAbsolute6(configured)) {
+  if (configured !== void 0 && !isAbsolute7(configured)) {
     throw new OrbitError("CONFIG_INVALID", `CODEX_HOME must be an absolute path, got ${JSON.stringify(configured)}`, { variable: "CODEX_HOME" });
   }
-  return canonicalPath(configured ?? join7(canonicalPath(homeDir), ".codex"));
+  return canonicalPath(configured ?? join8(canonicalPath(homeDir), ".codex"));
 }
 function repoParentDenial(repoRoot, homeDir) {
   const repo = canonicalPath(repoRoot);
@@ -25246,7 +25567,7 @@ function checkoutBelowDenied(opts) {
   const checkout = canonicalPath(opts.checkout);
   const repo = canonicalPath(opts.repoRoot);
   const parent = repoParentDenial(repo, opts.homeDir).path;
-  const denied = [...credentialDenyPaths({ homeDir: opts.homeDir, ...opts.env ? { env: opts.env } : {} }), join7(repo, ".orbit"), ...isWithin(repo, checkout) ? [] : [repo], ...parent ? [parent] : []];
+  const denied = [...credentialDenyPaths({ homeDir: opts.homeDir, ...opts.env ? { env: opts.env } : {} }), join8(repo, ".orbit"), ...isWithin(repo, checkout) ? [] : [repo], ...parent ? [parent] : []];
   return denied.some((d) => d !== checkout && isWithin(checkout, d));
 }
 function denyList(opts) {
@@ -25254,9 +25575,9 @@ function denyList(opts) {
   const repo = canonicalPath(opts.repoRoot);
   const parent = repoParentDenial(repo, opts.home).path;
   return uniq([
-    ...HOME_DENY_READ.map((rel) => join7(opts.home, rel)),
+    ...HOME_DENY_READ.map((rel) => join8(opts.home, rel)),
     ...SYSTEM_DENY_READ.map(canonicalPath),
-    join7(repo, ".orbit"),
+    join8(repo, ".orbit"),
     ...isWithin(repo, opts.worktree) ? [] : [repo],
     // Credential files in the worktree (.env, keys, and what the policy protects as credentials): a deny nested in the
     // re-allowed worktree stays the more specific rule. An enumeration that cannot finish throws rather than guess.
@@ -25268,14 +25589,14 @@ function denyList(opts) {
 }
 function claudeLogins(home2, env, configured) {
   const fromEnv = nonEmpty(env.CLAUDE_CONFIG_DIR);
-  return uniq([configured, ...fromEnv && isAbsolute6(fromEnv) ? [canonicalPath(fromEnv)] : [], join7(home2, ".claude")]);
+  return uniq([configured, ...fromEnv && isAbsolute7(fromEnv) ? [canonicalPath(fromEnv)] : [], join8(home2, ".claude")]);
 }
 function codexHomes(home2, env, configured) {
   const fromEnv = nonEmpty(env.CODEX_HOME);
-  return uniq([configured, ...fromEnv && isAbsolute6(fromEnv) ? [canonicalPath(fromEnv)] : [], join7(home2, ".codex")]);
+  return uniq([configured, ...fromEnv && isAbsolute7(fromEnv) ? [canonicalPath(fromEnv)] : [], join8(home2, ".codex")]);
 }
 function claudeGlobalConfig(home2, configDir) {
-  return configDir === join7(home2, ".claude") ? join7(home2, ".claude.json") : join7(configDir, ".claude.json");
+  return configDir === join8(home2, ".claude") ? join8(home2, ".claude.json") : join8(configDir, ".claude.json");
 }
 function claudeState(home2, configDir) {
   return uniq([configDir, claudeGlobalConfig(home2, configDir)]);
@@ -25285,7 +25606,7 @@ function assertProviderDirConfinable(dir, home2, env) {
     throw new OrbitError("ISOLATION_UNAVAILABLE", `refusing to let a worker write ${dir}: a provider config directory must not be the home directory or contain it`, { path: dir });
   }
   const fromEnv = nonEmpty(env.ORBIT_HOME);
-  for (const orbitHome of uniq([join7(home2, ".orbit"), ...fromEnv && isAbsolute6(fromEnv) ? [canonicalPath(fromEnv)] : []])) {
+  for (const orbitHome of uniq([join8(home2, ".orbit"), ...fromEnv && isAbsolute7(fromEnv) ? [canonicalPath(fromEnv)] : []])) {
     if (isWithin(dir, orbitHome) || isWithin(orbitHome, dir)) {
       throw new OrbitError("ISOLATION_UNAVAILABLE", `refusing to let a worker write ${dir}: a provider config directory must not be, contain or sit inside the Orbit home ${orbitHome}`, { path: dir });
     }
@@ -25309,6 +25630,7 @@ var init_profiles = __esm({
     init_errors();
     init_hash();
     init_builtin();
+    init_toolchains();
     init_util();
     PROVIDER_HOSTS = {
       claude: ["api.anthropic.com", "claude.ai", "platform.claude.com"],
@@ -25406,9 +25728,9 @@ function validate(schema4, value, label) {
   if (fn(value)) return value;
   const errors = formatSchemaErrors(fn.errors);
   const name = label ?? labels.get(fn) ?? "value";
-  const shown2 = errors.slice(0, 10).join("; ");
+  const shown3 = errors.slice(0, 10).join("; ");
   const more = errors.length > 10 ? ` (and ${errors.length - 10} more)` : "";
-  throw new OrbitError("SCHEMA_INVALID", `${name} does not match its schema: ${shown2}${more}`, {
+  throw new OrbitError("SCHEMA_INVALID", `${name} does not match its schema: ${shown3}${more}`, {
     schema: labels.get(fn) ?? null,
     errors: errors.slice(0, MAX_REPORTED_ERRORS)
   });
@@ -25524,8 +25846,8 @@ var init_schema5 = __esm({
 });
 
 // src/adapters/claude-settings.ts
-import { existsSync as existsSync6, statSync as statSync4 } from "node:fs";
-import { isAbsolute as isAbsolute7 } from "node:path";
+import { existsSync as existsSync7, statSync as statSync4 } from "node:fs";
+import { isAbsolute as isAbsolute8 } from "node:path";
 function absRule(tool, absPath, glob) {
   const base = absPath.endsWith("/") ? absPath.slice(0, -1) : absPath;
   return `${tool}(/${base}${glob ? `/${glob}` : ""})`;
@@ -25589,7 +25911,7 @@ function claudeSettingsProblems(settings) {
     for (const hook of matcher.hooks) {
       if (!isExecutable(hook.command)) problems.push(`hook command ${hook.command} is not an executable file`);
       for (const arg of hook.args) {
-        if (isAbsolute7(arg) && !existsSync6(arg)) problems.push(`hook script ${arg} does not exist`);
+        if (isAbsolute8(arg) && !existsSync7(arg)) problems.push(`hook script ${arg} does not exist`);
       }
     }
   }
@@ -26028,18 +26350,18 @@ var init_claude_transcript = __esm({
 });
 
 // src/adapters/commands.ts
-import { existsSync as existsSync7 } from "node:fs";
-import { dirname as dirname8, join as join8 } from "node:path";
+import { existsSync as existsSync8 } from "node:fs";
+import { dirname as dirname8, join as join9 } from "node:path";
 import { fileURLToPath } from "node:url";
 function orbitCommands(entry, node = process.execPath) {
   return { shim: [node, entry, "shim"], hook: [node, entry, "hook", "pre-tool-use"] };
 }
 function sourceCommands(node = process.execPath) {
   const here = dirname8(fileURLToPath(import.meta.url));
-  return { shim: [node, "--no-warnings", join8(here, "shim-main.ts")], hook: [node, "--no-warnings", join8(here, "hook-main.ts")] };
+  return { shim: [node, "--no-warnings", join9(here, "shim-main.ts")], hook: [node, "--no-warnings", join9(here, "hook-main.ts")] };
 }
 function defaultOrbitCommands(self = fileURLToPath(import.meta.url)) {
-  if (self.endsWith(".mjs") && existsSync7(self)) return orbitCommands(self);
+  if (self.endsWith(".mjs") && existsSync8(self)) return orbitCommands(self);
   return sourceCommands();
 }
 var init_commands = __esm({
@@ -26795,8 +27117,8 @@ var init_overlays = __esm({
 });
 
 // src/adapters/prompt.ts
-import { existsSync as existsSync8, readFileSync as readFileSync7 } from "node:fs";
-import { dirname as dirname9, join as join9 } from "node:path";
+import { existsSync as existsSync9, readFileSync as readFileSync7 } from "node:fs";
+import { dirname as dirname9, join as join10 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function outputBudgetFor(role, opts = {}) {
   if (opts.explicit !== void 0) {
@@ -26893,8 +27215,8 @@ function stripFrontmatter(text2) {
 function readRolePrompt(role, agentsDir) {
   if (!AGENT_ROLES.includes(role)) throw new OrbitError("CONFIG_INVALID", `unknown role ${String(role)}`);
   const dir = agentsDir ?? findAgentsDir();
-  const path = join9(dir, `${role}.md`);
-  if (!existsSync8(path)) throw new OrbitError("NOT_FOUND", `role prompt not found: ${path}`, { path });
+  const path = join10(dir, `${role}.md`);
+  if (!existsSync9(path)) throw new OrbitError("NOT_FOUND", `role prompt not found: ${path}`, { path });
   return stripFrontmatter(readFileSync7(path, "utf8"));
 }
 function renderSystemPrompt(role, opts = {}) {
@@ -26910,8 +27232,8 @@ ${opts.overlay.trim()}
 function findAgentsDir() {
   let dir = dirname9(fileURLToPath2(import.meta.url));
   for (let i = 0; i < 5; i++) {
-    if (existsSync8(join9(dir, "agents", "implementer.md"))) return join9(dir, "agents");
-    if (existsSync8(join9(dir, "plugin", "agents", "implementer.md"))) return join9(dir, "plugin", "agents");
+    if (existsSync9(join10(dir, "agents", "implementer.md"))) return join10(dir, "agents");
+    if (existsSync9(join10(dir, "plugin", "agents", "implementer.md"))) return join10(dir, "plugin", "agents");
     dir = dirname9(dir);
   }
   throw new OrbitError("NOT_FOUND", "cannot find the agents/ directory of the Orbit installation");
@@ -26971,19 +27293,19 @@ complete; the controller determines completion from independent gates.`;
 
 // src/adapters/shim.ts
 import { spawn as spawn3, spawnSync as spawnSync2 } from "node:child_process";
-import { closeSync as closeSync4, existsSync as existsSync9, fstatSync as fstatSync2, openSync as openSync4, readFileSync as readFileSync8, readSync, rmSync, statSync as statSync5, unlinkSync, writeSync as writeSync2 } from "node:fs";
+import { closeSync as closeSync4, existsSync as existsSync10, fstatSync as fstatSync2, openSync as openSync4, readFileSync as readFileSync8, readSync, rmSync as rmSync2, statSync as statSync5, unlinkSync as unlinkSync2, writeSync as writeSync2 } from "node:fs";
 import { randomBytes as randomBytes3 } from "node:crypto";
 import { StringDecoder as StringDecoder2 } from "node:string_decoder";
 import { tmpdir as tmpdir4 } from "node:os";
-import { basename as basename4, dirname as dirname10, isAbsolute as isAbsolute8, join as join10, resolve as resolve5 } from "node:path";
+import { basename as basename5, dirname as dirname10, isAbsolute as isAbsolute9, join as join11, resolve as resolve5 } from "node:path";
 function argvHash(argv2) {
   return `sha256:${sha256(JSON.stringify(argv2))}`;
 }
 function readPidRecord(workerDir) {
-  return readRecord(join10(workerDir, PID_FILE), (o) => typeof o.shimPid === "number" && typeof o.pgid === "number");
+  return readRecord(join11(workerDir, PID_FILE), (o) => typeof o.shimPid === "number" && typeof o.pgid === "number");
 }
 function readExitRecord(workerDir) {
-  return readRecord(join10(workerDir, EXIT_FILE), (o) => typeof o.timedOut === "boolean" && typeof o.endedAt === "number");
+  return readRecord(join11(workerDir, EXIT_FILE), (o) => typeof o.timedOut === "boolean" && typeof o.endedAt === "number");
 }
 function readRecord(path, check) {
   let text2;
@@ -27019,8 +27341,8 @@ function isJsonLine(line3) {
   }
 }
 function isRemovable(p) {
-  if (!isAbsolute8(p) || !existsSync9(p)) return false;
-  const name = basename4(p);
+  if (!isAbsolute9(p) || !existsSync10(p)) return false;
+  const name = basename5(p);
   if (!name.startsWith("orbit-")) return false;
   const parent = dirname10(p);
   return parent === tmpdir4() || parent === resolve5(tmpdir4()) || parent === "/tmp" || parent === "/private/tmp";
@@ -27062,7 +27384,7 @@ function groupMembers(pgid) {
 function readPgid(pid, opts = {}) {
   try {
     if ((opts.platform ?? process.platform) === "linux") {
-      const stat = readFileSync8(join10(opts.procDir ?? "/proc", String(pid), "stat"), "utf8");
+      const stat = readFileSync8(join11(opts.procDir ?? "/proc", String(pid), "stat"), "utf8");
       const n3 = Number(stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[2]);
       return Number.isSafeInteger(n3) && n3 > 0 ? n3 : null;
     }
@@ -27148,7 +27470,7 @@ function parseShimArgs(args) {
         throw new OrbitError("CONFIG_INVALID", `orbit shim: unknown option ${flag}`);
     }
   }
-  if (!out.workerDir || !isAbsolute8(out.workerDir)) throw new OrbitError("CONFIG_INVALID", "orbit shim: --worker-dir must be an absolute path");
+  if (!out.workerDir || !isAbsolute9(out.workerDir)) throw new OrbitError("CONFIG_INVALID", "orbit shim: --worker-dir must be an absolute path");
   return out;
 }
 function nonNegativeInt(flag, value) {
@@ -27262,9 +27584,9 @@ var init_shim = __esm({
         const fds = [];
         let child;
         try {
-          const log = openSync4(join10(this.workerDir, LOG_FILE), "a", 384);
+          const log = openSync4(join11(this.workerDir, LOG_FILE), "a", 384);
           fds.push(log);
-          const errLog = openSync4(join10(this.workerDir, STDERR_FILE), "a", 384);
+          const errLog = openSync4(join11(this.workerDir, STDERR_FILE), "a", 384);
           fds.push(errLog);
           let stdin = "ignore";
           if (this.o.stdinPath) {
@@ -27272,7 +27594,7 @@ var init_shim = __esm({
             fds.push(stdin);
           }
           try {
-            this.logOffset = statSync5(join10(this.workerDir, LOG_FILE)).size;
+            this.logOffset = statSync5(join11(this.workerDir, LOG_FILE)).size;
           } catch {
             this.logOffset = 0;
           }
@@ -27366,10 +27688,10 @@ var init_shim = __esm({
       }
       /** An anonymous file the provider writes one stream to: created in the worker directory and unlinked at once, so it is no artifact. */
       openSpill(name) {
-        const path = join10(this.workerDir, `.spill-${name}-${process.pid}-${randomBytes3(4).toString("hex")}`);
+        const path = join11(this.workerDir, `.spill-${name}-${process.pid}-${randomBytes3(4).toString("hex")}`);
         const fd = openSync4(path, "a+", 384);
         try {
-          unlinkSync(path);
+          unlinkSync2(path);
         } catch {
         }
         return fd;
@@ -27442,7 +27764,7 @@ var init_shim = __esm({
       }
       /** The provider never started. pid.json is still written, so every reader finds the shim the same way. */
       finishWithoutChild(error) {
-        if (!existsSync9(join10(this.workerDir, PID_FILE))) this.writePid(null);
+        if (!existsSync10(join11(this.workerDir, PID_FILE))) this.writePid(null);
         this.finish(this.record(null, null, error));
       }
       writePid(child) {
@@ -27457,7 +27779,7 @@ var init_shim = __esm({
           argvHash: argvHash(this.o.argv),
           startedAt: this.startedAt
         };
-        atomicWriteJson(join10(this.workerDir, PID_FILE), pid, 384);
+        atomicWriteJson(join11(this.workerDir, PID_FILE), pid, 384);
       }
       record(code2, signal, error) {
         this.noteFirstOutput();
@@ -27476,7 +27798,7 @@ var init_shim = __esm({
         };
       }
       persist(rec2) {
-        atomicWriteJson(join10(this.workerDir, EXIT_FILE), rec2, 384);
+        atomicWriteJson(join11(this.workerDir, EXIT_FILE), rec2, 384);
         this.cleanup();
       }
       finish(rec2, write2 = true) {
@@ -27491,7 +27813,7 @@ var init_shim = __esm({
         for (const p of this.o.cleanupPaths ?? []) {
           if (!isRemovable(p)) continue;
           try {
-            rmSync(p, { recursive: true, force: true });
+            rmSync2(p, { recursive: true, force: true });
           } catch {
           }
         }
@@ -27514,7 +27836,7 @@ var init_shim = __esm({
       noteFirstOutput() {
         if (this.firstOutputAt !== null) return;
         try {
-          if (statSync5(join10(this.workerDir, LOG_FILE)).size > this.logStartSize) this.firstOutputAt = this.clock.now();
+          if (statSync5(join11(this.workerDir, LOG_FILE)).size > this.logStartSize) this.firstOutputAt = this.clock.now();
         } catch {
         }
       }
@@ -27539,7 +27861,7 @@ var init_shim = __esm({
       }
       /** Read new complete lines of the provider's stdout and test them against the abort patterns. */
       scanLog() {
-        const buf = readFrom(join10(this.workerDir, LOG_FILE), this.logOffset);
+        const buf = readFrom(join11(this.workerDir, LOG_FILE), this.logOffset);
         if (!buf) return null;
         this.logOffset += buf.length;
         const text2 = this.logCarry + buf.toString("utf8");
@@ -27670,12 +27992,12 @@ var init_shim = __esm({
 
 // src/adapters/supervise.ts
 import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync10, mkdirSync as mkdirSync6, renameSync as renameSync2 } from "node:fs";
-import { join as join11 } from "node:path";
+import { existsSync as existsSync11, mkdirSync as mkdirSync7, renameSync as renameSync2 } from "node:fs";
+import { join as join12 } from "node:path";
 async function launchShim(input) {
   const clock = input.clock ?? systemClock;
-  mkdirSync6(input.workerDir, { recursive: true, mode: 448 });
-  if (existsSync10(join11(input.workerDir, LAUNCH_FILE))) return reattachLaunch(input.provider, input.workerDir, input.workerId, clock);
+  mkdirSync7(input.workerDir, { recursive: true, mode: 448 });
+  if (existsSync11(join12(input.workerDir, LAUNCH_FILE))) return reattachLaunch(input.provider, input.workerDir, input.workerId, clock);
   const launch = {
     version: 1,
     provider: input.provider,
@@ -27685,7 +28007,7 @@ async function launchShim(input) {
     requestedAt: clock.now(),
     ...input.meta ? { meta: input.meta } : {}
   };
-  atomicWriteJson(join11(input.workerDir, LAUNCH_FILE), launch, 384);
+  atomicWriteJson(join12(input.workerDir, LAUNCH_FILE), launch, 384);
   const args = shimArgs({
     workerDir: input.workerDir,
     timeoutMs: input.timeoutMs,
@@ -27697,7 +28019,7 @@ async function launchShim(input) {
     cleanupPaths: input.cleanupPaths,
     argv: input.argv
   });
-  const shimLog = join11(input.workerDir, SHIM_LOG_FILE);
+  const shimLog = join12(input.workerDir, SHIM_LOG_FILE);
   const { pid } = spawnDetached([...input.shimCommand, ...args], { cwd: input.cwd, env: input.env, stdoutPath: shimLog, stderrPath: shimLog });
   recordShimIdentity(input.workerDir, launch, pid);
   const handle = await waitForHandle(input.provider, input.workerDir, pid, clock);
@@ -27711,7 +28033,7 @@ function recordShimIdentity(workerDir, launch, pid) {
   } catch {
     procStart = null;
   }
-  atomicWriteJson(join11(workerDir, LAUNCH_FILE), { ...launch, pid, procStart }, 384);
+  atomicWriteJson(join12(workerDir, LAUNCH_FILE), { ...launch, pid, procStart }, 384);
 }
 async function reattachLaunch(provider, workerDir, workerId, clock = systemClock) {
   const handle = await waitForHandle(provider, workerDir, null, clock);
@@ -27726,7 +28048,7 @@ async function waitForHandle(provider, workerDir, shimPid, clock) {
   for (; ; ) {
     const handle = handleFromWorkerDir(provider, workerDir);
     if (handle) return handle;
-    if (shimPid !== null && !isAlive(shimPid) && !existsSync10(join11(workerDir, PID_FILE))) return null;
+    if (shimPid !== null && !isAlive(shimPid) && !existsSync11(join12(workerDir, PID_FILE))) return null;
     if (clock.now() >= deadline) return null;
     await clock.sleep(25);
   }
@@ -27736,13 +28058,13 @@ function handleFromWorkerDir(provider, workerDir) {
   if (!pid) return null;
   return {
     provider,
-    workerId: readJsonIfExists(join11(workerDir, LAUNCH_FILE))?.workerId ?? "",
+    workerId: readJsonIfExists(join12(workerDir, LAUNCH_FILE))?.workerId ?? "",
     workerDir,
     pid: pid.shimPid,
     pgid: pid.pgid,
     procStart: pid.shimStart,
-    logPath: join11(workerDir, LOG_FILE),
-    exitPath: join11(workerDir, EXIT_FILE)
+    logPath: join12(workerDir, LOG_FILE),
+    exitPath: join12(workerDir, EXIT_FILE)
   };
 }
 function timeToFirstEventMs(exit) {
@@ -27750,7 +28072,7 @@ function timeToFirstEventMs(exit) {
   return Math.max(0, exit.firstOutputAt - exit.startedAt);
 }
 function withWorkerTelemetry(usage, workerDir) {
-  const meta = readJsonIfExists(join11(workerDir, LAUNCH_FILE))?.meta;
+  const meta = readJsonIfExists(join12(workerDir, LAUNCH_FILE))?.meta;
   const budget = meta && typeof meta.outputBudgetTokens === "number" ? meta.outputBudgetTokens : null;
   return { ...usage, timeToFirstEventMs: timeToFirstEventMs(readExitRecord(workerDir)), outputBudgetTokens: budget };
 }
@@ -27761,7 +28083,7 @@ function taskState(handle) {
   if (shimAlive(handle)) return { state: "running", pid };
   const late = readExitRecord(handle.workerDir);
   if (late) return { state: "exited", exit: late, pid };
-  return { state: "lost", pid, orphans: childAlive(pid) || leftoverGroup(handle.pgid), cancelRequested: existsSync10(join11(handle.workerDir, CANCEL_FILE)) };
+  return { state: "lost", pid, orphans: childAlive(pid) || leftoverGroup(handle.pgid), cancelRequested: existsSync11(join12(handle.workerDir, CANCEL_FILE)) };
 }
 function leftoverGroup(pgid) {
   try {
@@ -27786,8 +28108,8 @@ function childAlive(pid) {
   }
 }
 async function cancelShim(handle, graceMs, clock = systemClock) {
-  if (!existsSync10(join11(handle.workerDir, CANCEL_FILE))) {
-    atomicWriteJson(join11(handle.workerDir, CANCEL_FILE), { version: 1, requestedAt: clock.now() }, 384);
+  if (!existsSync11(join12(handle.workerDir, CANCEL_FILE))) {
+    atomicWriteJson(join12(handle.workerDir, CANCEL_FILE), { version: 1, requestedAt: clock.now() }, 384);
   }
   const pid = readPidRecord(handle.workerDir);
   if (!shimAliveStrict(handle) && !childAlive(pid) && !leftoverGroupStrict(handle.pgid)) return;
@@ -27858,18 +28180,18 @@ function archiveAttempt(provider, workerDir) {
   if (st?.state === "lost" && st.orphans) {
     throw new OrbitError("TRANSITION_INVALID", `the shim of the attempt in ${workerDir} is gone but its provider process is still running; cancel it before archiving`, { workerDir });
   }
-  const files = ATTEMPT_FILES.filter((f) => existsSync10(join11(workerDir, f)));
+  const files = ATTEMPT_FILES.filter((f) => existsSync11(join12(workerDir, f)));
   if (files.length === 0) return null;
   let n2 = 1;
-  while (existsSync10(join11(workerDir, "attempts", String(n2)))) n2++;
-  const dest = join11(workerDir, "attempts", String(n2));
-  mkdirSync6(dest, { recursive: true, mode: 448 });
-  for (const f of files) renameSync2(join11(workerDir, f), join11(dest, f));
+  while (existsSync11(join12(workerDir, "attempts", String(n2)))) n2++;
+  const dest = join12(workerDir, "attempts", String(n2));
+  mkdirSync7(dest, { recursive: true, mode: 448 });
+  for (const f of files) renameSync2(join12(workerDir, f), join12(dest, f));
   return dest;
 }
 function archivedAttempts(workerDir) {
   let n2 = 0;
-  while (existsSync10(join11(workerDir, "attempts", String(n2 + 1)))) n2++;
+  while (existsSync11(join12(workerDir, "attempts", String(n2 + 1)))) n2++;
   return n2;
 }
 function nextSessionId(workerId, workerDir) {
@@ -27914,9 +28236,9 @@ var init_supervise = __esm({
 });
 
 // src/adapters/claude.ts
-import { existsSync as existsSync11, mkdtempSync, readFileSync as readFileSync9, rmSync as rmSync2, statSync as statSync6, writeFileSync } from "node:fs";
+import { existsSync as existsSync12, mkdtempSync, readFileSync as readFileSync9, rmSync as rmSync3, statSync as statSync6, writeFileSync } from "node:fs";
 import { tmpdir as tmpdir5 } from "node:os";
-import { basename as basename5, dirname as dirname11, isAbsolute as isAbsolute9, join as join12 } from "node:path";
+import { basename as basename6, dirname as dirname11, isAbsolute as isAbsolute10, join as join13 } from "node:path";
 function buildClaudeArgv(i) {
   const tools = [...READ_TOOLS, ...i.readOnly ? [] : EDIT_TOOLS, "Bash"];
   const web = i.allowedHosts.length > 0;
@@ -27977,9 +28299,9 @@ function assertClaudeExtraArgs(args) {
 }
 function validateSpec(spec) {
   for (const [name, p] of [["cwd", spec.cwd], ["workerDir", spec.workerDir], ["policyPath", spec.policyPath]]) {
-    if (!isAbsolute9(p)) throw new OrbitError("CONFIG_INVALID", `TaskSpec.${name} must be absolute: ${p}`);
+    if (!isAbsolute10(p)) throw new OrbitError("CONFIG_INVALID", `TaskSpec.${name} must be absolute: ${p}`);
   }
-  if (!existsSync11(spec.cwd) || !statSync6(spec.cwd).isDirectory()) throw new OrbitError("NOT_FOUND", `worker cwd does not exist: ${spec.cwd}`);
+  if (!existsSync12(spec.cwd) || !statSync6(spec.cwd).isDirectory()) throw new OrbitError("NOT_FOUND", `worker cwd does not exist: ${spec.cwd}`);
   if (!Number.isSafeInteger(spec.maxTurns) || spec.maxTurns < 1) throw new OrbitError("CONFIG_INVALID", `maxTurns must be a positive integer, got ${spec.maxTurns}`);
   if (!Number.isSafeInteger(spec.timeoutMs) || spec.timeoutMs < 1) throw new OrbitError("CONFIG_INVALID", `timeoutMs must be a positive integer, got ${spec.timeoutMs}`);
   if (spec.model !== null && !/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]*$/.test(spec.model)) throw new OrbitError("CONFIG_INVALID", `invalid model id ${JSON.stringify(spec.model)}`);
@@ -28006,16 +28328,16 @@ function readOnlyProfile(profile, worktree, readOnly) {
 function wrapperTempDirs(argv2) {
   const out = [];
   for (const a of argv2) {
-    if (!isAbsolute9(a)) continue;
+    if (!isAbsolute10(a)) continue;
     const dir = dirname11(a);
-    if (basename5(dir).startsWith("orbit-srt-")) out.push(dir);
+    if (basename6(dir).startsWith("orbit-srt-")) out.push(dir);
   }
   return [...new Set(out)];
 }
 function stderrTail(workerDir, maxChars = 300) {
   let text2;
   try {
-    text2 = readFileSync9(join12(workerDir, STDERR_FILE), "utf8");
+    text2 = readFileSync9(join13(workerDir, STDERR_FILE), "utf8");
   } catch {
     return null;
   }
@@ -28049,7 +28371,7 @@ function compareVersions(a, b) {
   return 0;
 }
 function launchPluginPolicy(workerDir) {
-  const meta = readJsonIfExists(join12(workerDir, LAUNCH_FILE))?.meta;
+  const meta = readJsonIfExists(join13(workerDir, LAUNCH_FILE))?.meta;
   const p = meta?.pluginPolicy;
   if (!p || !Array.isArray(p.allowed)) return STRICT_PLUGIN_POLICY;
   return { allowed: p.allowed.filter((id) => typeof id === "string"), allowManaged: p.allowManaged === true };
@@ -28152,12 +28474,12 @@ var init_claude = __esm({
       async probeCredentials(opts = {}) {
         const env = { ...this.workerEnvForProbe(), CLAUDE_CODE_MAX_RETRIES: "1", CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1" };
         const args = ["-p", "--output-format", "stream-json", "--verbose", "--max-turns", "1", "--tools", "", "--permission-mode", "dontAsk", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--model", opts.model ?? "haiku"];
-        const cwd = mkdtempSync(join12(tmpdir5(), "orbit-probe-"));
+        const cwd = mkdtempSync(join13(tmpdir5(), "orbit-probe-"));
         let r;
         try {
           r = await execCapture([...this.command, ...args], { env, cwd, input: "Reply with OK.", timeoutMs: opts.timeoutMs ?? 6e4 });
         } finally {
-          rmSync2(cwd, { recursive: true, force: true });
+          rmSync3(cwd, { recursive: true, force: true });
         }
         const lines = parseJsonLines(r.stdout);
         const res = classifyClaudeTranscript({
@@ -28178,7 +28500,7 @@ var init_claude = __esm({
       async startTask(spec) {
         validateSpec(spec);
         const sessionId = spec.sessionId ?? nextSessionId(spec.workerId, spec.workerDir);
-        const prior = readJsonIfExists(join12(spec.workerDir, LAUNCH_FILE));
+        const prior = readJsonIfExists(join13(spec.workerDir, LAUNCH_FILE));
         if (prior) {
           const handle2 = await reattachLaunch(this.id, spec.workerDir, spec.workerId, this.clock);
           const meta = prior.meta ?? {};
@@ -28210,12 +28532,12 @@ var init_claude = __esm({
           tmpDir
         });
         assertClaudeSettings(settings);
-        writePrivate(join12(workerDir, PROMPT_FILE), outputTokens === null ? spec.prompt : `${spec.prompt.trimEnd()}
+        writePrivate(join13(workerDir, PROMPT_FILE), outputTokens === null ? spec.prompt : `${spec.prompt.trimEnd()}
 
 ${outputBudgetInstruction(outputTokens)}
 `);
-        writePrivate(join12(workerDir, SYSTEM_FILE), spec.systemPrompt);
-        atomicWriteJson(join12(workerDir, SETTINGS_FILE), settings, 384);
+        writePrivate(join13(workerDir, SYSTEM_FILE), spec.systemPrompt);
+        atomicWriteJson(join13(workerDir, SETTINGS_FILE), settings, 384);
         const effort = this.effortFor(spec.model, spec.effort);
         const argv2 = buildClaudeArgv({
           command: this.command,
@@ -28228,8 +28550,8 @@ ${outputBudgetInstruction(outputTokens)}
           experiments: spec.experiments ?? false,
           tier,
           allowedHosts: snapshot2.config.network.allowed_hosts,
-          settingsPath: join12(workerDir, SETTINGS_FILE),
-          systemPromptPath: join12(workerDir, SYSTEM_FILE),
+          settingsPath: join13(workerDir, SETTINGS_FILE),
+          systemPromptPath: join13(workerDir, SYSTEM_FILE),
           outputSchema: spec.outputSchema,
           permissionPrompts: this.supportsPermissionPrompts(),
           extraArgs: this.opts.extraArgs ?? []
@@ -28259,7 +28581,7 @@ ${outputBudgetInstruction(outputTokens)}
           timeoutMs: spec.timeoutMs,
           graceMs: this.opts.graceMs,
           sessionId,
-          stdinPath: join12(workerDir, PROMPT_FILE),
+          stdinPath: join13(workerDir, PROMPT_FILE),
           abortOn: CLAUDE_ABORT_PATTERNS,
           cleanupPaths,
           // The plugin policy the session is judged by at collection, from the verified snapshot. launch.json is
@@ -28307,11 +28629,11 @@ ${outputBudgetInstruction(outputTokens)}
           if (stderr) result2 = { ...result2, error: `${result2.error ?? "crashed"}; stderr: ${stderr}` };
         }
         result2 = { ...result2, usage: withWorkerTelemetry(result2.usage, handle.workerDir) };
-        atomicWriteJson(join12(handle.workerDir, RESULT_FILE), result2, 384);
+        atomicWriteJson(join13(handle.workerDir, RESULT_FILE), result2, 384);
         return result2;
       }
       async reportUsage(handle) {
-        if (!existsSync11(handle.logPath)) return emptyUsage(this.id);
+        if (!existsSync12(handle.logPath)) return emptyUsage(this.id);
         return withWorkerTelemetry(claudeUsage(readLogLines(handle.logPath).events), handle.workerDir);
       }
       /**
@@ -28622,9 +28944,9 @@ var init_models = __esm({
 
 // src/routing/shared-catalog.ts
 import { readFileSync as readFileSync10 } from "node:fs";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 function sharedCatalogPath(orbitHome) {
-  return join13(orbitHome, "models", "codex-catalog.json");
+  return join14(orbitHome, "models", "codex-catalog.json");
 }
 function saveSharedCatalog(path, catalog, nowMs) {
   atomicWriteJson(path, { schema: "orbit.codex-catalog/1", saved_at: nowMs, catalog });
@@ -29482,9 +29804,9 @@ var init_codex_events = __esm({
 });
 
 // src/adapters/codex.ts
-import { chmodSync as chmodSync3, existsSync as existsSync12, mkdirSync as mkdirSync7, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync2 } from "node:fs";
+import { chmodSync as chmodSync4, existsSync as existsSync13, mkdirSync as mkdirSync8, rmSync as rmSync4, statSync as statSync7, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { basename as basename6, dirname as dirname12, isAbsolute as isAbsolute10, join as join14 } from "node:path";
+import { basename as basename7, dirname as dirname12, isAbsolute as isAbsolute11, join as join15 } from "node:path";
 function decideCodexTier(i) {
   const key2 = i.providerId ? `providers.${i.providerId}.tier` : "providers.codex.tier";
   if (i.setting === "codex-sandbox") {
@@ -29539,13 +29861,13 @@ function assertWrapped(bare, launched) {
   }
 }
 function reviewerTmpDir(workerDir) {
-  const dir = join14(workerDir, REVIEWER_TMP_DIR);
-  mkdirSync7(dir, { recursive: true, mode: 448 });
-  chmodSync3(dir, 448);
+  const dir = join15(workerDir, REVIEWER_TMP_DIR);
+  mkdirSync8(dir, { recursive: true, mode: 448 });
+  chmodSync4(dir, 448);
   return dir;
 }
 function homeOf(env) {
-  return env.HOME && isAbsolute10(env.HOME) ? env.HOME : homedir5();
+  return env.HOME && isAbsolute11(env.HOME) ? env.HOME : homedir5();
 }
 function parseHelpFlags(help) {
   const out = /* @__PURE__ */ new Set();
@@ -29578,7 +29900,7 @@ function parseDoctorChecks(stdout) {
   return out;
 }
 function launchModel(workerDir) {
-  const meta = readJsonIfExists(join14(workerDir, LAUNCH_FILE))?.meta;
+  const meta = readJsonIfExists(join15(workerDir, LAUNCH_FILE))?.meta;
   return meta && typeof meta.model === "string" ? meta.model : null;
 }
 var CODEX_PROMPT_FILE, CODEX_SCHEMA_FILE, CODEX_LAST_MESSAGE_FILE, CODEX_RESULT_FILE, CODEX_EFFORTS, CODEX_REQUIRED_FLAGS, CODEX_EXTRA_ARGS_ALLOWED, PROJECT_CONFIG_LIMITATION, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, NO_KEY_REASON, DANGER_FULL_ACCESS, NO_OS_ISOLATION, REVIEWER_TMP_DIR, CodexAdapter;
@@ -29702,11 +30024,11 @@ ${status2.stderr}`;
         if (!spec.model) throw new OrbitError("CONFIG_INVALID", "Codex needs an explicit model (-m): the configured default may not work with the installed CLI");
         if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(spec.model)) throw new OrbitError("CONFIG_INVALID", `invalid Codex model ${JSON.stringify(spec.model)}`);
         if (spec.effort !== null && !CODEX_EFFORTS.includes(spec.effort)) throw new OrbitError("CONFIG_INVALID", `unsupported Codex reasoning effort ${JSON.stringify(spec.effort)}`);
-        for (const p of [spec.cwd, spec.workerDir, spec.policyPath]) if (!isAbsolute10(p)) throw new OrbitError("CONFIG_INVALID", `paths must be absolute: ${p}`);
-        if (!existsSync12(spec.cwd) || !statSync7(spec.cwd).isDirectory()) throw new OrbitError("NOT_FOUND", `review checkout does not exist: ${spec.cwd}`);
+        for (const p of [spec.cwd, spec.workerDir, spec.policyPath]) if (!isAbsolute11(p)) throw new OrbitError("CONFIG_INVALID", `paths must be absolute: ${p}`);
+        if (!existsSync13(spec.cwd) || !statSync7(spec.cwd).isDirectory()) throw new OrbitError("NOT_FOUND", `review checkout does not exist: ${spec.cwd}`);
         const violations = strictSchemaViolations(spec.outputSchema);
         if (violations.length > 0) throw new OrbitError("SCHEMA_INVALID", `output schema is outside the strict subset Codex sends with strict: true: ${violations.slice(0, 5).join("; ")}`, { violations });
-        const prior = readJsonIfExists(join14(spec.workerDir, LAUNCH_FILE));
+        const prior = readJsonIfExists(join15(spec.workerDir, LAUNCH_FILE));
         if (prior) {
           const handle2 = await reattachLaunch(this.id, spec.workerDir, spec.workerId, this.clock);
           const meta = prior.meta ?? {};
@@ -29721,15 +30043,15 @@ ${status2.stderr}`;
         const tmpDir = choice.srt ? reviewerTmpDir(workerDir) : prepareWorkerTmpDir(workerDir);
         const env = buildWorkerEnv({ provider: "codex", base: this.baseEnv(), policyPath: spec.policyPath, policyHash, worktree: checkout, tmpDir, extra: { ...passThrough(this.baseEnv(), this.opts.passEnv), ...spec.env } });
         const srt = choice.srt ? { provider: choice.srt, profile: codexReviewerProfile(spec.sandbox, { checkout, workerDir, codexHome: codexHomeFor(homeOf(env), env), homeDir: homeOf(env), env: this.baseEnv() }) } : null;
-        writeFileSync2(join14(workerDir, CODEX_PROMPT_FILE), `${spec.systemPrompt.trim()}
+        writeFileSync2(join15(workerDir, CODEX_PROMPT_FILE), `${spec.systemPrompt.trim()}
 
 ${spec.prompt}${outputTokens === null ? "" : `
 ${outputBudgetInstruction(outputTokens)}
 `}`, { mode: 384 });
-        atomicWriteJson(join14(workerDir, CODEX_SCHEMA_FILE), spec.outputSchema, 384);
-        rmSync3(join14(workerDir, CODEX_LAST_MESSAGE_FILE), { force: true });
+        atomicWriteJson(join15(workerDir, CODEX_SCHEMA_FILE), spec.outputSchema, 384);
+        rmSync4(join15(workerDir, CODEX_LAST_MESSAGE_FILE), { force: true });
         const tier = choice.decision.tier;
-        const argv2 = buildCodexArgv({ command: this.command, model: spec.model, effort: spec.effort, cwd: checkout, schemaPath: join14(workerDir, CODEX_SCHEMA_FILE), lastMessagePath: join14(workerDir, CODEX_LAST_MESSAGE_FILE), tier, wrapper: srt?.provider.kind ?? null });
+        const argv2 = buildCodexArgv({ command: this.command, model: spec.model, effort: spec.effort, cwd: checkout, schemaPath: join15(workerDir, CODEX_SCHEMA_FILE), lastMessagePath: join15(workerDir, CODEX_LAST_MESSAGE_FILE), tier, wrapper: srt?.provider.kind ?? null });
         let launchArgv = argv2;
         let launchEnv = env;
         const limitations = [...srt ? CODEX_OS_SANDBOX_LIMITATIONS : CODEX_LIMITATIONS];
@@ -29746,7 +30068,7 @@ ${outputBudgetInstruction(outputTokens)}
           launchArgv = wrapped.argv;
           launchEnv = wrapped.env;
           limitations.push(...wrapped.limitations);
-          for (const a of wrapped.argv) if (isAbsolute10(a) && basename6(dirname12(a)).startsWith("orbit-srt-")) cleanupPaths.push(dirname12(a));
+          for (const a of wrapped.argv) if (isAbsolute11(a) && basename7(dirname12(a)).startsWith("orbit-srt-")) cleanupPaths.push(dirname12(a));
           if (choice.decision.risky) limitations.push(`Codex runs in the os-sandbox tier although it may not work there: ${choice.decision.reason}.`);
         } else {
           limitations.push(NO_OS_ISOLATION);
@@ -29762,7 +30084,7 @@ ${outputBudgetInstruction(outputTokens)}
           env: launchEnv,
           timeoutMs: spec.timeoutMs,
           graceMs: this.opts.graceMs,
-          stdinPath: join14(workerDir, CODEX_PROMPT_FILE),
+          stdinPath: join15(workerDir, CODEX_PROMPT_FILE),
           cleanupPaths: [...new Set(cleanupPaths)],
           meta: { tier, limitations, model: spec.model, outputBudgetTokens: outputTokens },
           clock: this.clock
@@ -29799,11 +30121,11 @@ ${outputBudgetInstruction(outputTokens)}
           result2 = classifyCodexTranscript({ events: log.events, malformedTail: log.malformedTail, exit: st.exit, outputSchema: spec.outputSchema, model });
         }
         result2 = { ...result2, usage: withWorkerTelemetry(result2.usage, handle.workerDir) };
-        atomicWriteJson(join14(handle.workerDir, CODEX_RESULT_FILE), result2, 384);
+        atomicWriteJson(join15(handle.workerDir, CODEX_RESULT_FILE), result2, 384);
         return result2;
       }
       async reportUsage(handle) {
-        return withWorkerTelemetry(codexUsage(existsSync12(handle.logPath) ? readLogLines(handle.logPath).events : [], launchModel(handle.workerDir)), handle.workerDir);
+        return withWorkerTelemetry(codexUsage(existsSync13(handle.logPath) ? readLogLines(handle.logPath).events : [], launchModel(handle.workerDir)), handle.workerDir);
       }
       reattach(workerDir) {
         return handleFromWorkerDir(this.id, workerDir);
@@ -29852,9 +30174,9 @@ ${outputBudgetInstruction(outputTokens)}
 });
 
 // src/adapters/fake.ts
-import { basename as basename7 } from "node:path";
+import { basename as basename8 } from "node:path";
 function fakeKind(command) {
-  const name = basename7(command);
+  const name = basename8(command);
   if (name === FAKE_SCRIPTS.claude) return "claude";
   if (name === FAKE_SCRIPTS.codex) return "codex";
   return null;
@@ -29933,14 +30255,14 @@ var init_types2 = __esm({
 });
 
 // src/adapters/index.ts
-import { basename as basename8 } from "node:path";
+import { basename as basename9 } from "node:path";
 function providerKind(id) {
   if (id === "claude" || id.startsWith("claude-") || id.startsWith("claude_")) return "claude";
   if (id === "codex" || id.startsWith("codex-") || id.startsWith("codex_")) return "codex";
   throw new OrbitError("CONFIG_INVALID", `providers.${id}: unknown provider; Orbit has adapters for claude and codex`, { provider: id });
 }
 function commandArgv(command) {
-  return /\.(mjs|cjs|js)$/.test(basename8(command)) ? [process.execPath, command] : [command];
+  return /\.(mjs|cjs|js)$/.test(basename9(command)) ? [process.execPath, command] : [command];
 }
 function createAdapter(id, config, deps = {}) {
   const kind = providerKind(id);
@@ -30066,9 +30388,9 @@ var init_limits = __esm({
 
 // src/isolation/container.ts
 import { spawnSync as spawnSync3 } from "node:child_process";
-import { chmodSync as chmodSync4, existsSync as existsSync13, mkdtempSync as mkdtempSync2, rmSync as rmSync4, statSync as statSync8, writeFileSync as writeFileSync3 } from "node:fs";
+import { chmodSync as chmodSync5, existsSync as existsSync14, mkdtempSync as mkdtempSync2, rmSync as rmSync5, statSync as statSync8, writeFileSync as writeFileSync3 } from "node:fs";
 import { tmpdir as tmpdir6 } from "node:os";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 import { randomBytes as randomBytes4 } from "node:crypto";
 function planMounts(profile) {
   const notes = [];
@@ -30078,12 +30400,12 @@ function planMounts(profile) {
     return real;
   };
   const writable = uniq(profile.writablePaths.map(check)).filter((p) => {
-    if (existsSync13(p)) return true;
+    if (existsSync14(p)) return true;
     notes.push(`${p} does not exist and was not mounted.`);
     return false;
   });
   const readOnly = uniq(readablePathsOf(profile).map(check)).filter((p) => {
-    if (existsSync13(p)) return true;
+    if (existsSync14(p)) return true;
     if (writable.some((w) => isWithin(p, w))) notes.push(`${p} does not exist, so it could not be mounted read-only and the command can create it.`);
     else notes.push(`${p} does not exist and was not mounted.`);
     return false;
@@ -30094,7 +30416,7 @@ function planMounts(profile) {
   );
   for (const denied of uniq(profile.denyReadPaths.map(check))) {
     if (!mounts.some((m) => isWithin(denied, m.path))) continue;
-    if (!existsSync13(denied)) continue;
+    if (!existsSync14(denied)) continue;
     if (mounts.some((m) => m.path === denied)) throw new OrbitError("INTERNAL", `${denied} is both mounted and read-denied in one profile`);
     mounts.push({ kind: "shadow", path: denied, isDir: statSync8(denied).isDirectory() });
   }
@@ -30218,20 +30540,20 @@ var init_container = __esm({
         }
         const containerEnv = containerEnvFor(opts.env);
         const name = `orbit-${randomBytes4(6).toString("hex")}`;
-        const dir = mkdtempSync2(join15(this.opts.envFileDir ?? tmpdir6(), "orbit-docker-"));
+        const dir = mkdtempSync2(join16(this.opts.envFileDir ?? tmpdir6(), "orbit-docker-"));
         const cliEnv = this.cliEnv();
         let cleaned = false;
         const cleanup = () => {
           if (cleaned) return;
           cleaned = true;
-          rmSync4(dir, { recursive: true, force: true });
+          rmSync5(dir, { recursive: true, force: true });
           spawnSync3(docker, ["rm", "-f", name], { env: cliEnv, stdio: "ignore", timeout: 15e3 });
         };
         try {
-          const envFile = join15(dir, "env");
+          const envFile = join16(dir, "env");
           writeFileSync3(envFile, Object.entries(containerEnv).map(([k, v]) => `${k}=${v}
 `).join(""), { mode: 384, flag: "wx" });
-          chmodSync4(envFile, 384);
+          chmodSync5(envFile, 384);
           const labels2 = { "orbit.isolation": "container", ...this.opts.labels ?? {} };
           const args = [
             "run",
@@ -30346,7 +30668,7 @@ var init_none = __esm({
 });
 
 // src/isolation/memory.ts
-import { existsSync as existsSync14 } from "node:fs";
+import { existsSync as existsSync15 } from "node:fs";
 function findPs(candidates = PS_PATHS) {
   return candidates.find((p) => isExecutableFile(p)) ?? null;
 }
@@ -30356,7 +30678,7 @@ function withMemoryWatchdog(argv2, memoryMb, opts = {}) {
   const ps = opts.ps === void 0 ? findPs() : opts.ps;
   if (!ps) throw new OrbitError("ISOLATION_UNAVAILABLE", `isolation.limits.memory_mb needs ps to sample memory, and none was found (looked in ${PS_PATHS.join(", ")})`, { rule: "isolation.limits.memory_mb" });
   const node = opts.node ?? process.execPath;
-  if (!existsSync14(node)) throw new OrbitError("ISOLATION_UNAVAILABLE", `isolation.limits.memory_mb needs node to run its watchdog, and ${node} does not exist`, { rule: "isolation.limits.memory_mb" });
+  if (!existsSync15(node)) throw new OrbitError("ISOLATION_UNAVAILABLE", `isolation.limits.memory_mb needs node to run its watchdog, and ${node} does not exist`, { rule: "isolation.limits.memory_mb" });
   const interval = opts.intervalMs ?? DEFAULT_MEMORY_SAMPLE_MS;
   return [node, "-e", MEMORY_WATCHDOG_SOURCE, ps, String(memoryMb), String(interval), ...argv2];
 }
@@ -30477,10 +30799,10 @@ timer = setInterval(check, intervalMs);
 });
 
 // src/isolation/sandbox-runtime.ts
-import { chmodSync as chmodSync5, existsSync as existsSync15, mkdirSync as mkdirSync8, mkdtempSync as mkdtempSync3, readFileSync as readFileSync11, realpathSync as realpathSync5, rmSync as rmSync5, writeFileSync as writeFileSync4 } from "node:fs";
+import { chmodSync as chmodSync6, existsSync as existsSync16, mkdirSync as mkdirSync9, mkdtempSync as mkdtempSync3, readFileSync as readFileSync11, realpathSync as realpathSync5, rmSync as rmSync6, writeFileSync as writeFileSync4 } from "node:fs";
 import { tmpdir as tmpdir7, userInfo } from "node:os";
-import { basename as basename9, delimiter as delimiter2, dirname as dirname13, isAbsolute as isAbsolute11, join as join16 } from "node:path";
-import { fileURLToPath as fileURLToPath3, pathToFileURL } from "node:url";
+import { basename as basename10, delimiter as delimiter2, dirname as dirname13, isAbsolute as isAbsolute12, join as join17 } from "node:path";
+import { fileURLToPath as fileURLToPath3, pathToFileURL as pathToFileURL2 } from "node:url";
 function normalizeHost2(raw) {
   const host = raw.trim().toLowerCase();
   const match = HOST_PATTERN.exec(host) ?? IPV6_PATTERN.exec(host);
@@ -30541,19 +30863,19 @@ function srtPackageOf(srtPath) {
     return null;
   }
   const dir = dirname13(cli);
-  const pkg = basename9(dir) === "dist" ? dirname13(dir) : dir;
+  const pkg = basename10(dir) === "dist" ? dirname13(dir) : dir;
   try {
-    const meta = JSON.parse(readFileSync11(join16(pkg, "package.json"), "utf8"));
+    const meta = JSON.parse(readFileSync11(join17(pkg, "package.json"), "utf8"));
     return { cli, name: typeof meta.name === "string" ? meta.name : null, version: typeof meta.version === "string" ? meta.version : null };
   } catch {
     return { cli, name: null, version: null };
   }
 }
 function developmentCheckoutOf(installDir) {
-  if (basename9(installDir) !== "plugin") return null;
+  if (basename10(installDir) !== "plugin") return null;
   const parent = dirname13(installDir);
   try {
-    const meta = JSON.parse(readFileSync11(join16(parent, "package.json"), "utf8"));
+    const meta = JSON.parse(readFileSync11(join17(parent, "package.json"), "utf8"));
     return meta.name === DEVELOPMENT_PACKAGE ? parent : null;
   } catch {
     return null;
@@ -30568,8 +30890,8 @@ function seccompHelperFor(srtPath, arch) {
   } catch {
     return null;
   }
-  const rel = join16("vendor", "seccomp", vendorArch, "apply-seccomp");
-  return [join16(dist, "sandbox", rel), join16(dist, "..", rel), join16(dist, rel)].find((p) => existsSync15(p)) ?? null;
+  const rel = join17("vendor", "seccomp", vendorArch, "apply-seccomp");
+  return [join17(dist, "sandbox", rel), join17(dist, "..", rel), join17(dist, rel)].find((p) => existsSync16(p)) ?? null;
 }
 function sandboxEnv(env, allowWrite, chromium, dotnet) {
   const out = { ...env };
@@ -30588,13 +30910,13 @@ function sandboxEnv(env, allowWrite, chromium, dotnet) {
   }
   if (chromium && writable(out.CLAUDE_CODE_TMPDIR)) out.MAC_CHROMIUM_TMPDIR = out.CLAUDE_CODE_TMPDIR;
   if (dotnet) {
-    for (const [name, value] of Object.entries(DOTNET_IPV4_ENV)) if (out[name] === void 0) out[name] = value;
+    for (const [name, value] of Object.entries({ ...DOTNET_IPV4_ENV, ...DOTNET_POLLING_WATCHER_ENV })) if (out[name] === void 0) out[name] = value;
   }
   return out;
 }
 function sandboxReach(settings, envHome) {
   const home2 = envHome || userInfo().homedir;
-  const defaults = ["/tmp/claude", "/private/tmp/claude", ...home2 && isAbsolute11(home2) ? [join16(home2, ".npm", "_logs"), join16(home2, ".claude", "debug")] : []];
+  const defaults = ["/tmp/claude", "/private/tmp/claude", ...home2 && isAbsolute12(home2) ? [join17(home2, ".npm", "_logs"), join17(home2, ".claude", "debug")] : []];
   return {
     writable: uniq([...settings.filesystem.allowWrite, ...defaults.map(canonicalPath)]),
     protectedPaths: settings.filesystem.denyWrite,
@@ -30612,7 +30934,7 @@ function assertLauncherOutOfReach(srtPath, reach) {
     throw new OrbitError("ISOLATION_UNAVAILABLE", `srt at ${srtPath} cannot be resolved`);
   }
   const dir = dirname13(real);
-  const pkg = basename9(dir) === "dist" ? dirname13(dir) : dir;
+  const pkg = basename10(dir) === "dist" ? dirname13(dir) : dir;
   const exposed = writableIn(reach, pkg) || reach.writable.some((w) => isWithin(w, pkg) && !reach.protectedPaths.some((d) => isWithin(w, d)));
   if (exposed) {
     throw new OrbitError("ISOLATION_UNAVAILABLE", `srt at ${pkg} is inside a path the sandbox may write, so a sandboxed command could replace the sandbox itself`, { path: pkg });
@@ -30621,7 +30943,7 @@ function assertLauncherOutOfReach(srtPath, reach) {
 function readPreloadRefusal(dir) {
   let text2;
   try {
-    text2 = readFileSync11(join16(dir, PRELOAD_REFUSAL_FILE), "utf8");
+    text2 = readFileSync11(join17(dir, PRELOAD_REFUSAL_FILE), "utf8");
   } catch {
     return null;
   }
@@ -30654,7 +30976,7 @@ function launcherEnv(env, reach) {
   return { env: out, restore };
 }
 function launcherPathEntryIsSafe(entry, reach) {
-  if (!entry || !isAbsolute11(entry) || /[\n\r\0]/.test(entry)) return false;
+  if (!entry || !isAbsolute12(entry) || /[\n\r\0]/.test(entry)) return false;
   let real;
   try {
     real = canonicalPath(entry);
@@ -30686,7 +31008,7 @@ function isWsl1() {
     return false;
   }
 }
-var DENIED_RESOLVED_ADDRESSES, LABEL2, HOST_PATTERN, IPV6_PATTERN, SRT_LIMITATIONS, SRT_VERIFIED_VERSION, SRT_PACKAGE, PRELOAD_REFUSAL_FILE, CHROMIUM_MACH_RENDEZVOUS, CHROMIUM_MACH_RENDEZVOUS_LIMITATION, NIS_DOMAINNAME_READ, NIS_DOMAINNAME_LIMITATION, NIS_DOMAINNAME_SKIPPED, DOTNET_IPV4_ENV, LINUX_LIMITATION, SECCOMP_ARCHES, SandboxRuntimeIsolation, DEVELOPMENT_PACKAGE, LOADER_ENV_NAMES, LOADER_ENV_PREFIXES;
+var DENIED_RESOLVED_ADDRESSES, LABEL2, HOST_PATTERN, IPV6_PATTERN, SRT_LIMITATIONS, SRT_VERIFIED_VERSION, SRT_PACKAGE, PRELOAD_REFUSAL_FILE, CHROMIUM_MACH_RENDEZVOUS, CHROMIUM_MACH_RENDEZVOUS_LIMITATION, NIS_DOMAINNAME_READ, NIS_DOMAINNAME_LIMITATION, NIS_DOMAINNAME_SKIPPED, DOTNET_IPV4_ENV, DOTNET_POLLING_WATCHER_ENV, LINUX_LIMITATION, SECCOMP_ARCHES, SandboxRuntimeIsolation, DEVELOPMENT_PACKAGE, LOADER_ENV_NAMES, LOADER_ENV_PREFIXES;
 var init_sandbox_runtime = __esm({
   "src/isolation/sandbox-runtime.ts"() {
     "use strict";
@@ -30717,6 +31039,7 @@ var init_sandbox_runtime = __esm({
     NIS_DOMAINNAME_LIMITATION = ".NET on macOS: an Orbit preload on the unmodified srt CLI adds one Seatbelt rule, sysctl-read of kern.nisdomainname (the NIS domain name, empty unless the machine is bound to NIS) and nothing else, since .NET's CookieContainer reads it and every .NET HTTP client, NuGet's restore included, failed without it. It is read-only and reveals less than the host name srt already allows.";
     NIS_DOMAINNAME_SKIPPED = `.NET on macOS: the NIS domain name rule was not added, because the srt found is not the version Orbit's preload was verified against, so a .NET HTTP client (NuGet's restore included) fails with "GetDomainName: -1"; use the srt that ships with Orbit`;
     DOTNET_IPV4_ENV = Object.freeze({ DOTNET_SYSTEM_NET_DISABLEIPV6: "1" });
+    DOTNET_POLLING_WATCHER_ENV = Object.freeze({ DOTNET_USE_POLLING_FILE_WATCHER: "1" });
     LINUX_LIMITATION = "On Linux the mandatory write denies inside writable paths (.git/hooks, shell rc files...) are found by a scan at launch, so such files created later are not covered.";
     SECCOMP_ARCHES = { x64: "x64", arm64: "arm64" };
     SandboxRuntimeIsolation = class {
@@ -30738,12 +31061,12 @@ var init_sandbox_runtime = __esm({
       }
       resolveSrt() {
         if (this.opts.srtPath !== void 0) {
-          return isAbsolute11(this.opts.srtPath) && isExecutableFile(this.opts.srtPath) ? { path: this.opts.srtPath, source: "configured" } : null;
+          return isAbsolute12(this.opts.srtPath) && isExecutableFile(this.opts.srtPath) ? { path: this.opts.srtPath, source: "configured" } : null;
         }
         const onPath = which("srt", this.pathEnv);
         if (onPath) return { path: onPath, source: "PATH" };
         for (const bin of this.installBinDirs()) {
-          const bundled = join16(bin, "srt");
+          const bundled = join17(bin, "srt");
           if (isExecutableFile(bundled)) return { path: bundled, source: "install" };
         }
         return null;
@@ -30756,9 +31079,9 @@ var init_sandbox_runtime = __esm({
        */
       installBinDirs() {
         const install = this.opts.orbitInstallDir;
-        if (!install || !isAbsolute11(install)) return [];
+        if (!install || !isAbsolute12(install)) return [];
         const checkout = developmentCheckoutOf(install);
-        return [join16(install, "node_modules", ".bin"), ...checkout ? [join16(checkout, "node_modules", ".bin")] : []];
+        return [join17(install, "node_modules", ".bin"), ...checkout ? [join17(checkout, "node_modules", ".bin")] : []];
       }
       /**
        * The OS mechanism srt drives, or why this host cannot run it. Synchronous
@@ -30803,19 +31126,19 @@ var init_sandbox_runtime = __esm({
         const timeoutMs = this.opts.probeTimeoutMs ?? 15e3;
         const version = await runBounded(srt.path, ["--version"], { timeoutMs });
         if (version.code !== 0) return { ok: false, detail: `srt at ${srt.path} does not run (${probeFailure(version)})` };
-        const dir = mkdtempSync3(join16(this.opts.settingsDir ?? tmpdir7(), "orbit-srt-probe-"));
+        const dir = mkdtempSync3(join17(this.opts.settingsDir ?? tmpdir7(), "orbit-srt-probe-"));
         try {
-          const file = join16(dir, "settings.json");
+          const file = join17(dir, "settings.json");
           const settings = buildSrtSettings({ writablePaths: [], denyReadPaths: [], allowedHosts: [], limits: { timeoutMs, memoryMb: null, cpus: null, pids: null } });
           writeFileSync4(file, JSON.stringify(settings), { mode: 384 });
-          const canaryDir = join16(dir, "canary");
-          mkdirSync8(canaryDir);
-          const canary = join16(canaryDir, "orbit-canary");
+          const canaryDir = join17(dir, "canary");
+          mkdirSync9(canaryDir);
+          const canary = join17(canaryDir, "orbit-canary");
           const probe2 = await runBounded(srt.path, ["--settings", file, "--", "/bin/sh", "-c", 'echo x > "$1" 2>/dev/null; exit 0', "sh", canary], { timeoutMs });
           if (probe2.code !== 0) return { ok: false, detail: `srt ${version.stdout.trim()} could not start a sandboxed command (${probeFailure(probe2)})` };
-          if (existsSync15(canary)) return { ok: false, detail: `srt at ${srt.path} ran a command without confining it: a write no rule allowed succeeded` };
+          if (existsSync16(canary)) return { ok: false, detail: `srt at ${srt.path} ran a command without confining it: a write no rule allowed succeeded` };
         } finally {
-          rmSync5(dir, { recursive: true, force: true });
+          rmSync6(dir, { recursive: true, force: true });
         }
         return { ok: true, detail: `srt ${version.stdout.trim()} (${srt.source}: ${srt.path}); ${platform3.detail}; sandbox probe passed` };
       }
@@ -30847,12 +31170,12 @@ var init_sandbox_runtime = __esm({
         const nis = nisWanted && this.preloadVerified(pkg);
         const sets = [...browser ? ["chromium"] : [], ...nis ? ["nis-domainname"] : []];
         const preloaded = sets.length > 0 ? this.preloadLauncher(pkg, browser ? "browser checks" : ".NET processes") : null;
-        const dir = mkdtempSync3(join16(this.opts.settingsDir ?? tmpdir7(), "orbit-srt-"));
+        const dir = mkdtempSync3(join17(this.opts.settingsDir ?? tmpdir7(), "orbit-srt-"));
         let cleaned = false;
         const cleanup = () => {
           if (cleaned) return;
           cleaned = true;
-          rmSync5(dir, { recursive: true, force: true });
+          rmSync6(dir, { recursive: true, force: true });
         };
         try {
           const settings = buildSrtSettings(profile, { extraDenyRead: [dir], stdioFiles: opts.stdioFiles });
@@ -30868,11 +31191,11 @@ var init_sandbox_runtime = __esm({
           if (launch.restore.length && command[0].includes("=")) {
             throw new OrbitError("INTERNAL", `command name ${JSON.stringify(command[0])} contains "=", which /usr/bin/env would read as an assignment`);
           }
-          const file = join16(dir, "settings.json");
+          const file = join17(dir, "settings.json");
           writeFileSync4(file, `${JSON.stringify(settings, null, 2)}
 `, { mode: 384, flag: "wx" });
-          chmodSync5(file, 384);
-          const launcher = preloaded ? [preloaded.node, "--import", `${pathToFileURL(preloaded.preload).href}?rules=${sets.join(",")}`, preloaded.cli] : [srt.path];
+          chmodSync6(file, 384);
+          const launcher = preloaded ? [preloaded.node, "--import", `${pathToFileURL2(preloaded.preload).href}?rules=${sets.join(",")}`, preloaded.cli] : [srt.path];
           const srtArgv = [...launcher, "--settings", file, "--", ...launch.restore.length ? ["/usr/bin/env", "--", ...launch.restore] : [], ...command];
           const memoryMb = this.opts.limits?.memory_mb ?? null;
           return {
@@ -30981,26 +31304,26 @@ var init_isolation = __esm({
 
 // src/controller/start.ts
 import { realpathSync as realpathSync6 } from "node:fs";
-import { dirname as dirname14, join as join17, resolve as resolve6 } from "node:path";
+import { dirname as dirname14, join as join18, resolve as resolve6 } from "node:path";
 import { homedir as homedir6 } from "node:os";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 function orbitDir(repoRoot) {
-  return join17(repoRoot, ".orbit");
+  return join18(repoRoot, ".orbit");
 }
 function stateDbPath(repoRoot) {
-  return join17(orbitDir(repoRoot), "state.sqlite");
+  return join18(orbitDir(repoRoot), "state.sqlite");
 }
 function defaultOrbitHome(env = process.env) {
-  return env.ORBIT_HOME ?? join17(homedir6(), ".orbit");
+  return env.ORBIT_HOME ?? join18(homedir6(), ".orbit");
 }
 function orbitInstallDir(here = dirname14(fileURLToPath4(import.meta.url))) {
-  return here.endsWith(join17("src", "controller")) ? resolve6(here, "..", "..") : resolve6(here, "..");
+  return here.endsWith(join18("src", "controller")) ? resolve6(here, "..", "..") : resolve6(here, "..");
 }
 function startRun(input) {
   const clock = input.clock ?? systemClock;
   const repoRoot = realpathSync6(input.repoRoot);
   const id = input.runId ?? newRunId(clock.now());
-  const runDir2 = join17(orbitDir(repoRoot), "runs", id);
+  const runDir2 = join18(orbitDir(repoRoot), "runs", id);
   const snap = snapshotPolicy(input.config, { runId: id, repoRoot, runDir: runDir2, clock });
   return createRun(input.db, { id, repoRoot, goal: input.goal, mode: input.config.mode, policyHash: snap.hash, policyPath: snap.path, ...input.environment ? { environment: input.environment } : {} }, clock, input.actor ?? "cli");
 }
@@ -31022,7 +31345,7 @@ function defaultControllerDeps(input) {
     }
     adapters = createAdapters(config, { isolation, clock, baseEnv: env, ...input.adapterDeps ?? {} });
   }
-  const logger = input.logger ?? createLogger({ file: join17(orbitHome, "logs", "controller.jsonl"), clock });
+  const logger = input.logger ?? createLogger({ file: join18(orbitHome, "logs", "controller.jsonl"), clock });
   return { db, clock, logger, adapters, registry: new ModelRegistry(db, clock).useSharedCatalog(sharedCatalogPath(orbitHome)), orbitHome, homeDir: homedir6(), hostEnv: env, orbitInstallDir: installDir };
 }
 var init_start = __esm({
@@ -31043,7 +31366,7 @@ var init_start = __esm({
 });
 
 // src/cli/context.ts
-import { existsSync as existsSync16, realpathSync as realpathSync7 } from "node:fs";
+import { existsSync as existsSync17, realpathSync as realpathSync7 } from "node:fs";
 import { homedir as homedir7, hostname as hostname2, userInfo as userInfo2 } from "node:os";
 import { resolve as resolve7 } from "node:path";
 function createContext(overrides = {}) {
@@ -31082,7 +31405,7 @@ function safeRealpath(p) {
 }
 async function resolveRepo(ctx, flag) {
   const start = resolve7(ctx.cwd, flag ?? ".");
-  if (!existsSync16(start)) throw new OrbitError("NOT_FOUND", `${start} does not exist`);
+  if (!existsSync17(start)) throw new OrbitError("NOT_FOUND", `${start} does not exist`);
   let r;
   try {
     r = await execCapture(["git", "rev-parse", "--path-format=absolute", "--show-toplevel"], { cwd: start, timeoutMs: 15e3, env: gitEnv(ctx.env) });
@@ -31101,11 +31424,11 @@ function gitEnv(env) {
   return out;
 }
 function initialised(repoRoot) {
-  return existsSync16(resolve7(repoRoot, ".orbit", "config.yaml"));
+  return existsSync17(resolve7(repoRoot, ".orbit", "config.yaml"));
 }
 function openState(repoRoot, opts = {}) {
   const path = stateDbPath(repoRoot);
-  if (!opts.create && !existsSync16(path)) {
+  if (!opts.create && !existsSync17(path)) {
     if (initialised(repoRoot)) throw new OrbitError("NOT_FOUND", `no runs yet in ${repoRoot}; start one with: orbit run --goal "..."`, { path });
     throw new OrbitError("NOT_FOUND", `no Orbit state in ${repoRoot}; run ${orbitHint("init")}, then ${orbitHint("run")}`, { path });
   }
@@ -33151,9 +33474,9 @@ function compareWording(prev, next) {
   }
   if (qualifiers.size > 0) reasons.push(`the new text adds qualifying language (${[...qualifiers].sort().join(", ")})`);
   if (others.size > 0) {
-    const shown2 = [...others].slice(0, MAX_LISTED_WORDS);
-    const more = others.size > shown2.length ? `, and ${others.size - shown2.length} more` : "";
-    reasons.push(`the new text adds words that can narrow or redefine it (${shown2.join(", ")}${more})`);
+    const shown3 = [...others].slice(0, MAX_LISTED_WORDS);
+    const more = others.size > shown3.length ? `, and ${others.size - shown3.length} more` : "";
+    reasons.push(`the new text adds words that can narrow or redefine it (${shown3.join(", ")}${more})`);
   }
   return { clarification: reasons.length === 0, reasons };
 }
@@ -33404,8 +33727,8 @@ var init_model_outputs = __esm({
 });
 
 // src/storage/decisions.ts
-import { closeSync as closeSync5, existsSync as existsSync17, fstatSync as fstatSync3, openSync as openSync5, readFileSync as readFileSync12, readSync as readSync2, writeSync as writeSync3 } from "node:fs";
-import { join as join18 } from "node:path";
+import { closeSync as closeSync5, existsSync as existsSync18, fstatSync as fstatSync3, openSync as openSync5, readFileSync as readFileSync12, readSync as readSync2, writeSync as writeSync3 } from "node:fs";
+import { join as join19 } from "node:path";
 function toRecord4(r) {
   return { id: r.id, runId: r.run_id, kind: r.kind, summary: r.summary, data: r.data_json === null ? null : JSON.parse(r.data_json), createdAt: r.created_at };
 }
@@ -33413,7 +33736,7 @@ function toLine(d) {
   return { id: d.id, run_id: d.runId, kind: d.kind, summary: d.summary, data: d.data, created_at: d.createdAt };
 }
 function decisionsPath(runDir2) {
-  return join18(runDir2, DECISIONS_FILE);
+  return join19(runDir2, DECISIONS_FILE);
 }
 function recordDecision(db, runDir2, input, clock, opts = {}) {
   assertNoTransaction(db, "recordDecision");
@@ -33451,7 +33774,7 @@ function listDecisions(db, runId, opts = {}) {
 }
 function readDecisionsMirror(runDir2) {
   const path = decisionsPath(runDir2);
-  if (!existsSync17(path)) return [];
+  if (!existsSync18(path)) return [];
   const out = [];
   for (const line3 of readFileSync12(path, "utf8").split("\n")) {
     if (line3.trim() === "") continue;
@@ -33470,7 +33793,7 @@ function assertNoTransaction(db, fn) {
 }
 function appendLine(runDir2, d) {
   const path = decisionsPath(runDir2);
-  if (existsSync17(path)) {
+  if (existsSync18(path)) {
     const fd = openSync5(path, "a+");
     try {
       const size = fstatSync3(fd).size;
@@ -34114,10 +34437,10 @@ var init_store = __esm({
 });
 
 // src/evidence/check-shim.ts
-import { existsSync as existsSync18, readFileSync as readFileSync13 } from "node:fs";
-import { join as join19 } from "node:path";
+import { existsSync as existsSync19, readFileSync as readFileSync13 } from "node:fs";
+import { join as join20 } from "node:path";
 function ensureShim(runDir2) {
-  const path = join19(runDir2, "check-shim.mjs");
+  const path = join20(runDir2, "check-shim.mjs");
   let current = null;
   try {
     current = readFileSync13(path, "utf8");
@@ -34127,7 +34450,7 @@ function ensureShim(runDir2) {
   return path;
 }
 function readJsonFile(path) {
-  if (!existsSync18(path)) return null;
+  if (!existsSync19(path)) return null;
   try {
     return JSON.parse(readFileSync13(path, "utf8"));
   } catch {
@@ -34135,7 +34458,7 @@ function readJsonFile(path) {
   }
 }
 function shimPath(dir, file) {
-  return join19(dir, SHIM_FILES[file]);
+  return join20(dir, SHIM_FILES[file]);
 }
 var SHIM_FILES, CHECK_SHIM_SOURCE, CHECK_SHIM_HASH;
 var init_check_shim = __esm({
@@ -34308,7 +34631,7 @@ var init_env2 = __esm({
 
 // src/ui/app-fixture.ts
 import { closeSync as closeSync6, openSync as openSync6, readSync as readSync3, statSync as statSync9 } from "node:fs";
-import { join as join20 } from "node:path";
+import { join as join21 } from "node:path";
 function isLoopbackHost(hostname6) {
   const h = hostname6.toLowerCase().replace(/^\[|\]$/g, "");
   if (h === "localhost" || h === "::1" || h.endsWith(".localhost")) return true;
@@ -34372,7 +34695,7 @@ async function startApp(opts) {
   const requestTimeout = opts.requestTimeoutMs ?? 2e3;
   assertBaseUrl(opts.baseUrl, opts.isolatedTestData !== false);
   if (opts.command.length === 0) throw new OrbitError("CONFIG_INVALID", "ui.environment.start_command is empty");
-  const priorState = join20(opts.stateDir, APP_STATE_FILE);
+  const priorState = join21(opts.stateDir, APP_STATE_FILE);
   const outcome = await reconcileApp(priorState, { clock });
   if (outcome === "still-running") {
     throw new OrbitError("CONFIG_INVALID", `an application started by an earlier run (state ${priorState}) would not stop; refusing to start another`, { reason: "previous_app_running", stateFile: priorState });
@@ -34382,8 +34705,8 @@ async function startApp(opts) {
     throw new OrbitError("CONFIG_INVALID", `something already answers at ${opts.baseUrl} (HTTP ${existing}); refusing to test a server Orbit did not start`, { reason: "port_in_use", status: existing });
   }
   ensureDir(opts.stateDir);
-  const stateFile = join20(opts.stateDir, APP_STATE_FILE);
-  const logPath = join20(opts.stateDir, APP_LOG_FILE);
+  const stateFile = join21(opts.stateDir, APP_STATE_FILE);
+  const logPath = join21(opts.stateDir, APP_LOG_FILE);
   const startedAt = clock.now();
   const base = { command: opts.command, cwd: opts.cwd, baseUrl: opts.baseUrl, startedAt, logPath };
   atomicWriteJson(stateFile, { ...base, state: "starting", pid: null, pgid: null, start: null });
@@ -34409,8 +34732,11 @@ async function startApp(opts) {
   try {
     for (; ; ) {
       if (!groupAlive(spawned.pgid)) {
-        throw new OrbitError("INTERNAL", `the application exited before it became ready: ${logTail(logPath).trim() || "(no output)"}`, { reason: "app_exited", logPath });
+        const why = opts.stopWhen?.(true) ?? null;
+        throw new OrbitError("INTERNAL", `the application exited before it became ready: ${logTail(logPath).trim() || "(no output)"}${why ? `; ${why}` : ""}`, { reason: "app_exited", logPath });
       }
+      const stop = opts.stopWhen?.(false) ?? null;
+      if (stop !== null) throw new OrbitError("INTERNAL", `the application was stopped before it became ready: ${stop}`, { reason: "app_stopped", logPath });
       const status2 = await probe2(opts.baseUrl, requestTimeout);
       if (status2 !== null && isReadyStatus(status2)) return handle;
       if (clock.now() >= deadline) {
@@ -34943,8 +35269,8 @@ var init_identity2 = __esm({
 });
 
 // src/recovery/reconcile.ts
-import { existsSync as existsSync19, readdirSync as readdirSync3 } from "node:fs";
-import { dirname as dirname15, join as join21 } from "node:path";
+import { existsSync as existsSync20, readdirSync as readdirSync4 } from "node:fs";
+import { dirname as dirname15, join as join22 } from "node:path";
 async function reconcileOnStart(opts) {
   const ctx = {
     db: opts.db,
@@ -35094,12 +35420,12 @@ function observeWorker(ctx, w) {
   }
   const exit = readExitRecord(w.workerDir);
   if (exit) {
-    const synthetic = { provider: w.provider, workerId: w.id, workerDir: w.workerDir, pid: 0, pgid: 0, procStart: null, logPath: join21(w.workerDir, "log.jsonl"), exitPath: join21(w.workerDir, EXIT_FILE) };
+    const synthetic = { provider: w.provider, workerId: w.id, workerDir: w.workerDir, pid: 0, pgid: 0, procStart: null, logPath: join22(w.workerDir, "log.jsonl"), exitPath: join22(w.workerDir, EXIT_FILE) };
     return { kind: "exited", handle: synthetic, task: { state: "exited", exit, pid: null }, detail: "pid.json missing" };
   }
   let launch = null;
   try {
-    launch = readJsonIfExists(join21(w.workerDir, LAUNCH_FILE));
+    launch = readJsonIfExists(join22(w.workerDir, LAUNCH_FILE));
   } catch {
     launch = null;
   }
@@ -35341,18 +35667,18 @@ function findCheckDirs(root) {
   const found = /* @__PURE__ */ new Map();
   const visit3 = (parent) => {
     for (const name of safeDirs(parent)) {
-      const dir = join21(parent, name);
+      const dir = join22(parent, name);
       const intent = readJsonFile(shimPath(dir, "intent"));
       if (intent && typeof intent.checkRunId === "string") found.set(intent.checkRunId, { dir, intent });
     }
   };
-  visit3(join21(root, "baseline"));
-  for (const seq2 of safeDirs(join21(root, "evidence"))) visit3(join21(root, "evidence", seq2));
+  visit3(join22(root, "baseline"));
+  for (const seq2 of safeDirs(join22(root, "evidence"))) visit3(join22(root, "evidence", seq2));
   return found;
 }
 function safeDirs(dir) {
   try {
-    return readdirSync3(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+    return readdirSync4(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
   } catch {
     return [];
   }
@@ -35432,7 +35758,7 @@ async function stopCheck(ctx, dir, shimPid, stillOurs, childPgid) {
   } catch {
   }
   const deadline = Date.now() + ctx.graceMs * 2 + 1e3;
-  while (Date.now() < deadline && !existsSync19(shimPath(dir, "exit")) && stillOurs()) await systemClock.sleep(25);
+  while (Date.now() < deadline && !existsSync20(shimPath(dir, "exit")) && stillOurs()) await systemClock.sleep(25);
   if (stillOurs()) {
     try {
       process.kill(shimPid, "SIGKILL");
@@ -35458,12 +35784,12 @@ function findAppStateFiles(root) {
   const walk4 = (dir, depth) => {
     if (depth > 6) return;
     for (const name of safeDirs(dir)) {
-      const child = join21(dir, name);
-      if (name === "app" && existsSync19(join21(child, APP_STATE_FILE))) out.push(join21(child, APP_STATE_FILE));
+      const child = join22(dir, name);
+      if (name === "app" && existsSync20(join22(child, APP_STATE_FILE))) out.push(join22(child, APP_STATE_FILE));
       else walk4(child, depth + 1);
     }
   };
-  walk4(join21(root, "evidence"), 0);
+  walk4(join22(root, "evidence"), 0);
   return out;
 }
 async function reconcileApps(ctx, run) {
@@ -35527,7 +35853,7 @@ var init_reconcile = __esm({
 
 // src/recovery/watchdog.ts
 import { hostname as hostname3 } from "node:os";
-import { join as join22 } from "node:path";
+import { join as join23 } from "node:path";
 import { statSync as statSync10 } from "node:fs";
 async function watchdogTick(opts) {
   const cfg = { ...DEFAULT_WATCHDOG, ...opts.config, stepTimeoutMs: { ...DEFAULT_WATCHDOG.stepTimeoutMs, ...opts.config?.stepTimeoutMs } };
@@ -35618,7 +35944,7 @@ function workerActivity(opts, w, now) {
   if (opts.workerActivityAt) t = opts.workerActivityAt(w);
   else {
     try {
-      t = statSync10(join22(w.workerDir, LOG_FILE)).mtimeMs;
+      t = statSync10(join23(w.workerDir, LOG_FILE)).mtimeMs;
     } catch {
       t = null;
     }
@@ -35678,248 +36004,6 @@ var init_watchdog = __esm({
       graceMs: 2e3
     });
     minutes = (ms) => Math.round(ms / MIN);
-  }
-});
-
-// src/isolation/toolchains.ts
-import { chmodSync as chmodSync6, existsSync as existsSync20, lstatSync as lstatSync5, mkdirSync as mkdirSync9, readdirSync as readdirSync4, rmSync as rmSync6 } from "node:fs";
-import { basename as basename10, isAbsolute as isAbsolute12, join as join23 } from "node:path";
-function nugetAuditRuns(d) {
-  return d.platform !== "darwin" && NUGET_HOSTS.every((h) => hostAllowed(h, d.networkHosts));
-}
-function toolchainCacheRoot(orbitHome, repoKey2) {
-  if (!REPO_KEY.test(repoKey2)) throw new Error(`invalid repository key ${JSON.stringify(repoKey2)}`);
-  return join23(orbitHome, "toolchains", repoKey2);
-}
-function toolchainRegistryHosts(ids) {
-  return [...new Set(ordered(ids).flatMap((id) => TOOLCHAIN_PROFILES[id].registryHosts))];
-}
-function ordered(ids) {
-  return TOOLCHAIN_IDS.filter((id) => ids.includes(id));
-}
-function commandWords(command) {
-  return command.flatMap((part) => part.split(/[\s;&|()<>`]+/)).filter((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)).map((w) => basename10(w));
-}
-function hasMarker(dir, markers) {
-  let names;
-  try {
-    names = readdirSync4(dir);
-  } catch {
-    return false;
-  }
-  return markers.some((m) => m.startsWith("*.") ? names.some((n2) => n2.endsWith(m.slice(1)) && n2.length > m.length - 1) : names.includes(m));
-}
-function detectToolchains(input) {
-  const words2 = commandWords(input.command ?? []);
-  return TOOLCHAIN_IDS.filter((id) => {
-    const p = TOOLCHAIN_PROFILES[id];
-    return words2.some((w) => p.executables.test(w)) || (input.roots ?? []).some((r) => hasMarker(r, p.markers));
-  });
-}
-function rustupHomeOf(input) {
-  const configured = (input.hostEnv ?? process.env).RUSTUP_HOME;
-  if (configured && configured.trim() !== "") return isAbsolute12(configured) ? configured : null;
-  if (!input.hostHome) return null;
-  const dflt = join23(input.hostHome, ".rustup");
-  return existsSync20(dflt) ? dflt : null;
-}
-function javaHomeOf(input) {
-  const configured = (input.hostEnv ?? process.env).JAVA_HOME;
-  return configured && configured.trim() !== "" && isAbsolute12(configured) ? configured : null;
-}
-function toolchainLayout(input) {
-  const ids = ordered(input.toolchains);
-  const shared = input.cacheRoot !== null;
-  const cachePath = (name) => input.cacheRoot !== null ? join23(input.cacheRoot, name) : join23(input.scratchRoot, "cache", name);
-  const scratchPath = (name) => join23(input.scratchRoot, name);
-  const rustupHome = ids.includes("rust") ? rustupHomeOf(input) : null;
-  const javaHome = ids.includes("jvm") ? javaHomeOf(input) : null;
-  const platform3 = input.platform ?? process.platform;
-  const env = {};
-  const directories = [];
-  const caches = [];
-  for (const id of ids) {
-    const p = TOOLCHAIN_PROFILES[id];
-    Object.assign(env, p.env({ mode: input.mode, cache: cachePath, scratch: scratchPath, tmpDir: input.tmpDir, rustupHome, javaHome, platform: platform3, networkHosts: input.networkHosts }));
-    for (const name of p.caches) caches.push({ toolchain: id, name, path: cachePath(name) });
-    directories.push(...p.caches.map(cachePath), ...p.scratch.map(scratchPath));
-  }
-  const cachePaths = caches.map((c) => c.path);
-  return {
-    toolchains: ids,
-    env,
-    writable: ids.length === 0 ? [] : [input.scratchRoot, ...shared && input.mode === "install" ? cachePaths : []],
-    readOnly: shared && input.mode !== "install" ? cachePaths : [],
-    directories,
-    caches,
-    nisDomainName: ids.includes("dotnet")
-  };
-}
-function prepareToolchainLayout(layout) {
-  for (const d of layout.directories) {
-    mkdirSync9(d, { recursive: true, mode: 448 });
-    chmodSync6(d, 448);
-  }
-}
-function removeScratch(dir) {
-  const remove = () => rmSync6(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-  try {
-    remove();
-    return;
-  } catch (err) {
-    const code2 = err.code;
-    if (code2 !== "EACCES" && code2 !== "EPERM" && code2 !== "ENOTEMPTY") throw err;
-  }
-  makeTreeWritable(dir);
-  remove();
-}
-function makeTreeWritable(dir) {
-  try {
-    if (!lstatSync5(dir).isDirectory()) return;
-  } catch {
-    return;
-  }
-  const stack = [dir];
-  while (stack.length > 0) {
-    const d = stack.pop();
-    try {
-      chmodSync6(d, 448);
-      for (const entry of readdirSync4(d, { withFileTypes: true })) if (entry.isDirectory()) stack.push(join23(d, entry.name));
-    } catch {
-    }
-  }
-}
-var TOOLCHAIN_IDS, PROBE_TFM, probeLibrary, DOTNET_PROBE_PROJECT, NUGET_AUDIT_LIMITATION, NUGET_HOSTS, TOOLCHAIN_PROFILES, REPO_KEY;
-var init_toolchains = __esm({
-  "src/isolation/toolchains.ts"() {
-    "use strict";
-    init_hosts();
-    TOOLCHAIN_IDS = ["dotnet", "go", "jvm", "python", "rust"];
-    PROBE_TFM = "<TargetFramework>net$(NETCoreAppMaximumVersion)</TargetFramework>";
-    probeLibrary = (refs = []) => `<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>${PROBE_TFM}</PropertyGroup>
-${refs.length ? `  <ItemGroup>${refs.map((r) => `<ProjectReference Include="../${r}/${r}.csproj" />`).join("")}</ItemGroup>
-` : ""}</Project>
-`;
-    DOTNET_PROBE_PROJECT = {
-      "Directory.Build.props": "<Project />\n",
-      "Directory.Build.targets": "<Project />\n",
-      "Probe.Left/Probe.Left.csproj": probeLibrary(),
-      "Probe.Left/Left.cs": "namespace Probe;\npublic static class Left { public static int One => 1; }\n",
-      "Probe.Right/Probe.Right.csproj": probeLibrary(),
-      "Probe.Right/Right.cs": "namespace Probe;\npublic static class Right { public static int Two => 2; }\n",
-      "Probe.App/Probe.App.csproj": probeLibrary(["Probe.Left", "Probe.Right"]),
-      "Probe.App/App.cs": "namespace Probe;\npublic static class App { public static int Three => Left.One + Right.Two; }\n"
-    };
-    NUGET_AUDIT_LIMITATION = "NuGet's vulnerability audit was off (NuGetAudit=false in Orbit's .NET profile, which turns it off where it cannot reach the package source from the sandbox), so a package with a known vulnerability does not fail this restore, even where such warnings are errors; the repository's CI still runs it";
-    NUGET_HOSTS = ["api.nuget.org"];
-    TOOLCHAIN_PROFILES = {
-      dotnet: {
-        id: "dotnet",
-        executables: /^dotnet$/,
-        markers: ["*.sln", "*.slnx", "*.csproj", "*.fsproj", "*.vbproj", "global.json", "Directory.Build.props"],
-        caches: ["nuget"],
-        scratch: ["nuget-http", "nuget-plugins"],
-        scratchVars: ["NUGET_HTTP_CACHE_PATH", "NUGET_PLUGINS_CACHE_PATH"],
-        registryHosts: NUGET_HOSTS,
-        // A real build: `dotnet help` started the SDK and ran its first-run steps (#10) but passed where every build of two
-        // projects was denied an MSBuild worker node (#10, reopened). A build runs the first-run steps too.
-        probe: {
-          executables: ["dotnet"],
-          args: ["build", "Probe.App/Probe.App.csproj"],
-          files: DOTNET_PROBE_PROJECT,
-          about: "three generated projects with no packages, one referencing the other two: their restore and build start MSBuild as a real build does"
-        },
-        env: (d) => ({
-          NUGET_PACKAGES: d.cache("nuget"),
-          NUGET_HTTP_CACHE_PATH: d.scratch("nuget-http"),
-          NUGET_PLUGINS_CACHE_PATH: d.scratch("nuget-plugins"),
-          // NuGet's vulnerability audit (an MSBuild property, which MSBuild also reads from the environment) fetches from the
-          // package source at every restore. Off only where it cannot run (nugetAuditRuns): anything on macOS under srt,
-          // and any process whose network lacks the host (a check or worker that does not list it). There it could only
-          // add warning NU1900, after a wait, and a repository that treats warnings as errors fails its restore on it,
-          // after its cache was filled (#10). Elsewhere (the dependency install on Linux or in a container, a Linux check
-          // that lists the host) it stays as the repository configures it, so Orbit does not pass a restore the
-          // repository's CI fails on NU1903. A check's own env, or a project that sets NuGetAudit itself, wins (orbit
-          // doctor's checks.dotnet-audit names the second on macOS).
-          ...nugetAuditRuns(d) ? {} : { NuGetAudit: "false" }
-        })
-      },
-      go: {
-        id: "go",
-        executables: /^(go|gofmt)$/,
-        markers: ["go.mod", "go.work"],
-        caches: ["gomod"],
-        scratch: ["gocache", "gopath"],
-        scratchVars: ["GOCACHE", "GOPATH"],
-        registryHosts: ["proxy.golang.org", "sum.golang.org"],
-        probe: { executables: ["go"], args: ["version"] },
-        env: (d) => ({ GOMODCACHE: d.cache("gomod"), GOCACHE: d.scratch("gocache"), GOPATH: d.scratch("gopath") })
-      },
-      jvm: {
-        id: "jvm",
-        executables: /^(java|javac|jar|jshell|kotlinc|mvn|mvnw|gradle|gradlew)$/,
-        markers: ["pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew", "mvnw"],
-        caches: ["gradle", "maven"],
-        scratch: ["gradle-home", "maven-repo"],
-        scratchVars: ["GRADLE_USER_HOME", "maven.repo.local"],
-        registryHosts: ["repo.maven.apache.org", "repo1.maven.org", "plugins.gradle.org", "services.gradle.org"],
-        probe: { executables: ["java"], args: ["--version"] },
-        env: (d) => ({
-          // The install fills Gradle's and Maven's own homes; everyone else reads them as Gradle's read-only dependency
-          // cache (the directory holding modules-2) and Maven's read-only tail repository, writing only private copies.
-          ...d.mode === "install" ? { GRADLE_USER_HOME: d.cache("gradle"), MAVEN_OPTS: `-Dmaven.repo.local=${d.cache("maven")}` } : {
-            GRADLE_USER_HOME: d.scratch("gradle-home"),
-            GRADLE_RO_DEP_CACHE: join23(d.cache("gradle"), "caches"),
-            MAVEN_OPTS: `-Dmaven.repo.local=${d.scratch("maven-repo")} -Dmaven.repo.local.tail=${d.cache("maven")}`
-          },
-          // The JVM ignores TMPDIR on macOS; srt sets JAVA_TOOL_OPTIONS for its own proxy agent, so this goes in the
-          // launcher's variable (java 9 and later).
-          JDK_JAVA_OPTIONS: `-Djava.io.tmpdir=${d.tmpDir}`,
-          // The host's JDK, read-only: a check inherits nothing else of the host's environment, and macOS's /usr/bin/java
-          // (a stub that finds the runtime through JAVA_HOME, else a JDK registered under /Library/Java) and the Maven and
-          // Gradle launchers find the JDK through it. Without it a JDK outside /Library/Java (GitHub's macOS runners keep
-          // theirs in the tool cache) is "Unable to locate a Java Runtime".
-          ...d.javaHome ? { JAVA_HOME: d.javaHome } : {}
-        })
-      },
-      python: {
-        id: "python",
-        executables: /^(python[0-9.]*|pip[0-9.]*|pytest|py\.test|tox|nox|poetry|pipenv|hatch|pdm)$/,
-        markers: ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "Pipfile", "poetry.lock", "tox.ini"],
-        caches: ["pip"],
-        scratch: ["pycache", "python-user"],
-        scratchVars: ["PYTHONPYCACHEPREFIX", "PYTHONUSERBASE"],
-        registryHosts: ["pypi.org", "files.pythonhosted.org"],
-        probe: { executables: ["python3", "python"], args: ["--version"] },
-        env: (d) => ({
-          PIP_CACHE_DIR: d.cache("pip"),
-          PIP_DISABLE_PIP_VERSION_CHECK: "1",
-          PYTHONPYCACHEPREFIX: d.scratch("pycache"),
-          PYTHONUSERBASE: d.scratch("python-user"),
-          // Virtual environments belong in the checkout (per run), never in a tool's cache directory.
-          POETRY_VIRTUALENVS_IN_PROJECT: "true",
-          PIPENV_VENV_IN_PROJECT: "1"
-        })
-      },
-      rust: {
-        id: "rust",
-        executables: /^(cargo|rustc|rustup|rustfmt|rustdoc)$/,
-        markers: ["Cargo.toml", "Cargo.lock", "rust-toolchain", "rust-toolchain.toml"],
-        caches: ["cargo"],
-        scratch: ["cargo-target"],
-        scratchVars: ["CARGO_TARGET_DIR"],
-        registryHosts: ["index.crates.io", "static.crates.io"],
-        probe: { executables: ["cargo"], args: ["--version"] },
-        env: (d) => ({
-          CARGO_HOME: d.cache("cargo"),
-          CARGO_TARGET_DIR: d.scratch("cargo-target"),
-          // rustup's proxies find their toolchains through RUSTUP_HOME, else under HOME, which is private in a check.
-          ...d.rustupHome ? { RUSTUP_HOME: d.rustupHome } : {}
-        })
-      }
-    };
-    REPO_KEY = /^[A-Za-z0-9_-]{1,64}$/;
   }
 });
 
@@ -36161,10 +36245,32 @@ function findMsbuildNodeDenial(tmpDir, maxNames = MAX_SCANNED_NAMES) {
 function msbuildNodeDenialText(d) {
   return `MSBuild node (pid ${d.pid}) could not bind its named pipe${d.pipe ? ` ${d.pipe}` : ""} (${d.exception})`;
 }
-function msbuildNodeDenialNote(d, fix, stopped = true) {
+function nodeDenialSubject(what) {
+  return { sandbox: `the sandbox of ${what}`, process: what, looker: "Orbit's" };
+}
+function msbuildNodeDenialNote(d, fix, stopped = true, subject = CHECK_SUBJECT) {
   const pipe = d.pipe ? ` ${d.pipe}` : "";
-  const how = stopped ? "; MSBuild waits 30 s for each of ten node starts before it fails, so Orbit stopped the check" : ", and the check failed on it before the runner's next look";
-  return `the check sandbox denied MSBuild node (pid ${d.pid}) its named pipe${pipe} (${d.exception})${how}. Fix: ${fix}`;
+  const how = stopped ? `; MSBuild waits 30 s for each of ten node starts before it fails, so Orbit stopped ${subject.process}` : `, and ${subject.process} failed on it before ${subject.looker} next look`;
+  return `${subject.sandbox} denied MSBuild node (pid ${d.pid}) its named pipe${pipe} (${d.exception})${how}. Fix: ${fix}`;
+}
+async function runStoppingRefusedNodes(tmpDir, run, outer, everyMs = NODE_SCAN_MS) {
+  const stop = new AbortController();
+  let denial = null;
+  let stoppedForIt = false;
+  const timer = setInterval(() => {
+    if (denial !== null) return;
+    denial = findMsbuildNodeDenial(tmpDir);
+    if (denial === null) return;
+    stoppedForIt = outer?.aborted !== true;
+    stop.abort();
+  }, everyMs);
+  try {
+    const result2 = await run(outer ? AbortSignal.any([outer, stop.signal]) : stop.signal);
+    const found = denial;
+    return { result: result2, denial: found ?? findMsbuildNodeDenial(tmpDir), stopped: stoppedForIt && result2.cancelled };
+  } finally {
+    clearInterval(timer);
+  }
 }
 function onOneProcessor(env) {
   return env?.DOTNET_PROCESSOR_COUNT?.trim() === "1";
@@ -36323,15 +36429,19 @@ function withOneNode(check) {
 function shown(command) {
   return `[${command.map((w) => JSON.stringify(w)).join(", ")}]`;
 }
+function pasted(field, command, line3) {
+  if (!line3) return `${field}: ${shown(command)}`;
+  if (field.endsWith(".command")) return `${field}: ${shown(command)} with ${field.slice(0, -".command".length)}.shell: true`;
+  return `${field}: ${shown(["sh", "-c", command.join(" ")])}`;
+}
 function msbuildFix(check, where2 = null) {
   const env = check && onOneProcessor(check.env) ? null : where2 ? where2.env : check ? `checks.${check.id}.env` : "a check's env";
   if (!check) return { change: `pass -m:1 to every dotnet ${VERB_LIST} a check starts, ${RUN_CLAUSE}`, env };
   const field = where2?.command ?? `checks.${check.id}.command`;
   const fixed = withOneNode(check);
   if (fixed) {
-    const shellToo = fixed.shell && !check.shell && field.endsWith(".command") ? ` with ${field.slice(0, -".command".length)}.shell: true` : "";
     const why = fixed.run ? " (dotnet run hands -m:1 to the program, so build with it first, with the same configuration and framework, and run without building)" : "";
-    return { change: `${field}: ${shown(fixed.command)}${shellToo}${why}`, env };
+    return { change: `${pasted(field, fixed.command, fixed.shell && !check.shell)}${why}`, env };
   }
   const current = shown(check.command);
   const cut = current.length > MAX_SHOWN_CHARS ? `${current.slice(0, MAX_SHOWN_CHARS - 3)}...` : current;
@@ -36358,7 +36468,7 @@ function probeNodeSwitches(check) {
   if (builds.length === 0) return [ONE_NODE];
   return [...new Set(builds.flatMap((c) => verbOf(c.argv) === "run" ? [] : nodeSwitches(msbuildWords(c.argv, verbOf(c.argv))).map((s) => s.word)))];
 }
-var REPORT_DIR, REPORT_FILE, MAX_REPORTS, MAX_TMP_ENTRIES, MAX_REPORT_DIR_ENTRIES, MAX_SCANNED_NAMES, MAX_REPORT_BYTES, MAX_EXCEPTION_CHARS, SOCKET_EXCEPTION, PIPE_SERVER, BUILD_NODE, same, NODE_SWITCH, ONE_NODE, MSBUILD_VERBS, VERB_LIST, RUN_CLAUSE, RUN_REASON, CANNOT_TELL, RUNNERS, SCRIPT, SHELLS2, SHELL_SYNTAX, CHAIN_SEPARATOR, ASSIGNMENT2, MAX_SHOWN_CHARS, isDotnet, verbOf, msbuildWords, runsOthers, PINNED, stripSwitches;
+var REPORT_DIR, REPORT_FILE, MAX_REPORTS, MAX_TMP_ENTRIES, MAX_REPORT_DIR_ENTRIES, MAX_SCANNED_NAMES, MAX_REPORT_BYTES, MAX_EXCEPTION_CHARS, SOCKET_EXCEPTION, PIPE_SERVER, BUILD_NODE, same, CHECK_SUBJECT, NODE_SCAN_MS, NODE_SWITCH, ONE_NODE, MSBUILD_VERBS, VERB_LIST, RUN_CLAUSE, RUN_REASON, CANNOT_TELL, RUNNERS, SCRIPT, SHELLS2, SHELL_SYNTAX, CHAIN_SEPARATOR, ASSIGNMENT2, MAX_SHOWN_CHARS, isDotnet, verbOf, msbuildWords, runsOthers, PINNED, stripSwitches;
 var init_msbuild = __esm({
   "src/evidence/msbuild.ts"() {
     "use strict";
@@ -36374,6 +36484,8 @@ var init_msbuild = __esm({
     PIPE_SERVER = /System\.IO\.Pipes\.NamedPipeServerStream/;
     BUILD_NODE = /Microsoft\.Build\.BackEnd\.NodeEndpointOutOfProc/;
     same = (a, b) => a !== null && b !== null && a.dev === b.dev && a.ino === b.ino;
+    CHECK_SUBJECT = { sandbox: "the check sandbox", process: "the check", looker: "the runner's" };
+    NODE_SCAN_MS = 1e3;
     NODE_SWITCH = /^(?:--?|\/)(?:m|maxcpucount)(?::(\d+))?$/i;
     ONE_NODE = "-m:1";
     MSBUILD_VERBS = /* @__PURE__ */ new Set(["build", "test", "publish", "pack", "restore", "msbuild", "run", "clean"]);
@@ -36400,7 +36512,8 @@ var init_msbuild = __esm({
 // src/evidence/dotnet-format.ts
 import { lstatSync as lstatSync7, readFileSync as readFileSync16 } from "node:fs";
 import { basename as basename12, dirname as dirname16, join as join26, posix as posix5, relative as relative2, isAbsolute as isAbsolute13 } from "node:path";
-function formatOutsideFix(check) {
+function formatOutsideFix(check, where2 = null) {
+  if (where2) return `remove dotnet format from ${where2.command} and run it in CI`;
   return `remove checks.${check.id} from .orbit/config.yaml, or set checks.${check.id}.mandatory: false, and run dotnet format in CI`;
 }
 function loadsProject(argv2) {
@@ -36535,10 +36648,10 @@ function rewritten(check, argvForm, lineForm) {
   const text2 = lineForm(c, true);
   return text2 === null ? null : { command: [text2], shell: true };
 }
-function dotnetFormatFix(check) {
-  const field = `checks.${check.id}.command`;
+function dotnetFormatFix(check, where2 = null) {
+  const field = where2?.command ?? `checks.${check.id}.command`;
   const fixed = withFolderForm(check);
-  return fixed ? `${field}: ${shown(fixed.command)}` : `in ${field}, run "${FOLDER_TEXT}" in place of its dotnet format command`;
+  return fixed ? pasted(field, fixed.command, fixed.shell && !check.shell) : `in ${field}, run "${FOLDER_TEXT}" in place of its dotnet format command`;
 }
 function formatAndNodeFix(check, where2) {
   const fixed = withFolderForm(check);
@@ -36548,7 +36661,7 @@ function formatRestoreFix(check, where2) {
   const fixed = withRestoreFirst(check);
   if (fixed?.shell) {
     const field = where2?.command ?? `checks.${check.id}.command`;
-    return { change: `${field}: ${shown(fixed.command)} with ${field.slice(0, -".command".length)}.shell: true ${RESTORE_FIRST}`, env: msbuildFix(check, where2).env };
+    return { change: `${pasted(field, fixed.command, true)} ${RESTORE_FIRST}`, env: msbuildFix(check, where2).env };
   }
   const fix = msbuildFix(fixed ? { ...check, command: fixed.command } : check, where2);
   return { ...fix, change: `${fix.change} ${RESTORE_FIRST}` };
@@ -36567,7 +36680,16 @@ function nodeDenialFix(check, where2, inProcess = false, folderForm = true) {
   const fix = formatAndNodeFix(check, where2);
   return `${fix.change} ${msbuildFixReason([fix])} ${DOTNET_FORMAT_REASON}`;
 }
-var FOLDER_FORM, FOLDER_TEXT, LOADS_NOTHING, SUBCOMMANDS, ONE_VALUE, MANY_VALUES, KEPT, WORKSPACE_FILE, ROLLS_MAJOR, RESTORE_FIRST, DOTNET_FORMAT_REASON, FORMAT_OUTSIDE_REASON, restoresFirst, shownOf, withFolderForm, withRestoreFirst;
+function formatLoadedNoProject(output) {
+  return LOADED_NO_PROJECT.test(output);
+}
+function buildHostDenialNote(fix) {
+  return `the check sandbox denied dotnet format's build host its named pipe under /tmp, so dotnet format loaded no project and checked nothing, though it exited 0 (it reports a project it could not load as "Format currently supports only C# and Visual Basic projects"). Fix: ${fix}`;
+}
+function buildHostFix(check, where2, folderForm = true) {
+  return folderForm ? `${dotnetFormatFix(check, where2)} ${DOTNET_FORMAT_REASON}` : `${formatOutsideFix(check, where2)} ${FORMAT_OUTSIDE_REASON}`;
+}
+var FOLDER_FORM, FOLDER_TEXT, LOADS_NOTHING, SUBCOMMANDS, ONE_VALUE, MANY_VALUES, KEPT, WORKSPACE_FILE, ROLLS_MAJOR, RESTORE_FIRST, DOTNET_FORMAT_REASON, FORMAT_OUTSIDE_REASON, restoresFirst, shownOf, withFolderForm, withRestoreFirst, LOADED_NO_PROJECT;
 var init_dotnet_format = __esm({
   "src/evidence/dotnet-format.ts"() {
     "use strict";
@@ -36601,6 +36723,7 @@ var init_dotnet_format = __esm({
         return [...w(c.prefix), ...w(restore), "&&", ...w(c.prefix), ...w(format)].join(" ");
       }
     );
+    LOADED_NO_PROJECT = /^\s*Could not format '[^'\r\n]+\.(?:cs|vb)proj'\. Format currently supports only C# and Visual Basic projects\.\s*$/m;
   }
 });
 
@@ -36845,6 +36968,10 @@ function prepareCheckHome(homeDir) {
   mkdirSync10(dir, { recursive: true, mode: 448 });
   atomicWrite(join27(dir, NUGET_LATEST_MIGRATION), "", 384);
 }
+function privateHomeDotnetEnv(homeDir) {
+  prepareCheckHome(homeDir);
+  return { ...DOTNET_CHECK_ENV, DOTNET_CLI_HOME: homeDir };
+}
 function checkEnv(def, dirs, hostPath = process.env.PATH, toolchainEnv = {}) {
   return {
     ...toolchainEnv,
@@ -36959,16 +37086,19 @@ async function launchAttempt(ctx, subject, def, configHash, rerunOf) {
 }
 function checkToolchains(ctx, def, cwd, dirs, tmpDir, platform3 = process.platform) {
   const install = INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
-  return toolchainLayout({
-    toolchains: detectToolchains({ command: def.command, shell: def.shell, roots: [ctx.checkoutDir, cwd] }),
+  return commandToolchains({
+    command: def.command,
+    shell: def.shell,
+    roots: [ctx.checkoutDir, cwd],
     mode: install ? "install" : "check",
     cacheRoot: ctx.toolchainCacheRoot ?? null,
     scratchRoot: dirs.toolchainsDir,
     tmpDir,
-    platform: ctx.isolation.kind === "container" ? "linux" : platform3,
+    isolation: ctx.isolation.kind,
     networkHosts: def.network_hosts,
-    // A container brings its own toolchain installation; the host's rustup and JDK are neither mounted nor wanted there.
-    ...ctx.isolation.kind === "container" ? { hostEnv: {} } : { hostEnv: process.env, ...ctx.homeDir ? { hostHome: ctx.homeDir } : {} }
+    platform: platform3,
+    hostEnv: process.env,
+    ...ctx.homeDir ? { hostHome: ctx.homeDir } : {}
   });
 }
 function msbuildFixWhere(ctx, def) {
@@ -36978,8 +37108,8 @@ async function assertCheckoutUnmodified(dir, nextCheck) {
   const out = await git2(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--ignore-submodules=none"]);
   const changed2 = out.split("\0").filter(Boolean).map((rec2) => rec2.slice(3));
   if (changed2.length > 0) {
-    const shown2 = changed2.slice(0, 10).join(", ") + (changed2.length > 10 ? `, and ${changed2.length - 10} more` : "");
-    throw new OrbitError("STALE_EVIDENCE", `the checkout no longer holds the candidate tree (tracked files changed: ${shown2}); check ${nextCheck} was not started`, { checkout: dir, changed: changed2.slice(0, 50), checkId: nextCheck });
+    const shown3 = changed2.slice(0, 10).join(", ") + (changed2.length > 10 ? `, and ${changed2.length - 10} more` : "");
+    throw new OrbitError("STALE_EVIDENCE", `the checkout no longer holds the candidate tree (tracked files changed: ${shown3}); check ${nextCheck} was not started`, { checkout: dir, changed: changed2.slice(0, 50), checkId: nextCheck });
   }
 }
 function sleepOrAbort(ctx, ms) {
@@ -37017,6 +37147,11 @@ function readShim(dir, intentToken) {
 function denialNote(ctx, def, denial, stopped = true) {
   const inProcess = sdkFormatsInProcess(resolve8(ctx.checkoutDir, def.cwd), ctx.checkoutDir);
   return redact(msbuildNodeDenialNote(denial, nodeDenialFix(def, msbuildFixWhere(ctx, def), inProcess, folderFormRuns(ctx)), stopped));
+}
+function loadedNoProjectNote(ctx, def, output) {
+  if (ctx.isolation.kind !== "sandbox-runtime" || !formatLoadedNoProject(output)) return null;
+  if (sdkFormatsInProcess(resolve8(ctx.checkoutDir, def.cwd), ctx.checkoutDir)) return null;
+  return redact(buildHostDenialNote(buildHostFix(def, msbuildFixWhere(ctx, def), folderFormRuns(ctx))));
 }
 function folderFormRuns(ctx) {
   if (platform() !== "darwin" || !ctx.snapshot.repo_root) return true;
@@ -37161,6 +37296,12 @@ function finalize(ctx, def, row, dirs, exit, synthetic) {
   } else if (status2 === "FAILED" && note3 === null) {
     const late = findMsbuildNodeDenial(dirs.tmpDir);
     if (late) note3 = denialNote(ctx, def, late, false);
+  } else if (status2 === "PASSED") {
+    const unloaded = loadedNoProjectNote(ctx, def, body);
+    if (unloaded !== null) {
+      status2 = "FAILED";
+      note3 = unloaded;
+    }
   }
   const exitCode = exit?.exitCode ?? null;
   const footer = `[orbit] check=${def.id} status=${status2} exit=${exitCode === null ? exit?.signal ?? "none" : exitCode}${note3 ? ` note=${note3}` : ""}
@@ -46904,8 +47045,8 @@ function classifyEnvironmentFailure(input) {
     if (deniedOutside(line3, input.insideRoots)) found.push("eacces-outside-worktree");
     if (found.length === 0) continue;
     for (const s of found) see(s);
-    const shown2 = line3.trim().slice(0, MAX_LINE_CHARS);
-    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown2)) lines.push(shown2);
+    const shown3 = line3.trim().slice(0, MAX_LINE_CHARS);
+    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown3)) lines.push(shown3);
   }
   if (signals.length === 0) return null;
   return { checkId: input.checkId, fingerprint, signals, cause: signals.map((s) => CAUSES[s]).join("; "), lines };
@@ -46980,8 +47121,8 @@ function pipeDenials(lines) {
   if (node) out.push(node[1].slice(0, MAX_LINE_CHARS));
   const text2 = lines.join("\n");
   if (BUILD_HOST_FRAME.test(text2) && BUILD_HOST_PIPE.test(text2)) {
-    const shown2 = lines.map((l) => l.trim()).find((l) => UNHANDLED.test(l)) ?? lines.map((l) => l.trim()).find((l) => BUILD_HOST_PIPE.test(l));
-    if (shown2) out.push(shown2.slice(0, MAX_LINE_CHARS));
+    const shown3 = lines.map((l) => l.trim()).find((l) => UNHANDLED.test(l)) ?? lines.map((l) => l.trim()).find((l) => BUILD_HOST_PIPE.test(l));
+    if (shown3) out.push(shown3.slice(0, MAX_LINE_CHARS));
   }
   return out;
 }
@@ -46997,8 +47138,8 @@ function classifyCouldNotRun(input) {
   const signals = pipes.length > 0 ? ["pipe-denied"] : [];
   const lines = [];
   const show = (line3, at) => {
-    const shown2 = excerpt2(line3, at);
-    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown2)) lines.push(shown2);
+    const shown3 = excerpt2(line3, at);
+    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown3)) lines.push(shown3);
   };
   for (const pipe of pipes) show(pipe, 0);
   for (const raw of all) {
@@ -47124,7 +47265,7 @@ var init_environment_failure = __esm({
     MSBUILD_ERROR_SUMMARY = /\b[1-9]\d* Error\(s\)/;
     MSBUILD_ERROR_LINE = /^(.*?)\s*:\s+error(?:\s+([A-Za-z]+\d+))?\s*:/;
     NUGET_TARGETS = /\bNuGet\.targets\(\d+,\d+\)$/;
-    RUNNER_NODE_DENIAL = /^\[orbit\] check=\S+ status=FAILED exit=\S+ note=(the check sandbox denied MSBuild node \(pid \d+\) its named pipe .*)$/;
+    RUNNER_NODE_DENIAL = /^\[orbit\] check=\S+ status=FAILED exit=\S+ note=(the check sandbox denied (?:MSBuild node \(pid \d+\)|dotnet format's build host) its named pipe .*)$/;
     BUILD_HOST_FRAME = /\bMicrosoft\.CodeAnalysis\.MSBuild\.BuildHostProcessManager\b/;
     BUILD_HOST_PIPE = /\bSystem\.IO\.Pipes\.NamedPipeClientStream\.(?:ConnectInternal|TryConnect)\b|unable to connect to it'?s pipe/;
     UNHANDLED = /^Unhandled exception[.:]\s/;
@@ -47171,9 +47312,9 @@ function classifyMisconfigured(input) {
       if (!m) continue;
       const detail = sig.detail ? lines.slice(i + 1, i + 6).map((l) => l.trim()).find((l) => sig.detail.test(l)) : void 0;
       if (sig.names && !sig.names(inv, m, detail)) continue;
-      const shown2 = [line3.slice(0, MAX_LINE_CHARS2), ...detail !== void 0 ? [detail.slice(0, MAX_LINE_CHARS2)] : []];
+      const shown3 = [line3.slice(0, MAX_LINE_CHARS2), ...detail !== void 0 ? [detail.slice(0, MAX_LINE_CHARS2)] : []];
       const cause = sig.kind === "argument" ? `${sig.tool} rejected the check's command line: ${sig.meaning}` : `${sig.tool} could not find what the check's command names: ${sig.meaning}`;
-      return { checkId: input.checkId, kind: sig.kind, signature: sig.id, tool: sig.tool, cause, lines: shown2, configKey: `checks.${input.checkId}.command` };
+      return { checkId: input.checkId, kind: sig.kind, signature: sig.id, tool: sig.tool, cause, lines: shown3, configKey: `checks.${input.checkId}.command` };
     }
   }
   return null;
@@ -50546,6 +50687,57 @@ var init_baseline = __esm({
   }
 });
 
+// src/ui/app-toolchains.ts
+import { homedir as homedir12 } from "node:os";
+function appToolchains(input) {
+  const layout = commandToolchains({
+    command: input.command,
+    roots: [input.checkoutDir],
+    mode: "check",
+    cacheRoot: input.cacheRoot,
+    scratchRoot: input.scratchRoot,
+    tmpDir: input.tmpDir,
+    isolation: input.isolation,
+    networkHosts: input.networkHosts,
+    hostHome: input.homeDir ?? homedir12(),
+    hostEnv: input.hostEnv ?? process.env
+  });
+  prepareToolchainLayout(layout);
+  const { PYTHONUSERBASE: _userBase, ...env } = layout.env;
+  return {
+    layout,
+    env: { ...env, ...layout.toolchains.includes("dotnet") ? DOTNET_CHECK_ENV : {} },
+    extraWritable: layout.writable,
+    readablePaths: layout.readOnly,
+    nisDomainName: layout.nisDomainName
+  };
+}
+function appNodeDenialNote(command, d, stopped) {
+  return redact(msbuildNodeDenialNote(d, msbuildNodeFix({ id: "ui-app", command: [...command], shell: false }, { command: APP_FIELD, env: null }), stopped, APP_SUBJECT));
+}
+function appNodeDenialWatch(command, tmpDir, now = Date.now) {
+  let next = 0;
+  return (exited) => {
+    if (!exited && now() < next) return null;
+    next = now() + DENIAL_SCAN_MS2;
+    const d = findMsbuildNodeDenial(tmpDir);
+    return d ? appNodeDenialNote(command, d, !exited) : null;
+  };
+}
+var APP_FIELD, APP_SUBJECT, DENIAL_SCAN_MS2;
+var init_app_toolchains = __esm({
+  "src/ui/app-toolchains.ts"() {
+    "use strict";
+    init_redact();
+    init_msbuild();
+    init_runner();
+    init_toolchains();
+    APP_FIELD = "ui.environment.start_command";
+    APP_SUBJECT = nodeDenialSubject("the application");
+    DENIAL_SCAN_MS2 = 1e3;
+  }
+});
+
 // src/ui/single-sandbox.ts
 import { readFileSync as readFileSync24 } from "node:fs";
 function singleSandboxLimitation(kind) {
@@ -50989,29 +51181,35 @@ async function runUiChecks(input) {
   const notExecuted = [];
   let terminal = null;
   let app = null;
+  removeScratch(join44(outDir, "tmp"));
   const tmpDir = ensureDir(join44(outDir, "tmp"));
   const baseEnv = safeBaseEnv(input.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;
   const appStart = uiConfig.environment.start_command;
   const appEnv = { ...input.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir };
-  const launch = appStart !== null && input.isolation.privateLoopback === true ? { command: appStart, env: { ...baseEnv, ...appEnv }, readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1e3, stateDir: ensureDir(join44(outDir, "app")), pollMs: input.appPollMs } : null;
+  const appScratch = join44(outDir, "toolchains");
+  const toolchainsFor = (command, networkHosts2) => appToolchains({ command, checkoutDir, cacheRoot: input.toolchainCacheRoot ?? null, scratchRoot: appScratch, tmpDir, isolation: input.isolation.kind, networkHosts: networkHosts2, ...input.homeDir ? { homeDir: input.homeDir } : {}, hostEnv: input.hostEnv ?? process.env });
+  const launch = appStart !== null && input.isolation.privateLoopback === true ? { command: appStart, env: { ...baseEnv, ...appEnv }, readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1e3, stateDir: ensureDir(join44(outDir, "app")), pollMs: input.appPollMs, toolchains: (hosts) => toolchainsFor(appStart, hosts) } : null;
   try {
     if (appStart !== null && launch === null) {
       const appCheck = { ...defaultCheck("ui-app"), command: appStart, network_hosts: [], timeout_seconds: uiConfig.environment.ready_timeout_seconds };
-      const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot: snapshot2, extraWritable: [tmpDir], homeDir: input.homeDir, env: input.hostEnv });
+      const tc = toolchainsFor(appStart, appCheck.network_hosts);
+      const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot: snapshot2, extraWritable: [tmpDir, ...tc.extraWritable], readablePaths: tc.readablePaths, nisDomainName: tc.nisDomainName, homeDir: input.homeDir, env: input.hostEnv });
       try {
         app = await startApp({
           command: appStart,
           cwd: checkoutDir,
           baseUrl,
           readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1e3,
-          env: appEnv,
+          // The application's own variables win over its toolchains'.
+          env: { ...tc.env, ...appEnv },
           isolation: { provider: input.isolation, profile },
           isolatedTestData: uiConfig.environment.isolated_test_data,
           stateDir: join44(outDir, "app"),
           clock,
           pollMs: input.appPollMs,
-          hostEnv: input.hostEnv
+          hostEnv: input.hostEnv,
+          stopWhen: appNodeDenialWatch(appStart, tmpDir)
         });
       } catch (err) {
         if (err instanceof OrbitError && (err.code === "ISOLATION_UNAVAILABLE" || err.code === "POLICY_DENIED")) throw err;
@@ -51037,6 +51235,7 @@ async function runUiChecks(input) {
     }
   } finally {
     if (app) await stopApp(app, { clock });
+    removeScratch(appScratch);
   }
   const written = await baselineFilesWrittenDuringRun(checkoutDir, candidate.commitSha, globs);
   const visualBaselineChanges = [.../* @__PURE__ */ new Set([...visualFromDiff, ...written])].sort();
@@ -51200,10 +51399,19 @@ async function runOneCheck(ctx) {
     ORBIT_A11Y_FAIL_ON: a11yFailOn(input.uiConfig),
     PLAYWRIGHT_JSON_OUTPUT_FILE: reportPath2
   };
-  const launch = ctx.launch;
+  const tc = ctx.launch ? ctx.launch.toolchains(check.network_hosts) : null;
+  const launch = ctx.launch && tc ? { ...ctx.launch, env: { ...tc.env, ...ctx.launch.env } } : ctx.launch;
   const profile = {
-    // Single-sandbox mode: the application shares the check's sandbox and writes its log and the launcher's record there.
-    ...profileForCheck({ worktree: checkoutDir, check, snapshot: input.snapshot, extraWritable: [checkDir, ctx.tmpDir, ...launch ? [launch.stateDir] : []], homeDir: input.homeDir, env: input.hostEnv }),
+    // Single-sandbox mode: the application writes its log and the launcher's record in the check's sandbox.
+    ...profileForCheck({
+      worktree: checkoutDir,
+      check,
+      snapshot: input.snapshot,
+      extraWritable: [checkDir, ctx.tmpDir, ...launch ? [launch.stateDir] : [], ...tc?.extraWritable ?? []],
+      ...tc ? { readablePaths: tc.readablePaths, nisDomainName: tc.nisDomainName } : {},
+      homeDir: input.homeDir,
+      env: input.hostEnv
+    }),
     allowLocalBinding: true,
     // The browser run, and only it: Chromium's Mach rendezvous rules under srt on macOS (never the application or a worker).
     chromiumMachRendezvous: true
@@ -51265,7 +51473,9 @@ ${exec.stderr}` : ""}`), { mode: 384 });
   if (spec) {
     const status2 = readLaunchStatus(spec.statusPath);
     if (status2 !== null && launchFailed(status2)) {
-      reasons.push(`the application did not start: ${describeLaunchFailure(status2, spec)}: ${logTail(spec.app.logPath).trim() || "(no output)"}`);
+      const refused = launch ? findMsbuildNodeDenial(ctx.tmpDir) : null;
+      const note3 = refused && launch ? `; ${appNodeDenialNote(launch.command, refused, false)}` : "";
+      reasons.push(`the application did not start: ${describeLaunchFailure(status2, spec)}: ${logTail(spec.app.logPath).trim() || "(no output)"}${note3}`);
       return { ...quiet("ERROR"), notExecuted: { stage: "application", checkId: null, logPath: spec.app.logPath, signal: null }, appFailed: true };
     }
     if (status2?.app === "stopped" && status2.exitedDuringCheck === true) {
@@ -51609,12 +51819,15 @@ var init_runner2 = __esm({
     init_fsx();
     init_hash();
     init_redact();
+    init_msbuild();
     init_profiles();
+    init_toolchains();
     init_sandbox_runtime();
     init_config();
     init_globs();
     init_snapshot();
     init_app_fixture();
+    init_app_toolchains();
     init_env2();
     init_single_sandbox();
     init_report3();
@@ -52432,7 +52645,9 @@ async function exploreUi(opts) {
   opts.abortSignal?.addEventListener("abort", onAbort, { once: true });
   if (opts.abortSignal?.aborted) control.abort();
   atomicWriteJson(join46(outDir, "exploration.json"), { state: "running", candidate: opts.candidate.id, startedAt });
+  removeScratch(join46(outDir, "tmp"));
   const tmpDir = ensureDir(join46(outDir, "tmp"));
+  const appScratch = join46(outDir, "toolchains");
   const baseEnv = safeBaseEnv(opts.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;
   let app = null;
@@ -52447,20 +52662,22 @@ async function exploreUi(opts) {
       reasons.push(`exploration is not available under ${opts.isolation.kind}: every sandbox has its own loopback, so neither the explorer nor a reproduction spec could reach an application Orbit starts; the journey checks run the application and the browser in one sandbox instead`);
     } else if (uiStart !== null) {
       const appCheck = { ...defaultCheck("ui-app"), command: uiStart, network_hosts: [], timeout_seconds: opts.uiConfig.environment.ready_timeout_seconds };
-      const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot: opts.snapshot, extraWritable: [tmpDir], homeDir: opts.homeDir, env: opts.hostEnv });
+      const tc = appToolchains({ command: uiStart, checkoutDir, cacheRoot: opts.toolchainCacheRoot ?? null, scratchRoot: appScratch, tmpDir, isolation: opts.isolation.kind, networkHosts: appCheck.network_hosts, ...opts.homeDir ? { homeDir: opts.homeDir } : {}, hostEnv: opts.hostEnv ?? process.env });
+      const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot: opts.snapshot, extraWritable: [tmpDir, ...tc.extraWritable], readablePaths: tc.readablePaths, nisDomainName: tc.nisDomainName, homeDir: opts.homeDir, env: opts.hostEnv });
       try {
         app = await startApp({
           command: uiStart,
           cwd: checkoutDir,
           baseUrl,
           readyTimeoutMs: opts.uiConfig.environment.ready_timeout_seconds * 1e3,
-          env: { ...opts.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: opts.uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir },
+          env: { ...tc.env, ...opts.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: opts.uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir },
           isolation: { provider: opts.isolation, profile },
           isolatedTestData: opts.uiConfig.environment.isolated_test_data,
           stateDir: join46(outDir, "app"),
           clock,
           pollMs: opts.appPollMs,
-          hostEnv: opts.hostEnv
+          hostEnv: opts.hostEnv,
+          stopWhen: appNodeDenialWatch(uiStart, tmpDir)
         });
       } catch (err) {
         if (err instanceof OrbitError && (err.code === "ISOLATION_UNAVAILABLE" || err.code === "POLICY_DENIED")) throw err;
@@ -52495,6 +52712,7 @@ async function exploreUi(opts) {
   } finally {
     opts.abortSignal?.removeEventListener("abort", onAbort);
     if (app) await stopApp(app, { clock });
+    removeScratch(appScratch);
   }
   if (state.costUnknownCalls > 0) unverified.push(`the provider reported no cost for ${state.costUnknownCalls} call(s), so ui.exploration.budget_usd was enforced on reported costs only`);
   if (findings.some((f) => f.status === "reproduced")) unverified.push("a reproduced finding is a failing test on this candidate; the lint on the test is heuristic, so Orbit cannot prove the test fails for the reason the explorer stated");
@@ -52803,8 +53021,10 @@ var init_explore = __esm({
     init_redact();
     init_model_outputs();
     init_profiles();
+    init_toolchains();
     init_config();
     init_app_fixture();
+    init_app_toolchains();
     init_env2();
     init_report3();
     init_runner2();
@@ -52839,6 +53059,7 @@ async function exploreCandidate(ctx, cand, checkoutDir, outDir, opts = {}) {
     clock: ctx.clock,
     hostEnv: ctx.deps.hostEnv ?? process.env,
     homeDir: homeOf2(ctx.deps),
+    toolchainCacheRoot: toolchainCacheRootFor(ctx),
     abortSignal: ctx.signal,
     explore: async (task) => {
       const r = await runToEnd(ctx, {
@@ -52998,7 +53219,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
   const uiRequired = contract.acceptance_criteria.some((c) => c.ui === true) || ui !== null && ui.required_when_ui_changes && changed2.some(compileGlobs(ui.ui_paths, { nocase: false }));
   let uiResult = null;
   if (uiRequired && ui && ui.journey_check_ids.length > 0) {
-    uiResult = await runUiChecks({ checkoutDir, snapshot: snapshot2, candidate: cand, uiConfig: ui, journeyCheckIds: ui.journey_check_ids, isolation: ctx.isolation(), outDir: uiEvidenceDir(ctx.runDir, cand.seq), clock: ctx.clock, abortSignal: ctx.signal, homeDir: homeOf2(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
+    uiResult = await runUiChecks({ checkoutDir, snapshot: snapshot2, candidate: cand, uiConfig: ui, journeyCheckIds: ui.journey_check_ids, isolation: ctx.isolation(), outDir: uiEvidenceDir(ctx.runDir, cand.seq), clock: ctx.clock, abortSignal: ctx.signal, homeDir: homeOf2(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env, toolchainCacheRoot: toolchainCacheRootFor(ctx) });
     const afterUi = await checkpoint();
     if (afterUi !== null) return { stopped: afterUi };
   }
@@ -54260,7 +54481,7 @@ var init_deliver = __esm({
 
 // src/delivery/release.ts
 import { existsSync as existsSync35, mkdirSync as mkdirSync19, rmSync as rmSync13 } from "node:fs";
-import { platform as platform2 } from "node:os";
+import { homedir as homedir13, platform as platform2 } from "node:os";
 import { join as join52 } from "node:path";
 function releaseConfig(snapshot2) {
   return snapshot2.config.release ?? null;
@@ -54569,7 +54790,7 @@ async function runDeploy(a) {
   try {
     const tree = (await execCapture(["git", "rev-parse", `${sha}^{tree}`], { cwd: repoRoot, env: gitEnv4(), timeoutMs: 3e4 })).stdout.trim();
     mkdirSync19(files.home, { recursive: true, mode: 448 });
-    const tmp = prepareWorkerTmpDir(files.dir);
+    const tmp = prepareFreshTmpDir(files.dir);
     const def = {
       id: `release:${envName}`,
       command: [...env.deploy_command],
@@ -54584,22 +54805,35 @@ async function runDeploy(a) {
       kind: "command",
       category: "other"
     };
-    const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [files.home, tmp], ...input.homeDir ? { homeDir: input.homeDir } : {} });
-    const cmdEnv = releaseCommandEnv({ home: files.home, tmp, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha });
-    const wrapped = a.isolation.wrap([...env.deploy_command], profile, { cwd: checkout, env: cmdEnv });
-    atomicWriteJson(files.started, { environment: envName, sha, attempt: a.attempt, started_at: input.clock.now() }, 384);
+    const field = `release.environments.${envName}.deploy_command`;
+    const scratch = join52(files.dir, "toolchains");
+    const realHome = input.homeDir ?? homedir13();
+    const toolchains = releaseToolchains({ command: env.deploy_command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, homeDir: realHome, hostEnv: input.hostEnv ?? process.env });
+    const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [files.home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: realHome });
+    const cmdEnv = releaseCommandEnv({ home: files.home, tmp, toolchainEnv: toolchains.env, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha });
     let outcome;
+    let stopped = null;
     try {
-      const res = await execCapture(wrapped.argv, { cwd: checkout, env: wrapped.env, timeoutMs: env.timeout_seconds * 1e3, maxOutputBytes: 1024 * 1024 });
-      const output = redact(`${res.stdout}${res.stderr ? `
-${res.stderr}` : ""}`).slice(-OUTPUT_TAIL);
-      outcome = { environment: envName, branch, sha, tree, attempt: a.attempt, exitCode: res.exitCode, timedOut: res.timedOut, durationMs: res.durationMs, isolation: a.isolation.kind, limitations: wrapped.limitations, output };
+      const wrapped = a.isolation.wrap([...env.deploy_command], profile, { cwd: checkout, env: cmdEnv });
+      atomicWriteJson(files.started, { environment: envName, sha, attempt: a.attempt, started_at: input.clock.now() }, 384);
+      try {
+        const ran = await runReleaseCommand({ argv: wrapped.argv, checkout, env: wrapped.env, timeoutMs: env.timeout_seconds * 1e3, tmp, command: env.deploy_command, field, what: "the deploy command" });
+        const res = ran.result;
+        stopped = ran.stopped ? ran.note : null;
+        const output = redact(`${res.stdout}${res.stderr ? `
+${res.stderr}` : ""}${ran.note ? `
+[orbit] ${ran.note}` : ""}`).slice(-OUTPUT_TAIL);
+        outcome = { environment: envName, branch, sha, tree, attempt: a.attempt, exitCode: ran.stopped ? null : res.exitCode, timedOut: res.timedOut, durationMs: res.durationMs, isolation: a.isolation.kind, limitations: wrapped.limitations, output };
+      } finally {
+        wrapped.cleanup();
+      }
     } finally {
-      wrapped.cleanup();
+      removeScratch(scratch);
     }
     atomicWriteJson(files.outcome, outcome, 384);
     if (outcome.exitCode !== 0 || outcome.timedOut) {
-      throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} to ${envName} ${outcome.timedOut ? `timed out after ${env.timeout_seconds}s, so whether it took effect is unknown` : `exited ${outcome.exitCode ?? "by signal"}`}: ${outcome.output.slice(-500)}`, { definitive: true, ...outcome.timedOut ? unknownDetails(envName, sha) : {} });
+      const ended = outcome.timedOut ? `timed out after ${env.timeout_seconds}s, so whether it took effect is unknown` : stopped ? "was stopped" : `exited ${outcome.exitCode ?? "by signal"}`;
+      throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} to ${envName} ${ended}: ${redact(stopped ?? "") || outcome.output.slice(-500)}`, { definitive: true, ...outcome.timedOut ? unknownDetails(envName, sha) : {} });
     }
     return receiptOf(outcome);
   } finally {
@@ -54607,8 +54841,19 @@ ${res.stderr}` : ""}`).slice(-OUTPUT_TAIL);
     });
   }
 }
+function releaseToolchains(a) {
+  const layout = commandToolchains({ command: a.command, roots: [a.checkout], mode: "fetch", cacheRoot: a.cacheRoot, scratchRoot: a.scratch, tmpDir: a.tmp, isolation: a.isolation, networkHosts: a.networkHosts, hostHome: a.homeDir, hostEnv: a.hostEnv });
+  prepareToolchainLayout(layout);
+  return layout;
+}
+async function runReleaseCommand(a) {
+  const ran = await runStoppingRefusedNodes(a.tmp, (signal) => execCapture(a.argv, { cwd: a.checkout, env: a.env, timeoutMs: a.timeoutMs, maxOutputBytes: 1024 * 1024, abortSignal: signal }));
+  const note3 = ran.denial ? msbuildNodeDenialNote(ran.denial, msbuildNodeFix({ id: a.field, command: [...a.command], shell: false }, { command: a.field, env: null }), ran.stopped, nodeDenialSubject(a.what)) : null;
+  return { result: ran.result, stopped: ran.stopped, note: note3 };
+}
 function releaseCommandEnv(a) {
   return {
+    ...a.toolchainEnv ?? {},
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     HOME: a.home,
     TMPDIR: a.tmp,
@@ -54619,6 +54864,7 @@ function releaseCommandEnv(a) {
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_TERMINAL_PROMPT: "0",
+    ...privateHomeDotnetEnv(a.home),
     ...a.deployEnv ?? {},
     ORBIT_RUN_ID: a.runId,
     ORBIT_RELEASE_ENVIRONMENT: a.envName,
@@ -54704,22 +54950,31 @@ async function runVerifyCommand(a) {
   const checkout = await materializeCandidate(run.repoRoot, sha, checkoutDir, { readOnly: false });
   try {
     mkdirSync19(home2, { recursive: true, mode: 448 });
-    const tmp = prepareWorkerTmpDir(dir);
+    const tmp = prepareFreshTmpDir(dir);
     const def = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: ".", timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], local_binding: false, env: {}, mandatory: true, flaky_reruns: 0, kind: "command", category: "other" };
-    const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [home2, tmp], ...input.homeDir ? { homeDir: input.homeDir } : {} });
-    const cmdEnv = releaseCommandEnv({ home: home2, tmp, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha, extra: { ORBIT_RELEASE_VERIFY: "1" } });
-    const wrapped = a.isolation.wrap([...a.command], profile, { cwd: checkout, env: cmdEnv });
+    const scratch = join52(dir, "toolchains");
+    const realHome = input.homeDir ?? homedir13();
+    const toolchains = releaseToolchains({ command: a.command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, homeDir: realHome, hostEnv: input.hostEnv ?? process.env });
+    const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: realHome });
+    const cmdEnv = releaseCommandEnv({ home: home2, tmp, toolchainEnv: toolchains.env, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha, extra: { ORBIT_RELEASE_VERIFY: "1" } });
     try {
-      const res = await execCapture(wrapped.argv, { cwd: checkout, env: wrapped.env, timeoutMs: env.timeout_seconds * 1e3, maxOutputBytes: 1024 * 1024 });
-      const output = redact(`${res.stdout}${res.stderr ? `
+      const wrapped = a.isolation.wrap([...a.command], profile, { cwd: checkout, env: cmdEnv });
+      try {
+        const ran = await runReleaseCommand({ argv: wrapped.argv, checkout, env: wrapped.env, timeoutMs: env.timeout_seconds * 1e3, tmp, command: a.command, field: `release.environments.${envName}.verify_command`, what: "the verify command" });
+        const res = ran.result;
+        if (ran.note) return { verdict: "unknown", detail: `verify_command ${ran.stopped ? "was stopped" : "failed on its own build"}, so the outcome is still unknown: ${redact(ran.note)}` };
+        const output = redact(`${res.stdout}${res.stderr ? `
 ${res.stderr}` : ""}`).trim().slice(-500);
-      const tail2 = output ? `: ${output}` : "";
-      if (res.timedOut) return { verdict: "unknown", detail: `the verify_command timed out after ${env.timeout_seconds}s` };
-      if (res.exitCode === 0) return { verdict: "deployed", detail: `verify_command exited 0 for ${sha.slice(0, 12)} in ${envName}${tail2}` };
-      if (res.exitCode === 1) return { verdict: "not-deployed", detail: `verify_command exited 1 for ${sha.slice(0, 12)} in ${envName}${tail2}` };
-      return { verdict: "unknown", detail: `verify_command ${res.exitCode === null ? "was stopped by a signal" : `exited ${res.exitCode}`} (0 means deployed, 1 means not deployed), so the outcome is still unknown${tail2}` };
+        const tail2 = output ? `: ${output}` : "";
+        if (res.timedOut) return { verdict: "unknown", detail: `the verify_command timed out after ${env.timeout_seconds}s` };
+        if (res.exitCode === 0) return { verdict: "deployed", detail: `verify_command exited 0 for ${sha.slice(0, 12)} in ${envName}${tail2}` };
+        if (res.exitCode === 1) return { verdict: "not-deployed", detail: `verify_command exited 1 for ${sha.slice(0, 12)} in ${envName}${tail2}` };
+        return { verdict: "unknown", detail: `verify_command ${res.exitCode === null ? "was stopped by a signal" : `exited ${res.exitCode}`} (0 means deployed, 1 means not deployed), so the outcome is still unknown${tail2}` };
+      } finally {
+        wrapped.cleanup();
+      }
     } finally {
-      wrapped.cleanup();
+      removeScratch(scratch);
     }
   } finally {
     await cleanupCandidateCheckout(run.repoRoot, checkout).catch(() => {
@@ -54739,7 +54994,10 @@ var init_release = __esm({
     init_redact();
     init_authorize();
     init_profiles();
+    init_toolchains();
     init_candidate();
+    init_msbuild();
+    init_runner();
     init_gate();
     init_git2();
     OUTPUT_TAIL = 4e3;
@@ -54830,9 +55088,9 @@ ${body.endsWith("\n") ? body : `${body}
 `;
 }
 function bullet(items, max = MAX_LIST_ITEMS, itemMax = 500) {
-  const shown2 = items.slice(0, max).map((s) => `- ${oneLine4(s, itemMax)}`);
-  if (items.length > max) shown2.push(`- ... ${items.length - max} more not shown`);
-  return shown2.length === 0 ? "- none\n" : `${shown2.join("\n")}
+  const shown3 = items.slice(0, max).map((s) => `- ${oneLine4(s, itemMax)}`);
+  if (items.length > max) shown3.push(`- ... ${items.length - max} more not shown`);
+  return shown3.length === 0 ? "- none\n" : `${shown3.join("\n")}
 `;
 }
 function oneLine4(s, max) {
@@ -56738,7 +56996,7 @@ var init_parallel_writers = __esm({
 
 // src/controller/authorization.ts
 import { existsSync as existsSync38, mkdirSync as mkdirSync21 } from "node:fs";
-import { join as join56 } from "node:path";
+import { basename as basename16, join as join56 } from "node:path";
 function operationKey(op) {
   return `op-${sha256(canonicalJson(op)).slice(0, 16)}`;
 }
@@ -56904,33 +57162,79 @@ async function runApprovedOperation(ctx, n2, op, grant) {
     return { ...none, state: "UNKNOWN", note: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) };
   }
 }
+function installingToolchains(command, worktree, toolchains) {
+  const installs = classifyBash(command, { cwd: worktree, root: worktree }).commands.filter((c) => c.category === "package-install");
+  return toolchains.filter((id) => installs.some((c) => TOOLCHAIN_PROFILES[id].executables.test(basename16(c.argv[0] ?? ""))));
+}
+function cachesLine(toolchains, installs) {
+  if (toolchains.length === 0) return "";
+  const own = "the repository's read-only, caches of the command's own writable";
+  if (installs.length === 0) return `[toolchains ${toolchains.join(", ")}: ${own}]
+`;
+  const many = installs.length > 1;
+  const others = toolchains.length > installs.length ? `; for the others ${own}` : "";
+  return `[toolchains ${toolchains.join(", ")}: the repository's dependency cache${many ? "s" : ""} of ${installs.join(" and ")} writable, since the command installs ${many ? "their" : "its"} packages${others}]
+`;
+}
 async function executeApproved(ctx, plan, dir, rel) {
   const worktree = ctx.run.worktreePath;
   const home2 = join56(dir, "home");
   mkdirSync21(home2, { recursive: true, mode: 448 });
   const tmp = prepareWorkerTmpDir(dir);
   const hosts = [.../* @__PURE__ */ new Set([...ctx.snapshot.config.network.allowed_hosts, ...plan.host ? [plan.host] : []])];
+  const isolation = ctx.isolation();
+  const ids = detectToolchains({ command: plan.argv, roots: [worktree] });
+  const installs = plan.argv[0] === "/bin/sh" ? installingToolchains(plan.shown, worktree, ids) : [];
+  const scratch = join56(dir, "toolchains");
+  const toolchains = commandToolchains({ command: plan.argv, roots: [worktree], mode: "fetch", installs, cacheRoot: toolchainCacheRootFor(ctx), scratchRoot: scratch, tmpDir: tmp, isolation: isolation.kind, networkHosts: hosts, hostHome: homeOf2(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
+  prepareToolchainLayout(toolchains);
   const def = { id: `approved-${rel.split("/").at(-1)}`, command: plan.argv, shell: false, cwd: ".", timeout_seconds: APPROVED_TIMEOUT_S, network_hosts: hosts, local_binding: false, env: {}, mandatory: false, flaky_reruns: 0, kind: "command" };
-  const profile = profileForCheck({ worktree, check: def, snapshot: ctx.snapshot, extraWritable: [home2, tmp] });
-  const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home2, TMPDIR: tmp, LANG: "C.UTF-8", TERM: "dumb", NO_COLOR: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" };
-  const wrapped = ctx.isolation().wrap(plan.argv, profile, { cwd: worktree, env });
+  const profile = profileForCheck({ worktree, check: def, snapshot: ctx.snapshot, extraWritable: [home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: homeOf2(ctx.deps) });
+  const env = {
+    ...toolchains.env,
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    HOME: home2,
+    TMPDIR: tmp,
+    ...privateHomeDotnetEnv(home2),
+    LANG: "C.UTF-8",
+    TERM: "dumb",
+    NO_COLOR: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_TERMINAL_PROMPT: "0"
+  };
   let r;
+  let note3 = null;
+  let stopped = false;
   try {
-    r = await execCapture(wrapped.argv, { cwd: worktree, env: wrapped.env, timeoutMs: APPROVED_TIMEOUT_S * 1e3, maxOutputBytes: APPROVED_MAX_OUTPUT_BYTES, abortSignal: ctx.signal });
-  } catch (err) {
-    throw new OrbitError("INTERNAL", `the approved command could not start: ${err instanceof Error ? err.message : String(err)}`, { definitive: true }, { cause: err });
+    const wrapped = isolation.wrap(plan.argv, profile, { cwd: worktree, env });
+    try {
+      const ran = await runStoppingRefusedNodes(tmp, (signal) => execCapture(wrapped.argv, { cwd: worktree, env: wrapped.env, timeoutMs: APPROVED_TIMEOUT_S * 1e3, maxOutputBytes: APPROVED_MAX_OUTPUT_BYTES, abortSignal: signal }), ctx.signal);
+      r = ran.result;
+      stopped = ran.stopped;
+      if (ran.denial) note3 = msbuildNodeDenialNote(ran.denial, msbuildNodeFix({ id: def.id, command: plan.argv, shell: false }, { command: "the command to approve", env: null }), ran.stopped, nodeDenialSubject("the approved command"));
+    } catch (err) {
+      throw new OrbitError("INTERNAL", `the approved command could not start: ${err instanceof Error ? err.message : String(err)}`, { definitive: true }, { cause: err });
+    } finally {
+      wrapped.cleanup();
+    }
   } finally {
-    wrapped.cleanup();
+    removeScratch(scratch);
   }
+  const exitCode = stopped || r.cancelled || r.timedOut ? null : r.exitCode;
+  const ended = stopped ? "stopped by Orbit: the sandbox refused an MSBuild worker node" : r.cancelled ? "stopped: the run was cancelled" : r.timedOut ? `stopped: timed out after ${APPROVED_TIMEOUT_S}s` : `exit ${r.exitCode ?? `signal ${r.signal ?? "unknown"}`}`;
+  const caches = cachesLine(toolchains.toolchains, installs);
   const text2 = redact(`$ ${plan.shown}
-[exit ${r.exitCode ?? `signal ${r.signal ?? "unknown"}`}${r.timedOut ? ", timed out" : ""}]
+${caches}[${ended}]
 --- stdout ---
 ${r.stdout}
 --- stderr ---
 ${r.stderr}
-`);
+${note3 ? `--- orbit ---
+${note3}
+` : ""}`);
   atomicWrite(join56(dir, OUTPUT_FILE), text2, 384);
-  const receipt = { exit_code: r.exitCode, timed_out: r.timedOut, path: join56(rel, OUTPUT_FILE), sha256: sha256(text2), excerpt: text2.slice(-APPROVED_EXCERPT_CHARS) };
+  const receipt = { exit_code: exitCode, timed_out: r.timedOut, path: join56(rel, OUTPUT_FILE), sha256: sha256(text2), excerpt: text2.slice(-APPROVED_EXCERPT_CHARS) };
   atomicWrite(join56(dir, RECEIPT_FILE), `${JSON.stringify(receipt)}
 `, 384);
   return receipt;
@@ -56954,9 +57258,9 @@ function ungrantedCommands(events, snapshot2, worktreeRoot, granted) {
       if (!op) continue;
       const d = authorize(snapshot2, op, { worktreeRoot });
       if (d.allowed || !ASKABLE_RULE.test(d.rule)) continue;
-      const shown2 = op.kind === "bash" ? denialTarget(op.command) : op.host;
-      const named2 = granted.some((g) => op.kind === "bash" && g.op.kind === "bash" && g.op.command === shown2 || op.kind === "network" && g.op.kind === "network" && g.op.host === op.host);
-      if (!named2) out.push(shown2);
+      const shown3 = op.kind === "bash" ? denialTarget(op.command) : op.host;
+      const named2 = granted.some((g) => op.kind === "bash" && g.op.kind === "bash" && g.op.command === shown3 || op.kind === "network" && g.op.kind === "network" && g.op.host === op.host);
+      if (!named2) out.push(shown3);
     }
   }
   return out;
@@ -56976,12 +57280,17 @@ var init_authorization = __esm({
     init_redact();
     init_authorize();
     init_profiles();
+    init_toolchains();
+    init_bash();
+    init_msbuild();
+    init_runner();
     init_actions();
     init_questions();
     init_store4();
     init_decisions();
     init_supervise();
     init_shim();
+    init_context2();
     init_common();
     init_denials();
     APPROVE_ONCE = "approve-once";
@@ -58736,7 +59045,9 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
     },
     isolation: ctx.isolation(),
     workDir: ctx.runDir,
-    homeDir: homeOf2(ctx.deps)
+    homeDir: homeOf2(ctx.deps),
+    hostEnv: ctx.deps.hostEnv ?? process.env,
+    toolchainCacheRoot: toolchainCacheRootFor(ctx)
   });
   let result2 = null;
   for (let settled = 0; result2 === null; settled++) {
@@ -58775,7 +59086,7 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
 }
 async function settleUnknownDeploy(ctx, ledger, run, environment) {
   try {
-    const r = await resolveDeploy({ run, snapshot: ctx.snapshot, ledger, clock: ctx.clock, workDir: ctx.runDir, environment, resolution: "verify", by: "controller", isolation: ctx.isolation(), homeDir: homeOf2(ctx.deps) });
+    const r = await resolveDeploy({ run, snapshot: ctx.snapshot, ledger, clock: ctx.clock, workDir: ctx.runDir, environment, resolution: "verify", by: "controller", isolation: ctx.isolation(), homeDir: homeOf2(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env, toolchainCacheRoot: toolchainCacheRootFor(ctx) });
     return { settled: r.verdict !== "unknown", detail: r.detail };
   } catch (err) {
     return { settled: false, detail: err instanceof Error ? err.message.slice(0, 300) : String(err) };
@@ -59477,7 +59788,7 @@ var init_steps = __esm({
 
 // src/storage/retention.ts
 import { existsSync as existsSync44, lstatSync as lstatSync10, realpathSync as realpathSync17, rmSync as rmSync16 } from "node:fs";
-import { homedir as homedir12 } from "node:os";
+import { homedir as homedir14 } from "node:os";
 import { dirname as dirname27, join as join64, resolve as resolve15 } from "node:path";
 function repoKeyFor(repoRoot) {
   let real = repoRoot;
@@ -59493,7 +59804,7 @@ async function pruneExpiredRuns(db, opts) {
   const cutoff = now - opts.keepDays * DAY_MS;
   const repoRoot = realOrResolved(opts.repoRoot);
   const runsRoot = join64(repoRoot, ".orbit", "runs");
-  const worktreesRoot = join64(opts.orbitHome ?? process.env.ORBIT_HOME ?? join64(homedir12(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
+  const worktreesRoot = join64(opts.orbitHome ?? process.env.ORBIT_HOME ?? join64(homedir14(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
   const placeholders = PRUNABLE_STATES.map(() => "?").join(", ");
   const rows = db.all(
     `SELECT r.id, r.state, r.policy_path, r.ended_at, r.updated_at FROM runs r
@@ -61449,7 +61760,7 @@ var init_doctor_plugins = __esm({
 
 // src/cli/commands/doctor-dotnet.ts
 import { existsSync as existsSync50, lstatSync as lstatSync12, readdirSync as readdirSync13, readFileSync as readFileSync33 } from "node:fs";
-import { basename as basename16, join as join71, posix as posix6, resolve as resolve18 } from "node:path";
+import { basename as basename17, join as join71, posix as posix6, resolve as resolve18 } from "node:path";
 function xunitReferences(text2) {
   const out = [];
   for (const m of text2.matchAll(ITEM)) {
@@ -61490,10 +61801,10 @@ function threadsLifted(repo, tracked, dir) {
   }
 }
 function xunitBefore28(repo, files) {
-  const relevant = files.filter((f) => PROJECT_FILE.test(f) || basename16(f) === CENTRAL_FILE).slice(0, MAX_FILES);
+  const relevant = files.filter((f) => PROJECT_FILE.test(f) || basename17(f) === CENTRAL_FILE).slice(0, MAX_FILES);
   const tracked = new Set(files);
   const central = /* @__PURE__ */ new Map();
-  for (const f of relevant.filter((x) => basename16(x) === CENTRAL_FILE)) {
+  for (const f of relevant.filter((x) => basename17(x) === CENTRAL_FILE)) {
     const versions = /* @__PURE__ */ new Map();
     for (const r of xunitReferences(readSmall(join71(repo, f)) ?? "")) if (r.kind === "PackageVersion" && r.version !== null) versions.set(r.id.toLowerCase(), r.version);
     central.set(posix6.dirname(f), versions);
@@ -61519,8 +61830,8 @@ function xunitBefore28(repo, files) {
 }
 function mayRunTests(check) {
   const all = words(check.command);
-  if (all.some((w) => basename16(w) === "dotnet")) return all.includes("test") || all.includes("vstest");
-  return all.some((w) => /test/i.test(basename16(w)));
+  if (all.some((w) => basename17(w) === "dotnet")) return all.includes("test") || all.includes("vstest");
+  return all.some((w) => /test/i.test(basename17(w)));
 }
 function dotnetTestsCheck(input) {
   const { config, repo, files } = input;
@@ -61545,7 +61856,7 @@ function dotnetTestsCheck(input) {
   ];
 }
 function nugetSdks(file, text2) {
-  if (basename16(file) === "global.json") {
+  if (basename17(file) === "global.json") {
     try {
       const sdks = JSON.parse(text2.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, ""))["msbuild-sdks"] ?? {};
       return Object.entries(sdks).flatMap(([name, version]) => typeof version === "string" ? [`${name}/${version}`] : []);
@@ -61565,7 +61876,7 @@ function nugetSdks(file, text2) {
 function packageEvidence(repo, files) {
   const out = [];
   for (const f of files.slice(0, MAX_FILES * 4)) {
-    const name = basename16(f);
+    const name = basename17(f);
     if (PACKAGE_FILES.has(name) || name === TOOL_MANIFEST) out.push(f);
     else if (MSBUILD_FILE.test(f) || MSBUILD_IMPORTS.has(name) || f === "global.json") {
       const text2 = readSmall(join71(repo, f)) ?? "";
@@ -61580,10 +61891,10 @@ function hasNugetPackages(repo, files) {
   return packageEvidence(repo, files).length > 0;
 }
 function floatingVersions(repo, files) {
-  if (files.some((f) => basename16(f) === "packages.lock.json")) return [];
+  if (files.some((f) => basename17(f) === "packages.lock.json")) return [];
   const out = [];
   for (const f of files.slice(0, MAX_FILES * 4)) {
-    if (!PROJECT_FILE.test(f) && !MSBUILD_IMPORTS.has(basename16(f)) && basename16(f) !== CENTRAL_FILE) continue;
+    if (!PROJECT_FILE.test(f) && !MSBUILD_IMPORTS.has(basename17(f)) && basename17(f) !== CENTRAL_FILE) continue;
     for (const m of (readSmall(join71(repo, f)) ?? "").matchAll(ITEM)) {
       const attrs = m[2] ?? "";
       const body = m[3] ?? "";
@@ -61637,7 +61948,7 @@ function fillCommand(repo, cache2, files, install, evidence) {
   const env = `NUGET_PACKAGES=${shellWord(cache2)}`;
   const inRepo = (body) => `(cd ${shellWord(repo)} && ${body})`;
   const restores = install ? restoresOf(install) : { projects: false, tools: false };
-  const packages = restores.projects || evidence.some((e) => basename16(e.split(":")[0]) !== TOOL_MANIFEST);
+  const packages = restores.projects || evidence.some((e) => basename17(e.split(":")[0]) !== TOOL_MANIFEST);
   const tools = restores.tools || files.some((f) => ROOT_MANIFESTS.has(f));
   const projects = packages ? projectRestores(files, install) : { steps: [], note: "" };
   const steps = [...projects.steps, ...tools ? ["dotnet tool restore"] : []];
@@ -61857,14 +62168,14 @@ var init_doctor_dotnet = __esm({
 // src/cli/commands/doctor-sandbox.ts
 import { existsSync as existsSync51, mkdirSync as mkdirSync23, mkdtempSync as mkdtempSync6, realpathSync as realpathSync18, writeFileSync as writeFileSync9 } from "node:fs";
 import { tmpdir as tmpdir12 } from "node:os";
-import { basename as basename17, dirname as dirname33, isAbsolute as isAbsolute23, join as join72, resolve as resolve19 } from "node:path";
+import { basename as basename18, dirname as dirname33, isAbsolute as isAbsolute23, join as join72, resolve as resolve19 } from "node:path";
 function checkWord(check) {
   if (!check.shell) return check.command[0] ?? null;
   return (check.command[0] ?? "").trim().split(/\s+/).find((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) ?? null;
 }
-function msbuildRefusal(checkId, shown2, d, msbuild) {
+function msbuildRefusal(checkId, shown3, d, msbuild) {
   const text2 = msbuildNodeDenialText(d);
-  return { kind: "refused", detail: `"${shown2}" was refused in the sandbox: ${text2}`, failure: { checkId, fingerprint: null, signals: ["sandbox-violation"], cause: text2, lines: [d.exception] }, msbuild };
+  return { kind: "refused", detail: `"${shown3}" was refused in the sandbox: ${text2}`, failure: { checkId, fingerprint: null, signals: ["sandbox-violation"], cause: text2, lines: [d.exception] }, msbuild };
 }
 function probeCacheRoot(input, toolchains, scratch) {
   if (!input.orbitHome || !input.repo) return null;
@@ -61892,7 +62203,7 @@ async function probe(input, check, exe, args, cwd, project, nodeFix) {
     for (const d of toolchains.directories) if (!existsSync51(d)) mkdirSync23(d, { recursive: true, mode: 448 });
     const profile = profileForCheck({ worktree: checkout, check, snapshot: snapshot2, extraWritable: [artifacts, home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: input.homeDir, env: { ...input.env } });
     const env = checkEnv(check, { homeDir: home2, tmpDir: tmp, artifactsDir: artifacts }, input.env.PATH, toolchains.env);
-    const shown2 = [basename17(exe), ...args].join(" ");
+    const shown3 = [basename18(exe), ...args].join(" ");
     const wrapped = input.provider.wrap([exe, ...args], profile, { cwd: checkout, env });
     const probeTmp = tmp;
     const denied = () => findMsbuildNodeDenial(probeTmp);
@@ -61903,27 +62214,27 @@ async function probe(input, check, exe, args, cwd, project, nodeFix) {
       wrapped.cleanup();
     }
     const denial = denied();
-    if (denial) return msbuildRefusal(check.id, shown2, denial, nodeFix);
-    if (r.exitCode === 0) return { kind: "ran", detail: `"${shown2}" ran in the sandbox${project ? ` (${project.about})` : ""}` };
+    if (denial) return msbuildRefusal(check.id, shown3, denial, nodeFix);
+    if (r.exitCode === 0) return { kind: "ran", detail: `"${shown3}" ran in the sandbox${project ? ` (${project.about})` : ""}` };
     const output = redact(r.output);
     const ended = r.exitCode === null ? "timed out" : `exited ${r.exitCode}`;
     const nodes = project ? msbuildNodes({ command: [exe, ...args], shell: false, env: check.env }, true) : null;
     if (nodes?.kind === "unpinned") {
       const cause = `${nodes.reason}, and the build failed (${ended}) with no record of which node was refused`;
-      return { kind: "refused", detail: `"${shown2}" was refused in the sandbox: ${cause}`, failure: { checkId: check.id, fingerprint: null, signals: ["sandbox-violation"], cause, lines: [oneLine(output, 160)] }, msbuild: nodeFix };
+      return { kind: "refused", detail: `"${shown3}" was refused in the sandbox: ${cause}`, failure: { checkId: check.id, fingerprint: null, signals: ["sandbox-violation"], cause, lines: [oneLine(output, 160)] }, msbuild: nodeFix };
     }
     const failure = classifyNotExecuted({ checkId: check.id, output }) ?? classifyCouldNotRun({ checkId: check.id, output, insideRoots: [scratch, ...tmp ? [tmp] : []] });
-    if (failure) return { kind: "refused", failure, detail: `"${shown2}" was refused in the sandbox: ${failure.cause}${failure.lines[0] ? ` (${JSON.stringify(failure.lines[0])})` : ""}` };
+    if (failure) return { kind: "refused", failure, detail: `"${shown3}" was refused in the sandbox: ${failure.cause}${failure.lines[0] ? ` (${JSON.stringify(failure.lines[0])})` : ""}` };
     if (project) {
       const cause = `the generated project did not build (${ended})`;
       return {
         kind: "refused",
-        detail: `"${shown2}" ${ended} in the sandbox: ${project.about.split(":")[0]} did not build${output ? `: ${oneLine(output, 160)}` : ""}`,
+        detail: `"${shown3}" ${ended} in the sandbox: ${project.about.split(":")[0]} did not build${output ? `: ${oneLine(output, 160)}` : ""}`,
         failure: { checkId: check.id, fingerprint: null, signals: ["start-failed"], cause, lines: output ? [oneLine(output, 160)] : [] },
         fix: `the generated project needs nothing but the toolchain, so build it outside the sandbox to tell a broken installation from a sandbox denial (the line above shows the output; docs/troubleshooting.md, "A check cannot run in the sandbox")`
       };
     }
-    return { kind: "ran", detail: `"${shown2}" ${ended} in the sandbox, with no sandbox denial in its output${output ? `: ${oneLine(output, 160)}` : ""}` };
+    return { kind: "ran", detail: `"${shown3}" ${ended} in the sandbox, with no sandbox denial in its output${output ? `: ${oneLine(output, 160)}` : ""}` };
   } finally {
     removeScratch(scratch);
     if (tmp) removeScratch(tmp);
@@ -61933,7 +62244,8 @@ async function checkSandboxCheck(input) {
   const id = "checks.sandbox";
   const result2 = (status3, summary, details2 = [], missing = null, fix = null) => ({ id, area: "checks", status: status3, summary, details: details2, missing, fix });
   const checks = Object.values(input.config.checks).filter((c) => c.kind === "command");
-  if (checks.length === 0) return result2("pass", "not needed: no command check is defined");
+  const others = sandboxedCommands(input.config);
+  if (checks.length === 0 && others.length === 0) return result2("pass", "not needed: no command check is defined");
   const provider = input.provider;
   if (!provider || !input.available) return result2("warn", "not checked: isolation is unavailable (see the isolation check)", [], "an available isolation provider");
   if (provider.kind !== "sandbox-runtime") return result2("pass", `not needed: checks run under ${provider.kind}, not in an OS sandbox on this host`);
@@ -61947,17 +62259,17 @@ async function checkSandboxCheck(input) {
   let started = 0;
   const used = new Set(repo ? detectToolchains({ roots: [repo] }) : []);
   const users = /* @__PURE__ */ new Map();
-  const judge = (check, usesDotnet, label = null, where2 = null) => {
+  const judge = (check, usesDotnet, label = null, where2 = null, formats2 = label === null) => {
     const nodes2 = msbuildNodes(check, usesDotnet);
     const named2 = label ? { label } : {};
     const id2 = label ?? check.id;
-    const loads = label ? null : formatLoadsProject(check);
+    const loads = formats2 ? formatLoadsProject(check) : null;
     const inProcess = loads !== null && repo !== null && sdkFormatsInProcess(resolve19(repo, check.cwd), repo);
     const restore = inProcess ? formatRestoresUnpinned(check) : null;
     const host = inProcess || !loads ? null : `runs "${loads.shown}", which loads the project through a build host whose named pipe .NET binds under /tmp`;
-    const reads = label || folderForm ? null : formatReadsFolder(check);
+    const reads = !formats2 || folderForm ? null : formatReadsFolder(check);
     const folder = reads ? `runs "${reads.shown}", which lists every folder above the checkout for .editorconfig files, while a run's checkout sits in the Orbit home, which the check sandbox does not let it read` : null;
-    const outside = host !== null && !folderForm || folder !== null ? formatOutsideFix(check) : null;
+    const outside = host !== null && !folderForm || folder !== null ? formatOutsideFix(check, where2) : null;
     if (nodes2?.kind === "unpinned" || restore) {
       const causes = [...nodes2?.kind === "unpinned" ? [nodes2.reason] : [], ...restore ? [`runs "${restore.shown}", which restores the project first with a worker node per processor (SDK 8, which global.json pins, loads the project in its own process)`] : []];
       for (const cause of causes) details.push(`${id2}: ${cause}, and the check sandbox refuses every MSBuild worker node its named pipe under /tmp`);
@@ -61980,8 +62292,8 @@ async function checkSandboxCheck(input) {
     }
     const format = host ?? folder;
     if (format) {
-      details.push(`${check.id}: ${format}, and the check sandbox refuses it`);
-      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: ["pipe-denied"], cause: format, lines: [format] }, ...outside ? { outside } : { format: dotnetFormatFix(check) } });
+      details.push(`${id2}: ${format}, and the check sandbox refuses it`);
+      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: ["pipe-denied"], cause: format, lines: [format] }, ...outside ? { outside } : { format: dotnetFormatFix(check, where2) }, ...named2 });
       return true;
     }
     return false;
@@ -62012,7 +62324,7 @@ async function checkSandboxCheck(input) {
       continue;
     }
     started++;
-    const out = await probeOrRefuse(probeInput, check, exe, PROBE_ARGS[basename17(exe)] ?? DEFAULT_PROBE_ARGS, repo ? resolve19(repo, check.cwd) : null, null, msbuildFix(check));
+    const out = await probeOrRefuse(probeInput, check, exe, PROBE_ARGS[basename18(exe)] ?? DEFAULT_PROBE_ARGS, repo ? resolve19(repo, check.cwd) : null, null, msbuildFix(check));
     details.push(`${check.id}: ${out.detail}`);
     if (out.kind === "refused") refused.push({ check, failure: out.failure, ...out.fix ? { fix: out.fix } : {}, ...out.msbuild ? { msbuild: out.msbuild } : {} });
   }
@@ -62020,6 +62332,10 @@ async function checkSandboxCheck(input) {
   if (deps.install_existing_lockfile && deps.install_command) {
     const install = { ...defaultCheck(INSTALL_CHECK_ID), command: [...deps.install_command], shell: false, mandatory: true };
     judge(install, detectToolchains({ command: install.command, roots: repo ? [repo] : [] }).includes("dotnet"), "dependencies.install_command", { command: "dependencies.install_command", env: null });
+  }
+  for (const o of others) {
+    const def = { ...defaultCheck(o.field), command: [...o.command], shell: false, mandatory: true };
+    judge(def, detectToolchains({ command: def.command, roots: repo ? [repo] : [] }).includes("dotnet"), o.field, { command: o.field, env: null }, true);
   }
   const refusedToolchains = [];
   if (repo && input.orbitHome) {
@@ -62072,13 +62388,25 @@ async function checkSandboxCheck(input) {
   const pipes = refused.every((r) => r.msbuild || r.format || r.outside);
   const one = "dotnet commands that pin one MSBuild node (-m:1)";
   const loadsNothing = folderForm ? "dotnet format checks that load no project (dotnet format whitespace --folder)" : "dotnet format run outside Orbit, in CI";
+  const atBaseline = refused.some((r) => !r.label || r.label === "dependencies.install_command");
+  const blocks = atBaseline ? "a run would block at its baseline" : `a run would fail where Orbit starts ${refused.length === 1 ? "it" : "them"}`;
   return result2(
     status2,
-    nodes ? `${subject(refused)} would start MSBuild worker nodes, which the sandbox refuses; a run would block at its baseline` : formats ? `${subject(refused)} ${refused.length === 1 ? "runs" : "run"} dotnet format, ${folderForm ? "which loads the project through a build host the sandbox refuses its named pipe" : "which cannot run in a run's check sandbox on macOS"}; a run would block at its baseline` : pipes ? folderForm ? `${subject(refused)} would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; a run would block at its baseline` : `${subject(refused)} would start MSBuild worker nodes, whose named pipes the sandbox refuses, or run dotnet format, which cannot run in a run's check sandbox on macOS; a run would block at its baseline` : `the sandbox refuses ${refused.length === 1 ? "the executable" : "the executables"} of ${subject(refused)}; a run would block at its baseline`,
+    nodes ? `${subject(refused)} would start MSBuild worker nodes, which the sandbox refuses; ${blocks}` : formats ? `${subject(refused)} ${refused.length === 1 ? "runs" : "run"} dotnet format, ${folderForm ? "which loads the project through a build host the sandbox refuses its named pipe" : "which cannot run in a run's check sandbox on macOS"}; ${blocks}` : pipes ? folderForm ? `${subject(refused)} would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; ${blocks}` : `${subject(refused)} would start MSBuild worker nodes, whose named pipes the sandbox refuses, or run dotnet format, which cannot run in a run's check sandbox on macOS; ${blocks}` : `the sandbox refuses ${refused.length === 1 ? "the executable" : "the executables"} of ${subject(refused)}; ${blocks}`,
     details,
     nodes ? one : formats ? loadsNothing : pipes ? `${one}, and ${loadsNothing}` : "a check executable that can start in the check sandbox",
     fixFor([...refused, ...refusedToolchains])
   );
+}
+function sandboxedCommands(config) {
+  const start = config.ui?.environment.start_command ?? null;
+  return [
+    ...start && start.length > 0 ? [{ field: "ui.environment.start_command", command: start }] : [],
+    ...Object.entries(config.mode === "release" ? config.release?.environments ?? {} : {}).flatMap(([name, env]) => [
+      { field: `release.environments.${name}.deploy_command`, command: env.deploy_command },
+      ...env.verify_command && env.verify_command.length > 0 ? [{ field: `release.environments.${name}.verify_command`, command: env.verify_command }] : []
+    ])
+  ];
 }
 function runsToolchain(check, id) {
   return detectToolchains({ command: check.command, shell: check.shell }).includes(id);
@@ -62090,7 +62418,7 @@ function baseCheck(id, users) {
 function launchPath(found, repo) {
   const target = realpathSync18(found);
   if (repo && isWithin(target, repo)) return null;
-  const named2 = join72(realpathSync18(dirname33(found)), basename17(found));
+  const named2 = join72(realpathSync18(dirname33(found)), basename18(found));
   return repo && isWithin(named2, repo) ? target : named2;
 }
 async function probeOrRefuse(input, check, exe, args, cwd, project, nodeFix) {
@@ -62114,7 +62442,7 @@ async function toolchainLine(input, orbitHome, id, base) {
   const found = p.probe.executables.map((e) => which(e, input.env.PATH)).find((x) => x !== null);
   if (!found) return { detail: `${label}: not started ("${p.probe.executables[0]}" was not found); ${where2}`, refusal: null };
   const exe = launchPath(found, input.repo);
-  if (!exe) return { detail: `${label}: not started ("${basename17(found)}" is the repository's own code, which only a run executes); ${where2}`, refusal: null };
+  if (!exe) return { detail: `${label}: not started ("${basename18(found)}" is the repository's own code, which only a run executes); ${where2}`, refusal: null };
   const args = id === "dotnet" ? [...p.probe.args, ...probeNodeSwitches(base)] : p.probe.args;
   const check = { ...base ?? defaultCheck(`toolchain-${id}`), id: `toolchain-${id}`, command: [exe, ...args], shell: false, cwd: ".", mandatory: false };
   const project = p.probe.files ? { files: p.probe.files, about: p.probe.about ?? "a generated project" } : null;
@@ -62163,7 +62491,7 @@ ${r.stderr}`.trim() };
 import { accessSync as accessSync3, constants as constants5, existsSync as existsSync52, mkdtempSync as mkdtempSync7, readFileSync as readFileSync34, realpathSync as realpathSync19, rmSync as rmSync18, statSync as statSync15 } from "node:fs";
 import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
-import { homedir as homedir13, tmpdir as tmpdir13 } from "node:os";
+import { homedir as homedir15, tmpdir as tmpdir13 } from "node:os";
 import { delimiter as delimiter4, isAbsolute as isAbsolute24, join as join73, resolve as resolve20 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
@@ -62725,7 +63053,7 @@ async function browserIsolationCheck(input) {
     return fail2(id, "ui", `${info.detail}; browser checks are refused`, `srt ${SRT_VERIFIED_VERSION} (@anthropic-ai/sandbox-runtime)`, `install @anthropic-ai/sandbox-runtime@${SRT_VERIFIED_VERSION}`, [info.detail, limitation]);
   }
   if (!input.repo) return warn2(id, "ui", "not launched: no repository to find Playwright in", "a repository", null, [info.detail, limitation]);
-  const home2 = input.homeDir ?? input.env.HOME ?? homedir13();
+  const home2 = input.homeDir ?? input.env.HOME ?? homedir15();
   const cache2 = playwrightCache(input.env, home2, "darwin");
   const browser = headlessChromiumOf(input.repo, cache2);
   if ("problem" in browser) {
@@ -63203,7 +63531,7 @@ var init_models2 = __esm({
 
 // src/cli/check-detect.ts
 import { existsSync as existsSync54, readFileSync as readFileSync35 } from "node:fs";
-import { basename as basename18, dirname as dirname34, join as join74 } from "node:path";
+import { basename as basename19, dirname as dirname34, join as join74 } from "node:path";
 function read(path) {
   try {
     return readFileSync35(path, "utf8").slice(0, MAX_READ_BYTES);
@@ -63294,7 +63622,7 @@ function dotnetTestProjects(repo, projects) {
   const found = [];
   for (const p of projects.slice(0, MAX_PROJECT_READS)) {
     const text2 = read(join74(repo, p)) ?? "";
-    if (/Microsoft\.NET\.Test\.Sdk/i.test(text2) || /<IsTestProject>\s*true/i.test(text2) || /tests?\.[cfv]sproj$/i.test(basename18(p))) found.push(p);
+    if (/Microsoft\.NET\.Test\.Sdk/i.test(text2) || /<IsTestProject>\s*true/i.test(text2) || /tests?\.[cfv]sproj$/i.test(basename19(p))) found.push(p);
   }
   return found;
 }
@@ -63326,7 +63654,7 @@ function dotnetDrafts(input, out) {
   const drafts = [];
   for (const target of targets) {
     const t = target.startsWith("-") ? `./${target}` : target;
-    const suffix = targets.length > 1 ? `-${slug(basename18(target).replace(/\.[^.]+$/, ""))}` : "";
+    const suffix = targets.length > 1 ? `-${slug(basename19(target).replace(/\.[^.]+$/, ""))}` : "";
     drafts.push({ name: `build${suffix}`, command: ["dotnet", "build", t, ONE_MSBUILD_NODE], category: "build", timeout_seconds: TIMEOUT.compile, reason: `${what} file ${t}; ${ONE_NODE_REASON}` });
     const testable = what === "solution" ? testProjects.length > 0 : testProjects.includes(t);
     if (testable) drafts.push({ name: `unit-tests${suffix}`, command: ["dotnet", "test", t, ONE_MSBUILD_NODE], category: "test", timeout_seconds: TIMEOUT.nodeTest, reason: `${what} file ${t} with ${what === "solution" ? "a test project" : "a test project of its own"} (Microsoft.NET.Test.Sdk); ${ONE_NODE_REASON}` });
@@ -64275,7 +64603,7 @@ var init_ingest = __esm({
 
 // src/cli/commands/learn.ts
 import { existsSync as existsSync56, mkdirSync as mkdirSync26, readFileSync as readFileSync37, statSync as statSync16 } from "node:fs";
-import { basename as basename19, isAbsolute as isAbsolute26, join as join76, relative as relative8, resolve as resolve21 } from "node:path";
+import { basename as basename20, isAbsolute as isAbsolute26, join as join76, relative as relative8, resolve as resolve21 } from "node:path";
 function knowledgePath(ctx, repo, global) {
   return global ? join76(ctx.orbitHome, "knowledge.sqlite") : join76(repo, ".orbit", "knowledge.sqlite");
 }
@@ -64397,7 +64725,7 @@ async function readSource(ctx, repo, ref2, label) {
   if (!st.isFile()) throw new OrbitError("SCHEMA_INVALID", `${path} is not a regular file`);
   if (st.size > FETCH_MAX_BYTES) throw new OrbitError("SCHEMA_INVALID", `${path} is larger than ${FETCH_MAX_BYTES} bytes`);
   const rel = relative8(repo, path);
-  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute26(rel) ? rel : basename19(path), content: readFileSync37(path, "utf8") };
+  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute26(rel) ? rel : basename20(path), content: readFileSync37(path, "utf8") };
 }
 async function runIngestCurator(ctx, repo, config, prompt) {
   if (!(config.knowledge.curator_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.curator_budget_usd is 0, so no curator may run; raise it, or supply the curator output with --curator-output");
@@ -64890,7 +65218,7 @@ async function releaseResolveCommand(args, ctx) {
             ...environment === void 0 ? {} : { environment },
             resolution,
             by,
-            ...resolution === "verify" ? { isolation: rc.isolation(), homeDir: homeOf2(rc.deps) } : {}
+            ...resolution === "verify" ? { isolation: rc.isolation(), homeDir: homeOf2(rc.deps), hostEnv: rc.deps.hostEnv ?? ctx.env, toolchainCacheRoot: toolchainCacheRootFor(rc) } : {}
           });
           return { result: result3 };
         } finally {
@@ -66350,9 +66678,9 @@ async function timelineCommand(args, ctx) {
     const tail2 = (entries) => last === void 0 ? entries : last === 0 ? [] : entries.slice(-last);
     if (!args.bool("follow")) {
       const t2 = build();
-      const shown2 = { ...t2, entries: tail2(t2.entries) };
-      if (asJson) json(ctx.io, shown2);
-      else ctx.io.out(renderTimeline(shown2));
+      const shown3 = { ...t2, entries: tail2(t2.entries) };
+      if (asJson) json(ctx.io, shown3);
+      else ctx.io.out(renderTimeline(shown3));
       return EXIT.OK;
     }
     let t = build();

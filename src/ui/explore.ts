@@ -9,10 +9,12 @@ import { redact, redactValue } from '../core/redact.ts';
 import { validateModelOutput, type ExplorerOutput } from '../contract/model-outputs.ts';
 import type { Candidate } from '../evidence/types.ts';
 import { profileForCheck } from '../isolation/profiles.ts';
+import { removeScratch } from '../isolation/toolchains.ts';
 import type { IsolationProvider, SandboxProfile } from '../isolation/types.ts';
 import { defaultCheck } from '../policy/config.ts';
 import type { PolicySnapshot, UiConfig } from '../policy/types.ts';
 import { assertBaseUrl, startApp, stopApp, type AppHandle } from './app-fixture.ts';
+import { appNodeDenialWatch, appToolchains } from './app-toolchains.ts';
 import { safeBaseEnv } from './env.ts';
 import { cleanText, describeError, parsePlaywrightReport, type RawTest } from './report.ts';
 import { assertCheckoutMatchesCandidate, shellQuote } from './runner.ts';
@@ -115,6 +117,8 @@ export interface ExploreOptions {
   hostEnv?: Readonly<Record<string, string | undefined>>;
   appEnv?: Record<string, string>;
   homeDir?: string;
+  /** The repository's toolchain dependency caches, read-only for the application under test (ui/app-toolchains.ts). */
+  toolchainCacheRoot?: string | null;
   abortSignal?: AbortSignal;
   appPollMs?: number;
 }
@@ -307,7 +311,12 @@ export async function exploreUi(opts: ExploreOptions): Promise<ExplorationResult
   if (opts.abortSignal?.aborted) control.abort();
 
   atomicWriteJson(join(outDir, 'exploration.json'), { state: 'running', candidate: opts.candidate.id, startedAt });
+  // Emptied first: the directory is under the candidate's evidence, which a later exploration of the candidate reuses, and an
+  // MSBuild failure report an earlier one left there would stop the application at its first look (a review of #26).
+  removeScratch(join(outDir, 'tmp'));
   const tmpDir = ensureDir(join(outDir, 'tmp'));
+  // The application's build state, private to this exploration and removed with it.
+  const appScratch = join(outDir, 'toolchains');
   const baseEnv = safeBaseEnv(opts.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;
   let app: AppHandle | null = null;
@@ -326,20 +335,23 @@ export async function exploreUi(opts: ExploreOptions): Promise<ExplorationResult
       reasons.push(`exploration is not available under ${opts.isolation.kind}: every sandbox has its own loopback, so neither the explorer nor a reproduction spec could reach an application Orbit starts; the journey checks run the application and the browser in one sandbox instead`);
     } else if (uiStart !== null) {
       const appCheck = { ...defaultCheck('ui-app'), command: uiStart, network_hosts: [], timeout_seconds: opts.uiConfig.environment.ready_timeout_seconds };
-      const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot: opts.snapshot, extraWritable: [tmpDir], homeDir: opts.homeDir, env: opts.hostEnv });
+      // The application's toolchain profile, as the journey runner starts it (ui/app-toolchains.ts).
+      const tc = appToolchains({ command: uiStart, checkoutDir, cacheRoot: opts.toolchainCacheRoot ?? null, scratchRoot: appScratch, tmpDir, isolation: opts.isolation.kind, networkHosts: appCheck.network_hosts, ...(opts.homeDir ? { homeDir: opts.homeDir } : {}), hostEnv: opts.hostEnv ?? process.env });
+      const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot: opts.snapshot, extraWritable: [tmpDir, ...tc.extraWritable], readablePaths: tc.readablePaths, nisDomainName: tc.nisDomainName, homeDir: opts.homeDir, env: opts.hostEnv });
       try {
         app = await startApp({
           command: uiStart,
           cwd: checkoutDir,
           baseUrl,
           readyTimeoutMs: opts.uiConfig.environment.ready_timeout_seconds * 1000,
-          env: { ...(opts.appEnv ?? {}), ORBIT_UI_BASE_URL: baseUrl, ...(port ? { PORT: port, ORBIT_UI_PORT: port } : {}), ORBIT_UI_ISOLATED_TEST_DATA: opts.uiConfig.environment.isolated_test_data ? '1' : '0', TMPDIR: tmpDir },
+          env: { ...tc.env, ...(opts.appEnv ?? {}), ORBIT_UI_BASE_URL: baseUrl, ...(port ? { PORT: port, ORBIT_UI_PORT: port } : {}), ORBIT_UI_ISOLATED_TEST_DATA: opts.uiConfig.environment.isolated_test_data ? '1' : '0', TMPDIR: tmpDir },
           isolation: { provider: opts.isolation, profile },
           isolatedTestData: opts.uiConfig.environment.isolated_test_data,
           stateDir: join(outDir, 'app'),
           clock,
           pollMs: opts.appPollMs,
           hostEnv: opts.hostEnv,
+          stopWhen: appNodeDenialWatch(uiStart, tmpDir),
         });
       } catch (err) {
         if (err instanceof OrbitError && (err.code === 'ISOLATION_UNAVAILABLE' || err.code === 'POLICY_DENIED')) throw err;
@@ -375,6 +387,7 @@ export async function exploreUi(opts: ExploreOptions): Promise<ExplorationResult
   } finally {
     opts.abortSignal?.removeEventListener('abort', onAbort);
     if (app) await stopApp(app, { clock });
+    removeScratch(appScratch);
   }
 
   if (state.costUnknownCalls > 0) unverified.push(`the provider reported no cost for ${state.costUnknownCalls} call(s), so ui.exploration.budget_usd was enforced on reported costs only`);

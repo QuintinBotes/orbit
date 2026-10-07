@@ -114,7 +114,7 @@ export async function collectVerificationEvidence<S = never>(ctx: RunContext, ca
   const uiRequired = contract.acceptance_criteria.some((c) => c.ui === true) || (ui !== null && ui.required_when_ui_changes && changed.some(compileGlobs(ui.ui_paths, { nocase: false })));
   let uiResult: UiRunResult | null = null;
   if (uiRequired && ui && ui.journey_check_ids.length > 0) {
-    uiResult = await runUiChecks({ checkoutDir, snapshot, candidate: cand, uiConfig: ui, journeyCheckIds: ui.journey_check_ids, isolation: ctx.isolation(), outDir: uiEvidenceDir(ctx.runDir, cand.seq), clock: ctx.clock, abortSignal: ctx.signal, homeDir: homeOf(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
+    uiResult = await runUiChecks({ checkoutDir, snapshot, candidate: cand, uiConfig: ui, journeyCheckIds: ui.journey_check_ids, isolation: ctx.isolation(), outDir: uiEvidenceDir(ctx.runDir, cand.seq), clock: ctx.clock, abortSignal: ctx.signal, homeDir: homeOf(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env, toolchainCacheRoot: toolchainCacheRootFor(ctx) });
     const afterUi = await checkpoint();
     if (afterUi !== null) return { stopped: afterUi };
   }

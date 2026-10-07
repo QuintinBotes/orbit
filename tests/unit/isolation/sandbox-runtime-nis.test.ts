@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { isOrbitError } from '../../../src/core/errors.ts';
-import { CHROMIUM_MACH_RENDEZVOUS, DOTNET_IPV4_ENV, NIS_DOMAINNAME_LIMITATION, NIS_DOMAINNAME_READ, NIS_DOMAINNAME_SKIPPED, SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.ts';
+import { CHROMIUM_MACH_RENDEZVOUS, DOTNET_IPV4_ENV, DOTNET_POLLING_WATCHER_ENV, NIS_DOMAINNAME_LIMITATION, NIS_DOMAINNAME_READ, NIS_DOMAINNAME_SKIPPED, SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.ts';
 import type { SandboxProfile } from '../../../src/isolation/types.ts';
 import { tempRoot, writeExecutable } from './fixtures.ts';
 
@@ -137,5 +137,26 @@ describe('wrap of a .NET process on macOS: IPv4 sockets', () => {
   it('sets nothing for a process that does not run .NET, or on Linux', () => {
     const h = host();
     for (const w of [wrap(h, {}), wrap(h, { nisDomainName: true }, 'linux')]) expect(w.env.DOTNET_SYSTEM_NET_DISABLEIPV6).toBeUndefined();
+  });
+});
+
+// ASP.NET Core's host watches its configuration files (reloadOnChange) through a FileSystemWatcher, which on macOS asks
+// the FSEvents service for events; srt's Seatbelt profile denies that lookup (mach-lookup com.apple.FSEvents), and the
+// application then hung at startup with no output: a .NET web application started as ui.environment.start_command never
+// became ready under srt (issue #26, measured on macOS 27 with SDK 9.0.305). With the polling watcher it starts.
+describe('wrap of a .NET process on macOS: the polling file watcher', () => {
+  it('sets DOTNET_USE_POLLING_FILE_WATCHER=1 for the process, with or without the NIS rule', () => {
+    expect(DOTNET_POLLING_WATCHER_ENV).toEqual({ DOTNET_USE_POLLING_FILE_WATCHER: '1' });
+    expect(wrap(host(), { nisDomainName: true }).env).toMatchObject(DOTNET_POLLING_WATCHER_ENV);
+    expect(wrap(host({ version: '0.0.79' }), { nisDomainName: true }).env).toMatchObject(DOTNET_POLLING_WATCHER_ENV);
+  });
+
+  it('keeps the value the command sets itself', () => {
+    expect(wrap(host(), { nisDomainName: true }, 'darwin', { DOTNET_USE_POLLING_FILE_WATCHER: 'false' }).env.DOTNET_USE_POLLING_FILE_WATCHER).toBe('false');
+  });
+
+  it('sets nothing for a process that does not run .NET, or on Linux', () => {
+    const h = host();
+    for (const w of [wrap(h, {}), wrap(h, { nisDomainName: true }, 'linux')]) expect(w.env.DOTNET_USE_POLLING_FILE_WATCHER).toBeUndefined();
   });
 });

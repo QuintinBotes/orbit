@@ -406,11 +406,10 @@ Decision.
    read-only and names one sysctl. It needs the `srt` the preload was verified
    against (0.0.78, which the plugin ships); with another `srt` the command runs
    without the rule and its record says so, rather than refusing, since the
-   rule only lets .NET's HTTP clients start. Approved operations (an approved
-   `dotnet add package`), the UI app (`ui.environment.start_command`) and
-   release commands get no toolchain profile, so neither this rule nor `-m:1`
-   handling: .NET there meets the denials this addendum describes, and a `dotnet
-   run` app start would wait out MSBuild's five minutes. Not addressed here.
+   rule only lets .NET's HTTP clients start. Approved operations, the UI app
+   (`ui.environment.start_command`) and release commands got no toolchain
+   profile at first, so neither this rule nor `-m:1` handling; item 14 gives
+   them one.
 9. **The system trust service stays out of reach.** `srt` documents the lookup
    of `com.apple.trustd.agent` as an exfiltration path: a process that may ask
    trustd to evaluate a certificate can make it fetch the certificate's issuer
@@ -623,6 +622,230 @@ Decision.
     through the preload, `(deny network-outbound (socket-domain AF_INET6))`,
     reproduced both of the runner's failures, and with the variable both
     tests passed under that rule and without it.
+14. **Every sandbox built from the check profile gets the toolchain profile**
+    (issue #26). Three places built theirs without it: an operation a person
+    approved once in a supervised run (`controller/authorization.ts`,
+    `executeApproved`), the application under test for the journeys and for
+    exploration (`ui.environment.start_command`; `ui/runner.ts`,
+    `ui/explore.ts`), and a release environment's `deploy_command` and
+    `verify_command` (`delivery/release.ts`). Measured under `srt` 0.0.78 on
+    macOS 27 with SDK 9.0.305, before: an approved command and a deploy, each
+    with a fresh private `HOME`, died at the SDK's first run on every dotnet
+    command (`The system cannot open the device or file specified. :
+    'NuGet-Migrations'`, the named mutex under `/tmp/.dotnet`, #10); a web
+    project referencing two libraries started as `[dotnet, run, --project,
+    Web]` was not ready after 100 s with "(no output)" in the reason while four
+    node reports sat in its temp directory; built with `-m:1` first, its host
+    hung (item 15) and then its `HttpClient` died on `GetDomainName: -1`. None
+    had a NuGet cache: the application read the account's `~/.nuget/packages`,
+    the others had an empty one.
+
+    Each now gets the layout a check gets, found the same way from its command
+    and the checkout's marker files (`isolation/toolchains.ts`
+    `commandToolchains`, which checks use too), with the hosts its sandbox
+    really allows deciding NuGet's audit (item 12): build state in a directory
+    private to that command (removed after it), the repository's caches (read
+    by the application as by a check; beneath caches of their own for a release
+    command and an approved operation, item 16), the NIS domain name rule (item
+    8) and IPv4 sockets (item 13) for .NET, and the runner's early stop (item 3,
+    `evidence/msbuild.ts` `runStoppingRefusedNodes`), with a note that names the
+    process and the fix for its field. The early stop says Orbit stopped a
+    command only when its abort reached the command still running (`execCapture`
+    reports that as cancelled): a review found that a command that had already
+    exited on its own (MSBuild fails at once on Linux), or that a cancellation
+    had stopped first, read as stopped by Orbit, its own exit code replaced by
+    null. Per place:
+
+    - **The application** reads the caches (mode `check`: it is repository code,
+      like a check), has no network of its own (the journey check's hosts when
+      it shares that check's sandbox: ADR 0001, "Browsers under sandbox-runtime
+      on macOS", Linux paragraph),
+      gets a check's .NET settings (`DOTNET_CHECK_ENV`: first-run steps and
+      SourceLink's git queries off, the latter needed under `srt` on Linux) and
+      keeps the account's `HOME`, which its browser-facing tools read as before.
+      It keeps the account's Python user site-packages too: `PYTHONUSERBASE`
+      is not set for it, since a review found that the check's private one hid
+      packages installed with `pip install --user`, which the interpreter
+      reads at run time (its bytecode still goes to `PYTHONPYCACHEPREFIX`).
+      `startApp` asks the early stop while it waits for readiness: a refused
+      node ends the start at once with "the application was stopped before it
+      became ready" and the note; in the single-sandbox mode MSBuild fails at
+      once, and the reason gets the note after the fact. Its temp directory
+      (`<evidence>/ui/tmp`, and the exploration's) is emptied before each UI
+      run, since a later verification of the same candidate reuses it, and a
+      failure report MSBuild left there stopped the application at its first
+      look (a review).
+    - **A release command** fetches into caches of its own, with the
+      repository's read-only beneath them (mode `fetch`, item 16; only the
+      install writes the repository's), with the environment's
+      `network_hosts`, and its private
+      home is prepared as a check's (`privateHomeDotnetEnv`: the NuGet
+      migrations recorded as done, `DOTNET_CHECK_ENV`, `DOTNET_CLI_HOME`),
+      below the controller's deploy credentials, which still win. A deploy the
+      early stop ends is a failure with the note, never a success and never
+      UNKNOWN: `srt` exits 0 when it is stopped (measured), so the outcome has
+      no exit code of its own. A verify command whose own build was refused a
+      node leaves the deploy UNKNOWN whatever it exits with, since an exit 1
+      there would otherwise read as "not deployed". Each deploy and verify
+      command starts with an empty temp directory (`prepareFreshTmpDir`): the
+      directory is derived from the deploy's, so each resolution of an UNKNOWN
+      deploy reused it, and a review found that a failure report an earlier
+      verify left there made every later verify of that deploy UNKNOWN.
+    - **An approved operation** fetches into caches of its own, as a release
+      command does (mode `fetch`, item 16), unless it is itself the install: a
+      command of the approved line that `policy/bash.ts` classifies as a
+      package install and that runs a toolchain's executable (`dotnet add
+      package`, `dotnet restore`, `cargo add`, `cargo fetch`, `pip install`,
+      `go get`) gets mode `install` for that toolchain, so the repository's
+      cache of that toolchain is writable, as for the dependency install; every
+      other toolchain it uses stays in mode `fetch`. This keeps ADR 0009's
+      rules: the caches are written by an install step only, and nothing is
+      shared between repositories. The person approved exactly that command,
+      its network stays the frozen policy's hosts plus the approved one (no
+      registry hosts are added), and its output says which toolchains it got
+      and whose cache was writable. The exposure is the one decision 3 accepted
+      for a configured install command that evaluates repository code: the
+      approved command runs in the attempt's worktree, so MSBuild or a build
+      script there runs a candidate's code with that toolchain's cache
+      writable. Without it an approved `dotnet add package` could add the
+      reference but not restore the package anywhere the retried worker reads
+      it. Its private home is prepared as a check's, and one Orbit stopped (for
+      a refused node, the run's cancellation or the 300 s limit) has no exit
+      code and says why: `srt` exits 0 when stopped, and a review found that a
+      cancelled command's receipt said exit 0. Considered and rejected: a
+      private cache for an approved install (the worker could not build with
+      what it installed), the install mode for every approved command (a `chmod
+      +x` that also runs a build would get a writable cache it does not need),
+      and the install mode for every toolchain an approved install uses (a
+      review found that an approved `pip install` in a repository with a
+      `go.mod` made the Go module cache writable too, and a `cargo install` the
+      shared `CARGO_HOME/bin`, which Cargo searches for subcommands, for every
+      later run of the repository).
+
+    `orbit doctor` (`checks.sandbox`) judges `ui.environment.start_command` and
+    each release environment's `deploy_command` and `verify_command` with the
+    static rules of items 2 and 10 (`-m:1`, `dotnet run` in two steps, `dotnet
+    format`), always as mandatory, since none of them can start when the
+    sandbox refuses it, and with no `DOTNET_PROCESSOR_COUNT` alternative, since
+    none has an env of its own. The release commands only in mode `release`,
+    the one mode whose runs merge or deploy: a review found doctor failing a
+    supervised configuration for a release block no run of it uses. These
+    fields are argvs, never run through a shell, so a fix that needs a shell
+    line is a `sh -c` script
+    (`ui.environment.start_command: ["sh", "-c", "dotnet build Web -m:1 &&
+    dotnet run --project Web --no-build"]`; `dependencies.install_command` gets
+    the same form now, where it named a one-word argv before). Its summary says
+    a run "would fail where Orbit starts it" when only these are refused, since
+    they do not run at the baseline. An approved command is not judged in
+    advance (a worker writes it); its note names the command with `-m:1`, to be
+    asked for again.
+
+    Verified under `srt` 0.0.78 on macOS 27 (SDK 9.0.305) in integration
+    tests, each failing on the code before this item: the web project above as
+    `[dotnet, run, --project, Web]` is stopped within seconds with the note
+    and the two-step fix (it waited out the 150 s ready timeout before), and in
+    two steps it serves a journey whose page fetches another with `HttpClient`
+    (it never became ready before); an approved `dotnet build -m:1` of a project
+    with two references builds (it died at the first run before), and without
+    `-m:1` it is stopped with the pinned command; a deploy `dotnet build -m:1`
+    builds (it exited 1 at the first run before); release commands that fetch
+    are item 16's. Not verified: Linux (the single-sandbox note is
+    unit-tested) and an approved install that writes the cache under `srt`.
+15. **.NET file watchers poll on macOS.** A `FileSystemWatcher` on macOS asks
+    the FSEvents service for events, and `srt`'s Seatbelt profile denies that
+    lookup (`deny(1) mach-lookup com.apple.FSEvents`, again and again in the
+    Seatbelt log stream while one host started). ASP.NET Core's host watches its configuration
+    files (`reloadOnChange`), and the web project of item 14, run as `dotnet
+    Web.dll` under `srt`, printed nothing and listened on nothing for 75 s
+    (outside the sandbox it served in under a second). With
+    `DOTNET_USE_POLLING_FILE_WATCHER=1`, which Microsoft.Extensions' file
+    providers read, or with `DOTNET_hostBuilder__reloadConfigOnChange=false`, it
+    started at once. The wrap of a process that gets .NET's profile on macOS
+    (`isolation/sandbox-runtime.ts`, `DOTNET_POLLING_WATCHER_ENV`, beside
+    item 13's variable) sets the first unless the command sets it: it keeps
+    reloading on change (by polling every few seconds), applies to every host,
+    and needs no Seatbelt rule. Considered and rejected: allowing the FSEvents
+    lookup (a Mach service outside the sandbox that reports file system
+    activity, opened for one framework's convenience), and turning reload off
+    (it changes what the application does). A program that creates a
+    `FileSystemWatcher` itself, outside those providers, still asks FSEvents;
+    not measured. Checks, workers and the dependency install get the variable
+    too: a check that starts the same host (`WebApplicationFactory` in an
+    ASP.NET Core integration test) would meet the same lookup, which was not
+    measured.
+16. **A release command and an approved operation fetch into caches of their
+    own** (a review of item 14). Before item 14 they ran with a private `HOME`,
+    so Go, Cargo and NuGet fetched into it on the hosts their sandbox allows;
+    with the check's read-only caches they could fetch nothing. Reproduced
+    under `srt` 0.0.78 on macOS 27 through `performRelease`: a deploy `[sh, -c,
+    "GOTOOLCHAIN=local GOPROXY=file://$PWD/proxy GOSUMDB=off GOFLAGS=-mod=mod
+    go run ."]` that fetched one module from a proxy committed in the
+    repository (no network, no TLS) exited 0 on the code before item 14 and,
+    with item 14, ended `DELIVERY_FAILED` with `go: writing go.mod cache: mkdir
+    <orbit home>/toolchains/<key>/gomod/cache: operation not permitted`; a
+    `dotnet build` restoring a package from a feed in the repository failed
+    with NuGet's `Access to the path '<orbit home>/toolchains/<key>/nuget/
+    acme.greeting' is denied ... Operation not permitted`; `cargo install
+    --path .` failed with `failed to open: <orbit home>/toolchains/<key>/cargo/
+    .crates.toml ... Operation not permitted`. That is every deploy or verify
+    command (and every approved command) that needs something the run's
+    install did not put in the repository's cache: a Node repository whose
+    deploy tool is Go or .NET, `go run tool@version`, crates, NuGet packages a
+    restore of the checkout does not fetch, a merge commit that picks up
+    dependencies from the base branch; and on Linux or in a container, where
+    these tools can reach their registries on `network_hosts`, a fetch from
+    those too.
+
+    They now get mode `fetch` (`isolation/toolchains.ts`): each toolchain's
+    dependency cache is the command's own (`<its scratch>/cache/<name>`,
+    writable, removed after it), with the repository's read-only beneath it
+    where the tool reads a second cache:
+
+    | toolchain | the command's own, writable | the repository's, read-only beneath it |
+    |---|---|---|
+    | dotnet | `NUGET_PACKAGES` | `NUGET_FALLBACK_PACKAGES`: a fallback folder, from which NuGet resolves a package in place and extracts only the others |
+    | go | `GOMODCACHE` | `GOPROXY=file://<cache>/gomod/cache/download,https://proxy.golang.org,direct`: the download directory is laid out as a module proxy (`go help goproxy`), so Go copies a module found there and asks its default proxies for the rest |
+    | jvm | `GRADLE_USER_HOME`, `-Dmaven.repo.local` (private, as in a check) | `GRADLE_RO_DEP_CACHE`, `-Dmaven.repo.local.tail` (as in a check) |
+    | python | `PIP_CACHE_DIR` | none: pip reads no second cache (a read-only one it turns off) |
+    | rust | `CARGO_HOME` | none: Cargo reads no second registry cache |
+
+    This keeps ADR 0009's rules: only an install step writes the repository's
+    caches, and nothing is shared between repositories (a command's own caches
+    are its alone and removed with it). Its network is unchanged, so it fetches
+    what it fetched before item 14, where it fetched it. Verified under `srt`
+    0.0.78 on macOS 27 in integration tests (Go 1.27.1, SDK 9.0.305, Cargo
+    1.98.1), the first three failing with item 14's layout: the Go deploy above
+    prints its module's greeting, and the repository's module cache stays
+    empty; a `dotnet build` that restores a package from a feed in the
+    repository builds, the repository's NuGet cache untouched; `cargo install
+    --path .` installs and the installed program runs. Two more pass both ways:
+    a Go deploy whose module only the repository's cache holds, with no network
+    and no proxy of its own, and a `dotnet build` whose package only the
+    repository's cache holds, with no package source. Measured before, outside
+    the sandbox: with `NUGET_FALLBACK_PACKAGES` the restore resolved the package
+    and left `NUGET_PACKAGES` empty, and without it failed `NU1100`; Go passed a
+    file proxy whose directory does not exist over to the next entry, and read
+    one whose path held `%2C` for a comma (the variable escapes `,` and `|`,
+    GOPROXY's separators).
+
+    Costs. Go copies each module it uses from the repository's cache into the
+    command's own (a local copy, no download). pip and Cargo start empty, as
+    under the private `HOME` before item 14: a Rust or Python release command
+    fetches its packages on the environment's hosts (`index.crates.io` and
+    `static.crates.io`; `pypi.org` and `files.pythonhosted.org`), or fails
+    without them, as it did then. A module that `GOPRIVATE` or `GONOPROXY`
+    names bypasses every proxy, the repository's cache included, and a command
+    that sets `GOPROXY` (or `NUGET_FALLBACK_PACKAGES`) itself replaces Orbit's.
+    The application under test keeps mode `check`: it has no network of its
+    own (the journey check's in the single-sandbox mode), so the repository's
+    caches serve it better than empty ones. Considered and rejected: item 14's
+    read-only caches (the failures above); the repository's caches writable for
+    these commands (a deploy runs the delivered commit's code, or a merge
+    commit's, with no install step's trust, and its writes would reach every
+    later check of the repository); and copying the repository's Cargo home
+    into the command's own (a full copy of a cache that can hold gigabytes, for
+    each command). Not verified: Linux, a container, Maven and Gradle (not
+    installed where this was measured), and pip.
 
 Consequences.
 
@@ -655,12 +878,25 @@ Consequences.
   with `isolation.provider: container`, the dependency install downloads the
   packages itself. Checks after the install build with `--no-restore`, which
   needs no network on any SDK measured.
-- Every check, dependency install, worker and doctor probe that runs .NET
-  under `srt` on macOS can read one more sysctl; a check's evidence record (the
-  dependency install's included) says so, in the limitation that names the
-  rule. Each also opens IPv4 sockets by default (item 13); a check that needs
-  .NET's dual-stack default sets `DOTNET_SYSTEM_NET_DISABLEIPV6` in its own
+- Every check, dependency install, worker, doctor probe, approved operation,
+  application under test and release command that runs .NET under `srt` on
+  macOS can read one more sysctl; a check's evidence record (the dependency
+  install's included) says so, in the limitation that names the rule, and so
+  does a deploy's outcome, which lists its command's limitations. Each also
+  opens IPv4 sockets by default (item 13) and polls in its file watchers (item
+  15); a check that needs either default back sets the variable in its own
   `env`.
+- An application under test reads the repository's dependency caches as a
+  check does (item 14), so what the run's install did not fetch is missing for
+  it too, and a write it tries there is refused by the sandbox (Go's
+  "operation not permitted", NuGet's "Access to the path ... is denied"). A
+  release command and an approved operation fetch what they need on their own
+  hosts into caches of their own (item 16), over the repository's where the
+  tool reads a second cache; Cargo and pip there start empty, as before item
+  14. An approved package install may write the cache of the toolchain it
+  installs with, as the install step does, and only that one.
+  `ui.environment.start_command: [dotnet, run, ...]` fails doctor; its two-step
+  form, a `sh -c` script, passes.
 - A `dotnet format` check under `srt` is `dotnet format whitespace --folder
   --verify-no-changes` on Linux, or, with SDK 8 pinned by `global.json`, any
   form whose restore is pinned; otherwise doctor fails it (mandatory) or warns
@@ -669,10 +905,16 @@ Consequences.
   anyway (through make, say) blocks the run with the fix within about a
   minute on macOS (about two seconds when its restore is refused a node)
   instead of becoming a pre-existing failure. On Linux the build host's
-  refusal is read from the output (a measured log); a refused restore is read
+  refusal is read from the output (a measured log), or, where `dotnet format`
+  says the C# project it could not load is in no language it supports and
+  exits 0 (8 runs of 40 under the runner and `srt`, SDK 10.0.401, once in
+  CI), from the note with which the runner records that check as failed
+  instead of passed; a refused restore is read
   only when MSBuild recorded the node, which the runner now also looks for when
-  the check has already failed; whether MSBuild records it before failing on
-  Linux was not measured.
+  the check has already failed; on Linux MSBuild had recorded it by the time
+  a `dotnet build` of a project with two references failed in five runs of
+  eight (an approved command, SDK 10.0.401, arm64 Ubuntu 24.04 container),
+  and on GitHub's Ubuntu runners in neither of two.
 - No Unix socket is allowed in any sandbox; the evaluation above found none
   that would help.
 - Not verified: `dotnet test -m:1` in the Microsoft.Testing.Platform mode of
