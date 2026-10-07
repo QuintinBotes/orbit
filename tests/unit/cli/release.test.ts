@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { systemClock } from '../../../src/core/clock.ts';
 import { defaultConfig } from '../../../src/policy/config.ts';
@@ -109,12 +110,13 @@ describe('orbit release resolve', () => {
   it('the verify_command gets its toolchains\' profile, with the repository\'s dependency caches under the Orbit home', async () => {
     const out = join(realpathSync(mkdtempSync(join(tmpdir(), 'orbit-verify-'))), 'seen.txt');
     scratch.push(dirname(out));
-    // The last word names cargo, so the command uses the Rust toolchain.
-    const verify = [node, '-e', `require('fs').writeFileSync(${JSON.stringify(out)}, String(process.env.CARGO_HOME));`, 'cargo'];
+    // The last word names go, so the command uses the Go toolchain: a module cache of its own, with the repository's
+    // read beneath it as the first module proxy (ADR 0009, addendum, item 16).
+    const verify = [node, '-e', `require('fs').writeFileSync(${JSON.stringify(out)}, String(process.env.GOPROXY));`, 'go'];
     const s = unknownDeploy({ verify });
     const r = await s.l.cli(['release', 'resolve', s.runId, '--json']);
     expect(r.code, r.err).toBe(0);
-    expect(readFileSync(out, 'utf8')).toBe(join(s.l.orbitHome, 'toolchains', repoKey(s.l.repo), 'cargo'));
+    expect(readFileSync(out, 'utf8')).toBe(`${pathToFileURL(join(s.l.orbitHome, 'toolchains', repoKey(s.l.repo), 'gomod', 'cache', 'download')).href},https://proxy.golang.org,direct`);
   });
 
   it('a verify_command that cannot tell, or no verify_command, changes nothing and exits 1 telling the person what to run', async () => {

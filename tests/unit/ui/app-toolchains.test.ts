@@ -173,6 +173,35 @@ describe('the application under test gets its toolchain profile (issue #26)', ()
     expect(reason).toContain('Fix: ui.environment.start_command: ["sh", "-c", "dotnet build Web -m:1 && dotnet run --project Web --no-build"]');
   }, 30_000);
 
+  // The application keeps the account's HOME, and Python reads the account's user site-packages through it at run time
+  // (packages installed with `pip install --user`). A review of #26 found PYTHONUSERBASE pointed at the run's private
+  // scratch, so such an application no longer found them.
+  it('leaves a Python application the account\'s user site-packages, with its bytecode still private', async () => {
+    const port = await freePort();
+    const p = policy(port, ['python3', '-m', 'acme.web']);
+    const r = recording({});
+    await runUiChecks({ checkoutDir: repo, snapshot: p.snapshot, candidate, uiConfig: p.ui, journeyCheckIds: ['ui-journeys'], isolation: r.provider, outDir: join(root, 'evidence', 'ui'), homeDir: home, hostEnv: { PATH: process.env.PATH, HOME: home }, toolchainCacheRoot: cacheRoot, appPollMs: 50 });
+    const [app] = r.apps;
+    expect(app!.env.PYTHONPYCACHEPREFIX).toBeDefined();
+    expect(app!.env).not.toHaveProperty('PYTHONUSERBASE');
+  }, 30_000);
+
+  // The UI run's temp directory is under the candidate's evidence, so a run that verifies the candidate again (after a
+  // restart) reuses it: a review of #26 found that an MSBuild failure report an earlier run left there stopped the
+  // application at its first look.
+  it('starts the application in an empty temp directory, so a refused node an earlier UI run recorded does not stop it', async () => {
+    const port = await freePort();
+    const p = policy(port, ['dotnet', 'run', '--project', 'Web']);
+    const outDir = join(root, 'evidence', 'ui');
+    mkdirSync(join(outDir, 'tmp', 'MSBuildTempacme'), { recursive: true });
+    writeFileSync(join(outDir, 'tmp', 'MSBuildTempacme', 'MSBuild_pid-4242_01234567.failure.txt'), MSBUILD_FAILURE);
+    const serve = `require('node:http').createServer((q, s) => s.end('ok')).listen(Number(process.env.PORT), '127.0.0.1');`;
+    const r = recording({ app: () => [process.execPath, '-e', serve] });
+    const result = await runUiChecks({ checkoutDir: repo, snapshot: p.snapshot, candidate, uiConfig: p.ui, journeyCheckIds: ['ui-journeys'], isolation: r.provider, outDir, homeDir: home, hostEnv: { PATH: process.env.PATH, HOME: home }, toolchainCacheRoot: cacheRoot, appPollMs: 50 });
+    expect(result.reasons.filter((x) => x.startsWith('the application did not start'))).toEqual([]);
+    expect(r.journeys.length).toBeGreaterThan(0);
+  }, 60_000);
+
   it('starts the explorer\'s application with the same profile', async () => {
     const port = await freePort();
     const p = policy(port, ['dotnet', 'run', '--project', 'Web']);
@@ -198,5 +227,34 @@ describe('the application under test gets its toolchain profile (issue #26)', ()
     expect(app!.profile.nisDomainName).toBe(true);
     expect(explored.outcome).toBe('app_failed');
     expect(explored.reasons.join('\n')).toContain('so Orbit stopped the application. Fix: ui.environment.start_command: ["sh", "-c", "dotnet build Web -m:1 && dotnet run --project Web --no-build"]');
+  }, 60_000);
+});
+
+describe('the explorer\'s application temp directory (review of #26)', () => {
+  it('starts the explorer\'s application in an empty temp directory, so a refused node an earlier exploration recorded does not stop it', async () => {
+    const port = await freePort();
+    const p = policy(port, ['dotnet', 'run', '--project', 'Web']);
+    const outDir = join(root, 'evidence', 'ui-exploration');
+    mkdirSync(join(outDir, 'tmp', 'MSBuildTempacme'), { recursive: true });
+    writeFileSync(join(outDir, 'tmp', 'MSBuildTempacme', 'MSBuild_pid-4242_01234567.failure.txt'), MSBUILD_FAILURE);
+    const serve = `require('node:http').createServer((q, s) => s.end('ok')).listen(Number(process.env.PORT), '127.0.0.1');`;
+    const r = recording({ app: () => [process.execPath, '-e', serve] });
+    const explored = await exploreUi({
+      checkoutDir: repo,
+      snapshot: p.snapshot,
+      candidate,
+      uiConfig: p.ui,
+      exploration: { enabled: true, budget_usd: 1, max_minutes: 5 },
+      isolation: r.provider,
+      outDir,
+      explore: async () => ({ output: null, costUsd: 0, status: 'failed', error: 'not reached' }),
+      authorSpec: async () => null,
+      homeDir: home,
+      hostEnv: { PATH: process.env.PATH, HOME: home },
+      toolchainCacheRoot: cacheRoot,
+      appPollMs: 50,
+    });
+    expect(explored.outcome).not.toBe('app_failed');
+    expect(explored.reasons.join('\n')).not.toContain('MSBuild node');
   }, 60_000);
 });

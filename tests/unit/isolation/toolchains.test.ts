@@ -107,6 +107,67 @@ describe('the toolchain profile table', () => {
     expect(l.readOnly).toEqual([]);
   });
 
+  // A release command and an approved operation may fetch what the run's install did not, on the hosts their sandbox
+  // allows, as they did with a private HOME before the toolchain profile (review of #26): reproduced under srt, a deploy
+  // `go run .` that fetched one module from a file proxy in the repository exited 0 with a private HOME and failed with
+  // "go: writing go.mod cache: mkdir <orbit home>/toolchains/<key>/gomod/cache: operation not permitted" with the check's
+  // read-only GOMODCACHE. Each gets caches of its own; the repository's stay read-only beneath them where the tool reads
+  // a second cache (NuGet's fallback folder, a Go module proxy, Gradle's read-only cache, Maven's tail repository).
+  it('gives a command that may fetch caches of its own, with the repository\'s read-only beneath them where the tool reads a second cache', () => {
+    const cacheRoot = '/orbit/toolchains/abc';
+    const scratch = '/run/deploy/toolchains';
+    const l = toolchainLayout({ toolchains: [...TOOLCHAIN_IDS], mode: 'fetch', cacheRoot, scratchRoot: scratch, tmpDir: '/t', networkHosts: [], hostHome: '/nonexistent-home', hostEnv: {} });
+    expect(l.env).toEqual({
+      NUGET_PACKAGES: `${scratch}/cache/nuget`,
+      NUGET_FALLBACK_PACKAGES: `${cacheRoot}/nuget`,
+      NUGET_HTTP_CACHE_PATH: `${scratch}/nuget-http`,
+      NUGET_PLUGINS_CACHE_PATH: `${scratch}/nuget-plugins`,
+      NuGetAudit: 'false',
+      GOMODCACHE: `${scratch}/cache/gomod`,
+      GOPROXY: `file://${cacheRoot}/gomod/cache/download,https://proxy.golang.org,direct`,
+      GOCACHE: `${scratch}/gocache`,
+      GOPATH: `${scratch}/gopath`,
+      GRADLE_USER_HOME: `${scratch}/gradle-home`,
+      GRADLE_RO_DEP_CACHE: `${cacheRoot}/gradle/caches`,
+      MAVEN_OPTS: `-Dmaven.repo.local=${scratch}/maven-repo -Dmaven.repo.local.tail=${cacheRoot}/maven`,
+      JDK_JAVA_OPTIONS: '-Djava.io.tmpdir=/t',
+      // pip and Cargo read no second cache: theirs start empty, as under the private HOME they had before.
+      PIP_CACHE_DIR: `${scratch}/cache/pip`,
+      PIP_DISABLE_PIP_VERSION_CHECK: '1',
+      PYTHONPYCACHEPREFIX: `${scratch}/pycache`,
+      PYTHONUSERBASE: `${scratch}/python-user`,
+      POETRY_VIRTUALENVS_IN_PROJECT: 'true',
+      PIPENV_VENV_IN_PROJECT: '1',
+      CARGO_HOME: `${scratch}/cache/cargo`,
+      CARGO_TARGET_DIR: `${scratch}/cargo-target`,
+    });
+    // Only the command's own scratch is writable; the repository's caches are read, never written.
+    expect(l.writable).toEqual([scratch]);
+    expect(l.readOnly).toEqual(['nuget', 'gomod', 'gradle', 'maven', 'pip', 'cargo'].map((c) => `${cacheRoot}/${c}`));
+    expect(l.directories).toEqual(expect.arrayContaining(['nuget', 'gomod', 'pip', 'cargo'].map((c) => `${scratch}/cache/${c}`)));
+    // The module proxy is a URL: a separator in the Orbit home's path is escaped, so Go reads one entry.
+    const odd = toolchainLayout({ toolchains: ['go'], mode: 'fetch', cacheRoot: '/acme orbit,x|y/toolchains/abc', scratchRoot: scratch, tmpDir: '/t', networkHosts: [], hostEnv: {} });
+    expect(odd.env.GOPROXY).toBe('file:///acme%20orbit%2Cx%7Cy/toolchains/abc/gomod/cache/download,https://proxy.golang.org,direct');
+    // Without an Orbit home there is no repository cache to read beneath: the private caches alone.
+    const alone = toolchainLayout({ toolchains: ['dotnet', 'go'], mode: 'fetch', cacheRoot: null, scratchRoot: '/s', tmpDir: '/t', networkHosts: [], hostEnv: {} });
+    expect(alone.env).toMatchObject({ NUGET_PACKAGES: '/s/cache/nuget', GOMODCACHE: '/s/cache/gomod' });
+    expect(alone.env).not.toHaveProperty('NUGET_FALLBACK_PACKAGES');
+    expect(alone.env).not.toHaveProperty('GOPROXY');
+    expect(alone.writable).toEqual(['/s']);
+    expect(alone.readOnly).toEqual([]);
+    expect(new Set(alone.directories).size).toBe(alone.directories.length);
+  });
+
+  // An approved package install writes the cache of the toolchain that installs, as the install step does; a review of
+  // #26 found that every detected toolchain's cache became writable (an approved `pip install x` in a repository with a
+  // go.mod could write GOMODCACHE, and `cargo install` the shared CARGO_HOME/bin, for every later run).
+  it('makes writable only the caches of the toolchains that install, the others fetching into their own', () => {
+    const l = toolchainLayout({ toolchains: ['go', 'python', 'rust'], mode: 'fetch', installs: ['python'], cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', networkHosts: [], hostEnv: {} });
+    expect(l.env).toMatchObject({ PIP_CACHE_DIR: '/c/pip', GOMODCACHE: '/s/cache/gomod', GOPROXY: 'file:///c/gomod/cache/download,https://proxy.golang.org,direct', CARGO_HOME: '/s/cache/cargo' });
+    expect(l.writable).toEqual(['/s', '/c/pip']);
+    expect(l.readOnly).toEqual(['/c/gomod', '/c/cargo']);
+  });
+
   it('keeps the caches read-only for a worker too', () => {
     const l = toolchainLayout({ toolchains: ['go'], mode: 'worker', cacheRoot: '/c', scratchRoot: '/w/toolchains', tmpDir: '/t', networkHosts: [], hostEnv: {} });
     expect(l.writable).toEqual(['/w/toolchains']);
@@ -135,7 +196,7 @@ describe('the toolchain profile table', () => {
     expect(audit('worker', 'linux', ['api.anthropic.com'])).toBe('false');
     expect(audit('worker', 'linux', ['api.anthropic.com', 'api.nuget.org'])).toBeUndefined();
     // Anything on macOS under srt: off, the host allowed or not.
-    for (const mode of ['install', 'check', 'worker'] as const) {
+    for (const mode of ['install', 'check', 'worker', 'fetch'] as const) {
       expect(audit(mode, 'darwin', registry), mode).toBe('false');
       expect(audit(mode, 'darwin', []), mode).toBe('false');
     }
@@ -172,7 +233,7 @@ describe('the toolchain profile table', () => {
 
   it('points a JVM toolchain at the host\'s JDK through JAVA_HOME, in every mode, and nothing else at it', () => {
     const jdk = '/opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21/arm64/Contents/Home';
-    for (const mode of ['install', 'check', 'worker'] as const) {
+    for (const mode of ['install', 'check', 'worker', 'fetch'] as const) {
       const l = toolchainLayout({ toolchains: ['jvm'], mode, cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', networkHosts: [], hostEnv: { JAVA_HOME: jdk } });
       expect(l.env.JAVA_HOME, mode).toBe(jdk);
       // The JDK is read where it is: never made writable, never re-allowed inside a denied directory.

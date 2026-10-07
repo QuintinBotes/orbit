@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { hostAllowed } from '../policy/hosts.ts';
 
 /**
@@ -8,7 +9,9 @@ import { hostAllowed } from '../policy/hosts.ts';
  * One table, keyed by toolchain, says where each tool keeps them:
  *
  * - dependency caches live under the Orbit home, one set per repository (toolchainCacheRoot), written only by
- *   Orbit's dependency-install step and read-only for every other check and for workers;
+ *   Orbit's dependency-install step and read-only for every other check and for workers; a command that may fetch on
+ *   hosts of its own (a release command, an approved operation) writes caches private to it, over the repository's
+ *   read-only ones where its tool reads a second cache;
  * - build outputs and per-command scratch go to a private directory per check attempt (or per worker);
  * - nothing points at the user's own caches, and nothing is shared between repositories.
  *
@@ -20,13 +23,28 @@ export type ToolchainId = 'dotnet' | 'go' | 'jvm' | 'python' | 'rust';
 /** In table order, which is also the order detection returns. */
 export const TOOLCHAIN_IDS: readonly ToolchainId[] = ['dotnet', 'go', 'jvm', 'python', 'rust'];
 
-/** `install`: Orbit's dependency-install step, which may write the caches. `check` and `worker`: read-only caches. */
-export type ToolchainMode = 'install' | 'check' | 'worker';
+/**
+ * `install`: Orbit's dependency-install step, which may write the caches. `check` and `worker`: read-only caches.
+ * `fetch`: a command that may fetch what its own hosts allow (a release command, an approved operation that is not an
+ * install; ADR 0009, addendum, item 16): caches private to it, which it writes, with the repository's read-only beneath
+ * them where the tool reads a second cache, never written.
+ */
+export type ToolchainMode = 'install' | 'check' | 'worker' | 'fetch';
 
 export interface ToolchainEnvDirs {
   mode: ToolchainMode;
-  /** A dependency cache of this toolchain, by name (one of its `caches`). */
+  /** The repository's dependency cache of this toolchain, by name (one of its `caches`). */
   cache(name: string): string;
+  /**
+   * The dependency cache by that name the tool writes into: in `fetch` mode a private one under the scratch root, else
+   * the repository's (`cache`, read-only outside the install).
+   */
+  own(name: string): string;
+  /**
+   * In `fetch` mode, the repository's cache by that name, which the tool reads beneath its own where it can read a
+   * second cache; null in the other modes, and without an Orbit home (no repository cache to read).
+   */
+  beneath(name: string): string | null;
   /** A private scratch directory of this attempt or worker, by name (one of its `scratch`). */
   scratch(name: string): string;
   /** The process's private temp directory. */
@@ -124,7 +142,11 @@ export const TOOLCHAIN_PROFILES: Readonly<Record<ToolchainId, ToolchainProfile>>
       about: 'three generated projects with no packages, one referencing the other two: their restore and build start MSBuild as a real build does',
     },
     env: (d) => ({
-      NUGET_PACKAGES: d.cache('nuget'),
+      NUGET_PACKAGES: d.own('nuget'),
+      // A fallback folder: NuGet resolves a package found there in place, read-only, and extracts only the others into
+      // NUGET_PACKAGES (measured with SDK 9.0.305: a restore with no package source resolved from it, the packages
+      // folder left empty).
+      ...nonNull('NUGET_FALLBACK_PACKAGES', d.beneath('nuget')),
       NUGET_HTTP_CACHE_PATH: d.scratch('nuget-http'),
       NUGET_PLUGINS_CACHE_PATH: d.scratch('nuget-plugins'),
       // NuGet's vulnerability audit (an MSBuild property, which MSBuild also reads from the environment) fetches from the
@@ -147,7 +169,18 @@ export const TOOLCHAIN_PROFILES: Readonly<Record<ToolchainId, ToolchainProfile>>
     scratchVars: ['GOCACHE', 'GOPATH'],
     registryHosts: ['proxy.golang.org', 'sum.golang.org'],
     probe: { executables: ['go'], args: ['version'] },
-    env: (d) => ({ GOMODCACHE: d.cache('gomod'), GOCACHE: d.scratch('gocache'), GOPATH: d.scratch('gopath') }),
+    env: (d) => {
+      const beneath = d.beneath('gomod');
+      return {
+        GOMODCACHE: d.own('gomod'),
+        // The module cache's download directory is laid out as a module proxy (`go help goproxy`): Go copies a module
+        // found there into its own cache and asks its default proxies for the others (a missing file is "not found",
+        // which a comma passes over). A command that sets GOPROXY itself replaces the list.
+        ...(beneath === null ? {} : { GOPROXY: `${goProxyUrl(join(beneath, 'cache', 'download'))},${GO_DEFAULT_PROXY}` }),
+        GOCACHE: d.scratch('gocache'),
+        GOPATH: d.scratch('gopath'),
+      };
+    },
   },
   jvm: {
     id: 'jvm',
@@ -160,7 +193,8 @@ export const TOOLCHAIN_PROFILES: Readonly<Record<ToolchainId, ToolchainProfile>>
     probe: { executables: ['java'], args: ['--version'] },
     env: (d) => ({
       // The install fills Gradle's and Maven's own homes; everyone else reads them as Gradle's read-only dependency
-      // cache (the directory holding modules-2) and Maven's read-only tail repository, writing only private copies.
+      // cache (the directory holding modules-2) and Maven's read-only tail repository, writing only private copies, into
+      // which a command in `fetch` mode also downloads what they do not hold.
       ...(d.mode === 'install'
         ? { GRADLE_USER_HOME: d.cache('gradle'), MAVEN_OPTS: `-Dmaven.repo.local=${d.cache('maven')}` }
         : {
@@ -188,7 +222,8 @@ export const TOOLCHAIN_PROFILES: Readonly<Record<ToolchainId, ToolchainProfile>>
     registryHosts: ['pypi.org', 'files.pythonhosted.org'],
     probe: { executables: ['python3', 'python'], args: ['--version'] },
     env: (d) => ({
-      PIP_CACHE_DIR: d.cache('pip'),
+      // pip reads no second cache (a read-only one it turns off): in `fetch` mode its own starts empty.
+      PIP_CACHE_DIR: d.own('pip'),
       PIP_DISABLE_PIP_VERSION_CHECK: '1',
       PYTHONPYCACHEPREFIX: d.scratch('pycache'),
       PYTHONUSERBASE: d.scratch('python-user'),
@@ -207,13 +242,26 @@ export const TOOLCHAIN_PROFILES: Readonly<Record<ToolchainId, ToolchainProfile>>
     registryHosts: ['index.crates.io', 'static.crates.io'],
     probe: { executables: ['cargo'], args: ['--version'] },
     env: (d) => ({
-      CARGO_HOME: d.cache('cargo'),
+      // Cargo reads no second registry cache: in `fetch` mode its own home starts empty.
+      CARGO_HOME: d.own('cargo'),
       CARGO_TARGET_DIR: d.scratch('cargo-target'),
       // rustup's proxies find their toolchains through RUSTUP_HOME, else under HOME, which is private in a check.
       ...(d.rustupHome ? { RUSTUP_HOME: d.rustupHome } : {}),
     }),
   },
 };
+
+/** What Go uses when GOPROXY is unset; in `fetch` mode it comes after the repository's module cache. */
+const GO_DEFAULT_PROXY = 'https://proxy.golang.org,direct';
+
+/** A file URL for GOPROXY, with its list separators (`,` and `|`) escaped where the path holds them. */
+function goProxyUrl(dir: string): string {
+  return pathToFileURL(dir).href.replaceAll(',', '%2C').replaceAll('|', '%7C');
+}
+
+function nonNull(name: string, value: string | null): Record<string, string> {
+  return value === null ? {} : { [name]: value };
+}
 
 const REPO_KEY = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -263,6 +311,11 @@ export function detectToolchains(input: { command?: readonly string[]; shell?: b
 export interface ToolchainLayoutInput {
   toolchains: readonly ToolchainId[];
   mode: ToolchainMode;
+  /**
+   * Toolchains in mode `install` whatever `mode` says: those whose packages the process installs (an approved package
+   * install), so that only their caches are writable.
+   */
+  installs?: readonly ToolchainId[];
   /** The repository's cache root (toolchainCacheRoot), or null: then the caches are private scratch too. */
   cacheRoot: string | null;
   /** The attempt's (or worker's) private scratch root; writable. */
@@ -282,12 +335,13 @@ export interface ToolchainLayout {
   toolchains: ToolchainId[];
   /** Variables for the process; the check's own env is applied after them. */
   env: Record<string, string>;
-  /** Paths the sandbox must let the process write: the scratch root, and the caches in the install step. */
+  /** Paths the sandbox must let the process write: the scratch root, and the caches of the toolchains that install. */
   writable: string[];
-  /** Paths the sandbox must let the process read and never write: the repository's caches outside the install step. */
+  /** Paths the sandbox must let the process read and never write: the repository's caches of every other toolchain. */
   readOnly: string[];
   /** Every cache and scratch directory, to create before the process starts. */
   directories: string[];
+  /** The repository's caches (their stand-ins without an Orbit home), never a `fetch` command's own. */
   caches: { toolchain: ToolchainId; name: string; path: string }[];
   /**
    * The process runs .NET, whose CookieContainer reads the NIS domain name: every .NET HTTP client (NuGet's restore
@@ -315,26 +369,45 @@ export function toolchainLayout(input: ToolchainLayoutInput): ToolchainLayout {
   const ids = ordered(input.toolchains);
   const shared = input.cacheRoot !== null;
   const cachePath = (name: string) => (input.cacheRoot !== null ? join(input.cacheRoot, name) : join(input.scratchRoot, 'cache', name));
+  // A `fetch` command's own caches; without an Orbit home they are the stand-ins above, already private and writable.
+  const ownPath = (name: string) => join(input.scratchRoot, 'cache', name);
   const scratchPath = (name: string) => join(input.scratchRoot, name);
+  const modeOf = (id: ToolchainId): ToolchainMode => (input.installs?.includes(id) ? 'install' : input.mode);
   const rustupHome = ids.includes('rust') ? rustupHomeOf(input) : null;
   const javaHome = ids.includes('jvm') ? javaHomeOf(input) : null;
   const platform = input.platform ?? process.platform;
   const env: Record<string, string> = {};
   const directories: string[] = [];
   const caches: ToolchainLayout['caches'] = [];
+  const writableCaches: string[] = [];
+  const readOnly: string[] = [];
   for (const id of ids) {
     const p = TOOLCHAIN_PROFILES[id];
-    Object.assign(env, p.env({ mode: input.mode, cache: cachePath, scratch: scratchPath, tmpDir: input.tmpDir, rustupHome, javaHome, platform, networkHosts: input.networkHosts }));
+    const mode = modeOf(id);
+    const fetch = mode === 'fetch';
+    const dirs: ToolchainEnvDirs = {
+      mode,
+      cache: cachePath,
+      own: (name) => (fetch ? ownPath(name) : cachePath(name)),
+      beneath: (name) => (fetch && shared ? cachePath(name) : null),
+      scratch: scratchPath,
+      tmpDir: input.tmpDir,
+      rustupHome,
+      javaHome,
+      platform,
+      networkHosts: input.networkHosts,
+    };
+    Object.assign(env, p.env(dirs));
     for (const name of p.caches) caches.push({ toolchain: id, name, path: cachePath(name) });
-    directories.push(...p.caches.map(cachePath), ...p.scratch.map(scratchPath));
+    if (shared) (mode === 'install' ? writableCaches : readOnly).push(...p.caches.map(cachePath));
+    directories.push(...p.caches.map(cachePath), ...(fetch ? p.caches.map(ownPath) : []), ...p.scratch.map(scratchPath));
   }
-  const cachePaths = caches.map((c) => c.path);
   return {
     toolchains: ids,
     env,
-    writable: ids.length === 0 ? [] : [input.scratchRoot, ...(shared && input.mode === 'install' ? cachePaths : [])],
-    readOnly: shared && input.mode !== 'install' ? cachePaths : [],
-    directories,
+    writable: ids.length === 0 ? [] : [input.scratchRoot, ...writableCaches],
+    readOnly,
+    directories: [...new Set(directories)],
     caches,
     nisDomainName: ids.includes('dotnet'),
   };
@@ -346,6 +419,8 @@ export interface CommandToolchainsInput {
   /** Where the command's marker files are looked for: the checkout root and the directory it runs in. */
   roots: readonly string[];
   mode: ToolchainMode;
+  /** Toolchains whose packages the command installs: their caches are writable (ToolchainLayoutInput.installs). */
+  installs?: readonly ToolchainId[];
   cacheRoot: string | null;
   scratchRoot: string;
   tmpDir: string;
@@ -365,13 +440,15 @@ export interface CommandToolchainsInput {
  * name, with the repository's caches (`cacheRoot`), build state in `scratchRoot`, and the hosts its sandbox allows.
  * Under a container the platform is Linux whatever the host's, and the host's rustup and JDK are neither mounted nor
  * wanted. Checks and the dependency install use it (evidence/runner.ts), and so do the other commands Orbit starts in a
- * sandbox built from the check profile: approved operations, the application under test, and release commands (#26).
+ * sandbox built from the check profile (#26): approved operations and release commands (mode `fetch`, and `install` for
+ * the toolchains an approved package install installs with) and the application under test (mode `check`).
  */
 export function commandToolchains(input: CommandToolchainsInput): ToolchainLayout {
   const container = input.isolation === 'container';
   return toolchainLayout({
     toolchains: detectToolchains({ command: input.command, ...(input.shell === undefined ? {} : { shell: input.shell }), roots: input.roots }),
     mode: input.mode,
+    ...(input.installs ? { installs: input.installs } : {}),
     cacheRoot: input.cacheRoot,
     scratchRoot: input.scratchRoot,
     tmpDir: input.tmpDir,

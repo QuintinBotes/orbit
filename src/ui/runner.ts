@@ -160,6 +160,9 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
   const notExecuted: UiNotExecuted[] = [];
   let terminal: UiRunVerdict | null = null;
   let app: AppHandle | null = null;
+  // Emptied first: the directory is under the candidate's evidence, which a later UI run of the candidate reuses, and an
+  // MSBuild failure report an earlier one left there would stop the application at its first look (a review of #26).
+  removeScratch(join(outDir, 'tmp'));
   const tmpDir = ensureDir(join(outDir, 'tmp'));
   const baseEnv = safeBaseEnv(input.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;

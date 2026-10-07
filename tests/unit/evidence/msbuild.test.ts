@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { fingerprintFailure } from '../../../src/evidence/fingerprint.ts';
-import { findMsbuildNodeDenial, msbuildFix, msbuildFixReason, msbuildNodeDenialNote, msbuildNodeDenialText, msbuildNodeFix, msbuildNodes, probeNodeSwitches } from '../../../src/evidence/msbuild.ts';
+import { findMsbuildNodeDenial, msbuildFix, msbuildFixReason, msbuildNodeDenialNote, msbuildNodeDenialText, msbuildNodeFix, msbuildNodes, probeNodeSwitches, runStoppingRefusedNodes } from '../../../src/evidence/msbuild.ts';
 import { checkDef } from './fixtures.ts';
 
 const MSBUILD_MODULE = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '../../../src/evidence/msbuild.ts')).href;
@@ -376,5 +376,65 @@ describe('msbuildNodeDenialNote', () => {
     const note = msbuildNodeDenialNote({ pid: 4242, pipe: '/tmp/MSBuild4242', exception: 'System.Net.Sockets.SocketException (13): Permission denied' }, fix, false);
     expect(note).toBe(`the check sandbox denied MSBuild node (pid 4242) its named pipe /tmp/MSBuild4242 (System.Net.Sockets.SocketException (13): Permission denied), and the check failed on it before the runner's next look. Fix: ${fix}`);
     expect(note).not.toMatch(/Orbit stopped/);
+  });
+});
+
+describe('runStoppingRefusedNodes', () => {
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const NAME = 'MSBuild_pid-4242_0123456789abcdef0123456789abcdef.failure.txt';
+
+  it('stops a command once MSBuild records a refused node, and says Orbit stopped it', async () => {
+    const d = tmp();
+    const ran = await runStoppingRefusedNodes(
+      d,
+      (signal) =>
+        new Promise<{ cancelled: boolean }>((resolve) => {
+          report(d, NAME, FAILURE);
+          signal.addEventListener('abort', () => resolve({ cancelled: true }));
+        }),
+      undefined,
+      20,
+    );
+    expect(ran).toMatchObject({ stopped: true, denial: { pid: 4242 } });
+  });
+
+  // A review of #26 found that a command that had already exited on its own (MSBuild fails at once on Linux) read as
+  // stopped by Orbit when a look found the record before the run's result came back: its real exit code was replaced by
+  // null and its note said Orbit stopped it. The abort only stops a command that is still running (execCapture reports
+  // that as `cancelled`).
+  it('does not say Orbit stopped a command that exited on its own before the abort reached it', async () => {
+    const d = tmp();
+    const ran = await runStoppingRefusedNodes(
+      d,
+      async () => {
+        report(d, NAME, FAILURE);
+        await wait(300);
+        return { cancelled: false };
+      },
+      undefined,
+      20,
+    );
+    expect(ran.denial).toMatchObject({ pid: 4242 });
+    expect(ran.stopped).toBe(false);
+  });
+
+  it('does not say Orbit stopped a command a cancellation had stopped first', async () => {
+    const d = tmp();
+    const outer = new AbortController();
+    setTimeout(() => outer.abort(), 50);
+    const ran = await runStoppingRefusedNodes(
+      d,
+      (signal) =>
+        new Promise<{ cancelled: boolean }>((resolve) => {
+          signal.addEventListener('abort', () => {
+            report(d, NAME, FAILURE);
+            setTimeout(() => resolve({ cancelled: true }), 300);
+          });
+        }),
+      outer.signal,
+      20,
+    );
+    expect(ran.denial).toMatchObject({ pid: 4242 });
+    expect(ran.stopped).toBe(false);
   });
 });

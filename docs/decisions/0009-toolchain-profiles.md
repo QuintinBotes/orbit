@@ -644,11 +644,17 @@ Decision.
     and the checkout's marker files (`isolation/toolchains.ts`
     `commandToolchains`, which checks use too), with the hosts its sandbox
     really allows deciding NuGet's audit (item 12): build state in a directory
-    private to that command (removed after it), the repository's caches, the
-    NIS domain name rule (item 8) and IPv4 sockets (item 13) for .NET, and the
-    runner's early stop (item 3, `evidence/msbuild.ts`
-    `runStoppingRefusedNodes`), with a note that names the process and the fix
-    for its field. Per place:
+    private to that command (removed after it), the repository's caches (read
+    by the application as by a check; beneath caches of their own for a release
+    command and an approved operation, item 16), the NIS domain name rule (item
+    8) and IPv4 sockets (item 13) for .NET, and the runner's early stop (item 3,
+    `evidence/msbuild.ts` `runStoppingRefusedNodes`), with a note that names the
+    process and the fix for its field. The early stop says Orbit stopped a
+    command only when its abort reached the command still running (`execCapture`
+    reports that as cancelled): a review found that a command that had already
+    exited on its own (MSBuild fails at once on Linux), or that a cancellation
+    had stopped first, read as stopped by Orbit, its own exit code replaced by
+    null. Per place:
 
     - **The application** reads the caches (mode `check`: it is repository code,
       like a check), has no network of its own (the journey check's hosts when
@@ -657,12 +663,22 @@ Decision.
       gets a check's .NET settings (`DOTNET_CHECK_ENV`: first-run steps and
       SourceLink's git queries off, the latter needed under `srt` on Linux) and
       keeps the account's `HOME`, which its browser-facing tools read as before.
+      It keeps the account's Python user site-packages too: `PYTHONUSERBASE`
+      is not set for it, since a review found that the check's private one hid
+      packages installed with `pip install --user`, which the interpreter
+      reads at run time (its bytecode still goes to `PYTHONPYCACHEPREFIX`).
       `startApp` asks the early stop while it waits for readiness: a refused
       node ends the start at once with "the application was stopped before it
       became ready" and the note; in the single-sandbox mode MSBuild fails at
-      once, and the reason gets the note after the fact.
-    - **A release command** reads the caches (mode `check`; only the install
-      writes them), with the environment's `network_hosts`, and its private
+      once, and the reason gets the note after the fact. Its temp directory
+      (`<evidence>/ui/tmp`, and the exploration's) is emptied before each UI
+      run, since a later verification of the same candidate reuses it, and a
+      failure report MSBuild left there stopped the application at its first
+      look (a review).
+    - **A release command** fetches into caches of its own, with the
+      repository's read-only beneath them (mode `fetch`, item 16; only the
+      install writes the repository's), with the environment's
+      `network_hosts`, and its private
       home is prepared as a check's (`privateHomeDotnetEnv`: the NuGet
       migrations recorded as done, `DOTNET_CHECK_ENV`, `DOTNET_CLI_HOME`),
       below the controller's deploy credentials, which still win. A deploy the
@@ -670,36 +686,52 @@ Decision.
       UNKNOWN: `srt` exits 0 when it is stopped (measured), so the outcome has
       no exit code of its own. A verify command whose own build was refused a
       node leaves the deploy UNKNOWN whatever it exits with, since an exit 1
-      there would otherwise read as "not deployed".
-    - **An approved operation** reads the caches unless it is itself the
-      install: a command of the approved line that `policy/bash.ts` classifies
-      as a package install and that runs a toolchain's executable (`dotnet add
+      there would otherwise read as "not deployed". Each deploy and verify
+      command starts with an empty temp directory (`prepareFreshTmpDir`): the
+      directory is derived from the deploy's, so each resolution of an UNKNOWN
+      deploy reused it, and a review found that a failure report an earlier
+      verify left there made every later verify of that deploy UNKNOWN.
+    - **An approved operation** fetches into caches of its own, as a release
+      command does (mode `fetch`, item 16), unless it is itself the install: a
+      command of the approved line that `policy/bash.ts` classifies as a
+      package install and that runs a toolchain's executable (`dotnet add
       package`, `dotnet restore`, `cargo add`, `cargo fetch`, `pip install`,
-      `go get`) gets mode `install`, so the repository's caches are writable,
-      as for the dependency install. This keeps ADR 0009's rules: the caches
-      are written by an install step only, and nothing is shared between
-      repositories. The person approved exactly that command, its network stays
-      the frozen policy's hosts plus the approved one (no registry hosts are
-      added), and its output says which toolchains it got and whether the
-      caches were writable. The exposure is the one decision 3 accepted for a
-      configured install command that evaluates repository code: the approved
-      command runs in the attempt's worktree, so MSBuild or a build script there
-      runs a candidate's code with that repository's cache writable. Without it
-      an approved `dotnet add package` could add the reference but not restore
-      the package anywhere the retried worker reads it. Its private home is
-      prepared as a check's, and a stopped one has no exit code and says so.
-      Considered and rejected: a private cache for an approved install (the
-      worker could not build with what it installed), and the install mode for
-      every approved command (a `chmod +x` that also runs a build would get a
-      writable cache it does not need).
+      `go get`) gets mode `install` for that toolchain, so the repository's
+      cache of that toolchain is writable, as for the dependency install; every
+      other toolchain it uses stays in mode `fetch`. This keeps ADR 0009's
+      rules: the caches are written by an install step only, and nothing is
+      shared between repositories. The person approved exactly that command,
+      its network stays the frozen policy's hosts plus the approved one (no
+      registry hosts are added), and its output says which toolchains it got
+      and whose cache was writable. The exposure is the one decision 3 accepted
+      for a configured install command that evaluates repository code: the
+      approved command runs in the attempt's worktree, so MSBuild or a build
+      script there runs a candidate's code with that toolchain's cache
+      writable. Without it an approved `dotnet add package` could add the
+      reference but not restore the package anywhere the retried worker reads
+      it. Its private home is prepared as a check's, and one Orbit stopped (for
+      a refused node, the run's cancellation or the 300 s limit) has no exit
+      code and says why: `srt` exits 0 when stopped, and a review found that a
+      cancelled command's receipt said exit 0. Considered and rejected: a
+      private cache for an approved install (the worker could not build with
+      what it installed), the install mode for every approved command (a `chmod
+      +x` that also runs a build would get a writable cache it does not need),
+      and the install mode for every toolchain an approved install uses (a
+      review found that an approved `pip install` in a repository with a
+      `go.mod` made the Go module cache writable too, and a `cargo install` the
+      shared `CARGO_HOME/bin`, which Cargo searches for subcommands, for every
+      later run of the repository).
 
     `orbit doctor` (`checks.sandbox`) judges `ui.environment.start_command` and
     each release environment's `deploy_command` and `verify_command` with the
     static rules of items 2 and 10 (`-m:1`, `dotnet run` in two steps, `dotnet
     format`), always as mandatory, since none of them can start when the
     sandbox refuses it, and with no `DOTNET_PROCESSOR_COUNT` alternative, since
-    none has an env of its own. These fields are argvs, never run through a
-    shell, so a fix that needs a shell line is a `sh -c` script
+    none has an env of its own. The release commands only in mode `release`,
+    the one mode whose runs merge or deploy: a review found doctor failing a
+    supervised configuration for a release block no run of it uses. These
+    fields are argvs, never run through a shell, so a fix that needs a shell
+    line is a `sh -c` script
     (`ui.environment.start_command: ["sh", "-c", "dotnet build Web -m:1 &&
     dotnet run --project Web --no-build"]`; `dependencies.install_command` gets
     the same form now, where it named a one-word argv before). Its summary says
@@ -716,9 +748,9 @@ Decision.
     (it never became ready before); an approved `dotnet build -m:1` of a project
     with two references builds (it died at the first run before), and without
     `-m:1` it is stopped with the pinned command; a deploy `dotnet build -m:1`
-    builds (it exited 1 at the first run before). Not verified: Linux (the
-    single-sandbox note is unit-tested), a release command that restores
-    packages, and an approved install that writes the cache under `srt`.
+    builds (it exited 1 at the first run before); release commands that fetch
+    are item 16's. Not verified: Linux (the single-sandbox note is
+    unit-tested) and an approved install that writes the cache under `srt`.
 15. **.NET file watchers poll on macOS.** A `FileSystemWatcher` on macOS asks
     the FSEvents service for events, and `srt`'s Seatbelt profile denies that
     lookup (`deny(1) mach-lookup com.apple.FSEvents`, again and again in the
@@ -741,6 +773,79 @@ Decision.
     too: a check that starts the same host (`WebApplicationFactory` in an
     ASP.NET Core integration test) would meet the same lookup, which was not
     measured.
+16. **A release command and an approved operation fetch into caches of their
+    own** (a review of item 14). Before item 14 they ran with a private `HOME`,
+    so Go, Cargo and NuGet fetched into it on the hosts their sandbox allows;
+    with the check's read-only caches they could fetch nothing. Reproduced
+    under `srt` 0.0.78 on macOS 27 through `performRelease`: a deploy `[sh, -c,
+    "GOTOOLCHAIN=local GOPROXY=file://$PWD/proxy GOSUMDB=off GOFLAGS=-mod=mod
+    go run ."]` that fetched one module from a proxy committed in the
+    repository (no network, no TLS) exited 0 on the code before item 14 and,
+    with item 14, ended `DELIVERY_FAILED` with `go: writing go.mod cache: mkdir
+    <orbit home>/toolchains/<key>/gomod/cache: operation not permitted`; a
+    `dotnet build` restoring a package from a feed in the repository failed
+    with NuGet's `Access to the path '<orbit home>/toolchains/<key>/nuget/
+    acme.greeting' is denied ... Operation not permitted`; `cargo install
+    --path .` failed with `failed to open: <orbit home>/toolchains/<key>/cargo/
+    .crates.toml ... Operation not permitted`. That is every deploy or verify
+    command (and every approved command) that needs something the run's
+    install did not put in the repository's cache: a Node repository whose
+    deploy tool is Go or .NET, `go run tool@version`, crates, NuGet packages a
+    restore of the checkout does not fetch, a merge commit that picks up
+    dependencies from the base branch; and on Linux or in a container, where
+    these tools can reach their registries on `network_hosts`, a fetch from
+    those too.
+
+    They now get mode `fetch` (`isolation/toolchains.ts`): each toolchain's
+    dependency cache is the command's own (`<its scratch>/cache/<name>`,
+    writable, removed after it), with the repository's read-only beneath it
+    where the tool reads a second cache:
+
+    | toolchain | the command's own, writable | the repository's, read-only beneath it |
+    |---|---|---|
+    | dotnet | `NUGET_PACKAGES` | `NUGET_FALLBACK_PACKAGES`: a fallback folder, from which NuGet resolves a package in place and extracts only the others |
+    | go | `GOMODCACHE` | `GOPROXY=file://<cache>/gomod/cache/download,https://proxy.golang.org,direct`: the download directory is laid out as a module proxy (`go help goproxy`), so Go copies a module found there and asks its default proxies for the rest |
+    | jvm | `GRADLE_USER_HOME`, `-Dmaven.repo.local` (private, as in a check) | `GRADLE_RO_DEP_CACHE`, `-Dmaven.repo.local.tail` (as in a check) |
+    | python | `PIP_CACHE_DIR` | none: pip reads no second cache (a read-only one it turns off) |
+    | rust | `CARGO_HOME` | none: Cargo reads no second registry cache |
+
+    This keeps ADR 0009's rules: only an install step writes the repository's
+    caches, and nothing is shared between repositories (a command's own caches
+    are its alone and removed with it). Its network is unchanged, so it fetches
+    what it fetched before item 14, where it fetched it. Verified under `srt`
+    0.0.78 on macOS 27 in integration tests (Go 1.27.1, SDK 9.0.305, Cargo
+    1.98.1), the first three failing with item 14's layout: the Go deploy above
+    prints its module's greeting, and the repository's module cache stays
+    empty; a `dotnet build` that restores a package from a feed in the
+    repository builds, the repository's NuGet cache untouched; `cargo install
+    --path .` installs and the installed program runs. Two more pass both ways:
+    a Go deploy whose module only the repository's cache holds, with no network
+    and no proxy of its own, and a `dotnet build` whose package only the
+    repository's cache holds, with no package source. Measured before, outside
+    the sandbox: with `NUGET_FALLBACK_PACKAGES` the restore resolved the package
+    and left `NUGET_PACKAGES` empty, and without it failed `NU1100`; Go passed a
+    file proxy whose directory does not exist over to the next entry, and read
+    one whose path held `%2C` for a comma (the variable escapes `,` and `|`,
+    GOPROXY's separators).
+
+    Costs. Go copies each module it uses from the repository's cache into the
+    command's own (a local copy, no download). pip and Cargo start empty, as
+    under the private `HOME` before item 14: a Rust or Python release command
+    fetches its packages on the environment's hosts (`index.crates.io` and
+    `static.crates.io`; `pypi.org` and `files.pythonhosted.org`), or fails
+    without them, as it did then. A module that `GOPRIVATE` or `GONOPROXY`
+    names bypasses every proxy, the repository's cache included, and a command
+    that sets `GOPROXY` (or `NUGET_FALLBACK_PACKAGES`) itself replaces Orbit's.
+    The application under test keeps mode `check`: it has no network of its
+    own (the journey check's in the single-sandbox mode), so the repository's
+    caches serve it better than empty ones. Considered and rejected: item 14's
+    read-only caches (the failures above); the repository's caches writable for
+    these commands (a deploy runs the delivered commit's code, or a merge
+    commit's, with no install step's trust, and its writes would reach every
+    later check of the repository); and copying the repository's Cargo home
+    into the command's own (a full copy of a cache that can hold gigabytes, for
+    each command). Not verified: Linux, a container, Maven and Gradle (not
+    installed where this was measured), and pip.
 
 Consequences.
 
@@ -781,11 +886,15 @@ Consequences.
   opens IPv4 sockets by default (item 13) and polls in its file watchers (item
   15); a check that needs either default back sets the variable in its own
   `env`.
-- An application under test, a release command and an approved operation read
-  the repository's dependency caches as a check does (item 14), so what the run's
-  install did not fetch is missing for them too: a deploy of a merge commit that
-  adds a package fails with the tool's "read-only" message, as a check would.
-  An approved package install may write the caches, as the install step does.
+- An application under test reads the repository's dependency caches as a
+  check does (item 14), so what the run's install did not fetch is missing for
+  it too, and a write it tries there is refused by the sandbox (Go's
+  "operation not permitted", NuGet's "Access to the path ... is denied"). A
+  release command and an approved operation fetch what they need on their own
+  hosts into caches of their own (item 16), over the repository's where the
+  tool reads a second cache; Cargo and pip there start empty, as before item
+  14. An approved package install may write the cache of the toolchain it
+  installs with, as the install step does, and only that one.
   `ui.environment.start_command: [dotnet, run, ...]` fails doctor; its two-step
   form, a `sh -c` script, passes.
 - A `dotnet format` check under `srt` is `dotnet format whitespace --folder

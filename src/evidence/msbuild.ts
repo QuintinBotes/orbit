@@ -200,20 +200,26 @@ const NODE_SCAN_MS = 1_000;
  * runner does for a check (ADR 0009, addendum, item 3): once there is one the build cannot succeed, so `run`'s signal is
  * aborted, which stops the command, instead of MSBuild waiting 30 s for each of ten node starts. `outer` aborts it too
  * (a cancellation). After it ends the directory is looked at once more, since on Linux MSBuild fails at once, usually
- * before a look. `stopped`: whether Orbit stopped it for the denial.
+ * before a look. `stopped`: whether Orbit stopped it for the denial, which `run`'s result says by `cancelled` (an
+ * abort that reached a command still running, as execCapture reports it). A command that had exited on its own before
+ * the look, or that a cancellation had already stopped, was not stopped for the denial: a review of #26 found such a
+ * command read as stopped, its own exit code replaced by null.
  */
-export async function runStoppingRefusedNodes<T>(tmpDir: string, run: (signal: AbortSignal) => Promise<T>, outer?: AbortSignal, everyMs = NODE_SCAN_MS): Promise<{ result: T; denial: MsbuildNodeDenial | null; stopped: boolean }> {
+export async function runStoppingRefusedNodes<T extends { cancelled: boolean }>(tmpDir: string, run: (signal: AbortSignal) => Promise<T>, outer?: AbortSignal, everyMs = NODE_SCAN_MS): Promise<{ result: T; denial: MsbuildNodeDenial | null; stopped: boolean }> {
   const stop = new AbortController();
   let denial: MsbuildNodeDenial | null = null;
+  let stoppedForIt = false;
   const timer = setInterval(() => {
     if (denial !== null) return;
     denial = findMsbuildNodeDenial(tmpDir);
-    if (denial !== null) stop.abort();
+    if (denial === null) return;
+    stoppedForIt = outer?.aborted !== true;
+    stop.abort();
   }, everyMs);
   try {
     const result = await run(outer ? AbortSignal.any([outer, stop.signal]) : stop.signal);
     const found = denial as MsbuildNodeDenial | null;
-    return { result, denial: found ?? findMsbuildNodeDenial(tmpDir), stopped: found !== null };
+    return { result, denial: found ?? findMsbuildNodeDenial(tmpDir), stopped: stoppedForIt && result.cancelled };
   } finally {
     clearInterval(timer);
   }

@@ -55,7 +55,7 @@ import { atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
 import { recordDecision } from '../storage/decisions.ts';
 import { redact } from '../core/redact.ts';
 import { authorize } from '../policy/authorize.ts';
-import { prepareWorkerTmpDir, profileForCheck } from '../isolation/profiles.ts';
+import { prepareFreshTmpDir, profileForCheck } from '../isolation/profiles.ts';
 import { commandToolchains, prepareToolchainLayout, removeScratch, type ToolchainLayout } from '../isolation/toolchains.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../evidence/candidate.ts';
 import { msbuildNodeDenialNote, msbuildNodeFix, nodeDenialSubject, runStoppingRefusedNodes } from '../evidence/msbuild.ts';
@@ -108,7 +108,7 @@ export interface ReleaseInput {
   homeDir?: string;
   /**
    * The repository's toolchain dependency caches (isolation/toolchains.ts toolchainCacheRoot), read-only for the deploy
-   * command, as for a check. Absent: the command keeps its caches in its private scratch.
+   * command, beneath caches of its own where its tool reads a second cache. Absent: its caches are its own alone.
    */
   toolchainCacheRoot?: string | null;
   /** Overrides repository.remote (a name or URL). */
@@ -591,7 +591,7 @@ async function runDeploy(a: {
   try {
     const tree = (await execCapture(['git', 'rev-parse', `${sha}^{tree}`], { cwd: repoRoot, env: gitEnv(), timeoutMs: 30_000 })).stdout.trim();
     mkdirSync(files.home, { recursive: true, mode: 0o700 });
-    const tmp = prepareWorkerTmpDir(files.dir);
+    const tmp = prepareFreshTmpDir(files.dir);
     const def: CheckDefinition = {
       id: `release:${envName}`,
       command: [...env.deploy_command],
@@ -643,12 +643,16 @@ async function runDeploy(a: {
 }
 
 /**
- * The toolchain layout of a deploy or verify command (docs/decisions/0009-toolchain-profiles.md, addendum, item 14),
- * found as a check's is from its command and the deployed checkout's marker files: the repository's dependency caches
- * read-only (only Orbit's install step writes them), build state private to the command, and for .NET the NIS rule.
+ * The toolchain layout of a deploy or verify command (docs/decisions/0009-toolchain-profiles.md, addendum, items 14 and
+ * 16), found as a check's is from its command and the deployed checkout's marker files: dependency caches of its own,
+ * which it fills on the environment's hosts as it did with the private HOME it had before, the repository's read-only
+ * beneath them where its tool reads a second cache (only Orbit's install step writes those), build state private to the
+ * command, and for .NET the NIS rule. With the check's read-only caches it could fetch nothing: a deploy `go run .`
+ * that fetched one module failed with "go: writing go.mod cache: mkdir <orbit home>/toolchains/<key>/gomod/cache:
+ * operation not permitted" under srt, where it had exited 0.
  */
 function releaseToolchains(a: { command: readonly string[]; checkout: string; cacheRoot: string | null; scratch: string; tmp: string; isolation: IsolationProvider['kind']; networkHosts: readonly string[]; homeDir?: string }): ToolchainLayout {
-  const layout = commandToolchains({ command: a.command, roots: [a.checkout], mode: 'check', cacheRoot: a.cacheRoot, scratchRoot: a.scratch, tmpDir: a.tmp, isolation: a.isolation, networkHosts: a.networkHosts, ...(a.homeDir ? { hostHome: a.homeDir } : {}), hostEnv: process.env });
+  const layout = commandToolchains({ command: a.command, roots: [a.checkout], mode: 'fetch', cacheRoot: a.cacheRoot, scratchRoot: a.scratch, tmpDir: a.tmp, isolation: a.isolation, networkHosts: a.networkHosts, ...(a.homeDir ? { hostHome: a.homeDir } : {}), hostEnv: process.env });
   prepareToolchainLayout(layout);
   return layout;
 }
@@ -833,7 +837,7 @@ async function runVerifyCommand(a: {
   const checkout = await materializeCandidate(run.repoRoot, sha, checkoutDir, { readOnly: false });
   try {
     mkdirSync(home, { recursive: true, mode: 0o700 });
-    const tmp = prepareWorkerTmpDir(dir);
+    const tmp = prepareFreshTmpDir(dir);
     const def: CheckDefinition = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: '.', timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], local_binding: false, env: {}, mandatory: true, flaky_reruns: 0, kind: 'command', category: 'other' };
     const scratch = join(dir, 'toolchains');
     const toolchains = releaseToolchains({ command: a.command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, ...(input.homeDir ? { homeDir: input.homeDir } : {}) });

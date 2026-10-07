@@ -44,8 +44,9 @@ function withApp(cfg: OrbitConfig, command: string[]): OrbitConfig {
   return { ...cfg, ui };
 }
 
-function withRelease(cfg: OrbitConfig, deploy: string[], verify: string[] | null = null): OrbitConfig {
-  return { ...cfg, release: { merge: defaultReleaseMerge(), environments: { production: { ...defaultReleaseEnvironment('main'), deploy_command: deploy, verify_command: verify } } } };
+/** A release environment, in mode `release`, the only mode whose runs deploy (or `mode`, to see one that never does). */
+function withRelease(cfg: OrbitConfig, deploy: string[], verify: string[] | null = null, mode: OrbitConfig['mode'] = 'release'): OrbitConfig {
+  return { ...cfg, mode, release: { merge: defaultReleaseMerge(), environments: { production: { ...defaultReleaseEnvironment('main'), deploy_command: deploy, verify_command: verify } } } };
 }
 
 /** An srt-like provider that records every wrap and wraps nothing. */
@@ -126,6 +127,17 @@ describe('checkSandboxCheck: release commands (issue #26)', () => {
     expect(c.status).toBe('fail');
     expect(c.details).toContain('release.environments.production.deploy_command: runs "dotnet format --verify-no-changes", which loads the project through a build host whose named pipe .NET binds under /tmp, and the check sandbox refuses it');
     expect(c.fix!.startsWith('release.environments.production.deploy_command: ["sh", "-c", "dotnet format whitespace --folder --verify-no-changes && fly deploy"] (dotnet format loads the project through a build host')).toBe(true);
+  });
+
+  // A review of #26 found that doctor failed a supervised configuration for a release block it never uses: only a run
+  // in mode release merges or deploys (actions.merge and actions.deploy_production require it).
+  it('does not judge the release commands of a mode that never releases', async () => {
+    const w = world();
+    for (const mode of ['supervised', 'autonomous', 'autonomous-delivery'] as const) {
+      const c = await checkSandboxCheck({ config: withRelease(w.cfg, ['dotnet', 'publish', 'src/Acme.Web', '-c', 'Release'], ['dotnet', 'run', '--project', 'tools/Verify'], mode), repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, platform: 'linux', launch: ok });
+      expect(c.status, `${mode}: ${c.summary}`).toBe('pass');
+      expect(c.details.some((d) => d.includes('release.environments')), mode).toBe(false);
+    }
   });
 
   it('names running dotnet format outside Orbit for a deploy command on macOS, where a run\'s checkout sits below the denied Orbit home', async () => {

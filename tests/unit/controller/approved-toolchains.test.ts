@@ -4,7 +4,7 @@
 // command with a fresh private HOME and nothing else: every dotnet command died at its first-run step (measured under
 // srt on macOS: "The system cannot open the device or file specified. : 'NuGet-Migrations'", the named mutex under
 // /tmp/.dotnet), there was no NuGet cache and no NIS rule, and a build without -m:1 waited out the 300 s limit.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -66,18 +66,22 @@ async function dotnetLab(provider: IsolationProvider, hosts: string[] = []): Pro
 }
 
 describe('approved operations get the toolchain profile of a check (issue #26)', () => {
-  it('runs an approved command in a .NET repository with the repository\'s NuGet cache read-only, private build state, a prepared home and the NIS rule', async () => {
+  it('runs an approved command in a .NET repository with the repository\'s NuGet cache read-only beneath its own, private build state, a prepared home and the NIS rule', async () => {
     const r = recording();
     const { cache } = await dotnetLab(r.provider);
     const out = await runApprovedOperation(lab.ctx(), 1, guarded('chmod +x apps/run.sh && dotnet build apps -m:1'), grant);
     expect(out).toMatchObject({ state: 'SUCCEEDED', exit_code: 0 });
     const [w] = r.wraps;
     expect(w!.argv).toEqual(['/bin/sh', '-c', 'chmod +x apps/run.sh && dotnet build apps -m:1']);
-    // The repository's cache, read-only: this command installs nothing.
-    expect(w!.env.NUGET_PACKAGES).toBe(cache);
+    // The repository's cache, read-only: this command installs nothing. It is NuGet's fallback folder beneath a global
+    // packages folder of the command's own, so what the approved command fetches on its hosts it can write, as it could
+    // with the private HOME it had before.
+    expect(w!.env.NUGET_FALLBACK_PACKAGES).toBe(cache);
     expect(w!.profile.readablePaths).toContain(cache);
     expect(w!.profile.writablePaths).not.toContain(cache);
     expect(existsSync(cache)).toBe(true);
+    expect(w!.env.NUGET_PACKAGES!.startsWith(join(lab.ctx().runDir, 'authorization', 'attempt-1'))).toBe(true);
+    expect(w!.profile.writablePaths.some((p) => w!.env.NUGET_PACKAGES!.startsWith(p))).toBe(true);
     // Build state private to this approved command, beside its output.
     expect(w!.env.NUGET_HTTP_CACHE_PATH!.startsWith(join(lab.ctx().runDir, 'authorization', 'attempt-1'))).toBe(true);
     expect(w!.profile.writablePaths.some((p) => w!.env.NUGET_HTTP_CACHE_PATH!.startsWith(p))).toBe(true);
@@ -87,8 +91,10 @@ describe('approved operations get the toolchain profile of a check (issue #26)',
     // .NET's HTTP clients read the NIS domain name; NuGet's audit cannot reach a package source this sandbox does not allow.
     expect(w!.profile.nisDomainName).toBe(true);
     expect(w!.env.NuGetAudit).toBe('false');
-    // The scratch is gone afterwards.
+    expect(readFileSync(join(lab.ctx().runDir, out.path!), 'utf8')).toContain("[toolchains dotnet: the repository's read-only, caches of the command's own writable]");
+    // The scratch is gone afterwards, the command's own packages with it.
     expect(existsSync(w!.env.NUGET_HTTP_CACHE_PATH!)).toBe(false);
+    expect(existsSync(w!.env.NUGET_PACKAGES!)).toBe(false);
   });
 
   it('lets an approved package install write the repository\'s cache, as the install step does, and passes the hosts its sandbox allows', async () => {
@@ -103,6 +109,39 @@ describe('approved operations get the toolchain profile of a check (issue #26)',
     // The audit runs as the repository configures it where the sandbox reaches the package source, off macOS.
     expect(w!.env.NuGetAudit).toBe(process.platform === 'darwin' ? 'false' : undefined);
   });
+
+  // A review of #26 found that an approved install made every detected toolchain's cache writable, not just the one
+  // whose executable installs: an approved `dotnet add package` in a repository that also has a go.mod could write the
+  // repository's Go module cache for every later run.
+  it('lets an approved package install write only the cache of the toolchain that installs; another toolchain fetches into its own', async () => {
+    const r = recording();
+    const { worktree, cache } = await dotnetLab(r.provider, ['api.nuget.org']);
+    writeFileSync(join(worktree, 'go.mod'), 'module example.com/acme\n\ngo 1.21\n');
+    const out = await runApprovedOperation(lab.ctx(), 1, guarded('dotnet add apps package Newtonsoft.Json --version 13.0.3'), grant);
+    const [w] = r.wraps;
+    expect(w!.env.NUGET_PACKAGES).toBe(cache);
+    expect(w!.profile.writablePaths).toContain(cache);
+    const gomod = join(dirname(cache), 'gomod');
+    expect(w!.profile.writablePaths).not.toContain(gomod);
+    expect(w!.profile.readablePaths).toContain(gomod);
+    expect(w!.env.GOMODCACHE).not.toBe(gomod);
+    expect(w!.env.GOPROXY!.startsWith(`file://${gomod}/cache/download,`)).toBe(true);
+    // Its output says which cache it could write.
+    expect(readFileSync(join(lab.ctx().runDir, out.path!), 'utf8')).toContain("[toolchains dotnet, go: the repository's dependency cache of dotnet writable, since the command installs its packages; for the others the repository's read-only, caches of the command's own writable]");
+  });
+
+  // srt exits 0 when it is stopped (measured), and the controller stops an approved command when the run is cancelled.
+  // A review of #26 found that the receipt then said exit 0, as if the command had succeeded.
+  it('records no exit code for an approved command the run\'s cancellation stopped', async () => {
+    const standIn = `process.on('SIGTERM', () => process.exit(0)); console.log('started'); setTimeout(() => {}, 120000);`;
+    const r = recording(() => [process.execPath, '-e', standIn]);
+    await dotnetLab(r.provider);
+    const cancel = new AbortController();
+    setTimeout(() => cancel.abort(), 1_000);
+    const out = await runApprovedOperation(lab.ctx(cancel.signal), 1, guarded('chmod +x apps/run.sh && dotnet build apps -m:1'), grant);
+    expect(out.exit_code).toBeNull();
+    expect(readFileSync(join(lab.ctx().runDir, out.path!), 'utf8')).toContain('[stopped: the run was cancelled]');
+  }, 30_000);
 
   it('gives an approved command in a repository without a detected toolchain nothing of a toolchain', async () => {
     const r = recording();

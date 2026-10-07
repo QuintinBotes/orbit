@@ -311,6 +311,9 @@ export async function exploreUi(opts: ExploreOptions): Promise<ExplorationResult
   if (opts.abortSignal?.aborted) control.abort();
 
   atomicWriteJson(join(outDir, 'exploration.json'), { state: 'running', candidate: opts.candidate.id, startedAt });
+  // Emptied first: the directory is under the candidate's evidence, which a later exploration of the candidate reuses, and an
+  // MSBuild failure report an earlier one left there would stop the application at its first look (a review of #26).
+  removeScratch(join(outDir, 'tmp'));
   const tmpDir = ensureDir(join(outDir, 'tmp'));
   // The application's build state, private to this exploration and removed with it.
   const appScratch = join(outDir, 'toolchains');

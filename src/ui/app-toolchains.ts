@@ -8,7 +8,8 @@ import type { IsolationProvider } from '../isolation/types.ts';
  * The application under test's toolchain profile (issue #26; docs/decisions/0009-toolchain-profiles.md, addendum, item
  * 14): what a check gets, found the same way from `ui.environment.start_command` and the checkout's marker files. The
  * repository's dependency caches are read-only (the application is repository code, like a check; only Orbit's install
- * step writes them), its build state goes to a directory private to the UI run, and for .NET it gets the check's .NET
+ * step writes them), its build state goes to a directory private to the UI run (Python's user site-packages stay the
+ * account's, under the HOME it keeps), and for .NET it gets the check's .NET
  * settings (first-run steps and SourceLink's git queries off) and the NIS domain name rule, and is stopped as soon as
  * MSBuild records a worker node the sandbox refused its named pipe, which the readiness probe cannot see.
  *
@@ -65,9 +66,12 @@ export function appToolchains(input: AppToolchainsInput): AppToolchains {
     ...(input.hostEnv ? { hostEnv: input.hostEnv } : {}),
   });
   prepareToolchainLayout(layout);
+  // The application keeps the account's HOME, and Python reads the account's user site-packages through it at run time
+  // (`pip install --user`): a check's private PYTHONUSERBASE would hide them (a review of #26). Its bytecode stays private.
+  const { PYTHONUSERBASE: _userBase, ...env } = layout.env;
   return {
     layout,
-    env: { ...layout.env, ...(layout.toolchains.includes('dotnet') ? DOTNET_CHECK_ENV : {}) },
+    env: { ...env, ...(layout.toolchains.includes('dotnet') ? DOTNET_CHECK_ENV : {}) },
     extraWritable: layout.writable,
     readablePaths: layout.readOnly,
     nisDomainName: layout.nisDomainName,

@@ -1,10 +1,10 @@
 // Release commands get the toolchain profile a check gets (issue #26; ADR 0009 and its addendum): the repository's
-// dependency caches read-only, build state private to the command, and for .NET a home prepared as a check's, the NIS
+// dependency caches read-only beneath caches of their own (they may fetch), build state private to the command, and for .NET a home prepared as a check's, the NIS
 // domain name rule and the runner's early stop for a refused MSBuild worker node. Before, a deploy or verify command ran
 // with a fresh private HOME and nothing else: every dotnet command died at its first-run step under srt (measured on
 // macOS: "The system cannot open the device or file specified. : 'NuGet-Migrations'"), there was no NuGet cache and no
 // NIS rule, and a publish without -m:1 waited out MSBuild's node retries, past many a deploy's timeout (an UNKNOWN deploy).
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -12,6 +12,7 @@ import { deliver } from '../../../src/delivery/deliver.ts';
 import { performRelease, resolveDeploy } from '../../../src/delivery/release.ts';
 import { NUGET_MIGRATIONS_DIR } from '../../../src/evidence/runner.ts';
 import { NoIsolation } from '../../../src/isolation/none.ts';
+import { workerTmpDir } from '../../../src/isolation/profiles.ts';
 import { toolchainCacheRoot } from '../../../src/isolation/toolchains.ts';
 import type { IsolationProvider, SandboxProfile, WrappedCommand } from '../../../src/isolation/types.ts';
 import { makeLab, type Lab } from '../../integration/delivery/harness.ts';
@@ -80,9 +81,13 @@ async function released(provider: IsolationProvider, deploy: string[] = [...DEPL
 }
 
 function expectDotnetProfile(w: Wrap, cache: string): void {
-  expect(w.env.NUGET_PACKAGES).toBe(cache);
+  // The repository's cache read-only, as NuGet's fallback folder beneath a global packages folder of the command's own,
+  // which it may write: a release command fetches what the run's install did not, on its environment's hosts.
+  expect(w.env.NUGET_FALLBACK_PACKAGES).toBe(cache);
   expect(w.profile.readablePaths).toContain(cache);
   expect(w.profile.writablePaths).not.toContain(cache);
+  expect(w.env.NUGET_PACKAGES).not.toBe(cache);
+  expect(w.profile.writablePaths.some((p) => w.env.NUGET_PACKAGES!.startsWith(p))).toBe(true);
   expect(w.profile.writablePaths.some((p) => w.env.NUGET_HTTP_CACHE_PATH!.startsWith(p))).toBe(true);
   expect(w.env).toMatchObject({ DOTNET_CLI_HOME: w.env.HOME, DOTNET_NOLOGO: '1', DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1', NuGetAudit: 'false' });
   expect(w.homePrepared).toBe(true);
@@ -99,8 +104,9 @@ describe('release commands get the toolchain profile of a check (issue #26)', ()
     expect(w!.argv).toEqual([...DEPLOY, '-m:1']);
     expectDotnetProfile(w!, join(cacheRoot, 'nuget'));
     expect(w!.env.ACME_DEPLOY_TOKEN).toBe('acme-token');
-    // The build state is gone with the deploy.
+    // The build state and the command's own packages are gone with the deploy.
     expect(existsSync(w!.env.NUGET_HTTP_CACHE_PATH!)).toBe(false);
+    expect(existsSync(w!.env.NUGET_PACKAGES!)).toBe(false);
   });
 
   it('settles an unknown deploy with a verify command that gets the same profile', async () => {
@@ -115,6 +121,24 @@ describe('release commands get the toolchain profile of a check (issue #26)', ()
     expect(w!.argv).toEqual(VERIFY);
     expect(w!.env.ORBIT_RELEASE_VERIFY).toBe('1');
     expectDotnetProfile(w!, join(cacheRoot, 'nuget'));
+  });
+
+  // A verify command runs again in the same directory (each resolution of an UNKNOWN deploy), and its temp directory is
+  // derived from that directory: a review of #26 found that an MSBuild failure report an earlier invocation left there
+  // made every later verify of that deploy UNKNOWN.
+  it('runs each verify command in an empty temp directory, so a refused node an earlier invocation recorded does not decide this one', async () => {
+    const r = recording();
+    const { l, c, cacheRoot } = await released(r.provider);
+    const workDir = join(l.dir, 'runs', l.runId);
+    const stale = join(workerTmpDir(join(workDir, 'release', `deploy-preview-${c.commitSha.slice(0, 12)}`, 'verify')), 'MSBuildTempacme');
+    mkdirSync(stale, { recursive: true, mode: 0o700 });
+    writeFileSync(join(stale, 'MSBuild_pid-4242_01234567.failure.txt'), MSBUILD_FAILURE);
+    const ledger = l.ledger();
+    const { action } = ledger.recordIntent({ runId: l.runId, kind: 'deploy', idempotencyKey: `release:${l.runId}:deploy:preview:${c.commitSha}`, target: { environment: 'preview', branch: 'orbit/x', sha: c.commitSha, command: ['x'] }, treeHash: c.treeHash, commitSha: c.commitSha });
+    ledger.markExecuting(action);
+    const res = await resolveDeploy({ run: l.deliveryRun, snapshot: l.snapshot, ledger, clock: l.clock, workDir, resolution: 'verify', by: 'acme-operator', isolation: r.provider, toolchainCacheRoot: cacheRoot });
+    expect(res).toMatchObject({ verdict: 'deployed' });
+    expect(existsSync(stale)).toBe(false);
   });
 
   it('stops a deploy as soon as MSBuild records a refused worker node, a definite failure with the note and the deploy command pinned', async () => {

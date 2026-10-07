@@ -415,13 +415,14 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
 /**
  * The commands besides checks and the dependency install that Orbit starts in a sandbox built from the check profile,
  * by the field that configures each: the application under test, and each release environment's deploy and verify
- * commands (issue #26).
+ * commands (issue #26). The release commands only in mode release, the one mode whose runs merge or deploy: a review of
+ * #26 found doctor failing a supervised configuration for a release block no run of it uses.
  */
 export function sandboxedCommands(config: OrbitConfig): { field: string; command: readonly string[] }[] {
   const start = config.ui?.environment.start_command ?? null;
   return [
     ...(start && start.length > 0 ? [{ field: 'ui.environment.start_command', command: start }] : []),
-    ...Object.entries(config.release?.environments ?? {}).flatMap(([name, env]) => [
+    ...Object.entries(config.mode === 'release' ? (config.release?.environments ?? {}) : {}).flatMap(([name, env]) => [
       { field: `release.environments.${name}.deploy_command`, command: env.deploy_command },
       ...(env.verify_command && env.verify_command.length > 0 ? [{ field: `release.environments.${name}.verify_command`, command: env.verify_command }] : []),
     ]),

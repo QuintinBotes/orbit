@@ -481,10 +481,14 @@ degraded but usable.
   dependency cache read-only from `<orbit home>/toolchains/<repo key>/` and its
   build state in a private directory per attempt (ADR 0009; the variables are in
   [configuration](configuration.md#toolchain-caches-and-build-state)). A check
-  that needs a dependency the install did not fetch fails with the tool's own
-  "read-only" or "operation not permitted" message on a path under that
-  directory: fetch it in the install step (`dependencies.install_command`, for
-  example `[cargo, fetch, --locked]`) rather than giving the check network.
+  that needs a dependency the install did not fetch fails on a write the
+  sandbox refuses under that directory (Go and Cargo say "operation not
+  permitted", NuGet "Access to the path ... is denied"): fetch it in the install
+  step (`dependencies.install_command`, for example `[cargo, fetch, --locked]`)
+  rather than giving the check network. A release command or an approved
+  operation fetches into caches of its own instead, on its own hosts; there
+  Cargo and pip start empty, so a Rust or Python deploy needs its registry hosts
+  in the environment's `network_hosts`.
   Go module downloads inside `srt` on macOS fail with `tls: failed to verify
   certificate: x509: OSStatus -26276`, because Go verifies certificates through
   the system trust service, which the sandbox does not let it reach: vendor the

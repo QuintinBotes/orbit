@@ -5,6 +5,7 @@ import { OrbitError } from '../core/errors.ts';
 import { sha256 } from '../core/hash.ts';
 import { credentialGlobsOf } from '../policy/builtin.ts';
 import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
+import { removeScratch } from './toolchains.ts';
 import type { SandboxProfile } from './types.ts';
 import { canonicalPath, credentialFilesIn, gitCommonDir, isWithin, readablePathsOf, uniq } from './util.ts';
 
@@ -385,6 +386,17 @@ export function prepareWorkerTmpDir(workerDir: string, root: string = orbitTmpRo
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   chmodSync(dir, 0o700);
   return dir;
+}
+
+/**
+ * prepareWorkerTmpDir, emptied: for a command that runs again in the same directory (a release environment's deploy or
+ * verify command), whose temp directory is derived from it. Nothing an earlier invocation left there reaches this one:
+ * a review of #26 found that an MSBuild failure report an earlier verify command left made every later verify of that
+ * deploy UNKNOWN, since a refused node recorded there stops a command at its first look.
+ */
+export function prepareFreshTmpDir(dir: string, root: string = orbitTmpRoot()): string {
+  removeScratch(prepareWorkerTmpDir(dir, root));
+  return prepareWorkerTmpDir(dir, root);
 }
 
 export function providerDirs(opts: { homeDir: string; claudeConfigDir?: string; codexHome?: string; env?: Record<string, string | undefined> }): ProviderDirs {

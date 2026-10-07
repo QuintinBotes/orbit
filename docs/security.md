@@ -252,8 +252,12 @@ State these plainly to yourself before running unattended.
   `<orbit home>/toolchains/<repo key>/`, one set per repository and never the
   user's own (`~/.cargo`, `~/go`, `~/.m2`, `~/.nuget/packages`). Only Orbit's
   dependency-install step may write them; every other check, every worker, the
-  application under test and the release commands get them read-only, and a
-  write is refused by the sandbox. Build state
+  application under test, the release commands and approved operations get them
+  read-only, and a write is refused by the sandbox. A release command and an
+  approved operation, which may fetch on their own hosts, write dependency
+  caches of their own instead, private to that command and removed after it,
+  with the repository's read-only beneath them (NuGet's fallback folder, a Go
+  module proxy, Gradle's read-only cache, Maven's tail repository). Build state
   (`GOCACHE`, `CARGO_TARGET_DIR`, `__pycache__`) is private to each check
   attempt (and to each of those other commands), so a cached object or test
   result from one candidate never reaches another's evidence. The install step
@@ -263,12 +267,12 @@ State these plainly to yourself before running unattended.
   candidate's code with that repository's cache writable. One other command may
   write them: an operation a person approved once in a supervised run when it is
   itself a package install with a toolchain it uses (`dotnet add package`,
-  `cargo add`, `pip install`), which then is the install. It runs in the
-  attempt's worktree, with that repository's caches writable and never another
-  repository's, on the policy's hosts plus the one approved, and its output says
-  the caches were writable; approve it as you would configure an install
-  command. Remove the directory to start clean. See ADR 0009 and its addendum,
-  item 14.
+  `cargo add`, `pip install`), which then is the install for that toolchain. It
+  runs in the attempt's worktree, with that repository's cache of that toolchain
+  writable (no other toolchain's, and never another repository's), on the
+  policy's hosts plus the one approved, and its output says whose cache was
+  writable; approve it as you would configure an install command. Remove the
+  directory to start clean. See ADR 0009 and its addendum, items 14 and 16.
 - **Verification has limited coverage.** Accessibility scans find only what
   automated rules can find and are not an accessibility audit. Visual checks
   compare pixels to a baseline and do not judge design. Orbit reports these

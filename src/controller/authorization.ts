@@ -363,14 +363,25 @@ export async function runApprovedOperation(ctx: RunContext, n: number, op: Guard
 }
 
 /**
- * Whether an approved command installs packages with a toolchain it uses (`dotnet add package`, `cargo fetch`, `pip
- * install`, `go get`): then the approved operation is the install, and may write the repository's dependency caches as
- * Orbit's install step does (docs/decisions/0009-toolchain-profiles.md, addendum, item 14). Anything else reads them, as
- * a check does.
+ * The toolchains an approved command installs packages with (`dotnet add package`, `cargo fetch`, `pip install`, `go
+ * get`), of those it uses: for them the approved operation is the install, and may write the repository's dependency
+ * cache as Orbit's install step does (docs/decisions/0009-toolchain-profiles.md, addendum, items 14 and 16). Only theirs:
+ * a review of #26 found that an approved `pip install` in a repository with a go.mod made the Go module cache writable
+ * too, for every later run of the repository.
  */
-function installsWith(command: string, worktree: string, toolchains: readonly ToolchainId[]): boolean {
-  const cls = classifyBash(command, { cwd: worktree, root: worktree });
-  return cls.commands.some((c) => c.category === 'package-install' && toolchains.some((id) => TOOLCHAIN_PROFILES[id].executables.test(basename(c.argv[0] ?? ''))));
+function installingToolchains(command: string, worktree: string, toolchains: readonly ToolchainId[]): ToolchainId[] {
+  const installs = classifyBash(command, { cwd: worktree, root: worktree }).commands.filter((c) => c.category === 'package-install');
+  return toolchains.filter((id) => installs.some((c) => TOOLCHAIN_PROFILES[id].executables.test(basename(c.argv[0] ?? ''))));
+}
+
+/** What an approved command's output says of its toolchains' caches, or nothing for a command that uses none. */
+function cachesLine(toolchains: readonly ToolchainId[], installs: readonly ToolchainId[]): string {
+  if (toolchains.length === 0) return '';
+  const own = "the repository's read-only, caches of the command's own writable";
+  if (installs.length === 0) return `[toolchains ${toolchains.join(', ')}: ${own}]\n`;
+  const many = installs.length > 1;
+  const others = toolchains.length > installs.length ? `; for the others ${own}` : '';
+  return `[toolchains ${toolchains.join(', ')}: the repository's dependency cache${many ? 's' : ''} of ${installs.join(' and ')} writable, since the command installs ${many ? 'their' : 'its'} packages${others}]\n`;
 }
 
 async function executeApproved(ctx: RunContext, plan: { argv: string[]; shown: string; host: string | null }, dir: string, rel: string): Promise<ApprovedReceipt> {
@@ -380,14 +391,15 @@ async function executeApproved(ctx: RunContext, plan: { argv: string[]; shown: s
   const tmp = prepareWorkerTmpDir(dir);
   const hosts = [...new Set([...ctx.snapshot.config.network.allowed_hosts, ...(plan.host ? [plan.host] : [])])];
   const isolation = ctx.isolation();
-  // The toolchain profile a check gets (ADR 0009, addendum, item 14): the repository's dependency caches, read-only unless
-  // the approved command is itself a package install of a toolchain it uses, build state private to this command, and
-  // for .NET the NIS domain name rule, a home prepared as a check's and the runner's early stop for a refused MSBuild
+  // The toolchain profile (ADR 0009, addendum, items 14 and 16): caches of its own, which it fills on its hosts as it did
+  // with the private HOME it had before, the repository's read-only beneath them where the tool reads a second cache,
+  // and writable only for a toolchain the approved command installs packages with; build state private to this command;
+  // and for .NET the NIS domain name rule, a home prepared as a check's and the runner's early stop for a refused MSBuild
   // worker node. Its network is exactly the frozen policy's hosts and the approved one, which decides NuGet's audit.
   const ids = detectToolchains({ command: plan.argv, roots: [worktree] });
-  const install = plan.argv[0] === '/bin/sh' && installsWith(plan.shown, worktree, ids);
+  const installs = plan.argv[0] === '/bin/sh' ? installingToolchains(plan.shown, worktree, ids) : [];
   const scratch = join(dir, 'toolchains');
-  const toolchains = commandToolchains({ command: plan.argv, roots: [worktree], mode: install ? 'install' : 'check', cacheRoot: toolchainCacheRootFor(ctx), scratchRoot: scratch, tmpDir: tmp, isolation: isolation.kind, networkHosts: hosts, hostHome: homeOf(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
+  const toolchains = commandToolchains({ command: plan.argv, roots: [worktree], mode: 'fetch', installs, cacheRoot: toolchainCacheRootFor(ctx), scratchRoot: scratch, tmpDir: tmp, isolation: isolation.kind, networkHosts: hosts, hostHome: homeOf(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
   prepareToolchainLayout(toolchains);
   const def: CheckDefinition = { id: `approved-${rel.split('/').at(-1)}`, command: plan.argv, shell: false, cwd: '.', timeout_seconds: APPROVED_TIMEOUT_S, network_hosts: hosts, local_binding: false, env: {}, mandatory: false, flaky_reruns: 0, kind: 'command' };
   const profile = profileForCheck({ worktree, check: def, snapshot: ctx.snapshot, extraWritable: [home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: homeOf(ctx.deps) });
@@ -422,11 +434,17 @@ async function executeApproved(ctx: RunContext, plan: { argv: string[]; shown: s
   } finally {
     removeScratch(scratch);
   }
-  // Stopped for a refused MSBuild node: its build could not succeed, whatever the stopped process exits with (srt exits
-  // 0 on SIGTERM, measured), so it has no exit code of its own.
-  const exitCode = stopped ? null : r.exitCode;
-  const ended = stopped ? 'stopped by Orbit: the sandbox refused an MSBuild worker node' : `exit ${r.exitCode ?? `signal ${r.signal ?? 'unknown'}`}${r.timedOut ? ', timed out' : ''}`;
-  const caches = toolchains.toolchains.length === 0 ? '' : `[toolchains ${toolchains.toolchains.join(', ')}: the repository's dependency caches ${install ? 'writable, since the command installs packages' : 'read-only'}]\n`;
+  // Stopped, for a refused MSBuild node, the run's cancellation or the time limit, it has no exit code of its own: srt
+  // exits 0 when it is stopped (measured), which must not read as a command that succeeded.
+  const exitCode = stopped || r.cancelled || r.timedOut ? null : r.exitCode;
+  const ended = stopped
+    ? 'stopped by Orbit: the sandbox refused an MSBuild worker node'
+    : r.cancelled
+      ? 'stopped: the run was cancelled'
+      : r.timedOut
+        ? `stopped: timed out after ${APPROVED_TIMEOUT_S}s`
+        : `exit ${r.exitCode ?? `signal ${r.signal ?? 'unknown'}`}`;
+  const caches = cachesLine(toolchains.toolchains, installs);
   const text = redact(`$ ${plan.shown}\n${caches}[${ended}]\n--- stdout ---\n${r.stdout}\n--- stderr ---\n${r.stderr}\n${note ? `--- orbit ---\n${note}\n` : ''}`);
   atomicWrite(join(dir, OUTPUT_FILE), text, 0o600);
   const receipt: ApprovedReceipt = { exit_code: exitCode, timed_out: r.timedOut, path: join(rel, OUTPUT_FILE), sha256: sha256(text), excerpt: text.slice(-APPROVED_EXCERPT_CHARS) };
