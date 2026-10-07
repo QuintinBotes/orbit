@@ -183,7 +183,7 @@ No ports, schemes or bare `*`. Everything else is blocked by the sandbox.
 
 The dependency install is `npm ci` from an npm lockfile, or
 `install_command` when set (for another ecosystem: `cargo fetch --locked`,
-`dotnet restore --locked-mode`, a virtual environment plus `pip install -r
+`dotnet restore --locked-mode -m:1`, a virtual environment plus `pip install -r
 requirements.txt`, `./gradlew dependencies`). It reaches the npm registry and,
 for a configured command, the registries of the toolchains its command and
 the repository use (`proxy.golang.org`, `sum.golang.org`; `index.crates.io`,
@@ -468,7 +468,7 @@ writes, so checks you wrote or edited stay exactly as they are.
 | Ecosystem | Declared by | Proposed (id, command, category) |
 |---|---|---|
 | Node | root `package.json` scripts; the package manager comes from `pnpm-lock.yaml`, `yarn.lock` or `package-lock.json` (else the `packageManager` field, else npm) | `lint` (script `lint`), `typecheck` (script `typecheck`, `type-check` or `check-types`; else `tsc --noEmit` when there is a root `tsconfig.json` and a `typescript` dependency), `unit-tests` (script `test`, never the `npm init` placeholder), `build` (script `build`) |
-| .NET | a solution (`.sln`, `.slnx`), else the project files | `build`: `dotnet build <solution>`; `unit-tests`: `dotnet test <solution>` when a project references `Microsoft.NET.Test.Sdk` |
+| .NET | a solution (`.sln`, `.slnx`), else the project files | `build`: `dotnet build <solution> -m:1`; `unit-tests`: `dotnet test <solution> -m:1` when a project references `Microsoft.NET.Test.Sdk` (`-m:1` keeps MSBuild on one node, which the check sandbox needs) |
 | Python | pytest in `pytest.ini`, `pyproject.toml`, `setup.cfg` or `tox.ini`; ruff or flake8 by their config files; mypy by `mypy.ini`, `pyproject.toml` or `setup.cfg`; any of them listed as a dependency | `unit-tests` (`pytest`), `lint` (`ruff check .`, else `flake8`), `typecheck` (`mypy .`) |
 | Go | `go.mod`, or `go.work` | `build` (`go build ./...`), `vet` (`go vet ./...`, category lint), `unit-tests` (`go test ./...`) |
 | Rust | `Cargo.toml` | `build` (`cargo build`), `unit-tests` (`cargo test`), `clippy` (`cargo clippy --all-targets -- -D warnings`, category lint, only when `cargo clippy` works) |
@@ -507,6 +507,29 @@ exception question that PREFLIGHT raised for the pre-existing failure with
 `orbit decide`, then `orbit resume`. A plain pre-existing code failure, with no
 such signal, keeps the repair loop.
 
+On the base revision PREFLIGHT goes further and classifies every failing
+mandatory check before it calls one pre-existing
+([ADR 0010](decisions/0010-base-failure-classification.md)). A check whose
+tool rejected its command line (a misconfigured check: an MSBuild command-line
+error such as `MSB1008`, a go or cargo usage error) and a check the environment refused before it ran anything of the
+repository (a denial outside its checkout, EACCES included; a socket refused in
+the tool's own startup; a .NET named pipe refused under `/tmp`, an MSBuild
+worker node's or `dotnet format`'s build host's; a connection the sandbox's
+proxy refused; a program not installed where it runs, exit 127) both end the
+run `BLOCKED` at PREFLIGHT with the first error line. A check whose command
+names something that does not exist yet (a missing target: no project, `npm
+error Missing script`, a missing test file, an option of a pytest plugin not
+installed yet) is expected to flip when the
+contract names it, and blocks at CONTRACTING as misconfigured, with advice of
+its own, when it does not (a goal meant to create the target says so in a new
+run; a target a tool provides that is not installed or restored yet needs a new
+run once it is). None of them is ever accepted as a baseline exception. Only the check's own direct invocation of the tool
+counts: a `command` that is a shell chain or pipeline, or that runs a script of
+the repository which then fails this way, is read as a failure of the code. The
+reason of a misconfigured check blocked at PREFLIGHT names `checks.<id>.command`:
+the command is wrong, so fix it there. A missing target blocked at CONTRACTING
+says by cause what to do, because the command may be right.
+
 A mandatory check that could not execute at all is an environment failure too,
 with or without a base-revision comparison: its process (or the UI application
 under test) was killed by a crash signal such as `SIGABRT` before it printed
@@ -531,7 +554,7 @@ where the tools keep their state (ADR 0009):
 
 | toolchain | dependency cache (read-only) | private to the check attempt |
 |---|---|---|
-| .NET | `NUGET_PACKAGES` | `NUGET_HTTP_CACHE_PATH`, `NUGET_PLUGINS_CACHE_PATH` |
+| .NET | `NUGET_PACKAGES` | `NUGET_HTTP_CACHE_PATH`, `NUGET_PLUGINS_CACHE_PATH` (and `NuGetAudit=false` where NuGet's vulnerability audit cannot reach nuget.org: on macOS, or without `api.nuget.org` in the check's `network_hosts`) |
 | Go | `GOMODCACHE` | `GOCACHE`, `GOPATH` |
 | JVM | `GRADLE_RO_DEP_CACHE`, `-Dmaven.repo.local.tail` in `MAVEN_OPTS` | `GRADLE_USER_HOME`, `-Dmaven.repo.local`, `JDK_JAVA_OPTIONS=-Djava.io.tmpdir=<TMPDIR>` (and `JAVA_HOME` set to your JDK, read-only) |
 | Python | `PIP_CACHE_DIR` | `PYTHONPYCACHEPREFIX`, `PYTHONUSERBASE` (and `POETRY_VIRTUALENVS_IN_PROJECT`, `PIPENV_VENV_IN_PROJECT`) |
@@ -545,8 +568,53 @@ created for each check attempt and removed with it (a worker has its own under
 its worker directory), so `cargo build` and `cargo test` in two checks each
 compile. A check's `env` overrides any of these variables, for example
 `CARGO_TARGET_DIR: target` to build inside the checkout. `orbit doctor`
-(`checks.sandbox`) lists each toolchain, whether it starts in the sandbox and
-where its caches live.
+(`checks.sandbox`) lists each toolchain, whether it starts in the sandbox (for
+.NET: whether three generated projects build there) and where its caches live.
+
+A .NET check pins MSBuild to one node in its own command: `-m:1` on `dotnet
+build`, `test`, `publish`, `pack`, `restore`, `clean` and `msbuild` (and on
+`dependencies.install_command`), since a worker node needs a named pipe under
+`/tmp` that no check sandbox may create (ADR 0009, addendum). Put it before
+any `--`: after the `--` of `dotnet test` it goes to the test runner. `dotnet
+run` hands the switch to the program, so a check that runs a project builds
+first: `["dotnet build -m:1 && dotnet run --no-build"]` with `shell: true`.
+`orbit doctor` fails a mandatory check without it and prints the fixed command.
+Orbit does not change a check's processor count: `DOTNET_PROCESSOR_COUNT=1` in
+a check's own `env` also keeps MSBuild on one node, and doctor accepts it, but
+the test host gets one processor too, where xunit before 2.8 deadlocks a test
+that blocks on async code (doctor's `checks.dotnet-tests` names such test
+projects). A `dotnet format` check under `sandbox-runtime` is `[dotnet,
+format, whitespace, --folder, --verify-no-changes]` (with the folder of the
+solution or project it formats, and its `--include` and `--exclude`): with
+SDK 9 and later every other form loads the project through a build host whose
+named pipe under `/tmp` the sandbox refuses, and doctor fails a mandatory one
+with that command as the fix. On macOS that form cannot list the folders above
+a run's checkout, which sits in the read-denied Orbit home, so there doctor
+fails every mandatory `dotnet format` check with SDK 9 and later and names
+running it in CI. With SDK 8 pinned by a `global.json`, which loads
+the project in dotnet format's own process, any form runs once its restore is
+pinned: `["dotnet restore -m:1 && dotnet format --verify-no-changes
+--no-restore"]` with `shell: true`. On macOS the
+checks, the dependency install, workers and doctor's probes that run .NET may
+also read the NIS domain name, which .NET's HTTP clients need, and open IPv4
+sockets (`DOTNET_SYSTEM_NET_DISABLEIPV6=1` unless a check's `env` sets it), whose
+loopback connects the sandbox allows on every macOS release; a NuGet restore
+from nuget.org still cannot verify TLS there, so fill the repository's NuGet
+cache outside the sandbox with the command doctor's `checks.dotnet-packages`
+prints (it restores local tools too; a check that runs one restores it first,
+from the cache, since its home is its own). NuGet's vulnerability audit is
+off only where it cannot reach its source: in every .NET process on macOS
+(.NET under `srt` cannot verify nuget.org's certificate) and, on Linux, in a
+check without `api.nuget.org` in its `network_hosts` and a worker without it in
+`network.allowed_hosts`. There its warning `NU1900` would fail a repository
+that treats warnings as errors; the check's record says the audit was off. The
+dependency install on Linux or in a container, and a Linux check that lists the
+host, run the audit as the repository configures it, so a vulnerable package
+fails there as it does in CI. A project that sets `NuGetAudit` itself overrides
+Orbit's setting, and doctor's `checks.dotnet-audit` names the change on
+macOS. See [troubleshooting](troubleshooting.md#run-problems), ".NET builds
+and MSBuild worker nodes", "dotnet format under the sandbox" and ".NET HTTP
+clients and NuGet restore on macOS".
 
 ## ui
 

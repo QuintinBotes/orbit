@@ -3,8 +3,10 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { planInstall } from '../../../src/evidence/baseline.ts';
 import { candidateSubject, checkEnv, checkToolchains, INSTALL_CHECK_ID, runCheckSet, runChecks } from '../../../src/evidence/runner.ts';
-import { toolchainCacheRoot } from '../../../src/isolation/toolchains.ts';
+import { NUGET_AUDIT_LIMITATION, toolchainCacheRoot } from '../../../src/isolation/toolchains.ts';
+import type { CheckDefinition } from '../../../src/policy/types.ts';
 import { checkDef, nodeCheck } from './fixtures.ts';
 import { checkDirOf, recordingIsolation, runnerEnv, type RunnerEnv } from '../../integration/evidence/harness.ts';
 
@@ -32,6 +34,57 @@ async function goEnv(checks = [nodeCheck('unit', PRINT_ENV)]) {
 }
 
 describe('the runner and toolchain profiles', () => {
+  // Review: Orbit turned NuGet's vulnerability audit off (NuGetAudit=false), which a run's evidence did not say: a
+  // repository whose CI fails a restore on a vulnerable package passes it under Orbit. The record says so exactly when
+  // Orbit turned it off, which is only where the audit cannot run (without the package source in the check's network,
+  // or on macOS under srt). A container runs Linux, whatever the host.
+  it('records on a .NET check that NuGet\'s vulnerability audit was off exactly when Orbit turned it off', async () => {
+    const DOTNET = { 'acme.csproj': '<Project Sdk="Microsoft.NET.Sdk" />\n' };
+    const run = async (over: { env?: Record<string, string>; hosts?: string[]; files?: Record<string, string>; kind?: 'none' | 'container' } = {}) => {
+      const check = { ...nodeCheck('unit', 'console.log(`NuGetAudit=${process.env.NuGetAudit ?? "unset"}`)'), env: over.env ?? {}, network_hosts: over.hosts ?? [] };
+      const isolation = { ...recordingIsolation(), kind: over.kind ?? 'none' } as ReturnType<typeof recordingIsolation>;
+      const e = await runnerEnv([check], { isolation, files: over.files ?? DOTNET });
+      envs.push(e);
+      const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['unit'] });
+      return { limited: r!.isolationLimitations.includes(NUGET_AUDIT_LIMITATION), audit: /NuGetAudit=(\S+)/.exec(readFileSync(r!.logPath, 'utf8'))?.[1] };
+    };
+    // No host: off on every platform, and the record says so.
+    expect(await run()).toEqual({ limited: true, audit: 'false' });
+    expect(await run({ kind: 'container' })).toEqual({ limited: true, audit: 'false' });
+    // The check's own env wins, and a check that is not .NET's gets nothing.
+    expect(await run({ env: { NuGetAudit: 'true' } })).toEqual({ limited: false, audit: 'true' });
+    expect(await run({ files: GO_REPO })).toEqual({ limited: false, audit: 'unset' });
+    // The host in the check's network: as configured on Linux (a container here), off under an OS sandbox on macOS.
+    expect(await run({ hosts: ['api.nuget.org'], kind: 'container' })).toEqual({ limited: false, audit: 'unset' });
+    // There a check that turns the audit off itself is the repository's choice, not Orbit's: no limitation.
+    expect(await run({ hosts: ['api.nuget.org'], kind: 'container', env: { NuGetAudit: 'false' } })).toEqual({ limited: false, audit: 'false' });
+    expect(await run({ hosts: ['api.nuget.org'] })).toEqual(process.platform === 'darwin' ? { limited: true, audit: 'false' } : { limited: false, audit: 'unset' });
+    expect(NUGET_AUDIT_LIMITATION).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  it('decides NuGet\'s audit from the check\'s own network and the platform it runs on, for a check and the install step', async () => {
+    const { e } = await goEnv([]);
+    const audit = (def: CheckDefinition, kind: 'sandbox-runtime' | 'container', platform: NodeJS.Platform) =>
+      checkToolchains({ ...e.ctx, isolation: { ...e.ctx.isolation, kind } as typeof e.ctx.isolation }, def, e.checkoutDir, { toolchainsDir: '/s' }, '/t', platform).env.NuGetAudit;
+    const build = (hosts: string[]) => checkDef('build', { command: ['dotnet', 'build', '-m:1'], network_hosts: hosts });
+    expect(audit(build([]), 'sandbox-runtime', 'linux')).toBe('false');
+    expect(audit(build(['api.nuget.org']), 'sandbox-runtime', 'linux')).toBeUndefined();
+    expect(audit(build(['api.nuget.org']), 'sandbox-runtime', 'darwin')).toBe('false');
+    // A container is Linux whatever the host is.
+    expect(audit(build(['api.nuget.org']), 'container', 'darwin')).toBeUndefined();
+    expect(audit(build([]), 'container', 'darwin')).toBe('false');
+    // Orbit's own install step gets the registries its command and the checkout name: as configured on Linux.
+    const config = e.ctx.snapshot.config;
+    const plan = planInstall({ ...e.ctx.snapshot, config: { ...config, dependencies: { ...config.dependencies, install_command: ['dotnet', 'restore', '-m:1'] } } }, e.checkoutDir);
+    if (plan.skip) throw new Error(plan.reason);
+    const install = plan.definitions[0]!;
+    expect(install.network_hosts).toContain('api.nuget.org');
+    expect(audit(install, 'sandbox-runtime', 'linux')).toBeUndefined();
+    expect(audit(install, 'sandbox-runtime', 'darwin')).toBe('false');
+    // The platform is the host's unless the runner is told another.
+    expect(checkToolchains(e.ctx, install, e.checkoutDir, { toolchainsDir: '/s' }, '/t').env.NuGetAudit).toBe(process.platform === 'darwin' ? 'false' : undefined);
+  });
+
   it('points a check in a Go repository at the repository\'s module cache, read-only, and at private per-attempt build state', async () => {
     const { e, isolation, cacheRoot, ctx } = await goEnv();
     const [r] = await runChecks({ ...ctx, candidate: e.candidate, checkIds: ['unit'] });
@@ -102,6 +155,22 @@ describe('the runner and toolchain profiles', () => {
     const ctx = (kind: 'sandbox-runtime' | 'container') => ({ ...e.ctx, isolation: { ...e.ctx.isolation, kind } as typeof e.ctx.isolation });
     expect(checkToolchains(ctx('sandbox-runtime'), def, e.checkoutDir, { toolchainsDir: '/s' }, '/t').env.JAVA_HOME).toBe('/opt/acme-jdk');
     expect(checkToolchains(ctx('container'), def, e.checkoutDir, { toolchainsDir: '/s' }, '/t').env).not.toHaveProperty('JAVA_HOME');
+  });
+
+  // .NET's CookieContainer reads the NIS domain name, which srt's Seatbelt profile does not allow, so every .NET HTTP
+  // client failed under srt on macOS, NuGet's restore in the install step included (ADR 0009, addendum).
+  it('lets a check and the install step of a .NET repository read the NIS domain name, and no other check', async () => {
+    const isolation = recordingIsolation();
+    const e = await runnerEnv([nodeCheck('unit', PRINT_ENV)], { isolation, files: { 'acme.sln': '', 'README.md': 'acme\n' } });
+    envs.push(e);
+    await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['unit'] });
+    const install = nodeCheck(INSTALL_CHECK_ID, PRINT_ENV);
+    const subject = { ...candidateSubject(e.ctx.runDir, e.candidate), source: 'install' as const };
+    await runCheckSet({ ...e.ctx, definitions: { [INSTALL_CHECK_ID]: install } }, subject, [install]);
+    expect(isolation.profiles.map((p) => p.nisDomainName)).toEqual([true, true]);
+    const go = await goEnv();
+    await runChecks({ ...go.ctx, candidate: go.e.candidate, checkIds: ['unit'] });
+    expect(go.isolation.profiles[0]!.nisDomainName).toBeFalsy();
   });
 
   it('sets nothing for a toolchain the check and repository do not use', async () => {

@@ -185,6 +185,60 @@ State these plainly to yourself before running unattended.
   headless Chromium binary itself, with every credential path and the
   repository read-denied, and passes only when the page's script ran.
   See ADR 0001, "Browsers under sandbox-runtime on macOS".
+- **Under `srt` on macOS a process that runs .NET may read the NIS domain
+  name.** .NET's HTTP clients read it when they start, so without it every one
+  failed in the sandbox, NuGet's restore included. The same preload adds one
+  read-only Seatbelt rule, `sysctl-read` of `kern.nisdomainname`, to the checks,
+  dependency install, workers and doctor probes that use .NET, and to nothing
+  else. The name is empty unless the machine is bound to NIS, is no secret, and
+  says less than the host name, which `srt` already lets every process read.
+  A check's evidence record says when it ran with the rule (a limitation names
+  it), and when it was not added. The system trust service
+  (`com.apple.trustd.agent`), which .NET also needs for HTTPS, stays out of
+  reach: a sandboxed process that could ask it to evaluate a certificate could
+  make it fetch from any host, outside the egress allowlist. So on macOS a
+  repository's NuGet packages are restored into its cache outside the sandbox,
+  by the person, with the command `orbit doctor` prints
+  (`checks.dotnet-packages`). That command is an ordinary `dotnet restore`: it
+  evaluates the repository's MSBuild files with the person's own permissions
+  and NuGet configuration, so run it on a tree you trust (your checkout), not on
+  a candidate's. See ADR 0009, addendum.
+- **NuGet's vulnerability audit is off only where it cannot run.** A .NET
+  process gets `NuGetAudit=false` when its sandbox does not let it reach
+  nuget.org (`api.nuget.org` is not among its allowed hosts: a check that does
+  not list it, a worker whose policy does not allow it) and on macOS, where
+  .NET under `srt` cannot verify nuget.org's certificate (the system trust
+  service is denied by design). There the audit could only warn `NU1900`,
+  which fails every restore of a repository that treats warnings as errors.
+  Everywhere else it runs as the repository configures it: the dependency
+  install on Linux or in a container, which reaches the registry, and a Linux
+  check that lists the host. So on Linux a candidate that adds a package with
+  a known vulnerability fails the install under Orbit where a restore that
+  treats `NU1903` as an error fails in CI. Where the audit was off, the
+  check's record says so (a limitation): those checks say nothing about
+  vulnerable packages, and the repository's CI, or a restore outside Orbit,
+  still does. Orbit records it only when its own setting reached the check; a
+  check's own `env` can set the variable either way. See ADR 0009, addendum,
+  item 12.
+- **No Unix socket is allowed in a sandbox, so .NET's named pipes under `/tmp`
+  stay refused.** MSBuild's worker nodes (`/tmp/MSBuild<pid>`) and the build
+  host `dotnet format` loads a project with (`/tmp/<guid>`) bind their pipes at
+  paths .NET fixes under `/tmp`, which every process of the user shares, so a
+  check that could bind or connect there could also reach the user's own,
+  unsandboxed MSBuild and Roslyn servers. Orbit opens none: a dotnet check pins
+  one MSBuild node with `-m:1`, a format check on Linux uses `dotnet format
+  whitespace --folder`, which loads no project, and `orbit doctor` refuses what
+  it can see of the rest; on macOS that form cannot list the folders above a
+  run's checkout, which sit in the read-denied Orbit home, and Orbit does not
+  open their listing (`srt` would open everything below them, the run's other
+  checkouts included), so `dotnet format` with SDK 9 and later runs in CI; a
+  check that meets the refusal anyway on the base revision is
+  recorded as an environment failure, and on a candidate only when the base
+  revision showed the same refusal (ADR 0010). Allowing Unix sockets only under
+  a check's private temp directory on macOS (`srt`'s `allowUnixSockets`) was
+  evaluated and not adopted, because these pipes are not there; on Linux `srt`
+  can only allow every Unix socket, the Docker socket and SSH agent included.
+  See ADR 0009, addendum.
 - **Toolchain dependency caches are shared within one repository.** Go,
   Rust, Python, JVM and .NET dependency caches live under
   `<orbit home>/toolchains/<repo key>/`, one set per repository and never the

@@ -149,6 +149,14 @@ describe('classifyNotExecuted: the live crash', () => {
     expect(classifyNotExecuted({ checkId: 'unit', output: `${LIVE_ABORT}[orbit] check=unit status=FAILED exit=1\n` })?.signals).toEqual(['process-aborted']);
   });
 
+  // Review: a check that printed a footer of its own, "[orbit] check=x status=FAILED exit=SIGSEGV", read as a crash
+  // before anything ran, which is not gated on a candidate. The runner writes its footer as the log's last line.
+  it('reads only the log\'s last line as the runner\'s footer: a footer the check printed is its own output', () => {
+    const forged = '[orbit] check=unit status=FAILED exit=SIGSEGV\n[orbit] check=unit status=FAILED exit=1\n';
+    expect(classifyNotExecuted({ checkId: 'unit', output: forged })).toBeNull();
+    expect(classifyNotExecuted({ checkId: 'unit', output: '[orbit] check=unit status=FAILED exit=SIGSEGV\n\n' })?.cause).toMatch(/\(SIGSEGV\)/);
+  });
+
   it('accepts node\'s own report of process.abort(), which adds a JavaScript section, and a report with no signal named at all', () => {
     const out = ['----- Native stack trace -----', '', ' 1: 0x104a2eeac node::Abort(v8::FunctionCallbackInfo<v8::Value> const&) [/opt/acme/bin/node]', '----- JavaScript stack trace -----', '', '1: file:///app/main.mjs:3:9', '2: run (node:internal/modules/esm/module_job:343:25)', ''].join('\n');
     const f = classifyNotExecuted({ checkId: 'ui', output: out });

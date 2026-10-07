@@ -2,10 +2,17 @@
 // read-only, its build state private to the worker, and nothing pointing at the user's own caches.
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { repoKey } from '../../../src/controller/context.ts';
 import { implementingStep } from '../../../src/controller/steps/implementing.ts';
+import { toolchainLayout } from '../../../src/isolation/toolchains.ts';
 import { giveRepository, initLedger, makeUnitLab, okResult, scriptedAdapter, setContract, validateModels, type UnitLab } from './coverage-helpers.ts';
+
+// The real layout, watched: a worker's NuGet audit depends on the hosts its sandbox allows (see the last test).
+vi.mock('../../../src/isolation/toolchains.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/isolation/toolchains.ts')>();
+  return { ...actual, toolchainLayout: vi.fn(actual.toolchainLayout) };
+});
 
 let lab: UnitLab;
 afterEach(() => lab?.cleanup());
@@ -31,5 +38,45 @@ describe('worker toolchain profiles', () => {
     expect(sandbox.writablePaths).not.toContain(cache);
     expect(sandbox.writablePaths.some((p) => join(spec.workerDir, 'toolchains').startsWith(p))).toBe(true);
     expect(existsSync(cache)).toBe(true);
+    // Not a .NET repository: no NIS domain name rule.
+    expect(spec.sandbox.nisDomainName).toBeFalsy();
+  });
+
+  // .NET's CookieContainer reads the NIS domain name, which srt's Seatbelt profile does not allow, so every .NET HTTP
+  // client failed under srt on macOS (ADR 0009, addendum). A worker in a .NET repository may run its tests itself.
+  it('lets an implementer in a .NET repository read the NIS domain name', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'], deps: { schedulerProbe: { availableParallelism: () => 16, freemem: () => 64_000 * 1024 * 1024 } } });
+    const adapter = scriptedAdapter(lab, () => okResult(IMPL));
+    lab.deps.adapters = { claude: adapter };
+    validateModels(lab);
+    const repo = await giveRepository(lab, { 'acme.sln': '', 'apps/Acme.cs': 'namespace Acme;\n' });
+    setContract(lab, { baseline_revision: repo.base });
+    initLedger(lab);
+    await implementingStep(lab.ctx());
+    expect(adapter.specs[0]!.sandbox.nisDomainName).toBe(true);
+  });
+
+  // NuGet's vulnerability audit is off in a worker unless the worker's sandbox lets it reach the package source and it
+  // is not on macOS, where .NET under srt cannot verify nuget.org's certificate (isolation/toolchains.ts): the layout
+  // gets exactly the hosts the worker's sandbox allows, its provider's and the policy's.
+  it('turns NuGet\'s vulnerability audit off for an implementer in a .NET repository unless its network has the package source, off macOS', async () => {
+    for (const [i, extra] of [[], ['api.nuget.org']].entries()) {
+      if (i > 0) lab.cleanup();
+      lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'], tweak: (c) => void c.network.allowed_hosts.push(...extra), deps: { schedulerProbe: { availableParallelism: () => 16, freemem: () => 64_000 * 1024 * 1024 } } });
+      const adapter = scriptedAdapter(lab, () => okResult(IMPL));
+      lab.deps.adapters = { claude: adapter };
+      validateModels(lab);
+      const repo = await giveRepository(lab, { 'acme.sln': '', 'apps/Acme.cs': 'namespace Acme;\n' });
+      setContract(lab, { baseline_revision: repo.base });
+      initLedger(lab);
+      vi.mocked(toolchainLayout).mockClear();
+      await implementingStep(lab.ctx());
+      const spec = adapter.specs[0]!;
+      const layouts = vi.mocked(toolchainLayout).mock.calls.map(([input]) => input).filter((input) => input.mode === 'worker');
+      expect(layouts).toHaveLength(1);
+      expect([...layouts[0]!.networkHosts].sort(), JSON.stringify(extra)).toEqual([...spec.sandbox.allowedHosts].sort());
+      expect(spec.sandbox.allowedHosts.includes('api.nuget.org'), JSON.stringify(extra)).toBe(extra.length > 0);
+      expect(spec.env.NuGetAudit, JSON.stringify(extra)).toBe(extra.length > 0 && process.platform !== 'darwin' ? undefined : 'false');
+    }
   });
 });

@@ -21,11 +21,11 @@ const unit: EnvironmentFailure & { questionId: string } = {
 describe('environmentBlockReason', () => {
   it('names the check, the environment cause, that no repair was spent, and both ways forward', () => {
     const reason = environmentBlockReason({ runId: 'orb-1', candidateSeq: 1, failures: [unit] });
-    expect(reason).toMatch(/^check unit fails on candidate 1 exactly as on the base revision/);
+    expect(reason).toMatch(/^Check unit fails on candidate 1 exactly as on the base revision/);
     expect(reason).toMatch(/environment cause/);
     expect(reason).toContain('listen EPERM: operation not permitted 127.0.0.1');
     expect(reason).toMatch(/sandbox/);
-    expect(reason).toMatch(/no repair attempt was spent/);
+    expect(reason).toMatch(/\. No repair attempt was spent/);
     // Way one: the environment or the definition. The definition is frozen into the run's policy.
     expect(reason).toMatch(/fix the environment or the check definition/);
     expect(reason).toMatch(/new run/);
@@ -38,7 +38,7 @@ describe('environmentBlockReason', () => {
   it('lists every blocked check, each with its own question, and writes no em or en dashes', () => {
     const legacy = { ...unit, checkId: 'legacy', fingerprint: 'fp:ffffffffffffffff', cause: 'permission was denied (EACCES) on a path outside the worktree', lines: [], questionId: 'q-baseline-bbbbbbbbbbbb' };
     const reason = environmentBlockReason({ runId: 'orb-2', candidateSeq: 3, failures: [unit, legacy] });
-    expect(reason).toMatch(/^checks unit, legacy fail on candidate 3/);
+    expect(reason).toMatch(/^Checks unit, legacy fail on candidate 3/);
     expect(reason).toContain('legacy: permission was denied (EACCES) on a path outside the worktree');
     expect(reason).toContain('orbit decide orb-2 q-baseline-aaaaaaaaaaaa Approve');
     expect(reason).toContain('orbit decide orb-2 q-baseline-bbbbbbbbbbbb Approve');
@@ -165,11 +165,11 @@ const notExecuted = (over: Partial<BlockedCheck> = {}): BlockedCheck => ({
 describe('environmentBlockReason: a check that could not execute', () => {
   it('says the check could not execute, names the cause, the signal line and the log, and offers the one way forward that applies', () => {
     const reason = environmentBlockReason({ runId: 'orb-3', candidateSeq: 2, failures: [notExecuted()] });
-    expect(reason).toMatch(/^check ui could not execute on candidate 2, and the output shows an environment cause, not a defect in the change: ui: the process was killed by a fatal signal before it printed anything of its own \(SIGABRT\)/);
+    expect(reason).toMatch(/^Check ui could not execute on candidate 2, and the output shows an environment cause, not a defect in the change: the process was killed by a fatal signal before it printed anything of its own \(SIGABRT\)/);
     expect(reason).toContain('"Process killed by signal: SIGABRT"');
     expect(reason).toContain('output in /orbit/runs/acme/evidence/1/ui/app/app.log');
-    expect(reason).toMatch(/no repair attempt was spent/);
-    expect(reason).toMatch(/way forward: fix the environment \(orbit doctor checks the isolation provider and its limits\) or the check definition and start a new run/);
+    expect(reason).toMatch(/\. No repair attempt was spent/);
+    expect(reason).toMatch(/\. Way forward: fix the environment \(orbit doctor checks the isolation provider and its limits\) or the check definition and start a new run/);
     // There is no failure to except, so no baseline question is offered.
     expect(reason).not.toMatch(/orbit decide/);
     expect(reason).not.toMatch(/exactly as on the base revision/);
@@ -178,11 +178,11 @@ describe('environmentBlockReason: a check that could not execute', () => {
 
   it('keeps both sentences and both ways forward when a check failed like the base revision and another could not execute', () => {
     const reason = environmentBlockReason({ runId: 'orb-4', candidateSeq: 1, failures: [unit, notExecuted()] });
-    expect(reason).toMatch(/^check unit fails on candidate 1 exactly as on the base revision/);
-    expect(reason).toMatch(/\. check ui could not execute on candidate 1/);
+    expect(reason).toMatch(/^Check unit fails on candidate 1 exactly as on the base revision/);
+    expect(reason).toMatch(/\. Check ui could not execute on candidate 1/);
     expect(reason).toContain('orbit decide orb-4 q-baseline-aaaaaaaaaaaa Approve');
     expect(reason.match(/orbit decide/g)).toHaveLength(1);
-    expect(reason).toMatch(/two ways forward/);
+    expect(reason).toMatch(/\. Two ways forward/);
   });
 });
 

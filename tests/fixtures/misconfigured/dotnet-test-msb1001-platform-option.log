@@ -1,0 +1,6 @@
+MSBUILD : error MSB1001: Unknown switch.
+    Full command line: '/usr/local/share/dotnet/sdk/9.0.305/MSBuild.dll -maxcpucount -verbosity:m -tlp:default=auto -nologo -restore -nodereuse:false -target:VSTest -nologo A.csproj --report-trx -property:VSTestArtifactsProcessingMode=collect'
+  Switches appended by response files:
+Switch: --report-trx
+
+For switch syntax, type "MSBuild -help"

@@ -174,6 +174,20 @@ describe('contractingStep', () => {
     expect(prompts.at(-1)).toContain('unit (mandatory), lint');
   });
 
+  // Review: P18 for a missing target rests on the contract naming the check, and the planner was never told which
+  // checks name something the base revision does not have, so a contract could name one the goal does not create.
+  it('tells the planner which checks name something the base revision does not have, and when to name them', async () => {
+    prepare(PLANNER_OUTPUT, (c) => void (c.checks = { unit: { ...c.checks.unit!, mandatory: true }, lint: { ...c.checks.unit!, id: 'lint', mandatory: true } }));
+    const ctx = lab.ctx();
+    writeFileSync(
+      join(ctx.runDir, 'baseline.json'),
+      JSON.stringify({ schema: 'orbit.baseline/1', runId: lab.runId, baseRevision: ctx.run.baseRevision, failures: [{ checkId: 'lint', fingerprint: null, excerpt: 'npm error Missing script: "lint"', classification: 'missing-target' }, { checkId: 'unit', fingerprint: 'fp:1', excerpt: 'not ok 1' }], checks: [] }),
+    );
+    await contractingStep(lab.ctx());
+    expect(prompts.at(-1)).toContain('On the base revision the command of check lint names something that does not exist yet (a missing target): name it as the proof of a criterion only when the goal is to create what it names, and the run then expects it to pass; otherwise leave it out, and the run stops on it as a misconfigured check.');
+    expect(prompts.at(-1)).not.toMatch(/check unit names something/);
+  });
+
   it('tells the planner there are no trusted checks when the policy defines none', async () => {
     prepare(PLANNER_OUTPUT, (c) => void (c.checks = {}));
     await contractingStep(lab.ctx());

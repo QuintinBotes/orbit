@@ -192,6 +192,10 @@ prototyped against the demo app's real suite and judged security first:
   remains an explicit opt-in (`ui.isolation: container`), never an automatic
   fallback.
 - Upstream: propose `allowMachRegister` to srt, then delete the preload.
+- The preload's rules are named sets, chosen by the query of its URL
+  (`?rules=chromium`). A second set, one read-only rule for the sysctl
+  `kern.nisdomainname` that .NET's HTTP clients need, is added for processes
+  that run .NET (ADR 0009, addendum); without it the preload adds nothing.
 
 On Linux there is no Mach and no rule is needed, but app and tests in separate
 srt processes do not share loopback: srt always gives a bubblewrap sandbox its

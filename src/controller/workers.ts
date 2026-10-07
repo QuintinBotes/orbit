@@ -24,7 +24,7 @@ import { archiveAttempt, handleFromWorkerDir, LAUNCH_FILE, readLogLines } from '
 import { LOG_FILE, readExitRecord } from '../adapters/shim.ts';
 import { renderSystemPrompt, ROLE_OUTPUT_KIND } from '../adapters/prompt.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
-import { profileForWorker, workerTmpDir } from '../isolation/profiles.ts';
+import { PROVIDER_HOSTS, profileForWorker, workerAllowedHosts, workerTmpDir } from '../isolation/profiles.ts';
 import { detectToolchains, prepareToolchainLayout, toolchainLayout } from '../isolation/toolchains.ts';
 import { stopWorker } from '../recovery/reconcile.ts';
 import { route, toDecisionRecord } from '../routing/router.ts';
@@ -200,7 +200,9 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
   // Every session runs under the run's frozen snapshot; nothing (an approve-once grant included) widens a worker.
   const policy = { path: ctx.run.policyPath, hash: ctx.run.policyHash, snapshot: ctx.snapshot };
   // The toolchains the worktree uses: the repository's dependency caches read-only, build state private to the worker
-  // (docs/decisions/0009-toolchain-profiles.md). The worker keeps the real HOME its provider CLI needs.
+  // (docs/decisions/0009-toolchain-profiles.md). The worker keeps the real HOME its provider CLI needs. The hosts its
+  // sandbox allows decide whether NuGet's vulnerability audit can run there; a Codex worker, a read-only reviewer, is
+  // confined to its provider's hosts by its adapter (codexReviewerProfile).
   const toolchains = toolchainLayout({
     toolchains: detectToolchains({ roots: [req.cwd] }),
     mode: 'worker',
@@ -209,6 +211,7 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
     tmpDir: workerTmpDir(w.workerDir),
     hostHome: home,
     hostEnv: env,
+    networkHosts: provider === 'codex' ? PROVIDER_HOSTS.codex : workerAllowedHosts(provider, policy.snapshot),
   });
   prepareToolchainLayout(toolchains);
   const sandbox = profileForWorker({
@@ -220,6 +223,7 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
     homeDir: home,
     policyPath: policy.path,
     readablePaths: [ctx.deps.orbitInstallDir, ...toolchains.readOnly],
+    nisDomainName: toolchains.nisDomainName,
     timeoutMs,
     env,
   });

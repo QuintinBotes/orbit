@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { frozenPolicySetting } from '../../../src/controller/resume.ts';
 import { getRun } from '../../../src/controller/run-store.ts';
 import { finishRun, frozenPolicyCause, outcomeForError } from '../../../src/controller/steps/common.ts';
 import { OrbitError } from '../../../src/core/errors.ts';
@@ -39,6 +40,38 @@ describe('blocks caused by the frozen policy', () => {
     const next = nextAction(ctx.runDir);
     expect(next).toMatch(/new run/);
     expect(next).not.toMatch(/Resolve that, then run `orbit resume/);
+  });
+
+  it('a block that brings its own advice gets it in place of the generic one, and is still a frozen-policy block that resume refuses', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING'] });
+    const ctx = lab.ctx();
+    await finishRun(ctx, 'BLOCKED', 'Check lint is misconfigured, not a pre-existing failure: its command names something that does not exist.', { frozenAdvice: 'Start a new run whose goal says it creates the target.' });
+    const run = getRun(lab.db, lab.runId);
+    expect(run.outcomeReason).toBe('Check lint is misconfigured, not a pre-existing failure: its command names something that does not exist. Start a new run whose goal says it creates the target.');
+    expect(run.outcomeReason).not.toMatch(/This comes from the run's frozen policy|--force/);
+    expect(JSON.parse(run.outcomeJson!)).toMatchObject({ frozen_policy: { setting: 'checks.lint.command' } });
+    expect(frozenPolicySetting(run)).toBe('checks.lint.command');
+    // The next action is the reason itself: it already names the way forward.
+    expect(nextAction(ctx.runDir)).toBe(run.outcomeReason);
+  });
+
+  it('the advice is the end of the reason, so the cap on the stored reason cuts the evidence before it, never the way forward', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING'] });
+    const ctx = lab.ctx();
+    // Several checks with long log paths: the evidence alone is longer than the cap.
+    const evidence = Array.from({ length: 12 }, (_, i) => `"error: no such command: \`tool${i}\`", command in checks.c${i}.command, output in /orbit/runs/acme/baseline/${'deep/'.repeat(12)}c${i}.log`).join('; ');
+    const reason = `Checks c0, c1 are misconfigured, not a pre-existing failure: ${evidence}.`;
+    const advice = 'Fix, by cause: say so in the goal of a new run; or install it and start a new run. Resuming this run would only block again, so cancel it (orbit cancel orb-9) and start the new run with orbit run.';
+    expect(reason.length + advice.length).toBeGreaterThan(2000);
+    await finishRun(ctx, 'BLOCKED', reason, { frozenAdvice: advice });
+    const run = getRun(lab.db, lab.runId);
+    expect(run.outcomeReason!.length).toBeLessThanOrEqual(2000);
+    expect(run.outcomeReason!.endsWith(advice)).toBe(true);
+    expect(run.outcomeReason).toMatch(/^Checks c0, c1 are misconfigured/);
+    // The record keeps the whole reason.
+    expect((JSON.parse(run.outcomeJson!) as { reason: string }).reason).toBe(`${reason} ${advice}`);
+    // The next action of the final report is the stored reason, so it names the way forward too.
+    expect(nextAction(ctx.runDir).endsWith(advice)).toBe(true);
   });
 
   it('a policy-scope contract failure is a frozen-policy block too', async () => {

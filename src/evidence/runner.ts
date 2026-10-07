@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
-import { platform } from 'node:os';
+import { homedir, platform } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { isOrbitError, OrbitError } from '../core/errors.ts';
@@ -10,14 +10,16 @@ import { spawnDetached } from '../core/exec.ts';
 import { isAlive, killGroup, processStartTime } from '../core/proc.ts';
 import { isSecretEnvName, redact } from '../core/redact.ts';
 import { RESOURCE_LIMIT_EXIT_CODE, resourceLimitNote } from '../isolation/memory.ts';
-import { prepareWorkerTmpDir, profileForCheck, workerTmpDir } from '../isolation/profiles.ts';
-import { detectToolchains, prepareToolchainLayout, removeScratch, toolchainLayout, type ToolchainLayout } from '../isolation/toolchains.ts';
+import { checkoutBelowDenied, prepareWorkerTmpDir, profileForCheck, workerTmpDir } from '../isolation/profiles.ts';
+import { detectToolchains, NUGET_AUDIT_LIMITATION, prepareToolchainLayout, removeScratch, toolchainLayout, type ToolchainLayout } from '../isolation/toolchains.ts';
 import type { IsolationProvider, WrappedCommand } from '../isolation/types.ts';
 import { checkConfigHash, snapshotHash } from '../policy/snapshot.ts';
 import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { fingerprintFailure } from './fingerprint.ts';
 import { git } from './git.ts';
+import { nodeDenialFix, sdkFormatsInProcess } from './dotnet-format.ts';
+import { findMsbuildNodeDenial, msbuildNodeDenialNote, type MsbuildFixWhere, type MsbuildNodeDenial } from './msbuild.ts';
 import {
   checkRunToResult,
   finishCheckRun,
@@ -91,6 +93,12 @@ export interface RunnerContext {
    * install step, read-only for every other check. Absent: each attempt keeps its caches in its private scratch.
    */
   toolchainCacheRoot?: string | null;
+  /**
+   * Recorded check runs (group roots) whose result must not be reused, so their check runs again. PREFLIGHT set them
+   * aside when it found the check could not run or was misconfigured on the base revision (ADR 0010): the environment
+   * or the missing program may have been fixed since, which the recorded result cannot show.
+   */
+  setAside?: ReadonlySet<string>;
 }
 
 export interface RunChecksInput extends RunnerContext {
@@ -368,7 +376,7 @@ async function executeCheckGroup(ctx: RunnerContext, subject: CheckSubject, def:
   const loadGroup = (): CheckRunRecord[] => {
     const rows = listCheckRuns(ctx.db, query);
     const root = [...rows].reverse().find((r) => r.rerunOf === null);
-    if (!root) return [];
+    if (!root || ctx.setAside?.has(root.id)) return [];
     // A group recorded under another configuration or policy says nothing about this one.
     if (root.checkConfigHash !== configHash || root.policyHash !== ctx.run.policyHash || root.treeHash !== subject.treeHash) return [];
     return rows.filter((r) => r.id === root.id || r.rerunOf === root.id);
@@ -466,6 +474,12 @@ function safeCwd(checkout: string, rel: string): string {
  * .gitconfig...) by binding an unopenable device over each one the checkout lacks, so reading an absent .gitmodules
  * fails with EACCES and the build stops at "Error reading git repository information" (.NET SDK 9 and 10). Turning the
  * query off keeps that protection and every other rule of the sandbox; a check's own env can turn it back on.
+ *
+ * Orbit never changes a check's processor count (issue #10, reopened; evidence/msbuild.ts): DOTNET_PROCESSOR_COUNT
+ * reaches the test host, where it changes how the repository's tests run (xunit before 2.8 deadlocks a test that blocks
+ * on async code on one processor). MSBuild worker nodes, which the sandbox refuses their named pipe under /tmp, are kept
+ * out by the check's own command instead (-m:1, which `orbit doctor` asks for), and a check that still starts one is
+ * stopped as soon as MSBuild records the refusal (superviseAttempt).
  */
 export const DOTNET_CHECK_ENV: Readonly<Record<string, string>> = {
   DOTNET_CLI_TELEMETRY_OPTOUT: '1',
@@ -541,6 +555,7 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
     snapshot: ctx.snapshot,
     extraWritable: [dirs.artifactsDir, dirs.homeDir, tmp, ...toolchains.writable],
     readablePaths: toolchains.readOnly,
+    nisDomainName: toolchains.nisDomainName,
     homeDir: ctx.homeDir,
   });
   const wrapped: WrappedCommand = ctx.isolation.wrap(argv, profile, { cwd, env });
@@ -561,7 +576,9 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
         command: argv,
         cwd,
         isolation: ctx.isolation.kind,
-        limitations: wrapped.limitations,
+        // NuGet's audit off (only where it cannot run) is a gap in what the check proves, as an isolation limitation
+        // is: the record says so exactly when Orbit's NuGetAudit=false reached the check (its own env left it alone).
+        limitations: [...wrapped.limitations, ...(toolchains.env.NuGetAudit === 'false' && env.NuGetAudit === 'false' ? [NUGET_AUDIT_LIMITATION] : [])],
         rerunOf,
       },
       ctx.clock,
@@ -617,9 +634,10 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
  * The toolchains a check uses (its command, the checkout root and its cwd) and where their state goes
  * (docs/decisions/0009-toolchain-profiles.md): the repository's dependency caches are writable only for Orbit's own
  * install step (a generated definition, never a policy check that borrows its id) and read-only for every other
- * check; build state is private to the attempt.
+ * check; build state is private to the attempt. The check's network_hosts and the platform it runs on (`platform`, the
+ * host's by default; a container's is Linux) decide whether NuGet's vulnerability audit can run in it.
  */
-export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutDir' | 'toolchainCacheRoot' | 'homeDir' | 'isolation'>, def: CheckDefinition, cwd: string, dirs: Pick<AttemptDirs, 'toolchainsDir'>, tmpDir: string): ToolchainLayout {
+export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutDir' | 'toolchainCacheRoot' | 'homeDir' | 'isolation'>, def: CheckDefinition, cwd: string, dirs: Pick<AttemptDirs, 'toolchainsDir'>, tmpDir: string, platform: NodeJS.Platform = process.platform): ToolchainLayout {
   const install = INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
   return toolchainLayout({
     toolchains: detectToolchains({ command: def.command, shell: def.shell, roots: [ctx.checkoutDir, cwd] }),
@@ -627,9 +645,19 @@ export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutD
     cacheRoot: ctx.toolchainCacheRoot ?? null,
     scratchRoot: dirs.toolchainsDir,
     tmpDir,
+    platform: ctx.isolation.kind === 'container' ? 'linux' : platform,
+    networkHosts: def.network_hosts,
     // A container brings its own toolchain installation; the host's rustup and JDK are neither mounted nor wanted there.
     ...(ctx.isolation.kind === 'container' ? { hostEnv: {} } : { hostEnv: process.env, ...(ctx.homeDir ? { hostHome: ctx.homeDir } : {}) }),
   });
+}
+
+/**
+ * Where a check's command is configured, for the fix of a denied MSBuild node: Orbit's own dependency install is
+ * `dependencies.install_command` (it has no env a person sets), any other check is `checks.<id>`.
+ */
+function msbuildFixWhere(ctx: Pick<RunnerContext, 'snapshot'>, def: CheckDefinition): MsbuildFixWhere | null {
+  return INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id] ? { command: 'dependencies.install_command', env: null } : null;
 }
 
 /**
@@ -692,6 +720,53 @@ function readShim(dir: string, intentToken: string | null): Shim {
   };
 }
 
+/**
+ * Written beside the attempt when the runner stops a check for a sandbox denial that its tool would otherwise wait out
+ * (an MSBuild node denied its pipe, evidence/msbuild.ts): the outcome is FAILED with this note, whatever the stopped
+ * process exits with (srt exits 0 on SIGTERM), and a restarted controller finds it there. The note ends the log, on the
+ * footer only the runner writes, where PREFLIGHT reads it as the environment's failure, not a pre-existing one
+ * (evidence/environment-failure.ts classifyCouldNotRun). On a candidate it is read so only when the same check showed it
+ * on the base revision (ADR 0010): otherwise the change brought the node, and the failure goes to repair.
+ */
+const DENIAL_FILE = 'sandbox-denial.json';
+/** How often a running check's private temp directory is looked at for such a denial. */
+const DENIAL_SCAN_MS = 1_000;
+
+interface DenialRecord {
+  token: string | null;
+  note: string;
+}
+
+/**
+ * The note on a check MSBuild recorded a refused worker node for. The exception line comes from a file the check could
+ * write: redacted like the check's own output. The fix is for this check's command: -m:1, or for a dotnet format whose
+ * implicit restore was refused, the form that loads no project, or with SDK 8 (pinned by the checkout's global.json) a
+ * pinned restore first; on macOS, where the form that loads no project cannot list the folders above a checkout below a
+ * denied directory (a run's, in the Orbit home), running dotnet format outside Orbit.
+ */
+function denialNote(ctx: RunnerContext, def: CheckDefinition, denial: MsbuildNodeDenial, stopped = true): string {
+  const inProcess = sdkFormatsInProcess(resolve(ctx.checkoutDir, def.cwd), ctx.checkoutDir);
+  return redact(msbuildNodeDenialNote(denial, nodeDenialFix(def, msbuildFixWhere(ctx, def), inProcess, folderFormRuns(ctx)), stopped));
+}
+
+/** Whether dotnet format whitespace --folder can list the folders above this checkout in the check sandbox (evidence/dotnet-format.ts). */
+function folderFormRuns(ctx: Pick<RunnerContext, 'checkoutDir' | 'snapshot' | 'homeDir'>): boolean {
+  if (platform() !== 'darwin' || !ctx.snapshot.repo_root) return true;
+  try {
+    return !checkoutBelowDenied({ checkout: ctx.checkoutDir, repoRoot: ctx.snapshot.repo_root, homeDir: ctx.homeDir ?? homedir() });
+  } catch {
+    return false;
+  }
+}
+
+/** The note of a denial recorded for this attempt (its intent's token), or null. */
+function readDenial(checkDir: string): string | null {
+  const record = readJsonFile<DenialRecord>(join(checkDir, DENIAL_FILE));
+  if (!record || typeof record.note !== 'string') return null;
+  const token = readJsonFile<ShimIntent>(shimPath(checkDir, 'intent'))?.token ?? null;
+  return token === null || record.token === token ? record.note : null;
+}
+
 /** Wait for the attempt to end (or end it), then record the outcome. Returns the final row. */
 async function superviseAttempt(ctx: RunnerContext, subject: CheckSubject, def: CheckDefinition, row: CheckRunRecord, wrapped: WrappedCommand | null): Promise<CheckRunRecord> {
   const index = attemptIndex(ctx, row);
@@ -704,6 +779,10 @@ async function superviseAttempt(ctx: RunnerContext, subject: CheckSubject, def: 
   let cancelSentAt: number | null = null;
   let checkedIdentity = false;
   let detachedHere = false;
+  // A denial found in the check's temp directory: when the group was told to stop, and whether it was killed.
+  let deniedAt: number | null = readDenial(dirs.checkDir) === null ? null : ctx.clock.now();
+  let deniedKilled = false;
+  let nextDenialScan = 0;
 
   try {
     for (;;) {
@@ -732,6 +811,23 @@ async function superviseAttempt(ctx: RunnerContext, subject: CheckSubject, def: 
       if (cancelSentAt !== null && now - cancelSentAt > grace * 2 + 1_000) {
         reapAll(shim);
         return finalize(ctx, def, row, dirs, null, 'cancelled');
+      }
+
+      // MSBuild recorded a worker node the sandbox denied its pipe: the build cannot succeed, and MSBuild would wait
+      // 30 s for each of ten node starts before saying so. Stop the check's group (not the shim, which would read it as
+      // a cancellation); the outcome is recorded from the denial file whatever the group exits with.
+      if (cancelSentAt === null && deniedAt === null && shim.pgid !== null && now >= nextDenialScan) {
+        nextDenialScan = now + DENIAL_SCAN_MS;
+        const denial = findMsbuildNodeDenial(dirs.tmpDir);
+        if (denial) {
+          atomicWriteJson(join(dirs.checkDir, DENIAL_FILE), { token, note: denialNote(ctx, def, denial) } satisfies DenialRecord, 0o600);
+          deniedAt = now;
+          killQuiet(shim.pgid, 'SIGTERM');
+        }
+      }
+      if (cancelSentAt === null && deniedAt !== null && !deniedKilled && now - deniedAt > grace && shim.pgid !== null) {
+        deniedKilled = true;
+        killQuiet(shim.pgid, 'SIGKILL');
       }
 
       if (now > backstop && cancelSentAt === null) {
@@ -821,6 +917,17 @@ function finalize(ctx: RunnerContext, def: CheckDefinition, row: CheckRunRecord,
   } else {
     status = 'ERROR';
     note = 'the check process disappeared without writing an exit record (killed externally or the host restarted)';
+  }
+  // Stopped by the runner for a sandbox denial its tool would have waited out: a failure, never a pass (srt exits 0 on
+  // SIGTERM), unless it was cancelled or timed out first.
+  const denial = status === 'CANCELLED' || status === 'TIMEOUT' ? null : readDenial(dirs.checkDir);
+  if (denial !== null) {
+    status = 'FAILED';
+    note = denial;
+  } else if (status === 'FAILED' && note === null) {
+    // MSBuild can record a refused node and fail before the next scan (at once on Linux): look once more.
+    const late = findMsbuildNodeDenial(dirs.tmpDir);
+    if (late) note = denialNote(ctx, def, late, false);
   }
 
   const exitCode = exit?.exitCode ?? null;

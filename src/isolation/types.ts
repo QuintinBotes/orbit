@@ -25,6 +25,13 @@ export interface SandboxProfile {
    * ignore it.
    */
   chromiumMachRendezvous?: boolean;
+  /**
+   * A process that runs .NET (a check, the dependency install or a worker whose toolchains include dotnet). On macOS the
+   * sandbox-runtime provider then lets it read the NIS domain name (sysctl kern.nisdomainname), and only that: .NET's
+   * CookieContainer reads it, so every .NET HTTP client, NuGet's restore included, needs it (docs/decisions/0009-toolchain-profiles.md,
+   * addendum). Other providers and platforms ignore it.
+   */
+  nisDomainName?: boolean;
   limits: {
     timeoutMs: number;
     memoryMb: number | null;
@@ -40,10 +47,13 @@ export interface WrappedCommand {
   cleanup(): void;
   /** What this wrapping does not enforce, for the evidence record and `orbit doctor`. */
   limitations: string[];
-  /** Changes this wrapping made to the provider's usual confinement (`chromium-mach-rendezvous`); recorded with the evidence. */
+  /**
+   * Changes this wrapping made to the provider's usual confinement (`chromium-mach-rendezvous`, `nis-domainname-read`).
+   * A UI run records them with its evidence; a check's record keeps the limitations, which state each change too.
+   */
   adjustments?: string[];
   /**
-   * With the chromium-mach-rendezvous adjustment: why the srt preload refused to start the sandbox, as it recorded it
+   * With an adjustment the srt preload makes: why the preload refused to start the sandbox, as it recorded it
    * where the sandbox cannot write, or null. Read it before cleanup(). A command's exit code alone cannot tell, since srt
    * passes the command's own through.
    */

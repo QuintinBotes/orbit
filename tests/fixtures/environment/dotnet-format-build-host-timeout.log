@@ -1,0 +1,24 @@
+  The dotnet runtime version is '9.0.9'.
+  Using MSBuild.exe located in '/opt/dotnet/sdk/9.0.305/'.
+  Formatting code files in workspace '/var/folders/acme/T/orbit-evidence-acme/checkout/acme.csproj'.
+  Loading workspace.
+    Determining projects to restore...
+  Restored /var/folders/acme/T/orbit-evidence-acme/checkout/acme.csproj (in 35 ms).
+Unhandled exception: System.TimeoutException: The operation has timed out.
+   at System.IO.Pipes.NamedPipeClientStream.ConnectInternal(Int32 timeout, CancellationToken cancellationToken, Int32 startTime)
+   at Microsoft.CodeAnalysis.MSBuild.BuildHostProcessManager.BuildHostProcess..ctor(Process process, String pipeName, ILoggerFactory loggerFactory)
+   at Microsoft.CodeAnalysis.MSBuild.BuildHostProcessManager.GetBuildHostAsync(BuildHostProcessKind buildHostKind, CancellationToken cancellationToken)
+   at Microsoft.CodeAnalysis.MSBuild.BuildHostProcessManager.GetBuildHostWithFallbackAsync(BuildHostProcessKind buildHostKind, String projectOrSolutionFilePath, CancellationToken cancellationToken)
+   at Microsoft.CodeAnalysis.MSBuild.MSBuildProjectLoader.Worker.LoadProjectFileInfosAsync(String projectPath, DiagnosticReportingOptions reportingOptions, CancellationToken cancellationToken)
+   at Microsoft.CodeAnalysis.MSBuild.MSBuildProjectLoader.Worker.LoadProjectInfosFromPathAsync(String projectPath, DiagnosticReportingOptions reportingOptions, CancellationToken cancellationToken)
+   at Microsoft.CodeAnalysis.MSBuild.MSBuildProjectLoader.Worker.LoadAsync(CancellationToken cancellationToken)
+   at Microsoft.CodeAnalysis.MSBuild.MSBuildProjectLoader.LoadProjectInfoAsync(String projectFilePath, ProjectMap projectMap, IProgress`1 progress, ILogger msbuildLogger, CancellationToken cancellationToken)
+   at Microsoft.CodeAnalysis.MSBuild.MSBuildProjectLoader.LoadProjectInfoAsync(String projectFilePath, ProjectMap projectMap, IProgress`1 progress, ILogger msbuildLogger, CancellationToken cancellationToken)
+   at Microsoft.CodeAnalysis.MSBuild.MSBuildWorkspace.OpenProjectAsync(String projectFilePath, ILogger msbuildLogger, IProgress`1 progress, CancellationToken cancellationToken)
+   at Microsoft.CodeAnalysis.Tools.Workspaces.MSBuildWorkspaceLoader.LoadAsync(String solutionOrProjectPath, WorkspaceType workspaceType, String binaryLogPath, Boolean logWorkspaceWarnings, ILogger logger, CancellationToken cancellationToken)
+   at Microsoft.CodeAnalysis.Tools.CodeFormatter.OpenMSBuildWorkspaceAsync(String solutionOrProjectPath, WorkspaceType workspaceType, Boolean noRestore, Boolean requiresSemantics, String binaryLogPath, Boolean logWorkspaceWarnings, ILogger logger, CancellationToken cancellationToken)
+   at Microsoft.CodeAnalysis.Tools.CodeFormatter.FormatWorkspaceAsync(FormatOptions formatOptions, ILogger logger, CancellationToken cancellationToken, String binaryLogPath)
+   at Microsoft.CodeAnalysis.Tools.FormatCommandCommon.FormatAsync(FormatOptions formatOptions, ILogger`1 logger, CancellationToken cancellationToken)
+   at Microsoft.CodeAnalysis.Tools.Commands.RootFormatCommand.FormatCommandDefaultHandler.InvokeAsync(ParseResult parseResult, CancellationToken cancellationToken)
+   at System.CommandLine.Invocation.InvocationPipeline.InvokeAsync(ParseResult parseResult, CancellationToken cancellationToken)
+[orbit] check=fmt status=FAILED exit=1

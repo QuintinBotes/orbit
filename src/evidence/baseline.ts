@@ -16,7 +16,8 @@ import { appendEvent } from '../storage/events.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from './candidate.ts';
 import { resolveCommit, treeOf } from './git.ts';
 import { assertRunPolicy, baselineSubject, candidateSubject, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, runCheckSet, type CheckSubject, type RunnerContext } from './runner.ts';
-import { recordFailure } from './store.ts';
+import { isFinalCheckStatus, listCheckRuns, recordFailure } from './store.ts';
+import type { EnvironmentSignal } from './environment-failure.ts';
 import type { Candidate, CheckResult, CheckStatus } from './types.ts';
 
 /**
@@ -419,6 +420,14 @@ async function auditCandidate(ctx: RunnerContext & { candidate: Candidate; regis
 // ---------------------------------------------------------------------------
 // baseline
 
+/**
+ * Why a check that failed on the base revision is not a pre-existing failure (docs/decisions/0010-base-failure-classification.md):
+ * the environment stopped it before it ran anything of the repository (evidence/environment-failure.ts), its tool
+ * rejected the command line the check runs (`misconfigured`), or its command names something the base revision does not
+ * have (`missing-target`, evidence/check-misconfigured.ts), which the goal may create.
+ */
+export type BaseFailureClassification = 'environment' | 'misconfigured' | 'missing-target';
+
 export interface BaselineCheckEntry {
   checkId: string;
   mandatory: boolean;
@@ -444,8 +453,19 @@ export interface BaselineReport {
   /** Gate notes for the base revision's audit findings at or above `fail_on` (see baselineAuditNotes); absent in baselines recorded before it existed. */
   auditNotes?: string[];
   checks: BaselineCheckEntry[];
-  /** Mandatory checks that already fail (or time out) on the base revision. */
-  failures: { checkId: string; fingerprint: string | null; excerpt: string | null }[];
+  /**
+   * Mandatory checks that already fail (or time out) on the base revision. PREFLIGHT marks a failure it found was not
+   * the repository's code with its classification (docs/decisions/0010-base-failure-classification.md); no baseline
+   * exception is ever applied to one so marked. An unmarked failure is a pre-existing failure.
+   */
+  failures: {
+    checkId: string;
+    fingerprint: string | null;
+    excerpt: string | null;
+    classification?: BaseFailureClassification;
+    /** For an `environment` failure, the signals that showed it; a candidate's denial counts only when its signal is here. */
+    signals?: EnvironmentSignal[];
+  }[];
   /** False when the run was cancelled or a check could not run; such a baseline is not reused. */
   complete: boolean;
   recordedAt: number;
@@ -509,6 +529,12 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
     return { report: prior, results: [], reused: true };
   }
 
+  // A check PREFLIGHT classified on an earlier try at this baseline (its failure carries a classification, ADR 0010) runs
+  // again: the person was told to fix the environment, install the program or restore the tool and resume, which the
+  // recorded result cannot show. A failure of the code is reused as recorded.
+  const classified = prior && prior.baseRevision === baseRevision && prior.policyHash === run.policyHash && Array.isArray(prior.failures) ? prior.failures.filter((f) => f.classification !== undefined).map((f) => f.checkId) : [];
+  const setAside = new Set(classified.flatMap((checkId) => listCheckRuns(db, { runId: run.id, candidateId: null, checkId, rootsOnly: true }).filter((r) => isFinalCheckStatus(r.status)).map((r) => r.id)));
+
   const checkoutDir = input.checkoutDir ?? join(prepareWorkerTmpDir(join(runDir, 'baseline-checkout')), `base-${sha256(run.id).slice(0, 8)}`);
   await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
   await materializeCandidate(input.repoRoot, baseRevision, checkoutDir, { readOnly: false });
@@ -529,7 +555,7 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
       toolchainCacheRoot: input.toolchainCacheRoot ?? null,
     };
     const install = await installDependencies({ ...ctx, baseTree, registryHosts: input.registryHosts });
-    const results = install.skipped || install.ok ? await runCheckSet(ctx, baselineSubject(runDir, baseTree), defs) : [];
+    const results = install.skipped || install.ok ? await runCheckSet({ ...ctx, ...(setAside.size > 0 ? { setAside } : {}) }, baselineSubject(runDir, baseTree), defs) : [];
     const audit = await runDependencyAudit({ ...ctx, registryHosts: input.registryHosts }, baselineSubject(runDir, baseTree, 'install'));
 
     const entries: BaselineCheckEntry[] = results.map((r) => ({

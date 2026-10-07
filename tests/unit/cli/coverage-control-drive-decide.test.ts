@@ -13,6 +13,7 @@ import { createContext } from '../../../src/cli/context.ts';
 import { memoryIo } from '../../../src/cli/io.ts';
 import { systemClock } from '../../../src/core/clock.ts';
 import { OrbitError } from '../../../src/core/errors.ts';
+import { misconfiguredRecord } from '../../../src/controller/environment-block.ts';
 import { defaultConfig } from '../../../src/policy/config.ts';
 import { acquireLease, getRun, releaseLease, setPaused, transition } from '../../../src/controller/run-store.ts';
 import { appendEvent } from '../../../src/storage/events.ts';
@@ -218,6 +219,27 @@ describe('orbit run --foreground and resume --foreground, with a scripted contro
     const without = await drive(l, ['run', '--goal', 'two', '--foreground']).result;
     expect(without.out).toMatch(/resolve the reason above, then "orbit resume orb-\S+ --foreground"\n$/);
     expect(without.out).not.toContain('open question');
+  });
+
+  it('a frozen-policy block says a new run; one of a missing target the contract does not name points to the reason\'s advice by cause, not to the config', async () => {
+    const l = lab();
+    await l.cli(['init']);
+    const lint = { checkId: 'lint', kind: 'missing-target' as const, signature: 'cargo-no-such-command', tool: 'cargo', cause: 'cargo has no such command', lines: ['error: no such command: `nextest`'], configKey: 'checks.lint.command' };
+    const block = (outcome: Record<string, unknown>) => async (id: string) => {
+      l.moveTo(id, ['PREFLIGHT', 'CONTRACTING', 'BLOCKED'], 'the reason');
+      l.db().run('UPDATE runs SET outcome_reason = ?, outcome_json = ? WHERE id = ?', 'the reason', JSON.stringify({ state: 'BLOCKED', reason: 'the reason', ...outcome }), id);
+    };
+
+    hooks.start = block({ frozen_policy: { setting: 'scope.allowed_paths' } });
+    const generic = await drive(l, ['run', '--goal', 'one', '--foreground']).result;
+    expect(generic.out).toMatch(/this block comes from the run's frozen policy: fix \.orbit\/config\.yaml, then "orbit cancel orb-\S+" and start a new run with "orbit run"\n$/);
+
+    hooks.start = block({ frozen_policy: { setting: 'checks.lint.command' }, misconfigured_checks: [misconfiguredRecord(lint, 'misconfigured')] });
+    const missing = await drive(l, ['run', '--goal', 'two', '--foreground']).result;
+    expect(missing.out).toMatch(/ended BLOCKED: the reason\n/);
+    // The config is not what is wrong when the goal should create the target or a tool is not installed yet.
+    expect(missing.out).not.toMatch(/fix \.orbit\/config\.yaml/);
+    expect(missing.out).toMatch(/the advice above says what to do by cause\b.*resuming would only block again.*"orbit cancel orb-\S+" and start a new run with "orbit run"\n$/);
   });
 
   it('Ctrl-C pauses the run instead of cancelling it, stops the controller, and exits 20', async () => {

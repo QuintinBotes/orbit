@@ -1,0 +1,8 @@
+ERROR: file or directory not found: tests/missing_test.py
+
+============================= test session starts ==============================
+platform darwin -- Python 3.12.10, pytest-8.4.1, pluggy-1.6.0
+rootdir: /home/acme/checkout
+collected 0 items
+
+============================ no tests ran in 0.01s =============================

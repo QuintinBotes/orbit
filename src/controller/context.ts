@@ -17,6 +17,7 @@ import type { OrbitDb } from '../storage/db.ts';
 import type { ProviderAdapter } from '../adapters/types.ts';
 import type { IsolationProvider } from '../isolation/types.ts';
 import { getIsolation } from '../isolation/index.ts';
+import { checkoutBelowDenied } from '../isolation/profiles.ts';
 import { toolchainCacheRoot } from '../isolation/toolchains.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { verifySnapshot } from '../policy/snapshot.ts';
@@ -231,6 +232,21 @@ export function lenientContext(deps: ControllerDeps, runId: string, signal: Abor
 
 export function homeOf(deps: ControllerDeps): string {
   return deps.homeDir ?? homedir();
+}
+
+/**
+ * Whether dotnet format whitespace --folder can list the folders above `checkout` (a check's checkout or a worker's
+ * worktree of this run) in its sandbox: on macOS not when the profile read-denies a directory above it, as it does
+ * below the default Orbit home (isolation/profiles.ts checkoutBelowDenied; evidence/dotnet-format.ts). A layout that
+ * cannot be judged counts as one where it cannot.
+ */
+export function folderFormRunsAt(ctx: Pick<RunContext, 'deps' | 'snapshot'>, checkout: string): boolean {
+  if (process.platform !== 'darwin') return true;
+  try {
+    return !checkoutBelowDenied({ checkout, repoRoot: ctx.snapshot.repo_root, homeDir: homeOf(ctx.deps), ...(ctx.deps.hostEnv ? { env: ctx.deps.hostEnv } : {}) });
+  } catch {
+    return false;
+  }
 }
 
 /** The agent scheduler for a run's admission decisions, on the controller's machine probe. */

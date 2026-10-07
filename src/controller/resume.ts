@@ -30,13 +30,35 @@ function liveEvidenceForLatestCandidate(db: OrbitDb, runId: string): boolean {
 }
 
 /** The policy setting a block came from, when the controller recorded it as a frozen-policy block. */
-export function frozenPolicySetting(run: RunRecord): string | null {
+export function frozenPolicySetting(run: Pick<RunRecord, 'outcomeJson'>): string | null {
   try {
     const o = run.outcomeJson ? (JSON.parse(run.outcomeJson) as { frozen_policy?: { setting?: unknown } }) : null;
     if (!o?.frozen_policy) return null;
     return typeof o.frozen_policy.setting === 'string' ? o.frozen_policy.setting : 'a policy setting';
   } catch {
     return null;
+  }
+}
+
+/**
+ * The checks a run was blocked on at CONTRACTING because each names a target the base revision does not have and the
+ * contract does not name as a proof (steps/baseline-questions.ts blockOnMissingTargets), as the outcome recorded them
+ * (kind `missing-target`). Empty for every other block: a PREFLIGHT block records only argument errors, whose cause is
+ * the command and so the config. Such a block is a frozen-policy block too, but a fix of the config is one of three
+ * causes of it, so the surfaces that print the way forward give the advice by cause (environment-block.ts
+ * missingTargetAdvice) instead of the generic one.
+ */
+export function missingTargetChecks(run: Pick<RunRecord, 'outcomeJson'>): { checkId: string; configKey: string }[] {
+  try {
+    const o = run.outcomeJson ? (JSON.parse(run.outcomeJson) as { misconfigured_checks?: unknown }) : null;
+    if (!Array.isArray(o?.misconfigured_checks)) return [];
+    return o.misconfigured_checks.flatMap((m: unknown) => {
+      const r = m !== null && typeof m === 'object' ? (m as { check_id?: unknown; kind?: unknown; config_key?: unknown }) : {};
+      if (r.kind !== 'missing-target' || typeof r.check_id !== 'string') return [];
+      return [{ checkId: r.check_id, configKey: typeof r.config_key === 'string' ? r.config_key : `checks.${r.check_id}.command` }];
+    });
+  } catch {
+    return [];
   }
 }
 

@@ -23,7 +23,14 @@ degraded but usable.
 | `checks` | a configured check's executable or script is missing | Install it, or correct the `command` in `checks`. With no checks defined, nothing can be verified. |
 | `checks` | `orbit init` proposed no check, or fewer than expected | Init proposes only for tools on `PATH` that the repository declares, and only when it writes a new config; it prints each tool it skipped and why (`checks.not_proposed` with `--json`). Install the tool, or add the check by hand; see [Checks that `orbit init` proposes](configuration.md#checks-that-orbit-init-proposes). A proposed check that fails offline needs `network_hosts` for its dependencies. |
 | `checks.sandbox` | `the sandbox refuses the executable of check X; a run would block at its baseline` | Under `sandbox-runtime`, doctor starts each check's executable (one installed outside the repository) in the sandbox that check gets, with a harmless argument (`--version`; `dotnet help`, which runs the .NET SDK's first-run steps; `go version`). The detail line shows what was refused. See [A check cannot run in the sandbox](#run-problems). A tool that exits non-zero with no denial in its output (an unknown `--version` flag) is not counted. |
-| `checks.sandbox` | `the sandbox refuses the go toolchain; checks that use it would block at their baseline` | One `toolchain <name>:` line per toolchain the checks or the repository use (Go, Rust, Python, JVM, .NET): whether its executable starts in the check sandbox with that toolchain's environment, where the repository's dependency caches live (`<orbit home>/toolchains/<repo key>/...`, "not created yet" before the first dependency install) and which build state is private to each check attempt. See [Toolchains under the sandbox](#run-problems). |
+| `checks.sandbox` | `check X would start MSBuild worker nodes, which the sandbox refuses; a run would block at its baseline` | The check (or `dependencies.install_command`, named so) runs `dotnet build`, `test`, `publish`, `pack`, `restore`, `clean`, `msbuild` or `run` itself (its command, the command `env` starts, or a command of a chain joined by `&&` or `;`) without `-m:1`, and its own `env` does not set `DOTNET_PROCESSOR_COUNT=1`. It is refused without being started; the fix is its command with `-m:1` added, ready to paste, with the reason once after all such fixes. A `-m:1` after the `--` of `dotnet test` goes to the test runner and does not count. See [.NET builds and MSBuild worker nodes](#run-problems). |
+| `checks.sandbox` | `doctor cannot tell whether check X runs MSBuild on one node` (warning) | The check runs dotnet through make, a script, a wrapper or a shell line with a pipe, `\|\|`, a substitution or a redirection, which its definition does not show. Make sure every dotnet build, test, publish, pack, restore, clean or msbuild it starts passes `-m:1`; one that does not is stopped as soon as MSBuild records the refused node. `DOTNET_PROCESSOR_COUNT=1` in the check's `env` also clears this warning. See [.NET builds and MSBuild worker nodes](#run-problems). |
+| `checks.sandbox` | `the sandbox refuses the go toolchain; checks that use it would block at their baseline` | One `toolchain <name>:` line per toolchain the checks or the repository use (Go, Rust, Python, JVM, .NET): whether its executable starts in the check sandbox with that toolchain's environment, where the repository's dependency caches live (`<orbit home>/toolchains/<repo key>/...`, "not created yet" before the first dependency install; on macOS, for a .NET repository with packages, that they are restored into it outside the sandbox, as `checks.dotnet-packages` says) and which build state is private to each check attempt. See [Toolchains under the sandbox](#run-problems). For .NET the line does more than start `dotnet`: it builds three generated projects with no packages (offline, from the SDK alone) in the sandbox of the check that uses .NET, its `env` included (so `DOTNET_PROCESSOR_COUNT=1` there gives the probe one node too), with the node switch MSBuild gets from that check's command (`-m:1` for a check that runs dotnet through make or a script, or whose dotnet commands do not build), so a build the sandbox refuses (an MSBuild worker node denied its pipe) shows here with the refused node and the fix. A refused toolchain, of any kind, fails doctor when a mandatory check runs the toolchain's executable itself, and is a warning otherwise. |
+| `checks.sandbox` | `check X runs dotnet format, which loads the project through a build host the sandbox refuses its named pipe; a run would block at its baseline` | Every form of `dotnet format` but `dotnet format whitespace --folder` loads the project through a build host whose named pipe .NET binds under `/tmp`, which the sandbox refuses. The check is refused without being started (a warning when it is optional); the fix is its command with `dotnet format whitespace --folder --verify-no-changes` in place of that `dotnet format`, in the folder of the solution or project it names and with its `--include` and `--exclude`, ready to paste. See [dotnet format under the sandbox](#run-problems). |
+| `checks.sandbox` | `check X runs dotnet format, which cannot run in a run's check sandbox on macOS; a run would block at its baseline` | On macOS the folder form lists every folder above the run's checkout for `.editorconfig` files, and the Orbit home the checkout sits in is read-denied, so no form of `dotnet format` runs with SDK 9 and later. Remove the check (or make it optional) and run `dotnet format` in CI, or pin SDK 8 with `global.json` and restore first. See [dotnet format under the sandbox](#run-problems). |
+| `checks.dotnet-packages` | `this repository's NuGet packages cannot be downloaded inside the sandbox on macOS (...)` (warning), or `dependencies.install_command restores NuGet packages, which cannot be downloaded inside the sandbox on macOS (...), and this repository's NuGet cache is empty` (or `and a package version floats, which every restore looks up at nuget.org`), or `check X restores NuGet packages, ..., and this repository's NuGet cache is empty: the check would fail at the baseline` (a mandatory check that restores, with no install that does) | macOS under `srt`, a .NET repository with packages (a `PackageReference`, `packages.lock.json`, `Directory.Packages.props`, `packages.config`, a local tool manifest, or an MSBuild SDK that NuGet resolves, in its tracked files). The sandbox keeps the system trust service out of reach, so .NET cannot verify nuget.org's certificate. Run the command the fix prints, once, in a terminal (outside the sandbox), and again whenever the packages change: it restores the projects' packages and the local tools into this repository's NuGet cache, at the path the detail line shows. The dependency install and the checks then restore offline from it, except a floating version (`13.*`), which the detail lines name: pin it or use a lock file. See [.NET HTTP clients and NuGet restore on macOS](#run-problems). |
+| `checks.dotnet-audit` | `NuGet's vulnerability audit cannot reach nuget.org from the sandbox on macOS, and Directory.Build.props turns it on where Orbit turns it off: with warnings as errors, its warning NU1900 fails dependencies.install_command and check build` | macOS under `srt`, a .NET repository with packages that sets `NuGetAudit` to true itself (a project or MSBuild import, a check's `env`, or `-p:NuGetAudit=true`) while warnings are errors (`TreatWarningsAsErrors`, `NU1900` in `WarningsAsErrors`, `-warnaserror`). On macOS under `srt` Orbit turns the audit off in every .NET process through the environment, since it cannot reach nuget.org there, and such a setting overrides that, so `NU1900` fails every restore there. Make the change the fix names: in each file, `<NuGetAudit Condition="'$(NuGetAudit)' == ''">true</NuGetAudit>`, which keeps the audit on everywhere else; a check's `env` or command loses its setting. A fail when the dependency install or a mandatory check restores; a warning when only optional checks, make or a script, or a setting under a condition doctor cannot evaluate are involved. See [.NET HTTP clients and NuGet restore on macOS](#run-problems). |
+| `checks.dotnet-tests` | `check X sets DOTNET_PROCESSOR_COUNT=1 in its env, which its test host gets too: xunit before 2.8 deadlocks a test that blocks on async code there, and the check times out` (warning) | A tracked test project references xunit before 2.8 (the detail lines name each project and version), and a .NET check whose command names tests sets the variable in its own `env` (which `checks.sandbox` accepts as one MSBuild node). Remove it and pass `-m:1` in the command instead, or upgrade xunit; see [.NET builds and MSBuild worker nodes](#run-problems). |
 | `isolation` | sandbox-runtime unavailable | Install `srt` (`npm install --global @anthropic-ai/sandbox-runtime`); on Linux install bubblewrap. A plugin install and a clone after `npm ci` carry their own `srt`; if doctor says it is missing there, the plugin's or the clone's install did not finish (run `npm ci` in the clone, or reinstall the plugin). Orbit will not fall back to weaker isolation. |
 | `isolation` | container image not present locally | `docker pull <image>`. Containers run with `--pull never`. Make sure the Docker daemon is running. |
 | `isolation` | `none` provider warning | Workers run with your full permissions. Use `sandbox-runtime` or `container`. |
@@ -68,7 +75,15 @@ degraded but usable.
   again, and `orbit resume` refuses with exit 5. Fix the config, `orbit cancel
   <run-id>`, and start a new run with `orbit run`. If the fix was outside the
   policy (for example `orbit models refresh`), `orbit resume <run-id> --force`
-  continues the same run. The cases are listed in
+  continues the same run; not for a misconfigured check, whose command is the
+  policy's: a forced resume runs the same command again, so it blocks again
+  unless the tool changed outside the policy, and the reason names only a new
+  run. A missing target the contract does not name is a frozen-policy block too
+  (`orbit resume` refuses it, exit 5), but its reason says "Check X is
+  misconfigured ... the contract does not name it as the proof of any criterion"
+  and gives advice by cause, not "fix the config" (see "A check's target does not exist yet" below);
+  a new run in every case, since even a forced resume reads the recorded baseline
+  and blocks again. The cases are listed in
   [operations](operations.md#pause-resume-cancel).
 - **`resume` exits 5 (CONFLICT).** A live controller owns the run, open material
   questions remain, or the block comes from the frozen policy. Answer the
@@ -104,24 +119,108 @@ degraded but usable.
   command's own exit 97 does not). Anything else stays a journey failure.
   `orbit doctor` (`ui.browser-isolation`) launches Playwright's real headless
   Chromium binary through the preload, with no repository code, to check this.
-- **A check cannot run in the sandbox.** The run blocks at PREFLIGHT with "check X
+- **A check cannot run in the sandbox.** The run blocks at PREFLIGHT with "Check X
   could not run on the base revision ..., and the output shows an environment
-  cause, not a pre-existing failure", the first error line, the log and a fix. The
+  cause, not a pre-existing failure", the first error line, the log and a fix
+  (checks with the same cause are named together, with their evidence once). The
   check never got as far as the repository's code: the sandbox or the operating
   system refused it a filesystem operation outside its checkout (EPERM, "Operation
-  not permitted", a Seatbelt `deny(1) file-...` line; on Linux, where `srt` mounts
-  everything outside the writable paths read-only, EROFS, "Read-only file
-  system"), or it was killed by a crash
-  signal before printing anything. Such a failure is not recorded as pre-existing
-  and no baseline exception is offered, since accepting one would let a run pass
-  with a check that never ran. The same refusal on a candidate blocks the run
-  without a repair attempt. Output that shows a compile error or a failing test
-  is never read this way: that failure stays the code's. Run `orbit doctor`
-  (`checks.sandbox`) to see what the tool is refused, then let it keep its files
-  in the check's `HOME` or `TMPDIR` (each check gets a private, empty one; set
-  the tool's variables in the check's `env`) or change the check. `orbit resume
-  <run-id>` runs the baseline again once the environment is fixed; a changed
-  check definition needs a new run.
+  not permitted", EACCES, "Permission denied", a Seatbelt `deny(1) file-...` line;
+  on Linux, where `srt` mounts everything outside the writable paths read-only,
+  EROFS, "Read-only file system"); refused MSBuild the named pipe of a worker node,
+  a Unix socket under `/tmp` the sandbox does not let a check create (the
+  runner's note "the check sandbox denied MSBuild node (pid N) its named pipe"
+  with the fix for the check's command, written when it stopped the check, or
+  `MSBUILD : error MSB1025` with `System.Net.Sockets.SocketException (13):
+  Permission denied` from `dotnet test`: build on one MSBuild node with `-m:1`
+  on the check's dotnet command, for example `[dotnet, test, -m:1]`, when it is
+  one that hands its arguments to MSBuild; see ".NET builds and MSBuild worker
+  nodes"); refused `dotnet format`'s build host its named pipe (a
+  `TimeoutException` under `BuildHostProcessManager` on macOS, "unable to
+  connect to it's pipe" on Linux: `dotnet format` takes no `-m:1`, so use the
+  form that loads no project, see "dotnet format under the sandbox");
+  refused a connection through its network proxy (`curl:
+  (56) CONNECT tunnel failed, response 403`, `X-Proxy-Error:
+  blocked-by-allowlist`, NuGet's "The proxy tunnel request ... failed with status
+  code '403'": add the host to the check's `network_hosts`, or restore
+  dependencies in the dependency install); NuGet's HTTP client could not start in
+  the sandbox (`error NU1301: The type initializer for
+  'System.Net.CookieContainer' threw an exception` with `GetDomainName: -1`:
+  Orbit adds the rule .NET needs for it only with the `srt` it ships, and the
+  check's record says when it was not added; see ".NET HTTP clients and NuGet
+  restore on macOS"); the program its
+  command runs is not installed where it runs (the shell's "command not found",
+  exit 127: install it or give the check a PATH that holds it, or correct a
+  misspelled name, which needs a new run); or it was killed by a crash signal
+  before printing anything. Such a failure is not recorded as pre-existing and no
+  baseline exception is offered, since accepting one would let a run pass with a
+  check that never ran. Output that shows a compile error or a failing test is
+  never read this way (a failing test in any runner's report: TAP, Jest,
+  pytest, unittest, go, cargo, VSTest's `Failed!  - Failed: 1`,
+  Microsoft.Testing.Platform's `failed X (12ms)` and `failed: 1`, which xunit v3,
+  MSTest's runner and TUnit print, and xunit's `[FAIL]`): that failure stays the
+  code's, and so does a socket refused to the repository's own program. A
+  restore error inside `dotnet build` on the base revision is read this way even
+  though MSBuild counts it in "N Error(s)", when every error it counted is a
+  restore error (`NUxxxx`) or `MSB1025`; on a candidate that count is the
+  change's unless the base revision failed the same way. On a candidate the same
+  refusal blocks the run without a repair attempt only when the check showed it
+  on the base revision too (EACCES, a socket, a .NET named pipe, the network
+  proxy and NuGet's client need the same one there); a refusal the change
+  brought is repaired. Run `orbit doctor` (`checks.sandbox`) to see what the
+  tool is refused, then let it keep its files in the check's `HOME` or `TMPDIR`
+  (each check gets a private, empty one; set the tool's variables in the
+  check's `env`) or change the check. `orbit resume <run-id>` runs those checks
+  again once the environment is fixed; a changed check definition needs a new
+  run. The rules are in
+  [ADR 0010](decisions/0010-base-failure-classification.md).
+- **A check is misconfigured.** The run blocks at PREFLIGHT with "Check X is
+  misconfigured, not a pre-existing failure", the tool's error line, "command in
+  checks.X.command" and the log. The tool the check runs rejected the command
+  line itself: an MSBuild command-line error (`MSB1001` unknown switch outside
+  `dotnet test`, `MSB1008` more than one project), go's `flag provided but not
+  defined` or `unknown command` (exit 2), or cargo's `unexpected argument`. No
+  baseline exception is offered, and none can be approved. Run the command by
+  hand in a clean checkout, correct it in `.orbit/config.yaml` and start a new run
+  (`orbit resume` refuses, because the command is in the run's frozen policy; a
+  forced resume runs the same command again, so it blocks again unless the tool
+  changed outside the policy).
+  Only the check's own direct invocation of the tool is read this way: its program
+  (after a leading env assignment, `env`, an npx-style runner or `python -m`) is
+  the tool, the command is not a shell chain or pipeline, and what the error names
+  is what the command names. A usage error printed by a script of the repository
+  (`npm test` whose script runs a wrong command, or `cd client && npm test` in a
+  package with no test script: npm's `> acme@1.0.0 test` banner shows it ran the
+  check's script), a chain (`dotnet restore && npm test`) or a program the check
+  runs (`dotnet run --project build/...` printing
+  `MSB1008`) is the repository's code, so it stays a pre-existing failure; so is
+  an argument from the repository's own configuration (pytest's `addopts`, a
+  `Directory.Build.rsp`).
+- **A check's target does not exist yet.** The check's command names something
+  the base revision does not have: `MSB1003` (no project in the directory),
+  `MSB1009` (no such project), `MSB1011` (more than one in the directory, which
+  the goal may leave with one), `dotnet test`'s `MSB1001` unknown switch (a test
+  platform's option, `--report-trx`, before the repository runs its tests on
+  it), `npm error Missing script` for the script the command runs, pytest's
+  `file or directory not found` or `unrecognized arguments` (exit 4; an option
+  of a plugin or a `conftest.py` not there yet, `--cov` without pytest-cov or
+  `-n` without pytest-xdist, says the same as a misspelled one), dotnet's "Could
+  not execute because the specified command or file was not found", cargo's `no
+  such command` (exit 101), or a script of the repository the shell cannot find
+  (exit 127). PREFLIGHT lets the run go on, because the goal may be to create it.
+  When the contract names the check as the proof of a criterion, its question is
+  withdrawn and the check is expected to pass on the candidate. When it does not,
+  the run blocks at CONTRACTING with "Check X is misconfigured, not a pre-existing
+  failure: ... the contract does not name it as the proof of any criterion" and
+  advice of its own, by cause. If the goal is meant to create what the command
+  names, start a new run whose goal says so. If a tool that is not installed or
+  restored yet provides it (a cargo plugin, a dotnet local tool, a pytest
+  plugin), install or restore it and then start a new run. If the command is wrong, correct `checks.X.command` in
+  `.orbit/config.yaml` and start a new run. Each needs a new run because
+  CONTRACTING reads the baseline PREFLIGHT recorded: `orbit resume` would read
+  the same failure and block again, so the reason does not offer `--force`. It is
+  never accepted as a baseline exception: a check whose target does not exist
+  tests nothing.
 - **.NET checks under the sandbox.** A check's `HOME` is new and empty, so every
   `dotnet` command is the SDK's first run, and its first-run NuGet migrations take
   a named mutex. The .NET runtime keeps named mutexes under `/tmp/.dotnet` (and
@@ -148,13 +247,211 @@ degraded but usable.
   information: Access to the path '.../.gitmodules' is denied". A check's own `env`
   overrides any of them. With that, `dotnet build` of a console project runs
   under `srt` (verified with the .NET 9 SDK on macOS, and the .NET 9 and 10 SDKs on
-  Linux). Two cases remain yours to decide:
+  Linux). Three cases remain yours to decide:
   code under test that creates a named `Mutex` or `Semaphore` needs
   `/tmp/.dotnet` and cannot run under `sandbox-runtime` (change the code to use
   an unnamed one or a file lock in `TMPDIR`; `isolation.provider: container`
-  gives each check its own `/tmp`, which Orbit has not verified with .NET); and a project with NuGet packages reads them
+  gives each check its own `/tmp`, which Orbit has not verified with .NET); a project with NuGet packages reads them
   from the repository's read-only NuGet cache (`NUGET_PACKAGES`), so restore them in the dependency install
-  (`dependencies.install_command: [dotnet, restore, --locked-mode]`, which reaches `api.nuget.org`).
+  (`dependencies.install_command: [dotnet, restore, --locked-mode, -m:1]`, which reaches `api.nuget.org`; on macOS
+  see ".NET HTTP clients and NuGet restore on macOS" below).
+- **.NET builds and MSBuild worker nodes.** `dotnet build`, `dotnet test` and the
+  like run MSBuild with one node per processor. Whenever a restore or build has two
+  projects to work on at once (a test project referencing two libraries, any
+  solution), MSBuild starts a worker node, a separate process that binds a named
+  pipe, which .NET implements as a Unix socket at `/tmp/MSBuild<pid>`: a path MSBuild
+  fixes whatever `TMPDIR` says, outside every check's writable paths and shared by
+  every MSBuild on the machine. The sandbox refuses it (macOS Seatbelt denies
+  `file-write-create` of the socket; on Linux `srt`'s seccomp filter
+  refuses every Unix socket), the node dies with `System.Net.Sockets.SocketException
+  (13): Permission denied`, and the build fails: on macOS after MSBuild has waited
+  30 s for each of ten node starts (five minutes, then `Build FAILED` with no error
+  from `dotnet build`, `MSBUILD : error MSB1025` from `dotnet test`), on Linux
+  within a second and with no error at all.
+
+  So every dotnet command a check runs pins one node itself: add `-m:1` (or
+  `-maxcpucount:1`) to `dotnet build`, `test`, `publish`, `pack`, `restore`,
+  `clean` and `msbuild`, in place of any `-m:N`. `dotnet run` hands `-m:1` to
+  the program instead of MSBuild, so build first and run without building:
+
+  ```yaml
+  checks:
+    test:
+      command: [dotnet, test, tests/Acme.Tests, -m:1]
+    smoke:
+      command: ["dotnet build -m:1 && dotnet run --project src/Acme --no-build"]
+      shell: true
+  dependencies:
+    install_command: [dotnet, restore, --locked-mode, -m:1]
+  ```
+
+  `orbit doctor` fails a mandatory check (and the dependency install command)
+  that runs one of these itself without `-m:1`, before starting anything, and
+  prints its command with `-m:1` added; an optional one is a warning. It reads
+  each command of a chain joined by `&&`, `;` or a new line (`cd src && dotnet
+  test -m:1`, and the `dotnet run` form above, pass), the command `env` starts,
+  and the script of `sh -c`. A `-m:1` after the `--` of `dotnet test` goes to
+  the test runner, not to MSBuild, so put it before the `--`. A check that runs
+  MSBuild through make, a script or a shell line with a pipe, `||`, a
+  substitution or a redirection cannot be judged from its definition: doctor
+  warns that it cannot tell, and the same fix applies to every dotnet command it
+  starts. If one runs
+  without `-m:1` anyway, the runner stops it as soon as MSBuild records the
+  refused node (a crash report in the check's private `TMPDIR`) and records it
+  FAILED with the pipe and the fix for that check's command, instead of waiting
+  out the five minutes. On the base revision the run then blocks with that fix
+  as an environment failure, with no baseline exception question. On a
+  candidate the same record goes to repair, unless the check showed it on the
+  base revision too: a node the base revision did not start is the change's (a
+  second project under a check without `-m:1`, a test that runs `dotnet
+  build`), as for every denial in [ADR 0010](decisions/0010-base-failure-classification.md).
+  `orbit init` proposes `-m:1` already. Workers in a .NET repository are told
+  the same in their instructions.
+
+  `DOTNET_PROCESSOR_COUNT=1` in a check's `env` also keeps MSBuild on one node,
+  but Orbit does not set it: it reaches the test host too, where **xunit before
+  2.8 deadlocks** a test that blocks on async code (`.Result` or `.Wait()` on a
+  method whose continuation comes back to xunit's context; xunit runs a test
+  assembly on one thread per processor, and the continuation waits behind the
+  blocked test forever), and the check times out with a log that ends at
+  `Starting test execution`. A check may still set it in its own `env`:
+  `orbit doctor` accepts that as one node (unless a switch asks for more), and
+  `checks.dotnet-tests` names the tracked test projects on such an xunit.
+  Opening the pipes instead is not an option: `/tmp/MSBuild<pid>` would have to
+  be writable by every check, and a check that could connect there could hand
+  work to an idle MSBuild node of yours, outside the sandbox.
+- **.NET HTTP clients and NuGet restore on macOS.** Every .NET HTTP client reads
+  the machine's NIS domain name when it starts, which `srt`'s Seatbelt profile
+  does not allow on its own: a restore failed with `error NU1301: ... The type
+  initializer for 'System.Net.CookieContainer' threw an exception ...
+  GetDomainName: -1`, and so did a test that makes an HTTP request. Orbit adds
+  one read-only rule for that name to the checks, the dependency install,
+  workers and doctor's probes that run .NET (ADR 0009, addendum); it needs
+  `srt` 0.0.78, the version Orbit ships, and the check's record says when it was
+  not added. Approved operations, the UI app and release commands do not get it
+  yet. Those processes also open IPv4 sockets (`DOTNET_SYSTEM_NET_DISABLEIPV6=1`,
+  unless the check's `env` sets it): .NET's dual-stack sockets reach loopback as
+  `::ffff:127.0.0.1`, which the sandbox's loopback rule does not match on some
+  macOS releases, so a request through `srt`'s proxy or to a server on loopback
+  failed with `Permission denied (localhost:N)` or `(127.0.0.1:N)`. HTTPS needs
+  the system trust service as
+  well, which the sandbox keeps out of reach (it could fetch from any host for a
+  sandboxed process), so on macOS a restore from nuget.org inside the sandbox
+  stops at `NU1301: ... The SSL connection could not be established` (a run
+  blocks on it at its baseline with this fix, and so it does when the sandbox's
+  proxy refuses a NuGet restore its host: adding the host to `network_hosts`
+  only leads to the SSL failure there). Fill the
+  repository's NuGet cache outside the sandbox instead, once and whenever its
+  packages change: `orbit doctor` (`checks.dotnet-packages`) prints the exact
+  command for the repository, for example `(cd ~/src/acme && NUGET_PACKAGES=<orbit
+  home>/toolchains/<repo key>/nuget dotnet restore -m:1)`, or the dependency
+  install's own restore with `-m:1`, followed by `dotnet tool restore` when the
+  repository has a local tool manifest (`.config/dotnet-tools.json`) or the
+  install restores tools: local tools are NuGet packages in the same cache. It
+  counts as packages a `PackageReference`, a lock file, `Directory.Packages.props`,
+  `packages.config`, a tool manifest, and an MSBuild SDK that NuGet resolves
+  (`Sdk="MSTest.Sdk/3.6.0"`, `<Sdk Name="..." Version="..." />`, `msbuild-sdks`
+  in `global.json`), which the fill command's restore caches too. Doctor fails
+  while `dependencies.install_command` restores packages and that cache is
+  empty, since the install would fail. Run it
+  in a terminal, on your own checkout: like any `dotnet restore`, it evaluates
+  the repository's MSBuild files outside the sandbox. The dependency install and the checks then restore
+  from it with nothing to download. A check runs with a home of its own, so a
+  check that runs a local tool restores it first (`dotnet tool restore &&
+  dotnet csharpier --check .`), from the cache, with no network. A floating
+  version (`Version="13.*"`) is the exception: every restore looks it up at
+  nuget.org, cache or not (`NU1301`), so doctor names it and fails while the
+  install restores projects; pin it, or restore with a lock file
+  (`RestorePackagesWithLockFile`, then `packages.lock.json`), which restores
+  from the cache. NuGet's vulnerability audit cannot reach
+  nuget.org from the sandbox on macOS either, nor on Linux from a check that
+  does not list the host, so Orbit sets `NuGetAudit=false` in the environment
+  of every .NET process there, and only there: otherwise each restore waits on
+  it and warns `NU1900`, and a repository that treats warnings as errors
+  (`TreatWarningsAsErrors`, `-warnaserror`) fails the install and every
+  restoring check with `error NU1900: Warning As Error`. The dependency
+  install on Linux or in a container, and a Linux check that lists
+  `api.nuget.org`, reach nuget.org and audit as the repository configures it,
+  so a package with a known vulnerability fails there (`NU1903` as an error)
+  as it does in CI. A check's own `env` can set the variable either way. A project or
+  MSBuild import that sets `NuGetAudit` itself overrides the environment:
+  `orbit doctor` (`checks.dotnet-audit`) fails such a repository on macOS when
+  warnings are errors, and names the change, `<NuGetAudit
+  Condition="'$(NuGetAudit)' == ''">true</NuGetAudit>`, which keeps the audit
+  everywhere else. On Linux, or with `isolation.provider:
+  container`, the dependency install downloads the packages itself. After the
+  dependency install, checks can build with `--no-restore`, which needs no
+  network on any SDK; a restore in a check reached nuget.org with Ubuntu's own
+  `dotnet-sdk-8.0` package, which also downloads the app host pack.
+- **dotnet format under the sandbox.** Every form of `dotnet format` except
+  `dotnet format whitespace --folder` (`whitespace` without `--folder`, `style`,
+  `analyzers`, and `dotnet format --verify-no-changes`, with or without
+  `--no-restore`) loads the project through Roslyn's MSBuildWorkspace, which
+  evaluates it in a build host: a separate process that binds a named pipe at
+  `/tmp/<guid>`, a path .NET fixes whatever `TMPDIR` says, like MSBuild's
+  `/tmp/MSBuild<pid>` (SDK 9 and later; SDK 8 loads the project in its own
+  process, see below). The sandbox refuses it, and the build host exits at once.
+  On macOS (SDK 9) `dotnet format` then waits 60 s for it and fails with
+  `Unhandled exception: System.TimeoutException: The operation has timed out`
+  under `BuildHostProcessManager`, with nothing in its output about the
+  sandbox; on Linux (SDK 10) it fails at once with "The build host was started
+  but we were unable to connect to it's pipe". Its implicit restore of a
+  project with project references is also refused MSBuild worker nodes, and no
+  switch of `dotnet format` passes `-m:1` to it. Orbit opens nothing for it:
+  `/tmp` is shared by every process of yours, and Unix sockets in the check's
+  private temp directory would not reach that pipe. So under `sandbox-runtime`
+  a format check is the form that loads no project:
+
+  ```yaml
+  checks:
+    format:
+      command: [dotnet, format, whitespace, --folder, --verify-no-changes]
+  ```
+
+  It reads the files and checks whitespace only, from the `.editorconfig`; run
+  the style and analyzer checks (`dotnet format --verify-no-changes`) outside
+  Orbit, in CI. Given a solution or project (`dotnet format src/Acme.sln
+  --exclude gen`), it reads that file's folder, and keeps `--include`,
+  `--exclude` (read from that folder) and `--include-generated`: `[dotnet,
+  format, whitespace, src, --folder, --verify-no-changes, --exclude, gen]`.
+  `orbit doctor` fails a mandatory check that runs another form, before
+  starting anything, with this command as the fix (an optional one is a
+  warning); a check that also builds without `-m:1` (`dotnet build && dotnet
+  format --verify-no-changes`) gets one command with both changes. One that
+  runs anyway, through make or a script, fails and is recorded as an
+  environment failure when MSBuild or the build host left a sign of the
+  refusal: the run blocks with the fix instead of asking a baseline exception
+  question (measured on macOS; on Linux the build host's refusal is read, and
+  a refused restore only when MSBuild recorded the node).
+
+  With the .NET 8 SDK pinned by a `global.json` (`"sdk": {"version":
+  "8.0.303"}`, and a `rollForward` that stays on 8), `dotnet format` evaluates
+  the project in its own process, with no build host: every form runs, and
+  only its implicit restore of a project with references is refused worker
+  nodes. Measured under `srt` on macOS (8.0.303): `dotnet restore <project> -m:1
+  && dotnet format <project> --verify-no-changes --no-restore` passed, and so
+  did the plain form with `DOTNET_PROCESSOR_COUNT=1` in the check's `env`.
+  Doctor and the runner read the nearest `global.json` from the check's
+  directory up: with SDK 8 they refuse only a format that restores first, and
+  name that pinned restore and `--no-restore` as the fix. Without a
+  `global.json` the SDK is whichever is newest, so doctor judges it as SDK 9.
+  Workers are told which form runs.
+
+  On macOS the folder form does not run in a run's check sandbox either. It
+  lists every folder above the one it formats for `.editorconfig` files (a
+  `root = true` file does not stop it), and a run's checkout sits in
+  `<orbit home>/worktrees/<key>/<run>/`, which the sandbox does not let a check
+  read but for the checkout itself (the default `~/.orbit` is read-denied), so
+  the check dies at once with `System.UnauthorizedAccessException: Access to
+  the path '.../worktrees/<key>/<run>' is denied`. With SDK 9 and later no form
+  of `dotnet format` runs there: remove the check from `.orbit/config.yaml` (or
+  set its `mandatory: false`) and run `dotnet format` in CI, or pin SDK 8 as
+  above when the projects build with it. `orbit doctor` fails a mandatory such
+  check on macOS, the folder form included, with that fix, and the runner's
+  note and the block reason name it. On Linux `srt` lays an empty directory
+  over a read-denied one, so the folder form can list the folders above the
+  checkout. An `ORBIT_HOME` that no rule denies avoids it too, but then nothing
+  keeps checks from reading the Orbit home.
 - **Toolchains under the sandbox.** Each check (and worker) gets its toolchain's
   dependency cache read-only from `<orbit home>/toolchains/<repo key>/` and its
   build state in a private directory per attempt (ADR 0009; the variables are in

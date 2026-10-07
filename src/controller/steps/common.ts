@@ -12,7 +12,7 @@ import { appendEvent } from '../../storage/events.ts';
 import { recordDecision, type DecisionRecord } from '../../storage/decisions.ts';
 import { heartbeatController } from '../../storage/controllers.ts';
 import { authBlocker, blockRunOnCredentials, type BlockedCredentialState } from '../../recovery/credentials.ts';
-import type { RunContext } from '../context.ts';
+import { folderFormRunsAt, runWorktreeRoot, type RunContext } from '../context.ts';
 import { isTerminal, type RunState } from '../states.ts';
 import { markProgress, transition, type TransitionRequest } from '../run-store.ts';
 import { raiseOutputCap, stopActiveWorkers } from '../workers.ts';
@@ -20,6 +20,7 @@ import { closeMootBaselineQuestions } from './baseline-questions.ts';
 import { releaseRunWorktrees } from '../worktree-cleanup.ts';
 import { finalizeRun } from '../report.ts';
 import { blockingQuestions } from '../gates.ts';
+import { detectToolchains } from '../../isolation/toolchains.ts';
 import { applyAmendmentAnswers } from '../../inquisition/amendment-answers.ts';
 
 export interface StepResult {
@@ -68,12 +69,15 @@ export function decide(ctx: RunContext, input: { id?: string; kind: string; summ
  * then the final report and the learning hook, which never change the
  * outcome. BLOCKED keeps nothing running either: it waits for a person.
  */
-export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown> } = {}): Promise<StepResult> {
+export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown>; frozenAdvice?: string } = {}): Promise<StepResult> {
+  let advice = '';
   if (to === 'BLOCKED') {
-    // A block whose cause lives in the frozen policy cannot be cleared by editing the config and resuming: say so.
+    // A block whose cause lives in the frozen policy cannot be cleared by editing the config and resuming: say so. A block
+    // that knows better than the generic advice (a missing target, which a fix of the config may not even be) brings its own.
     const setting = frozenPolicyCause(reason, typeof opts.data?.code === 'string' ? opts.data.code : undefined);
     if (setting !== null) {
-      reason = withSentence(reason, frozenPolicyAdvice(ctx.run.id, setting));
+      advice = opts.frozenAdvice ?? frozenPolicyAdvice(ctx.run.id, setting);
+      reason = withSentence(reason, advice);
       opts = { ...opts, outcome: { ...(opts.outcome ?? {}), frozen_policy: { setting } } };
     }
   }
@@ -85,11 +89,26 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
   const target = ctx.run.cancelRequested && to !== 'CANCELLED' ? 'CANCELLED' : to;
   if (target === 'SUCCEEDED') closeMootBaselineQuestions(ctx);
   const why = target === to ? reason : `cancelled by request (the step had decided ${to}: ${reason})`;
-  const result = move(ctx, target, why, { patch: { outcomeReason: why.slice(0, 2000), outcomeJson: JSON.stringify(target === to ? outcome : { ...outcome, state: target, decided: to }) }, data: opts.data });
+  const result = move(ctx, target, why, { patch: { outcomeReason: cappedReason(why, target === to ? advice : ''), outcomeJson: JSON.stringify(target === to ? outcome : { ...outcome, state: target, decided: to }) }, data: opts.data });
   await finalizeRun(ctx);
   // The result lives in the branch and the candidate refs; a finished run does not keep a checkout (BLOCKED and EXHAUSTED do).
   if (target === 'SUCCEEDED' || target === 'CANCELLED') await releaseRunWorktrees(ctx);
   return result;
+}
+
+/** The longest outcome reason a run row keeps; outcome_json keeps the whole text. */
+const OUTCOME_REASON_MAX = 2000;
+
+/**
+ * `why` as the run row keeps it: cut to the cap, but never in the advice that ends it (the way forward of a frozen-policy
+ * block), which is what a person who reads only the row needs. Several checks with long log paths make the evidence
+ * longer than the cap, so it is the evidence that gives way.
+ */
+function cappedReason(why: string, advice: string): string {
+  if (why.length <= OUTCOME_REASON_MAX) return why;
+  if (advice === '' || !why.endsWith(advice) || advice.length > OUTCOME_REASON_MAX / 2) return why.slice(0, OUTCOME_REASON_MAX);
+  const head = why.slice(0, why.length - advice.length - 1);
+  return `${head.slice(0, OUTCOME_REASON_MAX - advice.length - 5)}... ${advice}`;
 }
 
 /**
@@ -112,6 +131,9 @@ export function frozenPolicyCause(reason: string, code?: string): string | null 
   // agents.allow_managed_plugins admits only managed plugins, so it is named only when doctor's fix line offers it.
   if (/plugin\(s\)[^.;]*\bthe policy does not allow/.test(reason)) return /agents\.allow_managed_plugins/.test(reason) ? 'agents.allowed_plugins or agents.allow_managed_plugins' : 'agents.allowed_plugins';
   if (/differs from the frozen policy mode/.test(reason)) return 'mode';
+  // A misconfigured check at PREFLIGHT or CONTRACTING (environment-block.ts baselineBlockReason, missingTargetBlockReason): its command is in the policy.
+  const misconfigured = /^[Cc]hecks? ([\w.-]+(?:, [\w.-]+)*) (?:is|are) misconfigured\b/.exec(reason);
+  if (misconfigured) return misconfigured[1]!.split(', ').map((id) => `checks.${id}.command`).join(', ');
   return null;
 }
 
@@ -121,9 +143,21 @@ export function withSentence(reason: string, next: string): string {
   return `${/[.!?]$/.test(r) ? r : `${r}.`} ${next}`;
 }
 
+/**
+ * Whether a fix outside the policy can clear a block on `setting`, so that `orbit resume --force` is a way forward. Not
+ * offered for a misconfigured check (`checks.<id>.command`): its command is the policy's, and a forced resume runs the
+ * same command again (a PREFLIGHT block leaves the baseline incomplete, so the check runs again; at CONTRACTING the
+ * recorded baseline is read and blocks again), so it blocks again unless the tool changed outside the policy. A new
+ * run, which the advice names, clears the block whatever the cause (ADR 0010).
+ */
+export function frozenPolicyForceHelps(setting: string): boolean {
+  return !/^checks\.[\w.-]+\.command(?:, checks\.[\w.-]+\.command)*$/.test(setting);
+}
+
 /** What to do about a frozen-policy block: the config change applies only to a new run. */
 export function frozenPolicyAdvice(runId: string, setting: string): string {
-  return `This comes from the run's frozen policy (${setting}): a run keeps the policy it started with, so editing .orbit/config.yaml does not change it and resuming would block again. Fix the config, then cancel this run (orbit cancel ${runId}) and start a new run with orbit run. If what you fixed is outside the policy (for example orbit models refresh), resume with orbit resume ${runId} --force.`;
+  const advice = `This comes from the run's frozen policy (${setting}): a run keeps the policy it started with, so editing .orbit/config.yaml does not change it and resuming would block again. Fix the config, then cancel this run (orbit cancel ${runId}) and start a new run with orbit run.`;
+  return frozenPolicyForceHelps(setting) ? `${advice} If what you fixed is outside the policy (for example orbit models refresh), resume with orbit resume ${runId} --force.` : advice;
 }
 
 export async function blockOnAuth(ctx: RunContext, provider: string, state: BlockedCredentialState, detail: string | null): Promise<StepResult> {
@@ -221,6 +255,23 @@ export function assertContract(ctx: RunContext): NonNullable<RunContext['contrac
   return ctx.contract;
 }
 
+/**
+ * What a worker running dotnet itself must know about its sandbox (docs/decisions/0009-toolchain-profiles.md, addendum):
+ * srt refuses MSBuild worker nodes their named pipe under /tmp, as it does a check's, and the dotnet CLI asks for one
+ * node per processor, so a build without -m:1 fails, on macOS only after MSBuild's ten 30 s node retries. Orbit does not
+ * change the worker's processor count (DOTNET_PROCESSOR_COUNT would reach the test host), so the worker is told. dotnet
+ * format meets the same refusal through the build host it loads the project with (evidence/dotnet-format.ts), which no
+ * switch avoids, so the worker is told which form of it runs.
+ */
+const DOTNET_WORKER_BUILDS =
+  '- .NET: pass -m:1 to every dotnet build, test, publish, pack, restore, clean or msbuild you start, and run a project with dotnet run --no-build after such a build (dotnet run hands -m:1 to the program); this sandbox refuses MSBuild worker nodes, so without -m:1 such a command fails, on macOS only after about five minutes; ';
+export const DOTNET_WORKER_NOTE = `${DOTNET_WORKER_BUILDS}dotnet format loads the project through a build host whose named pipe this sandbox refuses too, so of dotnet format only dotnet format whitespace --folder runs here`;
+/**
+ * The same where the folder form cannot list the folders above the worktree either (macOS, a worktree in the
+ * read-denied Orbit home; evidence/dotnet-format.ts): no form of dotnet format that SDK 9 and later run works there.
+ */
+export const DOTNET_WORKER_NOTE_NO_FORMAT = `${DOTNET_WORKER_BUILDS}dotnet format does not run here: every form but dotnet format whitespace --folder loads the project through a build host whose named pipe this sandbox refuses too, and whitespace --folder lists the folders above your worktree, which this sandbox does not let you read`;
+
 /** The controller-written summary of a worker's authority (spec section 21: "policy summary"). */
 export function policySummary(ctx: RunContext, opts: { readOnly: boolean }): string {
   const c = ctx.snapshot.config;
@@ -233,6 +284,8 @@ export function policySummary(ctx: RunContext, opts: { readOnly: boolean }): str
     `- network: ${c.network.allowed_hosts.length > 0 ? c.network.allowed_hosts.join(', ') : 'none'}`,
     `- trusted checks (run by the controller, not you): ${Object.keys(c.checks).join(', ') || 'none'}`,
     '- you cannot commit, push, open pull requests, change policy, or decide completion',
+    // A worker's toolchains are its worktree's markers, the repository's tracked files (controller/workers.ts).
+    ...(c.isolation.provider === 'sandbox-runtime' && detectToolchains({ roots: [ctx.snapshot.repo_root] }).includes('dotnet') ? [folderFormRunsAt(ctx, runWorktreeRoot(ctx)) ? DOTNET_WORKER_NOTE : DOTNET_WORKER_NOTE_NO_FORMAT] : []),
   ];
   return lines.join('\n');
 }

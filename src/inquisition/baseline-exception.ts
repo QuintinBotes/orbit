@@ -13,8 +13,14 @@
  * fingerprint must equal the one recorded on the base revision and the policy's rules hold. The applied amendment
  * is recorded with the contract hashes around it, and the run's contract is rewritten, so the evidence report
  * (evidence/report.ts) honours the exception, and only while the check fails with exactly that fingerprint.
+ *
+ * Only a failure of the repository's code can be excepted. A check that never tested it (one the environment stopped,
+ * a misconfigured one whose tool rejected its command, or one whose command names something that does not exist on the
+ * base revision) is refused whoever approves it and however (`orbit decide`, a remote answer):
+ * docs/decisions/0010-base-failure-classification.md.
  */
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join, normalize, sep } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { isOrbitError, OrbitError } from '../core/errors.ts';
 import { atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
@@ -27,6 +33,9 @@ import type { ContractAmendment, GoalContract } from '../contract/types.ts';
 import { verifySnapshot } from '../policy/snapshot.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import type { BaselineReport } from '../evidence/baseline.ts';
+import { classifyMisconfigured, classifyProgramNotFound } from '../evidence/check-misconfigured.ts';
+import { classifyCouldNotRun, classifyNotExecuted, type EnvironmentSignal } from '../evidence/environment-failure.ts';
+import { listCheckRuns } from '../evidence/store.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { getDecision, listDecisions, recordDecision, type DecisionRecord } from '../storage/decisions.ts';
 import { appendEvent } from '../storage/events.ts';
@@ -182,6 +191,60 @@ interface RunRow {
 
 const MAX_CAS_ATTEMPTS = 4;
 
+/** Log bytes read at most to judge a baseline failure; the classifier stops scanning long before. */
+const MAX_LOG_BYTES = 4 * 1024 * 1024;
+
+function logOf(path: string | undefined): string | null {
+  if (!path) return null;
+  try {
+    return readFileSync(path, 'utf8').slice(0, MAX_LOG_BYTES);
+  } catch {
+    return null;
+  }
+}
+
+/** The environment signals read from a denial on a path, which only the check's own directories tell from the code's. */
+const ON_A_PATH: ReadonlySet<EnvironmentSignal> = new Set<EnvironmentSignal>(['filesystem-denied', 'permission-denied', 'sandbox-violation']);
+
+/**
+ * Why the failure of `checkId` recorded on the base revision may not be accepted as a baseline exception, or null when
+ * it may (docs/decisions/0010-base-failure-classification.md). PREFLIGHT blocks on a failure it classifies as an
+ * environment failure or a misconfigured check and raises no question for it; it does ask about a missing target, so
+ * that the contract can expect it to flip, but that is no exception either: a check whose target does not exist tests
+ * nothing, and accepting its failure would make a meaningless check green. This is the guard behind all three, for a
+ * question raised before the classification existed and for a baseline PREFLIGHT marked. A usage error and a program
+ * that was not found are read again from the recorded log, the exit code and the command in the frozen policy, since
+ * that needs no other context; so is a check the environment stopped before it ran anything of the repository
+ * (classifyNotExecuted, classifyCouldNotRun), with the checkout and cwd of its recorded run (`recordedCwd`) as its own
+ * directories. Without a recorded run a denial on a path is not read, since it may be inside the checkout.
+ */
+function notExceptable(baseline: BaselineReport, checkId: string, snapshot: PolicySnapshot, recordedCwd: string | null = null): string | null {
+  const failure = (baseline.failures ?? []).find((f) => f.checkId === checkId);
+  const def = snapshot.config.checks[checkId];
+  const entry = (baseline.checks ?? []).find((c) => c.checkId === checkId);
+  const input = def && def.kind === 'command' && entry ? { checkId, command: def.command, shell: def.shell, exitCode: entry.exitCode, output: logOf(entry.log) ?? failure?.excerpt ?? '' } : null;
+  const stopped = (): boolean => {
+    if (input === null) return false;
+    if (classifyProgramNotFound(input) !== null || classifyNotExecuted({ checkId, output: input.output }) !== null) return true;
+    const cwd = recordedCwd !== null ? normalize(recordedCwd) : null;
+    const rel = def && def.kind === 'command' ? normalize(def.cwd ?? '.') : '.';
+    const checkout = cwd !== null && rel !== '.' && cwd.endsWith(`${sep}${rel}`) ? cwd.slice(0, -(rel.length + 1)) : cwd;
+    const roots = [...(checkout !== null ? [checkout] : []), ...(cwd !== null ? [cwd] : []), dirname(entry!.log)];
+    const found = classifyCouldNotRun({ checkId, output: input.output, insideRoots: roots });
+    return found !== null && (cwd !== null || !found.signals.some((sg) => ON_A_PATH.has(sg)));
+  };
+  if (failure?.classification === 'environment' || stopped()) {
+    return `check ${checkId} could not run on the base revision: PREFLIGHT found an environment cause, not a pre-existing failure, so its failure cannot be accepted as a baseline exception (a check that never ran would let a run pass)`;
+  }
+  const found = input !== null ? classifyMisconfigured(input) : null;
+  const evidence = found ? `: ${found.cause} (${JSON.stringify(found.lines[0])})` : '';
+  if (failure?.classification === 'missing-target' || found?.kind === 'missing-target') {
+    return `check ${checkId} names something that does not exist on the base revision${evidence}, so its failure cannot be accepted as a baseline exception: a check whose target does not exist tests nothing, and accepting its failure would make a meaningless check green. If the goal creates it, the contract names the check as the proof of a criterion and expects it to flip; otherwise start a new run, after installing or restoring it when a tool that is not there yet provides it (a cargo plugin, a dotnet local tool, a pytest plugin), or after correcting checks.${checkId}.command in .orbit/config.yaml when the command is wrong`;
+  }
+  if (failure?.classification !== 'misconfigured' && found === null) return null;
+  return `check ${checkId} is misconfigured on the base revision${evidence}, so its failure cannot be accepted as a baseline exception: a check whose command is wrong never tested anything. Correct checks.${checkId}.command in .orbit/config.yaml and start a new run`;
+}
+
 /**
  * Apply every approved baseline-exception answer to the run's contract (all of them, or the one `questionId`).
  * Idempotent: an exception already applied, or refused, is not applied again. Never throws for a refused
@@ -250,6 +313,10 @@ export function applyBaselineExceptionAnswers(ctx: RunScope, opts: { questionId?
       let next: GoalContract;
       let record: ContractAmendment;
       try {
+        // Never for a check that tested nothing (ADR 0010), whoever approves it and however (orbit decide, a remote answer).
+        const recorded = listCheckRuns(ctx.db, { runId: ctx.runId, candidateId: null, checkId: data.check_id, rootsOnly: true }).at(-1);
+        const never = baseline ? notExceptable(baseline, data.check_id, snapshot, recorded?.cwd ?? null) : null;
+        if (never !== null) throw new OrbitError('POLICY_DENIED', never, { checkId: data.check_id });
         const res = applyAmendment(current, proposal, {
           snapshot,
           approvedBy: answerId,

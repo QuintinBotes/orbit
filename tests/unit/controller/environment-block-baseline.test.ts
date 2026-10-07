@@ -4,14 +4,18 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { baselineEnvironmentBlockReason, baselineEnvironmentFailures, checksNotExecutedFor, environmentBlockReason, environmentFix, type BlockedCheck } from '../../../src/controller/environment-block.ts';
 import type { BaselineReport } from '../../../src/evidence/baseline.ts';
+import { msbuildNodeDenialNote, msbuildNodeFix } from '../../../src/evidence/msbuild.ts';
 import { finishCheckRun, planCheckRun } from '../../../src/evidence/store.ts';
-import { addCandidate, addEvidence, BASE_REV, makeUnitLab, setContract, type UnitLab } from './coverage-helpers.ts';
+import { checkDef } from '../evidence/fixtures.ts';
+import { addCandidate, addEvidence, BASE_REV, makeUnitLab, setContract, type UnitLab, type UnitLabOptions } from './coverage-helpers.ts';
 
 // Issue #10: a check the environment stopped before it ran anything of the repository.
 
 const fixture = (name: string): string => readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../fixtures/environment', name), 'utf8');
 const DOTNET_CRASH = fixture('dotnet-build-eperm-shm.log');
 const COMPILE_ERROR = fixture('dotnet-build-compile-error.log');
+const FORMAT_BUILD_HOST = fixture('dotnet-format-build-host-timeout.log');
+const FORMAT_RESTORE_NODE = fixture('dotnet-format-restore-node-denied.log');
 const FP = 'fp:0123456789abcdef';
 
 const dotnet: BlockedCheck = {
@@ -27,23 +31,23 @@ const dotnet: BlockedCheck = {
 describe('baselineEnvironmentBlockReason', () => {
   it('names the check, the base revision, the first error line and the log, says why no exception is offered, and gives the fix', () => {
     const reason = baselineEnvironmentBlockReason({ runId: 'orb-1', baseRevision: BASE_REV, failures: [dotnet] });
-    expect(reason).toMatch(/^check build could not run on the base revision aaaaaaaaaaaa, and the output shows an environment cause, not a pre-existing failure: build: the sandbox or the operating system refused a filesystem operation outside the check's checkout/);
+    expect(reason).toMatch(/^Check build could not run on the base revision aaaaaaaaaaaa, and the output shows an environment cause, not a pre-existing failure: the sandbox or the operating system refused a filesystem operation outside the check's checkout/);
     expect(reason).toContain('errno == EPERM;');
     expect(reason).toContain('output in /orbit/runs/acme/baseline/build.log');
-    expect(reason).toMatch(/it is not recorded as a pre-existing failure and no baseline exception is offered: the check never got as far as the repository's code, so accepting its failure would let a run pass with a check that never ran/);
-    expect(reason).toMatch(/fix: this is the \.NET runtime asking for \/tmp\/\.dotnet/);
+    expect(reason).toMatch(/\. It is not recorded as a pre-existing failure and no baseline exception is offered: the check never got as far as the repository's code, so accepting its failure would let a run pass with a check that never ran/);
+    expect(reason).toMatch(/\. Fix: this is the \.NET runtime asking for \/tmp\/\.dotnet/);
     expect(reason).toContain('docs/troubleshooting.md');
-    expect(reason).toMatch(/then orbit resume orb-1 runs the baseline again; a changed check definition needs a new run/);
+    expect(reason).toMatch(/\. Then orbit resume orb-1 runs the baseline again; a changed check definition needs a new run/);
     expect(reason).not.toMatch(/orbit decide/);
-    expect(reason).not.toMatch(/[–—]/);
+    expect(reason).not.toMatch(/[\u2013\u2014]/);
   });
 
   it('lists several checks, and falls back to orbit doctor for a cause it has no specific fix for', () => {
     const crash: BlockedCheck = { checkId: 'unit', fingerprint: null, signals: ['process-aborted'], cause: 'the process was killed by a fatal signal before it printed anything of its own (SIGABRT)', lines: [], questionId: null };
     const reason = baselineEnvironmentBlockReason({ runId: 'orb-2', baseRevision: BASE_REV, failures: [crash, { ...crash, checkId: 'lint' }] });
-    expect(reason).toMatch(/^checks unit, lint could not run on the base revision/);
-    expect(reason).toMatch(/they are not recorded as a pre-existing failure/);
-    expect(reason).toMatch(/fix: let the check run in this environment \(orbit doctor checks the isolation provider and starts each check's executable in the sandbox\), or change the check definition/);
+    expect(reason).toMatch(/^Checks unit, lint could not run on the base revision/);
+    expect(reason).toMatch(/\. They are not recorded as a pre-existing failure/);
+    expect(reason).toMatch(/\. Fix: let the check run in this environment \(orbit doctor checks the isolation provider and starts each check's executable in the sandbox\), or change the check definition/);
   });
 });
 
@@ -55,10 +59,67 @@ describe('environmentFix', () => {
     expect(environmentFix([])).toBeNull();
   });
 
+  it('names the fix for a .NET named pipe the sandbox refused: the check\'s own fix in its log for a worker node, whitespace --folder for dotnet format', () => {
+    const pipe = (line: string): BlockedCheck => ({ ...dotnet, signals: ['pipe-denied'], lines: [line] });
+    const node = 'the check sandbox denied MSBuild node (pid 4242) its named pipe /tmp/MSBuild4242 (System.Net.Sockets.SocketException (13): Permission denied)';
+    const host = 'Unhandled exception: System.TimeoutException: The operation has timed out.';
+    expect(environmentFix([pipe(node)])).toMatch(
+      /^the sandbox refuses MSBuild worker nodes their named pipe under \/tmp: the check's log ends with the fix for its command \(docs\/troubleshooting\.md, "\.NET builds and MSBuild worker nodes"\)$/,
+    );
+    const format = environmentFix([pipe(host)]);
+    expect(format).toMatch(/^dotnet format \(check build\) takes no -m:1, which it reads as the project to format, and it loads the project through a build host whose named pipe \.NET binds under \/tmp, which no check sandbox may use: check whitespace with the form that loads no project/);
+    expect(format).toContain('dotnet format whitespace --folder --verify-no-changes in place of its dotnet format, in the folder of the solution or project it formats and with its --include and --exclude');
+    expect(format).toContain('docs/troubleshooting.md, "dotnet format under the sandbox"');
+    // With the check's command known, the fix is that command in the form that loads no project, as doctor names it: the
+    // folder of the solution it formats, and its --exclude, kept.
+    const exact = environmentFix([{ ...pipe(host), checkId: 'fmt', command: { argv: ['dotnet', 'format', 'src/Acme.sln', '--verify-no-changes', '--exclude', 'gen'], shell: false } }]);
+    expect(exact).toContain('checks.fmt.command: ["dotnet", "format", "whitespace", "src", "--folder", "--verify-no-changes", "--exclude", "gen"]');
+    // Both kinds: each fix names its checks, and neither says -m:1 to dotnet format.
+    const both = environmentFix([pipe(node), { ...pipe(host), checkId: 'fmt' }])!;
+    expect(both).toMatch(/^for check build: the sandbox refuses MSBuild worker nodes .*; and dotnet format \(check fmt\) takes no -m:1/);
+  });
+
+  // Review: on macOS the folder form lists <orbit home>/worktrees/<key>/<run>, which the check profile read-denies, and
+  // died with UnauthorizedAccessException in every real run; the fix named it all the same, or sent the person to
+  // orbit doctor, which passed it.
+  it('where the folder form cannot list the folders above the checkout, names running dotnet format outside Orbit, for its build host and for its refused listing', () => {
+    const host: BlockedCheck = { ...dotnet, checkId: 'fmt', signals: ['pipe-denied'], lines: ['Unhandled exception: System.TimeoutException: The operation has timed out.'], command: { argv: ['dotnet', 'format', '--verify-no-changes'], shell: false }, folderForm: false };
+    const fix = environmentFix([host])!;
+    expect(fix).toMatch(/^dotnet format \(check fmt\) cannot run in this check sandbox: remove checks\.fmt from \.orbit\/config\.yaml, or set checks\.fmt\.mandatory: false, and run dotnet format in CI \(on macOS no form of dotnet format runs/);
+    expect(fix).not.toMatch(/whitespace --folder --verify-no-changes in place|"--folder"/);
+    const listing: BlockedCheck = {
+      ...dotnet,
+      checkId: 'fmt',
+      signals: ['permission-denied'],
+      lines: ["Unhandled exception: System.UnauthorizedAccessException: Access to the path '/home/acme/.orbit/worktrees/abcdefabcdef/orb-1' is denied."],
+      command: { argv: ['dotnet', 'format', 'whitespace', '--folder', '--verify-no-changes'], shell: false },
+      folderForm: false,
+    };
+    expect(environmentFix([listing])).toBe(fix);
+    // Where the folder form lists (Linux), a refused listing is any other denial.
+    expect(environmentFix([{ ...listing, folderForm: true }])).toMatch(/^run orbit doctor, which starts each check's executable in the sandbox/);
+  });
+
+  // Review: on macOS the network-denied fix (the host in network_hosts, or an offline check with the install restoring)
+  // leads a NuGet restore to the SSL failure, since nothing in the sandbox can verify nuget.org's certificate there.
+  it('names doctor\'s fill command for a NuGet restore on macOS, whether the proxy refused it or its SSL connection failed', () => {
+    const nuget = "/var/folders/acme/T/orbit-evidence-acme/checkout/Acme.csproj : error NU1301:   The proxy tunnel request to proxy 'http://localhost:54120/' failed with status code '403'.\"";
+    const refused: BlockedCheck = { ...dotnet, signals: ['network-denied'], lines: [nuget] };
+    const fill = /fill the repository's NuGet cache outside the sandbox with the command orbit doctor prints \(checks\.dotnet-packages\)/;
+    expect(environmentFix([refused], 'darwin')).toMatch(fill);
+    expect(environmentFix([refused], 'darwin')).not.toMatch(/add the host to the check's network_hosts/);
+    expect(environmentFix([refused], 'linux')).toMatch(/^the check reached for a host its policy does not let it reach.*add the host to the check's network_hosts/);
+    // Another tool's refusal keeps the network fix on macOS too.
+    expect(environmentFix([{ ...refused, lines: ['curl: (56) CONNECT tunnel failed, response 403'] }], 'darwin')).toMatch(/add the host to the check's network_hosts/);
+    const tls: BlockedCheck = { ...dotnet, signals: ['nuget-tls-denied'], lines: ['/var/folders/acme/T/orbit-evidence-acme/checkout/Acme.csproj : error NU1301:   The SSL connection could not be established, see inner exception.'] };
+    expect(environmentFix([tls])).toMatch(fill);
+    expect(environmentFix([tls, refused], 'darwin')!.match(/checks\.dotnet-packages/g)).toHaveLength(1);
+  });
+
   it('is added to the candidate reason for a check that could not execute because of a denial', () => {
     const reason = environmentBlockReason({ runId: 'orb-3', candidateSeq: 2, failures: [dotnet] });
-    expect(reason).toMatch(/^check build could not execute on candidate 2/);
-    expect(reason).toMatch(/there is no baseline exception to approve, because the check never ran\. fix: this is the \.NET runtime/);
+    expect(reason).toMatch(/^Check build could not execute on candidate 2/);
+    expect(reason).toMatch(/there is no baseline exception to approve, because the check never ran\. Fix: this is the \.NET runtime/);
   });
 });
 
@@ -69,8 +130,8 @@ let lab: UnitLab;
 afterEach(() => lab?.cleanup());
 
 /** A baseline report with failing mandatory checks, each with a recorded baseline run whose log holds `logs[checkId]`. */
-function baselineWith(logs: Record<string, string | null>, opts: { excerpt?: string | null; row?: boolean } = {}): { report: BaselineReport; checkout: string } {
-  lab = makeUnitLab();
+function baselineWith(logs: Record<string, string | null>, opts: { excerpt?: string | null; row?: boolean; tweak?: UnitLabOptions['tweak'] } = {}): { report: BaselineReport; checkout: string } {
+  lab = makeUnitLab(opts.tweak ? { tweak: opts.tweak } : {});
   const ctx = lab.ctx();
   const dir = join(ctx.runDir, 'baseline');
   mkdirSync(dir, { recursive: true });
@@ -113,6 +174,32 @@ describe('baselineEnvironmentFailures', () => {
     lab.cleanup();
     const nothing = baselineWith({ build: null }, { excerpt: null });
     expect(baselineEnvironmentFailures(lab.ctx(), nothing.report, nothing.checkout)).toEqual([]);
+  });
+
+  it('finds a dotnet format check whose build host or implicit restore the sandbox refused its named pipe: no baseline exception for it', () => {
+    const { report, checkout } = baselineWith({ format: FORMAT_BUILD_HOST, lint: FORMAT_RESTORE_NODE });
+    const found = baselineEnvironmentFailures(lab.ctx(), report, checkout);
+    expect(found.map((f) => [f.checkId, f.signals, f.questionId])).toEqual([
+      ['format', ['pipe-denied'], null],
+      ['lint', ['pipe-denied'], null],
+    ]);
+    expect(baselineEnvironmentBlockReason({ runId: 'orb-4', baseRevision: BASE_REV, failures: found })).toMatch(
+      /no baseline exception is offered.*Fix: for check lint: the sandbox refuses MSBuild worker nodes their named pipe under \/tmp: the check's log ends with the fix for its command .*; and dotnet format \(check format\) takes no -m:1, which it reads as the project to format, and it loads the project through a build host/,
+    );
+  });
+
+  // Review: the reason for a check the runner stopped for a refused node said only that the log ends with the fix, and
+  // quoted the note cut at 200 characters, so orbit status and the notification never named -m:1.
+  it('names the runner\'s exact fix for a check it stopped for a refused MSBuild node, from the frozen policy\'s command', () => {
+    const fix = msbuildNodeFix(checkDef('build', { command: ['dotnet', 'build'] }));
+    const note = msbuildNodeDenialNote({ pid: 4242, pipe: '/tmp/MSBuild4242', exception: 'System.Net.Sockets.SocketException (13): Permission denied' }, fix);
+    const log = `  Determining projects to restore...\n[orbit] check=build status=FAILED exit=143 note=${note}\n`;
+    const { report, checkout } = baselineWith({ build: log }, { tweak: (c) => (c.checks.build = { ...c.checks.unit!, id: 'build', command: ['dotnet', 'build'], mandatory: true }) });
+    const found = baselineEnvironmentFailures(lab.ctx(), report, checkout);
+    expect(found.map((f) => [f.checkId, f.signals, f.nodeFix])).toEqual([['build', ['pipe-denied'], fix]]);
+    const reason = baselineEnvironmentBlockReason({ runId: 'orb-5', baseRevision: BASE_REV, failures: found });
+    expect(reason).toContain(`Fix: the sandbox refuses MSBuild worker nodes their named pipe under /tmp: checks.build.command: ["dotnet", "build", "-m:1"] (MSBuild worker nodes cannot run in the check sandbox`);
+    expect(reason).not.toContain("the check's log ends with the fix");
   });
 
   it('reads a denial inside the baseline checkout as the code\'s', () => {

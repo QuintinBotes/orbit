@@ -1,16 +1,23 @@
-// Loaded with `node --import` in front of the unmodified srt CLI (dist/cli.js) for UI checks on macOS, and nowhere else
-// (docs/decisions/0001-runtime-choices.md, "Browsers under sandbox-runtime on macOS").
+// Loaded with `node --import` in front of the unmodified srt CLI (dist/cli.js) on macOS, for a UI check's browser and for
+// a process that runs .NET, and nowhere else. It adds constant Seatbelt rules, in named sets, to the profile srt hands to
+// sandbox-exec; the query of its own URL names the sets (`?rules=chromium,nis-domainname`), Chromium's alone without one.
 //
-// Chromium registers a Mach service at start (bootstrap_check_in
-// org.chromium.Chromium.MachPortRendezvousServer.<pid>) and its child processes look it up. srt's Seatbelt profile has
-// no mach-register option and allows only listed mach-lookup names, so Chromium aborts. This preload adds exactly two
-// constant rules, for that name pattern only, to the profile srt hands to sandbox-exec.
+// chromium (docs/decisions/0001-runtime-choices.md, "Browsers under sandbox-runtime on macOS"): Chromium registers a
+// Mach service at start (bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer.<pid>) and its child
+// processes look it up. srt's Seatbelt profile has no mach-register option and allows only listed mach-lookup names, so
+// Chromium aborts. Two rules, for that name pattern only.
+//
+// nis-domainname (docs/decisions/0009-toolchain-profiles.md, addendum): .NET's CookieContainer reads the NIS domain name
+// (getdomainname, which libc answers from the sysctl kern.nisdomainname) in its type initializer, and srt allows only
+// listed sysctl reads, so every .NET HTTP client failed ("GetDomainName: -1"), NuGet's restore included. One read-only
+// rule, for that one name.
 //
 // Plain JavaScript with no dependencies, so it runs before srt and is shipped next to plugin/dist/orbit.mjs as it is.
-// The rules are constants; nothing is read from the environment, and from the arguments only the path of srt's settings
-// file, to record a refusal beside it (Orbit's own directory, which the sandbox can neither read nor write). Every shape
-// of command it was not verified against (srt 0.0.78) is refused with exit 97, before a sandbox starts, so a changed
-// srt fails closed instead of running unpatched or patched in the wrong place.
+// The rules are constants; nothing is read from the environment, from its URL only which sets of constants to add, and
+// from the arguments only the path of srt's settings file, to record a refusal beside it (Orbit's own directory, which
+// the sandbox can neither read nor write). Every shape of command it was not verified against (srt 0.0.78), and every
+// set it does not know, is refused with exit 97, before a sandbox starts, so a changed srt fails closed instead of
+// running unpatched or patched in the wrong place.
 import childProcess from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
@@ -26,8 +33,34 @@ export const REFUSAL_FILE = 'chromium-preload-refused';
 
 const NAME_REGEX = '^org[.]chromium[.]Chromium[.]MachPortRendezvousServer[.][0-9]+$';
 
-/** The only rules this preload ever adds. */
+/** Chromium's rules: its Mach rendezvous service, registered and looked up, for that name pattern only. */
 export const CHROMIUM_RULES = Object.freeze([`(allow mach-register (global-name-regex #"${NAME_REGEX}"))`, `(allow mach-lookup (global-name-regex #"${NAME_REGEX}"))`]);
+
+/** .NET's rule: reading the NIS domain name, which CookieContainer's type initializer asks libc for. Nothing else. */
+export const NIS_DOMAINNAME_RULES = Object.freeze(['(allow sysctl-read (sysctl-name "kern.nisdomainname"))']);
+
+/** The only rules this preload ever adds, by the set name Orbit asks for. */
+export const RULE_SETS = Object.freeze({ chromium: CHROMIUM_RULES, 'nis-domainname': NIS_DOMAINNAME_RULES });
+
+/**
+ * The rules the query of this module's URL asks for (`?rules=chromium,nis-domainname`), in that order; Chromium's when
+ * there is no query, as before rule sets. Throws for anything else: an empty, unknown, repeated or second `rules`, or
+ * another parameter.
+ */
+export function rulesFor(url) {
+  const params = new URL(url).searchParams;
+  const keys = [...params.keys()];
+  if (keys.length === 0) return [...CHROMIUM_RULES];
+  if (keys.length !== 1 || keys[0] !== 'rules') throw new Error(`the preload's URL names no rule set the preload knows (${[...new Set(keys)].join(', ')})`);
+  const names = params.get('rules').split(',');
+  const rules = [];
+  for (const [i, name] of names.entries()) {
+    if (!Object.hasOwn(RULE_SETS, name)) throw new Error(`unknown rule set ${JSON.stringify(name)}`);
+    if (names.indexOf(name) !== i) throw new Error(`rule set ${JSON.stringify(name)} named twice`);
+    rules.push(...RULE_SETS[name]);
+  }
+  return rules;
+}
 
 const MARKER = '(allow process-exec)';
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
@@ -79,14 +112,14 @@ function wordsOf(command) {
 }
 
 /**
- * srt's command with the two rules inserted after the one `(allow process-exec)` line of the profile it passes to
- * sandbox-exec with -p. Pure. Throws, naming why, for any other shape: a command that does not start with `env`,
+ * srt's command with the rules (Chromium's two unless others are given) inserted after the one `(allow process-exec)`
+ * line of the profile it passes to sandbox-exec with -p. Pure. Throws, naming why, for any other shape: a command that does not start with `env`,
  * sandbox-exec not followed by a single-quoted -p profile, sandbox-exec named anywhere outside that profile again, a
  * profile that is not `(version 1)`, or not exactly one line that is the marker. srt writes every path in the profile with
  * JSON.stringify, so a path can hold the marker's text (or sandbox-exec's) but never a line of its own; such paths are
  * kept as they are.
  */
-export function patchSandboxExecCommand(command) {
+export function patchSandboxExecCommand(command, rules = CHROMIUM_RULES) {
   if (typeof command !== 'string') throw new Error('the command is not a string');
   if (!command.startsWith('env ')) throw new Error('the command does not start with env');
   const words = wordsOf(command);
@@ -100,7 +133,7 @@ export function patchSandboxExecCommand(command) {
   const lines = profile.split('\n');
   if (lines.filter((l) => l === MARKER).length !== 1) throw new Error(`the profile does not hold ${MARKER} exactly once, on a line of its own`);
   const marker = lines.indexOf(MARKER);
-  const patched = [...lines.slice(0, marker + 1), ...CHROMIUM_RULES, ...lines.slice(marker + 1)].join('\n');
+  const patched = [...lines.slice(0, marker + 1), ...rules, ...lines.slice(marker + 1)].join('\n');
   return `${command.slice(0, word.start)}${quoteWord(patched)}${command.slice(word.end)}`;
 }
 
@@ -128,11 +161,11 @@ function carriesSandboxExec(value) {
 }
 
 /**
- * Replaces `spawn` on `cp` with one that patches srt's sandbox-exec command (once), makes the other spawners refuse
- * any sandbox-exec, and refuses an exit without a patched sandbox; every refusal is passed to `record` first. `sync`
- * updates the named ESM exports, since srt imports `{ spawn }` from child_process.
+ * Replaces `spawn` on `cp` with one that patches srt's sandbox-exec command (once) with `rules`, makes the other
+ * spawners refuse any sandbox-exec, and refuses an exit without a patched sandbox; every refusal is passed to `record`
+ * first. `sync` updates the named ESM exports, since srt imports `{ spawn }` from child_process.
  */
-export function installSandboxExecHook(cp, proc, sync, record = () => {}) {
+export function installSandboxExecHook(cp, proc, sync, record = () => {}, rules = CHROMIUM_RULES) {
   let patched = 0;
   const refuse = (why) => {
     record(why);
@@ -149,7 +182,7 @@ export function installSandboxExecHook(cp, proc, sync, record = () => {}) {
     }
     let next;
     try {
-      next = patchSandboxExecCommand(command);
+      next = patchSandboxExecCommand(command, rules);
     } catch (err) {
       return refuse(err instanceof Error ? err.message : String(err));
     }
@@ -172,4 +205,14 @@ export function installSandboxExecHook(cp, proc, sync, record = () => {}) {
   });
 }
 
-installSandboxExecHook(childProcess, process, syncBuiltinESMExports, refusalRecorder(process.argv));
+const record = refusalRecorder(process.argv);
+let requested;
+try {
+  requested = rulesFor(import.meta.url);
+} catch (err) {
+  const why = err instanceof Error ? err.message : String(err);
+  record(why);
+  process.stderr.write(`orbit srt-chromium-preload: ${why}; refusing to start the sandbox (exit ${REFUSAL_EXIT_CODE})\n`);
+  process.exit(REFUSAL_EXIT_CODE);
+}
+installSandboxExecHook(childProcess, process, syncBuiltinESMExports, record, requested);

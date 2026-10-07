@@ -14,9 +14,10 @@ import { parseCommand } from '../../../src/cli/args.ts';
 import { createContext, type CliContext } from '../../../src/cli/context.ts';
 import { memoryIo } from '../../../src/cli/io.ts';
 import { systemClock } from '../../../src/core/clock.ts';
-import { defaultConfig } from '../../../src/policy/config.ts';
+import { defaultCheck, defaultConfig } from '../../../src/policy/config.ts';
 import type { OrbitConfig } from '../../../src/policy/types.ts';
 import type { CredentialStatus, ProviderAdapter, ProviderCapabilities } from '../../../src/adapters/types.ts';
+import { NoIsolation } from '../../../src/isolation/none.ts';
 import type { IsolationProvider } from '../../../src/isolation/types.ts';
 
 const hooks = vi.hoisted(() => ({
@@ -39,7 +40,8 @@ vi.mock('../../../src/isolation/index.ts', async (importOriginal) => {
 
 const GIT_ENV = { GIT_AUTHOR_NAME: 'acme', GIT_AUTHOR_EMAIL: 'dev@acme.test', GIT_COMMITTER_NAME: 'acme', GIT_COMMITTER_EMAIL: 'dev@acme.test', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 const dirs: string[] = [];
-const iso = (kind: IsolationProvider['kind'], ok: boolean, detail: string): IsolationProvider => ({ kind, available: async () => ({ ok, detail }), wrap: () => ({}) as never });
+// A provider that reports the given kind and wraps nothing: checks.sandbox's probes run the world's own tools as they are.
+const iso = (kind: IsolationProvider['kind'], ok: boolean, detail: string): IsolationProvider => ({ kind, available: async () => ({ ok, detail }), wrap: (argv, profile, opts) => new NoIsolation().wrap(argv, profile, opts) });
 beforeEach(() => {
   hooks.config = null;
   hooks.adapters = null;
@@ -54,13 +56,16 @@ interface World {
   repo: string;
   ctx(io?: ReturnType<typeof memoryIo>): CliContext;
 }
-function world(files: Record<string, string> = { 'README.md': '# acme\n' }): World {
+function world(files: Record<string, string> = { 'README.md': '# acme\n' }, platform: NodeJS.Platform = 'linux'): World {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'orbit-docact-')));
   dirs.push(base);
   const repo = join(base, 'repo');
   const home = join(base, 'home');
   const bin = join(base, 'bin');
   for (const d of [repo, home, bin]) mkdirSync(d, { recursive: true });
+  // The world's .NET SDK, first on PATH: doctor's .NET lines start this one, never the host's (a GitHub Ubuntu runner
+  // has /usr/bin/dotnet, which a probe through the provider above would otherwise start, or not find on another host).
+  writeFileSync(join(bin, 'dotnet'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const git = (...a: string[]) => execFileSync('git', a, { cwd: repo, env: { ...process.env, ...GIT_ENV }, stdio: 'pipe' });
   git('init', '-q', '-b', 'main');
   for (const [rel, text] of Object.entries(files)) {
@@ -70,7 +75,7 @@ function world(files: Record<string, string> = { 'README.md': '# acme\n' }): Wor
   git('add', '-A');
   git('commit', '-q', '-m', 'base');
   const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, ...GIT_ENV };
-  return { repo, ctx: (io = memoryIo()) => createContext({ io, cwd: repo, env, homeDir: home, orbitHome: join(home, '.orbit'), platform: 'linux', uid: 1000, user: 'alice', clock: systemClock }) };
+  return { repo, ctx: (io = memoryIo()) => createContext({ io, cwd: repo, env, homeDir: home, orbitHome: join(home, '.orbit'), platform, uid: 1000, user: 'alice', clock: systemClock }) };
 }
 
 function adapter(id: string, cap: Partial<ProviderCapabilities> = {}, cred?: CredentialStatus): ProviderAdapter {
@@ -203,5 +208,82 @@ describe('P24: doctor warns when the allowed paths match nothing', () => {
     const w = world({ 'README.md': '# acme\n', 'src/a.ts': 'export {};\n' });
     const c = byId(await report(w, cfg((x) => (x.scope.allowed_paths = ['src/**']))));
     expect(c.scope).toMatchObject({ status: 'pass' });
+  });
+});
+
+describe('issue #10: doctor names a test project that deadlocks when a check sets DOTNET_PROCESSOR_COUNT=1 itself', () => {
+  const XUNIT_241 = '<Project Sdk="Microsoft.NET.Sdk">\n  <ItemGroup>\n    <PackageReference Include="xunit" Version="2.4.1" />\n  </ItemGroup>\n</Project>\n';
+  const test = (env: Record<string, string>) => ({ test: { ...defaultCheck('test'), command: ['dotnet', 'test', '-m:1'], env } });
+
+  it('warns on checks.dotnet-tests for a tracked test project on xunit before 2.8 that such a dotnet test check runs', async () => {
+    const w = world({ 'acme.sln': '', 'tests/Acme.Tests/Acme.Tests.csproj': XUNIT_241 });
+    const c = byId(await report(w, cfg((x) => (x.checks = test({ DOTNET_PROCESSOR_COUNT: '1' })))));
+    expect(c['checks.dotnet-tests']).toMatchObject({ status: 'warn', details: ['tests/Acme.Tests/Acme.Tests.csproj: xunit 2.4.1'] });
+  });
+
+  // Review round 4: doctor failed checks.sandbox for this alternative, which its own fix names and the runner passes, so
+  // checks.dotnet-tests could hardly be reached.
+  it('passes checks.sandbox for a dotnet test check that relies on DOTNET_PROCESSOR_COUNT=1 in its env, and warns on its xunit', async () => {
+    const w = world({ 'acme.sln': '', 'tests/Acme.Tests/Acme.Tests.csproj': XUNIT_241 });
+    const c = byId(await report(w, cfg((x) => (x.checks = { test: { ...defaultCheck('test'), command: ['dotnet', 'test', 'tests/Acme.Tests'], mandatory: true, env: { DOTNET_PROCESSOR_COUNT: '1' } } }))));
+    expect(c['checks.sandbox']!.status).toBe('pass');
+    // Started, not skipped: the check's executable and the .NET probe build, both with the world's own SDK.
+    expect(c['checks.sandbox']!.details).toEqual(['test: "dotnet help" ran in the sandbox', expect.stringMatching(/^toolchain dotnet: "dotnet build Probe\.App\/Probe\.App\.csproj" ran in the sandbox /)]);
+    expect(c['checks.dotnet-tests']).toMatchObject({ status: 'warn', details: ['tests/Acme.Tests/Acme.Tests.csproj: xunit 2.4.1'] });
+    expect(c['checks.dotnet-tests']!.fix).toMatch(/^remove DOTNET_PROCESSOR_COUNT from checks\.test\.env and pass -m:1 to every dotnet build or test its command starts instead/);
+  });
+
+  it('adds no line for a check that leaves the processor count alone, or without such a project', async () => {
+    const w = world({ 'acme.sln': '', 'tests/Acme.Tests/Acme.Tests.csproj': XUNIT_241 });
+    expect(byId(await report(w, cfg((x) => (x.checks = test({})))))['checks.dotnet-tests']).toBeUndefined();
+    const bare = world({ 'acme.sln': '' });
+    expect(byId(await report(bare, cfg((x) => (x.checks = test({ DOTNET_PROCESSOR_COUNT: '1' })))))['checks.dotnet-tests']).toBeUndefined();
+  });
+});
+
+// Issue #10: on macOS srt keeps the system trust service out of reach, so a NuGet restore from nuget.org cannot complete
+// in the sandbox; doctor says so before a run, with the command that fills the repository's cache outside it.
+describe('issue #10: doctor names the NuGet cache a .NET repository with packages fills outside the sandbox on macOS', () => {
+  const PACKAGED = '<Project Sdk="Microsoft.NET.Sdk">\n  <ItemGroup><PackageReference Include="Newtonsoft.Json" Version="13.0.3" /></ItemGroup>\n</Project>\n';
+  const build = (x: OrbitConfig) => {
+    x.isolation = { ...x.isolation, provider: 'sandbox-runtime' };
+    x.checks = { build: { ...defaultCheck('build'), command: ['dotnet', 'build', '-m:1'], mandatory: true } };
+  };
+
+  it('fails checks.dotnet-packages when the dependency install or a mandatory check restores into an empty cache, and warns for a check that does not restore', async () => {
+    const w = world({ 'acme.csproj': PACKAGED }, 'darwin');
+    const failing = byId(await report(w, cfg((x) => (build(x), (x.dependencies.install_command = ['dotnet', 'restore', '-m:1'])))))['checks.dotnet-packages'];
+    expect(failing).toMatchObject({ status: 'fail', details: ['acme.csproj: PackageReference Newtonsoft.Json', expect.stringMatching(/^NuGet cache .+\/\.orbit\/toolchains\/[0-9a-f]{12}\/nuget: not created yet$/)] });
+    expect(failing!.fix).toMatch(/^run once in a terminal, outside the sandbox, and again whenever the packages change: \(cd \S+ && NUGET_PACKAGES=\S+\/nuget dotnet restore -m:1\); /);
+    // Review: a mandatory check that restores, with no install, only warned, and the run blocked on its restore.
+    expect(byId(await report(w, cfg(build)))['checks.dotnet-packages']).toMatchObject({ status: 'fail', summary: expect.stringMatching(/^check build restores NuGet packages, .*: the check would fail at the baseline$/) });
+    const noRestore = (x: OrbitConfig) => (build(x), (x.checks.build!.command = ['dotnet', 'build', '--no-restore', '-m:1']));
+    const warned = byId(await report(w, cfg(noRestore)));
+    expect(warned['checks.dotnet-packages']!.status).toBe('warn');
+    // The .NET line of checks.sandbox says where those packages come from, for this repository, which has some.
+    expect(warned['checks.sandbox']!.details.find((d) => d.startsWith('toolchain dotnet:'))).toContain("on macOS the dependency install cannot download NuGet packages, so this repository's are restored into it outside the sandbox");
+    // Rendered: the summary, then what is missing and the fix.
+    const io = memoryIo();
+    hooks.config = () => cfg(noRestore);
+    await doctorCommand(parseCommand([], undefined, 'orbit doctor'), w.ctx(io));
+    expect(io.stdout).toMatch(/WARN  checks\.dotnet-packages this repository's NuGet packages cannot be downloaded inside the sandbox on macOS/);
+  });
+
+  it('adds no line on Linux', async () => {
+    const w = world({ 'acme.csproj': PACKAGED });
+    expect(byId(await report(w, cfg(build)))['checks.dotnet-packages']).toBeUndefined();
+  });
+
+  // On macOS under srt Orbit turns NuGet's vulnerability audit off in every .NET process, where it cannot reach
+  // nuget.org, through the environment, which a project's own NuGetAudit overrides; with warnings as errors its NU1900
+  // then fails every restore there.
+  it('fails checks.dotnet-audit for a project that turns the audit on while warnings are errors, and says nothing without it', async () => {
+    const strict = PACKAGED.replace('<ItemGroup>', '<PropertyGroup><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup>\n  <ItemGroup>');
+    const on = world({ 'acme.csproj': strict, 'Directory.Build.props': '<Project><PropertyGroup><NuGetAudit>true</NuGetAudit></PropertyGroup></Project>\n' }, 'darwin');
+    const audit = byId(await report(on, cfg(build)))['checks.dotnet-audit'];
+    expect(audit).toMatchObject({ status: 'fail', details: ['Directory.Build.props: NuGetAudit true', 'acme.csproj: TreatWarningsAsErrors true'] });
+    expect(audit!.fix).toMatch(/^in Directory\.Build\.props, set NuGetAudit only where nothing has set it yet: /);
+    const off = world({ 'acme.csproj': strict }, 'darwin');
+    expect(byId(await report(off, cfg(build)))['checks.dotnet-audit']).toBeUndefined();
   });
 });

@@ -1,0 +1,3 @@
+flag provided but not defined: -bogus
+usage: go build [-o output] [build flags] [packages]
+Run 'go help build' for details.

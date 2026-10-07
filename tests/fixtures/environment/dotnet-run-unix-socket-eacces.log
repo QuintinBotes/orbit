@@ -1,0 +1,14 @@
+3
+System.Net.Sockets.SocketException (13): Permission denied
+   at System.Net.Sockets.Socket.DoBind(EndPoint endPointSnapshot, SocketAddress socketAddress)
+   at System.Net.Sockets.Socket.Bind(EndPoint localEP)
+   at Program.<Main>$(String[] args) in /var/folders/acme/T/orbit-evidence-acme/checkout/src/Acme.Cli/Program.cs:line 3
+Unhandled exception. System.Net.Sockets.SocketException (13): Permission denied
+   at System.Net.Sockets.Socket.DoBind(EndPoint endPointSnapshot, SocketAddress socketAddress)
+   at System.Net.Sockets.Socket.Bind(EndPoint localEP)
+   at System.IO.Pipes.NamedPipeServerStream.SharedServer..ctor(String path, Int32 maxCount, Boolean isFirstPipeInstance)
+   at System.IO.Pipes.NamedPipeServerStream.SharedServer.Get(String path, Int32 maxCount, PipeOptions pipeOptions)
+   at System.IO.Pipes.NamedPipeServerStream.Create(String pipeName, PipeDirection direction, Int32 maxNumberOfServerInstances, PipeTransmissionMode transmissionMode, PipeOptions options, Int32 inBufferSize, Int32 outBufferSize, HandleInheritability inheritability)
+   at System.IO.Pipes.NamedPipeServerStream..ctor(String pipeName)
+   at Program.<Main>$(String[] args) in /var/folders/acme/T/orbit-evidence-acme/checkout/src/Acme.Cli/Program.cs:line 4
+[orbit] check=run status=FAILED exit=134

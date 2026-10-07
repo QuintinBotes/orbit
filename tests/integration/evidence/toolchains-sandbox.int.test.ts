@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -8,12 +7,11 @@ import { checkSandboxCheck } from '../../../src/cli/commands/doctor-sandbox.ts';
 import { candidateSubject, INSTALL_CHECK_ID, runCheckSet, runChecks } from '../../../src/evidence/runner.ts';
 import { SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.ts';
 import { toolchainCacheRoot } from '../../../src/isolation/toolchains.ts';
-import { which } from '../../../src/isolation/util.ts';
 import { defaultCheck, defaultConfig } from '../../../src/policy/config.ts';
 import type { CheckDefinition } from '../../../src/policy/types.ts';
 import { repoKeyFor } from '../../../src/storage/retention.ts';
 import { checkDef, nodeCheck } from '../../unit/evidence/fixtures.ts';
-import { runnerEnv, type RunnerEnv } from './harness.ts';
+import { hostRustupHome, hostTool, runnerEnv, type RunnerEnv } from './harness.ts';
 
 /**
  * Toolchain sandbox profiles (docs/decisions/0009-toolchain-profiles.md) under Orbit's real srt check profile: each
@@ -25,19 +23,11 @@ const installDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const provider = new SandboxRuntimeIsolation({ orbitInstallDir: installDir });
 const probe = await provider.available();
 const absent: Record<string, string> = {};
-/**
- * A tool the host has: found on PATH (or at a fallback) and starting there with its version argument, outside any
- * sandbox. Being on PATH is not enough: every Mac has /usr/bin/java, a stub that only starts a JDK installed elsewhere.
- */
+/** A tool the host has, started with its version argument outside any sandbox (harness.ts hostTool), or null. */
 function tool(name: string, args: string[], ...fallbacks: string[]): string | null {
-  const found = which(name, process.env.PATH) ?? fallbacks.find((p) => existsSync(p)) ?? null;
-  if (found === null) {
-    absent[name] = `${name} is not installed`;
-    return null;
-  }
-  if (spawnSync(found, args, { stdio: 'ignore', timeout: 60_000 }).status === 0) return found;
-  absent[name] = `${name} is not installed: "${found} ${args.join(' ')}" fails outside the sandbox`;
-  return null;
+  const t = hostTool(name, args, ...fallbacks);
+  if (t.path === null) absent[name] = t.absent;
+  return t.path;
 }
 const tools = {
   python3: tool('python3', ['--version']),
@@ -48,14 +38,6 @@ const tools = {
 };
 const skipFor = (name: keyof typeof tools): string | null => (!probe.ok ? `srt unavailable: ${probe.detail}` : tools[name] === null ? absent[name]! : null);
 const title = (what: string, skip: string | null) => (skip === null ? what : `${what} skipped: ${skip}`);
-
-/**
- * The host's rustup installation: RUSTUP_HOME, else ~/.rustup of the real home. A cargo that is a rustup proxy (a link
- * to rustup in ~/.cargo/bin, as on GitHub's runners) finds its toolchains only there. The runner looks for it under the
- * run's home, which in these tests is a scratch directory, so the cargo test passes it in RUSTUP_HOME, as a host that
- * sets the variable would. Null where there is none (Homebrew's cargo is not a proxy and needs none).
- */
-const hostRustupHome = process.env.RUSTUP_HOME?.trim() || (existsSync(join(homedir(), '.rustup')) ? join(homedir(), '.rustup') : null);
 
 const envs: RunnerEnv[] = [];
 const dirs: string[] = [];
@@ -203,8 +185,10 @@ describe.skipIf(!probe.ok)(title('orbit doctor reports each installed toolchain 
       const line = c.details.find((d) => d.startsWith(`toolchain ${id}:`));
       expect(line, id).toBeDefined();
       if (tools[exe] === null) continue;
-      // Started by its own name: rustup's cargo is a link to rustup, whose `--version` runs where cargo cannot.
-      expect(line, id).toMatch(new RegExp(`^toolchain ${id}: "${exe} [^"]*" ran in the sandbox; dependency caches? `));
+      // Started by its own name: rustup's cargo is a link to rustup, whose `--version` runs where cargo cannot. .NET builds
+      // three generated projects instead, since starting it showed nothing of what a build is refused (#10, reopened).
+      const what = id === 'dotnet' ? ' \\(three generated projects with no packages, one referencing the other two: [^)]*\\)' : '';
+      expect(line, id).toMatch(new RegExp(`^toolchain ${id}: "${exe} [^"]*" ran in the sandbox${what}; dependency caches? `));
       expect(line, id).toContain(join(orbitHome, 'toolchains', key, cache));
     }
     expect(c.status).toBe('pass');

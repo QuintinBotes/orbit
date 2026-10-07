@@ -152,6 +152,8 @@ export interface WorkerProfileInput {
   policyPath?: string;
   /** Paths the worker may read and never write, such as Orbit's install directory for its guard hook. */
   readablePaths?: string[];
+  /** The worker's worktree uses .NET (ToolchainLayout.nisDomainName): see SandboxProfile.nisDomainName. */
+  nisDomainName?: boolean;
   /** Defaults to the run's wall-clock hard limit. */
   timeoutMs?: number;
   /** The environment Orbit runs with, for CLAUDE_CONFIG_DIR and CODEX_HOME; defaults to process.env. */
@@ -167,6 +169,8 @@ export interface CheckProfileInput {
   /** For example an evidence output directory or a private temp directory. */
   extraWritable?: string[];
   readablePaths?: string[];
+  /** The check runs .NET (ToolchainLayout.nisDomainName): see SandboxProfile.nisDomainName. */
+  nisDomainName?: boolean;
   homeDir?: string;
   claudeConfigDir?: string;
   codexHome?: string;
@@ -177,6 +181,14 @@ export interface CheckProfileInput {
 
 function walkLimit(input: { credentialWalkLimit?: number }): { credentialWalkLimit?: number } {
   return input.credentialWalkLimit === undefined ? {} : { credentialWalkLimit: input.credentialWalkLimit };
+}
+
+/**
+ * The hosts a worker's sandbox lets it reach (profileForWorker): its provider's, and the policy's allowed hosts. A Codex
+ * worker is a read-only reviewer that its adapter confines further, to its provider's hosts (codexReviewerProfile).
+ */
+export function workerAllowedHosts(provider: WorkerProvider, snapshot: PolicySnapshot): string[] {
+  return uniq([...PROVIDER_HOSTS[provider], ...snapshot.config.network.allowed_hosts]);
 }
 
 /**
@@ -230,7 +242,8 @@ export function profileForWorker(input: WorkerProfileInput): BuiltProfile {
       ...WORKER_DIR_READ_ONLY.map((rel) => join(workerDir, rel)),
       ...ownReadOnly,
     ]),
-    allowedHosts: uniq([...PROVIDER_HOSTS[input.provider], ...input.snapshot.config.network.allowed_hosts]),
+    allowedHosts: workerAllowedHosts(input.provider, input.snapshot),
+    ...(input.nisDomainName ? { nisDomainName: true } : {}),
     limits: {
       timeoutMs: input.timeoutMs ?? input.snapshot.config.scheduler.hard_limits.wall_minutes * 60_000,
       ...resourceLimits(input.snapshot),
@@ -312,6 +325,7 @@ export function profileForCheck(input: CheckProfileInput): BuiltProfile {
     allowedHosts: uniq(input.check.network_hosts),
     // `!== false`: a definition frozen into an older snapshot has no key and reads as the default.
     allowLocalBinding: input.check.local_binding !== false,
+    ...(input.nisDomainName ? { nisDomainName: true } : {}),
     limits: { timeoutMs: input.check.timeout_seconds * 1000, ...resourceLimits(input.snapshot) },
   };
 }
@@ -411,6 +425,23 @@ export function repoParentDenial(repoRoot: string, homeDir: string): { path: str
   const shared = uniq(['/tmp', '/private/tmp', '/var/tmp', '/var/folders', tmpdir()].map(canonicalPath));
   if (shared.some((root) => isWithin(root, parent))) return { path: null, reason: `${parent} contains a shared temp directory` };
   return { path: parent, reason: 'sibling projects are denied; the worktree and git directory are re-allowed' };
+}
+
+/**
+ * Whether a check profile read-denies a directory above `checkout`: the profile re-allows the checkout itself, so a
+ * process in it can read everything below it and list nothing between it and that directory. A run's checkouts sit
+ * in <orbit home>/worktrees/<repo key>/<run>/, and the default Orbit home, ~/.orbit, is denied (HOME_DENY_READ), so for a
+ * run this is true unless ORBIT_HOME is somewhere no rule denies. On macOS Seatbelt then refuses a listing of
+ * <orbit home>/worktrees/<repo key>/<run> with EPERM, which a tool that walks up from its folder meets (dotnet format
+ * whitespace --folder looking for .editorconfig files, evidence/dotnet-format.ts); on Linux srt lays an empty tmpfs over
+ * a denied directory, which lists.
+ */
+export function checkoutBelowDenied(opts: { checkout: string; repoRoot: string; homeDir: string; env?: Record<string, string | undefined> }): boolean {
+  const checkout = canonicalPath(opts.checkout);
+  const repo = canonicalPath(opts.repoRoot);
+  const parent = repoParentDenial(repo, opts.homeDir).path;
+  const denied = [...credentialDenyPaths({ homeDir: opts.homeDir, ...(opts.env ? { env: opts.env } : {}) }), join(repo, '.orbit'), ...(isWithin(repo, checkout) ? [] : [repo]), ...(parent ? [parent] : [])];
+  return denied.some((d) => d !== checkout && isWithin(checkout, d));
 }
 
 /**

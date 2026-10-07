@@ -242,3 +242,58 @@ describe('the preload in a real node process', () => {
     expect(r.status).toBe(97);
   });
 });
+
+// A second rule set, for .NET (docs/decisions/0009-toolchain-profiles.md, addendum): .NET's CookieContainer reads the
+// NIS domain name, which srt's Seatbelt profile does not let a process read, so every .NET HTTP client failed, NuGet's
+// restore included ("The type initializer for 'System.Net.CookieContainer' threw an exception ... GetDomainName: -1").
+// Orbit names the sets it wants in the query of the preload's URL; each set is a constant of the preload.
+describe('rule sets', () => {
+  const NIS = '(allow sysctl-read (sysctl-name "kern.nisdomainname"))';
+
+  it('holds exactly one read-only rule for the NIS domain name, and nothing else', async () => {
+    const { mod } = await load();
+    expect(mod.NIS_DOMAINNAME_RULES).toEqual([NIS]);
+    expect(Object.isFrozen(mod.NIS_DOMAINNAME_RULES)).toBe(true);
+    expect(Object.keys(mod.RULE_SETS)).toEqual(['chromium', 'nis-domainname']);
+  });
+
+  it('reads the sets from its URL: Chromium alone without a query, as before', async () => {
+    const { mod } = await load();
+    const url = pathToFileURL(PRELOAD).href;
+    expect(mod.rulesFor(url)).toEqual([REGISTER, LOOKUP]);
+    expect(mod.rulesFor(`${url}?rules=nis-domainname`)).toEqual([NIS]);
+    expect(mod.rulesFor(`${url}?rules=chromium,nis-domainname`)).toEqual([REGISTER, LOOKUP, NIS]);
+    for (const bad of ['?rules=', '?rules=acme', '?rules=chromium,chromium', '?rules=nis-domainname&rules=chromium', '?sets=chromium']) {
+      expect(() => mod.rulesFor(`${url}${bad}`), bad).toThrow(/rule set/);
+    }
+  });
+
+  it('inserts the rules it is given right after the one (allow process-exec)', async () => {
+    const { mod } = await load();
+    const cmd = srtCommand();
+    expect(mod.patchSandboxExecCommand(cmd, [NIS])).toBe(cmd.replace('(allow process-exec)', `(allow process-exec)\n${NIS}`));
+  });
+
+  it('patches with the sets its URL names in a real node process, and refuses an unknown set before anything runs', () => {
+    dir = mkdtempSync(join(tmpdir(), 'orbit-preload-'));
+    const cmd = srtCommand(profile(), 'true');
+    const cli = join(dir, 'cli.mjs');
+    writeFileSync(cli, `import { spawn } from 'child_process';\nconst child = spawn(${JSON.stringify(cmd)}, { shell: true, stdio: 'ignore' });\nprocess.stdout.write(JSON.stringify(child.spawnargs));\nchild.on('exit', () => process.exit(0));\nchild.on('error', () => process.exit(0));\n`);
+    const url = pathToFileURL(PRELOAD).href;
+    const r = spawnSync(process.execPath, ['--import', `${url}?rules=nis-domainname`, cli], { encoding: 'utf8' });
+    expect(r.status, r.stderr).toBe(0);
+    expect((JSON.parse(r.stdout) as string[]).at(-1)).toBe(cmd.replace('(allow process-exec)', `(allow process-exec)\n${NIS}`));
+    const settings = join(dir, 'settings.json');
+    writeFileSync(settings, '{}');
+    const bad = spawnSync(process.execPath, ['--import', `${url}?rules=acme`, cli, '--settings', settings, '--', 'true'], { encoding: 'utf8' });
+    expect(bad.status).toBe(97);
+    expect(bad.stdout).toBe('');
+    expect(bad.stderr).toMatch(/orbit srt-chromium-preload: unknown rule set "acme"; refusing to start the sandbox \(exit 97\)/);
+    expect(readFileSync(join(dir, 'chromium-preload-refused'), 'utf8')).toMatch(/unknown rule set "acme"/);
+  });
+
+  let dir: string;
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+});

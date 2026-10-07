@@ -1,0 +1,8 @@
+npm error Missing script: "tset"
+npm error
+npm error Did you mean this?
+npm error   npm set # Set a value in the npm configuration
+npm error
+npm error To see a list of scripts, run:
+npm error   npm run
+npm error A complete log of this run can be found in: /home/acme/.npm/_logs/2026-10-06T15_48_06_869Z-debug-0.log

@@ -55,15 +55,15 @@ describe.skipIf(!canStripTypes)('controller: a check the environment stopped on 
     expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
     expect(transitions(l, run.id)).toEqual(['PREFLIGHT', 'BLOCKED']);
     const reason = done.outcomeReason ?? '';
-    expect(reason).toMatch(/^check build could not run on the base revision [0-9a-f]{12}, and the output shows an environment cause, not a pre-existing failure/);
+    expect(reason).toMatch(/^Check build could not run on the base revision [0-9a-f]{12}, and the output shows an environment cause, not a pre-existing failure/);
     // The first error line, and the fix.
     expect(reason).toContain('mkdir(\\"/tmp/.dotnet/shm/session');
     expect(reason).toContain('errno == EPERM;');
     expect(reason).toMatch(/no baseline exception is offered/);
-    expect(reason).toMatch(/fix: this is the \.NET runtime asking for \/tmp\/\.dotnet/);
+    expect(reason).toMatch(/\. Fix: this is the \.NET runtime asking for \/tmp\/\.dotnet/);
     expect(reason).toMatch(/orbit resume \S+ runs the baseline again/);
     expect(reason).not.toMatch(/orbit decide/);
-    expect(reason).not.toMatch(/[–—]/);
+    expect(reason).not.toMatch(/[\u2013\u2014]/);
 
     // No question, no request to accept the failure, and no pre-existing failure recorded as such.
     expect(listQuestions(l.db(), run.id)).toEqual([]);
@@ -76,7 +76,7 @@ describe.skipIf(!canStripTypes)('controller: a check the environment stopped on 
     const baseline = JSON.parse(readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'baseline.json'), 'utf8')) as { complete: boolean; failures: { checkId: string }[] };
     expect(baseline.complete).toBe(false);
     const final = readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'final.md'), 'utf8');
-    expect(final).toMatch(/check build could not run on the base revision/);
+    expect(final).toMatch(/Check build could not run on the base revision/);
   }, 180_000);
 
   it('a real compile error on the base revision is still a pre-existing failure with its baseline-exception question', async () => {
