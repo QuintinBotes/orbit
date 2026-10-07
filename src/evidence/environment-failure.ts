@@ -214,11 +214,16 @@ export function classifyNotExecuted(input: NotExecutedInput): EnvironmentFailure
   let traced = false;
   let own = 0;
   let inJsTrace = false;
-  for (const raw of stripAnsi(input.output).split('\n', MAX_SCANNED_LINES)) {
+  const all = stripAnsi(input.output).split('\n', MAX_SCANNED_LINES);
+  // The runner writes its footer as the log's last line, after everything the check printed: a footer-like line
+  // anywhere else is the check's own output, so a check cannot print one that reads as a crash.
+  let last = all.length - 1;
+  while (last >= 0 && all[last]!.trim() === '') last--;
+  for (const [i, raw] of all.entries()) {
     const line = raw.trim();
     if (line === '') continue;
     const killed = KILLED_BY_SIGNAL.exec(line);
-    const footer = RUNNER_FOOTER.exec(line);
+    const footer = i === last ? RUNNER_FOOTER.exec(line) : null;
     const header = TRACE_HEADER.exec(line);
     if (header) {
       inJsTrace = header[1]!.toLowerCase() === 'javascript';
