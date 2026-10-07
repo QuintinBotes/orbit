@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -8,7 +7,6 @@ import { checkSandboxCheck } from '../../../src/cli/commands/doctor-sandbox.ts';
 import { candidateSubject, INSTALL_CHECK_ID, runCheckSet, runChecks } from '../../../src/evidence/runner.ts';
 import { SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.ts';
 import { toolchainCacheRoot } from '../../../src/isolation/toolchains.ts';
-import { which } from '../../../src/isolation/util.ts';
 import { defaultCheck, defaultConfig } from '../../../src/policy/config.ts';
 import type { CheckDefinition } from '../../../src/policy/types.ts';
 import { repoKeyFor } from '../../../src/storage/retention.ts';
