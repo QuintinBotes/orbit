@@ -225,7 +225,10 @@ was compiled or tested and failed: no compiler diagnostic (`error CS1002`,
 word that ends there (`failed: 1`, `Failed: 1,`), an `AssertionError`, Python
 unittest's `FAILED (errors=1)` and `ERROR: test_x (...)`, the line
 Microsoft.Testing.Platform prints for each failing test (`failed WritesCache
-(12ms)`) and xunit's (`Acme.Tests.CacheTests.WritesCache [FAIL]`)) and no error
+(12ms)`) and xunit's (`Acme.Tests.CacheTests.WritesCache [FAIL]`), go test
+-json's `"Action":"fail"` event, bun's `(fail) x` and ` 1 fail`, and dart's
+`Some tests failed.`, which a review found read as a denial on the base
+revision for a test that fails reading `/etc/sudoers`) and no error
 count (`N errors`, MSBuild's `N Error(s)`). A denial next to any of those is the
 code's failure. The .NET runners were captured with `dotnet run` of real test
 projects: Microsoft.Testing.Platform's report (`failed X (12ms)`, then `Test

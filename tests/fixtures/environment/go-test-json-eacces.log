@@ -1,0 +1,10 @@
+{"Time":"2026-10-07T02:37:31.857946+02:00","Action":"start","Package":"example.com/acme"}
+{"Time":"2026-10-07T02:37:32.141203+02:00","Action":"run","Package":"example.com/acme","Test":"TestReadsConfig"}
+{"Time":"2026-10-07T02:37:32.141408+02:00","Action":"output","Package":"example.com/acme","Test":"TestReadsConfig","Output":"=== RUN   TestReadsConfig\n","OutputType":"frame"}
+{"Time":"2026-10-07T02:37:32.142426+02:00","Action":"output","Package":"example.com/acme","Test":"TestReadsConfig","Output":"    acme_test.go:10: open /etc/sudoers: permission denied\n","OutputType":"error"}
+{"Time":"2026-10-07T02:37:32.142495+02:00","Action":"output","Package":"example.com/acme","Test":"TestReadsConfig","Output":"--- FAIL: TestReadsConfig (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-10-07T02:37:32.142516+02:00","Action":"fail","Package":"example.com/acme","Test":"TestReadsConfig","Elapsed":0}
+{"Time":"2026-10-07T02:37:32.142552+02:00","Action":"output","Package":"example.com/acme","Output":"FAIL\n","OutputType":"frame"}
+{"Time":"2026-10-07T02:37:32.143683+02:00","Action":"output","Package":"example.com/acme","Output":"FAIL\texample.com/acme\t0.285s\n","OutputType":"frame"}
+{"Time":"2026-10-07T02:37:32.143737+02:00","Action":"fail","Package":"example.com/acme","Elapsed":0.286}
+[orbit] check=test status=FAILED exit=1

@@ -234,6 +234,25 @@ describe('classifyCouldNotRun: a NuGet restore refused inside dotnet build', () 
   });
 });
 
+// Review: a test that fails on a path it may not read, in a report CODE_FAILURE did not recognise, read as the
+// environment's on the base revision (permission-denied), so the run blocked with no exception question where main had
+// a pre-existing failure: go test -json (captured with go 1.27), bun's report and dart's (constructed from their formats).
+describe('a failing test in go test -json, bun and dart reports stays the code\'s failure, whatever denial it reports', () => {
+  it('reads each as a failing test, on the base revision and on a candidate', () => {
+    const goJson = fixture('go-test-json-eacces.log');
+    expect(goJson).toMatch(/open \/etc\/sudoers: permission denied/);
+    const bun = ['acme.test.ts:', 'error: EACCES: permission denied, open \'/etc/sudoers\'', '(fail) reads the config [0.31ms]', '', ' 0 pass', ' 1 fail', ' 1 expect() calls', 'Ran 1 tests across 1 files. [10.00ms]', ''].join('\n');
+    const dart = ['00:00 +0: reads the config', "PathAccessException: Cannot open file, path = '/etc/sudoers' (OS Error: Permission denied, errno = 13)", '00:00 +0 -1: reads the config [E]', '00:00 +0 -1: Some tests failed.', ''].join('\n');
+    for (const [name, output] of [['go test -json', goJson], ['bun', bun], ['dart', dart]] as const) {
+      expect(showsCodeFailure(output), name).toBe(true);
+      expect(classifyCouldNotRun({ checkId: 'test', output, insideRoots: ROOTS }), name).toBeNull();
+      expect(classifyCouldNotRun({ checkId: 'test', output, insideRoots: ROOTS, baseSignals: ['permission-denied'] }), name).toBeNull();
+    }
+    // Nothing failed: no count, no failing event.
+    for (const output of ['{"Action":"pass","Package":"example.com/acme"}\n', ' 3 pass\n 0 fail\n', '00:00 +3: All tests passed!\n']) expect(showsCodeFailure(output), output).toBe(false);
+  });
+});
+
 describe('a failing test in a .NET test runner\'s own report stays the code\'s failure, whatever denial it reports', () => {
   /**
    * Captured with `dotnet run` of real test projects on macOS (the .NET 9.0.305 SDK), the checkout path neutral: a test

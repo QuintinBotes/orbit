@@ -342,6 +342,13 @@ const CODE_FAILURE: readonly RegExp[] = [
   /^[ \t]*failed \S.*\((?:\d+(?:ms|[smhd])[ \t]?)+\)[ \t]*\r?$/m,
   // xunit's own runner's line for each failing test: "Acme.Tests.CacheTests.WritesCache [FAIL]".
   /\[FAIL\][ \t]*\r?$/m,
+  // go test -json's event for a test or package that failed: {"Action":"fail",...}.
+  /"Action":\s*"fail"/,
+  // bun test's line for each failing test, "(fail) reads the config [0.31ms]", and its summary's " 1 fail".
+  /^[ \t]*\(fail\) \S/m,
+  /^[ \t]*[1-9]\d* fail[ \t]*\r?$/m,
+  // dart test's last line when a test failed: "00:01 +3 -1: Some tests failed.".
+  /\bSome tests failed\.[ \t]*\r?$/m,
 ];
 
 /** Compilers' and MSBuild's error counts ("2 errors", "1 Error(s)"). */
