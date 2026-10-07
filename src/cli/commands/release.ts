@@ -65,7 +65,7 @@ export async function releaseResolveCommand(args: Args, ctx: CliContext): Promis
             ...(environment === undefined ? {} : { environment }),
             resolution,
             by,
-            ...(resolution === 'verify' ? { isolation: rc.isolation(), homeDir: homeOf(rc.deps), toolchainCacheRoot: toolchainCacheRootFor(rc) } : {}),
+            ...(resolution === 'verify' ? { isolation: rc.isolation(), homeDir: homeOf(rc.deps), hostEnv: rc.deps.hostEnv ?? ctx.env, toolchainCacheRoot: toolchainCacheRootFor(rc) } : {}),
           });
           return { result };
         } finally {

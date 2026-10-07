@@ -144,6 +144,7 @@ export async function releaseDelivered(ctx: RunContext, d: DeliveredRecord, outc
       isolation: ctx.isolation(),
       workDir: ctx.runDir,
       homeDir: homeOf(ctx.deps),
+      hostEnv: ctx.deps.hostEnv ?? process.env,
       toolchainCacheRoot: toolchainCacheRootFor(ctx),
     });
 
@@ -191,7 +192,7 @@ export async function releaseDelivered(ctx: RunContext, d: DeliveredRecord, outc
  */
 async function settleUnknownDeploy(ctx: RunContext, ledger: ActionLedger, run: Parameters<typeof resolveDeploy>[0]['run'], environment: string): Promise<{ settled: boolean; detail: string | null }> {
   try {
-    const r = await resolveDeploy({ run, snapshot: ctx.snapshot, ledger, clock: ctx.clock, workDir: ctx.runDir, environment, resolution: 'verify', by: 'controller', isolation: ctx.isolation(), homeDir: homeOf(ctx.deps), toolchainCacheRoot: toolchainCacheRootFor(ctx) });
+    const r = await resolveDeploy({ run, snapshot: ctx.snapshot, ledger, clock: ctx.clock, workDir: ctx.runDir, environment, resolution: 'verify', by: 'controller', isolation: ctx.isolation(), homeDir: homeOf(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env, toolchainCacheRoot: toolchainCacheRootFor(ctx) });
     return { settled: r.verdict !== 'unknown', detail: r.detail };
   } catch (err) {
     return { settled: false, detail: err instanceof Error ? err.message.slice(0, 300) : String(err) };

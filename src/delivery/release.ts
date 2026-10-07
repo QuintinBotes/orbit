@@ -39,7 +39,7 @@
  * an UNKNOWN deploy: deployed adopts it, not deployed lets the next call run it.
  */
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
-import { platform } from 'node:os';
+import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import picomatch from 'picomatch';
 import type { Clock } from '../core/clock.ts';
@@ -104,8 +104,13 @@ export interface ReleaseInput {
   workDir?: string;
   /** Controller-supplied environment for the deploy command (its deploy credentials). Never a worker-supplied value. */
   deployEnv?: Record<string, string>;
-  /** Real home directory, used only to compute what the sandbox must hide (and to find a rustup installation). */
+  /**
+   * Real home directory, used only to compute what the sandbox must hide and to find a rustup installation: the
+   * account's (os.homedir) by default, for both.
+   */
   homeDir?: string;
+  /** The controller's environment, where a toolchain's installation is found (RUSTUP_HOME, JAVA_HOME); process.env by default. */
+  hostEnv?: Readonly<Record<string, string | undefined>>;
   /**
    * The repository's toolchain dependency caches (isolation/toolchains.ts toolchainCacheRoot), read-only for the deploy
    * command, beneath caches of its own where its tool reads a second cache. Absent: its caches are its own alone.
@@ -608,8 +613,9 @@ async function runDeploy(a: {
     };
     const field = `release.environments.${envName}.deploy_command`;
     const scratch = join(files.dir, 'toolchains');
-    const toolchains = releaseToolchains({ command: env.deploy_command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, ...(input.homeDir ? { homeDir: input.homeDir } : {}) });
-    const profile = profileForCheck({ worktree: checkout, check: def, snapshot, extraWritable: [files.home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, ...(input.homeDir ? { homeDir: input.homeDir } : {}) });
+    const realHome = input.homeDir ?? homedir();
+    const toolchains = releaseToolchains({ command: env.deploy_command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, homeDir: realHome, hostEnv: input.hostEnv ?? process.env });
+    const profile = profileForCheck({ worktree: checkout, check: def, snapshot, extraWritable: [files.home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: realHome });
     const cmdEnv = releaseCommandEnv({ home: files.home, tmp, toolchainEnv: toolchains.env, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha });
     let outcome: DeployOutcome;
     let stopped: string | null = null;
@@ -649,10 +655,13 @@ async function runDeploy(a: {
  * beneath them where its tool reads a second cache (only Orbit's install step writes those), build state private to the
  * command, and for .NET the NIS rule. With the check's read-only caches it could fetch nothing: a deploy `go run .`
  * that fetched one module failed with "go: writing go.mod cache: mkdir <orbit home>/toolchains/<key>/gomod/cache:
- * operation not permitted" under srt, where it had exited 0.
+ * operation not permitted" under srt, where it had exited 0. The host's rustup installation is found as a check's is,
+ * in RUSTUP_HOME of the controller's environment, else under the real home (`homeDir`, the account's when the caller
+ * names none, as the sandbox profile's): rustup's cargo is a proxy that looks under HOME, the command's private one,
+ * and a deploy `cargo install` failed with "rustup could not choose a version of cargo to run" (GitHub's runners).
  */
-function releaseToolchains(a: { command: readonly string[]; checkout: string; cacheRoot: string | null; scratch: string; tmp: string; isolation: IsolationProvider['kind']; networkHosts: readonly string[]; homeDir?: string }): ToolchainLayout {
-  const layout = commandToolchains({ command: a.command, roots: [a.checkout], mode: 'fetch', cacheRoot: a.cacheRoot, scratchRoot: a.scratch, tmpDir: a.tmp, isolation: a.isolation, networkHosts: a.networkHosts, ...(a.homeDir ? { hostHome: a.homeDir } : {}), hostEnv: process.env });
+function releaseToolchains(a: { command: readonly string[]; checkout: string; cacheRoot: string | null; scratch: string; tmp: string; isolation: IsolationProvider['kind']; networkHosts: readonly string[]; homeDir: string; hostEnv: Readonly<Record<string, string | undefined>> }): ToolchainLayout {
+  const layout = commandToolchains({ command: a.command, roots: [a.checkout], mode: 'fetch', cacheRoot: a.cacheRoot, scratchRoot: a.scratch, tmpDir: a.tmp, isolation: a.isolation, networkHosts: a.networkHosts, hostHome: a.homeDir, hostEnv: a.hostEnv });
   prepareToolchainLayout(layout);
   return layout;
 }
@@ -722,7 +731,10 @@ export interface ResolveDeployInput {
   /** Required to run a verify_command. */
   isolation?: IsolationProvider;
   deployEnv?: Record<string, string>;
+  /** As ReleaseInput.homeDir. */
   homeDir?: string;
+  /** As ReleaseInput.hostEnv. */
+  hostEnv?: Readonly<Record<string, string | undefined>>;
   /** The repository's toolchain dependency caches, read-only for the verify_command (ReleaseInput.toolchainCacheRoot). */
   toolchainCacheRoot?: string | null;
   git?: GitOptions;
@@ -840,8 +852,9 @@ async function runVerifyCommand(a: {
     const tmp = prepareFreshTmpDir(dir);
     const def: CheckDefinition = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: '.', timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], local_binding: false, env: {}, mandatory: true, flaky_reruns: 0, kind: 'command', category: 'other' };
     const scratch = join(dir, 'toolchains');
-    const toolchains = releaseToolchains({ command: a.command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, ...(input.homeDir ? { homeDir: input.homeDir } : {}) });
-    const profile = profileForCheck({ worktree: checkout, check: def, snapshot, extraWritable: [home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, ...(input.homeDir ? { homeDir: input.homeDir } : {}) });
+    const realHome = input.homeDir ?? homedir();
+    const toolchains = releaseToolchains({ command: a.command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, homeDir: realHome, hostEnv: input.hostEnv ?? process.env });
+    const profile = profileForCheck({ worktree: checkout, check: def, snapshot, extraWritable: [home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: realHome });
     const cmdEnv = releaseCommandEnv({ home, tmp, toolchainEnv: toolchains.env, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha, extra: { ORBIT_RELEASE_VERIFY: '1' } });
     try {
       const wrapped = a.isolation.wrap([...a.command], profile, { cwd: checkout, env: cmdEnv });

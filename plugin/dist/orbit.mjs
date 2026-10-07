@@ -50667,6 +50667,7 @@ var init_baseline = __esm({
 });
 
 // src/ui/app-toolchains.ts
+import { homedir as homedir12 } from "node:os";
 function appToolchains(input) {
   const layout = commandToolchains({
     command: input.command,
@@ -50677,8 +50678,8 @@ function appToolchains(input) {
     tmpDir: input.tmpDir,
     isolation: input.isolation,
     networkHosts: input.networkHosts,
-    ...input.homeDir ? { hostHome: input.homeDir } : {},
-    ...input.hostEnv ? { hostEnv: input.hostEnv } : {}
+    hostHome: input.homeDir ?? homedir12(),
+    hostEnv: input.hostEnv ?? process.env
   });
   prepareToolchainLayout(layout);
   const { PYTHONUSERBASE: _userBase, ...env } = layout.env;
@@ -54459,7 +54460,7 @@ var init_deliver = __esm({
 
 // src/delivery/release.ts
 import { existsSync as existsSync35, mkdirSync as mkdirSync19, rmSync as rmSync13 } from "node:fs";
-import { platform as platform2 } from "node:os";
+import { homedir as homedir13, platform as platform2 } from "node:os";
 import { join as join52 } from "node:path";
 function releaseConfig(snapshot2) {
   return snapshot2.config.release ?? null;
@@ -54785,8 +54786,9 @@ async function runDeploy(a) {
     };
     const field = `release.environments.${envName}.deploy_command`;
     const scratch = join52(files.dir, "toolchains");
-    const toolchains = releaseToolchains({ command: env.deploy_command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, ...input.homeDir ? { homeDir: input.homeDir } : {} });
-    const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [files.home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, ...input.homeDir ? { homeDir: input.homeDir } : {} });
+    const realHome = input.homeDir ?? homedir13();
+    const toolchains = releaseToolchains({ command: env.deploy_command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, homeDir: realHome, hostEnv: input.hostEnv ?? process.env });
+    const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [files.home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: realHome });
     const cmdEnv = releaseCommandEnv({ home: files.home, tmp, toolchainEnv: toolchains.env, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha });
     let outcome;
     let stopped = null;
@@ -54819,7 +54821,7 @@ ${res.stderr}` : ""}${ran.note ? `
   }
 }
 function releaseToolchains(a) {
-  const layout = commandToolchains({ command: a.command, roots: [a.checkout], mode: "fetch", cacheRoot: a.cacheRoot, scratchRoot: a.scratch, tmpDir: a.tmp, isolation: a.isolation, networkHosts: a.networkHosts, ...a.homeDir ? { hostHome: a.homeDir } : {}, hostEnv: process.env });
+  const layout = commandToolchains({ command: a.command, roots: [a.checkout], mode: "fetch", cacheRoot: a.cacheRoot, scratchRoot: a.scratch, tmpDir: a.tmp, isolation: a.isolation, networkHosts: a.networkHosts, hostHome: a.homeDir, hostEnv: a.hostEnv });
   prepareToolchainLayout(layout);
   return layout;
 }
@@ -54930,8 +54932,9 @@ async function runVerifyCommand(a) {
     const tmp = prepareFreshTmpDir(dir);
     const def = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: ".", timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], local_binding: false, env: {}, mandatory: true, flaky_reruns: 0, kind: "command", category: "other" };
     const scratch = join52(dir, "toolchains");
-    const toolchains = releaseToolchains({ command: a.command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, ...input.homeDir ? { homeDir: input.homeDir } : {} });
-    const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, ...input.homeDir ? { homeDir: input.homeDir } : {} });
+    const realHome = input.homeDir ?? homedir13();
+    const toolchains = releaseToolchains({ command: a.command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, homeDir: realHome, hostEnv: input.hostEnv ?? process.env });
+    const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: realHome });
     const cmdEnv = releaseCommandEnv({ home: home2, tmp, toolchainEnv: toolchains.env, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha, extra: { ORBIT_RELEASE_VERIFY: "1" } });
     try {
       const wrapped = a.isolation.wrap([...a.command], profile, { cwd: checkout, env: cmdEnv });
@@ -59022,6 +59025,7 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
     isolation: ctx.isolation(),
     workDir: ctx.runDir,
     homeDir: homeOf2(ctx.deps),
+    hostEnv: ctx.deps.hostEnv ?? process.env,
     toolchainCacheRoot: toolchainCacheRootFor(ctx)
   });
   let result2 = null;
@@ -59061,7 +59065,7 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
 }
 async function settleUnknownDeploy(ctx, ledger, run, environment) {
   try {
-    const r = await resolveDeploy({ run, snapshot: ctx.snapshot, ledger, clock: ctx.clock, workDir: ctx.runDir, environment, resolution: "verify", by: "controller", isolation: ctx.isolation(), homeDir: homeOf2(ctx.deps), toolchainCacheRoot: toolchainCacheRootFor(ctx) });
+    const r = await resolveDeploy({ run, snapshot: ctx.snapshot, ledger, clock: ctx.clock, workDir: ctx.runDir, environment, resolution: "verify", by: "controller", isolation: ctx.isolation(), homeDir: homeOf2(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env, toolchainCacheRoot: toolchainCacheRootFor(ctx) });
     return { settled: r.verdict !== "unknown", detail: r.detail };
   } catch (err) {
     return { settled: false, detail: err instanceof Error ? err.message.slice(0, 300) : String(err) };
@@ -59763,7 +59767,7 @@ var init_steps = __esm({
 
 // src/storage/retention.ts
 import { existsSync as existsSync44, lstatSync as lstatSync10, realpathSync as realpathSync17, rmSync as rmSync16 } from "node:fs";
-import { homedir as homedir12 } from "node:os";
+import { homedir as homedir14 } from "node:os";
 import { dirname as dirname27, join as join64, resolve as resolve15 } from "node:path";
 function repoKeyFor(repoRoot) {
   let real = repoRoot;
@@ -59779,7 +59783,7 @@ async function pruneExpiredRuns(db, opts) {
   const cutoff = now - opts.keepDays * DAY_MS;
   const repoRoot = realOrResolved(opts.repoRoot);
   const runsRoot = join64(repoRoot, ".orbit", "runs");
-  const worktreesRoot = join64(opts.orbitHome ?? process.env.ORBIT_HOME ?? join64(homedir12(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
+  const worktreesRoot = join64(opts.orbitHome ?? process.env.ORBIT_HOME ?? join64(homedir14(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
   const placeholders = PRUNABLE_STATES.map(() => "?").join(", ");
   const rows = db.all(
     `SELECT r.id, r.state, r.policy_path, r.ended_at, r.updated_at FROM runs r
@@ -62466,7 +62470,7 @@ ${r.stderr}`.trim() };
 import { accessSync as accessSync3, constants as constants5, existsSync as existsSync52, mkdtempSync as mkdtempSync7, readFileSync as readFileSync34, realpathSync as realpathSync19, rmSync as rmSync18, statSync as statSync15 } from "node:fs";
 import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
-import { homedir as homedir13, tmpdir as tmpdir13 } from "node:os";
+import { homedir as homedir15, tmpdir as tmpdir13 } from "node:os";
 import { delimiter as delimiter4, isAbsolute as isAbsolute24, join as join73, resolve as resolve20 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
@@ -63028,7 +63032,7 @@ async function browserIsolationCheck(input) {
     return fail2(id, "ui", `${info.detail}; browser checks are refused`, `srt ${SRT_VERIFIED_VERSION} (@anthropic-ai/sandbox-runtime)`, `install @anthropic-ai/sandbox-runtime@${SRT_VERIFIED_VERSION}`, [info.detail, limitation]);
   }
   if (!input.repo) return warn2(id, "ui", "not launched: no repository to find Playwright in", "a repository", null, [info.detail, limitation]);
-  const home2 = input.homeDir ?? input.env.HOME ?? homedir13();
+  const home2 = input.homeDir ?? input.env.HOME ?? homedir15();
   const cache2 = playwrightCache(input.env, home2, "darwin");
   const browser = headlessChromiumOf(input.repo, cache2);
   if ("problem" in browser) {
@@ -65193,7 +65197,7 @@ async function releaseResolveCommand(args, ctx) {
             ...environment === void 0 ? {} : { environment },
             resolution,
             by,
-            ...resolution === "verify" ? { isolation: rc.isolation(), homeDir: homeOf2(rc.deps), toolchainCacheRoot: toolchainCacheRootFor(rc) } : {}
+            ...resolution === "verify" ? { isolation: rc.isolation(), homeDir: homeOf2(rc.deps), hostEnv: rc.deps.hostEnv ?? ctx.env, toolchainCacheRoot: toolchainCacheRootFor(rc) } : {}
           });
           return { result: result3 };
         } finally {

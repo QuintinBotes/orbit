@@ -300,8 +300,9 @@ describe('releaseDelivered', () => {
     expect(out).toMatchObject({ done: true });
     expect(state()).toBe('SUCCEEDED');
     const input = hooks.performRelease.mock.calls[0]![0] as { environments: string; pr: number | null; commit: string; contractMerge: boolean; readiness: () => { ok: boolean; reasons: string[] } };
-    // The deploy command reads the repository's dependency caches, as the checks do (issue #26).
-    expect(input).toMatchObject({ environments: 'all', pr: 7, commit: cand.commitSha, contractMerge: false, toolchainCacheRoot: join(lab.home, 'toolchains', repoKey(lab.repo)) });
+    // The deploy command reads the repository's dependency caches, as the checks do (issue #26), and finds the host's
+    // rustup installation through the controller's home and environment, as a check does.
+    expect(input).toMatchObject({ environments: 'all', pr: 7, commit: cand.commitSha, contractMerge: false, toolchainCacheRoot: join(lab.home, 'toolchains', repoKey(lab.repo)), homeDir: lab.deps.homeDir, hostEnv: lab.deps.hostEnv });
     expect(input.readiness()).toMatchObject({ ok: true });
     expect(JSON.parse(readFileSync(join(lab.ctx().runDir, RELEASE_FILE), 'utf8'))).toMatchObject({ merge: { pr: 7, merge_commit: 'b'.repeat(40), method: 'squash' }, deploys: [{ environment: 'staging' }] });
     expect(decisions('release.completed')[0]?.summary).toContain('merged PR #7; deployed to staging');
@@ -368,7 +369,7 @@ describe('releaseDelivered', () => {
     hooks.resolveDeploy.mockResolvedValue({ verdict: 'deployed', detail: 'verified' });
     await releaseDelivered(lab.ctx(), record(cand), {});
     expect(hooks.resolveDeploy).toHaveBeenCalledTimes(1);
-    expect(hooks.resolveDeploy.mock.calls[0]![0]).toMatchObject({ environment: 'staging', resolution: 'verify', by: 'controller', toolchainCacheRoot: join(lab.home, 'toolchains', repoKey(lab.repo)) });
+    expect(hooks.resolveDeploy.mock.calls[0]![0]).toMatchObject({ environment: 'staging', resolution: 'verify', by: 'controller', toolchainCacheRoot: join(lab.home, 'toolchains', repoKey(lab.repo)), homeDir: lab.deps.homeDir, hostEnv: lab.deps.hostEnv });
     expect(state()).toBe('SUCCEEDED');
   });
 

@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { redact } from '../core/redact.ts';
 import { findMsbuildNodeDenial, msbuildNodeDenialNote, msbuildNodeFix, nodeDenialSubject, type MsbuildNodeDenial } from '../evidence/msbuild.ts';
 import { DOTNET_CHECK_ENV } from '../evidence/runner.ts';
@@ -36,8 +37,9 @@ export interface AppToolchainsInput {
   isolation: IsolationProvider['kind'];
   /** The hosts the application's sandbox lets it reach: none of its own, or the journey check's when it shares that sandbox. */
   networkHosts: readonly string[];
-  /** The account's real home, only to find an existing rustup installation. */
+  /** The account's real home, only to find an existing rustup installation; os.homedir by default, as the sandbox profile's. */
   homeDir?: string;
+  /** The controller's environment, where a toolchain's installation is found (RUSTUP_HOME, JAVA_HOME); process.env by default. */
   hostEnv?: Readonly<Record<string, string | undefined>>;
 }
 
@@ -62,8 +64,8 @@ export function appToolchains(input: AppToolchainsInput): AppToolchains {
     tmpDir: input.tmpDir,
     isolation: input.isolation,
     networkHosts: input.networkHosts,
-    ...(input.homeDir ? { hostHome: input.homeDir } : {}),
-    ...(input.hostEnv ? { hostEnv: input.hostEnv } : {}),
+    hostHome: input.homeDir ?? homedir(),
+    hostEnv: input.hostEnv ?? process.env,
   });
   prepareToolchainLayout(layout);
   // The application keeps the account's HOME, and Python reads the account's user site-packages through it at run time

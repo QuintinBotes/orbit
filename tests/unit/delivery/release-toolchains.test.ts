@@ -4,12 +4,13 @@
 // with a fresh private HOME and nothing else: every dotnet command died at its first-run step under srt (measured on
 // macOS: "The system cannot open the device or file specified. : 'NuGet-Migrations'"), there was no NuGet cache and no
 // NIS rule, and a publish without -m:1 waited out MSBuild's node retries, past many a deploy's timeout (an UNKNOWN deploy).
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { deliver } from '../../../src/delivery/deliver.ts';
-import { performRelease, resolveDeploy } from '../../../src/delivery/release.ts';
+import { performRelease, resolveDeploy, type ReleaseInput } from '../../../src/delivery/release.ts';
 import { NUGET_MIGRATIONS_DIR } from '../../../src/evidence/runner.ts';
 import { NoIsolation } from '../../../src/isolation/none.ts';
 import { workerTmpDir } from '../../../src/isolation/profiles.ts';
@@ -19,6 +20,7 @@ import { makeLab, type Lab } from '../../integration/delivery/harness.ts';
 
 let lab: Lab | null = null;
 afterEach(() => {
+  vi.unstubAllEnvs();
   lab?.cleanup();
   lab = null;
 });
@@ -52,7 +54,7 @@ function recording(standIn: () => string[] = () => [process.execPath, '-e', '0']
 }
 
 /** A .NET repository in release mode with one environment, a candidate delivered, and the repository's cache root. */
-async function released(provider: IsolationProvider, deploy: string[] = [...DEPLOY, '-m:1']) {
+async function released(provider: IsolationProvider, deploy: string[] = [...DEPLOY, '-m:1'], host: Pick<ReleaseInput, 'homeDir' | 'hostEnv'> = {}, verify: string[] = VERIFY) {
   const l = (lab = makeLab({
     mode: 'release',
     tweak: (cfg) => {
@@ -62,7 +64,7 @@ async function released(provider: IsolationProvider, deploy: string[] = [...DEPL
       cfg.isolation = { ...cfg.isolation, provider: 'none', allow_unisolated: true };
       cfg.release = {
         merge: { method: 'squash', require_checks: [], delete_branch: false, mark_ready: true },
-        environments: { preview: { deploy_command: deploy, allowed_branches: ['orbit/*'], require_ci_green: false, network_hosts: [], timeout_seconds: 60, verify_command: VERIFY } },
+        environments: { preview: { deploy_command: deploy, allowed_branches: ['orbit/*'], require_ci_green: false, network_hosts: [], timeout_seconds: 60, verify_command: verify } },
       };
     },
   }));
@@ -75,7 +77,7 @@ async function released(provider: IsolationProvider, deploy: string[] = [...DEPL
     performRelease({
       run: l.deliveryRun, candidate: c, evidence: ev, review: rv, snapshot: l.snapshot, ledger: l.ledger(), client: l.fake, clock: l.clock,
       commit: d.commit, pr: d.pr?.number ?? null, contractMerge: false, environment: 'preview', readiness: () => ({ ok: true, reasons: [] }),
-      isolation: provider, workDir: join(l.dir, 'runs', l.runId), deployEnv: { ACME_DEPLOY_TOKEN: 'acme-token' }, toolchainCacheRoot: cacheRoot,
+      isolation: provider, workDir: join(l.dir, 'runs', l.runId), deployEnv: { ACME_DEPLOY_TOKEN: 'acme-token' }, toolchainCacheRoot: cacheRoot, ...host,
     });
   return { l, c, d, cacheRoot, release };
 }
@@ -152,4 +154,60 @@ describe('release commands get the toolchain profile of a check (issue #26)', ()
     expect(err!.message).toContain('the sandbox of the deploy command denied MSBuild node (pid 4242) its named pipe /tmp/MSBuild4242 (System.Net.Sockets.SocketException (13): Permission denied); MSBuild waits 30 s for each of ten node starts before it fails, so Orbit stopped the deploy command.');
     expect(err!.message).toContain('Fix: release.environments.preview.deploy_command: ["dotnet", "publish", "Acme.csproj", "-c", "Release", "-m:1"]');
   }, 60_000);
+});
+
+// rustup's cargo (GitHub's runners) is a proxy that finds its toolchains in RUSTUP_HOME, else under HOME, which for a
+// release command is a private one. A deploy `cargo install` under srt failed with "rustup could not choose a version of
+// cargo to run" where its caller named no real home: the sandbox profile used the account's, the toolchain layout none.
+describe('a release command finds the host\'s rustup installation as a check does (CI of #26)', () => {
+  const CARGO = ['cargo', 'install', '--path', '.', '--offline'];
+  const ledgerFor = (l: Lab, sha: string, tree: string) => {
+    const ledger = l.ledger();
+    const { action } = ledger.recordIntent({ runId: l.runId, kind: 'deploy', idempotencyKey: `release:${l.runId}:deploy:preview:${sha}`, target: { environment: 'preview', branch: 'orbit/x', sha, command: ['x'] }, treeHash: tree, commitSha: sha });
+    ledger.markExecuting(action);
+    return ledger;
+  };
+
+  it('points a deploy at the real home\'s rustup installation, and at the controller\'s RUSTUP_HOME over it', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'orbit-rustup-home-'));
+    try {
+      mkdirSync(join(home, '.rustup'));
+      const r = recording();
+      const { release } = await released(r.provider, CARGO, { homeDir: home, hostEnv: {} });
+      await release();
+      expect(r.wraps[0]!.env.RUSTUP_HOME).toBe(join(home, '.rustup'));
+      lab?.cleanup();
+      const again = recording();
+      const second = await released(again.provider, CARGO, { homeDir: home, hostEnv: { RUSTUP_HOME: '/opt/acme-rustup' } });
+      await second.release();
+      expect(again.wraps[0]!.env.RUSTUP_HOME).toBe('/opt/acme-rustup');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('looks in the account\'s home when its caller names none, as the sandbox profile does', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'orbit-rustup-account-'));
+    try {
+      mkdirSync(join(home, '.rustup'));
+      vi.stubEnv('HOME', home);
+      vi.stubEnv('RUSTUP_HOME', '');
+      const r = recording();
+      const { release } = await released(r.provider, CARGO);
+      await release();
+      expect(r.wraps[0]!.env.RUSTUP_HOME).toBe(join(home, '.rustup'));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('points a verify command at the controller\'s RUSTUP_HOME', async () => {
+    const r = recording();
+    const { l, c, cacheRoot } = await released(r.provider, CARGO, {}, ['cargo', 'run', '--offline', '--bin', 'verify']);
+    const res = await resolveDeploy({ run: l.deliveryRun, snapshot: l.snapshot, ledger: ledgerFor(l, c.commitSha, c.treeHash), clock: l.clock, workDir: join(l.dir, 'runs', l.runId), resolution: 'verify', by: 'acme-operator', isolation: r.provider, toolchainCacheRoot: cacheRoot, homeDir: '/nonexistent/acme-home', hostEnv: { RUSTUP_HOME: '/opt/acme-rustup' } });
+    expect(res.verdict).toBe('deployed');
+    const [w] = r.wraps;
+    expect(w!.argv).toEqual(['cargo', 'run', '--offline', '--bin', 'verify']);
+    expect(w!.env.RUSTUP_HOME).toBe('/opt/acme-rustup');
+  });
 });

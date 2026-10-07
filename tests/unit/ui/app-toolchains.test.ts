@@ -10,7 +10,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ManualClock } from '../../../src/core/clock.ts';
 import type { Candidate } from '../../../src/evidence/types.ts';
 import { NoIsolation } from '../../../src/isolation/none.ts';
@@ -58,7 +58,10 @@ beforeEach(() => {
   const commitSha = sh(repo, 'rev-parse', 'HEAD');
   candidate = { id: `cand-${commitSha.slice(0, 7)}`, runId: 'orb-ui-tc', seq: 1, attempt: 1, commitSha, treeHash: sh(repo, 'rev-parse', 'HEAD^{tree}'), parentSha };
 });
-afterEach(() => rmSync(root, { recursive: true, force: true }));
+afterEach(() => {
+  vi.unstubAllEnvs();
+  rmSync(root, { recursive: true, force: true });
+});
 
 async function freePort(): Promise<number> {
   return new Promise((resolve) => {
@@ -200,6 +203,25 @@ describe('the application under test gets its toolchain profile (issue #26)', ()
     const result = await runUiChecks({ checkoutDir: repo, snapshot: p.snapshot, candidate, uiConfig: p.ui, journeyCheckIds: ['ui-journeys'], isolation: r.provider, outDir, homeDir: home, hostEnv: { PATH: process.env.PATH, HOME: home }, toolchainCacheRoot: cacheRoot, appPollMs: 50 });
     expect(result.reasons.filter((x) => x.startsWith('the application did not start'))).toEqual([]);
     expect(r.journeys.length).toBeGreaterThan(0);
+  }, 60_000);
+
+  // rustup's cargo (GitHub's runners) is a proxy that finds its toolchains in RUSTUP_HOME, else under HOME: the host's
+  // installation is passed as a check's is, from the controller's environment, else the real home, the account's when
+  // the caller names none, as the sandbox profile's (CI of #26).
+  it('points a Rust application at the host\'s rustup installation: the controller\'s RUSTUP_HOME, else the real home\'s', async () => {
+    mkdirSync(join(home, '.rustup'));
+    const runs: { homeDir?: string; hostEnv: Record<string, string | undefined>; expected: string }[] = [
+      { homeDir: home, hostEnv: { PATH: process.env.PATH, HOME: home }, expected: join(home, '.rustup') },
+      { homeDir: home, hostEnv: { PATH: process.env.PATH, HOME: home, RUSTUP_HOME: '/opt/acme-rustup' }, expected: '/opt/acme-rustup' },
+      { hostEnv: { PATH: process.env.PATH }, expected: join(home, '.rustup') },
+    ];
+    vi.stubEnv('HOME', home);
+    for (const run of runs) {
+      const p = policy(await freePort(), ['cargo', 'run', '--offline']);
+      const r = recording({});
+      await runUiChecks({ checkoutDir: repo, snapshot: p.snapshot, candidate, uiConfig: p.ui, journeyCheckIds: ['ui-journeys'], isolation: r.provider, outDir: join(root, 'evidence', `ui-${runs.indexOf(run)}`), ...(run.homeDir ? { homeDir: run.homeDir } : {}), hostEnv: run.hostEnv, toolchainCacheRoot: cacheRoot, appPollMs: 50 });
+      expect(r.apps[0]!.env.RUSTUP_HOME).toBe(run.expected);
+    }
   }, 60_000);
 
   it('starts the explorer\'s application with the same profile', async () => {

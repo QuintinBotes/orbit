@@ -4,7 +4,7 @@
 // command with a fresh private HOME and nothing else: every dotnet command died at its first-run step (measured under
 // srt on macOS: "The system cannot open the device or file specified. : 'NuGet-Migrations'", the named mutex under
 // /tmp/.dotnet), there was no NuGet cache and no NIS rule, and a build without -m:1 waited out the 300 s limit.
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -170,4 +170,18 @@ describe('approved operations get the toolchain profile of a check (issue #26)',
     expect(text).toContain('Fix: the command to approve: ["/bin/sh", "-c", "chmod +x apps/run.sh && dotnet build apps -m:1"]');
     expect(out.excerpt).toContain('so Orbit stopped the approved command');
   }, 60_000);
+
+  // rustup's cargo (GitHub's runners) is a proxy that finds its toolchains in RUSTUP_HOME, else under HOME, which for an
+  // approved command is a private one: the host's installation is passed as a check's is (CI of #26).
+  it('points an approved cargo command at the real home\'s rustup installation, and at the controller\'s RUSTUP_HOME over it', async () => {
+    for (const hostEnv of [{ PATH: process.env.PATH }, { PATH: process.env.PATH, RUSTUP_HOME: '/opt/acme-rustup' }]) {
+      const r = recording();
+      lab = makeUnitLab({ tweak: (c) => void (c.mode = 'supervised'), path: ['PREFLIGHT'], deps: { isolationFor: () => r.provider, hostEnv } });
+      mkdirSync(join(lab.deps.homeDir!, '.rustup'), { recursive: true });
+      await giveRepository(lab);
+      await runApprovedOperation(lab.ctx(), 1, guarded('chmod +x apps/calc.mjs && cargo build --offline'), grant);
+      expect(r.wraps[0]!.env.RUSTUP_HOME).toBe(hostEnv.RUSTUP_HOME ?? join(lab.deps.homeDir!, '.rustup'));
+      lab.cleanup();
+    }
+  });
 });
