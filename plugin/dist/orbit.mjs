@@ -30571,7 +30571,7 @@ function seccompHelperFor(srtPath, arch) {
   const rel = join16("vendor", "seccomp", vendorArch, "apply-seccomp");
   return [join16(dist, "sandbox", rel), join16(dist, "..", rel), join16(dist, rel)].find((p) => existsSync15(p)) ?? null;
 }
-function sandboxEnv(env, allowWrite, chromium) {
+function sandboxEnv(env, allowWrite, chromium, dotnet) {
   const out = { ...env };
   const writable = (p) => {
     if (!p) return false;
@@ -30587,6 +30587,9 @@ function sandboxEnv(env, allowWrite, chromium) {
     out.TMPDIR = [tmpdir7(), "/tmp"].find((candidate) => !writable(candidate)) ?? "/tmp";
   }
   if (chromium && writable(out.CLAUDE_CODE_TMPDIR)) out.MAC_CHROMIUM_TMPDIR = out.CLAUDE_CODE_TMPDIR;
+  if (dotnet) {
+    for (const [name, value] of Object.entries(DOTNET_IPV4_ENV)) if (out[name] === void 0) out[name] = value;
+  }
   return out;
 }
 function sandboxReach(settings, envHome) {
@@ -30683,7 +30686,7 @@ function isWsl1() {
     return false;
   }
 }
-var DENIED_RESOLVED_ADDRESSES, LABEL2, HOST_PATTERN, IPV6_PATTERN, SRT_LIMITATIONS, SRT_VERIFIED_VERSION, SRT_PACKAGE, PRELOAD_REFUSAL_FILE, CHROMIUM_MACH_RENDEZVOUS, CHROMIUM_MACH_RENDEZVOUS_LIMITATION, NIS_DOMAINNAME_READ, NIS_DOMAINNAME_LIMITATION, NIS_DOMAINNAME_SKIPPED, LINUX_LIMITATION, SECCOMP_ARCHES, SandboxRuntimeIsolation, DEVELOPMENT_PACKAGE, LOADER_ENV_NAMES, LOADER_ENV_PREFIXES;
+var DENIED_RESOLVED_ADDRESSES, LABEL2, HOST_PATTERN, IPV6_PATTERN, SRT_LIMITATIONS, SRT_VERIFIED_VERSION, SRT_PACKAGE, PRELOAD_REFUSAL_FILE, CHROMIUM_MACH_RENDEZVOUS, CHROMIUM_MACH_RENDEZVOUS_LIMITATION, NIS_DOMAINNAME_READ, NIS_DOMAINNAME_LIMITATION, NIS_DOMAINNAME_SKIPPED, DOTNET_IPV4_ENV, LINUX_LIMITATION, SECCOMP_ARCHES, SandboxRuntimeIsolation, DEVELOPMENT_PACKAGE, LOADER_ENV_NAMES, LOADER_ENV_PREFIXES;
 var init_sandbox_runtime = __esm({
   "src/isolation/sandbox-runtime.ts"() {
     "use strict";
@@ -30713,6 +30716,7 @@ var init_sandbox_runtime = __esm({
     NIS_DOMAINNAME_READ = "nis-domainname-read";
     NIS_DOMAINNAME_LIMITATION = ".NET on macOS: an Orbit preload on the unmodified srt CLI adds one Seatbelt rule, sysctl-read of kern.nisdomainname (the NIS domain name, empty unless the machine is bound to NIS) and nothing else, since .NET's CookieContainer reads it and every .NET HTTP client, NuGet's restore included, failed without it. It is read-only and reveals less than the host name srt already allows.";
     NIS_DOMAINNAME_SKIPPED = `.NET on macOS: the NIS domain name rule was not added, because the srt found is not the version Orbit's preload was verified against, so a .NET HTTP client (NuGet's restore included) fails with "GetDomainName: -1"; use the srt that ships with Orbit`;
+    DOTNET_IPV4_ENV = Object.freeze({ DOTNET_SYSTEM_NET_DISABLEIPV6: "1" });
     LINUX_LIMITATION = "On Linux the mandatory write denies inside writable paths (.git/hooks, shell rc files...) are found by a scan at launch, so such files created later are not covered.";
     SECCOMP_ARCHES = { x64: "x64", arm64: "arm64" };
     SandboxRuntimeIsolation = class {
@@ -30859,7 +30863,7 @@ var init_sandbox_runtime = __esm({
             assertFileOutOfReach(preloaded.node, reach, `node ${preloaded.node}`);
             if (writableIn(reach, realpathSync5(dir))) throw new OrbitError("ISOLATION_UNAVAILABLE", `the srt settings directory ${dir} is inside a path the sandbox may write, so the srt preload's refusal record could be forged`, { path: dir });
           }
-          const launch = launcherEnv(sandboxEnv(opts.env, settings.filesystem.allowWrite, browser), reach);
+          const launch = launcherEnv(sandboxEnv(opts.env, settings.filesystem.allowWrite, browser, nisWanted), reach);
           const command = withResourceLimits(argv2, this.opts.limits, { shell: this.opts.limitShell });
           if (launch.restore.length && command[0].includes("=")) {
             throw new OrbitError("INTERNAL", `command name ${JSON.stringify(command[0])} contains "=", which /usr/bin/env would read as an assignment`);
