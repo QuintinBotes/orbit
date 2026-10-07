@@ -11,7 +11,7 @@ import { isAlive, killGroup, processStartTime } from '../core/proc.ts';
 import { isSecretEnvName, redact } from '../core/redact.ts';
 import { RESOURCE_LIMIT_EXIT_CODE, resourceLimitNote } from '../isolation/memory.ts';
 import { checkoutBelowDenied, prepareWorkerTmpDir, profileForCheck, workerTmpDir } from '../isolation/profiles.ts';
-import { detectToolchains, prepareToolchainLayout, removeScratch, toolchainLayout, type ToolchainLayout } from '../isolation/toolchains.ts';
+import { detectToolchains, NUGET_AUDIT_LIMITATION, prepareToolchainLayout, removeScratch, toolchainLayout, type ToolchainLayout } from '../isolation/toolchains.ts';
 import type { IsolationProvider, WrappedCommand } from '../isolation/types.ts';
 import { checkConfigHash, snapshotHash } from '../policy/snapshot.ts';
 import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
@@ -576,7 +576,8 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
         command: argv,
         cwd,
         isolation: ctx.isolation.kind,
-        limitations: wrapped.limitations,
+        // NuGet's audit off is a gap in what the check proves, as an isolation limitation is: the record says so.
+        limitations: [...wrapped.limitations, ...(env.NuGetAudit === 'false' ? [NUGET_AUDIT_LIMITATION] : [])],
         rerunOf,
       },
       ctx.clock,

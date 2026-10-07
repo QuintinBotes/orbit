@@ -79,6 +79,14 @@ export const DOTNET_PROBE_PROJECT: Readonly<Record<string, string>> = {
   'Probe.App/App.cs': 'namespace Probe;\npublic static class App { public static int Three => Left.One + Right.Two; }\n',
 };
 
+/**
+ * What a check's record says when the .NET profile's NuGetAudit=false reached it (the check's own env did not set it
+ * back): a review found that nothing in a run's evidence said a restore under Orbit skips the vulnerability audit that
+ * a repository's CI may fail on (NU1903 as an error).
+ */
+export const NUGET_AUDIT_LIMITATION =
+  "NuGet's vulnerability audit was off (NuGetAudit=false in Orbit's .NET profile), so a package with a known vulnerability does not fail this restore, even where such warnings are errors; the repository's CI still runs it";
+
 export const TOOLCHAIN_PROFILES: Readonly<Record<ToolchainId, ToolchainProfile>> = {
   dotnet: {
     id: 'dotnet',

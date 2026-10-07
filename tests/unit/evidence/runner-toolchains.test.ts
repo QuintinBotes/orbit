@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { candidateSubject, checkEnv, checkToolchains, INSTALL_CHECK_ID, runCheckSet, runChecks } from '../../../src/evidence/runner.ts';
-import { toolchainCacheRoot } from '../../../src/isolation/toolchains.ts';
+import { NUGET_AUDIT_LIMITATION, toolchainCacheRoot } from '../../../src/isolation/toolchains.ts';
 import { checkDef, nodeCheck } from './fixtures.ts';
 import { checkDirOf, recordingIsolation, runnerEnv, type RunnerEnv } from '../../integration/evidence/harness.ts';
 
@@ -32,6 +32,21 @@ async function goEnv(checks = [nodeCheck('unit', PRINT_ENV)]) {
 }
 
 describe('the runner and toolchain profiles', () => {
+  // Review: Orbit turns NuGet's vulnerability audit off for every .NET process (NuGetAudit=false), which a run's
+  // evidence did not say: a repository whose CI fails a restore on a vulnerable package passes it under Orbit.
+  it('records on a .NET check that NuGet\'s vulnerability audit was off, unless its own env turns it back on', async () => {
+    const run = async (env: Record<string, string> = {}, files: Record<string, string> = { 'acme.csproj': '<Project Sdk="Microsoft.NET.Sdk" />\n' }) => {
+      const e = await runnerEnv([{ ...nodeCheck('unit', 'console.log(process.env.NuGetAudit ?? "unset")'), env }], { isolation: recordingIsolation(), files });
+      envs.push(e);
+      const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['unit'] });
+      return r!;
+    };
+    expect((await run()).isolationLimitations).toContain(NUGET_AUDIT_LIMITATION);
+    expect((await run({ NuGetAudit: 'true' })).isolationLimitations).not.toContain(NUGET_AUDIT_LIMITATION);
+    expect((await run({}, GO_REPO)).isolationLimitations).not.toContain(NUGET_AUDIT_LIMITATION);
+    expect(NUGET_AUDIT_LIMITATION).not.toMatch(/[\u2013\u2014]/);
+  });
+
   it('points a check in a Go repository at the repository\'s module cache, read-only, and at private per-attempt build state', async () => {
     const { e, isolation, cacheRoot, ctx } = await goEnv();
     const [r] = await runChecks({ ...ctx, candidate: e.candidate, checkIds: ['unit'] });

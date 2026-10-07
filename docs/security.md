@@ -204,13 +204,17 @@ State these plainly to yourself before running unattended.
   and NuGet configuration, so run it on a tree you trust (your checkout), not on
   a candidate's. See ADR 0009, addendum.
 - **NuGet's vulnerability audit does not run in the sandbox.** Every .NET
-  process there gets `NuGetAudit=false`: the audit cannot reach nuget.org from
-  the sandbox (on macOS nothing can verify its certificate; on Linux a check
-  has no network unless it lists the host), so it could only warn `NU1900`,
-  which fails every restore of a repository that treats warnings as errors.
-  Orbit's checks therefore say nothing about vulnerable packages; the
-  repository's CI, or a restore outside Orbit, still does. A check's own `env`
-  can set it back. See ADR 0009, addendum, item 12.
+  process there gets `NuGetAudit=false`. Where the audit cannot reach nuget.org
+  (on macOS nothing in the sandbox can verify its certificate; on Linux a check
+  has no network unless it lists the host) it could only warn `NU1900`, which
+  fails every restore of a repository that treats warnings as errors. It is off
+  for the dependency install too, although on Linux the install may reach
+  nuget.org, so that a check's restore matches the install's: a candidate that
+  adds a package with a known vulnerability fails a restore that treats `NU1903`
+  as an error in CI and passes under Orbit. Each .NET check's record says the
+  audit was off (a limitation). Orbit's checks therefore say nothing about
+  vulnerable packages; the repository's CI, or a restore outside Orbit, still
+  does. A check's own `env` can set it back. See ADR 0009, addendum, item 12.
 - **No Unix socket is allowed in a sandbox, so .NET's named pipes under `/tmp`
   stay refused.** MSBuild's worker nodes (`/tmp/MSBuild<pid>`) and the build
   host `dotnet format` loads a project with (`/tmp/<guid>`) bind their pipes at
