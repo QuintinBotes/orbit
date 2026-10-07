@@ -17,6 +17,7 @@ import { systemClock } from '../../../src/core/clock.ts';
 import { defaultCheck, defaultConfig } from '../../../src/policy/config.ts';
 import type { OrbitConfig } from '../../../src/policy/types.ts';
 import type { CredentialStatus, ProviderAdapter, ProviderCapabilities } from '../../../src/adapters/types.ts';
+import { NoIsolation } from '../../../src/isolation/none.ts';
 import type { IsolationProvider } from '../../../src/isolation/types.ts';
 
 const hooks = vi.hoisted(() => ({
@@ -39,7 +40,8 @@ vi.mock('../../../src/isolation/index.ts', async (importOriginal) => {
 
 const GIT_ENV = { GIT_AUTHOR_NAME: 'acme', GIT_AUTHOR_EMAIL: 'dev@acme.test', GIT_COMMITTER_NAME: 'acme', GIT_COMMITTER_EMAIL: 'dev@acme.test', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 const dirs: string[] = [];
-const iso = (kind: IsolationProvider['kind'], ok: boolean, detail: string): IsolationProvider => ({ kind, available: async () => ({ ok, detail }), wrap: () => ({}) as never });
+// A provider that reports the given kind and wraps nothing: checks.sandbox's probes run the world's own tools as they are.
+const iso = (kind: IsolationProvider['kind'], ok: boolean, detail: string): IsolationProvider => ({ kind, available: async () => ({ ok, detail }), wrap: (argv, profile, opts) => new NoIsolation().wrap(argv, profile, opts) });
 beforeEach(() => {
   hooks.config = null;
   hooks.adapters = null;
@@ -61,6 +63,9 @@ function world(files: Record<string, string> = { 'README.md': '# acme\n' }, plat
   const home = join(base, 'home');
   const bin = join(base, 'bin');
   for (const d of [repo, home, bin]) mkdirSync(d, { recursive: true });
+  // The world's .NET SDK, first on PATH: doctor's .NET lines start this one, never the host's (a GitHub Ubuntu runner
+  // has /usr/bin/dotnet, which a probe through the provider above would otherwise start, or not find on another host).
+  writeFileSync(join(bin, 'dotnet'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const git = (...a: string[]) => execFileSync('git', a, { cwd: repo, env: { ...process.env, ...GIT_ENV }, stdio: 'pipe' });
   git('init', '-q', '-b', 'main');
   for (const [rel, text] of Object.entries(files)) {
@@ -222,6 +227,8 @@ describe('issue #10: doctor names a test project that deadlocks when a check set
     const w = world({ 'acme.sln': '', 'tests/Acme.Tests/Acme.Tests.csproj': XUNIT_241 });
     const c = byId(await report(w, cfg((x) => (x.checks = { test: { ...defaultCheck('test'), command: ['dotnet', 'test', 'tests/Acme.Tests'], mandatory: true, env: { DOTNET_PROCESSOR_COUNT: '1' } } }))));
     expect(c['checks.sandbox']!.status).toBe('pass');
+    // Started, not skipped: the check's executable and the .NET probe build, both with the world's own SDK.
+    expect(c['checks.sandbox']!.details).toEqual(['test: "dotnet help" ran in the sandbox', expect.stringMatching(/^toolchain dotnet: "dotnet build Probe\.App\/Probe\.App\.csproj" ran in the sandbox /)]);
     expect(c['checks.dotnet-tests']).toMatchObject({ status: 'warn', details: ['tests/Acme.Tests/Acme.Tests.csproj: xunit 2.4.1'] });
     expect(c['checks.dotnet-tests']!.fix).toMatch(/^remove DOTNET_PROCESSOR_COUNT from checks\.test\.env and pass -m:1 to every dotnet build or test its command starts instead/);
   });
