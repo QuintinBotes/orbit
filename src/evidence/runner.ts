@@ -576,8 +576,9 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
         command: argv,
         cwd,
         isolation: ctx.isolation.kind,
-        // NuGet's audit off is a gap in what the check proves, as an isolation limitation is: the record says so.
-        limitations: [...wrapped.limitations, ...(env.NuGetAudit === 'false' ? [NUGET_AUDIT_LIMITATION] : [])],
+        // NuGet's audit off (only where it cannot run) is a gap in what the check proves, as an isolation limitation
+        // is: the record says so exactly when Orbit's NuGetAudit=false reached the check (its own env left it alone).
+        limitations: [...wrapped.limitations, ...(toolchains.env.NuGetAudit === 'false' && env.NuGetAudit === 'false' ? [NUGET_AUDIT_LIMITATION] : [])],
         rerunOf,
       },
       ctx.clock,
@@ -633,9 +634,10 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
  * The toolchains a check uses (its command, the checkout root and its cwd) and where their state goes
  * (docs/decisions/0009-toolchain-profiles.md): the repository's dependency caches are writable only for Orbit's own
  * install step (a generated definition, never a policy check that borrows its id) and read-only for every other
- * check; build state is private to the attempt.
+ * check; build state is private to the attempt. The check's network_hosts and the platform it runs on (`platform`, the
+ * host's by default; a container's is Linux) decide whether NuGet's vulnerability audit can run in it.
  */
-export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutDir' | 'toolchainCacheRoot' | 'homeDir' | 'isolation'>, def: CheckDefinition, cwd: string, dirs: Pick<AttemptDirs, 'toolchainsDir'>, tmpDir: string): ToolchainLayout {
+export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutDir' | 'toolchainCacheRoot' | 'homeDir' | 'isolation'>, def: CheckDefinition, cwd: string, dirs: Pick<AttemptDirs, 'toolchainsDir'>, tmpDir: string, platform: NodeJS.Platform = process.platform): ToolchainLayout {
   const install = INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
   return toolchainLayout({
     toolchains: detectToolchains({ command: def.command, shell: def.shell, roots: [ctx.checkoutDir, cwd] }),
@@ -643,6 +645,8 @@ export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutD
     cacheRoot: ctx.toolchainCacheRoot ?? null,
     scratchRoot: dirs.toolchainsDir,
     tmpDir,
+    platform: ctx.isolation.kind === 'container' ? 'linux' : platform,
+    networkHosts: def.network_hosts,
     // A container brings its own toolchain installation; the host's rustup and JDK are neither mounted nor wanted there.
     ...(ctx.isolation.kind === 'container' ? { hostEnv: {} } : { hostEnv: process.env, ...(ctx.homeDir ? { hostHome: ctx.homeDir } : {}) }),
   });

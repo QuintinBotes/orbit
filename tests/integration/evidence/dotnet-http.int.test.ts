@@ -10,7 +10,7 @@ import { classifyCouldNotRun } from '../../../src/evidence/environment-failure.t
 import { planInstall } from '../../../src/evidence/baseline.ts';
 import { candidateSubject, runCheckSet, runChecks } from '../../../src/evidence/runner.ts';
 import { SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.ts';
-import { toolchainCacheRoot } from '../../../src/isolation/toolchains.ts';
+import { NUGET_AUDIT_LIMITATION, toolchainCacheRoot } from '../../../src/isolation/toolchains.ts';
 import { which } from '../../../src/isolation/util.ts';
 import type { CheckDefinition } from '../../../src/policy/types.ts';
 import { repoKeyFor } from '../../../src/storage/retention.ts';
@@ -116,8 +116,9 @@ describe.skipIf(skip !== null)(skip === null ? '.NET HTTP clients under srt' : `
       const log = readFileSync(r!.logPath, 'utf8');
       expect(log, id).not.toMatch(NOT_CONTAINER);
       expect(log, id).toMatch(/Build succeeded/);
-      // Orbit turns NuGet's vulnerability audit off in the sandbox, where it cannot reach nuget.org (NU1900).
+      // A check has no network, so Orbit turns NuGet's vulnerability audit off there (NU1900), and its record says so.
       expect(log, id).not.toMatch(/NU1900/);
+      expect(r!.isolationLimitations, id).toContain(NUGET_AUDIT_LIMITATION);
       expect(r, id).toMatchObject({ status: 'PASSED', isolation: 'sandbox-runtime' });
     }
   }
@@ -134,20 +135,22 @@ describe.skipIf(skip !== null)(skip === null ? '.NET HTTP clients under srt' : `
   // A repository that treats warnings as errors (#10): NuGet's vulnerability audit cannot reach nuget.org from a check
   // (on macOS from no process in the sandbox), and its warning NU1900 was then "error NU1900: Warning As Error", so the
   // install step and every restoring check failed after the cache was filled, and the base revision's failure became a
-  // baseline exception question. Orbit turns the audit off in the sandbox.
-  it('restores and builds a project that treats warnings as errors: the vulnerability audit, which cannot reach nuget.org from the sandbox, is off', async () => {
+  // baseline exception question. Orbit turns the audit off only there: the install on Linux reaches nuget.org and
+  // audits as the repository configures it (this package has no known vulnerability), as the repository's CI does.
+  it('restores and builds a project that treats warnings as errors: the vulnerability audit is off where it cannot reach nuget.org, and runs where it can', async () => {
     const strict = { ...PROJECT, 'acme.csproj': PROJECT['acme.csproj'].replace('</TargetFramework>', '</TargetFramework><TreatWarningsAsErrors>true</TreatWarningsAsErrors>') };
     const p = await packaged(strict);
     if (process.platform === 'darwin') fillOutside(p, strict);
     const i = await install(p);
     expect(i.log).not.toMatch(/NU1900/);
     expect(i.r.status, i.log).toBe('PASSED');
+    expect(i.r.isolationLimitations.includes(NUGET_AUDIT_LIMITATION)).toBe(process.platform === 'darwin');
     await buildsFromCache(p, ['build', 'build-restoring']);
   }, 600_000);
 
-  // The one setting Orbit's NuGetAudit=false (an environment variable) does not override: the repository's own
-  // NuGetAudit. With warnings as errors, NU1900 fails the install again; doctor's checks.dotnet-audit says so before a
-  // run, and the form its fix names lets Orbit's setting through.
+  // The one setting Orbit's NuGetAudit=false (an environment variable, in every .NET process on macOS) does not
+  // override: the repository's own NuGetAudit. With warnings as errors, NU1900 fails the install again; doctor's
+  // checks.dotnet-audit says so before a run, and the form its fix names lets Orbit's setting through.
   it.skipIf(process.platform !== 'darwin')('on macOS follows doctor\'s checks.dotnet-audit: a project\'s own NuGetAudit fails the install on NU1900, and the form doctor names passes', async () => {
     const strict = { ...PROJECT, 'acme.csproj': PROJECT['acme.csproj'].replace('</TargetFramework>', '</TargetFramework><TreatWarningsAsErrors>true</TreatWarningsAsErrors>') };
     const withAudit = (property: string) => ({ ...strict, 'Directory.Build.props': `<Project><PropertyGroup>${property}</PropertyGroup></Project>\n` });
@@ -229,7 +232,7 @@ describe.skipIf(skip !== null)(skip === null ? '.NET HTTP clients under srt' : `
     const p = await packaged();
     fillOutside(p, PROJECT);
     // The install step then restores from the cache with nothing to download (the vulnerability audit, which cannot
-    // reach nuget.org there, is off), and the checks build from it, read-only and with no network.
+    // reach nuget.org on macOS, is off), and the checks build from it, read-only and with no network.
     const again = await install(p);
     expect(again.log).not.toMatch(NOT_CONTAINER);
     expect(again.r.status, again.log).toBe('PASSED');

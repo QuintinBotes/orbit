@@ -16,6 +16,7 @@ import {
   toolchainLayout,
   toolchainRegistryHosts,
   type ToolchainId,
+  type ToolchainMode,
 } from '../../../src/isolation/toolchains.ts';
 import { defaultCheck } from '../../../src/policy/config.ts';
 import { fakeSnapshot } from '../evidence/report-fixtures.ts';
@@ -70,7 +71,7 @@ describe('the toolchain profile table', () => {
   it('points each tool at the repository cache and at private per-attempt scratch, in a check', () => {
     const cacheRoot = '/orbit/toolchains/abc';
     const scratch = '/run/check/toolchains';
-    const l = toolchainLayout({ toolchains: [...TOOLCHAIN_IDS], mode: 'check', cacheRoot, scratchRoot: scratch, tmpDir: '/t', hostHome: '/nonexistent-home', hostEnv: {} });
+    const l = toolchainLayout({ toolchains: [...TOOLCHAIN_IDS], mode: 'check', cacheRoot, scratchRoot: scratch, tmpDir: '/t', networkHosts: [], hostHome: '/nonexistent-home', hostEnv: {} });
     expect(l.env).toEqual({
       NUGET_PACKAGES: `${cacheRoot}/nuget`,
       NUGET_HTTP_CACHE_PATH: `${scratch}/nuget-http`,
@@ -99,7 +100,7 @@ describe('the toolchain profile table', () => {
   });
 
   it('lets the install step write the caches it fills: Gradle and Maven use them as their own homes there', () => {
-    const l = toolchainLayout({ toolchains: ['jvm', 'go'], mode: 'install', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostEnv: {} });
+    const l = toolchainLayout({ toolchains: ['jvm', 'go'], mode: 'install', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', networkHosts: [], hostEnv: {} });
     expect(l.env).toMatchObject({ GRADLE_USER_HOME: '/c/gradle', MAVEN_OPTS: '-Dmaven.repo.local=/c/maven', GOMODCACHE: '/c/gomod' });
     expect(l.env).not.toHaveProperty('GRADLE_RO_DEP_CACHE');
     expect(l.writable).toEqual(['/s', '/c/gomod', '/c/gradle', '/c/maven']);
@@ -107,58 +108,80 @@ describe('the toolchain profile table', () => {
   });
 
   it('keeps the caches read-only for a worker too', () => {
-    const l = toolchainLayout({ toolchains: ['go'], mode: 'worker', cacheRoot: '/c', scratchRoot: '/w/toolchains', tmpDir: '/t', hostEnv: {} });
+    const l = toolchainLayout({ toolchains: ['go'], mode: 'worker', cacheRoot: '/c', scratchRoot: '/w/toolchains', tmpDir: '/t', networkHosts: [], hostEnv: {} });
     expect(l.writable).toEqual(['/w/toolchains']);
     expect(l.readOnly).toEqual(['/c/gomod']);
   });
 
-  // NuGet's vulnerability audit cannot reach nuget.org from the sandbox (on macOS .NET cannot verify its certificate
-  // there; a check has no network unless it lists the host), so it could only add warning NU1900, which a repository
-  // that treats warnings as errors turns into a failed restore after the cache was filled (#10).
-  it('turns NuGet\'s vulnerability audit off for every .NET process in the sandbox: the install step, a check and a worker', () => {
+  // NuGet's vulnerability audit fetches from the package source at every restore. Where it cannot (the process's
+  // sandbox does not let it reach api.nuget.org, or on macOS, where .NET under srt cannot verify nuget.org's
+  // certificate) it could only add warning NU1900, which a repository that treats warnings as errors turns into a
+  // failed restore after the cache was filled (#10). Everywhere else Orbit leaves it as the repository configures it,
+  // so a package with a known vulnerability fails a restore under Orbit where it fails in CI (NU1903 as an error).
+  it('turns NuGet\'s vulnerability audit off only where it cannot run: without the package source in the process\'s network, or on macOS', () => {
+    const registry = toolchainRegistryHosts(['dotnet']);
+    expect(registry).toEqual(['api.nuget.org']);
+    const audit = (mode: ToolchainMode, platform: NodeJS.Platform, networkHosts: readonly string[]) =>
+      toolchainLayout({ toolchains: ['dotnet'], mode, cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', platform, networkHosts, hostEnv: {} }).env.NuGetAudit;
+    // The dependency install on Linux (or in a container, which is Linux) reaches the registries: as configured.
+    expect(audit('install', 'linux', ['registry.npmjs.org', ...registry])).toBeUndefined();
+    expect(audit('install', 'linux', ['registry.npmjs.org'])).toBe('false');
+    // A check on Linux: off without the host in its network_hosts, as configured with it (or a wildcard covering it).
+    expect(audit('check', 'linux', [])).toBe('false');
+    expect(audit('check', 'linux', ['api.nuget.org'])).toBeUndefined();
+    expect(audit('check', 'linux', ['*.nuget.org'])).toBeUndefined();
+    for (const lookalike of ['nuget.org', '*.api.nuget.org', 'api.nuget.org.example.com']) expect(audit('check', 'linux', [lookalike]), lookalike).toBe('false');
+    // A worker: off unless its network has the host and it is not on macOS.
+    expect(audit('worker', 'linux', ['api.anthropic.com'])).toBe('false');
+    expect(audit('worker', 'linux', ['api.anthropic.com', 'api.nuget.org'])).toBeUndefined();
+    // Anything on macOS under srt: off, the host allowed or not.
     for (const mode of ['install', 'check', 'worker'] as const) {
-      expect(toolchainLayout({ toolchains: ['dotnet'], mode, cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostEnv: {} }).env.NuGetAudit, mode).toBe('false');
+      expect(audit(mode, 'darwin', registry), mode).toBe('false');
+      expect(audit(mode, 'darwin', []), mode).toBe('false');
     }
-    expect(toolchainLayout({ toolchains: ['go'], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostEnv: {} }).env).not.toHaveProperty('NuGetAudit');
+    // The platform is the host's unless the caller names another.
+    const host = toolchainLayout({ toolchains: ['dotnet'], mode: 'install', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', networkHosts: registry, hostEnv: {} }).env.NuGetAudit;
+    expect(host).toBe(process.platform === 'darwin' ? 'false' : undefined);
+    expect(toolchainLayout({ toolchains: ['go'], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', networkHosts: [], hostEnv: {} }).env).not.toHaveProperty('NuGetAudit');
   });
 
   it('without an Orbit home, puts the caches in the private scratch too (writable, per attempt)', () => {
-    const l = toolchainLayout({ toolchains: ['rust'], mode: 'check', cacheRoot: null, scratchRoot: '/s', tmpDir: '/t', hostEnv: {} });
+    const l = toolchainLayout({ toolchains: ['rust'], mode: 'check', cacheRoot: null, scratchRoot: '/s', tmpDir: '/t', networkHosts: [], hostEnv: {} });
     expect(l.env).toMatchObject({ CARGO_HOME: '/s/cache/cargo', CARGO_TARGET_DIR: '/s/cargo-target' });
     expect(l.writable).toEqual(['/s']);
     expect(l.readOnly).toEqual([]);
   });
 
   it('sets nothing for a toolchain that was not detected', () => {
-    const l = toolchainLayout({ toolchains: [], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostEnv: {} });
+    const l = toolchainLayout({ toolchains: [], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', networkHosts: [], hostEnv: {} });
     expect(l).toMatchObject({ env: {}, readOnly: [], caches: [], directories: [] });
   });
 
   it('never points a tool at the user\'s own caches; rustup\'s installation is found, read only', () => {
     const home = temp('orbit-toolchains-home-');
     for (const d of ['.cargo', 'go', '.m2', '.nuget/packages', 'Library/Caches/pip', '.rustup']) mkdirSync(join(home, d), { recursive: true });
-    const l = toolchainLayout({ toolchains: [...TOOLCHAIN_IDS], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostHome: home, hostEnv: {} });
+    const l = toolchainLayout({ toolchains: [...TOOLCHAIN_IDS], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', networkHosts: [], hostHome: home, hostEnv: {} });
     const { RUSTUP_HOME, ...rest } = l.env;
     expect(RUSTUP_HOME).toBe(join(home, '.rustup'));
     for (const [k, v] of Object.entries(rest)) expect(v.includes(home), `${k}=${v}`).toBe(false);
     expect(l.writable.concat(l.readOnly).some((p) => p.startsWith(home))).toBe(false);
     // RUSTUP_HOME from the environment wins; a relative one is ignored.
-    expect(toolchainLayout({ toolchains: ['rust'], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostHome: home, hostEnv: { RUSTUP_HOME: '/opt/rustup' } }).env.RUSTUP_HOME).toBe('/opt/rustup');
-    expect(toolchainLayout({ toolchains: ['rust'], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostHome: '/nonexistent', hostEnv: { RUSTUP_HOME: 'rel' } }).env).not.toHaveProperty('RUSTUP_HOME');
+    expect(toolchainLayout({ toolchains: ['rust'], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', networkHosts: [], hostHome: home, hostEnv: { RUSTUP_HOME: '/opt/rustup' } }).env.RUSTUP_HOME).toBe('/opt/rustup');
+    expect(toolchainLayout({ toolchains: ['rust'], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', networkHosts: [], hostHome: '/nonexistent', hostEnv: { RUSTUP_HOME: 'rel' } }).env).not.toHaveProperty('RUSTUP_HOME');
   });
 
   it('points a JVM toolchain at the host\'s JDK through JAVA_HOME, in every mode, and nothing else at it', () => {
     const jdk = '/opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21/arm64/Contents/Home';
     for (const mode of ['install', 'check', 'worker'] as const) {
-      const l = toolchainLayout({ toolchains: ['jvm'], mode, cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostEnv: { JAVA_HOME: jdk } });
+      const l = toolchainLayout({ toolchains: ['jvm'], mode, cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', networkHosts: [], hostEnv: { JAVA_HOME: jdk } });
       expect(l.env.JAVA_HOME, mode).toBe(jdk);
       // The JDK is read where it is: never made writable, never re-allowed inside a denied directory.
       expect(l.writable.concat(l.readOnly).some((p) => p.startsWith(jdk)), mode).toBe(false);
     }
     // Only for a JVM check; a relative or empty JAVA_HOME names no JDK.
-    expect(toolchainLayout({ toolchains: ['go'], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostEnv: { JAVA_HOME: jdk } }).env).not.toHaveProperty('JAVA_HOME');
+    expect(toolchainLayout({ toolchains: ['go'], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', networkHosts: [], hostEnv: { JAVA_HOME: jdk } }).env).not.toHaveProperty('JAVA_HOME');
     for (const JAVA_HOME of ['jdk', ' ', '']) {
-      expect(toolchainLayout({ toolchains: ['jvm'], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', hostEnv: { JAVA_HOME } }).env, JSON.stringify(JAVA_HOME)).not.toHaveProperty('JAVA_HOME');
+      expect(toolchainLayout({ toolchains: ['jvm'], mode: 'check', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', networkHosts: [], hostEnv: { JAVA_HOME } }).env, JSON.stringify(JAVA_HOME)).not.toHaveProperty('JAVA_HOME');
     }
   });
 
@@ -170,7 +193,7 @@ describe('the toolchain profile table', () => {
 
   it('creates every cache and scratch directory owner-only, and can run again', () => {
     const root = temp();
-    const l = toolchainLayout({ toolchains: ['go', 'python'], mode: 'check', cacheRoot: join(root, 'cache'), scratchRoot: join(root, 'scratch'), tmpDir: '/t', hostEnv: {} });
+    const l = toolchainLayout({ toolchains: ['go', 'python'], mode: 'check', cacheRoot: join(root, 'cache'), scratchRoot: join(root, 'scratch'), tmpDir: '/t', networkHosts: [], hostEnv: {} });
     prepareToolchainLayout(l);
     prepareToolchainLayout(l);
     expect(l.directories).toEqual([join(root, 'cache', 'gomod'), join(root, 'scratch', 'gocache'), join(root, 'scratch', 'gopath'), join(root, 'cache', 'pip'), join(root, 'scratch', 'pycache'), join(root, 'scratch', 'python-user')]);
@@ -223,7 +246,7 @@ describe('a check profile with toolchain caches', () => {
     const home = temp('orbit-toolchains-home-');
     const worktree = temp('orbit-toolchains-wt-');
     const cacheRoot = toolchainCacheRoot(join(home, '.orbit'), 'abcdefabcdef');
-    const l = toolchainLayout({ toolchains: ['go'], mode: 'check', cacheRoot, scratchRoot: join(worktree, '..', 'scratch'), tmpDir: '/t', hostEnv: {} });
+    const l = toolchainLayout({ toolchains: ['go'], mode: 'check', cacheRoot, scratchRoot: join(worktree, '..', 'scratch'), tmpDir: '/t', networkHosts: [], hostEnv: {} });
     const check = { ...defaultCheck('unit'), command: ['go', 'test'] };
     const profile = profileForCheck({ worktree, check, snapshot: fakeSnapshot([]), extraWritable: l.writable, readablePaths: l.readOnly, homeDir: home });
     const gomod = join(cacheRoot, 'gomod');

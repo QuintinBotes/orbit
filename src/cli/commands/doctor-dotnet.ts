@@ -415,12 +415,18 @@ export function dotnetPackagesCheck(input: DotnetPackagesInput): DoctorCheck[] {
  * checks.dotnet-audit (issue #10; docs/decisions/0009-toolchain-profiles.md, addendum). NuGet's vulnerability audit
  * fetches from the package source at every restore, which nothing in the sandbox reaches on macOS, so it adds warning
  * NU1900 there, and a repository that treats warnings as errors fails the restore on it: the dependency install and
- * every check that restores, however full the NuGet cache. Orbit sets NuGetAudit=false for every .NET process in the
- * sandbox (isolation/toolchains.ts), which MSBuild reads from the environment, so that holds while nothing else sets
- * NuGetAudit: a project or MSBuild import that sets it overrides the environment (unless its condition defers to a value
- * set already), and so do a check's own env and a -p:NuGetAudit=true. Doctor names such a setting when warnings are
- * errors (TreatWarningsAsErrors, NU1900 in WarningsAsErrors, -warnaserror), with the change that lets Orbit's setting
- * through. It reads tracked files only; a setting under a condition doctor cannot evaluate makes the finding a warning.
+ * every check that restores, however full the NuGet cache. Orbit turns the audit off only where it cannot run
+ * (isolation/toolchains.ts nugetAuditRuns), which on macOS under srt is every .NET process, with NuGetAudit=false in
+ * the environment, which MSBuild reads, so that holds while nothing else sets NuGetAudit: a project or MSBuild import
+ * that sets it overrides the environment (unless its condition defers to a value set already), and so do a check's own
+ * env and a -p:NuGetAudit=true. Doctor names such a setting when warnings are errors (TreatWarningsAsErrors, NU1900 in
+ * WarningsAsErrors, -warnaserror), with the change that lets Orbit's setting through. It reads tracked files only; a
+ * setting under a condition doctor cannot evaluate makes the finding a warning.
+ *
+ * Doctor judges macOS under srt only, as before the rule was narrowed: the narrowing leaves the audit as configured
+ * only where it reaches nuget.org (the dependency install on Linux, a Linux check that lists the host), where a
+ * repository's own NuGetAudit adds no NU1900, so it makes no case newly relevant. The one other case where a
+ * repository's setting meets an unreachable source, a Linux check without the host that restores, is not judged.
  */
 const AUDIT_PROPERTY = /<(NuGetAudit|TreatWarningsAsErrors|MSBuildTreatWarningsAsErrors|WarningsAsErrors|MSBuildWarningsAsErrors|NoWarn|WarningsNotAsErrors|MSBuildWarningsNotAsErrors)\b([^>]*)>([^<]*)<\/\1\s*>/g;
 const CONDITION = /\bCondition\s*=\s*(?:"([^"]*)"|'([^']*)')/i;

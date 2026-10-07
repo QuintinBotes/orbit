@@ -267,8 +267,9 @@ describe('issue #10: doctor names the NuGet cache a .NET repository with package
     expect(byId(await report(w, cfg(build)))['checks.dotnet-packages']).toBeUndefined();
   });
 
-  // Orbit turns NuGet's vulnerability audit off in the sandbox through the environment, which a project's own
-  // NuGetAudit overrides; with warnings as errors its NU1900 then fails every restore there.
+  // On macOS under srt Orbit turns NuGet's vulnerability audit off in every .NET process, where it cannot reach
+  // nuget.org, through the environment, which a project's own NuGetAudit overrides; with warnings as errors its NU1900
+  // then fails every restore there.
   it('fails checks.dotnet-audit for a project that turns the audit on while warnings are errors, and says nothing without it', async () => {
     const strict = PACKAGED.replace('<ItemGroup>', '<PropertyGroup><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup>\n  <ItemGroup>');
     const on = world({ 'acme.csproj': strict, 'Directory.Build.props': '<Project><PropertyGroup><NuGetAudit>true</NuGetAudit></PropertyGroup></Project>\n' }, 'darwin');

@@ -103,7 +103,7 @@ Maven and Gradle were not installed where this was measured.
 
    | toolchain | dependency cache (read-only outside the install) | private per attempt |
    |---|---|---|
-   | dotnet | `NUGET_PACKAGES` | `NUGET_HTTP_CACHE_PATH`, `NUGET_PLUGINS_CACHE_PATH` (and `DOTNET_CLI_HOME`, the private home; `NuGetAudit=false` in every mode, addendum item 12) |
+   | dotnet | `NUGET_PACKAGES` | `NUGET_HTTP_CACHE_PATH`, `NUGET_PLUGINS_CACHE_PATH` (and `DOTNET_CLI_HOME`, the private home; `NuGetAudit=false` where the vulnerability audit cannot run, addendum item 12) |
    | go | `GOMODCACHE` | `GOCACHE`, `GOPATH` |
    | jvm | Gradle `GRADLE_RO_DEP_CACHE`; Maven `-Dmaven.repo.local.tail` (in `MAVEN_OPTS`) | `GRADLE_USER_HOME`, `-Dmaven.repo.local`, `JDK_JAVA_OPTIONS=-Djava.io.tmpdir=<TMPDIR>` (and `JAVA_HOME` set to the host's, read-only, so macOS's `/usr/bin/java` stub and the Maven and Gradle launchers find the JDK; not under the container provider) |
    | python | `PIP_CACHE_DIR` | `PYTHONPYCACHEPREFIX`, `PYTHONUSERBASE` |
@@ -535,19 +535,37 @@ Decision.
     12; with the audit off there is none); an
     integration test does the same through the install step, which then had
     nothing to download, and checks with and without `--no-restore`.
-12. **NuGet's vulnerability audit is off in the sandbox.** The .NET profile sets
-    `NuGetAudit=false` for the dependency install, checks, workers and doctor's
-    probes (`isolation/toolchains.ts`; MSBuild reads it from the environment).
-    The audit fetches from the package source at every restore, which nothing
-    in the sandbox reaches on macOS (item 9) and a check or worker does not
-    reach on Linux (no network, unless a check lists the host); there it could
-    only wait and add `NU1900`, which fails every restore of a repository that
-    treats warnings as errors, however full its cache, and on the base revision
-    turned that into a baseline exception question, the symptom #10 is about.
-    It is the same in every mode, the Linux install included (which could
-    reach nuget.org), so a check's restore matches the install's;
-    vulnerability auditing belongs to CI. A check's own `env` sets it back. A project or MSBuild import that
-    sets `NuGetAudit` itself overrides the environment, so
+12. **NuGet's vulnerability audit is off only where it cannot run.** The
+    audit fetches from the package source at every restore. The .NET profile
+    (`isolation/toolchains.ts`, `nugetAuditRuns`; MSBuild reads the variable
+    from the environment) sets `NuGetAudit=false` for a .NET process whose
+    sandbox does not let it reach the package source (`api.nuget.org`, the
+    profile's registry host, in a check's `network_hosts` or a worker's
+    allowed hosts; a `*.nuget.org` entry covers it) and for every .NET process
+    on macOS, where .NET under `srt` cannot complete TLS to nuget.org because
+    the system trust service is denied by design (item 9). There the audit
+    could only wait and add `NU1900`, which fails every restore of a
+    repository that treats warnings as errors, however full its cache, and on
+    the base revision turned that into a baseline exception question, the
+    symptom #10 is about. Everywhere else it stays as the repository
+    configures it. So the dependency install on Linux, or with
+    `isolation.provider: container` (a container runs Linux whatever the
+    host), which gets the registry hosts, audits as configured; a check or a
+    worker without the host in its network has it off; anything on macOS
+    under `srt` has it off; and a Linux check that lists `api.nuget.org` in
+    its own `network_hosts` audits as configured. The principle: Orbit never
+    changes a check's or an install's semantics where the real thing could
+    happen, so it does not report green where the repository's CI fails
+    (`TreatWarningsAsErrors` and a package with a known vulnerability,
+    `NU1903`). Rejected: the first form of this item, `NuGetAudit=false` in
+    every mode on every platform so that a check's restore matched the
+    install's: on Linux a candidate that adds a vulnerable package passes
+    Orbit's install, where the audit could have run, while the repository's
+    CI fails it. Doctor's probes follow the same rule, with the check's hosts.
+    A check's record carries a limitation exactly when Orbit's
+    `NuGetAudit=false` reached it (its own `env` left the variable alone). A
+    check's own `env` sets it back. A project or MSBuild import that sets
+    `NuGetAudit` itself overrides the environment, so
     **`checks.dotnet-audit`** (`cli/commands/doctor-dotnet.ts`; macOS under
     `srt`, a .NET repository with packages) reads the tracked project and
     `.props`/`.targets` files, the checks' and the install's commands and the
@@ -562,7 +580,12 @@ Decision.
     the check. It fails when the dependency install or a mandatory check
     restores (a dotnet restore, or a build verb without `--no-restore` or
     `--no-build`), and warns when only optional checks, make or a script, or a
-    setting under a condition doctor does not evaluate are involved.
+    setting under a condition doctor does not evaluate are involved. It stays
+    on macOS under `srt` with the narrowed rule: the rule leaves the audit as
+    configured only where it reaches nuget.org, where a repository's own
+    `NuGetAudit` adds no `NU1900`, so it makes no case newly relevant (a Linux
+    check without the host that restores, where such a setting meets an
+    unreachable source too, was not judged before and is not now).
     `checks.dotnet-packages` then promises the offline restore only once the
     audit no longer fails it. Rejected: naming
     `<WarningsNotAsErrors>$(WarningsNotAsErrors);NU1900</WarningsNotAsErrors>`
@@ -601,9 +624,11 @@ Consequences.
   checks then restore from it with nothing to download; NuGet's vulnerability
   audit is off there (item 12), so `NU1900` does not fail a repository that
   treats warnings as errors, unless the repository sets `NuGetAudit` itself
-  (`checks.dotnet-audit`). NuGet's vulnerability audit does not run in
-  Orbit's sandbox, on any platform; it runs where the repository's CI runs it.
-  On Linux, or
+  (`checks.dotnet-audit`). NuGet's vulnerability audit runs in Orbit's
+  sandbox only where it can reach nuget.org (the dependency install on Linux
+  or in a container, and a Linux check that lists the host), as the
+  repository configures it; elsewhere it runs where the repository's CI runs
+  it. On Linux, or
   with `isolation.provider: container`, the dependency install downloads the
   packages itself. Checks after the install build with `--no-restore`, which
   needs no network on any SDK measured.

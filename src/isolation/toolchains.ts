@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
+import { hostAllowed } from '../policy/hosts.ts';
 
 /**
  * Toolchain sandbox profiles (docs/decisions/0009-toolchain-profiles.md). Checks and workers run with a write
@@ -34,6 +35,10 @@ export interface ToolchainEnvDirs {
   rustupHome: string | null;
   /** The JDK the host's JAVA_HOME names, or null. */
   javaHome: string | null;
+  /** The platform the process runs on: the host's under an OS sandbox, Linux in a container. */
+  platform: NodeJS.Platform;
+  /** The hosts the process's sandbox lets it reach (a check's network_hosts, a worker's allowed hosts). */
+  networkHosts: readonly string[];
 }
 
 export interface ToolchainProfile {
@@ -82,10 +87,24 @@ export const DOTNET_PROBE_PROJECT: Readonly<Record<string, string>> = {
 /**
  * What a check's record says when the .NET profile's NuGetAudit=false reached it (the check's own env did not set it
  * back): a review found that nothing in a run's evidence said a restore under Orbit skips the vulnerability audit that
- * a repository's CI may fail on (NU1903 as an error).
+ * a repository's CI may fail on (NU1903 as an error). Orbit sets it only where the audit cannot run (nugetAuditRuns).
  */
 export const NUGET_AUDIT_LIMITATION =
-  "NuGet's vulnerability audit was off (NuGetAudit=false in Orbit's .NET profile), so a package with a known vulnerability does not fail this restore, even where such warnings are errors; the repository's CI still runs it";
+  "NuGet's vulnerability audit was off (NuGetAudit=false in Orbit's .NET profile, which turns it off where it cannot reach the package source from the sandbox), so a package with a known vulnerability does not fail this restore, even where such warnings are errors; the repository's CI still runs it";
+
+const NUGET_HOSTS: readonly string[] = ['api.nuget.org'];
+
+/**
+ * Whether NuGet's vulnerability audit can run in a .NET process (ADR 0009, addendum, item 12): its sandbox lets it
+ * reach the package source, and it is not on macOS, where .NET under srt cannot verify nuget.org's certificate (the
+ * system trust service is denied by design, addendum item 9). Where it cannot run, the audit only waits and warns
+ * NU1900, which fails every restore of a repository that treats warnings as errors (#10), so the profile turns it off;
+ * everywhere else it stays as the repository configures it, so a package with a known vulnerability fails a restore
+ * under Orbit as it fails in the repository's CI (NU1903 as an error).
+ */
+export function nugetAuditRuns(d: Pick<ToolchainEnvDirs, 'platform' | 'networkHosts'>): boolean {
+  return d.platform !== 'darwin' && NUGET_HOSTS.every((h) => hostAllowed(h, d.networkHosts));
+}
 
 export const TOOLCHAIN_PROFILES: Readonly<Record<ToolchainId, ToolchainProfile>> = {
   dotnet: {
@@ -95,7 +114,7 @@ export const TOOLCHAIN_PROFILES: Readonly<Record<ToolchainId, ToolchainProfile>>
     caches: ['nuget'],
     scratch: ['nuget-http', 'nuget-plugins'],
     scratchVars: ['NUGET_HTTP_CACHE_PATH', 'NUGET_PLUGINS_CACHE_PATH'],
-    registryHosts: ['api.nuget.org'],
+    registryHosts: NUGET_HOSTS,
     // A real build: `dotnet help` started the SDK and ran its first-run steps (#10) but passed where every build of two
     // projects was denied an MSBuild worker node (#10, reopened). A build runs the first-run steps too.
     probe: {
@@ -109,13 +128,14 @@ export const TOOLCHAIN_PROFILES: Readonly<Record<ToolchainId, ToolchainProfile>>
       NUGET_HTTP_CACHE_PATH: d.scratch('nuget-http'),
       NUGET_PLUGINS_CACHE_PATH: d.scratch('nuget-plugins'),
       // NuGet's vulnerability audit (an MSBuild property, which MSBuild also reads from the environment) fetches from the
-      // package source at every restore, which nothing in the sandbox can reach on macOS (.NET cannot verify
-      // nuget.org's certificate there) and a check or worker cannot reach on Linux (no network, unless a check lists
-      // the host). It could only add warning NU1900, after a wait, and a repository that treats warnings as errors
-      // fails its restore on it, the install step and every restoring check alike, after its cache was filled (#10).
-      // The same in every mode, so a check's restore matches the install's. A check's own env, or a project that
-      // sets NuGetAudit itself, wins (orbit doctor's checks.dotnet-audit names the second on macOS).
-      NuGetAudit: 'false',
+      // package source at every restore. Off only where it cannot run (nugetAuditRuns): anything on macOS under srt,
+      // and any process whose network lacks the host (a check or worker that does not list it). There it could only
+      // add warning NU1900, after a wait, and a repository that treats warnings as errors fails its restore on it,
+      // after its cache was filled (#10). Elsewhere (the dependency install on Linux or in a container, a Linux check
+      // that lists the host) it stays as the repository configures it, so Orbit does not pass a restore the
+      // repository's CI fails on NU1903. A check's own env, or a project that sets NuGetAudit itself, wins (orbit
+      // doctor's checks.dotnet-audit names the second on macOS).
+      ...(nugetAuditRuns(d) ? {} : { NuGetAudit: 'false' }),
     }),
   },
   go: {
@@ -252,6 +272,10 @@ export interface ToolchainLayoutInput {
   hostHome?: string;
   /** For RUSTUP_HOME and JAVA_HOME; defaults to process.env. */
   hostEnv?: Readonly<Record<string, string | undefined>>;
+  /** The platform the process runs on; defaults to process.platform. A container's is Linux, whatever the host's. */
+  platform?: NodeJS.Platform;
+  /** The hosts the process's sandbox lets it reach: a check's network_hosts, a worker's allowed hosts. */
+  networkHosts: readonly string[];
 }
 
 export interface ToolchainLayout {
@@ -294,12 +318,13 @@ export function toolchainLayout(input: ToolchainLayoutInput): ToolchainLayout {
   const scratchPath = (name: string) => join(input.scratchRoot, name);
   const rustupHome = ids.includes('rust') ? rustupHomeOf(input) : null;
   const javaHome = ids.includes('jvm') ? javaHomeOf(input) : null;
+  const platform = input.platform ?? process.platform;
   const env: Record<string, string> = {};
   const directories: string[] = [];
   const caches: ToolchainLayout['caches'] = [];
   for (const id of ids) {
     const p = TOOLCHAIN_PROFILES[id];
-    Object.assign(env, p.env({ mode: input.mode, cache: cachePath, scratch: scratchPath, tmpDir: input.tmpDir, rustupHome, javaHome }));
+    Object.assign(env, p.env({ mode: input.mode, cache: cachePath, scratch: scratchPath, tmpDir: input.tmpDir, rustupHome, javaHome, platform, networkHosts: input.networkHosts }));
     for (const name of p.caches) caches.push({ toolchain: id, name, path: cachePath(name) });
     directories.push(...p.caches.map(cachePath), ...p.scratch.map(scratchPath));
   }

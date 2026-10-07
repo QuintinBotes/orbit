@@ -184,6 +184,14 @@ function walkLimit(input: { credentialWalkLimit?: number }): { credentialWalkLim
 }
 
 /**
+ * The hosts a worker's sandbox lets it reach (profileForWorker): its provider's, and the policy's allowed hosts. A Codex
+ * worker is a read-only reviewer that its adapter confines further, to its provider's hosts (codexReviewerProfile).
+ */
+export function workerAllowedHosts(provider: WorkerProvider, snapshot: PolicySnapshot): string[] {
+  return uniq([...PROVIDER_HOSTS[provider], ...snapshot.config.network.allowed_hosts]);
+}
+
+/**
  * A worker may write only its worktree, its worker directory (minus the
  * files the controller trusts), a private temp directory and the state its
  * own provider CLI must write: for Claude Code the config directory, for
@@ -234,7 +242,7 @@ export function profileForWorker(input: WorkerProfileInput): BuiltProfile {
       ...WORKER_DIR_READ_ONLY.map((rel) => join(workerDir, rel)),
       ...ownReadOnly,
     ]),
-    allowedHosts: uniq([...PROVIDER_HOSTS[input.provider], ...input.snapshot.config.network.allowed_hosts]),
+    allowedHosts: workerAllowedHosts(input.provider, input.snapshot),
     ...(input.nisDomainName ? { nisDomainName: true } : {}),
     limits: {
       timeoutMs: input.timeoutMs ?? input.snapshot.config.scheduler.hard_limits.wall_minutes * 60_000,

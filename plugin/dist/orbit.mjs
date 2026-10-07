@@ -25109,6 +25109,9 @@ import { dirname as dirname7, isAbsolute as isAbsolute6, join as join7 } from "n
 function walkLimit(input) {
   return input.credentialWalkLimit === void 0 ? {} : { credentialWalkLimit: input.credentialWalkLimit };
 }
+function workerAllowedHosts(provider, snapshot2) {
+  return uniq([...PROVIDER_HOSTS[provider], ...snapshot2.config.network.allowed_hosts]);
+}
 function profileForWorker(input) {
   const home2 = canonicalPath(input.homeDir);
   const worktree = canonicalPath(input.worktree);
@@ -25140,7 +25143,7 @@ function profileForWorker(input) {
       ...WORKER_DIR_READ_ONLY.map((rel) => join7(workerDir, rel)),
       ...ownReadOnly
     ]),
-    allowedHosts: uniq([...PROVIDER_HOSTS[input.provider], ...input.snapshot.config.network.allowed_hosts]),
+    allowedHosts: workerAllowedHosts(input.provider, input.snapshot),
     ...input.nisDomainName ? { nisDomainName: true } : {},
     limits: {
       timeoutMs: input.timeoutMs ?? input.snapshot.config.scheduler.hard_limits.wall_minutes * 6e4,
@@ -35677,6 +35680,9 @@ var init_watchdog = __esm({
 // src/isolation/toolchains.ts
 import { chmodSync as chmodSync6, existsSync as existsSync20, lstatSync as lstatSync5, mkdirSync as mkdirSync9, readdirSync as readdirSync4, rmSync as rmSync6 } from "node:fs";
 import { basename as basename10, isAbsolute as isAbsolute12, join as join23 } from "node:path";
+function nugetAuditRuns(d) {
+  return d.platform !== "darwin" && NUGET_HOSTS.every((h) => hostAllowed(h, d.networkHosts));
+}
 function toolchainCacheRoot(orbitHome, repoKey2) {
   if (!REPO_KEY.test(repoKey2)) throw new Error(`invalid repository key ${JSON.stringify(repoKey2)}`);
   return join23(orbitHome, "toolchains", repoKey2);
@@ -35724,12 +35730,13 @@ function toolchainLayout(input) {
   const scratchPath = (name) => join23(input.scratchRoot, name);
   const rustupHome = ids.includes("rust") ? rustupHomeOf(input) : null;
   const javaHome = ids.includes("jvm") ? javaHomeOf(input) : null;
+  const platform3 = input.platform ?? process.platform;
   const env = {};
   const directories = [];
   const caches = [];
   for (const id of ids) {
     const p = TOOLCHAIN_PROFILES[id];
-    Object.assign(env, p.env({ mode: input.mode, cache: cachePath, scratch: scratchPath, tmpDir: input.tmpDir, rustupHome, javaHome }));
+    Object.assign(env, p.env({ mode: input.mode, cache: cachePath, scratch: scratchPath, tmpDir: input.tmpDir, rustupHome, javaHome, platform: platform3, networkHosts: input.networkHosts }));
     for (const name of p.caches) caches.push({ toolchain: id, name, path: cachePath(name) });
     directories.push(...p.caches.map(cachePath), ...p.scratch.map(scratchPath));
   }
@@ -35778,10 +35785,11 @@ function makeTreeWritable(dir) {
     }
   }
 }
-var TOOLCHAIN_IDS, PROBE_TFM, probeLibrary, DOTNET_PROBE_PROJECT, NUGET_AUDIT_LIMITATION, TOOLCHAIN_PROFILES, REPO_KEY;
+var TOOLCHAIN_IDS, PROBE_TFM, probeLibrary, DOTNET_PROBE_PROJECT, NUGET_AUDIT_LIMITATION, NUGET_HOSTS, TOOLCHAIN_PROFILES, REPO_KEY;
 var init_toolchains = __esm({
   "src/isolation/toolchains.ts"() {
     "use strict";
+    init_hosts();
     TOOLCHAIN_IDS = ["dotnet", "go", "jvm", "python", "rust"];
     PROBE_TFM = "<TargetFramework>net$(NETCoreAppMaximumVersion)</TargetFramework>";
     probeLibrary = (refs = []) => `<Project Sdk="Microsoft.NET.Sdk">
@@ -35799,7 +35807,8 @@ ${refs.length ? `  <ItemGroup>${refs.map((r) => `<ProjectReference Include="../$
       "Probe.App/Probe.App.csproj": probeLibrary(["Probe.Left", "Probe.Right"]),
       "Probe.App/App.cs": "namespace Probe;\npublic static class App { public static int Three => Left.One + Right.Two; }\n"
     };
-    NUGET_AUDIT_LIMITATION = "NuGet's vulnerability audit was off (NuGetAudit=false in Orbit's .NET profile), so a package with a known vulnerability does not fail this restore, even where such warnings are errors; the repository's CI still runs it";
+    NUGET_AUDIT_LIMITATION = "NuGet's vulnerability audit was off (NuGetAudit=false in Orbit's .NET profile, which turns it off where it cannot reach the package source from the sandbox), so a package with a known vulnerability does not fail this restore, even where such warnings are errors; the repository's CI still runs it";
+    NUGET_HOSTS = ["api.nuget.org"];
     TOOLCHAIN_PROFILES = {
       dotnet: {
         id: "dotnet",
@@ -35808,7 +35817,7 @@ ${refs.length ? `  <ItemGroup>${refs.map((r) => `<ProjectReference Include="../$
         caches: ["nuget"],
         scratch: ["nuget-http", "nuget-plugins"],
         scratchVars: ["NUGET_HTTP_CACHE_PATH", "NUGET_PLUGINS_CACHE_PATH"],
-        registryHosts: ["api.nuget.org"],
+        registryHosts: NUGET_HOSTS,
         // A real build: `dotnet help` started the SDK and ran its first-run steps (#10) but passed where every build of two
         // projects was denied an MSBuild worker node (#10, reopened). A build runs the first-run steps too.
         probe: {
@@ -35822,13 +35831,14 @@ ${refs.length ? `  <ItemGroup>${refs.map((r) => `<ProjectReference Include="../$
           NUGET_HTTP_CACHE_PATH: d.scratch("nuget-http"),
           NUGET_PLUGINS_CACHE_PATH: d.scratch("nuget-plugins"),
           // NuGet's vulnerability audit (an MSBuild property, which MSBuild also reads from the environment) fetches from the
-          // package source at every restore, which nothing in the sandbox can reach on macOS (.NET cannot verify
-          // nuget.org's certificate there) and a check or worker cannot reach on Linux (no network, unless a check lists
-          // the host). It could only add warning NU1900, after a wait, and a repository that treats warnings as errors
-          // fails its restore on it, the install step and every restoring check alike, after its cache was filled (#10).
-          // The same in every mode, so a check's restore matches the install's. A check's own env, or a project that
-          // sets NuGetAudit itself, wins (orbit doctor's checks.dotnet-audit names the second on macOS).
-          NuGetAudit: "false"
+          // package source at every restore. Off only where it cannot run (nugetAuditRuns): anything on macOS under srt,
+          // and any process whose network lacks the host (a check or worker that does not list it). There it could only
+          // add warning NU1900, after a wait, and a repository that treats warnings as errors fails its restore on it,
+          // after its cache was filled (#10). Elsewhere (the dependency install on Linux or in a container, a Linux check
+          // that lists the host) it stays as the repository configures it, so Orbit does not pass a restore the
+          // repository's CI fails on NU1903. A check's own env, or a project that sets NuGetAudit itself, wins (orbit
+          // doctor's checks.dotnet-audit names the second on macOS).
+          ...nugetAuditRuns(d) ? {} : { NuGetAudit: "false" }
         })
       },
       go: {
@@ -36892,8 +36902,9 @@ async function launchAttempt(ctx, subject, def, configHash, rerunOf) {
         command: argv2,
         cwd,
         isolation: ctx.isolation.kind,
-        // NuGet's audit off is a gap in what the check proves, as an isolation limitation is: the record says so.
-        limitations: [...wrapped.limitations, ...env.NuGetAudit === "false" ? [NUGET_AUDIT_LIMITATION] : []],
+        // NuGet's audit off (only where it cannot run) is a gap in what the check proves, as an isolation limitation
+        // is: the record says so exactly when Orbit's NuGetAudit=false reached the check (its own env left it alone).
+        limitations: [...wrapped.limitations, ...toolchains.env.NuGetAudit === "false" && env.NuGetAudit === "false" ? [NUGET_AUDIT_LIMITATION] : []],
         rerunOf
       },
       ctx.clock
@@ -36942,7 +36953,7 @@ async function launchAttempt(ctx, subject, def, configHash, rerunOf) {
   }
   return superviseAttempt(ctx, subject, def, row, wrapped);
 }
-function checkToolchains(ctx, def, cwd, dirs, tmpDir) {
+function checkToolchains(ctx, def, cwd, dirs, tmpDir, platform3 = process.platform) {
   const install = INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
   return toolchainLayout({
     toolchains: detectToolchains({ command: def.command, shell: def.shell, roots: [ctx.checkoutDir, cwd] }),
@@ -36950,6 +36961,8 @@ function checkToolchains(ctx, def, cwd, dirs, tmpDir) {
     cacheRoot: ctx.toolchainCacheRoot ?? null,
     scratchRoot: dirs.toolchainsDir,
     tmpDir,
+    platform: ctx.isolation.kind === "container" ? "linux" : platform3,
+    networkHosts: def.network_hosts,
     // A container brings its own toolchain installation; the host's rustup and JDK are neither mounted nor wanted there.
     ...ctx.isolation.kind === "container" ? { hostEnv: {} } : { hostEnv: process.env, ...ctx.homeDir ? { hostHome: ctx.homeDir } : {} }
   });
@@ -41847,7 +41860,8 @@ function taskSpec(ctx, w, req) {
     scratchRoot: join32(w.workerDir, "toolchains"),
     tmpDir: workerTmpDir(w.workerDir),
     hostHome: home2,
-    hostEnv: env
+    hostEnv: env,
+    networkHosts: provider === "codex" ? PROVIDER_HOSTS.codex : workerAllowedHosts(provider, policy.snapshot)
   });
   prepareToolchainLayout(toolchains);
   const sandbox = profileForWorker({
@@ -61870,7 +61884,7 @@ async function probe(input, check, exe, args, cwd, project, nodeFix) {
     tmp = prepareWorkerTmpDir(scratch);
     const snapshot2 = { schema: "orbit.policy/1", run_id: "doctor", created_at: "", repo_root: input.repo ?? scratch, config: input.config, effective_protected_paths: [], check_config_hashes: {} };
     const ids = detectToolchains({ command: check.command, shell: check.shell, roots: [...input.repo ? [input.repo] : [], ...cwd ? [cwd] : []] });
-    const toolchains = toolchainLayout({ toolchains: ids, mode: "check", cacheRoot: probeCacheRoot(input, ids, scratch), scratchRoot: join72(scratch, "toolchains"), tmpDir: tmp, hostHome: input.homeDir, hostEnv: input.env });
+    const toolchains = toolchainLayout({ toolchains: ids, mode: "check", cacheRoot: probeCacheRoot(input, ids, scratch), scratchRoot: join72(scratch, "toolchains"), tmpDir: tmp, hostHome: input.homeDir, hostEnv: input.env, platform: input.platform ?? process.platform, networkHosts: check.network_hosts });
     for (const d of toolchains.directories) if (!existsSync51(d)) mkdirSync23(d, { recursive: true, mode: 448 });
     const profile = profileForCheck({ worktree: checkout, check, snapshot: snapshot2, extraWritable: [artifacts, home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: input.homeDir, env: { ...input.env } });
     const env = checkEnv(check, { homeDir: home2, tmpDir: tmp, artifactsDir: artifacts }, input.env.PATH, toolchains.env);

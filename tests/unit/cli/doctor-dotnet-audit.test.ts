@@ -1,14 +1,15 @@
 // `orbit doctor`'s checks.dotnet-audit (issue #10; ADR 0009, addendum). NuGet's vulnerability audit cannot reach
 // nuget.org from the sandbox on macOS, so it adds warning NU1900 to every restore there, which a repository that treats
 // warnings as errors turns into a failed restore: the install step and every restoring check failed after the cache
-// was filled. Orbit sets NuGetAudit=false for every .NET process in the sandbox, which MSBuild reads from the
-// environment, but a project that sets NuGetAudit itself overrides the environment. Doctor names such a project when
-// warnings are errors, with the change that lets Orbit's setting through.
+// was filled. Orbit turns the audit off where it cannot run, which on macOS under srt is every .NET process, with
+// NuGetAudit=false in the environment, but a project that sets NuGetAudit itself overrides the environment. Doctor
+// names such a project when warnings are errors, with the change that lets Orbit's setting through.
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { dotnetAuditCheck, dotnetPackagesCheck, type DotnetPackagesInput } from '../../../src/cli/commands/doctor-dotnet.ts';
+import { toolchainLayout, toolchainRegistryHosts } from '../../../src/isolation/toolchains.ts';
 import { defaultCheck, defaultConfig } from '../../../src/policy/config.ts';
 import type { CheckDefinition, OrbitConfig } from '../../../src/policy/types.ts';
 
@@ -151,6 +152,20 @@ describe('dotnetAuditCheck', () => {
     const [both] = dotnetAuditCheck(input({ 'acme.csproj': STRICT, 'Directory.Build.props': AUDIT_ON }, config([{ ...BUILD, env: { NuGetAudit: 'true' } }])));
     expect(both!.summary).toMatch(/, and checks\.build\.env and Directory\.Build\.props turn it on where Orbit turns it off: /);
     expect(both!.fix).toBe(`in Directory.Build.props, set NuGetAudit only where nothing has set it yet: ${CONDITIONAL}; remove NuGetAudit from checks.build.env, so Orbit's NuGetAudit=false reaches the restore in the sandbox and the audit stays on everywhere else ${DOCS}`);
+  });
+
+  // The rule doctor follows (isolation/toolchains.ts): Orbit turns the audit off only where it cannot run. On macOS
+  // under srt that is every .NET process, the dependency install with nuget.org in its network included, so a
+  // project's own NuGetAudit meets an unreachable source in each restore. On Linux the install, and a check that lists
+  // the host, keep the audit as configured, where it reaches nuget.org and adds no NU1900.
+  it('judges the restores Orbit turns the audit off for: on macOS under srt every one, the install included', () => {
+    const i = input({ 'acme.csproj': STRICT, 'Directory.Build.props': AUDIT_ON }, config([BUILD], RESTORE));
+    const installAudit = (platform: NodeJS.Platform) =>
+      toolchainLayout({ toolchains: ['dotnet'], mode: 'install', cacheRoot: null, scratchRoot: '/s', tmpDir: '/t', platform, networkHosts: toolchainRegistryHosts(['dotnet']), hostEnv: {} }).env.NuGetAudit;
+    expect(installAudit('darwin')).toBe('false');
+    expect(dotnetAuditCheck(i)[0]!.summary).toMatch(/its warning NU1900 fails dependencies\.install_command and check build$/);
+    expect(installAudit('linux')).toBeUndefined();
+    expect(dotnetAuditCheck({ ...i, platform: 'linux' })).toEqual([]);
   });
 
   it('says nothing on Linux, outside srt, with isolation unavailable, or for a repository without packages', () => {

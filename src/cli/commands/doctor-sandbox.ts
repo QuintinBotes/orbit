@@ -162,7 +162,7 @@ async function probe(input: CheckSandboxInput & { provider: IsolationProvider },
     tmp = prepareWorkerTmpDir(scratch);
     const snapshot: PolicySnapshot = { schema: 'orbit.policy/1', run_id: 'doctor', created_at: '', repo_root: input.repo ?? scratch, config: input.config, effective_protected_paths: [], check_config_hashes: {} };
     const ids = detectToolchains({ command: check.command, shell: check.shell, roots: [...(input.repo ? [input.repo] : []), ...(cwd ? [cwd] : [])] });
-    const toolchains = toolchainLayout({ toolchains: ids, mode: 'check', cacheRoot: probeCacheRoot(input, ids, scratch), scratchRoot: join(scratch, 'toolchains'), tmpDir: tmp, hostHome: input.homeDir, hostEnv: input.env });
+    const toolchains = toolchainLayout({ toolchains: ids, mode: 'check', cacheRoot: probeCacheRoot(input, ids, scratch), scratchRoot: join(scratch, 'toolchains'), tmpDir: tmp, hostHome: input.homeDir, hostEnv: input.env, platform: input.platform ?? process.platform, networkHosts: check.network_hosts });
     // Only what is missing is created: an existing cache is the repository's and stays untouched.
     for (const d of toolchains.directories) if (!existsSync(d)) mkdirSync(d, { recursive: true, mode: 0o700 });
     const profile = profileForCheck({ worktree: checkout, check, snapshot, extraWritable: [artifacts, home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: input.homeDir, env: { ...input.env } });

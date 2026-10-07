@@ -554,7 +554,7 @@ where the tools keep their state (ADR 0009):
 
 | toolchain | dependency cache (read-only) | private to the check attempt |
 |---|---|---|
-| .NET | `NUGET_PACKAGES` | `NUGET_HTTP_CACHE_PATH`, `NUGET_PLUGINS_CACHE_PATH` (and `NuGetAudit=false`: NuGet's vulnerability audit cannot reach nuget.org from the sandbox) |
+| .NET | `NUGET_PACKAGES` | `NUGET_HTTP_CACHE_PATH`, `NUGET_PLUGINS_CACHE_PATH` (and `NuGetAudit=false` where NuGet's vulnerability audit cannot reach nuget.org: on macOS, or without `api.nuget.org` in the check's `network_hosts`) |
 | Go | `GOMODCACHE` | `GOCACHE`, `GOPATH` |
 | JVM | `GRADLE_RO_DEP_CACHE`, `-Dmaven.repo.local.tail` in `MAVEN_OPTS` | `GRADLE_USER_HOME`, `-Dmaven.repo.local`, `JDK_JAVA_OPTIONS=-Djava.io.tmpdir=<TMPDIR>` (and `JAVA_HOME` set to your JDK, read-only) |
 | Python | `PIP_CACHE_DIR` | `PYTHONPYCACHEPREFIX`, `PYTHONUSERBASE` (and `POETRY_VIRTUALENVS_IN_PROJECT`, `PIPENV_VENV_IN_PROJECT`) |
@@ -600,10 +600,16 @@ also read the NIS domain name, which .NET's HTTP clients need; a NuGet restore
 from nuget.org still cannot verify TLS there, so fill the repository's NuGet
 cache outside the sandbox with the command doctor's `checks.dotnet-packages`
 prints (it restores local tools too; a check that runs one restores it first,
-from the cache, since its home is its own). NuGet's vulnerability audit is off in every .NET process in the
-sandbox, which cannot reach its source, so its warning `NU1900` does not fail a
-repository that treats warnings as errors; a project that sets `NuGetAudit`
-itself overrides that, and doctor's `checks.dotnet-audit` names the change on
+from the cache, since its home is its own). NuGet's vulnerability audit is
+off only where it cannot reach its source: in every .NET process on macOS
+(.NET under `srt` cannot verify nuget.org's certificate) and, on Linux, in a
+check without `api.nuget.org` in its `network_hosts` and a worker without it in
+`network.allowed_hosts`. There its warning `NU1900` would fail a repository
+that treats warnings as errors; the check's record says the audit was off. The
+dependency install on Linux or in a container, and a Linux check that lists the
+host, run the audit as the repository configures it, so a vulnerable package
+fails there as it does in CI. A project that sets `NuGetAudit` itself overrides
+Orbit's setting, and doctor's `checks.dotnet-audit` names the change on
 macOS. See [troubleshooting](troubleshooting.md#run-problems), ".NET builds
 and MSBuild worker nodes", "dotnet format under the sandbox" and ".NET HTTP
 clients and NuGet restore on macOS".

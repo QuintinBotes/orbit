@@ -203,18 +203,23 @@ State these plainly to yourself before running unattended.
   evaluates the repository's MSBuild files with the person's own permissions
   and NuGet configuration, so run it on a tree you trust (your checkout), not on
   a candidate's. See ADR 0009, addendum.
-- **NuGet's vulnerability audit does not run in the sandbox.** Every .NET
-  process there gets `NuGetAudit=false`. Where the audit cannot reach nuget.org
-  (on macOS nothing in the sandbox can verify its certificate; on Linux a check
-  has no network unless it lists the host) it could only warn `NU1900`, which
-  fails every restore of a repository that treats warnings as errors. It is off
-  for the dependency install too, although on Linux the install may reach
-  nuget.org, so that a check's restore matches the install's: a candidate that
-  adds a package with a known vulnerability fails a restore that treats `NU1903`
-  as an error in CI and passes under Orbit. Each .NET check's record says the
-  audit was off (a limitation). Orbit's checks therefore say nothing about
-  vulnerable packages; the repository's CI, or a restore outside Orbit, still
-  does. A check's own `env` can set it back. See ADR 0009, addendum, item 12.
+- **NuGet's vulnerability audit is off only where it cannot run.** A .NET
+  process gets `NuGetAudit=false` when its sandbox does not let it reach
+  nuget.org (`api.nuget.org` is not among its allowed hosts: a check that does
+  not list it, a worker whose policy does not allow it) and on macOS, where
+  .NET under `srt` cannot verify nuget.org's certificate (the system trust
+  service is denied by design). There the audit could only warn `NU1900`,
+  which fails every restore of a repository that treats warnings as errors.
+  Everywhere else it runs as the repository configures it: the dependency
+  install on Linux or in a container, which reaches the registry, and a Linux
+  check that lists the host. So on Linux a candidate that adds a package with
+  a known vulnerability fails the install under Orbit where a restore that
+  treats `NU1903` as an error fails in CI. Where the audit was off, the
+  check's record says so (a limitation): those checks say nothing about
+  vulnerable packages, and the repository's CI, or a restore outside Orbit,
+  still does. Orbit records it only when its own setting reached the check; a
+  check's own `env` can set the variable either way. See ADR 0009, addendum,
+  item 12.
 - **No Unix socket is allowed in a sandbox, so .NET's named pipes under `/tmp`
   stay refused.** MSBuild's worker nodes (`/tmp/MSBuild<pid>`) and the build
   host `dotnet format` loads a project with (`/tmp/<guid>`) bind their pipes at
