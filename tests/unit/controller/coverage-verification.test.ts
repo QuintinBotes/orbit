@@ -28,6 +28,7 @@ vi.mock('../../../src/evidence/git.ts', async (orig) => ({ ...(await orig<Git>()
 const { EXPLORATION_NOT_RUN, collectVerificationEvidence } = await import('../../../src/controller/verification.ts');
 const { defaultCheck, defaultUi } = await import('../../../src/policy/config.ts');
 const { addCandidate, cleanScope, makeUnitLab, setContract } = await import('./coverage-helpers.ts');
+const { repoKey } = await import('../../../src/controller/context.ts');
 type UnitLab = import('./coverage-helpers.ts').UnitLab;
 type CheckResult = import('../../../src/evidence/types.ts').CheckResult;
 type OrbitConfig = import('../../../src/policy/types.ts').OrbitConfig;
@@ -195,6 +196,8 @@ describe('collecting evidence', () => {
     n = 0;
     expect(await run(s, { checkpoint: stopAt(2) })).toEqual({ stopped: 'stop' });
     expect(hooks.runUiChecks).toHaveBeenCalledTimes(1);
+    // The application under test reads the repository's dependency caches, as the checks do (issue #26).
+    expect((hooks.runUiChecks.mock.calls[0]![0] as { toolchainCacheRoot?: string }).toolchainCacheRoot).toBe(join(lab.home, 'toolchains', repoKey(lab.repo)));
     expect(hooks.exploreCandidate).not.toHaveBeenCalled();
     n = 0;
     expect(await run(s, { checkpoint: stopAt(3) })).toEqual({ stopped: 'stop' });

@@ -12,6 +12,7 @@ import { startRun } from '../../../src/controller/start.ts';
 import { ActionLedger } from '../../../src/delivery/actions.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
 import { getRun } from '../../../src/controller/run-store.ts';
+import { repoKey } from '../../../src/controller/context.ts';
 import { makeLab, type Lab } from './lab.ts';
 
 const labs: Lab[] = [];
@@ -102,6 +103,18 @@ describe('orbit release resolve', () => {
     const r = await s.l.cli(['release', 'resolve', s.runId, '--json']);
     expect(r.code, r.err).toBe(0);
     expect(readFileSync(out, 'utf8')).toBe(`${s.sha} staging 1 true`);
+  });
+
+  // Issue #26: a release command gets the toolchain profile a check gets, the repository's dependency caches included.
+  it('the verify_command gets its toolchains\' profile, with the repository\'s dependency caches under the Orbit home', async () => {
+    const out = join(realpathSync(mkdtempSync(join(tmpdir(), 'orbit-verify-'))), 'seen.txt');
+    scratch.push(dirname(out));
+    // The last word names cargo, so the command uses the Rust toolchain.
+    const verify = [node, '-e', `require('fs').writeFileSync(${JSON.stringify(out)}, String(process.env.CARGO_HOME));`, 'cargo'];
+    const s = unknownDeploy({ verify });
+    const r = await s.l.cli(['release', 'resolve', s.runId, '--json']);
+    expect(r.code, r.err).toBe(0);
+    expect(readFileSync(out, 'utf8')).toBe(join(s.l.orbitHome, 'toolchains', repoKey(s.l.repo), 'cargo'));
   });
 
   it('a verify_command that cannot tell, or no verify_command, changes nothing and exits 1 telling the person what to run', async () => {

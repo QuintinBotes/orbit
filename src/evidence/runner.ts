@@ -11,7 +11,7 @@ import { isAlive, killGroup, processStartTime } from '../core/proc.ts';
 import { isSecretEnvName, redact } from '../core/redact.ts';
 import { RESOURCE_LIMIT_EXIT_CODE, resourceLimitNote } from '../isolation/memory.ts';
 import { checkoutBelowDenied, prepareWorkerTmpDir, profileForCheck, workerTmpDir } from '../isolation/profiles.ts';
-import { detectToolchains, NUGET_AUDIT_LIMITATION, prepareToolchainLayout, removeScratch, toolchainLayout, type ToolchainLayout } from '../isolation/toolchains.ts';
+import { commandToolchains, NUGET_AUDIT_LIMITATION, prepareToolchainLayout, removeScratch, type ToolchainLayout } from '../isolation/toolchains.ts';
 import type { IsolationProvider, WrappedCommand } from '../isolation/types.ts';
 import { checkConfigHash, snapshotHash } from '../policy/snapshot.ts';
 import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
@@ -507,6 +507,18 @@ export function prepareCheckHome(homeDir: string): void {
 }
 
 /**
+ * The .NET settings of a check's private home (DOTNET_CHECK_ENV, DOTNET_CLI_HOME) for another command Orbit runs with a
+ * private home of its own (an approved operation, a release command), the home prepared as a check's (prepareCheckHome).
+ * With a new, empty home every dotnet command is the SDK's first run, whose NuGet migrations take the named mutex the
+ * sandbox refuses: measured under srt on macOS, a dotnet build with such a home died with "The system cannot open the
+ * device or file specified. : 'NuGet-Migrations'" (issue #26). Harmless to every other tool.
+ */
+export function privateHomeDotnetEnv(homeDir: string): Record<string, string> {
+  prepareCheckHome(homeDir);
+  return { ...DOTNET_CHECK_ENV, DOTNET_CLI_HOME: homeDir };
+}
+
+/**
  * The fixed environment a check starts with. The host environment is not inherited beyond PATH. `toolchainEnv` (a
  * ToolchainLayout's env) cannot replace what the runner fixes here; the check's own env overrides everything.
  */
@@ -639,16 +651,19 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
  */
 export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutDir' | 'toolchainCacheRoot' | 'homeDir' | 'isolation'>, def: CheckDefinition, cwd: string, dirs: Pick<AttemptDirs, 'toolchainsDir'>, tmpDir: string, platform: NodeJS.Platform = process.platform): ToolchainLayout {
   const install = INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
-  return toolchainLayout({
-    toolchains: detectToolchains({ command: def.command, shell: def.shell, roots: [ctx.checkoutDir, cwd] }),
+  return commandToolchains({
+    command: def.command,
+    shell: def.shell,
+    roots: [ctx.checkoutDir, cwd],
     mode: install ? 'install' : 'check',
     cacheRoot: ctx.toolchainCacheRoot ?? null,
     scratchRoot: dirs.toolchainsDir,
     tmpDir,
-    platform: ctx.isolation.kind === 'container' ? 'linux' : platform,
+    isolation: ctx.isolation.kind,
     networkHosts: def.network_hosts,
-    // A container brings its own toolchain installation; the host's rustup and JDK are neither mounted nor wanted there.
-    ...(ctx.isolation.kind === 'container' ? { hostEnv: {} } : { hostEnv: process.env, ...(ctx.homeDir ? { hostHome: ctx.homeDir } : {}) }),
+    platform,
+    hostEnv: process.env,
+    ...(ctx.homeDir ? { hostHome: ctx.homeDir } : {}),
   });
 }
 

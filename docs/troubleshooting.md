@@ -24,6 +24,7 @@ degraded but usable.
 | `checks` | `orbit init` proposed no check, or fewer than expected | Init proposes only for tools on `PATH` that the repository declares, and only when it writes a new config; it prints each tool it skipped and why (`checks.not_proposed` with `--json`). Install the tool, or add the check by hand; see [Checks that `orbit init` proposes](configuration.md#checks-that-orbit-init-proposes). A proposed check that fails offline needs `network_hosts` for its dependencies. |
 | `checks.sandbox` | `the sandbox refuses the executable of check X; a run would block at its baseline` | Under `sandbox-runtime`, doctor starts each check's executable (one installed outside the repository) in the sandbox that check gets, with a harmless argument (`--version`; `dotnet help`, which runs the .NET SDK's first-run steps; `go version`). The detail line shows what was refused. See [A check cannot run in the sandbox](#run-problems). A tool that exits non-zero with no denial in its output (an unknown `--version` flag) is not counted. |
 | `checks.sandbox` | `check X would start MSBuild worker nodes, which the sandbox refuses; a run would block at its baseline` | The check (or `dependencies.install_command`, named so) runs `dotnet build`, `test`, `publish`, `pack`, `restore`, `clean`, `msbuild` or `run` itself (its command, the command `env` starts, or a command of a chain joined by `&&` or `;`) without `-m:1`, and its own `env` does not set `DOTNET_PROCESSOR_COUNT=1`. It is refused without being started; the fix is its command with `-m:1` added, ready to paste, with the reason once after all such fixes. A `-m:1` after the `--` of `dotnet test` goes to the test runner and does not count. See [.NET builds and MSBuild worker nodes](#run-problems). |
+| `checks.sandbox` | `ui.environment.start_command would start MSBuild worker nodes, which the sandbox refuses; a run would fail where Orbit starts it` (or `release.environments.<name>.deploy_command`, `.verify_command`) | The application under test or a release command runs a dotnet build itself without `-m:1`, or `dotnet run`, which builds on worker nodes and hands `-m:1` to the program; or it runs a `dotnet format` that loads the project. These run in a sandbox built from the check profile, so the same rules apply, always as mandatory. The fields are argvs, so a fix that needs a shell line is a `sh -c` script: `ui.environment.start_command: ["sh", "-c", "dotnet build Web -m:1 && dotnet run --project Web --no-build"]`. See [.NET builds and MSBuild worker nodes](#run-problems) and "A .NET application under test never becomes ready". |
 | `checks.sandbox` | `doctor cannot tell whether check X runs MSBuild on one node` (warning) | The check runs dotnet through make, a script, a wrapper or a shell line with a pipe, `\|\|`, a substitution or a redirection, which its definition does not show. Make sure every dotnet build, test, publish, pack, restore, clean or msbuild it starts passes `-m:1`; one that does not is stopped as soon as MSBuild records the refused node. `DOTNET_PROCESSOR_COUNT=1` in the check's `env` also clears this warning. See [.NET builds and MSBuild worker nodes](#run-problems). |
 | `checks.sandbox` | `the sandbox refuses the go toolchain; checks that use it would block at their baseline` | One `toolchain <name>:` line per toolchain the checks or the repository use (Go, Rust, Python, JVM, .NET): whether its executable starts in the check sandbox with that toolchain's environment, where the repository's dependency caches live (`<orbit home>/toolchains/<repo key>/...`, "not created yet" before the first dependency install; on macOS, for a .NET repository with packages, that they are restored into it outside the sandbox, as `checks.dotnet-packages` says) and which build state is private to each check attempt. See [Toolchains under the sandbox](#run-problems). For .NET the line does more than start `dotnet`: it builds three generated projects with no packages (offline, from the SDK alone) in the sandbox of the check that uses .NET, its `env` included (so `DOTNET_PROCESSOR_COUNT=1` there gives the probe one node too), with the node switch MSBuild gets from that check's command (`-m:1` for a check that runs dotnet through make or a script, or whose dotnet commands do not build), so a build the sandbox refuses (an MSBuild worker node denied its pipe) shows here with the refused node and the fix. A refused toolchain, of any kind, fails doctor when a mandatory check runs the toolchain's executable itself, and is a warning otherwise. |
 | `checks.sandbox` | `check X runs dotnet format, which loads the project through a build host the sandbox refuses its named pipe; a run would block at its baseline` | Every form of `dotnet format` but `dotnet format whitespace --folder` loads the project through a build host whose named pipe .NET binds under `/tmp`, which the sandbox refuses. The check is refused without being started (a warning when it is optional); the fix is its command with `dotnet format whitespace --folder --verify-no-changes` in place of that `dotnet format`, in the folder of the solution or project it names and with its `--include` and `--exclude`, ready to paste. See [dotnet format under the sandbox](#run-problems). |
@@ -306,7 +307,16 @@ degraded but usable.
   second project under a check without `-m:1`, a test that runs `dotnet
   build`), as for every denial in [ADR 0010](decisions/0010-base-failure-classification.md).
   `orbit init` proposes `-m:1` already. Workers in a .NET repository are told
-  the same in their instructions.
+  the same in their instructions. The same rule and the same early stop cover
+  the other commands Orbit starts in such a sandbox: doctor judges
+  `ui.environment.start_command` and each release environment's
+  `deploy_command` and `verify_command` (argvs, so a fixed shell line is a `sh
+  -c` script), and an application, a release command or an approved operation
+  that MSBuild records a refused node for is stopped at once, with the fix
+  in the run's reason, the deploy's failure or the approved command's output.
+  A deploy stopped that way failed, it never counts as deployed (`srt` exits 0
+  when it is stopped), and a verify command stopped that way leaves the deploy
+  UNKNOWN.
 
   `DOTNET_PROCESSOR_COUNT=1` in a check's `env` also keeps MSBuild on one node,
   but Orbit does not set it: it reaches the test host too, where **xunit before
@@ -320,16 +330,31 @@ degraded but usable.
   Opening the pipes instead is not an option: `/tmp/MSBuild<pid>` would have to
   be writable by every check, and a check that could connect there could hand
   work to an idle MSBuild node of yours, outside the sandbox.
+- **A .NET application under test never becomes ready.** Measured under `srt`
+  on macOS with a web project referencing two libraries, each of these kept
+  `ui.environment.start_command` from serving the journeys, and the
+  application now gets what avoids it (ADR 0009, addendum, items 14 and 15):
+  `[dotnet, run, ...]` waited out MSBuild's node retries with `(no output)` in
+  the reason (`orbit doctor` now fails it, and the run stops it at once, with
+  `[sh, -c, "dotnet build Web -m:1 && dotnet run --project Web --no-build"]` as
+  the fix); built that way, ASP.NET Core's host hung at startup with no output,
+  because its configuration file watcher asks the FSEvents service, which the
+  sandbox denies (every .NET process on macOS now gets
+  `DOTNET_USE_POLLING_FILE_WATCHER=1` unless it sets the variable itself); and
+  past that, a page that made an HTTP request failed with `GetDomainName: -1`
+  (the NIS domain name rule below). The application reads the repository's
+  NuGet cache read-only, as a check does, and keeps your `HOME`: on a machine
+  where the SDK never ran under that home, run any `dotnet` command there once.
 - **.NET HTTP clients and NuGet restore on macOS.** Every .NET HTTP client reads
   the machine's NIS domain name when it starts, which `srt`'s Seatbelt profile
   does not allow on its own: a restore failed with `error NU1301: ... The type
   initializer for 'System.Net.CookieContainer' threw an exception ...
   GetDomainName: -1`, and so did a test that makes an HTTP request. Orbit adds
   one read-only rule for that name to the checks, the dependency install,
-  workers and doctor's probes that run .NET (ADR 0009, addendum); it needs
+  workers, doctor's probes, approved operations, the application under test and
+  release commands that run .NET (ADR 0009, addendum, items 8 and 14); it needs
   `srt` 0.0.78, the version Orbit ships, and the check's record says when it was
-  not added. Approved operations, the UI app and release commands do not get it
-  yet. Those processes also open IPv4 sockets (`DOTNET_SYSTEM_NET_DISABLEIPV6=1`,
+  not added. Those processes also open IPv4 sockets (`DOTNET_SYSTEM_NET_DISABLEIPV6=1`,
   unless the check's `env` sets it): .NET's dual-stack sockets reach loopback as
   `::ffff:127.0.0.1`, which the sandbox's loopback rule does not match on some
   macOS releases, so a request through `srt`'s proxy or to a server on loopback

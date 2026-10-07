@@ -246,6 +246,16 @@ export const NIS_DOMAINNAME_SKIPPED =
  */
 export const DOTNET_IPV4_ENV: Readonly<Record<string, string>> = Object.freeze({ DOTNET_SYSTEM_NET_DISABLEIPV6: '1' });
 
+/**
+ * What a .NET process on macOS also gets unless its command sets the variable: file watchers that poll. A
+ * FileSystemWatcher on macOS asks the FSEvents service for events, and srt's Seatbelt profile denies that lookup
+ * (mach-lookup com.apple.FSEvents), so ASP.NET Core's host, which watches its configuration files (reloadOnChange), hung
+ * at startup with no output: a .NET web application started as ui.environment.start_command never became ready (issue
+ * #26, measured on macOS 27 with SDK 9.0.305). Microsoft.Extensions' file providers read this variable and poll instead
+ * (every few seconds), which the sandbox allows; nothing else changes, and no Seatbelt rule is added.
+ */
+export const DOTNET_POLLING_WATCHER_ENV: Readonly<Record<string, string>> = Object.freeze({ DOTNET_USE_POLLING_FILE_WATCHER: '1' });
+
 /** srt-chromium-preload.mjs: beside this module in the sources, beside the bundle in plugin/dist/ (scripts/build.mjs copies it there). */
 export function defaultChromiumPreloadPath(): string {
   return fileURLToPath(new URL('./srt-chromium-preload.mjs', import.meta.url));
@@ -418,7 +428,8 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
     const browser = profile.chromiumMachRendezvous === true && darwin;
     // A browser run needs its rules to start at all, so an unverified srt stops it; the NIS rule only lets .NET's HTTP
     // clients start, so without a verified srt the command runs as srt alone runs it, and says so. A .NET process gets
-    // its sockets in IPv4 only either way (DOTNET_IPV4_ENV), which needs no rule.
+    // its sockets in IPv4 only and polling file watchers either way (DOTNET_IPV4_ENV, DOTNET_POLLING_WATCHER_ENV), which
+    // need no rule.
     const nisWanted = profile.nisDomainName === true && darwin;
     const nis = nisWanted && this.preloadVerified(pkg);
     const sets = [...(browser ? ['chromium'] : []), ...(nis ? ['nis-domainname'] : [])];
@@ -568,8 +579,9 @@ export function seccompHelperFor(srtPath: string, arch: string): string | null {
  * (live demo 3). The child's private temp directory is handed to Chromium as
  * MAC_CHROMIUM_TMPDIR instead; the Seatbelt profile does not change.
  *
- * A process that runs .NET on macOS (`dotnet`) gets its sockets in IPv4 only (DOTNET_IPV4_ENV), unless its command
- * sets the variable itself, so its connects to loopback match srt's Seatbelt rule.
+ * A process that runs .NET on macOS (`dotnet`) gets its sockets in IPv4 only (DOTNET_IPV4_ENV), so its connects to
+ * loopback match srt's Seatbelt rule, and file watchers that poll (DOTNET_POLLING_WATCHER_ENV), since the FSEvents
+ * service a native watcher asks is out of reach; a variable the command sets itself is kept.
  */
 function sandboxEnv(env: Record<string, string>, allowWrite: string[], chromium: boolean, dotnet: boolean): Record<string, string> {
   const out = { ...env };
@@ -588,7 +600,7 @@ function sandboxEnv(env: Record<string, string>, allowWrite: string[], chromium:
   }
   // Only a private directory already in the write allowlist: never srt's shared /tmp/claude, never a new path.
   if (chromium && writable(out.CLAUDE_CODE_TMPDIR)) out.MAC_CHROMIUM_TMPDIR = out.CLAUDE_CODE_TMPDIR!;
-  if (dotnet) for (const [name, value] of Object.entries(DOTNET_IPV4_ENV)) if (out[name] === undefined) out[name] = value;
+  if (dotnet) for (const [name, value] of Object.entries({ ...DOTNET_IPV4_ENV, ...DOTNET_POLLING_WATCHER_ENV })) if (out[name] === undefined) out[name] = value;
   return out;
 }
 

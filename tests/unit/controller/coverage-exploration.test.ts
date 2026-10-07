@@ -8,6 +8,7 @@ import { listFailures } from '../../../src/evidence/store.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
 import { getWorker, listWorkers } from '../../../src/storage/workers.ts';
 import { SPEC_OUTPUT_SCHEMA, exploreCandidate, explorationEnabled, explorationUnverified } from '../../../src/controller/exploration.ts';
+import { repoKey } from '../../../src/controller/context.ts';
 import { addCandidate, makeUnitLab, setContract, type UnitLab } from './coverage-helpers.ts';
 
 let lab: UnitLab;
@@ -89,7 +90,14 @@ describe('exploreCandidate', () => {
 
   it('records each reproduced finding as a failure of the candidate, writes the report and one decision, and returns the result', async () => {
     const { ctx, cand, outDir } = setup(adapter(() => result()));
-    const res = await exploreCandidate(ctx, cand, lab.repo, outDir, { exploreUi: async (o) => (expect(o.goal).toBe('Add a mul function to the calculator.'), explored()) });
+    const res = await exploreCandidate(ctx, cand, lab.repo, outDir, {
+      exploreUi: async (o) => {
+        expect(o.goal).toBe('Add a mul function to the calculator.');
+        // The application under test reads the repository's dependency caches, as the checks do (issue #26).
+        expect(o.toolchainCacheRoot).toBe(join(lab.home, 'toolchains', repoKey(lab.repo)));
+        return explored();
+      },
+    });
     expect(res?.outcome).toBe('completed');
     const failures = listFailures(lab.db, lab.runId);
     expect(failures).toHaveLength(1);

@@ -56,7 +56,10 @@ import { recordDecision } from '../storage/decisions.ts';
 import { redact } from '../core/redact.ts';
 import { authorize } from '../policy/authorize.ts';
 import { prepareWorkerTmpDir, profileForCheck } from '../isolation/profiles.ts';
+import { commandToolchains, prepareToolchainLayout, removeScratch, type ToolchainLayout } from '../isolation/toolchains.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../evidence/candidate.ts';
+import { msbuildNodeDenialNote, msbuildNodeFix, nodeDenialSubject, runStoppingRefusedNodes } from '../evidence/msbuild.ts';
+import { privateHomeDotnetEnv } from '../evidence/runner.ts';
 import { assertDeliverable, assertRecordedBindings, verifyCandidateTree } from './gate.ts';
 import { fetchBranchContaining, gitEnv, hasCommit, isObjectId, remoteHost, resolveRemoteUrl } from './git.ts';
 
@@ -101,8 +104,13 @@ export interface ReleaseInput {
   workDir?: string;
   /** Controller-supplied environment for the deploy command (its deploy credentials). Never a worker-supplied value. */
   deployEnv?: Record<string, string>;
-  /** Real home directory, used only to compute what the sandbox must hide. */
+  /** Real home directory, used only to compute what the sandbox must hide (and to find a rustup installation). */
   homeDir?: string;
+  /**
+   * The repository's toolchain dependency caches (isolation/toolchains.ts toolchainCacheRoot), read-only for the deploy
+   * command, as for a check. Absent: the command keeps its caches in its private scratch.
+   */
+  toolchainCacheRoot?: string | null;
   /** Overrides repository.remote (a name or URL). */
   remote?: string;
   /** Scoped token for HTTPS fetches of the merge commit. */
@@ -598,22 +606,35 @@ async function runDeploy(a: {
       kind: 'command',
       category: 'other',
     };
-    const profile = profileForCheck({ worktree: checkout, check: def, snapshot, extraWritable: [files.home, tmp], ...(input.homeDir ? { homeDir: input.homeDir } : {}) });
-    const cmdEnv = releaseCommandEnv({ home: files.home, tmp, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha });
-    const wrapped = a.isolation.wrap([...env.deploy_command], profile, { cwd: checkout, env: cmdEnv });
-    // The marker goes down before the command starts: from here on, a missing outcome means "unknown", never "not run".
-    atomicWriteJson(files.started, { environment: envName, sha, attempt: a.attempt, started_at: input.clock.now() }, 0o600);
+    const field = `release.environments.${envName}.deploy_command`;
+    const scratch = join(files.dir, 'toolchains');
+    const toolchains = releaseToolchains({ command: env.deploy_command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, ...(input.homeDir ? { homeDir: input.homeDir } : {}) });
+    const profile = profileForCheck({ worktree: checkout, check: def, snapshot, extraWritable: [files.home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, ...(input.homeDir ? { homeDir: input.homeDir } : {}) });
+    const cmdEnv = releaseCommandEnv({ home: files.home, tmp, toolchainEnv: toolchains.env, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha });
     let outcome: DeployOutcome;
+    let stopped: string | null = null;
     try {
-      const res = await execCapture(wrapped.argv, { cwd: checkout, env: wrapped.env, timeoutMs: env.timeout_seconds * 1000, maxOutputBytes: 1024 * 1024 });
-      const output = redact(`${res.stdout}${res.stderr ? `\n${res.stderr}` : ''}`).slice(-OUTPUT_TAIL);
-      outcome = { environment: envName, branch, sha, tree, attempt: a.attempt, exitCode: res.exitCode, timedOut: res.timedOut, durationMs: res.durationMs, isolation: a.isolation.kind, limitations: wrapped.limitations, output };
+      const wrapped = a.isolation.wrap([...env.deploy_command], profile, { cwd: checkout, env: cmdEnv });
+      // The marker goes down before the command starts: from here on, a missing outcome means "unknown", never "not run".
+      atomicWriteJson(files.started, { environment: envName, sha, attempt: a.attempt, started_at: input.clock.now() }, 0o600);
+      try {
+        const ran = await runReleaseCommand({ argv: wrapped.argv, checkout, env: wrapped.env, timeoutMs: env.timeout_seconds * 1000, tmp, command: env.deploy_command, field, what: 'the deploy command' });
+        const res = ran.result;
+        stopped = ran.stopped ? ran.note : null;
+        const output = redact(`${res.stdout}${res.stderr ? `\n${res.stderr}` : ''}${ran.note ? `\n[orbit] ${ran.note}` : ''}`).slice(-OUTPUT_TAIL);
+        // Stopped, it has no exit code of its own: srt exits 0 on SIGTERM (measured), which must never read as deployed.
+        outcome = { environment: envName, branch, sha, tree, attempt: a.attempt, exitCode: ran.stopped ? null : res.exitCode, timedOut: res.timedOut, durationMs: res.durationMs, isolation: a.isolation.kind, limitations: wrapped.limitations, output };
+      } finally {
+        wrapped.cleanup();
+      }
     } finally {
-      wrapped.cleanup();
+      removeScratch(scratch);
     }
     atomicWriteJson(files.outcome, outcome, 0o600);
     if (outcome.exitCode !== 0 || outcome.timedOut) {
-      throw new OrbitError('DELIVERY_FAILED', `the deploy of ${sha.slice(0, 12)} to ${envName} ${outcome.timedOut ? `timed out after ${env.timeout_seconds}s, so whether it took effect is unknown` : `exited ${outcome.exitCode ?? 'by signal'}`}: ${outcome.output.slice(-500)}`, { definitive: true, ...(outcome.timedOut ? unknownDetails(envName, sha) : {}) });
+      // Stopped for a refused MSBuild node, its build could not succeed: a failure like any other exit, with the note whole.
+      const ended = outcome.timedOut ? `timed out after ${env.timeout_seconds}s, so whether it took effect is unknown` : stopped ? 'was stopped' : `exited ${outcome.exitCode ?? 'by signal'}`;
+      throw new OrbitError('DELIVERY_FAILED', `the deploy of ${sha.slice(0, 12)} to ${envName} ${ended}: ${redact(stopped ?? '') || outcome.output.slice(-500)}`, { definitive: true, ...(outcome.timedOut ? unknownDetails(envName, sha) : {}) });
     }
     return receiptOf(outcome);
   } finally {
@@ -621,9 +642,37 @@ async function runDeploy(a: {
   }
 }
 
-/** The scrubbed environment of a deploy or verify command: the controller's deploy credentials, never a worker's. */
-function releaseCommandEnv(a: { home: string; tmp: string; deployEnv: Record<string, string> | undefined; runId: string; envName: string; branch: string; sha: string; extra?: Record<string, string> }): Record<string, string> {
+/**
+ * The toolchain layout of a deploy or verify command (docs/decisions/0009-toolchain-profiles.md, addendum, item 14),
+ * found as a check's is from its command and the deployed checkout's marker files: the repository's dependency caches
+ * read-only (only Orbit's install step writes them), build state private to the command, and for .NET the NIS rule.
+ */
+function releaseToolchains(a: { command: readonly string[]; checkout: string; cacheRoot: string | null; scratch: string; tmp: string; isolation: IsolationProvider['kind']; networkHosts: readonly string[]; homeDir?: string }): ToolchainLayout {
+  const layout = commandToolchains({ command: a.command, roots: [a.checkout], mode: 'check', cacheRoot: a.cacheRoot, scratchRoot: a.scratch, tmpDir: a.tmp, isolation: a.isolation, networkHosts: a.networkHosts, ...(a.homeDir ? { hostHome: a.homeDir } : {}), hostEnv: process.env });
+  prepareToolchainLayout(layout);
+  return layout;
+}
+
+/**
+ * Run a wrapped release command, stopped as soon as MSBuild records a worker node the sandbox refused (it would wait 30 s
+ * for each of ten node starts, past many a command's timeout, which leaves a deploy UNKNOWN). `note`: that denial with
+ * the command's field fixed, or null.
+ */
+async function runReleaseCommand(a: { argv: string[]; checkout: string; env: Record<string, string>; timeoutMs: number; tmp: string; command: readonly string[]; field: string; what: string }) {
+  const ran = await runStoppingRefusedNodes(a.tmp, (signal) => execCapture(a.argv, { cwd: a.checkout, env: a.env, timeoutMs: a.timeoutMs, maxOutputBytes: 1024 * 1024, abortSignal: signal }));
+  const note = ran.denial ? msbuildNodeDenialNote(ran.denial, msbuildNodeFix({ id: a.field, command: [...a.command], shell: false }, { command: a.field, env: null }), ran.stopped, nodeDenialSubject(a.what)) : null;
+  return { result: ran.result, stopped: ran.stopped, note };
+}
+
+/**
+ * The scrubbed environment of a deploy or verify command: the controller's deploy credentials, never a worker's. Its
+ * toolchains' variables first (they cannot replace what is fixed here), and the .NET settings of a check's private home,
+ * the home prepared as a check's: with a new, empty home every dotnet command is the SDK's first run, which the sandbox
+ * refuses (issue #26).
+ */
+function releaseCommandEnv(a: { home: string; tmp: string; toolchainEnv?: Record<string, string>; deployEnv: Record<string, string> | undefined; runId: string; envName: string; branch: string; sha: string; extra?: Record<string, string> }): Record<string, string> {
   return {
+    ...(a.toolchainEnv ?? {}),
     PATH: process.env.PATH ?? '/usr/bin:/bin',
     HOME: a.home,
     TMPDIR: a.tmp,
@@ -634,6 +683,7 @@ function releaseCommandEnv(a: { home: string; tmp: string; deployEnv: Record<str
     GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_CONFIG_NOSYSTEM: '1',
     GIT_TERMINAL_PROMPT: '0',
+    ...privateHomeDotnetEnv(a.home),
     ...(a.deployEnv ?? {}),
     ORBIT_RUN_ID: a.runId,
     ORBIT_RELEASE_ENVIRONMENT: a.envName,
@@ -669,6 +719,8 @@ export interface ResolveDeployInput {
   isolation?: IsolationProvider;
   deployEnv?: Record<string, string>;
   homeDir?: string;
+  /** The repository's toolchain dependency caches, read-only for the verify_command (ReleaseInput.toolchainCacheRoot). */
+  toolchainCacheRoot?: string | null;
   git?: GitOptions;
 }
 
@@ -783,19 +835,29 @@ async function runVerifyCommand(a: {
     mkdirSync(home, { recursive: true, mode: 0o700 });
     const tmp = prepareWorkerTmpDir(dir);
     const def: CheckDefinition = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: '.', timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], local_binding: false, env: {}, mandatory: true, flaky_reruns: 0, kind: 'command', category: 'other' };
-    const profile = profileForCheck({ worktree: checkout, check: def, snapshot, extraWritable: [home, tmp], ...(input.homeDir ? { homeDir: input.homeDir } : {}) });
-    const cmdEnv = releaseCommandEnv({ home, tmp, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha, extra: { ORBIT_RELEASE_VERIFY: '1' } });
-    const wrapped = a.isolation.wrap([...a.command], profile, { cwd: checkout, env: cmdEnv });
+    const scratch = join(dir, 'toolchains');
+    const toolchains = releaseToolchains({ command: a.command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, ...(input.homeDir ? { homeDir: input.homeDir } : {}) });
+    const profile = profileForCheck({ worktree: checkout, check: def, snapshot, extraWritable: [home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, ...(input.homeDir ? { homeDir: input.homeDir } : {}) });
+    const cmdEnv = releaseCommandEnv({ home, tmp, toolchainEnv: toolchains.env, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha, extra: { ORBIT_RELEASE_VERIFY: '1' } });
     try {
-      const res = await execCapture(wrapped.argv, { cwd: checkout, env: wrapped.env, timeoutMs: env.timeout_seconds * 1000, maxOutputBytes: 1024 * 1024 });
-      const output = redact(`${res.stdout}${res.stderr ? `\n${res.stderr}` : ''}`).trim().slice(-500);
-      const tail = output ? `: ${output}` : '';
-      if (res.timedOut) return { verdict: 'unknown', detail: `the verify_command timed out after ${env.timeout_seconds}s` };
-      if (res.exitCode === 0) return { verdict: 'deployed', detail: `verify_command exited 0 for ${sha.slice(0, 12)} in ${envName}${tail}` };
-      if (res.exitCode === 1) return { verdict: 'not-deployed', detail: `verify_command exited 1 for ${sha.slice(0, 12)} in ${envName}${tail}` };
-      return { verdict: 'unknown', detail: `verify_command ${res.exitCode === null ? 'was stopped by a signal' : `exited ${res.exitCode}`} (0 means deployed, 1 means not deployed), so the outcome is still unknown${tail}` };
+      const wrapped = a.isolation.wrap([...a.command], profile, { cwd: checkout, env: cmdEnv });
+      try {
+        const ran = await runReleaseCommand({ argv: wrapped.argv, checkout, env: wrapped.env, timeoutMs: env.timeout_seconds * 1000, tmp, command: a.command, field: `release.environments.${envName}.verify_command`, what: 'the verify command' });
+        const res = ran.result;
+        // Its own build was refused an MSBuild worker node (stopped for it, or failed on it at once on Linux): whatever it
+        // exited with says nothing about the deploy, an exit 1 included.
+        if (ran.note) return { verdict: 'unknown', detail: `verify_command ${ran.stopped ? 'was stopped' : 'failed on its own build'}, so the outcome is still unknown: ${redact(ran.note)}` };
+        const output = redact(`${res.stdout}${res.stderr ? `\n${res.stderr}` : ''}`).trim().slice(-500);
+        const tail = output ? `: ${output}` : '';
+        if (res.timedOut) return { verdict: 'unknown', detail: `the verify_command timed out after ${env.timeout_seconds}s` };
+        if (res.exitCode === 0) return { verdict: 'deployed', detail: `verify_command exited 0 for ${sha.slice(0, 12)} in ${envName}${tail}` };
+        if (res.exitCode === 1) return { verdict: 'not-deployed', detail: `verify_command exited 1 for ${sha.slice(0, 12)} in ${envName}${tail}` };
+        return { verdict: 'unknown', detail: `verify_command ${res.exitCode === null ? 'was stopped by a signal' : `exited ${res.exitCode}`} (0 means deployed, 1 means not deployed), so the outcome is still unknown${tail}` };
+      } finally {
+        wrapped.cleanup();
+      }
     } finally {
-      wrapped.cleanup();
+      removeScratch(scratch);
     }
   } finally {
     await cleanupCandidateCheckout(run.repoRoot, checkout).catch(() => {});

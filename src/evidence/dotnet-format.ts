@@ -1,7 +1,7 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, posix, relative, isAbsolute } from 'node:path';
 import type { CheckDefinition } from '../policy/types.ts';
-import { chainOf, commandsOf, isDotnet, type JudgedCheck, msbuildFix, type MsbuildFix, msbuildFixReason, msbuildNodeFix, msbuildNodes, type MsbuildFixWhere, onOneProcessor, shellLine, shellWord, shown, simple, type Simple, verbOf, words } from './msbuild.ts';
+import { chainOf, commandsOf, isDotnet, type JudgedCheck, msbuildFix, type MsbuildFix, msbuildFixReason, msbuildNodeFix, msbuildNodes, type MsbuildFixWhere, onOneProcessor, pasted, shellLine, shellWord, shown, simple, type Simple, verbOf, words } from './msbuild.ts';
 
 /**
  * dotnet format under the check sandbox (issue #10; docs/decisions/0009-toolchain-profiles.md, addendum). Every form of
@@ -70,8 +70,13 @@ export const FORMAT_OUTSIDE_REASON =
   "with SDK 8 pinned by global.json, which loads the project in dotnet format's own process, a dotnet restore -m:1 first and dotnet format with --no-restore run; " +
   'docs/troubleshooting.md, "dotnet format under the sandbox")';
 
-/** The fix for a dotnet format check that cannot run in the check sandbox (FORMAT_OUTSIDE_REASON): run it outside Orbit. */
-export function formatOutsideFix(check: Pick<CheckDefinition, 'id'>): string {
+/**
+ * The fix for a dotnet format check that cannot run in the check sandbox (FORMAT_OUTSIDE_REASON): run it outside Orbit.
+ * For another command Orbit starts in such a sandbox (`where`: a release environment's deploy_command, say), dotnet
+ * format comes out of that command.
+ */
+export function formatOutsideFix(check: Pick<CheckDefinition, 'id'>, where: MsbuildFixWhere | null = null): string {
+  if (where) return `remove dotnet format from ${where.command} and run it in CI`;
   return `remove checks.${check.id} from .orbit/config.yaml, or set checks.${check.id}.mandatory: false, and run dotnet format in CI`;
 }
 
@@ -291,11 +296,12 @@ const withRestoreFirst = (check: JudgedCheck) =>
  * with the folder form in place of each such dotnet format, ready to paste (an argv keeps its program and what `env`
  * sets; a chain, or `sh -c`, is rewritten in place), or, for a shell line doctor cannot split, the form to run instead.
  * The folder form reads the folder of the solution or project the check formats, with its --include and --exclude.
+ * `where` names another field than the check's command (a release environment's deploy_command, say).
  */
-export function dotnetFormatFix(check: JudgedCheck & Pick<CheckDefinition, 'id'>): string {
-  const field = `checks.${check.id}.command`;
+export function dotnetFormatFix(check: JudgedCheck & Pick<CheckDefinition, 'id'>, where: MsbuildFixWhere | null = null): string {
+  const field = where?.command ?? `checks.${check.id}.command`;
   const fixed = withFolderForm(check);
-  return fixed ? `${field}: ${shown(fixed.command)}` : `in ${field}, run "${FOLDER_TEXT}" in place of its dotnet format command`;
+  return fixed ? pasted(field, fixed.command, fixed.shell && !check.shell) : `in ${field}, run "${FOLDER_TEXT}" in place of its dotnet format command`;
 }
 
 /**
@@ -319,7 +325,7 @@ export function formatRestoreFix(check: JudgedCheck & Pick<CheckDefinition, 'id'
   if (fixed?.shell) {
     // An argv, now a shell line of its own restore, pinned, and its format: nothing else to pin, and its words quoted.
     const field = where?.command ?? `checks.${check.id}.command`;
-    return { change: `${field}: ${shown(fixed.command)} with ${field.slice(0, -'.command'.length)}.shell: true ${RESTORE_FIRST}`, env: msbuildFix(check, where).env };
+    return { change: `${pasted(field, fixed.command, true)} ${RESTORE_FIRST}`, env: msbuildFix(check, where).env };
   }
   const fix = msbuildFix(fixed ? { ...check, command: fixed.command } : check, where);
   return { ...fix, change: `${fix.change} ${RESTORE_FIRST}` };

@@ -340,6 +340,47 @@ export function toolchainLayout(input: ToolchainLayoutInput): ToolchainLayout {
   };
 }
 
+export interface CommandToolchainsInput {
+  command: readonly string[];
+  shell?: boolean;
+  /** Where the command's marker files are looked for: the checkout root and the directory it runs in. */
+  roots: readonly string[];
+  mode: ToolchainMode;
+  cacheRoot: string | null;
+  scratchRoot: string;
+  tmpDir: string;
+  /** The provider the command runs under: a container brings its own toolchain installation and runs Linux. */
+  isolation: 'sandbox-runtime' | 'container' | 'none';
+  /** The hosts the command's sandbox lets it reach. */
+  networkHosts: readonly string[];
+  /** The account's real home, only to find an existing rustup installation. */
+  hostHome?: string;
+  hostEnv?: Readonly<Record<string, string | undefined>>;
+  /** The host's platform; process.platform by default. */
+  platform?: NodeJS.Platform;
+}
+
+/**
+ * The toolchain layout of one sandboxed command, found as a check's is: the toolchains its command and its marker files
+ * name, with the repository's caches (`cacheRoot`), build state in `scratchRoot`, and the hosts its sandbox allows.
+ * Under a container the platform is Linux whatever the host's, and the host's rustup and JDK are neither mounted nor
+ * wanted. Checks and the dependency install use it (evidence/runner.ts), and so do the other commands Orbit starts in a
+ * sandbox built from the check profile: approved operations, the application under test, and release commands (#26).
+ */
+export function commandToolchains(input: CommandToolchainsInput): ToolchainLayout {
+  const container = input.isolation === 'container';
+  return toolchainLayout({
+    toolchains: detectToolchains({ command: input.command, ...(input.shell === undefined ? {} : { shell: input.shell }), roots: input.roots }),
+    mode: input.mode,
+    cacheRoot: input.cacheRoot,
+    scratchRoot: input.scratchRoot,
+    tmpDir: input.tmpDir,
+    platform: container ? 'linux' : (input.platform ?? process.platform),
+    networkHosts: input.networkHosts,
+    ...(container ? { hostEnv: {} } : { hostEnv: input.hostEnv ?? process.env, ...(input.hostHome ? { hostHome: input.hostHome } : {}) }),
+  });
+}
+
 /** Create the layout's directories, owner-only. Orbit (trusted) creates the caches; only the install step fills them. */
 export function prepareToolchainLayout(layout: ToolchainLayout): void {
   for (const d of layout.directories) {

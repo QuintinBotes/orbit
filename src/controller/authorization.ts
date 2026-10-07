@@ -32,7 +32,7 @@
  * so there is no delivery action to authorize there.
  */
 import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { canonicalJson, sha256 } from '../core/hash.ts';
 import { atomicWrite, readJsonIfExists } from '../core/fsx.ts';
 import { OrbitError, isOrbitError } from '../core/errors.ts';
@@ -41,6 +41,10 @@ import { redact } from '../core/redact.ts';
 import { authorize } from '../policy/authorize.ts';
 import type { CheckDefinition, Operation, PolicySnapshot } from '../policy/types.ts';
 import { prepareWorkerTmpDir, profileForCheck } from '../isolation/profiles.ts';
+import { commandToolchains, detectToolchains, prepareToolchainLayout, removeScratch, TOOLCHAIN_PROFILES, type ToolchainId } from '../isolation/toolchains.ts';
+import { classifyBash } from '../policy/bash.ts';
+import { msbuildNodeDenialNote, msbuildNodeFix, nodeDenialSubject, runStoppingRefusedNodes } from '../evidence/msbuild.ts';
+import { privateHomeDotnetEnv } from '../evidence/runner.ts';
 import { ActionLedger } from '../delivery/actions.ts';
 import type { ScopeReport } from '../evidence/types.ts';
 import { isHumanActor, persistQuestion } from '../inquisition/questions.ts';
@@ -50,7 +54,7 @@ import { getDecision, listDecisions } from '../storage/decisions.ts';
 import type { WorkerRecord } from '../storage/workers.ts';
 import { readLogLines } from '../adapters/supervise.ts';
 import { LOG_FILE } from '../adapters/shim.ts';
-import type { RunContext } from './context.ts';
+import { homeOf, toolchainCacheRootFor, type RunContext } from './context.ts';
 import { decide } from './steps/common.ts';
 import { denialTarget, denialsFromTranscript } from './denials.ts';
 
@@ -358,27 +362,74 @@ export async function runApprovedOperation(ctx: RunContext, n: number, op: Guard
   }
 }
 
+/**
+ * Whether an approved command installs packages with a toolchain it uses (`dotnet add package`, `cargo fetch`, `pip
+ * install`, `go get`): then the approved operation is the install, and may write the repository's dependency caches as
+ * Orbit's install step does (docs/decisions/0009-toolchain-profiles.md, addendum, item 14). Anything else reads them, as
+ * a check does.
+ */
+function installsWith(command: string, worktree: string, toolchains: readonly ToolchainId[]): boolean {
+  const cls = classifyBash(command, { cwd: worktree, root: worktree });
+  return cls.commands.some((c) => c.category === 'package-install' && toolchains.some((id) => TOOLCHAIN_PROFILES[id].executables.test(basename(c.argv[0] ?? ''))));
+}
+
 async function executeApproved(ctx: RunContext, plan: { argv: string[]; shown: string; host: string | null }, dir: string, rel: string): Promise<ApprovedReceipt> {
   const worktree = ctx.run.worktreePath!;
   const home = join(dir, 'home');
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const tmp = prepareWorkerTmpDir(dir);
   const hosts = [...new Set([...ctx.snapshot.config.network.allowed_hosts, ...(plan.host ? [plan.host] : [])])];
+  const isolation = ctx.isolation();
+  // The toolchain profile a check gets (ADR 0009, addendum, item 14): the repository's dependency caches, read-only unless
+  // the approved command is itself a package install of a toolchain it uses, build state private to this command, and
+  // for .NET the NIS domain name rule, a home prepared as a check's and the runner's early stop for a refused MSBuild
+  // worker node. Its network is exactly the frozen policy's hosts and the approved one, which decides NuGet's audit.
+  const ids = detectToolchains({ command: plan.argv, roots: [worktree] });
+  const install = plan.argv[0] === '/bin/sh' && installsWith(plan.shown, worktree, ids);
+  const scratch = join(dir, 'toolchains');
+  const toolchains = commandToolchains({ command: plan.argv, roots: [worktree], mode: install ? 'install' : 'check', cacheRoot: toolchainCacheRootFor(ctx), scratchRoot: scratch, tmpDir: tmp, isolation: isolation.kind, networkHosts: hosts, hostHome: homeOf(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
+  prepareToolchainLayout(toolchains);
   const def: CheckDefinition = { id: `approved-${rel.split('/').at(-1)}`, command: plan.argv, shell: false, cwd: '.', timeout_seconds: APPROVED_TIMEOUT_S, network_hosts: hosts, local_binding: false, env: {}, mandatory: false, flaky_reruns: 0, kind: 'command' };
-  const profile = profileForCheck({ worktree, check: def, snapshot: ctx.snapshot, extraWritable: [home, tmp] });
-  const env: Record<string, string> = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, TMPDIR: tmp, LANG: 'C.UTF-8', TERM: 'dumb', NO_COLOR: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
-  const wrapped = ctx.isolation().wrap(plan.argv, profile, { cwd: worktree, env });
-  let r;
+  const profile = profileForCheck({ worktree, check: def, snapshot: ctx.snapshot, extraWritable: [home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: homeOf(ctx.deps) });
+  const env: Record<string, string> = {
+    ...toolchains.env,
+    PATH: process.env.PATH ?? '/usr/bin:/bin',
+    HOME: home,
+    TMPDIR: tmp,
+    ...privateHomeDotnetEnv(home),
+    LANG: 'C.UTF-8',
+    TERM: 'dumb',
+    NO_COLOR: '1',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_TERMINAL_PROMPT: '0',
+  };
+  let r: Awaited<ReturnType<typeof execCapture>>;
+  let note: string | null = null;
+  let stopped = false;
   try {
-    r = await execCapture(wrapped.argv, { cwd: worktree, env: wrapped.env, timeoutMs: APPROVED_TIMEOUT_S * 1000, maxOutputBytes: APPROVED_MAX_OUTPUT_BYTES, abortSignal: ctx.signal });
-  } catch (err) {
-    throw new OrbitError('INTERNAL', `the approved command could not start: ${err instanceof Error ? err.message : String(err)}`, { definitive: true }, { cause: err });
+    const wrapped = isolation.wrap(plan.argv, profile, { cwd: worktree, env });
+    try {
+      const ran = await runStoppingRefusedNodes(tmp, (signal) => execCapture(wrapped.argv, { cwd: worktree, env: wrapped.env, timeoutMs: APPROVED_TIMEOUT_S * 1000, maxOutputBytes: APPROVED_MAX_OUTPUT_BYTES, abortSignal: signal }), ctx.signal);
+      r = ran.result;
+      stopped = ran.stopped;
+      if (ran.denial) note = msbuildNodeDenialNote(ran.denial, msbuildNodeFix({ id: def.id, command: plan.argv, shell: false }, { command: 'the command to approve', env: null }), ran.stopped, nodeDenialSubject('the approved command'));
+    } catch (err) {
+      throw new OrbitError('INTERNAL', `the approved command could not start: ${err instanceof Error ? err.message : String(err)}`, { definitive: true }, { cause: err });
+    } finally {
+      wrapped.cleanup();
+    }
   } finally {
-    wrapped.cleanup();
+    removeScratch(scratch);
   }
-  const text = redact(`$ ${plan.shown}\n[exit ${r.exitCode ?? `signal ${r.signal ?? 'unknown'}`}${r.timedOut ? ', timed out' : ''}]\n--- stdout ---\n${r.stdout}\n--- stderr ---\n${r.stderr}\n`);
+  // Stopped for a refused MSBuild node: its build could not succeed, whatever the stopped process exits with (srt exits
+  // 0 on SIGTERM, measured), so it has no exit code of its own.
+  const exitCode = stopped ? null : r.exitCode;
+  const ended = stopped ? 'stopped by Orbit: the sandbox refused an MSBuild worker node' : `exit ${r.exitCode ?? `signal ${r.signal ?? 'unknown'}`}${r.timedOut ? ', timed out' : ''}`;
+  const caches = toolchains.toolchains.length === 0 ? '' : `[toolchains ${toolchains.toolchains.join(', ')}: the repository's dependency caches ${install ? 'writable, since the command installs packages' : 'read-only'}]\n`;
+  const text = redact(`$ ${plan.shown}\n${caches}[${ended}]\n--- stdout ---\n${r.stdout}\n--- stderr ---\n${r.stderr}\n${note ? `--- orbit ---\n${note}\n` : ''}`);
   atomicWrite(join(dir, OUTPUT_FILE), text, 0o600);
-  const receipt: ApprovedReceipt = { exit_code: r.exitCode, timed_out: r.timedOut, path: join(rel, OUTPUT_FILE), sha256: sha256(text), excerpt: text.slice(-APPROVED_EXCERPT_CHARS) };
+  const receipt: ApprovedReceipt = { exit_code: exitCode, timed_out: r.timedOut, path: join(rel, OUTPUT_FILE), sha256: sha256(text), excerpt: text.slice(-APPROVED_EXCERPT_CHARS) };
   // Last: its presence is what tells a restarted controller the command ran.
   atomicWrite(join(dir, RECEIPT_FILE), `${JSON.stringify(receipt)}\n`, 0o600);
   return receipt;

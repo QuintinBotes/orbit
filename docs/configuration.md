@@ -157,6 +157,18 @@ in the middle of it). It runs like `deploy_command`, in isolation and with the
 environment's `network_hosts`. With `null`, an UNKNOWN deploy waits for a
 person.
 
+Both commands get the toolchain profile a check gets (see [Toolchain
+caches](#toolchain-caches-and-build-state)): the repository's dependency caches
+read-only, build state private to the command and removed after it, and for
+.NET a private home prepared as a check's, the NIS domain name rule on macOS,
+and `-m:1` in the command, which `orbit doctor` asks for
+(`release.environments.<name>.deploy_command` and `.verify_command`). A deploy
+that MSBuild records a refused worker node for is stopped at once and fails
+with the note and the fixed command, instead of waiting out MSBuild's five
+minutes and ending UNKNOWN; a verify command stopped that way leaves the deploy
+UNKNOWN. A deploy of a merge commit whose dependencies the run's install did not
+fetch fails with the tool's "read-only" message, as a check does.
+
 ## dependencies and network
 
 ```yaml
@@ -571,6 +583,21 @@ compile. A check's `env` overrides any of these variables, for example
 (`checks.sandbox`) lists each toolchain, whether it starts in the sandbox (for
 .NET: whether three generated projects build there) and where its caches live.
 
+The other commands Orbit starts in a sandbox built from the check profile get
+the same profile, found the same way from their command and the checkout's
+marker files (ADR 0009, addendum, item 14): the application under test
+(`ui.environment.start_command`, for the journeys and for exploration), a
+release environment's `deploy_command` and `verify_command`, and an operation a
+person approved once in a supervised run. They read the repository's caches and
+keep their build state private. An approved command that is itself a package
+install with a toolchain it uses (`dotnet add package`, `cargo add`, `pip
+install`, `go get`) is the install, and may write the repository's caches, as
+the dependency install does; its network stays the policy's hosts plus the one
+approved, and its output says the caches were writable. A command that runs
+.NET with a private home of its own (an approved operation, a release command)
+gets that home prepared as a check's, so the SDK's first-run steps do not reach
+the named mutex under `/tmp/.dotnet` that the sandbox refuses.
+
 A .NET check pins MSBuild to one node in its own command: `-m:1` on `dotnet
 build`, `test`, `publish`, `pack`, `restore`, `clean` and `msbuild` (and on
 `dependencies.install_command`), since a worker node needs a named pipe under
@@ -578,7 +605,11 @@ build`, `test`, `publish`, `pack`, `restore`, `clean` and `msbuild` (and on
 any `--`: after the `--` of `dotnet test` it goes to the test runner. `dotnet
 run` hands the switch to the program, so a check that runs a project builds
 first: `["dotnet build -m:1 && dotnet run --no-build"]` with `shell: true`.
-`orbit doctor` fails a mandatory check without it and prints the fixed command.
+`orbit doctor` fails a mandatory check without it and prints the fixed command,
+and judges `ui.environment.start_command` and a release environment's
+`deploy_command` and `verify_command` the same way, always as mandatory: those
+fields are argvs, so a fix that needs a shell line is a `sh -c` script, such as
+`[sh, -c, "dotnet build Web -m:1 && dotnet run --project Web --no-build"]`.
 Orbit does not change a check's processor count: `DOTNET_PROCESSOR_COUNT=1` in
 a check's own `env` also keeps MSBuild on one node, and doctor accepts it, but
 the test host gets one processor too, where xunit before 2.8 deadlocks a test
@@ -595,10 +626,14 @@ running it in CI. With SDK 8 pinned by a `global.json`, which loads
 the project in dotnet format's own process, any form runs once its restore is
 pinned: `["dotnet restore -m:1 && dotnet format --verify-no-changes
 --no-restore"]` with `shell: true`. On macOS the
-checks, the dependency install, workers and doctor's probes that run .NET may
-also read the NIS domain name, which .NET's HTTP clients need, and open IPv4
-sockets (`DOTNET_SYSTEM_NET_DISABLEIPV6=1` unless a check's `env` sets it), whose
-loopback connects the sandbox allows on every macOS release; a NuGet restore
+checks, the dependency install, workers, doctor's probes, approved operations,
+the application under test and release commands that run .NET may also read
+the NIS domain name, which .NET's HTTP clients need, and open IPv4 sockets
+(`DOTNET_SYSTEM_NET_DISABLEIPV6=1` unless a check's `env` sets it), whose
+loopback connects the sandbox allows on every macOS release, and their file
+watchers poll (`DOTNET_USE_POLLING_FILE_WATCHER=1`, likewise), since the
+sandbox keeps the FSEvents service a native watcher asks out of reach and an
+ASP.NET Core host hung at startup without it; a NuGet restore
 from nuget.org still cannot verify TLS there, so fill the repository's NuGet
 cache outside the sandbox with the command doctor's `checks.dotnet-packages`
 prints (it restores local tools too; a check that runs one restores it first,
@@ -646,6 +681,17 @@ ui:
 explorer look for UI defects beyond the journeys, within the time and spend
 ceilings; its findings are unproven until reproduced as a failing test. Accessibility scans and visual checks have
 limited coverage; Orbit reports that rather than claiming complete accessibility.
+
+`environment.start_command` is an argv, never run through a shell, and the
+application gets the toolchain profile of a check (see [Toolchain
+caches](#toolchain-caches-and-build-state)). A .NET application that `dotnet
+run` builds starts MSBuild worker nodes the sandbox refuses, so build it on
+one node first and run it without building:
+`[sh, -c, "dotnet build Web -m:1 && dotnet run --project Web --no-build"]`.
+`orbit doctor` fails `[dotnet, run, ...]` with that command, and an application
+whose build MSBuild records a refused node for is stopped at once, with the
+same fix in the run's reason, instead of never becoming ready within
+`ready_timeout_seconds`.
 
 ## isolation and providers
 

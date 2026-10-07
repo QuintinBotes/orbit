@@ -25,7 +25,7 @@ import { deliver, type DeliveryResult } from '../../delivery/deliver.ts';
 import { performRelease, resolveDeploy, type ReleaseResult } from '../../delivery/release.ts';
 import { FakeGitHub, GhCliClient, type GitHubClient } from '../../delivery/github.ts';
 import { resolveRemoteUrl } from '../../delivery/git.ts';
-import { homeOf, type RunContext } from '../context.ts';
+import { homeOf, toolchainCacheRootFor, type RunContext } from '../context.ts';
 import { completionGate, deliveryGate } from '../gates.ts';
 import { assertContract, blockOnOpenQuestions, decide, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
 import { implementerProvider } from './reviewing.ts';
@@ -144,6 +144,7 @@ export async function releaseDelivered(ctx: RunContext, d: DeliveredRecord, outc
       isolation: ctx.isolation(),
       workDir: ctx.runDir,
       homeDir: homeOf(ctx.deps),
+      toolchainCacheRoot: toolchainCacheRootFor(ctx),
     });
 
   // A deploy with an unknown outcome is first settled by the environment's verify_command and the release is then
@@ -190,7 +191,7 @@ export async function releaseDelivered(ctx: RunContext, d: DeliveredRecord, outc
  */
 async function settleUnknownDeploy(ctx: RunContext, ledger: ActionLedger, run: Parameters<typeof resolveDeploy>[0]['run'], environment: string): Promise<{ settled: boolean; detail: string | null }> {
   try {
-    const r = await resolveDeploy({ run, snapshot: ctx.snapshot, ledger, clock: ctx.clock, workDir: ctx.runDir, environment, resolution: 'verify', by: 'controller', isolation: ctx.isolation(), homeDir: homeOf(ctx.deps) });
+    const r = await resolveDeploy({ run, snapshot: ctx.snapshot, ledger, clock: ctx.clock, workDir: ctx.runDir, environment, resolution: 'verify', by: 'controller', isolation: ctx.isolation(), homeDir: homeOf(ctx.deps), toolchainCacheRoot: toolchainCacheRootFor(ctx) });
     return { settled: r.verdict !== 'unknown', detail: r.detail };
   } catch (err) {
     return { settled: false, detail: err instanceof Error ? err.message.slice(0, 300) : String(err) };

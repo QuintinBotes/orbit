@@ -214,7 +214,8 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
   const id = 'checks.sandbox';
   const result = (status: DoctorCheck['status'], summary: string, details: string[] = [], missing: string | null = null, fix: string | null = null): DoctorCheck => ({ id, area: 'checks', status, summary, details, missing, fix });
   const checks = Object.values(input.config.checks).filter((c) => c.kind === 'command');
-  if (checks.length === 0) return result('pass', 'not needed: no command check is defined');
+  const others = sandboxedCommands(input.config);
+  if (checks.length === 0 && others.length === 0) return result('pass', 'not needed: no command check is defined');
   const provider = input.provider;
   if (!provider || !input.available) return result('warn', 'not checked: isolation is unavailable (see the isolation check)', [], 'an available isolation provider');
   if (provider.kind !== 'sandbox-runtime') return result('pass', `not needed: checks run under ${provider.kind}, not in an OS sandbox on this host`);
@@ -244,21 +245,21 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
    * a form that loads the project is refused, since its build host's pipe under /tmp is refused whatever the check
    * does. True when the command was refused.
    */
-  const judge = (check: CheckDefinition, usesDotnet: boolean, label: string | null = null, where: MsbuildFixWhere | null = null): boolean => {
+  const judge = (check: CheckDefinition, usesDotnet: boolean, label: string | null = null, where: MsbuildFixWhere | null = null, formats = label === null): boolean => {
     const nodes = msbuildNodes(check, usesDotnet);
     const named = label ? { label } : {};
     const id = label ?? check.id;
     // A dotnet format that loads the project: SDK 8 (pinned by global.json) loads it in its own process, so only its
     // implicit restore's worker nodes are refused; SDK 9 and later load it through the build host the sandbox refuses.
-    const loads = label ? null : formatLoadsProject(check);
+    const loads = formats ? formatLoadsProject(check) : null;
     const inProcess = loads !== null && repo !== null && sdkFormatsInProcess(resolve(repo, check.cwd), repo);
     const restore = inProcess ? formatRestoresUnpinned(check) : null;
     const host = inProcess || !loads ? null : `runs "${loads.shown}", which loads the project through a build host whose named pipe .NET binds under /tmp`;
     // The folder form, where it cannot list the folders above a run's checkout: whatever SDK runs it.
-    const reads = label || folderForm ? null : formatReadsFolder(check);
+    const reads = !formats || folderForm ? null : formatReadsFolder(check);
     const folder = reads ? `runs "${reads.shown}", which lists every folder above the checkout for .editorconfig files, while a run's checkout sits in the Orbit home, which the check sandbox does not let it read` : null;
     // Where the folder form cannot run, a format the sandbox refuses is fixed by running it outside Orbit.
-    const outside = (host !== null && !folderForm) || folder !== null ? formatOutsideFix(check) : null;
+    const outside = (host !== null && !folderForm) || folder !== null ? formatOutsideFix(check, where) : null;
     if (nodes?.kind === 'unpinned' || restore) {
       // One fix for all of it, so the pasted command is not refused again for what it did not fix.
       const causes = [...(nodes?.kind === 'unpinned' ? [nodes.reason] : []), ...(restore ? [`runs "${restore.shown}", which restores the project first with a worker node per processor (SDK 8, which global.json pins, loads the project in its own process)`] : [])];
@@ -282,8 +283,8 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
     }
     const format = host ?? folder;
     if (format) {
-      details.push(`${check.id}: ${format}, and the check sandbox refuses it`);
-      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: ['pipe-denied'], cause: format, lines: [format] }, ...(outside ? { outside } : { format: dotnetFormatFix(check) }) });
+      details.push(`${id}: ${format}, and the check sandbox refuses it`);
+      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: ['pipe-denied'], cause: format, lines: [format] }, ...(outside ? { outside } : { format: dotnetFormatFix(check, where) }), ...named });
       return true;
     }
     return false;
@@ -323,6 +324,13 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
   if (deps.install_existing_lockfile && deps.install_command) {
     const install: CheckDefinition = { ...defaultCheck(INSTALL_CHECK_ID), command: [...deps.install_command], shell: false, mandatory: true };
     judge(install, detectToolchains({ command: install.command, roots: repo ? [repo] : [] }).includes('dotnet'), 'dependencies.install_command', { command: 'dependencies.install_command', env: null });
+  }
+  // The application under test and the release commands run in sandboxes built from the check profile, with the .NET
+  // toolchain's profile where they use .NET (issue #26): judged the same way, dotnet format included, and always as
+  // mandatory, since none of them can start when the sandbox refuses it. Their fields are argvs with no env of their own.
+  for (const o of others) {
+    const def: CheckDefinition = { ...defaultCheck(o.field), command: [...o.command], shell: false, mandatory: true };
+    judge(def, detectToolchains({ command: def.command, roots: repo ? [repo] : [] }).includes('dotnet'), o.field, { command: o.field, env: null }, true);
   }
   const refusedToolchains: { id: ToolchainId; failure: EnvironmentFailure; fix?: string; msbuild?: MsbuildFix; mandatory: boolean }[] = [];
   if (repo && input.orbitHome) {
@@ -384,21 +392,40 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
   const pipes = refused.every((r) => r.msbuild || r.format || r.outside);
   const one = 'dotnet commands that pin one MSBuild node (-m:1)';
   const loadsNothing = folderForm ? 'dotnet format checks that load no project (dotnet format whitespace --folder)' : 'dotnet format run outside Orbit, in CI';
+  // Checks and the dependency install run at the baseline; the application and the release commands later, when started.
+  const atBaseline = refused.some((r) => !r.label || r.label === 'dependencies.install_command');
+  const blocks = atBaseline ? 'a run would block at its baseline' : `a run would fail where Orbit starts ${refused.length === 1 ? 'it' : 'them'}`;
   return result(
     status,
     nodes
-      ? `${subject(refused)} would start MSBuild worker nodes, which the sandbox refuses; a run would block at its baseline`
+      ? `${subject(refused)} would start MSBuild worker nodes, which the sandbox refuses; ${blocks}`
       : formats
-        ? `${subject(refused)} ${refused.length === 1 ? 'runs' : 'run'} dotnet format, ${folderForm ? 'which loads the project through a build host the sandbox refuses its named pipe' : "which cannot run in a run's check sandbox on macOS"}; a run would block at its baseline`
+        ? `${subject(refused)} ${refused.length === 1 ? 'runs' : 'run'} dotnet format, ${folderForm ? 'which loads the project through a build host the sandbox refuses its named pipe' : "which cannot run in a run's check sandbox on macOS"}; ${blocks}`
         : pipes
           ? folderForm
-            ? `${subject(refused)} would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; a run would block at its baseline`
-            : `${subject(refused)} would start MSBuild worker nodes, whose named pipes the sandbox refuses, or run dotnet format, which cannot run in a run's check sandbox on macOS; a run would block at its baseline`
-          : `the sandbox refuses ${refused.length === 1 ? 'the executable' : 'the executables'} of ${subject(refused)}; a run would block at its baseline`,
+            ? `${subject(refused)} would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; ${blocks}`
+            : `${subject(refused)} would start MSBuild worker nodes, whose named pipes the sandbox refuses, or run dotnet format, which cannot run in a run's check sandbox on macOS; ${blocks}`
+          : `the sandbox refuses ${refused.length === 1 ? 'the executable' : 'the executables'} of ${subject(refused)}; ${blocks}`,
     details,
     nodes ? one : formats ? loadsNothing : pipes ? `${one}, and ${loadsNothing}` : 'a check executable that can start in the check sandbox',
     fixFor([...refused, ...refusedToolchains]),
   );
+}
+
+/**
+ * The commands besides checks and the dependency install that Orbit starts in a sandbox built from the check profile,
+ * by the field that configures each: the application under test, and each release environment's deploy and verify
+ * commands (issue #26).
+ */
+export function sandboxedCommands(config: OrbitConfig): { field: string; command: readonly string[] }[] {
+  const start = config.ui?.environment.start_command ?? null;
+  return [
+    ...(start && start.length > 0 ? [{ field: 'ui.environment.start_command', command: start }] : []),
+    ...Object.entries(config.release?.environments ?? {}).flatMap(([name, env]) => [
+      { field: `release.environments.${name}.deploy_command`, command: env.deploy_command },
+      ...(env.verify_command && env.verify_command.length > 0 ? [{ field: `release.environments.${name}.verify_command`, command: env.verify_command }] : []),
+    ]),
+  ];
 }
 
 /** Whether a check's own command runs one of the toolchain's executables (`dotnet test`, `cd app && go test`). */

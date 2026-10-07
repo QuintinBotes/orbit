@@ -19,6 +19,7 @@ const { listDecisions } = await import('../../../src/storage/decisions.ts');
 const { recordReview } = await import('../../../src/review/store.ts');
 const { FakeGitHub, GhCliClient } = await import('../../../src/delivery/github.ts');
 const { addEvidence, giveRepository, gitIn, initLedger, makeUnitLab, setContract } = await import('./coverage-helpers.ts');
+const { repoKey } = await import('../../../src/controller/context.ts');
 type UnitLab = import('./coverage-helpers.ts').UnitLab;
 type CandidateRecord = import('../../../src/evidence/store.ts').CandidateRecord;
 type OrbitConfig = import('../../../src/policy/types.ts').OrbitConfig;
@@ -299,7 +300,8 @@ describe('releaseDelivered', () => {
     expect(out).toMatchObject({ done: true });
     expect(state()).toBe('SUCCEEDED');
     const input = hooks.performRelease.mock.calls[0]![0] as { environments: string; pr: number | null; commit: string; contractMerge: boolean; readiness: () => { ok: boolean; reasons: string[] } };
-    expect(input).toMatchObject({ environments: 'all', pr: 7, commit: cand.commitSha, contractMerge: false });
+    // The deploy command reads the repository's dependency caches, as the checks do (issue #26).
+    expect(input).toMatchObject({ environments: 'all', pr: 7, commit: cand.commitSha, contractMerge: false, toolchainCacheRoot: join(lab.home, 'toolchains', repoKey(lab.repo)) });
     expect(input.readiness()).toMatchObject({ ok: true });
     expect(JSON.parse(readFileSync(join(lab.ctx().runDir, RELEASE_FILE), 'utf8'))).toMatchObject({ merge: { pr: 7, merge_commit: 'b'.repeat(40), method: 'squash' }, deploys: [{ environment: 'staging' }] });
     expect(decisions('release.completed')[0]?.summary).toContain('merged PR #7; deployed to staging');
@@ -366,7 +368,7 @@ describe('releaseDelivered', () => {
     hooks.resolveDeploy.mockResolvedValue({ verdict: 'deployed', detail: 'verified' });
     await releaseDelivered(lab.ctx(), record(cand), {});
     expect(hooks.resolveDeploy).toHaveBeenCalledTimes(1);
-    expect(hooks.resolveDeploy.mock.calls[0]![0]).toMatchObject({ environment: 'staging', resolution: 'verify', by: 'controller' });
+    expect(hooks.resolveDeploy.mock.calls[0]![0]).toMatchObject({ environment: 'staging', resolution: 'verify', by: 'controller', toolchainCacheRoot: join(lab.home, 'toolchains', repoKey(lab.repo)) });
     expect(state()).toBe('SUCCEEDED');
   });
 

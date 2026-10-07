@@ -22546,7 +22546,7 @@ function tempRoots() {
   return tempRootsCache;
 }
 function judgeRead(c, r, root, home2) {
-  const denied = (shown2) => deny("bash.credential-read", `${r.via} reads ${shown2}, which holds credentials`);
+  const denied = (shown3) => deny("bash.credential-read", `${r.via} reads ${shown3}, which holds credentials`);
   if (r.abs === null) {
     return c.credential(stripDotSlash(toPosix(posix3.normalize(r.path.replace(/^\/+/, ""))))) ? denied(r.path) : null;
   }
@@ -25406,9 +25406,9 @@ function validate(schema4, value, label) {
   if (fn(value)) return value;
   const errors = formatSchemaErrors(fn.errors);
   const name = label ?? labels.get(fn) ?? "value";
-  const shown2 = errors.slice(0, 10).join("; ");
+  const shown3 = errors.slice(0, 10).join("; ");
   const more = errors.length > 10 ? ` (and ${errors.length - 10} more)` : "";
-  throw new OrbitError("SCHEMA_INVALID", `${name} does not match its schema: ${shown2}${more}`, {
+  throw new OrbitError("SCHEMA_INVALID", `${name} does not match its schema: ${shown3}${more}`, {
     schema: labels.get(fn) ?? null,
     errors: errors.slice(0, MAX_REPORTED_ERRORS)
   });
@@ -30588,7 +30588,7 @@ function sandboxEnv(env, allowWrite, chromium, dotnet) {
   }
   if (chromium && writable(out.CLAUDE_CODE_TMPDIR)) out.MAC_CHROMIUM_TMPDIR = out.CLAUDE_CODE_TMPDIR;
   if (dotnet) {
-    for (const [name, value] of Object.entries(DOTNET_IPV4_ENV)) if (out[name] === void 0) out[name] = value;
+    for (const [name, value] of Object.entries({ ...DOTNET_IPV4_ENV, ...DOTNET_POLLING_WATCHER_ENV })) if (out[name] === void 0) out[name] = value;
   }
   return out;
 }
@@ -30686,7 +30686,7 @@ function isWsl1() {
     return false;
   }
 }
-var DENIED_RESOLVED_ADDRESSES, LABEL2, HOST_PATTERN, IPV6_PATTERN, SRT_LIMITATIONS, SRT_VERIFIED_VERSION, SRT_PACKAGE, PRELOAD_REFUSAL_FILE, CHROMIUM_MACH_RENDEZVOUS, CHROMIUM_MACH_RENDEZVOUS_LIMITATION, NIS_DOMAINNAME_READ, NIS_DOMAINNAME_LIMITATION, NIS_DOMAINNAME_SKIPPED, DOTNET_IPV4_ENV, LINUX_LIMITATION, SECCOMP_ARCHES, SandboxRuntimeIsolation, DEVELOPMENT_PACKAGE, LOADER_ENV_NAMES, LOADER_ENV_PREFIXES;
+var DENIED_RESOLVED_ADDRESSES, LABEL2, HOST_PATTERN, IPV6_PATTERN, SRT_LIMITATIONS, SRT_VERIFIED_VERSION, SRT_PACKAGE, PRELOAD_REFUSAL_FILE, CHROMIUM_MACH_RENDEZVOUS, CHROMIUM_MACH_RENDEZVOUS_LIMITATION, NIS_DOMAINNAME_READ, NIS_DOMAINNAME_LIMITATION, NIS_DOMAINNAME_SKIPPED, DOTNET_IPV4_ENV, DOTNET_POLLING_WATCHER_ENV, LINUX_LIMITATION, SECCOMP_ARCHES, SandboxRuntimeIsolation, DEVELOPMENT_PACKAGE, LOADER_ENV_NAMES, LOADER_ENV_PREFIXES;
 var init_sandbox_runtime = __esm({
   "src/isolation/sandbox-runtime.ts"() {
     "use strict";
@@ -30717,6 +30717,7 @@ var init_sandbox_runtime = __esm({
     NIS_DOMAINNAME_LIMITATION = ".NET on macOS: an Orbit preload on the unmodified srt CLI adds one Seatbelt rule, sysctl-read of kern.nisdomainname (the NIS domain name, empty unless the machine is bound to NIS) and nothing else, since .NET's CookieContainer reads it and every .NET HTTP client, NuGet's restore included, failed without it. It is read-only and reveals less than the host name srt already allows.";
     NIS_DOMAINNAME_SKIPPED = `.NET on macOS: the NIS domain name rule was not added, because the srt found is not the version Orbit's preload was verified against, so a .NET HTTP client (NuGet's restore included) fails with "GetDomainName: -1"; use the srt that ships with Orbit`;
     DOTNET_IPV4_ENV = Object.freeze({ DOTNET_SYSTEM_NET_DISABLEIPV6: "1" });
+    DOTNET_POLLING_WATCHER_ENV = Object.freeze({ DOTNET_USE_POLLING_FILE_WATCHER: "1" });
     LINUX_LIMITATION = "On Linux the mandatory write denies inside writable paths (.git/hooks, shell rc files...) are found by a scan at launch, so such files created later are not covered.";
     SECCOMP_ARCHES = { x64: "x64", arm64: "arm64" };
     SandboxRuntimeIsolation = class {
@@ -33151,9 +33152,9 @@ function compareWording(prev, next) {
   }
   if (qualifiers.size > 0) reasons.push(`the new text adds qualifying language (${[...qualifiers].sort().join(", ")})`);
   if (others.size > 0) {
-    const shown2 = [...others].slice(0, MAX_LISTED_WORDS);
-    const more = others.size > shown2.length ? `, and ${others.size - shown2.length} more` : "";
-    reasons.push(`the new text adds words that can narrow or redefine it (${shown2.join(", ")}${more})`);
+    const shown3 = [...others].slice(0, MAX_LISTED_WORDS);
+    const more = others.size > shown3.length ? `, and ${others.size - shown3.length} more` : "";
+    reasons.push(`the new text adds words that can narrow or redefine it (${shown3.join(", ")}${more})`);
   }
   return { clarification: reasons.length === 0, reasons };
 }
@@ -34409,8 +34410,11 @@ async function startApp(opts) {
   try {
     for (; ; ) {
       if (!groupAlive(spawned.pgid)) {
-        throw new OrbitError("INTERNAL", `the application exited before it became ready: ${logTail(logPath).trim() || "(no output)"}`, { reason: "app_exited", logPath });
+        const why = opts.stopWhen?.(true) ?? null;
+        throw new OrbitError("INTERNAL", `the application exited before it became ready: ${logTail(logPath).trim() || "(no output)"}${why ? `; ${why}` : ""}`, { reason: "app_exited", logPath });
       }
+      const stop = opts.stopWhen?.(false) ?? null;
+      if (stop !== null) throw new OrbitError("INTERNAL", `the application was stopped before it became ready: ${stop}`, { reason: "app_stopped", logPath });
       const status2 = await probe2(opts.baseUrl, requestTimeout);
       if (status2 !== null && isReadyStatus(status2)) return handle;
       if (clock.now() >= deadline) {
@@ -35755,6 +35759,19 @@ function toolchainLayout(input) {
     nisDomainName: ids.includes("dotnet")
   };
 }
+function commandToolchains(input) {
+  const container = input.isolation === "container";
+  return toolchainLayout({
+    toolchains: detectToolchains({ command: input.command, ...input.shell === void 0 ? {} : { shell: input.shell }, roots: input.roots }),
+    mode: input.mode,
+    cacheRoot: input.cacheRoot,
+    scratchRoot: input.scratchRoot,
+    tmpDir: input.tmpDir,
+    platform: container ? "linux" : input.platform ?? process.platform,
+    networkHosts: input.networkHosts,
+    ...container ? { hostEnv: {} } : { hostEnv: input.hostEnv ?? process.env, ...input.hostHome ? { hostHome: input.hostHome } : {} }
+  });
+}
 function prepareToolchainLayout(layout) {
   for (const d of layout.directories) {
     mkdirSync9(d, { recursive: true, mode: 448 });
@@ -36161,10 +36178,29 @@ function findMsbuildNodeDenial(tmpDir, maxNames = MAX_SCANNED_NAMES) {
 function msbuildNodeDenialText(d) {
   return `MSBuild node (pid ${d.pid}) could not bind its named pipe${d.pipe ? ` ${d.pipe}` : ""} (${d.exception})`;
 }
-function msbuildNodeDenialNote(d, fix, stopped = true) {
+function nodeDenialSubject(what) {
+  return { sandbox: `the sandbox of ${what}`, process: what, looker: "Orbit's" };
+}
+function msbuildNodeDenialNote(d, fix, stopped = true, subject = CHECK_SUBJECT) {
   const pipe = d.pipe ? ` ${d.pipe}` : "";
-  const how = stopped ? "; MSBuild waits 30 s for each of ten node starts before it fails, so Orbit stopped the check" : ", and the check failed on it before the runner's next look";
-  return `the check sandbox denied MSBuild node (pid ${d.pid}) its named pipe${pipe} (${d.exception})${how}. Fix: ${fix}`;
+  const how = stopped ? `; MSBuild waits 30 s for each of ten node starts before it fails, so Orbit stopped ${subject.process}` : `, and ${subject.process} failed on it before ${subject.looker} next look`;
+  return `${subject.sandbox} denied MSBuild node (pid ${d.pid}) its named pipe${pipe} (${d.exception})${how}. Fix: ${fix}`;
+}
+async function runStoppingRefusedNodes(tmpDir, run, outer, everyMs = NODE_SCAN_MS) {
+  const stop = new AbortController();
+  let denial = null;
+  const timer = setInterval(() => {
+    if (denial !== null) return;
+    denial = findMsbuildNodeDenial(tmpDir);
+    if (denial !== null) stop.abort();
+  }, everyMs);
+  try {
+    const result2 = await run(outer ? AbortSignal.any([outer, stop.signal]) : stop.signal);
+    const found = denial;
+    return { result: result2, denial: found ?? findMsbuildNodeDenial(tmpDir), stopped: found !== null };
+  } finally {
+    clearInterval(timer);
+  }
 }
 function onOneProcessor(env) {
   return env?.DOTNET_PROCESSOR_COUNT?.trim() === "1";
@@ -36323,15 +36359,19 @@ function withOneNode(check) {
 function shown(command) {
   return `[${command.map((w) => JSON.stringify(w)).join(", ")}]`;
 }
+function pasted(field, command, line3) {
+  if (!line3) return `${field}: ${shown(command)}`;
+  if (field.endsWith(".command")) return `${field}: ${shown(command)} with ${field.slice(0, -".command".length)}.shell: true`;
+  return `${field}: ${shown(["sh", "-c", command.join(" ")])}`;
+}
 function msbuildFix(check, where2 = null) {
   const env = check && onOneProcessor(check.env) ? null : where2 ? where2.env : check ? `checks.${check.id}.env` : "a check's env";
   if (!check) return { change: `pass -m:1 to every dotnet ${VERB_LIST} a check starts, ${RUN_CLAUSE}`, env };
   const field = where2?.command ?? `checks.${check.id}.command`;
   const fixed = withOneNode(check);
   if (fixed) {
-    const shellToo = fixed.shell && !check.shell && field.endsWith(".command") ? ` with ${field.slice(0, -".command".length)}.shell: true` : "";
     const why = fixed.run ? " (dotnet run hands -m:1 to the program, so build with it first, with the same configuration and framework, and run without building)" : "";
-    return { change: `${field}: ${shown(fixed.command)}${shellToo}${why}`, env };
+    return { change: `${pasted(field, fixed.command, fixed.shell && !check.shell)}${why}`, env };
   }
   const current = shown(check.command);
   const cut = current.length > MAX_SHOWN_CHARS ? `${current.slice(0, MAX_SHOWN_CHARS - 3)}...` : current;
@@ -36358,7 +36398,7 @@ function probeNodeSwitches(check) {
   if (builds.length === 0) return [ONE_NODE];
   return [...new Set(builds.flatMap((c) => verbOf(c.argv) === "run" ? [] : nodeSwitches(msbuildWords(c.argv, verbOf(c.argv))).map((s) => s.word)))];
 }
-var REPORT_DIR, REPORT_FILE, MAX_REPORTS, MAX_TMP_ENTRIES, MAX_REPORT_DIR_ENTRIES, MAX_SCANNED_NAMES, MAX_REPORT_BYTES, MAX_EXCEPTION_CHARS, SOCKET_EXCEPTION, PIPE_SERVER, BUILD_NODE, same, NODE_SWITCH, ONE_NODE, MSBUILD_VERBS, VERB_LIST, RUN_CLAUSE, RUN_REASON, CANNOT_TELL, RUNNERS, SCRIPT, SHELLS2, SHELL_SYNTAX, CHAIN_SEPARATOR, ASSIGNMENT2, MAX_SHOWN_CHARS, isDotnet, verbOf, msbuildWords, runsOthers, PINNED, stripSwitches;
+var REPORT_DIR, REPORT_FILE, MAX_REPORTS, MAX_TMP_ENTRIES, MAX_REPORT_DIR_ENTRIES, MAX_SCANNED_NAMES, MAX_REPORT_BYTES, MAX_EXCEPTION_CHARS, SOCKET_EXCEPTION, PIPE_SERVER, BUILD_NODE, same, CHECK_SUBJECT, NODE_SCAN_MS, NODE_SWITCH, ONE_NODE, MSBUILD_VERBS, VERB_LIST, RUN_CLAUSE, RUN_REASON, CANNOT_TELL, RUNNERS, SCRIPT, SHELLS2, SHELL_SYNTAX, CHAIN_SEPARATOR, ASSIGNMENT2, MAX_SHOWN_CHARS, isDotnet, verbOf, msbuildWords, runsOthers, PINNED, stripSwitches;
 var init_msbuild = __esm({
   "src/evidence/msbuild.ts"() {
     "use strict";
@@ -36374,6 +36414,8 @@ var init_msbuild = __esm({
     PIPE_SERVER = /System\.IO\.Pipes\.NamedPipeServerStream/;
     BUILD_NODE = /Microsoft\.Build\.BackEnd\.NodeEndpointOutOfProc/;
     same = (a, b) => a !== null && b !== null && a.dev === b.dev && a.ino === b.ino;
+    CHECK_SUBJECT = { sandbox: "the check sandbox", process: "the check", looker: "the runner's" };
+    NODE_SCAN_MS = 1e3;
     NODE_SWITCH = /^(?:--?|\/)(?:m|maxcpucount)(?::(\d+))?$/i;
     ONE_NODE = "-m:1";
     MSBUILD_VERBS = /* @__PURE__ */ new Set(["build", "test", "publish", "pack", "restore", "msbuild", "run", "clean"]);
@@ -36400,7 +36442,8 @@ var init_msbuild = __esm({
 // src/evidence/dotnet-format.ts
 import { lstatSync as lstatSync7, readFileSync as readFileSync16 } from "node:fs";
 import { basename as basename12, dirname as dirname16, join as join26, posix as posix5, relative as relative2, isAbsolute as isAbsolute13 } from "node:path";
-function formatOutsideFix(check) {
+function formatOutsideFix(check, where2 = null) {
+  if (where2) return `remove dotnet format from ${where2.command} and run it in CI`;
   return `remove checks.${check.id} from .orbit/config.yaml, or set checks.${check.id}.mandatory: false, and run dotnet format in CI`;
 }
 function loadsProject(argv2) {
@@ -36535,10 +36578,10 @@ function rewritten(check, argvForm, lineForm) {
   const text2 = lineForm(c, true);
   return text2 === null ? null : { command: [text2], shell: true };
 }
-function dotnetFormatFix(check) {
-  const field = `checks.${check.id}.command`;
+function dotnetFormatFix(check, where2 = null) {
+  const field = where2?.command ?? `checks.${check.id}.command`;
   const fixed = withFolderForm(check);
-  return fixed ? `${field}: ${shown(fixed.command)}` : `in ${field}, run "${FOLDER_TEXT}" in place of its dotnet format command`;
+  return fixed ? pasted(field, fixed.command, fixed.shell && !check.shell) : `in ${field}, run "${FOLDER_TEXT}" in place of its dotnet format command`;
 }
 function formatAndNodeFix(check, where2) {
   const fixed = withFolderForm(check);
@@ -36548,7 +36591,7 @@ function formatRestoreFix(check, where2) {
   const fixed = withRestoreFirst(check);
   if (fixed?.shell) {
     const field = where2?.command ?? `checks.${check.id}.command`;
-    return { change: `${field}: ${shown(fixed.command)} with ${field.slice(0, -".command".length)}.shell: true ${RESTORE_FIRST}`, env: msbuildFix(check, where2).env };
+    return { change: `${pasted(field, fixed.command, true)} ${RESTORE_FIRST}`, env: msbuildFix(check, where2).env };
   }
   const fix = msbuildFix(fixed ? { ...check, command: fixed.command } : check, where2);
   return { ...fix, change: `${fix.change} ${RESTORE_FIRST}` };
@@ -36845,6 +36888,10 @@ function prepareCheckHome(homeDir) {
   mkdirSync10(dir, { recursive: true, mode: 448 });
   atomicWrite(join27(dir, NUGET_LATEST_MIGRATION), "", 384);
 }
+function privateHomeDotnetEnv(homeDir) {
+  prepareCheckHome(homeDir);
+  return { ...DOTNET_CHECK_ENV, DOTNET_CLI_HOME: homeDir };
+}
 function checkEnv(def, dirs, hostPath = process.env.PATH, toolchainEnv = {}) {
   return {
     ...toolchainEnv,
@@ -36959,16 +37006,19 @@ async function launchAttempt(ctx, subject, def, configHash, rerunOf) {
 }
 function checkToolchains(ctx, def, cwd, dirs, tmpDir, platform3 = process.platform) {
   const install = INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
-  return toolchainLayout({
-    toolchains: detectToolchains({ command: def.command, shell: def.shell, roots: [ctx.checkoutDir, cwd] }),
+  return commandToolchains({
+    command: def.command,
+    shell: def.shell,
+    roots: [ctx.checkoutDir, cwd],
     mode: install ? "install" : "check",
     cacheRoot: ctx.toolchainCacheRoot ?? null,
     scratchRoot: dirs.toolchainsDir,
     tmpDir,
-    platform: ctx.isolation.kind === "container" ? "linux" : platform3,
+    isolation: ctx.isolation.kind,
     networkHosts: def.network_hosts,
-    // A container brings its own toolchain installation; the host's rustup and JDK are neither mounted nor wanted there.
-    ...ctx.isolation.kind === "container" ? { hostEnv: {} } : { hostEnv: process.env, ...ctx.homeDir ? { hostHome: ctx.homeDir } : {} }
+    platform: platform3,
+    hostEnv: process.env,
+    ...ctx.homeDir ? { hostHome: ctx.homeDir } : {}
   });
 }
 function msbuildFixWhere(ctx, def) {
@@ -36978,8 +37028,8 @@ async function assertCheckoutUnmodified(dir, nextCheck) {
   const out = await git2(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--ignore-submodules=none"]);
   const changed2 = out.split("\0").filter(Boolean).map((rec2) => rec2.slice(3));
   if (changed2.length > 0) {
-    const shown2 = changed2.slice(0, 10).join(", ") + (changed2.length > 10 ? `, and ${changed2.length - 10} more` : "");
-    throw new OrbitError("STALE_EVIDENCE", `the checkout no longer holds the candidate tree (tracked files changed: ${shown2}); check ${nextCheck} was not started`, { checkout: dir, changed: changed2.slice(0, 50), checkId: nextCheck });
+    const shown3 = changed2.slice(0, 10).join(", ") + (changed2.length > 10 ? `, and ${changed2.length - 10} more` : "");
+    throw new OrbitError("STALE_EVIDENCE", `the checkout no longer holds the candidate tree (tracked files changed: ${shown3}); check ${nextCheck} was not started`, { checkout: dir, changed: changed2.slice(0, 50), checkId: nextCheck });
   }
 }
 function sleepOrAbort(ctx, ms) {
@@ -46904,8 +46954,8 @@ function classifyEnvironmentFailure(input) {
     if (deniedOutside(line3, input.insideRoots)) found.push("eacces-outside-worktree");
     if (found.length === 0) continue;
     for (const s of found) see(s);
-    const shown2 = line3.trim().slice(0, MAX_LINE_CHARS);
-    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown2)) lines.push(shown2);
+    const shown3 = line3.trim().slice(0, MAX_LINE_CHARS);
+    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown3)) lines.push(shown3);
   }
   if (signals.length === 0) return null;
   return { checkId: input.checkId, fingerprint, signals, cause: signals.map((s) => CAUSES[s]).join("; "), lines };
@@ -46980,8 +47030,8 @@ function pipeDenials(lines) {
   if (node) out.push(node[1].slice(0, MAX_LINE_CHARS));
   const text2 = lines.join("\n");
   if (BUILD_HOST_FRAME.test(text2) && BUILD_HOST_PIPE.test(text2)) {
-    const shown2 = lines.map((l) => l.trim()).find((l) => UNHANDLED.test(l)) ?? lines.map((l) => l.trim()).find((l) => BUILD_HOST_PIPE.test(l));
-    if (shown2) out.push(shown2.slice(0, MAX_LINE_CHARS));
+    const shown3 = lines.map((l) => l.trim()).find((l) => UNHANDLED.test(l)) ?? lines.map((l) => l.trim()).find((l) => BUILD_HOST_PIPE.test(l));
+    if (shown3) out.push(shown3.slice(0, MAX_LINE_CHARS));
   }
   return out;
 }
@@ -46997,8 +47047,8 @@ function classifyCouldNotRun(input) {
   const signals = pipes.length > 0 ? ["pipe-denied"] : [];
   const lines = [];
   const show = (line3, at) => {
-    const shown2 = excerpt2(line3, at);
-    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown2)) lines.push(shown2);
+    const shown3 = excerpt2(line3, at);
+    if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown3)) lines.push(shown3);
   };
   for (const pipe of pipes) show(pipe, 0);
   for (const raw of all) {
@@ -47171,9 +47221,9 @@ function classifyMisconfigured(input) {
       if (!m) continue;
       const detail = sig.detail ? lines.slice(i + 1, i + 6).map((l) => l.trim()).find((l) => sig.detail.test(l)) : void 0;
       if (sig.names && !sig.names(inv, m, detail)) continue;
-      const shown2 = [line3.slice(0, MAX_LINE_CHARS2), ...detail !== void 0 ? [detail.slice(0, MAX_LINE_CHARS2)] : []];
+      const shown3 = [line3.slice(0, MAX_LINE_CHARS2), ...detail !== void 0 ? [detail.slice(0, MAX_LINE_CHARS2)] : []];
       const cause = sig.kind === "argument" ? `${sig.tool} rejected the check's command line: ${sig.meaning}` : `${sig.tool} could not find what the check's command names: ${sig.meaning}`;
-      return { checkId: input.checkId, kind: sig.kind, signature: sig.id, tool: sig.tool, cause, lines: shown2, configKey: `checks.${input.checkId}.command` };
+      return { checkId: input.checkId, kind: sig.kind, signature: sig.id, tool: sig.tool, cause, lines: shown3, configKey: `checks.${input.checkId}.command` };
     }
   }
   return null;
@@ -50546,6 +50596,55 @@ var init_baseline = __esm({
   }
 });
 
+// src/ui/app-toolchains.ts
+function appToolchains(input) {
+  const layout = commandToolchains({
+    command: input.command,
+    roots: [input.checkoutDir],
+    mode: "check",
+    cacheRoot: input.cacheRoot,
+    scratchRoot: input.scratchRoot,
+    tmpDir: input.tmpDir,
+    isolation: input.isolation,
+    networkHosts: input.networkHosts,
+    ...input.homeDir ? { hostHome: input.homeDir } : {},
+    ...input.hostEnv ? { hostEnv: input.hostEnv } : {}
+  });
+  prepareToolchainLayout(layout);
+  return {
+    layout,
+    env: { ...layout.env, ...layout.toolchains.includes("dotnet") ? DOTNET_CHECK_ENV : {} },
+    extraWritable: layout.writable,
+    readablePaths: layout.readOnly,
+    nisDomainName: layout.nisDomainName
+  };
+}
+function appNodeDenialNote(command, d, stopped) {
+  return redact(msbuildNodeDenialNote(d, msbuildNodeFix({ id: "ui-app", command: [...command], shell: false }, { command: APP_FIELD, env: null }), stopped, APP_SUBJECT));
+}
+function appNodeDenialWatch(command, tmpDir, now = Date.now) {
+  let next = 0;
+  return (exited) => {
+    if (!exited && now() < next) return null;
+    next = now() + DENIAL_SCAN_MS2;
+    const d = findMsbuildNodeDenial(tmpDir);
+    return d ? appNodeDenialNote(command, d, !exited) : null;
+  };
+}
+var APP_FIELD, APP_SUBJECT, DENIAL_SCAN_MS2;
+var init_app_toolchains = __esm({
+  "src/ui/app-toolchains.ts"() {
+    "use strict";
+    init_redact();
+    init_msbuild();
+    init_runner();
+    init_toolchains();
+    APP_FIELD = "ui.environment.start_command";
+    APP_SUBJECT = nodeDenialSubject("the application");
+    DENIAL_SCAN_MS2 = 1e3;
+  }
+});
+
 // src/ui/single-sandbox.ts
 import { readFileSync as readFileSync24 } from "node:fs";
 function singleSandboxLimitation(kind) {
@@ -50994,24 +51093,29 @@ async function runUiChecks(input) {
   const port = new URL(baseUrl).port;
   const appStart = uiConfig.environment.start_command;
   const appEnv = { ...input.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir };
-  const launch = appStart !== null && input.isolation.privateLoopback === true ? { command: appStart, env: { ...baseEnv, ...appEnv }, readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1e3, stateDir: ensureDir(join44(outDir, "app")), pollMs: input.appPollMs } : null;
+  const appScratch = join44(outDir, "toolchains");
+  const toolchainsFor = (command, networkHosts2) => appToolchains({ command, checkoutDir, cacheRoot: input.toolchainCacheRoot ?? null, scratchRoot: appScratch, tmpDir, isolation: input.isolation.kind, networkHosts: networkHosts2, ...input.homeDir ? { homeDir: input.homeDir } : {}, hostEnv: input.hostEnv ?? process.env });
+  const launch = appStart !== null && input.isolation.privateLoopback === true ? { command: appStart, env: { ...baseEnv, ...appEnv }, readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1e3, stateDir: ensureDir(join44(outDir, "app")), pollMs: input.appPollMs, toolchains: (hosts) => toolchainsFor(appStart, hosts) } : null;
   try {
     if (appStart !== null && launch === null) {
       const appCheck = { ...defaultCheck("ui-app"), command: appStart, network_hosts: [], timeout_seconds: uiConfig.environment.ready_timeout_seconds };
-      const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot: snapshot2, extraWritable: [tmpDir], homeDir: input.homeDir, env: input.hostEnv });
+      const tc = toolchainsFor(appStart, appCheck.network_hosts);
+      const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot: snapshot2, extraWritable: [tmpDir, ...tc.extraWritable], readablePaths: tc.readablePaths, nisDomainName: tc.nisDomainName, homeDir: input.homeDir, env: input.hostEnv });
       try {
         app = await startApp({
           command: appStart,
           cwd: checkoutDir,
           baseUrl,
           readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1e3,
-          env: appEnv,
+          // The application's own variables win over its toolchains'.
+          env: { ...tc.env, ...appEnv },
           isolation: { provider: input.isolation, profile },
           isolatedTestData: uiConfig.environment.isolated_test_data,
           stateDir: join44(outDir, "app"),
           clock,
           pollMs: input.appPollMs,
-          hostEnv: input.hostEnv
+          hostEnv: input.hostEnv,
+          stopWhen: appNodeDenialWatch(appStart, tmpDir)
         });
       } catch (err) {
         if (err instanceof OrbitError && (err.code === "ISOLATION_UNAVAILABLE" || err.code === "POLICY_DENIED")) throw err;
@@ -51037,6 +51141,7 @@ async function runUiChecks(input) {
     }
   } finally {
     if (app) await stopApp(app, { clock });
+    removeScratch(appScratch);
   }
   const written = await baselineFilesWrittenDuringRun(checkoutDir, candidate.commitSha, globs);
   const visualBaselineChanges = [.../* @__PURE__ */ new Set([...visualFromDiff, ...written])].sort();
@@ -51200,10 +51305,19 @@ async function runOneCheck(ctx) {
     ORBIT_A11Y_FAIL_ON: a11yFailOn(input.uiConfig),
     PLAYWRIGHT_JSON_OUTPUT_FILE: reportPath2
   };
-  const launch = ctx.launch;
+  const tc = ctx.launch ? ctx.launch.toolchains(check.network_hosts) : null;
+  const launch = ctx.launch && tc ? { ...ctx.launch, env: { ...tc.env, ...ctx.launch.env } } : ctx.launch;
   const profile = {
-    // Single-sandbox mode: the application shares the check's sandbox and writes its log and the launcher's record there.
-    ...profileForCheck({ worktree: checkoutDir, check, snapshot: input.snapshot, extraWritable: [checkDir, ctx.tmpDir, ...launch ? [launch.stateDir] : []], homeDir: input.homeDir, env: input.hostEnv }),
+    // Single-sandbox mode: the application writes its log and the launcher's record in the check's sandbox.
+    ...profileForCheck({
+      worktree: checkoutDir,
+      check,
+      snapshot: input.snapshot,
+      extraWritable: [checkDir, ctx.tmpDir, ...launch ? [launch.stateDir] : [], ...tc?.extraWritable ?? []],
+      ...tc ? { readablePaths: tc.readablePaths, nisDomainName: tc.nisDomainName } : {},
+      homeDir: input.homeDir,
+      env: input.hostEnv
+    }),
     allowLocalBinding: true,
     // The browser run, and only it: Chromium's Mach rendezvous rules under srt on macOS (never the application or a worker).
     chromiumMachRendezvous: true
@@ -51265,7 +51379,9 @@ ${exec.stderr}` : ""}`), { mode: 384 });
   if (spec) {
     const status2 = readLaunchStatus(spec.statusPath);
     if (status2 !== null && launchFailed(status2)) {
-      reasons.push(`the application did not start: ${describeLaunchFailure(status2, spec)}: ${logTail(spec.app.logPath).trim() || "(no output)"}`);
+      const refused = launch ? findMsbuildNodeDenial(ctx.tmpDir) : null;
+      const note3 = refused && launch ? `; ${appNodeDenialNote(launch.command, refused, false)}` : "";
+      reasons.push(`the application did not start: ${describeLaunchFailure(status2, spec)}: ${logTail(spec.app.logPath).trim() || "(no output)"}${note3}`);
       return { ...quiet("ERROR"), notExecuted: { stage: "application", checkId: null, logPath: spec.app.logPath, signal: null }, appFailed: true };
     }
     if (status2?.app === "stopped" && status2.exitedDuringCheck === true) {
@@ -51609,12 +51725,15 @@ var init_runner2 = __esm({
     init_fsx();
     init_hash();
     init_redact();
+    init_msbuild();
     init_profiles();
+    init_toolchains();
     init_sandbox_runtime();
     init_config();
     init_globs();
     init_snapshot();
     init_app_fixture();
+    init_app_toolchains();
     init_env2();
     init_single_sandbox();
     init_report3();
@@ -52433,6 +52552,7 @@ async function exploreUi(opts) {
   if (opts.abortSignal?.aborted) control.abort();
   atomicWriteJson(join46(outDir, "exploration.json"), { state: "running", candidate: opts.candidate.id, startedAt });
   const tmpDir = ensureDir(join46(outDir, "tmp"));
+  const appScratch = join46(outDir, "toolchains");
   const baseEnv = safeBaseEnv(opts.hostEnv ?? process.env);
   const port = new URL(baseUrl).port;
   let app = null;
@@ -52447,20 +52567,22 @@ async function exploreUi(opts) {
       reasons.push(`exploration is not available under ${opts.isolation.kind}: every sandbox has its own loopback, so neither the explorer nor a reproduction spec could reach an application Orbit starts; the journey checks run the application and the browser in one sandbox instead`);
     } else if (uiStart !== null) {
       const appCheck = { ...defaultCheck("ui-app"), command: uiStart, network_hosts: [], timeout_seconds: opts.uiConfig.environment.ready_timeout_seconds };
-      const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot: opts.snapshot, extraWritable: [tmpDir], homeDir: opts.homeDir, env: opts.hostEnv });
+      const tc = appToolchains({ command: uiStart, checkoutDir, cacheRoot: opts.toolchainCacheRoot ?? null, scratchRoot: appScratch, tmpDir, isolation: opts.isolation.kind, networkHosts: appCheck.network_hosts, ...opts.homeDir ? { homeDir: opts.homeDir } : {}, hostEnv: opts.hostEnv ?? process.env });
+      const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot: opts.snapshot, extraWritable: [tmpDir, ...tc.extraWritable], readablePaths: tc.readablePaths, nisDomainName: tc.nisDomainName, homeDir: opts.homeDir, env: opts.hostEnv });
       try {
         app = await startApp({
           command: uiStart,
           cwd: checkoutDir,
           baseUrl,
           readyTimeoutMs: opts.uiConfig.environment.ready_timeout_seconds * 1e3,
-          env: { ...opts.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: opts.uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir },
+          env: { ...tc.env, ...opts.appEnv ?? {}, ORBIT_UI_BASE_URL: baseUrl, ...port ? { PORT: port, ORBIT_UI_PORT: port } : {}, ORBIT_UI_ISOLATED_TEST_DATA: opts.uiConfig.environment.isolated_test_data ? "1" : "0", TMPDIR: tmpDir },
           isolation: { provider: opts.isolation, profile },
           isolatedTestData: opts.uiConfig.environment.isolated_test_data,
           stateDir: join46(outDir, "app"),
           clock,
           pollMs: opts.appPollMs,
-          hostEnv: opts.hostEnv
+          hostEnv: opts.hostEnv,
+          stopWhen: appNodeDenialWatch(uiStart, tmpDir)
         });
       } catch (err) {
         if (err instanceof OrbitError && (err.code === "ISOLATION_UNAVAILABLE" || err.code === "POLICY_DENIED")) throw err;
@@ -52495,6 +52617,7 @@ async function exploreUi(opts) {
   } finally {
     opts.abortSignal?.removeEventListener("abort", onAbort);
     if (app) await stopApp(app, { clock });
+    removeScratch(appScratch);
   }
   if (state.costUnknownCalls > 0) unverified.push(`the provider reported no cost for ${state.costUnknownCalls} call(s), so ui.exploration.budget_usd was enforced on reported costs only`);
   if (findings.some((f) => f.status === "reproduced")) unverified.push("a reproduced finding is a failing test on this candidate; the lint on the test is heuristic, so Orbit cannot prove the test fails for the reason the explorer stated");
@@ -52803,8 +52926,10 @@ var init_explore = __esm({
     init_redact();
     init_model_outputs();
     init_profiles();
+    init_toolchains();
     init_config();
     init_app_fixture();
+    init_app_toolchains();
     init_env2();
     init_report3();
     init_runner2();
@@ -52839,6 +52964,7 @@ async function exploreCandidate(ctx, cand, checkoutDir, outDir, opts = {}) {
     clock: ctx.clock,
     hostEnv: ctx.deps.hostEnv ?? process.env,
     homeDir: homeOf2(ctx.deps),
+    toolchainCacheRoot: toolchainCacheRootFor(ctx),
     abortSignal: ctx.signal,
     explore: async (task) => {
       const r = await runToEnd(ctx, {
@@ -52998,7 +53124,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
   const uiRequired = contract.acceptance_criteria.some((c) => c.ui === true) || ui !== null && ui.required_when_ui_changes && changed2.some(compileGlobs(ui.ui_paths, { nocase: false }));
   let uiResult = null;
   if (uiRequired && ui && ui.journey_check_ids.length > 0) {
-    uiResult = await runUiChecks({ checkoutDir, snapshot: snapshot2, candidate: cand, uiConfig: ui, journeyCheckIds: ui.journey_check_ids, isolation: ctx.isolation(), outDir: uiEvidenceDir(ctx.runDir, cand.seq), clock: ctx.clock, abortSignal: ctx.signal, homeDir: homeOf2(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
+    uiResult = await runUiChecks({ checkoutDir, snapshot: snapshot2, candidate: cand, uiConfig: ui, journeyCheckIds: ui.journey_check_ids, isolation: ctx.isolation(), outDir: uiEvidenceDir(ctx.runDir, cand.seq), clock: ctx.clock, abortSignal: ctx.signal, homeDir: homeOf2(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env, toolchainCacheRoot: toolchainCacheRootFor(ctx) });
     const afterUi = await checkpoint();
     if (afterUi !== null) return { stopped: afterUi };
   }
@@ -54584,22 +54710,34 @@ async function runDeploy(a) {
       kind: "command",
       category: "other"
     };
-    const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [files.home, tmp], ...input.homeDir ? { homeDir: input.homeDir } : {} });
-    const cmdEnv = releaseCommandEnv({ home: files.home, tmp, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha });
-    const wrapped = a.isolation.wrap([...env.deploy_command], profile, { cwd: checkout, env: cmdEnv });
-    atomicWriteJson(files.started, { environment: envName, sha, attempt: a.attempt, started_at: input.clock.now() }, 384);
+    const field = `release.environments.${envName}.deploy_command`;
+    const scratch = join52(files.dir, "toolchains");
+    const toolchains = releaseToolchains({ command: env.deploy_command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, ...input.homeDir ? { homeDir: input.homeDir } : {} });
+    const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [files.home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, ...input.homeDir ? { homeDir: input.homeDir } : {} });
+    const cmdEnv = releaseCommandEnv({ home: files.home, tmp, toolchainEnv: toolchains.env, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha });
     let outcome;
+    let stopped = null;
     try {
-      const res = await execCapture(wrapped.argv, { cwd: checkout, env: wrapped.env, timeoutMs: env.timeout_seconds * 1e3, maxOutputBytes: 1024 * 1024 });
-      const output = redact(`${res.stdout}${res.stderr ? `
-${res.stderr}` : ""}`).slice(-OUTPUT_TAIL);
-      outcome = { environment: envName, branch, sha, tree, attempt: a.attempt, exitCode: res.exitCode, timedOut: res.timedOut, durationMs: res.durationMs, isolation: a.isolation.kind, limitations: wrapped.limitations, output };
+      const wrapped = a.isolation.wrap([...env.deploy_command], profile, { cwd: checkout, env: cmdEnv });
+      atomicWriteJson(files.started, { environment: envName, sha, attempt: a.attempt, started_at: input.clock.now() }, 384);
+      try {
+        const ran = await runReleaseCommand({ argv: wrapped.argv, checkout, env: wrapped.env, timeoutMs: env.timeout_seconds * 1e3, tmp, command: env.deploy_command, field, what: "the deploy command" });
+        const res = ran.result;
+        stopped = ran.stopped ? ran.note : null;
+        const output = redact(`${res.stdout}${res.stderr ? `
+${res.stderr}` : ""}${ran.note ? `
+[orbit] ${ran.note}` : ""}`).slice(-OUTPUT_TAIL);
+        outcome = { environment: envName, branch, sha, tree, attempt: a.attempt, exitCode: ran.stopped ? null : res.exitCode, timedOut: res.timedOut, durationMs: res.durationMs, isolation: a.isolation.kind, limitations: wrapped.limitations, output };
+      } finally {
+        wrapped.cleanup();
+      }
     } finally {
-      wrapped.cleanup();
+      removeScratch(scratch);
     }
     atomicWriteJson(files.outcome, outcome, 384);
     if (outcome.exitCode !== 0 || outcome.timedOut) {
-      throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} to ${envName} ${outcome.timedOut ? `timed out after ${env.timeout_seconds}s, so whether it took effect is unknown` : `exited ${outcome.exitCode ?? "by signal"}`}: ${outcome.output.slice(-500)}`, { definitive: true, ...outcome.timedOut ? unknownDetails(envName, sha) : {} });
+      const ended = outcome.timedOut ? `timed out after ${env.timeout_seconds}s, so whether it took effect is unknown` : stopped ? "was stopped" : `exited ${outcome.exitCode ?? "by signal"}`;
+      throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} to ${envName} ${ended}: ${redact(stopped ?? "") || outcome.output.slice(-500)}`, { definitive: true, ...outcome.timedOut ? unknownDetails(envName, sha) : {} });
     }
     return receiptOf(outcome);
   } finally {
@@ -54607,8 +54745,19 @@ ${res.stderr}` : ""}`).slice(-OUTPUT_TAIL);
     });
   }
 }
+function releaseToolchains(a) {
+  const layout = commandToolchains({ command: a.command, roots: [a.checkout], mode: "check", cacheRoot: a.cacheRoot, scratchRoot: a.scratch, tmpDir: a.tmp, isolation: a.isolation, networkHosts: a.networkHosts, ...a.homeDir ? { hostHome: a.homeDir } : {}, hostEnv: process.env });
+  prepareToolchainLayout(layout);
+  return layout;
+}
+async function runReleaseCommand(a) {
+  const ran = await runStoppingRefusedNodes(a.tmp, (signal) => execCapture(a.argv, { cwd: a.checkout, env: a.env, timeoutMs: a.timeoutMs, maxOutputBytes: 1024 * 1024, abortSignal: signal }));
+  const note3 = ran.denial ? msbuildNodeDenialNote(ran.denial, msbuildNodeFix({ id: a.field, command: [...a.command], shell: false }, { command: a.field, env: null }), ran.stopped, nodeDenialSubject(a.what)) : null;
+  return { result: ran.result, stopped: ran.stopped, note: note3 };
+}
 function releaseCommandEnv(a) {
   return {
+    ...a.toolchainEnv ?? {},
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     HOME: a.home,
     TMPDIR: a.tmp,
@@ -54619,6 +54768,7 @@ function releaseCommandEnv(a) {
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_TERMINAL_PROMPT: "0",
+    ...privateHomeDotnetEnv(a.home),
     ...a.deployEnv ?? {},
     ORBIT_RUN_ID: a.runId,
     ORBIT_RELEASE_ENVIRONMENT: a.envName,
@@ -54706,20 +54856,28 @@ async function runVerifyCommand(a) {
     mkdirSync19(home2, { recursive: true, mode: 448 });
     const tmp = prepareWorkerTmpDir(dir);
     const def = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: ".", timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], local_binding: false, env: {}, mandatory: true, flaky_reruns: 0, kind: "command", category: "other" };
-    const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [home2, tmp], ...input.homeDir ? { homeDir: input.homeDir } : {} });
-    const cmdEnv = releaseCommandEnv({ home: home2, tmp, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha, extra: { ORBIT_RELEASE_VERIFY: "1" } });
-    const wrapped = a.isolation.wrap([...a.command], profile, { cwd: checkout, env: cmdEnv });
+    const scratch = join52(dir, "toolchains");
+    const toolchains = releaseToolchains({ command: a.command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, ...input.homeDir ? { homeDir: input.homeDir } : {} });
+    const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, ...input.homeDir ? { homeDir: input.homeDir } : {} });
+    const cmdEnv = releaseCommandEnv({ home: home2, tmp, toolchainEnv: toolchains.env, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha, extra: { ORBIT_RELEASE_VERIFY: "1" } });
     try {
-      const res = await execCapture(wrapped.argv, { cwd: checkout, env: wrapped.env, timeoutMs: env.timeout_seconds * 1e3, maxOutputBytes: 1024 * 1024 });
-      const output = redact(`${res.stdout}${res.stderr ? `
+      const wrapped = a.isolation.wrap([...a.command], profile, { cwd: checkout, env: cmdEnv });
+      try {
+        const ran = await runReleaseCommand({ argv: wrapped.argv, checkout, env: wrapped.env, timeoutMs: env.timeout_seconds * 1e3, tmp, command: a.command, field: `release.environments.${envName}.verify_command`, what: "the verify command" });
+        const res = ran.result;
+        if (ran.note) return { verdict: "unknown", detail: `verify_command ${ran.stopped ? "was stopped" : "failed on its own build"}, so the outcome is still unknown: ${redact(ran.note)}` };
+        const output = redact(`${res.stdout}${res.stderr ? `
 ${res.stderr}` : ""}`).trim().slice(-500);
-      const tail2 = output ? `: ${output}` : "";
-      if (res.timedOut) return { verdict: "unknown", detail: `the verify_command timed out after ${env.timeout_seconds}s` };
-      if (res.exitCode === 0) return { verdict: "deployed", detail: `verify_command exited 0 for ${sha.slice(0, 12)} in ${envName}${tail2}` };
-      if (res.exitCode === 1) return { verdict: "not-deployed", detail: `verify_command exited 1 for ${sha.slice(0, 12)} in ${envName}${tail2}` };
-      return { verdict: "unknown", detail: `verify_command ${res.exitCode === null ? "was stopped by a signal" : `exited ${res.exitCode}`} (0 means deployed, 1 means not deployed), so the outcome is still unknown${tail2}` };
+        const tail2 = output ? `: ${output}` : "";
+        if (res.timedOut) return { verdict: "unknown", detail: `the verify_command timed out after ${env.timeout_seconds}s` };
+        if (res.exitCode === 0) return { verdict: "deployed", detail: `verify_command exited 0 for ${sha.slice(0, 12)} in ${envName}${tail2}` };
+        if (res.exitCode === 1) return { verdict: "not-deployed", detail: `verify_command exited 1 for ${sha.slice(0, 12)} in ${envName}${tail2}` };
+        return { verdict: "unknown", detail: `verify_command ${res.exitCode === null ? "was stopped by a signal" : `exited ${res.exitCode}`} (0 means deployed, 1 means not deployed), so the outcome is still unknown${tail2}` };
+      } finally {
+        wrapped.cleanup();
+      }
     } finally {
-      wrapped.cleanup();
+      removeScratch(scratch);
     }
   } finally {
     await cleanupCandidateCheckout(run.repoRoot, checkout).catch(() => {
@@ -54739,7 +54897,10 @@ var init_release = __esm({
     init_redact();
     init_authorize();
     init_profiles();
+    init_toolchains();
     init_candidate();
+    init_msbuild();
+    init_runner();
     init_gate();
     init_git2();
     OUTPUT_TAIL = 4e3;
@@ -54830,9 +54991,9 @@ ${body.endsWith("\n") ? body : `${body}
 `;
 }
 function bullet(items, max = MAX_LIST_ITEMS, itemMax = 500) {
-  const shown2 = items.slice(0, max).map((s) => `- ${oneLine4(s, itemMax)}`);
-  if (items.length > max) shown2.push(`- ... ${items.length - max} more not shown`);
-  return shown2.length === 0 ? "- none\n" : `${shown2.join("\n")}
+  const shown3 = items.slice(0, max).map((s) => `- ${oneLine4(s, itemMax)}`);
+  if (items.length > max) shown3.push(`- ... ${items.length - max} more not shown`);
+  return shown3.length === 0 ? "- none\n" : `${shown3.join("\n")}
 `;
 }
 function oneLine4(s, max) {
@@ -56738,7 +56899,7 @@ var init_parallel_writers = __esm({
 
 // src/controller/authorization.ts
 import { existsSync as existsSync38, mkdirSync as mkdirSync21 } from "node:fs";
-import { join as join56 } from "node:path";
+import { basename as basename16, join as join56 } from "node:path";
 function operationKey(op) {
   return `op-${sha256(canonicalJson(op)).slice(0, 16)}`;
 }
@@ -56904,33 +57065,70 @@ async function runApprovedOperation(ctx, n2, op, grant) {
     return { ...none, state: "UNKNOWN", note: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) };
   }
 }
+function installsWith(command, worktree, toolchains) {
+  const cls = classifyBash(command, { cwd: worktree, root: worktree });
+  return cls.commands.some((c) => c.category === "package-install" && toolchains.some((id) => TOOLCHAIN_PROFILES[id].executables.test(basename16(c.argv[0] ?? ""))));
+}
 async function executeApproved(ctx, plan, dir, rel) {
   const worktree = ctx.run.worktreePath;
   const home2 = join56(dir, "home");
   mkdirSync21(home2, { recursive: true, mode: 448 });
   const tmp = prepareWorkerTmpDir(dir);
   const hosts = [.../* @__PURE__ */ new Set([...ctx.snapshot.config.network.allowed_hosts, ...plan.host ? [plan.host] : []])];
+  const isolation = ctx.isolation();
+  const ids = detectToolchains({ command: plan.argv, roots: [worktree] });
+  const install = plan.argv[0] === "/bin/sh" && installsWith(plan.shown, worktree, ids);
+  const scratch = join56(dir, "toolchains");
+  const toolchains = commandToolchains({ command: plan.argv, roots: [worktree], mode: install ? "install" : "check", cacheRoot: toolchainCacheRootFor(ctx), scratchRoot: scratch, tmpDir: tmp, isolation: isolation.kind, networkHosts: hosts, hostHome: homeOf2(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
+  prepareToolchainLayout(toolchains);
   const def = { id: `approved-${rel.split("/").at(-1)}`, command: plan.argv, shell: false, cwd: ".", timeout_seconds: APPROVED_TIMEOUT_S, network_hosts: hosts, local_binding: false, env: {}, mandatory: false, flaky_reruns: 0, kind: "command" };
-  const profile = profileForCheck({ worktree, check: def, snapshot: ctx.snapshot, extraWritable: [home2, tmp] });
-  const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home2, TMPDIR: tmp, LANG: "C.UTF-8", TERM: "dumb", NO_COLOR: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" };
-  const wrapped = ctx.isolation().wrap(plan.argv, profile, { cwd: worktree, env });
+  const profile = profileForCheck({ worktree, check: def, snapshot: ctx.snapshot, extraWritable: [home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: homeOf2(ctx.deps) });
+  const env = {
+    ...toolchains.env,
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    HOME: home2,
+    TMPDIR: tmp,
+    ...privateHomeDotnetEnv(home2),
+    LANG: "C.UTF-8",
+    TERM: "dumb",
+    NO_COLOR: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_TERMINAL_PROMPT: "0"
+  };
   let r;
+  let note3 = null;
+  let stopped = false;
   try {
-    r = await execCapture(wrapped.argv, { cwd: worktree, env: wrapped.env, timeoutMs: APPROVED_TIMEOUT_S * 1e3, maxOutputBytes: APPROVED_MAX_OUTPUT_BYTES, abortSignal: ctx.signal });
-  } catch (err) {
-    throw new OrbitError("INTERNAL", `the approved command could not start: ${err instanceof Error ? err.message : String(err)}`, { definitive: true }, { cause: err });
+    const wrapped = isolation.wrap(plan.argv, profile, { cwd: worktree, env });
+    try {
+      const ran = await runStoppingRefusedNodes(tmp, (signal) => execCapture(wrapped.argv, { cwd: worktree, env: wrapped.env, timeoutMs: APPROVED_TIMEOUT_S * 1e3, maxOutputBytes: APPROVED_MAX_OUTPUT_BYTES, abortSignal: signal }), ctx.signal);
+      r = ran.result;
+      stopped = ran.stopped;
+      if (ran.denial) note3 = msbuildNodeDenialNote(ran.denial, msbuildNodeFix({ id: def.id, command: plan.argv, shell: false }, { command: "the command to approve", env: null }), ran.stopped, nodeDenialSubject("the approved command"));
+    } catch (err) {
+      throw new OrbitError("INTERNAL", `the approved command could not start: ${err instanceof Error ? err.message : String(err)}`, { definitive: true }, { cause: err });
+    } finally {
+      wrapped.cleanup();
+    }
   } finally {
-    wrapped.cleanup();
+    removeScratch(scratch);
   }
+  const exitCode = stopped ? null : r.exitCode;
+  const ended = stopped ? "stopped by Orbit: the sandbox refused an MSBuild worker node" : `exit ${r.exitCode ?? `signal ${r.signal ?? "unknown"}`}${r.timedOut ? ", timed out" : ""}`;
+  const caches = toolchains.toolchains.length === 0 ? "" : `[toolchains ${toolchains.toolchains.join(", ")}: the repository's dependency caches ${install ? "writable, since the command installs packages" : "read-only"}]
+`;
   const text2 = redact(`$ ${plan.shown}
-[exit ${r.exitCode ?? `signal ${r.signal ?? "unknown"}`}${r.timedOut ? ", timed out" : ""}]
+${caches}[${ended}]
 --- stdout ---
 ${r.stdout}
 --- stderr ---
 ${r.stderr}
-`);
+${note3 ? `--- orbit ---
+${note3}
+` : ""}`);
   atomicWrite(join56(dir, OUTPUT_FILE), text2, 384);
-  const receipt = { exit_code: r.exitCode, timed_out: r.timedOut, path: join56(rel, OUTPUT_FILE), sha256: sha256(text2), excerpt: text2.slice(-APPROVED_EXCERPT_CHARS) };
+  const receipt = { exit_code: exitCode, timed_out: r.timedOut, path: join56(rel, OUTPUT_FILE), sha256: sha256(text2), excerpt: text2.slice(-APPROVED_EXCERPT_CHARS) };
   atomicWrite(join56(dir, RECEIPT_FILE), `${JSON.stringify(receipt)}
 `, 384);
   return receipt;
@@ -56954,9 +57152,9 @@ function ungrantedCommands(events, snapshot2, worktreeRoot, granted) {
       if (!op) continue;
       const d = authorize(snapshot2, op, { worktreeRoot });
       if (d.allowed || !ASKABLE_RULE.test(d.rule)) continue;
-      const shown2 = op.kind === "bash" ? denialTarget(op.command) : op.host;
-      const named2 = granted.some((g) => op.kind === "bash" && g.op.kind === "bash" && g.op.command === shown2 || op.kind === "network" && g.op.kind === "network" && g.op.host === op.host);
-      if (!named2) out.push(shown2);
+      const shown3 = op.kind === "bash" ? denialTarget(op.command) : op.host;
+      const named2 = granted.some((g) => op.kind === "bash" && g.op.kind === "bash" && g.op.command === shown3 || op.kind === "network" && g.op.kind === "network" && g.op.host === op.host);
+      if (!named2) out.push(shown3);
     }
   }
   return out;
@@ -56976,12 +57174,17 @@ var init_authorization = __esm({
     init_redact();
     init_authorize();
     init_profiles();
+    init_toolchains();
+    init_bash();
+    init_msbuild();
+    init_runner();
     init_actions();
     init_questions();
     init_store4();
     init_decisions();
     init_supervise();
     init_shim();
+    init_context2();
     init_common();
     init_denials();
     APPROVE_ONCE = "approve-once";
@@ -58736,7 +58939,8 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
     },
     isolation: ctx.isolation(),
     workDir: ctx.runDir,
-    homeDir: homeOf2(ctx.deps)
+    homeDir: homeOf2(ctx.deps),
+    toolchainCacheRoot: toolchainCacheRootFor(ctx)
   });
   let result2 = null;
   for (let settled = 0; result2 === null; settled++) {
@@ -58775,7 +58979,7 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
 }
 async function settleUnknownDeploy(ctx, ledger, run, environment) {
   try {
-    const r = await resolveDeploy({ run, snapshot: ctx.snapshot, ledger, clock: ctx.clock, workDir: ctx.runDir, environment, resolution: "verify", by: "controller", isolation: ctx.isolation(), homeDir: homeOf2(ctx.deps) });
+    const r = await resolveDeploy({ run, snapshot: ctx.snapshot, ledger, clock: ctx.clock, workDir: ctx.runDir, environment, resolution: "verify", by: "controller", isolation: ctx.isolation(), homeDir: homeOf2(ctx.deps), toolchainCacheRoot: toolchainCacheRootFor(ctx) });
     return { settled: r.verdict !== "unknown", detail: r.detail };
   } catch (err) {
     return { settled: false, detail: err instanceof Error ? err.message.slice(0, 300) : String(err) };
@@ -61449,7 +61653,7 @@ var init_doctor_plugins = __esm({
 
 // src/cli/commands/doctor-dotnet.ts
 import { existsSync as existsSync50, lstatSync as lstatSync12, readdirSync as readdirSync13, readFileSync as readFileSync33 } from "node:fs";
-import { basename as basename16, join as join71, posix as posix6, resolve as resolve18 } from "node:path";
+import { basename as basename17, join as join71, posix as posix6, resolve as resolve18 } from "node:path";
 function xunitReferences(text2) {
   const out = [];
   for (const m of text2.matchAll(ITEM)) {
@@ -61490,10 +61694,10 @@ function threadsLifted(repo, tracked, dir) {
   }
 }
 function xunitBefore28(repo, files) {
-  const relevant = files.filter((f) => PROJECT_FILE.test(f) || basename16(f) === CENTRAL_FILE).slice(0, MAX_FILES);
+  const relevant = files.filter((f) => PROJECT_FILE.test(f) || basename17(f) === CENTRAL_FILE).slice(0, MAX_FILES);
   const tracked = new Set(files);
   const central = /* @__PURE__ */ new Map();
-  for (const f of relevant.filter((x) => basename16(x) === CENTRAL_FILE)) {
+  for (const f of relevant.filter((x) => basename17(x) === CENTRAL_FILE)) {
     const versions = /* @__PURE__ */ new Map();
     for (const r of xunitReferences(readSmall(join71(repo, f)) ?? "")) if (r.kind === "PackageVersion" && r.version !== null) versions.set(r.id.toLowerCase(), r.version);
     central.set(posix6.dirname(f), versions);
@@ -61519,8 +61723,8 @@ function xunitBefore28(repo, files) {
 }
 function mayRunTests(check) {
   const all = words(check.command);
-  if (all.some((w) => basename16(w) === "dotnet")) return all.includes("test") || all.includes("vstest");
-  return all.some((w) => /test/i.test(basename16(w)));
+  if (all.some((w) => basename17(w) === "dotnet")) return all.includes("test") || all.includes("vstest");
+  return all.some((w) => /test/i.test(basename17(w)));
 }
 function dotnetTestsCheck(input) {
   const { config, repo, files } = input;
@@ -61545,7 +61749,7 @@ function dotnetTestsCheck(input) {
   ];
 }
 function nugetSdks(file, text2) {
-  if (basename16(file) === "global.json") {
+  if (basename17(file) === "global.json") {
     try {
       const sdks = JSON.parse(text2.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, ""))["msbuild-sdks"] ?? {};
       return Object.entries(sdks).flatMap(([name, version]) => typeof version === "string" ? [`${name}/${version}`] : []);
@@ -61565,7 +61769,7 @@ function nugetSdks(file, text2) {
 function packageEvidence(repo, files) {
   const out = [];
   for (const f of files.slice(0, MAX_FILES * 4)) {
-    const name = basename16(f);
+    const name = basename17(f);
     if (PACKAGE_FILES.has(name) || name === TOOL_MANIFEST) out.push(f);
     else if (MSBUILD_FILE.test(f) || MSBUILD_IMPORTS.has(name) || f === "global.json") {
       const text2 = readSmall(join71(repo, f)) ?? "";
@@ -61580,10 +61784,10 @@ function hasNugetPackages(repo, files) {
   return packageEvidence(repo, files).length > 0;
 }
 function floatingVersions(repo, files) {
-  if (files.some((f) => basename16(f) === "packages.lock.json")) return [];
+  if (files.some((f) => basename17(f) === "packages.lock.json")) return [];
   const out = [];
   for (const f of files.slice(0, MAX_FILES * 4)) {
-    if (!PROJECT_FILE.test(f) && !MSBUILD_IMPORTS.has(basename16(f)) && basename16(f) !== CENTRAL_FILE) continue;
+    if (!PROJECT_FILE.test(f) && !MSBUILD_IMPORTS.has(basename17(f)) && basename17(f) !== CENTRAL_FILE) continue;
     for (const m of (readSmall(join71(repo, f)) ?? "").matchAll(ITEM)) {
       const attrs = m[2] ?? "";
       const body = m[3] ?? "";
@@ -61637,7 +61841,7 @@ function fillCommand(repo, cache2, files, install, evidence) {
   const env = `NUGET_PACKAGES=${shellWord(cache2)}`;
   const inRepo = (body) => `(cd ${shellWord(repo)} && ${body})`;
   const restores = install ? restoresOf(install) : { projects: false, tools: false };
-  const packages = restores.projects || evidence.some((e) => basename16(e.split(":")[0]) !== TOOL_MANIFEST);
+  const packages = restores.projects || evidence.some((e) => basename17(e.split(":")[0]) !== TOOL_MANIFEST);
   const tools = restores.tools || files.some((f) => ROOT_MANIFESTS.has(f));
   const projects = packages ? projectRestores(files, install) : { steps: [], note: "" };
   const steps = [...projects.steps, ...tools ? ["dotnet tool restore"] : []];
@@ -61857,14 +62061,14 @@ var init_doctor_dotnet = __esm({
 // src/cli/commands/doctor-sandbox.ts
 import { existsSync as existsSync51, mkdirSync as mkdirSync23, mkdtempSync as mkdtempSync6, realpathSync as realpathSync18, writeFileSync as writeFileSync9 } from "node:fs";
 import { tmpdir as tmpdir12 } from "node:os";
-import { basename as basename17, dirname as dirname33, isAbsolute as isAbsolute23, join as join72, resolve as resolve19 } from "node:path";
+import { basename as basename18, dirname as dirname33, isAbsolute as isAbsolute23, join as join72, resolve as resolve19 } from "node:path";
 function checkWord(check) {
   if (!check.shell) return check.command[0] ?? null;
   return (check.command[0] ?? "").trim().split(/\s+/).find((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) ?? null;
 }
-function msbuildRefusal(checkId, shown2, d, msbuild) {
+function msbuildRefusal(checkId, shown3, d, msbuild) {
   const text2 = msbuildNodeDenialText(d);
-  return { kind: "refused", detail: `"${shown2}" was refused in the sandbox: ${text2}`, failure: { checkId, fingerprint: null, signals: ["sandbox-violation"], cause: text2, lines: [d.exception] }, msbuild };
+  return { kind: "refused", detail: `"${shown3}" was refused in the sandbox: ${text2}`, failure: { checkId, fingerprint: null, signals: ["sandbox-violation"], cause: text2, lines: [d.exception] }, msbuild };
 }
 function probeCacheRoot(input, toolchains, scratch) {
   if (!input.orbitHome || !input.repo) return null;
@@ -61892,7 +62096,7 @@ async function probe(input, check, exe, args, cwd, project, nodeFix) {
     for (const d of toolchains.directories) if (!existsSync51(d)) mkdirSync23(d, { recursive: true, mode: 448 });
     const profile = profileForCheck({ worktree: checkout, check, snapshot: snapshot2, extraWritable: [artifacts, home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: input.homeDir, env: { ...input.env } });
     const env = checkEnv(check, { homeDir: home2, tmpDir: tmp, artifactsDir: artifacts }, input.env.PATH, toolchains.env);
-    const shown2 = [basename17(exe), ...args].join(" ");
+    const shown3 = [basename18(exe), ...args].join(" ");
     const wrapped = input.provider.wrap([exe, ...args], profile, { cwd: checkout, env });
     const probeTmp = tmp;
     const denied = () => findMsbuildNodeDenial(probeTmp);
@@ -61903,27 +62107,27 @@ async function probe(input, check, exe, args, cwd, project, nodeFix) {
       wrapped.cleanup();
     }
     const denial = denied();
-    if (denial) return msbuildRefusal(check.id, shown2, denial, nodeFix);
-    if (r.exitCode === 0) return { kind: "ran", detail: `"${shown2}" ran in the sandbox${project ? ` (${project.about})` : ""}` };
+    if (denial) return msbuildRefusal(check.id, shown3, denial, nodeFix);
+    if (r.exitCode === 0) return { kind: "ran", detail: `"${shown3}" ran in the sandbox${project ? ` (${project.about})` : ""}` };
     const output = redact(r.output);
     const ended = r.exitCode === null ? "timed out" : `exited ${r.exitCode}`;
     const nodes = project ? msbuildNodes({ command: [exe, ...args], shell: false, env: check.env }, true) : null;
     if (nodes?.kind === "unpinned") {
       const cause = `${nodes.reason}, and the build failed (${ended}) with no record of which node was refused`;
-      return { kind: "refused", detail: `"${shown2}" was refused in the sandbox: ${cause}`, failure: { checkId: check.id, fingerprint: null, signals: ["sandbox-violation"], cause, lines: [oneLine(output, 160)] }, msbuild: nodeFix };
+      return { kind: "refused", detail: `"${shown3}" was refused in the sandbox: ${cause}`, failure: { checkId: check.id, fingerprint: null, signals: ["sandbox-violation"], cause, lines: [oneLine(output, 160)] }, msbuild: nodeFix };
     }
     const failure = classifyNotExecuted({ checkId: check.id, output }) ?? classifyCouldNotRun({ checkId: check.id, output, insideRoots: [scratch, ...tmp ? [tmp] : []] });
-    if (failure) return { kind: "refused", failure, detail: `"${shown2}" was refused in the sandbox: ${failure.cause}${failure.lines[0] ? ` (${JSON.stringify(failure.lines[0])})` : ""}` };
+    if (failure) return { kind: "refused", failure, detail: `"${shown3}" was refused in the sandbox: ${failure.cause}${failure.lines[0] ? ` (${JSON.stringify(failure.lines[0])})` : ""}` };
     if (project) {
       const cause = `the generated project did not build (${ended})`;
       return {
         kind: "refused",
-        detail: `"${shown2}" ${ended} in the sandbox: ${project.about.split(":")[0]} did not build${output ? `: ${oneLine(output, 160)}` : ""}`,
+        detail: `"${shown3}" ${ended} in the sandbox: ${project.about.split(":")[0]} did not build${output ? `: ${oneLine(output, 160)}` : ""}`,
         failure: { checkId: check.id, fingerprint: null, signals: ["start-failed"], cause, lines: output ? [oneLine(output, 160)] : [] },
         fix: `the generated project needs nothing but the toolchain, so build it outside the sandbox to tell a broken installation from a sandbox denial (the line above shows the output; docs/troubleshooting.md, "A check cannot run in the sandbox")`
       };
     }
-    return { kind: "ran", detail: `"${shown2}" ${ended} in the sandbox, with no sandbox denial in its output${output ? `: ${oneLine(output, 160)}` : ""}` };
+    return { kind: "ran", detail: `"${shown3}" ${ended} in the sandbox, with no sandbox denial in its output${output ? `: ${oneLine(output, 160)}` : ""}` };
   } finally {
     removeScratch(scratch);
     if (tmp) removeScratch(tmp);
@@ -61933,7 +62137,8 @@ async function checkSandboxCheck(input) {
   const id = "checks.sandbox";
   const result2 = (status3, summary, details2 = [], missing = null, fix = null) => ({ id, area: "checks", status: status3, summary, details: details2, missing, fix });
   const checks = Object.values(input.config.checks).filter((c) => c.kind === "command");
-  if (checks.length === 0) return result2("pass", "not needed: no command check is defined");
+  const others = sandboxedCommands(input.config);
+  if (checks.length === 0 && others.length === 0) return result2("pass", "not needed: no command check is defined");
   const provider = input.provider;
   if (!provider || !input.available) return result2("warn", "not checked: isolation is unavailable (see the isolation check)", [], "an available isolation provider");
   if (provider.kind !== "sandbox-runtime") return result2("pass", `not needed: checks run under ${provider.kind}, not in an OS sandbox on this host`);
@@ -61947,17 +62152,17 @@ async function checkSandboxCheck(input) {
   let started = 0;
   const used = new Set(repo ? detectToolchains({ roots: [repo] }) : []);
   const users = /* @__PURE__ */ new Map();
-  const judge = (check, usesDotnet, label = null, where2 = null) => {
+  const judge = (check, usesDotnet, label = null, where2 = null, formats2 = label === null) => {
     const nodes2 = msbuildNodes(check, usesDotnet);
     const named2 = label ? { label } : {};
     const id2 = label ?? check.id;
-    const loads = label ? null : formatLoadsProject(check);
+    const loads = formats2 ? formatLoadsProject(check) : null;
     const inProcess = loads !== null && repo !== null && sdkFormatsInProcess(resolve19(repo, check.cwd), repo);
     const restore = inProcess ? formatRestoresUnpinned(check) : null;
     const host = inProcess || !loads ? null : `runs "${loads.shown}", which loads the project through a build host whose named pipe .NET binds under /tmp`;
-    const reads = label || folderForm ? null : formatReadsFolder(check);
+    const reads = !formats2 || folderForm ? null : formatReadsFolder(check);
     const folder = reads ? `runs "${reads.shown}", which lists every folder above the checkout for .editorconfig files, while a run's checkout sits in the Orbit home, which the check sandbox does not let it read` : null;
-    const outside = host !== null && !folderForm || folder !== null ? formatOutsideFix(check) : null;
+    const outside = host !== null && !folderForm || folder !== null ? formatOutsideFix(check, where2) : null;
     if (nodes2?.kind === "unpinned" || restore) {
       const causes = [...nodes2?.kind === "unpinned" ? [nodes2.reason] : [], ...restore ? [`runs "${restore.shown}", which restores the project first with a worker node per processor (SDK 8, which global.json pins, loads the project in its own process)`] : []];
       for (const cause of causes) details.push(`${id2}: ${cause}, and the check sandbox refuses every MSBuild worker node its named pipe under /tmp`);
@@ -61980,8 +62185,8 @@ async function checkSandboxCheck(input) {
     }
     const format = host ?? folder;
     if (format) {
-      details.push(`${check.id}: ${format}, and the check sandbox refuses it`);
-      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: ["pipe-denied"], cause: format, lines: [format] }, ...outside ? { outside } : { format: dotnetFormatFix(check) } });
+      details.push(`${id2}: ${format}, and the check sandbox refuses it`);
+      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: ["pipe-denied"], cause: format, lines: [format] }, ...outside ? { outside } : { format: dotnetFormatFix(check, where2) }, ...named2 });
       return true;
     }
     return false;
@@ -62012,7 +62217,7 @@ async function checkSandboxCheck(input) {
       continue;
     }
     started++;
-    const out = await probeOrRefuse(probeInput, check, exe, PROBE_ARGS[basename17(exe)] ?? DEFAULT_PROBE_ARGS, repo ? resolve19(repo, check.cwd) : null, null, msbuildFix(check));
+    const out = await probeOrRefuse(probeInput, check, exe, PROBE_ARGS[basename18(exe)] ?? DEFAULT_PROBE_ARGS, repo ? resolve19(repo, check.cwd) : null, null, msbuildFix(check));
     details.push(`${check.id}: ${out.detail}`);
     if (out.kind === "refused") refused.push({ check, failure: out.failure, ...out.fix ? { fix: out.fix } : {}, ...out.msbuild ? { msbuild: out.msbuild } : {} });
   }
@@ -62020,6 +62225,10 @@ async function checkSandboxCheck(input) {
   if (deps.install_existing_lockfile && deps.install_command) {
     const install = { ...defaultCheck(INSTALL_CHECK_ID), command: [...deps.install_command], shell: false, mandatory: true };
     judge(install, detectToolchains({ command: install.command, roots: repo ? [repo] : [] }).includes("dotnet"), "dependencies.install_command", { command: "dependencies.install_command", env: null });
+  }
+  for (const o of others) {
+    const def = { ...defaultCheck(o.field), command: [...o.command], shell: false, mandatory: true };
+    judge(def, detectToolchains({ command: def.command, roots: repo ? [repo] : [] }).includes("dotnet"), o.field, { command: o.field, env: null }, true);
   }
   const refusedToolchains = [];
   if (repo && input.orbitHome) {
@@ -62072,13 +62281,25 @@ async function checkSandboxCheck(input) {
   const pipes = refused.every((r) => r.msbuild || r.format || r.outside);
   const one = "dotnet commands that pin one MSBuild node (-m:1)";
   const loadsNothing = folderForm ? "dotnet format checks that load no project (dotnet format whitespace --folder)" : "dotnet format run outside Orbit, in CI";
+  const atBaseline = refused.some((r) => !r.label || r.label === "dependencies.install_command");
+  const blocks = atBaseline ? "a run would block at its baseline" : `a run would fail where Orbit starts ${refused.length === 1 ? "it" : "them"}`;
   return result2(
     status2,
-    nodes ? `${subject(refused)} would start MSBuild worker nodes, which the sandbox refuses; a run would block at its baseline` : formats ? `${subject(refused)} ${refused.length === 1 ? "runs" : "run"} dotnet format, ${folderForm ? "which loads the project through a build host the sandbox refuses its named pipe" : "which cannot run in a run's check sandbox on macOS"}; a run would block at its baseline` : pipes ? folderForm ? `${subject(refused)} would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; a run would block at its baseline` : `${subject(refused)} would start MSBuild worker nodes, whose named pipes the sandbox refuses, or run dotnet format, which cannot run in a run's check sandbox on macOS; a run would block at its baseline` : `the sandbox refuses ${refused.length === 1 ? "the executable" : "the executables"} of ${subject(refused)}; a run would block at its baseline`,
+    nodes ? `${subject(refused)} would start MSBuild worker nodes, which the sandbox refuses; ${blocks}` : formats ? `${subject(refused)} ${refused.length === 1 ? "runs" : "run"} dotnet format, ${folderForm ? "which loads the project through a build host the sandbox refuses its named pipe" : "which cannot run in a run's check sandbox on macOS"}; ${blocks}` : pipes ? folderForm ? `${subject(refused)} would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; ${blocks}` : `${subject(refused)} would start MSBuild worker nodes, whose named pipes the sandbox refuses, or run dotnet format, which cannot run in a run's check sandbox on macOS; ${blocks}` : `the sandbox refuses ${refused.length === 1 ? "the executable" : "the executables"} of ${subject(refused)}; ${blocks}`,
     details,
     nodes ? one : formats ? loadsNothing : pipes ? `${one}, and ${loadsNothing}` : "a check executable that can start in the check sandbox",
     fixFor([...refused, ...refusedToolchains])
   );
+}
+function sandboxedCommands(config) {
+  const start = config.ui?.environment.start_command ?? null;
+  return [
+    ...start && start.length > 0 ? [{ field: "ui.environment.start_command", command: start }] : [],
+    ...Object.entries(config.release?.environments ?? {}).flatMap(([name, env]) => [
+      { field: `release.environments.${name}.deploy_command`, command: env.deploy_command },
+      ...env.verify_command && env.verify_command.length > 0 ? [{ field: `release.environments.${name}.verify_command`, command: env.verify_command }] : []
+    ])
+  ];
 }
 function runsToolchain(check, id) {
   return detectToolchains({ command: check.command, shell: check.shell }).includes(id);
@@ -62090,7 +62311,7 @@ function baseCheck(id, users) {
 function launchPath(found, repo) {
   const target = realpathSync18(found);
   if (repo && isWithin(target, repo)) return null;
-  const named2 = join72(realpathSync18(dirname33(found)), basename17(found));
+  const named2 = join72(realpathSync18(dirname33(found)), basename18(found));
   return repo && isWithin(named2, repo) ? target : named2;
 }
 async function probeOrRefuse(input, check, exe, args, cwd, project, nodeFix) {
@@ -62114,7 +62335,7 @@ async function toolchainLine(input, orbitHome, id, base) {
   const found = p.probe.executables.map((e) => which(e, input.env.PATH)).find((x) => x !== null);
   if (!found) return { detail: `${label}: not started ("${p.probe.executables[0]}" was not found); ${where2}`, refusal: null };
   const exe = launchPath(found, input.repo);
-  if (!exe) return { detail: `${label}: not started ("${basename17(found)}" is the repository's own code, which only a run executes); ${where2}`, refusal: null };
+  if (!exe) return { detail: `${label}: not started ("${basename18(found)}" is the repository's own code, which only a run executes); ${where2}`, refusal: null };
   const args = id === "dotnet" ? [...p.probe.args, ...probeNodeSwitches(base)] : p.probe.args;
   const check = { ...base ?? defaultCheck(`toolchain-${id}`), id: `toolchain-${id}`, command: [exe, ...args], shell: false, cwd: ".", mandatory: false };
   const project = p.probe.files ? { files: p.probe.files, about: p.probe.about ?? "a generated project" } : null;
@@ -63203,7 +63424,7 @@ var init_models2 = __esm({
 
 // src/cli/check-detect.ts
 import { existsSync as existsSync54, readFileSync as readFileSync35 } from "node:fs";
-import { basename as basename18, dirname as dirname34, join as join74 } from "node:path";
+import { basename as basename19, dirname as dirname34, join as join74 } from "node:path";
 function read(path) {
   try {
     return readFileSync35(path, "utf8").slice(0, MAX_READ_BYTES);
@@ -63294,7 +63515,7 @@ function dotnetTestProjects(repo, projects) {
   const found = [];
   for (const p of projects.slice(0, MAX_PROJECT_READS)) {
     const text2 = read(join74(repo, p)) ?? "";
-    if (/Microsoft\.NET\.Test\.Sdk/i.test(text2) || /<IsTestProject>\s*true/i.test(text2) || /tests?\.[cfv]sproj$/i.test(basename18(p))) found.push(p);
+    if (/Microsoft\.NET\.Test\.Sdk/i.test(text2) || /<IsTestProject>\s*true/i.test(text2) || /tests?\.[cfv]sproj$/i.test(basename19(p))) found.push(p);
   }
   return found;
 }
@@ -63326,7 +63547,7 @@ function dotnetDrafts(input, out) {
   const drafts = [];
   for (const target of targets) {
     const t = target.startsWith("-") ? `./${target}` : target;
-    const suffix = targets.length > 1 ? `-${slug(basename18(target).replace(/\.[^.]+$/, ""))}` : "";
+    const suffix = targets.length > 1 ? `-${slug(basename19(target).replace(/\.[^.]+$/, ""))}` : "";
     drafts.push({ name: `build${suffix}`, command: ["dotnet", "build", t, ONE_MSBUILD_NODE], category: "build", timeout_seconds: TIMEOUT.compile, reason: `${what} file ${t}; ${ONE_NODE_REASON}` });
     const testable = what === "solution" ? testProjects.length > 0 : testProjects.includes(t);
     if (testable) drafts.push({ name: `unit-tests${suffix}`, command: ["dotnet", "test", t, ONE_MSBUILD_NODE], category: "test", timeout_seconds: TIMEOUT.nodeTest, reason: `${what} file ${t} with ${what === "solution" ? "a test project" : "a test project of its own"} (Microsoft.NET.Test.Sdk); ${ONE_NODE_REASON}` });
@@ -64275,7 +64496,7 @@ var init_ingest = __esm({
 
 // src/cli/commands/learn.ts
 import { existsSync as existsSync56, mkdirSync as mkdirSync26, readFileSync as readFileSync37, statSync as statSync16 } from "node:fs";
-import { basename as basename19, isAbsolute as isAbsolute26, join as join76, relative as relative8, resolve as resolve21 } from "node:path";
+import { basename as basename20, isAbsolute as isAbsolute26, join as join76, relative as relative8, resolve as resolve21 } from "node:path";
 function knowledgePath(ctx, repo, global) {
   return global ? join76(ctx.orbitHome, "knowledge.sqlite") : join76(repo, ".orbit", "knowledge.sqlite");
 }
@@ -64397,7 +64618,7 @@ async function readSource(ctx, repo, ref2, label) {
   if (!st.isFile()) throw new OrbitError("SCHEMA_INVALID", `${path} is not a regular file`);
   if (st.size > FETCH_MAX_BYTES) throw new OrbitError("SCHEMA_INVALID", `${path} is larger than ${FETCH_MAX_BYTES} bytes`);
   const rel = relative8(repo, path);
-  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute26(rel) ? rel : basename19(path), content: readFileSync37(path, "utf8") };
+  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute26(rel) ? rel : basename20(path), content: readFileSync37(path, "utf8") };
 }
 async function runIngestCurator(ctx, repo, config, prompt) {
   if (!(config.knowledge.curator_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.curator_budget_usd is 0, so no curator may run; raise it, or supply the curator output with --curator-output");
@@ -64890,7 +65111,7 @@ async function releaseResolveCommand(args, ctx) {
             ...environment === void 0 ? {} : { environment },
             resolution,
             by,
-            ...resolution === "verify" ? { isolation: rc.isolation(), homeDir: homeOf2(rc.deps) } : {}
+            ...resolution === "verify" ? { isolation: rc.isolation(), homeDir: homeOf2(rc.deps), toolchainCacheRoot: toolchainCacheRootFor(rc) } : {}
           });
           return { result: result3 };
         } finally {
@@ -66350,9 +66571,9 @@ async function timelineCommand(args, ctx) {
     const tail2 = (entries) => last === void 0 ? entries : last === 0 ? [] : entries.slice(-last);
     if (!args.bool("follow")) {
       const t2 = build();
-      const shown2 = { ...t2, entries: tail2(t2.entries) };
-      if (asJson) json(ctx.io, shown2);
-      else ctx.io.out(renderTimeline(shown2));
+      const shown3 = { ...t2, entries: tail2(t2.entries) };
+      if (asJson) json(ctx.io, shown3);
+      else ctx.io.out(renderTimeline(shown3));
       return EXIT.OK;
     }
     let t = build();
