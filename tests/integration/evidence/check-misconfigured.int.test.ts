@@ -1,31 +1,28 @@
-import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { classifyMisconfigured, classifyProgramNotFound } from '../../../src/evidence/check-misconfigured.ts';
 import { runChecks } from '../../../src/evidence/runner.ts';
-import { which } from '../../../src/isolation/util.ts';
 import { checkDef } from '../../unit/evidence/fixtures.ts';
-import { runnerEnv, type RunnerEnv } from './harness.ts';
+import { hostRustupHome, hostTool, runnerEnv, type RunnerEnv } from './harness.ts';
 
 /**
  * Issue #23: the usage-error table against the real tools. Each misconfigured command runs as a check through Orbit's
  * runner (the environment a check gets: a private HOME and TMPDIR, the toolchain variables), and the log it leaves is
  * classified as PREFLIGHT classifies it: an argument error, a missing target, or (exit 127) a program that is not
  * installed, which is the environment's. A usage error the check's command does not print itself (a script of the
- * repository, a chain) is none of them. Each tool is skipped where it is not installed.
+ * repository, a chain) is none of them. Each tool is skipped, with the reason, where it is not installed: where it is
+ * not found, or does not start outside the sandbox (harness.ts hostTool), as rustup's cargo does not without a default
+ * toolchain.
  */
-const dotnet = which('dotnet', process.env.PATH) ?? [join(homedir(), '.dotnet', 'dotnet')].find((p) => existsSync(p)) ?? null;
-const python = which('python3', process.env.PATH);
-const hasPytest = python !== null && (() => {
-  try {
-    execFileSync(python, ['-m', 'pytest', '--version'], { stdio: 'ignore', timeout: 30_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
+const dotnet = hostTool('dotnet', ['--version'], join(homedir(), '.dotnet', 'dotnet'));
+const python = hostTool('python3', ['--version']);
+const pytest = { absent: python.path === null ? python.absent : hostTool(python.path, ['-m', 'pytest', '--version']).path !== null ? null : `pytest is not installed: "${python.path} -m pytest --version" fails outside the sandbox` };
+const npm = hostTool('npm', ['--version']);
+const cargo = hostTool('cargo', ['--version']);
+const go = hostTool('go', ['version']);
+const title = (what: string, absent: string | null) => (absent === null ? what : `${what} skipped: ${absent}`);
 
 const envs: RunnerEnv[] = [];
 afterEach(async () => {
@@ -41,33 +38,40 @@ async function run(command: string[], files?: Record<string, string>, shell = fa
 }
 
 const PACKAGE = '{"name":"acme","version":"1.0.0","private":true,"scripts":{"test":"node -e 0"}}\n';
-const hasCargo = which('cargo', process.env.PATH) !== null;
-const hasGo = which('go', process.env.PATH) !== null;
 
-const CASES: { name: string; available: boolean; command: () => string[]; shell?: boolean; files?: Record<string, string>; signature: string; kind: 'argument' | 'missing-target'; line: RegExp }[] = [
-  { name: 'dotnet build with two projects', available: dotnet !== null, command: () => [dotnet!, 'build', 'A.csproj', 'B.csproj'], signature: 'msbuild-one-project', kind: 'argument', line: /^MSBUILD : error MSB1008: Only one project can be specified\.$/ },
-  { name: 'dotnet build of a project that does not exist', available: dotnet !== null, command: () => [dotnet!, 'build', 'Missing.csproj'], signature: 'msbuild-project-missing', kind: 'missing-target', line: /^MSBUILD : error MSB1009: Project file does not exist\.$/ },
-  { name: 'dotnet build in a directory with no project', available: dotnet !== null, command: () => [dotnet!, 'build'], signature: 'msbuild-no-project', kind: 'missing-target', line: /^MSBUILD : error MSB1003: / },
-  { name: 'dotnet build with an unknown switch', available: dotnet !== null, command: () => [dotnet!, 'build', '--bogus-flag'], signature: 'msbuild-unknown-switch', kind: 'argument', line: /^MSBUILD : error MSB1001: Unknown switch\.$/ },
+const CASES: { name: string; absent: string | null; command: () => string[]; shell?: boolean; files?: Record<string, string>; signature: string; kind: 'argument' | 'missing-target'; line: RegExp }[] = [
+  { name: 'dotnet build with two projects', absent: dotnet.absent, command: () => [dotnet.path!, 'build', 'A.csproj', 'B.csproj'], signature: 'msbuild-one-project', kind: 'argument', line: /^MSBUILD : error MSB1008: Only one project can be specified\.$/ },
+  { name: 'dotnet build of a project that does not exist', absent: dotnet.absent, command: () => [dotnet.path!, 'build', 'Missing.csproj'], signature: 'msbuild-project-missing', kind: 'missing-target', line: /^MSBUILD : error MSB1009: Project file does not exist\.$/ },
+  { name: 'dotnet build in a directory with no project', absent: dotnet.absent, command: () => [dotnet.path!, 'build'], signature: 'msbuild-no-project', kind: 'missing-target', line: /^MSBUILD : error MSB1003: / },
+  { name: 'dotnet build with an unknown switch', absent: dotnet.absent, command: () => [dotnet.path!, 'build', '--bogus-flag'], signature: 'msbuild-unknown-switch', kind: 'argument', line: /^MSBUILD : error MSB1001: Unknown switch\.$/ },
   // dotnet test hands MSBuild what it does not know itself, a test platform's option included, until the repository runs that platform.
-  { name: 'dotnet test with an unknown switch', available: dotnet !== null, command: () => [dotnet!, 'test', '--report-trx'], signature: 'dotnet-test-unknown-switch', kind: 'missing-target', line: /^MSBUILD : error MSB1001: Unknown switch\.$/ },
-  { name: 'dotnet with no such command', available: dotnet !== null, command: () => [dotnet!, 'tset'], signature: 'dotnet-no-such-command', kind: 'missing-target', line: /^Could not execute because the specified command or file was not found\.$/ },
-  { name: 'npm with a missing script', available: which('npm', process.env.PATH) !== null, command: () => ['npm', 'run', 'tset'], files: { 'package.json': PACKAGE }, signature: 'npm-missing-script', kind: 'missing-target', line: /^npm (?:error|ERR!) Missing script: "tset"$/ },
-  { name: 'pytest with an unknown argument', available: hasPytest, command: () => [python!, '-m', 'pytest', '--bogus'], signature: 'pytest-unrecognized-arguments', kind: 'missing-target', line: /: error: unrecognized arguments: --bogus$/ },
+  { name: 'dotnet test with an unknown switch', absent: dotnet.absent, command: () => [dotnet.path!, 'test', '--report-trx'], signature: 'dotnet-test-unknown-switch', kind: 'missing-target', line: /^MSBUILD : error MSB1001: Unknown switch\.$/ },
+  { name: 'dotnet with no such command', absent: dotnet.absent, command: () => [dotnet.path!, 'tset'], signature: 'dotnet-no-such-command', kind: 'missing-target', line: /^Could not execute because the specified command or file was not found\.$/ },
+  { name: 'npm with a missing script', absent: npm.absent, command: () => ['npm', 'run', 'tset'], files: { 'package.json': PACKAGE }, signature: 'npm-missing-script', kind: 'missing-target', line: /^npm (?:error|ERR!) Missing script: "tset"$/ },
+  { name: 'pytest with an unknown argument', absent: pytest.absent, command: () => [python.path!, '-m', 'pytest', '--bogus'], signature: 'pytest-unrecognized-arguments', kind: 'missing-target', line: /: error: unrecognized arguments: --bogus$/ },
   // An option of a plugin that is not loaded is the same error: -p no:cov stands in for a pytest-cov the repository does not install yet.
-  { name: 'pytest with a plugin option and no plugin', available: hasPytest, command: () => [python!, '-m', 'pytest', '-p', 'no:cov', '--cov=src'], signature: 'pytest-unrecognized-arguments', kind: 'missing-target', line: /: error: unrecognized arguments: --cov=src$/ },
-  { name: 'pytest with a test file that does not exist', available: hasPytest, command: () => [python!, '-m', 'pytest', 'tests/missing_test.py'], signature: 'pytest-path-not-found', kind: 'missing-target', line: /^ERROR: file or directory not found: tests\/missing_test\.py$/ },
-  { name: 'go build with an unknown flag', available: hasGo, command: () => ['go', 'build', '-bogus'], signature: 'go-flag', kind: 'argument', line: /^flag provided but not defined: -bogus$/ },
-  { name: 'go with no such command', available: hasGo, command: () => ['go', 'tset'], signature: 'go-unknown-command', kind: 'argument', line: /^go tset: unknown command$/ },
-  { name: 'go mod with no such command', available: hasGo, command: () => ['go', 'mod', 'tset'], signature: 'go-unknown-command', kind: 'argument', line: /^go mod: unknown command$/ },
-  { name: 'cargo test with an unknown argument', available: hasCargo, command: () => ['cargo', 'test', '--bogus'], signature: 'cargo-unexpected-argument', kind: 'argument', line: /^error: unexpected argument '--bogus' found$/ },
-  { name: 'cargo with no such command', available: hasCargo, command: () => ['cargo', 'tset'], signature: 'cargo-no-such-command', kind: 'missing-target', line: /^error: no such command: `tset`$/ },
-  { name: 'a script of the repository that does not exist yet', available: true, command: () => ['./scripts/check.sh --fast'], shell: true, signature: 'script-not-found', kind: 'missing-target', line: /\.\/scripts\/check\.sh: (?:No such file or directory|not found)$/ },
+  { name: 'pytest with a plugin option and no plugin', absent: pytest.absent, command: () => [python.path!, '-m', 'pytest', '-p', 'no:cov', '--cov=src'], signature: 'pytest-unrecognized-arguments', kind: 'missing-target', line: /: error: unrecognized arguments: --cov=src$/ },
+  { name: 'pytest with a test file that does not exist', absent: pytest.absent, command: () => [python.path!, '-m', 'pytest', 'tests/missing_test.py'], signature: 'pytest-path-not-found', kind: 'missing-target', line: /^ERROR: file or directory not found: tests\/missing_test\.py$/ },
+  { name: 'go build with an unknown flag', absent: go.absent, command: () => ['go', 'build', '-bogus'], signature: 'go-flag', kind: 'argument', line: /^flag provided but not defined: -bogus$/ },
+  { name: 'go with no such command', absent: go.absent, command: () => ['go', 'tset'], signature: 'go-unknown-command', kind: 'argument', line: /^go tset: unknown command$/ },
+  { name: 'go mod with no such command', absent: go.absent, command: () => ['go', 'mod', 'tset'], signature: 'go-unknown-command', kind: 'argument', line: /^go mod: unknown command$/ },
+  { name: 'cargo test with an unknown argument', absent: cargo.absent, command: () => ['cargo', 'test', '--bogus'], signature: 'cargo-unexpected-argument', kind: 'argument', line: /^error: unexpected argument '--bogus' found$/ },
+  { name: 'cargo with no such command', absent: cargo.absent, command: () => ['cargo', 'tset'], signature: 'cargo-no-such-command', kind: 'missing-target', line: /^error: no such command: `tset`$/ },
+  { name: 'a script of the repository that does not exist yet', absent: null, command: () => ['./scripts/check.sh --fast'], shell: true, signature: 'script-not-found', kind: 'missing-target', line: /\.\/scripts\/check\.sh: (?:No such file or directory|not found)$/ },
 ];
 
 describe('the misconfigured-check table against the real tools, run as checks', () => {
+  // rustup's cargo (GitHub's runners) finds its toolchains in RUSTUP_HOME, else under the run's home, which here is a
+  // scratch directory: the host's installation is passed in, as on a host that sets RUSTUP_HOME (harness.ts hostRustupHome).
+  beforeEach(() => {
+    if (hostRustupHome) vi.stubEnv('RUSTUP_HOME', hostRustupHome);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   for (const c of CASES) {
-    it.skipIf(!c.available)(`${c.name}: ${c.signature}`, async () => {
+    it.skipIf(c.absent !== null)(title(`${c.name}: ${c.signature}`, c.absent), async () => {
       const command = c.command();
       const { exitCode, log } = await run(command, c.files, c.shell === true);
       const found = classifyMisconfigured({ checkId: 'build', command, shell: c.shell === true, exitCode, output: log });
@@ -86,7 +90,7 @@ describe('the misconfigured-check table against the real tools, run as checks', 
     expect(found!.lines[0]).toMatch(/orbit-acme-missing-tool: (?:command )?not found$/);
   }, 300_000);
 
-  it.skipIf(which('npm', process.env.PATH) === null)('npm test whose script runs a missing npm run lint, and a chain, stay pre-existing failures', async () => {
+  it.skipIf(npm.absent !== null)(title('npm test whose script runs a missing npm run lint, and a chain, stay pre-existing failures', npm.absent), async () => {
     const files = { 'package.json': '{"name":"acme","version":"1.0.0","private":true,"scripts":{"test":"npm run lint && node -e 0"}}\n' };
     const nested = await run(['npm', 'test'], files);
     expect(nested.log).toMatch(/Missing script: "lint"/);
@@ -96,7 +100,7 @@ describe('the misconfigured-check table against the real tools, run as checks', 
     expect(classifyMisconfigured({ checkId: 'build', command: ['node -e 0 && npm run lint'], shell: true, exitCode: chained.exitCode, output: chained.log })).toBeNull();
   }, 300_000);
 
-  it.skipIf(which('npm', process.env.PATH) === null)('npm test whose script runs npm test in a package that has none stays a pre-existing failure', async () => {
+  it.skipIf(npm.absent !== null)(title('npm test whose script runs npm test in a package that has none stays a pre-existing failure', npm.absent), async () => {
     const files = {
       'package.json': '{"name":"acme","version":"1.0.0","private":true,"scripts":{"test":"cd client && npm test"}}\n',
       'client/package.json': '{"name":"acme-client","version":"1.0.0","private":true}\n',
