@@ -19,15 +19,19 @@ export interface RunnerEnv {
   close(): Promise<void>;
 }
 
-/** A repo, a candidate snapshotted from a worktree, a writable checkout of it, and a ready RunnerContext. */
-export async function runnerEnv(checks: CheckDefinition[], opts: { clock?: Clock; isolation?: IsolationProvider; files?: Record<string, string> } = {}): Promise<RunnerEnv> {
+/**
+ * A repo, a candidate snapshotted from a worktree, a writable checkout of it, and a ready RunnerContext. `checkoutAt`
+ * places the checkout (from the temp root), as a run's sits in <orbit home>/worktrees/<key>/<run>/; the default is
+ * `<root>/checkout`, with nothing read-denied above it.
+ */
+export async function runnerEnv(checks: CheckDefinition[], opts: { clock?: Clock; isolation?: IsolationProvider; files?: Record<string, string>; checkoutAt?: (root: string) => string } = {}): Promise<RunnerEnv> {
   const t = tempRoot();
   const r = makeRepo(t.root, opts.files);
   const clock = opts.clock ?? systemClock;
   const run = makeRun(t.root, r.repo, checks, { clock });
   const wt = addWorktree(r.repo, join(t.root, 'wt', 'w1'));
   const candidate = await snapshotCandidate({ db: run.db, clock: clock instanceof ManualClock ? clock : systemClock, repoRoot: r.repo, worktree: wt, runId: run.runId, baseRev: r.base, attempt: 1, workerId: 'w1' });
-  const checkoutDir = await materializeCandidate(r.repo, candidate.commitSha, join(t.root, 'checkout'), { readOnly: false });
+  const checkoutDir = await materializeCandidate(r.repo, candidate.commitSha, opts.checkoutAt ? opts.checkoutAt(t.root) : join(t.root, 'checkout'), { readOnly: false });
   const ctx: RunnerContext = {
     db: run.db,
     run: { id: run.runId, policyHash: run.policyHash },

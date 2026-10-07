@@ -77,6 +77,27 @@ describe('environmentFix', () => {
     expect(both).toMatch(/^for check build: the sandbox refuses MSBuild worker nodes .*; and dotnet format \(check fmt\) takes no -m:1/);
   });
 
+  // Review: on macOS the folder form lists <orbit home>/worktrees/<key>/<run>, which the check profile read-denies, and
+  // died with UnauthorizedAccessException in every real run; the fix named it all the same, or sent the person to
+  // orbit doctor, which passed it.
+  it('where the folder form cannot list the folders above the checkout, names running dotnet format outside Orbit, for its build host and for its refused listing', () => {
+    const host: BlockedCheck = { ...dotnet, checkId: 'fmt', signals: ['pipe-denied'], lines: ['Unhandled exception: System.TimeoutException: The operation has timed out.'], command: { argv: ['dotnet', 'format', '--verify-no-changes'], shell: false }, folderForm: false };
+    const fix = environmentFix([host])!;
+    expect(fix).toMatch(/^dotnet format \(check fmt\) cannot run in this check sandbox: remove checks\.fmt from \.orbit\/config\.yaml, or set checks\.fmt\.mandatory: false, and run dotnet format in CI \(on macOS no form of dotnet format runs/);
+    expect(fix).not.toMatch(/whitespace --folder --verify-no-changes in place|"--folder"/);
+    const listing: BlockedCheck = {
+      ...dotnet,
+      checkId: 'fmt',
+      signals: ['permission-denied'],
+      lines: ["Unhandled exception: System.UnauthorizedAccessException: Access to the path '/home/acme/.orbit/worktrees/abcdefabcdef/orb-1' is denied."],
+      command: { argv: ['dotnet', 'format', 'whitespace', '--folder', '--verify-no-changes'], shell: false },
+      folderForm: false,
+    };
+    expect(environmentFix([listing])).toBe(fix);
+    // Where the folder form lists (Linux), a refused listing is any other denial.
+    expect(environmentFix([{ ...listing, folderForm: true }])).toMatch(/^run orbit doctor, which starts each check's executable in the sandbox/);
+  });
+
   it('is added to the candidate reason for a check that could not execute because of a denial', () => {
     const reason = environmentBlockReason({ runId: 'orb-3', candidateSeq: 2, failures: [dotnet] });
     expect(reason).toMatch(/^Check build could not execute on candidate 2/);

@@ -21,6 +21,17 @@ import { chainOf, commandsOf, isDotnet, type JudgedCheck, msbuildFix, type Msbui
  * only that implicit restore is refused. Measured under srt through the runner on macOS with SDK 8.0.303: a format of a
  * project with two references failed in about a second, its restore refused a worker node; a `dotnet restore -m:1`
  * first and `--no-restore` passed, and so did the plain form with DOTNET_PROCESSOR_COUNT=1 in the check's env.
+ *
+ * The folder form does not run everywhere either (review of #10). It lists every folder above the one it formats for
+ * .editorconfig files (Roslyn's EditorConfigFinder, DirectoryInfo.GetFiles on each, a root = true file included), and a
+ * run's checkout sits in <orbit home>/worktrees/<repo key>/<run>/, which the check profile read-denies but for the
+ * checkout itself (isolation/profiles.ts checkoutBelowDenied). On macOS Seatbelt refuses the listing, and dotnet format
+ * dies at once with "System.UnauthorizedAccessException: Access to the path '<orbit home>/worktrees/<key>/<run>' is
+ * denied" (measured under the runner and srt 0.0.78 with SDK 9.0.305; it passed where nothing above the checkout was
+ * denied); on Linux srt lays an empty tmpfs over a denied directory, which lists. So where the folder form cannot list
+ * (`folderForm` false: macOS, a checkout below a denied directory), no form of dotnet format that SDK 9 and later run
+ * works in the check sandbox, and the fix is to run it outside Orbit (formatOutsideFix); a format with SDK 8 pinned
+ * keeps its own fix, a pinned restore first, which passed in such a run.
  */
 
 /** The form of dotnet format that reads the files of a folder and loads no project, measured to run under srt. */
@@ -50,6 +61,20 @@ export const DOTNET_FORMAT_REASON =
   `${FOLDER_TEXT} reads the files without loading the project and checks whitespace only, so run the style and analyzer checks (dotnet format --verify-no-changes) outside Orbit, in CI; ` +
   'docs/troubleshooting.md, "dotnet format under the sandbox")';
 
+/**
+ * Why, where the folder form cannot list the folders above the checkout (macOS, in a run's layout), said once after any
+ * number of fixes.
+ */
+export const FORMAT_OUTSIDE_REASON =
+  "(on macOS no form of dotnet format runs in a run's check sandbox with SDK 9 and later: every form but dotnet format whitespace --folder loads the project through a build host whose named pipe .NET binds under /tmp, which the sandbox refuses, and whitespace --folder lists every folder above the checkout for .editorconfig files, while the run's checkout sits in the Orbit home, which the sandbox does not let a check read; " +
+  "with SDK 8 pinned by global.json, which loads the project in dotnet format's own process, a dotnet restore -m:1 first and dotnet format with --no-restore run; " +
+  'docs/troubleshooting.md, "dotnet format under the sandbox")';
+
+/** The fix for a dotnet format check that cannot run in the check sandbox (FORMAT_OUTSIDE_REASON): run it outside Orbit. */
+export function formatOutsideFix(check: Pick<CheckDefinition, 'id'>): string {
+  return `remove checks.${check.id} from .orbit/config.yaml, or set checks.${check.id}.mandatory: false, and run dotnet format in CI`;
+}
+
 export interface DotnetFormatUse {
   /** The dotnet format command as the check writes it, its program by its base name; "dotnet format" for a shell line doctor cannot split. */
   shown: string;
@@ -61,6 +86,13 @@ function loadsProject(argv: readonly string[]): boolean {
   const rest = argv.slice(argv.indexOf('format') + 1);
   if (rest.some((w) => LOADS_NOTHING.has(w))) return false;
   return !(rest.includes('whitespace') && rest.includes('--folder'));
+}
+
+/** Whether a dotnet argv is `dotnet format whitespace --folder`, which lists the folders above the one it formats. */
+function readsFolder(argv: readonly string[]): boolean {
+  if (!isDotnet(argv[0] ?? '') || verbOf(argv) !== 'format') return false;
+  const rest = argv.slice(argv.indexOf('format') + 1);
+  return !rest.some((w) => LOADS_NOTHING.has(w)) && rest.includes('whitespace') && rest.includes('--folder');
 }
 
 /** Whether a dotnet argv is `dotnet format` that loads the project and restores it first (no --no-restore). */
@@ -120,6 +152,25 @@ export function formatLoadsProject(check: JudgedCheck): DotnetFormatUse | null {
     // The words of a line doctor cannot split run on to the next command; its first dotnet format decides.
     const next = ws.findIndex((w, j) => j > i && isDotnet(w));
     if (loadsProject(ws.slice(i, next < 0 ? undefined : next))) return { shown: 'dotnet format' };
+  }
+  return null;
+}
+
+/**
+ * The first dotnet format command of a check in the folder form (whitespace --folder), or null; read as
+ * formatLoadsProject reads a check.
+ */
+export function formatReadsFolder(check: JudgedCheck): DotnetFormatUse | null {
+  const commands = commandsOf(check);
+  if (commands !== null) {
+    const found = commands.find((c) => readsFolder(c.argv));
+    return found ? { shown: shownOf(found.argv) } : null;
+  }
+  const ws = words(check.command);
+  for (let i = 0; i < ws.length; i++) {
+    if (!isDotnet(ws[i]!) || verbOf(ws.slice(i)) !== 'format') continue;
+    const next = ws.findIndex((w, j) => j > i && isDotnet(w));
+    if (readsFolder(ws.slice(i, next < 0 ? undefined : next))) return { shown: 'dotnet format' };
   }
   return null;
 }
@@ -277,14 +328,20 @@ export function formatRestoreFix(check: JudgedCheck & Pick<CheckDefinition, 'id'
 /**
  * The fix the runner names for a check it stopped because the sandbox refused an MSBuild worker node. For a check whose
  * dotnet format loads the project: with SDK 8 (`inProcess`), a pinned restore first and --no-restore; else the folder
- * form, which restores nothing, with -m:1 on the check's other builds and both reasons when one is unpinned. For any
- * other check, -m:1 on its dotnet commands that build, or on every MSBuild call it starts (msbuildNodeFix).
+ * form, which restores nothing, with -m:1 on the check's other builds and both reasons when one is unpinned, or, where
+ * the folder form cannot list the folders above the checkout (`folderForm` false), running dotnet format outside Orbit,
+ * with -m:1 on the check's builds when one is unpinned. For any other check, -m:1 on its dotnet commands that build, or
+ * on every MSBuild call it starts (msbuildNodeFix).
  */
-export function nodeDenialFix(check: JudgedCheck & Pick<CheckDefinition, 'id'>, where: MsbuildFixWhere | null, inProcess = false): string {
+export function nodeDenialFix(check: JudgedCheck & Pick<CheckDefinition, 'id'>, where: MsbuildFixWhere | null, inProcess = false, folderForm = true): string {
   if (where || !formatLoadsProject(check)) return msbuildNodeFix(check, where);
   if (inProcess) {
     const fix = formatRestoreFix(check, where);
     return `${fix.change} ${msbuildFixReason([fix])}`;
+  }
+  if (!folderForm) {
+    const nodes = msbuildNodes(check, true)?.kind === 'unpinned' ? msbuildFix(check, where) : null;
+    return `${nodes ? `${nodes.change} ${msbuildFixReason([nodes])}; ` : ''}${formatOutsideFix(check)} ${FORMAT_OUTSIDE_REASON}`;
   }
   if (msbuildNodes(check, true)?.kind !== 'unpinned') return `${dotnetFormatFix(check)} ${DOTNET_FORMAT_REASON}`;
   const fix = formatAndNodeFix(check, where);

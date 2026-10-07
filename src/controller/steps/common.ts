@@ -12,7 +12,7 @@ import { appendEvent } from '../../storage/events.ts';
 import { recordDecision, type DecisionRecord } from '../../storage/decisions.ts';
 import { heartbeatController } from '../../storage/controllers.ts';
 import { authBlocker, blockRunOnCredentials, type BlockedCredentialState } from '../../recovery/credentials.ts';
-import type { RunContext } from '../context.ts';
+import { folderFormRunsAt, runWorktreeRoot, type RunContext } from '../context.ts';
 import { isTerminal, type RunState } from '../states.ts';
 import { markProgress, transition, type TransitionRequest } from '../run-store.ts';
 import { raiseOutputCap, stopActiveWorkers } from '../workers.ts';
@@ -263,8 +263,14 @@ export function assertContract(ctx: RunContext): NonNullable<RunContext['contrac
  * format meets the same refusal through the build host it loads the project with (evidence/dotnet-format.ts), which no
  * switch avoids, so the worker is told which form of it runs.
  */
-export const DOTNET_WORKER_NOTE =
-  '- .NET: pass -m:1 to every dotnet build, test, publish, pack, restore, clean or msbuild you start, and run a project with dotnet run --no-build after such a build (dotnet run hands -m:1 to the program); this sandbox refuses MSBuild worker nodes, so without -m:1 such a command fails, on macOS only after about five minutes; dotnet format loads the project through a build host whose named pipe this sandbox refuses too, so of dotnet format only dotnet format whitespace --folder runs here';
+const DOTNET_WORKER_BUILDS =
+  '- .NET: pass -m:1 to every dotnet build, test, publish, pack, restore, clean or msbuild you start, and run a project with dotnet run --no-build after such a build (dotnet run hands -m:1 to the program); this sandbox refuses MSBuild worker nodes, so without -m:1 such a command fails, on macOS only after about five minutes; ';
+export const DOTNET_WORKER_NOTE = `${DOTNET_WORKER_BUILDS}dotnet format loads the project through a build host whose named pipe this sandbox refuses too, so of dotnet format only dotnet format whitespace --folder runs here`;
+/**
+ * The same where the folder form cannot list the folders above the worktree either (macOS, a worktree in the
+ * read-denied Orbit home; evidence/dotnet-format.ts): no form of dotnet format that SDK 9 and later run works there.
+ */
+export const DOTNET_WORKER_NOTE_NO_FORMAT = `${DOTNET_WORKER_BUILDS}dotnet format does not run here: every form but dotnet format whitespace --folder loads the project through a build host whose named pipe this sandbox refuses too, and whitespace --folder lists the folders above your worktree, which this sandbox does not let you read`;
 
 /** The controller-written summary of a worker's authority (spec section 21: "policy summary"). */
 export function policySummary(ctx: RunContext, opts: { readOnly: boolean }): string {
@@ -279,7 +285,7 @@ export function policySummary(ctx: RunContext, opts: { readOnly: boolean }): str
     `- trusted checks (run by the controller, not you): ${Object.keys(c.checks).join(', ') || 'none'}`,
     '- you cannot commit, push, open pull requests, change policy, or decide completion',
     // A worker's toolchains are its worktree's markers, the repository's tracked files (controller/workers.ts).
-    ...(c.isolation.provider === 'sandbox-runtime' && detectToolchains({ roots: [ctx.snapshot.repo_root] }).includes('dotnet') ? [DOTNET_WORKER_NOTE] : []),
+    ...(c.isolation.provider === 'sandbox-runtime' && detectToolchains({ roots: [ctx.snapshot.repo_root] }).includes('dotnet') ? [folderFormRunsAt(ctx, runWorktreeRoot(ctx)) ? DOTNET_WORKER_NOTE : DOTNET_WORKER_NOTE_NO_FORMAT] : []),
   ];
   return lines.join('\n');
 }

@@ -420,6 +420,23 @@ export function repoParentDenial(repoRoot: string, homeDir: string): { path: str
 }
 
 /**
+ * Whether a check profile read-denies a directory above `checkout`: the profile re-allows the checkout itself, so a
+ * process in it can read everything below it and list nothing between it and that directory. A run's checkouts sit
+ * in <orbit home>/worktrees/<repo key>/<run>/, and the default Orbit home, ~/.orbit, is denied (HOME_DENY_READ), so for a
+ * run this is true unless ORBIT_HOME is somewhere no rule denies. On macOS Seatbelt then refuses a listing of
+ * <orbit home>/worktrees/<repo key>/<run> with EPERM, which a tool that walks up from its folder meets (dotnet format
+ * whitespace --folder looking for .editorconfig files, evidence/dotnet-format.ts); on Linux srt lays an empty tmpfs over
+ * a denied directory, which lists.
+ */
+export function checkoutBelowDenied(opts: { checkout: string; repoRoot: string; homeDir: string; env?: Record<string, string | undefined> }): boolean {
+  const checkout = canonicalPath(opts.checkout);
+  const repo = canonicalPath(opts.repoRoot);
+  const parent = repoParentDenial(repo, opts.homeDir).path;
+  const denied = [...credentialDenyPaths({ homeDir: opts.homeDir, ...(opts.env ? { env: opts.env } : {}) }), join(repo, '.orbit'), ...(isWithin(repo, checkout) ? [] : [repo]), ...(parent ? [parent] : [])];
+  return denied.some((d) => d !== checkout && isWithin(checkout, d));
+}
+
+/**
  * The repository's main checkout is denied as a whole (its git directory is
  * re-allowed through the read-only paths): it holds the user's uncommitted
  * work and untracked files such as .env, none of which is in the worktree.

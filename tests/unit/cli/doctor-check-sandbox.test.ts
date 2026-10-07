@@ -545,12 +545,14 @@ describe('checkSandboxCheck: the .NET build probe (issue #10)', () => {
   // whatever TMPDIR says, which the sandbox refuses (ADR 0009, addendum): measured, the check failed after the build
   // host's 60 s connect timeout on macOS (SDK 9) and at once on Linux (SDK 10). Only whitespace --folder loads nothing.
   describe('dotnet format', () => {
+    // These pin Linux, where srt lays an empty tmpfs over a denied directory, so the folder form lists the folders above
+    // a run's checkout; on macOS it cannot (the describe block below).
     const FORMAT_FIX = /\(dotnet format loads the project through a build host, a separate process whose named pipe \.NET binds under \/tmp, which the check sandbox refuses/;
 
     it('fails a mandatory dotnet format check that loads the project, before any probe, with whitespace --folder ready to paste', async () => {
       const { w, cfg } = dotnetWorld([{ id: 'format', command: ['dotnet', 'format', '--verify-no-changes'], mandatory: true }]);
       const { seen, launch } = launches(() => ({ exitCode: 0, output: 'Build succeeded.' }));
-      const c = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, launch });
+      const c = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, platform: 'linux', launch });
       expect(seen).toEqual([]);
       expect(c.status).toBe('fail');
       expect(c.summary).toBe('check format runs dotnet format, which loads the project through a build host the sandbox refuses its named pipe; a run would block at its baseline');
@@ -564,21 +566,21 @@ describe('checkSandboxCheck: the .NET build probe (issue #10)', () => {
     it('fails every form that loads the project, --no-restore after a pinned restore included, and only warns for an optional one', async () => {
       for (const command of [['dotnet', 'format', 'style', '--verify-no-changes'], ['dotnet', 'format', 'whitespace', '--verify-no-changes'], ['dotnet restore -m:1 && dotnet format --verify-no-changes --no-restore']]) {
         const { w, cfg } = dotnetWorld([{ id: 'format', command, shell: command.length === 1, mandatory: true }]);
-        const c = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, launch: async () => ({ exitCode: 0, output: '' }) });
+        const c = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, platform: 'linux', launch: async () => ({ exitCode: 0, output: '' }) });
         expect(c.status, command.join(' ')).toBe('fail');
       }
       const { w, cfg } = dotnetWorld([{ id: 'format', command: ['dotnet restore -m:1 && dotnet format --verify-no-changes --no-restore'], shell: true, mandatory: false }]);
-      const c = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, launch: async () => ({ exitCode: 0, output: '' }) });
+      const c = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, platform: 'linux', launch: async () => ({ exitCode: 0, output: '' }) });
       expect(c.status).toBe('warn');
       expect(c.fix!.startsWith('checks.format.command: ["dotnet restore -m:1 && dotnet format whitespace --folder --verify-no-changes"] (dotnet format loads')).toBe(true);
     });
 
     it('starts whitespace --folder like any check, and says nothing of dotnet format where checks do not run under srt', async () => {
       const { w, cfg } = dotnetWorld([{ id: 'format', command: ['dotnet', 'format', 'whitespace', '--folder', '--verify-no-changes'], mandatory: true }]);
-      const ok = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, launch: async () => ({ exitCode: 0, output: '' }) });
+      const ok = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, platform: 'linux', launch: async () => ({ exitCode: 0, output: '' }) });
       expect(ok).toMatchObject({ status: 'pass', details: ['format: "dotnet help" ran in the sandbox'] });
       const loads = dotnetWorld([{ id: 'format', command: ['dotnet', 'format', '--verify-no-changes'], mandatory: true }]);
-      const none = await checkSandboxCheck({ config: loads.cfg, repo: loads.w.repo, provider: new NoIsolation(), available: true, env: loads.w.env, homeDir: loads.w.home, launch: async () => ({ exitCode: 0, output: '' }) });
+      const none = await checkSandboxCheck({ config: loads.cfg, repo: loads.w.repo, provider: new NoIsolation(), available: true, env: loads.w.env, homeDir: loads.w.home, platform: 'linux', launch: async () => ({ exitCode: 0, output: '' }) });
       expect(none.status).toBe('pass');
     });
 
@@ -586,7 +588,7 @@ describe('checkSandboxCheck: the .NET build probe (issue #10)', () => {
     // again on the next doctor run for its format.
     it('fixes a chain that builds without -m:1 and runs a dotnet format that loads the project in one command, with both reasons', async () => {
       const { w, cfg } = dotnetWorld([{ id: 'ci', command: ['dotnet build && dotnet format --verify-no-changes'], shell: true, mandatory: true }]);
-      const c = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, launch: async () => ({ exitCode: 0, output: '' }) });
+      const c = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, platform: 'linux', launch: async () => ({ exitCode: 0, output: '' }) });
       expect(c.status).toBe('fail');
       expect(c.summary).toBe("check ci would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; a run would block at its baseline");
       expect(c.details).toEqual([
@@ -598,7 +600,7 @@ describe('checkSandboxCheck: the .NET build probe (issue #10)', () => {
       expect(c.fix!.match(/dotnet format loads the project through a build host/g)).toHaveLength(1);
       // The fixed command passes doctor's judgement: it would start the executable now.
       const again = dotnetWorld([{ id: 'ci', command: ['dotnet build -m:1 && dotnet format whitespace --folder --verify-no-changes'], shell: true, mandatory: true }]);
-      const ok = await checkSandboxCheck({ config: again.cfg, repo: again.w.repo, provider: srtLike().provider, available: true, env: again.w.env, homeDir: again.w.home, launch: async () => ({ exitCode: 0, output: '' }) });
+      const ok = await checkSandboxCheck({ config: again.cfg, repo: again.w.repo, provider: srtLike().provider, available: true, env: again.w.env, homeDir: again.w.home, platform: 'linux', launch: async () => ({ exitCode: 0, output: '' }) });
       expect(ok.status).toBe('pass');
     });
 
@@ -636,12 +638,63 @@ describe('checkSandboxCheck: the .NET build probe (issue #10)', () => {
         { id: 'format', command: ['dotnet', 'format', '--verify-no-changes'], mandatory: true },
         { id: 'style', command: ['dotnet', 'format', 'style', '--verify-no-changes'], mandatory: false },
       ]);
-      const c = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, launch: async () => ({ exitCode: 0, output: '' }) });
+      const c = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, platform: 'linux', launch: async () => ({ exitCode: 0, output: '' }) });
       expect(c.status).toBe('fail');
       expect(c.summary).toBe("checks unit, format, style would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; a run would block at its baseline");
       expect(c.missing).toBe('dotnet commands that pin one MSBuild node (-m:1), and dotnet format checks that load no project (dotnet format whitespace --folder)');
       expect(c.fix).toMatch(/^checks\.unit\.command: \["dotnet", "test", "-m:1"\] \(MSBuild worker nodes cannot run in the check sandbox.*\); checks\.format\.command: \["dotnet", "format", "whitespace", "--folder", "--verify-no-changes"\]; checks\.style\.command: \["dotnet", "format", "whitespace", "--folder", "--verify-no-changes"\] \(dotnet format loads/);
       expect(c.fix!.match(/dotnet format loads the project through a build host/g)).toHaveLength(1);
     });
+  });
+
+  // Review: doctor passed `dotnet format whitespace --folder` (its probe started `dotnet help`), and in every real run on
+  // macOS the check died at once with "UnauthorizedAccessException: Access to the path '<orbit home>/worktrees/<key>/<run>'
+  // is denied": the folder form lists every folder above the checkout for .editorconfig files, and a run's checkout sits
+  // in the Orbit home, which the check profile read-denies but for the checkout itself.
+  describe('dotnet format on macOS, where a run\'s checkout sits in the read-denied Orbit home', () => {
+    const OUTSIDE = /^remove checks\.format from \.orbit\/config\.yaml, or set checks\.format\.mandatory: false, and run dotnet format in CI \(on macOS no form of dotnet format runs in a run's check sandbox with SDK 9 and later: /;
+
+    it('fails a mandatory folder-form check before starting it, with running dotnet format outside Orbit as its fix', async () => {
+      const { w, cfg } = dotnetWorld([{ id: 'format', command: ['dotnet', 'format', 'whitespace', '--folder', '--verify-no-changes'], mandatory: true }]);
+      const { seen, launch } = launches(() => ({ exitCode: 0, output: '' }));
+      // The default Orbit home, ~/.orbit, which every check profile read-denies.
+      const c = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, platform: 'darwin', launch });
+      expect(seen).toEqual([]);
+      expect(c.status).toBe('fail');
+      expect(c.summary).toBe("check format runs dotnet format, which cannot run in a run's check sandbox on macOS; a run would block at its baseline");
+      expect(c.details).toEqual([
+        'format: runs "dotnet format whitespace --folder --verify-no-changes", which lists every folder above the checkout for .editorconfig files, while a run\'s checkout sits in the Orbit home, which the check sandbox does not let it read, and the check sandbox refuses it',
+      ]);
+      expect(c.missing).toBe('dotnet format run outside Orbit, in CI');
+      expect(c.fix).toMatch(OUTSIDE);
+      expect(c.fix).not.toMatch(/whitespace --folder --verify-no-changes"\]/);
+      expect(c.fix).not.toMatch(/[\u2013\u2014]/);
+    });
+
+    it('fails a format that loads the project with the same fix, not the folder form, and keeps -m:1 for a chain\'s build', async () => {
+      const loads = dotnetWorld([{ id: 'format', command: ['dotnet', 'format', '--verify-no-changes'], mandatory: true }]);
+      const c = await checkSandboxCheck({ config: loads.cfg, repo: loads.w.repo, provider: srtLike().provider, available: true, env: loads.w.env, homeDir: loads.w.home, platform: 'darwin', launch: async () => ({ exitCode: 0, output: '' }) });
+      expect(c.status).toBe('fail');
+      expect(c.fix).toMatch(OUTSIDE);
+      expect(c.fix!.match(/on macOS no form of dotnet format runs/g)).toHaveLength(1);
+      const chain = dotnetWorld([{ id: 'format', command: ['dotnet build && dotnet format --verify-no-changes'], shell: true, mandatory: true }]);
+      const both = await checkSandboxCheck({ config: chain.cfg, repo: chain.w.repo, provider: srtLike().provider, available: true, env: chain.w.env, homeDir: chain.w.home, platform: 'darwin', launch: async () => ({ exitCode: 0, output: '' }) });
+      expect(both.status).toBe('fail');
+      expect(both.summary).toBe("check format would start MSBuild worker nodes, whose named pipes the sandbox refuses, or run dotnet format, which cannot run in a run's check sandbox on macOS; a run would block at its baseline");
+      expect(both.fix!.startsWith('checks.format.command: ["dotnet build -m:1 && dotnet format --verify-no-changes"] (MSBuild worker nodes cannot run in the check sandbox')).toBe(true);
+      expect(both.fix).toMatch(/; remove checks\.format from \.orbit\/config\.yaml, or set checks\.format\.mandatory: false, and run dotnet format in CI \(on macOS no form/);
+      expect(both.fix).not.toMatch(/whitespace --folder --verify-no-changes"/);
+    });
+
+    it('starts the folder form like any check when ORBIT_HOME is somewhere no rule denies, and passes SDK 8\'s pinned restore first', async () => {
+      const { w, cfg, orbitHome } = dotnetWorld([{ id: 'format', command: ['dotnet', 'format', 'whitespace', '--folder', '--verify-no-changes'], mandatory: true }]);
+      const ok = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, orbitHome, platform: 'darwin', launch: async () => ({ exitCode: 0, output: 'Build succeeded.' }) });
+      expect(ok.status, ok.details.join('\n')).toBe('pass');
+      const sdk8 = dotnetWorld([{ id: 'format', command: ['dotnet restore -m:1 && dotnet format --verify-no-changes --no-restore'], shell: true, mandatory: true }]);
+      writeFileSync(join(sdk8.w.repo, 'global.json'), '{ "sdk": { "version": "8.0.303" } }\n');
+      const pinned = await checkSandboxCheck({ config: sdk8.cfg, repo: sdk8.w.repo, provider: srtLike().provider, available: true, env: sdk8.w.env, homeDir: sdk8.w.home, platform: 'darwin', launch: async () => ({ exitCode: 0, output: '' }) });
+      expect(pinned.status).toBe('pass');
+    });
+
   });
 });

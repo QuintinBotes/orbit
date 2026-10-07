@@ -588,7 +588,10 @@ format, whitespace, --folder, --verify-no-changes]` (with the folder of the
 solution or project it formats, and its `--include` and `--exclude`): with
 SDK 9 and later every other form loads the project through a build host whose
 named pipe under `/tmp` the sandbox refuses, and doctor fails a mandatory one
-with that command as the fix. With SDK 8 pinned by a `global.json`, which loads
+with that command as the fix. On macOS that form cannot list the folders above
+a run's checkout, which sits in the read-denied Orbit home, so there doctor
+fails every mandatory `dotnet format` check with SDK 9 and later and names
+running it in CI. With SDK 8 pinned by a `global.json`, which loads
 the project in dotnet format's own process, any form runs once its restore is
 pinned: `["dotnet restore -m:1 && dotnet format --verify-no-changes
 --no-restore"]` with `shell: true`. On macOS the

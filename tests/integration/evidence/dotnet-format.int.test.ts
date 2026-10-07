@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { checkSandboxCheck } from '../../../src/cli/commands/doctor-sandbox.ts';
+import { environmentFix } from '../../../src/controller/environment-block.ts';
 import { classifyCouldNotRun } from '../../../src/evidence/environment-failure.ts';
 import { runChecks } from '../../../src/evidence/runner.ts';
 import { SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.ts';
@@ -66,8 +67,8 @@ describe.skipIf(skip !== null)(skip === null ? 'dotnet format under the srt chec
   /** The SDK versions installed: SDK 8 is measured where 8.0.303 is one. */
   const sdks = skip === null ? execFileSync(dotnet!, ['--list-sdks'], { encoding: 'utf8' }).split('\n').map((l) => l.split(' ')[0]!) : [];
 
-  async function run(files: Record<string, string>, check: Partial<CheckDefinition>) {
-    const e = await runnerEnv([checkDef('format', { timeout_seconds: 300, ...check })], { isolation: provider, files });
+  async function run(files: Record<string, string>, check: Partial<CheckDefinition>, checkoutAt?: (root: string) => string) {
+    const e = await runnerEnv([checkDef('format', { timeout_seconds: 300, ...check })], { isolation: provider, files, ...(checkoutAt ? { checkoutAt } : {}) });
     envs.push(e);
     const started = Date.now();
     const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['format'] });
@@ -133,6 +134,33 @@ describe.skipIf(skip !== null)(skip === null ? 'dotnet format under the srt chec
     expect(one.r.status, one.log).toBe('PASSED');
   }, 600_000);
 
+  // Review: the folder form passed in this file only because the harness's checkout had nothing read-denied above it. A
+  // run's checkout sits in <orbit home>/worktrees/<key>/<run>/, and the check profile read-denies the Orbit home (~/.orbit)
+  // but for the checkout: dotnet format whitespace --folder lists every folder above the checkout for .editorconfig files,
+  // and in every real run on macOS it died at once, while doctor passed it and the runner and the block named it as the fix.
+  it.skipIf(process.platform !== 'darwin')('on macOS, in a run\'s layout below the read-denied Orbit home: the folder form fails as the environment\'s, and the fixes name running dotnet format outside Orbit', async () => {
+    const runLayout = (root: string): string => join(root, 'home', '.orbit', 'worktrees', 'abcdefabcdef', 'orb-1', 'check-1');
+    const folder = [dotnet!, 'format', 'whitespace', '--folder', '--verify-no-changes'];
+    const { r, log, roots } = await run(PROJECT, { command: folder }, runLayout);
+    expect(r.status).toBe('FAILED');
+    expect(log).toMatch(/System\.UnauthorizedAccessException: Access to the path '[^']*\/\.orbit\/worktrees\/abcdefabcdef\/orb-1' is denied/);
+    const found = classifyCouldNotRun({ checkId: 'format', output: log, insideRoots: roots });
+    expect(found?.signals).toEqual(['permission-denied']);
+    const fix = environmentFix([{ ...found!, command: { argv: folder, shell: false }, folderForm: false }]);
+    expect(fix).toMatch(/^dotnet format \(check format\) cannot run in this check sandbox: remove checks\.format from \.orbit\/config\.yaml, or set checks\.format\.mandatory: false, and run dotnet format in CI \(on macOS no form/);
+    // The runner's note for a format whose implicit restore was refused a worker node names the same, not the folder form.
+    const restore = await run(SOLUTION, { command: [dotnet!, 'format', 'tests/Acme.Tests/Acme.Tests.csproj', '--verify-no-changes'] }, runLayout);
+    expect(restore.r.status).toBe('FAILED');
+    expect(restore.log).toMatch(/note=the check sandbox denied MSBuild node \(pid \d+\) its named pipe \/tmp\/MSBuild\d+ /);
+    expect(restore.log).toContain(' Fix: remove checks.format from .orbit/config.yaml, or set checks.format.mandatory: false, and run dotnet format in CI (on macOS no form');
+    expect(restore.log).not.toContain('"--folder"');
+    // With SDK 8 pinned, the pinned restore first and --no-restore, which the fix names as the other way, pass in this layout.
+    if (!sdks.includes('8.0.303')) return;
+    const sdk8 = { ...SOLUTION, 'global.json': '{"sdk":{"version":"8.0.303"}}\n' };
+    const pinned = await run(sdk8, { command: [`"${dotnet}" restore tests/Acme.Tests/Acme.Tests.csproj -m:1 && "${dotnet}" format tests/Acme.Tests/Acme.Tests.csproj --verify-no-changes --no-restore`], shell: true }, runLayout);
+    expect(pinned.r.status, pinned.log).toBe('PASSED');
+  }, 600_000);
+
   it('with SDK 8 pinned by global.json, passes in doctor a format that restores first with -m:1, and refuses the plain one with that fix', async () => {
     if (!sdks.includes('8.0.303')) return;
     const repo = realpathSync(mkdtempSync(join(tmpdir(), 'orbit-dotnet-format-repo-')));
@@ -160,7 +188,9 @@ describe.skipIf(skip !== null)(skip === null ? 'dotnet format under the srt chec
       const c = await checkSandboxCheck({ config, repo, provider, available: true, env: process.env, homeDir: homedir() });
       expect(Date.now() - started).toBeLessThan(10_000);
       expect(c.status).toBe('fail');
-      expect(c.fix).toContain(`checks.format.command: ${JSON.stringify([dotnet!, 'format', 'whitespace', '--folder', '--verify-no-changes']).replace(/,/g, ', ')}`);
+      // The default Orbit home, ~/.orbit, is read-denied: on macOS the folder form cannot list the folders above a run's
+      // checkout there, so the fix is to run dotnet format outside Orbit; elsewhere it is the folder form.
+      expect(c.fix).toContain(process.platform === 'darwin' ? 'remove checks.format from .orbit/config.yaml, or set checks.format.mandatory: false, and run dotnet format in CI' : `checks.format.command: ${JSON.stringify([dotnet!, 'format', 'whitespace', '--folder', '--verify-no-changes']).replace(/,/g, ', ')}`);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

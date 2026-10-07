@@ -269,7 +269,19 @@ libraries:
   references it was refused a worker node, and the runner stopped it within 1.5
   s ("Restore operation failed"); before the early stop it took the five
   minutes. `dotnet format whitespace --folder --verify-no-changes` reads the
-  files without loading a project and passed in about a second on both. SDK
+  files without loading a project and passed in about a second on both where
+  nothing above the checkout was read-denied (the test harness's layout). A
+  review measured it in a run's layout through the real CLI and runner on
+  macOS (SDK 9.0.305, `srt` 0.0.78): it lists every folder above the one it
+  formats for `.editorconfig` files (Roslyn's `EditorConfigFinder`,
+  `DirectoryInfo.GetFiles` on each, a `root = true` file included), a run's
+  checkout sits in `<orbit home>/worktrees/<key>/<run>/`, and the check profile
+  read-denies `~/.orbit` but for the checkout, so Seatbelt refused the listing
+  and the check died at once with `System.UnauthorizedAccessException: Access
+  to the path '<orbit home>/worktrees/<key>/<run>' is denied`, while doctor
+  passed it (its probe only started `dotnet help`). On Linux `srt` lays an
+  empty tmpfs over a denied directory, which lists (not measured in a run's
+  layout). SDK
   8.0.303's `dotnet format` evaluates projects in its own process: with
   `--no-restore` after `dotnet restore -m:1` it passed in 3.7 s. The .NET
   runtime's own diagnostics socket, `dotnet-diagnostic-<pid>-...-socket` in the
@@ -437,7 +449,18 @@ Decision.
     is left in the check's temp directory, and the denial is only in the system
     log, so on macOS the check ends at the parent's 60 s timeout, on Linux at
     once. Workers are told which form of
-    `dotnet format` runs. SDK 8 loads the project in dotnet format's own
+    `dotnet format` runs. Where the folder form cannot list the folders above
+    the checkout (macOS, a checkout below a read-denied directory, as a run's
+    is below the default `~/.orbit`; `isolation/profiles.ts`
+    `checkoutBelowDenied`), no form that SDK 9 and later run works in the check
+    sandbox: doctor fails a mandatory check in any form, the folder form
+    included, and doctor, the runner's note and the block reason name running
+    `dotnet format` outside Orbit, in CI (`checks.<id>` removed, or not
+    mandatory), with SDK 8's pinned restore first as the other way (it passed
+    in such a run). Opening the listing of the folders above the checkout was
+    left to the maintainer: `srt` re-allows a region, not a folder's listing
+    alone, so it would open everything below `<orbit home>/worktrees/<key>/<run>/`,
+    other checkouts of the run included. SDK 8 loads the project in dotnet format's own
     process, with no build host, so doctor and the runner read the nearest
     `global.json` from the check's directory up to the repository (or the run's
     checkout): when it pins SDK 8 or earlier with a `rollForward` that keeps the
@@ -589,9 +612,10 @@ Consequences.
   dependency install's included) says so, in the limitation that names the
   rule.
 - A `dotnet format` check under `srt` is `dotnet format whitespace --folder
-  --verify-no-changes`, or, with SDK 8 pinned by `global.json`, any form whose
-  restore is pinned; otherwise doctor fails it (mandatory) or warns
-  (optional); `dotnet format --verify-no-changes` runs in CI. One that runs
+  --verify-no-changes` on Linux, or, with SDK 8 pinned by `global.json`, any
+  form whose restore is pinned; otherwise doctor fails it (mandatory) or warns
+  (optional); `dotnet format --verify-no-changes` runs in CI. On macOS, in a
+  run's layout, only the SDK 8 form runs, and the rest belongs in CI. One that runs
   anyway (through make, say) blocks the run with the fix within about a
   minute on macOS (about two seconds when its restore is refused a node)
   instead of becoming a pre-existing failure. On Linux the build host's

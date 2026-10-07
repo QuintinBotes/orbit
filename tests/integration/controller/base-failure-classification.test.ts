@@ -107,9 +107,15 @@ describe.skipIf(!canStripTypes)('PREFLIGHT classifies a base-revision failure', 
     // Named once, then the shared evidence once: not once per check.
     expect(reason.match(/MSBUILD : error MSB1025: An internal failure occurred while running MSBuild\./g)).toHaveLength(1);
     expect(reason.match(/System\.Net\.Sockets\.SocketException \(13\): Permission denied/g)).toHaveLength(1);
-    // -m:1 for the two MSBuild commands; dotnet format takes no -m:1 (it reads it as a project and fails).
+    // -m:1 for the two MSBuild commands; dotnet format takes no -m:1 (it reads it as a project and fails). On macOS the
+    // lab's checkouts sit below the repository's parent directory, which the check profile read-denies as it does a run's
+    // Orbit home, so the folder form cannot list the folders above them and no form of dotnet format runs there.
     expect(reason).toMatch(/\. Fix: for checks build, test: this is MSBuild starting a worker node, whose named pipe \.NET makes a Unix socket under \/tmp.*-m:1 on the check's dotnet command/);
-    expect(reason).toMatch(/; and dotnet format \(check format\) takes no -m:1, which it reads as the project to format/);
+    expect(reason).toMatch(
+      process.platform === 'darwin'
+        ? /; and dotnet format \(check format\) cannot run in this check sandbox: remove checks\.format from \.orbit\/config\.yaml, or set checks\.format\.mandatory: false, and run dotnet format in CI \(on macOS no form/
+        : /; and dotnet format \(check format\) takes no -m:1, which it reads as the project to format/,
+    );
     expect(reason.match(/-m:1 on the check's dotnet command/g)).toHaveLength(1);
     expect(reason).not.toMatch(/nodeReuse|UseSharedCompilation|MSBUILDDISABLENODEREUSE|DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER/);
     expect(reason).not.toMatch(/orbit decide/);

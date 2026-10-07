@@ -217,9 +217,13 @@ State these plainly to yourself before running unattended.
   paths .NET fixes under `/tmp`, which every process of the user shares, so a
   check that could bind or connect there could also reach the user's own,
   unsandboxed MSBuild and Roslyn servers. Orbit opens none: a dotnet check pins
-  one MSBuild node with `-m:1`, a format check uses `dotnet format whitespace
-  --folder`, which loads no project, and `orbit doctor` refuses what it can see
-  of the rest; a check that meets the refusal anyway on the base revision is
+  one MSBuild node with `-m:1`, a format check on Linux uses `dotnet format
+  whitespace --folder`, which loads no project, and `orbit doctor` refuses what
+  it can see of the rest; on macOS that form cannot list the folders above a
+  run's checkout, which sit in the read-denied Orbit home, and Orbit does not
+  open their listing (`srt` would open everything below them, the run's other
+  checkouts included), so `dotnet format` with SDK 9 and later runs in CI; a
+  check that meets the refusal anyway on the base revision is
   recorded as an environment failure, and on a candidate only when the base
   revision showed the same refusal (ADR 0010). Allowing Unix sockets only under
   a check's private temp directory on macOS (`srt`'s `allowUnixSockets`) was

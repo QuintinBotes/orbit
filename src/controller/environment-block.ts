@@ -27,7 +27,7 @@ import { readJsonIfExists } from '../core/fsx.ts';
 import { BASELINE_FILE, type BaselineReport } from '../evidence/baseline.ts';
 import { directInvocation } from '../evidence/check-command.ts';
 import { classifyMisconfigured, classifyProgramNotFound, type MisconfiguredCheck } from '../evidence/check-misconfigured.ts';
-import { dotnetFormatFix, formatLoadsProject } from '../evidence/dotnet-format.ts';
+import { dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatLoadsProject, formatOutsideFix } from '../evidence/dotnet-format.ts';
 import { classifyCouldNotRun, classifyEnvironmentFailure, classifyNotExecuted, type EnvironmentFailure, type EnvironmentSignal } from '../evidence/environment-failure.ts';
 import type { JudgedCheck } from '../evidence/msbuild.ts';
 import { listCheckRuns, type CandidateRecord, type CheckRunRecord } from '../evidence/store.ts';
@@ -35,7 +35,7 @@ import type { EvidenceReport } from '../evidence/types.ts';
 import { baselineQuestionId } from '../inquisition/baseline-exception.ts';
 import { UI_RESULT_FILE } from '../ui/runner.ts';
 import type { UiNotExecuted } from '../ui/types.ts';
-import { runWorktreeRoot, type RunContext } from './context.ts';
+import { folderFormRunsAt, runWorktreeRoot, type RunContext } from './context.ts';
 import { uiEvidenceDir } from './verification.ts';
 
 /** Output read from a check's log at most, so a runaway log stays cheap. */
@@ -48,7 +48,15 @@ export interface CheckCommand {
 }
 
 /** An environment failure, with the check's command when it is known, so that a fix can fit the tool it runs. */
-export type FailureWithCommand = EnvironmentFailure & { command?: CheckCommand };
+export type FailureWithCommand = EnvironmentFailure & {
+  command?: CheckCommand;
+  /**
+   * False where dotnet format whitespace --folder cannot list the folders above the check's checkout (macOS, a run's
+   * checkout in the Orbit home, which the check profile read-denies; evidence/dotnet-format.ts): no form of dotnet format
+   * that SDK 9 and later run works there, so its fix is to run it outside Orbit. Absent: it can.
+   */
+  folderForm?: boolean;
+};
 
 export type BlockedCheck = FailureWithCommand & {
   /** The baseline-exception question PREFLIGHT raised for this check's pre-existing failure; null for a check that could not execute (there is no failure to except). */
@@ -98,7 +106,7 @@ export function environmentFailuresFor(ctx: RunContext, cand: CandidateRecord, r
       // The checkout (the check's cwd is resolved, the checkout path may not be) and the evidence directory holding its scratch HOME.
       insideRoots: [checkout, row.cwd, ...(row.logPath ? [dirname(row.logPath)] : [])],
     });
-    if (found) out.push({ ...found, ...commandOf(ctx, base.checkId), questionId: baselineQuestionId(ctx.run.id, base.checkId, row.fingerprint) });
+    if (found) out.push({ ...found, ...commandOf(ctx, base.checkId), folderForm: folderFormRunsAt(ctx, checkout), questionId: baselineQuestionId(ctx.run.id, base.checkId, row.fingerprint) });
   }
   return out;
 }
@@ -210,6 +218,7 @@ function formatFix(f: FailureWithCommand): string {
   return def !== null && formatLoadsProject(def) !== null ? dotnetFormatFix(def) : `in checks.${f.checkId}.command, dotnet format whitespace --folder --verify-no-changes in place of its dotnet format, in the folder of the solution or project it formats and with its --include and --exclude`;
 }
 
+
 /**
  * How to fix a check the sandbox or the operating system refused (issue #10): the .NET cases by name, any other denial
  * through `orbit doctor`, which starts each check's executable in the sandbox, a refused connection through the check's
@@ -226,7 +235,11 @@ export function environmentFix(failures: readonly FailureWithCommand[]): string 
   const fixes: string[] = [];
   const has = (signal: EnvironmentSignal): FailureWithCommand[] => failures.filter((f) => f.signals.includes(signal));
   // A refused pipe can also leave a Seatbelt line for its fixed path under /tmp, which the tool's TMPDIR does not move.
-  const denied = failures.filter((f) => !f.signals.includes('pipe-denied') && (f.signals.includes('filesystem-denied') || f.signals.includes('permission-denied') || f.signals.includes('sandbox-violation')));
+  const refusedFs = failures.filter((f) => !f.signals.includes('pipe-denied') && (f.signals.includes('filesystem-denied') || f.signals.includes('permission-denied') || f.signals.includes('sandbox-violation')));
+  // dotnet format whitespace --folder refused a listing of a folder above the checkout (macOS, a run's checkout in the
+  // Orbit home): no form of dotnet format runs there, whatever doctor's probe of the dotnet executable says.
+  const outsideFs = refusedFs.filter((f) => f.folderForm === false && runsDotnetFormat(f));
+  const denied = refusedFs.filter((f) => !outsideFs.includes(f));
   if (denied.some((f) => f.lines.some((l) => DOTNET_DENIAL.test(l)))) {
     fixes.push('this is the .NET runtime asking for /tmp/.dotnet, a directory it shares between processes for named mutexes and which no check sandbox may write. Orbit prepares every check for the .NET SDK\'s first run so the SDK itself needs none (docs/troubleshooting.md, ".NET checks under the sandbox"); upgrade Orbit if this run predates that, and if the repository\'s own code creates a named Mutex or Semaphore, make it use an unnamed one or a file lock in TMPDIR');
   } else if (denied.length > 0) {
@@ -236,7 +249,7 @@ export function environmentFix(failures: readonly FailureWithCommand[]): string 
   const pipes = has('pipe-denied');
   const msbuild = sockets.filter((f) => !runsDotnetFormat(f));
   const stopped = pipes.filter((f) => f.lines.some((l) => MSBUILD_NODE_DENIAL.test(l)));
-  const format = [...sockets.filter(runsDotnetFormat), ...pipes.filter((f) => f.lines.some((l) => !MSBUILD_NODE_DENIAL.test(l)))];
+  const format = [...sockets.filter(runsDotnetFormat), ...pipes.filter((f) => f.lines.some((l) => !MSBUILD_NODE_DENIAL.test(l))), ...outsideFs];
   // With more than one kind, each fix names the checks it is for; the dotnet format fix always does.
   const kinds = [msbuild, stopped, format].filter((g) => g.length > 0).length;
   const forChecks = (group: readonly EnvironmentFailure[]): string => (kinds > 1 ? `for ${group.length > 1 ? 'checks' : 'check'} ${group.map((f) => f.checkId).join(', ')}: ` : '');
@@ -248,9 +261,17 @@ export function environmentFix(failures: readonly FailureWithCommand[]): string 
   // dotnet format reads -m:1 as the project to format and fails, and every form of it but whitespace --folder loads the
   // project through a build host whose pipe the sandbox refuses (measured under Orbit's runner and srt: SDK 9 on macOS,
   // SDK 10 on Linux).
-  if (format.length > 0) {
-    const ids = format.map((f) => f.checkId);
-    fixes.push(`dotnet format (${ids.length > 1 ? 'checks' : 'check'} ${ids.join(', ')}) takes no -m:1, which it reads as the project to format, and it loads the project through a build host whose named pipe .NET binds under /tmp, which no check sandbox may use: check whitespace with the form that loads no project, ${format.map(formatFix).join('; ')}, and run the style and analyzer checks outside Orbit, in CI (docs/troubleshooting.md, "dotnet format under the sandbox")`);
+  // Where the folder form cannot list the folders above the checkout either (macOS, a run's checkout in the Orbit home),
+  // no form runs in the check sandbox (review of #10: the folder form died on an UnauthorizedAccessException there).
+  const outside = format.filter((f) => f.folderForm === false);
+  const folder = format.filter((f) => f.folderForm !== false);
+  if (folder.length > 0) {
+    const ids = folder.map((f) => f.checkId);
+    fixes.push(`dotnet format (${ids.length > 1 ? 'checks' : 'check'} ${ids.join(', ')}) takes no -m:1, which it reads as the project to format, and it loads the project through a build host whose named pipe .NET binds under /tmp, which no check sandbox may use: check whitespace with the form that loads no project, ${folder.map(formatFix).join('; ')}, and run the style and analyzer checks outside Orbit, in CI (docs/troubleshooting.md, "dotnet format under the sandbox")`);
+  }
+  if (outside.length > 0) {
+    const ids = outside.map((f) => f.checkId);
+    fixes.push(`dotnet format (${ids.length > 1 ? 'checks' : 'check'} ${ids.join(', ')}) cannot run in this check sandbox: ${outside.map((f) => formatOutsideFix({ id: f.checkId })).join('; ')} ${FORMAT_OUTSIDE_REASON}`);
   }
   if (has('network-denied').length > 0) {
     fixes.push('the check reached for a host its policy does not let it reach, and the sandbox\'s network proxy refused it: add the host to the check\'s network_hosts (it must also be covered by network.allowed_hosts), or let the check work offline, with its dependencies restored by the dependency install (dependencies.install_command)');
@@ -299,7 +320,7 @@ export function baselineEnvironmentFailures(ctx: RunContext, report: BaselineRep
       classifyNotExecuted({ checkId: failure.checkId, output }) ??
       classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ??
       (def && def.kind === 'command' ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) : null);
-    if (found) out.push({ ...found, ...commandOf(ctx, failure.checkId), questionId: null, ...(logPath ? { logPath } : {}) });
+    if (found) out.push({ ...found, ...commandOf(ctx, failure.checkId), folderForm: folderFormRunsAt(ctx, checkoutDir), questionId: null, ...(logPath ? { logPath } : {}) });
   }
   return out;
 }
@@ -462,6 +483,7 @@ export function checksNotExecutedFor(ctx: RunContext, cand: CandidateRecord, rep
     const f = baseFailures.find((b) => b.checkId === checkId);
     return f?.classification === 'environment' ? (f.signals ?? []) : [];
   };
+  const checkout = join(runWorktreeRoot(ctx), `check-${cand.seq}`);
   for (const result of report.checks) {
     if (!mandatory.has(result.id) || (result.status !== 'FAILED' && result.status !== 'ERROR')) continue;
     const row = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id, checkId: result.id, rootsOnly: true }).at(-1);
@@ -471,8 +493,8 @@ export function checksNotExecutedFor(ctx: RunContext, cand: CandidateRecord, rep
     const found =
       classifyNotExecuted({ checkId: result.id, output, startFailure }) ??
       // Refused a filesystem operation outside its checkout before it compiled or tested anything (issue #10).
-      (row.status === 'FAILED' ? classifyCouldNotRun({ checkId: result.id, output, insideRoots: [join(runWorktreeRoot(ctx), `check-${cand.seq}`), row.cwd, ...(row.logPath ? [dirname(row.logPath)] : [])], baseSignals: baseSignals(result.id) }) : null);
-    if (found) out.push({ ...found, ...commandOf(ctx, result.id), questionId: null, ...(row.logPath ? { logPath: row.logPath } : {}) });
+      (row.status === 'FAILED' ? classifyCouldNotRun({ checkId: result.id, output, insideRoots: [checkout, row.cwd, ...(row.logPath ? [dirname(row.logPath)] : [])], baseSignals: baseSignals(result.id) }) : null);
+    if (found) out.push({ ...found, ...commandOf(ctx, result.id), folderForm: folderFormRunsAt(ctx, checkout), questionId: null, ...(row.logPath ? { logPath: row.logPath } : {}) });
   }
 
   if (report.ui.some((u) => u.status === 'ERROR')) {

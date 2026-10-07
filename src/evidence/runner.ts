@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
-import { platform } from 'node:os';
+import { homedir, platform } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { isOrbitError, OrbitError } from '../core/errors.ts';
@@ -10,7 +10,7 @@ import { spawnDetached } from '../core/exec.ts';
 import { isAlive, killGroup, processStartTime } from '../core/proc.ts';
 import { isSecretEnvName, redact } from '../core/redact.ts';
 import { RESOURCE_LIMIT_EXIT_CODE, resourceLimitNote } from '../isolation/memory.ts';
-import { prepareWorkerTmpDir, profileForCheck, workerTmpDir } from '../isolation/profiles.ts';
+import { checkoutBelowDenied, prepareWorkerTmpDir, profileForCheck, workerTmpDir } from '../isolation/profiles.ts';
 import { detectToolchains, prepareToolchainLayout, removeScratch, toolchainLayout, type ToolchainLayout } from '../isolation/toolchains.ts';
 import type { IsolationProvider, WrappedCommand } from '../isolation/types.ts';
 import { checkConfigHash, snapshotHash } from '../policy/snapshot.ts';
@@ -736,11 +736,22 @@ interface DenialRecord {
  * The note on a check MSBuild recorded a refused worker node for. The exception line comes from a file the check could
  * write: redacted like the check's own output. The fix is for this check's command: -m:1, or for a dotnet format whose
  * implicit restore was refused, the form that loads no project, or with SDK 8 (pinned by the checkout's global.json) a
- * pinned restore first.
+ * pinned restore first; on macOS, where the form that loads no project cannot list the folders above a checkout below a
+ * denied directory (a run's, in the Orbit home), running dotnet format outside Orbit.
  */
 function denialNote(ctx: RunnerContext, def: CheckDefinition, denial: MsbuildNodeDenial): string {
   const inProcess = sdkFormatsInProcess(resolve(ctx.checkoutDir, def.cwd), ctx.checkoutDir);
-  return redact(msbuildNodeDenialNote(denial, nodeDenialFix(def, msbuildFixWhere(ctx, def), inProcess)));
+  return redact(msbuildNodeDenialNote(denial, nodeDenialFix(def, msbuildFixWhere(ctx, def), inProcess, folderFormRuns(ctx))));
+}
+
+/** Whether dotnet format whitespace --folder can list the folders above this checkout in the check sandbox (evidence/dotnet-format.ts). */
+function folderFormRuns(ctx: Pick<RunnerContext, 'checkoutDir' | 'snapshot' | 'homeDir'>): boolean {
+  if (platform() !== 'darwin' || !ctx.snapshot.repo_root) return true;
+  try {
+    return !checkoutBelowDenied({ checkout: ctx.checkoutDir, repoRoot: ctx.snapshot.repo_root, homeDir: ctx.homeDir ?? homedir() });
+  } catch {
+    return false;
+  }
 }
 
 /** The note of a denial recorded for this attempt (its intent's token), or null. */

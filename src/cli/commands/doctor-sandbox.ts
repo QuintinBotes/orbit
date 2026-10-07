@@ -27,7 +27,11 @@
  * loads the project with binds its named pipe under /tmp, which the sandbox refuses (evidence/dotnet-format.ts). With
  * SDK 8, pinned by a global.json, dotnet format loads the project in its own process, so only a format that restores
  * first (no --no-restore, and no DOTNET_PROCESSOR_COUNT=1) is refused, with a pinned restore first as its fix. A check
- * refused for both, a build without -m:1 and a format, gets one fixed command with both changes.
+ * refused for both, a build without -m:1 and a format, gets one fixed command with both changes. On macOS, where a run's
+ * checkout sits below a directory the check profile read-denies (the default Orbit home), the folder form cannot list
+ * the folders above it either, so every dotnet format with SDK 9 and later, that form included, is refused with running
+ * it outside Orbit as its fix (review of #10: doctor passed the folder form, whose probe only started `dotnet help`, and
+ * the run's check died on an UnauthorizedAccessException for <orbit home>/worktrees/<key>/<run>).
  */
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,11 +40,11 @@ import { execCapture } from '../../core/exec.ts';
 import { OrbitError } from '../../core/errors.ts';
 import { redact } from '../../core/redact.ts';
 import { environmentFix } from '../../controller/environment-block.ts';
-import { DOTNET_FORMAT_REASON, dotnetFormatFix, formatAndNodeFix, formatLoadsProject, formatRestoreFix, formatRestoresUnpinned, sdkFormatsInProcess } from '../../evidence/dotnet-format.ts';
+import { DOTNET_FORMAT_REASON, dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatAndNodeFix, formatLoadsProject, formatOutsideFix, formatReadsFolder, formatRestoreFix, formatRestoresUnpinned, sdkFormatsInProcess } from '../../evidence/dotnet-format.ts';
 import { classifyCouldNotRun, classifyNotExecuted, type EnvironmentFailure } from '../../evidence/environment-failure.ts';
 import { findMsbuildNodeDenial, msbuildFix, msbuildFixReason, msbuildNodeDenialText, msbuildNodes, probeNodeSwitches, type MsbuildFix, type MsbuildFixWhere, type MsbuildNodeDenial } from '../../evidence/msbuild.ts';
 import { checkEnv, INSTALL_CHECK_ID, prepareCheckHome } from '../../evidence/runner.ts';
-import { prepareWorkerTmpDir, profileForCheck } from '../../isolation/profiles.ts';
+import { checkoutBelowDenied, prepareWorkerTmpDir, profileForCheck } from '../../isolation/profiles.ts';
 import { detectToolchains, removeScratch, TOOLCHAIN_PROFILES, toolchainCacheRoot, toolchainLayout, type ToolchainId } from '../../isolation/toolchains.ts';
 import type { IsolationProvider } from '../../isolation/types.ts';
 import { isWithin, which } from '../../isolation/util.ts';
@@ -221,7 +225,12 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
   // `label`: what the summary calls it when it is not a check (the dependency install's command). `format`: the fix of a
   // dotnet format that loads the project, whose reason doctor gives once; `formatReason`: an MSBuild fix that also puts
   // such a format in the folder form, so that reason is given too.
-  const refused: { check: CheckDefinition; failure: EnvironmentFailure; fix?: string; msbuild?: MsbuildFix; format?: string; formatReason?: boolean; label?: string }[] = [];
+  // `outside`: the fix of a dotnet format that cannot run in the check sandbox at all (FORMAT_OUTSIDE_REASON).
+  const refused: { check: CheckDefinition; failure: EnvironmentFailure; fix?: string; msbuild?: MsbuildFix; format?: string; formatReason?: boolean; outside?: string; label?: string }[] = [];
+  // Whether dotnet format whitespace --folder can list the folders above a run's checkout: on macOS not when the check
+  // profile read-denies a directory above <orbit home>/worktrees/<key>/<run>/<checkout>, as it does the default ~/.orbit.
+  const platform = input.platform ?? process.platform;
+  const folderForm = platform !== 'darwin' || repo === null || !checkoutBelowDenied({ checkout: join(input.orbitHome ?? join(input.homeDir, '.orbit'), 'worktrees', repoKeyFor(repo), 'run', 'checkout'), repoRoot: repo, homeDir: input.homeDir, env: input.env });
   // Checks whose MSBuild calls no definition shows (make, a script, a shell line): a warning with the fix.
   const undetermined: { check: CheckDefinition; msbuild: MsbuildFix; label?: string }[] = [];
   let started = 0;
@@ -245,22 +254,36 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
     const inProcess = loads !== null && repo !== null && sdkFormatsInProcess(resolve(repo, check.cwd), repo);
     const restore = inProcess ? formatRestoresUnpinned(check) : null;
     const host = inProcess || !loads ? null : `runs "${loads.shown}", which loads the project through a build host whose named pipe .NET binds under /tmp`;
+    // The folder form, where it cannot list the folders above a run's checkout: whatever SDK runs it.
+    const reads = label || folderForm ? null : formatReadsFolder(check);
+    const folder = reads ? `runs "${reads.shown}", which lists every folder above the checkout for .editorconfig files, while a run's checkout sits in the Orbit home, which the check sandbox does not let it read` : null;
+    // Where the folder form cannot run, a format the sandbox refuses is fixed by running it outside Orbit.
+    const outside = (host !== null && !folderForm) || folder !== null ? formatOutsideFix(check) : null;
     if (nodes?.kind === 'unpinned' || restore) {
       // One fix for all of it, so the pasted command is not refused again for what it did not fix.
       const causes = [...(nodes?.kind === 'unpinned' ? [nodes.reason] : []), ...(restore ? [`runs "${restore.shown}", which restores the project first with a worker node per processor (SDK 8, which global.json pins, loads the project in its own process)`] : [])];
       for (const cause of causes) details.push(`${id}: ${cause}, and the check sandbox refuses every MSBuild worker node its named pipe under /tmp`);
-      if (host) details.push(`${id}: ${host}, and the check sandbox refuses it`);
-      const msbuild = restore ? formatRestoreFix(check, where) : host ? formatAndNodeFix(check, where) : msbuildFix(check, where);
-      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: host ? ['sandbox-violation', 'pipe-denied'] : ['sandbox-violation'], cause: causes[0]!, lines: [...causes, ...(host ? [host] : [])] }, msbuild, ...(host ? { formatReason: true } : {}), ...named });
+      for (const more of [host, folder]) if (more) details.push(`${id}: ${more}, and the check sandbox refuses it`);
+      const msbuild = restore ? formatRestoreFix(check, where) : host && !outside ? formatAndNodeFix(check, where) : msbuildFix(check, where);
+      const pipe = host !== null || folder !== null;
+      refused.push({
+        check,
+        failure: { checkId: check.id, fingerprint: null, signals: pipe ? ['sandbox-violation', 'pipe-denied'] : ['sandbox-violation'], cause: causes[0]!, lines: [...causes, ...(host ? [host] : []), ...(folder ? [folder] : [])] },
+        msbuild,
+        ...(host && !outside ? { formatReason: true } : {}),
+        ...(outside ? { outside } : {}),
+        ...named,
+      });
       return true;
     }
     if (nodes?.kind === 'indirect') {
       details.push(`${id}: ${nodes.reason}`);
       undetermined.push({ check, msbuild: msbuildFix(check, where), ...named });
     }
-    if (host) {
-      details.push(`${check.id}: ${host}, and the check sandbox refuses it`);
-      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: ['pipe-denied'], cause: host, lines: [host] }, format: dotnetFormatFix(check) });
+    const format = host ?? folder;
+    if (format) {
+      details.push(`${check.id}: ${format}, and the check sandbox refuses it`);
+      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: ['pipe-denied'], cause: format, lines: [format] }, ...(outside ? { outside } : { format: dotnetFormatFix(check) }) });
       return true;
     }
     return false;
@@ -316,17 +339,19 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
    * Every MSBuild fix first, each command once, with their shared reason once; then the dotnet format fixes alike; then
    * the other fixes. An MSBuild fix that also puts a dotnet format in the folder form gets the format's reason too, once.
    */
-  const fixFor = (items: readonly { failure: EnvironmentFailure; fix?: string; msbuild?: MsbuildFix; format?: string; formatReason?: boolean }[]): string => {
+  const fixFor = (items: readonly { failure: EnvironmentFailure; fix?: string; msbuild?: MsbuildFix; format?: string; formatReason?: boolean; outside?: string }[]): string => {
     const nodes = [...items.flatMap((i) => (i.msbuild ? [i.msbuild] : [])), ...undetermined.map((u) => u.msbuild)];
     const changes = [...new Set(nodes.map((n) => n.change))];
     const formats = [...new Set(items.flatMap((i) => (i.format ? [i.format] : [])))];
     const formatReason = formats.length === 0 && items.some((i) => i.formatReason) ? ` ${DOTNET_FORMAT_REASON}` : '';
     const msbuild = changes.length > 0 ? [`${changes.join('; ')} ${msbuildFixReason(nodes)}${formatReason}`] : [];
     const format = formats.length > 0 ? [`${formats.join('; ')} ${DOTNET_FORMAT_REASON}`] : [];
+    const outsides = [...new Set(items.flatMap((i) => (i.outside ? [i.outside] : [])))];
+    const outside = outsides.length > 0 ? [`${outsides.join('; ')} ${FORMAT_OUTSIDE_REASON}`] : [];
     const own = [...new Set(items.flatMap((i) => (i.fix ? [i.fix] : [])))];
-    const rest = items.filter((i) => !i.fix && !i.msbuild && !i.format).map((i) => i.failure);
+    const rest = items.filter((i) => !i.fix && !i.msbuild && !i.format && !i.outside).map((i) => i.failure);
     const generic = rest.length > 0 ? (environmentFix(rest) ?? 'see the line above and docs/troubleshooting.md, "A check cannot run in the sandbox"') : null;
-    return [...msbuild, ...format, ...own, ...(generic ? [generic] : [])].join('; ');
+    return [...msbuild, ...format, ...outside, ...own, ...(generic ? [generic] : [])].join('; ');
   };
   /** "check a", "checks a, b", "dependencies.install_command", "check a and dependencies.install_command". */
   const subject = (items: readonly { check: CheckDefinition; label?: string }[]): string => {
@@ -354,19 +379,21 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
   const status = refused.some((r) => r.check.mandatory) || refusedToolchains.some((r) => r.mandatory) ? 'fail' : 'warn';
   // What the sandbox refuses: MSBuild's worker nodes, dotnet format's build host, or both, when that is all it refuses
   // the checks, else their executables.
-  const nodes = refused.every((r) => r.msbuild && !r.formatReason);
-  const formats = refused.every((r) => r.format);
-  const pipes = refused.every((r) => r.msbuild || r.format);
+  const nodes = refused.every((r) => r.msbuild && !r.formatReason && !r.outside);
+  const formats = refused.every((r) => (r.format || r.outside) && !r.msbuild);
+  const pipes = refused.every((r) => r.msbuild || r.format || r.outside);
   const one = 'dotnet commands that pin one MSBuild node (-m:1)';
-  const loadsNothing = 'dotnet format checks that load no project (dotnet format whitespace --folder)';
+  const loadsNothing = folderForm ? 'dotnet format checks that load no project (dotnet format whitespace --folder)' : 'dotnet format run outside Orbit, in CI';
   return result(
     status,
     nodes
       ? `${subject(refused)} would start MSBuild worker nodes, which the sandbox refuses; a run would block at its baseline`
       : formats
-        ? `${subject(refused)} ${refused.length === 1 ? 'runs' : 'run'} dotnet format, which loads the project through a build host the sandbox refuses its named pipe; a run would block at its baseline`
+        ? `${subject(refused)} ${refused.length === 1 ? 'runs' : 'run'} dotnet format, ${folderForm ? 'which loads the project through a build host the sandbox refuses its named pipe' : "which cannot run in a run's check sandbox on macOS"}; a run would block at its baseline`
         : pipes
-          ? `${subject(refused)} would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; a run would block at its baseline`
+          ? folderForm
+            ? `${subject(refused)} would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; a run would block at its baseline`
+            : `${subject(refused)} would start MSBuild worker nodes, whose named pipes the sandbox refuses, or run dotnet format, which cannot run in a run's check sandbox on macOS; a run would block at its baseline`
           : `the sandbox refuses ${refused.length === 1 ? 'the executable' : 'the executables'} of ${subject(refused)}; a run would block at its baseline`,
     details,
     nodes ? one : formats ? loadsNothing : pipes ? `${one}, and ${loadsNothing}` : 'a check executable that can start in the check sandbox',

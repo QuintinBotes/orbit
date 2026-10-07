@@ -14,6 +14,8 @@ import {
   blockOnAuth,
   blockOnOpenQuestions,
   decide,
+  DOTNET_WORKER_NOTE,
+  DOTNET_WORKER_NOTE_NO_FORMAT,
   finishRun,
   handleWorkerFailure,
   move,
@@ -323,6 +325,14 @@ describe('contract and policy helpers', () => {
     writeFileSync(join(lab.repo, 'acme.sln'), '');
     expect(policySummary(lab.ctx(), { readOnly: false }).split('\n')).toContain(NOTE);
     expect(policySummary(lab.ctx(), { readOnly: true }).split('\n')).toContain(NOTE);
+    // Review: with the worktree in the read-denied Orbit home (the default ~/.orbit), dotnet format whitespace --folder
+    // cannot list the folders above it on macOS, so the worker is told no form of dotnet format runs there.
+    const ctx = lab.ctx();
+    const inOrbitHome = { ...ctx, deps: { ...ctx.deps, orbitHome: join(ctx.deps.homeDir!, '.orbit') } } as typeof ctx;
+    const note = policySummary(inOrbitHome, { readOnly: false }).split('\n').find((l) => l.startsWith('- .NET:'));
+    expect(note).toBe(process.platform === 'darwin' ? DOTNET_WORKER_NOTE_NO_FORMAT : NOTE);
+    expect(DOTNET_WORKER_NOTE_NO_FORMAT).toMatch(/; dotnet format does not run here: every form but dotnet format whitespace --folder loads the project through a build host whose named pipe this sandbox refuses too, and whitespace --folder lists the folders above your worktree, which this sandbox does not let you read$/);
+    expect(DOTNET_WORKER_NOTE).toBe(NOTE);
     lab.cleanup();
     lab = makeUnitLab({ path: ['PREFLIGHT'], tweak: (c) => (c.isolation = { ...c.isolation, provider: 'container' }) });
     writeFileSync(join(lab.repo, 'acme.sln'), '');

@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { DOTNET_FORMAT_REASON, dotnetFormatFix, formatLoadsProject, formatRestoreFix, formatRestoresUnpinned, nodeDenialFix, sdkFormatsInProcess } from '../../../src/evidence/dotnet-format.ts';
-import { msbuildFixReason, type JudgedCheck } from '../../../src/evidence/msbuild.ts';
+import { DOTNET_FORMAT_REASON, dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatLoadsProject, formatOutsideFix, formatReadsFolder, formatRestoreFix, formatRestoresUnpinned, nodeDenialFix, sdkFormatsInProcess } from '../../../src/evidence/dotnet-format.ts';
+import { msbuildFix, msbuildFixReason, type JudgedCheck } from '../../../src/evidence/msbuild.ts';
 
 // dotnet format under the check sandbox (issue #10; ADR 0009, addendum). Every form but `dotnet format whitespace
 // --folder` loads the project through MSBuildWorkspace's build host, a separate process whose named pipe Roslyn binds at
@@ -108,6 +108,29 @@ describe('nodeDenialFix', () => {
   it('with SDK 8, which formats in its own process, restores with -m:1 first and formats with --no-restore', () => {
     const check = { id: 'format', ...argv('dotnet', 'format', 'tests/Acme.Tests/Acme.Tests.csproj', '--verify-no-changes') };
     expect(nodeDenialFix(check, null, true)).toBe(`${formatRestoreFix(check, null).change} ${msbuildFixReason([formatRestoreFix(check, null)])}`);
+    // A run's layout on macOS changes nothing for SDK 8: its pinned restore first passed in such a run.
+    expect(nodeDenialFix(check, null, true, false)).toBe(nodeDenialFix(check, null, true));
+  });
+
+  // Review: the folder form the note named died in every real run on macOS, listing <orbit home>/worktrees/<key>/<run>.
+  it('where the folder form cannot list the folders above the checkout, names running dotnet format outside Orbit, and -m:1 for the check\'s builds', () => {
+    const format = { id: 'format', ...argv('dotnet', 'format', 'tests/Acme.Tests/Acme.Tests.csproj', '--verify-no-changes') };
+    expect(nodeDenialFix(format, null, false, false)).toBe(`${formatOutsideFix(format)} ${FORMAT_OUTSIDE_REASON}`);
+    const ci = { id: 'ci', ...line('dotnet build && dotnet format --verify-no-changes --no-restore') };
+    const nodes = msbuildFix(ci, null);
+    expect(nodeDenialFix(ci, null, false, false)).toBe(`${nodes.change} ${msbuildFixReason([nodes])}; ${formatOutsideFix(ci)} ${FORMAT_OUTSIDE_REASON}`);
+    expect(nodes.change).toBe('checks.ci.command: ["dotnet build -m:1 && dotnet format --verify-no-changes --no-restore"]');
+    expect(FORMAT_OUTSIDE_REASON).not.toMatch(/[\u2013\u2014]/);
+  });
+});
+
+describe('formatReadsFolder', () => {
+  it('finds dotnet format whitespace --folder, which lists the folders above the one it formats, and nothing else', () => {
+    expect(formatReadsFolder(argv('dotnet', 'format', 'whitespace', 'src', '--folder', '--verify-no-changes'))).toEqual({ shown: 'dotnet format whitespace src --folder --verify-no-changes' });
+    expect(formatReadsFolder(line('dotnet build -m:1 && dotnet format whitespace --folder --verify-no-changes'))).toEqual({ shown: 'dotnet format whitespace --folder --verify-no-changes' });
+    for (const check of [argv('dotnet', 'format', '--verify-no-changes'), argv('dotnet', 'format', 'whitespace', '--folder', '--help'), argv('dotnet', 'build', '-m:1')]) {
+      expect(formatReadsFolder(check), JSON.stringify(check)).toBeNull();
+    }
   });
 });
 
