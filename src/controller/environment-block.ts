@@ -230,7 +230,6 @@ function formatFix(f: FailureWithCommand): string {
   return def !== null && formatLoadsProject(def) !== null ? dotnetFormatFix(def) : `in checks.${f.checkId}.command, dotnet format whitespace --folder --verify-no-changes in place of its dotnet format, in the folder of the solution or project it formats and with its --include and --exclude`;
 }
 
-
 /**
  * How to fix a check the sandbox or the operating system refused (issue #10): the .NET cases by name, any other denial
  * through `orbit doctor`, which starts each check's executable in the sandbox, a refused connection through the check's

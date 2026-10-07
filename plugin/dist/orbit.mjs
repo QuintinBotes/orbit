@@ -527,9 +527,9 @@ var init_redact = __esm({
         hintRe: KEYWORD_HINT,
         re: new RegExp(String.raw`(?<![A-Za-z0-9_.-])(["']?)([A-Za-z0-9_.-]{0,64}?${KEYWORDS})\1([ \t]*[:=][ \t]*)(${DQ}|${SQ})`, "gi"),
         replace: (m, g) => {
-          const [q, key2, sep11, value] = g;
+          const [q, key2, sep12, value] = g;
           if (isLiteralPlaceholder(value.slice(1, -1))) return m;
-          return `${q}${key2}${q}${sep11}${value[0]}${tag(kindForKey(key2))}${value[0]}`;
+          return `${q}${key2}${q}${sep12}${value[0]}${tag(kindForKey(key2))}${value[0]}`;
         }
       },
       {
@@ -9825,10 +9825,10 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
   let offset = bm.offset;
   let commentEnd = null;
   for (const collItem of bm.items) {
-    const { start, key: key2, sep: sep11, value } = collItem;
+    const { start, key: key2, sep: sep12, value } = collItem;
     const keyProps = resolveProps(start, {
       indicator: "explicit-key-ind",
-      next: key2 ?? sep11?.[0],
+      next: key2 ?? sep12?.[0],
       offset,
       onError,
       parentIndent: bm.indent,
@@ -9842,7 +9842,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
         else if ("indent" in key2 && key2.indent !== bm.indent)
           onError(offset, "BAD_INDENT", startColMsg);
       }
-      if (!keyProps.anchor && !keyProps.tag && !sep11) {
+      if (!keyProps.anchor && !keyProps.tag && !sep12) {
         commentEnd = keyProps.end;
         if (keyProps.comment) {
           if (map2.comment)
@@ -9866,7 +9866,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
     ctx.atKey = false;
     if (mapIncludes(ctx, map2.items, keyNode))
       onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
-    const valueProps = resolveProps(sep11 ?? [], {
+    const valueProps = resolveProps(sep12 ?? [], {
       indicator: "map-value-ind",
       next: value,
       offset: keyNode.range[2],
@@ -9882,7 +9882,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
         if (ctx.options.strict && keyProps.start < valueProps.found.offset - 1024)
           onError(keyNode.range, "KEY_OVER_1024_CHARS", "The : indicator must be at most 1024 chars after the start of an implicit block mapping key");
       }
-      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : composeEmptyNode2(ctx, offset, sep11, null, valueProps, onError);
+      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : composeEmptyNode2(ctx, offset, sep12, null, valueProps, onError);
       if (ctx.schema.compat)
         flowIndentCheck(bm.indent, value, onError);
       offset = valueNode.range[2];
@@ -9977,7 +9977,7 @@ function resolveEnd(end, offset, reqSpace, onError) {
   let comment = "";
   if (end) {
     let hasSpace = false;
-    let sep11 = "";
+    let sep12 = "";
     for (const token of end) {
       const { source, type } = token;
       switch (type) {
@@ -9991,13 +9991,13 @@ function resolveEnd(end, offset, reqSpace, onError) {
           if (!comment)
             comment = cb;
           else
-            comment += sep11 + cb;
-          sep11 = "";
+            comment += sep12 + cb;
+          sep12 = "";
           break;
         }
         case "newline":
           if (comment)
-            sep11 += source;
+            sep12 += source;
           hasSpace = true;
           break;
         default:
@@ -10028,18 +10028,18 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
   let offset = fc.offset + fc.start.source.length;
   for (let i = 0; i < fc.items.length; ++i) {
     const collItem = fc.items[i];
-    const { start, key: key2, sep: sep11, value } = collItem;
+    const { start, key: key2, sep: sep12, value } = collItem;
     const props = resolveProps(start, {
       flow: fcName,
       indicator: "explicit-key-ind",
-      next: key2 ?? sep11?.[0],
+      next: key2 ?? sep12?.[0],
       offset,
       onError,
       parentIndent: fc.indent,
       startOnNewline: false
     });
     if (!props.found) {
-      if (!props.anchor && !props.tag && !sep11 && !value) {
+      if (!props.anchor && !props.tag && !sep12 && !value) {
         if (i === 0 && props.comma)
           onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`);
         else if (i < fc.items.length - 1)
@@ -10093,8 +10093,8 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
         }
       }
     }
-    if (!isMap2 && !sep11 && !props.found) {
-      const valueNode = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, sep11, null, props, onError);
+    if (!isMap2 && !sep12 && !props.found) {
+      const valueNode = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, sep12, null, props, onError);
       coll.items.push(valueNode);
       offset = valueNode.range[2];
       if (isBlock(value))
@@ -10106,7 +10106,7 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
       if (isBlock(key2))
         onError(keyNode.range, "BLOCK_IN_FLOW", blockMsg);
       ctx.atKey = false;
-      const valueProps = resolveProps(sep11 ?? [], {
+      const valueProps = resolveProps(sep12 ?? [], {
         flow: fcName,
         indicator: "map-value-ind",
         next: value,
@@ -10117,8 +10117,8 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
       });
       if (valueProps.found) {
         if (!isMap2 && !props.found && ctx.options.strict) {
-          if (sep11)
-            for (const st of sep11) {
+          if (sep12)
+            for (const st of sep12) {
               if (st === valueProps.found)
                 break;
               if (st.type === "newline") {
@@ -10135,7 +10135,7 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
         else
           onError(valueProps.start, "MISSING_CHAR", `Missing , or : between ${fcName} items`);
       }
-      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode2(ctx, valueProps.end, sep11, null, valueProps, onError) : null;
+      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode2(ctx, valueProps.end, sep12, null, valueProps, onError) : null;
       if (valueNode) {
         if (isBlock(value))
           onError(valueNode.range, "BLOCK_IN_FLOW", blockMsg);
@@ -10321,7 +10321,7 @@ function resolveBlockScalar(ctx, scalar, onError) {
       chompStart = i + 1;
   }
   let value = "";
-  let sep11 = "";
+  let sep12 = "";
   let prevMoreIndented = false;
   for (let i = 0; i < contentStart; ++i)
     value += lines[i][0].slice(trimIndent) + "\n";
@@ -10338,24 +10338,24 @@ function resolveBlockScalar(ctx, scalar, onError) {
       indent = "";
     }
     if (type === Scalar.BLOCK_LITERAL) {
-      value += sep11 + indent.slice(trimIndent) + content;
-      sep11 = "\n";
+      value += sep12 + indent.slice(trimIndent) + content;
+      sep12 = "\n";
     } else if (indent.length > trimIndent || content[0] === "	") {
-      if (sep11 === " ")
-        sep11 = "\n";
-      else if (!prevMoreIndented && sep11 === "\n")
-        sep11 = "\n\n";
-      value += sep11 + indent.slice(trimIndent) + content;
-      sep11 = "\n";
+      if (sep12 === " ")
+        sep12 = "\n";
+      else if (!prevMoreIndented && sep12 === "\n")
+        sep12 = "\n\n";
+      value += sep12 + indent.slice(trimIndent) + content;
+      sep12 = "\n";
       prevMoreIndented = true;
     } else if (content === "") {
-      if (sep11 === "\n")
+      if (sep12 === "\n")
         value += "\n";
       else
-        sep11 = "\n";
+        sep12 = "\n";
     } else {
-      value += sep11 + content;
-      sep11 = " ";
+      value += sep12 + content;
+      sep12 = " ";
       prevMoreIndented = false;
     }
   }
@@ -10535,25 +10535,25 @@ function unfoldLines(source) {
     trimBoth = /^[ \t]+|[ \t]+$/g;
   }
   let res = match[1].replace(trimEnd, "");
-  let sep11 = " ";
+  let sep12 = " ";
   let pos = line3.lastIndex;
   while (match = line3.exec(source)) {
     const lm = match[1].replace(trimBoth, "");
     if (lm === "") {
-      if (sep11 === "\n")
-        res += sep11;
+      if (sep12 === "\n")
+        res += sep12;
       else
-        sep11 = "\n";
+        sep12 = "\n";
     } else {
-      res += sep11 + lm;
-      sep11 = " ";
+      res += sep12 + lm;
+      sep12 = " ";
     }
     pos = line3.lastIndex;
   }
   const last = /[ \t]*(.*)/sy;
   last.lastIndex = pos;
   match = last.exec(source);
-  return res + sep11 + (match?.[1] ?? "");
+  return res + sep12 + (match?.[1] ?? "");
 }
 function doubleQuotedValue(source, onError) {
   let res = "";
@@ -12264,18 +12264,18 @@ var init_parser = __esm({
         if (this.type === "map-value-ind") {
           const prev = getPrevProps(this.peek(2));
           const start = getFirstKeyStartProps(prev);
-          let sep11;
+          let sep12;
           if (scalar.end) {
-            sep11 = scalar.end;
-            sep11.push(this.sourceToken);
+            sep12 = scalar.end;
+            sep12.push(this.sourceToken);
             delete scalar.end;
           } else
-            sep11 = [this.sourceToken];
+            sep12 = [this.sourceToken];
           const map2 = {
             type: "block-map",
             offset: scalar.offset,
             indent: scalar.indent,
-            items: [{ start, key: scalar, sep: sep11 }]
+            items: [{ start, key: scalar, sep: sep12 }]
           };
           this.onKeyLine = true;
           this.stack[this.stack.length - 1] = map2;
@@ -12428,15 +12428,15 @@ var init_parser = __esm({
                 } else if (isFlowToken(it.key) && !includesToken(it.sep, "newline")) {
                   const start2 = getFirstKeyStartProps(it.start);
                   const key2 = it.key;
-                  const sep11 = it.sep;
-                  sep11.push(this.sourceToken);
+                  const sep12 = it.sep;
+                  sep12.push(this.sourceToken);
                   delete it.key;
                   delete it.sep;
                   this.stack.push({
                     type: "block-map",
                     offset: this.offset,
                     indent: this.indent,
-                    items: [{ start: start2, key: key2, sep: sep11 }]
+                    items: [{ start: start2, key: key2, sep: sep12 }]
                   });
                 } else if (start.length > 0) {
                   it.sep = it.sep.concat(start, this.sourceToken);
@@ -12630,13 +12630,13 @@ var init_parser = __esm({
             const prev = getPrevProps(parent);
             const start = getFirstKeyStartProps(prev);
             fixFlowSeqItems(fc);
-            const sep11 = fc.end.splice(1, fc.end.length);
-            sep11.push(this.sourceToken);
+            const sep12 = fc.end.splice(1, fc.end.length);
+            sep12.push(this.sourceToken);
             const map2 = {
               type: "block-map",
               offset: fc.offset,
               indent: fc.indent,
-              items: [{ start, key: fc, sep: sep11 }]
+              items: [{ start, key: fc, sep: sep12 }]
             };
             this.onKeyLine = true;
             this.stack[this.stack.length - 1] = map2;
@@ -15033,8 +15033,8 @@ var require_resolve = __commonJS({
       }
       return count3;
     }
-    function getFullPath(resolver, id = "", normalize3) {
-      if (normalize3 !== false)
+    function getFullPath(resolver, id = "", normalize4) {
+      if (normalize4 !== false)
         id = normalizeId(id);
       const p = resolver.parse(id);
       return _getFullPath(resolver, p);
@@ -15782,7 +15782,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref2];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve23.call(this, root, ref2);
+      let _sch = resolve24.call(this, root, ref2);
       if (_sch === void 0) {
         const schema4 = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref2];
         const { schemaId } = this.opts;
@@ -15809,7 +15809,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve23(root, ref2) {
+    function resolve24(root, ref2) {
       let sch;
       while (typeof (sch = this.refs[ref2]) == "string")
         ref2 = sch;
@@ -16629,7 +16629,7 @@ var require_fast_uri = __commonJS({
       }
       return decodedScheme;
     }
-    function normalize3(uri, options) {
+    function normalize4(uri, options) {
       if (typeof uri === "string") {
         uri = /** @type {T} */
         normalizeString(uri, options);
@@ -16639,7 +16639,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve23(baseURI, relativeURI, options) {
+    function resolve24(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -17007,8 +17007,8 @@ var require_fast_uri = __commonJS({
     }
     var fastUri = {
       SCHEMES,
-      normalize: normalize3,
-      resolve: resolve23,
+      normalize: normalize4,
+      resolve: resolve24,
       resolveComponent,
       equal,
       serialize: serialize3,
@@ -23270,7 +23270,7 @@ var init_clock = __esm({
     "use strict";
     systemClock = {
       now: () => Date.now(),
-      sleep: (ms) => new Promise((resolve23) => setTimeout(resolve23, ms))
+      sleep: (ms) => new Promise((resolve24) => setTimeout(resolve24, ms))
     };
   }
 });
@@ -25239,6 +25239,13 @@ function repoParentDenial(repoRoot, homeDir) {
   if (shared.some((root) => isWithin(root, parent))) return { path: null, reason: `${parent} contains a shared temp directory` };
   return { path: parent, reason: "sibling projects are denied; the worktree and git directory are re-allowed" };
 }
+function checkoutBelowDenied(opts) {
+  const checkout = canonicalPath(opts.checkout);
+  const repo = canonicalPath(opts.repoRoot);
+  const parent = repoParentDenial(repo, opts.homeDir).path;
+  const denied = [...credentialDenyPaths({ homeDir: opts.homeDir, ...opts.env ? { env: opts.env } : {} }), join7(repo, ".orbit"), ...isWithin(repo, checkout) ? [] : [repo], ...parent ? [parent] : []];
+  return denied.some((d) => d !== checkout && isWithin(checkout, d));
+}
 function denyList(opts) {
   if (!opts.repoRoot) throw new OrbitError("INTERNAL", "policy snapshot has no repo_root");
   const repo = canonicalPath(opts.repoRoot);
@@ -27096,10 +27103,10 @@ function shimArgs(opts) {
   return [...out, "--", ...opts.argv];
 }
 function parseShimArgs(args) {
-  const sep11 = args.indexOf("--");
-  if (sep11 === -1 || sep11 === args.length - 1) throw new OrbitError("CONFIG_INVALID", "orbit shim: expected -- followed by the provider command");
-  const opts = args.slice(0, sep11);
-  const out = { workerDir: "", timeoutMs: 0, graceMs: DEFAULT_GRACE_MS, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], argv: args.slice(sep11 + 1) };
+  const sep12 = args.indexOf("--");
+  if (sep12 === -1 || sep12 === args.length - 1) throw new OrbitError("CONFIG_INVALID", "orbit shim: expected -- followed by the provider command");
+  const opts = args.slice(0, sep12);
+  const out = { workerDir: "", timeoutMs: 0, graceMs: DEFAULT_GRACE_MS, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], argv: args.slice(sep12 + 1) };
   for (let i = 0; i < opts.length; i += 2) {
     const flag = opts[i];
     const value = opts[i + 1];
@@ -30895,14 +30902,14 @@ var init_sandbox_runtime = __esm({
         if (pkg.name === null && pkg.version === null) throw unavailable(`srt at ${where2} has an unknown version (no readable package.json), and the srt preload was verified against ${SRT_PACKAGE} ${SRT_VERIFIED_VERSION} only`);
         if (pkg.name !== SRT_PACKAGE) throw unavailable(`srt at ${where2} is not ${SRT_PACKAGE} (package ${String(pkg.name)})`);
         if (pkg.version !== SRT_VERIFIED_VERSION) throw unavailable(`srt at ${where2} is version ${String(pkg.version)}, and the srt preload was verified against ${SRT_VERIFIED_VERSION} only`);
-        const resolve23 = (path, what) => {
+        const resolve24 = (path, what) => {
           try {
             return realpathSync5(path);
           } catch {
             throw unavailable(`${what} ${path} is missing`);
           }
         };
-        return { node: resolve23(this.opts.nodePath ?? process.execPath, "node"), preload: resolve23(this.opts.chromiumPreloadPath ?? defaultChromiumPreloadPath(), "the srt preload"), cli: pkg.cli };
+        return { node: resolve24(this.opts.nodePath ?? process.execPath, "node"), preload: resolve24(this.opts.chromiumPreloadPath ?? defaultChromiumPreloadPath(), "the srt preload"), cli: pkg.cli };
       }
       missingDetail() {
         if (this.opts.srtPath !== void 0) return `configured srt ${this.opts.srtPath} is not an absolute path to an executable file`;
@@ -33410,8 +33417,8 @@ function recordDecision(db, runDir2, input, clock, opts = {}) {
   const { record, fresh } = db.tx(() => {
     const existing = db.get("SELECT * FROM decisions WHERE id = ?", id);
     if (existing) {
-      const same = existing.run_id === input.runId && existing.kind === input.kind && existing.summary === input.summary && canonicalJson(existing.data_json === null ? null : JSON.parse(existing.data_json)) === canonicalJson(dataJson === null ? null : JSON.parse(dataJson));
-      if (!same) throw new OrbitError("CONCURRENT_UPDATE", `decision ${id} already exists with different content`, { decisionId: id });
+      const same2 = existing.run_id === input.runId && existing.kind === input.kind && existing.summary === input.summary && canonicalJson(existing.data_json === null ? null : JSON.parse(existing.data_json)) === canonicalJson(dataJson === null ? null : JSON.parse(dataJson));
+      if (!same2) throw new OrbitError("CONCURRENT_UPDATE", `decision ${id} already exists with different content`, { decisionId: id });
       return { record: toRecord4(existing), fresh: false };
     }
     if (!db.get("SELECT 1 AS x FROM runs WHERE id = ?", input.runId)) throw new OrbitError("NOT_FOUND", `no run ${input.runId}`);
@@ -33595,8 +33602,8 @@ var init_actions = __esm({
         return this.db.tx(() => {
           const existing = this.db.get("SELECT * FROM actions WHERE idempotency_key = ?", input.idempotencyKey);
           if (existing) {
-            const same = existing.run_id === input.runId && existing.kind === input.kind && canonicalJson(JSON.parse(existing.target_json)) === targetJson && (existing.tree_hash ?? null) === (input.treeHash ?? null) && (existing.commit_sha ?? null) === (input.commitSha ?? null);
-            if (!same) {
+            const same2 = existing.run_id === input.runId && existing.kind === input.kind && canonicalJson(JSON.parse(existing.target_json)) === targetJson && (existing.tree_hash ?? null) === (input.treeHash ?? null) && (existing.commit_sha ?? null) === (input.commitSha ?? null);
+            if (!same2) {
               throw new OrbitError("CONCURRENT_UPDATE", `idempotency key ${input.idempotencyKey} already names a different action`, {
                 existing: existing.id,
                 kind: existing.kind
@@ -35364,12 +35371,12 @@ async function reconcileChecks(ctx, run) {
       const shimStart = launch && launch.token === intent.token ? launch.procStart : null;
       const childPgid = pidFile && pidFile.token === intent.token ? pidFile.childPgid : null;
       const startedAt = pidFile && pidFile.token === intent.token ? pidFile.startedAt : null;
-      const identity = shimPid === null ? "dead" : shimIdentity(shimPid, shimStart, startedAt ?? intent.writtenAt);
+      const identity2 = shimPid === null ? "dead" : shimIdentity(shimPid, shimStart, startedAt ?? intent.writtenAt);
       if (exit && exit.token === intent.token) {
         rep.observation = "finished";
-      } else if (shimPid !== null && identity !== "dead") {
+      } else if (shimPid !== null && identity2 !== "dead") {
         rep.observation = "running";
-        if (ended && identity === "ours") {
+        if (ended && identity2 === "ours") {
           rep.terminated = await stopCheck(ctx, dir, shimPid, () => shimIdentity(shimPid, shimStart, startedAt ?? intent.writtenAt) === "ours", childPgid);
           rep.observation = "orphan-terminated";
         } else if (ended) {
@@ -35771,7 +35778,7 @@ function makeTreeWritable(dir) {
     }
   }
 }
-var TOOLCHAIN_IDS, PROBE_TFM, probeLibrary, DOTNET_PROBE_PROJECT, TOOLCHAIN_PROFILES, REPO_KEY;
+var TOOLCHAIN_IDS, PROBE_TFM, probeLibrary, DOTNET_PROBE_PROJECT, NUGET_AUDIT_LIMITATION, TOOLCHAIN_PROFILES, REPO_KEY;
 var init_toolchains = __esm({
   "src/isolation/toolchains.ts"() {
     "use strict";
@@ -35792,6 +35799,7 @@ ${refs.length ? `  <ItemGroup>${refs.map((r) => `<ProjectReference Include="../$
       "Probe.App/Probe.App.csproj": probeLibrary(["Probe.Left", "Probe.Right"]),
       "Probe.App/App.cs": "namespace Probe;\npublic static class App { public static int Three => Left.One + Right.Two; }\n"
     };
+    NUGET_AUDIT_LIMITATION = "NuGet's vulnerability audit was off (NuGetAudit=false in Orbit's .NET profile), so a package with a known vulnerability does not fail this restore, even where such warnings are errors; the repository's CI still runs it";
     TOOLCHAIN_PROFILES = {
       dotnet: {
         id: "dotnet",
@@ -36067,15 +36075,15 @@ var init_git = __esm({
 // src/evidence/msbuild.ts
 import { closeSync as closeSync7, constants as constants3, fstatSync as fstatSync4, lstatSync as lstatSync6, opendirSync, openSync as openSync7, readSync as readSync4 } from "node:fs";
 import { basename as basename11, join as join25 } from "node:path";
-function is(path, kind) {
+function identity(path, kind) {
   try {
     const st = lstatSync6(path);
-    return kind === "dir" ? st.isDirectory() : st.isFile();
+    return (kind === "dir" ? st.isDirectory() : st.isFile()) ? { dev: st.dev, ino: st.ino } : null;
   } catch {
-    return false;
+    return null;
   }
 }
-function readHead(path) {
+function readHead(path, opened = () => true) {
   let fd;
   try {
     fd = openSync7(path, constants3.O_RDONLY | constants3.O_NOFOLLOW | constants3.O_NONBLOCK);
@@ -36083,7 +36091,8 @@ function readHead(path) {
     return null;
   }
   try {
-    if (!fstatSync4(fd).isFile()) return null;
+    const st = fstatSync4(fd);
+    if (!st.isFile() || !opened({ dev: st.dev, ino: st.ino })) return null;
     const buf = Buffer.alloc(MAX_REPORT_BYTES);
     const n2 = readSync4(fd, buf, 0, buf.length, 0);
     return buf.subarray(0, n2).toString("utf8");
@@ -36109,14 +36118,24 @@ function list(dir, max) {
   }
   return names.sort();
 }
-function findMsbuildNodeDenial(tmpDir) {
+function findMsbuildNodeDenial(tmpDir, maxNames = MAX_SCANNED_NAMES) {
   let seen = 0;
-  for (const sub of list(tmpDir, MAX_TMP_ENTRIES).filter((n2) => REPORT_DIR.test(n2) && is(join25(tmpDir, n2), "dir"))) {
-    for (const name of list(join25(tmpDir, sub), MAX_REPORT_DIR_ENTRIES)) {
+  const top = list(tmpDir, Math.min(MAX_TMP_ENTRIES, maxNames));
+  let budget = maxNames - top.length;
+  for (const sub of top.filter((n2) => REPORT_DIR.test(n2))) {
+    const dir = join25(tmpDir, sub);
+    const looked = identity(dir, "dir");
+    if (looked === null) continue;
+    if (budget <= 0) return null;
+    const names = list(dir, Math.min(MAX_REPORT_DIR_ENTRIES, budget));
+    budget -= names.length;
+    if (!same(identity(dir, "dir"), looked)) continue;
+    for (const name of names) {
       const m = REPORT_FILE.exec(name);
-      if (!m || !is(join25(tmpDir, sub, name), "file")) continue;
+      const path = join25(dir, name);
+      if (!m || identity(path, "file") === null) continue;
       if (++seen > MAX_REPORTS) return null;
-      const text2 = readHead(join25(tmpDir, sub, name));
+      const text2 = readHead(path, (file) => same(identity(dir, "dir"), looked) && same(identity(path, "file"), file) && same(identity(dir, "dir"), looked));
       const exception = text2 === null ? null : SOCKET_EXCEPTION.exec(text2);
       if (!text2 || !exception || !PIPE_SERVER.test(text2)) continue;
       const pid = Number(m[1]);
@@ -36128,9 +36147,10 @@ function findMsbuildNodeDenial(tmpDir) {
 function msbuildNodeDenialText(d) {
   return `MSBuild node (pid ${d.pid}) could not bind its named pipe${d.pipe ? ` ${d.pipe}` : ""} (${d.exception})`;
 }
-function msbuildNodeDenialNote(d, fix) {
+function msbuildNodeDenialNote(d, fix, stopped = true) {
   const pipe = d.pipe ? ` ${d.pipe}` : "";
-  return `the check sandbox denied MSBuild node (pid ${d.pid}) its named pipe${pipe} (${d.exception}); MSBuild waits 30 s for each of ten node starts before it fails, so Orbit stopped the check. Fix: ${fix}`;
+  const how = stopped ? "; MSBuild waits 30 s for each of ten node starts before it fails, so Orbit stopped the check" : ", and the check failed on it before the runner's next look";
+  return `the check sandbox denied MSBuild node (pid ${d.pid}) its named pipe${pipe} (${d.exception})${how}. Fix: ${fix}`;
 }
 function onOneProcessor(env) {
   return env?.DOTNET_PROCESSOR_COUNT?.trim() === "1";
@@ -36324,7 +36344,7 @@ function probeNodeSwitches(check) {
   if (builds.length === 0) return [ONE_NODE];
   return [...new Set(builds.flatMap((c) => verbOf(c.argv) === "run" ? [] : nodeSwitches(msbuildWords(c.argv, verbOf(c.argv))).map((s) => s.word)))];
 }
-var REPORT_DIR, REPORT_FILE, MAX_REPORTS, MAX_TMP_ENTRIES, MAX_REPORT_DIR_ENTRIES, MAX_REPORT_BYTES, MAX_EXCEPTION_CHARS, SOCKET_EXCEPTION, PIPE_SERVER, BUILD_NODE, NODE_SWITCH, ONE_NODE, MSBUILD_VERBS, VERB_LIST, RUN_CLAUSE, RUN_REASON, CANNOT_TELL, RUNNERS, SCRIPT, SHELLS2, SHELL_SYNTAX, CHAIN_SEPARATOR, ASSIGNMENT2, MAX_SHOWN_CHARS, isDotnet, verbOf, msbuildWords, runsOthers, PINNED, stripSwitches;
+var REPORT_DIR, REPORT_FILE, MAX_REPORTS, MAX_TMP_ENTRIES, MAX_REPORT_DIR_ENTRIES, MAX_SCANNED_NAMES, MAX_REPORT_BYTES, MAX_EXCEPTION_CHARS, SOCKET_EXCEPTION, PIPE_SERVER, BUILD_NODE, same, NODE_SWITCH, ONE_NODE, MSBUILD_VERBS, VERB_LIST, RUN_CLAUSE, RUN_REASON, CANNOT_TELL, RUNNERS, SCRIPT, SHELLS2, SHELL_SYNTAX, CHAIN_SEPARATOR, ASSIGNMENT2, MAX_SHOWN_CHARS, isDotnet, verbOf, msbuildWords, runsOthers, PINNED, stripSwitches;
 var init_msbuild = __esm({
   "src/evidence/msbuild.ts"() {
     "use strict";
@@ -36333,11 +36353,13 @@ var init_msbuild = __esm({
     MAX_REPORTS = 32;
     MAX_TMP_ENTRIES = 4096;
     MAX_REPORT_DIR_ENTRIES = 256;
+    MAX_SCANNED_NAMES = 8192;
     MAX_REPORT_BYTES = 64 * 1024;
     MAX_EXCEPTION_CHARS = 200;
     SOCKET_EXCEPTION = /System\.Net\.Sockets\.SocketException \(\d+\): [^\r\n]+/;
     PIPE_SERVER = /System\.IO\.Pipes\.NamedPipeServerStream/;
     BUILD_NODE = /Microsoft\.Build\.BackEnd\.NodeEndpointOutOfProc/;
+    same = (a, b) => a !== null && b !== null && a.dev === b.dev && a.ino === b.ino;
     NODE_SWITCH = /^(?:--?|\/)(?:m|maxcpucount)(?::(\d+))?$/i;
     ONE_NODE = "-m:1";
     MSBUILD_VERBS = /* @__PURE__ */ new Set(["build", "test", "publish", "pack", "restore", "msbuild", "run", "clean"]);
@@ -36364,11 +36386,19 @@ var init_msbuild = __esm({
 // src/evidence/dotnet-format.ts
 import { lstatSync as lstatSync7, readFileSync as readFileSync16 } from "node:fs";
 import { basename as basename12, dirname as dirname16, join as join26, posix as posix5, relative as relative2, isAbsolute as isAbsolute13 } from "node:path";
+function formatOutsideFix(check) {
+  return `remove checks.${check.id} from .orbit/config.yaml, or set checks.${check.id}.mandatory: false, and run dotnet format in CI`;
+}
 function loadsProject(argv2) {
   if (!isDotnet(argv2[0] ?? "") || verbOf(argv2) !== "format") return false;
   const rest = argv2.slice(argv2.indexOf("format") + 1);
   if (rest.some((w) => LOADS_NOTHING.has(w))) return false;
   return !(rest.includes("whitespace") && rest.includes("--folder"));
+}
+function readsFolder(argv2) {
+  if (!isDotnet(argv2[0] ?? "") || verbOf(argv2) !== "format") return false;
+  const rest = argv2.slice(argv2.indexOf("format") + 1);
+  return !rest.some((w) => LOADS_NOTHING.has(w)) && rest.includes("whitespace") && rest.includes("--folder");
 }
 function formatArgs(argv2) {
   const rest = argv2.slice(argv2.indexOf("format") + 1);
@@ -36407,6 +36437,20 @@ function formatLoadsProject(check) {
     if (!isDotnet(ws[i]) || verbOf(ws.slice(i)) !== "format") continue;
     const next = ws.findIndex((w, j) => j > i && isDotnet(w));
     if (loadsProject(ws.slice(i, next < 0 ? void 0 : next))) return { shown: "dotnet format" };
+  }
+  return null;
+}
+function formatReadsFolder(check) {
+  const commands = commandsOf(check);
+  if (commands !== null) {
+    const found = commands.find((c) => readsFolder(c.argv));
+    return found ? { shown: shownOf(found.argv) } : null;
+  }
+  const ws = words(check.command);
+  for (let i = 0; i < ws.length; i++) {
+    if (!isDotnet(ws[i]) || verbOf(ws.slice(i)) !== "format") continue;
+    const next = ws.findIndex((w, j) => j > i && isDotnet(w));
+    if (readsFolder(ws.slice(i, next < 0 ? void 0 : next))) return { shown: "dotnet format" };
   }
   return null;
 }
@@ -36495,17 +36539,21 @@ function formatRestoreFix(check, where2) {
   const fix = msbuildFix(fixed ? { ...check, command: fixed.command } : check, where2);
   return { ...fix, change: `${fix.change} ${RESTORE_FIRST}` };
 }
-function nodeDenialFix(check, where2, inProcess = false) {
+function nodeDenialFix(check, where2, inProcess = false, folderForm = true) {
   if (where2 || !formatLoadsProject(check)) return msbuildNodeFix(check, where2);
   if (inProcess) {
     const fix2 = formatRestoreFix(check, where2);
     return `${fix2.change} ${msbuildFixReason([fix2])}`;
   }
+  if (!folderForm) {
+    const nodes = msbuildNodes(check, true)?.kind === "unpinned" ? msbuildFix(check, where2) : null;
+    return `${nodes ? `${nodes.change} ${msbuildFixReason([nodes])}; ` : ""}${formatOutsideFix(check)} ${FORMAT_OUTSIDE_REASON}`;
+  }
   if (msbuildNodes(check, true)?.kind !== "unpinned") return `${dotnetFormatFix(check)} ${DOTNET_FORMAT_REASON}`;
   const fix = formatAndNodeFix(check, where2);
   return `${fix.change} ${msbuildFixReason([fix])} ${DOTNET_FORMAT_REASON}`;
 }
-var FOLDER_FORM, FOLDER_TEXT, LOADS_NOTHING, SUBCOMMANDS, ONE_VALUE, MANY_VALUES, KEPT, WORKSPACE_FILE, ROLLS_MAJOR, RESTORE_FIRST, DOTNET_FORMAT_REASON, restoresFirst, shownOf, withFolderForm, withRestoreFirst;
+var FOLDER_FORM, FOLDER_TEXT, LOADS_NOTHING, SUBCOMMANDS, ONE_VALUE, MANY_VALUES, KEPT, WORKSPACE_FILE, ROLLS_MAJOR, RESTORE_FIRST, DOTNET_FORMAT_REASON, FORMAT_OUTSIDE_REASON, restoresFirst, shownOf, withFolderForm, withRestoreFirst;
 var init_dotnet_format = __esm({
   "src/evidence/dotnet-format.ts"() {
     "use strict";
@@ -36521,6 +36569,7 @@ var init_dotnet_format = __esm({
     ROLLS_MAJOR = /* @__PURE__ */ new Set(["major", "latestmajor"]);
     RESTORE_FIRST = "(dotnet format passes no -m:1 to the restore it runs first, so restore with -m:1 first and format with --no-restore)";
     DOTNET_FORMAT_REASON = `(dotnet format loads the project through a build host, a separate process whose named pipe .NET binds under /tmp, which the check sandbox refuses, so the check fails, on macOS only after a 60 s wait (SDK 9 and later; SDK 8, pinned by global.json, loads it in its own process); ${FOLDER_TEXT} reads the files without loading the project and checks whitespace only, so run the style and analyzer checks (dotnet format --verify-no-changes) outside Orbit, in CI; docs/troubleshooting.md, "dotnet format under the sandbox")`;
+    FORMAT_OUTSIDE_REASON = `(on macOS no form of dotnet format runs in a run's check sandbox with SDK 9 and later: every form but dotnet format whitespace --folder loads the project through a build host whose named pipe .NET binds under /tmp, which the sandbox refuses, and whitespace --folder lists every folder above the checkout for .editorconfig files, while the run's checkout sits in the Orbit home, which the sandbox does not let a check read; with SDK 8 pinned by global.json, which loads the project in dotnet format's own process, a dotnet restore -m:1 first and dotnet format with --no-restore run; docs/troubleshooting.md, "dotnet format under the sandbox")`;
     restoresFirst = (argv2) => loadsProject(argv2) && !argv2.includes("--no-restore");
     shownOf = (argv2) => [basename12(argv2[0]), ...argv2.slice(1)].join(" ");
     withFolderForm = (check) => rewritten(
@@ -36544,7 +36593,7 @@ var init_dotnet_format = __esm({
 // src/evidence/runner.ts
 import { createHash as createHash3, randomBytes as randomBytes5 } from "node:crypto";
 import { closeSync as closeSync8, existsSync as existsSync21, lstatSync as lstatSync8, mkdirSync as mkdirSync10, openSync as openSync8, readSync as readSync5, readdirSync as readdirSync6, realpathSync as realpathSync9, rmSync as rmSync7, statSync as statSync11 } from "node:fs";
-import { platform } from "node:os";
+import { homedir as homedir8, platform } from "node:os";
 import { join as join27, resolve as resolve8, sep as sep4 } from "node:path";
 function candidateEvidenceDir(runDir2, seq2) {
   return join27(runDir2, "evidence", String(seq2));
@@ -36843,7 +36892,8 @@ async function launchAttempt(ctx, subject, def, configHash, rerunOf) {
         command: argv2,
         cwd,
         isolation: ctx.isolation.kind,
-        limitations: wrapped.limitations,
+        // NuGet's audit off is a gap in what the check proves, as an isolation limitation is: the record says so.
+        limitations: [...wrapped.limitations, ...env.NuGetAudit === "false" ? [NUGET_AUDIT_LIMITATION] : []],
         rerunOf
       },
       ctx.clock
@@ -36947,9 +36997,17 @@ function readShim(dir, intentToken) {
     pgid: pidFile && valid(pidFile.token) ? pidFile.childPgid : null
   };
 }
-function denialNote(ctx, def, denial) {
+function denialNote(ctx, def, denial, stopped = true) {
   const inProcess = sdkFormatsInProcess(resolve8(ctx.checkoutDir, def.cwd), ctx.checkoutDir);
-  return redact(msbuildNodeDenialNote(denial, nodeDenialFix(def, msbuildFixWhere(ctx, def), inProcess)));
+  return redact(msbuildNodeDenialNote(denial, nodeDenialFix(def, msbuildFixWhere(ctx, def), inProcess, folderFormRuns(ctx)), stopped));
+}
+function folderFormRuns(ctx) {
+  if (platform() !== "darwin" || !ctx.snapshot.repo_root) return true;
+  try {
+    return !checkoutBelowDenied({ checkout: ctx.checkoutDir, repoRoot: ctx.snapshot.repo_root, homeDir: ctx.homeDir ?? homedir8() });
+  } catch {
+    return false;
+  }
 }
 function readDenial(checkDir) {
   const record = readJsonFile(join27(checkDir, DENIAL_FILE));
@@ -37085,7 +37143,7 @@ function finalize(ctx, def, row, dirs, exit, synthetic) {
     note3 = denial;
   } else if (status2 === "FAILED" && note3 === null) {
     const late = findMsbuildNodeDenial(dirs.tmpDir);
-    if (late) note3 = denialNote(ctx, def, late);
+    if (late) note3 = denialNote(ctx, def, late, false);
   }
   const exitCode = exit?.exitCode ?? null;
   const footer = `[orbit] check=${def.id} status=${status2} exit=${exitCode === null ? exit?.signal ?? "none" : exitCode}${note3 ? ` note=${note3}` : ""}
@@ -38645,7 +38703,7 @@ var init_scheduler = __esm({
 
 // src/controller/context.ts
 import { dirname as dirname17, join as join28 } from "node:path";
-import { homedir as homedir8 } from "node:os";
+import { homedir as homedir9 } from "node:os";
 import { existsSync as existsSync22, readFileSync as readFileSync17, realpathSync as realpathSync11 } from "node:fs";
 function loadRunContext(deps, runId, signal) {
   const { db } = deps;
@@ -38740,7 +38798,15 @@ function lenientContext(deps, runId, signal) {
   return ctx;
 }
 function homeOf2(deps) {
-  return deps.homeDir ?? homedir8();
+  return deps.homeDir ?? homedir9();
+}
+function folderFormRunsAt(ctx, checkout) {
+  if (process.platform !== "darwin") return true;
+  try {
+    return !checkoutBelowDenied({ checkout, repoRoot: ctx.snapshot.repo_root, homeDir: homeOf2(ctx.deps), ...ctx.deps.hostEnv ? { env: ctx.deps.hostEnv } : {} });
+  } catch {
+    return false;
+  }
 }
 function schedulerFor(ctx) {
   const config = ctx.snapshot.config;
@@ -38777,6 +38843,7 @@ var init_context2 = __esm({
     init_hash();
     init_log2();
     init_isolation();
+    init_profiles();
     init_toolchains();
     init_snapshot();
     init_validate();
@@ -39106,8 +39173,8 @@ function routeSafetyReview(ctx) {
   } else {
     const fallback = reviewFallback(policy.review);
     const sameAllowed = fallback !== "block";
-    const same = sorted.filter((c) => !c.independent);
-    if (!sameAllowed || same.length === 0) {
+    const same2 = sorted.filter((c) => !c.independent);
+    if (!sameAllowed || same2.length === 0) {
       throw new OrbitError(
         "PROVIDER_UNAVAILABLE",
         sameAllowed ? "no qualified reviewer at or above the safety review quality floor is eligible" : `independent review is required (review.when_unavailable: block) but no qualified reviewer from a provider other than ${implementer} is eligible`,
@@ -39119,7 +39186,7 @@ function routeSafetyReview(ctx) {
         }
       );
     }
-    chosen = same[0];
+    chosen = same2[0];
     notes.push(
       fallback === "ask" ? `no qualified independent reviewer; review.when_unavailable is ask: a person must approve a same-provider review at the opus-class floor in a separate session (not independent; ${chosen.detail})` : `no qualified independent reviewer; review.when_unavailable is claude, so a same-provider review at the opus-class floor in a separate session (not independent; ${chosen.detail})`
     );
@@ -41012,8 +41079,8 @@ function recordReview(db, input, clock) {
   return db.tx(() => {
     const existing = db.get("SELECT * FROM reviews WHERE id = ?", id);
     if (existing) {
-      const same = existing.run_id === input.runId && existing.candidate_id === input.candidateId && existing.tree_hash === input.treeHash && existing.provider === input.provider && existing.verdict === input.verdict && existing.findings_json === findingsJson;
-      if (!same) throw new OrbitError("CONCURRENT_UPDATE", `review ${id} already exists with different content`, { reviewId: id });
+      const same2 = existing.run_id === input.runId && existing.candidate_id === input.candidateId && existing.tree_hash === input.treeHash && existing.provider === input.provider && existing.verdict === input.verdict && existing.findings_json === findingsJson;
+      if (!same2) throw new OrbitError("CONCURRENT_UPDATE", `review ${id} already exists with different content`, { reviewId: id });
       return toReview(existing);
     }
     if (!db.get("SELECT 1 AS x FROM runs WHERE id = ?", input.runId)) throw new OrbitError("NOT_FOUND", `no run ${input.runId}`);
@@ -42616,17 +42683,17 @@ function selectReviewer(input) {
       alternatives
     };
   }
-  const same = sameProviderModel(input, alternatives);
-  if (!same.ok) {
-    return { decision: "BLOCK", code: "PROVIDER_UNAVAILABLE", reason: `no independent reviewer is usable (${detail}) and review.when_unavailable is ${fallback}, but ${same.reason}`, alternatives };
+  const same2 = sameProviderModel(input, alternatives);
+  if (!same2.ok) {
+    return { decision: "BLOCK", code: "PROVIDER_UNAVAILABLE", reason: `no independent reviewer is usable (${detail}) and review.when_unavailable is ${fallback}, but ${same2.reason}`, alternatives };
   }
   const why = `no independent reviewer was usable: ${detail}`;
   return finish3(
     input,
-    same.usable,
+    same2.usable,
     { independent: false, substitutedForPreferred: false, independentUnavailable: why, needsApproval: fallback === "ask" },
     alternatives,
-    `${why}; review.when_unavailable is ${fallback}, so "${impl}" reviews with ${same.usable.model} in a separate reviewer session (${same.usable.detail})${fallback === "ask" ? " once a person says yes" : ""}. This review is not independent.`
+    `${why}; review.when_unavailable is ${fallback}, so "${impl}" reviews with ${same2.usable.model} in a separate reviewer session (${same2.usable.detail})${fallback === "ask" ? " once a person says yes" : ""}. This review is not independent.`
   );
 }
 function finish3(input, u, how, alternatives, reason) {
@@ -44040,7 +44107,7 @@ var init_global = __esm({
 
 // src/guard/publication.ts
 import { readFileSync as readFileSync18 } from "node:fs";
-import { homedir as homedir9 } from "node:os";
+import { homedir as homedir10 } from "node:os";
 import { dirname as dirname19, isAbsolute as isAbsolute15, join as join33, resolve as resolve10 } from "node:path";
 import { inspect } from "node:util";
 function defaultGuardConfigPath(env = process.env) {
@@ -44112,7 +44179,7 @@ function sanitize(text2) {
   return text2.normalize("NFKC").replace(INVISIBLE, "");
 }
 function home(env = process.env) {
-  return env.HOME || homedir9();
+  return env.HOME || homedir10();
 }
 function expandHome(p, env = process.env) {
   if (p === "~") return home(env);
@@ -44436,11 +44503,11 @@ async function readControllerIdentity(repoRoot, opts = {}) {
   return { name, email };
 }
 async function createDeliveryCommit(input) {
-  const { repoRoot, tree, parent, message, identity } = input;
+  const { repoRoot, tree, parent, message, identity: identity2 } = input;
   if (!isObjectId(tree)) throw new OrbitError("GIT_FAILED", "the tree is not a full object id", { tree });
   if (!isObjectId(parent)) throw new OrbitError("GIT_FAILED", "the parent is not a full object id", { parent });
   if (!message.trim()) throw new OrbitError("GIT_FAILED", "a delivery commit needs a message");
-  if (!identity.name || !identity.email) throw new OrbitError("CONFIG_INVALID", "a delivery commit needs an identity", { definitive: true });
+  if (!identity2.name || !identity2.email) throw new OrbitError("CONFIG_INVALID", "a delivery commit needs an identity", { definitive: true });
   if (!await objectExists(repoRoot, `${tree}^{tree}`, input)) throw new OrbitError("GIT_FAILED", `tree ${tree} is not in the repository`);
   if (!await objectExists(repoRoot, `${parent}^{commit}`, input)) throw new OrbitError("GIT_FAILED", `parent ${parent} is not a commit in the repository`);
   const when = `${Math.floor(input.timeMs / 1e3)} +0000`;
@@ -44448,11 +44515,11 @@ async function createDeliveryCommit(input) {
     // Reproducible: no user or system configuration can influence the result.
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
-    GIT_AUTHOR_NAME: identity.name,
-    GIT_AUTHOR_EMAIL: identity.email,
+    GIT_AUTHOR_NAME: identity2.name,
+    GIT_AUTHOR_EMAIL: identity2.email,
     GIT_AUTHOR_DATE: when,
-    GIT_COMMITTER_NAME: identity.name,
-    GIT_COMMITTER_EMAIL: identity.email,
+    GIT_COMMITTER_NAME: identity2.name,
+    GIT_COMMITTER_EMAIL: identity2.email,
     GIT_COMMITTER_DATE: when
   });
   const res = await git3(repoRoot, ["commit-tree", tree, "-p", parent, "-F", "-"], { ...input, env, input: message.endsWith("\n") ? message : `${message}
@@ -46427,8 +46494,8 @@ function applyChange(ctx, change) {
         }
         if (!globs.includes(g)) globs.push(g);
       }
-      const same = globs.length === contract.allowed_paths.length && globs.every((g) => contract.allowed_paths.includes(g));
-      if (same && ctx.forbidden.length === 0) noop();
+      const same2 = globs.length === contract.allowed_paths.length && globs.every((g) => contract.allowed_paths.includes(g));
+      if (same2 && ctx.forbidden.length === 0) noop();
       const scope = ctx.snapshot.config.scope?.allowed_paths ?? [];
       for (const g of globs) {
         if (!containedInAny(g, contract.allowed_paths)) ctx.approval.push(`widens allowed_paths with "${g}"`);
@@ -46836,11 +46903,14 @@ function classifyNotExecuted(input) {
   let traced = false;
   let own = 0;
   let inJsTrace = false;
-  for (const raw of stripAnsi(input.output).split("\n", MAX_SCANNED_LINES2)) {
+  const all = stripAnsi(input.output).split("\n", MAX_SCANNED_LINES2);
+  let last = all.length - 1;
+  while (last >= 0 && all[last].trim() === "") last--;
+  for (const [i, raw] of all.entries()) {
     const line3 = raw.trim();
     if (line3 === "") continue;
     const killed = KILLED_BY_SIGNAL.exec(line3);
-    const footer = RUNNER_FOOTER.exec(line3);
+    const footer = i === last ? RUNNER_FOOTER.exec(line3) : null;
     const header2 = TRACE_HEADER.exec(line3);
     if (header2) {
       inJsTrace = header2[1].toLowerCase() === "javascript";
@@ -46920,14 +46990,16 @@ function classifyCouldNotRun(input) {
     const permission = PERMISSION_DENIAL.exec(line3);
     const network = NETWORK_DENIAL.exec(line3);
     const nuget = domainNameDenied ? NUGET_HTTP_DENIAL.exec(line3) : null;
+    const tls = NUGET_TLS_DENIAL.exec(line3);
     const socket = toolCrashed ? SOCKET_DENIAL.exec(line3) : null;
-    const pathOutside = () => FS_CALL.test(line3) && (line3.match(ABSOLUTE_PATH) ?? []).some(outside);
+    const pathOutside = () => (line3.match(ABSOLUTE_PATH) ?? []).some(outside);
     const candidates = [];
     if (deny2 && (!deny2[1].toLowerCase().startsWith("file-") || deny2[2] !== void 0 && isAbsolute17(deny2[2]) && outside(deny2[2]))) candidates.push({ signal: "sandbox-violation", at: deny2.index });
-    if (denial && pathOutside()) candidates.push({ signal: "filesystem-denied", at: denial.index });
-    if (permission && pathOutside()) candidates.push({ signal: "permission-denied", at: permission.index });
+    if (denial && FS_CALL.test(line3) && pathOutside()) candidates.push({ signal: "filesystem-denied", at: denial.index });
+    if (permission && (FS_CALL.test(line3) || LISTEN_CALL.test(line3)) && pathOutside()) candidates.push({ signal: "permission-denied", at: permission.index });
     if (network) candidates.push({ signal: "network-denied", at: network.index });
     if (nuget) candidates.push({ signal: "nuget-http-denied", at: nuget.index });
+    if (tls) candidates.push({ signal: "nuget-tls-denied", at: tls.index });
     if (socket) candidates.push({ signal: "socket-denied", at: socket.index });
     const found = candidates.find((c) => counts(c.signal));
     if (found === void 0) continue;
@@ -46942,12 +47014,12 @@ function classifyCouldNotRun(input) {
   if (signals.length === 0) return null;
   return { checkId: input.checkId, fingerprint: null, signals, cause: signals.map((s) => CAUSES[s]).join("; "), lines };
 }
-var BASE_GATED_SIGNALS, MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER, FS_CALL, DENIAL, PERMISSION_DENIAL, SEATBELT_DENY, NETWORK_DENIAL, NUGET_HTTP_DENIAL, DOMAIN_NAME_DENIED, SOCKET_DENIAL, MSBUILD_INTERNAL_FAILURE, TOOL_CRASH, CODE_FAILURE, ERROR_COUNT, MSBUILD_ERROR_SUMMARY, MSBUILD_ERROR_LINE, NUGET_TARGETS, RUNNER_NODE_DENIAL, BUILD_HOST_FRAME, BUILD_HOST_PIPE, UNHANDLED;
+var BASE_GATED_SIGNALS, MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER, FS_CALL, LISTEN_CALL, DENIAL, PERMISSION_DENIAL, SEATBELT_DENY, NETWORK_DENIAL, NUGET_HTTP_DENIAL, NUGET_TLS_DENIAL, DOMAIN_NAME_DENIED, SOCKET_DENIAL, MSBUILD_INTERNAL_FAILURE, TOOL_CRASH, CODE_FAILURE, ERROR_COUNT, MSBUILD_ERROR_SUMMARY, MSBUILD_ERROR_LINE, NUGET_TARGETS, RUNNER_NODE_DENIAL, BUILD_HOST_FRAME, BUILD_HOST_PIPE, UNHANDLED;
 var init_environment_failure = __esm({
   "src/evidence/environment-failure.ts"() {
     "use strict";
     init_fingerprint();
-    BASE_GATED_SIGNALS = /* @__PURE__ */ new Set(["permission-denied", "socket-denied", "network-denied", "nuget-http-denied", "program-not-found", "pipe-denied"]);
+    BASE_GATED_SIGNALS = /* @__PURE__ */ new Set(["permission-denied", "socket-denied", "network-denied", "nuget-http-denied", "nuget-tls-denied", "program-not-found", "pipe-denied"]);
     MAX_EVIDENCE_LINES = 3;
     MAX_LINE_CHARS = 200;
     MAX_SCANNED_LINES2 = 2e5;
@@ -46969,6 +47041,7 @@ var init_environment_failure = __esm({
       "socket-denied": "the sandbox or the operating system refused the tool a socket (permission denied) in its own startup, before it ran anything of the repository",
       "network-denied": "the sandbox's network proxy refused a connection to a host the check may not reach",
       "nuget-http-denied": "NuGet's HTTP client could not start in the sandbox (the type initializer of System.Net.CookieContainer failed to read the host's domain name, GetDomainName: -1), so the restore could reach no package source",
+      "nuget-tls-denied": "NuGet could not establish the SSL connection to its package source in the sandbox (on macOS srt keeps the system trust service out of reach, so .NET cannot verify nuget.org's certificate there), so the restore could reach no package source",
       "program-not-found": "a program the check runs was not found where it runs (exit 127)",
       "pipe-denied": "the sandbox refused a .NET process the named pipe it binds under /tmp (an MSBuild worker node, or the build host dotnet format loads the project with), so nothing was built or formatted"
     };
@@ -46978,12 +47051,14 @@ var init_environment_failure = __esm({
     TRACE_FRAME = /^\d+:\s+0x[0-9a-f]+(?:\s|$)/i;
     KILLED_BY_SIGNAL = /^Process killed by signal: (SIG[A-Z0-9]+)$/;
     RUNNER_FOOTER = /^\[orbit\] check=\S+ status=\S+ exit=(\S+)/;
-    FS_CALL = /\b(?:mkdir|mkdtemp|mkstemp|open|openat|creat|rename|unlink|rmdir|chmod|chown|lchown|symlink|link|copyfile|clonefile|scandir|opendir|access|stat|lstat|utimes?|truncate|shm_open|sem_open|realpath|readlink|mkfifo|bind|connect|listen|touch|cp|mv|rm|ln|PermissionError|IOException|errno)\b/i;
+    FS_CALL = /\b(?:mkdir|mkdtemp|mkstemp|open|openat|creat|rename|unlink|rmdir|chmod|chown|lchown|symlink|link|copyfile|clonefile|scandir|opendir|access|stat|lstat|utimes?|truncate|shm_open|sem_open|realpath|readlink|mkfifo|bind|connect|touch|cp|mv|rm|ln|PermissionError|IOException|errno)\b/i;
+    LISTEN_CALL = /\blisten\b/i;
     DENIAL = /\bEPERM\b|operation not permitted|\bEROFS\b|read-only file system/i;
     PERMISSION_DENIAL = /\bEACCES\b|permission denied|access to the path '[^']*' is denied/i;
     SEATBELT_DENY = /\bdeny\(\d+\)\s+([a-z][\w-]*)(?:\s+(\S+))?/i;
     NETWORK_DENIAL = /Connection blocked by network allowlist|\bX-Proxy-Error\b|\bblocked-by-allowlist\b|\bCONNECT tunnel failed, response 403\b|\bproxy tunnel request to proxy '[^']*' failed with status code '403'/i;
     NUGET_HTTP_DENIAL = /\berror NU1301:.*\bThe type initializer for 'System\.Net\.CookieContainer' threw an exception\b/;
+    NUGET_TLS_DENIAL = /\berror NU1301:\s+The SSL connection could not be established\b/;
     DOMAIN_NAME_DENIED = /\bGetDomainName: -1\b/;
     SOCKET_DENIAL = /\bSocketException \((?:1|13)\): (?:Permission denied|Operation not permitted)\b|\b(?:bind|listen|connect)\b.*(?:\bEACCES\b|\bEPERM\b|permission denied|operation not permitted)|(?:\bEACCES\b|\bEPERM\b|permission denied|operation not permitted).*\b(?:bind|listen|connect)\b/i;
     MSBUILD_INTERNAL_FAILURE = /\bMSBUILD : error MSB1025\b/;
@@ -47018,7 +47093,14 @@ var init_environment_failure = __esm({
       // Microsoft.Testing.Platform's line for each failing test, with its duration: "failed WritesCache (12ms)".
       /^[ \t]*failed \S.*\((?:\d+(?:ms|[smhd])[ \t]?)+\)[ \t]*\r?$/m,
       // xunit's own runner's line for each failing test: "Acme.Tests.CacheTests.WritesCache [FAIL]".
-      /\[FAIL\][ \t]*\r?$/m
+      /\[FAIL\][ \t]*\r?$/m,
+      // go test -json's event for a test or package that failed: {"Action":"fail",...}.
+      /"Action":\s*"fail"/,
+      // bun test's line for each failing test, "(fail) reads the config [0.31ms]", and its summary's " 1 fail".
+      /^[ \t]*\(fail\) \S/m,
+      /^[ \t]*[1-9]\d* fail[ \t]*\r?$/m,
+      // dart test's last line when a test failed: "00:01 +3 -1: Some tests failed.".
+      /\bSome tests failed\.[ \t]*\r?$/m
     ];
     ERROR_COUNT = /\b[1-9]\d*[ \t]+errors?\b|\b[1-9]\d* Error\(s\)/i;
     MSBUILD_ERROR_SUMMARY = /\b[1-9]\d* Error\(s\)/;
@@ -47153,9 +47235,23 @@ var init_check_misconfigured = __esm({
     passes = (inv, arg) => inv.args.some((a) => a === arg || a.startsWith(`${arg}=`));
     subcommand = (inv) => inv.args.find((a) => !a.startsWith("-") && !a.startsWith("+"));
     USAGE_ERRORS = [
-      { id: "msbuild-unknown-switch", kind: "argument", tool: "dotnet (MSBuild)", runs: runsMsbuild, line: /^MSBUILD : error MSB1001: /, detail: MSBUILD_SWITCH, names: switchPassed, meaning: "MSBuild does not know a switch on it" },
+      {
+        id: "dotnet-test-unknown-switch",
+        kind: "missing-target",
+        tool: "dotnet test (MSBuild)",
+        // dotnet test hands MSBuild every option it does not know itself, and a test platform's option is one of them until
+        // the repository runs its tests on that platform (SDK 9.0.305: `dotnet test A.csproj --report-trx` is MSB1001,
+        // "Switch: --report-trx"). A change to the repository may be what makes it right, so the goal may be to.
+        runs: (inv) => inv.tool === "dotnet" && inv.args[0] === "test",
+        line: /^MSBUILD : error MSB1001: /,
+        detail: MSBUILD_SWITCH,
+        names: switchPassed,
+        meaning: "MSBuild does not know a switch on it: a misspelled one, or an option of a test platform the repository does not run its tests on yet (Microsoft.Testing.Platform's --report-trx), which dotnet test hands to MSBuild"
+      },
+      { id: "msbuild-unknown-switch", kind: "argument", tool: "dotnet (MSBuild)", runs: (inv) => runsMsbuild(inv) && !(inv.tool === "dotnet" && inv.args[0] === "test"), line: /^MSBUILD : error MSB1001: /, detail: MSBUILD_SWITCH, names: switchPassed, meaning: "MSBuild does not know a switch on it" },
       { id: "msbuild-one-project", kind: "argument", tool: "dotnet (MSBuild)", runs: runsMsbuild, line: /^MSBUILD : error MSB1008: /, detail: MSBUILD_SWITCH, names: switchPassed, meaning: "it names more than one project, and MSBuild builds one project or solution per command" },
-      { id: "msbuild-ambiguous-project", kind: "argument", tool: "dotnet (MSBuild)", runs: runsMsbuild, line: /^MSBUILD : error MSB1011: /, meaning: "it names no project or solution, and its working directory holds more than one" },
+      // A folder with two projects or solutions is one a change may leave with one (an old .sln next to its .slnx).
+      { id: "msbuild-ambiguous-project", kind: "missing-target", tool: "dotnet (MSBuild)", runs: runsMsbuild, line: /^MSBUILD : error MSB1011: /, meaning: "it names no project or solution, and its working directory holds more than one" },
       { id: "msbuild-no-project", kind: "missing-target", tool: "dotnet (MSBuild)", runs: runsMsbuild, line: /^MSBUILD : error MSB1003: /, meaning: "it names no project or solution, and its working directory holds none" },
       { id: "msbuild-project-missing", kind: "missing-target", tool: "dotnet (MSBuild)", runs: runsMsbuild, line: /^MSBUILD : error MSB1009: /, detail: MSBUILD_SWITCH, names: switchPassed, meaning: "the project or solution file it names does not exist" },
       {
@@ -47184,15 +47280,17 @@ var init_check_misconfigured = __esm({
       },
       {
         id: "pytest-unrecognized-arguments",
-        kind: "argument",
+        // pytest says the same for an option of a plugin it has not loaded or of a conftest.py that does not add it yet
+        // (pytest 8.4.1: --cov without pytest-cov, -n without pytest-xdist), and the goal may be to add that plugin or
+        // option, as cargo's no such command may be a plugin not provided yet.
+        kind: "missing-target",
         tool: "pytest",
         runs: (inv) => PYTEST.includes(inv.tool),
         line: /^\S+: error: unrecognized arguments: (.+)$/,
         exitCodes: [4],
         // Every argument pytest did not know is one the command passes, not one of the repository's addopts.
         names: (inv, m) => m[1].trim().split(/\s+/).every((a) => inv.args.includes(a)),
-        // pytest says the same for an option of a plugin it has not loaded (pytest 8.4, --cov without pytest-cov).
-        meaning: "pytest does not know an argument on it: a misspelled option, or an option of a plugin that is not installed where the check runs (--cov without pytest-cov), which the dependency install can add"
+        meaning: "pytest does not know an option on it: a misspelled one, or an option of a plugin or a conftest.py that is not there yet (--cov without pytest-cov, -n without pytest-xdist), which the repository's dependencies or its conftest.py add"
       },
       {
         id: "pytest-path-not-found",
@@ -47274,7 +47372,7 @@ var init_check_misconfigured = __esm({
 
 // src/inquisition/baseline-exception.ts
 import { readFileSync as readFileSync21 } from "node:fs";
-import { join as join36 } from "node:path";
+import { dirname as dirname20, join as join36, normalize as normalize2, sep as sep8 } from "node:path";
 function keyOf(runId, checkId, fingerprint) {
   return hashObject({ run: runId, check: checkId, fingerprint }).slice(7, 19);
 }
@@ -47352,18 +47450,28 @@ function logOf(path) {
     return null;
   }
 }
-function notExceptable(baseline, checkId, snapshot2) {
+function notExceptable(baseline, checkId, snapshot2, recordedCwd = null) {
   const failure = (baseline.failures ?? []).find((f) => f.checkId === checkId);
   const def = snapshot2.config.checks[checkId];
   const entry = (baseline.checks ?? []).find((c) => c.checkId === checkId);
   const input = def && def.kind === "command" && entry ? { checkId, command: def.command, shell: def.shell, exitCode: entry.exitCode, output: logOf(entry.log) ?? failure?.excerpt ?? "" } : null;
-  if (failure?.classification === "environment" || input !== null && classifyProgramNotFound(input) !== null) {
+  const stopped = () => {
+    if (input === null) return false;
+    if (classifyProgramNotFound(input) !== null || classifyNotExecuted({ checkId, output: input.output }) !== null) return true;
+    const cwd = recordedCwd !== null ? normalize2(recordedCwd) : null;
+    const rel = def && def.kind === "command" ? normalize2(def.cwd ?? ".") : ".";
+    const checkout = cwd !== null && rel !== "." && cwd.endsWith(`${sep8}${rel}`) ? cwd.slice(0, -(rel.length + 1)) : cwd;
+    const roots = [...checkout !== null ? [checkout] : [], ...cwd !== null ? [cwd] : [], dirname20(entry.log)];
+    const found2 = classifyCouldNotRun({ checkId, output: input.output, insideRoots: roots });
+    return found2 !== null && (cwd !== null || !found2.signals.some((sg) => ON_A_PATH.has(sg)));
+  };
+  if (failure?.classification === "environment" || stopped()) {
     return `check ${checkId} could not run on the base revision: PREFLIGHT found an environment cause, not a pre-existing failure, so its failure cannot be accepted as a baseline exception (a check that never ran would let a run pass)`;
   }
   const found = input !== null ? classifyMisconfigured(input) : null;
   const evidence = found ? `: ${found.cause} (${JSON.stringify(found.lines[0])})` : "";
   if (failure?.classification === "missing-target" || found?.kind === "missing-target") {
-    return `check ${checkId} names something that does not exist on the base revision${evidence}, so its failure cannot be accepted as a baseline exception: a check whose target does not exist tests nothing, and accepting its failure would make a meaningless check green. If the goal creates it, the contract names the check as the proof of a criterion and expects it to flip; otherwise start a new run, after installing or restoring it when a tool that is not there yet provides it (a cargo plugin, a dotnet local tool), or after correcting checks.${checkId}.command in .orbit/config.yaml when the command is wrong`;
+    return `check ${checkId} names something that does not exist on the base revision${evidence}, so its failure cannot be accepted as a baseline exception: a check whose target does not exist tests nothing, and accepting its failure would make a meaningless check green. If the goal creates it, the contract names the check as the proof of a criterion and expects it to flip; otherwise start a new run, after installing or restoring it when a tool that is not there yet provides it (a cargo plugin, a dotnet local tool, a pytest plugin), or after correcting checks.${checkId}.command in .orbit/config.yaml when the command is wrong`;
   }
   if (failure?.classification !== "misconfigured" && found === null) return null;
   return `check ${checkId} is misconfigured on the base revision${evidence}, so its failure cannot be accepted as a baseline exception: a check whose command is wrong never tested anything. Correct checks.${checkId}.command in .orbit/config.yaml and start a new run`;
@@ -47426,7 +47534,8 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
       let next;
       let record;
       try {
-        const never = baseline ? notExceptable(baseline, data.check_id, snapshot2) : null;
+        const recorded = listCheckRuns(ctx.db, { runId: ctx.runId, candidateId: null, checkId: data.check_id, rootsOnly: true }).at(-1);
+        const never = baseline ? notExceptable(baseline, data.check_id, snapshot2, recorded?.cwd ?? null) : null;
         if (never !== null) throw new OrbitError("POLICY_DENIED", never, { checkId: data.check_id });
         const res = applyAmendment(current, proposal, {
           snapshot: snapshot2,
@@ -47489,7 +47598,7 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
   if (contract && outcomes.some((o) => o.status === "applied" || o.status === "already-applied")) atomicWriteJson(join36(ctx.runDir, "contract.json"), contract);
   return { contract, outcomes };
 }
-var BASELINE_EXCEPTION_REQUEST_KIND, BASELINE_APPROVE, BASELINE_REJECT, BASELINE_FILE, MAX_CAS_ATTEMPTS, MAX_LOG_BYTES;
+var BASELINE_EXCEPTION_REQUEST_KIND, BASELINE_APPROVE, BASELINE_REJECT, BASELINE_FILE, MAX_CAS_ATTEMPTS, MAX_LOG_BYTES, ON_A_PATH;
 var init_baseline_exception = __esm({
   "src/inquisition/baseline-exception.ts"() {
     "use strict";
@@ -47501,6 +47610,8 @@ var init_baseline_exception = __esm({
     init_amend();
     init_snapshot();
     init_check_misconfigured();
+    init_environment_failure();
+    init_store();
     init_decisions();
     init_events();
     init_actors();
@@ -47511,6 +47622,7 @@ var init_baseline_exception = __esm({
     BASELINE_FILE = "baseline.json";
     MAX_CAS_ATTEMPTS = 4;
     MAX_LOG_BYTES = 4 * 1024 * 1024;
+    ON_A_PATH = /* @__PURE__ */ new Set(["filesystem-denied", "permission-denied", "sandbox-violation"]);
   }
 });
 
@@ -49435,7 +49547,7 @@ var init_notify = __esm({
 
 // src/controller/report.ts
 import { existsSync as existsSync28, mkdirSync as mkdirSync15, readdirSync as readdirSync7, readFileSync as readFileSync22 } from "node:fs";
-import { homedir as homedir10 } from "node:os";
+import { homedir as homedir11 } from "node:os";
 import { join as join41 } from "node:path";
 function writeFinalReport(db, runId, opts) {
   const run = getRun(db, runId);
@@ -49788,7 +49900,7 @@ async function runCurator(host, task, model = curatorModelFor(host.deps.registry
   const ctx = host.recorded ?? null;
   const timeoutMs = host.timeoutMs ?? CURATOR_TIMEOUT_MS;
   const env = host.env ?? host.deps.hostEnv ?? process.env;
-  const home2 = host.homeDir ?? host.deps.homeDir ?? homedir10();
+  const home2 = host.homeDir ?? host.deps.homeDir ?? homedir11();
   const cwd = join41(host.dir, "cwd");
   mkdirSync15(cwd, { recursive: true, mode: 448 });
   let row = null;
@@ -49916,7 +50028,7 @@ var init_report2 = __esm({
 // src/evidence/candidate.ts
 import { chmodSync as chmodSync7, existsSync as existsSync29, lstatSync as lstatSync9, mkdirSync as mkdirSync16, mkdtempSync as mkdtempSync4, readdirSync as readdirSync8, realpathSync as realpathSync12, rmSync as rmSync9, writeFileSync as writeFileSync5 } from "node:fs";
 import { tmpdir as tmpdir9 } from "node:os";
-import { dirname as dirname20, join as join42, parse as parse4, sep as sep8 } from "node:path";
+import { dirname as dirname21, join as join42, parse as parse4, sep as sep9 } from "node:path";
 function candidateRef(runId, seq2) {
   return `refs/orbit/${runId}/candidates/${seq2}`;
 }
@@ -49988,7 +50100,7 @@ async function materializeCandidate(repoRoot, commit, dir, opts = {}) {
   if (existsSync29(dir) && readdirSync8(dir).length > 0) {
     throw new OrbitError("GIT_FAILED", `checkout directory is not empty: ${dir}`, { dir });
   }
-  mkdirSync16(dirname20(dir), { recursive: true });
+  mkdirSync16(dirname21(dir), { recursive: true });
   await git2(repoRoot, ["worktree", "add", "--detach", "--force", dir, sha]);
   const real = realpathSync12(dir);
   if (opts.readOnly !== false) makeReadOnly(real);
@@ -50013,7 +50125,7 @@ function assertDisposableCheckout(repoRoot, dir) {
   const refuse = (why) => {
     throw new OrbitError("GIT_FAILED", `refusing to remove ${dir}: ${why}`, { dir, repoRoot });
   };
-  if (target === root || root.startsWith(target.endsWith(sep8) ? target : target + sep8)) refuse("it is or contains the repository");
+  if (target === root || root.startsWith(target.endsWith(sep9) ? target : target + sep9)) refuse("it is or contains the repository");
   if (target === parse4(target).root) refuse("it is a filesystem root");
   let dotGit;
   try {
@@ -50827,7 +50939,7 @@ var init_report3 = __esm({
 // src/ui/runner.ts
 import { closeSync as closeSync9, copyFileSync, existsSync as existsSync31, mkdirSync as mkdirSync17, openSync as openSync9, readFileSync as readFileSync25, realpathSync as realpathSync13, rmSync as rmSync10, statSync as statSync12, writeFileSync as writeFileSync6 } from "node:fs";
 import { createRequire as createRequire3 } from "node:module";
-import { basename as basename15, dirname as dirname21, isAbsolute as isAbsolute19, join as join44, relative as relative5, resolve as resolve11, sep as sep9 } from "node:path";
+import { basename as basename15, dirname as dirname22, isAbsolute as isAbsolute19, join as join44, relative as relative5, resolve as resolve11, sep as sep10 } from "node:path";
 async function runUiChecks(input) {
   const clock = input.clock ?? systemClock;
   const { snapshot: snapshot2, uiConfig, candidate } = input;
@@ -51292,7 +51404,7 @@ function fallbackBrowser(checkoutDir, configured) {
   const name = configured[0] ?? "chromium";
   try {
     const req = createRequire3(join44(checkoutDir, "package.json"));
-    const dir = dirname21(req.resolve("playwright-core/package.json"));
+    const dir = dirname22(req.resolve("playwright-core/package.json"));
     const parsed3 = JSON.parse(readFileSync25(join44(dir, "browsers.json"), "utf8"));
     const list3 = parsed3.browsers ?? [];
     const version = list3.find((b) => b.name === name)?.browserVersion;
@@ -51379,7 +51491,7 @@ function safeReal(path) {
 }
 function isInside(child, parent) {
   if (parent === null) return false;
-  return child === parent || child.startsWith(parent.endsWith(sep9) ? parent : parent + sep9);
+  return child === parent || child.startsWith(parent.endsWith(sep10) ? parent : parent + sep10);
 }
 function tally(journeys) {
   const s = { passed: 0, failed: 0, flaky: 0, skipped: 0, other: 0 };
@@ -51463,7 +51575,7 @@ function changedA11yBaselines(journeys, checkoutDir, changed2) {
       if (!scan.baselinePath) continue;
       const real = safeReal(scan.baselinePath) ?? resolve11(scan.baselinePath);
       if (!isInside(real, root) || root === null) continue;
-      const rel = relative5(root, real).split(sep9).join("/");
+      const rel = relative5(root, real).split(sep10).join("/");
       if (changed2.has(rel)) out.add(rel);
     }
   }
@@ -51880,7 +51992,7 @@ var init_gates = __esm({
 
 // src/controller/security.ts
 import { accessSync as accessSync2, constants as constants4, existsSync as existsSync32, mkdirSync as mkdirSync18, readFileSync as readFileSync26, rmSync as rmSync11, statSync as statSync13 } from "node:fs";
-import { delimiter as delimiter3, dirname as dirname22, join as join45, normalize as normalize2, sep as sep10 } from "node:path";
+import { delimiter as delimiter3, dirname as dirname23, join as join45, normalize as normalize3, sep as sep11 } from "node:path";
 import { tmpdir as tmpdir10 } from "node:os";
 import { spawn as spawn5 } from "node:child_process";
 function findOnPath(name, pathVar = process.env.PATH) {
@@ -52060,10 +52172,10 @@ async function runGitleaks(bin, input, files, reportPath2) {
   atomicWrite(config, TRUSTED_GITLEAKS_CONFIG, 292);
   let copied = 0;
   for (const rel of files) {
-    const target = normalize2(join45(tree, rel));
-    if (!target.startsWith(tree + sep10)) continue;
+    const target = normalize3(join45(tree, rel));
+    if (!target.startsWith(tree + sep11)) continue;
     const content = await git2(input.repoRoot, ["cat-file", "blob", `${input.commit}:${rel}`]);
-    mkdirSync18(dirname22(target), { recursive: true });
+    mkdirSync18(dirname23(target), { recursive: true });
     atomicWrite(target, content, 384);
     copied++;
   }
@@ -52082,7 +52194,7 @@ async function runGitleaks(bin, input, files, reportPath2) {
   return { scanner: "gitleaks", completed: true, findings, files: copied, note: "gitleaks with Orbit's trusted configuration and --ignore-gitleaks-allow", reportPath: reportPath2 };
 }
 function relativeTo2(root, p) {
-  return p.startsWith(root + sep10) ? p.slice(root.length + 1) : p;
+  return p.startsWith(root + sep11) ? p.slice(root.length + 1) : p;
 }
 async function partitionBySize(input, changed2) {
   const max = input.maxScanBytes ?? MAX_SCAN_BYTES;
@@ -52110,9 +52222,9 @@ async function scanBlobInChunks(repoRoot, commit, rel) {
     for (const m of red.matchAll(/\[REDACTED:([a-z0-9_-]+)\]/gi)) found.set(`${at}:${m[1]}`, { file: rel, line: at, rule: `builtin:${m[1]}` });
   };
   const child = spawn5("git", ["cat-file", "blob", `${commit}:${rel}`], { cwd: repoRoot, env: gitEnv3(), stdio: ["ignore", "pipe", "ignore"] });
-  const exited = new Promise((resolve23, reject2) => {
+  const exited = new Promise((resolve24, reject2) => {
     child.once("error", reject2);
-    child.once("close", (code2) => resolve23(code2));
+    child.once("close", (code2) => resolve24(code2));
   });
   const timer = setTimeout(() => child.kill("SIGKILL"), 10 * 6e4);
   try {
@@ -52203,7 +52315,7 @@ var init_security = __esm({
 
 // src/ui/explore.ts
 import { existsSync as existsSync33, readFileSync as readFileSync27, realpathSync as realpathSync15, symlinkSync, writeFileSync as writeFileSync7 } from "node:fs";
-import { dirname as dirname23, join as join46, resolve as resolve12 } from "node:path";
+import { dirname as dirname24, join as join46, resolve as resolve12 } from "node:path";
 function explorationConfigOf(ui) {
   const raw = ui.exploration;
   if (!raw || typeof raw !== "object") return DISABLED;
@@ -52576,7 +52688,7 @@ function linkNodeModules(dir, checkoutDir) {
       symlinkSync(realpathSync15(candidate), target);
       return;
     }
-    const up = dirname23(cur);
+    const up = dirname24(cur);
     if (up === cur) return;
     cur = up;
   }
@@ -52966,7 +53078,7 @@ var init_verification = __esm({
 
 // src/controller/environment-block.ts
 import { readFileSync as readFileSync28, realpathSync as realpathSync16 } from "node:fs";
-import { dirname as dirname24, isAbsolute as isAbsolute20, join as join49, relative as relative6 } from "node:path";
+import { dirname as dirname25, isAbsolute as isAbsolute20, join as join49, relative as relative6, resolve as resolve13 } from "node:path";
 function outputOf(row) {
   if (row.logPath) {
     try {
@@ -52993,9 +53105,9 @@ function environmentFailuresFor(ctx, cand, report2) {
       baselineFingerprint: base.fingerprint,
       output: outputOf(row),
       // The checkout (the check's cwd is resolved, the checkout path may not be) and the evidence directory holding its scratch HOME.
-      insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname24(row.logPath)] : []]
+      insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname25(row.logPath)] : []]
     });
-    if (found) out.push({ ...found, ...commandOf(ctx, base.checkId), questionId: baselineQuestionId(ctx.run.id, base.checkId, row.fingerprint) });
+    if (found) out.push({ ...found, ...commandOf(ctx, base.checkId), folderForm: folderFormRunsAt(ctx, checkout), questionId: baselineQuestionId(ctx.run.id, base.checkId, row.fingerprint) });
   }
   return out;
 }
@@ -53061,10 +53173,12 @@ function formatFix(f) {
   const def = definitionOf(f);
   return def !== null && formatLoadsProject(def) !== null ? dotnetFormatFix(def) : `in checks.${f.checkId}.command, dotnet format whitespace --folder --verify-no-changes in place of its dotnet format, in the folder of the solution or project it formats and with its --include and --exclude`;
 }
-function environmentFix(failures) {
+function environmentFix(failures, platform3 = process.platform) {
   const fixes = [];
   const has = (signal) => failures.filter((f) => f.signals.includes(signal));
-  const denied = failures.filter((f) => !f.signals.includes("pipe-denied") && (f.signals.includes("filesystem-denied") || f.signals.includes("permission-denied") || f.signals.includes("sandbox-violation")));
+  const refusedFs = failures.filter((f) => !f.signals.includes("pipe-denied") && (f.signals.includes("filesystem-denied") || f.signals.includes("permission-denied") || f.signals.includes("sandbox-violation")));
+  const outsideFs = refusedFs.filter((f) => f.folderForm === false && runsDotnetFormat(f));
+  const denied = refusedFs.filter((f) => !outsideFs.includes(f));
   if (denied.some((f) => f.lines.some((l) => DOTNET_DENIAL.test(l)))) {
     fixes.push(`this is the .NET runtime asking for /tmp/.dotnet, a directory it shares between processes for named mutexes and which no check sandbox may write. Orbit prepares every check for the .NET SDK's first run so the SDK itself needs none (docs/troubleshooting.md, ".NET checks under the sandbox"); upgrade Orbit if this run predates that, and if the repository's own code creates a named Mutex or Semaphore, make it use an unnamed one or a file lock in TMPDIR`);
   } else if (denied.length > 0) {
@@ -53074,20 +53188,33 @@ function environmentFix(failures) {
   const pipes = has("pipe-denied");
   const msbuild = sockets.filter((f) => !runsDotnetFormat(f));
   const stopped = pipes.filter((f) => f.lines.some((l) => MSBUILD_NODE_DENIAL.test(l)));
-  const format = [...sockets.filter(runsDotnetFormat), ...pipes.filter((f) => f.lines.some((l) => !MSBUILD_NODE_DENIAL.test(l)))];
+  const format = [...sockets.filter(runsDotnetFormat), ...pipes.filter((f) => f.lines.some((l) => !MSBUILD_NODE_DENIAL.test(l))), ...outsideFs];
   const kinds = [msbuild, stopped, format].filter((g) => g.length > 0).length;
   const forChecks = (group) => kinds > 1 ? `for ${group.length > 1 ? "checks" : "check"} ${group.map((f) => f.checkId).join(", ")}: ` : "";
   if (msbuild.length > 0) fixes.push(`${forChecks(msbuild)}this is MSBuild starting a worker node, whose named pipe .NET makes a Unix socket under /tmp, and the check sandbox does not let a check create one: build on one MSBuild node, with -m:1 on the check's dotnet command (for example [dotnet, test, -m:1]), which orbit doctor prints for the check's own command (docs/troubleshooting.md, ".NET builds and MSBuild worker nodes")`);
-  if (stopped.length > 0) fixes.push(`${forChecks(stopped)}the sandbox refuses MSBuild worker nodes their named pipe under /tmp: the check's log ends with the fix for its command (docs/troubleshooting.md, ".NET builds and MSBuild worker nodes")`);
-  if (format.length > 0) {
-    const ids = format.map((f) => f.checkId);
-    fixes.push(`dotnet format (${ids.length > 1 ? "checks" : "check"} ${ids.join(", ")}) takes no -m:1, which it reads as the project to format, and it loads the project through a build host whose named pipe .NET binds under /tmp, which no check sandbox may use: check whitespace with the form that loads no project, ${format.map(formatFix).join("; ")}, and run the style and analyzer checks outside Orbit, in CI (docs/troubleshooting.md, "dotnet format under the sandbox")`);
+  if (stopped.length > 0) {
+    const exact = stopped.every((f) => f.nodeFix !== void 0) ? [...new Set(stopped.map((f) => f.nodeFix))] : null;
+    fixes.push(`${forChecks(stopped)}the sandbox refuses MSBuild worker nodes their named pipe under /tmp: ${exact ? exact.join("; ") : `the check's log ends with the fix for its command (docs/troubleshooting.md, ".NET builds and MSBuild worker nodes")`}`);
   }
-  if (has("network-denied").length > 0) {
+  const outside = format.filter((f) => f.folderForm === false);
+  const folder = format.filter((f) => f.folderForm !== false);
+  if (folder.length > 0) {
+    const ids = folder.map((f) => f.checkId);
+    fixes.push(`dotnet format (${ids.length > 1 ? "checks" : "check"} ${ids.join(", ")}) takes no -m:1, which it reads as the project to format, and it loads the project through a build host whose named pipe .NET binds under /tmp, which no check sandbox may use: check whitespace with the form that loads no project, ${folder.map(formatFix).join("; ")}, and run the style and analyzer checks outside Orbit, in CI (docs/troubleshooting.md, "dotnet format under the sandbox")`);
+  }
+  if (outside.length > 0) {
+    const ids = outside.map((f) => f.checkId);
+    fixes.push(`dotnet format (${ids.length > 1 ? "checks" : "check"} ${ids.join(", ")}) cannot run in this check sandbox: ${outside.map((f) => formatOutsideFix({ id: f.checkId })).join("; ")} ${FORMAT_OUTSIDE_REASON}`);
+  }
+  const network = has("network-denied");
+  const nugetOnMac2 = platform3 === "darwin" ? network.filter((f) => f.lines.some((l) => NUGET_LINE.test(l))) : [];
+  if (network.length > nugetOnMac2.length) {
     fixes.push("the check reached for a host its policy does not let it reach, and the sandbox's network proxy refused it: add the host to the check's network_hosts (it must also be covered by network.allowed_hosts), or let the check work offline, with its dependencies restored by the dependency install (dependencies.install_command)");
   }
   if (has("nuget-http-denied").length > 0) {
-    fixes.push(`NuGet's HTTP client could not start because it may not read the machine's NIS domain name: Orbit adds the one rule that allows it only with the srt it ships, and the check's record says when it was not added, so run with that srt; and since nuget.org's certificate cannot be verified inside the sandbox on macOS, fill the repository's NuGet cache outside it with the command orbit doctor prints (checks.dotnet-packages), from which the dependency install and the checks restore (docs/troubleshooting.md, ".NET HTTP clients and NuGet restore on macOS")`);
+    fixes.push(`NuGet's HTTP client could not start because it may not read the machine's NIS domain name: Orbit adds the one rule that allows it only with the srt it ships, and the check's record says when it was not added, so run with that srt; and ${NUGET_FILL}`);
+  } else if (nugetOnMac2.length > 0 || has("nuget-tls-denied").length > 0) {
+    fixes.push(`NuGet's restore could not download its packages in the sandbox: ${NUGET_FILL}`);
   }
   const missing = has("program-not-found");
   if (missing.length > 0) {
@@ -53095,6 +53222,12 @@ function environmentFix(failures) {
     fixes.push(`install the program where the check runs, or give the check a PATH that holds it (through its env); if the name is misspelled, correct ${keys} in .orbit/config.yaml, which needs a new run because this run's policy is frozen (orbit doctor names a check whose executable is missing)`);
   }
   return fixes.length > 0 ? fixes.join("; and ") : null;
+}
+function stoppedNodeFix(ctx, found, checkout, folderForm) {
+  const def = ctx.snapshot.config.checks[found.checkId];
+  if (!def || def.kind !== "command" || !found.signals.includes("pipe-denied") || !found.lines.some((l) => MSBUILD_NODE_DENIAL.test(l))) return {};
+  const check = { id: found.checkId, command: def.command, shell: def.shell === true, ...def.env ? { env: def.env } : {} };
+  return { nodeFix: nodeDenialFix(check, null, sdkFormatsInProcess(resolve13(checkout, def.cwd), checkout), folderForm) };
 }
 function commandOf(ctx, checkId) {
   const def = ctx.snapshot.config.checks[checkId];
@@ -53109,11 +53242,13 @@ function baselineEnvironmentFailures(ctx, report2, checkoutDir) {
   const out = [];
   for (const failure of report2.failures) {
     const { output, logPath, row } = baselineOutput(ctx, report2, failure);
-    const insideRoots = [checkoutDir, ...row ? [row.cwd] : [], ...logPath ? [dirname24(logPath)] : []];
+    const insideRoots = [checkoutDir, ...row ? [row.cwd] : [], ...logPath ? [dirname25(logPath)] : []];
     const def = ctx.snapshot.config.checks[failure.checkId];
     const exitCode = row ? row.exitCode : report2.checks.find((c) => c.checkId === failure.checkId)?.exitCode ?? null;
     const found = classifyNotExecuted({ checkId: failure.checkId, output }) ?? classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ?? (def && def.kind === "command" ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) : null);
-    if (found) out.push({ ...found, ...commandOf(ctx, failure.checkId), questionId: null, ...logPath ? { logPath } : {} });
+    if (!found) continue;
+    const folderForm = folderFormRunsAt(ctx, checkoutDir);
+    out.push({ ...found, ...commandOf(ctx, failure.checkId), folderForm, ...stoppedNodeFix(ctx, found, checkoutDir, folderForm), questionId: null, ...logPath ? { logPath } : {} });
   }
   return out;
 }
@@ -53175,7 +53310,7 @@ function missingTargetAdvice(input) {
   const many = checks.length > 1;
   const keys = checks.map((m) => m.configKey).join(", ");
   return joinSentences([
-    `Fix, by cause: when the goal is meant to create what ${many ? "a command" : "the command"} names, say so in the goal of a new run, so that the contract names ${many ? "each check" : "the check"} as the proof of a criterion and expects it to flip; when a tool that is not installed or restored yet provides it (a cargo plugin, a dotnet local tool), install or restore it and then start a new run, because this run reads the baseline it recorded and does not look again; when ${many ? "the commands are" : "the command is"} wrong, correct ${keys} in .orbit/config.yaml and start a new run`,
+    `Fix, by cause: when the goal is meant to create what ${many ? "a command" : "the command"} names, say so in the goal of a new run, so that the contract names ${many ? "each check" : "the check"} as the proof of a criterion and expects it to flip; when a tool that is not installed or restored yet provides it (a cargo plugin, a dotnet local tool, a pytest plugin), install or restore it and then start a new run, because this run reads the baseline it recorded and does not look again; when ${many ? "the commands are" : "the command is"} wrong, correct ${keys} in .orbit/config.yaml and start a new run`,
     `Resuming this run would only block again, so cancel it (orbit cancel ${input.runId}) and start the new run with orbit run`
   ]);
 }
@@ -53212,6 +53347,7 @@ function checksNotExecutedFor(ctx, cand, report2) {
     const f = baseFailures.find((b) => b.checkId === checkId);
     return f?.classification === "environment" ? f.signals ?? [] : [];
   };
+  const checkout = join49(runWorktreeRoot(ctx), `check-${cand.seq}`);
   for (const result2 of report2.checks) {
     if (!mandatory.has(result2.id) || result2.status !== "FAILED" && result2.status !== "ERROR") continue;
     const row = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id, checkId: result2.id, rootsOnly: true }).at(-1);
@@ -53219,8 +53355,10 @@ function checksNotExecutedFor(ctx, cand, report2) {
     const output = outputOf(row);
     const startFailure = row.status === "ERROR" ? /could not start the check:[^\n]*/.exec(output)?.[0] ?? null : null;
     const found = classifyNotExecuted({ checkId: result2.id, output, startFailure }) ?? // Refused a filesystem operation outside its checkout before it compiled or tested anything (issue #10).
-    (row.status === "FAILED" ? classifyCouldNotRun({ checkId: result2.id, output, insideRoots: [join49(runWorktreeRoot(ctx), `check-${cand.seq}`), row.cwd, ...row.logPath ? [dirname24(row.logPath)] : []], baseSignals: baseSignals(result2.id) }) : null);
-    if (found) out.push({ ...found, ...commandOf(ctx, result2.id), questionId: null, ...row.logPath ? { logPath: row.logPath } : {} });
+    (row.status === "FAILED" ? classifyCouldNotRun({ checkId: result2.id, output, insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname25(row.logPath)] : []], baseSignals: baseSignals(result2.id) }) : null);
+    if (!found) continue;
+    const folderForm = folderFormRunsAt(ctx, checkout);
+    out.push({ ...found, ...commandOf(ctx, result2.id), folderForm, ...stoppedNodeFix(ctx, found, checkout, folderForm), questionId: null, ...row.logPath ? { logPath: row.logPath } : {} });
   }
   if (report2.ui.some((u) => u.status === "ERROR")) {
     const dir = uiEvidenceDir(ctx.runDir, cand.seq);
@@ -53249,7 +53387,7 @@ function uiNotExecuted(resultPath) {
     return [];
   }
 }
-var MAX_LOG_BYTES3, DOTNET_DENIAL, MSBUILD_NODE_DENIAL, ENVIRONMENT_FALLBACK_FIX;
+var MAX_LOG_BYTES3, DOTNET_DENIAL, NUGET_LINE, NUGET_FILL, MSBUILD_NODE_DENIAL, ENVIRONMENT_FALLBACK_FIX;
 var init_environment_block = __esm({
   "src/controller/environment-block.ts"() {
     "use strict";
@@ -53266,6 +53404,8 @@ var init_environment_block = __esm({
     init_verification();
     MAX_LOG_BYTES3 = 4 * 1024 * 1024;
     DOTNET_DENIAL = /\/tmp\/\.dotnet\b|\.coreclr\.|NuGet-Migrations|System\.Threading\.(?:Mutex|Semaphore)/i;
+    NUGET_LINE = /\berror NU\d{4}\b|\bNuGet\b|proxy tunnel request to proxy '[^']*' failed with status code '403'/;
+    NUGET_FILL = `since nuget.org's certificate cannot be verified inside the sandbox on macOS (srt keeps the system trust service out of reach), fill the repository's NuGet cache outside the sandbox with the command orbit doctor prints (checks.dotnet-packages), from which the dependency install and the checks restore (docs/troubleshooting.md, ".NET HTTP clients and NuGet restore on macOS")`;
     MSBUILD_NODE_DENIAL = /^the check sandbox denied MSBuild node /;
     ENVIRONMENT_FALLBACK_FIX = "let the check run in this environment (orbit doctor checks the isolation provider and starts each check's executable in the sandbox), or change the check definition";
   }
@@ -53568,7 +53708,7 @@ function policySummary(ctx, opts) {
     `- trusted checks (run by the controller, not you): ${Object.keys(c.checks).join(", ") || "none"}`,
     "- you cannot commit, push, open pull requests, change policy, or decide completion",
     // A worker's toolchains are its worktree's markers, the repository's tracked files (controller/workers.ts).
-    ...c.isolation.provider === "sandbox-runtime" && detectToolchains({ roots: [ctx.snapshot.repo_root] }).includes("dotnet") ? [DOTNET_WORKER_NOTE] : []
+    ...c.isolation.provider === "sandbox-runtime" && detectToolchains({ roots: [ctx.snapshot.repo_root] }).includes("dotnet") ? [folderFormRunsAt(ctx, runWorktreeRoot(ctx)) ? DOTNET_WORKER_NOTE : DOTNET_WORKER_NOTE_NO_FORMAT] : []
   ];
   return lines.join("\n");
 }
@@ -53648,7 +53788,7 @@ async function handleWorkerFailure(ctx, failed, opts) {
   if (opts.exhausted) return { retry: false, result: await opts.exhausted() };
   return { retry: false, result: await finishRun(ctx, "BLOCKED", `${opts.what}: no usable result after ${opts.attemptsUsed} attempt(s) (last: ${failed.status}${failed.error ? `, ${failed.error.slice(0, 200)}` : ""})`) };
 }
-var WAIT, MOVED, DONE, OUTCOME_REASON_MAX, DOTNET_WORKER_NOTE, WORKER_RETRY_EVENT, MAX_REGENERATIONS;
+var WAIT, MOVED, DONE, OUTCOME_REASON_MAX, DOTNET_WORKER_BUILDS, DOTNET_WORKER_NOTE, DOTNET_WORKER_NOTE_NO_FORMAT, WORKER_RETRY_EVENT, MAX_REGENERATIONS;
 var init_common = __esm({
   "src/controller/steps/common.ts"() {
     "use strict";
@@ -53660,6 +53800,7 @@ var init_common = __esm({
     init_decisions();
     init_controllers();
     init_credentials();
+    init_context2();
     init_states();
     init_run_store();
     init_workers2();
@@ -53673,7 +53814,9 @@ var init_common = __esm({
     MOVED = { progressed: true };
     DONE = { progressed: true, done: true };
     OUTCOME_REASON_MAX = 2e3;
-    DOTNET_WORKER_NOTE = "- .NET: pass -m:1 to every dotnet build, test, publish, pack, restore, clean or msbuild you start, and run a project with dotnet run --no-build after such a build (dotnet run hands -m:1 to the program); this sandbox refuses MSBuild worker nodes, so without -m:1 such a command fails, on macOS only after about five minutes; dotnet format loads the project through a build host whose named pipe this sandbox refuses too, so of dotnet format only dotnet format whitespace --folder runs here";
+    DOTNET_WORKER_BUILDS = "- .NET: pass -m:1 to every dotnet build, test, publish, pack, restore, clean or msbuild you start, and run a project with dotnet run --no-build after such a build (dotnet run hands -m:1 to the program); this sandbox refuses MSBuild worker nodes, so without -m:1 such a command fails, on macOS only after about five minutes; ";
+    DOTNET_WORKER_NOTE = `${DOTNET_WORKER_BUILDS}dotnet format loads the project through a build host whose named pipe this sandbox refuses too, so of dotnet format only dotnet format whitespace --folder runs here`;
+    DOTNET_WORKER_NOTE_NO_FORMAT = `${DOTNET_WORKER_BUILDS}dotnet format does not run here: every form but dotnet format whitespace --folder loads the project through a build host whose named pipe this sandbox refuses too, and whitespace --folder lists the folders above your worktree, which this sandbox does not let you read`;
     WORKER_RETRY_EVENT = "worker.retry";
     MAX_REGENERATIONS = 2;
   }
@@ -53963,7 +54106,7 @@ async function deliver(input) {
   const last = ledger.list(run.id, { kind: "commit", state: "SUCCEEDED" }).at(-1);
   const lastParent = last?.target?.parent;
   const parent = last && last.treeHash === tree && lastParent || last?.receipt?.commit || candidate.parentSha;
-  const identity = input.identity ?? await readControllerIdentity(run.repoRoot, input.git);
+  const identity2 = input.identity ?? await readControllerIdentity(run.repoRoot, input.git);
   const message = commitMessage(run, input.report);
   const timeMs = clock.now();
   const ref2 = deliveryRef(run.id, tree, parent);
@@ -53971,7 +54114,7 @@ async function deliver(input) {
     { runId: run.id, kind: "commit", idempotencyKey: `deliver:${run.id}:commit:${parent}:${tree}`, target: { branch, tree, parent }, candidateId: candidate.id, treeHash: tree },
     {
       execute: async () => {
-        const commit2 = await createDeliveryCommit({ repoRoot: run.repoRoot, tree, parent, message, identity, timeMs, ref: ref2, ...input.git });
+        const commit2 = await createDeliveryCommit({ repoRoot: run.repoRoot, tree, parent, message, identity: identity2, timeMs, ref: ref2, ...input.git });
         return { commit: commit2, tree };
       },
       // A commit object is local and the pinned ref says whether we made it before the receipt was lost.
@@ -55710,9 +55853,9 @@ function draftContract(input) {
   for (const d of plan.unresolved_decisions) {
     const statement = d.question.trim();
     if (!d.material || statement === "") continue;
-    const same = assumptions.find((a) => normalizeEntry(a.statement) === normalizeEntry(statement));
-    const target = same ?? { id: `AS-${assumptions.length + 1}`, statement, status: "needs-decision" };
-    if (same) same.status = "needs-decision";
+    const same2 = assumptions.find((a) => normalizeEntry(a.statement) === normalizeEntry(statement));
+    const target = same2 ?? { id: `AS-${assumptions.length + 1}`, statement, status: "needs-decision" };
+    if (same2) same2.status = "needs-decision";
     else assumptions.push(target);
     adjustments.push({ kind: "decision-recorded", subject: target.id, reason: "the planner left a material decision unresolved" });
   }
@@ -55918,7 +56061,7 @@ var init_worker_plugins = __esm({
 
 // src/controller/steps/preflight.ts
 import { existsSync as existsSync36, mkdirSync as mkdirSync20, rmSync as rmSync14 } from "node:fs";
-import { dirname as dirname25, isAbsolute as isAbsolute21, join as join53, resolve as resolve13 } from "node:path";
+import { dirname as dirname26, isAbsolute as isAbsolute21, join as join53, resolve as resolve14 } from "node:path";
 async function preflightStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -56069,7 +56212,7 @@ async function gitCredentialProblems(repo) {
       entries.push(nl === -1 ? { key: raw, value: "" } : { key: raw.slice(0, nl), value: raw.slice(nl + 1) });
     }
   }
-  const root = resolve13(repo);
+  const root = resolve14(repo);
   const problems = [];
   const note3 = (text2) => {
     if (!problems.includes(text2)) problems.push(text2);
@@ -56086,7 +56229,7 @@ async function gitCredentialProblems(repo) {
       const store = /^store\b.*?--file(?:=|\s+)(\S+)/.exec(v);
       if (store) {
         const file = store[1].replace(/^["']|["']$/g, "");
-        const abs = isAbsolute21(file) ? resolve13(file) : resolve13(root, file);
+        const abs = isAbsolute21(file) ? resolve14(file) : resolve14(root, file);
         if (!isAbsolute21(file) || abs === root || abs.startsWith(`${root}/`)) note3(`${key2} stores credentials in a file inside the repository`);
       }
     }
@@ -56106,7 +56249,7 @@ async function ensureWorktree(repo, path, base) {
       rmSync14(path, { recursive: true, force: true });
     }
   }
-  mkdirSync20(dirname25(path), { recursive: true, mode: 448 });
+  mkdirSync20(dirname26(path), { recursive: true, mode: 448 });
   await git2(repo, ["worktree", "prune"]);
   await git2(repo, ["worktree", "add", "--detach", "--force", path, base]);
   return (await adminDirFor(repo, path)).worktree;
@@ -56257,11 +56400,17 @@ function worktreeOf(ctx) {
 }
 function plannerPrompt(ctx, workerId) {
   const checks = Object.values(ctx.snapshot.config.checks).map((c) => `${c.id}${c.mandatory ? " (mandatory)" : ""}`);
+  const baseline = readJsonIfExists(join54(ctx.runDir, BASELINE_FILE2));
+  const missing = baseline && baseline.baseRevision === ctx.run.baseRevision && Array.isArray(baseline.failures) ? baseline.failures.filter((f) => f.classification === "missing-target").map((f) => f.checkId) : [];
+  const many = missing.length > 1;
   const task = [
     "Draft the goal contract for the goal below. Read the repository as needed; do not edit anything.",
     "Return the current behaviour, criteria that are observable and testable, the proof for each, the trusted check ids that would show it,",
     "the files you expect to change, the narrowest allowed paths, non-goals, risks, assumptions and any decision you cannot settle from evidence.",
     `Trusted checks the policy defines: ${checks.join(", ") || "none"}. Name only these as check ids.`,
+    ...missing.length > 0 ? [
+      `On the base revision the command of ${many ? "checks" : "check"} ${missing.join(", ")} ${many ? "name" : "names"} something that does not exist yet (a missing target): name ${many ? "each" : "it"} as the proof of a criterion only when the goal is to create what it names, and the run then expects it to pass; otherwise leave it out, and the run stops on it as a misconfigured check.`
+    ] : [],
     "",
     `Goal (from the user): ${ctx.run.goal}`
   ].join("\n");
@@ -56287,6 +56436,7 @@ var init_contracting = __esm({
   "src/controller/steps/contracting.ts"() {
     "use strict";
     init_fsx();
+    init_baseline();
     init_hash();
     init_errors();
     init_draft();
@@ -57094,9 +57244,9 @@ function routeSignals(ctx, n2) {
   const prevRoute = prev ? JSON.parse(prev.data_json) : null;
   const solved = n2 > 1 && diagnosisSolved(ctx, n2);
   const latest = failures.at(-1) ?? null;
-  const same = latest && !solved ? failures.filter((f) => f.fingerprint === latest.fingerprint) : [];
-  const repeated = new Set(same.map((f) => f.candidateId ?? `row-${f.id}`)).size;
-  const evidence = same.map((f) => `failure:${f.id}`);
+  const same2 = latest && !solved ? failures.filter((f) => f.fingerprint === latest.fingerprint) : [];
+  const repeated = new Set(same2.map((f) => f.candidateId ?? `row-${f.id}`)).size;
+  const evidence = same2.map((f) => `failure:${f.id}`);
   const security = criticalSecurity(ctx);
   return {
     difficulty,
@@ -59309,8 +59459,8 @@ var init_steps = __esm({
 
 // src/storage/retention.ts
 import { existsSync as existsSync44, lstatSync as lstatSync10, realpathSync as realpathSync17, rmSync as rmSync16 } from "node:fs";
-import { homedir as homedir11 } from "node:os";
-import { dirname as dirname26, join as join64, resolve as resolve14 } from "node:path";
+import { homedir as homedir12 } from "node:os";
+import { dirname as dirname27, join as join64, resolve as resolve15 } from "node:path";
 function repoKeyFor(repoRoot) {
   let real = repoRoot;
   try {
@@ -59325,7 +59475,7 @@ async function pruneExpiredRuns(db, opts) {
   const cutoff = now - opts.keepDays * DAY_MS;
   const repoRoot = realOrResolved(opts.repoRoot);
   const runsRoot = join64(repoRoot, ".orbit", "runs");
-  const worktreesRoot = join64(opts.orbitHome ?? process.env.ORBIT_HOME ?? join64(homedir11(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
+  const worktreesRoot = join64(opts.orbitHome ?? process.env.ORBIT_HOME ?? join64(homedir12(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
   const placeholders = PRUNABLE_STATES.map(() => "?").join(", ");
   const rows = db.all(
     `SELECT r.id, r.state, r.policy_path, r.ended_at, r.updated_at FROM runs r
@@ -59349,9 +59499,9 @@ async function pruneExpiredRuns(db, opts) {
       continue;
     }
     const runDir2 = join64(runsRoot, row.id);
-    const recorded = dirname26(row.policy_path);
-    const literalRunDir = join64(resolve14(opts.repoRoot), ".orbit", "runs", row.id);
-    if (![runDir2, literalRunDir].includes(resolve14(recorded)) && realOrResolved(recorded) !== runDir2) {
+    const recorded = dirname27(row.policy_path);
+    const literalRunDir = join64(resolve15(opts.repoRoot), ".orbit", "runs", row.id);
+    if (![runDir2, literalRunDir].includes(resolve15(recorded)) && realOrResolved(recorded) !== runDir2) {
       result2.skipped.push({ runId: row.id, reason: `its recorded run directory ${recorded} is not ${runDir2}` });
       continue;
     }
@@ -59372,7 +59522,7 @@ function realOrResolved(p) {
   try {
     return realpathSync17(p);
   } catch {
-    return resolve14(p);
+    return resolve15(p);
   }
 }
 function isRealDirectory(p) {
@@ -59403,7 +59553,7 @@ __export(loop_exports, {
 });
 import { existsSync as existsSync45 } from "node:fs";
 import { hostname as hostname4 } from "node:os";
-import { dirname as dirname27, join as join65 } from "node:path";
+import { dirname as dirname28, join as join65 } from "node:path";
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -59582,8 +59732,8 @@ var init_loop = __esm({
         const timeoutMs = this.opts.stepTimeoutMs ?? 45 * 6e4;
         const graceMs = this.opts.stepAbortGraceMs ?? 6e4;
         let wedge = null;
-        const gaveUp = new Promise((resolve23) => {
-          wedge = setTimeout(() => resolve23("wedged"), timeoutMs + graceMs);
+        const gaveUp = new Promise((resolve24) => {
+          wedge = setTimeout(() => resolve24("wedged"), timeoutMs + graceMs);
           wedge.unref();
         });
         const timer = setTimeout(() => {
@@ -59785,7 +59935,7 @@ var init_loop = __esm({
           } catch {
             config = null;
           }
-          await notifyOpenQuestions({ db, clock, run, runDir: dirname27(run.policyPath), config, deps: resolveNotifyDeps(this.deps), actor: this.ownerId });
+          await notifyOpenQuestions({ db, clock, run, runDir: dirname28(run.policyPath), config, deps: resolveNotifyDeps(this.deps), actor: this.ownerId });
         } catch (err) {
           this.log.warn("question notification failed", { run_id: runId, error: messageOf3(err) });
         }
@@ -59817,7 +59967,7 @@ var init_loop = __esm({
             try {
               const notify = resolveNotifyDeps(this.deps);
               const client = await notify.threads(run.repoRoot, config);
-              const rep = await pollRemoteAnswers({ db, clock, run, runDir: dirname27(run.policyPath), config, client, actor: this.ownerId });
+              const rep = await pollRemoteAnswers({ db, clock, run, runDir: dirname28(run.policyPath), config, client, actor: this.ownerId });
               for (const e of rep.errors) this.log.warn("remote answers", { run_id: run.id, error: e });
               if (rep.accepted.length === 0) continue;
               const to = resumeAnsweredRun(db, clock, run.id, this.ownerId, this.ownerId, `resumed after a remote answer by ${rep.accepted.map((a) => a.author).join(", ")}`);
@@ -59894,7 +60044,7 @@ var init_loop = __esm({
         for (const row of db.all("SELECT id FROM runs WHERE ended_at IS NOT NULL AND ended_at >= ?", since)) {
           try {
             const run = getRun(db, row.id);
-            const runDir2 = dirname27(run.policyPath);
+            const runDir2 = dirname28(run.policyPath);
             if (existsSync45(join65(runDir2, "final.md"))) continue;
             let snapshot2 = null;
             try {
@@ -59958,7 +60108,7 @@ var init_loop = __esm({
 // src/controller/service.ts
 import { chmodSync as chmodSync8, existsSync as existsSync46, lstatSync as lstatSync11, mkdirSync as mkdirSync22, readFileSync as readFileSync31, readdirSync as readdirSync12, rmSync as rmSync17, rmdirSync, statSync as statSync14 } from "node:fs";
 import { hostname as hostname5 } from "node:os";
-import { dirname as dirname28, isAbsolute as isAbsolute22, join as join66 } from "node:path";
+import { dirname as dirname29, isAbsolute as isAbsolute22, join as join66 } from "node:path";
 function serviceLabel(repoRoot) {
   return `${SERVICE_LABEL_PREFIX}.${repoKey(repoRoot)}`;
 }
@@ -60045,7 +60195,7 @@ function newerVersion(a, b) {
   return false;
 }
 function sameInstallation(a, b) {
-  return dirname28(dirname28(dirname28(a))) === dirname28(dirname28(dirname28(b)));
+  return dirname29(dirname29(dirname29(a))) === dirname29(dirname29(dirname29(b)));
 }
 function refreshLauncher(input) {
   const path = launcherPath(input.orbitHome);
@@ -60174,7 +60324,7 @@ async function installService(spec, opts) {
   const run = opts.run ?? defaultRunner;
   mkdirSync22(spec.logDir, { recursive: true, mode: 448 });
   if (opts.platform !== "darwin" && opts.platform !== "linux") return unsupported(opts.platform);
-  writeLauncher(dirname28(dirname28(spec.launcher)), { node: spec.nodePath, entry: spec.entry, ...spec.version !== void 0 ? { version: spec.version } : {} });
+  writeLauncher(dirname29(dirname29(spec.launcher)), { node: spec.nodePath, entry: spec.entry, ...spec.version !== void 0 ? { version: spec.version } : {} });
   if (opts.platform === "darwin") {
     const plist = launchdPlistPath(opts.homeDir, spec.label);
     mkdirSync22(join66(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
@@ -60228,7 +60378,7 @@ function withLauncherCleanup(status2, opts) {
   if (readLauncher(path) === null) return status2;
   rmSync17(path, { force: true });
   try {
-    rmdirSync(dirname28(path));
+    rmdirSync(dirname29(path));
   } catch {
   }
   return { ...status2, launcherRemoved: true };
@@ -60313,7 +60463,7 @@ var init_controller = __esm({
 
 // src/cli/commands/drive.ts
 import { existsSync as existsSync47, readFileSync as readFileSync32 } from "node:fs";
-import { dirname as dirname29, join as join67 } from "node:path";
+import { dirname as dirname30, join as join67 } from "node:path";
 function formatEvent(e) {
   const at = clockTime(e.ts);
   let data = {};
@@ -60433,8 +60583,8 @@ function safeContinue(db, runId, ctx) {
 }
 function resultOf(ctx, db, run) {
   try {
-    const finalJson = join67(dirname29(run.policyPath), "final.json");
-    const report2 = existsSync47(finalJson) ? JSON.parse(readFileSync32(finalJson, "utf8")) : buildFinalReport(db, run, { runDir: dirname29(run.policyPath), clock: ctx.clock, snapshot: null });
+    const finalJson = join67(dirname30(run.policyPath), "final.json");
+    const report2 = existsSync47(finalJson) ? JSON.parse(readFileSync32(finalJson, "utf8")) : buildFinalReport(db, run, { runDir: dirname30(run.policyPath), clock: ctx.clock, snapshot: null });
     const rv = report2.revision;
     if (!rv) return null;
     return { branch: rv.branch ?? null, candidate_commit: rv.candidate ?? null, delivered_commit: rv.delivered_commit ?? null, pull_request: rv.pull_request ?? null };
@@ -60499,7 +60649,7 @@ var init_drive = __esm({
 });
 
 // src/cli/commands/notify.ts
-import { dirname as dirname30, resolve as resolve15 } from "node:path";
+import { dirname as dirname31, resolve as resolve16 } from "node:path";
 function depsOf(ctx) {
   return resolveNotifyDeps({ hostEnv: ctx.env, ...ctx.seams.notify ? { notify: ctx.seams.notify } : {} });
 }
@@ -60507,7 +60657,7 @@ async function notifyTestCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
   const policy = args.str("policy");
-  const config = loadConfig(repo, policy ? resolve15(ctx.cwd, policy) : void 0);
+  const config = loadConfig(repo, policy ? resolve16(ctx.cwd, policy) : void 0);
   const outcomes = await sendTestNotification({ config, repoRoot: repo, deps: depsOf(ctx) });
   if (args.bool("json")) json(ctx.io, { outcomes });
   else for (const o of outcomes) line(ctx.io, `${o.channel}: ${o.status} (${o.detail})`);
@@ -60527,7 +60677,7 @@ async function readRemoteAnswers(ctx, db, run, say) {
   if (!notificationsPolicy(config).remote_answers.enabled) return;
   try {
     const client = await depsOf(ctx).threads(run.repoRoot, config);
-    const report2 = await pollRemoteAnswers({ db, clock: ctx.clock, run, runDir: dirname30(run.policyPath), config, client, actor: `cli:${ctx.user}` });
+    const report2 = await pollRemoteAnswers({ db, clock: ctx.clock, run, runDir: dirname31(run.policyPath), config, client, actor: `cli:${ctx.user}` });
     for (const a of report2.accepted) say(`recorded the answer to ${a.questionId} by ${a.author} (${a.permission}) from ${a.thread}`);
     for (const r of report2.refused) say(`ignored a comment by ${r.author} on ${r.thread} (${r.reason})`);
     for (const e of report2.errors) say(`could not read remote answers: ${e}`);
@@ -60557,7 +60707,7 @@ var init_notify2 = __esm({
 });
 
 // src/cli/commands/control.ts
-import { join as join68, resolve as resolve16 } from "node:path";
+import { join as join68, resolve as resolve17 } from "node:path";
 async function pauseCommand(args, ctx) {
   const [id] = args.expect(1);
   const repo = await resolveRepo(ctx, args.str("repo"));
@@ -60636,7 +60786,7 @@ async function resumeCommand(args, ctx) {
     if (foreground) {
       if (!args.bool("json")) line(ctx.io, `run ${after.id}: ${notes.join(", ")}; driving it in the foreground (Ctrl-C pauses it)`);
       const policy = args.str("policy");
-      const config = loadConfig(repo, policy ? resolve16(ctx.cwd, policy) : void 0);
+      const config = loadConfig(repo, policy ? resolve17(ctx.cwd, policy) : void 0);
       const result2 = await driveForeground(ctx, { repoRoot: repo, config, db, runId: after.id, fromStart: false, json: args.bool("json") });
       return result2.exitCode;
     }
@@ -60784,7 +60934,7 @@ var init_inquisition2 = __esm({
 
 // src/cli/commands/decide.ts
 import { existsSync as existsSync48 } from "node:fs";
-import { dirname as dirname31 } from "node:path";
+import { dirname as dirname32 } from "node:path";
 function matchQuestion(db, runId, ref2) {
   const all = listQuestions(db, runId);
   const exact = all.find((q) => q.id === ref2);
@@ -60837,7 +60987,7 @@ async function decideCommand(args, ctx) {
     const run = findRunByPrefix(db, runRef);
     if (isTerminal(run.state) && run.state !== "BLOCKED") throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is ${run.state}; its questions can no longer change anything`);
     const q = matchQuestion(db, run.id, qRef);
-    const runDir2 = dirname31(run.policyPath);
+    const runDir2 = dirname32(run.policyPath);
     const result2 = answerQuestion(db, runDir2, q.id, answer, by, ctx.clock);
     let amendment = null;
     if (amendmentIdOfQuestion(q.id) !== null) {
@@ -61281,7 +61431,7 @@ var init_doctor_plugins = __esm({
 
 // src/cli/commands/doctor-dotnet.ts
 import { existsSync as existsSync50, lstatSync as lstatSync12, readdirSync as readdirSync13, readFileSync as readFileSync33 } from "node:fs";
-import { basename as basename16, join as join71, posix as posix6, resolve as resolve17 } from "node:path";
+import { basename as basename16, join as join71, posix as posix6, resolve as resolve18 } from "node:path";
 function xunitReferences(text2) {
   const out = [];
   for (const m of text2.matchAll(ITEM)) {
@@ -61357,7 +61507,7 @@ function mayRunTests(check) {
 function dotnetTestsCheck(input) {
   const { config, repo, files } = input;
   const atRisk = Object.values(config.checks).filter(
-    (c) => c.kind === "command" && onOneProcessor(c.env) && mayRunTests(c) && detectToolchains({ command: c.command, shell: c.shell, roots: [repo, resolve17(repo, c.cwd)] }).includes("dotnet")
+    (c) => c.kind === "command" && onOneProcessor(c.env) && mayRunTests(c) && detectToolchains({ command: c.command, shell: c.shell, roots: [repo, resolve18(repo, c.cwd)] }).includes("dotnet")
   );
   if (atRisk.length === 0) return [];
   const projects = xunitBefore28(repo, files);
@@ -61501,6 +61651,8 @@ function dotnetPackagesCheck(input) {
     ...restores && empty ? ["this repository's NuGet cache is empty"] : [],
     ...install !== null && restoresOf(install).projects && floating.length > 0 ? ["a package version floats, which every restore looks up at nuget.org"] : []
   ];
+  const restoring = failing.length > 0 || !empty ? [] : Object.values(input.config.checks).filter((c) => c.kind === "command" && c.mandatory && checkUsesDotnet(repo, c) && restoresPackages(c.command)).map((c) => c.id);
+  const many = restoring.length > 1;
   const until = [
     ...floating.length > 0 ? ["no package version floats: pin each one the details name, or restore with a lock file (RestorePackagesWithLockFile)"] : [],
     ...auditFailures(input, mac) ? ["the vulnerability audit no longer fails them, as checks.dotnet-audit says"] : []
@@ -61509,8 +61661,8 @@ function dotnetPackagesCheck(input) {
     {
       id: "checks.dotnet-packages",
       area: "checks",
-      status: failing.length > 0 ? "fail" : "warn",
-      summary: failing.length > 0 ? `dependencies.install_command restores NuGet packages, which ${TRUST_REASON}, and ${failing.join(", and ")}: the dependency install would fail` : `this repository's NuGet packages ${TRUST_REASON}: fill its NuGet cache outside the sandbox`,
+      status: failing.length > 0 || restoring.length > 0 ? "fail" : "warn",
+      summary: failing.length > 0 ? `dependencies.install_command restores NuGet packages, which ${TRUST_REASON}, and ${failing.join(", and ")}: the dependency install would fail` : restoring.length > 0 ? `${many ? "checks" : "check"} ${restoring.join(", ")} ${many ? "restore" : "restores"} NuGet packages, which ${TRUST_REASON}, and this repository's NuGet cache is empty: the ${many ? "checks" : "check"} would fail at the baseline` : `this repository's NuGet packages ${TRUST_REASON}: fill its NuGet cache outside the sandbox`,
       details: [...capped(evidence), ...capped(floating), `NuGet cache ${cache2}: ${state}`],
       missing: "NuGet packages in this repository's cache, restored outside the sandbox",
       fix: `run once in a terminal, outside the sandbox, and again whenever the packages change: ${fillCommand(repo, cache2, files, install, evidence)}; the dependency install and the checks then restore offline from that cache ${until.length > 0 ? `once ${until.join(", and once ")} (${NUGET_DOCS})` : `(Orbit turns NuGet's vulnerability audit off in the sandbox, where it cannot reach nuget.org; ${NUGET_DOCS})`}`
@@ -61667,7 +61819,7 @@ var init_doctor_dotnet = __esm({
     MSBUILD_FILE = /\.(?:cs|fs|vb)?proj$/i;
     SDK_ATTRIBUTE = /\bSdk\s*=\s*"([^"]*\/[^"]*)"/gi;
     SDK_ELEMENT = /<Sdk\b([^>]*)>/gi;
-    checkUsesDotnet = (repo, c) => c.kind === "command" && detectToolchains({ command: c.command, shell: c.shell, roots: [repo, resolve17(repo, c.cwd)] }).includes("dotnet");
+    checkUsesDotnet = (repo, c) => c.kind === "command" && detectToolchains({ command: c.command, shell: c.shell, roots: [repo, resolve18(repo, c.cwd)] }).includes("dotnet");
     AUDIT_PROPERTY = /<(NuGetAudit|TreatWarningsAsErrors|MSBuildTreatWarningsAsErrors|WarningsAsErrors|MSBuildWarningsAsErrors|NoWarn|WarningsNotAsErrors|MSBuildWarningsNotAsErrors)\b([^>]*)>([^<]*)<\/\1\s*>/g;
     CONDITION = /\bCondition\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
     DEFERS = /\$\(\s*NuGetAudit\s*\)/i;
@@ -61687,7 +61839,7 @@ var init_doctor_dotnet = __esm({
 // src/cli/commands/doctor-sandbox.ts
 import { existsSync as existsSync51, mkdirSync as mkdirSync23, mkdtempSync as mkdtempSync6, realpathSync as realpathSync18, writeFileSync as writeFileSync9 } from "node:fs";
 import { tmpdir as tmpdir12 } from "node:os";
-import { basename as basename17, dirname as dirname32, isAbsolute as isAbsolute23, join as join72, resolve as resolve18 } from "node:path";
+import { basename as basename17, dirname as dirname33, isAbsolute as isAbsolute23, join as join72, resolve as resolve19 } from "node:path";
 function checkWord(check) {
   if (!check.shell) return check.command[0] ?? null;
   return (check.command[0] ?? "").trim().split(/\s+/).find((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) ?? null;
@@ -61711,7 +61863,7 @@ async function probe(input, check, exe, args, cwd, project, nodeFix) {
     const artifacts = join72(scratch, "artifacts");
     for (const d of [checkout, home2, artifacts]) mkdirSync23(d, { recursive: true, mode: 448 });
     for (const [rel, text2] of Object.entries(project?.files ?? {})) {
-      mkdirSync23(dirname32(join72(checkout, rel)), { recursive: true, mode: 448 });
+      mkdirSync23(dirname33(join72(checkout, rel)), { recursive: true, mode: 448 });
       writeFileSync9(join72(checkout, rel), text2, { mode: 384 });
     }
     prepareCheckHome(home2);
@@ -61771,6 +61923,8 @@ async function checkSandboxCheck(input) {
   const probeInput = { ...input, repo, provider };
   const details = [];
   const refused = [];
+  const platform3 = input.platform ?? process.platform;
+  const folderForm = platform3 !== "darwin" || repo === null || !checkoutBelowDenied({ checkout: join72(input.orbitHome ?? join72(input.homeDir, ".orbit"), "worktrees", repoKeyFor(repo), "run", "checkout"), repoRoot: repo, homeDir: input.homeDir, env: input.env });
   const undetermined = [];
   let started = 0;
   const used = new Set(repo ? detectToolchains({ roots: [repo] }) : []);
@@ -61780,30 +61934,42 @@ async function checkSandboxCheck(input) {
     const named2 = label ? { label } : {};
     const id2 = label ?? check.id;
     const loads = label ? null : formatLoadsProject(check);
-    const inProcess = loads !== null && repo !== null && sdkFormatsInProcess(resolve18(repo, check.cwd), repo);
+    const inProcess = loads !== null && repo !== null && sdkFormatsInProcess(resolve19(repo, check.cwd), repo);
     const restore = inProcess ? formatRestoresUnpinned(check) : null;
     const host = inProcess || !loads ? null : `runs "${loads.shown}", which loads the project through a build host whose named pipe .NET binds under /tmp`;
+    const reads = label || folderForm ? null : formatReadsFolder(check);
+    const folder = reads ? `runs "${reads.shown}", which lists every folder above the checkout for .editorconfig files, while a run's checkout sits in the Orbit home, which the check sandbox does not let it read` : null;
+    const outside = host !== null && !folderForm || folder !== null ? formatOutsideFix(check) : null;
     if (nodes2?.kind === "unpinned" || restore) {
       const causes = [...nodes2?.kind === "unpinned" ? [nodes2.reason] : [], ...restore ? [`runs "${restore.shown}", which restores the project first with a worker node per processor (SDK 8, which global.json pins, loads the project in its own process)`] : []];
       for (const cause of causes) details.push(`${id2}: ${cause}, and the check sandbox refuses every MSBuild worker node its named pipe under /tmp`);
-      if (host) details.push(`${id2}: ${host}, and the check sandbox refuses it`);
-      const msbuild = restore ? formatRestoreFix(check, where2) : host ? formatAndNodeFix(check, where2) : msbuildFix(check, where2);
-      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: host ? ["sandbox-violation", "pipe-denied"] : ["sandbox-violation"], cause: causes[0], lines: [...causes, ...host ? [host] : []] }, msbuild, ...host ? { formatReason: true } : {}, ...named2 });
+      for (const more of [host, folder]) if (more) details.push(`${id2}: ${more}, and the check sandbox refuses it`);
+      const msbuild = restore ? formatRestoreFix(check, where2) : host && !outside ? formatAndNodeFix(check, where2) : msbuildFix(check, where2);
+      const pipe = host !== null || folder !== null;
+      refused.push({
+        check,
+        failure: { checkId: check.id, fingerprint: null, signals: pipe ? ["sandbox-violation", "pipe-denied"] : ["sandbox-violation"], cause: causes[0], lines: [...causes, ...host ? [host] : [], ...folder ? [folder] : []] },
+        msbuild,
+        ...host && !outside ? { formatReason: true } : {},
+        ...outside ? { outside } : {},
+        ...named2
+      });
       return true;
     }
     if (nodes2?.kind === "indirect") {
       details.push(`${id2}: ${nodes2.reason}`);
       undetermined.push({ check, msbuild: msbuildFix(check, where2), ...named2 });
     }
-    if (host) {
-      details.push(`${check.id}: ${host}, and the check sandbox refuses it`);
-      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: ["pipe-denied"], cause: host, lines: [host] }, format: dotnetFormatFix(check) });
+    const format = host ?? folder;
+    if (format) {
+      details.push(`${check.id}: ${format}, and the check sandbox refuses it`);
+      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: ["pipe-denied"], cause: format, lines: [format] }, ...outside ? { outside } : { format: dotnetFormatFix(check) } });
       return true;
     }
     return false;
   };
   for (const check of checks) {
-    const ids = detectToolchains({ command: check.command, shell: check.shell, roots: repo ? [repo, resolve18(repo, check.cwd)] : [] });
+    const ids = detectToolchains({ command: check.command, shell: check.shell, roots: repo ? [repo, resolve19(repo, check.cwd)] : [] });
     if (repo) {
       for (const id2 of ids) {
         used.add(id2);
@@ -61816,8 +61982,8 @@ async function checkSandboxCheck(input) {
       details.push(`${check.id}: not started (${word ? `shell builtin "${word}"` : "no command"})`);
       continue;
     }
-    const cwd = repo ? resolve18(repo, check.cwd) : process.cwd();
-    const found = word.includes("/") ? which(isAbsolute23(word) ? word : resolve18(cwd, word), input.env.PATH) : which(word, input.env.PATH);
+    const cwd = repo ? resolve19(repo, check.cwd) : process.cwd();
+    const found = word.includes("/") ? which(isAbsolute23(word) ? word : resolve19(cwd, word), input.env.PATH) : which(word, input.env.PATH);
     if (!found) {
       details.push(`${check.id}: not started ("${word}" was not found; see the checks entry)`);
       continue;
@@ -61828,7 +61994,7 @@ async function checkSandboxCheck(input) {
       continue;
     }
     started++;
-    const out = await probeOrRefuse(probeInput, check, exe, PROBE_ARGS[basename17(exe)] ?? DEFAULT_PROBE_ARGS, repo ? resolve18(repo, check.cwd) : null, null, msbuildFix(check));
+    const out = await probeOrRefuse(probeInput, check, exe, PROBE_ARGS[basename17(exe)] ?? DEFAULT_PROBE_ARGS, repo ? resolve19(repo, check.cwd) : null, null, msbuildFix(check));
     details.push(`${check.id}: ${out.detail}`);
     if (out.kind === "refused") refused.push({ check, failure: out.failure, ...out.fix ? { fix: out.fix } : {}, ...out.msbuild ? { msbuild: out.msbuild } : {} });
   }
@@ -61853,10 +62019,12 @@ async function checkSandboxCheck(input) {
     const formatReason = formats2.length === 0 && items.some((i) => i.formatReason) ? ` ${DOTNET_FORMAT_REASON}` : "";
     const msbuild = changes.length > 0 ? [`${changes.join("; ")} ${msbuildFixReason(nodes2)}${formatReason}`] : [];
     const format = formats2.length > 0 ? [`${formats2.join("; ")} ${DOTNET_FORMAT_REASON}`] : [];
+    const outsides = [...new Set(items.flatMap((i) => i.outside ? [i.outside] : []))];
+    const outside = outsides.length > 0 ? [`${outsides.join("; ")} ${FORMAT_OUTSIDE_REASON}`] : [];
     const own = [...new Set(items.flatMap((i) => i.fix ? [i.fix] : []))];
-    const rest = items.filter((i) => !i.fix && !i.msbuild && !i.format).map((i) => i.failure);
+    const rest = items.filter((i) => !i.fix && !i.msbuild && !i.format && !i.outside).map((i) => i.failure);
     const generic2 = rest.length > 0 ? environmentFix(rest) ?? 'see the line above and docs/troubleshooting.md, "A check cannot run in the sandbox"' : null;
-    return [...msbuild, ...format, ...own, ...generic2 ? [generic2] : []].join("; ");
+    return [...msbuild, ...format, ...outside, ...own, ...generic2 ? [generic2] : []].join("; ");
   };
   const subject = (items) => {
     const ids = items.filter((i) => !i.label).map((i) => i.check.id);
@@ -61881,14 +62049,14 @@ async function checkSandboxCheck(input) {
     return result2(status3, `the sandbox refuses ${listed2}; checks that use ${names.length === 1 ? "it" : "them"} would block at their baseline`, details, "a toolchain that can start in the check sandbox", fixFor(refusedToolchains));
   }
   const status2 = refused.some((r) => r.check.mandatory) || refusedToolchains.some((r) => r.mandatory) ? "fail" : "warn";
-  const nodes = refused.every((r) => r.msbuild && !r.formatReason);
-  const formats = refused.every((r) => r.format);
-  const pipes = refused.every((r) => r.msbuild || r.format);
+  const nodes = refused.every((r) => r.msbuild && !r.formatReason && !r.outside);
+  const formats = refused.every((r) => (r.format || r.outside) && !r.msbuild);
+  const pipes = refused.every((r) => r.msbuild || r.format || r.outside);
   const one = "dotnet commands that pin one MSBuild node (-m:1)";
-  const loadsNothing = "dotnet format checks that load no project (dotnet format whitespace --folder)";
+  const loadsNothing = folderForm ? "dotnet format checks that load no project (dotnet format whitespace --folder)" : "dotnet format run outside Orbit, in CI";
   return result2(
     status2,
-    nodes ? `${subject(refused)} would start MSBuild worker nodes, which the sandbox refuses; a run would block at its baseline` : formats ? `${subject(refused)} ${refused.length === 1 ? "runs" : "run"} dotnet format, which loads the project through a build host the sandbox refuses its named pipe; a run would block at its baseline` : pipes ? `${subject(refused)} would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; a run would block at its baseline` : `the sandbox refuses ${refused.length === 1 ? "the executable" : "the executables"} of ${subject(refused)}; a run would block at its baseline`,
+    nodes ? `${subject(refused)} would start MSBuild worker nodes, which the sandbox refuses; a run would block at its baseline` : formats ? `${subject(refused)} ${refused.length === 1 ? "runs" : "run"} dotnet format, ${folderForm ? "which loads the project through a build host the sandbox refuses its named pipe" : "which cannot run in a run's check sandbox on macOS"}; a run would block at its baseline` : pipes ? folderForm ? `${subject(refused)} would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; a run would block at its baseline` : `${subject(refused)} would start MSBuild worker nodes, whose named pipes the sandbox refuses, or run dotnet format, which cannot run in a run's check sandbox on macOS; a run would block at its baseline` : `the sandbox refuses ${refused.length === 1 ? "the executable" : "the executables"} of ${subject(refused)}; a run would block at its baseline`,
     details,
     nodes ? one : formats ? loadsNothing : pipes ? `${one}, and ${loadsNothing}` : "a check executable that can start in the check sandbox",
     fixFor([...refused, ...refusedToolchains])
@@ -61904,7 +62072,7 @@ function baseCheck(id, users) {
 function launchPath(found, repo) {
   const target = realpathSync18(found);
   if (repo && isWithin(target, repo)) return null;
-  const named2 = join72(realpathSync18(dirname32(found)), basename17(found));
+  const named2 = join72(realpathSync18(dirname33(found)), basename17(found));
   return repo && isWithin(named2, repo) ? target : named2;
 }
 async function probeOrRefuse(input, check, exe, args, cwd, project, nodeFix) {
@@ -61977,8 +62145,8 @@ ${r.stderr}`.trim() };
 import { accessSync as accessSync3, constants as constants5, existsSync as existsSync52, mkdtempSync as mkdtempSync7, readFileSync as readFileSync34, realpathSync as realpathSync19, rmSync as rmSync18, statSync as statSync15 } from "node:fs";
 import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
-import { homedir as homedir12, tmpdir as tmpdir13 } from "node:os";
-import { delimiter as delimiter4, isAbsolute as isAbsolute24, join as join73, resolve as resolve19 } from "node:path";
+import { homedir as homedir13, tmpdir as tmpdir13 } from "node:os";
+import { delimiter as delimiter4, isAbsolute as isAbsolute24, join as join73, resolve as resolve20 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
     try {
@@ -61988,7 +62156,7 @@ function which2(cmd, env, cwd = process.cwd()) {
     }
   };
   if (cmd.includes("/")) {
-    const p = isAbsolute24(cmd) ? cmd : resolve19(cwd, cmd);
+    const p = isAbsolute24(cmd) ? cmd : resolve20(cwd, cmd);
     return ok(p) ? p : null;
   }
   for (const dir of (env.PATH ?? "").split(delimiter4)) {
@@ -62144,7 +62312,7 @@ function checkConfiguredChecks(p) {
   const details = [];
   let status2 = "pass";
   for (const c of entries) {
-    const cwd = repo ? resolve19(repo, c.cwd) : ctx.cwd;
+    const cwd = repo ? resolve20(repo, c.cwd) : ctx.cwd;
     const word = checkWord2(c);
     const bump = (s) => {
       if (s === "fail" || s === "warn" && status2 === "pass") status2 = s;
@@ -62539,7 +62707,7 @@ async function browserIsolationCheck(input) {
     return fail2(id, "ui", `${info.detail}; browser checks are refused`, `srt ${SRT_VERIFIED_VERSION} (@anthropic-ai/sandbox-runtime)`, `install @anthropic-ai/sandbox-runtime@${SRT_VERIFIED_VERSION}`, [info.detail, limitation]);
   }
   if (!input.repo) return warn2(id, "ui", "not launched: no repository to find Playwright in", "a repository", null, [info.detail, limitation]);
-  const home2 = input.homeDir ?? input.env.HOME ?? homedir12();
+  const home2 = input.homeDir ?? input.env.HOME ?? homedir13();
   const cache2 = playwrightCache(input.env, home2, "darwin");
   const browser = headlessChromiumOf(input.repo, cache2);
   if ("problem" in browser) {
@@ -63017,7 +63185,7 @@ var init_models2 = __esm({
 
 // src/cli/check-detect.ts
 import { existsSync as existsSync54, readFileSync as readFileSync35 } from "node:fs";
-import { basename as basename18, dirname as dirname33, join as join74 } from "node:path";
+import { basename as basename18, dirname as dirname34, join as join74 } from "node:path";
 function read(path) {
   try {
     return readFileSync35(path, "utf8").slice(0, MAX_READ_BYTES);
@@ -63235,7 +63403,7 @@ async function rustDrafts(input, out) {
 }
 async function realClippyProbe(cargo) {
   try {
-    const r = await execCapture([cargo, "clippy", "--version"], { cwd: dirname33(cargo), timeoutMs: 2e4, maxOutputBytes: 16 * 1024 });
+    const r = await execCapture([cargo, "clippy", "--version"], { cwd: dirname34(cargo), timeoutMs: 2e4, maxOutputBytes: 16 * 1024 });
     return r.exitCode === 0 && !r.timedOut;
   } catch {
     return false;
@@ -63300,7 +63468,7 @@ var init_check_detect = __esm({
 
 // src/cli/commands/init.ts
 import { appendFileSync as appendFileSync2, existsSync as existsSync55, mkdirSync as mkdirSync24, readFileSync as readFileSync36, realpathSync as realpathSync20, writeFileSync as writeFileSync10 } from "node:fs";
-import { dirname as dirname34, join as join75 } from "node:path";
+import { dirname as dirname35, join as join75 } from "node:path";
 function templatePath() {
   return join75(orbitInstallDir(), "templates", "config.yaml");
 }
@@ -63834,7 +64002,7 @@ async function initCommand(args, ctx) {
   if (existsSync55(configPath)) config = "exists";
   else {
     let text2 = templateText();
-    mkdirSync24(dirname34(configPath), { recursive: true });
+    mkdirSync24(dirname35(configPath), { recursive: true });
     const proposal = await proposeScope(ctx, repo);
     derivedPaths = proposal.allowed;
     excludedDirs = proposal.excluded;
@@ -63863,7 +64031,7 @@ ${block2}`);
   }
   const excludePath = await excludeFile(ctx, repo);
   const sharedAcrossWorktrees = await inLinkedWorktree(ctx, repo);
-  mkdirSync24(dirname34(excludePath), { recursive: true });
+  mkdirSync24(dirname35(excludePath), { recursive: true });
   const current = existsSync55(excludePath) ? readFileSync36(excludePath, "utf8") : "";
   const have = new Set(current.split("\n").map((l) => l.trim()));
   const missing = EXCLUDE_RULES.filter((r) => !have.has(r));
@@ -63961,14 +64129,14 @@ async function checkRunnerCommand(rawArgs, ctx) {
   }
   mkdirSync25(runDir2, { recursive: true });
   const shim = ensureShim(runDir2);
-  return new Promise((resolve23) => {
+  return new Promise((resolve24) => {
     const child = spawn6(process.execPath, [shim, checkDir], { stdio: "inherit", env: process.env });
     child.on("error", (err) => {
       ctx.io.err(`check-runner: cannot start the check shim: ${err.message}
 `);
-      resolve23(EXIT.FAILURE);
+      resolve24(EXIT.FAILURE);
     });
-    child.on("exit", (code2, signal) => resolve23(code2 ?? (signal ? 128 : EXIT.FAILURE)));
+    child.on("exit", (code2, signal) => resolve24(code2 ?? (signal ? 128 : EXIT.FAILURE)));
   });
 }
 var init_internal = __esm({
@@ -64089,7 +64257,7 @@ var init_ingest = __esm({
 
 // src/cli/commands/learn.ts
 import { existsSync as existsSync56, mkdirSync as mkdirSync26, readFileSync as readFileSync37, statSync as statSync16 } from "node:fs";
-import { basename as basename19, isAbsolute as isAbsolute26, join as join76, relative as relative8, resolve as resolve20 } from "node:path";
+import { basename as basename19, isAbsolute as isAbsolute26, join as join76, relative as relative8, resolve as resolve21 } from "node:path";
 function knowledgePath(ctx, repo, global) {
   return global ? join76(ctx.orbitHome, "knowledge.sqlite") : join76(repo, ".orbit", "knowledge.sqlite");
 }
@@ -64164,9 +64332,9 @@ async function learnExportCommand(args, ctx) {
     const doc = JSON.stringify(store.exportJsonLd(), null, 2);
     const out = args.str("out");
     if (out) {
-      atomicWrite(resolve20(ctx.cwd, out), `${doc}
+      atomicWrite(resolve21(ctx.cwd, out), `${doc}
 `);
-      line(ctx.io, `exported ${store.count()} lesson(s) as JSON-LD to ${resolve20(ctx.cwd, out)}`);
+      line(ctx.io, `exported ${store.count()} lesson(s) as JSON-LD to ${resolve21(ctx.cwd, out)}`);
     } else ctx.io.out(`${doc}
 `);
     return EXIT.OK;
@@ -64205,7 +64373,7 @@ async function readSource(ctx, repo, ref2, label) {
     }
     return { kind: "url", ref: ref2, content: Buffer.concat(chunks).toString("utf8") };
   }
-  const path = resolve20(ctx.cwd, ref2);
+  const path = resolve21(ctx.cwd, ref2);
   if (!existsSync56(path)) throw new OrbitError("NOT_FOUND", `${path} does not exist`);
   const st = statSync16(path);
   if (!st.isFile()) throw new OrbitError("SCHEMA_INVALID", `${path} is not a regular file`);
@@ -64252,7 +64420,7 @@ async function learnIngestCommand(args, ctx) {
   const prepared = args.str("curator-output");
   if (prepared) {
     try {
-      output = JSON.parse(readFileSync37(resolve20(ctx.cwd, prepared), "utf8"));
+      output = JSON.parse(readFileSync37(resolve21(ctx.cwd, prepared), "utf8"));
     } catch (err) {
       throw new OrbitError("SCHEMA_INVALID", `${prepared} is not readable JSON: ${err instanceof Error ? oneLine(err.message, 120) : "error"}`);
     }
@@ -64370,7 +64538,7 @@ async function learnEvalCommand(args, ctx) {
       if (metricsFile) {
         let m;
         try {
-          m = JSON.parse(readFileSync37(resolve20(ctx.cwd, metricsFile), "utf8"));
+          m = JSON.parse(readFileSync37(resolve21(ctx.cwd, metricsFile), "utf8"));
         } catch (err) {
           throw new OrbitError("SCHEMA_INVALID", `${metricsFile} is not readable JSON: ${err instanceof Error ? oneLine(err.message, 120) : "error"}`);
         }
@@ -64463,7 +64631,7 @@ var init_learn2 = __esm({
 
 // src/cli/commands/logs.ts
 import { closeSync as closeSync10, existsSync as existsSync57, fstatSync as fstatSync5, openSync as openSync10, readSync as readSync6, statSync as statSync17 } from "node:fs";
-import { dirname as dirname35, join as join77 } from "node:path";
+import { dirname as dirname36, join as join77 } from "node:path";
 function readTail(path, lines) {
   const size = statSync17(path).size;
   const fd = openSync10(path, "r");
@@ -64525,7 +64693,7 @@ async function logsCommand(args, ctx) {
   const asJson = args.bool("json");
   return withState(repo, async (db) => {
     const run = findRunByPrefix(db, runRef);
-    const runDir2 = dirname35(run.policyPath);
+    const runDir2 = dirname36(run.policyPath);
     const wantController = !args.bool("workers") && !args.str("worker");
     const wantWorkers = !args.bool("controller");
     const sources = [];
@@ -64758,14 +64926,14 @@ var init_release2 = __esm({
 
 // src/cli/commands/report.ts
 import { existsSync as existsSync58, readFileSync as readFileSync38 } from "node:fs";
-import { dirname as dirname36, join as join78 } from "node:path";
+import { dirname as dirname37, join as join78 } from "node:path";
 async function reportCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   if (args.bool("learning")) return withState(repo, (db) => learningReport(ctx, repo, db, args.bool("json")));
   const [id] = args.expect(1);
   return withState(repo, (db) => {
     const run = findRunByPrefix(db, id);
-    const runDir2 = dirname36(run.policyPath);
+    const runDir2 = dirname37(run.policyPath);
     const finalMd = join78(runDir2, "final.md");
     const finalJson = join78(runDir2, "final.json");
     const asJson = args.bool("json");
@@ -65012,7 +65180,7 @@ var init_admission = __esm({
 
 // src/cli/commands/run.ts
 import { existsSync as existsSync60 } from "node:fs";
-import { resolve as resolve21 } from "node:path";
+import { resolve as resolve22 } from "node:path";
 async function runCommand(args, ctx) {
   const usage = 'orbit run --goal "<goal>" [--mode <mode>] [--environment <name>] [--policy <path>] [--foreground | --detach]';
   if (args.bool("foreground") && args.bool("detach")) throw new UsageError("--foreground and --detach cannot be combined", usage);
@@ -65024,8 +65192,8 @@ async function runCommand(args, ctx) {
   if (!goal) throw new UsageError('a goal is required: orbit run --goal "..."', usage);
   const repo = await resolveRepo(ctx, args.str("repo"));
   const policy = args.str("policy");
-  if (policy !== void 0 && !existsSync60(resolve21(ctx.cwd, policy))) throw new OrbitError("NOT_FOUND", `policy file ${resolve21(ctx.cwd, policy)} does not exist; check the --policy path`);
-  const config = loadConfig(repo, policy ? resolve21(ctx.cwd, policy) : void 0, mode ? { mode } : {});
+  if (policy !== void 0 && !existsSync60(resolve22(ctx.cwd, policy))) throw new OrbitError("NOT_FOUND", `policy file ${resolve22(ctx.cwd, policy)} does not exist; check the --policy path`);
+  const config = loadConfig(repo, policy ? resolve22(ctx.cwd, policy) : void 0, mode ? { mode } : {});
   const environment = args.str("environment");
   if (environment !== void 0) {
     const why = releaseEnvironmentProblem(config, environment);
@@ -65089,7 +65257,7 @@ var init_run = __esm({
 });
 
 // src/cli/commands/repair.ts
-import { resolve as resolve22 } from "node:path";
+import { resolve as resolve23 } from "node:path";
 function runArgv(args, goal) {
   const argv2 = ["--goal", goal];
   for (const name of ["repo", "mode", "policy"]) {
@@ -65151,7 +65319,7 @@ async function repairCommand(args, ctx) {
         line(ctx.io, `run ${after.id}: repairing failure ${fingerprint}; the controller writes the brief to ${brief}. Driving it in the foreground (Ctrl-C pauses it)`);
       }
       const policy = args.str("policy");
-      const config = loadConfig(repo, policy ? resolve22(ctx.cwd, policy) : void 0);
+      const config = loadConfig(repo, policy ? resolve23(ctx.cwd, policy) : void 0);
       const result2 = await driveForeground(ctx, { repoRoot: repo, config, db, runId: after.id, fromStart: false, json: args.bool("json") });
       return result2.exitCode;
     }
@@ -66231,7 +66399,7 @@ var init_timeline2 = __esm({
 });
 
 // src/cli/commands/verify.ts
-import { dirname as dirname37, isAbsolute as isAbsolute27, join as join80, relative as relative9 } from "node:path";
+import { dirname as dirname38, isAbsolute as isAbsolute27, join as join80, relative as relative9 } from "node:path";
 function exitCodeForVerdict(verdict) {
   return verdict === "PASS" ? EXIT.OK : verdict === "FAIL" ? EXIT.VERIFY_FAILED : EXIT.VERIFY_INCOMPLETE;
 }
@@ -66305,7 +66473,7 @@ function repairNextStep(run) {
 function print(ctx, repo, asJson, o, contractJson) {
   const contract = JSON.parse(contractJson);
   const statements = new Map(contract.acceptance_criteria.map((c) => [c.id, c]));
-  const runDir2 = dirname37(o.run.policyPath);
+  const runDir2 = dirname38(o.run.policyPath);
   const rel = (given) => {
     const p = isAbsolute27(given) ? given : join80(runDir2, given);
     const r = relative9(repo, p);
