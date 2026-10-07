@@ -54,8 +54,11 @@ categories at PREFLIGHT, in this order:
    know, more projects than it takes. No change to the repository makes such a
    command line right.
 2. **Missing target.** The check's command names something the base revision
-   does not have: a project, an npm script, a test file, a script of the
-   repository, a dotnet or cargo command nothing provides yet. The goal may be
+   does not have: a project (or one of two in its folder), an npm script, a test
+   file, a script of the repository, a dotnet or cargo command nothing provides
+   yet, an option of a pytest plugin or a test platform the repository does not
+   use yet. Whatever a change to the repository can make right is here, not in
+   the first category. The goal may be
    to create it.
 3. **Environment failure.** The sandbox or the host refused the check something
    before it ran anything of the repository, or it could not execute at all:
@@ -173,13 +176,14 @@ All of:
 
 | signature | kind | tool | the tool's line | also required |
 |---|---|---|---|---|
-| `msbuild-unknown-switch` | argument | dotnet (MSBuild command), msbuild | `MSBUILD : error MSB1001: Unknown switch.` | the switch is the command's |
+| `msbuild-unknown-switch` | argument | dotnet (MSBuild command but `test`), msbuild | `MSBUILD : error MSB1001: Unknown switch.` | the switch is the command's |
 | `msbuild-one-project` | argument | dotnet (MSBuild command), msbuild | `MSBUILD : error MSB1008: Only one project can be specified.` | the switch is the command's |
-| `msbuild-ambiguous-project` | argument | dotnet (MSBuild command), msbuild | `MSBUILD : error MSB1011: Specify which project or solution file to use ...` | |
 | `go-flag` | argument | go | `flag provided but not defined: -x` (or `flag needs an argument`, `invalid value ... for flag`) | exit 2, go's usage line, the flag is the command's |
 | `go-unknown-command` | argument | go | `go x: unknown command` (`go mod: unknown command` for `go mod x`) | exit 2, the command's words |
-| `pytest-unrecognized-arguments` | argument | pytest | `pytest: error: unrecognized arguments: --x` (also an option of a plugin that is not installed, `--cov` without pytest-cov, which the cause names) | exit 4, every argument the command's |
 | `cargo-unexpected-argument` | argument | cargo | `error: unexpected argument '--x' found` | exit 1, `Usage: cargo`, the argument the command's |
+| `msbuild-ambiguous-project` | missing target | dotnet (MSBuild command), msbuild | `MSBUILD : error MSB1011: Specify which project or solution file to use ...` (a folder the goal may leave with one, an old `.sln` next to its `.slnx`) | |
+| `dotnet-test-unknown-switch` | missing target | dotnet test | `MSBUILD : error MSB1001: Unknown switch.` (a misspelling, or a test platform's option dotnet test hands to MSBuild until the repository runs that platform: `--report-trx`) | the switch is the command's |
+| `pytest-unrecognized-arguments` | missing target | pytest | `pytest: error: unrecognized arguments: --x` (a misspelling, or an option of a plugin or a `conftest.py` that is not there yet: `--cov` without pytest-cov, `-n` without pytest-xdist) | exit 4, every argument the command's |
 | `msbuild-no-project` | missing target | dotnet (MSBuild command), msbuild | `MSBUILD : error MSB1003: Specify a project or solution file. ...` | |
 | `msbuild-project-missing` | missing target | dotnet (MSBuild command), msbuild | `MSBUILD : error MSB1009: Project file does not exist.` | the project is the command's |
 | `dotnet-no-such-command` | missing target | dotnet, with a first argument that is no dotnet command | `Could not execute because the specified command or file was not found.` | |
@@ -384,13 +388,20 @@ used.
 - A missing target the goal creates is checked as the goal's proof; one it does
   not create blocks at CONTRACTING, after the planner ran, as a misconfigured
   check, with the advice of its own above. A target a tool provides that is not
-  installed or restored yet (a cargo plugin, a dotnet local tool) needs a new
-  run once it is there: CONTRACTING reads the recorded baseline, which `orbit
+  installed or restored yet (a cargo plugin, a dotnet local tool, a pytest
+  plugin) needs a new run once it is there: CONTRACTING reads the recorded baseline, which `orbit
   resume` does not run again. cargo's `no such command` and dotnet's "Could not execute
   ..." cannot tell a misspelled command of their own from a plugin or tool not
   provided yet (cargo suggests `test` for an uninstalled `nextest` as it does for
   `tset`), so both are missing targets: a misspelled one the contract names as a
-  proof goes through repair until the run is EXHAUSTED.
+  proof goes through repair until the run is EXHAUSTED. The same holds for
+  pytest's unrecognized arguments (an option of pytest-cov, pytest-xdist or a
+  `conftest.py` the goal may add), `dotnet test`'s unknown switch (a
+  Microsoft.Testing.Platform option before the repository runs its tests on it)
+  and MSBuild's `MSB1011` (a folder the goal may leave with one solution): a
+  review found the first an argument error had blocked a goal to add pytest-cov
+  and enforce coverage at PREFLIGHT, which the rule before this decision let
+  through as expected to flip.
 - An environment failure is not a frozen-policy block: fix the environment and
   `orbit resume <run-id>`, which runs those checks again.
 - Left as pre-existing failures, each still with its question: a usage error

@@ -12,12 +12,13 @@ import { stripAnsi } from './fingerprint.ts';
  * it as a baseline exception would let a run pass with a check that never tested anything. The table below has two
  * kinds of such errors:
  *
- * - an argument error (MSBuild's unknown switch or second project, pytest's unrecognized arguments, go's undefined flag,
- *   cargo's unexpected argument): the command line itself is wrong, whatever the repository holds. PREFLIGHT blocks on
- *   it as a misconfigured check (`checks.<id>.command`).
- * - a missing target (no project for MSBuild, npm's missing script, pytest's missing test file, a dotnet or cargo
- *   command nothing provides yet, a script of the repository that does not exist): the command names something the
- *   base revision does not have, which the goal may be to create. It stays eligible for P18: a contract that names the
+ * - an argument error (MSBuild's unknown switch or second project, go's undefined flag, cargo's unexpected argument):
+ *   the command line itself is wrong, whatever the repository holds. PREFLIGHT blocks on it as a misconfigured check
+ *   (`checks.<id>.command`).
+ * - a missing target (no project for MSBuild, or more than one, npm's missing script, pytest's missing test file or
+ *   unknown option, dotnet test's unknown switch, a dotnet or cargo command nothing provides yet, a script of the
+ *   repository that does not exist): the command names something the base revision does not have, which the goal may be
+ *   to create (a pytest plugin's option, a test platform's, a project, one solution of two). It stays eligible for P18: a contract that names the
  *   check as the proof of a criterion expects it to flip (controller/steps/baseline-questions.ts); one that does not
  *   blocks the run as misconfigured at CONTRACTING. Either way it is never accepted as a baseline exception: a check
  *   whose target does not exist would be a meaningless check made green.
@@ -144,9 +145,23 @@ export function npmScript(args: readonly string[]): string | undefined {
 
 /** The usage-error signatures, one per tool error, each verified against the real tool (tests/fixtures/misconfigured). */
 export const USAGE_ERRORS: readonly UsageErrorSignature[] = [
-  { id: 'msbuild-unknown-switch', kind: 'argument', tool: 'dotnet (MSBuild)', runs: runsMsbuild, line: /^MSBUILD : error MSB1001: /, detail: MSBUILD_SWITCH, names: switchPassed, meaning: 'MSBuild does not know a switch on it' },
+  {
+    id: 'dotnet-test-unknown-switch',
+    kind: 'missing-target',
+    tool: 'dotnet test (MSBuild)',
+    // dotnet test hands MSBuild every option it does not know itself, and a test platform's option is one of them until
+    // the repository runs its tests on that platform (SDK 9.0.305: `dotnet test A.csproj --report-trx` is MSB1001,
+    // "Switch: --report-trx"). A change to the repository may be what makes it right, so the goal may be to.
+    runs: (inv) => inv.tool === 'dotnet' && inv.args[0] === 'test',
+    line: /^MSBUILD : error MSB1001: /,
+    detail: MSBUILD_SWITCH,
+    names: switchPassed,
+    meaning: 'MSBuild does not know a switch on it: a misspelled one, or an option of a test platform the repository does not run its tests on yet (Microsoft.Testing.Platform\'s --report-trx), which dotnet test hands to MSBuild',
+  },
+  { id: 'msbuild-unknown-switch', kind: 'argument', tool: 'dotnet (MSBuild)', runs: (inv) => runsMsbuild(inv) && !(inv.tool === 'dotnet' && inv.args[0] === 'test'), line: /^MSBUILD : error MSB1001: /, detail: MSBUILD_SWITCH, names: switchPassed, meaning: 'MSBuild does not know a switch on it' },
   { id: 'msbuild-one-project', kind: 'argument', tool: 'dotnet (MSBuild)', runs: runsMsbuild, line: /^MSBUILD : error MSB1008: /, detail: MSBUILD_SWITCH, names: switchPassed, meaning: 'it names more than one project, and MSBuild builds one project or solution per command' },
-  { id: 'msbuild-ambiguous-project', kind: 'argument', tool: 'dotnet (MSBuild)', runs: runsMsbuild, line: /^MSBUILD : error MSB1011: /, meaning: 'it names no project or solution, and its working directory holds more than one' },
+  // A folder with two projects or solutions is one a change may leave with one (an old .sln next to its .slnx).
+  { id: 'msbuild-ambiguous-project', kind: 'missing-target', tool: 'dotnet (MSBuild)', runs: runsMsbuild, line: /^MSBUILD : error MSB1011: /, meaning: 'it names no project or solution, and its working directory holds more than one' },
   { id: 'msbuild-no-project', kind: 'missing-target', tool: 'dotnet (MSBuild)', runs: runsMsbuild, line: /^MSBUILD : error MSB1003: /, meaning: 'it names no project or solution, and its working directory holds none' },
   { id: 'msbuild-project-missing', kind: 'missing-target', tool: 'dotnet (MSBuild)', runs: runsMsbuild, line: /^MSBUILD : error MSB1009: /, detail: MSBUILD_SWITCH, names: switchPassed, meaning: 'the project or solution file it names does not exist' },
   {
@@ -175,15 +190,17 @@ export const USAGE_ERRORS: readonly UsageErrorSignature[] = [
   },
   {
     id: 'pytest-unrecognized-arguments',
-    kind: 'argument',
+    // pytest says the same for an option of a plugin it has not loaded or of a conftest.py that does not add it yet
+    // (pytest 8.4.1: --cov without pytest-cov, -n without pytest-xdist), and the goal may be to add that plugin or
+    // option, as cargo's no such command may be a plugin not provided yet.
+    kind: 'missing-target',
     tool: 'pytest',
     runs: (inv) => PYTEST.includes(inv.tool),
     line: /^\S+: error: unrecognized arguments: (.+)$/,
     exitCodes: [4],
     // Every argument pytest did not know is one the command passes, not one of the repository's addopts.
     names: (inv, m) => m[1]!.trim().split(/\s+/).every((a) => inv.args.includes(a)),
-    // pytest says the same for an option of a plugin it has not loaded (pytest 8.4, --cov without pytest-cov).
-    meaning: 'pytest does not know an argument on it: a misspelled option, or an option of a plugin that is not installed where the check runs (--cov without pytest-cov), which the dependency install can add',
+    meaning: 'pytest does not know an option on it: a misspelled one, or an option of a plugin or a conftest.py that is not there yet (--cov without pytest-cov, -n without pytest-xdist), which the repository\'s dependencies or its conftest.py add',
   },
   {
     id: 'pytest-path-not-found',

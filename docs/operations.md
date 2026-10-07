@@ -428,14 +428,16 @@ revision ([ADR 0010](decisions/0010-base-failure-classification.md)):
 
 - **Misconfigured check.** The tool the check's command runs rejected that
   command line itself (`MSBUILD : error MSB1008: Only one project can be
-  specified.`, an unknown switch, pytest's unrecognized arguments with exit 4,
-  `go x: unknown command`, cargo's unexpected argument). The run ends `BLOCKED`
+  specified.`, an unknown switch outside `dotnet test`, `go x: unknown
+  command`, cargo's unexpected argument). The run ends `BLOCKED`
   at PREFLIGHT with the check, the tool's error line and the config key,
   `checks.<id>.command`. The command is in the run's frozen policy, so `orbit
   resume` refuses: correct the command and start a new run.
 - **Missing target.** The check's command names something the base revision
-  does not have: no project for `dotnet build`, `npm error Missing script` for
-  the script it runs, pytest's `file or directory not found` with exit 4, a
+  does not have: no project for `dotnet build` or more than one, `npm error
+  Missing script` for the script it runs, pytest's `file or directory not found`
+  or `unrecognized arguments` with exit 4 (an option of a plugin not installed
+  yet), `dotnet test`'s unknown switch (a test platform's option), a
   dotnet or cargo command nothing provides yet, a script of the repository the
   shell cannot find. The goal may be to create it, so the run goes on to
   CONTRACTING. When the contract names the check as the proof of a criterion,
@@ -444,8 +446,8 @@ revision ([ADR 0010](decisions/0010-base-failure-classification.md)):
   misconfigured check, before the contract is written or any other check's
   question is settled against it, with advice of its own by cause: a goal meant
   to create the target says so in a new run; a target a tool provides that is
-  not installed or restored yet (a cargo plugin, a dotnet local tool) needs a new
-  run once it is; a wrong command is corrected in `checks.<id>.command`. Each needs a
+  not installed or restored yet (a cargo plugin, a dotnet local tool, a pytest
+  plugin) needs a new run once it is; a wrong command is corrected in `checks.<id>.command`. Each needs a
   new run, because CONTRACTING reads the baseline PREFLIGHT recorded, so
   `orbit resume` would read the same failure.
 - **Environment failure.** The sandbox or the host refused the check something

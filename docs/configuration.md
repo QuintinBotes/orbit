@@ -511,15 +511,15 @@ On the base revision PREFLIGHT goes further and classifies every failing
 mandatory check before it calls one pre-existing
 ([ADR 0010](decisions/0010-base-failure-classification.md)). A check whose
 tool rejected its command line (a misconfigured check: an MSBuild command-line
-error such as `MSB1008`, a pytest usage error with exit 4, a go or cargo usage
-error) and a check the environment refused before it ran anything of the
+error such as `MSB1008`, a go or cargo usage error) and a check the environment refused before it ran anything of the
 repository (a denial outside its checkout, EACCES included; a socket refused in
 the tool's own startup; a .NET named pipe refused under `/tmp`, an MSBuild
 worker node's or `dotnet format`'s build host's; a connection the sandbox's
 proxy refused; a program not installed where it runs, exit 127) both end the
 run `BLOCKED` at PREFLIGHT with the first error line. A check whose command
 names something that does not exist yet (a missing target: no project, `npm
-error Missing script`, a missing test file) is expected to flip when the
+error Missing script`, a missing test file, an option of a pytest plugin not
+installed yet) is expected to flip when the
 contract names it, and blocks at CONTRACTING as misconfigured, with advice of
 its own, when it does not (a goal meant to create the target says so in a new
 run; a target a tool provides that is not installed or restored yet needs a new

@@ -176,19 +176,14 @@ degraded but usable.
 - **A check is misconfigured.** The run blocks at PREFLIGHT with "Check X is
   misconfigured, not a pre-existing failure", the tool's error line, "command in
   checks.X.command" and the log. The tool the check runs rejected the command
-  line itself: an MSBuild command-line error (`MSB1001` unknown switch, `MSB1008`
-  more than one project, `MSB1011` more than one project in the directory), a
-  pytest usage error (exit 4: unrecognized arguments), go's `flag provided but not
+  line itself: an MSBuild command-line error (`MSB1001` unknown switch outside
+  `dotnet test`, `MSB1008` more than one project), go's `flag provided but not
   defined` or `unknown command` (exit 2), or cargo's `unexpected argument`. No
   baseline exception is offered, and none can be approved. Run the command by
   hand in a clean checkout, correct it in `.orbit/config.yaml` and start a new run
   (`orbit resume` refuses, because the command is in the run's frozen policy; a
   forced resume runs the same command again, so it blocks again unless the tool
-  changed outside the policy). pytest says "unrecognized arguments" for an
-  option of a plugin that is not installed where the check runs too (`--cov`
-  without pytest-cov): then add the plugin to what the dependency install
-  installs, not change the command. A plugin installed outside the policy is
-  picked up by `orbit resume <run-id> --force`, which runs the check again.
+  changed outside the policy).
   Only the check's own direct invocation of the tool is read this way: its program
   (after a leading env assignment, `env`, an npx-style runner or `python -m`) is
   the tool, the command is not a shell chain or pipeline, and what the error names
@@ -202,8 +197,13 @@ degraded but usable.
   `Directory.Build.rsp`).
 - **A check's target does not exist yet.** The check's command names something
   the base revision does not have: `MSB1003` (no project in the directory),
-  `MSB1009` (no such project), `npm error Missing script` for the script the
-  command runs, pytest's `file or directory not found` (exit 4), dotnet's "Could
+  `MSB1009` (no such project), `MSB1011` (more than one in the directory, which
+  the goal may leave with one), `dotnet test`'s `MSB1001` unknown switch (a test
+  platform's option, `--report-trx`, before the repository runs its tests on
+  it), `npm error Missing script` for the script the command runs, pytest's
+  `file or directory not found` or `unrecognized arguments` (exit 4; an option
+  of a plugin or a `conftest.py` not there yet, `--cov` without pytest-cov or
+  `-n` without pytest-xdist, says the same as a misspelled one), dotnet's "Could
   not execute because the specified command or file was not found", cargo's `no
   such command` (exit 101), or a script of the repository the shell cannot find
   (exit 127). PREFLIGHT lets the run go on, because the goal may be to create it.
@@ -213,8 +213,8 @@ degraded but usable.
   failure: ... the contract does not name it as the proof of any criterion" and
   advice of its own, by cause. If the goal is meant to create what the command
   names, start a new run whose goal says so. If a tool that is not installed or
-  restored yet provides it (a cargo plugin, a dotnet local tool), install or
-  restore it and then start a new run. If the command is wrong, correct `checks.X.command` in
+  restored yet provides it (a cargo plugin, a dotnet local tool, a pytest
+  plugin), install or restore it and then start a new run. If the command is wrong, correct `checks.X.command` in
   `.orbit/config.yaml` and start a new run. Each needs a new run because
   CONTRACTING reads the baseline PREFLIGHT recorded: `orbit resume` would read
   the same failure and block again, so the reason does not offer `--force`. It is

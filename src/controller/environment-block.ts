@@ -405,7 +405,7 @@ export function missingTargetAdvice(input: { runId: string; checks: readonly Pic
   const many = checks.length > 1;
   const keys = checks.map((m) => m.configKey).join(', ');
   return joinSentences([
-    `Fix, by cause: when the goal is meant to create what ${many ? 'a command' : 'the command'} names, say so in the goal of a new run, so that the contract names ${many ? 'each check' : 'the check'} as the proof of a criterion and expects it to flip; when a tool that is not installed or restored yet provides it (a cargo plugin, a dotnet local tool), install or restore it and then start a new run, because this run reads the baseline it recorded and does not look again; when ${many ? 'the commands are' : 'the command is'} wrong, correct ${keys} in .orbit/config.yaml and start a new run`,
+    `Fix, by cause: when the goal is meant to create what ${many ? 'a command' : 'the command'} names, say so in the goal of a new run, so that the contract names ${many ? 'each check' : 'the check'} as the proof of a criterion and expects it to flip; when a tool that is not installed or restored yet provides it (a cargo plugin, a dotnet local tool, a pytest plugin), install or restore it and then start a new run, because this run reads the baseline it recorded and does not look again; when ${many ? 'the commands are' : 'the command is'} wrong, correct ${keys} in .orbit/config.yaml and start a new run`,
     `Resuming this run would only block again, so cancel it (orbit cancel ${input.runId}) and start the new run with orbit run`,
   ]);
 }

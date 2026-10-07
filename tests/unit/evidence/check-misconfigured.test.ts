@@ -21,14 +21,15 @@ const input = (command: string[], exitCode: number | null, output: string, more:
 
 /** Each signature of the table, from the tool's real output: the command that produced it, its exit code, its kind, and the error line expected first. */
 const CASES: { signature: string; kind: 'argument' | 'missing-target'; fixture: string; command: string[]; shell?: boolean; exit: number; line: string; detail?: string }[] = [
-  { signature: 'msbuild-unknown-switch', kind: 'argument', fixture: 'dotnet-msb1001-unknown-switch.log', command: ['dotnet', 'test', '--bogus-flag'], exit: 1, line: 'MSBUILD : error MSB1001: Unknown switch.', detail: 'Switch: --bogus-flag' },
+  { signature: 'msbuild-unknown-switch', kind: 'argument', fixture: 'dotnet-build-msb1001-unknown-switch.log', command: ['dotnet', 'build', 'A.csproj', '--bogus-flag'], exit: 1, line: 'MSBUILD : error MSB1001: Unknown switch.', detail: 'Switch: --bogus-flag' },
+  { signature: 'dotnet-test-unknown-switch', kind: 'missing-target', fixture: 'dotnet-test-msb1001-platform-option.log', command: ['dotnet', 'test', 'A.csproj', '--report-trx'], exit: 1, line: 'MSBUILD : error MSB1001: Unknown switch.', detail: 'Switch: --report-trx' },
   { signature: 'msbuild-one-project', kind: 'argument', fixture: 'dotnet-msb1008-one-project.log', command: ['dotnet', 'build', 'A.csproj', 'B.csproj'], exit: 1, line: 'MSBUILD : error MSB1008: Only one project can be specified.', detail: 'Switch: B.csproj' },
-  { signature: 'msbuild-ambiguous-project', kind: 'argument', fixture: 'dotnet-msb1011-ambiguous-project.log', command: ['dotnet', 'build'], exit: 1, line: 'MSBUILD : error MSB1011: Specify which project or solution file to use because this folder contains more than one project or solution file.' },
+  { signature: 'msbuild-ambiguous-project', kind: 'missing-target', fixture: 'dotnet-msb1011-ambiguous-project.log', command: ['dotnet', 'build'], exit: 1, line: 'MSBUILD : error MSB1011: Specify which project or solution file to use because this folder contains more than one project or solution file.' },
   { signature: 'msbuild-no-project', kind: 'missing-target', fixture: 'dotnet-msb1003-no-project.log', command: ['dotnet', 'build'], exit: 1, line: 'MSBUILD : error MSB1003: Specify a project or solution file. The current working directory does not contain a project or solution file.' },
   { signature: 'msbuild-project-missing', kind: 'missing-target', fixture: 'dotnet-msb1009-project-missing.log', command: ['dotnet', 'build', 'Missing.csproj'], exit: 1, line: 'MSBUILD : error MSB1009: Project file does not exist.', detail: 'Switch: Missing.csproj' },
   { signature: 'dotnet-no-such-command', kind: 'missing-target', fixture: 'dotnet-command-not-found.log', command: ['dotnet', 'tset'], exit: 1, line: 'Could not execute because the specified command or file was not found.' },
   { signature: 'npm-missing-script', kind: 'missing-target', fixture: 'npm-missing-script.log', command: ['npm', 'run', 'tset'], exit: 1, line: 'npm error Missing script: "tset"' },
-  { signature: 'pytest-unrecognized-arguments', kind: 'argument', fixture: 'pytest-unrecognized-arguments.log', command: ['python3', '-m', 'pytest', '--bogus'], exit: 4, line: '__main__.py: error: unrecognized arguments: --bogus' },
+  { signature: 'pytest-unrecognized-arguments', kind: 'missing-target', fixture: 'pytest-unrecognized-arguments.log', command: ['python3', '-m', 'pytest', '--bogus'], exit: 4, line: '__main__.py: error: unrecognized arguments: --bogus' },
   { signature: 'pytest-path-not-found', kind: 'missing-target', fixture: 'pytest-path-not-found.log', command: ['pytest', 'tests/missing_test.py'], exit: 4, line: 'ERROR: file or directory not found: tests/missing_test.py' },
   { signature: 'go-flag', kind: 'argument', fixture: 'go-flag-not-defined.log', command: ['go', 'build', '-bogus'], exit: 2, line: 'flag provided but not defined: -bogus' },
   { signature: 'go-unknown-command', kind: 'argument', fixture: 'go-unknown-command.log', command: ['go', 'tset'], exit: 2, line: 'go tset: unknown command' },
@@ -55,8 +56,12 @@ describe('classifyMisconfigured: the table of tool usage errors', () => {
 
   it('splits the table: an argument error the goal cannot fix, a missing target the goal may create', () => {
     const kinds = Object.fromEntries(USAGE_ERRORS.map((s) => [s.id, s.kind]));
-    expect(Object.entries(kinds).filter(([, k]) => k === 'argument').map(([id]) => id).sort()).toEqual(['cargo-unexpected-argument', 'go-flag', 'go-unknown-command', 'msbuild-ambiguous-project', 'msbuild-one-project', 'msbuild-unknown-switch', 'pytest-unrecognized-arguments']);
-    expect(Object.entries(kinds).filter(([, k]) => k === 'missing-target').map(([id]) => id).sort()).toEqual(['cargo-no-such-command', 'dotnet-no-such-command', 'msbuild-no-project', 'msbuild-project-missing', 'npm-missing-script', 'pytest-path-not-found', 'script-not-found']);
+    expect(Object.entries(kinds).filter(([, k]) => k === 'argument').map(([id]) => id).sort()).toEqual(['cargo-unexpected-argument', 'go-flag', 'go-unknown-command', 'msbuild-one-project', 'msbuild-unknown-switch']);
+    // Review: a change to the repository makes these right too, so the goal may be to: pytest's unknown option is also
+    // a plugin's or a conftest's not there yet (--cov without pytest-cov, -n without pytest-xdist), dotnet test hands
+    // MSBuild a test platform's option until the repository runs that platform (--report-trx), and a folder with two
+    // solutions is one the goal may leave with one.
+    expect(Object.entries(kinds).filter(([, k]) => k === 'missing-target').map(([id]) => id).sort()).toEqual(['cargo-no-such-command', 'dotnet-no-such-command', 'dotnet-test-unknown-switch', 'msbuild-ambiguous-project', 'msbuild-no-project', 'msbuild-project-missing', 'npm-missing-script', 'pytest-path-not-found', 'pytest-unrecognized-arguments', 'script-not-found']);
   });
 
   it('names the tool and what its error means in the cause', () => {
@@ -64,9 +69,14 @@ describe('classifyMisconfigured: the table of tool usage errors', () => {
     expect(classifyMisconfigured(input(['npm', 'run', 'lint'], 1, 'npm error Missing script: "lint"\n'))!.cause).toMatch(/^npm could not find what the check's command names: package\.json has no script of that name/);
     // pytest 8.4 says the same for an option of a plugin that is not installed (--cov without pytest-cov), whose fix is
     // the plugin, not the command.
-    const cov = classifyMisconfigured(input(['pytest', '--cov=acme'], 4, '__main__.py: error: unrecognized arguments: --cov=acme\n  inifile: None\n  rootdir: /home/acme/checkout\n\n'));
-    expect(cov?.signature).toBe('pytest-unrecognized-arguments');
-    expect(cov!.cause).toMatch(/an option of a plugin that is not installed where the check runs \(--cov without pytest-cov\)/);
+    const cov = classifyMisconfigured(input(['pytest', '--cov=src', '--cov-fail-under=80'], 4, fixture('pytest-plugin-not-installed.log')));
+    expect(cov).toMatchObject({ signature: 'pytest-unrecognized-arguments', kind: 'missing-target' });
+    expect(cov!.lines).toEqual(['pytest: error: unrecognized arguments: --cov=src --cov-fail-under=80']);
+    expect(cov!.cause).toMatch(/^pytest could not find what the check's command names: .*an option of a plugin or a conftest\.py that is not there yet \(--cov without pytest-cov, -n without pytest-xdist\)/);
+    // pytest-xdist's -n under uv, as captured with pytest 8.4.1: the option's value is an argument pytest takes as a path.
+    expect(classifyMisconfigured(input(['uv', 'run', 'pytest', '-n', 'auto'], 4, 'ERROR: usage: pytest [options] [file_or_dir] [file_or_dir] [...]\npytest: error: unrecognized arguments: -n\n  inifile: None\n  rootdir: /home/acme/checkout\n'))).toMatchObject({ signature: 'pytest-unrecognized-arguments', kind: 'missing-target' });
+    // dotnet test hands an option of Microsoft.Testing.Platform to MSBuild until the repository runs its tests there.
+    expect(classifyMisconfigured(input(['dotnet', 'test', 'A.csproj', '--report-trx'], 1, fixture('dotnet-test-msb1001-platform-option.log')))!.cause).toMatch(/^dotnet test \(MSBuild\) could not find what the check's command names: .*--report-trx/);
   });
 
   it('reads the other spellings of a usage error the same tools print', () => {

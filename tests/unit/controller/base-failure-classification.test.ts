@@ -207,7 +207,7 @@ describe('missingTargetAdvice: what to do about a missing target the contract do
     // A goal meant to create the target says so, in a new run, so that the contract names the check and expects it to flip.
     expect(advice).toContain('when the goal is meant to create what the command names, say so in the goal of a new run, so that the contract names the check as the proof of a criterion and expects it to flip');
     // A target a tool that is not installed or restored yet provides needs a new run once it is.
-    expect(advice).toContain('when a tool that is not installed or restored yet provides it (a cargo plugin, a dotnet local tool), install or restore it and then start a new run, because this run reads the baseline it recorded and does not look again');
+    expect(advice).toContain('when a tool that is not installed or restored yet provides it (a cargo plugin, a dotnet local tool, a pytest plugin), install or restore it and then start a new run, because this run reads the baseline it recorded and does not look again');
     // A wrong command is the config's.
     expect(advice).toContain('when the command is wrong, correct checks.lint.command in .orbit/config.yaml and start a new run');
     expect(advice).toContain('orbit cancel orb-5');

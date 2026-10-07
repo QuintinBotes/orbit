@@ -121,7 +121,7 @@ describe('a baseline exception for a misconfigured check is refused', () => {
       expect(res.baselineException!.detail).toContain('would make a meaningless check green');
       expect(res.baselineException!.detail).toContain('checks.lint.command');
       // The same causes the CONTRACTING block names, and a new run for the two the goal does not settle: never a forced resume.
-      expect(res.baselineException!.detail).toContain('otherwise start a new run, after installing or restoring it when a tool that is not there yet provides it (a cargo plugin, a dotnet local tool), or after correcting checks.lint.command in .orbit/config.yaml when the command is wrong');
+      expect(res.baselineException!.detail).toContain('otherwise start a new run, after installing or restoring it when a tool that is not there yet provides it (a cargo plugin, a dotnet local tool, a pytest plugin), or after correcting checks.lint.command in .orbit/config.yaml when the command is wrong');
       expect(res.baselineException!.detail).not.toMatch(/--force/);
       expect(env.contractRow()).toEqual(before);
       expect(listAmendments(env.db, RUN, { status: 'rejected' })).toHaveLength(1);

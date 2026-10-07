@@ -119,7 +119,7 @@ export function missingTargetsNotExpectedToFlip(ctx: RunContext, contract: GoalC
  * checks, a frozen-policy block (the reason starts "Check X is misconfigured", steps/common.ts frozenPolicyCause), but
  * with the advice of its own that finishRun adds in place of the generic one (environment-block.ts missingTargetAdvice):
  * a goal meant to create the target must say so in a new run, and a target a tool provides that is not installed or
- * restored yet (a cargo plugin, a dotnet local tool) needs a new run once it is, because CONTRACTING reads the baseline
+ * restored yet (a cargo plugin, a dotnet local tool, a pytest plugin) needs a new run once it is, because CONTRACTING reads the baseline
  * PREFLIGHT recorded. Their open exception questions are withdrawn: the block answers them.
  */
 export async function blockOnMissingTargets(ctx: RunContext, checks: readonly MisconfiguredBlock[]): Promise<StepResult> {

@@ -233,7 +233,7 @@ describe.skipIf(!canStripTypes)('PREFLIGHT classifies a base-revision failure', 
     expect(reason).toMatch(/^Check lint is misconfigured, not a pre-existing failure: on the base revision [0-9a-f]{12} the check's command names something that does not exist, and the contract does not name it as the proof of any criterion/);
     expect(reason).toMatch(/"npm (?:error|ERR!) Missing script: \\"lint\\""/);
     // The block's own advice, not the generic frozen-policy one: three causes, each with what a new run needs.
-    expect(reason).toMatch(/\. Fix, by cause: when the goal is meant to create what the command names, say so in the goal of a new run, so that the contract names the check as the proof of a criterion and expects it to flip; when a tool that is not installed or restored yet provides it \(a cargo plugin, a dotnet local tool\), install or restore it and then start a new run, because this run reads the baseline it recorded and does not look again; when the command is wrong, correct checks\.lint\.command in \.orbit\/config\.yaml and start a new run\. Resuming this run would only block again, so cancel it \(orbit cancel orb-[\w-]+\) and start the new run with orbit run\.$/);
+    expect(reason).toMatch(/\. Fix, by cause: when the goal is meant to create what the command names, say so in the goal of a new run, so that the contract names the check as the proof of a criterion and expects it to flip; when a tool that is not installed or restored yet provides it \(a cargo plugin, a dotnet local tool, a pytest plugin\), install or restore it and then start a new run, because this run reads the baseline it recorded and does not look again; when the command is wrong, correct checks\.lint\.command in \.orbit\/config\.yaml and start a new run\. Resuming this run would only block again, so cancel it \(orbit cancel orb-[\w-]+\) and start the new run with orbit run\.$/);
     expect(reason).not.toMatch(/This comes from the run's frozen policy|Fix the config/);
     // Still a frozen-policy block: `orbit resume` refuses it (exit 5).
     expect(frozenPolicySetting(getRun(l.db(), run.id))).toBe('checks.lint.command');
@@ -262,7 +262,7 @@ describe.skipIf(!canStripTypes)('PREFLIGHT classifies a base-revision failure', 
     const reason = done.outcomeReason ?? '';
     expect(reason).toMatch(/^Check nextest is misconfigured, not a pre-existing failure: on the base revision [0-9a-f]{12} /);
     expect(reason).toContain('"error: no such command: `nextest`"');
-    expect(reason).toContain('when a tool that is not installed or restored yet provides it (a cargo plugin, a dotnet local tool), install or restore it and then start a new run, because this run reads the baseline it recorded and does not look again');
+    expect(reason).toContain('when a tool that is not installed or restored yet provides it (a cargo plugin, a dotnet local tool, a pytest plugin), install or restore it and then start a new run, because this run reads the baseline it recorded and does not look again');
     expect(reason).not.toMatch(/--force|orbit resume|This comes from the run's frozen policy/);
     expect(frozenPolicySetting(getRun(l.db(), run.id))).toBe('checks.nextest.command');
 
@@ -327,6 +327,52 @@ describe.skipIf(!canStripTypes)('PREFLIGHT classifies a base-revision failure', 
     expect(listQuestions(l.db(), run.id).map((q) => q.status)).toEqual(['withdrawn']);
     expect(listDecisions(l.db(), run.id, { kind: 'baseline.check-misconfigured' })).toEqual([]);
     // Nothing was excepted: the check passes on the candidate.
+    const contract = JSON.parse(getRun(l.db(), run.id).contractJson ?? '{}') as { baseline_exceptions?: unknown[] };
+    expect(contract.baseline_exceptions ?? []).toEqual([]);
+  }, 240_000);
+
+  // Review: pytest's "unrecognized arguments" was an argument error, so a goal to add pytest-cov and enforce coverage was
+  // BLOCKED at PREFLIGHT before the planner ran ("Check cov is misconfigured"), where main let the contract expect it to
+  // flip. An option of a plugin the repository does not install yet is something the goal may add: a missing target.
+  it('pytest with an option of a plugin the base revision does not install, which the contract names as a proof: expected to flip, and the run adds the plugin and succeeds', async () => {
+    // A stand-in pytest that prints what pytest 8.4.1 printed without pytest-cov, until the repository lists the plugin.
+    const bin = realpathSync(mkdtempSync(join(tmpdir(), 'orbit-bin-')));
+    bins.push(bin);
+    const pytest = [
+      `#!${process.execPath}`,
+      "const { existsSync, readFileSync } = require('node:fs');",
+      "if (existsSync('requirements-dev.txt') && readFileSync('requirements-dev.txt', 'utf8').includes('pytest-cov')) { process.stdout.write('1 passed in 0.01s\\n'); process.exit(0); }",
+      `process.stdout.write(${JSON.stringify(fixture('misconfigured', 'pytest-plugin-not-installed.log'))});`,
+      'process.exit(4);',
+      '',
+    ].join('\n');
+    writeFileSync(join(bin, 'pytest'), pytest);
+    chmodSync(join(bin, 'pytest'), 0o755);
+    const l = labWith({ cov: { command: ['pytest', '--cov=src', '--cov-fail-under=80'], env: PATH(bin) } }, {}, (c) => {
+      c.scope.allowed_paths = [...c.scope.allowed_paths, 'requirements-dev.txt'];
+      c.dependencies = { ...c.dependencies, add_packages: true };
+    });
+    const planner = {
+      ...PLANNER_OUTPUT,
+      criteria: [...PLANNER_OUTPUT.criteria, { key: 'cov', statement: 'Coverage of at least 80% is enforced.', mandatory: true, ui: false, proof: ['pytest --cov=src --cov-fail-under=80 exits 0'], check_ids: ['cov'], changes: [{ path: 'requirements-dev.txt', summary: 'add pytest-cov' }] }],
+      expected_changed_files: [...PLANNER_OUTPUT.expected_changed_files, { path: 'requirements-dev.txt', change: 'add', reason: 'pytest-cov' }],
+      allowed_paths: [...PLANNER_OUTPUT.allowed_paths, 'requirements-dev.txt'],
+      required_check_ids: ['unit', 'cov'],
+    };
+    const implementer = {
+      edits: [...(implementMul('*') as { edits: object[] }).edits, { op: 'write', path: 'requirements-dev.txt', content: 'pytest-cov==7.0.0\n' }],
+      structured: { ...IMPLEMENTER_OUTPUT, changed_paths: [...IMPLEMENTER_OUTPUT.changed_paths, { path: 'requirements-dev.txt', change: 'add', purpose: 'pytest-cov' }] },
+    };
+    writeScenario(l, baseScenario({ planner: [{ structured: planner }], implementer: [implementer], verifier: [DIAGNOSIS] }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(transitions(l, run.id).slice(0, 2)).toEqual(['PREFLIGHT', 'CONTRACTING']);
+    expect(listDecisions(l.db(), run.id, { kind: 'baseline.missing-target' })[0]?.data).toMatchObject({ checks: [expect.objectContaining({ check_id: 'cov', kind: 'missing-target', signature: 'pytest-unrecognized-arguments' })] });
+    expect(listDecisions(l.db(), run.id, { kind: 'baseline.expected-to-flip' }).map((d) => d.data)).toEqual([expect.objectContaining({ check_id: 'cov', criteria: ['AC-2'], missing_target: true })]);
+    expect(listDecisions(l.db(), run.id, { kind: 'baseline.check-misconfigured' })).toEqual([]);
     const contract = JSON.parse(getRun(l.db(), run.id).contractJson ?? '{}') as { baseline_exceptions?: unknown[] };
     expect(contract.baseline_exceptions ?? []).toEqual([]);
   }, 240_000);
