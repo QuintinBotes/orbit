@@ -27,6 +27,7 @@ import { ManualClock, systemClock } from '../../../src/core/clock.ts';
 import { registerController, heartbeatController, markControllerStopped } from '../../../src/storage/controllers.ts';
 import { acquireLease } from '../../../src/controller/run-store.ts';
 import { makeLab } from './lab.ts';
+import { ORBIT_VERSION } from '../../../src/cli/version.ts';
 
 const labs: Array<ReturnType<typeof makeLab>> = [];
 const dirs: string[] = [];
@@ -102,7 +103,7 @@ describe('help and version', () => {
 
   it.each(['--version', '-V', 'version'])('%s prints the version only', async (flag) => {
     const r = await run([flag]);
-    expect(r).toEqual({ code: 0, out: '0.2.0\n', err: '' });
+    expect(r).toEqual({ code: 0, out: `${ORBIT_VERSION}\n`, err: '' });
   });
 
   it('a command accepts --help and prints its help without running', async () => {

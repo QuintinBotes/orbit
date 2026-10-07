@@ -464,7 +464,13 @@ degraded but usable.
   directory up: with SDK 8 they refuse only a format that restores first, and
   name that pinned restore and `--no-restore` as the fix. Without a
   `global.json` the SDK is whichever is newest, so doctor judges it as SDK 9.
-  Workers are told which form runs.
+  Workers are told which form runs. SDK 8's `dotnet format` reads the output
+  of a `dotnet --version` it starts before it loads anything, and on a busy
+  machine it can lose that output, print `Unable to locate dotnet CLI. Ensure
+  that it is on the PATH.` and exit 4 having checked nothing (a race in
+  `dotnet format` itself, also outside Orbit; dotnet/sdk#44957). The runner
+  starts such an attempt again, up to two more times beside the check's
+  `flaky_reruns`, and a pass after it is a clean pass.
 
   On macOS the folder form does not run in a run's check sandbox either. It
   lists every folder above the one it formats for `.editorconfig` files (a

@@ -25,7 +25,10 @@ import { runnerEnv, type RunnerEnv } from './harness.ts';
  * Before this, such a check failed its baseline after a minute, or after MSBuild's five minutes of node retries when
  * its implicit restore had two projects to walk, and became a pre-existing failure with a baseline exception question. Now doctor fails it before any probe, and the
  * runner's record of the failure reads as the environment's. SDK 8.0.303's dotnet format evaluates projects in its own
- * process and runs once its restore is pinned (a global.json pins it here). Skipped where srt or dotnet is missing.
+ * process and runs once its restore is pinned (a global.json pins it here). On a busy machine it can lose the output of
+ * the `dotnet --version` it starts first and exit 4 having checked nothing, wherever its checkout is (once in seven CI
+ * runs of the step in a run's layout); the runner starts such an attempt again (runner.test.ts). Skipped where srt or
+ * dotnet is missing.
  */
 const installDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const provider = new SandboxRuntimeIsolation({ orbitInstallDir: installDir });

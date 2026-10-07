@@ -328,6 +328,57 @@ describe('runChecks: flakiness', () => {
     expect(listFailures(e.run.db, e.run.runId)).toHaveLength(1);
   });
 
+  // SDK 8's dotnet format loses the output of the `dotnet --version` it starts first when the child exits before it has
+  // begun to read it, prints this and exits 4, having checked nothing (evidence/dotnet-format.ts formatProbeLost;
+  // reproduced under srt with SDK 8.0.303 by holding its thread after the start, and seen once in seven CI runs).
+  const formatScript = (file: string, lost: number, failed = 0) =>
+    `const fs=require("fs");const f=${JSON.stringify(file)};fs.appendFileSync(f,"x");const n=fs.readFileSync(f,"utf8").length;` +
+    `if(n<=${lost}){console.log("Unable to locate dotnet CLI. Ensure that it is on the PATH.");process.exit(4)}` +
+    `if(n<=${lost + failed}){console.error("Error: formatting failure number "+n);process.exit(2)}`;
+
+  it('starts again an attempt whose dotnet format lost its own version probe, and a pass after it is clean', async () => {
+    const m = marker();
+    const e = await setup([nodeCheck('format', formatScript(m, 1))]);
+    const [r] = await run(e, ['format']);
+    expect(r).toMatchObject({ status: 'PASSED', flaky: false, exitCode: 0 });
+    const rows = listCheckRuns(e.run.db, { runId: e.run.runId, checkId: 'format' });
+    expect(rows.map((x) => [x.status, x.flaky, x.exitCode])).toEqual([['FAILED', false, 4], ['PASSED', false, 0]]);
+    expect(rows[1]!.rerunOf).toBe(rows[0]!.id);
+    expect(readFileSync(rows[0]!.logPath!, 'utf8')).toContain(
+      '[orbit] check=format status=FAILED exit=4 note=dotnet format checked nothing: the output of the dotnet --version it starts first was lost, a race in the dotnet format of SDK 8 on a busy machine that it reports as "Unable to locate dotnet CLI", so the runner starts the check again',
+    );
+    expect(listFailures(e.run.db, e.run.runId)).toEqual([]);
+  });
+
+  it('fails a check that loses it three times, and reruns nothing for the words with another exit code', async () => {
+    const m = marker();
+    const other = marker();
+    const e = await setup([nodeCheck('format', formatScript(m, 99)), nodeCheck('echo', `require("fs").appendFileSync(${JSON.stringify(other)},"x");console.log("Unable to locate dotnet CLI. Ensure that it is on the PATH.");process.exit(1)`)]);
+    const [format, echo] = await run(e, ['format', 'echo']);
+    expect(format).toMatchObject({ status: 'FAILED', flaky: false, exitCode: 4 });
+    expect(readText(m)).toBe('xxx');
+    expect(format!.id).toBe(listCheckRuns(e.run.db, { runId: e.run.runId, checkId: 'format' })[0]!.id);
+    expect(echo).toMatchObject({ status: 'FAILED', exitCode: 1 });
+    expect(readText(other)).toBe('x');
+    expect(readFileSync(echo!.logPath, 'utf8')).not.toContain('note=');
+    expect(listFailures(e.run.db, e.run.runId).map((f) => f.sourceId).sort()).toEqual([format!.id, echo!.id].sort());
+  });
+
+  it('reports the failure that came after a lost probe, and a pass after both is flaky', async () => {
+    const m = marker();
+    const flaky = marker();
+    const e = await setup([nodeCheck('format', formatScript(m, 1, 1)), nodeCheck('later', formatScript(flaky, 1, 1), { flaky_reruns: 1 })]);
+    const [format, later] = await run(e, ['format', 'later']);
+    const rows = listCheckRuns(e.run.db, { runId: e.run.runId, checkId: 'format' });
+    expect(rows.map((x) => [x.status, x.exitCode])).toEqual([['FAILED', 4], ['FAILED', 2]]);
+    expect(format).toMatchObject({ status: 'FAILED', exitCode: 2 });
+    expect(format!.id).toBe(rows[1]!.id);
+    expect(later).toMatchObject({ status: 'PASSED', flaky: true });
+    const laterRows = listCheckRuns(e.run.db, { runId: e.run.runId, checkId: 'later' });
+    expect(laterRows.map((x) => x.status)).toEqual(['FAILED', 'FAILED', 'PASSED']);
+    expect(listFailures(e.run.db, e.run.runId).map((f) => [f.source, f.sourceId])).toEqual(expect.arrayContaining([['check', rows[1]!.id], ['flaky_check', laterRows[1]!.id]]));
+  });
+
   it('does not rerun without flaky_reruns, and never reruns a timeout', async () => {
     const m = marker();
     const e = await setup([nodeCheck('plain', flakyScript(m, 99)), nodeCheck('slow', 'setInterval(()=>{},1000)', { timeout_seconds: 1, flaky_reruns: 3 })]);
