@@ -529,7 +529,9 @@ describe('resolveDeploy: a deploy left UNKNOWN (G51)', () => {
     const l = releaseLab((cfg) => {
       const e = cfg.release!.environments.preview!;
       e.deploy_command = [node, '-e', "require('fs').appendFileSync(process.env.MARK, 'ran\\n'); setTimeout(() => {}, 30000)"];
-      e.timeout_seconds = 1;
+      // Long enough for the sandbox and node to start and write the mark on a loaded runner (1 s was not, on macOS CI),
+      // and still far below the 30 s the command waits, so the deploy always times out after it started.
+      e.timeout_seconds = 5;
     });
     const d = await delivered(l);
     await expect(performRelease(input(l, d, { contractMerge: false, environment: 'preview' }))).rejects.toMatchObject({ details: { outcomeUnknown: true, environment: 'preview' } });
