@@ -99,7 +99,10 @@ wrong command either: `dotnet build` in a repository with no project yet,
 the file exists are what a goal that creates them is checked with. So PREFLIGHT
 lets the run go on and asks the baseline-exception question as for any failure,
 and CONTRACTING settles it against the contract
-(`controller/steps/baseline-questions.ts`):
+(`controller/steps/baseline-questions.ts`). The planner is told which checks
+those are, by id, and that it names one as a proof only when the goal is to
+create what its command names (a review found it was told nothing, so a
+contract could name such a check for a goal that does not create its target):
 
 - the contract names the check as the proof of a criterion: the goal is to
   create what the command names, so the check is expected to flip. The

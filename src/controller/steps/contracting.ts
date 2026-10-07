@@ -8,7 +8,8 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { atomicWriteJson } from '../../core/fsx.ts';
+import { atomicWriteJson, readJsonIfExists } from '../../core/fsx.ts';
+import { BASELINE_FILE, type BaselineReport } from '../../evidence/baseline.ts';
 import { hashObject } from '../../core/hash.ts';
 import { OrbitError } from '../../core/errors.ts';
 import { draftContract } from '../../contract/draft.ts';
@@ -111,11 +112,21 @@ function worktreeOf(ctx: RunContext): string {
 
 function plannerPrompt(ctx: RunContext, workerId: string): string {
   const checks = Object.values(ctx.snapshot.config.checks).map((c) => `${c.id}${c.mandatory ? ' (mandatory)' : ''}`);
+  // P18 for a missing target rests on the contract naming the check (steps/baseline-questions.ts): the planner is told
+  // which checks those are, by id only, and what naming one means.
+  const baseline = readJsonIfExists<BaselineReport>(join(ctx.runDir, BASELINE_FILE));
+  const missing = baseline && baseline.baseRevision === ctx.run.baseRevision && Array.isArray(baseline.failures) ? baseline.failures.filter((f) => f.classification === 'missing-target').map((f) => f.checkId) : [];
+  const many = missing.length > 1;
   const task = [
     'Draft the goal contract for the goal below. Read the repository as needed; do not edit anything.',
     'Return the current behaviour, criteria that are observable and testable, the proof for each, the trusted check ids that would show it,',
     'the files you expect to change, the narrowest allowed paths, non-goals, risks, assumptions and any decision you cannot settle from evidence.',
     `Trusted checks the policy defines: ${checks.join(', ') || 'none'}. Name only these as check ids.`,
+    ...(missing.length > 0
+      ? [
+          `On the base revision the command of ${many ? 'checks' : 'check'} ${missing.join(', ')} ${many ? 'name' : 'names'} something that does not exist yet (a missing target): name ${many ? 'each' : 'it'} as the proof of a criterion only when the goal is to create what it names, and the run then expects it to pass; otherwise leave it out, and the run stops on it as a misconfigured check.`,
+        ]
+      : []),
     '',
     `Goal (from the user): ${ctx.run.goal}`,
   ].join('\n');
