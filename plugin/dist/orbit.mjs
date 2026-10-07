@@ -25403,7 +25403,7 @@ var init_util = __esm({
 });
 
 // src/isolation/profiles.ts
-import { chmodSync as chmodSync3, lstatSync as lstatSync5, mkdirSync as mkdirSync6 } from "node:fs";
+import { chmodSync as chmodSync3, lstatSync as lstatSync5, mkdirSync as mkdirSync6, unlinkSync } from "node:fs";
 import { homedir as homedir4, tmpdir as tmpdir3 } from "node:os";
 import { dirname as dirname7, isAbsolute as isAbsolute7, join as join8 } from "node:path";
 function walkLimit(input) {
@@ -25514,9 +25514,26 @@ function prepareWorkerTmpDir(workerDir, root = orbitTmpRoot()) {
     throw new OrbitError("ISOLATION_UNAVAILABLE", `${root} is not a private directory owned by this user; refusing to put worker temp files there`, { path: root });
   }
   const dir = workerTmpDir(workerDir, root);
-  mkdirSync6(dir, { recursive: true, mode: 448 });
+  const existing = lstatOrNull2(dir);
+  if (existing !== null && (existing.isSymbolicLink() || !existing.isDirectory())) unlinkSync(dir);
+  else if (existing !== null && uid !== void 0 && existing.uid !== uid) {
+    throw new OrbitError("ISOLATION_UNAVAILABLE", `${dir} is not owned by this user; refusing to put worker temp files there`, { path: dir });
+  }
+  if (existing === null || existing.isSymbolicLink() || !existing.isDirectory()) mkdirSync6(dir, { mode: 448 });
+  const made = lstatSync5(dir);
+  if (made.isSymbolicLink() || !made.isDirectory()) {
+    throw new OrbitError("ISOLATION_UNAVAILABLE", `${dir} changed while it was being prepared; refusing to put worker temp files there`, { path: dir });
+  }
   chmodSync3(dir, 448);
   return dir;
+}
+function lstatOrNull2(p) {
+  try {
+    return lstatSync5(p);
+  } catch (err) {
+    if (err.code === "ENOENT") return null;
+    throw err;
+  }
 }
 function prepareFreshTmpDir(dir, root = orbitTmpRoot()) {
   removeScratch(prepareWorkerTmpDir(dir, root));
@@ -27276,7 +27293,7 @@ complete; the controller determines completion from independent gates.`;
 
 // src/adapters/shim.ts
 import { spawn as spawn3, spawnSync as spawnSync2 } from "node:child_process";
-import { closeSync as closeSync4, existsSync as existsSync10, fstatSync as fstatSync2, openSync as openSync4, readFileSync as readFileSync8, readSync, rmSync as rmSync2, statSync as statSync5, unlinkSync, writeSync as writeSync2 } from "node:fs";
+import { closeSync as closeSync4, existsSync as existsSync10, fstatSync as fstatSync2, openSync as openSync4, readFileSync as readFileSync8, readSync, rmSync as rmSync2, statSync as statSync5, unlinkSync as unlinkSync2, writeSync as writeSync2 } from "node:fs";
 import { randomBytes as randomBytes3 } from "node:crypto";
 import { StringDecoder as StringDecoder2 } from "node:string_decoder";
 import { tmpdir as tmpdir4 } from "node:os";
@@ -27674,7 +27691,7 @@ var init_shim = __esm({
         const path = join11(this.workerDir, `.spill-${name}-${process.pid}-${randomBytes3(4).toString("hex")}`);
         const fd = openSync4(path, "a+", 384);
         try {
-          unlinkSync(path);
+          unlinkSync2(path);
         } catch {
         }
         return fd;

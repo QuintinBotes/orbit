@@ -1,4 +1,4 @@
-import { chmodSync, lstatSync, mkdirSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, unlinkSync, type Stats } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
@@ -383,9 +383,30 @@ export function prepareWorkerTmpDir(workerDir: string, root: string = orbitTmpRo
     throw new OrbitError('ISOLATION_UNAVAILABLE', `${root} is not a private directory owned by this user; refusing to put worker temp files there`, { path: root });
   }
   const dir = workerTmpDir(workerDir, root);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // A sandboxed process can write its temp directory's entry, so a reused one may now be a link or a file. Never follow
+  // it: the sandbox's write rule resolves the path, so a link would make its target writable, and chmod would follow it
+  // (found in the #26 review). A link or file is removed; a directory that is not this user's is refused.
+  const existing = lstatOrNull(dir);
+  if (existing !== null && (existing.isSymbolicLink() || !existing.isDirectory())) unlinkSync(dir);
+  else if (existing !== null && uid !== undefined && existing.uid !== uid) {
+    throw new OrbitError('ISOLATION_UNAVAILABLE', `${dir} is not owned by this user; refusing to put worker temp files there`, { path: dir });
+  }
+  if (existing === null || existing.isSymbolicLink() || !existing.isDirectory()) mkdirSync(dir, { mode: 0o700 });
+  const made = lstatSync(dir);
+  if (made.isSymbolicLink() || !made.isDirectory()) {
+    throw new OrbitError('ISOLATION_UNAVAILABLE', `${dir} changed while it was being prepared; refusing to put worker temp files there`, { path: dir });
+  }
   chmodSync(dir, 0o700);
   return dir;
+}
+
+function lstatOrNull(p: string): Stats | null {
+  try {
+    return lstatSync(p);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
 }
 
 /**
