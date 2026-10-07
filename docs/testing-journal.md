@@ -8,6 +8,13 @@ status: **fixed** (with the commit), **open** (with the gap id from
 Entry format:
 
 ```
+### 2026-10-06: v0.2.0 retest from the public catalog
+- Tested: a fresh install of orbit@quintinbotes (v0.2.0) into an empty Claude config; the installed bin ran doctor, a live model probe and the three demo goals (simple, difficult, ui) in autonomous mode with Claude writing and Codex reviewing; orbit init on a fresh copy of the demo app.
+- Went well: all three runs SUCCEEDED with an independent Codex review ($0.49, $1.09 and $2.53 of a $30 cap; about 13 minutes in all); the timeline shows the completion gate, the desktop notification and the skipped channels in order; init proposed lint, typecheck and unit-tests.
+- Went wrong: the first attempt switched the demo to mode autonomous but left its delivery actions on; Orbit refused the config with one fix line per action (correct, but a person editing the mode by hand meets four errors).
+- Root cause: actions.commit, push_task_branch, open_pull_request and repair_ci default to the delivery mode's values in the demo config.
+- Change: watch. Not exercised: draft pull request delivery, PR comment notifications and remote answers against GitHub (no demo token); covered by tests with fakes only.
+
 ### <date>: <area>: <title>
 - Tested:
 - Went well:

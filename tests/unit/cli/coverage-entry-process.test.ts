@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryIo } from '../../../src/cli/io.ts';
 import { createContext } from '../../../src/cli/context.ts';
 import { EXIT } from '../../../src/cli/exit.ts';
+import { ORBIT_VERSION } from '../../../src/cli/version.ts';
 
 const spawnMock = vi.hoisted(() => ({ impl: null as null | ((...a: unknown[]) => unknown) }));
 vi.mock('node:child_process', async (importOriginal) => {
@@ -152,7 +153,7 @@ describe('main.ts (the process entry)', () => {
     process.argv = ['node', '/x/orbit.mjs', '--version'];
     process.exitCode = 9;
     await import('../../../src/cli/main.ts');
-    expect(stdout).toBe('0.2.0\n');
+    expect(stdout).toBe(`${ORBIT_VERSION}\n`);
     expect(process.exitCode).toBe(0);
   });
 
