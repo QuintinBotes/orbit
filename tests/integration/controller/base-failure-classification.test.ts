@@ -113,7 +113,7 @@ describe.skipIf(!canStripTypes)('PREFLIGHT classifies a base-revision failure', 
     expect(reason).toMatch(/\. Fix: for checks build, test: this is MSBuild starting a worker node, whose named pipe \.NET makes a Unix socket under \/tmp.*-m:1 on the check's dotnet command/);
     expect(reason).toMatch(
       process.platform === 'darwin'
-        ? /; and dotnet format \(check format\) cannot run in this check sandbox: remove checks\.format from \.orbit\/config\.yaml, or set checks\.format\.mandatory: false, and run dotnet format in CI \(on macOS no form/
+        ? /; and dotnet format \(check format\) cannot run in this check sandbox: remove checks\.format from \.orbit\/config\.yaml and run dotnet format in CI \(on macOS no form/
         : /; and dotnet format \(check format\) takes no -m:1, which it reads as the project to format/,
     );
     expect(reason.match(/-m:1 on the check's dotnet command/g)).toHaveLength(1);

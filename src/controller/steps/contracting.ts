@@ -117,11 +117,17 @@ function plannerPrompt(ctx: RunContext, workerId: string): string {
   const baseline = readJsonIfExists<BaselineReport>(join(ctx.runDir, BASELINE_FILE));
   const missing = baseline && baseline.baseRevision === ctx.run.baseRevision && Array.isArray(baseline.failures) ? baseline.failures.filter((f) => f.classification === 'missing-target').map((f) => f.checkId) : [];
   const many = missing.length > 1;
+  // A check the policy does not mark mandatory is the contract's to require, and one it names is held to what a mandatory
+  // check is: run on the base revision before any change, and a block when it cannot run there (ADR 0012).
+  const optional = Object.values(ctx.snapshot.config.checks).some((c) => !c.mandatory);
   const task = [
     'Draft the goal contract for the goal below. Read the repository as needed; do not edit anything.',
     'Return the current behaviour, criteria that are observable and testable, the proof for each, the trusted check ids that would show it,',
     'the files you expect to change, the narrowest allowed paths, non-goals, risks, assumptions and any decision you cannot settle from evidence.',
     `Trusted checks the policy defines: ${checks.join(', ') || 'none'}. Name only these as check ids.`,
+    ...(optional
+      ? ['A check not marked mandatory runs only when the contract names it, and then like a mandatory one: on the base revision before any change, and the run stops if it cannot run there. Name one only as the proof of a criterion that needs it.']
+      : []),
     ...(missing.length > 0
       ? [
           `On the base revision the command of ${many ? 'checks' : 'check'} ${missing.join(', ')} ${many ? 'name' : 'names'} something that does not exist yet (a missing target): name ${many ? 'each' : 'it'} as the proof of a criterion only when the goal is to create what it names, and the run then expects it to pass; otherwise leave it out, and the run stops on it as a misconfigured check.`,

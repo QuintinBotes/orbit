@@ -489,10 +489,14 @@ degraded but usable.
   read but for the checkout itself (the default `~/.orbit` is read-denied), so
   the check dies at once with `System.UnauthorizedAccessException: Access to
   the path '.../worktrees/<key>/<run>' is denied`. With SDK 9 and later no form
-  of `dotnet format` runs there: remove the check from `.orbit/config.yaml` (or
-  set its `mandatory: false`) and run `dotnet format` in CI, or pin SDK 8 as
-  above when the projects build with it. `orbit doctor` fails a mandatory such
-  check on macOS, the folder form included, with that fix, and the runner's
+  of `dotnet format` runs there: remove the check from `.orbit/config.yaml` and
+  run `dotnet format` in CI, or pin SDK 8 as above when the projects build with
+  it. Making the check optional (`mandatory: false`) is no way around it: a run
+  whose contract cites it in a criterion requires it, runs it on the base
+  revision before any change and blocks there
+  ([ADR 0012](decisions/0012-contract-checks-and-judged-trees.md)). `orbit
+  doctor` fails a mandatory such check on macOS, the folder form included, with
+  that fix, warns about an optional one with the same fix, and the runner's
   note and the block reason name it. On Linux `srt` lays an empty directory
   over a read-denied one, so the folder form can list the folders above the
   checkout. An `ORBIT_HOME` that no rule denies avoids it too, but then nothing

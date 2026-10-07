@@ -470,7 +470,7 @@ checks:
 | `network_hosts` | hosts the check may reach; must be covered by `network.allowed_hosts` |
 | `local_binding` | default true: the check may listen on 127.0.0.1 (a test suite that starts an HTTP server); outbound reach is still only `network_hosts`. Set false for a check that never serves |
 | `env` | extra environment; delivery credentials such as `GH_TOKEN` are refused |
-| `mandatory` | default true; a run cannot succeed while it fails |
+| `mandatory` | default true; a run cannot succeed while it fails. A check marked false runs only in a run whose contract requires it (a criterion cites it as proof), and then as a mandatory one does: on the base revision before any change, where it blocks the run when it cannot run ([ADR 0012](decisions/0012-contract-checks-and-judged-trees.md)), so marking a check optional does not make one that cannot run in the sandbox harmless |
 | `flaky_reruns` | 0 to 5; reruns are used only to classify flakiness |
 | `kind` | `command` (default) or `playwright` |
 
@@ -550,6 +550,27 @@ the repository which then fails this way, is read as a failure of the code. The
 reason of a misconfigured check blocked at PREFLIGHT names `checks.<id>.command`:
 the command is wrong, so fix it there. A missing target blocked at CONTRACTING
 says by cause what to do, because the command may be right.
+
+PREFLIGHT runs the mandatory checks. A check the contract requires that the
+policy does not mark mandatory (a criterion cites it as proof) is run on the
+base revision at PLANNING, before any attempt, and added to the baseline (a
+baseline amendment, [ADR 0012](decisions/0012-contract-checks-and-judged-trees.md));
+one a contract amendment adds later is run there at VERIFYING, before the
+candidate is judged. It is classified and handled as PREFLIGHT handles a
+mandatory check: an environment failure or a misconfigured check blocks the
+run there (the reason says the contract requires the check), a missing target
+is settled against the contract while the contract requires the check, a
+pre-existing failure gets its question, and a pass makes a failure on a
+candidate the change's. `orbit resume` after an environment block runs the
+check on the base revision again.
+
+A repair attempt that ends on a tree an earlier attempt produced, which
+verification judges `FAIL` exactly as before, ends the run `EXHAUSTED` as
+non-progress at once, instead of another diagnosis and attempt on the same
+tree (`BLOCKED` instead when an open material question blocks a criterion).
+A repair whose session stopped before it finished (max turns, a timeout) is
+not such a stop: the existing budget rules decide whether another attempt
+runs.
 
 A mandatory check that could not execute at all is an environment failure too,
 with or without a base-revision comparison: its process (or the UI application

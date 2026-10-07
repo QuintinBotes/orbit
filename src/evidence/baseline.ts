@@ -24,7 +24,9 @@ import type { Candidate, CheckResult, CheckStatus } from './types.ts';
  * Baseline and dependency install (spec §6 Preflight, §5 dependency gate).
  * Before the implementer changes anything, the mandatory checks run on the
  * base revision so failures that were already there are recorded and never
- * blamed on the candidate. Dependencies come from the existing lockfile only,
+ * blamed on the candidate; a check the contract requires beyond them is run
+ * there later and added (`amend`, docs/decisions/0012-contract-checks-and-judged-trees.md).
+ * Dependencies come from the existing lockfile only,
  * with install scripts denied unless policy allows or allowlists them, and the
  * only network the install gets is the package registry.
  *
@@ -469,6 +471,19 @@ export interface BaselineReport {
   /** False when the run was cancelled or a check could not run; such a baseline is not reused. */
   complete: boolean;
   recordedAt: number;
+  /**
+   * Checks run on the base revision after PREFLIGHT because the contract requires them and the baseline had no result
+   * for them (a baseline amendment, docs/decisions/0012-contract-checks-and-judged-trees.md), in the order they were
+   * run, each with the step that ran it. Absent when nothing was amended.
+   */
+  amendments?: BaselineAmendment[];
+}
+
+/** One baseline amendment: the checks it ran on the base revision, the step that ran them, and when. */
+export interface BaselineAmendment {
+  checkIds: string[];
+  stage: string;
+  recordedAt: number;
 }
 
 export interface RunBaselineInput {
@@ -492,6 +507,13 @@ export interface RunBaselineInput {
   registryHosts?: readonly string[];
   /** The repository's toolchain dependency caches (RunnerContext.toolchainCacheRoot). */
   toolchainCacheRoot?: string | null;
+  /**
+   * Run `checkIds` on the base revision and add them to the baseline recorded for this revision and policy, keeping what
+   * it recorded for every other check and its dependency audit (a baseline amendment, ADR 0012). Every failure of these
+   * checks is recorded, mandatory in the policy or not: the contract requires them. `stage` is the step that asks. The
+   * amended report is returned, not written: the caller writes it once it has classified the checks it ran.
+   */
+  amend?: { stage: string };
 }
 
 export interface BaselineOutcome {
@@ -516,24 +538,26 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
 
   const file = join(runDir, BASELINE_FILE);
   const prior = readJsonIfExists<BaselineReport>(file);
+  const sameBase = prior !== null && prior.schema === 'orbit.baseline/1' && prior.baseRevision === baseRevision && prior.policyHash === run.policyHash;
+  // An amendment adds to the baseline this run recorded; without one there is nothing to add to.
+  const amending = input.amend !== undefined;
+  if (amending && !(sameBase && Array.isArray(prior.checkIds) && Array.isArray(prior.checks) && Array.isArray(prior.failures))) {
+    throw new OrbitError('INTERNAL', `run ${run.id} has no baseline of ${baseRevision.slice(0, 12)} under this policy to amend`);
+  }
   // Reused only when it answers exactly this question: a baseline of fewer checks would leave the extra ones without a pre-existing record.
-  if (
-    prior &&
-    prior.schema === 'orbit.baseline/1' &&
-    prior.complete &&
-    prior.baseRevision === baseRevision &&
-    prior.policyHash === run.policyHash &&
-    Array.isArray(prior.checkIds) &&
-    prior.checkIds.join('\0') === checkIds.join('\0')
-  ) {
+  if (!amending && sameBase && prior.complete && Array.isArray(prior.checkIds) && prior.checkIds.join('\0') === checkIds.join('\0')) {
     return { report: prior, results: [], reused: true };
   }
 
   // A check PREFLIGHT classified on an earlier try at this baseline (its failure carries a classification, ADR 0010) runs
   // again: the person was told to fix the environment, install the program or restore the tool and resume, which the
   // recorded result cannot show. A failure of the code is reused as recorded.
-  const classified = prior && prior.baseRevision === baseRevision && prior.policyHash === run.policyHash && Array.isArray(prior.failures) ? prior.failures.filter((f) => f.classification !== undefined).map((f) => f.checkId) : [];
-  const setAside = new Set(classified.flatMap((checkId) => listCheckRuns(db, { runId: run.id, candidateId: null, checkId, rootsOnly: true }).filter((r) => isFinalCheckStatus(r.status)).map((r) => r.id)));
+  const classified = sameBase && Array.isArray(prior.failures) ? prior.failures.filter((f) => f.classification !== undefined && checkIds.includes(f.checkId)).map((f) => f.checkId) : [];
+  const finalBaseRuns = (checkId: string): string[] => listCheckRuns(db, { runId: run.id, candidateId: null, checkId, rootsOnly: true }).filter((r) => isFinalCheckStatus(r.status)).map((r) => r.id);
+  const setAside = new Set(classified.flatMap(finalBaseRuns));
+  // A check that runs again, or for the first time after PREFLIGHT, runs in a fresh checkout: the recorded install says
+  // nothing about this one, so it is installed again rather than reused (ADR 0012).
+  if (setAside.size > 0 || amending) for (const id of [INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID]) for (const r of finalBaseRuns(id)) setAside.add(r);
 
   const checkoutDir = input.checkoutDir ?? join(prepareWorkerTmpDir(join(runDir, 'baseline-checkout')), `base-${sha256(run.id).slice(0, 8)}`);
   await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
@@ -553,10 +577,12 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
       killGraceMs: input.killGraceMs,
       homeDir: input.homeDir,
       toolchainCacheRoot: input.toolchainCacheRoot ?? null,
+      ...(setAside.size > 0 ? { setAside } : {}),
     };
     const install = await installDependencies({ ...ctx, baseTree, registryHosts: input.registryHosts });
-    const results = install.skipped || install.ok ? await runCheckSet({ ...ctx, ...(setAside.size > 0 ? { setAside } : {}) }, baselineSubject(runDir, baseTree), defs) : [];
-    const audit = await runDependencyAudit({ ...ctx, registryHosts: input.registryHosts }, baselineSubject(runDir, baseTree, 'install'));
+    const results = install.skipped || install.ok ? await runCheckSet(ctx, baselineSubject(runDir, baseTree), defs) : [];
+    // An amendment keeps the audit PREFLIGHT recorded: the dependencies of the base revision are what they were.
+    const audit = amending ? (prior!.audit ?? null) : await runDependencyAudit({ ...ctx, registryHosts: input.registryHosts }, baselineSubject(runDir, baseTree, 'install'));
 
     const entries: BaselineCheckEntry[] = results.map((r) => ({
       checkId: r.checkId,
@@ -568,25 +594,53 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
       excerpt: r.excerpt,
       log: r.logPath,
     }));
-    const report: BaselineReport = {
-      schema: 'orbit.baseline/1',
-      runId: run.id,
-      baseRevision,
-      baseTree,
-      policyHash: run.policyHash,
-      checkIds,
-      install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
-      ...(audit ? { audit } : {}),
-      auditNotes: baselineAuditNotes(audit, dependencyAuditPolicy(snapshot.config)),
-      checks: entries,
-      failures: entries.filter((e) => e.mandatory && (e.status === 'FAILED' || e.status === 'TIMEOUT')).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
-      // Every requested check produced a decisive result (no ERROR, no CANCELLED, none skipped).
-      complete: (install.skipped || install.ok) && entries.length === defs.length && entries.every((e) => e.status === 'PASSED' || e.status === 'FAILED' || e.status === 'TIMEOUT'),
-      recordedAt: clock.now(),
-    };
-    atomicWriteJson(file, report);
-    const auditSummary = audit ? { ran: audit.ran, reason: audit.reason, vulnerabilities: audit.vulnerabilities.length, disallowed_licenses: audit.licenses.length } : null;
-    db.tx(() => appendEvent(db, run.id, 'baseline.recorded', 'controller', { base_revision: baseRevision, base_tree: baseTree, failures: report.failures.map((f) => f.checkId), complete: report.complete, audit: auditSummary }, clock.now()));
+    const decisive = (e: BaselineCheckEntry): boolean => e.status === 'PASSED' || e.status === 'FAILED' || e.status === 'TIMEOUT';
+    const failed = (e: BaselineCheckEntry): boolean => e.status === 'FAILED' || e.status === 'TIMEOUT';
+    // Every requested check produced a decisive result (no ERROR, no CANCELLED, none skipped).
+    const complete = (install.skipped || install.ok) && entries.length === defs.length && entries.every(decisive);
+    const now = clock.now();
+    let report: BaselineReport;
+    if (amending) {
+      // The amended checks replace whatever was recorded for them; a check with no decisive result is not counted as
+      // covered, so the next step that needs it runs it again.
+      const base = prior!;
+      const asked = new Set(checkIds);
+      const covered = entries.filter(decisive).map((e) => e.checkId);
+      report = {
+        ...base,
+        checkIds: [...new Set([...base.checkIds.filter((id) => !asked.has(id)), ...covered])].sort(),
+        install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
+        checks: [...base.checks.filter((c) => !asked.has(c.checkId)), ...entries],
+        failures: [...base.failures.filter((f) => !asked.has(f.checkId)), ...entries.filter(failed).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt }))],
+        complete: base.complete && complete,
+        amendments: [...(base.amendments ?? []), { checkIds, stage: input.amend!.stage, recordedAt: now }],
+      };
+    } else {
+      report = {
+        schema: 'orbit.baseline/1',
+        runId: run.id,
+        baseRevision,
+        baseTree,
+        policyHash: run.policyHash,
+        checkIds,
+        install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
+        ...(audit ? { audit } : {}),
+        auditNotes: baselineAuditNotes(audit, dependencyAuditPolicy(snapshot.config)),
+        checks: entries,
+        failures: entries.filter((e) => e.mandatory && failed(e)).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
+        complete,
+        recordedAt: now,
+      };
+    }
+    // An amendment's report is the caller's to write, once it has classified the checks it ran (steps/baseline-amendment.ts):
+    // written here, a crash before that would leave them looking judged and never classified.
+    if (!amending) atomicWriteJson(file, report);
+    if (amending) {
+      db.tx(() => appendEvent(db, run.id, 'baseline.amended', 'controller', { base_revision: baseRevision, base_tree: baseTree, stage: input.amend!.stage, checks: checkIds, failures: entries.filter(failed).map((e) => e.checkId), complete }, now));
+    } else {
+      const auditSummary = audit ? { ran: audit.ran, reason: audit.reason, vulnerabilities: audit.vulnerabilities.length, disallowed_licenses: audit.licenses.length } : null;
+      db.tx(() => appendEvent(db, run.id, 'baseline.recorded', 'controller', { base_revision: baseRevision, base_tree: baseTree, failures: report.failures.map((f) => f.checkId), complete: report.complete, audit: auditSummary }, now));
+    }
     return { report, results, reused: false };
   } finally {
     await cleanupCandidateCheckout(input.repoRoot, checkoutDir);

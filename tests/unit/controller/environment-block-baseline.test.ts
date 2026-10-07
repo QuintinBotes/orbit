@@ -85,7 +85,7 @@ describe('environmentFix', () => {
   it('where the folder form cannot list the folders above the checkout, names running dotnet format outside Orbit, for its build host and for its refused listing', () => {
     const host: BlockedCheck = { ...dotnet, checkId: 'fmt', signals: ['pipe-denied'], lines: ['Unhandled exception: System.TimeoutException: The operation has timed out.'], command: { argv: ['dotnet', 'format', '--verify-no-changes'], shell: false }, folderForm: false };
     const fix = environmentFix([host])!;
-    expect(fix).toMatch(/^dotnet format \(check fmt\) cannot run in this check sandbox: remove checks\.fmt from \.orbit\/config\.yaml, or set checks\.fmt\.mandatory: false, and run dotnet format in CI \(on macOS no form of dotnet format runs/);
+    expect(fix).toMatch(/^dotnet format \(check fmt\) cannot run in this check sandbox: remove checks\.fmt from \.orbit\/config\.yaml and run dotnet format in CI \(on macOS no form of dotnet format runs/);
     expect(fix).not.toMatch(/whitespace --folder --verify-no-changes in place|"--folder"/);
     const listing: BlockedCheck = {
       ...dotnet,

@@ -13,6 +13,9 @@
  * its output, or a mandatory check that could not execute at all) is BLOCKED
  * first, whatever the verdict: no repair or inquiry can fix it.
  * A protected-path edit is a policy violation: BLOCKED, never repaired.
+ * A check the contract requires that the base revision has no result for (one
+ * a contract amendment added after PLANNING) is run there first (a baseline
+ * amendment, steps/baseline-amendment.ts), so the candidate gate has its base.
  */
 import { existsSync, readdirSync } from 'node:fs';
 import { atomicWriteJson } from '../../core/fsx.ts';
@@ -38,6 +41,7 @@ import { implementationScopeGate, behaviourGate, type ScopeGateDetails } from '.
 import { authorizedOnce, deniedDependencyOperations, grantFor, requestAuthorization, scopeWithGrants } from '../authorization.ts';
 import { collectVerificationEvidence } from '../verification.ts';
 import { storedPlan } from './contracting.ts';
+import { amendBaseline } from './baseline-amendment.ts';
 import { assertContract, decide, finishRun, move, note, progress, safePoint, type StepResult } from './common.ts';
 import { briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
 import { recordGate } from './preflight.ts';
@@ -53,6 +57,10 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
   const contract = assertContract(ctx);
   const cand = ctx.candidate;
   if (!cand) throw new OrbitError('INTERNAL', `run ${ctx.run.id} is VERIFYING without a candidate`);
+  // No candidate is judged against a check the base revision has no result for: one a contract amendment added since
+  // PLANNING is run there first (ADR 0012), and blocks the run as at PREFLIGHT when it cannot run there.
+  const amended = await amendBaseline(ctx, contract);
+  if (amended) return amended;
   // A candidate invalidated for a policy violation is never repaired in place (the implementer may not touch the
   // protected paths it changed): after a person's resume the worktree is restored first (e2e Nm7).
   if (cand.status === 'INVALIDATED') return violatingCandidate(ctx, cand);

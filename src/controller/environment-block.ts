@@ -397,11 +397,37 @@ function quoted(lines: readonly string[]): string {
 
 const ENVIRONMENT_FALLBACK_FIX = 'let the check run in this environment (orbit doctor checks the isolation provider and starts each check\'s executable in the sandbox), or change the check definition';
 
-/** The outcome reason of a run blocked at PREFLIGHT because a check could not run on the base revision: which check, the first error line, why no exception is offered, and the fix. */
-export function baselineEnvironmentBlockReason(input: { runId: string; baseRevision: string; failures: readonly BlockedCheck[] }): string {
+/**
+ * A check a baseline amendment ran (docs/decisions/0012-contract-checks-and-judged-trees.md): the contract requires it, and
+ * PREFLIGHT, which runs the checks the policy marks mandatory, had not run it.
+ */
+export interface AmendedCheck {
+  checkId: string;
+  /** The criteria that cite it as evidence; empty when the contract only lists it among its required checks. */
+  citedBy: readonly string[];
+  /** Whether the policy marks it mandatory. */
+  mandatory: boolean;
+}
+
+/** The sentence that says why a check that blocks was run on the base revision after PREFLIGHT: the contract requires it. */
+export function amendmentSentence(checks: readonly AmendedCheck[]): string {
+  const why = (c: AmendedCheck): string =>
+    c.citedBy.length === 0 ? 'the contract lists it among its required checks' : `${c.citedBy.length > 1 ? 'criteria' : 'criterion'} ${c.citedBy.join(', ')} ${c.citedBy.length > 1 ? 'cite' : 'cites'} it as evidence`;
+  const many = checks.length > 1;
+  const optional = checks.every((c) => !c.mandatory) ? `, which the policy does not mark mandatory` : '';
+  return `The contract requires ${many ? 'checks' : 'check'} ${checks.map((c) => `${c.checkId} (${why(c)})`).join(', ')}${optional}, so ${many ? 'they were' : 'it was'} run on the base revision before any change was judged (a baseline amendment)`;
+}
+
+/**
+ * The outcome reason of a run blocked at PREFLIGHT because a check could not run on the base revision: which check, the
+ * first error line, why no exception is offered, and the fix. A check a baseline amendment ran says why it ran there.
+ */
+export function baselineEnvironmentBlockReason(input: { runId: string; baseRevision: string; failures: readonly BlockedCheck[]; amended?: readonly AmendedCheck[] }): string {
   const { runId, failures } = input;
+  const amended = (input.amended ?? []).filter((a) => failures.some((f) => f.checkId === a.checkId));
   return joinSentences([
     `${named(failures)} could not run on the base revision ${input.baseRevision.slice(0, 12)}, and the output shows an environment cause, not a pre-existing failure: ${evidenceOf(failures)}`,
+    ...(amended.length > 0 ? [amendmentSentence(amended)] : []),
     `${failures.length > 1 ? 'They are' : 'It is'} not recorded as a pre-existing failure and no baseline exception is offered: the check never got as far as the repository's code, so accepting its failure would let a run pass with a check that never ran`,
     `Fix: ${environmentFix(failures) ?? ENVIRONMENT_FALLBACK_FIX}`,
     `Then orbit resume ${runId} runs the baseline again; a changed check definition needs a new run, because this run's policy is frozen`,
@@ -421,11 +447,13 @@ function commandFix(checks: readonly MisconfiguredBlock[]): string {
  * policy, so the reason starts with "Check X is misconfigured" and finishRun adds the frozen-policy advice
  * (steps/common.ts frozenPolicyCause).
  */
-export function baselineBlockReason(input: { runId: string; baseRevision: string; environment: readonly BlockedCheck[]; misconfigured: readonly MisconfiguredBlock[] }): string {
+export function baselineBlockReason(input: { runId: string; baseRevision: string; environment: readonly BlockedCheck[]; misconfigured: readonly MisconfiguredBlock[]; amended?: readonly AmendedCheck[] }): string {
   const { environment, misconfigured } = input;
-  if (misconfigured.length === 0) return baselineEnvironmentBlockReason({ runId: input.runId, baseRevision: input.baseRevision, failures: environment });
+  if (misconfigured.length === 0) return baselineEnvironmentBlockReason({ runId: input.runId, baseRevision: input.baseRevision, failures: environment, ...(input.amended ? { amended: input.amended } : {}) });
+  const amended = (input.amended ?? []).filter((a) => misconfigured.some((m) => m.checkId === a.checkId) || environment.some((f) => f.checkId === a.checkId));
   const sentences = [
     `${named(misconfigured)} ${misconfigured.length > 1 ? 'are' : 'is'} misconfigured, not a pre-existing failure: on the base revision ${input.baseRevision.slice(0, 12)} the tool rejected the command line the check runs before it ran anything of the repository: ${evidenceOf(misconfigured)}`,
+    ...(amended.length > 0 ? [amendmentSentence(amended)] : []),
     `${misconfigured.length > 1 ? 'They are' : 'It is'} not recorded as a pre-existing failure and no baseline exception is offered: a check whose command is wrong never tested anything, so accepting its failure would let a run pass with a check that never ran`,
   ];
   if (environment.length > 0) {

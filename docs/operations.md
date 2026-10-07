@@ -502,6 +502,22 @@ run that reaches VERIFYING has none recorded, so today those denials always go
 to repair on a candidate, as does a restore failure MSBuild counts in "N
 Error(s)".
 
+A check the contract requires that the policy does not mark mandatory (a
+criterion cites it as proof) is not among PREFLIGHT's. It is run on the base
+revision at PLANNING, before any attempt, and one a contract amendment adds
+later at VERIFYING, before the candidate is judged (a baseline amendment,
+[ADR 0012](decisions/0012-contract-checks-and-judged-trees.md); the
+`baseline.amended` decision and `amendments` in `baseline.json` record it).
+It is classified and blocks as above, at the step that ran it, with a reason
+that says the contract requires it; after an environment fix `orbit resume`
+runs it on the base revision again. So `mandatory: false` does not make a
+check that cannot run in the sandbox harmless: remove such a check, as `orbit
+doctor` says. A repair attempt that ends on a tree an earlier attempt produced,
+judged `FAIL` exactly as before, ends the run `EXHAUSTED` as non-progress at
+once (`repair.non-progress`), not after more diagnoses and attempts on the same
+tree, unless its session stopped before it finished (max turns, a timeout) or
+a person resumed the run or asked for the repair with `orbit repair` since.
+
 PREFLIGHT asks the baseline-exception question for every pre-existing failure
 and every missing target. When the goal is to make that check pass (the
 contract's criteria name the check as their proof), the failure is expected to

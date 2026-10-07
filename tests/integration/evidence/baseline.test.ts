@@ -110,6 +110,38 @@ describe('runBaseline', () => {
     expect(out.report.failures).toEqual([]);
   });
 
+  // ADR 0012: a check the contract requires that PREFLIGHT did not run is run on the base revision later, and added.
+  it('an amendment adds the checks it runs to the recorded baseline, failures of optional checks included, and keeps the rest', async () => {
+    const t = tempRoot();
+    const r = makeRepo(t.root);
+    const run = makeRun(t.root, r.repo, [
+      nodeCheck('lint', 'console.log("clean")'),
+      nodeCheck('tests', 'console.error("Error: 2 tests were already broken"); process.exit(1)'),
+      nodeCheck('extra', 'console.error("extra: 1 problem"); process.exit(1)', { mandatory: false }),
+      nodeCheck('docs', 'console.log("docs ok")', { mandatory: false }),
+    ]);
+    cleanups.push(() => run.db.close(), () => t.remove());
+    await expect(runBaseline(baselineInput(t, r.repo, r.base, run, { checkIds: ['extra'], amend: { stage: 'PLANNING' } }))).rejects.toMatchObject({ code: 'INTERNAL' });
+
+    const first = await runBaseline(baselineInput(t, r.repo, r.base, run));
+    expect(first.report.checkIds).toEqual(['lint', 'tests']);
+    const out = await runBaseline(baselineInput(t, r.repo, r.base, run, { checkIds: ['extra', 'docs'], amend: { stage: 'PLANNING' } }));
+    expect(out.reused).toBe(false);
+    expect(out.report.checkIds).toEqual(['docs', 'extra', 'lint', 'tests']);
+    expect(out.report.checks.map((c) => [c.checkId, c.status, c.mandatory])).toEqual([['lint', 'PASSED', true], ['tests', 'FAILED', true], ['extra', 'FAILED', false], ['docs', 'PASSED', false]]);
+    // The contract requires the amended checks, so a failure of one the policy does not mark mandatory is recorded too.
+    expect(out.report.failures.map((f) => f.checkId)).toEqual(['tests', 'extra']);
+    expect(out.report.complete).toBe(true);
+    expect(out.report.recordedAt).toBe(first.report.recordedAt);
+    expect(out.report.amendments).toEqual([{ checkIds: ['docs', 'extra'], stage: 'PLANNING', recordedAt: expect.any(Number) }]);
+    // Returned, not written: the caller writes it once it has classified the amended checks.
+    expect(JSON.parse(readFileSync(join(run.runDir, 'baseline.json'), 'utf8'))).toEqual(first.report);
+    // PREFLIGHT's checks ran once; the amended ones once each.
+    expect(listCheckRuns(run.db, { runId: run.runId, candidateId: null, rootsOnly: true }).map((x) => x.checkId).sort()).toEqual(['docs', 'extra', 'lint', 'tests']);
+    expect(run.db.get("SELECT 1 AS x FROM events WHERE type = 'baseline.amended'")).toBeTruthy();
+    expect(sh(r.repo, 'worktree', 'list').trim().split('\n')).toHaveLength(1);
+  });
+
   it('rejects a tampered snapshot and a bad revision', async () => {
     const t = tempRoot();
     const r = makeRepo(t.root);
@@ -226,5 +258,47 @@ describe.skipIf(!npmProbe)(npmProbe ? 'dependency install from the lockfile' : '
     expect(out.report.checks[0]).toMatchObject({ checkId: 'probe', status: 'PASSED' });
     expect(readFileSync(out.results[0]!.logPath, 'utf8')).toContain('dep=42');
     expect(out.report.complete).toBe(true);
+  });
+
+  // ADR 0012: an amendment runs in a fresh checkout of the base revision, where the install PREFLIGHT recorded never ran.
+  it('installs again in an amendment\'s own checkout before it runs a check there', async () => {
+    const t = tempRoot();
+    cleanups.push(() => t.remove());
+    const { project } = npmProject(t.root);
+    sh(project, 'init', '-q', '-b', 'main');
+    sh(project, 'add', '-A');
+    sh(project, 'commit', '-qm', 'init');
+    const run = makeRun(t.root, project, [nodeCheck('probe', 'console.log("dep=" + require("acme-local"))'), nodeCheck('later', 'console.log("later=" + require("acme-local"))', { mandatory: false })]);
+    cleanups.push(() => run.db.close());
+    const head = sh(project, 'rev-parse', 'HEAD').trim();
+    expect((await runBaseline(baselineInput(t, project, head, run))).report.checks[0]).toMatchObject({ checkId: 'probe', status: 'PASSED' });
+    const out = await runBaseline(baselineInput(t, project, head, run, { checkIds: ['later'], amend: { stage: 'VERIFYING' } }));
+    expect(out.report.install).toMatchObject({ skipped: false, ok: true });
+    expect(out.report.checks.map((c) => [c.checkId, c.status])).toEqual([['probe', 'PASSED'], ['later', 'PASSED']]);
+    expect(readFileSync(out.results[0]!.logPath, 'utf8')).toContain('later=42');
+    expect(listCheckRuns(run.db, { runId: run.runId, candidateId: null, checkId: 'orbit-install', rootsOnly: true })).toHaveLength(2);
+  });
+
+  // A resumed PREFLIGHT runs a check it classified again (ADR 0010) in a fresh checkout too, which the recorded install never touched.
+  it('installs again when a resumed baseline runs a classified check again', async () => {
+    const t = tempRoot();
+    cleanups.push(() => t.remove());
+    const { project } = npmProject(t.root);
+    sh(project, 'init', '-q', '-b', 'main');
+    sh(project, 'add', '-A');
+    sh(project, 'commit', '-qm', 'init');
+    const flag = join(t.root, 'environment-refused');
+    writeFileSync(flag, 'x');
+    const run = makeRun(t.root, project, [nodeCheck('probe', 'require("acme-local"); if (require("fs").existsSync(process.env.REFUSED)) { console.error("refused"); process.exit(1); } console.log("ok")', { env: { REFUSED: flag } })]);
+    cleanups.push(() => run.db.close());
+    const head = sh(project, 'rev-parse', 'HEAD').trim();
+    const first = await runBaseline(baselineInput(t, project, head, run));
+    expect(first.report.failures.map((f) => f.checkId)).toEqual(['probe']);
+    // What PREFLIGHT leaves when it blocks on an environment failure: the failure classified, the baseline incomplete.
+    writeFileSync(join(run.runDir, 'baseline.json'), JSON.stringify({ ...first.report, complete: false, failures: first.report.failures.map((f) => ({ ...f, classification: 'environment' })) }));
+    execFileSync('rm', [flag]);
+    const again = await runBaseline(baselineInput(t, project, head, run));
+    expect(again.report.checks.map((c) => [c.checkId, c.status])).toEqual([['probe', 'PASSED']]);
+    expect(listCheckRuns(run.db, { runId: run.runId, candidateId: null, checkId: 'orbit-install', rootsOnly: true })).toHaveLength(2);
   });
 });

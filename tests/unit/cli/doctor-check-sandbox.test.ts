@@ -652,7 +652,7 @@ describe('checkSandboxCheck: the .NET build probe (issue #10)', () => {
   // is denied": the folder form lists every folder above the checkout for .editorconfig files, and a run's checkout sits
   // in the Orbit home, which the check profile read-denies but for the checkout itself.
   describe('dotnet format on macOS, where a run\'s checkout sits in the read-denied Orbit home', () => {
-    const OUTSIDE = /^remove checks\.format from \.orbit\/config\.yaml, or set checks\.format\.mandatory: false, and run dotnet format in CI \(on macOS no form of dotnet format runs in a run's check sandbox with SDK 9 and later: /;
+    const OUTSIDE = /^remove checks\.format from \.orbit\/config\.yaml and run dotnet format in CI \(on macOS no form of dotnet format runs in a run's check sandbox with SDK 9 and later: /;
 
     it('fails a mandatory folder-form check before starting it, with running dotnet format outside Orbit as its fix', async () => {
       const { w, cfg } = dotnetWorld([{ id: 'format', command: ['dotnet', 'format', 'whitespace', '--folder', '--verify-no-changes'], mandatory: true }]);
@@ -671,6 +671,17 @@ describe('checkSandboxCheck: the .NET build probe (issue #10)', () => {
       expect(c.fix).not.toMatch(/[\u2013\u2014]/);
     });
 
+    // Issue #32: doctor's fix offered checks.format.mandatory: false, and with it set a contract that cited the check in a
+    // criterion required it anyway; it is run on the base revision first and blocks that run, so optional is no fix.
+    it('warns for an optional format that cannot run, says a run that requires it blocks, and never offers making it optional', async () => {
+      const { w, cfg } = dotnetWorld([{ id: 'format', command: ['dotnet', 'format', '--verify-no-changes'], mandatory: false }]);
+      const c = await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, platform: 'darwin', launch: async () => ({ exitCode: 0, output: '' }) });
+      expect(c.status).toBe('warn');
+      expect(c.summary).toBe("check format runs dotnet format, which cannot run in a run's check sandbox on macOS; a run whose contract requires it would block at its baseline");
+      expect(c.fix).toMatch(OUTSIDE);
+      expect(c.fix).not.toMatch(/mandatory/);
+    });
+
     it('fails a format that loads the project with the same fix, not the folder form, and keeps -m:1 for a chain\'s build', async () => {
       const loads = dotnetWorld([{ id: 'format', command: ['dotnet', 'format', '--verify-no-changes'], mandatory: true }]);
       const c = await checkSandboxCheck({ config: loads.cfg, repo: loads.w.repo, provider: srtLike().provider, available: true, env: loads.w.env, homeDir: loads.w.home, platform: 'darwin', launch: async () => ({ exitCode: 0, output: '' }) });
@@ -682,7 +693,7 @@ describe('checkSandboxCheck: the .NET build probe (issue #10)', () => {
       expect(both.status).toBe('fail');
       expect(both.summary).toBe("check format would start MSBuild worker nodes, whose named pipes the sandbox refuses, or run dotnet format, which cannot run in a run's check sandbox on macOS; a run would block at its baseline");
       expect(both.fix!.startsWith('checks.format.command: ["dotnet build -m:1 && dotnet format --verify-no-changes"] (MSBuild worker nodes cannot run in the check sandbox')).toBe(true);
-      expect(both.fix).toMatch(/; remove checks\.format from \.orbit\/config\.yaml, or set checks\.format\.mandatory: false, and run dotnet format in CI \(on macOS no form/);
+      expect(both.fix).toMatch(/; remove checks\.format from \.orbit\/config\.yaml and run dotnet format in CI \(on macOS no form/);
       expect(both.fix).not.toMatch(/whitespace --folder --verify-no-changes"/);
     });
 

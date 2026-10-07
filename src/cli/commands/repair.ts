@@ -3,7 +3,8 @@
  *
  * With a run id: the run's latest evidence must say FAIL and the run must be
  * BLOCKED or paused. The CLI takes a short lease, moves the run to DIAGNOSING
- * (the controller then writes the repair brief and repairs), unpauses it, and
+ * (the controller then writes the repair brief and repairs), records the
+ * request (also for a run paused in DIAGNOSING already), unpauses it, and
  * hands off exactly as `orbit resume` does. With anything else it is
  * `orbit run --goal "Repair: <text>"`. A run id that does not qualify is
  * refused with the reason; it is never turned into a goal by accident.
@@ -89,13 +90,18 @@ export async function repairCommand(args: Args, ctx: CliContext): Promise<number
 
     const actor = `cli:${ctx.user}`;
     let after: RunRecord = run;
+    const requested = (): void => void appendEvent(db, run.id, 'run.repair-requested', actor, { from: run.state, fingerprint, candidate_id: cand.id, report_id: evidence.id }, ctx.clock.now());
     if (run.state !== 'DIAGNOSING') {
       await withCliLease(ctx, db, run.id, (ownerId) => {
         db.tx(() => {
           after = transition(db, { runId: run.id, to: 'DIAGNOSING', ownerId, reason: `repair requested by ${ctx.user}: ${fingerprint}`, actor, expectedFrom: run.state }, ctx.clock);
-          appendEvent(db, run.id, 'run.repair-requested', actor, { from: run.state, fingerprint, candidate_id: cand.id, report_id: evidence.id }, ctx.clock.now());
+          requested();
         });
       });
+    } else {
+      // A run paused in DIAGNOSING needs no transition, but the request is recorded all the same, before the unpause lets
+      // a controller step it: DIAGNOSING reads it as a person asking for this repair (steps/diagnosing.ts stalledRepair).
+      db.tx(requested);
     }
     if (getRun(db, run.id).paused) setPaused(db, run.id, false, actor, ctx.clock);
     after = getRun(db, run.id);

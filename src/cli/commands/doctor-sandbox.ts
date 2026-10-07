@@ -393,8 +393,15 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
   const one = 'dotnet commands that pin one MSBuild node (-m:1)';
   const loadsNothing = folderForm ? 'dotnet format checks that load no project (dotnet format whitespace --folder)' : 'dotnet format run outside Orbit, in CI';
   // Checks and the dependency install run at the baseline; the application and the release commands later, when started.
+  // A check the policy does not mark mandatory runs only in a run whose contract requires it, and then on the base
+  // revision first, where it blocks that run as a mandatory one would (ADR 0012): optional is no way around a refusal.
   const atBaseline = refused.some((r) => !r.label || r.label === 'dependencies.install_command');
-  const blocks = atBaseline ? 'a run would block at its baseline' : `a run would fail where Orbit starts ${refused.length === 1 ? 'it' : 'them'}`;
+  const optionalOnly = refused.every((r) => !r.label && !r.check.mandatory) && !refusedToolchains.some((r) => r.mandatory);
+  const blocks = optionalOnly
+    ? `a run whose contract requires ${refused.length === 1 ? 'it' : 'one of them'} would block at its baseline`
+    : atBaseline
+      ? 'a run would block at its baseline'
+      : `a run would fail where Orbit starts ${refused.length === 1 ? 'it' : 'them'}`;
   return result(
     status,
     nodes
