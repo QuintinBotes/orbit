@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { isOrbitError } from '../../../src/core/errors.ts';
-import { CHROMIUM_MACH_RENDEZVOUS, NIS_DOMAINNAME_LIMITATION, NIS_DOMAINNAME_READ, NIS_DOMAINNAME_SKIPPED, SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.ts';
+import { CHROMIUM_MACH_RENDEZVOUS, DOTNET_IPV4_ENV, NIS_DOMAINNAME_LIMITATION, NIS_DOMAINNAME_READ, NIS_DOMAINNAME_SKIPPED, SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.ts';
 import type { SandboxProfile } from '../../../src/isolation/types.ts';
 import { tempRoot, writeExecutable } from './fixtures.ts';
 
@@ -49,8 +49,8 @@ function iso(h: ReturnType<typeof host>, platform: NodeJS.Platform = 'darwin') {
   return new SandboxRuntimeIsolation({ srtPath: h.srt, pathEnv: h.bin, settingsDir: h.settingsDir, platform, sandboxExecPath: h.sandboxExec, chromiumPreloadPath: h.preload, nodePath: h.node });
 }
 
-function wrap(h: ReturnType<typeof host>, over: Partial<SandboxProfile>, platform: NodeJS.Platform = 'darwin') {
-  const w = iso(h, platform).wrap(['dotnet', 'restore', '-m:1'], profile({ writablePaths: [h.wt], ...over }), { cwd: h.wt, env: { PATH: '/usr/bin:/bin' } });
+function wrap(h: ReturnType<typeof host>, over: Partial<SandboxProfile>, platform: NodeJS.Platform = 'darwin', env: Record<string, string> = {}) {
+  const w = iso(h, platform).wrap(['dotnet', 'restore', '-m:1'], profile({ writablePaths: [h.wt], ...over }), { cwd: h.wt, env: { PATH: '/usr/bin:/bin', ...env } });
   cleanups.push(w.cleanup);
   return w;
 }
@@ -117,5 +117,25 @@ describe('wrap with nisDomainName on macOS', () => {
     const reachable = new SandboxRuntimeIsolation({ srtPath: h.srt, pathEnv: h.bin, settingsDir: logs, platform: 'darwin', sandboxExecPath: h.sandboxExec, chromiumPreloadPath: h.preload, nodePath: h.node });
     expect(code(() => reachable.wrap(['true'], profile({ writablePaths: [h.wt], nisDomainName: true }), { cwd: h.wt, env: { HOME: h.r } }))).toBe('ISOLATION_UNAVAILABLE');
     expect(readdirSync(logs)).toEqual([]);
+  });
+});
+
+// .NET opens dual-stack IPv6 sockets, so its connects to 127.0.0.1 (srt's proxy on localhost included) reach the kernel as
+// ::ffff:127.0.0.1, which Seatbelt's localhost rule does not match on GitHub's macOS runner: every .NET HTTP request there
+// was denied. A .NET process on macOS gets its sockets in IPv4 only, as srt does for Java.
+describe('wrap of a .NET process on macOS: IPv4 sockets', () => {
+  it('sets DOTNET_SYSTEM_NET_DISABLEIPV6=1 for the process, with or without the NIS rule', () => {
+    expect(DOTNET_IPV4_ENV).toEqual({ DOTNET_SYSTEM_NET_DISABLEIPV6: '1' });
+    expect(wrap(host(), { nisDomainName: true }).env).toMatchObject(DOTNET_IPV4_ENV);
+    expect(wrap(host({ version: '0.0.79' }), { nisDomainName: true }).env).toMatchObject(DOTNET_IPV4_ENV);
+  });
+
+  it('keeps the value the command sets itself', () => {
+    expect(wrap(host(), { nisDomainName: true }, 'darwin', { DOTNET_SYSTEM_NET_DISABLEIPV6: '0' }).env.DOTNET_SYSTEM_NET_DISABLEIPV6).toBe('0');
+  });
+
+  it('sets nothing for a process that does not run .NET, or on Linux', () => {
+    const h = host();
+    for (const w of [wrap(h, {}), wrap(h, { nisDomainName: true }, 'linux')]) expect(w.env.DOTNET_SYSTEM_NET_DISABLEIPV6).toBeUndefined();
   });
 });

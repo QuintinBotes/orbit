@@ -23,7 +23,10 @@ import { runnerEnv, type RunnerEnv } from './harness.ts';
  * initializer asks libc for the NIS domain name (sysctl kern.nisdomainname), which srt's Seatbelt profile does not let
  * it read ("The type initializer for 'System.Net.CookieContainer' threw an exception ... GetDomainName: -1"). NuGet's
  * restore failed that way (NU1301), and so did any test that makes an HTTP request. Orbit's preload adds one read-only
- * rule for that name to every sandbox that runs .NET.
+ * rule for that name to every sandbox that runs .NET. Past it, .NET's dual-stack IPv6 sockets connect to loopback as
+ * ::ffff:127.0.0.1, which srt's Seatbelt loopback rule does not match on every macOS release (GitHub's runner denied
+ * every request, srt's proxy included, with "Permission denied"; macOS 27 allows it), so .NET there opens IPv4 sockets
+ * (DOTNET_SYSTEM_NET_DISABLEIPV6=1), which the loopback program reports.
  *
  * HTTPS needs more on macOS: .NET verifies a server certificate through the system trust service (trustd), which srt
  * keeps out of reach because sandboxed code could have it fetch from any host. So a NuGet restore from nuget.org
@@ -56,6 +59,7 @@ const LOOPBACK = {
     '  var body = "acme 42";',
     '  await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\\r\\nContent-Length: {body.Length}\\r\\nConnection: close\\r\\n\\r\\n{body}"));',
     '});',
+    'Console.WriteLine($"dual-stack sockets: {Socket.OSSupportsIPv6}");',
     'using var http = new HttpClient();',
     'Console.WriteLine($"fetched: {await http.GetStringAsync($"http://127.0.0.1:{port}/")}");',
     'await server;',
@@ -84,6 +88,8 @@ describe.skipIf(skip !== null)(skip === null ? '.NET HTTP clients under srt' : `
     const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['http'] });
     const log = readFileSync(r!.logPath, 'utf8');
     expect(log).not.toMatch(NOT_CONTAINER);
+    // On macOS in IPv4, so its connect matches srt's loopback rule on every release, not only where the mapped form does.
+    if (process.platform === 'darwin') expect(log).toContain('dual-stack sockets: False');
     expect(log).toContain('fetched: acme 42');
     expect(r).toMatchObject({ status: 'PASSED', isolation: 'sandbox-runtime' });
   }, 300_000);

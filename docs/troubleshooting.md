@@ -329,7 +329,12 @@ degraded but usable.
   workers and doctor's probes that run .NET (ADR 0009, addendum); it needs
   `srt` 0.0.78, the version Orbit ships, and the check's record says when it was
   not added. Approved operations, the UI app and release commands do not get it
-  yet. HTTPS needs the system trust service as
+  yet. Those processes also open IPv4 sockets (`DOTNET_SYSTEM_NET_DISABLEIPV6=1`,
+  unless the check's `env` sets it): .NET's dual-stack sockets reach loopback as
+  `::ffff:127.0.0.1`, which the sandbox's loopback rule does not match on some
+  macOS releases, so a request through `srt`'s proxy or to a server on loopback
+  failed with `Permission denied (localhost:N)` or `(127.0.0.1:N)`. HTTPS needs
+  the system trust service as
   well, which the sandbox keeps out of reach (it could fetch from any host for a
   sandboxed process), so on macOS a restore from nuget.org inside the sandbox
   stops at `NU1301: ... The SSL connection could not be established` (a run

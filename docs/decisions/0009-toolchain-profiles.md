@@ -600,6 +600,29 @@ Decision.
     in `Directory.Build.props` doctor fails and the install fails on `error
     NU1900`; with the form doctor names, doctor says nothing and the install
     and checks pass.
+13. **.NET opens IPv4 sockets on macOS.** .NET creates dual-stack IPv6 sockets
+    by default, HttpClient's included, so its connect to `127.0.0.1` reaches
+    the kernel as `::ffff:127.0.0.1`. `srt` lets a sandbox reach loopback
+    through one Seatbelt rule, `(remote ip "localhost:N")`, which matches
+    `127.0.0.1` and `::1` but, on some macOS releases, not that mapped form:
+    `srt` 0.0.78 says so for Java, which it starts with
+    `-Djava.net.preferIPv4Stack=true`, and on GitHub's macOS runner every .NET
+    HTTP request in the sandbox was denied once item 8 let the clients start,
+    NuGet's restore through `srt`'s proxy (`NU1301 ... Permission denied
+    (localhost:N)`) and a test's request to its own server on loopback
+    (`Permission denied (127.0.0.1:N)`). macOS 27 matches the mapped form, so
+    the denial did not show there. The wrap of a process that gets .NET's
+    profile on macOS (`isolation/sandbox-runtime.ts`, `DOTNET_IPV4_ENV`) sets
+    `DOTNET_SYSTEM_NET_DISABLEIPV6=1` unless the command sets the variable
+    itself: .NET then opens IPv4 sockets by default and resolves names to IPv4
+    addresses, while a socket the code asks for in IPv6 explicitly still opens
+    (measured with SDK 9). Nothing reachable is lost, since the sandbox reaches
+    loopback and `srt`'s proxy only; no Seatbelt rule changes, and no
+    particular `srt` is needed. Verified on macOS 27 with SDK 9.0.305 and
+    10.0.401 through the runner under `srt`: one rule appended to the profile
+    through the preload, `(deny network-outbound (socket-domain AF_INET6))`,
+    reproduced both of the runner's failures, and with the variable both
+    tests passed under that rule and without it.
 
 Consequences.
 
@@ -635,7 +658,9 @@ Consequences.
 - Every check, dependency install, worker and doctor probe that runs .NET
   under `srt` on macOS can read one more sysctl; a check's evidence record (the
   dependency install's included) says so, in the limitation that names the
-  rule.
+  rule. Each also opens IPv4 sockets by default (item 13); a check that needs
+  .NET's dual-stack default sets `DOTNET_SYSTEM_NET_DISABLEIPV6` in its own
+  `env`.
 - A `dotnet format` check under `srt` is `dotnet format whitespace --folder
   --verify-no-changes` on Linux, or, with SDK 8 pinned by `global.json`, any
   form whose restore is pinned; otherwise doctor fails it (mandatory) or warns

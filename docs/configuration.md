@@ -596,7 +596,9 @@ the project in dotnet format's own process, any form runs once its restore is
 pinned: `["dotnet restore -m:1 && dotnet format --verify-no-changes
 --no-restore"]` with `shell: true`. On macOS the
 checks, the dependency install, workers and doctor's probes that run .NET may
-also read the NIS domain name, which .NET's HTTP clients need; a NuGet restore
+also read the NIS domain name, which .NET's HTTP clients need, and open IPv4
+sockets (`DOTNET_SYSTEM_NET_DISABLEIPV6=1` unless a check's `env` sets it), whose
+loopback connects the sandbox allows on every macOS release; a NuGet restore
 from nuget.org still cannot verify TLS there, so fill the repository's NuGet
 cache outside the sandbox with the command doctor's `checks.dotnet-packages`
 prints (it restores local tools too; a check that runs one restores it first,

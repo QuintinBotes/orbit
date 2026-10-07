@@ -234,6 +234,18 @@ export const NIS_DOMAINNAME_LIMITATION =
 export const NIS_DOMAINNAME_SKIPPED =
   ".NET on macOS: the NIS domain name rule was not added, because the srt found is not the version Orbit's preload was verified against, so a .NET HTTP client (NuGet's restore included) fails with \"GetDomainName: -1\"; use the srt that ships with Orbit";
 
+/**
+ * What a .NET process on macOS gets in its environment unless its command sets the variable: its sockets in IPv4 only.
+ * .NET opens dual-stack IPv6 sockets by default (SocketsHttpHandler included), so a connect to 127.0.0.1 reaches the
+ * kernel as ::ffff:127.0.0.1, and srt's one loopback rule, Seatbelt's (remote ip "localhost:N"), does not match that
+ * form on every macOS release (srt 0.0.78 says so for Java; GitHub's macOS runner denied it, macOS 27 allows it). There
+ * every .NET HTTP request in the sandbox was denied ("Permission denied (localhost:N)"): NuGet's restore through srt's
+ * proxy, and a test's request to its own server on loopback. srt forces Java onto IPv4 for the same reason
+ * (-Djava.net.preferIPv4Stack=true). Nothing is lost: the sandbox reaches loopback and srt's proxy only, and a socket
+ * the code asks for in IPv6 explicitly still opens.
+ */
+export const DOTNET_IPV4_ENV: Readonly<Record<string, string>> = Object.freeze({ DOTNET_SYSTEM_NET_DISABLEIPV6: '1' });
+
 /** srt-chromium-preload.mjs: beside this module in the sources, beside the bundle in plugin/dist/ (scripts/build.mjs copies it there). */
 export function defaultChromiumPreloadPath(): string {
   return fileURLToPath(new URL('./srt-chromium-preload.mjs', import.meta.url));
@@ -405,7 +417,8 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
     const darwin = this.platform === 'darwin';
     const browser = profile.chromiumMachRendezvous === true && darwin;
     // A browser run needs its rules to start at all, so an unverified srt stops it; the NIS rule only lets .NET's HTTP
-    // clients start, so without a verified srt the command runs as srt alone runs it, and says so.
+    // clients start, so without a verified srt the command runs as srt alone runs it, and says so. A .NET process gets
+    // its sockets in IPv4 only either way (DOTNET_IPV4_ENV), which needs no rule.
     const nisWanted = profile.nisDomainName === true && darwin;
     const nis = nisWanted && this.preloadVerified(pkg);
     const sets = [...(browser ? ['chromium'] : []), ...(nis ? ['nis-domainname'] : [])];
@@ -429,7 +442,7 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
         // The preload records a refusal here; a sandboxed command that could write it could fake one.
         if (writableIn(reach, realpathSync(dir))) throw new OrbitError('ISOLATION_UNAVAILABLE', `the srt settings directory ${dir} is inside a path the sandbox may write, so the srt preload's refusal record could be forged`, { path: dir });
       }
-      const launch = launcherEnv(sandboxEnv(opts.env, settings.filesystem.allowWrite, browser), reach);
+      const launch = launcherEnv(sandboxEnv(opts.env, settings.filesystem.allowWrite, browser, nisWanted), reach);
       // Inside the sandbox, so the limits bind the command and its children but not srt or its proxy.
       const command = withResourceLimits(argv, this.opts.limits, { shell: this.opts.limitShell });
       if (launch.restore.length && command[0]!.includes('=')) {
@@ -554,8 +567,11 @@ export function seccompHelperFor(srtPath: string, arch: string): string | null {
  * to a temp file there first, so under srt every download was cancelled
  * (live demo 3). The child's private temp directory is handed to Chromium as
  * MAC_CHROMIUM_TMPDIR instead; the Seatbelt profile does not change.
+ *
+ * A process that runs .NET on macOS (`dotnet`) gets its sockets in IPv4 only (DOTNET_IPV4_ENV), unless its command
+ * sets the variable itself, so its connects to loopback match srt's Seatbelt rule.
  */
-function sandboxEnv(env: Record<string, string>, allowWrite: string[], chromium: boolean): Record<string, string> {
+function sandboxEnv(env: Record<string, string>, allowWrite: string[], chromium: boolean, dotnet: boolean): Record<string, string> {
   const out = { ...env };
   const writable = (p: string | undefined): boolean => {
     if (!p) return false;
@@ -572,6 +588,7 @@ function sandboxEnv(env: Record<string, string>, allowWrite: string[], chromium:
   }
   // Only a private directory already in the write allowlist: never srt's shared /tmp/claude, never a new path.
   if (chromium && writable(out.CLAUDE_CODE_TMPDIR)) out.MAC_CHROMIUM_TMPDIR = out.CLAUDE_CODE_TMPDIR!;
+  if (dotnet) for (const [name, value] of Object.entries(DOTNET_IPV4_ENV)) if (out[name] === undefined) out[name] = value;
   return out;
 }
 
