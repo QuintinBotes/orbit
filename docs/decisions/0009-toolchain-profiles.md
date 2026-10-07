@@ -911,8 +911,10 @@ Consequences.
   CI), from the note with which the runner records that check as failed
   instead of passed; a refused restore is read
   only when MSBuild recorded the node, which the runner now also looks for when
-  the check has already failed; whether MSBuild records it before failing on
-  Linux was not measured.
+  the check has already failed; on Linux MSBuild had recorded it by the time
+  a `dotnet build` of a project with two references failed in five runs of
+  eight (an approved command, SDK 10.0.401, arm64 Ubuntu 24.04 container),
+  and on GitHub's Ubuntu runners in neither of two.
 - No Unix socket is allowed in any sandbox; the evaluation above found none
   that would help.
 - Not verified: `dotnet test -m:1` in the Microsoft.Testing.Platform mode of
