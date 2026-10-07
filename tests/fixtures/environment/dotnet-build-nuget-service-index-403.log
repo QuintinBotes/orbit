@@ -1,0 +1,14 @@
+  Determining projects to restore...
+/var/folders/acme/T/orbit-evidence-acme/checkout/Acme.csproj : error NU1301: Unable to load the service index for source https://api.nuget.org/v3/index.json.
+/var/folders/acme/T/orbit-evidence-acme/checkout/Acme.csproj : error NU1301:   The proxy tunnel request to proxy 'http://localhost:54120/' failed with status code '403'."
+  Failed to restore /var/folders/acme/T/orbit-evidence-acme/checkout/Acme.csproj (in 5.77 sec).
+
+Build FAILED.
+
+/var/folders/acme/T/orbit-evidence-acme/checkout/Acme.csproj : error NU1301: Unable to load the service index for source https://api.nuget.org/v3/index.json.
+/var/folders/acme/T/orbit-evidence-acme/checkout/Acme.csproj : error NU1301:   The proxy tunnel request to proxy 'http://localhost:54120/' failed with status code '403'."
+    0 Warning(s)
+    1 Error(s)
+
+Time Elapsed 00:00:06.17
+[orbit] check=build status=FAILED exit=1

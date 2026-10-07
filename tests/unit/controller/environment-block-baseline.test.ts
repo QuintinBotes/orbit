@@ -98,6 +98,22 @@ describe('environmentFix', () => {
     expect(environmentFix([{ ...listing, folderForm: true }])).toMatch(/^run orbit doctor, which starts each check's executable in the sandbox/);
   });
 
+  // Review: on macOS the network-denied fix (the host in network_hosts, or an offline check with the install restoring)
+  // leads a NuGet restore to the SSL failure, since nothing in the sandbox can verify nuget.org's certificate there.
+  it('names doctor\'s fill command for a NuGet restore on macOS, whether the proxy refused it or its SSL connection failed', () => {
+    const nuget = "/var/folders/acme/T/orbit-evidence-acme/checkout/Acme.csproj : error NU1301:   The proxy tunnel request to proxy 'http://localhost:54120/' failed with status code '403'.\"";
+    const refused: BlockedCheck = { ...dotnet, signals: ['network-denied'], lines: [nuget] };
+    const fill = /fill the repository's NuGet cache outside the sandbox with the command orbit doctor prints \(checks\.dotnet-packages\)/;
+    expect(environmentFix([refused], 'darwin')).toMatch(fill);
+    expect(environmentFix([refused], 'darwin')).not.toMatch(/add the host to the check's network_hosts/);
+    expect(environmentFix([refused], 'linux')).toMatch(/^the check reached for a host its policy does not let it reach.*add the host to the check's network_hosts/);
+    // Another tool's refusal keeps the network fix on macOS too.
+    expect(environmentFix([{ ...refused, lines: ['curl: (56) CONNECT tunnel failed, response 403'] }], 'darwin')).toMatch(/add the host to the check's network_hosts/);
+    const tls: BlockedCheck = { ...dotnet, signals: ['nuget-tls-denied'], lines: ['/var/folders/acme/T/orbit-evidence-acme/checkout/Acme.csproj : error NU1301:   The SSL connection could not be established, see inner exception.'] };
+    expect(environmentFix([tls])).toMatch(fill);
+    expect(environmentFix([tls, refused], 'darwin')!.match(/checks\.dotnet-packages/g)).toHaveLength(1);
+  });
+
   it('is added to the candidate reason for a check that could not execute because of a denial', () => {
     const reason = environmentBlockReason({ runId: 'orb-3', candidateSeq: 2, failures: [dotnet] });
     expect(reason).toMatch(/^Check build could not execute on candidate 2/);

@@ -26,6 +26,14 @@ const PROGRAM_SOCKET = fixture('dotnet-run-unix-socket-eacces.log');
 const NUGET_PROXY = fixture('dotnet-build-nuget-proxy-403.log');
 /** Captured under Orbit's runner and srt 0.0.78 on macOS: NuGet's HTTP client cannot start in the sandbox. */
 const NUGET_HTTP = fixture('dotnet-build-nuget-cookiecontainer.log');
+/**
+ * Captured under Orbit's runner and srt 0.0.78 on macOS (the .NET 9.0.305 SDK, the NIS rule in place): `dotnet build
+ * Acme.csproj -m:1` of a project with one package and an empty cache, with api.nuget.org in the check's network_hosts.
+ * The proxy lets it through, and .NET cannot verify the certificate, since srt keeps the system trust service out of
+ * reach; and the same build without the host, the proxy's 403 on the service index.
+ */
+const NUGET_SSL = fixture('dotnet-build-nuget-ssl.log');
+const NUGET_INDEX_403 = fixture('dotnet-build-nuget-service-index-403.log');
 /** Python 3.12's unittest, a test that opens a file it may not read (captured; the checkout path neutral). */
 const UNITTEST_EACCES = fixture('python-unittest-permission-error.log');
 /**
@@ -173,6 +181,19 @@ describe('classifyCouldNotRun: a NuGet restore refused inside dotnet build', () 
     expect(classifyCouldNotRun({ checkId: 'build', output: NUGET_HTTP.replace(/^.*GetDomainName: -1\n/gm, ''), insideRoots: ROOTS })).toBeNull();
   });
 
+  // Review: following the network-denied fix on macOS (the host in network_hosts) led to this, which PREFLIGHT recorded
+  // as a pre-existing failure with a baseline-exception question, the issue #10 symptom.
+  it('reads NuGet\'s restore that could not establish the SSL connection (macOS, the system trust service out of reach) as the environment', () => {
+    const f = classifyCouldNotRun({ checkId: 'build', output: NUGET_SSL, insideRoots: ROOTS });
+    expect(f).toMatchObject({ checkId: 'build', fingerprint: null, signals: ['nuget-tls-denied'] });
+    expect(f!.lines).toEqual(['/var/folders/acme/T/orbit-evidence-acme/checkout/Acme.csproj : error NU1301:   The SSL connection could not be established, see inner exception.']);
+    expect(f!.cause).toMatch(/system trust service/);
+    expect(classifyCouldNotRun({ checkId: 'build', output: NUGET_INDEX_403, insideRoots: ROOTS })?.signals).toEqual(['network-denied']);
+    // A failing test that reports the same words is the code's.
+    expect(classifyCouldNotRun({ checkId: 'test', output: `${NUGET_SSL}\nFailed!  - Failed:     1, Passed:     3, Skipped:     0, Total:     4\n`, insideRoots: ROOTS })).toBeNull();
+    expect(classifyCouldNotRun({ checkId: 'test', output: 'HttpRequestException: The SSL connection could not be established, see inner exception.\n', insideRoots: ROOTS })).toBeNull();
+  });
+
   it('keeps the count when any counted error is not a restore error: the build compiled the repository\'s code', () => {
     const withCompile = NUGET_PROXY.replace(/^ {4}2 Error\(s\)$/m, '/src/Acme/Calc.cs(3,1): error CS1002: ; expected [/src/Acme/Acme.csproj]\n    3 Error(s)');
     expect(classifyCouldNotRun({ checkId: 'build', output: withCompile, insideRoots: ROOTS })).toBeNull();
@@ -262,7 +283,7 @@ describe('classifyCouldNotRun on a candidate: the denials ADR 0010 added count o
   const NETWORK = 'curl: (56) CONNECT tunnel failed, response 403\n';
 
   it('takes a new denial on a candidate whose base revision showed none for a failure for repair', () => {
-    for (const output of [EACCES, NETWORK, NUGET_PROXY, NUGET_HTTP, MSBUILD_SOCKET]) {
+    for (const output of [EACCES, NETWORK, NUGET_PROXY, NUGET_HTTP, NUGET_SSL, MSBUILD_SOCKET]) {
       expect(classifyCouldNotRun({ checkId: 'unit', output, insideRoots: ROOTS }), output).not.toBeNull();
       expect(classifyCouldNotRun({ checkId: 'unit', output, insideRoots: ROOTS, baseSignals: [] }), output).toBeNull();
     }
@@ -273,6 +294,7 @@ describe('classifyCouldNotRun on a candidate: the denials ADR 0010 added count o
   it('counts it when the base revision showed the same signal', () => {
     expect(classifyCouldNotRun({ checkId: 'unit', output: EACCES, insideRoots: ROOTS, baseSignals: ['permission-denied'] })?.signals).toEqual(['permission-denied']);
     expect(classifyCouldNotRun({ checkId: 'build', output: NUGET_PROXY, insideRoots: ROOTS, baseSignals: ['network-denied'] })?.signals).toEqual(['network-denied']);
+    expect(classifyCouldNotRun({ checkId: 'build', output: NUGET_SSL, insideRoots: ROOTS, baseSignals: ['nuget-tls-denied'] })?.signals).toEqual(['nuget-tls-denied']);
     expect(classifyCouldNotRun({ checkId: 'test', output: MSBUILD_SOCKET, insideRoots: ROOTS, baseSignals: ['socket-denied'] })?.signals).toEqual(['socket-denied']);
   });
 
@@ -290,7 +312,7 @@ describe('classifyCouldNotRun on a candidate: the denials ADR 0010 added count o
   });
 
   it('keeps the denials that predate ADR 0010 (EPERM, EROFS, a Seatbelt deny line) as they were on a candidate', () => {
-    expect([...BASE_GATED_SIGNALS].sort()).toEqual(['network-denied', 'nuget-http-denied', 'permission-denied', 'pipe-denied', 'program-not-found', 'socket-denied']);
+    expect([...BASE_GATED_SIGNALS].sort()).toEqual(['network-denied', 'nuget-http-denied', 'nuget-tls-denied', 'permission-denied', 'pipe-denied', 'program-not-found', 'socket-denied']);
     expect(classifyCouldNotRun({ checkId: 'unit', output: "Error: EPERM: operation not permitted, mkdir '/usr/local/var/acme'\n", insideRoots: ROOTS, baseSignals: [] })?.signals).toEqual(['filesystem-denied']);
     expect(classifyCouldNotRun({ checkId: 'unit', output: 'Sandbox: make(1) deny(1) file-write-create /usr/local/var/acme\n', insideRoots: ROOTS, baseSignals: [] })?.signals).toEqual(['sandbox-violation']);
   });

@@ -199,6 +199,13 @@ function runsDotnetFormat(f: FailureWithCommand): boolean {
 /** What a .NET runtime refused prints: its shared-memory directory, the runtime itself, or the NuGet step that asked. */
 const DOTNET_DENIAL = /\/tmp\/\.dotnet\b|\.coreclr\.|NuGet-Migrations|System\.Threading\.(?:Mutex|Semaphore)/i;
 
+/** NuGet's restore in a line of the check's output: its error code, or .NET's HttpClient's report of the proxy's 403. */
+const NUGET_LINE = /\berror NU\d{4}\b|\bNuGet\b|proxy tunnel request to proxy '[^']*' failed with status code '403'/;
+
+/** The fix for a NuGet restore that cannot download on macOS, named by doctor's checks.dotnet-packages. */
+const NUGET_FILL =
+  'since nuget.org\'s certificate cannot be verified inside the sandbox on macOS (srt keeps the system trust service out of reach), fill the repository\'s NuGet cache outside the sandbox with the command orbit doctor prints (checks.dotnet-packages), from which the dependency install and the checks restore (docs/troubleshooting.md, ".NET HTTP clients and NuGet restore on macOS")';
+
 /** The runner's note on a check it stopped for an MSBuild worker node the sandbox refused (evidence/runner.ts). */
 const MSBUILD_NODE_DENIAL = /^the check sandbox denied MSBuild node /;
 
@@ -231,7 +238,7 @@ function formatFix(f: FailureWithCommand): string {
  * knowing the SDK the checkout pins; dotnet format's build host (pipe-denied, or socket-denied in a dotnet format check)
  * takes the form that loads no project.
  */
-export function environmentFix(failures: readonly FailureWithCommand[]): string | null {
+export function environmentFix(failures: readonly FailureWithCommand[], platform: NodeJS.Platform = process.platform): string | null {
   const fixes: string[] = [];
   const has = (signal: EnvironmentSignal): FailureWithCommand[] => failures.filter((f) => f.signals.includes(signal));
   // A refused pipe can also leave a Seatbelt line for its fixed path under /tmp, which the tool's TMPDIR does not move.
@@ -273,11 +280,17 @@ export function environmentFix(failures: readonly FailureWithCommand[]): string 
     const ids = outside.map((f) => f.checkId);
     fixes.push(`dotnet format (${ids.length > 1 ? 'checks' : 'check'} ${ids.join(', ')}) cannot run in this check sandbox: ${outside.map((f) => formatOutsideFix({ id: f.checkId })).join('; ')} ${FORMAT_OUTSIDE_REASON}`);
   }
-  if (has('network-denied').length > 0) {
+  // On macOS a NuGet restore refused its host reaches nothing better with the host allowed: .NET cannot verify a
+  // certificate in the sandbox there, so its fix is the cache filled outside it (review of #10).
+  const network = has('network-denied');
+  const nugetOnMac = platform === 'darwin' ? network.filter((f) => f.lines.some((l) => NUGET_LINE.test(l))) : [];
+  if (network.length > nugetOnMac.length) {
     fixes.push('the check reached for a host its policy does not let it reach, and the sandbox\'s network proxy refused it: add the host to the check\'s network_hosts (it must also be covered by network.allowed_hosts), or let the check work offline, with its dependencies restored by the dependency install (dependencies.install_command)');
   }
   if (has('nuget-http-denied').length > 0) {
-    fixes.push('NuGet\'s HTTP client could not start because it may not read the machine\'s NIS domain name: Orbit adds the one rule that allows it only with the srt it ships, and the check\'s record says when it was not added, so run with that srt; and since nuget.org\'s certificate cannot be verified inside the sandbox on macOS, fill the repository\'s NuGet cache outside it with the command orbit doctor prints (checks.dotnet-packages), from which the dependency install and the checks restore (docs/troubleshooting.md, ".NET HTTP clients and NuGet restore on macOS")');
+    fixes.push(`NuGet's HTTP client could not start because it may not read the machine's NIS domain name: Orbit adds the one rule that allows it only with the srt it ships, and the check's record says when it was not added, so run with that srt; and ${NUGET_FILL}`);
+  } else if (nugetOnMac.length > 0 || has('nuget-tls-denied').length > 0) {
+    fixes.push(`NuGet's restore could not download its packages in the sandbox: ${NUGET_FILL}`);
   }
   const missing = has('program-not-found');
   if (missing.length > 0) {

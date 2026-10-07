@@ -270,6 +270,17 @@ reads as the change's, as every count did before this decision. Then one of:
   reaches the network, with `error NU1301: The type initializer for
   'System.Net.CookieContainer' threw an exception` next to `GetDomainName: -1`
   (captured under Orbit's runner, `dotnet-build-nuget-cookiecontainer.log`);
+- new: NuGet's restore that reached its package source and could not establish
+  the SSL connection (`nuget-tls-denied`): on macOS under `srt` .NET verifies a
+  certificate through the system trust service, which `srt` keeps out of reach,
+  so with the host allowed a check's restore stops at `error NU1301: The SSL
+  connection could not be established` (captured under Orbit's runner with
+  api.nuget.org in the check's `network_hosts`, `dotnet-build-nuget-ssl.log`).
+  Only NuGet's own `NU1301` counts; a test that reports the same exception
+  failed. A review found it read as a pre-existing failure with a question,
+  reached by following the fix for the proxy's refusal; on macOS that fix, for a
+  NuGet restore, is now the cache filled outside the sandbox (`orbit doctor`'s
+  `checks.dotnet-packages`), as it is for this one;
 - new: a permission denial on a socket (`SocketException (13): Permission
   denied` or `(1): Operation not permitted`, or a bind, listen or connect
   refused with EACCES or EPERM) inside the tool's own crash (`socket-denied`):
@@ -321,7 +332,8 @@ is never applied to a candidate: the same error there is the change's (a
 candidate that deletes the project the check builds), and the repair loop keeps
 it. When VERIFYING applies `classifyCouldNotRun` to a candidate
 (`checksNotExecutedFor`), the signals this decision added (`permission-denied`,
-`socket-denied`, `network-denied`, `nuget-http-denied`, `program-not-found`)
+`socket-denied`, `network-denied`, `nuget-http-denied`, `nuget-tls-denied`,
+`program-not-found`)
 and ADR 0009's `pipe-denied` (`BASE_GATED_SIGNALS`) count only when the same
 check's base-revision result had the same classification with the same signal
 (the baseline report records each environment failure's signals). Otherwise

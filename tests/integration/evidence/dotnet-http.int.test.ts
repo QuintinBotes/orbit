@@ -5,6 +5,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { dotnetAuditCheck, dotnetPackagesCheck } from '../../../src/cli/commands/doctor-dotnet.ts';
+import { environmentFix } from '../../../src/controller/environment-block.ts';
+import { classifyCouldNotRun } from '../../../src/evidence/environment-failure.ts';
 import { planInstall } from '../../../src/evidence/baseline.ts';
 import { candidateSubject, runCheckSet, runChecks } from '../../../src/evidence/runner.ts';
 import { SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.ts';
@@ -217,6 +219,11 @@ describe.skipIf(skip !== null)(skip === null ? '.NET HTTP clients under srt' : `
     // The next refusal: the certificate check needs the system trust service, which srt keeps out of reach.
     expect(first.log).toMatch(/error NU1301: .*The SSL connection could not be established/);
     expect(first.r.status).toBe('FAILED');
+    // Review: on the base revision this was a pre-existing failure with a baseline-exception question; it is the
+    // environment's, and its fix is the cache filled outside the sandbox.
+    const found = classifyCouldNotRun({ checkId: 'install', output: first.log, insideRoots: [denied.e.checkoutDir, dirname(first.r.logPath)] });
+    expect(found?.signals).toEqual(['nuget-tls-denied']);
+    expect(environmentFix([found!], 'darwin')).toMatch(/fill the repository's NuGet cache outside the sandbox with the command orbit doctor prints \(checks\.dotnet-packages\)/);
     // The way out on macOS: the person fills the repository's cache outside the sandbox, as the restore would, before
     // the run (a new checkout, as a run's is).
     const p = await packaged();

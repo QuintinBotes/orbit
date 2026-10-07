@@ -43,6 +43,7 @@ export type EnvironmentSignal =
   | 'socket-denied'
   | 'network-denied'
   | 'nuget-http-denied'
+  | 'nuget-tls-denied'
   | 'program-not-found'
   | 'pipe-denied';
 
@@ -55,7 +56,7 @@ export type EnvironmentSignal =
  * relays MSBuild's crash report from the check's own temp directory, about a node the repository's projects or tests
  * made MSBuild start, and it is the same refusal `socket-denied` reads from `dotnet test`'s MSB1025, so both get one rule.
  */
-export const BASE_GATED_SIGNALS: ReadonlySet<EnvironmentSignal> = new Set<EnvironmentSignal>(['permission-denied', 'socket-denied', 'network-denied', 'nuget-http-denied', 'program-not-found', 'pipe-denied']);
+export const BASE_GATED_SIGNALS: ReadonlySet<EnvironmentSignal> = new Set<EnvironmentSignal>(['permission-denied', 'socket-denied', 'network-denied', 'nuget-http-denied', 'nuget-tls-denied', 'program-not-found', 'pipe-denied']);
 
 export interface EnvironmentFailureInput {
   checkId: string;
@@ -113,6 +114,7 @@ const CAUSES: Record<EnvironmentSignal, string> = {
   'socket-denied': 'the sandbox or the operating system refused the tool a socket (permission denied) in its own startup, before it ran anything of the repository',
   'network-denied': "the sandbox's network proxy refused a connection to a host the check may not reach",
   'nuget-http-denied': "NuGet's HTTP client could not start in the sandbox (the type initializer of System.Net.CookieContainer failed to read the host's domain name, GetDomainName: -1), so the restore could reach no package source",
+  'nuget-tls-denied': "NuGet could not establish the SSL connection to its package source in the sandbox (on macOS srt keeps the system trust service out of reach, so .NET cannot verify nuget.org's certificate there), so the restore could reach no package source",
   'program-not-found': 'a program the check runs was not found where it runs (exit 127)',
   'pipe-denied': 'the sandbox refused a .NET process the named pipe it binds under /tmp (an MSBuild worker node, or the build host dotnet format loads the project with), so nothing was built or formatted',
 };
@@ -290,6 +292,14 @@ const NETWORK_DENIAL = /Connection blocked by network allowlist|\bX-Proxy-Error\
  * Counted only in NuGet's own restore error (NU1301) and with the failed read next to it.
  */
 const NUGET_HTTP_DENIAL = /\berror NU1301:.*\bThe type initializer for 'System\.Net\.CookieContainer' threw an exception\b/;
+/**
+ * NuGet's restore that reached its package source and could not establish the SSL connection: on macOS under srt,
+ * .NET verifies a certificate through the system trust service, which srt keeps out of reach (captured under the real
+ * runner and srt 0.0.78 with the .NET 9 SDK and api.nuget.org in the check's network_hosts,
+ * tests/fixtures/environment/dotnet-build-nuget-ssl.log). Counted only in NuGet's own restore error (NU1301): a test
+ * that reports the same HttpRequestException is a test that failed.
+ */
+const NUGET_TLS_DENIAL = /\berror NU1301:\s+The SSL connection could not be established\b/;
 const DOMAIN_NAME_DENIED = /\bGetDomainName: -1\b/;
 /**
  * A permission denial on a socket: .NET's SocketException with errno 13 (EACCES) or 1 (EPERM), or a bind, listen or
@@ -420,8 +430,9 @@ function pipeDenials(lines: readonly string[]): string[] {
  *     "permission denied" (the host's permissions, or a Unix socket the sandbox refuses: node's `listen EACCES:
  *     permission denied /tmp/x.pipe`; permission-denied);
  *   - a Seatbelt deny line (one for a file operation only on such a path);
- *   - the sandbox's network proxy refusing a connection (NETWORK_DENIAL), or NuGet's HTTP client failing to start in
- *     the sandbox (NUGET_HTTP_DENIAL);
+ *   - the sandbox's network proxy refusing a connection (NETWORK_DENIAL), NuGet's HTTP client failing to start in
+ *     the sandbox (NUGET_HTTP_DENIAL), or NuGet's restore that could not establish the SSL connection to its source
+ *     (NUGET_TLS_DENIAL);
  *   - a .NET named pipe the sandbox refused under /tmp (pipeDenials, pipe-denied): the runner's note on a check it
  *     stopped for a refused MSBuild worker node, or dotnet format's build host that could not be reached;
  *   - a permission denial on a socket (SOCKET_DENIAL) inside the tool's own crash (TOOL_CRASH): MSBuild's internal
@@ -461,6 +472,7 @@ export function classifyCouldNotRun(input: CouldNotRunInput): EnvironmentFailure
     const permission = PERMISSION_DENIAL.exec(line);
     const network = NETWORK_DENIAL.exec(line);
     const nuget = domainNameDenied ? NUGET_HTTP_DENIAL.exec(line) : null;
+    const tls = NUGET_TLS_DENIAL.exec(line);
     const socket = toolCrashed ? SOCKET_DENIAL.exec(line) : null;
     const pathOutside = (): boolean => (line.match(ABSOLUTE_PATH) ?? []).some(outside);
     const candidates: { signal: EnvironmentSignal; at: number }[] = [];
@@ -469,6 +481,7 @@ export function classifyCouldNotRun(input: CouldNotRunInput): EnvironmentFailure
     if (permission && (FS_CALL.test(line) || LISTEN_CALL.test(line)) && pathOutside()) candidates.push({ signal: 'permission-denied', at: permission.index });
     if (network) candidates.push({ signal: 'network-denied', at: network.index });
     if (nuget) candidates.push({ signal: 'nuget-http-denied', at: nuget.index });
+    if (tls) candidates.push({ signal: 'nuget-tls-denied', at: tls.index });
     if (socket) candidates.push({ signal: 'socket-denied', at: socket.index });
     const found = candidates.find((c) => counts(c.signal));
     if (found === undefined) continue;

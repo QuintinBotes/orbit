@@ -163,8 +163,9 @@ export function dotnetTestsCheck(input: DotnetTestsInput): DoctorCheck[] {
  * The SSL connection could not be established"). A repository whose .NET projects reference packages fills its NuGet
  * cache outside the sandbox, once and whenever its packages change; the dependency install and the checks then restore
  * from it with nothing to download. Doctor says so before a run, with the exact command, and fails when the dependency
- * install would restore from the network into an empty cache, since that install cannot succeed. It reads tracked files
- * only, and never creates the cache.
+ * install would restore from the network into an empty cache, since that install cannot succeed, and when a mandatory
+ * check would (a `dotnet build` without --no-restore and no install that restores), since the run would block on it. It
+ * reads tracked files only, and never creates the cache.
  */
 export interface DotnetPackagesInput {
   config: OrbitConfig;
@@ -379,6 +380,10 @@ export function dotnetPackagesCheck(input: DotnetPackagesInput): DoctorCheck[] {
     ...(restores && empty ? ["this repository's NuGet cache is empty"] : []),
     ...(install !== null && restoresOf(install).projects && floating.length > 0 ? ['a package version floats, which every restore looks up at nuget.org'] : []),
   ];
+  // A mandatory check that restores into an empty cache blocks the run as surely (review of #10): its restore is
+  // refused the host, or with the host allowed cannot verify nuget.org's certificate.
+  const restoring = failing.length > 0 || !empty ? [] : Object.values(input.config.checks).filter((c) => c.kind === 'command' && c.mandatory && checkUsesDotnet(repo, c) && restoresPackages(c.command)).map((c) => c.id);
+  const many = restoring.length > 1;
   const until = [
     ...(floating.length > 0 ? ['no package version floats: pin each one the details name, or restore with a lock file (RestorePackagesWithLockFile)'] : []),
     ...(auditFailures(input, mac) ? ['the vulnerability audit no longer fails them, as checks.dotnet-audit says'] : []),
@@ -387,11 +392,13 @@ export function dotnetPackagesCheck(input: DotnetPackagesInput): DoctorCheck[] {
     {
       id: 'checks.dotnet-packages',
       area: 'checks',
-      status: failing.length > 0 ? 'fail' : 'warn',
+      status: failing.length > 0 || restoring.length > 0 ? 'fail' : 'warn',
       summary:
         failing.length > 0
           ? `dependencies.install_command restores NuGet packages, which ${TRUST_REASON}, and ${failing.join(', and ')}: the dependency install would fail`
-          : `this repository's NuGet packages ${TRUST_REASON}: fill its NuGet cache outside the sandbox`,
+          : restoring.length > 0
+            ? `${many ? 'checks' : 'check'} ${restoring.join(', ')} ${many ? 'restore' : 'restores'} NuGet packages, which ${TRUST_REASON}, and this repository's NuGet cache is empty: the ${many ? 'checks' : 'check'} would fail at the baseline`
+            : `this repository's NuGet packages ${TRUST_REASON}: fill its NuGet cache outside the sandbox`,
       details: [...capped(evidence), ...capped(floating), `NuGet cache ${cache}: ${state}`],
       missing: "NuGet packages in this repository's cache, restored outside the sandbox",
       fix: `run once in a terminal, outside the sandbox, and again whenever the packages change: ${fillCommand(repo, cache, files, install, evidence)}; the dependency install and the checks then restore offline from that cache ${

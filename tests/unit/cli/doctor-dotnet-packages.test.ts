@@ -47,7 +47,10 @@ function world(files: Record<string, string>, cfg: OrbitConfig, opts: { repoName
   return { repo, cache, input };
 }
 
-const BUILD = { id: 'build', command: ['dotnet', 'build', '-m:1'], mandatory: true };
+/** A check after the dependency install, which builds from what it restored. */
+const BUILD = { id: 'build', command: ['dotnet', 'build', '--no-restore', '-m:1'], mandatory: true };
+/** A check that restores itself. */
+const RESTORING = { id: 'build', command: ['dotnet', 'build', 'Acme.csproj', '-m:1'], mandatory: true };
 const REASON = "cannot be downloaded inside the sandbox on macOS (it keeps the system trust service out of reach, so .NET cannot verify nuget.org's certificate)";
 
 describe('dotnetPackagesCheck', () => {
@@ -80,6 +83,25 @@ describe('dotnetPackagesCheck', () => {
         expect(c!.fix).toContain(`(cd ${repo} && NUGET_PACKAGES=${cache} ${restore});`);
       }
     }
+  });
+
+  // Review: a mandatory check that restores into an empty cache (no install, `dotnet build Acme.csproj -m:1`) only
+  // warned, and the run blocked on its restore for certain: network-denied, or with the host allowed the SSL failure.
+  it('fails when a mandatory check restores and the cache is empty, as the run would block on its restore', () => {
+    for (const install of [null, ['make', 'deps']]) {
+      const { repo, cache, input } = world({ 'acme.csproj': PACKAGED }, config([RESTORING, { id: 'lint', command: ['dotnet', 'format', 'whitespace', '--folder', '--verify-no-changes'], mandatory: true }], install));
+      const [c] = dotnetPackagesCheck(input);
+      expect(c!.status, JSON.stringify(install)).toBe('fail');
+      expect(c!.summary).toBe(`check build restores NuGet packages, which ${REASON}, and this repository's NuGet cache is empty: the check would fail at the baseline`);
+      expect(c!.fix).toContain(`(cd ${repo} && NUGET_PACKAGES=${cache} dotnet restore -m:1);`);
+      mkdirSync(join(cache, 'newtonsoft.json', '13.0.3'), { recursive: true });
+      expect(dotnetPackagesCheck(input)[0]!.status).toBe('warn');
+    }
+    const two = world({ 'acme.csproj': PACKAGED }, config([RESTORING, { ...RESTORING, id: 'test', command: ['dotnet', 'test', '-m:1'] }]));
+    expect(dotnetPackagesCheck(two.input)[0]!.summary).toBe(`checks build, test restore NuGet packages, which ${REASON}, and this repository's NuGet cache is empty: the checks would fail at the baseline`);
+    // An optional check, or one that does not restore, only warns.
+    expect(dotnetPackagesCheck(world({ 'acme.csproj': PACKAGED }, config([{ ...RESTORING, mandatory: false }])).input)[0]!.status).toBe('warn');
+    expect(dotnetPackagesCheck(world({ 'acme.csproj': PACKAGED }, config([BUILD])).input)[0]!.status).toBe('warn');
   });
 
   it('only warns once the cache holds packages, or when the install does not restore, or doctor cannot tell', () => {

@@ -243,18 +243,21 @@ describe('issue #10: doctor names the NuGet cache a .NET repository with package
     x.checks = { build: { ...defaultCheck('build'), command: ['dotnet', 'build', '-m:1'], mandatory: true } };
   };
 
-  it('fails checks.dotnet-packages when the dependency install restores into an empty cache, and warns without an install', async () => {
+  it('fails checks.dotnet-packages when the dependency install or a mandatory check restores into an empty cache, and warns for a check that does not restore', async () => {
     const w = world({ 'acme.csproj': PACKAGED }, 'darwin');
     const failing = byId(await report(w, cfg((x) => (build(x), (x.dependencies.install_command = ['dotnet', 'restore', '-m:1'])))))['checks.dotnet-packages'];
     expect(failing).toMatchObject({ status: 'fail', details: ['acme.csproj: PackageReference Newtonsoft.Json', expect.stringMatching(/^NuGet cache .+\/\.orbit\/toolchains\/[0-9a-f]{12}\/nuget: not created yet$/)] });
     expect(failing!.fix).toMatch(/^run once in a terminal, outside the sandbox, and again whenever the packages change: \(cd \S+ && NUGET_PACKAGES=\S+\/nuget dotnet restore -m:1\); /);
-    const warned = byId(await report(w, cfg(build)));
+    // Review: a mandatory check that restores, with no install, only warned, and the run blocked on its restore.
+    expect(byId(await report(w, cfg(build)))['checks.dotnet-packages']).toMatchObject({ status: 'fail', summary: expect.stringMatching(/^check build restores NuGet packages, .*: the check would fail at the baseline$/) });
+    const noRestore = (x: OrbitConfig) => (build(x), (x.checks.build!.command = ['dotnet', 'build', '--no-restore', '-m:1']));
+    const warned = byId(await report(w, cfg(noRestore)));
     expect(warned['checks.dotnet-packages']!.status).toBe('warn');
     // The .NET line of checks.sandbox says where those packages come from, for this repository, which has some.
     expect(warned['checks.sandbox']!.details.find((d) => d.startsWith('toolchain dotnet:'))).toContain("on macOS the dependency install cannot download NuGet packages, so this repository's are restored into it outside the sandbox");
     // Rendered: the summary, then what is missing and the fix.
     const io = memoryIo();
-    hooks.config = () => cfg(build);
+    hooks.config = () => cfg(noRestore);
     await doctorCommand(parseCommand([], undefined, 'orbit doctor'), w.ctx(io));
     expect(io.stdout).toMatch(/WARN  checks\.dotnet-packages this repository's NuGet packages cannot be downloaded inside the sandbox on macOS/);
   });
