@@ -36683,13 +36683,16 @@ function nodeDenialFix(check, where2, inProcess = false, folderForm = true) {
 function formatLoadedNoProject(output) {
   return LOADED_NO_PROJECT.test(output);
 }
+function formatProbeLost(output, exitCode) {
+  return exitCode === PROBE_LOST_EXIT && PROBE_LOST.test(output);
+}
 function buildHostDenialNote(fix) {
   return `the check sandbox denied dotnet format's build host its named pipe under /tmp, so dotnet format loaded no project and checked nothing, though it exited 0 (it reports a project it could not load as "Format currently supports only C# and Visual Basic projects"). Fix: ${fix}`;
 }
 function buildHostFix(check, where2, folderForm = true) {
   return folderForm ? `${dotnetFormatFix(check, where2)} ${DOTNET_FORMAT_REASON}` : `${formatOutsideFix(check, where2)} ${FORMAT_OUTSIDE_REASON}`;
 }
-var FOLDER_FORM, FOLDER_TEXT, LOADS_NOTHING, SUBCOMMANDS, ONE_VALUE, MANY_VALUES, KEPT, WORKSPACE_FILE, ROLLS_MAJOR, RESTORE_FIRST, DOTNET_FORMAT_REASON, FORMAT_OUTSIDE_REASON, restoresFirst, shownOf, withFolderForm, withRestoreFirst, LOADED_NO_PROJECT;
+var FOLDER_FORM, FOLDER_TEXT, LOADS_NOTHING, SUBCOMMANDS, ONE_VALUE, MANY_VALUES, KEPT, WORKSPACE_FILE, ROLLS_MAJOR, RESTORE_FIRST, DOTNET_FORMAT_REASON, FORMAT_OUTSIDE_REASON, restoresFirst, shownOf, withFolderForm, withRestoreFirst, LOADED_NO_PROJECT, PROBE_LOST, PROBE_LOST_EXIT, FORMAT_PROBE_LOST_NOTE;
 var init_dotnet_format = __esm({
   "src/evidence/dotnet-format.ts"() {
     "use strict";
@@ -36724,6 +36727,9 @@ var init_dotnet_format = __esm({
       }
     );
     LOADED_NO_PROJECT = /^\s*Could not format '[^'\r\n]+\.(?:cs|vb)proj'\. Format currently supports only C# and Visual Basic projects\.\s*$/m;
+    PROBE_LOST = /^\s*Unable to locate dotnet CLI\. Ensure that it is on the PATH\.\s*$/m;
+    PROBE_LOST_EXIT = 4;
+    FORMAT_PROBE_LOST_NOTE = 'dotnet format checked nothing: the output of the dotnet --version it starts first was lost, a race in the dotnet format of SDK 8 on a busy machine that it reports as "Unable to locate dotnet CLI", so the runner starts the check again';
   }
 });
 
@@ -36911,7 +36917,7 @@ async function executeCheckGroup(ctx, subject, def) {
     if (last) {
       if (last.status === "PASSED") break;
       if (last.status === "FAILED") {
-        if (group.length - 1 >= def.flaky_reruns) break;
+        if (group.length - 1 >= def.flaky_reruns + Math.min(group.filter(probeLost).length, FORMAT_PROBE_RERUNS)) break;
       } else if (touched || last.status === "TIMEOUT") {
         break;
       } else {
@@ -36931,16 +36937,18 @@ async function executeCheckGroup(ctx, subject, def) {
 function settleGroup(ctx, subject, def, binding, group) {
   const passed = group.find((r) => r.status === "PASSED") ?? null;
   const first = group[0];
+  const ran = group.filter((r) => !probeLost(r));
   let chosen;
   if (passed) {
     chosen = passed;
-    if (group.length > 1) {
+    const failed = ran.find((r) => r.id !== passed.id) ?? null;
+    if (failed) {
       if (!passed.flaky) setCheckFlaky(ctx.db, passed.id, true);
-      if (first.fingerprint) recordFailure(ctx.db, { runId: ctx.run.id, candidateId: subject.candidateId, source: "flaky_check", sourceId: first.id, fingerprint: first.fingerprint, excerpt: first.excerpt }, ctx.clock);
+      if (failed.fingerprint) recordFailure(ctx.db, { runId: ctx.run.id, candidateId: subject.candidateId, source: "flaky_check", sourceId: failed.id, fingerprint: failed.fingerprint, excerpt: failed.excerpt }, ctx.clock);
     }
   } else {
     const last = group.at(-1);
-    chosen = last.status === "CANCELLED" ? last : first;
+    chosen = last.status === "CANCELLED" ? last : ran[0] ?? first;
     if (chosen.fingerprint && chosen.status !== "CANCELLED") {
       recordFailure(ctx.db, { runId: ctx.run.id, candidateId: subject.candidateId, source: subject.source, sourceId: chosen.id, fingerprint: chosen.fingerprint, excerpt: chosen.excerpt }, ctx.clock);
     }
@@ -37296,6 +37304,7 @@ function finalize(ctx, def, row, dirs, exit, synthetic) {
   } else if (status2 === "FAILED" && note3 === null) {
     const late = findMsbuildNodeDenial(dirs.tmpDir);
     if (late) note3 = denialNote(ctx, def, late, false);
+    else if (formatProbeLost(body, exit?.exitCode ?? null)) note3 = FORMAT_PROBE_LOST_NOTE;
   } else if (status2 === "PASSED") {
     const unloaded = loadedNoProjectNote(ctx, def, body);
     if (unloaded !== null) {
@@ -37336,6 +37345,14 @@ ${note3}
     artifacts,
     endedAt: ctx.clock.now()
   });
+}
+function probeLost(row) {
+  if (row.status !== "FAILED" || row.logPath === null) return false;
+  try {
+    return formatProbeLost(readCapped(row.logPath), row.exitCode);
+  } catch {
+    return false;
+  }
 }
 function readCapped(path) {
   if (!existsSync21(path)) return "";
@@ -37406,7 +37423,7 @@ function removeLeftovers(subject, checkId, index) {
   rmSync7(shimPath(dirs.checkDir, "output"), { force: true });
   for (const d of [dirs.homeDir, dirs.tmpDir, dirs.toolchainsDir]) removeScratch(d);
 }
-var DEFAULT_POLL_MS, DEFAULT_KILL_GRACE_MS2, DEFAULT_MAX_OUTPUT_BYTES2, LAUNCH_GRACE_MS, MAX_ARTIFACTS, MAX_RAW_READ, CHECK_ID, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, INSTALL_CHECK_IDS, DEFINITION_FILE, DOTNET_CHECK_ENV, NUGET_MIGRATIONS_DIR, NUGET_LATEST_MIGRATION, DENIAL_FILE, DENIAL_SCAN_MS;
+var DEFAULT_POLL_MS, DEFAULT_KILL_GRACE_MS2, DEFAULT_MAX_OUTPUT_BYTES2, LAUNCH_GRACE_MS, MAX_ARTIFACTS, MAX_RAW_READ, CHECK_ID, FORMAT_PROBE_RERUNS, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, INSTALL_CHECK_IDS, DEFINITION_FILE, DOTNET_CHECK_ENV, NUGET_MIGRATIONS_DIR, NUGET_LATEST_MIGRATION, DENIAL_FILE, DENIAL_SCAN_MS;
 var init_runner = __esm({
   "src/evidence/runner.ts"() {
     "use strict";
@@ -37433,6 +37450,7 @@ var init_runner = __esm({
     MAX_ARTIFACTS = 200;
     MAX_RAW_READ = 32 * 1024 * 1024;
     CHECK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+    FORMAT_PROBE_RERUNS = 2;
     INSTALL_CHECK_ID = "orbit-install";
     INSTALL_SCRIPTS_CHECK_ID = "orbit-install-scripts";
     INSTALL_CHECK_IDS = [INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID];

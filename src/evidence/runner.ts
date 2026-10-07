@@ -18,7 +18,7 @@ import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { fingerprintFailure } from './fingerprint.ts';
 import { git } from './git.ts';
-import { buildHostDenialNote, buildHostFix, formatLoadedNoProject, nodeDenialFix, sdkFormatsInProcess } from './dotnet-format.ts';
+import { buildHostDenialNote, buildHostFix, FORMAT_PROBE_LOST_NOTE, formatLoadedNoProject, formatProbeLost, nodeDenialFix, sdkFormatsInProcess } from './dotnet-format.ts';
 import { findMsbuildNodeDenial, msbuildNodeDenialNote, type MsbuildFixWhere, type MsbuildNodeDenial } from './msbuild.ts';
 import {
   checkRunToResult,
@@ -56,6 +56,13 @@ const LAUNCH_GRACE_MS = 10_000;
 const MAX_ARTIFACTS = 200;
 const MAX_RAW_READ = 32 * 1024 * 1024;
 const CHECK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+/**
+ * How many attempts of a check whose dotnet format lost its own version probe (evidence/dotnet-format.ts
+ * formatProbeLost) are started again, beside the check's flaky reruns. Such an attempt checked nothing, so a pass after
+ * it is a clean pass. The race is rare (once in seven runs of one check on GitHub's macOS runners), so two more attempts
+ * leave a check that keeps losing it, which is something else, to fail as it did.
+ */
+const FORMAT_PROBE_RERUNS = 2;
 
 export interface RunnerContext {
   db: OrbitDb;
@@ -397,7 +404,9 @@ async function executeCheckGroup(ctx: RunnerContext, subject: CheckSubject, def:
     if (last) {
       if (last.status === 'PASSED') break;
       if (last.status === 'FAILED') {
-        if (group.length - 1 >= def.flaky_reruns) break;
+        // Attempts whose dotnet format lost its version probe checked nothing: up to FORMAT_PROBE_RERUNS of them are
+        // started again beside the flaky reruns.
+        if (group.length - 1 >= def.flaky_reruns + Math.min(group.filter(probeLost).length, FORMAT_PROBE_RERUNS)) break;
       } else if (touched || last.status === 'TIMEOUT') {
         break;
       } else {
@@ -421,17 +430,20 @@ async function executeCheckGroup(ctx: RunnerContext, subject: CheckSubject, def:
 function settleGroup(ctx: RunnerContext, subject: CheckSubject, def: CheckDefinition, binding: EvidenceBinding, group: CheckRunRecord[]): CheckResult {
   const passed = group.find((r) => r.status === 'PASSED') ?? null;
   const first = group[0]!;
+  // The attempts that ran the check: one whose dotnet format lost its version probe checked nothing.
+  const ran = group.filter((r) => !probeLost(r));
   let chosen: CheckRunRecord;
   if (passed) {
     chosen = passed;
-    if (group.length > 1) {
+    const failed = ran.find((r) => r.id !== passed.id) ?? null;
+    if (failed) {
       // A pass that needed a rerun is never a clean pass.
       if (!passed.flaky) setCheckFlaky(ctx.db, passed.id, true);
-      if (first.fingerprint) recordFailure(ctx.db, { runId: ctx.run.id, candidateId: subject.candidateId, source: 'flaky_check', sourceId: first.id, fingerprint: first.fingerprint, excerpt: first.excerpt }, ctx.clock);
+      if (failed.fingerprint) recordFailure(ctx.db, { runId: ctx.run.id, candidateId: subject.candidateId, source: 'flaky_check', sourceId: failed.id, fingerprint: failed.fingerprint, excerpt: failed.excerpt }, ctx.clock);
     }
   } else {
     const last = group.at(-1)!;
-    chosen = last.status === 'CANCELLED' ? last : first;
+    chosen = last.status === 'CANCELLED' ? last : (ran[0] ?? first);
     if (chosen.fingerprint && chosen.status !== 'CANCELLED') {
       recordFailure(ctx.db, { runId: ctx.run.id, candidateId: subject.candidateId, source: subject.source, sourceId: chosen.id, fingerprint: chosen.fingerprint, excerpt: chosen.excerpt }, ctx.clock);
     }
@@ -956,6 +968,8 @@ function finalize(ctx: RunnerContext, def: CheckDefinition, row: CheckRunRecord,
     // MSBuild can record a refused node and fail before the next scan (at once on Linux): look once more.
     const late = findMsbuildNodeDenial(dirs.tmpDir);
     if (late) note = denialNote(ctx, def, late, false);
+    // dotnet format (SDK 8) lost the output of its own version probe and checked nothing: the group starts it again.
+    else if (formatProbeLost(body, exit?.exitCode ?? null)) note = FORMAT_PROBE_LOST_NOTE;
   } else if (status === 'PASSED') {
     // dotnet format can exit 0 having loaded no project when its build host was refused (on Linux): it checked nothing.
     const unloaded = loadedNoProjectNote(ctx, def, body);
@@ -999,6 +1013,19 @@ function finalize(ctx: RunnerContext, def: CheckDefinition, row: CheckRunRecord,
     artifacts,
     endedAt: ctx.clock.now(),
   });
+}
+
+/**
+ * Whether an attempt failed as dotnet format does when it lost its own version probe (evidence/dotnet-format.ts
+ * formatProbeLost), read from its log: such an attempt checked nothing.
+ */
+function probeLost(row: CheckRunRecord): boolean {
+  if (row.status !== 'FAILED' || row.logPath === null) return false;
+  try {
+    return formatProbeLost(readCapped(row.logPath), row.exitCode);
+  } catch {
+    return false;
+  }
 }
 
 function readCapped(path: string): string {

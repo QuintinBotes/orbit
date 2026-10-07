@@ -371,6 +371,31 @@ export function formatLoadedNoProject(output: string): boolean {
 }
 
 /**
+ * dotnet format of SDK 8 (8.3.x) reads the dotnet CLI's version before it loads anything: it starts `dotnet --version`
+ * with its output redirected and takes the first line. Its process runner completes the result when the child exits, and
+ * waits for the redirected output only once it has begun to read it, which it does after the start returns. When the
+ * machine is busy enough that the child exits first, the line is lost: dotnet format prints this, exits 4 and has checked
+ * nothing. A race in dotnet format itself, under any provider and outside Orbit (dotnet/sdk#44957, open; the fix,
+ * dotnet/format#2000, reached no SDK 8 band, and SDK 9 dropped the probe). Measured under the runner and srt on macOS
+ * with SDK 8.0.303, `dotnet restore <project> -m:1 && dotnet format <project> --verify-no-changes --no-restore`, dotnet
+ * format's thread held after starting the probe (an fstat interposer): held 300 ms or more it failed so, in a run's
+ * checkout below the Orbit home and outside it alike; held 20 ms it passed. On GitHub's macOS runners the same check
+ * failed so once in seven runs on one image.
+ */
+const PROBE_LOST = /^\s*Unable to locate dotnet CLI\. Ensure that it is on the PATH\.\s*$/m;
+/** dotnet format's exit code for it (UnableToLocateDotNetCliExitCode). */
+const PROBE_LOST_EXIT = 4;
+
+/** Whether a check ended as dotnet format does when it lost its own `dotnet --version` probe (PROBE_LOST): it checked nothing. */
+export function formatProbeLost(output: string, exitCode: number | null): boolean {
+  return exitCode === PROBE_LOST_EXIT && PROBE_LOST.test(output);
+}
+
+/** The note on such an attempt; the runner starts the check again (evidence/runner.ts FORMAT_PROBE_RERUNS). */
+export const FORMAT_PROBE_LOST_NOTE =
+  'dotnet format checked nothing: the output of the dotnet --version it starts first was lost, a race in the dotnet format of SDK 8 on a busy machine that it reports as "Unable to locate dotnet CLI", so the runner starts the check again';
+
+/**
  * The note on a check the runner records as FAILED although it exited 0: its dotnet format loaded no project
  * (formatLoadedNoProject) because the check sandbox refused the build host's pipe, so it checked nothing. PREFLIGHT reads
  * it as the environment's failure (evidence/environment-failure.ts, pipe-denied), as it reads the build host's crash.

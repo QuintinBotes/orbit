@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { DOTNET_FORMAT_REASON, dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatLoadsProject, formatOutsideFix, formatReadsFolder, formatRestoreFix, formatRestoresUnpinned, nodeDenialFix, sdkFormatsInProcess } from '../../../src/evidence/dotnet-format.ts';
+import { DOTNET_FORMAT_REASON, dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatLoadsProject, formatOutsideFix, formatProbeLost, formatReadsFolder, formatRestoreFix, formatRestoresUnpinned, nodeDenialFix, sdkFormatsInProcess } from '../../../src/evidence/dotnet-format.ts';
 import { msbuildFix, msbuildFixReason, type JudgedCheck } from '../../../src/evidence/msbuild.ts';
 
 // dotnet format under the check sandbox (issue #10; ADR 0009, addendum). Every form but `dotnet format whitespace
@@ -194,5 +194,25 @@ describe('dotnet format with SDK 8', () => {
       'checks.ci.command: ["dotnet build -m:1 && dotnet restore -m:1 && dotnet format style --verify-no-changes --no-restore"] (dotnet format passes no -m:1 to the restore it runs first, so restore with -m:1 first and format with --no-restore)',
     );
     expect(formatRestoreFix({ id: 'format', ...argv('/opt/my dotnet/dotnet', 'format') }, null).change).toMatch(/^checks\.format\.command: \["'\/opt\/my dotnet\/dotnet' restore -m:1 && '\/opt\/my dotnet\/dotnet' format --no-restore"\] with checks\.format\.shell: true /);
+  });
+});
+
+// SDK 8's dotnet format reads `dotnet --version` before it loads anything, and loses the line when the child exits before
+// it has begun to read the child's output (a race in dotnet format; reproduced under the runner and srt on macOS with
+// SDK 8.0.303 by holding its thread after the start, and seen once in seven CI runs of one check).
+describe('formatProbeLost', () => {
+  const lost = 'Unable to locate dotnet CLI. Ensure that it is on the PATH.';
+
+  it('reads the line dotnet format prints with its exit code 4, after a restore and before the footer', () => {
+    expect(formatProbeLost(`${lost}\n`, 4)).toBe(true);
+    expect(formatProbeLost(`  Determining projects to restore...\n  Restored /w/Acme.csproj (in 156 ms).\n${lost}\n[orbit] check=format status=FAILED exit=4\n`, 4)).toBe(true);
+  });
+
+  it('is nothing else: another exit code, the words inside another line, or another tool\'s report', () => {
+    expect(formatProbeLost(`${lost}\n`, 1)).toBe(false);
+    expect(formatProbeLost(`${lost}\n`, null)).toBe(false);
+    expect(formatProbeLost(`error: ${lost}\n`, 4)).toBe(false);
+    expect(formatProbeLost('Unable to locate MSBuild. Ensure the .NET SDK was installed with the official installer.\n', 4)).toBe(false);
+    expect(formatProbeLost('', 4)).toBe(false);
   });
 });
