@@ -22,12 +22,12 @@
  * share a cause and its evidence lines are listed together before them.
  */
 import { readFileSync, realpathSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { readJsonIfExists } from '../core/fsx.ts';
 import { BASELINE_FILE, type BaselineReport } from '../evidence/baseline.ts';
 import { directInvocation } from '../evidence/check-command.ts';
 import { classifyMisconfigured, classifyProgramNotFound, type MisconfiguredCheck } from '../evidence/check-misconfigured.ts';
-import { dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatLoadsProject, formatOutsideFix } from '../evidence/dotnet-format.ts';
+import { dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatLoadsProject, formatOutsideFix, nodeDenialFix, sdkFormatsInProcess } from '../evidence/dotnet-format.ts';
 import { classifyCouldNotRun, classifyEnvironmentFailure, classifyNotExecuted, type EnvironmentFailure, type EnvironmentSignal } from '../evidence/environment-failure.ts';
 import type { JudgedCheck } from '../evidence/msbuild.ts';
 import { listCheckRuns, type CandidateRecord, type CheckRunRecord } from '../evidence/store.ts';
@@ -56,6 +56,11 @@ export type FailureWithCommand = EnvironmentFailure & {
    * that SDK 9 and later run works there, so its fix is to run it outside Orbit. Absent: it can.
    */
   folderForm?: boolean;
+  /**
+   * For a check the runner stopped for a refused MSBuild worker node: the fix for its command, as the runner named it at
+   * the end of its log (stoppedNodeFix), so the reason carries it whole where the quoted note is cut.
+   */
+  nodeFix?: string;
 };
 
 export type BlockedCheck = FailureWithCommand & {
@@ -264,7 +269,11 @@ export function environmentFix(failures: readonly FailureWithCommand[], platform
   // starts none. Verified under Orbit's runner and srt on macOS: the dotnet test that failed with MSB1025 after five
   // minutes passes with -m:1 (ADR 0010; ADR 0009, addendum).
   if (msbuild.length > 0) fixes.push(`${forChecks(msbuild)}this is MSBuild starting a worker node, whose named pipe .NET makes a Unix socket under /tmp, and the check sandbox does not let a check create one: build on one MSBuild node, with -m:1 on the check's dotnet command (for example [dotnet, test, -m:1]), which orbit doctor prints for the check's own command (docs/troubleshooting.md, ".NET builds and MSBuild worker nodes")`);
-  if (stopped.length > 0) fixes.push(`${forChecks(stopped)}the sandbox refuses MSBuild worker nodes their named pipe under /tmp: the check's log ends with the fix for its command (docs/troubleshooting.md, ".NET builds and MSBuild worker nodes")`);
+  // The runner's exact fix for each, when the policy shows the command: the quoted note is cut before it (review of #10).
+  if (stopped.length > 0) {
+    const exact = stopped.every((f) => f.nodeFix !== undefined) ? [...new Set(stopped.map((f) => f.nodeFix!))] : null;
+    fixes.push(`${forChecks(stopped)}the sandbox refuses MSBuild worker nodes their named pipe under /tmp: ${exact ? exact.join('; ') : 'the check\'s log ends with the fix for its command (docs/troubleshooting.md, ".NET builds and MSBuild worker nodes")'}`);
+  }
   // dotnet format reads -m:1 as the project to format and fails, and every form of it but whitespace --folder loads the
   // project through a build host whose pipe the sandbox refuses (measured under Orbit's runner and srt: SDK 9 on macOS,
   // SDK 10 on Linux).
@@ -300,6 +309,20 @@ export function environmentFix(failures: readonly FailureWithCommand[], platform
   return fixes.length > 0 ? fixes.join('; and ') : null;
 }
 
+/**
+ * The fix for a check the runner stopped for a refused MSBuild worker node, as the runner named it in the note that
+ * ends its log (evidence/runner.ts denialNote): from the frozen policy's command, the global.json of the check's
+ * checkout and whether dotnet format's folder form can run there. Recomputed, not read from the log, whose last line a
+ * check that prints past the 4 MB the reader takes could write. Nothing for a check the policy does not define, or for
+ * a failure that is not such a stop.
+ */
+function stoppedNodeFix(ctx: RunContext, found: EnvironmentFailure, checkout: string, folderForm: boolean): { nodeFix?: string } {
+  const def = ctx.snapshot.config.checks[found.checkId];
+  if (!def || def.kind !== 'command' || !found.signals.includes('pipe-denied') || !found.lines.some((l) => MSBUILD_NODE_DENIAL.test(l))) return {};
+  const check = { id: found.checkId, command: def.command, shell: def.shell === true, ...(def.env ? { env: def.env } : {}) };
+  return { nodeFix: nodeDenialFix(check, null, sdkFormatsInProcess(resolve(checkout, def.cwd), checkout), folderForm) };
+}
+
 /** The command the run's frozen policy gives a command check, so that a fix can fit the tool it runs. */
 function commandOf(ctx: RunContext, checkId: string): { command?: CheckCommand } {
   const def = ctx.snapshot.config.checks[checkId];
@@ -333,7 +356,9 @@ export function baselineEnvironmentFailures(ctx: RunContext, report: BaselineRep
       classifyNotExecuted({ checkId: failure.checkId, output }) ??
       classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ??
       (def && def.kind === 'command' ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) : null);
-    if (found) out.push({ ...found, ...commandOf(ctx, failure.checkId), folderForm: folderFormRunsAt(ctx, checkoutDir), questionId: null, ...(logPath ? { logPath } : {}) });
+    if (!found) continue;
+    const folderForm = folderFormRunsAt(ctx, checkoutDir);
+    out.push({ ...found, ...commandOf(ctx, failure.checkId), folderForm, ...stoppedNodeFix(ctx, found, checkoutDir, folderForm), questionId: null, ...(logPath ? { logPath } : {}) });
   }
   return out;
 }
@@ -507,7 +532,9 @@ export function checksNotExecutedFor(ctx: RunContext, cand: CandidateRecord, rep
       classifyNotExecuted({ checkId: result.id, output, startFailure }) ??
       // Refused a filesystem operation outside its checkout before it compiled or tested anything (issue #10).
       (row.status === 'FAILED' ? classifyCouldNotRun({ checkId: result.id, output, insideRoots: [checkout, row.cwd, ...(row.logPath ? [dirname(row.logPath)] : [])], baseSignals: baseSignals(result.id) }) : null);
-    if (found) out.push({ ...found, ...commandOf(ctx, result.id), folderForm: folderFormRunsAt(ctx, checkout), questionId: null, ...(row.logPath ? { logPath: row.logPath } : {}) });
+    if (!found) continue;
+    const folderForm = folderFormRunsAt(ctx, checkout);
+    out.push({ ...found, ...commandOf(ctx, result.id), folderForm, ...stoppedNodeFix(ctx, found, checkout, folderForm), questionId: null, ...(row.logPath ? { logPath: row.logPath } : {}) });
   }
 
   if (report.ui.some((u) => u.status === 'ERROR')) {

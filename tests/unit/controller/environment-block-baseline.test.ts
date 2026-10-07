@@ -4,8 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { baselineEnvironmentBlockReason, baselineEnvironmentFailures, checksNotExecutedFor, environmentBlockReason, environmentFix, type BlockedCheck } from '../../../src/controller/environment-block.ts';
 import type { BaselineReport } from '../../../src/evidence/baseline.ts';
+import { msbuildNodeDenialNote, msbuildNodeFix } from '../../../src/evidence/msbuild.ts';
 import { finishCheckRun, planCheckRun } from '../../../src/evidence/store.ts';
-import { addCandidate, addEvidence, BASE_REV, makeUnitLab, setContract, type UnitLab } from './coverage-helpers.ts';
+import { checkDef } from '../evidence/fixtures.ts';
+import { addCandidate, addEvidence, BASE_REV, makeUnitLab, setContract, type UnitLab, type UnitLabOptions } from './coverage-helpers.ts';
 
 // Issue #10: a check the environment stopped before it ran anything of the repository.
 
@@ -128,8 +130,8 @@ let lab: UnitLab;
 afterEach(() => lab?.cleanup());
 
 /** A baseline report with failing mandatory checks, each with a recorded baseline run whose log holds `logs[checkId]`. */
-function baselineWith(logs: Record<string, string | null>, opts: { excerpt?: string | null; row?: boolean } = {}): { report: BaselineReport; checkout: string } {
-  lab = makeUnitLab();
+function baselineWith(logs: Record<string, string | null>, opts: { excerpt?: string | null; row?: boolean; tweak?: UnitLabOptions['tweak'] } = {}): { report: BaselineReport; checkout: string } {
+  lab = makeUnitLab(opts.tweak ? { tweak: opts.tweak } : {});
   const ctx = lab.ctx();
   const dir = join(ctx.runDir, 'baseline');
   mkdirSync(dir, { recursive: true });
@@ -184,6 +186,20 @@ describe('baselineEnvironmentFailures', () => {
     expect(baselineEnvironmentBlockReason({ runId: 'orb-4', baseRevision: BASE_REV, failures: found })).toMatch(
       /no baseline exception is offered.*Fix: for check lint: the sandbox refuses MSBuild worker nodes their named pipe under \/tmp: the check's log ends with the fix for its command .*; and dotnet format \(check format\) takes no -m:1, which it reads as the project to format, and it loads the project through a build host/,
     );
+  });
+
+  // Review: the reason for a check the runner stopped for a refused node said only that the log ends with the fix, and
+  // quoted the note cut at 200 characters, so orbit status and the notification never named -m:1.
+  it('names the runner\'s exact fix for a check it stopped for a refused MSBuild node, from the frozen policy\'s command', () => {
+    const fix = msbuildNodeFix(checkDef('build', { command: ['dotnet', 'build'] }));
+    const note = msbuildNodeDenialNote({ pid: 4242, pipe: '/tmp/MSBuild4242', exception: 'System.Net.Sockets.SocketException (13): Permission denied' }, fix);
+    const log = `  Determining projects to restore...\n[orbit] check=build status=FAILED exit=143 note=${note}\n`;
+    const { report, checkout } = baselineWith({ build: log }, { tweak: (c) => (c.checks.build = { ...c.checks.unit!, id: 'build', command: ['dotnet', 'build'], mandatory: true }) });
+    const found = baselineEnvironmentFailures(lab.ctx(), report, checkout);
+    expect(found.map((f) => [f.checkId, f.signals, f.nodeFix])).toEqual([['build', ['pipe-denied'], fix]]);
+    const reason = baselineEnvironmentBlockReason({ runId: 'orb-5', baseRevision: BASE_REV, failures: found });
+    expect(reason).toContain(`Fix: the sandbox refuses MSBuild worker nodes their named pipe under /tmp: checks.build.command: ["dotnet", "build", "-m:1"] (MSBuild worker nodes cannot run in the check sandbox`);
+    expect(reason).not.toContain("the check's log ends with the fix");
   });
 
   it('reads a denial inside the baseline checkout as the code\'s', () => {

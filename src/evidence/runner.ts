@@ -739,9 +739,9 @@ interface DenialRecord {
  * pinned restore first; on macOS, where the form that loads no project cannot list the folders above a checkout below a
  * denied directory (a run's, in the Orbit home), running dotnet format outside Orbit.
  */
-function denialNote(ctx: RunnerContext, def: CheckDefinition, denial: MsbuildNodeDenial): string {
+function denialNote(ctx: RunnerContext, def: CheckDefinition, denial: MsbuildNodeDenial, stopped = true): string {
   const inProcess = sdkFormatsInProcess(resolve(ctx.checkoutDir, def.cwd), ctx.checkoutDir);
-  return redact(msbuildNodeDenialNote(denial, nodeDenialFix(def, msbuildFixWhere(ctx, def), inProcess, folderFormRuns(ctx))));
+  return redact(msbuildNodeDenialNote(denial, nodeDenialFix(def, msbuildFixWhere(ctx, def), inProcess, folderFormRuns(ctx)), stopped));
 }
 
 /** Whether dotnet format whitespace --folder can list the folders above this checkout in the check sandbox (evidence/dotnet-format.ts). */
@@ -922,7 +922,7 @@ function finalize(ctx: RunnerContext, def: CheckDefinition, row: CheckRunRecord,
   } else if (status === 'FAILED' && note === null) {
     // MSBuild can record a refused node and fail before the next scan (at once on Linux): look once more.
     const late = findMsbuildNodeDenial(dirs.tmpDir);
-    if (late) note = denialNote(ctx, def, late);
+    if (late) note = denialNote(ctx, def, late, false);
   }
 
   const exitCode = exit?.exitCode ?? null;

@@ -46,28 +46,42 @@ const MAX_REPORTS = 32;
  */
 const MAX_TMP_ENTRIES = 4096;
 const MAX_REPORT_DIR_ENTRIES = 256;
+/**
+ * How many names one look reads in all, the temp directory's and every report directory's: without it a check could
+ * make it list 4096 directories of 256 names each (about a million names, a second of the event loop every second).
+ */
+const MAX_SCANNED_NAMES = 8192;
 const MAX_REPORT_BYTES = 64 * 1024;
 const MAX_EXCEPTION_CHARS = 200;
 const SOCKET_EXCEPTION = /System\.Net\.Sockets\.SocketException \(\d+\): [^\r\n]+/;
 const PIPE_SERVER = /System\.IO\.Pipes\.NamedPipeServerStream/;
 const BUILD_NODE = /Microsoft\.Build\.BackEnd\.NodeEndpointOutOfProc/;
 
-/** Whether `path` is itself of the kind wanted; a link is neither, so nothing a check plants points the reader elsewhere. */
-function is(path: string, kind: 'dir' | 'file'): boolean {
+/** A file or directory as the file system knows it, whatever name it is reached by. */
+interface Identity {
+  dev: number;
+  ino: number;
+}
+
+/** The identity of `path` itself when it is of the kind wanted, or null; a link is neither, and is not followed. */
+function identity(path: string, kind: 'dir' | 'file'): Identity | null {
   try {
     const st = lstatSync(path);
-    return kind === 'dir' ? st.isDirectory() : st.isFile();
+    return (kind === 'dir' ? st.isDirectory() : st.isFile()) ? { dev: st.dev, ino: st.ino } : null;
   } catch {
-    return false;
+    return null;
   }
 }
+
+const same = (a: Identity | null, b: Identity | null): boolean => a !== null && b !== null && a.dev === b.dev && a.ino === b.ino;
 
 /**
  * The start of a regular file, opened without following a link and without waiting (the check owns the directory it
  * sits in, and can swap a FIFO in after the lstat: opened for reading, a FIFO waits for a writer with no time limit,
- * which froze the controller). Non-blocking, a FIFO opens at once and fstat turns it away.
+ * which froze the controller). Non-blocking, a FIFO opens at once and fstat turns it away. `opened` must accept the file
+ * that was opened before anything of it is read.
  */
-function readHead(path: string): string | null {
+function readHead(path: string, opened: (file: Identity) => boolean = () => true): string | null {
   let fd: number;
   try {
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -75,7 +89,8 @@ function readHead(path: string): string | null {
     return null;
   }
   try {
-    if (!fstatSync(fd).isFile()) return null;
+    const st = fstatSync(fd);
+    if (!st.isFile() || !opened({ dev: st.dev, ino: st.ino })) return null;
     const buf = Buffer.alloc(MAX_REPORT_BYTES);
     const n = readSync(fd, buf, 0, buf.length, 0);
     return buf.subarray(0, n).toString('utf8');
@@ -108,17 +123,33 @@ function list(dir: string, max: number): string[] {
 /**
  * The first node MSBuild recorded as unable to bind its named pipe, among the crash reports in a process's private
  * temp directory, or null. Nothing else about those reports counts: another crash is MSBuild's own business. The
- * directory is the sandboxed process's, so links are not followed, nothing is waited for, and at most MAX_REPORTS reports
- * of a bounded number of names are read.
+ * directory is the sandboxed process's, so nothing is waited for, at most MAX_REPORTS reports and MAX_SCANNED_NAMES names
+ * in all are read, and a link it plants is not followed: neither a report nor a report directory that is one when looked
+ * at is read. A report directory the check swaps for a link between that look and the open (the open follows a link in
+ * the middle of its path, and Node has no way to open a name in a directory it holds open) is caught after the open,
+ * before anything is read: the directory must still be the one looked at, and its name for the report must still name
+ * the file opened, checked on both sides. That narrows the swap to four exact moments; it cannot close it, and what it
+ * could show is one line of a file named like a report, cut to MAX_EXCEPTION_CHARS. `maxNames` is for tests.
  */
-export function findMsbuildNodeDenial(tmpDir: string): MsbuildNodeDenial | null {
+export function findMsbuildNodeDenial(tmpDir: string, maxNames = MAX_SCANNED_NAMES): MsbuildNodeDenial | null {
   let seen = 0;
-  for (const sub of list(tmpDir, MAX_TMP_ENTRIES).filter((n) => REPORT_DIR.test(n) && is(join(tmpDir, n), 'dir'))) {
-    for (const name of list(join(tmpDir, sub), MAX_REPORT_DIR_ENTRIES)) {
+  const top = list(tmpDir, Math.min(MAX_TMP_ENTRIES, maxNames));
+  let budget = maxNames - top.length;
+  for (const sub of top.filter((n) => REPORT_DIR.test(n))) {
+    const dir = join(tmpDir, sub);
+    const looked = identity(dir, 'dir');
+    if (looked === null) continue;
+    if (budget <= 0) return null;
+    const names = list(dir, Math.min(MAX_REPORT_DIR_ENTRIES, budget));
+    budget -= names.length;
+    // A listing taken through a link swapped in for the directory names what is elsewhere: read nothing of it.
+    if (!same(identity(dir, 'dir'), looked)) continue;
+    for (const name of names) {
       const m = REPORT_FILE.exec(name);
-      if (!m || !is(join(tmpDir, sub, name), 'file')) continue;
+      const path = join(dir, name);
+      if (!m || identity(path, 'file') === null) continue;
       if (++seen > MAX_REPORTS) return null;
-      const text = readHead(join(tmpDir, sub, name));
+      const text = readHead(path, (file) => same(identity(dir, 'dir'), looked) && same(identity(path, 'file'), file) && same(identity(dir, 'dir'), looked));
       const exception = text === null ? null : SOCKET_EXCEPTION.exec(text);
       if (!text || !exception || !PIPE_SERVER.test(text)) continue;
       const pid = Number(m[1]);
@@ -133,10 +164,15 @@ export function msbuildNodeDenialText(d: MsbuildNodeDenial): string {
   return `MSBuild node (pid ${d.pid}) could not bind its named pipe${d.pipe ? ` ${d.pipe}` : ''} (${d.exception})`;
 }
 
-/** The note on the record of a check the runner stopped for a denied node, with the fix for that check (msbuildNodeFix). */
-export function msbuildNodeDenialNote(d: MsbuildNodeDenial, fix: string): string {
+/**
+ * The note on the record of a check the runner stopped for a denied node, with the fix for that check (msbuildNodeFix).
+ * `stopped` false: the check had failed on its own before the runner's next look found the record (MSBuild fails at
+ * once on Linux), so the note does not say Orbit stopped it.
+ */
+export function msbuildNodeDenialNote(d: MsbuildNodeDenial, fix: string, stopped = true): string {
   const pipe = d.pipe ? ` ${d.pipe}` : '';
-  return `the check sandbox denied MSBuild node (pid ${d.pid}) its named pipe${pipe} (${d.exception}); MSBuild waits 30 s for each of ten node starts before it fails, so Orbit stopped the check. Fix: ${fix}`;
+  const how = stopped ? '; MSBuild waits 30 s for each of ten node starts before it fails, so Orbit stopped the check' : ", and the check failed on it before the runner's next look";
+  return `the check sandbox denied MSBuild node (pid ${d.pid}) its named pipe${pipe} (${d.exception})${how}. Fix: ${fix}`;
 }
 
 // -m, -m:4, /m:4, -maxcpucount:4, --maxCpuCount:4; MSBuild switches are case-insensitive.

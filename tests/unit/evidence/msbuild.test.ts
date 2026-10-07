@@ -93,6 +93,44 @@ describe('findMsbuildNodeDenial', () => {
     expect(r.stdout).toBe('null');
   });
 
+  // Review: the scanner lstat()ed MSBuildTemp* and then listed and read through it, so a check that swapped the
+  // directory for a link between the two (renamex_np RENAME_SWAP in a loop) had the controller relay a line of a file
+  // outside its temp directory. Simulated here: the directory is one when looked at, a link from then on.
+  it('reads nothing through a report directory a check swaps for a link after the scanner looked at it', () => {
+    const d = tmp();
+    const outside = tmp();
+    report(outside, 'MSBuild_pid-4242_ab.failure.txt', FAILURE.replace('Permission denied', 'SECRET-OUTSIDE-CONTENT'));
+    const linked = join(d, 'MSBuildTempacme');
+    symlinkSync(join(outside, 'MSBuildTempacme'), linked);
+    const decoy = tmp();
+    const script = `
+      import fs from 'node:fs';
+      import { syncBuiltinESMExports } from 'node:module';
+      const lstat = fs.lstatSync;
+      let looks = 0;
+      fs.lstatSync = (p, ...rest) => (String(p) === ${JSON.stringify(linked)} && looks++ === 0 ? lstat(${JSON.stringify(decoy)}, ...rest) : lstat(p, ...rest));
+      syncBuiltinESMExports();
+      const { findMsbuildNodeDenial } = await import(${JSON.stringify(MSBUILD_MODULE)});
+      process.stdout.write(JSON.stringify(findMsbuildNodeDenial(${JSON.stringify(d)})));
+    `;
+    const r = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', '--input-type=module', '-e', script], { encoding: 'utf8', timeout: 15_000 });
+    expect(r.stderr).toBe('');
+    expect(r.stdout).toBe('null');
+  });
+
+  // Review: the limit was per directory, so 4096 report directories of 256 names each were about a million names
+  // listed on the controller's event loop every second.
+  it('reads a bounded number of names in all, however many report directories a check makes', () => {
+    const d = tmp();
+    for (let i = 0; i < 5; i++) {
+      mkdirSync(join(d, `MSBuildTemp${i}`));
+      for (let j = 0; j < 10; j++) writeFileSync(join(d, `MSBuildTemp${i}`, `junk-${j}.txt`), '');
+    }
+    writeFileSync(join(d, 'MSBuildTemp4', 'MSBuild_pid-4242_ab.failure.txt'), FAILURE);
+    expect(findMsbuildNodeDenial(d)?.pid).toBe(4242);
+    expect(findMsbuildNodeDenial(d, 30)).toBeNull();
+  });
+
   it('words the stopped check\'s note so the same denial in two runs shares one failure fingerprint (the pid differs)', () => {
     const exception = 'System.Net.Sockets.SocketException (13): Permission denied';
     const fix = msbuildNodeFix(checkDef('build', { command: ['dotnet', 'build'] }));
@@ -329,5 +367,14 @@ describe('msbuildNodeDenialNote', () => {
     const note = msbuildNodeDenialNote({ pid: 4242, pipe: '/tmp/MSBuild4242', exception: 'System.Net.Sockets.SocketException (13): Permission denied' }, fix);
     expect(note).toBe(`the check sandbox denied MSBuild node (pid 4242) its named pipe /tmp/MSBuild4242 (System.Net.Sockets.SocketException (13): Permission denied); MSBuild waits 30 s for each of ten node starts before it fails, so Orbit stopped the check. Fix: ${fix}`);
     expect(note).toContain('checks.build.command: ["dotnet", "build", "-m:1"]');
+  });
+
+  // Review: the note said Orbit stopped the check when the late look found the record of a check that had already
+  // failed on its own (MSBuild fails at once on Linux; the dotnet format baseline ended exit=1, not 143).
+  it('says the check failed on it, not that Orbit stopped it, for a check that ended before the runner\'s next look', () => {
+    const fix = msbuildNodeFix(checkDef('build', { command: ['dotnet', 'build'] }));
+    const note = msbuildNodeDenialNote({ pid: 4242, pipe: '/tmp/MSBuild4242', exception: 'System.Net.Sockets.SocketException (13): Permission denied' }, fix, false);
+    expect(note).toBe(`the check sandbox denied MSBuild node (pid 4242) its named pipe /tmp/MSBuild4242 (System.Net.Sockets.SocketException (13): Permission denied), and the check failed on it before the runner's next look. Fix: ${fix}`);
+    expect(note).not.toMatch(/Orbit stopped/);
   });
 });
