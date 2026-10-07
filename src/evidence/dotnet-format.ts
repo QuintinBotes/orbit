@@ -353,3 +353,36 @@ export function nodeDenialFix(check: JudgedCheck & Pick<CheckDefinition, 'id'>, 
   const fix = formatAndNodeFix(check, where);
   return `${fix.change} ${msbuildFixReason([fix])} ${DOTNET_FORMAT_REASON}`;
 }
+
+/**
+ * dotnet format's own report of a project it could not load: it catches MSBuildWorkspace's error and says the project's
+ * language is unsupported, of a C# or Visual Basic project file, and exits 0. Measured under the runner and srt on Linux
+ * (arm64 Ubuntu 24.04, SDK 10.0.401, verbosity diagnostic included): with the build host's pipe refused, `dotnet format
+ * --verify-no-changes --no-restore` of a console project failed with the build host's unhandled exception in most runs,
+ * and in 8 of 40 (more often with other tests running beside it) printed "Could not format '<checkout>/acme.csproj'.
+ * Format currently supports only C# and Visual Basic projects." and exited 0, having loaded no project and checked
+ * nothing (CI of #26 found it as a pass).
+ */
+const LOADED_NO_PROJECT = /^\s*Could not format '[^'\r\n]+\.(?:cs|vb)proj'\. Format currently supports only C# and Visual Basic projects\.\s*$/m;
+
+/** Whether a check's output shows a dotnet format that loaded no project of the C# or Visual Basic project file it named. */
+export function formatLoadedNoProject(output: string): boolean {
+  return LOADED_NO_PROJECT.test(output);
+}
+
+/**
+ * The note on a check the runner records as FAILED although it exited 0: its dotnet format loaded no project
+ * (formatLoadedNoProject) because the check sandbox refused the build host's pipe, so it checked nothing. PREFLIGHT reads
+ * it as the environment's failure (evidence/environment-failure.ts, pipe-denied), as it reads the build host's crash.
+ */
+export function buildHostDenialNote(fix: string): string {
+  return `the check sandbox denied dotnet format's build host its named pipe under /tmp, so dotnet format loaded no project and checked nothing, though it exited 0 (it reports a project it could not load as "Format currently supports only C# and Visual Basic projects"). Fix: ${fix}`;
+}
+
+/**
+ * The fix for a check whose dotnet format could not reach its build host: the form that loads no project, or, where that
+ * form cannot list the folders above the checkout (`folderForm` false: macOS, a run's checkout), running it outside Orbit.
+ */
+export function buildHostFix(check: JudgedCheck & Pick<CheckDefinition, 'id'>, where: MsbuildFixWhere | null, folderForm = true): string {
+  return folderForm ? `${dotnetFormatFix(check, where)} ${DOTNET_FORMAT_REASON}` : `${formatOutsideFix(check, where)} ${FORMAT_OUTSIDE_REASON}`;
+}

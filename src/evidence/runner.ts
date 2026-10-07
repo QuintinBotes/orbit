@@ -18,7 +18,7 @@ import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { fingerprintFailure } from './fingerprint.ts';
 import { git } from './git.ts';
-import { nodeDenialFix, sdkFormatsInProcess } from './dotnet-format.ts';
+import { buildHostDenialNote, buildHostFix, formatLoadedNoProject, nodeDenialFix, sdkFormatsInProcess } from './dotnet-format.ts';
 import { findMsbuildNodeDenial, msbuildNodeDenialNote, type MsbuildFixWhere, type MsbuildNodeDenial } from './msbuild.ts';
 import {
   checkRunToResult,
@@ -764,6 +764,19 @@ function denialNote(ctx: RunnerContext, def: CheckDefinition, denial: MsbuildNod
   return redact(msbuildNodeDenialNote(denial, nodeDenialFix(def, msbuildFixWhere(ctx, def), inProcess, folderFormRuns(ctx)), stopped));
 }
 
+/**
+ * The note on a check that exited 0 although its dotnet format loaded no project (evidence/dotnet-format.ts
+ * formatLoadedNoProject), or null. Under srt, the provider that refuses the build host its pipe, that is the build host's
+ * refusal, and a check that checked nothing must not read as passed: it is FAILED with the fix for its command, and read
+ * as the environment's failure. Not where the checkout pins SDK 8, whose dotnet format loads the project in its own
+ * process, and not under another provider: there the report is the project's own, as it would be outside Orbit.
+ */
+function loadedNoProjectNote(ctx: RunnerContext, def: CheckDefinition, output: string): string | null {
+  if (ctx.isolation.kind !== 'sandbox-runtime' || !formatLoadedNoProject(output)) return null;
+  if (sdkFormatsInProcess(resolve(ctx.checkoutDir, def.cwd), ctx.checkoutDir)) return null;
+  return redact(buildHostDenialNote(buildHostFix(def, msbuildFixWhere(ctx, def), folderFormRuns(ctx))));
+}
+
 /** Whether dotnet format whitespace --folder can list the folders above this checkout in the check sandbox (evidence/dotnet-format.ts). */
 function folderFormRuns(ctx: Pick<RunnerContext, 'checkoutDir' | 'snapshot' | 'homeDir'>): boolean {
   if (platform() !== 'darwin' || !ctx.snapshot.repo_root) return true;
@@ -943,6 +956,13 @@ function finalize(ctx: RunnerContext, def: CheckDefinition, row: CheckRunRecord,
     // MSBuild can record a refused node and fail before the next scan (at once on Linux): look once more.
     const late = findMsbuildNodeDenial(dirs.tmpDir);
     if (late) note = denialNote(ctx, def, late, false);
+  } else if (status === 'PASSED') {
+    // dotnet format can exit 0 having loaded no project when its build host was refused (on Linux): it checked nothing.
+    const unloaded = loadedNoProjectNote(ctx, def, body);
+    if (unloaded !== null) {
+      status = 'FAILED';
+      note = unloaded;
+    }
   }
 
   const exitCode = exit?.exitCode ?? null;

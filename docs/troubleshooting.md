@@ -138,7 +138,8 @@ degraded but usable.
   one that hands its arguments to MSBuild; see ".NET builds and MSBuild worker
   nodes"); refused `dotnet format`'s build host its named pipe (a
   `TimeoutException` under `BuildHostProcessManager` on macOS, "unable to
-  connect to it's pipe" on Linux: `dotnet format` takes no `-m:1`, so use the
+  connect to it's pipe" on Linux, or the runner's note that `dotnet format`
+  loaded no project: `dotnet format` takes no `-m:1`, so use the
   form that loads no project, see "dotnet format under the sandbox");
   refused a connection through its network proxy (`curl:
   (56) CONNECT tunnel failed, response 403`, `X-Proxy-Error:
@@ -420,7 +421,10 @@ degraded but usable.
   `Unhandled exception: System.TimeoutException: The operation has timed out`
   under `BuildHostProcessManager`, with nothing in its output about the
   sandbox; on Linux (SDK 10) it fails at once with "The build host was started
-  but we were unable to connect to it's pipe". Its implicit restore of a
+  but we were unable to connect to it's pipe", or now and then prints "Could
+  not format '<project>.csproj'. Format currently supports only C# and Visual
+  Basic projects." and exits 0, having checked nothing, which the runner records
+  as a failure with the same fix. Its implicit restore of a
   project with project references is also refused MSBuild worker nodes, and no
   switch of `dotnet format` passes `-m:1` to it. Orbit opens nothing for it:
   `/tmp` is shared by every process of yours, and Unix sockets in the check's

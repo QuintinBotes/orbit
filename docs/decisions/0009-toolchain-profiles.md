@@ -905,7 +905,11 @@ Consequences.
   anyway (through make, say) blocks the run with the fix within about a
   minute on macOS (about two seconds when its restore is refused a node)
   instead of becoming a pre-existing failure. On Linux the build host's
-  refusal is read from the output (a measured log); a refused restore is read
+  refusal is read from the output (a measured log), or, where `dotnet format`
+  says the C# project it could not load is in no language it supports and
+  exits 0 (8 runs of 40 under the runner and `srt`, SDK 10.0.401, once in
+  CI), from the note with which the runner records that check as failed
+  instead of passed; a refused restore is read
   only when MSBuild recorded the node, which the runner now also looks for when
   the check has already failed; whether MSBuild records it before failing on
   Linux was not measured.

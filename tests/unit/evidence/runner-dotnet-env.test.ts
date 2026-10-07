@@ -3,9 +3,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { environmentFix } from '../../../src/controller/environment-block.ts';
 import { classifyCouldNotRun } from '../../../src/evidence/environment-failure.ts';
 import { checkEnv, DOTNET_CHECK_ENV, NUGET_MIGRATIONS_DIR, prepareCheckHome, runChecks } from '../../../src/evidence/runner.ts';
 import { checkDef, nodeCheck } from './fixtures.ts';
+import { NoIsolation } from '../../../src/isolation/none.ts';
+import type { IsolationProvider } from '../../../src/isolation/types.ts';
 import { runnerEnv, type RunnerEnv } from '../../integration/evidence/harness.ts';
 
 // Issue #10: what a check gets so the .NET SDK's first run needs nothing outside the sandbox.
@@ -172,5 +175,40 @@ describe('a .NET check that times out', () => {
     const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['test'] });
     expect(r!.status).toBe('TIMEOUT');
     expect(readFileSync(r!.logPath, 'utf8')).not.toContain('DOTNET_PROCESSOR_COUNT');
+  }, 60_000);
+});
+
+// CI of #26: under srt on Linux (SDK 10.0.401), dotnet format whose build host's pipe was refused failed with the build
+// host's unhandled exception in most runs, and in 8 of 40 printed that the C# project it named is in neither language
+// it supports and exited 0, having loaded no project: the check read as passed, having checked nothing.
+describe('a dotnet format check that exits 0 having loaded no project', () => {
+  const FORMAT = ['dotnet', 'format', 'acme.csproj', '--verify-no-changes', '--no-restore'];
+  /** The provider runs a stand-in for dotnet format that prints its measured report for `project` and exits 0. */
+  const misreporting = (kind: IsolationProvider['kind'], project = 'acme.csproj'): IsolationProvider => {
+    const inner = new NoIsolation();
+    const script = `console.log("  Determining projects to restore...");console.log("Could not format '" + require("path").join(process.cwd(), ${JSON.stringify(project)}) + "'. Format currently supports only C# and Visual Basic projects.");`;
+    return { kind, available: () => inner.available(), wrap: (_argv, profile, opts) => inner.wrap([process.execPath, '-e', script], profile, opts) };
+  };
+  const run = async (isolation: IsolationProvider, files: Record<string, string> = {}, command = FORMAT) => {
+    const e = await runnerEnv([checkDef('format', { command, timeout_seconds: 60 })], { isolation, files: { 'acme.csproj': '<Project Sdk="Microsoft.NET.Sdk" />\n', ...files } });
+    envs.push(e);
+    const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['format'] });
+    return { r: r!, log: readFileSync(r!.logPath, 'utf8'), roots: [e.checkoutDir, dirname(r!.logPath)] };
+  };
+
+  it('is FAILED under srt, with the build host named and the form that loads no project, and read as the environment\'s', async () => {
+    const { r, log, roots } = await run(misreporting('sandbox-runtime'));
+    expect(r.status).toBe('FAILED');
+    expect(log).toMatch(/\[orbit\] check=format status=FAILED exit=0 note=the check sandbox denied dotnet format's build host its named pipe under \/tmp, so dotnet format loaded no project and checked nothing, though it exited 0 /);
+    expect(log).toContain(' Fix: checks.format.command: ["dotnet", "format", "whitespace", "--folder", "--verify-no-changes"] (dotnet format loads the project through a build host');
+    const found = classifyCouldNotRun({ checkId: 'format', output: log, insideRoots: roots });
+    expect(found?.signals).toEqual(['pipe-denied']);
+    expect(environmentFix([{ ...found!, command: { argv: FORMAT, shell: false } }])).toContain('check whitespace with the form that loads no project, checks.format.command: ["dotnet", "format", "whitespace", "--folder", "--verify-no-changes"]');
+  }, 60_000);
+
+  it('is left as it exited where the report is the project\'s own: another provider, SDK 8 pinned, a project in another language', async () => {
+    expect((await run(misreporting('none'))).r.status).toBe('PASSED');
+    expect((await run(misreporting('sandbox-runtime'), { 'global.json': '{"sdk":{"version":"8.0.303"}}\n' })).r.status).toBe('PASSED');
+    expect((await run(misreporting('sandbox-runtime', 'acme.fsproj'), {}, ['dotnet', 'format', 'acme.fsproj', '--verify-no-changes'])).r.status).toBe('PASSED');
   }, 60_000);
 });

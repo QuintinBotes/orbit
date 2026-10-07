@@ -402,10 +402,11 @@ function excerpt(line: string, at: number): string {
 }
 
 /**
- * The runner's record of a check it stopped because MSBuild recorded a worker node the sandbox refused its named pipe
+ * The runner's record of a check it stopped because MSBuild recorded a worker node the sandbox refused its named pipe,
+ * or of a check whose dotnet format exited 0 having loaded no project because the sandbox refused its build host's pipe
  * (evidence/runner.ts): the note on the footer it writes as the log's last line, which no output of the check can follow.
  */
-const RUNNER_NODE_DENIAL = /^\[orbit\] check=\S+ status=FAILED exit=\S+ note=(the check sandbox denied MSBuild node \(pid \d+\) its named pipe .*)$/;
+const RUNNER_NODE_DENIAL = /^\[orbit\] check=\S+ status=FAILED exit=\S+ note=(the check sandbox denied (?:MSBuild node \(pid \d+\)|dotnet format's build host) its named pipe .*)$/;
 /**
  * dotnet format's MSBuildWorkspace that could not reach its build host, whose named pipe Roslyn binds under /tmp
  * (evidence/dotnet-format.ts): a frame of its build host manager, and a pipe connect that timed out (macOS, SDK 9) or was
@@ -446,7 +447,8 @@ function pipeDenials(lines: readonly string[]): string[] {
  *     the sandbox (NUGET_HTTP_DENIAL), or NuGet's restore that could not establish the SSL connection to its source
  *     (NUGET_TLS_DENIAL);
  *   - a .NET named pipe the sandbox refused under /tmp (pipeDenials, pipe-denied): the runner's note on a check it
- *     stopped for a refused MSBuild worker node, or dotnet format's build host that could not be reached;
+ *     stopped for a refused MSBuild worker node or whose dotnet format loaded no project, or dotnet format's build host
+ *     that could not be reached;
  *   - a permission denial on a socket (SOCKET_DENIAL) inside the tool's own crash (TOOL_CRASH): MSBuild's internal
  *     failure on the named pipe it opens for its nodes, a Unix socket, is the tool being refused; the same denial in
  *     the repository's own program, or with no crash of the tool around it, is not shown to be. When pipeDenials has

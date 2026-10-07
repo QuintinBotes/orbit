@@ -36680,7 +36680,16 @@ function nodeDenialFix(check, where2, inProcess = false, folderForm = true) {
   const fix = formatAndNodeFix(check, where2);
   return `${fix.change} ${msbuildFixReason([fix])} ${DOTNET_FORMAT_REASON}`;
 }
-var FOLDER_FORM, FOLDER_TEXT, LOADS_NOTHING, SUBCOMMANDS, ONE_VALUE, MANY_VALUES, KEPT, WORKSPACE_FILE, ROLLS_MAJOR, RESTORE_FIRST, DOTNET_FORMAT_REASON, FORMAT_OUTSIDE_REASON, restoresFirst, shownOf, withFolderForm, withRestoreFirst;
+function formatLoadedNoProject(output) {
+  return LOADED_NO_PROJECT.test(output);
+}
+function buildHostDenialNote(fix) {
+  return `the check sandbox denied dotnet format's build host its named pipe under /tmp, so dotnet format loaded no project and checked nothing, though it exited 0 (it reports a project it could not load as "Format currently supports only C# and Visual Basic projects"). Fix: ${fix}`;
+}
+function buildHostFix(check, where2, folderForm = true) {
+  return folderForm ? `${dotnetFormatFix(check, where2)} ${DOTNET_FORMAT_REASON}` : `${formatOutsideFix(check, where2)} ${FORMAT_OUTSIDE_REASON}`;
+}
+var FOLDER_FORM, FOLDER_TEXT, LOADS_NOTHING, SUBCOMMANDS, ONE_VALUE, MANY_VALUES, KEPT, WORKSPACE_FILE, ROLLS_MAJOR, RESTORE_FIRST, DOTNET_FORMAT_REASON, FORMAT_OUTSIDE_REASON, restoresFirst, shownOf, withFolderForm, withRestoreFirst, LOADED_NO_PROJECT;
 var init_dotnet_format = __esm({
   "src/evidence/dotnet-format.ts"() {
     "use strict";
@@ -36714,6 +36723,7 @@ var init_dotnet_format = __esm({
         return [...w(c.prefix), ...w(restore), "&&", ...w(c.prefix), ...w(format)].join(" ");
       }
     );
+    LOADED_NO_PROJECT = /^\s*Could not format '[^'\r\n]+\.(?:cs|vb)proj'\. Format currently supports only C# and Visual Basic projects\.\s*$/m;
   }
 });
 
@@ -37138,6 +37148,11 @@ function denialNote(ctx, def, denial, stopped = true) {
   const inProcess = sdkFormatsInProcess(resolve8(ctx.checkoutDir, def.cwd), ctx.checkoutDir);
   return redact(msbuildNodeDenialNote(denial, nodeDenialFix(def, msbuildFixWhere(ctx, def), inProcess, folderFormRuns(ctx)), stopped));
 }
+function loadedNoProjectNote(ctx, def, output) {
+  if (ctx.isolation.kind !== "sandbox-runtime" || !formatLoadedNoProject(output)) return null;
+  if (sdkFormatsInProcess(resolve8(ctx.checkoutDir, def.cwd), ctx.checkoutDir)) return null;
+  return redact(buildHostDenialNote(buildHostFix(def, msbuildFixWhere(ctx, def), folderFormRuns(ctx))));
+}
 function folderFormRuns(ctx) {
   if (platform() !== "darwin" || !ctx.snapshot.repo_root) return true;
   try {
@@ -37281,6 +37296,12 @@ function finalize(ctx, def, row, dirs, exit, synthetic) {
   } else if (status2 === "FAILED" && note3 === null) {
     const late = findMsbuildNodeDenial(dirs.tmpDir);
     if (late) note3 = denialNote(ctx, def, late, false);
+  } else if (status2 === "PASSED") {
+    const unloaded = loadedNoProjectNote(ctx, def, body);
+    if (unloaded !== null) {
+      status2 = "FAILED";
+      note3 = unloaded;
+    }
   }
   const exitCode = exit?.exitCode ?? null;
   const footer = `[orbit] check=${def.id} status=${status2} exit=${exitCode === null ? exit?.signal ?? "none" : exitCode}${note3 ? ` note=${note3}` : ""}
@@ -47244,7 +47265,7 @@ var init_environment_failure = __esm({
     MSBUILD_ERROR_SUMMARY = /\b[1-9]\d* Error\(s\)/;
     MSBUILD_ERROR_LINE = /^(.*?)\s*:\s+error(?:\s+([A-Za-z]+\d+))?\s*:/;
     NUGET_TARGETS = /\bNuGet\.targets\(\d+,\d+\)$/;
-    RUNNER_NODE_DENIAL = /^\[orbit\] check=\S+ status=FAILED exit=\S+ note=(the check sandbox denied MSBuild node \(pid \d+\) its named pipe .*)$/;
+    RUNNER_NODE_DENIAL = /^\[orbit\] check=\S+ status=FAILED exit=\S+ note=(the check sandbox denied (?:MSBuild node \(pid \d+\)|dotnet format's build host) its named pipe .*)$/;
     BUILD_HOST_FRAME = /\bMicrosoft\.CodeAnalysis\.MSBuild\.BuildHostProcessManager\b/;
     BUILD_HOST_PIPE = /\bSystem\.IO\.Pipes\.NamedPipeClientStream\.(?:ConnectInternal|TryConnect)\b|unable to connect to it'?s pipe/;
     UNHANDLED = /^Unhandled exception[.:]\s/;
