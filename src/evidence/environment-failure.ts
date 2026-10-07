@@ -260,7 +260,14 @@ export interface CouldNotRunInput {
 }
 
 // A filesystem call, by the name a runtime, the C library or a shell tool gives it, or the error type that reports one.
-const FS_CALL = /\b(?:mkdir|mkdtemp|mkstemp|open|openat|creat|rename|unlink|rmdir|chmod|chown|lchown|symlink|link|copyfile|clonefile|scandir|opendir|access|stat|lstat|utimes?|truncate|shm_open|sem_open|realpath|readlink|mkfifo|bind|connect|listen|touch|cp|mv|rm|ln|PermissionError|IOException|errno)\b/i;
+const FS_CALL = /\b(?:mkdir|mkdtemp|mkstemp|open|openat|creat|rename|unlink|rmdir|chmod|chown|lchown|symlink|link|copyfile|clonefile|scandir|opendir|access|stat|lstat|utimes?|truncate|shm_open|sem_open|realpath|readlink|mkfifo|bind|connect|touch|cp|mv|rm|ln|PermissionError|IOException|errno)\b/i;
+/**
+ * node's name for a server's bind of a Unix socket (`listen EACCES: permission denied /tmp/x.pipe`). It counts with
+ * EACCES only, the gated permission-denied: Seatbelt refuses a Unix socket server anywhere with EPERM (`listen EPERM:
+ * operation not permitted /tmp/claude/acme.sock`, captured under srt on macOS), and an ungated reading of that would take
+ * a candidate that adds such a server out of the repair loop.
+ */
+const LISTEN_CALL = /\blisten\b/i;
 // macOS's Seatbelt refuses a write with EPERM; srt on Linux mounts everything outside the writable paths read-only, so
 // the same write fails there with EROFS.
 const DENIAL = /\bEPERM\b|operation not permitted|\bEROFS\b|read-only file system/i;
@@ -455,11 +462,11 @@ export function classifyCouldNotRun(input: CouldNotRunInput): EnvironmentFailure
     const network = NETWORK_DENIAL.exec(line);
     const nuget = domainNameDenied ? NUGET_HTTP_DENIAL.exec(line) : null;
     const socket = toolCrashed ? SOCKET_DENIAL.exec(line) : null;
-    const pathOutside = (): boolean => FS_CALL.test(line) && (line.match(ABSOLUTE_PATH) ?? []).some(outside);
+    const pathOutside = (): boolean => (line.match(ABSOLUTE_PATH) ?? []).some(outside);
     const candidates: { signal: EnvironmentSignal; at: number }[] = [];
     if (deny && (!deny[1]!.toLowerCase().startsWith('file-') || (deny[2] !== undefined && isAbsolute(deny[2]) && outside(deny[2])))) candidates.push({ signal: 'sandbox-violation', at: deny.index });
-    if (denial && pathOutside()) candidates.push({ signal: 'filesystem-denied', at: denial.index });
-    if (permission && pathOutside()) candidates.push({ signal: 'permission-denied', at: permission.index });
+    if (denial && FS_CALL.test(line) && pathOutside()) candidates.push({ signal: 'filesystem-denied', at: denial.index });
+    if (permission && (FS_CALL.test(line) || LISTEN_CALL.test(line)) && pathOutside()) candidates.push({ signal: 'permission-denied', at: permission.index });
     if (network) candidates.push({ signal: 'network-denied', at: network.index });
     if (nuget) candidates.push({ signal: 'nuget-http-denied', at: nuget.index });
     if (socket) candidates.push({ signal: 'socket-denied', at: socket.index });

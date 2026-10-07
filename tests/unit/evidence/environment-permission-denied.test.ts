@@ -28,6 +28,11 @@ const NUGET_PROXY = fixture('dotnet-build-nuget-proxy-403.log');
 const NUGET_HTTP = fixture('dotnet-build-nuget-cookiecontainer.log');
 /** Python 3.12's unittest, a test that opens a file it may not read (captured; the checkout path neutral). */
 const UNITTEST_EACCES = fixture('python-unittest-permission-error.log');
+/**
+ * Captured under srt 0.0.78 on macOS (node 22): a node server of the repository listens on a Unix socket in its temp
+ * directory, which Seatbelt refuses anywhere. node names the call `listen` and the errno EPERM.
+ */
+const LISTEN_UNIX_EPERM = fixture('node-listen-unix-socket-eperm.log');
 const CHECKOUT = '/var/folders/acme/T/orbit-evidence-acme/checkout';
 const ROOTS = [CHECKOUT, '/orbit/runs/acme/baseline/build'];
 
@@ -269,6 +274,19 @@ describe('classifyCouldNotRun on a candidate: the denials ADR 0010 added count o
     expect(classifyCouldNotRun({ checkId: 'unit', output: EACCES, insideRoots: ROOTS, baseSignals: ['permission-denied'] })?.signals).toEqual(['permission-denied']);
     expect(classifyCouldNotRun({ checkId: 'build', output: NUGET_PROXY, insideRoots: ROOTS, baseSignals: ['network-denied'] })?.signals).toEqual(['network-denied']);
     expect(classifyCouldNotRun({ checkId: 'test', output: MSBUILD_SOCKET, insideRoots: ROOTS, baseSignals: ['socket-denied'] })?.signals).toEqual(['socket-denied']);
+  });
+
+  // Review: `listen` joined the filesystem calls for node's `listen EACCES: permission denied /tmp/x.pipe`, which made
+  // the same server's EPERM an ungated filesystem denial, so a candidate that adds a Unix socket server ended BLOCKED
+  // where main repaired it. `listen` counts with EACCES only, which is gated; its EPERM is no evidence, as before.
+  it('takes a Unix socket server the sandbox refuses with EPERM for the code\'s failure, on a candidate and on the base revision', () => {
+    expect(classifyCouldNotRun({ checkId: 'unit', output: LISTEN_UNIX_EPERM, insideRoots: ROOTS, baseSignals: [] })).toBeNull();
+    expect(classifyCouldNotRun({ checkId: 'unit', output: LISTEN_UNIX_EPERM, insideRoots: ROOTS, baseSignals: ['filesystem-denied'] })).toBeNull();
+    expect(classifyCouldNotRun({ checkId: 'unit', output: LISTEN_UNIX_EPERM, insideRoots: ROOTS })).toBeNull();
+    // Its EACCES form is the gated permission-denied: read on the base revision, on a candidate only when the base showed it.
+    const eacces = 'Error: listen EACCES: permission denied /tmp/tsx-501/4242.pipe\n';
+    expect(classifyCouldNotRun({ checkId: 'unit', output: eacces, insideRoots: ROOTS })?.signals).toEqual(['permission-denied']);
+    expect(classifyCouldNotRun({ checkId: 'unit', output: eacces, insideRoots: ROOTS, baseSignals: [] })).toBeNull();
   });
 
   it('keeps the denials that predate ADR 0010 (EPERM, EROFS, a Seatbelt deny line) as they were on a candidate', () => {

@@ -300,7 +300,11 @@ Not evidence of an environment failure: the same `SocketException (13)` from
 the repository's own program (its stack is in its own code; captured under
 `srt` on macOS, where a Unix socket bind is refused anywhere), a socket denial
 with no crash of the tool around it (`listen EPERM: operation not permitted
-127.0.0.1`), a denial inside the checkout or with no path, a DNS failure
+127.0.0.1`), the same EPERM on a Unix socket's path (`listen EPERM: operation
+not permitted /tmp/claude/acme.sock`, node's report of a server Seatbelt
+refuses anywhere, captured under `srt` on macOS: `listen` counts only with
+EACCES, which is gated, so a candidate that adds such a server goes to repair),
+a denial inside the checkout or with no path, a DNS failure
 (`ENOTFOUND`, which an offline host or a wrong name gives too), and any denial
 in the output of a failing test. A test whose assertion message says
 "permission denied" is a failing test, and so is a Python unittest that errors
