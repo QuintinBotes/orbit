@@ -58,12 +58,30 @@ describe.skipIf(skip !== null)(skip === null ? 'an approved .NET command under s
     expect(text).toContain('Build succeeded.');
   }, 240_000);
 
-  it('stops a build without -m:1 within seconds once MSBuild records the refused worker node, with the command pinned', async () => {
+  // macOS: MSBuild waits 30 s for each of ten node starts, so Orbit finds the refused node's record and stops the build.
+  // Linux: srt refuses MSBuild's own socket too, and the build fails in about a second, often before a node has written
+  // its record (ADR 0009, addendum, item 3); Orbit looks once more when the command has ended, so the note is there
+  // whenever the record is, saying the command failed on it. Measured in an arm64 Ubuntu 24.04 container (SDK 10.0.401,
+  // srt 0.0.78): the record was there in five runs of eight; on GitHub's Ubuntu runners in neither job.
+  it('stops a build without -m:1 within seconds once MSBuild records the refused worker node, with the command pinned (Linux: fails at once, with the note whenever MSBuild recorded the node)', async () => {
     const started = Date.now();
     const { out, text } = await approve(`chmod +x apps/build.sh && ${dotnet} build apps/App`);
     expect(Date.now() - started).toBeLessThan(120_000);
-    expect(out.exit_code, text).not.toBe(0);
-    expect(text).toMatch(/the sandbox of the approved command denied MSBuild node \(pid \d+\) its named pipe \/tmp\/MSBuild\d+ /);
-    expect(text).toContain(`Fix: the command to approve: ["/bin/sh", "-c", "chmod +x apps/build.sh && ${dotnet} build apps/App -m:1"]`);
+    const fix = `Fix: the command to approve: ["/bin/sh", "-c", "chmod +x apps/build.sh && ${dotnet} build apps/App -m:1"]`;
+    const note = /the sandbox of the approved command denied MSBuild node \(pid \d+\) its named pipe \/tmp\/MSBuild\d+ \(System\.Net\.Sockets\.SocketException \(\d+\): [^)]+\)/;
+    // Stopped by Orbit always on macOS; on Linux only when its look comes before MSBuild's own failure.
+    const stopped = text.includes('[stopped by Orbit: the sandbox refused an MSBuild worker node]');
+    if (process.platform === 'darwin') expect(stopped, text).toBe(true);
+    if (stopped) {
+      expect(out.exit_code, text).toBeNull();
+      expect(text).toMatch(new RegExp(`${note.source}; MSBuild waits 30 s for each of ten node starts before it fails, so Orbit stopped the approved command\\. `));
+      expect(text).toContain(fix);
+      return;
+    }
+    expect(out.exit_code, text).toBeGreaterThan(0);
+    expect(text).toContain('Build FAILED.');
+    if (!note.test(text)) return;
+    expect(text).toMatch(new RegExp(`${note.source}, and the approved command failed on it before Orbit's next look\\. `));
+    expect(text).toContain(fix);
   }, 240_000);
 });
