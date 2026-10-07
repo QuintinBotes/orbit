@@ -357,7 +357,11 @@ Seatbelt deny line, a crash before any output) keep their earlier rule.
 marks with a classification, and reads a usage error and a program that was not
 found again from the recorded log, the exit code and the command in the frozen
 policy, so a question raised before this decision existed cannot be approved
-either. A missing target is refused with its own reason. Both `orbit decide`
+either. A review found such a question for an issue #10 failure still approved,
+so the environment's readings are read again from the log too, with the
+checkout and cwd of the check's recorded run as its own directories; with no
+recorded run a denial on a path is left alone, since it may be inside the
+checkout. A missing target is refused with its own reason. Both `orbit decide`
 and remote answers apply answers there. The refusal is recorded as a rejected
 amendment, and the contract is unchanged.
 

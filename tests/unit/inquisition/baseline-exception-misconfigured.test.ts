@@ -138,6 +138,24 @@ describe('a baseline exception for a misconfigured check is refused', () => {
     expect(answerQuestion(env.db, env.runDir, questionId(env), 'Approve', 'alice', env.clock).baselineException).toMatchObject({ status: 'refused', detail: expect.stringMatching(/^check lint could not run on the base revision/) });
   });
 
+  // Review: a question raised before ADR 0010 (an in-flight run) for an issue #10 failure was still approved: only a usage
+  // error and a program not found were read again from the log. The environment's readings are read again too.
+  it('refuses a failure the environment stopped before it ran anything of the repository, read again from the log', () => {
+    const environment = (name: string): string => readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../fixtures/environment', name), 'utf8');
+    for (const name of ['dotnet-test-msbuild-node-pipe-eacces.log', 'dotnet-build-nuget-cookiecontainer.log', 'dotnet-build-nuget-ssl.log', 'dotnet-format-restore-node-denied.log']) {
+      env = setup(['dotnet', 'test'], environment(name), 1);
+      const before = env.contractRow();
+      const res = answerQuestion(env.db, env.runDir, questionId(env), 'Approve', 'alice', env.clock);
+      expect(res.baselineException, name).toMatchObject({ status: 'refused', detail: expect.stringMatching(/^check lint could not run on the base revision/) });
+      expect(env.contractRow()).toEqual(before);
+      env.cleanup();
+      env = null;
+    }
+    // A denial on a path, with no recorded run to say where the check's checkout was, is not read: it may be the code's.
+    env = setup(['npm', 'test'], "Error: EACCES: permission denied, open '/home/acme/checkout/dist/out.js'\n", 1);
+    expect(answerQuestion(env.db, env.runDir, questionId(env), 'Approve', 'alice', env.clock).baselineException).toMatchObject({ status: 'applied' });
+  });
+
   it('still applies an approved exception for a failure of the repository\'s code', () => {
     env = setup(['npm', 'run', 'lint'], 'src/export.ts:12 error: unused variable\n', 1);
     expect(answerQuestion(env.db, env.runDir, questionId(env), 'Approve', 'alice', env.clock).baselineException).toMatchObject({ status: 'applied' });
