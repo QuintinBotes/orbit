@@ -19,6 +19,7 @@ import type { ScopeReport } from '../evidence/types.ts';
 import type { PolicySnapshot } from './types.ts';
 import { BUILTIN_PROTECTED_PATHS } from './builtin.ts';
 import { compileGlobs } from './globs.ts';
+import { gitTreeReader, loadTestLayout } from './test-files.ts';
 import { detectWeakening, type WeakeningInput } from './weakening.ts';
 
 export interface ScopeInput {
@@ -101,7 +102,9 @@ export async function inspectScope(input: ScopeInput): Promise<ScopeReport> {
   const diffs = await perFileDiffs(repoRoot, base, cand, textChanges.map((c) => c.path));
   for (const p of forcedText) changedLines += countPatchLines(diffs.get(p) ?? '');
   const weakeningInputs: WeakeningInput[] = changes.map((c) => ({ path: c.path, status: c.status, diff: diffs.get(c.path) ?? '' }));
-  const weakening = detectWeakening(weakeningInputs);
+  // Which changed files are tests depends on project files of both trees (.NET test projects, Rust crates; ADR 0011).
+  const testLayout = await loadTestLayout(gitTreeReader(async (args) => (await git(repoRoot, [...args])).toString('utf8')), base, cand, changes.map((c) => c.path));
+  const weakening = detectWeakening(weakeningInputs, testLayout);
 
   const limits = config.scheduler.hard_limits;
   return {

@@ -31,7 +31,7 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
   // An exception a person approved since the contract was loaded is part of it before any inquiry reasons about it.
   const contract = applyBaselineExceptionAnswers({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { snapshot: ctx.snapshot }).contract ?? assertContract(ctx);
   const resume: RunState = ctx.run.resumeState ?? (ctx.candidate ? 'VERIFYING' : 'PLANNING');
-  const trigger = enteringTrigger(ctx) ?? (ctx.candidate ? pendingTrigger(ctx, ctx.candidate, null) : null);
+  const trigger = enteringTrigger(ctx) ?? (ctx.candidate ? await pendingTrigger(ctx, ctx.candidate, null) : null);
   if (!trigger || handledTriggerKeys(ctx).has(trigger.key)) return move(ctx, resume, trigger ? `inquiry ${trigger.key} already settled; resuming ${resume}` : `nothing left to inquire into; resuming ${resume}`);
 
   // An inquisitor a crashed controller left behind is collected first; the engine refuses to start a second one.

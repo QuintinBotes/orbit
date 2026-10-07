@@ -57,7 +57,7 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   // 2. Repeated equivalent failures go to the Inquisition before another repair (spec section 7 stop logic).
   const existing = readJsonIfExists<StoredBrief>(briefPath(ctx, next));
   if (!existing) {
-    const trigger = pendingTrigger(ctx, cand, ['repeated_failure']);
+    const trigger = await pendingTrigger(ctx, cand, ['repeated_failure']);
     if (trigger) return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
   }
 

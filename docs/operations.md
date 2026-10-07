@@ -135,7 +135,15 @@ A green check is not enough for PASS. A criterion is only `supported` when its
 checks passed and at least one of them either failed on the base revision (so
 the change turned it green) or the candidate adds or changes a test; otherwise
 it is `unverified` with the reason "no new evidence". A candidate whose tree is
-the base revision's tree makes no change, and the verdict is INCOMPLETE. The
+the base revision's tree makes no change, and the verdict is INCOMPLETE. What
+counts as a test follows each language's test runner (ADR 0011): a file of a
+.NET test project (its project file references Microsoft.NET.Test.Sdk or a test
+framework, or sets IsTestProject), a JVM test source set (`src/test/`), a
+crate's `tests/` or a `#[test]` function the change adds to a source of the
+crate's `src/` that cargo compiles (not one marked `#[ignore]`), and
+the usual test files of JavaScript/TypeScript, Python, Go, Ruby, PHP, Swift,
+Elixir, Dart, C and C++. A test-named file of a production project or source
+set does not count, since its runner never runs it. The
 test-change rule counts a changed test anywhere in the run, since a contract does
 not map criteria to test files, so it can still pass a criterion whose own test
 was left alone when another test changed. The evidence report lists its

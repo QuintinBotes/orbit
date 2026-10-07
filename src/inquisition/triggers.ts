@@ -6,7 +6,7 @@ import { listDecisions } from '../storage/decisions.ts';
 import type { GoalContract } from '../contract/types.ts';
 import type { ImplementerOutput } from '../contract/model-outputs.ts';
 import { wordTokens } from '../contract/wording.ts';
-import { isTestPath } from '../policy/weakening.ts';
+import { isTestPath, type TestLayout } from '../policy/test-files.ts';
 import type { RunMode } from '../policy/types.ts';
 import { fingerprintOccurrences, listFailures, type FailureRecord } from './store.ts';
 import { RISK_CATEGORIES, riskCategoriesInDiff, riskCategoriesInPaths, riskCategoriesInText, type RiskCategory } from './heuristics.ts';
@@ -88,6 +88,8 @@ export interface InquisitionSnapshot {
   /** The planner's expected_changed_files paths. */
   expectedChangedFiles: string[];
   changedFiles: string[];
+  /** The candidate's test layout (loadTestLayout), so the files of a .NET test project or a crate's tests/ are tests. */
+  testLayout?: TestLayout;
   /** Unified diff of the candidate against its base; only added lines are inspected. */
   diff: string | null;
   claims: ImplementerOutput | null;
@@ -99,6 +101,8 @@ export interface InquisitionSnapshot {
 export interface SnapshotExtras {
   expectedChangedFiles?: string[];
   changedFiles?: string[];
+  /** Absent: path conventions alone tell tests apart, and no .NET source counts as one. */
+  testLayout?: TestLayout;
   diff?: string | null;
   claims?: ImplementerOutput | null;
   sources?: SourceStatement[];
@@ -188,6 +192,7 @@ export function loadInquisitionSnapshot(db: OrbitDb, runId: string, extras: Snap
     decisions: decisions.map((d) => ({ kind: d.kind, summary: d.summary })),
     expectedChangedFiles: extras.expectedChangedFiles ?? [],
     changedFiles: extras.changedFiles ?? [],
+    ...(extras.testLayout ? { testLayout: extras.testLayout } : {}),
     diff: extras.diff ?? null,
     claims: extras.claims ?? null,
     sources: extras.sources ?? [],
@@ -327,7 +332,7 @@ function detectUnexplainedArchitecture(s: InquisitionSnapshot): Trigger[] {
   const expected = new Set(s.expectedChangedFiles.map((p) => p.replace(/^\.\//, '')));
   const expectedDirs = new Set([...expected].map((p) => p.split('/')[0] ?? p));
   // New tests are asked for by the criteria themselves; weakening of old ones is its own trigger.
-  const extra = s.changedFiles.filter((p) => !expected.has(p) && !isTestPath(p));
+  const extra = s.changedFiles.filter((p) => !expected.has(p) && !isTestPath(p, s.testLayout));
   if (extra.length <= s.thresholds.unexplainedFiles) return [];
   const newAreas = [...new Set(extra.map((p) => p.split('/')[0] ?? p))].filter((d) => !expectedDirs.has(d)).sort();
   const evidence = [`${extra.length} changed files are outside the planner's expected set (tolerated: ${s.thresholds.unexplainedFiles})`, ...extra.slice(0, 10)];

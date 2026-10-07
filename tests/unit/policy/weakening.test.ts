@@ -17,6 +17,25 @@ describe('test file recognition', () => {
     for (const p of ['src/a.ts', 'testing.md', 'tests/fixtures/data.json', 'contest.py']) expect(isTestPath(p), p).toBe(false);
   });
 
+  // Issue #30: the same predicate gates test-file-deleted, so a deleted test of another language is a signal too.
+  it('flags a deleted test file of every covered language, and a deleted file of a .NET test project by its layout', () => {
+    const layout = { dotnetProjects: new Map([['src/Acme', false], ['tests/Acme.Tests', true]]), cargoManifests: new Map([['', true]]) };
+    const deleted = (path: string) => detectWeakening([{ path, status: 'D', diff: '' }], layout).map((s) => s.signal);
+    for (const p of ['tests/Acme.Tests/CalculatorTests.cs', 'src/test/java/com/acme/CalculatorTest.java', 'spec/models/user_spec.rb', 'tests/Unit/CalculatorTest.php', 'Tests/AcmeTests/CalculatorTests.swift', 'src/parser_test.cc', 'test/acme/calculator_test.exs', 'test/calculator_test.dart', 'tests/mul.rs']) {
+      expect(deleted(p), p).toEqual(['test-file-deleted']);
+    }
+    for (const p of ['src/Acme/Test.cs', 'src/Acme/CalculatorTests.cs', 'src/main/java/com/acme/LoadTest.java', 'src/lib.rs']) expect(deleted(p), p).toEqual([]);
+    // Without the layout a C# path says nothing about its project.
+    expect(detectWeakening([{ path: 'tests/Acme.Tests/CalculatorTests.cs', status: 'D', diff: '' }]).map((s) => s.signal)).toEqual([]);
+  });
+
+  it('judges a Rust source by what the file is, not by the #[test] its change adds: its production numbers are not test tolerances', () => {
+    const layout = { dotnetProjects: new Map<string, boolean>(), cargoManifests: new Map([['', true]]) };
+    const d = diff(['    let timeout_ms = 500;'], ['    let timeout_ms = 5000;', '#[test]', 'fn mul_works() { assert_eq!(mul(2, 3), 6); }']);
+    expect(detectWeakening([{ path: 'src/lib.rs', status: 'M', diff: d }], layout)).toEqual([]);
+    expect(detectWeakening([{ path: 'tests/mul.rs', status: 'M', diff: d }], layout).map((s) => s.signal)).toEqual(['timeout-raised']);
+  });
+
   it('recognises stored expectations', () => {
     for (const p of ['src/__snapshots__/a.test.ts.snap', 'e2e/home.spec.ts-snapshots/home-chromium.png', 'tests/__snapshots__/test_x.ambr', 'x/__screenshots__/a.png']) {
       expect(isSnapshotPath(p), p).toBe(true);

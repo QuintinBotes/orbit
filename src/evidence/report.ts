@@ -4,7 +4,7 @@ import { atomicWriteJson } from '../core/fsx.ts';
 import { hashObject } from '../core/hash.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { snapshotHash } from '../policy/snapshot.ts';
-import { isTestPath } from '../policy/weakening.ts';
+import { isTestPath, type TestLayout } from '../policy/test-files.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { candidateEvidenceDir } from './runner.ts';
@@ -55,6 +55,13 @@ export interface BaseComparison {
   checks: readonly { checkId: string; status: CheckStatus }[] | null;
   /** Paths the candidate adds or modifies relative to the base revision (deletions excluded). */
   changedPaths: readonly string[];
+  /**
+   * The test layout of the base and candidate trees for those paths (loadTestLayout, ADR 0011), so a file of a .NET
+   * test project or a crate's tests/ counts as a test. Absent, path conventions alone decide.
+   */
+  testLayout?: TestLayout;
+  /** Diffs of changed files whose test changes only their content shows (testedByContent: a #[test] added in Rust). */
+  diffs?: ReadonlyMap<string, string>;
 }
 
 /** One hash over the configuration of the given checks, in id order. */
@@ -217,7 +224,9 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
   const base = input.base;
   const noChange = base !== undefined && base.treeHash === candidate.treeHash;
   if (noChange) note(incomplete, 'the candidate makes no change: its tree is the base revision\'s tree, so no check result is evidence of a change');
-  const testChanged = base !== undefined && base.changedPaths.some(isTestPath);
+  // One test-file predicate for every language (ADR 0011); the change's diff counts here, since the question is
+  // whether the change adds or changes a test.
+  const testChanged = base !== undefined && base.changedPaths.some((p) => isTestPath(p, base.testLayout, base.diffs?.get(p)));
   const baseStatus = new Map((base?.checks ?? []).map((c) => [c.checkId, c.status] as const));
   const newEvidenceGap = (ids: readonly string[]): string | null => {
     if (base === undefined) return null;

@@ -31532,20 +31532,303 @@ var init_version = __esm({
   }
 });
 
+// src/policy/test-files.ts
+function isTestPath(path, layout = NO_LAYOUT, diff) {
+  const p = path.toLowerCase();
+  if (JS_PY_GO.test(p)) return jsPyGoTest(p);
+  if (JVM.test(p)) return JVM_TEST_SOURCES.test(path);
+  if (DOTNET_SOURCE.test(p)) return testOwners(path, layout.dotnetProjects, layout) !== null;
+  if (p.endsWith(".rs")) return rustTest(path, layout, diff);
+  if (p.endsWith(".rb")) return /(^|\/)spec\/(.+\/)?[^/]+_spec\.rb$/.test(p) || /(^|\/)test\/(.+\/)?[^/]+_test\.rb$/.test(p);
+  if (p.endsWith(".php")) return /(^|\/)[Tt]ests?\/(.+\/)?[^/]+Test\.php$/.test(path);
+  if (p.endsWith(".swift")) return !/(^|\/)Sources\//.test(path) && /(^|\/)(tests|\w*Tests)\//.test(path);
+  if (p.endsWith(".exs")) return /(^|\/)test\/(.+\/)?[^/]+_test\.exs$/.test(p);
+  if (p.endsWith(".dart")) return /(^|\/)(test|integration_test)\/(.+\/)?[^/]+_test\.dart$/.test(p);
+  if (C_FAMILY.test(p)) return /(^|\/)tests?\//.test(p) || /_(unit)?tests?\.(cc|cpp|cxx)$/.test(p) && !/(^|\/|_)(self|ab|a_b)_tests?\.(cc|cpp|cxx)$/.test(p);
+  return false;
+}
+function jsPyGoTest(p) {
+  if (/(^|\/)(__tests__|__test__|tests?|specs?|e2e|integration-tests?|testing)\//.test(p)) return true;
+  if (/\.(test|spec|e2e|cy)\.(m|c)?(j|t)sx?$/.test(p)) return true;
+  if (/(^|\/)test_[^/]*\.py$|_test\.py$|(^|\/)conftest\.py$/.test(p)) return true;
+  return /_test\.go$/.test(p);
+}
+function isTestPathOnEitherRevision(path, layout = NO_LAYOUT) {
+  const p = path.toLowerCase();
+  const owners = layout.owners?.get(path);
+  if (owners === void 0) return isTestPath(path, layout);
+  if (DOTNET_SOURCE.test(p)) return owners.some((o) => o.here);
+  if (p.endsWith(".rs")) return owners.some((o) => o.here && o.dir !== null && relativeTo(o.dir, path).startsWith("tests/"));
+  return isTestPath(path, layout);
+}
+function testOwners(path, dirs, layout) {
+  const owners = layout.owners?.get(path)?.map((o) => o.dir) ?? [nearestDir(path, (d) => dirs.has(d))];
+  if (owners.length === 0) return null;
+  const out = [];
+  for (const d of owners) {
+    if (d === null || dirs.get(d) !== true) return null;
+    out.push(d);
+  }
+  return out;
+}
+function rustTest(path, layout, diff) {
+  const crates = testOwners(path, layout.cargoManifests, layout);
+  if (crates === null) return false;
+  const rels = crates.map((dir) => relativeTo(dir, path));
+  if (rels.every((r) => r.startsWith("tests/"))) return true;
+  if (diff === void 0 || !rels.every((r) => r.startsWith("src/"))) return false;
+  if (!rels.every((r) => RUST_CRATE_ROOT.test(r)) && layout.compiledRust?.has(path) !== true) return false;
+  return addsRunnableRustTest(diff);
+}
+function testedByContent(path) {
+  return path.toLowerCase().endsWith(".rs");
+}
+function dirOf(path) {
+  const i = path.lastIndexOf("/");
+  return i < 0 ? "" : path.slice(0, i);
+}
+function relativeTo(dir, path) {
+  return dir === "" ? path : path.slice(dir.length + 1);
+}
+function ancestors(path) {
+  const out = [];
+  let dir = path;
+  do {
+    dir = dirOf(dir);
+    out.push(dir);
+  } while (dir !== "");
+  return out;
+}
+function nearestDir(path, has) {
+  return ancestors(path).find(has) ?? null;
+}
+function addsRunnableRustTest(diff) {
+  let group = [];
+  const settle = () => {
+    const runs = group.some((l) => l.added && RUST_TEST_ATTRIBUTE.test(l.text)) && !group.some((l) => RUST_IGNORE_ATTRIBUTE.test(l.text));
+    group = [];
+    return runs;
+  };
+  let inHunk = false;
+  for (const line3 of diff.split("\n")) {
+    if (line3.startsWith("@@") || line3.startsWith("diff --git ")) {
+      if (settle()) return true;
+      inHunk = line3.startsWith("@@");
+      continue;
+    }
+    if (!inHunk || !(line3.startsWith("+") || line3.startsWith(" "))) continue;
+    const text2 = line3.slice(1);
+    if (/^\s*(#\[|\/\/|$)/.test(text2)) group.push({ text: text2, added: line3.startsWith("+") });
+    else if (settle()) return true;
+  }
+  return settle();
+}
+function isDotnetTestProject(text2) {
+  const xml2 = text2.replace(/<!--[\s\S]*?-->/g, "");
+  if (/<IsTestProject\b[^>]*>\s*false\s*<\/IsTestProject>/i.test(xml2)) return false;
+  const plain = unconditional(xml2);
+  if (/<IsTestProject\b[^>]*>\s*true\s*<\/IsTestProject>/i.test(plain)) return true;
+  if (/<Project\b[^>]*\bSdk\s*=\s*["']\s*MSTest\.Sdk\b/i.test(plain) || /<Sdk\b[^>]*\bName\s*=\s*["']\s*MSTest\.Sdk\b/i.test(plain)) return true;
+  for (const m of plain.matchAll(/<PackageReference\b[^>]*\bInclude\s*=\s*["']([^"']+)["']/gi)) {
+    if (TEST_PACKAGES.has(m[1].trim().toLowerCase())) return true;
+  }
+  for (const m of plain.matchAll(/<Reference\b[^>]*\bInclude\s*=\s*["']([^"']+)["']/gi)) {
+    if (TEST_ASSEMBLIES.has(m[1].split(",")[0].trim().toLowerCase())) return true;
+  }
+  return /<ProjectTypeGuids\b[^>]*>[^<]*3AC096D0-A1C2-E12C-1390-A8335801FDAB/i.test(plain);
+}
+function unconditional(xml2) {
+  let out = "";
+  let kept = 0;
+  let skip = null;
+  for (const m of xml2.matchAll(XML_TAG)) {
+    const [tag2, close, name, attrs, empty] = m;
+    if (skip !== null) {
+      if (name !== skip.name || empty) continue;
+      skip.depth += close ? -1 : 1;
+      if (skip.depth === 0) {
+        skip = null;
+        kept = m.index + tag2.length;
+      }
+      continue;
+    }
+    if (close || !(/\bCondition\s*=/i.test(attrs) || /^Choose$/i.test(name))) continue;
+    out += xml2.slice(kept, m.index);
+    kept = m.index + tag2.length;
+    if (!empty) skip = { name, depth: 1 };
+  }
+  return skip === null ? out + xml2.slice(kept) : out;
+}
+function declaresCargoPackage(text2) {
+  return /^\s*\[package\]\s*(#.*)?$/m.test(text2);
+}
+function gitTreeReader(run) {
+  return {
+    async list(rev, dirs) {
+      const out = [];
+      for (let i = 0; i < dirs.length; i += LIST_BATCH) {
+        const specs = dirs.slice(i, i + LIST_BATCH).map((d) => d === "" ? "." : `./${d}/`);
+        const listing = await run(["ls-tree", "-z", "--name-only", "--full-tree", rev, "--", ...specs]);
+        if (listing.length > 0 && !listing.endsWith("\0")) {
+          throw new OrbitError("GIT_FAILED", `the listing of ${rev} was cut short, so its test files cannot be told apart`, { rev });
+        }
+        out.push(...listing.split("\0").filter((p) => p.length > 0));
+      }
+      return out;
+    },
+    async text(rev, path) {
+      try {
+        return await run(["cat-file", "blob", `${rev}:${path}`]);
+      } catch {
+        return null;
+      }
+    }
+  };
+}
+async function loadTestLayout(reader, base, candidate, changed2, options = {}) {
+  const dotnet = changed2.filter((p) => DOTNET_SOURCE.test(p.toLowerCase()));
+  const rust = changed2.filter((p) => p.toLowerCase().endsWith(".rs"));
+  if (dotnet.length === 0 && rust.length === 0) return NO_LAYOUT;
+  const dirs = [...new Set([...dotnet, ...rust].flatMap(ancestors))].sort();
+  const revs = base === candidate ? [base] : [base, candidate];
+  const trees = await Promise.all(revs.map(async (rev) => ({ rev, entries: new Set(await reader.list(rev, dirs)) })));
+  const owners = /* @__PURE__ */ new Map();
+  const isCargo = (p) => p === "Cargo.toml" || p.endsWith("/Cargo.toml");
+  const dotnetProjects = await judgeOwners(reader, trees, dotnet, (p) => DOTNET_PROJECT.test(p), isDotnetTestProject, owners);
+  const cargoManifests = await judgeOwners(reader, trees, rust, isCargo, declaresCargoPackage, owners);
+  if (!options.rustModules) return { dotnetProjects, cargoManifests, owners };
+  const cand = trees[trees.length - 1];
+  const crateDirs = new Set([...cand.entries].filter(isCargo).map(dirOf));
+  const compiledRust = /* @__PURE__ */ new Set();
+  const modules = new RustModules(reader, candidate);
+  for (const p of rust) {
+    if (!cand.entries.has(p)) continue;
+    const crate = nearestDir(p, (d) => crateDirs.has(d));
+    if (crate === null || cargoManifests.get(crate) !== true) continue;
+    const rel = relativeTo(crate, p);
+    if (rel.startsWith("src/") && !RUST_CRATE_ROOT.test(rel) && await modules.compiled(crate, rel)) compiledRust.add(p);
+  }
+  return { dotnetProjects, cargoManifests, owners, compiledRust };
+}
+async function judgeOwners(reader, trees, changed2, isManifest, judge, owners) {
+  const byDir = /* @__PURE__ */ new Map();
+  for (const t of trees) {
+    for (const path of t.entries) {
+      if (!isManifest(path)) continue;
+      const revs = byDir.get(dirOf(path)) ?? /* @__PURE__ */ new Map();
+      revs.set(t.rev, [...revs.get(t.rev) ?? [], path]);
+      byDir.set(dirOf(path), revs);
+    }
+  }
+  const verdicts = /* @__PURE__ */ new Map();
+  const on = (rev, dir) => {
+    const key2 = `${rev}\0${dir}`;
+    let known = verdicts.get(key2);
+    if (known === void 0) {
+      known = (async () => {
+        for (const path of byDir.get(dir)?.get(rev) ?? []) {
+          const text2 = await reader.text(rev, path);
+          if (text2 === null || !judge(text2.slice(0, MAX_MANIFEST_CHARS))) return false;
+        }
+        return true;
+      })();
+      verdicts.set(key2, known);
+    }
+    return known;
+  };
+  const out = new Map([...byDir.keys()].sort().map((d) => [d, false]));
+  for (const p of changed2) {
+    const own = [];
+    for (const t of trees) {
+      if (!t.entries.has(p)) continue;
+      const dir = nearestDir(p, (d) => byDir.get(d)?.has(t.rev) === true);
+      own.push({ dir, here: dir !== null && await on(t.rev, dir) });
+      if (dir === null) continue;
+      let all = true;
+      for (const rev of byDir.get(dir).keys()) if (!await on(rev, dir)) all = false;
+      out.set(dir, all);
+    }
+    owners.set(p, own);
+  }
+  return out;
+}
+function declarersOf(dir) {
+  if (dir === "src") return ["src/lib.rs", "src/main.rs"];
+  if (dir === "src/bin") return [];
+  if (/^src\/bin\/[^/]+$/.test(dir)) return [`${dir}/main.rs`, `${dir}/mod.rs`];
+  return [`${dir}.rs`, `${dir}/mod.rs`];
+}
+var NO_LAYOUT, JS_PY_GO, JVM, DOTNET_SOURCE, DOTNET_PROJECT, C_FAMILY, JVM_TEST_SOURCES, RUST_TEST_ATTRIBUTE, RUST_IGNORE_ATTRIBUTE, RUST_CRATE_ROOT, TEST_PACKAGES, TEST_ASSEMBLIES, XML_TAG, LIST_BATCH, MAX_MANIFEST_CHARS, RustModules;
+var init_test_files = __esm({
+  "src/policy/test-files.ts"() {
+    "use strict";
+    init_errors();
+    NO_LAYOUT = Object.freeze({ dotnetProjects: /* @__PURE__ */ new Map(), cargoManifests: /* @__PURE__ */ new Map() });
+    JS_PY_GO = /\.(m|c)?(j|t)sx?$|\.py$|\.go$|\.(vue|svelte)$/;
+    JVM = /\.(java|kt|scala|groovy)$/;
+    DOTNET_SOURCE = /\.(cs|fs|vb|razor)$/;
+    DOTNET_PROJECT = /\.(cs|fs|vb)proj$/i;
+    C_FAMILY = /\.(c|cc|cpp|cxx|h|hh|hpp|hxx)$/;
+    JVM_TEST_SOURCES = /(^|\/)src\/(test|it|test(Debug|Release)|[a-z]\w*Test)\/|(^|\/)javatests\//;
+    RUST_TEST_ATTRIBUTE = /^\s*#\[\s*(?:(?:[A-Za-z_]\w*::)*test|rstest|test_case)\s*[(\]]/;
+    RUST_IGNORE_ATTRIBUTE = /#\[\s*(?:ignore\b|cfg_attr\s*\(.*\bignore\b)/;
+    RUST_CRATE_ROOT = /^src\/(lib|main)\.rs$|^src\/bin\/[^/]+\.rs$|^src\/bin\/[^/]+\/main\.rs$/;
+    TEST_PACKAGES = /* @__PURE__ */ new Set(["microsoft.net.test.sdk", "xunit", "xunit.v3", "nunit", "mstest", "mstest.testframework", "tunit"]);
+    TEST_ASSEMBLIES = /* @__PURE__ */ new Set(["nunit.framework", "xunit.core", "microsoft.visualstudio.qualitytools.unittestframework", "microsoft.visualstudio.testplatform.testframework"]);
+    XML_TAG = /<(\/?)([A-Za-z_][\w.:-]*)((?:\s+[\w.:-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/g;
+    LIST_BATCH = 200;
+    MAX_MANIFEST_CHARS = 1024 * 1024;
+    RustModules = class {
+      reader;
+      rev;
+      memo = /* @__PURE__ */ new Map();
+      texts = /* @__PURE__ */ new Map();
+      constructor(reader, rev) {
+        this.reader = reader;
+        this.rev = rev;
+      }
+      compiled(crate, rel) {
+        const key2 = `${crate}\0${rel}`;
+        let known = this.memo.get(key2);
+        if (known === void 0) {
+          known = this.find(crate, rel);
+          this.memo.set(key2, known);
+        }
+        return known;
+      }
+      async find(crate, rel) {
+        if (RUST_CRATE_ROOT.test(rel)) return true;
+        const parts = rel.split("/");
+        const file = parts.pop();
+        const name = file === "mod.rs" ? parts.pop() : file.replace(/\.rs$/, "");
+        const dir = parts.join("/");
+        if (name === void 0 || !/^[A-Za-z_]\w*$/.test(name) || !(dir === "src" || dir.startsWith("src/"))) return false;
+        const declaration = new RegExp(`^[ \\t]*(?:#\\[[^\\]\\n]*\\][ \\t]*)*(?:pub(?:[ \\t]*\\([^)\\n]*\\))?[ \\t]+)?mod[ \\t]+(?:r#)?${name}[ \\t]*;`, "m");
+        for (const declarer of declarersOf(dir)) {
+          const text2 = await this.text(crate, declarer);
+          if (text2 !== null && declaration.test(text2) && await this.compiled(crate, declarer)) return true;
+        }
+        return false;
+      }
+      text(crate, rel) {
+        const path = crate === "" ? rel : `${crate}/${rel}`;
+        let known = this.texts.get(path);
+        if (known === void 0) {
+          known = this.reader.text(this.rev, path);
+          this.texts.set(path, known);
+        }
+        return known;
+      }
+    };
+  }
+});
+
 // src/policy/weakening.ts
 function langOf(path) {
   if (/\.(m|c)?(j|t)sx?$|\.(vue|svelte)$/.test(path)) return "js";
   if (/\.py$/.test(path)) return "py";
   if (/\.go$/.test(path)) return "go";
   return "other";
-}
-function isTestPath(path) {
-  const p = path.toLowerCase();
-  if (/(^|\/)(__tests__|__test__|tests?|specs?|e2e|integration-tests?|testing)\//.test(p)) return /\.(m|c)?(j|t)sx?$|\.py$|\.go$|\.(vue|svelte)$/.test(p);
-  if (/\.(test|spec|e2e|cy)\.(m|c)?(j|t)sx?$/.test(p)) return true;
-  if (/(^|\/)test_[^/]*\.py$|_test\.py$|(^|\/)conftest\.py$/.test(p)) return true;
-  if (/_test\.go$/.test(p)) return true;
-  return false;
 }
 function isSnapshotPath(path) {
   return /(^|\/)(__snapshots__|__screenshots__|__image_snapshots__|snapshots)\/|-snapshots\/|\.snap$|\.ambr$/.test(path);
@@ -31569,12 +31852,12 @@ function parseDiff(diff) {
   }
   return out;
 }
-function detectWeakening(files) {
+function detectWeakening(files, layout = NO_LAYOUT) {
   const out = [];
-  for (const f of files) out.push(...detectWeakeningInFile(f));
+  for (const f of files) out.push(...detectWeakeningInFile(f, layout));
   return out;
 }
-function detectWeakeningInFile(file) {
+function detectWeakeningInFile(file, layout = NO_LAYOUT) {
   const { path, status: status2 } = file;
   const signals = [];
   const add = (signal, detail) => {
@@ -31590,7 +31873,7 @@ function detectWeakeningInFile(file) {
     else add("snapshot-edited", status2 === "D" ? "stored expectation deleted" : "stored expectation changed");
     return signals;
   }
-  const test = isTestPath(path);
+  const test = isTestPathOnEitherRevision(path, layout);
   if (status2 === "D") {
     if (test) add("test-file-deleted", "test file deleted");
     return signals;
@@ -31722,6 +32005,7 @@ var TEST_CONFIG, LINT_CONFIG, ASSERTION, COMMENT, SKIP3, FOCUS, GO_IGNORE, WEAK_
 var init_weakening = __esm({
   "src/policy/weakening.ts"() {
     "use strict";
+    init_test_files();
     TEST_CONFIG = /(^|\/)(jest|vitest|vite|playwright|karma|cypress|ava|wdio)\.config\.[a-z.]+$|(^|\/)(\.mocharc[a-z.]*|pytest\.ini|tox\.ini|setup\.cfg|pyproject\.toml|conftest\.py|package\.json|\.nycrc[a-z.]*|\.c8rc[a-z.]*)$/;
     LINT_CONFIG = /(^|\/)(\.eslintrc[a-z.]*|eslint\.config\.[a-z.]+|\.golangci\.(ya?ml|toml|json)|\.flake8|\.pylintrc|pylintrc|ruff\.toml|\.ruff\.toml|biome\.jsonc?|\.stylelintrc[a-z.]*|tslint\.json|\.rubocop\.yml|tsconfig[a-z.-]*\.json|mypy\.ini|\.mypy\.ini|pyrightconfig\.json|setup\.cfg|pyproject\.toml|tox\.ini)$/;
     ASSERTION = {
@@ -31806,7 +32090,8 @@ async function inspectScope(input) {
   const diffs = await perFileDiffs(repoRoot, base, cand, textChanges.map((c) => c.path));
   for (const p of forcedText) changedLines += countPatchLines(diffs.get(p) ?? "");
   const weakeningInputs = changes.map((c) => ({ path: c.path, status: c.status, diff: diffs.get(c.path) ?? "" }));
-  const weakening = detectWeakening(weakeningInputs);
+  const testLayout = await loadTestLayout(gitTreeReader(async (args) => (await git(repoRoot, [...args])).toString("utf8")), base, cand, changes.map((c) => c.path));
+  const weakening = detectWeakening(weakeningInputs, testLayout);
   const limits = config.scheduler.hard_limits;
   return {
     allowed_paths_pass: forbidden.length === 0 && outOfScope.length === 0,
@@ -32095,6 +32380,7 @@ var init_scope = __esm({
     init_hash();
     init_builtin();
     init_globs();
+    init_test_files();
     init_weakening();
     LOCKFILES = /* @__PURE__ */ new Set([
       "package-lock.json",
@@ -32140,6 +32426,7 @@ var init_policy = __esm({
     init_bash();
     init_scope();
     init_weakening();
+    init_test_files();
     init_guard_hook();
     init_role_grants();
     init_hosts();
@@ -46248,7 +46535,7 @@ function evaluateEvidence(input) {
   const base = input.base;
   const noChange = base !== void 0 && base.treeHash === candidate.treeHash;
   if (noChange) note3(incomplete, "the candidate makes no change: its tree is the base revision's tree, so no check result is evidence of a change");
-  const testChanged = base !== void 0 && base.changedPaths.some(isTestPath);
+  const testChanged = base !== void 0 && base.changedPaths.some((p) => isTestPath(p, base.testLayout, base.diffs?.get(p)));
   const baseStatus = new Map((base?.checks ?? []).map((c) => [c.checkId, c.status]));
   const newEvidenceGap = (ids) => {
     if (base === void 0) return null;
@@ -46361,7 +46648,7 @@ var init_report = __esm({
     init_fsx();
     init_hash();
     init_snapshot();
-    init_weakening();
+    init_test_files();
     init_runner();
     init_store();
   }
@@ -48438,6 +48725,7 @@ function loadInquisitionSnapshot(db, runId, extras = {}) {
     decisions: decisions.map((d) => ({ kind: d.kind, summary: d.summary })),
     expectedChangedFiles: extras.expectedChangedFiles ?? [],
     changedFiles: extras.changedFiles ?? [],
+    ...extras.testLayout ? { testLayout: extras.testLayout } : {},
     diff: extras.diff ?? null,
     claims: extras.claims ?? null,
     sources: extras.sources ?? [],
@@ -48543,7 +48831,7 @@ function detectUnexplainedArchitecture(s) {
   if (s.changedFiles.length === 0 || s.expectedChangedFiles.length === 0) return [];
   const expected = new Set(s.expectedChangedFiles.map((p) => p.replace(/^\.\//, "")));
   const expectedDirs = new Set([...expected].map((p) => p.split("/")[0] ?? p));
-  const extra = s.changedFiles.filter((p) => !expected.has(p) && !isTestPath(p));
+  const extra = s.changedFiles.filter((p) => !expected.has(p) && !isTestPath(p, s.testLayout));
   if (extra.length <= s.thresholds.unexplainedFiles) return [];
   const newAreas = [...new Set(extra.map((p) => p.split("/")[0] ?? p))].filter((d) => !expectedDirs.has(d)).sort();
   const evidence = [`${extra.length} changed files are outside the planner's expected set (tolerated: ${s.thresholds.unexplainedFiles})`, ...extra.slice(0, 10)];
@@ -48655,7 +48943,7 @@ var init_triggers = __esm({
     init_redact();
     init_decisions();
     init_wording();
-    init_weakening();
+    init_test_files();
     init_store4();
     init_heuristics();
     DEFAULT_THRESHOLDS = { repeatedFailure: 2, unexplainedFiles: 3, denials: 3 };
@@ -51020,14 +51308,14 @@ function describeError(err, rootDir) {
   const loc = err.location;
   return {
     message,
-    location: loc ? { file: relativeTo(loc.file, rootDir), line: loc.line, column: loc.column } : null,
+    location: loc ? { file: relativeTo2(loc.file, rootDir), line: loc.line, column: loc.column } : null,
     snippet: err.snippet,
     expected: exp,
     observed: rec2,
     diff
   };
 }
-function relativeTo(file, rootDir) {
+function relativeTo2(file, rootDir) {
   if (!rootDir) return file;
   const prefix = rootDir.endsWith("/") ? rootDir : `${rootDir}/`;
   return file.startsWith(prefix) ? file.slice(prefix.length) : file;
@@ -51581,7 +51869,7 @@ function tail(text2, max = 600) {
 }
 function buildJourney(test, ctx, checkDir, cwd) {
   const { checkoutDir } = ctx;
-  const file = relativeTo(test.file, checkoutDir);
+  const file = relativeTo2(test.file, checkoutDir);
   const title = test.titlePath[test.titlePath.length - 1] ?? "";
   const id = `${test.projectName}/${file}#${test.titlePath.join(" > ")}`;
   const failing = test.results.filter((r) => FAILED_RESULT.has(r.status));
@@ -52437,12 +52725,12 @@ async function runGitleaks(bin, input, files, reportPath2) {
   });
   if (r.exitCode !== 0 && r.exitCode !== 1) throw new Error(`exit ${r.exitCode ?? r.signal}: ${redact(r.stderr).slice(0, 300)}`);
   const parsed3 = existsSync32(raw) ? readJsonIfExists(raw) ?? [] : [];
-  const findings = parsed3.map((f) => ({ file: relativeTo2(tree, f.File ?? ""), line: typeof f.StartLine === "number" ? f.StartLine : null, rule: String(f.RuleID ?? "secret") }));
+  const findings = parsed3.map((f) => ({ file: relativeTo3(tree, f.File ?? ""), line: typeof f.StartLine === "number" ? f.StartLine : null, rule: String(f.RuleID ?? "secret") }));
   if (r.exitCode === 1 && findings.length === 0) throw new Error("reported leaks but wrote no readable report");
   rmSync11(scanRoot, { recursive: true, force: true });
   return { scanner: "gitleaks", completed: true, findings, files: copied, note: "gitleaks with Orbit's trusted configuration and --ignore-gitleaks-allow", reportPath: reportPath2 };
 }
-function relativeTo2(root, p) {
+function relativeTo3(root, p) {
   return p.startsWith(root + sep11) ? p.slice(root.length + 1) : p;
 }
 async function partitionBySize(input, changed2) {
@@ -53298,21 +53586,32 @@ async function collectVerificationEvidence(ctx, cand, opts) {
   return { evidence: { report: report2, failReasons, incompleteReasons: evaluation.incompleteReasons, evaluation, scan, sast: sastVerdicts, security, ui: uiG, uiRequired, exploration } };
 }
 async function baseComparison(ctx, baseRev, commit) {
-  const treeHash = (await git2(ctx.run.repoRoot, ["rev-parse", "--verify", `${baseRev}^{tree}`])).trim();
+  const repoRoot = ctx.run.repoRoot;
+  const treeHash = (await git2(repoRoot, ["rev-parse", "--verify", `${baseRev}^{tree}`])).trim();
   const baseline = readJsonIfExists(join48(ctx.runDir, BASELINE_FILE2));
   const usable = baseline !== null && baseline.schema === "orbit.baseline/1" && baseline.baseTree === treeHash && baseline.policyHash === ctx.run.policyHash && Array.isArray(baseline.checks);
-  const out = await git2(ctx.run.repoRoot, ["diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACMT", baseRev, commit, "--"]);
+  const out = await git2(repoRoot, ["diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACMT", baseRev, commit, "--"]);
+  const changedPaths2 = out.split("\0").filter((p) => p.length > 0);
+  const testLayout = await loadTestLayout(gitTreeReader((args) => git2(repoRoot, args)), baseRev, commit, changedPaths2, { rustModules: true });
+  const diffs = /* @__PURE__ */ new Map();
+  if (!changedPaths2.some((p) => isTestPath(p, testLayout))) {
+    for (const p of changedPaths2.filter(testedByContent).slice(0, MAX_CONTENT_DIFFS)) {
+      diffs.set(p, await git2(repoRoot, ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--text", "-U0", baseRev, commit, "--", `:(literal)${p}`]));
+    }
+  }
   return {
     treeHash,
     checks: usable ? baseline.checks.map((c) => ({ checkId: c.checkId, status: c.status })) : null,
-    changedPaths: out.split("\0").filter((p) => p.length > 0)
+    changedPaths: changedPaths2,
+    testLayout,
+    diffs
   };
 }
 async function changedPaths(repoRoot, baseRev, commit) {
   const out = await git2(repoRoot, ["diff", "--name-only", "-z", "--no-renames", baseRev, commit, "--"]);
   return out.split("\0").filter((p) => p.length > 0);
 }
-var EXPLORATION_NOT_RUN;
+var EXPLORATION_NOT_RUN, MAX_CONTENT_DIFFS;
 var init_verification = __esm({
   "src/controller/verification.ts"() {
     "use strict";
@@ -53320,6 +53619,7 @@ var init_verification = __esm({
     init_globs();
     init_config();
     init_fsx();
+    init_test_files();
     init_git();
     init_baseline();
     init_runner();
@@ -53330,6 +53630,7 @@ var init_verification = __esm({
     init_security();
     init_exploration();
     EXPLORATION_NOT_RUN = "UI exploration (ui.exploration) runs only in the controller's VERIFYING step; this verification did not explore the UI";
+    MAX_CONTENT_DIFFS = 50;
   }
 });
 
@@ -55166,10 +55467,11 @@ async function buildReviewPacket(input) {
       excluded.push({ path: f.path, part: "both", reason: "generated", detail: `generated or lock file, +${f.added} -${f.deleted}` });
     } else candidates.push(f);
   }
+  const testLayout = await loadTestLayout(gitTreeReader((args) => git5(input.repoRoot, [...args])), baseSha, commitSha, all.map((f) => f.path));
   const score = (f) => {
     let s = 0;
     if (hot.has(f.path)) s += 10;
-    if (isTestPath(f.path)) s += 4;
+    if (isTestPath(f.path, testLayout)) s += 4;
     else s += 5;
     if (contractText.includes(f.path)) s += 3;
     if (/\.(md|txt|rst)$/i.test(f.path)) s -= 4;
@@ -55409,7 +55711,7 @@ var init_packet = __esm({
     init_redact();
     init_practices();
     init_builtin();
-    init_weakening();
+    init_test_files();
     init_resolve();
     enc = new TextEncoder();
     byteLen = (s) => enc.encode(s).length;
@@ -57839,7 +58141,7 @@ async function askForAuthorization(ctx, cand, scope, details) {
 async function act(ctx, cand, ev) {
   const verdict = ev.report.verdict;
   if (verdict === "PASS") {
-    const trigger2 = pendingTrigger(ctx, cand, PROOF_BLOCKING_TRIGGERS);
+    const trigger2 = await pendingTrigger(ctx, cand, PROOF_BLOCKING_TRIGGERS);
     if (trigger2) return move2(ctx, "INQUISITION", `green checks, but ${trigger2.summary}`, { data: { trigger: trigger2 } });
     progress(ctx, "evidence.pass", { candidate_id: cand.id, report_id: ev.id });
     return move2(ctx, "REVIEWING", `candidate ${cand.seq} verified: PASS (${ev.id})`);
@@ -57848,7 +58150,7 @@ async function act(ctx, cand, ev) {
   const environment = [...sameAsBase, ...checksNotExecutedFor(ctx, cand, ev.report).filter((n2) => !sameAsBase.some((b) => b.checkId === n2.checkId))];
   if (environment.length > 0) return blockOnEnvironment(ctx, cand, ev, environment);
   if (verdict === "FAIL") return move2(ctx, "DIAGNOSING", `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
-  const trigger = pendingTrigger(ctx, cand, null);
+  const trigger = await pendingTrigger(ctx, cand, null);
   if (trigger) return move2(ctx, "INQUISITION", `verification incomplete: ${trigger.summary}`, { data: { trigger } });
   return finishRun(ctx, "BLOCKED", `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join("; ") || "the evidence is incomplete"}`, { outcome: { report_id: ev.id } });
 }
@@ -57868,13 +58170,17 @@ function handledTriggerKeys(ctx) {
   }
   return keys;
 }
-function pendingTrigger(ctx, cand, only) {
+async function pendingTrigger(ctx, cand, only) {
   const plan = storedPlan(ctx);
   const claims = latestImplementerClaims(ctx);
+  const changedFiles4 = cand.diffStat?.paths ?? [];
+  const base = ctx.run.baseRevision;
+  const testLayout = base && (only === null || only.includes("unexplained_architecture")) ? await loadTestLayout(gitTreeReader((args) => git2(ctx.run.repoRoot, args)), base, cand.commitSha, changedFiles4) : void 0;
   const snapshot2 = loadInquisitionSnapshot(ctx.db, ctx.run.id, {
     currentTreeHash: cand.treeHash,
     expectedChangedFiles: plan?.expected_changed_files.map((f) => f.path) ?? [],
-    changedFiles: cand.diffStat?.paths ?? [],
+    changedFiles: changedFiles4,
+    ...testLayout ? { testLayout } : {},
     claims,
     thresholds: thresholdsFromPolicy(ctx.snapshot.config)
   });
@@ -57955,6 +58261,7 @@ var init_verifying = __esm({
     init_errors();
     init_baseline_exception();
     init_scope();
+    init_test_files();
     init_candidate();
     init_git();
     init_report();
@@ -57999,7 +58306,7 @@ async function diagnosingStep(ctx) {
   if (att.used >= att.hard_cap) return finishRun(ctx, "EXHAUSTED", `implementation attempts hard cap reached (${att.used} of ${att.hard_cap}); the last failure was ${fingerprint}`, { outcome: { fingerprint } });
   const existing = readJsonIfExists(briefPath(ctx, next));
   if (!existing) {
-    const trigger = pendingTrigger(ctx, cand, ["repeated_failure"]);
+    const trigger = await pendingTrigger(ctx, cand, ["repeated_failure"]);
     if (trigger) return move2(ctx, "INQUISITION", trigger.summary, { data: { trigger } });
   }
   let stored;
@@ -59384,7 +59691,7 @@ async function inquisitionStep(ctx) {
   if (stop) return stop;
   const contract = applyBaselineExceptionAnswers({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { snapshot: ctx.snapshot }).contract ?? assertContract(ctx);
   const resume = ctx.run.resumeState ?? (ctx.candidate ? "VERIFYING" : "PLANNING");
-  const trigger = enteringTrigger(ctx) ?? (ctx.candidate ? pendingTrigger(ctx, ctx.candidate, null) : null);
+  const trigger = enteringTrigger(ctx) ?? (ctx.candidate ? await pendingTrigger(ctx, ctx.candidate, null) : null);
   if (!trigger || handledTriggerKeys(ctx).has(trigger.key)) return move2(ctx, resume, trigger ? `inquiry ${trigger.key} already settled; resuming ${resume}` : `nothing left to inquire into; resuming ${resume}`);
   for (const w of listActiveWorkers(ctx.db, ctx.run.id).filter((x) => x.role === "inquisitor")) {
     if (await collectIfFinished(ctx, w)) return WAIT(`inquisitor ${w.id} is still running`);

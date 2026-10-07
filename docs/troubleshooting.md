@@ -94,7 +94,17 @@ degraded but usable.
   not done and look at which criterion has no evidence. A criterion reading "no new
   evidence" means its checks were already green on the base revision and the candidate
   adds or changes no test, so the green result proves nothing about the change; an
-  INCOMPLETE verdict on a candidate that changes nothing means the same.
+  INCOMPLETE verdict on a candidate that changes nothing means the same. Tests are
+  recognised by each language's test layout (ADR 0011): a .NET test file must belong to
+  a project whose project file declares it a test project (`<IsTestProject>true</IsTestProject>`
+  or a Microsoft.NET.Test.Sdk, xunit, NUnit or MSTest reference, not under a condition),
+  so a test project that gets those only from a `Directory.Build.props` needs one of them
+  in its project file. Commit that to the base branch before the run: a project counts as
+  a test project only when its project file says so on the base revision too, so a
+  candidate that adds the declaration during the run still gets "no new evidence".
+  A Rust `#[test]` counts only where `cargo test` runs it: in a crate's `tests/`, or in
+  `src/` of a crate (not beside a `[workspace]`-only `Cargo.toml`) in a file the crate
+  compiles, and not marked `#[ignore]`.
 - **A worker fails with "exceeded the N output token maximum".** The response outgrew
   `routing.output_budgets` for its role. Orbit retries the unit once with the cap doubled
   (up to 32000) and records `worker.output-cap-raised`; if it still overflows, raise that

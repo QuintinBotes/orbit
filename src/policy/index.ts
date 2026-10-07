@@ -41,7 +41,8 @@ export { canonicalize, isCaseInsensitiveFs, resolveDetailed, resolveInside, type
 export { authorize, type AuthorizeContext } from './authorize.ts';
 export { BASH_CATEGORIES_BY_SEVERITY, classifyBash, type BashCategory, type BashClassification, type BashCommandInfo, type BashContext, type BashWrite } from './bash.ts';
 export { inspectScope, type ScopeInput } from './scope.ts';
-export { detectWeakening, isSnapshotPath, isTestPath, type WeakeningInput, type WeakeningSignal, type WeakeningSignalId } from './weakening.ts';
+export { detectWeakening, isSnapshotPath, type WeakeningInput, type WeakeningSignal, type WeakeningSignalId } from './weakening.ts';
+export { declaresCargoPackage, gitTreeReader, isDotnetTestProject, isTestPath, isTestPathOnEitherRevision, loadTestLayout, NO_LAYOUT, testedByContent, type LayoutOptions, type Owner, type TestLayout, type TreeReader } from './test-files.ts';
 export { ENV_POLICY_HASH, ENV_POLICY_PATH, ENV_WORKTREE, handlePreToolUse, runGuardHook, runGuardHookProcess, type GuardOptions, type GuardResult } from './guard-hook.ts';
 export { bashGrant, type BashGrant, type BashGrantInput } from './role-grants.ts';
 export { hostAllowed, normalizeHost } from './hosts.ts';

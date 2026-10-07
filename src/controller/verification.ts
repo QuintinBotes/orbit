@@ -17,6 +17,7 @@ import { OrbitError } from '../core/errors.ts';
 import { compileGlobs } from '../policy/globs.ts';
 import { staticSecurityPolicy } from '../policy/config.ts';
 import { readJsonIfExists } from '../core/fsx.ts';
+import { gitTreeReader, isTestPath, loadTestLayout, testedByContent } from '../policy/test-files.ts';
 import { git } from '../evidence/git.ts';
 import { BASELINE_FILE, installDependencies, type BaselineReport } from '../evidence/baseline.ts';
 import { candidateEvidenceDir, runChecks, type RunnerContext } from '../evidence/runner.ts';
@@ -187,19 +188,35 @@ export async function collectVerificationEvidence<S = never>(ctx: RunContext, ca
 /**
  * What the candidate is compared with so a green check that the base revision gives as well is not taken as proof:
  * the base tree, the base revision's recorded check results (only a baseline of this revision under this policy),
- * and the paths the candidate adds or modifies.
+ * the paths the candidate adds or modifies, and what tells which of them are tests (ADR 0011): the test layout of
+ * both trees and, when no changed path is a test by itself, the diffs of the files only content can show a test in.
  */
 async function baseComparison(ctx: RunContext, baseRev: string, commit: string): Promise<BaseComparison> {
-  const treeHash = (await git(ctx.run.repoRoot, ['rev-parse', '--verify', `${baseRev}^{tree}`])).trim();
+  const repoRoot = ctx.run.repoRoot;
+  const treeHash = (await git(repoRoot, ['rev-parse', '--verify', `${baseRev}^{tree}`])).trim();
   const baseline = readJsonIfExists<BaselineReport>(join(ctx.runDir, BASELINE_FILE));
   const usable = baseline !== null && baseline.schema === 'orbit.baseline/1' && baseline.baseTree === treeHash && baseline.policyHash === ctx.run.policyHash && Array.isArray(baseline.checks);
-  const out = await git(ctx.run.repoRoot, ['diff', '--name-only', '-z', '--no-renames', '--diff-filter=ACMT', baseRev, commit, '--']);
+  const out = await git(repoRoot, ['diff', '--name-only', '-z', '--no-renames', '--diff-filter=ACMT', baseRev, commit, '--']);
+  const changedPaths = out.split('\0').filter((p) => p.length > 0);
+  // With the Rust modules the crate compiles: a #[test] the change adds to a module counts only when cargo builds it.
+  const testLayout = await loadTestLayout(gitTreeReader((args) => git(repoRoot, args)), baseRev, commit, changedPaths, { rustModules: true });
+  const diffs = new Map<string, string>();
+  if (!changedPaths.some((p) => isTestPath(p, testLayout))) {
+    for (const p of changedPaths.filter(testedByContent).slice(0, MAX_CONTENT_DIFFS)) {
+      diffs.set(p, await git(repoRoot, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--text', '-U0', baseRev, commit, '--', `:(literal)${p}`]));
+    }
+  }
   return {
     treeHash,
     checks: usable ? baseline.checks.map((c) => ({ checkId: c.checkId, status: c.status })) : null,
-    changedPaths: out.split('\0').filter((p) => p.length > 0),
+    changedPaths,
+    testLayout,
+    diffs,
   };
 }
+
+/** Changed files read for a test only their content shows; beyond this many, the rest are judged by path. */
+const MAX_CONTENT_DIFFS = 50;
 
 async function changedPaths(repoRoot: string, baseRev: string, commit: string): Promise<string[]> {
   const out = await git(repoRoot, ['diff', '--name-only', '-z', '--no-renames', baseRev, commit, '--']);
