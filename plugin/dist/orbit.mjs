@@ -705,6 +705,9 @@ var init_builtin = __esm({
       ".config/git/credentials",
       // Agent and tool logins: a worker reading these could act as the user elsewhere.
       ".claude/.credentials.json",
+      // An IDE extension's lock files (<port>.lock), each with the token of its MCP server on loopback, whose tools act
+      // outside every sandbox. Claude Code looks here whatever CLAUDE_CONFIG_DIR says (isolation/profiles.ts CLAUDE_CONFIG_DENIED).
+      ".claude/ide/**",
       ".codex/auth.json",
       ".config/hub",
       ".config/glab-cli/**",
@@ -21688,6 +21691,9 @@ function defaultCheck(id) {
     category: "test"
   };
 }
+function checkCategory(check) {
+  return check.category ?? (check.kind === "playwright" ? "ui" : "test");
+}
 function defaultUi() {
   return {
     required_when_ui_changes: true,
@@ -25429,7 +25435,7 @@ function profileForWorker(input) {
     own = dirs.claudeConfigDir;
     ownReadOnly = [...CLAUDE_CONFIG_READ_ONLY.map((rel) => join8(own, rel)), claudeGlobalConfig(home2, own)];
     ownDenied = CLAUDE_CONFIG_DENIED.map((rel) => join8(own, rel));
-    others = [...claudeDirs.filter((d) => d !== own).flatMap((d) => claudeState(home2, d)), ...codexDirs];
+    others = [...otherClaudeLogins(home2, env, own).flatMap((l) => [l.configDir, l.globalConfig]), ...codexDirs];
   } else {
     own = dirs.codexHome;
     ownReadOnly = CODEX_HOME_READ_ONLY.map((rel) => join8(own, rel));
@@ -25590,6 +25596,10 @@ function denyList(opts) {
     ...parent ? [parent] : [],
     ...opts.extra
   ]);
+}
+function otherClaudeLogins(homeDir, env, own) {
+  const home2 = canonicalPath(homeDir);
+  return claudeLogins(home2, env, own).filter((d) => d !== own).map((d) => ({ configDir: d, globalConfig: claudeGlobalConfig(home2, d) }));
 }
 function claudeLogins(home2, env, configured) {
   const fromEnv = nonEmpty(env.CLAUDE_CONFIG_DIR);
@@ -25872,6 +25882,15 @@ function renderClaudeSettings(input) {
   for (const glob of credentialGlobs(snapshot2)) deny2.push(absRule("Read", worktree, glob));
   for (const rel of HOME_CREDENTIAL_PATHS) deny2.push(`Read(~/${rel})`);
   for (const rel of CLAUDE_CONFIG_DENIED) deny2.push(absRule("Read", input.claudeConfigDir, `${rel}/**`));
+  const mustRead = [worktree, input.tmpDir, ...input.readablePaths ?? []];
+  for (const login of input.otherClaudeLogins) {
+    if (mustRead.some((p) => isWithin(p, login.configDir))) {
+      for (const rel of CLAUDE_CONFIG_DENIED) deny2.push(absRule("Read", login.configDir, `${rel}/**`));
+    } else {
+      deny2.push(absRule("Read", login.configDir, "**"));
+    }
+    deny2.push(absRule("Read", login.globalConfig));
+  }
   deny2.push(absRule("Edit", input.workerDir, "**"), absRule("Edit", input.policyPath));
   const settings = {
     permissions: { allow: uniq2(allow2), deny: uniq2(deny2) },
@@ -28528,6 +28547,7 @@ var init_claude = __esm({
         const env = buildWorkerEnv({ provider: "claude", base: baseEnv, policyPath: spec.policyPath, policyHash, worktree, tmpDir, maxOutputTokens: outputTokens, extra: { ...passThrough(this.baseEnv(), this.opts.passEnv), ...spec.env } });
         const sandbox = { ...spec.sandbox, allowLocalBinding: false };
         const claudeConfigDir = providerDirs({ homeDir: env.HOME ?? homedir5(), env }).claudeConfigDir;
+        const otherLogins = otherClaudeLogins(env.HOME ?? homedir5(), env, claudeConfigDir);
         const settings = renderClaudeSettings({
           snapshot: snapshot2,
           worktree,
@@ -28540,7 +28560,8 @@ var init_claude = __esm({
           denyReadPaths: sandbox.denyReadPaths,
           readablePaths: readablePathsOf(sandbox),
           tmpDir,
-          claudeConfigDir
+          claudeConfigDir,
+          otherClaudeLogins: otherLogins
         });
         assertClaudeSettings(settings);
         writePrivate(join13(workerDir, PROMPT_FILE), outputTokens === null ? spec.prompt : `${spec.prompt.trimEnd()}
@@ -31547,7 +31568,7 @@ var init_version = __esm({
 function isTestPath(path, layout = NO_LAYOUT, diff) {
   const p = path.toLowerCase();
   if (JS_PY_GO.test(p)) return jsPyGoTest(p);
-  if (JVM.test(p)) return JVM_TEST_SOURCES.test(path);
+  if (JVM.test(p)) return JVM_TEST_SOURCES.test(path) && !JVM_RESOURCES.test(path);
   if (DOTNET_SOURCE.test(p)) return testOwners(path, layout.dotnetProjects, layout) !== null;
   if (p.endsWith(".rs")) return rustTest(path, layout, diff);
   if (p.endsWith(".rb")) return /(^|\/)spec\/(.+\/)?[^/]+_spec\.rb$/.test(p) || /(^|\/)test\/(.+\/)?[^/]+_test\.rb$/.test(p);
@@ -31614,25 +31635,83 @@ function nearestDir(path, has) {
   return ancestors(path).find(has) ?? null;
 }
 function addsRunnableRustTest(diff) {
-  let group = [];
-  const settle = () => {
-    const runs = group.some((l) => l.added && RUST_TEST_ATTRIBUTE.test(l.text)) && !group.some((l) => RUST_IGNORE_ATTRIBUTE.test(l.text));
-    group = [];
-    return runs;
-  };
-  let inHunk = false;
-  for (const line3 of diff.split("\n")) {
-    if (line3.startsWith("@@") || line3.startsWith("diff --git ")) {
-      if (settle()) return true;
-      inHunk = line3.startsWith("@@");
-      continue;
-    }
-    if (!inHunk || !(line3.startsWith("+") || line3.startsWith(" "))) continue;
-    const text2 = line3.slice(1);
-    if (/^\s*(#\[|\/\/|$)/.test(text2)) group.push({ text: text2, added: line3.startsWith("+") });
-    else if (settle()) return true;
+  const lines = wholeCandidate(diff);
+  if (lines === null) return false;
+  return scanRust(lines, (attrs, _code, compiled4) => compiled4 && attrs.some((a) => a.added && RUST_TEST_ATTRIBUTE.test(a.text)) && !attrs.some((a) => RUST_IGNORE_ATTRIBUTE.test(a.text) || offCfg(a.text)));
+}
+function wholeCandidate(diff) {
+  const raw = diff.split("\n");
+  if (raw[raw.length - 1] === "") raw.pop();
+  const at = raw.findIndex((l) => l.startsWith("@@"));
+  if (at < 0) return null;
+  const header2 = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(raw[at]);
+  if (header2 === null) return null;
+  const start = Number(header2[1]);
+  const count3 = header2[2] === void 0 ? 1 : Number(header2[2]);
+  if (count3 > 0 && start !== 1) return null;
+  const out = [];
+  for (const line3 of raw.slice(at + 1)) {
+    if (line3.startsWith("+") || line3.startsWith(" ")) out.push({ text: line3.slice(1), added: line3.startsWith("+") });
+    else if (!line3.startsWith("-") && !line3.startsWith("\\")) return null;
   }
-  return settle();
+  return out.length === count3 ? out : null;
+}
+function offCfg(attribute2) {
+  return /^#!?\[\s*cfg\s*\(/.test(attribute2) && !/^#!?\[\s*cfg\s*\(\s*test\s*\)\s*\]$/.test(attribute2);
+}
+function scanRust(lines, item) {
+  const lexer = new RustLexer();
+  const blocks = [];
+  let fileOff = false;
+  let group = [];
+  let attr = null;
+  let opens = null;
+  for (const line3 of lines) {
+    const code2 = lexer.line(line3.text);
+    let i = 0;
+    while (i < code2.length) {
+      if (attr !== null) {
+        const c = code2[i++];
+        attr.text += c;
+        attr.added ||= line3.added;
+        if (c === "[") attr.depth++;
+        else if (c === "]" && --attr.depth === 0) {
+          const text2 = attr.text.trim();
+          const added = attr.added;
+          attr = null;
+          if (!text2.startsWith("#!")) group.push({ text: text2, added });
+          else if (offCfg(text2)) {
+            if (blocks.length === 0) fileOff = true;
+            else blocks[blocks.length - 1] = "off";
+          }
+        }
+        continue;
+      }
+      if (/\s/.test(code2[i])) {
+        i++;
+        continue;
+      }
+      if (code2.startsWith("#[", i) || code2.startsWith("#![", i)) {
+        attr = { text: "", depth: 0, added: line3.added };
+        continue;
+      }
+      const rest = code2.slice(i);
+      if (opens === null || !rest.startsWith("{")) {
+        if (item(group, rest, !fileOff && blocks.every((b) => b === "module"), blocks.length > 0)) return true;
+        const mod = RUST_MOD_ITEM.exec(rest);
+        opens = mod !== null && mod[2] !== ";" ? group.some((a) => offCfg(a.text)) ? "off" : "module" : null;
+        group = [];
+      }
+      for (const c of rest) {
+        if (c === "{") {
+          blocks.push(opens ?? "other");
+          opens = null;
+        } else if (c === "}") blocks.pop();
+      }
+      break;
+    }
+  }
+  return false;
 }
 function isDotnetTestProject(text2) {
   const xml2 = text2.replace(/<!--[\s\S]*?-->/g, "");
@@ -31763,13 +31842,22 @@ async function judgeOwners(reader, trees, changed2, isManifest, judge, owners) {
   }
   return out;
 }
+function declaresModule(text2, name) {
+  return scanRust(
+    text2.split("\n").map((t) => ({ text: t, added: false })),
+    (attrs, code2, compiled4, nested) => {
+      const mod = RUST_MOD_ITEM.exec(code2);
+      return compiled4 && !nested && mod !== null && mod[1] === name && mod[2] === ";" && !attrs.some((a) => offCfg(a.text) || /^#\[\s*(?:path\b|cfg_attr\b.*\bpath\s*=)/.test(a.text));
+    }
+  );
+}
 function declarersOf(dir) {
   if (dir === "src") return ["src/lib.rs", "src/main.rs"];
   if (dir === "src/bin") return [];
   if (/^src\/bin\/[^/]+$/.test(dir)) return [`${dir}/main.rs`, `${dir}/mod.rs`];
   return [`${dir}.rs`, `${dir}/mod.rs`];
 }
-var NO_LAYOUT, JS_PY_GO, JVM, DOTNET_SOURCE, DOTNET_PROJECT, C_FAMILY, JVM_TEST_SOURCES, RUST_TEST_ATTRIBUTE, RUST_IGNORE_ATTRIBUTE, RUST_CRATE_ROOT, TEST_PACKAGES, TEST_ASSEMBLIES, XML_TAG, LIST_BATCH, MAX_MANIFEST_CHARS, RustModules;
+var NO_LAYOUT, JS_PY_GO, JVM, DOTNET_SOURCE, DOTNET_PROJECT, C_FAMILY, JVM_TEST_SOURCES, JVM_RESOURCES, RUST_TEST_ATTRIBUTE, RUST_IGNORE_ATTRIBUTE, RUST_CRATE_ROOT, RUST_MOD_ITEM, RustLexer, RAW_STRING, CHAR_LITERAL, TEST_PACKAGES, TEST_ASSEMBLIES, XML_TAG, LIST_BATCH, MAX_MANIFEST_CHARS, RustModules;
 var init_test_files = __esm({
   "src/policy/test-files.ts"() {
     "use strict";
@@ -31781,10 +31869,75 @@ var init_test_files = __esm({
     DOTNET_PROJECT = /\.(cs|fs|vb)proj$/i;
     C_FAMILY = /\.(c|cc|cpp|cxx|h|hh|hpp|hxx)$/;
     JVM_TEST_SOURCES = /(^|\/)src\/(test|it|test(Debug|Release)|[a-z]\w*Test)\/|(^|\/)javatests\//;
+    JVM_RESOURCES = /(^|\/)src\/[A-Za-z]\w*\/resources\//;
     RUST_TEST_ATTRIBUTE = /^\s*#\[\s*(?:(?:[A-Za-z_]\w*::)*test|rstest|test_case)\s*[(\]]/;
     RUST_IGNORE_ATTRIBUTE = /#\[\s*(?:ignore\b|cfg_attr\s*\(.*\bignore\b)/;
     RUST_CRATE_ROOT = /^src\/(lib|main)\.rs$|^src\/bin\/[^/]+\.rs$|^src\/bin\/[^/]+\/main\.rs$/;
-    TEST_PACKAGES = /* @__PURE__ */ new Set(["microsoft.net.test.sdk", "xunit", "xunit.v3", "nunit", "mstest", "mstest.testframework", "tunit"]);
+    RUST_MOD_ITEM = /^(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(?:r#)?([A-Za-z_]\w*)\s*([;{]|$)/;
+    RustLexer = class {
+      /** Nesting of the block comment the next line starts in; 0 outside one. */
+      comment = 0;
+      /** The literal the next line starts in: the number of '#' that close a raw string, -1 for a plain string. */
+      literal = null;
+      line(text2) {
+        let out = "";
+        let i = 0;
+        while (i < text2.length) {
+          if (this.comment > 0) {
+            if (text2.startsWith("/*", i)) {
+              this.comment++;
+              i += 2;
+            } else if (text2.startsWith("*/", i)) {
+              this.comment--;
+              i += 2;
+              if (this.comment === 0) out += " ";
+            } else i++;
+            continue;
+          }
+          if (this.literal !== null) {
+            if (this.literal < 0 && text2[i] === "\\") i += 2;
+            else if (text2[i] === '"' && (this.literal < 0 || text2.startsWith("#".repeat(this.literal), i + 1))) {
+              i += 1 + Math.max(this.literal, 0);
+              this.literal = null;
+              out += '"';
+            } else i++;
+            continue;
+          }
+          if (text2.startsWith("//", i)) break;
+          if (text2.startsWith("/*", i)) {
+            this.comment = 1;
+            i += 2;
+            continue;
+          }
+          RAW_STRING.lastIndex = i;
+          const raw = "rbc".includes(text2[i]) ? RAW_STRING.exec(text2) : null;
+          if (raw !== null) {
+            out += '"';
+            this.literal = raw[1].length;
+            i = RAW_STRING.lastIndex;
+            continue;
+          }
+          if (text2[i] === '"') {
+            out += '"';
+            this.literal = -1;
+            i++;
+            continue;
+          }
+          CHAR_LITERAL.lastIndex = i;
+          if (text2[i] === "'" && CHAR_LITERAL.test(text2)) {
+            out += "''";
+            i = CHAR_LITERAL.lastIndex;
+            continue;
+          }
+          out += text2[i];
+          i++;
+        }
+        return out;
+      }
+    };
+    RAW_STRING = /(?<![A-Za-z0-9_])[bc]?r(#*)"/y;
+    CHAR_LITERAL = /'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]{1,8}\}|.)|[^\\'\n])'/uy;
+    TEST_PACKAGES = /* @__PURE__ */ new Set(["microsoft.net.test.sdk", "xunit", "xunit.v3", "mstest", "tunit"]);
     TEST_ASSEMBLIES = /* @__PURE__ */ new Set(["nunit.framework", "xunit.core", "microsoft.visualstudio.qualitytools.unittestframework", "microsoft.visualstudio.testplatform.testframework"]);
     XML_TAG = /<(\/?)([A-Za-z_][\w.:-]*)((?:\s+[\w.:-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/g;
     LIST_BATCH = 200;
@@ -31814,10 +31967,9 @@ var init_test_files = __esm({
         const name = file === "mod.rs" ? parts.pop() : file.replace(/\.rs$/, "");
         const dir = parts.join("/");
         if (name === void 0 || !/^[A-Za-z_]\w*$/.test(name) || !(dir === "src" || dir.startsWith("src/"))) return false;
-        const declaration = new RegExp(`^[ \\t]*(?:#\\[[^\\]\\n]*\\][ \\t]*)*(?:pub(?:[ \\t]*\\([^)\\n]*\\))?[ \\t]+)?mod[ \\t]+(?:r#)?${name}[ \\t]*;`, "m");
         for (const declarer of declarersOf(dir)) {
           const text2 = await this.text(crate, declarer);
-          if (text2 !== null && declaration.test(text2) && await this.compiled(crate, declarer)) return true;
+          if (text2 !== null && declaresModule(text2, name) && await this.compiled(crate, declarer)) return true;
         }
         return false;
       }
@@ -45478,7 +45630,7 @@ function sanitizeReason(text2) {
   return s.length > REASON_MAX ? s.slice(0, REASON_MAX) : s;
 }
 function nextAction(input) {
-  const { run, questionIds, pullRequest, remote } = input;
+  const { run, questionIds, pullRequest, remote, refs } = input;
   const [first] = questionIds;
   if (first !== void 0) {
     const local = `Answer with orbit decide ${run.id} ${first} <answer>`;
@@ -45486,7 +45638,10 @@ function nextAction(input) {
   }
   switch (run.state) {
     case "SUCCEEDED":
-      return pullRequest !== null ? `Review pull request #${pullRequest} and merge it if you accept it.` : `Inspect branch ${run.branch ?? `orbit/${run.id}`} and merge it yourself if you accept it.`;
+      if (pullRequest !== null) return `Review pull request #${pullRequest} and merge it if you accept it.`;
+      if (refs.branch !== null) return `Inspect branch ${refs.branch} and merge it yourself if you accept it.`;
+      if (refs.candidateRef !== null) return `Inspect the reviewed candidate at ${refs.candidateRef} and merge it yourself if you accept it.`;
+      return `Read orbit report ${run.id} for the reviewed candidate, and merge it yourself if you accept it.`;
     case "BLOCKED":
       if (frozenPolicySetting({ outcomeJson: run.outcomeJson ?? null }) !== null) return `Read orbit report ${run.id}; this block comes from the run's frozen policy, so resuming alone would only block again.`;
       if (candidateEnvironmentFailures({ outcomeJson: run.outcomeJson ?? null }) !== null) return `Read orbit report ${run.id}; this block comes from the environment or a check's definition, so resuming alone would only block again.`;
@@ -50200,7 +50355,8 @@ async function dispatch(input, kind, key2, questionIds) {
   const pr = pullRequestOf(runDir2);
   const targets = config ? commentTargets(runDir2, config) : [];
   const answerable = config && questionIds.length > 0 ? answerThreads(runDir2, config) : [];
-  const payload = buildPayload({ kind, run, questionIds, pullRequest: pr, remote: answerable[0] ? { where: where(answerable[0]) } : null });
+  const refs = { branch: createdBranch(db, run), candidateRef: currentCandidateRef(db, run.id) };
+  const payload = buildPayload({ kind, run, refs, questionIds, pullRequest: pr, remote: answerable[0] ? { where: where(answerable[0]) } : null });
   db.tx(() => appendEvent(db, run.id, DISPATCHED, actor, { key: key2, kind, state: run.state, questions: questionIds }, clock.now()));
   const outcomes = await sendAll(payload, n2, config, targets[0] ?? null, run.repoRoot, deps);
   db.tx(() => {
@@ -50234,6 +50390,7 @@ var init_notify = __esm({
   "src/notify/notify.ts"() {
     "use strict";
     init_fsx();
+    init_run_refs();
     init_run_states();
     init_store4();
     init_config();
@@ -52508,6 +52665,8 @@ function environmentGate(input) {
   return result("environment", reasons, evidence, notes, { blockedProvider, code: code2 });
 }
 function baselineGate(report2) {
+  const ranNothing = report2.checkIds.length === 0 && report2.checks.length === 0 && report2.failures.length === 0 && report2.install.skipped && !report2.audit && (report2.auditNotes ?? []).length === 0;
+  if (ranNothing && report2.complete) return notApplicable("baseline", "nothing ran on the base revision: the policy marks no check mandatory, and there is no locked install or dependency audit", { failures: [] });
   const reasons = [];
   const notes = [];
   const evidence = [`baseline of ${report2.baseRevision} (tree ${report2.baseTree}): ${report2.checks.length} check(s)`];
@@ -53728,7 +53887,7 @@ async function baseComparison(ctx, baseRev, commit) {
   const diffs = /* @__PURE__ */ new Map();
   if (!changedPaths2.some((p) => isTestPath(p, testLayout))) {
     for (const p of changedPaths2.filter(testedByContent).slice(0, MAX_CONTENT_DIFFS)) {
-      diffs.set(p, await git2(repoRoot, ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--text", "-U0", baseRev, commit, "--", `:(literal)${p}`]));
+      diffs.set(p, await git2(repoRoot, ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--text", `-U${WHOLE_FILE_CONTEXT}`, baseRev, commit, "--", `:(literal)${p}`]));
     }
   }
   return {
@@ -53743,7 +53902,7 @@ async function changedPaths(repoRoot, baseRev, commit) {
   const out = await git2(repoRoot, ["diff", "--name-only", "-z", "--no-renames", baseRev, commit, "--"]);
   return out.split("\0").filter((p) => p.length > 0);
 }
-var EXPLORATION_NOT_RUN, MAX_CONTENT_DIFFS;
+var EXPLORATION_NOT_RUN, MAX_CONTENT_DIFFS, WHOLE_FILE_CONTEXT;
 var init_verification = __esm({
   "src/controller/verification.ts"() {
     "use strict";
@@ -53763,6 +53922,7 @@ var init_verification = __esm({
     init_exploration();
     EXPLORATION_NOT_RUN = "UI exploration (ui.exploration) runs only in the controller's VERIFYING step; this verification did not explore the UI";
     MAX_CONTENT_DIFFS = 50;
+    WHOLE_FILE_CONTEXT = 1e8;
   }
 });
 
@@ -58316,6 +58476,7 @@ async function runAmendment(ctx, contract, ids, baseRevision) {
   }
   askAboutBaseFailures(ctx, found, { baseRevision, key: `amended-${at}`, only });
   settleExpectedFlips(ctx, contract);
+  recordGate(ctx, baselineGate(classified));
   judged();
   return null;
 }
@@ -63183,7 +63344,7 @@ function workerLoopbackCheck(input) {
   const id = "workers.loopback";
   const area = "isolation";
   if (input.platform === "linux") {
-    const summary = "workers can run test suites that listen on loopback: on Linux every worker sandbox has a loopback of its own, which nothing outside it can reach";
+    const summary = "workers can run test suites that listen on loopback: on Linux srt starts every worker sandbox in a network namespace of its own, with a loopback nothing outside it can reach (from srt's source, not measured by Orbit)";
     return { id, area, status: "pass", summary, details: [], missing: null, fix: null };
   }
   const cannot = `on macOS workers cannot run test hosts that need a loopback socket (${RUNNERS3}), in either worker tier`;
@@ -63195,15 +63356,16 @@ function workerLoopbackCheck(input) {
     return { id, area, status: "pass", summary, details: [WHY], missing: null, fix: null };
   }
   const listening = Object.values(input.config.checks).filter((check) => check.local_binding !== false);
-  const who = listening.length > 0 ? "the checks that may listen run them" : "no check may listen either (local_binding: false on every check), so nothing here runs them";
+  const testing = listening.filter((check) => check.kind === "command" && checkCategory(check) === "test");
+  const who = testing.length > 0 ? "the test checks that may listen run them" : listening.length > 0 ? "no test check may listen (local_binding: false on each), so nothing here runs them" : "no check may listen either (local_binding: false on every check), so nothing here runs them";
   return {
     id,
     area,
     status: "warn",
     summary: `${cannot}, and this repository's tests need one, so a worker submits changes it could not test; ${who}`,
-    details: [...runners, WHY, ...listening.map((check) => `check ${check.id} may listen (its own local_binding), so it runs tests a worker cannot`)],
+    details: [...runners, WHY, ...testing.map((check) => `check ${check.id} may listen (its own local_binding), so it runs tests a worker cannot`)],
     missing: "a worker sandbox that limits a listener to loopback, which macOS's Seatbelt cannot express",
-    fix: "nothing to set in Orbit on macOS: keep local_binding (the default) on the checks that run these tests, which test every change a worker submits; on Linux every worker sandbox has a loopback of its own, so workers there run them too"
+    fix: "nothing to set in Orbit on macOS: keep local_binding (the default) on the checks that run these tests, which test every change a worker submits; on Linux srt starts every worker sandbox in a network namespace of its own (from srt's source, not measured by Orbit), so workers there can run them too"
   };
 }
 function workerToolchainsCheck(input) {
@@ -63228,6 +63390,7 @@ var RUNNERS3, DOTNET_FILE, GRADLE_FILES, WHY, SCRATCH_BOUND;
 var init_doctor_workers = __esm({
   "src/cli/commands/doctor-workers.ts"() {
     "use strict";
+    init_config();
     RUNNERS3 = "dotnet test's VSTest test host, Gradle's test workers, a test that starts a server";
     DOTNET_FILE = /\.(sln|slnx|csproj|fsproj|vbproj)$/;
     GRADLE_FILES = /* @__PURE__ */ new Set(["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew"]);
