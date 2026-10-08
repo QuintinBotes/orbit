@@ -96,7 +96,17 @@ export const XUNIT_PROJECT = {
   'Acme.Tests/CalcTests.cs': 'using Xunit;\n\nnamespace Acme.Tests;\n\npublic class CalcTests\n{\n    [Fact]\n    public void Adds() => Assert.Equal(5, 2 + 3);\n}\n',
 };
 
+/**
+ * A Maven build file. Every repository whose tests Surefire or Gradle runs has one (pom.xml, build.gradle...), and these
+ * are what make a repository a JVM one to Orbit (the jvm toolchain's markers), so only with one does a worker get the
+ * host's JDK through JAVA_HOME (isolation/toolchains.ts). Without it the worker had no JAVA_HOME, and where the JDK is
+ * found through JAVA_HOME alone (GitHub's macOS runners keep it in the tool cache, behind the /usr/bin/javac stub) its
+ * javac was "Unable to locate a Java Runtime".
+ */
+const MAVEN_POM = { 'pom.xml': '<project xmlns="http://maven.apache.org/POM/4.0.0"><modelVersion>4.0.0</modelVersion><groupId>acme</groupId><artifactId>acme</artifactId><version>0</version></project>\n' };
+
 const JAVA_SOCKET = {
+  ...MAVEN_POM,
   'Runner.java': [
     'import java.io.*;',
     'import java.net.*;',
@@ -124,6 +134,7 @@ const JAVA_SOCKET = {
 };
 
 const JAVA_PIPES = {
+  ...MAVEN_POM,
   'Runner.java': [
     'import java.io.*;',
     'public class Runner {',
