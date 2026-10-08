@@ -25124,7 +25124,14 @@ ${refs.length ? `  <ItemGroup>${refs.map((r) => `<ProjectReference Include="../$
           // that lists the host) it stays as the repository configures it, so Orbit does not pass a restore the
           // repository's CI fails on NU1903. A check's own env, or a project that sets NuGetAudit itself, wins (orbit
           // doctor's checks.dotnet-audit names the second on macOS).
-          ...nugetAuditRuns(d) ? {} : { NuGetAudit: "false" }
+          ...nugetAuditRuns(d) ? {} : { NuGetAudit: "false" },
+          // SourceLink's git query, off as in a check (evidence/runner.ts DOTNET_CHECK_ENV), here for every process that
+          // uses .NET and so for a worker, which gets nothing else of a check's environment. On Linux it cannot run in any
+          // srt sandbox (Claude Code's included): srt binds an unopenable device over each git file a writable directory
+          // lacks (.gitmodules...), so every build in a worker's worktree stopped at "Error reading git repository
+          // information: Access to the path '.../.gitmodules' is denied" (SDK 10, os-sandbox and claude-sandbox tiers, CI
+          // of #31). A build's result needs none of the commit, branch and remote it embeds; a command can set it back.
+          EnableSourceControlManagerQueries: "false"
         })
       },
       go: {
