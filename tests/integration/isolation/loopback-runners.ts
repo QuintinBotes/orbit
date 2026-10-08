@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { which } from '../../../src/isolation/util.ts';
+import { hostTool } from '../evidence/harness.ts';
 
 /**
  * Issue #31: the shapes in which a repository's test runner or its tests use loopback, and the shapes that need none,
@@ -32,12 +32,17 @@ export interface LoopbackRunner {
   timeoutMs: number;
 }
 
-const PATH = process.env.PATH;
 const node = process.execPath;
-const python = which('python3', PATH);
-const go = which('go', PATH);
-const javac = which('javac', PATH);
-export const dotnet = which('dotnet', PATH) ?? [join(homedir(), '.dotnet', 'dotnet')].find((p) => existsSync(p)) ?? null;
+// Each tool counts only if it starts, outside any sandbox, the way a runner starts it (harness.ts hostTool): every Mac
+// has /usr/bin/javac and /usr/bin/java, stubs that start a JDK installed elsewhere or fail with "Unable to locate a Java
+// Runtime".
+const python = hostTool('python3', ['--version']);
+const go = hostTool('go', ['version']);
+const javac = hostTool('javac', ['-version']);
+const java = hostTool('java', ['-version']);
+const jvmAbsent = javac.absent ?? java.absent;
+const dotnetTool = hostTool('dotnet', ['--version'], join(homedir(), '.dotnet', 'dotnet'));
+export const dotnet = dotnetTool.path;
 
 const TFM = '<TargetFramework>net$(NETCoreAppMaximumVersion)</TargetFramework>';
 /** No package references: it restores and builds offline from the SDK alone. Empty Directory.Build files stop MSBuild importing any above. */
@@ -152,9 +157,9 @@ export const LOOPBACK_RUNNERS: readonly LoopbackRunner[] = [
   },
   {
     name: "a Python test that starts a server (http.server)",
-    unavailable: python ? null : 'python3 is not installed',
+    unavailable: python.absent,
     files: { ...PYPROJECT, 'serve.py': "import http.server, threading, urllib.request\ns = http.server.HTTPServer(('127.0.0.1', 0), http.server.SimpleHTTPRequestHandler)\nthreading.Thread(target=s.serve_forever, daemon=True).start()\nprint('server answered', urllib.request.urlopen(f'http://127.0.0.1:{s.server_address[1]}/pyproject.toml').status)\n" },
-    command: [python ?? 'python3', 'serve.py'],
+    command: [python.path ?? 'python3', 'serve.py'],
     listens: true,
     passed: /server answered 200/,
     refused: /PermissionError: \[Errno 1\] Operation not permitted/,
@@ -162,12 +167,12 @@ export const LOOPBACK_RUNNERS: readonly LoopbackRunner[] = [
   },
   {
     name: "a Go test that starts an httptest server, under go test -json",
-    unavailable: go ? null : 'go is not installed',
+    unavailable: go.absent,
     files: {
       ...GO_MOD,
       'serve_test.go': 'package acme\n\nimport (\n\t"io"\n\t"net/http"\n\t"net/http/httptest"\n\t"testing"\n)\n\nfunc TestServe(t *testing.T) {\n\ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))\n\tdefer s.Close()\n\tres, err := http.Get(s.URL)\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\tb, _ := io.ReadAll(res.Body)\n\tif string(b) != "ok" {\n\t\tt.Fatal(string(b))\n\t}\n}\n',
     },
-    command: [go ?? 'go', 'test', '-json', './...'],
+    command: [go.path ?? 'go', 'test', '-json', './...'],
     listens: true,
     passed: /"Action":"pass","Package":"acme","Test":"TestServe"/,
     refused: /httptest: failed to listen on a port: listen tcp6? \S+:0: bind: operation not permitted/,
@@ -175,7 +180,7 @@ export const LOOPBACK_RUNNERS: readonly LoopbackRunner[] = [
   },
   {
     name: "a forked JVM that connects back over loopback (Gradle's test workers, Surefire's TCP fork channel)",
-    unavailable: javac ? null : 'javac is not installed',
+    unavailable: jvmAbsent,
     files: JAVA_SOCKET,
     command: ['/bin/sh', '-c', 'javac Runner.java Forked.java && java -cp . Runner'],
     listens: true,
@@ -185,7 +190,7 @@ export const LOOPBACK_RUNNERS: readonly LoopbackRunner[] = [
   },
   {
     name: "VSTest's shape: a .NET runner that listens on loopback for the test host it starts",
-    unavailable: dotnet ? null : 'dotnet is not installed',
+    unavailable: dotnetTool.absent,
     files: VSTEST_SHAPE,
     command: ['/bin/sh', '-c', `"$0" build -m:1 -o out -v q -nologo && "$0" out/acme.dll`, dotnet ?? 'dotnet'],
     listens: true,
@@ -195,7 +200,7 @@ export const LOOPBACK_RUNNERS: readonly LoopbackRunner[] = [
   },
   {
     name: 'the issue itself: dotnet test -m:1 of an xunit project (VSTest)',
-    unavailable: !dotnet ? 'dotnet is not installed' : !xunitCached ? `the xunit packages (${Object.entries(XUNIT_PACKAGES).map(([id, v]) => `${id} ${v}`).join(', ')}) are not in the NuGet cache ${nugetGlobalPackages}` : null,
+    unavailable: dotnetTool.absent !== null ? dotnetTool.absent : !xunitCached ? `the xunit packages (${Object.entries(XUNIT_PACKAGES).map(([id, v]) => `${id} ${v}`).join(', ')}) are not in the NuGet cache ${nugetGlobalPackages}` : null,
     files: XUNIT_PROJECT,
     command: [dotnet ?? 'dotnet', 'test', '-m:1', 'Acme.Tests/Acme.Tests.csproj'],
     listens: true,
@@ -205,16 +210,16 @@ export const LOOPBACK_RUNNERS: readonly LoopbackRunner[] = [
   },
   {
     name: 'go test -json of a plain test (test2json over a pipe)',
-    unavailable: go ? null : 'go is not installed',
+    unavailable: go.absent,
     files: { ...GO_MOD, 'calc.go': 'package acme\n\nfunc Add(a, b int) int { return a + b }\n', 'calc_test.go': 'package acme\n\nimport "testing"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(2, 3) != 5 {\n\t\tt.Fatal("2 + 3")\n\t}\n}\n' },
-    command: [go ?? 'go', 'test', '-json', './...'],
+    command: [go.path ?? 'go', 'test', '-json', './...'],
     listens: false,
     passed: /"Action":"pass","Package":"acme","Test":"TestAdd"/,
     timeoutMs: 180_000,
   },
   {
     name: "a forked JVM over pipes (Surefire's default fork channel)",
-    unavailable: javac ? null : 'javac is not installed',
+    unavailable: jvmAbsent,
     files: JAVA_PIPES,
     command: ['/bin/sh', '-c', 'javac Runner.java Forked.java && java -cp . Runner'],
     listens: false,
@@ -239,9 +244,9 @@ export const LOOPBACK_RUNNERS: readonly LoopbackRunner[] = [
   },
   {
     name: "a child Python over pipes (pytest-xdist's execnet popen gateways)",
-    unavailable: python ? null : 'python3 is not installed',
+    unavailable: python.absent,
     files: { ...PYPROJECT, 'pipes.py': "import subprocess, sys\nr = subprocess.run([sys.executable, '-c', 'import sys; print(sys.stdin.read().upper())'], input='ping', capture_output=True, text=True)\nprint('child said', r.stdout.strip())\n" },
-    command: [python ?? 'python3', 'pipes.py'],
+    command: [python.path ?? 'python3', 'pipes.py'],
     listens: false,
     passed: /child said PING/,
     timeoutMs: 30_000,
