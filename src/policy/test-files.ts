@@ -182,31 +182,192 @@ function nearestDir(path: string, has: (dir: string) => boolean): string | null 
 }
 
 /**
- * Whether the diff adds a test function cargo test runs: a test attribute among added lines, in an attribute group
- * (the attributes, comments and blank lines before an item) that has no ignore attribute. Removed lines are not part
- * of the new file, so they neither add a test nor ignore one.
+ * Whether the diff adds a test function cargo test runs: a test attribute on an added line, in an attribute group (the
+ * attributes before an item, across comments and blank lines) that has no ignore attribute and no cfg other than
+ * cfg(test), on an item of a module cargo compiles (scanRust). The group is read in the candidate, unchanged lines
+ * included, so the diff must show the whole candidate file (git diff with full context, one hunk from line 1): a diff
+ * that does not (no context, or cut short by an output limit) adds no test, since an unchanged #[ignore] may sit
+ * outside it. Removed lines are not part of the new file, so they neither add a test nor ignore one.
  */
 function addsRunnableRustTest(diff: string): boolean {
-  let group: { text: string; added: boolean }[] = [];
-  const settle = (): boolean => {
-    const runs = group.some((l) => l.added && RUST_TEST_ATTRIBUTE.test(l.text)) && !group.some((l) => RUST_IGNORE_ATTRIBUTE.test(l.text));
-    group = [];
-    return runs;
-  };
-  let inHunk = false;
-  for (const line of diff.split('\n')) {
-    if (line.startsWith('@@') || line.startsWith('diff --git ')) {
-      if (settle()) return true;
-      inHunk = line.startsWith('@@');
-      continue;
-    }
-    if (!inHunk || !(line.startsWith('+') || line.startsWith(' '))) continue;
-    const text = line.slice(1);
-    if (/^\s*(#\[|\/\/|$)/.test(text)) group.push({ text, added: line.startsWith('+') });
-    else if (settle()) return true;
-  }
-  return settle();
+  const lines = wholeCandidate(diff);
+  if (lines === null) return false;
+  return scanRust(lines, (attrs, _code, compiled) => compiled && attrs.some((a) => a.added && RUST_TEST_ATTRIBUTE.test(a.text)) && !attrs.some((a) => RUST_IGNORE_ATTRIBUTE.test(a.text) || offCfg(a.text)));
 }
+
+/** The lines of the candidate file a diff shows, each marked added or not; null unless the diff shows every one of them. */
+function wholeCandidate(diff: string): { text: string; added: boolean }[] | null {
+  const raw = diff.split('\n');
+  if (raw[raw.length - 1] === '') raw.pop();
+  const at = raw.findIndex((l) => l.startsWith('@@'));
+  if (at < 0) return null;
+  const header = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(raw[at]!);
+  if (header === null) return null;
+  const start = Number(header[1]);
+  const count = header[2] === undefined ? 1 : Number(header[2]);
+  if (count > 0 && start !== 1) return null;
+  const out: { text: string; added: boolean }[] = [];
+  for (const line of raw.slice(at + 1)) {
+    if (line.startsWith('+') || line.startsWith(' ')) out.push({ text: line.slice(1), added: line.startsWith('+') });
+    else if (!line.startsWith('-') && !line.startsWith('\\')) return null;
+  }
+  return out.length === count ? out : null;
+}
+
+/** An attribute of an item, with whether any line of it is an added line of the diff. */
+interface RustAttribute {
+  readonly text: string;
+  readonly added: boolean;
+}
+
+/** A cfg attribute other than cfg(test): cargo test without features or other targets does not compile what it marks. */
+function offCfg(attribute: string): boolean {
+  return /^#!?\[\s*cfg\s*\(/.test(attribute) && !/^#!?\[\s*cfg\s*\(\s*test\s*\)\s*\]$/.test(attribute);
+}
+
+/** The start of an inline module or of a module declaration: `mod name`, with any visibility. */
+const RUST_MOD_ITEM = /^(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(?:r#)?([A-Za-z_]\w*)\s*([;{]|$)/;
+
+/**
+ * Walks Rust source line by line as the compiler reads it (RustLexer: comments removed, literals emptied) and calls
+ * `item` with the start of each item's code (the rest of its line), the attributes before it (outer attributes, also
+ * those on the item's own line and those spanning lines), whether it sits in a block, and whether cargo test compiles
+ * it: every block around it is a module, none marked by a cfg other than cfg(test) (an outer attribute on the module or
+ * an inner one in it), and the file is not (an inner cfg at the top). A test function in a function or another block is
+ * not run (rustc does not test inner items). Returns true as soon as `item` does. Every line that is not an attribute or
+ * blank starts an item here, which for a line inside an expression only ends the group before it.
+ */
+function scanRust(lines: Iterable<{ text: string; added: boolean }>, item: (attrs: readonly RustAttribute[], code: string, compiled: boolean, nested: boolean) => boolean): boolean {
+  const lexer = new RustLexer();
+  // One entry per open brace: whether it opened a module cargo compiles, one a cfg leaves out, or any other block.
+  const blocks: ('module' | 'off' | 'other')[] = [];
+  let fileOff = false;
+  let group: RustAttribute[] = [];
+  let attr: { text: string; depth: number; added: boolean } | null = null;
+  // The block the next '{' opens, when an item before it was a module whose brace has not come yet.
+  let opens: 'module' | 'off' | null = null;
+  for (const line of lines) {
+    const code = lexer.line(line.text);
+    let i = 0;
+    while (i < code.length) {
+      if (attr !== null) {
+        const c = code[i++]!;
+        attr.text += c;
+        attr.added ||= line.added;
+        if (c === '[') attr.depth++;
+        else if (c === ']' && --attr.depth === 0) {
+          const text = attr.text.trim();
+          const added = attr.added;
+          attr = null;
+          if (!text.startsWith('#!')) group.push({ text, added });
+          else if (offCfg(text)) {
+            if (blocks.length === 0) fileOff = true;
+            else blocks[blocks.length - 1] = 'off';
+          }
+        }
+        continue;
+      }
+      if (/\s/.test(code[i]!)) {
+        i++;
+        continue;
+      }
+      if (code.startsWith('#[', i) || code.startsWith('#![', i)) {
+        attr = { text: '', depth: 0, added: line.added };
+        continue;
+      }
+      const rest = code.slice(i);
+      if (opens === null || !rest.startsWith('{')) {
+        if (item(group, rest, !fileOff && blocks.every((b) => b === 'module'), blocks.length > 0)) return true;
+        const mod = RUST_MOD_ITEM.exec(rest);
+        opens = mod !== null && mod[2] !== ';' ? (group.some((a) => offCfg(a.text)) ? 'off' : 'module') : null;
+        group = [];
+      }
+      for (const c of rest) {
+        if (c === '{') {
+          blocks.push(opens ?? 'other');
+          opens = null;
+        } else if (c === '}') blocks.pop();
+      }
+      break;
+    }
+  }
+  return false;
+}
+
+/**
+ * Reads Rust source a line at a time and returns each line's code: comments removed (line comments, and block comments,
+ * which nest and may span lines), and string, raw string, byte string and character literals emptied to their quotes.
+ * What spans a line break carries over to the next call. Without it, a #[test] in a block comment or a raw string counts
+ * as a test, and a brace there misleads the block structure. A misread can only hide code (read a lifetime as the start
+ * of a literal, say), which leaves a test uncounted, the safe direction.
+ */
+class RustLexer {
+  /** Nesting of the block comment the next line starts in; 0 outside one. */
+  private comment = 0;
+  /** The literal the next line starts in: the number of '#' that close a raw string, -1 for a plain string. */
+  private literal: number | null = null;
+
+  line(text: string): string {
+    let out = '';
+    let i = 0;
+    while (i < text.length) {
+      if (this.comment > 0) {
+        if (text.startsWith('/*', i)) {
+          this.comment++;
+          i += 2;
+        } else if (text.startsWith('*/', i)) {
+          this.comment--;
+          i += 2;
+          if (this.comment === 0) out += ' ';
+        } else i++;
+        continue;
+      }
+      if (this.literal !== null) {
+        if (this.literal < 0 && text[i] === '\\') i += 2;
+        else if (text[i] === '"' && (this.literal < 0 || text.startsWith('#'.repeat(this.literal), i + 1))) {
+          i += 1 + Math.max(this.literal, 0);
+          this.literal = null;
+          out += '"';
+        } else i++;
+        continue;
+      }
+      if (text.startsWith('//', i)) break;
+      if (text.startsWith('/*', i)) {
+        this.comment = 1;
+        i += 2;
+        continue;
+      }
+      RAW_STRING.lastIndex = i;
+      const raw = 'rbc'.includes(text[i]!) ? RAW_STRING.exec(text) : null;
+      if (raw !== null) {
+        out += '"';
+        this.literal = raw[1]!.length;
+        i = RAW_STRING.lastIndex;
+        continue;
+      }
+      if (text[i] === '"') {
+        out += '"';
+        this.literal = -1;
+        i++;
+        continue;
+      }
+      CHAR_LITERAL.lastIndex = i;
+      if (text[i] === "'" && CHAR_LITERAL.test(text)) {
+        out += "''";
+        i = CHAR_LITERAL.lastIndex;
+        continue;
+      }
+      out += text[i];
+      i++;
+    }
+    return out;
+  }
+}
+
+/** The opening of a raw string (r"", r#""#, and the byte and C string forms br and cr), not the end of a longer name. */
+const RAW_STRING = /(?<![A-Za-z0-9_])[bc]?r(#*)"/y;
+/** A character or byte literal: one character or one escape between quotes; any other quote starts a lifetime or a label. */
+const CHAR_LITERAL = /'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]{1,8}\}|.)|[^\\'\n])'/uy;
 
 // ---------------------------------------------------------------------------
 // Project files
@@ -446,10 +607,9 @@ class RustModules {
     const name = file === 'mod.rs' ? parts.pop() : file.replace(/\.rs$/, '');
     const dir = parts.join('/');
     if (name === undefined || !/^[A-Za-z_]\w*$/.test(name) || !(dir === 'src' || dir.startsWith('src/'))) return false;
-    const declaration = new RegExp(`^[ \\t]*(?:#\\[[^\\]\\n]*\\][ \\t]*)*(?:pub(?:[ \\t]*\\([^)\\n]*\\))?[ \\t]+)?mod[ \\t]+(?:r#)?${name}[ \\t]*;`, 'm');
     for (const declarer of declarersOf(dir)) {
       const text = await this.text(crate, declarer);
-      if (text !== null && declaration.test(text) && (await this.compiled(crate, declarer))) return true;
+      if (text !== null && declaresModule(text, name) && (await this.compiled(crate, declarer))) return true;
     }
     return false;
   }
@@ -463,6 +623,21 @@ class RustModules {
     }
     return known;
   }
+}
+
+/**
+ * Whether a source declares the module `name` from a file of its own (`mod name;`) as cargo test compiles it: at the
+ * top of the file, not in a comment or string, not under a cfg other than cfg(test) (on the declaration or on the whole
+ * file), and not moved elsewhere by a #[path] attribute.
+ */
+function declaresModule(text: string, name: string): boolean {
+  return scanRust(
+    text.split('\n').map((t) => ({ text: t, added: false })),
+    (attrs, code, compiled, nested) => {
+      const mod = RUST_MOD_ITEM.exec(code);
+      return compiled && !nested && mod !== null && mod[1] === name && mod[2] === ';' && !attrs.some((a) => offCfg(a.text) || /^#\[\s*(?:path\b|cfg_attr\b.*\bpath\s*=)/.test(a.text));
+    },
+  );
 }
 
 /** The sources whose `mod name;` declares a module file of `dir` (a directory of src/). */

@@ -16,8 +16,19 @@ function layout(dotnet: Record<string, boolean>, cargo: Record<string, boolean> 
   return { dotnetProjects: new Map(Object.entries(dotnet)), cargoManifests: new Map(Object.entries(cargo)) };
 }
 
+/**
+ * The diff the evidence comparison reads for a Rust source: every line of the candidate file, as git prints it with
+ * full context (one hunk from line 1). Each line is marked '+', '-' or ' '.
+ */
+function wholeDiff(lines: string[]): string {
+  const old = lines.filter((l) => !l.startsWith('+')).length;
+  const cand = lines.filter((l) => !l.startsWith('-')).length;
+  return ['diff --git a/src/lib.rs b/src/lib.rs', '--- a/src/lib.rs', '+++ b/src/lib.rs', `@@ -${old ? 1 : 0},${old} +${cand ? 1 : 0},${cand} @@`, ...lines].join('\n');
+}
+
+/** A whole-file diff whose candidate is `context` followed by `added`, and whose base is `context` followed by `removed`. */
 function diff(added: string[], removed: string[] = [], context: string[] = []): string {
-  return ['diff --git a/src/lib.rs b/src/lib.rs', '--- a/src/lib.rs', '+++ b/src/lib.rs', '@@ -1,3 +1,4 @@', ...context.map((l) => ` ${l}`), ...removed.map((l) => `-${l}`), ...added.map((l) => `+${l}`)].join('\n');
+  return wholeDiff([...context.map((l) => ` ${l}`), ...removed.map((l) => `-${l}`), ...added.map((l) => `+${l}`)]);
 }
 
 describe('path conventions', () => {
@@ -245,6 +256,68 @@ describe('Rust: a crate\'s tests/ directory, and #[test] functions the change ad
     expect(isTestPath('src/lib.rs', crates)).toBe(false);
   });
 
+  // Final review of #30 to #33: the diff had no context lines, so a group's unchanged #[ignore] was out of sight, and a
+  // change to the test attribute alone of an ignored test (made async, given another row) counted as a test cargo runs.
+  it('judges an added test attribute by its whole attribute group in the candidate, unchanged lines included', () => {
+    const asyncIgnored = wholeDiff([' #[cfg(test)]', ' mod tests {', '-    #[test]', '+    #[tokio::test]', '     #[ignore]', '     async fn mul_works() {}', ' }']);
+    expect(isTestPath('src/lib.rs', crates, asyncIgnored)).toBe(false);
+    const rowOfIgnored = wholeDiff(['+#[test_case(2)]', ' #[test_case(1)]', ' #[ignore = "slow"]', ' fn mul_works(n: i32) {}']);
+    expect(isTestPath('src/lib.rs', crates, rowOfIgnored)).toBe(false);
+    expect(isTestPath('src/lib.rs', crates, wholeDiff([' #[ignore]', ' // why', '+#[test]', ' fn slow() {}']))).toBe(false);
+    // The unchanged #[ignore] of another test does not hide the one the change adds.
+    expect(isTestPath('src/lib.rs', crates, wholeDiff([' #[test]', ' #[ignore]', ' fn slow() {}', ' ', '+#[test]', '+fn fast() {}']))).toBe(true);
+    // An attribute that spans lines is one attribute, added when any line of it is.
+    expect(isTestPath('src/lib.rs', crates, wholeDiff([' #[test_case(', '+    2,', '     1', ' )]', ' fn t(n: i32) {}']))).toBe(true);
+    expect(isTestPath('src/lib.rs', crates, wholeDiff([' #[test_case(', '+    2,', '     1', ' )]', ' #[ignore]', ' fn t(n: i32) {}']))).toBe(false);
+  });
+
+  it('judges only a diff that shows the whole candidate file: one without context, or one cut short, adds no test', () => {
+    const head = ['diff --git a/src/lib.rs b/src/lib.rs', '--- a/src/lib.rs', '+++ b/src/lib.rs'];
+    expect(isTestPath('src/lib.rs', crates, [...head, '@@ -14 +14 @@', '-    #[test]', '+    #[tokio::test]'].join('\n'))).toBe(false);
+    expect(isTestPath('src/lib.rs', crates, [...head, '@@ -20,0 +21,2 @@', '+#[test]', '+fn t() {}'].join('\n'))).toBe(false);
+    expect(isTestPath('src/lib.rs', crates, [...head, '@@ -1,0 +1,2 @@', '+#[test]', '+fn t() {}', '@@ -9,0 +11,1 @@', '+// more'].join('\n'))).toBe(false);
+    // Cut short by the output limit: the header promises more lines than arrived (here the #[ignore] after the #[test]).
+    const whole = wholeDiff(['+#[test]', '+#[ignore]', '+fn slow() {}']).split('\n');
+    expect(isTestPath('src/lib.rs', crates, [...whole.slice(0, -2), '[orbit: output truncated: 20 bytes dropped after the first 8388608]', ''].join('\n'))).toBe(false);
+    expect(isTestPath('src/lib.rs', crates, `${whole.join('\n')}\n`)).toBe(false);
+    expect(isTestPath('src/lib.rs', crates, `${wholeDiff(['+#[test]', '+fn t() {}'])}\n\\ No newline at end of file\n`)).toBe(true);
+  });
+
+  it('does not count a test cargo never compiles: in a block comment, in a string, under a cfg other than cfg(test), or inside a function', () => {
+    const off: string[][] = [
+      ['/*', '#[test]', 'fn disabled() {}', '*/'],
+      ['/* outer /* nested */', '#[test]', 'fn disabled() {}', '*/'],
+      ['const DOC: &str = r#"', '#[test]', 'fn in_a_string() {}', '"#;'],
+      ['const DOC: &str = "', '#[test]', 'fn in_a_string() {}', '";'],
+      ['#[cfg(feature = "slow")]', '#[test]', 'fn gated() {}'],
+      ['#[test]', '#[cfg(any())]', 'fn never() {}'],
+      ['#[cfg(not(test))]', '#[test]', 'fn never() {}'],
+      ['#[test] #[cfg(windows)] fn inline() {}'],
+      ['#[test_case(', '    1', ')]', '#[ignore]', 'fn slow(n: i32) {}'],
+      ['#[cfg(feature = "slow")]', 'mod slow {', '    #[test]', '    fn a() {}', '    #[test]', '    fn b() {}', '}'],
+      ['#[cfg(all(test, feature = "x"))] mod tests', '{', '    #[test]', '    fn a() {}', '}'],
+      ['#[cfg(test)]', 'mod tests {', '    #![cfg(feature = "slow")]', '    #[test]', '    fn a() {}', '}'],
+      ['#![cfg(feature = "slow")]', '#[test]', 'fn a() {}'],
+      ['fn outer() {', '    #[test]', '    fn inner() {}', '}'],
+      ['macro_rules! cases {', '    () => {', '        #[test]', '        fn a() {}', '    };', '}'],
+    ];
+    for (const lines of off) expect(isTestPath('src/lib.rs', crates, diff(lines)), lines.join(' | ')).toBe(false);
+    // An unchanged cfg on the module still leaves out the test the change adds inside it.
+    expect(isTestPath('src/lib.rs', crates, wholeDiff([' #[cfg(feature = "slow")]', ' mod slow {', '+    #[test]', '+    fn a() {}', ' }']))).toBe(false);
+    const on: string[][] = [
+      ['/* a comment */', '#[test]', 'fn runs() {}'],
+      ['// a /* in a line comment', '#[test]', 'fn runs() {}'],
+      ['const S: &str = "/* not a comment";', '#[test]', 'fn runs() {}'],
+      ["const Q: char = '\"';", "fn f<'a>(x: &'a str) -> &'a str { x }", '#[test]', 'fn runs() {}'],
+      ['#[cfg(test)]', '#[test]', 'fn runs() {}'],
+      ['#![cfg_attr(docsrs, feature(doc_cfg))]', '#[test]', 'fn runs() {}'],
+      ['#[cfg(feature = "slow")]', 'mod slow {', '    #[test]', '    fn a() {}', '}', '', '#[test]', 'fn after() {}'],
+      ['#[cfg(test)]', 'pub(crate) mod tests {', '    mod inner {', '        #[test]', '        fn a() {}', '    }', '}'],
+      ['#[test_case(', '    1', ')]', 'fn runs(n: i32) {}'],
+    ];
+    for (const lines of on) expect(isTestPath('src/lib.rs', crates, diff(lines)), lines.join(' | ')).toBe(true);
+  });
+
   it('reads diff content for Rust only', () => {
     expect(isTestPath('src/Calculator.cs', NO_LAYOUT, diff(['#[test]']))).toBe(false);
     expect(isTestPath('src/calc.py', NO_LAYOUT, diff(['#[test]']))).toBe(false);
@@ -414,6 +487,44 @@ describe('loadTestLayout: the project files of the base and candidate trees that
     expect(isTestPath('src/tests.rs', l, diff(['#[test]', 'fn mul_works() {}']))).toBe(true);
     // Without the option no module is looked for, and only the crate roots count.
     expect((await loadTestLayout(reader({ base: cand, cand }), 'base', 'cand', changed)).compiledRust).toBeUndefined();
+  });
+
+  // Final review: a mod declaration in a block comment, under a cfg other than cfg(test), with a #[path], or inside an
+  // inline module does not make cargo compile src/<name>.rs.
+  it('counts a module only for a declaration cargo compiles: not in a comment or string, under a cfg, moved by #[path] or nested', async () => {
+    const cand = {
+      'Cargo.toml': '[package]\nname = "calc"\n',
+      'src/lib.rs': [
+        '/*',
+        'mod in_comment;',
+        '*/',
+        'const S: &str = "',
+        'mod in_string;',
+        '";',
+        '#[cfg(feature = "slow")]',
+        'mod gated;',
+        '#[cfg(feature = "x")] mod gated_inline;',
+        '#[path = "elsewhere.rs"]',
+        'mod moved;',
+        'mod outer {',
+        '    mod nested;',
+        '}',
+        '#[cfg(test)]',
+        '#[allow(dead_code)]',
+        'mod tests;',
+        'pub mod plain;',
+        '#[cfg(feature = "slow")]',
+        'mod slow {',
+        '}',
+        'mod after;',
+      ].join('\n'),
+      'src/gate.rs': '#![cfg(feature = "slow")]\nmod behind_gate;\n',
+    };
+    const files = ['in_comment', 'in_string', 'gated', 'gated_inline', 'moved', 'nested', 'tests', 'plain', 'after', 'behind_gate'].map((n) => `src/${n}.rs`);
+    const tree: Record<string, string> = { ...cand, ...Object.fromEntries(files.map((f) => [f, ''])) };
+    tree['src/lib.rs'] += '\nmod gate;\n';
+    const l = await loadTestLayout(reader({ base: tree, cand: tree }), 'base', 'cand', files, { rustModules: true });
+    expect([...(l.compiledRust ?? [])].sort()).toEqual(['src/after.rs', 'src/plain.rs', 'src/tests.rs']);
   });
 
   it('reads no tree at all when no .NET or Rust file changed', async () => {

@@ -205,8 +205,10 @@ async function baseComparison(ctx: RunContext, baseRev: string, commit: string):
   const testLayout = await loadTestLayout(gitTreeReader((args) => git(repoRoot, args)), baseRev, commit, changedPaths, { rustModules: true });
   const diffs = new Map<string, string>();
   if (!changedPaths.some((p) => isTestPath(p, testLayout))) {
+    // With full context: an added #[test] is judged by its whole attribute group in the candidate, whose #[ignore] or
+    // cfg may be an unchanged line (with -U0 a change to the attribute alone of an ignored test counted).
     for (const p of changedPaths.filter(testedByContent).slice(0, MAX_CONTENT_DIFFS)) {
-      diffs.set(p, await git(repoRoot, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--text', '-U0', baseRev, commit, '--', `:(literal)${p}`]));
+      diffs.set(p, await git(repoRoot, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--text', `-U${WHOLE_FILE_CONTEXT}`, baseRev, commit, '--', `:(literal)${p}`]));
     }
   }
   return {
@@ -220,6 +222,12 @@ async function baseComparison(ctx: RunContext, baseRev: string, commit: string):
 
 /** Changed files read for a test only their content shows; beyond this many, the rest are judged by path. */
 const MAX_CONTENT_DIFFS = 50;
+/**
+ * Context lines that make git show the whole file in one hunk: more lines than any source the 8 MiB output limit lets
+ * through, and twice it still fits the int git keeps it in (2^31 and more overflowed, measured with git 2.54). A diff
+ * that is not whole is judged to add no test (policy/test-files.ts).
+ */
+const WHOLE_FILE_CONTEXT = 100_000_000;
 
 async function changedPaths(repoRoot: string, baseRev: string, commit: string): Promise<string[]> {
   const out = await git(repoRoot, ['diff', '--name-only', '-z', '--no-renames', baseRev, commit, '--']);

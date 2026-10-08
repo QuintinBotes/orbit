@@ -323,3 +323,45 @@ describe.skipIf(!canStripTypes)('issue #30: a Rust #[test] that cargo test never
     expect(state, reason).toBe('SUCCEEDED');
   }, 120_000);
 });
+
+// Final review of #30 to #33: the evidence diff of a Rust source had no context lines, so a group's unchanged #[ignore]
+// was out of sight, and a change to the test attribute alone of an ignored test (made async, or given another rstest or
+// test_case row) counted as a test cargo runs. mul stays wrong; cargo test still skips the test, as it did on the base.
+const ignoredMulLib = (attrs: string[]): string =>
+  [
+    'pub fn add(a: i32, b: i32) -> i32 {',
+    '    a + b',
+    '}',
+    '',
+    'pub fn mul(a: i32, b: i32) -> i32 {',
+    '    a + b',
+    '}',
+    '',
+    '#[cfg(test)]',
+    'mod tests {',
+    '    use super::*;',
+    '',
+    ...attrs.map((a) => `    ${a}`),
+    '    fn mul_works() {',
+    '        assert_eq!(mul(2, 3), 6);',
+    '    }',
+    '}',
+    '',
+  ].join('\n');
+
+describe.skipIf(!canStripTypes)('final review: a Rust change to the test attribute of an ignored test is not new evidence', () => {
+  for (const [name, base, candidate] of [
+    ['#[test] made #[tokio::test] above an unchanged #[ignore]', ['#[test]', '#[ignore]'], ['#[tokio::test]', '#[ignore]']],
+    ['#[test] made #[test_log::test] above an unchanged #[ignore]', ['#[test]', '#[ignore]'], ['#[test_log::test]', '#[ignore]']],
+    ['a #[test_case] row added to a group with an unchanged #[ignore = "slow"]', ['#[test_case(1)]', '#[ignore = "slow"]'], ['#[test_case(2)]', '#[test_case(1)]', '#[ignore = "slow"]']],
+  ] as const) {
+    it(`leaves the criterion unverified: ${name}`, async () => {
+      const repo = { ...RUST_REPO, 'src/lib.rs': ignoredMulLib([...base]) };
+      const { state, reason, first } = await drive(lab({ ...RUST, repo }, { 'src/lib.rs': ignoredMulLib([...candidate]) }, 'src/lib.rs'));
+      expect(first?.report.checks.map((c) => `${c.id}:${c.status}`)).toEqual(['unit-tests:PASSED']);
+      expect(first?.report.verdict).toBe('INCOMPLETE');
+      expect(first?.report.acceptance_evidence).toEqual([{ criterion_id: 'AC-1', status: 'unverified', artifacts: expect.any(Array), note: NO_NEW_EVIDENCE }]);
+      expect(state, reason).not.toBe('SUCCEEDED');
+    }, 120_000);
+  }
+});

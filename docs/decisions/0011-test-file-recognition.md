@@ -145,6 +145,29 @@ and any other attribute do not count either. Editing only the body of an
 existing inline test is therefore not a test change (the safe direction: the
 criterion is unverified).
 
+The source is read as the compiler reads it (a small lexer: comments, which
+nest, removed; string, raw string and character literals emptied), so a
+`#[test]` inside a `/* */` comment or a raw string is not an attribute. Only
+a test cargo test compiles counts: not one whose attributes include a `cfg`
+other than `cfg(test)` (`cfg(feature = "x")`, `cfg(any())`, `cfg(unix)`), not
+one inside a module such a `cfg` marks (on the module, or an inner
+`#![cfg(...)]` in it or at the top of the file), and not one inside a
+function, `impl` or macro body (rustc does not test inner items). A `mod name;`
+declaration counts only at the top of its file, outside comments and strings,
+without such a `cfg` and without a `#[path]` that moves the module elsewhere.
+
+Final review (2026-10-08). The evidence comparison first read each Rust
+source's diff with no context lines (`-U0`), so a test attribute was judged
+against the added lines of its group only. A change to the attribute alone
+of an ignored test (`#[test]` made `#[tokio::test]` or `#[test_log::test]`,
+another `#[test_case(...)]` row on a group with `#[ignore = "slow"]`) counted
+as a new test while the unchanged `#[ignore]` was out of sight, and a run
+passed its criterion on a check that still skipped the test (reproduced end to
+end through the controller). The diff is now read with full context (one hunk
+holding the whole candidate file), and a diff that does not show the whole
+file (cut short by the 8 MiB output limit, or read without context) adds no
+test. The same review found the block comment and `cfg` cases above.
+
 The diff is passed only by the new-evidence rule, which asks whether the change
 adds a test. The weakening signals and the trigger filter ask what a file is, so
 `src/lib.rs` stays a source file there, and its production timeouts are never
@@ -166,8 +189,8 @@ read. With no such file changed it reads nothing. The scope inspection, the
 evidence base comparison, the pending-trigger check and the review packet each
 load it for their candidate. The evidence comparison also asks for the Rust
 modules the crate compiles (`rustModules`), reading the declaring sources of
-the changed modules, and reads the diffs of changed Rust sources (at most 50)
-when no changed path is a test by itself.
+the changed modules, and reads the diffs of changed Rust sources (at most 50,
+each with full context) when no changed path is a test by itself.
 
 ## Why conservative
 
@@ -182,7 +205,9 @@ where they count); Minitest's `test_*.rb`; test projects declared only through
 condition; Unity test assemblies, defined by an `.asmdef` with no committed
 project file; Rust tests in a `[[test]]` target with a custom path, in a crate
 whose library or binaries are not at cargo's default paths, or in a module
-declared through `#[path]`, inside an inline module or by a macro; languages
+declared through `#[path]`, inside an inline module or by a macro; a Rust test
+under any `cfg` other than `cfg(test)`, also one cargo test does compile (a
+default feature, `cfg(unix)` on Unix), and a test a macro generates; languages
 without a rule (Haskell, Clojure, Lua, Zig and others).
 
 Known false "tests", which the rules cannot see without reading the build:
@@ -191,9 +216,13 @@ layout (a test file a Vitest `include` pattern skips, a C++ file under `tests/`
 no CMake target lists, a helper module under a crate's `tests/` no test target
 declares, a crate the workspace does not list as a member, a .NET test project
 missing from the solution the check builds). Like adding an empty test file,
-each is a change the reviewer sees, not a test the green check ran. A line
-inside a Rust raw string that starts with `#[test]` counts as a test attribute
-(no lexer reads the string); it takes a deliberately misleading change.
+each is a change the reviewer sees, not a test the green check ran. In Rust,
+a file under a crate's `tests/` counts by its path even when cargo builds no
+test from it: a crate with `autotests = false` (only its `[[test]]` targets
+build), a `[[test]]` target with `required-features` the check does not
+enable, or a file whose inner `#![cfg(feature = "...")]` empties it without
+that feature; the path rule does not read the manifest's targets or the
+file.
 
 The weakening signals still read assertion, skip and focus idioms for
 JavaScript/TypeScript, Python and Go only; xunit's `Skip =` and JUnit's
