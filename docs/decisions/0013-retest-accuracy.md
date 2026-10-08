@@ -30,7 +30,7 @@ decided, not what a template of the message assumed.
 
 ## Decisions
 
-### Doctor says no more than it knows, and goes quiet once its advice is applied
+### Doctor says no more than it knows, and does not repeat advice already applied
 
 `checks.sandbox` on a check that is not mandatory: PREFLIGHT's baseline runs
 mandatory checks only (`evidence/baseline.ts`), so "a run would block at its
@@ -48,10 +48,10 @@ them.
 The 0.2.1 retest saw doctor repeat "or set `checks.X.mandatory: false`" to a
 check that already had it. ADR 0012 takes that half out of the fix for a `dotnet
 format` that cannot run (`formatOutsideFix`): remove the check and run it in CI.
-The fix doctor gives an optional check is never one it already has. The first version
-of this change made such an optional check a pass, with a detail line saying a
-contract that names it would fail where its checks run; that rested on the
-baseline never running an optional check, which ADR 0012 changed, and was
+The fix doctor gives an optional check is never one it already has. The first
+version of this change made such an optional check a pass, with a detail line
+saying a contract that names it would fail where its checks run; that rested on
+the baseline never running an optional check, which ADR 0012 changed, and was
 dropped when the two were combined.
 
 `checks.dotnet-packages`: a cache that holds packages is a pass that says so,
