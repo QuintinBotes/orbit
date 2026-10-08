@@ -77,6 +77,7 @@ describe('the toolchain profile table', () => {
       NUGET_HTTP_CACHE_PATH: `${scratch}/nuget-http`,
       NUGET_PLUGINS_CACHE_PATH: `${scratch}/nuget-plugins`,
       NuGetAudit: 'false',
+      EnableSourceControlManagerQueries: 'false',
       GOMODCACHE: `${cacheRoot}/gomod`,
       GOCACHE: `${scratch}/gocache`,
       GOPATH: `${scratch}/gopath`,
@@ -123,6 +124,7 @@ describe('the toolchain profile table', () => {
       NUGET_HTTP_CACHE_PATH: `${scratch}/nuget-http`,
       NUGET_PLUGINS_CACHE_PATH: `${scratch}/nuget-plugins`,
       NuGetAudit: 'false',
+      EnableSourceControlManagerQueries: 'false',
       GOMODCACHE: `${scratch}/cache/gomod`,
       GOPROXY: `file://${cacheRoot}/gomod/cache/download,https://proxy.golang.org,direct`,
       GOCACHE: `${scratch}/gocache`,
@@ -172,6 +174,18 @@ describe('the toolchain profile table', () => {
     const l = toolchainLayout({ toolchains: ['go'], mode: 'worker', cacheRoot: '/c', scratchRoot: '/w/toolchains', tmpDir: '/t', networkHosts: [], hostEnv: {} });
     expect(l.writable).toEqual(['/w/toolchains']);
     expect(l.readOnly).toEqual(['/c/gomod']);
+  });
+
+  // CI of #31 (SDK 10 on Linux): srt binds an unopenable device over the .gitmodules a worktree lacks, so SourceLink's
+  // git query failed every worker's build with "Error reading git repository information"; a check has it off already.
+  it('turns SourceLink\'s git query off for every process that uses .NET, a worker included, and only for those', () => {
+    for (const mode of ['install', 'check', 'worker', 'fetch'] as const) {
+      for (const platform of ['linux', 'darwin'] as const) {
+        const env = toolchainLayout({ toolchains: ['dotnet'], mode, cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', platform, networkHosts: [], hostEnv: {} }).env;
+        expect(env.EnableSourceControlManagerQueries, `${mode} ${platform}`).toBe('false');
+      }
+    }
+    expect(toolchainLayout({ toolchains: ['go'], mode: 'worker', cacheRoot: '/c', scratchRoot: '/s', tmpDir: '/t', networkHosts: [], hostEnv: {} }).env).not.toHaveProperty('EnableSourceControlManagerQueries');
   });
 
   // NuGet's vulnerability audit fetches from the package source at every restore. Where it cannot (the process's
