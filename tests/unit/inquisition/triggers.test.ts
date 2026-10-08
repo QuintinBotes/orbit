@@ -222,6 +222,18 @@ describe('unexplained architecture changes (risk-review)', () => {
     expect(find(e, 'unexplained_architecture', { expectedChangedFiles: expected, changedFiles: within, thresholds: { unexplainedFiles: 2 } })).toHaveLength(1);
   });
 
+  // Issue #30: the filter uses the one test-file predicate, with the candidate's .NET project layout.
+  it('does not count the files of a .NET test project or the tests of other languages, and does count a test-named production file', () => {
+    const e = clean();
+    const testLayout = { dotnetProjects: new Map([['apps/Acme', false], ['tests/Acme.Tests', true]]), cargoManifests: new Map<string, boolean>() };
+    const csExpected = ['apps/Acme/Export.cs'];
+    const tests = ['tests/Acme.Tests/ExportTests.cs', 'tests/Acme.Tests/RoutesTests.cs', 'tests/Acme.Tests/Support/Builders.cs', 'tests/Acme.Tests/QueueTests.cs', 'src/test/java/com/acme/ExportTest.java', 'spec/export_spec.rb'];
+    expect(find(e, 'unexplained_architecture', { expectedChangedFiles: csExpected, changedFiles: [...csExpected, ...tests], testLayout })).toEqual([]);
+    const misplaced = ['apps/Acme/ExportTests.cs', 'apps/Acme/RoutesTests.cs', 'apps/Acme/Test.cs', 'apps/Acme/QueueTests.cs'];
+    const [t] = find(e, 'unexplained_architecture', { expectedChangedFiles: csExpected, changedFiles: [...csExpected, ...misplaced], testLayout });
+    expect(t?.evidence[0]).toContain('4 changed files');
+  });
+
   it('cannot judge without an expected set', () => {
     const e = clean();
     expect(find(e, 'unexplained_architecture', { changedFiles: ['a', 'b', 'c', 'd', 'e'] })).toEqual([]);

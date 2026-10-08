@@ -8,6 +8,9 @@ import { outputBudgetInstruction } from '../../../src/adapters/prompt.ts';
 import { DEFAULT_OUTPUT_BUDGETS } from '../../../src/policy/config.ts';
 import { LOG_FILE, readExitRecord, readPidRecord } from '../../../src/adapters/shim.ts';
 import { archiveAttempt, nextSessionId } from '../../../src/adapters/supervise.ts';
+import { NoIsolation } from '../../../src/isolation/none.ts';
+import { canonicalPath } from '../../../src/isolation/util.ts';
+import type { IsolationProvider, SandboxProfile } from '../../../src/isolation/types.ts';
 import { FAKE_CLAUDE, IMPLEMENTER_OUTPUT, alive, implementerSpec, makeFixture, waitFor, writeScenario, type Fixture } from './helpers.ts';
 
 // The shim and fake-claude run as real detached processes; the shim runs from
@@ -283,6 +286,55 @@ describe.skipIf(!canStripTypes)('ClaudeAdapter + shim + fake-claude', () => {
     const launch = JSON.parse(readFileSync(join(f.workerDir, 'launch.json'), 'utf8')) as { meta?: { tier?: string; limitations?: string[] } };
     expect(launch.meta?.tier).toBe('claude-sandbox');
     expect(launch.meta?.limitations?.length).toBeGreaterThan(0);
+  });
+
+  // Issue #31: neither sandbox can limit a listener to loopback on macOS (srt's and Claude Code's allowLocalBinding admit
+  // every address of the machine, measured), and a worker runs model-driven commands, so no Claude worker may listen, in
+  // either tier, whatever profile a caller hands the adapter.
+  it('never lets a Claude worker listen, in either tier, even when the profile it is given asks for it', async () => {
+    const roles: [string, { readOnly: boolean; experiments?: boolean }][] = [
+      ['implementer', { readOnly: false }],
+      ['diagnosis', { readOnly: true, experiments: true }],
+      ['reviewer', { readOnly: true }],
+    ];
+    for (const [role, grant] of roles) {
+      const f = fixture();
+      writeScenario(f, { roles: { '*': [{ structured: IMPLEMENTER_OUTPUT }] } });
+      const cs = adapter();
+      await collect(cs, await cs.startTask(implementerSpec(f, { ...grant, sandbox: { ...implementerSpec(f).sandbox, allowLocalBinding: true } })), f);
+      const settings = JSON.parse(readFileSync(join(f.workerDir, 'settings.json'), 'utf8')) as { sandbox: { network: { allowLocalBinding: boolean } } };
+      expect(settings.sandbox.network.allowLocalBinding, `${role} claude-sandbox`).toBe(false);
+
+      const seen: SandboxProfile[] = [];
+      const none = new NoIsolation();
+      const recording: IsolationProvider = { kind: 'sandbox-runtime', available: async () => ({ ok: true, detail: 'recording' }), wrap: (argv, profile, o) => (seen.push(profile), none.wrap(argv, profile, o)) };
+      const g = fixture();
+      writeScenario(g, { roles: { '*': [{ structured: IMPLEMENTER_OUTPUT }] } });
+      const os = adapter({ tier: 'os-sandbox', isolation: recording });
+      const handle = await os.startTask(implementerSpec(g, { ...grant, sandbox: { ...implementerSpec(g).sandbox, allowLocalBinding: true } }));
+      expect(handle.tier).toBe('os-sandbox');
+      await collect(os, handle, g);
+      expect(seen.map((p) => p.allowLocalBinding === true), `${role} os-sandbox`).toEqual([false]);
+      expect(JSON.parse(readFileSync(join(g.workerDir, 'settings.json'), 'utf8')).sandbox).toEqual({ enabled: false });
+    }
+  });
+
+  // Review of #31: the IDE lock directory of the config dir the CLI runs with (CLAUDE_CONFIG_DIR, else ~/.claude) holds
+  // the token of an IDE extension's MCP server on loopback; Read must not reach it in either tier.
+  it('denies Read on the IDE lock directory of every Claude login the worker CLI knows of', async () => {
+    const home = canonicalPath(process.env.HOME!);
+    for (const custom of [false, true]) {
+      const f = fixture();
+      const dir = custom ? join(f.base, 'claude-acme') : join(home, '.claude');
+      writeScenario(f, { roles: { '*': [{ structured: IMPLEMENTER_OUTPUT }] } });
+      const a = adapter({ baseEnv: { PATH: process.env.PATH, HOME: process.env.HOME, ANTHROPIC_API_KEY: 'sk-ant-fake-000', ...(custom ? { CLAUDE_CONFIG_DIR: dir } : {}) } });
+      await collect(a, await a.startTask(implementerSpec(f)), f);
+      const deny = (JSON.parse(readFileSync(join(f.workerDir, 'settings.json'), 'utf8')) as { permissions: { deny: string[] } }).permissions.deny;
+      expect(deny, dir).toContain(`Read(/${dir}/ide/**)`);
+      // Final review: with a config dir of its own, the default login (where Claude Code also looks for IDE lock files) is denied whole.
+      if (custom) expect(deny, dir).toEqual(expect.arrayContaining([`Read(/${home}/.claude/**)`, `Read(/${home}/.claude.json)`]));
+      else expect(deny.filter((r) => r.startsWith(`Read(/${home}/.claude`)), dir).toEqual([`Read(/${home}/.claude/ide/**)`]);
+    }
   });
 
   it('does not turn a timeout beyond the 24.8-day timer limit into an immediate kill', async () => {

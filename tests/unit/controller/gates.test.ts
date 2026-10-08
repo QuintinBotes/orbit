@@ -232,6 +232,17 @@ describe('baselineGate', () => {
     expect(baselineGate(report({ install: { skipped: false, reason: 'npm ci failed', ok: false } })).status).toBe('fail');
     expect(baselineGate(report({ complete: false })).status).toBe('unverified');
   });
+  // Final review: a policy that marks no command check mandatory, with no locked install and no audit, runs nothing on the
+  // base revision; the gate said "pass" with "0 check(s)" (the class issue #33 fixed for gate.ui).
+  it('is not applicable when nothing ran on the base revision: no check, no locked install, no audit', () => {
+    const none = baselineGate(report({ checkIds: [] }));
+    expect(none).toMatchObject({ status: 'not_applicable', passed: true, reasons: [], evidence: [] });
+    expect(none.notes).toEqual([expect.stringMatching(/no check/)]);
+    expect(baselineGate(report({ checkIds: [], install: { skipped: false, reason: null, ok: true } })).status).toBe('pass');
+    expect(baselineGate(report({ checkIds: [], install: { skipped: false, reason: 'npm ci failed', ok: false } })).status).toBe('fail');
+    expect(baselineGate(report({ checkIds: [], audit: { findings: [] } as unknown as BaselineReport['audit'] })).status).toBe('pass');
+  });
+
   it('lists each base-revision audit finding the baseline recorded, without failing the gate (G52)', () => {
     const auditNotes = ['pre-existing vulnerability on the base revision: left-pad 1.0.0 (high) GHSA-test-0001', 'pre-existing license problem on the base revision: widget 2.0.0 uses GPL-3.0'];
     const g = baselineGate(report({ auditNotes }));
@@ -285,5 +296,19 @@ describe('behaviour and UI gates', () => {
     expect(uiGate({ required: true, configured: false, result: null }).status).toBe('fail');
     expect(uiGate({ required: true, configured: true, result: { verdict: 'CANCELLED', reasons: ['interrupted'], unverified: [], journeys: [] } }).status).toBe('unverified');
     expect(uiGate({ required: true, configured: true, result: { verdict: 'FAIL', reasons: ['journey failed'], unverified: [], journeys: [] } }).status).toBe('fail');
+  });
+
+  // Issue #33 (0.2.1 retest): gate.ui was recorded as a pass for a repository with no UI section, though nothing was
+  // evaluated. A gate that has nothing to judge is not applicable, which is neither a pass nor an unverified claim, and
+  // cites no evidence (a recorded opinion, not an observation to learn from).
+  it('records not applicable, not pass, where nothing needs UI evidence, and cites no evidence', () => {
+    const none = uiGate({ required: false, configured: false, result: null });
+    expect(none).toMatchObject({ gate: 'ui', status: 'not_applicable', passed: true, reasons: [], evidence: [], onFailure: 'repair-or-block' });
+    expect(none.notes).toEqual(['the policy configures no UI journeys, and no criterion needs UI evidence']);
+    const unchanged = uiGate({ required: false, configured: true, result: null });
+    expect(unchanged).toMatchObject({ status: 'not_applicable', passed: true, evidence: [] });
+    expect(unchanged.notes).toEqual(['no UI path changed and no criterion needs UI evidence']);
+    // Where UI evidence is needed the gate still judges: a pass is a pass.
+    expect(uiGate({ required: true, configured: true, result: { verdict: 'PASS', reasons: [], unverified: [], journeys: [] } })).toMatchObject({ status: 'pass', passed: true });
   });
 });

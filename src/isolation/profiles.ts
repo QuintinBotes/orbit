@@ -107,6 +107,21 @@ export const CLAUDE_CONFIG_READ_ONLY: readonly string[] = [
   'local',
 ];
 
+/**
+ * Inside the provider config directory a Claude worker runs with, what it may neither read nor write. ide/ holds a lock
+ * file per running IDE extension (VS Code, JetBrains: <config dir>/ide/<port>.lock) with the auth token of that
+ * extension's MCP server on loopback, whose tools open, diff and save files in the editor and run code in a Jupyter
+ * kernel, all outside any sandbox. A worker that read the token could act through the IDE: not by itself (a worker may
+ * not listen and connects only to its proxy, profileForWorker), but through a check, which may reach loopback on macOS
+ * by its local_binding and runs the code the worker wrote, a token in it included. A check cannot read the lock itself
+ * (every Claude config directory is denied to it), so this deny is what keeps the token out of the worktree. Every other
+ * Claude login Orbit knows of is denied to a worker whole (otherClaudeLogins), ~/.claude among them, where Claude Code
+ * also looks for lock files when CLAUDE_CONFIG_DIR is set. Claude Code runs with ide/ denied (verified with `claude -p`
+ * under srt; ADR 0001, "Workers and loopback", review). In the claude-sandbox tier the Read tool runs outside Claude
+ * Code's sandbox, so the worker settings also deny it there, for every login (adapters/claude-settings.ts).
+ */
+export const CLAUDE_CONFIG_DENIED: readonly string[] = ['ide'];
+
 /** The Codex equivalents: config.toml carries MCP server and notify commands, hooks.json hooks, AGENTS.md instructions. */
 export const CODEX_HOME_READ_ONLY: readonly string[] = ['config.toml', 'hooks.json', 'AGENTS.md', 'AGENTS.override.md', 'prompts', 'rules', 'skills'];
 
@@ -198,9 +213,22 @@ export function workerAllowedHosts(provider: WorkerProvider, snapshot: PolicySna
  * own provider CLI must write: for Claude Code the config directory, for
  * Codex its CODEX_HOME, minus the entries that run code or carry
  * instructions on the host. Claude Code's global config (.claude.json) is
- * read-only too. It may reach only its provider's hosts plus the policy's
+ * read-only too, and the IDE lock directory is denied (CLAUDE_CONFIG_DENIED).
+ * It may reach only its provider's hosts plus the policy's
  * allowed hosts. Every other login's state, the other provider's included,
  * is denied like any other credential.
+ *
+ * It may not listen, on any address (no allowLocalBinding; issue #31). A
+ * check may, by its own `local_binding`, but on macOS neither srt's nor
+ * Claude Code's allowLocalBinding is loopback only: Seatbelt lets a process
+ * listen on every address of the machine or on none (a rule for "localhost"
+ * admits 0.0.0.0 and the machine's network address too, measured), so a
+ * server a worker started could serve what it may read to the network, and a
+ * worker runs model-driven commands. On Linux every srt sandbox has a network
+ * namespace, and so a loopback, of its own, which its commands may use either
+ * way. So a worker's test run that listens on loopback (VSTest's test host)
+ * runs on Linux and not on macOS, where the checks run it (ADR 0001,
+ * "Workers and loopback").
  *
  * A Codex reviewer gets the narrower codexReviewerProfile instead.
  *
@@ -222,21 +250,25 @@ export function profileForWorker(input: WorkerProfileInput): BuiltProfile {
 
   let own: string;
   let ownReadOnly: string[];
+  let ownDenied: string[];
   let others: string[];
   if (input.provider === 'claude') {
     own = dirs.claudeConfigDir;
     ownReadOnly = [...CLAUDE_CONFIG_READ_ONLY.map((rel) => join(own, rel)), claudeGlobalConfig(home, own)];
-    others = [...claudeDirs.filter((d) => d !== own).flatMap((d) => claudeState(home, d)), ...codexDirs];
+    ownDenied = CLAUDE_CONFIG_DENIED.map((rel) => join(own, rel));
+    others = [...otherClaudeLogins(home, env, own).flatMap((l) => [l.configDir, l.globalConfig]), ...codexDirs];
   } else {
     own = dirs.codexHome;
     ownReadOnly = CODEX_HOME_READ_ONLY.map((rel) => join(own, rel));
+    ownDenied = [];
     others = [...claudeDirs.flatMap((d) => claudeState(home, d)), ...codexDirs.filter((d) => d !== own)];
   }
   assertProviderDirConfinable(own, home, env);
 
   return {
     writablePaths: uniq([worktree, workerDir, tmp, own]),
-    denyReadPaths: denyList({ home, repoRoot: input.snapshot.repo_root, worktree, extra: others, snapshot: input.snapshot, ...walkLimit(input) }),
+    // A denied path inside the writable config dir is write-denied too (buildSrtSettings).
+    denyReadPaths: denyList({ home, repoRoot: input.snapshot.repo_root, worktree, extra: [...others, ...ownDenied], snapshot: input.snapshot, ...walkLimit(input) }),
     readablePaths: uniq([
       ...readableFor(worktree, input.readablePaths),
       ...(input.policyPath ? [canonicalPath(input.policyPath)] : []),
@@ -499,6 +531,25 @@ function denyList(opts: { home: string; repoRoot: string; worktree: string; extr
     ...(parent ? [parent] : []),
     ...opts.extra,
   ]);
+}
+
+/** A Claude login other than the worker's own: its config directory and its global config file (both absolute, canonical). */
+export interface ClaudeLogin {
+  configDir: string;
+  globalConfig: string;
+}
+
+/**
+ * Every Claude login Orbit can know of besides `own`, the canonical config directory a worker's CLI runs with:
+ * CLAUDE_CONFIG_DIR and ~/.claude. A worker's profile denies each whole, and its settings deny the Read tool on each
+ * (adapters/claude-settings.ts): Claude Code 2.1.292 looks for IDE lock files in ~/.claude/ide whenever CLAUDE_CONFIG_DIR
+ * is set, so an IDE extension leaves its token there for a worker whose config directory is another.
+ */
+export function otherClaudeLogins(homeDir: string, env: Record<string, string | undefined>, own: string): ClaudeLogin[] {
+  const home = canonicalPath(homeDir);
+  return claudeLogins(home, env, own)
+    .filter((d) => d !== own)
+    .map((d) => ({ configDir: d, globalConfig: claudeGlobalConfig(home, d) }));
 }
 
 /** Every Claude Code config directory Orbit can know of: the one in use, CLAUDE_CONFIG_DIR, and the default. */

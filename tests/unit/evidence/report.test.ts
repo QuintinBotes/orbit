@@ -320,6 +320,42 @@ describe('buildEvidenceReport: green checks that prove nothing about the change'
     expect(e.report.verdict).toBe('PASS');
     expect(e.report.acceptance_evidence.map((a) => a.status)).toEqual(['supported', 'supported']);
   });
+
+  // Issue #30 (ADR 0011): test files of every mainstream language count, by the rules of its test runner.
+  const judge = (base: Partial<NonNullable<BuildReportInput['base']>>) =>
+    evaluateEvidence({ contract: contract(), candidate: CANDIDATE, checkResults: [result(snapshot, 'tests'), result(snapshot, 'lint')], scope: CLEAN_SCOPE, snapshot, base: { treeHash: 'tree-base', checks: passedAtBase, changedPaths: [], ...base } });
+  const dotnet = { dotnetProjects: new Map([['src/Acme', false], ['tests/Acme.Tests', true]]), cargoManifests: new Map<string, boolean>() };
+
+  it('supports a criterion when the candidate changes a file of a .NET test project (issue #30: xunit tests in C#)', () => {
+    const e = judge({ changedPaths: ['src/Acme/Calculator.cs', 'tests/Acme.Tests/CalculatorTests.cs'], testLayout: dotnet });
+    expect(e.report.verdict).toBe('PASS');
+    expect(e.report.acceptance_evidence.map((a) => a.status)).toEqual(['supported', 'supported']);
+  });
+
+  it('does not count a test-named C# file of a production project, nor a C# file when the project layout is unknown', () => {
+    for (const changedPaths of [['src/Acme/Calculator.cs', 'src/Acme/Test.cs'], ['src/Acme/Calculator.cs', 'src/Acme/CalculatorTests.cs']]) {
+      const e = judge({ changedPaths, testLayout: dotnet });
+      expect(e.report.verdict, changedPaths.join(' ')).toBe('INCOMPLETE');
+      expect(e.report.acceptance_evidence[0]!.note).toContain('the candidate adds or changes no test');
+    }
+    expect(judge({ changedPaths: ['src/Acme/Calculator.cs', 'tests/Acme.Tests/CalculatorTests.cs'] }).report.verdict).toBe('INCOMPLETE');
+  });
+
+  it('supports a criterion when the candidate adds or changes a test by the path conventions of Java, Ruby, PHP, Swift, C++, Elixir and Dart', () => {
+    for (const test of ['src/test/java/com/acme/CalculatorTest.java', 'spec/models/user_spec.rb', 'tests/Unit/CalculatorTest.php', 'Tests/AcmeTests/CalculatorTests.swift', 'src/parser_test.cc', 'test/acme/calculator_test.exs', 'test/calculator_test.dart']) {
+      expect(judge({ changedPaths: ['src/calc', test] }).report.verdict, test).toBe('PASS');
+    }
+  });
+
+  it('supports a criterion when a Rust change adds a #[test] function to a source file, or a test to a crate\'s tests/; not when it adds only code', () => {
+    const crate = { dotnetProjects: new Map<string, boolean>(), cargoManifests: new Map([['', true]]) };
+    // As the evidence comparison reads it: with full context, the whole candidate file in one hunk (here all of it added).
+    const added = (lines: string[]) => ['diff --git a/src/lib.rs b/src/lib.rs', '--- a/src/lib.rs', '+++ b/src/lib.rs', `@@ -0,0 +1,${lines.length} @@`, ...lines.map((l) => `+${l}`)].join('\n');
+    expect(judge({ changedPaths: ['src/lib.rs'], testLayout: crate, diffs: new Map([['src/lib.rs', added(['#[test]', 'fn mul_works() { assert_eq!(mul(2, 3), 6); }'])]]) }).report.verdict).toBe('PASS');
+    expect(judge({ changedPaths: ['src/lib.rs', 'tests/mul.rs'], testLayout: crate }).report.verdict).toBe('PASS');
+    expect(judge({ changedPaths: ['src/lib.rs'], testLayout: crate, diffs: new Map([['src/lib.rs', added(['pub fn mul(a: i32, b: i32) -> i32 { a * b }'])]]) }).report.verdict).toBe('INCOMPLETE');
+    expect(judge({ changedPaths: ['src/lib.rs'], testLayout: crate }).report.verdict).toBe('INCOMPLETE');
+  });
 });
 
 // P27: evidence names a file a person can open, not a bare log name.

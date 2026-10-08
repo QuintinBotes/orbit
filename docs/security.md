@@ -120,11 +120,56 @@ State these plainly to yourself before running unattended.
 - **Reads are broad.** Under sandbox-runtime, reads are allowed everywhere except
   denied paths, so the rest of your home directory is readable by a worker.
   Egress is filtered by host name, and traffic to an allowed host is not inspected.
-- **Checks may use loopback.** A check's `local_binding` (default true) lets its
-  process listen on 127.0.0.1, which a test suite that starts an HTTP server
-  needs. Under sandbox-runtime that also lets it connect to other services on
-  this machine's loopback while it runs; it opens no route to any other host.
-  Set `local_binding: false` on a check that never needs it.
+- **Checks may listen; workers may not.** A check's `local_binding` (default
+  true) lets its process listen, which a test suite that starts an HTTP server
+  needs, and `dotnet test` on every run (VSTest's test host connects back to
+  it). On macOS that permission is not limited to loopback: `srt` turns it into
+  Seatbelt rules for every address of the machine, so a server the check
+  starts on every interface (0.0.0.0) can be reached from the network while it
+  runs, unless the macOS firewall refuses it, and the check can reach
+  services listening on any address of this machine, over TCP and UDP, not
+  only on loopback (a local database, a development server, a proxy listening
+  there; a forward proxy there is the one way it could reach a host off its
+  list): a check reached a service bound only to the machine's network
+  address, and a UDP datagram it sent there arrived. It opens no connection to
+  any other host. Seatbelt has no narrower rule: one for "localhost" admits
+  every address of the machine too (measured on macOS 27 with `srt` 0.0.78;
+  ADR 0001, "Workers and loopback"). Set `local_binding: false` on a check
+  that never serves; such a check may neither listen nor bind a UDP socket.
+  Workers run model-driven commands, so on macOS a worker may not listen at
+  all, in either tier (Claude Code's own sandbox admits every address too,
+  measured with 2.1.292): it cannot run a test host that needs a loopback
+  socket, and the checks run those tests (`orbit doctor`, `workers.loopback`).
+  On Linux `srt` starts every sandbox in a network namespace of its own
+  (`bwrap --unshare-net`), whose loopback its commands may use and nothing
+  outside can reach, so there workers can run them too; this rests on `srt`'s
+  source and was not measured on Linux. A worker reads files a check cannot (the Claude config directory
+  its CLI runs with, and its `.claude.json`). IDE extensions (VS Code,
+  JetBrains) leave the token of their MCP server on loopback in
+  `<config dir>/ide`, and Claude Code also looks in `~/.claude/ide` when
+  `CLAUDE_CONFIG_DIR` is set. A worker cannot reach that server, but on macOS a
+  check that may listen can, and it runs the code the worker wrote, so a token
+  the worker copied into the worktree would reach the server through it: what
+  stops that is that no worker can read the token. A worker's own
+  `<config dir>/ide` is denied to it, for reading and writing, every other
+  Claude login Orbit knows of (`CLAUDE_CONFIG_DIR`, `~/.claude`, and their
+  `.claude.json`) is denied whole, and the Read tool is denied all of them in
+  both tiers. A lock directory Orbit cannot know of (a config directory set
+  only in the editor's environment) is not covered. Still readable: the MCP
+  server entries in the worker's own `.claude.json` (headers of an HTTP server
+  you configured, if any). Background tasks are off for
+  workers, so a long command cannot hold a session open, but on macOS a process
+  a worker detaches itself (`nohup ... &`, `setsid`) is not stopped with its
+  session; nothing contains a sandbox's processes there. It keeps the worker's
+  sandbox, and so the worker's write access: it can go on editing the worktree
+  after the session (measured by the final review: in both tiers a detached
+  process was alive and still writing a file in the worktree after the
+  session's result was collected). What it writes before the candidate is
+  snapshotted is judged as the worker's own change; what it writes after is in
+  the worktree the next attempt starts from. Orbit's guard hook
+  refuses a command that names a loopback address (`curl
+  http://127.0.0.1:3000`), since it judges hosts by `network.allowed_hosts`; it
+  is advisory.
 - **Static classification of bash commands is advisory.** It catches common
   dangerous shapes but cannot prove an arbitrary shell command safe. The OS
   sandbox and the controller's diff inspection are what hold.

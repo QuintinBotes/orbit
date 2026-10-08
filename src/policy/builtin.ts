@@ -159,6 +159,9 @@ export const HOME_CREDENTIAL_PATHS: readonly string[] = Object.freeze([
   '.config/git/credentials',
   // Agent and tool logins: a worker reading these could act as the user elsewhere.
   '.claude/.credentials.json',
+  // An IDE extension's lock files (<port>.lock), each with the token of its MCP server on loopback, whose tools act
+  // outside every sandbox. Claude Code looks here whatever CLAUDE_CONFIG_DIR says (isolation/profiles.ts CLAUDE_CONFIG_DENIED).
+  '.claude/ide/**',
   '.codex/auth.json',
   '.config/hub',
   '.config/glab-cli/**',

@@ -8,7 +8,15 @@
  * another file shows up as "assertion-removed" here; the point is that such a
  * change is never silent. Coverage: JavaScript/TypeScript, Python and Go
  * idioms, plus snapshot files, lint suppressions and test/lint configuration.
+ * Which files are tests is decided by the test-file predicate (test-files.ts,
+ * ADR 0011), with the project layout of the base and the candidate: a file
+ * that is a test on either revision, so a change to a project file cannot
+ * hide the tests deleted or edited beside it.
  */
+
+import { isTestPath, isTestPathOnEitherRevision, NO_LAYOUT, type TestLayout } from './test-files.ts';
+
+export { isTestPath };
 
 export type WeakeningSignalId =
   | 'test-file-deleted'
@@ -47,16 +55,6 @@ function langOf(path: string): Lang {
   if (/\.py$/.test(path)) return 'py';
   if (/\.go$/.test(path)) return 'go';
   return 'other';
-}
-
-/** Test sources by the common conventions of the three covered ecosystems. */
-export function isTestPath(path: string): boolean {
-  const p = path.toLowerCase();
-  if (/(^|\/)(__tests__|__test__|tests?|specs?|e2e|integration-tests?|testing)\//.test(p)) return /\.(m|c)?(j|t)sx?$|\.py$|\.go$|\.(vue|svelte)$/.test(p);
-  if (/\.(test|spec|e2e|cy)\.(m|c)?(j|t)sx?$/.test(p)) return true;
-  if (/(^|\/)test_[^/]*\.py$|_test\.py$|(^|\/)conftest\.py$/.test(p)) return true;
-  if (/_test\.go$/.test(p)) return true;
-  return false;
 }
 
 /** Stored expectations: Jest/Vitest snapshots, Playwright and image baselines, syrupy. */
@@ -141,13 +139,14 @@ const LOOSER_WHEN_HIGHER = ['maxDiffPixelRatio', 'maxDiffPixels', 'threshold', '
 /** Keys whose number going DOWN loosens the check. */
 const LOOSER_WHEN_LOWER = ['places', 'lines', 'branches', 'functions', 'statements'];
 
-export function detectWeakening(files: readonly WeakeningInput[]): WeakeningSignal[] {
+/** `layout` is the test layout of the base and the candidate (loadTestLayout), so a .NET test project's or a crate's test files count. */
+export function detectWeakening(files: readonly WeakeningInput[], layout: TestLayout = NO_LAYOUT): WeakeningSignal[] {
   const out: WeakeningSignal[] = [];
-  for (const f of files) out.push(...detectWeakeningInFile(f));
+  for (const f of files) out.push(...detectWeakeningInFile(f, layout));
   return out;
 }
 
-export function detectWeakeningInFile(file: WeakeningInput): WeakeningSignal[] {
+export function detectWeakeningInFile(file: WeakeningInput, layout: TestLayout = NO_LAYOUT): WeakeningSignal[] {
   const { path, status } = file;
   const signals: WeakeningSignal[] = [];
   const add = (signal: WeakeningSignalId, detail: string) => {
@@ -166,7 +165,8 @@ export function detectWeakeningInFile(file: WeakeningInput): WeakeningSignal[] {
     return signals;
   }
 
-  const test = isTestPath(path);
+  // What the file is or was, not what its change adds: a Rust source that gains a #[test] is not a test file here.
+  const test = isTestPathOnEitherRevision(path, layout);
   if (status === 'D') {
     if (test) add('test-file-deleted', 'test file deleted');
     return signals;

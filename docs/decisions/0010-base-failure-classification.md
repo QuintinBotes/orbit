@@ -434,3 +434,19 @@ used.
 - The table grows one verified signature at a time: an entry needs the tool's
   real output as a fixture and a test (`tests/unit/evidence/check-misconfigured.test.ts`
   requires one case per entry, and names each entry's kind).
+
+## Addendum (2026-10-07): checks the contract adds (issue #32)
+
+The section "On a candidate, a new denial goes to repair" assumed that every
+check a candidate is judged on has a base-revision result. It did not for a
+check the policy does not mark mandatory that the contract requires (a
+criterion cites it): PREFLIGHT runs only the mandatory checks, so the gate
+found no base result, read a sandbox refusal of such a check as the change's,
+and sent it to repair on an identical tree. ADR 0012 runs every check the
+contract requires on the base revision before any candidate is judged (a
+baseline amendment, at PLANNING and again at VERIFYING for a contract amended
+since), classified by the rules above with the same outcomes, so the gate
+always has the base result it asks for. It also changes the fix this decision
+names for a `dotnet format` check that cannot run in the sandbox: remove it
+and run it in CI, no longer "or set `checks.<id>.mandatory: false`", since a
+contract that requires an optional check runs it on the base revision too.

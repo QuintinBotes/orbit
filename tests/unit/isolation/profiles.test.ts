@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isOrbitError } from '../../../src/core/errors.ts';
 import {
+  CLAUDE_CONFIG_DENIED,
   CLAUDE_CONFIG_READ_ONLY,
   CODEX_HOME_READ_ONLY,
   HOME_DENY_READ,
@@ -13,6 +14,7 @@ import {
   orbitTmpRoot,
   prepareWorkerTmpDir,
   profileForCheck,
+  otherClaudeLogins,
   profileForWorker,
   providerDirs,
   repoParentDenial,
@@ -20,6 +22,7 @@ import {
 } from '../../../src/isolation/profiles.ts';
 import { buildSrtSettings } from '../../../src/isolation/sandbox-runtime.ts';
 import { canonicalPath, isWithin } from '../../../src/isolation/util.ts';
+import type { PolicySnapshot } from '../../../src/policy/types.ts';
 import { checkFor, snapshotFor, tempRoot } from './fixtures.ts';
 
 const cleanups: (() => void)[] = [];
@@ -101,6 +104,32 @@ describe('profileForWorker', () => {
     // Transcripts and the rest of the config dir stay writable.
     expect(buildSrtSettings(p).filesystem.allowWrite).toContain(l.claudeDir);
     expect(denyWrite).not.toContain(join(l.claudeDir, 'projects'));
+  });
+
+  // Review of #31: a running IDE extension (VS Code, JetBrains) writes <config dir>/ide/<port>.lock with the auth token of
+  // its MCP server on loopback (openFile, saveDocument, executeCode in a Jupyter kernel). A worker that could read the lock
+  // could act through the IDE, outside its sandbox: a check cannot read it (the whole config dir is denied to it), but it
+  // may reach loopback on macOS and runs the code the worker wrote, a token in it included. Final review: Claude Code
+  // also looks in ~/.claude/ide when CLAUDE_CONFIG_DIR is set, so every other login is denied to the worker whole.
+  it('denies its own config dir\'s IDE lock directory, for reading and for writing, and keeps the rest of the dir writable', () => {
+    const l = layout();
+    for (const claudeConfigDir of [l.claudeDir, join(l.home, '.claude')]) {
+      const p = profileForWorker({ worktree: l.worktree, workerDir: l.workerDir, snapshot: snapshotFor({ repoRoot: l.repo }), provider: 'claude', claudeConfigDir, homeDir: l.home, env: {} });
+      expect(CLAUDE_CONFIG_DENIED).toEqual(['ide']);
+      expect(p.denyReadPaths, claudeConfigDir).toContain(join(claudeConfigDir, 'ide'));
+      const fs = buildSrtSettings(p).filesystem;
+      expect(fs.denyRead).toContain(join(claudeConfigDir, 'ide'));
+      expect(fs.denyWrite).toContain(join(claudeConfigDir, 'ide'));
+      expect(fs.allowWrite).toContain(claudeConfigDir);
+      expect(fs.denyRead).not.toContain(claudeConfigDir);
+      if (claudeConfigDir === l.claudeDir) expect(p.denyReadPaths).toEqual(expect.arrayContaining([join(l.home, '.claude'), join(l.home, '.claude.json')]));
+    }
+    expect(otherClaudeLogins(l.home, {}, l.claudeDir)).toEqual([{ configDir: join(l.home, '.claude'), globalConfig: join(l.home, '.claude.json') }]);
+    expect(otherClaudeLogins(l.home, { CLAUDE_CONFIG_DIR: l.claudeDir }, join(l.home, '.claude'))).toEqual([{ configDir: l.claudeDir, globalConfig: join(l.claudeDir, '.claude.json') }]);
+    expect(otherClaudeLogins(l.home, {}, join(l.home, '.claude'))).toEqual([]);
+    // A check already gets none of any Claude config dir.
+    const check = profileForCheck({ worktree: l.worktree, check: checkFor(), snapshot: snapshotFor({ repoRoot: l.repo }), homeDir: l.home, claudeConfigDir: l.claudeDir, env: {} });
+    expect(check.denyReadPaths).toEqual(expect.arrayContaining([l.claudeDir, join(l.home, '.claude')]));
   });
 
   it('treats ~/.claude.json as the global config of the default dir: readable, never writable', () => {
@@ -256,6 +285,23 @@ describe('profileForWorker', () => {
     expect(s.filesystem.allowRead).not.toContain(join(l.repo, '.orbit'));
     expect(s.filesystem.allowRead).not.toContain(l.repo);
     expect(s.network.allowedDomains).toEqual(PROVIDER_HOSTS.claude);
+  });
+
+  // Issue #31: srt's allowLocalBinding lets a process listen on every address of this machine, not on loopback only
+  // (measured: a listener on 0.0.0.0 answered on the LAN address), and Seatbelt has no rule that narrows it. A worker runs
+  // model-driven commands, so it gets none: a server it started could serve what it may read to the network.
+  it('never lets a worker listen, on any address, whatever its snapshot carries, and leaves its outbound rules alone', () => {
+    const l = layout();
+    const snapshot = snapshotFor({ repoRoot: l.repo, allowedHosts: ['registry.npmjs.org'] });
+    const p = profileForWorker({ worktree: l.worktree, workerDir: l.workerDir, snapshot, provider: 'claude', claudeConfigDir: l.claudeDir, homeDir: l.home, env: {} });
+    expect(p.allowLocalBinding).toBeUndefined();
+    expect(buildSrtSettings(p).network).toMatchObject({ allowLocalBinding: false, allowedDomains: ['api.anthropic.com', 'claude.ai', 'platform.claude.com', 'registry.npmjs.org'] });
+    // A snapshot a development build froze with the key it no longer has: still nothing.
+    const stray = { ...snapshot, config: { ...snapshot.config, network: { ...snapshot.config.network, local_binding: true } } } as PolicySnapshot;
+    const q = profileForWorker({ worktree: l.worktree, workerDir: l.workerDir, snapshot: stray, provider: 'claude', claudeConfigDir: l.claudeDir, homeDir: l.home, env: {} });
+    expect(q).toEqual(p);
+    // A check keeps its own local_binding (default true), unchanged.
+    expect(profileForCheck({ worktree: l.worktree, check: checkFor(), snapshot, homeDir: l.home, claudeConfigDir: l.claudeDir, env: {} }).allowLocalBinding).toBe(true);
   });
 
   it('refuses a snapshot without a repository root', () => {

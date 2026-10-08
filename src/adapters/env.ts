@@ -56,6 +56,16 @@ export const CODEX_ENV_CREDENTIALS: readonly string[] = ['CODEX_API_KEY', 'OPENA
  * write the user's memory), no nonessential traffic, and the repository's
  * CLAUDE.md not loaded as instructions (repository text is untrusted data).
  *
+ * Background tasks are off (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1): `claude -p`
+ * writes its result and then does not exit while a background task of the
+ * session runs, so a server a worker left there (Bash run_in_background, or a
+ * foreground command Claude Code moves to the background at its timeout) held
+ * the session until the role's ceiling, which then ended as a timeout of
+ * finished work (review of issue #31; measured with Claude Code 2.1.292). With
+ * it the Bash tool has no run_in_background, a foreground command ends at its
+ * timeout, and the session ends with its result; a test that needs a server
+ * starts and stops it within one command.
+ *
  * CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 is deliberately absent: with Claude Code
  * 2.1.288 it switched the session from --permission-mode dontAsk to
  * "default" (observed in system/init against a fake API), and Orbit's policy
@@ -67,6 +77,7 @@ export const CLAUDE_WORKER_ENV: Readonly<Record<string, string>> = {
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
   CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
+  CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
 };
 
 /** Claude Code's per-request max_tokens cap. */

@@ -77,10 +77,11 @@ export function labConfig(tweak?: (c: OrbitConfig) => void): OrbitConfig {
   return c;
 }
 
-export function makeLab(opts: { tweak?: (c: OrbitConfig) => void; files?: Record<string, string> } = {}): Lab {
+/** `repoFiles` replaces the calculator repository (another language's repository); `files` adds to it. */
+export function makeLab(opts: { tweak?: (c: OrbitConfig) => void; files?: Record<string, string>; repoFiles?: Record<string, string> } = {}): Lab {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'orbit-ctl-')));
   const repo = join(base, 'repo');
-  for (const [rel, content] of Object.entries({ ...REPO_FILES, ...(opts.files ?? {}) })) {
+  for (const [rel, content] of Object.entries({ ...(opts.repoFiles ?? REPO_FILES), ...(opts.files ?? {}) })) {
     mkdirSync(join(repo, rel, '..'), { recursive: true });
     writeFileSync(join(repo, rel), content);
   }

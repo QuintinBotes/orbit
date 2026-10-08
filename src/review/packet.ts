@@ -8,7 +8,7 @@ import { ENGINEERING_PRACTICES } from '../contract/practices.ts';
 import type { Candidate, EvidenceReport } from '../evidence/types.ts';
 import { BUILTIN_CREDENTIAL_PATHS } from '../policy/builtin.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
-import { isTestPath } from '../policy/weakening.ts';
+import { gitTreeReader, isTestPath, loadTestLayout } from '../policy/test-files.ts';
 import { readSecurityPolicy } from './resolve.ts';
 
 /**
@@ -284,10 +284,12 @@ export async function buildReviewPacket(input: ReviewPacketInput): Promise<Revie
       excluded.push({ path: f.path, part: 'both', reason: 'generated', detail: `generated or lock file, +${f.added} -${f.deleted}` });
     } else candidates.push(f);
   }
+  // Tests rank just below the code they test, by the one test-file predicate with the candidate's layout (ADR 0011).
+  const testLayout = await loadTestLayout(gitTreeReader((args) => git(input.repoRoot, [...args])), baseSha, commitSha, all.map((f) => f.path));
   const score = (f: Changed): number => {
     let s = 0;
     if (hot.has(f.path)) s += 10;
-    if (isTestPath(f.path)) s += 4;
+    if (isTestPath(f.path, testLayout)) s += 4;
     else s += 5;
     if (contractText.includes(f.path)) s += 3;
     if (/\.(md|txt|rst)$/i.test(f.path)) s -= 4;

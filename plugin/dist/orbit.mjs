@@ -705,6 +705,9 @@ var init_builtin = __esm({
       ".config/git/credentials",
       // Agent and tool logins: a worker reading these could act as the user elsewhere.
       ".claude/.credentials.json",
+      // An IDE extension's lock files (<port>.lock), each with the token of its MCP server on loopback, whose tools act
+      // outside every sandbox. Claude Code looks here whatever CLAUDE_CONFIG_DIR says (isolation/profiles.ts CLAUDE_CONFIG_DENIED).
+      ".claude/ide/**",
       ".codex/auth.json",
       ".config/hub",
       ".config/glab-cli/**",
@@ -21688,6 +21691,9 @@ function defaultCheck(id) {
     category: "test"
   };
 }
+function checkCategory(check) {
+  return check.category ?? (check.kind === "playwright" ? "ui" : "test");
+}
 function defaultUi() {
   return {
     required_when_ui_changes: true,
@@ -25118,7 +25124,14 @@ ${refs.length ? `  <ItemGroup>${refs.map((r) => `<ProjectReference Include="../$
           // that lists the host) it stays as the repository configures it, so Orbit does not pass a restore the
           // repository's CI fails on NU1903. A check's own env, or a project that sets NuGetAudit itself, wins (orbit
           // doctor's checks.dotnet-audit names the second on macOS).
-          ...nugetAuditRuns(d) ? {} : { NuGetAudit: "false" }
+          ...nugetAuditRuns(d) ? {} : { NuGetAudit: "false" },
+          // SourceLink's git query, off as in a check (evidence/runner.ts DOTNET_CHECK_ENV), here for every process that
+          // uses .NET and so for a worker, which gets nothing else of a check's environment. On Linux it cannot run in any
+          // srt sandbox (Claude Code's included): srt binds an unopenable device over each git file a writable directory
+          // lacks (.gitmodules...), so every build in a worker's worktree stopped at "Error reading git repository
+          // information: Access to the path '.../.gitmodules' is denied" (SDK 10, os-sandbox and claude-sandbox tiers, CI
+          // of #31). A build's result needs none of the commit, branch and remote it embeds; a command can set it back.
+          EnableSourceControlManagerQueries: "false"
         })
       },
       go: {
@@ -25423,20 +25436,24 @@ function profileForWorker(input) {
   const codexDirs = codexHomes(home2, env, dirs.codexHome);
   let own;
   let ownReadOnly;
+  let ownDenied;
   let others;
   if (input.provider === "claude") {
     own = dirs.claudeConfigDir;
     ownReadOnly = [...CLAUDE_CONFIG_READ_ONLY.map((rel) => join8(own, rel)), claudeGlobalConfig(home2, own)];
-    others = [...claudeDirs.filter((d) => d !== own).flatMap((d) => claudeState(home2, d)), ...codexDirs];
+    ownDenied = CLAUDE_CONFIG_DENIED.map((rel) => join8(own, rel));
+    others = [...otherClaudeLogins(home2, env, own).flatMap((l) => [l.configDir, l.globalConfig]), ...codexDirs];
   } else {
     own = dirs.codexHome;
     ownReadOnly = CODEX_HOME_READ_ONLY.map((rel) => join8(own, rel));
+    ownDenied = [];
     others = [...claudeDirs.flatMap((d) => claudeState(home2, d)), ...codexDirs.filter((d) => d !== own)];
   }
   assertProviderDirConfinable(own, home2, env);
   return {
     writablePaths: uniq([worktree, workerDir, tmp, own]),
-    denyReadPaths: denyList({ home: home2, repoRoot: input.snapshot.repo_root, worktree, extra: others, snapshot: input.snapshot, ...walkLimit(input) }),
+    // A denied path inside the writable config dir is write-denied too (buildSrtSettings).
+    denyReadPaths: denyList({ home: home2, repoRoot: input.snapshot.repo_root, worktree, extra: [...others, ...ownDenied], snapshot: input.snapshot, ...walkLimit(input) }),
     readablePaths: uniq([
       ...readableFor(worktree, input.readablePaths),
       ...input.policyPath ? [canonicalPath(input.policyPath)] : [],
@@ -25587,6 +25604,10 @@ function denyList(opts) {
     ...opts.extra
   ]);
 }
+function otherClaudeLogins(homeDir, env, own) {
+  const home2 = canonicalPath(homeDir);
+  return claudeLogins(home2, env, own).filter((d) => d !== own).map((d) => ({ configDir: d, globalConfig: claudeGlobalConfig(home2, d) }));
+}
 function claudeLogins(home2, env, configured) {
   const fromEnv = nonEmpty(env.CLAUDE_CONFIG_DIR);
   return uniq([configured, ...fromEnv && isAbsolute7(fromEnv) ? [canonicalPath(fromEnv)] : [], join8(home2, ".claude")]);
@@ -25623,7 +25644,7 @@ function resourceLimits(snapshot2) {
 function nonEmpty(v) {
   return v && v.trim() ? v : void 0;
 }
-var PROVIDER_HOSTS, HOME_DENY_READ, SYSTEM_DENY_READ, CLAUDE_CONFIG_READ_ONLY, CODEX_HOME_READ_ONLY, WORKER_DIR_READ_ONLY;
+var PROVIDER_HOSTS, HOME_DENY_READ, SYSTEM_DENY_READ, CLAUDE_CONFIG_READ_ONLY, CLAUDE_CONFIG_DENIED, CODEX_HOME_READ_ONLY, WORKER_DIR_READ_ONLY;
 var init_profiles = __esm({
   "src/isolation/profiles.ts"() {
     "use strict";
@@ -25686,6 +25707,7 @@ var init_profiles = __esm({
       "rules",
       "local"
     ];
+    CLAUDE_CONFIG_DENIED = ["ide"];
     CODEX_HOME_READ_ONLY = ["config.toml", "hooks.json", "AGENTS.md", "AGENTS.override.md", "prompts", "rules", "skills"];
     WORKER_DIR_READ_ONLY = ["prompt.md", "system.md", "settings.json", "schema.json", "policy.json", "launch.json", "log.jsonl", "stderr.log", "shim.log", "pid.json", "exit.json", "result.json"];
   }
@@ -25866,6 +25888,16 @@ function renderClaudeSettings(input) {
   for (const glob of snapshot2.effective_protected_paths) deny2.push(absRule("Edit", worktree, glob));
   for (const glob of credentialGlobs(snapshot2)) deny2.push(absRule("Read", worktree, glob));
   for (const rel of HOME_CREDENTIAL_PATHS) deny2.push(`Read(~/${rel})`);
+  for (const rel of CLAUDE_CONFIG_DENIED) deny2.push(absRule("Read", input.claudeConfigDir, `${rel}/**`));
+  const mustRead = [worktree, input.tmpDir, ...input.readablePaths ?? []];
+  for (const login of input.otherClaudeLogins) {
+    if (mustRead.some((p) => isWithin(p, login.configDir))) {
+      for (const rel of CLAUDE_CONFIG_DENIED) deny2.push(absRule("Read", login.configDir, `${rel}/**`));
+    } else {
+      deny2.push(absRule("Read", login.configDir, "**"));
+    }
+    deny2.push(absRule("Read", login.globalConfig));
+  }
   deny2.push(absRule("Edit", input.workerDir, "**"), absRule("Edit", input.policyPath));
   const settings = {
     permissions: { allow: uniq2(allow2), deny: uniq2(deny2) },
@@ -25889,7 +25921,7 @@ function renderClaudeSettings(input) {
         denyRead: uniq2(input.denyReadPaths),
         allowRead: reopenedReads(input)
       },
-      network: { allowedDomains: uniq2(cfg.network.allowed_hosts), strictAllowlist: true }
+      network: { allowedDomains: uniq2(cfg.network.allowed_hosts), strictAllowlist: true, allowLocalBinding: false }
     } : { enabled: false }
   };
   return settings;
@@ -25940,6 +25972,7 @@ var init_claude_settings = __esm({
     "use strict";
     init_errors();
     init_schema5();
+    init_profiles();
     init_util();
     init_role_grants();
     init_builtin();
@@ -26017,8 +26050,8 @@ var init_claude_settings = __esm({
                 network: {
                   type: "object",
                   additionalProperties: false,
-                  required: ["allowedDomains", "strictAllowlist"],
-                  properties: { allowedDomains: { type: "array", items: { type: "string", minLength: 1 } }, strictAllowlist: { const: true } }
+                  required: ["allowedDomains", "strictAllowlist", "allowLocalBinding"],
+                  properties: { allowedDomains: { type: "array", items: { type: "string", minLength: 1 } }, strictAllowlist: { const: true }, allowLocalBinding: { const: false } }
                 }
               }
             }
@@ -26445,7 +26478,8 @@ var init_env = __esm({
       CLAUDE_CODE_MAX_RETRIES: "4",
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-      CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1"
+      CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
     };
     ENV_MAX_OUTPUT_TOKENS = "CLAUDE_CODE_MAX_OUTPUT_TOKENS";
     COMMON_WORKER_ENV = { GIT_OPTIONAL_LOCKS: "0" };
@@ -28237,7 +28271,7 @@ var init_supervise = __esm({
 
 // src/adapters/claude.ts
 import { existsSync as existsSync12, mkdtempSync, readFileSync as readFileSync9, rmSync as rmSync3, statSync as statSync6, writeFileSync } from "node:fs";
-import { tmpdir as tmpdir5 } from "node:os";
+import { homedir as homedir5, tmpdir as tmpdir5 } from "node:os";
 import { basename as basename6, dirname as dirname11, isAbsolute as isAbsolute10, join as join13 } from "node:path";
 function buildClaudeArgv(i) {
   const tools = [...READ_TOOLS, ...i.readOnly ? [] : EDIT_TOOLS, "Bash"];
@@ -28518,6 +28552,9 @@ var init_claude = __esm({
         const tier = await this.chooseTier(baseEnv);
         const outputTokens = outputBudgetFor(spec.role, { explicit: spec.outputTokens, configured: snapshot2.config.routing.output_budgets });
         const env = buildWorkerEnv({ provider: "claude", base: baseEnv, policyPath: spec.policyPath, policyHash, worktree, tmpDir, maxOutputTokens: outputTokens, extra: { ...passThrough(this.baseEnv(), this.opts.passEnv), ...spec.env } });
+        const sandbox = { ...spec.sandbox, allowLocalBinding: false };
+        const claudeConfigDir = providerDirs({ homeDir: env.HOME ?? homedir5(), env }).claudeConfigDir;
+        const otherLogins = otherClaudeLogins(env.HOME ?? homedir5(), env, claudeConfigDir);
         const settings = renderClaudeSettings({
           snapshot: snapshot2,
           worktree,
@@ -28527,9 +28564,11 @@ var init_claude = __esm({
           readOnly: spec.readOnly,
           experiments: spec.experiments ?? false,
           hookCommand,
-          denyReadPaths: spec.sandbox.denyReadPaths,
-          readablePaths: readablePathsOf(spec.sandbox),
-          tmpDir
+          denyReadPaths: sandbox.denyReadPaths,
+          readablePaths: readablePathsOf(sandbox),
+          tmpDir,
+          claudeConfigDir,
+          otherClaudeLogins: otherLogins
         });
         assertClaudeSettings(settings);
         writePrivate(join13(workerDir, PROMPT_FILE), outputTokens === null ? spec.prompt : `${spec.prompt.trimEnd()}
@@ -28562,7 +28601,7 @@ ${outputBudgetInstruction(outputTokens)}
         const cleanupPaths = [];
         if (tier === "os-sandbox") {
           const isolation = this.opts.isolation;
-          const wrapped = isolation.wrap(argv2, readOnlyProfile(spec.sandbox, worktree, spec.readOnly), { cwd: worktree, env });
+          const wrapped = isolation.wrap(argv2, readOnlyProfile(sandbox, worktree, spec.readOnly), { cwd: worktree, env });
           launchArgv = wrapped.argv;
           launchEnv = wrapped.env;
           cleanupPaths.push(...wrapperTempDirs(wrapped.argv));
@@ -29805,7 +29844,7 @@ var init_codex_events = __esm({
 
 // src/adapters/codex.ts
 import { chmodSync as chmodSync4, existsSync as existsSync13, mkdirSync as mkdirSync8, rmSync as rmSync4, statSync as statSync7, writeFileSync as writeFileSync2 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
+import { homedir as homedir6 } from "node:os";
 import { basename as basename7, dirname as dirname12, isAbsolute as isAbsolute11, join as join15 } from "node:path";
 function decideCodexTier(i) {
   const key2 = i.providerId ? `providers.${i.providerId}.tier` : "providers.codex.tier";
@@ -29867,7 +29906,7 @@ function reviewerTmpDir(workerDir) {
   return dir;
 }
 function homeOf(env) {
-  return env.HOME && isAbsolute11(env.HOME) ? env.HOME : homedir5();
+  return env.HOME && isAbsolute11(env.HOME) ? env.HOME : homedir6();
 }
 function parseHelpFlags(help) {
   const out = /* @__PURE__ */ new Set();
@@ -31305,7 +31344,7 @@ var init_isolation = __esm({
 // src/controller/start.ts
 import { realpathSync as realpathSync6 } from "node:fs";
 import { dirname as dirname14, join as join18, resolve as resolve6 } from "node:path";
-import { homedir as homedir6 } from "node:os";
+import { homedir as homedir7 } from "node:os";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 function orbitDir(repoRoot) {
   return join18(repoRoot, ".orbit");
@@ -31314,7 +31353,7 @@ function stateDbPath(repoRoot) {
   return join18(orbitDir(repoRoot), "state.sqlite");
 }
 function defaultOrbitHome(env = process.env) {
-  return env.ORBIT_HOME ?? join18(homedir6(), ".orbit");
+  return env.ORBIT_HOME ?? join18(homedir7(), ".orbit");
 }
 function orbitInstallDir(here = dirname14(fileURLToPath4(import.meta.url))) {
   return here.endsWith(join18("src", "controller")) ? resolve6(here, "..", "..") : resolve6(here, "..");
@@ -31346,7 +31385,7 @@ function defaultControllerDeps(input) {
     adapters = createAdapters(config, { isolation, clock, baseEnv: env, ...input.adapterDeps ?? {} });
   }
   const logger = input.logger ?? createLogger({ file: join18(orbitHome, "logs", "controller.jsonl"), clock });
-  return { db, clock, logger, adapters, registry: new ModelRegistry(db, clock).useSharedCatalog(sharedCatalogPath(orbitHome)), orbitHome, homeDir: homedir6(), hostEnv: env, orbitInstallDir: installDir };
+  return { db, clock, logger, adapters, registry: new ModelRegistry(db, clock).useSharedCatalog(sharedCatalogPath(orbitHome)), orbitHome, homeDir: homedir7(), hostEnv: env, orbitInstallDir: installDir };
 }
 var init_start = __esm({
   "src/controller/start.ts"() {
@@ -31367,11 +31406,11 @@ var init_start = __esm({
 
 // src/cli/context.ts
 import { existsSync as existsSync17, realpathSync as realpathSync7 } from "node:fs";
-import { homedir as homedir7, hostname as hostname2, userInfo as userInfo2 } from "node:os";
+import { homedir as homedir8, hostname as hostname2, userInfo as userInfo2 } from "node:os";
 import { resolve as resolve7 } from "node:path";
 function createContext(overrides = {}) {
   const env = overrides.env ?? process.env;
-  const homeDir = overrides.homeDir ?? homedir7();
+  const homeDir = overrides.homeDir ?? homedir8();
   const io = overrides.io ?? createIo(process.stdout, process.stderr, process.stdin);
   let user = env.ORBIT_USER || env.USER || env.LOGNAME || "";
   if (!user) {
@@ -31532,20 +31571,434 @@ var init_version = __esm({
   }
 });
 
+// src/policy/test-files.ts
+function isTestPath(path, layout = NO_LAYOUT, diff) {
+  const p = path.toLowerCase();
+  if (JS_PY_GO.test(p)) return jsPyGoTest(p);
+  if (JVM.test(p)) return JVM_TEST_SOURCES.test(path) && !JVM_RESOURCES.test(path);
+  if (DOTNET_SOURCE.test(p)) return testOwners(path, layout.dotnetProjects, layout) !== null;
+  if (p.endsWith(".rs")) return rustTest(path, layout, diff);
+  if (p.endsWith(".rb")) return /(^|\/)spec\/(.+\/)?[^/]+_spec\.rb$/.test(p) || /(^|\/)test\/(.+\/)?[^/]+_test\.rb$/.test(p);
+  if (p.endsWith(".php")) return /(^|\/)[Tt]ests?\/(.+\/)?[^/]+Test\.php$/.test(path);
+  if (p.endsWith(".swift")) return !/(^|\/)Sources\//.test(path) && /(^|\/)(tests|\w*Tests)\//.test(path);
+  if (p.endsWith(".exs")) return /(^|\/)test\/(.+\/)?[^/]+_test\.exs$/.test(p);
+  if (p.endsWith(".dart")) return /(^|\/)(test|integration_test)\/(.+\/)?[^/]+_test\.dart$/.test(p);
+  if (C_FAMILY.test(p)) return /(^|\/)tests?\//.test(p) || /_(unit)?tests?\.(cc|cpp|cxx)$/.test(p) && !/(^|\/|_)(self|ab|a_b)_tests?\.(cc|cpp|cxx)$/.test(p);
+  return false;
+}
+function jsPyGoTest(p) {
+  if (/(^|\/)(__tests__|__test__|tests?|specs?|e2e|integration-tests?|testing)\//.test(p)) return true;
+  if (/\.(test|spec|e2e|cy)\.(m|c)?(j|t)sx?$/.test(p)) return true;
+  if (/(^|\/)test_[^/]*\.py$|_test\.py$|(^|\/)conftest\.py$/.test(p)) return true;
+  return /_test\.go$/.test(p);
+}
+function isTestPathOnEitherRevision(path, layout = NO_LAYOUT) {
+  const p = path.toLowerCase();
+  const owners = layout.owners?.get(path);
+  if (owners === void 0) return isTestPath(path, layout);
+  if (DOTNET_SOURCE.test(p)) return owners.some((o) => o.here);
+  if (p.endsWith(".rs")) return owners.some((o) => o.here && o.dir !== null && relativeTo(o.dir, path).startsWith("tests/"));
+  return isTestPath(path, layout);
+}
+function testOwners(path, dirs, layout) {
+  const owners = layout.owners?.get(path)?.map((o) => o.dir) ?? [nearestDir(path, (d) => dirs.has(d))];
+  if (owners.length === 0) return null;
+  const out = [];
+  for (const d of owners) {
+    if (d === null || dirs.get(d) !== true) return null;
+    out.push(d);
+  }
+  return out;
+}
+function rustTest(path, layout, diff) {
+  const crates = testOwners(path, layout.cargoManifests, layout);
+  if (crates === null) return false;
+  const rels = crates.map((dir) => relativeTo(dir, path));
+  if (rels.every((r) => r.startsWith("tests/"))) return true;
+  if (diff === void 0 || !rels.every((r) => r.startsWith("src/"))) return false;
+  if (!rels.every((r) => RUST_CRATE_ROOT.test(r)) && layout.compiledRust?.has(path) !== true) return false;
+  return addsRunnableRustTest(diff);
+}
+function testedByContent(path) {
+  return path.toLowerCase().endsWith(".rs");
+}
+function dirOf(path) {
+  const i = path.lastIndexOf("/");
+  return i < 0 ? "" : path.slice(0, i);
+}
+function relativeTo(dir, path) {
+  return dir === "" ? path : path.slice(dir.length + 1);
+}
+function ancestors(path) {
+  const out = [];
+  let dir = path;
+  do {
+    dir = dirOf(dir);
+    out.push(dir);
+  } while (dir !== "");
+  return out;
+}
+function nearestDir(path, has) {
+  return ancestors(path).find(has) ?? null;
+}
+function addsRunnableRustTest(diff) {
+  const lines = wholeCandidate(diff);
+  if (lines === null) return false;
+  return scanRust(lines, (attrs, _code, compiled4) => compiled4 && attrs.some((a) => a.added && RUST_TEST_ATTRIBUTE.test(a.text)) && !attrs.some((a) => RUST_IGNORE_ATTRIBUTE.test(a.text) || offCfg(a.text)));
+}
+function wholeCandidate(diff) {
+  const raw = diff.split("\n");
+  if (raw[raw.length - 1] === "") raw.pop();
+  const at = raw.findIndex((l) => l.startsWith("@@"));
+  if (at < 0) return null;
+  const header2 = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(raw[at]);
+  if (header2 === null) return null;
+  const start = Number(header2[1]);
+  const count3 = header2[2] === void 0 ? 1 : Number(header2[2]);
+  if (count3 > 0 && start !== 1) return null;
+  const out = [];
+  for (const line3 of raw.slice(at + 1)) {
+    if (line3.startsWith("+") || line3.startsWith(" ")) out.push({ text: line3.slice(1), added: line3.startsWith("+") });
+    else if (!line3.startsWith("-") && !line3.startsWith("\\")) return null;
+  }
+  return out.length === count3 ? out : null;
+}
+function offCfg(attribute2) {
+  return /^#!?\[\s*cfg\s*\(/.test(attribute2) && !/^#!?\[\s*cfg\s*\(\s*test\s*\)\s*\]$/.test(attribute2);
+}
+function scanRust(lines, item) {
+  const lexer = new RustLexer();
+  const blocks = [];
+  let fileOff = false;
+  let group = [];
+  let attr = null;
+  let opens = null;
+  for (const line3 of lines) {
+    const code2 = lexer.line(line3.text);
+    let i = 0;
+    while (i < code2.length) {
+      if (attr !== null) {
+        const c = code2[i++];
+        attr.text += c;
+        attr.added ||= line3.added;
+        if (c === "[") attr.depth++;
+        else if (c === "]" && --attr.depth === 0) {
+          const text2 = attr.text.trim();
+          const added = attr.added;
+          attr = null;
+          if (!text2.startsWith("#!")) group.push({ text: text2, added });
+          else if (offCfg(text2)) {
+            if (blocks.length === 0) fileOff = true;
+            else blocks[blocks.length - 1] = "off";
+          }
+        }
+        continue;
+      }
+      if (/\s/.test(code2[i])) {
+        i++;
+        continue;
+      }
+      if (code2.startsWith("#[", i) || code2.startsWith("#![", i)) {
+        attr = { text: "", depth: 0, added: line3.added };
+        continue;
+      }
+      const rest = code2.slice(i);
+      if (opens === null || !rest.startsWith("{")) {
+        if (item(group, rest, !fileOff && blocks.every((b) => b === "module"), blocks.length > 0)) return true;
+        const mod = RUST_MOD_ITEM.exec(rest);
+        opens = mod !== null && mod[2] !== ";" ? group.some((a) => offCfg(a.text)) ? "off" : "module" : null;
+        group = [];
+      }
+      for (const c of rest) {
+        if (c === "{") {
+          blocks.push(opens ?? "other");
+          opens = null;
+        } else if (c === "}") blocks.pop();
+      }
+      break;
+    }
+  }
+  return false;
+}
+function isDotnetTestProject(text2) {
+  const xml2 = text2.replace(/<!--[\s\S]*?-->/g, "");
+  if (/<IsTestProject\b[^>]*>\s*false\s*<\/IsTestProject>/i.test(xml2)) return false;
+  const plain = unconditional(xml2);
+  if (/<IsTestProject\b[^>]*>\s*true\s*<\/IsTestProject>/i.test(plain)) return true;
+  if (/<Project\b[^>]*\bSdk\s*=\s*["']\s*MSTest\.Sdk\b/i.test(plain) || /<Sdk\b[^>]*\bName\s*=\s*["']\s*MSTest\.Sdk\b/i.test(plain)) return true;
+  for (const m of plain.matchAll(/<PackageReference\b[^>]*\bInclude\s*=\s*["']([^"']+)["']/gi)) {
+    if (TEST_PACKAGES.has(m[1].trim().toLowerCase())) return true;
+  }
+  for (const m of plain.matchAll(/<Reference\b[^>]*\bInclude\s*=\s*["']([^"']+)["']/gi)) {
+    if (TEST_ASSEMBLIES.has(m[1].split(",")[0].trim().toLowerCase())) return true;
+  }
+  return /<ProjectTypeGuids\b[^>]*>[^<]*3AC096D0-A1C2-E12C-1390-A8335801FDAB/i.test(plain);
+}
+function unconditional(xml2) {
+  let out = "";
+  let kept = 0;
+  let skip = null;
+  for (const m of xml2.matchAll(XML_TAG)) {
+    const [tag2, close, name, attrs, empty] = m;
+    if (skip !== null) {
+      if (name !== skip.name || empty) continue;
+      skip.depth += close ? -1 : 1;
+      if (skip.depth === 0) {
+        skip = null;
+        kept = m.index + tag2.length;
+      }
+      continue;
+    }
+    if (close || !(/\bCondition\s*=/i.test(attrs) || /^Choose$/i.test(name))) continue;
+    out += xml2.slice(kept, m.index);
+    kept = m.index + tag2.length;
+    if (!empty) skip = { name, depth: 1 };
+  }
+  return skip === null ? out + xml2.slice(kept) : out;
+}
+function declaresCargoPackage(text2) {
+  return /^\s*\[package\]\s*(#.*)?$/m.test(text2);
+}
+function gitTreeReader(run) {
+  return {
+    async list(rev, dirs) {
+      const out = [];
+      for (let i = 0; i < dirs.length; i += LIST_BATCH) {
+        const specs = dirs.slice(i, i + LIST_BATCH).map((d) => d === "" ? "." : `./${d}/`);
+        const listing = await run(["ls-tree", "-z", "--name-only", "--full-tree", rev, "--", ...specs]);
+        if (listing.length > 0 && !listing.endsWith("\0")) {
+          throw new OrbitError("GIT_FAILED", `the listing of ${rev} was cut short, so its test files cannot be told apart`, { rev });
+        }
+        out.push(...listing.split("\0").filter((p) => p.length > 0));
+      }
+      return out;
+    },
+    async text(rev, path) {
+      try {
+        return await run(["cat-file", "blob", `${rev}:${path}`]);
+      } catch {
+        return null;
+      }
+    }
+  };
+}
+async function loadTestLayout(reader, base, candidate, changed2, options = {}) {
+  const dotnet = changed2.filter((p) => DOTNET_SOURCE.test(p.toLowerCase()));
+  const rust = changed2.filter((p) => p.toLowerCase().endsWith(".rs"));
+  if (dotnet.length === 0 && rust.length === 0) return NO_LAYOUT;
+  const dirs = [...new Set([...dotnet, ...rust].flatMap(ancestors))].sort();
+  const revs = base === candidate ? [base] : [base, candidate];
+  const trees = await Promise.all(revs.map(async (rev) => ({ rev, entries: new Set(await reader.list(rev, dirs)) })));
+  const owners = /* @__PURE__ */ new Map();
+  const isCargo = (p) => p === "Cargo.toml" || p.endsWith("/Cargo.toml");
+  const dotnetProjects = await judgeOwners(reader, trees, dotnet, (p) => DOTNET_PROJECT.test(p), isDotnetTestProject, owners);
+  const cargoManifests = await judgeOwners(reader, trees, rust, isCargo, declaresCargoPackage, owners);
+  if (!options.rustModules) return { dotnetProjects, cargoManifests, owners };
+  const cand = trees[trees.length - 1];
+  const crateDirs = new Set([...cand.entries].filter(isCargo).map(dirOf));
+  const compiledRust = /* @__PURE__ */ new Set();
+  const modules = new RustModules(reader, candidate);
+  for (const p of rust) {
+    if (!cand.entries.has(p)) continue;
+    const crate = nearestDir(p, (d) => crateDirs.has(d));
+    if (crate === null || cargoManifests.get(crate) !== true) continue;
+    const rel = relativeTo(crate, p);
+    if (rel.startsWith("src/") && !RUST_CRATE_ROOT.test(rel) && await modules.compiled(crate, rel)) compiledRust.add(p);
+  }
+  return { dotnetProjects, cargoManifests, owners, compiledRust };
+}
+async function judgeOwners(reader, trees, changed2, isManifest, judge, owners) {
+  const byDir = /* @__PURE__ */ new Map();
+  for (const t of trees) {
+    for (const path of t.entries) {
+      if (!isManifest(path)) continue;
+      const revs = byDir.get(dirOf(path)) ?? /* @__PURE__ */ new Map();
+      revs.set(t.rev, [...revs.get(t.rev) ?? [], path]);
+      byDir.set(dirOf(path), revs);
+    }
+  }
+  const verdicts = /* @__PURE__ */ new Map();
+  const on = (rev, dir) => {
+    const key2 = `${rev}\0${dir}`;
+    let known = verdicts.get(key2);
+    if (known === void 0) {
+      known = (async () => {
+        for (const path of byDir.get(dir)?.get(rev) ?? []) {
+          const text2 = await reader.text(rev, path);
+          if (text2 === null || !judge(text2.slice(0, MAX_MANIFEST_CHARS))) return false;
+        }
+        return true;
+      })();
+      verdicts.set(key2, known);
+    }
+    return known;
+  };
+  const out = new Map([...byDir.keys()].sort().map((d) => [d, false]));
+  for (const p of changed2) {
+    const own = [];
+    for (const t of trees) {
+      if (!t.entries.has(p)) continue;
+      const dir = nearestDir(p, (d) => byDir.get(d)?.has(t.rev) === true);
+      own.push({ dir, here: dir !== null && await on(t.rev, dir) });
+      if (dir === null) continue;
+      let all = true;
+      for (const rev of byDir.get(dir).keys()) if (!await on(rev, dir)) all = false;
+      out.set(dir, all);
+    }
+    owners.set(p, own);
+  }
+  return out;
+}
+function declaresModule(text2, name) {
+  return scanRust(
+    text2.split("\n").map((t) => ({ text: t, added: false })),
+    (attrs, code2, compiled4, nested) => {
+      const mod = RUST_MOD_ITEM.exec(code2);
+      return compiled4 && !nested && mod !== null && mod[1] === name && mod[2] === ";" && !attrs.some((a) => offCfg(a.text) || /^#\[\s*(?:path\b|cfg_attr\b.*\bpath\s*=)/.test(a.text));
+    }
+  );
+}
+function declarersOf(dir) {
+  if (dir === "src") return ["src/lib.rs", "src/main.rs"];
+  if (dir === "src/bin") return [];
+  if (/^src\/bin\/[^/]+$/.test(dir)) return [`${dir}/main.rs`, `${dir}/mod.rs`];
+  return [`${dir}.rs`, `${dir}/mod.rs`];
+}
+var NO_LAYOUT, JS_PY_GO, JVM, DOTNET_SOURCE, DOTNET_PROJECT, C_FAMILY, JVM_TEST_SOURCES, JVM_RESOURCES, RUST_TEST_ATTRIBUTE, RUST_IGNORE_ATTRIBUTE, RUST_CRATE_ROOT, RUST_MOD_ITEM, RustLexer, RAW_STRING, CHAR_LITERAL, TEST_PACKAGES, TEST_ASSEMBLIES, XML_TAG, LIST_BATCH, MAX_MANIFEST_CHARS, RustModules;
+var init_test_files = __esm({
+  "src/policy/test-files.ts"() {
+    "use strict";
+    init_errors();
+    NO_LAYOUT = Object.freeze({ dotnetProjects: /* @__PURE__ */ new Map(), cargoManifests: /* @__PURE__ */ new Map() });
+    JS_PY_GO = /\.(m|c)?(j|t)sx?$|\.py$|\.go$|\.(vue|svelte)$/;
+    JVM = /\.(java|kt|scala|groovy)$/;
+    DOTNET_SOURCE = /\.(cs|fs|vb|razor)$/;
+    DOTNET_PROJECT = /\.(cs|fs|vb)proj$/i;
+    C_FAMILY = /\.(c|cc|cpp|cxx|h|hh|hpp|hxx)$/;
+    JVM_TEST_SOURCES = /(^|\/)src\/(test|it|test(Debug|Release)|[a-z]\w*Test)\/|(^|\/)javatests\//;
+    JVM_RESOURCES = /(^|\/)src\/[A-Za-z]\w*\/resources\//;
+    RUST_TEST_ATTRIBUTE = /^\s*#\[\s*(?:(?:[A-Za-z_]\w*::)*test|rstest|test_case)\s*[(\]]/;
+    RUST_IGNORE_ATTRIBUTE = /#\[\s*(?:ignore\b|cfg_attr\s*\(.*\bignore\b)/;
+    RUST_CRATE_ROOT = /^src\/(lib|main)\.rs$|^src\/bin\/[^/]+\.rs$|^src\/bin\/[^/]+\/main\.rs$/;
+    RUST_MOD_ITEM = /^(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(?:r#)?([A-Za-z_]\w*)\s*([;{]|$)/;
+    RustLexer = class {
+      /** Nesting of the block comment the next line starts in; 0 outside one. */
+      comment = 0;
+      /** The literal the next line starts in: the number of '#' that close a raw string, -1 for a plain string. */
+      literal = null;
+      line(text2) {
+        let out = "";
+        let i = 0;
+        while (i < text2.length) {
+          if (this.comment > 0) {
+            if (text2.startsWith("/*", i)) {
+              this.comment++;
+              i += 2;
+            } else if (text2.startsWith("*/", i)) {
+              this.comment--;
+              i += 2;
+              if (this.comment === 0) out += " ";
+            } else i++;
+            continue;
+          }
+          if (this.literal !== null) {
+            if (this.literal < 0 && text2[i] === "\\") i += 2;
+            else if (text2[i] === '"' && (this.literal < 0 || text2.startsWith("#".repeat(this.literal), i + 1))) {
+              i += 1 + Math.max(this.literal, 0);
+              this.literal = null;
+              out += '"';
+            } else i++;
+            continue;
+          }
+          if (text2.startsWith("//", i)) break;
+          if (text2.startsWith("/*", i)) {
+            this.comment = 1;
+            i += 2;
+            continue;
+          }
+          RAW_STRING.lastIndex = i;
+          const raw = "rbc".includes(text2[i]) ? RAW_STRING.exec(text2) : null;
+          if (raw !== null) {
+            out += '"';
+            this.literal = raw[1].length;
+            i = RAW_STRING.lastIndex;
+            continue;
+          }
+          if (text2[i] === '"') {
+            out += '"';
+            this.literal = -1;
+            i++;
+            continue;
+          }
+          CHAR_LITERAL.lastIndex = i;
+          if (text2[i] === "'" && CHAR_LITERAL.test(text2)) {
+            out += "''";
+            i = CHAR_LITERAL.lastIndex;
+            continue;
+          }
+          out += text2[i];
+          i++;
+        }
+        return out;
+      }
+    };
+    RAW_STRING = /(?<![A-Za-z0-9_])[bc]?r(#*)"/y;
+    CHAR_LITERAL = /'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]{1,8}\}|.)|[^\\'\n])'/uy;
+    TEST_PACKAGES = /* @__PURE__ */ new Set(["microsoft.net.test.sdk", "xunit", "xunit.v3", "mstest", "tunit"]);
+    TEST_ASSEMBLIES = /* @__PURE__ */ new Set(["nunit.framework", "xunit.core", "microsoft.visualstudio.qualitytools.unittestframework", "microsoft.visualstudio.testplatform.testframework"]);
+    XML_TAG = /<(\/?)([A-Za-z_][\w.:-]*)((?:\s+[\w.:-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/g;
+    LIST_BATCH = 200;
+    MAX_MANIFEST_CHARS = 1024 * 1024;
+    RustModules = class {
+      reader;
+      rev;
+      memo = /* @__PURE__ */ new Map();
+      texts = /* @__PURE__ */ new Map();
+      constructor(reader, rev) {
+        this.reader = reader;
+        this.rev = rev;
+      }
+      compiled(crate, rel) {
+        const key2 = `${crate}\0${rel}`;
+        let known = this.memo.get(key2);
+        if (known === void 0) {
+          known = this.find(crate, rel);
+          this.memo.set(key2, known);
+        }
+        return known;
+      }
+      async find(crate, rel) {
+        if (RUST_CRATE_ROOT.test(rel)) return true;
+        const parts = rel.split("/");
+        const file = parts.pop();
+        const name = file === "mod.rs" ? parts.pop() : file.replace(/\.rs$/, "");
+        const dir = parts.join("/");
+        if (name === void 0 || !/^[A-Za-z_]\w*$/.test(name) || !(dir === "src" || dir.startsWith("src/"))) return false;
+        for (const declarer of declarersOf(dir)) {
+          const text2 = await this.text(crate, declarer);
+          if (text2 !== null && declaresModule(text2, name) && await this.compiled(crate, declarer)) return true;
+        }
+        return false;
+      }
+      text(crate, rel) {
+        const path = crate === "" ? rel : `${crate}/${rel}`;
+        let known = this.texts.get(path);
+        if (known === void 0) {
+          known = this.reader.text(this.rev, path);
+          this.texts.set(path, known);
+        }
+        return known;
+      }
+    };
+  }
+});
+
 // src/policy/weakening.ts
 function langOf(path) {
   if (/\.(m|c)?(j|t)sx?$|\.(vue|svelte)$/.test(path)) return "js";
   if (/\.py$/.test(path)) return "py";
   if (/\.go$/.test(path)) return "go";
   return "other";
-}
-function isTestPath(path) {
-  const p = path.toLowerCase();
-  if (/(^|\/)(__tests__|__test__|tests?|specs?|e2e|integration-tests?|testing)\//.test(p)) return /\.(m|c)?(j|t)sx?$|\.py$|\.go$|\.(vue|svelte)$/.test(p);
-  if (/\.(test|spec|e2e|cy)\.(m|c)?(j|t)sx?$/.test(p)) return true;
-  if (/(^|\/)test_[^/]*\.py$|_test\.py$|(^|\/)conftest\.py$/.test(p)) return true;
-  if (/_test\.go$/.test(p)) return true;
-  return false;
 }
 function isSnapshotPath(path) {
   return /(^|\/)(__snapshots__|__screenshots__|__image_snapshots__|snapshots)\/|-snapshots\/|\.snap$|\.ambr$/.test(path);
@@ -31569,12 +32022,12 @@ function parseDiff(diff) {
   }
   return out;
 }
-function detectWeakening(files) {
+function detectWeakening(files, layout = NO_LAYOUT) {
   const out = [];
-  for (const f of files) out.push(...detectWeakeningInFile(f));
+  for (const f of files) out.push(...detectWeakeningInFile(f, layout));
   return out;
 }
-function detectWeakeningInFile(file) {
+function detectWeakeningInFile(file, layout = NO_LAYOUT) {
   const { path, status: status2 } = file;
   const signals = [];
   const add = (signal, detail) => {
@@ -31590,7 +32043,7 @@ function detectWeakeningInFile(file) {
     else add("snapshot-edited", status2 === "D" ? "stored expectation deleted" : "stored expectation changed");
     return signals;
   }
-  const test = isTestPath(path);
+  const test = isTestPathOnEitherRevision(path, layout);
   if (status2 === "D") {
     if (test) add("test-file-deleted", "test file deleted");
     return signals;
@@ -31722,6 +32175,7 @@ var TEST_CONFIG, LINT_CONFIG, ASSERTION, COMMENT, SKIP3, FOCUS, GO_IGNORE, WEAK_
 var init_weakening = __esm({
   "src/policy/weakening.ts"() {
     "use strict";
+    init_test_files();
     TEST_CONFIG = /(^|\/)(jest|vitest|vite|playwright|karma|cypress|ava|wdio)\.config\.[a-z.]+$|(^|\/)(\.mocharc[a-z.]*|pytest\.ini|tox\.ini|setup\.cfg|pyproject\.toml|conftest\.py|package\.json|\.nycrc[a-z.]*|\.c8rc[a-z.]*)$/;
     LINT_CONFIG = /(^|\/)(\.eslintrc[a-z.]*|eslint\.config\.[a-z.]+|\.golangci\.(ya?ml|toml|json)|\.flake8|\.pylintrc|pylintrc|ruff\.toml|\.ruff\.toml|biome\.jsonc?|\.stylelintrc[a-z.]*|tslint\.json|\.rubocop\.yml|tsconfig[a-z.-]*\.json|mypy\.ini|\.mypy\.ini|pyrightconfig\.json|setup\.cfg|pyproject\.toml|tox\.ini)$/;
     ASSERTION = {
@@ -31806,7 +32260,8 @@ async function inspectScope(input) {
   const diffs = await perFileDiffs(repoRoot, base, cand, textChanges.map((c) => c.path));
   for (const p of forcedText) changedLines += countPatchLines(diffs.get(p) ?? "");
   const weakeningInputs = changes.map((c) => ({ path: c.path, status: c.status, diff: diffs.get(c.path) ?? "" }));
-  const weakening = detectWeakening(weakeningInputs);
+  const testLayout = await loadTestLayout(gitTreeReader(async (args) => (await git(repoRoot, [...args])).toString("utf8")), base, cand, changes.map((c) => c.path));
+  const weakening = detectWeakening(weakeningInputs, testLayout);
   const limits = config.scheduler.hard_limits;
   return {
     allowed_paths_pass: forbidden.length === 0 && outOfScope.length === 0,
@@ -32095,6 +32550,7 @@ var init_scope = __esm({
     init_hash();
     init_builtin();
     init_globs();
+    init_test_files();
     init_weakening();
     LOCKFILES = /* @__PURE__ */ new Set([
       "package-lock.json",
@@ -32140,6 +32596,7 @@ var init_policy = __esm({
     init_bash();
     init_scope();
     init_weakening();
+    init_test_files();
     init_guard_hook();
     init_role_grants();
     init_hosts();
@@ -36514,7 +36971,7 @@ import { lstatSync as lstatSync7, readFileSync as readFileSync16 } from "node:fs
 import { basename as basename12, dirname as dirname16, join as join26, posix as posix5, relative as relative2, isAbsolute as isAbsolute13 } from "node:path";
 function formatOutsideFix(check, where2 = null) {
   if (where2) return `remove dotnet format from ${where2.command} and run it in CI`;
-  return `remove checks.${check.id} from .orbit/config.yaml, or set checks.${check.id}.mandatory: false, and run dotnet format in CI`;
+  return `remove checks.${check.id} from .orbit/config.yaml and run dotnet format in CI`;
 }
 function loadsProject(argv2) {
   if (!isDotnet(argv2[0] ?? "") || verbOf(argv2) !== "format") return false;
@@ -36736,7 +37193,7 @@ var init_dotnet_format = __esm({
 // src/evidence/runner.ts
 import { createHash as createHash3, randomBytes as randomBytes5 } from "node:crypto";
 import { closeSync as closeSync8, existsSync as existsSync21, lstatSync as lstatSync8, mkdirSync as mkdirSync10, openSync as openSync8, readSync as readSync5, readdirSync as readdirSync6, realpathSync as realpathSync9, rmSync as rmSync7, statSync as statSync11 } from "node:fs";
-import { homedir as homedir8, platform } from "node:os";
+import { homedir as homedir9, platform } from "node:os";
 import { join as join27, resolve as resolve8, sep as sep4 } from "node:path";
 function candidateEvidenceDir(runDir2, seq2) {
   return join27(runDir2, "evidence", String(seq2));
@@ -37164,7 +37621,7 @@ function loadedNoProjectNote(ctx, def, output) {
 function folderFormRuns(ctx) {
   if (platform() !== "darwin" || !ctx.snapshot.repo_root) return true;
   try {
-    return !checkoutBelowDenied({ checkout: ctx.checkoutDir, repoRoot: ctx.snapshot.repo_root, homeDir: ctx.homeDir ?? homedir8() });
+    return !checkoutBelowDenied({ checkout: ctx.checkoutDir, repoRoot: ctx.snapshot.repo_root, homeDir: ctx.homeDir ?? homedir9() });
   } catch {
     return false;
   }
@@ -38879,7 +39336,7 @@ var init_scheduler = __esm({
 
 // src/controller/context.ts
 import { dirname as dirname17, join as join28 } from "node:path";
-import { homedir as homedir9 } from "node:os";
+import { homedir as homedir10 } from "node:os";
 import { existsSync as existsSync22, readFileSync as readFileSync17, realpathSync as realpathSync11 } from "node:fs";
 function loadRunContext(deps, runId, signal) {
   const { db } = deps;
@@ -38974,7 +39431,7 @@ function lenientContext(deps, runId, signal) {
   return ctx;
 }
 function homeOf2(deps) {
-  return deps.homeDir ?? homedir9();
+  return deps.homeDir ?? homedir10();
 }
 function folderFormRunsAt(ctx, checkout) {
   if (process.platform !== "darwin") return true;
@@ -42309,6 +42766,10 @@ function routeFor(ctx, purpose, workKind, signals) {
     if (!isOrbitError(err, "PROVIDER_UNAVAILABLE")) throw err;
     const fallback = unvalidatedChoice(ctx, signals);
     if (!fallback) throw err;
+    const validated = ctx.deps.registry.list().some((e) => e.provider === "claude" && allowMatch(e, config.routing.allowed_models) !== null && e.surfaces.some((s) => s.surface === "claude-cli" && s.available === true));
+    const chosenValidated = ctx.deps.registry.get(fallback.model)?.surfaces.some((s) => s.surface === "claude-cli" && s.available === true) === true;
+    const summary = validated ? `${purpose}: ${fallback.model} (allowed, and chosen although the router reported: ${messageOf(err)})` : `${purpose}: ${fallback.model} (allowed but not yet validated on claude-cli; the first successful session validates it)`;
+    const reason = validated ? `${fallback.model} was chosen although the router reported: ${messageOf(err)}` : `no claude-cli model is validated for ${workKind} yet; the first successful session validates the allowed ${fallback.model}, which was chosen`;
     recordDecision(
       ctx.db,
       ctx.runDir,
@@ -42316,8 +42777,8 @@ function routeFor(ctx, purpose, workKind, signals) {
         id: decisionId2,
         runId: ctx.run.id,
         kind: "route",
-        summary: `${purpose}: ${fallback.model} (allowed but not yet validated on claude-cli; ${messageOf(err)})`.slice(0, 500),
-        data: { kind: "route", provider: "claude", model: fallback.model, effort: fallback.effort, work_kind: workKind, purpose, unvalidated: true, reason: messageOf(err) }
+        summary: summary.slice(0, 500),
+        data: { kind: "route", provider: "claude", model: fallback.model, effort: fallback.effort, work_kind: workKind, purpose, unvalidated: !chosenValidated, reason }
       },
       ctx.clock
     );
@@ -44284,7 +44745,7 @@ var init_global = __esm({
 
 // src/guard/publication.ts
 import { readFileSync as readFileSync18 } from "node:fs";
-import { homedir as homedir10 } from "node:os";
+import { homedir as homedir11 } from "node:os";
 import { dirname as dirname19, isAbsolute as isAbsolute15, join as join33, resolve as resolve10 } from "node:path";
 import { inspect } from "node:util";
 function defaultGuardConfigPath(env = process.env) {
@@ -44356,7 +44817,7 @@ function sanitize(text2) {
   return text2.normalize("NFKC").replace(INVISIBLE, "");
 }
 function home(env = process.env) {
-  return env.HOME || homedir10();
+  return env.HOME || homedir11();
 }
 function expandHome(p, env = process.env) {
   if (p === "~") return home(env);
@@ -44625,6 +45086,288 @@ var init_publication = __esm({
   }
 });
 
+// src/controller/resume.ts
+function resumeTarget(db, run) {
+  const prior = run.resumeState;
+  if (prior && canTransition("BLOCKED", prior)) {
+    if ((prior === "REVIEWING" || prior === "DELIVERING") && !liveEvidenceForLatestCandidate(db, run.id)) return "VERIFYING";
+    return prior;
+  }
+  if (db.get("SELECT 1 AS x FROM candidates WHERE run_id = ? LIMIT 1", run.id)) return "VERIFYING";
+  return run.contractJson ? "PLANNING" : "PREFLIGHT";
+}
+function liveEvidenceForLatestCandidate(db, runId) {
+  const cand = db.get("SELECT id FROM candidates WHERE run_id = ? ORDER BY seq DESC LIMIT 1", runId);
+  if (!cand) return false;
+  return db.get("SELECT 1 AS x FROM evidence_reports WHERE run_id = ? AND candidate_id = ? AND invalidated_at IS NULL LIMIT 1", runId, cand.id) !== void 0;
+}
+function frozenPolicySetting(run) {
+  try {
+    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
+    if (!o?.frozen_policy) return null;
+    return typeof o.frozen_policy.setting === "string" ? o.frozen_policy.setting : "a policy setting";
+  } catch {
+    return null;
+  }
+}
+function frozenPolicyForceHelps(setting) {
+  return !/^checks\.[\w.-]+\.command(?:, checks\.[\w.-]+\.command)*$/.test(setting);
+}
+function candidateEnvironmentFailures(run) {
+  try {
+    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
+    if (typeof o?.candidate_id !== "string" || !Array.isArray(o.environment_failures)) return null;
+    return o.environment_failures.flatMap((f) => {
+      const r = f !== null && typeof f === "object" ? f : {};
+      return typeof r.check_id === "string" ? [{ checkId: r.check_id, questionId: typeof r.question_id === "string" ? r.question_id : null }] : [];
+    });
+  } catch {
+    return null;
+  }
+}
+function newRunNeeded(db, run) {
+  if (run.state !== "BLOCKED") return null;
+  const frozen = frozenPolicySetting(run);
+  if (frozen !== null) return `its frozen policy (${frozen}) causes the block${frozenPolicyForceHelps(frozen) ? '; if what you fixed is outside the policy, "orbit resume --force" is the other way forward' : ""}`;
+  const failures = candidateEnvironmentFailures(run);
+  if (failures !== null && failures.every((f) => f.questionId === null || listQuestions(db, run.id).every((q) => q.id !== f.questionId))) {
+    return "the block comes from the environment or a check's definition, which a resume does not change: the run's policy and the check results recorded for its candidate are frozen";
+  }
+  return null;
+}
+function missingTargetChecks(run) {
+  try {
+    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
+    if (!Array.isArray(o?.misconfigured_checks)) return [];
+    return o.misconfigured_checks.flatMap((m) => {
+      const r = m !== null && typeof m === "object" ? m : {};
+      if (r.kind !== "missing-target" || typeof r.check_id !== "string") return [];
+      return [{ checkId: r.check_id, configKey: typeof r.config_key === "string" ? r.config_key : `checks.${r.check_id}.command` }];
+    });
+  } catch {
+    return [];
+  }
+}
+function resumeAnsweredRun(db, clock, runId, ownerId, actor, reason) {
+  const run = getRun(db, runId);
+  if (run.state !== "BLOCKED" || run.cancelRequested || frozenPolicySetting(run) !== null) return null;
+  if (listQuestions(db, run.id, { status: "open" }).some((q) => q.material)) return null;
+  if (!acquireLease(db, run.id, ownerId, 6e4, clock)) return null;
+  try {
+    const target = resumeTarget(db, run);
+    db.tx(() => {
+      transition(db, { runId: run.id, to: target, ownerId, reason, actor, expectedFrom: "BLOCKED" }, clock);
+      appendEvent(db, run.id, "run.resumed", actor, { from: "BLOCKED", to: target, forced: false, by: "remote-answer" }, clock.now());
+    });
+    return target;
+  } finally {
+    releaseLease(db, run.id, ownerId);
+  }
+}
+var init_resume = __esm({
+  "src/controller/resume.ts"() {
+    "use strict";
+    init_store4();
+    init_events();
+    init_run_store();
+    init_states();
+  }
+});
+
+// src/evidence/candidate.ts
+import { chmodSync as chmodSync7, existsSync as existsSync26, lstatSync as lstatSync9, mkdirSync as mkdirSync14, mkdtempSync as mkdtempSync4, readdirSync as readdirSync7, realpathSync as realpathSync12, rmSync as rmSync9, writeFileSync as writeFileSync5 } from "node:fs";
+import { tmpdir as tmpdir9 } from "node:os";
+import { dirname as dirname20, join as join34, parse as parse4, sep as sep7 } from "node:path";
+function candidateRef(runId, seq2) {
+  return `refs/orbit/${runId}/candidates/${seq2}`;
+}
+async function snapshotCandidate(input) {
+  const { db, clock, repoRoot, runId } = input;
+  if (!RUN_ID.test(runId)) throw new OrbitError("INTERNAL", `run id is not safe in a ref name: ${JSON.stringify(runId)}`);
+  const base = await resolveCommit(repoRoot, input.baseRev);
+  const { gitDir, worktree } = await adminDirFor(repoRoot, input.worktree);
+  const tree = await stageTree({ gitDir, worktree, base, extraExcludes: input.extraExcludes ?? [] });
+  const row = reserveCandidate(db, { runId, attempt: input.attempt, workerId: input.workerId, treeHash: tree, parentSha: base }, clock);
+  if (row.status !== "CREATING") return { ...row, created: false };
+  const message = `orbit candidate ${runId}/${row.seq}
+
+attempt: ${row.attempt}
+worker: ${row.workerId ?? "none"}
+tree: ${tree}
+`;
+  const when = `${Math.floor(row.createdAt / 1e3)} +0000`;
+  const commit = (await git2(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], {
+    env: {
+      GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name,
+      GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email,
+      GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name,
+      GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email,
+      GIT_AUTHOR_DATE: when,
+      GIT_COMMITTER_DATE: when
+    }
+  })).trim();
+  await git2(repoRoot, ["update-ref", candidateRef(runId, row.seq), commit]);
+  const stat = await diffStat(repoRoot, await treeOf(repoRoot, base), tree);
+  const done = finalizeCandidate(db, row.id, commit, stat, clock);
+  return { ...done, created: true };
+}
+async function stageTree(o) {
+  const scratch = mkdtempSync4(join34(tmpdir9(), "orbit-index-"));
+  try {
+    const excludes = join34(scratch, "exclude");
+    writeFileSync5(excludes, `${[...BUILTIN_EXCLUDES, ...o.extraExcludes].join("\n")}
+`);
+    const env = { GIT_DIR: o.gitDir, GIT_WORK_TREE: o.worktree, GIT_INDEX_FILE: join34(scratch, "index") };
+    const opts = { env, config: { "core.excludesFile": excludes } };
+    await git2(o.worktree, ["read-tree", o.base], opts);
+    await git2(o.worktree, ["add", "-A", "--", "."], opts);
+    return (await git2(o.worktree, ["write-tree"], opts)).trim();
+  } finally {
+    rmSync9(scratch, { recursive: true, force: true });
+  }
+}
+async function diffStat(repoRoot, fromTree, toTree) {
+  const out = await git2(repoRoot, ["diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", fromTree, toTree, "--"]);
+  const stat = { files: 0, insertions: 0, deletions: 0, binaryFiles: 0, paths: [], truncated: false };
+  for (const rec2 of out.split("\0")) {
+    if (!rec2) continue;
+    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(rec2);
+    if (!m) continue;
+    stat.files++;
+    if (m[1] === "-") stat.binaryFiles++;
+    else {
+      stat.insertions += Number(m[1]);
+      stat.deletions += Number(m[2]);
+    }
+    if (stat.paths.length < MAX_DIFF_PATHS) stat.paths.push(m[3]);
+    else stat.truncated = true;
+  }
+  return stat;
+}
+async function materializeCandidate(repoRoot, commit, dir, opts = {}) {
+  const sha = await resolveCommit(repoRoot, commit);
+  if (existsSync26(dir) && readdirSync7(dir).length > 0) {
+    throw new OrbitError("GIT_FAILED", `checkout directory is not empty: ${dir}`, { dir });
+  }
+  mkdirSync14(dirname20(dir), { recursive: true });
+  await git2(repoRoot, ["worktree", "add", "--detach", "--force", dir, sha]);
+  const real = realpathSync12(dir);
+  if (opts.readOnly !== false) makeReadOnly(real);
+  return real;
+}
+async function cleanupCandidateCheckout(repoRoot, dir) {
+  assertDisposableCheckout(repoRoot, dir);
+  if (existsSync26(dir)) makeWritable(dir);
+  try {
+    await git2(repoRoot, ["worktree", "remove", "--force", dir]);
+  } catch {
+    rmSync9(dir, { recursive: true, force: true });
+  }
+  rmSync9(dir, { recursive: true, force: true });
+  await git2(repoRoot, ["worktree", "prune"]).catch(() => {
+  });
+}
+function assertDisposableCheckout(repoRoot, dir) {
+  if (!existsSync26(dir)) return;
+  const target = realpathSync12(dir);
+  const root = realpathSync12(repoRoot);
+  const refuse = (why) => {
+    throw new OrbitError("GIT_FAILED", `refusing to remove ${dir}: ${why}`, { dir, repoRoot });
+  };
+  if (target === root || root.startsWith(target.endsWith(sep7) ? target : target + sep7)) refuse("it is or contains the repository");
+  if (target === parse4(target).root) refuse("it is a filesystem root");
+  let dotGit;
+  try {
+    dotGit = lstatSync9(join34(target, ".git"));
+  } catch {
+    return;
+  }
+  if (dotGit.isDirectory()) refuse("it holds its own .git directory, so it is a repository, not a checkout");
+}
+function walk3(dir, visit3) {
+  for (const name of readdirSync7(dir)) {
+    const p = join34(dir, name);
+    const st = lstatSync9(p);
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) {
+      if (name === ".git") continue;
+      walk3(p, visit3);
+      visit3(p, true);
+    } else visit3(p, false);
+  }
+}
+function makeReadOnly(dir) {
+  walk3(dir, (p, isDir) => chmodSync7(p, isDir ? 365 : lstatSync9(p).mode & 365));
+  chmodSync7(dir, 365);
+}
+function makeWritable(dir) {
+  try {
+    chmodSync7(dir, 493);
+    const stack = [dir];
+    while (stack.length) {
+      const d = stack.pop();
+      for (const name of readdirSync7(d)) {
+        const p = join34(d, name);
+        const st = lstatSync9(p);
+        if (st.isSymbolicLink()) continue;
+        if (st.isDirectory()) {
+          chmodSync7(p, 493);
+          if (name !== ".git") stack.push(p);
+        } else chmodSync7(p, st.mode | 128);
+      }
+    }
+  } catch {
+  }
+}
+var ORBIT_GIT_IDENTITY, BUILTIN_EXCLUDES, RUN_ID, MAX_DIFF_PATHS;
+var init_candidate = __esm({
+  "src/evidence/candidate.ts"() {
+    "use strict";
+    init_errors();
+    init_git();
+    init_store();
+    ORBIT_GIT_IDENTITY = { name: "Orbit", email: "orbit@orbit.invalid" };
+    BUILTIN_EXCLUDES = [".DS_Store", "Thumbs.db", "node_modules/"];
+    RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+    MAX_DIFF_PATHS = 200;
+  }
+});
+
+// src/controller/run-refs.ts
+function createdBranch(db, run) {
+  try {
+    const outcome = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
+    if (typeof outcome?.branch === "string" && outcome.branch !== "") return outcome.branch;
+  } catch {
+  }
+  const pushed = pushedBranch(db, run.id);
+  if (pushed !== null) return pushed;
+  if (run.branch === null) return null;
+  return run.state === "SUCCEEDED" || listDecisions(db, run.id, { kind: "delivery.completed" }).length > 0 ? run.branch : null;
+}
+function pushedBranch(db, runId) {
+  const row = db.get("SELECT target_json FROM actions WHERE run_id = ? AND kind = 'push' AND state = 'SUCCEEDED' ORDER BY created_at DESC, id DESC LIMIT 1", runId);
+  if (!row) return null;
+  try {
+    const ref2 = JSON.parse(row.target_json).ref;
+    return typeof ref2 === "string" && ref2.startsWith("refs/heads/") && ref2.length > "refs/heads/".length ? ref2.slice("refs/heads/".length) : null;
+  } catch {
+    return null;
+  }
+}
+function currentCandidateRef(db, runId) {
+  const cand = currentCandidate(db, runId);
+  return cand === null ? null : candidateRef(runId, cand.seq);
+}
+var init_run_refs = __esm({
+  "src/controller/run-refs.ts"() {
+    "use strict";
+    init_candidate();
+    init_decisions();
+    init_context2();
+  }
+});
+
 // src/delivery/git.ts
 function isObjectId(value) {
   return typeof value === "string" && OBJECT_ID.test(value);
@@ -44881,69 +45624,6 @@ var init_git2 = __esm({
   }
 });
 
-// src/controller/resume.ts
-function resumeTarget(db, run) {
-  const prior = run.resumeState;
-  if (prior && canTransition("BLOCKED", prior)) {
-    if ((prior === "REVIEWING" || prior === "DELIVERING") && !liveEvidenceForLatestCandidate(db, run.id)) return "VERIFYING";
-    return prior;
-  }
-  if (db.get("SELECT 1 AS x FROM candidates WHERE run_id = ? LIMIT 1", run.id)) return "VERIFYING";
-  return run.contractJson ? "PLANNING" : "PREFLIGHT";
-}
-function liveEvidenceForLatestCandidate(db, runId) {
-  const cand = db.get("SELECT id FROM candidates WHERE run_id = ? ORDER BY seq DESC LIMIT 1", runId);
-  if (!cand) return false;
-  return db.get("SELECT 1 AS x FROM evidence_reports WHERE run_id = ? AND candidate_id = ? AND invalidated_at IS NULL LIMIT 1", runId, cand.id) !== void 0;
-}
-function frozenPolicySetting(run) {
-  try {
-    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
-    if (!o?.frozen_policy) return null;
-    return typeof o.frozen_policy.setting === "string" ? o.frozen_policy.setting : "a policy setting";
-  } catch {
-    return null;
-  }
-}
-function missingTargetChecks(run) {
-  try {
-    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
-    if (!Array.isArray(o?.misconfigured_checks)) return [];
-    return o.misconfigured_checks.flatMap((m) => {
-      const r = m !== null && typeof m === "object" ? m : {};
-      if (r.kind !== "missing-target" || typeof r.check_id !== "string") return [];
-      return [{ checkId: r.check_id, configKey: typeof r.config_key === "string" ? r.config_key : `checks.${r.check_id}.command` }];
-    });
-  } catch {
-    return [];
-  }
-}
-function resumeAnsweredRun(db, clock, runId, ownerId, actor, reason) {
-  const run = getRun(db, runId);
-  if (run.state !== "BLOCKED" || run.cancelRequested || frozenPolicySetting(run) !== null) return null;
-  if (listQuestions(db, run.id, { status: "open" }).some((q) => q.material)) return null;
-  if (!acquireLease(db, run.id, ownerId, 6e4, clock)) return null;
-  try {
-    const target = resumeTarget(db, run);
-    db.tx(() => {
-      transition(db, { runId: run.id, to: target, ownerId, reason, actor, expectedFrom: "BLOCKED" }, clock);
-      appendEvent(db, run.id, "run.resumed", actor, { from: "BLOCKED", to: target, forced: false, by: "remote-answer" }, clock.now());
-    });
-    return target;
-  } finally {
-    releaseLease(db, run.id, ownerId);
-  }
-}
-var init_resume = __esm({
-  "src/controller/resume.ts"() {
-    "use strict";
-    init_store4();
-    init_events();
-    init_run_store();
-    init_states();
-  }
-});
-
 // src/notify/payload.ts
 function sanitizeReason(text2) {
   if (text2 === null || text2 === void 0) return null;
@@ -44957,7 +45637,7 @@ function sanitizeReason(text2) {
   return s.length > REASON_MAX ? s.slice(0, REASON_MAX) : s;
 }
 function nextAction(input) {
-  const { run, questionIds, pullRequest, remote } = input;
+  const { run, questionIds, pullRequest, remote, refs } = input;
   const [first] = questionIds;
   if (first !== void 0) {
     const local = `Answer with orbit decide ${run.id} ${first} <answer>`;
@@ -44965,9 +45645,13 @@ function nextAction(input) {
   }
   switch (run.state) {
     case "SUCCEEDED":
-      return pullRequest !== null ? `Review pull request #${pullRequest} and merge it if you accept it.` : `Inspect branch ${run.branch ?? `orbit/${run.id}`} and merge it yourself if you accept it.`;
+      if (pullRequest !== null) return `Review pull request #${pullRequest} and merge it if you accept it.`;
+      if (refs.branch !== null) return `Inspect branch ${refs.branch} and merge it yourself if you accept it.`;
+      if (refs.candidateRef !== null) return `Inspect the reviewed candidate at ${refs.candidateRef} and merge it yourself if you accept it.`;
+      return `Read orbit report ${run.id} for the reviewed candidate, and merge it yourself if you accept it.`;
     case "BLOCKED":
       if (frozenPolicySetting({ outcomeJson: run.outcomeJson ?? null }) !== null) return `Read orbit report ${run.id}; this block comes from the run's frozen policy, so resuming alone would only block again.`;
+      if (candidateEnvironmentFailures({ outcomeJson: run.outcomeJson ?? null }) !== null) return `Read orbit report ${run.id}; this block comes from the environment or a check's definition, so resuming alone would only block again.`;
       return `Resolve the block, then run orbit resume ${run.id}.`;
     case "EXHAUSTED":
       return `Read orbit report ${run.id}, then continue by hand or start a new run.`;
@@ -45025,7 +45709,7 @@ var init_payload = __esm({
 
 // src/delivery/github.ts
 import { execFileSync } from "node:child_process";
-import { existsSync as existsSync26, readFileSync as readFileSync19 } from "node:fs";
+import { existsSync as existsSync27, readFileSync as readFileSync19 } from "node:fs";
 function malformed(what, detail) {
   return new OrbitError("MALFORMED_OUTPUT", `gh ${what}: ${detail}`);
 }
@@ -45828,7 +46512,7 @@ ${res.stdout}`;
         }
       }
       load() {
-        if (!existsSync26(this.opts.statePath)) return emptyState();
+        if (!existsSync27(this.opts.statePath)) return emptyState();
         return JSON.parse(readFileSync19(this.opts.statePath, "utf8"));
       }
       mutate(fn) {
@@ -45841,7 +46525,7 @@ ${res.stdout}`;
 });
 
 // src/notify/threads.ts
-import { existsSync as existsSync27, readFileSync as readFileSync20 } from "node:fs";
+import { existsSync as existsSync28, readFileSync as readFileSync20 } from "node:fs";
 function malformed2(what, detail) {
   return new OrbitError("MALFORMED_OUTPUT", `gh api ${what}: ${detail}`);
 }
@@ -45968,7 +46652,7 @@ ${res.stdout}`);
         this.statePath = opts.statePath;
       }
       read() {
-        if (!existsSync27(this.statePath)) return { comments: [], permissions: {} };
+        if (!existsSync28(this.statePath)) return { comments: [], permissions: {} };
         const s = JSON.parse(readFileSync20(this.statePath, "utf8"));
         return { comments: s.comments ?? [], permissions: s.permissions ?? {}, fail: s.fail ?? null, failNext: s.failNext ?? {} };
       }
@@ -46024,13 +46708,13 @@ ${res.stdout}`);
 });
 
 // src/notify/channels.ts
-import { join as join34 } from "node:path";
+import { join as join35 } from "node:path";
 function notificationsOff(env) {
   return (env.ORBIT_NOTIFICATIONS ?? "").trim().toLowerCase() === "off";
 }
 function defaultThreads(env) {
   return async (repoRoot, config) => {
-    if (config.delivery.provider === "fake") return new FakeThreadClient({ statePath: join34(repoRoot, ".orbit", FAKE_THREADS_FILE) });
+    if (config.delivery.provider === "fake") return new FakeThreadClient({ statePath: join35(repoRoot, ".orbit", FAKE_THREADS_FILE) });
     const url = await resolveRemoteUrl(repoRoot, config.repository.remote);
     const m = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url);
     if (!m) throw new OrbitError("CONFIG_INVALID", `remote ${config.repository.remote} is not a GitHub repository`);
@@ -46137,7 +46821,7 @@ var init_channels = __esm({
 });
 
 // src/evidence/report.ts
-import { basename as basename13, isAbsolute as isAbsolute16, join as join35, relative as relative4, sep as sep7 } from "node:path";
+import { basename as basename13, isAbsolute as isAbsolute16, join as join36, relative as relative4, sep as sep8 } from "node:path";
 function aggregateCheckConfigHash(snapshot2, checkIds) {
   const ids = [...new Set(checkIds)].sort();
   const map2 = {};
@@ -46192,7 +46876,7 @@ function evaluateEvidence(input) {
   const artifactPath = (p, fallback) => {
     if (runDir2 === void 0) return fallback;
     const r = relative4(runDir2, p);
-    return r === "" || r.startsWith("..") || isAbsolute16(r) ? p : r.split(sep7).join("/");
+    return r === "" || r.startsWith("..") || isAbsolute16(r) ? p : r.split(sep8).join("/");
   };
   const logName = (p) => artifactPath(p, basename13(p));
   const evidenceFor = (checkId) => {
@@ -46248,7 +46932,7 @@ function evaluateEvidence(input) {
   const base = input.base;
   const noChange = base !== void 0 && base.treeHash === candidate.treeHash;
   if (noChange) note3(incomplete, "the candidate makes no change: its tree is the base revision's tree, so no check result is evidence of a change");
-  const testChanged = base !== void 0 && base.changedPaths.some(isTestPath);
+  const testChanged = base !== void 0 && base.changedPaths.some((p) => isTestPath(p, base.testLayout, base.diffs?.get(p)));
   const baseStatus = new Map((base?.checks ?? []).map((c) => [c.checkId, c.status]));
   const newEvidenceGap = (ids) => {
     if (base === void 0) return null;
@@ -46348,7 +47032,7 @@ function evaluateEvidence(input) {
   return { report: report2, failReasons: fail3, incompleteReasons: incomplete };
 }
 function reportPath(runDir2, candidate) {
-  return join35(candidateEvidenceDir(runDir2, candidate.seq), "report.json");
+  return join36(candidateEvidenceDir(runDir2, candidate.seq), "report.json");
 }
 function saveEvidenceReport(opts) {
   const path = reportPath(opts.runDir, opts.candidate);
@@ -46361,7 +47045,7 @@ var init_report = __esm({
     init_fsx();
     init_hash();
     init_snapshot();
-    init_weakening();
+    init_test_files();
     init_runner();
     init_store();
   }
@@ -47549,7 +48233,7 @@ var init_check_misconfigured = __esm({
 
 // src/inquisition/baseline-exception.ts
 import { readFileSync as readFileSync21 } from "node:fs";
-import { dirname as dirname20, join as join36, normalize as normalize2, sep as sep8 } from "node:path";
+import { dirname as dirname21, join as join37, normalize as normalize2, sep as sep9 } from "node:path";
 function keyOf(runId, checkId, fingerprint) {
   return hashObject({ run: runId, check: checkId, fingerprint }).slice(7, 19);
 }
@@ -47637,8 +48321,8 @@ function notExceptable(baseline, checkId, snapshot2, recordedCwd = null) {
     if (classifyProgramNotFound(input) !== null || classifyNotExecuted({ checkId, output: input.output }) !== null) return true;
     const cwd = recordedCwd !== null ? normalize2(recordedCwd) : null;
     const rel = def && def.kind === "command" ? normalize2(def.cwd ?? ".") : ".";
-    const checkout = cwd !== null && rel !== "." && cwd.endsWith(`${sep8}${rel}`) ? cwd.slice(0, -(rel.length + 1)) : cwd;
-    const roots = [...checkout !== null ? [checkout] : [], ...cwd !== null ? [cwd] : [], dirname20(entry.log)];
+    const checkout = cwd !== null && rel !== "." && cwd.endsWith(`${sep9}${rel}`) ? cwd.slice(0, -(rel.length + 1)) : cwd;
+    const roots = [...checkout !== null ? [checkout] : [], ...cwd !== null ? [cwd] : [], dirname21(entry.log)];
     const found2 = classifyCouldNotRun({ checkId, output: input.output, insideRoots: roots });
     return found2 !== null && (cwd !== null || !found2.signals.some((sg) => ON_A_PATH.has(sg)));
   };
@@ -47706,7 +48390,7 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
         outcome("refused", `the policy snapshot could not be verified: ${err instanceof Error ? err.message : String(err)}`);
         break;
       }
-      const baseline = readJsonIfExists(join36(ctx.runDir, BASELINE_FILE));
+      const baseline = readJsonIfExists(join37(ctx.runDir, BASELINE_FILE));
       const proposal = data.proposal;
       let next;
       let record;
@@ -47772,7 +48456,7 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
   }
   const row = load();
   const contract = row.contract_json === null ? null : JSON.parse(row.contract_json);
-  if (contract && outcomes.some((o) => o.status === "applied" || o.status === "already-applied")) atomicWriteJson(join36(ctx.runDir, "contract.json"), contract);
+  if (contract && outcomes.some((o) => o.status === "applied" || o.status === "already-applied")) atomicWriteJson(join37(ctx.runDir, "contract.json"), contract);
   return { contract, outcomes };
 }
 var BASELINE_EXCEPTION_REQUEST_KIND, BASELINE_APPROVE, BASELINE_REJECT, BASELINE_FILE, MAX_CAS_ATTEMPTS, MAX_LOG_BYTES, ON_A_PATH;
@@ -48438,6 +49122,7 @@ function loadInquisitionSnapshot(db, runId, extras = {}) {
     decisions: decisions.map((d) => ({ kind: d.kind, summary: d.summary })),
     expectedChangedFiles: extras.expectedChangedFiles ?? [],
     changedFiles: extras.changedFiles ?? [],
+    ...extras.testLayout ? { testLayout: extras.testLayout } : {},
     diff: extras.diff ?? null,
     claims: extras.claims ?? null,
     sources: extras.sources ?? [],
@@ -48543,7 +49228,7 @@ function detectUnexplainedArchitecture(s) {
   if (s.changedFiles.length === 0 || s.expectedChangedFiles.length === 0) return [];
   const expected = new Set(s.expectedChangedFiles.map((p) => p.replace(/^\.\//, "")));
   const expectedDirs = new Set([...expected].map((p) => p.split("/")[0] ?? p));
-  const extra = s.changedFiles.filter((p) => !expected.has(p) && !isTestPath(p));
+  const extra = s.changedFiles.filter((p) => !expected.has(p) && !isTestPath(p, s.testLayout));
   if (extra.length <= s.thresholds.unexplainedFiles) return [];
   const newAreas = [...new Set(extra.map((p) => p.split("/")[0] ?? p))].filter((d) => !expectedDirs.has(d)).sort();
   const evidence = [`${extra.length} changed files are outside the planner's expected set (tolerated: ${s.thresholds.unexplainedFiles})`, ...extra.slice(0, 10)];
@@ -48655,7 +49340,7 @@ var init_triggers = __esm({
     init_redact();
     init_decisions();
     init_wording();
-    init_weakening();
+    init_test_files();
     init_store4();
     init_heuristics();
     DEFAULT_THRESHOLDS = { repeatedFailure: 2, unexplainedFiles: 3, denials: 3 };
@@ -48681,8 +49366,8 @@ var init_triggers = __esm({
 });
 
 // src/inquisition/engine.ts
-import { mkdirSync as mkdirSync14 } from "node:fs";
-import { join as join37 } from "node:path";
+import { mkdirSync as mkdirSync15 } from "node:fs";
+import { join as join38 } from "node:path";
 function ledgerDraft(runId, claim, source, experiment, status2 = "unverified", reversibility2 = "costly-to-reverse") {
   return { runId, claim, source, confidence: "low", consequence: "the work ships on an unchecked belief", reversibility: reversibility2, experiment, status: status2 };
 }
@@ -48795,12 +49480,12 @@ async function runWorker(adapter, ctx, opts, trigger, prompt, attempt, signal) {
   const { db, clock } = ctx;
   signal?.throwIfAborted();
   const workerId = opts.workerIdFor?.(attempt) ?? newId("wrk");
-  const workerDir = join37(opts.workerDir, workerId);
+  const workerDir = join38(opts.workerDir, workerId);
   db.tx(() => {
     opts.fence?.();
     planWorker(db, { id: workerId, runId: ctx.runId, role: "inquisitor", purpose: workerPurpose(trigger), provider: opts.route.provider, model: opts.route.model, effort: opts.route.effort, workerDir, cwd: opts.cwd, attempt }, clock);
   });
-  mkdirSync14(workerDir, { recursive: true });
+  mkdirSync15(workerDir, { recursive: true });
   const spec = {
     runId: ctx.runId,
     workerId,
@@ -49359,7 +50044,7 @@ var init_engine = __esm({
 });
 
 // src/inquisition/amendment-answers.ts
-import { join as join38 } from "node:path";
+import { join as join39 } from "node:path";
 function amendmentIdOfQuestion(questionId) {
   return questionId.startsWith(AMENDMENT_QUESTION_PREFIX) ? questionId.slice(AMENDMENT_QUESTION_PREFIX.length) : null;
 }
@@ -49448,7 +50133,7 @@ function applyAmendmentAnswers(ctx, opts = {}) {
     if (!done) throw new OrbitError("CONCURRENT_UPDATE", `the contract of run ${ctx.runId} kept changing while amendment ${rec2.id} was applied`, { amendmentId: rec2.id });
   }
   const contract = parsed2(load());
-  if (contract && changed2) atomicWriteJson(join38(ctx.runDir, "contract.json"), contract);
+  if (contract && changed2) atomicWriteJson(join39(ctx.runDir, "contract.json"), contract);
   return { contract, outcomes, changed: changed2 };
 }
 function parsed2(row) {
@@ -49475,7 +50160,7 @@ var init_amendment_answers = __esm({
 });
 
 // src/notify/remote-answers.ts
-import { join as join39 } from "node:path";
+import { join as join40 } from "node:path";
 function parseAnswerCommands(body) {
   if (body.includes(COMMENT_MARKER)) return [];
   const out = [];
@@ -49487,7 +50172,7 @@ function parseAnswerCommands(body) {
 }
 function commentTargets(runDir2, config) {
   const out = [];
-  const delivery = readJsonIfExists(join39(runDir2, "delivery.json"));
+  const delivery = readJsonIfExists(join40(runDir2, "delivery.json"));
   const pr = delivery?.pr?.number;
   if (typeof pr === "number" && Number.isInteger(pr) && pr > 0) out.push({ number: pr, kind: "pull request" });
   const issue = notificationsPolicy(config).remote_answers.issue;
@@ -49639,7 +50324,7 @@ var init_remote_answers = __esm({
 });
 
 // src/notify/notify.ts
-import { join as join40 } from "node:path";
+import { join as join41 } from "node:path";
 function resolveNotifyDeps(d) {
   const env = d.notify?.env ?? { ...process.env, ...d.hostEnv ?? {} };
   return { ...defaultNotifyDeps(env), ...d.notify ?? {}, env };
@@ -49655,7 +50340,7 @@ function dispatched(db, runId) {
   });
 }
 function pullRequestOf(runDir2) {
-  const pr = readJsonIfExists(join40(runDir2, "delivery.json"))?.pr?.number;
+  const pr = readJsonIfExists(join41(runDir2, "delivery.json"))?.pr?.number;
   return typeof pr === "number" && Number.isInteger(pr) && pr > 0 ? pr : null;
 }
 function where(t) {
@@ -49677,7 +50362,8 @@ async function dispatch(input, kind, key2, questionIds) {
   const pr = pullRequestOf(runDir2);
   const targets = config ? commentTargets(runDir2, config) : [];
   const answerable = config && questionIds.length > 0 ? answerThreads(runDir2, config) : [];
-  const payload = buildPayload({ kind, run, questionIds, pullRequest: pr, remote: answerable[0] ? { where: where(answerable[0]) } : null });
+  const refs = { branch: createdBranch(db, run), candidateRef: currentCandidateRef(db, run.id) };
+  const payload = buildPayload({ kind, run, refs, questionIds, pullRequest: pr, remote: answerable[0] ? { where: where(answerable[0]) } : null });
   db.tx(() => appendEvent(db, run.id, DISPATCHED, actor, { key: key2, kind, state: run.state, questions: questionIds }, clock.now()));
   const outcomes = await sendAll(payload, n2, config, targets[0] ?? null, run.repoRoot, deps);
   db.tx(() => {
@@ -49711,6 +50397,7 @@ var init_notify = __esm({
   "src/notify/notify.ts"() {
     "use strict";
     init_fsx();
+    init_run_refs();
     init_run_states();
     init_store4();
     init_config();
@@ -49723,14 +50410,14 @@ var init_notify = __esm({
 });
 
 // src/controller/report.ts
-import { existsSync as existsSync28, mkdirSync as mkdirSync15, readdirSync as readdirSync7, readFileSync as readFileSync22 } from "node:fs";
-import { homedir as homedir11 } from "node:os";
-import { join as join41 } from "node:path";
+import { existsSync as existsSync29, mkdirSync as mkdirSync16, readdirSync as readdirSync8, readFileSync as readFileSync22 } from "node:fs";
+import { homedir as homedir12 } from "node:os";
+import { join as join42 } from "node:path";
 function writeFinalReport(db, runId, opts) {
   const run = getRun(db, runId);
   const report2 = buildFinalReport(db, run, opts);
-  atomicWriteJson(join41(opts.runDir, "final.json"), report2);
-  atomicWrite(join41(opts.runDir, "final.md"), renderMarkdown(report2));
+  atomicWriteJson(join42(opts.runDir, "final.json"), report2);
+  atomicWrite(join42(opts.runDir, "final.md"), renderMarkdown(report2));
   return report2;
 }
 function buildFinalReport(db, run, opts) {
@@ -49748,7 +50435,7 @@ function assembleFinalReport(db, run, opts) {
   const reviews = listReviews(db, run.id, { includeInvalidated: true });
   const findings = listFindings(db, run.id);
   const decisions = listDecisions(db, run.id).map((d) => ({ kind: d.kind, summary: d.summary, at: d.createdAt }));
-  const delivery = readJsonIfExists(join41(opts.runDir, "delivery.json"));
+  const delivery = readJsonIfExists(join42(opts.runDir, "delivery.json"));
   const outcomeJson = parseJson5(run.outcomeJson);
   let budget = null;
   const usage = summarizeUsage(db, run.id);
@@ -49764,7 +50451,7 @@ function assembleFinalReport(db, run, opts) {
   const unverified = [...ev?.report.unverified ?? []];
   for (const c of criteria) if (c.mandatory && c.status !== "supported") unverified.push(`${c.id} is ${c.status}`);
   const risks = [];
-  const env = readJsonIfExists(join41(opts.runDir, "environment.json"));
+  const env = readJsonIfExists(join42(opts.runDir, "environment.json"));
   risks.push(...env?.gate?.notes ?? []);
   if (!usage.costComplete || budget.cost_measurement.includes("unmeasured")) risks.push(`model spend: ${budget.cost_measurement}`);
   for (const f of findings.filter((x) => x.status === "advisory" || x.status === "open" || x.status === "claim_pending")) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}): ${f.claim.slice(0, 160)}`);
@@ -49791,7 +50478,8 @@ function assembleFinalReport(db, run, opts) {
   const plugins = workerPluginsOf(listWorkers(db, { runId: run.id }));
   risks.push(...plugins.risks);
   const prNumber = delivery?.pr?.number ?? null;
-  const branch = delivery?.branch ?? outcomeJson?.branch ?? run.branch;
+  const branch = delivery?.branch ?? outcomeJson?.branch ?? createdBranch(db, run);
+  const candidateRefName = cand ? candidateRef(run.id, cand.seq) : null;
   return {
     schema: "orbit.final/1",
     run_id: run.id,
@@ -49815,6 +50503,7 @@ function assembleFinalReport(db, run, opts) {
       candidate: cand?.commitSha ?? null,
       tree: cand?.treeHash ?? null,
       branch,
+      candidate_ref: candidateRefName,
       // Only a delivery action delivers. A local mode leaves the candidate commit on a local branch: that is the
       // `candidate` above, never a delivered commit.
       delivered_commit: delivery?.commit ?? (DELIVERY_MODES.has(run.mode) ? outcomeJson?.commit ?? null : null),
@@ -49823,7 +50512,7 @@ function assembleFinalReport(db, run, opts) {
     budget,
     unverified: [...new Set(unverified)],
     residual_risks: [...new Set(risks)],
-    next_action: nextAction2(run, branch, prNumber, listQuestions(db, run.id, { status: "open" }).filter((q) => q.material)),
+    next_action: nextAction2(run, { branch, candidateRef: candidateRefName }, prNumber, listQuestions(db, run.id, { status: "open" }).filter((q) => q.material), newRunNeeded(db, run)),
     generated_at: opts.clock.now()
   };
 }
@@ -49875,9 +50564,9 @@ function tokens(t) {
   return { input: t.inputTokens, output: t.outputTokens, cache_read: t.cacheReadTokens, cache_write: t.cacheWriteTokens };
 }
 function repairs(runDir2) {
-  const dir = join41(runDir2, "briefs");
-  if (!existsSync28(dir)) return [];
-  return readdirSync7(dir).filter((f) => /^attempt-\d+\.json$/.test(f)).map((f) => readJsonIfExists(join41(dir, f))).filter((b) => b !== null).map((b) => ({ attempt: b.attempt, source: b.source, fingerprint: b.fingerprint })).sort((a, b) => a.attempt - b.attempt);
+  const dir = join42(runDir2, "briefs");
+  if (!existsSync29(dir)) return [];
+  return readdirSync8(dir).filter((f) => /^attempt-\d+\.json$/.test(f)).map((f) => readJsonIfExists(join42(dir, f))).filter((b) => b !== null).map((b) => ({ attempt: b.attempt, source: b.source, fingerprint: b.fingerprint })).sort((a, b) => a.attempt - b.attempt);
 }
 function outcomeHas(run, key2) {
   try {
@@ -49887,14 +50576,19 @@ function outcomeHas(run, key2) {
     return false;
   }
 }
-function nextAction2(run, branch, pr, openMaterial = []) {
+function nextAction2(run, refs, pr, openMaterial = [], fresh = null) {
+  const { branch, candidateRef: ref2 } = refs;
+  const candidate = ref2 !== null ? `the reviewed candidate at ${ref2}` : "the reviewed candidate";
   switch (run.state) {
     case "SUCCEEDED":
-      return DELIVERY_MODES.has(run.mode) ? `Review${pr !== null ? ` pull request #${pr}` : ` branch ${branch ?? "orbit/<run>"}`} and merge it if you accept it; Orbit does not merge.` : `Inspect the local branch ${branch ?? `orbit/${run.id}`} (the reviewed candidate) and merge it yourself if you accept it.`;
+      return DELIVERY_MODES.has(run.mode) ? `Review ${pr !== null ? `pull request #${pr}` : branch !== null ? `branch ${branch}` : candidate} and merge it if you accept it; Orbit does not merge.` : branch !== null ? `Inspect the local branch ${branch} (the reviewed candidate) and merge it yourself if you accept it.` : `Inspect ${candidate}${ref2 !== null ? ` (git log ${ref2})` : ""} and merge it yourself if you accept it.`;
     case "BLOCKED": {
       const why = run.outcomeReason ?? "The run is blocked.";
-      if (outcomeHas(run, "frozen_policy") || /orbit resume/.test(why)) return why;
-      return `${/[.!?]$/.test(why.trim()) ? why.trim() : `${why.trim()}.`} Resolve that, then run \`orbit resume ${run.id}\`.`;
+      if (outcomeHas(run, "frozen_policy")) return why;
+      const sentence = /[.!?]$/.test(why.trim()) ? why.trim() : `${why.trim()}.`;
+      if (fresh !== null) return /start a new run/.test(why) ? why : `${sentence} Resuming would only block again (${fresh}): cancel this run (orbit cancel ${run.id}) and start a new run with orbit run.`;
+      if (/orbit resume/.test(why)) return why;
+      return `${sentence} Resolve that, then run \`orbit resume ${run.id}\`.`;
     }
     case "EXHAUSTED": {
       const advice = exhaustedAdvice(run);
@@ -49948,7 +50642,7 @@ function renderMarkdown(r) {
   }
   out.push("## Repairs", "", list3(r.repairs.map((x) => `attempt ${x.attempt}: ${x.source} brief${x.fingerprint ? ` for ${x.fingerprint}` : ""}`)), "");
   const rv = r.revision;
-  out.push("## Revision, branch and pull request", "", list3([`base: ${rv.base ?? "none"}`, `candidate: ${rv.candidate ?? "none"} (tree ${rv.tree ?? "none"})`, `branch: ${rv.branch ?? "none"}`, rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? "none"}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ""}` : "none"}`]), "");
+  out.push("## Revision, branch and pull request", "", list3([`base: ${rv.base ?? "none"}`, `candidate: ${rv.candidate ?? "none"} (tree ${rv.tree ?? "none"})`, `branch: ${rv.branch ?? "none"}`, ...rv.candidate_ref ? [`candidate ref: ${rv.candidate_ref}`] : [], rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? "none"}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ""}` : "none"}`]), "");
   if (r.budget) {
     const b = r.budget;
     out.push("## Budget consumption", "", list3([...b.counters.map((c) => `${c.counter}: ${round2(c.used)} used of ${round2(c.allowance)} allowed (hard cap ${round2(c.hard_cap)})`), `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? "measured" : "incomplete: some usage has no cost"}); ${b.cost_measurement}`, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), "");
@@ -49989,6 +50683,13 @@ async function finalizeRun(ctx) {
   } catch (err) {
     ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.failed", ctx.ownerId, { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, ctx.clock.now()));
   }
+  if (listWorkers(ctx.db, { runId: ctx.run.id, role: "curator" }).length > 0) {
+    try {
+      writeFinalReport(ctx.db, ctx.run.id, { runDir: ctx.runDir, clock: ctx.clock, snapshot: ctx.snapshot });
+    } catch (err) {
+      ctx.log.error("final report failed after learning", { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
 }
 function curatorRaisedCap(host, ctx, purpose, error) {
   if (ctx && purpose) return raiseOutputCap(ctx, purpose, error);
@@ -50007,6 +50708,7 @@ async function learnAtTerminal(ctx) {
     const admitted = curationAdmitted(ctx);
     if (run.state === "CANCELLED") summary.skipped = "cancelled runs are not curated";
     else if (refusedWithoutOutput(ctx.db, run)) summary.skipped = "the run ended because a worker session was refused and produced nothing; the curator is a session in the same environment and would be refused the same way";
+    else if (endedBeforeAnyWorker(ctx.db, run)) summary.skipped = "the run ended before any worker session, so there is nothing of the repository to learn from; its gate decisions record the environment, not a lesson";
     else if (!admitted.ok) summary.skipped = admitted.why;
     else {
       const host = curatorHostFor(ctx);
@@ -50019,7 +50721,7 @@ async function learnAtTerminal(ctx) {
       attempts: listWorkers(ctx.db, { runId: run.id, role: "implementer" }).length,
       verifiedCriteria: ev?.report.acceptance_evidence.filter((a) => a.status === "supported").map((a) => a.criterion_id) ?? [],
       contradictedLessonIds: [],
-      artifact: existsSync28(join41(ctx.runDir, "final.md")) ? { path: "final.md", sha256: sha256(readFileSync22(join41(ctx.runDir, "final.md"))) } : { path: "final.md", sha256: null }
+      artifact: existsSync29(join42(ctx.runDir, "final.md")) ? { path: "final.md", sha256: sha256(readFileSync22(join42(ctx.runDir, "final.md"))) } : { path: "final.md", sha256: null }
     });
     if (k.share_globally) {
       const guard = loadPublicationGuard(ctx.snapshot.config.guard.terms_file ? { termsPath: ctx.snapshot.config.guard.terms_file } : {});
@@ -50038,11 +50740,14 @@ async function learnAtTerminal(ctx) {
   } finally {
     store.close();
   }
-  atomicWriteJson(join41(ctx.runDir, "learning.json"), summary);
+  atomicWriteJson(join42(ctx.runDir, "learning.json"), summary);
   ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.completed", ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0 }, ctx.clock.now()));
 }
 function refusedWithoutOutput(db, run) {
   return outcomeHas(run, "worker_refusal") && db.get("SELECT 1 AS x FROM candidates WHERE run_id = ? LIMIT 1", run.id) === void 0;
+}
+function endedBeforeAnyWorker(db, run) {
+  return db.get("SELECT 1 AS x FROM workers WHERE run_id = ? AND role <> 'curator' LIMIT 1", run.id) === void 0;
 }
 function curatorHostFor(ctx) {
   return {
@@ -50052,7 +50757,7 @@ function curatorHostFor(ctx) {
     policyPath: ctx.run.policyPath,
     policyHash: ctx.run.policyHash,
     runId: ctx.run.id,
-    dir: join41(ctx.runDir, "learning"),
+    dir: join42(ctx.runDir, "learning"),
     budgetUsd: ctx.snapshot.config.knowledge.curator_budget_usd,
     recorded: ctx
   };
@@ -50077,9 +50782,9 @@ async function runCurator(host, task, model = curatorModelFor(host.deps.registry
   const ctx = host.recorded ?? null;
   const timeoutMs = host.timeoutMs ?? CURATOR_TIMEOUT_MS;
   const env = host.env ?? host.deps.hostEnv ?? process.env;
-  const home2 = host.homeDir ?? host.deps.homeDir ?? homedir11();
-  const cwd = join41(host.dir, "cwd");
-  mkdirSync15(cwd, { recursive: true, mode: 448 });
+  const home2 = host.homeDir ?? host.deps.homeDir ?? homedir12();
+  const cwd = join42(host.dir, "cwd");
+  mkdirSync16(cwd, { recursive: true, mode: 448 });
   let row = null;
   let workerId;
   let workerDir;
@@ -50088,8 +50793,8 @@ async function runCurator(host, task, model = curatorModelFor(host.deps.registry
     const n2 = listWorkers(ctx.db, { runId: ctx.run.id, role: "curator" }).length + 1;
     workerId = `${ctx.run.id}-curator-${n2}`;
     purpose = `curate:${n2}`;
-    workerDir = join41(ctx.runDir, "workers", workerId);
-    mkdirSync15(workerDir, { recursive: true, mode: 448 });
+    workerDir = join42(ctx.runDir, "workers", workerId);
+    mkdirSync16(workerDir, { recursive: true, mode: 448 });
     recordSpendCap(ctx, purpose, host.budgetUsd, 0);
     const ctxNow = ctx;
     row = ctx.db.tx(() => {
@@ -50098,8 +50803,8 @@ async function runCurator(host, task, model = curatorModelFor(host.deps.registry
     });
   } else {
     workerId = `${host.runId}-curator`;
-    workerDir = join41(host.dir, "curator");
-    mkdirSync15(workerDir, { recursive: true, mode: 448 });
+    workerDir = join42(host.dir, "curator");
+    mkdirSync16(workerDir, { recursive: true, mode: 448 });
   }
   const spec = {
     runId: host.runId,
@@ -50115,7 +50820,7 @@ async function runCurator(host, task, model = curatorModelFor(host.deps.registry
     readOnly: true,
     maxTurns: CURATOR_MAX_TURNS,
     timeoutMs,
-    sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: host.snapshot, provider: "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join41(home2, ".claude"), homeDir: home2, policyPath: host.policyPath, readablePaths: [host.deps.orbitInstallDir], env }),
+    sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: host.snapshot, provider: "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join42(home2, ".claude"), homeDir: home2, policyPath: host.policyPath, readablePaths: [host.deps.orbitInstallDir], env }),
     policyPath: host.policyPath,
     policyHash: host.policyHash,
     env: {},
@@ -50191,6 +50896,9 @@ var init_report2 = __esm({
     init_profiles();
     init_prompt();
     init_run_store();
+    init_resume();
+    init_run_refs();
+    init_candidate();
     init_context2();
     init_run_store();
     init_workers2();
@@ -50199,165 +50907,6 @@ var init_report2 = __esm({
     init_knowledge_hooks();
     CURATOR_TIMEOUT_MS = 5 * 6e4;
     CURATOR_MAX_TURNS = 6;
-  }
-});
-
-// src/evidence/candidate.ts
-import { chmodSync as chmodSync7, existsSync as existsSync29, lstatSync as lstatSync9, mkdirSync as mkdirSync16, mkdtempSync as mkdtempSync4, readdirSync as readdirSync8, realpathSync as realpathSync12, rmSync as rmSync9, writeFileSync as writeFileSync5 } from "node:fs";
-import { tmpdir as tmpdir9 } from "node:os";
-import { dirname as dirname21, join as join42, parse as parse4, sep as sep9 } from "node:path";
-function candidateRef(runId, seq2) {
-  return `refs/orbit/${runId}/candidates/${seq2}`;
-}
-async function snapshotCandidate(input) {
-  const { db, clock, repoRoot, runId } = input;
-  if (!RUN_ID.test(runId)) throw new OrbitError("INTERNAL", `run id is not safe in a ref name: ${JSON.stringify(runId)}`);
-  const base = await resolveCommit(repoRoot, input.baseRev);
-  const { gitDir, worktree } = await adminDirFor(repoRoot, input.worktree);
-  const tree = await stageTree({ gitDir, worktree, base, extraExcludes: input.extraExcludes ?? [] });
-  const row = reserveCandidate(db, { runId, attempt: input.attempt, workerId: input.workerId, treeHash: tree, parentSha: base }, clock);
-  if (row.status !== "CREATING") return { ...row, created: false };
-  const message = `orbit candidate ${runId}/${row.seq}
-
-attempt: ${row.attempt}
-worker: ${row.workerId ?? "none"}
-tree: ${tree}
-`;
-  const when = `${Math.floor(row.createdAt / 1e3)} +0000`;
-  const commit = (await git2(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], {
-    env: {
-      GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name,
-      GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email,
-      GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name,
-      GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email,
-      GIT_AUTHOR_DATE: when,
-      GIT_COMMITTER_DATE: when
-    }
-  })).trim();
-  await git2(repoRoot, ["update-ref", candidateRef(runId, row.seq), commit]);
-  const stat = await diffStat(repoRoot, await treeOf(repoRoot, base), tree);
-  const done = finalizeCandidate(db, row.id, commit, stat, clock);
-  return { ...done, created: true };
-}
-async function stageTree(o) {
-  const scratch = mkdtempSync4(join42(tmpdir9(), "orbit-index-"));
-  try {
-    const excludes = join42(scratch, "exclude");
-    writeFileSync5(excludes, `${[...BUILTIN_EXCLUDES, ...o.extraExcludes].join("\n")}
-`);
-    const env = { GIT_DIR: o.gitDir, GIT_WORK_TREE: o.worktree, GIT_INDEX_FILE: join42(scratch, "index") };
-    const opts = { env, config: { "core.excludesFile": excludes } };
-    await git2(o.worktree, ["read-tree", o.base], opts);
-    await git2(o.worktree, ["add", "-A", "--", "."], opts);
-    return (await git2(o.worktree, ["write-tree"], opts)).trim();
-  } finally {
-    rmSync9(scratch, { recursive: true, force: true });
-  }
-}
-async function diffStat(repoRoot, fromTree, toTree) {
-  const out = await git2(repoRoot, ["diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", fromTree, toTree, "--"]);
-  const stat = { files: 0, insertions: 0, deletions: 0, binaryFiles: 0, paths: [], truncated: false };
-  for (const rec2 of out.split("\0")) {
-    if (!rec2) continue;
-    const m = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(rec2);
-    if (!m) continue;
-    stat.files++;
-    if (m[1] === "-") stat.binaryFiles++;
-    else {
-      stat.insertions += Number(m[1]);
-      stat.deletions += Number(m[2]);
-    }
-    if (stat.paths.length < MAX_DIFF_PATHS) stat.paths.push(m[3]);
-    else stat.truncated = true;
-  }
-  return stat;
-}
-async function materializeCandidate(repoRoot, commit, dir, opts = {}) {
-  const sha = await resolveCommit(repoRoot, commit);
-  if (existsSync29(dir) && readdirSync8(dir).length > 0) {
-    throw new OrbitError("GIT_FAILED", `checkout directory is not empty: ${dir}`, { dir });
-  }
-  mkdirSync16(dirname21(dir), { recursive: true });
-  await git2(repoRoot, ["worktree", "add", "--detach", "--force", dir, sha]);
-  const real = realpathSync12(dir);
-  if (opts.readOnly !== false) makeReadOnly(real);
-  return real;
-}
-async function cleanupCandidateCheckout(repoRoot, dir) {
-  assertDisposableCheckout(repoRoot, dir);
-  if (existsSync29(dir)) makeWritable(dir);
-  try {
-    await git2(repoRoot, ["worktree", "remove", "--force", dir]);
-  } catch {
-    rmSync9(dir, { recursive: true, force: true });
-  }
-  rmSync9(dir, { recursive: true, force: true });
-  await git2(repoRoot, ["worktree", "prune"]).catch(() => {
-  });
-}
-function assertDisposableCheckout(repoRoot, dir) {
-  if (!existsSync29(dir)) return;
-  const target = realpathSync12(dir);
-  const root = realpathSync12(repoRoot);
-  const refuse = (why) => {
-    throw new OrbitError("GIT_FAILED", `refusing to remove ${dir}: ${why}`, { dir, repoRoot });
-  };
-  if (target === root || root.startsWith(target.endsWith(sep9) ? target : target + sep9)) refuse("it is or contains the repository");
-  if (target === parse4(target).root) refuse("it is a filesystem root");
-  let dotGit;
-  try {
-    dotGit = lstatSync9(join42(target, ".git"));
-  } catch {
-    return;
-  }
-  if (dotGit.isDirectory()) refuse("it holds its own .git directory, so it is a repository, not a checkout");
-}
-function walk3(dir, visit3) {
-  for (const name of readdirSync8(dir)) {
-    const p = join42(dir, name);
-    const st = lstatSync9(p);
-    if (st.isSymbolicLink()) continue;
-    if (st.isDirectory()) {
-      if (name === ".git") continue;
-      walk3(p, visit3);
-      visit3(p, true);
-    } else visit3(p, false);
-  }
-}
-function makeReadOnly(dir) {
-  walk3(dir, (p, isDir) => chmodSync7(p, isDir ? 365 : lstatSync9(p).mode & 365));
-  chmodSync7(dir, 365);
-}
-function makeWritable(dir) {
-  try {
-    chmodSync7(dir, 493);
-    const stack = [dir];
-    while (stack.length) {
-      const d = stack.pop();
-      for (const name of readdirSync8(d)) {
-        const p = join42(d, name);
-        const st = lstatSync9(p);
-        if (st.isSymbolicLink()) continue;
-        if (st.isDirectory()) {
-          chmodSync7(p, 493);
-          if (name !== ".git") stack.push(p);
-        } else chmodSync7(p, st.mode | 128);
-      }
-    }
-  } catch {
-  }
-}
-var ORBIT_GIT_IDENTITY, BUILTIN_EXCLUDES, RUN_ID, MAX_DIFF_PATHS;
-var init_candidate = __esm({
-  "src/evidence/candidate.ts"() {
-    "use strict";
-    init_errors();
-    init_git();
-    init_store();
-    ORBIT_GIT_IDENTITY = { name: "Orbit", email: "orbit@orbit.invalid" };
-    BUILTIN_EXCLUDES = [".DS_Store", "Thumbs.db", "node_modules/"];
-    RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-    MAX_DIFF_PATHS = 200;
   }
 });
 
@@ -50614,14 +51163,22 @@ async function runBaseline(input) {
   const checkIds = defs.map((d) => d.id).sort();
   const file = join43(runDir2, BASELINE_FILE2);
   const prior = readJsonIfExists(file);
-  if (prior && prior.schema === "orbit.baseline/1" && prior.complete && prior.baseRevision === baseRevision && prior.policyHash === run.policyHash && Array.isArray(prior.checkIds) && prior.checkIds.join("\0") === checkIds.join("\0")) {
+  const sameBase = prior !== null && prior.schema === "orbit.baseline/1" && prior.baseRevision === baseRevision && prior.policyHash === run.policyHash;
+  const amending = input.amend !== void 0;
+  if (amending && !(sameBase && Array.isArray(prior.checkIds) && Array.isArray(prior.checks) && Array.isArray(prior.failures))) {
+    throw new OrbitError("INTERNAL", `run ${run.id} has no baseline of ${baseRevision.slice(0, 12)} under this policy to amend`);
+  }
+  if (!amending && sameBase && prior.complete && Array.isArray(prior.checkIds) && prior.checkIds.join("\0") === checkIds.join("\0")) {
     return { report: prior, results: [], reused: true };
   }
-  const classified = prior && prior.baseRevision === baseRevision && prior.policyHash === run.policyHash && Array.isArray(prior.failures) ? prior.failures.filter((f) => f.classification !== void 0).map((f) => f.checkId) : [];
-  const setAside = new Set(classified.flatMap((checkId) => listCheckRuns(db, { runId: run.id, candidateId: null, checkId, rootsOnly: true }).filter((r) => isFinalCheckStatus(r.status)).map((r) => r.id)));
+  const classified = sameBase && Array.isArray(prior.failures) ? prior.failures.filter((f) => f.classification !== void 0 && checkIds.includes(f.checkId)).map((f) => f.checkId) : [];
+  const finalBaseRuns = (checkId) => listCheckRuns(db, { runId: run.id, candidateId: null, checkId, rootsOnly: true }).filter((r) => isFinalCheckStatus(r.status)).map((r) => r.id);
+  const setAside = new Set(classified.flatMap(finalBaseRuns));
+  if (setAside.size > 0 || amending) for (const id of [INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID]) for (const r of finalBaseRuns(id)) setAside.add(r);
   const checkoutDir = input.checkoutDir ?? join43(prepareWorkerTmpDir(join43(runDir2, "baseline-checkout")), `base-${sha256(run.id).slice(0, 8)}`);
   await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
   await materializeCandidate(input.repoRoot, baseRevision, checkoutDir, { readOnly: false });
+  let measured;
   try {
     const ctx = {
       db,
@@ -50636,11 +51193,12 @@ async function runBaseline(input) {
       pollMs: input.pollMs,
       killGraceMs: input.killGraceMs,
       homeDir: input.homeDir,
-      toolchainCacheRoot: input.toolchainCacheRoot ?? null
+      toolchainCacheRoot: input.toolchainCacheRoot ?? null,
+      ...setAside.size > 0 ? { setAside } : {}
     };
     const install = await installDependencies({ ...ctx, baseTree, registryHosts: input.registryHosts });
-    const results = install.skipped || install.ok ? await runCheckSet({ ...ctx, ...setAside.size > 0 ? { setAside } : {} }, baselineSubject(runDir2, baseTree), defs) : [];
-    const audit = await runDependencyAudit({ ...ctx, registryHosts: input.registryHosts }, baselineSubject(runDir2, baseTree, "install"));
+    const results = install.skipped || install.ok ? await runCheckSet(ctx, baselineSubject(runDir2, baseTree), defs) : [];
+    const audit2 = amending ? prior.audit ?? null : await runDependencyAudit({ ...ctx, registryHosts: input.registryHosts }, baselineSubject(runDir2, baseTree, "install"));
     const entries = results.map((r) => ({
       checkId: r.checkId,
       mandatory: snapshot2.config.checks[r.checkId]?.mandatory === true,
@@ -50651,7 +51209,27 @@ async function runBaseline(input) {
       excerpt: r.excerpt,
       log: r.logPath
     }));
-    const report2 = {
+    const decisive = (e) => e.status === "PASSED" || e.status === "FAILED" || e.status === "TIMEOUT";
+    const failed = (e) => e.status === "FAILED" || e.status === "TIMEOUT";
+    const complete2 = (install.skipped || install.ok) && entries.length === defs.length && entries.every(decisive);
+    const now = clock.now();
+    if (amending) {
+      const base = prior;
+      const asked = new Set(checkIds);
+      const covered = entries.filter(decisive).map((e) => e.checkId);
+      const report4 = {
+        ...base,
+        checkIds: [.../* @__PURE__ */ new Set([...base.checkIds.filter((id) => !asked.has(id)), ...covered])].sort(),
+        install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
+        checks: [...base.checks.filter((c) => !asked.has(c.checkId)), ...entries],
+        failures: [...base.failures.filter((f) => !asked.has(f.checkId)), ...entries.filter(failed).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt }))],
+        complete: base.complete && complete2,
+        amendments: [...base.amendments ?? [], { checkIds, stage: input.amend.stage, recordedAt: now }]
+      };
+      db.tx(() => appendEvent(db, run.id, "baseline.amended", "controller", { base_revision: baseRevision, base_tree: baseTree, stage: input.amend.stage, checks: checkIds, failures: entries.filter(failed).map((e) => e.checkId), complete: complete2 }, now));
+      return { report: report4, results, reused: false };
+    }
+    const report3 = {
       schema: "orbit.baseline/1",
       runId: run.id,
       baseRevision,
@@ -50659,21 +51237,23 @@ async function runBaseline(input) {
       policyHash: run.policyHash,
       checkIds,
       install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
-      ...audit ? { audit } : {},
-      auditNotes: baselineAuditNotes(audit, dependencyAuditPolicy(snapshot2.config)),
+      ...audit2 ? { audit: audit2 } : {},
+      auditNotes: baselineAuditNotes(audit2, dependencyAuditPolicy(snapshot2.config)),
       checks: entries,
-      failures: entries.filter((e) => e.mandatory && (e.status === "FAILED" || e.status === "TIMEOUT")).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
-      // Every requested check produced a decisive result (no ERROR, no CANCELLED, none skipped).
-      complete: (install.skipped || install.ok) && entries.length === defs.length && entries.every((e) => e.status === "PASSED" || e.status === "FAILED" || e.status === "TIMEOUT"),
-      recordedAt: clock.now()
+      failures: entries.filter((e) => e.mandatory && failed(e)).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
+      complete: complete2,
+      recordedAt: now
     };
-    atomicWriteJson(file, report2);
-    const auditSummary = audit ? { ran: audit.ran, reason: audit.reason, vulnerabilities: audit.vulnerabilities.length, disallowed_licenses: audit.licenses.length } : null;
-    db.tx(() => appendEvent(db, run.id, "baseline.recorded", "controller", { base_revision: baseRevision, base_tree: baseTree, failures: report2.failures.map((f) => f.checkId), complete: report2.complete, audit: auditSummary }, clock.now()));
-    return { report: report2, results, reused: false };
+    measured = { report: report3, results };
   } finally {
     await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
   }
+  const report2 = input.settle ? input.settle(measured.report) : measured.report;
+  atomicWriteJson(file, report2);
+  const audit = report2.audit ?? null;
+  const auditSummary = audit ? { ran: audit.ran, reason: audit.reason, vulnerabilities: audit.vulnerabilities.length, disallowed_licenses: audit.licenses.length } : null;
+  db.tx(() => appendEvent(db, run.id, "baseline.recorded", "controller", { base_revision: baseRevision, base_tree: baseTree, failures: report2.failures.map((f) => f.checkId), complete: report2.complete, audit: auditSummary }, clock.now()));
+  return { report: report2, results: measured.results, reused: false };
 }
 var BASELINE_FILE2, NPM_REGISTRY_HOSTS, INSTALL_TIMEOUT_SECONDS, OTHER_LOCKFILES, AUDIT_CHECK_ID, AUDIT_TIMEOUT_SECONDS, AUDIT_REPORT, MANIFEST_FILES, SEVERITY_RANK, MAX_BASELINE_AUDIT_NOTES;
 var init_baseline = __esm({
@@ -50706,7 +51286,7 @@ var init_baseline = __esm({
 });
 
 // src/ui/app-toolchains.ts
-import { homedir as homedir12 } from "node:os";
+import { homedir as homedir13 } from "node:os";
 function appToolchains(input) {
   const layout = commandToolchains({
     command: input.command,
@@ -50717,7 +51297,7 @@ function appToolchains(input) {
     tmpDir: input.tmpDir,
     isolation: input.isolation,
     networkHosts: input.networkHosts,
-    hostHome: input.homeDir ?? homedir12(),
+    hostHome: input.homeDir ?? homedir13(),
     hostEnv: input.hostEnv ?? process.env
   });
   prepareToolchainLayout(layout);
@@ -51020,14 +51600,14 @@ function describeError(err, rootDir) {
   const loc = err.location;
   return {
     message,
-    location: loc ? { file: relativeTo(loc.file, rootDir), line: loc.line, column: loc.column } : null,
+    location: loc ? { file: relativeTo2(loc.file, rootDir), line: loc.line, column: loc.column } : null,
     snippet: err.snippet,
     expected: exp,
     observed: rec2,
     diff
   };
 }
-function relativeTo(file, rootDir) {
+function relativeTo2(file, rootDir) {
   if (!rootDir) return file;
   const prefix = rootDir.endsWith("/") ? rootDir : `${rootDir}/`;
   return file.startsWith(prefix) ? file.slice(prefix.length) : file;
@@ -51581,7 +52161,7 @@ function tail(text2, max = 600) {
 }
 function buildJourney(test, ctx, checkDir, cwd) {
   const { checkoutDir } = ctx;
-  const file = relativeTo(test.file, checkoutDir);
+  const file = relativeTo2(test.file, checkoutDir);
   const title = test.titlePath[test.titlePath.length - 1] ?? "";
   const id = `${test.projectName}/${file}#${test.titlePath.join(" > ")}`;
   const failing = test.results.filter((r) => FAILED_RESULT.has(r.status));
@@ -51981,6 +52561,9 @@ function result(gate, reasons, evidence, notes, details, unverified = false) {
   const status2 = reasons.length > 0 ? "fail" : unverified ? "unverified" : "pass";
   return { gate, status: status2, passed: status2 === "pass", reasons, evidence, notes, onFailure: FAILURE_BEHAVIOUR[gate], details };
 }
+function notApplicable(gate, why, details) {
+  return { gate, status: "not_applicable", passed: true, reasons: [], evidence: [], notes: [why], onFailure: FAILURE_BEHAVIOUR[gate], details };
+}
 function intakeGate(input) {
   const { snapshot: snapshot2, run } = input;
   const reasons = [];
@@ -52089,6 +52672,8 @@ function environmentGate(input) {
   return result("environment", reasons, evidence, notes, { blockedProvider, code: code2 });
 }
 function baselineGate(report2) {
+  const ranNothing = report2.checkIds.length === 0 && report2.checks.length === 0 && report2.failures.length === 0 && report2.install.skipped && !report2.audit && (report2.auditNotes ?? []).length === 0;
+  if (ranNothing && report2.complete) return notApplicable("baseline", "nothing ran on the base revision: the policy marks no check mandatory, and there is no locked install or dependency audit", { failures: [] });
   const reasons = [];
   const notes = [];
   const evidence = [`baseline of ${report2.baseRevision} (tree ${report2.baseTree}): ${report2.checks.length} check(s)`];
@@ -52149,7 +52734,7 @@ function behaviourGate(evaluation) {
   return result("behaviour", [], evidence, [...evaluation.incompleteReasons, ...r.unverified], { verdict: r.verdict }, r.verdict !== "PASS");
 }
 function uiGate(input) {
-  if (!input.required) return result("ui", [], ["no UI path changed and no criterion needs UI evidence"], [], { verdict: null });
+  if (!input.required) return notApplicable("ui", input.configured ? "no UI path changed and no criterion needs UI evidence" : "the policy configures no UI journeys, and no criterion needs UI evidence", { verdict: null });
   if (!input.configured) return result("ui", ["UI evidence is required but the policy configures no UI journeys"], [], [], { verdict: null });
   const r = input.result;
   if (!r) return result("ui", [], [], ["UI checks did not run"], { verdict: null }, true);
@@ -52437,12 +53022,12 @@ async function runGitleaks(bin, input, files, reportPath2) {
   });
   if (r.exitCode !== 0 && r.exitCode !== 1) throw new Error(`exit ${r.exitCode ?? r.signal}: ${redact(r.stderr).slice(0, 300)}`);
   const parsed3 = existsSync32(raw) ? readJsonIfExists(raw) ?? [] : [];
-  const findings = parsed3.map((f) => ({ file: relativeTo2(tree, f.File ?? ""), line: typeof f.StartLine === "number" ? f.StartLine : null, rule: String(f.RuleID ?? "secret") }));
+  const findings = parsed3.map((f) => ({ file: relativeTo3(tree, f.File ?? ""), line: typeof f.StartLine === "number" ? f.StartLine : null, rule: String(f.RuleID ?? "secret") }));
   if (r.exitCode === 1 && findings.length === 0) throw new Error("reported leaks but wrote no readable report");
   rmSync11(scanRoot, { recursive: true, force: true });
   return { scanner: "gitleaks", completed: true, findings, files: copied, note: "gitleaks with Orbit's trusted configuration and --ignore-gitleaks-allow", reportPath: reportPath2 };
 }
-function relativeTo2(root, p) {
+function relativeTo3(root, p) {
   return p.startsWith(root + sep11) ? p.slice(root.length + 1) : p;
 }
 async function partitionBySize(input, changed2) {
@@ -53273,7 +53858,8 @@ async function collectVerificationEvidence(ctx, cand, opts) {
   const disclose = (text2) => {
     if (!report2.unverified.includes(text2)) report2.unverified.push(text2);
   };
-  for (const n2 of [...security.notes, ...uiG.notes, ...opts.notes ?? []]) disclose(n2);
+  for (const g of [security, uiG]) if (g.status !== "not_applicable") for (const n2 of g.notes) disclose(n2);
+  for (const n2 of opts.notes ?? []) disclose(n2);
   if (install.audit && install.audit.blocking.length === 0 && install.audit.summary) disclose(install.audit.summary);
   for (const v of sastVerdicts) if (v.note && (!v.classification || v.classification.excepted.length > 0 || v.classification.advisory.length > 0)) disclose(v.note);
   if (security.status === "fail") {
@@ -53298,21 +53884,32 @@ async function collectVerificationEvidence(ctx, cand, opts) {
   return { evidence: { report: report2, failReasons, incompleteReasons: evaluation.incompleteReasons, evaluation, scan, sast: sastVerdicts, security, ui: uiG, uiRequired, exploration } };
 }
 async function baseComparison(ctx, baseRev, commit) {
-  const treeHash = (await git2(ctx.run.repoRoot, ["rev-parse", "--verify", `${baseRev}^{tree}`])).trim();
+  const repoRoot = ctx.run.repoRoot;
+  const treeHash = (await git2(repoRoot, ["rev-parse", "--verify", `${baseRev}^{tree}`])).trim();
   const baseline = readJsonIfExists(join48(ctx.runDir, BASELINE_FILE2));
   const usable = baseline !== null && baseline.schema === "orbit.baseline/1" && baseline.baseTree === treeHash && baseline.policyHash === ctx.run.policyHash && Array.isArray(baseline.checks);
-  const out = await git2(ctx.run.repoRoot, ["diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACMT", baseRev, commit, "--"]);
+  const out = await git2(repoRoot, ["diff", "--name-only", "-z", "--no-renames", "--diff-filter=ACMT", baseRev, commit, "--"]);
+  const changedPaths2 = out.split("\0").filter((p) => p.length > 0);
+  const testLayout = await loadTestLayout(gitTreeReader((args) => git2(repoRoot, args)), baseRev, commit, changedPaths2, { rustModules: true });
+  const diffs = /* @__PURE__ */ new Map();
+  if (!changedPaths2.some((p) => isTestPath(p, testLayout))) {
+    for (const p of changedPaths2.filter(testedByContent).slice(0, MAX_CONTENT_DIFFS)) {
+      diffs.set(p, await git2(repoRoot, ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--text", `-U${WHOLE_FILE_CONTEXT}`, baseRev, commit, "--", `:(literal)${p}`]));
+    }
+  }
   return {
     treeHash,
     checks: usable ? baseline.checks.map((c) => ({ checkId: c.checkId, status: c.status })) : null,
-    changedPaths: out.split("\0").filter((p) => p.length > 0)
+    changedPaths: changedPaths2,
+    testLayout,
+    diffs
   };
 }
 async function changedPaths(repoRoot, baseRev, commit) {
   const out = await git2(repoRoot, ["diff", "--name-only", "-z", "--no-renames", baseRev, commit, "--"]);
   return out.split("\0").filter((p) => p.length > 0);
 }
-var EXPLORATION_NOT_RUN;
+var EXPLORATION_NOT_RUN, MAX_CONTENT_DIFFS, WHOLE_FILE_CONTEXT;
 var init_verification = __esm({
   "src/controller/verification.ts"() {
     "use strict";
@@ -53320,6 +53917,7 @@ var init_verification = __esm({
     init_globs();
     init_config();
     init_fsx();
+    init_test_files();
     init_git();
     init_baseline();
     init_runner();
@@ -53330,6 +53928,8 @@ var init_verification = __esm({
     init_security();
     init_exploration();
     EXPLORATION_NOT_RUN = "UI exploration (ui.exploration) runs only in the controller's VERIFYING step; this verification did not explore the UI";
+    MAX_CONTENT_DIFFS = 50;
+    WHOLE_FILE_CONTEXT = 1e8;
   }
 });
 
@@ -53527,10 +54127,18 @@ function misconfiguredRecord(m, classification = m.kind === "argument" ? "miscon
 function quoted2(lines) {
   return lines.map((l) => JSON.stringify(l)).join(", ");
 }
+function amendmentSentence(checks) {
+  const why = (c) => c.citedBy.length === 0 ? "the contract lists it among its required checks" : `${c.citedBy.length > 1 ? "criteria" : "criterion"} ${c.citedBy.join(", ")} ${c.citedBy.length > 1 ? "cite" : "cites"} it as evidence`;
+  const many = checks.length > 1;
+  const optional = checks.every((c) => !c.mandatory) ? `, which the policy does not mark mandatory` : "";
+  return `The contract requires ${many ? "checks" : "check"} ${checks.map((c) => `${c.checkId} (${why(c)})`).join(", ")}${optional}, so ${many ? "they were" : "it was"} run on the base revision before any change was judged (a baseline amendment)`;
+}
 function baselineEnvironmentBlockReason(input) {
   const { runId, failures } = input;
+  const amended = (input.amended ?? []).filter((a) => failures.some((f) => f.checkId === a.checkId));
   return joinSentences([
     `${named(failures)} could not run on the base revision ${input.baseRevision.slice(0, 12)}, and the output shows an environment cause, not a pre-existing failure: ${evidenceOf(failures)}`,
+    ...amended.length > 0 ? [amendmentSentence(amended)] : [],
     `${failures.length > 1 ? "They are" : "It is"} not recorded as a pre-existing failure and no baseline exception is offered: the check never got as far as the repository's code, so accepting its failure would let a run pass with a check that never ran`,
     `Fix: ${environmentFix(failures) ?? ENVIRONMENT_FALLBACK_FIX}`,
     `Then orbit resume ${runId} runs the baseline again; a changed check definition needs a new run, because this run's policy is frozen`
@@ -53542,9 +54150,11 @@ function commandFix(checks) {
 }
 function baselineBlockReason(input) {
   const { environment, misconfigured } = input;
-  if (misconfigured.length === 0) return baselineEnvironmentBlockReason({ runId: input.runId, baseRevision: input.baseRevision, failures: environment });
+  if (misconfigured.length === 0) return baselineEnvironmentBlockReason({ runId: input.runId, baseRevision: input.baseRevision, failures: environment, ...input.amended ? { amended: input.amended } : {} });
+  const amended = (input.amended ?? []).filter((a) => misconfigured.some((m) => m.checkId === a.checkId) || environment.some((f) => f.checkId === a.checkId));
   const sentences = [
     `${named(misconfigured)} ${misconfigured.length > 1 ? "are" : "is"} misconfigured, not a pre-existing failure: on the base revision ${input.baseRevision.slice(0, 12)} the tool rejected the command line the check runs before it ran anything of the repository: ${evidenceOf(misconfigured)}`,
+    ...amended.length > 0 ? [amendmentSentence(amended)] : [],
     `${misconfigured.length > 1 ? "They are" : "It is"} not recorded as a pre-existing failure and no baseline exception is offered: a check whose command is wrong never tested anything, so accepting its failure would let a run pass with a check that never ran`
   ];
   if (environment.length > 0) {
@@ -53662,7 +54272,7 @@ var init_environment_block = __esm({
     MAX_LOG_BYTES3 = 4 * 1024 * 1024;
     DOTNET_DENIAL = /\/tmp\/\.dotnet\b|\.coreclr\.|NuGet-Migrations|System\.Threading\.(?:Mutex|Semaphore)/i;
     NUGET_LINE = /\berror NU\d{4}\b|\bNuGet\b|proxy tunnel request to proxy '[^']*' failed with status code '403'/;
-    NUGET_FILL = `since nuget.org's certificate cannot be verified inside the sandbox on macOS (srt keeps the system trust service out of reach), fill the repository's NuGet cache outside the sandbox with the command orbit doctor prints (checks.dotnet-packages), from which the dependency install and the checks restore (docs/troubleshooting.md, ".NET HTTP clients and NuGet restore on macOS")`;
+    NUGET_FILL = `since nuget.org's certificate cannot be verified inside the sandbox on macOS (srt keeps the system trust service out of reach), fill the repository's NuGet cache outside the sandbox with the command orbit doctor prints (checks.dotnet-packages), which the checks that restore read, and the dependency install too when dependencies.install_command restores packages (docs/troubleshooting.md, ".NET HTTP clients and NuGet restore on macOS")`;
     MSBUILD_NODE_DENIAL = /^the check sandbox denied MSBuild node /;
     ENVIRONMENT_FALLBACK_FIX = "let the check run in this environment (orbit doctor checks the isolation provider and starts each check's executable in the sandbox), or change the check definition";
   }
@@ -53711,7 +54321,8 @@ function settleExpectedFlips(ctx, contract) {
 function missingTargetsNotExpectedToFlip(ctx, contract) {
   const report2 = baselineOf(ctx);
   if (!report2) return [];
-  const missing = report2.failures.filter((f) => f.classification === "missing-target" && criteriaProvedBy(contract, f.checkId).length === 0);
+  const required = new Set(contract.required_check_ids);
+  const missing = report2.failures.filter((f) => f.classification === "missing-target" && required.has(f.checkId) && criteriaProvedBy(contract, f.checkId).length === 0);
   if (missing.length === 0) return [];
   const found = baselineMisconfiguredChecks(ctx, { ...report2, failures: missing });
   return missing.map(
@@ -53735,7 +54346,7 @@ async function blockOnMissingTargets(ctx, checks) {
     if (ids.has(req.check_id)) withdrawQuestion(ctx.db, req.question_id, `check ${req.check_id} is misconfigured: its command names something that does not exist on the base revision, and the contract does not expect the goal to create it`, ctx.clock);
   }
   const records = checks.map((m) => misconfiguredRecord(m, "misconfigured"));
-  decide2(ctx, { id: `dec-${ctx.run.id}-contract-missing-target-${ctx.clock.now()}`, kind: "baseline.check-misconfigured", summary: `${reason} ${advice}`, data: { base_revision: baseRevision, stage: "CONTRACTING", checks: records } });
+  decide2(ctx, { id: `dec-${ctx.run.id}-contract-missing-target-${ctx.clock.now()}`, kind: "baseline.check-misconfigured", summary: `${reason} ${advice}`, data: { base_revision: baseRevision, stage: ctx.run.state, checks: records } });
   return finishRun(ctx, "BLOCKED", reason, { frozenAdvice: advice, outcome: { base_revision: baseRevision, misconfigured_checks: records } });
 }
 function closeMootBaselineQuestions(ctx) {
@@ -53872,9 +54483,6 @@ function frozenPolicyCause(reason, code2) {
 function withSentence(reason, next) {
   const r = reason.trimEnd();
   return `${/[.!?]$/.test(r) ? r : `${r}.`} ${next}`;
-}
-function frozenPolicyForceHelps(setting) {
-  return !/^checks\.[\w.-]+\.command(?:, checks\.[\w.-]+\.command)*$/.test(setting);
 }
 function frozenPolicyAdvice(runId, setting) {
   const advice = `This comes from the run's frozen policy (${setting}): a run keeps the policy it started with, so editing .orbit/config.yaml does not change it and resuming would block again. Fix the config, then cancel this run (orbit cancel ${runId}) and start a new run with orbit run.`;
@@ -54060,6 +54668,7 @@ var init_common = __esm({
     init_context2();
     init_states();
     init_run_store();
+    init_resume();
     init_workers2();
     init_baseline_questions();
     init_worktree_cleanup();
@@ -54499,7 +55108,7 @@ var init_deliver = __esm({
 
 // src/delivery/release.ts
 import { existsSync as existsSync35, mkdirSync as mkdirSync19, rmSync as rmSync13 } from "node:fs";
-import { homedir as homedir13, platform as platform2 } from "node:os";
+import { homedir as homedir14, platform as platform2 } from "node:os";
 import { join as join52 } from "node:path";
 function releaseConfig(snapshot2) {
   return snapshot2.config.release ?? null;
@@ -54825,7 +55434,7 @@ async function runDeploy(a) {
     };
     const field = `release.environments.${envName}.deploy_command`;
     const scratch = join52(files.dir, "toolchains");
-    const realHome = input.homeDir ?? homedir13();
+    const realHome = input.homeDir ?? homedir14();
     const toolchains = releaseToolchains({ command: env.deploy_command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, homeDir: realHome, hostEnv: input.hostEnv ?? process.env });
     const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [files.home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: realHome });
     const cmdEnv = releaseCommandEnv({ home: files.home, tmp, toolchainEnv: toolchains.env, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha });
@@ -54971,7 +55580,7 @@ async function runVerifyCommand(a) {
     const tmp = prepareFreshTmpDir(dir);
     const def = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: ".", timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], local_binding: false, env: {}, mandatory: true, flaky_reruns: 0, kind: "command", category: "other" };
     const scratch = join52(dir, "toolchains");
-    const realHome = input.homeDir ?? homedir13();
+    const realHome = input.homeDir ?? homedir14();
     const toolchains = releaseToolchains({ command: a.command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, homeDir: realHome, hostEnv: input.hostEnv ?? process.env });
     const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: realHome });
     const cmdEnv = releaseCommandEnv({ home: home2, tmp, toolchainEnv: toolchains.env, deployEnv: input.deployEnv, runId: run.id, envName, branch, sha, extra: { ORBIT_RELEASE_VERIFY: "1" } });
@@ -55166,10 +55775,11 @@ async function buildReviewPacket(input) {
       excluded.push({ path: f.path, part: "both", reason: "generated", detail: `generated or lock file, +${f.added} -${f.deleted}` });
     } else candidates.push(f);
   }
+  const testLayout = await loadTestLayout(gitTreeReader((args) => git5(input.repoRoot, [...args])), baseSha, commitSha, all.map((f) => f.path));
   const score = (f) => {
     let s = 0;
     if (hot.has(f.path)) s += 10;
-    if (isTestPath(f.path)) s += 4;
+    if (isTestPath(f.path, testLayout)) s += 4;
     else s += 5;
     if (contractText.includes(f.path)) s += 3;
     if (/\.(md|txt|rst)$/i.test(f.path)) s -= 4;
@@ -55409,7 +56019,7 @@ var init_packet = __esm({
     init_redact();
     init_practices();
     init_builtin();
-    init_weakening();
+    init_test_files();
     init_resolve();
     enc = new TextEncoder();
     byteLen = (s) => enc.encode(s).length;
@@ -56304,10 +56914,16 @@ async function judgeWorkerPlugins(adapter, config) {
     }
     return { status: "warn", summary: `workers may load ${refused.length} plugin(s) the policy does not allow: ${refused.map(named2).join(", ")}`, details: [...details, SCOPE_SOURCE], missing, fix, refused };
   }
+  const allowed = judged.map((p) => `${p.id} (scope ${p.scope}, ${p.allowed_by})`).join(", ");
+  const placed = loads.length === 0 ? "" : `${loads.length} plugin(s)${maybe.length > 0 ? " (scope managed)" : ""}`;
+  const unplaced = maybe.length === 0 ? "" : loads.length === 0 ? `${maybe.length} plugin(s) of a scope doctor cannot place` : `${maybe.length} more of a scope doctor cannot place`;
+  const verb2 = [placed && `workers would load ${placed}`, unplaced && `${placed ? "and " : "workers "}may load ${unplaced}`].filter(Boolean).join(" ");
+  const reportNote = `a run's final report lists the plugins its worker sessions reported loading and says nothing when they loaded none`;
+  const unplacedNote = maybe.length > 0 ? "; a scope doctor cannot place may not be loaded at all, because workers start with no user, project or local settings" : "";
   return {
     status: "pass",
-    summary: `workers would load ${judged.length} plugin(s), each allowed by the policy: ${judged.map((p) => `${p.id} (scope ${p.scope}, ${p.allowed_by})`).join(", ")}`,
-    details: [...details, `${HOOKS_NOTE}; each run lists the plugins its workers loaded in its final report`, SCOPE_SOURCE],
+    summary: `${verb2}, each allowed by the policy: ${allowed}`,
+    details: [...details, `${HOOKS_NOTE}; ${reportNote}${unplacedNote}`, SCOPE_SOURCE],
     missing: null,
     fix: null,
     refused: []
@@ -56392,7 +57008,10 @@ async function preflightStep(ctx) {
   }
   const wtRoot = runWorktreeRoot(ctx);
   mkdirSync20(wtRoot, { recursive: true, mode: 448 });
+  const baselineDir = join53(wtRoot, "baseline");
+  let settled = null;
   const baseline = await runBaseline({
+    settle: (report2) => (settled = classifyBaseline(ctx, report2, baselineDir)).report,
     db: ctx.db,
     run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
     repoRoot: repo,
@@ -56405,57 +57024,35 @@ async function preflightStep(ctx) {
     pollMs: ctx.timing.checkPollMs,
     killGraceMs: ctx.timing.killGraceMs,
     homeDir: homeOf2(ctx.deps),
-    checkoutDir: join53(wtRoot, "baseline"),
+    checkoutDir: baselineDir,
     toolchainCacheRoot: toolchainCacheRootFor(ctx)
   });
   const after = await safePoint(ctx);
   if (after) return after;
-  const commandErrors = baselineMisconfiguredChecks(ctx, baseline.report);
-  const misconfigured = commandErrors.filter((m) => m.kind === "argument");
-  const missingTargets = commandErrors.filter((m) => m.kind === "missing-target");
-  const notRun = baselineEnvironmentFailures(ctx, baseline.report, join53(wtRoot, "baseline")).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId));
-  const classified = classifiedBaseline(baseline.report, notRun, misconfigured, missingTargets);
+  const found = settled ?? classifyBaseline(ctx, baseline.report, baselineDir);
+  const { report: classified, misconfigured, missingTargets, environment: notRun } = found;
   const bg = baselineGate(classified);
   recordGate(ctx, bg);
   if (!bg.passed && bg.status === "fail") return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}`, { outcome: { gate: bg } });
   if (misconfigured.length > 0 || notRun.length > 0) return blockOnBaseline(ctx, classified, { environment: notRun, misconfigured });
-  const preExisting = classified.failures.filter((f) => f.classification === void 0);
-  if (missingTargets.length > 0) {
-    atomicWriteJson(join53(ctx.runDir, BASELINE_FILE2), classified);
-    decide2(ctx, {
-      id: `dec-${ctx.run.id}-baseline-missing-target-${classified.recordedAt}`,
-      kind: MISSING_TARGET_KIND,
-      summary: `on ${head.slice(0, 12)} the command of ${missingTargets.length > 1 ? "checks" : "check"} ${missingTargets.map((m) => m.checkId).join(", ")} names something that does not exist yet: expected to flip if the contract names ${missingTargets.length > 1 ? "them" : "it"} as the proof of a criterion, otherwise misconfigured; never a baseline exception`,
-      data: { base_revision: head, checks: missingTargets.map((m) => misconfiguredRecord(m)) }
-    });
-  }
-  if (preExisting.length > 0) {
-    decide2(ctx, {
-      id: `dec-${ctx.run.id}-baseline-failures`,
-      kind: "baseline.failures",
-      summary: `pre-existing failures on ${head.slice(0, 12)}: ${preExisting.map((f) => f.checkId).join(", ")}`,
-      data: { failures: preExisting }
-    });
-  }
-  const asked = classified.failures.filter((f) => f.classification === void 0 || f.classification === "missing-target");
-  if (asked.length > 0) {
-    const raised = raiseBaselineExceptionQuestions({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { failures: asked, baseRevision: head });
-    if (raised.skipped.length > 0) {
-      decide2(ctx, {
-        id: `dec-${ctx.run.id}-baseline-exception-skipped`,
-        kind: "baseline.exception-unavailable",
-        summary: `no baseline exception can be offered for: ${raised.skipped.map((s) => s.checkId).join(", ")} (${raised.skipped[0].why})`,
-        data: { skipped: raised.skipped }
-      });
-    }
-  }
+  const { preExisting } = askAboutBaseFailures(ctx, found, { baseRevision: head, key: "" });
   const worktree = await ensureWorktree(repo, join53(wtRoot, "implementer"), head);
   const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
-  const found = [...preExisting.length > 0 ? [`${preExisting.length} pre-existing failure(s)`] : [], ...missingTargets.length > 0 ? [`${missingTargets.length} check(s) whose target does not exist yet (${missingTargets.map((m) => m.checkId).join(", ")})`] : []];
-  return move2(ctx, "CONTRACTING", `preflight passed at ${head.slice(0, 12)}${found.length > 0 ? ` with ${found.join(" and ")}` : ""}`, {
+  const noted = [...preExisting.length > 0 ? [`${preExisting.length} pre-existing failure(s)`] : [], ...missingTargets.length > 0 ? [`${missingTargets.length} check(s) whose target does not exist yet (${missingTargets.map((m) => m.checkId).join(", ")})`] : []];
+  return move2(ctx, "CONTRACTING", `preflight passed at ${head.slice(0, 12)}${noted.length > 0 ? ` with ${noted.join(" and ")}` : ""}`, {
     patch: { baseRevision: head, baseTree, worktreePath: worktree, branch },
     data: { base_revision: head, base_tree: baseTree, worktree, environment: env.gate.notes }
   });
+}
+function classifyBaseline(ctx, report2, checkoutDir, only = null) {
+  const judged = only === null ? report2 : { ...report2, failures: report2.failures.filter((f) => only.has(f.checkId)) };
+  const commandErrors = baselineMisconfiguredChecks(ctx, judged);
+  const misconfigured = commandErrors.filter((m) => m.kind === "argument");
+  const missingTargets = commandErrors.filter((m) => m.kind === "missing-target");
+  const environment = baselineEnvironmentFailures(ctx, judged, checkoutDir).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId));
+  const marked = classifiedBaseline(report2, environment, misconfigured, missingTargets);
+  const incomplete = only === null && (environment.length > 0 || misconfigured.length > 0);
+  return { report: incomplete ? { ...marked, complete: false } : marked, misconfigured, missingTargets, environment };
 }
 function classifiedBaseline(report2, environment, misconfigured, missingTargets) {
   if (environment.length === 0 && misconfigured.length === 0 && missingTargets.length === 0) return report2;
@@ -56466,23 +57063,61 @@ function classifiedBaseline(report2, environment, misconfigured, missingTargets)
   ]);
   return { ...report2, failures: report2.failures.map((f) => ({ ...f, ...marks.get(f.checkId) ?? {} })) };
 }
-async function blockOnBaseline(ctx, report2, blocked) {
+function askAboutBaseFailures(ctx, found, opts) {
+  const { report: classified, missingTargets } = found;
+  const head = opts.baseRevision;
+  const suffix = opts.key === "" ? "" : `-${opts.key}`;
+  const mine = classified.failures.filter((f) => opts.only === void 0 || opts.only.has(f.checkId));
+  const preExisting = mine.filter((f) => f.classification === void 0);
+  if (missingTargets.length > 0) {
+    atomicWriteJson(join53(ctx.runDir, BASELINE_FILE2), classified);
+    decide2(ctx, {
+      id: `dec-${ctx.run.id}-baseline-missing-target-${opts.key === "" ? classified.recordedAt : opts.key}`,
+      kind: MISSING_TARGET_KIND,
+      summary: `on ${head.slice(0, 12)} the command of ${missingTargets.length > 1 ? "checks" : "check"} ${missingTargets.map((m) => m.checkId).join(", ")} names something that does not exist yet: expected to flip if the contract names ${missingTargets.length > 1 ? "them" : "it"} as the proof of a criterion, otherwise misconfigured; never a baseline exception`,
+      data: { base_revision: head, checks: missingTargets.map((m) => misconfiguredRecord(m)) }
+    });
+  }
+  if (preExisting.length > 0) {
+    decide2(ctx, {
+      id: `dec-${ctx.run.id}-baseline-failures${suffix}`,
+      kind: "baseline.failures",
+      summary: `pre-existing failures on ${head.slice(0, 12)}: ${preExisting.map((f) => f.checkId).join(", ")}`,
+      data: { failures: preExisting }
+    });
+  }
+  const asked = mine.filter((f) => f.classification === void 0 || f.classification === "missing-target");
+  if (asked.length > 0) {
+    const raised = raiseBaselineExceptionQuestions({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { failures: asked, baseRevision: head });
+    if (raised.skipped.length > 0) {
+      decide2(ctx, {
+        id: `dec-${ctx.run.id}-baseline-exception-skipped${suffix}`,
+        kind: "baseline.exception-unavailable",
+        summary: `no baseline exception can be offered for: ${raised.skipped.map((s) => s.checkId).join(", ")} (${raised.skipped[0].why})`,
+        data: { skipped: raised.skipped }
+      });
+    }
+  }
+  return { preExisting };
+}
+async function blockOnBaseline(ctx, report2, blocked, amendment = null) {
   const { environment, misconfigured } = blocked;
-  atomicWriteJson(join53(ctx.runDir, BASELINE_FILE2), { ...report2, complete: false });
-  const reason = baselineBlockReason({ runId: ctx.run.id, baseRevision: report2.baseRevision, environment, misconfigured });
+  atomicWriteJson(join53(ctx.runDir, BASELINE_FILE2), amendment ? report2 : { ...report2, complete: false });
+  const reason = baselineBlockReason({ runId: ctx.run.id, baseRevision: report2.baseRevision, environment, misconfigured, ...amendment ? { amended: amendment.checks } : {} });
   const environmentChecks = environment.map((f) => ({ check_id: f.checkId, classification: "environment", signals: f.signals, cause: f.cause, evidence_lines: f.lines, ...f.logPath ? { log_path: f.logPath } : {} }));
   const misconfiguredChecks = misconfigured.map((m) => misconfiguredRecord(m));
-  const at = report2.recordedAt;
-  if (misconfiguredChecks.length > 0) decide2(ctx, { id: `dec-${ctx.run.id}-baseline-misconfigured-${at}`, kind: "baseline.check-misconfigured", summary: reason, data: { base_revision: report2.baseRevision, checks: misconfiguredChecks } });
-  if (environmentChecks.length > 0) decide2(ctx, { id: `dec-${ctx.run.id}-baseline-environment-${at}`, kind: "baseline.environment-failure", summary: reason, data: { base_revision: report2.baseRevision, checks: environmentChecks } });
+  const at = amendment ? `amended-${amendment.at}` : String(report2.recordedAt);
+  const stage = amendment ? { stage: amendment.stage } : {};
+  if (misconfiguredChecks.length > 0) decide2(ctx, { id: `dec-${ctx.run.id}-baseline-misconfigured-${at}`, kind: "baseline.check-misconfigured", summary: reason, data: { base_revision: report2.baseRevision, ...stage, checks: misconfiguredChecks } });
+  if (environmentChecks.length > 0) decide2(ctx, { id: `dec-${ctx.run.id}-baseline-environment-${at}`, kind: "baseline.environment-failure", summary: reason, data: { base_revision: report2.baseRevision, ...stage, checks: environmentChecks } });
   return finishRun(ctx, "BLOCKED", reason, {
-    outcome: { base_revision: report2.baseRevision, ...environmentChecks.length > 0 ? { environment_failures: environmentChecks } : {}, ...misconfiguredChecks.length > 0 ? { misconfigured_checks: misconfiguredChecks } : {} }
+    outcome: { base_revision: report2.baseRevision, ...stage, ...environmentChecks.length > 0 ? { environment_failures: environmentChecks } : {}, ...misconfiguredChecks.length > 0 ? { misconfigured_checks: misconfiguredChecks } : {} }
   });
 }
 function recordGate(ctx, g) {
   decide2(ctx, {
     kind: `gate.${g.gate}`,
-    summary: `${g.gate} gate ${g.status}${g.reasons.length ? `: ${g.reasons.join("; ")}` : ""}${g.notes.length ? ` (notes: ${g.notes.join("; ")})` : ""}`,
+    summary: `${g.gate} gate ${g.status === "not_applicable" ? "not applicable" : g.status}${g.reasons.length ? `: ${g.reasons.join("; ")}` : ""}${g.notes.length ? ` (notes: ${g.notes.join("; ")})` : ""}`,
     data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure }
   });
 }
@@ -56697,11 +57332,13 @@ function plannerPrompt(ctx, workerId) {
   const baseline = readJsonIfExists(join54(ctx.runDir, BASELINE_FILE2));
   const missing = baseline && baseline.baseRevision === ctx.run.baseRevision && Array.isArray(baseline.failures) ? baseline.failures.filter((f) => f.classification === "missing-target").map((f) => f.checkId) : [];
   const many = missing.length > 1;
+  const optional = Object.values(ctx.snapshot.config.checks).some((c) => !c.mandatory);
   const task = [
     "Draft the goal contract for the goal below. Read the repository as needed; do not edit anything.",
     "Return the current behaviour, criteria that are observable and testable, the proof for each, the trusted check ids that would show it,",
     "the files you expect to change, the narrowest allowed paths, non-goals, risks, assumptions and any decision you cannot settle from evidence.",
     `Trusted checks the policy defines: ${checks.join(", ") || "none"}. Name only these as check ids.`,
+    ...optional ? ["A check not marked mandatory runs only when the contract names it, and then like a mandatory one: on the base revision before any change, and the run stops if it cannot run there. Name one only as the proof of a criterion that needs it."] : [],
     ...missing.length > 0 ? [
       `On the base revision the command of ${many ? "checks" : "check"} ${missing.join(", ")} ${many ? "name" : "names"} something that does not exist yet (a missing target): name ${many ? "each" : "it"} as the proof of a criterion only when the goal is to create what it names, and the run then expects it to pass; otherwise leave it out, and the run stops on it as a misconfigured check.`
     ] : [],
@@ -57490,7 +58127,7 @@ async function continueAttempt(ctx, n2, contract) {
       k++;
       continue;
     }
-    if (r.status !== "succeeded") note2(ctx, "implementation.worker-ended", { attempt: n2, status: r.status, error: r.error?.slice(0, 300) ?? null, note: "its edits are verified like any other" });
+    if (r.status !== "succeeded") note2(ctx, WORKER_ENDED_EVENT, { attempt: n2, status: r.status, error: r.error?.slice(0, 300) ?? null, note: "its edits are verified like any other" });
     return snapshot(ctx, n2, st.worker.id);
   }
 }
@@ -57712,7 +58349,7 @@ function approvedOutcome(e) {
 function relative7(root, p) {
   return p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p;
 }
-var ATTEMPT_EVENT, READ_ONLY_ROLES, AUTHORIZATION_RETRY_EVENT, LOST_RESTART_EVENT;
+var ATTEMPT_EVENT, WORKER_ENDED_EVENT, READ_ONLY_ROLES, AUTHORIZATION_RETRY_EVENT, LOST_RESTART_EVENT;
 var init_implementing = __esm({
   "src/controller/steps/implementing.ts"() {
     "use strict";
@@ -57742,15 +58379,134 @@ var init_implementing = __esm({
     init_common();
     init_obtain();
     ATTEMPT_EVENT = "implementation.attempt";
+    WORKER_ENDED_EVENT = "implementation.worker-ended";
     READ_ONLY_ROLES = /* @__PURE__ */ new Set(["planner", "verifier", "reviewer", "inquisitor", "curator", "explorer"]);
     AUTHORIZATION_RETRY_EVENT = "authorization.retry";
     LOST_RESTART_EVENT = "recovery.worker-restart";
   }
 });
 
+// src/controller/steps/baseline-amendment.ts
+import { join as join58 } from "node:path";
+function amendedDecisionId(runId, at) {
+  return `dec-${runId}-baseline-amended-${at}`;
+}
+function baselineOf2(ctx) {
+  const report2 = readJsonIfExists(join58(ctx.runDir, BASELINE_FILE2));
+  if (!report2 || report2.baseRevision !== ctx.run.baseRevision || report2.policyHash !== ctx.run.policyHash) return null;
+  return Array.isArray(report2.checkIds) && Array.isArray(report2.checks) && Array.isArray(report2.failures) ? report2 : null;
+}
+function citedBy(contract, checkId) {
+  return contract.acceptance_criteria.filter((c) => (c.check_ids ?? []).includes(checkId)).map((c) => c.id);
+}
+function checksToAmend(ctx, contract, report2, judged) {
+  const covered = new Set(report2.checkIds);
+  const latest = /* @__PURE__ */ new Map();
+  for (const a of report2.amendments ?? []) for (const id of a.checkIds) latest.set(id, a);
+  const blocked = new Set(report2.failures.filter((f) => latest.has(f.checkId) && (f.classification === "environment" || f.classification === "misconfigured")).map((f) => f.checkId));
+  const unjudged = new Set([...latest].filter(([, a]) => !judged(a)).map(([id]) => id));
+  return [...new Set(contract.required_check_ids)].filter((id) => ctx.snapshot.config.checks[id]?.kind === "command" && (!covered.has(id) || blocked.has(id) || unjudged.has(id))).sort();
+}
+async function amendBaseline(ctx, contract) {
+  const prior = baselineOf2(ctx);
+  if (!prior || !ctx.run.baseRevision) return null;
+  const ids = checksToAmend(ctx, contract, prior, (a) => getDecision(ctx.db, amendedDecisionId(ctx.run.id, a.recordedAt)) !== null);
+  if (ids.length > 0) {
+    const stop = await runAmendment(ctx, contract, ids, ctx.run.baseRevision);
+    if (stop) return stop;
+  }
+  const amended = new Set((baselineOf2(ctx)?.amendments ?? []).flatMap((a) => a.checkIds));
+  if (amended.size === 0) return null;
+  const unexpected = missingTargetsNotExpectedToFlip(ctx, contract).filter((m) => amended.has(m.checkId));
+  return unexpected.length > 0 ? blockOnMissingTargets(ctx, unexpected) : null;
+}
+async function runAmendment(ctx, contract, ids, baseRevision) {
+  const stage = ctx.run.state;
+  const checkoutDir = join58(runWorktreeRoot(ctx), "baseline");
+  const outcome = await runBaseline({
+    db: ctx.db,
+    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
+    repoRoot: ctx.run.repoRoot,
+    baseRev: baseRevision,
+    snapshot: ctx.snapshot,
+    isolation: ctx.isolation(),
+    runDir: ctx.runDir,
+    clock: ctx.clock,
+    signal: ctx.signal,
+    pollMs: ctx.timing.checkPollMs,
+    killGraceMs: ctx.timing.killGraceMs,
+    homeDir: homeOf2(ctx.deps),
+    checkoutDir,
+    toolchainCacheRoot: toolchainCacheRootFor(ctx),
+    checkIds: [...ids],
+    amend: { stage }
+  });
+  const after = await safePoint(ctx);
+  if (after) return after;
+  const only = new Set(ids);
+  const found = classifyBaseline(ctx, outcome.report, checkoutDir, only);
+  const classified = found.report;
+  atomicWriteJson(join58(ctx.runDir, BASELINE_FILE2), classified);
+  faultPoint("controller.baseline-amendment.after-write");
+  const at = classified.amendments?.at(-1)?.recordedAt ?? ctx.clock.now();
+  const amended = ids.map((id) => ({ checkId: id, citedBy: citedBy(contract, id), mandatory: ctx.snapshot.config.checks[id]?.mandatory === true }));
+  const records = amended.map((a) => {
+    const entry = classified.checks.find((c) => c.checkId === a.checkId);
+    const failure = classified.failures.find((f) => f.checkId === a.checkId);
+    return {
+      check_id: a.checkId,
+      status: entry?.status ?? "NOT_RUN",
+      ...failure ? { classification: failure.classification ?? "pre-existing" } : {},
+      ...failure?.signals ? { signals: failure.signals } : {},
+      cited_by: [...a.citedBy],
+      mandatory: a.mandatory,
+      ...entry?.log ? { log_path: entry.log } : {}
+    };
+  });
+  const said = records.map((r) => `${r.check_id} ${r.status}${r.classification ? ` (${r.classification})` : ""}`).join(", ");
+  const judged = () => void decide2(ctx, {
+    id: amendedDecisionId(ctx.run.id, at),
+    kind: BASELINE_AMENDED_KIND,
+    summary: `the contract requires ${ids.length > 1 ? "checks" : "check"} ${ids.join(", ")}, which the base revision ${classified.baseRevision.slice(0, 12)} had no result for, so ${stage} ran ${ids.length > 1 ? "them" : "it"} there before any change was judged: ${said}`,
+    data: { base_revision: classified.baseRevision, stage, checks: records }
+  });
+  if (!classified.install.skipped && !classified.install.ok) {
+    judged();
+    const bg = baselineGate(classified);
+    recordGate(ctx, bg);
+    return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}, so ${ids.length > 1 ? "checks" : "check"} ${ids.join(", ")}, which the contract requires, could not be run there`, { outcome: { gate: bg, stage } });
+  }
+  const { misconfigured, environment } = found;
+  if (misconfigured.length > 0 || environment.length > 0) {
+    judged();
+    return blockOnBaseline(ctx, classified, { environment, misconfigured }, { at, stage, checks: amended });
+  }
+  askAboutBaseFailures(ctx, found, { baseRevision, key: `amended-${at}`, only });
+  settleExpectedFlips(ctx, contract);
+  recordGate(ctx, baselineGate(classified));
+  judged();
+  return null;
+}
+var BASELINE_AMENDED_KIND;
+var init_baseline_amendment = __esm({
+  "src/controller/steps/baseline-amendment.ts"() {
+    "use strict";
+    init_faults();
+    init_fsx();
+    init_baseline();
+    init_decisions();
+    init_context2();
+    init_gates();
+    init_baseline_questions();
+    init_common();
+    init_preflight();
+    BASELINE_AMENDED_KIND = "baseline.amended";
+  }
+});
+
 // src/controller/steps/verifying.ts
 import { existsSync as existsSync40, readdirSync as readdirSync10 } from "node:fs";
-import { join as join58 } from "node:path";
+import { join as join59 } from "node:path";
 async function verifyingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -57759,6 +58515,8 @@ async function verifyingStep(ctx) {
   const contract = assertContract(ctx);
   const cand = ctx.candidate;
   if (!cand) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is VERIFYING without a candidate`);
+  const amended = await amendBaseline(ctx, contract);
+  if (amended) return amended;
   if (cand.status === "INVALIDATED") return violatingCandidate(ctx, cand);
   const existing = currentEvidenceReport(ctx.db, ctx.run.id, cand.id);
   if (existing && isFresh(existing.report, { candidate: cand, snapshot: ctx.snapshot })) return act(ctx, cand, existing);
@@ -57793,7 +58551,7 @@ async function verifyingStep(ctx) {
     }
     return act(ctx, cand, report2);
   }
-  const checkoutDir = join58(runWorktreeRoot(ctx), `check-${cand.seq}`);
+  const checkoutDir = join59(runWorktreeRoot(ctx), `check-${cand.seq}`);
   await ensureCheckout(ctx, cand, checkoutDir);
   try {
     const collected = await collectVerificationEvidence(ctx, cand, { checkoutDir, scope, notes: authorizedOnceNotes, checkpoint: () => safePoint(ctx), onGate: (g) => recordGate(ctx, g), exploration: true });
@@ -57839,7 +58597,7 @@ async function askForAuthorization(ctx, cand, scope, details) {
 async function act(ctx, cand, ev) {
   const verdict = ev.report.verdict;
   if (verdict === "PASS") {
-    const trigger2 = pendingTrigger(ctx, cand, PROOF_BLOCKING_TRIGGERS);
+    const trigger2 = await pendingTrigger(ctx, cand, PROOF_BLOCKING_TRIGGERS);
     if (trigger2) return move2(ctx, "INQUISITION", `green checks, but ${trigger2.summary}`, { data: { trigger: trigger2 } });
     progress(ctx, "evidence.pass", { candidate_id: cand.id, report_id: ev.id });
     return move2(ctx, "REVIEWING", `candidate ${cand.seq} verified: PASS (${ev.id})`);
@@ -57848,7 +58606,7 @@ async function act(ctx, cand, ev) {
   const environment = [...sameAsBase, ...checksNotExecutedFor(ctx, cand, ev.report).filter((n2) => !sameAsBase.some((b) => b.checkId === n2.checkId))];
   if (environment.length > 0) return blockOnEnvironment(ctx, cand, ev, environment);
   if (verdict === "FAIL") return move2(ctx, "DIAGNOSING", `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
-  const trigger = pendingTrigger(ctx, cand, null);
+  const trigger = await pendingTrigger(ctx, cand, null);
   if (trigger) return move2(ctx, "INQUISITION", `verification incomplete: ${trigger.summary}`, { data: { trigger } });
   return finishRun(ctx, "BLOCKED", `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join("; ") || "the evidence is incomplete"}`, { outcome: { report_id: ev.id } });
 }
@@ -57868,13 +58626,17 @@ function handledTriggerKeys(ctx) {
   }
   return keys;
 }
-function pendingTrigger(ctx, cand, only) {
+async function pendingTrigger(ctx, cand, only) {
   const plan = storedPlan(ctx);
   const claims = latestImplementerClaims(ctx);
+  const changedFiles4 = cand.diffStat?.paths ?? [];
+  const base = ctx.run.baseRevision;
+  const testLayout = base && (only === null || only.includes("unexplained_architecture")) ? await loadTestLayout(gitTreeReader((args) => git2(ctx.run.repoRoot, args)), base, cand.commitSha, changedFiles4) : void 0;
   const snapshot2 = loadInquisitionSnapshot(ctx.db, ctx.run.id, {
     currentTreeHash: cand.treeHash,
     expectedChangedFiles: plan?.expected_changed_files.map((f) => f.path) ?? [],
-    changedFiles: cand.diffStat?.paths ?? [],
+    changedFiles: changedFiles4,
+    ...testLayout ? { testLayout } : {},
     claims,
     thresholds: thresholdsFromPolicy(ctx.snapshot.config)
   });
@@ -57955,6 +58717,7 @@ var init_verifying = __esm({
     init_errors();
     init_baseline_exception();
     init_scope();
+    init_test_files();
     init_candidate();
     init_git();
     init_report();
@@ -57969,6 +58732,7 @@ var init_verifying = __esm({
     init_authorization();
     init_verification();
     init_contracting();
+    init_baseline_amendment();
     init_common();
     init_implementing();
     init_preflight();
@@ -57992,6 +58756,14 @@ async function diagnosingStep(ctx) {
     decide2(ctx, { id: `dec-${ctx.run.id}-non-progress-${next}`, kind: "repair.non-progress", summary: np.reason, data: np });
     return finishRun(ctx, "EXHAUSTED", `non-progress: ${np.reason}`, { outcome: { non_progress: np } });
   }
+  const stalled = stalledRepair(ctx, cand);
+  if (stalled) {
+    const outcome = { non_progress: stalled.decision };
+    const blocked = await blockOnOpenQuestions(ctx, "another repair", { detail: `non-progress: ${stalled.decision.reason}.`, outcome });
+    if (blocked) return blocked;
+    decide2(ctx, { id: `dec-${ctx.run.id}-non-progress-${next}`, kind: "repair.non-progress", summary: stalled.decision.reason, data: { ...stalled.decision, attempt: stalled.attempt, same_tree_as: stalled.sameTreeAs, tree_hash: cand.treeHash, verdict: stalled.verdict, failing_checks: stalled.failingChecks } });
+    return finishRun(ctx, "EXHAUSTED", `non-progress: ${stalled.decision.reason}`, { outcome });
+  }
   const failures = listFailures(ctx.db, ctx.run.id).filter((f) => f.candidateId === cand.id);
   const primary = failures.find((f) => f.source !== "flaky_check") ?? failures[0] ?? null;
   const fingerprint = primary?.fingerprint ?? `verdict:${cand.id}`;
@@ -57999,7 +58771,7 @@ async function diagnosingStep(ctx) {
   if (att.used >= att.hard_cap) return finishRun(ctx, "EXHAUSTED", `implementation attempts hard cap reached (${att.used} of ${att.hard_cap}); the last failure was ${fingerprint}`, { outcome: { fingerprint } });
   const existing = readJsonIfExists(briefPath(ctx, next));
   if (!existing) {
-    const trigger = pendingTrigger(ctx, cand, ["repeated_failure"]);
+    const trigger = await pendingTrigger(ctx, cand, ["repeated_failure"]);
     if (trigger) return move2(ctx, "INQUISITION", trigger.summary, { data: { trigger } });
   }
   let stored;
@@ -58087,6 +58859,41 @@ async function diagnosingStep(ctx) {
   if (!existsSync41(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
   decide2(ctx, { id: `dec-${ctx.run.id}-brief-${next}`, kind: "repair.brief", summary: `repair brief (${stored.source}) for attempt ${next}: ${fingerprint}`, data: { attempt: next, source: stored.source, fingerprint, path: `briefs/attempt-${next}.json` } });
   return move2(ctx, "REPAIRING", `repair brief for attempt ${next} (${stored.source})`, { data: { attempt: next, fingerprint } });
+}
+function judgement(r) {
+  return JSON.stringify({
+    verdict: r.verdict,
+    checks: r.checks.filter((c) => c.status !== "PASSED").map((c) => `${c.id}:${c.status}`).sort(),
+    criteria: r.acceptance_evidence.map((a) => `${a.criterion_id}:${a.status}`).sort(),
+    ui: r.ui.filter((u) => u.status !== "PASSED").map((u) => `${u.journey}:${u.status}`).sort()
+  });
+}
+function stalledRepair(ctx, cand) {
+  const latest = currentAttempt(ctx);
+  if (latest < 2 || attemptCandidateId(ctx, latest) !== cand.id) return null;
+  let sameTreeAs = 0;
+  for (let k = latest - 1; k >= 1 && sameTreeAs === 0; k--) if (attemptCandidateId(ctx, k) === cand.id) sameTreeAs = k;
+  if (sameTreeAs === 0) return null;
+  const started = ctx.db.get("SELECT id FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, ATTEMPT_EVENT, latest);
+  if (!started) return null;
+  if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type IN ('run.resumed', 'run.repair-requested') AND id > ?", ctx.run.id, started.id)) return null;
+  if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? AND id > ?", ctx.run.id, WORKER_ENDED_EVENT, latest, started.id)) return null;
+  const before = ctx.db.get("SELECT json_extract(data_json, '$.report_id') AS report_id FROM events WHERE run_id = ? AND type = 'evidence.report' AND json_extract(data_json, '$.candidate_id') = ? AND id < ? ORDER BY id DESC LIMIT 1", ctx.run.id, cand.id, started.id);
+  const now = currentEvidenceReport(ctx.db, ctx.run.id, cand.id);
+  if (!before?.report_id || !now || now.verdict !== "FAIL") return null;
+  const then = getEvidenceReport(ctx.db, before.report_id);
+  if (judgement(then.report) !== judgement(now.report)) return null;
+  const failingChecks = now.report.checks.filter((c) => c.status !== "PASSED").map((c) => c.id).sort();
+  const unsupported2 = now.report.acceptance_evidence.filter((a) => a.status === "unsupported").map((a) => a.criterion_id);
+  const what = failingChecks.length > 0 ? `failing: ${failingChecks.join(", ")}` : unsupported2.length > 0 ? `unsupported: ${unsupported2.join(", ")}` : now.report.unverified[0] ?? "the same failures";
+  const reason = `attempt ${latest} ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt ${sameTreeAs} produced, and verification judged it FAIL again as it did then (${what}): the same evidence, diagnosis and repair brief would follow, so no further attempt is dispatched on it`;
+  return {
+    decision: { terminate: true, reason, consecutiveNoProgress: 1, threshold: 1, fingerprint: null, suggestedState: "EXHAUSTED" },
+    attempt: latest,
+    sameTreeAs,
+    verdict: now.verdict,
+    failingChecks
+  };
 }
 function repeatedCount(ctx, fingerprint) {
   return new Set(listFailures(ctx.db, ctx.run.id, fingerprint).map((f) => f.candidateId ?? `row-${f.id}`)).size;
@@ -58318,7 +59125,7 @@ var init_review_approval = __esm({
 
 // src/controller/steps/reviewing.ts
 import { existsSync as existsSync42, readdirSync as readdirSync11, readFileSync as readFileSync30 } from "node:fs";
-import { join as join59 } from "node:path";
+import { join as join60 } from "node:path";
 async function reviewingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -58886,12 +59693,12 @@ async function preparePacket(ctx, cand, reviewDir, provider) {
     questions: listQuestions(ctx.db, ctx.run.id, { status: "open" }).map((q) => q.question),
     provider
   });
-  atomicWrite(join59(reviewDir, "packet.md"), packet.text, 384);
-  atomicWriteJson(join59(reviewDir, "packet.json"), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
+  atomicWrite(join60(reviewDir, "packet.md"), packet.text, 384);
+  atomicWriteJson(join60(reviewDir, "packet.json"), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
 }
 function packetShaOf(reviewDir) {
   try {
-    return JSON.parse(readText(join59(reviewDir, "packet.json"))).sha256;
+    return JSON.parse(readText(join60(reviewDir, "packet.json"))).sha256;
   } catch {
     return "";
   }
@@ -58900,7 +59707,7 @@ function readText(p) {
   return readFileSync30(p, "utf8");
 }
 function reviewerPrompt(ctx, cand, reviewDir, focus = "general") {
-  const text2 = readText(join59(reviewDir, "packet.md"));
+  const text2 = readText(join60(reviewDir, "packet.md"));
   const contract = assertContract(ctx);
   const task = [
     "Review the exact candidate in this read-only checkout against the contract and the bound evidence in the packet. Do not edit anything and do not ask questions.",
@@ -58920,9 +59727,9 @@ function reviewerPrompt(ctx, cand, reviewDir, focus = "general") {
   });
 }
 async function prepareReview(ctx, cand, provider) {
-  const reviewDir = join59(ctx.runDir, "reviews", String(cand.seq));
-  const checkout = join59(runWorktreeRoot(ctx), `review-${cand.seq}`);
-  if (!existsSync42(join59(reviewDir, "packet.md"))) await preparePacket(ctx, cand, reviewDir, provider);
+  const reviewDir = join60(ctx.runDir, "reviews", String(cand.seq));
+  const checkout = join60(runWorktreeRoot(ctx), `review-${cand.seq}`);
+  if (!existsSync42(join60(reviewDir, "packet.md"))) await preparePacket(ctx, cand, reviewDir, provider);
   if (!existsSync42(checkout) || readdirSync11(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
@@ -58977,7 +59784,7 @@ var init_reviewing = __esm({
 });
 
 // src/controller/steps/delivering.ts
-import { join as join60 } from "node:path";
+import { join as join61 } from "node:path";
 async function deliveringStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -58993,10 +59800,10 @@ async function deliveringStep(ctx) {
   if (waiting) return waiting;
   if (!DELIVERY_MODES.has(ctx.run.mode)) {
     const branch = ctx.run.branch ?? `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
-    await git2(ctx.run.repoRoot, ["update-ref", "-m", `orbit: reviewed candidate of ${ctx.run.id}`, `refs/heads/${branch}`, cand.commitSha]);
-    const tree = await treeOf(ctx.run.repoRoot, `refs/heads/${branch}`);
+    const tree = await treeOf(ctx.run.repoRoot, cand.commitSha);
     const refused2 = await deliveryGateOrBlock(ctx, ev, review, tree);
     if (refused2) return refused2;
+    await git2(ctx.run.repoRoot, ["update-ref", "-m", `orbit: reviewed candidate of ${ctx.run.id}`, `refs/heads/${branch}`, cand.commitSha]);
     return complete(ctx, tree, { branch, commit: cand.commitSha, delivery: "local branch; no external action in this mode" });
   }
   const client = await githubClient(ctx);
@@ -59025,7 +59832,7 @@ async function deliveringStep(ctx) {
   }
   const refused = await deliveryGateOrBlock(ctx, ev, review, result2.tree);
   if (refused) return refused;
-  atomicWriteJson(join60(ctx.runDir, DELIVERY_FILE), { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr ? { number: result2.pr.number, url: result2.pr.url, state: result2.pr.state, isDraft: result2.pr.isDraft } : null, pr_skipped: result2.prSkipped, warnings: result2.warnings, delivered_at: ctx.clock.now() });
+  atomicWriteJson(join61(ctx.runDir, DELIVERY_FILE), { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr ? { number: result2.pr.number, url: result2.pr.url, state: result2.pr.state, isDraft: result2.pr.isDraft } : null, pr_skipped: result2.prSkipped, warnings: result2.warnings, delivered_at: ctx.clock.now() });
   setCandidateStatus(ctx.db, cand.id, "DELIVERED");
   decide2(ctx, { id: `dec-${ctx.run.id}-delivered-${result2.commit}`, kind: "delivery.completed", summary: `delivered ${result2.commit.slice(0, 12)} (tree ${result2.tree.slice(0, 12)}) to ${result2.branch}${result2.pr ? `, PR #${result2.pr.number}` : ""}`, data: { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr?.number ?? null, pr_skipped: result2.prSkipped } });
   return move2(ctx, "AWAITING_CI", `delivered ${result2.commit.slice(0, 12)} to ${result2.branch}`, { patch: { branch: result2.branch }, data: { commit: result2.commit, pr: result2.pr?.number ?? null } });
@@ -59097,7 +59904,7 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
     deploys: result2.deploys.map((x) => ({ environment: x.environment, sha: x.sha, branch: x.branch })),
     deploy_skipped: result2.deploySkipped
   };
-  atomicWriteJson(join60(ctx.runDir, RELEASE_FILE), { ...summary, released_at: ctx.clock.now() });
+  atomicWriteJson(join61(ctx.runDir, RELEASE_FILE), { ...summary, released_at: ctx.clock.now() });
   const deployed = summary.deploys.length > 0 ? `deployed to ${summary.deploys.map((x) => x.environment).join(", ")}${summary.deploy_skipped ? ` (not: ${summary.deploy_skipped})` : ""}` : `no deploy (${summary.deploy_skipped})`;
   decide2(ctx, { id: `dec-${ctx.run.id}-released-${d.commit}`, kind: "release.completed", summary: `release of ${d.commit.slice(0, 12)}: ${summary.merge ? `merged PR #${summary.merge.pr}` : `no merge (${summary.merge_skipped})`}; ${deployed}`, data: summary });
   return complete(ctx, d.tree, { ...outcome, release: summary }, notes);
@@ -59158,7 +59965,7 @@ async function githubClient(ctx) {
   if (config.delivery.provider === "fake") {
     const url = await resolveRemoteUrl(ctx.run.repoRoot, remote).catch(() => null);
     const local = url !== null && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !/^[^/]+@[^:]+:/.test(url) ? url : void 0;
-    return new FakeGitHub({ statePath: join60(ctx.run.repoRoot, ".orbit", "fake-github.json"), ...local ? { remoteGitDir: local } : {} });
+    return new FakeGitHub({ statePath: join61(ctx.run.repoRoot, ".orbit", "fake-github.json"), ...local ? { remoteGitDir: local } : {} });
   }
   return githubClientFor(ctx.run.repoRoot, remote, ctx.deps.hostEnv ?? process.env);
 }
@@ -59198,11 +60005,11 @@ var init_delivering = __esm({
 
 // src/controller/steps/awaiting-ci.ts
 import { existsSync as existsSync43 } from "node:fs";
-import { join as join61 } from "node:path";
+import { join as join62 } from "node:path";
 async function awaitingCiStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
-  const d = readJsonIfExists(join61(ctx.runDir, DELIVERY_FILE));
+  const d = readJsonIfExists(join62(ctx.runDir, DELIVERY_FILE));
   if (!d || !ctx.ledger) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is AWAITING_CI without a delivery record`);
   const config = ctx.snapshot.config;
   const client = await githubClient(ctx);
@@ -59322,7 +60129,7 @@ async function blockOnConflict(ctx, d, base, m, reason) {
   return finishRun(ctx, "BLOCKED", reason, { outcome: { ...base, base_conflict: { baseBranch: m.baseBranch, from: m.from, to: m.to, files } } });
 }
 async function rebaseCandidate(ctx, cand, tip) {
-  const checkoutDir = join61(runWorktreeRoot(ctx), `rebase-${tip.slice(0, 12)}`);
+  const checkoutDir = join62(runWorktreeRoot(ctx), `rebase-${tip.slice(0, 12)}`);
   const env = { ...gitEnv4({}, ctx.deps.hostEnv ?? process.env), GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name, GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name, GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email };
   await cleanupCandidateCheckout(ctx.run.repoRoot, checkoutDir).catch(() => {
   });
@@ -59378,13 +60185,13 @@ var init_awaiting_ci = __esm({
 });
 
 // src/controller/steps/inquisition.ts
-import { join as join62 } from "node:path";
+import { join as join63 } from "node:path";
 async function inquisitionStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
   const contract = applyBaselineExceptionAnswers({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { snapshot: ctx.snapshot }).contract ?? assertContract(ctx);
   const resume = ctx.run.resumeState ?? (ctx.candidate ? "VERIFYING" : "PLANNING");
-  const trigger = enteringTrigger(ctx) ?? (ctx.candidate ? pendingTrigger(ctx, ctx.candidate, null) : null);
+  const trigger = enteringTrigger(ctx) ?? (ctx.candidate ? await pendingTrigger(ctx, ctx.candidate, null) : null);
   if (!trigger || handledTriggerKeys(ctx).has(trigger.key)) return move2(ctx, resume, trigger ? `inquiry ${trigger.key} already settled; resuming ${resume}` : `nothing left to inquire into; resuming ${resume}`);
   for (const w of listActiveWorkers(ctx.db, ctx.run.id).filter((x) => x.role === "inquisitor")) {
     if (await collectIfFinished(ctx, w)) return WAIT(`inquisitor ${w.id} is still running`);
@@ -59393,7 +60200,7 @@ async function inquisitionStep(ctx) {
   const cwd = ctx.run.worktreePath;
   const env = ctx.deps.hostEnv ?? process.env;
   const home2 = homeOf2(ctx.deps);
-  const workerDir = join62(ctx.runDir, "workers");
+  const workerDir = join63(ctx.runDir, "workers");
   const supported = ctx.candidate ? currentEvidenceReport(ctx.db, ctx.run.id, ctx.candidate.id)?.report.acceptance_evidence.filter((a) => a.status === "supported").map((a) => a.criterion_id) ?? [] : [];
   const result2 = await runInquisition({
     trigger,
@@ -59411,7 +60218,7 @@ async function inquisitionStep(ctx) {
         route: { provider: route2.provider, model: route2.model, effort: route2.effort },
         workerDir,
         cwd,
-        sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: ctx.snapshot, provider: route2.provider.startsWith("codex") ? "codex" : "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join62(home2, ".claude"), homeDir: home2, policyPath: ctx.run.policyPath, readablePaths: [ctx.deps.orbitInstallDir], env }),
+        sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: ctx.snapshot, provider: route2.provider.startsWith("codex") ? "codex" : "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join63(home2, ".claude"), homeDir: home2, policyPath: ctx.run.policyPath, readablePaths: [ctx.deps.orbitInstallDir], env }),
         policyPath: ctx.run.policyPath,
         systemPrompt: systemPromptFor(ctx, "inquisitor"),
         maxTurns: ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session,
@@ -59422,7 +60229,7 @@ async function inquisitionStep(ctx) {
     signal: ctx.signal
   });
   const patch = hashObject(result2.contract) !== hashObject(contract) ? { contractJson: JSON.stringify(result2.contract), contractHash: hashObject(result2.contract) } : void 0;
-  if (patch) atomicWriteJson(join62(ctx.runDir, "contract.json"), result2.contract);
+  if (patch) atomicWriteJson(join63(ctx.runDir, "contract.json"), result2.contract);
   const after = await safePoint(ctx);
   if (after) return after;
   if (result2.disposition === "ask" || result2.disposition === "block") {
@@ -59606,14 +60413,16 @@ var init_difficulty = __esm({
 });
 
 // src/controller/steps/planning.ts
-import { join as join63 } from "node:path";
+import { join as join64 } from "node:path";
 async function planningStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
   const exceptions = applyBaselineExceptionAnswers({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { snapshot: ctx.snapshot });
   const contract = exceptions.contract ?? assertContract(ctx);
+  const amended = await amendBaseline(ctx, contract);
+  if (amended) return amended;
   const plan = storedPlan(ctx);
-  const baseline = readJsonIfExists(join63(ctx.runDir, BASELINE_FILE2));
+  const baseline = readJsonIfExists(join64(ctx.runDir, BASELINE_FILE2));
   if (plan) {
     decide2(ctx, {
       id: `dec-${ctx.run.id}-proof-map`,
@@ -59688,6 +60497,7 @@ var init_planning = __esm({
     init_budget();
     init_workers2();
     init_common();
+    init_baseline_amendment();
     init_contracting();
     SECURITY_WORDS = /\b(secur\w*|auth\w*|permission\w*|privacy|secret\w*|credential\w*|token\w*|tenant\w*|injection|billing|payment\w*)\b/i;
   }
@@ -59806,8 +60616,8 @@ var init_steps = __esm({
 
 // src/storage/retention.ts
 import { existsSync as existsSync44, lstatSync as lstatSync10, realpathSync as realpathSync17, rmSync as rmSync16 } from "node:fs";
-import { homedir as homedir14 } from "node:os";
-import { dirname as dirname27, join as join64, resolve as resolve15 } from "node:path";
+import { homedir as homedir15 } from "node:os";
+import { dirname as dirname27, join as join65, resolve as resolve15 } from "node:path";
 function repoKeyFor(repoRoot) {
   let real = repoRoot;
   try {
@@ -59821,8 +60631,8 @@ async function pruneExpiredRuns(db, opts) {
   const now = opts.clock.now();
   const cutoff = now - opts.keepDays * DAY_MS;
   const repoRoot = realOrResolved(opts.repoRoot);
-  const runsRoot = join64(repoRoot, ".orbit", "runs");
-  const worktreesRoot = join64(opts.orbitHome ?? process.env.ORBIT_HOME ?? join64(homedir14(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
+  const runsRoot = join65(repoRoot, ".orbit", "runs");
+  const worktreesRoot = join65(opts.orbitHome ?? process.env.ORBIT_HOME ?? join65(homedir15(), ".orbit"), "worktrees", repoKeyFor(repoRoot));
   const placeholders = PRUNABLE_STATES.map(() => "?").join(", ");
   const rows = db.all(
     `SELECT r.id, r.state, r.policy_path, r.ended_at, r.updated_at FROM runs r
@@ -59845,14 +60655,14 @@ async function pruneExpiredRuns(db, opts) {
       result2.skipped.push({ runId: row.id, reason: "a controller still holds its lease" });
       continue;
     }
-    const runDir2 = join64(runsRoot, row.id);
+    const runDir2 = join65(runsRoot, row.id);
     const recorded = dirname27(row.policy_path);
-    const literalRunDir = join64(resolve15(opts.repoRoot), ".orbit", "runs", row.id);
+    const literalRunDir = join65(resolve15(opts.repoRoot), ".orbit", "runs", row.id);
     if (![runDir2, literalRunDir].includes(resolve15(recorded)) && realOrResolved(recorded) !== runDir2) {
       result2.skipped.push({ runId: row.id, reason: `its recorded run directory ${recorded} is not ${runDir2}` });
       continue;
     }
-    const targets = [runDir2, join64(worktreesRoot, row.id)].filter((p) => isRealDirectory(p));
+    const targets = [runDir2, join65(worktreesRoot, row.id)].filter((p) => isRealDirectory(p));
     if (!opts.dryRun) {
       for (const t of targets) rmSync16(t, { recursive: true, force: true });
       db.tx(() => appendEvent(db, row.id, ARTIFACTS_PRUNED_EVENT, "gc", { keep_runs_days: opts.keepDays, removed: targets }, now));
@@ -59860,7 +60670,7 @@ async function pruneExpiredRuns(db, opts) {
     }
     result2.pruned.push({ runId: row.id, state: row.state, endedAt: row.ended_at ?? row.updated_at, removed: targets });
   }
-  if (removedWorktree && existsSync44(join64(repoRoot, ".git"))) {
+  if (removedWorktree && existsSync44(join65(repoRoot, ".git"))) {
     await execCapture(["git", "worktree", "prune"], { cwd: repoRoot, timeoutMs: 3e4 }).catch(() => void 0);
   }
   return result2;
@@ -59900,7 +60710,7 @@ __export(loop_exports, {
 });
 import { existsSync as existsSync45 } from "node:fs";
 import { hostname as hostname4 } from "node:os";
-import { dirname as dirname28, join as join65 } from "node:path";
+import { dirname as dirname28, join as join66 } from "node:path";
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -60392,7 +61202,7 @@ var init_loop = __esm({
           try {
             const run = getRun(db, row.id);
             const runDir2 = dirname28(run.policyPath);
-            if (existsSync45(join65(runDir2, "final.md"))) continue;
+            if (existsSync45(join66(runDir2, "final.md"))) continue;
             let snapshot2 = null;
             try {
               snapshot2 = verifySnapshot(run.policyPath, run.policyHash);
@@ -60455,7 +61265,7 @@ var init_loop = __esm({
 // src/controller/service.ts
 import { chmodSync as chmodSync8, existsSync as existsSync46, lstatSync as lstatSync11, mkdirSync as mkdirSync22, readFileSync as readFileSync31, readdirSync as readdirSync12, rmSync as rmSync17, rmdirSync, statSync as statSync14 } from "node:fs";
 import { hostname as hostname5 } from "node:os";
-import { dirname as dirname29, isAbsolute as isAbsolute22, join as join66 } from "node:path";
+import { dirname as dirname29, isAbsolute as isAbsolute22, join as join67 } from "node:path";
 function serviceLabel(repoRoot) {
   return `${SERVICE_LABEL_PREFIX}.${repoKey(repoRoot)}`;
 }
@@ -60468,7 +61278,7 @@ function serviceSpec(input) {
     ...input.version !== void 0 ? { version: input.version } : {},
     args: ["service", "run", "--repo", input.repoRoot],
     workingDirectory: input.repoRoot,
-    logDir: join66(input.orbitHome, "logs"),
+    logDir: join67(input.orbitHome, "logs"),
     env: {
       PATH: input.path ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
       NODE_OPTIONS: "--disable-warning=ExperimentalWarning",
@@ -60479,7 +61289,7 @@ function serviceSpec(input) {
   };
 }
 function launcherPath(orbitHome) {
-  return join66(orbitHome, "bin", "orbit");
+  return join67(orbitHome, "bin", "orbit");
 }
 function shQuote(s) {
   return `'${s.replace(/'/g, `'\\''`)}'`;
@@ -60518,7 +61328,7 @@ function secureLauncherDir(orbitHome) {
   const home2 = statSync14(orbitHome);
   if (uid !== void 0 && home2.uid !== uid) throw new OrbitError("CONFIG_INVALID", `${orbitHome} is not owned by this user; refusing to put the service launcher in it`, { path: orbitHome });
   if ((home2.mode & 18) !== 0) chmodSync8(orbitHome, home2.mode & 493 & ~18);
-  const bin = join66(orbitHome, "bin");
+  const bin = join67(orbitHome, "bin");
   mkdirSync22(bin, { recursive: true, mode: 448 });
   const st = lstatSync11(bin);
   if (st.isSymbolicLink() || !st.isDirectory()) throw new OrbitError("CONFIG_INVALID", `${bin} must be a real directory, not a link or a file; refusing to put the service launcher in it`, { path: bin });
@@ -60564,7 +61374,7 @@ function refreshLauncher(input) {
   return "updated";
 }
 function logPaths(spec) {
-  return { out: join66(spec.logDir, `${spec.label}.out.log`), err: join66(spec.logDir, `${spec.label}.err.log`) };
+  return { out: join67(spec.logDir, `${spec.label}.out.log`), err: join67(spec.logDir, `${spec.label}.err.log`) };
 }
 function xml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -60605,7 +61415,7 @@ function renderLaunchdPlist(spec) {
   ].join("\n");
 }
 function launchdPlistPath(homeDir, label) {
-  return join66(homeDir, "Library", "LaunchAgents", `${label}.plist`);
+  return join67(homeDir, "Library", "LaunchAgents", `${label}.plist`);
 }
 function launchctlCommands(label, uid, plistPath) {
   const domain = `gui/${uid}`;
@@ -60646,7 +61456,7 @@ function renderSystemdUnit(spec) {
   ].join("\n");
 }
 function systemdUnitPath(homeDir, label) {
-  return join66(homeDir, ".config", "systemd", "user", `${label}.service`);
+  return join67(homeDir, ".config", "systemd", "user", `${label}.service`);
 }
 function systemctlCommands(label) {
   const unit = `${label}.service`;
@@ -60674,7 +61484,7 @@ async function installService(spec, opts) {
   writeLauncher(dirname29(dirname29(spec.launcher)), { node: spec.nodePath, entry: spec.entry, ...spec.version !== void 0 ? { version: spec.version } : {} });
   if (opts.platform === "darwin") {
     const plist = launchdPlistPath(opts.homeDir, spec.label);
-    mkdirSync22(join66(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
+    mkdirSync22(join67(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
     atomicWrite(plist, renderLaunchdPlist(spec), 420);
     const cmd = launchctlCommands(spec.label, opts.uid, plist);
     await must(run, cmd.bootout, [0, 3]);
@@ -60684,7 +61494,7 @@ async function installService(spec, opts) {
   }
   if (opts.platform === "linux") {
     const unit = systemdUnitPath(opts.homeDir, spec.label);
-    mkdirSync22(join66(opts.homeDir, ".config", "systemd", "user"), { recursive: true });
+    mkdirSync22(join67(opts.homeDir, ".config", "systemd", "user"), { recursive: true });
     atomicWrite(unit, renderSystemdUnit(spec), 420);
     const cmd = systemctlCommands(spec.label);
     await must(run, cmd.daemonReload, [0]);
@@ -60712,7 +61522,7 @@ async function uninstallService(label, opts) {
   return unsupported(opts.platform);
 }
 function installedDefinitions(opts) {
-  const dir = opts.platform === "darwin" ? join66(opts.homeDir, "Library", "LaunchAgents") : join66(opts.homeDir, ".config", "systemd", "user");
+  const dir = opts.platform === "darwin" ? join67(opts.homeDir, "Library", "LaunchAgents") : join67(opts.homeDir, ".config", "systemd", "user");
   try {
     return readdirSync12(dir).filter((f) => f.startsWith(`${SERVICE_LABEL_PREFIX}.`));
   } catch {
@@ -60810,7 +61620,7 @@ var init_controller = __esm({
 
 // src/cli/commands/drive.ts
 import { existsSync as existsSync47, readFileSync as readFileSync32 } from "node:fs";
-import { dirname as dirname30, join as join67 } from "node:path";
+import { dirname as dirname30, join as join68 } from "node:path";
 function formatEvent(e) {
   const at = clockTime(e.ts);
   let data = {};
@@ -60928,9 +61738,16 @@ function safeContinue(db, runId, ctx) {
     return `orbit resume ${runId} --foreground`;
   }
 }
+function safeNewRunNeeded(db, run) {
+  try {
+    return newRunNeeded(db, run);
+  } catch {
+    return null;
+  }
+}
 function resultOf(ctx, db, run) {
   try {
-    const finalJson = join67(dirname30(run.policyPath), "final.json");
+    const finalJson = join68(dirname30(run.policyPath), "final.json");
     const report2 = existsSync47(finalJson) ? JSON.parse(readFileSync32(finalJson, "utf8")) : buildFinalReport(db, run, { runDir: dirname30(run.policyPath), clock: ctx.clock, snapshot: null });
     const rv = report2.revision;
     if (!rv) return null;
@@ -60967,9 +61784,11 @@ function announceEnd(ctx, db, run, exitCode, wantJson) {
       for (const q of open2) line(ctx.io, `  open question ${q.id}: ${flat(q.question)}`);
       const frozen = /"frozen_policy"/.test(run.outcomeJson ?? "");
       const next = safeContinue(db, run.id, ctx);
-      if (open2.length > 0) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "${next}"`);
+      const fresh = safeNewRunNeeded(db, run);
+      if (open2.length > 0 && fresh === null) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "${next}"`);
       else if (frozen && missingTargetChecks(run).length > 0) line(ctx.io, `the advice above says what to do by cause; resuming would only block again, so "orbit cancel ${run.id}" and start a new run with "orbit run"`);
       else if (frozen) line(ctx.io, `this block comes from the run's frozen policy: fix .orbit/config.yaml, then "orbit cancel ${run.id}" and start a new run with "orbit run"`);
+      else if (fresh !== null) line(ctx.io, `resuming would only block again (${fresh}): fix it, then "orbit cancel ${run.id}" and start a new run with "orbit run"`);
       else line(ctx.io, `resolve the reason above, then "${next}"`);
     }
   } else {
@@ -61054,7 +61873,7 @@ var init_notify2 = __esm({
 });
 
 // src/cli/commands/control.ts
-import { join as join68, resolve as resolve17 } from "node:path";
+import { join as join69, resolve as resolve17 } from "node:path";
 async function pauseCommand(args, ctx) {
   const [id] = args.expect(1);
   const repo = await resolveRepo(ctx, args.str("repo"));
@@ -61168,7 +61987,7 @@ function cliLeaseDeps(ctx, repo, db, ownerId) {
       db,
       clock: ctx.clock,
       ownerId,
-      logger: createLogger({ file: join68(ctx.orbitHome, "logs", "controller.jsonl"), clock: ctx.clock }),
+      logger: createLogger({ file: join69(ctx.orbitHome, "logs", "controller.jsonl"), clock: ctx.clock }),
       adapters: {},
       registry: new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome)),
       orbitHome: ctx.orbitHome,
@@ -61464,7 +62283,7 @@ var init_recovery = __esm({
 
 // src/cli/commands/service.ts
 import { existsSync as existsSync49 } from "node:fs";
-import { join as join69 } from "node:path";
+import { join as join70 } from "node:path";
 function managerOptions(ctx) {
   return {
     platform: ctx.platform,
@@ -61507,7 +62326,7 @@ async function serviceInstallCommand(args, ctx) {
     line(ctx.io, `service ${status2.label} installed (${status2.platform}): ${status2.loaded ? "loaded" : status2.detail}`);
     line(ctx.io, `definition: ${status2.definitionPath}`);
     line(ctx.io, `launcher: ${spec.launcher} (runs ${entry}; it follows plugin updates, so the service never needs reinstalling for one)`);
-    line(ctx.io, `logs: ${join69(ctx.orbitHome, "logs")}`);
+    line(ctx.io, `logs: ${join70(ctx.orbitHome, "logs")}`);
     line(ctx.io, "No credentials were written to the definition. For unattended runs export ANTHROPIC_API_KEY (and CODEX_API_KEY) where the service can see them; see docs/decisions/0003-authentication.md.");
     for (const w of warnings) ctx.io.err(`warning: ${w}
 `);
@@ -61566,7 +62385,7 @@ async function serviceRunCommand(args, ctx) {
   const config = loadConfig(repo);
   const db = openDb(stateDbPath(repo));
   try {
-    const logger = createLogger({ file: join69(ctx.orbitHome, "logs", "controller.jsonl"), stderr: true, clock: ctx.clock });
+    const logger = createLogger({ file: join70(ctx.orbitHome, "logs", "controller.jsonl"), stderr: true, clock: ctx.clock });
     const factory = ctx.seams.controllerDeps ?? defaultControllerDeps;
     const deps = factory({ repoRoot: repo, db, clock: ctx.clock, config, env: ctx.env, orbitHome: ctx.orbitHome, logger });
     const controller = new Controller({ deps, mode: "service", handleSignals: true, ...ctx.seams.controller ?? {} });
@@ -61600,7 +62419,7 @@ var init_service2 = __esm({
 
 // src/cli/layout.ts
 import { open } from "node:fs/promises";
-import { join as join70 } from "node:path";
+import { join as join71 } from "node:path";
 async function trackedFiles(ctx, repo) {
   try {
     const r = await execCapture(["git", "ls-files", "-z"], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 3e4 });
@@ -61674,7 +62493,7 @@ async function pipelineYaml(repo, files) {
   const candidates = files.filter((f) => /\.ya?ml$/i.test(f) && !f.startsWith(".") && !f.split("/").includes("node_modules")).slice(0, MAX_YAML_READS);
   for (const f of candidates) {
     try {
-      if (isPipelineYaml(await readHead2(join70(repo, f)))) found.add(f);
+      if (isPipelineYaml(await readHead2(join71(repo, f)))) found.add(f);
     } catch {
     }
   }
@@ -61778,7 +62597,7 @@ var init_doctor_plugins = __esm({
 
 // src/cli/commands/doctor-dotnet.ts
 import { existsSync as existsSync50, lstatSync as lstatSync12, readdirSync as readdirSync13, readFileSync as readFileSync33 } from "node:fs";
-import { basename as basename17, join as join71, posix as posix6, resolve as resolve18 } from "node:path";
+import { basename as basename17, join as join72, posix as posix6, resolve as resolve18 } from "node:path";
 function xunitReferences(text2) {
   const out = [];
   for (const m of text2.matchAll(ITEM)) {
@@ -61810,7 +62629,7 @@ function readSmall(path) {
 function threadsLifted(repo, tracked, dir) {
   const rel = dir === "." ? RUNNER_JSON : posix6.join(dir, RUNNER_JSON);
   if (!tracked.has(rel)) return false;
-  const text2 = readSmall(join71(repo, rel));
+  const text2 = readSmall(join72(repo, rel));
   try {
     const n2 = JSON.parse(text2 ?? "").maxParallelThreads;
     return typeof n2 === "number" && (n2 === -1 || n2 >= 2);
@@ -61824,7 +62643,7 @@ function xunitBefore28(repo, files) {
   const central = /* @__PURE__ */ new Map();
   for (const f of relevant.filter((x) => basename17(x) === CENTRAL_FILE)) {
     const versions = /* @__PURE__ */ new Map();
-    for (const r of xunitReferences(readSmall(join71(repo, f)) ?? "")) if (r.kind === "PackageVersion" && r.version !== null) versions.set(r.id.toLowerCase(), r.version);
+    for (const r of xunitReferences(readSmall(join72(repo, f)) ?? "")) if (r.kind === "PackageVersion" && r.version !== null) versions.set(r.id.toLowerCase(), r.version);
     central.set(posix6.dirname(f), versions);
   }
   const centralVersion = (project, id) => {
@@ -61836,7 +62655,7 @@ function xunitBefore28(repo, files) {
   };
   const out = [];
   for (const project of relevant.filter((f) => PROJECT_FILE.test(f)).sort()) {
-    for (const r of xunitReferences(readSmall(join71(repo, project)) ?? "")) {
+    for (const r of xunitReferences(readSmall(join72(repo, project)) ?? "")) {
       if (r.kind !== "PackageReference") continue;
       const old = before28(r.version ?? centralVersion(project, r.id) ?? "");
       if (old === null || threadsLifted(repo, tracked, posix6.dirname(project))) continue;
@@ -61897,7 +62716,7 @@ function packageEvidence(repo, files) {
     const name = basename17(f);
     if (PACKAGE_FILES.has(name) || name === TOOL_MANIFEST) out.push(f);
     else if (MSBUILD_FILE.test(f) || MSBUILD_IMPORTS.has(name) || f === "global.json") {
-      const text2 = readSmall(join71(repo, f)) ?? "";
+      const text2 = readSmall(join72(repo, f)) ?? "";
       const id = PACKAGE_REFERENCE.exec(text2)?.[1];
       if (id !== void 0) out.push(`${f}: PackageReference ${id.trim()}`);
       for (const sdk of nugetSdks(f, text2)) out.push(`${f}: MSBuild SDK ${sdk}`);
@@ -61913,7 +62732,7 @@ function floatingVersions(repo, files) {
   const out = [];
   for (const f of files.slice(0, MAX_FILES * 4)) {
     if (!PROJECT_FILE.test(f) && !MSBUILD_IMPORTS.has(basename17(f)) && basename17(f) !== CENTRAL_FILE) continue;
-    for (const m of (readSmall(join71(repo, f)) ?? "").matchAll(ITEM)) {
+    for (const m of (readSmall(join72(repo, f)) ?? "").matchAll(ITEM)) {
       const attrs = m[2] ?? "";
       const body = m[3] ?? "";
       const id = attribute(attrs, "Include") ?? attribute(attrs, "Update");
@@ -61987,7 +62806,7 @@ function dotnetPackagesCheck(input) {
   const mac = nugetOnMac(input);
   if (!mac) return [];
   const { install, evidence } = mac;
-  const cache2 = join71(toolchainCacheRoot(input.orbitHome, repoKeyFor(repo)), "nuget");
+  const cache2 = join72(toolchainCacheRoot(input.orbitHome, repoKeyFor(repo)), "nuget");
   const count3 = cachedPackages(cache2);
   const empty = count3 === null || count3 === 0;
   const restores = install !== null && restoresPackages(install);
@@ -62000,21 +62819,38 @@ function dotnetPackagesCheck(input) {
   ];
   const restoring = failing.length > 0 || !empty ? [] : Object.values(input.config.checks).filter((c) => c.kind === "command" && c.mandatory && checkUsesDotnet(repo, c) && restoresPackages(c.command)).map((c) => c.id);
   const many = restoring.length > 1;
+  const audit = auditFailures(input, mac);
   const until = [
     ...floating.length > 0 ? ["no package version floats: pin each one the details name, or restore with a lock file (RestorePackagesWithLockFile)"] : [],
-    ...auditFailures(input, mac) ? ["the vulnerability audit no longer fails them, as checks.dotnet-audit says"] : []
+    ...audit ? ["the vulnerability audit no longer fails them, as checks.dotnet-audit says"] : []
   ];
+  const noInstall = noInstallRestore(input.config, install);
+  const thenRestore = noInstall === null ? "the dependency install and the checks then restore" : "the checks that restore then do so";
+  const filled = !empty;
+  const stuck = filled && floating.length > 0;
+  const failed = failing.length > 0 || restoring.length > 0;
+  const status2 = failed ? "fail" : empty || stuck ? "warn" : "pass";
+  const packages = `${count3} ${count3 === 1 ? "package" : "packages"}`;
+  const summary = failing.length > 0 ? `dependencies.install_command restores NuGet packages, which ${TRUST_REASON}, and ${failing.join(", and ")}: the dependency install would fail` : restoring.length > 0 ? `${many ? "checks" : "check"} ${restoring.join(", ")} ${many ? "restore" : "restores"} NuGet packages, which ${TRUST_REASON}, and this repository's NuGet cache is empty: the ${many ? "checks" : "check"} would fail at the baseline` : stuck ? `this repository's NuGet cache holds ${packages}, but a package version floats, which every restore looks up at nuget.org, cache or not` : filled ? `this repository's NuGet cache holds ${packages}, restored outside the sandbox: ${noInstall === null ? "the dependency install and the checks restore from it" : "the checks that restore read it"} with nothing to download` : `this repository's NuGet packages ${TRUST_REASON}: fill its NuGet cache outside the sandbox`;
+  const extra = status2 === "pass" ? [...noInstall === null ? [] : [noInstall], ...audit ? ["restores still wait for the vulnerability audit to stop failing them, as checks.dotnet-audit says"] : [], `when the packages change, fill it again outside the sandbox: dotnet restore from the repository with NUGET_PACKAGES set to that cache (${NUGET_DOCS})`] : [];
+  const fix = status2 === "pass" ? null : filled ? `pin each package version the details name, or restore with a lock file (RestorePackagesWithLockFile), so that ${thenRestore} offline from the filled cache (${NUGET_DOCS})` : `run once in a terminal, outside the sandbox, and again whenever the packages change: ${fillCommand(repo, cache2, files, install, evidence)}; ${thenRestore} offline from that cache ${until.length > 0 ? `once ${until.join(", and once ")} (${[noInstall, NUGET_DOCS].filter((x) => x !== null).join("; ")})` : `(${[noInstall, "Orbit turns NuGet's vulnerability audit off in the sandbox, where it cannot reach nuget.org", NUGET_DOCS].filter((x) => x !== null).join("; ")})`}`;
   return [
     {
       id: "checks.dotnet-packages",
       area: "checks",
-      status: failing.length > 0 || restoring.length > 0 ? "fail" : "warn",
-      summary: failing.length > 0 ? `dependencies.install_command restores NuGet packages, which ${TRUST_REASON}, and ${failing.join(", and ")}: the dependency install would fail` : restoring.length > 0 ? `${many ? "checks" : "check"} ${restoring.join(", ")} ${many ? "restore" : "restores"} NuGet packages, which ${TRUST_REASON}, and this repository's NuGet cache is empty: the ${many ? "checks" : "check"} would fail at the baseline` : `this repository's NuGet packages ${TRUST_REASON}: fill its NuGet cache outside the sandbox`,
-      details: [...capped(evidence), ...capped(floating), `NuGet cache ${cache2}: ${state}`],
-      missing: "NuGet packages in this repository's cache, restored outside the sandbox",
-      fix: `run once in a terminal, outside the sandbox, and again whenever the packages change: ${fillCommand(repo, cache2, files, install, evidence)}; the dependency install and the checks then restore offline from that cache ${until.length > 0 ? `once ${until.join(", and once ")} (${NUGET_DOCS})` : `(Orbit turns NuGet's vulnerability audit off in the sandbox, where it cannot reach nuget.org; ${NUGET_DOCS})`}`
+      status: status2,
+      summary,
+      details: [...capped(evidence), ...capped(floating), `NuGet cache ${cache2}: ${state}`, ...extra],
+      missing: status2 === "pass" ? null : "NuGet packages in this repository's cache, restored outside the sandbox",
+      fix
     }
   ];
+}
+function noInstallRestore(config, install) {
+  if (install !== null && restoresPackages(install)) return null;
+  const deps = config.dependencies;
+  const why = !deps.install_existing_lockfile ? "dependencies.install_existing_lockfile is false, so no install runs" : !deps.install_command ? `dependencies.install_command is not set, and Orbit's own install is npm ci, which restores no NuGet package and is skipped without a package-lock.json ("no lockfile to install from")` : `dependencies.install_command is ${deps.install_command.join(" ")}, which doctor cannot see restore NuGet packages`;
+  return `no dependency install restores NuGet packages here: ${why}`;
 }
 function lastMatch(text2, pattern) {
   let at = -1;
@@ -62087,7 +62923,7 @@ function auditFailures(input, mac) {
     if (restores) restorers.push({ label: `check ${c.id}`, check: c.id, commandField: `checks.${c.id}.command`, envField: `checks.${c.id}.env`, command: c.command, env: c.env, restores, mandatory: c.mandatory });
   }
   if (restorers.length === 0) return null;
-  const read2 = files.filter((f) => PROJECT_FILE.test(f) || AUDIT_FILE.test(f)).slice(0, MAX_FILES * 4).sort().map((f) => fileSettings(f, readSmall(join71(repo, f)) ?? ""));
+  const read2 = files.filter((f) => PROJECT_FILE.test(f) || AUDIT_FILE.test(f)).slice(0, MAX_FILES * 4).sort().map((f) => fileSettings(f, readSmall(join72(repo, f)) ?? ""));
   if (read2.some((r) => r.kept)) return null;
   const fileOn = read2.flatMap((r) => r.on);
   const fileErrors = read2.flatMap((r) => r.errors);
@@ -62186,7 +63022,7 @@ var init_doctor_dotnet = __esm({
 // src/cli/commands/doctor-sandbox.ts
 import { existsSync as existsSync51, mkdirSync as mkdirSync23, mkdtempSync as mkdtempSync6, realpathSync as realpathSync18, writeFileSync as writeFileSync9 } from "node:fs";
 import { tmpdir as tmpdir12 } from "node:os";
-import { basename as basename18, dirname as dirname33, isAbsolute as isAbsolute23, join as join72, resolve as resolve19 } from "node:path";
+import { basename as basename18, dirname as dirname33, isAbsolute as isAbsolute23, join as join73, resolve as resolve19 } from "node:path";
 function checkWord(check) {
   if (!check.shell) return check.command[0] ?? null;
   return (check.command[0] ?? "").trim().split(/\s+/).find((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) ?? null;
@@ -62198,26 +63034,26 @@ function msbuildRefusal(checkId, shown3, d, msbuild) {
 function probeCacheRoot(input, toolchains, scratch) {
   if (!input.orbitHome || !input.repo) return null;
   const real = toolchainCacheRoot(input.orbitHome, repoKeyFor(input.repo));
-  const all = toolchains.every((id) => TOOLCHAIN_PROFILES[id].caches.every((c) => existsSync51(join72(real, c))));
-  return all ? real : join72(scratch, "cache-stand-in");
+  const all = toolchains.every((id) => TOOLCHAIN_PROFILES[id].caches.every((c) => existsSync51(join73(real, c))));
+  return all ? real : join73(scratch, "cache-stand-in");
 }
 async function probe(input, check, exe, args, cwd, project, nodeFix) {
-  const scratch = realpathSync18(mkdtempSync6(join72(tmpdir12(), "orbit-doctor-check-")));
+  const scratch = realpathSync18(mkdtempSync6(join73(tmpdir12(), "orbit-doctor-check-")));
   let tmp = null;
   try {
-    const checkout = join72(scratch, "checkout");
-    const home2 = join72(scratch, "home");
-    const artifacts = join72(scratch, "artifacts");
+    const checkout = join73(scratch, "checkout");
+    const home2 = join73(scratch, "home");
+    const artifacts = join73(scratch, "artifacts");
     for (const d of [checkout, home2, artifacts]) mkdirSync23(d, { recursive: true, mode: 448 });
     for (const [rel, text2] of Object.entries(project?.files ?? {})) {
-      mkdirSync23(dirname33(join72(checkout, rel)), { recursive: true, mode: 448 });
-      writeFileSync9(join72(checkout, rel), text2, { mode: 384 });
+      mkdirSync23(dirname33(join73(checkout, rel)), { recursive: true, mode: 448 });
+      writeFileSync9(join73(checkout, rel), text2, { mode: 384 });
     }
     prepareCheckHome(home2);
     tmp = prepareWorkerTmpDir(scratch);
     const snapshot2 = { schema: "orbit.policy/1", run_id: "doctor", created_at: "", repo_root: input.repo ?? scratch, config: input.config, effective_protected_paths: [], check_config_hashes: {} };
     const ids = detectToolchains({ command: check.command, shell: check.shell, roots: [...input.repo ? [input.repo] : [], ...cwd ? [cwd] : []] });
-    const toolchains = toolchainLayout({ toolchains: ids, mode: "check", cacheRoot: probeCacheRoot(input, ids, scratch), scratchRoot: join72(scratch, "toolchains"), tmpDir: tmp, hostHome: input.homeDir, hostEnv: input.env, platform: input.platform ?? process.platform, networkHosts: check.network_hosts });
+    const toolchains = toolchainLayout({ toolchains: ids, mode: "check", cacheRoot: probeCacheRoot(input, ids, scratch), scratchRoot: join73(scratch, "toolchains"), tmpDir: tmp, hostHome: input.homeDir, hostEnv: input.env, platform: input.platform ?? process.platform, networkHosts: check.network_hosts });
     for (const d of toolchains.directories) if (!existsSync51(d)) mkdirSync23(d, { recursive: true, mode: 448 });
     const profile = profileForCheck({ worktree: checkout, check, snapshot: snapshot2, extraWritable: [artifacts, home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: input.homeDir, env: { ...input.env } });
     const env = checkEnv(check, { homeDir: home2, tmpDir: tmp, artifactsDir: artifacts }, input.env.PATH, toolchains.env);
@@ -62272,7 +63108,7 @@ async function checkSandboxCheck(input) {
   const details = [];
   const refused = [];
   const platform3 = input.platform ?? process.platform;
-  const folderForm = platform3 !== "darwin" || repo === null || !checkoutBelowDenied({ checkout: join72(input.orbitHome ?? join72(input.homeDir, ".orbit"), "worktrees", repoKeyFor(repo), "run", "checkout"), repoRoot: repo, homeDir: input.homeDir, env: input.env });
+  const folderForm = platform3 !== "darwin" || repo === null || !checkoutBelowDenied({ checkout: join73(input.orbitHome ?? join73(input.homeDir, ".orbit"), "worktrees", repoKeyFor(repo), "run", "checkout"), repoRoot: repo, homeDir: input.homeDir, env: input.env });
   const undetermined = [];
   let started = 0;
   const used = new Set(repo ? detectToolchains({ roots: [repo] }) : []);
@@ -62406,8 +63242,9 @@ async function checkSandboxCheck(input) {
   const pipes = refused.every((r) => r.msbuild || r.format || r.outside);
   const one = "dotnet commands that pin one MSBuild node (-m:1)";
   const loadsNothing = folderForm ? "dotnet format checks that load no project (dotnet format whitespace --folder)" : "dotnet format run outside Orbit, in CI";
-  const atBaseline = refused.some((r) => !r.label || r.label === "dependencies.install_command");
-  const blocks = atBaseline ? "a run would block at its baseline" : `a run would fail where Orbit starts ${refused.length === 1 ? "it" : "them"}`;
+  const atBaseline = refused.some((r) => r.label === "dependencies.install_command" || !r.label && r.check.mandatory) || refusedToolchains.some((r) => r.mandatory);
+  const optionalOnly = refused.every((r) => !r.label && !r.check.mandatory);
+  const blocks = atBaseline ? "a run would block at its baseline" : optionalOnly ? `a run whose contract requires ${refused.length === 1 ? "it" : "one of them"} would block at its baseline` : `a run would fail where Orbit starts ${refused.length === 1 ? "it" : "them"}`;
   return result2(
     status2,
     nodes ? `${subject(refused)} would start MSBuild worker nodes, which the sandbox refuses; ${blocks}` : formats ? `${subject(refused)} ${refused.length === 1 ? "runs" : "run"} dotnet format, ${folderForm ? "which loads the project through a build host the sandbox refuses its named pipe" : "which cannot run in a run's check sandbox on macOS"}; ${blocks}` : pipes ? folderForm ? `${subject(refused)} would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; ${blocks}` : `${subject(refused)} would start MSBuild worker nodes, whose named pipes the sandbox refuses, or run dotnet format, which cannot run in a run's check sandbox on macOS; ${blocks}` : `the sandbox refuses ${refused.length === 1 ? "the executable" : "the executables"} of ${subject(refused)}; ${blocks}`,
@@ -62436,7 +63273,7 @@ function baseCheck(id, users) {
 function launchPath(found, repo) {
   const target = realpathSync18(found);
   if (repo && isWithin(target, repo)) return null;
-  const named2 = join72(realpathSync18(dirname33(found)), basename18(found));
+  const named2 = join73(realpathSync18(dirname33(found)), basename18(found));
   return repo && isWithin(named2, repo) ? target : named2;
 }
 async function probeOrRefuse(input, check, exe, args, cwd, project, nodeFix) {
@@ -62450,11 +63287,14 @@ async function probeOrRefuse(input, check, exe, args, cwd, project, nodeFix) {
 async function toolchainLine(input, orbitHome, id, base) {
   const p = TOOLCHAIN_PROFILES[id];
   const root = toolchainCacheRoot(orbitHome, repoKeyFor(input.repo));
-  const caches = p.caches.map((c) => join72(root, c));
+  const caches = p.caches.map((c) => join73(root, c));
   const outside = id === "dotnet" && input.nugetPackages === true && (input.platform ?? process.platform) === "darwin";
   const nuget = "on macOS the dependency install cannot download NuGet packages, so this repository's are restored into it outside the sandbox, as checks.dotnet-packages says";
   const exists = caches.every((c) => existsSync51(c));
-  const state = exists ? `read-only for checks and workers${outside ? `; ${nuget}` : ", written by the dependency install"}` : `not created yet${outside ? `: ${nuget}` : "; the first dependency install creates it"}`;
+  const deps = input.config.dependencies;
+  const installs = deps.install_existing_lockfile && !!deps.install_command;
+  const noInstall = deps.install_existing_lockfile ? "dependencies.install_command is not set" : "dependencies.install_existing_lockfile is false";
+  const state = exists ? `read-only for checks and workers${outside ? `; ${nuget}` : installs ? ", written by the dependency install" : `; ${noInstall}, so no run writes it`}` : `not created yet${outside ? `: ${nuget}` : installs ? "; the first dependency install creates it" : `; ${noInstall}, so no run creates it`}`;
   const where2 = `${caches.length === 1 ? "dependency cache" : "dependency caches"} ${caches.join(", ")} (${state}); private per check attempt: ${p.scratchVars.join(", ")}`;
   const label = `toolchain ${id}`;
   const found = p.probe.executables.map((e) => which(e, input.env.PATH)).find((x) => x !== null);
@@ -62505,12 +63345,77 @@ ${r.stderr}`.trim() };
   }
 });
 
+// src/cli/commands/doctor-workers.ts
+import { basename as basename19 } from "node:path";
+function workerLoopbackCheck(input) {
+  const id = "workers.loopback";
+  const area = "isolation";
+  if (input.platform === "linux") {
+    const summary = "workers can run test suites that listen on loopback: on Linux srt starts every worker sandbox in a network namespace of its own, with a loopback nothing outside it can reach (from srt's source, not measured by Orbit)";
+    return { id, area, status: "pass", summary, details: [], missing: null, fix: null };
+  }
+  const cannot = `on macOS workers cannot run test hosts that need a loopback socket (${RUNNERS3}), in either worker tier`;
+  const runners = [];
+  if (input.files.some((f) => DOTNET_FILE.test(f))) runners.push(`this repository uses .NET: every dotnet test listens on loopback for its test host, so a worker's aborts with "SocketException (13): Permission denied"`);
+  if (input.files.some((f) => GRADLE_FILES.has(basename19(f)))) runners.push("this repository uses Gradle: its test workers connect to the build over loopback, so a worker's gradle test cannot run");
+  if (runners.length === 0) {
+    const summary = `${cannot}; this repository uses no runner that needs one on every run (.NET, Gradle), and a test that starts its own server runs in the checks`;
+    return { id, area, status: "pass", summary, details: [WHY], missing: null, fix: null };
+  }
+  const listening = Object.values(input.config.checks).filter((check) => check.local_binding !== false);
+  const testing = listening.filter((check) => check.kind === "command" && checkCategory(check) === "test");
+  const who = testing.length > 0 ? "the test checks that may listen run them" : listening.length > 0 ? "no test check may listen (local_binding: false on each), so nothing here runs them" : "no check may listen either (local_binding: false on every check), so nothing here runs them";
+  return {
+    id,
+    area,
+    status: "warn",
+    summary: `${cannot}, and this repository's tests need one, so a worker submits changes it could not test; ${who}`,
+    details: [...runners, WHY, ...testing.map((check) => `check ${check.id} may listen (its own local_binding), so it runs tests a worker cannot`)],
+    missing: "a worker sandbox that limits a listener to loopback, which macOS's Seatbelt cannot express",
+    fix: "nothing to set in Orbit on macOS: keep local_binding (the default) on the checks that run these tests, which test every change a worker submits; on Linux srt starts every worker sandbox in a network namespace of its own (from srt's source, not measured by Orbit), so workers there can run them too"
+  };
+}
+function workerToolchainsCheck(input) {
+  if (input.tier !== "claude-sandbox") return [];
+  const hit = SCRATCH_BOUND.filter((t) => input.toolchains.includes(t.id));
+  if (hit.length === 0) return [];
+  const names = hit.map((t) => t.name);
+  const list3 = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} or ${names.at(-1)}`;
+  return [
+    {
+      id: "workers.toolchains",
+      area: "isolation",
+      status: "warn",
+      summary: `workers run in the claude-sandbox tier, where Claude Code's sandbox does not let their commands write their build state, so a worker cannot build or test ${list3} code here and submits changes it could not test; the checks still run them`,
+      details: hit.map((t) => t.detail),
+      missing: "the os-sandbox tier for workers, where the whole worker process is confined by sandbox-runtime and may write its build state",
+      fix: "export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) and use isolation.provider: sandbox-runtime (see claude.worker-tier)"
+    }
+  ];
+}
+var RUNNERS3, DOTNET_FILE, GRADLE_FILES, WHY, SCRATCH_BOUND;
+var init_doctor_workers = __esm({
+  "src/cli/commands/doctor-workers.ts"() {
+    "use strict";
+    init_config();
+    RUNNERS3 = "dotnet test's VSTest test host, Gradle's test workers, a test that starts a server";
+    DOTNET_FILE = /\.(sln|slnx|csproj|fsproj|vbproj)$/;
+    GRADLE_FILES = /* @__PURE__ */ new Set(["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew"]);
+    WHY = `neither worker sandbox on macOS (sandbox-runtime, or Claude Code's own) can limit a listener to loopback: Seatbelt lets a process listen on every address of this machine or on none, so a test server on 0.0.0.0 would be reachable from the network, and a worker runs model-driven commands (ADR 0001, "Workers and loopback")`;
+    SCRATCH_BOUND = [
+      { id: "go", name: "Go", detail: `go: GOCACHE and GOPATH are in the worker's private toolchain directory; go build and go test fail first ("failed to initialize build cache ... operation not permitted")` },
+      { id: "rust", name: "Rust", detail: `rust: CARGO_TARGET_DIR is in the worker's private toolchain directory; cargo build and cargo test fail first ("failed to create directory ... Operation not permitted")` },
+      { id: "jvm", name: "JVM", detail: "jvm: GRADLE_USER_HOME and Maven's local repository are in the worker's private toolchain directory, which Gradle writes on every build and Maven whenever it resolves an artifact" }
+    ];
+  }
+});
+
 // src/cli/commands/doctor.ts
 import { accessSync as accessSync3, constants as constants5, existsSync as existsSync52, mkdtempSync as mkdtempSync7, readFileSync as readFileSync34, realpathSync as realpathSync19, rmSync as rmSync18, statSync as statSync15 } from "node:fs";
 import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
-import { homedir as homedir15, tmpdir as tmpdir13 } from "node:os";
-import { delimiter as delimiter4, isAbsolute as isAbsolute24, join as join73, resolve as resolve20 } from "node:path";
+import { homedir as homedir16, tmpdir as tmpdir13 } from "node:os";
+import { delimiter as delimiter4, isAbsolute as isAbsolute24, join as join74, resolve as resolve20 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
     try {
@@ -62525,7 +63430,7 @@ function which2(cmd, env, cwd = process.cwd()) {
   }
   for (const dir of (env.PATH ?? "").split(delimiter4)) {
     if (!dir) continue;
-    const p = join73(dir, cmd);
+    const p = join74(dir, cmd);
     if (ok(p)) return p;
   }
   return null;
@@ -62629,13 +63534,13 @@ function checkStorage(p) {
   const { repo } = p;
   if (!repo) return warn2("storage", "storage", "no repository, so no state database to check", "a repository", null);
   const path = stateDbPath(repo);
-  const dir = join73(repo, ".orbit");
+  const dir = join74(repo, ".orbit");
   let db = null;
   try {
     if (!existsSync52(path)) {
-      const scratch = mkdtempSync7(join73(tmpdir13(), "orbit-doctor-"));
+      const scratch = mkdtempSync7(join74(tmpdir13(), "orbit-doctor-"));
       try {
-        db = openDb(join73(scratch, "probe.sqlite"));
+        db = openDb(join74(scratch, "probe.sqlite"));
         const mode2 = String((db.get("PRAGMA journal_mode") ?? {}).journal_mode);
         if (mode2.toLowerCase() !== "wal") return fail2("storage", "storage", `SQLite cannot use WAL on this filesystem (journal_mode=${mode2})`, "WAL journaling", "use a local disk, not a network or container bind mount");
       } finally {
@@ -62691,7 +63596,7 @@ function checkConfiguredChecks(p) {
       details.push(`${c.id}: shell builtin "${word}" (not resolved)`);
       continue;
     }
-    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join73(repo, "node_modules", ".bin", word), ctx.env) : null);
+    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join74(repo, "node_modules", ".bin", word), ctx.env) : null);
     if (!found) {
       details.push(`${c.id}: "${word}" was not found${c.mandatory ? "" : " (optional check)"}${c.cwd !== "." ? ` (cwd ${c.cwd})` : ""}`);
       bump(level);
@@ -62699,7 +63604,7 @@ function checkConfiguredChecks(p) {
     }
     const script = c.shell ? void 0 : packageScriptOf(c.command);
     if (script) {
-      const pj = join73(cwd, "package.json");
+      const pj = join74(cwd, "package.json");
       let defined = false;
       try {
         defined = typeof JSON.parse(readFileSync34(pj, "utf8")).scripts?.[script] === "string";
@@ -62742,6 +63647,9 @@ async function checkScope(p) {
     )
   ];
 }
+function claudeWorkerTier(iso2, env) {
+  return iso2.available && iso2.provider?.kind === "sandbox-runtime" && claudeEnvCredential(env) ? "os-sandbox" : "claude-sandbox";
+}
 async function checkIsolation(p) {
   const { config, ctx } = p;
   let provider;
@@ -62761,7 +63669,7 @@ async function checkIsolation(p) {
   }
   if (!st.ok) {
     const pluginRoot = ctx.env.ORBIT_PLUGIN_ROOT;
-    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync52(join73(pluginRoot, "package.json")) && !existsSync52(join73(pluginRoot, "node_modules"))) {
+    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync52(join74(pluginRoot, "package.json")) && !existsSync52(join74(pluginRoot, "node_modules"))) {
       return {
         check: fail2(
           "isolation",
@@ -62839,7 +63747,7 @@ async function checkProviders(p, iso2, registry) {
     }
     if (kind === "claude") {
       const envCred = claudeEnvCredential(ctx.env);
-      if (iso2.available && iso2.provider?.kind === "sandbox-runtime" && envCred) checks.push(pass(`${id}.worker-tier`, "providers", `workers run in the os-sandbox tier (${envCred} is set, so the whole claude process is confined)`));
+      if (claudeWorkerTier(iso2, ctx.env) === "os-sandbox") checks.push(pass(`${id}.worker-tier`, "providers", `workers run in the os-sandbox tier (${envCred} is set, so the whole claude process is confined)`));
       else {
         const why = !envCred ? "no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in the environment (a keychain login is invisible inside srt)" : "sandbox-runtime isolation is not in use";
         checks.push(warn2(`${id}.worker-tier`, "providers", `workers run in the claude-sandbox tier: ${why}`, "an exported Claude credential plus sandbox-runtime for the strongest tier", "export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)", CLAUDE_SANDBOX_LIMITATIONS.map((l) => `limitation: ${l}`)));
@@ -62964,9 +63872,9 @@ function packageInstalled(req, name) {
 function playwrightCache(env, home2, platform3) {
   const override = env.PLAYWRIGHT_BROWSERS_PATH;
   if (override && override !== "0") return override;
-  if (platform3 === "darwin") return join73(home2, "Library", "Caches", "ms-playwright");
-  if (platform3 === "win32") return join73(env.LOCALAPPDATA ?? join73(home2, "AppData", "Local"), "ms-playwright");
-  return join73(env.XDG_CACHE_HOME ?? join73(home2, ".cache"), "ms-playwright");
+  if (platform3 === "darwin") return join74(home2, "Library", "Caches", "ms-playwright");
+  if (platform3 === "win32") return join74(env.LOCALAPPDATA ?? join74(home2, "AppData", "Local"), "ms-playwright");
+  return join74(env.XDG_CACHE_HOME ?? join74(home2, ".cache"), "ms-playwright");
 }
 function checkPlaywright(p) {
   const { config, repo, ctx } = p;
@@ -62974,7 +63882,7 @@ function checkPlaywright(p) {
   if (!wanted) return pass("playwright", "ui", "not required: no ui section and no playwright check is configured");
   const level = fail2;
   if (!repo) return level("playwright", "ui", "no repository to look for Playwright in", "a repository", null);
-  const req = createRequire4(join73(repo, "package.json"));
+  const req = createRequire4(join74(repo, "package.json"));
   let pwTest = null;
   try {
     pwTest = req.resolve("@playwright/test/package.json");
@@ -62992,7 +63900,7 @@ function checkPlaywright(p) {
   if (!core) return level("playwright", "ui", "playwright-core is missing next to @playwright/test", "playwright-core", "reinstall dependencies");
   let revisions = {};
   try {
-    const bj = JSON.parse(readFileSync34(join73(core, "..", "browsers.json"), "utf8"));
+    const bj = JSON.parse(readFileSync34(join74(core, "..", "browsers.json"), "utf8"));
     revisions = Object.fromEntries((bj.browsers ?? []).map((b) => [b.name, b.revision]));
   } catch {
     details.push("browsers.json could not be read; browser revisions are not checked");
@@ -63003,7 +63911,7 @@ function checkPlaywright(p) {
   for (const b of names) {
     const dirs = b === "chromium" ? ["chromium", "chromium_headless_shell"] : [b];
     const revs = dirs.map((d) => ({ d, rev: revisions[d] ?? revisions[b] ?? null }));
-    const present = revs.some((r) => r.rev ? existsSync52(join73(cache2, `${r.d}-${r.rev}`)) : false);
+    const present = revs.some((r) => r.rev ? existsSync52(join74(cache2, `${r.d}-${r.rev}`)) : false);
     details.push(`${b}: ${present ? `installed (${cache2})` : `not found in ${cache2}`}`);
     if (!present && revs.some((r) => r.rev)) missing.push(b);
   }
@@ -63033,7 +63941,7 @@ function headlessShellLayouts(arch) {
 function headlessChromiumOf(repo, cache2, arch = process.arch) {
   let browsersJson;
   try {
-    browsersJson = join73(createRequire4(join73(repo, "package.json")).resolve("playwright-core/package.json"), "..", "browsers.json");
+    browsersJson = join74(createRequire4(join74(repo, "package.json")).resolve("playwright-core/package.json"), "..", "browsers.json");
   } catch {
     return { problem: "Playwright is not installed in this repository" };
   }
@@ -63046,8 +63954,8 @@ function headlessChromiumOf(repo, cache2, arch = process.arch) {
     return { problem: `Playwright's browsers.json could not be read (${browsersJson})` };
   }
   if (!revision) return { problem: "Playwright's browsers.json names no Chromium revision" };
-  const dir = join73(cache2, `chromium_headless_shell-${revision}`);
-  const exe = headlessShellLayouts(arch).map((rel) => join73(dir, rel)).find((p) => isExecutable2(p));
+  const dir = join74(cache2, `chromium_headless_shell-${revision}`);
+  const exe = headlessShellLayouts(arch).map((rel) => join74(dir, rel)).find((p) => isExecutable2(p));
   return exe ? { exe, revision } : { problem: `Playwright's headless Chromium (revision ${revision}) is not installed in ${cache2}` };
 }
 function noncePage() {
@@ -63071,13 +63979,13 @@ async function browserIsolationCheck(input) {
     return fail2(id, "ui", `${info.detail}; browser checks are refused`, `srt ${SRT_VERIFIED_VERSION} (@anthropic-ai/sandbox-runtime)`, `install @anthropic-ai/sandbox-runtime@${SRT_VERIFIED_VERSION}`, [info.detail, limitation]);
   }
   if (!input.repo) return warn2(id, "ui", "not launched: no repository to find Playwright in", "a repository", null, [info.detail, limitation]);
-  const home2 = input.homeDir ?? input.env.HOME ?? homedir15();
+  const home2 = input.homeDir ?? input.env.HOME ?? homedir16();
   const cache2 = playwrightCache(input.env, home2, "darwin");
   const browser = headlessChromiumOf(input.repo, cache2);
   if ("problem" in browser) {
     return warn2(id, "ui", `not launched: ${browser.problem}`, "Playwright's headless Chromium for the repository's Playwright", "npm install -D @playwright/test, then npx playwright install chromium", [info.detail, limitation]);
   }
-  const dir = realpathSync19(mkdtempSync7(join73(tmpdir13(), "orbit-doctor-browser-")));
+  const dir = realpathSync19(mkdtempSync7(join74(tmpdir13(), "orbit-doctor-browser-")));
   try {
     const repo = realpathSync19(input.repo);
     const exe = realpathSync19(browser.exe);
@@ -63085,7 +63993,7 @@ async function browserIsolationCheck(input) {
     const profile = { writablePaths: [dir], denyReadPaths, allowedHosts: [], allowLocalBinding: false, chromiumMachRendezvous: true, limits: { timeoutMs: 9e4, memoryMb: null, cpus: null, pids: null } };
     const env = { ...safeBaseEnv(input.env), TMPDIR: dir };
     const page = noncePage();
-    const argv2 = [browser.exe, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", `--user-data-dir=${join73(dir, "profile")}`, "--dump-dom", page.url];
+    const argv2 = [browser.exe, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", `--user-data-dir=${join74(dir, "profile")}`, "--dump-dom", page.url];
     const wrapped = provider.wrap(argv2, profile, { cwd: dir, env });
     let r;
     try {
@@ -63165,7 +64073,7 @@ async function checkService(p) {
   if (linger === "no") details.push(`lingering is off for ${ctx.user}: the service stops at logout (loginctl enable-linger ${ctx.user})`);
   if (!status2.installed) return warn2("service", "service", "no service is installed, so runs only progress while a terminal is attached", "an installed background service (survives terminal closure and restarts after failure)", orbitHint("service install", void 0, { quote: false }), details);
   if (status2.loaded !== true) return warn2("service", "service", `service installed but ${status2.loaded === false ? "not loaded" : `state unknown (${status2.detail})`}`, "a loaded service", `${orbitHint("service install", void 0, { quote: false })} (reloads it)`, details);
-  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join73(ctx.orbitHome, "logs")}, then ${orbitHint("service install", void 0, { quote: false })} to restart it`, details);
+  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join74(ctx.orbitHome, "logs")}, then ${orbitHint("service install", void 0, { quote: false })} to restart it`, details);
   if (linger === "no") return warn2("service", "service", "service is loaded; lingering is off", "systemd lingering", `loginctl enable-linger ${ctx.user}`, details);
   return pass("service", "service", live ? "service loaded and its controller heartbeat is fresh" : "service loaded; the controller has not published a heartbeat yet", details);
 }
@@ -63255,6 +64163,8 @@ async function runDoctor(ctx, opts) {
     () => checkSandboxCheck({ config, repo, provider: isoFacts.provider, available: isoFacts.available, env: ctx.env, homeDir: ctx.homeDir, orbitHome: ctx.orbitHome, platform: ctx.platform, nugetPackages: repo !== null && hasNugetPackages(repo, tracked) })
   );
   await safely("checks.dotnet-tests", "checks", () => repo && configLoaded ? dotnetTestsCheck({ config, repo, files: tracked }) : []);
+  await safely("workers.loopback", "isolation", () => repo && configLoaded ? workerLoopbackCheck({ config, files: tracked, platform: ctx.platform }) : []);
+  await safely("workers.toolchains", "isolation", () => repo && configLoaded ? workerToolchainsCheck({ tier: claudeWorkerTier(isoFacts, ctx.env), toolchains: detectToolchains({ roots: [repo] }) }) : []);
   const nuget = repo && configLoaded ? { config, repo, files: tracked, provider: isoFacts.provider, available: isoFacts.available, platform: ctx.platform, orbitHome: ctx.orbitHome } : null;
   await safely("checks.dotnet-packages", "checks", () => nuget ? dotnetPackagesCheck(nuget) : []);
   await safely("checks.dotnet-audit", "checks", () => nuget ? dotnetAuditCheck(nuget) : []);
@@ -63299,6 +64209,7 @@ var init_doctor = __esm({
     init_adapters();
     init_isolation();
     init_sandbox_runtime();
+    init_toolchains();
     init_env2();
     init_single_sandbox();
     init_registry();
@@ -63324,6 +64235,7 @@ var init_doctor = __esm({
     init_doctor_plugins();
     init_doctor_dotnet();
     init_doctor_sandbox();
+    init_doctor_workers();
     DOCTOR_OPTIONS = {
       probe: { type: "boolean", description: "also make tiny live requests (a few cents): one per provider that has a probe to detect expired or revoked credentials, and one per eligible Claude model" }
     };
@@ -63549,7 +64461,7 @@ var init_models2 = __esm({
 
 // src/cli/check-detect.ts
 import { existsSync as existsSync54, readFileSync as readFileSync35 } from "node:fs";
-import { basename as basename19, dirname as dirname34, join as join74 } from "node:path";
+import { basename as basename20, dirname as dirname34, join as join75 } from "node:path";
 function read(path) {
   try {
     return readFileSync35(path, "utf8").slice(0, MAX_READ_BYTES);
@@ -63562,7 +64474,7 @@ function slug(name) {
 }
 function nodeDrafts(input, out) {
   const { repo, files, pathEnv } = input;
-  const manifest = read(join74(repo, "package.json"));
+  const manifest = read(join75(repo, "package.json"));
   if (manifest === null) return [];
   let pkg;
   try {
@@ -63577,9 +64489,9 @@ function nodeDrafts(input, out) {
   const has = (name) => typeof scripts[name] === "string" && scripts[name].trim() !== "";
   let pm = "npm";
   let pmFrom = "no lockfile, so npm";
-  if (existsSync54(join74(repo, "pnpm-lock.yaml"))) [pm, pmFrom] = ["pnpm", "pnpm-lock.yaml"];
-  else if (existsSync54(join74(repo, "yarn.lock"))) [pm, pmFrom] = ["yarn", "yarn.lock"];
-  else if (existsSync54(join74(repo, "package-lock.json")) || existsSync54(join74(repo, "npm-shrinkwrap.json"))) pmFrom = "package-lock.json";
+  if (existsSync54(join75(repo, "pnpm-lock.yaml"))) [pm, pmFrom] = ["pnpm", "pnpm-lock.yaml"];
+  else if (existsSync54(join75(repo, "yarn.lock"))) [pm, pmFrom] = ["yarn", "yarn.lock"];
+  else if (existsSync54(join75(repo, "package-lock.json")) || existsSync54(join75(repo, "npm-shrinkwrap.json"))) pmFrom = "package-lock.json";
   else {
     const declared = typeof pkg.packageManager === "string" ? /^(npm|pnpm|yarn)@/.exec(pkg.packageManager)?.[1] : void 0;
     if (declared === "pnpm" || declared === "yarn") [pm, pmFrom] = [declared, "package.json packageManager"];
@@ -63588,10 +64500,10 @@ function nodeDrafts(input, out) {
     out.skip("node", `package.json declares checks, but ${pm} (chosen from ${pmFrom}) was not found on PATH`);
     return [];
   }
-  const workspaceDeclared = Array.isArray(pkg.workspaces) || typeof pkg.workspaces === "object" && pkg.workspaces !== null || existsSync54(join74(repo, "pnpm-workspace.yaml"));
+  const workspaceDeclared = Array.isArray(pkg.workspaces) || typeof pkg.workspaces === "object" && pkg.workspaces !== null || existsSync54(join75(repo, "pnpm-workspace.yaml"));
   const nestedManifests = files.filter((f) => f.endsWith("package.json") && f !== "package.json" && !f.split("/").includes("node_modules"));
   const nestedHas = (name) => nestedManifests.some((f) => {
-    const t = read(join74(repo, f));
+    const t = read(join75(repo, f));
     if (t === null) return false;
     try {
       const s = JSON.parse(t).scripts;
@@ -63625,7 +64537,7 @@ function nodeDrafts(input, out) {
   const typed = script("typecheck", ["typecheck", "type-check", "check-types"], "typecheck", TIMEOUT.typecheck);
   if (!typed) {
     const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    if (existsSync54(join74(repo, "tsconfig.json")) && "typescript" in deps) {
+    if (existsSync54(join75(repo, "tsconfig.json")) && "typescript" in deps) {
       const tsc = pm === "npm" ? ["npx", "--no-install", "tsc", "--noEmit"] : pm === "pnpm" ? ["pnpm", "exec", "tsc", "--noEmit"] : ["yarn", "tsc", "--noEmit"];
       drafts.push({ name: "typecheck", command: tsc, category: "typecheck", timeout_seconds: TIMEOUT.typecheck, reason: `tsconfig.json and the typescript dependency (${pm}, from ${pmFrom})` });
     }
@@ -63639,8 +64551,8 @@ function nodeDrafts(input, out) {
 function dotnetTestProjects(repo, projects) {
   const found = [];
   for (const p of projects.slice(0, MAX_PROJECT_READS)) {
-    const text2 = read(join74(repo, p)) ?? "";
-    if (/Microsoft\.NET\.Test\.Sdk/i.test(text2) || /<IsTestProject>\s*true/i.test(text2) || /tests?\.[cfv]sproj$/i.test(basename19(p))) found.push(p);
+    const text2 = read(join75(repo, p)) ?? "";
+    if (/Microsoft\.NET\.Test\.Sdk/i.test(text2) || /<IsTestProject>\s*true/i.test(text2) || /tests?\.[cfv]sproj$/i.test(basename20(p))) found.push(p);
   }
   return found;
 }
@@ -63672,7 +64584,7 @@ function dotnetDrafts(input, out) {
   const drafts = [];
   for (const target of targets) {
     const t = target.startsWith("-") ? `./${target}` : target;
-    const suffix = targets.length > 1 ? `-${slug(basename19(target).replace(/\.[^.]+$/, ""))}` : "";
+    const suffix = targets.length > 1 ? `-${slug(basename20(target).replace(/\.[^.]+$/, ""))}` : "";
     drafts.push({ name: `build${suffix}`, command: ["dotnet", "build", t, ONE_MSBUILD_NODE], category: "build", timeout_seconds: TIMEOUT.compile, reason: `${what} file ${t}; ${ONE_NODE_REASON}` });
     const testable = what === "solution" ? testProjects.length > 0 : testProjects.includes(t);
     if (testable) drafts.push({ name: `unit-tests${suffix}`, command: ["dotnet", "test", t, ONE_MSBUILD_NODE], category: "test", timeout_seconds: TIMEOUT.nodeTest, reason: `${what} file ${t} with ${what === "solution" ? "a test project" : "a test project of its own"} (Microsoft.NET.Test.Sdk); ${ONE_NODE_REASON}` });
@@ -63681,19 +64593,19 @@ function dotnetDrafts(input, out) {
 }
 function pythonDrafts(input, out) {
   const { repo, files, pathEnv } = input;
-  const pyproject = read(join74(repo, "pyproject.toml"));
-  const setupCfg = read(join74(repo, "setup.cfg"));
-  const toxIni = read(join74(repo, "tox.ini"));
+  const pyproject = read(join75(repo, "pyproject.toml"));
+  const setupCfg = read(join75(repo, "setup.cfg"));
+  const toxIni = read(join75(repo, "tox.ini"));
   const rootFiles = files.filter((f) => !f.includes("/"));
-  const requirements = rootFiles.filter((f) => /^requirements.*\.(txt|in)$/i.test(f)).map((f) => read(join74(repo, f)) ?? "");
+  const requirements = rootFiles.filter((f) => /^requirements.*\.(txt|in)$/i.test(f)).map((f) => read(join75(repo, f)) ?? "");
   const markers = ["pyproject.toml", "setup.cfg", "tox.ini", "pytest.ini", "mypy.ini", "ruff.toml", ".flake8"];
-  if (!markers.some((m) => existsSync54(join74(repo, m)))) return [];
+  if (!markers.some((m) => existsSync54(join75(repo, m)))) return [];
   const listed2 = (name) => {
     const re = new RegExp(`(^|[^\\w-])${name}([^\\w-]|$)`, "im");
     return [pyproject, setupCfg, toxIni, ...requirements].some((t) => t !== null && re.test(t));
   };
   const section = (text2, re) => text2 !== null && re.test(text2);
-  const exists = (f) => existsSync54(join74(repo, f));
+  const exists = (f) => existsSync54(join75(repo, f));
   const declared = {
     pytest: exists("pytest.ini") ? "pytest.ini" : section(pyproject, /^\[tool\.pytest/m) ? "pyproject.toml" : section(setupCfg, /^\[tool:pytest\]/m) ? "setup.cfg" : section(toxIni, /^\[pytest\]/m) ? "tox.ini" : listed2("pytest") ? "the declared dependencies" : null,
     ruff: exists("ruff.toml") ? "ruff.toml" : exists(".ruff.toml") ? ".ruff.toml" : section(pyproject, /^\[tool\.ruff/m) ? "pyproject.toml" : listed2("ruff") ? "the declared dependencies" : null,
@@ -63726,8 +64638,8 @@ function goWorkModules(text2) {
 }
 function goDrafts(input, out) {
   const { repo, pathEnv } = input;
-  const work = read(join74(repo, "go.work"));
-  if (!existsSync54(join74(repo, "go.mod")) && work === null) return [];
+  const work = read(join75(repo, "go.work"));
+  if (!existsSync54(join75(repo, "go.mod")) && work === null) return [];
   if (which("go", pathEnv) === null) {
     out.skip("go", "the repository has a Go module, but go was not found on PATH");
     return [];
@@ -63735,7 +64647,7 @@ function goDrafts(input, out) {
   const modules = work === null ? [] : goWorkModules(work);
   const patterns = modules.length > 0 ? modules.map((m) => `./${m}/...`) : ["./..."];
   const reason = modules.length > 0 ? `go.work lists ${modules.length} module(s), so one root command covers them` : "go.mod";
-  if (modules.length === 0 && !existsSync54(join74(repo, "go.mod"))) {
+  if (modules.length === 0 && !existsSync54(join75(repo, "go.mod"))) {
     out.skip("go", "go.work names no module directory and there is no root go.mod");
     return [];
   }
@@ -63747,7 +64659,7 @@ function goDrafts(input, out) {
 }
 async function rustDrafts(input, out) {
   const { repo, pathEnv } = input;
-  const manifest = read(join74(repo, "Cargo.toml"));
+  const manifest = read(join75(repo, "Cargo.toml"));
   if (manifest === null) return [];
   const cargo = which("cargo", pathEnv);
   if (cargo === null) {
@@ -63832,9 +64744,22 @@ var init_check_detect = __esm({
 
 // src/cli/commands/init.ts
 import { appendFileSync as appendFileSync2, existsSync as existsSync55, mkdirSync as mkdirSync24, readFileSync as readFileSync36, realpathSync as realpathSync20, writeFileSync as writeFileSync10 } from "node:fs";
-import { dirname as dirname35, join as join75 } from "node:path";
+import { dirname as dirname35, join as join76 } from "node:path";
+function reviewPolicyProposal(codexEligible) {
+  return codexEligible ? "review: Codex reviews independently when it is usable (review.providers: [codex]); when it is not, Claude reviews in a separate session and every report says the review was not independent and why (review.when_unavailable: claude). Set review.when_unavailable to ask to be asked first, or to block to require an independent reviewer." : REVIEW_POLICY_PROPOSAL;
+}
+function declaredCheckIds(path) {
+  try {
+    const doc = parseDocument(readFileSync36(path, "utf8"), { uniqueKeys: true, prettyErrors: false, strict: true });
+    if (doc.errors.length > 0) return [];
+    const checks = doc.toJS({ maxAliasCount: 50 })?.checks;
+    return checks !== null && typeof checks === "object" && !Array.isArray(checks) ? Object.keys(checks) : [];
+  } catch {
+    return [];
+  }
+}
 function templatePath() {
-  return join75(orbitInstallDir(), "templates", "config.yaml");
+  return join76(orbitInstallDir(), "templates", "config.yaml");
 }
 function templateText() {
   if (true) return `# Orbit configuration (.orbit/config.yaml)
@@ -64356,7 +65281,7 @@ async function seedModels(ctx, repo) {
 async function initCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
-  const configPath = join75(repo, ".orbit", "config.yaml");
+  const configPath = join76(repo, ".orbit", "config.yaml");
   let config;
   let derivedPaths = [];
   let protectedAdded = [];
@@ -64421,8 +65346,16 @@ ${block2}`);
     }
   }
   const models = await seedModels(ctx, repo);
+  let codexEligible = false;
+  let defined;
+  if (problems.length === 0) {
+    const loaded = loadConfig(repo);
+    codexEligible = loaded.providers.codex?.data_policy_eligible === true;
+    defined = Object.keys(loaded.checks);
+  } else defined = declaredCheckIds(configPath);
+  const reviewPolicy = reviewPolicyProposal(codexEligible);
   if (args.bool("json")) {
-    json(ctx.io, { repo, review_policy: config === "created" ? REVIEW_POLICY_PROPOSAL : null, config: { path: configPath, status: config, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, config_problems: problems, warnings, models });
+    json(ctx.io, { repo, review_policy: config === "created" ? reviewPolicy : null, config: { path: configPath, status: config, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, checks_defined: defined, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === "created" ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
@@ -64446,14 +65379,18 @@ ${block2}`);
   } else line(ctx.io, "The configuration validates.");
   for (const m of models) line(ctx.io, m);
   for (const w of warnings) line(ctx.io, `WARN: ${w}`);
-  if (config === "created") line(ctx.io, REVIEW_POLICY_PROPOSAL);
-  line(ctx.io, checkProposal.proposed.length > 0 ? `Next: review the proposed checks in .orbit/config.yaml and add any that are missing, then run ${orbitHint("doctor")}.` : `Next: define your checks in .orbit/config.yaml, then run ${orbitHint("doctor")}.`);
+  if (config === "created") line(ctx.io, reviewPolicy);
+  if (checkProposal.proposed.length > 0) line(ctx.io, `Next: review the proposed checks in .orbit/config.yaml and add any that are missing, then run ${orbitHint("doctor")}.`);
+  else if (defined.length > 0 && problems.length > 0) line(ctx.io, `Next: the configuration defines checks (${defined.join(", ")}) but does not validate: fix the problems above, then run ${orbitHint("doctor")}.`);
+  else if (defined.length > 0) line(ctx.io, `Next: the configuration already defines checks (${defined.join(", ")}); run ${orbitHint("doctor")} to see whether they can run here.`);
+  else line(ctx.io, `Next: define your checks in .orbit/config.yaml, then run ${orbitHint("doctor")}.`);
   return EXIT.OK;
 }
 var REVIEW_POLICY_PROPOSAL, EXCLUDE_RULES, EXCLUDE_HEADER, SHARED_EXCLUDE_NOTE;
 var init_init = __esm({
   "src/cli/commands/init.ts"() {
     "use strict";
+    init_browser();
     init_errors();
     init_exec();
     init_policy();
@@ -64471,7 +65408,7 @@ var init_init = __esm({
     init_globs();
     init_invocation();
     init_check_detect();
-    REVIEW_POLICY_PROPOSAL = "review: Codex reviews independently when it is usable (review.providers: [codex]); when it is not, Claude reviews in a separate session and every report says the review was not independent and why (review.when_unavailable: claude). Set review.when_unavailable to ask to be asked first, or to block to require an independent reviewer.";
+    REVIEW_POLICY_PROPOSAL = "review: Codex would review independently (review.providers: [codex]), but the template sets providers.codex.data_policy_eligible: false, so Codex does not review until you set it to true in .orbit/config.yaml (only if sending sanitized code and diffs to Codex is permitted for this repository); until then Claude reviews in a separate session and every report says the review was not independent and why (review.when_unavailable: claude). Set review.when_unavailable to ask to be asked first, or to block to require an independent reviewer.";
     EXCLUDE_RULES = ["/.orbit/state.sqlite*", "/.orbit/knowledge.sqlite*", "/.orbit/runs/"];
     EXCLUDE_HEADER = '# Orbit runtime state (added by "orbit init")';
     SHARED_EXCLUDE_NOTE = "that file is in the clone's common git directory, outside this worktree, and every worktree of this clone shares it";
@@ -64621,9 +65558,9 @@ var init_ingest = __esm({
 
 // src/cli/commands/learn.ts
 import { existsSync as existsSync56, mkdirSync as mkdirSync26, readFileSync as readFileSync37, statSync as statSync16 } from "node:fs";
-import { basename as basename20, isAbsolute as isAbsolute26, join as join76, relative as relative8, resolve as resolve21 } from "node:path";
+import { basename as basename21, isAbsolute as isAbsolute26, join as join77, relative as relative8, resolve as resolve21 } from "node:path";
 function knowledgePath(ctx, repo, global) {
-  return global ? join76(ctx.orbitHome, "knowledge.sqlite") : join76(repo, ".orbit", "knowledge.sqlite");
+  return global ? join77(ctx.orbitHome, "knowledge.sqlite") : join77(repo, ".orbit", "knowledge.sqlite");
 }
 function openExisting(ctx, repo, global) {
   const path = knowledgePath(ctx, repo, global);
@@ -64743,7 +65680,7 @@ async function readSource(ctx, repo, ref2, label) {
   if (!st.isFile()) throw new OrbitError("SCHEMA_INVALID", `${path} is not a regular file`);
   if (st.size > FETCH_MAX_BYTES) throw new OrbitError("SCHEMA_INVALID", `${path} is larger than ${FETCH_MAX_BYTES} bytes`);
   const rel = relative8(repo, path);
-  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute26(rel) ? rel : basename20(path), content: readFileSync37(path, "utf8") };
+  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute26(rel) ? rel : basename21(path), content: readFileSync37(path, "utf8") };
 }
 async function runIngestCurator(ctx, repo, config, prompt) {
   if (!(config.knowledge.curator_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.curator_budget_usd is 0, so no curator may run; raise it, or supply the curator output with --curator-output");
@@ -64754,7 +65691,7 @@ async function runIngestCurator(ctx, repo, config, prompt) {
     if (!deps.adapters.claude) throw new OrbitError("PROVIDER_UNAVAILABLE", "no claude provider is configured; the curator runs on Claude");
     deps.registry.seed();
     const id = `ingest-${ctx.clock.now().toString(36)}`;
-    const dir = join76(ctx.orbitHome, "ingest", repoKey(repo), id);
+    const dir = join77(ctx.orbitHome, "ingest", repoKey(repo), id);
     mkdirSync26(dir, { recursive: true, mode: 448 });
     const snap = snapshotPolicy(config, { runId: id, repoRoot: repo, runDir: dir, clock: ctx.clock });
     const out = await runCurator(
@@ -64790,8 +65727,8 @@ async function learnIngestCommand(args, ctx) {
     }
   } else ({ output, model } = await runIngestCurator(ctx, repo, config, task.prompt));
   const result2 = acceptIngestOutput(output, source, ctx.clock, model ? { curatorModel: model } : {});
-  mkdirSync26(join76(repo, ".orbit"), { recursive: true });
-  const store = KnowledgeStore.open(join76(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
+  mkdirSync26(join77(repo, ".orbit"), { recursive: true });
+  const store = KnowledgeStore.open(join77(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const created = [];
   const merged = [];
   const rejected = [...result2.rejected];
@@ -64867,7 +65804,7 @@ async function learnEvalCommand(args, ctx) {
   if (!(config.knowledge.eval_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.eval_budget_usd is 0, which disables replay evaluations and with them automatic overlay adoption; set a budget to evaluate");
   const metricsFile = args.str("metrics");
   const db = openState(repo);
-  const store = KnowledgeStore.open(join76(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
+  const store = KnowledgeStore.open(join77(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const runner = metricsFile ? null : ctx.seams.evalRunner ? budgeted(ctx.seams.evalRunner, config.knowledge.eval_budget_usd) : new ReplayEvalRunner({
     repoRoot: repo,
     config,
@@ -64995,7 +65932,7 @@ var init_learn2 = __esm({
 
 // src/cli/commands/logs.ts
 import { closeSync as closeSync10, existsSync as existsSync57, fstatSync as fstatSync5, openSync as openSync10, readSync as readSync6, statSync as statSync17 } from "node:fs";
-import { dirname as dirname36, join as join77 } from "node:path";
+import { dirname as dirname36, join as join78 } from "node:path";
 function readTail(path, lines) {
   const size = statSync17(path).size;
   const fd = openSync10(path, "r");
@@ -65069,13 +66006,13 @@ async function logsCommand(args, ctx) {
         sources.push({ ...s, offset: 0 });
       };
       if (wantController) {
-        add({ label: "controller", kind: "controller", path: join77(ctx.orbitHome, "logs", "controller.jsonl"), runId: run.id });
-        add({ label: "controller", kind: "controller", path: join77(runDir2, "logs", "controller.jsonl") });
+        add({ label: "controller", kind: "controller", path: join78(ctx.orbitHome, "logs", "controller.jsonl"), runId: run.id });
+        add({ label: "controller", kind: "controller", path: join78(runDir2, "logs", "controller.jsonl") });
       }
       if (wantWorkers) {
         for (const w of listWorkers(db, { runId: run.id })) {
           if (args.str("worker") && w.id !== args.str("worker")) continue;
-          for (const f of ["log.jsonl", "stderr.log", "shim.log"]) add({ label: `${w.id}${f === "log.jsonl" ? "" : `:${f.split(".")[0]}`}`, kind: "worker", path: join77(w.workerDir, f) });
+          for (const f of ["log.jsonl", "stderr.log", "shim.log"]) add({ label: `${w.id}${f === "log.jsonl" ? "" : `:${f.split(".")[0]}`}`, kind: "worker", path: join78(w.workerDir, f) });
         }
       }
     };
@@ -65290,7 +66227,7 @@ var init_release2 = __esm({
 
 // src/cli/commands/report.ts
 import { existsSync as existsSync58, readFileSync as readFileSync38 } from "node:fs";
-import { dirname as dirname37, join as join78 } from "node:path";
+import { dirname as dirname37, join as join79 } from "node:path";
 async function reportCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   if (args.bool("learning")) return withState(repo, (db) => learningReport(ctx, repo, db, args.bool("json")));
@@ -65298,8 +66235,8 @@ async function reportCommand(args, ctx) {
   return withState(repo, (db) => {
     const run = findRunByPrefix(db, id);
     const runDir2 = dirname37(run.policyPath);
-    const finalMd = join78(runDir2, "final.md");
-    const finalJson = join78(runDir2, "final.json");
+    const finalMd = join79(runDir2, "final.md");
+    const finalJson = join79(runDir2, "final.json");
     const asJson = args.bool("json");
     if (isTerminal(run.state) && !args.bool("interim") && existsSync58(finalMd)) {
       if (asJson) {
@@ -65330,7 +66267,7 @@ function snapshotOrNull(path, hash) {
 function learningReport(ctx, repo, db, asJson) {
   const runs = db.all("SELECT id, state, created_at FROM runs WHERE state IN ('SUCCEEDED','EXHAUSTED','IMPOSSIBLE','BLOCKED') ORDER BY created_at");
   const windows = [{ label: "base prompt", from: 0, to: Number.POSITIVE_INFINITY }];
-  const kPath = join78(repo, ".orbit", "knowledge.sqlite");
+  const kPath = join79(repo, ".orbit", "knowledge.sqlite");
   const overlays = [];
   if (existsSync58(kPath)) {
     const store = KnowledgeStore.open(kPath, { clock: ctx.clock });
@@ -65401,7 +66338,7 @@ var init_report4 = __esm({
 // src/cli/admission.ts
 import { existsSync as existsSync59 } from "node:fs";
 import { createRequire as createRequire5 } from "node:module";
-import { join as join79 } from "node:path";
+import { join as join80 } from "node:path";
 async function admitRun(ctx, input) {
   const check = ctx.seams.admission ?? checkAdmission;
   const refusal = await check(ctx, input);
@@ -65420,7 +66357,7 @@ async function repositoryHasCommits(repo) {
 }
 function playwrightInstalled(repo) {
   try {
-    createRequire5(join79(repo, "package.json")).resolve("@playwright/test/package.json");
+    createRequire5(join80(repo, "package.json")).resolve("@playwright/test/package.json");
     return true;
   } catch {
     return false;
@@ -65666,13 +66603,16 @@ async function repairCommand(args, ctx) {
     const fingerprint = primary?.fingerprint ?? `verdict:${cand.id}`;
     const actor = `cli:${ctx.user}`;
     let after = run;
+    const requested = () => void appendEvent(db, run.id, "run.repair-requested", actor, { from: run.state, fingerprint, candidate_id: cand.id, report_id: evidence.id }, ctx.clock.now());
     if (run.state !== "DIAGNOSING") {
       await withCliLease(ctx, db, run.id, (ownerId) => {
         db.tx(() => {
           after = transition(db, { runId: run.id, to: "DIAGNOSING", ownerId, reason: `repair requested by ${ctx.user}: ${fingerprint}`, actor, expectedFrom: run.state }, ctx.clock);
-          appendEvent(db, run.id, "run.repair-requested", actor, { from: run.state, fingerprint, candidate_id: cand.id, report_id: evidence.id }, ctx.clock.now());
+          requested();
         });
       });
+    } else {
+      db.tx(requested);
     }
     if (getRun(db, run.id).paused) setPaused(db, run.id, false, actor, ctx.clock);
     after = getRun(db, run.id);
@@ -66078,6 +67018,11 @@ function finished(state) {
 function workerSummary(w) {
   return { id: w.id, role: w.role, provider: w.provider, model: w.model, state: w.state, spawned_at: w.spawnedAt };
 }
+function stageOf(db, run) {
+  if (!run.resumeState || !(run.state === "INQUISITION" || run.state === "BLOCKED" || run.state === "RECOVERING")) return run.state;
+  const fresh = run.state === "BLOCKED" ? newRunNeeded(db, run) : null;
+  return fresh !== null ? `${run.state} (a new run is needed: ${fresh})` : `${run.state} (will return to ${run.resumeState})`;
+}
 function buildRunStatus(ctx, db, run) {
   const now = ctx.clock.now();
   const lease = liveLease(db, run.id, now);
@@ -66106,11 +67051,12 @@ function buildRunStatus(ctx, db, run) {
     goal: run.goal,
     mode: run.mode,
     state: run.state,
-    stage: run.resumeState && (run.state === "INQUISITION" || run.state === "BLOCKED" || run.state === "RECOVERING") ? `${run.state} (will return to ${run.resumeState})` : run.state,
+    stage: stageOf(db, run),
     paused: run.paused,
     cancel_requested: run.cancelRequested,
     outcome_reason: run.outcomeReason,
-    branch: run.branch,
+    branch: createdBranch(db, run),
+    candidate_ref: currentCandidateRef(db, run.id),
     difficulty: run.difficulty,
     created_at: run.createdAt,
     started_at: run.startedAt,
@@ -66139,6 +67085,7 @@ function renderRunStatus(s, now) {
   out.push(`run ${s.id}  ${s.state}${flags.length ? `  (${flags.join(", ")})` : ""}`);
   out.push(`goal:      ${flat(s.goal)}`);
   out.push(`mode:      ${s.mode}${s.difficulty ? `   difficulty: ${s.difficulty}` : ""}${s.branch ? `   branch: ${s.branch}` : ""}`);
+  if (s.candidate_ref) out.push(`candidate: ${s.candidate_ref}`);
   out.push(`stage:     ${s.stage}`);
   if (s.outcome_reason) out.push(`outcome:   ${flat(s.outcome_reason)}`);
   out.push(`progress:  last progress ${ago(now, s.last_progress_at)}${s.last_event ? `; last event ${s.last_event.type}${s.last_event.to_state ? ` -> ${s.last_event.to_state}` : ""} ${ago(now, s.last_event.at)}` : ""}`);
@@ -66202,6 +67149,8 @@ var init_status = __esm({
     init_controllers();
     init_workers();
     init_run_store();
+    init_resume();
+    init_run_refs();
     init_states();
     init_start();
     init_service();
@@ -66763,7 +67712,7 @@ var init_timeline2 = __esm({
 });
 
 // src/cli/commands/verify.ts
-import { dirname as dirname38, isAbsolute as isAbsolute27, join as join80, relative as relative9 } from "node:path";
+import { dirname as dirname38, isAbsolute as isAbsolute27, join as join81, relative as relative9 } from "node:path";
 function exitCodeForVerdict(verdict) {
   return verdict === "PASS" ? EXIT.OK : verdict === "FAIL" ? EXIT.VERIFY_FAILED : EXIT.VERIFY_INCOMPLETE;
 }
@@ -66814,7 +67763,7 @@ async function verifyCandidate(rc) {
   if (!rc.run.baseRevision) throw new OrbitError("TRANSITION_INVALID", `run ${rc.run.id} has no base revision; preflight did not finish`);
   const snapshot2 = rc.snapshot;
   const scope = cand.scope ?? await inspectScope({ repoRoot: rc.run.repoRoot, baseRev: rc.run.baseRevision, candidateRev: cand.commitSha, snapshot: snapshot2, contractAllowedPaths: contract.allowed_paths });
-  const checkoutDir = join80(runWorktreeRoot(rc), `verify-${cand.seq}`);
+  const checkoutDir = join81(runWorktreeRoot(rc), `verify-${cand.seq}`);
   await cleanupCandidateCheckout(rc.run.repoRoot, checkoutDir).catch(() => {
   });
   await materializeCandidate(rc.run.repoRoot, cand.commitSha, checkoutDir, { readOnly: false });
@@ -66839,7 +67788,7 @@ function print(ctx, repo, asJson, o, contractJson) {
   const statements = new Map(contract.acceptance_criteria.map((c) => [c.id, c]));
   const runDir2 = dirname38(o.run.policyPath);
   const rel = (given) => {
-    const p = isAbsolute27(given) ? given : join80(runDir2, given);
+    const p = isAbsolute27(given) ? given : join81(runDir2, given);
     const r = relative9(repo, p);
     return r.startsWith("..") || r === "" ? p : r;
   };

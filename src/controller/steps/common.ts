@@ -15,6 +15,7 @@ import { authBlocker, blockRunOnCredentials, type BlockedCredentialState } from 
 import { folderFormRunsAt, runWorktreeRoot, type RunContext } from '../context.ts';
 import { isTerminal, type RunState } from '../states.ts';
 import { markProgress, transition, type TransitionRequest } from '../run-store.ts';
+import { frozenPolicyForceHelps } from '../resume.ts';
 import { raiseOutputCap, stopActiveWorkers } from '../workers.ts';
 import { closeMootBaselineQuestions } from './baseline-questions.ts';
 import { releaseRunWorktrees } from '../worktree-cleanup.ts';
@@ -141,17 +142,6 @@ export function frozenPolicyCause(reason: string, code?: string): string | null 
 export function withSentence(reason: string, next: string): string {
   const r = reason.trimEnd();
   return `${/[.!?]$/.test(r) ? r : `${r}.`} ${next}`;
-}
-
-/**
- * Whether a fix outside the policy can clear a block on `setting`, so that `orbit resume --force` is a way forward. Not
- * offered for a misconfigured check (`checks.<id>.command`): its command is the policy's, and a forced resume runs the
- * same command again (a PREFLIGHT block leaves the baseline incomplete, so the check runs again; at CONTRACTING the
- * recorded baseline is read and blocks again), so it blocks again unless the tool changed outside the policy. A new
- * run, which the advice names, clears the block whatever the cause (ADR 0010).
- */
-export function frozenPolicyForceHelps(setting: string): boolean {
-  return !/^checks\.[\w.-]+\.command(?:, checks\.[\w.-]+\.command)*$/.test(setting);
 }
 
 /** What to do about a frozen-policy block: the config change applies only to a new run. */

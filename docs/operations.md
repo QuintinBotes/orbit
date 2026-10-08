@@ -135,7 +135,15 @@ A green check is not enough for PASS. A criterion is only `supported` when its
 checks passed and at least one of them either failed on the base revision (so
 the change turned it green) or the candidate adds or changes a test; otherwise
 it is `unverified` with the reason "no new evidence". A candidate whose tree is
-the base revision's tree makes no change, and the verdict is INCOMPLETE. The
+the base revision's tree makes no change, and the verdict is INCOMPLETE. What
+counts as a test follows each language's test runner (ADR 0011): a file of a
+.NET test project (its project file references Microsoft.NET.Test.Sdk or a test
+framework, or sets IsTestProject), a JVM test source set (`src/test/`), a
+crate's `tests/` or a `#[test]` function the change adds to a source of the
+crate's `src/` that cargo compiles (not one marked `#[ignore]`), and
+the usual test files of JavaScript/TypeScript, Python, Go, Ruby, PHP, Swift,
+Elixir, Dart, C and C++. A test-named file of a production project or source
+set does not count, since its runner never runs it. The
 test-change rule counts a changed test anywhere in the run, since a contract does
 not map criteria to test files, so it can still pass a criterion whose own test
 was left alone when another test changed. The evidence report lists its
@@ -164,7 +172,11 @@ completion gate, the reviewed candidate commit is left on the local branch
 tree and current branch are not touched. The report calls it
 "candidate commit (local, not delivered)"; "delivered commit" appears only when a
 real delivery happened. Look at the result with `git log orbit/<run-id>` and
-`orbit report <run-id>`. In the delivery modes Orbit builds the delivery commit
+`orbit report <run-id>`. That branch is made only when the run is delivered: a
+run that ended before then (blocked, exhausted) has none, and `orbit status` and
+the report name `refs/orbit/<run-id>/candidates/<n>` instead, the ref that pins
+its candidate (read it with `git log` as the branch); `branch` in their JSON
+stays null until a branch exists, and `candidate_ref` carries the ref. In the delivery modes Orbit builds the delivery commit
 on exactly the reviewed tree, pushes the task branch and opens a pull request
 (draft by default).
 
@@ -493,6 +505,22 @@ to repair. Since PREFLIGHT blocks on any base-revision environment failure, a
 run that reaches VERIFYING has none recorded, so today those denials always go
 to repair on a candidate, as does a restore failure MSBuild counts in "N
 Error(s)".
+
+A check the contract requires that the policy does not mark mandatory (a
+criterion cites it as proof) is not among PREFLIGHT's. It is run on the base
+revision at PLANNING, before any attempt, and one a contract amendment adds
+later at VERIFYING, before the candidate is judged (a baseline amendment,
+[ADR 0012](decisions/0012-contract-checks-and-judged-trees.md); the
+`baseline.amended` decision and `amendments` in `baseline.json` record it).
+It is classified and blocks as above, at the step that ran it, with a reason
+that says the contract requires it; after an environment fix `orbit resume`
+runs it on the base revision again. So `mandatory: false` does not make a
+check that cannot run in the sandbox harmless: remove such a check, as `orbit
+doctor` says. A repair attempt that ends on a tree an earlier attempt produced,
+judged `FAIL` exactly as before, ends the run `EXHAUSTED` as non-progress at
+once (`repair.non-progress`), not after more diagnoses and attempts on the same
+tree, unless its session stopped before it finished (max turns, a timeout) or
+a person resumed the run or asked for the repair with `orbit repair` since.
 
 PREFLIGHT asks the baseline-exception question for every pre-existing failure
 and every missing target. When the goal is to make that check pass (the

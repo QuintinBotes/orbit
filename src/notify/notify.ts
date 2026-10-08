@@ -8,6 +8,7 @@
 import { join } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { readJsonIfExists } from '../core/fsx.ts';
+import { createdBranch, currentCandidateRef } from '../controller/run-refs.ts';
 import type { RunRecord } from '../controller/run-store.ts';
 import { TERMINAL_STATES } from '../core/run-states.ts';
 import { listQuestions } from '../inquisition/store.ts';
@@ -85,7 +86,8 @@ async function dispatch(input: RunNotifyInput, kind: Exclude<NotificationKind, '
   const pr = pullRequestOf(runDir);
   const targets = config ? commentTargets(runDir, config) : [];
   const answerable = config && questionIds.length > 0 ? answerThreads(runDir, config) : [];
-  const payload = buildPayload({ kind, run, questionIds, pullRequest: pr, remote: answerable[0] ? { where: where(answerable[0]) } : null });
+  const refs = { branch: createdBranch(db, run), candidateRef: currentCandidateRef(db, run.id) };
+  const payload = buildPayload({ kind, run, refs, questionIds, pullRequest: pr, remote: answerable[0] ? { where: where(answerable[0]) } : null });
   // Recorded before sending: a crash mid-send loses this notification rather than repeating it.
   db.tx(() => appendEvent(db, run.id, DISPATCHED, actor, { key, kind, state: run.state, questions: questionIds }, clock.now()));
   const outcomes = await sendAll(payload, n, config, targets[0] ?? null, run.repoRoot, deps);

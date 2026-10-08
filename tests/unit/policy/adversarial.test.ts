@@ -197,6 +197,8 @@ describe('bash commands that slipped past the guard', () => {
 describe('credential reads', () => {
   it.each([
     '.claude/.credentials.json',
+    // An IDE extension's lock file: the token of its MCP server on loopback (final review of #31).
+    '.claude/ide/4243.lock',
     '.codex/auth.json',
     '.vault-token',
     '.cargo/credentials.toml',

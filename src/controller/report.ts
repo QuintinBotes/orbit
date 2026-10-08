@@ -46,6 +46,9 @@ import { profileForWorker } from '../isolation/profiles.ts';
 import { renderSystemPrompt } from '../adapters/prompt.ts';
 import type { TaskHandle, TaskResult, TaskSpec } from '../adapters/types.ts';
 import { getRun, type RunRecord } from './run-store.ts';
+import { newRunNeeded } from './resume.ts';
+import { createdBranch } from './run-refs.ts';
+import { candidateRef } from '../evidence/candidate.ts';
 import { currentCandidate, type ControllerDeps, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
 import { accountWorker, OUTPUT_CAP_CEILING, outcomeOf, outputCapExceeded, raiseOutputCap, recordSpendCap } from './workers.ts';
@@ -82,7 +85,17 @@ export interface FinalReport {
    * written before it existed.
    */
   worker_plugins?: WorkerPluginLine[];
-  revision: { base: string | null; candidate: string | null; tree: string | null; branch: string | null; delivered_commit: string | null; pull_request: { number: number; url: string | null } | null };
+  revision: {
+    base: string | null;
+    candidate: string | null;
+    tree: string | null;
+    /** The task branch, only when delivery created it: PREFLIGHT chooses the name, which is no branch until then. */
+    branch: string | null;
+    /** The ref that pins the current candidate, refs/orbit/<run>/candidates/<seq>; absent in reports written before it existed. */
+    candidate_ref?: string | null;
+    delivered_commit: string | null;
+    pull_request: { number: number; url: string | null } | null;
+  };
   budget: { counters: BudgetSnapshot['counters']; cost_measurement: string; cost_usd: number; cost_complete: boolean; tokens: { input: number; output: number; cache_read: number; cache_write: number } } | null;
   unverified: string[];
   residual_risks: string[];
@@ -195,7 +208,10 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
   risks.push(...plugins.risks);
 
   const prNumber = delivery?.pr?.number ?? null;
-  const branch = delivery?.branch ?? outcomeJson?.branch ?? run.branch;
+  // Only a branch that exists: the one delivery made (delivery.json, or the local delivery's outcome). The name PREFLIGHT
+  // chose is not one for a run that never delivered, which has its candidate ref instead (issue #33).
+  const branch = delivery?.branch ?? outcomeJson?.branch ?? createdBranch(db, run);
+  const candidateRefName = cand ? candidateRef(run.id, cand.seq) : null;
   return {
     schema: 'orbit.final/1',
     run_id: run.id,
@@ -219,6 +235,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
       candidate: cand?.commitSha ?? null,
       tree: cand?.treeHash ?? null,
       branch,
+      candidate_ref: candidateRefName,
       // Only a delivery action delivers. A local mode leaves the candidate commit on a local branch: that is the
       // `candidate` above, never a delivered commit.
       delivered_commit: delivery?.commit ?? (DELIVERY_MODES.has(run.mode) ? (outcomeJson?.commit ?? null) : null),
@@ -227,7 +244,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     budget,
     unverified: [...new Set(unverified)],
     residual_risks: [...new Set(risks)],
-    next_action: nextAction(run, branch, prNumber, listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material)),
+    next_action: nextAction(run, { branch, candidateRef: candidateRefName }, prNumber, listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material), newRunNeeded(db, run)),
     generated_at: opts.clock.now(),
   };
 }
@@ -316,18 +333,27 @@ function outcomeHas(run: RunRecord, key: string): boolean {
   }
 }
 
-function nextAction(run: RunRecord, branch: string | null, pr: number | null, openMaterial: readonly { id: string; question: string }[] = []): string {
+function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef: string | null }, pr: number | null, openMaterial: readonly { id: string; question: string }[] = [], fresh: string | null = null): string {
+  const { branch, candidateRef: ref } = refs;
+  // Where no branch was recorded, the reviewed candidate is at its ref (and says so only when there is one).
+  const candidate = ref !== null ? `the reviewed candidate at ${ref}` : 'the reviewed candidate';
   switch (run.state) {
     case 'SUCCEEDED':
       return DELIVERY_MODES.has(run.mode)
-        ? `Review${pr !== null ? ` pull request #${pr}` : ` branch ${branch ?? 'orbit/<run>'}`} and merge it if you accept it; Orbit does not merge.`
-        : `Inspect the local branch ${branch ?? `orbit/${run.id}`} (the reviewed candidate) and merge it yourself if you accept it.`;
+        ? `Review ${pr !== null ? `pull request #${pr}` : branch !== null ? `branch ${branch}` : candidate} and merge it if you accept it; Orbit does not merge.`
+        : branch !== null
+          ? `Inspect the local branch ${branch} (the reviewed candidate) and merge it yourself if you accept it.`
+          : `Inspect ${candidate}${ref !== null ? ` (git log ${ref})` : ''} and merge it yourself if you accept it.`;
     case 'BLOCKED': {
       const why = run.outcomeReason ?? 'The run is blocked.';
       // A frozen-policy block already names the way forward (a new run), and most others already name the resume command.
-      if (outcomeHas(run, 'frozen_policy') || /orbit resume/.test(why)) return why;
+      if (outcomeHas(run, 'frozen_policy')) return why;
       // A reason recorded without a closing full stop still reads as its own sentence.
-      return `${/[.!?]$/.test(why.trim()) ? why.trim() : `${why.trim()}.`} Resolve that, then run \`orbit resume ${run.id}\`.`;
+      const sentence = /[.!?]$/.test(why.trim()) ? why.trim() : `${why.trim()}.`;
+      // Where a resume cannot clear the block, the reason either says a new run already (an environment block) or is told so (issue #33).
+      if (fresh !== null) return /start a new run/.test(why) ? why : `${sentence} Resuming would only block again (${fresh}): cancel this run (orbit cancel ${run.id}) and start a new run with orbit run.`;
+      if (/orbit resume/.test(why)) return why;
+      return `${sentence} Resolve that, then run \`orbit resume ${run.id}\`.`;
     }
     case 'EXHAUSTED': {
       const advice = exhaustedAdvice(run);
@@ -390,7 +416,7 @@ export function renderMarkdown(r: FinalReport): string {
   }
   out.push('## Repairs', '', list(r.repairs.map((x) => `attempt ${x.attempt}: ${x.source} brief${x.fingerprint ? ` for ${x.fingerprint}` : ''}`)), '');
   const rv = r.revision;
-  out.push('## Revision, branch and pull request', '', list([`base: ${rv.base ?? 'none'}`, `candidate: ${rv.candidate ?? 'none'} (tree ${rv.tree ?? 'none'})`, `branch: ${rv.branch ?? 'none'}`, rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? 'none'}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ''}` : 'none'}`]), '');
+  out.push('## Revision, branch and pull request', '', list([`base: ${rv.base ?? 'none'}`, `candidate: ${rv.candidate ?? 'none'} (tree ${rv.tree ?? 'none'})`, `branch: ${rv.branch ?? 'none'}`, ...(rv.candidate_ref ? [`candidate ref: ${rv.candidate_ref}`] : []), rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? 'none'}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ''}` : 'none'}`]), '');
   if (r.budget) {
     const b = r.budget;
     out.push('## Budget consumption', '', list([...b.counters.map((c) => `${c.counter}: ${round(c.used)} used of ${round(c.allowance)} allowed (hard cap ${round(c.hard_cap)})`), `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? 'measured' : 'incomplete: some usage has no cost'}); ${b.cost_measurement}`, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), '');
@@ -440,6 +466,15 @@ export async function finalizeRun(ctx: RunContext): Promise<void> {
   } catch (err) {
     ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.failed', ctx.ownerId, { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, ctx.clock.now()));
   }
+  // The curator is charged after the report above was written, and `orbit report` prints that file, so its cost was
+  // missing there while status and the timeline (read from the usage rows) had it (issue #33): write the report again.
+  if (listWorkers(ctx.db, { runId: ctx.run.id, role: 'curator' }).length > 0) {
+    try {
+      writeFinalReport(ctx.db, ctx.run.id, { runDir: ctx.runDir, clock: ctx.clock, snapshot: ctx.snapshot });
+    } catch (err) {
+      ctx.log.error('final report failed after learning', { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
 }
 
 const CURATOR_TIMEOUT_MS = 5 * 60_000;
@@ -469,6 +504,7 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
     const admitted = curationAdmitted(ctx);
     if (run.state === 'CANCELLED') summary.skipped = 'cancelled runs are not curated';
     else if (refusedWithoutOutput(ctx.db, run)) summary.skipped = 'the run ended because a worker session was refused and produced nothing; the curator is a session in the same environment and would be refused the same way';
+    else if (endedBeforeAnyWorker(ctx.db, run)) summary.skipped = 'the run ended before any worker session, so there is nothing of the repository to learn from; its gate decisions record the environment, not a lesson';
     else if (!admitted.ok) summary.skipped = admitted.why;
     else {
       const host = curatorHostFor(ctx);
@@ -515,6 +551,15 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
  */
 function refusedWithoutOutput(db: OrbitDb, run: RunRecord): boolean {
   return outcomeHas(run, 'worker_refusal') && db.get('SELECT 1 AS x FROM candidates WHERE run_id = ? LIMIT 1', run.id) === undefined;
+}
+
+/**
+ * A run that ended before any worker session ran (blocked at PREFLIGHT, say): its decisions are the gates' records of the
+ * environment, which cite the evidence they looked at and so reach the curator as observations, though nothing of the
+ * repository was tried (issue #33). Starting a session to curate them only spends the curator's budget.
+ */
+function endedBeforeAnyWorker(db: OrbitDb, run: RunRecord): boolean {
+  return db.get("SELECT 1 AS x FROM workers WHERE run_id = ? AND role <> 'curator' LIMIT 1", run.id) === undefined;
 }
 
 /** The curator for this run's learning: a recorded worker of the run, files under its learning/ directory. */

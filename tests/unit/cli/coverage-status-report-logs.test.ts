@@ -42,6 +42,7 @@ function status(over: Partial<RunStatus> = {}): RunStatus {
     cancel_requested: false,
     outcome_reason: null,
     branch: null,
+    candidate_ref: null,
     difficulty: null,
     created_at: NOW - 3_600_000,
     started_at: null,

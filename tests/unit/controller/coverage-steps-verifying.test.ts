@@ -338,7 +338,7 @@ describe('verification in a clean checkout', () => {
 });
 
 describe('pendingTrigger', () => {
-  it('feeds the stored plan, the claims of the newest successful implementer and the thresholds into the detection', () => {
+  it('feeds the stored plan, the claims of the newest successful implementer and the thresholds into the detection', async () => {
     const { cand } = setup();
     mkdirSync(lab.ctx().runDir, { recursive: true });
     writeFileSync(join(lab.ctx().runDir, PLANNER_FILE), JSON.stringify({ worker_id: 'w', output: PLANNER_OUTPUT }));
@@ -347,22 +347,49 @@ describe('pendingTrigger', () => {
     finishWorker(lab.db, w.id, { state: 'SUCCEEDED', resultStatus: 'succeeded', result: { status: 'succeeded', structured: IMPLEMENTER_OUTPUT, text: null, error: null, exitCode: 0, usage: { provider: 'claude', model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: 'unavailable' }, durationMs: 1 } }, lab.clock, OWNER);
     const t = trigger('k1');
     hooks.detectTriggers.mockReturnValue([t]);
-    expect(pendingTrigger(lab.ctx(), cand, null)).toEqual(t);
+    expect(await pendingTrigger(lab.ctx(), cand, null)).toEqual(t);
     const snapshot = hooks.detectTriggers.mock.calls[0]![0] as { expectedChangedFiles: string[]; claims: unknown };
     expect(snapshot.expectedChangedFiles).toEqual(PLANNER_OUTPUT.expected_changed_files.map((f) => f.path));
     expect(snapshot.claims).not.toBeNull();
   });
 
-  it('has no plan or claims to feed when none exist or they cannot be read, and filters by kind', () => {
+  it('has no plan or claims to feed when none exist or they cannot be read, and filters by kind', async () => {
     const { cand } = setup();
     hooks.detectTriggers.mockReturnValue([trigger('a', 'scope_pressure'), trigger('b', 'oracle_weakening')]);
-    expect(pendingTrigger(lab.ctx(), cand, ['oracle_weakening'])?.key).toBe('b');
-    expect(pendingTrigger(lab.ctx(), cand, ['green_without_proof'])).toBeNull();
+    expect((await pendingTrigger(lab.ctx(), cand, ['oracle_weakening']))?.key).toBe('b');
+    expect(await pendingTrigger(lab.ctx(), cand, ['green_without_proof'])).toBeNull();
     expect((hooks.detectTriggers.mock.calls[0]![0] as { claims: unknown }).claims).toBeNull();
     const w = planWorker(lab.db, { id: 'wrk-bad', runId: lab.runId, role: 'implementer', provider: 'claude', workerDir: join(lab.base, 'wb'), cwd: lab.repo }, lab.clock, OWNER);
     markWorkerRunning(lab.db, w.id, { pid: 2_000_000_000, pgid: 2_000_000_000, procStart: 'x' }, lab.clock, OWNER);
     finishWorker(lab.db, w.id, { state: 'SUCCEEDED', resultStatus: 'succeeded', result: { status: 'succeeded', structured: { not: 'an implementer output' }, text: null, error: null, exitCode: 0, usage: { provider: 'claude', model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: 'unavailable' }, durationMs: 1 } }, lab.clock, OWNER);
-    pendingTrigger(lab.ctx(), cand, null);
+    await pendingTrigger(lab.ctx(), cand, null);
     expect((hooks.detectTriggers.mock.calls.at(-1)![0] as { claims: unknown }).claims).toBeNull();
+  });
+
+  // Issue #30: the unexplained-architecture filter needs the .NET project layout of the base and candidate trees.
+  it('feeds the test layout of the base and candidate trees, read only when a .NET or Rust file changed and that trigger is asked for', async () => {
+    const { cand } = setup();
+    lab.db.run('UPDATE candidates SET diff_stat_json = ? WHERE id = ?', JSON.stringify({ files: 2, insertions: 4, deletions: 0, binaryFiles: 0, paths: ['src/Acme/Calculator.cs', 'tests/Acme.Tests/CalculatorTests.cs'], truncated: false }), cand.id);
+    const project = { 'src/Acme/Acme.csproj': '<Project Sdk="Microsoft.NET.Sdk" />', 'src/Acme/Calculator.cs': '', 'tests/Acme.Tests/Acme.Tests.csproj': '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="xunit" Version="2.9.2" /></ItemGroup></Project>', 'tests/Acme.Tests/CalculatorTests.cs': '' } as Record<string, string>;
+    hooks.git.mockImplementation(async (_dir: string, args: string[]) => {
+      // ls-tree of the asked directories: '.' is the root, './<dir>/' a directory.
+      if (args[0] === 'ls-tree') {
+        const dirs = args.slice(args.indexOf('--') + 1).map((d) => (d === '.' ? '' : d.slice(2, -1)));
+        return Object.keys(project).filter((p) => dirs.includes(p.slice(0, Math.max(0, p.lastIndexOf('/'))))).map((p) => `${p}\0`).join('');
+      }
+      if (args[0] === 'cat-file') return project[args[2]!.slice(args[2]!.indexOf(':') + 1)] ?? '';
+      return '';
+    });
+    const withDiff = getCandidate(lab.db, cand.id);
+    await pendingTrigger(lab.ctx(), withDiff, null);
+    const layout = (hooks.detectTriggers.mock.calls.at(-1)![0] as { testLayout?: { dotnetProjects: Map<string, boolean> } }).testLayout;
+    expect(Object.fromEntries(layout?.dotnetProjects ?? [])).toEqual({ 'src/Acme': false, 'tests/Acme.Tests': true });
+    // The base revision and the candidate, each listed once (the revision comes just before the '--').
+    expect(hooks.git.mock.calls.filter((c) => (c[1] as string[])[0] === 'ls-tree').map((c) => { const a = c[1] as string[]; return a[a.indexOf('--') - 1]; })).toEqual(['a'.repeat(40), cand.commitSha]);
+
+    hooks.git.mockClear();
+    await pendingTrigger(lab.ctx(), withDiff, ['repeated_failure']);
+    expect(hooks.git).not.toHaveBeenCalled();
+    expect((hooks.detectTriggers.mock.calls.at(-1)![0] as { testLayout?: unknown }).testLayout).toBeUndefined();
   });
 });

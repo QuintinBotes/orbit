@@ -52,10 +52,12 @@ export async function deliveringStep(ctx: RunContext): Promise<StepResult> {
   if (!DELIVERY_MODES.has(ctx.run.mode)) {
     const branch = ctx.run.branch ?? `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
     // Local only: a ref in the user's repository pointing at the reviewed candidate commit. No push, no pull request.
-    await git(ctx.run.repoRoot, ['update-ref', '-m', `orbit: reviewed candidate of ${ctx.run.id}`, `refs/heads/${branch}`, cand.commitSha]);
-    const tree = await treeOf(ctx.run.repoRoot, `refs/heads/${branch}`);
+    // The gate judges the tree the branch will carry before the branch is made, so a delivery it refuses leaves none (status
+    // and the report name a branch only once it exists, issue #33).
+    const tree = await treeOf(ctx.run.repoRoot, cand.commitSha);
     const refused = await deliveryGateOrBlock(ctx, ev, review, tree);
     if (refused) return refused;
+    await git(ctx.run.repoRoot, ['update-ref', '-m', `orbit: reviewed candidate of ${ctx.run.id}`, `refs/heads/${branch}`, cand.commitSha]);
     return complete(ctx, tree, { branch, commit: cand.commitSha, delivery: 'local branch; no external action in this mode' });
   }
 

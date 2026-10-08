@@ -161,8 +161,10 @@ export function dotnetTestsCheck(input: DotnetTestsInput): DoctorCheck[] {
  * server's certificate through the system trust service, whose lookup srt keeps out of reach (it could make trustd fetch
  * from any host for a sandboxed process), so a NuGet restore from nuget.org cannot complete inside the sandbox ("NU1301:
  * The SSL connection could not be established"). A repository whose .NET projects reference packages fills its NuGet
- * cache outside the sandbox, once and whenever its packages change; the dependency install and the checks then restore
- * from it with nothing to download. Doctor says so before a run, with the exact command, and fails when the dependency
+ * cache outside the sandbox, once and whenever its packages change; the checks that restore (and the dependency install,
+ * when its command restores packages: Orbit's own install is npm ci, skipped without an npm lockfile) then restore from it
+ * with nothing to download. Doctor says so before a run, with the exact command, reports a cache that holds packages as
+ * filled and warns of nothing (issue #33), and fails when the dependency
  * install would restore from the network into an empty cache, since that install cannot succeed, and when a mandatory
  * check would (a `dotnet build` without --no-restore and no install that restores), since the run would block on it. It
  * reads tracked files only, and never creates the cache.
@@ -384,28 +386,68 @@ export function dotnetPackagesCheck(input: DotnetPackagesInput): DoctorCheck[] {
   // refused the host, or with the host allowed cannot verify nuget.org's certificate.
   const restoring = failing.length > 0 || !empty ? [] : Object.values(input.config.checks).filter((c) => c.kind === 'command' && c.mandatory && checkUsesDotnet(repo, c) && restoresPackages(c.command)).map((c) => c.id);
   const many = restoring.length > 1;
+  const audit = auditFailures(input, mac);
   const until = [
     ...(floating.length > 0 ? ['no package version floats: pin each one the details name, or restore with a lock file (RestorePackagesWithLockFile)'] : []),
-    ...(auditFailures(input, mac) ? ['the vulnerability audit no longer fails them, as checks.dotnet-audit says'] : []),
+    ...(audit ? ['the vulnerability audit no longer fails them, as checks.dotnet-audit says'] : []),
   ];
+  // What restores from the cache: the dependency install only when it is a command that restores packages. Orbit skips
+  // its own install for a repository with no npm lockfile ("no lockfile to install from"), so without a configured
+  // install only the checks that restore read the cache (issue #33).
+  const noInstall = noInstallRestore(input.config, install);
+  const thenRestore = noInstall === null ? 'the dependency install and the checks then restore' : 'the checks that restore then do so';
+  const filled = !empty;
+  const stuck = filled && floating.length > 0;
+  const failed = failing.length > 0 || restoring.length > 0;
+  // A filled cache is a pass that says so; a warning is left only for an empty cache, or a version that floats, which
+  // a restore looks up at nuget.org however full the cache is (the fill command is of no use to either of the latter).
+  const status = failed ? 'fail' : empty || stuck ? 'warn' : 'pass';
+  const packages = `${count} ${count === 1 ? 'package' : 'packages'}`;
+  const summary = failing.length > 0
+    ? `dependencies.install_command restores NuGet packages, which ${TRUST_REASON}, and ${failing.join(', and ')}: the dependency install would fail`
+    : restoring.length > 0
+      ? `${many ? 'checks' : 'check'} ${restoring.join(', ')} ${many ? 'restore' : 'restores'} NuGet packages, which ${TRUST_REASON}, and this repository's NuGet cache is empty: the ${many ? 'checks' : 'check'} would fail at the baseline`
+      : stuck
+        ? `this repository's NuGet cache holds ${packages}, but a package version floats, which every restore looks up at nuget.org, cache or not`
+        : filled
+          ? `this repository's NuGet cache holds ${packages}, restored outside the sandbox: ${noInstall === null ? 'the dependency install and the checks restore from it' : 'the checks that restore read it'} with nothing to download`
+          : `this repository's NuGet packages ${TRUST_REASON}: fill its NuGet cache outside the sandbox`;
+  const extra = status === 'pass' ? [...(noInstall === null ? [] : [noInstall]), ...(audit ? ['restores still wait for the vulnerability audit to stop failing them, as checks.dotnet-audit says'] : []), `when the packages change, fill it again outside the sandbox: dotnet restore from the repository with NUGET_PACKAGES set to that cache (${NUGET_DOCS})`] : [];
+  const fix = status === 'pass'
+    ? null
+    : filled
+      ? `pin each package version the details name, or restore with a lock file (RestorePackagesWithLockFile), so that ${thenRestore} offline from the filled cache (${NUGET_DOCS})`
+      : `run once in a terminal, outside the sandbox, and again whenever the packages change: ${fillCommand(repo, cache, files, install, evidence)}; ${thenRestore} offline from that cache ${
+          until.length > 0
+            ? `once ${until.join(', and once ')} (${[noInstall, NUGET_DOCS].filter((x) => x !== null).join('; ')})`
+            : `(${[noInstall, "Orbit turns NuGet's vulnerability audit off in the sandbox, where it cannot reach nuget.org", NUGET_DOCS].filter((x) => x !== null).join('; ')})`
+        }`;
   return [
     {
       id: 'checks.dotnet-packages',
       area: 'checks',
-      status: failing.length > 0 || restoring.length > 0 ? 'fail' : 'warn',
-      summary:
-        failing.length > 0
-          ? `dependencies.install_command restores NuGet packages, which ${TRUST_REASON}, and ${failing.join(', and ')}: the dependency install would fail`
-          : restoring.length > 0
-            ? `${many ? 'checks' : 'check'} ${restoring.join(', ')} ${many ? 'restore' : 'restores'} NuGet packages, which ${TRUST_REASON}, and this repository's NuGet cache is empty: the ${many ? 'checks' : 'check'} would fail at the baseline`
-            : `this repository's NuGet packages ${TRUST_REASON}: fill its NuGet cache outside the sandbox`,
-      details: [...capped(evidence), ...capped(floating), `NuGet cache ${cache}: ${state}`],
-      missing: "NuGet packages in this repository's cache, restored outside the sandbox",
-      fix: `run once in a terminal, outside the sandbox, and again whenever the packages change: ${fillCommand(repo, cache, files, install, evidence)}; the dependency install and the checks then restore offline from that cache ${
-        until.length > 0 ? `once ${until.join(', and once ')} (${NUGET_DOCS})` : `(Orbit turns NuGet's vulnerability audit off in the sandbox, where it cannot reach nuget.org; ${NUGET_DOCS})`
-      }`,
+      status,
+      summary,
+      details: [...capped(evidence), ...capped(floating), `NuGet cache ${cache}: ${state}`, ...extra],
+      missing: status === 'pass' ? null : "NuGet packages in this repository's cache, restored outside the sandbox",
+      fix,
     },
   ];
+}
+
+/**
+ * Why no dependency install restores this repository's NuGet packages, or null when the configured one does: the policy
+ * runs none, Orbit's own is `npm ci` (skipped without an npm lockfile), or the configured command shows no restore.
+ */
+function noInstallRestore(config: OrbitConfig, install: readonly string[] | null): string | null {
+  if (install !== null && restoresPackages(install)) return null;
+  const deps = config.dependencies;
+  const why = !deps.install_existing_lockfile
+    ? 'dependencies.install_existing_lockfile is false, so no install runs'
+    : !deps.install_command
+      ? `dependencies.install_command is not set, and Orbit's own install is npm ci, which restores no NuGet package and is skipped without a package-lock.json ("no lockfile to install from")`
+      : `dependencies.install_command is ${deps.install_command.join(' ')}, which doctor cannot see restore NuGet packages`;
+  return `no dependency install restores NuGet packages here: ${why}`;
 }
 
 // ---------------------------------------------------------------------------

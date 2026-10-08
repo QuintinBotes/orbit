@@ -93,11 +93,11 @@ describe('doctor: plugins a worker would load (issue #9)', () => {
     ]);
   });
 
-  it('passes when the policy allows the plugin, and says the report will name it', async () => {
+  it('passes when the policy allows the plugin, and says the report names what the sessions loaded', async () => {
     const managed = await pluginCheck(LIST, '{allow_managed_plugins: true}');
     expect(managed).toMatchObject({ status: 'pass', summary: 'workers would load 1 plugin(s), each allowed by the policy: acme-guard@acme-it (scope managed, agents.allow_managed_plugins)' });
     expect(managed!.details[0]).toBe('acme-guard@acme-it (scope managed): allowed by agents.allow_managed_plugins');
-    expect(managed!.details).toContain('a plugin can add hooks and tools to workers; each run lists the plugins its workers loaded in its final report');
+    expect(managed!.details).toContain("a plugin can add hooks and tools to workers; a run's final report lists the plugins its worker sessions reported loading and says nothing when they loaded none");
     const exact = await pluginCheck(LIST, '{allowed_plugins: ["acme-guard@acme-it"]}');
     expect(exact).toMatchObject({ status: 'pass', summary: 'workers would load 1 plugin(s), each allowed by the policy: acme-guard@acme-it (scope managed, agents.allowed_plugins)' });
   });

@@ -156,12 +156,12 @@ describe.skipIf(skip !== null)(skip === null ? 'dotnet format under the srt chec
     const found = classifyCouldNotRun({ checkId: 'format', output: log, insideRoots: roots });
     expect(found?.signals).toEqual(['permission-denied']);
     const fix = environmentFix([{ ...found!, command: { argv: folder, shell: false }, folderForm: false }]);
-    expect(fix).toMatch(/^dotnet format \(check format\) cannot run in this check sandbox: remove checks\.format from \.orbit\/config\.yaml, or set checks\.format\.mandatory: false, and run dotnet format in CI \(on macOS no form/);
+    expect(fix).toMatch(/^dotnet format \(check format\) cannot run in this check sandbox: remove checks\.format from \.orbit\/config\.yaml and run dotnet format in CI \(on macOS no form/);
     // The runner's note for a format whose implicit restore was refused a worker node names the same, not the folder form.
     const restore = await run(SOLUTION, { command: [dotnet!, 'format', 'tests/Acme.Tests/Acme.Tests.csproj', '--verify-no-changes'] }, runLayout);
     expect(restore.r.status).toBe('FAILED');
     expect(restore.log).toMatch(/note=the check sandbox denied MSBuild node \(pid \d+\) its named pipe \/tmp\/MSBuild\d+ /);
-    expect(restore.log).toContain(' Fix: remove checks.format from .orbit/config.yaml, or set checks.format.mandatory: false, and run dotnet format in CI (on macOS no form');
+    expect(restore.log).toContain(' Fix: remove checks.format from .orbit/config.yaml and run dotnet format in CI (on macOS no form');
     expect(restore.log).not.toContain('"--folder"');
     // With SDK 8 pinned, the pinned restore first and --no-restore, which the fix names as the other way, pass in this layout.
     if (!sdks.includes('8.0.303')) return;
@@ -199,7 +199,7 @@ describe.skipIf(skip !== null)(skip === null ? 'dotnet format under the srt chec
       expect(c.status).toBe('fail');
       // The default Orbit home, ~/.orbit, is read-denied: on macOS the folder form cannot list the folders above a run's
       // checkout there, so the fix is to run dotnet format outside Orbit; elsewhere it is the folder form.
-      expect(c.fix).toContain(process.platform === 'darwin' ? 'remove checks.format from .orbit/config.yaml, or set checks.format.mandatory: false, and run dotnet format in CI' : `checks.format.command: ${JSON.stringify([dotnet!, 'format', 'whitespace', '--folder', '--verify-no-changes']).replace(/,/g, ', ')}`);
+      expect(c.fix).toContain(process.platform === 'darwin' ? 'remove checks.format from .orbit/config.yaml and run dotnet format in CI' : `checks.format.command: ${JSON.stringify([dotnet!, 'format', 'whitespace', '--folder', '--verify-no-changes']).replace(/,/g, ', ')}`);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

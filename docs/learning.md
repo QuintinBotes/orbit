@@ -15,7 +15,10 @@ After each run, deterministic code extracts raw observations from verified
 evidence: a failure fingerprint and the repair that cleared it, a resolved
 review finding, a CI breakage, a decision with its evidence, a scope denial.
 A curator worker (a small, cheap model call, bounded by
-`knowledge.curator_budget_usd` and skipped when the run needs its reserve) turns
+`knowledge.curator_budget_usd` and skipped when the run needs its reserve, when
+the run was cancelled, and when it ended before any worker session, such as a
+block at PREFLIGHT: the gates' records of the environment are not lessons about
+the repository, and the curator would only cost a session) turns
 them into lessons in one standard format (`schemas/lesson.schema.json`):
 statement, rationale, applicability, verification, evidence references,
 provenance, qualitative confidence, status and scope.

@@ -3,7 +3,9 @@
  * is recorded, difficulty is classified with every factor written down, the
  * budget counters are created from the frozen caps and the difficulty class,
  * spend from before the ledger existed is charged, and the first
- * implementation route is decided and recorded.
+ * implementation route is decided and recorded. First, a check the contract
+ * requires that PREFLIGHT did not run is run on the base revision (a baseline
+ * amendment, steps/baseline-amendment.ts).
  */
 import { join } from 'node:path';
 import { readJsonIfExists } from '../../core/fsx.ts';
@@ -17,6 +19,7 @@ import type { Coupling } from '../../scheduling/types.ts';
 import type { RunContext } from '../context.ts';
 import { routeFor, tokenEstimateFor } from '../workers.ts';
 import { assertContract, decide, move, note, safePoint, type StepResult } from './common.ts';
+import { amendBaseline } from './baseline-amendment.ts';
 import { storedPlan } from './contracting.ts';
 
 const SECURITY_WORDS = /\b(secur\w*|auth\w*|permission\w*|privacy|secret\w*|credential\w*|token\w*|tenant\w*|injection|billing|payment\w*)\b/i;
@@ -28,6 +31,10 @@ export async function planningStep(ctx: RunContext): Promise<StepResult> {
   // CONTRACTING); it is applied now, so planning, difficulty and every later step see the contract that carries it.
   const exceptions = applyBaselineExceptionAnswers({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { snapshot: ctx.snapshot });
   const contract = exceptions.contract ?? assertContract(ctx);
+  // A check the contract requires that PREFLIGHT did not run is run on the base revision now, before any attempt, so a
+  // candidate is never judged without its base result (ADR 0012); one that cannot run there blocks the run as at PREFLIGHT.
+  const amended = await amendBaseline(ctx, contract);
+  if (amended) return amended;
   const plan = storedPlan(ctx);
   const baseline = readJsonIfExists<BaselineReport>(join(ctx.runDir, BASELINE_FILE));
 

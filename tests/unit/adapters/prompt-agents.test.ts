@@ -53,6 +53,13 @@ describe('agents/*.md', () => {
         expect(text).toContain(`schemas/${ROLE_OUTPUT_KIND[role]}-output.schema.json`);
       });
 
+      // Review of #31: a worker that runs commands may listen on loopback, and on macOS nothing contains a process it
+      // detaches (nohup, setsid): a server it leaves can outlive the session and answer a later check. Background tasks
+      // are off (adapters/env.ts), so a server must be stopped within the command that starts it.
+      it.runIf(role === 'implementer' || role === 'verifier')('tells a role that runs commands to leave nothing running when a command ends', () => {
+        expect(readRolePrompt(role, AGENTS)).toMatch(/Leave nothing running when a command ends: an? (test|experiment) that needs a server starts it and stops it within the same Bash command\./);
+      });
+
       it('contains no em or en dashes and names no real organization', () => {
         expect(text).not.toMatch(/[–—]/);
       });

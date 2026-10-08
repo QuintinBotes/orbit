@@ -74,10 +74,14 @@ export const FORMAT_OUTSIDE_REASON =
  * The fix for a dotnet format check that cannot run in the check sandbox (FORMAT_OUTSIDE_REASON): run it outside Orbit.
  * For another command Orbit starts in such a sandbox (`where`: a release environment's deploy_command, say), dotnet
  * format comes out of that command.
+ *
+ * Never "make it optional": a check the policy does not mark mandatory is still run, on the base revision first, by any
+ * run whose contract requires it (a criterion that cites it as evidence), and blocks that run as a mandatory one would
+ * (issue #32; docs/decisions/0012-contract-checks-and-judged-trees.md).
  */
 export function formatOutsideFix(check: Pick<CheckDefinition, 'id'>, where: MsbuildFixWhere | null = null): string {
   if (where) return `remove dotnet format from ${where.command} and run it in CI`;
-  return `remove checks.${check.id} from .orbit/config.yaml, or set checks.${check.id}.mandatory: false, and run dotnet format in CI`;
+  return `remove checks.${check.id} from .orbit/config.yaml and run dotnet format in CI`;
 }
 
 export interface DotnetFormatUse {

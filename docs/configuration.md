@@ -202,6 +202,26 @@ Hosts are exact names, IPv4 addresses, or `*.example.com` (subdomains only).
 No ports, schemes or bare `*`. Everything else is blocked by the sandbox.
 `add_packages` also needs `change_lockfile`.
 
+On macOS a worker may not listen, on any address, in either tier, and there is
+no setting for it. Many test runners listen on loopback: `dotnet test` on
+every run (VSTest's test host connects back to it), Gradle's test workers,
+Maven Surefire's TCP fork channel, and any test that starts a server (Go's
+`httptest`, a Node or Python server). Neither worker sandbox on macOS can limit
+a listener to loopback (a server on 0.0.0.0 would be reachable from the
+network, measured; see [security](security.md)), and workers run model-driven
+commands, so there a worker's own run of those tests is refused and the worker
+reports them as not run. The checks run them (a check's `local_binding`,
+below), on every candidate, and `orbit doctor` (`workers.loopback`) warns for
+a .NET or Gradle repository. On Linux `srt` starts every worker sandbox in a
+network namespace of its own (`bwrap --unshare-net`, from `srt`'s source, not
+measured by Orbit), with a loopback nothing outside it can reach, so workers
+there can run them too. Runners
+that talk to their workers over pipes or IPC need no listener and run in
+workers everywhere: `go test -json`, pytest-xdist, Jest's and Vitest's
+workers, and Surefire's default fork channel. The guard hook refuses a command
+that names a loopback address, such as `curl http://127.0.0.1:3000`, because
+loopback is not in `allowed_hosts`.
+
 The dependency install is `npm ci` from an npm lockfile, or
 `install_command` when set (for another ecosystem: `cargo fetch --locked`,
 `dotnet restore --locked-mode -m:1`, a virtual environment plus `pip install -r
@@ -376,8 +396,12 @@ from the session's `system/init` entry when it has one; Claude Code does not
 report it there today, so it comes from `claude plugin list --json`. Every
 non-built-in plugin a worker loaded is recorded in its result and listed under
 "Worker plugins" in the final report, with a residual risk for each allowed
-one. `orbit doctor` lists, before any run, the plugins a worker would load and
-whether the policy allows them.
+one; a session that loaded none adds none, and the report says nothing then.
+`orbit doctor` lists, before any run, the plugins a worker would load (a
+managed one) or may load (one of a scope it cannot place, such as `synced`:
+workers start with no user, project or local settings, and sessions have been
+seen to load none of those) and whether the policy allows them; what a
+session really loaded is in its own record and the report.
 
 A run is not started when doctor would fail that check (`claude.plugins`:
 workers would load a managed plugin the policy does not allow, so every session
@@ -468,9 +492,9 @@ checks:
 | `cwd` | relative to the worktree root (default `.`) |
 | `timeout_seconds` | default 600 |
 | `network_hosts` | hosts the check may reach; must be covered by `network.allowed_hosts` |
-| `local_binding` | default true: the check may listen on 127.0.0.1 (a test suite that starts an HTTP server); outbound reach is still only `network_hosts`. Set false for a check that never serves |
+| `local_binding` | default true: the check may listen (a test suite that starts an HTTP server, `dotnet test`'s test host); other hosts are still reachable only through `network_hosts`. On macOS the permission is not limited to 127.0.0.1: a listener on 0.0.0.0 can be reached from the network while the check runs, and the check can reach services listening on any address of this machine, its network address included, over TCP and UDP (see [security](security.md)). Set false for a check that never serves. Workers may not listen |
 | `env` | extra environment; delivery credentials such as `GH_TOKEN` are refused |
-| `mandatory` | default true; a run cannot succeed while it fails |
+| `mandatory` | default true; a run cannot succeed while it fails. A check marked false runs only in a run whose contract requires it (a criterion cites it as proof), and then as a mandatory one does: on the base revision before any change, where it blocks the run when it cannot run ([ADR 0012](decisions/0012-contract-checks-and-judged-trees.md)), so marking a check optional does not make one that cannot run in the sandbox harmless |
 | `flaky_reruns` | 0 to 5; reruns are used only to classify flakiness |
 | `kind` | `command` (default) or `playwright` |
 
@@ -484,7 +508,13 @@ prints what it proposed and why, and `--json` carries the same in
 `checks.proposed` (id, ecosystem, command, category, timeout_seconds, reason)
 and `checks.not_proposed` (a declared tool that was not found, for example).
 An existing config is never touched: init proposes only for a config it
-writes, so checks you wrote or edited stay exactly as they are.
+writes, so checks you wrote or edited stay exactly as they are, and when it
+already defines checks init says so (`checks_defined` in `--json`) instead of
+asking you to define them. The starter sets `providers.codex.data_policy_eligible:
+false`, so Codex does not review until you set it to `true` (only if sending
+sanitized code and diffs to Codex is permitted for this repository); init says
+so when it writes the config, and until then Claude reviews in a separate
+session and every report says the review was not independent.
 
 | Ecosystem | Declared by | Proposed (id, command, category) |
 |---|---|---|
@@ -551,6 +581,27 @@ reason of a misconfigured check blocked at PREFLIGHT names `checks.<id>.command`
 the command is wrong, so fix it there. A missing target blocked at CONTRACTING
 says by cause what to do, because the command may be right.
 
+PREFLIGHT runs the mandatory checks. A check the contract requires that the
+policy does not mark mandatory (a criterion cites it as proof) is run on the
+base revision at PLANNING, before any attempt, and added to the baseline (a
+baseline amendment, [ADR 0012](decisions/0012-contract-checks-and-judged-trees.md));
+one a contract amendment adds later is run there at VERIFYING, before the
+candidate is judged. It is classified and handled as PREFLIGHT handles a
+mandatory check: an environment failure or a misconfigured check blocks the
+run there (the reason says the contract requires the check), a missing target
+is settled against the contract while the contract requires the check, a
+pre-existing failure gets its question, and a pass makes a failure on a
+candidate the change's. `orbit resume` after an environment block runs the
+check on the base revision again.
+
+A repair attempt that ends on a tree an earlier attempt produced, which
+verification judges `FAIL` exactly as before, ends the run `EXHAUSTED` as
+non-progress at once, instead of another diagnosis and attempt on the same
+tree (`BLOCKED` instead when an open material question blocks a criterion).
+A repair whose session stopped before it finished (max turns, a timeout) is
+not such a stop: the existing budget rules decide whether another attempt
+runs.
+
 A mandatory check that could not execute at all is an environment failure too,
 with or without a base-revision comparison: its process (or the UI application
 under test) was killed by a crash signal such as `SIGABRT` before it printed
@@ -586,7 +637,9 @@ set per repository, never your own `~/.cargo`, `~/go`, `~/.m2` or
 `~/.nuget/packages`. Only the dependency install writes them; every other
 check and every worker reads them and cannot write them. Build state is
 created for each check attempt and removed with it (a worker has its own under
-its worker directory), so `cargo build` and `cargo test` in two checks each
+its worker directory, which only the `os-sandbox` worker tier lets it write:
+in the `claude-sandbox` tier a worker cannot build Go, Rust or JVM code, as
+`orbit doctor` says under `workers.toolchains`), so `cargo build` and `cargo test` in two checks each
 compile. A check's `env` overrides any of these variables, for example
 `CARGO_TARGET_DIR: target` to build inside the checkout. `orbit doctor`
 (`checks.sandbox`) lists each toolchain, whether it starts in the sandbox (for

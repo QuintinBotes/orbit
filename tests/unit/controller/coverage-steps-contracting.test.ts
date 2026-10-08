@@ -188,6 +188,19 @@ describe('contractingStep', () => {
     expect(prompts.at(-1)).not.toMatch(/check unit names something/);
   });
 
+  // Issue #32: the planner cited an optional dotnet format check in an optional criterion, which made the run require it.
+  it('tells the planner what naming a check the policy does not mark mandatory costs, and only when there is one', async () => {
+    const line = 'A check not marked mandatory runs only when the contract names it, and then like a mandatory one: on the base revision before any change, and the run stops if it cannot run there. Name one only as the proof of a criterion that needs it.';
+    prepare(PLANNER_OUTPUT, (c) => void (c.checks = { unit: { ...c.checks.unit!, mandatory: true }, format: { ...c.checks.unit!, id: 'format', mandatory: false } }));
+    await contractingStep(lab.ctx());
+    expect(prompts.at(-1)).toContain('Trusted checks the policy defines: unit (mandatory), format. Name only these as check ids.');
+    expect(prompts.at(-1)).toContain(line);
+    lab.cleanup();
+    prepare(PLANNER_OUTPUT, (c) => void (c.checks = { unit: { ...c.checks.unit!, mandatory: true } }));
+    await contractingStep(lab.ctx());
+    expect(prompts.at(-1)).not.toContain(line);
+  });
+
   it('tells the planner there are no trusted checks when the policy defines none', async () => {
     prepare(PLANNER_OUTPUT, (c) => void (c.checks = {}));
     await contractingStep(lab.ctx());

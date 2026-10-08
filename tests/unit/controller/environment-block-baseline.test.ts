@@ -85,7 +85,7 @@ describe('environmentFix', () => {
   it('where the folder form cannot list the folders above the checkout, names running dotnet format outside Orbit, for its build host and for its refused listing', () => {
     const host: BlockedCheck = { ...dotnet, checkId: 'fmt', signals: ['pipe-denied'], lines: ['Unhandled exception: System.TimeoutException: The operation has timed out.'], command: { argv: ['dotnet', 'format', '--verify-no-changes'], shell: false }, folderForm: false };
     const fix = environmentFix([host])!;
-    expect(fix).toMatch(/^dotnet format \(check fmt\) cannot run in this check sandbox: remove checks\.fmt from \.orbit\/config\.yaml, or set checks\.fmt\.mandatory: false, and run dotnet format in CI \(on macOS no form of dotnet format runs/);
+    expect(fix).toMatch(/^dotnet format \(check fmt\) cannot run in this check sandbox: remove checks\.fmt from \.orbit\/config\.yaml and run dotnet format in CI \(on macOS no form of dotnet format runs/);
     expect(fix).not.toMatch(/whitespace --folder --verify-no-changes in place|"--folder"/);
     const listing: BlockedCheck = {
       ...dotnet,
@@ -114,6 +114,9 @@ describe('environmentFix', () => {
     const tls: BlockedCheck = { ...dotnet, signals: ['nuget-tls-denied'], lines: ['/var/folders/acme/T/orbit-evidence-acme/checkout/Acme.csproj : error NU1301:   The SSL connection could not be established, see inner exception.'] };
     expect(environmentFix([tls])).toMatch(fill);
     expect(environmentFix([tls, refused], 'darwin')!.match(/checks\.dotnet-packages/g)).toHaveLength(1);
+    // Issue #33: it is the checks that restore from the filled cache; the install only when dependencies.install_command restores packages (Orbit's own install is skipped without an npm lockfile).
+    expect(environmentFix([tls])).toMatch(/which the checks that restore read, and the dependency install too when dependencies\.install_command restores packages \(docs\/troubleshooting\.md/);
+    expect(environmentFix([tls])).not.toMatch(/from which the dependency install and the checks restore/);
   });
 
   it('is added to the candidate reason for a check that could not execute because of a denial', () => {

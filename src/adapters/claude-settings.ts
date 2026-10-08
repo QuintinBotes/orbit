@@ -22,6 +22,7 @@ import { existsSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
 import { compileSchema, schemaErrors } from '../core/schema.ts';
+import { CLAUDE_CONFIG_DENIED, type ClaudeLogin } from '../isolation/profiles.ts';
 import { isWithin } from '../isolation/util.ts';
 import { bashGrant } from '../policy/role-grants.ts';
 import { HOME_CREDENTIAL_PATHS, credentialGlobsOf } from '../policy/builtin.ts';
@@ -50,7 +51,13 @@ export interface ClaudeSandboxSettings {
   autoAllowBashIfSandboxed: boolean;
   allowUnsandboxedCommands: false;
   filesystem: { allowWrite: string[]; denyRead: string[]; allowRead: string[] };
-  network: { allowedDomains: string[]; strictAllowlist: true };
+  /**
+   * allowLocalBinding: never. Claude Code's, like srt's, lets sandboxed Bash listen on every address of the machine, not
+   * on loopback only (measured with 2.1.292: a listener on 0.0.0.0 answered on the LAN address), and Orbit cannot narrow
+   * Claude Code's rules, so a worker's server could serve what it may read to the network (issue #31; ADR 0001, "Workers
+   * and loopback"). Claude Code reads a missing key as false; Orbit writes it, and the strict schema holds it there.
+   */
+  network: { allowedDomains: string[]; strictAllowlist: true; allowLocalBinding: false };
 }
 
 export interface ClaudeSettingsInput {
@@ -76,6 +83,16 @@ export interface ClaudeSettingsInput {
   readablePaths?: string[];
   /** The worker's private temp directory; Bash may write it. */
   tmpDir: string;
+  /**
+   * Absolute, canonical: the config directory the worker's CLI runs with (CLAUDE_CONFIG_DIR, else ~/.claude). Read is
+   * denied on its CLAUDE_CONFIG_DENIED entries, the IDE lock directory, which the worker's sandbox profile also denies.
+   */
+  claudeConfigDir: string;
+  /**
+   * Every other Claude login Orbit knows of (isolation/profiles.ts otherClaudeLogins): Read is denied on each whole, as
+   * the worker's sandbox profile denies it, or on its IDE lock directory alone when it holds a path the worker must read.
+   */
+  otherClaudeLogins: readonly ClaudeLogin[];
 }
 
 /** `Edit(//abs/...)`: the permission-rule form of an absolute path (a leading `/` alone means settings-relative). */
@@ -108,6 +125,20 @@ export function renderClaudeSettings(input: ClaudeSettingsInput): ClaudeSettings
   for (const glob of snapshot.effective_protected_paths) deny.push(absRule('Edit', worktree, glob));
   for (const glob of credentialGlobs(snapshot)) deny.push(absRule('Read', worktree, glob));
   for (const rel of HOME_CREDENTIAL_PATHS) deny.push(`Read(~/${rel})`);
+  // The tokens of IDE extensions' MCP servers on loopback (isolation/profiles.ts CLAUDE_CONFIG_DENIED). In the
+  // claude-sandbox tier the Read tool runs outside Claude Code's sandbox, so only these rules keep it away from them.
+  for (const rel of CLAUDE_CONFIG_DENIED) deny.push(absRule('Read', input.claudeConfigDir, `${rel}/**`));
+  // Every other login, ~/.claude among them, where Claude Code also looks for lock files when CLAUDE_CONFIG_DIR is set:
+  // whole, as the sandbox profile denies it, unless it holds a path the worker must read (a deny beats every allow).
+  const mustRead = [worktree, input.tmpDir, ...(input.readablePaths ?? [])];
+  for (const login of input.otherClaudeLogins) {
+    if (mustRead.some((p) => isWithin(p, login.configDir))) {
+      for (const rel of CLAUDE_CONFIG_DENIED) deny.push(absRule('Read', login.configDir, `${rel}/**`));
+    } else {
+      deny.push(absRule('Read', login.configDir, '**'));
+    }
+    deny.push(absRule('Read', login.globalConfig));
+  }
   // The worker directory and the snapshot are the controller's: prompt,
   // settings, logs, pid and exit files.
   deny.push(absRule('Edit', input.workerDir, '**'), absRule('Edit', input.policyPath));
@@ -136,7 +167,7 @@ export function renderClaudeSettings(input: ClaudeSettingsInput): ClaudeSettings
               denyRead: uniq(input.denyReadPaths),
               allowRead: reopenedReads(input),
             },
-            network: { allowedDomains: uniq(cfg.network.allowed_hosts), strictAllowlist: true },
+            network: { allowedDomains: uniq(cfg.network.allowed_hosts), strictAllowlist: true, allowLocalBinding: false },
           }
         : { enabled: false },
   };
@@ -239,8 +270,8 @@ export const CLAUDE_SETTINGS_SCHEMA = {
             network: {
               type: 'object',
               additionalProperties: false,
-              required: ['allowedDomains', 'strictAllowlist'],
-              properties: { allowedDomains: { type: 'array', items: { type: 'string', minLength: 1 } }, strictAllowlist: { const: true } },
+              required: ['allowedDomains', 'strictAllowlist', 'allowLocalBinding'],
+              properties: { allowedDomains: { type: 'array', items: { type: 'string', minLength: 1 } }, strictAllowlist: { const: true }, allowLocalBinding: { const: false } },
             },
           },
         },

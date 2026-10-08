@@ -287,8 +287,8 @@ describe('uiGate', () => {
   const journeys = [{ id: 'home', status: 'PASSED' }] as never;
   const result = (verdict: string, over: object = {}) => ({ verdict, reasons: [], unverified: [], journeys, ...over }) as never;
 
-  it('is a pass when no UI evidence is needed, a failure when it is needed but unconfigured, unverified when it did not run', () => {
-    expect(uiGate({ required: false, configured: false, result: null }).status).toBe('pass');
+  it('is not applicable when no UI evidence is needed (issue #33), a failure when it is needed but unconfigured, unverified when it did not run', () => {
+    expect(uiGate({ required: false, configured: false, result: null }).status).toBe('not_applicable');
     expect(uiGate({ required: true, configured: false, result: null }).reasons).toEqual(['UI evidence is required but the policy configures no UI journeys']);
     const g = uiGate({ required: true, configured: true, result: null });
     expect(g.status).toBe('unverified');

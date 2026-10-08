@@ -13,6 +13,9 @@
  * its output, or a mandatory check that could not execute at all) is BLOCKED
  * first, whatever the verdict: no repair or inquiry can fix it.
  * A protected-path edit is a policy violation: BLOCKED, never repaired.
+ * A check the contract requires that the base revision has no result for (one
+ * a contract amendment added after PLANNING) is run there first (a baseline
+ * amendment, steps/baseline-amendment.ts), so the candidate gate has its base.
  */
 import { existsSync, readdirSync } from 'node:fs';
 import { atomicWriteJson } from '../../core/fsx.ts';
@@ -21,6 +24,7 @@ import { sha256 } from '../../core/hash.ts';
 import { OrbitError } from '../../core/errors.ts';
 import { applyBaselineExceptionAnswers } from '../../inquisition/baseline-exception.ts';
 import { inspectScope } from '../../policy/scope.ts';
+import { gitTreeReader, loadTestLayout } from '../../policy/test-files.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../../evidence/candidate.ts';
 import { git } from '../../evidence/git.ts';
 import { evaluateEvidence, saveEvidenceReport } from '../../evidence/report.ts';
@@ -37,6 +41,7 @@ import { implementationScopeGate, behaviourGate, type ScopeGateDetails } from '.
 import { authorizedOnce, deniedDependencyOperations, grantFor, requestAuthorization, scopeWithGrants } from '../authorization.ts';
 import { collectVerificationEvidence } from '../verification.ts';
 import { storedPlan } from './contracting.ts';
+import { amendBaseline } from './baseline-amendment.ts';
 import { assertContract, decide, finishRun, move, note, progress, safePoint, type StepResult } from './common.ts';
 import { briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
 import { recordGate } from './preflight.ts';
@@ -52,6 +57,10 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
   const contract = assertContract(ctx);
   const cand = ctx.candidate;
   if (!cand) throw new OrbitError('INTERNAL', `run ${ctx.run.id} is VERIFYING without a candidate`);
+  // No candidate is judged against a check the base revision has no result for: one a contract amendment added since
+  // PLANNING is run there first (ADR 0012), and blocks the run as at PREFLIGHT when it cannot run there.
+  const amended = await amendBaseline(ctx, contract);
+  if (amended) return amended;
   // A candidate invalidated for a policy violation is never repaired in place (the implementer may not touch the
   // protected paths it changed): after a person's resume the worktree is restored first (e2e Nm7).
   if (cand.status === 'INVALIDATED') return violatingCandidate(ctx, cand);
@@ -150,7 +159,7 @@ async function askForAuthorization(ctx: RunContext, cand: CandidateRecord, scope
 async function act(ctx: RunContext, cand: CandidateRecord, ev: EvidenceReportRecord): Promise<StepResult> {
   const verdict = ev.report.verdict;
   if (verdict === 'PASS') {
-    const trigger = pendingTrigger(ctx, cand, PROOF_BLOCKING_TRIGGERS);
+    const trigger = await pendingTrigger(ctx, cand, PROOF_BLOCKING_TRIGGERS);
     if (trigger) return move(ctx, 'INQUISITION', `green checks, but ${trigger.summary}`, { data: { trigger } });
     progress(ctx, 'evidence.pass', { candidate_id: cand.id, report_id: ev.id });
     return move(ctx, 'REVIEWING', `candidate ${cand.seq} verified: PASS (${ev.id})`);
@@ -163,7 +172,7 @@ async function act(ctx: RunContext, cand: CandidateRecord, ev: EvidenceReportRec
   const environment = [...sameAsBase, ...checksNotExecutedFor(ctx, cand, ev.report).filter((n) => !sameAsBase.some((b) => b.checkId === n.checkId))];
   if (environment.length > 0) return blockOnEnvironment(ctx, cand, ev, environment);
   if (verdict === 'FAIL') return move(ctx, 'DIAGNOSING', `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
-  const trigger = pendingTrigger(ctx, cand, null);
+  const trigger = await pendingTrigger(ctx, cand, null);
   if (trigger) return move(ctx, 'INQUISITION', `verification incomplete: ${trigger.summary}`, { data: { trigger } });
   return finishRun(ctx, 'BLOCKED', `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join('; ') || 'the evidence is incomplete'}`, { outcome: { report_id: ev.id } });
 }
@@ -187,13 +196,19 @@ export function handledTriggerKeys(ctx: RunContext): Set<string> {
   return keys;
 }
 
-export function pendingTrigger(ctx: RunContext, cand: CandidateRecord, only: readonly string[] | null): Trigger | null {
+export async function pendingTrigger(ctx: RunContext, cand: CandidateRecord, only: readonly string[] | null): Promise<Trigger | null> {
   const plan = storedPlan(ctx);
   const claims = latestImplementerClaims(ctx);
+  const changedFiles = cand.diffStat?.paths ?? [];
+  // The unexplained-architecture filter tells tests apart with the one test-file predicate, which needs the project
+  // files of both trees for .NET and Rust (ADR 0011); loadTestLayout reads nothing when no such file changed.
+  const base = ctx.run.baseRevision;
+  const testLayout = base && (only === null || only.includes('unexplained_architecture')) ? await loadTestLayout(gitTreeReader((args) => git(ctx.run.repoRoot, args)), base, cand.commitSha, changedFiles) : undefined;
   const snapshot = loadInquisitionSnapshot(ctx.db, ctx.run.id, {
     currentTreeHash: cand.treeHash,
     expectedChangedFiles: plan?.expected_changed_files.map((f) => f.path) ?? [],
-    changedFiles: cand.diffStat?.paths ?? [],
+    changedFiles,
+    ...(testLayout ? { testLayout } : {}),
     claims,
     thresholds: thresholdsFromPolicy(ctx.snapshot.config),
   });

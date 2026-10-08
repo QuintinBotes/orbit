@@ -89,14 +89,18 @@ export function settleExpectedFlips(ctx: RunContext, contract: GoalContract): st
 }
 
 /**
- * The checks whose command names something the base revision does not have and that the contract does not name as the
- * proof of any criterion: nothing in the run is expected to create what they name, so they are misconfigured. Read
- * again from their recorded output, with the evidence PREFLIGHT read.
+ * The checks the contract requires whose command names something the base revision does not have and that the contract
+ * does not name as the proof of any criterion: nothing in the run is expected to create what they name, so they are
+ * misconfigured. Read again from their recorded output, with the evidence PREFLIGHT read. A check the contract does not
+ * require is never run on a candidate, so its base result judges nothing: an approved amendment that stops requiring a
+ * check a baseline amendment ran (remove_required_checks) leaves nothing to block on. PREFLIGHT's checks are mandatory,
+ * which every contract requires.
  */
 export function missingTargetsNotExpectedToFlip(ctx: RunContext, contract: GoalContract): MisconfiguredBlock[] {
   const report = baselineOf(ctx);
   if (!report) return [];
-  const missing = report.failures.filter((f) => f.classification === 'missing-target' && criteriaProvedBy(contract, f.checkId).length === 0);
+  const required = new Set(contract.required_check_ids);
+  const missing = report.failures.filter((f) => f.classification === 'missing-target' && required.has(f.checkId) && criteriaProvedBy(contract, f.checkId).length === 0);
   if (missing.length === 0) return [];
   const found = baselineMisconfiguredChecks(ctx, { ...report, failures: missing });
   // A log that is gone still leaves the classification PREFLIGHT recorded.
@@ -120,7 +124,8 @@ export function missingTargetsNotExpectedToFlip(ctx: RunContext, contract: GoalC
  * with the advice of its own that finishRun adds in place of the generic one (environment-block.ts missingTargetAdvice):
  * a goal meant to create the target must say so in a new run, and a target a tool provides that is not installed or
  * restored yet (a cargo plugin, a dotnet local tool, a pytest plugin) needs a new run once it is, because CONTRACTING reads the baseline
- * PREFLIGHT recorded. Their open exception questions are withdrawn: the block answers them.
+ * PREFLIGHT recorded. Their open exception questions are withdrawn: the block answers them. A baseline amendment
+ * (steps/baseline-amendment.ts) blocks the same way, at the step that ran it, on a missing target it found.
  */
 export async function blockOnMissingTargets(ctx: RunContext, checks: readonly MisconfiguredBlock[]): Promise<StepResult> {
   const baseRevision = ctx.run.baseRevision ?? '';
@@ -131,7 +136,7 @@ export async function blockOnMissingTargets(ctx: RunContext, checks: readonly Mi
     if (ids.has(req.check_id)) withdrawQuestion(ctx.db, req.question_id, `check ${req.check_id} is misconfigured: its command names something that does not exist on the base revision, and the contract does not expect the goal to create it`, ctx.clock);
   }
   const records = checks.map((m) => misconfiguredRecord(m, 'misconfigured'));
-  decide(ctx, { id: `dec-${ctx.run.id}-contract-missing-target-${ctx.clock.now()}`, kind: 'baseline.check-misconfigured', summary: `${reason} ${advice}`, data: { base_revision: baseRevision, stage: 'CONTRACTING', checks: records } });
+  decide(ctx, { id: `dec-${ctx.run.id}-contract-missing-target-${ctx.clock.now()}`, kind: 'baseline.check-misconfigured', summary: `${reason} ${advice}`, data: { base_revision: baseRevision, stage: ctx.run.state, checks: records } });
   return finishRun(ctx, 'BLOCKED', reason, { frozenAdvice: advice, outcome: { base_revision: baseRevision, misconfigured_checks: records } });
 }
 

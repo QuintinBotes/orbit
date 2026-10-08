@@ -16,6 +16,8 @@ import { stepTo, waitFor } from '../../fault-injection/helpers.ts';
 import { listWorkers } from '../../../src/storage/workers.ts';
 import { listEvidenceReports } from '../../../src/evidence/store.ts';
 import { loadRunContext } from '../../../src/controller/context.ts';
+import { newRunNeeded } from '../../../src/controller/resume.ts';
+import { buildRunStatus } from '../../../src/cli/commands/status.ts';
 import { deniedDependencyOperations, grantFor } from '../../../src/controller/authorization.ts';
 import { baseScenario, IMPLEMENTER_OUTPUT, implementMul, labDeps, makeLab, MUL_TEST, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
 
@@ -218,6 +220,34 @@ describe.skipIf(!canStripTypes)('controller: supervised authorization of operati
     expect(ws.map((w) => w.purpose)).toEqual(['implement:1#1', 'implement:1#2']);
     expect(existsSync(join(ws[1]!.workerDir, 'policy-grant.json'))).toBe(false);
     expect(readFileSync(join(ws[1]!.workerDir, 'prompt.md'), 'utf8')).toMatch(/Refused by a person: run `chmod \+x apps\/run\.sh`\. Do not try it again/);
+  }, 180_000);
+
+  // Issue #33: the attempt counter is charged when an attempt starts, so a run blocked in the middle of its last attempt
+  // has every attempt "used" and still resumes into the same attempt (nothing new is spent). Advising a new run for it
+  // told people to cancel a run that the answer and a resume finish.
+  it('a run blocked in the middle of its last attempt is still advised to answer and resume, and the resume finishes it', async () => {
+    const l = makeLab({ tweak: (c) => void ((c.mode = 'supervised'), (c.scheduler.hard_limits.implementation_attempts = 1)) });
+    labs.push(l);
+    const id = await deniedChmodRun(l);
+
+    const blocked = runState(l, id);
+    expect(blocked.state).toBe('BLOCKED');
+    expect(blocked.resumeState).toBe('IMPLEMENTING');
+    expect(l.db().get('SELECT used, hard_cap FROM budget_counters WHERE run_id = ? AND counter = ?', id, 'implementation_attempts')).toMatchObject({ used: 1, hard_cap: 1 });
+    // Every surface says "answer, then resume", none says "a new run is needed".
+    expect(newRunNeeded(l.db(), blocked)).toBeNull();
+    expect(buildRunStatus({ clock: systemClock }, l.db(), blocked).stage).toBe('BLOCKED (will return to IMPLEMENTING)');
+    const final = JSON.parse(readFileSync(join(l.repo, '.orbit', 'runs', id, 'final.json'), 'utf8')) as { next_action: string };
+    expect(final.next_action).toMatch(/orbit decide/);
+    expect(final.next_action).not.toMatch(/new run|Resuming would only block again/);
+
+    const [q] = listQuestions(l.db(), id, { status: 'open' });
+    answerQuestion(l.db(), join(l.repo, '.orbit', 'runs', id), q!.id, 'approve-once', 'acme-dev', systemClock);
+    resume(l, id);
+    await drive(l, id);
+    const done = runState(l, id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(l.db().get('SELECT used FROM budget_counters WHERE run_id = ? AND counter = ?', id, 'implementation_attempts')).toMatchObject({ used: 1 });
   }, 180_000);
 
   it('autonomous mode only records the denial and asks nothing', async () => {

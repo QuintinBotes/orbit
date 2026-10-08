@@ -42,6 +42,8 @@ import { assertContract, blockOnAuth, blockOnRefusedSession, decide, finishRun, 
 import { attemptStart, latestAttempt } from './obtain.ts';
 
 export const ATTEMPT_EVENT = 'implementation.attempt';
+/** An attempt whose last session ended without finishing (max turns, a timeout, a failure, malformed output): its tree is verified anyway. */
+export const WORKER_ENDED_EVENT = 'implementation.worker-ended';
 
 /** A repair brief waiting for an attempt, as DIAGNOSING, REVIEWING or AWAITING_CI wrote it. */
 export interface StoredBrief {
@@ -248,7 +250,7 @@ async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable
       k++;
       continue;
     }
-    if (r.status !== 'succeeded') note(ctx, 'implementation.worker-ended', { attempt: n, status: r.status, error: r.error?.slice(0, 300) ?? null, note: 'its edits are verified like any other' });
+    if (r.status !== 'succeeded') note(ctx, WORKER_ENDED_EVENT, { attempt: n, status: r.status, error: r.error?.slice(0, 300) ?? null, note: 'its edits are verified like any other' });
     return snapshot(ctx, n, st.worker.id);
   }
 }

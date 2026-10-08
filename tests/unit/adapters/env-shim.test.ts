@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorkerEnv, claudeEnvCredential, codexEnvCredential, passThrough } from '../../../src/adapters/env.ts';
+import { CLAUDE_WORKER_ENV, buildWorkerEnv, claudeEnvCredential, codexEnvCredential, passThrough } from '../../../src/adapters/env.ts';
 import { parseShimArgs, shimArgs } from '../../../src/adapters/shim.ts';
 import { sessionIdFor } from '../../../src/adapters/supervise.ts';
 
@@ -64,6 +64,16 @@ describe('buildWorkerEnv', () => {
     expect(codex).toMatchObject({ CODEX_API_KEY: 'sk-codex', CODEX_HOME: '/home/u/.codex' });
     expect(codex).not.toHaveProperty('ANTHROPIC_API_KEY');
     expect(codex).not.toHaveProperty('CLAUDE_CODE_DISABLE_AUTO_MEMORY');
+  });
+
+  // Review of #31: `claude -p` does not exit after its result while a background task runs, and a worker that may
+  // listen on loopback can leave a server running (run_in_background, or a foreground command Claude Code moves to the
+  // background at its timeout); the session then ran to the role's ceiling and ended as a timeout.
+  it('turns off background tasks for a Claude worker, whatever the caller passes, and leaves Codex alone', () => {
+    expect(CLAUDE_WORKER_ENV.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1');
+    expect(buildWorkerEnv(input('claude'))).toMatchObject({ CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' });
+    expect(buildWorkerEnv(input('claude', { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '0' }))).toMatchObject({ CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' });
+    expect(buildWorkerEnv(input('codex'))).not.toHaveProperty('CLAUDE_CODE_DISABLE_BACKGROUND_TASKS');
   });
 
   it('refuses extra variables that would add credentials or undo fixed settings, and cannot be used to move the guard', () => {

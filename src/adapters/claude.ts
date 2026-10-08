@@ -30,7 +30,7 @@
  * and guard hook, and the controller's diff inspection gates either.
  */
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { systemClock } from '../core/clock.ts';
@@ -40,7 +40,7 @@ import { redact } from '../core/redact.ts';
 import { atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
 import { strictSchemaViolations } from '../contract/strict-schema.ts';
 import type { IsolationProvider, SandboxProfile } from '../isolation/types.ts';
-import { prepareWorkerTmpDir } from '../isolation/profiles.ts';
+import { otherClaudeLogins, prepareWorkerTmpDir, providerDirs } from '../isolation/profiles.ts';
 import { canonicalPath, isWithin, readablePathsOf } from '../isolation/util.ts';
 import { bashGrant } from '../policy/role-grants.ts';
 import { snapshotHash, verifySnapshot } from '../policy/snapshot.ts';
@@ -253,6 +253,14 @@ export class ClaudeAdapter implements ProviderAdapter {
     // The verified mechanism is CLAUDE_CODE_MAX_OUTPUT_TOKENS (the request's max_tokens); the instruction keeps the model inside it rather than cut off.
     const outputTokens = outputBudgetFor(spec.role, { explicit: spec.outputTokens, configured: snapshot.config.routing.output_budgets });
     const env = buildWorkerEnv({ provider: 'claude', base: baseEnv, policyPath: spec.policyPath, policyHash, worktree, tmpDir, maxOutputTokens: outputTokens, extra: { ...passThrough(this.baseEnv(), this.opts.passEnv), ...spec.env } });
+    // A worker never listens, in either tier, whatever profile it is handed (issue #31): on macOS no sandbox can limit a
+    // listener to loopback, so a server a worker started could serve what it may read to the network. The worker profile
+    // never asks for it (profileForWorker); this holds it for every caller. On Linux the sandbox's loopback is its own.
+    const sandbox: SandboxProfile = { ...spec.sandbox, allowLocalBinding: false };
+    // The config directory the CLI runs with, from the environment it gets: CLAUDE_CONFIG_DIR, else ~/.claude; and every
+    // other login of that home, whose IDE lock files the worker must not read either.
+    const claudeConfigDir = providerDirs({ homeDir: env.HOME ?? homedir(), env }).claudeConfigDir;
+    const otherLogins = otherClaudeLogins(env.HOME ?? homedir(), env, claudeConfigDir);
 
     const settings = renderClaudeSettings({
       snapshot,
@@ -263,9 +271,11 @@ export class ClaudeAdapter implements ProviderAdapter {
       readOnly: spec.readOnly,
       experiments: spec.experiments ?? false,
       hookCommand,
-      denyReadPaths: spec.sandbox.denyReadPaths,
-      readablePaths: readablePathsOf(spec.sandbox),
+      denyReadPaths: sandbox.denyReadPaths,
+      readablePaths: readablePathsOf(sandbox),
       tmpDir,
+      claudeConfigDir,
+      otherClaudeLogins: otherLogins,
     });
     assertClaudeSettings(settings);
     writePrivate(join(workerDir, PROMPT_FILE), outputTokens === null ? spec.prompt : `${spec.prompt.trimEnd()}\n\n${outputBudgetInstruction(outputTokens)}\n`);
@@ -297,7 +307,7 @@ export class ClaudeAdapter implements ProviderAdapter {
     const cleanupPaths: string[] = [];
     if (tier === 'os-sandbox') {
       const isolation = this.opts.isolation!;
-      const wrapped = isolation.wrap(argv, readOnlyProfile(spec.sandbox, worktree, spec.readOnly), { cwd: worktree, env });
+      const wrapped = isolation.wrap(argv, readOnlyProfile(sandbox, worktree, spec.readOnly), { cwd: worktree, env });
       launchArgv = wrapped.argv;
       launchEnv = wrapped.env;
       cleanupPaths.push(...wrapperTempDirs(wrapped.argv));

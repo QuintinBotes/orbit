@@ -392,9 +392,17 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
   const pipes = refused.every((r) => r.msbuild || r.format || r.outside);
   const one = 'dotnet commands that pin one MSBuild node (-m:1)';
   const loadsNothing = folderForm ? 'dotnet format checks that load no project (dotnet format whitespace --folder)' : 'dotnet format run outside Orbit, in CI';
-  // Checks and the dependency install run at the baseline; the application and the release commands later, when started.
-  const atBaseline = refused.some((r) => !r.label || r.label === 'dependencies.install_command');
-  const blocks = atBaseline ? 'a run would block at its baseline' : `a run would fail where Orbit starts ${refused.length === 1 ? 'it' : 'them'}`;
+  // The dependency install and the mandatory checks run at the baseline; the application and the release commands
+  // later, when started. A check the policy does not mark mandatory runs only in a run whose contract requires it, and
+  // then on the base revision first, where it blocks that run as a mandatory one would (ADR 0012): optional is no way
+  // around a refusal, and no unconditional block either (issue #33).
+  const atBaseline = refused.some((r) => r.label === 'dependencies.install_command' || (!r.label && r.check.mandatory)) || refusedToolchains.some((r) => r.mandatory);
+  const optionalOnly = refused.every((r) => !r.label && !r.check.mandatory);
+  const blocks = atBaseline
+    ? 'a run would block at its baseline'
+    : optionalOnly
+      ? `a run whose contract requires ${refused.length === 1 ? 'it' : 'one of them'} would block at its baseline`
+      : `a run would fail where Orbit starts ${refused.length === 1 ? 'it' : 'them'}`;
   return result(
     status,
     nodes
@@ -481,7 +489,14 @@ async function toolchainLine(input: CheckSandboxInput & { provider: IsolationPro
   const outside = id === 'dotnet' && input.nugetPackages === true && (input.platform ?? process.platform) === 'darwin';
   const nuget = "on macOS the dependency install cannot download NuGet packages, so this repository's are restored into it outside the sandbox, as checks.dotnet-packages says";
   const exists = caches.every((c) => existsSync(c));
-  const state = exists ? `read-only for checks and workers${outside ? `; ${nuget}` : ', written by the dependency install'}` : `not created yet${outside ? `: ${nuget}` : '; the first dependency install creates it'}`;
+  // Only a configured install fills a cache (Orbit's own is npm ci, which fills none of these): without one, nothing
+  // in a run creates or writes it, and saying the install does would be false (issue #33).
+  const deps = input.config.dependencies;
+  const installs = deps.install_existing_lockfile && !!deps.install_command;
+  const noInstall = deps.install_existing_lockfile ? 'dependencies.install_command is not set' : 'dependencies.install_existing_lockfile is false';
+  const state = exists
+    ? `read-only for checks and workers${outside ? `; ${nuget}` : installs ? ', written by the dependency install' : `; ${noInstall}, so no run writes it`}`
+    : `not created yet${outside ? `: ${nuget}` : installs ? '; the first dependency install creates it' : `; ${noInstall}, so no run creates it`}`;
   const where = `${caches.length === 1 ? 'dependency cache' : 'dependency caches'} ${caches.join(', ')} (${state}); private per check attempt: ${p.scratchVars.join(', ')}`;
   const label = `toolchain ${id}`;
   const found = p.probe.executables.map((e) => which(e, input.env.PATH)).find((x): x is string => x !== null);

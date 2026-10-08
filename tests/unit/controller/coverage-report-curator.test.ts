@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { ProviderAdapter, TaskHandle, TaskResult, TaskSpec } from '../../../src/adapters/types.ts';
 import { OrbitError } from '../../../src/core/errors.ts';
 import type { BudgetLedger } from '../../../src/scheduling/budget.ts';
-import { getWorker, listWorkers } from '../../../src/storage/workers.ts';
+import { getWorker, listWorkers, planWorker } from '../../../src/storage/workers.ts';
 import { curatorModelFor, finalizeRun, learnAtTerminal, runCurator, type CuratorHost } from '../../../src/controller/report.ts';
 import { getRun, transition } from '../../../src/controller/run-store.ts';
 import { initLedger, makeUnitLab, OWNER, type UnitLab } from './coverage-helpers.ts';
@@ -195,6 +195,8 @@ describe('learnAtTerminal', () => {
     c.knowledge.enabled = true;
   };
   const events = (type: string): { data_json: string | null }[] => lab.db.all('SELECT data_json FROM events WHERE run_id = ? AND type = ?', lab.runId, type);
+  /** The run had a worker session, as every run that got past PREFLIGHT did: what a curator is started for (issue #33). */
+  const ranAWorker = (): void => void planWorker(lab.db, { id: 'wrk-plan', runId: lab.runId, role: 'planner', provider: 'claude', workerDir: join(lab.base, 'wp'), cwd: lab.repo }, lab.clock, OWNER);
 
   it('does nothing while learning is off', async () => {
     lab = makeUnitLab({ path: ['PREFLIGHT'] });
@@ -207,11 +209,27 @@ describe('learnAtTerminal', () => {
     ['there is no Claude adapter', { claude: false }, () => undefined, 'no claude adapter for the curator'],
   ])('skips curation when %s, and records why', async (_why, flags, tweak, reason) => {
     lab = makeUnitLab({ path: ['PREFLIGHT'], adapters: flags.claude ? { claude: adapter() } : {}, tweak: (c) => (enable(c), tweak(c as never)) });
+    ranAWorker();
     await learnAtTerminal(lab.ctx());
     const summary = JSON.parse(readFileSync(join(lab.ctx().runDir, 'learning.json'), 'utf8'));
     expect(summary).toMatchObject({ learn: null, skipped: reason });
     expect(JSON.parse(events('learning.curation-skipped')[0]!.data_json!)).toEqual({ reason });
     expect(events('learning.completed')).toHaveLength(1);
+  });
+
+  // Issue #33: a run blocked at PREFLIGHT started a Haiku curator on the gates' decisions, which cite the evidence they
+  // looked at. No worker had run, so there is nothing of the repository to learn from.
+  it('skips curation of a run that ended before any worker session, whatever the budget and the adapter, and records why', async () => {
+    const a = adapter();
+    lab = makeUnitLab({ path: ['PREFLIGHT'], adapters: { claude: a }, tweak: enable });
+    initLedger(lab);
+    lab.db.run("UPDATE runs SET state = 'BLOCKED' WHERE id = ?", lab.runId);
+    await learnAtTerminal(lab.ctx());
+    const reason = 'the run ended before any worker session, so there is nothing of the repository to learn from; its gate decisions record the environment, not a lesson';
+    expect(JSON.parse(readFileSync(join(lab.ctx().runDir, 'learning.json'), 'utf8'))).toMatchObject({ learn: null, skipped: reason });
+    expect(JSON.parse(events('learning.curation-skipped')[0]!.data_json!)).toEqual({ reason });
+    expect(a.specs).toEqual([]);
+    expect(listWorkers(lab.db, { runId: lab.runId, role: 'curator' })).toEqual([]);
   });
 
   it('skips curation of a cancelled run and does not evaluate overlays for it', async () => {
@@ -224,6 +242,7 @@ describe('learnAtTerminal', () => {
   it('skips curation when the closing reserve cannot pay for it', async () => {
     lab = makeUnitLab({ path: ['PREFLIGHT'], adapters: { claude: adapter() }, tweak: enable });
     initLedger(lab);
+    ranAWorker();
     lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE counter = 'cost_usd'");
     await learnAtTerminal(lab.ctx());
     const summary = JSON.parse(readFileSync(join(lab.ctx().runDir, 'learning.json'), 'utf8'));
@@ -233,6 +252,7 @@ describe('learnAtTerminal', () => {
   it('with curation admitted and nothing to learn from, settles the run and evaluates overlays', async () => {
     lab = makeUnitLab({ path: ['PREFLIGHT'], adapters: { claude: adapter() }, tweak: enable });
     initLedger(lab);
+    ranAWorker();
     transition(lab.db, { runId: lab.runId, to: 'CANCELLED', ownerId: OWNER, reason: 'x' }, lab.clock);
     lab.db.run("UPDATE runs SET state = 'EXHAUSTED' WHERE id = ?", lab.runId);
     await learnAtTerminal(lab.ctx());

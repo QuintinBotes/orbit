@@ -620,10 +620,20 @@ export function routeFor(ctx: RunContext, purpose: string, workKind: WorkKind, s
     return { provider: decision.provider, model: decision.model, effort: decision.effort, workKind, decisionId };
   } catch (err) {
     if (!isOrbitError(err, 'PROVIDER_UNAVAILABLE')) throw err;
-    // No model is validated on the CLI yet (nothing has run). Choose an allowed, seeded model and say it is
-    // unvalidated; the first successful run validates it from the model the provider reports.
+    // The router found no eligible model, usually because none is validated on the CLI yet (nothing has run). Choose an
+    // allowed, seeded model; the first successful run validates it from the model the provider reports.
     const fallback = unvalidatedChoice(ctx, signals);
     if (!fallback) throw err;
+    // "Nothing is validated yet" is one reason for a router that found nothing eligible, not the only one (a validated model
+    // the router did not take, such as one whose tier it does not justify): the reason says which it was (issue #33).
+    const validated = ctx.deps.registry
+      .list()
+      .some((e) => e.provider === 'claude' && allowMatch(e, config.routing.allowed_models) !== null && e.surfaces.some((s) => s.surface === 'claude-cli' && s.available === true));
+    const chosenValidated = ctx.deps.registry.get(fallback.model)?.surfaces.some((s) => s.surface === 'claude-cli' && s.available === true) === true;
+    // Where nothing is validated the reason is not the router's own failure message ("no eligible claude-cli model for
+    // routine-code"), which read as a reason against the choice it was made despite.
+    const summary = validated ? `${purpose}: ${fallback.model} (allowed, and chosen although the router reported: ${messageOf(err)})` : `${purpose}: ${fallback.model} (allowed but not yet validated on claude-cli; the first successful session validates it)`;
+    const reason = validated ? `${fallback.model} was chosen although the router reported: ${messageOf(err)}` : `no claude-cli model is validated for ${workKind} yet; the first successful session validates the allowed ${fallback.model}, which was chosen`;
     recordDecision(
       ctx.db,
       ctx.runDir,
@@ -631,8 +641,8 @@ export function routeFor(ctx: RunContext, purpose: string, workKind: WorkKind, s
         id: decisionId,
         runId: ctx.run.id,
         kind: 'route',
-        summary: `${purpose}: ${fallback.model} (allowed but not yet validated on claude-cli; ${messageOf(err)})`.slice(0, 500),
-        data: { kind: 'route', provider: 'claude', model: fallback.model, effort: fallback.effort, work_kind: workKind, purpose, unvalidated: true, reason: messageOf(err) },
+        summary: summary.slice(0, 500),
+        data: { kind: 'route', provider: 'claude', model: fallback.model, effort: fallback.effort, work_kind: workKind, purpose, unvalidated: !chosenValidated, reason },
       },
       ctx.clock,
     );

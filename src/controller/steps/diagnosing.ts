@@ -2,7 +2,8 @@
  * DIAGNOSING (spec sections 7 and 14): from the failure records of the
  * current candidate to a repair brief for the next attempt.
  *
- *   1. non-progress: attempts that keep failing without measurable progress end the run (EXHAUSTED, scenario 6)
+ *   1. non-progress: attempts that keep failing without measurable progress end the run (EXHAUSTED, scenario 6), and so
+ *      does a repair that ended on a tree an earlier attempt produced, judged as it was then (stalledRepair)
  *   2. repeated equivalent failures call the Inquisition (diagnose mode), once per condition
  *   3. the brief: CI and scope briefs are deterministic; otherwise a read-only verifier writes one,
  *      validated against the fingerprint, the policy's checks and earlier hypotheses (bounded regeneration)
@@ -14,9 +15,9 @@ import { atomicWriteJson, readJsonIfExists } from '../../core/fsx.ts';
 import { OrbitError } from '../../core/errors.ts';
 import { renderWorkerPrompt, type EvidenceRef } from '../../adapters/prompt.ts';
 import { validateModelOutput, type DiagnosisOutput } from '../../contract/model-outputs.ts';
-import { listCheckRuns, listEvidenceReports, listFailures, type FailureRecord } from '../../evidence/store.ts';
-import type { RepairBrief } from '../../evidence/types.ts';
-import { briefFromDiagnosis, nonProgress, nonProgressThreshold, progressSince, validateRepairBrief, type AttemptSnapshot } from '../../inquisition/repair.ts';
+import { currentEvidenceReport, getEvidenceReport, listCheckRuns, listEvidenceReports, listFailures, type CandidateRecord, type FailureRecord } from '../../evidence/store.ts';
+import type { EvidenceReport, RepairBrief } from '../../evidence/types.ts';
+import { briefFromDiagnosis, nonProgress, nonProgressThreshold, progressSince, validateRepairBrief, type AttemptSnapshot, type NonProgressDecision } from '../../inquisition/repair.ts';
 import { eliminatedHypothesisIds, proposeHypothesis, toPrior } from '../../inquisition/hypotheses.ts';
 import { listHypotheses, listQuestions } from '../../inquisition/store.ts';
 import { listDecisions } from '../../storage/decisions.ts';
@@ -25,9 +26,9 @@ import { extensionDecisionRecord } from '../../scheduling/budget.ts';
 import type { RunContext } from '../context.ts';
 import { routeFor } from '../workers.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
-import { assertContract, decide, finishRun, MAX_REGENERATIONS, move, policySummary, safePoint, type StepResult } from './common.ts';
+import { assertContract, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, move, policySummary, safePoint, type StepResult } from './common.ts';
 import { obtain } from './obtain.ts';
-import { attemptCandidateId, briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
+import { ATTEMPT_EVENT, attemptCandidateId, briefPath, currentAttempt, WORKER_ENDED_EVENT, type StoredBrief } from './implementing.ts';
 import { pendingTrigger } from './verifying.ts';
 
 export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
@@ -46,6 +47,17 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
     decide(ctx, { id: `dec-${ctx.run.id}-non-progress-${next}`, kind: 'repair.non-progress', summary: np.reason, data: np });
     return finishRun(ctx, 'EXHAUSTED', `non-progress: ${np.reason}`, { outcome: { non_progress: np } });
   }
+  // A repair that ended on a tree an earlier attempt produced, judged as it was then: the same evidence, diagnosis and
+  // brief would follow, so no further attempt is dispatched on it (issue #32, ADR 0012), whatever the threshold says.
+  const stalled = stalledRepair(ctx, cand);
+  if (stalled) {
+    const outcome = { non_progress: stalled.decision };
+    // An unanswered material question may be why nothing changed: a person's answer, not another attempt, moves it.
+    const blocked = await blockOnOpenQuestions(ctx, 'another repair', { detail: `non-progress: ${stalled.decision.reason}.`, outcome });
+    if (blocked) return blocked;
+    decide(ctx, { id: `dec-${ctx.run.id}-non-progress-${next}`, kind: 'repair.non-progress', summary: stalled.decision.reason, data: { ...stalled.decision, attempt: stalled.attempt, same_tree_as: stalled.sameTreeAs, tree_hash: cand.treeHash, verdict: stalled.verdict, failing_checks: stalled.failingChecks } });
+    return finishRun(ctx, 'EXHAUSTED', `non-progress: ${stalled.decision.reason}`, { outcome });
+  }
 
   const failures = listFailures(ctx.db, ctx.run.id).filter((f) => f.candidateId === cand.id);
   const primary: FailureRecord | null = failures.find((f) => f.source !== 'flaky_check') ?? failures[0] ?? null;
@@ -57,7 +69,7 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   // 2. Repeated equivalent failures go to the Inquisition before another repair (spec section 7 stop logic).
   const existing = readJsonIfExists<StoredBrief>(briefPath(ctx, next));
   if (!existing) {
-    const trigger = pendingTrigger(ctx, cand, ['repeated_failure']);
+    const trigger = await pendingTrigger(ctx, cand, ['repeated_failure']);
     if (trigger) return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
   }
 
@@ -153,6 +165,68 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   if (!existsSync(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
   decide(ctx, { id: `dec-${ctx.run.id}-brief-${next}`, kind: 'repair.brief', summary: `repair brief (${stored.source}) for attempt ${next}: ${fingerprint}`, data: { attempt: next, source: stored.source, fingerprint, path: `briefs/attempt-${next}.json` } });
   return move(ctx, 'REPAIRING', `repair brief for attempt ${next} (${stored.source})`, { data: { attempt: next, fingerprint } });
+}
+
+/** A repair attempt that reproduced a tree an earlier attempt produced, judged as it was then (stalledRepair). */
+export interface StalledRepair {
+  decision: NonProgressDecision;
+  /** The attempt that reproduced the tree. */
+  attempt: number;
+  /** The earlier attempt that produced it. */
+  sameTreeAs: number;
+  verdict: EvidenceReport['verdict'];
+  /** The checks that did not pass, as they did not before the attempt. */
+  failingChecks: string[];
+}
+
+/** What a verdict rests on: the verdict, the checks that did not pass and each criterion's status, in a fixed order. */
+function judgement(r: EvidenceReport): string {
+  return JSON.stringify({
+    verdict: r.verdict,
+    checks: r.checks.filter((c) => c.status !== 'PASSED').map((c) => `${c.id}:${c.status}`).sort(),
+    criteria: r.acceptance_evidence.map((a) => `${a.criterion_id}:${a.status}`).sort(),
+    ui: r.ui.filter((u) => u.status !== 'PASSED').map((u) => `${u.journey}:${u.status}`).sort(),
+  });
+}
+
+/**
+ * The latest attempt ended on a tree an earlier attempt already produced, and verification judged it FAIL again exactly
+ * as it judged it before that attempt started (issue #32). The same tree is the same candidate (evidence/candidate.ts),
+ * whose recorded check results are reused, so this is what a repair that changed nothing, or that undid itself, comes
+ * back with; the next diagnosis, repair brief and attempt would start from exactly what the latest one started from.
+ * Null when the tree is new, when its judgement changed since (a contract amendment, a baseline exception), when a
+ * person resumed the run or asked for a repair after the latest attempt started (an answer or an environment repair is
+ * new information), or when the latest attempt's session stopped before it finished (max turns, a timeout, a failure,
+ * malformed output): it never judged the tree it left, so its tree says nothing about what the brief can achieve, and the
+ * existing rules (the non-progress threshold, the diagnosis's novelty, the allowance) decide whether another attempt runs.
+ */
+export function stalledRepair(ctx: RunContext, cand: CandidateRecord): StalledRepair | null {
+  const latest = currentAttempt(ctx);
+  if (latest < 2 || attemptCandidateId(ctx, latest) !== cand.id) return null;
+  let sameTreeAs = 0;
+  for (let k = latest - 1; k >= 1 && sameTreeAs === 0; k--) if (attemptCandidateId(ctx, k) === cand.id) sameTreeAs = k;
+  if (sameTreeAs === 0) return null;
+  const started = ctx.db.get<{ id: number }>("SELECT id FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, ATTEMPT_EVENT, latest);
+  if (!started) return null;
+  // A person who resumed the run or asked for this repair (orbit repair) since then decides that another attempt is worth it.
+  if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type IN ('run.resumed', 'run.repair-requested') AND id > ?", ctx.run.id, started.id)) return null;
+  if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? AND id > ?", ctx.run.id, WORKER_ENDED_EVENT, latest, started.id)) return null;
+  const before = ctx.db.get<{ report_id: string | null }>("SELECT json_extract(data_json, '$.report_id') AS report_id FROM events WHERE run_id = ? AND type = 'evidence.report' AND json_extract(data_json, '$.candidate_id') = ? AND id < ? ORDER BY id DESC LIMIT 1", ctx.run.id, cand.id, started.id);
+  const now = currentEvidenceReport(ctx.db, ctx.run.id, cand.id);
+  if (!before?.report_id || !now || now.verdict !== 'FAIL') return null;
+  const then = getEvidenceReport(ctx.db, before.report_id);
+  if (judgement(then.report) !== judgement(now.report)) return null;
+  const failingChecks = now.report.checks.filter((c) => c.status !== 'PASSED').map((c) => c.id).sort();
+  const unsupported = now.report.acceptance_evidence.filter((a) => a.status === 'unsupported').map((a) => a.criterion_id);
+  const what = failingChecks.length > 0 ? `failing: ${failingChecks.join(', ')}` : unsupported.length > 0 ? `unsupported: ${unsupported.join(', ')}` : now.report.unverified[0] ?? 'the same failures';
+  const reason = `attempt ${latest} ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt ${sameTreeAs} produced, and verification judged it FAIL again as it did then (${what}): the same evidence, diagnosis and repair brief would follow, so no further attempt is dispatched on it`;
+  return {
+    decision: { terminate: true, reason, consecutiveNoProgress: 1, threshold: 1, fingerprint: null, suggestedState: 'EXHAUSTED' },
+    attempt: latest,
+    sameTreeAs,
+    verdict: now.verdict,
+    failingChecks,
+  };
 }
 
 /** Distinct candidates that failed with this fingerprint. */

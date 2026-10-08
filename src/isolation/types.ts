@@ -16,7 +16,12 @@ export interface SandboxProfile {
   denyReadPaths: string[];
   /** Egress allowlist. Empty = no network. */
   allowedHosts: string[];
-  /** Allow listening on loopback. UI app fixtures, and checks whose definition says `local_binding` (the default). */
+  /**
+   * Allow listening. UI app fixtures, and checks whose definition says `local_binding` (the default); never a worker. On
+   * macOS srt turns it into Seatbelt rules that admit every address of the machine, not loopback only (a server on 0.0.0.0
+   * can be reached from the network; Seatbelt has no narrower rule); on Linux it changes nothing, since every srt sandbox
+   * has a loopback of its own (ADR 0001, "Workers and loopback").
+   */
   allowLocalBinding?: boolean;
   /**
    * A UI check's browser run, and nothing else (never the application under test or a worker). On macOS the

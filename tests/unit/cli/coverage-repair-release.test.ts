@@ -114,15 +114,19 @@ describe('orbit repair <run-id>', () => {
     expect(JSON.parse(r.out)).toEqual({ run_id: run.id, state: 'DIAGNOSING', fingerprint: 'fp:one', brief_path: `.orbit/runs/${run.id}/briefs/attempt-1.json`, candidate_seq: 1, service_running: true });
   });
 
-  it('only unpauses a paused run that is already DIAGNOSING', async () => {
+  it('unpauses a paused run that is already DIAGNOSING without a transition, and records the request before it does', async () => {
     const l = lab();
-    const { run } = failedRun(l, { paused: true });
+    const { run, report } = failedRun(l, { paused: true, failures: [{ source: 'check', fingerprint: 'fp:one' }] });
     l.db().run("UPDATE runs SET state = 'DIAGNOSING' WHERE id = ?", run.id);
     const r = await l.cli(['repair', run.id]);
     expect(r.code, r.err).toBe(0);
     expect(r.out).toContain('moved to DIAGNOSING to repair');
     expect(getRun(l.db(), run.id)).toMatchObject({ state: 'DIAGNOSING', paused: false });
-    expect(l.db().get("SELECT 1 FROM events WHERE run_id = ? AND type = 'run.repair-requested'", run.id)).toBeUndefined();
+    expect(l.db().get("SELECT 1 FROM events WHERE run_id = ? AND type = 'state.transition' AND to_state = 'DIAGNOSING'", run.id)).toBeUndefined();
+    // The request is what tells DIAGNOSING that a person wants this repair (stalledRepair, ADR 0012): it comes before the unpause.
+    const events = l.db().all<{ type: string; data_json: string }>("SELECT type, data_json FROM events WHERE run_id = ? AND type IN ('run.repair-requested', 'run.unpaused') ORDER BY id", run.id);
+    expect(events.map((e) => e.type)).toEqual(['run.repair-requested', 'run.unpaused']);
+    expect(JSON.parse(events[0]!.data_json)).toMatchObject({ from: 'DIAGNOSING', fingerprint: 'fp:one', report_id: report.id });
   });
 
   it('refuses a run with a cancellation request, evidence that is not FAIL, a stage that cannot diagnose, or open material questions', async () => {

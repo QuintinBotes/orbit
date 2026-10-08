@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { TaskResult } from '../../../src/adapters/types.ts';
 import { finishCheckRun, markCheckRunning, planCheckRun, recordFailure, type CandidateRecord } from '../../../src/evidence/store.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
-import { listHypotheses } from '../../../src/inquisition/store.ts';
+import { insertQuestion, listHypotheses } from '../../../src/inquisition/store.ts';
 import { getRun, requestCancel } from '../../../src/controller/run-store.ts';
 import { attemptHistory, diagnosingStep, localizedFault, raisesTimeout, timeoutContext, timeoutPromptLines, withTimeoutHypothesis } from '../../../src/controller/steps/diagnosing.ts';
 import { briefPath } from '../../../src/controller/steps/implementing.ts';
@@ -107,6 +107,106 @@ describe('preconditions and stops', () => {
     expect(state()).toBe('EXHAUSTED');
     expect(decisions('repair.non-progress')).toHaveLength(1);
     expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^non-progress: \d+ consecutive attempts made no progress/);
+  });
+});
+
+// Issue #32: a repair that returned the tree attempt 1 produced, which verification judged FAIL again as before.
+describe('a repair that ends on a tree an earlier attempt produced, judged as it was then', () => {
+  const FAILING = { verdict: 'FAIL' as const, checks: [{ id: 'unit', status: 'FAILED' as const, exit_code: 1, flaky: false, log: 'l' }], acceptance_evidence: [{ criterion_id: 'AC-1', status: 'unsupported' as const, artifacts: [] }] };
+
+  /** Attempt 1's candidate judged FAIL, then attempt 2 that produced the same candidate, the same tree. */
+  async function judgedTwice(o: Setup = {}): Promise<{ cand: CandidateRecord; adapter: ScriptedAdapter }> {
+    const out = await setup(o);
+    addEvidence(lab, out.cand, FAILING);
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, ?, 'implementation.attempt', 'x', ?)", lab.runId, lab.clock.now(), JSON.stringify({ attempt: 2 }));
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, ?, 'implementation.candidate', 'x', ?)", lab.runId, lab.clock.now(), JSON.stringify({ attempt: 2, candidate_id: out.cand.id }));
+    return out;
+  }
+
+  it('ends EXHAUSTED before any diagnosis is asked for, with the attempt, the tree and the failing checks', async () => {
+    const { cand, adapter } = await judgedTwice();
+    await run();
+    expect(state()).toBe('EXHAUSTED');
+    expect(adapter.specs).toHaveLength(0);
+    expect(getRun(lab.db, lab.runId).outcomeReason).toBe(`non-progress: attempt 2 ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt 1 produced, and verification judged it FAIL again as it did then (failing: unit): the same evidence, diagnosis and repair brief would follow, so no further attempt is dispatched on it`);
+    expect(decisions('repair.non-progress')[0]?.data).toMatchObject({ terminate: true, attempt: 2, same_tree_as: 1, verdict: 'FAIL', failing_checks: ['unit'] });
+  });
+
+  it('a tree that undid a later attempt (attempt 3 back to attempt 1\'s tree) stops the same way', async () => {
+    const { cand } = await setup();
+    addEvidence(lab, cand, FAILING);
+    addAttempt(2);
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, ?, 'implementation.attempt', 'x', ?)", lab.runId, lab.clock.now(), JSON.stringify({ attempt: 3 }));
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, ?, 'implementation.candidate', 'x', ?)", lab.runId, lab.clock.now(), JSON.stringify({ attempt: 3, candidate_id: cand.id }));
+    await run();
+    expect(state()).toBe('EXHAUSTED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^non-progress: attempt 3 ended on tree \w{12}, the tree attempt 1 produced,/);
+  });
+
+  it('a person who resumed the run, or asked for this repair, since the attempt started gets the diagnosis and the repair', async () => {
+    for (const type of ['run.resumed', 'run.repair-requested']) {
+      const { adapter } = await judgedTwice();
+      lab.db.run('INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, ?, ?, ?, ?)', lab.runId, lab.clock.now(), type, 'acme-dev', JSON.stringify({ from: 'BLOCKED' }));
+      await settle();
+      expect(state(), type).toBe('REPAIRING');
+      expect(adapter.specs).toHaveLength(1);
+      expect(decisions('repair.non-progress')).toEqual([]);
+      lab.cleanup();
+    }
+  });
+
+  it('an attempt whose session stopped before it finished is not a stall: the diagnosis and the repair follow', async () => {
+    const { adapter } = await judgedTwice();
+    // What IMPLEMENTING notes when the attempt's last session ends max_turns, timeout, failed or malformed_output.
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, ?, 'implementation.worker-ended', 'x', ?)", lab.runId, lab.clock.now(), JSON.stringify({ attempt: 2, status: 'max_turns', error: null }));
+    await settle();
+    expect(state()).toBe('REPAIRING');
+    expect(adapter.specs).toHaveLength(1);
+    expect(decisions('repair.non-progress')).toEqual([]);
+  });
+
+  it('a session of an earlier attempt that stopped early does not excuse the latest attempt', async () => {
+    const out = await setup();
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, ?, 'implementation.worker-ended', 'x', ?)", lab.runId, lab.clock.now(), JSON.stringify({ attempt: 1, status: 'timeout', error: null }));
+    addEvidence(lab, out.cand, FAILING);
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, ?, 'implementation.attempt', 'x', ?)", lab.runId, lab.clock.now(), JSON.stringify({ attempt: 2 }));
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, ?, 'implementation.candidate', 'x', ?)", lab.runId, lab.clock.now(), JSON.stringify({ attempt: 2, candidate_id: out.cand.id }));
+    await run();
+    expect(state()).toBe('EXHAUSTED');
+    expect(decisions('repair.non-progress')[0]?.data).toMatchObject({ attempt: 2, same_tree_as: 1 });
+  });
+
+  it('a judgement that changed since the attempt started (judged again with another result) is not a stall', async () => {
+    const { cand } = await judgedTwice();
+    addEvidence(lab, cand, { ...FAILING, acceptance_evidence: [{ criterion_id: 'AC-1', status: 'unverified', artifacts: [] }] });
+    await settle();
+    expect(state()).toBe('REPAIRING');
+    expect(decisions('repair.non-progress')).toEqual([]);
+  });
+
+  it('a candidate judged for the first time, or one that passed, is not a stall', async () => {
+    const { cand } = await setup();
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, ?, 'implementation.attempt', 'x', ?)", lab.runId, lab.clock.now(), JSON.stringify({ attempt: 2 }));
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, ?, 'implementation.candidate', 'x', ?)", lab.runId, lab.clock.now(), JSON.stringify({ attempt: 2, candidate_id: cand.id }));
+    addEvidence(lab, cand, FAILING);
+    await settle();
+    expect(state()).toBe('REPAIRING');
+    lab.cleanup();
+    const again = await judgedTwice();
+    addEvidence(lab, again.cand, { verdict: 'PASS', acceptance_evidence: [{ criterion_id: 'AC-1', status: 'supported', artifacts: [] }] });
+    await settle();
+    expect(state()).toBe('REPAIRING');
+  });
+
+  it('an open material question blocks the run for a person\'s answer instead', async () => {
+    await judgedTwice();
+    insertQuestion(lab.db, { runId: lab.runId, mode: 'clarify', question: 'Should mul round to cents?', evidence: [], options: [], changes: ['implementation'], recommendation: { option: 'A', reason: 'r' }, safeDefault: { exists: false, option: null, reason: 'differs' }, material: true, affected: ['AC-1'], unblocked: [] }, lab.clock);
+    await run();
+    expect(state()).toBe('BLOCKED');
+    const reason = getRun(lab.db, lab.runId).outcomeReason ?? '';
+    expect(reason).toMatch(/^AC-1 waits for a decision before another repair; open questions: q-/);
+    expect(reason).toContain('non-progress: attempt 2 ended on tree');
+    expect(decisions('repair.non-progress')).toEqual([]);
   });
 });
 
