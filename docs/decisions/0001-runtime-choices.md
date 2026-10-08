@@ -375,6 +375,24 @@ separate follow-up. The review asked for doctor to say so, as the issue did:
 the JVM (Go and Cargo measured with the real CLI, Gradle and Maven by their
 variables), with the `os-sandbox` tier as the fix.
 
+Found by CI (2026-10-08, GitHub's Ubuntu runner, .NET SDK 10): on Linux a
+worker's own `dotnet build` never reached its listener. `srt` binds an
+unopenable device over each git file a writable directory lacks, so
+SourceLink's git query, which checks have had off since #10, failed every
+build in a worker's worktree with "Error reading git repository information",
+in both tiers; the .NET toolchain profile now turns it off for every process
+that uses .NET, workers included. Not changed: a worker's `HOME` is the
+account's and read-only, and the SDK writes its first-run state (`~/.dotnet`)
+and NuGet its user config (`~/.nuget/NuGet/NuGet.Config`) there on the
+account's first run, so where the account has never run a restore (that
+runner's), a worker's first `dotnet` command fails ("Unexpected failure
+reading NuGet.Config ... Read-only file system"); one `dotnet restore` run as
+the account, outside Orbit, ends it (measured in an Ubuntu container). The
+tests make that first run before a worker's. On GitHub's macOS runners the JDK
+is found through `JAVA_HOME` alone, which a worker gets only in a repository
+with a JVM build file (the toolchain's markers), as every Maven or Gradle
+repository has.
+
 Review (2026-10-07). An independent review of the branch's first form, which
 let workers listen, measured what its argument had missed; each item was
 reproduced before it was changed, and the changes stand now that workers do

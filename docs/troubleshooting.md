@@ -275,7 +275,10 @@ degraded but usable.
   that query cannot run: `srt` protects the files that can make git run code
   (`.gitmodules`, `.gitconfig`...) by binding an unopenable device over each one
   the checkout lacks, so the SDK failed with "Error reading git repository
-  information: Access to the path '.../.gitmodules' is denied". A check's own `env`
+  information: Access to the path '.../.gitmodules' is denied". A worker's build met
+  the same protection in its worktree, in both worker tiers, so the .NET toolchain
+  profile sets `EnableSourceControlManagerQueries=false` for every process that uses
+  .NET, workers included. A check's own `env`
   overrides any of them. With that, `dotnet build` of a console project runs
   under `srt` (verified with the .NET 9 SDK on macOS, and the .NET 9 and 10 SDKs on
   Linux). Three cases remain yours to decide:
