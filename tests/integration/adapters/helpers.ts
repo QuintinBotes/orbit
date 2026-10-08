@@ -8,6 +8,7 @@ import { MODEL_OUTPUT_SCHEMAS } from '../../../src/contract/model-outputs.ts';
 import { parseConfig } from '../../../src/policy/config.ts';
 import { snapshotPolicy } from '../../../src/policy/snapshot.ts';
 import type { TaskSpec } from '../../../src/adapters/types.ts';
+import type { IsolationProvider } from '../../../src/isolation/types.ts';
 
 export const FAKES = fileURLToPath(new URL('../../fakes/', import.meta.url));
 export const FAKE_CLAUDE = join(FAKES, 'fake-claude.mjs');
@@ -95,4 +96,19 @@ export function alive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Test harness only: the given provider (srt) with listening and loopback connects opened for the whole wrapped process,
+ * so the REAL claude CLI inside it (the os-sandbox tier) reaches the fake API on this machine's loopback. A Claude worker
+ * never gets that permission (issue #31): the adapter hands the provider allowLocalBinding false whatever profile it was
+ * given, and this puts it back, for the fake API's sake, in tests whose subject is something else.
+ */
+export function withHarnessLoopback(isolation: IsolationProvider): IsolationProvider {
+  return {
+    kind: isolation.kind,
+    ...(isolation.privateLoopback === undefined ? {} : { privateLoopback: isolation.privateLoopback }),
+    available: () => isolation.available(),
+    wrap: (argv, profile, opts) => isolation.wrap(argv, { ...profile, allowLocalBinding: true }, opts),
+  };
 }

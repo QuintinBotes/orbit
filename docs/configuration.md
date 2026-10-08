@@ -202,6 +202,24 @@ Hosts are exact names, IPv4 addresses, or `*.example.com` (subdomains only).
 No ports, schemes or bare `*`. Everything else is blocked by the sandbox.
 `add_packages` also needs `change_lockfile`.
 
+On macOS a worker may not listen, on any address, in either tier, and there is
+no setting for it. Many test runners listen on loopback: `dotnet test` on
+every run (VSTest's test host connects back to it), Gradle's test workers,
+Maven Surefire's TCP fork channel, and any test that starts a server (Go's
+`httptest`, a Node or Python server). Neither worker sandbox on macOS can limit
+a listener to loopback (a server on 0.0.0.0 would be reachable from the
+network, measured; see [security](security.md)), and workers run model-driven
+commands, so there a worker's own run of those tests is refused and the worker
+reports them as not run. The checks run them (a check's `local_binding`,
+below), on every candidate, and `orbit doctor` (`workers.loopback`) warns for
+a .NET or Gradle repository. On Linux every worker sandbox has a loopback of its
+own, which nothing outside it can reach, so workers there run them too. Runners
+that talk to their workers over pipes or IPC need no listener and run in
+workers everywhere: `go test -json`, pytest-xdist, Jest's and Vitest's
+workers, and Surefire's default fork channel. The guard hook refuses a command
+that names a loopback address, such as `curl http://127.0.0.1:3000`, because
+loopback is not in `allowed_hosts`.
+
 The dependency install is `npm ci` from an npm lockfile, or
 `install_command` when set (for another ecosystem: `cargo fetch --locked`,
 `dotnet restore --locked-mode -m:1`, a virtual environment plus `pip install -r
@@ -472,7 +490,7 @@ checks:
 | `cwd` | relative to the worktree root (default `.`) |
 | `timeout_seconds` | default 600 |
 | `network_hosts` | hosts the check may reach; must be covered by `network.allowed_hosts` |
-| `local_binding` | default true: the check may listen on 127.0.0.1 (a test suite that starts an HTTP server); outbound reach is still only `network_hosts`. Set false for a check that never serves |
+| `local_binding` | default true: the check may listen (a test suite that starts an HTTP server, `dotnet test`'s test host); outbound reach is still only `network_hosts`. On macOS the listener is not limited to 127.0.0.1: one on 0.0.0.0 can be reached from the network while the check runs (see [security](security.md)). Set false for a check that never serves. Workers may not listen |
 | `env` | extra environment; delivery credentials such as `GH_TOKEN` are refused |
 | `mandatory` | default true; a run cannot succeed while it fails. A check marked false runs only in a run whose contract requires it (a criterion cites it as proof), and then as a mandatory one does: on the base revision before any change, where it blocks the run when it cannot run ([ADR 0012](decisions/0012-contract-checks-and-judged-trees.md)), so marking a check optional does not make one that cannot run in the sandbox harmless |
 | `flaky_reruns` | 0 to 5; reruns are used only to classify flakiness |
@@ -617,7 +635,9 @@ set per repository, never your own `~/.cargo`, `~/go`, `~/.m2` or
 `~/.nuget/packages`. Only the dependency install writes them; every other
 check and every worker reads them and cannot write them. Build state is
 created for each check attempt and removed with it (a worker has its own under
-its worker directory), so `cargo build` and `cargo test` in two checks each
+its worker directory, which only the `os-sandbox` worker tier lets it write:
+in the `claude-sandbox` tier a worker cannot build Go, Rust or JVM code, as
+`orbit doctor` says under `workers.toolchains`), so `cargo build` and `cargo test` in two checks each
 compile. A check's `env` overrides any of these variables, for example
 `CARGO_TARGET_DIR: target` to build inside the checkout. `orbit doctor`
 (`checks.sandbox`) lists each toolchain, whether it starts in the sandbox (for

@@ -20,6 +20,7 @@ import type { CredentialStatus, ProviderAdapter, ProviderCapabilities } from '..
 import { CLAUDE_SANDBOX_LIMITATIONS, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, compareVersions, claudeEnvCredential, codexEnvCredential, createAdapters, decideCodexTier, providerKind, type CodexTierDecision, type CodexTierSetting } from '../../adapters/index.ts';
 import { CONTAINER_LIMITATIONS, RESOURCE_LIMIT_FIX, SRT_LIMITATIONS, credentialDenyPaths, getIsolation, noIsolationLimitations, resourceLimitRefusals } from '../../isolation/index.ts';
 import { CHROMIUM_MACH_RENDEZVOUS_LIMITATION, SRT_VERIFIED_VERSION, type SandboxRuntimeIsolation } from '../../isolation/sandbox-runtime.ts';
+import { detectToolchains } from '../../isolation/toolchains.ts';
 import type { IsolationProvider, SandboxProfile } from '../../isolation/types.ts';
 import { safeBaseEnv } from '../../ui/env.ts';
 import { UI_SINGLE_SANDBOX, UI_SINGLE_SANDBOX_LIMITATION } from '../../ui/single-sandbox.ts';
@@ -47,6 +48,7 @@ import { allReviewPrerequisites, reviewFix } from '../review-fix.ts';
 import { workerPluginsCheck } from './doctor-plugins.ts';
 import { dotnetAuditCheck, dotnetPackagesCheck, dotnetTestsCheck, hasNugetPackages } from './doctor-dotnet.ts';
 import { checkSandboxCheck } from './doctor-sandbox.ts';
+import { workerLoopbackCheck, workerToolchainsCheck } from './doctor-workers.ts';
 
 export const DOCTOR_OPTIONS: OptionSpec = {
   probe: { type: 'boolean', description: 'also make tiny live requests (a few cents): one per provider that has a probe to detect expired or revoked credentials, and one per eligible Claude model' },
@@ -356,6 +358,14 @@ interface IsolationFacts {
   available: boolean;
 }
 
+/**
+ * The tier Claude workers run in, as the adapter chooses it (ClaudeAdapter chooseTier, `auto`): os-sandbox with an
+ * exported credential and a working sandbox-runtime, claude-sandbox otherwise.
+ */
+function claudeWorkerTier(iso: IsolationFacts, env: Readonly<Record<string, string | undefined>>): 'os-sandbox' | 'claude-sandbox' {
+  return iso.available && iso.provider?.kind === 'sandbox-runtime' && claudeEnvCredential(env) ? 'os-sandbox' : 'claude-sandbox';
+}
+
 async function checkIsolation(p: Probe): Promise<{ check: DoctorCheck; facts: IsolationFacts }> {
   const { config, ctx } = p;
   let provider: IsolationProvider;
@@ -470,7 +480,7 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
     }
     if (kind === 'claude') {
       const envCred = claudeEnvCredential(ctx.env);
-      if (iso.available && iso.provider?.kind === 'sandbox-runtime' && envCred) checks.push(pass(`${id}.worker-tier`, 'providers', `workers run in the os-sandbox tier (${envCred} is set, so the whole claude process is confined)`));
+      if (claudeWorkerTier(iso, ctx.env) === 'os-sandbox') checks.push(pass(`${id}.worker-tier`, 'providers', `workers run in the os-sandbox tier (${envCred} is set, so the whole claude process is confined)`));
       else {
         const why = !envCred ? 'no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in the environment (a keychain login is invisible inside srt)' : 'sandbox-runtime isolation is not in use';
         checks.push(warn(`${id}.worker-tier`, 'providers', `workers run in the claude-sandbox tier: ${why}`, 'an exported Claude credential plus sandbox-runtime for the strongest tier', 'export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)', CLAUDE_SANDBOX_LIMITATIONS.map((l) => `limitation: ${l}`)));
@@ -996,6 +1006,8 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; prob
     checkSandboxCheck({ config, repo, provider: isoFacts.provider, available: isoFacts.available, env: ctx.env, homeDir: ctx.homeDir, orbitHome: ctx.orbitHome, platform: ctx.platform, nugetPackages: repo !== null && hasNugetPackages(repo, tracked) }),
   );
   await safely('checks.dotnet-tests', 'checks', () => (repo && configLoaded ? dotnetTestsCheck({ config, repo, files: tracked }) : []));
+  await safely('workers.loopback', 'isolation', () => (repo && configLoaded ? workerLoopbackCheck({ config, files: tracked, platform: ctx.platform }) : []));
+  await safely('workers.toolchains', 'isolation', () => (repo && configLoaded ? workerToolchainsCheck({ tier: claudeWorkerTier(isoFacts, ctx.env), toolchains: detectToolchains({ roots: [repo] }) }) : []));
   const nuget = repo && configLoaded ? { config, repo, files: tracked, provider: isoFacts.provider, available: isoFacts.available, platform: ctx.platform, orbitHome: ctx.orbitHome } : null;
   await safely('checks.dotnet-packages', 'checks', () => (nuget ? dotnetPackagesCheck(nuget) : []));
   await safely('checks.dotnet-audit', 'checks', () => (nuget ? dotnetAuditCheck(nuget) : []));

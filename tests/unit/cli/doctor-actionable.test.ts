@@ -14,6 +14,7 @@ import { parseCommand } from '../../../src/cli/args.ts';
 import { createContext, type CliContext } from '../../../src/cli/context.ts';
 import { memoryIo } from '../../../src/cli/io.ts';
 import { systemClock } from '../../../src/core/clock.ts';
+import { OrbitError } from '../../../src/core/errors.ts';
 import { defaultCheck, defaultConfig } from '../../../src/policy/config.ts';
 import type { OrbitConfig } from '../../../src/policy/types.ts';
 import type { CredentialStatus, ProviderAdapter, ProviderCapabilities } from '../../../src/adapters/types.ts';
@@ -285,5 +286,56 @@ describe('issue #10: doctor names the NuGet cache a .NET repository with package
     expect(audit!.fix).toMatch(/^in Directory\.Build\.props, set NuGetAudit only where nothing has set it yet: /);
     const off = world({ 'acme.csproj': strict }, 'darwin');
     expect(byId(await report(off, cfg(build)))['checks.dotnet-audit']).toBeUndefined();
+  });
+});
+
+// Issue #31: workers ran a .NET repository's tests without loopback, which its checks had, and submitted untested code. On
+// macOS they still cannot (no sandbox there limits a listener to loopback), and doctor says so.
+describe('issue #31: doctor says when workers cannot run tests that need a loopback socket', () => {
+  it('warns on workers.loopback on macOS for a .NET repository, with its fix, passes for one with no such runner, and passes on Linux', async () => {
+    const files = { 'acme.sln': '', 'tests/Acme.Tests/Acme.Tests.csproj': '<Project Sdk="Microsoft.NET.Sdk" />\n' };
+    const w = world(files, 'darwin');
+    const c = byId(await report(w, cfg()));
+    expect(c['workers.loopback']).toMatchObject({ status: 'warn', area: 'isolation' });
+    expect(c['workers.loopback']!.details).toContain('this repository uses .NET: every dotnet test listens on loopback for its test host, so a worker\'s aborts with "SocketException (13): Permission denied"');
+    const io = memoryIo();
+    hooks.config = () => cfg();
+    await doctorCommand(parseCommand([], undefined, 'orbit doctor'), w.ctx(io));
+    expect(io.stdout).toMatch(/WARN {2}workers\.loopback +on macOS workers cannot run test hosts that need a loopback socket/);
+    expect(io.stdout).toMatch(/fix: {5}nothing to set in Orbit on macOS: keep local_binding \(the default\) on the checks that run these tests/);
+    expect(byId(await report(world({ 'package.json': '{}\n' }, 'darwin'), cfg()))['workers.loopback']).toMatchObject({ status: 'pass' });
+    expect(byId(await report(world(files, 'linux'), cfg()))['workers.loopback']).toMatchObject({ status: 'pass' });
+  });
+});
+
+// Review of #31: doctor's worker lines describe the repository's config, so they need it read, as every other
+// config-dependent line does; and in the claude-sandbox tier workers cannot write their Go, Rust or JVM build state.
+describe('issue #31 review: doctor\'s worker lines', () => {
+  it('says nothing about workers.loopback or workers.toolchains when the config could not be read', async () => {
+    const w = world({ 'acme.sln': '', 'go.mod': 'module acme\n' }, 'darwin');
+    hooks.adapters = () => ({ claude: adapter('claude'), codex: adapter('codex') });
+    hooks.config = () => {
+      throw new OrbitError('CONFIG_INVALID', 'checks.unit.command must be an array');
+    };
+    const c = byId(await runDoctor(w.ctx(), { probe: false }));
+    expect(c.config).toMatchObject({ status: 'fail' });
+    expect(c['workers.loopback']).toBeUndefined();
+    expect(c['workers.toolchains']).toBeUndefined();
+  });
+
+  it('warns on workers.toolchains for a Go repository when workers run in the claude-sandbox tier, and not in the os-sandbox tier', async () => {
+    const w = world({ 'go.mod': 'module acme\n', 'calc.go': 'package acme\n' }, 'darwin');
+    const c = byId(await report(w, cfg()));
+    // No Claude credential in the world's environment: the claude-sandbox tier.
+    expect(c['claude.worker-tier']).toMatchObject({ status: 'warn' });
+    expect(c['workers.toolchains']).toMatchObject({ status: 'warn', area: 'isolation' });
+    expect(c['workers.toolchains']!.summary).toMatch(/cannot build or test Go code here/);
+
+    const keyed: World = { repo: w.repo, ctx: (io) => ({ ...w.ctx(io), env: { ...w.ctx(io).env, ANTHROPIC_API_KEY: 'sk-ant-fake-000' } }) };
+    const os = byId(await report(keyed, cfg((x) => (x.isolation = { ...x.isolation, provider: 'sandbox-runtime', allow_unisolated: false }))));
+    expect(os['claude.worker-tier']).toMatchObject({ status: 'pass' });
+    expect(os['workers.toolchains']).toBeUndefined();
+    // A repository without such a toolchain gets no line.
+    expect(byId(await report(world(), cfg()))['workers.toolchains']).toBeUndefined();
   });
 });

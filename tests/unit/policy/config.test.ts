@@ -157,6 +157,16 @@ describe('check normalization', () => {
     expect(problems(() => parseConfig('version: 1\nchecks:\n  a: {command: [x], local_binding: "yes"}\n')).join('\n')).toMatch(/local_binding/);
   });
 
+  // Issue #31: workers never listen on macOS, because Seatbelt cannot limit a listener to loopback (a rule for
+  // "localhost" admits 0.0.0.0 and the machine's network address too; ADR 0001, "Workers and loopback"), and on Linux every
+  // sandbox has a loopback of its own. A switch for workers would change nothing anywhere, so there is none.
+  it('has no network.local_binding: a worker setting would change nothing, and a check keeps its own local_binding', () => {
+    expect(parseConfig('version: 1\n').network).toEqual({ allowed_hosts: ['github.com', 'api.github.com', 'registry.npmjs.org'] });
+    expect(defaultConfig().network).toEqual({ allowed_hosts: ['github.com', 'api.github.com', 'registry.npmjs.org'] });
+    for (const value of ['true', 'false']) expect(problems(() => parseConfig(`version: 1\nnetwork: {local_binding: ${value}}\n`)).join('\n')).toMatch(/network.*local_binding|local_binding/);
+    expect(parseConfig('version: 1\nchecks:\n  unit: {command: [npm, test]}\n').checks.unit!.local_binding).toBe(true);
+  });
+
   it('categorizes checks: default test, playwright implies ui, explicit wins, unknown categories are refused', () => {
     const c = parseConfig(
       [
