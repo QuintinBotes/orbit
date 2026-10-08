@@ -22,7 +22,7 @@ import { existsSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
 import { compileSchema, schemaErrors } from '../core/schema.ts';
-import { CLAUDE_CONFIG_DENIED } from '../isolation/profiles.ts';
+import { CLAUDE_CONFIG_DENIED, type ClaudeLogin } from '../isolation/profiles.ts';
 import { isWithin } from '../isolation/util.ts';
 import { bashGrant } from '../policy/role-grants.ts';
 import { HOME_CREDENTIAL_PATHS, credentialGlobsOf } from '../policy/builtin.ts';
@@ -88,6 +88,11 @@ export interface ClaudeSettingsInput {
    * denied on its CLAUDE_CONFIG_DENIED entries, the IDE lock directory, which the worker's sandbox profile also denies.
    */
   claudeConfigDir: string;
+  /**
+   * Every other Claude login Orbit knows of (isolation/profiles.ts otherClaudeLogins): Read is denied on each whole, as
+   * the worker's sandbox profile denies it, or on its IDE lock directory alone when it holds a path the worker must read.
+   */
+  otherClaudeLogins: readonly ClaudeLogin[];
 }
 
 /** `Edit(//abs/...)`: the permission-rule form of an absolute path (a leading `/` alone means settings-relative). */
@@ -121,8 +126,19 @@ export function renderClaudeSettings(input: ClaudeSettingsInput): ClaudeSettings
   for (const glob of credentialGlobs(snapshot)) deny.push(absRule('Read', worktree, glob));
   for (const rel of HOME_CREDENTIAL_PATHS) deny.push(`Read(~/${rel})`);
   // The tokens of IDE extensions' MCP servers on loopback (isolation/profiles.ts CLAUDE_CONFIG_DENIED). In the
-  // claude-sandbox tier the Read tool runs outside Claude Code's sandbox, so only this rule keeps it away from them.
+  // claude-sandbox tier the Read tool runs outside Claude Code's sandbox, so only these rules keep it away from them.
   for (const rel of CLAUDE_CONFIG_DENIED) deny.push(absRule('Read', input.claudeConfigDir, `${rel}/**`));
+  // Every other login, ~/.claude among them, where Claude Code also looks for lock files when CLAUDE_CONFIG_DIR is set:
+  // whole, as the sandbox profile denies it, unless it holds a path the worker must read (a deny beats every allow).
+  const mustRead = [worktree, input.tmpDir, ...(input.readablePaths ?? [])];
+  for (const login of input.otherClaudeLogins) {
+    if (mustRead.some((p) => isWithin(p, login.configDir))) {
+      for (const rel of CLAUDE_CONFIG_DENIED) deny.push(absRule('Read', login.configDir, `${rel}/**`));
+    } else {
+      deny.push(absRule('Read', login.configDir, '**'));
+    }
+    deny.push(absRule('Read', login.globalConfig));
+  }
   // The worker directory and the snapshot are the controller's: prompt,
   // settings, logs, pid and exit files.
   deny.push(absRule('Edit', input.workerDir, '**'), absRule('Edit', input.policyPath));

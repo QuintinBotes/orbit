@@ -164,6 +164,7 @@ describe('renderClaudeSettings', () => {
     denyReadPaths: ['/home/u/.ssh'],
     tmpDir: '/tmp/orbit-1/abc',
     claudeConfigDir: '/home/u/.claude',
+    otherClaudeLogins: [],
     ...over,
   });
 
@@ -177,14 +178,26 @@ describe('renderClaudeSettings', () => {
   // Review of #31: Claude Code's file tools run outside its sandbox in the claude-sandbox tier, where only a permission
   // rule keeps Read away from a file. An IDE extension's lock file in the worker's own config dir holds the token of its
   // MCP server on loopback, which nothing of the worker's should ever hold.
-  it('denies Read on the IDE lock directory of the config dir the worker runs with, in both tiers', () => {
+  //
+  // Final review: Claude Code looks for lock files in ~/.claude/ide whenever CLAUDE_CONFIG_DIR is set, so with a config dir
+  // of its own the worker's Read reached the token there. Every other login Orbit knows of is denied, whole as the worker's
+  // sandbox profile denies it, and only its ide/ when it holds a path the worker must read (a deny beats every allow).
+  it('denies Read on the IDE lock directory of every Claude login Orbit knows of, in both tiers', () => {
+    const defaultLogin = { configDir: '/home/u/.claude', globalConfig: '/home/u/.claude.json' };
     for (const tier of ['claude-sandbox', 'os-sandbox'] as const) {
       expect(renderClaudeSettings(input({ tier })).permissions.deny, tier).toContain('Read(//home/u/.claude/ide/**)');
-      const custom = renderClaudeSettings(input({ tier, claudeConfigDir: '/home/u/.claude-acme' })).permissions.deny;
+      const custom = renderClaudeSettings(input({ tier, claudeConfigDir: '/home/u/.claude-acme', otherClaudeLogins: [defaultLogin] })).permissions.deny;
       expect(custom, tier).toContain('Read(//home/u/.claude-acme/ide/**)');
-      expect(custom, tier).not.toContain('Read(//home/u/.claude/ide/**)');
+      expect(custom, tier).toEqual(expect.arrayContaining(['Read(//home/u/.claude/**)', 'Read(//home/u/.claude.json)']));
+      expect(custom, tier).not.toContain('Read(//home/u/.claude-acme/**)');
     }
-    expect(claudeSettingsProblems(renderClaudeSettings(input()))).toEqual([]);
+    // Orbit's install directory under the other login's plugins: that login keeps only its lock directory denied.
+    const holding = renderClaudeSettings(input({ claudeConfigDir: '/home/u/.claude-acme', otherClaudeLogins: [defaultLogin], readablePaths: ['/home/u/.claude/plugins/cache/orbit'] })).permissions.deny;
+    expect(holding).toEqual(expect.arrayContaining(['Read(//home/u/.claude/ide/**)', 'Read(//home/u/.claude.json)']));
+    expect(holding).not.toContain('Read(//home/u/.claude/**)');
+    // The guard hook judges the default login's lock directory as a credential location too.
+    expect(renderClaudeSettings(input()).permissions.deny).toContain('Read(~/.claude/ide/**)');
+    expect(claudeSettingsProblems(renderClaudeSettings(input({ claudeConfigDir: '/home/u/.claude-acme', otherClaudeLogins: [defaultLogin] })))).toEqual([]);
   });
 
   it('denies Read on the policy\'s protected credential globs, not on every protected glob', () => {

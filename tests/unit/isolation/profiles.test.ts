@@ -14,6 +14,7 @@ import {
   orbitTmpRoot,
   prepareWorkerTmpDir,
   profileForCheck,
+  otherClaudeLogins,
   profileForWorker,
   providerDirs,
   repoParentDenial,
@@ -107,8 +108,9 @@ describe('profileForWorker', () => {
 
   // Review of #31: a running IDE extension (VS Code, JetBrains) writes <config dir>/ide/<port>.lock with the auth token of
   // its MCP server on loopback (openFile, saveDocument, executeCode in a Jupyter kernel). A worker that could read the lock
-  // and reach loopback could act through the IDE, outside its sandbox; a check never could (the whole config dir is denied
-  // to it). Workers reach no loopback service today, so this is a second barrier, kept for any path to loopback.
+  // could act through the IDE, outside its sandbox: a check cannot read it (the whole config dir is denied to it), but it
+  // may reach loopback on macOS and runs the code the worker wrote, a token in it included. Final review: Claude Code
+  // also looks in ~/.claude/ide when CLAUDE_CONFIG_DIR is set, so every other login is denied to the worker whole.
   it('denies its own config dir\'s IDE lock directory, for reading and for writing, and keeps the rest of the dir writable', () => {
     const l = layout();
     for (const claudeConfigDir of [l.claudeDir, join(l.home, '.claude')]) {
@@ -120,7 +122,11 @@ describe('profileForWorker', () => {
       expect(fs.denyWrite).toContain(join(claudeConfigDir, 'ide'));
       expect(fs.allowWrite).toContain(claudeConfigDir);
       expect(fs.denyRead).not.toContain(claudeConfigDir);
+      if (claudeConfigDir === l.claudeDir) expect(p.denyReadPaths).toEqual(expect.arrayContaining([join(l.home, '.claude'), join(l.home, '.claude.json')]));
     }
+    expect(otherClaudeLogins(l.home, {}, l.claudeDir)).toEqual([{ configDir: join(l.home, '.claude'), globalConfig: join(l.home, '.claude.json') }]);
+    expect(otherClaudeLogins(l.home, { CLAUDE_CONFIG_DIR: l.claudeDir }, join(l.home, '.claude'))).toEqual([{ configDir: l.claudeDir, globalConfig: join(l.claudeDir, '.claude.json') }]);
+    expect(otherClaudeLogins(l.home, {}, join(l.home, '.claude'))).toEqual([]);
     // A check already gets none of any Claude config dir.
     const check = profileForCheck({ worktree: l.worktree, check: checkFor(), snapshot: snapshotFor({ repoRoot: l.repo }), homeDir: l.home, claudeConfigDir: l.claudeDir, env: {} });
     expect(check.denyReadPaths).toEqual(expect.arrayContaining([l.claudeDir, join(l.home, '.claude')]));

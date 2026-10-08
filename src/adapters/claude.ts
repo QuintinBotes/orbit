@@ -40,7 +40,7 @@ import { redact } from '../core/redact.ts';
 import { atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
 import { strictSchemaViolations } from '../contract/strict-schema.ts';
 import type { IsolationProvider, SandboxProfile } from '../isolation/types.ts';
-import { prepareWorkerTmpDir, providerDirs } from '../isolation/profiles.ts';
+import { otherClaudeLogins, prepareWorkerTmpDir, providerDirs } from '../isolation/profiles.ts';
 import { canonicalPath, isWithin, readablePathsOf } from '../isolation/util.ts';
 import { bashGrant } from '../policy/role-grants.ts';
 import { snapshotHash, verifySnapshot } from '../policy/snapshot.ts';
@@ -257,8 +257,10 @@ export class ClaudeAdapter implements ProviderAdapter {
     // listener to loopback, so a server a worker started could serve what it may read to the network. The worker profile
     // never asks for it (profileForWorker); this holds it for every caller. On Linux the sandbox's loopback is its own.
     const sandbox: SandboxProfile = { ...spec.sandbox, allowLocalBinding: false };
-    // The config directory the CLI runs with, from the environment it gets: CLAUDE_CONFIG_DIR, else ~/.claude.
+    // The config directory the CLI runs with, from the environment it gets: CLAUDE_CONFIG_DIR, else ~/.claude; and every
+    // other login of that home, whose IDE lock files the worker must not read either.
     const claudeConfigDir = providerDirs({ homeDir: env.HOME ?? homedir(), env }).claudeConfigDir;
+    const otherLogins = otherClaudeLogins(env.HOME ?? homedir(), env, claudeConfigDir);
 
     const settings = renderClaudeSettings({
       snapshot,
@@ -273,6 +275,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       readablePaths: readablePathsOf(sandbox),
       tmpDir,
       claudeConfigDir,
+      otherClaudeLogins: otherLogins,
     });
     assertClaudeSettings(settings);
     writePrivate(join(workerDir, PROMPT_FILE), outputTokens === null ? spec.prompt : `${spec.prompt.trimEnd()}\n\n${outputBudgetInstruction(outputTokens)}\n`);

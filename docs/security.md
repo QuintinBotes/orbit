@@ -140,12 +140,20 @@ State these plainly to yourself before running unattended.
   every sandbox has a network namespace, and so a loopback, of its own, which
   its commands may use and nothing outside can reach, so there workers run
   them too. A worker reads files a check cannot (the Claude config directory
-  its CLI runs with, and `~/.claude.json`): the directory where IDE extensions
-  (VS Code, JetBrains) leave the token of their MCP server on loopback,
-  `<config dir>/ide`, is denied to workers, for reading and writing, and to the
-  Read tool in both tiers, a second barrier now that workers reach no loopback
-  service. Still readable: the MCP server entries in `~/.claude.json` (headers
-  of an HTTP server you configured, if any). Background tasks are off for
+  its CLI runs with, and its `.claude.json`). IDE extensions (VS Code,
+  JetBrains) leave the token of their MCP server on loopback in
+  `<config dir>/ide`, and Claude Code also looks in `~/.claude/ide` when
+  `CLAUDE_CONFIG_DIR` is set. A worker cannot reach that server, but on macOS a
+  check that may listen can, and it runs the code the worker wrote, so a token
+  the worker copied into the worktree would reach the server through it: what
+  stops that is that no worker can read the token. A worker's own
+  `<config dir>/ide` is denied to it, for reading and writing, every other
+  Claude login Orbit knows of (`CLAUDE_CONFIG_DIR`, `~/.claude`, and their
+  `.claude.json`) is denied whole, and the Read tool is denied all of them in
+  both tiers. A lock directory Orbit cannot know of (a config directory set
+  only in the editor's environment) is not covered. Still readable: the MCP
+  server entries in the worker's own `.claude.json` (headers of an HTTP server
+  you configured, if any). Background tasks are off for
   workers, so a long command cannot hold a session open, but on macOS a process
   a worker detaches itself (`nohup ... &`, `setsid`) is not stopped with its
   session; nothing contains a sandbox's processes there. Orbit's guard hook

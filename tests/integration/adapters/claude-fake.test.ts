@@ -321,7 +321,7 @@ describe.skipIf(!canStripTypes)('ClaudeAdapter + shim + fake-claude', () => {
 
   // Review of #31: the IDE lock directory of the config dir the CLI runs with (CLAUDE_CONFIG_DIR, else ~/.claude) holds
   // the token of an IDE extension's MCP server on loopback; Read must not reach it in either tier.
-  it('denies Read on the IDE lock directory of the config dir the worker CLI runs with', async () => {
+  it('denies Read on the IDE lock directory of every Claude login the worker CLI knows of', async () => {
     const home = canonicalPath(process.env.HOME!);
     for (const custom of [false, true]) {
       const f = fixture();
@@ -331,6 +331,9 @@ describe.skipIf(!canStripTypes)('ClaudeAdapter + shim + fake-claude', () => {
       await collect(a, await a.startTask(implementerSpec(f)), f);
       const deny = (JSON.parse(readFileSync(join(f.workerDir, 'settings.json'), 'utf8')) as { permissions: { deny: string[] } }).permissions.deny;
       expect(deny, dir).toContain(`Read(/${dir}/ide/**)`);
+      // Final review: with a config dir of its own, the default login (where Claude Code also looks for IDE lock files) is denied whole.
+      if (custom) expect(deny, dir).toEqual(expect.arrayContaining([`Read(/${home}/.claude/**)`, `Read(/${home}/.claude.json)`]));
+      else expect(deny.filter((r) => r.startsWith(`Read(/${home}/.claude`)), dir).toEqual([`Read(/${home}/.claude/ide/**)`]);
     }
   });
 

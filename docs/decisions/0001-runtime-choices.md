@@ -384,21 +384,46 @@ not listen.
   Bash read the lock and the server accepted the token; in the
   `claude-sandbox` tier Bash could not read it (`EPERM`), but the Read tool,
   which runs outside Claude Code's sandbox there, returned the token to the
-  model, and a Bash command carrying it was accepted. A check never could: its
-  profile denies every Claude config directory. Decision: the worker profile
-  denies `<config dir>/ide` for reading and writing (`CLAUDE_CONFIG_DENIED`; in
-  `srt` a denied path inside a writable one is write-denied too), and the
-  worker settings deny `Read` on it in both tiers, for the config directory
-  the CLI runs with (`CLAUDE_CONFIG_DIR`, else `~/.claude`). Workers no longer
-  reach loopback, so this is a second barrier; the test keeps loopback open in
-  the `os-sandbox` tier (for its fake API), where the probe now ends
-  `READ-FAIL EPERM` and the Read tool is refused
-  (`tests/integration/adapters/worker-ide-lock.test.ts`). What is left, and
-  stated in docs/security.md: `~/.claude.json` (or the custom config
-  directory's `.claude.json`) stays readable, because the CLI must read it and
-  in the `os-sandbox` tier runs inside the sandbox; it can hold the headers of
-  MCP servers the user configured. A private config directory per worker would
-  close that; Orbit does not create one yet.
+  model, and a Bash command carrying it was accepted. A check cannot read the
+  lock: its profile denies every Claude config directory. Decision: the worker
+  profile denies `<config dir>/ide` for reading and writing
+  (`CLAUDE_CONFIG_DENIED`; in `srt` a denied path inside a writable one is
+  write-denied too), and the worker settings deny `Read` on it in both tiers,
+  for the config directory the CLI runs with (`CLAUDE_CONFIG_DIR`, else
+  `~/.claude`). The test keeps loopback open in the `os-sandbox` tier (for its
+  fake API), where the probe now ends `READ-FAIL EPERM` and the Read tool is
+  refused (`tests/integration/adapters/worker-ide-lock.test.ts`). What is
+  left, and stated in docs/security.md: the worker's own `.claude.json`
+  (`~/.claude.json`, or the custom config directory's) stays readable, because
+  the CLI must read it and in the `os-sandbox` tier runs inside the sandbox; it
+  can hold the headers of MCP servers the user configured. A private config
+  directory per worker would close that; Orbit does not create one yet.
+
+  Final review (2026-10-08). This deny is not a second barrier behind "workers
+  reach no loopback", as the draft said: a worker cannot reach the server, but
+  a check can. A check with the default `local_binding` may connect to any
+  loopback port on macOS, and it runs the code the worker wrote: a token the
+  worker copies into the worktree reaches the server through it (measured on
+  this branch and on main: an `srt` check under `profileForCheck` read the
+  token from a worktree file and a stand-in IDE server on 127.0.0.1 answered
+  `200`). So keeping the token from the worker is the barrier for that path,
+  and it had a gap. Claude Code 2.1.292 looks for lock files in `~/.claude/ide`
+  whenever `CLAUDE_CONFIG_DIR` is set, so an IDE extension writes there for a
+  worker whose config directory is another, and the settings denied `Read` on
+  the worker's own `ide/` only: in the `claude-sandbox` tier the Read tool
+  returned the token from `~/.claude/ide` (reproduced with the real CLI, a
+  fake home and `CLAUDE_CONFIG_DIR` set elsewhere; the `os-sandbox` tier was
+  not affected, since `srt` denies the other login whole). Decision: the
+  settings deny `Read` on every other Claude login Orbit knows of
+  (`otherClaudeLogins`: `CLAUDE_CONFIG_DIR` and `~/.claude`, with their
+  `.claude.json`) whole, as the worker profile already denied them to the
+  sandbox, and on its `ide/` alone when it holds a path the worker must read
+  (a deny beats every allow); `~/.claude/ide/**` is a home credential
+  location, so the guard hook refuses it too. The real-CLI test has both tiers
+  with `CLAUDE_CONFIG_DIR` set elsewhere. Not covered: an IDE lock directory
+  Orbit cannot know of, such as a config directory set only in the editor's
+  environment. Narrowing what a check may reach on loopback would close the
+  relay itself; Seatbelt cannot (above), so it is not done.
 - Long commands that hold a session open. `claude -p` writes its result and
   then does not exit while a background task of the session is alive. A server
   the model started with `run_in_background`, or a foreground one Claude Code
