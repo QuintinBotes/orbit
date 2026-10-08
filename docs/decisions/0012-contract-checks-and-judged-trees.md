@@ -98,11 +98,20 @@ one (ADR 0010), and the outcome is the same:
   environment cause blocks as ADR 0010 says.
 - **A pass establishes a clean base**: a failure on a candidate is the
   change's, and goes to repair.
+- **A check the runner could not start at all** (status `ERROR`: an argv
+  command whose executable is missing, say) has no output to classify and no
+  result. The amendment records it so (`lint ERROR` in `baseline.amended`) and
+  the run goes on, as PREFLIGHT goes on for a mandatory check it could not
+  start (`gate.baseline` unverified). It is not counted as covered, so every
+  later amendment runs it on the base revision again, and its run on the
+  candidate blocks the run for the environment (ADR 0010's rule for a check
+  that could not execute), after the first attempt. Blocking such a check
+  before any attempt would treat an amended check more strictly than a
+  mandatory one; it was found by the final review and left as it is for both.
 
 With this, every check a candidate is judged on was run on the base revision
-first, so ADR 0010's candidate gate has the base result it asks for; a check
-that produced no result there (the runner could not start it) is not counted
-as covered, and the next amendment runs it again.
+first (until a rebase, below), so ADR 0010's candidate gate has the base result
+it asks for, except for a check that produced no result there, as above.
 
 An amended check's missing target and PREFLIGHT's are judged at different
 times, and this is intended. PREFLIGHT's mandatory checks are judged at
@@ -151,7 +160,12 @@ attempt 1 produced, and verification judged it FAIL again as it did then
 no further attempt is dispatched on it". A `repair.non-progress` decision
 records the attempt, the earlier attempt, the tree, the verdict and the failing
 checks. A tree that undid a later attempt (attempt 3 back to attempt 1's tree)
-stops the same way: the next attempt would start from where attempt 2 started.
+stops the same way. That stop is conservative, not exact: the next attempt would
+start from the tree and the evidence attempt 2 started from, but its diagnosis
+would also know attempts 2 and 3 and their hypotheses, so it might brief a
+repair that works. It is kept because such a run has already gone round once
+on that tree and the stop never passes a tree; the maintainer is asked to
+confirm it (final review).
 
 It does not stop, and the loop goes on under the existing rules, when the tree
 is new, when its judgement changed since (a contract amendment or an approved
@@ -201,7 +215,8 @@ differently, since its check results are reused, so continuing only spends.
 - A run whose contract cites an optional check that cannot run in the sandbox
   ends `BLOCKED` at PLANNING after the planner, before any implementer, with
   the cause and the fix; doctor warns about such a check beforehand with the
-  same fix.
+  same fix. A check whose command cannot be started at all blocks only on the
+  candidate, after the first attempt (section 1).
 - An optional check a contract requires runs on the base revision once per run
   (and again after a resume that follows its block), which takes the check's
   time before the first attempt.
