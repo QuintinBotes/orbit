@@ -1,5 +1,6 @@
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hostTool } from '../evidence/harness.ts';
 
@@ -45,6 +46,32 @@ const dotnetTool = hostTool('dotnet', ['--version'], join(homedir(), '.dotnet', 
 export const dotnet = dotnetTool.path;
 
 const TFM = '<TargetFramework>net$(NETCoreAppMaximumVersion)</TargetFramework>';
+
+let dotnetFirstRunDone = false;
+
+/**
+ * The account's own first .NET run, outside any sandbox, as on every machine where it has run a restore. The SDK keeps
+ * its first-run state (~/.dotnet) and NuGet its user config (~/.nuget/NuGet/NuGet.Config) and migrations under HOME, and
+ * writes them on the first run. A worker's HOME is the account's, which its sandbox lets it read and not write, so where
+ * the account never ran a restore (GitHub's Ubuntu runner) a worker's first dotnet build stopped at "Unexpected failure
+ * reading NuGet.Config ... Read-only file system : '<home>/.nuget'", and on a home without ~/.dotnet at the SDK's
+ * first-use configuration. It restores a project with no packages, from no package source, in a directory of its own,
+ * once: nothing of the runner's worktree, and nothing the account already has, changes.
+ */
+export function dotnetFirstRun(): void {
+  if (dotnetFirstRunDone) return;
+  const dir = mkdtempSync(join(tmpdir(), 'orbit-dotnet-first-run-'));
+  try {
+    writeFileSync(join(dir, 'first.csproj'), `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>${TFM}</PropertyGroup></Project>\n`);
+    for (const f of ['Directory.Build.props', 'Directory.Build.targets']) writeFileSync(join(dir, f), '<Project></Project>\n');
+    mkdirSync(join(dir, 'no-source'));
+    execFileSync(dotnet!, ['restore', 'first.csproj', '--source', join(dir, 'no-source'), '-v', 'q'], { cwd: dir, stdio: 'pipe' });
+    dotnetFirstRunDone = true;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /** No package references: it restores and builds offline from the SDK alone. Empty Directory.Build files stop MSBuild importing any above. */
 const DOTNET_ISOLATED = { 'Directory.Build.props': '<Project></Project>\n', 'Directory.Build.targets': '<Project></Project>\n' };
 

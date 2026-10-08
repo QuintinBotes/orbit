@@ -13,7 +13,7 @@ import type { SandboxProfile } from '../../../src/isolation/types.ts';
 import { defaultCheck } from '../../../src/policy/config.ts';
 import { verifySnapshot } from '../../../src/policy/snapshot.ts';
 import { makeFixture, waitFor, type Fixture } from '../adapters/helpers.ts';
-import { LOOPBACK_RUNNERS, XUNIT_PROJECT, dotnet, nugetGlobalPackages, type LoopbackRunner } from './loopback-runners.ts';
+import { LOOPBACK_RUNNERS, XUNIT_PROJECT, dotnet, dotnetFirstRun, nugetGlobalPackages, type LoopbackRunner } from './loopback-runners.ts';
 import { runWrapped } from './run.ts';
 
 /**
@@ -68,6 +68,8 @@ function workerSandbox(f: Fixture, files: Record<string, string>, timeoutMs: num
     networkHosts: workerAllowedHosts('claude', snapshot),
   });
   prepareToolchainLayout(toolchains);
+  // A worker runs with the account's HOME, read-only: .NET's first run there is the account's own, outside it.
+  if (toolchains.toolchains.includes('dotnet')) dotnetFirstRun();
   if (files === XUNIT_PROJECT) {
     // What the dependency install does for a run, outside the sandbox: fill the repository's NuGet cache, here offline
     // from the account's own.

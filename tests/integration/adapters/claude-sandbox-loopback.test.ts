@@ -10,7 +10,7 @@ import { profileForWorker, workerAllowedHosts, workerTmpDir } from '../../../src
 import { detectToolchains, prepareToolchainLayout, toolchainLayout } from '../../../src/isolation/toolchains.ts';
 import type { PolicySnapshot } from '../../../src/policy/types.ts';
 import { startFakeAnthropicApi } from '../../fakes/fake-anthropic-api.mjs';
-import { LOOPBACK_RUNNERS, XUNIT_PROJECT, dotnet, nugetGlobalPackages, type LoopbackRunner } from '../isolation/loopback-runners.ts';
+import { LOOPBACK_RUNNERS, XUNIT_PROJECT, dotnet, dotnetFirstRun, nugetGlobalPackages, type LoopbackRunner } from '../isolation/loopback-runners.ts';
 import { IMPLEMENTER_OUTPUT, implementerSpec, makeFixture, waitFor, type Fixture } from './helpers.ts';
 
 /**
@@ -83,6 +83,8 @@ async function session(): Promise<{ outputs: string[]; settings: { sandbox: { ne
     networkHosts: workerAllowedHosts('claude', snapshot),
   });
   prepareToolchainLayout(toolchains);
+  // Bash runs with the account's HOME, read-only: .NET's first run there is the account's own, outside the sandbox.
+  if (toolchains.toolchains.includes('dotnet')) dotnetFirstRun();
   RUNNERS.forEach((runner, i) => {
     // The dependency install's part, outside the sandbox: the repository's NuGet cache, filled offline from the account's.
     if (runner.files === XUNIT_PROJECT) execFileSync(dotnet!, ['restore', 'Acme.Tests/Acme.Tests.csproj', '--source', nugetGlobalPackages, '-v', 'q'], { cwd: dirs[i]!, env: { ...process.env, NUGET_PACKAGES: join(cacheRoot, 'nuget') }, stdio: 'pipe' });
