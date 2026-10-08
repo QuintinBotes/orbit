@@ -1,7 +1,7 @@
 {
   "name": "orbit-dev",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Development workspace for Orbit, an autonomous, evidence-driven engineering loop for Claude Code. The plugin is plugin/: a single bundle plus the sandbox runtime (srt) as its only dependency.",
   "homepage": "https://github.com/QuintinBotes/orbit#readme",
   "repository": {
