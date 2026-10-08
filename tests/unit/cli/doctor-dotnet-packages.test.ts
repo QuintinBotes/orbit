@@ -52,6 +52,9 @@ const BUILD = { id: 'build', command: ['dotnet', 'build', '--no-restore', '-m:1'
 /** A check that restores itself. */
 const RESTORING = { id: 'build', command: ['dotnet', 'build', 'Acme.csproj', '-m:1'], mandatory: true };
 const REASON = "cannot be downloaded inside the sandbox on macOS (it keeps the system trust service out of reach, so .NET cannot verify nuget.org's certificate)";
+const NUGET_DOCS = 'docs/troubleshooting.md, ".NET HTTP clients and NuGet restore on macOS"';
+/** Why a repository with no dependencies.install_command has no install that restores packages. */
+const NO_INSTALL = `no dependency install restores NuGet packages here: dependencies.install_command is not set, and Orbit's own install is npm ci, which restores no NuGet package and is skipped without a package-lock.json ("no lockfile to install from")`;
 
 describe('dotnetPackagesCheck', () => {
   it('warns for a repository whose project references a package, with the exact command that fills its cache outside the sandbox', () => {
@@ -62,9 +65,63 @@ describe('dotnetPackagesCheck', () => {
     expect(c!.details).toEqual(['acme.csproj: PackageReference Newtonsoft.Json', `NuGet cache ${cache}: not created yet`]);
     expect(c!.missing).toBe("NuGet packages in this repository's cache, restored outside the sandbox");
     expect(c!.fix).toBe(
-      `run once in a terminal, outside the sandbox, and again whenever the packages change: (cd ${repo} && NUGET_PACKAGES=${cache} dotnet restore -m:1); the dependency install and the checks then restore offline from that cache (Orbit turns NuGet's vulnerability audit off in the sandbox, where it cannot reach nuget.org; docs/troubleshooting.md, ".NET HTTP clients and NuGet restore on macOS")`,
+      `run once in a terminal, outside the sandbox, and again whenever the packages change: (cd ${repo} && NUGET_PACKAGES=${cache} dotnet restore -m:1); the checks that restore then do so offline from that cache (${NO_INSTALL}; Orbit turns NuGet's vulnerability audit off in the sandbox, where it cannot reach nuget.org; docs/troubleshooting.md, ".NET HTTP clients and NuGet restore on macOS")`,
     );
     expect(`${c!.summary} ${c!.fix}`).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  // Issue #33 (0.2.1 retest): the fix said "the dependency install and the checks then restore offline from that
+  // cache", but a repository with no dependencies.install_command and no npm lockfile has no install at all ("no
+  // lockfile to install from"); only the checks restore from the cache.
+  it('says what restores from the cache: the install only when the install command is one that restores packages', () => {
+    const none = world({ 'acme.csproj': PACKAGED }, config([BUILD]));
+    expect(dotnetPackagesCheck(none.input)[0]!.fix).toContain(`; the checks that restore then do so offline from that cache (${NO_INSTALL};`);
+    expect(dotnetPackagesCheck(none.input)[0]!.fix).not.toContain('the dependency install and the checks');
+    const off = world({ 'acme.csproj': PACKAGED }, config([BUILD], ['dotnet', 'restore', '-m:1']));
+    off.input.config.dependencies.install_existing_lockfile = false;
+    expect(dotnetPackagesCheck(off.input)[0]!.fix).toContain('; the checks that restore then do so offline from that cache (no dependency install restores NuGet packages here: dependencies.install_existing_lockfile is false, so no install runs;');
+    const make = world({ 'acme.csproj': PACKAGED }, config([BUILD], ['make', 'deps']));
+    expect(dotnetPackagesCheck(make.input)[0]!.fix).toContain('; the checks that restore then do so offline from that cache (no dependency install restores NuGet packages here: dependencies.install_command is make deps, which doctor cannot see restore NuGet packages;');
+    const restoring = world({ 'acme.csproj': PACKAGED }, config([BUILD], ['dotnet', 'restore', '-m:1']));
+    const fix = dotnetPackagesCheck(restoring.input)[0]!.fix!;
+    expect(fix).toContain('; the dependency install and the checks then restore offline from that cache (Orbit turns NuGet');
+    expect(fix).not.toContain('no dependency install restores');
+  });
+
+  // Issue #33: once the cache holds packages the fix is done: doctor said so in a warning that reprinted the fill
+  // command at every run. Filled is a pass that reports it; only an empty cache, or a package version that floats
+  // (which a restore looks up at nuget.org however full the cache), is left to warn about.
+  it('reports a filled cache as filled, with no warning and no fill command, and names what restores from it', () => {
+    const filled = world({ 'acme.csproj': PACKAGED }, config([BUILD], ['dotnet', 'restore', '-m:1']));
+    mkdirSync(join(filled.cache, 'newtonsoft.json', '13.0.3'), { recursive: true });
+    mkdirSync(join(filled.cache, 'xunit', '2.9.3'), { recursive: true });
+    const [c] = dotnetPackagesCheck(filled.input);
+    expect(c).toMatchObject({ id: 'checks.dotnet-packages', area: 'checks', status: 'pass', missing: null, fix: null });
+    expect(c!.summary).toBe("this repository's NuGet cache holds 2 packages, restored outside the sandbox: the dependency install and the checks restore from it with nothing to download");
+    expect(c!.details).toEqual([
+      'acme.csproj: PackageReference Newtonsoft.Json',
+      `NuGet cache ${filled.cache}: holds 2 packages`,
+      `when the packages change, fill it again outside the sandbox: dotnet restore from the repository with NUGET_PACKAGES set to that cache (${NUGET_DOCS})`,
+    ]);
+    expect([c!.summary, ...c!.details].join('\n')).not.toMatch(/NUGET_PACKAGES=|dotnet restore -m:1/);
+    // Without an install that restores, the summary says only the checks do.
+    const checksOnly = world({ 'acme.csproj': PACKAGED }, config([RESTORING]));
+    mkdirSync(join(checksOnly.cache, 'newtonsoft.json', '13.0.3'), { recursive: true });
+    const [o] = dotnetPackagesCheck(checksOnly.input);
+    expect(o!.status).toBe('pass');
+    expect(o!.summary).toBe("this repository's NuGet cache holds 1 package, restored outside the sandbox: the checks that restore read it with nothing to download");
+    expect(o!.details).toContain(NO_INSTALL);
+  });
+
+  it('still warns, with what to change and no fill command, for a filled cache and a package version that floats', () => {
+    const FLOATING = PACKAGED.replace('Version="13.0.3"', 'Version="13.*"');
+    const w = world({ 'acme.csproj': FLOATING }, config([BUILD]));
+    mkdirSync(join(w.cache, 'newtonsoft.json', '13.0.3'), { recursive: true });
+    const [c] = dotnetPackagesCheck(w.input);
+    expect(c!.status).toBe('warn');
+    expect(c!.summary).toBe("this repository's NuGet cache holds 1 package, but a package version floats, which every restore looks up at nuget.org, cache or not");
+    expect(c!.fix).toBe('pin each package version the details name, or restore with a lock file (RestorePackagesWithLockFile), so that the checks that restore then do so offline from the filled cache (docs/troubleshooting.md, ".NET HTTP clients and NuGet restore on macOS")');
+    expect(c!.fix).not.toMatch(/NUGET_PACKAGES=/);
   });
 
   it('fails when the dependency install restores from nuget.org and the cache is empty, mirroring the install command with -m:1', () => {
@@ -94,8 +151,9 @@ describe('dotnetPackagesCheck', () => {
       expect(c!.status, JSON.stringify(install)).toBe('fail');
       expect(c!.summary).toBe(`check build restores NuGet packages, which ${REASON}, and this repository's NuGet cache is empty: the check would fail at the baseline`);
       expect(c!.fix).toContain(`(cd ${repo} && NUGET_PACKAGES=${cache} dotnet restore -m:1);`);
+      // Once the cache holds the packages the restoring check is fine: nothing is left to warn of (issue #33).
       mkdirSync(join(cache, 'newtonsoft.json', '13.0.3'), { recursive: true });
-      expect(dotnetPackagesCheck(input)[0]!.status).toBe('warn');
+      expect(dotnetPackagesCheck(input)[0]!.status, JSON.stringify(install)).toBe('pass');
     }
     const two = world({ 'acme.csproj': PACKAGED }, config([RESTORING, { ...RESTORING, id: 'test', command: ['dotnet', 'test', '-m:1'] }]));
     expect(dotnetPackagesCheck(two.input)[0]!.summary).toBe(`checks build, test restore NuGet packages, which ${REASON}, and this repository's NuGet cache is empty: the checks would fail at the baseline`);
@@ -104,12 +162,12 @@ describe('dotnetPackagesCheck', () => {
     expect(dotnetPackagesCheck(world({ 'acme.csproj': PACKAGED }, config([BUILD])).input)[0]!.status).toBe('warn');
   });
 
-  it('only warns once the cache holds packages, or when the install does not restore, or doctor cannot tell', () => {
+  it('passes once the cache holds packages, and only warns when the install does not restore or doctor cannot tell', () => {
     const filled = world({ 'acme.csproj': PACKAGED }, config([BUILD], ['dotnet', 'restore', '-m:1']));
     mkdirSync(join(filled.cache, 'newtonsoft.json', '13.0.3'), { recursive: true });
     const [c] = dotnetPackagesCheck(filled.input);
-    expect(c!.status).toBe('warn');
-    expect(c!.details.at(-1)).toBe(`NuGet cache ${filled.cache}: holds 1 package`);
+    expect(c!.status).toBe('pass');
+    expect(c!.details).toContain(`NuGet cache ${filled.cache}: holds 1 package`);
     for (const install of [['dotnet', 'build', '--no-restore', '-m:1'], ['make', 'deps']]) {
       const w = world({ 'acme.csproj': PACKAGED }, config([BUILD], install));
       expect(dotnetPackagesCheck(w.input)[0]!.status, install.join(' ')).toBe('warn');
@@ -190,13 +248,17 @@ describe('dotnetPackagesCheck', () => {
     expect(c!.status).toBe('fail');
     expect(c!.summary).toBe(`dependencies.install_command restores NuGet packages, which ${REASON}, and a package version floats, which every restore looks up at nuget.org: the dependency install would fail`);
     expect(c!.details).toEqual(['acme.csproj: PackageReference Newtonsoft.Json', 'acme.csproj: Newtonsoft.Json 13.* floats, so every restore looks it up at nuget.org', `NuGet cache ${w.cache}: holds 1 package`]);
-    expect(c!.fix).toMatch(/; the dependency install and the checks then restore offline from that cache once no package version floats: pin each one the details name, or restore with a lock file \(RestorePackagesWithLockFile\) \(docs\/troubleshooting\.md, "\.NET HTTP clients and NuGet restore on macOS"\)$/);
-    // Without an install that restores, a warning that says the same; with a lock file, nothing floats.
-    expect(dotnetPackagesCheck(world({ 'acme.csproj': FLOATING }, config([BUILD])).input)[0]!.status).toBe('warn');
+    // The cache is filled, so the fix is the pin alone, not the command that fills it (issue #33).
+    expect(c!.fix).toBe('pin each package version the details name, or restore with a lock file (RestorePackagesWithLockFile), so that the dependency install and the checks then restore offline from the filled cache (docs/troubleshooting.md, ".NET HTTP clients and NuGet restore on macOS")');
+    // Without an install that restores, and the cache still empty, a warning that says the same with the command that fills it.
+    const empty = dotnetPackagesCheck(world({ 'acme.csproj': FLOATING }, config([BUILD])).input)[0]!;
+    expect(empty.status).toBe('warn');
+    expect(empty.fix).toMatch(/NUGET_PACKAGES=.*; the checks that restore then do so offline from that cache once no package version floats: pin each one the details name, or restore with a lock file \(RestorePackagesWithLockFile\) \(no dependency install restores NuGet packages here: [^;]+; docs\/troubleshooting\.md, "\.NET HTTP clients and NuGet restore on macOS"\)$/);
+    // With a lock file, nothing floats, and a filled cache is all there is to report.
     const locked = world({ 'acme.csproj': FLOATING, 'packages.lock.json': '{}' }, config([BUILD], ['dotnet', 'restore', '-m:1']));
     mkdirSync(join(locked.cache, 'newtonsoft.json', '13.0.3'), { recursive: true });
     const [l] = dotnetPackagesCheck(locked.input);
-    expect(l!.status).toBe('warn');
+    expect(l!.status).toBe('pass');
     expect(l!.details.some((d) => d.includes('floats'))).toBe(false);
   });
 
@@ -204,7 +266,7 @@ describe('dotnetPackagesCheck', () => {
     const files = Object.fromEntries(Array.from({ length: 22 }, (_, i) => [`src/P${String(i).padStart(2, '0')}/P.csproj`, PACKAGED]));
     const fix = dotnetPackagesCheck(world(files, config([{ ...BUILD, cwd: 'src/P00' }])).input)[0]!.fix!;
     expect(fix.match(/dotnet restore src\/P\d\d\/P\.csproj -m:1/g)).toHaveLength(20);
-    expect(fix).toContain('dotnet restore src/P19/P.csproj -m:1) (the first 20 of 22 projects; restore the other 2 the same way); the dependency install');
+    expect(fix).toContain('dotnet restore src/P19/P.csproj -m:1) (the first 20 of 22 projects; restore the other 2 the same way); the checks that restore then do so');
   });
 
   it('quotes a path the shell would split', () => {

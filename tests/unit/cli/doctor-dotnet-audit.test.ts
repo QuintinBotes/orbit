@@ -182,9 +182,9 @@ describe('dotnetAuditCheck', () => {
 describe('dotnetPackagesCheck, of the vulnerability audit', () => {
   it('says the audit is off in the sandbox, and does not promise a restore that checks.dotnet-audit says fails', () => {
     const [ok] = dotnetPackagesCheck(input({ 'acme.csproj': STRICT }, config([BUILD])));
-    expect(ok!.fix).toMatch(/; the dependency install and the checks then restore offline from that cache \(Orbit turns NuGet's vulnerability audit off in the sandbox, where it cannot reach nuget\.org; docs\/troubleshooting\.md, "\.NET HTTP clients and NuGet restore on macOS"\)$/);
+    expect(ok!.fix).toMatch(/; the checks that restore then do so offline from that cache \(no dependency install restores NuGet packages here: [^;]+; Orbit turns NuGet's vulnerability audit off in the sandbox, where it cannot reach nuget\.org; docs\/troubleshooting\.md, "\.NET HTTP clients and NuGet restore on macOS"\)$/);
     expect(ok!.fix).not.toMatch(/NU1900/);
     const [blocked] = dotnetPackagesCheck(input({ 'acme.csproj': STRICT, 'Directory.Build.props': AUDIT_ON }, config([BUILD])));
-    expect(blocked!.fix).toMatch(/; the dependency install and the checks then restore offline from that cache once the vulnerability audit no longer fails them, as checks\.dotnet-audit says \(docs\/troubleshooting\.md, "\.NET HTTP clients and NuGet restore on macOS"\)$/);
+    expect(blocked!.fix).toMatch(/; the checks that restore then do so offline from that cache once the vulnerability audit no longer fails them, as checks\.dotnet-audit says \(no dependency install restores NuGet packages here: [^;]+; docs\/troubleshooting\.md, "\.NET HTTP clients and NuGet restore on macOS"\)$/);
   });
 });

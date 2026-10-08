@@ -175,7 +175,7 @@ describe('checkSandboxCheck: toolchains (ADR 0009)', () => {
     expect(c.status).toBe('pass');
     expect(c.details).toEqual([
       'unit: "make --version" ran in the sandbox',
-      `toolchain go: "go version" ran in the sandbox; dependency cache ${cache} (not created yet; the first dependency install creates it); private per check attempt: GOCACHE, GOPATH`,
+      `toolchain go: "go version" ran in the sandbox; dependency cache ${cache} (not created yet; dependencies.install_command is not set, so no run creates it); private per check attempt: GOCACHE, GOPATH`,
     ]);
     expect(seen).toEqual([[join(w.bin, 'make'), '--version'], [join(w.bin, 'go'), 'version']]);
     // The check's probe gets the check's toolchain environment: a stand-in cache, read-only, and private build state.
@@ -198,7 +198,15 @@ describe('checkSandboxCheck: toolchains (ADR 0009)', () => {
     mkdirSync(cache, { recursive: true });
     const s = srtLike();
     const c = await checkSandboxCheck({ config: config([{ id: 'unit', command: ['cargo', 'test'] }]), repo: w.repo, provider: s.provider, available: true, env: w.env, homeDir: w.home, orbitHome, launch: async () => ({ exitCode: 0, output: '' }) });
-    expect(c.details).toContain(`toolchain rust: "cargo --version" ran in the sandbox; dependency cache ${cache} (read-only for checks and workers, written by the dependency install); private per check attempt: CARGO_TARGET_DIR`);
+    expect(c.details).toContain(`toolchain rust: "cargo --version" ran in the sandbox; dependency cache ${cache} (read-only for checks and workers; dependencies.install_command is not set, so no run writes it); private per check attempt: CARGO_TARGET_DIR`);
+    // With an install command, the install is what writes it (issue #33: the line said so for every repository).
+    const withInstall = config([{ id: 'unit', command: ['cargo', 'test'] }]);
+    withInstall.dependencies = { ...withInstall.dependencies, install_command: ['cargo', 'fetch'] };
+    const installed = await checkSandboxCheck({ config: withInstall, repo: w.repo, provider: s.provider, available: true, env: w.env, homeDir: w.home, orbitHome, launch: async () => ({ exitCode: 0, output: '' }) });
+    expect(installed.details.find((d) => d.startsWith('toolchain rust:'))).toContain('(read-only for checks and workers, written by the dependency install); private per check attempt');
+    withInstall.dependencies.install_existing_lockfile = false;
+    const off = await checkSandboxCheck({ config: withInstall, repo: w.repo, provider: s.provider, available: true, env: w.env, homeDir: w.home, orbitHome, launch: async () => ({ exitCode: 0, output: '' }) });
+    expect(off.details.find((d) => d.startsWith('toolchain rust:'))).toContain('(read-only for checks and workers; dependencies.install_existing_lockfile is false, so no run writes it); private per check attempt');
     expect(s.wraps[0]!.env.CARGO_HOME).toBe(cache);
     expect((s.wraps[0]!.profile as { readablePaths?: string[] }).readablePaths).toContain(cache);
     expect(s.wraps[0]!.profile.writablePaths).not.toContain(cache);
@@ -314,13 +322,19 @@ describe('checkSandboxCheck: the .NET build probe (issue #10)', () => {
     expect(await line('darwin', true)).toContain(
       '(not created yet: on macOS the dependency install cannot download NuGet packages, so this repository\'s are restored into it outside the sandbox, as checks.dotnet-packages says); private per check attempt',
     );
-    expect(await line('darwin', false)).toContain('(not created yet; the first dependency install creates it); private per check attempt');
-    expect(await line('linux', true)).toContain('(not created yet; the first dependency install creates it); private per check attempt');
+    // No install command is configured here, and Orbit's own install is npm ci: nothing in a run creates the cache (issue #33).
+    expect(await line('darwin', false)).toContain('(not created yet; dependencies.install_command is not set, so no run creates it); private per check attempt');
+    expect(await line('linux', true)).toContain('(not created yet; dependencies.install_command is not set, so no run creates it); private per check attempt');
     for (const [platform, packages] of [['darwin', false], ['linux', true]] as const) expect(await line(platform, packages)).not.toContain('outside the sandbox');
     // Once it exists, checks and workers read it; on macOS it is still filled outside the sandbox.
     mkdirSync(join(toolchainCacheRoot(orbitHome, repoKeyFor(realpathSync(w.repo))), 'nuget'), { recursive: true });
     expect(await line('darwin', true)).toContain("(read-only for checks and workers; on macOS the dependency install cannot download NuGet packages, so this repository's are restored into it outside the sandbox, as checks.dotnet-packages says); private per check attempt");
+    expect(await line('linux', true)).toContain('(read-only for checks and workers; dependencies.install_command is not set, so no run writes it); private per check attempt');
+    // With an install command it is the install that creates and writes it.
+    cfg.dependencies = { ...cfg.dependencies, install_command: ['dotnet', 'restore', '-m:1'] };
     expect(await line('linux', true)).toContain('(read-only for checks and workers, written by the dependency install); private per check attempt');
+    rmSync(join(toolchainCacheRoot(orbitHome, repoKeyFor(realpathSync(w.repo))), 'nuget'), { recursive: true });
+    expect(await line('linux', true)).toContain('(not created yet; the first dependency install creates it); private per check attempt');
   });
 
   // Orbit never changes a check's processor count (ADR 0009, addendum), so a dotnet check pins one MSBuild node in its
@@ -707,5 +721,55 @@ describe('checkSandboxCheck: the .NET build probe (issue #10)', () => {
       expect(pinned.status).toBe('pass');
     });
 
+  });
+
+  // Issue #33 (0.2.1 retest): after "set checks.format.mandatory: false", doctor still warned that a run would block at
+  // its baseline and offered "set mandatory: false" again. PREFLIGHT runs mandatory checks only, so an optional check
+  // blocks no run unconditionally; a run whose contract requires it runs it on the base revision first and blocks there
+  // (issue #32, ADR 0012), so doctor still warns, says which run blocks, and never offers making it optional.
+  describe('an optional check (issue #33): only a run whose contract requires it blocks', () => {
+    const run = (cfg: OrbitConfig, w: ReturnType<typeof world>, orbitHome?: string) => checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, platform: 'darwin', ...(orbitHome ? { orbitHome } : {}), launch: async () => ({ exitCode: 0, output: '' }) });
+
+    it('warns about an optional dotnet format that cannot run on macOS in either form, names the run that blocks, and never offers set mandatory: false', async () => {
+      for (const command of [['dotnet', 'format', '--verify-no-changes'], ['dotnet', 'format', 'whitespace', '--folder', '--verify-no-changes']]) {
+        const { w, cfg } = dotnetWorld([{ id: 'format', command, mandatory: false }]);
+        const c = await run(cfg, w);
+        expect(c.status, command.join(' ')).toBe('warn');
+        expect(c.summary).toBe("check format runs dotnet format, which cannot run in a run's check sandbox on macOS; a run whose contract requires it would block at its baseline");
+        expect(c.missing).toBe('dotnet format run outside Orbit, in CI');
+        expect(c.fix).toMatch(/^remove checks\.format from \.orbit\/config\.yaml and run dotnet format in CI \(on macOS no form/);
+        const text = [c.summary, ...c.details, c.fix].join('\n');
+        expect(text).not.toMatch(/; a run would block at its baseline/);
+        expect(text).not.toMatch(/mandatory: false/);
+        expect(c.details).toEqual([`format: ${command.includes('whitespace') ? 'runs "dotnet format whitespace --folder --verify-no-changes", which lists every folder above the checkout for .editorconfig files, while a run\'s checkout sits in the Orbit home, which the check sandbox does not let it read' : 'runs "dotnet format --verify-no-changes", which loads the project through a build host whose named pipe .NET binds under /tmp'}, and the check sandbox refuses it`]);
+      }
+    });
+
+    it('still fails the same check when it is mandatory, and offers "set mandatory: false" to neither', async () => {
+      const mandatory = dotnetWorld([{ id: 'format', command: ['dotnet', 'format', '--verify-no-changes'], mandatory: true }]);
+      const m = await run(mandatory.cfg, mandatory.w);
+      expect(m.status).toBe('fail');
+      expect(m.summary).toBe("check format runs dotnet format, which cannot run in a run's check sandbox on macOS; a run would block at its baseline");
+      expect(m.fix).toMatch(/^remove checks\.format from \.orbit\/config\.yaml and run dotnet format in CI \(on macOS no form/);
+      expect(m.fix).not.toMatch(/mandatory/);
+      // An optional dotnet format inside a chain that also builds without -m:1 is still refused for the build, with the format taken out and no mandatory advice.
+      const chain = dotnetWorld([{ id: 'format', command: ['dotnet build && dotnet format --verify-no-changes'], shell: true, mandatory: false }]);
+      const c = await run(chain.cfg, chain.w);
+      expect(c.status).toBe('warn');
+      expect(c.fix).toMatch(/^checks\.format\.command: \["dotnet build -m:1 && dotnet format --verify-no-changes"\] \(MSBuild worker nodes cannot run/);
+      expect(c.fix).toMatch(/; remove checks\.format from \.orbit\/config\.yaml and run dotnet format in CI \(on macOS no form/);
+      expect(c.fix).not.toMatch(/mandatory/);
+    });
+
+    it('says only a run whose contract requires an optional check the sandbox refuses for another cause blocks, in place of "a run would block at its baseline"', async () => {
+      const { w, cfg } = dotnetWorld([{ id: 'test', command: ['dotnet', 'build'], mandatory: false }]);
+      const c = await run(cfg, w);
+      expect(c.status).toBe('warn');
+      expect(c.summary).toBe('check test would start MSBuild worker nodes, which the sandbox refuses; a run whose contract requires it would block at its baseline');
+      const optionals = dotnetWorld([{ id: 'test', command: ['dotnet', 'build'], mandatory: false }, { id: 'docs', command: ['dotnet', 'build', 'docs'], mandatory: false }]);
+      expect((await run(optionals.cfg, optionals.w)).summary).toBe('checks test, docs would start MSBuild worker nodes, which the sandbox refuses; a run whose contract requires one of them would block at its baseline');
+      const mixed = dotnetWorld([{ id: 'build', command: ['dotnet', 'build'], mandatory: true }, { id: 'docs', command: ['dotnet', 'build', 'docs'], mandatory: false }]);
+      expect((await run(mixed.cfg, mixed.w)).summary).toBe('checks build, docs would start MSBuild worker nodes, which the sandbox refuses; a run would block at its baseline');
+    });
   });
 });

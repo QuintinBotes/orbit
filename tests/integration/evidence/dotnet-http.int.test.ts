@@ -264,8 +264,9 @@ describe.skipIf(skip !== null)(skip === null ? '.NET HTTP clients under srt' : `
     const cacheRoot = toolchainCacheRoot(orbitHome, repoKeyFor(base.e.r.repo));
     expect(readdirSync(join(cacheRoot, 'nuget'))).toContain(PACKAGE.id.toLowerCase());
     const after = doctor();
-    expect(after.status).toBe('warn');
-    expect(after.details.at(-1)).toMatch(/^NuGet cache .+: holds \d+ packages?$/);
+    // Filled: reported as filled, with nothing left to warn of (issue #33).
+    expect(after.status).toBe('pass');
+    expect(after.details.find((d) => d.startsWith('NuGet cache '))).toMatch(/^NuGet cache .+: holds \d+ packages?$/);
     const p = { ...base, cacheRoot, ctx: { ...base.ctx, toolchainCacheRoot: cacheRoot } };
     const i = await install(p);
     expect(i.log).not.toMatch(NOT_CONTAINER);

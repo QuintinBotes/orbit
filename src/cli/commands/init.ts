@@ -16,6 +16,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { parseDocument } from 'yaml';
 import { OrbitError } from '../../core/errors.ts';
 import { execCapture } from '../../core/exec.ts';
 import { defaultConfig, loadConfig } from '../../policy/index.ts';
@@ -40,7 +41,33 @@ import { detectChecks, renderChecksYaml, type CheckProposal } from '../check-det
  * the default is written, and the person is told how to pick ask or block.
  */
 export const REVIEW_POLICY_PROPOSAL =
-  'review: Codex reviews independently when it is usable (review.providers: [codex]); when it is not, Claude reviews in a separate session and every report says the review was not independent and why (review.when_unavailable: claude). Set review.when_unavailable to ask to be asked first, or to block to require an independent reviewer.';
+  'review: Codex would review independently (review.providers: [codex]), but the template sets providers.codex.data_policy_eligible: false, so Codex does not review until you set it to true in .orbit/config.yaml (only if sending sanitized code and diffs to Codex is permitted for this repository); until then Claude reviews in a separate session and every report says the review was not independent and why (review.when_unavailable: claude). Set review.when_unavailable to ask to be asked first, or to block to require an independent reviewer.';
+
+/**
+ * The review policy sentence for the config just written: where Codex is eligible in it, Codex reviews when it is usable;
+ * where it is not (the template's value), saying so would be false without the one line that enables it (issue #33).
+ */
+export function reviewPolicyProposal(codexEligible: boolean): string {
+  return codexEligible
+    ? 'review: Codex reviews independently when it is usable (review.providers: [codex]); when it is not, Claude reviews in a separate session and every report says the review was not independent and why (review.when_unavailable: claude). Set review.when_unavailable to ask to be asked first, or to block to require an independent reviewer.'
+    : REVIEW_POLICY_PROPOSAL;
+}
+
+/**
+ * The check ids a configuration file declares, read without validating it: a file that fails validation for another
+ * reason still defines its checks, and "define your checks" is not the next step for it (issue #33). Empty for a file that
+ * is not YAML or has no `checks` mapping.
+ */
+function declaredCheckIds(path: string): string[] {
+  try {
+    const doc = parseDocument(readFileSync(path, 'utf8'), { uniqueKeys: true, prettyErrors: false, strict: true });
+    if (doc.errors.length > 0) return [];
+    const checks = (doc.toJS({ maxAliasCount: 50 }) as { checks?: unknown } | null)?.checks;
+    return checks !== null && typeof checks === 'object' && !Array.isArray(checks) ? Object.keys(checks) : [];
+  } catch {
+    return [];
+  }
+}
 
 /** Runtime state only. config.yaml is deliberately not here: it is reviewed like code and normally committed. */
 export const EXCLUDE_RULES: readonly string[] = ['/.orbit/state.sqlite*', '/.orbit/knowledge.sqlite*', '/.orbit/runs/'];
@@ -229,8 +256,20 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
 
   const models = await seedModels(ctx, repo);
 
+  // What the configuration on disk says, for the review sentence and the next step (issue #33): whether Codex is
+  // eligible, and which checks it already defines. A configuration that does not validate says nothing of Codex, but its
+  // checks are still read from the file.
+  let codexEligible = false;
+  let defined: string[];
+  if (problems.length === 0) {
+    const loaded = loadConfig(repo);
+    codexEligible = loaded.providers.codex?.data_policy_eligible === true;
+    defined = Object.keys(loaded.checks);
+  } else defined = declaredCheckIds(configPath);
+  const reviewPolicy = reviewPolicyProposal(codexEligible);
+
   if (args.bool('json')) {
-    json(ctx.io, { repo, review_policy: config === 'created' ? REVIEW_POLICY_PROPOSAL : null, config: { path: configPath, status: config, ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, config_problems: problems, warnings, models });
+    json(ctx.io, { repo, review_policy: config === 'created' ? reviewPolicy : null, config: { path: configPath, status: config, ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, checks_defined: defined, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === 'created' ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
@@ -254,7 +293,12 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   } else line(ctx.io, 'The configuration validates.');
   for (const m of models) line(ctx.io, m);
   for (const w of warnings) line(ctx.io, `WARN: ${w}`);
-  if (config === 'created') line(ctx.io, REVIEW_POLICY_PROPOSAL);
-  line(ctx.io, checkProposal.proposed.length > 0 ? `Next: review the proposed checks in .orbit/config.yaml and add any that are missing, then run ${orbitHint('doctor')}.` : `Next: define your checks in .orbit/config.yaml, then run ${orbitHint('doctor')}.`);
+  if (config === 'created') line(ctx.io, reviewPolicy);
+  if (checkProposal.proposed.length > 0) line(ctx.io, `Next: review the proposed checks in .orbit/config.yaml and add any that are missing, then run ${orbitHint('doctor')}.`);
+  // An existing configuration that already defines checks has nothing to define (issue #33); one that does not validate
+  // has its problems to fix first.
+  else if (defined.length > 0 && problems.length > 0) line(ctx.io, `Next: the configuration defines checks (${defined.join(', ')}) but does not validate: fix the problems above, then run ${orbitHint('doctor')}.`);
+  else if (defined.length > 0) line(ctx.io, `Next: the configuration already defines checks (${defined.join(', ')}); run ${orbitHint('doctor')} to see whether they can run here.`);
+  else line(ctx.io, `Next: define your checks in .orbit/config.yaml, then run ${orbitHint('doctor')}.`);
   return EXIT.OK;
 }

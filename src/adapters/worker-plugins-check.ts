@@ -75,10 +75,19 @@ export async function judgeWorkerPlugins(adapter: ProviderAdapter | undefined, c
     }
     return { status: 'warn', summary: `workers may load ${refused.length} plugin(s) the policy does not allow: ${refused.map(named).join(', ')}`, details: [...details, SCOPE_SOURCE], missing, fix, refused };
   }
+  // Only a managed plugin is known to load into a worker (no setting-sources value leaves it out). A plugin of a scope
+  // doctor cannot place (synced, say) may load, and the 0.2.1 retest's workers loaded none: "would load" is for the
+  // first kind only, and the report names what a session reported loading and says nothing when that is nothing (issue #33).
+  const allowed = judged.map((p) => `${p.id} (scope ${p.scope}, ${p.allowed_by})`).join(', ');
+  const placed = loads.length === 0 ? '' : `${loads.length} plugin(s)${maybe.length > 0 ? ' (scope managed)' : ''}`;
+  const unplaced = maybe.length === 0 ? '' : loads.length === 0 ? `${maybe.length} plugin(s) of a scope doctor cannot place` : `${maybe.length} more of a scope doctor cannot place`;
+  const verb = [placed && `workers would load ${placed}`, unplaced && `${placed ? 'and ' : 'workers '}may load ${unplaced}`].filter(Boolean).join(' ');
+  const reportNote = `a run's final report lists the plugins its worker sessions reported loading and says nothing when they loaded none`;
+  const unplacedNote = maybe.length > 0 ? '; a scope doctor cannot place may not be loaded at all, because workers start with no user, project or local settings' : '';
   return {
     status: 'pass',
-    summary: `workers would load ${judged.length} plugin(s), each allowed by the policy: ${judged.map((p) => `${p.id} (scope ${p.scope}, ${p.allowed_by})`).join(', ')}`,
-    details: [...details, `${HOOKS_NOTE}; each run lists the plugins its workers loaded in its final report`, SCOPE_SOURCE],
+    summary: `${verb}, each allowed by the policy: ${allowed}`,
+    details: [...details, `${HOOKS_NOTE}; ${reportNote}${unplacedNote}`, SCOPE_SOURCE],
     missing: null,
     fix: null,
     refused: [],

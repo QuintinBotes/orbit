@@ -20,6 +20,7 @@ const { recordReview } = await import('../../../src/review/store.ts');
 const { FakeGitHub, GhCliClient } = await import('../../../src/delivery/github.ts');
 const { addEvidence, giveRepository, gitIn, initLedger, makeUnitLab, setContract } = await import('./coverage-helpers.ts');
 const { repoKey } = await import('../../../src/controller/context.ts');
+const { createdBranch } = await import('../../../src/controller/run-refs.ts');
 type UnitLab = import('./coverage-helpers.ts').UnitLab;
 type CandidateRecord = import('../../../src/evidence/store.ts').CandidateRecord;
 type OrbitConfig = import('../../../src/policy/types.ts').OrbitConfig;
@@ -136,6 +137,20 @@ describe('a mode that takes no external action', () => {
     lab.db.run('UPDATE runs SET branch = NULL WHERE id = ?', lab.runId);
     await run();
     expect(gitIn(lab.repo, 'rev-parse', `refs/heads/orbit/${lab.runId}`)).toBe(cand.commitSha);
+  });
+
+  // Issue #33: status and the report name a branch only once it exists, so a delivery the gate refuses must not leave one
+  // behind (the branch was made first, and the refusal then reported "no branch" while one existed).
+  it('makes no branch for a delivery the delivery gate refuses', async () => {
+    await setup();
+    lab.db.run("UPDATE evidence_reports SET verdict = 'INCOMPLETE', report_json = json_set(report_json, '$.verdict', 'INCOMPLETE') WHERE run_id = ?", lab.runId);
+    await run();
+    expect(state()).toBe('BLOCKED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^delivery gate: .*not PASS/);
+    const branch = getRun(lab.db, lab.runId).branch ?? `orbit/${lab.runId}`;
+    expect(() => gitIn(lab.repo, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`)).toThrow();
+    expect(createdBranch(lab.db, getRun(lab.db, lab.runId))).toBeNull();
+    expect(decisions('gate.delivery')).toHaveLength(1);
   });
 
   it('does not succeed when the completion gate does not hold', async () => {

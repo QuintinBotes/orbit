@@ -47,7 +47,13 @@ then last-progress time, spend against budget, and any pending questions with
 their ids. With a run id, add a short account of the timeline: what was tried,
 what failed and why, where it escalated, and what it cost. BLOCKED means a decision or credential is needed: say which, and
 point to `/orbit:inquisition --run <run-id>` for questions or `/orbit:resume
-<run-id>` once the blocker is cleared. A run that is not final but shows no
+<run-id>` once the blocker is cleared. When the stage line says a new run is
+needed (a frozen-policy or check-definition block, or an environment block with no
+baseline exception to approve), do not point to resume: say that and suggest
+cancelling the run and starting a new one after the fix the reason names. A run
+with every implementation attempt used that waits in its last attempt is not one
+of these: its stage line says what it returns to, and answering then resuming
+continues that attempt. A run that is not final but shows no
 recent progress may have no controller: point to `/orbit:resume <run-id>`.
 With no run id the command lists runs; summarise them in a short table.
 Read-only: this skill changes nothing.

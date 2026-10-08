@@ -9,6 +9,8 @@ import type { OrbitDb } from '../../storage/db.ts';
 import { findController } from '../../storage/controllers.ts';
 import { listWorkers, type WorkerRecord } from '../../storage/workers.ts';
 import { listRuns, type RunRecord } from '../../controller/run-store.ts';
+import { newRunNeeded } from '../../controller/resume.ts';
+import { createdBranch, currentCandidateRef } from '../../controller/run-refs.ts';
 import { isTerminal } from '../../controller/states.ts';
 import { stateDbPath } from '../../controller/start.ts';
 import { pruneDeadControllers } from '../../controller/service.ts';
@@ -40,7 +42,10 @@ export interface RunStatus {
   paused: boolean;
   cancel_requested: boolean;
   outcome_reason: string | null;
+  /** The task branch, once delivery created it; null before (the name PREFLIGHT chose is not a branch yet). */
   branch: string | null;
+  /** The ref that pins the run's current candidate (refs/orbit/<run>/candidates/<seq>), once there is one. */
+  candidate_ref: string | null;
   difficulty: string | null;
   created_at: number;
   started_at: number | null;
@@ -71,6 +76,17 @@ interface WorkerSummary {
 
 function workerSummary(w: WorkerRecord): WorkerSummary {
   return { id: w.id, role: w.role, provider: w.provider, model: w.model, state: w.state, spawned_at: w.spawnedAt };
+}
+
+/**
+ * The state, plus the stage an interruption returns to. A BLOCKED run says so only where a resume can clear the block:
+ * where it cannot (a frozen policy, an environment block with nothing to approve, every attempt used), "will return to
+ * VERIFYING" read as an invitation to resume, and the way forward is a new run (issue #33).
+ */
+function stageOf(db: OrbitDb, run: RunRecord): string {
+  if (!run.resumeState || !(run.state === 'INQUISITION' || run.state === 'BLOCKED' || run.state === 'RECOVERING')) return run.state;
+  const fresh = run.state === 'BLOCKED' ? newRunNeeded(db, run) : null;
+  return fresh !== null ? `${run.state} (a new run is needed: ${fresh})` : `${run.state} (will return to ${run.resumeState})`;
 }
 
 export function buildRunStatus(ctx: Pick<CliContext, 'clock'>, db: OrbitDb, run: RunRecord): RunStatus {
@@ -107,11 +123,12 @@ export function buildRunStatus(ctx: Pick<CliContext, 'clock'>, db: OrbitDb, run:
     goal: run.goal,
     mode: run.mode,
     state: run.state,
-    stage: run.resumeState && (run.state === 'INQUISITION' || run.state === 'BLOCKED' || run.state === 'RECOVERING') ? `${run.state} (will return to ${run.resumeState})` : run.state,
+    stage: stageOf(db, run),
     paused: run.paused,
     cancel_requested: run.cancelRequested,
     outcome_reason: run.outcomeReason,
-    branch: run.branch,
+    branch: createdBranch(db, run),
+    candidate_ref: currentCandidateRef(db, run.id),
     difficulty: run.difficulty,
     created_at: run.createdAt,
     started_at: run.startedAt,
@@ -143,6 +160,7 @@ export function renderRunStatus(s: RunStatus, now: number): string {
   out.push(`run ${s.id}  ${s.state}${flags.length ? `  (${flags.join(', ')})` : ''}`);
   out.push(`goal:      ${flat(s.goal)}`);
   out.push(`mode:      ${s.mode}${s.difficulty ? `   difficulty: ${s.difficulty}` : ''}${s.branch ? `   branch: ${s.branch}` : ''}`);
+  if (s.candidate_ref) out.push(`candidate: ${s.candidate_ref}`);
   out.push(`stage:     ${s.stage}`);
   if (s.outcome_reason) out.push(`outcome:   ${flat(s.outcome_reason)}`);
   out.push(`progress:  last progress ${ago(now, s.last_progress_at)}${s.last_event ? `; last event ${s.last_event.type}${s.last_event.to_state ? ` -> ${s.last_event.to_state}` : ''} ${ago(now, s.last_event.at)}` : ''}`);

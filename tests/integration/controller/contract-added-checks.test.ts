@@ -99,6 +99,7 @@ interface Baseline {
   checks: { checkId: string; status: string }[];
   failures: { checkId: string; classification?: string; signals?: string[] }[];
   amendments?: { checkIds: string[]; stage: string }[];
+  complete: boolean;
 }
 
 function baselineOf(l: Lab, runId: string): Baseline {
@@ -153,6 +154,9 @@ describe.skipIf(!canStripTypes)('a check the contract adds is run on the base re
     expect(baseline.checkIds).toEqual(['format', 'unit']);
     expect(baseline.failures.map((f) => [f.checkId, f.classification, f.signals])).toEqual([['format', 'environment', ['pipe-denied']]]);
     expect(baseline.amendments).toEqual([expect.objectContaining({ checkIds: ['format'], stage: 'PLANNING' })]);
+    // PREFLIGHT's baseline was complete, and an amendment that blocks leaves it so (issue #33 marks only PREFLIGHT's own
+    // incomplete): its classification is what makes the resume run the check again.
+    expect(baseline.complete).toBe(true);
     const [amended] = listDecisions(l.db(), run.id, { kind: 'baseline.amended' });
     expect(amended?.data).toMatchObject({ stage: 'PLANNING', checks: [expect.objectContaining({ check_id: 'format', status: 'FAILED', classification: 'environment', cited_by: ['AC-2'] })] });
     expect(listDecisions(l.db(), run.id, { kind: 'baseline.environment-failure' })[0]?.data).toMatchObject({ checks: [expect.objectContaining({ check_id: 'format', classification: 'environment', signals: ['pipe-denied'] })] });
@@ -168,6 +172,7 @@ describe.skipIf(!canStripTypes)('a check the contract adds is run on the base re
     expect(baseRuns(l, run.id, 'unit')).toEqual(['PASSED']);
     const after = baselineOf(l, run.id);
     expect(after.failures).toEqual([]);
+    expect(after.complete).toBe(true);
     expect(after.checks.map((c) => [c.checkId, c.status]).sort()).toEqual([['format', 'PASSED'], ['unit', 'PASSED']]);
     expect(listWorkers(l.db(), { runId: run.id, role: 'implementer' })).toHaveLength(1);
   }, 240_000);

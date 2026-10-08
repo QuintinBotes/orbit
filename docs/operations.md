@@ -172,7 +172,11 @@ completion gate, the reviewed candidate commit is left on the local branch
 tree and current branch are not touched. The report calls it
 "candidate commit (local, not delivered)"; "delivered commit" appears only when a
 real delivery happened. Look at the result with `git log orbit/<run-id>` and
-`orbit report <run-id>`. In the delivery modes Orbit builds the delivery commit
+`orbit report <run-id>`. That branch is made only when the run is delivered: a
+run that ended before then (blocked, exhausted) has none, and `orbit status` and
+the report name `refs/orbit/<run-id>/candidates/<n>` instead, the ref that pins
+its candidate (read it with `git log` as the branch); `branch` in their JSON
+stays null until a branch exists, and `candidate_ref` carries the ref. In the delivery modes Orbit builds the delivery commit
 on exactly the reviewed tree, pushes the task branch and opens a pull request
 (draft by default).
 

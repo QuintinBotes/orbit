@@ -747,6 +747,44 @@ describe('routeFor', () => {
     const rec = getDecision(lab.db, choice.decisionId)!;
     expect(rec.data).toMatchObject({ unvalidated: true, provider: 'claude', model: choice.model });
     expect(rec.summary).toContain('allowed but not yet validated on claude-cli');
+    // Issue #33: the reason was the router's own failure message, "no eligible claude-cli model for extraction", read as a
+    // reason for the choice it was made despite. It says what happened: nothing is validated yet, so the allowed one was chosen.
+    expect((rec.data as { reason: string }).reason).toBe(`no claude-cli model is validated for extraction yet; the first successful session validates the allowed ${choice.model}, which was chosen`);
+    expect(rec.summary).toBe(`plan:1: ${choice.model} (allowed but not yet validated on claude-cli; the first successful session validates it)`);
+    expect(`${rec.summary} ${(rec.data as { reason: string }).reason}`).not.toContain('no eligible');
+  });
+
+  // The fallback is for a router that found nothing eligible, and "nothing is validated yet" is only one reason for that. A
+  // model that claude-cli reported available is validated, so the decision must not say it is not (issue #33, review).
+  it('does not call a validated model unvalidated when the router found none eligible for another reason', () => {
+    lab = makeUnitLab({
+      path: ['PREFLIGHT'],
+      tweak: (c) => {
+        c.routing = { ...c.routing, allowed_models: ['claude-fable-5-1'] };
+      },
+    });
+    seed(false);
+    lab.deps.registry.markAvailability('claude-fable-5-1', 'claude-cli', true, 'test');
+    const choice = routeFor(lab.ctx(), 'plan:1', 'routine-code', signals);
+    expect(choice.model).toBe('claude-fable-5-1');
+    const rec = getDecision(lab.db, choice.decisionId)!;
+    const reason = (rec.data as { reason: string; unvalidated: boolean }).reason;
+    expect(rec.summary).not.toMatch(/not yet validated/);
+    expect(reason).not.toMatch(/is validated for|first successful session validates/);
+    expect(reason).toContain('claude-fable-5-1 was chosen although the router reported: no eligible claude-cli model for routine-code');
+    expect(rec.data).toMatchObject({ unvalidated: false, model: 'claude-fable-5-1' });
+  });
+
+  it('still says nothing is validated when the only model that reported anything was withdrawn', () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    seed(false);
+    lab.deps.registry.markAvailability('claude-sonnet-5-5', 'claude-cli', false, 'withdrawn');
+    const choice = routeFor(lab.ctx(), 'plan:1', 'extraction', signals);
+    expect(choice.model).not.toBe('claude-sonnet-5-5');
+    const rec = getDecision(lab.db, choice.decisionId)!;
+    // A withdrawn model is not a validated one, and the one chosen is unvalidated.
+    expect(rec.data).toMatchObject({ unvalidated: true });
+    expect((rec.data as { reason: string }).reason).toBe(`no claude-cli model is validated for extraction yet; the first successful session validates the allowed ${choice.model}, which was chosen`);
   });
 
   it('prefers the configured provider model when it is one of the allowed seeded models', () => {

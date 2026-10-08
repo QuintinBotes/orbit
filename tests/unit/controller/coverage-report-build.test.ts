@@ -192,9 +192,11 @@ describe('what to do next', () => {
       return out;
     };
     expect(delivery(true)).toBe('Review pull request #12 and merge it if you accept it; Orbit does not merge.');
-    expect(delivery(false)).toBe('Review branch orbit/<run> and merge it if you accept it; Orbit does not merge.');
+    // Neither a pull request nor a branch was recorded: no placeholder name (issue #33), only the candidate.
+    expect(delivery(false)).toBe('Review the reviewed candidate and merge it if you accept it; Orbit does not merge.');
     expect(next('SUCCEEDED', 'autonomous', null, { branch: 'orbit/local' })).toBe('Inspect the local branch orbit/local (the reviewed candidate) and merge it yourself if you accept it.');
-    expect(next('SUCCEEDED')).toBe('Inspect the local branch orbit/orb-unit (the reviewed candidate) and merge it yourself if you accept it.');
+    // No branch recorded and no candidate: the run id is not turned into a branch name (issue #33).
+    expect(next('SUCCEEDED')).toBe('Inspect the reviewed candidate and merge it yourself if you accept it.');
   });
 
   it('each other outcome says what a person does', () => {

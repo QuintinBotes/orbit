@@ -26,7 +26,9 @@ any), the checks it proposed from what the repository declares (each is commente
 config for review) and the tools it skipped, and every problem listed under "The
 configuration does not validate yet". The starter is a template, not a working policy: the person must review
 it, define the checks that prove a change, and set the provider settings it
-asks for. When this is a linked git worktree, `init` says that the exclude file
+asks for (it says that the starter sets `providers.codex.data_policy_eligible:
+false`, so Codex does not review until the person sets it to true, which is
+theirs to decide). When this is a linked git worktree, `init` says that the exclude file
 it wrote is shared by every worktree of the clone and lives outside this
 worktree; pass that on, since a person may not expect a worktree's init to
 write into the main checkout's git directory. Offer to help edit `.orbit/config.yaml`, then suggest `/orbit:doctor`.

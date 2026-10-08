@@ -58,6 +58,44 @@ describe.skipIf(!canStripTypes)('the curator is a recorded worker of the finishe
     expect(types).not.toContain('learning.curation-skipped');
   }, 120_000);
 
+  // Issue #33: `orbit report` printed final.json/final.md, written when the run ended and before the curator ran, so its
+  // cost left the curator out while `orbit status` and the timeline (read from the usage rows) included it.
+  it('rewrites the final report once the curator has been charged, so its cost is the one status and the timeline show', async () => {
+    const l = lab();
+    const runId = await runToEnd(l);
+    const [curator] = listWorkers(l.db(), { runId, role: 'curator' });
+    const cost = (sql: string, ...args: string[]) => l.db().get<{ c: number | null }>(sql, ...args)?.c ?? 0;
+    const total = cost('SELECT SUM(cost_usd) AS c FROM usage WHERE run_id = ?', runId);
+    const curatorCost = cost('SELECT SUM(cost_usd) AS c FROM usage WHERE run_id = ? AND worker_id = ?', runId, curator!.id);
+    expect(curatorCost).toBeGreaterThan(0);
+    const runDir = join(l.repo, '.orbit', 'runs', runId);
+    const report = JSON.parse(readFileSync(join(runDir, 'final.json'), 'utf8')) as { budget: { cost_usd: number } };
+    expect(report.budget.cost_usd).toBeCloseTo(total, 6);
+    expect(readFileSync(join(runDir, 'final.md'), 'utf8')).toContain(`model cost: $${total.toFixed(4)}`);
+    // What `orbit report` prints is that file.
+    const io = memoryIo('');
+    const code = await main(['report', runId, '--json'], { io, cwd: l.repo, homeDir: l.base, orbitHome: l.orbitHome, env: { ...process.env, ORBIT_HOME: l.orbitHome }, user: 'alice' });
+    expect(code).toBe(0);
+    expect((JSON.parse(io.stdout) as { budget: { cost_usd: number } }).budget.cost_usd).toBeCloseTo(total, 6);
+  }, 120_000);
+
+  // Issue #33: a run blocked at PREFLIGHT started a Haiku curator on its gate decisions (each cites the evidence it
+  // looked at), though no worker had run and nothing of the repository had been tried: nothing to learn from.
+  it('starts no curator for a run that ended before any worker session, and records why', async () => {
+    const l = lab();
+    writeFileSync(join(l.repo, 'scratch.txt'), 'uncommitted\n');
+    writeScenario(l, baseScenario({ implementer: [implementMul('*')], curator: [{ structured: { lessons: [], discarded: [] } }] }));
+    const run = startLabRun(l);
+    await new Controller({ mode: 'foreground', runId: run.id, deps: labDeps(l), tickIntervalMs: 20, leaseTtlMs: 30_000, graceMs: 300 }).start();
+    const done = l.db().get<{ state: string; outcome_reason: string | null }>('SELECT state, outcome_reason FROM runs WHERE id = ?', run.id);
+    expect(done?.state, done?.outcome_reason ?? '').toBe('BLOCKED');
+    expect(done?.outcome_reason).toMatch(/uncommitted changes/);
+    expect(listWorkers(l.db(), { runId: run.id })).toEqual([]);
+    expect(learningOf(l, run.id).skipped).toBe('the run ended before any worker session, so there is nothing of the repository to learn from; its gate decisions record the environment, not a lesson');
+    expect(eventTypes(l, run.id)).toContain('learning.curation-skipped');
+    expect(existsSync(l.argvLog) ? readFileSync(l.argvLog, 'utf8') : '').not.toContain('"role":"curator"');
+  }, 120_000);
+
   it('skips curation, and records why, when knowledge.curator_budget_usd is 0', async () => {
     const l = lab((c) => void (c.knowledge.curator_budget_usd = 0));
     const runId = await runToEnd(l);

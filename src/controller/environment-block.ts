@@ -209,7 +209,7 @@ const NUGET_LINE = /\berror NU\d{4}\b|\bNuGet\b|proxy tunnel request to proxy '[
 
 /** The fix for a NuGet restore that cannot download on macOS, named by doctor's checks.dotnet-packages. */
 const NUGET_FILL =
-  'since nuget.org\'s certificate cannot be verified inside the sandbox on macOS (srt keeps the system trust service out of reach), fill the repository\'s NuGet cache outside the sandbox with the command orbit doctor prints (checks.dotnet-packages), from which the dependency install and the checks restore (docs/troubleshooting.md, ".NET HTTP clients and NuGet restore on macOS")';
+  'since nuget.org\'s certificate cannot be verified inside the sandbox on macOS (srt keeps the system trust service out of reach), fill the repository\'s NuGet cache outside the sandbox with the command orbit doctor prints (checks.dotnet-packages), which the checks that restore read, and the dependency install too when dependencies.install_command restores packages (docs/troubleshooting.md, ".NET HTTP clients and NuGet restore on macOS")';
 
 /** The runner's note on a check it stopped for an MSBuild worker node the sandbox refused (evidence/runner.ts). */
 const MSBUILD_NODE_DENIAL = /^the check sandbox denied MSBuild node /;

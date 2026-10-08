@@ -97,6 +97,33 @@ describe('runBaseline', () => {
     expect((await runBaseline(baselineInput(t, r.repo, r.base, run))).reused).toBe(false);
   });
 
+  // Issue #33: the controller judges the baseline as it is recorded, so the file, the event and the gate say alike. A judgement
+  // that throws records nothing, never an unjudged baseline that says "complete" (the inconsistency the issue is about): the
+  // step's retry measures again, and its checkout is gone either way.
+  it('records the baseline as the controller judged it, and nothing when the judgement throws', async () => {
+    const t = tempRoot();
+    const r = makeRepo(t.root);
+    const run = makeRun(t.root, r.repo, [nodeCheck('lint', 'console.log("clean")')]);
+    cleanups.push(() => run.db.close(), () => t.remove());
+    await expect(
+      runBaseline(
+        baselineInput(t, r.repo, r.base, run, {
+          settle: () => {
+            throw new Error('the classification failed');
+          },
+        }),
+      ),
+    ).rejects.toThrow('the classification failed');
+    expect(existsSync(join(run.runDir, 'baseline.json'))).toBe(false);
+    expect(run.db.get("SELECT 1 AS x FROM events WHERE type = 'baseline.recorded'")).toBeUndefined();
+    expect(sh(r.repo, 'worktree', 'list').trim().split('\n')).toHaveLength(1);
+    const judged = await runBaseline(baselineInput(t, r.repo, r.base, run, { settle: (rep: { complete: boolean }) => ({ ...rep, complete: false }) }));
+    expect(judged.reused).toBe(false);
+    expect(JSON.parse(readFileSync(join(run.runDir, 'baseline.json'), 'utf8')).complete).toBe(false);
+    const recorded = run.db.get<{ data_json: string }>("SELECT data_json FROM events WHERE type = 'baseline.recorded'");
+    expect(JSON.parse(recorded!.data_json).complete).toBe(false);
+  });
+
   it('stops when cancelled and says the baseline is incomplete', async () => {
     const t = tempRoot();
     const r = makeRepo(t.root);

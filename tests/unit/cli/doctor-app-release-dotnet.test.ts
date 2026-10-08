@@ -86,6 +86,19 @@ describe('checkSandboxCheck: ui.environment.start_command (issue #26)', () => {
     expect(fixed.status, fixed.details.join('\n')).toBe('pass');
   });
 
+  // Issue #33: an optional check runs only in a run whose contract requires it (ADR 0012), so beside the application it
+  // makes no block at every run's baseline; with a mandatory check refused too, every run blocks there.
+  it('says a run would fail where Orbit starts them for the start command beside an optional check, and blocks at the baseline with a mandatory one', async () => {
+    const w = world();
+    const optional = withApp({ ...w.cfg, checks: { docs: { ...w.cfg.checks.test!, id: 'docs', command: ['dotnet', 'build', 'docs'], mandatory: false } } }, ['dotnet', 'run', '--project', 'Web']);
+    const c = await checkSandboxCheck({ config: optional, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, platform: 'linux', launch: ok });
+    expect(c.status).toBe('fail');
+    expect(c.summary).toBe('check docs and ui.environment.start_command would start MSBuild worker nodes, which the sandbox refuses; a run would fail where Orbit starts them');
+    const mandatory = withApp({ ...w.cfg, checks: { docs: { ...w.cfg.checks.test!, id: 'docs', command: ['dotnet', 'build', 'docs'], mandatory: true } } }, ['dotnet', 'run', '--project', 'Web']);
+    const m = await checkSandboxCheck({ config: mandatory, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, platform: 'linux', launch: ok });
+    expect(m.summary).toBe('check docs and ui.environment.start_command would start MSBuild worker nodes, which the sandbox refuses; a run would block at its baseline');
+  });
+
   it('pins a build the start command runs itself, warns for one it cannot see, and says nothing of an application without .NET', async () => {
     const w = world();
     // An application that is already built runs no MSBuild.

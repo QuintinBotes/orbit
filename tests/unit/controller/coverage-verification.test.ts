@@ -117,6 +117,9 @@ describe('collecting evidence', () => {
     expect(e.uiRequired).toBe(false);
     expect(e.exploration).toBeNull();
     expect(e.report.unverified).toContain('one-shot authorization used');
+    // No UI section: the gate is not applicable, which claims nothing was checked and so lists nothing as unverified (issue #33).
+    expect(e.ui.status).toBe('not_applicable');
+    expect(e.report.unverified.join('\n')).not.toMatch(/UI/);
     const runnerCtx = hooks.runChecks.mock.calls[0]![0] as { checkIds: string[]; checkoutDir: string; pollMs: number; killGraceMs: number };
     expect(runnerCtx).toMatchObject({ checkIds: ['unit'], checkoutDir: s.checkoutDir, pollMs: 20, killGraceMs: 50 });
     expect(hooks.scanCandidateSecrets.mock.calls[0]![0]).toMatchObject({ baseRev: s.ctx.run.baseRevision, commit: s.cand.commitSha, now: lab.clock.now() });
@@ -242,6 +245,25 @@ describe('UI evidence', () => {
     const out = await run(s);
     expect(hooks.runUiChecks).not.toHaveBeenCalled();
     expect('evidence' in out && out.evidence.uiRequired).toBe(false);
+  });
+
+  it('lists nothing as unverified for a configured UI that no change needed (not applicable), and still lists a UI run that did not happen', async () => {
+    const s = setup({ ui: true });
+    hooks.git.mockResolvedValue('apps/calc.mjs\0');
+    const idle = await run(s);
+    if (!('evidence' in idle)) throw new Error('stopped');
+    expect(idle.evidence.ui).toMatchObject({ status: 'not_applicable', notes: ['no UI path changed and no criterion needs UI evidence'] });
+    expect(idle.evidence.report.unverified).not.toContain('no UI path changed and no criterion needs UI evidence');
+    expect(idle.evidence.report.unverified.join('\n')).not.toMatch(/UI/);
+    // A gate that could not establish its claim is not this: it keeps its note.
+    lab.cleanup();
+    const t = setup({ ui: true });
+    hooks.git.mockResolvedValue('src/App.tsx\0');
+    hooks.runUiChecks.mockResolvedValue(null);
+    const ran = await run(t);
+    if (!('evidence' in ran)) throw new Error('stopped');
+    expect(ran.evidence.ui.status).toBe('unverified');
+    expect(ran.evidence.report.unverified).toContain('UI checks did not run');
   });
 
   it('a UI failure does not overturn a verdict that already failed for another reason', async () => {

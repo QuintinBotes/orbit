@@ -286,4 +286,18 @@ describe('behaviour and UI gates', () => {
     expect(uiGate({ required: true, configured: true, result: { verdict: 'CANCELLED', reasons: ['interrupted'], unverified: [], journeys: [] } }).status).toBe('unverified');
     expect(uiGate({ required: true, configured: true, result: { verdict: 'FAIL', reasons: ['journey failed'], unverified: [], journeys: [] } }).status).toBe('fail');
   });
+
+  // Issue #33 (0.2.1 retest): gate.ui was recorded as a pass for a repository with no UI section, though nothing was
+  // evaluated. A gate that has nothing to judge is not applicable, which is neither a pass nor an unverified claim, and
+  // cites no evidence (a recorded opinion, not an observation to learn from).
+  it('records not applicable, not pass, where nothing needs UI evidence, and cites no evidence', () => {
+    const none = uiGate({ required: false, configured: false, result: null });
+    expect(none).toMatchObject({ gate: 'ui', status: 'not_applicable', passed: true, reasons: [], evidence: [], onFailure: 'repair-or-block' });
+    expect(none.notes).toEqual(['the policy configures no UI journeys, and no criterion needs UI evidence']);
+    const unchanged = uiGate({ required: false, configured: true, result: null });
+    expect(unchanged).toMatchObject({ status: 'not_applicable', passed: true, evidence: [] });
+    expect(unchanged.notes).toEqual(['no UI path changed and no criterion needs UI evidence']);
+    // Where UI evidence is needed the gate still judges: a pass is a pass.
+    expect(uiGate({ required: true, configured: true, result: { verdict: 'PASS', reasons: [], unverified: [], journeys: [] } })).toMatchObject({ status: 'pass', passed: true });
+  });
 });

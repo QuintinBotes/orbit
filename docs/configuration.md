@@ -376,8 +376,12 @@ from the session's `system/init` entry when it has one; Claude Code does not
 report it there today, so it comes from `claude plugin list --json`. Every
 non-built-in plugin a worker loaded is recorded in its result and listed under
 "Worker plugins" in the final report, with a residual risk for each allowed
-one. `orbit doctor` lists, before any run, the plugins a worker would load and
-whether the policy allows them.
+one; a session that loaded none adds none, and the report says nothing then.
+`orbit doctor` lists, before any run, the plugins a worker would load (a
+managed one) or may load (one of a scope it cannot place, such as `synced`:
+workers start with no user, project or local settings, and sessions have been
+seen to load none of those) and whether the policy allows them; what a
+session really loaded is in its own record and the report.
 
 A run is not started when doctor would fail that check (`claude.plugins`:
 workers would load a managed plugin the policy does not allow, so every session
@@ -484,7 +488,13 @@ prints what it proposed and why, and `--json` carries the same in
 `checks.proposed` (id, ecosystem, command, category, timeout_seconds, reason)
 and `checks.not_proposed` (a declared tool that was not found, for example).
 An existing config is never touched: init proposes only for a config it
-writes, so checks you wrote or edited stay exactly as they are.
+writes, so checks you wrote or edited stay exactly as they are, and when it
+already defines checks init says so (`checks_defined` in `--json`) instead of
+asking you to define them. The starter sets `providers.codex.data_policy_eligible:
+false`, so Codex does not review until you set it to `true` (only if sending
+sanitized code and diffs to Codex is permitted for this repository); init says
+so when it writes the config, and until then Claude reviews in a separate
+session and every report says the review was not independent.
 
 | Ecosystem | Declared by | Proposed (id, command, category) |
 |---|---|---|

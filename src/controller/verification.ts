@@ -158,7 +158,10 @@ export async function collectVerificationEvidence<S = never>(ctx: RunContext, ca
   const disclose = (text: string): void => {
     if (!report.unverified.includes(text)) report.unverified.push(text);
   };
-  for (const n of [...security.notes, ...uiG.notes, ...(opts.notes ?? [])]) disclose(n);
+  // A gate's notes say what it could not establish; a gate with nothing to judge (not applicable) established nothing and
+  // claims nothing, so its note (the reason) is a decision detail, not something left unverified (issue #33).
+  for (const g of [security, uiG]) if (g.status !== 'not_applicable') for (const n of g.notes) disclose(n);
+  for (const n of opts.notes ?? []) disclose(n);
   // A dependency audit that could not run on this candidate is unverified, never silently a pass (a blocking one stopped the install).
   if (install.audit && install.audit.blocking.length === 0 && install.audit.summary) disclose(install.audit.summary);
   // Waived or advisory SAST findings, and SARIF that could not be read, are disclosed with the evidence.

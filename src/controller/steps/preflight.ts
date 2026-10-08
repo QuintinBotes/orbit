@@ -75,7 +75,18 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
   // The baseline checkout lives with the run's other checkouts, outside the repository.
   const wtRoot = runWorktreeRoot(ctx);
   mkdirSync(wtRoot, { recursive: true, mode: 0o700 });
+  // Every failure of the base revision is classified before any is called pre-existing (ADR 0010), the gate included. A
+  // check whose tool rejected its command line (issue #23) or that the environment stopped (issue #10) never tested the
+  // repository's code, so it is no pre-existing failure and gets no baseline-exception question: approving one would let
+  // a run pass with a check that never ran. A check whose command names something that does not exist yet (a missing
+  // target) goes on to CONTRACTING, which expects it to flip when the contract names it and blocks on it as misconfigured
+  // when the contract does not (steps/baseline-questions.ts); it is never accepted as an exception either. Only what is
+  // left is a failure of the code. The classification is made as the baseline is recorded, so that the file, the
+  // baseline.recorded event and the gate all say whether it is complete (issue #33).
+  const baselineDir = join(wtRoot, 'baseline');
+  let settled: BaselineClassification | null = null;
   const baseline = await runBaseline({
+    settle: (report) => (settled = classifyBaseline(ctx, report, baselineDir)).report,
     db: ctx.db,
     run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
     repoRoot: repo,
@@ -88,19 +99,13 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
     pollMs: ctx.timing.checkPollMs,
     killGraceMs: ctx.timing.killGraceMs,
     homeDir: homeOf(ctx.deps),
-    checkoutDir: join(wtRoot, 'baseline'),
+    checkoutDir: baselineDir,
     toolchainCacheRoot: toolchainCacheRootFor(ctx),
   });
   const after = await safePoint(ctx);
   if (after) return after;
-  // Every failure of the base revision is classified before any is called pre-existing (ADR 0010), the gate included. A
-  // check whose tool rejected its command line (issue #23) or that the environment stopped (issue #10) never tested the
-  // repository's code, so it is no pre-existing failure and gets no baseline-exception question: approving one would let
-  // a run pass with a check that never ran. A check whose command names something that does not exist yet (a missing
-  // target) goes on to CONTRACTING, which expects it to flip when the contract names it and blocks on it as misconfigured
-  // when the contract does not (steps/baseline-questions.ts); it is never accepted as an exception either. Only what is
-  // left is a failure of the code.
-  const found = classifyBaseline(ctx, baseline.report, join(wtRoot, 'baseline'));
+  // A baseline reused from an earlier try was not measured now, so it is judged here, as before.
+  const found = settled ?? classifyBaseline(ctx, baseline.report, baselineDir);
   const { report: classified, misconfigured, missingTargets, environment: notRun } = found;
   const bg = baselineGate(classified);
   recordGate(ctx, bg);
@@ -140,7 +145,14 @@ export function classifyBaseline(ctx: RunContext, report: BaselineReport, checko
   const misconfigured = commandErrors.filter((m) => m.kind === 'argument');
   const missingTargets = commandErrors.filter((m) => m.kind === 'missing-target');
   const environment = baselineEnvironmentFailures(ctx, judged, checkoutDir).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId));
-  return { report: classifiedBaseline(report, environment, misconfigured, missingTargets), misconfigured, missingTargets, environment };
+  const marked = classifiedBaseline(report, environment, misconfigured, missingTargets);
+  // A check the environment stopped, or whose command the tool rejected, produced no result of its own: PREFLIGHT's
+  // baseline is incomplete, which is what blockOnBaseline records and what the next baseline run acts on (it runs that
+  // check again), and the file, the baseline.recorded event and the gate say so alike (issue #33). A missing target is
+  // still a decisive result: CONTRACTING expects it to flip. An amendment (`only`) leaves the baseline complete: the
+  // classification it records is what makes the next amendment run the check again (ADR 0012).
+  const incomplete = only === null && (environment.length > 0 || misconfigured.length > 0);
+  return { report: incomplete ? { ...marked, complete: false } : marked, misconfigured, missingTargets, environment };
 }
 
 /**
@@ -244,7 +256,7 @@ export async function blockOnBaseline(
 export function recordGate(ctx: RunContext, g: GateResult<unknown>): void {
   decide(ctx, {
     kind: `gate.${g.gate}`,
-    summary: `${g.gate} gate ${g.status}${g.reasons.length ? `: ${g.reasons.join('; ')}` : ''}${g.notes.length ? ` (notes: ${g.notes.join('; ')})` : ''}`,
+    summary: `${g.gate} gate ${g.status === 'not_applicable' ? 'not applicable' : g.status}${g.reasons.length ? `: ${g.reasons.join('; ')}` : ''}${g.notes.length ? ` (notes: ${g.notes.join('; ')})` : ''}`,
     data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure },
   });
 }

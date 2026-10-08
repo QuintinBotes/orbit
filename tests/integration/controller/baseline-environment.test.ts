@@ -33,6 +33,11 @@ function replaying(fixture: string): string {
   return `process.stdout.write(${JSON.stringify(log)});\nprocess.exit(1);\n`;
 }
 
+/** The `complete` each baseline.recorded event of the run states. */
+function recordedCompleteness(l: Lab, runId: string): boolean[] {
+  return l.db().all<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'baseline.recorded' ORDER BY id", runId).map((r) => (JSON.parse(r.data_json) as { complete: boolean }).complete);
+}
+
 function buildLab(script: string): Lab {
   const l = makeLab({
     files: { 'tools/build.mjs': script },
@@ -75,6 +80,13 @@ describe.skipIf(!canStripTypes)('controller: a check the environment stopped on 
     // The baseline is kept for the record, but a resume runs it again rather than reusing it.
     const baseline = JSON.parse(readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'baseline.json'), 'utf8')) as { complete: boolean; failures: { checkId: string }[] };
     expect(baseline.complete).toBe(false);
+    // The gate and the event say what baseline.json says (issue #33): the check produced no result of its own, so the
+    // baseline is incomplete, the gate is unverified (not "pass"), and baseline.recorded does not claim complete.
+    const [gate] = listDecisions(l.db(), run.id, { kind: 'gate.baseline' });
+    expect(gate?.data).toMatchObject({ status: 'unverified' });
+    expect(gate?.summary).toMatch(/^baseline gate unverified \(notes: environment failure on the base revision, not a pre-existing failure: build/);
+    expect(gate?.summary).toContain('the baseline is incomplete');
+    expect(recordedCompleteness(l, run.id)).toEqual([false]);
     const final = readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'final.md'), 'utf8');
     expect(final).toMatch(/Check build could not run on the base revision/);
   }, 180_000);
@@ -88,5 +100,8 @@ describe.skipIf(!canStripTypes)('controller: a check the environment stopped on 
     expect(listDecisions(l.db(), run.id, { kind: 'baseline.environment-failure' })).toEqual([]);
     expect(listDecisions(l.db(), run.id, { kind: 'baseline.exception-request' })).toHaveLength(1);
     expect(listQuestions(l.db(), run.id).map((q) => q.id)).toEqual([expect.stringMatching(/^q-baseline-/)]);
+    // A pre-existing failure is a decisive result: complete, and the gate passes with it noted.
+    expect(listDecisions(l.db(), run.id, { kind: 'gate.baseline' })[0]?.data).toMatchObject({ status: 'pass' });
+    expect(recordedCompleteness(l, run.id)).toEqual([true]);
   }, 240_000);
 });

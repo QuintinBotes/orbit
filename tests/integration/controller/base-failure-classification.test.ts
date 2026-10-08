@@ -71,6 +71,11 @@ async function drive(l: Lab, runId: string): Promise<void> {
   await new Controller({ mode: 'foreground', runId, deps: labDeps(l), tickIntervalMs: 20, leaseTtlMs: 30_000, graceMs: 300 }).start();
 }
 
+/** The `complete` each baseline.recorded event of the run states. */
+function recordedCompleteness(l: Lab, runId: string): boolean[] {
+  return l.db().all<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'baseline.recorded' ORDER BY id", runId).map((r) => (JSON.parse(r.data_json) as { complete: boolean }).complete);
+}
+
 function transitions(l: Lab, runId: string): string[] {
   return l.db().all<{ to_state: string }>("SELECT to_state FROM events WHERE run_id = ? AND type = 'state.transition' ORDER BY id", runId).map((r) => r.to_state);
 }
@@ -171,6 +176,9 @@ describe.skipIf(!canStripTypes)('PREFLIGHT classifies a base-revision failure', 
     const [gate] = listDecisions(l.db(), run.id, { kind: 'gate.baseline' });
     expect(gate?.summary).toContain('misconfigured check on the base revision, not a pre-existing failure: build');
     expect(gate?.summary).not.toContain('pre-existing failure on the base revision: build');
+    // The gate and the event say what baseline.json says (issue #33): this baseline is incomplete.
+    expect(gate?.data).toMatchObject({ status: 'unverified' });
+    expect(recordedCompleteness(l, run.id)).toEqual([false]);
 
     // `orbit resume --force` with nothing fixed runs the baseline again and blocks again, cleanly.
     resume(l, run.id);
@@ -245,6 +253,9 @@ describe.skipIf(!canStripTypes)('PREFLIGHT classifies a base-revision failure', 
     expect(frozenPolicySetting(getRun(l.db(), run.id))).toBe('checks.lint.command');
     expect(listDecisions(l.db(), run.id, { kind: 'baseline.missing-target' })[0]?.data).toMatchObject({ checks: [expect.objectContaining({ check_id: 'lint', kind: 'missing-target', signature: 'npm-missing-script' })] });
     expect(listDecisions(l.db(), run.id, { kind: 'baseline.check-misconfigured' })[0]?.data).toMatchObject({ stage: 'CONTRACTING', checks: [expect.objectContaining({ check_id: 'lint', classification: 'misconfigured', kind: 'missing-target' })] });
+    // A missing target is a decisive result CONTRACTING acts on, so the baseline stays complete and its gate passes (issue #33).
+    expect(listDecisions(l.db(), run.id, { kind: 'gate.baseline' })[0]?.data).toMatchObject({ status: 'pass' });
+    expect(recordedCompleteness(l, run.id)).toEqual([true]);
     // Its question was raised for P18 and withdrawn by the block; it was never a pre-existing failure.
     expect(listQuestions(l.db(), run.id).map((q) => q.status)).toEqual(['withdrawn']);
     expect(listDecisions(l.db(), run.id, { kind: 'baseline.failures' })).toEqual([]);

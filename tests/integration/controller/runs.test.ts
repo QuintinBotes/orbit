@@ -59,6 +59,17 @@ describe.skipIf(!canStripTypes)('controller: complete runs with fake providers',
     expect(kinds.indexOf('gate.delivery')).toBeLessThan(kinds.indexOf('gate.completion'));
     const security = listDecisions(l.db(), run.id, { kind: 'gate.static_security' })[0]!;
     expect(security.summary).toMatch(/unverified/);
+    // No UI section: nothing was evaluated, so the gate is not applicable, not a pass (issue #33).
+    const ui = listDecisions(l.db(), run.id, { kind: 'gate.ui' })[0]!;
+    expect(ui.data).toMatchObject({ status: 'not_applicable', evidence: [] });
+    expect(ui.summary).toBe('ui gate not applicable (notes: the policy configures no UI journeys, and no criterion needs UI evidence)');
+    // Not applicable claims nothing, so no surface lists it as "not verified": not the evidence report, final.json, final.md, nor the PR body's source.
+    expect(ev!.report.unverified.join('\n')).not.toMatch(/UI/);
+    const finalJson = JSON.parse(readFileSync(join(runDir(l, run.id), 'final.json'), 'utf8')) as { unverified: string[] };
+    expect(finalJson.unverified.join('\n')).not.toMatch(/UI/);
+    const notVerified = /## Not verified\n([\s\S]*?)\n## /.exec(readFileSync(join(runDir(l, run.id), 'final.md'), 'utf8'))?.[1] ?? '';
+    expect(notVerified).toMatch(/static analysis/);
+    expect(notVerified).not.toMatch(/UI/);
   });
 
   it('scenario 2: a failing check is diagnosed and repaired in a second attempt', async () => {

@@ -2,8 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { EXCLUDE_RULES } from '../../../src/cli/commands/init.ts';
-import { makeLab, type Lab } from './lab.ts';
+import { EXCLUDE_RULES, REVIEW_POLICY_PROPOSAL, reviewPolicyProposal } from '../../../src/cli/commands/init.ts';
+import { defineCheck, makeLab, type Lab } from './lab.ts';
 
 const labs: Lab[] = [];
 const lab = (o?: Parameters<typeof makeLab>[0]) => {
@@ -202,8 +202,65 @@ describe('orbit init', () => {
     const cfg = readFileSync(join(l.repo, '.orbit', 'config.yaml'), 'utf8');
     expect(cfg).toMatch(/^ {2}providers: \[codex\]$/m);
     expect(cfg).toMatch(/^ {2}when_unavailable: claude$/m);
-    expect(r.out).toMatch(/review: Codex reviews independently when it is usable.*Claude reviews in a separate session and every report says the review was not independent.*review\.when_unavailable: claude.*Set review\.when_unavailable to ask to be asked first, or to block to require an independent reviewer/);
+    expect(r.out).toMatch(/review: Codex would review independently.*Claude reviews in a separate session and every report says the review was not independent.*review\.when_unavailable: claude.*Set review\.when_unavailable to ask to be asked first, or to block to require an independent reviewer/);
     const again = JSON.parse((await l.cli(['init', '--json'])).out) as { review_policy: string | null };
     expect(again.review_policy).toBeNull();
+  });
+
+  // Issue #33 (0.2.1 retest): init said Codex reviews independently when usable, while the template it writes sets
+  // providers.codex.data_policy_eligible: false, which keeps Codex from reviewing at all. It says so, and how to enable it.
+  it('says the template does not let Codex review yet, and how to enable it', async () => {
+    const l = lab();
+    const r = await l.cli(['init']);
+    const cfg = readFileSync(join(l.repo, '.orbit', 'config.yaml'), 'utf8');
+    expect(cfg).toMatch(/^ {4}data_policy_eligible: false$/m);
+    expect(r.out).toContain('the template sets providers.codex.data_policy_eligible: false, so Codex does not review until you set it to true in .orbit/config.yaml (only if sending sanitized code and diffs to Codex is permitted for this repository)');
+    expect(r.out).not.toContain('Codex reviews independently when it is usable');
+    const j = JSON.parse((await lab().cli(['init', '--json'])).out) as { review_policy: string };
+    expect(j.review_policy).toContain('providers.codex.data_policy_eligible: false');
+    expect(j.review_policy).toContain('set it to true');
+    // Where Codex is eligible in the config init wrote, the old sentence is the true one.
+    expect(reviewPolicyProposal(true)).toMatch(/^review: Codex reviews independently when it is usable \(review\.providers: \[codex\]\); when it is not, Claude reviews in a separate session/);
+    expect(reviewPolicyProposal(true)).not.toContain('data_policy_eligible');
+    expect(reviewPolicyProposal(false)).toBe(REVIEW_POLICY_PROPOSAL);
+  });
+
+  // Issue #33: "Next: define your checks" on a configuration that already defines them.
+  it('does not say to define checks when the existing configuration already defines some', async () => {
+    const l = lab();
+    await l.cli(['init']);
+    defineCheck(l);
+    const r = await l.cli(['init']);
+    expect(r.out).toContain('already exists; left unchanged');
+    expect(r.out).not.toContain('define your checks');
+    expect(r.out).toContain('Next: the configuration already defines checks (unit-tests); run "orbit doctor" to see whether they can run here.');
+    const j = JSON.parse((await l.cli(['init', '--json'])).out) as { checks_defined: string[] };
+    expect(j.checks_defined).toEqual(['unit-tests']);
+    // A fresh starter with no check detected still has to define them.
+    const fresh = await lab().cli(['init']);
+    expect(fresh.out).toContain('Next: define your checks in .orbit/config.yaml, then run "orbit doctor".');
+  });
+
+  // The checks of a configuration that fails validation for another reason are still the checks it defines.
+  it('does not say to define checks when the existing configuration defines some but does not validate', async () => {
+    const l = lab();
+    await l.cli(['init']);
+    defineCheck(l);
+    const path = join(l.repo, '.orbit', 'config.yaml');
+    writeFileSync(path, readFileSync(path, 'utf8').replace(/^mode: .*$/m, 'mode: not-a-mode'));
+    const r = await l.cli(['init']);
+    expect(r.out).toContain('The configuration does not validate yet:');
+    expect(r.out).not.toContain('define your checks');
+    expect(r.out).toContain('Next: the configuration defines checks (unit-tests) but does not validate: fix the problems above, then run "orbit doctor".');
+    const j = JSON.parse((await l.cli(['init', '--json'])).out) as { checks_defined: string[]; config_problems: string[] };
+    expect(j.config_problems.length).toBeGreaterThan(0);
+    expect(j.checks_defined).toEqual(['unit-tests']);
+    // No check in it, or a file that is not YAML at all: nothing is read from it, and the step is the same as before.
+    writeFileSync(path, readFileSync(path, 'utf8').replace(/^ {2}unit-tests:\n {4}command: .*\n/m, ''));
+    expect((await l.cli(['init'])).out).toContain('Next: define your checks in .orbit/config.yaml, then run "orbit doctor".');
+    writeFileSync(path, 'checks: [unclosed\n');
+    const broken = await l.cli(['init']);
+    expect(broken.out).toContain('Next: define your checks in .orbit/config.yaml, then run "orbit doctor".');
+    expect((JSON.parse((await l.cli(['init', '--json'])).out) as { checks_defined: string[] }).checks_defined).toEqual([]);
   });
 });

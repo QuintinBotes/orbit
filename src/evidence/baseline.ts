@@ -514,6 +514,13 @@ export interface RunBaselineInput {
    * amended report is returned, not written: the caller writes it once it has classified the checks it ran.
    */
   amend?: { stage: string };
+  /**
+   * Judges a baseline just measured, before it is written or recorded. The controller classifies each failure that was
+   * not the repository's code (ADR 0010), and a check that never produced a result of its own leaves the baseline
+   * incomplete, which the file, the `baseline.recorded` event and the gate must all say alike (issue #33). Not called for
+   * a baseline reused from an earlier call, nor for an amendment, whose caller classifies and writes it.
+   */
+  settle?: (report: BaselineReport) => BaselineReport;
 }
 
 export interface BaselineOutcome {
@@ -562,6 +569,7 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
   const checkoutDir = input.checkoutDir ?? join(prepareWorkerTmpDir(join(runDir, 'baseline-checkout')), `base-${sha256(run.id).slice(0, 8)}`);
   await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
   await materializeCandidate(input.repoRoot, baseRevision, checkoutDir, { readOnly: false });
+  let measured: { report: BaselineReport; results: CheckResult[] };
   try {
     const ctx: RunnerContext = {
       db,
@@ -599,14 +607,13 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
     // Every requested check produced a decisive result (no ERROR, no CANCELLED, none skipped).
     const complete = (install.skipped || install.ok) && entries.length === defs.length && entries.every(decisive);
     const now = clock.now();
-    let report: BaselineReport;
     if (amending) {
       // The amended checks replace whatever was recorded for them; a check with no decisive result is not counted as
       // covered, so the next step that needs it runs it again.
       const base = prior!;
       const asked = new Set(checkIds);
       const covered = entries.filter(decisive).map((e) => e.checkId);
-      report = {
+      const report: BaselineReport = {
         ...base,
         checkIds: [...new Set([...base.checkIds.filter((id) => !asked.has(id)), ...covered])].sort(),
         install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
@@ -615,34 +622,35 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
         complete: base.complete && complete,
         amendments: [...(base.amendments ?? []), { checkIds, stage: input.amend!.stage, recordedAt: now }],
       };
-    } else {
-      report = {
-        schema: 'orbit.baseline/1',
-        runId: run.id,
-        baseRevision,
-        baseTree,
-        policyHash: run.policyHash,
-        checkIds,
-        install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
-        ...(audit ? { audit } : {}),
-        auditNotes: baselineAuditNotes(audit, dependencyAuditPolicy(snapshot.config)),
-        checks: entries,
-        failures: entries.filter((e) => e.mandatory && failed(e)).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
-        complete,
-        recordedAt: now,
-      };
-    }
-    // An amendment's report is the caller's to write, once it has classified the checks it ran (steps/baseline-amendment.ts):
-    // written here, a crash before that would leave them looking judged and never classified.
-    if (!amending) atomicWriteJson(file, report);
-    if (amending) {
+      // An amendment's report is the caller's to write, once it has classified the checks it ran (steps/baseline-amendment.ts):
+      // written here, a crash before that would leave them looking judged and never classified.
       db.tx(() => appendEvent(db, run.id, 'baseline.amended', 'controller', { base_revision: baseRevision, base_tree: baseTree, stage: input.amend!.stage, checks: checkIds, failures: entries.filter(failed).map((e) => e.checkId), complete }, now));
-    } else {
-      const auditSummary = audit ? { ran: audit.ran, reason: audit.reason, vulnerabilities: audit.vulnerabilities.length, disallowed_licenses: audit.licenses.length } : null;
-      db.tx(() => appendEvent(db, run.id, 'baseline.recorded', 'controller', { base_revision: baseRevision, base_tree: baseTree, failures: report.failures.map((f) => f.checkId), complete: report.complete, audit: auditSummary }, now));
+      return { report, results, reused: false };
     }
-    return { report, results, reused: false };
+    const report: BaselineReport = {
+      schema: 'orbit.baseline/1',
+      runId: run.id,
+      baseRevision,
+      baseTree,
+      policyHash: run.policyHash,
+      checkIds,
+      install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
+      ...(audit ? { audit } : {}),
+      auditNotes: baselineAuditNotes(audit, dependencyAuditPolicy(snapshot.config)),
+      checks: entries,
+      failures: entries.filter((e) => e.mandatory && failed(e)).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
+      complete,
+      recordedAt: now,
+    };
+    measured = { report, results };
   } finally {
     await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
   }
+  // Judged after the checkout is gone, as the controller always has: what it reads is the check rows and their logs.
+  const report = input.settle ? input.settle(measured.report) : measured.report;
+  atomicWriteJson(file, report);
+  const audit = report.audit ?? null;
+  const auditSummary = audit ? { ran: audit.ran, reason: audit.reason, vulnerabilities: audit.vulnerabilities.length, disallowed_licenses: audit.licenses.length } : null;
+  db.tx(() => appendEvent(db, run.id, 'baseline.recorded', 'controller', { base_revision: baseRevision, base_tree: baseTree, failures: report.failures.map((f) => f.checkId), complete: report.complete, audit: auditSummary }, clock.now()));
+  return { report, results: measured.results, reused: false };
 }

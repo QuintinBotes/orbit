@@ -4,10 +4,11 @@
  *   intake -> environment -> baseline -> implementation (scope) ->
  *   static security -> behaviour -> UI -> independent review -> delivery -> completion
  *
- * Each gate returns pass, fail or unverified with the evidence it looked at
- * and the failure behaviour from the spec table. Gates decide nothing about
- * state: the step that calls one acts on `onFailure`. "Unverified" is never
- * reported as passed; where a gate cannot establish its claim it says so.
+ * Each gate returns pass, fail, unverified or not applicable with the evidence
+ * it looked at and the failure behaviour from the spec table. Gates decide
+ * nothing about state: the step that calls one acts on `onFailure`. "Unverified"
+ * is never reported as passed; where a gate cannot establish its claim it says
+ * so, and a gate with nothing to judge is "not applicable", never a pass.
  */
 import { realpathSync } from 'node:fs';
 import type { OrbitDb } from '../storage/db.ts';
@@ -53,7 +54,8 @@ export const FAILURE_BEHAVIOUR: Readonly<Record<GateName, GateFailure>> = {
   completion: 'no-success',
 };
 
-export type GateStatus = 'pass' | 'fail' | 'unverified';
+/** `not_applicable`: the gate had nothing to judge (no UI section, say). It blocks nothing, and is not a claim that anything was checked. */
+export type GateStatus = 'pass' | 'fail' | 'unverified' | 'not_applicable';
 
 export interface GateResult<D = Record<string, unknown>> {
   gate: GateName;
@@ -72,6 +74,11 @@ export interface GateResult<D = Record<string, unknown>> {
 function result<D>(gate: GateName, reasons: string[], evidence: string[], notes: string[], details: D, unverified = false): GateResult<D> {
   const status: GateStatus = reasons.length > 0 ? 'fail' : unverified ? 'unverified' : 'pass';
   return { gate, status, passed: status === 'pass', reasons, evidence, notes, onFailure: FAILURE_BEHAVIOUR[gate], details };
+}
+
+/** A gate with nothing to judge: it passes through (`passed`), cites no evidence, and says why in a note (issue #33). */
+function notApplicable<D>(gate: GateName, why: string, details: D): GateResult<D> {
+  return { gate, status: 'not_applicable', passed: true, reasons: [], evidence: [], notes: [why], onFailure: FAILURE_BEHAVIOUR[gate], details };
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +335,7 @@ export interface UiGateInput {
 }
 
 export function uiGate(input: UiGateInput): GateResult<{ verdict: string | null }> {
-  if (!input.required) return result('ui', [], ['no UI path changed and no criterion needs UI evidence'], [], { verdict: null });
+  if (!input.required) return notApplicable('ui', input.configured ? 'no UI path changed and no criterion needs UI evidence' : 'the policy configures no UI journeys, and no criterion needs UI evidence', { verdict: null });
   if (!input.configured) return result('ui', ['UI evidence is required but the policy configures no UI journeys'], [], [], { verdict: null });
   const r = input.result;
   if (!r) return result('ui', [], [], ['UI checks did not run'], { verdict: null }, true);
