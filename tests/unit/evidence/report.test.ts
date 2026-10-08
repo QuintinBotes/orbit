@@ -349,7 +349,8 @@ describe('buildEvidenceReport: green checks that prove nothing about the change'
 
   it('supports a criterion when a Rust change adds a #[test] function to a source file, or a test to a crate\'s tests/; not when it adds only code', () => {
     const crate = { dotnetProjects: new Map<string, boolean>(), cargoManifests: new Map([['', true]]) };
-    const added = (lines: string[]) => ['diff --git a/src/lib.rs b/src/lib.rs', '--- a/src/lib.rs', '+++ b/src/lib.rs', '@@ -1,1 +1,4 @@', ...lines.map((l) => `+${l}`)].join('\n');
+    // As the evidence comparison reads it: with full context, the whole candidate file in one hunk (here all of it added).
+    const added = (lines: string[]) => ['diff --git a/src/lib.rs b/src/lib.rs', '--- a/src/lib.rs', '+++ b/src/lib.rs', `@@ -0,0 +1,${lines.length} @@`, ...lines.map((l) => `+${l}`)].join('\n');
     expect(judge({ changedPaths: ['src/lib.rs'], testLayout: crate, diffs: new Map([['src/lib.rs', added(['#[test]', 'fn mul_works() { assert_eq!(mul(2, 3), 6); }'])]]) }).report.verdict).toBe('PASS');
     expect(judge({ changedPaths: ['src/lib.rs', 'tests/mul.rs'], testLayout: crate }).report.verdict).toBe('PASS');
     expect(judge({ changedPaths: ['src/lib.rs'], testLayout: crate, diffs: new Map([['src/lib.rs', added(['pub fn mul(a: i32, b: i32) -> i32 { a * b }'])]]) }).report.verdict).toBe('INCOMPLETE');
