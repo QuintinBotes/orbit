@@ -13,9 +13,9 @@
  *   src/testDebug, src/testRelease) and Bazel's javatests. A test-named class of the main source set is never run by
  *   the build, and helper source sets (testFixtures, testUtils) hold no tests.
  * - C#, F#, Visual Basic: a source is a test when the project that owns it (the nearest project file) is a test project
- *   by its project file (IsTestProject, or a reference to the test SDK or a test framework), on every revision that has
- *   the file, judged by every revision that has the project file. `dotnet test` runs test projects only, so a file
- *   name says nothing here.
+ *   by its project file (IsTestProject, or a reference to the test SDK or a package that makes a test project), on
+ *   every revision that has the file, judged by every revision that has the project file. `dotnet test` runs test
+ *   projects only, so a file name says nothing here.
  * - Rust: a crate's tests/ directory, and a source of a crate's src/ whose change adds a #[test] function that is not
  *   ignored, when the source is a crate root or a module the crate declares; the second needs the file's diff.
  * - Ruby: *_spec.rb under spec/ and *_test.rb under test/. PHP: *Test.php under tests/. Swift: sources under Tests/
@@ -69,6 +69,8 @@ const C_FAMILY = /\.(c|cc|cpp|cxx|h|hh|hpp|hxx)$/;
  * Bazel's javatests. Helper source sets (testFixtures, testUtils, testSupport) hold builders and fakes, not tests.
  */
 const JVM_TEST_SOURCES = /(^|\/)src\/(test|it|test(Debug|Release)|[a-z]\w*Test)\/|(^|\/)javatests\//;
+/** A source set's resources, which the build copies and never compiles, whatever a file there is named. */
+const JVM_RESOURCES = /(^|\/)src\/[A-Za-z]\w*\/resources\//;
 
 /** #[test], #[tokio::test(...)] and other runtimes' path::test, rstest and test_case: what cargo test runs. */
 const RUST_TEST_ATTRIBUTE = /^\s*#\[\s*(?:(?:[A-Za-z_]\w*::)*test|rstest|test_case)\s*[(\]]/;
@@ -87,7 +89,7 @@ const RUST_CRATE_ROOT = /^src\/(lib|main)\.rs$|^src\/bin\/[^/]+\.rs$|^src\/bin\/
 export function isTestPath(path: string, layout: TestLayout = NO_LAYOUT, diff?: string): boolean {
   const p = path.toLowerCase();
   if (JS_PY_GO.test(p)) return jsPyGoTest(p);
-  if (JVM.test(p)) return JVM_TEST_SOURCES.test(path);
+  if (JVM.test(p)) return JVM_TEST_SOURCES.test(path) && !JVM_RESOURCES.test(path);
   if (DOTNET_SOURCE.test(p)) return testOwners(path, layout.dotnetProjects, layout) !== null;
   if (p.endsWith('.rs')) return rustTest(path, layout, diff);
   if (p.endsWith('.rb')) return /(^|\/)spec\/(.+\/)?[^/]+_spec\.rb$/.test(p) || /(^|\/)test\/(.+\/)?[^/]+_test\.rb$/.test(p);
@@ -372,15 +374,21 @@ const CHAR_LITERAL = /'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]{1,8}\}|.)|[^\\'\n
 // ---------------------------------------------------------------------------
 // Project files
 
-/** Package ids whose reference makes a project a test project (NuGet ids are case-insensitive). */
-const TEST_PACKAGES = new Set(['microsoft.net.test.sdk', 'xunit', 'xunit.v3', 'nunit', 'mstest', 'mstest.testframework', 'tunit']);
+/**
+ * Package ids whose reference makes a project one `dotnet test` runs (NuGet ids are case-insensitive): the test SDK,
+ * and packages that bring it or set IsTestProject themselves (xunit's xunit.core, TUnit's engine, the MSTest
+ * metapackage; xunit.v3 refuses a library). A framework alone (NUnit, MSTest.TestFramework) is what a shared library
+ * of base classes references, and dotnet test does not run that (measured, ADR 0011).
+ */
+const TEST_PACKAGES = new Set(['microsoft.net.test.sdk', 'xunit', 'xunit.v3', 'mstest', 'tunit']);
 /** Assemblies whose Reference makes a legacy (non-SDK) .NET Framework project a test project: the test frameworks. */
 const TEST_ASSEMBLIES = new Set(['nunit.framework', 'xunit.core', 'microsoft.visualstudio.qualitytools.unittestframework', 'microsoft.visualstudio.testplatform.testframework']);
 
 /**
  * Whether a .NET project file declares a test project: `<IsTestProject>true</IsTestProject>`, a PackageReference to
- * the test SDK or a test framework, the MSTest project SDK, or in a legacy .NET Framework project a Reference to a test
- * framework assembly or the test project type GUID. `<IsTestProject>false</IsTestProject>` wins, even under a
+ * the test SDK or a package that makes a test project (TEST_PACKAGES), the MSTest project SDK, or in a legacy .NET
+ * Framework project a Reference to a test framework assembly or the test project type GUID.
+ * `<IsTestProject>false</IsTestProject>` wins, even under a
  * condition. Comments are ignored, and so is everything under a condition (an element with a Condition attribute and
  * what it holds, and Choose), since which branch applies is MSBuild's to evaluate. What a Directory.Build.props adds is
  * not read: such a project is not counted until its project file says so (ADR 0011).

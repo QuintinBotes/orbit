@@ -70,6 +70,10 @@ describe('path conventions', () => {
       'app/CalculatorIT.java',
       'build.gradle.kts',
       'src/test/resources/expected.json',
+      // Final review: resources are copied, never compiled, whatever their extension.
+      'src/test/resources/Foo.java',
+      'src/integrationTest/resources/fixtures/Sample.kt',
+      'app/src/androidTest/resources/Fixture.groovy',
     ]);
   });
 
@@ -142,12 +146,23 @@ describe('isDotnetTestProject: what makes a project file a test project', () => 
   const project = (body: string, sdk = 'Microsoft.NET.Sdk') => `<Project Sdk="${sdk}">\n  <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>\n${body}\n</Project>\n`;
   const ref = (id: string) => project(`  <ItemGroup>\n    <PackageReference Include="${id}" Version="1.0.0" />\n  </ItemGroup>`);
 
-  it('a reference to the test SDK or a test framework, IsTestProject, or the MSTest project SDK', () => {
-    for (const id of ['Microsoft.NET.Test.Sdk', 'xunit', 'xunit.v3', 'NUnit', 'MSTest', 'MSTest.TestFramework', 'TUnit', 'microsoft.net.test.sdk']) expect(isDotnetTestProject(ref(id)), id).toBe(true);
+  it('a reference to the test SDK or a package that makes a test project, IsTestProject, or the MSTest project SDK', () => {
+    for (const id of ['Microsoft.NET.Test.Sdk', 'xunit', 'xunit.v3', 'MSTest', 'TUnit', 'microsoft.net.test.sdk']) expect(isDotnetTestProject(ref(id)), id).toBe(true);
+    expect(isDotnetTestProject(project('  <ItemGroup>\n    <PackageReference Include="NUnit" Version="3.14.0" />\n    <PackageReference Include="NUnit3TestAdapter" Version="4.5.0" />\n    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />\n  </ItemGroup>'))).toBe(true);
     expect(isDotnetTestProject(project('  <ItemGroup><PackageReference Version="2.9.2" Include=\'xunit\' /></ItemGroup>'))).toBe(true);
     expect(isDotnetTestProject(project('  <PropertyGroup>\n    <IsTestProject>true</IsTestProject>\n  </PropertyGroup>'))).toBe(true);
     expect(isDotnetTestProject(project('', 'MSTest.Sdk/3.6.4'))).toBe(true);
     expect(isDotnetTestProject('<Project>\n  <Sdk Name="MSTest.Sdk" Version="3.6.4" />\n</Project>\n')).toBe(true);
+  });
+
+  // Final review: a shared library of NUnit or MSTest base classes references the framework without the test SDK, and
+  // dotnet test does not run it. Measured with SDK 9.0.305 on one solution: dotnet test ran the project referencing
+  // NUnit with NUnit3TestAdapter and Microsoft.NET.Test.Sdk, and neither one referencing only NUnit 3.14.0 nor one
+  // referencing only MSTest.TestFramework 3.6.4 (their failing tests never ran). It did run one referencing only xunit
+  // 2.9.2, whose xunit.core sets IsTestProject; xunit.v3 refuses to build a library, and TUnit's engine and the MSTest
+  // metapackage (which brings the test SDK) make a test project too.
+  it('not a library that references only a test framework dotnet test does not run without the test SDK: NUnit, MSTest.TestFramework', () => {
+    for (const id of ['NUnit', 'nunit', 'MSTest.TestFramework']) expect(isDotnetTestProject(ref(id)), id).toBe(false);
   });
 
   it('not a library, a reference to an assertion or analyzer package alone, a commented-out reference or a central version entry', () => {

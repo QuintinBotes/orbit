@@ -41,7 +41,7 @@ runs, never a loose name match:
 |---|---|
 | JavaScript/TypeScript, Python, Go | as before: test directories, `.test.`/`.spec.` files, `test_*.py`, `*_test.py`, `conftest.py`, `*_test.go` |
 | C#, F#, Visual Basic (`.cs`, `.fs`, `.vb`, `.razor`) | a source whose project (the nearest project file above it) is a test project |
-| Java, Kotlin, Scala, Groovy | a source in a test source set: `src/test/`, `src/it/`, `src/<name>Test/` (Gradle, Android, Kotlin Multiplatform), `src/testDebug/` and `src/testRelease/` (Android build types); or under Bazel's `javatests/`. Not a helper source set (`src/testFixtures/`, `src/testUtils/`, `src/testSupport/`) |
+| Java, Kotlin, Scala, Groovy | a source in a test source set: `src/test/`, `src/it/`, `src/<name>Test/` (Gradle, Android, Kotlin Multiplatform), `src/testDebug/` and `src/testRelease/` (Android build types); or under Bazel's `javatests/`. Not a helper source set (`src/testFixtures/`, `src/testUtils/`, `src/testSupport/`), and not a source set's `resources/`, which the build copies and never compiles |
 | Rust | a file under a crate's `tests/`, or a source of a crate's `src/` that cargo compiles (a crate root, or a module the crate declares) whose change adds a `#[test]` function that is not ignored |
 | Ruby | `*_spec.rb` under `spec/`, `*_test.rb` under `test/` |
 | PHP | `*Test.php` under `tests/` |
@@ -79,8 +79,8 @@ is not a test.
 
 A project is a test project when its project file sets
 `<IsTestProject>true</IsTestProject>`, references one of
-`Microsoft.NET.Test.Sdk`, `xunit`, `xunit.v3`, `NUnit`, `MSTest`,
-`MSTest.TestFramework` or `TUnit`, or uses the `MSTest.Sdk` project SDK, and
+`Microsoft.NET.Test.Sdk`, `xunit`, `xunit.v3`, `MSTest` or `TUnit`, or uses
+the `MSTest.Sdk` project SDK, and
 does not set `<IsTestProject>false</IsTestProject>` (anywhere, even under a
 condition: in doubt, a project is not a test project). A legacy .NET Framework
 project counts by a `Reference` to a test framework assembly (`nunit.framework`,
@@ -89,7 +89,18 @@ project counts by a `Reference` to a test framework assembly (`nunit.framework`,
 GUID `{3AC096D0-A1C2-E12C-1390-A8335801FDAB}` in `ProjectTypeGuids`. Comments
 are ignored; a reference to an assertion or analyzer package alone
 (`xunit.assert`, `NUnit.Analyzers`, `FluentAssertions`) is not enough, and
-neither is a `PackageVersion` entry. Nothing under a condition counts: an
+neither is a `PackageVersion` entry. Nor is a test framework alone: a shared
+library of NUnit or MSTest base classes references `NUnit` or
+`MSTest.TestFramework` without the test SDK, and `dotnet test` does not run it
+(measured with SDK 9.0.305 on one solution, final review: it ran the project
+referencing `NUnit`, `NUnit3TestAdapter` and `Microsoft.NET.Test.Sdk`, and not
+the failing tests of a project referencing only `NUnit` 3.14.0 or only
+`MSTest.TestFramework` 3.6.4). The packages that count make a test project by
+themselves: the test SDK; `xunit`, whose `xunit.core` sets `IsTestProject`
+(`dotnet test` ran a project referencing only `xunit` 2.9.2); `xunit.v3`,
+which refuses to build a project that is not a test executable; `TUnit`,
+whose engine sets `IsTestProject`; and the `MSTest` metapackage, which brings
+the test SDK. Nothing under a condition counts: an
 element with a `Condition` attribute is dropped with everything it holds (a
 conditional `PropertyGroup`, `ItemGroup` or reference), and so is `Choose`,
 since which branch applies is MSBuild's to evaluate.
@@ -215,7 +226,11 @@ a file the runner's own configuration or build leaves out still counts by its
 layout (a test file a Vitest `include` pattern skips, a C++ file under `tests/`
 no CMake target lists, a helper module under a crate's `tests/` no test target
 declares, a crate the workspace does not list as a member, a .NET test project
-missing from the solution the check builds). Like adding an empty test file,
+missing from the solution the check builds, a JVM `src/<name>Test/` the build
+never declares as a source set, Android's instrumented `src/androidTest/`,
+which `gradlew test` does not run (only a device run such as
+`connectedAndroidTest` does), and a legacy .NET Framework library that
+references a test framework assembly without being a test project). Like adding an empty test file,
 each is a change the reviewer sees, not a test the green check ran. In Rust,
 a file under a crate's `tests/` counts by its path even when cargo builds no
 test from it: a crate with `autotests = false` (only its `[[test]]` targets
