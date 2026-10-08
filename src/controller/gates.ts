@@ -230,8 +230,14 @@ export function environmentGate(input: EnvironmentInput): GateResult<{ blockedPr
 // ---------------------------------------------------------------------------
 // Baseline
 
-/** Records pre-existing failures (pass); blocks only when the locked install itself failed. */
+/**
+ * Records pre-existing failures (pass); blocks only when the locked install itself failed. Not applicable when nothing
+ * ran on the base revision (no check, no locked install, no dependency audit): a pass would cite nothing (issue #33's
+ * class). A baseline amendment records the gate again with the checks it ran (steps/baseline-amendment.ts).
+ */
 export function baselineGate(report: BaselineReport): GateResult<{ failures: BaselineReport['failures'] }> {
+  const ranNothing = report.checkIds.length === 0 && report.checks.length === 0 && report.failures.length === 0 && report.install.skipped && !report.audit && (report.auditNotes ?? []).length === 0;
+  if (ranNothing && report.complete) return notApplicable('baseline', 'nothing ran on the base revision: the policy marks no check mandatory, and there is no locked install or dependency audit', { failures: [] });
   const reasons: string[] = [];
   const notes: string[] = [];
   const evidence = [`baseline of ${report.baseRevision} (tree ${report.baseTree}): ${report.checks.length} check(s)`];

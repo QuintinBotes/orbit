@@ -279,6 +279,23 @@ describe.skipIf(!canStripTypes)('a check the contract adds is run on the base re
     expect(baseRuns(l, run.id, 'lint')).toEqual(['PASSED']);
   }, 240_000);
 
+  // Final review: with no check the policy marks mandatory PREFLIGHT ran nothing, yet its baseline gate said "pass" with
+  // "0 check(s)", and the checks the contract requires then ran through the amendment, which recorded no gate at all.
+  it('records the baseline gate as not applicable when PREFLIGHT ran nothing, and again with the checks an amendment ran', async () => {
+    const l = labWith({ unit: {} });
+    writeScenario(l, baseScenario({ implementer: [implementMul('*')], verifier: [DIAGNOSIS] }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(baselineOf(l, run.id).amendments?.map((a) => [a.stage, a.checkIds])).toEqual([['PLANNING', ['unit']]]);
+    const gates = listDecisions(l.db(), run.id, { kind: 'gate.baseline' }).map((d) => d.data as { status: string; evidence: string[]; notes: string[] });
+    expect(gates.map((g) => g.status)).toEqual(['not_applicable', 'pass']);
+    expect(gates[0]).toMatchObject({ evidence: [], notes: [expect.stringMatching(/no check/)] });
+    expect(gates[1]?.evidence).toEqual([expect.stringMatching(/: 1 check\(s\)$/)]);
+  }, 240_000);
+
   it('a pre-existing failure of a check the contract adds follows the existing rules: the contract names it as a proof, so it is expected to flip', async () => {
     // tools/lint.mjs fails on the base revision because apps/calc.mjs has no mul yet: a failure of the code, which the goal fixes.
     const lint = "import { readFileSync } from 'node:fs';\nif (!readFileSync('apps/calc.mjs', 'utf8').includes('mul')) { console.error('apps/calc.mjs: missing export mul'); process.exit(1); }\nconsole.log('lint clean');\n";

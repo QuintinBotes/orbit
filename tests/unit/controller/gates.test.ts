@@ -232,6 +232,17 @@ describe('baselineGate', () => {
     expect(baselineGate(report({ install: { skipped: false, reason: 'npm ci failed', ok: false } })).status).toBe('fail');
     expect(baselineGate(report({ complete: false })).status).toBe('unverified');
   });
+  // Final review: a policy that marks no command check mandatory, with no locked install and no audit, runs nothing on the
+  // base revision; the gate said "pass" with "0 check(s)" (the class issue #33 fixed for gate.ui).
+  it('is not applicable when nothing ran on the base revision: no check, no locked install, no audit', () => {
+    const none = baselineGate(report({ checkIds: [] }));
+    expect(none).toMatchObject({ status: 'not_applicable', passed: true, reasons: [], evidence: [] });
+    expect(none.notes).toEqual([expect.stringMatching(/no check/)]);
+    expect(baselineGate(report({ checkIds: [], install: { skipped: false, reason: null, ok: true } })).status).toBe('pass');
+    expect(baselineGate(report({ checkIds: [], install: { skipped: false, reason: 'npm ci failed', ok: false } })).status).toBe('fail');
+    expect(baselineGate(report({ checkIds: [], audit: { findings: [] } as unknown as BaselineReport['audit'] })).status).toBe('pass');
+  });
+
   it('lists each base-revision audit finding the baseline recorded, without failing the gate (G52)', () => {
     const auditNotes = ['pre-existing vulnerability on the base revision: left-pad 1.0.0 (high) GHSA-test-0001', 'pre-existing license problem on the base revision: widget 2.0.0 uses GPL-3.0'];
     const g = baselineGate(report({ auditNotes }));

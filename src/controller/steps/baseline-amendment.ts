@@ -164,6 +164,9 @@ async function runAmendment(ctx: RunContext, contract: GoalContract, ids: readon
   }
   askAboutBaseFailures(ctx, found, { baseRevision, key: `amended-${at}`, only });
   settleExpectedFlips(ctx, contract);
+  // The gate as the run goes on with it: PREFLIGHT's record says nothing of the checks the amendment ran (with no
+  // mandatory check it said "not applicable").
+  recordGate(ctx, baselineGate(classified));
   judged();
   return null;
 }

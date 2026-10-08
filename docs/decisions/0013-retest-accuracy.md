@@ -153,9 +153,16 @@ its record for an observation), and says why in a note. A note of a gate that is
 not applicable is the reason, recorded with the decision; it is not a claim that
 something was left unchecked, so verification does not copy it into the report's
 `unverified` list (and so not into `final.md`, the pull request body or
-`orbit verify`). Only the UI gate uses it so far. Adding a status was preferred
-to leaving the gate out of the record: the record of the gate sequence stays
-complete, and says what it did.
+`orbit verify`). Adding a status was preferred to leaving the gate out of the
+record: the record of the gate sequence stays complete, and says what it did.
+
+The baseline gate uses it too (final review): with no check the policy marks
+mandatory, no locked install and no dependency audit, PREFLIGHT ran nothing on
+the base revision, yet `gate.baseline` was `pass` with the evidence "0
+check(s)". It is now `not_applicable`, saying why. The checks a contract
+requires then run through a baseline amendment (ADR 0012), which recorded no
+gate; an amendment the run goes on from records `gate.baseline` again, with the
+checks it ran, so the latest record says what the base revision ran.
 
 ### Learning starts only for a run that did something
 
@@ -189,7 +196,10 @@ delivery, a succeeded run, or a recorded delivery) and gives the candidate ref
 (`refs/orbit/<run>/candidates/<seq>`) that exists from the first snapshot. `branch`
 in status and report JSON is null until then (it was the planned name), and
 `candidate_ref` is new. The next action for a succeeded run with no recorded
-branch points at the candidate ref and no longer invents a branch from the run id.
+branch points at the candidate ref and no longer invents a branch from the run id;
+the notification's next action does the same (a final review found it still
+named `orbit/<run>`): it names the branch delivery created, else the candidate
+ref, else the report.
 
 A branch can exist before a delivery is recorded, and two such cases were
 missed. A local delivery made the branch (`update-ref`) and only then ran the
@@ -224,7 +234,8 @@ anything validated) is in the registry itself.
 - Messages changed (doctor details, closing lines, the init sentence, route
   reasons); the machine-readable fields are additive except `branch` of status and
   the report, which is null where it used to be a name nothing had created, and
-  `gate.ui`'s status value `not_applicable`. `docs/` and the plugin skills say so.
+  the status value `not_applicable` of `gate.ui` and `gate.baseline`. `docs/`
+  and the plugin skills say so.
 - Doctor's pass for a filled cache rests on the advice having been applied.
   Doctor still warns about an optional check the sandbox refuses, since a run
   whose contract requires it blocks at its baseline (ADR 0012); the summary says
