@@ -20,7 +20,7 @@ import { ModelRegistry } from '../../../src/routing/registry.ts';
 import { startRun, stateDbPath } from '../../../src/controller/start.ts';
 import type { ControllerDeps } from '../../../src/controller/context.ts';
 import { getRun, type RunRecord } from '../../../src/controller/run-store.ts';
-import { ScenarioAdapter } from './scenario-adapter.ts';
+import { replaceFile, ScenarioAdapter } from './scenario-adapter.ts';
 
 export const FAKES = fileURLToPath(new URL('../../fakes/', import.meta.url));
 export const FAKE_CLAUDE = join(FAKES, 'fake-claude.mjs');
@@ -116,8 +116,9 @@ export function makeLab(opts: { tweak?: (c: OrbitConfig) => void; files?: Record
 }
 
 export function writeScenario(lab: Pick<Lab, 'templatePath' | 'scenarioPath'>, scenario: object): void {
-  writeFileSync(lab.templatePath, JSON.stringify(scenario));
-  writeFileSync(lab.scenarioPath, JSON.stringify(scenario));
+  // Replaced, not rewritten in place: a test may change the scenario while a controller or a fake is reading it.
+  replaceFile(lab.templatePath, JSON.stringify(scenario));
+  replaceFile(lab.scenarioPath, JSON.stringify(scenario));
 }
 
 /** What `orbit doctor` would have done: seed the registry and validate the Claude models on the CLI surface. */
