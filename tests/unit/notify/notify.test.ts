@@ -123,6 +123,25 @@ describe('notifying when a run ends', () => {
     expect(events(env, 'notification.dispatched')).toEqual([]);
   });
 
+  // Final review of #33: the payload named branch orbit/<run> for a run whose branch was never made, where orbit status and
+  // the report name the branch delivery created, or else the candidate ref.
+  it('names the branch delivery created, and never one that was not made', async () => {
+    const env = world();
+    setState(env, 'SUCCEEDED', 'all criteria supported', 3);
+    env.db.run('UPDATE runs SET outcome_json = ? WHERE id = ?', JSON.stringify({ state: 'SUCCEEDED', branch: 'orbit/local-2' }), RUN);
+    const sys = fakeSystem({ env: ENV });
+    await notifyRunEnded(input(env, sys));
+    expect(JSON.parse(sys.fetchCalls[0]!.body).text).toContain('Inspect branch orbit/local-2 and merge it yourself');
+
+    const bare = world();
+    setState(bare, 'SUCCEEDED', 'all criteria supported', 4);
+    const sys2 = fakeSystem({ env: ENV });
+    await notifyRunEnded(input(bare, sys2));
+    const text = JSON.parse(sys2.fetchCalls[0]!.body).text as string;
+    expect(text).not.toContain(`orbit/${RUN}`);
+    expect(text).toContain(`Read orbit report ${RUN} for the reviewed candidate`);
+  });
+
   it('does nothing for a run that has not ended', async () => {
     const env = world();
     const sys = fakeSystem();

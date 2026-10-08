@@ -5,7 +5,7 @@ import { OrbitError } from '../../../src/core/errors.ts';
 import { fakeSystem, notifyConfig } from './helpers.ts';
 
 const HOOK = 'https://hooks.acme.test/services/T000/B000/XXXXXXXXXXXXXXXX';
-const payload = buildPayload({ kind: 'run.ended', run: { id: 'orb-1', state: 'SUCCEEDED', outcomeReason: 'all criteria supported', branch: 'orbit/orb-1', mode: 'autonomous' }, questionIds: [], pullRequest: null, remote: null });
+const payload = buildPayload({ kind: 'run.ended', run: { id: 'orb-1', state: 'SUCCEEDED', outcomeReason: 'all criteria supported', mode: 'autonomous' }, questionIds: [], pullRequest: null, remote: null, refs: { branch: 'orbit/orb-1', candidateRef: null } });
 
 const webhookConfig = (hosts: string[] = ['hooks.acme.test']) =>
   notifyConfig((c) => {

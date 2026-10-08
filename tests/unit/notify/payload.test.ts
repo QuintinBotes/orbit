@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest';
 import type { RunRecord } from '../../../src/controller/run-store.ts';
 import { buildPayload, COMMENT_MARKER, commentBody, payloadText, REASON_MAX, sanitizeReason, testPayload } from '../../../src/notify/payload.ts';
 
-const RUN: Pick<RunRecord, 'id' | 'state' | 'outcomeReason' | 'branch' | 'mode'> = { id: 'orb-20261006-101500-a1b2c3', state: 'BLOCKED', outcomeReason: 'contract change needs a decision; open questions: q-1a2b3c', branch: 'orbit/orb-20261006-101500-a1b2c3', mode: 'autonomous-delivery' };
+const RUN: Pick<RunRecord, 'id' | 'state' | 'outcomeReason' | 'mode'> = { id: 'orb-20261006-101500-a1b2c3', state: 'BLOCKED', outcomeReason: 'contract change needs a decision; open questions: q-1a2b3c', mode: 'autonomous-delivery' };
+const BRANCH = 'orbit/orb-20261006-101500-a1b2c3';
+/** The refs a run left: the branch delivery created, and the candidate ref (run-refs.ts). */
+const REFS = { branch: BRANCH, candidateRef: null };
 const TOKEN = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
 
 describe('notification payload (ADR 0008)', () => {
   it('carries the run id, state, reason, next action and question ids, and nothing else', () => {
-    const p = buildPayload({ kind: 'run.ended', run: RUN, questionIds: ['q-1a2b3c'], pullRequest: 12, remote: null });
+    const p = buildPayload({ kind: 'run.ended', run: RUN, questionIds: ['q-1a2b3c'], pullRequest: 12, remote: null, refs: REFS });
     expect(Object.keys(p).sort()).toEqual(['kind', 'next_action', 'question_ids', 'reason', 'run_id', 'schema', 'state']);
     expect(p).toMatchObject({ schema: 'orbit.notification/1', kind: 'run.ended', run_id: RUN.id, state: 'BLOCKED', question_ids: ['q-1a2b3c'] });
     expect(p.reason).toBe(RUN.outcomeReason);
@@ -16,7 +19,7 @@ describe('notification payload (ADR 0008)', () => {
 
   it('never carries code, a diff, a secret or a log excerpt from the outcome reason', () => {
     const reason = [`VERIFYING failed 3 time(s); last error INTERNAL: push refused with token ${TOKEN}`, 'diff --git a/apps/x.ts b/apps/x.ts', '+export const secret = 1;', '    at Object.<anonymous> (/repo/acme/apps/x.ts:3:9)'].join('\n');
-    const p = buildPayload({ kind: 'run.ended', run: { ...RUN, state: 'BLOCKED', outcomeReason: reason }, questionIds: [], pullRequest: null, remote: null });
+    const p = buildPayload({ kind: 'run.ended', run: { ...RUN, state: 'BLOCKED', outcomeReason: reason }, questionIds: [], pullRequest: null, remote: null, refs: REFS });
     const all = JSON.stringify(p) + payloadText(p) + commentBody(p);
     expect(all).not.toContain(TOKEN);
     expect(all).not.toContain('diff --git');
@@ -35,11 +38,15 @@ describe('notification payload (ADR 0008)', () => {
   });
 
   it('names a next action per state from a fixed template', () => {
-    const at = (state: string, extra: Partial<typeof RUN> = {}, pr: number | null = null) =>
-      buildPayload({ kind: 'run.ended', run: { ...RUN, ...extra, state: state as typeof RUN.state }, questionIds: [], pullRequest: pr, remote: null }).next_action;
+    const at = (state: string, extra: Partial<typeof RUN> = {}, pr: number | null = null, refs: { branch: string | null; candidateRef: string | null } = REFS) =>
+      buildPayload({ kind: 'run.ended', run: { ...RUN, ...extra, state: state as typeof RUN.state }, questionIds: [], pullRequest: pr, remote: null, refs }).next_action;
     expect(at('SUCCEEDED', {}, 7)).toBe('Review pull request #7 and merge it if you accept it.');
-    expect(at('SUCCEEDED', { mode: 'autonomous' })).toBe(`Inspect branch ${RUN.branch} and merge it yourself if you accept it.`);
-    expect(at('SUCCEEDED', { mode: 'autonomous', branch: null })).toContain(`orbit/${RUN.id}`);
+    expect(at('SUCCEEDED', { mode: 'autonomous' })).toBe(`Inspect branch ${BRANCH} and merge it yourself if you accept it.`);
+    // Final review of #33: with no branch created, the candidate ref (as orbit status and the report name it), never
+    // an orbit/<run> branch that was not made.
+    const ref = `refs/orbit/${RUN.id}/candidates/2`;
+    expect(at('SUCCEEDED', { mode: 'autonomous' }, null, { branch: null, candidateRef: ref })).toBe(`Inspect the reviewed candidate at ${ref} and merge it yourself if you accept it.`);
+    expect(at('SUCCEEDED', { mode: 'autonomous' }, null, { branch: null, candidateRef: null })).toBe(`Read orbit report ${RUN.id} for the reviewed candidate, and merge it yourself if you accept it.`);
     expect(at('BLOCKED')).toBe(`Resolve the block, then run orbit resume ${RUN.id}.`);
     expect(at('EXHAUSTED')).toBe(`Read orbit report ${RUN.id}, then continue by hand or start a new run.`);
     expect(at('IMPOSSIBLE')).toBe(`Read orbit report ${RUN.id}; revise the goal or the authorization before trying again.`);
@@ -48,7 +55,7 @@ describe('notification payload (ADR 0008)', () => {
   });
 
   it('does not tell a person to resume a block that comes from the run\'s frozen policy: resuming alone would only block again', () => {
-    const at = (outcomeJson: string | null) => buildPayload({ kind: 'run.ended', run: { ...RUN, state: 'BLOCKED', outcomeJson }, questionIds: [], pullRequest: null, remote: null }).next_action;
+    const at = (outcomeJson: string | null) => buildPayload({ kind: 'run.ended', run: { ...RUN, state: 'BLOCKED', outcomeJson }, questionIds: [], pullRequest: null, remote: null, refs: REFS }).next_action;
     const frozen = at(JSON.stringify({ state: 'BLOCKED', reason: 'x', frozen_policy: { setting: 'checks.lint.command' } }));
     expect(frozen).toBe(`Read orbit report ${RUN.id}; this block comes from the run's frozen policy, so resuming alone would only block again.`);
     expect(frozen).not.toMatch(/orbit resume/);
@@ -59,13 +66,13 @@ describe('notification payload (ADR 0008)', () => {
   });
 
   it('a question notification names how to answer, remotely too when remote answers are on', () => {
-    const p = buildPayload({ kind: 'question.open', run: { ...RUN, state: 'BLOCKED' }, questionIds: ['q-1', 'q-2'], pullRequest: 3, remote: { where: 'pull request #3' } });
+    const p = buildPayload({ kind: 'question.open', run: { ...RUN, state: 'BLOCKED' }, questionIds: ['q-1', 'q-2'], pullRequest: 3, remote: { where: 'pull request #3' }, refs: REFS });
     expect(p.kind).toBe('question.open');
     expect(p.next_action).toBe(`Answer with orbit decide ${RUN.id} q-1 <answer>, or comment "/orbit answer q-1 <choice>" on pull request #3.`);
   });
 
   it('the text form is one short message and the comment form carries the marker Orbit uses to skip its own comments', () => {
-    const p = buildPayload({ kind: 'run.ended', run: RUN, questionIds: ['q-1a2b3c'], pullRequest: null, remote: null });
+    const p = buildPayload({ kind: 'run.ended', run: RUN, questionIds: ['q-1a2b3c'], pullRequest: null, remote: null, refs: REFS });
     expect(payloadText(p)).toBe(`Orbit run ${RUN.id} is BLOCKED: ${RUN.outcomeReason}. ${p.next_action} Open questions: q-1a2b3c.`);
     const body = commentBody(p);
     expect(body.startsWith(COMMENT_MARKER)).toBe(true);

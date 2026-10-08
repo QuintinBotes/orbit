@@ -28,7 +28,12 @@ export interface NotificationPayload {
 
 export interface PayloadInput {
   kind: Exclude<NotificationKind, 'test'>;
-  run: Pick<RunRecord, 'id' | 'state' | 'outcomeReason' | 'branch' | 'mode'> & Partial<Pick<RunRecord, 'outcomeJson'>>;
+  run: Pick<RunRecord, 'id' | 'state' | 'outcomeReason' | 'mode'> & Partial<Pick<RunRecord, 'outcomeJson'>>;
+  /**
+   * The refs the run left (controller/run-refs.ts), as orbit status and the report name them: the branch delivery
+   * created, else null, and the ref that pins the current candidate, else null. A branch that was never made is never named.
+   */
+  refs: { branch: string | null; candidateRef: string | null };
   questionIds: readonly string[];
   /** The run's pull request, when delivery opened one. */
   pullRequest: number | null;
@@ -53,7 +58,7 @@ export function sanitizeReason(text: string | null | undefined): string | null {
 }
 
 function nextAction(input: PayloadInput): string {
-  const { run, questionIds, pullRequest, remote } = input;
+  const { run, questionIds, pullRequest, remote, refs } = input;
   const [first] = questionIds;
   if (first !== undefined) {
     const local = `Answer with orbit decide ${run.id} ${first} <answer>`;
@@ -61,7 +66,10 @@ function nextAction(input: PayloadInput): string {
   }
   switch (run.state) {
     case 'SUCCEEDED':
-      return pullRequest !== null ? `Review pull request #${pullRequest} and merge it if you accept it.` : `Inspect branch ${run.branch ?? `orbit/${run.id}`} and merge it yourself if you accept it.`;
+      if (pullRequest !== null) return `Review pull request #${pullRequest} and merge it if you accept it.`;
+      if (refs.branch !== null) return `Inspect branch ${refs.branch} and merge it yourself if you accept it.`;
+      if (refs.candidateRef !== null) return `Inspect the reviewed candidate at ${refs.candidateRef} and merge it yourself if you accept it.`;
+      return `Read orbit report ${run.id} for the reviewed candidate, and merge it yourself if you accept it.`;
     case 'BLOCKED':
       // A block from the frozen policy is not cleared by resuming: the report names the way forward (a new run).
       if (frozenPolicySetting({ outcomeJson: run.outcomeJson ?? null }) !== null) return `Read orbit report ${run.id}; this block comes from the run's frozen policy, so resuming alone would only block again.`;
