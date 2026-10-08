@@ -212,8 +212,10 @@ network, measured; see [security](security.md)), and workers run model-driven
 commands, so there a worker's own run of those tests is refused and the worker
 reports them as not run. The checks run them (a check's `local_binding`,
 below), on every candidate, and `orbit doctor` (`workers.loopback`) warns for
-a .NET or Gradle repository. On Linux every worker sandbox has a loopback of its
-own, which nothing outside it can reach, so workers there run them too. Runners
+a .NET or Gradle repository. On Linux `srt` starts every worker sandbox in a
+network namespace of its own (`bwrap --unshare-net`, from `srt`'s source, not
+measured by Orbit), with a loopback nothing outside it can reach, so workers
+there can run them too. Runners
 that talk to their workers over pipes or IPC need no listener and run in
 workers everywhere: `go test -json`, pytest-xdist, Jest's and Vitest's
 workers, and Surefire's default fork channel. The guard hook refuses a command
@@ -490,7 +492,7 @@ checks:
 | `cwd` | relative to the worktree root (default `.`) |
 | `timeout_seconds` | default 600 |
 | `network_hosts` | hosts the check may reach; must be covered by `network.allowed_hosts` |
-| `local_binding` | default true: the check may listen (a test suite that starts an HTTP server, `dotnet test`'s test host); outbound reach is still only `network_hosts`. On macOS the listener is not limited to 127.0.0.1: one on 0.0.0.0 can be reached from the network while the check runs (see [security](security.md)). Set false for a check that never serves. Workers may not listen |
+| `local_binding` | default true: the check may listen (a test suite that starts an HTTP server, `dotnet test`'s test host); other hosts are still reachable only through `network_hosts`. On macOS the permission is not limited to 127.0.0.1: a listener on 0.0.0.0 can be reached from the network while the check runs, and the check can reach services listening on any address of this machine, its network address included, over TCP and UDP (see [security](security.md)). Set false for a check that never serves. Workers may not listen |
 | `env` | extra environment; delivery credentials such as `GH_TOKEN` are refused |
 | `mandatory` | default true; a run cannot succeed while it fails. A check marked false runs only in a run whose contract requires it (a criterion cites it as proof), and then as a mandatory one does: on the base revision before any change, where it blocks the run when it cannot run ([ADR 0012](decisions/0012-contract-checks-and-judged-trees.md)), so marking a check optional does not make one that cannot run in the sandbox harmless |
 | `flaky_reruns` | 0 to 5; reruns are used only to classify flakiness |

@@ -19,10 +19,12 @@ const WHY =
 
 describe('workerLoopbackCheck', () => {
   it('warns on macOS for a .NET repository: workers cannot run its test host in either tier, and the checks that may listen run it', () => {
-    const c = workerLoopbackCheck({ config: config([{ id: 'unit', command: ['dotnet', 'test'] }, { id: 'lint', command: ['dotnet', 'format'], local_binding: false }]), files: ['acme.sln', 'src/Acme/Acme.csproj'], platform: 'darwin' });
+    // Final review: a build check that may listen runs no test, so it is not named as one that runs the tests.
+    const checks = [{ id: 'unit', command: ['dotnet', 'test'] }, { id: 'build', command: ['dotnet', 'build'], category: 'build' as const }, { id: 'lint', command: ['dotnet', 'format'], local_binding: false }];
+    const c = workerLoopbackCheck({ config: config(checks), files: ['acme.sln', 'src/Acme/Acme.csproj'], platform: 'darwin' });
     expect(c).toMatchObject({ id: 'workers.loopback', area: 'isolation', status: 'warn' });
     expect(c.summary).toBe(
-      "on macOS workers cannot run test hosts that need a loopback socket (dotnet test's VSTest test host, Gradle's test workers, a test that starts a server), in either worker tier, and this repository's tests need one, so a worker submits changes it could not test; the checks that may listen run them",
+      "on macOS workers cannot run test hosts that need a loopback socket (dotnet test's VSTest test host, Gradle's test workers, a test that starts a server), in either worker tier, and this repository's tests need one, so a worker submits changes it could not test; the test checks that may listen run them",
     );
     expect(c.details).toEqual([
       'this repository uses .NET: every dotnet test listens on loopback for its test host, so a worker\'s aborts with "SocketException (13): Permission denied"',
@@ -31,7 +33,7 @@ describe('workerLoopbackCheck', () => {
     ]);
     expect(c.missing).toBe("a worker sandbox that limits a listener to loopback, which macOS's Seatbelt cannot express");
     expect(c.fix).toBe(
-      'nothing to set in Orbit on macOS: keep local_binding (the default) on the checks that run these tests, which test every change a worker submits; on Linux every worker sandbox has a loopback of its own, so workers there run them too',
+      "nothing to set in Orbit on macOS: keep local_binding (the default) on the checks that run these tests, which test every change a worker submits; on Linux srt starts every worker sandbox in a network namespace of its own (from srt's source, not measured by Orbit), so workers there can run them too",
     );
   });
 
@@ -40,6 +42,10 @@ describe('workerLoopbackCheck', () => {
     expect(gradle.status).toBe('warn');
     expect(gradle.summary).toMatch(/; no check may listen either \(local_binding: false on every check\), so nothing here runs them$/);
     expect(gradle.details).toEqual(["this repository uses Gradle: its test workers connect to the build over loopback, so a worker's gradle test cannot run", WHY]);
+    // Only a build check may listen: it runs none of the tests.
+    const buildOnly = workerLoopbackCheck({ config: config([{ id: 'unit', command: ['./gradlew', 'test'], local_binding: false }, { id: 'build', command: ['./gradlew', 'assemble'], category: 'build' }]), files: ['build.gradle.kts'], platform: 'darwin' });
+    expect(buildOnly.summary).toMatch(/; no test check may listen \(local_binding: false on each\), so nothing here runs them$/);
+    expect(buildOnly.details.filter((d) => d.startsWith('check '))).toEqual([]);
     expect(workerLoopbackCheck({ config: config(), files: ['pom.xml', 'src/main/java/Acme.java'], platform: 'darwin' }).status).toBe('pass');
   });
 
@@ -52,9 +58,10 @@ describe('workerLoopbackCheck', () => {
     expect(c.details).toEqual([WHY]);
   });
 
-  it('passes on Linux, where every worker sandbox has a loopback of its own', () => {
+  // Final review: the Linux statements rest on srt's source (bwrap --unshare-net), not on a measurement, and say so.
+  it('passes on Linux, where srt gives every worker sandbox a loopback of its own', () => {
     const c = workerLoopbackCheck({ config: config(), files: ['acme.sln'], platform: 'linux' });
     expect(c).toMatchObject({ id: 'workers.loopback', status: 'pass', details: [], missing: null, fix: null });
-    expect(c.summary).toBe('workers can run test suites that listen on loopback: on Linux every worker sandbox has a loopback of its own, which nothing outside it can reach');
+    expect(c.summary).toBe("workers can run test suites that listen on loopback: on Linux srt starts every worker sandbox in a network namespace of its own, with a loopback nothing outside it can reach (from srt's source, not measured by Orbit)");
   });
 });

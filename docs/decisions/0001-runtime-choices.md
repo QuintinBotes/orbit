@@ -270,7 +270,12 @@ implementer and a real `claude -p` session whose Bash steps started the
 listeners. So the permission is not loopback only: a server on every
 interface answers a connection made to the machine's network address while it
 runs, as it would one from another machine (not measured from one), unless the
-macOS firewall refuses it.
+macOS firewall refuses it. The outbound rule is as wide (measured by the final
+review, 2026-10-08, and again for this addendum): a process with the permission
+reached a TCP service on this machine bound only to its LAN address, and a UDP
+datagram it sent to that address arrived, so a check that may listen reaches
+services on any address of this machine, not only on loopback. With the
+permission off it can bind no UDP socket either.
 
 Narrowing it in Orbit, where Orbit writes the Seatbelt rules (the `srt` tier
 on macOS, for checks and workers), was tried with `srt`'s own rule off and each
@@ -403,10 +408,11 @@ not listen.
   reach no loopback", as the draft said: a worker cannot reach the server, but
   a check can. A check with the default `local_binding` may connect to any
   loopback port on macOS, and it runs the code the worker wrote: a token the
-  worker copies into the worktree reaches the server through it (measured on
-  this branch and on main: an `srt` check under `profileForCheck` read the
-  token from a worktree file and a stand-in IDE server on 127.0.0.1 answered
-  `200`). So keeping the token from the worker is the barrier for that path,
+  worker copies into the worktree reaches the server through it (measured by
+  the review on this branch and on main: an `srt` check under
+  `profileForCheck` read the token from a worktree file and a stand-in IDE
+  server on 127.0.0.1 answered `200`). So keeping the token from the worker is
+  the barrier for that path,
   and it had a gap. Claude Code 2.1.292 looks for lock files in `~/.claude/ide`
   whenever `CLAUDE_CONFIG_DIR` is set, so an IDE extension writes there for a
   worker whose config directory is another, and the settings denied `Read` on
@@ -452,4 +458,11 @@ not listen.
   `srt`'s source, not measured here). A sweep by environment marker is not
   possible on macOS 27, where `ps` shows no other process's environment, and a
   sweep by process tree misses a process whose shell has already exited;
-  containing it is a follow-up.
+  containing it is a follow-up. Such a process keeps the worker's sandbox and
+  so its write access to the worktree, and it can go on editing the worktree
+  after the session (final review: in both tiers a `nohup ... &` and a
+  `spawn(..., { detached: true })` grandchild were alive three seconds after
+  the adapter collected the result, their files in the worktree still
+  changing). What it writes before the candidate is snapshotted is judged as
+  the worker's change; what it writes later is in the tree the next attempt
+  starts from. docs/security.md says so.
