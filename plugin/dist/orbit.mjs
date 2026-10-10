@@ -51210,7 +51210,7 @@ async function runBaseline(input) {
       log: r.logPath
     }));
     const decisive = (e) => e.status === "PASSED" || e.status === "FAILED" || e.status === "TIMEOUT";
-    const failed = (e) => e.status === "FAILED" || e.status === "TIMEOUT";
+    const failed = (e) => e.status === "FAILED" || e.status === "TIMEOUT" || e.status === "ERROR";
     const complete2 = (install.skipped || install.ok) && entries.length === defs.length && entries.every(decisive);
     const now = clock.now();
     if (amending) {
@@ -51240,7 +51240,9 @@ async function runBaseline(input) {
       ...audit2 ? { audit: audit2 } : {},
       auditNotes: baselineAuditNotes(audit2, dependencyAuditPolicy(snapshot2.config)),
       checks: entries,
-      failures: entries.filter((e) => e.mandatory && failed(e)).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
+      // With the default list every entry is policy-mandatory. An explicit list also means each selected check matters
+      // to the caller, notably the optional checks a contract requires after a rebase, so retain their failures too.
+      failures: entries.filter(failed).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
       complete: complete2,
       recordedAt: now
     };
@@ -54101,8 +54103,10 @@ function baselineEnvironmentFailures(ctx, report2, checkoutDir) {
     const { output, logPath, row } = baselineOutput(ctx, report2, failure);
     const insideRoots = [checkoutDir, ...row ? [row.cwd] : [], ...logPath ? [dirname25(logPath)] : []];
     const def = ctx.snapshot.config.checks[failure.checkId];
-    const exitCode = row ? row.exitCode : report2.checks.find((c) => c.checkId === failure.checkId)?.exitCode ?? null;
-    const found = classifyNotExecuted({ checkId: failure.checkId, output }) ?? classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ?? (def && def.kind === "command" ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) : null);
+    const entry = report2.checks.find((c) => c.checkId === failure.checkId);
+    const exitCode = row ? row.exitCode : entry?.exitCode ?? null;
+    const startFailure = row?.status === "ERROR" || entry?.status === "ERROR" ? /could not start the check:[^\n]*/.exec(output)?.[0] ?? null : null;
+    const found = classifyNotExecuted({ checkId: failure.checkId, output, startFailure }) ?? classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ?? (def && def.kind === "command" ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) : null);
     if (!found) continue;
     const folderForm = folderFormRunsAt(ctx, checkoutDir);
     out.push({ ...found, ...commandOf(ctx, failure.checkId), folderForm, ...stoppedNodeFix(ctx, found, checkoutDir, folderForm), questionId: null, ...logPath ? { logPath } : {} });
@@ -54865,6 +54869,597 @@ var init_ci = __esm({
   }
 });
 
+// src/controller/delivery-env.ts
+function deliversThroughGithub(config) {
+  return config.delivery.provider === "github" && DELIVERY_MODES.has(config.mode) && (config.actions.open_pull_request || config.actions.push_task_branch || config.actions.repair_ci);
+}
+function deliveryEnvironmentProblem(config, env) {
+  if (!deliversThroughGithub(config)) return null;
+  if (!which("gh", env.PATH)) {
+    return { summary: "the gh CLI was not found", missing: "the gh executable on PATH", fix: "install GitHub CLI (https://cli.github.com)", code: "PROVIDER_UNAVAILABLE" };
+  }
+  if (!env.GH_TOKEN) {
+    return {
+      summary: "GH_TOKEN is not set for the controller",
+      missing: "a fine-grained GH_TOKEN scoped to the target repository (delivery refuses a broad keyring login)",
+      fix: "export GH_TOKEN in the environment the controller or service runs in",
+      code: "AUTH_MISSING"
+    };
+  }
+  return null;
+}
+var init_delivery_env = __esm({
+  "src/controller/delivery-env.ts"() {
+    "use strict";
+    init_config();
+    init_util();
+  }
+});
+
+// src/adapters/worker-plugins-check.ts
+async function judgeWorkerPlugins(adapter, config) {
+  const list3 = adapter?.listPlugins;
+  if (typeof list3 !== "function") return null;
+  const listed2 = await list3.call(adapter);
+  if (!listed2.ok) {
+    return {
+      status: "warn",
+      summary: `could not list the installed plugins (${listed2.detail.replace(/\s+/g, " ").trim()})`,
+      details: [],
+      missing: "the output of claude plugin list --json",
+      fix: 'run "claude plugin list --json" to see why; a worker session that loads a plugin the policy does not allow is refused',
+      refused: []
+    };
+  }
+  const policy = pluginPolicyOf(config);
+  const loads = [];
+  const maybe = [];
+  const skipped = [];
+  for (const p of listed2.plugins) {
+    if (!p.enabled) skipped.push(`not loaded by workers: ${p.id} (disabled)`);
+    else if (p.scope !== null && WORKER_EXCLUDED_SCOPES.includes(p.scope)) skipped.push(`not loaded by workers: ${p.id} (scope ${p.scope}; workers load no user, project or local settings)`);
+    else {
+      const [judged2] = workerPlugins([{ name: p.id.split("@")[0], source: p.id, scope: p.scope ?? "unknown" }], { policy, installed: null });
+      (p.scope === "managed" ? loads : maybe).push(judged2);
+    }
+  }
+  const named2 = (p) => `${p.id} (scope ${p.scope})`;
+  const line3 = (p) => `${named2(p)}${maybe.includes(p) ? ", may load" : ""}: ${p.allowed_by ? `allowed by ${p.allowed_by}` : `refused; allow it with ${pluginAllowLines(p).join(" or ")}`}`;
+  const judged = [...loads, ...maybe];
+  const details = [...judged.map(line3), ...skipped];
+  if (judged.length === 0) return { status: "pass", summary: "workers load only Claude Code built-ins", details, missing: null, fix: null, refused: [] };
+  const refused = judged.filter((p) => p.allowed_by === null);
+  if (refused.length > 0) {
+    const managed = refused.some((p) => p.scope === "managed") ? " (or agents.allow_managed_plugins: true for every managed plugin)" : "";
+    const fix = `add to .orbit/config.yaml: agents.allowed_plugins: ${JSON.stringify(refused.map((p) => p.id))}${managed}; ${HOOKS_NOTE}`;
+    const definite = refused.filter((p) => loads.includes(p));
+    const missing = "a policy that allows each plugin a worker loads";
+    if (definite.length > 0) {
+      return { status: "fail", summary: `workers would load ${definite.length} plugin(s) the policy does not allow, so every worker session would be refused: ${definite.map(named2).join(", ")}`, details: [...details, SCOPE_SOURCE], missing, fix, refused: definite };
+    }
+    return { status: "warn", summary: `workers may load ${refused.length} plugin(s) the policy does not allow: ${refused.map(named2).join(", ")}`, details: [...details, SCOPE_SOURCE], missing, fix, refused };
+  }
+  const allowed = judged.map((p) => `${p.id} (scope ${p.scope}, ${p.allowed_by})`).join(", ");
+  const placed = loads.length === 0 ? "" : `${loads.length} plugin(s)${maybe.length > 0 ? " (scope managed)" : ""}`;
+  const unplaced = maybe.length === 0 ? "" : loads.length === 0 ? `${maybe.length} plugin(s) of a scope doctor cannot place` : `${maybe.length} more of a scope doctor cannot place`;
+  const verb2 = [placed && `workers would load ${placed}`, unplaced && `${placed ? "and " : "workers "}may load ${unplaced}`].filter(Boolean).join(" ");
+  const reportNote = `a run's final report lists the plugins its worker sessions reported loading and says nothing when they loaded none`;
+  const unplacedNote = maybe.length > 0 ? "; a scope doctor cannot place may not be loaded at all, because workers start with no user, project or local settings" : "";
+  return {
+    status: "pass",
+    summary: `${verb2}, each allowed by the policy: ${allowed}`,
+    details: [...details, `${HOOKS_NOTE}; ${reportNote}${unplacedNote}`, SCOPE_SOURCE],
+    missing: null,
+    fix: null,
+    refused: []
+  };
+}
+async function workerPluginRefusals(adapters, config) {
+  const out = [];
+  for (const [provider, adapter] of Object.entries(adapters)) {
+    let verdict = null;
+    try {
+      verdict = await judgeWorkerPlugins(adapter, config);
+    } catch {
+      verdict = null;
+    }
+    if (verdict?.status === "fail") out.push({ provider, verdict });
+  }
+  return out;
+}
+var HOOKS_NOTE, SCOPE_SOURCE;
+var init_worker_plugins_check = __esm({
+  "src/adapters/worker-plugins-check.ts"() {
+    "use strict";
+    init_claude_plugins();
+    HOOKS_NOTE = "a plugin can add hooks and tools to workers";
+    SCOPE_SOURCE = "scope source: claude plugin list --json (system/init does not report a plugin's scope)";
+  }
+});
+
+// src/controller/steps/worker-plugins.ts
+async function workerPluginsStep(ctx) {
+  const refusals = await workerPluginRefusals(ctx.deps.adapters, ctx.snapshot.config);
+  if (refusals.length === 0) return null;
+  const reason = refusals.map(({ verdict }) => `${verdict.summary}; to fix: ${verdict.fix ?? "allow each plugin in .orbit/config.yaml"}`).join("; and ");
+  const plugins = refusals.flatMap(({ verdict }) => verdict.refused.map((p) => p.id).filter((id) => id !== null));
+  decide2(ctx, { kind: "preflight.worker-plugins", summary: reason, data: { providers: refusals.map((r) => r.provider), plugins } });
+  return finishRun(ctx, "BLOCKED", reason, { outcome: { worker_refusal: { kind: "plugins", plugins, providers: refusals.map((r) => r.provider) } } });
+}
+var init_worker_plugins = __esm({
+  "src/controller/steps/worker-plugins.ts"() {
+    "use strict";
+    init_worker_plugins_check();
+    init_common();
+  }
+});
+
+// src/controller/steps/preflight.ts
+import { existsSync as existsSync35, mkdirSync as mkdirSync19, rmSync as rmSync13 } from "node:fs";
+import { dirname as dirname26, isAbsolute as isAbsolute21, join as join52, resolve as resolve14 } from "node:path";
+async function preflightStep(ctx) {
+  const stop = await safePoint(ctx);
+  if (stop) return stop;
+  const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot });
+  recordGate(ctx, intake);
+  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
+  const env = await checkEnvironment(ctx);
+  recordGate(ctx, env.gate);
+  if (!env.gate.passed) {
+    const auth = env.credentials.find((c) => c.provider === env.gate.details.blockedProvider && c.verdict === "blocked");
+    if (auth?.status) return blockOnAuth(ctx, auth.provider, auth.status.state, auth.status.detail);
+    return finishRun(ctx, "BLOCKED", `environment gate: ${env.gate.reasons.join("; ")}`, { outcome: { gate: env.gate } });
+  }
+  const plugins = await workerPluginsStep(ctx);
+  if (plugins) return plugins;
+  const repo = ctx.run.repoRoot;
+  const credentialProblems = await gitCredentialProblems(repo);
+  if (credentialProblems.length > 0) {
+    return finishRun(
+      ctx,
+      "BLOCKED",
+      `the repository's git configuration carries credentials a worker could read (${credentialProblems.join("; ")}); remove them and authenticate through a credential helper outside the repository`,
+      { outcome: { git_credentials: credentialProblems } }
+    );
+  }
+  const head = await resolveCommit(repo, "HEAD");
+  const baseTree = await treeOf(repo, head);
+  const dirty = await dirtyPaths(repo);
+  if (dirty.length > 0) {
+    if (!ctx.snapshot.config.repository.allow_dirty_start) {
+      return finishRun(ctx, "BLOCKED", `the repository has uncommitted changes (${dirty.slice(0, 10).join(", ")}${dirty.length > 10 ? ", ..." : ""}); commit or stash them, or set repository.allow_dirty_start`, { outcome: { dirty: dirty.slice(0, 50) } });
+    }
+    decide2(ctx, { id: `dec-${ctx.run.id}-dirty-start`, kind: "preflight.dirty-start", summary: `dirty start allowed by policy; ${dirty.length} uncommitted path(s) are not part of the run, which starts from ${head}`, data: { paths: dirty.slice(0, 200) } });
+  }
+  const wtRoot = runWorktreeRoot(ctx);
+  mkdirSync19(wtRoot, { recursive: true, mode: 448 });
+  const baselineDir = join52(wtRoot, "baseline");
+  let settled = null;
+  const baseline = await runBaseline({
+    settle: (report2) => (settled = classifyBaseline(ctx, report2, baselineDir)).report,
+    db: ctx.db,
+    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
+    repoRoot: repo,
+    baseRev: head,
+    snapshot: ctx.snapshot,
+    isolation: ctx.isolation(),
+    runDir: ctx.runDir,
+    clock: ctx.clock,
+    signal: ctx.signal,
+    pollMs: ctx.timing.checkPollMs,
+    killGraceMs: ctx.timing.killGraceMs,
+    homeDir: homeOf2(ctx.deps),
+    checkoutDir: baselineDir,
+    toolchainCacheRoot: toolchainCacheRootFor(ctx)
+  });
+  const after = await safePoint(ctx);
+  if (after) return after;
+  const found = settled ?? classifyBaseline(ctx, baseline.report, baselineDir);
+  const { report: classified, misconfigured, missingTargets, environment: notRun } = found;
+  const bg = baselineGate(classified);
+  recordGate(ctx, bg);
+  if (!bg.passed && bg.status === "fail") return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}`, { outcome: { gate: bg } });
+  if (misconfigured.length > 0 || notRun.length > 0) return blockOnBaseline(ctx, classified, { environment: notRun, misconfigured });
+  const { preExisting } = askAboutBaseFailures(ctx, found, { baseRevision: head, key: "" });
+  const worktree = await ensureWorktree(repo, join52(wtRoot, "implementer"), head);
+  const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
+  const noted = [...preExisting.length > 0 ? [`${preExisting.length} pre-existing failure(s)`] : [], ...missingTargets.length > 0 ? [`${missingTargets.length} check(s) whose target does not exist yet (${missingTargets.map((m) => m.checkId).join(", ")})`] : []];
+  return move2(ctx, "CONTRACTING", `preflight passed at ${head.slice(0, 12)}${noted.length > 0 ? ` with ${noted.join(" and ")}` : ""}`, {
+    patch: { baseRevision: head, baseTree, worktreePath: worktree, branch },
+    data: { base_revision: head, base_tree: baseTree, worktree, environment: env.gate.notes }
+  });
+}
+function classifyBaseline(ctx, report2, checkoutDir, only = null) {
+  const judged = only === null ? report2 : { ...report2, failures: report2.failures.filter((f) => only.has(f.checkId)) };
+  const commandErrors = baselineMisconfiguredChecks(ctx, judged);
+  const misconfigured = commandErrors.filter((m) => m.kind === "argument");
+  const missingTargets = commandErrors.filter((m) => m.kind === "missing-target");
+  const environment = baselineEnvironmentFailures(ctx, judged, checkoutDir).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId));
+  const marked = classifiedBaseline(report2, environment, misconfigured, missingTargets);
+  const incomplete = only === null && (environment.length > 0 || misconfigured.length > 0);
+  return { report: incomplete ? { ...marked, complete: false } : marked, misconfigured, missingTargets, environment };
+}
+function classifiedBaseline(report2, environment, misconfigured, missingTargets) {
+  if (environment.length === 0 && misconfigured.length === 0 && missingTargets.length === 0) return report2;
+  const marks = new Map([
+    ...environment.map((f) => [f.checkId, { classification: "environment", signals: f.signals }]),
+    ...misconfigured.map((m) => [m.checkId, { classification: "misconfigured" }]),
+    ...missingTargets.map((m) => [m.checkId, { classification: "missing-target" }])
+  ]);
+  return { ...report2, failures: report2.failures.map((f) => ({ ...f, ...marks.get(f.checkId) ?? {} })) };
+}
+function askAboutBaseFailures(ctx, found, opts) {
+  const { report: classified, missingTargets } = found;
+  const head = opts.baseRevision;
+  const suffix = opts.key === "" ? "" : `-${opts.key}`;
+  const mine = classified.failures.filter((f) => opts.only === void 0 || opts.only.has(f.checkId));
+  const preExisting = mine.filter((f) => f.classification === void 0);
+  if (missingTargets.length > 0) {
+    atomicWriteJson(join52(ctx.runDir, BASELINE_FILE2), classified);
+    decide2(ctx, {
+      id: `dec-${ctx.run.id}-baseline-missing-target-${opts.key === "" ? classified.recordedAt : opts.key}`,
+      kind: MISSING_TARGET_KIND,
+      summary: `on ${head.slice(0, 12)} the command of ${missingTargets.length > 1 ? "checks" : "check"} ${missingTargets.map((m) => m.checkId).join(", ")} names something that does not exist yet: expected to flip if the contract names ${missingTargets.length > 1 ? "them" : "it"} as the proof of a criterion, otherwise misconfigured; never a baseline exception`,
+      data: { base_revision: head, checks: missingTargets.map((m) => misconfiguredRecord(m)) }
+    });
+  }
+  if (preExisting.length > 0) {
+    decide2(ctx, {
+      id: `dec-${ctx.run.id}-baseline-failures${suffix}`,
+      kind: "baseline.failures",
+      summary: `pre-existing failures on ${head.slice(0, 12)}: ${preExisting.map((f) => f.checkId).join(", ")}`,
+      data: { failures: preExisting }
+    });
+  }
+  const asked = mine.filter((f) => f.classification === void 0 || f.classification === "missing-target");
+  if (asked.length > 0) {
+    const raised = raiseBaselineExceptionQuestions({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { failures: asked, baseRevision: head });
+    if (raised.skipped.length > 0) {
+      decide2(ctx, {
+        id: `dec-${ctx.run.id}-baseline-exception-skipped${suffix}`,
+        kind: "baseline.exception-unavailable",
+        summary: `no baseline exception can be offered for: ${raised.skipped.map((s) => s.checkId).join(", ")} (${raised.skipped[0].why})`,
+        data: { skipped: raised.skipped }
+      });
+    }
+  }
+  return { preExisting };
+}
+async function blockOnBaseline(ctx, report2, blocked, amendment = null) {
+  const { environment, misconfigured } = blocked;
+  atomicWriteJson(join52(ctx.runDir, BASELINE_FILE2), amendment ? report2 : { ...report2, complete: false });
+  const reason = baselineBlockReason({ runId: ctx.run.id, baseRevision: report2.baseRevision, environment, misconfigured, ...amendment ? { amended: amendment.checks } : {} });
+  const environmentChecks = environment.map((f) => ({ check_id: f.checkId, classification: "environment", signals: f.signals, cause: f.cause, evidence_lines: f.lines, ...f.logPath ? { log_path: f.logPath } : {} }));
+  const misconfiguredChecks = misconfigured.map((m) => misconfiguredRecord(m));
+  const at = amendment ? `amended-${amendment.at}` : String(report2.recordedAt);
+  const stage = amendment ? { stage: amendment.stage } : {};
+  if (misconfiguredChecks.length > 0) decide2(ctx, { id: `dec-${ctx.run.id}-baseline-misconfigured-${at}`, kind: "baseline.check-misconfigured", summary: reason, data: { base_revision: report2.baseRevision, ...stage, checks: misconfiguredChecks } });
+  if (environmentChecks.length > 0) decide2(ctx, { id: `dec-${ctx.run.id}-baseline-environment-${at}`, kind: "baseline.environment-failure", summary: reason, data: { base_revision: report2.baseRevision, ...stage, checks: environmentChecks } });
+  return finishRun(ctx, "BLOCKED", reason, {
+    outcome: { base_revision: report2.baseRevision, ...stage, ...environmentChecks.length > 0 ? { environment_failures: environmentChecks } : {}, ...misconfiguredChecks.length > 0 ? { misconfigured_checks: misconfiguredChecks } : {} }
+  });
+}
+function recordGate(ctx, g) {
+  decide2(ctx, {
+    kind: `gate.${g.gate}`,
+    summary: `${g.gate} gate ${g.status === "not_applicable" ? "not applicable" : g.status}${g.reasons.length ? `: ${g.reasons.join("; ")}` : ""}${g.notes.length ? ` (notes: ${g.notes.join("; ")})` : ""}`,
+    data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure }
+  });
+}
+function urlCarriesCredentials(value) {
+  const m = URL_USERINFO.exec(value.trim());
+  if (!m) return false;
+  return m[2].includes(":") || /^https?$/i.test(m[1]);
+}
+async function gitCredentialProblems(repo) {
+  const entries = [];
+  for (const scope of ["--local", "--worktree"]) {
+    let out;
+    try {
+      out = await git2(repo, ["config", scope, "--list", "-z"]);
+    } catch {
+      continue;
+    }
+    for (const raw of out.split("\0")) {
+      if (!raw) continue;
+      const nl = raw.indexOf("\n");
+      entries.push(nl === -1 ? { key: raw, value: "" } : { key: raw.slice(0, nl), value: raw.slice(nl + 1) });
+    }
+  }
+  const root = resolve14(repo);
+  const problems = [];
+  const note3 = (text2) => {
+    if (!problems.includes(text2)) problems.push(text2);
+  };
+  for (const { key: key2, value } of entries) {
+    const k = key2.toLowerCase();
+    if (/^remote\..+\.(?:url|pushurl)$/.test(k) && urlCarriesCredentials(value)) note3(`${key2} has credentials in its URL`);
+    else if (/^url\..+\.(?:insteadof|pushinsteadof)$/.test(k) && (urlCarriesCredentials(value) || urlCarriesCredentials(key2.slice(4, key2.toLowerCase().lastIndexOf("."))))) note3("a url.<base>.insteadOf rewrite has credentials in a URL");
+    else if (/^http\.(?:.+\.)?extraheader$/.test(k) && AUTH_HEADER.test(value)) note3(`${key2} sets an authorization header`);
+    else if (/^credential\.(?:.+\.)?(?:password|token|secret)$/.test(k)) note3(`${key2} holds a literal credential`);
+    else if (/^credential(?:\..+)?\.helper$/.test(k)) {
+      const v = value.trim();
+      if (v.startsWith("!") && /password|token|secret/i.test(v)) note3(`${key2} embeds a credential in a shell helper`);
+      const store = /^store\b.*?--file(?:=|\s+)(\S+)/.exec(v);
+      if (store) {
+        const file = store[1].replace(/^["']|["']$/g, "");
+        const abs = isAbsolute21(file) ? resolve14(file) : resolve14(root, file);
+        if (!isAbsolute21(file) || abs === root || abs.startsWith(`${root}/`)) note3(`${key2} stores credentials in a file inside the repository`);
+      }
+    }
+  }
+  return problems;
+}
+async function dirtyPaths(repo) {
+  const out = await git2(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).orbit"]);
+  return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3));
+}
+async function ensureWorktree(repo, path, base) {
+  if (existsSync35(path)) {
+    try {
+      return (await adminDirFor(repo, path)).worktree;
+    } catch (err) {
+      if (!isOrbitError(err)) throw err;
+      rmSync13(path, { recursive: true, force: true });
+    }
+  }
+  mkdirSync19(dirname26(path), { recursive: true, mode: 448 });
+  await git2(repo, ["worktree", "prune"]);
+  await git2(repo, ["worktree", "add", "--detach", "--force", path, base]);
+  return (await adminDirFor(repo, path)).worktree;
+}
+async function checkEnvironment(ctx) {
+  const config = ctx.snapshot.config;
+  try {
+    ctx.deps.registry.seed();
+  } catch (err) {
+    ctx.log.warn("model registry seed failed", { error: messageOf(err) });
+  }
+  let isolation;
+  try {
+    const iso2 = ctx.isolation();
+    const status2 = await iso2.available();
+    isolation = { kind: iso2.kind, available: status2.ok, detail: status2.detail };
+  } catch (err) {
+    isolation = { error: messageOf(err) };
+  }
+  const capabilities = {};
+  for (const [id, adapter] of Object.entries(ctx.deps.adapters)) {
+    try {
+      capabilities[id] = await adapter.discoverCapabilities();
+    } catch (err) {
+      capabilities[id] = { provider: id, available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: "none", costReporting: false, detail: messageOf(err) };
+    }
+  }
+  const required = /* @__PURE__ */ new Set([IMPLEMENTER_PROVIDER]);
+  const mandatory = mandatoryReviewProvider(config.review, IMPLEMENTER_PROVIDER);
+  if (mandatory !== null) required.add(mandatory);
+  const all = await validateCredentials({ adapters: ctx.deps.adapters, providers: [.../* @__PURE__ */ new Set([...required, ...Object.keys(ctx.deps.adapters)])] });
+  const credentialsById = {};
+  for (const c of all) credentialsById[c.provider] = c.status ?? void 0;
+  const reviewer = selectReviewer({ snapshot: ctx.snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: ctx.deps.registry });
+  if (mandatory !== null && reviewer.decision === "SELECT") {
+    required.delete(mandatory);
+    required.add(reviewer.provider);
+  }
+  const credentials = all.filter((c) => required.has(c.provider));
+  const delivery = deliveryEnvironmentProblem(config, ctx.deps.hostEnv ?? process.env);
+  const gate = environmentGate({ snapshot: ctx.snapshot, mode: ctx.run.mode, isolation, credentials, reviewer, delivery });
+  atomicWriteJson(join52(ctx.runDir, "environment.json"), {
+    checked_at: ctx.clock.now(),
+    gate,
+    capabilities,
+    credentials: all.map((c) => ({ provider: c.provider, verdict: c.verdict, state: c.status?.state ?? null, method: c.status?.method ?? null, error: c.error })),
+    reviewer: reviewer ? selectionDecisionRecord(reviewer).summary : null
+  });
+  return { gate, credentials: all, capabilities, reviewer };
+}
+var IMPLEMENTER_PROVIDER, URL_USERINFO, AUTH_HEADER;
+var init_preflight = __esm({
+  "src/controller/steps/preflight.ts"() {
+    "use strict";
+    init_fsx();
+    init_errors();
+    init_git();
+    init_baseline();
+    init_baseline_exception();
+    init_credentials();
+    init_select();
+    init_context2();
+    init_gates();
+    init_delivery_env();
+    init_environment_block();
+    init_baseline_questions();
+    init_common();
+    init_worker_plugins();
+    init_workers2();
+    IMPLEMENTER_PROVIDER = "claude";
+    URL_USERINFO = /^([a-z][a-z0-9+.-]*):\/\/([^/?#@]*)@/i;
+    AUTH_HEADER = /authorization|cookie|bearer|token|api[-_]?key|secret/i;
+  }
+});
+
+// src/controller/steps/baseline-amendment.ts
+import { join as join53 } from "node:path";
+function amendedDecisionId(runId, at) {
+  return `dec-${runId}-baseline-amended-${at}`;
+}
+function rebasedDecisionId(runId, baseRevision) {
+  return `dec-${runId}-baseline-rebased-${baseRevision}`;
+}
+function baselineOf2(ctx) {
+  const report2 = readJsonIfExists(join53(ctx.runDir, BASELINE_FILE2));
+  if (!report2 || report2.baseRevision !== ctx.run.baseRevision || report2.policyHash !== ctx.run.policyHash) return null;
+  return Array.isArray(report2.checkIds) && Array.isArray(report2.checks) && Array.isArray(report2.failures) ? report2 : null;
+}
+function citedBy(contract, checkId) {
+  return contract.acceptance_criteria.filter((c) => (c.check_ids ?? []).includes(checkId)).map((c) => c.id);
+}
+function checksToAmend(ctx, contract, report2, judged) {
+  const covered = new Set(report2.checkIds);
+  const latest = /* @__PURE__ */ new Map();
+  for (const a of report2.amendments ?? []) for (const id of a.checkIds) latest.set(id, a);
+  const blocked = new Set(report2.failures.filter((f) => latest.has(f.checkId) && (f.classification === "environment" || f.classification === "misconfigured")).map((f) => f.checkId));
+  const unjudged = new Set([...latest].filter(([, a]) => !judged(a)).map(([id]) => id));
+  return [...new Set(contract.required_check_ids)].filter((id) => ctx.snapshot.config.checks[id]?.kind === "command" && (!covered.has(id) || blocked.has(id) || unjudged.has(id))).sort();
+}
+async function amendBaseline(ctx, contract) {
+  const remeasured = await remeasureRebasedBaseline(ctx, contract);
+  if (remeasured) return remeasured;
+  const prior = baselineOf2(ctx);
+  if (!prior || !ctx.run.baseRevision) return null;
+  const ids = checksToAmend(ctx, contract, prior, (a) => getDecision(ctx.db, amendedDecisionId(ctx.run.id, a.recordedAt)) !== null);
+  if (ids.length > 0) {
+    const stop = await runAmendment(ctx, contract, ids, ctx.run.baseRevision);
+    if (stop) return stop;
+  }
+  const amended = new Set((baselineOf2(ctx)?.amendments ?? []).flatMap((a) => a.checkIds));
+  if (amended.size === 0) return null;
+  const unexpected = missingTargetsNotExpectedToFlip(ctx, contract).filter((m) => amended.has(m.checkId));
+  return unexpected.length > 0 ? blockOnMissingTargets(ctx, unexpected) : null;
+}
+async function remeasureRebasedBaseline(ctx, contract) {
+  const baseRevision = ctx.run.baseRevision;
+  if (!baseRevision) return null;
+  const rebased = ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'delivery.rebased' AND json_extract(data_json, '$.to') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, baseRevision);
+  if (!rebased) return null;
+  const existing = baselineOf2(ctx);
+  if (existing !== null && getDecision(ctx.db, rebasedDecisionId(ctx.run.id, baseRevision)) !== null) return null;
+  const checkoutDir = join53(runWorktreeRoot(ctx), "baseline");
+  const ids = [...new Set(contract.required_check_ids)].filter((id) => ctx.snapshot.config.checks[id]?.kind === "command").sort();
+  let found = null;
+  if (existing === null) {
+    const outcome = await runBaseline({
+      settle: (report2) => {
+        found = classifyBaseline(ctx, report2, checkoutDir);
+        return found.report;
+      },
+      db: ctx.db,
+      run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
+      repoRoot: ctx.run.repoRoot,
+      baseRev: baseRevision,
+      snapshot: ctx.snapshot,
+      isolation: ctx.isolation(),
+      runDir: ctx.runDir,
+      clock: ctx.clock,
+      signal: ctx.signal,
+      pollMs: ctx.timing.checkPollMs,
+      killGraceMs: ctx.timing.killGraceMs,
+      homeDir: homeOf2(ctx.deps),
+      checkoutDir,
+      toolchainCacheRoot: toolchainCacheRootFor(ctx),
+      checkIds: ids
+    });
+    faultPoint("controller.baseline-rebase.after-write");
+    const after = await safePoint(ctx);
+    if (after) return after;
+    found ??= classifyBaseline(ctx, outcome.report, checkoutDir);
+  } else {
+    found = classifyBaseline(ctx, existing, checkoutDir);
+  }
+  const classified = found.report;
+  const gate = baselineGate(classified);
+  recordGate(ctx, gate);
+  if (!gate.passed && gate.status === "fail") {
+    return finishRun(ctx, "BLOCKED", `baseline gate: ${gate.reasons.join("; ")}, so the rebased candidate cannot be judged against ${baseRevision.slice(0, 12)}`, { outcome: { gate, stage: ctx.run.state } });
+  }
+  if (found.misconfigured.length > 0 || found.environment.length > 0) return blockOnBaseline(ctx, classified, { environment: found.environment, misconfigured: found.misconfigured });
+  const only = new Set(ids);
+  askAboutBaseFailures(ctx, found, { baseRevision, key: `rebased-${baseRevision}`, only });
+  settleExpectedFlips(ctx, contract);
+  decide2(ctx, {
+    id: rebasedDecisionId(ctx.run.id, baseRevision),
+    kind: BASELINE_REBASED_KIND,
+    summary: `after rebasing onto ${baseRevision.slice(0, 12)}, VERIFYING remeasured the baseline for the contract's ${ids.length === 1 ? "check" : "checks"}${ids.length > 0 ? ` ${ids.join(", ")}` : ""}`,
+    data: { base_revision: baseRevision, stage: ctx.run.state, check_ids: ids, complete: classified.complete }
+  });
+  return null;
+}
+async function runAmendment(ctx, contract, ids, baseRevision) {
+  const stage = ctx.run.state;
+  const checkoutDir = join53(runWorktreeRoot(ctx), "baseline");
+  const outcome = await runBaseline({
+    db: ctx.db,
+    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
+    repoRoot: ctx.run.repoRoot,
+    baseRev: baseRevision,
+    snapshot: ctx.snapshot,
+    isolation: ctx.isolation(),
+    runDir: ctx.runDir,
+    clock: ctx.clock,
+    signal: ctx.signal,
+    pollMs: ctx.timing.checkPollMs,
+    killGraceMs: ctx.timing.killGraceMs,
+    homeDir: homeOf2(ctx.deps),
+    checkoutDir,
+    toolchainCacheRoot: toolchainCacheRootFor(ctx),
+    checkIds: [...ids],
+    amend: { stage }
+  });
+  const after = await safePoint(ctx);
+  if (after) return after;
+  const only = new Set(ids);
+  const found = classifyBaseline(ctx, outcome.report, checkoutDir, only);
+  const classified = found.report;
+  atomicWriteJson(join53(ctx.runDir, BASELINE_FILE2), classified);
+  faultPoint("controller.baseline-amendment.after-write");
+  const at = classified.amendments?.at(-1)?.recordedAt ?? ctx.clock.now();
+  const amended = ids.map((id) => ({ checkId: id, citedBy: citedBy(contract, id), mandatory: ctx.snapshot.config.checks[id]?.mandatory === true }));
+  const records = amended.map((a) => {
+    const entry = classified.checks.find((c) => c.checkId === a.checkId);
+    const failure = classified.failures.find((f) => f.checkId === a.checkId);
+    return {
+      check_id: a.checkId,
+      status: entry?.status ?? "NOT_RUN",
+      ...failure ? { classification: failure.classification ?? "pre-existing" } : {},
+      ...failure?.signals ? { signals: failure.signals } : {},
+      cited_by: [...a.citedBy],
+      mandatory: a.mandatory,
+      ...entry?.log ? { log_path: entry.log } : {}
+    };
+  });
+  const said = records.map((r) => `${r.check_id} ${r.status}${r.classification ? ` (${r.classification})` : ""}`).join(", ");
+  const judged = () => void decide2(ctx, {
+    id: amendedDecisionId(ctx.run.id, at),
+    kind: BASELINE_AMENDED_KIND,
+    summary: `the contract requires ${ids.length > 1 ? "checks" : "check"} ${ids.join(", ")}, which the base revision ${classified.baseRevision.slice(0, 12)} had no result for, so ${stage} ran ${ids.length > 1 ? "them" : "it"} there before any change was judged: ${said}`,
+    data: { base_revision: classified.baseRevision, stage, checks: records }
+  });
+  if (!classified.install.skipped && !classified.install.ok) {
+    judged();
+    const bg = baselineGate(classified);
+    recordGate(ctx, bg);
+    return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}, so ${ids.length > 1 ? "checks" : "check"} ${ids.join(", ")}, which the contract requires, could not be run there`, { outcome: { gate: bg, stage } });
+  }
+  const { misconfigured, environment } = found;
+  if (misconfigured.length > 0 || environment.length > 0) {
+    judged();
+    return blockOnBaseline(ctx, classified, { environment, misconfigured }, { at, stage, checks: amended });
+  }
+  askAboutBaseFailures(ctx, found, { baseRevision, key: `amended-${at}`, only });
+  settleExpectedFlips(ctx, contract);
+  recordGate(ctx, baselineGate(classified));
+  judged();
+  return null;
+}
+var BASELINE_AMENDED_KIND, BASELINE_REBASED_KIND;
+var init_baseline_amendment = __esm({
+  "src/controller/steps/baseline-amendment.ts"() {
+    "use strict";
+    init_faults();
+    init_fsx();
+    init_baseline();
+    init_decisions();
+    init_context2();
+    init_gates();
+    init_baseline_questions();
+    init_common();
+    init_preflight();
+    BASELINE_AMENDED_KIND = "baseline.amended";
+    BASELINE_REBASED_KIND = "baseline.rebased";
+  }
+});
+
 // src/delivery/gate.ts
 function assertDeliverable2(input) {
   const { run, candidate, evidence, review, snapshot: snapshot2 } = input;
@@ -55107,9 +55702,9 @@ var init_deliver = __esm({
 });
 
 // src/delivery/release.ts
-import { existsSync as existsSync35, mkdirSync as mkdirSync19, rmSync as rmSync13 } from "node:fs";
+import { existsSync as existsSync36, mkdirSync as mkdirSync20, rmSync as rmSync14 } from "node:fs";
 import { homedir as homedir14, platform as platform2 } from "node:os";
-import { join as join52 } from "node:path";
+import { join as join54 } from "node:path";
 function releaseConfig(snapshot2) {
   return snapshot2.config.release ?? null;
 }
@@ -55374,8 +55969,8 @@ function verdictOf2(result2, sha, required, requireAny) {
   return { state: "passed", detail: `${result2.checks.length} check(s) green` };
 }
 function deployFiles(workDir, envName, sha) {
-  const dir = join52(workDir, "release", `deploy-${envName}-${sha.slice(0, 12)}`);
-  return { dir, checkout: join52(dir, "checkout"), home: join52(dir, "home"), started: join52(dir, "started.json"), outcome: join52(dir, "outcome.json") };
+  const dir = join54(workDir, "release", `deploy-${envName}-${sha.slice(0, 12)}`);
+  return { dir, checkout: join54(dir, "checkout"), home: join54(dir, "home"), started: join54(dir, "started.json"), outcome: join54(dir, "outcome.json") };
 }
 function readDeployOutcome(files, sha, envName) {
   const outcome = readJsonIfExists(files.outcome);
@@ -55383,7 +55978,7 @@ function readDeployOutcome(files, sha, envName) {
     if (outcome.exitCode === 0 && !outcome.timedOut) return receiptOf(outcome);
     throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} to ${outcome.environment} ${outcome.timedOut ? "timed out, so whether it took effect is unknown" : `exited ${outcome.exitCode ?? "by signal"}`}; it is not retried automatically`, { definitive: true, ...outcome.timedOut ? unknownDetails(envName, sha) : {} });
   }
-  if (existsSync35(files.started)) {
+  if (existsSync36(files.started)) {
     throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} started but recorded no outcome (the controller stopped while it ran); check the environment, then run "orbit release resolve <run-id>" (the environment's verify_command) or pass --deployed or --not-deployed`, { definitive: true, outcomeUnknown: true, environment: envName, sha });
   }
   return null;
@@ -55411,12 +56006,12 @@ async function runDeploy(a) {
     }
     await fetchBranchContaining({ repoRoot, remote: a.remote, token: input.token, ...input.git, branch, commit: sha, ref: `refs/orbit/release/${run.id}` });
   }
-  mkdirSync19(files.dir, { recursive: true, mode: 448 });
-  if (existsSync35(files.checkout)) await cleanupCandidateCheckout(repoRoot, files.checkout);
+  mkdirSync20(files.dir, { recursive: true, mode: 448 });
+  if (existsSync36(files.checkout)) await cleanupCandidateCheckout(repoRoot, files.checkout);
   const checkout = await materializeCandidate(repoRoot, sha, files.checkout, { readOnly: false });
   try {
     const tree = (await execCapture(["git", "rev-parse", `${sha}^{tree}`], { cwd: repoRoot, env: gitEnv4(), timeoutMs: 3e4 })).stdout.trim();
-    mkdirSync19(files.home, { recursive: true, mode: 448 });
+    mkdirSync20(files.home, { recursive: true, mode: 448 });
     const tmp = prepareFreshTmpDir(files.dir);
     const def = {
       id: `release:${envName}`,
@@ -55433,7 +56028,7 @@ async function runDeploy(a) {
       category: "other"
     };
     const field = `release.environments.${envName}.deploy_command`;
-    const scratch = join52(files.dir, "toolchains");
+    const scratch = join54(files.dir, "toolchains");
     const realHome = input.homeDir ?? homedir14();
     const toolchains = releaseToolchains({ command: env.deploy_command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, homeDir: realHome, hostEnv: input.hostEnv ?? process.env });
     const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [files.home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: realHome });
@@ -55544,12 +56139,12 @@ async function resolveDeploy(input) {
   if (verdict === "unknown") return done(verdict, via, detail);
   if (verdict === "deployed") {
     const receipt = { environment: t.environment, branch: t.branch, sha: t.sha, tree: action.treeHash ?? "", exitCode: 0, durationMs: 0, isolation: via === "verify_command" ? "verify_command" : "person", limitations: [`resolved after an unknown outcome: ${detail}`], output: redact(detail).slice(-OUTPUT_TAIL) };
-    mkdirSync19(files.dir, { recursive: true, mode: 448 });
+    mkdirSync20(files.dir, { recursive: true, mode: 448 });
     atomicWriteJson(files.outcome, { environment: t.environment, branch: t.branch, sha: t.sha, tree: receipt.tree, attempt: action.attempts, exitCode: 0, timedOut: false, durationMs: 0, isolation: receipt.isolation, limitations: receipt.limitations, output: receipt.output }, 384);
     ledger.recordReceipt(action, receipt, "reconcile");
   } else {
-    rmSync13(files.started, { force: true });
-    rmSync13(files.outcome, { force: true });
+    rmSync14(files.started, { force: true });
+    rmSync14(files.outcome, { force: true });
     ledger.markUnknown(action, `resolved: the deploy did not take effect (${detail})`);
   }
   recordDecision(
@@ -55569,17 +56164,17 @@ async function runVerifyCommand(a) {
     if (!d.allowed) throw new OrbitError("POLICY_DENIED", `verifying the deploy needs network access to ${host}: ${d.reason}`, { rule: d.rule, definitive: true });
   }
   if (!await hasCommit(run.repoRoot, sha, input.git)) return { verdict: "unknown", detail: `commit ${sha.slice(0, 12)} is not in the repository, so the verify_command has nothing to run on` };
-  const dir = join52(files.dir, "verify");
-  const checkoutDir = join52(dir, "checkout");
-  const home2 = join52(dir, "home");
-  mkdirSync19(dir, { recursive: true, mode: 448 });
-  if (existsSync35(checkoutDir)) await cleanupCandidateCheckout(run.repoRoot, checkoutDir);
+  const dir = join54(files.dir, "verify");
+  const checkoutDir = join54(dir, "checkout");
+  const home2 = join54(dir, "home");
+  mkdirSync20(dir, { recursive: true, mode: 448 });
+  if (existsSync36(checkoutDir)) await cleanupCandidateCheckout(run.repoRoot, checkoutDir);
   const checkout = await materializeCandidate(run.repoRoot, sha, checkoutDir, { readOnly: false });
   try {
-    mkdirSync19(home2, { recursive: true, mode: 448 });
+    mkdirSync20(home2, { recursive: true, mode: 448 });
     const tmp = prepareFreshTmpDir(dir);
     const def = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: ".", timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], local_binding: false, env: {}, mandatory: true, flaky_reruns: 0, kind: "command", category: "other" };
-    const scratch = join52(dir, "toolchains");
+    const scratch = join54(dir, "toolchains");
     const realHome = input.homeDir ?? homedir14();
     const toolchains = releaseToolchains({ command: a.command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, homeDir: realHome, hostEnv: input.hostEnv ?? process.env });
     const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: realHome });
@@ -56844,419 +57439,9 @@ var init_draft = __esm({
   }
 });
 
-// src/controller/delivery-env.ts
-function deliversThroughGithub(config) {
-  return config.delivery.provider === "github" && DELIVERY_MODES.has(config.mode) && (config.actions.open_pull_request || config.actions.push_task_branch || config.actions.repair_ci);
-}
-function deliveryEnvironmentProblem(config, env) {
-  if (!deliversThroughGithub(config)) return null;
-  if (!which("gh", env.PATH)) {
-    return { summary: "the gh CLI was not found", missing: "the gh executable on PATH", fix: "install GitHub CLI (https://cli.github.com)", code: "PROVIDER_UNAVAILABLE" };
-  }
-  if (!env.GH_TOKEN) {
-    return {
-      summary: "GH_TOKEN is not set for the controller",
-      missing: "a fine-grained GH_TOKEN scoped to the target repository (delivery refuses a broad keyring login)",
-      fix: "export GH_TOKEN in the environment the controller or service runs in",
-      code: "AUTH_MISSING"
-    };
-  }
-  return null;
-}
-var init_delivery_env = __esm({
-  "src/controller/delivery-env.ts"() {
-    "use strict";
-    init_config();
-    init_util();
-  }
-});
-
-// src/adapters/worker-plugins-check.ts
-async function judgeWorkerPlugins(adapter, config) {
-  const list3 = adapter?.listPlugins;
-  if (typeof list3 !== "function") return null;
-  const listed2 = await list3.call(adapter);
-  if (!listed2.ok) {
-    return {
-      status: "warn",
-      summary: `could not list the installed plugins (${listed2.detail.replace(/\s+/g, " ").trim()})`,
-      details: [],
-      missing: "the output of claude plugin list --json",
-      fix: 'run "claude plugin list --json" to see why; a worker session that loads a plugin the policy does not allow is refused',
-      refused: []
-    };
-  }
-  const policy = pluginPolicyOf(config);
-  const loads = [];
-  const maybe = [];
-  const skipped = [];
-  for (const p of listed2.plugins) {
-    if (!p.enabled) skipped.push(`not loaded by workers: ${p.id} (disabled)`);
-    else if (p.scope !== null && WORKER_EXCLUDED_SCOPES.includes(p.scope)) skipped.push(`not loaded by workers: ${p.id} (scope ${p.scope}; workers load no user, project or local settings)`);
-    else {
-      const [judged2] = workerPlugins([{ name: p.id.split("@")[0], source: p.id, scope: p.scope ?? "unknown" }], { policy, installed: null });
-      (p.scope === "managed" ? loads : maybe).push(judged2);
-    }
-  }
-  const named2 = (p) => `${p.id} (scope ${p.scope})`;
-  const line3 = (p) => `${named2(p)}${maybe.includes(p) ? ", may load" : ""}: ${p.allowed_by ? `allowed by ${p.allowed_by}` : `refused; allow it with ${pluginAllowLines(p).join(" or ")}`}`;
-  const judged = [...loads, ...maybe];
-  const details = [...judged.map(line3), ...skipped];
-  if (judged.length === 0) return { status: "pass", summary: "workers load only Claude Code built-ins", details, missing: null, fix: null, refused: [] };
-  const refused = judged.filter((p) => p.allowed_by === null);
-  if (refused.length > 0) {
-    const managed = refused.some((p) => p.scope === "managed") ? " (or agents.allow_managed_plugins: true for every managed plugin)" : "";
-    const fix = `add to .orbit/config.yaml: agents.allowed_plugins: ${JSON.stringify(refused.map((p) => p.id))}${managed}; ${HOOKS_NOTE}`;
-    const definite = refused.filter((p) => loads.includes(p));
-    const missing = "a policy that allows each plugin a worker loads";
-    if (definite.length > 0) {
-      return { status: "fail", summary: `workers would load ${definite.length} plugin(s) the policy does not allow, so every worker session would be refused: ${definite.map(named2).join(", ")}`, details: [...details, SCOPE_SOURCE], missing, fix, refused: definite };
-    }
-    return { status: "warn", summary: `workers may load ${refused.length} plugin(s) the policy does not allow: ${refused.map(named2).join(", ")}`, details: [...details, SCOPE_SOURCE], missing, fix, refused };
-  }
-  const allowed = judged.map((p) => `${p.id} (scope ${p.scope}, ${p.allowed_by})`).join(", ");
-  const placed = loads.length === 0 ? "" : `${loads.length} plugin(s)${maybe.length > 0 ? " (scope managed)" : ""}`;
-  const unplaced = maybe.length === 0 ? "" : loads.length === 0 ? `${maybe.length} plugin(s) of a scope doctor cannot place` : `${maybe.length} more of a scope doctor cannot place`;
-  const verb2 = [placed && `workers would load ${placed}`, unplaced && `${placed ? "and " : "workers "}may load ${unplaced}`].filter(Boolean).join(" ");
-  const reportNote = `a run's final report lists the plugins its worker sessions reported loading and says nothing when they loaded none`;
-  const unplacedNote = maybe.length > 0 ? "; a scope doctor cannot place may not be loaded at all, because workers start with no user, project or local settings" : "";
-  return {
-    status: "pass",
-    summary: `${verb2}, each allowed by the policy: ${allowed}`,
-    details: [...details, `${HOOKS_NOTE}; ${reportNote}${unplacedNote}`, SCOPE_SOURCE],
-    missing: null,
-    fix: null,
-    refused: []
-  };
-}
-async function workerPluginRefusals(adapters, config) {
-  const out = [];
-  for (const [provider, adapter] of Object.entries(adapters)) {
-    let verdict = null;
-    try {
-      verdict = await judgeWorkerPlugins(adapter, config);
-    } catch {
-      verdict = null;
-    }
-    if (verdict?.status === "fail") out.push({ provider, verdict });
-  }
-  return out;
-}
-var HOOKS_NOTE, SCOPE_SOURCE;
-var init_worker_plugins_check = __esm({
-  "src/adapters/worker-plugins-check.ts"() {
-    "use strict";
-    init_claude_plugins();
-    HOOKS_NOTE = "a plugin can add hooks and tools to workers";
-    SCOPE_SOURCE = "scope source: claude plugin list --json (system/init does not report a plugin's scope)";
-  }
-});
-
-// src/controller/steps/worker-plugins.ts
-async function workerPluginsStep(ctx) {
-  const refusals = await workerPluginRefusals(ctx.deps.adapters, ctx.snapshot.config);
-  if (refusals.length === 0) return null;
-  const reason = refusals.map(({ verdict }) => `${verdict.summary}; to fix: ${verdict.fix ?? "allow each plugin in .orbit/config.yaml"}`).join("; and ");
-  const plugins = refusals.flatMap(({ verdict }) => verdict.refused.map((p) => p.id).filter((id) => id !== null));
-  decide2(ctx, { kind: "preflight.worker-plugins", summary: reason, data: { providers: refusals.map((r) => r.provider), plugins } });
-  return finishRun(ctx, "BLOCKED", reason, { outcome: { worker_refusal: { kind: "plugins", plugins, providers: refusals.map((r) => r.provider) } } });
-}
-var init_worker_plugins = __esm({
-  "src/controller/steps/worker-plugins.ts"() {
-    "use strict";
-    init_worker_plugins_check();
-    init_common();
-  }
-});
-
-// src/controller/steps/preflight.ts
-import { existsSync as existsSync36, mkdirSync as mkdirSync20, rmSync as rmSync14 } from "node:fs";
-import { dirname as dirname26, isAbsolute as isAbsolute21, join as join53, resolve as resolve14 } from "node:path";
-async function preflightStep(ctx) {
-  const stop = await safePoint(ctx);
-  if (stop) return stop;
-  const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot });
-  recordGate(ctx, intake);
-  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
-  const env = await checkEnvironment(ctx);
-  recordGate(ctx, env.gate);
-  if (!env.gate.passed) {
-    const auth = env.credentials.find((c) => c.provider === env.gate.details.blockedProvider && c.verdict === "blocked");
-    if (auth?.status) return blockOnAuth(ctx, auth.provider, auth.status.state, auth.status.detail);
-    return finishRun(ctx, "BLOCKED", `environment gate: ${env.gate.reasons.join("; ")}`, { outcome: { gate: env.gate } });
-  }
-  const plugins = await workerPluginsStep(ctx);
-  if (plugins) return plugins;
-  const repo = ctx.run.repoRoot;
-  const credentialProblems = await gitCredentialProblems(repo);
-  if (credentialProblems.length > 0) {
-    return finishRun(
-      ctx,
-      "BLOCKED",
-      `the repository's git configuration carries credentials a worker could read (${credentialProblems.join("; ")}); remove them and authenticate through a credential helper outside the repository`,
-      { outcome: { git_credentials: credentialProblems } }
-    );
-  }
-  const head = await resolveCommit(repo, "HEAD");
-  const baseTree = await treeOf(repo, head);
-  const dirty = await dirtyPaths(repo);
-  if (dirty.length > 0) {
-    if (!ctx.snapshot.config.repository.allow_dirty_start) {
-      return finishRun(ctx, "BLOCKED", `the repository has uncommitted changes (${dirty.slice(0, 10).join(", ")}${dirty.length > 10 ? ", ..." : ""}); commit or stash them, or set repository.allow_dirty_start`, { outcome: { dirty: dirty.slice(0, 50) } });
-    }
-    decide2(ctx, { id: `dec-${ctx.run.id}-dirty-start`, kind: "preflight.dirty-start", summary: `dirty start allowed by policy; ${dirty.length} uncommitted path(s) are not part of the run, which starts from ${head}`, data: { paths: dirty.slice(0, 200) } });
-  }
-  const wtRoot = runWorktreeRoot(ctx);
-  mkdirSync20(wtRoot, { recursive: true, mode: 448 });
-  const baselineDir = join53(wtRoot, "baseline");
-  let settled = null;
-  const baseline = await runBaseline({
-    settle: (report2) => (settled = classifyBaseline(ctx, report2, baselineDir)).report,
-    db: ctx.db,
-    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
-    repoRoot: repo,
-    baseRev: head,
-    snapshot: ctx.snapshot,
-    isolation: ctx.isolation(),
-    runDir: ctx.runDir,
-    clock: ctx.clock,
-    signal: ctx.signal,
-    pollMs: ctx.timing.checkPollMs,
-    killGraceMs: ctx.timing.killGraceMs,
-    homeDir: homeOf2(ctx.deps),
-    checkoutDir: baselineDir,
-    toolchainCacheRoot: toolchainCacheRootFor(ctx)
-  });
-  const after = await safePoint(ctx);
-  if (after) return after;
-  const found = settled ?? classifyBaseline(ctx, baseline.report, baselineDir);
-  const { report: classified, misconfigured, missingTargets, environment: notRun } = found;
-  const bg = baselineGate(classified);
-  recordGate(ctx, bg);
-  if (!bg.passed && bg.status === "fail") return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}`, { outcome: { gate: bg } });
-  if (misconfigured.length > 0 || notRun.length > 0) return blockOnBaseline(ctx, classified, { environment: notRun, misconfigured });
-  const { preExisting } = askAboutBaseFailures(ctx, found, { baseRevision: head, key: "" });
-  const worktree = await ensureWorktree(repo, join53(wtRoot, "implementer"), head);
-  const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
-  const noted = [...preExisting.length > 0 ? [`${preExisting.length} pre-existing failure(s)`] : [], ...missingTargets.length > 0 ? [`${missingTargets.length} check(s) whose target does not exist yet (${missingTargets.map((m) => m.checkId).join(", ")})`] : []];
-  return move2(ctx, "CONTRACTING", `preflight passed at ${head.slice(0, 12)}${noted.length > 0 ? ` with ${noted.join(" and ")}` : ""}`, {
-    patch: { baseRevision: head, baseTree, worktreePath: worktree, branch },
-    data: { base_revision: head, base_tree: baseTree, worktree, environment: env.gate.notes }
-  });
-}
-function classifyBaseline(ctx, report2, checkoutDir, only = null) {
-  const judged = only === null ? report2 : { ...report2, failures: report2.failures.filter((f) => only.has(f.checkId)) };
-  const commandErrors = baselineMisconfiguredChecks(ctx, judged);
-  const misconfigured = commandErrors.filter((m) => m.kind === "argument");
-  const missingTargets = commandErrors.filter((m) => m.kind === "missing-target");
-  const environment = baselineEnvironmentFailures(ctx, judged, checkoutDir).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId));
-  const marked = classifiedBaseline(report2, environment, misconfigured, missingTargets);
-  const incomplete = only === null && (environment.length > 0 || misconfigured.length > 0);
-  return { report: incomplete ? { ...marked, complete: false } : marked, misconfigured, missingTargets, environment };
-}
-function classifiedBaseline(report2, environment, misconfigured, missingTargets) {
-  if (environment.length === 0 && misconfigured.length === 0 && missingTargets.length === 0) return report2;
-  const marks = new Map([
-    ...environment.map((f) => [f.checkId, { classification: "environment", signals: f.signals }]),
-    ...misconfigured.map((m) => [m.checkId, { classification: "misconfigured" }]),
-    ...missingTargets.map((m) => [m.checkId, { classification: "missing-target" }])
-  ]);
-  return { ...report2, failures: report2.failures.map((f) => ({ ...f, ...marks.get(f.checkId) ?? {} })) };
-}
-function askAboutBaseFailures(ctx, found, opts) {
-  const { report: classified, missingTargets } = found;
-  const head = opts.baseRevision;
-  const suffix = opts.key === "" ? "" : `-${opts.key}`;
-  const mine = classified.failures.filter((f) => opts.only === void 0 || opts.only.has(f.checkId));
-  const preExisting = mine.filter((f) => f.classification === void 0);
-  if (missingTargets.length > 0) {
-    atomicWriteJson(join53(ctx.runDir, BASELINE_FILE2), classified);
-    decide2(ctx, {
-      id: `dec-${ctx.run.id}-baseline-missing-target-${opts.key === "" ? classified.recordedAt : opts.key}`,
-      kind: MISSING_TARGET_KIND,
-      summary: `on ${head.slice(0, 12)} the command of ${missingTargets.length > 1 ? "checks" : "check"} ${missingTargets.map((m) => m.checkId).join(", ")} names something that does not exist yet: expected to flip if the contract names ${missingTargets.length > 1 ? "them" : "it"} as the proof of a criterion, otherwise misconfigured; never a baseline exception`,
-      data: { base_revision: head, checks: missingTargets.map((m) => misconfiguredRecord(m)) }
-    });
-  }
-  if (preExisting.length > 0) {
-    decide2(ctx, {
-      id: `dec-${ctx.run.id}-baseline-failures${suffix}`,
-      kind: "baseline.failures",
-      summary: `pre-existing failures on ${head.slice(0, 12)}: ${preExisting.map((f) => f.checkId).join(", ")}`,
-      data: { failures: preExisting }
-    });
-  }
-  const asked = mine.filter((f) => f.classification === void 0 || f.classification === "missing-target");
-  if (asked.length > 0) {
-    const raised = raiseBaselineExceptionQuestions({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir }, { failures: asked, baseRevision: head });
-    if (raised.skipped.length > 0) {
-      decide2(ctx, {
-        id: `dec-${ctx.run.id}-baseline-exception-skipped${suffix}`,
-        kind: "baseline.exception-unavailable",
-        summary: `no baseline exception can be offered for: ${raised.skipped.map((s) => s.checkId).join(", ")} (${raised.skipped[0].why})`,
-        data: { skipped: raised.skipped }
-      });
-    }
-  }
-  return { preExisting };
-}
-async function blockOnBaseline(ctx, report2, blocked, amendment = null) {
-  const { environment, misconfigured } = blocked;
-  atomicWriteJson(join53(ctx.runDir, BASELINE_FILE2), amendment ? report2 : { ...report2, complete: false });
-  const reason = baselineBlockReason({ runId: ctx.run.id, baseRevision: report2.baseRevision, environment, misconfigured, ...amendment ? { amended: amendment.checks } : {} });
-  const environmentChecks = environment.map((f) => ({ check_id: f.checkId, classification: "environment", signals: f.signals, cause: f.cause, evidence_lines: f.lines, ...f.logPath ? { log_path: f.logPath } : {} }));
-  const misconfiguredChecks = misconfigured.map((m) => misconfiguredRecord(m));
-  const at = amendment ? `amended-${amendment.at}` : String(report2.recordedAt);
-  const stage = amendment ? { stage: amendment.stage } : {};
-  if (misconfiguredChecks.length > 0) decide2(ctx, { id: `dec-${ctx.run.id}-baseline-misconfigured-${at}`, kind: "baseline.check-misconfigured", summary: reason, data: { base_revision: report2.baseRevision, ...stage, checks: misconfiguredChecks } });
-  if (environmentChecks.length > 0) decide2(ctx, { id: `dec-${ctx.run.id}-baseline-environment-${at}`, kind: "baseline.environment-failure", summary: reason, data: { base_revision: report2.baseRevision, ...stage, checks: environmentChecks } });
-  return finishRun(ctx, "BLOCKED", reason, {
-    outcome: { base_revision: report2.baseRevision, ...stage, ...environmentChecks.length > 0 ? { environment_failures: environmentChecks } : {}, ...misconfiguredChecks.length > 0 ? { misconfigured_checks: misconfiguredChecks } : {} }
-  });
-}
-function recordGate(ctx, g) {
-  decide2(ctx, {
-    kind: `gate.${g.gate}`,
-    summary: `${g.gate} gate ${g.status === "not_applicable" ? "not applicable" : g.status}${g.reasons.length ? `: ${g.reasons.join("; ")}` : ""}${g.notes.length ? ` (notes: ${g.notes.join("; ")})` : ""}`,
-    data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure }
-  });
-}
-function urlCarriesCredentials(value) {
-  const m = URL_USERINFO.exec(value.trim());
-  if (!m) return false;
-  return m[2].includes(":") || /^https?$/i.test(m[1]);
-}
-async function gitCredentialProblems(repo) {
-  const entries = [];
-  for (const scope of ["--local", "--worktree"]) {
-    let out;
-    try {
-      out = await git2(repo, ["config", scope, "--list", "-z"]);
-    } catch {
-      continue;
-    }
-    for (const raw of out.split("\0")) {
-      if (!raw) continue;
-      const nl = raw.indexOf("\n");
-      entries.push(nl === -1 ? { key: raw, value: "" } : { key: raw.slice(0, nl), value: raw.slice(nl + 1) });
-    }
-  }
-  const root = resolve14(repo);
-  const problems = [];
-  const note3 = (text2) => {
-    if (!problems.includes(text2)) problems.push(text2);
-  };
-  for (const { key: key2, value } of entries) {
-    const k = key2.toLowerCase();
-    if (/^remote\..+\.(?:url|pushurl)$/.test(k) && urlCarriesCredentials(value)) note3(`${key2} has credentials in its URL`);
-    else if (/^url\..+\.(?:insteadof|pushinsteadof)$/.test(k) && (urlCarriesCredentials(value) || urlCarriesCredentials(key2.slice(4, key2.toLowerCase().lastIndexOf("."))))) note3("a url.<base>.insteadOf rewrite has credentials in a URL");
-    else if (/^http\.(?:.+\.)?extraheader$/.test(k) && AUTH_HEADER.test(value)) note3(`${key2} sets an authorization header`);
-    else if (/^credential\.(?:.+\.)?(?:password|token|secret)$/.test(k)) note3(`${key2} holds a literal credential`);
-    else if (/^credential(?:\..+)?\.helper$/.test(k)) {
-      const v = value.trim();
-      if (v.startsWith("!") && /password|token|secret/i.test(v)) note3(`${key2} embeds a credential in a shell helper`);
-      const store = /^store\b.*?--file(?:=|\s+)(\S+)/.exec(v);
-      if (store) {
-        const file = store[1].replace(/^["']|["']$/g, "");
-        const abs = isAbsolute21(file) ? resolve14(file) : resolve14(root, file);
-        if (!isAbsolute21(file) || abs === root || abs.startsWith(`${root}/`)) note3(`${key2} stores credentials in a file inside the repository`);
-      }
-    }
-  }
-  return problems;
-}
-async function dirtyPaths(repo) {
-  const out = await git2(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).orbit"]);
-  return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3));
-}
-async function ensureWorktree(repo, path, base) {
-  if (existsSync36(path)) {
-    try {
-      return (await adminDirFor(repo, path)).worktree;
-    } catch (err) {
-      if (!isOrbitError(err)) throw err;
-      rmSync14(path, { recursive: true, force: true });
-    }
-  }
-  mkdirSync20(dirname26(path), { recursive: true, mode: 448 });
-  await git2(repo, ["worktree", "prune"]);
-  await git2(repo, ["worktree", "add", "--detach", "--force", path, base]);
-  return (await adminDirFor(repo, path)).worktree;
-}
-async function checkEnvironment(ctx) {
-  const config = ctx.snapshot.config;
-  try {
-    ctx.deps.registry.seed();
-  } catch (err) {
-    ctx.log.warn("model registry seed failed", { error: messageOf(err) });
-  }
-  let isolation;
-  try {
-    const iso2 = ctx.isolation();
-    const status2 = await iso2.available();
-    isolation = { kind: iso2.kind, available: status2.ok, detail: status2.detail };
-  } catch (err) {
-    isolation = { error: messageOf(err) };
-  }
-  const capabilities = {};
-  for (const [id, adapter] of Object.entries(ctx.deps.adapters)) {
-    try {
-      capabilities[id] = await adapter.discoverCapabilities();
-    } catch (err) {
-      capabilities[id] = { provider: id, available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: "none", costReporting: false, detail: messageOf(err) };
-    }
-  }
-  const required = /* @__PURE__ */ new Set([IMPLEMENTER_PROVIDER]);
-  const mandatory = mandatoryReviewProvider(config.review, IMPLEMENTER_PROVIDER);
-  if (mandatory !== null) required.add(mandatory);
-  const all = await validateCredentials({ adapters: ctx.deps.adapters, providers: [.../* @__PURE__ */ new Set([...required, ...Object.keys(ctx.deps.adapters)])] });
-  const credentialsById = {};
-  for (const c of all) credentialsById[c.provider] = c.status ?? void 0;
-  const reviewer = selectReviewer({ snapshot: ctx.snapshot, capabilities, credentials: credentialsById, implementer: { provider: IMPLEMENTER_PROVIDER, model: null }, registry: ctx.deps.registry });
-  if (mandatory !== null && reviewer.decision === "SELECT") {
-    required.delete(mandatory);
-    required.add(reviewer.provider);
-  }
-  const credentials = all.filter((c) => required.has(c.provider));
-  const delivery = deliveryEnvironmentProblem(config, ctx.deps.hostEnv ?? process.env);
-  const gate = environmentGate({ snapshot: ctx.snapshot, mode: ctx.run.mode, isolation, credentials, reviewer, delivery });
-  atomicWriteJson(join53(ctx.runDir, "environment.json"), {
-    checked_at: ctx.clock.now(),
-    gate,
-    capabilities,
-    credentials: all.map((c) => ({ provider: c.provider, verdict: c.verdict, state: c.status?.state ?? null, method: c.status?.method ?? null, error: c.error })),
-    reviewer: reviewer ? selectionDecisionRecord(reviewer).summary : null
-  });
-  return { gate, credentials: all, capabilities, reviewer };
-}
-var IMPLEMENTER_PROVIDER, URL_USERINFO, AUTH_HEADER;
-var init_preflight = __esm({
-  "src/controller/steps/preflight.ts"() {
-    "use strict";
-    init_fsx();
-    init_errors();
-    init_git();
-    init_baseline();
-    init_baseline_exception();
-    init_credentials();
-    init_select();
-    init_context2();
-    init_gates();
-    init_delivery_env();
-    init_environment_block();
-    init_baseline_questions();
-    init_common();
-    init_worker_plugins();
-    init_workers2();
-    IMPLEMENTER_PROVIDER = "claude";
-    URL_USERINFO = /^([a-z][a-z0-9+.-]*):\/\/([^/?#@]*)@/i;
-    AUTH_HEADER = /authorization|cookie|bearer|token|api[-_]?key|secret/i;
-  }
-});
-
 // src/controller/steps/contracting.ts
 import { readFileSync as readFileSync29 } from "node:fs";
-import { join as join54 } from "node:path";
+import { join as join55 } from "node:path";
 async function contractingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -57280,7 +57465,7 @@ async function contractingStep(ctx) {
   });
   if (!got.ok) return got.step;
   const plan = got.value;
-  atomicWriteJson(join54(ctx.runDir, PLANNER_FILE), { worker_id: got.worker.id, output: plan });
+  atomicWriteJson(join55(ctx.runDir, PLANNER_FILE), { worker_id: got.worker.id, output: plan });
   let drafted;
   try {
     drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? "", taskId: ctx.run.id, policyHash: ctx.run.policyHash, environment: ctx.run.environment });
@@ -57303,7 +57488,7 @@ async function accept2(ctx, contract, plan) {
   if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate rejected the contract: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
   const unexpected = missingTargetsNotExpectedToFlip(ctx, contract);
   if (unexpected.length > 0) return blockOnMissingTargets(ctx, unexpected);
-  atomicWriteJson(join54(ctx.runDir, "contract.json"), contract);
+  atomicWriteJson(join55(ctx.runDir, "contract.json"), contract);
   settleExpectedFlips(ctx, contract);
   const patch = { contractJson: JSON.stringify(contract), contractHash: hashObject(contract) };
   const material = (plan?.unresolved_decisions ?? []).filter((d) => d.material);
@@ -57329,7 +57514,7 @@ function worktreeOf(ctx) {
 }
 function plannerPrompt(ctx, workerId) {
   const checks = Object.values(ctx.snapshot.config.checks).map((c) => `${c.id}${c.mandatory ? " (mandatory)" : ""}`);
-  const baseline = readJsonIfExists(join54(ctx.runDir, BASELINE_FILE2));
+  const baseline = readJsonIfExists(join55(ctx.runDir, BASELINE_FILE2));
   const missing = baseline && baseline.baseRevision === ctx.run.baseRevision && Array.isArray(baseline.failures) ? baseline.failures.filter((f) => f.classification === "missing-target").map((f) => f.checkId) : [];
   const many = missing.length > 1;
   const optional = Object.values(ctx.snapshot.config.checks).some((c) => !c.mandatory);
@@ -57356,7 +57541,7 @@ function plannerPrompt(ctx, workerId) {
 }
 function storedPlan(ctx) {
   try {
-    const raw = JSON.parse(readFileSync29(join54(ctx.runDir, PLANNER_FILE), "utf8")).output;
+    const raw = JSON.parse(readFileSync29(join55(ctx.runDir, PLANNER_FILE), "utf8")).output;
     return raw ? validateModelOutput("planner", raw) : null;
   } catch {
     return null;
@@ -57387,7 +57572,7 @@ var init_contracting = __esm({
 // src/controller/parallel-writers.ts
 import { existsSync as existsSync37, mkdtempSync as mkdtempSync5, rmSync as rmSync15, writeFileSync as writeFileSync8 } from "node:fs";
 import { tmpdir as tmpdir11 } from "node:os";
-import { join as join55 } from "node:path";
+import { join as join56 } from "node:path";
 function splitAttempt(ctx, contract, fresh) {
   if (!fresh || ctx.run.mode === "supervised") return null;
   if (ctx.snapshot.config.agents.default_parallelism < 2) return null;
@@ -57407,7 +57592,7 @@ function unitPurpose(n2, u) {
   return `implement:${n2}/${u.id}#1`;
 }
 function unitWorktree(ctx, n2, u) {
-  return join55(runWorktreeRoot(ctx), `unit-${n2}-${u.id}`);
+  return join56(runWorktreeRoot(ctx), `unit-${n2}-${u.id}`);
 }
 async function runParallelUnits(ctx, n2, units, opts) {
   const settled = () => /* @__PURE__ */ new Set([...unitEvents(ctx, UNIT_INTEGRATED_EVENT, n2).map((e) => e.unit), ...serializedUnits(ctx, n2).map((e) => e.unit)]);
@@ -57572,12 +57757,12 @@ async function changedFiles3(c) {
   return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3)).sort();
 }
 async function commitWorktree(repoRoot, c, base, message) {
-  const scratch = mkdtempSync5(join55(tmpdir11(), "orbit-unit-"));
+  const scratch = mkdtempSync5(join56(tmpdir11(), "orbit-unit-"));
   try {
-    const excludes = join55(scratch, "exclude");
+    const excludes = join56(scratch, "exclude");
     writeFileSync8(excludes, `${UNIT_EXCLUDES.join("\n")}
 `);
-    const opts = { ...inCheckout(c, { GIT_INDEX_FILE: join55(scratch, "index") }), config: { "core.excludesFile": excludes } };
+    const opts = { ...inCheckout(c, { GIT_INDEX_FILE: join56(scratch, "index") }), config: { "core.excludesFile": excludes } };
     await git2(c.worktree, ["read-tree", base], opts);
     await git2(c.worktree, ["add", "-A", "--", "."], opts);
     const tree = (await git2(c.worktree, ["write-tree"], opts)).trim();
@@ -57651,7 +57836,7 @@ var init_parallel_writers = __esm({
 
 // src/controller/authorization.ts
 import { existsSync as existsSync38, mkdirSync as mkdirSync21 } from "node:fs";
-import { basename as basename16, join as join56 } from "node:path";
+import { basename as basename16, join as join57 } from "node:path";
 function operationKey(op) {
   return `op-${sha256(canonicalJson(op)).slice(0, 16)}`;
 }
@@ -57792,10 +57977,10 @@ async function runApprovedOperation(ctx, n2, op, grant) {
   const plan = approvedPlan(op);
   const none = { key: op.key, command: plan?.shown ?? null, exit_code: null, timed_out: false, path: null, sha256: null, excerpt: null };
   if (!plan) return { ...none, state: "NOT_RUN", note: "the approval names a host but no exact command or address, so the controller had nothing exact to run" };
-  const rel = join56("authorization", `attempt-${n2}`, op.key);
-  const dir = join56(ctx.runDir, rel);
+  const rel = join57("authorization", `attempt-${n2}`, op.key);
+  const dir = join57(ctx.runDir, rel);
   const ledger = new ActionLedger(ctx.db, ctx.clock, { runDir: ctx.runDir, maxAttempts: 1, actor: ctx.ownerId });
-  const recorded = () => readJsonIfExists(join56(dir, RECEIPT_FILE));
+  const recorded = () => readJsonIfExists(join57(dir, RECEIPT_FILE));
   try {
     const done = await ledger.performAction(
       { runId: ctx.run.id, kind: APPROVED_COMMAND_ACTION, idempotencyKey: `${ctx.run.id}:approved:${n2}:${op.key}`, target: { command: plan.shown, attempt: n2, op_key: op.key, grant: grant.decisionId } },
@@ -57833,14 +58018,14 @@ function cachesLine(toolchains, installs) {
 }
 async function executeApproved(ctx, plan, dir, rel) {
   const worktree = ctx.run.worktreePath;
-  const home2 = join56(dir, "home");
+  const home2 = join57(dir, "home");
   mkdirSync21(home2, { recursive: true, mode: 448 });
   const tmp = prepareWorkerTmpDir(dir);
   const hosts = [.../* @__PURE__ */ new Set([...ctx.snapshot.config.network.allowed_hosts, ...plan.host ? [plan.host] : []])];
   const isolation = ctx.isolation();
   const ids = detectToolchains({ command: plan.argv, roots: [worktree] });
   const installs = plan.argv[0] === "/bin/sh" ? installingToolchains(plan.shown, worktree, ids) : [];
-  const scratch = join56(dir, "toolchains");
+  const scratch = join57(dir, "toolchains");
   const toolchains = commandToolchains({ command: plan.argv, roots: [worktree], mode: "fetch", installs, cacheRoot: toolchainCacheRootFor(ctx), scratchRoot: scratch, tmpDir: tmp, isolation: isolation.kind, networkHosts: hosts, hostHome: homeOf2(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
   prepareToolchainLayout(toolchains);
   const def = { id: `approved-${rel.split("/").at(-1)}`, command: plan.argv, shell: false, cwd: ".", timeout_seconds: APPROVED_TIMEOUT_S, network_hosts: hosts, local_binding: false, env: {}, mandatory: false, flaky_reruns: 0, kind: "command" };
@@ -57888,9 +58073,9 @@ ${r.stderr}
 ${note3 ? `--- orbit ---
 ${note3}
 ` : ""}`);
-  atomicWrite(join56(dir, OUTPUT_FILE), text2, 384);
-  const receipt = { exit_code: exitCode, timed_out: r.timedOut, path: join56(rel, OUTPUT_FILE), sha256: sha256(text2), excerpt: text2.slice(-APPROVED_EXCERPT_CHARS) };
-  atomicWrite(join56(dir, RECEIPT_FILE), `${JSON.stringify(receipt)}
+  atomicWrite(join57(dir, OUTPUT_FILE), text2, 384);
+  const receipt = { exit_code: exitCode, timed_out: r.timedOut, path: join57(rel, OUTPUT_FILE), sha256: sha256(text2), excerpt: text2.slice(-APPROVED_EXCERPT_CHARS) };
+  atomicWrite(join57(dir, RECEIPT_FILE), `${JSON.stringify(receipt)}
 `, 384);
   return receipt;
 }
@@ -57921,7 +58106,7 @@ function ungrantedCommands(events, snapshot2, worktreeRoot, granted) {
   return out;
 }
 function sessionEvents(worker) {
-  const path = join56(worker.workerDir, LOG_FILE);
+  const path = join57(worker.workerDir, LOG_FILE);
   return existsSync38(path) ? readLogLines(path).events : [];
 }
 var APPROVE_ONCE, DENY2, AUTHORIZATION_REQUEST_KIND, AUTHORIZATION_GRANT_KIND, ASKABLE_RULE, NEVER_GRANTED, URL_HOST, APPROVED_COMMAND_ACTION, APPROVED_TIMEOUT_S, APPROVED_MAX_OUTPUT_BYTES, APPROVED_EXCERPT_CHARS, OUTPUT_FILE, RECEIPT_FILE;
@@ -57966,9 +58151,9 @@ var init_authorization = __esm({
 
 // src/controller/steps/implementing.ts
 import { existsSync as existsSync39 } from "node:fs";
-import { join as join57 } from "node:path";
+import { join as join58 } from "node:path";
 function briefPath(ctx, attempt) {
-  return join57(ctx.runDir, "briefs", `attempt-${attempt}.json`);
+  return join58(ctx.runDir, "briefs", `attempt-${attempt}.json`);
 }
 function currentAttempt(ctx) {
   const row = ctx.db.get("SELECT MAX(CAST(json_extract(data_json, '$.attempt') AS INTEGER)) AS n FROM events WHERE run_id = ? AND type = ?", ctx.run.id, ATTEMPT_EVENT);
@@ -58383,124 +58568,6 @@ var init_implementing = __esm({
     READ_ONLY_ROLES = /* @__PURE__ */ new Set(["planner", "verifier", "reviewer", "inquisitor", "curator", "explorer"]);
     AUTHORIZATION_RETRY_EVENT = "authorization.retry";
     LOST_RESTART_EVENT = "recovery.worker-restart";
-  }
-});
-
-// src/controller/steps/baseline-amendment.ts
-import { join as join58 } from "node:path";
-function amendedDecisionId(runId, at) {
-  return `dec-${runId}-baseline-amended-${at}`;
-}
-function baselineOf2(ctx) {
-  const report2 = readJsonIfExists(join58(ctx.runDir, BASELINE_FILE2));
-  if (!report2 || report2.baseRevision !== ctx.run.baseRevision || report2.policyHash !== ctx.run.policyHash) return null;
-  return Array.isArray(report2.checkIds) && Array.isArray(report2.checks) && Array.isArray(report2.failures) ? report2 : null;
-}
-function citedBy(contract, checkId) {
-  return contract.acceptance_criteria.filter((c) => (c.check_ids ?? []).includes(checkId)).map((c) => c.id);
-}
-function checksToAmend(ctx, contract, report2, judged) {
-  const covered = new Set(report2.checkIds);
-  const latest = /* @__PURE__ */ new Map();
-  for (const a of report2.amendments ?? []) for (const id of a.checkIds) latest.set(id, a);
-  const blocked = new Set(report2.failures.filter((f) => latest.has(f.checkId) && (f.classification === "environment" || f.classification === "misconfigured")).map((f) => f.checkId));
-  const unjudged = new Set([...latest].filter(([, a]) => !judged(a)).map(([id]) => id));
-  return [...new Set(contract.required_check_ids)].filter((id) => ctx.snapshot.config.checks[id]?.kind === "command" && (!covered.has(id) || blocked.has(id) || unjudged.has(id))).sort();
-}
-async function amendBaseline(ctx, contract) {
-  const prior = baselineOf2(ctx);
-  if (!prior || !ctx.run.baseRevision) return null;
-  const ids = checksToAmend(ctx, contract, prior, (a) => getDecision(ctx.db, amendedDecisionId(ctx.run.id, a.recordedAt)) !== null);
-  if (ids.length > 0) {
-    const stop = await runAmendment(ctx, contract, ids, ctx.run.baseRevision);
-    if (stop) return stop;
-  }
-  const amended = new Set((baselineOf2(ctx)?.amendments ?? []).flatMap((a) => a.checkIds));
-  if (amended.size === 0) return null;
-  const unexpected = missingTargetsNotExpectedToFlip(ctx, contract).filter((m) => amended.has(m.checkId));
-  return unexpected.length > 0 ? blockOnMissingTargets(ctx, unexpected) : null;
-}
-async function runAmendment(ctx, contract, ids, baseRevision) {
-  const stage = ctx.run.state;
-  const checkoutDir = join58(runWorktreeRoot(ctx), "baseline");
-  const outcome = await runBaseline({
-    db: ctx.db,
-    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
-    repoRoot: ctx.run.repoRoot,
-    baseRev: baseRevision,
-    snapshot: ctx.snapshot,
-    isolation: ctx.isolation(),
-    runDir: ctx.runDir,
-    clock: ctx.clock,
-    signal: ctx.signal,
-    pollMs: ctx.timing.checkPollMs,
-    killGraceMs: ctx.timing.killGraceMs,
-    homeDir: homeOf2(ctx.deps),
-    checkoutDir,
-    toolchainCacheRoot: toolchainCacheRootFor(ctx),
-    checkIds: [...ids],
-    amend: { stage }
-  });
-  const after = await safePoint(ctx);
-  if (after) return after;
-  const only = new Set(ids);
-  const found = classifyBaseline(ctx, outcome.report, checkoutDir, only);
-  const classified = found.report;
-  atomicWriteJson(join58(ctx.runDir, BASELINE_FILE2), classified);
-  faultPoint("controller.baseline-amendment.after-write");
-  const at = classified.amendments?.at(-1)?.recordedAt ?? ctx.clock.now();
-  const amended = ids.map((id) => ({ checkId: id, citedBy: citedBy(contract, id), mandatory: ctx.snapshot.config.checks[id]?.mandatory === true }));
-  const records = amended.map((a) => {
-    const entry = classified.checks.find((c) => c.checkId === a.checkId);
-    const failure = classified.failures.find((f) => f.checkId === a.checkId);
-    return {
-      check_id: a.checkId,
-      status: entry?.status ?? "NOT_RUN",
-      ...failure ? { classification: failure.classification ?? "pre-existing" } : {},
-      ...failure?.signals ? { signals: failure.signals } : {},
-      cited_by: [...a.citedBy],
-      mandatory: a.mandatory,
-      ...entry?.log ? { log_path: entry.log } : {}
-    };
-  });
-  const said = records.map((r) => `${r.check_id} ${r.status}${r.classification ? ` (${r.classification})` : ""}`).join(", ");
-  const judged = () => void decide2(ctx, {
-    id: amendedDecisionId(ctx.run.id, at),
-    kind: BASELINE_AMENDED_KIND,
-    summary: `the contract requires ${ids.length > 1 ? "checks" : "check"} ${ids.join(", ")}, which the base revision ${classified.baseRevision.slice(0, 12)} had no result for, so ${stage} ran ${ids.length > 1 ? "them" : "it"} there before any change was judged: ${said}`,
-    data: { base_revision: classified.baseRevision, stage, checks: records }
-  });
-  if (!classified.install.skipped && !classified.install.ok) {
-    judged();
-    const bg = baselineGate(classified);
-    recordGate(ctx, bg);
-    return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}, so ${ids.length > 1 ? "checks" : "check"} ${ids.join(", ")}, which the contract requires, could not be run there`, { outcome: { gate: bg, stage } });
-  }
-  const { misconfigured, environment } = found;
-  if (misconfigured.length > 0 || environment.length > 0) {
-    judged();
-    return blockOnBaseline(ctx, classified, { environment, misconfigured }, { at, stage, checks: amended });
-  }
-  askAboutBaseFailures(ctx, found, { baseRevision, key: `amended-${at}`, only });
-  settleExpectedFlips(ctx, contract);
-  recordGate(ctx, baselineGate(classified));
-  judged();
-  return null;
-}
-var BASELINE_AMENDED_KIND;
-var init_baseline_amendment = __esm({
-  "src/controller/steps/baseline-amendment.ts"() {
-    "use strict";
-    init_faults();
-    init_fsx();
-    init_baseline();
-    init_decisions();
-    init_context2();
-    init_gates();
-    init_baseline_questions();
-    init_common();
-    init_preflight();
-    BASELINE_AMENDED_KIND = "baseline.amended";
   }
 });
 
@@ -60121,7 +60188,9 @@ async function handleMovedBase(ctx, d, base) {
   ctx.candidate = next;
   decide2(ctx, { id: `dec-${ctx.run.id}-rebase-${m.to}`, kind: "delivery.rebased", summary: `${m.baseBranch} moved from ${short3(m.from)} to ${short3(m.to)}; rebased the reviewed candidate (${short3(cand.commitSha)}) onto it as ${short3(next.commitSha)}, evidence and reviews invalidated`, data: { from: m.from, to: m.to, old_commit: cand.commitSha, commit: next.commitSha, tree: next.treeHash } });
   const baseTree = (await execCapture(["git", "rev-parse", `${m.to}^{tree}`], { cwd: ctx.run.repoRoot, env: gitEnv4({}, ctx.deps.hostEnv ?? process.env), timeoutMs: 3e4 })).stdout.trim();
-  return move2(ctx, "VERIFYING", `${reason}; verifying again`, { patch: { baseRevision: m.to, ...baseTree ? { baseTree } : {} }, data: { rebase: { from: m.from, to: m.to } } });
+  const moved = move2(ctx, "VERIFYING", `${reason}; verifying again`, { patch: { baseRevision: m.to, ...baseTree ? { baseTree } : {} }, data: { rebase: { from: m.from, to: m.to } } });
+  const baseline = await remeasureRebasedBaseline(ctx, assertContract(ctx));
+  return baseline ?? moved;
 }
 async function blockOnConflict(ctx, d, base, m, reason) {
   const files = m.conflicts[0] === "(unknown paths)" ? [] : m.conflicts;
@@ -60176,6 +60245,7 @@ var init_awaiting_ci = __esm({
     init_ci();
     init_context2();
     init_common();
+    init_baseline_amendment();
     init_delivering();
     init_implementing();
     CI_CYCLE_EVENT = "ci.repair-cycle";

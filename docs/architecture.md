@@ -116,11 +116,13 @@ dependency is the sandbox runtime. The root is the development workspace.
   asked for.
 - **Rebase and release** (`steps/awaiting-ci.ts`, `delivery/release.ts`).
   With `actions.rebase_task_branch` a moved base is rebased onto in an
-  isolated checkout, evidence and reviews are invalidated and the run goes
-  back to VERIFYING (`AWAITING_CI -> VERIFYING`, at most 3 rebases). Release
-  mode marks a draft pull request ready (ledgered `pr_ready`) before the
-  merge, deploys each defined environment its branch allows, and settles an
-  UNKNOWN deploy with `verify_command` or `orbit release resolve`.
+  isolated checkout, evidence and reviews are invalidated, and the contract's
+  required command checks receive a fresh baseline on the new base before
+  VERIFYING judges the rebased candidate (`AWAITING_CI -> VERIFYING`, at most
+  3 rebases).
+  Release mode marks a draft pull request ready (ledgered `pr_ready`) before
+  the merge, deploys each defined environment its branch allows, and settles
+  an UNKNOWN deploy with `verify_command` or `orbit release resolve`.
 - **Resource limits** (`isolation/limits.ts`, `isolation/memory.ts`).
   `isolation.limits` is on by default. CPU time, process count and file size
   are `ulimit` hard limits (docker `--ulimit` under the container provider);
