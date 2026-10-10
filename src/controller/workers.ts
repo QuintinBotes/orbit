@@ -24,7 +24,8 @@ import { archiveAttempt, handleFromWorkerDir, LAUNCH_FILE, readLogLines } from '
 import { LOG_FILE, readExitRecord } from '../adapters/shim.ts';
 import { renderSystemPrompt, ROLE_OUTPUT_KIND } from '../adapters/prompt.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
-import { PROVIDER_HOSTS, profileForWorker, workerAllowedHosts, workerTmpDir } from '../isolation/profiles.ts';
+import { privateHomeDotnetEnv } from '../evidence/runner.ts';
+import { PROVIDER_HOSTS, prepareWorkerTmpDir, profileForWorker, workerAllowedHosts, workerTmpDir } from '../isolation/profiles.ts';
 import { detectToolchains, prepareToolchainLayout, toolchainLayout } from '../isolation/toolchains.ts';
 import { stopWorker } from '../recovery/reconcile.ts';
 import { route, toDecisionRecord } from '../routing/router.ts';
@@ -200,9 +201,10 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
   // Every session runs under the run's frozen snapshot; nothing (an approve-once grant included) widens a worker.
   const policy = { path: ctx.run.policyPath, hash: ctx.run.policyHash, snapshot: ctx.snapshot };
   // The toolchains the worktree uses: the repository's dependency caches read-only, build state private to the worker
-  // (docs/decisions/0009-toolchain-profiles.md). The worker keeps the real HOME its provider CLI needs. The hosts its
-  // sandbox allows decide whether NuGet's vulnerability audit can run there; a Codex worker, a read-only reviewer, is
-  // confined to its provider's hosts by its adapter (codexReviewerProfile).
+  // (docs/decisions/0009-toolchain-profiles.md). The worker keeps the real HOME its provider CLI needs, but .NET gets
+  // a private CLI home before it starts: its first-run state and NuGet user config never need to write the account
+  // home. The hosts its sandbox allows decide whether NuGet's vulnerability audit can run there; a Codex worker, a
+  // read-only reviewer, is confined to its provider's hosts by its adapter (codexReviewerProfile).
   const toolchains = toolchainLayout({
     toolchains: detectToolchains({ roots: [req.cwd] }),
     mode: 'worker',
@@ -214,6 +216,11 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
     networkHosts: provider === 'codex' ? PROVIDER_HOSTS.codex : workerAllowedHosts(provider, policy.snapshot),
   });
   prepareToolchainLayout(toolchains);
+  // Claude Code permits Bash to write its private temp directory in both worker tiers. Codex's os-sandbox reviewer
+  // instead permits its worker directory, so keep its private .NET state there.
+  const dotnetEnv = toolchains.toolchains.includes('dotnet')
+    ? privateHomeDotnetEnv(provider === 'codex' ? join(w.workerDir, 'dotnet-home') : prepareWorkerTmpDir(w.workerDir))
+    : {};
   const sandbox = profileForWorker({
     worktree: req.cwd,
     workerDir: w.workerDir,
@@ -245,7 +252,7 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
     sandbox,
     policyPath: policy.path,
     policyHash: policy.hash,
-    env: toolchains.env,
+    env: { ...toolchains.env, ...dotnetEnv },
     ...(outputCap === null ? {} : { outputTokens: outputCap }),
     ...(req.maxBudgetUsd === undefined ? {} : { maxBudgetUsd: req.maxBudgetUsd }),
   };

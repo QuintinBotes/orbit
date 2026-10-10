@@ -7,7 +7,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { doctorCommand, runDoctor, type DoctorCheck, type DoctorReport } from '../../../src/cli/commands/doctor.ts';
 import { parseCommand } from '../../../src/cli/args.ts';
@@ -19,6 +19,7 @@ import { defaultCheck, defaultConfig } from '../../../src/policy/config.ts';
 import type { OrbitConfig } from '../../../src/policy/types.ts';
 import type { CredentialStatus, ProviderAdapter, ProviderCapabilities } from '../../../src/adapters/types.ts';
 import { NoIsolation } from '../../../src/isolation/none.ts';
+import { nugetUserConfigPath } from '../../../src/isolation/toolchains.ts';
 import type { IsolationProvider } from '../../../src/isolation/types.ts';
 
 const hooks = vi.hoisted(() => ({
@@ -308,6 +309,21 @@ describe('issue #31: doctor says when workers cannot run tests that need a loopb
   });
 });
 
+describe("issue #38: doctor identifies a .NET worker's first NuGet config", () => {
+  it('warns about a fresh account with the one-time restore command, then clears the warning once the config exists', async () => {
+    const w = world({ 'acme.sln': '', 'apps/Acme.cs': 'namespace Acme;\n' });
+    const c = byId(await report(w, cfg()))['workers.dotnet'];
+    const config = nugetUserConfigPath(w.ctx().homeDir);
+    expect(c).toMatchObject({ status: 'warn', area: 'isolation', missing: `NuGet's account config at ${config}` });
+    expect(c!.summary).toContain("a worker's HOME is read-only");
+    expect(c!.fix).toBe('run once outside Orbit: dotnet restore');
+
+    mkdirSync(dirname(config), { recursive: true });
+    writeFileSync(config, '<configuration />\n');
+    expect(byId(await report(w, cfg()))['workers.dotnet']).toBeUndefined();
+  });
+});
+
 // Review of #31: doctor's worker lines describe the repository's config, so they need it read, as every other
 // config-dependent line does; and in the claude-sandbox tier workers cannot write their Go, Rust or JVM build state.
 describe('issue #31 review: doctor\'s worker lines', () => {
@@ -321,6 +337,7 @@ describe('issue #31 review: doctor\'s worker lines', () => {
     expect(c.config).toMatchObject({ status: 'fail' });
     expect(c['workers.loopback']).toBeUndefined();
     expect(c['workers.toolchains']).toBeUndefined();
+    expect(c['workers.dotnet']).toBeUndefined();
   });
 
   it('warns on workers.toolchains for a Go repository when workers run in the claude-sandbox tier, and not in the os-sandbox tier', async () => {

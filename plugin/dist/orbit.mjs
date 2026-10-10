@@ -24924,6 +24924,9 @@ var init_strict_schema = __esm({
 import { chmodSync as chmodSync2, existsSync as existsSync5, lstatSync as lstatSync3, mkdirSync as mkdirSync5, readdirSync as readdirSync2, rmSync } from "node:fs";
 import { basename as basename3, isAbsolute as isAbsolute5, join as join6 } from "node:path";
 import { pathToFileURL } from "node:url";
+function nugetUserConfigPath(homeDir) {
+  return join6(homeDir, NUGET_USER_CONFIG);
+}
 function nugetAuditRuns(d) {
   return d.platform !== "darwin" && NUGET_HOSTS.every((h) => hostAllowed(h, d.networkHosts));
 }
@@ -25067,7 +25070,7 @@ function makeTreeWritable(dir) {
     }
   }
 }
-var TOOLCHAIN_IDS, PROBE_TFM, probeLibrary, DOTNET_PROBE_PROJECT, NUGET_AUDIT_LIMITATION, NUGET_HOSTS, TOOLCHAIN_PROFILES, GO_DEFAULT_PROXY, REPO_KEY;
+var TOOLCHAIN_IDS, PROBE_TFM, probeLibrary, DOTNET_PROBE_PROJECT, NUGET_AUDIT_LIMITATION, NUGET_HOSTS, NUGET_USER_CONFIG, TOOLCHAIN_PROFILES, GO_DEFAULT_PROXY, REPO_KEY;
 var init_toolchains = __esm({
   "src/isolation/toolchains.ts"() {
     "use strict";
@@ -25091,6 +25094,7 @@ ${refs.length ? `  <ItemGroup>${refs.map((r) => `<ProjectReference Include="../$
     };
     NUGET_AUDIT_LIMITATION = "NuGet's vulnerability audit was off (NuGetAudit=false in Orbit's .NET profile, which turns it off where it cannot reach the package source from the sandbox), so a package with a known vulnerability does not fail this restore, even where such warnings are errors; the repository's CI still runs it";
     NUGET_HOSTS = ["api.nuget.org"];
+    NUGET_USER_CONFIG = join6(".nuget", "NuGet", "NuGet.Config");
     TOOLCHAIN_PROFILES = {
       dotnet: {
         id: "dotnet",
@@ -42484,6 +42488,7 @@ function taskSpec(ctx, w, req) {
     networkHosts: provider === "codex" ? PROVIDER_HOSTS.codex : workerAllowedHosts(provider, policy.snapshot)
   });
   prepareToolchainLayout(toolchains);
+  const dotnetEnv = toolchains.toolchains.includes("dotnet") ? privateHomeDotnetEnv(provider === "codex" ? join32(w.workerDir, "dotnet-home") : prepareWorkerTmpDir(w.workerDir)) : {};
   const sandbox = profileForWorker({
     worktree: req.cwd,
     workerDir: w.workerDir,
@@ -42515,7 +42520,7 @@ function taskSpec(ctx, w, req) {
     sandbox,
     policyPath: policy.path,
     policyHash: policy.hash,
-    env: toolchains.env,
+    env: { ...toolchains.env, ...dotnetEnv },
     ...outputCap === null ? {} : { outputTokens: outputCap },
     ...req.maxBudgetUsd === void 0 ? {} : { maxBudgetUsd: req.maxBudgetUsd }
   };
@@ -42839,6 +42844,7 @@ var init_workers2 = __esm({
     init_shim();
     init_prompt();
     init_model_outputs();
+    init_runner();
     init_profiles();
     init_toolchains();
     init_reconcile();
@@ -63346,6 +63352,7 @@ ${r.stderr}`.trim() };
 });
 
 // src/cli/commands/doctor-workers.ts
+import { existsSync as existsSync52 } from "node:fs";
 import { basename as basename19 } from "node:path";
 function workerLoopbackCheck(input) {
   const id = "workers.loopback";
@@ -63393,10 +63400,30 @@ function workerToolchainsCheck(input) {
     }
   ];
 }
+function workerDotnetCheck(input) {
+  if (!input.toolchains.includes("dotnet")) return [];
+  const config = nugetUserConfigPath(input.homeDir);
+  if (existsSync52(config)) return [];
+  return [
+    {
+      id: "workers.dotnet",
+      area: "isolation",
+      status: "warn",
+      summary: `NuGet's account config is missing at ${config}: a worker's HOME is read-only, so its first dotnet command would fail without a private CLI home`,
+      details: [
+        "NuGet creates this file on the account's first restore; checks use a private writable HOME and are not affected",
+        "Orbit gives .NET a private CLI home before it starts a worker, so NuGet creates its config without letting that worker write the account home"
+      ],
+      missing: `NuGet's account config at ${config}`,
+      fix: "run once outside Orbit: dotnet restore"
+    }
+  ];
+}
 var RUNNERS3, DOTNET_FILE, GRADLE_FILES, WHY, SCRATCH_BOUND;
 var init_doctor_workers = __esm({
   "src/cli/commands/doctor-workers.ts"() {
     "use strict";
+    init_toolchains();
     init_config();
     RUNNERS3 = "dotnet test's VSTest test host, Gradle's test workers, a test that starts a server";
     DOTNET_FILE = /\.(sln|slnx|csproj|fsproj|vbproj)$/;
@@ -63411,7 +63438,7 @@ var init_doctor_workers = __esm({
 });
 
 // src/cli/commands/doctor.ts
-import { accessSync as accessSync3, constants as constants5, existsSync as existsSync52, mkdtempSync as mkdtempSync7, readFileSync as readFileSync34, realpathSync as realpathSync19, rmSync as rmSync18, statSync as statSync15 } from "node:fs";
+import { accessSync as accessSync3, constants as constants5, existsSync as existsSync53, mkdtempSync as mkdtempSync7, readFileSync as readFileSync34, realpathSync as realpathSync19, rmSync as rmSync18, statSync as statSync15 } from "node:fs";
 import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
 import { homedir as homedir16, tmpdir as tmpdir13 } from "node:os";
@@ -63537,7 +63564,7 @@ function checkStorage(p) {
   const dir = join74(repo, ".orbit");
   let db = null;
   try {
-    if (!existsSync52(path)) {
+    if (!existsSync53(path)) {
       const scratch = mkdtempSync7(join74(tmpdir13(), "orbit-doctor-"));
       try {
         db = openDb(join74(scratch, "probe.sqlite"));
@@ -63549,9 +63576,9 @@ function checkStorage(p) {
         rmSync18(scratch, { recursive: true, force: true });
       }
       try {
-        accessSync3(existsSync52(dir) ? dir : repo, constants5.W_OK);
+        accessSync3(existsSync53(dir) ? dir : repo, constants5.W_OK);
       } catch {
-        return fail2("storage", "storage", `${existsSync52(dir) ? dir : repo} is not writable`, "a writable .orbit directory", "fix permissions");
+        return fail2("storage", "storage", `${existsSync53(dir) ? dir : repo} is not writable`, "a writable .orbit directory", "fix permissions");
       }
       return pass("storage", "storage", "no state database yet; it will be created in .orbit/ (WAL works, directory writable)");
     }
@@ -63669,7 +63696,7 @@ async function checkIsolation(p) {
   }
   if (!st.ok) {
     const pluginRoot = ctx.env.ORBIT_PLUGIN_ROOT;
-    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync52(join74(pluginRoot, "package.json")) && !existsSync52(join74(pluginRoot, "node_modules"))) {
+    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync53(join74(pluginRoot, "package.json")) && !existsSync53(join74(pluginRoot, "node_modules"))) {
       return {
         check: fail2(
           "isolation",
@@ -63911,7 +63938,7 @@ function checkPlaywright(p) {
   for (const b of names) {
     const dirs = b === "chromium" ? ["chromium", "chromium_headless_shell"] : [b];
     const revs = dirs.map((d) => ({ d, rev: revisions[d] ?? revisions[b] ?? null }));
-    const present = revs.some((r) => r.rev ? existsSync52(join74(cache2, `${r.d}-${r.rev}`)) : false);
+    const present = revs.some((r) => r.rev ? existsSync53(join74(cache2, `${r.d}-${r.rev}`)) : false);
     details.push(`${b}: ${present ? `installed (${cache2})` : `not found in ${cache2}`}`);
     if (!present && revs.some((r) => r.rev)) missing.push(b);
   }
@@ -64053,7 +64080,7 @@ async function checkService(p) {
   let beat = "no controller has registered in this repository";
   let stale = false;
   let live = false;
-  if (existsSync52(stateDbPath(repo))) {
+  if (existsSync53(stateDbPath(repo))) {
     let db = null;
     try {
       db = openDb(stateDbPath(repo));
@@ -64133,7 +64160,7 @@ async function runDoctor(ctx, opts) {
   });
   let regDb = null;
   try {
-    const persisted = repo !== null && existsSync52(stateDbPath(repo));
+    const persisted = repo !== null && existsSync53(stateDbPath(repo));
     regDb = persisted ? openDb(stateDbPath(repo)) : openDb(":memory:");
     const registry = new ModelRegistry(regDb, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
     if (!persisted || registry.list().length === 0) registry.seed();
@@ -64165,6 +64192,7 @@ async function runDoctor(ctx, opts) {
   await safely("checks.dotnet-tests", "checks", () => repo && configLoaded ? dotnetTestsCheck({ config, repo, files: tracked }) : []);
   await safely("workers.loopback", "isolation", () => repo && configLoaded ? workerLoopbackCheck({ config, files: tracked, platform: ctx.platform }) : []);
   await safely("workers.toolchains", "isolation", () => repo && configLoaded ? workerToolchainsCheck({ tier: claudeWorkerTier(isoFacts, ctx.env), toolchains: detectToolchains({ roots: [repo] }) }) : []);
+  await safely("workers.dotnet", "isolation", () => repo && configLoaded ? workerDotnetCheck({ homeDir: ctx.homeDir, toolchains: detectToolchains({ roots: [repo] }) }) : []);
   const nuget = repo && configLoaded ? { config, repo, files: tracked, provider: isoFacts.provider, available: isoFacts.available, platform: ctx.platform, orbitHome: ctx.orbitHome } : null;
   await safely("checks.dotnet-packages", "checks", () => nuget ? dotnetPackagesCheck(nuget) : []);
   await safely("checks.dotnet-audit", "checks", () => nuget ? dotnetAuditCheck(nuget) : []);
@@ -64287,7 +64315,7 @@ var init_gc = __esm({
 });
 
 // src/cli/commands/models.ts
-import { existsSync as existsSync53 } from "node:fs";
+import { existsSync as existsSync54 } from "node:fs";
 function configOrDefault(repo) {
   try {
     return { config: loadConfig(repo), loaded: true };
@@ -64299,7 +64327,7 @@ async function modelsListCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
   const { config, loaded } = configOrDefault(repo);
-  const persisted = existsSync53(stateDbPath(repo));
+  const persisted = existsSync54(stateDbPath(repo));
   const db = persisted ? openState(repo) : openDb(":memory:");
   try {
     const registry = new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
@@ -64460,7 +64488,7 @@ var init_models2 = __esm({
 });
 
 // src/cli/check-detect.ts
-import { existsSync as existsSync54, readFileSync as readFileSync35 } from "node:fs";
+import { existsSync as existsSync55, readFileSync as readFileSync35 } from "node:fs";
 import { basename as basename20, dirname as dirname34, join as join75 } from "node:path";
 function read(path) {
   try {
@@ -64489,9 +64517,9 @@ function nodeDrafts(input, out) {
   const has = (name) => typeof scripts[name] === "string" && scripts[name].trim() !== "";
   let pm = "npm";
   let pmFrom = "no lockfile, so npm";
-  if (existsSync54(join75(repo, "pnpm-lock.yaml"))) [pm, pmFrom] = ["pnpm", "pnpm-lock.yaml"];
-  else if (existsSync54(join75(repo, "yarn.lock"))) [pm, pmFrom] = ["yarn", "yarn.lock"];
-  else if (existsSync54(join75(repo, "package-lock.json")) || existsSync54(join75(repo, "npm-shrinkwrap.json"))) pmFrom = "package-lock.json";
+  if (existsSync55(join75(repo, "pnpm-lock.yaml"))) [pm, pmFrom] = ["pnpm", "pnpm-lock.yaml"];
+  else if (existsSync55(join75(repo, "yarn.lock"))) [pm, pmFrom] = ["yarn", "yarn.lock"];
+  else if (existsSync55(join75(repo, "package-lock.json")) || existsSync55(join75(repo, "npm-shrinkwrap.json"))) pmFrom = "package-lock.json";
   else {
     const declared = typeof pkg.packageManager === "string" ? /^(npm|pnpm|yarn)@/.exec(pkg.packageManager)?.[1] : void 0;
     if (declared === "pnpm" || declared === "yarn") [pm, pmFrom] = [declared, "package.json packageManager"];
@@ -64500,7 +64528,7 @@ function nodeDrafts(input, out) {
     out.skip("node", `package.json declares checks, but ${pm} (chosen from ${pmFrom}) was not found on PATH`);
     return [];
   }
-  const workspaceDeclared = Array.isArray(pkg.workspaces) || typeof pkg.workspaces === "object" && pkg.workspaces !== null || existsSync54(join75(repo, "pnpm-workspace.yaml"));
+  const workspaceDeclared = Array.isArray(pkg.workspaces) || typeof pkg.workspaces === "object" && pkg.workspaces !== null || existsSync55(join75(repo, "pnpm-workspace.yaml"));
   const nestedManifests = files.filter((f) => f.endsWith("package.json") && f !== "package.json" && !f.split("/").includes("node_modules"));
   const nestedHas = (name) => nestedManifests.some((f) => {
     const t = read(join75(repo, f));
@@ -64537,7 +64565,7 @@ function nodeDrafts(input, out) {
   const typed = script("typecheck", ["typecheck", "type-check", "check-types"], "typecheck", TIMEOUT.typecheck);
   if (!typed) {
     const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    if (existsSync54(join75(repo, "tsconfig.json")) && "typescript" in deps) {
+    if (existsSync55(join75(repo, "tsconfig.json")) && "typescript" in deps) {
       const tsc = pm === "npm" ? ["npx", "--no-install", "tsc", "--noEmit"] : pm === "pnpm" ? ["pnpm", "exec", "tsc", "--noEmit"] : ["yarn", "tsc", "--noEmit"];
       drafts.push({ name: "typecheck", command: tsc, category: "typecheck", timeout_seconds: TIMEOUT.typecheck, reason: `tsconfig.json and the typescript dependency (${pm}, from ${pmFrom})` });
     }
@@ -64599,13 +64627,13 @@ function pythonDrafts(input, out) {
   const rootFiles = files.filter((f) => !f.includes("/"));
   const requirements = rootFiles.filter((f) => /^requirements.*\.(txt|in)$/i.test(f)).map((f) => read(join75(repo, f)) ?? "");
   const markers = ["pyproject.toml", "setup.cfg", "tox.ini", "pytest.ini", "mypy.ini", "ruff.toml", ".flake8"];
-  if (!markers.some((m) => existsSync54(join75(repo, m)))) return [];
+  if (!markers.some((m) => existsSync55(join75(repo, m)))) return [];
   const listed2 = (name) => {
     const re = new RegExp(`(^|[^\\w-])${name}([^\\w-]|$)`, "im");
     return [pyproject, setupCfg, toxIni, ...requirements].some((t) => t !== null && re.test(t));
   };
   const section = (text2, re) => text2 !== null && re.test(text2);
-  const exists = (f) => existsSync54(join75(repo, f));
+  const exists = (f) => existsSync55(join75(repo, f));
   const declared = {
     pytest: exists("pytest.ini") ? "pytest.ini" : section(pyproject, /^\[tool\.pytest/m) ? "pyproject.toml" : section(setupCfg, /^\[tool:pytest\]/m) ? "setup.cfg" : section(toxIni, /^\[pytest\]/m) ? "tox.ini" : listed2("pytest") ? "the declared dependencies" : null,
     ruff: exists("ruff.toml") ? "ruff.toml" : exists(".ruff.toml") ? ".ruff.toml" : section(pyproject, /^\[tool\.ruff/m) ? "pyproject.toml" : listed2("ruff") ? "the declared dependencies" : null,
@@ -64639,7 +64667,7 @@ function goWorkModules(text2) {
 function goDrafts(input, out) {
   const { repo, pathEnv } = input;
   const work = read(join75(repo, "go.work"));
-  if (!existsSync54(join75(repo, "go.mod")) && work === null) return [];
+  if (!existsSync55(join75(repo, "go.mod")) && work === null) return [];
   if (which("go", pathEnv) === null) {
     out.skip("go", "the repository has a Go module, but go was not found on PATH");
     return [];
@@ -64647,7 +64675,7 @@ function goDrafts(input, out) {
   const modules = work === null ? [] : goWorkModules(work);
   const patterns = modules.length > 0 ? modules.map((m) => `./${m}/...`) : ["./..."];
   const reason = modules.length > 0 ? `go.work lists ${modules.length} module(s), so one root command covers them` : "go.mod";
-  if (modules.length === 0 && !existsSync54(join75(repo, "go.mod"))) {
+  if (modules.length === 0 && !existsSync55(join75(repo, "go.mod"))) {
     out.skip("go", "go.work names no module directory and there is no root go.mod");
     return [];
   }
@@ -64743,7 +64771,7 @@ var init_check_detect = __esm({
 });
 
 // src/cli/commands/init.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync55, mkdirSync as mkdirSync24, readFileSync as readFileSync36, realpathSync as realpathSync20, writeFileSync as writeFileSync10 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync56, mkdirSync as mkdirSync24, readFileSync as readFileSync36, realpathSync as realpathSync20, writeFileSync as writeFileSync10 } from "node:fs";
 import { dirname as dirname35, join as join76 } from "node:path";
 function reviewPolicyProposal(codexEligible) {
   return codexEligible ? "review: Codex reviews independently when it is usable (review.providers: [codex]); when it is not, Claude reviews in a separate session and every report says the review was not independent and why (review.when_unavailable: claude). Set review.when_unavailable to ask to be asked first, or to block to require an independent reviewer." : REVIEW_POLICY_PROPOSAL;
@@ -65208,7 +65236,7 @@ verification:
   allow_flaky_pass: false
 `;
   const tpl = templatePath();
-  if (!existsSync55(tpl)) throw new OrbitError("NOT_FOUND", `the starter template ${tpl} is missing from this installation`);
+  if (!existsSync56(tpl)) throw new OrbitError("NOT_FOUND", `the starter template ${tpl} is missing from this installation`);
   return readFileSync36(tpl, "utf8");
 }
 async function currentBranch(ctx, repo) {
@@ -65249,7 +65277,7 @@ async function seedModels(ctx, repo) {
   } catch {
     config = defaultConfig();
   }
-  const persisted = existsSync55(stateDbPath(repo));
+  const persisted = existsSync56(stateDbPath(repo));
   let db;
   try {
     db = openDb(persisted ? stateDbPath(repo) : ":memory:");
@@ -65288,7 +65316,7 @@ async function initCommand(args, ctx) {
   let excludedDirs = [];
   let baseBranch = null;
   let checkProposal = { proposed: [], notProposed: [] };
-  if (existsSync55(configPath)) config = "exists";
+  if (existsSync56(configPath)) config = "exists";
   else {
     let text2 = templateText();
     mkdirSync24(dirname35(configPath), { recursive: true });
@@ -65321,7 +65349,7 @@ ${block2}`);
   const excludePath = await excludeFile(ctx, repo);
   const sharedAcrossWorktrees = await inLinkedWorktree(ctx, repo);
   mkdirSync24(dirname35(excludePath), { recursive: true });
-  const current = existsSync55(excludePath) ? readFileSync36(excludePath, "utf8") : "";
+  const current = existsSync56(excludePath) ? readFileSync36(excludePath, "utf8") : "";
   const have = new Set(current.split("\n").map((l) => l.trim()));
   const missing = EXCLUDE_RULES.filter((r) => !have.has(r));
   if (missing.length > 0) {
@@ -65557,14 +65585,14 @@ var init_ingest = __esm({
 });
 
 // src/cli/commands/learn.ts
-import { existsSync as existsSync56, mkdirSync as mkdirSync26, readFileSync as readFileSync37, statSync as statSync16 } from "node:fs";
+import { existsSync as existsSync57, mkdirSync as mkdirSync26, readFileSync as readFileSync37, statSync as statSync16 } from "node:fs";
 import { basename as basename21, isAbsolute as isAbsolute26, join as join77, relative as relative8, resolve as resolve21 } from "node:path";
 function knowledgePath(ctx, repo, global) {
   return global ? join77(ctx.orbitHome, "knowledge.sqlite") : join77(repo, ".orbit", "knowledge.sqlite");
 }
 function openExisting(ctx, repo, global) {
   const path = knowledgePath(ctx, repo, global);
-  if (!existsSync56(path)) throw new OrbitError("NOT_FOUND", `no ${global ? "global" : "repository"} knowledge graph at ${path}; it is created by the first run that learns something, or by "orbit learn ingest"`);
+  if (!existsSync57(path)) throw new OrbitError("NOT_FOUND", `no ${global ? "global" : "repository"} knowledge graph at ${path}; it is created by the first run that learns something, or by "orbit learn ingest"`);
   return KnowledgeStore.open(path, { clock: ctx.clock });
 }
 function lessonRow(l, support, contradict) {
@@ -65675,7 +65703,7 @@ async function readSource(ctx, repo, ref2, label) {
     return { kind: "url", ref: ref2, content: Buffer.concat(chunks).toString("utf8") };
   }
   const path = resolve21(ctx.cwd, ref2);
-  if (!existsSync56(path)) throw new OrbitError("NOT_FOUND", `${path} does not exist`);
+  if (!existsSync57(path)) throw new OrbitError("NOT_FOUND", `${path} does not exist`);
   const st = statSync16(path);
   if (!st.isFile()) throw new OrbitError("SCHEMA_INVALID", `${path} is not a regular file`);
   if (st.size > FETCH_MAX_BYTES) throw new OrbitError("SCHEMA_INVALID", `${path} is larger than ${FETCH_MAX_BYTES} bytes`);
@@ -65931,7 +65959,7 @@ var init_learn2 = __esm({
 });
 
 // src/cli/commands/logs.ts
-import { closeSync as closeSync10, existsSync as existsSync57, fstatSync as fstatSync5, openSync as openSync10, readSync as readSync6, statSync as statSync17 } from "node:fs";
+import { closeSync as closeSync10, existsSync as existsSync58, fstatSync as fstatSync5, openSync as openSync10, readSync as readSync6, statSync as statSync17 } from "node:fs";
 import { dirname as dirname36, join as join78 } from "node:path";
 function readTail(path, lines) {
   const size = statSync17(path).size;
@@ -66001,7 +66029,7 @@ async function logsCommand(args, ctx) {
     const known = /* @__PURE__ */ new Set();
     const discover = () => {
       const add = (s) => {
-        if (known.has(s.path) || !existsSync57(s.path)) return;
+        if (known.has(s.path) || !existsSync58(s.path)) return;
         known.add(s.path);
         sources.push({ ...s, offset: 0 });
       };
@@ -66226,7 +66254,7 @@ var init_release2 = __esm({
 });
 
 // src/cli/commands/report.ts
-import { existsSync as existsSync58, readFileSync as readFileSync38 } from "node:fs";
+import { existsSync as existsSync59, readFileSync as readFileSync38 } from "node:fs";
 import { dirname as dirname37, join as join79 } from "node:path";
 async function reportCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
@@ -66238,9 +66266,9 @@ async function reportCommand(args, ctx) {
     const finalMd = join79(runDir2, "final.md");
     const finalJson = join79(runDir2, "final.json");
     const asJson = args.bool("json");
-    if (isTerminal(run.state) && !args.bool("interim") && existsSync58(finalMd)) {
+    if (isTerminal(run.state) && !args.bool("interim") && existsSync59(finalMd)) {
       if (asJson) {
-        if (existsSync58(finalJson)) ctx.io.out(readFileSync38(finalJson, "utf8"));
+        if (existsSync59(finalJson)) ctx.io.out(readFileSync38(finalJson, "utf8"));
         else json(ctx.io, buildFinalReport(db, run, { runDir: runDir2, clock: ctx.clock, snapshot: snapshotOrNull(run.policyPath, run.policyHash) }));
       } else ctx.io.out(readFileSync38(finalMd, "utf8"));
       return EXIT.OK;
@@ -66269,7 +66297,7 @@ function learningReport(ctx, repo, db, asJson) {
   const windows = [{ label: "base prompt", from: 0, to: Number.POSITIVE_INFINITY }];
   const kPath = join79(repo, ".orbit", "knowledge.sqlite");
   const overlays = [];
-  if (existsSync58(kPath)) {
+  if (existsSync59(kPath)) {
     const store = KnowledgeStore.open(kPath, { clock: ctx.clock });
     try {
       for (const o of store.listOverlays({ scope: "repo" })) {
@@ -66336,7 +66364,7 @@ var init_report4 = __esm({
 });
 
 // src/cli/admission.ts
-import { existsSync as existsSync59 } from "node:fs";
+import { existsSync as existsSync60 } from "node:fs";
 import { createRequire as createRequire5 } from "node:module";
 import { join as join80 } from "node:path";
 async function admitRun(ctx, input) {
@@ -66365,7 +66393,7 @@ function playwrightInstalled(repo) {
 }
 async function environmentProblems(ctx, input) {
   const { repo, config } = input;
-  const persisted = existsSync59(stateDbPath(repo));
+  const persisted = existsSync60(stateDbPath(repo));
   const db = persisted ? openDb(stateDbPath(repo)) : openDb(":memory:");
   try {
     const factory = ctx.seams.controllerDeps ?? defaultControllerDeps;
@@ -66480,7 +66508,7 @@ var init_admission = __esm({
 });
 
 // src/cli/commands/run.ts
-import { existsSync as existsSync60 } from "node:fs";
+import { existsSync as existsSync61 } from "node:fs";
 import { resolve as resolve22 } from "node:path";
 async function runCommand(args, ctx) {
   const usage = 'orbit run --goal "<goal>" [--mode <mode>] [--environment <name>] [--policy <path>] [--foreground | --detach]';
@@ -66493,7 +66521,7 @@ async function runCommand(args, ctx) {
   if (!goal) throw new UsageError('a goal is required: orbit run --goal "..."', usage);
   const repo = await resolveRepo(ctx, args.str("repo"));
   const policy = args.str("policy");
-  if (policy !== void 0 && !existsSync60(resolve22(ctx.cwd, policy))) throw new OrbitError("NOT_FOUND", `policy file ${resolve22(ctx.cwd, policy)} does not exist; check the --policy path`);
+  if (policy !== void 0 && !existsSync61(resolve22(ctx.cwd, policy))) throw new OrbitError("NOT_FOUND", `policy file ${resolve22(ctx.cwd, policy)} does not exist; check the --policy path`);
   const config = loadConfig(repo, policy ? resolve22(ctx.cwd, policy) : void 0, mode ? { mode } : {});
   const environment = args.str("environment");
   if (environment !== void 0) {
@@ -66501,7 +66529,7 @@ async function runCommand(args, ctx) {
     if (why) throw new UsageError(`--environment ${environment}: ${why}`, usage);
   }
   let service = null;
-  if (existsSync60(stateDbPath(repo))) {
+  if (existsSync61(stateDbPath(repo))) {
     const probe2 = openState(repo);
     try {
       service = liveServiceController(probe2, ctx.clock.now());
@@ -67011,7 +67039,7 @@ var init_stats = __esm({
 });
 
 // src/cli/commands/status.ts
-import { existsSync as existsSync61 } from "node:fs";
+import { existsSync as existsSync62 } from "node:fs";
 function finished(state) {
   return state !== "BLOCKED" && isTerminal(state);
 }
@@ -67111,7 +67139,7 @@ function renderRunStatus(s, now) {
 async function statusCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   const [id] = args.expect(0, 1);
-  if (id === void 0 && !existsSync61(stateDbPath(repo)) && initialised(repo)) {
+  if (id === void 0 && !existsSync62(stateDbPath(repo)) && initialised(repo)) {
     if (args.bool("json")) json(ctx.io, { runs: [], controllers: [] });
     else line(ctx.io, 'no runs yet; start one with: orbit run --goal "..."');
     return EXIT.OK;

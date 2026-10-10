@@ -289,6 +289,15 @@ degraded but usable.
   from the repository's read-only NuGet cache (`NUGET_PACKAGES`), so restore them in the dependency install
   (`dependencies.install_command: [dotnet, restore, --locked-mode, -m:1]`, which reaches `api.nuget.org`; on macOS
   see ".NET HTTP clients and NuGet restore on macOS" below).
+- **A .NET worker on an account with no NuGet config.** A worker retains the
+  account's `HOME`, but that home is read-only to the worker. If
+  `~/.nuget/NuGet/NuGet.Config` does not yet exist, NuGet normally creates it
+  on its first restore, which would make the worker's first `dotnet` command
+  fail. Before starting a .NET worker, Orbit gives `dotnet` a private CLI
+  home, where NuGet can create its standard config and first-run state without
+  giving the worker permission to write the account home. `orbit doctor` warns
+  when it finds this first-use state and gives the manual fallback: run
+  `dotnet restore` once outside Orbit.
 - **.NET builds and MSBuild worker nodes.** `dotnet build`, `dotnet test` and the
   like run MSBuild with one node per processor. Whenever a restore or build has two
   projects to work on at once (a test project referencing two libraries, any

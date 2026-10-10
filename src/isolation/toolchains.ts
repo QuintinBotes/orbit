@@ -112,6 +112,14 @@ export const NUGET_AUDIT_LIMITATION =
 
 const NUGET_HOSTS: readonly string[] = ['api.nuget.org'];
 
+/** The .NET CLI's user-level NuGet config on macOS and Linux. */
+export const NUGET_USER_CONFIG = join('.nuget', 'NuGet', 'NuGet.Config');
+
+/** Where NuGet would create its config in an account home that has not restored a package yet. */
+export function nugetUserConfigPath(homeDir: string): string {
+  return join(homeDir, NUGET_USER_CONFIG);
+}
+
 /**
  * Whether NuGet's vulnerability audit can run in a .NET process (ADR 0009, addendum, item 12): its sandbox lets it
  * reach the package source, and it is not on macOS, where .NET under srt cannot verify nuget.org's certificate (the

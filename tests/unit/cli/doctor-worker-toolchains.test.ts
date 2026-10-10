@@ -2,8 +2,17 @@
 // tier a worker's build state (the toolchain scratch under its worker directory: GOCACHE, CARGO_TARGET_DIR,
 // GRADLE_USER_HOME, the Maven local repository) is not writable by Claude Code's sandboxed Bash, so its own `go test` and
 // `cargo test` fail before any test runs (measured with the real CLI), while the checks, under srt, run them.
-import { describe, expect, it } from 'vitest';
-import { workerToolchainsCheck } from '../../../src/cli/commands/doctor-workers.ts';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { workerDotnetCheck, workerToolchainsCheck } from '../../../src/cli/commands/doctor-workers.ts';
+import { nugetUserConfigPath } from '../../../src/isolation/toolchains.ts';
+
+const dirs: string[] = [];
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 describe('workerToolchainsCheck', () => {
   it('warns in the claude-sandbox tier for Go, Rust and the JVM, naming each, with the os-sandbox tier as the fix', () => {
@@ -31,5 +40,27 @@ describe('workerToolchainsCheck', () => {
     expect(workerToolchainsCheck({ tier: 'claude-sandbox', toolchains: ['dotnet', 'python'] })).toEqual([]);
     expect(workerToolchainsCheck({ tier: 'claude-sandbox', toolchains: [] })).toEqual([]);
     expect(workerToolchainsCheck({ tier: 'os-sandbox', toolchains: ['go', 'jvm', 'rust'] })).toEqual([]);
+  });
+});
+
+describe('workerDotnetCheck', () => {
+  it('names the first NuGet restore a fresh account needs before its read-only worker home can run dotnet', () => {
+    const home = mkdtempSync(join(tmpdir(), 'orbit-worker-home-'));
+    dirs.push(home);
+    const config = nugetUserConfigPath(home);
+    const [c] = workerDotnetCheck({ homeDir: home, toolchains: ['dotnet'] });
+    expect(c).toMatchObject({ id: 'workers.dotnet', area: 'isolation', status: 'warn' });
+    expect(c!.summary).toBe(`NuGet's account config is missing at ${config}: a worker's HOME is read-only, so its first dotnet command would fail without a private CLI home`);
+    expect(c!.details).toEqual([
+      'NuGet creates this file on the account\'s first restore; checks use a private writable HOME and are not affected',
+      'Orbit gives .NET a private CLI home before it starts a worker, so NuGet creates its config without letting that worker write the account home',
+    ]);
+    expect(c!.missing).toBe(`NuGet's account config at ${config}`);
+    expect(c!.fix).toBe('run once outside Orbit: dotnet restore');
+
+    mkdirSync(dirname(config), { recursive: true });
+    writeFileSync(config, '<configuration />\n');
+    expect(workerDotnetCheck({ homeDir: home, toolchains: ['dotnet'] })).toEqual([]);
+    expect(workerDotnetCheck({ homeDir: home, toolchains: ['go'] })).toEqual([]);
   });
 });
