@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- On macOS, a worker process that creates another process group or session is
+  now tracked from the provider tree and stopped before the shim writes its
+  result. The sweep remembers pid/start-time identities, so it cannot signal a
+  recycled pid, and result collection cannot race a detached child continuing
+  to write the worktree (#34).
 - Tests: the lab's scenario files are replaced, never rewritten in place. On the v0.2.2 release gate the parallel review test counted three reviewer sessions (`review-security` twice) for a run that succeeded. The security reviewer's fake started while the UI reviewer's scenario was being rendered into the same file (emptied, then written), read it empty, and exited 1 with no result; Orbit recorded that session `FAILED` ("exited 1 without turn.completed or turn.failed"), noted `worker.regenerate`, and started the unit's second attempt, as it does for any failed session. It was not a double dispatch: a unit's next session starts only after its earlier one is recorded as finished and unusable, one session per attempt, and a failed session records no review. Measured with a reader process beside the renders: a quarter of reads found the file torn before the change, none after. A review focus can now have steps of its own in a scenario (`reviewer@security`, `reviewer@ui`); a new test runs a failed security session through its regeneration (two reviews, from the second security session and the UI session, and three review rounds charged), and the parallel review test names each session and its error when a unit runs twice. No change to Orbit itself.
 
 ## 0.2.2 (2026-10-08)

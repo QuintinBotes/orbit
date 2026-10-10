@@ -27,6 +27,7 @@ import {
   shimArgs,
   shimMain,
   type ExitRecord,
+  type ProcessEntry,
   type ShimHost,
   type ShimOptions,
 } from '../../../src/adapters/shim.ts';
@@ -101,7 +102,16 @@ function waitForUp(dir: string, ms = 20_000): void {
   throw new Error('the provider never reported readiness');
 }
 
-function rig(behaviour: { throwOn?: string[]; echoSelf?: boolean; pgid?: number | null; deliver?: boolean } = {}): Rig {
+function rig(
+  behaviour: {
+    throwOn?: string[];
+    echoSelf?: boolean;
+    pgid?: number | null;
+    deliver?: boolean;
+    processes?: (rig: Rig) => ProcessEntry[] | null;
+    onGroupSignal?: (pgid: number, signal: NodeJS.Signals) => void;
+  } = {},
+): Rig {
   const dir = tmp();
   const signals: string[] = [];
   const emitter = new EventEmitter();
@@ -115,6 +125,7 @@ function rig(behaviour: { throwOn?: string[]; echoSelf?: boolean; pgid?: number 
       pgidOf: () => (behaviour.pgid === undefined ? process.pid : behaviour.pgid),
       signalGroup: (_pgid, sig) => {
         signals.push(sig);
+        behaviour.onGroupSignal?.(_pgid, sig);
         if (behaviour.throwOn?.includes(sig)) throw new Error('no such group');
         if (behaviour.deliver !== false) {
           if (r.awaitsUp) waitForUp(dir);
@@ -130,6 +141,7 @@ function rig(behaviour: { throwOn?: string[]; echoSelf?: boolean; pgid?: number 
         if (behaviour.echoSelf && (sig === 'SIGINT' || sig === 'SIGTERM')) queueMicrotask(() => emitter.emit(sig));
       },
       groupMembers: () => members.shift() ?? [],
+      processes: () => behaviour.processes?.(r) ?? null,
       onSignal: (sig, listener) => {
         emitter.on(sig, listener);
       },
@@ -200,6 +212,34 @@ describe('runShim: a provider that runs to its end', () => {
       env: { PATH: process.env.PATH, ORBIT_T_A: 'yes', ORBIT_T_B: undefined },
     });
     expect(readFileSync(join(r.dir, LOG_FILE), 'utf8').trim()).toBe('{"a":"yes","b":null}');
+  });
+
+  it.skipIf(process.platform !== 'darwin')('sweeps a remembered descendant after it is reparented into another process group', async () => {
+    const escapedPid = 987_654;
+    let escapedAlive = true;
+    let captures = 0;
+    const r = rig({
+      processes: (current) => {
+        const childPid = current.childPid();
+        if (!childPid) return [];
+        captures++;
+        if (captures === 1) {
+          return [
+            { pid: childPid, ppid: process.pid, pgid: process.pid, start: 'provider-start' },
+            { pid: escapedPid, ppid: childPid, pgid: escapedPid, start: 'escaped-start' },
+          ];
+        }
+        return escapedAlive ? [{ pid: escapedPid, ppid: 1, pgid: escapedPid, start: 'escaped-start' }] : [];
+      },
+      onGroupSignal: (pgid, signal) => {
+        if (pgid === escapedPid && signal === 'SIGTERM') escapedAlive = false;
+      },
+    });
+    const rec = await r.run({ argv: [NODE, '-e', 'process.exit(0)'], graceMs: 50 });
+    expect(rec).toMatchObject({ code: 0, signal: null, escalation: [] });
+    expect(captures).toBeGreaterThan(1);
+    expect(r.signals).toContain('SIGTERM');
+    expect(escapedAlive).toBe(false);
   });
 });
 

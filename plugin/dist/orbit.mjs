@@ -27405,6 +27405,36 @@ function readFrom(path, offset, max = 4 * 1024 * 1024) {
     safeClose(fd);
   }
 }
+function macProcesses() {
+  if (process.platform !== "darwin") return null;
+  let r;
+  try {
+    r = spawnSync2("ps", ["-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "lstart="], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" },
+      timeout: 1e4,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+  } catch {
+    return null;
+  }
+  if (r.error || r.status !== 0 || typeof r.stdout !== "string") return null;
+  const entries = [];
+  for (const line3 of r.stdout.split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line3);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    const ppid = Number(m[2]);
+    const pgid = Number(m[3]);
+    const start = m[4].trim().replace(/\s+/g, " ");
+    if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(ppid) || ppid < 0 || !Number.isSafeInteger(pgid) || pgid <= 0 || start === "") continue;
+    entries.push({ pid, ppid, pgid, start });
+  }
+  return entries;
+}
+function validEntry(entry) {
+  return Number.isSafeInteger(entry.pid) && entry.pid > 0 && Number.isSafeInteger(entry.ppid) && entry.ppid >= 0 && Number.isSafeInteger(entry.pgid) && entry.pgid > 0 && typeof entry.start === "string" && entry.start !== "";
+}
 function groupMembers(pgid) {
   const r = spawnSync2("ps", ["-A", "-o", "pid=,pgid="], { encoding: "utf8", timeout: 1e4, stdio: ["ignore", "pipe", "ignore"] });
   if (r.status !== 0 || typeof r.stdout !== "string") return [];
@@ -27536,7 +27566,7 @@ async function shimMain(args, host) {
   });
   return 0;
 }
-var PID_FILE, EXIT_FILE, LOG_FILE, STDERR_FILE, SHIM_LOG_FILE, DEFAULT_GRACE_MS, ABORT_POLL_MS, FIRST_OUTPUT_POLL_MS, LEFTOVER_GRACE_MS, OUTPUT_POLL_MS, OUTPUT_PUMP_BYTES, ESCALATION, MAX_TIMER_MS, DEFAULT_HOST, Shim, MAX_PENDING_LINE, PENDING_OVERLAP, MAX_KEY_BLOCK_LINES, KEY_MARKER, KEY_HEADER, LineSink, Spill;
+var PID_FILE, EXIT_FILE, LOG_FILE, STDERR_FILE, SHIM_LOG_FILE, DEFAULT_GRACE_MS, ABORT_POLL_MS, FIRST_OUTPUT_POLL_MS, LEFTOVER_GRACE_MS, DESCENDANT_POLL_MS, OUTPUT_POLL_MS, OUTPUT_PUMP_BYTES, ESCALATION, MAX_TIMER_MS, DEFAULT_HOST, Shim, MAX_PENDING_LINE, PENDING_OVERLAP, MAX_KEY_BLOCK_LINES, KEY_MARKER, KEY_HEADER, LineSink, Spill, DescendantTracker;
 var init_shim = __esm({
   "src/adapters/shim.ts"() {
     "use strict";
@@ -27554,6 +27584,7 @@ var init_shim = __esm({
     ABORT_POLL_MS = 200;
     FIRST_OUTPUT_POLL_MS = 25;
     LEFTOVER_GRACE_MS = 1e3;
+    DESCENDANT_POLL_MS = 100;
     OUTPUT_POLL_MS = 20;
     OUTPUT_PUMP_BYTES = 8 * 1024 * 1024;
     ESCALATION = ["SIGINT", "SIGTERM", "SIGKILL"];
@@ -27564,6 +27595,7 @@ var init_shim = __esm({
         process.kill(-pgid, signal);
       },
       groupMembers: (pgid) => groupMembers(pgid),
+      processes: () => macProcesses(),
       onSignal: (signal, listener) => {
         process.on(signal, listener);
       }
@@ -27596,6 +27628,9 @@ var init_shim = __esm({
       logCarry = "";
       redactor;
       spills = [];
+      /** macOS has no PID namespace, so remember descendants that leave the shim's group. */
+      descendants;
+      descendantSweep = null;
       constructor(options, pgid, host) {
         this.o = options;
         this.pgid = pgid;
@@ -27605,6 +27640,7 @@ var init_shim = __esm({
         this.workerDir = resolve5(options.workerDir);
         this.startedAt = this.clock.now();
         this.redactor = createRedactor({ env: cleanEnv2(options.env) });
+        this.descendants = process.platform === "darwin" ? new DescendantTracker(this.host, this.pgid) : null;
       }
       run() {
         return new Promise((resolvePromise) => {
@@ -27653,6 +27689,8 @@ var init_shim = __esm({
         if (child.pid === void 0) return;
         child.once("exit", (code2, signal) => void this.onChildExit(code2, signal));
         this.writePid(child);
+        this.descendants?.start(child.pid);
+        this.watchDescendants();
         this.watchFirstOutput();
         if (this.o.timeoutMs > 0) {
           this.later(this.o.timeoutMs, () => {
@@ -27684,12 +27722,13 @@ var init_shim = __esm({
       async escalate(from, waitFirst) {
         if (this.escalating || this.finished) return;
         this.escalating = true;
+        this.descendants?.capture();
         if (waitFirst) await this.clock.sleep(this.graceMs);
         for (let i = from; i < ESCALATION.length; i++) {
           if (this.finished || this.childExited) return;
           const sig = ESCALATION[i];
           if (sig === "SIGKILL") {
-            this.killGroupAndFinish(null, "SIGKILL", true);
+            await this.killGroupAndFinish(null, "SIGKILL", true);
             return;
           }
           this.signalGroup(sig);
@@ -27708,12 +27747,13 @@ var init_shim = __esm({
       async onChildExit(code2, signal) {
         if (this.finished) return;
         this.childExited = true;
+        await this.sweepEscapedDescendants();
         if (this.leftovers().length > 0) {
           this.signalGroup("SIGTERM");
           const deadline = this.clock.now() + Math.min(this.graceMs, LEFTOVER_GRACE_MS);
           while (this.clock.now() < deadline && this.leftovers().length > 0) await this.clock.sleep(50);
           if (this.leftovers().length > 0) {
-            this.killGroupAndFinish(code2, signal);
+            await this.killGroupAndFinish(code2, signal);
             return;
           }
         }
@@ -27785,7 +27825,8 @@ var init_shim = __esm({
        * `signal` are the provider's own exit when it already ended and only
        * leftovers are being killed; otherwise the provider dies by this SIGKILL.
        */
-      killGroupAndFinish(code2, signal, providerKilled = false) {
+      async killGroupAndFinish(code2, signal, providerKilled = false) {
+        await this.sweepEscapedDescendants();
         this.escalation.push("SIGKILL");
         this.closeOutput();
         const rec2 = this.record(code2, providerKilled ? "SIGKILL" : signal, null);
@@ -27795,6 +27836,53 @@ var init_shim = __esm({
         } catch {
         }
         this.finish(rec2, false);
+      }
+      /** Start a macOS-only descendant scan after the provider's pid is known. */
+      watchDescendants() {
+        const descendants = this.descendants;
+        if (!descendants) return;
+        this.later(DESCENDANT_POLL_MS, () => {
+          if (this.finished) return;
+          descendants.capture();
+          this.watchDescendants();
+        });
+      }
+      /**
+       * End process groups that a provider descendant moved out of the shim's
+       * group. The first pass is polite; a process that ignores it gets SIGKILL.
+       * A pid is used only while the process table proves its original start time,
+       * so a reused pid cannot make Orbit signal an unrelated process.
+       */
+      async sweepEscapedDescendants() {
+        if (!this.descendants) return;
+        if (this.descendantSweep) return this.descendantSweep;
+        const sweep = this.stopEscapedDescendants();
+        this.descendantSweep = sweep;
+        try {
+          await sweep;
+        } finally {
+          if (this.descendantSweep === sweep) this.descendantSweep = null;
+        }
+      }
+      async stopEscapedDescendants() {
+        this.descendants.capture();
+        for (const signal of ["SIGTERM", "SIGKILL"]) {
+          const groups = this.descendants.escapedGroups();
+          if (groups.length === 0) return;
+          for (const pgid of groups) {
+            try {
+              this.host.signalGroup(pgid, signal);
+            } catch {
+            }
+          }
+          if (signal === "SIGKILL") return;
+          const deadline = this.clock.now() + Math.min(this.graceMs, LEFTOVER_GRACE_MS);
+          while (this.clock.now() < deadline) {
+            await this.clock.sleep(Math.min(50, Math.max(1, deadline - this.clock.now())));
+            this.descendants.capture();
+            if (this.descendants.escapedGroups().length === 0) return;
+          }
+        }
       }
       /** The provider never started. pid.json is still written, so every reader finds the shim the same way. */
       finishWithoutChild(error) {
@@ -28019,6 +28107,70 @@ var init_shim = __esm({
           moved += n2;
           this.sink.write(buf.subarray(0, n2));
         }
+      }
+    };
+    DescendantTracker = class {
+      rootPid = null;
+      seen = /* @__PURE__ */ new Map();
+      live = /* @__PURE__ */ new Map();
+      host;
+      shimPgid;
+      constructor(host, shimPgid) {
+        this.host = host;
+        this.shimPgid = shimPgid;
+      }
+      start(pid) {
+        this.rootPid = pid;
+        this.capture();
+      }
+      /** Snapshot the live tree and add every descendant reachable from a remembered process. */
+      capture() {
+        const entries = this.host.processes?.();
+        if (!entries) return false;
+        this.live.clear();
+        const children = /* @__PURE__ */ new Map();
+        for (const entry of entries) {
+          if (!validEntry(entry)) continue;
+          this.live.set(entry.pid, entry);
+          const siblings = children.get(entry.ppid);
+          if (siblings) siblings.push(entry);
+          else children.set(entry.ppid, [entry]);
+        }
+        const queue = [];
+        const queued = /* @__PURE__ */ new Set();
+        const addKnown = (entry) => {
+          const known = this.seen.get(entry.pid);
+          if (known && known.start !== entry.start) return;
+          if (!known) this.seen.set(entry.pid, entry);
+          if (!queued.has(entry.pid)) {
+            queued.add(entry.pid);
+            queue.push(entry.pid);
+          }
+        };
+        if (this.rootPid !== null) {
+          const root = this.live.get(this.rootPid);
+          if (root) addKnown(root);
+        }
+        for (const [pid, known] of this.seen) {
+          const current = this.live.get(pid);
+          if (current && current.start === known.start) addKnown(current);
+        }
+        for (let at = 0; at < queue.length; at++) {
+          const pid = queue[at];
+          for (const child of children.get(pid) ?? []) addKnown(child);
+        }
+        return true;
+      }
+      /** Process groups containing a remembered, live descendant outside the shim group. */
+      escapedGroups() {
+        const groups = /* @__PURE__ */ new Set();
+        for (const [pid, known] of this.seen) {
+          const current = this.live.get(pid);
+          if (!current || current.start !== known.start) continue;
+          if (current.pid === process.pid || current.pgid <= 1 || current.pgid === this.shimPgid) continue;
+          groups.add(current.pgid);
+        }
+        return [...groups].sort((a, b) => a - b);
       }
     };
   }
