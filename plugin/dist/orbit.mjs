@@ -62581,17 +62581,35 @@ var init_review_fix = __esm({
   }
 });
 
+// src/cli/commands/doctor-policy-note.ts
+function withHumanPolicyConfigNote(fix) {
+  return `${fix}; ${HUMAN_POLICY_CONFIG_NOTE}`;
+}
+var HUMAN_POLICY_CONFIG_NOTE;
+var init_doctor_policy_note = __esm({
+  "src/cli/commands/doctor-policy-note.ts"() {
+    "use strict";
+    HUMAN_POLICY_CONFIG_NOTE = "A person, not an agent, must make any edit to agents.allowed_plugins or providers.codex.data_policy_eligible in .orbit/config.yaml. Do not ask an agent to apply this fix. An auto-mode classifier may flag worker launches.";
+  }
+});
+
 // src/cli/commands/doctor-plugins.ts
 async function workerPluginsCheck(id, adapter, config) {
   const verdict = await judgeWorkerPlugins(adapter, config);
   if (verdict === null) return null;
-  const { refused: _refused, ...check } = verdict;
-  return { id: `${id}.plugins`, area: "providers", ...check };
+  const { refused, ...check } = verdict;
+  return {
+    id: `${id}.plugins`,
+    area: "providers",
+    ...check,
+    fix: refused.length > 0 && check.fix !== null ? withHumanPolicyConfigNote(check.fix) : check.fix
+  };
 }
 var init_doctor_plugins = __esm({
   "src/cli/commands/doctor-plugins.ts"() {
     "use strict";
     init_worker_plugins_check();
+    init_doctor_policy_note();
   }
 });
 
@@ -63774,9 +63792,13 @@ function reviewCheck(config, facts, registry) {
     }
     return select(hypothetical, credentials).alternatives;
   });
+  const fixFor = (unmet2) => {
+    const fix = reviewFix(unmet2);
+    return unmet2.some((alternative2) => /data_policy_eligible is not true/.test(alternative2.reason)) ? withHumanPolicyConfigNote(fix) : fix;
+  };
   if (sel.decision === "BLOCK") {
     const unmet2 = unmetPrerequisites();
-    return (fallback === "block" ? fail2 : warn2)("review", "providers", `independent review would block: ${flat(sel.reason)}`, missing, reviewFix(unmet2), [policyLine, ...unmet2.map((a) => `${a.provider}: ${flat(a.reason)}`)]);
+    return (fallback === "block" ? fail2 : warn2)("review", "providers", `independent review would block: ${flat(sel.reason)}`, missing, fixFor(unmet2), [policyLine, ...unmet2.map((a) => `${a.provider}: ${flat(a.reason)}`)]);
   }
   if (sel.independent) return pass("review", "providers", `independent review: ${sel.provider}/${sel.model ?? "default"} (independent)`, [policyLine, ...sel.alternatives.map((a) => `not used: ${a.provider}: ${flat(a.reason)}`)]);
   const unmet = unmetPrerequisites();
@@ -63784,7 +63806,7 @@ function reviewCheck(config, facts, registry) {
   const who = `${sel.provider}/${sel.model ?? "default"}`;
   const why = flat((sel.independentUnavailable ?? "no independent reviewer was usable").replace(/^no independent reviewer was usable: /, ""));
   const summary = sel.needsApproval === true ? `same-provider review needs a person's yes: no independent reviewer is usable (${why}); a run asks a person before ${who} reviews in a separate session (review.when_unavailable: ask)` : `same-provider review: no independent reviewer is usable (${why}); ${who} reviews in a separate session at the opus-class floor, and reports say the review was not independent (review.when_unavailable: ${fallback})`;
-  return warn2("review", "providers", summary, missing, `${reviewFix(unmet)}; or set review.when_unavailable to ask or block to change what happens`, details);
+  return warn2("review", "providers", summary, missing, `${fixFor(unmet)}; or set review.when_unavailable to ask or block to change what happens`, details);
 }
 function codexTierCheck(id, setting, apiKeyVar, srtInUse, level) {
   const check = `${id}.worker-tier`;
@@ -64233,6 +64255,7 @@ var init_doctor = __esm({
     init_invocation();
     init_review_fix();
     init_doctor_plugins();
+    init_doctor_policy_note();
     init_doctor_dotnet();
     init_doctor_sandbox();
     init_doctor_workers();

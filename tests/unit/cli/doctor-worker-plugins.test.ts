@@ -15,6 +15,7 @@ import { memoryIo } from '../../../src/cli/io.ts';
 import { systemClock } from '../../../src/core/clock.ts';
 
 const GIT_ENV = { GIT_AUTHOR_NAME: 'acme', GIT_AUTHOR_EMAIL: 'dev@acme.test', GIT_COMMITTER_NAME: 'acme', GIT_COMMITTER_EMAIL: 'dev@acme.test', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+const HUMAN_POLICY_NOTE = 'A person, not an agent, must make any edit to agents.allowed_plugins or providers.codex.data_policy_eligible in .orbit/config.yaml. Do not ask an agent to apply this fix. An auto-mode classifier may flag worker launches.';
 const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
@@ -83,7 +84,7 @@ describe('doctor: plugins a worker would load (issue #9)', () => {
       area: 'providers',
       summary: 'workers would load 1 plugin(s) the policy does not allow, so every worker session would be refused: acme-guard@acme-it (scope managed)',
       missing: 'a policy that allows each plugin a worker loads',
-      fix: 'add to .orbit/config.yaml: agents.allowed_plugins: ["acme-guard@acme-it"] (or agents.allow_managed_plugins: true for every managed plugin); a plugin can add hooks and tools to workers',
+      fix: `add to .orbit/config.yaml: agents.allowed_plugins: ["acme-guard@acme-it"] (or agents.allow_managed_plugins: true for every managed plugin); a plugin can add hooks and tools to workers; ${HUMAN_POLICY_NOTE}`,
     });
     expect(c!.details).toEqual([
       'acme-guard@acme-it (scope managed): refused; allow it with agents.allowed_plugins: ["acme-guard@acme-it"] or agents.allow_managed_plugins: true',
@@ -107,6 +108,6 @@ describe('doctor: plugins a worker would load (issue #9)', () => {
     expect(await pluginCheck('EXIT')).toMatchObject({ status: 'warn', summary: expect.stringMatching(/^could not list the installed plugins \(claude plugin list --json: exit 1/), missing: 'the output of claude plugin list --json' });
     expect(await pluginCheck('not json')).toMatchObject({ status: 'warn', summary: 'could not list the installed plugins (claude plugin list --json gave no plugin list)' });
     const odd = await pluginCheck([{ id: 'acme-sync@acme', scope: 'synced', enabled: true }]);
-    expect(odd).toMatchObject({ status: 'warn', summary: 'workers may load 1 plugin(s) the policy does not allow: acme-sync@acme (scope synced)', fix: 'add to .orbit/config.yaml: agents.allowed_plugins: ["acme-sync@acme"]; a plugin can add hooks and tools to workers' });
+    expect(odd).toMatchObject({ status: 'warn', summary: 'workers may load 1 plugin(s) the policy does not allow: acme-sync@acme (scope synced)', fix: `add to .orbit/config.yaml: agents.allowed_plugins: ["acme-sync@acme"]; a plugin can add hooks and tools to workers; ${HUMAN_POLICY_NOTE}` });
   });
 });
