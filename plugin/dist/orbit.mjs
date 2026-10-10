@@ -27594,6 +27594,9 @@ var init_shim = __esm({
       signalGroup: (pgid, signal) => {
         process.kill(-pgid, signal);
       },
+      signalProcess: (pid, signal) => {
+        process.kill(pid, signal);
+      },
       groupMembers: (pgid) => groupMembers(pgid),
       processes: () => macProcesses(),
       onSignal: (signal, listener) => {
@@ -27867,11 +27870,17 @@ var init_shim = __esm({
       async stopEscapedDescendants() {
         this.descendants.capture();
         for (const signal of ["SIGTERM", "SIGKILL"]) {
-          const groups = this.descendants.escapedGroups();
-          if (groups.length === 0) return;
+          const { groups, pids } = this.descendants.escapedTargets();
+          if (groups.length === 0 && pids.length === 0) return;
           for (const pgid of groups) {
             try {
               this.host.signalGroup(pgid, signal);
+            } catch {
+            }
+          }
+          for (const pid of pids) {
+            try {
+              this.host.signalProcess?.(pid, signal);
             } catch {
             }
           }
@@ -27880,7 +27889,8 @@ var init_shim = __esm({
           while (this.clock.now() < deadline) {
             await this.clock.sleep(Math.min(50, Math.max(1, deadline - this.clock.now())));
             this.descendants.capture();
-            if (this.descendants.escapedGroups().length === 0) return;
+            const left = this.descendants.escapedTargets();
+            if (left.groups.length === 0 && left.pids.length === 0) return;
           }
         }
       }
@@ -28161,16 +28171,28 @@ var init_shim = __esm({
         }
         return true;
       }
-      /** Process groups containing a remembered, live descendant outside the shim group. */
-      escapedGroups() {
-        const groups = /* @__PURE__ */ new Set();
-        for (const [pid, known] of this.seen) {
+      /**
+       * What to signal for each remembered, live descendant outside the shim group.
+       * A group is signalled whole only when its leader is itself a remembered
+       * descendant; a descendant that joined a group someone else leads is
+       * signalled alone, so the sweep never reaches that group's other members.
+       */
+      escapedTargets() {
+        const alive = (pid) => {
+          const known = this.seen.get(pid);
           const current = this.live.get(pid);
-          if (!current || current.start !== known.start) continue;
-          if (current.pid === process.pid || current.pgid <= 1 || current.pgid === this.shimPgid) continue;
-          groups.add(current.pgid);
+          return known && current && current.start === known.start ? current : null;
+        };
+        const groups = /* @__PURE__ */ new Set();
+        const pids = /* @__PURE__ */ new Set();
+        for (const pid of this.seen.keys()) {
+          const current = alive(pid);
+          if (!current || current.pid === process.pid || current.pgid <= 1 || current.pgid === this.shimPgid) continue;
+          if (alive(current.pgid)) groups.add(current.pgid);
+          else pids.add(current.pid);
         }
-        return [...groups].sort((a, b) => a - b);
+        const ascending = (a, b) => a - b;
+        return { groups: [...groups].sort(ascending), pids: [...pids].sort(ascending) };
       }
     };
   }

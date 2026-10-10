@@ -105,6 +105,8 @@ export interface ShimHost {
   pgidOf(pid: number): number | null;
   /** Signal every member of group `pgid`; throws when the group is gone. */
   signalGroup(pgid: number, signal: NodeJS.Signals): void;
+  /** Send `signal` to one process; used for a descendant inside a group the shim does not own. */
+  signalProcess?(pid: number, signal: NodeJS.Signals): void;
   /** Process ids currently in group `pgid`. */
   groupMembers(pgid: number): number[];
   /**
@@ -121,6 +123,9 @@ const DEFAULT_HOST: ShimHost = {
   pgidOf: (pid) => readPgid(pid),
   signalGroup: (pgid, signal) => {
     process.kill(-pgid, signal);
+  },
+  signalProcess: (pid, signal) => {
+    process.kill(pid, signal);
   },
   groupMembers: (pgid) => groupMembers(pgid),
   processes: () => macProcesses(),
@@ -522,13 +527,21 @@ class Shim {
   private async stopEscapedDescendants(): Promise<void> {
     this.descendants!.capture();
     for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
-      const groups = this.descendants!.escapedGroups();
-      if (groups.length === 0) return;
+      const { groups, pids } = this.descendants!.escapedTargets();
+      if (groups.length === 0 && pids.length === 0) return;
+      // A process can end between the snapshot and its signal, so each send may throw.
       for (const pgid of groups) {
         try {
           this.host.signalGroup(pgid, signal);
         } catch {
-          /* a process can end between the snapshot and its signal */
+          /* already gone */
+        }
+      }
+      for (const pid of pids) {
+        try {
+          this.host.signalProcess?.(pid, signal);
+        } catch {
+          /* already gone */
         }
       }
       if (signal === 'SIGKILL') return;
@@ -536,7 +549,8 @@ class Shim {
       while (this.clock.now() < deadline) {
         await this.clock.sleep(Math.min(50, Math.max(1, deadline - this.clock.now())));
         this.descendants!.capture();
-        if (this.descendants!.escapedGroups().length === 0) return;
+        const left = this.descendants!.escapedTargets();
+        if (left.groups.length === 0 && left.pids.length === 0) return;
       }
     }
   }
@@ -972,16 +986,28 @@ class DescendantTracker {
     return true;
   }
 
-  /** Process groups containing a remembered, live descendant outside the shim group. */
-  escapedGroups(): number[] {
-    const groups = new Set<number>();
-    for (const [pid, known] of this.seen) {
+  /**
+   * What to signal for each remembered, live descendant outside the shim group.
+   * A group is signalled whole only when its leader is itself a remembered
+   * descendant; a descendant that joined a group someone else leads is
+   * signalled alone, so the sweep never reaches that group's other members.
+   */
+  escapedTargets(): { groups: number[]; pids: number[] } {
+    const alive = (pid: number): ProcessEntry | null => {
+      const known = this.seen.get(pid);
       const current = this.live.get(pid);
-      if (!current || current.start !== known.start) continue;
-      if (current.pid === process.pid || current.pgid <= 1 || current.pgid === this.shimPgid) continue;
-      groups.add(current.pgid);
+      return known && current && current.start === known.start ? current : null;
+    };
+    const groups = new Set<number>();
+    const pids = new Set<number>();
+    for (const pid of this.seen.keys()) {
+      const current = alive(pid);
+      if (!current || current.pid === process.pid || current.pgid <= 1 || current.pgid === this.shimPgid) continue;
+      if (alive(current.pgid)) groups.add(current.pgid);
+      else pids.add(current.pid);
     }
-    return [...groups].sort((a, b) => a - b);
+    const ascending = (a: number, b: number): number => a - b;
+    return { groups: [...groups].sort(ascending), pids: [...pids].sort(ascending) };
   }
 }
 

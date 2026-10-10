@@ -69,6 +69,8 @@ const plain = `setInterval(()=>{},1000)`;
 interface Rig {
   dir: string;
   signals: string[];
+  /** Signals the sweep sent to single processes, as [pid, signal]. */
+  processSignals: Array<[number, string]>;
   members: number[][];
   emitter: EventEmitter;
   host: ShimHost;
@@ -114,11 +116,13 @@ function rig(
 ): Rig {
   const dir = tmp();
   const signals: string[] = [];
+  const processSignals: Array<[number, string]> = [];
   const emitter = new EventEmitter();
   const members: number[][] = [];
   const r: Rig = {
     dir,
     signals,
+    processSignals,
     members,
     emitter,
     host: {
@@ -139,6 +143,9 @@ function rig(
           }
         }
         if (behaviour.echoSelf && (sig === 'SIGINT' || sig === 'SIGTERM')) queueMicrotask(() => emitter.emit(sig));
+      },
+      signalProcess: (pid, sig) => {
+        processSignals.push([pid, sig]);
       },
       groupMembers: () => members.shift() ?? [],
       processes: () => behaviour.processes?.(r) ?? null,
@@ -240,6 +247,31 @@ describe('runShim: a provider that runs to its end', () => {
     expect(captures).toBeGreaterThan(1);
     expect(r.signals).toContain('SIGTERM');
     expect(escapedAlive).toBe(false);
+  });
+  it.skipIf(process.platform !== 'darwin')('signals a descendant alone when it joins a group it does not lead', async () => {
+    const joinedPid = 987_655;
+    const foreignLeader = 987_600;
+    let joinedAlive = true;
+    const groupSignals: Array<[number, string]> = [];
+    const r = rig({
+      processes: (current) => {
+        const childPid = current.childPid();
+        if (!childPid) return [];
+        return [
+          { pid: childPid, ppid: process.pid, pgid: process.pid, start: 'provider-start' },
+          { pid: foreignLeader, ppid: 1, pgid: foreignLeader, start: 'leader-start' },
+          ...(joinedAlive ? [{ pid: joinedPid, ppid: childPid, pgid: foreignLeader, start: 'joined-start' }] : []),
+        ];
+      },
+      onGroupSignal: (pgid, signal) => {
+        groupSignals.push([pgid, signal]);
+      },
+    });
+    const rec = await r.run({ argv: [NODE, '-e', 'setTimeout(()=>process.exit(0),300)'], graceMs: 50 });
+    expect(rec).toMatchObject({ code: 0, signal: null });
+    expect(groupSignals.some(([pgid]) => pgid === foreignLeader)).toBe(false);
+    expect(r.processSignals).toContainEqual([joinedPid, 'SIGTERM']);
+    expect(r.processSignals.every(([pid]) => pid === joinedPid)).toBe(true);
   });
 });
 
@@ -396,7 +428,10 @@ describe('runShim: the real process-level defaults', () => {
     vi.mocked(process.kill).mockRestore();
     process.kill(childPid, 'SIGKILL');
     expect(handlers).toEqual(expect.arrayContaining(['SIGINT', 'SIGTERM', 'SIGHUP']));
-    expect(killed).toEqual([[-process.pid, 'SIGINT'], [-process.pid, 'SIGTERM'], [-process.pid, 'SIGKILL']]);
+    expect(killed.filter(([pid]) => pid === -process.pid)).toEqual([[-process.pid, 'SIGINT'], [-process.pid, 'SIGTERM'], [-process.pid, 'SIGKILL']]);
+    // The faked group is not the child's real one, so on macOS the sweep sees the child outside the shim
+    // group. Its real group is led by the test runner, not by a descendant, so only the child itself is signalled.
+    expect(killed.filter(([pid]) => pid !== -process.pid).every(([pid]) => pid === childPid)).toBe(true);
     expect(rec.escalation).toEqual(['SIGINT', 'SIGTERM', 'SIGKILL']);
   });
 });
