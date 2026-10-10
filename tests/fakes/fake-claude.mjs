@@ -5,7 +5,7 @@
 // observed runs). See README.md for the scenario format.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { applyEdits, attemptWrite, crashMidEdit, flagValue, loadStep, logArgv, readStdin, renderPlaceholders, roleFromSchema, sleep, spawnGrandchild } from './scenario.mjs';
+import { applyEdits, attemptWrite, crashMidEdit, flagValue, loadStep, logArgv, readStdin, renderPlaceholders, roleFromSchema, sleep, spawnDetachedWriter, spawnGrandchild } from './scenario.mjs';
 
 const argv = process.argv.slice(2);
 const env = process.env;
@@ -100,6 +100,10 @@ out({
 
 let grandchild = null;
 if (step.grandchildPidFile) grandchild = spawnGrandchild(step.grandchildPidFile);
+if (step.detachedChild) {
+  spawnDetachedWriter(step.detachedChild);
+  if (step.detachedChild.waitMs) await sleep(step.detachedChild.waitMs);
+}
 
 for (const [i, e] of (step.edits ?? []).entries()) {
   const id = `toolu_edit${i}`;

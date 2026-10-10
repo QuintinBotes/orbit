@@ -158,15 +158,14 @@ State these plainly to yourself before running unattended.
   only in the editor's environment) is not covered. Still readable: the MCP
   server entries in the worker's own `.claude.json` (headers of an HTTP server
   you configured, if any). Background tasks are off for
-  workers, so a long command cannot hold a session open, but on macOS a process
-  a worker detaches itself (`nohup ... &`, `setsid`) is not stopped with its
-  session; nothing contains a sandbox's processes there. It keeps the worker's
-  sandbox, and so the worker's write access: it can go on editing the worktree
-  after the session (measured by the final review: in both tiers a detached
-  process was alive and still writing a file in the worktree after the
-  session's result was collected). What it writes before the candidate is
-  snapshotted is judged as the worker's own change; what it writes after is in
-  the worktree the next attempt starts from. Orbit's guard hook
+  workers, so a long command cannot hold a session open. On macOS the shim
+  snapshots the provider's descendants while the session runs, remembers each
+  pid with its start time and process group, and ends every remembered group
+  outside the shim's group before it writes `exit.json`. Thus a worker child
+  that creates a new session with `setsid` cannot keep writing the worktree
+  after the result is collected. This is process-table containment rather
+  than a kernel process namespace: it depends on macOS allowing the shim to
+  read `ps`, as it already must to establish its own process group. Orbit's guard hook
   refuses a command that names a loopback address (`curl
   http://127.0.0.1:3000`), since it judges hosts by `network.allowed_hosts`; it
   is advisory.

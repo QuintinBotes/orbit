@@ -56,6 +56,8 @@ const ABORT_POLL_MS = 200;
 const FIRST_OUTPUT_POLL_MS = 25;
 /** Leftover helpers get this long after the provider exits before the group is killed. */
 const LEFTOVER_GRACE_MS = 1_000;
+/** How often the macOS shim snapshots its provider's descendants. */
+const DESCENDANT_POLL_MS = 100;
 /** How often the provider's spilled output is redacted into the artifacts, and how much one tick moves at most. */
 const OUTPUT_POLL_MS = 20;
 const OUTPUT_PUMP_BYTES = 8 * 1024 * 1024;
@@ -103,8 +105,16 @@ export interface ShimHost {
   pgidOf(pid: number): number | null;
   /** Signal every member of group `pgid`; throws when the group is gone. */
   signalGroup(pgid: number, signal: NodeJS.Signals): void;
+  /** Send `signal` to one process; used for a descendant inside a group the shim does not own. */
+  signalProcess?(pid: number, signal: NodeJS.Signals): void;
   /** Process ids currently in group `pgid`. */
   groupMembers(pgid: number): number[];
+  /**
+   * macOS process-table snapshot, or null when it cannot be read. The shim
+   * uses this to remember a worker child that creates another process group
+   * or session before its parent exits.
+   */
+  processes?(): ProcessEntry[] | null;
   /** Register a handler for a signal the shim itself receives. */
   onSignal(signal: 'SIGINT' | 'SIGTERM' | 'SIGHUP', listener: () => void): void;
 }
@@ -114,11 +124,24 @@ const DEFAULT_HOST: ShimHost = {
   signalGroup: (pgid, signal) => {
     process.kill(-pgid, signal);
   },
+  signalProcess: (pid, signal) => {
+    process.kill(pid, signal);
+  },
   groupMembers: (pgid) => groupMembers(pgid),
+  processes: () => macProcesses(),
   onSignal: (signal, listener) => {
     process.on(signal, listener);
   },
 };
+
+/** The fields needed to follow a process tree and prove a pid was not reused. */
+export interface ProcessEntry {
+  pid: number;
+  ppid: number;
+  pgid: number;
+  /** Opaque start time from `ps -o lstart=`, compared for equality only. */
+  start: string;
+}
 
 export interface PidRecord {
   version: 1;
@@ -225,6 +248,9 @@ class Shim {
   private logCarry = '';
   private readonly redactor: Redactor;
   private spills: Spill[] = [];
+  /** macOS has no PID namespace, so remember descendants that leave the shim's group. */
+  private readonly descendants: DescendantTracker | null;
+  private descendantSweep: Promise<void> | null = null;
 
   constructor(options: ShimOptions, pgid: number, host: ShimHost) {
     this.o = options;
@@ -235,6 +261,7 @@ class Shim {
     this.workerDir = resolve(options.workerDir);
     this.startedAt = this.clock.now();
     this.redactor = createRedactor({ env: cleanEnv(options.env) });
+    this.descendants = process.platform === 'darwin' ? new DescendantTracker(this.host, this.pgid) : null;
   }
 
   run(): Promise<ExitRecord> {
@@ -291,6 +318,8 @@ class Shim {
     child.once('exit', (code, signal) => void this.onChildExit(code, signal));
 
     this.writePid(child);
+    this.descendants?.start(child.pid);
+    this.watchDescendants();
     this.watchFirstOutput();
 
     if (this.o.timeoutMs > 0) {
@@ -331,12 +360,13 @@ class Shim {
   private async escalate(from: number, waitFirst: boolean): Promise<void> {
     if (this.escalating || this.finished) return;
     this.escalating = true;
+    this.descendants?.capture();
     if (waitFirst) await this.clock.sleep(this.graceMs);
     for (let i = from; i < ESCALATION.length; i++) {
       if (this.finished || this.childExited) return;
       const sig = ESCALATION[i]!;
       if (sig === 'SIGKILL') {
-        this.killGroupAndFinish(null, 'SIGKILL', true);
+        await this.killGroupAndFinish(null, 'SIGKILL', true);
         return;
       }
       this.signalGroup(sig);
@@ -357,6 +387,11 @@ class Shim {
   private async onChildExit(code: number | null, signal: NodeJS.Signals | null): Promise<void> {
     if (this.finished) return;
     this.childExited = true;
+    // Claude Code may put each Bash command in another group. On macOS that
+    // group is outside the shim's group kill, and a child can go further with
+    // setsid. Sweep every group that was observed below the provider before
+    // writing exit.json, so collection cannot race a later worktree write.
+    await this.sweepEscapedDescendants();
     // Helpers the provider left behind (MCP servers, background shells) still
     // hold the group; give them a moment, then the group goes.
     if (this.leftovers().length > 0) {
@@ -364,7 +399,7 @@ class Shim {
       const deadline = this.clock.now() + Math.min(this.graceMs, LEFTOVER_GRACE_MS);
       while (this.clock.now() < deadline && this.leftovers().length > 0) await this.clock.sleep(50);
       if (this.leftovers().length > 0) {
-        this.killGroupAndFinish(code, signal);
+        await this.killGroupAndFinish(code, signal);
         return;
       }
     }
@@ -446,7 +481,8 @@ class Shim {
    * `signal` are the provider's own exit when it already ended and only
    * leftovers are being killed; otherwise the provider dies by this SIGKILL.
    */
-  private killGroupAndFinish(code: number | null, signal: string | null, providerKilled = false): void {
+  private async killGroupAndFinish(code: number | null, signal: string | null, providerKilled = false): Promise<void> {
+    await this.sweepEscapedDescendants();
     this.escalation.push('SIGKILL');
     this.closeOutput();
     const rec = this.record(code, providerKilled ? 'SIGKILL' : signal, null);
@@ -457,6 +493,66 @@ class Shim {
       /* group already gone */
     }
     this.finish(rec, false);
+  }
+
+  /** Start a macOS-only descendant scan after the provider's pid is known. */
+  private watchDescendants(): void {
+    const descendants = this.descendants;
+    if (!descendants) return;
+    this.later(DESCENDANT_POLL_MS, () => {
+      if (this.finished) return;
+      descendants.capture();
+      this.watchDescendants();
+    });
+  }
+
+  /**
+   * End process groups that a provider descendant moved out of the shim's
+   * group. The first pass is polite; a process that ignores it gets SIGKILL.
+   * A pid is used only while the process table proves its original start time,
+   * so a reused pid cannot make Orbit signal an unrelated process.
+   */
+  async sweepEscapedDescendants(): Promise<void> {
+    if (!this.descendants) return;
+    if (this.descendantSweep) return this.descendantSweep;
+    const sweep = this.stopEscapedDescendants();
+    this.descendantSweep = sweep;
+    try {
+      await sweep;
+    } finally {
+      if (this.descendantSweep === sweep) this.descendantSweep = null;
+    }
+  }
+
+  private async stopEscapedDescendants(): Promise<void> {
+    this.descendants!.capture();
+    for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
+      const { groups, pids } = this.descendants!.escapedTargets();
+      if (groups.length === 0 && pids.length === 0) return;
+      // A process can end between the snapshot and its signal, so each send may throw.
+      for (const pgid of groups) {
+        try {
+          this.host.signalGroup(pgid, signal);
+        } catch {
+          /* already gone */
+        }
+      }
+      for (const pid of pids) {
+        try {
+          this.host.signalProcess?.(pid, signal);
+        } catch {
+          /* already gone */
+        }
+      }
+      if (signal === 'SIGKILL') return;
+      const deadline = this.clock.now() + Math.min(this.graceMs, LEFTOVER_GRACE_MS);
+      while (this.clock.now() < deadline) {
+        await this.clock.sleep(Math.min(50, Math.max(1, deadline - this.clock.now())));
+        this.descendants!.capture();
+        const left = this.descendants!.escapedTargets();
+        if (left.groups.length === 0 && left.pids.length === 0) return;
+      }
+    }
   }
 
   /** The provider never started. pid.json is still written, so every reader finds the shim the same way. */
@@ -783,6 +879,149 @@ export function readFrom(path: string, offset: number, max = 4 * 1024 * 1024): B
   } finally {
     safeClose(fd);
   }
+}
+
+/**
+ * The macOS process fields the shim needs in one snapshot. `ps -o sess` is
+ * always 0 there, so the tracker follows parent links and remembers every
+ * process group it sees instead. A null result is deliberately distinct from
+ * an empty table: a transiently unavailable process table must not make an
+ * earlier descendant look gone.
+ */
+export function macProcesses(): ProcessEntry[] | null {
+  if (process.platform !== 'darwin') return null;
+  let r: ReturnType<typeof spawnSync>;
+  try {
+    r = spawnSync('ps', ['-A', '-o', 'pid=', '-o', 'ppid=', '-o', 'pgid=', '-o', 'lstart='], {
+      encoding: 'utf8',
+      env: { ...process.env, LC_ALL: 'C', LANG: 'C', TZ: 'UTC' },
+      timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return null;
+  }
+  if (r.error || r.status !== 0 || typeof r.stdout !== 'string') return null;
+  const entries: ProcessEntry[] = [];
+  for (const line of r.stdout.split('\n')) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    const ppid = Number(m[2]);
+    const pgid = Number(m[3]);
+    const start = m[4]!.trim().replace(/\s+/g, ' ');
+    if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(ppid) || ppid < 0 || !Number.isSafeInteger(pgid) || pgid <= 0 || start === '') continue;
+    entries.push({ pid, ppid, pgid, start });
+  }
+  return entries;
+}
+
+/**
+ * Tracks a provider's descendants while their parent links still exist. A
+ * child can call setsid and later be reparented to launchd, at which point a
+ * final tree walk cannot prove it came from this worker. Remembering its pid
+ * and start time while the link exists lets the teardown signal only that
+ * process's current group, never a recycled pid or a group containing the
+ * shim itself.
+ */
+class DescendantTracker {
+  private rootPid: number | null = null;
+  private readonly seen = new Map<number, ProcessEntry>();
+  private readonly live = new Map<number, ProcessEntry>();
+  private readonly host: ShimHost;
+  private readonly shimPgid: number;
+
+  constructor(host: ShimHost, shimPgid: number) {
+    this.host = host;
+    this.shimPgid = shimPgid;
+  }
+
+  start(pid: number): void {
+    this.rootPid = pid;
+    this.capture();
+  }
+
+  /** Snapshot the live tree and add every descendant reachable from a remembered process. */
+  capture(): boolean {
+    const entries = this.host.processes?.();
+    if (!entries) return false;
+    this.live.clear();
+    const children = new Map<number, ProcessEntry[]>();
+    for (const entry of entries) {
+      if (!validEntry(entry)) continue;
+      this.live.set(entry.pid, entry);
+      const siblings = children.get(entry.ppid);
+      if (siblings) siblings.push(entry);
+      else children.set(entry.ppid, [entry]);
+    }
+
+    const queue: number[] = [];
+    const queued = new Set<number>();
+    const addKnown = (entry: ProcessEntry): void => {
+      const known = this.seen.get(entry.pid);
+      if (known && known.start !== entry.start) return;
+      if (!known) this.seen.set(entry.pid, entry);
+      if (!queued.has(entry.pid)) {
+        queued.add(entry.pid);
+        queue.push(entry.pid);
+      }
+    };
+
+    if (this.rootPid !== null) {
+      const root = this.live.get(this.rootPid);
+      if (root) addKnown(root);
+    }
+    // A process may have been reparented after it made a new session. It can
+    // still have children of its own, so each remembered, live identity stays
+    // a traversal root until it exits.
+    for (const [pid, known] of this.seen) {
+      const current = this.live.get(pid);
+      if (current && current.start === known.start) addKnown(current);
+    }
+
+    for (let at = 0; at < queue.length; at++) {
+      const pid = queue[at]!;
+      for (const child of children.get(pid) ?? []) addKnown(child);
+    }
+    return true;
+  }
+
+  /**
+   * What to signal for each remembered, live descendant outside the shim group.
+   * A group is signalled whole only when its leader is itself a remembered
+   * descendant; a descendant that joined a group someone else leads is
+   * signalled alone, so the sweep never reaches that group's other members.
+   */
+  escapedTargets(): { groups: number[]; pids: number[] } {
+    const alive = (pid: number): ProcessEntry | null => {
+      const known = this.seen.get(pid);
+      const current = this.live.get(pid);
+      return known && current && current.start === known.start ? current : null;
+    };
+    const groups = new Set<number>();
+    const pids = new Set<number>();
+    for (const pid of this.seen.keys()) {
+      const current = alive(pid);
+      if (!current || current.pid === process.pid || current.pgid <= 1 || current.pgid === this.shimPgid) continue;
+      if (alive(current.pgid)) groups.add(current.pgid);
+      else pids.add(current.pid);
+    }
+    const ascending = (a: number, b: number): number => a - b;
+    return { groups: [...groups].sort(ascending), pids: [...pids].sort(ascending) };
+  }
+}
+
+function validEntry(entry: ProcessEntry): boolean {
+  return (
+    Number.isSafeInteger(entry.pid) &&
+    entry.pid > 0 &&
+    Number.isSafeInteger(entry.ppid) &&
+    entry.ppid >= 0 &&
+    Number.isSafeInteger(entry.pgid) &&
+    entry.pgid > 0 &&
+    typeof entry.start === 'string' &&
+    entry.start !== ''
+  );
 }
 
 /** Process ids in group `pgid`, from `ps -A -o pid=,pgid=` (macOS and Linux procps). */
