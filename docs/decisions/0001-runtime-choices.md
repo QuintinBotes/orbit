@@ -381,14 +381,12 @@ unopenable device over each git file a writable directory lacks, so
 SourceLink's git query, which checks have had off since #10, failed every
 build in a worker's worktree with "Error reading git repository information",
 in both tiers; the .NET toolchain profile now turns it off for every process
-that uses .NET, workers included. Not changed: a worker's `HOME` is the
-account's and read-only, and the SDK writes its first-run state (`~/.dotnet`)
-and NuGet its user config (`~/.nuget/NuGet/NuGet.Config`) there on the
-account's first run, so where the account has never run a restore (that
-runner's), a worker's first `dotnet` command fails ("Unexpected failure
-reading NuGet.Config ... Read-only file system"); one `dotnet restore` run as
-the account, outside Orbit, ends it (measured in an Ubuntu container). The
-tests make that first run before a worker's. On GitHub's macOS runners the JDK
+that uses .NET, workers included. A worker's `HOME` remains the account's and
+read-only. Before the controller starts a .NET worker, it gives `dotnet` a
+private CLI home, so NuGet creates its config and first-run state there; the
+worker cannot write the account home. `orbit doctor` warns about this first-use
+state and names `dotnet restore`, run once outside Orbit, as the manual fix.
+On GitHub's macOS runners the JDK
 is found through `JAVA_HOME` alone, which a worker gets only in a repository
 with a JVM build file (the toolchain's markers), as every Maven or Gradle
 repository has.

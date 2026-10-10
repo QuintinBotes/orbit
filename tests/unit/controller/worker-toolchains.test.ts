@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { repoKey } from '../../../src/controller/context.ts';
 import { implementingStep } from '../../../src/controller/steps/implementing.ts';
-import { toolchainLayout } from '../../../src/isolation/toolchains.ts';
+import { NUGET_MIGRATIONS_DIR } from '../../../src/evidence/runner.ts';
+import { nugetUserConfigPath, toolchainLayout } from '../../../src/isolation/toolchains.ts';
 import { giveRepository, initLedger, makeUnitLab, okResult, scriptedAdapter, setContract, validateModels, type UnitLab } from './coverage-helpers.ts';
 
 // The real layout, watched: a worker's NuGet audit depends on the hosts its sandbox allows (see the last test).
@@ -54,6 +55,34 @@ describe('worker toolchain profiles', () => {
     initLedger(lab);
     await implementingStep(lab.ctx());
     expect(adapter.specs[0]!.sandbox.nisDomainName).toBe(true);
+  });
+
+  it('gives a .NET worker a prepared private CLI home before it starts, without making the account home writable to it', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'], deps: { schedulerProbe: { availableParallelism: () => 16, freemem: () => 64_000 * 1024 * 1024 } } });
+    const adapter = scriptedAdapter(
+      lab,
+      () => okResult(IMPL),
+      (spec) => {
+        const cliHome = spec.env.DOTNET_CLI_HOME!;
+        expect(existsSync(join(cliHome, NUGET_MIGRATIONS_DIR, '1')), 'the private CLI home is ready before the adapter starts the worker').toBe(true);
+      },
+    );
+    lab.deps.adapters = { claude: adapter };
+    validateModels(lab);
+    const repo = await giveRepository(lab, { 'acme.sln': '', 'apps/Acme.cs': 'namespace Acme;\n' });
+    setContract(lab, { baseline_revision: repo.base });
+    initLedger(lab);
+
+    await implementingStep(lab.ctx());
+
+    const spec = adapter.specs[0]!;
+    const cliHome = spec.env.DOTNET_CLI_HOME!;
+    expect(spec.env).toMatchObject({ DOTNET_CLI_HOME: cliHome, DOTNET_NOLOGO: '1', DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1' });
+    expect(cliHome).not.toBe(lab.deps.homeDir!);
+    expect(existsSync(nugetUserConfigPath(lab.deps.homeDir!))).toBe(false);
+    const sandbox = spec.sandbox;
+    expect(sandbox.writablePaths).toContain(cliHome);
+    expect(sandbox.writablePaths).not.toContain(lab.deps.homeDir!);
   });
 
   // NuGet's vulnerability audit is off in a worker unless the worker's sandbox lets it reach the package source and it

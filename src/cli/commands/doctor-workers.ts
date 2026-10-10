@@ -10,8 +10,9 @@
  * listen. On Linux srt starts every sandbox in a network namespace of its own (bwrap --unshare-net), whose loopback it may
  * always use; that rests on srt's source, not a measurement, and the message says so.
  */
+import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
-import type { ToolchainId } from '../../isolation/toolchains.ts';
+import { nugetUserConfigPath, type ToolchainId } from '../../isolation/toolchains.ts';
 import { checkCategory } from '../../policy/config.ts';
 import type { OrbitConfig } from '../../policy/types.ts';
 import type { DoctorCheck } from './doctor.ts';
@@ -105,6 +106,39 @@ export function workerToolchainsCheck(input: WorkerToolchainsInput): DoctorCheck
       details: hit.map((t) => t.detail),
       missing: 'the os-sandbox tier for workers, where the whole worker process is confined by sandbox-runtime and may write its build state',
       fix: 'export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) and use isolation.provider: sandbox-runtime (see claude.worker-tier)',
+    },
+  ];
+}
+
+export interface WorkerDotnetInput {
+  /** The account home a worker keeps for its provider CLI, but cannot write inside its sandbox. */
+  homeDir: string;
+  /** The toolchains the repository uses (isolation/toolchains.ts detectToolchains). */
+  toolchains: readonly ToolchainId[];
+}
+
+/**
+ * On a fresh account NuGet creates ~/.nuget/NuGet/NuGet.Config during its first restore. A worker deliberately gets
+ * the account HOME read-only, so its first dotnet command would fail there without a private CLI home. The controller
+ * now gives .NET one before it starts the worker; doctor still names the first-use state and the one-time outside-Orbit
+ * fix, before a run spends a worker session.
+ */
+export function workerDotnetCheck(input: WorkerDotnetInput): DoctorCheck[] {
+  if (!input.toolchains.includes('dotnet')) return [];
+  const config = nugetUserConfigPath(input.homeDir);
+  if (existsSync(config)) return [];
+  return [
+    {
+      id: 'workers.dotnet',
+      area: 'isolation',
+      status: 'warn',
+      summary: `NuGet's account config is missing at ${config}: a worker's HOME is read-only, so its first dotnet command would fail without a private CLI home`,
+      details: [
+        "NuGet creates this file on the account's first restore; checks use a private writable HOME and are not affected",
+        'Orbit gives .NET a private CLI home before it starts a worker, so NuGet creates its config without letting that worker write the account home',
+      ],
+      missing: `NuGet's account config at ${config}`,
+      fix: 'run once outside Orbit: dotnet restore',
     },
   ];
 }

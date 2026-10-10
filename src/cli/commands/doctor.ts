@@ -48,7 +48,7 @@ import { allReviewPrerequisites, reviewFix } from '../review-fix.ts';
 import { workerPluginsCheck } from './doctor-plugins.ts';
 import { dotnetAuditCheck, dotnetPackagesCheck, dotnetTestsCheck, hasNugetPackages } from './doctor-dotnet.ts';
 import { checkSandboxCheck } from './doctor-sandbox.ts';
-import { workerLoopbackCheck, workerToolchainsCheck } from './doctor-workers.ts';
+import { workerDotnetCheck, workerLoopbackCheck, workerToolchainsCheck } from './doctor-workers.ts';
 
 export const DOCTOR_OPTIONS: OptionSpec = {
   probe: { type: 'boolean', description: 'also make tiny live requests (a few cents): one per provider that has a probe to detect expired or revoked credentials, and one per eligible Claude model' },
@@ -1008,6 +1008,7 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; prob
   await safely('checks.dotnet-tests', 'checks', () => (repo && configLoaded ? dotnetTestsCheck({ config, repo, files: tracked }) : []));
   await safely('workers.loopback', 'isolation', () => (repo && configLoaded ? workerLoopbackCheck({ config, files: tracked, platform: ctx.platform }) : []));
   await safely('workers.toolchains', 'isolation', () => (repo && configLoaded ? workerToolchainsCheck({ tier: claudeWorkerTier(isoFacts, ctx.env), toolchains: detectToolchains({ roots: [repo] }) }) : []));
+  await safely('workers.dotnet', 'isolation', () => (repo && configLoaded ? workerDotnetCheck({ homeDir: ctx.homeDir, toolchains: detectToolchains({ roots: [repo] }) }) : []));
   const nuget = repo && configLoaded ? { config, repo, files: tracked, provider: isoFacts.provider, available: isoFacts.available, platform: ctx.platform, orbitHome: ctx.orbitHome } : null;
   await safely('checks.dotnet-packages', 'checks', () => (nuget ? dotnetPackagesCheck(nuget) : []));
   await safely('checks.dotnet-audit', 'checks', () => (nuget ? dotnetAuditCheck(nuget) : []));
