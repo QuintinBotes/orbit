@@ -34,6 +34,13 @@ export const AGENT_KEYS = new Set([
 
 const SRT_PACKAGE = '@anthropic-ai/sandbox-runtime';
 
+/** README, changelog and every documentation file are copied into plugin/ by the default build for git-subdir installs. */
+const DOCUMENTATION = new Set([
+  'README.md',
+  'CHANGELOG.md',
+  ...walk(join(root, 'docs'), () => true).map((path) => relative(root, path).split(sep).join('/')),
+]);
+
 /** Every file the payload may hold, as paths relative to plugin/. */
 const ALLOWED = [
   /^\.claude-plugin\/plugin\.json$/,
@@ -46,7 +53,7 @@ const ALLOWED = [
   /^package\.json$/,
   /^package-lock\.json$/,
 ];
-const REQUIRED = ['.claude-plugin/plugin.json', 'dist/orbit.mjs', 'dist/srt-chromium-preload.mjs', 'hooks/hooks.json', 'bin/orbit', 'package.json', 'package-lock.json'];
+const REQUIRED = ['.claude-plugin/plugin.json', 'dist/orbit.mjs', 'dist/srt-chromium-preload.mjs', 'hooks/hooks.json', 'bin/orbit', 'package.json', 'package-lock.json', ...DOCUMENTATION];
 /** package.json keys the payload may use; anything else (devDependencies, scripts, overrides, ...) is a development concern. */
 const PACKAGE_KEYS = new Set(['name', 'version', 'private', 'description', 'license', 'type', 'engines', 'dependencies']);
 const DEP_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies'];
@@ -144,7 +151,7 @@ export function payloadProblems(pluginDir = PLUGIN_DIR, opts = {}) {
   const problems = [];
 
   const files = payloadFiles(pluginDir);
-  for (const f of files) if (!ALLOWED.some((re) => re.test(f))) problems.push(`${f}: not part of the plugin payload (allowed: .claude-plugin/plugin.json, dist/, hooks/, skills/, agents/, bin/orbit, package.json, package-lock.json)`);
+  for (const f of files) if (!DOCUMENTATION.has(f) && !ALLOWED.some((re) => re.test(f))) problems.push(`${f}: not part of the plugin payload (allowed: README.md, CHANGELOG.md, docs/, .claude-plugin/plugin.json, dist/, hooks/, skills/, agents/, bin/orbit, package.json, package-lock.json)`);
   for (const f of REQUIRED) if (!files.includes(f)) problems.push(`${f}: missing from the plugin payload`);
   const bin = join(pluginDir, 'bin', 'orbit');
   if (existsSync(bin) && (statSync(bin).mode & 0o111) === 0) problems.push('bin/orbit: not executable');
