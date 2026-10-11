@@ -37809,6 +37809,11 @@ function readDenial(checkDir) {
   const token = readJsonFile(shimPath(checkDir, "intent"))?.token ?? null;
   return token === null || record.token === token ? record.note : null;
 }
+function recordFinalDenial(ctx, def, dirs, token) {
+  if (readDenial(dirs.checkDir) !== null) return;
+  const late = findMsbuildNodeDenial(dirs.tmpDir);
+  if (late) atomicWriteJson(join27(dirs.checkDir, DENIAL_FILE), { token, note: denialNote(ctx, def, late, false) }, 384);
+}
 async function superviseAttempt(ctx, subject, def, row, wrapped) {
   const index = attemptIndex(ctx, row);
   const dirs = dirsFor(subject, def.id, index);
@@ -37826,7 +37831,10 @@ async function superviseAttempt(ctx, subject, def, row, wrapped) {
   try {
     for (; ; ) {
       const exit = readJsonFile(shimPath(dirs.checkDir, "exit"));
-      if (exit && (token === null || exit.token === token)) return finalize(ctx, def, row, dirs, exit, null);
+      if (exit && (token === null || exit.token === token)) {
+        if (!exit.cancelled && !exit.timedOut) recordFinalDenial(ctx, def, dirs, token);
+        return finalize(ctx, def, row, dirs, exit, null);
+      }
       if (cancelSentAt === null && detached(ctx) && !cancelRequested(ctx)) {
         detachedHere = true;
         throw detachError(ctx);

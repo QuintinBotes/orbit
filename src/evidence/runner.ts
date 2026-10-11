@@ -807,6 +807,18 @@ function readDenial(checkDir: string): string | null {
   return token === null || record.token === token ? record.note : null;
 }
 
+/**
+ * A check can leave MSBuild's denial report and exit before its next scheduled scan (at once on Linux). Once its shim
+ * has written an exit record, take an immediate look before classifying an exit 0 from a stopped sandbox wrapper. The
+ * failed-exit finalizer has its own post-output scan for a report not yet readable here. Keep the record beside the
+ * attempt so a controller crash between this look and finalization still preserves the outcome.
+ */
+function recordFinalDenial(ctx: RunnerContext, def: CheckDefinition, dirs: AttemptDirs, token: string | null): void {
+  if (readDenial(dirs.checkDir) !== null) return;
+  const late = findMsbuildNodeDenial(dirs.tmpDir);
+  if (late) atomicWriteJson(join(dirs.checkDir, DENIAL_FILE), { token, note: denialNote(ctx, def, late, false) } satisfies DenialRecord, 0o600);
+}
+
 /** Wait for the attempt to end (or end it), then record the outcome. Returns the final row. */
 async function superviseAttempt(ctx: RunnerContext, subject: CheckSubject, def: CheckDefinition, row: CheckRunRecord, wrapped: WrappedCommand | null): Promise<CheckRunRecord> {
   const index = attemptIndex(ctx, row);
@@ -827,7 +839,12 @@ async function superviseAttempt(ctx: RunnerContext, subject: CheckSubject, def: 
   try {
     for (;;) {
       const exit = readJsonFile<ShimExit>(shimPath(dirs.checkDir, 'exit'));
-      if (exit && (token === null || exit.token === token)) return finalize(ctx, def, row, dirs, exit, null);
+      if (exit && (token === null || exit.token === token)) {
+        // The exit record wins this poll, so scan before finalize classifies exit 0 as a pass. A cancellation or timeout
+        // keeps its own result even if the check had already left a denial report.
+        if (!exit.cancelled && !exit.timedOut) recordFinalDenial(ctx, def, dirs, token);
+        return finalize(ctx, def, row, dirs, exit, null);
+      }
       // Stop supervising, not cancel: the process and its row are left exactly as they are for the next owner.
       // A cancellation already under way is finished first, since that one must end in a recorded outcome.
       if (cancelSentAt === null && detached(ctx) && !cancelRequested(ctx)) {
@@ -958,14 +975,15 @@ function finalize(ctx: RunnerContext, def: CheckDefinition, row: CheckRunRecord,
     status = 'ERROR';
     note = 'the check process disappeared without writing an exit record (killed externally or the host restarted)';
   }
-  // Stopped by the runner for a sandbox denial its tool would have waited out: a failure, never a pass (srt exits 0 on
+  // A denial recorded while the check ran, or by the final exit scan, is a failure, never a pass (srt exits 0 on
   // SIGTERM), unless it was cancelled or timed out first.
   const denial = status === 'CANCELLED' || status === 'TIMEOUT' ? null : readDenial(dirs.checkDir);
   if (denial !== null) {
     status = 'FAILED';
     note = denial;
   } else if (status === 'FAILED' && note === null) {
-    // MSBuild can record a refused node and fail before the next scan (at once on Linux): look once more.
+    // MSBuild can record a refused node and fail before the next scan (at once on Linux). Its report can become
+    // readable after the exit-record scan, so retain the failure path's scan after the shim has closed its output.
     const late = findMsbuildNodeDenial(dirs.tmpDir);
     if (late) note = denialNote(ctx, def, late, false);
     // dotnet format (SDK 8) lost the output of its own version probe and checked nothing: the group starts it again.
