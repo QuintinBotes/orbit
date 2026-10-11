@@ -38,6 +38,9 @@ type OrbitConfig = import('../../../src/policy/types.ts').OrbitConfig;
 type CheckInfo = import('../../../src/delivery/github.ts').CheckInfo;
 
 let lab: UnitLab;
+// This file's no-op command checks establish lifecycle invariants, not timeout behavior.
+const NON_TIMEOUT_CHECK_SECONDS = 180;
+
 function cleanup(): void {
   lab?.cleanup();
 }
@@ -81,6 +84,7 @@ async function setup(o: Setup = {}): Promise<{ cand: CandidateRecord }> {
     path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING', 'VERIFYING', 'REVIEWING', 'DELIVERING', 'AWAITING_CI'],
     tweak: (c) => {
       c.mode = o.mode ?? 'autonomous-delivery';
+      c.checks.unit!.timeout_seconds = NON_TIMEOUT_CHECK_SECONDS;
       Object.assign(c.actions, { commit: true, push_task_branch: true, open_pull_request: true, read_ci_logs: true, repair_ci: true });
       o.tweak?.(c);
     },
@@ -444,6 +448,7 @@ describe('a moved base branch', () => {
   it('finishes judging a rebased baseline after a fault immediately after its durable write', async () => {
     const { cand } = await setup({ tweak: allowRebase });
     await recordBaseline(cand.parentSha);
+    const old = baseline();
     const r = moveBase('docs/notes.md', 'notes\n');
     ci.checks = [check('unit', 'pass')];
     process.env.ORBIT_FAULTS = 'controller.baseline-rebase.after-write=throw';
@@ -460,7 +465,10 @@ describe('a moved base branch', () => {
     expect(await amendBaseline(ctx, ctx.contract!)).toBeNull();
     expect(decisions('baseline.rebased')).toHaveLength(1);
     // The persisted complete baseline was judged, not measured a third time.
-    expect(listCheckRuns(lab.db, { runId: lab.runId, candidateId: null, checkId: 'unit', rootsOnly: true }).map((row) => row.status)).toEqual(['PASSED', 'PASSED']);
+    expect(listCheckRuns(lab.db, { runId: lab.runId, candidateId: null, checkId: 'unit', rootsOnly: true }).map((row) => ({ status: row.status, treeHash: row.treeHash }))).toEqual([
+      { status: 'PASSED', treeHash: old.baseTree },
+      { status: 'PASSED', treeHash: gitIn(lab.repo, 'rev-parse', `${r.tip}^{tree}`) },
+    ]);
   });
 
   it('blocks the rebased baseline when an optional check the contract requires cannot start on the new base', async () => {
