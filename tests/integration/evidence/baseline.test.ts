@@ -89,12 +89,16 @@ describe('runBaseline', () => {
   it('is not complete, and not reused, when a check could not run', async () => {
     const t = tempRoot();
     const r = makeRepo(t.root);
-    const run = makeRun(t.root, r.repo, [checkDef('broken', { command: ['no-such-binary-acme'] })]);
+    const run = makeRun(t.root, r.repo, [checkDef('broken', { command: ['no-such-binary-acme'], mandatory: false })]);
     cleanups.push(() => run.db.close(), () => t.remove());
-    const out = await runBaseline(baselineInput(t, r.repo, r.base, run));
+    const input = baselineInput(t, r.repo, r.base, run, { checkIds: ['broken'] });
+    const out = await runBaseline(input);
     expect(out.report.checks[0]!.status).toBe('ERROR');
+    // Issue #36: the planner must see this failed launch as a baseline failure so it can block a contract that requires
+    // the check, rather than treating the missing row as a candidate-only problem.
+    expect(out.report.failures).toEqual([expect.objectContaining({ checkId: 'broken' })]);
     expect(out.report.complete).toBe(false);
-    expect((await runBaseline(baselineInput(t, r.repo, r.base, run))).reused).toBe(false);
+    expect((await runBaseline(input)).reused).toBe(false);
   });
 
   // Issue #33: the controller judges the baseline as it is recorded, so the file, the event and the gate say alike. A judgement

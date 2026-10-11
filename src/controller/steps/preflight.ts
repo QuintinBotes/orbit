@@ -230,8 +230,9 @@ export function askAboutBaseFailures(ctx: RunContext, found: BaselineClassificat
  * baseline's time, so a resumed run that blocks again records the new baseline's decisions next to the old.
  *
  * A baseline amendment (`amendment`, ADR 0012) blocks the same way at the step that ran it, with the reason saying why the
- * check ran on the base revision after PREFLIGHT and the decisions keyed by the amendment's time. It leaves the baseline
- * complete: the classification it records is what makes the next amendment run the check again.
+ * check ran on the base revision after PREFLIGHT and the decisions keyed by the amendment's time. A decisive amendment
+ * result leaves the prior completeness unchanged; an ERROR remains incomplete because the check produced no result.
+ * In either case its classification makes the next amendment run the check again.
  */
 export async function blockOnBaseline(
   ctx: RunContext,

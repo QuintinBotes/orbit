@@ -350,9 +350,17 @@ export function baselineEnvironmentFailures(ctx: RunContext, report: BaselineRep
     const { output, logPath, row } = baselineOutput(ctx, report, failure);
     const insideRoots = [checkoutDir, ...(row ? [row.cwd] : []), ...(logPath ? [dirname(logPath)] : [])];
     const def = ctx.snapshot.config.checks[failure.checkId];
-    const exitCode = row ? row.exitCode : (report.checks.find((c) => c.checkId === failure.checkId)?.exitCode ?? null);
+    const entry = report.checks.find((c) => c.checkId === failure.checkId);
+    const exitCode = row ? row.exitCode : (entry?.exitCode ?? null);
+    // A runner start failure has status ERROR and no process output of its own. Its note is in the runner footer when a
+    // shim started, or in the stored excerpt when launching the shim itself failed. Feed only that note to
+    // classifyNotExecuted: an arbitrary ERROR (for example a vanished process) is not enough to blame the environment.
+    const startFailure =
+      row?.status === 'ERROR' || entry?.status === 'ERROR'
+        ? (/could not start the check:[^\n]*/.exec(output)?.[0] ?? null)
+        : null;
     const found =
-      classifyNotExecuted({ checkId: failure.checkId, output }) ??
+      classifyNotExecuted({ checkId: failure.checkId, output, startFailure }) ??
       classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ??
       (def && def.kind === 'command' ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) : null);
     if (!found) continue;

@@ -99,19 +99,17 @@ one (ADR 0010), and the outcome is the same:
 - **A pass establishes a clean base**: a failure on a candidate is the
   change's, and goes to repair.
 - **A check the runner could not start at all** (status `ERROR`: an argv
-  command whose executable is missing, say) has no output to classify and no
-  result. The amendment records it so (`lint ERROR` in `baseline.amended`) and
-  the run goes on, as PREFLIGHT goes on for a mandatory check it could not
-  start (`gate.baseline` unverified). It is not counted as covered, so every
-  later amendment runs it on the base revision again, and its run on the
-  candidate blocks the run for the environment (ADR 0010's rule for a check
-  that could not execute), after the first attempt. Blocking such a check
-  before any attempt would treat an amended check more strictly than a
-  mandatory one; it was found by the final review and left as it is for both.
+  command whose executable is missing, say) is a baseline failure. The
+  runner's start-failure note is classified as `start-failed`, so an amendment
+  blocks at PLANNING or VERIFYING before a candidate is judged or an
+  implementer session starts. The classified result is not covered, so after
+  the environment is fixed `orbit resume` runs it on the base revision again.
+  This is the same outcome as a policy-mandatory check that cannot start in
+  PREFLIGHT, rather than a candidate-only environment block.
 
 With this, every check a candidate is judged on was run on the base revision
-first (until a rebase, below), so ADR 0010's candidate gate has the base result
-it asks for, except for a check that produced no result there, as above.
+first and judged there, so ADR 0010's candidate gate has the base result it
+asks for.
 
 An amended check's missing target and PREFLIGHT's are judged at different
 times, and this is intended. PREFLIGHT's mandatory checks are judged at
@@ -147,7 +145,25 @@ its baseline". The planner is told, when the policy has an optional check, that
 naming one runs it on the base revision first and stops the run if it cannot
 run there, so it names one only as the proof of a criterion that needs it.
 
-### 3. A repair that ends on an already judged tree ends the repair loop
+### 3. A clean rebase refreshes the baseline before a rebased candidate is verified
+
+A clean rebase in AWAITING_CI changes both the candidate's parent and the
+revision its baseline must describe. Once the rebase event and the new base
+revision are durable, Orbit measures every command check the accepted contract
+requires on that new base. This is a fresh baseline, not an amendment: it
+replaces the old-base record and repeats the dependency audit, before the
+rebased candidate can be judged in VERIFYING.
+
+The fresh report is classified and gated as any other baseline. An environment
+failure, misconfigured check or failed install blocks the run in VERIFYING;
+missing targets, pre-existing failures and expected flips are settled against
+the same contract. `baseline.rebased` is recorded only after that judgement.
+If the process stops after `baseline.json` and `baseline.recorded` are durable
+but before the decision, recovery judges the stored new-base report without
+running its checks a third time. It can therefore never use the old base as
+evidence for the rebased candidate.
+
+### 4. A repair that ends on an already judged tree ends the repair loop
 
 In DIAGNOSING, before any diagnosis is asked for: when the latest attempt
 produced the current candidate, an earlier attempt produced the same candidate
@@ -187,13 +203,7 @@ non-progress threshold, the allowance and its extension, and the hard caps.
 
 ### Limits
 
-- A rebase in AWAITING_CI moves the run to a new base revision, and the
-  recorded baseline is of the old one, so a baseline amendment after it finds
-  no baseline to amend and does nothing. Every baseline-dependent gate has the
-  same limit today (ADR 0010's candidate gate reads no base result after a
-  rebase either); running the baseline again on the new base is a separate
-  change.
-- The stop of section 3 covers the repair loop of DIAGNOSING, whose candidate
+- The stop of section 4 covers the repair loop of DIAGNOSING, whose candidate
   verification judged `FAIL`. A CI repair (AWAITING_CI) repairs a candidate
   verification judged `PASS`, so there is no verdict to compare; it stays
   bounded by the CI repair cycles (`delivery.max_ci_repair_cycles` within

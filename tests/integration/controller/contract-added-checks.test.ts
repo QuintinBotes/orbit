@@ -177,6 +177,31 @@ describe.skipIf(!canStripTypes)('a check the contract adds is run on the base re
     expect(listWorkers(l.db(), { runId: run.id, role: 'implementer' })).toHaveLength(1);
   }, 240_000);
 
+  // Issue #36: a direct argv whose executable is absent becomes ERROR rather than a shell's exit 127. It must receive
+  // the same baseline classification and PLANNING block as an executable that did start and then reported a refusal.
+  it('a contract-required check the runner cannot start blocks at PLANNING before an implementer session', async () => {
+    const l = labWith({ lint: { command: ['orbit-missing-linter', '--check'] } });
+    writeScenario(l, baseScenario({ planner: [{ structured: plannerCiting('lint') }], implementer: [implementMul('*')], verifier: [DIAGNOSIS] }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
+    expect(transitions(l, run.id)).toEqual(['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'BLOCKED']);
+    expect(done.outcomeReason).toContain('the check could not be started');
+    expect(done.outcomeReason).toContain('The contract requires check lint (criterion AC-2 cites it as evidence)');
+    expect(listWorkers(l.db(), { runId: run.id, role: 'implementer' })).toEqual([]);
+    expect(listCheckRuns(l.db(), { runId: run.id, checkId: 'unit' }).filter((r) => r.candidateId !== null)).toEqual([]);
+
+    const baseline = baselineOf(l, run.id);
+    expect(baseline.checkIds).toEqual(['unit']);
+    expect(baseline.checks.find((c) => c.checkId === 'lint')?.status).toBe('ERROR');
+    expect(baseline.failures).toEqual([expect.objectContaining({ checkId: 'lint', classification: 'environment', signals: ['start-failed'] })]);
+    expect(baseline.complete).toBe(false);
+    expect(baseRuns(l, run.id, 'lint')).toEqual(['ERROR']);
+    expect(listDecisions(l.db(), run.id, { kind: 'baseline.environment-failure' })[0]?.data).toMatchObject({ stage: 'PLANNING', checks: [expect.objectContaining({ check_id: 'lint', signals: ['start-failed'] })] });
+  }, 240_000);
+
   it('a check a contract amendment adds after PLANNING is run on the base revision before the candidate is judged, and blocks there when it cannot run', async () => {
     const l = labWith({ lint: { command: ['orbit-acme-missing-linter --check'], shell: true } });
     writeScenario(l, baseScenario({ implementer: [implementMul('*')], verifier: [DIAGNOSIS] }));
