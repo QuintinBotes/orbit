@@ -283,36 +283,35 @@ describe('orbit timeline: the readable history of a run', () => {
 });
 
 describe('orbit timeline --json', () => {
-  it('prints the run, every entry in order with an ISO time and its structured data, and the cost', async () => {
+  it('prints one JSON object per event, in order, with its durable event name, time and structured data', async () => {
     const l = lab();
     buildFullRun(l);
     const r = await l.cli(['timeline', RUN_ID, '--json']);
     expect(r.code, r.err).toBe(0);
-    const j = JSON.parse(r.out) as {
-      run: { id: string; state: string; goal: string };
-      entries: { at: number; time: string; category: string; kind: string; text: string; event_id: number | null; data: Record<string, unknown> }[];
-      cost: { measured_usd: number; estimated_usd: number; charged_usd: number | null; reported_records: number; unavailable_records: number; ceiling_charged_usd: number; note: string };
-    };
-    expect(j.run).toMatchObject({ id: RUN_ID, state: 'SUCCEEDED' });
-    expect(j.entries.length).toBeGreaterThan(30);
-    const times = j.entries.map((e) => e.at);
+    const entries = r.out.trimEnd().split('\n').map((line) => JSON.parse(line) as { at: number; time: string; event: string; category: string; kind: string; text: string; event_id: number | null; data: Record<string, unknown> });
+    expect(entries.length).toBeGreaterThan(30);
+    const times = entries.map((e) => e.at);
     expect(times).toEqual([...times].sort((a, b) => a - b));
-    for (const e of j.entries) expect(e.time).toBe(new Date(e.at).toISOString());
-    const esc = j.entries.find((e) => e.kind === 'route.escalation')!;
+    for (const e of entries) {
+      expect(e.time).toBe(new Date(e.at).toISOString());
+      expect(e.event).toMatch(/^[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*$/);
+    }
+    expect(entries.map((e) => e.event)).toEqual(expect.arrayContaining(['run.created', 'state.transition', 'worker.started', 'decision.recorded']));
+    const esc = entries.find((e) => e.kind === 'route.escalation')!;
     expect(esc.category).toBe('route');
+    expect(esc.event).toBe('decision.recorded');
     expect(esc.data).toMatchObject({ model: 'claude-opus-4-8', escalated_from: { model: 'claude-sonnet-4-6' } });
-    const review = j.entries.find((e) => e.kind === 'review.recorded')!;
+    const review = entries.find((e) => e.kind === 'review.recorded')!;
     expect(review.data).toMatchObject({ verdict: 'APPROVE', provider: 'codex', model: 'gpt-6.1-sol', round: 1 });
-    expect(j.entries.find((e) => e.kind === 'state.transition' && e.text.includes('DELIVERING -> SUCCEEDED'))).toBeTruthy();
-    expect(j.cost).toMatchObject({ measured_usd: 0.17, estimated_usd: 0, charged_usd: 1.17, reported_records: 2, unavailable_records: 1, ceiling_charged_usd: 1 });
+    expect(entries.find((e) => e.kind === 'state.transition' && e.text.includes('DELIVERING -> SUCCEEDED'))).toBeTruthy();
   });
 
   it('says the same thing as the text form: every entry text appears in it', async () => {
     const l = lab();
     buildFullRun(l);
-    const j = JSON.parse((await l.cli(['timeline', RUN_ID, '--json'])).out) as { entries: { text: string }[] };
+    const entries = (await l.cli(['timeline', RUN_ID, '--json'])).out.trimEnd().split('\n').map((line) => JSON.parse(line) as { text: string });
     const text = (await l.cli(['timeline', RUN_ID])).out;
-    for (const e of j.entries) expect(text).toContain(e.text);
+    for (const e of entries) expect(text).toContain(e.text);
   });
 });
 
@@ -378,8 +377,9 @@ describe('orbit timeline --follow', () => {
     handlers.get('SIGINT')?.();
     const r = await done;
     expect(r.code).toBe(0);
-    const lines = r.out.trim().split('\n').map((x) => JSON.parse(x) as { kind: string });
+    const lines = r.out.trim().split('\n').map((x) => JSON.parse(x) as { event: string; kind: string });
     expect(lines.map((x) => x.kind)).toEqual(expect.arrayContaining(['run.created', 'state.transition']));
+    expect(lines.map((x) => x.event)).toEqual(expect.arrayContaining(['run.created', 'state.transition']));
   });
 
   it('does not wait for a run that is already over', async () => {

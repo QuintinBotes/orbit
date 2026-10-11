@@ -35,6 +35,7 @@ import type { RunRecord } from '../controller/run-store.ts';
 import type { CliContext } from './context.ts';
 import { reviewFix } from './review-fix.ts';
 import { orbitHint } from '../core/invocation.ts';
+import { implementationAttemptWallTimeMinimum, implementationAttemptWallTimeProblem } from '../scheduling/budget.ts';
 
 export interface AdmissionInput {
   repo: string;
@@ -68,6 +69,13 @@ export const checkAdmission: AdmissionCheck = async (ctx, input) => {
   const { repo, config } = input;
   const cheap: string[] = [];
   const fixes: string[] = [];
+
+  const wallTimeProblem = implementationAttemptWallTimeProblem(config);
+  if (wallTimeProblem !== null) {
+    const minimum = implementationAttemptWallTimeMinimum(config);
+    cheap.push(wallTimeProblem);
+    fixes.push(`set scheduler.hard_limits.wall_minutes to at least ${minimum.minimumMinutes} min`);
+  }
 
   // A repository with no commits has no base revision: preflight would retry git five times, spend a model call, and
   // end with an empty "git rev-parse failed". Its files are all "uncommitted", so that is not reported on top of it.

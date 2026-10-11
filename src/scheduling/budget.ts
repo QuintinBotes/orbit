@@ -86,6 +86,34 @@ export const ROLE_WALL_CEILING_MS: Readonly<Record<BudgetRole, number>> = {
   explorer: 20 * 60_000,
 };
 
+/** The minimum total wall time that leaves a full implementer session before the closing reserve. */
+export interface ImplementationAttemptWallTimeMinimum {
+  configuredMinutes: number;
+  minimumMinutes: number;
+  implementerCeilingMinutes: number;
+  reserveFraction: number;
+}
+
+type WallTimePolicy = { scheduler: Pick<OrbitConfig['scheduler'], 'hard_limits' | 'final_reserve_fraction'> };
+
+export function implementationAttemptWallTimeMinimum(config: WallTimePolicy): ImplementationAttemptWallTimeMinimum {
+  const reserveFraction = config.scheduler.final_reserve_fraction;
+  const implementerCeilingMinutes = ROLE_WALL_CEILING_MS.implementer / 60_000;
+  let minimumMinutes = Math.ceil(implementerCeilingMinutes / (1 - reserveFraction));
+  // The ledger rounds its reserve to milliseconds. Keep this calculation exact
+  // for fractions where the simple division lands on a rounding boundary.
+  while (minimumMinutes * 60_000 - Math.round(minimumMinutes * 60_000 * reserveFraction) < ROLE_WALL_CEILING_MS.implementer) minimumMinutes++;
+  return { configuredMinutes: config.scheduler.hard_limits.wall_minutes, minimumMinutes, implementerCeilingMinutes, reserveFraction };
+}
+
+/** Null when ordinary work has enough time for one complete implementation attempt. */
+export function implementationAttemptWallTimeProblem(config: WallTimePolicy): string | null {
+  const minimum = implementationAttemptWallTimeMinimum(config);
+  if (minimum.configuredMinutes >= minimum.minimumMinutes) return null;
+  const reservePercent = minimum.reserveFraction * 100;
+  return `scheduler.hard_limits.wall_minutes is ${minimum.configuredMinutes} min, below the ${minimum.minimumMinutes} min minimum for one implementation attempt: the ${minimum.implementerCeilingMinutes} min implementer ceiling must fit after the ${reservePercent}% closing reserve`;
+}
+
 /** How the reserve is apportioned for reporting; enforcement uses the total. */
 const RESERVE_SHARES = { final_verification: 0.4, review: 0.45, reporting: 0.15 } as const;
 /** A repair cycle typically needs a reproduction and one discriminating experiment. */

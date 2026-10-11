@@ -295,6 +295,16 @@ and never from the final verification reserve. After
 `repeated_failure_threshold` equivalent failures Orbit stops and interrogates
 the plan.
 
+### Wall-time admission per implementation attempt
+
+One implementation attempt needs the implementer role's 30 minute wall-time
+ceiling before the closing reserve. The minimum `wall_minutes` is therefore
+the smallest whole minute for which the total wall time minus the
+`final_reserve_fraction` (rounded to milliseconds) still leaves 30 minutes.
+With the default 20% reserve, the minimum is 38 minutes. `orbit doctor` reports
+and `orbit run` refuses a lower value before a run is created, naming the
+minimum that applies to the effective policy.
+
 ### Cost admission and the role ceilings
 
 Before it starts a worker, Orbit checks that the session fits in what is left of

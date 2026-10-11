@@ -3,7 +3,7 @@ import { openDb, type OrbitDb } from '../../../src/storage/db.ts';
 import { ManualClock } from '../../../src/core/clock.ts';
 import { isOrbitError, type OrbitError } from '../../../src/core/errors.ts';
 import { createRun } from '../../../src/controller/run-store.ts';
-import { BudgetLedger, ROLE_COST_CEILING_USD, extensionDecisionRecord, type BudgetPolicy } from '../../../src/scheduling/budget.ts';
+import { BudgetLedger, ROLE_COST_CEILING_USD, extensionDecisionRecord, implementationAttemptWallTimeMinimum, implementationAttemptWallTimeProblem, type BudgetPolicy } from '../../../src/scheduling/budget.ts';
 import { recordUsage } from '../../../src/routing/usage.ts';
 import type { ExtensionRequest } from '../../../src/scheduling/types.ts';
 
@@ -66,6 +66,16 @@ const progress = { newly_supported_criteria: ['AC-2'] };
 function ext(patch: Partial<ExtensionRequest> = {}): ExtensionRequest {
   return { counter: 'implementation_attempts', progress, hypothesisIsNew: true, withinScope: true, nextExperiment: 'Run a multi-page filtered fixture.', estimatedCostUsd: 1, estimatedWallMs: 60_000, ...patch };
 }
+
+describe('implementation attempt wall-time minimum', () => {
+  it('leaves the 30 minute implementer ceiling before the configured closing reserve', () => {
+    const low = policy({ hard: { wall_minutes: 20 } });
+    expect(implementationAttemptWallTimeMinimum({ scheduler: low.scheduler })).toMatchObject({ configuredMinutes: 20, minimumMinutes: 38, implementerCeilingMinutes: 30, reserveFraction: 0.2 });
+    expect(implementationAttemptWallTimeProblem({ scheduler: low.scheduler })).toContain('below the 38 min minimum for one implementation attempt');
+    const enough = policy({ hard: { wall_minutes: 38 } });
+    expect(implementationAttemptWallTimeProblem({ scheduler: enough.scheduler })).toBeNull();
+  });
+});
 
 describe('BudgetLedger.init', () => {
   it('creates every counter with allowances from the difficulty class and caps from the snapshot', () => {

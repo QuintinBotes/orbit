@@ -179,6 +179,12 @@ export function decideCodexTier(i: CodexTierInput): CodexTierDecision {
 
 const DANGER_FULL_ACCESS = 'danger-full-access';
 
+/** Model availability documented in docs/interfaces/codex-cli.md. */
+export const CODEX_MODEL_MIN_CLI_VERSIONS: Readonly<Record<string, string>> = {
+  // gpt-6.1-sol is absent from the 0.153.4 catalog and works after the 0.160.0 update documented there.
+  'gpt-6.1-sol': '0.160.0',
+};
+
 const NO_OS_ISOLATION = 'No OS isolation around the codex process itself; only its own read-only sandbox applies to the commands it runs.';
 
 /** The reviewer's temp directory under srt: inside the worker directory, which it may write anyway, so its write set stays at two directories. */
@@ -230,6 +236,7 @@ export class CodexAdapter implements ProviderAdapter {
       available,
       version: v,
       models: slugs,
+      modelMinimumVersions: CODEX_MODEL_MIN_CLI_VERSIONS,
       structuredOutput: flags.has('--output-schema'),
       readOnlySandbox: flags.has('--sandbox'),
       usageReporting: 'partial',

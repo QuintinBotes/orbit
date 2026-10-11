@@ -340,6 +340,7 @@ describe('CodexAdapter', () => {
     execMock.execCapture.mockResolvedValueOnce(exec('codex-cli 0.153.4')).mockResolvedValueOnce(exec(`Usage\n  ${FLAGS}`)).mockResolvedValueOnce(exec(catalog));
     const ok = await adapter().discoverCapabilities();
     expect(ok).toMatchObject({ available: true, version: '0.153.4', models: ['codex-alpha'], structuredOutput: true, readOnlySandbox: true });
+    expect(ok.modelMinimumVersions).toMatchObject({ 'gpt-6.1-sol': '0.160.0' });
     expect(ok.detail).toBe('codex 0.153.4; exec lists --full-auto; Orbit never passes it');
 
     execMock.execCapture.mockResolvedValueOnce(exec('codex-cli')).mockResolvedValueOnce(exec(FLAGS)).mockResolvedValueOnce(exec('not json'));

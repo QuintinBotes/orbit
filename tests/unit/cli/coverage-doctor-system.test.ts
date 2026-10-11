@@ -11,7 +11,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { which, runDoctor, doctorCommand, type DoctorCheck } from '../../../src/cli/commands/doctor.ts';
+import { DOCTOR_OPTIONS, which, runDoctor, doctorCommand, renderDoctorReport, type DoctorCheck } from '../../../src/cli/commands/doctor.ts';
 import { createContext, type CliContext } from '../../../src/cli/context.ts';
 import { memoryIo } from '../../../src/cli/io.ts';
 import { parseCommand } from '../../../src/cli/args.ts';
@@ -1006,24 +1006,26 @@ describe('runDoctor and doctorCommand', () => {
 
   async function command(w: World, argv: string[], over: Partial<CliContext> = {}) {
     const io = memoryIo();
-    const args = parseCommand(argv, { probe: { type: 'boolean', description: '' } }, 'orbit doctor');
+    const args = parseCommand(argv, DOCTOR_OPTIONS, 'orbit doctor');
     const code = await doctorCommand(args, w.ctx({ io, ...over }));
     return { code, out: io.stdout };
   }
 
-  it('prints each check with its status, what is missing and the fix, then a summary line, and exits 1 on a failure', async () => {
+  it('prints failures before warnings on one actionable line, then counts them, and exits 1 on a failure', async () => {
     const w = world({ git: false });
     hooks.adapters = noAdapters;
     const r = await command(w, []);
     expect(r.code).toBe(1);
     expect(r.out.split('\n')[0]).toBe('orbit doctor');
-    expect(r.out).toMatch(/^PASS {2}runtime\.node {1,}Node v/m);
-    expect(r.out).toMatch(/^FAIL {2}git\.repo {1,}not inside a git repository\n {6}missing: a git repository to run in\n {6}fix: {5}run from a repository, or pass --repo <dir>\n/m);
-    expect(r.out).toMatch(/^WARN {2}storage /m);
-    expect(r.out).toMatch(/\n\d+ passed, \d+ warning\(s\), [1-9]\d* failed\n$/);
+    expect(r.out).not.toMatch(/^PASS /m);
+    expect(r.out).toMatch(/^FAIL {2}git\.repo {1,}not inside a git repository; fix: run from a repository, or pass --repo <dir>$/m);
+    expect(r.out).toMatch(/^WARN {2}storage .*; fix: no automatic fix is available$/m);
+    expect(r.out.indexOf('FAIL  ')).toBeLessThan(r.out.indexOf('WARN  '));
+    expect(r.out).toMatch(/\n[1-9]\d* failures?, \d+ warnings?\n$/);
+    expect(r.out).not.toMatch(/^ {6}(missing|fix):/m);
   });
 
-  it('names the repository, lists details under their check, and exits 0 when nothing failed', async () => {
+  it('names the repository, restores details only with --verbose, and exits 0 when nothing failed', async () => {
     const w = world();
     hooks.adapters = noAdapters;
     hooks.config = () => cfg((x) => (x.checks = { unit: { ...defaultCheck('unit'), command: ['node', '-e', '0'] } }));
@@ -1031,7 +1033,9 @@ describe('runDoctor and doctorCommand', () => {
     const binNode = exe(w.bin, 'node');
     const r = await command(w, [], { env: { ...w.env, PATH: `${w.bin}:${process.env.PATH}` } });
     expect(r.out.split('\n')[0]).toBe(`orbit doctor  (${w.repo})`);
-    expect(r.out).toContain(`      unit: node -> ${binNode}\n`);
+    expect(r.out).not.toContain(`unit: node -> ${binNode}`);
+    const verbose = await command(w, ['--verbose'], { env: { ...w.env, PATH: `${w.bin}:${process.env.PATH}` } });
+    expect(verbose.out).toContain(`      unit: node -> ${binNode}\n`);
     const json = await command(w, ['--json']);
     const report = JSON.parse(json.out) as { repo: string; ok: boolean; counts: Record<string, number>; checks: Array<{ id: string }> };
     expect(report.repo).toBe(w.repo);
@@ -1044,10 +1048,35 @@ describe('runDoctor and doctorCommand', () => {
     const other = world();
     hooks.adapters = noAdapters;
     hooks.config = () => cfg();
-    const args = parseCommand(['--repo', other.repo, '--json'], { probe: { type: 'boolean', description: '' } }, 'orbit doctor');
+    const args = parseCommand(['--repo', other.repo, '--json'], DOCTOR_OPTIONS, 'orbit doctor');
     const io = memoryIo();
     await doctorCommand(args, w.ctx({ io }));
     expect((JSON.parse(io.stdout) as { repo: string }).repo).toBe(other.repo);
-    await expect(doctorCommand(parseCommand(['extra'], { probe: { type: 'boolean', description: '' } }, 'orbit doctor'), w.ctx())).rejects.toThrow('expected 0 argument(s), got 1');
+    await expect(doctorCommand(parseCommand(['extra'], DOCTOR_OPTIONS, 'orbit doctor'), w.ctx())).rejects.toThrow('expected 0 argument(s), got 1');
+  });
+
+  it('shows a failure with its details, a warning on one line, and the rest only with --verbose', () => {
+    const report = {
+      repo: '/repo/acme',
+      ok: false,
+      counts: { pass: 1, warn: 1, fail: 1 },
+      checks: [
+        { id: 'claude.plugins', area: 'providers', status: 'warn' as const, summary: 'workers may load a plugin', details: ['plugin: acme-sync@acme (scope synced)'], missing: 'an allowed plugin', fix: 'allow acme-sync@acme' },
+        { id: 'isolation', area: 'isolation', status: 'fail' as const, summary: 'sandbox unavailable', details: ['limitation: cannot write outside the worktree'], missing: 'sandbox-runtime', fix: 'install sandbox-runtime' },
+        { id: 'runtime.node', area: 'runtime', status: 'pass' as const, summary: 'Node works', details: ['version: current'], missing: null, fix: null },
+      ],
+    };
+    const concise = renderDoctorReport(report);
+    expect(concise).toMatch(/^FAIL {2}isolation .*; fix: install sandbox-runtime$/m);
+    expect(concise.indexOf('FAIL  ')).toBeLessThan(concise.indexOf('WARN  '));
+    // A failure's details always show, or "fix the problems below" would point at nothing.
+    expect(concise).toContain('limitation: cannot write outside the worktree');
+    // A warning stays on its one line; its detail waits for --verbose.
+    expect(concise).not.toContain('plugin: acme-sync@acme');
+    expect(concise).not.toContain('PASS  runtime.node');
+    const verbose = renderDoctorReport(report, true);
+    expect(verbose).toContain('plugin: acme-sync@acme (scope synced)');
+    expect(verbose).toContain('limitation: cannot write outside the worktree');
+    expect(verbose).toContain('PASS  runtime.node');
   });
 });

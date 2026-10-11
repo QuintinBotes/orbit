@@ -55,7 +55,7 @@ export interface CommandDef {
 }
 
 export const COMMANDS: readonly CommandDef[] = [
-  { name: 'doctor', summary: 'check every capability a run depends on, with the exact missing piece for each failure', usage: 'orbit doctor [--probe] [--json]', options: DOCTOR_OPTIONS, run: doctorCommand },
+  { name: 'doctor', summary: 'check every capability a run depends on, with the exact missing piece for each failure', usage: 'orbit doctor [--policy <path>] [--probe] [--verbose] [--json]', options: DOCTOR_OPTIONS, run: doctorCommand },
   { name: 'init', summary: 'write .orbit/config.yaml from the starter template and keep runtime state out of git status', usage: 'orbit init', run: initCommand },
   { name: 'run', summary: 'start a run: freeze the policy, then drive it here or hand it to the service', usage: 'orbit run --goal "<goal>" [--mode <mode>] [--environment <name>] [--policy <path>] [--foreground | --detach]', options: RUN_OPTIONS, run: runCommand },
   { name: 'status', summary: 'state, stage, attempts, budgets, workers, open questions and heartbeat of a run (or the recent runs)', usage: 'orbit status [run-id] [--all] [--json]', options: STATUS_OPTIONS, run: statusCommand },

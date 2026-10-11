@@ -9,7 +9,7 @@ import { buildTimeline, type Timeline, type TimelineEntry } from '../../observab
 import type { Args, OptionSpec } from '../args.ts';
 import { findRunByPrefix, resolveRepo, withState, type CliContext } from '../context.ts';
 import { EXIT } from '../exit.ts';
-import { clockTime, flat, json } from '../io.ts';
+import { clockTime, flat } from '../io.ts';
 
 export const TIMELINE_OPTIONS: OptionSpec = {
   follow: { type: 'boolean', short: 'f', description: 'keep printing new steps until the run ends or blocks' },
@@ -67,7 +67,7 @@ export async function timelineCommand(args: Args, ctx: CliContext): Promise<numb
     if (!args.bool('follow')) {
       const t = build();
       const shown = { ...t, entries: tail(t.entries) };
-      if (asJson) json(ctx.io, shown);
+      if (asJson) for (const entry of shown.entries) ctx.io.out(`${JSON.stringify(entry)}\n`);
       else ctx.io.out(renderTimeline(shown));
       return EXIT.OK;
     }

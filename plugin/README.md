@@ -207,11 +207,11 @@ one ([troubleshooting](docs/troubleshooting.md#run-problems)).
 
 | Command | Purpose |
 |---|---|
-| `orbit doctor [--probe]` | Check every capability a run depends on. `--probe` makes live requests. |
+| `orbit doctor [--policy <path>] [--probe] [--verbose]` | Check every capability a run depends on, including an alternative policy before using it. `--probe` makes live requests; `--verbose` includes passing checks and full sandbox and plugin detail. |
 | `orbit init` | Write `.orbit/config.yaml` from the starter template, with checks proposed from what the repository declares. |
 | `orbit run --goal <text>` | Freeze the policy and start a run (`--mode`, `--environment`, `--policy`, `--foreground`, `--detach`). |
 | `orbit status [run-id]` | State, stage, attempts, budgets, workers, questions, heartbeat. |
-| `orbit timeline <run-id>` | What happened in a run, one readable line per step in order, with local time: state changes and their reasons, routing and escalation with the evidence, each attempt and candidate with its verification verdict, check results, review outcome and reviewer, questions asked and answered, delivery actions, and the cost so far (measured against charged). `--follow` streams a running run, `--last <n>` cuts it, `--all` adds housekeeping, `--json` is for machines. |
+| `orbit timeline <run-id>` | What happened in a run, one readable line per step in order, with local time: state changes and their reasons, routing and escalation with the evidence, each attempt and candidate with its verification verdict, check results, review outcome and reviewer, questions asked and answered, delivery actions, and the cost so far (measured against charged). `--follow` streams a running run, `--last <n>` cuts it, `--all` adds housekeeping, and `--json` emits one JSON object per event with its event name. |
 | `orbit logs <run-id>` | The raw controller and worker logs, redacted (`--follow`, `--lines`, `--controller`, `--workers`, `--worker`). For a readable history use `orbit timeline`. |
 | `orbit verify [run-id]` | Independent verification of a run's latest candidate: a verdict per criterion with its evidence. Exit 14 for FAIL, 15 for INCOMPLETE. |
 | `orbit repair <run-id \| description \| ->` | Repair a failed run (BLOCKED or paused with FAIL evidence), or start a run to repair a described failure (`--foreground`, `--detach`, `--mode`, `--policy`). `-` reads the description from stdin. |
