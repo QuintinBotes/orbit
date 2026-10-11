@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A worker cancelled with SIGINT is recorded as cancelled even when the provider's exit is handled before the shim's own signal handler runs. `cancelShim` writes `cancel.json` before it signals the group, and the shim now reads that durable intent when it writes `exit.json`, so the event order no longer decides between `cancelled` and `failed`. A unit test forces the losing order; the Codex and Claude adapter tests that failed intermittently on CI pass 20 runs in a row.
 - On macOS, a worker process that creates another process group or session is
   now tracked from the provider tree and stopped before the shim writes its
   result. The sweep remembers pid/start-time identities, so it cannot signal a

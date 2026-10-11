@@ -44,6 +44,8 @@ import { createRedactor, redactValue, type Redactor } from '../core/redact.ts';
 
 export const PID_FILE = 'pid.json';
 export const EXIT_FILE = 'exit.json';
+/** Durable controller intent, written before it signals the worker group. */
+export const CANCEL_FILE = 'cancel.json';
 export const LOG_FILE = 'log.jsonl';
 export const STDERR_FILE = 'stderr.log';
 /** The shim's own stdout and stderr (argument errors, crashes). */
@@ -162,7 +164,7 @@ export interface ExitRecord {
   code: number | null;
   signal: string | null;
   timedOut: boolean;
-  /** The shim received SIGINT/SIGTERM/SIGHUP from outside (controller cancellation). */
+  /** The shim received external cancellation, or a controller recorded cancellation intent before completion. */
   cancelled: boolean;
   /** The abort pattern that matched, as JSON, when the shim cancelled on output. */
   aborted: string | null;
@@ -583,7 +585,10 @@ class Shim {
       code,
       signal,
       timedOut: this.timedOut,
-      cancelled: this.cancelled,
+      // cancelShim persists this intent before it signals the group. The
+      // provider's exit callback can run before Node dispatches SIGINT to the
+      // shim, so the durable intent closes that event-order race.
+      cancelled: this.cancelled || existsSync(join(this.workerDir, CANCEL_FILE)),
       aborted: this.aborted,
       escalation: [...this.escalation],
       error,
