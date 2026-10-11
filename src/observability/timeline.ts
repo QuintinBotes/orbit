@@ -37,6 +37,8 @@ export interface TimelineEntry {
   at: number;
   /** `at` as ISO 8601 UTC. */
   time: string;
+  /** Durable event type. Synthetic records use the event they represent. */
+  event: string;
   category: TimelineCategory;
   /** The event type, or the decision kind, or "usage"; a routing escalation is "route.escalation". */
   kind: string;
@@ -509,8 +511,8 @@ function costNote(c: TimelineCost, ceilingCharges: number): string {
   return parts.join('; ');
 }
 
-function asEntry(at: number, key: string, category: TimelineCategory, kind: string, text: string, eventId: number | null, data: Rec): TimelineEntry {
-  return { key, at, time: new Date(at).toISOString(), category, kind, text, event_id: eventId, data };
+function asEntry(at: number, key: string, event: string, category: TimelineCategory, kind: string, text: string, eventId: number | null, data: Rec): TimelineEntry {
+  return { key, at, time: new Date(at).toISOString(), event, category, kind, text, event_id: eventId, data };
 }
 
 export function buildTimeline(db: OrbitDb, run: RunRecord, opts: TimelineOptions = {}): Timeline {
@@ -527,17 +529,17 @@ export function buildTimeline(db: OrbitDb, run: RunRecord, opts: TimelineOptions
       if (!d) continue;
       mirrored.add(d.id);
       const r = describeDecision(d);
-      spine.push(asEntry(e.ts, `event:${e.id}`, r.category, r.kind, r.text, e.id, r.data));
+      spine.push(asEntry(e.ts, `event:${e.id}`, e.type, r.category, r.kind, r.text, e.id, r.data));
       continue;
     }
     if (HOUSEKEEPING.has(e.type) && !opts.all) continue;
     const r = renderEvent(e, data, l);
     if (r === null) {
       if (!opts.all) continue;
-      spine.push(asEntry(e.ts, `event:${e.id}`, categoryOfType(e.type), e.type, generic(e.type, data), e.id, data));
+      spine.push(asEntry(e.ts, `event:${e.id}`, e.type, categoryOfType(e.type), e.type, generic(e.type, data), e.id, data));
       continue;
     }
-    spine.push(asEntry(e.ts, `event:${e.id}`, r.category ?? categoryOfType(e.type), r.kind ?? e.type, r.text, e.id, r.data ?? data));
+    spine.push(asEntry(e.ts, `event:${e.id}`, e.type, r.category ?? categoryOfType(e.type), r.kind ?? e.type, r.text, e.id, r.data ?? data));
   }
 
   const extras: TimelineEntry[] = [];
@@ -545,7 +547,7 @@ export function buildTimeline(db: OrbitDb, run: RunRecord, opts: TimelineOptions
   for (const d of l.decisions.values()) {
     if (mirrored.has(d.id)) continue;
     const r = describeDecision(d);
-    extras.push(asEntry(d.created_at, `decision:${d.id}`, r.category, r.kind, r.text, null, r.data));
+    extras.push(asEntry(d.created_at, `decision:${d.id}`, 'decision.recorded', r.category, r.kind, r.text, null, r.data));
   }
   let running = 0;
   for (const u of usage) {
@@ -557,7 +559,7 @@ export function buildTimeline(db: OrbitDb, run: RunRecord, opts: TimelineOptions
       if (u.cost_source !== 'estimated') running += u.cost_usd;
       text = `${who} ${usd(u.cost_usd)} ${u.cost_source === 'estimated' ? 'estimated' : 'reported'}${tokens}; measured so far ${usd(round6(running))}`;
     }
-    extras.push(asEntry(u.ts, `usage:${u.id}`, 'cost', 'usage', text, null, { worker_id: u.worker_id, provider: u.provider, model: u.model, input_tokens: u.input_tokens, output_tokens: u.output_tokens, cost_usd: u.cost_usd, cost_source: u.cost_source }));
+    extras.push(asEntry(u.ts, `usage:${u.id}`, 'usage.recorded', 'cost', 'usage', text, null, { worker_id: u.worker_id, provider: u.provider, model: u.model, input_tokens: u.input_tokens, output_tokens: u.output_tokens, cost_usd: u.cost_usd, cost_source: u.cost_source }));
   }
   extras.sort((a, b) => a.at - b.at);
 

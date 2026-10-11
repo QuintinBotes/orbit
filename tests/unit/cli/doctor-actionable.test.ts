@@ -160,6 +160,43 @@ describe('P6: the review fix matches the reason', () => {
     const c = byId(await report(w, cfg(), { claude: adapter('claude'), codex: adapter('codex', {}, { state: 'missing', method: null, detail: 'not logged in' }) }));
     expect(c.review!.fix).toMatch(/codex login/);
   });
+
+  it('issue #58: names the installed Codex CLI and both repair choices for a pinned model it does not offer', async () => {
+    const w = world();
+    const c = byId(
+      await report(
+        w,
+        cfg((x) => {
+          x.providers.codex!.model = 'gpt-6.1-sol';
+          x.review.when_unavailable = 'block';
+        }),
+        {
+          claude: adapter('claude'),
+          codex: adapter('codex', { version: '0.153.0', models: ['gpt-6-astra'], modelMinimumVersions: { 'gpt-6.1-sol': '0.160.0' } }),
+        },
+      ),
+    );
+    expect(c.review).toMatchObject({ status: 'fail' });
+    expect(c.review!.fix).toContain('installed Codex CLI 0.153.0');
+    expect(c.review!.fix).toContain('change providers.codex.model');
+    expect(c.review!.fix).toContain('upgrade the Codex CLI to at least 0.160.0');
+  });
+
+  it('issue #58: says an unavailable pinned model may need a newer CLI when no minimum is known', async () => {
+    const w = world();
+    const c = byId(
+      await report(
+        w,
+        cfg((x) => {
+          x.providers.codex!.model = 'gpt-future';
+          x.review.when_unavailable = 'block';
+        }),
+        { claude: adapter('claude'), codex: adapter('codex', { version: '0.153.0', models: ['gpt-6-astra'] }) },
+      ),
+    );
+    expect(c.review!.fix).toContain('installed Codex CLI 0.153.0');
+    expect(c.review!.fix).toContain('may need a newer CLI');
+  });
 });
 
 describe('P8: actionable text is shown in full', () => {
@@ -304,7 +341,7 @@ describe('issue #31: doctor says when workers cannot run tests that need a loopb
     hooks.config = () => cfg();
     await doctorCommand(parseCommand([], undefined, 'orbit doctor'), w.ctx(io));
     expect(io.stdout).toMatch(/WARN {2}workers\.loopback +on macOS workers cannot run test hosts that need a loopback socket/);
-    expect(io.stdout).toMatch(/fix: {5}nothing to set in Orbit on macOS: keep local_binding \(the default\) on the checks that run these tests/);
+    expect(io.stdout).toMatch(/; fix: nothing to set in Orbit on macOS: keep local_binding \(the default\) on the checks that run these tests/);
     expect(byId(await report(world({ 'package.json': '{}\n' }, 'darwin'), cfg()))['workers.loopback']).toMatchObject({ status: 'pass' });
     expect(byId(await report(world(files, 'linux'), cfg()))['workers.loopback']).toMatchObject({ status: 'pass' });
   });

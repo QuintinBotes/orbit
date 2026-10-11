@@ -14,7 +14,7 @@ import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { OrbitError } from '../../core/errors.ts';
 import { execCapture } from '../../core/exec.ts';
 import { redact } from '../../core/redact.ts';
-import { defaultConfig, loadConfig } from '../../policy/index.ts';
+import { defaultConfig } from '../../policy/index.ts';
 import type { OrbitConfig } from '../../policy/types.ts';
 import type { CredentialStatus, ProviderAdapter, ProviderCapabilities } from '../../adapters/types.ts';
 import { CLAUDE_SANDBOX_LIMITATIONS, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, compareVersions, claudeEnvCredential, codexEnvCredential, createAdapters, decideCodexTier, providerKind, type CodexTierDecision, type CodexTierSetting } from '../../adapters/index.ts';
@@ -39,7 +39,7 @@ import { orbitInstallDir, serviceLabel, serviceStatus, stateDbPath } from '../..
 import type { Args, OptionSpec } from '../args.ts';
 import { controllers, gitEnv, resolveRepo, type CliContext } from '../context.ts';
 import { EXIT } from '../exit.ts';
-import { ago, flat, json, line, oneLine } from '../io.ts';
+import { ago, flat, json, oneLine } from '../io.ts';
 import { lingerState } from './service.ts';
 import { compileGlobs } from '../../policy/globs.ts';
 import { proposeScope, trackedFiles } from '../layout.ts';
@@ -50,9 +50,13 @@ import { withHumanPolicyConfigNote } from './doctor-policy-note.ts';
 import { dotnetAuditCheck, dotnetPackagesCheck, dotnetTestsCheck, hasNugetPackages } from './doctor-dotnet.ts';
 import { checkSandboxCheck } from './doctor-sandbox.ts';
 import { workerLoopbackCheck, workerToolchainsCheck } from './doctor-workers.ts';
+import { loadCommandPolicy } from '../policy-file.ts';
+import { implementationAttemptWallTimeMinimum, implementationAttemptWallTimeProblem } from '../../scheduling/budget.ts';
 
 export const DOCTOR_OPTIONS: OptionSpec = {
   probe: { type: 'boolean', description: 'also make tiny live requests (a few cents): one per provider that has a probe to detect expired or revoked credentials, and one per eligible Claude model' },
+  policy: { type: 'string', description: 'policy file to check (default: .orbit/config.yaml)', valueName: 'path' },
+  verbose: { type: 'boolean', description: 'show passing checks and their full details, including plugin and sandbox probe detail' },
 };
 
 export type CheckStatus = 'pass' | 'warn' | 'fail';
@@ -126,6 +130,8 @@ interface Probe {
   repo: string | null;
   config: OrbitConfig;
   configLoaded: boolean;
+  /** Absolute path when --policy selected one, otherwise the repository default. */
+  policyPath: string | undefined;
   live: boolean;
 }
 
@@ -217,10 +223,34 @@ async function checkGit(p: Probe): Promise<DoctorCheck[]> {
 }
 
 function checkConfig(p: Probe, error: unknown): DoctorCheck {
-  if (p.configLoaded) return pass('config', 'config', `.orbit/config.yaml is valid (mode ${p.config.mode})`);
-  if (error instanceof OrbitError && error.code === 'NOT_FOUND') return fail('config', 'config', 'no .orbit/config.yaml', 'the repository policy file', `run ${orbitHint('init')}, then define your checks`);
+  const policy = p.policyPath ?? '.orbit/config.yaml';
+  if (p.configLoaded) return pass('config', 'config', `${policy} is valid (mode ${p.config.mode})`);
+  if (error instanceof OrbitError && error.code === 'NOT_FOUND') {
+    if (p.policyPath) return fail('config', 'config', error.message, 'the policy file named by --policy', 'check the --policy path');
+    return fail('config', 'config', 'no .orbit/config.yaml', 'the repository policy file', `run ${orbitHint('init')}, then define your checks`);
+  }
   const problems = error instanceof OrbitError && Array.isArray(error.details?.problems) ? (error.details.problems as string[]) : [error instanceof Error ? error.message : String(error)];
-  return fail('config', 'config', `configuration is invalid (${problems.length} problem${problems.length === 1 ? '' : 's'})`, 'a valid .orbit/config.yaml', 'fix the problems below; checks use defaults until then', problems.slice(0, 12).map((x) => flat(x)));
+  return fail('config', 'config', `configuration is invalid (${problems.length} problem${problems.length === 1 ? '' : 's'})`, p.policyPath ? `a valid policy at ${p.policyPath}` : 'a valid .orbit/config.yaml', 'fix the problems below; checks use defaults until then', problems.slice(0, 12).map((x) => flat(x)));
+}
+
+/** A run reserves closing time, so one implementation attempt must fit before that reserve begins. */
+function checkImplementationWallTime(p: Probe): DoctorCheck {
+  const minimum = implementationAttemptWallTimeMinimum(p.config);
+  const problem = implementationAttemptWallTimeProblem(p.config);
+  if (problem === null) {
+    return pass(
+      'budget.wall-time',
+      'budget',
+      `wall time ${minimum.configuredMinutes} min meets the ${minimum.minimumMinutes} min minimum for one implementation attempt`,
+    );
+  }
+  return fail(
+    'budget.wall-time',
+    'budget',
+    problem,
+    `at least ${minimum.minimumMinutes} minutes of wall time for one implementation attempt`,
+    `set scheduler.hard_limits.wall_minutes to at least ${minimum.minimumMinutes} min`,
+  );
 }
 
 function checkStorage(p: Probe): DoctorCheck {
@@ -524,7 +554,17 @@ function reviewCheck(config: OrbitConfig, facts: ProviderFacts, registry: ModelR
       return select(hypothetical, credentials).alternatives;
     });
   const fixFor = (unmet: readonly { provider: string; reason: string }[]) => {
-    const fix = reviewFix(unmet);
+    const fix = reviewFix(unmet, {
+      unavailableModelFix(provider, model) {
+        if (providerKindSafe(provider) !== 'codex') return undefined;
+        const capability = facts.capabilities[provider];
+        const installed = capability?.version === null || capability?.version === undefined ? 'the installed Codex CLI (version unknown)' : `installed Codex CLI ${capability.version}`;
+        const registryMinimum = registry.get(model);
+        const required = capability?.modelMinimumVersions?.[model] ?? (registryMinimum?.provider === provider ? registryMinimum.eligibility.minCliVersion : null);
+        const upgrade = required ? `upgrade the Codex CLI to at least ${required}` : 'upgrade the Codex CLI (the pinned model may need a newer CLI)';
+        return `for ${provider}: ${installed} does not offer "${model}"; change providers.${provider}.model to a model the CLI offers ("orbit models refresh" lists them), or ${upgrade}`;
+      },
+    });
     return unmet.some((alternative) => /data_policy_eligible is not true/.test(alternative.reason)) ? withHumanPolicyConfigNote(fix) : fix;
   };
   if (sel.decision === 'BLOCK') {
@@ -935,7 +975,7 @@ function checkGuard(p: Probe): DoctorCheck {
 
 // ---------------------------------------------------------------------------
 
-export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; probe: boolean }): Promise<DoctorReport> {
+export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; policy?: string; probe: boolean }): Promise<DoctorReport> {
   let repo: string | null = null;
   try {
     repo = await resolveRepo(ctx, opts.repoFlag);
@@ -945,15 +985,16 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; prob
   let config = defaultConfig();
   let configLoaded = false;
   let configError: unknown = null;
+  const policyPath = opts.policy ? resolve(ctx.cwd, opts.policy) : undefined;
   if (repo) {
     try {
-      config = loadConfig(repo);
+      config = loadCommandPolicy(repo, ctx.cwd, opts.policy);
       configLoaded = true;
     } catch (err) {
       configError = err;
     }
   } else configError = new OrbitError('NOT_FOUND', 'not inside a git repository');
-  const p: Probe = { ctx, repo, config, configLoaded, live: opts.probe };
+  const p: Probe = { ctx, repo, config, configLoaded, policyPath, live: opts.probe };
 
   const checks: DoctorCheck[] = [];
   const safely = async (id: string, area: string, fn: () => Promise<DoctorCheck | DoctorCheck[]> | DoctorCheck | DoctorCheck[]): Promise<void> => {
@@ -969,6 +1010,7 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; prob
   await safely('runtime.sqlite', 'runtime', checkSqlite);
   await safely('git', 'git', () => checkGit(p));
   await safely('config', 'config', () => checkConfig(p, configError));
+  if (configLoaded) await safely('budget.wall-time', 'budget', () => checkImplementationWallTime(p));
   await safely('storage', 'storage', () => checkStorage(p));
   await safely('checks', 'checks', () => checkConfiguredChecks(p));
   await safely('scope', 'config', () => checkScope(p));
@@ -1028,23 +1070,31 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; prob
 
 export async function doctorCommand(args: Args, ctx: CliContext): Promise<number> {
   args.expect(0);
-  const report = await runDoctor(ctx, { ...(args.str('repo') ? { repoFlag: args.str('repo')! } : {}), probe: args.bool('probe') });
+  const repoFlag = args.str('repo');
+  const policy = args.str('policy');
+  const report = await runDoctor(ctx, { ...(repoFlag !== undefined ? { repoFlag } : {}), ...(policy !== undefined ? { policy } : {}), probe: args.bool('probe') });
   if (args.bool('json')) {
     json(ctx.io, report);
     return report.ok ? EXIT.OK : EXIT.FAILURE;
   }
-  line(ctx.io, `orbit doctor${report.repo ? `  (${report.repo})` : ''}`);
-  line(ctx.io);
-  const tag = { pass: 'PASS', warn: 'WARN', fail: 'FAIL' } as const;
-  for (const c of report.checks) {
-    line(ctx.io, `${tag[c.status]}  ${c.id.padEnd(18)} ${c.summary}`);
-    if (c.status !== 'pass') {
-      if (c.missing) line(ctx.io, `      missing: ${c.missing}`);
-      if (c.fix) line(ctx.io, `      fix:     ${c.fix}`);
-    }
-    for (const d of c.details) line(ctx.io, `      ${d}`);
-  }
-  line(ctx.io);
-  line(ctx.io, `${report.counts.pass} passed, ${report.counts.warn} warning(s), ${report.counts.fail} failed`);
+  ctx.io.out(renderDoctorReport(report, args.bool('verbose')));
   return report.ok ? EXIT.OK : EXIT.FAILURE;
+}
+
+/** Human report: failures first, then warnings; full probe detail is intentionally opt-in. */
+export function renderDoctorReport(report: DoctorReport, verbose = false): string {
+  const lines = [`orbit doctor${report.repo ? `  (${report.repo})` : ''}`, ''];
+  const tag = { pass: 'PASS', warn: 'WARN', fail: 'FAIL' } as const;
+  const ordered = (['fail', 'warn', 'pass'] as const).flatMap((status) => report.checks.filter((check) => check.status === status));
+  for (const c of ordered) {
+    if (!verbose && c.status === 'pass') continue;
+    const fix = c.status === 'pass' ? '' : `; fix: ${flat(c.fix ?? 'no automatic fix is available')}`;
+    lines.push(`${tag[c.status]}  ${c.id.padEnd(18)} ${flat(c.summary)}${fix}`);
+    if (verbose) {
+      if (c.missing) lines.push(`      missing: ${flat(c.missing)}`);
+      for (const d of c.details) lines.push(`      ${flat(d)}`);
+    }
+  }
+  lines.push('', `${report.counts.fail} failure${report.counts.fail === 1 ? '' : 's'}, ${report.counts.warn} warning${report.counts.warn === 1 ? '' : 's'}`);
+  return `${lines.join('\n')}\n`;
 }

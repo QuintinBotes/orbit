@@ -85,15 +85,15 @@ describe('orbit doctor with working provider CLIs', () => {
     expect(tier.details.join('\n')).toMatch(/limitation: Edit and Write are confined by Claude Code's permission rules/);
   });
 
-  it('prints each failure with the exact missing capability and the fix, as text', async () => {
+  it('prints each failure as one actionable line, ahead of warnings, as text', async () => {
     const b = box({ config: BLOCK_CONFIG, fakes: { codex: false } });
     const r = await b.run(['doctor']);
     expect(r.code).toBe(1);
-    expect(r.stdout).toMatch(/^PASS {2}claude\.cli /m);
+    expect(r.stdout).not.toMatch(/^PASS /m);
     expect(r.stdout).toMatch(/^FAIL {2}codex\.cli /m);
-    expect(r.stdout).toMatch(/^ {6}missing: the codex CLI \(codex\) on PATH/m);
-    expect(r.stdout).toMatch(/^ {6}fix: {5}install the Codex CLI/m);
-    expect(r.stdout).toMatch(/\d+ passed, \d+ warning\(s\), [1-9]\d* failed/);
+    expect(r.stdout).toMatch(/^FAIL {2}codex\.cli .*; fix: install the Codex CLI$/m);
+    expect(r.stdout.indexOf('FAIL  ')).toBeLessThan(r.stdout.indexOf('WARN  '));
+    expect(r.stdout).toMatch(/[1-9]\d* failures?, \d+ warnings?/);
   });
 });
 

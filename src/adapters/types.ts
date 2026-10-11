@@ -19,6 +19,8 @@ export interface ProviderCapabilities {
   version: string | null;
   /** Exact model ids this surface accepts, when discoverable. */
   models: string[];
+  /** Known minimum CLI versions for model IDs, when the adapter can establish them. */
+  modelMinimumVersions?: Readonly<Record<string, string>>;
   structuredOutput: boolean;
   readOnlySandbox: boolean;
   usageReporting: 'exact' | 'partial' | 'none';
