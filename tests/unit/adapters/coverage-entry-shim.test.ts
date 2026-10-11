@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  CANCEL_FILE,
   EXIT_FILE,
   LOG_FILE,
   PID_FILE,
@@ -462,6 +463,25 @@ describe('runShim: signals from outside', () => {
     r.emitter.emit('SIGINT');
     const rec = await done;
     expect(rec).toMatchObject({ cancelled: true, timedOut: false, code: 0, escalation: [] });
+  });
+
+  it('keeps a durable cancellation request when the child exit is handled before the SIGINT callback', async () => {
+    const r = rig();
+    const done = r.run({ argv: [NODE, '-e', polite], graceMs: 100 });
+    await r.started();
+    await until(() => existsSync(join(r.dir, LOG_FILE)) && readFileSync(join(r.dir, LOG_FILE), 'utf8').includes('up'));
+
+    // cancelShim writes this intent before it signals the group. Deliver the
+    // provider's signal first and the shim's callback only after it has
+    // published exit.json: this is the losing event-loop interleaving.
+    writeFileSync(join(r.dir, CANCEL_FILE), JSON.stringify({ version: 1, requestedAt: 1 }));
+    process.kill(r.childPid(), 'SIGINT');
+    const rec = await done;
+    r.emitter.emit('SIGINT');
+
+    expect(rec).toMatchObject({ cancelled: true, timedOut: false, code: 0, escalation: [] });
+    expect(readExitRecord(r.dir)).toMatchObject({ cancelled: true });
+    expect(r.signals).toEqual([]);
   });
 
   it('turns SIGHUP into SIGTERM for the provider', async () => {

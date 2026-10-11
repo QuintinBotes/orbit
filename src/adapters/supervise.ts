@@ -17,6 +17,7 @@ import { spawnDetached } from '../core/exec.ts';
 import { atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
 import { isAlive, isGroupAlive, processStartTime, terminateGroup } from '../core/proc.ts';
 import {
+  CANCEL_FILE,
   EXIT_FILE,
   LOG_FILE,
   PID_FILE,
@@ -35,8 +36,7 @@ import type { TaskHandle, UsageReport } from './types.ts';
 
 /** Intent marker written before the shim is spawned (persist intent before acting). */
 export const LAUNCH_FILE = 'launch.json';
-/** Written by cancelTask before it signals anything. */
-export const CANCEL_FILE = 'cancel.json';
+export { CANCEL_FILE };
 const PID_WAIT_MS = 15_000;
 
 export interface LaunchRecord {

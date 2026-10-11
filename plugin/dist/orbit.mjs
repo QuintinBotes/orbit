@@ -27566,7 +27566,7 @@ async function shimMain(args, host) {
   });
   return 0;
 }
-var PID_FILE, EXIT_FILE, LOG_FILE, STDERR_FILE, SHIM_LOG_FILE, DEFAULT_GRACE_MS, ABORT_POLL_MS, FIRST_OUTPUT_POLL_MS, LEFTOVER_GRACE_MS, DESCENDANT_POLL_MS, OUTPUT_POLL_MS, OUTPUT_PUMP_BYTES, ESCALATION, MAX_TIMER_MS, DEFAULT_HOST, Shim, MAX_PENDING_LINE, PENDING_OVERLAP, MAX_KEY_BLOCK_LINES, KEY_MARKER, KEY_HEADER, LineSink, Spill, DescendantTracker;
+var PID_FILE, EXIT_FILE, CANCEL_FILE, LOG_FILE, STDERR_FILE, SHIM_LOG_FILE, DEFAULT_GRACE_MS, ABORT_POLL_MS, FIRST_OUTPUT_POLL_MS, LEFTOVER_GRACE_MS, DESCENDANT_POLL_MS, OUTPUT_POLL_MS, OUTPUT_PUMP_BYTES, ESCALATION, MAX_TIMER_MS, DEFAULT_HOST, Shim, MAX_PENDING_LINE, PENDING_OVERLAP, MAX_KEY_BLOCK_LINES, KEY_MARKER, KEY_HEADER, LineSink, Spill, DescendantTracker;
 var init_shim = __esm({
   "src/adapters/shim.ts"() {
     "use strict";
@@ -27577,6 +27577,7 @@ var init_shim = __esm({
     init_redact();
     PID_FILE = "pid.json";
     EXIT_FILE = "exit.json";
+    CANCEL_FILE = "cancel.json";
     LOG_FILE = "log.jsonl";
     STDERR_FILE = "stderr.log";
     SHIM_LOG_FILE = "shim.log";
@@ -27920,7 +27921,10 @@ var init_shim = __esm({
           code: code2,
           signal,
           timedOut: this.timedOut,
-          cancelled: this.cancelled,
+          // cancelShim persists this intent before it signals the group. The
+          // provider's exit callback can run before Node dispatches SIGINT to the
+          // shim, so the durable intent closes that event-order race.
+          cancelled: this.cancelled || existsSync10(join11(this.workerDir, CANCEL_FILE)),
           aborted: this.aborted,
           escalation: [...this.escalation],
           error,
@@ -28412,7 +28416,7 @@ function sessionIdFor(workerId, attempt = 0) {
   const x = h.subarray(0, 16).toString("hex");
   return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20, 32)}`;
 }
-var LAUNCH_FILE, CANCEL_FILE, PID_WAIT_MS, ATTEMPT_FILES;
+var LAUNCH_FILE, PID_WAIT_MS, ATTEMPT_FILES;
 var init_supervise = __esm({
   "src/adapters/supervise.ts"() {
     "use strict";
@@ -28423,7 +28427,6 @@ var init_supervise = __esm({
     init_proc();
     init_shim();
     LAUNCH_FILE = "launch.json";
-    CANCEL_FILE = "cancel.json";
     PID_WAIT_MS = 15e3;
     ATTEMPT_FILES = [
       LAUNCH_FILE,
