@@ -27405,6 +27405,36 @@ function readFrom(path, offset, max = 4 * 1024 * 1024) {
     safeClose(fd);
   }
 }
+function macProcesses() {
+  if (process.platform !== "darwin") return null;
+  let r;
+  try {
+    r = spawnSync2("ps", ["-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "lstart="], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" },
+      timeout: 1e4,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+  } catch {
+    return null;
+  }
+  if (r.error || r.status !== 0 || typeof r.stdout !== "string") return null;
+  const entries = [];
+  for (const line3 of r.stdout.split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line3);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    const ppid = Number(m[2]);
+    const pgid = Number(m[3]);
+    const start = m[4].trim().replace(/\s+/g, " ");
+    if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(ppid) || ppid < 0 || !Number.isSafeInteger(pgid) || pgid <= 0 || start === "") continue;
+    entries.push({ pid, ppid, pgid, start });
+  }
+  return entries;
+}
+function validEntry(entry) {
+  return Number.isSafeInteger(entry.pid) && entry.pid > 0 && Number.isSafeInteger(entry.ppid) && entry.ppid >= 0 && Number.isSafeInteger(entry.pgid) && entry.pgid > 0 && typeof entry.start === "string" && entry.start !== "";
+}
 function groupMembers(pgid) {
   const r = spawnSync2("ps", ["-A", "-o", "pid=,pgid="], { encoding: "utf8", timeout: 1e4, stdio: ["ignore", "pipe", "ignore"] });
   if (r.status !== 0 || typeof r.stdout !== "string") return [];
@@ -27536,7 +27566,7 @@ async function shimMain(args, host) {
   });
   return 0;
 }
-var PID_FILE, EXIT_FILE, LOG_FILE, STDERR_FILE, SHIM_LOG_FILE, DEFAULT_GRACE_MS, ABORT_POLL_MS, FIRST_OUTPUT_POLL_MS, LEFTOVER_GRACE_MS, OUTPUT_POLL_MS, OUTPUT_PUMP_BYTES, ESCALATION, MAX_TIMER_MS, DEFAULT_HOST, Shim, MAX_PENDING_LINE, PENDING_OVERLAP, MAX_KEY_BLOCK_LINES, KEY_MARKER, KEY_HEADER, LineSink, Spill;
+var PID_FILE, EXIT_FILE, CANCEL_FILE, LOG_FILE, STDERR_FILE, SHIM_LOG_FILE, DEFAULT_GRACE_MS, ABORT_POLL_MS, FIRST_OUTPUT_POLL_MS, LEFTOVER_GRACE_MS, DESCENDANT_POLL_MS, OUTPUT_POLL_MS, OUTPUT_PUMP_BYTES, ESCALATION, MAX_TIMER_MS, DEFAULT_HOST, Shim, MAX_PENDING_LINE, PENDING_OVERLAP, MAX_KEY_BLOCK_LINES, KEY_MARKER, KEY_HEADER, LineSink, Spill, DescendantTracker;
 var init_shim = __esm({
   "src/adapters/shim.ts"() {
     "use strict";
@@ -27547,6 +27577,7 @@ var init_shim = __esm({
     init_redact();
     PID_FILE = "pid.json";
     EXIT_FILE = "exit.json";
+    CANCEL_FILE = "cancel.json";
     LOG_FILE = "log.jsonl";
     STDERR_FILE = "stderr.log";
     SHIM_LOG_FILE = "shim.log";
@@ -27554,6 +27585,7 @@ var init_shim = __esm({
     ABORT_POLL_MS = 200;
     FIRST_OUTPUT_POLL_MS = 25;
     LEFTOVER_GRACE_MS = 1e3;
+    DESCENDANT_POLL_MS = 100;
     OUTPUT_POLL_MS = 20;
     OUTPUT_PUMP_BYTES = 8 * 1024 * 1024;
     ESCALATION = ["SIGINT", "SIGTERM", "SIGKILL"];
@@ -27563,7 +27595,11 @@ var init_shim = __esm({
       signalGroup: (pgid, signal) => {
         process.kill(-pgid, signal);
       },
+      signalProcess: (pid, signal) => {
+        process.kill(pid, signal);
+      },
       groupMembers: (pgid) => groupMembers(pgid),
+      processes: () => macProcesses(),
       onSignal: (signal, listener) => {
         process.on(signal, listener);
       }
@@ -27596,6 +27632,9 @@ var init_shim = __esm({
       logCarry = "";
       redactor;
       spills = [];
+      /** macOS has no PID namespace, so remember descendants that leave the shim's group. */
+      descendants;
+      descendantSweep = null;
       constructor(options, pgid, host) {
         this.o = options;
         this.pgid = pgid;
@@ -27605,6 +27644,7 @@ var init_shim = __esm({
         this.workerDir = resolve5(options.workerDir);
         this.startedAt = this.clock.now();
         this.redactor = createRedactor({ env: cleanEnv2(options.env) });
+        this.descendants = process.platform === "darwin" ? new DescendantTracker(this.host, this.pgid) : null;
       }
       run() {
         return new Promise((resolvePromise) => {
@@ -27653,6 +27693,8 @@ var init_shim = __esm({
         if (child.pid === void 0) return;
         child.once("exit", (code2, signal) => void this.onChildExit(code2, signal));
         this.writePid(child);
+        this.descendants?.start(child.pid);
+        this.watchDescendants();
         this.watchFirstOutput();
         if (this.o.timeoutMs > 0) {
           this.later(this.o.timeoutMs, () => {
@@ -27684,12 +27726,13 @@ var init_shim = __esm({
       async escalate(from, waitFirst) {
         if (this.escalating || this.finished) return;
         this.escalating = true;
+        this.descendants?.capture();
         if (waitFirst) await this.clock.sleep(this.graceMs);
         for (let i = from; i < ESCALATION.length; i++) {
           if (this.finished || this.childExited) return;
           const sig = ESCALATION[i];
           if (sig === "SIGKILL") {
-            this.killGroupAndFinish(null, "SIGKILL", true);
+            await this.killGroupAndFinish(null, "SIGKILL", true);
             return;
           }
           this.signalGroup(sig);
@@ -27708,12 +27751,13 @@ var init_shim = __esm({
       async onChildExit(code2, signal) {
         if (this.finished) return;
         this.childExited = true;
+        await this.sweepEscapedDescendants();
         if (this.leftovers().length > 0) {
           this.signalGroup("SIGTERM");
           const deadline = this.clock.now() + Math.min(this.graceMs, LEFTOVER_GRACE_MS);
           while (this.clock.now() < deadline && this.leftovers().length > 0) await this.clock.sleep(50);
           if (this.leftovers().length > 0) {
-            this.killGroupAndFinish(code2, signal);
+            await this.killGroupAndFinish(code2, signal);
             return;
           }
         }
@@ -27785,7 +27829,8 @@ var init_shim = __esm({
        * `signal` are the provider's own exit when it already ended and only
        * leftovers are being killed; otherwise the provider dies by this SIGKILL.
        */
-      killGroupAndFinish(code2, signal, providerKilled = false) {
+      async killGroupAndFinish(code2, signal, providerKilled = false) {
+        await this.sweepEscapedDescendants();
         this.escalation.push("SIGKILL");
         this.closeOutput();
         const rec2 = this.record(code2, providerKilled ? "SIGKILL" : signal, null);
@@ -27795,6 +27840,60 @@ var init_shim = __esm({
         } catch {
         }
         this.finish(rec2, false);
+      }
+      /** Start a macOS-only descendant scan after the provider's pid is known. */
+      watchDescendants() {
+        const descendants = this.descendants;
+        if (!descendants) return;
+        this.later(DESCENDANT_POLL_MS, () => {
+          if (this.finished) return;
+          descendants.capture();
+          this.watchDescendants();
+        });
+      }
+      /**
+       * End process groups that a provider descendant moved out of the shim's
+       * group. The first pass is polite; a process that ignores it gets SIGKILL.
+       * A pid is used only while the process table proves its original start time,
+       * so a reused pid cannot make Orbit signal an unrelated process.
+       */
+      async sweepEscapedDescendants() {
+        if (!this.descendants) return;
+        if (this.descendantSweep) return this.descendantSweep;
+        const sweep = this.stopEscapedDescendants();
+        this.descendantSweep = sweep;
+        try {
+          await sweep;
+        } finally {
+          if (this.descendantSweep === sweep) this.descendantSweep = null;
+        }
+      }
+      async stopEscapedDescendants() {
+        this.descendants.capture();
+        for (const signal of ["SIGTERM", "SIGKILL"]) {
+          const { groups, pids } = this.descendants.escapedTargets();
+          if (groups.length === 0 && pids.length === 0) return;
+          for (const pgid of groups) {
+            try {
+              this.host.signalGroup(pgid, signal);
+            } catch {
+            }
+          }
+          for (const pid of pids) {
+            try {
+              this.host.signalProcess?.(pid, signal);
+            } catch {
+            }
+          }
+          if (signal === "SIGKILL") return;
+          const deadline = this.clock.now() + Math.min(this.graceMs, LEFTOVER_GRACE_MS);
+          while (this.clock.now() < deadline) {
+            await this.clock.sleep(Math.min(50, Math.max(1, deadline - this.clock.now())));
+            this.descendants.capture();
+            const left = this.descendants.escapedTargets();
+            if (left.groups.length === 0 && left.pids.length === 0) return;
+          }
+        }
       }
       /** The provider never started. pid.json is still written, so every reader finds the shim the same way. */
       finishWithoutChild(error) {
@@ -27822,7 +27921,10 @@ var init_shim = __esm({
           code: code2,
           signal,
           timedOut: this.timedOut,
-          cancelled: this.cancelled,
+          // cancelShim persists this intent before it signals the group. The
+          // provider's exit callback can run before Node dispatches SIGINT to the
+          // shim, so the durable intent closes that event-order race.
+          cancelled: this.cancelled || existsSync10(join11(this.workerDir, CANCEL_FILE)),
           aborted: this.aborted,
           escalation: [...this.escalation],
           error,
@@ -28019,6 +28121,82 @@ var init_shim = __esm({
           moved += n2;
           this.sink.write(buf.subarray(0, n2));
         }
+      }
+    };
+    DescendantTracker = class {
+      rootPid = null;
+      seen = /* @__PURE__ */ new Map();
+      live = /* @__PURE__ */ new Map();
+      host;
+      shimPgid;
+      constructor(host, shimPgid) {
+        this.host = host;
+        this.shimPgid = shimPgid;
+      }
+      start(pid) {
+        this.rootPid = pid;
+        this.capture();
+      }
+      /** Snapshot the live tree and add every descendant reachable from a remembered process. */
+      capture() {
+        const entries = this.host.processes?.();
+        if (!entries) return false;
+        this.live.clear();
+        const children = /* @__PURE__ */ new Map();
+        for (const entry of entries) {
+          if (!validEntry(entry)) continue;
+          this.live.set(entry.pid, entry);
+          const siblings = children.get(entry.ppid);
+          if (siblings) siblings.push(entry);
+          else children.set(entry.ppid, [entry]);
+        }
+        const queue = [];
+        const queued = /* @__PURE__ */ new Set();
+        const addKnown = (entry) => {
+          const known = this.seen.get(entry.pid);
+          if (known && known.start !== entry.start) return;
+          if (!known) this.seen.set(entry.pid, entry);
+          if (!queued.has(entry.pid)) {
+            queued.add(entry.pid);
+            queue.push(entry.pid);
+          }
+        };
+        if (this.rootPid !== null) {
+          const root = this.live.get(this.rootPid);
+          if (root) addKnown(root);
+        }
+        for (const [pid, known] of this.seen) {
+          const current = this.live.get(pid);
+          if (current && current.start === known.start) addKnown(current);
+        }
+        for (let at = 0; at < queue.length; at++) {
+          const pid = queue[at];
+          for (const child of children.get(pid) ?? []) addKnown(child);
+        }
+        return true;
+      }
+      /**
+       * What to signal for each remembered, live descendant outside the shim group.
+       * A group is signalled whole only when its leader is itself a remembered
+       * descendant; a descendant that joined a group someone else leads is
+       * signalled alone, so the sweep never reaches that group's other members.
+       */
+      escapedTargets() {
+        const alive = (pid) => {
+          const known = this.seen.get(pid);
+          const current = this.live.get(pid);
+          return known && current && current.start === known.start ? current : null;
+        };
+        const groups = /* @__PURE__ */ new Set();
+        const pids = /* @__PURE__ */ new Set();
+        for (const pid of this.seen.keys()) {
+          const current = alive(pid);
+          if (!current || current.pid === process.pid || current.pgid <= 1 || current.pgid === this.shimPgid) continue;
+          if (alive(current.pgid)) groups.add(current.pgid);
+          else pids.add(current.pid);
+        }
+        const ascending = (a, b) => a - b;
+        return { groups: [...groups].sort(ascending), pids: [...pids].sort(ascending) };
       }
     };
   }
@@ -28238,7 +28416,7 @@ function sessionIdFor(workerId, attempt = 0) {
   const x = h.subarray(0, 16).toString("hex");
   return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20, 32)}`;
 }
-var LAUNCH_FILE, CANCEL_FILE, PID_WAIT_MS, ATTEMPT_FILES;
+var LAUNCH_FILE, PID_WAIT_MS, ATTEMPT_FILES;
 var init_supervise = __esm({
   "src/adapters/supervise.ts"() {
     "use strict";
@@ -28249,7 +28427,6 @@ var init_supervise = __esm({
     init_proc();
     init_shim();
     LAUNCH_FILE = "launch.json";
-    CANCEL_FILE = "cancel.json";
     PID_WAIT_MS = 15e3;
     ATTEMPT_FILES = [
       LAUNCH_FILE,
@@ -62651,17 +62828,35 @@ var init_review_fix = __esm({
   }
 });
 
+// src/cli/commands/doctor-policy-note.ts
+function withHumanPolicyConfigNote(fix) {
+  return `${fix}; ${HUMAN_POLICY_CONFIG_NOTE}`;
+}
+var HUMAN_POLICY_CONFIG_NOTE;
+var init_doctor_policy_note = __esm({
+  "src/cli/commands/doctor-policy-note.ts"() {
+    "use strict";
+    HUMAN_POLICY_CONFIG_NOTE = "A person, not an agent, must make any edit to agents.allowed_plugins or providers.codex.data_policy_eligible in .orbit/config.yaml. Do not ask an agent to apply this fix. An auto-mode classifier may flag worker launches.";
+  }
+});
+
 // src/cli/commands/doctor-plugins.ts
 async function workerPluginsCheck(id, adapter, config) {
   const verdict = await judgeWorkerPlugins(adapter, config);
   if (verdict === null) return null;
-  const { refused: _refused, ...check } = verdict;
-  return { id: `${id}.plugins`, area: "providers", ...check };
+  const { refused, ...check } = verdict;
+  return {
+    id: `${id}.plugins`,
+    area: "providers",
+    ...check,
+    fix: refused.length > 0 && check.fix !== null ? withHumanPolicyConfigNote(check.fix) : check.fix
+  };
 }
 var init_doctor_plugins = __esm({
   "src/cli/commands/doctor-plugins.ts"() {
     "use strict";
     init_worker_plugins_check();
+    init_doctor_policy_note();
   }
 });
 
@@ -63844,9 +64039,13 @@ function reviewCheck(config, facts, registry) {
     }
     return select(hypothetical, credentials).alternatives;
   });
+  const fixFor = (unmet2) => {
+    const fix = reviewFix(unmet2);
+    return unmet2.some((alternative2) => /data_policy_eligible is not true/.test(alternative2.reason)) ? withHumanPolicyConfigNote(fix) : fix;
+  };
   if (sel.decision === "BLOCK") {
     const unmet2 = unmetPrerequisites();
-    return (fallback === "block" ? fail2 : warn2)("review", "providers", `independent review would block: ${flat(sel.reason)}`, missing, reviewFix(unmet2), [policyLine, ...unmet2.map((a) => `${a.provider}: ${flat(a.reason)}`)]);
+    return (fallback === "block" ? fail2 : warn2)("review", "providers", `independent review would block: ${flat(sel.reason)}`, missing, fixFor(unmet2), [policyLine, ...unmet2.map((a) => `${a.provider}: ${flat(a.reason)}`)]);
   }
   if (sel.independent) return pass("review", "providers", `independent review: ${sel.provider}/${sel.model ?? "default"} (independent)`, [policyLine, ...sel.alternatives.map((a) => `not used: ${a.provider}: ${flat(a.reason)}`)]);
   const unmet = unmetPrerequisites();
@@ -63854,7 +64053,7 @@ function reviewCheck(config, facts, registry) {
   const who = `${sel.provider}/${sel.model ?? "default"}`;
   const why = flat((sel.independentUnavailable ?? "no independent reviewer was usable").replace(/^no independent reviewer was usable: /, ""));
   const summary = sel.needsApproval === true ? `same-provider review needs a person's yes: no independent reviewer is usable (${why}); a run asks a person before ${who} reviews in a separate session (review.when_unavailable: ask)` : `same-provider review: no independent reviewer is usable (${why}); ${who} reviews in a separate session at the opus-class floor, and reports say the review was not independent (review.when_unavailable: ${fallback})`;
-  return warn2("review", "providers", summary, missing, `${reviewFix(unmet)}; or set review.when_unavailable to ask or block to change what happens`, details);
+  return warn2("review", "providers", summary, missing, `${fixFor(unmet)}; or set review.when_unavailable to ask or block to change what happens`, details);
 }
 function codexTierCheck(id, setting, apiKeyVar, srtInUse, level) {
   const check = `${id}.worker-tier`;
@@ -64303,6 +64502,7 @@ var init_doctor = __esm({
     init_invocation();
     init_review_fix();
     init_doctor_plugins();
+    init_doctor_policy_note();
     init_doctor_dotnet();
     init_doctor_sandbox();
     init_doctor_workers();

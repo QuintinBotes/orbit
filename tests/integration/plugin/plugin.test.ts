@@ -14,6 +14,11 @@ const root = resolve(import.meta.dirname, '../../..');
 const plugin = join(root, 'plugin');
 const SKILLS = ['doctor', 'init', 'inquisition', 'repair', 'resume', 'run', 'status', 'verify'];
 const skillText = (s: string) => readFileSync(join(plugin, 'skills', s, 'SKILL.md'), 'utf8');
+const pathsBelow = (dir: string): string[] => readdirSync(dir).flatMap((entry) => {
+  const path = join(dir, entry);
+  return statSync(path).isDirectory() ? pathsBelow(path).map((child) => join(entry, child)) : [entry];
+});
+const DOCUMENTATION = ['README.md', 'CHANGELOG.md', ...pathsBelow(join(root, 'docs')).map((path) => join('docs', path))];
 /** The bodies of the ```bash fences of a skill. */
 const bashFences = (text: string) => [...text.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]!);
 const hasEntry = existsSync(join(root, 'src/cli/main.ts'));
@@ -206,6 +211,13 @@ describe('skills never leave a run idle or orphaned (P11, D11)', () => {
 });
 
 describe('plugin payload (ADR 0006, P9)', () => {
+  it('ships the README, changelog and every documentation path from the repository', () => {
+    for (const path of DOCUMENTATION) {
+      expect(existsSync(join(plugin, path)), path).toBe(true);
+      expect(readFileSync(join(plugin, path)), path).toEqual(readFileSync(join(root, path)));
+    }
+  });
+
   it('holds only the allowed files, and a package whose only dependency is srt at the verified version', async () => {
     const { payloadProblems } = await import('../../../scripts/check-plugin.mjs');
     expect(payloadProblems(plugin)).toEqual([]);

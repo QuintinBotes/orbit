@@ -30,13 +30,15 @@ Claude Code's documented behaviour (plugins reference, 2026-10):
 ## Decision
 
 1. The plugin is the `plugin/` directory of the repository. It holds exactly:
-   `.claude-plugin/plugin.json`, `dist/` (the bundle and the srt preload),
-   `hooks/`, `skills/`, `agents/`, `bin/orbit`, and a `package.json` plus
-   lockfile whose only dependency is `@anthropic-ai/sandbox-runtime`, pinned
-   to the version the preload is verified against. The repository root stays
-   the development workspace. The build writes into `plugin/dist/`, and a
-   check fails when the payload contains anything else (in particular a
-   devDependency).
+   `README.md`, `CHANGELOG.md`, `docs/`, `.claude-plugin/plugin.json`, `dist/`
+   (the bundle and the srt preload), `hooks/`, `skills/`, `agents/`,
+   `bin/orbit`, and a `package.json` plus lockfile whose only dependency is
+   `@anthropic-ai/sandbox-runtime`, pinned to the version the preload is
+   verified against. The repository root stays the development workspace. The
+   default build writes into `plugin/dist/` and copies the README, changelog
+   and docs into the payload, and a check fails when the payload contains
+   anything else (in particular a devDependency) or any copied documentation
+   path is missing.
 2. Marketplace entries use `{ "source": "git-subdir", "url":
    "QuintinBotes/orbit", "path": "plugin", "ref": "<release tag>" }`.
 3. `bin/orbit` runs the bundle with the current node, so `orbit` works in the

@@ -46,6 +46,7 @@ import { proposeScope, trackedFiles } from '../layout.ts';
 import { orbitHint } from '../../core/invocation.ts';
 import { allReviewPrerequisites, reviewFix } from '../review-fix.ts';
 import { workerPluginsCheck } from './doctor-plugins.ts';
+import { withHumanPolicyConfigNote } from './doctor-policy-note.ts';
 import { dotnetAuditCheck, dotnetPackagesCheck, dotnetTestsCheck, hasNugetPackages } from './doctor-dotnet.ts';
 import { checkSandboxCheck } from './doctor-sandbox.ts';
 import { workerLoopbackCheck, workerToolchainsCheck } from './doctor-workers.ts';
@@ -522,9 +523,13 @@ function reviewCheck(config: OrbitConfig, facts: ProviderFacts, registry: ModelR
       }
       return select(hypothetical, credentials).alternatives;
     });
+  const fixFor = (unmet: readonly { provider: string; reason: string }[]) => {
+    const fix = reviewFix(unmet);
+    return unmet.some((alternative) => /data_policy_eligible is not true/.test(alternative.reason)) ? withHumanPolicyConfigNote(fix) : fix;
+  };
   if (sel.decision === 'BLOCK') {
     const unmet = unmetPrerequisites();
-    return (fallback === 'block' ? fail : warn)('review', 'providers', `independent review would block: ${flat(sel.reason)}`, missing, reviewFix(unmet), [policyLine, ...unmet.map((a) => `${a.provider}: ${flat(a.reason)}`)]);
+    return (fallback === 'block' ? fail : warn)('review', 'providers', `independent review would block: ${flat(sel.reason)}`, missing, fixFor(unmet), [policyLine, ...unmet.map((a) => `${a.provider}: ${flat(a.reason)}`)]);
   }
   if (sel.independent) return pass('review', 'providers', `independent review: ${sel.provider}/${sel.model ?? 'default'} (independent)`, [policyLine, ...sel.alternatives.map((a) => `not used: ${a.provider}: ${flat(a.reason)}`)]);
   const unmet = unmetPrerequisites();
@@ -535,7 +540,7 @@ function reviewCheck(config: OrbitConfig, facts: ProviderFacts, registry: ModelR
     sel.needsApproval === true
       ? `same-provider review needs a person's yes: no independent reviewer is usable (${why}); a run asks a person before ${who} reviews in a separate session (review.when_unavailable: ask)`
       : `same-provider review: no independent reviewer is usable (${why}); ${who} reviews in a separate session at the opus-class floor, and reports say the review was not independent (review.when_unavailable: ${fallback})`;
-  return warn('review', 'providers', summary, missing, `${reviewFix(unmet)}; or set review.when_unavailable to ask or block to change what happens`, details);
+  return warn('review', 'providers', summary, missing, `${fixFor(unmet)}; or set review.when_unavailable to ask or block to change what happens`, details);
 }
 
 /**

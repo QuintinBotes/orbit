@@ -10,11 +10,17 @@ import { judgeWorkerPlugins } from '../../adapters/worker-plugins-check.ts';
 import type { ProviderAdapter } from '../../adapters/types.ts';
 import type { OrbitConfig } from '../../policy/types.ts';
 import type { DoctorCheck } from './doctor.ts';
+import { withHumanPolicyConfigNote } from './doctor-policy-note.ts';
 
 /** The check, or null for an adapter that cannot list plugins (a stand-in, or another provider). */
 export async function workerPluginsCheck(id: string, adapter: ProviderAdapter | undefined, config: OrbitConfig): Promise<DoctorCheck | null> {
   const verdict = await judgeWorkerPlugins(adapter, config);
   if (verdict === null) return null;
-  const { refused: _refused, ...check } = verdict;
-  return { id: `${id}.plugins`, area: 'providers', ...check };
+  const { refused, ...check } = verdict;
+  return {
+    id: `${id}.plugins`,
+    area: 'providers',
+    ...check,
+    fix: refused.length > 0 && check.fix !== null ? withHumanPolicyConfigNote(check.fix) : check.fix,
+  };
 }

@@ -37,10 +37,12 @@ hold delivery credentials, and cannot modify policy or trusted code.
 - **Worker shim**: `orbit shim --worker-dir D -- <provider argv>`, spawned
   detached in its own process group with stdout/stderr redirected to files.
   It writes `pid.json` (own pid, child pid, start times) on start and
-  `exit.json` atomically on finish. Any controller incarnation can tell a
-  running worker from a dead one and collect its result. A worker row is
-  written (PLANNED) before spawn, so a crash between spawn and bookkeeping is
-  reconciled from `pid.json`.
+  `exit.json` atomically on finish. On macOS it also follows the provider's
+  descendants while they run and ends groups that escaped the shim's group
+  before writing `exit.json`; collection therefore cannot race their later
+  writes. Any controller incarnation can tell a running worker from a dead
+  one and collect its result. A worker row is written (PLANNED) before spawn,
+  so a crash between spawn and bookkeeping is reconciled from `pid.json`.
 - **Checks** run through the isolation provider, also detached with
   pid/exit files, so a controller restart during checks reconciles rather than
   reruns blindly.

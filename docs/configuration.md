@@ -383,6 +383,15 @@ The keys this replaced still work and map onto `when_unavailable`:
 is a configuration error, and so is the legacy pair that contradicts itself. A
 legacy `preferred_provider` becomes the preference list.
 
+### Human policy decisions in auto mode
+
+A person, not an agent, must make any edit to `agents.allowed_plugins` or
+`providers.codex.data_policy_eligible` in `.orbit/config.yaml`.
+`agents.allowed_plugins` permits a plugin's hooks and tools in worker sessions;
+`providers.codex.data_policy_eligible` confirms that sending sanitized code to
+Codex is permitted. An auto-mode classifier may flag worker launches. Review
+that prompt yourself rather than asking an agent to apply either edit.
+
 ### Plugins in worker sessions
 
 Workers start with `--setting-sources ""`, so user, project and local plugins
