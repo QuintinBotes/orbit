@@ -1,9 +1,27 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Clock } from '../../../src/core/clock.ts';
+
+// The first exit-record scan can race the report's publication. Keep all other scanner behavior real, but let the
+// exit-1 test make precisely that first scan see no report; its later finalization scan must still classify the check.
+const denialScan = vi.hoisted(() => ({ hideOnce: false }));
+vi.mock('../../../src/evidence/msbuild.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/evidence/msbuild.ts')>();
+  return {
+    ...actual,
+    findMsbuildNodeDenial: (...args: Parameters<typeof actual.findMsbuildNodeDenial>) => {
+      if (denialScan.hideOnce) {
+        denialScan.hideOnce = false;
+        return null;
+      }
+      return actual.findMsbuildNodeDenial(...args);
+    },
+  };
+});
+
 import { environmentFix } from '../../../src/controller/environment-block.ts';
 import { classifyCouldNotRun } from '../../../src/evidence/environment-failure.ts';
 import { checkEnv, DOTNET_CHECK_ENV, NUGET_MIGRATIONS_DIR, prepareCheckHome, runChecks } from '../../../src/evidence/runner.ts';
@@ -17,6 +35,7 @@ import { checkDirOf, runnerEnv, waitFor, type RunnerEnv } from '../../integratio
 const envs: RunnerEnv[] = [];
 const dirs: string[] = [];
 afterEach(async () => {
+  denialScan.hideOnce = false;
   for (const e of envs.splice(0)) await e.close();
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
@@ -89,6 +108,9 @@ describe('a check whose MSBuild node the sandbox refused its pipe', () => {
   /** A check that records the denial only when the test releases it, then exits 0 as the sandbox wrapper can on SIGTERM. */
   const deniedNodeOnSignal = () =>
     `const fs=require("fs"),path=require("path");const deny=()=>{const d=path.join(process.env.TMPDIR,"MSBuildTempacme");fs.mkdirSync(d,{recursive:true});fs.writeFileSync(path.join(d,"MSBuild_pid-4242_9a2a6b744ce84a9a.failure.txt"),${JSON.stringify(FAILURE)});};process.on("SIGTERM",()=>{deny();process.exit(0)});fs.writeFileSync(path.join(process.env.ORBIT_ARTIFACTS_DIR,"ready"),"");setInterval(()=>{},1000)`;
+  /** A check that records the denial only when the test releases it, then exits as MSBuild does on Linux. */
+  const deniedNodeOnRelease = (exit: number) =>
+    `const fs=require("fs"),path=require("path");const deny=()=>{const d=path.join(process.env.TMPDIR,"MSBuildTempacme");fs.mkdirSync(d,{recursive:true});fs.writeFileSync(path.join(d,"MSBuild_pid-4242_9a2a6b744ce84a9a.failure.txt"),${JSON.stringify(FAILURE)});};const release=path.join(process.env.ORBIT_ARTIFACTS_DIR,"release");fs.writeFileSync(path.join(process.env.ORBIT_ARTIFACTS_DIR,"ready"),"");const wait=setInterval(()=>{if(!fs.existsSync(release))return;clearInterval(wait);deny();console.log("  Determining projects to restore...");process.exit(${exit})},1)`;
 
   /** Runs one hook after the supervisor's first scan and before its next poll, without waiting for a clock interval. */
   const afterFirstPoll = (hook: () => Promise<void>): Clock => {
@@ -179,14 +201,23 @@ describe('a check whose MSBuild node the sandbox refused its pipe', () => {
     expect(classifyCouldNotRun({ checkId: 'format', output: log, insideRoots: [e.checkoutDir, dirname(r!.logPath)] })?.signals).toEqual(['pipe-denied']);
   }, 60_000);
 
-  // Review: on Linux MSBuild fails at once when its node is refused, so a check could exit before the runner's next scan
-  // of its temp directory: then no note was written, and a dotnet format run through make or a script whose restore
-  // was refused read as a code failure, a pre-existing failure on the base revision. The runner looks once more when a
-  // check fails.
+  // Review: on Linux MSBuild fails at once when its node is refused, so an exit record can win the runner's next poll.
+  // The final scan must run after its completed output is read, or a dotnet format run through make or a script whose
+  // restore was refused reads as a code failure, a pre-existing failure on the base revision.
   it('reads a refused node MSBuild recorded even when the check failed before the next scan, and records it as the environment\'s', async () => {
-    const e = await runnerEnv([checkDef('format', { command: ['node deny.js && dotnet format tests/Acme.Tests/Acme.Tests.csproj --verify-no-changes'], shell: true, timeout_seconds: 120 })], { files: { 'deny.js': deniedNode('process.exit(1)') } });
+    let e!: RunnerEnv;
+    const clock = afterFirstPoll(async () => {
+      const checkDir = checkDirOf(e, 'format');
+      await waitFor(() => existsSync(join(checkDir, 'pid.json')) && existsSync(join(checkDir, 'artifacts', 'ready')));
+      // The report appears with the failed exit, but this models the Linux interleaving in which the first exit-record
+      // scan cannot read it yet. The old finalization scan, after output is complete, must make the classification.
+      denialScan.hideOnce = true;
+      writeFileSync(join(checkDir, 'artifacts', 'release'), '');
+      await waitFor(() => existsSync(join(checkDir, 'exit.json')));
+    });
+    e = await runnerEnv([checkDef('format', { command: ['node deny.js && dotnet format tests/Acme.Tests/Acme.Tests.csproj --verify-no-changes'], shell: true, timeout_seconds: 120 })], { clock, files: { 'deny.js': deniedNodeOnRelease(1) } });
     envs.push(e);
-    const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['format'] });
+    const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['format'], clock });
     expect(r!.status).toBe('FAILED');
     const log = readFileSync(r!.logPath, 'utf8');
     expect(log).toMatch(/status=FAILED exit=1 note=the check sandbox denied MSBuild node \(pid 4242\) its named pipe \/tmp\/MSBuild4242 .+ Fix: checks\.format\.command: \["node deny\.js && dotnet format whitespace tests\/Acme\.Tests --folder --verify-no-changes"\]/);

@@ -3,9 +3,11 @@
 ## Unreleased
 
 - A worker cancelled with SIGINT is recorded as cancelled even when the provider's exit is handled before the shim's own signal handler runs. `cancelShim` writes `cancel.json` before it signals the group, and the shim now reads that durable intent when it writes `exit.json`, so the event order no longer decides between `cancelled` and `failed`. A unit test forces the losing order; the Codex and Claude adapter tests that failed intermittently on CI pass 20 runs in a row.
-- A check that exits 0 after MSBuild records a sandbox-refused worker-node pipe
-  is no longer recorded as passed. The runner makes its final denial scan after
-  the shim records its exit and records the denied-pipe failure and fix.
+- A check that exits after MSBuild records a sandbox-refused worker-node pipe
+  is no longer recorded as passed or as an ordinary exit-1 failure. The runner
+  records its immediate exit scan for stopped-wrapper exit 0s and retains the
+  completed-output scan for exit 1s whose report becomes readable afterward
+  (#49).
 - On macOS, a worker process that creates another process group or session is
   now tracked from the provider tree and stopped before the shim writes its
   result. The sweep remembers pid/start-time identities, so it cannot signal a

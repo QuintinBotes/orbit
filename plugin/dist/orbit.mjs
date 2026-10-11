@@ -37944,7 +37944,9 @@ function finalize(ctx, def, row, dirs, exit, synthetic) {
     status2 = "FAILED";
     note3 = denial;
   } else if (status2 === "FAILED" && note3 === null) {
-    if (formatProbeLost(body, exit?.exitCode ?? null)) note3 = FORMAT_PROBE_LOST_NOTE;
+    const late = findMsbuildNodeDenial(dirs.tmpDir);
+    if (late) note3 = denialNote(ctx, def, late, false);
+    else if (formatProbeLost(body, exit?.exitCode ?? null)) note3 = FORMAT_PROBE_LOST_NOTE;
   } else if (status2 === "PASSED") {
     const unloaded = loadedNoProjectNote(ctx, def, body);
     if (unloaded !== null) {

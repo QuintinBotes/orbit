@@ -809,9 +809,9 @@ function readDenial(checkDir: string): string | null {
 
 /**
  * A check can leave MSBuild's denial report and exit before its next scheduled scan (at once on Linux). Once its shim
- * has written an exit record, take one final look before classifying that result, including exit 0 from a stopped
- * sandbox wrapper. Keep the record beside the attempt so a controller crash between this look and finalization still
- * preserves the outcome.
+ * has written an exit record, take an immediate look before classifying an exit 0 from a stopped sandbox wrapper. The
+ * failed-exit finalizer has its own post-output scan for a report not yet readable here. Keep the record beside the
+ * attempt so a controller crash between this look and finalization still preserves the outcome.
  */
 function recordFinalDenial(ctx: RunnerContext, def: CheckDefinition, dirs: AttemptDirs, token: string | null): void {
   if (readDenial(dirs.checkDir) !== null) return;
@@ -982,8 +982,12 @@ function finalize(ctx: RunnerContext, def: CheckDefinition, row: CheckRunRecord,
     status = 'FAILED';
     note = denial;
   } else if (status === 'FAILED' && note === null) {
+    // MSBuild can record a refused node and fail before the next scan (at once on Linux). Its report can become
+    // readable after the exit-record scan, so retain the failure path's scan after the shim has closed its output.
+    const late = findMsbuildNodeDenial(dirs.tmpDir);
+    if (late) note = denialNote(ctx, def, late, false);
     // dotnet format (SDK 8) lost the output of its own version probe and checked nothing: the group starts it again.
-    if (formatProbeLost(body, exit?.exitCode ?? null)) note = FORMAT_PROBE_LOST_NOTE;
+    else if (formatProbeLost(body, exit?.exitCode ?? null)) note = FORMAT_PROBE_LOST_NOTE;
   } else if (status === 'PASSED') {
     // dotnet format can exit 0 having loaded no project when its build host was refused (on Linux): it checked nothing.
     const unloaded = loadedNoProjectNote(ctx, def, body);
