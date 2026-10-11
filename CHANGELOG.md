@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Rebased-baseline recovery tests give their no-op lab check enough time on a loaded runner, while still requiring exactly one successful check for the old and rebased base trees.
 - The demo 2 acceptance test (a difficult task that is diagnosed, escalated and repaired) is skipped without Playwright's Chromium, as scenarios 17 and 18 are. Its criteria are UI criteria, so without a browser every journey failed to launch and the run ended `EXHAUSTED` on any machine that had not installed one; installed `claude` or `codex` CLIs, the home directory and the environment do not change the outcome (#52).
 - A base-revision check that ends in `ERROR` after it starts, such as a process that disappears, now blocks as incomplete with the runner's cause and log. It cannot be accepted as a baseline exception; a real `FAILED` check keeps its pre-existing-failure question (#48).
 - A worker cancelled with SIGINT is recorded as cancelled even when the provider's exit is handled before the shim's own signal handler runs. `cancelShim` writes `cancel.json` before it signals the group, and the shim now reads that durable intent when it writes `exit.json`, so the event order no longer decides between `cancelled` and `failed`. A unit test forces the losing order; the Codex and Claude adapter tests that failed intermittently on CI pass 20 runs in a row.
