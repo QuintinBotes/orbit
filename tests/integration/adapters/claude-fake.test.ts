@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ClaudeAdapter } from '../../../src/adapters/claude.ts';
 import { outputBudgetInstruction } from '../../../src/adapters/prompt.ts';
 import { DEFAULT_OUTPUT_BUDGETS } from '../../../src/policy/config.ts';
-import { LOG_FILE, readExitRecord, readPidRecord } from '../../../src/adapters/shim.ts';
+import { LOG_FILE, macProcesses, readExitRecord, readPidRecord } from '../../../src/adapters/shim.ts';
 import { archiveAttempt, nextSessionId } from '../../../src/adapters/supervise.ts';
 import { NoIsolation } from '../../../src/isolation/none.ts';
 import { canonicalPath } from '../../../src/isolation/util.ts';
@@ -16,15 +16,34 @@ import { FAKE_CLAUDE, IMPLEMENTER_OUTPUT, alive, implementerSpec, makeFixture, w
 // The shim and fake-claude run as real detached processes; the shim runs from
 // source, which needs Node's type stripping.
 const canStripTypes = Boolean((process as unknown as { features?: { typescript?: unknown } }).features?.typescript);
+// This uses macOS's real process table to prove that a child created a new
+// session. Restricted test sandboxes can deny `ps`, where exercising that
+// lifecycle would be misleading, so skip there as well as on other platforms.
+const macProcessTableAvailable =
+  process.platform === 'darwin' && spawnSync('ps', ['-A', '-o', 'pid='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).status === 0;
 
 const fixtures: Fixture[] = [];
+const detachedPids: number[] = [];
 function fixture(): Fixture {
   const f = makeFixture();
   fixtures.push(f);
   return f;
 }
+function stopDetached(pid: number): void {
+  if (!Number.isSafeInteger(pid) || pid <= 1) return;
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    /* already stopped by the shim */
+  }
+}
 afterEach(() => {
-  for (const f of fixtures.splice(0)) rmSync(f.base, { recursive: true, force: true });
+  for (const pid of detachedPids.splice(0)) stopDetached(pid);
+  for (const f of fixtures.splice(0)) {
+    const detachedPidPath = join(f.base, 'detached.pid');
+    if (existsSync(detachedPidPath)) stopDetached(Number(readFileSync(detachedPidPath, 'utf8').trim()));
+    rmSync(f.base, { recursive: true, force: true });
+  }
 });
 
 function adapter(extra: Partial<ConstructorParameters<typeof ClaudeAdapter>[0]> = {}): ClaudeAdapter {
@@ -88,6 +107,43 @@ describe.skipIf(!canStripTypes)('ClaudeAdapter + shim + fake-claude', () => {
     expect(events.at(-1)?.type).toBe('finished');
     expect((await a.streamEvents(handle, nextOffset)).events).toEqual([]);
   });
+
+  it.skipIf(!macProcessTableAvailable)('ends a real detached child before collecting the worker result, so it cannot keep writing the worktree', async () => {
+    const f = fixture();
+    const pidFile = join(f.base, 'detached.pid');
+    const markerPath = join(f.base, 'detached.started');
+    const writePath = join(f.repo, 'apps', 'detached.txt');
+    writeScenario(
+      f,
+      {
+        roles: {
+          implementer: [
+            {
+              detachedChild: { pidFile, markerPath, writePath, waitMs: 500, intervalMs: 20 },
+              structured: IMPLEMENTER_OUTPUT,
+            },
+          ],
+        },
+      },
+    );
+    const a = adapter();
+    const handle = await a.startTask(implementerSpec(f));
+    const detached = Number(await waitFor(() => (existsSync(pidFile) ? readFileSync(pidFile, 'utf8').trim() || null : null)));
+    detachedPids.push(detached);
+    await waitFor(() => (existsSync(markerPath) ? readFileSync(markerPath, 'utf8').trim() || null : null));
+    const detachedProcess = macProcesses()?.find((entry) => entry.pid === detached);
+    // Node's detached option creates a new session and therefore a new group.
+    expect(detachedProcess).toMatchObject({ pid: detached, pgid: detached });
+    expect(detachedProcess?.pgid).not.toBe(handle.pgid);
+    expect(readFileSync(writePath, 'utf8').length).toBeGreaterThan(0);
+
+    const result = await collect(a, handle, f);
+    expect(result.status).toBe('succeeded');
+    await waitFor(() => (!alive(detached) ? true : null), 10_000);
+    const settled = readFileSync(writePath, 'utf8');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(readFileSync(writePath, 'utf8')).toBe(settled);
+  }, 30_000);
 
   it('is idempotent per worker directory: a second startTask reattaches instead of spawning', async () => {
     const f = fixture();

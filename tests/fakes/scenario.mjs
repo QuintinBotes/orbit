@@ -122,6 +122,37 @@ export function spawnGrandchild(pidFile) {
   return child;
 }
 
+/**
+ * A real child that creates its own session, writes until it is stopped, and
+ * leaves its pid where an integration test can prove the shim ended it. This
+ * is deliberately only a fake-fixture primitive, not provider behaviour.
+ */
+export function spawnDetachedWriter(spec) {
+  const pidFile = String(spec.pidFile);
+  const markerPath = String(spec.markerPath);
+  const writePath = String(spec.writePath);
+  const intervalMs = Number.isSafeInteger(spec.intervalMs) && spec.intervalMs > 0 ? spec.intervalMs : 25;
+  const code = `
+    const { appendFileSync, mkdirSync, writeFileSync } = require('node:fs');
+    const { dirname } = require('node:path');
+    const markerPath = ${JSON.stringify(markerPath)};
+    const writePath = ${JSON.stringify(writePath)};
+    const intervalMs = ${JSON.stringify(intervalMs)};
+    mkdirSync(dirname(markerPath), { recursive: true });
+    mkdirSync(dirname(writePath), { recursive: true });
+    writeFileSync(markerPath, String(process.pid));
+    let n = 0;
+    const write = () => appendFileSync(writePath, String(++n) + '\\n');
+    write();
+    setInterval(write, intervalMs);
+    setTimeout(() => process.exit(0), 60_000);
+  `;
+  const child = spawn(process.execPath, ['-e', code], { detached: true, stdio: 'ignore' });
+  child.unref();
+  writeFileSync(pidFile, String(child.pid));
+  return child;
+}
+
 export function readStdin() {
   try {
     return readFileSync(0, 'utf8');

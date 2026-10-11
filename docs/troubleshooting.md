@@ -120,14 +120,12 @@ degraded but usable.
   command left there held the session until the role's time limit, which ended
   as a `timeout` and went to diagnosis though the work was done. A foreground
   command now ends at its Bash timeout, and workers are told to start and stop
-  a server within one command. A process a worker detaches itself (`nohup ...
-  &`, `setsid`) is not stopped with the session on macOS, where nothing
-  contains a sandbox's processes; it cannot listen there, but it runs until it
-  ends, with the worker's sandbox, so it can go on writing the worktree after
-  the session (into the candidate, if before the snapshot, or into the tree the
-  next attempt starts from), and `ps -o pid,command -U "$USER"` names it (ADR
-  0001, "Workers and loopback", review). On Linux it ends with its sandbox
-  (`srt`'s `--die-with-parent`, from its source).
+  a server within one command. On macOS the shim follows descendants while the
+  provider runs and, before it publishes the worker result, terminates every
+  remembered process group that left the shim's group. This includes a child
+  that uses `nohup ... &` or `setsid`, so it cannot keep writing the worktree
+  after collection. On Linux the sandbox also ends its process tree with
+  `srt`'s `--die-with-parent` (from its source).
 - **A release run is BLOCKED at the merge or deploy.** Read `orbit status <run-id>`. Common
   causes: the pull request is still a draft and `release.merge.mark_ready` is false; the base
   branch moved and `actions.rebase_task_branch` is false; a deploy outcome is unknown and the
