@@ -34,11 +34,15 @@ interface RouteData {
   justification: { signals: { signal: string; evidence: string[] }[] };
 }
 
+// Demo 2's criteria are UI criteria, so its candidates are judged in Playwright's Chromium: without it every journey fails
+// to launch and no candidate can pass, whatever the providers do (#52). It needs Chromium as scenarios 17 and 18 do.
+const CHROMIUM = READY && chromiumAvailable();
+
 describe.skipIf(!READY)('acceptance: the demo runs of spec section 2', () => {
   // The demo's journeys include its visual ones, whose baselines are per platform: where the example has none
   // committed (Linux), they are recorded in the lab template first, as a person would, or every run fails on them.
   beforeAll(() => {
-    if (chromiumAvailable()) ensureBaselines();
+    if (CHROMIUM) ensureBaselines();
   }, 300_000);
 
   it('demo 1: a simple task runs unattended through `orbit run --foreground` on a low-cost route in one attempt and opens a draft PR', async () => {
@@ -76,7 +80,7 @@ describe.skipIf(!READY)('acceptance: the demo runs of spec section 2', () => {
     assertRunInvariants(l, runId);
   }, 300_000);
 
-  it('demo 2: a difficult task fails its new tests, is diagnosed, escalates with recorded evidence, is repaired and opens a draft PR', async () => {
+  it.skipIf(!CHROMIUM)('demo 2: a difficult task fails its new tests, is diagnosed, escalates with recorded evidence, is repaired and opens a draft PR', async () => {
     const l = lab();
     writeScenario(l, scenarioFor('difficult'));
     const run = startLabRun(l, goal('difficult'));
