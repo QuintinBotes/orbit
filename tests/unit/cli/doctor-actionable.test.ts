@@ -120,6 +120,8 @@ describe('P6: the review fix matches the reason', () => {
     const c = byId(await report(w, cfg((x) => { x.providers.codex!.data_policy_eligible = false; x.providers.codex!.model = 'gpt-6-astra'; })));
     expect(c.review!.fix).toContain('providers.codex.data_policy_eligible: true');
     expect(c.review!.fix).not.toContain('orbit models refresh');
+    expect(c.review!.fix).toContain('A person, not an agent, must make any edit to agents.allowed_plugins or providers.codex.data_policy_eligible in .orbit/config.yaml.');
+    expect(c.review!.fix).toContain('An auto-mode classifier may flag worker launches.');
   });
 
   it('issue 7: with codex not eligible AND no model qualified, both prerequisites and both fixes are listed at once', async () => {
