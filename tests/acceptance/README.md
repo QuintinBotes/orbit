@@ -17,10 +17,10 @@ node node_modules/vitest/vitest.mjs run tests/acceptance
 
 Requirements: Node 22.18 or later (type stripping), `examples/demo-app`, and an
 npm cache that can install the example offline (otherwise Orbit's own
-`node_modules` is linked). Scenarios 17 and 18 need Playwright's Chromium
-(`npx playwright install chromium`) and are skipped without it. Scenario 11
-needs the `claude` CLI on PATH and is skipped without it; it never reaches a
-real model (the CLI talks to `tests/fakes/fake-anthropic-api.mjs`).
+`node_modules` is linked). Scenarios 17 and 18 and demo 2 need Playwright's
+Chromium (`npx playwright install chromium`) and are skipped without it.
+Scenario 11 needs the `claude` CLI on PATH and is skipped without it; it never
+reaches a real model (the CLI talks to `tests/fakes/fake-anthropic-api.mjs`).
 
 Every test is a plain `it`: no scenario is marked `it.fails`, so the suite
 passes only when the runtime meets each one.
