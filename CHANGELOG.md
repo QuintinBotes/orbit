@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A check that exits 0 after MSBuild records a sandbox-refused worker-node pipe
+  is no longer recorded as passed. The runner makes its final denial scan after
+  the shim records its exit and records the denied-pipe failure and fix.
 - On macOS, a worker process that creates another process group or session is
   now tracked from the provider tree and stopped before the shim writes its
   result. The sweep remembers pid/start-time identities, so it cannot signal a

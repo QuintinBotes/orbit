@@ -3,13 +3,14 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { Clock } from '../../../src/core/clock.ts';
 import { environmentFix } from '../../../src/controller/environment-block.ts';
 import { classifyCouldNotRun } from '../../../src/evidence/environment-failure.ts';
 import { checkEnv, DOTNET_CHECK_ENV, NUGET_MIGRATIONS_DIR, prepareCheckHome, runChecks } from '../../../src/evidence/runner.ts';
 import { checkDef, nodeCheck } from './fixtures.ts';
 import { NoIsolation } from '../../../src/isolation/none.ts';
 import type { IsolationProvider } from '../../../src/isolation/types.ts';
-import { runnerEnv, type RunnerEnv } from '../../integration/evidence/harness.ts';
+import { checkDirOf, runnerEnv, waitFor, type RunnerEnv } from '../../integration/evidence/harness.ts';
 
 // Issue #10: what a check gets so the .NET SDK's first run needs nothing outside the sandbox.
 
@@ -85,6 +86,22 @@ describe('a check whose MSBuild node the sandbox refused its pipe', () => {
   /** A check that leaves MSBuild's crash report of a denied node where MSBuild writes it, then waits as MSBuild would. */
   const deniedNode = (after = 'setInterval(() => {}, 1000)') =>
     `const fs=require("fs"),path=require("path");fs.writeFileSync(path.join(process.env.ORBIT_ARTIFACTS_DIR,"pid"),String(process.pid));const d=path.join(process.env.TMPDIR,"MSBuildTempacme");fs.mkdirSync(d,{recursive:true});fs.writeFileSync(path.join(d,"MSBuild_pid-4242_9a2a6b744ce84a9a.failure.txt"),${JSON.stringify(FAILURE)});console.log("  Determining projects to restore...");${after}`;
+  /** A check that records the denial only when the test releases it, then exits 0 as the sandbox wrapper can on SIGTERM. */
+  const deniedNodeOnSignal = () =>
+    `const fs=require("fs"),path=require("path");const deny=()=>{const d=path.join(process.env.TMPDIR,"MSBuildTempacme");fs.mkdirSync(d,{recursive:true});fs.writeFileSync(path.join(d,"MSBuild_pid-4242_9a2a6b744ce84a9a.failure.txt"),${JSON.stringify(FAILURE)});};process.on("SIGTERM",()=>{deny();process.exit(0)});fs.writeFileSync(path.join(process.env.ORBIT_ARTIFACTS_DIR,"ready"),"");setInterval(()=>{},1000)`;
+
+  /** Runs one hook after the supervisor's first scan and before its next poll, without waiting for a clock interval. */
+  const afterFirstPoll = (hook: () => Promise<void>): Clock => {
+    let first = true;
+    return {
+      now: () => Date.now(),
+      async sleep() {
+        if (!first) return;
+        first = false;
+        await hook();
+      },
+    };
+  };
 
   it('is stopped as soon as MSBuild records the denial, not after its ten 30 s node retries, and its record says why', async () => {
     const e = await runnerEnv([nodeCheck('build', deniedNode(), { timeout_seconds: 120 })]);
@@ -110,6 +127,24 @@ describe('a check whose MSBuild node the sandbox refused its pipe', () => {
     const e = await runnerEnv([nodeCheck('build', deniedNode('process.on("SIGTERM",()=>process.exit(0));setInterval(()=>{},1000)'), { timeout_seconds: 120 })]);
     envs.push(e);
     const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['build'] });
+    expect(r!.status).toBe('FAILED');
+    expect(readFileSync(r!.logPath, 'utf8')).toMatch(/status=FAILED exit=0 note=the check sandbox denied MSBuild node \(pid 4242\)/);
+  }, 60_000);
+
+  it('scans after an exit-0 record that arrives between polls, before classifying the result', async () => {
+    let e!: RunnerEnv;
+    const clock = afterFirstPoll(async () => {
+      const checkDir = checkDirOf(e, 'build');
+      // The first scan has completed with no report. Release the check only now, then wait for the shim's durable
+      // zero-exit record before allowing the next poll, forcing that record to win the poll race.
+      await waitFor(() => existsSync(join(checkDir, 'pid.json')) && existsSync(join(checkDir, 'artifacts', 'ready')));
+      const { childPgid } = JSON.parse(readFileSync(join(checkDir, 'pid.json'), 'utf8')) as { childPgid: number };
+      process.kill(childPgid, 'SIGTERM');
+      await waitFor(() => existsSync(join(checkDir, 'exit.json')));
+    });
+    e = await runnerEnv([nodeCheck('build', deniedNodeOnSignal(), { timeout_seconds: 120 })], { clock });
+    envs.push(e);
+    const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['build'], clock });
     expect(r!.status).toBe('FAILED');
     expect(readFileSync(r!.logPath, 'utf8')).toMatch(/status=FAILED exit=0 note=the check sandbox denied MSBuild node \(pid 4242\)/);
   }, 60_000);
