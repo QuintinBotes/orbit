@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 /** A run whose `lint` check runs `command`, with a contract and a baseline in which lint failed with `log` and `exit`. */
-function setup(command: string[], log: string, exit: number, classification?: 'environment' | 'misconfigured' | 'missing-target'): Env {
+function setup(command: string[], log: string, exit: number, classification?: 'environment' | 'incomplete' | 'misconfigured' | 'missing-target', status: 'FAILED' | 'ERROR' = 'FAILED'): Env {
   const dir = mkdtempSync(join(tmpdir(), 'orbit-baseline-misconfigured-'));
   const runDir = join(dir, 'run');
   mkdirSync(runDir, { recursive: true });
@@ -59,7 +59,7 @@ function setup(command: string[], log: string, exit: number, classification?: 'e
       schema: 'orbit.baseline/1',
       runId: RUN,
       complete: true,
-      checks: [{ checkId: 'lint', mandatory: true, status: 'FAILED', exitCode: exit, flaky: false, fingerprint: FP, excerpt, log: logPath }],
+      checks: [{ checkId: 'lint', mandatory: true, status, exitCode: exit, flaky: false, fingerprint: FP, excerpt, log: logPath }],
       failures: [{ checkId: 'lint', fingerprint: FP, excerpt, ...(classification ? { classification } : {}) }],
     }),
   );
@@ -109,6 +109,19 @@ describe('a baseline exception for a misconfigured check is refused', () => {
     env.cleanup();
     env = setup(['npm', 'run', 'lint'], 'src/export.ts:12 error: unused variable\n', 1, 'environment');
     expect(answerQuestion(env.db, env.runDir, questionId(env), 'Approve', 'alice', env.clock).baselineException).toMatchObject({ status: 'refused', detail: expect.stringMatching(/^check lint could not run on the base revision/) });
+  });
+
+  it('refuses an ERROR that did not complete, including one an earlier version left unclassified', () => {
+    const vanished = '[orbit] check=lint status=ERROR exit=none note=the check process disappeared without writing an exit record\n';
+    for (const classification of ['incomplete', undefined] as const) {
+      env = setup(['node', 'test'], vanished, 1, classification, 'ERROR');
+      expect(answerQuestion(env.db, env.runDir, questionId(env), 'Approve', 'alice', env.clock).baselineException).toMatchObject({
+        status: 'refused',
+        detail: expect.stringMatching(/^check lint did not complete on the base revision, so its ERROR cannot be accepted as a baseline exception/),
+      });
+      env.cleanup();
+      env = null;
+    }
   });
 
   it('refuses a missing target, which PREFLIGHT does ask about so the contract can expect it to flip: it would make a meaningless check green', () => {

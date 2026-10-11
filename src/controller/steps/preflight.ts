@@ -22,7 +22,7 @@ import type { ProviderCapabilities, CredentialStatus } from '../../adapters/type
 import { homeOf, runWorktreeRoot, toolchainCacheRootFor, type RunContext } from '../context.ts';
 import { baselineGate, environmentGate, intakeGate, type GateResult } from '../gates.ts';
 import { deliveryEnvironmentProblem } from '../delivery-env.ts';
-import { baselineBlockReason, baselineEnvironmentFailures, baselineMisconfiguredChecks, misconfiguredRecord, type AmendedCheck, type BlockedCheck, type MisconfiguredBlock } from '../environment-block.ts';
+import { baselineBlockReason, baselineEnvironmentFailures, baselineIncompleteChecks, baselineMisconfiguredChecks, misconfiguredRecord, type AmendedCheck, type BlockedCheck, type IncompleteBaselineCheck, type MisconfiguredBlock } from '../environment-block.ts';
 import { MISSING_TARGET_KIND } from './baseline-questions.ts';
 import { blockOnAuth, decide, finishRun, move, safePoint, type StepResult } from './common.ts';
 import { workerPluginsStep } from './worker-plugins.ts';
@@ -76,13 +76,14 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
   const wtRoot = runWorktreeRoot(ctx);
   mkdirSync(wtRoot, { recursive: true, mode: 0o700 });
   // Every failure of the base revision is classified before any is called pre-existing (ADR 0010), the gate included. A
-  // check whose tool rejected its command line (issue #23) or that the environment stopped (issue #10) never tested the
-  // repository's code, so it is no pre-existing failure and gets no baseline-exception question: approving one would let
-  // a run pass with a check that never ran. A check whose command names something that does not exist yet (a missing
-  // target) goes on to CONTRACTING, which expects it to flip when the contract names it and blocks on it as misconfigured
-  // when the contract does not (steps/baseline-questions.ts); it is never accepted as an exception either. Only what is
-  // left is a failure of the code. The classification is made as the baseline is recorded, so that the file, the
-  // baseline.recorded event and the gate all say whether it is complete (issue #33).
+  // check whose tool rejected its command line (issue #23), that the environment stopped (issue #10), or that ended
+  // ERROR without producing a result never tested the repository's code, so it is no pre-existing failure and gets no
+  // baseline-exception question: approving one would let a run pass with a check that never ran. A check whose command
+  // names something that does not exist yet (a missing target) goes on to CONTRACTING, which expects it to flip when the
+  // contract names it and blocks on it as misconfigured when the contract does not (steps/baseline-questions.ts); it is
+  // never accepted as an exception either. Only what is left is a failure of the code. The classification is made as the
+  // baseline is recorded, so that the file, the baseline.recorded event and the gate all say whether it is complete
+  // (issue #33).
   const baselineDir = join(wtRoot, 'baseline');
   let settled: BaselineClassification | null = null;
   const baseline = await runBaseline({
@@ -106,11 +107,11 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
   if (after) return after;
   // A baseline reused from an earlier try was not measured now, so it is judged here, as before.
   const found = settled ?? classifyBaseline(ctx, baseline.report, baselineDir);
-  const { report: classified, misconfigured, missingTargets, environment: notRun } = found;
+  const { report: classified, misconfigured, missingTargets, environment: notRun, incomplete } = found;
   const bg = baselineGate(classified);
   recordGate(ctx, bg);
   if (!bg.passed && bg.status === 'fail') return finishRun(ctx, 'BLOCKED', `baseline gate: ${bg.reasons.join('; ')}`, { outcome: { gate: bg } });
-  if (misconfigured.length > 0 || notRun.length > 0) return blockOnBaseline(ctx, classified, { environment: notRun, misconfigured });
+  if (misconfigured.length > 0 || notRun.length > 0 || incomplete.length > 0) return blockOnBaseline(ctx, classified, { environment: notRun, incomplete, misconfigured });
   const { preExisting } = askAboutBaseFailures(ctx, found, { baseRevision: head, key: '' });
 
   const worktree = await ensureWorktree(repo, join(wtRoot, 'implementer'), head);
@@ -132,12 +133,15 @@ export interface BaselineClassification {
   missingTargets: MisconfiguredBlock[];
   /** Checks the environment stopped before they ran anything of the repository. */
   environment: BlockedCheck[];
+  /** Checks that ended ERROR before the runner had a completed result. */
+  incomplete: IncompleteBaselineCheck[];
 }
 
 /**
  * Classify the failures of `report` (only those of the checks in `only`, when given: a baseline amendment judges the
  * checks it ran, and the rest were judged when they ran), in the order of ADR 0010: a misconfigured check, a missing
- * target, an environment failure, and what is left a pre-existing failure of the code.
+ * target, an environment failure, an ERROR without a completed result, and what is left a pre-existing failure of the
+ * code.
  */
 export function classifyBaseline(ctx: RunContext, report: BaselineReport, checkoutDir: string, only: ReadonlySet<string> | null = null): BaselineClassification {
   const judged = only === null ? report : { ...report, failures: report.failures.filter((f) => only.has(f.checkId)) };
@@ -145,24 +149,27 @@ export function classifyBaseline(ctx: RunContext, report: BaselineReport, checko
   const misconfigured = commandErrors.filter((m) => m.kind === 'argument');
   const missingTargets = commandErrors.filter((m) => m.kind === 'missing-target');
   const environment = baselineEnvironmentFailures(ctx, judged, checkoutDir).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId));
-  const marked = classifiedBaseline(report, environment, misconfigured, missingTargets);
-  // A check the environment stopped, or whose command the tool rejected, produced no result of its own: PREFLIGHT's
-  // baseline is incomplete, which is what blockOnBaseline records and what the next baseline run acts on (it runs that
-  // check again), and the file, the baseline.recorded event and the gate say so alike (issue #33). A missing target is
-  // still a decisive result: CONTRACTING expects it to flip. An amendment (`only`) leaves the baseline complete: the
-  // classification it records is what makes the next amendment run the check again (ADR 0012).
-  const incomplete = only === null && (environment.length > 0 || misconfigured.length > 0);
-  return { report: incomplete ? { ...marked, complete: false } : marked, misconfigured, missingTargets, environment };
+  const incomplete = baselineIncompleteChecks(ctx, judged).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId) && !environment.some((e) => e.checkId === f.checkId));
+  const marked = classifiedBaseline(report, environment, incomplete, misconfigured, missingTargets);
+  // A check the environment stopped, whose command the tool rejected, or that ended ERROR produced no result of its
+  // own: PREFLIGHT's baseline is incomplete, which is what blockOnBaseline records and what the next baseline run acts
+  // on (it runs that check again), and the file, the baseline.recorded event and the gate say so alike (issue #33). A
+  // missing target is still a decisive result: CONTRACTING expects it to flip. An amendment (`only`) leaves the baseline
+  // complete when its check is decisive; an ERROR remains incomplete and its classification makes the next amendment run
+  // it again (ADR 0012).
+  const hasIncomplete = only === null && (environment.length > 0 || incomplete.length > 0 || misconfigured.length > 0);
+  return { report: hasIncomplete ? { ...marked, complete: false } : marked, misconfigured, missingTargets, environment, incomplete };
 }
 
 /**
  * The baseline report with each failure PREFLIGHT found was not the repository's code marked with its classification,
  * and an environment failure with the signals that showed it (a candidate's denial counts only when its signal is there).
  */
-function classifiedBaseline(report: BaselineReport, environment: readonly BlockedCheck[], misconfigured: readonly MisconfiguredBlock[], missingTargets: readonly MisconfiguredBlock[]): BaselineReport {
-  if (environment.length === 0 && misconfigured.length === 0 && missingTargets.length === 0) return report;
+function classifiedBaseline(report: BaselineReport, environment: readonly BlockedCheck[], incomplete: readonly IncompleteBaselineCheck[], misconfigured: readonly MisconfiguredBlock[], missingTargets: readonly MisconfiguredBlock[]): BaselineReport {
+  if (environment.length === 0 && incomplete.length === 0 && misconfigured.length === 0 && missingTargets.length === 0) return report;
   const marks = new Map<string, { classification: BaseFailureClassification; signals?: EnvironmentSignal[] }>([
     ...environment.map((f) => [f.checkId, { classification: 'environment' as const, signals: f.signals }] as const),
+    ...incomplete.map((f) => [f.checkId, { classification: 'incomplete' as const }] as const),
     ...misconfigured.map((m) => [m.checkId, { classification: 'misconfigured' as const }] as const),
     ...missingTargets.map((m) => [m.checkId, { classification: 'missing-target' as const }] as const),
   ]);
@@ -221,7 +228,8 @@ export function askAboutBaseFailures(ctx: RunContext, found: BaselineClassificat
 }
 
 /**
- * End the run BLOCKED at PREFLIGHT for checks that are misconfigured or could not run on the base revision. The
+ * End the run BLOCKED at PREFLIGHT for checks that are misconfigured, could not run, or did not complete on the base
+ * revision. The
  * baseline is kept for the record, each such failure marked with its classification (classifiedBaseline; which also
  * keeps a baseline exception from ever being applied to it, inquisition/baseline-exception.ts, and makes the next
  * baseline run it again, evidence/baseline.ts), and marked incomplete, which is what it is (a check produced no result
@@ -237,20 +245,28 @@ export function askAboutBaseFailures(ctx: RunContext, found: BaselineClassificat
 export async function blockOnBaseline(
   ctx: RunContext,
   report: BaselineReport,
-  blocked: { environment: BlockedCheck[]; misconfigured: MisconfiguredBlock[] },
+  blocked: { environment: BlockedCheck[]; incomplete: IncompleteBaselineCheck[]; misconfigured: MisconfiguredBlock[] },
   amendment: { at: number; stage: string; checks: readonly AmendedCheck[] } | null = null,
 ): Promise<StepResult> {
-  const { environment, misconfigured } = blocked;
+  const { environment, incomplete, misconfigured } = blocked;
   atomicWriteJson(join(ctx.runDir, BASELINE_FILE), (amendment ? report : { ...report, complete: false }) satisfies BaselineReport);
-  const reason = baselineBlockReason({ runId: ctx.run.id, baseRevision: report.baseRevision, environment, misconfigured, ...(amendment ? { amended: amendment.checks } : {}) });
+  const reason = baselineBlockReason({ runId: ctx.run.id, baseRevision: report.baseRevision, environment, incomplete, misconfigured, ...(amendment ? { amended: amendment.checks } : {}) });
   const environmentChecks = environment.map((f) => ({ check_id: f.checkId, classification: 'environment', signals: f.signals, cause: f.cause, evidence_lines: f.lines, ...(f.logPath ? { log_path: f.logPath } : {}) }));
+  const incompleteChecks = incomplete.map((f) => ({ check_id: f.checkId, classification: 'incomplete', cause: f.cause, evidence_lines: f.lines, ...(f.logPath ? { log_path: f.logPath } : {}) }));
   const misconfiguredChecks = misconfigured.map((m) => misconfiguredRecord(m));
   const at = amendment ? `amended-${amendment.at}` : String(report.recordedAt);
   const stage = amendment ? { stage: amendment.stage } : {};
   if (misconfiguredChecks.length > 0) decide(ctx, { id: `dec-${ctx.run.id}-baseline-misconfigured-${at}`, kind: 'baseline.check-misconfigured', summary: reason, data: { base_revision: report.baseRevision, ...stage, checks: misconfiguredChecks } });
   if (environmentChecks.length > 0) decide(ctx, { id: `dec-${ctx.run.id}-baseline-environment-${at}`, kind: 'baseline.environment-failure', summary: reason, data: { base_revision: report.baseRevision, ...stage, checks: environmentChecks } });
+  if (incompleteChecks.length > 0) decide(ctx, { id: `dec-${ctx.run.id}-baseline-incomplete-${at}`, kind: 'baseline.incomplete-check', summary: reason, data: { base_revision: report.baseRevision, ...stage, checks: incompleteChecks } });
   return finishRun(ctx, 'BLOCKED', reason, {
-    outcome: { base_revision: report.baseRevision, ...stage, ...(environmentChecks.length > 0 ? { environment_failures: environmentChecks } : {}), ...(misconfiguredChecks.length > 0 ? { misconfigured_checks: misconfiguredChecks } : {}) },
+    outcome: {
+      base_revision: report.baseRevision,
+      ...stage,
+      ...(environmentChecks.length > 0 ? { environment_failures: environmentChecks } : {}),
+      ...(incompleteChecks.length > 0 ? { incomplete_checks: incompleteChecks } : {}),
+      ...(misconfiguredChecks.length > 0 ? { misconfigured_checks: misconfiguredChecks } : {}),
+    },
   });
 }
 

@@ -1,4 +1,4 @@
-# 0010. Classifying a check that fails on the base revision: environment, misconfigured, missing target or pre-existing
+# 0010. Classifying a check that fails on the base revision: environment, incomplete, misconfigured, missing target or pre-existing
 
 Status: accepted (2026-10-06)
 
@@ -46,7 +46,7 @@ until EXHAUSTED.
 
 ## Decision
 
-Every mandatory check that fails on the base revision is put in one of four
+Every mandatory check that fails on the base revision is put in one of five
 categories at PREFLIGHT, in this order:
 
 1. **Misconfigured check (an argument error).** The tool the check's command
@@ -63,10 +63,13 @@ categories at PREFLIGHT, in this order:
 3. **Environment failure.** The sandbox or the host refused the check something
    before it ran anything of the repository, or it could not execute at all:
    the program it runs is not installed where it runs included.
-4. **Pre-existing failure.** Everything else: a failure of the repository's
+4. **Incomplete check.** The runner recorded `ERROR` before the check completed,
+   without an established environment cause. Its cause and log are retained, but
+   it produced no check result to accept as a failure.
+5. **Pre-existing failure.** Everything else: a failure of the repository's
    code. Only this category is recorded as pre-existing.
 
-A check in category 1 or 3 ends the run `BLOCKED` at PREFLIGHT, before any
+A check in category 1, 3 or 4 ends the run `BLOCKED` at PREFLIGHT, before any
 model is asked anything, with no baseline-exception question. A check in
 category 2 goes on to CONTRACTING and is settled there (below). The reason
 names the checks, their classification, their first error line (and the line
@@ -80,10 +83,11 @@ the sandbox or the operating system refused the tool a socket ...
 ("MSBUILD : error MSB1025: ...", "System.Net.Sockets.SocketException (13):
 Permission denied"), output in .../build.log, .../test.log, .../format.log".
 
-The decisions `baseline.check-misconfigured`, `baseline.missing-target` and
-`baseline.environment-failure` carry each check with its classification and
-evidence lines, and the outcome carries `misconfigured_checks` and
-`environment_failures`. `orbit timeline` shows one line per decision, the
+The decisions `baseline.check-misconfigured`, `baseline.missing-target`,
+`baseline.environment-failure` and `baseline.incomplete-check` carry each
+check with its classification and evidence lines, and the outcome carries
+`misconfigured_checks`, `environment_failures` or `incomplete_checks`.
+`orbit timeline` shows one line per decision, the
 checks that share their first error line together, for example
 `baseline.check-misconfigured: build classified as a misconfigured check
 (checks.build.command), not a pre-existing failure: "MSBUILD : error MSB1008:
@@ -368,6 +372,12 @@ checkout. A missing target is refused with its own reason. Both `orbit decide`
 and remote answers apply answers there. The refusal is recorded as a rejected
 amendment, and the contract is unchanged.
 
+An `ERROR` with no start failure or recognised environment cause is also never
+an exception. It is an incomplete check, not a failed check: the run blocks
+with the runner's cause and log and runs the baseline again on resume. This is
+language-agnostic, because `ERROR` means the runner did not get a completed
+check result, whatever command it was running.
+
 ### A resumed baseline runs those checks again
 
 The check runner reuses a recorded result for the same tree, check
@@ -381,10 +391,10 @@ reused as recorded.
 
 The wrong answers cost differently. A check wrongly called pre-existing still
 reaches a person, whose question recommends Reject, and the run goes on under
-the normal rules; a check wrongly called misconfigured or an environment
-failure blocks the run with no question and tells the person to change
-something that is not wrong; a check wrongly called a missing target is decided
-by the contract. A real code failure must also never leave the repair loop. So
+the normal rules; a check wrongly called misconfigured, incomplete or an
+environment failure blocks the run with no question and tells the person to
+change something that is not wrong; a check wrongly called a missing target is
+decided by the contract. A real code failure must also never leave the repair loop. So
 a category needs evidence that only the tool or the environment produces: a
 signature from an explicit table, printed by the check's own direct invocation
 of the tool about what the command names, the exit code, and nothing in the

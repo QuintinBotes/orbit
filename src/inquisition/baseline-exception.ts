@@ -14,9 +14,10 @@
  * is recorded with the contract hashes around it, and the run's contract is rewritten, so the evidence report
  * (evidence/report.ts) honours the exception, and only while the check fails with exactly that fingerprint.
  *
- * Only a failure of the repository's code can be excepted. A check that never tested it (one the environment stopped,
- * a misconfigured one whose tool rejected its command, or one whose command names something that does not exist on the
- * base revision) is refused whoever approves it and however (`orbit decide`, a remote answer):
+ * Only a failure of the repository's code can be excepted. A check that never tested it or did not complete (one the
+ * environment stopped, an ERROR with no completed result, a misconfigured one whose tool rejected its command, or one
+ * whose command names something that does not exist on the base revision) is refused whoever approves it and however
+ * (`orbit decide`, a remote answer):
  * docs/decisions/0010-base-failure-classification.md.
  */
 import { readFileSync } from 'node:fs';
@@ -209,12 +210,12 @@ const ON_A_PATH: ReadonlySet<EnvironmentSignal> = new Set<EnvironmentSignal>(['f
 /**
  * Why the failure of `checkId` recorded on the base revision may not be accepted as a baseline exception, or null when
  * it may (docs/decisions/0010-base-failure-classification.md). PREFLIGHT blocks on a failure it classifies as an
- * environment failure or a misconfigured check and raises no question for it; it does ask about a missing target, so
- * that the contract can expect it to flip, but that is no exception either: a check whose target does not exist tests
- * nothing, and accepting its failure would make a meaningless check green. This is the guard behind all three, for a
- * question raised before the classification existed and for a baseline PREFLIGHT marked. A usage error and a program
- * that was not found are read again from the recorded log, the exit code and the command in the frozen policy, since
- * that needs no other context; so is a check the environment stopped before it ran anything of the repository
+ * environment failure, an incomplete ERROR or a misconfigured check and raises no question for it; it does ask about a
+ * missing target, so that the contract can expect it to flip, but that is no exception either: a check whose target does
+ * not exist tests nothing, and accepting its failure would make a meaningless check green. This is the guard behind all
+ * four, for a question raised before the classification existed and for a baseline PREFLIGHT marked. A usage error and
+ * a program that was not found are read again from the recorded log, the exit code and the command in the frozen policy,
+ * since that needs no other context; so is a check the environment stopped before it ran anything of the repository
  * (classifyNotExecuted, classifyCouldNotRun), with the checkout and cwd of its recorded run (`recordedCwd`) as its own
  * directories. Without a recorded run a denial on a path is not read, since it may be inside the checkout.
  */
@@ -233,6 +234,9 @@ function notExceptable(baseline: BaselineReport, checkId: string, snapshot: Poli
     const found = classifyCouldNotRun({ checkId, output: input.output, insideRoots: roots });
     return found !== null && (cwd !== null || !found.signals.some((sg) => ON_A_PATH.has(sg)));
   };
+  if (failure?.classification === 'incomplete' || entry?.status === 'ERROR') {
+    return `check ${checkId} did not complete on the base revision, so its ERROR cannot be accepted as a baseline exception: accepting it would let a run pass with a check that produced no result`;
+  }
   if (failure?.classification === 'environment' || stopped()) {
     return `check ${checkId} could not run on the base revision: PREFLIGHT found an environment cause, not a pre-existing failure, so its failure cannot be accepted as a baseline exception (a check that never ran would let a run pass)`;
   }
