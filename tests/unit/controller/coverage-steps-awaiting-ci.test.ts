@@ -2,22 +2,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { resetFaults } from '../../../src/core/faults.ts';
 
 type Release = typeof import('../../../src/delivery/release.ts');
 type CandMod = typeof import('../../../src/evidence/candidate.ts');
-const hooks = vi.hoisted(() => ({ performRelease: vi.fn(), cleanup: null as null | (() => Promise<void>) }));
+type CleanupHook = (...args: Parameters<CandMod['cleanupCandidateCheckout']>) => boolean | Promise<boolean>;
+const hooks = vi.hoisted(() => ({ performRelease: vi.fn(), cleanup: null as null | CleanupHook }));
 vi.mock('../../../src/delivery/release.ts', async (orig) => ({ ...(await orig<Release>()), performRelease: hooks.performRelease }));
 vi.mock('../../../src/evidence/candidate.ts', async (orig) => {
   const actual = await orig<CandMod>();
-  return { ...actual, cleanupCandidateCheckout: (...a: Parameters<CandMod['cleanupCandidateCheckout']>) => (hooks.cleanup ? hooks.cleanup() : actual.cleanupCandidateCheckout(...a)) };
+  return {
+    ...actual,
+    cleanupCandidateCheckout: async (...a: Parameters<CandMod['cleanupCandidateCheckout']>) => {
+      if (hooks.cleanup && (await hooks.cleanup(...a))) return;
+      return actual.cleanupCandidateCheckout(...a);
+    },
+  };
 });
 
 const { awaitingCiStep, baseConflict, baseMovement } = await import('../../../src/controller/steps/awaiting-ci.ts');
+const { amendBaseline } = await import('../../../src/controller/steps/baseline-amendment.ts');
 const { DELIVERY_FILE } = await import('../../../src/controller/steps/delivering.ts');
 const { briefPath } = await import('../../../src/controller/steps/implementing.ts');
 const { getRun, requestCancel } = await import('../../../src/controller/run-store.ts');
 const { snapshotCandidate } = await import('../../../src/evidence/candidate.ts');
-const { currentEvidenceReport } = await import('../../../src/evidence/store.ts');
+const { BASELINE_FILE, runBaseline } = await import('../../../src/evidence/baseline.ts');
+const { currentEvidenceReport, listCheckRuns } = await import('../../../src/evidence/store.ts');
 const { listDecisions } = await import('../../../src/storage/decisions.ts');
 const { recordReview } = await import('../../../src/review/store.ts');
 const { OrbitError } = await import('../../../src/core/errors.ts');
@@ -35,7 +45,11 @@ beforeEach(() => {
   hooks.performRelease.mockReset();
   hooks.cleanup = null;
 });
-afterEach(() => lab?.cleanup());
+afterEach(() => {
+  delete process.env.ORBIT_FAULTS;
+  resetFaults();
+  lab?.cleanup();
+});
 
 const check = (name: string, bucket: CheckInfo['bucket'], runId: string | null = null): CheckInfo => ({ name, bucket, state: bucket.toUpperCase(), link: null, workflow: null, runId, jobId: null, startedAt: null, completedAt: null, description: null });
 
@@ -91,6 +105,28 @@ const run = () => awaitingCiStep(lab.ctx());
 const state = () => getRun(lab.db, lab.runId).state;
 const reason = () => getRun(lab.db, lab.runId).outcomeReason ?? '';
 const decisions = (kind: string) => listDecisions(lab.db, lab.runId, { kind });
+
+/** Record the old-base baseline a real run has before it reaches AWAITING_CI. */
+async function recordBaseline(baseRevision: string): Promise<void> {
+  const ctx = lab.ctx();
+  await runBaseline({
+    db: lab.db,
+    run: { id: lab.runId, policyHash: ctx.run.policyHash },
+    repoRoot: lab.repo,
+    baseRev: baseRevision,
+    snapshot: ctx.snapshot,
+    isolation: ctx.isolation(),
+    runDir: ctx.runDir,
+    clock: lab.clock,
+    signal: ctx.signal,
+    pollMs: ctx.timing.checkPollMs,
+    killGraceMs: ctx.timing.killGraceMs,
+  });
+}
+
+function baseline(): { baseRevision: string; baseTree: string; checkIds: string[] } {
+  return JSON.parse(readFileSync(join(lab.ctx().runDir, BASELINE_FILE), 'utf8')) as { baseRevision: string; baseTree: string; checkIds: string[] };
+}
 
 describe('preconditions', () => {
   it('stops at a safe point and needs the delivery record and the ledger', async () => {
@@ -386,6 +422,68 @@ describe('a moved base branch', () => {
     expect(currentEvidenceReport(lab.db, lab.runId, cand.id)).toBeNull();
   });
 
+  it('remeasures the contract baseline on the new base before verifying the rebased candidate', async () => {
+    const { cand } = await setup({ tweak: allowRebase });
+    await recordBaseline(cand.parentSha);
+    const old = baseline();
+    const r = moveBase('docs/notes.md', 'notes\n');
+    ci.checks = [check('unit', 'pass')];
+
+    await run();
+
+    expect(state()).toBe('VERIFYING');
+    const refreshed = baseline();
+    expect(refreshed).toMatchObject({ baseRevision: r.tip, baseTree: gitIn(lab.repo, 'rev-parse', `${r.tip}^{tree}`), checkIds: ['unit'] });
+    expect(refreshed.baseRevision).not.toBe(old.baseRevision);
+    expect(listCheckRuns(lab.db, { runId: lab.runId, candidateId: null, checkId: 'unit', rootsOnly: true }).map((row) => row.status)).toEqual(['PASSED', 'PASSED']);
+    const recorded = lab.db.all<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'baseline.recorded' ORDER BY id", lab.runId).map((row) => (JSON.parse(row.data_json) as { base_revision: string }).base_revision);
+    expect(recorded).toEqual([old.baseRevision, r.tip]);
+    expect(decisions('baseline.rebased')[0]?.data).toMatchObject({ base_revision: r.tip, check_ids: ['unit'] });
+  });
+
+  it('finishes judging a rebased baseline after a fault immediately after its durable write', async () => {
+    const { cand } = await setup({ tweak: allowRebase });
+    await recordBaseline(cand.parentSha);
+    const r = moveBase('docs/notes.md', 'notes\n');
+    ci.checks = [check('unit', 'pass')];
+    process.env.ORBIT_FAULTS = 'controller.baseline-rebase.after-write=throw';
+    resetFaults();
+
+    await expect(run()).rejects.toThrow('fault injected at controller.baseline-rebase.after-write');
+    expect(state()).toBe('VERIFYING');
+    expect(baseline().baseRevision).toBe(r.tip);
+    expect(decisions('baseline.rebased')).toEqual([]);
+
+    delete process.env.ORBIT_FAULTS;
+    resetFaults();
+    const ctx = lab.ctx();
+    expect(await amendBaseline(ctx, ctx.contract!)).toBeNull();
+    expect(decisions('baseline.rebased')).toHaveLength(1);
+    // The persisted complete baseline was judged, not measured a third time.
+    expect(listCheckRuns(lab.db, { runId: lab.runId, candidateId: null, checkId: 'unit', rootsOnly: true }).map((row) => row.status)).toEqual(['PASSED', 'PASSED']);
+  });
+
+  it('blocks the rebased baseline when an optional check the contract requires cannot start on the new base', async () => {
+    const { cand } = await setup({
+      tweak: (c) => {
+        allowRebase(c);
+        c.checks.lint = { ...c.checks.unit!, id: 'lint', command: ['orbit-missing-rebase-linter', '--check'], mandatory: false };
+      },
+    });
+    setContract(lab, { baseline_revision: cand.parentSha, required_check_ids: ['unit', 'lint'] });
+    await recordBaseline(cand.parentSha);
+    const r = moveBase('docs/notes.md', 'notes\n');
+    ci.checks = [check('unit', 'pass')];
+
+    await run();
+
+    expect(state()).toBe('BLOCKED');
+    const refreshed = baseline();
+    expect(refreshed.baseRevision).toBe(r.tip);
+    expect((JSON.parse(readFileSync(join(lab.ctx().runDir, BASELINE_FILE), 'utf8')) as { failures: { checkId: string; classification?: string; signals?: string[] }[] }).failures).toContainEqual(expect.objectContaining({ checkId: 'lint', classification: 'environment', signals: ['start-failed'] }));
+    expect(decisions('baseline.rebased')).toEqual([]);
+  });
+
   it('a run that already rebased three times does not rebase again onto a further move', async () => {
     const { cand } = await setup({ tweak: allowRebase });
     moveBase('docs/notes.md', 'notes\n');
@@ -507,8 +605,9 @@ describe('a moved base branch', () => {
   it('a checkout that cannot be removed does not fail the rebase', async () => {
     await setup({ tweak: allowRebase });
     moveBase('apps/calc.mjs', conflictText);
-    hooks.cleanup = async () => {
-      throw new Error('busy');
+    hooks.cleanup = async (_repo, dir) => {
+      if (dir.includes('rebase-')) throw new Error('busy');
+      return false;
     };
     ci.checks = [check('unit', 'pass')];
     await run();
@@ -516,8 +615,9 @@ describe('a moved base branch', () => {
     cleanup();
     await setup({ tweak: allowRebase });
     moveBase('docs/notes.md', 'notes\n');
-    hooks.cleanup = async () => {
-      throw new Error('busy');
+    hooks.cleanup = async (_repo, dir) => {
+      if (dir.includes('rebase-')) throw new Error('busy');
+      return false;
     };
     ci.checks = [check('unit', 'pass')];
     await run();

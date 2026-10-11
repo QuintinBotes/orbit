@@ -96,7 +96,7 @@ describe.skipIf(!canStripTypes)('controller: terminal paths', () => {
     expect(exitCodeForState(done.state)).toBe(12);
   }, 60_000);
 
-  it('a mandatory check that cannot start leaves verification incomplete, and the run blocks as an environment failure, naming the cause', async () => {
+  it('a mandatory check that cannot start on the base blocks the run before any attempt, as an environment failure naming the cause', async () => {
     const l = lab({ tweak: (c) => void (c.checks.unit = { ...c.checks.unit!, command: ['/nonexistent/acme/bin/run-tests'] }) });
     writeScenario(l, baseScenario({ implementer: [implementMul('*')] }));
     const run = startLabRun(l);
@@ -104,16 +104,14 @@ describe.skipIf(!canStripTypes)('controller: terminal paths', () => {
 
     const done = runState(l, run.id);
     expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
-    // A check that could not execute at all is the environment's (or the check definition's), not a defect in the change.
-    expect(done.outcomeReason).toMatch(/^Check unit could not execute on candidate 1, and the output shows an environment cause/);
+    // A check that cannot start on the base is the environment's (or the check definition's), not a defect in the
+    // change, and no candidate could ever be verified with it, so the run stops before spending an attempt (#36).
+    expect(done.outcomeReason).toMatch(/^Check unit could not run on the base revision [0-9a-f]+, and the output shows an environment cause/);
     expect(done.outcomeReason).toMatch(/the check could not be started/);
-    expect(done.outcomeReason).toMatch(/\. No repair attempt was spent/);
-    const [report] = listEvidenceReports(l.db(), run.id);
-    expect(report?.verdict).toBe('INCOMPLETE');
-    expect(report?.report.checks.find((c) => c.id === 'unit')?.status).toBe('ERROR');
-    expect(transitions(l, run.id)).not.toContain('REVIEWING');
-    expect(transitions(l, run.id)).not.toContain('INQUISITION');
-    expect(transitions(l, run.id)).not.toContain('DIAGNOSING');
+    expect(done.outcomeReason).toMatch(/no baseline exception is offered/);
+    expect(transitions(l, run.id)).toEqual(['PREFLIGHT', 'BLOCKED']);
+    expect(listEvidenceReports(l.db(), run.id)).toEqual([]);
+    expect(listWorkers(l.db(), { runId: run.id, role: 'implementer' })).toHaveLength(0);
   }, 60_000);
 
   it('attempt 1 fails, the diagnosis localizes the fault with a new hypothesis, and the allowance is extended by one with a recorded decision', async () => {

@@ -383,6 +383,15 @@ The keys this replaced still work and map onto `when_unavailable`:
 is a configuration error, and so is the legacy pair that contradicts itself. A
 legacy `preferred_provider` becomes the preference list.
 
+### Human policy decisions in auto mode
+
+A person, not an agent, must make any edit to `agents.allowed_plugins` or
+`providers.codex.data_policy_eligible` in `.orbit/config.yaml`.
+`agents.allowed_plugins` permits a plugin's hooks and tools in worker sessions;
+`providers.codex.data_policy_eligible` confirms that sending sanitized code to
+Codex is permitted. An auto-mode classifier may flag worker launches. Review
+that prompt yourself rather than asking an agent to apply either edit.
+
 ### Plugins in worker sessions
 
 Workers start with `--setting-sources ""`, so user, project and local plugins
@@ -602,14 +611,16 @@ A repair whose session stopped before it finished (max turns, a timeout) is
 not such a stop: the existing budget rules decide whether another attempt
 runs.
 
-A mandatory check that could not execute at all is an environment failure too,
-with or without a base-revision comparison: its process (or the UI application
-under test) was killed by a crash signal such as `SIGABRT` before it printed
-anything of its own, or the runner could not start it. The run ends `BLOCKED`
-before the Inquisition and the repair loop, and the reason names the check, the
-cause and the log. Only the first way forward applies, since a check that never
-ran has no failure to except. A check that ran and failed, an application that
-threw while loading, or a crash after test output keeps the repair loop.
+A mandatory check, or a check the contract requires, that could not execute at
+all is an environment failure too, with or without a base-revision comparison:
+its process (or the UI application under test) was killed by a crash signal
+such as `SIGABRT` before it printed anything of its own, or the runner could
+not start it. A required check blocks at its base-revision step before an
+implementer session; a candidate-only failure blocks before the Inquisition
+and the repair loop. The reason names the check, the cause and the log. Only
+the first way forward applies, since a check that never ran has no failure to
+except. A check that ran and failed, an application that threw while loading,
+or a crash after test output keeps the repair loop.
 
 A check that fails then passes on rerun is reported as flaky. With
 `verification.allow_flaky_pass: false` (the default) a flaky pass cannot make the

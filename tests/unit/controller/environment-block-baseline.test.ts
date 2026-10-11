@@ -133,7 +133,7 @@ let lab: UnitLab;
 afterEach(() => lab?.cleanup());
 
 /** A baseline report with failing mandatory checks, each with a recorded baseline run whose log holds `logs[checkId]`. */
-function baselineWith(logs: Record<string, string | null>, opts: { excerpt?: string | null; row?: boolean; tweak?: UnitLabOptions['tweak'] } = {}): { report: BaselineReport; checkout: string } {
+function baselineWith(logs: Record<string, string | null>, opts: { excerpt?: string | null; row?: boolean; status?: 'FAILED' | 'ERROR'; tweak?: UnitLabOptions['tweak'] } = {}): { report: BaselineReport; checkout: string } {
   lab = makeUnitLab(opts.tweak ? { tweak: opts.tweak } : {});
   const ctx = lab.ctx();
   const dir = join(ctx.runDir, 'baseline');
@@ -146,10 +146,10 @@ function baselineWith(logs: Record<string, string | null>, opts: { excerpt?: str
     if (log !== null) writeFileSync(logPath, log);
     if (opts.row !== false) {
       const row = planCheckRun(lab.db, { runId: lab.runId, candidateId: null, checkId, kind: 'command', treeHash: 'b'.repeat(40), checkConfigHash: 'h', policyHash: ctx.run.policyHash, command: ['dotnet', 'build'], cwd: checkout, isolation: 'none', limitations: [] }, lab.clock);
-      finishCheckRun(lab.db, row.id, { status: 'FAILED', exitCode: 1, timedOut: false, cancelled: false, logPath: log === null ? null : logPath, logSha256: null, fingerprint: FP, excerpt: opts.excerpt ?? null, artifacts: [], endedAt: lab.clock.now() });
+      finishCheckRun(lab.db, row.id, { status: opts.status ?? 'FAILED', exitCode: 1, timedOut: false, cancelled: false, logPath: log === null ? null : logPath, logSha256: null, fingerprint: FP, excerpt: opts.excerpt ?? null, artifacts: [], endedAt: lab.clock.now() });
     }
     failures.push({ checkId, fingerprint: FP, excerpt: opts.excerpt ?? null });
-    checks.push({ checkId, mandatory: true, status: 'FAILED', exitCode: 1, flaky: false, fingerprint: FP, excerpt: opts.excerpt ?? null, log: logPath });
+    checks.push({ checkId, mandatory: true, status: opts.status ?? 'FAILED', exitCode: 1, flaky: false, fingerprint: FP, excerpt: opts.excerpt ?? null, log: logPath });
   }
   const report: BaselineReport = { schema: 'orbit.baseline/1', runId: lab.runId, baseRevision: BASE_REV, baseTree: 'b'.repeat(40), policyHash: ctx.run.policyHash, checkIds: Object.keys(logs), install: { skipped: true, reason: null, ok: false }, checks, failures, complete: true, recordedAt: lab.clock.now() };
   return { report, checkout };
@@ -166,6 +166,13 @@ describe('baselineEnvironmentFailures', () => {
   it('finds a check killed by a crash signal before it printed anything', () => {
     const { report, checkout } = baselineWith({ unit: '----- Native stack trace -----\n 1: 0x1 node::Abort() [/opt/acme/bin/node]\nProcess killed by signal: SIGABRT\n' });
     expect(baselineEnvironmentFailures(lab.ctx(), report, checkout).map((f) => f.signals)).toEqual([['process-aborted']]);
+  });
+
+  it('classifies an ERROR whose runner footer says the command never started', () => {
+    const { report, checkout } = baselineWith({ lint: '[orbit] check=lint status=ERROR exit=none note=could not start the check: spawn orbit-missing-linter ENOENT\n' }, { status: 'ERROR' });
+    expect(baselineEnvironmentFailures(lab.ctx(), report, checkout)).toEqual([
+      expect.objectContaining({ checkId: 'lint', signals: ['start-failed'], cause: 'the check could not be started', lines: ['could not start the check: spawn orbit-missing-linter ENOENT'] }),
+    ]);
   });
 
   it('reads the excerpt when the log is gone, and the report\'s log when there is no recorded run', () => {

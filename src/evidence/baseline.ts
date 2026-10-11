@@ -603,7 +603,9 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
       log: r.logPath,
     }));
     const decisive = (e: BaselineCheckEntry): boolean => e.status === 'PASSED' || e.status === 'FAILED' || e.status === 'TIMEOUT';
-    const failed = (e: BaselineCheckEntry): boolean => e.status === 'FAILED' || e.status === 'TIMEOUT';
+    // An ERROR did not produce a check result, but it is still a failure that the baseline classifier must see: in
+    // particular, a command the runner could not start is an environment failure, never a pre-existing failure.
+    const failed = (e: BaselineCheckEntry): boolean => e.status === 'FAILED' || e.status === 'TIMEOUT' || e.status === 'ERROR';
     // Every requested check produced a decisive result (no ERROR, no CANCELLED, none skipped).
     const complete = (install.skipped || install.ok) && entries.length === defs.length && entries.every(decisive);
     const now = clock.now();
@@ -638,7 +640,9 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
       ...(audit ? { audit } : {}),
       auditNotes: baselineAuditNotes(audit, dependencyAuditPolicy(snapshot.config)),
       checks: entries,
-      failures: entries.filter((e) => e.mandatory && failed(e)).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
+      // With the default list every entry is policy-mandatory. An explicit list also means each selected check matters
+      // to the caller, notably the optional checks a contract requires after a rebase, so retain their failures too.
+      failures: entries.filter(failed).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt })),
       complete,
       recordedAt: now,
     };

@@ -21,7 +21,8 @@ import { execCapture } from '../../core/exec.ts';
 import { fetchBranchContaining, gitEnv, lsRemoteBranch, remoteHost, resolveRemoteUrl } from '../../delivery/git.ts';
 import { ciRepairBrief, ciRepairDecision, observeCi } from '../../delivery/ci.ts';
 import { CANDIDATE_EVENT, runWorktreeRoot, type RunContext } from '../context.ts';
-import { decide, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
+import { decide, finishRun, move, safePoint, WAIT, assertContract, type StepResult } from './common.ts';
+import { remeasureRebasedBaseline } from './baseline-amendment.ts';
 import { complete, DELIVERY_FILE, githubClient, releaseDelivered } from './delivering.ts';
 import { briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
 
@@ -206,7 +207,11 @@ async function handleMovedBase(ctx: RunContext, d: DeliveryFile, base: Record<st
   ctx.candidate = next;
   decide(ctx, { id: `dec-${ctx.run.id}-rebase-${m.to}`, kind: 'delivery.rebased', summary: `${m.baseBranch} moved from ${short(m.from)} to ${short(m.to)}; rebased the reviewed candidate (${short(cand.commitSha)}) onto it as ${short(next.commitSha)}, evidence and reviews invalidated`, data: { from: m.from, to: m.to, old_commit: cand.commitSha, commit: next.commitSha, tree: next.treeHash } });
   const baseTree = (await execCapture(['git', 'rev-parse', `${m.to}^{tree}`], { cwd: ctx.run.repoRoot, env: gitEnv({}, ctx.deps.hostEnv ?? process.env), timeoutMs: 30_000 })).stdout.trim();
-  return move(ctx, 'VERIFYING', `${reason}; verifying again`, { patch: { baseRevision: m.to, ...(baseTree ? { baseTree } : {}) }, data: { rebase: { from: m.from, to: m.to } } });
+  // Make the new parent durable before measuring it. If a process dies during the fresh baseline, VERIFYING detects the
+  // rebase event and completes that baseline judgement before it can judge this candidate.
+  const moved = move(ctx, 'VERIFYING', `${reason}; verifying again`, { patch: { baseRevision: m.to, ...(baseTree ? { baseTree } : {}) }, data: { rebase: { from: m.from, to: m.to } } });
+  const baseline = await remeasureRebasedBaseline(ctx, assertContract(ctx));
+  return baseline ?? moved;
 }
 
 async function blockOnConflict(ctx: RunContext, d: DeliveryFile, base: Record<string, unknown>, m: BaseMovement, reason: string): Promise<StepResult> {

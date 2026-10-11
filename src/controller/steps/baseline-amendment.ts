@@ -19,6 +19,11 @@
  * - a pre-existing failure of the code gets its baseline-exception question, withdrawn when the contract names the check
  *   as a proof (P18);
  * - a pass establishes a clean base: a failure on a candidate is the change's.
+ *
+ * A rebase from AWAITING_CI changes the candidate's parent after its original baseline was recorded. Before VERIFYING
+ * judges that new candidate, its required command checks are measured again on the new base as a fresh baseline. The
+ * record is judged durably, so a crash after its atomic write resumes the judgement rather than treating the old base as
+ * evidence for the rebased candidate.
  */
 import { join } from 'node:path';
 import type { GoalContract } from '../../contract/types.ts';
@@ -35,6 +40,8 @@ import { askAboutBaseFailures, blockOnBaseline, classifyBaseline, recordGate } f
 
 /** The decision a baseline amendment records: the checks it ran on the base revision, the step, and what each did there. */
 export const BASELINE_AMENDED_KIND = 'baseline.amended';
+/** The decision that says a rebase's fresh baseline was fully judged. */
+export const BASELINE_REBASED_KIND = 'baseline.rebased';
 
 /**
  * The id of the `baseline.amended` decision of the amendment recorded at `at`. The decision is recorded once the
@@ -45,7 +52,11 @@ function amendedDecisionId(runId: string, at: number): string {
   return `dec-${runId}-baseline-amended-${at}`;
 }
 
-/** The baseline PREFLIGHT recorded for this run's base revision and policy, or null. */
+function rebasedDecisionId(runId: string, baseRevision: string): string {
+  return `dec-${runId}-baseline-rebased-${baseRevision}`;
+}
+
+/** The recorded baseline for this run's current base revision and policy, or null. */
 function baselineOf(ctx: RunContext): BaselineReport | null {
   const report = readJsonIfExists<BaselineReport>(join(ctx.runDir, BASELINE_FILE));
   if (!report || report.baseRevision !== ctx.run.baseRevision || report.policyHash !== ctx.run.policyHash) return null;
@@ -79,6 +90,8 @@ export function checksToAmend(ctx: Pick<RunContext, 'snapshot'>, contract: GoalC
  * null when it goes on, as it does at once when there is nothing to amend.
  */
 export async function amendBaseline(ctx: RunContext, contract: GoalContract): Promise<StepResult | null> {
+  const remeasured = await remeasureRebasedBaseline(ctx, contract);
+  if (remeasured) return remeasured;
   const prior = baselineOf(ctx);
   if (!prior || !ctx.run.baseRevision) return null;
   const ids = checksToAmend(ctx, contract, prior, (a) => getDecision(ctx.db, amendedDecisionId(ctx.run.id, a.recordedAt)) !== null);
@@ -93,6 +106,77 @@ export async function amendBaseline(ctx: RunContext, contract: GoalContract): Pr
   if (amended.size === 0) return null;
   const unexpected = missingTargetsNotExpectedToFlip(ctx, contract).filter((m) => amended.has(m.checkId));
   return unexpected.length > 0 ? blockOnMissingTargets(ctx, unexpected) : null;
+}
+
+/**
+ * A rebase in AWAITING_CI gives the candidate a new parent, so the original baseline is no longer evidence for it.
+ * Measure every command check its accepted contract requires on that parent before VERIFYING continues. A fresh baseline
+ * is deliberately not an amendment: it replaces the record for the old base, including its dependency audit. The
+ * `baseline.rebased` decision is written only after the result is judged. If the process dies after `runBaseline` writes
+ * its file, the next VERIFYING pass sees that file but no decision and finishes the same judgement without trusting an
+ * unclassified or unblocked result.
+ */
+export async function remeasureRebasedBaseline(ctx: RunContext, contract: GoalContract): Promise<StepResult | null> {
+  const baseRevision = ctx.run.baseRevision;
+  if (!baseRevision) return null;
+  const rebased = ctx.db.get<{ x: number }>("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'delivery.rebased' AND json_extract(data_json, '$.to') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, baseRevision);
+  if (!rebased) return null;
+
+  const existing = baselineOf(ctx);
+  if (existing !== null && getDecision(ctx.db, rebasedDecisionId(ctx.run.id, baseRevision)) !== null) return null;
+  const checkoutDir = join(runWorktreeRoot(ctx), 'baseline');
+  const ids = [...new Set(contract.required_check_ids)].filter((id) => ctx.snapshot.config.checks[id]?.kind === 'command').sort();
+  let found: ReturnType<typeof classifyBaseline> | null = null;
+  if (existing === null) {
+    const outcome = await runBaseline({
+      settle: (report) => {
+        found = classifyBaseline(ctx, report, checkoutDir);
+        return found.report;
+      },
+      db: ctx.db,
+      run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
+      repoRoot: ctx.run.repoRoot,
+      baseRev: baseRevision,
+      snapshot: ctx.snapshot,
+      isolation: ctx.isolation(),
+      runDir: ctx.runDir,
+      clock: ctx.clock,
+      signal: ctx.signal,
+      pollMs: ctx.timing.checkPollMs,
+      killGraceMs: ctx.timing.killGraceMs,
+      homeDir: homeOf(ctx.deps),
+      checkoutDir,
+      toolchainCacheRoot: toolchainCacheRootFor(ctx),
+      checkIds: ids,
+    });
+    // The file and baseline.recorded event are durable now. A recovery must judge that record before it may verify the
+    // rebased candidate, which is why this point sits before the decision below.
+    faultPoint('controller.baseline-rebase.after-write');
+    const after = await safePoint(ctx);
+    if (after) return after;
+    found ??= classifyBaseline(ctx, outcome.report, checkoutDir);
+  } else {
+    found = classifyBaseline(ctx, existing, checkoutDir);
+  }
+
+  const classified = found.report;
+  const gate = baselineGate(classified);
+  recordGate(ctx, gate);
+  if (!gate.passed && gate.status === 'fail') {
+    return finishRun(ctx, 'BLOCKED', `baseline gate: ${gate.reasons.join('; ')}, so the rebased candidate cannot be judged against ${baseRevision.slice(0, 12)}`, { outcome: { gate, stage: ctx.run.state } });
+  }
+  if (found.misconfigured.length > 0 || found.environment.length > 0) return blockOnBaseline(ctx, classified, { environment: found.environment, misconfigured: found.misconfigured });
+
+  const only = new Set(ids);
+  askAboutBaseFailures(ctx, found, { baseRevision, key: `rebased-${baseRevision}`, only });
+  settleExpectedFlips(ctx, contract);
+  decide(ctx, {
+    id: rebasedDecisionId(ctx.run.id, baseRevision),
+    kind: BASELINE_REBASED_KIND,
+    summary: `after rebasing onto ${baseRevision.slice(0, 12)}, VERIFYING remeasured the baseline for the contract's ${ids.length === 1 ? 'check' : 'checks'}${ids.length > 0 ? ` ${ids.join(', ')}` : ''}`,
+    data: { base_revision: baseRevision, stage: ctx.run.state, check_ids: ids, complete: classified.complete },
+  });
+  return null;
 }
 
 /** Run `ids` on the base revision as an amendment of its baseline, record them, and block on what PREFLIGHT blocks on. */

@@ -60,6 +60,16 @@ degraded but usable.
 | `service` | lingering is off (Linux) | `loginctl enable-linger <user>`, or the service stops at logout. |
 | `guard.terms` | no publish-guard terms file | Create `~/.config/publish-guard/terms.txt`, or set `guard.terms_file`. Required when `knowledge.share_globally` is true. |
 
+## Human policy decisions in auto mode
+
+A person, not an agent, must make any edit to `agents.allowed_plugins` or
+`providers.codex.data_policy_eligible` in `.orbit/config.yaml`.
+`agents.allowed_plugins` permits a plugin's hooks and tools in worker sessions;
+`providers.codex.data_policy_eligible` confirms that sending sanitized code to
+Codex is permitted. An auto-mode classifier may flag worker launches. Review
+that prompt yourself rather than asking an agent to apply either edit. When one
+of these settings is the fix, `orbit doctor` prints the same note.
+
 ## Run problems
 
 - **`orbit run` refuses to start.** "cannot start a run: ... No run was created and

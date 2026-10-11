@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A worker cancelled with SIGINT is recorded as cancelled even when the provider's exit is handled before the shim's own signal handler runs. `cancelShim` writes `cancel.json` before it signals the group, and the shim now reads that durable intent when it writes `exit.json`, so the event order no longer decides between `cancelled` and `failed`. A unit test forces the losing order; the Codex and Claude adapter tests that failed intermittently on CI pass 20 runs in a row.
 - A check that exits 0 after MSBuild records a sandbox-refused worker-node pipe
   is no longer recorded as passed. The runner makes its final denial scan after
   the shim records its exit and records the denied-pipe failure and fix.
@@ -10,6 +11,10 @@
   result. The sweep remembers pid/start-time identities, so it cannot signal a
   recycled pid, and result collection cannot race a detached child continuing
   to write the worktree (#34).
+- The installed plugin now includes its `README.md`, `CHANGELOG.md` and `docs/` tree. The default build copies those files into the `plugin/` payload, and the packaging checks require every source documentation path (#41).
+- The README, configuration and troubleshooting guides now identify `agents.allowed_plugins` and `providers.codex.data_policy_eligible` as policy edits a person, not an agent, makes. `orbit doctor` repeats that note when either is the unmet fix, including that an auto-mode classifier may flag worker launches (#42).
+- A contract-required command check that cannot start on the base revision is now retained as an `ERROR` baseline failure and blocks at PLANNING, or at VERIFYING for a later contract amendment, before an implementer session is started (#36).
+- A clean rebase while awaiting CI now measures all contract-required command checks on the new base before the rebased candidate can be verified. The fresh baseline replaces the old-base record and recovers safely if the controller stops after its durable write (#37).
 - Tests: the lab's scenario files are replaced, never rewritten in place. On the v0.2.2 release gate the parallel review test counted three reviewer sessions (`review-security` twice) for a run that succeeded. The security reviewer's fake started while the UI reviewer's scenario was being rendered into the same file (emptied, then written), read it empty, and exited 1 with no result; Orbit recorded that session `FAILED` ("exited 1 without turn.completed or turn.failed"), noted `worker.regenerate`, and started the unit's second attempt, as it does for any failed session. It was not a double dispatch: a unit's next session starts only after its earlier one is recorded as finished and unusable, one session per attempt, and a failed session records no review. Measured with a reader process beside the renders: a quarter of reads found the file torn before the change, none after. A review focus can now have steps of its own in a scenario (`reviewer@security`, `reviewer@ui`); a new test runs a failed security session through its regeneration (two reviews, from the second security session and the UI session, and three review rounds charged), and the parallel review test names each session and its error when a unit runs twice. No change to Orbit itself.
 
 ## 0.2.2 (2026-10-08)
