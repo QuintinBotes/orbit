@@ -225,6 +225,12 @@ Exit codes of `systemctl` and the `is-active` probe semantics: **UNVERIFIED** (n
   - The docs say the child "will be made the leader of a new process group and session" (setsid) [doc: https://nodejs.org/docs/latest-v22.x/api/child_process.html].
   - Locally, `ps -o pid=,ppid=,pgid=` showed **pgid == child.pid**, and grandchildren inherited that pgid [local: `proc.mjs`].
   - On macOS, `ps -o sess=` prints 0, which is not useful.
+  - For a worker whose provider makes further groups or sessions, snapshot
+    `pid`, `ppid`, `pgid` and `lstart` while its parent links still exist.
+    Remember the pid/start-time identity and terminate any remembered live
+    group outside the worker shim's group before publishing completion. This
+    catches a child after it is reparented without mistaking a reused pid for
+    it [Orbit implementation: issue #34].
 - **Group kill:** `process.kill(-pgid, 'SIGTERM')` killed the shell and both grandchild `sleep`s. Afterwards `process.kill(-pgid, 0)` threw `ESRCH` [local].
 - `subprocess.kill()` signals only the child, never the group [doc].
 - **Liveness:** `process.kill(pid, 0)` returns normally if the process exists [doc: process.kill]. Observed errors [local]:

@@ -74,6 +74,7 @@ A step:
 | `sleepMs` | waits before finishing (cancellation and timeout tests) |
 | `ignoreSignals` | ignores SIGINT and SIGTERM, so only SIGKILL ends it |
 | `grandchildPidFile` | (Claude) starts `/bin/sleep 600` in the same process group and writes its pid here |
+| `detachedChild` | (Claude) starts a real detached Node child for a containment test: `{pidFile, markerPath, writePath, waitMs?, intervalMs?}`. It creates its own session, writes `writePath` until stopped, and writes its pid and startup marker first. |
 | `structured` | the structured output of a successful run |
 | `usage` | Claude: `modelUsage` fields (`inputTokens`, `outputTokens`, `cacheReadInputTokens`, `cacheCreationInputTokens`, `costUSD`); Codex: `turn.completed.usage` fields |
 | `model` | (Claude) the model reported in `system/init` and `modelUsage`; default resolves `--model` aliases |

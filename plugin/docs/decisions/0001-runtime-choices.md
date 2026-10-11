@@ -466,21 +466,14 @@ not listen.
   implementer and diagnosis prompts say to start and stop a server within one
   command. Rejected: ending the session in the shim once the result line is
   written (it would change how every provider's exit is judged, for a cause one
-  environment variable removes), and a prompt alone (advisory). Not contained,
-  and stated: a process a worker detaches itself (`nohup ... &`, `setsid`)
-  outlives the session on macOS, because Claude Code starts each Bash command
-  in a process group of its own (measured: the shell's process group is its own
-  pid, not the shim's), beyond the shim's group kill, and Seatbelt has no
-  process namespace. On Linux `srt` starts bubblewrap with a PID namespace and
-  `--die-with-parent`, so what a command leaves ends with its sandbox (from
-  `srt`'s source, not measured here). A sweep by environment marker is not
-  possible on macOS 27, where `ps` shows no other process's environment, and a
-  sweep by process tree misses a process whose shell has already exited;
-  containing it is a follow-up. Such a process keeps the worker's sandbox and
-  so its write access to the worktree, and it can go on editing the worktree
-  after the session (final review: in both tiers a `nohup ... &` and a
-  `spawn(..., { detached: true })` grandchild were alive three seconds after
-  the adapter collected the result, their files in the worktree still
-  changing). What it writes before the candidate is snapshotted is judged as
-  the worker's change; what it writes later is in the tree the next attempt
-  starts from. docs/security.md says so.
+  environment variable removes), and a prompt alone (advisory). On macOS the
+  shim remains the detached group leader, then follows the provider tree in
+  process-table snapshots while it runs. It remembers every reachable child by
+  pid, start time and current process group, including a child that moves to a
+  new group or session. Before it writes `exit.json`, it sends SIGTERM and then
+  SIGKILL to remembered live groups outside the shim's own group. Remembering
+  the identity before a child is reparented lets the final sweep reach a
+  `setsid` child without relying on an environment marker, which macOS does not
+  expose for other processes. The real detached-child integration test proves
+  that collection waits for this sweep and the worktree stops changing. Linux
+  retains `srt`'s PID namespace and `--die-with-parent` protection as well.
