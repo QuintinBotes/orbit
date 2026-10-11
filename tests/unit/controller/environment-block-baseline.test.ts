@@ -2,10 +2,12 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { baselineEnvironmentBlockReason, baselineEnvironmentFailures, checksNotExecutedFor, environmentBlockReason, environmentFix, type BlockedCheck } from '../../../src/controller/environment-block.ts';
+import { baselineEnvironmentBlockReason, baselineEnvironmentFailures, baselineIncompleteBlockReason, baselineIncompleteChecks, checksNotExecutedFor, environmentBlockReason, environmentFix, type BlockedCheck } from '../../../src/controller/environment-block.ts';
+import { askAboutBaseFailures, classifyBaseline } from '../../../src/controller/steps/preflight.ts';
 import type { BaselineReport } from '../../../src/evidence/baseline.ts';
 import { msbuildNodeDenialNote, msbuildNodeFix } from '../../../src/evidence/msbuild.ts';
 import { finishCheckRun, planCheckRun } from '../../../src/evidence/store.ts';
+import { listQuestions } from '../../../src/inquisition/store.ts';
 import { checkDef } from '../evidence/fixtures.ts';
 import { addCandidate, addEvidence, BASE_REV, makeUnitLab, setContract, type UnitLab, type UnitLabOptions } from './coverage-helpers.ts';
 
@@ -173,6 +175,32 @@ describe('baselineEnvironmentFailures', () => {
     expect(baselineEnvironmentFailures(lab.ctx(), report, checkout)).toEqual([
       expect.objectContaining({ checkId: 'lint', signals: ['start-failed'], cause: 'the check could not be started', lines: ['could not start the check: spawn orbit-missing-linter ENOENT'] }),
     ]);
+  });
+
+  it('keeps a non-start ERROR out of the environment classifier and names its runner cause and log as incomplete', () => {
+    const vanished = '[orbit] check=unit status=ERROR exit=none note=the check process disappeared without writing an exit record (killed externally or the host restarted)\n';
+    const { report, checkout } = baselineWith({ unit: vanished }, { status: 'ERROR' });
+    expect(baselineEnvironmentFailures(lab.ctx(), report, checkout)).toEqual([]);
+    const found = baselineIncompleteChecks(lab.ctx(), report);
+    expect(found).toEqual([
+      {
+        checkId: 'unit',
+        cause: 'the runner recorded ERROR before the check produced a result',
+        lines: ['the check process disappeared without writing an exit record (killed externally or the host restarted)'],
+        logPath: join(lab.ctx().runDir, 'baseline', 'unit.log'),
+      },
+    ]);
+    const reason = baselineIncompleteBlockReason({ runId: 'orb-6', baseRevision: BASE_REV, failures: found });
+    expect(reason).toMatch(/^Check unit did not complete on the base revision aaaaaaaaaaaa: the runner recorded ERROR before the check produced a result \("the check process disappeared without writing an exit record \(killed externally or the host restarted\)"\), output in \/.*\/unit\.log/);
+    expect(reason).toMatch(/no baseline exception is offered: the check did not produce a result/);
+    expect(reason).toMatch(/Then orbit resume orb-6 runs the baseline again/);
+
+    const classified = classifyBaseline(lab.ctx(), report, checkout);
+    expect(classified.incomplete.map((check) => check.checkId)).toEqual(['unit']);
+    expect(classified.report.complete).toBe(false);
+    expect(classified.report.failures).toEqual([expect.objectContaining({ checkId: 'unit', classification: 'incomplete' })]);
+    expect(askAboutBaseFailures(lab.ctx(), classified, { baseRevision: BASE_REV, key: '' }).preExisting).toEqual([]);
+    expect(listQuestions(lab.db, lab.runId)).toEqual([]);
   });
 
   it('reads the excerpt when the log is gone, and the report\'s log when there is no recorded run', () => {

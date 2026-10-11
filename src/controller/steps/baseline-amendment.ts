@@ -12,8 +12,8 @@
  * PLANNING does it for the contract CONTRACTING accepted, before any attempt; VERIFYING does it for a contract amended
  * since. Each such check is classified as PREFLIGHT classifies a mandatory one, with the same outcome:
  *
- * - an environment failure or a misconfigured check blocks the run, with the reason PREFLIGHT gives and a sentence that
- *   says why the check ran on the base revision; a resume runs it there again;
+ * - an environment failure, an ERROR that did not complete, or a misconfigured check blocks the run, with the reason
+ *   PREFLIGHT gives and a sentence that says why the check ran on the base revision; a resume runs it there again;
  * - a missing target is settled against the contract: expected to flip when a criterion names the check, misconfigured
  *   when none does;
  * - a pre-existing failure of the code gets its baseline-exception question, withdrawn when the contract names the check
@@ -79,7 +79,11 @@ export function checksToAmend(ctx: Pick<RunContext, 'snapshot'>, contract: GoalC
   const covered = new Set(report.checkIds);
   const latest = new Map<string, BaselineAmendment>();
   for (const a of report.amendments ?? []) for (const id of a.checkIds) latest.set(id, a);
-  const blocked = new Set(report.failures.filter((f) => latest.has(f.checkId) && (f.classification === 'environment' || f.classification === 'misconfigured')).map((f) => f.checkId));
+  const blocked = new Set(
+    report.failures
+      .filter((f) => latest.has(f.checkId) && (f.classification === 'environment' || f.classification === 'incomplete' || f.classification === 'misconfigured'))
+      .map((f) => f.checkId),
+  );
   const unjudged = new Set([...latest].filter(([, a]) => !judged(a)).map(([id]) => id));
   return [...new Set(contract.required_check_ids)].filter((id) => ctx.snapshot.config.checks[id]?.kind === 'command' && (!covered.has(id) || blocked.has(id) || unjudged.has(id))).sort();
 }
@@ -165,7 +169,9 @@ export async function remeasureRebasedBaseline(ctx: RunContext, contract: GoalCo
   if (!gate.passed && gate.status === 'fail') {
     return finishRun(ctx, 'BLOCKED', `baseline gate: ${gate.reasons.join('; ')}, so the rebased candidate cannot be judged against ${baseRevision.slice(0, 12)}`, { outcome: { gate, stage: ctx.run.state } });
   }
-  if (found.misconfigured.length > 0 || found.environment.length > 0) return blockOnBaseline(ctx, classified, { environment: found.environment, misconfigured: found.misconfigured });
+  if (found.misconfigured.length > 0 || found.environment.length > 0 || found.incomplete.length > 0) {
+    return blockOnBaseline(ctx, classified, { environment: found.environment, incomplete: found.incomplete, misconfigured: found.misconfigured });
+  }
 
   const only = new Set(ids);
   askAboutBaseFailures(ctx, found, { baseRevision, key: `rebased-${baseRevision}`, only });
@@ -241,10 +247,10 @@ async function runAmendment(ctx: RunContext, contract: GoalContract, ids: readon
     recordGate(ctx, bg);
     return finishRun(ctx, 'BLOCKED', `baseline gate: ${bg.reasons.join('; ')}, so ${ids.length > 1 ? 'checks' : 'check'} ${ids.join(', ')}, which the contract requires, could not be run there`, { outcome: { gate: bg, stage } });
   }
-  const { misconfigured, environment } = found;
-  if (misconfigured.length > 0 || environment.length > 0) {
+  const { misconfigured, environment, incomplete } = found;
+  if (misconfigured.length > 0 || environment.length > 0 || incomplete.length > 0) {
     judged();
-    return blockOnBaseline(ctx, classified, { environment, misconfigured }, { at, stage, checks: amended });
+    return blockOnBaseline(ctx, classified, { environment, incomplete, misconfigured }, { at, stage, checks: amended });
   }
   askAboutBaseFailures(ctx, found, { baseRevision, key: `amended-${at}`, only });
   settleExpectedFlips(ctx, contract);

@@ -215,6 +215,7 @@ function decisionCategory(kind: string): TimelineCategory {
 /** What PREFLIGHT classified a base-revision failure as (ADR 0010), by the decision kind that records it. */
 const BASELINE_CLASSIFICATIONS: Readonly<Record<string, string>> = {
   'baseline.environment-failure': 'an environment failure',
+  'baseline.incomplete-check': 'a check that did not complete',
   'baseline.check-misconfigured': 'a misconfigured check',
   'baseline.missing-target': 'a missing target',
 };

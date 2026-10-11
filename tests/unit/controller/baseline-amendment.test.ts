@@ -39,13 +39,14 @@ describe('checksToAmend', () => {
     expect(checksToAmend({ snapshot }, contract(['unit', 'format']), baseline({ checkIds: ['format', 'unit'] }), judged)).toEqual([]);
   });
 
-  it('runs again a check an earlier amendment found could not run or was misconfigured, and nothing PREFLIGHT judged', () => {
+  it('runs again a check an earlier amendment found could not run, did not complete or was misconfigured, and nothing PREFLIGHT judged', () => {
     const amendments = [{ checkIds: ['format', 'lint'], stage: 'PLANNING', recordedAt: 2 }];
     const failures: BaselineReport['failures'] = [
       { checkId: 'format', fingerprint: 'fp:1', excerpt: null, classification: 'environment', signals: ['pipe-denied'] },
       { checkId: 'lint', fingerprint: 'fp:2', excerpt: null, classification: 'missing-target' },
     ];
     expect(checksToAmend({ snapshot }, contract(['unit', 'format', 'lint']), baseline({ checkIds: ['format', 'lint', 'unit'], failures, amendments }), judged)).toEqual(['format']);
+    expect(checksToAmend({ snapshot }, contract(['unit', 'format']), baseline({ checkIds: ['format', 'unit'], failures: [{ ...failures[0]!, classification: 'incomplete' }], amendments: [{ checkIds: ['format'], stage: 'PLANNING', recordedAt: 2 }] }), judged)).toEqual(['format']);
     expect(checksToAmend({ snapshot }, contract(['unit', 'lint']), baseline({ checkIds: ['format', 'lint', 'unit'], failures: [{ ...failures[1]!, classification: 'misconfigured' }], amendments }), judged)).toEqual(['lint']);
     // A mandatory check PREFLIGHT classified blocked there; a resume runs PREFLIGHT's baseline again, not an amendment.
     expect(checksToAmend({ snapshot }, contract(['unit']), baseline({ failures: [{ checkId: 'unit', fingerprint: 'fp:3', excerpt: null, classification: 'environment' }] }), judged)).toEqual([]);

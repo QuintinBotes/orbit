@@ -76,15 +76,16 @@ the same check settles it; only the latest amendment of each check counts.
 Each amended check is classified exactly as PREFLIGHT classifies a mandatory
 one (ADR 0010), and the outcome is the same:
 
-- **An environment failure or a misconfigured check blocks the run**, at the
+- **An environment failure, an incomplete `ERROR`, or a misconfigured check blocks the run**, at the
   step that ran the amendment, with PREFLIGHT's reason and one more sentence,
   second: "The contract requires check format (criterion AC-2 cites it as
   evidence), which the policy does not mark mandatory, so it was run on the
   base revision before any change was judged (a baseline amendment)". The
-  decisions `baseline.environment-failure` and `baseline.check-misconfigured`
-  carry the step. An environment block is cleared by fixing the environment
-  and `orbit resume`: the next amendment runs the classified check again (its
-  recorded result is set aside, as for a resumed PREFLIGHT).
+  decisions `baseline.environment-failure`, `baseline.incomplete-check` and
+  `baseline.check-misconfigured` carry the step. An environment or incomplete
+  block is cleared by fixing the cause and `orbit resume`: the next amendment
+  runs the classified check again (its recorded result is set aside, as for a
+  resumed PREFLIGHT).
 - **A missing target is settled against the contract**: expected to flip when
   a criterion names the check, misconfigured (the CONTRACTING block of ADR
   0010, at this step) when none does. It is judged again on every PLANNING

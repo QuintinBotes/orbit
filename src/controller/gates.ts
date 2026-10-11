@@ -249,6 +249,8 @@ export function baselineGate(report: BaselineReport): GateResult<{ failures: Bas
         ? 'misconfigured check on the base revision, not a pre-existing failure'
         : f.classification === 'environment'
           ? 'environment failure on the base revision, not a pre-existing failure'
+          : f.classification === 'incomplete'
+            ? 'check that did not complete on the base revision, not a pre-existing failure'
           : f.classification === 'missing-target'
             ? 'missing target on the base revision (expected to flip if the contract names the check, otherwise misconfigured), not a pre-existing failure'
             : 'pre-existing failure on the base revision';

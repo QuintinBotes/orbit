@@ -8,9 +8,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Controller } from '../../../src/controller/loop.ts';
+import { listCheckRuns } from '../../../src/evidence/store.ts';
 import { listQuestions } from '../../../src/inquisition/store.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
-import { baseScenario, DIAGNOSIS, implementMul, labDeps, makeLab, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
+import { baseScenario, DIAGNOSIS, implementMul, labDeps, makeLab, runState, startLabRun, waitFor, writeScenario, type Lab } from './harness.ts';
 
 const canStripTypes = Boolean((process as unknown as { features?: { typescript?: unknown } }).features?.typescript);
 
@@ -50,7 +51,82 @@ function buildLab(script: string): Lab {
   return l;
 }
 
+/** Stop the live baseline check and its shim without an exit record, as a host restart or external kill would. */
+async function vanishBaseCheck(l: Lab, runId: string): Promise<void> {
+  await waitFor(() => listCheckRuns(l.db(), { runId, candidateId: null, checkId: 'build', rootsOnly: true }).find((row) => row.status === 'RUNNING'), 15_000);
+  const pids = await waitFor(() => {
+    try {
+      return JSON.parse(readFileSync(join(l.repo, '.orbit', 'runs', runId, 'baseline', 'build', 'pid.json'), 'utf8')) as { shimPid: number; childPgid: number };
+    } catch {
+      return null;
+    }
+  }, 15_000);
+  // This matches a process outside Orbit stopping the shim and its group. The runner then records ERROR with its
+  // durable cause instead of inventing a failed check result.
+  for (const pid of [pids.shimPid, -pids.childPgid]) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      /* the controller may have observed the other process first */
+    }
+  }
+}
+
 describe.skipIf(!canStripTypes)('controller: a check the environment stopped on the base revision', () => {
+  it('a base check that ends ERROR after its process vanishes blocks with its cause and log, without a baseline exception', async () => {
+    const l = buildLab('setInterval(() => {}, 1_000);\n');
+    const run = startLabRun(l);
+    const controller = new Controller({ mode: 'foreground', runId: run.id, deps: labDeps(l), tickIntervalMs: 20, leaseTtlMs: 30_000, graceMs: 300 });
+    const driving = controller.start();
+    // Keep an environment-level process-inspection failure from surfacing as an unhandled rejection while the test
+    // reports the original failure.
+    void driving.catch(() => undefined);
+    await vanishBaseCheck(l, run.id);
+    await driving;
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
+    expect(transitions(l, run.id)).toEqual(['PREFLIGHT', 'BLOCKED']);
+    const reason = done.outcomeReason ?? '';
+    expect(reason).toMatch(/^Check build did not complete on the base revision [0-9a-f]{12}: the runner recorded ERROR before the check produced a result \("the check process disappeared without writing an exit record \(killed externally or the host restarted\)"\), output in /);
+    expect(reason).toMatch(/\. It is not recorded as a pre-existing failure and no baseline exception is offered: the check did not produce a result/);
+    expect(reason).toMatch(/\. Then orbit resume \S+ runs the baseline again/);
+    expect(reason).not.toMatch(/orbit decide/);
+
+    // A runner ERROR has no completed check result to except. Its cause and log stay durable for the person who fixes
+    // the external interruption, but no pre-existing-failure question or request is made.
+    expect(listQuestions(l.db(), run.id)).toEqual([]);
+    expect(listDecisions(l.db(), run.id, { kind: 'baseline.exception-request' })).toEqual([]);
+    expect(listDecisions(l.db(), run.id, { kind: 'baseline.failures' })).toEqual([]);
+    expect(listDecisions(l.db(), run.id, { kind: 'baseline.environment-failure' })).toEqual([]);
+    const [decision] = listDecisions(l.db(), run.id, { kind: 'baseline.incomplete-check' });
+    expect(decision?.data).toMatchObject({
+      checks: [
+        expect.objectContaining({
+          check_id: 'build',
+          classification: 'incomplete',
+          cause: 'the runner recorded ERROR before the check produced a result',
+          evidence_lines: ['the check process disappeared without writing an exit record (killed externally or the host restarted)'],
+          log_path: expect.stringContaining('baseline/build.log'),
+        }),
+      ],
+    });
+
+    const baseline = JSON.parse(readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'baseline.json'), 'utf8')) as {
+      complete: boolean;
+      checks: { checkId: string; status: string }[];
+      failures: { checkId: string; classification?: string }[];
+    };
+    expect(baseline.complete).toBe(false);
+    expect(baseline.checks.find((check) => check.checkId === 'build')?.status).toBe('ERROR');
+    expect(baseline.failures).toContainEqual({ checkId: 'build', fingerprint: expect.any(String), excerpt: expect.any(String), classification: 'incomplete' });
+    expect(listCheckRuns(l.db(), { runId: run.id, candidateId: null, checkId: 'build', rootsOnly: true }).map((row) => row.status)).toEqual(['ERROR']);
+    const [gate] = listDecisions(l.db(), run.id, { kind: 'gate.baseline' });
+    expect(gate?.data).toMatchObject({ status: 'unverified' });
+    expect(gate?.summary).toContain('check that did not complete on the base revision, not a pre-existing failure: build');
+    expect(recordedCompleteness(l, run.id)).toEqual([false]);
+  }, 120_000);
+
   it('the live sequence: the dotnet build dies with EPERM at PREFLIGHT, and the run ends BLOCKED with no baseline-exception question', async () => {
     const l = buildLab(replaying('dotnet-build-eperm-shm.log'));
     const run = startLabRun(l);
@@ -98,10 +174,17 @@ describe.skipIf(!canStripTypes)('controller: a check the environment stopped on 
 
     expect(transitions(l, run.id).slice(0, 2)).toEqual(['PREFLIGHT', 'CONTRACTING']);
     expect(listDecisions(l.db(), run.id, { kind: 'baseline.environment-failure' })).toEqual([]);
+    expect(listDecisions(l.db(), run.id, { kind: 'baseline.incomplete-check' })).toEqual([]);
     expect(listDecisions(l.db(), run.id, { kind: 'baseline.exception-request' })).toHaveLength(1);
     expect(listQuestions(l.db(), run.id).map((q) => q.id)).toEqual([expect.stringMatching(/^q-baseline-/)]);
     // A pre-existing failure is a decisive result: complete, and the gate passes with it noted.
     expect(listDecisions(l.db(), run.id, { kind: 'gate.baseline' })[0]?.data).toMatchObject({ status: 'pass' });
     expect(recordedCompleteness(l, run.id)).toEqual([true]);
+    const baseline = JSON.parse(readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'baseline.json'), 'utf8')) as {
+      checks: { checkId: string; status: string }[];
+      failures: { checkId: string; classification?: string }[];
+    };
+    expect(baseline.checks.find((check) => check.checkId === 'build')?.status).toBe('FAILED');
+    expect(baseline.failures.find((failure) => failure.checkId === 'build')?.classification).toBeUndefined();
   }, 240_000);
 });
