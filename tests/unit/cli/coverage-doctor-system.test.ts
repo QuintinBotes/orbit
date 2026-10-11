@@ -1055,7 +1055,7 @@ describe('runDoctor and doctorCommand', () => {
     await expect(doctorCommand(parseCommand(['extra'], DOCTOR_OPTIONS, 'orbit doctor'), w.ctx())).rejects.toThrow('expected 0 argument(s), got 1');
   });
 
-  it('hides plugin and sandbox details by default and restores them with --verbose', () => {
+  it('shows a failure with its details, a warning on one line, and the rest only with --verbose', () => {
     const report = {
       repo: '/repo/acme',
       ok: false,
@@ -1069,8 +1069,11 @@ describe('runDoctor and doctorCommand', () => {
     const concise = renderDoctorReport(report);
     expect(concise).toMatch(/^FAIL {2}isolation .*; fix: install sandbox-runtime$/m);
     expect(concise.indexOf('FAIL  ')).toBeLessThan(concise.indexOf('WARN  '));
+    // A failure's details always show, or "fix the problems below" would point at nothing.
+    expect(concise).toContain('limitation: cannot write outside the worktree');
+    // A warning stays on its one line; its detail waits for --verbose.
     expect(concise).not.toContain('plugin: acme-sync@acme');
-    expect(concise).not.toContain('limitation: cannot write outside the worktree');
+    expect(concise).not.toContain('PASS  runtime.node');
     const verbose = renderDoctorReport(report, true);
     expect(verbose).toContain('plugin: acme-sync@acme (scope synced)');
     expect(verbose).toContain('limitation: cannot write outside the worktree');

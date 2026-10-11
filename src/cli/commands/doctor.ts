@@ -1090,10 +1090,9 @@ export function renderDoctorReport(report: DoctorReport, verbose = false): strin
     if (!verbose && c.status === 'pass') continue;
     const fix = c.status === 'pass' ? '' : `; fix: ${flat(c.fix ?? 'no automatic fix is available')}`;
     lines.push(`${tag[c.status]}  ${c.id.padEnd(18)} ${flat(c.summary)}${fix}`);
-    if (verbose) {
-      if (c.missing) lines.push(`      missing: ${flat(c.missing)}`);
-      for (const d of c.details) lines.push(`      ${flat(d)}`);
-    }
+    if (verbose && c.missing) lines.push(`      missing: ${flat(c.missing)}`);
+    // A failure's details are the problems its fix points at ("fix the problems below"), so they always show.
+    if (verbose || c.status === 'fail') for (const d of c.details) lines.push(`      ${flat(d)}`);
   }
   lines.push('', `${report.counts.fail} failure${report.counts.fail === 1 ? '' : 's'}, ${report.counts.warn} warning${report.counts.warn === 1 ? '' : 's'}`);
   return `${lines.join('\n')}\n`;

@@ -64607,10 +64607,8 @@ function renderDoctorReport(report2, verbose = false) {
     if (!verbose && c.status === "pass") continue;
     const fix = c.status === "pass" ? "" : `; fix: ${flat(c.fix ?? "no automatic fix is available")}`;
     lines.push(`${tag2[c.status]}  ${c.id.padEnd(18)} ${flat(c.summary)}${fix}`);
-    if (verbose) {
-      if (c.missing) lines.push(`      missing: ${flat(c.missing)}`);
-      for (const d of c.details) lines.push(`      ${flat(d)}`);
-    }
+    if (verbose && c.missing) lines.push(`      missing: ${flat(c.missing)}`);
+    if (verbose || c.status === "fail") for (const d of c.details) lines.push(`      ${flat(d)}`);
   }
   lines.push("", `${report2.counts.fail} failure${report2.counts.fail === 1 ? "" : "s"}, ${report2.counts.warn} warning${report2.counts.warn === 1 ? "" : "s"}`);
   return `${lines.join("\n")}
