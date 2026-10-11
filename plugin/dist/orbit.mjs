@@ -48511,6 +48511,9 @@ function notExceptable(baseline, checkId, snapshot2, recordedCwd = null) {
     const found2 = classifyCouldNotRun({ checkId, output: input.output, insideRoots: roots });
     return found2 !== null && (cwd !== null || !found2.signals.some((sg) => ON_A_PATH.has(sg)));
   };
+  if (failure?.classification === "incomplete" || entry?.status === "ERROR") {
+    return `check ${checkId} did not complete on the base revision, so its ERROR cannot be accepted as a baseline exception: accepting it would let a run pass with a check that produced no result`;
+  }
   if (failure?.classification === "environment" || stopped()) {
     return `check ${checkId} could not run on the base revision: PREFLIGHT found an environment cause, not a pre-existing failure, so its failure cannot be accepted as a baseline exception (a check that never ran would let a run pass)`;
   }
@@ -52866,7 +52869,7 @@ function baselineGate(report2) {
   const evidence = [`baseline of ${report2.baseRevision} (tree ${report2.baseTree}): ${report2.checks.length} check(s)`];
   if (!report2.install.skipped && !report2.install.ok) reasons.push(`the locked dependency install failed on the base revision${report2.install.reason ? `: ${report2.install.reason}` : ""}`);
   for (const f of report2.failures) {
-    const what = f.classification === "misconfigured" ? "misconfigured check on the base revision, not a pre-existing failure" : f.classification === "environment" ? "environment failure on the base revision, not a pre-existing failure" : f.classification === "missing-target" ? "missing target on the base revision (expected to flip if the contract names the check, otherwise misconfigured), not a pre-existing failure" : "pre-existing failure on the base revision";
+    const what = f.classification === "misconfigured" ? "misconfigured check on the base revision, not a pre-existing failure" : f.classification === "environment" ? "environment failure on the base revision, not a pre-existing failure" : f.classification === "incomplete" ? "check that did not complete on the base revision, not a pre-existing failure" : f.classification === "missing-target" ? "missing target on the base revision (expected to flip if the contract names the check, otherwise misconfigured), not a pre-existing failure" : "pre-existing failure on the base revision";
     notes.push(`${what}: ${f.checkId}${f.fingerprint ? ` (${f.fingerprint})` : ""}`);
   }
   for (const n2 of report2.auditNotes ?? []) notes.push(n2);
@@ -54298,6 +54301,23 @@ function baselineEnvironmentFailures(ctx, report2, checkoutDir) {
   }
   return out;
 }
+function baselineIncompleteChecks(ctx, report2) {
+  const out = [];
+  for (const failure of report2.failures) {
+    const { output, logPath, row } = baselineOutput(ctx, report2, failure);
+    const entry = report2.checks.find((c) => c.checkId === failure.checkId);
+    if (row?.status !== "ERROR" && entry?.status !== "ERROR") continue;
+    const note3 = /\[orbit\][^\n]*\bstatus=ERROR\b[^\n]*\bnote=([^\n]+)/.exec(output)?.[1]?.trim();
+    const line3 = output.split(/\r?\n/).map((value) => value.trim()).find((value) => value.length > 0);
+    out.push({
+      checkId: failure.checkId,
+      cause: "the runner recorded ERROR before the check produced a result",
+      lines: note3 ? [note3] : line3 ? [line3.slice(0, 200)] : [],
+      ...logPath ? { logPath } : {}
+    });
+  }
+  return out;
+}
 function baselineMisconfiguredChecks(ctx, report2) {
   const out = [];
   for (const failure of report2.failures) {
@@ -54333,14 +54353,34 @@ function baselineEnvironmentBlockReason(input) {
     `Then orbit resume ${runId} runs the baseline again; a changed check definition needs a new run, because this run's policy is frozen`
   ]);
 }
+function incompleteBaseSentence(baseRevision, failures) {
+  return `${named(failures)} did not complete on the base revision ${baseRevision.slice(0, 12)}: ${evidenceOf(failures)}`;
+}
+function incompleteExceptionSentence(failures) {
+  return `${failures.length > 1 ? "They are" : "It is"} not recorded as a pre-existing failure and no baseline exception is offered: the check did not produce a result, so accepting its failure would let a run pass with a check that did not complete`;
+}
+function baselineIncompleteBlockReason(input) {
+  const { runId, failures } = input;
+  const amended = (input.amended ?? []).filter((a) => failures.some((f) => f.checkId === a.checkId));
+  return joinSentences([
+    incompleteBaseSentence(input.baseRevision, failures),
+    ...amended.length > 0 ? [amendmentSentence(amended)] : [],
+    incompleteExceptionSentence(failures),
+    `Then orbit resume ${runId} runs the baseline again; a changed check definition needs a new run, because this run's policy is frozen`
+  ]);
+}
 function commandFix(checks) {
   const keys = checks.map((m) => m.configKey).join(", ");
   return `Fix: correct ${keys} in .orbit/config.yaml so that ${checks.length > 1 ? "each runs" : "it runs"} as written from the check's cwd in a clean checkout of the base revision, and start a new run`;
 }
 function baselineBlockReason(input) {
   const { environment, misconfigured } = input;
-  if (misconfigured.length === 0) return baselineEnvironmentBlockReason({ runId: input.runId, baseRevision: input.baseRevision, failures: environment, ...input.amended ? { amended: input.amended } : {} });
-  const amended = (input.amended ?? []).filter((a) => misconfigured.some((m) => m.checkId === a.checkId) || environment.some((f) => f.checkId === a.checkId));
+  const incomplete = input.incomplete ?? [];
+  if (misconfigured.length === 0 && incomplete.length === 0) return baselineEnvironmentBlockReason({ runId: input.runId, baseRevision: input.baseRevision, failures: environment, ...input.amended ? { amended: input.amended } : {} });
+  if (misconfigured.length === 0 && environment.length === 0) return baselineIncompleteBlockReason({ runId: input.runId, baseRevision: input.baseRevision, failures: incomplete, ...input.amended ? { amended: input.amended } : {} });
+  const amended = (input.amended ?? []).filter(
+    (a) => misconfigured.some((m) => m.checkId === a.checkId) || environment.some((f) => f.checkId === a.checkId) || incomplete.some((f) => f.checkId === a.checkId)
+  );
   const sentences = [
     `${named(misconfigured)} ${misconfigured.length > 1 ? "are" : "is"} misconfigured, not a pre-existing failure: on the base revision ${input.baseRevision.slice(0, 12)} the tool rejected the command line the check runs before it ran anything of the repository: ${evidenceOf(misconfigured)}`,
     ...amended.length > 0 ? [amendmentSentence(amended)] : [],
@@ -54349,6 +54389,10 @@ function baselineBlockReason(input) {
   if (environment.length > 0) {
     sentences.push(`${named(environment)} could not run on the base revision either, and the output shows an environment cause: ${evidenceOf(environment)}`);
     sentences.push(`Fix for ${environment.length > 1 ? "them" : "it"}: ${environmentFix(environment) ?? ENVIRONMENT_FALLBACK_FIX}`);
+  }
+  if (incomplete.length > 0) {
+    sentences.push(incompleteBaseSentence(input.baseRevision, incomplete));
+    sentences.push(incompleteExceptionSentence(incomplete));
   }
   sentences.push(commandFix(misconfigured));
   return joinSentences(sentences);
@@ -55240,11 +55284,11 @@ async function preflightStep(ctx) {
   const after = await safePoint(ctx);
   if (after) return after;
   const found = settled ?? classifyBaseline(ctx, baseline.report, baselineDir);
-  const { report: classified, misconfigured, missingTargets, environment: notRun } = found;
+  const { report: classified, misconfigured, missingTargets, environment: notRun, incomplete } = found;
   const bg = baselineGate(classified);
   recordGate(ctx, bg);
   if (!bg.passed && bg.status === "fail") return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}`, { outcome: { gate: bg } });
-  if (misconfigured.length > 0 || notRun.length > 0) return blockOnBaseline(ctx, classified, { environment: notRun, misconfigured });
+  if (misconfigured.length > 0 || notRun.length > 0 || incomplete.length > 0) return blockOnBaseline(ctx, classified, { environment: notRun, incomplete, misconfigured });
   const { preExisting } = askAboutBaseFailures(ctx, found, { baseRevision: head, key: "" });
   const worktree = await ensureWorktree(repo, join52(wtRoot, "implementer"), head);
   const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
@@ -55260,14 +55304,16 @@ function classifyBaseline(ctx, report2, checkoutDir, only = null) {
   const misconfigured = commandErrors.filter((m) => m.kind === "argument");
   const missingTargets = commandErrors.filter((m) => m.kind === "missing-target");
   const environment = baselineEnvironmentFailures(ctx, judged, checkoutDir).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId));
-  const marked = classifiedBaseline(report2, environment, misconfigured, missingTargets);
-  const incomplete = only === null && (environment.length > 0 || misconfigured.length > 0);
-  return { report: incomplete ? { ...marked, complete: false } : marked, misconfigured, missingTargets, environment };
+  const incomplete = baselineIncompleteChecks(ctx, judged).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId) && !environment.some((e) => e.checkId === f.checkId));
+  const marked = classifiedBaseline(report2, environment, incomplete, misconfigured, missingTargets);
+  const hasIncomplete = only === null && (environment.length > 0 || incomplete.length > 0 || misconfigured.length > 0);
+  return { report: hasIncomplete ? { ...marked, complete: false } : marked, misconfigured, missingTargets, environment, incomplete };
 }
-function classifiedBaseline(report2, environment, misconfigured, missingTargets) {
-  if (environment.length === 0 && misconfigured.length === 0 && missingTargets.length === 0) return report2;
+function classifiedBaseline(report2, environment, incomplete, misconfigured, missingTargets) {
+  if (environment.length === 0 && incomplete.length === 0 && misconfigured.length === 0 && missingTargets.length === 0) return report2;
   const marks = new Map([
     ...environment.map((f) => [f.checkId, { classification: "environment", signals: f.signals }]),
+    ...incomplete.map((f) => [f.checkId, { classification: "incomplete" }]),
     ...misconfigured.map((m) => [m.checkId, { classification: "misconfigured" }]),
     ...missingTargets.map((m) => [m.checkId, { classification: "missing-target" }])
   ]);
@@ -55311,17 +55357,25 @@ function askAboutBaseFailures(ctx, found, opts) {
   return { preExisting };
 }
 async function blockOnBaseline(ctx, report2, blocked, amendment = null) {
-  const { environment, misconfigured } = blocked;
+  const { environment, incomplete, misconfigured } = blocked;
   atomicWriteJson(join52(ctx.runDir, BASELINE_FILE2), amendment ? report2 : { ...report2, complete: false });
-  const reason = baselineBlockReason({ runId: ctx.run.id, baseRevision: report2.baseRevision, environment, misconfigured, ...amendment ? { amended: amendment.checks } : {} });
+  const reason = baselineBlockReason({ runId: ctx.run.id, baseRevision: report2.baseRevision, environment, incomplete, misconfigured, ...amendment ? { amended: amendment.checks } : {} });
   const environmentChecks = environment.map((f) => ({ check_id: f.checkId, classification: "environment", signals: f.signals, cause: f.cause, evidence_lines: f.lines, ...f.logPath ? { log_path: f.logPath } : {} }));
+  const incompleteChecks = incomplete.map((f) => ({ check_id: f.checkId, classification: "incomplete", cause: f.cause, evidence_lines: f.lines, ...f.logPath ? { log_path: f.logPath } : {} }));
   const misconfiguredChecks = misconfigured.map((m) => misconfiguredRecord(m));
   const at = amendment ? `amended-${amendment.at}` : String(report2.recordedAt);
   const stage = amendment ? { stage: amendment.stage } : {};
   if (misconfiguredChecks.length > 0) decide2(ctx, { id: `dec-${ctx.run.id}-baseline-misconfigured-${at}`, kind: "baseline.check-misconfigured", summary: reason, data: { base_revision: report2.baseRevision, ...stage, checks: misconfiguredChecks } });
   if (environmentChecks.length > 0) decide2(ctx, { id: `dec-${ctx.run.id}-baseline-environment-${at}`, kind: "baseline.environment-failure", summary: reason, data: { base_revision: report2.baseRevision, ...stage, checks: environmentChecks } });
+  if (incompleteChecks.length > 0) decide2(ctx, { id: `dec-${ctx.run.id}-baseline-incomplete-${at}`, kind: "baseline.incomplete-check", summary: reason, data: { base_revision: report2.baseRevision, ...stage, checks: incompleteChecks } });
   return finishRun(ctx, "BLOCKED", reason, {
-    outcome: { base_revision: report2.baseRevision, ...stage, ...environmentChecks.length > 0 ? { environment_failures: environmentChecks } : {}, ...misconfiguredChecks.length > 0 ? { misconfigured_checks: misconfiguredChecks } : {} }
+    outcome: {
+      base_revision: report2.baseRevision,
+      ...stage,
+      ...environmentChecks.length > 0 ? { environment_failures: environmentChecks } : {},
+      ...incompleteChecks.length > 0 ? { incomplete_checks: incompleteChecks } : {},
+      ...misconfiguredChecks.length > 0 ? { misconfigured_checks: misconfiguredChecks } : {}
+    }
   });
 }
 function recordGate(ctx, g) {
@@ -55484,7 +55538,9 @@ function checksToAmend(ctx, contract, report2, judged) {
   const covered = new Set(report2.checkIds);
   const latest = /* @__PURE__ */ new Map();
   for (const a of report2.amendments ?? []) for (const id of a.checkIds) latest.set(id, a);
-  const blocked = new Set(report2.failures.filter((f) => latest.has(f.checkId) && (f.classification === "environment" || f.classification === "misconfigured")).map((f) => f.checkId));
+  const blocked = new Set(
+    report2.failures.filter((f) => latest.has(f.checkId) && (f.classification === "environment" || f.classification === "incomplete" || f.classification === "misconfigured")).map((f) => f.checkId)
+  );
   const unjudged = new Set([...latest].filter(([, a]) => !judged(a)).map(([id]) => id));
   return [...new Set(contract.required_check_ids)].filter((id) => ctx.snapshot.config.checks[id]?.kind === "command" && (!covered.has(id) || blocked.has(id) || unjudged.has(id))).sort();
 }
@@ -55548,7 +55604,9 @@ async function remeasureRebasedBaseline(ctx, contract) {
   if (!gate.passed && gate.status === "fail") {
     return finishRun(ctx, "BLOCKED", `baseline gate: ${gate.reasons.join("; ")}, so the rebased candidate cannot be judged against ${baseRevision.slice(0, 12)}`, { outcome: { gate, stage: ctx.run.state } });
   }
-  if (found.misconfigured.length > 0 || found.environment.length > 0) return blockOnBaseline(ctx, classified, { environment: found.environment, misconfigured: found.misconfigured });
+  if (found.misconfigured.length > 0 || found.environment.length > 0 || found.incomplete.length > 0) {
+    return blockOnBaseline(ctx, classified, { environment: found.environment, incomplete: found.incomplete, misconfigured: found.misconfigured });
+  }
   const only = new Set(ids);
   askAboutBaseFailures(ctx, found, { baseRevision, key: `rebased-${baseRevision}`, only });
   settleExpectedFlips(ctx, contract);
@@ -55616,10 +55674,10 @@ async function runAmendment(ctx, contract, ids, baseRevision) {
     recordGate(ctx, bg);
     return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}, so ${ids.length > 1 ? "checks" : "check"} ${ids.join(", ")}, which the contract requires, could not be run there`, { outcome: { gate: bg, stage } });
   }
-  const { misconfigured, environment } = found;
-  if (misconfigured.length > 0 || environment.length > 0) {
+  const { misconfigured, environment, incomplete } = found;
+  if (misconfigured.length > 0 || environment.length > 0 || incomplete.length > 0) {
     judged();
-    return blockOnBaseline(ctx, classified, { environment, misconfigured }, { at, stage, checks: amended });
+    return blockOnBaseline(ctx, classified, { environment, incomplete, misconfigured }, { at, stage, checks: amended });
   }
   askAboutBaseFailures(ctx, found, { baseRevision, key: `amended-${at}`, only });
   settleExpectedFlips(ctx, contract);
@@ -67873,6 +67931,7 @@ var init_timeline = __esm({
     SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
     BASELINE_CLASSIFICATIONS = {
       "baseline.environment-failure": "an environment failure",
+      "baseline.incomplete-check": "a check that did not complete",
       "baseline.check-misconfigured": "a misconfigured check",
       "baseline.missing-target": "a missing target"
     };

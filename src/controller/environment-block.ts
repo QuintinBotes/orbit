@@ -11,12 +11,13 @@
  * compiled or tested anything (issue #10, evidence/environment-failure.ts classifyCouldNotRun).
  *
  * PREFLIGHT applies the same judgement to the base revision (baselineEnvironmentFailures): a check that could not run
- * there is not a pre-existing failure, so the run blocks before any attempt and no baseline exception is offered. It
- * blocks the same way on a misconfigured check (baselineMisconfiguredChecks, issue #23): one whose tool rejected the
- * command line the policy gives it. A check whose command names something that does not exist yet (a missing target)
- * is left to CONTRACTING, which expects it to flip when the contract names it and blocks on it as misconfigured when the
- * contract does not (steps/baseline-questions.ts). Only a failure of the repository's code is a pre-existing failure
- * (docs/decisions/0010-base-failure-classification.md).
+ * there is not a pre-existing failure, so the run blocks before any attempt and no baseline exception is offered. A
+ * base-revision ERROR that has no established environment cause blocks too: it did not produce a result to except.
+ * It blocks the same way on a misconfigured check (baselineMisconfiguredChecks, issue #23): one whose tool rejected
+ * the command line the policy gives it. A check whose command names something that does not exist yet (a missing
+ * target) is left to CONTRACTING, which expects it to flip when the contract names it and blocks on it as misconfigured
+ * when the contract does not (steps/baseline-questions.ts). Only a failure of the repository's code is a pre-existing
+ * failure (docs/decisions/0010-base-failure-classification.md).
  *
  * Every reason here is a run of sentences, each starting with a capital letter, and names each check once: checks that
  * share a cause and its evidence lines are listed together before them.
@@ -69,6 +70,14 @@ export type BlockedCheck = FailureWithCommand & {
   /** The log that shows the cause, when there is one. */
   logPath?: string;
 };
+
+/** A base-revision check that ended in ERROR before it produced a result, with the runner's cause and log. */
+export interface IncompleteBaselineCheck {
+  checkId: string;
+  cause: string;
+  lines: readonly string[];
+  logPath?: string;
+}
 
 /** A mandatory check whose tool rejected its command, or found nothing where it points, on the base revision (evidence/check-misconfigured.ts), with its log. */
 export type MisconfiguredBlock = MisconfiguredCheck & {
@@ -371,6 +380,31 @@ export function baselineEnvironmentFailures(ctx: RunContext, report: BaselineRep
 }
 
 /**
+ * The base-revision checks that ended ERROR. A start failure or a known environment failure is classified first by
+ * `baselineEnvironmentFailures`; the caller removes those more specific cases. Every remaining ERROR is incomplete,
+ * regardless of the command or its output, because the runner has no completed check result to compare or except.
+ */
+export function baselineIncompleteChecks(ctx: RunContext, report: BaselineReport): IncompleteBaselineCheck[] {
+  const out: IncompleteBaselineCheck[] = [];
+  for (const failure of report.failures) {
+    const { output, logPath, row } = baselineOutput(ctx, report, failure);
+    const entry = report.checks.find((c) => c.checkId === failure.checkId);
+    if (row?.status !== 'ERROR' && entry?.status !== 'ERROR') continue;
+    // Prefer the runner's durable note. If it is unavailable, retain the first recorded line as the cause without
+    // interpreting the check's language or tool.
+    const note = /\[orbit\][^\n]*\bstatus=ERROR\b[^\n]*\bnote=([^\n]+)/.exec(output)?.[1]?.trim();
+    const line = output.split(/\r?\n/).map((value) => value.trim()).find((value) => value.length > 0);
+    out.push({
+      checkId: failure.checkId,
+      cause: 'the runner recorded ERROR before the check produced a result',
+      lines: note ? [note] : line ? [line.slice(0, 200)] : [],
+      ...(logPath ? { logPath } : {}),
+    });
+  }
+  return out;
+}
+
+/**
  * The mandatory checks that failed on the base revision with a usage error from their own direct invocation of a tool
  * (issue #23, evidence/check-misconfigured.ts): an argument error (kind `argument`, a misconfigured check) or a missing
  * target (kind `missing-target`, something the command names that does not exist on the base revision). Judged against
@@ -442,6 +476,26 @@ export function baselineEnvironmentBlockReason(input: { runId: string; baseRevis
   ]);
 }
 
+function incompleteBaseSentence(baseRevision: string, failures: readonly IncompleteBaselineCheck[]): string {
+  return `${named(failures)} did not complete on the base revision ${baseRevision.slice(0, 12)}: ${evidenceOf(failures)}`;
+}
+
+function incompleteExceptionSentence(failures: readonly IncompleteBaselineCheck[]): string {
+  return `${failures.length > 1 ? 'They are' : 'It is'} not recorded as a pre-existing failure and no baseline exception is offered: the check did not produce a result, so accepting its failure would let a run pass with a check that did not complete`;
+}
+
+/** The outcome reason of a run blocked because a base-revision check ended ERROR without completing. */
+export function baselineIncompleteBlockReason(input: { runId: string; baseRevision: string; failures: readonly IncompleteBaselineCheck[]; amended?: readonly AmendedCheck[] }): string {
+  const { runId, failures } = input;
+  const amended = (input.amended ?? []).filter((a) => failures.some((f) => f.checkId === a.checkId));
+  return joinSentences([
+    incompleteBaseSentence(input.baseRevision, failures),
+    ...(amended.length > 0 ? [amendmentSentence(amended)] : []),
+    incompleteExceptionSentence(failures),
+    `Then orbit resume ${runId} runs the baseline again; a changed check definition needs a new run, because this run's policy is frozen`,
+  ]);
+}
+
 /** The fix for a check whose command is wrong, the same at PREFLIGHT and at CONTRACTING: the command lives in the run's frozen policy. */
 function commandFix(checks: readonly MisconfiguredBlock[]): string {
   const keys = checks.map((m) => m.configKey).join(', ');
@@ -450,15 +504,19 @@ function commandFix(checks: readonly MisconfiguredBlock[]): string {
 
 /**
  * The outcome reason of a run blocked at PREFLIGHT on its baseline: the misconfigured checks first (each with the tool's
- * error line and the config key that holds its command), then any that could not run, and why no exception is offered.
- * With nothing misconfigured it is the environment reason. A misconfigured check's command lives in the run's frozen
- * policy, so the reason starts with "Check X is misconfigured" and finishRun adds the frozen-policy advice
- * (steps/common.ts frozenPolicyCause).
+ * error line and the config key that holds its command), then any that could not run or did not complete, and why no
+ * exception is offered. With nothing misconfigured it is the environment or incomplete-check reason. A misconfigured
+ * check's command lives in the run's frozen policy, so the reason starts with "Check X is misconfigured" and finishRun
+ * adds the frozen-policy advice (steps/common.ts frozenPolicyCause).
  */
-export function baselineBlockReason(input: { runId: string; baseRevision: string; environment: readonly BlockedCheck[]; misconfigured: readonly MisconfiguredBlock[]; amended?: readonly AmendedCheck[] }): string {
+export function baselineBlockReason(input: { runId: string; baseRevision: string; environment: readonly BlockedCheck[]; incomplete?: readonly IncompleteBaselineCheck[]; misconfigured: readonly MisconfiguredBlock[]; amended?: readonly AmendedCheck[] }): string {
   const { environment, misconfigured } = input;
-  if (misconfigured.length === 0) return baselineEnvironmentBlockReason({ runId: input.runId, baseRevision: input.baseRevision, failures: environment, ...(input.amended ? { amended: input.amended } : {}) });
-  const amended = (input.amended ?? []).filter((a) => misconfigured.some((m) => m.checkId === a.checkId) || environment.some((f) => f.checkId === a.checkId));
+  const incomplete = input.incomplete ?? [];
+  if (misconfigured.length === 0 && incomplete.length === 0) return baselineEnvironmentBlockReason({ runId: input.runId, baseRevision: input.baseRevision, failures: environment, ...(input.amended ? { amended: input.amended } : {}) });
+  if (misconfigured.length === 0 && environment.length === 0) return baselineIncompleteBlockReason({ runId: input.runId, baseRevision: input.baseRevision, failures: incomplete, ...(input.amended ? { amended: input.amended } : {}) });
+  const amended = (input.amended ?? []).filter(
+    (a) => misconfigured.some((m) => m.checkId === a.checkId) || environment.some((f) => f.checkId === a.checkId) || incomplete.some((f) => f.checkId === a.checkId),
+  );
   const sentences = [
     `${named(misconfigured)} ${misconfigured.length > 1 ? 'are' : 'is'} misconfigured, not a pre-existing failure: on the base revision ${input.baseRevision.slice(0, 12)} the tool rejected the command line the check runs before it ran anything of the repository: ${evidenceOf(misconfigured)}`,
     ...(amended.length > 0 ? [amendmentSentence(amended)] : []),
@@ -467,6 +525,10 @@ export function baselineBlockReason(input: { runId: string; baseRevision: string
   if (environment.length > 0) {
     sentences.push(`${named(environment)} could not run on the base revision either, and the output shows an environment cause: ${evidenceOf(environment)}`);
     sentences.push(`Fix for ${environment.length > 1 ? 'them' : 'it'}: ${environmentFix(environment) ?? ENVIRONMENT_FALLBACK_FIX}`);
+  }
+  if (incomplete.length > 0) {
+    sentences.push(incompleteBaseSentence(input.baseRevision, incomplete));
+    sentences.push(incompleteExceptionSentence(incomplete));
   }
   sentences.push(commandFix(misconfigured));
   return joinSentences(sentences);

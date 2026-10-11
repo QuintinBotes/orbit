@@ -424,11 +424,12 @@ async function auditCandidate(ctx: RunnerContext & { candidate: Candidate; regis
 
 /**
  * Why a check that failed on the base revision is not a pre-existing failure (docs/decisions/0010-base-failure-classification.md):
- * the environment stopped it before it ran anything of the repository (evidence/environment-failure.ts), its tool
- * rejected the command line the check runs (`misconfigured`), or its command names something the base revision does not
- * have (`missing-target`, evidence/check-misconfigured.ts), which the goal may create.
+ * the environment stopped it before it ran anything of the repository (evidence/environment-failure.ts), it ended in
+ * `ERROR` without producing a result (`incomplete`), its tool rejected the command line the check runs
+ * (`misconfigured`), or its command names something the base revision does not have (`missing-target`,
+ * evidence/check-misconfigured.ts), which the goal may create.
  */
-export type BaseFailureClassification = 'environment' | 'misconfigured' | 'missing-target';
+export type BaseFailureClassification = 'environment' | 'incomplete' | 'misconfigured' | 'missing-target';
 
 export interface BaselineCheckEntry {
   checkId: string;
@@ -456,9 +457,9 @@ export interface BaselineReport {
   auditNotes?: string[];
   checks: BaselineCheckEntry[];
   /**
-   * Mandatory checks that already fail (or time out) on the base revision. PREFLIGHT marks a failure it found was not
-   * the repository's code with its classification (docs/decisions/0010-base-failure-classification.md); no baseline
-   * exception is ever applied to one so marked. An unmarked failure is a pre-existing failure.
+   * Mandatory checks that already fail, time out or end in ERROR on the base revision. PREFLIGHT marks a failure it
+   * found was not the repository's code with its classification (docs/decisions/0010-base-failure-classification.md);
+   * no baseline exception is ever applied to one so marked. An unmarked failure is a pre-existing failure.
    */
   failures: {
     checkId: string;
