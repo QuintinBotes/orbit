@@ -64,9 +64,9 @@ export function installDependencies(dir: string, opts: { allowNetwork?: boolean 
   return 'linked';
 }
 
-/** True when this machine has the Chromium that the installed Playwright drives. */
+/** True when the installed Playwright can launch headless Chromium, the binary the journeys use (the headless shell, not the full browser). */
 export function chromiumAvailable(dir: string): boolean {
-  const script = "const { chromium } = require('@playwright/test'); process.exit(require('fs').existsSync(chromium.executablePath()) ? 0 : 1)";
+  const script = "require('@playwright/test').chromium.launch().then((b) => b.close()).then(() => process.exit(0), () => process.exit(1))";
   return run(dir, process.execPath, ['-e', script]).ok;
 }
 

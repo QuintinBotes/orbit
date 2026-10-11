@@ -74,10 +74,10 @@ const templateRoot = (): string => {
   return dir;
 };
 
-/** True when Playwright's Chromium is installed for the example's Playwright. */
+/** True when the example's Playwright can launch headless Chromium, the binary its journeys use (the headless shell, not the full browser). */
 export function chromiumAvailable(): boolean {
   if (!READY) return false;
-  const script = "const { chromium } = require('@playwright/test'); process.exit(require('fs').existsSync(chromium.executablePath()) ? 0 : 1)";
+  const script = "require('@playwright/test').chromium.launch().then((b) => b.close()).then(() => process.exit(0), () => process.exit(1))";
   return spawnSync(process.execPath, ['-e', script], { cwd: templateRoot(), env: cleanEnv() }).status === 0;
 }
 
