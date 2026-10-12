@@ -103,8 +103,10 @@ describe('prepareCheckHome', () => {
 describe('a check whose MSBuild node the sandbox refused its pipe', () => {
   const FAILURE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../fixtures/environment', 'msbuild-node-pipe-denied.failure.txt'), 'utf8');
   /** A check that leaves MSBuild's crash report of a denied node where MSBuild writes it, then waits as MSBuild would. */
-  const deniedNode = (after = 'setInterval(() => {}, 1000)') =>
-    `const fs=require("fs"),path=require("path");fs.writeFileSync(path.join(process.env.ORBIT_ARTIFACTS_DIR,"pid"),String(process.pid));const d=path.join(process.env.TMPDIR,"MSBuildTempacme");fs.mkdirSync(d,{recursive:true});fs.writeFileSync(path.join(d,"MSBuild_pid-4242_9a2a6b744ce84a9a.failure.txt"),${JSON.stringify(FAILURE)});console.log("  Determining projects to restore...");${after}`;
+  // `before` runs ahead of the denial record: a signal handler installed after it can lose the race with the runner,
+  // which stops the check as soon as it sees the record (it did once on a loaded CI runner).
+  const deniedNode = (after = 'setInterval(() => {}, 1000)', before = '') =>
+    `${before}const fs=require("fs"),path=require("path");fs.writeFileSync(path.join(process.env.ORBIT_ARTIFACTS_DIR,"pid"),String(process.pid));const d=path.join(process.env.TMPDIR,"MSBuildTempacme");fs.mkdirSync(d,{recursive:true});fs.writeFileSync(path.join(d,"MSBuild_pid-4242_9a2a6b744ce84a9a.failure.txt"),${JSON.stringify(FAILURE)});console.log("  Determining projects to restore...");${after}`;
   /** A check that records the denial only when the test releases it, then exits 0 as the sandbox wrapper can on SIGTERM. */
   const deniedNodeOnSignal = () =>
     `const fs=require("fs"),path=require("path");const deny=()=>{const d=path.join(process.env.TMPDIR,"MSBuildTempacme");fs.mkdirSync(d,{recursive:true});fs.writeFileSync(path.join(d,"MSBuild_pid-4242_9a2a6b744ce84a9a.failure.txt"),${JSON.stringify(FAILURE)});};process.on("SIGTERM",()=>{deny();process.exit(0)});fs.writeFileSync(path.join(process.env.ORBIT_ARTIFACTS_DIR,"ready"),"");setInterval(()=>{},1000)`;
@@ -146,7 +148,7 @@ describe('a check whose MSBuild node the sandbox refused its pipe', () => {
   }, 60_000);
 
   it('is never recorded as passed, even when the stopped command exits 0 (srt does on SIGTERM)', async () => {
-    const e = await runnerEnv([nodeCheck('build', deniedNode('process.on("SIGTERM",()=>process.exit(0));setInterval(()=>{},1000)'), { timeout_seconds: 120 })]);
+    const e = await runnerEnv([nodeCheck('build', deniedNode('setInterval(()=>{},1000)', 'process.on("SIGTERM",()=>process.exit(0));'), { timeout_seconds: 120 })]);
     envs.push(e);
     const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['build'] });
     expect(r!.status).toBe('FAILED');
