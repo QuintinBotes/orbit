@@ -756,10 +756,11 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
           stopped = { cause: 'environment', reason: (id) => `${id} was not probed: the locked install (${def.id}) on the probe tree shows an environment cause (${installSignals.join(', ')})${last?.log ? ` (${last.log})` : ''}` };
           break;
         }
-        // A passing install whose log was cut short may have dropped the line that shows such a cause: the tree it built
-        // cannot be trusted to produce evidence, so the probe stops as unscanned (never failed-before).
-        if (refused === null && last?.status === 'PASSED' && last.unscanned !== undefined) {
-          stopped = { cause: 'unscanned', reason: (id) => `${id} was not probed: the log of the locked install (${def.id}) on the probe tree could not be read whole (${last.unscanned}), so an environment cause cannot be ruled out${last.log ? ` (${last.log})` : ''}` };
+        // A passing install with any attempt's log cut short may have dropped the line that shows such a cause: the tree it
+        // built cannot be trusted to produce evidence, so the probe stops as unscanned (never failed-before).
+        const cut = attempts.find((a) => a.unscanned !== undefined);
+        if (refused === null && last?.status === 'PASSED' && cut !== undefined) {
+          stopped = { cause: 'unscanned', reason: (id) => `${id} was not probed: the log of the locked install (${def.id}, attempt ${cut.attempt}) on the probe tree could not be read whole (${cut.unscanned}), so an environment cause cannot be ruled out${cut.log ? ` (${cut.log})` : ''}` };
           break;
         }
         // Otherwise the install is judged by its exit status: a retry that passes after a flaky failure built the tree.

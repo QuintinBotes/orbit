@@ -3,7 +3,8 @@
 // one decision per probe, reuse for the same tree, and every way the probe ends not established: its time bound, the
 // run's remaining wall time, a refused tree, a failed install, an environment signal, a cancelled run, a crash.
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { systemClock } from '../../../src/core/clock.ts';
@@ -367,6 +368,16 @@ describe('third review: every attempt\'s log is read, and the install keeps to t
     const probed = await runFailBeforeProbe(e.request({ runner: { ...e.request().runner, maxOutputBytes: 1000 } }));
     expect(probed.checks[0]).toMatchObject({ outcome: 'not-established', cause: 'unscanned' });
     expect(probed.checks[0]!.outcome).not.toBe('failed-before');
+  }, 120_000);
+
+  it('does not probe after a passing retry when an earlier install attempt\'s log was cut short', async () => {
+    // The first attempt fails with its denial past the output cap; the retry passes with a complete, clean log.
+    const marker = join(mkdtempSync(join(tmpdir(), 'orbit-fb-install-')), 'tried');
+    const script = `if [ -e '${marker}' ]; then exit 0; fi; touch '${marker}'; head -c 1500 /dev/zero | tr '\\0' x; echo; echo 'curl: (56) CONNECT tunnel failed, response 403; Connection blocked by network allowlist'; exit 1`;
+    const e = await env([unit()], addMul, (c) => (c.dependencies.install_command = ['sh', '-c', script]));
+    const probed = await runFailBeforeProbe(e.request({ runner: { ...e.request().runner, maxOutputBytes: 1000 } }));
+    expect(listProbeAttempts(e.run.db, e.run.runId).map((a) => [a.checkId, a.status])).toEqual([['orbit-install', 'FAILED'], ['orbit-install', 'PASSED']]);
+    expect(probed.checks[0]).toMatchObject({ outcome: 'not-established', cause: 'unscanned' });
   }, 120_000);
 
   it('keeps an install that failed as the install\'s cause, never accepted, when its retry is cut short by the bound', async () => {

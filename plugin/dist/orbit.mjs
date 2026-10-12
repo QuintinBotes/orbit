@@ -38882,8 +38882,9 @@ tree: ${probeTree}
           stopped = { cause: "environment", reason: (id) => `${id} was not probed: the locked install (${def.id}) on the probe tree shows an environment cause (${installSignals.join(", ")})${last?.log ? ` (${last.log})` : ""}` };
           break;
         }
-        if (refused === null && last?.status === "PASSED" && last.unscanned !== void 0) {
-          stopped = { cause: "unscanned", reason: (id) => `${id} was not probed: the log of the locked install (${def.id}) on the probe tree could not be read whole (${last.unscanned}), so an environment cause cannot be ruled out${last.log ? ` (${last.log})` : ""}` };
+        const cut = attempts.find((a) => a.unscanned !== void 0);
+        if (refused === null && last?.status === "PASSED" && cut !== void 0) {
+          stopped = { cause: "unscanned", reason: (id) => `${id} was not probed: the log of the locked install (${def.id}, attempt ${cut.attempt}) on the probe tree could not be read whole (${cut.unscanned}), so an environment cause cannot be ruled out${cut.log ? ` (${cut.log})` : ""}` };
           break;
         }
         if (refused === null && last?.status === "PASSED") continue;
