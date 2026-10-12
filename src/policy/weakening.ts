@@ -135,14 +135,15 @@ const TAUTOLOGY = /expect\((true|false|1|0|null)\)\.(toBe|toEqual)\(\1\)|^\s*ass
 const LINT_SUPPRESS = /eslint-disable|@ts-(ignore|nocheck|expect-error)|tslint:disable|biome-ignore|oxlint-disable|#\s*noqa\b|#\s*flake8:\s*noqa\b|#\s*type:\s*ignore|#\s*pylint:\s*disable|#\s*pyright:\s*ignore|\/\/\s*nolint\b|#\[allow\(|@SuppressWarnings|(istanbul|c8|v8)\s+ignore|#\s*pragma:?\s*no\s*cover|\bnosec\b|NOLINT|rubocop:disable|stylelint-disable/;
 
 /**
- * Lint rules about where an import sits, its order, or whether it is used or typed. Silencing one of them on an import
- * line changes no test's outcome. Every other rule can: a review of #64 silenced \`jest/no-mocks-import\` to bring in an
+ * Lint rules that report on one import line alone: where it sits, its order, or whether it is used or typed. Silencing
+ * one of them there changes no test's outcome. A rule that reports on a whole import block (Ruff I001,
+ * simple-import-sort) is left out, since its directive then reorders imports a test may depend on. Every other rule can: a review of #64 silenced \`jest/no-mocks-import\` to bring in an
  * assertion helper that does nothing. Pylint and Go are left out, since their directives can act beyond the line, and
  * so is `# type: ignore[...]`, whose rule list Pyright ignores (it silences everything on the line).
  */
 const IMPORT_STYLE_RULES = new Set([
-  'E401', 'E402', 'F401', 'I001', // flake8, ruff (not I002: a required import can be a guard the repository insists on)
-  'import/first', 'import/order', 'import/newline-after-import', 'simple-import-sort/imports', 'no-unused-vars', '@typescript-eslint/no-unused-vars', '@typescript-eslint/no-require-imports', '@typescript-eslint/no-var-requires', // ESLint, oxlint
+  'E401', 'E402', 'F401', // flake8, ruff (not I001 or I002: they act on the whole import block, and a required import can be a guard)
+  'import/first', 'import/order', 'import/newline-after-import', 'no-unused-vars', '@typescript-eslint/no-unused-vars', '@typescript-eslint/no-require-imports', '@typescript-eslint/no-var-requires', // ESLint, oxlint
   'reportMissingImports', 'reportMissingModuleSource', 'reportMissingTypeStubs', // pyright
 ]);
 

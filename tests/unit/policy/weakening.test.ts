@@ -202,6 +202,9 @@ describe('detectWeakening', () => {
     ['tests/test_check.py', ['import style_check  # noqa: E402, B101']],
     ['tests/new.test.ts', ["import './a'; // eslint-disable-line import/first -- eslint-disable"]],
     ['pkg/new_test.go', ['import _ "embed" //nolint:revive']],
+    // Eighth review: Ruff's I001 acts on the whole import block, so it can keep a helper captured before its guard runs.
+    ['tests/test_oracle.py', ['from z_oracle import check  # noqa: I001', 'import a_guard', 'def test_oracle():', '    assert a_guard.installed; check(False)']],
+    ['tests/oracle.test.ts', ["import { check } from './z-oracle'; // eslint-disable-line simple-import-sort/imports"]],
     // Seventh review: Ruff's I002 enforces a required import, which can be a guard that makes assertions strict.
     ['tests/test_oracle.py', ['import oracle  # noqa: I002', 'def test_oracle():', '    oracle.check(False)']],
     // Sixth review: Pyright ignores the codes in `# type: ignore[...]`, so it silences an unknown imported symbol too.

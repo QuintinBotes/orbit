@@ -32412,12 +32412,10 @@ var init_weakening = __esm({
       "E401",
       "E402",
       "F401",
-      "I001",
-      // flake8, ruff (not I002: a required import can be a guard the repository insists on)
+      // flake8, ruff (not I001 or I002: they act on the whole import block, and a required import can be a guard)
       "import/first",
       "import/order",
       "import/newline-after-import",
-      "simple-import-sort/imports",
       "no-unused-vars",
       "@typescript-eslint/no-unused-vars",
       "@typescript-eslint/no-require-imports",

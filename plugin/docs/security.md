@@ -60,8 +60,8 @@ The hooks assist. The controller's diff inspection is the gate.
 The weakening detector reports recognized lint, type-check and coverage
 suppressions added to existing files as `lint-disabled`. In a newly added
 test file, an import line whose only comment is one line-local directive
-naming import-style rules only (import position or order, an unused import,
-missing type stubs; such as `import style_check  # noqa: E402`) is not reported.
+naming only rules that report on that one line (import position or order, an
+unused import, missing type stubs; such as `import style_check  # noqa: E402`) is not reported.
 Every other suppression is: a bare directive, one naming another rule (a
 silenced `jest/no-mocks-import` can bring in an assertion helper that does
 nothing), a next-line, block or file-wide directive, or a second comment or
