@@ -4,12 +4,13 @@ import { atomicWriteJson } from '../core/fsx.ts';
 import { hashObject } from '../core/hash.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { snapshotHash } from '../policy/snapshot.ts';
-import { isTestPath, type TestLayout } from '../policy/test-files.ts';
+import type { TestLayout } from '../policy/test-files.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
+import { criterionFailBefore, newTestSupport, testChangesUnder, type CriterionTestSupport, type FailBeforeEvidence } from './fail-before.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { candidateEvidenceDir } from './runner.ts';
 import { insertEvidenceReport, type EvidenceReportRecord } from './store.ts';
-import type { Candidate, CheckResult, CheckStatus, CriterionEvidence, CriterionStatus, EvidenceReport, ScopeReport } from './types.ts';
+import type { Candidate, CheckResult, CheckStatus, CriterionEvidence, CriterionFailBefore, CriterionStatus, EvidenceReport, ScopeReport } from './types.ts';
 
 /**
  * Evidence reports (spec §11 "Completion proof"). A report is derived only
@@ -46,6 +47,11 @@ export interface BuildReportInput {
   base?: BaseComparison;
   /** The run directory: artifacts and logs are then named by their path relative to it, so a reader can open them. */
   runDir?: string;
+  /**
+   * The fail-before probe of this candidate and the policy's mode (docs/decisions/0014-fail-before.md). With `base`, every
+   * criterion gets a `fail_before` entry; absent, a caller that ran no probe, criteria get none and no mode applies.
+   */
+  failBefore?: FailBeforeEvidence;
 }
 
 export interface BaseComparison {
@@ -220,21 +226,70 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
   // What the change could have turned green (spec section 10 "green checks without proof"). A candidate whose tree is
   // the base tree changes nothing, so nothing it passes is evidence about a change. A criterion whose mapped checks
   // have no failing result on the base revision rests on a green result the base revision gives as well, unless the
-  // candidate adds or changes a test those checks can run: without one, the pass is no new evidence.
+  // candidate adds or changes a test one of those checks runs: without one, the pass is no new evidence. Test evidence
+  // is per check (ADR 0014): a test change counts for a check only when it lies under the check's directory, so a test
+  // under another criterion's check supports nothing here.
   const base = input.base;
   const noChange = base !== undefined && base.treeHash === candidate.treeHash;
   if (noChange) note(incomplete, 'the candidate makes no change: its tree is the base revision\'s tree, so no check result is evidence of a change');
+  const baseStatus = new Map((base?.checks ?? []).map((c) => [c.checkId, c.status] as const));
   // One test-file predicate for every language (ADR 0011); the change's diff counts here, since the question is
   // whether the change adds or changes a test.
-  const testChanged = base !== undefined && base.changedPaths.some((p) => isTestPath(p, base.testLayout, base.diffs?.get(p)));
-  const baseStatus = new Map((base?.checks ?? []).map((c) => [c.checkId, c.status] as const));
-  const newEvidenceGap = (ids: readonly string[]): string | null => {
+  const support = new Map<string, CriterionTestSupport>(base === undefined ? [] : newTestSupport(contract, snapshot, base).map((x) => [x.criterionId, x]));
+  const anyTestChanged = base !== undefined && testChangesUnder(base, undefined).length > 0;
+  const newEvidenceGap = (criterionId: string, ids: readonly string[]): string | null => {
     if (base === undefined) return null;
     if (noChange) return 'the candidate makes no change, so its green checks are no evidence of one';
-    if (testChanged) return null;
-    if (ids.some((id) => baseStatus.get(id) === 'FAILED' || baseStatus.get(id) === 'TIMEOUT')) return null;
+    const s = support.get(criterionId);
+    if (s !== undefined && (s.flips.length > 0 || s.withTests.length > 0)) return null;
     const passed = base.checks !== null && ids.every((id) => baseStatus.get(id) === 'PASSED');
-    return `no new evidence: ${ids.join(', ')} ${passed ? 'already passed on the base revision' : 'has no failing result recorded on the base revision'} and the candidate adds or changes no test`;
+    const already = `no new evidence: ${ids.join(', ')} ${passed ? 'already passed on the base revision' : 'has no failing result recorded on the base revision'}`;
+    if (!anyTestChanged) return `${already} and the candidate adds or changes no test`;
+    const dirs = [...new Set(ids.map((id) => (snapshot.config.checks[id]?.cwd ?? '.').replace(/^\.\/+/, '').replace(/\/+$/, '') || '.'))];
+    return `${already} and no test the candidate adds or changes lies under ${ids.length === 1 ? 'its directory' : 'their directories'} (${dirs.join(', ')})`;
+  };
+
+  // Fail-before (ADR 0014): each criterion's entry, and under `required` what its outcome decides.
+  const fb = base !== undefined ? input.failBefore : undefined;
+  const failBeforeOf = new Map<string, CriterionFailBefore>();
+  if (fb !== undefined) for (const [id, s] of support) failBeforeOf.set(id, criterionFailBefore(s, fb));
+  const restsOnNewTests = (e: CriterionFailBefore | undefined): e is CriterionFailBefore => e !== undefined && e.outcome !== 'not-applicable';
+  const advisoryGaps: string[] = [];
+  const notRun: string[] = [];
+  /**
+   * What a supported criterion's fail-before outcome changes. off: nothing (unverified says the probe did not run).
+   * advisory: nothing (one unverified line names the new tests that passed on the base or could not be probed).
+   * required: failed-before supports it, passed-before leaves it unverified, not established blocks it, unless a person
+   * accepted it without fail-before for this tree.
+   */
+  const judgeFailBefore = (id: string, e: CriterionFailBefore, status: CriterionStatus): { status: CriterionStatus; why: string | undefined } => {
+    if (e.outcome === 'not-run') {
+      notRun.push(id);
+      return { status, why: undefined };
+    }
+    if (e.mode === 'advisory') {
+      if (e.outcome === 'passed-before') advisoryGaps.push(`the new tests of ${id} pass on the base revision (${e.reason})`);
+      else if (e.outcome === 'not-established') advisoryGaps.push(`${id} could not be probed (${e.reason})`);
+      return { status, why: undefined };
+    }
+    if (e.mode !== 'required' || e.outcome === 'failed-before') return { status, why: undefined };
+    if (e.accepted) {
+      note(unverified, `fail-before: ${id} accepted without fail-before by ${e.accepted.by} (question ${e.accepted.question_id}): ${e.reason}`);
+      return { status, why: undefined };
+    }
+    if (e.outcome === 'passed-before') return { status: 'unverified', why: passedBeforeNote(e) };
+    return { status: 'blocked', why: `fail-before not established: ${e.reason}` };
+  };
+  const passedBeforeNote = (e: CriterionFailBefore): string => {
+    const probe = fb?.probe;
+    const at = probe ? probe.baseRevision.slice(0, 12) : 'the base revision';
+    const files = probe ? probe.testPaths.length : e.test_paths.count;
+    return e.checks
+      .map((c) => {
+        const log = c.attempts.at(-1)?.log;
+        return `the new tests pass on the base revision: ${c.id} passed on ${at} with ${files} test ${files === 1 ? 'file' : 'files'} overlaid${log ? ` (${log})` : ''}, so they do not show the change, or ${c.id} does not run them`;
+      })
+      .join('; ');
   };
 
   // Criteria.
@@ -268,12 +323,14 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
         status = 'unverified';
         why = 'no browser check is mapped to this UI criterion; command checks alone do not prove a user journey';
       } else {
-        const gapWhy = newEvidenceGap(ids);
+        const gapWhy = newEvidenceGap(c.id, ids);
         if (gapWhy !== null) {
           status = 'unverified';
           why = gapWhy;
         } else {
           status = 'supported';
+          const entry = failBeforeOf.get(c.id);
+          if (restsOnNewTests(entry)) ({ status, why } = judgeFailBefore(c.id, entry, status));
         }
       }
     }
@@ -283,8 +340,11 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
     } else if (status !== 'supported') {
       note(unverified, `optional criterion ${c.id}: ${status}${why ? ` (${why})` : ''}`);
     }
-    return { criterion_id: c.id, status, artifacts, ...(why ? { note: why } : {}) };
+    const entry = failBeforeOf.get(c.id);
+    return { criterion_id: c.id, status, artifacts, ...(why ? { note: why } : {}), ...(entry ? { fail_before: entry } : {}) };
   });
+  if (notRun.length > 0) note(unverified, `fail-before: the probe was not run (verification.fail_before: off), so no new test was shown to fail on the base revision: ${notRun.join(', ')}`);
+  if (advisoryGaps.length > 0) note(unverified, `fail-before (advisory): ${advisoryGaps.join('; ')}`);
 
   // UI journeys.
   const uiRows = (input.uiResults ?? []).map((u) => ({ journey: u.journey, status: u.status, artifacts: [...u.artifacts] }));
