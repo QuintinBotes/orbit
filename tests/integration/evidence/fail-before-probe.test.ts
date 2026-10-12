@@ -361,6 +361,14 @@ describe('third review: every attempt\'s log is read, and the install keeps to t
     expect(listProbeAttempts(e.run.db, e.run.runId).map((a) => [a.checkId, a.status])).toEqual([['orbit-install', 'PASSED']]);
   }, 120_000);
 
+  it('does not probe after a passing install whose log was cut short, since a dropped line may hold an environment cause', async () => {
+    const padded = ['sh', '-c', "head -c 1500 /dev/zero | tr '\\0' x; echo; echo 'curl: (56) CONNECT tunnel failed, response 403; Connection blocked by network allowlist'; exit 0"];
+    const e = await env([unit()], addMul, (c) => (c.dependencies.install_command = padded));
+    const probed = await runFailBeforeProbe(e.request({ runner: { ...e.request().runner, maxOutputBytes: 1000 } }));
+    expect(probed.checks[0]).toMatchObject({ outcome: 'not-established', cause: 'unscanned' });
+    expect(probed.checks[0]!.outcome).not.toBe('failed-before');
+  }, 120_000);
+
   it('keeps an install that failed as the install\'s cause, never accepted, when its retry is cut short by the bound', async () => {
     // The first attempt fails at about 1.2 s; the retry gets what is left of the 2 s bound and is cut short.
     const failing = [process.execPath, '-e', 'setTimeout(() => process.exit(1), 1_200)'];
