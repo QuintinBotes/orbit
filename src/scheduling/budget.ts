@@ -240,6 +240,19 @@ export class BudgetLedger {
     return this.state(SESSION_COUNTER).hard_cap;
   }
 
+  /** Record a provider's cumulative session count, idempotently. The CLI enforces the cap; observed overshoot is retained. */
+  recordSessionTurns(sessionId: string, turns: number): CounterState {
+    if (!sessionId || !Number.isSafeInteger(turns) || turns < 0) throw new OrbitError('SCHEMA_INVALID', 'session turns need a session id and a non-negative integer count');
+    const { runId } = this.bound();
+    const key = `${SESSION_COUNTER}:${sessionId}`;
+    return this.db.tx(() => {
+      const base = this.row(runId, SESSION_COUNTER);
+      this.db.run('INSERT INTO budget_counters (run_id, counter, used, allowance, hard_cap) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id, counter) DO UPDATE SET used = MAX(used, excluded.used)', runId, key, turns, base.hard_cap, base.hard_cap);
+      this.db.run('UPDATE budget_counters SET used = MAX(used, ?) WHERE run_id = ? AND counter = ?', turns, runId, SESSION_COUNTER);
+      return toState(this.row(runId, key));
+    });
+  }
+
   consume(counter: BudgetCounter, amount: number, opts: ConsumeOptions = {}): CounterState {
     assertCounter(counter);
     if (!Number.isFinite(amount) || amount < 0) throw new OrbitError('SCHEMA_INVALID', `consume ${counter}: amount must be a non-negative number`);

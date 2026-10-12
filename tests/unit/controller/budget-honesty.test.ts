@@ -10,6 +10,8 @@ import { planWorker, type WorkerRecord } from '../../../src/storage/workers.ts';
 import { accountWorker, recordSpendCap, sessionSpendCap, unfundedSessionReason } from '../../../src/controller/workers.ts';
 import { worstCaseRequestUsd } from '../../../src/routing/registry.ts';
 import { makeUnitLab, OWNER, type UnitLab } from './coverage-helpers.ts';
+import { finishWorker } from '../../../src/storage/workers.ts';
+import { buildFinalReport, renderMarkdown } from '../../../src/controller/report.ts';
 
 let lab: UnitLab;
 afterEach(() => lab?.cleanup());
@@ -37,6 +39,68 @@ function worker(role: WorkerRole, purpose: string, provider = 'claude', log?: st
 const lines = (...events: object[]): string => events.map((e) => JSON.stringify(e)).join('\n') + (events.length ? '\n' : '');
 const used = (): number => lab.ctx().ledger!.state('cost_usd').used;
 const zeroEvents = (): unknown[] => lab.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = 'budget.cost-zero-no-model'", lab.runId);
+
+describe('reported worker turns', () => {
+  const withTurns = (numTurns: number | null): TaskResult & { numTurns: number | null } => ({ ...result({ usage: usage({ costUsd: 0, costSource: 'reported' }) }), numTurns });
+
+  it.each(['claude-review', 'claude_review'])('records turn counts for supported provider alias %s', (provider) => {
+    setup(30);
+    accountWorker(lab.ctx(), worker('reviewer', 'alias-turns', provider), withTurns(6));
+    expect(lab.ctx().ledger!.state('worker_turns_per_session').used).toBe(6);
+  });
+
+  it('keeps two provider sessions for one restarted worker distinct', () => {
+    setup(30);
+    const w = worker('planner', 'restarted-turns');
+    const first = { ...withTurns(7), sessionId: 'first-session' };
+    const second = { ...withTurns(3), sessionId: 'second-session' };
+    accountWorker(lab.ctx(), w, first);
+    accountWorker(lab.ctx(), w, second);
+    accountWorker(lab.ctx(), w, second);
+    expect(lab.ctx().ledger!.snapshot().sessions.map((c) => c.used).sort()).toEqual([3, 7]);
+  });
+
+  it('leaves unavailable and invalid counts unmeasured and does not count Codex turns', () => {
+    setup(30);
+    for (const [provider, turns] of [['claude', null], ['claude', -1], ['claude', 1.5], ['codex', 8]] as const) {
+      accountWorker(lab.ctx(), worker('reviewer', `missing-${provider}-${turns}`, provider), withTurns(turns));
+    }
+    expect(lab.ctx().ledger!.snapshot().sessions).toEqual([]);
+  });
+
+  it('reports the busiest Claude session and records each session once across reattachment', () => {
+    setup(30);
+    const a = worker('planner', 'turns-a');
+    const b = worker('reviewer', 'turns-b');
+    accountWorker(lab.ctx(), a, withTurns(7));
+    accountWorker(lab.ctx(), a, withTurns(7));
+    accountWorker(lab.ctx(), b, withTurns(3));
+    const budget = lab.ctx().ledger!.snapshot();
+    expect(budget.counters.find((c) => c.counter === 'worker_turns_per_session')?.used).toBe(7);
+    expect(budget.sessions.map((c) => c.used).sort()).toEqual([3, 7]);
+    const ctx = lab.ctx();
+    const report = buildFinalReport(lab.db, ctx.run, { runDir: ctx.runDir, clock: lab.clock, snapshot: ctx.snapshot });
+    expect(renderMarkdown(report)).toContain('worker_turns_per_session: 7 maximum reported turns; Claude CLI cap 30 per session');
+  });
+
+  it('records the real reported count even when Claude reports cap plus one', () => {
+    setup(30);
+    const cap = lab.ctx().ledger!.maxTurnsPerSession();
+    accountWorker(lab.ctx(), worker('planner', 'turns-limit'), { ...withTurns(cap + 1), status: 'max_turns' });
+    expect(lab.ctx().ledger!.state('worker_turns_per_session').used).toBe(cap + 1);
+  });
+
+  it('can account a stored pre-ledger session after initialization without charging twice', () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    const w = worker('planner', 'early-turns');
+    const r = withTurns(4);
+    accountWorker(lab.ctx(), w, r);
+    finishWorker(lab.db, w.id, { state: 'FAILED', resultStatus: 'failed', result: r }, lab.clock, OWNER);
+    new BudgetLedger(lab.db, lab.clock).init(lab.runId, lab.ctx().snapshot, 'medium');
+    accountWorker(lab.ctx(), w, r);
+    expect(lab.ctx().ledger!.state('worker_turns_per_session').used).toBe(4);
+  });
+});
 
 describe('NB2: a session that never reached the model is charged nothing', () => {
   it('a failed session with no usage and an empty transcript is a measured zero, recorded as such', () => {

@@ -17,7 +17,8 @@ import { BudgetLedger } from '../../scheduling/budget.ts';
 import { RECOVERY_ATTEMPT_EVENT } from '../../recovery/budget.ts';
 import type { Coupling } from '../../scheduling/types.ts';
 import type { RunContext } from '../context.ts';
-import { routeFor, tokenEstimateFor } from '../workers.ts';
+import { accountWorkerTurns, routeFor, storedResult, tokenEstimateFor } from '../workers.ts';
+import { listWorkers } from '../../storage/workers.ts';
 import { assertContract, decide, move, note, safePoint, type StepResult } from './common.ts';
 import { amendBaseline } from './baseline-amendment.ts';
 import { storedPlan } from './contracting.ts';
@@ -95,6 +96,7 @@ export async function planningStep(ctx: RunContext): Promise<StepResult> {
 function prechargeUsage(ctx: RunContext): void {
   const ledger = ctx.ledger;
   if (!ledger) return;
+  for (const w of listWorkers(ctx.db, { runId: ctx.run.id })) accountWorkerTurns(ctx, w, storedResult(w));
   if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'budget.precharged'", ctx.run.id)) return;
   const rows = ctx.db.all<{ worker_id: string | null; provider: string; model: string | null; input_tokens: number | null; output_tokens: number | null; cache_read_tokens: number | null; cache_write_tokens: number | null; cost_usd: number | null; cost_source: string; role: string | null }>(
     'SELECT u.worker_id, u.provider, u.model, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens, u.cost_usd, u.cost_source, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ? ORDER BY u.id',

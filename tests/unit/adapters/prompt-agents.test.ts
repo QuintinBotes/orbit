@@ -45,6 +45,12 @@ describe('agents/*.md', () => {
         expect(tools).not.toContain('WebSearch');
       });
 
+      it.runIf(['planner', 'reviewer', 'inquisitor', 'curator'].includes(role))('states that it has no shell and uses file-reading tools', () => {
+        expect(String(fm.tools)).not.toContain('Bash');
+        expect(text).toContain('You have no shell; use Read, Grep and Glob');
+        expect(text).not.toContain('your shell is for reading only');
+      });
+
       it('ends with an example of exactly the structured output the role schema requires', () => {
         const blocks = [...text.matchAll(/```json\n([\s\S]*?)\n```/g)];
         expect(blocks.length).toBeGreaterThan(0);
