@@ -996,7 +996,8 @@ verification:
 `allow_flaky_pass` is described with the checks above. `fail_before` decides
 what Orbit does with the question a new test raises: does it fail without the
 change ([ADR 0014](decisions/0014-fail-before.md)). Once a candidate is
-otherwise acceptable (every required check passed) and changes a test, Orbit
+otherwise acceptable (every required check passed, or failed exactly as its
+approved baseline exception records) and changes a test, Orbit
 runs each command check of category `test` that a criterion cites, and that
 passed on the base revision, on a probe tree: the base tree with the
 candidate's test-owned files (test files, and what only a test build reads:
@@ -1005,9 +1006,11 @@ a .NET test project's folder and project file). A failing run is repeated once.
 Each probed check is **failed-before** (every attempt failed, at least two, with
 no environment signal in the output), **passed-before** (every attempt passed)
 or **not established** (a timeout, an `ERROR`, mixed results, an environment
-signal, a failed install, a probe tree git refuses, or the probe's bound). A
+signal anywhere in the output, output that was cut short, a failed install, a
+probe tree git refuses, or the probe's bound). A criterion citing several
+probed checks takes every open check's cause into account. A
 candidate that changes a dependency manifest or lockfile outside test-owned
-files is not probed. The judgement is by exit status only: a compile or import
+files is not probed, also when a person authorized the change once. The judgement is by exit status only: a compile or import
 error counts as failing, so failed-before means "the tests depend on the
 change", not "an assertion failed".
 

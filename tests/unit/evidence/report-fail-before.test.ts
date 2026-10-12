@@ -5,7 +5,7 @@
 // blocks it, unless a person accepted the criterion without fail-before for this tree.
 import { describe, expect, it } from 'vitest';
 import { evaluateEvidence, type BuildReportInput } from '../../../src/evidence/report.ts';
-import type { CheckProbe, FailBeforeEvidence, ProbeResult } from '../../../src/evidence/fail-before.ts';
+import { otherwiseAcceptable, type CheckProbe, type FailBeforeEvidence, type ProbeResult } from '../../../src/evidence/fail-before.ts';
 import type { FailBeforeMode } from '../../../src/policy/types.ts';
 import { CANDIDATE, CLEAN_SCOPE, contract, fakeSnapshot, result } from './report-fixtures.ts';
 import { checkDef } from './fixtures.ts';
@@ -172,5 +172,74 @@ describe('fail_before per criterion, by mode', () => {
     const e = judge('required', null);
     expect(e.report.verdict).toBe('PASS');
     expect(e.report.acceptance_evidence[0]!.fail_before).toBeUndefined();
+  });
+});
+
+// Adversarial review of the branch (finding 1): a required check whose failure the contract excepts made the candidate
+// "not otherwise acceptable", so the probe was skipped, the criterion stayed supported, and the report, which accepts the
+// excepted failure, said PASS under required with no probe at all.
+describe('review finding 1: a baseline exception does not let a required run pass unprobed', () => {
+  const snapshot = fakeSnapshot([checkDef('unit'), checkDef('legacy')], (c) => (c.verification.fail_before = 'required'));
+  const excepted = contract({
+    acceptance_criteria: [{ id: 'AC-1', statement: 'mul multiplies', proof: ['tests/mul.test.mjs'], mandatory: true, check_ids: ['unit'] }],
+    required_check_ids: ['unit', 'legacy'],
+    baseline_exceptions: [{ check_id: 'legacy', fingerprint: 'fp:legacy', reason: 'legacy fails on the base revision too' }],
+  });
+  const results = [result(snapshot, 'unit'), result(snapshot, 'legacy', 'FAILED')];
+
+  it('a required check failing exactly as its baseline exception records keeps the candidate otherwise acceptable', () => {
+    expect(otherwiseAcceptable(results, ['unit', 'legacy'], false, new Map([['legacy', 'fp:legacy']]))).toBe(true);
+    expect(otherwiseAcceptable(results, ['unit', 'legacy'], false, new Map([['legacy', 'fp:other']]))).toBe(false);
+    expect(otherwiseAcceptable(results, ['unit', 'legacy'], false, new Map())).toBe(false);
+  });
+
+  it('under required, a criterion resting on new tests that were not probed never lets the verdict be PASS', () => {
+    const e = evaluateEvidence({
+      contract: excepted,
+      candidate: CANDIDATE,
+      checkResults: results,
+      scope: CLEAN_SCOPE,
+      snapshot,
+      base: { treeHash: 'tree-base', checks: [{ checkId: 'unit', status: 'PASSED' }, { checkId: 'legacy', status: 'FAILED' }], changedPaths: ['apps/calc.mjs', 'tests/mul.test.mjs'] },
+      failBefore: { mode: 'required', probe: null, skipped: { cause: 'not-acceptable', reason: 'the probe did not run: the candidate is not otherwise acceptable (a required check or the dependency install did not pass)' }, accepted: [] },
+    });
+    expect(e.report.verdict).not.toBe('PASS');
+    expect(e.incompleteReasons.join('\n')).toMatch(/criterion AC-1: fail-before was not established: the probe did not run/);
+  });
+});
+
+// Adversarial review (finding 2): a criterion took the cause of its first unresolved check only, so a timeout on one
+// check hid an environment signal or an ERROR on another, a person was offered an acceptance the ADR forbids, and the
+// order of check_ids changed the outcome.
+describe('review finding 2: every unresolved check\'s cause counts, in any order', () => {
+  const snapshot = fakeSnapshot([checkDef('a'), checkDef('b')], (c) => (c.verification.fail_before = 'required'));
+  const both = (ids: string[]) => contract({ acceptance_criteria: [{ id: 'AC-1', statement: 'mul multiplies', proof: ['tests'], mandatory: true, check_ids: ids }], required_check_ids: ['a', 'b'] });
+  const probe = (checks: CheckProbe[]): ProbeResult => ({ probeId: 'probe-1', probeTree: 'tree-probe', baseRevision: BASE_REV, testPaths: ['tests/mul.test.mjs'], reused: false, checks });
+  const timedOut: CheckProbe = { checkId: 'a', outcome: 'not-established', cause: 'timeout', reason: 'a timed out on the probe tree', attempts: [{ attempt: 1, status: 'TIMEOUT', exitCode: null, signals: [], log: 'evidence/1/fail-before/a.log' }] };
+  const denied: CheckProbe = { checkId: 'b', outcome: 'not-established', cause: 'environment', reason: 'b could not run on the probe tree: its output shows an environment cause (socket-denied), not a test result', attempts: [{ attempt: 1, status: 'FAILED', exitCode: 1, signals: ['socket-denied'], log: 'evidence/1/fail-before/b.log' }] };
+  const judge = (ids: string[], accepted: FailBeforeEvidence['accepted'] = []) =>
+    evaluateEvidence({
+      contract: both(ids),
+      candidate: CANDIDATE,
+      checkResults: [result(snapshot, 'a'), result(snapshot, 'b')],
+      scope: CLEAN_SCOPE,
+      snapshot,
+      base: { treeHash: 'tree-base', checks: [{ checkId: 'a', status: 'PASSED' }, { checkId: 'b', status: 'PASSED' }], changedPaths: ['tests/mul.test.mjs'] },
+      failBefore: { mode: 'required', probe: probe([timedOut, denied]), skipped: null, accepted },
+    }).report.acceptance_evidence[0]!;
+
+  it('takes the cause a person may never accept, whichever check comes first', () => {
+    for (const ids of [['a', 'b'], ['b', 'a']]) {
+      const e = judge(ids);
+      expect(e.status, ids.join(',')).toBe('blocked');
+      expect(e.fail_before, ids.join(',')).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+      expect(e.fail_before!.reason, ids.join(',')).toBe('a timed out on the probe tree; b could not run on the probe tree: its output shows an environment cause (socket-denied), not a test result');
+    }
+  });
+
+  it('rejects a recorded acceptance while the probe shows a cause that is never accepted', () => {
+    const e = judge(['a', 'b'], [{ criterionId: 'AC-1', questionId: 'q-fb-1', by: 'acme-dev' }]);
+    expect(e.status).toBe('blocked');
+    expect(e.fail_before!.accepted).toBeUndefined();
   });
 });

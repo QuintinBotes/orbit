@@ -287,4 +287,60 @@ describe.skipIf(!canStripTypes)('fail-before evidence through the controller', (
     expect(report.unverified).toContain('fail-before: the probe was not run (verification.fail_before: off), so no new test was shown to fail on the base revision: AC-1');
     expect(listProbeAttempts(l.db(), run.id)).toEqual([]);
   }, 240_000);
+
+  // Adversarial review of the branch (finding 1): `legacy` fails on every revision as the baseline exception a person
+  // approved records, and `unit` proves AC-1. The excepted failure made the candidate "not otherwise acceptable", so the
+  // probe was skipped and required passed with no fail-before evidence at all.
+  it('review finding 1: a required check failing as its approved baseline exception records does not let required pass without the probe', async () => {
+    const denied = "console.error('Error: listen EPERM: operation not permitted 127.0.0.1');\nprocess.exit(1);\n";
+    const l = lab('required', {
+      files: { 'tools/legacy-denied.mjs': denied },
+      tweak: (c) => {
+        c.checks.legacy = { ...c.checks.unit!, id: 'legacy', command: [process.execPath, 'tools/legacy-denied.mjs'], mandatory: true };
+      },
+    });
+    writeScenario(l, baseScenario({ implementer: [implementMul('*')] }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+    const blocked = runState(l, run.id);
+    expect(blocked.state, blocked.outcomeReason ?? '').toBe('BLOCKED');
+    expect(blocked.outcomeReason).toMatch(/Check legacy fails on candidate 1/);
+    const [question] = listQuestions(l.db(), run.id, { status: 'open' });
+    expect(answerQuestion(l.db(), join(l.repo, '.orbit', 'runs', run.id), question!.id, 'Approve', 'acme-dev', systemClock).baselineException?.status).toBe('applied');
+    resume(l, run.id);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    const last = listEvidenceReports(l.db(), run.id).at(-1)!.report;
+    expect(last.unverified.join('\n')).toMatch(/check legacy: failing as recorded in the contract's baseline exception; accepted/);
+    expect(last.acceptance_evidence[0]).toMatchObject({ status: 'supported', fail_before: { mode: 'required', outcome: 'failed-before' } });
+    expect(listDecisions(l.db(), run.id, { kind: 'verification.fail-before' }).map((d) => d.summary)).toEqual(['unit failed on the base revision with the new tests (exit 1, 2 attempts): AC-1']);
+  }, 240_000);
+
+  // Adversarial review (finding 4): in supervised mode a person's approve-once for a dependency change clears the
+  // manifest from the scope report verification is given, and the probe guard read that report, so a requirements file
+  // the change adds (no lockfile) reached the probe tree's base.
+  it('review finding 4: a dependency manifest a person authorized once is still a change the probe does not take', async () => {
+    const l = lab(null, { tweak: (c) => void (c.mode = 'supervised') });
+    writeScenario(l, baseScenario({ implementer: [implementMul('*', [{ op: 'write', path: 'apps/requirements.txt', content: 'left-pad==1.3.0\n' }])] }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+    const blocked = runState(l, run.id);
+    expect(blocked.state, blocked.outcomeReason ?? '').toBe('BLOCKED');
+    expect(blocked.outcomeReason).toMatch(/needs a person's authorization/);
+    const [q] = listQuestions(l.db(), run.id, { status: 'open' });
+    answerQuestion(l.db(), join(l.repo, '.orbit', 'runs', run.id), q!.id, 'approve-once', 'acme-dev', systemClock);
+    resume(l, run.id);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    const report = listEvidenceReports(l.db(), run.id).at(-1)!.report;
+    expect(report.unverified.join(' ')).toMatch(/authorized once by acme-dev/);
+    expect(report.acceptance_evidence[0]).toMatchObject({ fail_before: { outcome: 'not-established', cause: 'manifest', probe_tree: null } });
+    expect(report.acceptance_evidence[0]!.fail_before!.reason).toMatch(/^not probed: the candidate changes apps\/requirements\.txt, a dependency manifest or lockfile outside test-owned paths/);
+    expect(listProbeAttempts(l.db(), run.id)).toEqual([]);
+    expect(listDecisions(l.db(), run.id, { kind: 'verification.fail-before' })).toEqual([]);
+  }, 240_000);
 });

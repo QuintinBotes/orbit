@@ -239,6 +239,15 @@ async function textLooking(repoRoot: string, base: string, cand: string, changes
 // ---------------------------------------------------------------------------
 // Dependencies
 
+/**
+ * The dependency manifests `candidateRev` changes against `baseRev` in a way that matters to dependencies (what the scope
+ * report lists as dependency_manifest_changed), read from the revisions. The fail-before probe (ADR 0014) reads this,
+ * never a scope report: a person's one-shot grant clears the manifests from the report verification is given.
+ */
+export async function dependencyManifestsChangedBetween(repoRoot: string, baseRev: string, candidateRev: string, changes: readonly { path: string; status: 'A' | 'M' | 'D' | 'T' }[]): Promise<string[]> {
+  return dependencyManifestChanges(repoRoot, await verifyRev(repoRoot, baseRev), await verifyRev(repoRoot, candidateRev), changes.map((c) => ({ path: c.path, status: c.status })));
+}
+
 async function dependencyManifestChanges(repoRoot: string, base: string, cand: string, changes: Change[]): Promise<string[]> {
   const out: string[] = [];
   for (const c of changes) {

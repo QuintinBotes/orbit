@@ -19,12 +19,12 @@ import { git } from '../evidence/git.ts';
 import type { BaseComparison } from '../evidence/report.ts';
 import type { RunnerContext } from '../evidence/runner.ts';
 import { currentEvidenceReport, type CandidateRecord, type EvidenceReportRecord } from '../evidence/store.ts';
-import type { CheckResult, CriterionEvidence, EvidenceReport, ScopeReport } from '../evidence/types.ts';
+import type { CheckResult, CriterionEvidence, EvidenceReport } from '../evidence/types.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { isHumanActor } from '../inquisition/actors.ts';
 import { findQuestion, insertQuestion, withdrawQuestion, type QuestionRecord } from '../inquisition/store.ts';
 import { failBeforePolicy } from '../policy/config.ts';
-import { isLockfilePath } from '../policy/scope.ts';
+import { dependencyManifestsChangedBetween, isLockfilePath } from '../policy/scope.ts';
 import { gitTreeReader, isTestOwnedPath, loadTestLayout } from '../policy/test-files.ts';
 import { getDecision, listDecisions } from '../storage/decisions.ts';
 import { runWorktreeRoot, type RunContext } from './context.ts';
@@ -41,7 +41,6 @@ export interface CollectFailBeforeInput {
   results: readonly CheckResult[];
   /** Whether the candidate's dependency install passed (or was skipped): a probe needs the same install. */
   installOk: boolean;
-  scope: ScopeReport;
   /** The candidate's runner context: the probe runs its checks the same way. */
   runner: RunnerContext;
 }
@@ -62,7 +61,9 @@ export async function collectFailBefore(ctx: RunContext, cand: CandidateRecord, 
   if (byCheck.size === 0) return evidence(null);
   const allowFlaky = ctx.snapshot.config.verification.allow_flaky_pass === true;
   const required = [...new Set([...input.contract.required_check_ids, ...Object.values(ctx.snapshot.config.checks).filter((c) => c.mandatory && c.kind === 'command').map((c) => c.id)])].filter((id) => ctx.snapshot.config.checks[id]?.kind === 'command');
-  if (!input.installOk || !otherwiseAcceptable(input.results, required, allowFlaky)) {
+  // A failure the report accepts as the contract's baseline exception does not make the candidate unacceptable.
+  const exceptions = new Map((input.contract.baseline_exceptions ?? []).map((e) => [e.check_id, e.fingerprint] as const));
+  if (!input.installOk || !otherwiseAcceptable(input.results, required, allowFlaky, exceptions)) {
     return evidence(null, { cause: 'not-acceptable', reason: 'the probe did not run: the candidate is not otherwise acceptable (a required check or the dependency install did not pass)' });
   }
   const baseRev = ctx.run.baseRevision!;
@@ -74,7 +75,8 @@ export async function collectFailBefore(ctx: RunContext, cand: CandidateRecord, 
   if (owned.length === 0) {
     return evidence(null, { cause: 'content-only', reason: 'the probe did not run: the new tests are tests only by their content (such as a #[test] added to a Rust source), which the probe tree cannot take without the production code around them' });
   }
-  const manifests = [...new Set([...input.scope.dependency_manifest_changed, ...changes.map((c) => c.path).filter(isLockfilePath)])].filter((p) => !isTestOwnedPath(p, layout)).sort();
+  // From the revisions, never from the scope report verification is given: a person's one-shot grant clears it.
+  const manifests = [...new Set([...(await dependencyManifestsChangedBetween(repoRoot, baseRev, cand.commitSha, changes)), ...changes.map((c) => c.path).filter(isLockfilePath)])].filter((p) => !isTestOwnedPath(p, layout)).sort();
   if (manifests.length > 0) {
     return evidence(null, { cause: 'manifest', reason: `not probed: the candidate changes ${manifests.join(', ')}, a dependency manifest or lockfile outside test-owned paths, so a test could fail or pass on the base revision for a dependency rather than for the change` });
   }
@@ -189,6 +191,15 @@ function withdrawMoot(ctx: RunContext, cand: CandidateRecord, report: EvidenceRe
   }
 }
 
+/**
+ * Whether the criterion's probe shows a cause no person may accept (an environment signal, an ERROR, a failed install),
+ * on the criterion or on any one of its probed checks: a report that named only one check's cause cannot hide another's.
+ */
+function neverAccepted(e: CriterionEvidence): boolean {
+  const fb = e.fail_before!;
+  return [fb.cause, ...fb.checks.map((c) => c.cause)].some((c) => c !== undefined && !acceptableCause(c as NotEstablishedCause));
+}
+
 const PASSED_BEFORE_NOTE = 'the new tests pass on the base revision';
 const NOT_ESTABLISHED_NOTE = 'fail-before not established';
 
@@ -235,7 +246,7 @@ export async function routeFailBefore(ctx: RunContext, cand: CandidateRecord, ev
   const tree = cand.treeHash.slice(0, 12);
   const notEstablished = gaps.filter((e) => e.fail_before!.outcome === 'not-established');
   if (notEstablished.length > 0) {
-    const environment = notEstablished.filter((e) => !acceptableCause((e.fail_before!.cause ?? 'not-probed') as NotEstablishedCause));
+    const environment = notEstablished.filter(neverAccepted);
     const askable = notEstablished.filter((e) => !environment.includes(e));
     const declined = askable.filter((e) => answerFor(ctx, cand.treeHash, e.criterion_id).state === 'declined');
     const questions = askable.filter((e) => !declined.includes(e)).map((e) => ask(ctx, cand, e, `the probe was not established for tree ${tree}`));

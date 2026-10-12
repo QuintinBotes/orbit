@@ -166,6 +166,25 @@ describe('runFailBeforeProbe', () => {
     expect(e.decisions).toHaveLength(1);
   }, 120_000);
 
+  // Adversarial review (finding 3): only the first 4 MiB of a log were read for environment signals, so a denial after
+  // that much output, on two failing attempts, was judged failed-before.
+  it('reads the whole log for environment signals: a denial after 4 MiB of output is not established, not failed-before', async () => {
+    // One write, on stdout, so the denial is surely after the padding: about 4.8 MB of plain lines, then the EPERM line.
+    const script = ["const line = 'y'.repeat(1023) + String.fromCharCode(10);", "let out = '';", 'for (let i = 0; i < 4700; i++) out += line;', "out += \"Error: EPERM: operation not permitted, mkdir '/private/var/orbit-elsewhere/cache'\" + String.fromCharCode(10);", 'process.stdout.write(out);', 'process.exitCode = 1;'].join(' ');
+    const e = await env([unit({ command: [process.execPath, '-e', script] })], addMul);
+    const result = await runFailBeforeProbe(e.request());
+    expect(result.checks[0]!.attempts[0]!.signals).toEqual(['filesystem-denied']);
+    expect(result.checks[0]).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+  }, 120_000);
+
+  it('an attempt whose output was cut short cannot be fully scanned, so it is never failed-before', async () => {
+    const script = "process.stdout.write('z'.repeat(5000)); process.exitCode = 1;";
+    const e = await env([unit({ command: [process.execPath, '-e', script] })], addMul);
+    const result = await runFailBeforeProbe(e.request({ runner: { ...e.request().runner, maxOutputBytes: 1000 } }));
+    expect(result.checks[0]).toMatchObject({ outcome: 'not-established', cause: 'unscanned' });
+    expect(result.checks[0]!.reason).toMatch(/output was cut short/);
+  }, 120_000);
+
   it('starts nothing for a cancelled run and records no decision', async () => {
     const e = await env([unit()], addMul);
     e.run.db.run('UPDATE runs SET cancel_requested = 1 WHERE id = ?', e.run.runId);

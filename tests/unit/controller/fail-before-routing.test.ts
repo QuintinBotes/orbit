@@ -47,6 +47,19 @@ describe('routeFailBefore', () => {
     expect(resumeTarget(lab.db, run)).toBe('VERIFYING');
   });
 
+  it('review finding 2: offers no acceptance when any probed check of the criterion shows a cause that is never accepted', async () => {
+    const { cand } = setup();
+    // A report whose criterion names the first check's cause only, as the branch once recorded it.
+    const checks: CriterionFailBefore['checks'] = [
+      { id: 'a', outcome: 'not-established', cause: 'timeout', attempts: [{ status: 'TIMEOUT', exit_code: null, log: 'evidence/1/fail-before/a.log' }] },
+      { id: 'b', outcome: 'not-established', cause: 'error', attempts: [{ status: 'ERROR', exit_code: null, log: 'evidence/1/fail-before/b.log' }] },
+    ];
+    const ev = addEvidence(lab, cand, { verdict: 'INCOMPLETE', acceptance_evidence: [entry({ cause: 'timeout', checks })] });
+    await routeFailBefore(lab.ctx(), cand, ev, noInquiry);
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/AC-1: the cause is the environment's/);
+    expect(listQuestions(lab.db, lab.runId)).toEqual([]);
+  });
+
   it('asks one question per criterion for a cause a person may accept, and a decline stays a decline for the tree', async () => {
     const { cand } = setup();
     const ev = addEvidence(lab, cand, { verdict: 'INCOMPLETE', acceptance_evidence: [entry({})] });
