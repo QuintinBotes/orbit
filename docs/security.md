@@ -72,6 +72,11 @@ in a new test file weakens no existing oracle. Suppressions added to modified
 test files and suppressions on assertion lines in new files still require
 review. This rule applies to every suppression syntax the detector recognizes;
 secret-scanner suppressions and relaxed lint configuration keep their own rules.
+The exemption treats import placement and unused-import rules as style. A
+repository that relies on import order for correctness (a guard module that
+must load before a helper is captured) is not protected by it; a new test that
+asserts nothing is for the fail-before probe (issue #65), not this
+detector.
 
 Who gets Bash is decided in one place (`src/policy/role-grants.ts`): writers
 (implementer, repair) get it; read-only workers do not, except the diagnosis
