@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { ContainerIsolation } from '../../../src/isolation/container.ts';
 import type { SandboxProfile, WrappedCommand } from '../../../src/isolation/types.ts';
 import { tempRoot } from '../../unit/isolation/fixtures.ts';
-import { runWrapped } from './run.ts';
+import { runWrapped, type RunResult } from './run.ts';
 
 /**
  * Real containers on the local engine (OrbStack here). Uses the small
@@ -57,28 +57,39 @@ describe.skipIf(!status.ok)(status.ok ? 'container isolation (real docker)' : `c
     return w;
   }
 
+  /**
+   * Run a wrapped command and check how `docker run` ended before anything reads its output (issue #61). When docker
+   * itself fails (exit 125 to 127, its reason on stderr) or never returns (killed at runWrapped's deadline), the command
+   * printed nothing at all; read alone, that empty output looks like an isolation result, as "the read-only mount was
+   * read back empty" did. The message names docker's own outcome instead.
+   */
+  async function run(w: WrappedCommand, code = 0): Promise<RunResult> {
+    const started = Date.now();
+    const r = await runWrapped(w, worktree);
+    const how = r.signal ? `was killed (${r.signal}) after ${Date.now() - started} ms` : `exited ${r.code}`;
+    expect({ code: r.code, signal: r.signal }, `docker run ${how}; its stderr: ${r.stderr.trim() || '(empty)'}`).toEqual({ code, signal: null });
+    return r;
+  }
+
   it('has no network interface but loopback, so egress fails', async () => {
-    const r = await runWrapped(wrap(['sh', '-c', 'ls /sys/class/net; wget -q -T 3 -O /dev/null http://1.1.1.1/ 2>/dev/null; echo "net=$?"']), worktree);
-    expect(r.code).toBe(0);
+    const r = await run(wrap(['sh', '-c', 'ls /sys/class/net; wget -q -T 3 -O /dev/null http://1.1.1.1/ 2>/dev/null; echo "net=$?"']));
     expect(r.stdout).toMatch(/^lo\nnet=[1-9]\d*\n$/);
   });
 
   it('applies the memory, CPU and pids limits', async () => {
-    const r = await runWrapped(wrap(['cat', '/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/pids.max', '/sys/fs/cgroup/cpu.max']), worktree);
-    expect(r.code).toBe(0);
+    const r = await run(wrap(['cat', '/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/pids.max', '/sys/fs/cgroup/cpu.max']));
     expect(r.stdout.trim().split('\n')).toEqual([String(128 * 1024 * 1024), '64', '100000 100000']);
   });
 
   it('mounts the worktree read-write at its own path, as the host user', async () => {
-    const r = await runWrapped(wrap(['sh', '-c', 'pwd; cat input.txt; echo from container > out.txt; id -u']), worktree);
-    expect(r.code).toBe(0);
+    const r = await run(wrap(['sh', '-c', 'pwd; cat input.txt; echo from container > out.txt; id -u']));
     expect(r.stdout).toBe(`${worktree}\nfrom host\n${process.getuid!()}\n`);
     expect(readFileSync(join(worktree, 'out.txt'), 'utf8')).toBe('from container\n');
     expect(statSync(join(worktree, 'out.txt')).uid).toBe(process.getuid!());
   });
 
   it('keeps the root filesystem read-only and drops all capabilities', async () => {
-    const r = await runWrapped(wrap(['sh', '-c', 'touch /etc/orbit 2>&1; grep -E "^(CapEff|NoNewPrivs)" /proc/self/status']), worktree);
+    const r = await run(wrap(['sh', '-c', 'touch /etc/orbit 2>&1; grep -E "^(CapEff|NoNewPrivs)" /proc/self/status']));
     expect(r.stdout).toMatch(/Read-only file system/);
     expect(r.stdout).toMatch(/CapEff:\s+0000000000000000/);
     expect(r.stdout).toMatch(/NoNewPrivs:\s+1/);
@@ -90,10 +101,7 @@ describe.skipIf(!status.ok)(status.ok ? 'container isolation (real docker)' : `c
       denyReadPaths: [join(worktree, 'secrets'), join(worktree, '.env')],
       readablePaths: [readonlyDir],
     } as SandboxProfile;
-    const r = await runWrapped(
-      wrap(['sh', '-c', `cat secrets/key .env 2>/dev/null; ls secrets | wc -l; cat ${readonlyDir}/HEAD; echo x > ${readonlyDir}/HEAD 2>/dev/null; echo "ro=$?"`], profile),
-      worktree,
-    );
+    const r = await run(wrap(['sh', '-c', `cat secrets/key .env 2>/dev/null; ls secrets | wc -l; cat ${readonlyDir}/HEAD; echo x > ${readonlyDir}/HEAD 2>/dev/null; echo "ro=$?"`], profile));
     expect(r.stdout).not.toContain('SECRET-IN-WORKTREE');
     expect(r.stdout).not.toContain('acme-secret');
     expect(r.stdout).toContain('ref: refs/heads/main');
@@ -104,14 +112,13 @@ describe.skipIf(!status.ok)(status.ok ? 'container isolation (real docker)' : `c
   it('keeps a read-only path inside the writable worktree read-only', async () => {
     writeFileSync(join(worktree, 'trusted.json'), '{"frozen":true}');
     const profile = { ...base, readablePaths: [join(worktree, 'trusted.json')] } as SandboxProfile;
-    const r = await runWrapped(wrap(['sh', '-c', 'echo x > trusted.json 2>/dev/null; echo "ro=$?"; cat trusted.json; echo y > other.txt && echo rw-ok'], profile), worktree);
+    const r = await run(wrap(['sh', '-c', 'echo x > trusted.json 2>/dev/null; echo "ro=$?"; cat trusted.json; echo y > other.txt && echo rw-ok'], profile));
     expect(r.stdout).toMatch(/^ro=[1-9]\d*\n\{"frozen":true\}rw-ok\n$/);
     expect(readFileSync(join(worktree, 'trusted.json'), 'utf8')).toBe('{"frozen":true}');
   });
 
   it('passes the exit status and the command environment through, without host paths', async () => {
-    const r = await runWrapped(wrap(['sh', '-c', 'echo "$FOO|$HOME|$TMPDIR"; case "$PATH" in */Users/*) echo host-path;; esac; exit 3'], base, { FOO: 'bar baz', PATH: '/Users/acme/bin', HOME: '/Users/acme' }), worktree);
-    expect(r.code).toBe(3);
+    const r = await run(wrap(['sh', '-c', 'echo "$FOO|$HOME|$TMPDIR"; case "$PATH" in */Users/*) echo host-path;; esac; exit 3'], base, { FOO: 'bar baz', PATH: '/Users/acme/bin', HOME: '/Users/acme' }), 3);
     expect(r.stdout).toBe('bar baz|/tmp|/tmp\n');
   });
 

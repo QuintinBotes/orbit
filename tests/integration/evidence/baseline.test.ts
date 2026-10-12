@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, describe, expect, it } from 'vitest';
 import { installDependencies, runBaseline } from '../../../src/evidence/baseline.ts';
 import { listCheckRuns, listFailures } from '../../../src/evidence/store.ts';
@@ -128,17 +129,57 @@ describe('runBaseline', () => {
     expect(JSON.parse(recorded!.data_json).complete).toBe(false);
   });
 
-  it('stops when cancelled and says the baseline is incomplete', async () => {
+  // Issue #61: the cancellation is sent once the check is running, not after a fixed delay. On a loaded runner the
+  // checkout and the steps before the first check can take longer than any fixed delay, and a cancellation that lands
+  // before the first check starts is another case (the next test). The install step here takes longer than the delay
+  // this test used to cancel at, so a cancellation at a fixed time would land before the check and find no check.
+  it('stops a running check when cancelled and says the baseline is incomplete', async () => {
     const t = tempRoot();
     const r = makeRepo(t.root);
-    const run = makeRun(t.root, r.repo, [nodeCheck('slow', 'setInterval(()=>{},1000)', { timeout_seconds: 60 })]);
+    const started = join(t.root, 'check-started');
+    const run = makeRun(t.root, r.repo, [nodeCheck('slow', 'require("fs").writeFileSync(process.env.STARTED, "x"); setInterval(()=>{},1000)', { timeout_seconds: 60, env: { STARTED: started } })], {
+      configure: (c) => {
+        c.dependencies.install_command = ['node', '-e', 'setTimeout(() => {}, 1500)'];
+      },
+    });
     cleanups.push(() => run.db.close(), () => t.remove());
     const ac = new AbortController();
-    setTimeout(() => ac.abort(), 800);
-    const out = await runBaseline(baselineInput(t, r.repo, r.base, run, { signal: ac.signal }));
-    expect(out.report.complete).toBe(false);
+    let settled = false;
+    const cancelOnceRunning = (async () => {
+      while (!settled && !existsSync(started)) await sleep(20);
+      ac.abort();
+    })();
+    const out = await runBaseline(baselineInput(t, r.repo, r.base, run, { signal: ac.signal })).finally(() => (settled = true));
+    await cancelOnceRunning;
     expect(out.results.map((x) => x.status)).toEqual(['CANCELLED']);
+    expect(out.report.install).toMatchObject({ skipped: false, ok: true });
+    expect(out.report.complete).toBe(false);
     expect(out.report.failures).toEqual([]);
+  });
+
+  // Issue #61: a cancellation can land before the first check starts. No check ran, so none is recorded, not even as
+  // CANCELLED: a check row says a check was started. The baseline is recorded as incomplete, so it is never reused and
+  // the next baseline runs every check.
+  it('records no check when cancelled before the first check starts, and measures the baseline again next time', async () => {
+    const t = tempRoot();
+    const r = makeRepo(t.root);
+    const run = makeRun(t.root, r.repo, [nodeCheck('lint', 'console.log("clean")')]);
+    cleanups.push(() => run.db.close(), () => t.remove());
+    const ac = new AbortController();
+    ac.abort();
+    const out = await runBaseline(baselineInput(t, r.repo, r.base, run, { signal: ac.signal }));
+    expect(out.results).toEqual([]);
+    expect(out.report).toMatchObject({ checkIds: ['lint'], checks: [], failures: [], complete: false });
+    expect(listCheckRuns(run.db, { runId: run.runId })).toEqual([]);
+    expect(JSON.parse(readFileSync(join(run.runDir, 'baseline.json'), 'utf8')).complete).toBe(false);
+    const recorded = run.db.get<{ data_json: string }>("SELECT data_json FROM events WHERE type = 'baseline.recorded'");
+    expect(JSON.parse(recorded!.data_json)).toMatchObject({ failures: [], complete: false });
+    expect(sh(r.repo, 'worktree', 'list').trim().split('\n')).toHaveLength(1);
+
+    const again = await runBaseline(baselineInput(t, r.repo, r.base, run));
+    expect(again.reused).toBe(false);
+    expect(again.results.map((x) => [x.checkId, x.status])).toEqual([['lint', 'PASSED']]);
+    expect(again.report.complete).toBe(true);
   });
 
   // ADR 0012: a check the contract requires that PREFLIGHT did not run is run on the base revision later, and added.
