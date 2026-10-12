@@ -36,7 +36,12 @@ beforeAll(async () => {
   const r = await runScript(['--json', '--out', out]);
   exit = r.code;
   stderr = r.stderr;
-  result = JSON.parse(r.stdout) as MockDemoResult;
+  // A script that dies prints no JSON; say how it ended instead of failing on the parse (it did once on CI, with no clue).
+  try {
+    result = JSON.parse(r.stdout) as MockDemoResult;
+  } catch {
+    throw new Error(`run-mock-demo.sh exited ${r.code} without its JSON result; stdout: ${r.stdout.slice(-2000) || '(empty)'}; stderr: ${r.stderr.slice(-4000) || '(empty)'}`);
+  }
 }, 600_000);
 afterAll(() => {
   if (out) rmSync(out, { recursive: true, force: true });
