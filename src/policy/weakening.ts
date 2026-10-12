@@ -132,7 +132,56 @@ const GO_IGNORE = /^\s*\/\/\s*(\+build|go:build)\s+.*\bignore\b/;
 const WEAK_MATCHER = /\.(toBeDefined|toBeTruthy|toBeFalsy|toBeUndefined|toBeInstanceOf)\s*\(|\.not\.(toBeNull|toBeUndefined|toThrow)\s*\(|expect\.any(thing)?\s*\(/;
 const TAUTOLOGY = /expect\((true|false|1|0|null)\)\.(toBe|toEqual)\(\1\)|^\s*assert\s+(True|1)\s*(#.*)?$|assert\.ok\(true\)|\bt\.pass\(\)|self\.assertTrue\(True\)/;
 
-const LINT_SUPPRESS = /eslint-disable|@ts-(ignore|nocheck|expect-error)|tslint:disable|biome-ignore|oxlint-disable|#\s*noqa\b|#\s*type:\s*ignore|#\s*pylint:\s*disable|#\s*pyright:\s*ignore|\/\/\s*nolint\b|#\[allow\(|@SuppressWarnings|(istanbul|c8|v8)\s+ignore|#\s*pragma:?\s*no\s*cover|\bnosec\b|NOLINT|rubocop:disable|stylelint-disable/;
+const LINT_SUPPRESS = /eslint-disable|@ts-(ignore|nocheck|expect-error)|tslint:disable|biome-ignore|oxlint-disable|#\s*noqa\b|#\s*flake8:\s*noqa\b|#\s*type:\s*ignore|#\s*pylint:\s*disable|#\s*pyright:\s*ignore|\/\/\s*nolint\b|#\[allow\(|@SuppressWarnings|(istanbul|c8|v8)\s+ignore|#\s*pragma:?\s*no\s*cover|\bnosec\b|NOLINT|rubocop:disable|stylelint-disable/;
+
+/**
+ * Lint rules about where an import sits, its order, or whether it is used or typed. Silencing one of them on an import
+ * line changes no test's outcome. Every other rule can: a review of #64 silenced \`jest/no-mocks-import\` to bring in an
+ * assertion helper that does nothing. Pylint and Go are left out, since their directives can act beyond the line, and
+ * so is `# type: ignore[...]`, whose rule list Pyright ignores (it silences everything on the line).
+ */
+const IMPORT_STYLE_RULES = new Set([
+  'E401', 'E402', 'F401', 'I001', // flake8, ruff (not I002: a required import can be a guard the repository insists on)
+  'import/first', 'import/order', 'import/newline-after-import', 'simple-import-sort/imports', 'no-unused-vars', '@typescript-eslint/no-unused-vars', '@typescript-eslint/no-require-imports', '@typescript-eslint/no-var-requires', // ESLint, oxlint
+  'reportMissingImports', 'reportMissingModuleSource', 'reportMissingTypeStubs', // pyright
+]);
+
+/** A line comment that is exactly one line-local directive naming its rules: group 1 is the rule list, group 2 an ESLint description. */
+const LINE_LOCAL_DIRECTIVES = [
+  /^#\s*noqa:\s*([A-Z]+\d+(?:\s*,\s*[A-Z]+\d+)*)$/,
+  /^\/\/\s*(?:eslint|oxlint)-disable-line\s+([\w@/-]+(?:\s*,\s*[\w@/-]+)*)(?:\s+--\s+(.*))?$/,
+  /^#\s*pyright:\s*ignore\[([\w-]+(?:\s*,\s*[\w-]+)*)\]$/,
+];
+
+/**
+ * Exactly one static import declaration, matched over the whole code part of the line: no second statement after a
+ * semicolon, no expression, no dynamic import (issue #64 review).
+ */
+const IMPORT_STATEMENTS = [
+  /^import\s+[\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*$/, // Python import
+  /^from\s+[\w.]+\s+import\s+(?:\*|\(?\s*[\w]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w]+(?:\s+as\s+\w+)?)*\s*,?\s*\)?)$/, // Python from-import
+  /^import\s+(?:type\s+)?(?:[\w$]+\s*,?\s*)?(?:\*\s+as\s+[\w$]+|\{[\w$\s,]*\})?\s*(?:from\s+)?(['"])[^'"]+\1;?$/, // ES import
+  /^(?:const|let|var)\s+(?:[\w$]+|\{[\w$\s,:]*\})\s*=\s*require\(\s*(['"])[^'"]+\1\s*\);?$/, // CommonJS require binding
+];
+const isImportStatement = (code: string) => IMPORT_STATEMENTS.some((r) => r.test(code.trim()));
+
+/**
+ * The one suppression a new test file may add without it counting as weakening: one line comment on an import line
+ * that is exactly one line-local directive naming only import-style rules, such as \`import x  # noqa: E402\`. Five
+ * adversarial reviews of #64 showed why it is no wider: a bare or next-line, block or file-wide directive, a second
+ * comment, a block comment with code after it, a second statement on the line, a suppression on a matcher's
+ * continuation line, or a semantic rule such as \`jest/no-mocks-import\` can each hide an assertion that asserts nothing.
+ */
+function suppressedImport(line: string): boolean {
+  const marker = /\s(?:#|\/\/|\/\*)/.exec(line);
+  if (!marker || COMMENT.test(line) || !isImportStatement(line.slice(0, marker.index))) return false;
+  const comment = line.slice(marker.index).trim();
+  for (const directive of LINE_LOCAL_DIRECTIVES) {
+    const m = directive.exec(comment);
+    if (m) return m[1]!.split(',').every((rule) => IMPORT_STYLE_RULES.has(rule.trim())) && !LINT_SUPPRESS.test(m[2] ?? '');
+  }
+  return false;
+}
 
 /** Keys whose number going UP loosens the check. */
 const LOOSER_WHEN_HIGHER = ['maxDiffPixelRatio', 'maxDiffPixels', 'threshold', 'rtol', 'atol', 'rel', 'abs', 'delta', 'epsilon', 'tolerance', 'tol', 'retries'];
@@ -173,19 +222,23 @@ export function detectWeakeningInFile(file: WeakeningInput, layout: TestLayout =
   }
 
   const lang = langOf(path);
+  const patterns = ASSERTION[lang];
+  const isAssert = (l: string) => patterns.some((r) => r.test(l));
   const d = parseDiff(file.diff);
   const addedCode = d.added.filter((l) => !COMMENT.test(l));
   const removedCode = d.removed.filter((l) => !COMMENT.test(l));
 
   // Suppressions are comments by nature, so they are looked for in every added line of every file.
+  // In a new test file, a single line-local directive on an import weakens no existing oracle (issue #64). Every other
+  // suppression still counts: one in a new production file can be what gets new code past the repository's own lint
+  // check, and any wider one can hide an assertion that asserts nothing (see suppressedImport).
+  const exempt = (line: string) => status === 'A' && test && !isAssert(line) && suppressedImport(line);
   for (const line of d.added) {
     if (/\bgitleaks:allow\b/.test(line)) add('secret-scan-suppressed', 'gitleaks:allow added');
-    else if (LINT_SUPPRESS.test(line)) add('lint-disabled', `suppression added: ${trimDetail(line)}`);
+    else if (LINT_SUPPRESS.test(line) && !exempt(line)) add('lint-disabled', `suppression added: ${trimDetail(line)}`);
   }
 
   if (test || lang === 'other' && /\btest/i.test(path)) {
-    const patterns = ASSERTION[lang];
-    const isAssert = (l: string) => patterns.some((r) => r.test(l));
     const removedAsserts = removedCode.filter(isAssert).length;
     const addedAsserts = addedCode.filter(isAssert).length;
     if (removedAsserts > addedAsserts) add('assertion-removed', `${removedAsserts} assertion line(s) removed, ${addedAsserts} added`);

@@ -149,6 +149,76 @@ describe('detectWeakening', () => {
     expect(signals({ path: 'package.json', diff: diff(['    "test": "vitest run",'], ['    "test": "vitest run || true",']) })).toContain('test-config-weakened');
   });
 
+  const suppressedImports = [
+    ['tests/test_new.py', 'import style_check', 'import style_check  # noqa: E402'],
+    ['tests/new.test.ts', "import './style-check';", "import './style-check'; // eslint-disable-line import/first"],
+    ['tests/helpers.test.js', "const helper = require('./helper');", "const helper = require('./helper'); // eslint-disable-line @typescript-eslint/no-require-imports -- loaded first"],
+    ['tests/test_new.py', 'import fixtures', 'import fixtures  # pyright: ignore[reportMissingImports]'],
+  ] as const;
+
+  it.each(suppressedImports)('ignores a suppressed import in a new test file: %s, %s, %s', (path, _plain, suppressed) => {
+    expect(signals({ path, status: 'A', diff: diff([], [suppressed]) })).not.toContain('lint-disabled');
+  });
+
+  it.each(suppressedImports)('flags the same suppression added to a modified test file: %s, %s, %s', (path, plain, suppressed) => {
+    expect(signals({ path, status: 'M', diff: diff([plain], [suppressed]) })).toContain('lint-disabled');
+  });
+
+  it.each([
+    ['tests/test_new.py', 'assert result == expected  # noqa: E402'],
+    ['tests/new.test.ts', 'expect(result).toBe(expected); // eslint-disable-line'],
+    ['tests/new.test.ts', 'expect(result).toBe(expected); // @ts-expect-error'],
+    ['pkg/new_test.go', 'require.Equal(t, expected, result) //nolint:errcheck'],
+  ])('flags a suppression on an assertion line in a new test file: %s, %s', (path, line) => {
+    expect(signals({ path, status: 'A', diff: diff([], [line]) })).toContain('lint-disabled');
+  });
+
+  it.each([
+    // An uncalled matcher asserts nothing; the directive above it is what hides that (issue #64 review).
+    ['tests/check.test.ts', ['// eslint-disable-next-line jest/valid-expect', 'expect(result).toBe;']],
+    ['tests/check.test.ts', ['/* eslint-disable */', 'expect(result).toBe;']],
+    ['tests/check.test.ts', ['// @ts-expect-error', 'expect(result).toBe(1);']],
+    ['tests/check.test.ts', ["import './style-check'; // @ts-expect-error"]],
+    ['tests/test_check.py', ['# flake8: noqa', 'assert result']],
+    ['tests/test_check.py', ['# pylint: disable=unused-variable', 'x = 1']],
+    ['tests/test_check.py', ['value = load()  # noqa: E402  # pragma: no cover']],
+    // Second review: a block-wide directive next to a line-local one, and a suppressed continuation of an uncalled matcher.
+    ['tests/check.test.ts', ['const unused = 0; /* eslint-disable-line no-unused-vars */ /* eslint-disable */', 'expect(result).toBe;']],
+    ['tests/check.test.ts', ['void expect(result)', '  .toBe; // eslint-disable-line jest/valid-expect']],
+    // Only an import line qualifies: a trailing suppression on any other statement still counts.
+    ['tests/test_check.py', ['value = load()  # noqa: E402']],
+    // Third review: pylint directives can act on the whole file, and an import prefix can hide further statements.
+    ['tests/test_check.py', ['import os  # pylint: disable=all', 'assert (1 == 2, "failure")']],
+    ['tests/test_check.py', ['import os  # pylint: disable-next=unused-import']],
+    ['tests/test_check.py', ['def test_check():', '    import os; assert True  # noqa: E702']],
+    ['tests/check.test.ts', ["import './a'; expect(x).toBe; // eslint-disable-line"]],
+    ['tests/check.test.ts', ["const m = await import('./a'); // eslint-disable-line"]],
+    // Fourth review: a block comment can close mid-line and hide executable code after it.
+    // Fifth review: a semantic rule silenced on an import can bring in an assertion helper that does nothing. Only named
+    // import-style rules qualify; a bare directive, a mixed list, a description hiding another directive and Go do not.
+    ['tests/oracle.test.js', ["const assert = require('../__mocks__/assert.js'); // eslint-disable-line jest/no-mocks-import", 'test(\'oracle\', () => assert(false));']],
+    ['tests/test_check.py', ['import style_check  # noqa']],
+    ['tests/new.test.ts', ["import './style-check'; // eslint-disable-line"]],
+    ['tests/test_check.py', ['import style_check  # noqa: E402, B101']],
+    ['tests/new.test.ts', ["import './a'; // eslint-disable-line import/first -- eslint-disable"]],
+    ['pkg/new_test.go', ['import _ "embed" //nolint:revive']],
+    // Seventh review: Ruff's I002 enforces a required import, which can be a guard that makes assertions strict.
+    ['tests/test_oracle.py', ['import oracle  # noqa: I002', 'def test_oracle():', '    oracle.check(False)']],
+    // Sixth review: Pyright ignores the codes in `# type: ignore[...]`, so it silences an unknown imported symbol too.
+    ['tests/test_oracle.py', ['from unittest.mock import _is_exception as assert_that  # type: ignore[import]', 'def test_oracle():', '    assert_that(False)']],
+    ['tests/bypass.test.js', ["import { expect as check, test } from '@jest/globals'; /* eslint-disable-line jest/valid-expect */ test('oracle', () => { void check(1).toBe; });"]],
+  ] as const)('flags a next-line, block or file-wide suppression in a new test file: %s, %j', (path, lines) => {
+    expect(signals({ path, status: 'A', diff: diff([], [...lines]) })).toContain('lint-disabled');
+  });
+
+  it.each([
+    ['src/new_module.py', 'import style_check  # noqa: E402'],
+    ['src/new-module.ts', "import './style-check'; // eslint-disable-line"],
+    ['src/new-module.ts', 'const x: number = load(); // @ts-expect-error'],
+  ])('flags a suppression in a new production file, which can get new code past the lint check: %s, %s', (path, line) => {
+    expect(signals({ path, status: 'A', diff: diff([], [line]) })).toContain('lint-disabled');
+  });
+
   it('flags secret-scanner suppression and diff-hiding attributes', () => {
     expect(signals({ path: 'src/config.ts', diff: diff([], ['const k = "AKIA..."; // gitleaks:allow']) })).toContain('secret-scan-suppressed');
     expect(signals({ path: '.gitleaks.toml', status: 'A' })).toContain('secret-scan-suppressed');

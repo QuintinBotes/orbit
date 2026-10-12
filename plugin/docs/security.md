@@ -57,6 +57,22 @@ in `network.allowed_hosts`.
 
 The hooks assist. The controller's diff inspection is the gate.
 
+The weakening detector reports recognized lint, type-check and coverage
+suppressions added to existing files as `lint-disabled`. In a newly added
+test file, an import line whose only comment is one line-local directive
+naming import-style rules only (import position or order, an unused import,
+missing type stubs; such as `import style_check  # noqa: E402`) is not reported.
+Every other suppression is: a bare directive, one naming another rule (a
+silenced `jest/no-mocks-import` can bring in an assertion helper that does
+nothing), a next-line, block or file-wide directive, or a second comment or
+statement on the line can each hide an assertion that asserts nothing, and in a
+newly added production file any suppression can be what gets new code past the
+repository's own lint check. A suppressed import such as `import style_check  # noqa: E402`
+in a new test file weakens no existing oracle. Suppressions added to modified
+test files and suppressions on assertion lines in new files still require
+review. This rule applies to every suppression syntax the detector recognizes;
+secret-scanner suppressions and relaxed lint configuration keep their own rules.
+
 Who gets Bash is decided in one place (`src/policy/role-grants.ts`): writers
 (implementer, repair) get it; read-only workers do not, except the diagnosis
 verifier, which runs experiments (a test command, a reproduction). Its Bash runs
