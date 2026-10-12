@@ -1012,8 +1012,9 @@ environment classifier: cut short, or longer than 200,000 lines). Every
 attempt's log, a passing one's too, is scanned for environment signals however
 long it is, and an `ERROR` or an environment signal is never offered for
 acceptance. The locked install that prepares the probe tree keeps to the same
-bound, and a bound that runs out during it is the budget's, not an install
-failure. A criterion citing several
+bound. An install attempt the bound cuts short is the budget's, which a person
+may accept; an install that failed, even once before its retry was cut short,
+is an install failure, which is never accepted. A criterion citing several
 probed checks takes every open check's cause into account. A
 candidate that changes a dependency manifest or lockfile outside test-owned
 files is not probed, also when a person authorized the change once. The judgement is by exit status only: a compile or import

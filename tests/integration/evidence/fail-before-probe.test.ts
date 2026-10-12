@@ -350,4 +350,13 @@ describe('third review: every attempt\'s log is read, and the install keeps to t
     expect(listProbeAttempts(e.run.db, e.run.runId).map((a) => [a.checkId, a.status])).toEqual([['orbit-install', 'TIMEOUT']]);
     expect(took).toBeLessThan(15_000);
   }, 120_000);
+
+  it('keeps an install that failed as the install\'s cause, never accepted, when its retry is cut short by the bound', async () => {
+    // The first attempt fails at about 1.2 s; the retry gets what is left of the 2 s bound and is cut short.
+    const failing = [process.execPath, '-e', 'setTimeout(() => process.exit(1), 1_200)'];
+    const e = await env([unit()], addMul, (c) => (c.dependencies.install_command = failing));
+    const probed = await runFailBeforeProbe(e.request({ timeoutMs: 2_000, wallRemainingMs: 60_000 }));
+    expect(probed.checks[0]).toMatchObject({ outcome: 'not-established', cause: 'install' });
+    expect(listProbeAttempts(e.run.db, e.run.runId)[0]).toMatchObject({ checkId: 'orbit-install', status: 'FAILED' });
+  }, 120_000);
 });

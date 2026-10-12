@@ -751,7 +751,9 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
         const last = attempts.at(-1);
         // The install is judged as the candidate's is, by its exit status: it builds the tree, it is not the evidence.
         if (refused === null && last?.status === 'PASSED') continue;
-        if (refused === null && (outOfTime || (last?.status === 'TIMEOUT' && bounded))) {
+        // Only an attempt the bound cut short, or none at all, is the budget's. An install that FAILED once still failed,
+        // even when its retry had no time left or was cut short: that is the install's, never accepted.
+        if (refused === null && !attempts.some((a) => a.status === 'FAILED') && (outOfTime || (last?.status === 'TIMEOUT' && bounded))) {
           stopped = { cause: 'budget', reason: outOfBudget };
           break;
         }

@@ -38878,7 +38878,7 @@ tree: ${probeTree}
         }
         const last = attempts.at(-1);
         if (refused === null && last?.status === "PASSED") continue;
-        if (refused === null && (outOfTime || last?.status === "TIMEOUT" && bounded)) {
+        if (refused === null && !attempts.some((a) => a.status === "FAILED") && (outOfTime || last?.status === "TIMEOUT" && bounded)) {
           stopped = { cause: "budget", reason: outOfBudget };
           break;
         }
