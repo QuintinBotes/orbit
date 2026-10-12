@@ -693,8 +693,8 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
   const subject: CheckSubject = { candidateId: candidate.id, bindingId: `fail-before:${probeTree}`, treeHash: probeTree, evidenceDir: probeEvidenceDir(runDir, candidate.seq), source: 'check' };
   const attemptOf = (row: CheckRunRecord, def: CheckDefinition): ProbeAttempt => {
     const base = { attempt: attemptNumber(db, row.id), status: row.status as CheckStatus, exitCode: row.exitCode, log: runRelative(runDir, row.logPath) };
-    if (row.status === 'PASSED') return { ...base, signals: [] };
-    // Every line the attempt kept is read for an environment signal, however long or cut short its log (scanProbeLog).
+    // Every attempt's log is read for an environment signal, a passing one too (a shell pipeline can hide a failing
+    // command's exit status), however long or cut short it is (scanProbeLog).
     const scan = scanProbeLog(readProbeLog(row.logPath), {
       exitCode: row.exitCode,
       command: def.command,
@@ -721,13 +721,26 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
   let stopped: { cause: NotEstablishedCause; reason: (id: string) => string } | null = null;
   try {
     // The locked install, as the candidate's checkout had it: the probe tree's manifests are the base's.
+    // It keeps to the probe's one bound like every check: each attempt gets at most what is left of it, and none starts
+    // once it has run out. A bound that ran out is the budget's, not the install's: only an install that failed within
+    // it is an install failure, which is never accepted.
+    const outOfBudget = (id: string): string => `${id} was not probed to the end: the probe's bound of ${Math.floor(req.timeoutMs / 1000)} s (verification.fail_before_timeout_seconds) ran out during the locked install`;
     const install = planInstall(snapshot, checkout);
     if (!install.skip) {
       for (const def of install.definitions) {
         const attempts: ProbeAttempt[] = [];
         let refused: string | null = null;
+        let bounded = false;
+        let outOfTime = false;
         for (let n = 0; n < 2; n++) {
-          const row = await attempt(def, configHashFor(snapshot, def));
+          const left = deadline - clock.now();
+          if (left <= 0) {
+            outOfTime = true;
+            break;
+          }
+          const timeout = Math.min(def.timeout_seconds, Math.max(1, Math.ceil(left / 1000)));
+          bounded = timeout < def.timeout_seconds;
+          const row = await attempt({ ...def, timeout_seconds: timeout }, configHashFor(snapshot, def));
           if (typeof row === 'string') {
             refused = row;
             break;
@@ -736,11 +749,15 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
           if (row.status !== 'FAILED') break;
         }
         const last = attempts.at(-1);
-        if (refused !== null || last?.status !== 'PASSED') {
-          const how = refused !== null ? `could not be started (${refused})` : `ended ${last?.status ?? 'without a result'}`;
-          stopped = { cause: 'install', reason: (id) => `${id} was not probed: the locked install (${def.id}) ${how} on the probe tree${last?.log ? ` (${last.log})` : ''}` };
+        // The install is judged as the candidate's is, by its exit status: it builds the tree, it is not the evidence.
+        if (refused === null && last?.status === 'PASSED') continue;
+        if (refused === null && (outOfTime || (last?.status === 'TIMEOUT' && bounded))) {
+          stopped = { cause: 'budget', reason: outOfBudget };
           break;
         }
+        const how = refused !== null ? `could not be started (${refused})` : `ended ${last?.status ?? 'without a result'}`;
+        stopped = { cause: 'install', reason: (id) => `${id} was not probed: the locked install (${def.id}) ${how} on the probe tree${last?.log ? ` (${last.log})` : ''}` };
+        break;
       }
     }
     for (const id of toRun) {

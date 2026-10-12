@@ -38831,7 +38831,6 @@ tree: ${probeTree}
   const subject = { candidateId: candidate.id, bindingId: `fail-before:${probeTree}`, treeHash: probeTree, evidenceDir: probeEvidenceDir(runDir2, candidate.seq), source: "check" };
   const attemptOf = (row, def) => {
     const base = { attempt: attemptNumber(db, row.id), status: row.status, exitCode: row.exitCode, log: runRelative(runDir2, row.logPath) };
-    if (row.status === "PASSED") return { ...base, signals: [] };
     const scan = scanProbeLog(readProbeLog(row.logPath), {
       exitCode: row.exitCode,
       command: def.command,
@@ -38853,13 +38852,23 @@ tree: ${probeTree}
   const ran = [];
   let stopped = null;
   try {
+    const outOfBudget = (id) => `${id} was not probed to the end: the probe's bound of ${Math.floor(req.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds) ran out during the locked install`;
     const install = planInstall(snapshot2, checkout);
     if (!install.skip) {
       for (const def of install.definitions) {
         const attempts = [];
         let refused = null;
+        let bounded = false;
+        let outOfTime = false;
         for (let n2 = 0; n2 < 2; n2++) {
-          const row = await attempt(def, configHashFor(snapshot2, def));
+          const left = deadline - clock.now();
+          if (left <= 0) {
+            outOfTime = true;
+            break;
+          }
+          const timeout = Math.min(def.timeout_seconds, Math.max(1, Math.ceil(left / 1e3)));
+          bounded = timeout < def.timeout_seconds;
+          const row = await attempt({ ...def, timeout_seconds: timeout }, configHashFor(snapshot2, def));
           if (typeof row === "string") {
             refused = row;
             break;
@@ -38868,11 +38877,14 @@ tree: ${probeTree}
           if (row.status !== "FAILED") break;
         }
         const last = attempts.at(-1);
-        if (refused !== null || last?.status !== "PASSED") {
-          const how = refused !== null ? `could not be started (${refused})` : `ended ${last?.status ?? "without a result"}`;
-          stopped = { cause: "install", reason: (id) => `${id} was not probed: the locked install (${def.id}) ${how} on the probe tree${last?.log ? ` (${last.log})` : ""}` };
+        if (refused === null && last?.status === "PASSED") continue;
+        if (refused === null && (outOfTime || last?.status === "TIMEOUT" && bounded)) {
+          stopped = { cause: "budget", reason: outOfBudget };
           break;
         }
+        const how = refused !== null ? `could not be started (${refused})` : `ended ${last?.status ?? "without a result"}`;
+        stopped = { cause: "install", reason: (id) => `${id} was not probed: the locked install (${def.id}) ${how} on the probe tree${last?.log ? ` (${last.log})` : ""}` };
+        break;
       }
     }
     for (const id of toRun) {

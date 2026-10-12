@@ -12,6 +12,7 @@ import { snapshotCandidate } from '../../../src/evidence/candidate.ts';
 import { atomicWriteJson } from '../../../src/core/fsx.ts';
 import { changesBetween, closeInterruptedProbes, judgeProbeAttempts, listProbeAttempts, probeRecords, runFailBeforeProbe, type FailBeforeEvidence, type ProbeChange, type ProbeRequest, type ProbeResult } from '../../../src/evidence/fail-before.ts';
 import { evaluateEvidence } from '../../../src/evidence/report.ts';
+import { recordDecision } from '../../../src/storage/decisions.ts';
 import type { EvidenceReport } from '../../../src/evidence/types.ts';
 import { routeFailBefore } from '../../../src/controller/fail-before.ts';
 import { getRun } from '../../../src/controller/run-store.ts';
@@ -108,7 +109,6 @@ describe('runFailBeforeProbe', () => {
     expect(e.decisions[0]).toMatchObject({ kind: 'verification.fail-before', summary: 'unit failed on the base revision with the new tests (exit 1, 2 attempts): AC-1' });
 
     // The decision is what a later probe of the same tree reads back; without it nothing is reused.
-    const { recordDecision } = await import('../../../src/storage/decisions.ts');
     recordDecision(e.run.db, e.run.runDir, { ...e.decisions[0]!, runId: e.run.runId }, systemClock);
     const again = await runFailBeforeProbe(e.request());
     expect(again).toMatchObject({ reused: true, probeTree: result.probeTree, probeId: result.probeId });
@@ -230,35 +230,35 @@ describe('closeInterruptedProbes', () => {
 // whole log classified in ONE pass of the classifier (200,000 lines) and nothing dropped; every log is still scanned for
 // causes in overlapping windows, and a cause no person may accept wins; an ERROR stays ERROR whatever its log. Each case
 // runs through the probe, the report under required and VERIFYING's routing.
-describe('second review: how a probe attempt\'s log is judged', () => {
-  const required = fakeSnapshot([checkDef('unit')], (c) => (c.verification.fail_before = 'required'));
-  const oneCriterion = contract({ acceptance_criteria: [{ id: 'AC-1', statement: 'mul multiplies', proof: ['tests/mul.test.mjs'], mandatory: true, check_ids: ['unit'] }], required_check_ids: ['unit'] });
-  const report = (probe: ProbeResult, accepted: FailBeforeEvidence['accepted'] = []) =>
-    evaluateEvidence({
-      contract: oneCriterion,
-      candidate: CANDIDATE,
-      checkResults: [result(required, 'unit')],
-      scope: CLEAN_SCOPE,
-      snapshot: required,
-      base: { treeHash: 'tree-base', checks: [{ checkId: 'unit', status: 'PASSED' }], changedPaths: ['tests/mul.test.mjs'] },
-      failBefore: { mode: 'required', probe, skipped: null, accepted },
-    }).report;
-  /** What VERIFYING does with the report: whether it asks a person, and why it blocks. */
-  const route = async (r: EvidenceReport): Promise<{ questions: number; reason: string }> => {
-    const lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING', 'VERIFYING'] });
-    try {
-      setContract(lab);
-      const cand = addCandidate(lab);
-      const ev = addEvidence(lab, cand, { verdict: r.verdict, acceptance_evidence: r.acceptance_evidence });
-      await routeFailBefore(lab.ctx(), cand, ev, async () => null);
-      return { questions: listQuestions(lab.db, lab.runId).length, reason: getRun(lab.db, lab.runId).outcomeReason ?? '' };
-    } finally {
-      lab.cleanup();
-    }
-  };
-  const ACCEPTED = [{ criterionId: 'AC-1', questionId: 'q-fb-1', by: 'acme-dev' }];
-  const nodeScript = (lines: string[]) => unit({ command: [process.execPath, '-e', lines.join(' ')], timeout_seconds: 120 });
+const required = fakeSnapshot([checkDef('unit')], (c) => (c.verification.fail_before = 'required'));
+const oneCriterion = contract({ acceptance_criteria: [{ id: 'AC-1', statement: 'mul multiplies', proof: ['tests/mul.test.mjs'], mandatory: true, check_ids: ['unit'] }], required_check_ids: ['unit'] });
+const report = (probe: ProbeResult, accepted: FailBeforeEvidence['accepted'] = []) =>
+  evaluateEvidence({
+    contract: oneCriterion,
+    candidate: CANDIDATE,
+    checkResults: [result(required, 'unit')],
+    scope: CLEAN_SCOPE,
+    snapshot: required,
+    base: { treeHash: 'tree-base', checks: [{ checkId: 'unit', status: 'PASSED' }], changedPaths: ['tests/mul.test.mjs'] },
+    failBefore: { mode: 'required', probe, skipped: null, accepted },
+  }).report;
+/** What VERIFYING does with the report: whether it asks a person, and why it blocks. */
+const route = async (r: EvidenceReport): Promise<{ questions: number; reason: string }> => {
+  const lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING', 'VERIFYING'] });
+  try {
+    setContract(lab);
+    const cand = addCandidate(lab);
+    const ev = addEvidence(lab, cand, { verdict: r.verdict, acceptance_evidence: r.acceptance_evidence });
+    await routeFailBefore(lab.ctx(), cand, ev, async () => null);
+    return { questions: listQuestions(lab.db, lab.runId).length, reason: getRun(lab.db, lab.runId).outcomeReason ?? '' };
+  } finally {
+    lab.cleanup();
+  }
+};
+const ACCEPTED = [{ criterionId: 'AC-1', questionId: 'q-fb-1', by: 'acme-dev' }];
+const nodeScript = (lines: string[]) => unit({ command: [process.execPath, '-e', lines.join(' ')], timeout_seconds: 120 });
 
+describe('second review: how a probe attempt\'s log is judged', () => {
   it('A: an MSBuild crash header and its refused socket on either side of line 100,000 are one environment cause, never failed-before', async () => {
     const e = await env(
       [
@@ -315,4 +315,39 @@ describe('second review: how a probe attempt\'s log is judged', () => {
     expect(routed.questions).toBe(1);
     expect(routed.reason).toMatch(/could not be judged on the probe tree/);
   }, 180_000);
+});
+
+// Third adversarial review. (1) A passing attempt's log was never read, so a check whose shell pipeline hides a failing
+// command's exit status, with the sandbox's network refusal in its output, was passed-before, and under required reached
+// a person's acceptance. (2) The locked install ignored the probe's one bound: it ran with its own 900 s timeout and
+// started its retry after the bound had run out.
+describe('third review: every attempt\'s log is read, and the install keeps to the probe\'s bound', () => {
+  it('an exit 0 attempt whose log shows a network denial is not established as an environment cause, never passed-before, and not reused', async () => {
+    const e = await env([unit({ command: ["false || echo 'curl: (56) CONNECT tunnel failed, response 403; Connection blocked by network allowlist'; true"], shell: true })], addMul);
+    const probed = await runFailBeforeProbe(e.request());
+    expect(probed.checks[0]).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+    expect(probed.checks[0]!.attempts.map((a) => [a.status, a.signals])).toEqual([['PASSED', ['network-denied']]]);
+    expect(report(probed, ACCEPTED).acceptance_evidence[0]).toMatchObject({ status: 'blocked', fail_before: { outcome: 'not-established', cause: 'environment' } });
+    expect(report(probed, ACCEPTED).acceptance_evidence[0]!.fail_before!.accepted).toBeUndefined();
+    const routed = await route(report(probed));
+    expect(routed.questions).toBe(0);
+    expect(routed.reason).toMatch(/AC-1: the cause is the environment's/);
+    // The decision a later candidate of the same tree reads back holds no reusable passed-before.
+    recordDecision(e.run.db, e.run.runDir, { ...e.decisions[0]!, runId: e.run.runId }, systemClock);
+    const again = await runFailBeforeProbe(e.request());
+    expect(again.reused).toBe(false);
+    expect(again.checks[0]).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+  }, 120_000);
+
+  it('cuts the install at the probe\'s bound, starts no retry after it, and ends not established for the budget, not as an install failure', async () => {
+    const slow = [process.execPath, '-e', 'setTimeout(() => process.exit(1), 20_000)'];
+    const e = await env([unit()], addMul, (c) => (c.dependencies.install_command = slow));
+    const started = Date.now();
+    const probed = await runFailBeforeProbe(e.request({ timeoutMs: 2_000, wallRemainingMs: 60_000 }));
+    const took = Date.now() - started;
+    expect(probed.checks[0]).toMatchObject({ outcome: 'not-established', cause: 'budget' });
+    expect(probed.checks[0]!.reason).toMatch(/the probe's bound of 2 s \(verification\.fail_before_timeout_seconds\) ran out/);
+    expect(listProbeAttempts(e.run.db, e.run.runId).map((a) => [a.checkId, a.status])).toEqual([['orbit-install', 'TIMEOUT']]);
+    expect(took).toBeLessThan(15_000);
+  }, 120_000);
 });

@@ -1008,9 +1008,12 @@ no environment signal in the output), **passed-before** (every attempt passed)
 or **not established** (a timeout, an `ERROR`, mixed results, an environment
 signal anywhere in the output, a failed install, a probe tree git refuses, the
 probe's bound, or a failing log that cannot be read whole in one pass of the
-environment classifier: cut short, or longer than 200,000 lines). Every log is
-scanned for environment signals however long it is, and an `ERROR` or an
-environment signal is never offered for acceptance. A criterion citing several
+environment classifier: cut short, or longer than 200,000 lines). Every
+attempt's log, a passing one's too, is scanned for environment signals however
+long it is, and an `ERROR` or an environment signal is never offered for
+acceptance. The locked install that prepares the probe tree keeps to the same
+bound, and a bound that runs out during it is the budget's, not an install
+failure. A criterion citing several
 probed checks takes every open check's cause into account. A
 candidate that changes a dependency manifest or lockfile outside test-owned
 files is not probed, also when a person authorized the change once. The judgement is by exit status only: a compile or import
