@@ -19,8 +19,8 @@ import { currentEvidenceReport } from '../../evidence/store.ts';
 import { homeOf, type RunContext } from '../context.ts';
 import { assertLeaseHeld } from '../run-store.ts';
 import type { RunState } from '../states.ts';
-import { adapterFor, collectIfFinished, routeFor, systemPromptFor } from '../workers.ts';
-import { listActiveWorkers } from '../../storage/workers.ts';
+import { accountWorkerTurns, adapterFor, collectIfFinished, routeFor, storedResult, systemPromptFor } from '../workers.ts';
+import { listActiveWorkers, listWorkers } from '../../storage/workers.ts';
 import { assertContract, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
 import { briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
 import { handledTriggerKeys, pendingTrigger } from './verifying.ts';
@@ -72,6 +72,7 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
     signal: ctx.signal,
   });
   const patch = hashObject(result.contract) !== hashObject(contract) ? { contractJson: JSON.stringify(result.contract), contractHash: hashObject(result.contract) } : undefined;
+  for (const w of listWorkers(ctx.db, { runId: ctx.run.id, role: 'inquisitor' })) accountWorkerTurns(ctx, w, storedResult(w));
   if (patch) atomicWriteJson(join(ctx.runDir, 'contract.json'), result.contract);
   const after = await safePoint(ctx);
   if (after) return after;

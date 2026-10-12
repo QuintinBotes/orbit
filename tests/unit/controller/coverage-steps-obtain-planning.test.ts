@@ -278,10 +278,12 @@ describe('planningStep', () => {
     prepare();
     recordUsage(lab.db, { runId: lab.runId, workerId: null, provider: 'claude', model: 'm', usage, durationMs: 1 }, lab.clock);
     const w = planWorker(lab.db, { id: 'wrk-plan', runId: lab.runId, role: 'planner', provider: 'claude', workerDir: join(lab.base, 'wp'), cwd: lab.repo }, lab.clock, OWNER);
+    lab.db.run('UPDATE workers SET result_json = ? WHERE id = ?', JSON.stringify({ status: 'failed', numTurns: 4 }), w.id);
     recordUsage(lab.db, { runId: lab.runId, workerId: w.id, provider: 'claude', model: 'm', usage: { ...usage, costUsd: 0.3 }, durationMs: 1 }, lab.clock);
     await planningStep(lab.ctx());
     const ledger = lab.ctx().ledger!;
     expect(ledger.state('cost_usd').used).toBeCloseTo(0.5, 6);
+    expect(ledger.state('worker_turns_per_session').used).toBe(4);
     const ev = lab.db.get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'budget.precharged'", lab.runId);
     expect(JSON.parse(ev!.data_json)).toEqual({ usage_rows: 2, charged_usd: 0.5 });
   });

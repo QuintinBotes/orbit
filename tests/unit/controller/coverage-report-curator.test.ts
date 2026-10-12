@@ -73,6 +73,12 @@ describe('curatorModelFor', () => {
 });
 
 describe('runCurator without a run', () => {
+  it('keeps its own smaller cap but obeys a lower worker session policy cap', async () => {
+    const a = adapter();
+    lab = makeUnitLab({ path: ['PREFLIGHT'], adapters: { claude: a }, tweak: (c) => { c.scheduler.hard_limits.worker_turns_per_session = 2; } });
+    await runCurator(host(), { prompt: 'p' });
+    expect(a.specs[0]!.maxTurns).toBe(2);
+  });
   it('needs a claude provider', async () => {
     lab = makeUnitLab({ path: ['PREFLIGHT'] });
     await expect(runCurator(host(), { prompt: 'p' })).rejects.toMatchObject({ code: 'PROVIDER_UNAVAILABLE' });

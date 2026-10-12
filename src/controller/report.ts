@@ -51,7 +51,7 @@ import { createdBranch } from './run-refs.ts';
 import { candidateRef } from '../evidence/candidate.ts';
 import { currentCandidate, type ControllerDeps, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
-import { accountWorker, OUTPUT_CAP_CEILING, outcomeOf, outputCapExceeded, raiseOutputCap, recordSpendCap } from './workers.ts';
+import { accountWorker, accountWorkerTurns, OUTPUT_CAP_CEILING, outcomeOf, outputCapExceeded, raiseOutputCap, recordSpendCap, storedResult } from './workers.ts';
 import { autoEvaluateOverlays } from './eval-runner.ts';
 import { notifyRunEnded, resolveNotifyDeps } from '../notify/notify.ts';
 import { checkLiveOverlays, globalKnowledgePath, repoKnowledgePath } from './knowledge-hooks.ts';
@@ -96,7 +96,7 @@ export interface FinalReport {
     delivered_commit: string | null;
     pull_request: { number: number; url: string | null } | null;
   };
-  budget: { counters: BudgetSnapshot['counters']; cost_measurement: string; cost_usd: number; cost_complete: boolean; tokens: { input: number; output: number; cache_read: number; cache_write: number } } | null;
+  budget: { counters: BudgetSnapshot['counters']; sessions?: BudgetSnapshot['sessions']; cost_measurement: string; cost_usd: number; cost_complete: boolean; tokens: { input: number; output: number; cache_read: number; cache_write: number } } | null;
   unverified: string[];
   residual_risks: string[];
   next_action: string;
@@ -168,8 +168,10 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
   const usage = summarizeUsage(db, run.id);
   if (opts.snapshot && db.get('SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1', run.id)) {
     try {
-      const snap = new BudgetLedger(db, opts.clock).attach(run.id, opts.snapshot).snapshot();
-      budget = { counters: snap.counters, cost_measurement: snap.cost_measurement.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals) };
+      const ledger = new BudgetLedger(db, opts.clock).attach(run.id, opts.snapshot);
+      for (const w of listWorkers(db, { runId: run.id })) accountWorkerTurns({ ledger }, w, storedResult(w));
+      const snap = ledger.snapshot();
+      budget = { counters: snap.counters, sessions: snap.sessions, cost_measurement: snap.cost_measurement.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals) };
     } catch {
       budget = null;
     }
@@ -419,7 +421,10 @@ export function renderMarkdown(r: FinalReport): string {
   out.push('## Revision, branch and pull request', '', list([`base: ${rv.base ?? 'none'}`, `candidate: ${rv.candidate ?? 'none'} (tree ${rv.tree ?? 'none'})`, `branch: ${rv.branch ?? 'none'}`, ...(rv.candidate_ref ? [`candidate ref: ${rv.candidate_ref}`] : []), rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? 'none'}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ''}` : 'none'}`]), '');
   if (r.budget) {
     const b = r.budget;
-    out.push('## Budget consumption', '', list([...b.counters.map((c) => `${c.counter}: ${round(c.used)} used of ${round(c.allowance)} allowed (hard cap ${round(c.hard_cap)})`), `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? 'measured' : 'incomplete: some usage has no cost'}); ${b.cost_measurement}`, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), '');
+    const counters = b.counters.map((c) => c.counter === 'worker_turns_per_session'
+      ? `${c.counter}: ${c.used > 0 || (b.sessions?.length ?? 0) > 0 ? `${round(c.used)} maximum reported turns` : 'usage unavailable'}; Claude CLI cap ${round(c.hard_cap)} per session`
+      : `${c.counter}: ${round(c.used)} used of ${round(c.allowance)} allowed (hard cap ${round(c.hard_cap)})`);
+    out.push('## Budget consumption', '', list([...counters, ...(b.sessions ?? []).map((s) => `${s.counter}: ${round(s.used)} reported turns`), `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? 'measured' : 'incomplete: some usage has no cost'}); ${b.cost_measurement}`, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), '');
   }
   out.push('## Not verified', '', list(r.unverified), '');
   out.push('## Residual risks', '', list(r.residual_risks), '');
@@ -686,7 +691,7 @@ export async function runCurator(
     systemPrompt: renderSystemPrompt('curator', host.deps.agentsDir ? { agentsDir: host.deps.agentsDir } : {}),
     outputSchema: MODEL_OUTPUT_SCHEMAS.curator,
     readOnly: true,
-    maxTurns: CURATOR_MAX_TURNS,
+    maxTurns: Math.min(CURATOR_MAX_TURNS, host.snapshot.config.scheduler.hard_limits.worker_turns_per_session),
     timeoutMs,
     sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: host.snapshot, provider: 'claude', claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'), homeDir: home, policyPath: host.policyPath, readablePaths: [host.deps.orbitInstallDir], env }),
     policyPath: host.policyPath,

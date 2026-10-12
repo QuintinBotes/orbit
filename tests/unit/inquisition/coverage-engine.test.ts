@@ -141,6 +141,21 @@ describe('inquisitor prompt', () => {
 });
 
 describe('worker supervision', () => {
+  it('persists reported turns with the result and reuses both current and legacy output records', async () => {
+    env = setup();
+    const output = inquisitorOutput();
+    const script = { structured: output, numTurns: 5 };
+    const adapter = new ScriptedAdapter([script]);
+    const input = { trigger: trig(), context: env.ctx({}, { worker: workerOpts(env) }), adapter };
+    await runInquisition(input);
+    const [w] = listWorkers(env.db, { runId: RUN });
+    expect(JSON.parse(w!.resultJson!)).toMatchObject({ numTurns: 5, structured: output });
+    await runInquisition(input);
+    expect(adapter.specs).toHaveLength(1);
+    env.db.run('UPDATE workers SET result_json = ? WHERE id = ?', JSON.stringify(output), w!.id);
+    await runInquisition(input);
+    expect(adapter.specs).toHaveLength(1);
+  });
   it('uses the default turn, timeout and poll settings and falls back to the clock for duration', async () => {
     env = setup();
     const adapter = new ScriptedAdapter([{ structured: inquisitorOutput(), pendingPolls: 1, durationMs: null as never }]);

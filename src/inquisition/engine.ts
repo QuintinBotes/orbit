@@ -416,7 +416,7 @@ async function runWorker(adapter: ProviderAdapter, ctx: InquisitionContext, opts
   // One transaction: a crash between the result and its usage row would otherwise lose the spend for good, because a restart reuses the stored result and never sees the usage again.
   // One session, one usage row; cost is the session's own, never a running total.
   db.tx(() => {
-    finishWorker(db, workerId, { state: finishedState(result.status), exitCode: result.exitCode, resultStatus: result.status, result: result.structured, error: result.error }, clock);
+    finishWorker(db, workerId, { state: finishedState(result.status), exitCode: result.exitCode, resultStatus: result.status, result, error: result.error }, clock);
     recordUsage(db, { runId: ctx.runId, workerId, usage: result.usage, durationMs: result.durationMs ?? clock.now() - started }, clock);
   });
   return { workerId, result };
@@ -858,7 +858,8 @@ function reusableOutput(prior: readonly WorkerRecord[]): { output: InquisitorOut
   for (const w of [...prior].reverse()) {
     if (w.state === 'SUCCEEDED' && w.resultStatus === 'succeeded' && w.resultJson !== null) {
       try {
-        const output = validateModelOutput('inquisitor', JSON.parse(w.resultJson));
+        const stored = JSON.parse(w.resultJson) as unknown;
+        const output = validateModelOutput('inquisitor', stored && typeof stored === 'object' && 'structured' in stored ? stored.structured : stored);
         found ??= { output, workerId: w.id };
         continue;
       } catch {

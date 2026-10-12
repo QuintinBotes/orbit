@@ -20,6 +20,7 @@ import { appendEvent } from '../storage/events.ts';
 import { getDecision, recordDecision } from '../storage/decisions.ts';
 import { finishWorker, getWorker, listActiveWorkers, listWorkers, markWorkerRunning, planWorker, type WorkerOutcome, type WorkerRecord } from '../storage/workers.ts';
 import type { ProviderAdapter, TaskHandle, TaskResult, TaskSpec, UsageReport, WorkerRole } from '../adapters/types.ts';
+import type { ClaudeTaskResult } from '../adapters/claude-transcript.ts';
 import { archiveAttempt, handleFromWorkerDir, LAUNCH_FILE, readLogLines } from '../adapters/supervise.ts';
 import { LOG_FILE, readExitRecord } from '../adapters/shim.ts';
 import { renderSystemPrompt, ROLE_OUTPUT_KIND } from '../adapters/prompt.ts';
@@ -388,6 +389,7 @@ function emptyUsage(provider: string): UsageReport {
  * the ledger, usage is only recorded; PLANNING charges it (prechargeUsage).
  */
 export function accountWorker(ctx: RunContext, w: WorkerRecord, result: TaskResult, phase: BudgetPhase = 'work'): void {
+  accountWorkerTurns(ctx, w, result);
   if (ctx.db.get('SELECT 1 AS x FROM usage WHERE run_id = ? AND worker_id = ? LIMIT 1', ctx.run.id, w.id)) return;
   // Denials inside the session (guard hook, permission rules) become policy.deny decisions before anything else.
   try {
@@ -426,6 +428,15 @@ export function accountWorker(ctx: RunContext, w: WorkerRecord, result: TaskResu
     } catch {
       /* the registry is advisory here; a failure to update it never fails the step */
     }
+  }
+}
+
+/** Claude's result count is cumulative and may exceed --max-turns by one. Missing counts stay unmeasured. */
+export function accountWorkerTurns(ctx: Pick<RunContext, 'ledger'>, w: WorkerRecord, result: TaskResult): void {
+  const { numTurns: turns, sessionId } = result as Partial<ClaudeTaskResult>;
+  if (ctx.ledger && /^claude(?:$|[-_])/.test(w.provider) && typeof turns === 'number' && Number.isSafeInteger(turns) && turns >= 0) {
+    const session = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : `restart-${w.restartCount}`;
+    ctx.ledger.recordSessionTurns(`${w.id}:${session}`, turns);
   }
 }
 

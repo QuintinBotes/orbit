@@ -289,6 +289,13 @@ scheduler:
 ```
 
 Hard limits are copied into the policy snapshot and never change during a run.
+`worker_turns_per_session` is passed to every Claude worker session as
+`--max-turns`; the curator also keeps its smaller six-turn cap. Reports show
+each measured session's `num_turns` and the maximum reported count across
+sessions, rather than a sum. Claude can report cap plus one when the limit
+ends a session. Missing counts are unavailable, never an assumed zero. The
+Codex adapter does not enforce this turn cap or report session turns.
+
 Starting allowances must fit under `implementation_attempts`. One more attempt
 is granted only with measurable progress and a new, evidence-backed hypothesis,
 and never from the final verification reserve. After

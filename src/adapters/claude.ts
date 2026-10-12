@@ -496,13 +496,14 @@ export interface ClaudeArgvInput {
 
 /** The worker argv. List flags are single comma-joined values so no variadic flag can swallow the next argument. */
 export function buildClaudeArgv(i: ClaudeArgvInput): string[] {
-  const tools = [...READ_TOOLS, ...(i.readOnly ? [] : EDIT_TOOLS), 'Bash'];
+  const bash = bashGrant({ readOnly: i.readOnly, experiments: i.experiments ?? false, tier: i.tier });
+  const tools = [...READ_TOOLS, ...(i.readOnly ? [] : EDIT_TOOLS), ...(bash.allowRule || bash.autoAllowInSandbox ? ['Bash'] : [])];
   const web = i.allowedHosts.length > 0;
   if (web) tools.push('WebFetch');
   // Auto-approved: reading, and for writers and experiment workers Bash only where an OS sandbox
   // confines it. Edits are allowed per path by the settings file, never by
   // a bare `Edit` here (which would allow every path).
-  const allowed = [...READ_TOOLS, ...(bashGrant({ readOnly: i.readOnly, experiments: i.experiments ?? false, tier: i.tier }).allowRule ? ['Bash'] : []), ...i.allowedHosts.map((h) => `WebFetch(domain:${h})`)];
+  const allowed = [...READ_TOOLS, ...(bash.allowRule ? ['Bash'] : []), ...i.allowedHosts.map((h) => `WebFetch(domain:${h})`)];
   const disallowed = [...ALWAYS_DISALLOWED, ...(web ? [] : ['WebFetch']), ...(i.readOnly ? EDIT_TOOLS : [])];
   const argv = [
     ...i.command,

@@ -60,7 +60,7 @@ describe('buildClaudeArgv', () => {
 
   it('gives read-only roles no edit tool at all, and writers no blanket Edit allow', () => {
     const ro = argv({ readOnly: true });
-    expect(list(ro, '--tools')).toEqual(['Read', 'Glob', 'Grep', 'Bash']);
+    expect(list(ro, '--tools')).toEqual(['Read', 'Glob', 'Grep']);
     expect(list(ro, '--disallowedTools')).toEqual(expect.arrayContaining(['Edit', 'Write', 'NotebookEdit']));
     expect(list(ro, '--allowedTools')).not.toContain('Bash');
     const rw = argv();
@@ -68,6 +68,12 @@ describe('buildClaudeArgv', () => {
     expect(list(rw, '--allowedTools')).not.toContain('Edit');
     expect(list(rw, '--allowedTools')).not.toContain('Bash');
     expect(list(argv({ tier: 'os-sandbox' }), '--allowedTools')).toContain('Bash');
+  });
+
+  it.each(['os-sandbox', 'claude-sandbox'] as const)('offers Bash only to writers and experiment workers in %s', (tier) => {
+    expect(list(argv({ readOnly: true, tier }), '--tools')).not.toContain('Bash');
+    expect(list(argv({ readOnly: false, tier }), '--tools')).toContain('Bash');
+    expect(list(argv({ readOnly: true, experiments: true, tier }), '--tools')).toContain('Bash');
   });
 
   // NM2: a diagnosis worker is read-only but must run experiments (tests, repro scripts); only an explicit experiments grant adds Bash.

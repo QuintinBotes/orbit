@@ -62,6 +62,10 @@ Who gets Bash is decided in one place (`src/policy/role-grants.ts`): writers
 verifier, which runs experiments (a test command, a reproduction). Its Bash runs
 in the sandbox with the worktree denied for writing, so it can write only its
 scratch directory, and it gets no Edit or Write allow rules.
+Planner, reviewer, inquisitor and curator sessions have no shell and are not
+offered Bash. They use Read, Grep and Glob to inspect files and supplied
+evidence. The offered tools follow the same Bash grant as the permission
+settings, including sandbox approval for writers and experiment workers.
 
 ## Plugin install and skills
 
