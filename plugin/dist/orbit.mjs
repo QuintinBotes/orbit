@@ -62863,9 +62863,9 @@ async function proposeScope(ctx, repo, files) {
   const tracked = files ?? await trackedFiles(ctx, repo);
   const pipelines = await pipelineYaml(repo, tracked);
   const ci = classifyCiDefinitions(tracked, (f) => pipelines.has(f));
-  return { allowed: suggestAllowedPaths(tracked, ci.excludedDirs), protectedExtra: ci.protectedPaths, excluded: ci.excludedDirs };
+  return { ...suggestScope(tracked, ci.excludedDirs), protectedExtra: ci.protectedPaths, excluded: ci.excludedDirs };
 }
-function suggestAllowedPaths(files, excludedDirs = []) {
+function suggestScope(files, excludedDirs) {
   const dirs = /* @__PURE__ */ new Set();
   for (const f of files) {
     const slash = f.indexOf("/");
@@ -62876,8 +62876,8 @@ function suggestAllowedPaths(files, excludedDirs = []) {
     dirs.add(top);
   }
   const sorted = [...dirs].sort();
-  if (sorted.length > MAX_DIRS) return [];
-  if (sorted.length > 0) return sorted.map((d) => `${d}/**`);
+  if (sorted.length > MAX_DIRS) return { allowed: [], noScopeReason: `there are ${sorted.length} visible top-level source folders, more than the ${MAX_DIRS} init derives a scope from` };
+  if (sorted.length > 0) return { allowed: sorted.map((d) => `${d}/**`) };
   const exts = /* @__PURE__ */ new Set();
   for (const f of files) {
     if (f.includes("/") || f.startsWith(".")) continue;
@@ -62885,7 +62885,8 @@ function suggestAllowedPaths(files, excludedDirs = []) {
     const ext = dot > 0 ? f.slice(dot + 1).toLowerCase() : "";
     if (SOURCE_EXTENSIONS.has(ext)) exts.add(ext);
   }
-  return [...exts].sort().map((e) => `*.${e}`);
+  const allowed = [...exts].sort().map((e) => `*.${e}`);
+  return { allowed, ...allowed.length === 0 ? { noScopeReason: "no visible top-level source folder or recognised top-level source file was found" } : {} };
 }
 var NOT_SOURCE, SOURCE_EXTENSIONS, CENTRAL_BUILD_FILES, MAX_YAML_READS, YAML_READ_BYTES, MAX_DIRS;
 var init_layout = __esm({
@@ -65734,6 +65735,7 @@ async function initCommand(args, ctx) {
   const configPath = join76(repo, ".orbit", "config.yaml");
   let config;
   let derivedPaths = [];
+  let noScopeWarning;
   let protectedAdded = [];
   let excludedDirs = [];
   let baseBranch = null;
@@ -65744,6 +65746,10 @@ async function initCommand(args, ctx) {
     mkdirSync24(dirname35(configPath), { recursive: true });
     const proposal = await proposeScope(ctx, repo);
     derivedPaths = proposal.allowed;
+    if (proposal.noScopeReason !== void 0) {
+      const examples = parseDocument(text2).toJS().scope.allowed_paths;
+      noScopeWarning = `no scope was derived: ${proposal.noScopeReason}; the template's example paths (${examples.join(", ")}) remain in scope.allowed_paths and must be edited`;
+    }
     excludedDirs = proposal.excluded;
     const have2 = text2.match(/^\s*protected_paths: \[(.*)\]$/m)?.[1] ?? "";
     protectedAdded = proposal.protectedExtra.filter((g) => !have2.includes(JSON.stringify(g)));
@@ -65795,6 +65801,10 @@ ${block2}`);
       warnings.push(`scope.allowed_paths (${globs.join(", ")}) matches no tracked file, so a worker could change nothing; set scope.allowed_paths in .orbit/config.yaml to globs that match the files a worker may change`);
     }
   }
+  if (config === "created") {
+    if (noScopeWarning !== void 0) warnings.push(noScopeWarning);
+    if (checkProposal.proposed.length === 0 && checkProposal.notProposed.length === 0) warnings.push(NO_CHECKS_WARNING);
+  }
   const models = await seedModels(ctx, repo);
   let codexEligible = false;
   let defined;
@@ -65805,10 +65815,11 @@ ${block2}`);
   } else defined = declaredCheckIds(configPath);
   const reviewPolicy = reviewPolicyProposal(codexEligible);
   if (args.bool("json")) {
-    json(ctx.io, { repo, review_policy: config === "created" ? reviewPolicy : null, config: { path: configPath, status: config, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, checks_defined: defined, config_problems: problems, warnings, models });
+    json(ctx.io, { repo, review_policy: config === "created" ? reviewPolicy : null, config: { path: configPath, status: config, ...config === "created" ? { commit_advice: COMMIT_ADVICE } : {}, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, checks_defined: defined, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === "created" ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
+  if (config === "created") line(ctx.io, COMMIT_ADVICE);
   if (config === "created" && baseBranch !== null) line(ctx.io, `repository.base_branch set to ${baseBranch} from the checked-out branch (the template says main); review it`);
   if (config === "created" && derivedPaths.length > 0) line(ctx.io, `scope.allowed_paths set to ${derivedPaths.join(", ")} from the repository layout (the template's paths matched nothing here); review it`);
   if (config === "created" && excludedDirs.length > 0) line(ctx.io, `left out of scope.allowed_paths because they hold CI or build definitions: ${excludedDirs.join(", ")}`);
@@ -65836,7 +65847,7 @@ ${block2}`);
   else line(ctx.io, `Next: define your checks in .orbit/config.yaml, then run ${orbitHint("doctor")}.`);
   return EXIT.OK;
 }
-var REVIEW_POLICY_PROPOSAL, EXCLUDE_RULES, EXCLUDE_HEADER, SHARED_EXCLUDE_NOTE;
+var REVIEW_POLICY_PROPOSAL, EXCLUDE_RULES, EXCLUDE_HEADER, COMMIT_ADVICE, NO_CHECKS_WARNING, SHARED_EXCLUDE_NOTE;
 var init_init = __esm({
   "src/cli/commands/init.ts"() {
     "use strict";
@@ -65861,6 +65872,8 @@ var init_init = __esm({
     REVIEW_POLICY_PROPOSAL = "review: Codex would review independently (review.providers: [codex]), but the template sets providers.codex.data_policy_eligible: false, so Codex does not review until you set it to true in .orbit/config.yaml (only if sending sanitized code and diffs to Codex is permitted for this repository); until then Claude reviews in a separate session and every report says the review was not independent and why (review.when_unavailable: claude). Set review.when_unavailable to ask to be asked first, or to block to require an independent reviewer.";
     EXCLUDE_RULES = ["/.orbit/state.sqlite*", "/.orbit/knowledge.sqlite*", "/.orbit/runs/"];
     EXCLUDE_HEADER = '# Orbit runtime state (added by "orbit init")';
+    COMMIT_ADVICE = ".orbit/config.yaml is reviewed like code: commit it to share the policy. It shows as untracked until committed; runtime state stays excluded and is never committed.";
+    NO_CHECKS_WARNING = "no checks were derived from the repository declarations; looked for package.json (root and workspaces), read with the tsconfig.json, pnpm-workspace.yaml, pnpm-lock.yaml, yarn.lock, package-lock.json or npm-shrinkwrap.json beside it; tracked *.sln, *.slnx, *.csproj, *.fsproj, *.vbproj; pyproject.toml, setup.cfg, tox.ini, pytest.ini, mypy.ini, ruff.toml or .flake8, read with the requirements*.txt, requirements*.in, .mypy.ini or .ruff.toml beside it (those alone are not enough); go.mod, go.work; Cargo.toml. Define the checks that prove a change in .orbit/config.yaml.";
     SHARED_EXCLUDE_NOTE = "that file is in the clone's common git directory, outside this worktree, and every worktree of this clone shares it";
   }
 });

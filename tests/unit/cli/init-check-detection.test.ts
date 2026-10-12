@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { detectChecks, renderChecksYaml } from '../../../src/cli/check-detect.ts';
+import { REVIEW_POLICY_PROPOSAL } from '../../../src/cli/commands/init.ts';
 import { makeLab, type Lab } from './lab.ts';
 
 const labs: Lab[] = [];
@@ -272,6 +273,26 @@ describe('init proposes checks: Rust', () => {
 });
 
 describe('init proposes checks: several ecosystems, existing configs, output', () => {
+  it('preserves normal text output with only the added commit advice', async () => {
+    const l = repoWith({ 'src/index.ts': 'export {};\n', 'package.json': pkg({ scripts: { test: 'node --test' } }), 'package-lock.json': '{}' });
+    const r = await l.cli(['init'], { env: envFor(l, pathWith(['npm'])) });
+    expect(r.code, r.err).toBe(0);
+    // Model catalog notes depend on the installed provider; every other line is the original normal output.
+    const lines = r.out.trimEnd().split('\n').filter((s) => !s.startsWith('model registry ') && !s.startsWith('provider codex: '));
+    expect(lines).toEqual([
+      `created ${join(l.repo, '.orbit', 'config.yaml')} from the starter template (review it: it is the authority every run works under)`,
+      '.orbit/config.yaml is reviewed like code: commit it to share the policy. It shows as untracked until committed; runtime state stays excluded and is never committed.',
+      "scope.allowed_paths set to src/** from the repository layout (the template's paths matched nothing here); review it",
+      'Narrow scope.allowed_paths to the folders your goal needs: the proposal covers every source folder, and a smaller scope is safer and cheaper to review.',
+      'checks proposed from what the repository declares (each is commented in the config; review them, they are the evidence every run is judged by):',
+      '  unit-tests: npm test (test, 900s): package.json declares a test script (npm, from package-lock.json)',
+      `added 3 rule(s) to ${join(l.repo, '.git', 'info', 'exclude')} so runtime state stays out of git status`,
+      'The configuration validates.',
+      REVIEW_POLICY_PROPOSAL,
+      'Next: review the proposed checks in .orbit/config.yaml and add any that are missing, then run "orbit doctor".',
+    ]);
+  });
+
   const mixed = {
     'package.json': pkg({ scripts: { test: 'node --test', build: 'tsc' } }),
     'package-lock.json': '{}',

@@ -73,6 +73,11 @@ function declaredCheckIds(path: string): string[] {
 export const EXCLUDE_RULES: readonly string[] = ['/.orbit/state.sqlite*', '/.orbit/knowledge.sqlite*', '/.orbit/runs/'];
 const EXCLUDE_HEADER = '# Orbit runtime state (added by "orbit init")';
 
+const COMMIT_ADVICE = '.orbit/config.yaml is reviewed like code: commit it to share the policy. It shows as untracked until committed; runtime state stays excluded and is never committed.';
+
+/** Describe the existing detectors only; an empty proposal does not mean these files are absent. */
+const NO_CHECKS_WARNING = 'no checks were derived from the repository declarations; looked for package.json (root and workspaces), read with the tsconfig.json, pnpm-workspace.yaml, pnpm-lock.yaml, yarn.lock, package-lock.json or npm-shrinkwrap.json beside it; tracked *.sln, *.slnx, *.csproj, *.fsproj, *.vbproj; pyproject.toml, setup.cfg, tox.ini, pytest.ini, mypy.ini, ruff.toml or .flake8, read with the requirements*.txt, requirements*.in, .mypy.ini or .ruff.toml beside it (those alone are not enough); go.mod, go.work; Cargo.toml. Define the checks that prove a change in .orbit/config.yaml.';
+
 /** The starter config the build inlines into the bundle (scripts/build.mjs); undefined when running from the sources. */
 declare const __ORBIT_CONFIG_TEMPLATE__: string | undefined;
 
@@ -183,6 +188,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   let config: 'created' | 'exists';
   // The paths derived from the repository's layout, when the template's own do not fit it (P24).
   let derivedPaths: string[] = [];
+  let noScopeWarning: string | undefined;
   // CI pipeline and build-system definitions found in the repository, protected in the proposal; and the folders left out of scope for holding them.
   let protectedAdded: string[] = [];
   let excludedDirs: string[] = [];
@@ -195,6 +201,10 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
     mkdirSync(dirname(configPath), { recursive: true });
     const proposal = await proposeScope(ctx, repo);
     derivedPaths = proposal.allowed;
+    if (proposal.noScopeReason !== undefined) {
+      const examples = (parseDocument(text).toJS() as { scope: { allowed_paths: string[] } }).scope.allowed_paths;
+      noScopeWarning = `no scope was derived: ${proposal.noScopeReason}; the template's example paths (${examples.join(', ')}) remain in scope.allowed_paths and must be edited`;
+    }
     excludedDirs = proposal.excluded;
     // The template's own protections (.github/**, infra/**, env files) are not repeated.
     const have = text.match(/^\s*protected_paths: \[(.*)\]$/m)?.[1] ?? '';
@@ -254,6 +264,11 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
     }
   }
 
+  if (config === 'created') {
+    if (noScopeWarning !== undefined) warnings.push(noScopeWarning);
+    if (checkProposal.proposed.length === 0 && checkProposal.notProposed.length === 0) warnings.push(NO_CHECKS_WARNING);
+  }
+
   const models = await seedModels(ctx, repo);
 
   // What the configuration on disk says, for the review sentence and the next step (issue #33): whether Codex is
@@ -269,10 +284,11 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   const reviewPolicy = reviewPolicyProposal(codexEligible);
 
   if (args.bool('json')) {
-    json(ctx.io, { repo, review_policy: config === 'created' ? reviewPolicy : null, config: { path: configPath, status: config, ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, checks_defined: defined, config_problems: problems, warnings, models });
+    json(ctx.io, { repo, review_policy: config === 'created' ? reviewPolicy : null, config: { path: configPath, status: config, ...(config === 'created' ? { commit_advice: COMMIT_ADVICE } : {}), ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, checks_defined: defined, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === 'created' ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
+  if (config === 'created') line(ctx.io, COMMIT_ADVICE);
   if (config === 'created' && baseBranch !== null) line(ctx.io, `repository.base_branch set to ${baseBranch} from the checked-out branch (the template says main); review it`);
   if (config === 'created' && derivedPaths.length > 0) line(ctx.io, `scope.allowed_paths set to ${derivedPaths.join(', ')} from the repository layout (the template's paths matched nothing here); review it`);
   if (config === 'created' && excludedDirs.length > 0) line(ctx.io, `left out of scope.allowed_paths because they hold CI or build definitions: ${excludedDirs.join(', ')}`);

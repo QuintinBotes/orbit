@@ -64,6 +64,16 @@ describe('orbit check-runner', () => {
 });
 
 describe('orbit init as a process', () => {
+  it('relays commit advice in text and JSON for fresh configs', async () => {
+    const advice = '.orbit/config.yaml is reviewed like code: commit it to share the policy. It shows as untracked until committed; runtime state stays excluded and is never committed.';
+    const text = await box().run(['init']);
+    expect(text.code, text.stderr).toBe(0);
+    expect(text.stdout.split('\n')).toContain(advice);
+    const json = await box().run(['init', '--json']);
+    expect(json.code, json.stderr).toBe(0);
+    expect((JSON.parse(json.stdout) as { config: { commit_advice: string } }).config.commit_advice).toBe(advice);
+  });
+
   it('is idempotent across invocations and never overwrites', async () => {
     const b = makeSandbox({ config: null });
     boxes.push(b);

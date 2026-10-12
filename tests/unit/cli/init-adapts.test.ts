@@ -55,7 +55,7 @@ describe('Nm4: init adapts to a flat layout', () => {
     const r = await l.cli(['init']);
     expect(config(l).scope.allowed_paths).toEqual(['*.js']);
     expect(r.out).toMatch(/scope\.allowed_paths set to \*\.js from the repository layout/);
-    expect(r.out).not.toMatch(/WARN/);
+    expect(r.out).not.toMatch(/WARN: .*scope/);
   });
 
   it('warns, with the fix, when nothing matches and nothing can be derived', async () => {
