@@ -2,7 +2,7 @@
 // every attempt FAILED, at least two, with no ADR 0010 environment signal; passed-before needs every attempt PASSED;
 // anything else is not established, and an environment, ERROR or install cause is never offered for acceptance.
 import { describe, expect, it } from 'vitest';
-import { acceptableCause, judgeProbeAttempts, probeSignals, type ProbeAttempt } from '../../../src/evidence/fail-before.ts';
+import { acceptableCause, CLASSIFIER_LINES, judgeProbeAttempts, probeSignals, scanProbeLog, type ProbeAttempt } from '../../../src/evidence/fail-before.ts';
 
 const attempt = (n: number, status: ProbeAttempt['status'], over: Partial<ProbeAttempt> = {}): ProbeAttempt => ({ attempt: n, status, exitCode: status === 'PASSED' ? 0 : status === 'FAILED' ? 1 : null, signals: [], log: `evidence/2/fail-before/unit${n === 1 ? '' : `~${n - 1}`}.log`, ...over });
 
@@ -70,5 +70,38 @@ describe('probeSignals: ADR 0010 environment signals, BASE_GATED_SIGNALS ungated
   it('reads nothing from a failing test, even one whose message says permission denied', () => {
     const log = ['FAIL tests/mul.test.mjs', 'AssertionError: expected permission denied for /etc/shadow', '1 failed'].join('\n');
     expect(probeSignals({ output: log, exitCode: 1, command: ['node', 'tests/run.mjs'], shell: false, insideRoots: ['/checkout'] })).toEqual([]);
+  });
+});
+
+// The second review's decision: one whole pass of the classifier, with nothing dropped, is the only log that can show
+// failed-before; every log is scanned for causes in overlapping windows; ERROR and environment causes come first.
+describe('scanProbeLog and the order of causes', () => {
+  const input = { exitCode: 1, command: ['dotnet', 'test'], shell: false, insideRoots: ['/checkout'] };
+  const CRASH = 'MSBUILD : error MSB1025: An internal failure occurred while running MSBuild.';
+  const DENIAL = 'System.Net.Sockets.SocketException (13): Permission denied';
+
+  it('reads a log that fits one pass in that pass, and calls it whole unless output was dropped', () => {
+    expect(scanProbeLog(`${CRASH}\n${DENIAL}\n`, input)).toEqual({ signals: ['socket-denied'] });
+    expect(scanProbeLog('1 failed\n', input)).toEqual({ signals: [] });
+    expect(scanProbeLog('1 failed\n\n[orbit: output truncated: 10 bytes dropped after the first 100]\n', input).unscanned).toMatch(/cut short/);
+    expect(scanProbeLog(null, input)).toEqual({ signals: [], unscanned: expect.stringMatching(/not written/) });
+  });
+
+  it('reads a longer log in overlapping windows, so lines that belong together are read together, and never calls it whole', () => {
+    // The crash header ends the first pass and its refused socket starts the next: the window halfway between holds both.
+    const log = `${'ok\n'.repeat(CLASSIFIER_LINES - 1)}${CRASH}\n${DENIAL}\n${'ok\n'.repeat(50_000)}`;
+    const scan = scanProbeLog(log, input);
+    expect(scan.signals).toEqual(['socket-denied']);
+    expect(scan.unscanned).toMatch(/more than one pass of the environment classifier reads \(200000\)/);
+  });
+
+  it('judges an ERROR or an environment signal before anything else, and unscanned last', () => {
+    const cut = 'its output was cut short';
+    expect(judgeProbeAttempts('unit', [attempt(1, 'ERROR', { unscanned: cut })])).toMatchObject({ cause: 'error' });
+    expect(judgeProbeAttempts('unit', [attempt(1, 'FAILED', { unscanned: cut, signals: ['filesystem-denied'] }), attempt(2, 'FAILED', { unscanned: cut })])).toMatchObject({ cause: 'environment' });
+    expect(judgeProbeAttempts('unit', [attempt(1, 'TIMEOUT', { unscanned: cut })])).toMatchObject({ cause: 'timeout' });
+    expect(judgeProbeAttempts('unit', [attempt(1, 'FAILED', { unscanned: cut })])).toMatchObject({ cause: 'once' });
+    expect(judgeProbeAttempts('unit', [attempt(1, 'FAILED', { unscanned: cut }), attempt(2, 'FAILED')])).toMatchObject({ outcome: 'not-established', cause: 'unscanned' });
+    expect(acceptableCause('unscanned')).toBe(true);
   });
 });

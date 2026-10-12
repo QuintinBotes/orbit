@@ -10,7 +10,14 @@ import { systemClock } from '../../../src/core/clock.ts';
 import { processStartTime } from '../../../src/core/proc.ts';
 import { snapshotCandidate } from '../../../src/evidence/candidate.ts';
 import { atomicWriteJson } from '../../../src/core/fsx.ts';
-import { changesBetween, closeInterruptedProbes, listProbeAttempts, probeRecords, runFailBeforeProbe, type ProbeChange, type ProbeRequest } from '../../../src/evidence/fail-before.ts';
+import { changesBetween, closeInterruptedProbes, judgeProbeAttempts, listProbeAttempts, probeRecords, runFailBeforeProbe, type FailBeforeEvidence, type ProbeChange, type ProbeRequest, type ProbeResult } from '../../../src/evidence/fail-before.ts';
+import { evaluateEvidence } from '../../../src/evidence/report.ts';
+import type { EvidenceReport } from '../../../src/evidence/types.ts';
+import { routeFailBefore } from '../../../src/controller/fail-before.ts';
+import { getRun } from '../../../src/controller/run-store.ts';
+import { listQuestions } from '../../../src/inquisition/store.ts';
+import { CANDIDATE, CLEAN_SCOPE, contract, fakeSnapshot, result } from '../../unit/evidence/report-fixtures.ts';
+import { addCandidate, addEvidence, makeUnitLab, setContract } from '../../unit/controller/coverage-helpers.ts';
 import { shimPath } from '../../../src/evidence/check-shim.ts';
 import { listCheckRuns } from '../../../src/evidence/store.ts';
 import type { CandidateRecord } from '../../../src/evidence/store.ts';
@@ -217,4 +224,95 @@ describe('closeInterruptedProbes', () => {
     expect(e.run.db.get<{ excerpt: string }>('SELECT excerpt FROM fail_before_probes WHERE id = ?', row.id)?.excerpt).toMatch(/^interrupted/);
     expect(closeInterruptedProbes(e.run.db, e.run.runDir, e.run.runId, systemClock)).toEqual([]);
   }, 60_000);
+});
+
+// Second adversarial review (findings A and B), and the decision the coordinator took on them: failed-before needs the
+// whole log classified in ONE pass of the classifier (200,000 lines) and nothing dropped; every log is still scanned for
+// causes in overlapping windows, and a cause no person may accept wins; an ERROR stays ERROR whatever its log. Each case
+// runs through the probe, the report under required and VERIFYING's routing.
+describe('second review: how a probe attempt\'s log is judged', () => {
+  const required = fakeSnapshot([checkDef('unit')], (c) => (c.verification.fail_before = 'required'));
+  const oneCriterion = contract({ acceptance_criteria: [{ id: 'AC-1', statement: 'mul multiplies', proof: ['tests/mul.test.mjs'], mandatory: true, check_ids: ['unit'] }], required_check_ids: ['unit'] });
+  const report = (probe: ProbeResult, accepted: FailBeforeEvidence['accepted'] = []) =>
+    evaluateEvidence({
+      contract: oneCriterion,
+      candidate: CANDIDATE,
+      checkResults: [result(required, 'unit')],
+      scope: CLEAN_SCOPE,
+      snapshot: required,
+      base: { treeHash: 'tree-base', checks: [{ checkId: 'unit', status: 'PASSED' }], changedPaths: ['tests/mul.test.mjs'] },
+      failBefore: { mode: 'required', probe, skipped: null, accepted },
+    }).report;
+  /** What VERIFYING does with the report: whether it asks a person, and why it blocks. */
+  const route = async (r: EvidenceReport): Promise<{ questions: number; reason: string }> => {
+    const lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING', 'VERIFYING'] });
+    try {
+      setContract(lab);
+      const cand = addCandidate(lab);
+      const ev = addEvidence(lab, cand, { verdict: r.verdict, acceptance_evidence: r.acceptance_evidence });
+      await routeFailBefore(lab.ctx(), cand, ev, async () => null);
+      return { questions: listQuestions(lab.db, lab.runId).length, reason: getRun(lab.db, lab.runId).outcomeReason ?? '' };
+    } finally {
+      lab.cleanup();
+    }
+  };
+  const ACCEPTED = [{ criterionId: 'AC-1', questionId: 'q-fb-1', by: 'acme-dev' }];
+  const nodeScript = (lines: string[]) => unit({ command: [process.execPath, '-e', lines.join(' ')], timeout_seconds: 120 });
+
+  it('A: an MSBuild crash header and its refused socket on either side of line 100,000 are one environment cause, never failed-before', async () => {
+    const e = await env(
+      [
+        nodeScript([
+          "const nl = String.fromCharCode(10);",
+          "let out = 'ok' + nl;",
+          'out = out.repeat(99999);',
+          "out += 'MSBUILD : error MSB1025: An internal failure occurred while running MSBuild.' + nl;",
+          "out += 'System.Net.Sockets.SocketException (13): Permission denied' + nl;",
+          'process.stdout.write(out);',
+          'process.exitCode = 1;',
+        ]),
+      ],
+      addMul,
+    );
+    const probed = await runFailBeforeProbe(e.request());
+    expect(probed.checks[0]).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+    expect(probed.checks[0]!.attempts[0]!.signals).toEqual(['socket-denied']);
+    expect(report(probed, ACCEPTED).acceptance_evidence[0]).toMatchObject({ status: 'blocked', fail_before: { outcome: 'not-established', cause: 'environment' } });
+    expect(report(probed, ACCEPTED).acceptance_evidence[0]!.fail_before!.accepted).toBeUndefined();
+    const routed = await route(report(probed));
+    expect(routed.questions).toBe(0);
+    expect(routed.reason).toMatch(/AC-1: the cause is the environment's/);
+  }, 180_000);
+
+  it('B: a denial in the retained part of a cut-short log is an environment cause, not unscanned, and no acceptance is offered', async () => {
+    const e = await env([nodeScript(["process.stdout.write(\"Error: EPERM: operation not permitted, mkdir '/private/var/orbit-elsewhere/cache'\" + String.fromCharCode(10) + 'z'.repeat(5000));", 'process.exitCode = 1;'])], addMul);
+    const probed = await runFailBeforeProbe(e.request({ runner: { ...e.request().runner, maxOutputBytes: 2000 } }));
+    expect(probed.checks[0]).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+    expect(report(probed, ACCEPTED).acceptance_evidence[0]).toMatchObject({ status: 'blocked', fail_before: { cause: 'environment' } });
+    const routed = await route(report(probed));
+    expect(routed.questions).toBe(0);
+    expect(routed.reason).toMatch(/AC-1: the cause is the environment's/);
+  }, 180_000);
+
+  it('B: an ERROR attempt whose log was cut short stays ERROR, and no acceptance is offered', async () => {
+    const attempts = [{ attempt: 1, status: 'ERROR' as const, exitCode: null, signals: [], unscanned: 'its output was cut short (the runner kept only part of it), so an environment cause in the dropped part cannot be ruled out', log: 'evidence/1/fail-before/unit.log' }];
+    const judged = judgeProbeAttempts('unit', attempts);
+    expect(judged).toMatchObject({ outcome: 'not-established', cause: 'error' });
+    const probed: ProbeResult = { probeId: 'probe-1', probeTree: 'tree-probe', baseRevision: 'b'.repeat(40), testPaths: ['tests/mul.test.mjs'], checks: [judged], reused: false };
+    expect(report(probed, ACCEPTED).acceptance_evidence[0]).toMatchObject({ status: 'blocked', fail_before: { cause: 'error' } });
+    const routed = await route(report(probed));
+    expect(routed.questions).toBe(0);
+  });
+
+  it('a long clean failing log over one pass of the classifier is not failed-before: not established as unscanned, and a person may accept it', async () => {
+    const e = await env([nodeScript(["process.stdout.write(('ok' + String.fromCharCode(10)).repeat(200001));", 'process.exitCode = 1;'])], addMul);
+    const probed = await runFailBeforeProbe(e.request());
+    expect(probed.checks[0]).toMatchObject({ outcome: 'not-established', cause: 'unscanned' });
+    expect(probed.checks[0]!.attempts.map((a) => a.status)).toEqual(['FAILED', 'FAILED']);
+    expect(probed.checks[0]!.reason).toMatch(/more than one pass of the environment classifier reads \(200000\)/);
+    expect(report(probed, ACCEPTED).acceptance_evidence[0]).toMatchObject({ status: 'supported', fail_before: { cause: 'unscanned', accepted: { question_id: 'q-fb-1' } } });
+    const routed = await route(report(probed));
+    expect(routed.questions).toBe(1);
+    expect(routed.reason).toMatch(/could not be judged on the probe tree/);
+  }, 180_000);
 });

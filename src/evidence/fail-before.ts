@@ -11,7 +11,7 @@
  * reuses its decisive results when the probe tree, the check configuration and the policy all match (a repair that
  * changed production code only). A probe interrupted by a crash is closed as interrupted and runs again.
  */
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import type { Clock } from '../core/clock.ts';
@@ -74,7 +74,7 @@ export interface ProbeAttempt {
   exitCode: number | null;
   /** ADR 0010 environment signals the attempt's log shows, BASE_GATED_SIGNALS ungated (probeSignals). */
   signals: EnvironmentSignal[];
-  /** Why the attempt's output could not all be scanned for those signals, when it could not (readWholeLog). */
+  /** Why the attempt's log cannot support failed-before (not one whole classifier pass, or output dropped; scanProbeLog). */
   unscanned?: string;
   /** The attempt's log, relative to the run directory when it lies inside it. */
   log: string | null;
@@ -97,19 +97,20 @@ export interface CheckProbe {
 export function judgeProbeAttempts(checkId: string, attempts: readonly ProbeAttempt[]): CheckProbe {
   const done = (outcome: FailBeforeOutcome, reason: string, cause?: NotEstablishedCause): CheckProbe => ({ checkId, outcome, ...(cause ? { cause } : {}), reason, attempts: [...attempts] });
   if (attempts.length === 0) return done('not-established', `${checkId} did not run on the probe tree`, 'interrupted');
+  // The causes no person may accept come first, whatever else the attempts show: an ERROR, then an environment signal.
+  const statuses = attempts.map((a) => a.status);
+  if (statuses.includes('ERROR')) return done('not-established', `${checkId} could not be run on the probe tree (ERROR)`, 'error');
   const signals = [...new Set(attempts.flatMap((a) => a.signals))];
   if (signals.length > 0) return done('not-established', `${checkId} could not run on the probe tree: its output shows an environment cause (${signals.join(', ')}), not a test result`, 'environment');
-  // An environment signal in output nobody read cannot be ruled out, so such an attempt never counts as failing.
-  const unscanned = attempts.find((a) => a.unscanned !== undefined);
-  if (unscanned) return done('not-established', `${checkId} could not be judged on the probe tree: ${unscanned.unscanned}`, 'unscanned');
-  const statuses = attempts.map((a) => a.status);
   if (statuses.every((s) => s === 'PASSED')) return done('passed-before', `${checkId} passed on the base revision with the new tests`);
   if (statuses.every((s) => s === 'FAILED')) {
     if (attempts.length < 2) return done('not-established', `${checkId} failed once on the base revision with the new tests, and a failure counts only when it repeats`, 'once');
+    // A failure counts only from a log read whole in one pass with nothing dropped: a cause outside it cannot be ruled out.
+    const unscanned = attempts.find((a) => a.unscanned !== undefined);
+    if (unscanned) return done('not-established', `${checkId} could not be judged on the probe tree: ${unscanned.unscanned}`, 'unscanned');
     const exits = [...new Set(attempts.map((a) => (a.exitCode === null ? 'none' : String(a.exitCode))))];
     return done('failed-before', `${checkId} failed on the base revision with the new tests (exit ${exits.join(', ')}, ${attempts.length} attempts)`);
   }
-  if (statuses.includes('ERROR')) return done('not-established', `${checkId} could not be run on the probe tree (ERROR)`, 'error');
   if (statuses.includes('TIMEOUT')) return done('not-established', `${checkId} timed out on the probe tree`, 'timeout');
   if (statuses.includes('CANCELLED')) return done('not-established', `${checkId} was cancelled on the probe tree`, 'cancelled');
   return done('not-established', `${checkId} gave mixed results on the probe tree (${statuses.join(', then ')})`, 'mixed');
@@ -128,43 +129,62 @@ export interface SignalInput {
 }
 
 /**
- * The ADR 0010 environment signals an attempt on the probe tree shows, read as on the base revision: the signals of
- * BASE_GATED_SIGNALS count without a base comparison, since the probe tree is the base's but for its tests.
+ * The ADR 0010 environment signals one pass of the classifiers finds in `output`, read as on the base revision: the
+ * signals of BASE_GATED_SIGNALS count without a base comparison, since the probe tree is the base's but for its tests.
+ * A pass reads at most CLASSIFIER_LINES lines; scanProbeLog reads a longer log.
  */
 export function probeSignals(input: SignalInput): EnvironmentSignal[] {
-  const classify = (output: string): EnvironmentSignal[] =>
-    (
-      classifyNotExecuted({ checkId: 'probe', output, startFailure: input.startFailure ?? null }) ??
-      classifyProgramNotFound({ checkId: 'probe', command: input.command, shell: input.shell, exitCode: input.exitCode, output }) ??
-      classifyCouldNotRun({ checkId: 'probe', output, insideRoots: input.insideRoots })
-    )?.signals ?? [];
-  // The classifiers read a bounded number of lines of a text; a longer log is read in parts, so every line is read. A
-  // part judged alone can only find more signals than the whole, which leaves the attempt not established, never failing.
-  const lines = input.output.split('\n');
-  if (lines.length <= SCAN_LINES) return classify(input.output);
-  const found = new Set<EnvironmentSignal>();
-  for (let i = 0; i < lines.length; i += SCAN_LINES) for (const s of classify(lines.slice(i, i + SCAN_LINES).join('\n'))) found.add(s);
-  return [...found];
+  const found =
+    classifyNotExecuted({ checkId: 'probe', output: input.output, startFailure: input.startFailure ?? null }) ??
+    classifyProgramNotFound({ checkId: 'probe', command: input.command, shell: input.shell, exitCode: input.exitCode, output: input.output }) ??
+    classifyCouldNotRun({ checkId: 'probe', output: input.output, insideRoots: input.insideRoots });
+  return found?.signals ?? [];
 }
 
-/** Lines given to the environment classifiers at once: fewer than the 200,000 each reads of a text. */
-const SCAN_LINES = 100_000;
-/** A log is read whole up to this size; the runner writes none larger (it keeps at most 32 MiB of a check's output). */
-const MAX_LOG_SCAN_BYTES = 64 * 1024 * 1024;
+/** The lines one pass of the environment classifiers reads of a text (environment-failure.ts, check-misconfigured.ts). */
+export const CLASSIFIER_LINES = 200_000;
+/** A longer log is read in windows of one pass each, overlapping by half, so lines that belong together share one. */
+const WINDOW_STRIDE = CLASSIFIER_LINES / 2;
 /** The note the check shim or the runner writes when it kept only part of a check's output. */
 const OUTPUT_DROPPED = /^\[orbit: output truncated: \d+ bytes dropped/m;
 
+export interface LogScan {
+  /** Every environment signal found anywhere in the retained output. */
+  signals: EnvironmentSignal[];
+  /** Why the log cannot show a failure on the base revision: not one whole pass, or output dropped. Absent when it can. */
+  unscanned?: string;
+}
+
 /**
- * The whole retained log of an attempt, or why it cannot be scanned whole: output the shim or the runner dropped, or a
- * log too large to read. An environment signal in what was not read cannot be ruled out (ADR 0014 section 3).
+ * How an attempt's log is judged (ADR 0014 section 3). Every retained line is read for an environment signal, however
+ * long or cut short the log: one pass when the log fits in it, otherwise overlapping windows of one pass each, whose
+ * signals are all kept. Only a log read in one whole pass, with nothing dropped, can support failed-before: anything else
+ * is `unscanned`, since a cause outside what was read together cannot be ruled out. A missing log is unscanned too.
  */
-export function readWholeLog(path: string | null): { text: string } | { unscanned: string } {
-  if (path === null || !existsSync(path)) return { unscanned: 'its log was not written' };
-  const size = statSync(path).size;
-  if (size > MAX_LOG_SCAN_BYTES) return { unscanned: `its log of ${size} bytes is larger than the ${MAX_LOG_SCAN_BYTES} bytes that are scanned, so an environment cause in the rest cannot be ruled out` };
-  const text = readFileSync(path, 'utf8');
-  if (OUTPUT_DROPPED.test(text)) return { unscanned: 'its output was cut short (the runner kept only part of it), so an environment cause in the dropped part cannot be ruled out' };
-  return { text };
+export function scanProbeLog(text: string | null, input: Omit<SignalInput, 'output'>): LogScan {
+  if (text === null) return { signals: [], unscanned: 'its log was not written, so an environment cause cannot be ruled out' };
+  const lines = text.split('\n');
+  const found = new Set<EnvironmentSignal>();
+  if (lines.length <= CLASSIFIER_LINES) {
+    for (const s of probeSignals({ ...input, output: text })) found.add(s);
+  } else {
+    for (let start = 0; ; start += WINDOW_STRIDE) {
+      for (const s of probeSignals({ ...input, output: lines.slice(start, start + CLASSIFIER_LINES).join('\n') })) found.add(s);
+      if (start + CLASSIFIER_LINES >= lines.length) break;
+    }
+  }
+  const unscanned =
+    lines.length > CLASSIFIER_LINES
+      ? `its log has ${lines.length} lines, more than one pass of the environment classifier reads (${CLASSIFIER_LINES}), so an environment cause across its parts cannot be ruled out`
+      : OUTPUT_DROPPED.test(text)
+        ? 'its output was cut short (the runner kept only part of it), so an environment cause in the dropped part cannot be ruled out'
+        : null;
+  return { signals: [...found], ...(unscanned === null ? {} : { unscanned }) };
+}
+
+/** An attempt's log as written, or null when there is none. */
+function readProbeLog(path: string | null): string | null {
+  return path !== null && existsSync(path) ? readFileSync(path, 'utf8') : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -674,19 +694,16 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
   const attemptOf = (row: CheckRunRecord, def: CheckDefinition): ProbeAttempt => {
     const base = { attempt: attemptNumber(db, row.id), status: row.status as CheckStatus, exitCode: row.exitCode, log: runRelative(runDir, row.logPath) };
     if (row.status === 'PASSED') return { ...base, signals: [] };
-    // Every line the attempt kept is read for an environment signal; output that was not kept or read leaves it open.
-    const log = readWholeLog(row.logPath);
-    if ('unscanned' in log) return { ...base, signals: [], unscanned: log.unscanned };
-    const signals = probeSignals({
-      output: log.text,
+    // Every line the attempt kept is read for an environment signal, however long or cut short its log (scanProbeLog).
+    const scan = scanProbeLog(readProbeLog(row.logPath), {
       exitCode: row.exitCode,
       command: def.command,
       shell: def.shell,
       insideRoots: [checkout, req.checkoutDir, row.cwd, ...(row.logPath ? [dirname(row.logPath)] : [])],
       startFailure: row.status === 'ERROR' && row.excerpt?.startsWith('could not start the check') ? row.excerpt : null,
     });
-    if (signals.length > 0) db.run('UPDATE fail_before_probes SET signals_json = ? WHERE id = ?', JSON.stringify(signals), row.id);
-    return { ...base, signals };
+    if (scan.signals.length > 0) db.run('UPDATE fail_before_probes SET signals_json = ? WHERE id = ?', JSON.stringify(scan.signals), row.id);
+    return { ...base, signals: scan.signals, ...(scan.unscanned === undefined ? {} : { unscanned: scan.unscanned }) };
   };
   /**
    * One attempt, or why the runner refused to start it (a cwd missing from the probe tree, a tracked file an earlier
@@ -835,7 +852,8 @@ export function criterionFailBefore(support: CriterionTestSupport, fb: FailBefor
   // Every check left open counts: a cause no person may accept on any of them decides, whatever the others show.
   const open = probed.filter(({ c }) => c === null || c.outcome === 'not-established');
   const causes = open.map(({ c }) => c?.cause ?? fb.skipped?.cause ?? 'not-probed');
-  const cause = causes.find((c) => !acceptableCause(c)) ?? causes[0]!;
+  // A cause no person may accept first, then the other open causes, and unscanned only when nothing else is open.
+  const cause = causes.find((c) => !acceptableCause(c)) ?? causes.find((c) => c !== 'unscanned') ?? causes[0]!;
   const reason = [...new Set(open.map(({ id, c }) => c?.reason ?? fb.skipped?.reason ?? `${id} was not probed`))].join('; ');
   return { ...base, outcome: 'not-established', cause, checks, reason, ...(causes.every(acceptableCause) ? acceptance : {}) };
 }
