@@ -181,4 +181,24 @@ describe.skipIf(!gitAvailable)('inspectScope on a real repository (skipped when 
     await expect(inspectScope({ repoRoot: repo, baseRev: 'no-such-ref', candidateRev: cand, snapshot: SNAPSHOT })).rejects.toMatchObject({ code: 'GIT_FAILED' });
     await expect(inspectScope({ repoRoot: repo, baseRev: `${base}^{tree}`, candidateRev: cand, snapshot: SNAPSHOT })).rejects.toMatchObject({ code: 'GIT_FAILED' });
   });
+
+  it('distinguishes new-file import suppressions from modified-file and assertion suppressions', async () => {
+    write('tests/test_existing.py', 'import style_check\n');
+    git('add', 'tests/test_existing.py');
+    git('commit', '-q', '-m', 'existing Python test');
+    const before = git('rev-parse', 'HEAD');
+
+    write('tests/test_existing.py', 'import style_check  # noqa: E402\n');
+    write('tests/test_new.py', 'import style_check  # noqa: E402\n');
+    write('tests/test_assertion.py', 'assert result == expected  # noqa: E402\n');
+    git('add', 'tests/test_existing.py', 'tests/test_new.py', 'tests/test_assertion.py');
+    git('commit', '-q', '-m', 'suppression candidate');
+    const after = git('rev-parse', 'HEAD');
+
+    const r = await inspectScope({ repoRoot: repo, baseRev: before, candidateRev: after, snapshot: SNAPSHOT });
+    expect(r.weakening_signals).toEqual([
+      { path: 'tests/test_assertion.py', signal: 'lint-disabled', detail: 'suppression added: assert result == expected  # noqa: E402' },
+      { path: 'tests/test_existing.py', signal: 'lint-disabled', detail: 'suppression added: import style_check  # noqa: E402' },
+    ]);
+  });
 });

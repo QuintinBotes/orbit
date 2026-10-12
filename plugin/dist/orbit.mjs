@@ -32205,6 +32205,16 @@ function parseDiff(diff) {
   }
   return out;
 }
+function suppressedImport(line3) {
+  const marker = /\s(?:#|\/\/|\/\*)/.exec(line3);
+  if (!marker || COMMENT.test(line3) || !isImportStatement(line3.slice(0, marker.index))) return false;
+  const comment = line3.slice(marker.index).trim();
+  for (const directive of LINE_LOCAL_DIRECTIVES) {
+    const m = directive.exec(comment);
+    if (m) return m[1].split(",").every((rule) => IMPORT_STYLE_RULES.has(rule.trim())) && !LINT_SUPPRESS.test(m[2] ?? "");
+  }
+  return false;
+}
 function detectWeakening(files, layout = NO_LAYOUT) {
   const out = [];
   for (const f of files) out.push(...detectWeakeningInFile(f, layout));
@@ -32232,16 +32242,17 @@ function detectWeakeningInFile(file, layout = NO_LAYOUT) {
     return signals;
   }
   const lang = langOf(path);
+  const patterns = ASSERTION[lang];
+  const isAssert = (l) => patterns.some((r) => r.test(l));
   const d = parseDiff(file.diff);
   const addedCode = d.added.filter((l) => !COMMENT.test(l));
   const removedCode = d.removed.filter((l) => !COMMENT.test(l));
+  const exempt = (line3) => status2 === "A" && test && !isAssert(line3) && suppressedImport(line3);
   for (const line3 of d.added) {
     if (/\bgitleaks:allow\b/.test(line3)) add("secret-scan-suppressed", "gitleaks:allow added");
-    else if (LINT_SUPPRESS.test(line3)) add("lint-disabled", `suppression added: ${trimDetail(line3)}`);
+    else if (LINT_SUPPRESS.test(line3) && !exempt(line3)) add("lint-disabled", `suppression added: ${trimDetail(line3)}`);
   }
   if (test || lang === "other" && /\btest/i.test(path)) {
-    const patterns = ASSERTION[lang];
-    const isAssert = (l) => patterns.some((r) => r.test(l));
     const removedAsserts = removedCode.filter(isAssert).length;
     const addedAsserts = addedCode.filter(isAssert).length;
     if (removedAsserts > addedAsserts) add("assertion-removed", `${removedAsserts} assertion line(s) removed, ${addedAsserts} added`);
@@ -32354,7 +32365,7 @@ function closeToPrecision(d, add) {
     add("tolerance-increased", `toBeCloseTo precision ${Math.min(...before)} -> ${Math.min(...after)} digits`);
   }
 }
-var TEST_CONFIG, LINT_CONFIG, ASSERTION, COMMENT, SKIP3, FOCUS, GO_IGNORE, WEAK_MATCHER, TAUTOLOGY, LINT_SUPPRESS, LOOSER_WHEN_HIGHER, LOOSER_WHEN_LOWER, TIMEOUT_RE, code;
+var TEST_CONFIG, LINT_CONFIG, ASSERTION, COMMENT, SKIP3, FOCUS, GO_IGNORE, WEAK_MATCHER, TAUTOLOGY, LINT_SUPPRESS, IMPORT_STYLE_RULES, LINE_LOCAL_DIRECTIVES, IMPORT_STATEMENTS, isImportStatement, LOOSER_WHEN_HIGHER, LOOSER_WHEN_LOWER, TIMEOUT_RE, code;
 var init_weakening = __esm({
   "src/policy/weakening.ts"() {
     "use strict";
@@ -32396,7 +32407,41 @@ var init_weakening = __esm({
     GO_IGNORE = /^\s*\/\/\s*(\+build|go:build)\s+.*\bignore\b/;
     WEAK_MATCHER = /\.(toBeDefined|toBeTruthy|toBeFalsy|toBeUndefined|toBeInstanceOf)\s*\(|\.not\.(toBeNull|toBeUndefined|toThrow)\s*\(|expect\.any(thing)?\s*\(/;
     TAUTOLOGY = /expect\((true|false|1|0|null)\)\.(toBe|toEqual)\(\1\)|^\s*assert\s+(True|1)\s*(#.*)?$|assert\.ok\(true\)|\bt\.pass\(\)|self\.assertTrue\(True\)/;
-    LINT_SUPPRESS = /eslint-disable|@ts-(ignore|nocheck|expect-error)|tslint:disable|biome-ignore|oxlint-disable|#\s*noqa\b|#\s*type:\s*ignore|#\s*pylint:\s*disable|#\s*pyright:\s*ignore|\/\/\s*nolint\b|#\[allow\(|@SuppressWarnings|(istanbul|c8|v8)\s+ignore|#\s*pragma:?\s*no\s*cover|\bnosec\b|NOLINT|rubocop:disable|stylelint-disable/;
+    LINT_SUPPRESS = /eslint-disable|@ts-(ignore|nocheck|expect-error)|tslint:disable|biome-ignore|oxlint-disable|#\s*noqa\b|#\s*flake8:\s*noqa\b|#\s*type:\s*ignore|#\s*pylint:\s*disable|#\s*pyright:\s*ignore|\/\/\s*nolint\b|#\[allow\(|@SuppressWarnings|(istanbul|c8|v8)\s+ignore|#\s*pragma:?\s*no\s*cover|\bnosec\b|NOLINT|rubocop:disable|stylelint-disable/;
+    IMPORT_STYLE_RULES = /* @__PURE__ */ new Set([
+      "E401",
+      "E402",
+      "F401",
+      // flake8, ruff (not I001 or I002: they act on the whole import block, and a required import can be a guard)
+      "import/first",
+      "import/order",
+      "import/newline-after-import",
+      "no-unused-vars",
+      "@typescript-eslint/no-unused-vars",
+      "@typescript-eslint/no-require-imports",
+      "@typescript-eslint/no-var-requires",
+      // ESLint, oxlint
+      "reportMissingImports",
+      "reportMissingModuleSource",
+      "reportMissingTypeStubs"
+      // pyright
+    ]);
+    LINE_LOCAL_DIRECTIVES = [
+      /^#\s*noqa:\s*([A-Z]+\d+(?:\s*,\s*[A-Z]+\d+)*)$/,
+      /^\/\/\s*(?:eslint|oxlint)-disable-line\s+([\w@/-]+(?:\s*,\s*[\w@/-]+)*)(?:\s+--\s+(.*))?$/,
+      /^#\s*pyright:\s*ignore\[([\w-]+(?:\s*,\s*[\w-]+)*)\]$/
+    ];
+    IMPORT_STATEMENTS = [
+      /^import\s+[\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*$/,
+      // Python import
+      /^from\s+[\w.]+\s+import\s+(?:\*|\(?\s*[\w]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w]+(?:\s+as\s+\w+)?)*\s*,?\s*\)?)$/,
+      // Python from-import
+      /^import\s+(?:type\s+)?(?:[\w$]+\s*,?\s*)?(?:\*\s+as\s+[\w$]+|\{[\w$\s,]*\})?\s*(?:from\s+)?(['"])[^'"]+\1;?$/,
+      // ES import
+      /^(?:const|let|var)\s+(?:[\w$]+|\{[\w$\s,:]*\})\s*=\s*require\(\s*(['"])[^'"]+\1\s*\);?$/
+      // CommonJS require binding
+    ];
+    isImportStatement = (code2) => IMPORT_STATEMENTS.some((r) => r.test(code2.trim()));
     LOOSER_WHEN_HIGHER = ["maxDiffPixelRatio", "maxDiffPixels", "threshold", "rtol", "atol", "rel", "abs", "delta", "epsilon", "tolerance", "tol", "retries"];
     LOOSER_WHEN_LOWER = ["places", "lines", "branches", "functions", "statements"];
     TIMEOUT_RE = /([A-Za-z_$.]*timeout[A-Za-z_]*)['"]?\s*[:=(,]\s*\(?\s*([0-9][0-9_]*(?:\.[0-9]+)?)/gi;
