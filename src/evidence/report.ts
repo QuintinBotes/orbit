@@ -267,6 +267,8 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
       notRun.push(id);
       return { status, why: undefined };
     }
+    // A candidate that is not otherwise acceptable was not probed, and its verdict is not PASS for that reason already.
+    if (e.cause === 'not-acceptable') return { status, why: undefined };
     if (e.mode === 'advisory') {
       if (e.outcome === 'passed-before') advisoryGaps.push(`the new tests of ${id} pass on the base revision (${e.reason})`);
       else if (e.outcome === 'not-established') advisoryGaps.push(`${id} could not be probed (${e.reason})`);

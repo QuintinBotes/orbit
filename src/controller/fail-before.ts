@@ -63,7 +63,7 @@ export async function collectFailBefore(ctx: RunContext, cand: CandidateRecord, 
   const allowFlaky = ctx.snapshot.config.verification.allow_flaky_pass === true;
   const required = [...new Set([...input.contract.required_check_ids, ...Object.values(ctx.snapshot.config.checks).filter((c) => c.mandatory && c.kind === 'command').map((c) => c.id)])].filter((id) => ctx.snapshot.config.checks[id]?.kind === 'command');
   if (!input.installOk || !otherwiseAcceptable(input.results, required, allowFlaky)) {
-    return evidence(null, { cause: 'not-probed', reason: 'the probe did not run: the candidate is not otherwise acceptable (a required check or the dependency install did not pass)' });
+    return evidence(null, { cause: 'not-acceptable', reason: 'the probe did not run: the candidate is not otherwise acceptable (a required check or the dependency install did not pass)' });
   }
   const baseRev = ctx.run.baseRevision!;
   const repoRoot = ctx.run.repoRoot;

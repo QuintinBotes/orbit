@@ -152,6 +152,15 @@ describe('fail_before per criterion, by mode', () => {
     expect(e.report.acceptance_evidence[0]).toMatchObject({ status: 'supported', fail_before: { outcome: 'not-applicable', reason: 'its support does not rest on new tests: unit failed on the base revision' } });
   });
 
+  it('a candidate that is not otherwise acceptable was not probed, and that changes nothing: its verdict is not PASS already', () => {
+    const snapshot = withMode('required');
+    const lintToo = contract({ acceptance_criteria: oneCriterion.acceptance_criteria, required_check_ids: ['unit', 'lint'] });
+    const e = evaluateEvidence({ contract: lintToo, candidate: CANDIDATE, checkResults: [result(snapshot, 'unit'), result(snapshot, 'lint', 'FAILED')], scope: CLEAN_SCOPE, snapshot, base: { treeHash: 'tree-base', checks: [{ checkId: 'unit', status: 'PASSED' }, { checkId: 'lint', status: 'PASSED' }], changedPaths: ['tests/mul.test.mjs'] }, failBefore: { mode: 'required', probe: null, skipped: { cause: 'not-acceptable', reason: 'the probe did not run: the candidate is not otherwise acceptable' }, accepted: [] } });
+    expect(e.report.verdict).toBe('FAIL');
+    expect(e.report.acceptance_evidence[0]).toMatchObject({ status: 'supported', fail_before: { outcome: 'not-established', cause: 'not-acceptable' } });
+    expect(e.report.unverified.some((u) => u.startsWith('fail-before'))).toBe(false);
+  });
+
   it('a criterion supported only through a check the probe does not run is not established', () => {
     const lintOnly = contract({ acceptance_criteria: [{ id: 'AC-1', statement: 'style', proof: ['lint'], mandatory: true, check_ids: ['lint'] }], required_check_ids: ['lint'] });
     const snapshot = withMode('required');

@@ -55,6 +55,7 @@ export type NotEstablishedCause =
   | 'manifest'
   | 'budget'
   | 'content-only'
+  | 'not-acceptable'
   | 'not-probed';
 
 const NEVER_ACCEPTED: ReadonlySet<NotEstablishedCause> = new Set<NotEstablishedCause>(['environment', 'error', 'install']);
