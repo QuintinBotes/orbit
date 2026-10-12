@@ -4,7 +4,8 @@
  * policy whichever of them looks (docs/gaps.md G47).
  *
  * In a clean, writable checkout of exactly the candidate tree: the dependency install and audit, the trusted
- * command checks, the UI checks when UI paths changed or a criterion needs browser evidence, optionally the
+ * command checks, the fail-before probe of the candidate's new tests (ADR 0014, in a checkout of its own), the UI
+ * checks when UI paths changed or a criterion needs browser evidence, optionally the
  * agent-driven UI exploration, then the static security gate (secret scan and SAST) judged under the run's frozen
  * `static_security` policy at the controller's clock, and finally the evidence evaluation bound to the tree, the
  * check configuration and the policy.
@@ -31,6 +32,7 @@ import { homeOf, toolchainCacheRootFor, type RunContext } from './context.ts';
 import { staticSecurityGate, uiGate, type GateResult } from './gates.ts';
 import { judgeSastResult, sastCheckIds, scanCandidateSecrets, type SastVerdict, type SecretScanResult } from './security.ts';
 import { exploreCandidate, explorationEnabled, explorationUnverified } from './exploration.ts';
+import { collectFailBefore } from './fail-before.ts';
 
 export interface CollectOptions<S> {
   /** A clean, writable checkout of exactly the candidate tree (the caller materializes and removes it). */
@@ -109,6 +111,17 @@ export async function collectVerificationEvidence<S = never>(ctx: RunContext, ca
   if (afterChecks !== null) return { stopped: afterChecks };
   if (ctx.signal.aborted) throw new OrbitError('CANCELLED', 'the step was interrupted during checks');
 
+  // Fail-before (ADR 0014): do the candidate's new tests fail on the base revision? Run once the candidate is otherwise
+  // acceptable, on a checkout of the base tree with the candidate's test-owned paths; recorded apart from check_runs.
+  const base = await baseComparison(ctx, baseRev, cand.commitSha);
+  const failBefore = await collectFailBefore(ctx, cand, { contract, base, results, installOk: install.skipped || install.ok, runner });
+  if (failBefore.probe !== null && !failBefore.probe.reused) {
+    // A probe that ran was a long phase of its own: the step's safe point follows it.
+    const afterProbe = await checkpoint();
+    if (afterProbe !== null) return { stopped: afterProbe };
+    if (ctx.signal.aborted) throw new OrbitError('CANCELLED', 'the step was interrupted during the fail-before probe');
+  }
+
   // UI checks when UI paths changed or a criterion needs browser evidence.
   const changed = await changedPaths(ctx.run.repoRoot, baseRev, cand.commitSha);
   const ui = snapshot.config.ui;
@@ -151,8 +164,7 @@ export async function collectVerificationEvidence<S = never>(ctx: RunContext, ca
 
   // The evidence report, bound to tree, check configuration and policy.
   const uiResults: UiResultInput[] = uiResult ? toEvidenceUi(uiResult) : [];
-  const base = await baseComparison(ctx, baseRev, cand.commitSha);
-  const evaluation = evaluateEvidence({ contract, candidate: cand, checkResults: results, uiResults, scope, snapshot, uiRequired, base, runDir: ctx.runDir });
+  const evaluation = evaluateEvidence({ contract, candidate: cand, checkResults: results, uiResults, scope, snapshot, uiRequired, base, runDir: ctx.runDir, failBefore });
   const report = evaluation.report;
   const failReasons = [...evaluation.failReasons];
   const disclose = (text: string): void => {

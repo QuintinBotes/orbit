@@ -16,6 +16,8 @@ export {
   sastCheckIds,
   defaultConfig,
   defaultUi,
+  failBeforePolicy,
+  raiseFailBefore,
   loadConfig,
   modelPermitted,
   parseConfig,

@@ -30,6 +30,7 @@ import { assertContract, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATI
 import { obtain } from './obtain.ts';
 import { ATTEMPT_EVENT, attemptCandidateId, briefPath, currentAttempt, WORKER_ENDED_EVENT, type StoredBrief } from './implementing.ts';
 import { pendingTrigger } from './verifying.ts';
+import { askInsteadOfExhausting } from '../fail-before.ts';
 
 export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   const stop = await safePoint(ctx);
@@ -45,6 +46,9 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   const np = nonProgress(history, nonProgressThreshold(config.scheduler.repeated_failure_threshold));
   if (np.terminate) {
     decide(ctx, { id: `dec-${ctx.run.id}-non-progress-${next}`, kind: 'repair.non-progress', summary: np.reason, data: np });
+    // New tests that pass on the base revision under fail_before: required: a person decides, not the attempt count (ADR 0014).
+    const asked = await askInsteadOfExhausting(ctx, cand, `non-progress: ${np.reason}`);
+    if (asked) return asked;
     return finishRun(ctx, 'EXHAUSTED', `non-progress: ${np.reason}`, { outcome: { non_progress: np } });
   }
   // A repair that ended on a tree an earlier attempt produced, judged as it was then: the same evidence, diagnosis and
@@ -64,7 +68,11 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   const fingerprint = primary?.fingerprint ?? `verdict:${cand.id}`;
   // The hard cap never moves: with no attempt left, a diagnosis would be spend without a use.
   const att = ctx.ledger.state('implementation_attempts');
-  if (att.used >= att.hard_cap) return finishRun(ctx, 'EXHAUSTED', `implementation attempts hard cap reached (${att.used} of ${att.hard_cap}); the last failure was ${fingerprint}`, { outcome: { fingerprint } });
+  if (att.used >= att.hard_cap) {
+    const asked = await askInsteadOfExhausting(ctx, cand, `implementation attempts hard cap reached (${att.used} of ${att.hard_cap})`);
+    if (asked) return asked;
+    return finishRun(ctx, 'EXHAUSTED', `implementation attempts hard cap reached (${att.used} of ${att.hard_cap}); the last failure was ${fingerprint}`, { outcome: { fingerprint } });
+  }
 
   // 2. Repeated equivalent failures go to the Inquisition before another repair (spec section 7 stop logic).
   const existing = readJsonIfExists<StoredBrief>(briefPath(ctx, next));
@@ -158,6 +166,8 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
     const rec = extensionDecisionRecord(decision);
     decide(ctx, { id: `dec-${ctx.run.id}-extension-${next}`, kind: rec.kind, summary: rec.summary, data: rec.data });
     if (decision.decision === 'deny_extension') {
+      const asked = await askInsteadOfExhausting(ctx, cand, `implementation attempt allowance spent (${att.used} of ${att.allowance}) and no extension`);
+      if (asked) return asked;
       return finishRun(ctx, 'EXHAUSTED', `implementation attempt allowance spent (${att.used} of ${att.allowance}) and no extension: ${decision.denied_because.join('; ')}`, { outcome: { extension: decision } });
     }
   }

@@ -297,8 +297,12 @@
     "verification": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["allow_flaky_pass"],
-      "properties": { "allow_flaky_pass": { "type": "boolean" } }
+      "required": ["allow_flaky_pass", "fail_before", "fail_before_timeout_seconds"],
+      "properties": {
+        "allow_flaky_pass": { "type": "boolean" },
+        "fail_before": { "enum": ["off", "advisory", "required"] },
+        "fail_before_timeout_seconds": { "type": "integer", "minimum": 30, "maximum": 86400 }
+      }
     },
     "checks": { "type": "object", "maxProperties": 200, "propertyNames": { "$ref": "#/$defs/checkId" }, "additionalProperties": { "$ref": "#/$defs/check" } },
     "ui": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/ui" }] },

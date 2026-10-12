@@ -1,7 +1,7 @@
 /** `orbit run`: refuse what is cheap to detect, freeze the policy, create the run, then drive it here or hand it to the service. */
 import { releaseEnvironmentProblem } from '../../contract/validate.ts';
-import { RUN_MODES } from '../../policy/index.ts';
-import type { OrbitConfig } from '../../policy/types.ts';
+import { failBeforePolicy, raiseFailBefore, RUN_MODES } from '../../policy/index.ts';
+import { FAIL_BEFORE_MODES, type OrbitConfig } from '../../policy/types.ts';
 import { startRun, stateDbPath } from '../../controller/index.ts';
 import { existsSync } from 'node:fs';
 import type { Args, OptionSpec } from '../args.ts';
@@ -17,12 +17,13 @@ export const RUN_OPTIONS: OptionSpec = {
   mode: { type: 'string', description: 'supervised, autonomous, autonomous-delivery or release; validated exactly as if the policy file said it', valueName: 'mode' },
   policy: { type: 'string', description: 'policy file (default: .orbit/config.yaml)', valueName: 'path' },
   environment: { type: 'string', description: 'release mode: deploy only to this environment of the release profile (refused when it is not defined or not allowed for the branch); default: every environment the branch is allowed for', valueName: 'name' },
+  'fail-before': { type: 'string', description: 'off, advisory or required: raise verification.fail_before for this run (whether new tests must fail on the base revision); refused when lower than the policy', valueName: 'mode' },
   foreground: { type: 'boolean', description: 'drive the run in this terminal (the default when no service is running); Ctrl-C pauses it' },
   detach: { type: 'boolean', description: 'create the run and leave it to the service' },
 };
 
 export async function runCommand(args: Args, ctx: CliContext): Promise<number> {
-  const usage = 'orbit run --goal "<goal>" [--mode <mode>] [--environment <name>] [--policy <path>] [--foreground | --detach]';
+  const usage = 'orbit run --goal "<goal>" [--mode <mode>] [--environment <name>] [--fail-before <mode>] [--policy <path>] [--foreground | --detach]';
   if (args.bool('foreground') && args.bool('detach')) throw new UsageError('--foreground and --detach cannot be combined', usage);
   const mode = args.oneOf('mode', RUN_MODES);
   let goal = args.str('goal') ?? '';
@@ -34,7 +35,14 @@ export async function runCommand(args: Args, ctx: CliContext): Promise<number> {
   const repo = await resolveRepo(ctx, args.str('repo'));
   const policy = args.str('policy');
   // Every problem in the policy is reported at once, before any state exists.
-  const config: OrbitConfig = loadCommandPolicy(repo, ctx.cwd, policy, mode ? { mode } : {});
+  let config: OrbitConfig = loadCommandPolicy(repo, ctx.cwd, policy, mode ? { mode } : {});
+  // The fail-before mode is frozen with the policy: the flag may raise it for this run, never lower it (ADR 0014).
+  const failBefore = args.oneOf('fail-before', FAIL_BEFORE_MODES);
+  if (failBefore !== undefined) {
+    const raised = raiseFailBefore(config, failBefore);
+    if (raised === null) throw new UsageError(`--fail-before ${failBefore} would lower verification.fail_before (${failBeforePolicy(config).mode} in the policy); the flag can only raise it, and a lower mode is set in .orbit/config.yaml by a person`, usage);
+    config = raised;
+  }
 
   // A named environment is checked against the policy before any state exists, as the intake gate checks it again.
   const environment = args.str('environment');

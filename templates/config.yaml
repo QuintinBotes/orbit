@@ -442,3 +442,14 @@ verification:
   # A check that fails and then passes on a rerun is reported as flaky. When
   # false, a flaky pass cannot make the evidence verdict PASS.
   allow_flaky_pass: false
+  # Fail-before evidence (docs/decisions/0014-fail-before.md): do a
+  # candidate's new tests fail on the base revision? Orbit runs each test
+  # check a criterion cites on the base tree with the candidate's test files,
+  # once per candidate. off: not run. advisory: reported only. required: a
+  # criterion resting on new tests that pass on the base revision goes to
+  # repair, then to a person; one that cannot be probed blocks for a person.
+  # orbit run --fail-before can raise this for one run, never lower it.
+  fail_before: advisory
+  # The one wall-clock bound of a whole probe; skipped when the run has less
+  # wall time left.
+  fail_before_timeout_seconds: 900

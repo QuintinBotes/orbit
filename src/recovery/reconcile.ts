@@ -18,6 +18,7 @@ import { LAUNCH_FILE, archiveAttempt, cancelShim, handleFromWorkerDir, taskState
 import type { ProviderAdapter, TaskHandle, TaskResult, TaskStatus } from '../adapters/types.ts';
 import { ActionLedger } from '../delivery/actions.ts';
 import { finishCheckRun, isFinalCheckStatus } from '../evidence/store.ts';
+import { closeInterruptedProbes } from '../evidence/fail-before.ts';
 import { readJsonFile, shimPath, type ShimExit, type ShimIntent, type ShimLaunch, type ShimPid } from '../evidence/check-shim.ts';
 import { APP_STATE_FILE, reconcileApp, type ReconcileOutcome } from '../ui/app-fixture.ts';
 import { enterRecovery, exhaustRecovery, recoveryAttemptsRemaining, spendRecoveryAttempt, type EnterRecoveryOutcome, type LedgerFor } from './budget.ts';
@@ -124,6 +125,8 @@ export interface RunReconcileReport {
   recovery: EnterRecoveryOutcome['outcome'] | null;
   workers: WorkerReport[];
   checks: CheckReport[];
+  /** Fail-before probe attempts closed as interrupted (evidence/fail-before.ts closeInterruptedProbes). */
+  probes: string[];
   apps: AppReport[];
   actions: ActionReport[];
 }
@@ -276,7 +279,7 @@ function note(ctx: Ctx, runId: string, type: string, data: unknown): void {
 async function reconcileRun(ctx: Ctx, initial: RunRecord): Promise<RunReconcileReport> {
   const { db } = ctx;
   let run = initial;
-  const rep: RunReconcileReport = { runId: run.id, state: run.state, skipped: null, recovery: null, workers: [], checks: [], apps: [], actions: [] };
+  const rep: RunReconcileReport = { runId: run.id, state: run.state, skipped: null, recovery: null, workers: [], checks: [], probes: [], apps: [], actions: [] };
   const ended = isRunTerminal(run.state);
 
   if (!ended) {
@@ -330,15 +333,18 @@ async function reconcileRun(ctx: Ctx, initial: RunRecord): Promise<RunReconcileR
   run = getRun(db, run.id);
 
   rep.checks = await reconcileChecks(ctx, run);
+  // A fail-before probe is never reattached: its open attempts are stopped and closed, and it runs again (ADR 0014).
+  rep.probes = closeInterruptedProbes(db, runDir(ctx, run), run.id, ctx.clock);
   rep.apps = await reconcileApps(ctx, run);
   rep.actions = flagActions(ctx, run);
   rep.state = run.state;
 
-  if (rep.workers.length + rep.checks.length + rep.apps.length + rep.actions.length > 0 || rep.recovery) {
+  if (rep.workers.length + rep.checks.length + rep.probes.length + rep.apps.length + rep.actions.length > 0 || rep.recovery) {
     note(ctx, run.id, 'recovery.reconciled', {
       recovery: rep.recovery,
       workers: rep.workers.map((w) => ({ id: w.workerId, observation: w.observation, restart_planned: w.restartPlanned, restart_refused: w.restartRefused })),
       checks: rep.checks.map((c) => ({ id: c.checkRunId, observation: c.observation, terminated: c.terminated })),
+      ...(rep.probes.length > 0 ? { fail_before_probes_closed: rep.probes } : {}),
       apps: rep.apps.map((a) => a.outcome),
       actions_flagged: rep.actions.filter((a) => a.flagged).map((a) => a.actionId),
     });

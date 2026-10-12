@@ -45,7 +45,7 @@ export interface EvidenceView {
   treeHash: string;
   verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
   checks: { id: string; status: string; flaky: boolean }[];
-  acceptance: { criterion_id: string; status: string; artifacts: string[] }[];
+  acceptance: { criterion_id: string; status: string; artifacts: string[]; note?: string; failBefore?: { mode: string; outcome: string } }[];
   weakeningSignals: { path: string; signal: string; detail: string }[];
   visualBaselineChanges: string[];
   unverified: string[];
@@ -163,7 +163,13 @@ export function loadInquisitionSnapshot(db: OrbitDb, runId: string, extras: Snap
       treeHash: ev.tree_hash,
       verdict: ev.verdict as EvidenceView['verdict'],
       checks: ((report.checks ?? []) as { id: string; status: string; flaky?: boolean }[]).map((c) => ({ id: c.id, status: c.status, flaky: c.flaky === true })),
-      acceptance: ((report.acceptance_evidence ?? []) as { criterion_id: string; status: string; artifacts?: string[] }[]).map((a) => ({ criterion_id: a.criterion_id, status: a.status, artifacts: a.artifacts ?? [] })),
+      acceptance: ((report.acceptance_evidence ?? []) as { criterion_id: string; status: string; artifacts?: string[]; note?: string; fail_before?: { mode: string; outcome: string } }[]).map((a) => ({
+        criterion_id: a.criterion_id,
+        status: a.status,
+        artifacts: a.artifacts ?? [],
+        ...(a.note === undefined ? {} : { note: a.note }),
+        ...(a.fail_before === undefined ? {} : { failBefore: { mode: a.fail_before.mode, outcome: a.fail_before.outcome } }),
+      })),
       weakeningSignals: scope.weakening_signals ?? [],
       visualBaselineChanges: scope.visual_baseline_changes ?? [],
       unverified: (report.unverified ?? []) as string[],
@@ -295,7 +301,9 @@ function detectGreenWithoutProof(s: InquisitionSnapshot): Trigger[] {
   if (!s.evidence || !checksGreen(s)) return [];
   const unproven = unprovenCriteria(s);
   if (unproven.length === 0) return [];
-  const evidence = [`verdict ${s.evidence.verdict} although every required check passed`, ...unproven.map((u) => `${u.id}: ${u.why}`)];
+  // The fail-before probe's finding goes to the repair brief with its log (ADR 0014): the new tests pass on the base revision.
+  const passedBefore = s.evidence.acceptance.filter((a) => a.failBefore?.mode === 'required' && a.failBefore.outcome === 'passed-before' && a.status !== 'supported' && unproven.some((u) => u.id === a.criterion_id));
+  const evidence = [`verdict ${s.evidence.verdict} although every required check passed`, ...unproven.map((u) => `${u.id}: ${u.why}`), ...passedBefore.map((a) => `${a.criterion_id}: ${a.note ?? 'its new tests pass on the base revision'}`)];
   return [trig('green_without_proof', 'challenge', 'checks are green but mandatory criteria are not proven', evidence, unproven.map((u) => u.id), { tree: s.evidence.treeHash, unproven })];
 }
 

@@ -23,7 +23,8 @@ import { severityRank, type FindingSeverity } from '../../review/types.ts';
 import { appendEvent } from '../../storage/events.ts';
 import { listCheckRuns } from '../../evidence/store.ts';
 import { git } from '../../evidence/git.ts';
-import type { RepairBrief } from '../../evidence/types.ts';
+import type { EvidenceReport, RepairBrief } from '../../evidence/types.ts';
+import { probeLogPath, probeLogTail } from '../../evidence/fail-before.ts';
 import { validateModelOutput, type ImplementerOutput } from '../../contract/model-outputs.ts';
 import { mentionsIrreversible, riskCategoriesInText } from '../../inquisition/heuristics.ts';
 import { progressSince, type NonProgressDecision } from '../../inquisition/repair.ts';
@@ -764,9 +765,22 @@ async function preparePacket(ctx: RunContext, cand: CandidateRecord, reviewDir: 
     ledger: listLedger(ctx.db, ctx.run.id).map((l) => ({ id: l.id, claim: l.claim, source: l.source, confidence: l.confidence, status: l.status, ...(l.consequence ? { consequence_if_wrong: l.consequence } : {}), reversibility: l.reversibility, ...(l.experiment ? { validation_experiment: l.experiment } : {}) })),
     questions: listQuestions(ctx.db, ctx.run.id, { status: 'open' }).map((q) => q.question),
     provider,
+    failBeforeLogs: failBeforeLogs(ctx, ev.report),
   });
   atomicWrite(join(reviewDir, 'packet.md'), packet.text, 0o600);
   atomicWriteJson(join(reviewDir, 'packet.json'), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
+}
+
+/** The end of each fail-before probe log the report names, for the packet (ADR 0014); the files lie in the run directory. */
+function failBeforeLogs(ctx: RunContext, report: EvidenceReport): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const a of report.acceptance_evidence) {
+    for (const c of a.fail_before?.checks ?? []) {
+      const log = c.attempts.at(-1)?.log;
+      if (log && !out.has(log)) out.set(log, probeLogTail(probeLogPath(ctx.runDir, log)));
+    }
+  }
+  return out;
 }
 
 function packetShaOf(reviewDir: string): string {

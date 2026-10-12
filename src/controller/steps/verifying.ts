@@ -40,6 +40,7 @@ import { runWorktreeRoot, type RunContext } from '../context.ts';
 import { implementationScopeGate, behaviourGate, type ScopeGateDetails } from '../gates.ts';
 import { authorizedOnce, deniedDependencyOperations, grantFor, requestAuthorization, scopeWithGrants } from '../authorization.ts';
 import { collectVerificationEvidence } from '../verification.ts';
+import { failBeforeStale, routeFailBefore } from '../fail-before.ts';
 import { storedPlan } from './contracting.ts';
 import { amendBaseline } from './baseline-amendment.ts';
 import { assertContract, decide, finishRun, move, note, progress, safePoint, type StepResult } from './common.ts';
@@ -65,7 +66,8 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
   // protected paths it changed): after a person's resume the worktree is restored first (e2e Nm7).
   if (cand.status === 'INVALIDATED') return violatingCandidate(ctx, cand);
   const existing = currentEvidenceReport(ctx.db, ctx.run.id, cand.id);
-  if (existing && isFresh(existing.report, { candidate: cand, snapshot: ctx.snapshot })) return act(ctx, cand, existing);
+  // A person's fail-before answer, or a resume after a probe that was not established, makes the probe's part stale.
+  if (existing && isFresh(existing.report, { candidate: cand, snapshot: ctx.snapshot }) && !failBeforeStale(ctx, cand, existing)) return act(ctx, cand, existing);
 
   // 1. Implementation scope: the gate the hooks only assist.
   let scope = cand.scope ?? (await inspectScope({ repoRoot: ctx.run.repoRoot, baseRev: ctx.run.baseRevision!, candidateRev: cand.commitSha, snapshot: ctx.snapshot, contractAllowedPaths: contract.allowed_paths }));
@@ -172,6 +174,13 @@ async function act(ctx: RunContext, cand: CandidateRecord, ev: EvidenceReportRec
   const environment = [...sameAsBase, ...checksNotExecutedFor(ctx, cand, ev.report).filter((n) => !sameAsBase.some((b) => b.checkId === n.checkId))];
   if (environment.length > 0) return blockOnEnvironment(ctx, cand, ev, environment);
   if (verdict === 'FAIL') return move(ctx, 'DIAGNOSING', `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
+  // Fail-before under `required` (ADR 0014): not established blocks with a question per criterion; new tests that pass on
+  // the base revision go to repair through the inquiry below, and to a person once the loop has gone round on this tree.
+  const routed = await routeFailBefore(ctx, cand, ev, async () => {
+    const t = await pendingTrigger(ctx, cand, null);
+    return t ? move(ctx, 'INQUISITION', `verification incomplete: ${t.summary}`, { data: { trigger: t } }) : null;
+  });
+  if (routed) return routed;
   const trigger = await pendingTrigger(ctx, cand, null);
   if (trigger) return move(ctx, 'INQUISITION', `verification incomplete: ${trigger.summary}`, { data: { trigger } });
   return finishRun(ctx, 'BLOCKED', `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join('; ') || 'the evidence is incomplete'}`, { outcome: { report_id: ev.id } });
