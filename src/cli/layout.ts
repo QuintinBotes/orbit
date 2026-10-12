@@ -108,6 +108,8 @@ export function classifyCiDefinitions(files: readonly string[], isPipeline: (fil
 /** The scope `orbit init` proposes: source folders to allow, plus the CI and build definitions to protect. */
 export interface ProposedScope {
   allowed: string[];
+  /** Why no paths were derived, so init can explain the retained template examples. */
+  noScopeReason?: string;
   protectedExtra: string[];
   excluded: string[];
 }
@@ -141,7 +143,7 @@ export async function proposeScope(ctx: CliContext, repo: string, files?: readon
   const tracked = files ?? (await trackedFiles(ctx, repo));
   const pipelines = await pipelineYaml(repo, tracked);
   const ci = classifyCiDefinitions(tracked, (f) => pipelines.has(f));
-  return { allowed: suggestAllowedPaths(tracked, ci.excludedDirs), protectedExtra: ci.protectedPaths, excluded: ci.excludedDirs };
+  return { ...suggestScope(tracked, ci.excludedDirs), protectedExtra: ci.protectedPaths, excluded: ci.excludedDirs };
 }
 
 /**
@@ -150,6 +152,10 @@ export async function proposeScope(ctx: CliContext, repo: string, files?: readon
  * extensions at the top level; [] when there is neither.
  */
 export function suggestAllowedPaths(files: readonly string[], excludedDirs: readonly string[] = []): string[] {
+  return suggestScope(files, excludedDirs).allowed;
+}
+
+function suggestScope(files: readonly string[], excludedDirs: readonly string[]): Pick<ProposedScope, 'allowed' | 'noScopeReason'> {
   const dirs = new Set<string>();
   for (const f of files) {
     const slash = f.indexOf('/');
@@ -161,8 +167,8 @@ export function suggestAllowedPaths(files: readonly string[], excludedDirs: read
     dirs.add(top);
   }
   const sorted = [...dirs].sort();
-  if (sorted.length > MAX_DIRS) return [];
-  if (sorted.length > 0) return sorted.map((d) => `${d}/**`);
+  if (sorted.length > MAX_DIRS) return { allowed: [], noScopeReason: `there are ${sorted.length} visible top-level source folders, more than the ${MAX_DIRS} init derives a scope from` };
+  if (sorted.length > 0) return { allowed: sorted.map((d) => `${d}/**`) };
   // A flat layout has no directory to scope to: the source files sit at the top level, so scope by their extensions.
   const exts = new Set<string>();
   for (const f of files) {
@@ -171,5 +177,6 @@ export function suggestAllowedPaths(files: readonly string[], excludedDirs: read
     const ext = dot > 0 ? f.slice(dot + 1).toLowerCase() : '';
     if (SOURCE_EXTENSIONS.has(ext)) exts.add(ext);
   }
-  return [...exts].sort().map((e) => `*.${e}`);
+  const allowed = [...exts].sort().map((e) => `*.${e}`);
+  return { allowed, ...(allowed.length === 0 ? { noScopeReason: 'no visible top-level source folder or recognised top-level source file was found' } : {}) };
 }

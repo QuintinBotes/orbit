@@ -33,6 +33,11 @@ it wrote is shared by every worktree of the clone and lives outside this
 worktree; pass that on, since a person may not expect a worktree's init to
 write into the main checkout's git directory. Offer to help edit `.orbit/config.yaml`, then suggest `/orbit:doctor`.
 
+Relay any warning that no scope or checks were derived, including the reason,
+the example scope paths that must be edited, and the marker files init looked
+for. When the config was created, also relay this line:
+".orbit/config.yaml is reviewed like code: commit it to share the policy. It shows as untracked until committed; runtime state stays excluded and is never committed."
+
 ## The background service
 
 Runs make progress only while a controller drives them. The service drives them

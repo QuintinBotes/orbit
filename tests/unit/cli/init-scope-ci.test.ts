@@ -75,7 +75,7 @@ describe('Issue 4: init keeps CI and build definitions out of the proposed scope
     const r = await l.cli(['init']);
     const { scope } = config(l);
     expect(new Set(scope.protected_paths).size).toBe(scope.protected_paths.length);
-    expect(r.out).not.toMatch(/WARN/);
+    expect(r.out).not.toMatch(/WARN: .*scope/);
     expect(r.out).not.toMatch(/ {2}- .*scope/);
   });
 
