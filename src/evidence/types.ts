@@ -72,6 +72,30 @@ export interface CriterionEvidence {
   status: CriterionStatus;
   artifacts: string[];
   note?: string;
+  /** Whether the criterion's new tests fail on the base revision (docs/decisions/0014-fail-before.md); absent without a base comparison. */
+  fail_before?: CriterionFailBefore;
+}
+
+/** A criterion's fail-before entry in report.json (ADR 0014 section 5). */
+export interface CriterionFailBefore {
+  /** verification.fail_before of the run's policy. */
+  mode: 'off' | 'advisory' | 'required';
+  /**
+   * failed-before, passed-before or not-established from the probe; not-run when the policy turned the probe off;
+   * not-applicable when the criterion's support does not rest on new tests.
+   */
+  outcome: 'failed-before' | 'passed-before' | 'not-established' | 'not-run' | 'not-applicable';
+  /** Each probed check the criterion cites, with every attempt on the probe tree. */
+  checks: { id: string; outcome: 'failed-before' | 'passed-before' | 'not-established'; cause?: string; attempts: { status: CheckStatus; exit_code: number | null; log: string | null }[] }[];
+  /** The probe tree (the base tree with the candidate's test-owned paths); null when no probe tree was built. */
+  probe_tree: string | null;
+  /** The criterion's new tests: the first 20, and how many there are. */
+  test_paths: { paths: string[]; count: number };
+  reason: string;
+  /** Why the outcome is not established, when it is not. */
+  cause?: string;
+  /** A person accepted the criterion without fail-before for this candidate tree (its question and who answered). */
+  accepted?: { question_id: string; by: string };
 }
 
 /** Spec §11 example shape, extended with the bindings. */

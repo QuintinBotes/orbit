@@ -23,6 +23,7 @@ import type {
   CheckCategory,
   CheckDefinition,
   DependencyAuditConfig,
+  FailBeforeMode,
   IsolationLimits,
   NotificationsConfig,
   OrbitConfig,
@@ -38,6 +39,7 @@ import { hostEntryCovered, hostEntryProblem } from './hosts.ts';
 import { orbitHint } from '../core/invocation.ts';
 import { closest } from '../core/near-miss.ts';
 import { DEFAULT_REVIEW_FALLBACK, isSupportedReviewProvider, legacyReviewFallback, SUPPORTED_REVIEW_PROVIDERS } from './review.ts';
+import { FAIL_BEFORE_MODES } from './types.ts';
 
 /** Derived from the contract type so policy/ never imports controller/ (architecture dependency rule). */
 export type RunMode = OrbitConfig['mode'];
@@ -181,7 +183,7 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
       security: { block_severities: ['critical', 'high'], exceptions: [] },
     },
     delivery: { provider: 'github', pull_request: 'draft', max_ci_repair_cycles: 3, ci_timeout_minutes: 60, require_ci: false },
-    verification: { allow_flaky_pass: false },
+    verification: { allow_flaky_pass: false, fail_before: 'advisory', fail_before_timeout_seconds: DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS },
     checks: {},
     ui: null,
     isolation: { provider: 'sandbox-runtime', allow_unisolated: false, container: null, limits: defaultIsolationLimits(), require_resource_limits: false },
@@ -352,6 +354,27 @@ export function staticSecurityPolicy(config: Pick<OrbitConfig, 'static_security'
 
 export function dependencyAuditPolicy(config: Pick<OrbitConfig, 'dependencies'>): DependencyAuditConfig {
   return config.dependencies.audit ?? defaultDependencyAudit();
+}
+
+/** The one wall-clock bound of a fail-before probe when the config sets none (ADR 0014). */
+export const DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS = 900;
+
+/**
+ * The fail-before policy (docs/decisions/0014-fail-before.md). A snapshot written before the key existed reads as `off`:
+ * the run keeps the evidence rule it started with.
+ */
+export function failBeforePolicy(config: Pick<OrbitConfig, 'verification'>): { mode: FailBeforeMode; timeoutSeconds: number } {
+  return { mode: config.verification.fail_before ?? 'off', timeoutSeconds: config.verification.fail_before_timeout_seconds ?? DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS };
+}
+
+/**
+ * The config with `verification.fail_before` raised to `mode` for one run (`orbit run --fail-before`), or null when `mode`
+ * is lower than the policy's: an agent can type a command line, so the flag can only ask for more evidence (ADR 0014).
+ */
+export function raiseFailBefore(config: OrbitConfig, mode: FailBeforeMode): OrbitConfig | null {
+  const current = failBeforePolicy(config).mode;
+  if (FAIL_BEFORE_MODES.indexOf(mode) < FAIL_BEFORE_MODES.indexOf(current)) return null;
+  return deepFreeze({ ...config, verification: { ...config.verification, fail_before: mode } });
 }
 
 export function isolationLimits(config: Pick<OrbitConfig, 'isolation'>): IsolationLimits {

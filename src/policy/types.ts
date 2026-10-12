@@ -46,6 +46,11 @@ export type CheckCategory = 'test' | 'lint' | 'typecheck' | 'build' | 'sast' | '
 
 export const CHECK_CATEGORIES: readonly CheckCategory[] = ['test', 'lint', 'typecheck', 'build', 'sast', 'ui', 'other'];
 
+/** What the fail-before probe decides (ADR 0014), weakest first: a run may raise its policy's mode, never lower it. */
+export type FailBeforeMode = 'off' | 'advisory' | 'required';
+
+export const FAIL_BEFORE_MODES: readonly FailBeforeMode[] = ['off', 'advisory', 'required'];
+
 export interface HardLimits {
   implementation_attempts: number;
   diagnostic_experiments: number;
@@ -343,6 +348,15 @@ export interface OrbitConfig {
   verification: {
     /** A check that passed only on a rerun is disclosed as flaky; when false it cannot make the verdict PASS. */
     allow_flaky_pass: boolean;
+    /**
+     * Whether the candidate's new tests are run on the base revision (docs/decisions/0014-fail-before.md): `off`, `advisory`
+     * (reported only) or `required` (the outcome decides whether new tests support a criterion). Only a person sets it,
+     * in the config or raised per run with `orbit run --fail-before`. Parsed configs always carry it; optional in the type
+     * so older snapshots still read (read it through policy/config.ts `failBeforePolicy`; absent reads as off).
+     */
+    fail_before?: FailBeforeMode;
+    /** The one wall-clock bound of a whole fail-before probe. Parsed configs always carry it (default 900). */
+    fail_before_timeout_seconds?: number;
   };
   /** Learning layer (ADR 0002). Nothing here can widen authority. */
   knowledge: {

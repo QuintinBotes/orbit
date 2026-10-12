@@ -33,6 +33,8 @@ import {
   setCheckFlaky,
   type CheckRunRecord,
   type FailureSource,
+  type FinishedCheck,
+  type NewCheckRun,
 } from './store.ts';
 import { ensureShim, readJsonFile, shimPath, type ShimExit, type ShimIntent, type ShimLaunch, type ShimPid } from './check-shim.ts';
 import type { Candidate, CheckResult, CheckStatus, EvidenceBinding } from './types.ts';
@@ -106,6 +108,34 @@ export interface RunnerContext {
    * or the missing program may have been fixed since, which the recorded result cannot show.
    */
   setAside?: ReadonlySet<string>;
+  /**
+   * Where attempts are recorded: check_runs (CHECK_RUN_RECORDS) unless given. The fail-before probe records its own
+   * attempts elsewhere (evidence/fail-before.ts), because an expected failure on its tree is not the run's.
+   */
+  records?: AttemptRecords;
+}
+
+/** The store of a check's attempts: their intent before a process starts, its pid, and the outcome. */
+export interface AttemptRecords {
+  /** The attempts of one check for one subject (candidateId null: the base revision), oldest first. */
+  list(db: OrbitDb, query: { runId: string; candidateId: string | null; checkId: string }): CheckRunRecord[];
+  /** Persist the intent; must commit before the process starts, and refuse new work for a cancelled or ended run. */
+  plan(db: OrbitDb, input: NewCheckRun, clock: Clock): CheckRunRecord;
+  running(db: OrbitDb, id: string, pid: number, clock: Clock): CheckRunRecord;
+  /** Record the outcome; a final row is left alone. */
+  finish(db: OrbitDb, id: string, outcome: FinishedCheck): CheckRunRecord;
+}
+
+/** The trusted checks' attempts: the check_runs table, which diagnosis, the baseline and reconcile read. */
+export const CHECK_RUN_RECORDS: AttemptRecords = Object.freeze({
+  list: (db: OrbitDb, query: { runId: string; candidateId: string | null; checkId: string }) => listCheckRuns(db, query),
+  plan: planCheckRun,
+  running: markCheckRunning,
+  finish: finishCheckRun,
+});
+
+function recordsOf(ctx: Pick<RunnerContext, 'records'>): AttemptRecords {
+  return ctx.records ?? CHECK_RUN_RECORDS;
 }
 
 export interface RunChecksInput extends RunnerContext {
@@ -215,6 +245,20 @@ export function baselineSubject(runDir: string, baseTree: string, source: 'basel
 }
 
 /** The recorded configuration hash for a check, verified against its definition. */
+/**
+ * One attempt of `def` on the subject's tree, recorded through `ctx.records` under `configHash`, without the group's
+ * reruns, flakiness or failure records: the fail-before probe (evidence/fail-before.ts) decides what its attempts mean.
+ * Returns the final row; rejects as runChecks does when supervision stops (detachSignal).
+ */
+export async function runAttempt(ctx: RunnerContext, subject: CheckSubject, def: CheckDefinition, configHash: string): Promise<CheckRunRecord> {
+  assertPolicy(ctx);
+  await assertCheckoutTree(ctx.checkoutDir, subject.treeHash);
+  if (detached(ctx)) throw detachError(ctx);
+  const row = await launchAttempt(ctx, subject, validDefinition(def, def.id), configHash, null);
+  removeLeftovers(subject, def.id, attemptIndex(ctx, row));
+  return row;
+}
+
 export function configHashFor(snapshot: PolicySnapshot, def: CheckDefinition): string {
   const actual = checkConfigHash(def);
   const recorded = snapshot.check_config_hashes[def.id];
@@ -357,7 +401,7 @@ function attemptName(checkId: string, index: number): string {
 }
 
 function attemptIndex(ctx: RunnerContext, row: CheckRunRecord): number {
-  const rows = listCheckRuns(ctx.db, { runId: row.runId, candidateId: row.candidateId, checkId: row.checkId });
+  const rows = recordsOf(ctx).list(ctx.db, { runId: row.runId, candidateId: row.candidateId, checkId: row.checkId });
   return Math.max(0, rows.findIndex((r) => r.id === row.id));
 }
 
@@ -381,7 +425,7 @@ async function executeCheckGroup(ctx: RunnerContext, subject: CheckSubject, def:
   const query = { runId: ctx.run.id, candidateId: subject.candidateId, checkId: def.id };
 
   const loadGroup = (): CheckRunRecord[] => {
-    const rows = listCheckRuns(ctx.db, query);
+    const rows = recordsOf(ctx).list(ctx.db, query);
     const root = [...rows].reverse().find((r) => r.rerunOf === null);
     if (!root || ctx.setAside?.has(root.id)) return [];
     // A group recorded under another configuration or policy says nothing about this one.
@@ -562,7 +606,8 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
   const argv = def.shell ? ['/bin/sh', '-c', def.command[0]!] : [...def.command];
   const cwd = safeCwd(ctx.checkoutDir, def.cwd);
   await assertCheckoutUnmodified(ctx.checkoutDir, def.id);
-  const index = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: subject.candidateId, checkId: def.id }).length;
+  const records = recordsOf(ctx);
+  const index = records.list(ctx.db, { runId: ctx.run.id, candidateId: subject.candidateId, checkId: def.id }).length;
   const dirs = dirsFor(subject, def.id, index);
   for (const d of [dirs.checkDir, dirs.artifactsDir, dirs.homeDir]) mkdirSync(d, { recursive: true, mode: 0o700 });
   prepareCheckHome(dirs.homeDir);
@@ -587,7 +632,7 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
   let row: CheckRunRecord;
   try {
     // Intent first: once this commits, a restarted controller knows a check may be running for this row.
-    row = planCheckRun(
+    row = records.plan(
       ctx.db,
       {
         runId: ctx.run.id,
@@ -634,9 +679,9 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
       /* ps unavailable: liveness falls back to the bare pid */
     }
     atomicWriteJson(shimPath(dirs.checkDir, 'launch'), { token, pid, procStart } satisfies ShimLaunch, 0o600);
-    row = markCheckRunning(ctx.db, row.id, pid, ctx.clock);
+    row = records.running(ctx.db, row.id, pid, ctx.clock);
   } catch (err) {
-    finishCheckRun(ctx.db, row.id, {
+    records.finish(ctx.db, row.id, {
       status: 'ERROR',
       exitCode: null,
       timedOut: false,
@@ -1019,7 +1064,7 @@ function finalize(ctx: RunnerContext, def: CheckDefinition, row: CheckRunRecord,
   }
 
   const artifacts = [{ path: dirs.logPath, sha256: logSha256, kind: 'log' }, ...collectArtifacts(dirs.artifactsDir)];
-  return finishCheckRun(ctx.db, row.id, {
+  return recordsOf(ctx).finish(ctx.db, row.id, {
     status,
     exitCode,
     timedOut: status === 'TIMEOUT',

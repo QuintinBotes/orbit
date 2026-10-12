@@ -102,6 +102,34 @@ export function isTestPath(path: string, layout: TestLayout = NO_LAYOUT, diff?: 
   return false;
 }
 
+/**
+ * The test directories of ADR 0011's layouts, whatever a file there is: JavaScript, TypeScript, Python and Go test
+ * folders, Ruby's spec/ and test/, PHP's and C's tests/, Swift's Tests/, Dart's integration_test/, Go's testdata/ and
+ * Bazel's javatests/. A crate's tests/ is one of them.
+ */
+const TEST_DIRECTORY = /(^|\/)(__tests__|__test__|tests?|specs?|e2e|integration[-_]tests?|testing|testdata|javatests)\//i;
+/** An Xcode or Swift package test target folder (<Name>Tests/). */
+const SWIFT_TEST_TARGET = /(^|\/)\w+Tests\//;
+/** Source sets a production build compiles whatever a folder in them is called: JVM's src/main and Swift's Sources. */
+const PRODUCTION_SOURCES = /(^|\/)src\/main\/|(^|\/)Sources\//;
+
+/**
+ * Whether `path` is test-owned (docs/decisions/0014-fail-before.md): what the fail-before probe takes from the candidate
+ * onto the base tree. A test file by isTestPath, judged without a diff, and the files only a test build reads under ADR
+ * 0011's layouts: anything in a test directory (fixtures, helpers, a test folder's build file), Go's testdata/, a JVM
+ * test source set with its resources/, and a .NET test project's own folder and project file. A source that is a test
+ * only by its content (a Rust #[test] added to src/) is not: its tests cannot be taken without its production code.
+ * Production code, build files, runner configuration, manifests and lockfiles elsewhere stay the base's. Counting a
+ * production file here only makes the probe tree more like the candidate, so its new tests are less likely to fail.
+ */
+export function isTestOwnedPath(path: string, layout: TestLayout = NO_LAYOUT): boolean {
+  if (isTestPath(path, layout)) return true;
+  if (JVM_TEST_SOURCES.test(path)) return true;
+  if (testOwners(path, layout.dotnetProjects, layout) !== null) return true;
+  if (PRODUCTION_SOURCES.test(path)) return false;
+  return TEST_DIRECTORY.test(path) || SWIFT_TEST_TARGET.test(path);
+}
+
 /** JavaScript/TypeScript, Python and Go, as recognised before issue #30. */
 function jsPyGoTest(p: string): boolean {
   if (/(^|\/)(__tests__|__test__|tests?|specs?|e2e|integration-tests?|testing)\//.test(p)) return true;
@@ -489,6 +517,11 @@ const MAX_MANIFEST_CHARS = 1024 * 1024;
 export interface LayoutOptions {
   /** Also find which changed Rust sources are modules their crate compiles (compiledRust); only a #[test] added to one needs it. */
   readonly rustModules?: boolean;
+  /**
+   * Judge the .NET project that owns every changed file, not only the changed sources: isTestOwnedPath counts a test
+   * project's whole folder and its project file (ADR 0014).
+   */
+  readonly allDotnetOwners?: boolean;
 }
 
 /**
@@ -502,8 +535,8 @@ export interface LayoutOptions {
  * nothing when no .NET or Rust file changed.
  */
 export async function loadTestLayout(reader: TreeReader, base: string, candidate: string, changed: readonly string[], options: LayoutOptions = {}): Promise<TestLayout> {
-  const dotnet = changed.filter((p) => DOTNET_SOURCE.test(p.toLowerCase()));
   const rust = changed.filter((p) => p.toLowerCase().endsWith('.rs'));
+  const dotnet = options.allDotnetOwners ? changed.filter((p) => !p.toLowerCase().endsWith('.rs')) : changed.filter((p) => DOTNET_SOURCE.test(p.toLowerCase()));
   if (dotnet.length === 0 && rust.length === 0) return NO_LAYOUT;
   const dirs = [...new Set([...dotnet, ...rust].flatMap(ancestors))].sort();
   const revs = base === candidate ? [base] : [base, candidate];

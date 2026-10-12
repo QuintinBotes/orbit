@@ -379,4 +379,35 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE actions ADD COLUMN started_at INTEGER;
   ALTER TABLE actions ADD COLUMN deadline_at INTEGER;
   `,
+  /* 6: fail-before probe attempts (docs/decisions/0014-fail-before.md), kept out of check_runs and failures */ `
+  -- One row per attempt of a check on a probe tree (the base tree with the candidate's test-owned paths). An expected
+  -- failure here is not the run's: nothing that reads check_runs or failures (diagnosis, the baseline, reconcile,
+  -- the learning layer) may see it. probe_id groups the attempts of one probe; signals_json holds the ADR 0010
+  -- environment signals read from the attempt's log.
+  CREATE TABLE fail_before_probes (
+    id                 TEXT PRIMARY KEY,
+    run_id             TEXT NOT NULL REFERENCES runs(id),
+    candidate_id       TEXT NOT NULL,
+    probe_id           TEXT NOT NULL,
+    probe_tree         TEXT NOT NULL,
+    check_id           TEXT NOT NULL,
+    check_config_hash  TEXT NOT NULL,
+    policy_hash        TEXT NOT NULL,
+    attempt            INTEGER NOT NULL,
+    command_json       TEXT NOT NULL,
+    cwd                TEXT NOT NULL,
+    isolation          TEXT NOT NULL,
+    status             TEXT NOT NULL,
+    exit_code          INTEGER,
+    signals_json       TEXT,
+    log_path           TEXT,
+    log_sha256         TEXT,
+    excerpt            TEXT,
+    pid                INTEGER,
+    started_at         INTEGER NOT NULL,
+    ended_at           INTEGER
+  ) STRICT;
+  CREATE INDEX fail_before_probes_candidate ON fail_before_probes(run_id, candidate_id, check_id);
+  CREATE INDEX fail_before_probes_probe ON fail_before_probes(probe_id, check_id);
+  `,
 ];
