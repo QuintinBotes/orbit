@@ -159,6 +159,13 @@ describe('runFailBeforeProbe', () => {
     expect(listProbeAttempts(e.run.db, e.run.runId)[0]!.signals).toEqual(['filesystem-denied']);
   }, 120_000);
 
+  it('is not established, as an ERROR, when the runner cannot start a check on the probe tree', async () => {
+    const e = await env([unit({ cwd: 'packages/absent' })], addMul);
+    const result = await runFailBeforeProbe(e.request());
+    expect(result.checks[0]).toMatchObject({ outcome: 'not-established', cause: 'error', reason: expect.stringMatching(/^unit could not be run on the probe tree: check cwd packages\/absent does not exist in the checkout/) });
+    expect(e.decisions).toHaveLength(1);
+  }, 120_000);
+
   it('starts nothing for a cancelled run and records no decision', async () => {
     const e = await env([unit()], addMul);
     e.run.db.run('UPDATE runs SET cancel_requested = 1 WHERE id = ?', e.run.runId);

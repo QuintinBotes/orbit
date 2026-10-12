@@ -667,6 +667,18 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
     if (signals.length > 0) db.run('UPDATE fail_before_probes SET signals_json = ? WHERE id = ?', JSON.stringify(signals), row.id);
     return { attempt: attemptNumber(db, row.id), status: row.status as CheckStatus, exitCode: row.exitCode, signals, log: runRelative(runDir, row.logPath) };
   };
+  /**
+   * One attempt, or why the runner refused to start it (a cwd missing from the probe tree, a tracked file an earlier
+   * attempt rewrote): that check is not established. A cancellation or a stop of supervision is not caught here.
+   */
+  const attempt = async (def: CheckDefinition, configHash: string): Promise<CheckRunRecord | string> => {
+    try {
+      return await runAttempt(ctx, subject, def, configHash);
+    } catch (err) {
+      if (!isOrbitError(err) || err.code === 'CANCELLED') throw err;
+      return err.message;
+    }
+  };
   const ran: CheckProbe[] = [];
   let stopped: { cause: NotEstablishedCause; reason: (id: string) => string } | null = null;
   try {
@@ -675,14 +687,20 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
     if (!install.skip) {
       for (const def of install.definitions) {
         const attempts: ProbeAttempt[] = [];
+        let refused: string | null = null;
         for (let n = 0; n < 2; n++) {
-          const row = await runAttempt(ctx, subject, def, configHashFor(snapshot, def));
+          const row = await attempt(def, configHashFor(snapshot, def));
+          if (typeof row === 'string') {
+            refused = row;
+            break;
+          }
           attempts.push(attemptOf(row, def));
           if (row.status !== 'FAILED') break;
         }
         const last = attempts.at(-1);
-        if (last?.status !== 'PASSED') {
-          stopped = { cause: 'install', reason: (id) => `${id} was not probed: the locked install (${def.id}) ended ${last?.status ?? 'without a result'} on the probe tree${last?.log ? ` (${last.log})` : ''}` };
+        if (refused !== null || last?.status !== 'PASSED') {
+          const how = refused !== null ? `could not be started (${refused})` : `ended ${last?.status ?? 'without a result'}`;
+          stopped = { cause: 'install', reason: (id) => `${id} was not probed: the locked install (${def.id}) ${how} on the probe tree${last?.log ? ` (${last.log})` : ''}` };
           break;
         }
       }
@@ -692,15 +710,24 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
       const def = defs.get(id)!;
       const attempts: ProbeAttempt[] = [];
       let bounded = false;
+      let refused: string | null = null;
       for (let n = 0; n < 2; n++) {
         const left = deadline - clock.now();
         if (left <= 0) break;
         const timeout = Math.min(def.timeout_seconds, Math.max(1, Math.ceil(left / 1000)));
         bounded = timeout < def.timeout_seconds;
         // A shorter timeout keeps the probe inside its bound; the attempt stays bound to the check's own configuration.
-        const row = await runAttempt(ctx, subject, { ...def, timeout_seconds: timeout }, configHashes.get(id)!);
+        const row = await attempt({ ...def, timeout_seconds: timeout }, configHashes.get(id)!);
+        if (typeof row === 'string') {
+          refused = row;
+          break;
+        }
         attempts.push(attemptOf(row, def));
         if (row.status !== 'FAILED') break;
+      }
+      if (refused !== null) {
+        ran.push({ checkId: id, outcome: 'not-established', cause: 'error', reason: `${id} could not be run on the probe tree: ${refused}`, attempts });
+        continue;
       }
       let judged = judgeProbeAttempts(id, attempts);
       // Not run at all, cut short by the probe's bound, or not repeated for want of time: the bound ran out, not the check.

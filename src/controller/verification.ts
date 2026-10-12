@@ -4,7 +4,8 @@
  * policy whichever of them looks (docs/gaps.md G47).
  *
  * In a clean, writable checkout of exactly the candidate tree: the dependency install and audit, the trusted
- * command checks, the fail-before probe of the candidate's new tests (ADR 0014, its own checkout), the UI checks when UI paths changed or a criterion needs browser evidence, optionally the
+ * command checks, the fail-before probe of the candidate's new tests (ADR 0014, in a checkout of its own), the UI
+ * checks when UI paths changed or a criterion needs browser evidence, optionally the
  * agent-driven UI exploration, then the static security gate (secret scan and SAST) judged under the run's frozen
  * `static_security` policy at the controller's clock, and finally the evidence evaluation bound to the tree, the
  * check configuration and the policy.
