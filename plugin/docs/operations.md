@@ -95,7 +95,7 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 |---|---|
 | `orbit doctor` | `--probe` makes live requests (a few cents) |
 | `orbit init` | none |
-| `orbit run` | `--goal <text>` (or `-` for stdin), `--mode supervised\|autonomous\|autonomous-delivery\|release`, `--environment <name>` (release mode: deploy only there), `--policy <path>`, `--foreground`, `--detach` |
+| `orbit run` | `--goal <text>` (or `-` for stdin), `--mode supervised\|autonomous\|autonomous-delivery\|release`, `--environment <name>` (release mode: deploy only there), `--fail-before off\|advisory\|required` (raise `verification.fail_before` for this run, never lower it), `--policy <path>`, `--foreground`, `--detach` |
 | `orbit status [run-id]` | `--all` lists every run, not the latest 10 |
 | `orbit timeline <run-id>` | `--follow` / `-f`, `--last <n>`, `--all` |
 | `orbit logs <run-id>` | `--follow` / `-f`, `--lines <n>`, `--controller`, `--workers`, `--worker <id>` |
@@ -133,8 +133,8 @@ when it has not.
 
 A green check is not enough for PASS. A criterion is only `supported` when its
 checks passed and at least one of them either failed on the base revision (so
-the change turned it green) or the candidate adds or changes a test; otherwise
-it is `unverified` with the reason "no new evidence". A candidate whose tree is
+the change turned it green) or runs a test the candidate adds or changes;
+otherwise it is `unverified` with the reason "no new evidence". A candidate whose tree is
 the base revision's tree makes no change, and the verdict is INCOMPLETE. What
 counts as a test follows each language's test runner (ADR 0011): a file of a
 .NET test project (its project file references Microsoft.NET.Test.Sdk or a test
@@ -143,12 +143,28 @@ crate's `tests/` or a `#[test]` function the change adds to a source of the
 crate's `src/` that cargo compiles (not one marked `#[ignore]`), and
 the usual test files of JavaScript/TypeScript, Python, Go, Ruby, PHP, Swift,
 Elixir, Dart, C and C++. A test-named file of a production project or source
-set does not count, since its runner never runs it. The
-test-change rule counts a changed test anywhere in the run, since a contract does
-not map criteria to test files, so it can still pass a criterion whose own test
-was left alone when another test changed. The evidence report lists its
-artifacts (check logs and the like) as paths relative to the run directory, and
-`orbit verify` prints them relative to the repository.
+set does not count, since its runner never runs it. Test evidence is per check
+(ADR 0014): a changed test counts for a check only when it lies under the
+check's `cwd`, so a test added under another criterion's check (another
+package's directory) supports nothing here. With every check at the repository
+root a contract does not map criteria to test files, so a changed test still
+counts for each of them. The evidence report lists its artifacts (check logs
+and the like) as paths relative to the run directory, and `orbit verify` prints
+them relative to the repository.
+
+Whether new tests fail without the change is the fail-before probe's question
+(`verification.fail_before`, [configuration](configuration.md#verification)):
+each test check a criterion cites is run on the base tree with the candidate's
+test files, and each criterion in `report.json` carries a `fail_before` entry
+(`mode`, `outcome`, `checks` with every attempt's status, exit code and log,
+`probe_tree`, `test_paths`, `reason`). The probe's logs are under
+`evidence/<n>/fail-before/`, its tree is pinned under
+`refs/orbit/<run>/fail-before/<n>`, and `orbit timeline` shows a
+`verification.fail-before` line per probe, such as "unit failed on the base
+revision with the new tests (exit 1, 2 attempts): AC-1". Under `required`, a
+question about accepting a criterion without fail-before is answered with
+`orbit decide <run-id> <question-id> accept` (or `decline`), bound to the tree
+it names, and `orbit resume` judges the candidate again.
 
 `orbit repair <run-id>` hands the failure of a `BLOCKED` or paused run with FAIL
 evidence to a repair. A run id that does not qualify is refused with the

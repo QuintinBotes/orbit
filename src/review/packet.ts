@@ -64,6 +64,11 @@ export interface ReviewPacketInput {
   limits?: PacketLimits;
   /** Exact secret values to redact in addition to the recognized shapes. */
   extraSecrets?: Iterable<string>;
+  /**
+   * The end of each fail-before probe log the report names (ADR 0014), by the path the report gives: the reviewer judges
+   * whether a failure on the base revision is an assertion about the criterion or only a load failure.
+   */
+  failBeforeLogs?: ReadonlyMap<string, string>;
 }
 
 export type ExclusionReason = 'credential-path' | 'binary' | 'generated' | 'size-budget' | 'truncated' | 'deleted' | 'file-count';
@@ -473,7 +478,7 @@ ${bullet(ev.acceptance_evidence.map((a) => `${a.criterion_id}: ${a.status}${a.no
 ### UI
 ${bullet(ev.ui.map((u) => `${u.journey}: ${u.status}`), 20, 200)}
 ### Not verified
-${bullet(ev.unverified.map(red), 30, 300)}`);
+${bullet(ev.unverified.map(red), 30, 300)}${failBeforeSection(ev, input.failBeforeLogs, red)}`);
 
   sec.push(`## Assumptions
 
@@ -492,8 +497,52 @@ ${bullet(
   // The practice question is the controller's, asked of every review whatever the caller listed (spec section 5).
   sec.push(`## Review questions
 
-${bullet([...practiceReviewQuestions(contract), ...input.questions.map(red)], 20, 500)}`);
+${bullet([...practiceReviewQuestions(contract), ...failBeforeReviewQuestions(ev), ...input.questions.map(red)], 20, 500)}`);
   return sec.join('\n');
+}
+
+/** Probe logs shown per packet, and the characters kept from the end of each. */
+const MAX_PROBE_LOGS = 6;
+const PROBE_LOG_CHARS = 2_000;
+
+/**
+ * What the fail-before probe found for each criterion that rests on new tests (ADR 0014): its outcome, and the end of
+ * the log of each probed check's last attempt on the base revision, as untrusted data. Empty when no criterion has one.
+ */
+function failBeforeSection(ev: EvidenceReport, logs: ReadonlyMap<string, string> | undefined, red: (s: string) => string): string {
+  const entries = ev.acceptance_evidence.filter((a) => a.fail_before !== undefined && a.fail_before.outcome !== 'not-applicable');
+  if (entries.length === 0) return '';
+  const lines = entries.map((a) => {
+    const fb = a.fail_before!;
+    return `${a.criterion_id} (${fb.mode}): ${fb.outcome}${fb.accepted ? `, accepted without fail-before by ${red(fb.accepted.by)}` : ''}. ${red(oneLine(fb.reason, 300))}${fb.test_paths.count > 0 ? `; new tests: ${red(fb.test_paths.paths.slice(0, 5).join(', '))}${fb.test_paths.count > 5 ? ` and ${fb.test_paths.count - 5} more` : ''}` : ''}`;
+  });
+  const shown: string[] = [];
+  for (const a of entries) {
+    for (const c of a.fail_before!.checks) {
+      const log = c.attempts.at(-1)?.log;
+      const text = log ? logs?.get(log) : undefined;
+      if (!log || text === undefined || shown.length >= MAX_PROBE_LOGS || shown.some((x) => x.includes(`(${log})`))) continue;
+      const tail = text.length > PROBE_LOG_CHARS ? `...${text.slice(text.length - PROBE_LOG_CHARS)}` : text;
+      shown.push(`${c.id} on the base revision with the new tests, last attempt (${log}):\n${fenced('text', red(tail))}`);
+    }
+  }
+  return `
+### Fail-before
+The probe ran each check on the base tree with the candidate's test files: a failure there shows the tests depend on the change, not that they assert it.
+${bullet(lines, MAX_LIST_ITEMS, 600)}${shown.join('\n')}`;
+}
+
+/**
+ * The question the reviewer answers for each criterion whose new tests failed on the base revision under `required`
+ * (ADR 0014): an exit status cannot tell an assertion from a test that only fails to load.
+ */
+export function failBeforeReviewQuestions(ev: EvidenceReport): string[] {
+  return ev.acceptance_evidence
+    .filter((a) => a.fail_before?.mode === 'required' && a.fail_before.outcome === 'failed-before' && a.status === 'supported')
+    .map((a) => {
+      const log = a.fail_before!.checks.find((c) => c.outcome === 'failed-before')?.attempts.at(-1)?.log;
+      return `${a.criterion_id}'s new tests failed on the base revision${log ? ` (${log})` : ''}: is that failure an assertion about ${a.criterion_id}, or only a load failure (a missing symbol, an import error, a helper the tests need outside them)? A load-only failure shows the tests depend on the change, not that they check it: report it as a finding of high severity, which blocks like any other.`;
+    });
 }
 
 /**

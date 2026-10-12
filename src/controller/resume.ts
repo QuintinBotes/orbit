@@ -12,6 +12,9 @@ import { canTransition, type RunState } from './states.ts';
 
 /** Where a blocked run goes back to: the stage it stopped in, or the earliest stage its durable state supports. */
 export function resumeTarget(db: OrbitDb, run: RunRecord): RunState {
+  // A block that asked about fail-before evidence (ADR 0014) is answered by judging the candidate again, wherever it was
+  // asked (DIAGNOSING asks when the repair attempts run out).
+  if (failBeforeBlock(run) && db.get('SELECT 1 AS x FROM candidates WHERE run_id = ? LIMIT 1', run.id)) return 'VERIFYING';
   const prior = run.resumeState;
   if (prior && canTransition('BLOCKED', prior)) {
     // Review and delivery act only on live evidence; a decision that changed the contract while the run was blocked
@@ -21,6 +24,17 @@ export function resumeTarget(db: OrbitDb, run: RunRecord): RunState {
   }
   if (db.get('SELECT 1 AS x FROM candidates WHERE run_id = ? LIMIT 1', run.id)) return 'VERIFYING';
   return run.contractJson ? 'PLANNING' : 'PREFLIGHT';
+}
+
+/** Whether the run's block was about fail-before evidence (controller/fail-before.ts records `fail_before` in the outcome). */
+function failBeforeBlock(run: Pick<RunRecord, 'state' | 'outcomeJson'>): boolean {
+  if (run.state !== 'BLOCKED' || !run.outcomeJson) return false;
+  try {
+    const o = JSON.parse(run.outcomeJson) as { fail_before?: unknown };
+    return o.fail_before !== undefined && o.fail_before !== null;
+  } catch {
+    return false;
+  }
 }
 
 function liveEvidenceForLatestCandidate(db: OrbitDb, runId: string): boolean {

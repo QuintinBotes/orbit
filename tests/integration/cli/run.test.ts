@@ -233,3 +233,36 @@ describe('orbit run: starting', () => {
     expect(readFileSync(getRun(l.db(), run_id).policyPath, 'utf8')).toContain('"schema": "orbit.policy/1"');
   });
 });
+
+// ADR 0014: the fail-before mode is a person's setting, frozen with the policy. The run flag can ask for more evidence
+// for one run, never for less, because an agent can type a command line.
+describe('orbit run --fail-before', () => {
+  const frozen = (l: Lab, runId: string) => (JSON.parse(readFileSync(getRun(l.db(), runId).policyPath, 'utf8')) as { config: { verification: { fail_before: string } } }).config.verification.fail_before;
+
+  it('raises the policy\'s mode for this run, frozen in its snapshot', async () => {
+    const l = lab();
+    expect(l.config.verification.fail_before).toBe('advisory');
+    const r = await cli(l, ['run', '--goal', GOAL, '--detach', '--policy', l.configPath, '--fail-before', 'required', '--json']);
+    expect(r.code, r.err).toBe(0);
+    const { run_id } = JSON.parse(r.out) as { run_id: string };
+    expect(frozen(l, run_id)).toBe('required');
+    const same = await cli(l, ['run', '--goal', 'another goal', '--detach', '--policy', l.configPath, '--fail-before', 'advisory', '--json']);
+    expect(same.code, same.err).toBe(0);
+    expect(frozen(l, (JSON.parse(same.out) as { run_id: string }).run_id)).toBe('advisory');
+  });
+
+  it('refuses to lower it, before any run exists', async () => {
+    const l = lab({ tweak: (c) => (c.verification.fail_before = 'required') });
+    const r = await cli(l, ['run', '--goal', GOAL, '--detach', '--policy', l.configPath, '--fail-before', 'off']);
+    expect(r.code).toBe(2);
+    expect(r.err).toMatch(/--fail-before off would lower verification\.fail_before \(required in the policy\); the flag can only raise it/);
+    expect(existsSync(join(l.repo, '.orbit', 'state.sqlite'))).toBe(false);
+  });
+
+  it('accepts only off, advisory or required', async () => {
+    const l = lab();
+    const r = await cli(l, ['run', '--goal', GOAL, '--detach', '--policy', l.configPath, '--fail-before', 'strict']);
+    expect(r.code).toBe(2);
+    expect(r.err).toMatch(/fail-before/);
+  });
+});

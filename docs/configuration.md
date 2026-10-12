@@ -976,10 +976,56 @@ guard:
 
 verification:
   allow_flaky_pass: false
+  fail_before: advisory
+  fail_before_timeout_seconds: 900
 ```
 
 See [the learning layer](learning.md). The guard reads a private-terms list that
-Orbit never prints and never copies into a repository.
+Orbit never prints and never copies into a repository. The `verification` keys
+are described in [verification](#verification).
+
+## verification
+
+```yaml
+verification:
+  allow_flaky_pass: false             # a pass that needed a rerun cannot make the verdict PASS
+  fail_before: advisory               # off | advisory | required
+  fail_before_timeout_seconds: 900    # 30 to 86400: the one bound of a whole probe
+```
+
+`allow_flaky_pass` is described with the checks above. `fail_before` decides
+what Orbit does with the question a new test raises: does it fail without the
+change ([ADR 0014](decisions/0014-fail-before.md)). Once a candidate is
+otherwise acceptable (every required check passed) and changes a test, Orbit
+runs each command check of category `test` that a criterion cites, and that
+passed on the base revision, on a probe tree: the base tree with the
+candidate's test-owned files (test files, and what only a test build reads:
+test directories, Go `testdata/`, JVM test source sets and their `resources/`,
+a .NET test project's folder and project file). A failing run is repeated once.
+Each probed check is **failed-before** (every attempt failed, at least two, with
+no environment signal in the output), **passed-before** (every attempt passed)
+or **not established** (a timeout, an `ERROR`, mixed results, an environment
+signal, a failed install, a probe tree git refuses, or the probe's bound). A
+candidate that changes a dependency manifest or lockfile outside test-owned
+files is not probed. The judgement is by exit status only: a compile or import
+error counts as failing, so failed-before means "the tests depend on the
+change", not "an assertion failed".
+
+| `fail_before` | What it does |
+|---|---|
+| `off` | No probe; `unverified` says it was not run. |
+| `advisory` (default) | The probe runs and each criterion's `fail_before` entry in the report carries its outcome; `unverified` gains one line when a criterion's new tests passed on the base revision or could not be probed. Nothing else changes. |
+| `required` | failed-before supports the criterion (the reviewer is asked whether the failure is an assertion or only a load failure). passed-before leaves it unverified and goes to repair; when the repair attempts run out, the run asks a person whether to accept the criterion without fail-before for that tree. Not established blocks the run with a question per criterion; an environment, `ERROR` or install cause is never offered for acceptance: fix it and `orbit resume` runs the probe again. |
+
+Only a person sets it, in this file or for one run with `orbit run
+--fail-before <mode>`, which can raise the policy's mode (`off` < `advisory` <
+`required`) and is refused when it would lower it. It is frozen in the run's
+policy snapshot; a run started before the key existed reads it as `off`. The
+probe costs one install and one or two runs of each affected check per
+candidate, and its time counts against `wall_minutes`: it is skipped (not
+established) when less wall time is left than `fail_before_timeout_seconds`.
+Its attempts are recorded apart from the run's checks, and a later candidate
+with the same probe tree (a repair of production code only) reuses them.
 
 ## notifications
 

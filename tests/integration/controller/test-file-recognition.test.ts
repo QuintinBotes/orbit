@@ -33,6 +33,10 @@ afterEach(() => {
 });
 
 const NO_NEW_EVIDENCE = 'no new evidence: unit-tests already passed on the base revision and the candidate adds or changes no test';
+/** ADR 0014: a criterion whose support does not rest on new tests has nothing for the fail-before probe to say. */
+const NOT_APPLICABLE = expect.objectContaining({ mode: 'advisory', outcome: 'not-applicable' });
+/** A test only by its content (a #[test] in src/) cannot be taken onto the base tree without its production code. */
+const CONTENT_ONLY = expect.objectContaining({ mode: 'advisory', outcome: 'not-established', cause: 'content-only' });
 
 // ---------------------------------------------------------------------------
 // C#
@@ -261,7 +265,9 @@ describe.skipIf(!canStripTypes)('issue #30: a C# candidate that adds xunit tests
   it('verifies its criterion: the change to a file of the xunit test project is a test change, and the run succeeds', async () => {
     const test = 'tests/Acme.Tests/CalculatorTests.cs';
     const { state, reason, first } = await drive(lab(CSHARP, { 'src/Acme/Calculator.cs': calculator(true), [test]: calculatorTests(true) }, test));
-    expect(first?.report.acceptance_evidence, reason).toEqual([{ criterion_id: 'AC-1', status: 'supported', artifacts: expect.any(Array) }]);
+    // The stand-in prints the same passing run on every tree, so the probe finds the new test passing on the base
+    // revision; under the default advisory mode that is reported and changes nothing (ADR 0014).
+    expect(first?.report.acceptance_evidence, reason).toEqual([{ criterion_id: 'AC-1', status: 'supported', artifacts: expect.any(Array), fail_before: expect.objectContaining({ mode: 'advisory', outcome: 'passed-before', test_paths: { paths: [test], count: 1 } }) }]);
     expect(first?.report.checks.map((c) => `${c.id}:${c.status}`)).toEqual(['unit-tests:PASSED']);
     expect(first?.report.verdict).toBe('PASS');
     expect(first?.report.unverified.join('\n')).not.toContain('no new evidence');
@@ -274,7 +280,7 @@ describe.skipIf(!canStripTypes)('issue #30: a C# candidate that adds xunit tests
     const { state, reason, first } = await drive(lab(CSHARP, { 'src/Acme/Calculator.cs': calculator(true), [misplaced]: calculatorTests(true).replace('namespace Acme.Tests;', 'namespace Acme;') }, misplaced, 'tests/Acme.Tests/CalculatorTests.cs'));
     expect(first?.report.checks.map((c) => `${c.id}:${c.status}`)).toEqual(['unit-tests:PASSED']);
     expect(first?.report.verdict).toBe('INCOMPLETE');
-    expect(first?.report.acceptance_evidence).toEqual([{ criterion_id: 'AC-1', status: 'unverified', artifacts: expect.any(Array), note: NO_NEW_EVIDENCE }]);
+    expect(first?.report.acceptance_evidence).toEqual([{ criterion_id: 'AC-1', status: 'unverified', artifacts: expect.any(Array), note: NO_NEW_EVIDENCE, fail_before: NOT_APPLICABLE }]);
     expect(state, reason).not.toBe('SUCCEEDED');
   }, 120_000);
 });
@@ -282,7 +288,7 @@ describe.skipIf(!canStripTypes)('issue #30: a C# candidate that adds xunit tests
 describe.skipIf(!canStripTypes)('issue #30: a Rust candidate whose unit test lives in the source file', () => {
   it('verifies its criterion when the change adds a #[test] function to src/lib.rs, which cargo test runs', async () => {
     const { state, reason, first } = await drive(lab(RUST, { 'src/lib.rs': lib(true, true) }, 'src/lib.rs'));
-    expect(first?.report.acceptance_evidence, reason).toEqual([{ criterion_id: 'AC-1', status: 'supported', artifacts: expect.any(Array) }]);
+    expect(first?.report.acceptance_evidence, reason).toEqual([{ criterion_id: 'AC-1', status: 'supported', artifacts: expect.any(Array), fail_before: CONTENT_ONLY }]);
     expect(first?.report.verdict).toBe('PASS');
     expect(state, reason).toBe('SUCCEEDED');
   }, 120_000);
@@ -290,7 +296,7 @@ describe.skipIf(!canStripTypes)('issue #30: a Rust candidate whose unit test liv
   it('leaves the criterion unverified when the change to src/lib.rs adds code and no test', async () => {
     const { state, reason, first } = await drive(lab(RUST, { 'src/lib.rs': lib(true, false) }, 'src/lib.rs'));
     expect(first?.report.verdict).toBe('INCOMPLETE');
-    expect(first?.report.acceptance_evidence).toEqual([{ criterion_id: 'AC-1', status: 'unverified', artifacts: expect.any(Array), note: NO_NEW_EVIDENCE }]);
+    expect(first?.report.acceptance_evidence).toEqual([{ criterion_id: 'AC-1', status: 'unverified', artifacts: expect.any(Array), note: NO_NEW_EVIDENCE, fail_before: NOT_APPLICABLE }]);
     expect(state, reason).not.toBe('SUCCEEDED');
   }, 120_000);
 });
@@ -303,7 +309,7 @@ describe.skipIf(!canStripTypes)('issue #30: a Rust #[test] that cargo test never
     const { state, reason, first } = await drive(lab(RUST_WORKSPACE, { 'crates/calc/src/lib.rs': lib(true, false), [test]: MUL_TEST }, test));
     expect(first?.report.checks.map((c) => `${c.id}:${c.status}`)).toEqual(['unit-tests:PASSED']);
     expect(first?.report.verdict).toBe('INCOMPLETE');
-    expect(first?.report.acceptance_evidence).toEqual([{ criterion_id: 'AC-1', status: 'unverified', artifacts: expect.any(Array), note: NO_NEW_EVIDENCE }]);
+    expect(first?.report.acceptance_evidence).toEqual([{ criterion_id: 'AC-1', status: 'unverified', artifacts: expect.any(Array), note: NO_NEW_EVIDENCE, fail_before: NOT_APPLICABLE }]);
     expect(state, reason).not.toBe('SUCCEEDED');
   }, 120_000);
 
@@ -311,14 +317,14 @@ describe.skipIf(!canStripTypes)('issue #30: a Rust #[test] that cargo test never
     const test = 'src/mul_tests.rs';
     const { state, reason, first } = await drive(lab(RUST, { 'src/lib.rs': lib(true, false), [test]: MUL_UNIT_TEST }, test));
     expect(first?.report.verdict).toBe('INCOMPLETE');
-    expect(first?.report.acceptance_evidence).toEqual([{ criterion_id: 'AC-1', status: 'unverified', artifacts: expect.any(Array), note: NO_NEW_EVIDENCE }]);
+    expect(first?.report.acceptance_evidence).toEqual([{ criterion_id: 'AC-1', status: 'unverified', artifacts: expect.any(Array), note: NO_NEW_EVIDENCE, fail_before: NOT_APPLICABLE }]);
     expect(state, reason).not.toBe('SUCCEEDED');
   }, 120_000);
 
   it('verifies the criterion when the same test module is declared from the crate root, so cargo test runs it', async () => {
     const test = 'src/mul_tests.rs';
     const { state, reason, first } = await drive(lab(RUST, { 'src/lib.rs': `${lib(true, false)}\n#[cfg(test)]\nmod mul_tests;\n`, [test]: MUL_UNIT_TEST }, test));
-    expect(first?.report.acceptance_evidence, reason).toEqual([{ criterion_id: 'AC-1', status: 'supported', artifacts: expect.any(Array) }]);
+    expect(first?.report.acceptance_evidence, reason).toEqual([{ criterion_id: 'AC-1', status: 'supported', artifacts: expect.any(Array), fail_before: CONTENT_ONLY }]);
     expect(first?.report.verdict).toBe('PASS');
     expect(state, reason).toBe('SUCCEEDED');
   }, 120_000);
@@ -360,7 +366,7 @@ describe.skipIf(!canStripTypes)('final review: a Rust change to the test attribu
       const { state, reason, first } = await drive(lab({ ...RUST, repo }, { 'src/lib.rs': ignoredMulLib([...candidate]) }, 'src/lib.rs'));
       expect(first?.report.checks.map((c) => `${c.id}:${c.status}`)).toEqual(['unit-tests:PASSED']);
       expect(first?.report.verdict).toBe('INCOMPLETE');
-      expect(first?.report.acceptance_evidence).toEqual([{ criterion_id: 'AC-1', status: 'unverified', artifacts: expect.any(Array), note: NO_NEW_EVIDENCE }]);
+      expect(first?.report.acceptance_evidence).toEqual([{ criterion_id: 'AC-1', status: 'unverified', artifacts: expect.any(Array), note: NO_NEW_EVIDENCE, fail_before: NOT_APPLICABLE }]);
       expect(state, reason).not.toBe('SUCCEEDED');
     }, 120_000);
   }

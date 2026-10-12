@@ -42,6 +42,11 @@ const LOCKFILES = new Set([
   'packages.lock.json', 'Package.resolved', 'gradle.lockfile', 'flake.lock', 'mix.lock', 'pubspec.lock', 'Podfile.lock',
 ]);
 
+/** Whether `path` is a lockfile the scope inspection counts (lockfile_changed). */
+export function isLockfilePath(path: string): boolean {
+  return LOCKFILES.has(posix.basename(path));
+}
+
 // trustedDependencies (bun) and patchedDependencies decide which packages run install scripts or get patched.
 const JS_DEP_SECTIONS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies', 'bundleDependencies', 'bundledDependencies', 'overrides', 'resolutions', 'peerDependenciesMeta', 'packageManager', 'engines', 'trustedDependencies', 'patchedDependencies', 'workspaces'];
 const COMPOSER_DEP_SECTIONS = ['require', 'require-dev', 'conflict', 'replace', 'provide', 'repositories'];
