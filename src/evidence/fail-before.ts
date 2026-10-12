@@ -749,7 +749,14 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
           if (row.status !== 'FAILED') break;
         }
         const last = attempts.at(-1);
-        // The install is judged as the candidate's is, by its exit status: it builds the tree, it is not the evidence.
+        // An environment signal in any install attempt stops the probe, whatever the exit status: on the candidate a
+        // broken install only fails its tests, but on the probe tree a failing test is the evidence (ADR 0014).
+        const installSignals = [...new Set(attempts.flatMap((a) => a.signals))];
+        if (refused === null && installSignals.length > 0) {
+          stopped = { cause: 'environment', reason: (id) => `${id} was not probed: the locked install (${def.id}) on the probe tree shows an environment cause (${installSignals.join(', ')})${last?.log ? ` (${last.log})` : ''}` };
+          break;
+        }
+        // Otherwise the install is judged by its exit status: a retry that passes after a flaky failure built the tree.
         if (refused === null && last?.status === 'PASSED') continue;
         // Only an attempt the bound cut short, or none at all, is the budget's. An install that FAILED once still failed,
         // even when its retry had no time left or was cut short: that is the install's, never accepted.

@@ -351,6 +351,16 @@ describe('third review: every attempt\'s log is read, and the install keeps to t
     expect(took).toBeLessThan(15_000);
   }, 120_000);
 
+  it('does not probe after an install that exits 0 but whose log shows an environment cause', async () => {
+    // An install that could not reach a host can still exit 0. On the candidate that only makes its tests fail; on the
+    // probe tree a failing test is the evidence, so such an install must stop the probe as an environment cause.
+    const denied = ['sh', '-c', "echo 'curl: (56) CONNECT tunnel failed, response 403; Connection blocked by network allowlist'; exit 0"];
+    const e = await env([unit()], addMul, (c) => (c.dependencies.install_command = denied));
+    const probed = await runFailBeforeProbe(e.request());
+    expect(probed.checks[0]).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+    expect(listProbeAttempts(e.run.db, e.run.runId).map((a) => [a.checkId, a.status])).toEqual([['orbit-install', 'PASSED']]);
+  }, 120_000);
+
   it('keeps an install that failed as the install\'s cause, never accepted, when its retry is cut short by the bound', async () => {
     // The first attempt fails at about 1.2 s; the retry gets what is left of the 2 s bound and is cut short.
     const failing = [process.execPath, '-e', 'setTimeout(() => process.exit(1), 1_200)'];

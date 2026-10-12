@@ -1014,7 +1014,10 @@ long it is, and an `ERROR` or an environment signal is never offered for
 acceptance. The locked install that prepares the probe tree keeps to the same
 bound. An install attempt the bound cuts short is the budget's, which a person
 may accept; an install that failed, even once before its retry was cut short,
-is an install failure, which is never accepted. A criterion citing several
+is an install failure, which is never accepted. An install whose log shows an
+environment signal stops the probe as an environment cause even when it exits
+0: on the probe tree a failing test is the evidence, so a half-built tree must
+not produce one. A criterion citing several
 probed checks takes every open check's cause into account. A
 candidate that changes a dependency manifest or lockfile outside test-owned
 files is not probed, also when a person authorized the change once. The judgement is by exit status only: a compile or import

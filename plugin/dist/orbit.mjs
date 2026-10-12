@@ -38877,6 +38877,11 @@ tree: ${probeTree}
           if (row.status !== "FAILED") break;
         }
         const last = attempts.at(-1);
+        const installSignals = [...new Set(attempts.flatMap((a) => a.signals))];
+        if (refused === null && installSignals.length > 0) {
+          stopped = { cause: "environment", reason: (id) => `${id} was not probed: the locked install (${def.id}) on the probe tree shows an environment cause (${installSignals.join(", ")})${last?.log ? ` (${last.log})` : ""}` };
+          break;
+        }
         if (refused === null && last?.status === "PASSED") continue;
         if (refused === null && !attempts.some((a) => a.status === "FAILED") && (outOfTime || last?.status === "TIMEOUT" && bounded)) {
           stopped = { cause: "budget", reason: outOfBudget };
