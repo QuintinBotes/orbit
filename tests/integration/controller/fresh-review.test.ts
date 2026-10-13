@@ -7,10 +7,12 @@
 // revision, which no repair can change, so it is a note. Item 3 then ended the run BLOCKED, and resume came back to the
 // same BLOCKED. Now the tree gets exactly one fresh review, told the outcome is not a finding: its APPROVE lets the run
 // succeed, anything else ends it BLOCKED naming the findings, and with no review round left none starts.
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { systemClock } from '../../../src/core/clock.ts';
 import { Controller } from '../../../src/controller/loop.ts';
-import { resumeTarget } from '../../../src/controller/resume.ts';
+import { newRunNeeded, resumeTarget } from '../../../src/controller/resume.ts';
 import { acquireLease, getRun, releaseLease, transition } from '../../../src/controller/run-store.ts';
 import type { OrbitConfig } from '../../../src/policy/types.ts';
 import { listReviews } from '../../../src/review/store.ts';
@@ -49,6 +51,13 @@ function resume(l: Lab, runId: string): void {
   l.db().tx(() => appendEvent(l.db(), runId, 'run.resumed', 'acme-dev', { from: 'BLOCKED', to: target, forced: false }, systemClock.now()));
   transition(l.db(), { runId, to: target, ownerId: 'person-resume', reason: 'resumed', actor: 'acme-dev', expectedFrom: 'BLOCKED' }, systemClock);
   releaseLease(l.db(), runId, 'person-resume');
+}
+
+/** The next_action of the run's final report, as `orbit report` and final.json give it. */
+function nextAction(l: Lab, runId: string): string {
+  const p = join(l.repo, '.orbit', 'runs', runId, 'final.json');
+  expect(existsSync(p)).toBe(true);
+  return (JSON.parse(readFileSync(p, 'utf8')) as { next_action: string }).next_action;
 }
 
 function transitions(l: Lab, runId: string): string[] {
@@ -108,6 +117,10 @@ describe.skipIf(!canStripTypes)('one fresh review of a tree a review asked to re
     expect(done.outcomeReason).toMatch(/the one fresh review of this tree \([^)]*REPAIR_REQUIRED\)[^;]*did not approve it either: TEST-1 \(high, a note\)/);
     expect(reviewerPurposes(l, run.id)).toEqual(['review:cand#1', 'review-fresh:cand#1']);
     expect(transitions(l, run.id)).not.toContain('REPAIRING');
+    // A resume comes back to this BLOCKED, so nothing tells the person to resume.
+    expect(newRunNeeded(l.db(), done)).toBe('the tree had its one fresh review, and a resume starts no other');
+    expect(nextAction(l, run.id)).toMatch(/Resuming would only block again \(the tree had its one fresh review, and a resume starts no other\): cancel this run \(orbit cancel orb-\S+\) and start a new run with orbit run\.$/);
+    expect(nextAction(l, run.id)).not.toMatch(/Resolve that, then run/);
 
     resume(l, run.id);
     await drive(l, run.id);
@@ -130,5 +143,9 @@ describe.skipIf(!canStripTypes)('one fresh review of a tree a review asked to re
     expect(done.outcomeReason).toMatch(/no fresh review of the tree was started: review_rounds hard cap reached \(1 of 1\)/);
     expect(reviewerPurposes(l, run.id)).toEqual(['review:cand#1']);
     expect(listDecisions(l.db(), run.id, { kind: 'review.fresh' })).toEqual([]);
+    // The cap is the run's frozen policy: a resume blocks again, so the report says to start a new run.
+    expect(newRunNeeded(l.db(), done)).toBe('review_rounds is at its hard cap, so a resume starts no fresh review of the tree');
+    expect(nextAction(l, run.id)).toMatch(/Resuming would only block again \(review_rounds is at its hard cap[^)]*\): cancel this run/);
+    expect(nextAction(l, run.id)).not.toMatch(/Resolve that, then run/);
   });
 });

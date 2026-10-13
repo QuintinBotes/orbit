@@ -47338,6 +47338,17 @@ function candidateEnvironmentFailures(run) {
     return null;
   }
 }
+function freshReviewSpent(run) {
+  try {
+    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
+    const f = o?.fresh_review !== null && typeof o?.fresh_review === "object" ? o.fresh_review : null;
+    if (f === null) return null;
+    if (f.started === false) return "review_rounds is at its hard cap, so a resume starts no fresh review of the tree";
+    return typeof f.review_id === "string" ? "the tree had its one fresh review, and a resume starts no other" : null;
+  } catch {
+    return null;
+  }
+}
 function newRunNeeded(db, run) {
   if (run.state !== "BLOCKED") return null;
   const frozen = frozenPolicySetting(run);
@@ -47346,7 +47357,7 @@ function newRunNeeded(db, run) {
   if (failures !== null && failures.every((f) => f.questionId === null || listQuestions(db, run.id).every((q) => q.id !== f.questionId))) {
     return "the block comes from the environment or a check's definition, which a resume does not change: the run's policy and the check results recorded for its candidate are frozen";
   }
-  return null;
+  return freshReviewSpent(run);
 }
 function missingTargetChecks(run) {
   try {
@@ -47706,6 +47717,8 @@ function nextAction(input) {
     case "BLOCKED":
       if (frozenPolicySetting({ outcomeJson: run.outcomeJson ?? null }) !== null) return `Read orbit report ${run.id}; this block comes from the run's frozen policy, so resuming alone would only block again.`;
       if (candidateEnvironmentFailures({ outcomeJson: run.outcomeJson ?? null }) !== null) return `Read orbit report ${run.id}; this block comes from the environment or a check's definition, so resuming alone would only block again.`;
+      const spent = freshReviewSpent({ outcomeJson: run.outcomeJson ?? null });
+      if (spent !== null) return `Read orbit report ${run.id}; ${spent}, so resuming alone would only block again.`;
       return `Resolve the block, then run orbit resume ${run.id}.`;
     case "EXHAUSTED":
       return `Read orbit report ${run.id}, then continue by hand or start a new run.`;

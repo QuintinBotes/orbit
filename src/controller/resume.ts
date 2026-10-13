@@ -85,13 +85,34 @@ export function candidateEnvironmentFailures(run: Pick<RunRecord, 'outcomeJson'>
 }
 
 /**
- * Why resuming a BLOCKED run cannot clear its block, so that only a new run helps; null when a resume may. Two causes:
+ * Why a resume of a review block cannot start the fresh review its tree would need (steps/reviewing.ts records
+ * `fresh_review` in the outcome), or null when the block is not one or a resume may still bring it back. The tree had its
+ * one fresh review and it did not clear it: a resume decides the tree by that review again and starts no other. Or none
+ * started because review_rounds was at its hard cap, which is the run's frozen policy: a resume finds it there again. A
+ * fresh review that was started but has not come back is collected by a resume, so it is not a cause.
+ */
+export function freshReviewSpent(run: Pick<RunRecord, 'outcomeJson'>): string | null {
+  try {
+    const o = run.outcomeJson ? (JSON.parse(run.outcomeJson) as { fresh_review?: unknown }) : null;
+    const f = o?.fresh_review !== null && typeof o?.fresh_review === 'object' ? (o.fresh_review as { started?: unknown; review_id?: unknown }) : null;
+    if (f === null) return null;
+    if (f.started === false) return 'review_rounds is at its hard cap, so a resume starts no fresh review of the tree';
+    return typeof f.review_id === 'string' ? 'the tree had its one fresh review, and a resume starts no other' : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Why resuming a BLOCKED run cannot clear its block, so that only a new run helps; null when a resume may. Three causes:
  *   - the block comes from the run's frozen policy (a check's definition, an isolation setting): a run keeps the policy
  *     it started with, and a resume is refused for it;
  *   - a candidate's check could not run for an environment cause, with no baseline exception to approve: the candidate's
  *     evidence and the check configuration it was judged by are recorded with the run, so a resume reads the same
  *     evidence and blocks again, whatever is repaired outside (issue #33). A failure that has a baseline-exception
- *     question is answered instead, and the run resumes.
+ *     question is answered instead, and the run resumes;
+ *   - review does not clear the tree after its one fresh review, or review_rounds left none to start (freshReviewSpent):
+ *     a resume decides the tree the same way and blocks again.
  * A spent implementation-attempt counter is not a cause. It is charged when an attempt starts, so a run blocked in the
  * middle of its last attempt (a supervised authorization question, an expired login, transient provider failures) has it
  * full, and a resume continues that attempt and spends nothing new (steps/implementing.ts continueAttempt). A run that
@@ -109,7 +130,7 @@ export function newRunNeeded(db: OrbitDb, run: RunRecord): string | null {
   if (failures !== null && failures.every((f) => f.questionId === null || listQuestions(db, run.id).every((q) => q.id !== f.questionId))) {
     return "the block comes from the environment or a check's definition, which a resume does not change: the run's policy and the check results recorded for its candidate are frozen";
   }
-  return null;
+  return freshReviewSpent(run);
 }
 
 /**
