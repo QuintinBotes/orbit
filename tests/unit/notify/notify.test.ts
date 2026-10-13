@@ -72,7 +72,7 @@ describe('notifying when a run ends', () => {
     const out = await notifyRunEnded(input(env, sys, { config: allChannels(9) }));
     expect(out!.map((o) => o.status)).toEqual(['failed', 'failed', 'failed']);
     expect(events(env, 'notification.failed').map((e) => [e.channel, e.detail])).toEqual([
-      ['desktop', 'osascript exited 1: no session'],
+      ['desktop', 'notify-send exited 1: no session'],
       ['webhook', 'hooks.acme.test answered 503'],
       ['github_comment', expect.stringMatching(/^AUTH_EXPIRED/)],
     ]);

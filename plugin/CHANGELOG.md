@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Orbit no longer sends AppleScript notifications on macOS (ADR 0008 addendum). The desktop channel is skipped there, with a detail that points to the webhook channel; the notifications appeared as Script Editor's. Linux `notify-send` and the `notifications.desktop` setting are unchanged.
+
 ## 0.3.0 (2026-10-13)
 
 - Tests: the baseline cancellation test cancels once its check is running, not after a fixed 800 ms, which on a loaded runner could land before the first check started; a new test covers a cancellation before any check starts. The container isolation tests now check how `docker run` ended before they read its output, so an engine failure is reported as docker's own error instead of an empty isolation result. The container test's CI failure has no established cause yet (#61). No change to Orbit itself.
