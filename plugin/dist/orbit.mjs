@@ -33572,7 +33572,7 @@ var init_review_output_schema = __esm({
             properties: {
               id: { type: "string", pattern: "^[A-Z][A-Z0-9]*-[0-9]+$", description: "Category prefix and number, for example SEC-1." },
               severity: { type: "string", enum: ["critical", "high", "medium", "low", "info"] },
-              category: { type: "string", description: "For example authorization, correctness, test-adequacy, scope, performance." },
+              category: { type: "string", description: "For example authorization, correctness, test-adequacy, scope, performance. evidence-classification is reserved for a finding that disputes a classification Orbit recorded of its own evidence, or a criterion's promise of one (today the fail-before outcome), and asks for nothing a change to the candidate can give: unless a check confirms it, such a finding whose id is not a SEC- one is reported as a note that never blocks. A finding about the tests' content, coverage or assertions or about the code's behaviour, or one that mixes both, uses its normal category." },
               location: { type: ["string", "null"], description: "path:line, or null for a finding about the change as a whole." },
               claim: { type: "string" },
               evidence: { type: "string" },
@@ -36367,6 +36367,9 @@ function isFindingStatus(v) {
 function severityRank(s) {
   return FINDING_SEVERITIES.indexOf(s);
 }
+function isEvidenceClassification(category) {
+  return (category ?? "").trim().toLowerCase() === EVIDENCE_CLASSIFICATION_CATEGORY;
+}
 function splitLocation(location) {
   if (location === null) return { path: null, line: null };
   const text2 = location.trim();
@@ -36383,7 +36386,7 @@ function findingFingerprint(f) {
   const { path } = splitLocation(f.location);
   return `fp-${sha256([(f.category ?? "").trim().toLowerCase(), path ?? "", normalizeClaim(f.claim)].join("\n")).slice(0, 16)}`;
 }
-var REVIEW_VERDICTS, FINDING_SEVERITIES, FINDING_STATUSES, TERMINAL_FINDING_STATUSES, UNRESOLVED_FINDING_STATUSES, RESOLVED_FINDING_STATUSES;
+var REVIEW_VERDICTS, FINDING_SEVERITIES, FINDING_STATUSES, TERMINAL_FINDING_STATUSES, UNRESOLVED_FINDING_STATUSES, RESOLVED_FINDING_STATUSES, EVIDENCE_CLASSIFICATION_CATEGORY;
 var init_types4 = __esm({
   "src/review/types.ts"() {
     "use strict";
@@ -36394,6 +36397,7 @@ var init_types4 = __esm({
     TERMINAL_FINDING_STATUSES = ["rejected", "resolved"];
     UNRESOLVED_FINDING_STATUSES = ["open", "claim_pending", "accepted"];
     RESOLVED_FINDING_STATUSES = ["resolved"];
+    EVIDENCE_CLASSIFICATION_CATEGORY = "evidence-classification";
   }
 });
 
@@ -36577,9 +36581,13 @@ function resolveFindings(input) {
     let reasonCode = "unvalidated";
     const currentMembers = group.filter((m) => m.current);
     const closedHere = currentMembers.length > 0 && currentMembers.every((m) => m.f.status === "rejected" || m.f.status === "resolved") ? currentMembers[0].f : null;
+    const recorded = confirms.length === 0 && !wasAccepted && !sec && group.every((m) => isEvidenceClassification(m.f.category)) ? RECORDED_EVIDENCE_CLASSIFICATION : null;
     if (closedHere) {
       status2 = closedHere.status;
       reason = closedHere.resolution ?? `${closedHere.status} earlier on this tree`;
+    } else if (recorded !== null) {
+      status2 = "advisory";
+      reason = `a note, not a defect: filed under the category ${EVIDENCE_CLASSIFICATION_CATEGORY} and confirmed by no check, it disputes ${recorded}, which no repair can change; it is reported, and neither repaired nor sent to the Inquisition`;
     } else if (refutes.length > 0 && confirms.length > 0) {
       status2 = "claim_pending";
       reason = `conflicting evidence on tree ${treeHash.slice(0, 12)}: ${refs(refutes).join("; ")} refutes while ${refs(confirms).join("; ")} confirms; needs Inquisition`;
@@ -36646,7 +36654,8 @@ function resolveFindings(input) {
       exception,
       disagreement: status2 === "claim_pending" && reasonCode === "conflicting-evidence" ? { kinds: [...disagreement?.kinds ?? [], "conflicting-evidence"], parties: disagreement?.parties ?? [], detail: [...disagreement?.detail ?? [], "checks contradict each other"] } : disagreement,
       carried,
-      recurrenceOf: closedEarlier.get(fp) ?? []
+      recurrenceOf: closedEarlier.get(fp) ?? [],
+      ...recorded !== null && status2 === "advisory" ? { recordedClassification: recorded } : {}
     };
     if (d.recurrenceOf.length > 0 && !carried) d.reason += `; re-raised after ${d.recurrenceOf.length} earlier closure(s) on other trees, so it was re-tested against this tree`;
     dispositions.push(d);
@@ -36758,7 +36767,7 @@ function toRepairBrief(d, claim, group, snapshot2, confirms) {
     severity: d.severity
   };
 }
-var import_picomatch3, DEFAULT_SECURITY_POLICY, SECURITY_CATEGORY, DATE_ONLY, MACHINE_EVIDENCE_KINDS, PRIOR_OPEN, MAX_QUOTED;
+var import_picomatch3, DEFAULT_SECURITY_POLICY, SECURITY_CATEGORY, DATE_ONLY, MACHINE_EVIDENCE_KINDS, RECORDED_EVIDENCE_CLASSIFICATION, PRIOR_OPEN, MAX_QUOTED;
 var init_resolve = __esm({
   "src/review/resolve.ts"() {
     "use strict";
@@ -36771,6 +36780,7 @@ var init_resolve = __esm({
     SECURITY_CATEGORY = /secur|auth|inject|sqli|xss|csrf|ssrf|\brce\b|secret|credential|crypto|tenant|privacy|\bpii\b|traversal|deserializ|permission|access.?control|sandbox|vulnerab|escalation/i;
     DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
     MACHINE_EVIDENCE_KINDS = ["new_test", "existing_check", "reproduction", "static_analysis"];
+    RECORDED_EVIDENCE_CLASSIFICATION = "a classification Orbit recorded of its own evidence, such as the fail-before outcome of the base revision, or a criterion's promise of one";
     PRIOR_OPEN = UNRESOLVED_FINDING_STATUSES;
     MAX_QUOTED = 300;
   }
@@ -38996,15 +39006,57 @@ function otherwiseAcceptable(results, required, allowFlaky, exceptions) {
 function probeLogPath(runDir2, log) {
   return isAbsolute16(log) ? log : join27(runDir2, log);
 }
-function probeLogTail(path, max = 2e3) {
+function reportsFailure(line3) {
+  return FAILURE_WORDS.test(line3.replace(PATH_LIKE, " ").replace(NONE_COUNTED, ""));
+}
+function renderKept(lines, keep) {
+  const out = [];
+  let next = 0;
+  for (const i of keep) {
+    if (i > next) out.push(notShown(i - next));
+    out.push(lines[i]);
+    next = i + 1;
+  }
+  if (next < lines.length) out.push(notShown(lines.length - next));
+  return `${out.join("\n")}
+`;
+}
+function failureExcerpt(text2, max = PROBE_EXCERPT_CHARS) {
+  if (text2.length <= max) return text2;
+  const lines = text2.replace(/\n$/, "").split("\n").map((l) => l.length > EXCERPT_LINE_CHARS ? `${l.slice(0, EXCERPT_LINE_CHARS)}...` : l);
+  const hits = lines.flatMap((l, i) => reportsFailure(l) ? [i] : []);
+  const render2 = (keep2) => renderKept(lines, [...keep2].sort((a, b) => a - b));
+  const room = max - 60;
+  if (hits.length === 0) {
+    const keep2 = /* @__PURE__ */ new Set();
+    for (let i = 0; i < lines.length && render2(/* @__PURE__ */ new Set([...keep2, i])).length <= room / 2; i++) keep2.add(i);
+    for (let i = lines.length - 1; i >= 0 && !keep2.has(i) && render2(/* @__PURE__ */ new Set([...keep2, i])).length <= room; i--) keep2.add(i);
+    return render2(keep2);
+  }
+  const keep = /* @__PURE__ */ new Set();
+  let shown3 = 0;
+  while (shown3 < hits.length && render2(/* @__PURE__ */ new Set([...keep, hits[shown3]])).length <= room / 2) keep.add(hits[shown3++]);
+  for (const h of hits.slice(0, shown3)) {
+    for (const [before, after] of EXCERPT_CONTEXT) {
+      const wider = new Set(keep);
+      for (let i = Math.max(0, h - before); i <= Math.min(lines.length - 1, h + after); i++) wider.add(i);
+      if (render2(wider).length > room) continue;
+      for (const i of wider) keep.add(i);
+      break;
+    }
+  }
+  const left = hits.length - shown3;
+  return left === 0 ? render2(keep) : `${render2(keep)}[orbit: ${left} more failing ${left === 1 ? "line" : "lines"} not shown]
+`;
+}
+function probeLogExcerpt(path, max = PROBE_EXCERPT_CHARS) {
   try {
-    const text2 = readFileSync17(path, "utf8");
-    return text2.length <= max ? text2 : `...${text2.slice(text2.length - max)}`;
+    return failureExcerpt(readFileSync17(path, "utf8"), max);
   } catch {
     return "";
   }
 }
-var NEVER_ACCEPTED, FAIL_BEFORE_DECISION_KIND, CLASSIFIER_LINES, WINDOW_STRIDE, OUTPUT_DROPPED, GITLINK, MAX_LISTED_PATHS;
+var NEVER_ACCEPTED, FAIL_BEFORE_DECISION_KIND, CLASSIFIER_LINES, WINDOW_STRIDE, OUTPUT_DROPPED, GITLINK, MAX_LISTED_PATHS, PROBE_EXCERPT_CHARS, EXCERPT_LINE_CHARS, EXCERPT_CONTEXT, FAILURE_WORDS, NONE_COUNTED, PATH_LIKE, notShown;
 var init_fail_before = __esm({
   "src/evidence/fail-before.ts"() {
     "use strict";
@@ -39029,6 +39081,16 @@ var init_fail_before = __esm({
     OUTPUT_DROPPED = /^\[orbit: output truncated: \d+ bytes dropped/m;
     GITLINK = "160000";
     MAX_LISTED_PATHS = 20;
+    PROBE_EXCERPT_CHARS = 4e3;
+    EXCERPT_LINE_CHARS = 240;
+    EXCERPT_CONTEXT = [
+      [2, 4],
+      [1, 2]
+    ];
+    FAILURE_WORDS = /\bnot ok\b|\bfail(?:s|ed|ure|ures|ing)?\b|\b\w*(?:error|exception)s?\b|\bpanick?(?:ed|s)?\b/i;
+    NONE_COUNTED = /\b(?:fail(?:s|ed|ures?)?|errors?)\b\s*[:=]?\s*0\b(?!\.\d)|\b0\s+(?:fail(?:s|ed|ures?)?|errors?)\b/gi;
+    PATH_LIKE = /\S*[/\\]\S*/g;
+    notShown = (n2) => `[orbit: ${n2} ${n2 === 1 ? "line" : "lines"} not shown]`;
   }
 });
 
@@ -44410,8 +44472,9 @@ function persistResolution(db, runDir2, runId, resolution, clock) {
     }
   });
   for (const d of resolution.dispositions) {
-    if (d.status !== "accepted" && d.status !== "rejected" && d.status !== "excepted" && d.status !== "resolved") continue;
-    const kind = `review.finding.${d.status}`;
+    const noted = d.recordedClassification !== void 0 && d.status === "advisory";
+    if (d.status !== "accepted" && d.status !== "rejected" && d.status !== "excepted" && d.status !== "resolved" && !noted) continue;
+    const kind = noted ? "review.finding.noted" : `review.finding.${d.status}`;
     recordDecision(
       db,
       runDir2,
@@ -44419,7 +44482,7 @@ function persistResolution(db, runDir2, runId, resolution, clock) {
         id: decisionId(kind, d.findingId, d.status, d.reason),
         runId,
         kind,
-        summary: `${d.externalId ?? d.findingId} (${d.severity}) ${d.status}: ${d.reason}`.slice(0, 500),
+        summary: `${d.externalId ?? d.findingId} (${d.severity}) ${noted ? "noted" : d.status}: ${d.reason}`.slice(0, 500),
         data: {
           finding_ids: d.memberIds,
           fingerprint: d.fingerprint,
@@ -47266,6 +47329,17 @@ function candidateEnvironmentFailures(run) {
     return null;
   }
 }
+function freshReviewSpent(run) {
+  try {
+    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
+    const f = o?.fresh_review !== null && typeof o?.fresh_review === "object" ? o.fresh_review : null;
+    if (f === null) return null;
+    if (f.started === false) return "review_rounds is at its hard cap, so a resume starts no fresh review of the tree";
+    return typeof f.review_id === "string" ? "the tree had its one fresh review, and a resume starts no other" : null;
+  } catch {
+    return null;
+  }
+}
 function newRunNeeded(db, run) {
   if (run.state !== "BLOCKED") return null;
   const frozen = frozenPolicySetting(run);
@@ -47274,7 +47348,7 @@ function newRunNeeded(db, run) {
   if (failures !== null && failures.every((f) => f.questionId === null || listQuestions(db, run.id).every((q) => q.id !== f.questionId))) {
     return "the block comes from the environment or a check's definition, which a resume does not change: the run's policy and the check results recorded for its candidate are frozen";
   }
-  return null;
+  return freshReviewSpent(run);
 }
 function missingTargetChecks(run) {
   try {
@@ -47634,6 +47708,8 @@ function nextAction(input) {
     case "BLOCKED":
       if (frozenPolicySetting({ outcomeJson: run.outcomeJson ?? null }) !== null) return `Read orbit report ${run.id}; this block comes from the run's frozen policy, so resuming alone would only block again.`;
       if (candidateEnvironmentFailures({ outcomeJson: run.outcomeJson ?? null }) !== null) return `Read orbit report ${run.id}; this block comes from the environment or a check's definition, so resuming alone would only block again.`;
+      const spent = freshReviewSpent({ outcomeJson: run.outcomeJson ?? null });
+      if (spent !== null) return `Read orbit report ${run.id}; ${spent}, so resuming alone would only block again.`;
       return `Resolve the block, then run orbit resume ${run.id}.`;
     case "EXHAUSTED":
       return `Read orbit report ${run.id}, then continue by hand or start a new run.`;
@@ -57746,6 +57822,7 @@ ${lines.length === 0 ? "- nothing was excluded\n" : `${lines.join("\n")}
 function fixedSections(input, red, id) {
   const { contract, snapshot: snapshot2, evidenceReport: ev } = input;
   const cfg = snapshot2.config;
+  const failBefore = failBeforePolicy(cfg).mode;
   const sec = [];
   sec.push(`# Orbit independent review packet
 
@@ -57775,7 +57852,7 @@ ${bullet(
     contract.acceptance_criteria.map((c) => `${c.id}${c.mandatory ? " (mandatory)" : ""}${c.ui ? " (ui)" : ""}: ${red(c.statement)}${c.proof.length ? ` Proof: ${red(c.proof.join("; "))}` : ""}`),
     MAX_LIST_ITEMS,
     700
-  )}
+  )}${failBeforePromise(failBefore)}
 ### Non-goals
 ${bullet(contract.non_goals.map(red), 20, 300)}`);
   const security = readSecurityPolicy(snapshot2);
@@ -57795,6 +57872,7 @@ ${bullet(contract.non_goals.map(red), 20, 300)}`);
 ${security.exceptions.length > 0 ? `- security exceptions listed in policy (still report matching findings): ${security.exceptions.map((e) => `${e.category}${e.location ? ` at ${e.location}` : ""} (${e.severities.join("/")})`).join("; ")}
 ` : ""}`);
   const scope = ev.scope;
+  const unverified = failBefore === "required" ? ev.unverified : ev.unverified.filter((u) => !/^fail-before\b/.test(u));
   sec.push(`## Verification results
 
 - verdict: ${ev.verdict}
@@ -57813,7 +57891,7 @@ ${bullet(ev.acceptance_evidence.map((a) => `${a.criterion_id}: ${a.status}${a.no
 ### UI
 ${bullet(ev.ui.map((u) => `${u.journey}: ${u.status}`), 20, 200)}
 ### Not verified
-${bullet(ev.unverified.map(red), 30, 300)}${failBeforeSection(ev, input.failBeforeLogs, red)}`);
+${bullet(unverified.map(red), 30, 300)}${failBeforeSection(ev, input.failBeforeLogs, red, failBefore)}`);
   sec.push(`## Assumptions
 
 ### Contract
@@ -57831,8 +57909,15 @@ ${bullet(
 ${bullet([...practiceReviewQuestions(contract), ...failBeforeReviewQuestions(ev), ...input.questions.map(red)], 20, 500)}`);
   return sec.join("\n");
 }
-function failBeforeSection(ev, logs, red) {
-  const entries = ev.acceptance_evidence.filter((a) => a.fail_before !== void 0 && a.fail_before.outcome !== "not-applicable");
+function failBeforePromise(mode) {
+  if (mode === "required") return "";
+  return `
+Whether the new tests fail on the base revision is Orbit's to establish through verification.fail_before, which is ${mode} here: Orbit reports it to the person, not to you. A criterion's promise of it is therefore not a finding against the candidate and does not withhold APPROVE: judge the criterion's other clauses as usual. A finding that disputes only that promise uses the category evidence-classification.
+`;
+}
+function failBeforeSection(ev, logs, red, mode) {
+  if (mode !== "required") return "";
+  const entries = ev.acceptance_evidence.filter((a) => a.fail_before?.mode === "required" && a.fail_before.outcome !== "not-applicable");
   if (entries.length === 0) return "";
   const lines = entries.map((a) => {
     const fb = a.fail_before;
@@ -57844,21 +57929,23 @@ function failBeforeSection(ev, logs, red) {
       const log = c.attempts.at(-1)?.log;
       const text2 = log ? logs?.get(log) : void 0;
       if (!log || text2 === void 0 || shown3.length >= MAX_PROBE_LOGS || shown3.some((x) => x.includes(`(${log})`))) continue;
-      const tail2 = text2.length > PROBE_LOG_CHARS ? `...${text2.slice(text2.length - PROBE_LOG_CHARS)}` : text2;
-      shown3.push(`${c.id} on the base revision with the new tests, last attempt (${log}):
-${fenced("text", red(tail2))}`);
+      shown3.push(
+        `${c.id} on the base revision with the new tests, last attempt (${log}). The log is check-wide: it covers every test ${c.id} runs, not one criterion's. The lines that report a failure, with a little context:
+${fenced("text", red(failureExcerpt(text2, PROBE_LOG_CHARS)))}`
+      );
     }
   }
   return `
 ### Fail-before
-The probe ran each check on the base tree with the candidate's test files: a failure there shows the tests depend on the change, not that they assert it.
+verification.fail_before is required: the probe ran each check on the base tree with the candidate's test files, and a criterion that rests on new tests is supported only when they fail there. A failure there shows that the tests depend on the change, not that they assert it. A compile, collection or import failure of a new symbol counts as fail-before by policy: it is not a finding. The outcome is Orbit's to record and no repair can change the base revision, so do not dispute it, and do not ask for mutant runs, stub implementations or a rerun of the probe: no check produces them. A finding that disputes the outcome all the same uses the category evidence-classification and asks for nothing else; a finding about the new tests or the code uses its normal category.
 ${bullet(lines, MAX_LIST_ITEMS, 600)}${shown3.join("\n")}`;
 }
 function failBeforeReviewQuestions(ev) {
-  return ev.acceptance_evidence.filter((a) => a.fail_before?.mode === "required" && a.fail_before.outcome === "failed-before" && a.status === "supported").map((a) => {
-    const log = a.fail_before.checks.find((c) => c.outcome === "failed-before")?.attempts.at(-1)?.log;
-    return `${a.criterion_id}'s new tests failed on the base revision${log ? ` (${log})` : ""}: is that failure an assertion about ${a.criterion_id}, or only a load failure (a missing symbol, an import error, a helper the tests need outside them)? A load-only failure shows the tests depend on the change, not that they check it: report it as a finding of high severity, which blocks like any other.`;
-  });
+  const ids = ev.acceptance_evidence.filter((a) => a.fail_before?.mode === "required" && a.fail_before.outcome === "failed-before" && a.status === "supported").map((a) => a.criterion_id);
+  if (ids.length === 0) return [];
+  return [
+    `The new tests of ${ids.join(", ")} failed on the base revision, which supports ${ids.length === 1 ? "it" : "them"} whatever the failure was. Review those tests as you would any: report each test that is a tautology, or whose assertions cannot fail with any implementation.`
+  ];
 }
 function engineeringPracticesSection(contract, red = (s) => s) {
   const selection = contract.practices;
@@ -57892,7 +57979,9 @@ var init_packet = __esm({
     init_hash();
     init_redact();
     init_practices();
+    init_fail_before();
     init_builtin();
+    init_config();
     init_test_files();
     init_resolve();
     enc = new TextEncoder();
@@ -57903,7 +57992,7 @@ var init_packet = __esm({
     MAX_LIST_ITEMS = 40;
     GENERATED = /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|go\.sum|poetry\.lock|Pipfile\.lock|uv\.lock|Gemfile\.lock|composer\.lock)$|\.min\.(js|css)$|\.map$|(^|\/)(dist|build|coverage|node_modules|\.next|vendor)\//;
     MAX_PROBE_LOGS = 6;
-    PROBE_LOG_CHARS = 2e3;
+    PROBE_LOG_CHARS = PROBE_EXCERPT_CHARS;
   }
 });
 
@@ -60500,39 +60589,57 @@ async function reviewingStep(ctx) {
     throw new OrbitError("STALE_EVIDENCE", `candidate ${cand.seq} has no fresh PASS evidence; review authorizes nothing without it`);
   }
   await cancelObsoleteWork(ctx, cand.treeHash);
+  const fresh = freshReviewOf(ctx, cand.treeHash);
+  if (fresh) return freshReview(ctx, cand, fresh);
   const focuses = reviewFocuses(ctx, cand);
   if (listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).length >= focuses.length) return resolveAndDecide(ctx, cand);
+  const usable = await usableReviewer(ctx, cand);
+  if (!usable.ok) return usable.step;
+  const sel = usable.sel;
+  if (focuses.length > 1) return parallelReview(ctx, cand, sel, focuses);
+  const pending = await singleReview(ctx, cand, sel, { base: `review:${cand.id}`, what: `the ${sel.provider} reviewer`, fresh: null });
+  return pending ?? resolveAndDecide(ctx, cand);
+}
+async function usableReviewer(ctx, cand) {
   const sel = await reviewerSelection(ctx, cand);
   if (sel.decision === "BLOCK") {
     if (sel.code === "AUTH_EXPIRED" || sel.code === "AUTH_MISSING") {
       const provider = sel.alternatives.find((a) => /credentials/.test(a.reason))?.provider ?? preferredReviewProvider(ctx.snapshot.config.review) ?? IMPLEMENTER_PROVIDER;
-      return blockOnAuth(ctx, provider, sel.code === "AUTH_MISSING" ? "missing" : "expired", sel.reason);
+      return { ok: false, step: await blockOnAuth(ctx, provider, sel.code === "AUTH_MISSING" ? "missing" : "expired", sel.reason) };
     }
-    return finishRun(ctx, "BLOCKED", `independent review unavailable: ${sel.reason}`, { outcome: { reviewer: sel } });
+    return { ok: false, step: await finishRun(ctx, "BLOCKED", `independent review unavailable: ${sel.reason}`, { outcome: { reviewer: sel } }) };
   }
   if (sel.needsApproval === true) {
     const approval = sameProviderApproval(ctx, sel);
     if (approval.state === "pending") {
-      return finishRun(
-        ctx,
-        "BLOCKED",
-        `no independent reviewer is usable; review.when_unavailable is ask, so question ${approval.questionId} asks whether ${sel.provider} may review this run's candidate in a separate session (not independently). Answer with orbit decide ${ctx.run.id} ${approval.questionId} yes (or no), then orbit resume ${ctx.run.id}`,
-        { outcome: { reviewer: sel, questions: [approval.questionId] } }
-      );
+      return {
+        ok: false,
+        step: await finishRun(
+          ctx,
+          "BLOCKED",
+          `no independent reviewer is usable; review.when_unavailable is ask, so question ${approval.questionId} asks whether ${sel.provider} may review this run's candidate in a separate session (not independently). Answer with orbit decide ${ctx.run.id} ${approval.questionId} yes (or no), then orbit resume ${ctx.run.id}`,
+          { outcome: { reviewer: sel, questions: [approval.questionId] } }
+        )
+      };
     }
     if (approval.state === "declined") {
-      return finishRun(ctx, "BLOCKED", `${approval.by ?? "nobody"} declined a same-provider review (question ${approval.questionId}) and no independent reviewer is usable; make one usable (orbit doctor shows why it is not), then start a new run`, {
-        outcome: { reviewer: sel, questions: [approval.questionId] }
-      });
+      return {
+        ok: false,
+        step: await finishRun(ctx, "BLOCKED", `${approval.by ?? "nobody"} declined a same-provider review (question ${approval.questionId}) and no independent reviewer is usable; make one usable (orbit doctor shows why it is not), then start a new run`, {
+          outcome: { reviewer: sel, questions: [approval.questionId] }
+        })
+      };
     }
   }
-  if (focuses.length > 1) return parallelReview(ctx, cand, sel, focuses);
+  return { ok: true, sel };
+}
+async function singleReview(ctx, cand, sel, opts) {
   const round5 = listReviews(ctx.db, ctx.run.id, { includeInvalidated: true }).length + 1;
   const { reviewDir, checkout } = await prepareReview(ctx, cand, sel.provider);
   const got = await obtain(ctx, {
-    base: `review:${cand.id}`,
+    base: opts.base,
     maxAttempts: MAX_REGENERATIONS,
-    what: `the ${sel.provider} reviewer`,
+    what: opts.what,
     // One review round per reviewer session started, regenerations included: every session costs a round.
     beforeStart: () => ctx.ledger.consume("review_rounds", 1),
     request: (purpose) => ({
@@ -60545,7 +60652,7 @@ async function reviewingStep(ctx) {
       cwd: checkout,
       readOnly: true,
       phase: "final",
-      prompt: () => reviewerPrompt(ctx, cand, reviewDir)
+      prompt: () => reviewerPrompt(ctx, cand, reviewDir, "general", opts.fresh)
     }),
     accept: (r) => {
       try {
@@ -60584,7 +60691,7 @@ async function reviewingStep(ctx) {
     },
     ctx.clock
   );
-  return resolveAndDecide(ctx, cand);
+  return null;
 }
 function reviewFocuses(ctx, cand) {
   const ui = ctx.snapshot.config.ui;
@@ -60794,7 +60901,83 @@ async function resolveAndDecide(ctx, cand) {
     };
     if (!handledTriggerKeys(ctx).has(trigger.key)) return move2(ctx, "INQUISITION", trigger.summary, { data: { trigger } });
   }
-  return finishRun(ctx, "BLOCKED", `independent review does not clear tree ${cand.treeHash}: ${gate.reasons.join("; ") || "no approving review"}`, { outcome: { review_gate: gate.reasons, open_findings: openFindings(open2) } });
+  const noted = resolution.dispositions.filter((d) => d.recordedClassification !== void 0);
+  const notes = noted.length === 0 ? "" : `; review finding(s) ${noted.map((d) => `${d.externalId ?? d.findingId} (${d.severity})`).join(", ")} are filed under the category ${EVIDENCE_CLASSIFICATION_CATEGORY} and confirmed by no check: they dispute ${[...new Set(noted.map((d) => d.recordedClassification))].join(" and ")}, which no repair can change, so they are reported as notes and not repaired`;
+  let fresh = null;
+  const asked = freshReviewOf(ctx, cand.treeHash);
+  if (asked) {
+    fresh = describeFreshReview(ctx, asked, resolution, state);
+  } else if (gate.passed && askedOnlyThroughNotes(state, noted).length > 0) {
+    const rounds = ctx.ledger.state("review_rounds");
+    if (rounds.used < rounds.allowance) return startFreshReview(ctx, cand, state, noted);
+    fresh = {
+      text: `; no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap})`,
+      outcome: { started: false, reason: "review_rounds hard cap reached", review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } }
+    };
+  }
+  return finishRun(ctx, "BLOCKED", `independent review does not clear tree ${cand.treeHash}: ${gate.reasons.join("; ") || "no approving review"}${notes}${fresh?.text ?? ""}`.slice(0, 2e3), {
+    outcome: { review_gate: gate.reasons, open_findings: openFindings(open2), ...noted.length > 0 ? { noted_findings: openFindings(noted) } : {}, ...fresh ? { fresh_review: fresh.outcome } : {} }
+  });
+}
+function freshReviewDecisionId(ctx, treeHash) {
+  return `dec-${ctx.run.id}-review-fresh-${treeHash}`;
+}
+function freshReviewOf(ctx, treeHash) {
+  const d = getDecision(ctx.db, freshReviewDecisionId(ctx, treeHash));
+  return d ? d.data : null;
+}
+function recordedFreshReview(ctx, rec2) {
+  const prefix = `${rec2.base}#`;
+  const workers = new Set(ctx.db.all("SELECT id, purpose FROM workers WHERE run_id = ? AND role = 'reviewer'", ctx.run.id).filter((w) => w.purpose?.startsWith(prefix)).map((w) => w.id));
+  return listReviews(ctx.db, ctx.run.id, { treeHash: rec2.tree_hash }).find((r) => r.workerId !== null && workers.has(r.workerId)) ?? null;
+}
+function askedOnlyThroughNotes(state, noted) {
+  const notedIds = new Set(noted.flatMap((d) => d.memberIds));
+  return state.reviews.filter((r) => r.verdict === "REPAIR_REQUIRED" && state.findings.some((f) => f.reviewId === r.id && notedIds.has(f.id))).map((r) => r.id);
+}
+async function startFreshReview(ctx, cand, state, noted) {
+  const rec2 = {
+    tree_hash: cand.treeHash,
+    candidate_id: cand.id,
+    base: `review-fresh:${cand.id}`,
+    superseded: state.reviews.map((r) => r.id),
+    noted: noted.map((d) => ({ id: d.findingId, external_id: d.externalId, severity: d.severity, classification: d.recordedClassification, claim: d.claim.slice(0, 500) }))
+  };
+  decide2(ctx, {
+    id: freshReviewDecisionId(ctx, cand.treeHash),
+    kind: FRESH_REVIEW_KIND,
+    summary: `one fresh review of tree ${cand.treeHash.slice(0, 12)}: review(s) ${rec2.superseded.join(", ")} asked for repair only through note(s) ${rec2.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity})`).join(", ")} on ${[...new Set(rec2.noted.map((n2) => n2.classification))].join(" and ")}, which no repair can change; only an APPROVE from the fresh review clears the tree`,
+    data: rec2
+  });
+  return freshReview(ctx, cand, rec2);
+}
+async function freshReview(ctx, cand, rec2) {
+  let review = recordedFreshReview(ctx, rec2);
+  if (!review) {
+    const usable = await usableReviewer(ctx, cand);
+    if (!usable.ok) return usable.step;
+    const pending = await singleReview(ctx, cand, usable.sel, { base: rec2.base, what: `the ${usable.sel.provider} fresh reviewer`, fresh: rec2 });
+    if (pending) return pending;
+    review = recordedFreshReview(ctx, rec2);
+    if (!review) throw new OrbitError("INTERNAL", `the fresh review of tree ${rec2.tree_hash} was recorded but cannot be found`);
+  }
+  for (const id of rec2.superseded) {
+    if (id === review.id) continue;
+    markReviewInvalidated(ctx.db, id, `superseded by fresh review ${review.id} of the same tree: it asked for repair only through notes on a classification Orbit recorded, which no repair can change`, ctx.clock);
+  }
+  return resolveAndDecide(ctx, cand);
+}
+function describeFreshReview(ctx, rec2, resolution, state) {
+  const earlier = rec2.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity})`).join(", ");
+  const review = recordedFreshReview(ctx, rec2);
+  if (!review) return { text: `; the fresh review of the tree asked after note(s) ${earlier} has not come back`, outcome: { started: true, review_id: null, earlier_noted: rec2.noted } };
+  const own = new Set(state.findings.filter((f) => f.reviewId === review.id).map((f) => f.id));
+  const findings = resolution.dispositions.filter((d) => d.memberIds.some((id) => own.has(id)));
+  const named2 = findings.length === 0 ? "it named no finding" : findings.map((d) => `${d.externalId ?? d.findingId} (${d.severity}, ${d.recordedClassification !== void 0 ? "a note" : d.status})`).join(", ");
+  return {
+    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after review(s) ${rec2.superseded.join(", ")} raised only the note(s) ${earlier}, did not approve it either: ${named2}`,
+    outcome: { started: true, review_id: review.id, verdict: review.verdict, findings: openFindings(findings), earlier_noted: rec2.noted }
+  };
 }
 function reviewRepairs(ctx) {
   return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id", ctx.run.id, REVIEW_REPAIR_EVENT).map((r) => r.data_json ? JSON.parse(r.data_json) : null).filter((r) => r !== null && Array.isArray(r.findings));
@@ -61055,7 +61238,8 @@ async function preparePacket(ctx, cand, reviewDir, provider) {
     ledger: listLedger(ctx.db, ctx.run.id).map((l) => ({ id: l.id, claim: l.claim, source: l.source, confidence: l.confidence, status: l.status, ...l.consequence ? { consequence_if_wrong: l.consequence } : {}, reversibility: l.reversibility, ...l.experiment ? { validation_experiment: l.experiment } : {} })),
     questions: listQuestions(ctx.db, ctx.run.id, { status: "open" }).map((q) => q.question),
     provider,
-    failBeforeLogs: failBeforeLogs(ctx, ev.report)
+    // A reviewer sees the probe only under required (ADR 0014 section 1): under advisory and off it is the person's.
+    ...failBeforePolicy(ctx.snapshot.config).mode === "required" ? { failBeforeLogs: failBeforeLogs(ctx, ev.report) } : {}
   });
   atomicWrite(join62(reviewDir, "packet.md"), packet.text, 384);
   atomicWriteJson(join62(reviewDir, "packet.json"), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
@@ -61065,7 +61249,7 @@ function failBeforeLogs(ctx, report2) {
   for (const a of report2.acceptance_evidence) {
     for (const c of a.fail_before?.checks ?? []) {
       const log = c.attempts.at(-1)?.log;
-      if (log && !out.has(log)) out.set(log, probeLogTail(probeLogPath(ctx.runDir, log)));
+      if (log && !out.has(log)) out.set(log, probeLogExcerpt(probeLogPath(ctx.runDir, log)));
     }
   }
   return out;
@@ -61080,25 +61264,39 @@ function packetShaOf(reviewDir) {
 function readText(p) {
   return readFileSync31(p, "utf8");
 }
-function reviewerPrompt(ctx, cand, reviewDir, focus = "general") {
+function reviewerPrompt(ctx, cand, reviewDir, focus = "general", fresh = null) {
   const text2 = readText(join62(reviewDir, "packet.md"));
   const contract = assertContract(ctx);
   const task = [
     "Review the exact candidate in this read-only checkout against the contract and the bound evidence in the packet. Do not edit anything and do not ask questions.",
     "Reject weak proof, test weakening, scope leakage, regressions, unsafe defaults and unresolved material assumptions. Each finding must be a specific, testable claim with a location.",
     ...focus === "general" ? [] : [FOCUS_TEXT[focus]],
+    ...fresh ? freshReviewText(fresh) : [],
     `Echo the candidate revision ${cand.commitSha} in candidate_revision.`
   ].join("\n");
+  const noted = fresh ? [{ label: "findings noted in the earlier review", content: fresh.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity}): ${n2.claim}`).join("\n") }] : [];
   return renderWorkerPrompt({
     role: "reviewer",
     task,
     contract,
     policySummary: policySummary(ctx, { readOnly: true }),
     candidate: { revision: cand.commitSha, treeHash: cand.treeHash, base: ctx.run.baseRevision },
-    untrusted: [{ label: "review packet", content: text2, ref: `reviews/${cand.seq}/packet.md` }],
+    untrusted: [{ label: "review packet", content: text2, ref: `reviews/${cand.seq}/packet.md` }, ...noted],
     maxBlockChars: text2.length + 100,
     maxPromptChars: text2.length + 4e4
   });
+}
+function freshReviewText(rec2) {
+  const names = rec2.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity})`).join(", ");
+  const what = [...new Set(rec2.noted.map((n2) => n2.classification))];
+  return [
+    `This is a fresh review of a tree that an earlier review asked to have repaired only through finding(s) ${names}, quoted below, filed under the category ${EVIDENCE_CLASSIFICATION_CATEGORY}. Each disputes ${what.join(" or ")}.`,
+    "Such a classification is not a finding and cannot be repaired by changing the candidate: a repair changes only the candidate, never the base revision.",
+    `Judge the candidate as in any review: a finding is a defect of the candidate or of its tests that a change to the candidate can repair, and it uses its normal category. Use the category ${EVIDENCE_CLASSIFICATION_CATEGORY} only for a finding that disputes Orbit's recorded classification and asks for nothing else.`,
+    // Said whatever the criteria say, since no criterion's wording is read: the draft keeps a criterion such as the
+    // retest's AC-4 ("The new tests fail on the base revision") that the planner writes against its brief.
+    `Whether the new tests fail on the base revision is Orbit's to establish through verification.fail_before (under advisory and off it is reported to the person). A criterion's promise of it is therefore not a finding against the candidate and does not withhold APPROVE: judge the criterion's other clauses as usual. A finding that disputes only that promise uses the category ${EVIDENCE_CLASSIFICATION_CATEGORY}.`
+  ];
 }
 async function prepareReview(ctx, cand, provider) {
   const reviewDir = join62(ctx.runDir, "reviews", String(cand.seq));
@@ -61107,7 +61305,7 @@ async function prepareReview(ctx, cand, provider) {
   if (!existsSync43(checkout) || readdirSync12(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
-var FOCUS_TEXT, REVIEW_REPAIR_EVENT, UNDECIDED;
+var FOCUS_TEXT, FRESH_REVIEW_KIND, REVIEW_REPAIR_EVENT, UNDECIDED;
 var init_reviewing = __esm({
   "src/controller/steps/reviewing.ts"() {
     "use strict";
@@ -61132,9 +61330,11 @@ var init_reviewing = __esm({
     init_budget2();
     init_diagnosing();
     init_select();
+    init_config();
     init_review();
     init_review_approval();
     init_store3();
+    init_types4();
     init_store4();
     init_context2();
     init_gates();
@@ -61153,6 +61353,7 @@ var init_reviewing = __esm({
       security: "Focus: security. Authorization and tenancy, input validation, injection, secrets and sensitive data, unsafe defaults. Report any other defect you see as well.",
       ui: "Focus: the user interface. User-visible states (empty, loading, error), accessibility, layout and interaction regressions on the changed screens. Report any other defect you see as well."
     };
+    FRESH_REVIEW_KIND = "review.fresh";
     REVIEW_REPAIR_EVENT = "review.repair";
     UNDECIDED = /\b(ambiguous|ambiguity|unclear|unspecified|not specified|undecided|undefined behaviou?r|product decision|needs? a decision|not decided)\b/i;
   }

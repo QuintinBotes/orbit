@@ -911,11 +911,85 @@ export function probeLogPath(runDir: string, log: string): string {
   return isAbsolute(log) ? log : join(runDir, log);
 }
 
-/** The last `max` characters of a probe log, for a review packet. */
-export function probeLogTail(path: string, max = 2_000): string {
+/** The characters of one probe log a review packet shows: enough for the tests that failed, and bounded. */
+export const PROBE_EXCERPT_CHARS = 4_000;
+/** One line of an excerpt is cut here, so a long path or stack frame cannot spend the whole bound. */
+const EXCERPT_LINE_CHARS = 240;
+/** Lines kept before and after a failure line, widest first; the widest that still fits the bound is used. */
+const EXCERPT_CONTEXT: readonly (readonly [number, number])[] = [
+  [2, 4],
+  [1, 2],
+];
+
+/**
+ * A line that reports a failure, in the words test runners and compilers use ("not ok", "FAILED", "--- FAIL",
+ * "error CS1061", "ImportError", "panicked"), read without knowing which runner wrote it. Paths are not read (the probe's
+ * own checkout is named fail-before-<n>), and a count of none ("# fail 0", "Failed: 0", "0 errors") is not a failure.
+ */
+const FAILURE_WORDS = /\bnot ok\b|\bfail(?:s|ed|ure|ures|ing)?\b|\b\w*(?:error|exception)s?\b|\bpanick?(?:ed|s)?\b/i;
+const NONE_COUNTED = /\b(?:fail(?:s|ed|ures?)?|errors?)\b\s*[:=]?\s*0\b(?!\.\d)|\b0\s+(?:fail(?:s|ed|ures?)?|errors?)\b/gi;
+const PATH_LIKE = /\S*[/\\]\S*/g;
+
+function reportsFailure(line: string): boolean {
+  return FAILURE_WORDS.test(line.replace(PATH_LIKE, ' ').replace(NONE_COUNTED, ''));
+}
+
+const notShown = (n: number): string => `[orbit: ${n} ${n === 1 ? 'line' : 'lines'} not shown]`;
+
+/** The lines at `keep` (ascending indices), with a marker for each run of lines left out. */
+function renderKept(lines: readonly string[], keep: readonly number[]): string {
+  const out: string[] = [];
+  let next = 0;
+  for (const i of keep) {
+    if (i > next) out.push(notShown(i - next));
+    out.push(lines[i]!);
+    next = i + 1;
+  }
+  if (next < lines.length) out.push(notShown(lines.length - next));
+  return `${out.join('\n')}\n`;
+}
+
+/**
+ * What a review packet shows of a probe log (ADR 0014): the lines that report a failure, wherever they are, with a little
+ * context, within `max` characters. The end of a test runner's log is its passing suites and a summary, so a tail hides
+ * the tests that failed. The failure lines come first, in at most half the bound (any beyond are counted, not shown),
+ * then as much context around each, in order, as the rest of the bound holds. A log with no failure line is shown by its
+ * head and its tail; a log that fits is returned unchanged.
+ */
+export function failureExcerpt(text: string, max = PROBE_EXCERPT_CHARS): string {
+  if (text.length <= max) return text;
+  const lines = text.replace(/\n$/, '').split('\n').map((l) => (l.length > EXCERPT_LINE_CHARS ? `${l.slice(0, EXCERPT_LINE_CHARS)}...` : l));
+  const hits = lines.flatMap((l, i) => (reportsFailure(l) ? [i] : []));
+  const render = (keep: ReadonlySet<number>): string => renderKept(lines, [...keep].sort((a, b) => a - b));
+  // Room for the count of failure lines left out.
+  const room = max - 60;
+  if (hits.length === 0) {
+    // Head and tail, each about half the bound.
+    const keep = new Set<number>();
+    for (let i = 0; i < lines.length && render(new Set([...keep, i])).length <= room / 2; i++) keep.add(i);
+    for (let i = lines.length - 1; i >= 0 && !keep.has(i) && render(new Set([...keep, i])).length <= room; i--) keep.add(i);
+    return render(keep);
+  }
+  const keep = new Set<number>();
+  let shown = 0;
+  while (shown < hits.length && render(new Set([...keep, hits[shown]!])).length <= room / 2) keep.add(hits[shown++]!);
+  for (const h of hits.slice(0, shown)) {
+    for (const [before, after] of EXCERPT_CONTEXT) {
+      const wider = new Set(keep);
+      for (let i = Math.max(0, h - before); i <= Math.min(lines.length - 1, h + after); i++) wider.add(i);
+      if (render(wider).length > room) continue;
+      for (const i of wider) keep.add(i);
+      break;
+    }
+  }
+  const left = hits.length - shown;
+  return left === 0 ? render(keep) : `${render(keep)}[orbit: ${left} more failing ${left === 1 ? 'line' : 'lines'} not shown]\n`;
+}
+
+/** A probe log's excerpt for a review packet (`failureExcerpt`); empty when the log cannot be read. */
+export function probeLogExcerpt(path: string, max = PROBE_EXCERPT_CHARS): string {
   try {
-    const text = readFileSync(path, 'utf8');
-    return text.length <= max ? text : `...${text.slice(text.length - max)}`;
+    return failureExcerpt(readFileSync(path, 'utf8'), max);
   } catch {
     return '';
   }

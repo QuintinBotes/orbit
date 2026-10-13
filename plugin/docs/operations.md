@@ -164,7 +164,29 @@ test files, and each criterion in `report.json` carries a `fail_before` entry
 revision with the new tests (exit 1, 2 attempts): AC-1". Under `required`, a
 question about accepting a criterion without fail-before is answered with
 `orbit decide <run-id> <question-id> accept` (or `decline`), bound to the tree
-it names, and `orbit resume` judges the candidate again.
+it names, and `orbit resume` judges the candidate again. Only under `required`
+does the reviewer see the probe: the review packet shows the lines of each
+probe log that report a failure (the log is check-wide), says that a compile,
+collection or import failure of a new symbol counts and is not a finding, and
+asks only about the new tests' quality. Under `advisory` and `off` the
+reviewer and the Inquisition see nothing of it; the packet says only that
+whether the new tests fail on the base revision is Orbit's to establish, so a
+criterion's promise of it is not a finding against the candidate and does not
+withhold `APPROVE`. A review finding the reviewer files under the category
+`evidence-classification` (it disputes the recorded outcome, or a criterion's
+promise of one, and asks for nothing a change to the candidate can give) is,
+unless a check confirms it or its id is a security one (`SEC-`), a
+`review.finding.noted` decision in the timeline and a residual risk in the
+report, never a repair; the same claim in any other
+category is an ordinary finding, since the wording is never read to decide it.
+Delivery needs an approving review, so when a review asked for repair only
+through such notes, the tree first gets one fresh review (a `review.fresh`
+decision, charged to `review_rounds` like any review). It is an ordinary
+review: its `APPROVE` lets the run go on, and a defect of the candidate it
+reports goes to repair. If it again asks for repair only through such notes, or
+at the `review_rounds` cap, the run ends `BLOCKED` naming the findings; a
+resume would only block again, so `orbit status` and the report say to start a
+new run.
 
 `orbit repair <run-id>` hands the failure of a `BLOCKED` or paused run with FAIL
 evidence to a repair. A run id that does not qualify is refused with the

@@ -6,7 +6,7 @@
  * comes from a fixed template per state, never from model prose.
  */
 import { redact } from '../core/redact.ts';
-import { candidateEnvironmentFailures, frozenPolicySetting } from '../controller/resume.ts';
+import { candidateEnvironmentFailures, freshReviewSpent, frozenPolicySetting } from '../controller/resume.ts';
 import type { RunRecord } from '../controller/run-store.ts';
 
 export const PAYLOAD_SCHEMA = 'orbit.notification/1';
@@ -76,6 +76,9 @@ function nextAction(input: PayloadInput): string {
       // A candidate's check that could not run for an environment cause, with no baseline question to answer (those are
       // the open questions above): the evidence recorded with the run is read again by a resume (issue #33).
       if (candidateEnvironmentFailures({ outcomeJson: run.outcomeJson ?? null }) !== null) return `Read orbit report ${run.id}; this block comes from the environment or a check's definition, so resuming alone would only block again.`;
+      // Review does not clear the tree after its one fresh review (or none could start): a resume decides it the same way.
+      const spent = freshReviewSpent({ outcomeJson: run.outcomeJson ?? null });
+      if (spent !== null) return `Read orbit report ${run.id}; ${spent}, so resuming alone would only block again.`;
       return `Resolve the block, then run orbit resume ${run.id}.`;
     case 'EXHAUSTED':
       return `Read orbit report ${run.id}, then continue by hand or start a new run.`;

@@ -123,6 +123,10 @@ describe.skipIf(!canStripTypes)('fail-before evidence through the controller', (
     expect(labGit(l.repo, 'show', `refs/orbit/${run.id}/fail-before/1:apps/calc.mjs`)).toBe('export const add = (a, b) => a + b;');
     expect(buildTimeline(l.db(), getRun(l.db(), run.id)).entries.map((e) => e.text)).toContainEqual('verification.fail-before: unit passed on the base revision with the new tests: AC-1');
     expectProbesApart(l, run.id);
+    // Advisory is reported to the person only: the reviewer is shown nothing of the probe (0.3.1 addendum).
+    const packet = readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'reviews', '1', 'packet.md'), 'utf8');
+    expect(packet).not.toContain('### Fail-before');
+    expect(packet).not.toMatch(/fail-before/i);
   }, 240_000);
 
   it('a test that imports the new function fails on the base revision: the run succeeds under required, with the decision recorded', async () => {
@@ -148,11 +152,14 @@ describe.skipIf(!canStripTypes)('fail-before evidence through the controller', (
     ]);
     expect(l.db().all('SELECT * FROM failures WHERE run_id = ?', run.id)).toEqual([]);
     expectProbesApart(l, run.id);
-    // The review packet carries the probe log, and asks whether the failure is an assertion or only a load failure.
+    // The review packet carries the probe log's failing lines, says an import failure of the new function counts, and
+    // asks only about the quality of the new tests (0.3.1 addendum).
     const packet = readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'reviews', '1', 'packet.md'), 'utf8');
     expect(packet).toContain('### Fail-before');
     expect(packet).toMatch(/does not provide an export named 'mul'/);
-    expect(packet).toMatch(/an assertion about AC-1, or only a load failure/);
+    expect(packet).toMatch(/A compile, collection or import failure of a new symbol counts as fail-before by policy: it is not a finding\./);
+    expect(packet).toMatch(/The new tests of AC-1 failed on the base revision, which supports it whatever the failure was/);
+    expect(packet).not.toMatch(/only a load failure/);
   }, 240_000);
 
   it('issue #65 under required: a new test that passes on the base revision goes to repair, with the probe log in the brief', async () => {

@@ -1027,8 +1027,8 @@ change", not "an assertion failed".
 | `fail_before` | What it does |
 |---|---|
 | `off` | No probe; `unverified` says it was not run. |
-| `advisory` (default) | The probe runs and each criterion's `fail_before` entry in the report carries its outcome; `unverified` gains one line when a criterion's new tests passed on the base revision or could not be probed. Nothing else changes. |
-| `required` | failed-before supports the criterion (the reviewer is asked whether the failure is an assertion or only a load failure). passed-before leaves it unverified and goes to repair; when the repair attempts run out, the run asks a person whether to accept the criterion without fail-before for that tree. Not established blocks the run with a question per criterion; an environment, `ERROR` or install cause is never offered for acceptance: fix it and `orbit resume` runs the probe again. |
+| `advisory` (default) | The probe runs and each criterion's `fail_before` entry in the report carries its outcome; `unverified` gains one line when a criterion's new tests passed on the base revision or could not be probed. Nothing else changes: the reviewer and the Inquisition are shown nothing of the probe. |
+| `required` | failed-before supports the criterion, whatever the failure: a compile, collection or import failure of a new symbol counts and is not a review finding. The review packet shows the lines of each probe log that report a failure (the log is check-wide), and the reviewer reviews the new tests' quality only (a tautology, an assertion that cannot fail with any implementation). passed-before leaves it unverified and goes to repair; when the repair attempts run out, the run asks a person whether to accept the criterion without fail-before for that tree. Not established blocks the run with a question per criterion; an environment, `ERROR` or install cause is never offered for acceptance: fix it and `orbit resume` runs the probe again. |
 
 Only a person sets it, in this file or for one run with `orbit run
 --fail-before <mode>`, which can raise the policy's mode (`off` < `advisory` <
@@ -1039,6 +1039,37 @@ candidate, and its time counts against `wall_minutes`: it is skipped (not
 established) when less wall time is left than `fail_before_timeout_seconds`.
 Its attempts are recorded apart from the run's checks, and a later candidate
 with the same probe tree (a repair of production code only) reuses them.
+
+In every mode, a review finding is a note if and only if the reviewer files it
+under the category `evidence-classification`, no check confirms it and no
+report of it has a security id (`SEC-`), since a security finding fails closed.
+The reviewer brief reserves that category for a finding that disputes a
+classification Orbit recorded of its own evidence, or a criterion's promise of
+one (today the fail-before outcome, for example "the fail-before evidence shows
+only a load failure"), and asks for nothing a change to the candidate can give; a finding about the tests'
+content, coverage or assertions or the code's behaviour, or one that mixes
+both, uses its normal category. A note is a `review.finding.noted` decision and
+never blocks, goes to repair or goes to the Inquisition: a repair changes the
+candidate, not the base revision. The claim's wording is never read to decide
+it, since a wording rule can silence a real defect however it is tightened, and
+any other category, one an older reviewer writes included, is an ordinary
+finding. A review that asked for repair only through such notes approves
+nothing, so the tree first gets one fresh review (a `review.fresh` decision,
+charged to `review_rounds` like any review), told that the recorded outcome is
+not a finding. It is an ordinary review: its `APPROVE` lets the run go on, and
+a defect of the candidate it reports goes to repair as any review's would. If
+it again asks for repair only through such notes, or at the `review_rounds`
+cap, the run ends `BLOCKED` naming the findings, and a resume starts no second
+fresh review, so the way forward is a new run. The planner does not write a
+criterion that the new tests fail on the base revision, since that is this
+setting's to establish, and the Inquisition never requires fail-before
+mechanics such as a mutant run or a stub implementation. Orbit never removes a
+criterion: one the planner writes all the same stays as written. So the
+reviewer brief, the packet under `advisory` and `off` and the fresh review's
+prompt say, whatever the criteria say, that a criterion's promise that the new
+tests fail on the base revision is not a finding against the candidate and does
+not withhold `APPROVE`; its other clauses are judged as usual ([ADR 0014,
+addendum](decisions/0014-fail-before.md)).
 
 ## notifications
 

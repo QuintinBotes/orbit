@@ -209,3 +209,50 @@ describe('the report and the notification of a blocked run', () => {
     expect(buildPayload({ kind: 'run.ended', run: getRun(l.db(), plain.id), questionIds: [], pullRequest: null, remote: null } as never).next_action).toBe(`Resolve the block, then run orbit resume ${plain.id}.`);
   });
 });
+
+// The 0.3.1 fresh review (ADR 0014 addendum, item 3): a tree whose review asked for repair only through notes gets one
+// fresh review. When that review does not clear the tree, or review_rounds left none to start, the run ends BLOCKED and
+// a resume comes straight back to the same BLOCKED: it starts no second fresh review, and the cap is frozen policy. Every
+// surface told the person to resolve the reason and resume, which only blocked again.
+describe('a run blocked after its one fresh review, or with none left to start', () => {
+  const NOTED = [{ id: 'f-1', external_id: 'TEST-1', severity: 'high', status: 'advisory' }];
+  const FRESH_DONE = { review_gate: [], open_findings: [], noted_findings: NOTED, fresh_review: { started: true, review_id: 'rev-2', verdict: 'REPAIR_REQUIRED', findings: NOTED, earlier_noted: [] } };
+  const FRESH_CAP = { review_gate: [], open_findings: [], noted_findings: NOTED, fresh_review: { started: false, reason: 'review_rounds hard cap reached', review_rounds: { used: 1, hard_cap: 1 } } };
+  const REVIEWING: RunState[] = [...VERIFYING, 'REVIEWING'];
+  const nextAction = (l: Lab, id: string) => buildFinalReport(l.db(), getRun(l.db(), id), { runDir: l.base, clock: systemClock, snapshot: null }).next_action;
+  const payload = (l: Lab, id: string) => buildPayload({ kind: 'run.ended', run: getRun(l.db(), id), questionIds: [], pullRequest: null, remote: null } as never).next_action;
+
+  it('says a new run is needed, in status, the report and the notification, for both', () => {
+    const l = lab();
+    const done = l.newRun('one');
+    block(l, done.id, REVIEWING, FRESH_DONE);
+    expect(newRunNeeded(l.db(), getRun(l.db(), done.id))).toBe('the tree had its one fresh review, and a resume starts no other');
+    expect(buildRunStatus({ clock: systemClock }, l.db(), getRun(l.db(), done.id)).stage).toBe('BLOCKED (a new run is needed: the tree had its one fresh review, and a resume starts no other)');
+    expect(nextAction(l, done.id)).toBe(`the reason. Resuming would only block again (the tree had its one fresh review, and a resume starts no other): cancel this run (orbit cancel ${done.id}) and start a new run with orbit run.`);
+    expect(payload(l, done.id)).toBe(`Read orbit report ${done.id}; the tree had its one fresh review, and a resume starts no other, so resuming alone would only block again.`);
+
+    const cap = l.newRun('two');
+    block(l, cap.id, REVIEWING, FRESH_CAP);
+    expect(newRunNeeded(l.db(), getRun(l.db(), cap.id))).toBe('review_rounds is at its hard cap, so a resume starts no fresh review of the tree');
+    expect(nextAction(l, cap.id)).toMatch(/Resuming would only block again \(review_rounds is at its hard cap, so a resume starts no fresh review of the tree\): cancel this run/);
+    expect(nextAction(l, cap.id)).not.toMatch(/Resolve that, then run/);
+    expect(payload(l, cap.id)).toMatch(/so resuming alone would only block again\.$/);
+  });
+
+  it('keeps "resume" while the fresh review has not come back: a resume collects it', () => {
+    const l = lab();
+    const pending = l.newRun('one');
+    block(l, pending.id, REVIEWING, { review_gate: [], open_findings: [], fresh_review: { started: true, review_id: null, earlier_noted: [] } });
+    expect(newRunNeeded(l.db(), getRun(l.db(), pending.id))).toBeNull();
+    expect(nextAction(l, pending.id)).toBe(`the reason. Resolve that, then run \`orbit resume ${pending.id}\`.`);
+  });
+
+  it('the CLI closing line says cancel and start a new run, not resolve and resume', async () => {
+    const l = lab();
+    await l.cli(['init']);
+    hooks.start = async (id) => block(l, id, REVIEWING, FRESH_DONE);
+    const r = await drive(l, ['run', '--goal', 'one', '--foreground']);
+    expect(r.out).toMatch(/resuming would only block again \(the tree had its one fresh review, and a resume starts no other\): fix it, then "orbit cancel orb-\S+" and start a new run with "orbit run"\n$/);
+    expect(r.out).not.toMatch(/resolve the reason above/);
+  });
+});

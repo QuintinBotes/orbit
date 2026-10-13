@@ -52,12 +52,30 @@ export function severityRank(s: FindingSeverity): number {
   return FINDING_SEVERITIES.indexOf(s);
 }
 
+/**
+ * The one finding category Orbit gives a meaning of its own (ADR 0014, 0.3.1 addendum, item 3). The reviewer uses it only
+ * for a finding that disputes a classification Orbit recorded of its own evidence, or a criterion's promise of one (today
+ * the fail-before outcome, such as a criterion that the new tests fail on the base revision), and asks for nothing a
+ * change to the candidate can give; a finding about the tests or the code, or one that mixes both, uses its normal
+ * category. Unconfirmed by any check and without a SEC- id, such a finding is a note (review/resolve.ts). Every other
+ * category, one an older reviewer does not know included, is an ordinary finding.
+ */
+export const EVIDENCE_CLASSIFICATION_CATEGORY = 'evidence-classification';
+
+/** A reviewer's category: free text, of which only EVIDENCE_CLASSIFICATION_CATEGORY means something to Orbit. */
+export type FindingCategory = typeof EVIDENCE_CLASSIFICATION_CATEGORY | (string & {});
+
+/** Whether a finding's category is EVIDENCE_CLASSIFICATION_CATEGORY, compared as findingFingerprint compares categories. */
+export function isEvidenceClassification(category: string | null): boolean {
+  return (category ?? '').trim().toLowerCase() === EVIDENCE_CLASSIFICATION_CATEGORY;
+}
+
 /** A finding as it came out of a validated review output, normalized and redacted. */
 export interface IngestedFinding {
   /** The reviewer's id (SEC-1). Unique within one review only. */
   externalId: string;
   severity: FindingSeverity;
-  category: string;
+  category: FindingCategory;
   /** The reviewer's location string, kept verbatim for display. */
   location: string | null;
   /** Repository-relative path parsed from `location`; untrusted, never used for file access. */

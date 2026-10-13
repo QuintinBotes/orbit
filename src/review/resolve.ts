@@ -5,9 +5,11 @@ import { validateModelOutput } from '../contract/model-outputs.ts';
 import type { CheckStatus, RepairBrief } from '../evidence/types.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import {
+  EVIDENCE_CLASSIFICATION_CATEGORY,
   FINDING_SEVERITIES,
   UNRESOLVED_FINDING_STATUSES,
   findingFingerprint,
+  isEvidenceClassification,
   isFindingSeverity,
   severityRank,
   splitLocation,
@@ -345,6 +347,11 @@ export interface Disposition {
   carried: boolean;
   /** Earlier findings of the same claim that were closed (rejected or resolved) on another tree. */
   recurrenceOf: string[];
+  /**
+   * Set when the finding is a note: its category is `evidence-classification`, no check confirmed it and it is no security
+   * finding, so it disputes RECORDED_EVIDENCE_CLASSIFICATION, which no repair can change.
+   */
+  recordedClassification?: string;
 }
 
 export type ClaimRoute = 'validate' | 'inquisition';
@@ -403,6 +410,19 @@ export interface Resolution {
   /** Nothing blocks and no verdict is unexplained. This is necessary for review to clear, not sufficient (see stale.ts reviewGate). */
   clear: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Orbit's own recorded classifications
+
+/**
+ * What a note disputes, as its reason, the run's outcome and the fresh review's prompt name it (ADR 0014, 0.3.1
+ * addendum, item 3). A finding is a note if and only if its category is EVIDENCE_CLASSIFICATION_CATEGORY, no check
+ * confirms it and it is no security finding (isSecurityFinding: a SEC- id). That is structure the reviewer states, never
+ * the wording of its claim: the resolver reads no claim to decide it, because matching English, however tightened, can
+ * silence a real defect. The reviewer brief says when the category applies, and a finding that also names a defect of
+ * the tests or the code uses its normal category.
+ */
+export const RECORDED_EVIDENCE_CLASSIFICATION = "a classification Orbit recorded of its own evidence, such as the fail-before outcome of the base revision, or a criterion's promise of one";
 
 // ---------------------------------------------------------------------------
 // Resolution
@@ -489,10 +509,19 @@ export function resolveFindings(input: ResolveInput): Resolution {
     // Closed against this very tree in an earlier pass: terminal, and evidence is not re-litigated.
     const currentMembers = group.filter((m) => m.current);
     const closedHere = currentMembers.length > 0 && currentMembers.every((m) => m.f.status === 'rejected' || m.f.status === 'resolved') ? currentMembers[0]!.f : null;
+    // A note if and only if the reviewer filed it under evidence-classification, no check has confirmed it (confirming
+    // evidence, here or on an earlier tree, governs) and no report of it is a security finding. The claim's wording is not
+    // read. Every report of it shares the category, which is part of the fingerprint. A SEC- id and this category
+    // contradict each other, and the structure resolves that toward the stricter rule: the finding follows the security rule.
+    const recorded = confirms.length === 0 && !wasAccepted && !sec && group.every((m) => isEvidenceClassification(m.f.category)) ? RECORDED_EVIDENCE_CLASSIFICATION : null;
 
     if (closedHere) {
       status = closedHere.status as FindingStatus;
       reason = closedHere.resolution ?? `${closedHere.status} earlier on this tree`;
+    } else if (recorded !== null) {
+      // Not a claim about the candidate: whatever its severity, it is reported and nothing waits on it.
+      status = 'advisory';
+      reason = `a note, not a defect: filed under the category ${EVIDENCE_CLASSIFICATION_CATEGORY} and confirmed by no check, it disputes ${recorded}, which no repair can change; it is reported, and neither repaired nor sent to the Inquisition`;
     } else if (refutes.length > 0 && confirms.length > 0) {
       status = 'claim_pending';
       reason = `conflicting evidence on tree ${treeHash.slice(0, 12)}: ${refs(refutes).join('; ')} refutes while ${refs(confirms).join('; ')} confirms; needs Inquisition`;
@@ -569,6 +598,7 @@ export function resolveFindings(input: ResolveInput): Resolution {
       disagreement: status === 'claim_pending' && reasonCode === 'conflicting-evidence' ? { kinds: [...(disagreement?.kinds ?? []), 'conflicting-evidence'], parties: disagreement?.parties ?? [], detail: [...(disagreement?.detail ?? []), 'checks contradict each other'] } : disagreement,
       carried,
       recurrenceOf: closedEarlier.get(fp) ?? [],
+      ...(recorded !== null && status === 'advisory' ? { recordedClassification: recorded } : {}),
     };
     if (d.recurrenceOf.length > 0 && !carried) d.reason += `; re-raised after ${d.recurrenceOf.length} earlier closure(s) on other trees, so it was re-tested against this tree`;
     dispositions.push(d);
