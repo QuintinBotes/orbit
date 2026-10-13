@@ -55,7 +55,7 @@ import { createdBranch } from './run-refs.ts';
 import { candidateRef } from '../evidence/candidate.ts';
 import { currentCandidate, type ControllerDeps, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
-import { accountWorker, accountWorkerTurns, OUTPUT_CAP_CEILING, outcomeOf, outputCapExceeded, raiseOutputCap, recordSpendCap, settleRunUsage, storedResult } from './workers.ts';
+import { accountWorkerTurns, finishAndSettle, OUTPUT_CAP_CEILING, outcomeOf, outputCapExceeded, raiseOutputCap, recordSpendCap, settleRunUsage, storedResult } from './workers.ts';
 import { autoEvaluateOverlays } from './eval-runner.ts';
 import { notifyRunEnded, resolveNotifyDeps } from '../notify/notify.ts';
 import { checkLiveOverlays, globalKnowledgePath, repoKnowledgePath } from './knowledge-hooks.ts';
@@ -841,13 +841,15 @@ export async function runCurator(
   }
 
   if (ctx && row) {
-    const done = finishWorker(ctx.db, row.id, result ? outcomeOf(result) : { state: 'LOST', resultStatus: 'lost', error: 'the curator did not stop after it timed out' }, ctx.clock, ctx.ownerId);
-    if (result) {
-      try {
-        accountWorker(ctx, done, result, 'final');
-      } catch (err) {
-        ctx.log.warn('curator cost could not be charged', { error: err instanceof Error ? err.message : String(err) });
-      }
+    // The result, the usage record and the charge commit together: the curator runs after the report is written, and a
+    // controller that dies between them would leave a stored result that nothing settles. One that never answered is
+    // recorded unmeasured and charged its cap, as any lost session is.
+    const lost = { state: 'LOST' as const, resultStatus: 'lost' as const, error: 'the curator did not stop after it timed out' };
+    const ended: TaskResult = result ?? { status: 'lost', structured: null, text: null, error: lost.error, exitCode: null, usage: { provider: adapter.id, model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: 'unavailable' }, durationMs: null };
+    try {
+      finishAndSettle(ctx, row, ended, result ? outcomeOf(result) : lost, 'final');
+    } catch (err) {
+      ctx.log.warn('curator cost could not be charged', { error: err instanceof Error ? err.message : String(err) });
     }
   }
   if (!result || timedOut) throw new OrbitError('PROVIDER_UNAVAILABLE', 'the curator timed out');

@@ -357,9 +357,17 @@ function renderEvent(e: EventRow, data: Rec, l: Lookups): Rendered | null {
       // cost line does not, and PLANNING's precharge has its own record; only usage charged after another component
       // recorded it (the Inquisition, for its inquisitors) gets a line.
       if (data.source === 'collected' || data.source === 'precharge') return null;
+      // Charges nothing: the records a budget from before 0.3.1 charged, marked once so they are not charged again.
+      if (data.source === 'legacy') {
+        const n = Array.isArray(data.usage_ids) ? data.usage_ids.length : 0;
+        return { category: 'cost', text: `${n} usage ${n === 1 ? 'record' : 'records'} charged before 0.3.1 marked as charged` };
+      }
       const c = num(data.charged_usd);
-      const who = [str(data.role) ?? 'a session', str(data.worker_id)].filter((x): x is string => x !== null).join(' ');
-      return { category: 'cost', text: `charged ${c === null ? '?' : usd(c)} for ${who}, whose usage the Inquisition recorded` };
+      const role = str(data.role);
+      const who = [role ?? 'a session', str(data.worker_id)].filter((x): x is string => x !== null).join(' ');
+      // The Inquisition records its inquisitors' usage; reconciliation records a lost attempt's when it restarts the worker.
+      const by = role === null || role === 'inquisitor' ? 'the Inquisition recorded' : 'was recorded before it was charged';
+      return { category: 'cost', text: `charged ${c === null ? '?' : usd(c)} for ${who}, whose usage ${by}` };
     }
     case 'budget.cost-ceiling-charged': {
       const c = num(data.ceiling_usd);

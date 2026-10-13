@@ -19,6 +19,7 @@ import { newId } from '../core/ids.ts';
 import { appendEvent } from '../storage/events.ts';
 import { getDecision, recordDecision } from '../storage/decisions.ts';
 import { findWorker, finishWorker, getWorker, isWorkerActive, listActiveWorkers, listWorkers, markWorkerRunning, planWorker, type WorkerOutcome, type WorkerRecord } from '../storage/workers.ts';
+import type { OrbitDb } from '../storage/db.ts';
 import type { ProviderAdapter, TaskHandle, TaskResult, TaskSpec, UsageReport, WorkerRole } from '../adapters/types.ts';
 import { claudeModelRequests, claudeSessionId, type ClaudeTaskResult } from '../adapters/claude-transcript.ts';
 import { archiveAttempt, handleFromWorkerDir, LAUNCH_FILE, readLogLines } from '../adapters/supervise.ts';
@@ -27,7 +28,7 @@ import { renderSystemPrompt, ROLE_OUTPUT_KIND } from '../adapters/prompt.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
 import { PROVIDER_HOSTS, profileForWorker, workerAllowedHosts, workerTmpDir } from '../isolation/profiles.ts';
 import { detectToolchains, prepareToolchainLayout, toolchainLayout } from '../isolation/toolchains.ts';
-import { stopLaunch, stopWorker } from '../recovery/reconcile.ts';
+import { stopLaunch, stopWorker, WORKER_RESTART_EVENT } from '../recovery/reconcile.ts';
 import { route, toDecisionRecord } from '../routing/router.ts';
 import { allowMatch, fundedSessionCap, tierOf, worstCaseRequestUsd } from '../routing/registry.ts';
 import { recordUsage, routeStats } from '../routing/usage.ts';
@@ -123,8 +124,8 @@ export async function ensureWorker(ctx: RunContext, req: WorkerRequest): Promise
 
 async function observe(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): Promise<WorkerStatus> {
   if (w.cancelRequested) {
-    const stopped = await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, 'cancellation requested');
-    return { status: 'finished', worker: stopped, result: accountFinished(ctx, stopped, req.phase) };
+    const stopped = await stopAndSettle(ctx, w, 'cancellation requested', req.phase ?? 'work');
+    return { status: 'finished', worker: stopped, result: storedResult(stopped) };
   }
   if (w.state === 'PLANNED') {
     // Intent without a launch: the controller died before spawning. A launch without a pid: it died mid-spawn.
@@ -409,6 +410,53 @@ export function accountWorker(ctx: RunContext, w: WorkerRecord, result: TaskResu
  * worker as `finish` left it.
  */
 function settleSession(ctx: RunContext, w: WorkerRecord, result: TaskResult, phase: BudgetPhase, opts: { finish?: () => WorkerRecord; charge?: boolean } = {}): WorkerRecord {
+  const out = settle(ctx, w, result, phase, opts);
+  if (out.refused) throw out.refused;
+  return out.row;
+}
+
+/**
+ * Record a finished session's result, usage and charge in one transaction: `outcome` is what the row is finished with,
+ * `result` what the session reported (a lost session's is an empty report, charged as unmeasured). For a component that
+ * ends a session itself (the curator) and has no worker request to go through ensureWorker with.
+ */
+export function finishAndSettle(ctx: RunContext, w: WorkerRecord, result: TaskResult, outcome: WorkerOutcome, phase: BudgetPhase = 'work'): WorkerRecord {
+  return settleSession(ctx, w, result, phase, { finish: () => finishWorker(ctx.db, w.id, outcome, ctx.clock, ctx.ownerId) });
+}
+
+/**
+ * Stop a worker (stopWorker) and settle it in the transaction that records it stopped: its result, its usage and its
+ * charge, also for a session with nothing to collect, which is charged as unmeasured (its cap). A worker stopped
+ * mid-run (obsolete work, a cancelled unit, an exploration out of time) is no longer counted as committed spend once it
+ * stops, so it is charged then, before the next session is funded, not when the run ends. A charge that exhausts the
+ * budget is raised after the stop is recorded.
+ */
+export async function stopAndSettle(ctx: RunContext, w: WorkerRecord, reason: string, phase: BudgetPhase = 'work'): Promise<WorkerRecord> {
+  let refused: OrbitError | null = null;
+  const row = await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, reason, {
+    finish: (outcome, result) => {
+      const out = settle(ctx, w, result ?? endedWithoutResult(w, outcome), phase, { finish: () => finishWorker(ctx.db, w.id, outcome, ctx.clock, ctx.ownerId) });
+      refused = out.refused;
+      return out.row;
+    },
+  });
+  if (refused) throw refused;
+  return row;
+}
+
+/** What a session ended with when nothing could be collected: the result storedResult reads back for its row. */
+function endedWithoutResult(w: WorkerRecord, outcome: WorkerOutcome): TaskResult {
+  return { status: outcome.resultStatus ?? 'lost', structured: null, text: null, error: outcome.error ?? null, exitCode: outcome.exitCode ?? null, usage: emptyUsage(w.provider), durationMs: null };
+}
+
+interface Settled {
+  row: WorkerRecord;
+  /** Whether a usage record was written or a charge made. */
+  changed: boolean;
+  refused: OrbitError | null;
+}
+
+function settle(ctx: RunContext, w: WorkerRecord, result: TaskResult, phase: BudgetPhase, opts: { finish?: () => WorkerRecord; charge?: boolean } = {}): Settled {
   accountWorkerTurns(ctx, w, result);
   if (!hasUsage(ctx, w.id)) {
     // Denials inside the session (guard hook, permission rules) become policy.deny decisions before anything else.
@@ -419,7 +467,10 @@ function settleSession(ctx: RunContext, w: WorkerRecord, result: TaskResult, pha
     }
   }
   const ledger = opts.charge === false ? null : ctx.ledger;
-  const out = ctx.db.tx((): { row: WorkerRecord; usage: UsageReport | null; refused: OrbitError | null } => {
+  const out = ctx.db.tx((): { row: WorkerRecord; usage: UsageReport | null; changed: boolean; refused: OrbitError | null } => {
+    // Before this session's record is written: a budget from before 0.3.1 has its charged records marked first, so the
+    // record written here is never read as one of them.
+    adoptLegacyCharges(ctx);
     const row = opts.finish ? opts.finish() : w;
     let fresh: { id: number; usage: UsageReport } | null = null;
     // Asked again inside the transaction: another controller settling the same ended run may have recorded it.
@@ -428,15 +479,17 @@ function settleSession(ctx: RunContext, w: WorkerRecord, result: TaskResult, pha
       fresh = { id: recordUsage(ctx.db, { runId: ctx.run.id, workerId: w.id, provider: w.provider, model: usage.model ?? w.model, usage, durationMs: result.durationMs }, ctx.clock).id, usage };
     }
     let refused: OrbitError | null = null;
+    let charged = 0;
     if (ledger) {
       for (const r of unchargedUsageRows(ctx, ' AND u.worker_id = ?', w.id)) {
         // The record just written is charged from the session's own usage, as reported: recordUsage may have priced it
         // from the registry, and a charge from tokens says so (budget.cost-token-estimated).
         const e = chargeUsageRow(ctx, ledger, r, phase, { status: result.status, usage: r.id === fresh?.id ? fresh.usage : null, source: r.id === fresh?.id ? 'collected' : 'recorded' });
         refused ??= e;
+        charged++;
       }
     }
-    return { row, usage: fresh?.usage ?? null, refused };
+    return { row, usage: fresh?.usage ?? null, changed: fresh !== null || charged > 0, refused };
   });
   // A model the provider actually ran on is validated on that surface; nothing else marks a model available.
   const observed = out.usage?.model;
@@ -447,12 +500,27 @@ function settleSession(ctx: RunContext, w: WorkerRecord, result: TaskResult, pha
       /* the registry is advisory here; a failure to update it never fails the step */
     }
   }
-  if (out.refused) throw out.refused;
-  return out.row;
+  return { row: out.row, changed: out.changed, refused: out.refused };
 }
 
+/**
+ * Whether the worker's current session has its usage recorded. A record of an attempt that was lost and restarted on the
+ * same row (WORKER_RESTART_EVENT names it) is an earlier session's.
+ */
 function hasUsage(ctx: RunContext, workerId: string): boolean {
-  return ctx.db.get('SELECT 1 AS x FROM usage WHERE run_id = ? AND worker_id = ? LIMIT 1', ctx.run.id, workerId) !== undefined;
+  const earlier = lostAttemptUsageIds(ctx.db, ctx.run.id, workerId);
+  return ctx.db.all<{ id: number }>('SELECT id FROM usage WHERE run_id = ? AND worker_id = ?', ctx.run.id, workerId).some((r) => !earlier.has(r.id));
+}
+
+/** The usage records of lost attempts reconciliation restarted on the same row, of one worker or of the whole run. */
+function lostAttemptUsageIds(db: OrbitDb, runId: string, workerId?: string): Set<number> {
+  const rows = db.all<{ id: unknown }>(
+    `SELECT json_extract(data_json, '$.usage_id') AS id FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.usage_id') IS NOT NULL${workerId === undefined ? '' : " AND json_extract(data_json, '$.worker_id') = ?"}`,
+    runId,
+    WORKER_RESTART_EVENT,
+    ...(workerId === undefined ? [] : [workerId]),
+  );
+  return new Set(rows.map((r) => r.id).filter((id): id is number => typeof id === 'number'));
 }
 
 /**
@@ -546,10 +614,12 @@ export const USAGE_CHARGED_EVENT = 'budget.usage-charged';
 
 /**
  * Which path charged a record: `collected` when its session's usage was recorded and charged together, `recorded` when
- * the record was written earlier (by the Inquisition, which records its inquisitors' usage itself) and charged later,
- * `precharge` when PLANNING charged it on creating the budget.
+ * the record was written earlier (by the Inquisition, which records its inquisitors' usage itself, or by reconciliation
+ * for a lost attempt it restarted) and charged later, `precharge` when PLANNING charged it on creating the budget.
+ * `legacy` marks, once, the records a budget from before 0.3.1 charged without marking them (adoptLegacyCharges); it
+ * charges nothing.
  */
-export type ChargeSource = 'collected' | 'recorded' | 'precharge';
+export type ChargeSource = 'collected' | 'recorded' | 'precharge' | 'legacy';
 
 export interface UsageRow {
   id: number;
@@ -581,38 +651,108 @@ export function unchargedUsageRows(ctx: RunContext, where = '', ...params: (stri
 }
 
 /**
- * The usage records already charged to cost_usd: those a USAGE_CHARGED_EVENT marks. A budget PLANNING created before
- * charges marked their records (0.3.0) charged without marks: its precharge covered every record written by then, and
- * afterwards the controller charged each session as it recorded it, which was every session but an inquisitor's (the
- * Inquisition recorded those itself, and nothing charged them).
+ * The usage records already charged to cost_usd: those a USAGE_CHARGED_EVENT marks. A budget from before 0.3.1 has the
+ * records it charged marked first (adoptLegacyCharges), so marks are the only answer.
  */
-export function chargedUsageIds(ctx: Pick<RunContext, 'db' | 'run'>): Set<number> {
+export function chargedUsageIds(ctx: RunContext): Set<number> {
+  adoptLegacyCharges(ctx);
+  return markedUsageIds(ctx.db, ctx.run.id);
+}
+
+function markedUsageIds(db: OrbitDb, runId: string): Set<number> {
   const ids = new Set<number>();
-  for (const e of ctx.db.all<{ data_json: string | null }>('SELECT data_json FROM events WHERE run_id = ? AND type = ?', ctx.run.id, USAGE_CHARGED_EVENT)) {
+  for (const e of db.all<{ data_json: string | null }>('SELECT data_json FROM events WHERE run_id = ? AND type = ?', runId, USAGE_CHARGED_EVENT)) {
     const d = e.data_json ? (JSON.parse(e.data_json) as { usage_ids?: unknown }) : {};
     for (const id of Array.isArray(d.usage_ids) ? d.usage_ids : []) if (typeof id === 'number') ids.add(id);
-  }
-  const through = unmarkedPrechargeThrough(ctx);
-  if (through !== null) {
-    for (const r of ctx.db.all<{ id: number; role: string | null }>('SELECT u.id, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ?', ctx.run.id)) {
-      if (r.id <= through || r.role !== 'inquisitor') ids.add(r.id);
-    }
   }
   return ids;
 }
 
 /**
- * The newest usage id a precharge that marked no records covered; null when PLANNING has not charged anything yet or
- * marked each record it charged (`usage_marked`). One recorded before 0.3.1 named no usage id either: it charged every
- * record written by then.
+ * Mark, once, the usage records a budget created before 0.3.1 charged without marking them: one USAGE_CHARGED_EVENT
+ * with source `legacy`, which is also the sign that it was done. From then on only marks say what is charged, so a
+ * record written after the upgrade is charged like any other (0.3.0's rule, read for every record, took each later
+ * record but an inquisitor's as charged and never charged it). Two budgets are from before 0.3.1:
+ *
+ *   - PLANNING's precharge recorded without `usage_marked`. It charged every record written by then (its `usage_rows`
+ *     records, oldest first), and afterwards 0.3.0 charged each session it collected and then recorded it, which was
+ *     every session but an inquisitor's (the Inquisition recorded those, and nothing charged them).
+ *   - A 0.3.0 precharge cut short: no budget.precharged, no marks, cost_usd already used, and the run never past
+ *     PLANNING. 0.3.0 committed each record's charge on its own, oldest first, so the oldest records whose charges add
+ *     up to what was used are charged.
+ *
+ * A record reconciliation wrote for a lost attempt it restarted is 0.3.1's and never one of them. Idempotent; runs in a
+ * transaction of its own or the caller's.
  */
-function unmarkedPrechargeThrough(ctx: Pick<RunContext, 'db' | 'run'>): number | null {
-  const e = ctx.db.get<{ ts: number; data_json: string | null }>("SELECT ts, data_json FROM events WHERE run_id = ? AND type = 'budget.precharged' ORDER BY id LIMIT 1", ctx.run.id);
-  if (!e) return null;
-  const d = e.data_json ? (JSON.parse(e.data_json) as { through_usage_id?: unknown; usage_marked?: unknown }) : {};
-  if (d.usage_marked === true) return null;
+export function adoptLegacyCharges(ctx: RunContext): void {
+  const { db } = ctx;
+  const runId = ctx.run.id;
+  const pre = db.get<{ ts: number; data_json: string | null }>("SELECT ts, data_json FROM events WHERE run_id = ? AND type = 'budget.precharged' ORDER BY id LIMIT 1", runId);
+  const data = pre?.data_json ? (JSON.parse(pre.data_json) as { through_usage_id?: unknown; usage_rows?: unknown; usage_marked?: unknown }) : {};
+  if (pre && data.usage_marked === true) return;
+  // Without budget.precharged, a precharge cut short is the only way cost_usd has spend no mark accounts for, and only
+  // on a run that never got past PLANNING (every run past it has budget.precharged).
+  const spent = pre ? null : (db.get<{ used: number }>("SELECT used FROM budget_counters WHERE run_id = ? AND counter = 'cost_usd'", runId)?.used ?? 0);
+  if (spent !== null && !(spent > 1e-9)) return;
+  if (legacyAdopted(db, runId)) return;
+  if (!pre && db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'state.transition' AND from_state = 'PLANNING' AND to_state = 'IMPLEMENTING' LIMIT 1", runId)) return;
+  db.tx(() => {
+    if (legacyAdopted(db, runId)) return;
+    const marked = markedUsageIds(db, runId);
+    // Charges that marked their records are 0.3.1's: nothing was cut short.
+    if (!pre && marked.size > 0) return;
+    const restarted = lostAttemptUsageIds(db, runId);
+    const all = usageRows(ctx).filter((r) => !restarted.has(r.id));
+    const rows = all.filter((r) => !marked.has(r.id));
+    let ids: number[];
+    let basis: Record<string, unknown>;
+    if (pre) {
+      const through = prechargeThrough(ctx, all, pre.ts, data);
+      ids = rows.filter((r) => r.id <= through || r.role !== 'inquisitor').map((r) => r.id);
+      basis = { basis: 'precharge-unmarked', through_usage_id: through };
+    } else {
+      const through = oldestCovering(ctx, rows, spent!);
+      ids = rows.filter((r) => r.id <= through).map((r) => r.id);
+      basis = { basis: 'precharge-cut-short', used_usd: Math.round(spent! * 1e6) / 1e6 };
+    }
+    appendEvent(db, runId, USAGE_CHARGED_EVENT, ctx.ownerId, { worker_id: null, role: null, usage_ids: ids, charged_usd: null, source: 'legacy' satisfies ChargeSource, ...basis }, ctx.clock.now());
+  });
+}
+
+function legacyAdopted(db: OrbitDb, runId: string): boolean {
+  return db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.source') = 'legacy' LIMIT 1", runId, USAGE_CHARGED_EVENT) !== undefined;
+}
+
+/**
+ * The newest usage id a precharge recorded before 0.3.1 covered. It charged every record the run had, oldest first: the
+ * one it names; else the oldest records whose charges add up to what it says it charged (`charged_usd`), or the
+ * `usage_rows` oldest it says it charged, whichever reaches further; else every record written by then.
+ */
+function prechargeThrough(ctx: RunContext, rows: readonly UsageRow[], ts: number, d: { through_usage_id?: unknown; usage_rows?: unknown; charged_usd?: unknown }): number {
   if (typeof d.through_usage_id === 'number') return d.through_usage_id;
-  return ctx.db.get<{ id: number | null }>('SELECT MAX(id) AS id FROM usage WHERE run_id = ? AND ts <= ?', ctx.run.id, e.ts)?.id ?? 0;
+  const counted = typeof d.usage_rows === 'number' && Number.isSafeInteger(d.usage_rows) && d.usage_rows > 0 ? (rows[Math.min(d.usage_rows, rows.length) - 1]?.id ?? 0) : 0;
+  if (typeof d.charged_usd === 'number' && Number.isFinite(d.charged_usd)) return Math.max(counted, oldestCovering(ctx, rows, d.charged_usd));
+  const written = ctx.db.get<{ id: number | null }>('SELECT MAX(id) AS id FROM usage WHERE run_id = ? AND ts <= ?', ctx.run.id, ts)?.id ?? 0;
+  return Math.max(counted, written);
+}
+
+/**
+ * The newest of the oldest records whose 0.3.0 charges add up to `amount` (0 when none does): 0.3.0's precharge charged
+ * the records in order, each its cost, else what its tokens would cost, else its role's ceiling. A record that costs
+ * nothing right after them is covered too, which charges nothing either way.
+ */
+function oldestCovering(ctx: RunContext, rows: readonly UsageRow[], amount: number): number {
+  let sum = 0;
+  let through = 0;
+  for (const r of rows) {
+    const est = r.cost_usd === null ? tokenEstimateFor(ctx, r, { provider: r.provider, model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cacheReadTokens: r.cache_read_tokens, cacheWriteTokens: r.cache_write_tokens, costUsd: null, costSource: 'unavailable' }) : null;
+    const role = (r.role as WorkerRole | null) ?? 'planner';
+    const charge = r.cost_usd ?? est?.costUsd ?? (ctx.ledger ? ctx.ledger.roleCostCeiling(role) : ROLE_COST_CEILING_USD[role]);
+    if (sum + charge > amount + 1e-6) break;
+    sum += charge;
+    through = r.id;
+  }
+  return through;
 }
 
 /**
@@ -640,7 +780,9 @@ export function chargeUsageRows(ctx: RunContext, ledger: NonNullable<RunContext[
  */
 function chargeUsageRow(ctx: RunContext, ledger: NonNullable<RunContext['ledger']>, r: UsageRow, phase: BudgetPhase, opts: { source: ChargeSource; status?: string; usage?: UsageReport | null }): OrbitError | null {
   const w = r.worker_id === null ? null : findWorker(ctx.db, r.worker_id);
-  const status = opts.status ?? (w ? storedResult(w).status : null);
+  // A lost attempt's record (reconciliation restarted the row) ended lost, whatever the row's current session did.
+  const lostAttempt = r.worker_id !== null && lostAttemptUsageIds(ctx.db, ctx.run.id, r.worker_id).has(r.id);
+  const status = lostAttempt ? 'lost' : (opts.status ?? (w ? storedResult(w).status : null));
   return ctx.db.tx((): OrbitError | null => {
     let usage: UsageReport = opts.usage ?? { provider: r.provider, model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cacheReadTokens: r.cache_read_tokens, cacheWriteTokens: r.cache_write_tokens, costUsd: r.cost_usd, costSource: r.cost_source as UsageReport['costSource'] };
     if (!opts.usage && w && status !== null) {
@@ -693,17 +835,86 @@ export function recordStoredUsage(ctx: RunContext, w: WorkerRecord): void {
 
 /**
  * Every session of the run recorded and charged, whatever collected it: one no step looked at again (a worker the
- * watchdog or reconciliation stopped and stored as the run ended, an inquiry's charge pass a crash cut short) is
- * settled when the run's report is written. A charge that crosses the cap is recorded; the outcome already stands.
+ * watchdog or reconciliation stopped and stored as the run ended, an inquiry's charge pass a crash cut short, the lost
+ * attempt of a worker whose restart the run's end stopped) is settled when the run's report is written. A charge that
+ * crosses the cap is recorded; the outcome already stands. Returns whether anything was recorded or charged, for the
+ * caller to write the report again.
  */
-export function settleRunUsage(ctx: RunContext, phase: BudgetPhase = 'final'): void {
+export function settleRunUsage(ctx: RunContext, phase: BudgetPhase = 'final'): boolean {
+  let changed = false;
   for (const w of listWorkers(ctx.db, { runId: ctx.run.id })) {
+    if (!hasUsage(ctx, w.id) && !hasCollectedResult(w)) continue;
     try {
-      chargeRecordedUsage(ctx, w, phase);
+      changed = settle(ctx, w, storedResult(w), phase).changed || changed;
     } catch (err) {
-      if (!isOrbitError(err, 'BUDGET_EXHAUSTED')) ctx.log.warn('could not record or charge a session\'s usage', { worker_id: w.id, error: messageOf(err) });
+      ctx.log.warn('could not record or charge a session\'s usage', { worker_id: w.id, error: messageOf(err) });
     }
   }
+  try {
+    changed = chargeOutstanding(ctx, phase).changed || changed;
+  } catch (err) {
+    ctx.log.warn('could not charge the run\'s recorded usage', { error: messageOf(err) });
+  }
+  return changed;
+}
+
+/**
+ * The backstop at the start of each step: a session that ended with its result stored and no usage record (stopped by
+ * the watchdog, collected by reconciliation) whose purpose no step asks for again, and a usage record no charge marks
+ * (a lost attempt reconciliation restarted), are recorded and charged before the step funds anything. Nothing to do
+ * before PLANNING creates the budget, whose precharge charges what was spent before. A charge that exhausts the budget
+ * is raised after all of them are settled.
+ */
+export function settleUnsettledSessions(ctx: RunContext, phase: BudgetPhase = 'work'): void {
+  if (!ctx.ledger || !hasUnsettledSessions(ctx.db, ctx.run.id)) return;
+  let refused: OrbitError | null = null;
+  for (const w of listWorkers(ctx.db, { runId: ctx.run.id })) {
+    if (!hasCollectedResult(w) || hasUsage(ctx, w.id)) continue;
+    refused ??= settle(ctx, w, storedResult(w), phase).refused;
+  }
+  refused ??= chargeOutstanding(ctx, phase).refused;
+  if (refused) throw refused;
+}
+
+/** Charge every usage record of the run no charge marks yet, as recorded, in one transaction. */
+function chargeOutstanding(ctx: RunContext, phase: BudgetPhase): { changed: boolean; refused: OrbitError | null } {
+  const ledger = ctx.ledger;
+  if (!ledger) return { changed: false, refused: null };
+  return ctx.db.tx(() => {
+    const rows = unchargedUsageRows(ctx);
+    return { changed: rows.length > 0, refused: rows.length > 0 ? chargeUsageRows(ctx, ledger, rows, phase, 'recorded') : null };
+  });
+}
+
+/**
+ * Whether some session of the run is not settled: a stored result with no usage record of its session, or, once the
+ * budget exists, a usage record no charge marks. Read-only and cheap, for the checks that run on every step and on every
+ * ended run of the last day.
+ */
+export function hasUnsettledSessions(db: OrbitDb, runId: string): boolean {
+  // A finished worker with a collected result (hasCollectedResult) and no usage record of its own session.
+  const unrecorded = db.get(
+    `SELECT 1 AS x FROM workers w
+     WHERE w.run_id = ? AND w.state NOT IN ('PLANNED', 'RUNNING') AND w.result_json IS NOT NULL
+       AND (CASE WHEN json_valid(w.result_json) THEN json_type(w.result_json, '$.status') END) = 'text'
+       AND NOT EXISTS (
+         SELECT 1 FROM usage u WHERE u.run_id = w.run_id AND u.worker_id = w.id
+           AND u.id NOT IN (SELECT json_extract(e.data_json, '$.usage_id') FROM events e WHERE e.run_id = w.run_id AND e.type = ? AND json_extract(e.data_json, '$.usage_id') IS NOT NULL))
+     LIMIT 1`,
+    runId,
+    WORKER_RESTART_EVENT,
+  );
+  if (unrecorded) return true;
+  if (!db.get('SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1', runId)) return false;
+  // A usage record no charge mark names.
+  const unmarked = db.get(
+    `SELECT 1 AS x FROM usage u WHERE u.run_id = ?
+       AND NOT EXISTS (SELECT 1 FROM events e, json_each(e.data_json, '$.usage_ids') j WHERE e.run_id = u.run_id AND e.type = ? AND j.value = u.id)
+     LIMIT 1`,
+    runId,
+    USAGE_CHARGED_EVENT,
+  );
+  return unmarked !== undefined;
 }
 
 /**
@@ -982,7 +1193,10 @@ export async function collectIfFinished(ctx: RunContext, w: WorkerRecord, phase:
   const adapter = adapterFor(ctx, w.provider);
   const handle = handleOf(adapter, w);
   if (!handle) {
-    finishWorker(ctx.db, w.id, { state: 'LOST', resultStatus: 'lost', error: 'the worker directory has no pid.json' }, ctx.clock, ctx.ownerId);
+    // Nothing to collect, so what it spent is unknown: recorded unmeasured and charged its cap with the row, as a lost
+    // worker a step collects is (accountFinished), never left uncharged.
+    const outcome: WorkerOutcome = { state: 'LOST', resultStatus: 'lost', error: 'the worker directory has no pid.json' };
+    settleSession(ctx, w, endedWithoutResult(w, outcome), phase, { finish: () => finishWorker(ctx.db, w.id, outcome, ctx.clock, ctx.ownerId) });
     return false;
   }
   const result = await adapter.collectResult(handle, { outputSchema: schemaFor(w.role) });

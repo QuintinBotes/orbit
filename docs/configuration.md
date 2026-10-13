@@ -365,11 +365,20 @@ ceiling. Inquisitor sessions are charged the same way, by the same rules: the
 Inquisition records their usage itself, and the controller charges it when the
 inquiry settles or fails. Every charge marks the usage record it covers
 (`budget.usage-charged`) in the transaction that charges it, whichever path
-charged it, and a marked record is never charged again. A session whose result
-was stored with no usage record (one reconciliation collected after a controller
-restart, or one the watchdog stopped) has its usage recorded from that result
-and charged once, before the Inquisition reuses it and at the latest when the
-run's report is written. The session whose
+charged it, and a marked record is never charged again. A budget created
+before 0.3.1 has the records it charged marked once, the first time 0.3.1
+charges anything for the run; from then on only marks count, so a session after
+the upgrade is charged like any other. A session whose result was stored with no
+usage record (one reconciliation collected after a controller restart, or one the
+watchdog stopped) has its usage recorded from that result and charged once, at
+the start of the next step at the latest, and for a run that has ended when the
+controller next starts, with the report written again. A worker the controller
+stops mid-run (obsolete review or verification, a cancelled unit, an exploration
+out of time) is charged as it stops, before the next session is funded. A lost
+worker that reconciliation restarts has what the lost attempt spent recorded
+with the restart and charged before the next step, and a lost session with
+nothing to collect is charged as unmeasured: its spend cap, at most the role's
+ceiling. The session whose
 charge crosses the reserve or the cap is recorded with its usage before the run
 ends `EXHAUSTED`, so the spend line names it. An authentication failure still
 blocks on credentials when its charge reaches the cap. Spend from before PLANNING creates the

@@ -24,7 +24,7 @@ import type { BudgetPhase } from '../../scheduling/types.ts';
 import { adapterFor, chargeRecordedUsage, collectIfFinished, recordSpendCap, routeFor, sessionSpendCap, systemPromptFor, unfundedSessionReason } from '../workers.ts';
 import { listActiveWorkers, listWorkers } from '../../storage/workers.ts';
 import { listReviews } from '../../review/store.ts';
-import { assertContract, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
+import { assertContract, budgetPhaseOf, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
 import { briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
 import { handledTriggerKeys, pendingTrigger } from './verifying.ts';
 
@@ -39,7 +39,7 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
 
   // An inquiry spends from the budget of the stage it returns to: one that returns to review or delivery may use the
   // closing reserve, as that stage's own workers are admitted and charged, and any other leaves the reserve held.
-  const phase: BudgetPhase = CLOSING_STATES.has(resume) ? 'final' : 'work';
+  const phase: BudgetPhase = budgetPhaseOf(resume);
   // An inquisitor a crashed controller left behind is collected first; the engine refuses to start a second one.
   for (const w of listActiveWorkers(ctx.db, ctx.run.id).filter((x) => x.role === 'inquisitor')) {
     if (await collectIfFinished(ctx, w, phase)) return WAIT(`inquisitor ${w.id} is still running`);
@@ -145,9 +145,6 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
   }
   return move(ctx, resume, `inquiry ${trigger.kind} settled (${result.disposition}); resuming ${resume}`, { ...(patch ? { patch } : {}), data: { inquiry: trigger.key, disposition: result.disposition } });
 }
-
-/** Stages whose workers are admitted and charged in the closing phase, which may spend the reserve. */
-const CLOSING_STATES: ReadonlySet<RunState> = new Set(['REVIEWING', 'DELIVERING']);
 
 /** The trigger recorded on the transition into INQUISITION, if any. */
 function enteringTrigger(ctx: RunContext): Trigger | null {

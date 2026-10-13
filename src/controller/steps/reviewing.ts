@@ -50,9 +50,8 @@ import { assertContract, blockOnAuth, blockOnOpenQuestions, decide, finishRun, M
 import { compileGlobs } from '../../policy/globs.ts';
 import { budgetAdmission, DEFAULT_CONTEXT_DUPLICATION } from '../../scheduling/scheduler.ts';
 import type { WorkUnit } from '../../scheduling/types.ts';
-import { stopWorker } from '../../recovery/reconcile.ts';
 import { listActiveWorkers } from '../../storage/workers.ts';
-import { recordSpendCap, sessionSpendCap, workersFor } from '../workers.ts';
+import { recordSpendCap, sessionSpendCap, stopAndSettle, workersFor } from '../workers.ts';
 import { runningUnits } from './implementing.ts';
 import { obtain } from './obtain.ts';
 import { checkEnvironment, IMPLEMENTER_PROVIDER, recordGate } from './preflight.ts';
@@ -339,7 +338,9 @@ async function parallelReview(ctx: RunContext, cand: CandidateRecord, sel: Extra
 
 /**
  * Stop read-only work bound to a revision that is no longer current (spec section 8): reviewers, verifiers and
- * explorers of another tree, through the scheduler's obsolescence rule. Returns the stopped worker ids.
+ * explorers of another tree, through the scheduler's obsolescence rule. Returns the stopped worker ids. Each is charged
+ * as it is stopped (no step asks for its purpose again, and it no longer counts as committed spend); a charge that
+ * exhausts the budget is raised once every obsolete worker is stopped.
  */
 export async function cancelObsoleteWork(ctx: RunContext, currentTree: string): Promise<string[]> {
   const scheduler = schedulerFor(ctx);
@@ -347,12 +348,20 @@ export async function cancelObsoleteWork(ctx: RunContext, currentTree: string): 
   const active = listActiveWorkers(ctx.db, ctx.run.id).filter((w) => (w.role === 'reviewer' || w.role === 'verifier' || w.role === 'explorer') && w.candidateId !== null);
   const units: WorkUnit[] = active.map((w) => ({ id: w.id, role: w.role, writer: false, ownedPaths: [], dependsOn: [], revision: trees.get(w.candidateId!) ?? null, cancelWhen: ['revision-changed'], budget: {}, provider: w.provider, status: 'running' }));
   const stopped: string[] = [];
+  let refused: unknown = null;
   for (const o of scheduler.obsolete(units, currentTree)) {
     const w = active.find((x) => x.id === o.unit.id)!;
-    await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, `obsolete: ${o.reason}`);
+    try {
+      // A reviewer spends from the closing reserve, as it was admitted; the others from ordinary work.
+      await stopAndSettle(ctx, w, `obsolete: ${o.reason}`, w.role === 'reviewer' ? 'final' : 'work');
+    } catch (err) {
+      if (!isOrbitError(err, 'BUDGET_EXHAUSTED')) throw err;
+      refused ??= err;
+    }
     stopped.push(w.id);
   }
   if (stopped.length > 0) note(ctx, 'workers.obsolete-cancelled', { current_tree: currentTree, workers: stopped });
+  if (refused) throw refused;
   return stopped;
 }
 
