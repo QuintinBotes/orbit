@@ -32,6 +32,14 @@
  * the folders above it either, so every dotnet format with SDK 9 and later, that form included, is refused with running
  * it outside Orbit as its fix (review of #10: doctor passed the folder form, whose probe only started `dotnet help`, and
  * the run's check died on an UnauthorizedAccessException for <orbit home>/worktrees/<key>/<run>).
+ *
+ * Before any probe, too, a check whose program (its argv's, or one a shell command starts) is an absolute path in the
+ * repository or in the folder that holds it and its sibling projects is refused, whatever the tool: the check sandbox
+ * denies both (isolation/profiles.ts repositoryDenials), so the program cannot start in a run's check, and its fix is a
+ * tool environment built in each checkout by the dependency install or placed outside that folder. The 0.3.0 retest
+ * pointed a check at a virtualenv there and doctor passed it: it started the interpreter the virtualenv links to, and read
+ * the probe of a sibling one, refused with exit 126 "Operation not permitted", as an exit with no denial, which a probe
+ * now reads as the refusal it is (classifyProgramNotFound).
  */
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -39,8 +47,9 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { execCapture } from '../../core/exec.ts';
 import { OrbitError } from '../../core/errors.ts';
 import { redact } from '../../core/redact.ts';
-import { environmentFix } from '../../controller/environment-block.ts';
+import { environmentFix, programDenial, programDenialCause, type FailureWithCommand, type ProgramDenial } from '../../controller/environment-block.ts';
 import { DOTNET_FORMAT_REASON, dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatAndNodeFix, formatLoadsProject, formatOutsideFix, formatReadsFolder, formatRestoreFix, formatRestoresUnpinned, sdkFormatsInProcess } from '../../evidence/dotnet-format.ts';
+import { classifyProgramNotFound } from '../../evidence/check-misconfigured.ts';
 import { classifyCouldNotRun, classifyNotExecuted, type EnvironmentFailure } from '../../evidence/environment-failure.ts';
 import { findMsbuildNodeDenial, msbuildFix, msbuildFixReason, msbuildNodeDenialText, msbuildNodes, probeNodeSwitches, type MsbuildFix, type MsbuildFixWhere, type MsbuildNodeDenial } from '../../evidence/msbuild.ts';
 import { checkEnv, INSTALL_CHECK_ID, prepareCheckHome } from '../../evidence/runner.ts';
@@ -91,6 +100,58 @@ const SHELL_BUILTINS = new Set(['cd', 'export', 'set', 'test', '[', 'true', 'fal
 function checkWord(check: CheckDefinition): string | null {
   if (!check.shell) return check.command[0] ?? null;
   return (check.command[0] ?? '').trim().split(/\s+/).find((w) => w !== '' && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) ?? null;
+}
+
+const SHELLS = new Set(['sh', 'bash', 'dash', 'zsh', 'ksh', 'ash']);
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/** The program the words of one command start: its first word after leading assignments, `exec`, and `env` with its options and assignments. */
+function programOf(words: readonly string[]): string | null {
+  let i = 0;
+  for (;;) {
+    while (i < words.length && ASSIGNMENT.test(words[i]!)) i++;
+    const w = words[i];
+    if (w === 'exec') i++;
+    else if (w !== undefined && basename(w) === 'env') {
+      i++;
+      while (i < words.length && (words[i]!.startsWith('-') || ASSIGNMENT.test(words[i]!))) i += words[i] === '-u' ? 2 : 1;
+    } else return w ?? null;
+  }
+}
+
+/** The programs a shell script starts: the first word of each command its lines, `&&`, `||`, `;`, `|` and `&` separate, quotes dropped. */
+function scriptPrograms(script: string): string[] {
+  return script
+    .split(/&&|\|\||[;&|\n()]/)
+    .map((part) => programOf(part.trim().split(/\s+/).filter((w) => w !== '').map((w) => w.replace(/^(['"])(.*)\1$/, '$2'))))
+    .filter((p): p is string => p !== null);
+}
+
+/**
+ * The absolute paths of the programs a check's command starts (0.3.0 retest): an argv's program, or each program of a
+ * shell command (a `shell: true` check, or an argv that hands a script to sh -c), the interpreter of a tool environment
+ * named by its path included. A relative path is a file of the check's checkout, and a bare name is looked up on PATH.
+ */
+export function absolutePrograms(check: Pick<CheckDefinition, 'command' | 'shell'>): string[] {
+  if (check.shell) return scriptPrograms(check.command[0] ?? '').filter((p) => isAbsolute(p));
+  const program = programOf(check.command);
+  const at = program === null ? -1 : check.command.indexOf(program);
+  const rest = at < 0 ? [] : check.command.slice(at + 1);
+  const c = rest.findIndex((a) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a));
+  const script = program !== null && SHELLS.has(basename(program)) && c >= 0 ? rest[c + 1] : undefined;
+  return [...(program !== null ? [program] : []), ...(script !== undefined ? scriptPrograms(script) : [])].filter((p) => isAbsolute(p));
+}
+
+/**
+ * The first program of `check` that lies in a folder its sandbox denies because of where the repository is
+ * (controller/environment-block.ts programDenial): the repository, or the folder that holds it and its sibling projects.
+ */
+function deniedProgram(check: CheckDefinition, repo: string, homeDir: string): ProgramDenial | null {
+  for (const program of absolutePrograms(check)) {
+    const found = programDenial(program, repo, homeDir);
+    if (found) return found;
+  }
+  return null;
 }
 
 export interface CheckSandboxInput {
@@ -190,7 +251,11 @@ async function probe(input: CheckSandboxInput & { provider: IsolationProvider },
       const cause = `${nodes.reason}, and the build failed (${ended}) with no record of which node was refused`;
       return { kind: 'refused', detail: `"${shown}" was refused in the sandbox: ${cause}`, failure: { checkId: check.id, fingerprint: null, signals: ['sandbox-violation'], cause, lines: [oneLine(output, 160)] }, msbuild: nodeFix };
     }
-    const failure = classifyNotExecuted({ checkId: check.id, output }) ?? classifyCouldNotRun({ checkId: check.id, output, insideRoots: [scratch, ...(tmp ? [tmp] : [])] });
+    // The sandbox refusing to start the executable itself (exit 126, "Operation not permitted") is a denial too.
+    const failure =
+      classifyNotExecuted({ checkId: check.id, output }) ??
+      classifyCouldNotRun({ checkId: check.id, output, insideRoots: [scratch, ...(tmp ? [tmp] : [])] }) ??
+      classifyProgramNotFound({ checkId: check.id, command: [exe, ...args], shell: false, exitCode: r.exitCode, output });
     if (failure) return { kind: 'refused', failure, detail: `"${shown}" was refused in the sandbox: ${failure.cause}${failure.lines[0] ? ` (${JSON.stringify(failure.lines[0])})` : ''}` };
     // A generated project builds offline from the toolchain alone, so its failure is the sandbox's or the installation's.
     if (project) {
@@ -227,7 +292,7 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
   // dotnet format that loads the project, whose reason doctor gives once; `formatReason`: an MSBuild fix that also puts
   // such a format in the folder form, so that reason is given too.
   // `outside`: the fix of a dotnet format that cannot run in the check sandbox at all (FORMAT_OUTSIDE_REASON).
-  const refused: { check: CheckDefinition; failure: EnvironmentFailure; fix?: string; msbuild?: MsbuildFix; format?: string; formatReason?: boolean; outside?: string; label?: string }[] = [];
+  const refused: { check: CheckDefinition; failure: FailureWithCommand; fix?: string; msbuild?: MsbuildFix; format?: string; formatReason?: boolean; outside?: string; label?: string }[] = [];
   // Whether dotnet format whitespace --folder can list the folders above a run's checkout: on macOS not when the check
   // profile read-denies a directory above <orbit home>/worktrees/<key>/<run>/<checkout>, as it does the default ~/.orbit.
   const platform = input.platform ?? process.platform;
@@ -297,6 +362,15 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
         users.set(id, [...(users.get(id) ?? []), check]);
       }
     }
+    // A program in the repository or a folder beside it cannot start in a check, whatever it is (0.3.0 retest): judged
+    // from the command, before any probe, which would start what an in-repository link points to instead.
+    const located = repo ? deniedProgram(check, repo, input.homeDir) : null;
+    if (located) {
+      const cause = programDenialCause(located);
+      details.push(`${check.id}: ${cause}`);
+      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: ['program-denied'], cause, lines: [], programDenial: located } });
+      continue;
+    }
     if (judge(check, ids.includes('dotnet'))) continue;
     const word = checkWord(check);
     if (!word || (check.shell && SHELL_BUILTINS.has(word))) {
@@ -347,7 +421,7 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
    * Every MSBuild fix first, each command once, with their shared reason once; then the dotnet format fixes alike; then
    * the other fixes. An MSBuild fix that also puts a dotnet format in the folder form gets the format's reason too, once.
    */
-  const fixFor = (items: readonly { failure: EnvironmentFailure; fix?: string; msbuild?: MsbuildFix; format?: string; formatReason?: boolean; outside?: string }[]): string => {
+  const fixFor = (items: readonly { failure: FailureWithCommand; fix?: string; msbuild?: MsbuildFix; format?: string; formatReason?: boolean; outside?: string }[]): string => {
     const nodes = [...items.flatMap((i) => (i.msbuild ? [i.msbuild] : [])), ...undetermined.map((u) => u.msbuild)];
     const changes = [...new Set(nodes.map((n) => n.change))];
     const formats = [...new Set(items.flatMap((i) => (i.format ? [i.format] : [])))];

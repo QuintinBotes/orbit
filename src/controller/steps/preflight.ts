@@ -22,7 +22,7 @@ import type { ProviderCapabilities, CredentialStatus } from '../../adapters/type
 import { homeOf, runWorktreeRoot, toolchainCacheRootFor, type RunContext } from '../context.ts';
 import { baselineGate, environmentGate, intakeGate, type GateResult } from '../gates.ts';
 import { deliveryEnvironmentProblem } from '../delivery-env.ts';
-import { baselineBlockReason, baselineEnvironmentFailures, baselineIncompleteChecks, baselineMisconfiguredChecks, misconfiguredRecord, type AmendedCheck, type BlockedCheck, type IncompleteBaselineCheck, type MisconfiguredBlock } from '../environment-block.ts';
+import { baselineBlockReason, baselineEnvironmentFailures, baselineIncompleteChecks, baselineMisconfiguredChecks, environmentFixSettings, misconfiguredRecord, type AmendedCheck, type BlockedCheck, type IncompleteBaselineCheck, type MisconfiguredBlock } from '../environment-block.ts';
 import { MISSING_TARGET_KIND } from './baseline-questions.ts';
 import { blockOnAuth, decide, finishRun, move, safePoint, type StepResult } from './common.ts';
 import { workerPluginsStep } from './worker-plugins.ts';
@@ -252,6 +252,9 @@ export async function blockOnBaseline(
   atomicWriteJson(join(ctx.runDir, BASELINE_FILE), (amendment ? report : { ...report, complete: false }) satisfies BaselineReport);
   const reason = baselineBlockReason({ runId: ctx.run.id, baseRevision: report.baseRevision, environment, incomplete, misconfigured, ...(amendment ? { amended: amendment.checks } : {}) });
   const environmentChecks = environment.map((f) => ({ check_id: f.checkId, classification: 'environment', signals: f.signals, cause: f.cause, evidence_lines: f.lines, ...(f.logPath ? { log_path: f.logPath } : {}) }));
+  // A fix that changes the policy (a check's command) needs a new run, which the closing line, `orbit status` and the
+  // report say instead of a resume (resume.ts newRunNeeded): the run keeps the policy it started with.
+  const policyFix = environmentFixSettings(environment);
   const incompleteChecks = incomplete.map((f) => ({ check_id: f.checkId, classification: 'incomplete', cause: f.cause, evidence_lines: f.lines, ...(f.logPath ? { log_path: f.logPath } : {}) }));
   const misconfiguredChecks = misconfigured.map((m) => misconfiguredRecord(m));
   const at = amendment ? `amended-${amendment.at}` : String(report.recordedAt);
@@ -264,6 +267,7 @@ export async function blockOnBaseline(
       base_revision: report.baseRevision,
       ...stage,
       ...(environmentChecks.length > 0 ? { environment_failures: environmentChecks } : {}),
+      ...(policyFix.length > 0 ? { policy_fix: { settings: policyFix } } : {}),
       ...(incompleteChecks.length > 0 ? { incomplete_checks: incompleteChecks } : {}),
       ...(misconfiguredChecks.length > 0 ? { misconfigured_checks: misconfiguredChecks } : {}),
     },

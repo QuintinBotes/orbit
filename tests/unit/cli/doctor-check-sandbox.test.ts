@@ -162,6 +162,73 @@ describe('checkSandboxCheck', () => {
   });
 });
 
+// 0.3.0 retest (python): a check pointed at a virtualenv by an absolute path, in the repository or in a folder beside it,
+// could not start under the sandbox (exit 126, "Operation not permitted"), while doctor reported 0 failures: it started
+// the interpreter the in-repository virtualenv links to, and read the sibling one's exit 126 as no denial. The check
+// sandbox denies the repository and the folder that holds it and its sibling projects (isolation/profiles.ts), so doctor
+// names such a check before any run, from its command alone, whatever the tool.
+describe('checkSandboxCheck: a check program in a folder the check sandbox denies (0.3.0 retest)', () => {
+  /** A repository in a projects folder of its own (not a shared temp directory), so the check profile denies that folder too. */
+  function projects() {
+    const parent = temp('orbit-doctor-projects-');
+    const repo = join(parent, 'shop');
+    const home = temp('orbit-doctor-home-');
+    for (const dir of [join(repo, '.venv', 'bin'), join(parent, 'shop-venv', 'bin'), join(parent, 'tools', 'bin')]) mkdirSync(dir, { recursive: true });
+    for (const exe of [join(repo, '.venv', 'bin', 'python'), join(parent, 'shop-venv', 'bin', 'python')]) writeFileSync(exe, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    return { parent, repo, home, env: { PATH: '/usr/bin:/bin', HOME: home } };
+  }
+
+  it('fails a mandatory check whose program lies in the repository or in a folder beside it, starts neither, and names where a tool environment may live', async () => {
+    const p = projects();
+    const seen: string[][] = [];
+    const launch: ProbeLaunch = async (argv) => (seen.push(argv), { exitCode: 0, output: '' });
+    const cfg = config([
+      { id: 'unit-tests', command: [join(p.repo, '.venv', 'bin', 'python'), '-m', 'pytest'], mandatory: true },
+      { id: 'lint', command: [`PYTHONDONTWRITEBYTECODE=1 ${join(p.parent, 'shop-venv', 'bin', 'python')} -m ruff check .`], shell: true, mandatory: true },
+    ]);
+    const c = await checkSandboxCheck({ config: cfg, repo: p.repo, provider: srtLike().provider, available: true, env: p.env, homeDir: p.home, launch });
+    expect(seen).toEqual([]);
+    expect(c.status).toBe('fail');
+    expect(c.summary).toBe('the sandbox refuses the executables of checks unit-tests, lint; a run would block at its baseline');
+    const denies = `the check sandbox denies the repository (${p.repo}) and the folder that holds it and its sibling projects (${p.parent})`;
+    expect(c.details).toEqual([
+      `unit-tests: ${denies}, and the program "${join(p.repo, '.venv', 'bin', 'python')}" the check runs lies in the repository, so it cannot start in a check`,
+      `lint: ${denies}, and the program "${join(p.parent, 'shop-venv', 'bin', 'python')}" the check runs lies in a folder beside the repository, so it cannot start in a check`,
+    ]);
+    expect(c.fix).toContain('dependencies.install_command');
+    expect(c.fix).toContain(`outside ${p.parent}`);
+    expect(c.fix).toContain('docs/configuration.md, "Tool environments"');
+    // The rule and its fix are the same for every tool (Orbit stays language-agnostic).
+    expect(c.fix).not.toMatch(/python|pytest|ruff/);
+  });
+
+  it('warns for an optional check, and passes a program by a path relative to the checkout or outside the repository\'s parent folder', async () => {
+    const p = projects();
+    const outside = temp('orbit-doctor-tools-');
+    writeFileSync(join(outside, 'tool'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const launch: ProbeLaunch = async () => ({ exitCode: 0, output: '' });
+    const optional = await checkSandboxCheck({ config: config([{ id: 'docs', command: [join(p.parent, 'shop-venv', 'bin', 'python'), '-m', 'mkdocs', 'build'], mandatory: false }]), repo: p.repo, provider: srtLike().provider, available: true, env: p.env, homeDir: p.home, launch });
+    expect(optional.status).toBe('warn');
+    expect(optional.summary).toBe("the sandbox refuses the executable of check docs; a run whose contract requires it would block at its baseline");
+    const fine = await checkSandboxCheck({ config: config([{ id: 'unit-tests', command: ['.venv/bin/python', '-m', 'pytest'] }, { id: 'lint', command: [join(outside, 'tool')] }]), repo: p.repo, provider: srtLike().provider, available: true, env: p.env, homeDir: p.home, launch });
+    expect(fine.status).toBe('pass');
+    expect(fine.details.join('\n')).not.toMatch(/denies/);
+  });
+
+  it('reads a probe the sandbox refused to start (exit 126, "Operation not permitted") as a refusal, not as an exit with no denial', async () => {
+    const p = projects();
+    const outside = temp('orbit-doctor-tools-');
+    const tool = join(outside, 'tool');
+    writeFileSync(tool, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    // What srt's own shell printed for a program in a folder the profile denies (captured on macOS, srt 0.0.78).
+    const launch: ProbeLaunch = async () => ({ exitCode: 126, output: `/opt/homebrew/bin/bash: line 1: ${tool}: Operation not permitted` });
+    const c = await checkSandboxCheck({ config: config([{ id: 'lint', command: [tool], mandatory: true }]), repo: p.repo, provider: srtLike().provider, available: true, env: p.env, homeDir: p.home, launch });
+    expect(c.status).toBe('fail');
+    expect(c.details[0]).toBe(`lint: "tool --version" was refused in the sandbox: the sandbox or the operating system refused to start the program "${tool}" the check runs (exit 126, "operation not permitted") ("/opt/homebrew/bin/bash: line 1: ${tool}: Operation not permitted")`);
+    expect(c.fix).toMatch(/^put the program where the check sandbox lets a check start it/);
+  });
+});
+
 describe('checkSandboxCheck: toolchains (ADR 0009)', () => {
   it('starts each detected toolchain in the check sandbox and says where its caches live, writing nothing outside its scratch', async () => {
     const w = world(['go', 'make']);

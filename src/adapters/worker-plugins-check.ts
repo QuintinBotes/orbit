@@ -7,7 +7,10 @@
  * `claude plugin list --json`, because system/init does not report a plugin's scope.
  *
  * Workers start with `--setting-sources ""`, so an installed plugin of scope user, project or local never loads;
- * a managed plugin always does. A plugin of any other scope may load, so a refused one is a warning, not a failure.
+ * a managed plugin always does. Nor does a synced plugin: the 0.3.0 retest's 58 worker sessions loaded only Claude Code's
+ * built-ins with six synced plugins installed, and doctor's warning about them offered a fix that would only have allowed
+ * what no worker loads. A plugin of any other scope may load, so a refused one is a warning, not a failure. Whatever
+ * doctor says, a session's system/init is still judged at collection, so a plugin that does load is refused there.
  */
 import type { OrbitConfig } from '../policy/types.ts';
 import { WORKER_EXCLUDED_SCOPES, pluginAllowLines, pluginPolicyOf, workerPlugins, type InstalledPlugin, type WorkerPlugin } from './claude-plugins.ts';
@@ -29,6 +32,8 @@ export interface WorkerPluginsVerdict {
 }
 
 const HOOKS_NOTE = 'a plugin can add hooks and tools to workers';
+/** The scope of a plugin Orbit already keeps out of a worker session besides WORKER_EXCLUDED_SCOPES (module comment). */
+const SYNCED_SCOPE = 'synced';
 const SCOPE_SOURCE = "scope source: claude plugin list --json (system/init does not report a plugin's scope)";
 
 /** The verdict for one adapter, or null for one that cannot list plugins (a stand-in, or another provider). */
@@ -53,6 +58,7 @@ export async function judgeWorkerPlugins(adapter: ProviderAdapter | undefined, c
   for (const p of listed.plugins) {
     if (!p.enabled) skipped.push(`not loaded by workers: ${p.id} (disabled)`);
     else if (p.scope !== null && WORKER_EXCLUDED_SCOPES.includes(p.scope)) skipped.push(`not loaded by workers: ${p.id} (scope ${p.scope}; workers load no user, project or local settings)`);
+    else if (p.scope === SYNCED_SCOPE) skipped.push(`not loaded by workers: ${p.id} (scope ${SYNCED_SCOPE}; workers start with no user, project or local settings, which leaves synced plugins out)`);
     else {
       const [judged] = workerPlugins([{ name: p.id.split('@')[0], source: p.id, scope: p.scope ?? 'unknown' }], { policy, installed: null });
       (p.scope === 'managed' ? loads : maybe).push(judged!);
@@ -76,7 +82,7 @@ export async function judgeWorkerPlugins(adapter: ProviderAdapter | undefined, c
     return { status: 'warn', summary: `workers may load ${refused.length} plugin(s) the policy does not allow: ${refused.map(named).join(', ')}`, details: [...details, SCOPE_SOURCE], missing, fix, refused };
   }
   // Only a managed plugin is known to load into a worker (no setting-sources value leaves it out). A plugin of a scope
-  // doctor cannot place (synced, say) may load, and the 0.2.1 retest's workers loaded none: "would load" is for the
+  // doctor cannot place (one the list gives no scope, say) may load, and the 0.2.1 retest's workers loaded none: "would load" is for the
   // first kind only, and the report names what a session reported loading and says nothing when that is nothing (issue #33).
   const allowed = judged.map((p) => `${p.id} (scope ${p.scope}, ${p.allowed_by})`).join(', ');
   const placed = loads.length === 0 ? '' : `${loads.length} plugin(s)${maybe.length > 0 ? ' (scope managed)' : ''}`;

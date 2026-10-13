@@ -45,6 +45,7 @@ export type EnvironmentSignal =
   | 'nuget-http-denied'
   | 'nuget-tls-denied'
   | 'program-not-found'
+  | 'program-denied'
   | 'pipe-denied';
 
 /**
@@ -56,7 +57,7 @@ export type EnvironmentSignal =
  * relays MSBuild's crash report from the check's own temp directory, about a node the repository's projects or tests
  * made MSBuild start, and it is the same refusal `socket-denied` reads from `dotnet test`'s MSB1025, so both get one rule.
  */
-export const BASE_GATED_SIGNALS: ReadonlySet<EnvironmentSignal> = new Set<EnvironmentSignal>(['permission-denied', 'socket-denied', 'network-denied', 'nuget-http-denied', 'nuget-tls-denied', 'program-not-found', 'pipe-denied']);
+export const BASE_GATED_SIGNALS: ReadonlySet<EnvironmentSignal> = new Set<EnvironmentSignal>(['permission-denied', 'socket-denied', 'network-denied', 'nuget-http-denied', 'nuget-tls-denied', 'program-not-found', 'program-denied', 'pipe-denied']);
 
 export interface EnvironmentFailureInput {
   checkId: string;
@@ -116,8 +117,15 @@ const CAUSES: Record<EnvironmentSignal, string> = {
   'nuget-http-denied': "NuGet's HTTP client could not start in the sandbox (the type initializer of System.Net.CookieContainer failed to read the host's domain name, GetDomainName: -1), so the restore could reach no package source",
   'nuget-tls-denied': "NuGet could not establish the SSL connection to its package source in the sandbox (on macOS srt keeps the system trust service out of reach, so .NET cannot verify nuget.org's certificate there), so the restore could reach no package source",
   'program-not-found': 'a program the check runs was not found where it runs (exit 127)',
-  'pipe-denied': 'the sandbox refused a .NET process the named pipe it binds under /tmp (an MSBuild worker node, or the build host dotnet format loads the project with), so nothing was built or formatted',
+  'program-denied': 'the sandbox or the operating system refused to start a program the check runs (exit 126, "operation not permitted")',
+  'pipe-denied': 'the sandbox refused an MSBuild worker node the named pipe it binds under /tmp, so MSBuild built nothing',
 };
+
+/**
+ * The cause of a refused pipe that was dotnet format's build host: a check that only ran MSBuild (a `dotnet test` the
+ * runner stopped for a node) must not read as a format (0.3.0 retest), so each kind of pipe names its own process.
+ */
+const BUILD_HOST_CAUSE = 'the sandbox refused the build host dotnet format loads the project with the named pipe it binds under /tmp, so nothing was formatted';
 
 function within(path: string, root: string): boolean {
   const r = root.length > 1 ? root.replace(/\/+$/, '') : root;
@@ -416,18 +424,31 @@ const BUILD_HOST_FRAME = /\bMicrosoft\.CodeAnalysis\.MSBuild\.BuildHostProcessMa
 const BUILD_HOST_PIPE = /\bSystem\.IO\.Pipes\.NamedPipeClientStream\.(?:ConnectInternal|TryConnect)\b|unable to connect to it'?s pipe/;
 const UNHANDLED = /^Unhandled exception[.:]\s/;
 
+/** A refused pipe, by whose it was: an MSBuild worker node's (the runner's note names it) or dotnet format's build host's. */
+interface PipeDenial {
+  kind: 'node' | 'host';
+  line: string;
+}
+
 /** The lines that show a .NET named pipe the sandbox refused under /tmp, at most one per kind; empty when there is none. */
-function pipeDenials(lines: readonly string[]): string[] {
-  const out: string[] = [];
+function pipeDenials(lines: readonly string[]): PipeDenial[] {
+  const out: PipeDenial[] = [];
   const last = [...lines].reverse().find((l) => l.trim() !== '')?.trim() ?? '';
   const node = RUNNER_NODE_DENIAL.exec(last);
-  if (node) out.push(node[1]!.slice(0, MAX_LINE_CHARS));
+  // The runner's note names dotnet format's build host when that is what it recorded; any other note is a worker node.
+  if (node) out.push({ kind: /^the check sandbox denied dotnet format's build host\b/.test(node[1]!) ? 'host' : 'node', line: node[1]!.slice(0, MAX_LINE_CHARS) });
   const text = lines.join('\n');
   if (BUILD_HOST_FRAME.test(text) && BUILD_HOST_PIPE.test(text)) {
     const shown = lines.map((l) => l.trim()).find((l) => UNHANDLED.test(l)) ?? lines.map((l) => l.trim()).find((l) => BUILD_HOST_PIPE.test(l));
-    if (shown) out.push(shown.slice(0, MAX_LINE_CHARS));
+    if (shown) out.push({ kind: 'host', line: shown.slice(0, MAX_LINE_CHARS) });
   }
   return out;
+}
+
+/** The cause of the refused pipes, naming the process each belonged to: MSBuild's worker node, dotnet format's build host, or both. */
+function pipeCause(pipes: readonly PipeDenial[]): string {
+  const kinds = new Set(pipes.map((p) => p.kind));
+  return [...(kinds.has('node') ? [CAUSES['pipe-denied']] : []), ...(kinds.has('host') ? [BUILD_HOST_CAUSE] : [])].join('; ');
 }
 
 /**
@@ -478,7 +499,7 @@ export function classifyCouldNotRun(input: CouldNotRunInput): EnvironmentFailure
     const shown = excerpt(line, at);
     if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown)) lines.push(shown);
   };
-  for (const pipe of pipes) show(pipe, 0);
+  for (const pipe of pipes) show(pipe.line, 0);
   for (const raw of all) {
     const line = raw.trim();
     const deny = SEATBELT_DENY.exec(line);
@@ -510,5 +531,5 @@ export function classifyCouldNotRun(input: CouldNotRunInput): EnvironmentFailure
     show(line, found.at);
   }
   if (signals.length === 0) return null;
-  return { checkId: input.checkId, fingerprint: null, signals, cause: signals.map((s) => CAUSES[s]).join('; '), lines };
+  return { checkId: input.checkId, fingerprint: null, signals, cause: signals.map((s) => (s === 'pipe-denied' ? pipeCause(pipes) : CAUSES[s])).join('; '), lines };
 }

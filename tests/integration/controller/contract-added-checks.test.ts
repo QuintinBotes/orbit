@@ -137,12 +137,14 @@ describe.skipIf(!canStripTypes)('a check the contract adds is run on the base re
     expect(listWorkers(l.db(), { runId: run.id, role: 'implementer' })).toEqual([]);
     expect(listWorkers(l.db(), { runId: run.id, role: 'verifier' })).toEqual([]);
     const reason = done.outcomeReason ?? '';
-    expect(reason).toMatch(/^Check format could not run on the base revision [0-9a-f]{12}, and the output shows an environment cause, not a pre-existing failure: the sandbox refused a \.NET process the named pipe it binds under \/tmp/);
+    expect(reason).toMatch(/^Check format could not run on the base revision [0-9a-f]{12}, and the output shows an environment cause, not a pre-existing failure: the sandbox refused the build host dotnet format loads the project with the named pipe it binds under \/tmp/);
     expect(reason).toMatch(/\. The contract requires check format \(criterion AC-2 cites it as evidence\), which the policy does not mark mandatory, so it was run on the base revision before any change was judged \(a baseline amendment\)\./);
     // The fix never offers to make the check optional: an optional check the contract requires blocks as a mandatory one does.
     expect(reason).not.toMatch(/mandatory: false/);
     if (process.platform === 'darwin') expect(reason).toMatch(/remove checks\.format from \.orbit\/config\.yaml and run dotnet format in CI/);
-    expect(reason).toMatch(/Then orbit resume orb-[\w-]+ runs the baseline again/);
+    // The fix is a change to the check, which the run's policy freezes: a new run, not a resume (0.3.0 retest).
+    expect(reason).toMatch(/\. The fix changes checks\.format(?:\.command)?, which this run's frozen policy keeps as it started, so resuming would run the same check again: cancel this run \(orbit cancel orb-[\w-]+\) and start a new run with orbit run\.$/);
+    expect(reason).not.toMatch(/orbit resume/);
     expect(reason).not.toMatch(/[\u2013\u2014]/);
     for (const sentence of reason.split(/(?<=[a-z0-9)"\]])\. (?=\S)/)) expect(sentence, sentence).toMatch(/^[A-Z]/);
     // An environment failure, not the policy's: a resume after the environment is fixed is the way forward.
@@ -161,7 +163,8 @@ describe.skipIf(!canStripTypes)('a check the contract adds is run on the base re
     expect(amended?.data).toMatchObject({ stage: 'PLANNING', checks: [expect.objectContaining({ check_id: 'format', status: 'FAILED', classification: 'environment', cited_by: ['AC-2'] })] });
     expect(listDecisions(l.db(), run.id, { kind: 'baseline.environment-failure' })[0]?.data).toMatchObject({ checks: [expect.objectContaining({ check_id: 'format', classification: 'environment', signals: ['pipe-denied'] })] });
 
-    // The environment is fixed: the resume runs the check on the base revision again, and the run goes on and succeeds.
+    // A resume is not refused: when what changed is outside the policy (here the tool itself), it runs the check on the
+    // base revision again, and the run goes on and succeeds.
     install(bin, 'dotnet', 'Formatted 0 of 1 files.\n', 0);
     resume(l, run.id);
     await drive(l, run.id);

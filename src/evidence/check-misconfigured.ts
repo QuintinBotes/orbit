@@ -1,5 +1,5 @@
-import { isAbsolute } from 'node:path';
-import { directInvocation, type DirectInvocation } from './check-command.ts';
+import { basename, isAbsolute } from 'node:path';
+import { directInvocation, startedProgram, type DirectInvocation } from './check-command.ts';
 import { showsCodeFailure, type EnvironmentFailure } from './environment-failure.ts';
 import { stripAnsi } from './fingerprint.ts';
 
@@ -23,8 +23,9 @@ import { stripAnsi } from './fingerprint.ts';
  *   blocks the run as misconfigured at CONTRACTING. Either way it is never accepted as a baseline exception: a check
  *   whose target does not exist would be a meaningless check made green.
  *
- * A program the check runs that is not installed where it runs (exit 127, a bare name or an absolute path) is neither: it
- * is the environment's (classifyProgramNotFound), like a program the runner could not start at all.
+ * A program the check runs that is not installed where it runs (exit 127, a bare name or an absolute path), or that the
+ * sandbox does not let it start (exit 126, "Operation not permitted", by an absolute path or found on PATH), is neither:
+ * it is the environment's (classifyProgramNotFound), like a program the runner could not start at all.
  *
  * The rule is conservative on purpose: a fast exit proves nothing. A usage error counts only when all of these hold:
  *
@@ -116,6 +117,14 @@ const MSBUILD_SWITCH = /^Switch: \S/;
 const NPM_BANNER = /^> \S/m;
 const SHELL_NOT_FOUND =
   /^(?:\S*\/)?(?:sh|bash|dash|ksh|ash)(?::\s*line \d+)?:\s*(?:\d+:\s*)?(?:exec:\s*)?([^\s:]+): (?:command not found|not found|No such file or directory)$|^(?:\S*\/)?zsh:\d+: (?:command not found|no such file or directory): (\S+)$|^(?:\S*\/)?env: ['‘]?([^\s'’:]+)['’]?: No such file or directory$/;
+/**
+ * A shell, env or Orbit's limits wrapper (`orbit-limits`, isolation/limits.ts, a bash that execs the command) reporting
+ * that the operating system refused to start a program (exit 126): `/bin/sh: /x/python: Operation not permitted`,
+ * `orbit-limits: line 0: exec: /x/python: cannot execute: Operation not permitted`, `env: /x/python: Operation not
+ * permitted`.
+ */
+const SHELL_NOT_PERMITTED =
+  /^(?:\S*\/)?(?:sh|bash|dash|ksh|ash|orbit-limits)(?::\s*line \d+)?:\s*(?:\d+:\s*)?(?:exec:\s*)?([^\s:]+): (?:cannot execute: )?Operation not permitted$|^(?:\S*\/)?zsh:\d+: operation not permitted: (\S+)$|^(?:\S*\/)?env: ['‘]?([^\s'’:]+)['’]?: Operation not permitted$/;
 
 const runsMsbuild = (inv: DirectInvocation): boolean => inv.tool === 'msbuild' || (inv.tool === 'dotnet' && MSBUILD_COMMANDS.has(inv.args[0] ?? ''));
 /** The switch MSBuild names is one the command passes, when it names one. */
@@ -315,22 +324,47 @@ export function classifyMisconfigured(input: MisconfiguredInput): MisconfiguredC
 }
 
 /**
- * A program the check's own command runs that was not found where the check runs, or null (ADR 0010): the shell's or
- * env's "not found" for the command's program, named by a bare name (looked up on PATH) or an absolute path, with exit
- * 127. That is the environment's, as when the runner cannot start the program at all: it is not installed there, not on
- * the check's PATH, or misspelled. A path relative to the check's cwd is a script of the repository (script-not-found).
+ * A program the check's own command runs that could not be started where the check runs, or null (ADR 0010). Two kinds:
+ *
+ * - not found: the shell's or env's "not found" for the command's program, named by a bare name (looked up on PATH) or
+ *   an absolute path, with exit 127 (program-not-found). It is not installed there, not on the check's PATH, misspelled,
+ *   or in a folder the check sandbox hides (on Linux srt lays an empty folder over a denied one). The program is the one
+ *   the command starts or the one a runner or `python -m` runs. A path relative to the check's cwd is a script of the
+ *   repository (script-not-found).
+ * - refused: the shell's, env's or Orbit's limits wrapper's "Operation not permitted" for the program the command starts,
+ *   by its absolute path (the path the shell found it at on PATH for a bare name), with exit 126 (program-denied): the
+ *   sandbox does not let the check start it, as Seatbelt
+ *   refuses a program in a folder the check profile denies (the repository, the folder beside it), whatever it links
+ *   to. Captured under srt 0.0.78 on macOS. EACCES ("Permission denied") is a file without its execute bit, and a
+ *   relative path a file of the checkout: both stay the code's.
+ *
+ * Either is the environment's, as when the runner cannot start the program at all.
  */
 export function classifyProgramNotFound(input: MisconfiguredInput): EnvironmentFailure | null {
-  if (input.exitCode !== 127) return null;
+  if (input.exitCode !== 127 && input.exitCode !== 126) return null;
   const inv = directInvocation(input.command, input.shell === true);
-  if (inv === null) return null;
+  const started = startedProgram(input.command, input.shell === true);
+  if (inv === null || started === null) return null;
   const text = stripAnsi(input.output);
   if (showsCodeFailure(text)) return null;
   for (const raw of outputLines(text)) {
     const line = raw.trim();
+    if (input.exitCode === 126) {
+      const m = SHELL_NOT_PERMITTED.exec(line);
+      const denied = m?.slice(1).find((g) => g !== undefined);
+      // A shell names a program it found on PATH by the path it found it at.
+      if (denied === undefined || !isAbsolute(denied) || (denied !== started && (started.includes('/') || basename(denied) !== started))) continue;
+      return {
+        checkId: input.checkId,
+        fingerprint: null,
+        signals: ['program-denied'],
+        cause: `the sandbox or the operating system refused to start the program "${denied}" the check runs (exit 126, "operation not permitted")`,
+        lines: [line.slice(0, MAX_LINE_CHARS)],
+      };
+    }
     const m = SHELL_NOT_FOUND.exec(line);
     const missing = m?.slice(1).find((g) => g !== undefined);
-    if (missing === undefined || missing !== inv.program || (missing.includes('/') && !isAbsolute(missing))) continue;
+    if (missing === undefined || (missing !== inv.program && missing !== started) || (missing.includes('/') && !isAbsolute(missing))) continue;
     return {
       checkId: input.checkId,
       fingerprint: null,

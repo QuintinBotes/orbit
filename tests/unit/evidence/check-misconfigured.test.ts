@@ -236,6 +236,15 @@ describe('classifyProgramNotFound: a program the check runs is not installed whe
     }
   });
 
+  // 0.3.0 retest: a check that runs a tool environment's interpreter by an absolute path (`.venv/bin/python -m pytest`)
+  // names that interpreter as its program, not the module. On Linux srt lays an empty folder over the repository and the
+  // folder that holds it, so the interpreter there is not found.
+  it('reads the program the command starts itself, before python -m or a runner, as the program that was not found', () => {
+    const f = classifyProgramNotFound(input(['/home/acme/projects/shop/.venv/bin/python', '-m', 'pytest'], 127, 'bash: line 1: /home/acme/projects/shop/.venv/bin/python: No such file or directory\n'));
+    expect(f).toMatchObject({ signals: ['program-not-found'], cause: expect.stringMatching(/^the program "\/home\/acme\/projects\/shop\/\.venv\/bin\/python" was not found where the check runs/) });
+    expect(classifyProgramNotFound(input(['npx', 'jest'], 127, 'bash: line 1: npx: command not found\n'))?.signals).toEqual(['program-not-found']);
+  });
+
   it('is null for a program the check does not run itself, a script of the repository, another exit code or no direct invocation', () => {
     expect(classifyProgramNotFound(input(['make', 'test'], 127, '/bin/sh: jest: command not found\n'))).toBeNull();
     expect(classifyProgramNotFound(input(['npm test'], 127, 'sh: 1: jest: not found\n', { shell: true }))).toBeNull();
@@ -243,5 +252,58 @@ describe('classifyProgramNotFound: a program the check runs is not installed whe
     expect(classifyProgramNotFound(input(['dotnett build'], 1, fixture('sh-command-not-found.log'), { shell: true }))).toBeNull();
     expect(classifyProgramNotFound(input(['true && dotnett build'], 127, fixture('sh-command-not-found.log'), { shell: true }))).toBeNull();
     expect(classifyProgramNotFound(input(['dotnett build'], 127, `${fixture('sh-command-not-found.log')}not ok 1 - builds\n`, { shell: true }))).toBeNull();
+  });
+});
+
+// 0.3.0 retest: a check pointed at a virtualenv in the repository (and one in a folder beside it) failed on the base
+// revision with exit 126, "Operation not permitted", on its own executable: the check sandbox denies the repository and
+// the folder that holds it. PREFLIGHT called it a pre-existing failure and offered a baseline exception for it. Captured
+// under srt 0.0.78 on macOS (Orbit's runner with its limits wrapper, srt's own shell, /bin/sh -c and env), the paths
+// renamed.
+describe('classifyProgramNotFound: a program the sandbox does not let the check start (exit 126)', () => {
+  const VENV = '/home/acme/projects/shop/.venv/bin/python';
+  const SIBLING = '/home/acme/projects/shop-venv/bin/python';
+
+  it('reads the denial of the program the command starts, as each launcher reports it', () => {
+    const cases: [string[], boolean, string, string][] = [
+      [[VENV, '-m', 'pytest'], false, environment('exec-denied-orbit-limits.log'), VENV],
+      [[SIBLING, '-m', 'pytest'], false, `/opt/homebrew/bin/bash: line 1: ${SIBLING}: Operation not permitted\n`, SIBLING],
+      [['/bin/sh', '-c', `${SIBLING} -m pytest`], false, `/bin/sh: ${SIBLING}: Operation not permitted\n`, SIBLING],
+      [[`${SIBLING} -m pytest -q`], true, `/bin/sh: ${SIBLING}: Operation not permitted\n`, SIBLING],
+      [['env', 'PYTHONDONTWRITEBYTECODE=1', SIBLING, '-m', 'pytest'], false, `env: ${SIBLING}: Operation not permitted\n`, SIBLING],
+    ];
+    for (const [command, shell, output, program] of cases) {
+      const f = classifyProgramNotFound(input(command, 126, output, { shell }));
+      expect(f, output).toMatchObject({ checkId: 'build', fingerprint: null, signals: ['program-denied'] });
+      expect(f!.cause).toBe(`the sandbox or the operating system refused to start the program "${program}" the check runs (exit 126, "operation not permitted")`);
+      expect(f!.lines).toEqual([output.split('\n')[0]]);
+    }
+  });
+
+  // A program the command names by a bare name is the one the shell found on PATH: bash names it by the path it found.
+  it('reads the denial of a program named by a bare name, by the path the shell found it at', () => {
+    const PYTEST = '/home/acme/projects/shop/.venv/bin/pytest';
+    const cases: [string[], boolean, string][] = [
+      [['pytest', '-q'], false, `orbit-limits: ${PYTEST}: Operation not permitted\norbit-limits: line 0: exec: ${PYTEST}: cannot execute: Operation not permitted\n`],
+      [['pytest -q'], true, `/opt/homebrew/bin/bash: line 1: ${PYTEST}: Operation not permitted\n`],
+    ];
+    for (const [command, shell, output] of cases) {
+      const f = classifyProgramNotFound(input(command, 126, output, { shell }));
+      expect(f, output).toMatchObject({ signals: ['program-denied'], lines: [output.split('\n')[0]] });
+      expect(f!.cause).toBe(`the sandbox or the operating system refused to start the program "${PYTEST}" the check runs (exit 126, "operation not permitted")`);
+    }
+    // Another program of that name's denial, or one in the checkout, is not the command's own.
+    expect(classifyProgramNotFound(input(['pytest', '-q'], 126, '/bin/sh: /home/acme/bin/ruff: Operation not permitted\n'))).toBeNull();
+    expect(classifyProgramNotFound(input(['pytest', '-q'], 126, '/bin/sh: tools/pytest: Operation not permitted\n'))).toBeNull();
+  });
+
+  it('is null for another exit code, a program the command does not start itself, a relative path, a permission error or a failing test', () => {
+    const denied = `/bin/sh: ${SIBLING}: Operation not permitted\n`;
+    expect(classifyProgramNotFound(input([SIBLING, '-m', 'pytest'], 1, denied))).toBeNull();
+    expect(classifyProgramNotFound(input(['make', 'test'], 126, denied))).toBeNull();
+    expect(classifyProgramNotFound(input(['.venv/bin/python', '-m', 'pytest'], 126, '/bin/sh: .venv/bin/python: Operation not permitted\n'))).toBeNull();
+    // EACCES on exec is a file without its execute bit, which a change to the repository may fix.
+    expect(classifyProgramNotFound(input([SIBLING, '-m', 'pytest'], 126, `/bin/sh: ${SIBLING}: Permission denied\n`))).toBeNull();
+    expect(classifyProgramNotFound(input([SIBLING, '-m', 'pytest'], 126, `${denied}FAILED tests/test_x.py::test_y\n`))).toBeNull();
   });
 });

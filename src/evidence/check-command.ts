@@ -157,17 +157,50 @@ function afterOptions(words: readonly string[], from: number, valueOptions: read
   return i;
 }
 
+/** The words of the one simple command `command` runs, or null when it runs no such command (module comment). */
+function invocationWords(command: readonly string[], shell: boolean): string[] | null {
+  if (shell) return command.length === 1 ? shellWords(command[0]!) : null;
+  const script = shellScript(command);
+  return script !== undefined ? shellWords(script) : [...command];
+}
+
+/** The word after `env` at `i` and its options and assignments; null when an option makes env run something else. */
+function afterEnv(words: readonly string[], i: number): number | null {
+  let j = i + 1;
+  for (; j < words.length; j++) {
+    const w = words[j]!;
+    if (w === '-S' || w.startsWith('--split-string') || w === '-C' || w.startsWith('--chdir')) return null;
+    if (w === '-u') j++;
+    else if (!(w.startsWith('-') || ASSIGNMENT.test(w))) break;
+  }
+  return j;
+}
+
+/**
+ * The program the command starts, as the command writes it: its first word after leading assignments and `env` with its
+ * options and assignments, before any runner or `python -m` (`python3` in `python3 -m pytest`, `npx` in `npx jest`, an
+ * interpreter's absolute path in `/opt/acme/venv/bin/python -m pytest`). It is the file a shell or env names when it
+ * cannot start the command. Null when the command is no direct invocation of one program.
+ */
+export function startedProgram(command: readonly string[], shell: boolean): string | null {
+  const words = invocationWords(command, shell);
+  if (words === null) return null;
+  let i = 0;
+  while (i < words.length && ASSIGNMENT.test(words[i]!)) i++;
+  while (i < words.length && toolName(words[i]!) === 'env') {
+    const next = afterEnv(words, i);
+    if (next === null) return null;
+    i = next;
+  }
+  return i < words.length && words[i] !== '' ? words[i]! : null;
+}
+
 /**
  * The program the command runs itself and its arguments (module comment), or null when the command is no direct
  * invocation of one program. `shell` is the check's `shell` setting: its command is then one script.
  */
 export function directInvocation(command: readonly string[], shell: boolean): DirectInvocation | null {
-  let words: string[] | null;
-  if (shell) words = command.length === 1 ? shellWords(command[0]!) : null;
-  else {
-    const script = shellScript(command);
-    words = script !== undefined ? shellWords(script) : [...command];
-  }
+  const words = invocationWords(command, shell);
   if (words === null) return null;
   let i = 0;
   // A shell's leading assignments (CI=1 npm test), then env and its options and assignments.
@@ -176,14 +209,9 @@ export function directInvocation(command: readonly string[], shell: boolean): Di
     changed = false;
     const tool = toolName(words[i]!);
     if (tool === 'env') {
-      let j = i + 1;
-      for (; j < words.length; j++) {
-        const w = words[j]!;
-        if (w === '-S' || w.startsWith('--split-string') || w === '-C' || w.startsWith('--chdir')) return null;
-        if (w === '-u') j++;
-        else if (!(w.startsWith('-') || ASSIGNMENT.test(w))) break;
-      }
-      i = j;
+      const next = afterEnv(words, i);
+      if (next === null) return null;
+      i = next;
       changed = true;
       continue;
     }

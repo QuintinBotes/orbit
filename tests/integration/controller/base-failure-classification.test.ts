@@ -10,7 +10,7 @@
 // question; a test that merely reports "permission denied" in a failing assertion is still a pre-existing failure. A
 // check whose command names something that does not exist yet (npm's missing script) goes on to CONTRACTING: expected
 // to flip when the contract names it, misconfigured when it does not. A denial a candidate brings goes to repair.
-import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -232,6 +232,36 @@ describe.skipIf(!canStripTypes)('PREFLIGHT classifies a base-revision failure', 
     expect(transitions(l, run.id).slice(0, 4)).toEqual(['PREFLIGHT', 'BLOCKED', 'PREFLIGHT', 'CONTRACTING']);
     expect(listCheckRuns(l.db(), { runId: run.id, candidateId: null, checkId: 'build', rootsOnly: true }).map((r) => r.status)).toEqual(['FAILED', 'PASSED']);
     expect(listCheckRuns(l.db(), { runId: run.id, candidateId: null, checkId: 'unit', rootsOnly: true })).toHaveLength(1);
+  }, 240_000);
+
+  // 0.3.0 retest (python): a check that ran a virtualenv in a folder beside the repository failed on the base revision with
+  // exit 126, "Operation not permitted", on its executable (the check sandbox denies the folder that holds the repository).
+  // PREFLIGHT passed "with 1 pre-existing failure", raised q-baseline, and the run spent a contract and an attempt before
+  // it blocked at VERIFYING offering that exception. The stand-in prints what Orbit's runner captured then, for its path.
+  it('a program the sandbox does not let the check start (exit 126) is an environment failure at PREFLIGHT: BLOCKED naming the denied folders, no question, and a new run', async () => {
+    const l = labWith({ 'unit-tests': { command: ['/placeholder'] } });
+    const venv = join(l.base, 'shop-venv', 'bin');
+    mkdirSync(venv, { recursive: true });
+    const python = join(venv, 'python');
+    install(dirname(python), 'python', `orbit-limits: ${python}: Operation not permitted\norbit-limits: line 0: exec: ${python}: cannot execute: Operation not permitted\n`, 126);
+    l.config.checks['unit-tests'] = { ...l.config.checks['unit-tests']!, command: [python, '-m', 'pytest'] };
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
+    expect(transitions(l, run.id)).toEqual(['PREFLIGHT', 'BLOCKED']);
+    const reason = done.outcomeReason ?? '';
+    expect(reason).toMatch(/^Check unit-tests could not run on the base revision [0-9a-f]{12}, and the output shows an environment cause, not a pre-existing failure: the check sandbox denies/);
+    expect(reason).toContain(
+      `: the check sandbox denies the repository (${l.repo}) and the folder that holds it and its sibling projects (${l.base}), and the program "${python}" the check runs lies in a folder beside the repository, so it cannot start in a check ("orbit-limits: ${python}: Operation not permitted")`,
+    );
+    expect(reason).toMatch(new RegExp(`cancel this run \\(orbit cancel ${run.id}\\) and start a new run with orbit run\\.$`));
+    expect(reason).not.toMatch(/orbit resume|orbit decide/);
+    expect(reason).not.toMatch(/[\u2013\u2014]/);
+    expectNoException(l, run.id);
+    expect(listDecisions(l.db(), run.id, { kind: 'baseline.environment-failure' })[0]?.data).toMatchObject({ checks: [expect.objectContaining({ check_id: 'unit-tests', signals: ['program-denied'] })] });
+    expect(JSON.parse(getRun(l.db(), run.id).outcomeJson ?? '{}')).toMatchObject({ policy_fix: { settings: ['checks.unit-tests.command'] } });
   }, 240_000);
 
   it.skipIf(which('npm', process.env.PATH) === null)('the real npm with a missing script the contract does not name: a missing target, BLOCKED at CONTRACTING as misconfigured', async () => {

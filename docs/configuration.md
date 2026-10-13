@@ -424,10 +424,14 @@ non-built-in plugin a worker loaded is recorded in its result and listed under
 "Worker plugins" in the final report, with a residual risk for each allowed
 one; a session that loaded none adds none, and the report says nothing then.
 `orbit doctor` lists, before any run, the plugins a worker would load (a
-managed one) or may load (one of a scope it cannot place, such as `synced`:
-workers start with no user, project or local settings, and sessions have been
-seen to load none of those) and whether the policy allows them; what a
-session really loaded is in its own record and the report.
+managed one) or may load (one of a scope it cannot place, such as one the
+plugin list gives no scope: workers start with no user, project or local
+settings, and sessions have been seen to load none of those) and whether the
+policy allows them; what a session really loaded is in its own record and the
+report. A plugin of scope `synced` is not reported: workers start with no user,
+project or local settings, which leaves it out (worker sessions on a machine
+with synced plugins installed have loaded only Claude Code's built-ins), and a
+session that did load one would still be refused.
 
 A run is not started when doctor would fail that check (`claude.plugins`:
 workers would load a managed plugin the policy does not allow, so every session
@@ -592,7 +596,9 @@ error such as `MSB1008`, a go or cargo usage error) and a check the environment 
 repository (a denial outside its checkout, EACCES included; a socket refused in
 the tool's own startup; a .NET named pipe refused under `/tmp`, an MSBuild
 worker node's or `dotnet format`'s build host's; a connection the sandbox's
-proxy refused; a program not installed where it runs, exit 127) both end the
+proxy refused; a program not installed where it runs, exit 127, or one the
+sandbox does not let it start, exit 126 with "Operation not permitted", see
+[Tool environments](#tool-environments)) both end the
 run `BLOCKED` at PREFLIGHT with the first error line. A check whose command
 names something that does not exist yet (a missing target: no project, `npm
 error Missing script`, a missing test file, an option of a pytest plugin not
@@ -618,7 +624,12 @@ run there (the reason says the contract requires the check), a missing target
 is settled against the contract while the contract requires the check, a
 pre-existing failure gets its question, and a pass makes a failure on a
 candidate the change's. `orbit resume` after an environment block runs the
-check on the base revision again.
+check on the base revision again. When the fix is a change to a check's
+definition (`-m:1` on its command, a `dotnet format` check removed or put in
+the form that loads no project, a host added to its `network_hosts`, a program
+moved out of the repository), the reason, the closing line, `orbit status` and
+the report say to cancel the run and start a new one instead: the run keeps the
+policy it started with, so a resume would run the same check again.
 
 A repair attempt that ends on a tree an earlier attempt produced, which
 verification judges `FAIL` exactly as before, ends the run `EXHAUSTED` as
@@ -642,6 +653,44 @@ or a crash after test output keeps the repair loop.
 A check that fails then passes on rerun is reported as flaky. With
 `verification.allow_flaky_pass: false` (the default) a flaky pass cannot make the
 verdict PASS.
+
+### Tool environments
+
+A check runs in a checkout of its own, outside the repository, and under
+`sandbox-runtime` its sandbox may read neither the repository nor the folder
+that holds it and its sibling projects (unless that folder is the filesystem
+root, holds your home directory, or holds a shared temporary directory, when
+only the repository is denied). So a tool environment the checks run, such as a
+Python virtualenv, cannot live in the repository or in a folder beside it and be
+run by its absolute path: the program cannot start in a check (on macOS exit
+126, "Operation not permitted", even when it links to an interpreter
+elsewhere; on Linux the denied folder is empty in the sandbox, so exit 127,
+"No such file or directory"). A tool environment may live:
+
+- inside each checkout, built there by the dependency install, and run by a
+  path relative to the check's `cwd`. The install runs in every checkout Orbit
+  makes, the base revision's and each candidate's, before its checks:
+
+  ```yaml
+  dependencies:
+    install_command: ["/bin/sh", "-c", "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"]
+  checks:
+    unit-tests:
+      command: [.venv/bin/python, -m, pytest]
+  ```
+
+- or outside the folder that holds the repository, run by its absolute path, in
+  a place the check sandbox reads (not one of the credential folders it denies,
+  such as `~/.ssh`, or Orbit's home, `~/.orbit`). The checks then share one
+  environment that no run rebuilds.
+
+`orbit doctor` (`checks.sandbox`) refuses a check whose program, its argv's or
+one its shell command starts, is an absolute path in the repository or in the
+folder beside it, whatever the tool, and starts nothing of it. A run whose
+check could not start for that reason blocks at PREFLIGHT with no
+baseline-exception question, and its reason names the repository and the folder
+the sandbox denies. The fix changes the check's command, which the run's
+frozen policy keeps, so it needs a new run.
 
 ### Toolchain caches and build state
 

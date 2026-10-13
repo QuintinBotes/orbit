@@ -107,7 +107,17 @@ describe('doctor: plugins a worker would load (issue #9)', () => {
     expect(await pluginCheck([LIST[1]])).toMatchObject({ status: 'pass', summary: 'workers load only Claude Code built-ins' });
     expect(await pluginCheck('EXIT')).toMatchObject({ status: 'warn', summary: expect.stringMatching(/^could not list the installed plugins \(claude plugin list --json: exit 1/), missing: 'the output of claude plugin list --json' });
     expect(await pluginCheck('not json')).toMatchObject({ status: 'warn', summary: 'could not list the installed plugins (claude plugin list --json gave no plugin list)' });
-    const odd = await pluginCheck([{ id: 'acme-sync@acme', scope: 'synced', enabled: true }]);
-    expect(odd).toMatchObject({ status: 'warn', summary: 'workers may load 1 plugin(s) the policy does not allow: acme-sync@acme (scope synced)', fix: `add to .orbit/config.yaml: agents.allowed_plugins: ["acme-sync@acme"]; a plugin can add hooks and tools to workers; ${HUMAN_POLICY_NOTE}` });
+    const odd = await pluginCheck([{ id: 'acme-odd@acme', enabled: true }]);
+    expect(odd).toMatchObject({ status: 'warn', summary: 'workers may load 1 plugin(s) the policy does not allow: acme-odd@acme (scope unknown)', fix: `add to .orbit/config.yaml: agents.allowed_plugins: ["acme-odd@acme"]; a plugin can add hooks and tools to workers; ${HUMAN_POLICY_NOTE}` });
+  });
+
+  // 0.3.0 retest (audit): six synced plugins made doctor warn "workers may load 6 plugin(s) the policy does not allow",
+  // with a fix that would allow them, while every worker session loaded only Claude Code's built-ins.
+  it('does not warn about synced plugins, which Orbit already keeps out of a worker session', async () => {
+    const synced = ['acme-chat', 'acme-design', 'acme-docs', 'acme-pm', 'acme-eng', 'acme-site'].map((name) => ({ id: `${name}@synced`, scope: 'synced', enabled: true }));
+    const c = await pluginCheck(synced);
+    expect(c).toMatchObject({ status: 'pass', summary: 'workers load only Claude Code built-ins', fix: null });
+    expect(c!.details).toHaveLength(6);
+    expect(c!.details[0]).toBe('not loaded by workers: acme-chat@synced (scope synced; workers start with no user, project or local settings, which leaves synced plugins out)');
   });
 });

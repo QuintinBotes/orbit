@@ -40,7 +40,8 @@ export interface UnitLab {
 }
 
 export interface UnitLabOptions {
-  tweak?: (config: OrbitConfig) => void;
+  /** Changes the policy before the run is started; `at` is where the lab's directory and repository are (always given by makeUnitLab). */
+  tweak?: (config: OrbitConfig, at?: { base: string; repo: string }) => void;
   adapters?: Record<string, ProviderAdapter>;
   deps?: Partial<ControllerDeps>;
   path?: RunState[];
@@ -64,7 +65,7 @@ export function makeUnitLab(opts: UnitLabOptions = {}): UnitLab {
   mkdirSync(repo, { recursive: true });
   const db = openDb(':memory:');
   const clock = new ManualClock();
-  const config = unitConfig(opts.tweak);
+  const config = unitConfig(opts.tweak ? (c) => opts.tweak!(c, { base, repo }) : undefined);
   const run = startRun({ db, repoRoot: repo, goal: 'Add a mul function.', config, clock, runId: 'orb-unit' });
   acquireLease(db, run.id, OWNER, 3_600_000, clock);
   const deps: ControllerDeps = {
