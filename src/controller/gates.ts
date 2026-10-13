@@ -367,6 +367,8 @@ export interface ReviewGateArgs {
   now: number;
   /** Why no independent reviewer was usable (the recorded reviewer selection), for a review by the implementer's own provider. */
   whyNotIndependent?: string | null;
+  /** Whether the recorded reviewer selection was independent; decides independence while no review of the tree exists. Default true. */
+  selectionIndependent?: boolean;
 }
 
 /**
@@ -386,7 +388,9 @@ export function independentReviewGate(db: OrbitDb, input: ReviewGateArgs): GateR
   const approved = g.cleared.some((r) => r.verdict === 'APPROVE');
   const evidence = g.cleared.map((r) => `review ${r.id} by ${r.provider}: ${r.verdict} on tree ${r.treeHash}`);
   // A review by the provider that implemented is a review, not an independent one: the record says so and why, as the report does.
-  const independent = g.cleared.length === 0 || g.cleared.some((r) => r.provider !== input.implementerProvider);
+  // Independence is a property of who reviewed the tree, not of who cleared it: a same-provider BLOCK clears nothing and is still not independent.
+  const reviews = listReviews(db, input.runId, { treeHash: input.treeHash });
+  const independent = reviews.length === 0 ? input.selectionIndependent !== false : reviews.some((r) => r.provider !== input.implementerProvider);
   const why = `same-provider review, not independent: ${input.whyNotIndependent ?? 'no independent reviewer was usable'}`;
   const out = result('independent_review', g.reasons, evidence, independent ? [] : [why], { gate: g, approved, independent });
   // "Approved" only when a review approved; a same-provider review can clear the tree (nothing blocking) without anyone approving it.

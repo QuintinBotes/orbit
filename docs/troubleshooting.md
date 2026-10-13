@@ -610,8 +610,9 @@ of these settings is the fix, `orbit doctor` prints the same note.
   ownerless runs. Worktrees are under `~/.orbit/worktrees/`; a run that ends
   `SUCCEEDED`, `CANCELLED`, `EXHAUSTED` or `IMPOSSIBLE` removes its own (the work
   of an `EXHAUSTED` run is in its candidate refs, `refs/orbit/<run>/candidates/<n>`,
-  and its evidence under `.orbit/runs/<id>`), and `orbit gc` removes the ones a
-  `BLOCKED` or paused run kept (`--keep-days 0` for every finished run now).
+  and its evidence under `.orbit/runs/<id>`). A `BLOCKED` or paused run keeps its
+  worktrees until it is resumed to an end or cancelled (`orbit cancel <run-id>`);
+  `orbit gc` never removes them: it prunes only finished runs.
 - **`orbit service uninstall` says the service manager is "still stopping" the
   controller.** The controller finishes its current step before it stops. Check with
   `orbit service status`; it exits 1 and says the job is still held until it is gone.

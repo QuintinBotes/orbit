@@ -8,7 +8,8 @@
  * none of these states has a way back. An edit in the implementer's worktree that never became a candidate (a run
  * cancelled mid-work) is first snapshotted as one, so removal never loses work, and when that snapshot fails the
  * worktree is kept. A BLOCKED or paused run keeps its worktree: a person resumes from it (spec section 14: stops
- * preserve the worktree). `orbit gc --keep-days 0` removes those too.
+ * preserve the worktree), until it is resumed to an end or cancelled (`orbit cancel <run-id>`); `orbit gc` never
+ * removes it (retention prunes only SUCCEEDED, EXHAUSTED, IMPOSSIBLE and CANCELLED runs).
  */
 import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';

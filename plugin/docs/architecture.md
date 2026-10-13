@@ -71,7 +71,8 @@ ends `SUCCEEDED`, `CANCELLED`, `EXHAUSTED` or `IMPOSSIBLE` removes its worktrees
 (`controller/worktree-cleanup.ts`; an unsaved edit is first saved as a candidate;
 a run the recovery budget ends `EXHAUSTED` is released by `recovery/release.ts`).
 Its result is the branch and the candidate refs, not the checkout. `BLOCKED` and
-paused runs keep them, since they may resume, and `orbit gc` removes the rest.
+paused runs keep them, since they may resume, until the run is resumed to an end
+or cancelled (`orbit cancel <run-id>`); `orbit gc` never touches them.
 
 The plugin is the `plugin/` directory of the repository, not the repository root
 (`docs/decisions/0006-plugin-packaging.md`): the bundle `plugin/dist/orbit.mjs`,

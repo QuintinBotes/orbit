@@ -421,7 +421,8 @@ Files on disk:
   the repository on purpose. A run that ends `SUCCEEDED`, `CANCELLED`,
   `EXHAUSTED` or `IMPOSSIBLE` removes its worktrees (a `worktrees.released`
   event records it); one that is `BLOCKED` or paused keeps them until it
-  finishes or `orbit gc` removes them.
+  is resumed to an end or cancelled (`orbit cancel <run-id>`); `orbit gc` does
+  not remove them.
 
 `<repo>` is the working tree Orbit was started in. Inside a linked worktree
 (`git worktree add`) that is the worktree, not the main working tree: its

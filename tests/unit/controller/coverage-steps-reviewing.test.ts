@@ -146,6 +146,23 @@ describe('a review that is already recorded', () => {
     expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review does not clear tree/);
   });
 
+  it('a same-provider BLOCK review with an advisory finding does not call the block an independent review', async () => {
+    const { cand } = await setup();
+    record(cand, 'BLOCK', [finding('STY-1', { severity: 'low' })], 'claude');
+    await run();
+    expect(state()).toBe('BLOCKED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).not.toMatch(/independent review does not clear/);
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review does not clear tree/);
+  });
+
+  it('an independent (Codex) BLOCK review is still recorded as an independent review that does not clear the tree', async () => {
+    const { cand } = await setup();
+    record(cand, 'BLOCK', [finding('STY-1', { severity: 'low' })], 'codex');
+    await run();
+    expect(state()).toBe('BLOCKED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^independent review does not clear tree/);
+  });
+
   it('an approval with a material question still open blocks the run before delivery', async () => {
     const { cand } = await setup();
     record(cand, 'APPROVE');

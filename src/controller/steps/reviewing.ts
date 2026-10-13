@@ -366,7 +366,7 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
   markRepaired(resolution, repaired);
   const undecided = settleInquiredClaims(ctx, cand, resolution);
   persistResolution(ctx.db, ctx.runDir, ctx.run.id, resolution, ctx.clock);
-  const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx) });
+  const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx) });
   recordGate(ctx, gate);
   if (gate.passed && gate.details.approved) {
     progress(ctx, 'review.approved', { candidate_id: cand.id, tree_hash: cand.treeHash });
@@ -883,9 +883,19 @@ function reviewEffort(ctx: RunContext, sel: Extract<ReviewerSelection, { decisio
   return ctx.snapshot.config.providers[sel.provider]?.review_reasoning_effort ?? sel.effort;
 }
 
+/** The reviewer selection recorded for this run, the latest that selected a reviewer. */
+function recordedSelection(ctx: RunContext): Extract<ReviewerSelection, { decision: 'SELECT' }> | undefined {
+  return listDecisions(ctx.db, ctx.run.id, { kind: 'review.select' }).map((d) => d.data as ReviewerSelection | null).filter((d): d is Extract<ReviewerSelection, { decision: 'SELECT' }> => d?.decision === 'SELECT').at(-1);
+}
+
+/** Whether the recorded reviewer selection was independent; true when none was recorded. */
+function recordedSelectionIndependent(ctx: RunContext): boolean {
+  return recordedSelection(ctx)?.independent !== false;
+}
+
 /** Why the reviewer was not independent, from the reviewer selection recorded for this run; null when none says. */
 function recordedWhyNotIndependent(ctx: RunContext): string | null {
-  const sel = listDecisions(ctx.db, ctx.run.id, { kind: 'review.select' }).map((d) => d.data as ReviewerSelection | null).filter((d) => d?.decision === 'SELECT').at(-1);
+  const sel = recordedSelection(ctx);
   return sel && sel.decision === 'SELECT' && !sel.independent ? (sel.independentUnavailable ?? null) : null;
 }
 

@@ -95,9 +95,10 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
   if (target === 'CANCELLED') closeQuestionsOfCancelledRun(ctx);
   const why = target === to ? reason : `cancelled by request (the step had decided ${to}: ${reason})`;
   const result = move(ctx, target, why, { patch: { outcomeReason: cappedReason(why, target === to ? advice : ''), outcomeJson: JSON.stringify(target === to ? outcome : { ...outcome, state: target, decided: to }) }, data: opts.data });
-  await finalizeRun(ctx);
   // The result lives in the branch and the candidate refs; a finished run does not keep a checkout. BLOCKED alone keeps it: a person resumes from it.
+  // Released before the report is written: the release saves an unsaved implementer edit as a candidate, and the report names the newest one.
   if (target !== 'BLOCKED') await releaseRunWorktrees(ctx);
+  await finalizeRun(ctx);
   return result;
 }
 

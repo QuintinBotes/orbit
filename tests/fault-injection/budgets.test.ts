@@ -1,6 +1,7 @@
 // Fault: exhausted budgets (spec sections 7, 14 and 17: "Budget exhaustion: stop workers; preserve
 // artifacts; report"). Hard caps come from the frozen policy; the run ends EXHAUSTED with its
-// worktree, candidate, evidence and final report intact.
+// candidate refs, evidence and final report intact. The worktree is released (EXHAUSTED has no way back), and an
+// edit that never became a candidate is saved as one first.
 import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -11,15 +12,19 @@ import { baseScenario, calls, canStripTypes, DIAGNOSIS, drive, git, implementMul
 const t = tracker();
 afterEach(() => t.cleanup());
 
-function expectPreserved(l: ReturnType<typeof t.lab>, runId: string, opts: { candidate: boolean }): void {
+function expectPreserved(l: ReturnType<typeof t.lab>, runId: string, opts: { savedByRelease: boolean }): void {
   const done = runState(l, runId);
   const runDir = join(l.repo, '.orbit', 'runs', runId);
   expect(listActiveWorkers(l.db(), runId)).toEqual([]);
-  expect(existsSync(join(done.worktreePath!, 'tests', 'mul.test.mjs'))).toBe(true);
-  if (opts.candidate) {
-    const [cand] = listCandidates(l.db(), runId);
-    expect(git(l.repo, 'rev-parse', `${cand!.commitSha}^{tree}`)).toBe(cand!.treeHash);
-  }
+  // The worktree is released; the work lives in the candidate refs.
+  expect(existsSync(done.worktreePath!)).toBe(false);
+  const [cand] = listCandidates(l.db(), runId);
+  expect(cand).toBeDefined();
+  expect(git(l.repo, 'rev-parse', `${cand!.commitSha}^{tree}`)).toBe(cand!.treeHash);
+  expect(git(l.repo, 'rev-parse', `refs/orbit/${runId}/candidates/${cand!.seq}`)).toBe(cand!.commitSha);
+  // The implementer's edit was saved as candidate 1 by the release when no candidate existed before it.
+  if (opts.savedByRelease) expect(cand!.seq).toBe(1);
+  expect(git(l.repo, 'show', `${cand!.commitSha}:tests/mul.test.mjs`)).toContain('mul');
   // Every worker's transcript stays with the run.
   for (const w of listWorkers(l.db(), { runId })) expect(existsSync(join(w.workerDir, 'log.jsonl'))).toBe(true);
   expect(readFileSync(join(runDir, 'final.md'), 'utf8')).toMatch(/EXHAUSTED/);
@@ -29,7 +34,7 @@ function expectPreserved(l: ReturnType<typeof t.lab>, runId: string, opts: { can
 }
 
 describe.skipIf(!canStripTypes)('fault: exhausted budgets', () => {
-  it('the implementation attempt cap ends the run EXHAUSTED with the failing evidence and the worktree preserved', async () => {
+  it('the implementation attempt cap ends the run EXHAUSTED with the failing evidence and the work kept in its candidate ref', async () => {
     const l = t.lab({ tweak: (c) => void (c.scheduler.hard_limits.implementation_attempts = 1) });
     writeScenario(l, baseScenario({ implementer: [implementMul('+')], verifier: [DIAGNOSIS] }));
     const run = startLabRun(l);
@@ -42,7 +47,7 @@ describe.skipIf(!canStripTypes)('fault: exhausted budgets', () => {
     const [ev] = listEvidenceReports(l.db(), run.id);
     expect(ev?.verdict).toBe('FAIL');
     expect(existsSync(ev!.reportPath!)).toBe(true);
-    expectPreserved(l, run.id, { candidate: true });
+    expectPreserved(l, run.id, { savedByRelease: false });
   }, 30_000);
 
   it('a model cost cap reached by reported spend ends the run EXHAUSTED before any further worker starts', async () => {
@@ -57,7 +62,10 @@ describe.skipIf(!canStripTypes)('fault: exhausted budgets', () => {
     // Nothing more was started once the cap was reached.
     expect(calls(l, 'implementer')).toHaveLength(1);
     expect(listWorkers(l.db(), { runId: run.id, role: 'reviewer' })).toEqual([]);
-    // The spend was charged when the implementer finished, before its edits became a candidate; the edits stay in the worktree.
-    expectPreserved(l, run.id, { candidate: false });
+    // The spend was charged when the implementer finished, before its edits became a candidate: releasing the worktree saves them as candidate 1.
+    expectPreserved(l, run.id, { savedByRelease: true });
+    const report = JSON.parse(readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'final.json'), 'utf8')) as { next_action: string; revision: { candidate_ref: string | null } };
+    expect(report.revision.candidate_ref).toBe(`refs/orbit/${run.id}/candidates/1`);
+    expect(report.next_action).toContain(`refs/orbit/${run.id}/candidates/1`);
   }, 30_000);
 });
