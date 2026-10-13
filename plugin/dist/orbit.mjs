@@ -25635,6 +25635,10 @@ function repoParentDenial(repoRoot, homeDir) {
   if (shared.some((root) => isWithin(root, parent))) return { path: null, reason: `${parent} contains a shared temp directory` };
   return { path: parent, reason: "sibling projects are denied; the worktree and git directory are re-allowed" };
 }
+function repositoryDenials(repoRoot, homeDir) {
+  const repository = canonicalPath(repoRoot);
+  return { repository, parent: repoParentDenial(repository, homeDir).path };
+}
 function checkoutBelowDenied(opts) {
   const checkout = canonicalPath(opts.checkout);
   const repo = canonicalPath(opts.repoRoot);
@@ -35521,11 +35525,16 @@ function shellWords(script) {
 }
 function shellScript(command) {
   if (command.length < 3 || !SHELLS2.has(toolName(command[0]))) return void 0;
-  for (let i = 1; i < command.length - 1; i++) {
+  let script = false;
+  for (let i = 1; i < command.length; i++) {
     const a = command[i];
-    if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(a)) return command[i + 1];
-    if (a === "-o" || a === "+o") i++;
-    else if (!/^[-+][a-zA-Z]+$/.test(a)) return void 0;
+    if (a === "--") return script ? command[i + 1] : void 0;
+    if (a.startsWith("--")) {
+      if (SHELL_LONG_VALUE_OPTIONS.has(a)) i++;
+    } else if (a === "-o" || a === "+o" || a === "-O" || a === "+O") i++;
+    else if (/^[-+][a-zA-Z]+$/.test(a)) {
+      if (a.startsWith("-") && a.includes("c")) script = true;
+    } else return script ? a : void 0;
   }
   return void 0;
 }
@@ -35540,13 +35549,310 @@ function afterOptions(words2, from, valueOptions, refuse = []) {
   }
   return i;
 }
-function directInvocation(command, shell) {
-  let words2;
-  if (shell) words2 = command.length === 1 ? shellWords(command[0]) : null;
-  else {
-    const script = shellScript(command);
-    words2 = script !== void 0 ? shellWords(script) : [...command];
+function invocationWords(command, shell) {
+  let words2 = shell ? command.length === 1 ? shellWords(command[0]) : null : [...command];
+  for (let depth = shell ? 1 : 0; words2 !== null; depth++) {
+    const script = shellScript(words2);
+    if (script === void 0) return words2;
+    if (depth >= MAX_SCRIPT_DEPTH) return null;
+    words2 = shellWords(script);
   }
+  return null;
+}
+function afterEnv(words2, i) {
+  let j = i + 1;
+  for (; j < words2.length; j++) {
+    const w = words2[j];
+    if (w === "-S" || w.startsWith("--split-string") || w === "-C" || w.startsWith("--chdir")) return null;
+    if (w === "-u") j++;
+    else if (!(w.startsWith("-") || ASSIGNMENT2.test(w))) break;
+  }
+  return j;
+}
+function afterExec(words2, i) {
+  let j = i + 1;
+  while (j < words2.length && /^-[acl]+$/.test(words2[j])) j += words2[j].includes("a") ? 2 : 1;
+  return words2[j] === "--" ? j + 1 : j;
+}
+function wrapperOf(program) {
+  const tool = toolName(program);
+  return WRAPPERS.get(tool) ?? (tool.startsWith("g") ? WRAPPERS.get(tool.slice(1)) : void 0);
+}
+function programIndices(words2) {
+  const out = [];
+  let i = 0;
+  for (; ; ) {
+    while (i < words2.length && ASSIGNMENT2.test(words2[i])) i++;
+    const w = words2[i];
+    if (w === void 0 || w === "") return out;
+    if (w === "exec") i = afterExec(words2, i);
+    else if (w === "builtin") i++;
+    else if (w === "command") {
+      let j = i + 1;
+      for (; j < words2.length && /^-[pvV]+$/.test(words2[j]); j++) if (/[vV]/.test(words2[j])) return out;
+      i = words2[j] === "--" ? j + 1 : j;
+    } else if (toolName(w) === "env") {
+      const next = afterEnv(words2, i);
+      if (next === null) return out;
+      i = next;
+    } else {
+      out.push(i);
+      const wrapper = wrapperOf(w);
+      if (wrapper === void 0) return out;
+      const next = afterOptions(words2, i + 1, wrapper.valueOptions);
+      if (next === null) return out;
+      i = next + (wrapper.operands ?? 0);
+    }
+  }
+}
+function programIndex(words2) {
+  return programIndices(words2)[0] ?? null;
+}
+function startedProgram(command, shell) {
+  const words2 = invocationWords(command, shell);
+  if (words2 === null) return null;
+  const i = programIndex(words2);
+  return i === null ? null : words2[i];
+}
+function readScript(script) {
+  const s = script;
+  const commands = [];
+  let uncertain = false;
+  let broken = false;
+  let stopped = false;
+  const closing = (open2) => {
+    let depth = 0;
+    for (let k = open2; k < s.length; k++) {
+      if (s[k] === "(") depth++;
+      else if (s[k] === ")" && --depth === 0) return k + 1;
+    }
+    return -1;
+  };
+  const braceClosing = (open2) => {
+    let depth = 0;
+    for (let k = open2; k < s.length; k++) {
+      if (s[k] === "{") depth++;
+      else if (s[k] === "}" && --depth === 0) return k + 1;
+    }
+    return -1;
+  };
+  const arithmetic = (dollar) => {
+    const outer = closing(dollar + 1);
+    return outer >= 0 && closing(dollar + 2) === outer - 1;
+  };
+  const list3 = (start, close, nested = 0) => {
+    if (nested > MAX_SUBSTITUTION_DEPTH) {
+      broken = true;
+      return s.length;
+    }
+    let words2 = [];
+    let at = commands.length;
+    let cur = "";
+    let inWord = false;
+    let dropNext = false;
+    let open2 = 0;
+    const flush = () => {
+      if (inWord) {
+        if (dropNext) dropNext = false;
+        else words2.push(cur);
+      }
+      cur = "";
+      inWord = false;
+    };
+    const end = () => {
+      flush();
+      dropNext = false;
+      if (words2.length > 0) commands.splice(at, 0, words2);
+      words2 = [];
+      at = commands.length;
+    };
+    const substitution = (from, body, until) => {
+      uncertain = true;
+      const after = list3(body, until, nested + 1);
+      cur += s.slice(from, after);
+      inWord = true;
+      return after;
+    };
+    let i = start;
+    while (i < s.length && !broken && !stopped) {
+      const c = s[i];
+      if (close === "`" && c === "`") {
+        end();
+        return i + 1;
+      }
+      if (c === "'") {
+        const q = s.indexOf("'", i + 1);
+        if (q < 0) {
+          broken = true;
+          break;
+        }
+        cur += s.slice(i + 1, q);
+        inWord = true;
+        i = q + 1;
+      } else if (c === '"') {
+        let j = i + 1;
+        while (j < s.length && s[j] !== '"' && !broken && !stopped) {
+          if (s[j] === "\\" && j + 1 < s.length && '"\\$`'.includes(s[j + 1])) {
+            cur += s[j + 1];
+            j += 2;
+          } else if (s[j] === "$" && s[j + 1] === "(" && s[j + 2] === "(" && arithmetic(j)) {
+            const after = closing(j + 1);
+            cur += s.slice(j, after);
+            j = after;
+          } else if (s[j] === "$" && s[j + 1] === "(") j = substitution(j, j + 2, ")");
+          else if (s[j] === "`") j = substitution(j, j + 1, "`");
+          else cur += s[j++];
+        }
+        if (j >= s.length) {
+          broken = true;
+          break;
+        }
+        inWord = true;
+        i = j + 1;
+      } else if (c === "\\") {
+        if (i + 1 < s.length && s[i + 1] !== "\n") {
+          cur += s[i + 1];
+          inWord = true;
+        }
+        i += 2;
+      } else if (c === "#" && !inWord) {
+        const nl = s.indexOf("\n", i);
+        i = nl < 0 ? s.length : nl;
+      } else if (c === "$" && s[i + 1] === "(" && s[i + 2] === "(" && arithmetic(i)) {
+        const after = closing(i + 1);
+        cur += s.slice(i, after);
+        inWord = true;
+        i = after;
+      } else if (c === "$" && s[i + 1] === "{") {
+        const after = braceClosing(i + 1);
+        if (after < 0) {
+          broken = true;
+          break;
+        }
+        uncertain = true;
+        cur += s.slice(i, after);
+        inWord = true;
+        i = after;
+      } else if (c === "$" && s[i + 1] === "(") {
+        i = substitution(i, i + 2, ")");
+      } else if (c === "`") {
+        i = substitution(i, i + 1, "`");
+      } else if ((c === "<" || c === ">") && s[i + 1] === "(") {
+        flush();
+        i = substitution(i, i + 2, ")");
+      } else if (c === ")") {
+        end();
+        if (open2 === 0 && close === ")") return i + 1;
+        if (open2 > 0) open2--;
+        i++;
+      } else if (c === "(" && inWord) {
+        const after = closing(i);
+        if (after < 0) {
+          broken = true;
+          break;
+        }
+        uncertain = true;
+        const definition = after === i + 2;
+        cur += s.slice(i, after);
+        i = after;
+        if (definition) end();
+      } else if (c === "(") {
+        if (words2.some((w) => !BEFORE_COMMAND.has(w))) uncertain = true;
+        end();
+        open2++;
+        i++;
+      } else if (c === "\n" || c === ";" || c === "|") {
+        end();
+        i++;
+      } else if (c === "&") {
+        if (s[i + 1] === ">") {
+          flush();
+          i += s[i + 2] === ">" ? 3 : 2;
+          dropNext = true;
+        } else {
+          end();
+          i++;
+        }
+      } else if (c === ">" || c === "<") {
+        if (c === "<" && s[i + 1] === "<" && s[i + 2] !== "<") {
+          uncertain = true;
+          end();
+          stopped = true;
+          break;
+        }
+        if (inWord && /^\d+$/.test(cur)) {
+          cur = "";
+          inWord = false;
+        } else flush();
+        i++;
+        if (s[i] === ">" || s[i] === "|") i++;
+        else if (c === "<" && s[i] === "<" && s[i + 1] === "<") i += 2;
+        if (s[i] === "&") {
+          i++;
+          while (i < s.length && /[\d-]/.test(s[i])) i++;
+        } else dropNext = true;
+      } else if (/\s/.test(c)) {
+        flush();
+        i++;
+      } else {
+        cur += c;
+        inWord = true;
+        i++;
+      }
+    }
+    end();
+    if (close !== null && !stopped) broken = true;
+    return s.length;
+  };
+  list3(0, null);
+  return broken ? null : { commands, uncertain };
+}
+function scriptPrograms(script, depth, out) {
+  const reading = readScript(script);
+  if (reading === null) return true;
+  let uncertain = reading.uncertain;
+  for (const command of reading.commands) {
+    let words2 = command;
+    for (; ; ) {
+      while (words2.length > 0 && BEFORE_COMMAND.has(words2[0])) words2 = words2[0] === "time" && words2[1] === "-p" ? words2.slice(2) : words2.slice(1);
+      if (words2[0] !== "function") break;
+      uncertain = true;
+      words2 = words2.slice(2);
+    }
+    if (words2.length === 0) continue;
+    if (NOT_FOLLOWED.has(words2[0])) uncertain = true;
+    if (NO_COMMAND.has(words2[0])) continue;
+    const started = programIndices(words2);
+    for (const i of started) out.push(words2[i]);
+    const last = started.at(-1);
+    if (last !== void 0 && nestedPrograms(words2.slice(last), depth, out)) uncertain = true;
+  }
+  return uncertain;
+}
+function nestedPrograms(words2, depth, out) {
+  const evaluated = words2[0] === "eval";
+  const script = evaluated ? words2.slice(1).join(" ") : shellScript(words2);
+  if (script === void 0) return false;
+  if (depth >= MAX_SCRIPT_DEPTH) return true;
+  return scriptPrograms(script, depth + 1, out) || evaluated;
+}
+function checkPrograms(command, shell) {
+  const out = [];
+  let uncertain;
+  if (shell) uncertain = scriptPrograms(command[0] ?? "", 1, out);
+  else {
+    const started = programIndices(command);
+    if (started.length === 0) return { programs: [], uncertain: false };
+    for (const i of started) out.push(command[i]);
+    uncertain = nestedPrograms(command.slice(started.at(-1)), 0, out);
+  }
+  return { programs: [...new Set(out)], uncertain };
+}
+function startedPrograms(command, shell) {
+  return checkPrograms(command, shell).programs;
+}
+function directInvocation(command, shell) {
+  const words2 = invocationWords(command, shell);
   if (words2 === null) return null;
   let i = 0;
   while (i < words2.length && ASSIGNMENT2.test(words2[i])) i++;
@@ -35554,14 +35860,9 @@ function directInvocation(command, shell) {
     changed2 = false;
     const tool = toolName(words2[i]);
     if (tool === "env") {
-      let j = i + 1;
-      for (; j < words2.length; j++) {
-        const w = words2[j];
-        if (w === "-S" || w.startsWith("--split-string") || w === "-C" || w.startsWith("--chdir")) return null;
-        if (w === "-u") j++;
-        else if (!(w.startsWith("-") || ASSIGNMENT2.test(w))) break;
-      }
-      i = j;
+      const next = afterEnv(words2, i);
+      if (next === null) return null;
+      i = next;
       changed2 = true;
       continue;
     }
@@ -35584,12 +35885,14 @@ function directInvocation(command, shell) {
   if (i >= words2.length || words2[i] === "") return null;
   return { tool: toolName(words2[i]), program: words2[i], args: words2.slice(i + 1) };
 }
-var SHELLS2, ASSIGNMENT2, RUNNERS;
+var SHELLS2, ASSIGNMENT2, MAX_SCRIPT_DEPTH, MAX_SUBSTITUTION_DEPTH, RUNNERS, SHELL_LONG_VALUE_OPTIONS, WRAPPERS, BEFORE_COMMAND, NO_COMMAND, NOT_FOLLOWED;
 var init_check_command = __esm({
   "src/evidence/check-command.ts"() {
     "use strict";
     SHELLS2 = /* @__PURE__ */ new Set(["sh", "bash", "dash", "zsh", "ksh", "ash"]);
     ASSIGNMENT2 = /^[A-Za-z_][A-Za-z0-9_]*=/;
+    MAX_SCRIPT_DEPTH = 3;
+    MAX_SUBSTITUTION_DEPTH = 32;
     RUNNERS = [
       { words: ["npx"], valueOptions: ["-p", "--package"], refuse: ["-c", "--call"] },
       { words: ["pnpx"], valueOptions: [] },
@@ -35605,6 +35908,20 @@ var init_check_command = __esm({
       { words: ["pipenv", "run"], valueOptions: [] },
       { words: ["pdm", "run"], valueOptions: [] }
     ];
+    SHELL_LONG_VALUE_OPTIONS = /* @__PURE__ */ new Set(["--rcfile", "--init-file"]);
+    WRAPPERS = /* @__PURE__ */ new Map([
+      ["timeout", { valueOptions: ["-s", "--signal", "-k", "--kill-after"], operands: 1 }],
+      ["nice", { valueOptions: ["-n", "--adjustment"] }],
+      ["nohup", { valueOptions: [] }],
+      ["stdbuf", { valueOptions: ["-i", "-o", "-e", "--input", "--output", "--error"] }],
+      // GNU's and BSD's options with a value; `-i`, `-l` and `-e` take theirs in the same word.
+      ["xargs", { valueOptions: ["-a", "--arg-file", "-d", "--delimiter", "-E", "-I", "-J", "-L", "-n", "--max-args", "-P", "--max-procs", "-R", "-S", "-s", "--max-chars"] }],
+      // GNU time's and BSD time's (the shell's own `time` is a reserved word, read before the command it times).
+      ["time", { valueOptions: ["-f", "--format", "-o", "--output"] }]
+    ]);
+    BEFORE_COMMAND = /* @__PURE__ */ new Set(["if", "then", "else", "elif", "while", "until", "do", "!", "{", "time"]);
+    NO_COMMAND = /* @__PURE__ */ new Set(["for", "case", "select", "fi", "done", "esac", "}", "[["]);
+    NOT_FOLLOWED = /* @__PURE__ */ new Set(["case", "[[", "function"]);
   }
 });
 
@@ -35785,13 +36102,17 @@ function pipeDenials(lines) {
   const out = [];
   const last = [...lines].reverse().find((l) => l.trim() !== "")?.trim() ?? "";
   const node = RUNNER_NODE_DENIAL.exec(last);
-  if (node) out.push(node[1].slice(0, MAX_LINE_CHARS));
+  if (node) out.push({ kind: /^the check sandbox denied dotnet format's build host\b/.test(node[1]) ? "host" : "node", line: node[1].slice(0, MAX_LINE_CHARS) });
   const text2 = lines.join("\n");
   if (BUILD_HOST_FRAME.test(text2) && BUILD_HOST_PIPE.test(text2)) {
     const shown3 = lines.map((l) => l.trim()).find((l) => UNHANDLED.test(l)) ?? lines.map((l) => l.trim()).find((l) => BUILD_HOST_PIPE.test(l));
-    if (shown3) out.push(shown3.slice(0, MAX_LINE_CHARS));
+    if (shown3) out.push({ kind: "host", line: shown3.slice(0, MAX_LINE_CHARS) });
   }
   return out;
+}
+function pipeCause(pipes) {
+  const kinds = new Set(pipes.map((p) => p.kind));
+  return [...kinds.has("node") ? [CAUSES["pipe-denied"]] : [], ...kinds.has("host") ? [BUILD_HOST_CAUSE] : []].join("; ");
 }
 function classifyCouldNotRun(input) {
   const text2 = stripAnsi(input.output);
@@ -35808,7 +36129,7 @@ function classifyCouldNotRun(input) {
     const shown3 = excerpt(line3, at);
     if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown3)) lines.push(shown3);
   };
-  for (const pipe of pipes) show(pipe, 0);
+  for (const pipe of pipes) show(pipe.line, 0);
   for (const raw of all) {
     const line3 = raw.trim();
     const deny2 = SEATBELT_DENY.exec(line3);
@@ -35838,14 +36159,14 @@ function classifyCouldNotRun(input) {
     show(line3, found.at);
   }
   if (signals.length === 0) return null;
-  return { checkId: input.checkId, fingerprint: null, signals, cause: signals.map((s) => CAUSES[s]).join("; "), lines };
+  return { checkId: input.checkId, fingerprint: null, signals, cause: signals.map((s) => s === "pipe-denied" ? pipeCause(pipes) : CAUSES[s]).join("; "), lines };
 }
-var BASE_GATED_SIGNALS, MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER, FS_CALL, LISTEN_CALL, DENIAL, PERMISSION_DENIAL, SEATBELT_DENY, NETWORK_DENIAL, NUGET_HTTP_DENIAL, NUGET_TLS_DENIAL, DOMAIN_NAME_DENIED, SOCKET_DENIAL, MSBUILD_INTERNAL_FAILURE, TOOL_CRASH, CODE_FAILURE, ERROR_COUNT, MSBUILD_ERROR_SUMMARY, MSBUILD_ERROR_LINE, NUGET_TARGETS, RUNNER_NODE_DENIAL, BUILD_HOST_FRAME, BUILD_HOST_PIPE, UNHANDLED;
+var BASE_GATED_SIGNALS, MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, BUILD_HOST_CAUSE, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER, FS_CALL, LISTEN_CALL, DENIAL, PERMISSION_DENIAL, SEATBELT_DENY, NETWORK_DENIAL, NUGET_HTTP_DENIAL, NUGET_TLS_DENIAL, DOMAIN_NAME_DENIED, SOCKET_DENIAL, MSBUILD_INTERNAL_FAILURE, TOOL_CRASH, CODE_FAILURE, ERROR_COUNT, MSBUILD_ERROR_SUMMARY, MSBUILD_ERROR_LINE, NUGET_TARGETS, RUNNER_NODE_DENIAL, BUILD_HOST_FRAME, BUILD_HOST_PIPE, UNHANDLED;
 var init_environment_failure = __esm({
   "src/evidence/environment-failure.ts"() {
     "use strict";
     init_fingerprint();
-    BASE_GATED_SIGNALS = /* @__PURE__ */ new Set(["permission-denied", "socket-denied", "network-denied", "nuget-http-denied", "nuget-tls-denied", "program-not-found", "pipe-denied"]);
+    BASE_GATED_SIGNALS = /* @__PURE__ */ new Set(["permission-denied", "socket-denied", "network-denied", "nuget-http-denied", "nuget-tls-denied", "program-not-found", "program-denied", "pipe-denied"]);
     MAX_EVIDENCE_LINES = 3;
     MAX_LINE_CHARS = 200;
     MAX_SCANNED_LINES2 = 2e5;
@@ -35869,8 +36190,10 @@ var init_environment_failure = __esm({
       "nuget-http-denied": "NuGet's HTTP client could not start in the sandbox (the type initializer of System.Net.CookieContainer failed to read the host's domain name, GetDomainName: -1), so the restore could reach no package source",
       "nuget-tls-denied": "NuGet could not establish the SSL connection to its package source in the sandbox (on macOS srt keeps the system trust service out of reach, so .NET cannot verify nuget.org's certificate there), so the restore could reach no package source",
       "program-not-found": "a program the check runs was not found where it runs (exit 127)",
-      "pipe-denied": "the sandbox refused a .NET process the named pipe it binds under /tmp (an MSBuild worker node, or the build host dotnet format loads the project with), so nothing was built or formatted"
+      "program-denied": 'the sandbox or the operating system refused to start a program the check runs (exit 126, "operation not permitted")',
+      "pipe-denied": "the sandbox refused an MSBuild worker node the named pipe it binds under /tmp, so MSBuild built nothing"
     };
+    BUILD_HOST_CAUSE = "the sandbox refused the build host dotnet format loads the project with the named pipe it binds under /tmp, so nothing was formatted";
     CRASH_SIGNALS = /* @__PURE__ */ new Set(["SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL", "SIGTRAP", "SIGSYS"]);
     TRACE_HEADER = /^-{3,}\s*(Native|JavaScript) stack trace\s*-{3,}$/i;
     JS_FRAME = /^\d+:\s+\S/;
@@ -35926,7 +36249,16 @@ var init_environment_failure = __esm({
       /^[ \t]*\(fail\) \S/m,
       /^[ \t]*[1-9]\d* fail[ \t]*\r?$/m,
       // dart test's last line when a test failed: "00:01 +3 -1: Some tests failed.".
-      /\bSome tests failed\.[ \t]*\r?$/m
+      /\bSome tests failed\.[ \t]*\r?$/m,
+      // ctest's line for each failing test ("1/1 Test #1: perm ....***Failed    0.00 sec"), its summary ("0% tests passed,
+      // 1 tests failed out of 1") and its list ("The following tests FAILED:").
+      /\*\*\*Failed\b/,
+      /\b[1-9]\d* tests? failed out of\b/,
+      /^The following tests FAILED:/m,
+      // A formatter's verdict on the code: black's and ruff format's "1 file would be reformatted", prettier's "Code style
+      // issues found".
+      /\b[1-9]\d* files? would be reformatted\b/,
+      /\bCode style issues found\b/
     ];
     ERROR_COUNT = /\b[1-9]\d*[ \t]+errors?\b|\b[1-9]\d* Error\(s\)/i;
     MSBUILD_ERROR_SUMMARY = /\b[1-9]\d* Error\(s\)/;
@@ -35940,7 +36272,7 @@ var init_environment_failure = __esm({
 });
 
 // src/evidence/check-misconfigured.ts
-import { isAbsolute as isAbsolute14 } from "node:path";
+import { basename as basename12, isAbsolute as isAbsolute14 } from "node:path";
 function npmScript(args) {
   const VALUE_OPTIONS = /* @__PURE__ */ new Set(["--prefix", "-C", "--workspace", "-w", "--userconfig", "--cache", "--loglevel", "--script-shell"]);
   const positional2 = (from) => {
@@ -35987,27 +36319,119 @@ function classifyMisconfigured(input) {
   return null;
 }
 function classifyProgramNotFound(input) {
-  if (input.exitCode !== 127) return null;
-  const inv = directInvocation(input.command, input.shell === true);
-  if (inv === null) return null;
+  const exit = input.exitCode;
+  if (exit !== 127 && exit !== 126) return null;
+  const shell = input.shell === true;
+  const programs2 = startedPrograms(input.command, shell);
+  if (programs2.length === 0) return null;
+  const inv = directInvocation(input.command, shell);
+  const started = startedProgram(input.command, shell);
   const text2 = stripAnsi(input.output);
   if (showsCodeFailure(text2)) return null;
+  const startsPath = (path) => isAbsolute14(path) && programs2.includes(path);
+  const startsFound = (path) => isAbsolute14(path) && programs2.some((p) => p === path || !p.includes("/") && basename12(path) === p);
+  const startsName = (name) => !name.includes("/") && programs2.includes(name);
   for (const raw of outputLines(text2)) {
     const line3 = raw.trim();
-    const m = SHELL_NOT_FOUND.exec(line3);
+    if (exit === 126) {
+      const m2 = SHELL_NOT_PERMITTED.exec(line3) ?? WRAPPER_NOT_PERMITTED.exec(line3);
+      const denied = m2?.slice(1).find((g) => g !== void 0);
+      if (denied !== void 0 && (startsFound(denied) || startsName(denied))) {
+        return {
+          checkId: input.checkId,
+          fingerprint: null,
+          signals: ["program-denied"],
+          cause: `the sandbox or the operating system refused to start the program "${denied}" the check runs (exit 126, "operation not permitted")`,
+          lines: [line3.slice(0, MAX_LINE_CHARS2)],
+          program: denied
+        };
+      }
+    }
+    const m = SHELL_NOT_FOUND.exec(line3) ?? WRAPPER_NOT_FOUND.exec(line3);
     const missing = m?.slice(1).find((g) => g !== void 0);
-    if (missing === void 0 || missing !== inv.program || missing.includes("/") && !isAbsolute14(missing)) continue;
+    if (missing === void 0) continue;
+    const direct = exit === 127 && inv !== null && (missing === inv.program || missing === started) && !(missing.includes("/") && !isAbsolute14(missing));
+    const bare = exit === 127 && !missing.includes("/") && programs2.includes(missing);
+    if (!direct && !bare && !startsPath(missing)) continue;
     return {
       checkId: input.checkId,
       fingerprint: null,
       signals: ["program-not-found"],
-      cause: `the program "${missing}" was not found where the check runs (exit 127): it is not installed there, not on the check's PATH, or misspelled`,
-      lines: [line3.slice(0, MAX_LINE_CHARS2)]
+      cause: `the program "${missing}" was not found where the check runs (exit ${exit}): it is not installed there, not on the check's PATH, or misspelled`,
+      lines: [line3.slice(0, MAX_LINE_CHARS2)],
+      program: missing
     };
   }
   return null;
 }
-var MSBUILD_COMMANDS, DOTNET_COMMANDS, PYTEST, GO_USAGE, MSBUILD_SWITCH, NPM_BANNER, SHELL_NOT_FOUND, runsMsbuild, switchPassed, passes, subcommand, USAGE_ERRORS, MAX_SCANNED_LINES3, MAX_LINE_CHARS2;
+function logicalLines(text2) {
+  const out = [];
+  let hunk = false;
+  for (const raw of outputLines(text2)) {
+    if (raw.startsWith("@@")) {
+      hunk = true;
+      continue;
+    }
+    if (hunk && /^[-+ \\]/.test(raw)) continue;
+    hunk = false;
+    const line3 = raw.trim();
+    if (out.length > 0 && line3.startsWith("Caused by:")) out[out.length - 1] = `${out[out.length - 1]} ${line3}`;
+    else out.push(line3);
+  }
+  return out;
+}
+function linePaths(line3) {
+  return [...[...line3.matchAll(QUOTED_PATH)].map((q) => q[1]), ...line3.match(PATH_WORD) ?? []];
+}
+function classifyDeniedFolderProgram(input, folders) {
+  const exit = input.exitCode;
+  if (exit === null || exit === 0) return null;
+  const text2 = stripAnsi(input.output);
+  if (showsCodeFailure(text2)) return null;
+  const notFoundExit = exit === 127 || MAKE_RELAYED_127.test(text2);
+  const located = (named2) => {
+    const relative11 = !isAbsolute14(named2) && named2.includes("/");
+    const at = isAbsolute14(named2) ? named2 : relative11 ? folders.relative?.(named2) ?? null : folders.onPath(named2);
+    const where2 = at === null ? null : folders.holding(at);
+    if (where2 === null) return null;
+    return relative11 ? `links to "${at}" in ${where2}` : `lies in ${where2}`;
+  };
+  const failure = (signal, cause, line3, program) => ({
+    checkId: input.checkId,
+    fingerprint: null,
+    signals: [signal],
+    cause,
+    lines: [line3.slice(0, MAX_LINE_CHARS2)],
+    ...program !== void 0 ? { program } : {}
+  });
+  const notFound = (program, where2, line3) => failure("program-not-found", `the program "${program}" was not found where the check runs (exit ${exit}): it ${where2}, a folder the check sandbox denies`, line3, program);
+  for (const line3 of logicalLines(text2)) {
+    if (REFUSAL.test(line3)) {
+      const program = LAUNCHER_REFUSAL.exec(line3)?.slice(1).find((g) => g !== void 0);
+      const where2 = program !== void 0 ? located(program) : null;
+      if (program !== void 0 && where2 !== null) {
+        return failure("program-denied", `the sandbox or the operating system refused to start the program "${program}" the check runs ("operation not permitted"), which ${where2}, a folder the check sandbox denies`, line3, program);
+      }
+      for (const path of linePaths(line3)) {
+        const held = folders.holding(path);
+        if (held !== null) return failure("filesystem-denied", `the sandbox or the operating system refused "${path}" ("operation not permitted"), which lies in ${held}, a folder the check sandbox denies: a check runs in a checkout of its own and may not use it`, line3);
+      }
+    }
+    for (const m of [LAUNCHER_NOT_FOUND.exec(line3), notFoundExit ? NOT_FOUND.exec(line3) : null]) {
+      const missing = m?.slice(1).find((g) => g !== void 0);
+      const where2 = missing !== void 0 ? located(missing) : null;
+      if (missing !== void 0 && where2 !== null) return notFound(missing, where2, line3);
+    }
+    if (notFoundExit && NOT_FOUND_WORDS.test(line3)) {
+      for (const path of linePaths(line3)) {
+        const where2 = located(path);
+        if (where2 !== null) return notFound(path, where2, line3);
+      }
+    }
+  }
+  return null;
+}
+var MSBUILD_COMMANDS, DOTNET_COMMANDS, PYTEST, GO_USAGE, MSBUILD_SWITCH, NPM_BANNER, SHELL_NOT_FOUND, SHELL_NOT_PERMITTED, WRAPPER, wrapperFailure, WRAPPER_NOT_FOUND, WRAPPER_NOT_PERMITTED, runsMsbuild, switchPassed, passes, subcommand, USAGE_ERRORS, MAX_SCANNED_LINES3, MAX_LINE_CHARS2, REFUSAL, LAUNCHER, BEFORE_PROGRAM, NAMED, LAUNCHER_REFUSAL, QUOTED_PATH, PATH_WORD, LAUNCHER_NOT_FOUND, NOT_FOUND, NOT_FOUND_WORDS, MAKE_RELAYED_127;
 var init_check_misconfigured = __esm({
   "src/evidence/check-misconfigured.ts"() {
     "use strict";
@@ -36055,7 +36479,12 @@ var init_check_misconfigured = __esm({
     GO_USAGE = /^usage: go\b|^Run 'go help\b|^\s*go <command> \[arguments\]$/m;
     MSBUILD_SWITCH = /^Switch: \S/;
     NPM_BANNER = /^> \S/m;
-    SHELL_NOT_FOUND = /^(?:\S*\/)?(?:sh|bash|dash|ksh|ash)(?::\s*line \d+)?:\s*(?:\d+:\s*)?(?:exec:\s*)?([^\s:]+): (?:command not found|not found|No such file or directory)$|^(?:\S*\/)?zsh:\d+: (?:command not found|no such file or directory): (\S+)$|^(?:\S*\/)?env: ['‘]?([^\s'’:]+)['’]?: No such file or directory$/;
+    SHELL_NOT_FOUND = /^(?:\S*\/)?(?:sh|bash|dash|ksh|ash|orbit-limits)(?::\s*line \d+)?:\s*(?:\d+:\s*)?(?:exec:\s*)?(\S.*?): (?:cannot execute: )?(?:command not found|not found|No such file or directory)$|^(?:\S*\/)?zsh:\d+: (?:command not found|no such file or directory): (\S.*)$|^(?:\S*\/)?env: ['‘]?(\S.*?)['’]?: No such file or directory$/;
+    SHELL_NOT_PERMITTED = /^(?:\S*\/)?(?:sh|bash|dash|ksh|ash|orbit-limits)(?::\s*line \d+)?:\s*(?:\d+:\s*)?(?:exec:\s*)?(\S.*?): (?:cannot execute: |[^:]+: bad interpreter: )?Operation not permitted$|^(?:\S*\/)?zsh:\d+: operation not permitted: (\S.*)$|^(?:\S*\/)?env: ['‘]?(\S.*?)['’]?: Operation not permitted$/;
+    WRAPPER = String.raw`(?:\S*\/)?g?(?:timeout|nohup|nice|stdbuf|xargs|time)`;
+    wrapperFailure = (words2) => new RegExp(String.raw`^${WRAPPER}: (?:failed to run command |cannot run )?['\u2018]?(\S.*?)['\u2019]?: ${words2}$`);
+    WRAPPER_NOT_FOUND = wrapperFailure("No such file or directory");
+    WRAPPER_NOT_PERMITTED = wrapperFailure("Operation not permitted");
     runsMsbuild = (inv) => inv.tool === "msbuild" || inv.tool === "dotnet" && MSBUILD_COMMANDS.has(inv.args[0] ?? "");
     switchPassed = (inv, _m, detail) => detail === void 0 || inv.args.includes(detail.replace(/^Switch:\s*/, ""));
     passes = (inv, arg) => inv.args.some((a) => a === arg || a.startsWith(`${arg}=`));
@@ -36193,6 +36622,35 @@ var init_check_misconfigured = __esm({
     ];
     MAX_SCANNED_LINES3 = 2e5;
     MAX_LINE_CHARS2 = 200;
+    REFUSAL = /operation not permitted|\bEPERM\b/i;
+    LAUNCHER = String.raw`(?:\S*\/)?(?:sh|bash|dash|ksh|ash|zsh|orbit-limits|env|g?make|g?(?:timeout|nohup|nice|stdbuf|xargs|time))`;
+    BEFORE_PROGRAM = String.raw`(?:(?:^|\s)${LAUNCHER}(?::\s*line \d+)?|^\S+:\s*line \d+):\s*(?:\d+:\s*)?(?:(?:eval|exec):\s*)?(?:failed to run command |cannot run )?`;
+    NAMED = String.raw`['\u2018]?([^:\s'\u2018][^:]*?)['\u2019]?`;
+    LAUNCHER_REFUSAL = new RegExp(
+      [
+        String.raw`${BEFORE_PROGRAM}${NAMED}: (?:cannot execute: |[^:]+: bad interpreter: )?operation not permitted$`,
+        String.raw`^(?:\S*\/)?(?:zsh|\(eval\)):\d+: operation not permitted: (\S.*)$`,
+        String.raw`\bspawn(?:Sync)? (\S+) EPERM\b`,
+        String.raw`\bFailed to spawn: \x60([^\x60]+)\x60.*\boperation not permitted\b`,
+        String.raw`\boperation not permitted: ['"\u2018]([^'"\u2019/\s][^'"\u2019/]*)['"\u2019]`
+      ].join("|"),
+      "i"
+    );
+    QUOTED_PATH = /['"\u2018\u201C](\/[^'"\u2019\u201D]+)['"\u2019\u201D]/g;
+    PATH_WORD = /(?<![\w./~-])\/[^\s'"`\u2018\u2019\u201C\u201D:,;()<>[\]{}|]+/g;
+    LAUNCHER_NOT_FOUND = new RegExp(
+      [
+        String.raw`${BEFORE_PROGRAM}${NAMED}: (?:cannot execute: )?(?:command not found|not found|No such file or directory)$`,
+        String.raw`^(?:\S*\/)?(?:zsh|\(eval\)):\d+: (?:command not found|no such file or directory): (\S.*)$`,
+        String.raw`(?:^|:\s)${NAMED}: command not found$`,
+        String.raw`\bspawn(?:Sync)? (\S+) ENOENT\b`,
+        String.raw`\bFailed to spawn: \x60([^\x60]+)\x60.*\bNo such file or directory\b`,
+        String.raw`\bNo such file or directory: ['"\u2018]([^'"\u2019/\s][^'"\u2019/]*)['"\u2019]`
+      ].join("|")
+    );
+    NOT_FOUND = /(?:^|:\s)(?:exec:\s*|failed to run command |cannot run )?['\u2018]?([^:\s'\u2018][^:]*?)['\u2019]?: (?:cannot execute: )?(?:command not found|not found|No such file or directory)$|(?:command not found|no such file or directory): (\S.*)$/;
+    NOT_FOUND_WORDS = /\b(?:command not found|not found|No such file or directory|ENOENT)\b/i;
+    MAKE_RELAYED_127 = /^g?make(?:\[\d+\])?: \*\*\* \[[^\]]*\] Error 127$/m;
   }
 });
 
@@ -36788,7 +37246,7 @@ var init_resolve = __esm({
 
 // src/evidence/msbuild.ts
 import { closeSync as closeSync6, constants as constants3, fstatSync as fstatSync4, lstatSync as lstatSync7, opendirSync, openSync as openSync6, readSync as readSync3 } from "node:fs";
-import { basename as basename12, join as join23 } from "node:path";
+import { basename as basename13, join as join23 } from "node:path";
 function identity(path, kind) {
   try {
     const st = lstatSync7(path);
@@ -36930,7 +37388,7 @@ function unwrapEnv(argv2) {
 function shellLine(check) {
   if (check.shell) return check.command[0] ?? "";
   const [program, flag, script] = check.command;
-  return program !== void 0 && SHELLS3.has(basename12(program)) && flag === "-c" && script !== void 0 ? script : null;
+  return program !== void 0 && SHELLS3.has(basename13(program)) && flag === "-c" && script !== void 0 ? script : null;
 }
 function commandsOf(check) {
   const line3 = shellLine(check);
@@ -36940,7 +37398,7 @@ function commandsOf(check) {
   }
   const [program] = check.command;
   if (program === void 0) return [];
-  return [(basename12(program) === "env" ? unwrapEnv(check.command) : null) ?? { prefix: [], argv: [...check.command] }];
+  return [(basename13(program) === "env" ? unwrapEnv(check.command) : null) ?? { prefix: [], argv: [...check.command] }];
 }
 function programs(line3) {
   return line3.split(/[;&|()\n`]+/).map((part) => part.trim().split(/\s+/).find((w) => w !== "" && !ASSIGNMENT3.test(w))).filter((w) => w !== void 0);
@@ -36964,7 +37422,7 @@ function judgeCommand2(argv2, oneProcessor, usesDotnet) {
   const [program] = argv2;
   if (program === void 0) return null;
   if (isDotnet(program)) return judgeDotnet(argv2, oneProcessor);
-  if (words(argv2.slice(1)).some(isDotnet)) return { kind: "indirect", reason: `runs dotnet through ${basename12(program)}, ${CANNOT_TELL}` };
+  if (words(argv2.slice(1)).some(isDotnet)) return { kind: "indirect", reason: `runs dotnet through ${basename13(program)}, ${CANNOT_TELL}` };
   return usesDotnet && runsOthers(program) ? { kind: "indirect", reason: `may run dotnet through ${program}, ${CANNOT_TELL}` } : null;
 }
 function msbuildNodes(check, usesDotnet) {
@@ -37116,10 +37574,10 @@ var init_msbuild = __esm({
     CHAIN_SEPARATOR = /(&&|;|\n)/;
     ASSIGNMENT3 = /^[A-Za-z_][A-Za-z0-9_]*=/;
     MAX_SHOWN_CHARS = 160;
-    isDotnet = (word) => basename12(word) === "dotnet";
+    isDotnet = (word) => basename13(word) === "dotnet";
     verbOf = (argv2) => argv2.slice(1).find((w) => !w.startsWith("-"));
     msbuildWords = (argv2, verb2) => verb2 === "test" ? ownWords(argv2) : argv2;
-    runsOthers = (program) => RUNNERS2.has(basename12(program)) || SCRIPT.test(program) || program.includes("/");
+    runsOthers = (program) => RUNNERS2.has(basename13(program)) || SCRIPT.test(program) || program.includes("/");
     PINNED = { kind: "pinned" };
     stripSwitches = (text2) => text2.replace(/(^|\s)(?:--?|\/)(?:m|maxcpucount)(?::\d+)?(?=\s|$)/gi, "").trimEnd();
   }
@@ -37127,7 +37585,7 @@ var init_msbuild = __esm({
 
 // src/evidence/dotnet-format.ts
 import { lstatSync as lstatSync8, readFileSync as readFileSync15 } from "node:fs";
-import { basename as basename13, dirname as dirname16, join as join24, posix as posix5, relative as relative2, isAbsolute as isAbsolute15 } from "node:path";
+import { basename as basename14, dirname as dirname16, join as join24, posix as posix5, relative as relative2, isAbsolute as isAbsolute15 } from "node:path";
 function formatOutsideFix(check, where2 = null) {
   if (where2) return `remove dotnet format from ${where2.command} and run it in CI`;
   return `remove checks.${check.id} from .orbit/config.yaml and run dotnet format in CI`;
@@ -37326,7 +37784,7 @@ var init_dotnet_format = __esm({
     DOTNET_FORMAT_REASON = `(dotnet format loads the project through a build host, a separate process whose named pipe .NET binds under /tmp, which the check sandbox refuses, so the check fails, on macOS only after a 60 s wait (SDK 9 and later; SDK 8, pinned by global.json, loads it in its own process); ${FOLDER_TEXT} reads the files without loading the project and checks whitespace only, so run the style and analyzer checks (dotnet format --verify-no-changes) outside Orbit, in CI; docs/troubleshooting.md, "dotnet format under the sandbox")`;
     FORMAT_OUTSIDE_REASON = `(on macOS no form of dotnet format runs in a run's check sandbox with SDK 9 and later: every form but dotnet format whitespace --folder loads the project through a build host whose named pipe .NET binds under /tmp, which the sandbox refuses, and whitespace --folder lists every folder above the checkout for .editorconfig files, while the run's checkout sits in the Orbit home, which the sandbox does not let a check read; with SDK 8 pinned by global.json, which loads the project in dotnet format's own process, a dotnet restore -m:1 first and dotnet format with --no-restore run; docs/troubleshooting.md, "dotnet format under the sandbox")`;
     restoresFirst = (argv2) => loadsProject(argv2) && !argv2.includes("--no-restore");
-    shownOf = (argv2) => [basename13(argv2[0]), ...argv2.slice(1)].join(" ");
+    shownOf = (argv2) => [basename14(argv2[0]), ...argv2.slice(1)].join(" ");
     withFolderForm = (check) => rewritten(
       check,
       (argv2) => loadsProject(argv2) ? folderArgs(argv2) : [...argv2],
@@ -47340,6 +47798,18 @@ function freshReviewSpent(run) {
     return null;
   }
 }
+function policyFixSettings(run) {
+  try {
+    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
+    const settings = o?.policy_fix?.settings;
+    return Array.isArray(settings) ? settings.filter((s) => typeof s === "string") : [];
+  } catch {
+    return [];
+  }
+}
+function policyFixClause(settings) {
+  return `the fix changes ${settings.join(", ")}, which this run's frozen policy keeps as it started`;
+}
 function newRunNeeded(db, run) {
   if (run.state !== "BLOCKED") return null;
   const frozen = frozenPolicySetting(run);
@@ -47348,6 +47818,8 @@ function newRunNeeded(db, run) {
   if (failures !== null && failures.every((f) => f.questionId === null || listQuestions(db, run.id).every((q) => q.id !== f.questionId))) {
     return "the block comes from the environment or a check's definition, which a resume does not change: the run's policy and the check results recorded for its candidate are frozen";
   }
+  const settings = policyFixSettings(run);
+  if (settings.length > 0) return policyFixClause(settings);
   return freshReviewSpent(run);
 }
 function missingTargetChecks(run) {
@@ -48875,7 +49347,7 @@ var init_channels = __esm({
 });
 
 // src/evidence/report.ts
-import { basename as basename14, isAbsolute as isAbsolute19, join as join38, relative as relative5, sep as sep9 } from "node:path";
+import { basename as basename15, isAbsolute as isAbsolute19, join as join38, relative as relative5, sep as sep9 } from "node:path";
 function aggregateCheckConfigHash(snapshot2, checkIds) {
   const ids = [...new Set(checkIds)].sort();
   const map2 = {};
@@ -48932,7 +49404,7 @@ function evaluateEvidence(input) {
     const r = relative5(runDir2, p);
     return r === "" || r.startsWith("..") || isAbsolute19(r) ? p : r.split(sep9).join("/");
   };
-  const logName = (p) => artifactPath(p, basename14(p));
+  const logName = (p) => artifactPath(p, basename15(p));
   const evidenceFor = (checkId) => {
     const r = valid.get(checkId);
     const journeys = ui.get(checkId);
@@ -52804,7 +53276,7 @@ var init_report3 = __esm({
 // src/ui/runner.ts
 import { closeSync as closeSync9, copyFileSync, existsSync as existsSync32, mkdirSync as mkdirSync17, openSync as openSync9, readFileSync as readFileSync26, realpathSync as realpathSync14, rmSync as rmSync11, statSync as statSync12, writeFileSync as writeFileSync6 } from "node:fs";
 import { createRequire as createRequire3 } from "node:module";
-import { basename as basename15, dirname as dirname23, isAbsolute as isAbsolute20, join as join45, relative as relative6, resolve as resolve11, sep as sep11 } from "node:path";
+import { basename as basename16, dirname as dirname23, isAbsolute as isAbsolute20, join as join45, relative as relative6, resolve as resolve11, sep as sep11 } from "node:path";
 async function runUiChecks(input) {
   const clock = input.clock ?? systemClock;
   const { snapshot: snapshot2, uiConfig, candidate } = input;
@@ -53335,7 +53807,7 @@ function collectAttachments(attachments, dirs) {
       stored = real;
       if (!isInside(real, outputReal)) {
         mkdirSync17(dirs.artifactDir, { recursive: true });
-        const copy = join45(dirs.artifactDir, `${kind}-${basename15(real)}`);
+        const copy = join45(dirs.artifactDir, `${kind}-${basename16(real)}`);
         copyFileSync(real, copy);
         stored = copy;
       }
@@ -55206,8 +55678,33 @@ var init_verification = __esm({
 });
 
 // src/controller/environment-block.ts
-import { readFileSync as readFileSync29, realpathSync as realpathSync17 } from "node:fs";
-import { dirname as dirname26, isAbsolute as isAbsolute21, join as join51, relative as relative7, resolve as resolve13 } from "node:path";
+import { existsSync as existsSync35, lstatSync as lstatSync10, readFileSync as readFileSync29, readlinkSync as readlinkSync2, realpathSync as realpathSync17 } from "node:fs";
+import { basename as basename17, delimiter as delimiter4, dirname as dirname26, isAbsolute as isAbsolute21, join as join51, relative as relative7, resolve as resolve13 } from "node:path";
+function programDenial(program, repoRoot, homeDir, own = () => false) {
+  if (!isAbsolute21(program)) return null;
+  const { repository, parent } = repositoryDenials(repoRoot, homeDir);
+  const spelled = resolve13(program);
+  const paths = [spelled, join51(canonicalPath(dirname26(spelled)), basename17(spelled))].filter((p) => !own(p));
+  const real = canonicalPath(spelled);
+  const target = !paths.includes(real) && !own(real) ? real : null;
+  const folders = [["repository", repository], ...parent !== null ? [["parent", parent]] : []];
+  for (const [under, dir] of folders) if (paths.some((p) => isWithin(p, dir))) return { program, repository, parent, under };
+  for (const [under, dir] of folders) if (target !== null && isWithin(target, dir)) return { program, repository, parent, under, target };
+  return null;
+}
+function programDenialCause(d) {
+  const folders = d.parent !== null ? `the repository (${d.repository}) and the folder that holds it and its sibling projects (${d.parent})` : `the repository (${d.repository})`;
+  const where2 = d.under === "repository" ? "the repository" : "a folder beside the repository";
+  if (d.onPath) {
+    const leads = d.target !== void 0 ? `links to "${d.target}" in` : "leads into";
+    return `the check sandbox denies ${folders}, and the program "${d.onPath.name}" the check runs is "${d.program}" on ${pathOf(d.onPath.setBy)}, which ${leads} ${where2}, so it cannot start in a check`;
+  }
+  const lies = d.target !== void 0 ? `links to "${d.target}", which lies in` : "lies in";
+  return `the check sandbox denies ${folders}, and the program "${d.program}" the check runs ${lies} ${where2}, so it cannot start in a check`;
+}
+function pathOf(setBy) {
+  return setBy !== null ? `the PATH ${setBy} sets` : "the PATH Orbit runs its checks with";
+}
 function outputOf(row) {
   if (row.logPath) {
     try {
@@ -55303,7 +55800,19 @@ function formatFix(f) {
   return def !== null && formatLoadsProject(def) !== null ? dotnetFormatFix(def) : `in checks.${f.checkId}.command, dotnet format whitespace --folder --verify-no-changes in place of its dotnet format, in the folder of the solution or project it formats and with its --include and --exclude`;
 }
 function environmentFix(failures, platform3 = process.platform) {
+  const { fixes } = environmentFixes(failures, platform3);
+  return fixes.length > 0 ? fixes.join("; and ") : null;
+}
+function environmentFixSettings(failures, platform3 = process.platform) {
+  return environmentFixes(failures, platform3).settings;
+}
+function environmentFixes(failures, platform3) {
   const fixes = [];
+  const settings = /* @__PURE__ */ new Set();
+  const change = (group, key2) => {
+    for (const f of group) settings.add(key2(f.checkId));
+  };
+  const command = (id) => `checks.${id}.command`;
   const has = (signal) => failures.filter((f) => f.signals.includes(signal));
   const refusedFs = failures.filter((f) => !f.signals.includes("pipe-denied") && (f.signals.includes("filesystem-denied") || f.signals.includes("permission-denied") || f.signals.includes("sandbox-violation")));
   const outsideFs = refusedFs.filter((f) => f.folderForm === false && runsDotnetFormat(f));
@@ -55320,37 +55829,70 @@ function environmentFix(failures, platform3 = process.platform) {
   const format = [...sockets.filter(runsDotnetFormat), ...pipes.filter((f) => f.lines.some((l) => !MSBUILD_NODE_DENIAL.test(l))), ...outsideFs];
   const kinds = [msbuild, stopped, format].filter((g) => g.length > 0).length;
   const forChecks = (group) => kinds > 1 ? `for ${group.length > 1 ? "checks" : "check"} ${group.map((f) => f.checkId).join(", ")}: ` : "";
-  if (msbuild.length > 0) fixes.push(`${forChecks(msbuild)}this is MSBuild starting a worker node, whose named pipe .NET makes a Unix socket under /tmp, and the check sandbox does not let a check create one: build on one MSBuild node, with -m:1 on the check's dotnet command (for example [dotnet, test, -m:1]), which orbit doctor prints for the check's own command (docs/troubleshooting.md, ".NET builds and MSBuild worker nodes")`);
+  if (msbuild.length > 0) {
+    fixes.push(`${forChecks(msbuild)}this is MSBuild starting a worker node, whose named pipe .NET makes a Unix socket under /tmp, and the check sandbox does not let a check create one: build on one MSBuild node, with -m:1 on the check's dotnet command (for example [dotnet, test, -m:1]), which orbit doctor prints for the check's own command (docs/troubleshooting.md, ".NET builds and MSBuild worker nodes")`);
+    change(msbuild, command);
+  }
   if (stopped.length > 0) {
     const exact = stopped.every((f) => f.nodeFix !== void 0) ? [...new Set(stopped.map((f) => f.nodeFix))] : null;
     fixes.push(`${forChecks(stopped)}the sandbox refuses MSBuild worker nodes their named pipe under /tmp: ${exact ? exact.join("; ") : `the check's log ends with the fix for its command (docs/troubleshooting.md, ".NET builds and MSBuild worker nodes")`}`);
+    change(stopped, command);
   }
   const outside = format.filter((f) => f.folderForm === false);
   const folder = format.filter((f) => f.folderForm !== false);
   if (folder.length > 0) {
     const ids = folder.map((f) => f.checkId);
     fixes.push(`dotnet format (${ids.length > 1 ? "checks" : "check"} ${ids.join(", ")}) takes no -m:1, which it reads as the project to format, and it loads the project through a build host whose named pipe .NET binds under /tmp, which no check sandbox may use: check whitespace with the form that loads no project, ${folder.map(formatFix).join("; ")}, and run the style and analyzer checks outside Orbit, in CI (docs/troubleshooting.md, "dotnet format under the sandbox")`);
+    change(folder, command);
   }
   if (outside.length > 0) {
     const ids = outside.map((f) => f.checkId);
     fixes.push(`dotnet format (${ids.length > 1 ? "checks" : "check"} ${ids.join(", ")}) cannot run in this check sandbox: ${outside.map((f) => formatOutsideFix({ id: f.checkId })).join("; ")} ${FORMAT_OUTSIDE_REASON}`);
+    change(outside, (id) => `checks.${id}`);
   }
   const network = has("network-denied");
   const nugetOnMac2 = platform3 === "darwin" ? network.filter((f) => f.lines.some((l) => NUGET_LINE.test(l))) : [];
   if (network.length > nugetOnMac2.length) {
     fixes.push("the check reached for a host its policy does not let it reach, and the sandbox's network proxy refused it: add the host to the check's network_hosts (it must also be covered by network.allowed_hosts), or let the check work offline, with its dependencies restored by the dependency install (dependencies.install_command)");
+    change(network.filter((f) => !nugetOnMac2.includes(f)), (id) => `checks.${id}.network_hosts`);
   }
   if (has("nuget-http-denied").length > 0) {
     fixes.push(`NuGet's HTTP client could not start because it may not read the machine's NIS domain name: Orbit adds the one rule that allows it only with the srt it ships, and the check's record says when it was not added, so run with that srt; and ${NUGET_FILL}`);
   } else if (nugetOnMac2.length > 0 || has("nuget-tls-denied").length > 0) {
     fixes.push(`NuGet's restore could not download its packages in the sandbox: ${NUGET_FILL}`);
   }
-  const missing = has("program-not-found");
+  const located = failures.filter((f) => f.programDenial !== void 0 && (f.signals.includes("program-denied") || f.signals.includes("program-not-found")));
+  const byPath2 = located.filter((f) => f.programDenial.onPath !== void 0);
+  const byCommand = located.filter((f) => f.programDenial.onPath === void 0);
+  if (byCommand.length > 0) {
+    const d = byCommand[0].programDenial;
+    const reads = d.parent !== null ? "may read neither the repository nor the folder that holds it and its sibling projects" : "may not read the repository";
+    fixes.push(`a check runs in a checkout of its own, outside the repository, and its sandbox ${reads}: build the tool environment inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, or place it outside ${d.parent ?? d.repository}, then correct ${byCommand.map((f) => command(f.checkId)).join(", ")} in .orbit/config.yaml (docs/configuration.md, "Tool environments")`);
+    change(byCommand, command);
+  }
+  const ownPath = byPath2.filter((f) => f.programDenial.onPath.setBy === null);
+  if (ownPath.length > 0) {
+    fixes.push(`the check looks its program up on the PATH Orbit runs its checks with, the PATH of the shell that started orbit run or orbit resume --foreground (a service keeps the one orbit service install recorded), and that PATH leads into a folder the check sandbox denies: run Orbit from a shell whose PATH does not (deactivate the tool environment there, and install the service again from such a shell), then resume the run; or build the tool environment inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, a change to ${ownPath.map((f) => command(f.checkId)).join(", ")} that needs a new run (docs/configuration.md, "Tool environments")`);
+  }
+  const checkPath = byPath2.filter((f) => f.programDenial.onPath.setBy !== null);
+  if (checkPath.length > 0) {
+    const keys = checkPath.map((f) => f.programDenial.onPath.setBy);
+    fixes.push(`the PATH the check's env sets leads into a folder the check sandbox denies: take that folder out of it, or build the tool environment inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, then correct ${[...new Set(keys)].join(", ")} in .orbit/config.yaml (docs/configuration.md, "Tool environments")`);
+    for (const key2 of keys) settings.add(key2);
+  }
+  const refusedProgram = has("program-denied").filter((f) => !located.includes(f));
+  if (refusedProgram.length > 0) {
+    const named2 = refusedProgram.filter((f) => !foundOnPath(f));
+    const path = refusedProgram.length > named2.length ? ", or give the check a PATH that finds it where a check may start it (the PATH Orbit runs its checks with, or the check's env)" : "";
+    fixes.push(`put the program where the check sandbox lets a check start it, or build it inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, then correct ${refusedProgram.map((f) => command(f.checkId)).join(", ")} in .orbit/config.yaml${path} (orbit doctor names a check whose program lies in a folder the check sandbox denies; docs/configuration.md, "Tool environments")`);
+    change(named2, command);
+  }
+  const missing = has("program-not-found").filter((f) => !located.includes(f));
   if (missing.length > 0) {
-    const keys = missing.map((f) => `checks.${f.checkId}.command`).join(", ");
+    const keys = missing.map((f) => command(f.checkId)).join(", ");
     fixes.push(`install the program where the check runs, or give the check a PATH that holds it (through its env); if the name is misspelled, correct ${keys} in .orbit/config.yaml, which needs a new run because this run's policy is frozen (orbit doctor names a check whose executable is missing)`);
   }
-  return fixes.length > 0 ? fixes.join("; and ") : null;
+  return { fixes, settings: [...settings] };
 }
 function stoppedNodeFix(ctx, found, checkout, folderForm) {
   const def = ctx.snapshot.config.checks[found.checkId];
@@ -55376,12 +55918,118 @@ function baselineEnvironmentFailures(ctx, report2, checkoutDir) {
     const entry = report2.checks.find((c) => c.checkId === failure.checkId);
     const exitCode = row ? row.exitCode : entry?.exitCode ?? null;
     const startFailure = row?.status === "ERROR" || entry?.status === "ERROR" ? /could not start the check:[^\n]*/.exec(output)?.[0] ?? null : null;
-    const found = classifyNotExecuted({ checkId: failure.checkId, output, startFailure }) ?? classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ?? (def && def.kind === "command" ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) : null);
+    const found = classifyNotExecuted({ checkId: failure.checkId, output, startFailure }) ?? classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ?? (def && def.kind === "command" ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) ?? deniedFolderFailure(ctx, def, { checkId: failure.checkId, exitCode, output }, insideRoots) : null);
     if (!found) continue;
     const folderForm = folderFormRunsAt(ctx, checkoutDir);
-    out.push({ ...found, ...commandOf(ctx, failure.checkId), folderForm, ...stoppedNodeFix(ctx, found, checkoutDir, folderForm), questionId: null, ...logPath ? { logPath } : {} });
+    const located = def && def.kind === "command" ? deniedProgramOf(ctx, found, def) : null;
+    out.push({ ...found, ...located ? { cause: programDenialCause(located), programDenial: located } : {}, ...commandOf(ctx, failure.checkId), folderForm, ...stoppedNodeFix(ctx, found, checkoutDir, folderForm), questionId: null, ...logPath ? { logPath } : {} });
   }
   return out;
+}
+function deniedLaunches(ctx, report2, environment) {
+  const out = /* @__PURE__ */ new Set();
+  for (const f of environment) {
+    if (f.programDenial === void 0 || !f.signals.some((s) => s === "program-denied" || s === "program-not-found")) continue;
+    const row = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: null, checkId: f.checkId, rootsOnly: true }).at(-1);
+    const exitCode = row ? row.exitCode : report2.checks.find((c) => c.checkId === f.checkId)?.exitCode ?? null;
+    if (exitCode === 126 || exitCode === 127) out.add(f.checkId);
+  }
+  return out;
+}
+function deniedProgramOf(ctx, found, def) {
+  if (!found.signals.includes("program-denied") && !found.signals.includes("program-not-found")) return null;
+  const shell = def.shell === true;
+  const program = found.program ?? startedProgram(def.command, shell);
+  if (program === null) return null;
+  const setBy = def.env.PATH !== void 0 ? `checks.${found.checkId}.env` : null;
+  try {
+    const repo = ctx.snapshot.repo_root;
+    const home2 = homeOf2(ctx.deps);
+    if (isAbsolute21(program)) {
+      const d2 = programDenial(program, repo, home2);
+      if (d2 === null) return null;
+      const programs2 = startedPrograms(def.command, shell);
+      if (programs2.includes(program)) return d2;
+      const onPath = programs2.includes(basename17(program)) || pathFolders(def).some((dir) => resolve13(dir) === dirname26(resolve13(program)));
+      return onPath ? { ...d2, onPath: { name: basename17(program), setBy } } : d2;
+    }
+    if (program.includes("/")) {
+      const target = relativeTarget(repo, def, program, (path) => programDenial(path, repo, home2) !== null);
+      if (target === null) return null;
+      const d2 = programDenial(target, repo, home2);
+      return d2 === null ? null : { ...d2, program, target };
+    }
+    const at = onCheckPath(def, program);
+    if (at === null) return null;
+    const d = programDenial(at, repo, home2);
+    return d === null ? null : { ...d, onPath: { name: program, setBy } };
+  } catch {
+    return null;
+  }
+}
+function pathFolders(def) {
+  return (def.env.PATH ?? process.env.PATH ?? "").split(delimiter4).filter((dir) => isAbsolute21(dir));
+}
+function onCheckPath(def, name) {
+  for (const dir of pathFolders(def)) if (isExecutableFile(join51(dir, name))) return join51(dir, name);
+  return null;
+}
+function relativeTarget(repoRoot, def, path, denied) {
+  const root = resolve13(repoRoot);
+  const spelled = resolve13(root, def.cwd, path);
+  if (!isWithin(spelled, root) || !existsSync35(spelled)) return null;
+  const realRoot = canonicalPath(root);
+  let at = realRoot;
+  let rest = relative7(root, spelled).split("/");
+  let inCheckout2 = true;
+  for (let links = 0; rest.length > 0; ) {
+    const name = rest.shift();
+    if (name === "" || name === ".") continue;
+    if (name === "..") {
+      at = dirname26(at);
+      continue;
+    }
+    const next = join51(at, name);
+    let literal2;
+    try {
+      if (!lstatSync10(next).isSymbolicLink()) {
+        at = next;
+        continue;
+      }
+      literal2 = readlinkSync2(next);
+    } catch {
+      return null;
+    }
+    if (++links > MAX_LINKS) return null;
+    if (isAbsolute21(literal2)) inCheckout2 = false;
+    const leads = resolve13(at, literal2, ...rest);
+    if ((!inCheckout2 || !isWithin(leads, realRoot)) && denied(leads)) return leads;
+    if (isAbsolute21(literal2)) at = "/";
+    rest = [...literal2.split("/"), ...rest];
+  }
+  return null;
+}
+function deniedFolderFailure(ctx, def, run, insideRoots) {
+  try {
+    const repo = ctx.snapshot.repo_root;
+    const home2 = homeOf2(ctx.deps);
+    const roots = insideRoots.filter((root) => isAbsolute21(root)).flatMap((root) => [resolve13(root), canonicalPath(root)]);
+    const own = (path) => roots.some((root) => isWithin(path, root));
+    const seen = /* @__PURE__ */ new Map();
+    const holding = (path) => {
+      if (seen.has(path)) return seen.get(path);
+      const d = isAbsolute21(path) ? programDenial(path, repo, home2, own) : null;
+      const where2 = d === null ? null : d.under === "repository" ? `the repository (${d.repository})` : `the folder that holds the repository and its sibling projects (${d.parent})`;
+      seen.set(path, where2);
+      return where2;
+    };
+    return classifyDeniedFolderProgram({ ...run, command: def.command, shell: def.shell }, { holding, onPath: (name) => onCheckPath(def, name), relative: (path) => relativeTarget(repo, def, path, (target) => holding(target) !== null) });
+  } catch {
+    return null;
+  }
+}
+function foundOnPath(f) {
+  return f.program !== void 0 && f.command !== void 0 && !startedPrograms(f.command.argv, f.command.shell).includes(f.program);
 }
 function baselineIncompleteChecks(ctx, report2) {
   const out = [];
@@ -55427,13 +56075,19 @@ function amendmentSentence(checks) {
 function baselineEnvironmentBlockReason(input) {
   const { runId, failures } = input;
   const amended = (input.amended ?? []).filter((a) => failures.some((f) => f.checkId === a.checkId));
-  return joinSentences([
-    `${named(failures)} could not run on the base revision ${input.baseRevision.slice(0, 12)}, and the output shows an environment cause, not a pre-existing failure: ${evidenceOf(failures)}`,
+  return joinSentences([...environmentBaseSentences(input.baseRevision, failures, amended), afterEnvironmentFix(runId, environmentFixSettings(failures))]);
+}
+function environmentBaseSentences(baseRevision, failures, amended) {
+  return [
+    `${named(failures)} could not run on the base revision ${baseRevision.slice(0, 12)}, and the output shows an environment cause, not a pre-existing failure: ${evidenceOf(failures)}`,
     ...amended.length > 0 ? [amendmentSentence(amended)] : [],
     `${failures.length > 1 ? "They are" : "It is"} not recorded as a pre-existing failure and no baseline exception is offered: the check never got as far as the repository's code, so accepting its failure would let a run pass with a check that never ran`,
-    `Fix: ${environmentFix(failures) ?? ENVIRONMENT_FALLBACK_FIX}`,
-    `Then orbit resume ${runId} runs the baseline again; a changed check definition needs a new run, because this run's policy is frozen`
-  ]);
+    `Fix: ${environmentFix(failures) ?? ENVIRONMENT_FALLBACK_FIX}`
+  ];
+}
+function afterEnvironmentFix(runId, settings) {
+  if (settings.length === 0) return `Then orbit resume ${runId} runs the baseline again; a changed check definition needs a new run, because this run's policy is frozen`;
+  return `${policyFixClause(settings).replace(/^t/, "T")}, so resuming would run the same check again: cancel this run (orbit cancel ${runId}) and start a new run with orbit run`;
 }
 function incompleteBaseSentence(baseRevision, failures) {
   return `${named(failures)} did not complete on the base revision ${baseRevision.slice(0, 12)}: ${evidenceOf(failures)}`;
@@ -55463,6 +56117,14 @@ function baselineBlockReason(input) {
   const amended = (input.amended ?? []).filter(
     (a) => misconfigured.some((m) => m.checkId === a.checkId) || environment.some((f) => f.checkId === a.checkId) || incomplete.some((f) => f.checkId === a.checkId)
   );
+  if (misconfigured.length === 0) {
+    return joinSentences([
+      ...environmentBaseSentences(input.baseRevision, environment, amended),
+      incompleteBaseSentence(input.baseRevision, incomplete),
+      incompleteExceptionSentence(incomplete),
+      afterEnvironmentFix(input.runId, environmentFixSettings(environment))
+    ]);
+  }
   const sentences = [
     `${named(misconfigured)} ${misconfigured.length > 1 ? "are" : "is"} misconfigured, not a pre-existing failure: on the base revision ${input.baseRevision.slice(0, 12)} the tool rejected the command line the check runs before it ran anything of the repository: ${evidenceOf(misconfigured)}`,
     ...amended.length > 0 ? [amendmentSentence(amended)] : [],
@@ -55569,7 +56231,7 @@ function uiNotExecuted(resultPath) {
     return [];
   }
 }
-var MAX_LOG_BYTES3, DOTNET_DENIAL, NUGET_LINE, NUGET_FILL, MSBUILD_NODE_DENIAL, ENVIRONMENT_FALLBACK_FIX;
+var MAX_LOG_BYTES3, DOTNET_DENIAL, NUGET_LINE, NUGET_FILL, MSBUILD_NODE_DENIAL, MAX_LINKS, ENVIRONMENT_FALLBACK_FIX;
 var init_environment_block = __esm({
   "src/controller/environment-block.ts"() {
     "use strict";
@@ -55581,14 +56243,18 @@ var init_environment_block = __esm({
     init_environment_failure();
     init_store();
     init_baseline_exception();
+    init_profiles();
+    init_util();
     init_runner2();
     init_context2();
+    init_resume();
     init_verification();
     MAX_LOG_BYTES3 = 4 * 1024 * 1024;
     DOTNET_DENIAL = /\/tmp\/\.dotnet\b|\.coreclr\.|NuGet-Migrations|System\.Threading\.(?:Mutex|Semaphore)/i;
     NUGET_LINE = /\berror NU\d{4}\b|\bNuGet\b|proxy tunnel request to proxy '[^']*' failed with status code '403'/;
     NUGET_FILL = `since nuget.org's certificate cannot be verified inside the sandbox on macOS (srt keeps the system trust service out of reach), fill the repository's NuGet cache outside the sandbox with the command orbit doctor prints (checks.dotnet-packages), which the checks that restore read, and the dependency install too when dependencies.install_command restores packages (docs/troubleshooting.md, ".NET HTTP clients and NuGet restore on macOS")`;
     MSBUILD_NODE_DENIAL = /^the check sandbox denied MSBuild node /;
+    MAX_LINKS = 40;
     ENVIRONMENT_FALLBACK_FIX = "let the check run in this environment (orbit doctor checks the isolation provider and starts each check's executable in the sandbox), or change the check definition";
   }
 });
@@ -55687,7 +56353,7 @@ var init_baseline_questions = __esm({
 });
 
 // src/controller/worktree-cleanup.ts
-import { existsSync as existsSync35, readdirSync as readdirSync10, rmSync as rmSync13 } from "node:fs";
+import { existsSync as existsSync36, readdirSync as readdirSync10, rmSync as rmSync13 } from "node:fs";
 import { join as join53 } from "node:path";
 async function hasUnsavedEdits(worktree, repoRoot) {
   const admin = await adminDirFor(repoRoot, worktree);
@@ -55696,7 +56362,7 @@ async function hasUnsavedEdits(worktree, repoRoot) {
 }
 async function releaseRunWorktrees(ctx) {
   const root = runWorktreeRoot(ctx);
-  if (!existsSync35(root)) return;
+  if (!existsSync36(root)) return;
   const repoRoot = ctx.run.repoRoot;
   const kept = [];
   const removed = [];
@@ -56230,6 +56896,7 @@ async function judgeWorkerPlugins(adapter, config) {
   for (const p of listed2.plugins) {
     if (!p.enabled) skipped.push(`not loaded by workers: ${p.id} (disabled)`);
     else if (p.scope !== null && WORKER_EXCLUDED_SCOPES.includes(p.scope)) skipped.push(`not loaded by workers: ${p.id} (scope ${p.scope}; workers load no user, project or local settings)`);
+    else if (p.scope === SYNCED_SCOPE) skipped.push(`not loaded by workers: ${p.id} (scope ${SYNCED_SCOPE}; workers start with no user, project or local settings, which leaves synced plugins out)`);
     else {
       const [judged2] = workerPlugins([{ name: p.id.split("@")[0], source: p.id, scope: p.scope ?? "unknown" }], { policy, installed: null });
       (p.scope === "managed" ? loads : maybe).push(judged2);
@@ -56279,12 +56946,13 @@ async function workerPluginRefusals(adapters, config) {
   }
   return out;
 }
-var HOOKS_NOTE, SCOPE_SOURCE;
+var HOOKS_NOTE, SYNCED_SCOPE, SCOPE_SOURCE;
 var init_worker_plugins_check = __esm({
   "src/adapters/worker-plugins-check.ts"() {
     "use strict";
     init_claude_plugins();
     HOOKS_NOTE = "a plugin can add hooks and tools to workers";
+    SYNCED_SCOPE = "synced";
     SCOPE_SOURCE = "scope source: claude plugin list --json (system/init does not report a plugin's scope)";
   }
 });
@@ -56307,7 +56975,7 @@ var init_worker_plugins = __esm({
 });
 
 // src/controller/steps/preflight.ts
-import { existsSync as existsSync36, mkdirSync as mkdirSync19, rmSync as rmSync14 } from "node:fs";
+import { existsSync as existsSync37, mkdirSync as mkdirSync19, rmSync as rmSync14 } from "node:fs";
 import { dirname as dirname27, isAbsolute as isAbsolute22, join as join54, resolve as resolve14 } from "node:path";
 async function preflightStep(ctx) {
   const stop = await safePoint(ctx);
@@ -56383,10 +57051,12 @@ async function preflightStep(ctx) {
 }
 function classifyBaseline(ctx, report2, checkoutDir, only = null) {
   const judged = only === null ? report2 : { ...report2, failures: report2.failures.filter((f) => only.has(f.checkId)) };
-  const commandErrors = baselineMisconfiguredChecks(ctx, judged);
+  const notRun = baselineEnvironmentFailures(ctx, judged, checkoutDir);
+  const launches = deniedLaunches(ctx, judged, notRun);
+  const commandErrors = baselineMisconfiguredChecks(ctx, judged).filter((m) => !(m.kind === "missing-target" && launches.has(m.checkId)));
   const misconfigured = commandErrors.filter((m) => m.kind === "argument");
   const missingTargets = commandErrors.filter((m) => m.kind === "missing-target");
-  const environment = baselineEnvironmentFailures(ctx, judged, checkoutDir).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId));
+  const environment = notRun.filter((f) => !commandErrors.some((m) => m.checkId === f.checkId));
   const incomplete = baselineIncompleteChecks(ctx, judged).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId) && !environment.some((e) => e.checkId === f.checkId));
   const marked = classifiedBaseline(report2, environment, incomplete, misconfigured, missingTargets);
   const hasIncomplete = only === null && (environment.length > 0 || incomplete.length > 0 || misconfigured.length > 0);
@@ -56444,6 +57114,7 @@ async function blockOnBaseline(ctx, report2, blocked, amendment = null) {
   atomicWriteJson(join54(ctx.runDir, BASELINE_FILE), amendment ? report2 : { ...report2, complete: false });
   const reason = baselineBlockReason({ runId: ctx.run.id, baseRevision: report2.baseRevision, environment, incomplete, misconfigured, ...amendment ? { amended: amendment.checks } : {} });
   const environmentChecks = environment.map((f) => ({ check_id: f.checkId, classification: "environment", signals: f.signals, cause: f.cause, evidence_lines: f.lines, ...f.logPath ? { log_path: f.logPath } : {} }));
+  const policyFix = environmentFixSettings(environment);
   const incompleteChecks = incomplete.map((f) => ({ check_id: f.checkId, classification: "incomplete", cause: f.cause, evidence_lines: f.lines, ...f.logPath ? { log_path: f.logPath } : {} }));
   const misconfiguredChecks = misconfigured.map((m) => misconfiguredRecord(m));
   const at = amendment ? `amended-${amendment.at}` : String(report2.recordedAt);
@@ -56456,6 +57127,7 @@ async function blockOnBaseline(ctx, report2, blocked, amendment = null) {
       base_revision: report2.baseRevision,
       ...stage,
       ...environmentChecks.length > 0 ? { environment_failures: environmentChecks } : {},
+      ...policyFix.length > 0 ? { policy_fix: { settings: policyFix } } : {},
       ...incompleteChecks.length > 0 ? { incomplete_checks: incompleteChecks } : {},
       ...misconfiguredChecks.length > 0 ? { misconfigured_checks: misconfiguredChecks } : {}
     }
@@ -56517,7 +57189,7 @@ async function dirtyPaths(repo) {
   return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3));
 }
 async function ensureWorktree(repo, path, base) {
-  if (existsSync36(path)) {
+  if (existsSync37(path)) {
     try {
       return (await adminDirFor(repo, path)).worktree;
     } catch (err) {
@@ -57028,7 +57700,7 @@ var init_deliver = __esm({
 });
 
 // src/delivery/release.ts
-import { existsSync as existsSync37, mkdirSync as mkdirSync20, rmSync as rmSync15 } from "node:fs";
+import { existsSync as existsSync38, mkdirSync as mkdirSync20, rmSync as rmSync15 } from "node:fs";
 import { homedir as homedir14, platform as platform2 } from "node:os";
 import { join as join56 } from "node:path";
 function releaseConfig(snapshot2) {
@@ -57304,7 +57976,7 @@ function readDeployOutcome(files, sha, envName) {
     if (outcome.exitCode === 0 && !outcome.timedOut) return receiptOf(outcome);
     throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} to ${outcome.environment} ${outcome.timedOut ? "timed out, so whether it took effect is unknown" : `exited ${outcome.exitCode ?? "by signal"}`}; it is not retried automatically`, { definitive: true, ...outcome.timedOut ? unknownDetails(envName, sha) : {} });
   }
-  if (existsSync37(files.started)) {
+  if (existsSync38(files.started)) {
     throw new OrbitError("DELIVERY_FAILED", `the deploy of ${sha.slice(0, 12)} started but recorded no outcome (the controller stopped while it ran); check the environment, then run "orbit release resolve <run-id>" (the environment's verify_command) or pass --deployed or --not-deployed`, { definitive: true, outcomeUnknown: true, environment: envName, sha });
   }
   return null;
@@ -57333,7 +58005,7 @@ async function runDeploy(a) {
     await fetchBranchContaining({ repoRoot, remote: a.remote, token: input.token, ...input.git, branch, commit: sha, ref: `refs/orbit/release/${run.id}` });
   }
   mkdirSync20(files.dir, { recursive: true, mode: 448 });
-  if (existsSync37(files.checkout)) await cleanupCandidateCheckout(repoRoot, files.checkout);
+  if (existsSync38(files.checkout)) await cleanupCandidateCheckout(repoRoot, files.checkout);
   const checkout = await materializeCandidate(repoRoot, sha, files.checkout, { readOnly: false });
   try {
     const tree = (await execCapture(["git", "rev-parse", `${sha}^{tree}`], { cwd: repoRoot, env: gitEnv4(), timeoutMs: 3e4 })).stdout.trim();
@@ -57494,7 +58166,7 @@ async function runVerifyCommand(a) {
   const checkoutDir = join56(dir, "checkout");
   const home2 = join56(dir, "home");
   mkdirSync20(dir, { recursive: true, mode: 448 });
-  if (existsSync37(checkoutDir)) await cleanupCandidateCheckout(run.repoRoot, checkoutDir);
+  if (existsSync38(checkoutDir)) await cleanupCandidateCheckout(run.repoRoot, checkoutDir);
   const checkout = await materializeCandidate(run.repoRoot, sha, checkoutDir, { readOnly: false });
   try {
     mkdirSync20(home2, { recursive: true, mode: 448 });
@@ -58940,7 +59612,7 @@ var init_contracting = __esm({
 });
 
 // src/controller/parallel-writers.ts
-import { existsSync as existsSync38, mkdtempSync as mkdtempSync6, rmSync as rmSync16, writeFileSync as writeFileSync8 } from "node:fs";
+import { existsSync as existsSync39, mkdtempSync as mkdtempSync6, rmSync as rmSync16, writeFileSync as writeFileSync8 } from "node:fs";
 import { tmpdir as tmpdir12 } from "node:os";
 import { join as join58 } from "node:path";
 function splitAttempt(ctx, contract, fresh) {
@@ -59058,7 +59730,7 @@ async function admitAndStart(ctx, n2, all, waiting, opts) {
     if (merge2) note2(ctx, MERGE_OVERHEAD_EVENT, { attempt: n2, unit: u.id, alongside: merge2.alongside, usd: merge2.usd });
     if (cap.capUsd !== null) recordSpendCap(ctx, unitPurpose(n2, u), cap.capUsd, cap.worstCaseUsd);
     const dir = unitWorktree(ctx, n2, u);
-    if (!existsSync38(dir)) await materializeCandidate(ctx.run.repoRoot, ctx.run.baseRevision, dir, { readOnly: false });
+    if (!existsSync39(dir)) await materializeCandidate(ctx.run.repoRoot, ctx.run.baseRevision, dir, { readOnly: false });
     await ensureWorker(ctx, request(ctx, n2, u, all, opts));
     count3++;
   }
@@ -59116,7 +59788,7 @@ async function serialize2(ctx, n2, u, reason) {
 }
 async function removeWorktree(ctx, n2, u) {
   const dir = unitWorktree(ctx, n2, u);
-  if (existsSync38(dir)) await cleanupCandidateCheckout(ctx.run.repoRoot, dir).catch(() => {
+  if (existsSync39(dir)) await cleanupCandidateCheckout(ctx.run.repoRoot, dir).catch(() => {
   });
 }
 function inCheckout(c, extra = {}) {
@@ -59205,8 +59877,8 @@ var init_parallel_writers = __esm({
 });
 
 // src/controller/authorization.ts
-import { existsSync as existsSync39, mkdirSync as mkdirSync21 } from "node:fs";
-import { basename as basename16, join as join59 } from "node:path";
+import { existsSync as existsSync40, mkdirSync as mkdirSync21 } from "node:fs";
+import { basename as basename18, join as join59 } from "node:path";
 function operationKey(op) {
   return `op-${sha256(canonicalJson(op)).slice(0, 16)}`;
 }
@@ -59374,7 +60046,7 @@ async function runApprovedOperation(ctx, n2, op, grant) {
 }
 function installingToolchains(command, worktree, toolchains) {
   const installs = classifyBash(command, { cwd: worktree, root: worktree }).commands.filter((c) => c.category === "package-install");
-  return toolchains.filter((id) => installs.some((c) => TOOLCHAIN_PROFILES[id].executables.test(basename16(c.argv[0] ?? ""))));
+  return toolchains.filter((id) => installs.some((c) => TOOLCHAIN_PROFILES[id].executables.test(basename18(c.argv[0] ?? ""))));
 }
 function cachesLine(toolchains, installs) {
   if (toolchains.length === 0) return "";
@@ -59477,7 +60149,7 @@ function ungrantedCommands(events, snapshot2, worktreeRoot, granted) {
 }
 function sessionEvents(worker) {
   const path = join59(worker.workerDir, LOG_FILE);
-  return existsSync39(path) ? readLogLines(path).events : [];
+  return existsSync40(path) ? readLogLines(path).events : [];
 }
 var APPROVE_ONCE, DENY2, AUTHORIZATION_REQUEST_KIND, AUTHORIZATION_GRANT_KIND, ASKABLE_RULE, NEVER_GRANTED, URL_HOST, APPROVED_COMMAND_ACTION, APPROVED_TIMEOUT_S, APPROVED_MAX_OUTPUT_BYTES, APPROVED_EXCERPT_CHARS, OUTPUT_FILE, RECEIPT_FILE;
 var init_authorization = __esm({
@@ -59520,7 +60192,7 @@ var init_authorization = __esm({
 });
 
 // src/controller/steps/implementing.ts
-import { existsSync as existsSync40 } from "node:fs";
+import { existsSync as existsSync41 } from "node:fs";
 import { join as join60 } from "node:path";
 function briefPath(ctx, attempt) {
   return join60(ctx.runDir, "briefs", `attempt-${attempt}.json`);
@@ -59581,7 +60253,7 @@ async function startAttempt(ctx, n2) {
     return WAIT(`attempt ${n2} deferred: ${why}`);
   }
   if (cap.capUsd !== null && cap.capUsd <= 0) return finishRun(ctx, "EXHAUSTED", `attempt ${n2} not started: ${unfundedSessionReason(ctx, route2.model, "implementer")}`);
-  const units = splitAttempt(ctx, assertContract(ctx), n2 === 1 && !existsSync40(briefPath(ctx, n2)));
+  const units = splitAttempt(ctx, assertContract(ctx), n2 === 1 && !existsSync41(briefPath(ctx, n2)));
   const counted = ctx.db.tx(() => {
     if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, ATTEMPT_EVENT, n2)) return false;
     ledger.consume("implementation_attempts", 1);
@@ -59942,7 +60614,7 @@ var init_implementing = __esm({
 });
 
 // src/controller/steps/verifying.ts
-import { existsSync as existsSync41, readdirSync as readdirSync11 } from "node:fs";
+import { existsSync as existsSync42, readdirSync as readdirSync11 } from "node:fs";
 import { join as join61 } from "node:path";
 async function verifyingStep(ctx) {
   const stop = await safePoint(ctx);
@@ -60127,7 +60799,7 @@ async function violatingCandidate(ctx, cand) {
       preserved_constraints: [`Never edit protected paths: ${ctx.snapshot.effective_protected_paths.join(", ")}`, "Keep the behaviour tests that prove the acceptance criteria"]
     }
   };
-  if (!existsSync41(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
+  if (!existsSync42(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
   return move2(ctx, "DIAGNOSING", `candidate ${cand.seq} violated the policy; the worktree was restored to ${from} and attempt ${next} repairs from there`, { data: { attempt: next, restored_to: target?.id ?? "base" } });
 }
 async function restoreWorktree(worktree, base, commit) {
@@ -60141,7 +60813,7 @@ function scopeFingerprint(scope) {
   return `scope:${sha256(JSON.stringify([[...scope.forbidden_paths_changed].sort(), [...scope.out_of_scope_paths_changed].sort(), scope.within_size_limits, scope.lockfile_changed, [...scope.symlinks_escaping].sort()])).slice(0, 16)}`;
 }
 async function ensureCheckout(ctx, cand, dir) {
-  if (existsSync41(dir) && readdirSync11(dir).length > 0) {
+  if (existsSync42(dir) && readdirSync11(dir).length > 0) {
     try {
       const tree = (await git2(dir, ["rev-parse", "HEAD^{tree}"])).trim();
       if (tree === cand.treeHash && (await git2(dir, ["status", "--porcelain", "--untracked-files=no"])).trim() === "") return;
@@ -60183,7 +60855,7 @@ var init_verifying = __esm({
 });
 
 // src/controller/steps/diagnosing.ts
-import { existsSync as existsSync42 } from "node:fs";
+import { existsSync as existsSync43 } from "node:fs";
 import { availableParallelism as availableParallelism2, freemem as freemem2, loadavg } from "node:os";
 async function diagnosingStep(ctx) {
   const stop = await safePoint(ctx);
@@ -60307,7 +60979,7 @@ async function diagnosingStep(ctx) {
       return finishRun(ctx, "EXHAUSTED", `implementation attempt allowance spent (${att.used} of ${att.allowance}) and no extension: ${decision.denied_because.join("; ")}`, { outcome: { extension: decision } });
     }
   }
-  if (!existsSync42(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
+  if (!existsSync43(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
   decide2(ctx, { id: `dec-${ctx.run.id}-brief-${next}`, kind: "repair.brief", summary: `repair brief (${stored.source}) for attempt ${next}: ${fingerprint}`, data: { attempt: next, source: stored.source, fingerprint, path: `briefs/attempt-${next}.json` } });
   return move2(ctx, "REPAIRING", `repair brief for attempt ${next} (${stored.source})`, { data: { attempt: next, fingerprint } });
 }
@@ -60576,7 +61248,7 @@ var init_review_approval = __esm({
 });
 
 // src/controller/steps/reviewing.ts
-import { existsSync as existsSync43, readdirSync as readdirSync12, readFileSync as readFileSync31 } from "node:fs";
+import { existsSync as existsSync44, readdirSync as readdirSync12, readFileSync as readFileSync31 } from "node:fs";
 import { join as join62 } from "node:path";
 async function reviewingStep(ctx) {
   const stop = await safePoint(ctx);
@@ -61174,7 +61846,7 @@ async function routeToRepair(ctx, cand, toRepair, resolution, texts, waiting = {
     return hold.length > 0 ? { ...b, preserved_constraints: [...b.preserved_constraints, ...hold] } : b;
   });
   const stored = { attempt: next, source: "review", fingerprint: briefs[0].fingerprint, brief: briefs.length === 1 ? briefs[0] : { briefs }, refs: toRepair.flatMap((d) => d.memberIds) };
-  if (!existsSync43(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
+  if (!existsSync44(briefPath(ctx, next))) atomicWriteJson(briefPath(ctx, next), stored);
   const record = { attempt: next, tree_hash: cand.treeHash, candidate_id: cand.id, commit: cand.commitSha, findings: toRepair.map((d) => ({ finding_id: d.findingId, member_ids: d.memberIds, fingerprint: d.fingerprint, external_id: d.externalId })) };
   ctx.db.tx(() => {
     if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, REVIEW_REPAIR_EVENT, next)) return;
@@ -61301,8 +61973,8 @@ function freshReviewText(rec2) {
 async function prepareReview(ctx, cand, provider) {
   const reviewDir = join62(ctx.runDir, "reviews", String(cand.seq));
   const checkout = join62(runWorktreeRoot(ctx), `review-${cand.seq}`);
-  if (!existsSync43(join62(reviewDir, "packet.md"))) await preparePacket(ctx, cand, reviewDir, provider);
-  if (!existsSync43(checkout) || readdirSync12(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
+  if (!existsSync44(join62(reviewDir, "packet.md"))) await preparePacket(ctx, cand, reviewDir, provider);
+  if (!existsSync44(checkout) || readdirSync12(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
 var FOCUS_TEXT, FRESH_REVIEW_KIND, REVIEW_REPAIR_EVENT, UNDECIDED;
@@ -61580,7 +62252,7 @@ var init_delivering = __esm({
 });
 
 // src/controller/steps/awaiting-ci.ts
-import { existsSync as existsSync44 } from "node:fs";
+import { existsSync as existsSync45 } from "node:fs";
 import { join as join64 } from "node:path";
 async function awaitingCiStep(ctx) {
   const stop = await safePoint(ctx);
@@ -61723,7 +62395,7 @@ async function rebaseCandidate(ctx, cand, tip) {
     }
     const attempt = currentAttempt(ctx);
     const next = await snapshotCandidate({ db: ctx.db, clock: ctx.clock, repoRoot: ctx.run.repoRoot, worktree: checkoutDir, runId: ctx.run.id, baseRev: tip, attempt, workerId: null });
-    if (ctx.run.worktreePath && existsSync44(ctx.run.worktreePath)) {
+    if (ctx.run.worktreePath && existsSync45(ctx.run.worktreePath)) {
       try {
         await git2(ctx.run.worktreePath, ["reset", "--hard", next.commitSha]);
       } catch (err) {
@@ -62197,7 +62869,7 @@ var init_steps = __esm({
 });
 
 // src/storage/retention.ts
-import { existsSync as existsSync45, lstatSync as lstatSync10, realpathSync as realpathSync18, rmSync as rmSync17 } from "node:fs";
+import { existsSync as existsSync46, lstatSync as lstatSync11, realpathSync as realpathSync18, rmSync as rmSync17 } from "node:fs";
 import { homedir as homedir15 } from "node:os";
 import { dirname as dirname28, join as join67, resolve as resolve15 } from "node:path";
 function repoKeyFor(repoRoot) {
@@ -62252,7 +62924,7 @@ async function pruneExpiredRuns(db, opts) {
     }
     result2.pruned.push({ runId: row.id, state: row.state, endedAt: row.ended_at ?? row.updated_at, removed: targets });
   }
-  if (removedWorktree && existsSync45(join67(repoRoot, ".git"))) {
+  if (removedWorktree && existsSync46(join67(repoRoot, ".git"))) {
     await execCapture(["git", "worktree", "prune"], { cwd: repoRoot, timeoutMs: 3e4 }).catch(() => void 0);
   }
   return result2;
@@ -62266,7 +62938,7 @@ function realOrResolved(p) {
 }
 function isRealDirectory(p) {
   try {
-    return lstatSync10(p).isDirectory();
+    return lstatSync11(p).isDirectory();
   } catch {
     return false;
   }
@@ -62290,7 +62962,7 @@ var loop_exports = {};
 __export(loop_exports, {
   Controller: () => Controller
 });
-import { existsSync as existsSync46 } from "node:fs";
+import { existsSync as existsSync47 } from "node:fs";
 import { hostname as hostname4 } from "node:os";
 import { dirname as dirname29, join as join68 } from "node:path";
 function sleep(ms) {
@@ -62784,7 +63456,7 @@ var init_loop = __esm({
           try {
             const run = getRun(db, row.id);
             const runDir2 = dirname29(run.policyPath);
-            if (existsSync46(join68(runDir2, "final.md"))) continue;
+            if (existsSync47(join68(runDir2, "final.md"))) continue;
             let snapshot2 = null;
             try {
               snapshot2 = verifySnapshot(run.policyPath, run.policyHash);
@@ -62845,7 +63517,7 @@ var init_loop = __esm({
 });
 
 // src/controller/service.ts
-import { chmodSync as chmodSync8, existsSync as existsSync47, lstatSync as lstatSync11, mkdirSync as mkdirSync22, readFileSync as readFileSync32, readdirSync as readdirSync13, rmSync as rmSync18, rmdirSync, statSync as statSync14 } from "node:fs";
+import { chmodSync as chmodSync8, existsSync as existsSync48, lstatSync as lstatSync12, mkdirSync as mkdirSync22, readFileSync as readFileSync32, readdirSync as readdirSync13, rmSync as rmSync18, rmdirSync, statSync as statSync14 } from "node:fs";
 import { hostname as hostname5 } from "node:os";
 import { dirname as dirname30, isAbsolute as isAbsolute23, join as join69 } from "node:path";
 function serviceLabel(repoRoot) {
@@ -62912,7 +63584,7 @@ function secureLauncherDir(orbitHome) {
   if ((home2.mode & 18) !== 0) chmodSync8(orbitHome, home2.mode & 493 & ~18);
   const bin = join69(orbitHome, "bin");
   mkdirSync22(bin, { recursive: true, mode: 448 });
-  const st = lstatSync11(bin);
+  const st = lstatSync12(bin);
   if (st.isSymbolicLink() || !st.isDirectory()) throw new OrbitError("CONFIG_INVALID", `${bin} must be a real directory, not a link or a file; refusing to put the service launcher in it`, { path: bin });
   if (uid !== void 0 && st.uid !== uid) throw new OrbitError("CONFIG_INVALID", `${bin} is not owned by this user; refusing to put the service launcher in it`, { path: bin });
   if ((st.mode & 63) !== 0) chmodSync8(bin, 448);
@@ -62940,13 +63612,13 @@ function refreshLauncher(input) {
   const path = launcherPath(input.orbitHome);
   let st;
   try {
-    st = lstatSync11(path);
+    st = lstatSync12(path);
   } catch {
     return "absent";
   }
   const current = st.isFile() ? readLauncher(path) : null;
   if (!current) return "foreign";
-  if (!input.entry.endsWith(".mjs") || !isAbsolute23(input.entry) || !existsSync47(input.entry) || !isAbsolute23(input.nodePath) || !existsSync47(input.nodePath)) return "skipped";
+  if (!input.entry.endsWith(".mjs") || !isAbsolute23(input.entry) || !existsSync48(input.entry) || !isAbsolute23(input.nodePath) || !existsSync48(input.nodePath)) return "skipped";
   const ours = current.entry === input.entry || sameInstallation(current.entry, input.entry) || input.version !== void 0 && current.version !== void 0 && newerVersion(input.version, current.version);
   if (!ours) return "other-install";
   const version = input.version ?? current.version;
@@ -63096,7 +63768,7 @@ async function uninstallService(label, opts) {
   if (opts.platform === "linux") {
     const unit = systemdUnitPath(opts.homeDir, label);
     const cmd = systemctlCommands(label);
-    if (existsSync47(unit)) await run(cmd.disable);
+    if (existsSync48(unit)) await run(cmd.disable);
     rmSync18(unit, { force: true });
     await must(run, cmd.daemonReload, [0]);
     return withLauncherCleanup(await waitUntilGone(label, opts), opts);
@@ -63152,14 +63824,14 @@ async function serviceStatus(label, opts) {
     const path = launchdPlistPath(opts.homeDir, label);
     const r = await run(launchctlCommands(label, opts.uid, path).print);
     const loaded = r.exitCode === 0 ? true : r.exitCode === 113 ? false : null;
-    return { label, platform: opts.platform, definitionPath: path, installed: existsSync47(path), loaded, detail: loaded === null ? `launchctl print exited ${r.exitCode ?? "by signal"}` : loaded ? "loaded" : "not loaded" };
+    return { label, platform: opts.platform, definitionPath: path, installed: existsSync48(path), loaded, detail: loaded === null ? `launchctl print exited ${r.exitCode ?? "by signal"}` : loaded ? "loaded" : "not loaded" };
   }
   if (opts.platform === "linux") {
     const path = systemdUnitPath(opts.homeDir, label);
     const r = await run(systemctlCommands(label).isActive);
     const word = r.stdout.trim();
     const loaded = word === "active" || word === "activating" || word === "reloading" ? true : word === "inactive" || word === "failed" ? false : null;
-    return { label, platform: opts.platform, definitionPath: path, installed: existsSync47(path), loaded, detail: word || `systemctl exited ${r.exitCode ?? "by signal"}` };
+    return { label, platform: opts.platform, definitionPath: path, installed: existsSync48(path), loaded, detail: word || `systemctl exited ${r.exitCode ?? "by signal"}` };
   }
   return unsupported(opts.platform);
 }
@@ -63201,7 +63873,7 @@ var init_controller = __esm({
 });
 
 // src/cli/commands/drive.ts
-import { existsSync as existsSync48, readFileSync as readFileSync33 } from "node:fs";
+import { existsSync as existsSync49, readFileSync as readFileSync33 } from "node:fs";
 import { dirname as dirname31, join as join70 } from "node:path";
 function formatEvent(e) {
   const at = clockTime(e.ts);
@@ -63330,7 +64002,7 @@ function safeNewRunNeeded(db, run) {
 function resultOf(ctx, db, run) {
   try {
     const finalJson = join70(dirname31(run.policyPath), "final.json");
-    const report2 = existsSync48(finalJson) ? JSON.parse(readFileSync33(finalJson, "utf8")) : buildFinalReport(db, run, { runDir: dirname31(run.policyPath), clock: ctx.clock, snapshot: null });
+    const report2 = existsSync49(finalJson) ? JSON.parse(readFileSync33(finalJson, "utf8")) : buildFinalReport(db, run, { runDir: dirname31(run.policyPath), clock: ctx.clock, snapshot: null });
     const rv = report2.revision;
     if (!rv) return null;
     return { branch: rv.branch ?? null, candidate_commit: rv.candidate ?? null, delivered_commit: rv.delivered_commit ?? null, pull_request: rv.pull_request ?? null };
@@ -63681,7 +64353,7 @@ var init_inquisition2 = __esm({
 });
 
 // src/cli/commands/decide.ts
-import { existsSync as existsSync49 } from "node:fs";
+import { existsSync as existsSync50 } from "node:fs";
 import { dirname as dirname33 } from "node:path";
 function matchQuestion(db, runId, ref2) {
   const all = listQuestions(db, runId);
@@ -63796,7 +64468,7 @@ async function pendingQuestions(args, ctx) {
   const quiet = args.bool("quiet");
   const repo = await resolveRepo(ctx, args.str("repo"));
   const pending = [];
-  if (existsSync49(stateDbPath(repo))) {
+  if (existsSync50(stateDbPath(repo))) {
     await withState(repo, (db) => {
       for (const run of listRuns(db, { limit: 200 })) {
         if (isTerminal(run.state) && run.state !== "BLOCKED") continue;
@@ -63864,7 +64536,7 @@ var init_recovery = __esm({
 });
 
 // src/cli/commands/service.ts
-import { existsSync as existsSync50 } from "node:fs";
+import { existsSync as existsSync51 } from "node:fs";
 import { join as join72 } from "node:path";
 function managerOptions(ctx) {
   return {
@@ -63897,7 +64569,7 @@ async function serviceInstallCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   loadConfig(repo);
   const entry = args.str("entry") ?? ctx.entry;
-  if (!entry || !existsSync50(entry)) throw new OrbitError("NOT_FOUND", `the orbit entry script ${entry || "(unknown)"} does not exist; pass --entry <path to plugin/dist/orbit.mjs>`);
+  if (!entry || !existsSync51(entry)) throw new OrbitError("NOT_FOUND", `the orbit entry script ${entry || "(unknown)"} does not exist; pass --entry <path to plugin/dist/orbit.mjs>`);
   const warnings = [];
   if (!entry.endsWith(".mjs")) warnings.push(`the service will run ${entry}, not a built plugin/dist/orbit.mjs; build the bundle for a durable installation`);
   const spec = serviceSpec({ repoRoot: repo, orbitHome: ctx.orbitHome, entry, version: ORBIT_VERSION, ...ctx.env.PATH ? { path: ctx.env.PATH } : {} });
@@ -63928,14 +64600,14 @@ async function serviceUninstallCommand(args, ctx) {
 function launcherState(ctx) {
   const path = launcherPath(ctx.orbitHome);
   const target = readLauncher(path);
-  return { path, exists: existsSync50(path), node: target?.node ?? null, entry: target?.entry ?? null, bundleExists: target ? existsSync50(target.entry) && existsSync50(target.node) : false };
+  return { path, exists: existsSync51(path), node: target?.node ?? null, entry: target?.entry ?? null, bundleExists: target ? existsSync51(target.entry) && existsSync51(target.node) : false };
 }
 async function serviceStatusCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
   const status2 = await serviceStatus(serviceLabel(repo), managerOptions(ctx));
   let heartbeats = [];
-  if (existsSync50(stateDbPath(repo))) {
+  if (existsSync51(stateDbPath(repo))) {
     const db = openState(repo);
     try {
       pruneDeadControllers(db, ctx.clock);
@@ -64200,8 +64872,8 @@ var init_doctor_plugins = __esm({
 });
 
 // src/cli/commands/doctor-dotnet.ts
-import { existsSync as existsSync51, lstatSync as lstatSync12, readdirSync as readdirSync14, readFileSync as readFileSync34 } from "node:fs";
-import { basename as basename17, join as join74, posix as posix6, resolve as resolve18 } from "node:path";
+import { existsSync as existsSync52, lstatSync as lstatSync13, readdirSync as readdirSync14, readFileSync as readFileSync34 } from "node:fs";
+import { basename as basename19, join as join74, posix as posix6, resolve as resolve18 } from "node:path";
 function xunitReferences(text2) {
   const out = [];
   for (const m of text2.matchAll(ITEM)) {
@@ -64223,7 +64895,7 @@ function before28(version) {
 }
 function readSmall(path) {
   try {
-    const st = lstatSync12(path);
+    const st = lstatSync13(path);
     if (!st.isFile() || st.size > MAX_FILE_BYTES2) return null;
     return readFileSync34(path, "utf8");
   } catch {
@@ -64242,10 +64914,10 @@ function threadsLifted(repo, tracked, dir) {
   }
 }
 function xunitBefore28(repo, files) {
-  const relevant = files.filter((f) => PROJECT_FILE.test(f) || basename17(f) === CENTRAL_FILE).slice(0, MAX_FILES);
+  const relevant = files.filter((f) => PROJECT_FILE.test(f) || basename19(f) === CENTRAL_FILE).slice(0, MAX_FILES);
   const tracked = new Set(files);
   const central = /* @__PURE__ */ new Map();
-  for (const f of relevant.filter((x) => basename17(x) === CENTRAL_FILE)) {
+  for (const f of relevant.filter((x) => basename19(x) === CENTRAL_FILE)) {
     const versions = /* @__PURE__ */ new Map();
     for (const r of xunitReferences(readSmall(join74(repo, f)) ?? "")) if (r.kind === "PackageVersion" && r.version !== null) versions.set(r.id.toLowerCase(), r.version);
     central.set(posix6.dirname(f), versions);
@@ -64271,8 +64943,8 @@ function xunitBefore28(repo, files) {
 }
 function mayRunTests(check) {
   const all = words(check.command);
-  if (all.some((w) => basename17(w) === "dotnet")) return all.includes("test") || all.includes("vstest");
-  return all.some((w) => /test/i.test(basename17(w)));
+  if (all.some((w) => basename19(w) === "dotnet")) return all.includes("test") || all.includes("vstest");
+  return all.some((w) => /test/i.test(basename19(w)));
 }
 function dotnetTestsCheck(input) {
   const { config, repo, files } = input;
@@ -64297,7 +64969,7 @@ function dotnetTestsCheck(input) {
   ];
 }
 function nugetSdks(file, text2) {
-  if (basename17(file) === "global.json") {
+  if (basename19(file) === "global.json") {
     try {
       const sdks = JSON.parse(text2.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, ""))["msbuild-sdks"] ?? {};
       return Object.entries(sdks).flatMap(([name, version]) => typeof version === "string" ? [`${name}/${version}`] : []);
@@ -64317,7 +64989,7 @@ function nugetSdks(file, text2) {
 function packageEvidence(repo, files) {
   const out = [];
   for (const f of files.slice(0, MAX_FILES * 4)) {
-    const name = basename17(f);
+    const name = basename19(f);
     if (PACKAGE_FILES.has(name) || name === TOOL_MANIFEST) out.push(f);
     else if (MSBUILD_FILE.test(f) || MSBUILD_IMPORTS.has(name) || f === "global.json") {
       const text2 = readSmall(join74(repo, f)) ?? "";
@@ -64332,10 +65004,10 @@ function hasNugetPackages(repo, files) {
   return packageEvidence(repo, files).length > 0;
 }
 function floatingVersions(repo, files) {
-  if (files.some((f) => basename17(f) === "packages.lock.json")) return [];
+  if (files.some((f) => basename19(f) === "packages.lock.json")) return [];
   const out = [];
   for (const f of files.slice(0, MAX_FILES * 4)) {
-    if (!PROJECT_FILE.test(f) && !MSBUILD_IMPORTS.has(basename17(f)) && basename17(f) !== CENTRAL_FILE) continue;
+    if (!PROJECT_FILE.test(f) && !MSBUILD_IMPORTS.has(basename19(f)) && basename19(f) !== CENTRAL_FILE) continue;
     for (const m of (readSmall(join74(repo, f)) ?? "").matchAll(ITEM)) {
       const attrs = m[2] ?? "";
       const body = m[3] ?? "";
@@ -64366,7 +65038,7 @@ function restoresPackages(command) {
   return r.projects || r.tools;
 }
 function cachedPackages(cache2) {
-  if (!existsSync51(cache2)) return null;
+  if (!existsSync52(cache2)) return null;
   try {
     return readdirSync14(cache2, { withFileTypes: true }).filter((e) => e.isDirectory()).length;
   } catch {
@@ -64389,7 +65061,7 @@ function fillCommand(repo, cache2, files, install, evidence) {
   const env = `NUGET_PACKAGES=${shellWord(cache2)}`;
   const inRepo = (body) => `(cd ${shellWord(repo)} && ${body})`;
   const restores = install ? restoresOf(install) : { projects: false, tools: false };
-  const packages = restores.projects || evidence.some((e) => basename17(e.split(":")[0]) !== TOOL_MANIFEST);
+  const packages = restores.projects || evidence.some((e) => basename19(e.split(":")[0]) !== TOOL_MANIFEST);
   const tools = restores.tools || files.some((f) => ROOT_MANIFESTS.has(f));
   const projects = packages ? projectRestores(files, install) : { steps: [], note: "" };
   const steps = [...projects.steps, ...tools ? ["dotnet tool restore"] : []];
@@ -64624,12 +65296,24 @@ var init_doctor_dotnet = __esm({
 });
 
 // src/cli/commands/doctor-sandbox.ts
-import { existsSync as existsSync52, mkdirSync as mkdirSync23, mkdtempSync as mkdtempSync7, realpathSync as realpathSync19, writeFileSync as writeFileSync9 } from "node:fs";
+import { existsSync as existsSync53, mkdirSync as mkdirSync23, mkdtempSync as mkdtempSync7, realpathSync as realpathSync19, writeFileSync as writeFileSync9 } from "node:fs";
 import { tmpdir as tmpdir13 } from "node:os";
-import { basename as basename18, dirname as dirname34, isAbsolute as isAbsolute24, join as join75, resolve as resolve19 } from "node:path";
+import { basename as basename20, dirname as dirname34, isAbsolute as isAbsolute24, join as join75, resolve as resolve19 } from "node:path";
 function checkWord(check) {
   if (!check.shell) return check.command[0] ?? null;
   return (check.command[0] ?? "").trim().split(/\s+/).find((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) ?? null;
+}
+function deniedProgram(check, repo, homeDir) {
+  const read2 = checkPrograms(check.command, check.shell === true);
+  let first = null;
+  for (const program of read2.programs) {
+    if (!isAbsolute24(program)) continue;
+    const found = programDenial(program, repo, homeDir);
+    if (!found) continue;
+    if (isExecutableFile(program)) return { denial: found, uncertain: read2.uncertain, file: true };
+    first ??= { denial: found, uncertain: read2.uncertain, file: false };
+  }
+  return first;
 }
 function msbuildRefusal(checkId, shown3, d, msbuild) {
   const text2 = msbuildNodeDenialText(d);
@@ -64638,7 +65322,7 @@ function msbuildRefusal(checkId, shown3, d, msbuild) {
 function probeCacheRoot(input, toolchains, scratch) {
   if (!input.orbitHome || !input.repo) return null;
   const real = toolchainCacheRoot(input.orbitHome, repoKeyFor(input.repo));
-  const all = toolchains.every((id) => TOOLCHAIN_PROFILES[id].caches.every((c) => existsSync52(join75(real, c))));
+  const all = toolchains.every((id) => TOOLCHAIN_PROFILES[id].caches.every((c) => existsSync53(join75(real, c))));
   return all ? real : join75(scratch, "cache-stand-in");
 }
 async function probe(input, check, exe, args, cwd, project, nodeFix) {
@@ -64658,10 +65342,10 @@ async function probe(input, check, exe, args, cwd, project, nodeFix) {
     const snapshot2 = { schema: "orbit.policy/1", run_id: "doctor", created_at: "", repo_root: input.repo ?? scratch, config: input.config, effective_protected_paths: [], check_config_hashes: {} };
     const ids = detectToolchains({ command: check.command, shell: check.shell, roots: [...input.repo ? [input.repo] : [], ...cwd ? [cwd] : []] });
     const toolchains = toolchainLayout({ toolchains: ids, mode: "check", cacheRoot: probeCacheRoot(input, ids, scratch), scratchRoot: join75(scratch, "toolchains"), tmpDir: tmp, hostHome: input.homeDir, hostEnv: input.env, platform: input.platform ?? process.platform, networkHosts: check.network_hosts });
-    for (const d of toolchains.directories) if (!existsSync52(d)) mkdirSync23(d, { recursive: true, mode: 448 });
+    for (const d of toolchains.directories) if (!existsSync53(d)) mkdirSync23(d, { recursive: true, mode: 448 });
     const profile = profileForCheck({ worktree: checkout, check, snapshot: snapshot2, extraWritable: [artifacts, home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: input.homeDir, env: { ...input.env } });
     const env = checkEnv(check, { homeDir: home2, tmpDir: tmp, artifactsDir: artifacts }, input.env.PATH, toolchains.env);
-    const shown3 = [basename18(exe), ...args].join(" ");
+    const shown3 = [basename20(exe), ...args].join(" ");
     const wrapped = input.provider.wrap([exe, ...args], profile, { cwd: checkout, env });
     const probeTmp = tmp;
     const denied = () => findMsbuildNodeDenial(probeTmp);
@@ -64681,7 +65365,7 @@ async function probe(input, check, exe, args, cwd, project, nodeFix) {
       const cause = `${nodes.reason}, and the build failed (${ended}) with no record of which node was refused`;
       return { kind: "refused", detail: `"${shown3}" was refused in the sandbox: ${cause}`, failure: { checkId: check.id, fingerprint: null, signals: ["sandbox-violation"], cause, lines: [oneLine(output, 160)] }, msbuild: nodeFix };
     }
-    const failure = classifyNotExecuted({ checkId: check.id, output }) ?? classifyCouldNotRun({ checkId: check.id, output, insideRoots: [scratch, ...tmp ? [tmp] : []] });
+    const failure = classifyNotExecuted({ checkId: check.id, output }) ?? classifyCouldNotRun({ checkId: check.id, output, insideRoots: [scratch, ...tmp ? [tmp] : []] }) ?? classifyProgramNotFound({ checkId: check.id, command: [exe, ...args], shell: false, exitCode: r.exitCode, output });
     if (failure) return { kind: "refused", failure, detail: `"${shown3}" was refused in the sandbox: ${failure.cause}${failure.lines[0] ? ` (${JSON.stringify(failure.lines[0])})` : ""}` };
     if (project) {
       const cause = `the generated project did not build (${ended})`;
@@ -64714,6 +65398,7 @@ async function checkSandboxCheck(input) {
   const platform3 = input.platform ?? process.platform;
   const folderForm = platform3 !== "darwin" || repo === null || !checkoutBelowDenied({ checkout: join75(input.orbitHome ?? join75(input.homeDir, ".orbit"), "worktrees", repoKeyFor(repo), "run", "checkout"), repoRoot: repo, homeDir: input.homeDir, env: input.env });
   const undetermined = [];
+  const uncertain = [];
   let started = 0;
   const used = new Set(repo ? detectToolchains({ roots: [repo] }) : []);
   const users = /* @__PURE__ */ new Map();
@@ -64764,6 +65449,14 @@ async function checkSandboxCheck(input) {
         users.set(id2, [...users.get(id2) ?? [], check]);
       }
     }
+    const located = repo ? deniedProgram(check, repo, input.homeDir) : null;
+    if (located) {
+      const cause = programDenialCause(located.denial);
+      const failure = { checkId: check.id, fingerprint: null, signals: ["program-denied"], cause, lines: [], programDenial: located.denial };
+      details.push(`${check.id}: ${cause}, ${located.uncertain ? UNCERTAIN_READING : located.file ? TEXT_ONLY : NOT_A_FILE}`);
+      uncertain.push({ check, failure });
+      continue;
+    }
     if (judge(check, ids.includes("dotnet"))) continue;
     const word = checkWord(check);
     if (!word || check.shell && SHELL_BUILTINS.has(word)) {
@@ -64782,7 +65475,7 @@ async function checkSandboxCheck(input) {
       continue;
     }
     started++;
-    const out = await probeOrRefuse(probeInput, check, exe, PROBE_ARGS[basename18(exe)] ?? DEFAULT_PROBE_ARGS, repo ? resolve19(repo, check.cwd) : null, null, msbuildFix(check));
+    const out = await probeOrRefuse(probeInput, check, exe, PROBE_ARGS[basename20(exe)] ?? DEFAULT_PROBE_ARGS, repo ? resolve19(repo, check.cwd) : null, null, msbuildFix(check));
     details.push(`${check.id}: ${out.detail}`);
     if (out.kind === "refused") refused.push({ check, failure: out.failure, ...out.fix ? { fix: out.fix } : {}, ...out.msbuild ? { msbuild: out.msbuild } : {} });
   }
@@ -64822,15 +65515,16 @@ async function checkSandboxCheck(input) {
     const ids = items.filter((i) => !i.label).map((i) => i.check.id);
     return [...ids.length > 0 ? [`${ids.length === 1 ? "check" : "checks"} ${ids.join(", ")}`] : [], ...items.flatMap((i) => i.label ? [i.label] : [])].join(" and ");
   };
+  const maybeDenied = uncertain.length > 0 ? `doctor cannot tell for certain whether ${subject(uncertain)} ${uncertain.length === 1 ? "starts" : "start"} a program in a folder the check sandbox denies; one that does cannot start in a check` : null;
+  const alsoMaybe = maybeDenied !== null ? `; ${maybeDenied}` : "";
   if (refused.length === 0 && refusedToolchains.length === 0) {
-    if (undetermined.length > 0) {
-      return result2(
-        "warn",
-        `doctor cannot tell whether ${subject(undetermined)} ${undetermined.length === 1 ? "runs" : "run"} MSBuild on one node; one that does not is stopped as soon as MSBuild records the refused node`,
-        details,
-        "dotnet commands that pin one MSBuild node (-m:1)",
-        fixFor([])
-      );
+    if (undetermined.length > 0 || maybeDenied !== null) {
+      const warnings = [
+        ...undetermined.length > 0 ? [`doctor cannot tell whether ${subject(undetermined)} ${undetermined.length === 1 ? "runs" : "run"} MSBuild on one node; one that does not is stopped as soon as MSBuild records the refused node`] : [],
+        ...maybeDenied !== null ? [maybeDenied] : []
+      ];
+      const missing = [...undetermined.length > 0 ? ["dotnet commands that pin one MSBuild node (-m:1)"] : [], ...uncertain.length > 0 ? ["a check executable that can start in the check sandbox"] : []];
+      return result2("warn", warnings.join("; "), details, missing.join(", and "), fixFor(uncertain));
     }
     return result2("pass", started === 0 ? "no check executable outside the repository to start" : `${started} check executable(s) start in the sandbox`, details);
   }
@@ -64838,7 +65532,7 @@ async function checkSandboxCheck(input) {
     const names = refusedToolchains.map((r) => r.id);
     const listed2 = names.length === 1 ? `the ${names[0]} toolchain` : `the ${names.slice(0, -1).join(", ")} and ${names.at(-1)} toolchains`;
     const status3 = refusedToolchains.some((r) => r.mandatory) ? "fail" : "warn";
-    return result2(status3, `the sandbox refuses ${listed2}; checks that use ${names.length === 1 ? "it" : "them"} would block at their baseline`, details, "a toolchain that can start in the check sandbox", fixFor(refusedToolchains));
+    return result2(status3, `the sandbox refuses ${listed2}; checks that use ${names.length === 1 ? "it" : "them"} would block at their baseline${alsoMaybe}`, details, "a toolchain that can start in the check sandbox", fixFor([...refusedToolchains, ...uncertain]));
   }
   const status2 = refused.some((r) => r.check.mandatory) || refusedToolchains.some((r) => r.mandatory) ? "fail" : "warn";
   const nodes = refused.every((r) => r.msbuild && !r.formatReason && !r.outside);
@@ -64851,10 +65545,10 @@ async function checkSandboxCheck(input) {
   const blocks = atBaseline ? "a run would block at its baseline" : optionalOnly ? `a run whose contract requires ${refused.length === 1 ? "it" : "one of them"} would block at its baseline` : `a run would fail where Orbit starts ${refused.length === 1 ? "it" : "them"}`;
   return result2(
     status2,
-    nodes ? `${subject(refused)} would start MSBuild worker nodes, which the sandbox refuses; ${blocks}` : formats ? `${subject(refused)} ${refused.length === 1 ? "runs" : "run"} dotnet format, ${folderForm ? "which loads the project through a build host the sandbox refuses its named pipe" : "which cannot run in a run's check sandbox on macOS"}; ${blocks}` : pipes ? folderForm ? `${subject(refused)} would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; ${blocks}` : `${subject(refused)} would start MSBuild worker nodes, whose named pipes the sandbox refuses, or run dotnet format, which cannot run in a run's check sandbox on macOS; ${blocks}` : `the sandbox refuses ${refused.length === 1 ? "the executable" : "the executables"} of ${subject(refused)}; ${blocks}`,
+    (nodes ? `${subject(refused)} would start MSBuild worker nodes, which the sandbox refuses; ${blocks}` : formats ? `${subject(refused)} ${refused.length === 1 ? "runs" : "run"} dotnet format, ${folderForm ? "which loads the project through a build host the sandbox refuses its named pipe" : "which cannot run in a run's check sandbox on macOS"}; ${blocks}` : pipes ? folderForm ? `${subject(refused)} would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; ${blocks}` : `${subject(refused)} would start MSBuild worker nodes, whose named pipes the sandbox refuses, or run dotnet format, which cannot run in a run's check sandbox on macOS; ${blocks}` : `the sandbox refuses ${refused.length === 1 ? "the executable" : "the executables"} of ${subject(refused)}; ${blocks}`) + alsoMaybe,
     details,
     nodes ? one : formats ? loadsNothing : pipes ? `${one}, and ${loadsNothing}` : "a check executable that can start in the check sandbox",
-    fixFor([...refused, ...refusedToolchains])
+    fixFor([...refused, ...refusedToolchains, ...uncertain])
   );
 }
 function sandboxedCommands(config) {
@@ -64877,7 +65571,7 @@ function baseCheck(id, users) {
 function launchPath(found, repo) {
   const target = realpathSync19(found);
   if (repo && isWithin(target, repo)) return null;
-  const named2 = join75(realpathSync19(dirname34(found)), basename18(found));
+  const named2 = join75(realpathSync19(dirname34(found)), basename20(found));
   return repo && isWithin(named2, repo) ? target : named2;
 }
 async function probeOrRefuse(input, check, exe, args, cwd, project, nodeFix) {
@@ -64894,7 +65588,7 @@ async function toolchainLine(input, orbitHome, id, base) {
   const caches = p.caches.map((c) => join75(root, c));
   const outside = id === "dotnet" && input.nugetPackages === true && (input.platform ?? process.platform) === "darwin";
   const nuget = "on macOS the dependency install cannot download NuGet packages, so this repository's are restored into it outside the sandbox, as checks.dotnet-packages says";
-  const exists = caches.every((c) => existsSync52(c));
+  const exists = caches.every((c) => existsSync53(c));
   const deps = input.config.dependencies;
   const installs = deps.install_existing_lockfile && !!deps.install_command;
   const noInstall = deps.install_existing_lockfile ? "dependencies.install_command is not set" : "dependencies.install_existing_lockfile is false";
@@ -64904,14 +65598,14 @@ async function toolchainLine(input, orbitHome, id, base) {
   const found = p.probe.executables.map((e) => which(e, input.env.PATH)).find((x) => x !== null);
   if (!found) return { detail: `${label}: not started ("${p.probe.executables[0]}" was not found); ${where2}`, refusal: null };
   const exe = launchPath(found, input.repo);
-  if (!exe) return { detail: `${label}: not started ("${basename18(found)}" is the repository's own code, which only a run executes); ${where2}`, refusal: null };
+  if (!exe) return { detail: `${label}: not started ("${basename20(found)}" is the repository's own code, which only a run executes); ${where2}`, refusal: null };
   const args = id === "dotnet" ? [...p.probe.args, ...probeNodeSwitches(base)] : p.probe.args;
   const check = { ...base ?? defaultCheck(`toolchain-${id}`), id: `toolchain-${id}`, command: [exe, ...args], shell: false, cwd: ".", mandatory: false };
   const project = p.probe.files ? { files: p.probe.files, about: p.probe.about ?? "a generated project" } : null;
   const out = await probeOrRefuse(input, check, exe, args, null, project, msbuildFix(base));
   return { detail: `${label}: ${out.detail}; ${where2}`, refusal: out.kind === "refused" ? out : null };
 }
-var STOP_POLL_MS, launchWrapped, PROBE_TIMEOUT_MS, BUILD_PROBE_TIMEOUT_MS, PROBE_ARGS, DEFAULT_PROBE_ARGS, SHELL_BUILTINS;
+var STOP_POLL_MS, launchWrapped, PROBE_TIMEOUT_MS, BUILD_PROBE_TIMEOUT_MS, PROBE_ARGS, DEFAULT_PROBE_ARGS, SHELL_BUILTINS, UNCERTAIN_READING, NOT_A_FILE, TEXT_ONLY;
 var init_doctor_sandbox = __esm({
   "src/cli/commands/doctor-sandbox.ts"() {
     "use strict";
@@ -64920,6 +65614,8 @@ var init_doctor_sandbox = __esm({
     init_redact();
     init_environment_block();
     init_dotnet_format();
+    init_check_command();
+    init_check_misconfigured();
     init_environment_failure();
     init_msbuild();
     init_runner();
@@ -64946,11 +65642,14 @@ ${r.stderr}`.trim() };
     PROBE_ARGS = { dotnet: ["help"], go: ["version"] };
     DEFAULT_PROBE_ARGS = ["--version"];
     SHELL_BUILTINS = /* @__PURE__ */ new Set(["cd", "export", "set", "test", "[", "true", "false", "echo", "exit", "exec", ":", "source", ".", "eval", "unset"]);
+    UNCERTAIN_READING = "if the check starts it: doctor cannot read its command for certain (a command substitution, a here-document, eval, a case statement, a function, a [[ test, a parameter expansion, an array, or shells nested deeper than it reads)";
+    NOT_A_FILE = "if the check starts it: there is no executable file at that path now, so doctor cannot tell that it is a program";
+    TEXT_ONLY = "if the check starts it: doctor reads only the command's text, which cannot show for certain that a run reaches it";
   }
 });
 
 // src/cli/commands/doctor-workers.ts
-import { basename as basename19 } from "node:path";
+import { basename as basename21 } from "node:path";
 function workerLoopbackCheck(input) {
   const id = "workers.loopback";
   const area = "isolation";
@@ -64961,7 +65660,7 @@ function workerLoopbackCheck(input) {
   const cannot = `on macOS workers cannot run test hosts that need a loopback socket (${RUNNERS3}), in either worker tier`;
   const runners = [];
   if (input.files.some((f) => DOTNET_FILE.test(f))) runners.push(`this repository uses .NET: every dotnet test listens on loopback for its test host, so a worker's aborts with "SocketException (13): Permission denied"`);
-  if (input.files.some((f) => GRADLE_FILES.has(basename19(f)))) runners.push("this repository uses Gradle: its test workers connect to the build over loopback, so a worker's gradle test cannot run");
+  if (input.files.some((f) => GRADLE_FILES.has(basename21(f)))) runners.push("this repository uses Gradle: its test workers connect to the build over loopback, so a worker's gradle test cannot run");
   if (runners.length === 0) {
     const summary = `${cannot}; this repository uses no runner that needs one on every run (.NET, Gradle), and a test that starts its own server runs in the checks`;
     return { id, area, status: "pass", summary, details: [WHY], missing: null, fix: null };
@@ -65015,12 +65714,12 @@ var init_doctor_workers = __esm({
 });
 
 // src/cli/policy-file.ts
-import { existsSync as existsSync53 } from "node:fs";
+import { existsSync as existsSync54 } from "node:fs";
 import { resolve as resolve20 } from "node:path";
 function explicitPolicyPath(cwd, policy) {
   if (policy === void 0) return void 0;
   const path = resolve20(cwd, policy);
-  if (!existsSync53(path)) throw new OrbitError("NOT_FOUND", `policy file ${path} does not exist; check the --policy path`);
+  if (!existsSync54(path)) throw new OrbitError("NOT_FOUND", `policy file ${path} does not exist; check the --policy path`);
   return path;
 }
 function loadCommandPolicy(repo, cwd, policy, opts = {}) {
@@ -65036,11 +65735,11 @@ var init_policy_file = __esm({
 });
 
 // src/cli/commands/doctor.ts
-import { accessSync as accessSync3, constants as constants5, existsSync as existsSync54, mkdtempSync as mkdtempSync8, readFileSync as readFileSync35, realpathSync as realpathSync20, rmSync as rmSync19, statSync as statSync15 } from "node:fs";
+import { accessSync as accessSync3, constants as constants5, existsSync as existsSync55, mkdtempSync as mkdtempSync8, readFileSync as readFileSync35, realpathSync as realpathSync20, rmSync as rmSync19, statSync as statSync15 } from "node:fs";
 import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
 import { homedir as homedir16, tmpdir as tmpdir14 } from "node:os";
-import { delimiter as delimiter4, isAbsolute as isAbsolute25, join as join76, resolve as resolve21 } from "node:path";
+import { delimiter as delimiter5, isAbsolute as isAbsolute25, join as join76, resolve as resolve21 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
     try {
@@ -65053,7 +65752,7 @@ function which2(cmd, env, cwd = process.cwd()) {
     const p = isAbsolute25(cmd) ? cmd : resolve21(cwd, cmd);
     return ok(p) ? p : null;
   }
-  for (const dir of (env.PATH ?? "").split(delimiter4)) {
+  for (const dir of (env.PATH ?? "").split(delimiter5)) {
     if (!dir) continue;
     const p = join76(dir, cmd);
     if (ok(p)) return p;
@@ -65184,7 +65883,7 @@ function checkStorage(p) {
   const dir = join76(repo, ".orbit");
   let db = null;
   try {
-    if (!existsSync54(path)) {
+    if (!existsSync55(path)) {
       const scratch = mkdtempSync8(join76(tmpdir14(), "orbit-doctor-"));
       try {
         db = openDb(join76(scratch, "probe.sqlite"));
@@ -65196,9 +65895,9 @@ function checkStorage(p) {
         rmSync19(scratch, { recursive: true, force: true });
       }
       try {
-        accessSync3(existsSync54(dir) ? dir : repo, constants5.W_OK);
+        accessSync3(existsSync55(dir) ? dir : repo, constants5.W_OK);
       } catch {
-        return fail2("storage", "storage", `${existsSync54(dir) ? dir : repo} is not writable`, "a writable .orbit directory", "fix permissions");
+        return fail2("storage", "storage", `${existsSync55(dir) ? dir : repo} is not writable`, "a writable .orbit directory", "fix permissions");
       }
       return pass("storage", "storage", "no state database yet; it will be created in .orbit/ (WAL works, directory writable)");
     }
@@ -65316,7 +66015,7 @@ async function checkIsolation(p) {
   }
   if (!st.ok) {
     const pluginRoot = ctx.env.ORBIT_PLUGIN_ROOT;
-    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync54(join76(pluginRoot, "package.json")) && !existsSync54(join76(pluginRoot, "node_modules"))) {
+    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync55(join76(pluginRoot, "package.json")) && !existsSync55(join76(pluginRoot, "node_modules"))) {
       return {
         check: fail2(
           "isolation",
@@ -65572,7 +66271,7 @@ function checkPlaywright(p) {
   for (const b of names) {
     const dirs = b === "chromium" ? ["chromium", "chromium_headless_shell"] : [b];
     const revs = dirs.map((d) => ({ d, rev: revisions[d] ?? revisions[b] ?? null }));
-    const present = revs.some((r) => r.rev ? existsSync54(join76(cache2, `${r.d}-${r.rev}`)) : false);
+    const present = revs.some((r) => r.rev ? existsSync55(join76(cache2, `${r.d}-${r.rev}`)) : false);
     details.push(`${b}: ${present ? `installed (${cache2})` : `not found in ${cache2}`}`);
     if (!present && revs.some((r) => r.rev)) missing.push(b);
   }
@@ -65714,7 +66413,7 @@ async function checkService(p) {
   let beat = "no controller has registered in this repository";
   let stale = false;
   let live = false;
-  if (existsSync54(stateDbPath(repo))) {
+  if (existsSync55(stateDbPath(repo))) {
     let db = null;
     try {
       db = openDb(stateDbPath(repo));
@@ -65796,7 +66495,7 @@ async function runDoctor(ctx, opts) {
   });
   let regDb = null;
   try {
-    const persisted = repo !== null && existsSync54(stateDbPath(repo));
+    const persisted = repo !== null && existsSync55(stateDbPath(repo));
     regDb = persisted ? openDb(stateDbPath(repo)) : openDb(":memory:");
     const registry = new ModelRegistry(regDb, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
     if (!persisted || registry.list().length === 0) registry.seed();
@@ -65960,7 +66659,7 @@ var init_gc = __esm({
 });
 
 // src/cli/commands/models.ts
-import { existsSync as existsSync55 } from "node:fs";
+import { existsSync as existsSync56 } from "node:fs";
 function configOrDefault(repo) {
   try {
     return { config: loadConfig(repo), loaded: true };
@@ -65972,7 +66671,7 @@ async function modelsListCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
   const { config, loaded } = configOrDefault(repo);
-  const persisted = existsSync55(stateDbPath(repo));
+  const persisted = existsSync56(stateDbPath(repo));
   const db = persisted ? openState(repo) : openDb(":memory:");
   try {
     const registry = new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
@@ -66133,8 +66832,8 @@ var init_models2 = __esm({
 });
 
 // src/cli/check-detect.ts
-import { existsSync as existsSync56, readFileSync as readFileSync36 } from "node:fs";
-import { basename as basename20, dirname as dirname35, join as join77 } from "node:path";
+import { existsSync as existsSync57, readFileSync as readFileSync36 } from "node:fs";
+import { basename as basename22, dirname as dirname35, join as join77 } from "node:path";
 function read(path) {
   try {
     return readFileSync36(path, "utf8").slice(0, MAX_READ_BYTES);
@@ -66162,9 +66861,9 @@ function nodeDrafts(input, out) {
   const has = (name) => typeof scripts[name] === "string" && scripts[name].trim() !== "";
   let pm = "npm";
   let pmFrom = "no lockfile, so npm";
-  if (existsSync56(join77(repo, "pnpm-lock.yaml"))) [pm, pmFrom] = ["pnpm", "pnpm-lock.yaml"];
-  else if (existsSync56(join77(repo, "yarn.lock"))) [pm, pmFrom] = ["yarn", "yarn.lock"];
-  else if (existsSync56(join77(repo, "package-lock.json")) || existsSync56(join77(repo, "npm-shrinkwrap.json"))) pmFrom = "package-lock.json";
+  if (existsSync57(join77(repo, "pnpm-lock.yaml"))) [pm, pmFrom] = ["pnpm", "pnpm-lock.yaml"];
+  else if (existsSync57(join77(repo, "yarn.lock"))) [pm, pmFrom] = ["yarn", "yarn.lock"];
+  else if (existsSync57(join77(repo, "package-lock.json")) || existsSync57(join77(repo, "npm-shrinkwrap.json"))) pmFrom = "package-lock.json";
   else {
     const declared = typeof pkg.packageManager === "string" ? /^(npm|pnpm|yarn)@/.exec(pkg.packageManager)?.[1] : void 0;
     if (declared === "pnpm" || declared === "yarn") [pm, pmFrom] = [declared, "package.json packageManager"];
@@ -66173,7 +66872,7 @@ function nodeDrafts(input, out) {
     out.skip("node", `package.json declares checks, but ${pm} (chosen from ${pmFrom}) was not found on PATH`);
     return [];
   }
-  const workspaceDeclared = Array.isArray(pkg.workspaces) || typeof pkg.workspaces === "object" && pkg.workspaces !== null || existsSync56(join77(repo, "pnpm-workspace.yaml"));
+  const workspaceDeclared = Array.isArray(pkg.workspaces) || typeof pkg.workspaces === "object" && pkg.workspaces !== null || existsSync57(join77(repo, "pnpm-workspace.yaml"));
   const nestedManifests = files.filter((f) => f.endsWith("package.json") && f !== "package.json" && !f.split("/").includes("node_modules"));
   const nestedHas = (name) => nestedManifests.some((f) => {
     const t = read(join77(repo, f));
@@ -66210,7 +66909,7 @@ function nodeDrafts(input, out) {
   const typed = script("typecheck", ["typecheck", "type-check", "check-types"], "typecheck", TIMEOUT.typecheck);
   if (!typed) {
     const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    if (existsSync56(join77(repo, "tsconfig.json")) && "typescript" in deps) {
+    if (existsSync57(join77(repo, "tsconfig.json")) && "typescript" in deps) {
       const tsc = pm === "npm" ? ["npx", "--no-install", "tsc", "--noEmit"] : pm === "pnpm" ? ["pnpm", "exec", "tsc", "--noEmit"] : ["yarn", "tsc", "--noEmit"];
       drafts.push({ name: "typecheck", command: tsc, category: "typecheck", timeout_seconds: TIMEOUT.typecheck, reason: `tsconfig.json and the typescript dependency (${pm}, from ${pmFrom})` });
     }
@@ -66225,7 +66924,7 @@ function dotnetTestProjects(repo, projects) {
   const found = [];
   for (const p of projects.slice(0, MAX_PROJECT_READS)) {
     const text2 = read(join77(repo, p)) ?? "";
-    if (/Microsoft\.NET\.Test\.Sdk/i.test(text2) || /<IsTestProject>\s*true/i.test(text2) || /tests?\.[cfv]sproj$/i.test(basename20(p))) found.push(p);
+    if (/Microsoft\.NET\.Test\.Sdk/i.test(text2) || /<IsTestProject>\s*true/i.test(text2) || /tests?\.[cfv]sproj$/i.test(basename22(p))) found.push(p);
   }
   return found;
 }
@@ -66257,7 +66956,7 @@ function dotnetDrafts(input, out) {
   const drafts = [];
   for (const target of targets) {
     const t = target.startsWith("-") ? `./${target}` : target;
-    const suffix = targets.length > 1 ? `-${slug(basename20(target).replace(/\.[^.]+$/, ""))}` : "";
+    const suffix = targets.length > 1 ? `-${slug(basename22(target).replace(/\.[^.]+$/, ""))}` : "";
     drafts.push({ name: `build${suffix}`, command: ["dotnet", "build", t, ONE_MSBUILD_NODE], category: "build", timeout_seconds: TIMEOUT.compile, reason: `${what} file ${t}; ${ONE_NODE_REASON}` });
     const testable = what === "solution" ? testProjects.length > 0 : testProjects.includes(t);
     if (testable) drafts.push({ name: `unit-tests${suffix}`, command: ["dotnet", "test", t, ONE_MSBUILD_NODE], category: "test", timeout_seconds: TIMEOUT.nodeTest, reason: `${what} file ${t} with ${what === "solution" ? "a test project" : "a test project of its own"} (Microsoft.NET.Test.Sdk); ${ONE_NODE_REASON}` });
@@ -66272,13 +66971,13 @@ function pythonDrafts(input, out) {
   const rootFiles = files.filter((f) => !f.includes("/"));
   const requirements = rootFiles.filter((f) => /^requirements.*\.(txt|in)$/i.test(f)).map((f) => read(join77(repo, f)) ?? "");
   const markers = ["pyproject.toml", "setup.cfg", "tox.ini", "pytest.ini", "mypy.ini", "ruff.toml", ".flake8"];
-  if (!markers.some((m) => existsSync56(join77(repo, m)))) return [];
+  if (!markers.some((m) => existsSync57(join77(repo, m)))) return [];
   const listed2 = (name) => {
     const re = new RegExp(`(^|[^\\w-])${name}([^\\w-]|$)`, "im");
     return [pyproject, setupCfg, toxIni, ...requirements].some((t) => t !== null && re.test(t));
   };
   const section = (text2, re) => text2 !== null && re.test(text2);
-  const exists = (f) => existsSync56(join77(repo, f));
+  const exists = (f) => existsSync57(join77(repo, f));
   const declared = {
     pytest: exists("pytest.ini") ? "pytest.ini" : section(pyproject, /^\[tool\.pytest/m) ? "pyproject.toml" : section(setupCfg, /^\[tool:pytest\]/m) ? "setup.cfg" : section(toxIni, /^\[pytest\]/m) ? "tox.ini" : listed2("pytest") ? "the declared dependencies" : null,
     ruff: exists("ruff.toml") ? "ruff.toml" : exists(".ruff.toml") ? ".ruff.toml" : section(pyproject, /^\[tool\.ruff/m) ? "pyproject.toml" : listed2("ruff") ? "the declared dependencies" : null,
@@ -66312,7 +67011,7 @@ function goWorkModules(text2) {
 function goDrafts(input, out) {
   const { repo, pathEnv } = input;
   const work = read(join77(repo, "go.work"));
-  if (!existsSync56(join77(repo, "go.mod")) && work === null) return [];
+  if (!existsSync57(join77(repo, "go.mod")) && work === null) return [];
   if (which("go", pathEnv) === null) {
     out.skip("go", "the repository has a Go module, but go was not found on PATH");
     return [];
@@ -66320,7 +67019,7 @@ function goDrafts(input, out) {
   const modules = work === null ? [] : goWorkModules(work);
   const patterns = modules.length > 0 ? modules.map((m) => `./${m}/...`) : ["./..."];
   const reason = modules.length > 0 ? `go.work lists ${modules.length} module(s), so one root command covers them` : "go.mod";
-  if (modules.length === 0 && !existsSync56(join77(repo, "go.mod"))) {
+  if (modules.length === 0 && !existsSync57(join77(repo, "go.mod"))) {
     out.skip("go", "go.work names no module directory and there is no root go.mod");
     return [];
   }
@@ -66416,7 +67115,7 @@ var init_check_detect = __esm({
 });
 
 // src/cli/commands/init.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync57, mkdirSync as mkdirSync24, readFileSync as readFileSync37, realpathSync as realpathSync21, writeFileSync as writeFileSync10 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync58, mkdirSync as mkdirSync24, readFileSync as readFileSync37, realpathSync as realpathSync21, writeFileSync as writeFileSync10 } from "node:fs";
 import { dirname as dirname36, join as join78 } from "node:path";
 function reviewPolicyProposal(codexEligible) {
   return codexEligible ? "review: Codex reviews independently when it is usable (review.providers: [codex]); when it is not, Claude reviews in a separate session and every report says the review was not independent and why (review.when_unavailable: claude). Set review.when_unavailable to ask to be asked first, or to block to require an independent reviewer." : REVIEW_POLICY_PROPOSAL;
@@ -66892,7 +67591,7 @@ verification:
   fail_before_timeout_seconds: 900
 `;
   const tpl = templatePath();
-  if (!existsSync57(tpl)) throw new OrbitError("NOT_FOUND", `the starter template ${tpl} is missing from this installation`);
+  if (!existsSync58(tpl)) throw new OrbitError("NOT_FOUND", `the starter template ${tpl} is missing from this installation`);
   return readFileSync37(tpl, "utf8");
 }
 async function currentBranch(ctx, repo) {
@@ -66933,7 +67632,7 @@ async function seedModels(ctx, repo) {
   } catch {
     config = defaultConfig();
   }
-  const persisted = existsSync57(stateDbPath(repo));
+  const persisted = existsSync58(stateDbPath(repo));
   let db;
   try {
     db = openDb(persisted ? stateDbPath(repo) : ":memory:");
@@ -66973,7 +67672,7 @@ async function initCommand(args, ctx) {
   let excludedDirs = [];
   let baseBranch = null;
   let checkProposal = { proposed: [], notProposed: [] };
-  if (existsSync57(configPath)) config = "exists";
+  if (existsSync58(configPath)) config = "exists";
   else {
     let text2 = templateText();
     mkdirSync24(dirname36(configPath), { recursive: true });
@@ -67010,7 +67709,7 @@ ${block2}`);
   const excludePath = await excludeFile(ctx, repo);
   const sharedAcrossWorktrees = await inLinkedWorktree(ctx, repo);
   mkdirSync24(dirname36(excludePath), { recursive: true });
-  const current = existsSync57(excludePath) ? readFileSync37(excludePath, "utf8") : "";
+  const current = existsSync58(excludePath) ? readFileSync37(excludePath, "utf8") : "";
   const have = new Set(current.split("\n").map((l) => l.trim()));
   const missing = EXCLUDE_RULES.filter((r) => !have.has(r));
   if (missing.length > 0) {
@@ -67253,14 +67952,14 @@ var init_ingest = __esm({
 });
 
 // src/cli/commands/learn.ts
-import { existsSync as existsSync58, mkdirSync as mkdirSync26, readFileSync as readFileSync38, statSync as statSync16 } from "node:fs";
-import { basename as basename21, isAbsolute as isAbsolute27, join as join79, relative as relative9, resolve as resolve22 } from "node:path";
+import { existsSync as existsSync59, mkdirSync as mkdirSync26, readFileSync as readFileSync38, statSync as statSync16 } from "node:fs";
+import { basename as basename23, isAbsolute as isAbsolute27, join as join79, relative as relative9, resolve as resolve22 } from "node:path";
 function knowledgePath(ctx, repo, global) {
   return global ? join79(ctx.orbitHome, "knowledge.sqlite") : join79(repo, ".orbit", "knowledge.sqlite");
 }
 function openExisting(ctx, repo, global) {
   const path = knowledgePath(ctx, repo, global);
-  if (!existsSync58(path)) throw new OrbitError("NOT_FOUND", `no ${global ? "global" : "repository"} knowledge graph at ${path}; it is created by the first run that learns something, or by "orbit learn ingest"`);
+  if (!existsSync59(path)) throw new OrbitError("NOT_FOUND", `no ${global ? "global" : "repository"} knowledge graph at ${path}; it is created by the first run that learns something, or by "orbit learn ingest"`);
   return KnowledgeStore.open(path, { clock: ctx.clock });
 }
 function lessonRow(l, support, contradict) {
@@ -67371,12 +68070,12 @@ async function readSource(ctx, repo, ref2, label) {
     return { kind: "url", ref: ref2, content: Buffer.concat(chunks).toString("utf8") };
   }
   const path = resolve22(ctx.cwd, ref2);
-  if (!existsSync58(path)) throw new OrbitError("NOT_FOUND", `${path} does not exist`);
+  if (!existsSync59(path)) throw new OrbitError("NOT_FOUND", `${path} does not exist`);
   const st = statSync16(path);
   if (!st.isFile()) throw new OrbitError("SCHEMA_INVALID", `${path} is not a regular file`);
   if (st.size > FETCH_MAX_BYTES) throw new OrbitError("SCHEMA_INVALID", `${path} is larger than ${FETCH_MAX_BYTES} bytes`);
   const rel = relative9(repo, path);
-  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute27(rel) ? rel : basename21(path), content: readFileSync38(path, "utf8") };
+  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute27(rel) ? rel : basename23(path), content: readFileSync38(path, "utf8") };
 }
 async function runIngestCurator(ctx, repo, config, prompt) {
   if (!(config.knowledge.curator_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.curator_budget_usd is 0, so no curator may run; raise it, or supply the curator output with --curator-output");
@@ -67627,7 +68326,7 @@ var init_learn2 = __esm({
 });
 
 // src/cli/commands/logs.ts
-import { closeSync as closeSync10, existsSync as existsSync59, fstatSync as fstatSync5, openSync as openSync10, readSync as readSync6, statSync as statSync17 } from "node:fs";
+import { closeSync as closeSync10, existsSync as existsSync60, fstatSync as fstatSync5, openSync as openSync10, readSync as readSync6, statSync as statSync17 } from "node:fs";
 import { dirname as dirname37, join as join80 } from "node:path";
 function readTail(path, lines) {
   const size = statSync17(path).size;
@@ -67697,7 +68396,7 @@ async function logsCommand(args, ctx) {
     const known = /* @__PURE__ */ new Set();
     const discover = () => {
       const add = (s) => {
-        if (known.has(s.path) || !existsSync59(s.path)) return;
+        if (known.has(s.path) || !existsSync60(s.path)) return;
         known.add(s.path);
         sources.push({ ...s, offset: 0 });
       };
@@ -67922,7 +68621,7 @@ var init_release2 = __esm({
 });
 
 // src/cli/commands/report.ts
-import { existsSync as existsSync60, readFileSync as readFileSync39 } from "node:fs";
+import { existsSync as existsSync61, readFileSync as readFileSync39 } from "node:fs";
 import { dirname as dirname38, join as join81 } from "node:path";
 async function reportCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
@@ -67934,9 +68633,9 @@ async function reportCommand(args, ctx) {
     const finalMd = join81(runDir2, "final.md");
     const finalJson = join81(runDir2, "final.json");
     const asJson = args.bool("json");
-    if (isTerminal(run.state) && !args.bool("interim") && existsSync60(finalMd)) {
+    if (isTerminal(run.state) && !args.bool("interim") && existsSync61(finalMd)) {
       if (asJson) {
-        if (existsSync60(finalJson)) ctx.io.out(readFileSync39(finalJson, "utf8"));
+        if (existsSync61(finalJson)) ctx.io.out(readFileSync39(finalJson, "utf8"));
         else json(ctx.io, buildFinalReport(db, run, { runDir: runDir2, clock: ctx.clock, snapshot: snapshotOrNull(run.policyPath, run.policyHash) }));
       } else ctx.io.out(readFileSync39(finalMd, "utf8"));
       return EXIT.OK;
@@ -67965,7 +68664,7 @@ function learningReport(ctx, repo, db, asJson) {
   const windows = [{ label: "base prompt", from: 0, to: Number.POSITIVE_INFINITY }];
   const kPath = join81(repo, ".orbit", "knowledge.sqlite");
   const overlays = [];
-  if (existsSync60(kPath)) {
+  if (existsSync61(kPath)) {
     const store = KnowledgeStore.open(kPath, { clock: ctx.clock });
     try {
       for (const o of store.listOverlays({ scope: "repo" })) {
@@ -68032,7 +68731,7 @@ var init_report4 = __esm({
 });
 
 // src/cli/admission.ts
-import { existsSync as existsSync61 } from "node:fs";
+import { existsSync as existsSync62 } from "node:fs";
 import { createRequire as createRequire5 } from "node:module";
 import { join as join82 } from "node:path";
 async function admitRun(ctx, input) {
@@ -68061,7 +68760,7 @@ function playwrightInstalled(repo) {
 }
 async function environmentProblems(ctx, input) {
   const { repo, config } = input;
-  const persisted = existsSync61(stateDbPath(repo));
+  const persisted = existsSync62(stateDbPath(repo));
   const db = persisted ? openDb(stateDbPath(repo)) : openDb(":memory:");
   try {
     const factory = ctx.seams.controllerDeps ?? defaultControllerDeps;
@@ -68183,7 +68882,7 @@ var init_admission = __esm({
 });
 
 // src/cli/commands/run.ts
-import { existsSync as existsSync62 } from "node:fs";
+import { existsSync as existsSync63 } from "node:fs";
 async function runCommand(args, ctx) {
   const usage = 'orbit run --goal "<goal>" [--mode <mode>] [--environment <name>] [--fail-before <mode>] [--policy <path>] [--foreground | --detach]';
   if (args.bool("foreground") && args.bool("detach")) throw new UsageError("--foreground and --detach cannot be combined", usage);
@@ -68208,7 +68907,7 @@ async function runCommand(args, ctx) {
     if (why) throw new UsageError(`--environment ${environment}: ${why}`, usage);
   }
   let service = null;
-  if (existsSync62(stateDbPath(repo))) {
+  if (existsSync63(stateDbPath(repo))) {
     const probe2 = openState(repo);
     try {
       service = liveServiceController(probe2, ctx.clock.now());
@@ -68720,7 +69419,7 @@ var init_stats = __esm({
 });
 
 // src/cli/commands/status.ts
-import { existsSync as existsSync63 } from "node:fs";
+import { existsSync as existsSync64 } from "node:fs";
 function finished(state) {
   return state !== "BLOCKED" && isTerminal(state);
 }
@@ -68820,7 +69519,7 @@ function renderRunStatus(s, now) {
 async function statusCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   const [id] = args.expect(0, 1);
-  if (id === void 0 && !existsSync63(stateDbPath(repo)) && initialised(repo)) {
+  if (id === void 0 && !existsSync64(stateDbPath(repo)) && initialised(repo)) {
     if (args.bool("json")) json(ctx.io, { runs: [], controllers: [] });
     else line(ctx.io, 'no runs yet; start one with: orbit run --goal "..."');
     return EXIT.OK;
