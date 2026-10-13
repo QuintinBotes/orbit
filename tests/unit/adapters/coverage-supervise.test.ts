@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -36,7 +36,7 @@ const {
   timeToFirstEventMs,
   withWorkerTelemetry,
 } = await import('../../../src/adapters/supervise.ts');
-const { EXIT_FILE, LOG_FILE, PID_FILE } = await import('../../../src/adapters/shim.ts');
+const { EXIT_FILE, LOG_FILE, PID_FILE, REGISTRATION_FILE } = await import('../../../src/adapters/shim.ts');
 
 const dirs: string[] = [];
 function tmp(): string {
@@ -92,6 +92,55 @@ describe('launchShim', () => {
     expect(argv.slice(0, 3)).toEqual(['node', 'orbit.mjs', 'shim']);
     expect(argv).toContain('--stdin');
     expect(argv.slice(-3)).toEqual(['--', 'claude', '-p']);
+  });
+
+  it('records a launch token in launch.json before the spawn and hands it to the shim on its command line', async () => {
+    const dir = tmp();
+    let atSpawn: Record<string, unknown> | null = null;
+    execMock.spawnDetached.mockImplementation(() => {
+      atSpawn = JSON.parse(readFileSync(join(dir, 'w', LAUNCH_FILE), 'utf8')) as Record<string, unknown>;
+      writeJson(join(dir, 'w'), PID_FILE, pidRecord());
+      return { pid: 4242, pgid: 4242 };
+    });
+    await launchShim(input(dir));
+    const token = atSpawn!.token as string;
+    expect(token).toMatch(/^[0-9a-f]{32}$/);
+    // The intent carries no pid yet: recovery tells a spawn that never happened from one that did by searching for the token.
+    expect(atSpawn!.pid).toBeUndefined();
+    const argv = execMock.spawnDetached.mock.calls[0]![0];
+    const at = argv.indexOf('--launch-token');
+    expect(argv[at + 1]).toBe(token);
+    expect(at).toBeLessThan(argv.indexOf('--'));
+    expect(JSON.parse(readFileSync(join(dir, 'w', LAUNCH_FILE), 'utf8'))).toMatchObject({ token, pid: 4242 });
+    // A second launch gets a token of its own.
+    const other = tmp();
+    execMock.spawnDetached.mockImplementation(() => {
+      writeJson(join(other, 'w'), PID_FILE, pidRecord());
+      return { pid: 4242, pgid: 4242 };
+    });
+    await launchShim(input(other));
+    expect(JSON.parse(readFileSync(join(other, 'w', LAUNCH_FILE), 'utf8')).token).not.toBe(token);
+  });
+
+  it('does not abandon a spawned shim when launch.json cannot be rewritten with its identity', async () => {
+    if (process.getuid?.() === 0) return; // root writes into a read-only directory
+    const dir = tmp();
+    const w = join(dir, 'w');
+    execMock.spawnDetached.mockImplementation(() => {
+      writeJson(w, PID_FILE, pidRecord());
+      // The rewrite cannot create its temporary file.
+      chmodSync(w, 0o500);
+      return { pid: 4242, pgid: 4242 };
+    });
+    try {
+      const handle = await launchShim(input(dir));
+      expect(handle).toMatchObject({ pid: 4242, pgid: 4242 });
+    } finally {
+      chmodSync(w, 0o700);
+    }
+    const launch = JSON.parse(readFileSync(join(w, LAUNCH_FILE), 'utf8'));
+    expect(launch.pid).toBeUndefined();
+    expect(typeof launch.token).toBe('string');
   });
 
   it('copes with a start time it cannot read, and with a launch that carries no meta', async () => {
@@ -395,6 +444,8 @@ describe('archiving attempts', () => {
     expect(archiveAttempt('claude', dir)).toBe(join(dir, 'attempts', '2'));
     expect(archivedAttempts(dir)).toBe(2);
     expect(ATTEMPT_FILES).toContain('result.json');
+    // The shim's registration belongs to its attempt: a restart's shim registers afresh.
+    expect(ATTEMPT_FILES).toContain(REGISTRATION_FILE);
   });
 });
 

@@ -7,7 +7,7 @@
  * recorded pid whose start time no longer matches is a different process,
  * and its group is never signalled.
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Clock } from '../core/clock.ts';
@@ -19,8 +19,10 @@ import { isAlive, isGroupAlive, processStartTime, terminateGroup } from '../core
 import {
   CANCEL_FILE,
   EXIT_FILE,
+  LAUNCH_TOKEN_FLAG,
   LOG_FILE,
   PID_FILE,
+  REGISTRATION_FILE,
   SHIM_LOG_FILE,
   STDERR_FILE,
   argvHash,
@@ -46,6 +48,13 @@ export interface LaunchRecord {
   argvHash: string;
   sessionId: string | null;
   requestedAt: number;
+  /**
+   * A random token, recorded here before the spawn and handed to the shim on its command line (--launch-token), which
+   * the shim writes to registration.json before it starts the provider. Until launch.json names the pid, it is how
+   * recovery tells a launch that never spawned (no process carries the token) from one whose shim may still run.
+   * Absent from records written before it existed.
+   */
+  token?: string;
   /**
    * The spawned shim's pid and start time, written right after the spawn and
    * before waiting for pid.json, so reconciliation can tell a slow-starting
@@ -104,6 +113,7 @@ export async function launchShim(input: LaunchInput): Promise<TaskHandle> {
     argvHash: argvHash(input.argv),
     sessionId: input.sessionId ?? null,
     requestedAt: clock.now(),
+    token: randomBytes(16).toString('hex'),
     ...(input.meta ? { meta: input.meta } : {}),
   };
   atomicWriteJson(join(input.workerDir, LAUNCH_FILE), launch, 0o600);
@@ -117,6 +127,7 @@ export async function launchShim(input: LaunchInput): Promise<TaskHandle> {
     cwd: input.cwd,
     abortOn: input.abortOn,
     cleanupPaths: input.cleanupPaths,
+    launchToken: launch.token,
     argv: input.argv,
   });
   const shimLog = join(input.workerDir, SHIM_LOG_FILE);
@@ -132,7 +143,11 @@ export async function launchShim(input: LaunchInput): Promise<TaskHandle> {
   throw new OrbitError('PROVIDER_UNAVAILABLE', `worker shim for ${input.workerId} did not start (see ${shimLog})${stopped ? '' : `; its process ${pid} could not be confirmed stopped`}`, { workerId: input.workerId, shimLog, ...(stopped ? {} : { shimPid: pid }) });
 }
 
-/** Add the shim's pid and start time to launch.json (atomic rewrite of the record written before the spawn); returns the start time. */
+/**
+ * Add the shim's pid and start time to launch.json (atomic rewrite of the record written before the spawn); returns the
+ * start time. A rewrite that fails does not abandon the shim: the identity in hand still serves the wait and the stop
+ * below, and recovery finds the shim by its registration or its launch token.
+ */
 function recordShimIdentity(workerDir: string, launch: LaunchRecord, pid: number): string | null {
   let procStart: string | null = null;
   try {
@@ -140,8 +155,22 @@ function recordShimIdentity(workerDir: string, launch: LaunchRecord, pid: number
   } catch {
     procStart = null;
   }
-  atomicWriteJson(join(workerDir, LAUNCH_FILE), { ...launch, pid, procStart }, 0o600);
+  try {
+    atomicWriteJson(join(workerDir, LAUNCH_FILE), { ...launch, pid, procStart }, 0o600);
+  } catch {
+    /* launch.json keeps the intent and its token */
+  }
   return procStart;
+}
+
+/**
+ * Whether a command line (as core/proc findProcesses reads it, arguments joined by spaces) is the shim of a launch in
+ * `workerDir`: by the launch token when the record has one, otherwise by the worker directory shimArgs always puts
+ * first (a record written before tokens existed, or one that cannot be read).
+ */
+export function isShimCommandLine(commandLine: string, workerDir: string, token: string | null): boolean {
+  const padded = ` ${commandLine} `;
+  return token !== null ? padded.includes(` ${LAUNCH_TOKEN_FLAG} ${token} `) : padded.includes(` --worker-dir ${workerDir} --timeout-ms `);
 }
 
 const DEFAULT_STOP_GRACE_MS = 2_000;
@@ -413,6 +442,7 @@ function tryParse(line: string): Record<string, unknown> | null {
  */
 export const ATTEMPT_FILES: readonly string[] = [
   LAUNCH_FILE,
+  REGISTRATION_FILE,
   PID_FILE,
   EXIT_FILE,
   LOG_FILE,

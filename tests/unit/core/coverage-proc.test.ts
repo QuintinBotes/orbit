@@ -324,3 +324,21 @@ describe('killGroup, isGroupAlive and terminateGroup signalling errors', () => {
     expect(result.exited).toBe(true);
   });
 });
+
+describe('findProcesses (injected ps)', () => {
+  it('matches the command line of each process, skipping zombies, ps itself and this process', async () => {
+    const stdout = [`   10 S    node orbit.mjs shim --launch-token abc --`, `   11 Z    abc`, `   99 R    ps abc`, `${process.pid} S  node abc`, `   12 Ss+  other abc`, `garbage abc`, ''].join('\n');
+    const spawnSync = vi.fn(() => ({ status: 0, pid: 99, stdout, stderr: '' }));
+    const proc = await load('darwin', { spawnSync });
+    expect(proc.findProcesses((line) => line.includes('abc'))).toEqual([10, 12]);
+    expect(proc.findProcesses((line) => line === 'node orbit.mjs shim --launch-token abc --')).toEqual([10]);
+    expect(spawnSync).toHaveBeenCalledWith('ps', ['-A', '-ww', '-o', 'pid=,stat=,args='], expect.objectContaining({ encoding: 'utf8' }));
+  });
+
+  it('throws when ps cannot run or fails, so an empty answer always means no such process', async () => {
+    const broken = await load('linux', { spawnSync: vi.fn(() => ({ error: new Error('ENOENT'), status: null, stdout: '', stderr: '' })) });
+    expect(() => broken.findProcesses(() => true)).toThrow(expect.objectContaining({ code: 'INTERNAL', message: expect.stringContaining('cannot run ps') }));
+    const failing = await load('linux', { spawnSync: vi.fn(() => ({ status: 1, stdout: '', stderr: 'bad option' })) });
+    expect(() => failing.findProcesses(() => true)).toThrow(expect.objectContaining({ code: 'INTERNAL', message: expect.stringContaining('exit 1') }));
+  });
+});

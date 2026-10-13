@@ -34,18 +34,30 @@ hold delivery credentials, and cannot modify policy or trusted code.
   or expired; call `step(run)` for each owned run. Steps are idempotent: they
   read durable state, observe external processes and files, persist intent,
   then act. A crash anywhere is repaired by the next `step`.
-- **Worker shim**: `orbit shim --worker-dir D -- <provider argv>`, spawned
-  detached in its own process group with stdout/stderr redirected to files.
-  It writes `pid.json` (own pid, child pid, start times) on start and
-  `exit.json` atomically on finish. On macOS it also follows the provider's
-  descendants while they run and ends groups that escaped the shim's group
-  before writing `exit.json`; collection therefore cannot race their later
-  writes. Any controller incarnation can tell a running worker from a dead
-  one and collect its result. A worker row is written (PLANNED) before spawn,
-  so a crash between spawn and bookkeeping is reconciled from `pid.json`.
+- **Worker shim**: `orbit shim --worker-dir D --launch-token T -- <provider argv>`,
+  spawned detached in its own process group with stdout/stderr redirected to
+  files. Before it starts the provider, or anything else that can change the
+  checkout, it writes `registration.json` (own pid, start time, group, launch
+  token); it writes `pid.json` (own pid, child pid, start times) once the
+  provider runs and `exit.json` atomically on finish. On macOS it also follows
+  the provider's descendants while they run and ends groups that escaped the
+  shim's group before writing `exit.json`; collection therefore cannot race
+  their later writes. Any controller incarnation can tell a running worker
+  from a dead one and collect its result. A worker row is written (PLANNED)
+  and `launch.json` records the launch with a random token before the spawn,
+  then the shim's pid and start time after it, so a crash between spawn and
+  bookkeeping is reconciled from `pid.json` or `registration.json`. Before the
+  shim registered, recovery searches the process table for the token on a
+  command line: none found means the spawn never happened and the worker is
+  closed, and a process found (or a table that cannot be read) keeps the worker
+  active, since a record is closed only when its process is confirmed absent.
 - **Checks** run through the isolation provider, also detached with
   pid/exit files, so a controller restart during checks reconciles rather than
-  reruns blindly.
+  reruns blindly. The check shim's command line carries its directory and the
+  intent's token, for the same search before `launch.json` names it. A check
+  of an ended run stays open while its shim or its process group may still
+  run (an identity that cannot be established, a stop that failed or did not
+  end it).
 
 ## Storage
 
@@ -59,7 +71,7 @@ also appends an `events` row. Artifacts live under `.orbit/runs/<run-id>/`:
   contract.json
   decisions.jsonl      append-only mirror of decisions rows
   evidence/<candidate-seq>/<check-id>.log, report.json, ui/…
-  workers/<worker-id>/ prompt.md, settings.json, schema.json, log.jsonl, pid.json, exit.json, result.json
+  workers/<worker-id>/ prompt.md, settings.json, schema.json, launch.json, registration.json, log.jsonl, pid.json, exit.json, result.json
   logs/controller.jsonl
   final.md
 ```
@@ -77,9 +89,10 @@ checkout that no ref holds: the run's worktree as a candidate, a unit's under
 `refs/orbit/<run>/unsaved/<worker>` (a `worktree.preserved` event each). A
 checkout whose work could not be pinned is kept, and so is one a worker may
 still be writing in (its stop was not confirmed, including a shim that was
-launched but never wrote `pid.json`) or a check may still run in (its row is
-open), until a later controller start confirms the worker stopped or closes the
-check. A release that a crash or a failure cut short, or that kept a checkout,
+launched but never wrote `pid.json`, or one spawned before `launch.json` named
+it that recovery cannot yet confirm gone) or a check may still run in (its row
+is open), until a later controller start confirms the worker stopped or closes
+the check. A release that a crash or a failure cut short, or that kept a checkout,
 is tried again at the next controller start (`recovery/release.ts`
 `releaseDue`, under the run's lease), and `orbit gc` releases a run the same
 way before it removes anything, skipping a run whose release keeps a checkout.

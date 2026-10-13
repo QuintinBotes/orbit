@@ -108,8 +108,8 @@ describe('buildWorkerEnv', () => {
 
 describe('shim command line', () => {
   it('round-trips through shimArgs and parseShimArgs, provider argv untouched after --', () => {
-    const args = shimArgs({ workerDir: '/w', timeoutMs: 5000, graceMs: 100, sessionId: 's', stdinPath: '/w/prompt.md', cwd: '/wt', abortOn: [{ type: 'system', error: 'authentication_failed' }], cleanupPaths: ['/tmp/orbit-srt-1'], argv: ['claude', '--settings', 'x', '--', '-p'] });
-    expect(parseShimArgs(args)).toEqual({ workerDir: '/w', timeoutMs: 5000, graceMs: 100, sessionId: 's', stdinPath: '/w/prompt.md', cwd: '/wt', abortOn: [{ type: 'system', error: 'authentication_failed' }], cleanupPaths: ['/tmp/orbit-srt-1'], argv: ['claude', '--settings', 'x', '--', '-p'] });
+    const args = shimArgs({ workerDir: '/w', timeoutMs: 5000, graceMs: 100, sessionId: 's', stdinPath: '/w/prompt.md', cwd: '/wt', abortOn: [{ type: 'system', error: 'authentication_failed' }], cleanupPaths: ['/tmp/orbit-srt-1'], launchToken: 'tok', argv: ['claude', '--settings', 'x', '--', '-p'] });
+    expect(parseShimArgs(args)).toEqual({ workerDir: '/w', timeoutMs: 5000, graceMs: 100, sessionId: 's', stdinPath: '/w/prompt.md', cwd: '/wt', abortOn: [{ type: 'system', error: 'authentication_failed' }], cleanupPaths: ['/tmp/orbit-srt-1'], launchToken: 'tok', argv: ['claude', '--settings', 'x', '--', '-p'] });
   });
 
   it('rejects malformed invocations', () => {

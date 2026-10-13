@@ -128,14 +128,14 @@ export const CODEX_HOME_READ_ONLY: readonly string[] = ['config.toml', 'hooks.js
 /**
  * Files in a worker directory that the controller, the shim or the provider
  * CLI trust (docs/architecture.md): the settings and prompt the CLI starts
- * with, the policy snapshot a guard hook reads, and the log, pid, exit and
- * result files the controller judges the worker by. A worker writing any of
+ * with, the policy snapshot a guard hook reads, and the launch, registration,
+ * log, pid, exit and result files the controller judges the worker by. A worker writing any of
  * them could forge its own outcome or loosen its own rules. The log is
  * written through the descriptor the shim opened, which a write deny does
  * not affect (verified under srt). Any new file the controller trusts
  * belongs in this list.
  */
-export const WORKER_DIR_READ_ONLY: readonly string[] = ['prompt.md', 'system.md', 'settings.json', 'schema.json', 'policy.json', 'launch.json', 'log.jsonl', 'stderr.log', 'shim.log', 'pid.json', 'exit.json', 'result.json'];
+export const WORKER_DIR_READ_ONLY: readonly string[] = ['prompt.md', 'system.md', 'settings.json', 'schema.json', 'policy.json', 'launch.json', 'registration.json', 'log.jsonl', 'stderr.log', 'shim.log', 'pid.json', 'exit.json', 'result.json'];
 
 export type WorkerProvider = 'claude' | 'codex';
 

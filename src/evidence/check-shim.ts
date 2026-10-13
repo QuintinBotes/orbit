@@ -215,6 +215,16 @@ export function readJsonFile<T>(path: string): T | null {
   }
 }
 
+/**
+ * Whether a command line (as core/proc findProcesses reads it, arguments joined by spaces) is the shim of the check in
+ * `dir`. The runner starts it as `node check-shim.mjs <dir> <token>` (the shim reads only the directory; the intent's
+ * token is there for this search), so a shim spawned before launch.json named it can still be found; one started
+ * before the token was added ends with the directory.
+ */
+export function isCheckShimCommandLine(commandLine: string, dir: string, token: string): boolean {
+  return ` ${commandLine} `.includes(` ${dir} ${token} `) || commandLine.endsWith(` ${dir}`);
+}
+
 export function shimPath(dir: string, file: keyof typeof SHIM_FILES): string {
   return join(dir, SHIM_FILES[file]);
 }

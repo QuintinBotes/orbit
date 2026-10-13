@@ -123,6 +123,34 @@ export async function terminateGroup(pgid: number, graceMs: number, options: { c
   return { exited: !isGroupAlive(pgid), signal: last };
 }
 
+/**
+ * Pids of the live processes whose command line satisfies `match`, from `ps -A -ww -o pid=,stat=,args=` (macOS and
+ * Linux procps print the arguments joined by single spaces, never truncated). Zombies, this process and the ps itself
+ * are left out. A launcher puts a marker on the command line of a process it spawns (a launch token, a directory) so
+ * that this search finds it, whatever the process is written in, before any record names its pid. Throws when the
+ * process table cannot be read: an empty answer always means no such process, never that nobody could look.
+ */
+export function findProcesses(match: (commandLine: string) => boolean): number[] {
+  const r = spawnSync('ps', ['-A', '-ww', '-o', 'pid=,stat=,args='], {
+    encoding: 'utf8',
+    env: { ...process.env, LC_ALL: 'C', LANG: 'C' },
+    timeout: 10_000,
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (r.error) throw new OrbitError('INTERNAL', `cannot run ps to search the process table: ${r.error.message}`, {}, { cause: r.error });
+  if (r.status !== 0 || typeof r.stdout !== 'string') throw new OrbitError('INTERNAL', `ps failed searching the process table (exit ${String(r.status)})`, { stderr: String(r.stderr ?? '').slice(0, 500) });
+  const out: number[] = [];
+  for (const line of r.stdout.split('\n')) {
+    const m = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(line);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    if (!isValidPid(pid) || pid === process.pid || pid === r.pid || m[2]!.startsWith('Z')) continue;
+    if (match(m[3]!.trimEnd())) out.push(pid);
+  }
+  return out;
+}
+
 /** Collapse whitespace so start times recorded by different callers compare equal. */
 export function normalizeStart(raw: string): string {
   return raw.trim().replace(/\s+/g, ' ');

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ManualClock } from '../../../src/core/clock.ts';
-import { isAlive, isGroupAlive, killGroup, normalizeStart, processInfo, processStartTime, terminateGroup } from '../../../src/core/proc.ts';
+import { findProcesses, isAlive, isGroupAlive, killGroup, normalizeStart, processInfo, processStartTime, terminateGroup } from '../../../src/core/proc.ts';
 
 const NODE = process.execPath;
 
@@ -203,5 +203,18 @@ describe('adversarial review', () => {
     expect(report.pgid).toBe(sh.pid);
     expect(report.pid).not.toBe(report.pgid);
     expect(report.outcome).toBe('refused');
+  });
+});
+
+describe('findProcesses', () => {
+  it('finds a live process by a marker on its command line, and no longer once it has ended', async () => {
+    const marker = `orbit-find-${process.pid}-${Date.now()}`;
+    const has = (line: string): boolean => line.split(' ').includes(marker);
+    const child = spawn(NODE, ['-e', 'setInterval(() => {}, 1000)', '--', marker], { stdio: 'ignore' });
+    started.push(child);
+    expect(await waitFor(() => findProcesses(has).length > 0)).toBe(true);
+    expect(findProcesses(has)).toEqual([child.pid]);
+    child.kill('SIGKILL');
+    expect(await waitFor(() => findProcesses(has).length === 0)).toBe(true);
   });
 });

@@ -9,6 +9,8 @@ import type { IsolationProvider, WrappedCommand } from '../../../src/isolation/t
 import { checkEnv, configHashFor, assertRunPolicy, reattachCheck, resumeChecks, runChecks, INSTALL_CHECK_ID } from '../../../src/evidence/runner.ts';
 import { getCheckRun, listCheckRuns, planCheckRun } from '../../../src/evidence/store.ts';
 import { checkConfigHash } from '../../../src/policy/snapshot.ts';
+import { findProcesses } from '../../../src/core/proc.ts';
+import { isCheckShimCommandLine } from '../../../src/evidence/check-shim.ts';
 import { openDb } from '../../../src/storage/db.ts';
 import { checkDef, nodeCheck, write } from './fixtures.ts';
 import { checkDirOf, pidGone, readText, runnerEnv, waitFor, type RunnerEnv } from '../../integration/evidence/harness.ts';
@@ -330,6 +332,28 @@ describe('reattaching with a partly written shim record', () => {
     const result = await reattachCheck(e.ctx, row!.id);
     expect(result).toMatchObject({ id: row!.id, status: 'PASSED' });
     expect(readText(result.logPath)).toContain('done');
+  });
+});
+
+describe('the check shim command line', () => {
+  it('carries its check directory and the intent token, so recovery finds a shim that launch.json does not name yet', async () => {
+    const e = await setup([nodeCheck('long', 'setInterval(()=>{},1000)', { timeout_seconds: 120 })]);
+    const ac = new AbortController();
+    const pending = run(e, ['long'], { detachSignal: ac.signal });
+    const dir = checkDirOf(e, 'long');
+    await waitFor(() => existsSync(join(dir, 'pid.json')));
+    ac.abort(new Error('lease lost'));
+    await pending.then(() => null, () => null);
+    const { token } = JSON.parse(readFileSync(join(dir, 'intent.json'), 'utf8')) as { token: string };
+    const { shimPid } = pidsOf(e, 'long');
+    try {
+      expect(findProcesses((line) => isCheckShimCommandLine(line, dir, token))).toEqual([shimPid]);
+      expect(findProcesses((line) => isCheckShimCommandLine(line, dir, 'another-token'))).toEqual([]);
+      expect(findProcesses((line) => isCheckShimCommandLine(line, `${dir}~1`, token))).toEqual([]);
+    } finally {
+      process.kill(shimPid, 'SIGTERM');
+      await waitFor(() => pidGone(shimPid));
+    }
   });
 });
 

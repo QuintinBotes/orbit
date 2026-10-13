@@ -671,7 +671,9 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
   try {
     atomicWriteJson(shimPath(dirs.checkDir, 'intent'), intent, 0o600);
     const shim = ensureShim(ctx.runDir);
-    const { pid } = spawnDetached([process.execPath, shim, dirs.checkDir], { cwd: dirs.checkDir, env: wrapped.env, stdoutPath: join(dirs.checkDir, 'shim.out'), stderrPath: join(dirs.checkDir, 'shim.out') });
+    // The token after the directory is for recovery's process-table search (isCheckShimCommandLine): until launch.json
+    // names the pid, it is how a shim that was spawned is told from one that never was.
+    const { pid } = spawnDetached([process.execPath, shim, dirs.checkDir, token], { cwd: dirs.checkDir, env: wrapped.env, stdoutPath: join(dirs.checkDir, 'shim.out'), stderrPath: join(dirs.checkDir, 'shim.out') });
     let procStart: string | null = null;
     try {
       procStart = processStartTime(pid);

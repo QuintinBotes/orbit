@@ -43,7 +43,15 @@ import { processStartTime } from '../core/proc.ts';
 import { createRedactor, redactValue, type Redactor } from '../core/redact.ts';
 
 export const PID_FILE = 'pid.json';
+/**
+ * The shim's identity (pid, start time, group, launch token), written before it starts the provider or anything else
+ * that can change the checkout, so a launch.json the controller could not complete (a crash, or a failed rewrite,
+ * between the spawn and recording the pid) still leads recovery to the shim.
+ */
+export const REGISTRATION_FILE = 'registration.json';
 export const EXIT_FILE = 'exit.json';
+/** The flag that carries the launch token on the shim's command line, where a process-table search finds it. */
+export const LAUNCH_TOKEN_FLAG = '--launch-token';
 /** Durable controller intent, written before it signals the worker group. */
 export const CANCEL_FILE = 'cancel.json';
 export const LOG_FILE = 'log.jsonl';
@@ -92,6 +100,8 @@ export interface ShimOptions {
   abortOn?: AbortPattern[];
   /** Removed once the provider has ended, e.g. a sandbox settings directory. */
   cleanupPaths?: string[];
+  /** The token launch.json recorded before the spawn; written to registration.json, so recovery can pair the two. */
+  launchToken?: string | null;
   clock?: Clock;
   /** Process-level effects (group signals, group listing, signal handlers); tests substitute pieces, production uses the real ones. */
   host?: Partial<ShimHost>;
@@ -158,6 +168,16 @@ export interface PidRecord {
   startedAt: number;
 }
 
+export interface RegistrationRecord {
+  version: 1;
+  /** launch.json's token; null for a shim started without one. */
+  token: string | null;
+  shimPid: number;
+  shimStart: string | null;
+  pgid: number;
+  registeredAt: number;
+}
+
 export interface ExitRecord {
   version: 1;
   /** Provider exit code; null when it was ended by a signal or never started. */
@@ -185,6 +205,11 @@ export function argvHash(argv: readonly string[]): string {
 /** pid.json of a worker directory, or null when absent or unreadable (being replaced). */
 export function readPidRecord(workerDir: string): PidRecord | null {
   return readRecord<PidRecord>(join(workerDir, PID_FILE), (o) => typeof o.shimPid === 'number' && typeof o.pgid === 'number');
+}
+
+/** registration.json of a worker directory, or null when absent or not a whole record. */
+export function readRegistration(workerDir: string): RegistrationRecord | null {
+  return readRecord<RegistrationRecord>(join(workerDir, REGISTRATION_FILE), (o) => typeof o.shimPid === 'number' && typeof o.pgid === 'number' && typeof o.registeredAt === 'number');
 }
 
 export function readExitRecord(workerDir: string): ExitRecord | null {
@@ -275,6 +300,14 @@ class Shim {
   }
 
   private start(): void {
+    // Who this shim is goes on disk before it starts anything that can change the checkout: a controller that died
+    // before launch.json named it finds it by this record (or, until it exists, by the launch token on its command line).
+    try {
+      this.register();
+    } catch (err) {
+      this.finishWithoutChild(`could not register the shim before starting the provider: ${describe(err)}`);
+      return;
+    }
     const [command, ...args] = this.o.argv as [string, ...string[]];
     const fds: number[] = [];
     let child: ChildProcess;
@@ -561,6 +594,18 @@ class Shim {
   private finishWithoutChild(error: string): void {
     if (!existsSync(join(this.workerDir, PID_FILE))) this.writePid(null);
     this.finish(this.record(null, null, error));
+  }
+
+  private register(): void {
+    const record: RegistrationRecord = {
+      version: 1,
+      token: this.o.launchToken ?? null,
+      shimPid: process.pid,
+      shimStart: safeStart(process.pid),
+      pgid: this.pgid,
+      registeredAt: this.startedAt,
+    };
+    atomicWriteJson(join(this.workerDir, REGISTRATION_FILE), record, 0o600);
   }
 
   private writePid(child: ChildProcess | null): void {
@@ -1086,7 +1131,7 @@ function describe(err: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// Command line: `orbit shim --worker-dir D --timeout-ms N [options] -- <argv...>`
+// Command line: `orbit shim --worker-dir D --timeout-ms N [--launch-token T] [options] -- <argv...>`
 
 export interface ParsedShimArgs {
   workerDir: string;
@@ -1097,6 +1142,7 @@ export interface ParsedShimArgs {
   cwd: string | null;
   abortOn: AbortPattern[];
   cleanupPaths: string[];
+  launchToken: string | null;
   argv: string[];
 }
 
@@ -1110,9 +1156,13 @@ export function shimArgs(opts: {
   cwd?: string | null;
   abortOn?: AbortPattern[];
   cleanupPaths?: string[];
+  launchToken?: string | null;
   argv: string[];
 }): string[] {
+  // The worker directory and the timeout come first, always together: recovery recognises the shim of a launch
+  // record without a token by them (--worker-dir <dir> --timeout-ms).
   const out = ['--worker-dir', opts.workerDir, '--timeout-ms', String(opts.timeoutMs)];
+  if (opts.launchToken) out.push(LAUNCH_TOKEN_FLAG, opts.launchToken);
   if (opts.graceMs !== undefined) out.push('--grace-ms', String(opts.graceMs));
   if (opts.sessionId) out.push('--session-id', opts.sessionId);
   if (opts.stdinPath) out.push('--stdin', opts.stdinPath);
@@ -1126,7 +1176,7 @@ export function parseShimArgs(args: readonly string[]): ParsedShimArgs {
   const sep = args.indexOf('--');
   if (sep === -1 || sep === args.length - 1) throw new OrbitError('CONFIG_INVALID', 'orbit shim: expected -- followed by the provider command');
   const opts = args.slice(0, sep);
-  const out: ParsedShimArgs = { workerDir: '', timeoutMs: 0, graceMs: DEFAULT_GRACE_MS, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], argv: args.slice(sep + 1) };
+  const out: ParsedShimArgs = { workerDir: '', timeoutMs: 0, graceMs: DEFAULT_GRACE_MS, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], launchToken: null, argv: args.slice(sep + 1) };
   for (let i = 0; i < opts.length; i += 2) {
     const flag = opts[i]!;
     const value = opts[i + 1];
@@ -1160,6 +1210,9 @@ export function parseShimArgs(args: readonly string[]): ParsedShimArgs {
       }
       case '--cleanup':
         out.cleanupPaths.push(value);
+        break;
+      case LAUNCH_TOKEN_FLAG:
+        out.launchToken = value;
         break;
       default:
         throw new OrbitError('CONFIG_INVALID', `orbit shim: unknown option ${flag}`);
@@ -1195,6 +1248,7 @@ export async function shimMain(args: readonly string[], host?: Partial<ShimHost>
     stdinPath: parsed.stdinPath,
     abortOn: parsed.abortOn,
     cleanupPaths: parsed.cleanupPaths,
+    launchToken: parsed.launchToken,
     ...(host ? { host } : {}),
   });
   return 0;
