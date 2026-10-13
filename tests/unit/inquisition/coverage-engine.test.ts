@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { isOrbitError, type OrbitErrorCode } from '../../../src/core/errors.ts';
+import { isOrbitError, OrbitError, type OrbitErrorCode } from '../../../src/core/errors.ts';
 import { ManualClock } from '../../../src/core/clock.ts';
 import { createRun } from '../../../src/controller/run-store.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../../../src/contract/model-outputs.ts';
@@ -168,6 +168,30 @@ describe('worker supervision', () => {
     expect(env.clock.now() - t0).toBe(500);
     const usage = env.db.all<{ duration_ms: number }>('SELECT duration_ms FROM usage WHERE run_id = ?', RUN);
     expect(usage).toEqual([{ duration_ms: 500 }]);
+  });
+
+  it('admits each worker through the caller before recording it, and starts it under the spend cap the caller returns', async () => {
+    env = setup();
+    const adapter = new ScriptedAdapter([{ structured: inquisitorOutput() }]);
+    const admitted: string[] = [];
+    await runInquisition({ trigger: trig(), context: env.ctx({}, { worker: workerOpts(env, { admit: (purpose) => (admitted.push(purpose), 1.25) }) }), adapter });
+    expect(admitted).toEqual(['inquisition:clarify:missing_outcomes:abc']);
+    expect(adapter.specs[0]).toMatchObject({ maxBudgetUsd: 1.25 });
+    // A caller with no cap to give starts the worker without one.
+    const second = new ScriptedAdapter([{ structured: inquisitorOutput() }]);
+    await runInquisition({ trigger: trig({ key: 'missing_outcomes:def' }), context: env.ctx({}, { worker: workerOpts(env, { admit: () => null }) }), adapter: second });
+    expect(second.specs[0]).not.toHaveProperty('maxBudgetUsd');
+  });
+
+  it('starts nothing and records no worker when the caller refuses the worker', async () => {
+    env = setup();
+    const adapter = new ScriptedAdapter([{ structured: inquisitorOutput() }]);
+    const refuse = (): number => {
+      throw new OrbitError('BUDGET_EXHAUSTED', 'inquisitor not admitted');
+    };
+    await rejectsWith(runInquisition({ trigger: trig(), context: env.ctx({}, { worker: workerOpts(env, { admit: refuse }) }), adapter }), 'BUDGET_EXHAUSTED');
+    expect(adapter.specs).toEqual([]);
+    expect(listWorkers(env.db, { runId: RUN })).toEqual([]);
   });
 
   it('marks the worker failed and rethrows when the process cannot be started', async () => {

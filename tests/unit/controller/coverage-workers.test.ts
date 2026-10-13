@@ -505,10 +505,10 @@ describe('accountWorker', () => {
     expect(() => accountWorker(ctx, w, result({ status: 'auth_failed' }))).not.toThrow();
     expect(cap.lines().some((l) => l.msg.includes('budget exhausted while charging an auth-failed session'))).toBe(true);
     expect(lab.db.all('SELECT 1 FROM usage WHERE worker_id = ?', w.id)).toHaveLength(1);
-    // Any other session surfaces the exhaustion, and nothing is recorded for it.
+    // Any other session surfaces the exhaustion, with its usage recorded, so the spend line can name it.
     const other = active('planner', 'plan:9');
     expect(() => accountWorker(ctx, other, result({ status: 'succeeded' }))).toThrow(/cost_usd exhausted/);
-    expect(lab.db.all('SELECT 1 FROM usage WHERE worker_id = ?', other.id)).toHaveLength(0);
+    expect(lab.db.all('SELECT 1 FROM usage WHERE worker_id = ?', other.id)).toHaveLength(1);
   });
 
   it('marks the model a succeeded session actually ran on as available, and only then', () => {

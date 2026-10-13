@@ -41,7 +41,8 @@ const used = (): number => lab.ctx().ledger!.state('cost_usd').used;
 const zeroEvents = (): unknown[] => lab.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = 'budget.cost-zero-no-model'", lab.runId);
 
 describe('reported worker turns', () => {
-  const withTurns = (numTurns: number | null): TaskResult & { numTurns: number | null } => ({ ...result({ usage: usage({ costUsd: 0, costSource: 'reported' }) }), numTurns });
+  // A current Claude result: its model requests, which is what the turn cap counts, beside the CLI's num_turns.
+  const withTurns = (numTurns: number | null): TaskResult & { numTurns: number | null; modelRequests: number | null } => ({ ...result({ usage: usage({ costUsd: 0, costSource: 'reported' }) }), numTurns, modelRequests: numTurns });
 
   it.each(['claude-review', 'claude_review'])('records turn counts for supported provider alias %s', (provider) => {
     setup(30);

@@ -81,7 +81,7 @@ export function classifyClaudeTranscript(input: ClassifyInput): ClaudeTaskResult
   const { events, exit } = input;
   const result = lastOf(events, (e) => e.type === 'result');
   const init = events.find((e) => e.type === 'system' && e.subtype === 'init');
-  const sessionId = str(result?.session_id) ?? str(init?.session_id) ?? null;
+  const sessionId = claudeSessionId(events);
   const usage = claudeUsage(events);
   const plugins = workerPlugins(init?.plugins, input.plugins ?? NO_PLUGINS);
   const base = {
@@ -318,6 +318,13 @@ export function claudeModelRequests(events: Record<string, unknown>[]): number |
     ids.add(str(m.id) ?? `#${messages}`);
   }
   return messages === 0 ? null : ids.size;
+}
+
+/** The session a transcript belongs to: its result line's session_id, else its init line's. */
+export function claudeSessionId(events: Record<string, unknown>[]): string | null {
+  const result = lastOf(events, (e) => e.type === 'result');
+  const init = events.find((e) => e.type === 'system' && e.subtype === 'init');
+  return str(result?.session_id) ?? str(init?.session_id) ?? null;
 }
 
 /** Per-session delta of two cumulative reports (a resumed session repeats the earlier figures). */

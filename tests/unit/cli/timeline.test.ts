@@ -173,12 +173,16 @@ describe('orbit timeline: the readable history of a run', () => {
     fx.event('budget.exhausted', { counter: 'worker_turns_per_session', session: 'wrk-c', used: 30, requested: 1, hard_cap: 30, limit: 'hard_cap' }, 3);
     fx.event('budget.usage-charged', { worker_id: 'wrk-inq', role: 'inquisitor', usage_ids: [1], charged_usd: 0.04 }, 4);
     fx.event('budget.usage-charged', {}, 5);
+    fx.event('budget.session-turns-recounted', { session: 'wrk-d:s4', model_requests: 30, recorded_before: 61 }, 6);
+    fx.event('budget.session-turns-recounted', { session: 'wrk-e:s5', model_requests: 4, recorded_before: null }, 7);
     const out = (await l.cli(['timeline', RUN_ID])).out;
     expect(line(out, 1, 'budget', 'budget exhausted')).toContain('worker_turns_per_session 30 of 30 (hard_cap); the cap ended session wrk-a:s1');
     expect(line(out, 2, 'budget', 'budget exhausted')).toContain('31 of 30 (hard_cap); session wrk-b:s2 went past the cap');
     expect(line(out, 3, 'budget', 'budget exhausted')).toContain('(hard_cap) in session wrk-c');
     expect(line(out, 4, 'cost', 'charged')).toContain('charged $0.04 for inquisitor wrk-inq, whose usage the Inquisition recorded');
     expect(line(out, 5, 'cost', 'charged')).toContain('charged ? for a session, whose usage');
+    expect(line(out, 6, 'budget', 'session wrk-d:s4')).toContain('session wrk-d:s4 made 30 model requests, counted from its transcript; it was recorded before 0.3.1 as num_turns 61');
+    expect(line(out, 7, 'budget', 'session wrk-e:s5')).toContain('session wrk-e:s5 made 4 model requests, counted from its transcript');
   });
 
   it('prints events it has no special wording for rather than hiding them, and hides housekeeping unless asked', async () => {

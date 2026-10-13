@@ -166,9 +166,16 @@ export interface BudgetSnapshot {
   run_id: string;
   counters: CounterState[];
   sessions: CounterState[];
+  /** Sessions recorded before 0.3.1 whose transcript is gone: their num_turns, which is not model requests. Absent when none. */
+  num_turns_sessions?: CounterState[];
   reserve: ReserveState;
   cost_measurement: CostMeasurement;
 }
+
+/** The record of a session's num_turns where its model requests cannot be counted (recordSessionNumTurns). */
+export const NUM_TURNS_COUNTER = 'num_turns';
+/** Marks a session recorded before 0.3.1 whose model requests were counted from its transcript. */
+export const SESSION_RECOUNT_EVENT = 'budget.session-turns-recounted';
 
 export interface RoleCeilings {
   costUsd: Readonly<Record<BudgetRole, number>>;
@@ -246,16 +253,28 @@ export class BudgetLedger {
    * Record a session's turns, idempotently: the model requests it made, which is what the CLI's --max-turns counts.
    * The CLI enforces the cap; a session the cap stopped (`endedByCap`), or one recorded past it, leaves one
    * budget.exhausted event, so a count over the cap is never silent. Observed overshoot is retained.
+   *
+   * `recount`: the count comes from the transcript of a session recorded before 0.3.1, which recorded its num_turns as
+   * its turns. The count replaces that record (and the run's maximum is taken again), once marked as
+   * budget.session-turns-recounted, so a later rebuild without the transcript keeps it.
    */
-  recordSessionTurns(sessionId: string, turns: number, opts: { endedByCap?: boolean } = {}): CounterState {
+  recordSessionTurns(sessionId: string, turns: number, opts: { endedByCap?: boolean; recount?: boolean } = {}): CounterState {
     if (!sessionId || !Number.isSafeInteger(turns) || turns < 0) throw new OrbitError('SCHEMA_INVALID', 'session turns need a session id and a non-negative integer count');
     const { runId } = this.bound();
     const key = `${SESSION_COUNTER}:${sessionId}`;
     const now = this.clock.now();
     return this.db.tx(() => {
       const base = this.row(runId, SESSION_COUNTER);
-      this.db.run('INSERT INTO budget_counters (run_id, counter, used, allowance, hard_cap) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id, counter) DO UPDATE SET used = MAX(used, excluded.used)', runId, key, turns, base.hard_cap, base.hard_cap);
-      this.db.run('UPDATE budget_counters SET used = MAX(used, ?) WHERE run_id = ? AND counter = ?', turns, runId, SESSION_COUNTER);
+      if (opts.recount) {
+        const before = this.db.get<{ used: number }>('SELECT used FROM budget_counters WHERE run_id = ? AND counter = ?', runId, key)?.used ?? null;
+        this.db.run('INSERT INTO budget_counters (run_id, counter, used, allowance, hard_cap) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id, counter) DO UPDATE SET used = excluded.used', runId, key, turns, base.hard_cap, base.hard_cap);
+        this.db.run('DELETE FROM budget_counters WHERE run_id = ? AND counter = ?', runId, `${NUM_TURNS_COUNTER}:${sessionId}`);
+        if (!this.recounted(runId, sessionId)) this.event(runId, SESSION_RECOUNT_EVENT, { session: sessionId, model_requests: turns, recorded_before: before }, now);
+        this.retakeSessionMaximum(runId);
+      } else {
+        this.db.run('INSERT INTO budget_counters (run_id, counter, used, allowance, hard_cap) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id, counter) DO UPDATE SET used = MAX(used, excluded.used)', runId, key, turns, base.hard_cap, base.hard_cap);
+        this.db.run('UPDATE budget_counters SET used = MAX(used, ?) WHERE run_id = ? AND counter = ?', turns, runId, SESSION_COUNTER);
+      }
       const row = this.row(runId, key);
       const endedByCap = opts.endedByCap === true;
       if ((endedByCap || row.used > row.hard_cap + EPS) && !this.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'budget.exhausted' AND json_extract(data_json, '$.session') = ? LIMIT 1", runId, sessionId)) {
@@ -263,6 +282,44 @@ export class BudgetLedger {
       }
       return toState(row);
     });
+  }
+
+  /**
+   * Keep the num_turns of a session recorded before 0.3.1 whose transcript is gone, so its model requests cannot be
+   * counted. num_turns counts the prompt and every tool result, not what --max-turns limits, so it is kept apart (as
+   * `num_turns:<session>`), never compared with the cap and never the run's maximum, and leaves no event. What 0.3.0
+   * recorded as this session's turns was that num_turns, so it moves there. A session already counted from its
+   * transcript keeps that count. Returns the kept record, or null when the session's requests were counted.
+   */
+  recordSessionNumTurns(sessionId: string, numTurns: number): CounterState | null {
+    if (!sessionId || !Number.isSafeInteger(numTurns) || numTurns < 0) throw new OrbitError('SCHEMA_INVALID', 'session turns need a session id and a non-negative integer count');
+    const { runId } = this.bound();
+    const label = `${NUM_TURNS_COUNTER}:${sessionId}`;
+    return this.db.tx(() => {
+      if (this.recounted(runId, sessionId)) return null;
+      const base = this.row(runId, SESSION_COUNTER);
+      const moved = this.db.run('DELETE FROM budget_counters WHERE run_id = ? AND counter = ?', runId, `${SESSION_COUNTER}:${sessionId}`).changes > 0;
+      this.db.run('INSERT INTO budget_counters (run_id, counter, used, allowance, hard_cap) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id, counter) DO UPDATE SET used = MAX(used, excluded.used)', runId, label, numTurns, base.hard_cap, base.hard_cap);
+      if (moved) this.retakeSessionMaximum(runId);
+      return toState(this.row(runId, label));
+    });
+  }
+
+  private recounted(runId: string, sessionId: string): boolean {
+    return this.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.session') = ? LIMIT 1", runId, SESSION_RECOUNT_EVENT, sessionId) !== undefined;
+  }
+
+  /** The run's figure for worker_turns_per_session: the most model requests any one session made. */
+  private retakeSessionMaximum(runId: string): void {
+    const prefix = `${SESSION_COUNTER}:`;
+    this.db.run(
+      'UPDATE budget_counters SET used = COALESCE((SELECT MAX(used) FROM budget_counters WHERE run_id = ? AND substr(counter, 1, ?) = ?), 0) WHERE run_id = ? AND counter = ?',
+      runId,
+      prefix.length,
+      prefix,
+      runId,
+      SESSION_COUNTER,
+    );
   }
 
   consume(counter: BudgetCounter, amount: number, opts: ConsumeOptions = {}): CounterState {
@@ -339,10 +396,12 @@ export class BudgetLedger {
     const { runId } = this.bound();
     const rows = this.db.all<CounterRow>('SELECT counter, used, allowance, hard_cap FROM budget_counters WHERE run_id = ? ORDER BY counter', runId);
     const order = new Map<string, number>(BUDGET_COUNTERS.map((c, i) => [c, i]));
+    const numTurns = rows.filter((r) => r.counter.startsWith(`${NUM_TURNS_COUNTER}:`)).map(toState);
     return {
       run_id: runId,
       counters: rows.filter((r) => order.has(r.counter)).sort((a, b) => (order.get(a.counter) as number) - (order.get(b.counter) as number)).map(toState),
       sessions: rows.filter((r) => r.counter.startsWith(`${SESSION_COUNTER}:`)).map(toState),
+      ...(numTurns.length > 0 ? { num_turns_sessions: numTurns } : {}),
       reserve: this.reserve(),
       cost_measurement: this.costMeasurement(),
     };
@@ -787,7 +846,8 @@ function explainSpend(s: Omit<SpendBreakdown, 'explanation'>, state: string | nu
     if (state !== null && isRunState(state) && TERMINAL_STATES.has(state)) return `nothing charged to the cost budget: ${s.uncharged_reason}, so this spend was measured and never charged: ${spent}`;
     return `nothing charged to the cost budget yet: PLANNING creates it and then charges what was spent before; spent so far: ${spent}`;
   }
-  if (s.unmatched_usd >= SPEND_CENT) parts.push(`$${usd(s.unmatched_usd)} charged beyond the recorded sessions (a session charged again after a controller restart)`);
+  // The ledger keeps no record of why a charge has no usage record (a crash between the two, say), so none is given.
+  if (s.unmatched_usd >= SPEND_CENT) parts.push(`$${usd(s.unmatched_usd)} charged with no matching usage record`);
   const notes: string[] = [];
   if (parts.length === 0 && unpriced === null) notes.push('no usage recorded yet');
   if (s.precharged_usd >= SPEND_CENT) notes.push(`$${usd(s.precharged_usd)} of it was spent before PLANNING and charged when the budget was created`);

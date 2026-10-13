@@ -18,9 +18,9 @@ import { faultPoint } from '../core/faults.ts';
 import { newId } from '../core/ids.ts';
 import { appendEvent } from '../storage/events.ts';
 import { getDecision, recordDecision } from '../storage/decisions.ts';
-import { finishWorker, getWorker, listActiveWorkers, listWorkers, markWorkerRunning, planWorker, type WorkerOutcome, type WorkerRecord } from '../storage/workers.ts';
+import { findWorker, finishWorker, getWorker, listActiveWorkers, listWorkers, markWorkerRunning, planWorker, type WorkerOutcome, type WorkerRecord } from '../storage/workers.ts';
 import type { ProviderAdapter, TaskHandle, TaskResult, TaskSpec, UsageReport, WorkerRole } from '../adapters/types.ts';
-import type { ClaudeTaskResult } from '../adapters/claude-transcript.ts';
+import { claudeModelRequests, claudeSessionId, type ClaudeTaskResult } from '../adapters/claude-transcript.ts';
 import { archiveAttempt, handleFromWorkerDir, LAUNCH_FILE, readLogLines } from '../adapters/supervise.ts';
 import { LOG_FILE, readExitRecord } from '../adapters/shim.ts';
 import { renderSystemPrompt, ROLE_OUTPUT_KIND } from '../adapters/prompt.ts';
@@ -391,10 +391,10 @@ function emptyUsage(provider: string): UsageReport {
 }
 
 /**
- * Charge a finished worker's cost and record its usage, once. The ledger is
- * charged first: a crash between the two charges again on the next pass,
- * which overstates spend rather than hiding it. Before PLANNING initializes
- * the ledger, usage is only recorded; PLANNING charges it (prechargeUsage).
+ * Charge a finished worker's cost and record its usage, once. The charge and the usage record commit together, also
+ * when the charge exhausts the budget: the session whose charge crossed the cap is the one the spend line most needs
+ * to name, and a usage record is what marks the session charged. Before PLANNING initializes the ledger, usage is
+ * only recorded; PLANNING charges it (prechargeUsage).
  */
 export function accountWorker(ctx: RunContext, w: WorkerRecord, result: TaskResult, phase: BudgetPhase = 'work'): void {
   accountWorkerTurns(ctx, w, result);
@@ -405,29 +405,21 @@ export function accountWorker(ctx: RunContext, w: WorkerRecord, result: TaskResu
   } catch (err) {
     ctx.log.warn('could not read the worker transcript for policy denials', { worker_id: w.id, error: messageOf(err) });
   }
-  let usage = result.usage ?? emptyUsage(w.provider);
-  // A session that failed before any request reached a model (refused at authentication, crashed at launch, exited
-  // before any output) ran no model: its spend is a measured zero, not unknown. Charging it the session ceiling
-  // let a reviewer outage exhaust the cap on spend that never happened (e2e retest NB2).
-  if (ZERO_COST_STATUSES.has(result.status) && usage.costUsd === null && sessionSpentNothing(w, usage)) {
-    usage = { ...usage, costUsd: 0, costSource: 'reported' };
-    ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'budget.cost-zero-no-model', ctx.ownerId, { worker_id: w.id, role: w.role, status: result.status, provider: w.provider }, ctx.clock.now()));
-  }
-  if (ctx.ledger) {
-    const cap = spendCapOf(ctx, w.id);
-    // A lost session is charged its measured usage or at most the role ceiling: the restart that replaces it runs
-    // under a cap of its own, and charging both at the full session cap would count one piece of work twice.
-    const ceilingUsd = cap === null ? null : result.status === 'lost' ? Math.min(cap.ceilingUsd, ctx.ledger.roleCostCeiling(w.role)) : cap.ceilingUsd;
-    try {
-      ctx.ledger.consumeCost({ costUsd: usage.costUsd, costSource: usage.costSource }, w.role, { phase, ceilingUsd, tokenEstimate: tokenEstimateFor(ctx, w, usage), workerId: w.id });
-    } catch (err) {
-      // The charge is recorded (and so is the exhaustion); an authentication failure still blocks on credentials,
-      // which is the truthful cause, rather than ending the run EXHAUSTED on spend nobody can show happened.
-      if (!(result.status === 'auth_failed' && isOrbitError(err, 'BUDGET_EXHAUSTED'))) throw err;
-      ctx.log.warn('budget exhausted while charging an auth-failed session; blocking on credentials', { worker_id: w.id });
+  const usage = measuredUsage(ctx, w, result.status, result.usage ?? emptyUsage(w.provider));
+  const refusal = ctx.db.tx((): OrbitError | null => {
+    let refused: OrbitError | null = null;
+    if (ctx.ledger) {
+      try {
+        ctx.ledger.consumeCost({ costUsd: usage.costUsd, costSource: usage.costSource }, w.role, { phase, ceilingUsd: sessionCeilingUsd(ctx, w, result.status), tokenEstimate: tokenEstimateFor(ctx, w, usage), workerId: w.id });
+      } catch (err) {
+        // Returned, not thrown: the charge the ledger recorded and the usage record commit together.
+        if (!isOrbitError(err, 'BUDGET_EXHAUSTED')) throw err;
+        if (!blocksOnCredentials(ctx, w, result.status)) refused = err;
+      }
     }
-  }
-  recordUsage(ctx.db, { runId: ctx.run.id, workerId: w.id, provider: w.provider, model: usage.model ?? w.model, usage, durationMs: result.durationMs }, ctx.clock);
+    recordUsage(ctx.db, { runId: ctx.run.id, workerId: w.id, provider: w.provider, model: usage.model ?? w.model, usage, durationMs: result.durationMs }, ctx.clock);
+    return refused;
+  });
   // A model the provider actually ran on is validated on that surface; nothing else marks a model available.
   const observed = usage.model;
   if (observed && result.status === 'succeeded') {
@@ -437,20 +429,86 @@ export function accountWorker(ctx: RunContext, w: WorkerRecord, result: TaskResu
       /* the registry is advisory here; a failure to update it never fails the step */
     }
   }
+  if (refusal) throw refusal;
+}
+
+/**
+ * The usage a finished session is charged and recorded with. A session that failed before any request reached a
+ * model (refused at authentication, crashed at launch, exited before any output) ran no model: its spend is a
+ * measured zero, not unknown, recorded as budget.cost-zero-no-model. Charging it the session ceiling let a reviewer
+ * outage exhaust the cap on spend that never happened (e2e retest NB2).
+ */
+function measuredUsage(ctx: RunContext, w: WorkerRecord, status: string, usage: UsageReport): UsageReport {
+  if (!(ZERO_COST_STATUSES.has(status) && usage.costUsd === null && sessionSpentNothing(w, usage))) return usage;
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'budget.cost-zero-no-model', ctx.ownerId, { worker_id: w.id, role: w.role, status, provider: w.provider }, ctx.clock.now()));
+  return { ...usage, costUsd: 0, costSource: 'reported' };
+}
+
+/**
+ * The spend cap a session ran under, which a session that reported neither cost nor tokens is charged. A lost
+ * session is charged at most the role ceiling: the restart that replaces it runs under a cap of its own, and
+ * charging both at the full session cap would count one piece of work twice. Null when none was recorded.
+ */
+function sessionCeilingUsd(ctx: RunContext, w: WorkerRecord, status: string): number | null {
+  const cap = spendCapOf(ctx, w.id);
+  if (cap === null || !ctx.ledger) return null;
+  return status === 'lost' ? Math.min(cap.ceilingUsd, ctx.ledger.roleCostCeiling(w.role)) : cap.ceilingUsd;
+}
+
+/**
+ * Whether a charge that exhausted the budget still leaves the session's own outcome standing: the charge is
+ * recorded (and so is the exhaustion), but an authentication failure blocks on credentials, which is the truthful
+ * cause, rather than ending the run EXHAUSTED on spend nobody can show happened.
+ */
+function blocksOnCredentials(ctx: RunContext, w: WorkerRecord, status: string): boolean {
+  if (status !== 'auth_failed') return false;
+  ctx.log.warn('budget exhausted while charging an auth-failed session; blocking on credentials', { worker_id: w.id });
+  return true;
 }
 
 /**
  * A Claude session's turns are its model requests, the count --max-turns limits; the result's num_turns counts the
- * prompt and every tool result, so a session with parallel tool calls reported 61 under a cap of 30 it kept. A stored
- * result without a request count (before 0.3.1) falls back to num_turns. Missing counts stay unmeasured.
+ * prompt and every tool result, so a session with parallel tool calls reported 61 under a cap of 30 it kept. A result
+ * stored without a request count (before 0.3.1, which recorded num_turns as the session's turns) is counted from the
+ * session's transcript, and that count replaces what was recorded. Only without a transcript is num_turns kept, and
+ * then as num_turns, never as model requests or against the cap. Missing counts stay unmeasured.
  */
 export function accountWorkerTurns(ctx: Pick<RunContext, 'ledger'>, w: WorkerRecord, result: TaskResult): void {
+  const ledger = ctx.ledger;
   const { numTurns, modelRequests, sessionId } = result as Partial<ClaudeTaskResult>;
-  const turns = isCount(modelRequests) ? modelRequests : numTurns;
-  if (ctx.ledger && /^claude(?:$|[-_])/.test(w.provider) && isCount(turns)) {
-    const session = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : `restart-${w.restartCount}`;
-    ctx.ledger.recordSessionTurns(`${w.id}:${session}`, turns, { endedByCap: result.status === 'max_turns' });
+  // Only a classified Claude result has turns; one synthesized for a worker without a stored result has none.
+  if (!ledger || !/^claude(?:$|[-_])/.test(w.provider) || numTurns === undefined) return;
+  const session = `${w.id}:${typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : `restart-${w.restartCount}`}`;
+  const endedByCap = result.status === 'max_turns';
+  if (isCount(modelRequests)) {
+    ledger.recordSessionTurns(session, modelRequests, { endedByCap });
+    return;
   }
+  const counted = transcriptModelRequests(w, sessionId ?? null);
+  if (isCount(counted)) ledger.recordSessionTurns(session, counted, { endedByCap, recount: true });
+  else if (isCount(numTurns)) ledger.recordSessionNumTurns(session, numTurns);
+}
+
+/**
+ * The model requests in the transcript of session `sessionId`: the worker's own log, or an archived attempt's, whose
+ * session it is (the current log when the result named no session). Null without one, or without any message in it.
+ */
+function transcriptModelRequests(w: Pick<WorkerRecord, 'workerDir'>, sessionId: string | null): number | null {
+  const [current, ...archived] = workerLogs(w);
+  for (const p of sessionId ? [current!, ...archived] : [current!]) {
+    if (!existsSync(p)) continue;
+    const { events } = readLogLines(p);
+    if (sessionId && claudeSessionId(events) !== sessionId) continue;
+    return claudeModelRequests(events);
+  }
+  return null;
+}
+
+/** Every transcript a worker left: its current log first, then each archived attempt's. */
+function workerLogs(w: Pick<WorkerRecord, 'workerDir'>): string[] {
+  const logs = [join(w.workerDir, LOG_FILE)];
+  for (let n = 1; existsSync(join(w.workerDir, 'attempts', String(n))); n++) logs.push(join(w.workerDir, 'attempts', String(n), LOG_FILE));
+  return logs;
 }
 
 function isCount(n: number | null | undefined): n is number {
@@ -483,10 +541,36 @@ export function usageRows(ctx: RunContext, where = '', ...params: (string | numb
   );
 }
 
-/** Charge one usage record as a session is charged: its cost, else what its tokens would cost, else a ceiling. */
+/**
+ * Charge one usage record as accountWorker charges a session: its cost, a measured zero for a session that never
+ * reached a model (the record is corrected to say so, as accountWorker records it), else what its tokens would cost,
+ * else the spend cap it ran under or the role ceiling. A charge that exhausts the budget for an auth-failed session
+ * is recorded and not thrown, so the run blocks on credentials. The record and its correction commit with the charge.
+ */
 export function chargeUsageRow(ctx: RunContext, ledger: NonNullable<RunContext['ledger']>, r: UsageRow, phase: BudgetPhase = 'work'): void {
-  const tokenEstimate = r.cost_usd === null ? tokenEstimateFor(ctx, r, { provider: r.provider, model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cacheReadTokens: r.cache_read_tokens, cacheWriteTokens: r.cache_write_tokens, costUsd: null, costSource: 'unavailable' }) : null;
-  ledger.consumeCost({ costUsd: r.cost_usd, costSource: r.cost_source }, (r.role as WorkerRole | null) ?? 'planner', { phase, tokenEstimate, workerId: r.worker_id });
+  const w = r.worker_id === null ? null : findWorker(ctx.db, r.worker_id);
+  const status = w ? storedResult(w).status : null;
+  const refusal = ctx.db.tx((): OrbitError | null => {
+    let usage: UsageReport = { provider: r.provider, model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cacheReadTokens: r.cache_read_tokens, cacheWriteTokens: r.cache_write_tokens, costUsd: r.cost_usd, costSource: r.cost_source as UsageReport['costSource'] };
+    if (w && status !== null) {
+      usage = measuredUsage(ctx, w, status, usage);
+      if (usage.costUsd !== r.cost_usd) ctx.db.run('UPDATE usage SET cost_usd = ?, cost_source = ? WHERE id = ?', usage.costUsd, usage.costSource, r.id);
+    }
+    try {
+      ledger.consumeCost({ costUsd: usage.costUsd, costSource: usage.costSource }, (r.role as WorkerRole | null) ?? 'planner', {
+        phase,
+        ceilingUsd: w && status !== null ? sessionCeilingUsd(ctx, w, status) : null,
+        tokenEstimate: tokenEstimateFor(ctx, r, usage),
+        workerId: r.worker_id,
+      });
+      return null;
+    } catch (err) {
+      // Returned, not thrown: the charge the ledger recorded must commit.
+      if (!isOrbitError(err, 'BUDGET_EXHAUSTED')) throw err;
+      return w && status !== null && blocksOnCredentials(ctx, w, status) ? null : err;
+    }
+  });
+  if (refusal) throw refusal;
 }
 
 /** Usage ids already charged to cost_usd through a USAGE_CHARGED_EVENT mark. */
@@ -578,9 +662,7 @@ export function authFailureSpentNothing(w: Pick<WorkerRecord, 'workerDir'>, usag
  */
 export function sessionSpentNothing(w: Pick<WorkerRecord, 'workerDir'>, usage: UsageReport): boolean {
   if ((usage.inputTokens ?? 0) > 0 || (usage.outputTokens ?? 0) > 0) return false;
-  const logs = [join(w.workerDir, LOG_FILE)];
-  for (let n = 1; existsSync(join(w.workerDir, 'attempts', String(n))); n++) logs.push(join(w.workerDir, 'attempts', String(n), LOG_FILE));
-  const present = logs.filter((p) => existsSync(p));
+  const present = workerLogs(w).filter((p) => existsSync(p));
   if (present.length === 0) return typeof readExitRecord(w.workerDir)?.firstOutputAt !== 'number';
   return present.every((p) => transcriptSpentNothing(readLogLines(p).events));
 }
@@ -790,7 +872,7 @@ export function messageOf(err: unknown): string {
  * runs its own inquisitor workers). After a controller restart nothing else
  * would notice it finished. Returns true while it is still running.
  */
-export async function collectIfFinished(ctx: RunContext, w: WorkerRecord): Promise<boolean> {
+export async function collectIfFinished(ctx: RunContext, w: WorkerRecord, phase: BudgetPhase = 'work'): Promise<boolean> {
   if (w.state === 'PLANNED') {
     // Intent without a launch: nothing ran, so the owner may simply start over.
     if (!existsSync(join(w.workerDir, LAUNCH_FILE))) {
@@ -800,7 +882,7 @@ export async function collectIfFinished(ctx: RunContext, w: WorkerRecord): Promi
     if (!handleOf(adapterFor(ctx, w.provider), w)) return true;
     const h = handleOf(adapterFor(ctx, w.provider), w)!;
     markWorkerRunning(ctx.db, w.id, { pid: h.pid, pgid: h.pgid, procStart: h.procStart }, ctx.clock, ctx.ownerId);
-    return collectIfFinished(ctx, getWorker(ctx.db, w.id));
+    return collectIfFinished(ctx, getWorker(ctx.db, w.id), phase);
   }
   if (w.state !== 'RUNNING') return false;
   const adapter = adapterFor(ctx, w.provider);
@@ -815,6 +897,6 @@ export async function collectIfFinished(ctx: RunContext, w: WorkerRecord): Promi
   // Its usage is recorded as the engine records it, and charged the way the engine's own workers are, so the charge
   // and its mark commit together and the inquiry's charge pass never charges it a second time.
   accountWorker({ ...ctx, ledger: null }, row, result);
-  chargeRecordedUsage(ctx, row);
+  chargeRecordedUsage(ctx, row, phase);
   return false;
 }

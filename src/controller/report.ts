@@ -109,6 +109,8 @@ export interface FinalReport {
   budget: {
     counters: BudgetSnapshot['counters'];
     sessions?: BudgetSnapshot['sessions'];
+    /** Sessions recorded before 0.3.1 whose transcript is gone, by num_turns; absent when there are none. */
+    num_turns_sessions?: BudgetSnapshot['sessions'];
     cost_measurement: string;
     cost_usd: number;
     cost_complete: boolean;
@@ -198,7 +200,16 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
       const ledger = new BudgetLedger(db, opts.clock).attach(run.id, opts.snapshot);
       for (const w of listWorkers(db, { runId: run.id })) accountWorkerTurns({ ledger }, w, storedResult(w));
       const snap = ledger.snapshot();
-      budget = { counters: snap.counters, sessions: snap.sessions, cost_measurement: snap.cost_measurement.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals), spend };
+      budget = {
+        counters: snap.counters,
+        sessions: snap.sessions,
+        ...(snap.num_turns_sessions ? { num_turns_sessions: snap.num_turns_sessions } : {}),
+        cost_measurement: snap.cost_measurement.note,
+        cost_usd: usage.totals.costUsd,
+        cost_complete: usage.costComplete,
+        tokens: tokens(usage.totals),
+        spend,
+      };
     } catch {
       budget = null;
     }
@@ -513,7 +524,9 @@ export function renderMarkdown(r: FinalReport): string {
     // One spend explanation (the figure the cap is checked against, and what it adds to the reported spend); a report
     // written before it existed still shows its model cost.
     const spend = b.spend ? `spend: ${b.spend.explanation}` : `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? 'measured' : 'incomplete: some usage has no cost'}); ${b.cost_measurement}`;
-    out.push('## Budget consumption', '', list([...counters, ...(b.sessions ?? []).map((s) => `${s.counter}: ${round(s.used)} model requests`), spend, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), '');
+    // A session recorded before 0.3.1 whose transcript is gone has only its num_turns, which is not what the cap counts.
+    const numTurns = (b.num_turns_sessions ?? []).map((s) => `${s.counter}: ${round(s.used)} num_turns (the CLI's count of the prompt and every tool result, not model requests: the session's transcript is gone)`);
+    out.push('## Budget consumption', '', list([...counters, ...(b.sessions ?? []).map((s) => `${s.counter}: ${round(s.used)} model requests`), ...numTurns, spend, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), '');
   }
   out.push('## Not verified', '', list(r.unverified), '');
   out.push('## Residual risks', '', list(r.residual_risks), '');

@@ -279,7 +279,7 @@ describe('planningStep', () => {
     prepare();
     recordUsage(lab.db, { runId: lab.runId, workerId: null, provider: 'claude', model: 'm', usage, durationMs: 1 }, lab.clock);
     const w = planWorker(lab.db, { id: 'wrk-plan', runId: lab.runId, role: 'planner', provider: 'claude', workerDir: join(lab.base, 'wp'), cwd: lab.repo }, lab.clock, OWNER);
-    lab.db.run('UPDATE workers SET result_json = ? WHERE id = ?', JSON.stringify({ status: 'failed', numTurns: 4 }), w.id);
+    lab.db.run('UPDATE workers SET result_json = ? WHERE id = ?', JSON.stringify({ status: 'failed', numTurns: 9, modelRequests: 4 }), w.id);
     recordUsage(lab.db, { runId: lab.runId, workerId: w.id, provider: 'claude', model: 'm', usage: { ...usage, costUsd: 0.3 }, durationMs: 1 }, lab.clock);
     await planningStep(lab.ctx());
     const ledger = lab.ctx().ledger!;

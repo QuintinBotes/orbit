@@ -5,6 +5,7 @@
 // The cap Orbit reports must be the cap it enforces: the record counts model requests, and a session the cap stopped,
 // or one that went past it, leaves a budget event.
 import { afterEach, describe, expect, it } from 'vitest';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { TaskResult } from '../../../src/adapters/types.ts';
 import { buildClaudeArgv } from '../../../src/adapters/claude.ts';
@@ -115,7 +116,7 @@ describe('the turn count is what --max-turns limits', () => {
   it('a stored result without a request count (before 0.3.1) still records the reported num_turns', () => {
     setup();
     accountWorker(lab.ctx(), worker('wrk-old'), turns({ numTurns: 7, sessionId: 'sess-4' }));
-    expect(lab.ctx().ledger!.state('worker_turns_per_session').used).toBe(7);
+    expect(lab.ctx().ledger!.snapshot().num_turns_sessions).toEqual([expect.objectContaining({ counter: 'num_turns:wrk-old:sess-4', used: 7 })]);
   });
 
   it('enforcement: every worker session is started with --max-turns set to the per-session cap the ledger reports', async () => {
@@ -133,5 +134,84 @@ describe('the turn count is what --max-turns limits', () => {
     expect(argv.some((a) => ['--resume', '-r', '--continue', '-c', '--fork-session'].includes(a))).toBe(false);
     expect(argv[argv.indexOf('--session-id') + 1]).toBe('s');
     expect(sessionIdFor('wrk-257fa51d2bd7', 0)).not.toBe(sessionIdFor('wrk-257fa51d2bd7', 1));
+  });
+});
+
+// A result stored by 0.3.0 has num_turns and no request count. Rebuilding the report of such a run (orbit report
+// --interim, or a resumed 0.3.0 run) recorded num_turns 61 as "61 model requests" for the ui implementer and added a
+// "went past the cap" event about the very session the request count cleared (verifier, fix/031-budget): its
+// transcript shows 30 requests. 0.3.0 had already written num_turns into the session's record and the run's maximum.
+describe('sessions recorded before 0.3.1', () => {
+  const OLD_SESSION = 'wrk-257fa51d2bd7:s1';
+
+  /** The records 0.3.0 left: the session's num_turns as its turns, and as the run's maximum. */
+  function recordedBy030(session: string, numTurns: number): void {
+    lab.db.run('INSERT INTO budget_counters (run_id, counter, used, allowance, hard_cap) VALUES (?, ?, ?, 30, 30)', lab.runId, `worker_turns_per_session:${session}`, numTurns);
+    lab.db.run("UPDATE budget_counters SET used = MAX(used, ?) WHERE run_id = ? AND counter = 'worker_turns_per_session'", numTurns, lab.runId);
+  }
+
+  function writeLog(w: WorkerRecord, events: Record<string, unknown>[], attempt?: number): void {
+    const dir = attempt === undefined ? w.workerDir : join(w.workerDir, 'attempts', String(attempt));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'log.jsonl'), events.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  }
+
+  const report = (): string => {
+    const ctx = lab.ctx();
+    return renderMarkdown(buildFinalReport(lab.db, ctx.run, { runDir: ctx.runDir, clock: lab.clock, snapshot: ctx.snapshot }));
+  };
+
+  it('are counted from their transcript, which replaces the num_turns 0.3.0 recorded, with no event', () => {
+    setup();
+    const t = transcript(30, 3);
+    recordedBy030(OLD_SESSION, t.numTurns);
+    const w = worker('wrk-257fa51d2bd7');
+    writeLog(w, t.events);
+    lab.db.run('UPDATE workers SET state = ?, result_status = ?, result_json = ? WHERE id = ?', 'SUCCEEDED', 'succeeded', JSON.stringify(turns({ numTurns: t.numTurns, sessionId: 's1' })), w.id);
+    const md = report();
+    const ledger = lab.ctx().ledger!;
+    expect(ledger.state('worker_turns_per_session').used).toBe(30);
+    expect(ledger.snapshot().sessions).toEqual([expect.objectContaining({ counter: `worker_turns_per_session:${OLD_SESSION}`, used: 30 })]);
+    expect(exhaustions()).toEqual([]);
+    expect(md).toContain('- worker_turns_per_session: 30 model requests at most in one session; cap 30 per session, enforced by the Claude CLI (--max-turns)\n');
+    expect(md).toContain(`- worker_turns_per_session:${OLD_SESSION}: 30 model requests\n`);
+    expect(md).not.toContain('89');
+    // Rebuilt after the run's artifacts were pruned: the count from the transcript stands.
+    rmSync(join(w.workerDir, 'log.jsonl'));
+    report();
+    expect(ledger.snapshot().sessions).toEqual([expect.objectContaining({ counter: `worker_turns_per_session:${OLD_SESSION}`, used: 30 })]);
+    expect(ledger.snapshot().num_turns_sessions).toBeUndefined();
+    expect(ledger.state('worker_turns_per_session').used).toBe(30);
+  });
+
+  it('find their transcript among the archived attempts by session id', () => {
+    setup();
+    const t = transcript(12, 2);
+    const w = worker('wrk-257fa51d2bd7');
+    writeLog(w, t.events, 1);
+    writeLog(w, transcript(3, 1).events.map((e) => ('session_id' in e ? { ...e, session_id: 's2' } : e)));
+    accountWorker(lab.ctx(), w, turns({ numTurns: t.numTurns, sessionId: 's1' }));
+    expect(lab.ctx().ledger!.snapshot().sessions).toEqual([expect.objectContaining({ counter: `worker_turns_per_session:${OLD_SESSION}`, used: 12 })]);
+  });
+
+  it('without a transcript keep num_turns, labelled as num_turns: not the run\'s model requests, and never past the cap', () => {
+    setup();
+    recordedBy030(OLD_SESSION, 61);
+    accountWorker(lab.ctx(), worker('wrk-new'), turns({ numTurns: 25, modelRequests: 10, sessionId: 's9' }));
+    const w = worker('wrk-257fa51d2bd7');
+    lab.db.run('UPDATE workers SET state = ?, result_status = ?, result_json = ? WHERE id = ?', 'SUCCEEDED', 'succeeded', JSON.stringify(turns({ numTurns: 61, sessionId: 's1' })), w.id);
+    const md = report();
+    const snap = lab.ctx().ledger!.snapshot();
+    expect(snap.counters.find((c) => c.counter === 'worker_turns_per_session')?.used).toBe(10);
+    expect(snap.sessions.map((s) => s.counter)).toEqual(['worker_turns_per_session:wrk-new:s9']);
+    expect(snap.num_turns_sessions).toEqual([expect.objectContaining({ counter: `num_turns:${OLD_SESSION}`, used: 61 })]);
+    expect(exhaustions()).toEqual([]);
+    expect(md).toContain('- worker_turns_per_session: 10 model requests at most in one session; cap 30 per session, enforced by the Claude CLI (--max-turns)\n');
+    expect(md).toContain(`- num_turns:${OLD_SESSION}: 61 num_turns (the CLI's count of the prompt and every tool result, not model requests: the session's transcript is gone)\n`);
+    expect(md).not.toContain('61 model requests');
+    // Accounted again, nothing changes.
+    report();
+    expect(lab.ctx().ledger!.snapshot()).toEqual(snap);
+    expect(exhaustions()).toEqual([]);
   });
 });

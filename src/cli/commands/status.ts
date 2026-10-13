@@ -15,7 +15,7 @@ import { isTerminal } from '../../controller/states.ts';
 import { stateDbPath } from '../../controller/start.ts';
 import { pruneDeadControllers } from '../../controller/service.ts';
 import { verifySnapshot } from '../../policy/snapshot.ts';
-import { BudgetLedger, spendBreakdown } from '../../scheduling/budget.ts';
+import { BudgetLedger, NUM_TURNS_COUNTER, spendBreakdown } from '../../scheduling/budget.ts';
 import type { CostMeasurement, CounterState, ReserveState, SpendBreakdown } from '../../scheduling/types.ts';
 import { listQuestions } from '../../inquisition/store.ts';
 import type { Args, OptionSpec } from '../args.ts';
@@ -57,6 +57,8 @@ export interface RunStatus {
   budgets: {
     counters: CounterState[];
     sessions: CounterState[];
+    /** Sessions recorded before 0.3.1 whose transcript is gone, by num_turns (not model requests); absent when none. */
+    num_turns_sessions?: CounterState[];
     reserve: ReserveState | null;
     cost_measurement: CostMeasurement | null;
     verified_policy: boolean;
@@ -105,12 +107,20 @@ export function buildRunStatus(ctx: Pick<CliContext, 'clock'>, db: OrbitDb, run:
   if (db.get('SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1', run.id)) {
     try {
       const snap = new BudgetLedger(db, ctx.clock).attach(run.id, verifySnapshot(run.policyPath, run.policyHash)).snapshot();
-      budgets = { counters: snap.counters, sessions: snap.sessions, reserve: snap.reserve, cost_measurement: snap.cost_measurement, verified_policy: true };
+      budgets = { counters: snap.counters, sessions: snap.sessions, ...(snap.num_turns_sessions ? { num_turns_sessions: snap.num_turns_sessions } : {}), reserve: snap.reserve, cost_measurement: snap.cost_measurement, verified_policy: true };
     } catch {
       // The snapshot no longer verifies (or is unreadable): show the stored counters and say they are unverified.
       const rows = db.all<{ counter: string; used: number; allowance: number; hard_cap: number }>('SELECT counter, used, allowance, hard_cap FROM budget_counters WHERE run_id = ? ORDER BY counter', run.id);
       const toState = (r: (typeof rows)[number]): CounterState => ({ counter: r.counter, used: r.used, allowance: r.allowance, hard_cap: r.hard_cap, remaining: Math.max(0, r.allowance - r.used) });
-      budgets = { counters: rows.filter((r) => !r.counter.includes(':')).map(toState), sessions: rows.filter((r) => r.counter.includes(':')).map(toState), reserve: null, cost_measurement: null, verified_policy: false };
+      const numTurns = rows.filter((r) => r.counter.startsWith(`${NUM_TURNS_COUNTER}:`)).map(toState);
+      budgets = {
+        counters: rows.filter((r) => !r.counter.includes(':')).map(toState),
+        sessions: rows.filter((r) => r.counter.includes(':') && !r.counter.startsWith(`${NUM_TURNS_COUNTER}:`)).map(toState),
+        ...(numTurns.length > 0 ? { num_turns_sessions: numTurns } : {}),
+        reserve: null,
+        cost_measurement: null,
+        verified_policy: false,
+      };
     }
   }
 

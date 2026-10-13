@@ -84,7 +84,7 @@ describe('spendBreakdown: which figure the cap is checked against, and what it a
     expect(spendBreakdown(db, 'run-1').explanation).toBe('nothing charged to the cost budget yet: PLANNING creates it and then charges what was spent before; spent so far: 1 session with no reported cost');
   });
 
-  it('names the precharge, ceiling stand-ins, a second charge after a restart and spend the budget never charged', () => {
+  it('names the precharge, ceiling stand-ins, a charge with no usage record and spend the budget never charged', () => {
     const { db, clock } = setup();
     session(db, clock, 'wrk-plan', 0.05);
     const ledger = new BudgetLedger(db, clock).init('run-1', { config: POLICY }, 'medium');
@@ -100,7 +100,7 @@ describe('spendBreakdown: which figure the cap is checked against, and what it a
     const twice = spendBreakdown(db, 'run-1');
     expect(twice).toMatchObject({ charged_usd: 3.15, reported_usd: 0.35, ceiling_usd: 2.5, ceiling_sessions: 1, precharged_usd: 0.05, unmatched_usd: 0.3, uncharged_usd: 0 });
     expect(twice.explanation).toBe(
-      '$3.15 charged to the cost budget (the figure the cost cap is checked against): $0.35 reported by providers (2 sessions) + $2.50 at conservative ceilings for 1 session that reported no cost and could not be priced + $0.30 charged beyond the recorded sessions (a session charged again after a controller restart); $0.05 of it was spent before PLANNING and charged when the budget was created',
+      '$3.15 charged to the cost budget (the figure the cost cap is checked against): $0.35 reported by providers (2 sessions) + $2.50 at conservative ceilings for 1 session that reported no cost and could not be priced + $0.30 charged with no matching usage record; $0.05 of it was spent before PLANNING and charged when the budget was created',
     );
     // An inquisitor recorded by another component and never charged (0.3.0): the charge falls short of the spend.
     session(db, clock, 'wrk-inq', 0.5);

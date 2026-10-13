@@ -2,13 +2,17 @@
 // the figure the cost cap is checked against, with what it adds to the reported spend; a run that stopped before
 // PLANNING created the budget says its spend is measured and not charged, and why, instead of "has not reached planning".
 import { afterEach, describe, expect, it } from 'vitest';
+import { join } from 'node:path';
 import { buildRunStatus, renderRunStatus } from '../../../src/cli/commands/status.ts';
 import { buildFinalReport, renderMarkdown } from '../../../src/controller/report.ts';
 import { buildTimeline } from '../../../src/observability/timeline.ts';
 import { recordUsage } from '../../../src/routing/usage.ts';
 import { getRun } from '../../../src/controller/run-store.ts';
-import type { UsageReport } from '../../../src/adapters/types.ts';
-import { initLedger, makeUnitLab, type UnitLab } from './coverage-helpers.ts';
+import type { TaskResult, UsageReport } from '../../../src/adapters/types.ts';
+import { accountWorker } from '../../../src/controller/workers.ts';
+import { spendBreakdown } from '../../../src/scheduling/budget.ts';
+import { finishWorker, markWorkerRunning, planWorker, type WorkerRecord } from '../../../src/storage/workers.ts';
+import { initLedger, makeUnitLab, OWNER, type UnitLab } from './coverage-helpers.ts';
 
 let lab: UnitLab;
 afterEach(() => lab?.cleanup());
@@ -112,5 +116,34 @@ describe('spend before the budget exists (dotnet orb-20261013-083637-c332cc, blo
   it('once the budget exists nothing is uncharged for want of it', () => {
     demoRun();
     expect(buildRunStatus({ clock: lab.clock }, lab.db, getRun(lab.db, lab.runId)).spend).toMatchObject({ uncharged_usd: 0, uncharged_reason: null });
+  });
+});
+
+// The session whose charge crosses the reserve or the hard cap is the one a person most needs explained (verifier,
+// fix/031-budget): accountWorker charged the ledger and rethrew before recording its usage, so the spend line put its
+// cost under "charged beyond the recorded sessions (a session charged again after a controller restart)", which never
+// happened, and dropped it from what providers reported.
+describe('the session whose charge exhausts the cost budget', () => {
+  function implementer(id: string, cost: number): { row: WorkerRecord; result: TaskResult } {
+    planWorker(lab.db, { id, runId: lab.runId, role: 'implementer', purpose: `implement:${id}`, provider: 'claude', model: null, workerDir: join(lab.base, 'w', id), cwd: lab.repo }, lab.clock, OWNER);
+    markWorkerRunning(lab.db, id, { pid: 2_000_000_000, pgid: 2_000_000_000, procStart: 'x' }, lab.clock, OWNER);
+    const result: TaskResult = { status: 'succeeded', structured: {}, text: null, error: null, exitCode: 0, usage: { ...usage(cost), inputTokens: 10, outputTokens: 10 }, durationMs: 1 };
+    return { row: finishWorker(lab.db, id, { state: 'SUCCEEDED', exitCode: 0, resultStatus: 'succeeded', result, error: null }, lab.clock, OWNER), result };
+  }
+
+  it('is recorded with its usage, so the spend line names it as reported and asserts no restart', () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING'] });
+    initLedger(lab);
+    const a = implementer('wrk-a', 5);
+    accountWorker(lab.ctx(), a.row, a.result);
+    const b = implementer('wrk-b', 22);
+    expect(() => accountWorker(lab.ctx(), b.row, b.result)).toThrow(/cost_usd exhausted at the hard cap \$30\.00 less the closing reserve/);
+    expect(lab.db.all('SELECT worker_id, cost_usd FROM usage WHERE run_id = ? ORDER BY id', lab.runId)).toEqual([{ worker_id: 'wrk-a', cost_usd: 5 }, { worker_id: 'wrk-b', cost_usd: 22 }]);
+    const s = spendBreakdown(lab.db, lab.runId);
+    expect(s).toMatchObject({ charged_usd: 27, reported_usd: 27, reported_sessions: 2, unmatched_usd: 0 });
+    expect(s.explanation).toBe('$27.00 charged to the cost budget (the figure the cost cap is checked against): $27.00 reported by providers (2 sessions)');
+    // Accounted once: a later pass over the same session charges nothing more.
+    accountWorker(lab.ctx(), b.row, b.result);
+    expect(lab.ctx().ledger!.state('cost_usd').used).toBe(27);
   });
 });

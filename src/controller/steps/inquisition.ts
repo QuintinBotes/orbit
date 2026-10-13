@@ -8,6 +8,7 @@
  * keyboard input.
  */
 import { join } from 'node:path';
+import { OrbitError } from '../../core/errors.ts';
 import { atomicWriteJson } from '../../core/fsx.ts';
 import { hashObject } from '../../core/hash.ts';
 import { applyBaselineExceptionAnswers } from '../../inquisition/baseline-exception.ts';
@@ -19,7 +20,8 @@ import { currentEvidenceReport } from '../../evidence/store.ts';
 import { homeOf, type RunContext } from '../context.ts';
 import { assertLeaseHeld } from '../run-store.ts';
 import type { RunState } from '../states.ts';
-import { accountWorkerTurns, adapterFor, chargeRecordedUsage, collectIfFinished, routeFor, storedResult, systemPromptFor } from '../workers.ts';
+import type { BudgetPhase } from '../../scheduling/types.ts';
+import { accountWorkerTurns, adapterFor, chargeRecordedUsage, collectIfFinished, recordSpendCap, routeFor, sessionSpendCap, storedResult, systemPromptFor, unfundedSessionReason } from '../workers.ts';
 import { listActiveWorkers, listWorkers } from '../../storage/workers.ts';
 import { listReviews } from '../../review/store.ts';
 import { assertContract, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
@@ -35,16 +37,19 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
   const trigger = enteringTrigger(ctx) ?? (ctx.candidate ? await pendingTrigger(ctx, ctx.candidate, null) : null);
   if (!trigger || handledTriggerKeys(ctx).has(trigger.key)) return move(ctx, resume, trigger ? `inquiry ${trigger.key} already settled; resuming ${resume}` : `nothing left to inquire into; resuming ${resume}`);
 
+  // An inquiry spends from the budget of the stage it returns to: one that returns to review or delivery may use the
+  // closing reserve, as that stage's own workers are admitted and charged, and any other leaves the reserve held.
+  const phase: BudgetPhase = CLOSING_STATES.has(resume) ? 'final' : 'work';
   // An inquisitor a crashed controller left behind is collected first; the engine refuses to start a second one.
   for (const w of listActiveWorkers(ctx.db, ctx.run.id).filter((x) => x.role === 'inquisitor')) {
-    if (await collectIfFinished(ctx, w)) return WAIT(`inquisitor ${w.id} is still running`);
+    if (await collectIfFinished(ctx, w, phase)) return WAIT(`inquisitor ${w.id} is still running`);
   }
   // The engine records its inquisitors' usage itself; the controller charges it, like every other worker's: what an
   // earlier pass left uncharged now, and this inquiry's afterwards, even when the inquiry ends in an error.
   const account = (): void => {
     for (const w of listWorkers(ctx.db, { runId: ctx.run.id, role: 'inquisitor' })) {
       accountWorkerTurns(ctx, w, storedResult(w));
-      chargeRecordedUsage(ctx, w);
+      chargeRecordedUsage(ctx, w, phase);
     }
   };
   account();
@@ -65,6 +70,22 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
   const env = ctx.deps.hostEnv ?? process.env;
   const home = homeOf(ctx.deps);
   const workerDir = join(ctx.runDir, 'workers');
+  // An inquisitor is admitted and capped like any other session, when the engine is about to start one: against the
+  // budget in this inquiry's phase, and under its own --max-budget-usd, recorded as worker.spend-cap. Before PLANNING
+  // creates the budget there is nothing to admit against, as for the contracting planner; PLANNING charges that spend.
+  const admit = (purpose: string): number | null => {
+    const ledger = ctx.ledger;
+    if (!ledger) return null;
+    // An earlier attempt of this inquiry (regenerating malformed output) is charged first, so this one is admitted
+    // against what it spent. Inside the engine's transaction: a refusal rolls this back, and the finally charges it.
+    account();
+    const cap = sessionSpendCap(ctx, route.model, 'inquisitor', phase);
+    if (cap.capUsd !== null && cap.capUsd <= 0) throw new OrbitError('BUDGET_EXHAUSTED', `inquisitor not started: ${unfundedSessionReason(ctx, route.model, 'inquisitor', phase)}`, { role: 'inquisitor', phase });
+    const d = ledger.admit({ role: 'inquisitor', phase, estimatedCostUsd: cap.capUsd });
+    if (!d.admitted) throw new OrbitError('BUDGET_EXHAUSTED', `inquisitor not admitted: ${d.reasons.join('; ')}`.slice(0, 2000), { role: 'inquisitor', phase });
+    if (cap.capUsd !== null) recordSpendCap(ctx, purpose, cap.capUsd, cap.worstCaseUsd);
+    return cap.capUsd;
+  };
   const supported = ctx.candidate ? (currentEvidenceReport(ctx.db, ctx.run.id, ctx.candidate.id)?.report.acceptance_evidence.filter((a) => a.status === 'supported').map((a) => a.criterion_id) ?? []) : [];
   const result = await runInquisition({
     trigger,
@@ -88,6 +109,7 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
         maxTurns: ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session,
         pollMs: 250,
         fence: () => assertLeaseHeld(ctx.db, ctx.run.id, ctx.ownerId, ctx.clock.now()),
+        admit,
       },
     },
     signal: ctx.signal,
@@ -124,6 +146,9 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
   }
   return move(ctx, resume, `inquiry ${trigger.kind} settled (${result.disposition}); resuming ${resume}`, { ...(patch ? { patch } : {}), data: { inquiry: trigger.key, disposition: result.disposition } });
 }
+
+/** Stages whose workers are admitted and charged in the closing phase, which may spend the reserve. */
+const CLOSING_STATES: ReadonlySet<RunState> = new Set(['REVIEWING', 'DELIVERING']);
 
 /** The trigger recorded on the transition into INQUISITION, if any. */
 function enteringTrigger(ctx: RunContext): Trigger | null {

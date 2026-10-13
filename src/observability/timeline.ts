@@ -347,6 +347,11 @@ function renderEvent(e: EventRow, data: Rec, l: Lookups): Rendered | null {
       const which = session === null ? '' : data.ended_by_cap === true ? `; the cap ended session ${session}` : data.ended_by_cap === false ? `; session ${session} went past the cap` : ` in session ${session}`;
       return { text: `budget exhausted: ${str(data.counter) ?? '?'} ${num(data.used) ?? '?'} of ${num(data.allowance) ?? '?'}${str(data.limit) ? ` (${str(data.limit)})` : ''}${which}` };
     }
+    case 'budget.session-turns-recounted': {
+      // A session recorded before 0.3.1, whose turns were its num_turns until its transcript was counted.
+      const before = num(data.recorded_before);
+      return { text: `session ${str(data.session) ?? '?'} made ${num(data.model_requests) ?? '?'} model requests, counted from its transcript${before === null ? '' : `; it was recorded before 0.3.1 as num_turns ${before}`}` };
+    }
     case 'budget.usage-charged': {
       const c = num(data.charged_usd);
       const who = [str(data.role) ?? 'a session', str(data.worker_id)].filter((x): x is string => x !== null).join(' ');
