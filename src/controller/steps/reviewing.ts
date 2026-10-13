@@ -428,7 +428,11 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
         subjects: [],
         key: `review:${cand.treeHash}:${inquire.map((x) => x.d.fingerprint).sort().join(',')}`.slice(0, 500),
       };
-      if (!handledTriggerKeys(ctx).has(trigger.key)) return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
+      if (!handledTriggerKeys(ctx).has(trigger.key)) {
+        const spent = await reviewRoundsSpent(ctx, `${repairable.length} open finding(s): ${describeFindings(repairable)}`, { open_findings: openFindings(repairable) });
+        if (spent) return spent;
+        return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
+      }
     }
     return routeToRepair(ctx, cand, repairable, resolution, texts, { held, criteria: waiting.criteria, questions: waiting.questions.map((q) => q.id) });
   }
@@ -442,7 +446,16 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
       subjects: [],
       key: claimsTriggerKey(cand, resolution.claimsToTest),
     };
-    if (!handledTriggerKeys(ctx).has(trigger.key)) return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
+    if (!handledTriggerKeys(ctx).has(trigger.key)) {
+      // With an approving review on this tree, an inquiry that refutes the claims clears it with no further round,
+      // so only without one does the spent round cap end the run here.
+      if (!gate.details.approved) {
+        const claims = resolution.dispositions.filter((d) => resolution.claimsToTest.some((c) => c.findingId === d.findingId));
+        const spent = await reviewRoundsSpent(ctx, `${resolution.claimsToTest.length} review claim(s) still needing a discriminating test: ${describeFindings(claims)}`, { open_findings: openFindings(claims) });
+        if (spent) return spent;
+      }
+      return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
+    }
   }
   // A review that asked for repair only through notes (findings filed under evidence-classification that no check
   // confirmed: they dispute Orbit's own evidence classification) approves nothing, and no repair can answer it. It gets
@@ -779,6 +792,19 @@ function stalledReviewRepair(ctx: RunContext, cand: CandidateRecord): NonProgres
   if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.resumed' AND id > ?", ctx.run.id, sent.id)) return null;
   const reason = `attempt ${latest} reproduced tree ${cand.treeHash.slice(0, 12)}, the tree its review repair brief was written for: no measurable progress (same tree as attempt ${cand.attempt}); the same review, findings and brief would follow, so more attempts, tokens or lines would not change that`;
   return { terminate: true, reason, consecutiveNoProgress: 1, threshold: 1, fingerprint: null, suggestedState: 'EXHAUSTED' };
+}
+
+/**
+ * Whatever an inquiry decides about findings that need repair has to be reviewed again, so with no review round left
+ * no inquisitor starts and the run ends here, EXHAUSTED, as a repair without a round does (0.3.0 retest: the last
+ * Inquisition ran after review_rounds 4 of 4, and the run then ended EXHAUSTED anyway). The one exception, decided by
+ * the caller: claims on a tree an approving review cleared, which an inquiry that refutes them clears without another
+ * round. Null while a round is left.
+ */
+async function reviewRoundsSpent(ctx: RunContext, open: string, outcome: Record<string, unknown>): Promise<StepResult | null> {
+  const rounds = ctx.ledger!.state('review_rounds');
+  if (rounds.used < rounds.allowance) return null;
+  return finishRun(ctx, 'EXHAUSTED', `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}) with ${open}`.slice(0, 2000), { data: { counter: 'review_rounds', used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
 }
 
 function describeFindings(list: readonly Disposition[]): string {

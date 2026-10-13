@@ -32,7 +32,7 @@ describe('final report', () => {
     const r = report();
     r.budget!.counters = [{ counter: 'worker_turns_per_session', used: 0, allowance: 30, hard_cap: 30, remaining: 30 }];
     const md = renderMarkdown(r);
-    expect(md).toContain('worker_turns_per_session: usage unavailable; Claude CLI cap 30 per session');
+    expect(md).toContain('worker_turns_per_session: usage unavailable; cap 30 per session, enforced by the Claude CLI (--max-turns)');
     expect(md).not.toContain('worker_turns_per_session: 0 used');
   });
 
@@ -40,7 +40,7 @@ describe('final report', () => {
     const r = report();
     r.budget!.counters = [{ counter: 'worker_turns_per_session', used: 7, allowance: 30, hard_cap: 30, remaining: 23 }];
     const md = renderMarkdown(r);
-    expect(md).toContain('worker_turns_per_session: 7 maximum reported turns; Claude CLI cap 30 per session');
+    expect(md).toContain('worker_turns_per_session: 7 model requests at most in one session; cap 30 per session, enforced by the Claude CLI (--max-turns)');
   });
 
   it('distinguishes a measured zero from unavailable turns and lists session counts', () => {
@@ -49,8 +49,8 @@ describe('final report', () => {
     r.budget!.counters = [count];
     r.budget!.sessions = [{ ...count, counter: 'worker_turns_per_session:wrk-zero' }];
     const md = renderMarkdown(r);
-    expect(md).toContain('worker_turns_per_session: 0 maximum reported turns');
-    expect(md).toContain('worker_turns_per_session:wrk-zero: 0 reported turns');
+    expect(md).toContain('worker_turns_per_session: 0 model requests at most in one session');
+    expect(md).toContain('worker_turns_per_session:wrk-zero: 0 model requests');
     expect(md).not.toContain('usage unavailable');
   });
   it('has every section spec section 19 asks for', () => {

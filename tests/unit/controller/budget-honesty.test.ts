@@ -80,7 +80,7 @@ describe('reported worker turns', () => {
     expect(budget.sessions.map((c) => c.used).sort()).toEqual([3, 7]);
     const ctx = lab.ctx();
     const report = buildFinalReport(lab.db, ctx.run, { runDir: ctx.runDir, clock: lab.clock, snapshot: ctx.snapshot });
-    expect(renderMarkdown(report)).toContain('worker_turns_per_session: 7 maximum reported turns; Claude CLI cap 30 per session');
+    expect(renderMarkdown(report)).toContain('worker_turns_per_session: 7 model requests at most in one session; cap 30 per session, enforced by the Claude CLI (--max-turns)');
   });
 
   it('records the real reported count even when Claude reports cap plus one', () => {

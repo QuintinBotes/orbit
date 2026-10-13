@@ -1,6 +1,7 @@
 import type { OrbitDb } from '../storage/db.ts';
 import type { Clock } from '../core/clock.ts';
 import { OrbitError } from '../core/errors.ts';
+import { TERMINAL_STATES, isRunState } from '../core/run-states.ts';
 import type { OrbitConfig } from '../policy/types.ts';
 import type { ModelPricing } from '../routing/types.ts';
 import {
@@ -24,6 +25,7 @@ import {
   type MeasuredCounter,
   type ProgressReport,
   type ReserveState,
+  type SpendBreakdown,
 } from './types.ts';
 
 /**
@@ -240,16 +242,26 @@ export class BudgetLedger {
     return this.state(SESSION_COUNTER).hard_cap;
   }
 
-  /** Record a provider's cumulative session count, idempotently. The CLI enforces the cap; observed overshoot is retained. */
-  recordSessionTurns(sessionId: string, turns: number): CounterState {
+  /**
+   * Record a session's turns, idempotently: the model requests it made, which is what the CLI's --max-turns counts.
+   * The CLI enforces the cap; a session the cap stopped (`endedByCap`), or one recorded past it, leaves one
+   * budget.exhausted event, so a count over the cap is never silent. Observed overshoot is retained.
+   */
+  recordSessionTurns(sessionId: string, turns: number, opts: { endedByCap?: boolean } = {}): CounterState {
     if (!sessionId || !Number.isSafeInteger(turns) || turns < 0) throw new OrbitError('SCHEMA_INVALID', 'session turns need a session id and a non-negative integer count');
     const { runId } = this.bound();
     const key = `${SESSION_COUNTER}:${sessionId}`;
+    const now = this.clock.now();
     return this.db.tx(() => {
       const base = this.row(runId, SESSION_COUNTER);
       this.db.run('INSERT INTO budget_counters (run_id, counter, used, allowance, hard_cap) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id, counter) DO UPDATE SET used = MAX(used, excluded.used)', runId, key, turns, base.hard_cap, base.hard_cap);
       this.db.run('UPDATE budget_counters SET used = MAX(used, ?) WHERE run_id = ? AND counter = ?', turns, runId, SESSION_COUNTER);
-      return toState(this.row(runId, key));
+      const row = this.row(runId, key);
+      const endedByCap = opts.endedByCap === true;
+      if ((endedByCap || row.used > row.hard_cap + EPS) && !this.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'budget.exhausted' AND json_extract(data_json, '$.session') = ? LIMIT 1", runId, sessionId)) {
+        this.event(runId, 'budget.exhausted', { counter: SESSION_COUNTER, session: sessionId, used: row.used, allowance: row.allowance, hard_cap: row.hard_cap, limit: 'hard_cap', ended_by_cap: endedByCap }, now);
+      }
+      return toState(row);
     });
   }
 
@@ -277,7 +289,7 @@ export class BudgetLedger {
   consumeCost(
     cost: { costUsd: number | null; costSource?: string },
     role: BudgetRole,
-    opts: { phase?: BudgetPhase; ceilingUsd?: number | null; tokenEstimate?: TokenEstimate | null } = {},
+    opts: { phase?: BudgetPhase; ceilingUsd?: number | null; tokenEstimate?: TokenEstimate | null; workerId?: string | null } = {},
   ): CostCharge {
     const phase = opts.phase ?? 'work';
     if (opts.ceilingUsd !== undefined && opts.ceilingUsd !== null && !isAmount(opts.ceilingUsd)) {
@@ -287,13 +299,15 @@ export class BudgetLedger {
       const r = this.consumeMeasured('cost_usd', cost.costUsd, phase);
       return { charged: cost.costUsd, basis: cost.costSource === 'estimated' ? 'estimated' : 'reported', state: r.state };
     }
+    // The session a stand-in charge is for, so spendBreakdown counts it once, as the charge, whatever its usage row says.
+    const worker = opts.workerId ? { worker_id: opts.workerId } : {};
     // Tokens were reported but no cost (Codex under a ChatGPT login): what the tokens would cost is a far closer
     // charge than a ceiling several times larger, and it is still priced at or above any known model's rate.
     const est = opts.tokenEstimate;
     if (est && isAmount(est.costUsd)) {
       const r = this.consumeMeasured('cost_usd', est.costUsd, phase, {
         type: 'budget.cost-token-estimated',
-        data: { role, charged_usd: est.costUsd, basis: est.basis, model: est.model },
+        data: { role, charged_usd: est.costUsd, basis: est.basis, model: est.model, ...worker },
       });
       return { charged: est.costUsd, basis: 'estimated', state: r.state };
     }
@@ -301,7 +315,7 @@ export class BudgetLedger {
     const ceiling = sessionCap ?? this.costCeiling(role);
     const r = this.consumeMeasured('cost_usd', ceiling, phase, {
       type: 'budget.cost-ceiling-charged',
-      data: { role, ceiling_usd: ceiling, ceiling_basis: sessionCap !== null ? 'session-cap' : 'role-ceiling' },
+      data: { role, ceiling_usd: ceiling, ceiling_basis: sessionCap !== null ? 'session-cap' : 'role-ceiling', ...worker },
     });
     return { charged: ceiling, basis: 'ceiling', state: r.state };
   }
@@ -673,6 +687,117 @@ export function extensionDecisionRecord(d: ExtensionDecision): { kind: string; s
     summary: granted ? `${d.counter} allowance ${d.previous_allowance} -> ${d.new_allowance}` : `${d.counter} extension denied at ${d.previous_allowance}`,
     data: d,
   };
+}
+
+/**
+ * What the run's cost budget charged and what that charge is made of, from the usage records and the budget's own
+ * charge events; the report, the timeline footer and status all say it this way. Read-only, and it works before
+ * PLANNING creates the budget (charged_usd null). A session the budget charged from its tokens or at a ceiling counts
+ * as that charge, whatever its usage record says; such a charge recorded before charges named their session stands
+ * for one usage record without a cost, as the older cost note counted it.
+ */
+export function spendBreakdown(db: OrbitDb, runId: string): SpendBreakdown {
+  const stoodFor = new Set<string>();
+  let unnamed = 0;
+  let estimatedUsd = 0;
+  let estimatedSessions = 0;
+  let ceilingUsd = 0;
+  let ceilingSessions = 0;
+  let precharged = 0;
+  for (const e of db.all<{ type: string; data_json: string | null }>("SELECT type, data_json FROM events WHERE run_id = ? AND type IN ('budget.cost-token-estimated', 'budget.cost-ceiling-charged', 'budget.precharged') ORDER BY id", runId)) {
+    const d = e.data_json ? (JSON.parse(e.data_json) as { worker_id?: unknown; charged_usd?: unknown; ceiling_usd?: unknown }) : {};
+    if (e.type === 'budget.precharged') {
+      precharged += amountOf(d.charged_usd);
+      continue;
+    }
+    if (typeof d.worker_id === 'string') stoodFor.add(d.worker_id);
+    else unnamed++;
+    if (e.type === 'budget.cost-token-estimated') {
+      estimatedUsd += amountOf(d.charged_usd);
+      estimatedSessions++;
+    } else {
+      ceilingUsd += amountOf(d.ceiling_usd);
+      ceilingSessions++;
+    }
+  }
+  let reportedUsd = 0;
+  let reportedSessions = 0;
+  let unpriced = 0;
+  for (const u of db.all<{ worker_id: string | null; cost_usd: number | null; cost_source: string }>('SELECT worker_id, cost_usd, cost_source FROM usage WHERE run_id = ? ORDER BY id', runId)) {
+    if (u.worker_id !== null && stoodFor.has(u.worker_id)) continue;
+    if (u.cost_usd === null) {
+      if (unnamed > 0) unnamed--;
+      else unpriced++;
+    } else if (u.cost_source === 'estimated') {
+      estimatedUsd += u.cost_usd;
+      estimatedSessions++;
+    } else {
+      reportedUsd += u.cost_usd;
+      reportedSessions++;
+    }
+  }
+  const counter = db.get<{ used: number }>("SELECT used FROM budget_counters WHERE run_id = ? AND counter = 'cost_usd'", runId);
+  const charged = counter ? roundUsd(counter.used) : null;
+  const parts = roundUsd(reportedUsd + estimatedUsd + ceilingUsd);
+  const state = db.get<{ state: string }>('SELECT state FROM runs WHERE id = ?', runId)?.state ?? null;
+  const s: Omit<SpendBreakdown, 'explanation'> = {
+    charged_usd: charged,
+    reported_usd: roundUsd(reportedUsd),
+    reported_sessions: reportedSessions,
+    estimated_usd: roundUsd(estimatedUsd),
+    estimated_sessions: estimatedSessions,
+    ceiling_usd: roundUsd(ceilingUsd),
+    ceiling_sessions: ceilingSessions,
+    unpriced_sessions: unpriced,
+    precharged_usd: roundUsd(precharged),
+    unmatched_usd: charged === null ? 0 : roundUsd(Math.max(0, charged - parts)),
+    uncharged_usd: roundUsd(Math.max(0, parts - (charged ?? 0))),
+    uncharged_reason: charged === null ? withoutBudget(state) : null,
+  };
+  return { ...s, explanation: explainSpend(s, state) };
+}
+
+/**
+ * Why a run has no cost budget to charge: PLANNING creates it when it completes, so a run blocked before then (the
+ * 0.3.0 dotnet run blocked at PLANNING) has measured spend that is charged only if it resumes, and a run that ended
+ * before then never charges it.
+ */
+function withoutBudget(state: string | null): string {
+  if (state === 'BLOCKED') return 'the run blocked before PLANNING created the budget';
+  if (state !== null && isRunState(state) && TERMINAL_STATES.has(state)) return `the run ended ${state} before PLANNING created the budget`;
+  return 'PLANNING has not created the budget yet';
+}
+
+/** Amounts below a cent are rounding, not something to explain. */
+const SPEND_CENT = 0.005;
+
+function explainSpend(s: Omit<SpendBreakdown, 'explanation'>, state: string | null): string {
+  const sessions = (n: number): string => `${n} ${n === 1 ? 'session' : 'sessions'}`;
+  const parts = [
+    ...(s.reported_sessions > 0 ? [`$${usd(s.reported_usd)} reported by providers (${sessions(s.reported_sessions)})`] : []),
+    ...(s.estimated_sessions > 0 ? [`$${usd(s.estimated_usd)} estimated from tokens for ${sessions(s.estimated_sessions)} that reported no cost`] : []),
+    ...(s.ceiling_sessions > 0 ? [`$${usd(s.ceiling_usd)} at conservative ceilings for ${sessions(s.ceiling_sessions)} that reported no cost and could not be priced`] : []),
+  ];
+  const unpriced = s.unpriced_sessions > 0 ? `${sessions(s.unpriced_sessions)} with no reported cost` : null;
+  if (s.charged_usd === null) {
+    const spent = [...parts, ...(unpriced ? [unpriced] : [])].join(' and ');
+    if (spent.length === 0) return 'no usage recorded yet';
+    // Measured and not charged, and why: blocked (charged if resumed), ended (never charged) or not there yet.
+    if (state === 'BLOCKED') return `nothing charged to the cost budget: ${s.uncharged_reason}, so this spend is measured and not charged; PLANNING charges it if the run is resumed: ${spent}`;
+    if (state !== null && isRunState(state) && TERMINAL_STATES.has(state)) return `nothing charged to the cost budget: ${s.uncharged_reason}, so this spend was measured and never charged: ${spent}`;
+    return `nothing charged to the cost budget yet: PLANNING creates it and then charges what was spent before; spent so far: ${spent}`;
+  }
+  if (s.unmatched_usd >= SPEND_CENT) parts.push(`$${usd(s.unmatched_usd)} charged beyond the recorded sessions (a session charged again after a controller restart)`);
+  const notes: string[] = [];
+  if (parts.length === 0 && unpriced === null) notes.push('no usage recorded yet');
+  if (s.precharged_usd >= SPEND_CENT) notes.push(`$${usd(s.precharged_usd)} of it was spent before PLANNING and charged when the budget was created`);
+  if (s.uncharged_usd >= SPEND_CENT) notes.push(`$${usd(s.uncharged_usd)} of the recorded spend was never charged to the budget`);
+  if (unpriced) notes.push(`${unpriced} ${s.unpriced_sessions === 1 ? 'was' : 'were'} never charged`);
+  return `$${usd(s.charged_usd)} charged to the cost budget (the figure the cost cap is checked against)${parts.length > 0 ? `: ${parts.join(' + ')}` : ''}${notes.map((n) => `; ${n}`).join('')}`;
+}
+
+function amountOf(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
 function capsFrom(policy: BudgetPolicy): Record<BudgetCounter, number> {

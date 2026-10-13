@@ -17,7 +17,7 @@ import { BudgetLedger } from '../../scheduling/budget.ts';
 import { RECOVERY_ATTEMPT_EVENT } from '../../recovery/budget.ts';
 import type { Coupling } from '../../scheduling/types.ts';
 import type { RunContext } from '../context.ts';
-import { accountWorkerTurns, routeFor, storedResult, tokenEstimateFor } from '../workers.ts';
+import { accountWorkerTurns, chargeUsageRow, markedUsageIds, routeFor, storedResult, usageRows } from '../workers.ts';
 import { listWorkers } from '../../storage/workers.ts';
 import { assertContract, decide, move, note, safePoint, type StepResult } from './common.ts';
 import { amendBaseline } from './baseline-amendment.ts';
@@ -98,21 +98,19 @@ function prechargeUsage(ctx: RunContext): void {
   if (!ledger) return;
   for (const w of listWorkers(ctx.db, { runId: ctx.run.id })) accountWorkerTurns(ctx, w, storedResult(w));
   if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'budget.precharged'", ctx.run.id)) return;
-  const rows = ctx.db.all<{ worker_id: string | null; provider: string; model: string | null; input_tokens: number | null; output_tokens: number | null; cache_read_tokens: number | null; cache_write_tokens: number | null; cost_usd: number | null; cost_source: string; role: string | null }>(
-    'SELECT u.worker_id, u.provider, u.model, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens, u.cost_usd, u.cost_source, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ? ORDER BY u.id',
-    ctx.run.id,
-  );
-  let total = 0;
-  for (const r of rows) {
-    // A session with tokens but no cost is charged what the tokens would cost, not the planner ceiling.
-    const tokenEstimate = r.cost_usd === null ? tokenEstimateFor(ctx, r, { provider: r.provider, model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cacheReadTokens: r.cache_read_tokens, cacheWriteTokens: r.cache_write_tokens, costUsd: null, costSource: 'unavailable' }) : null;
-    const charge = ledger.consumeCost({ costUsd: r.cost_usd, costSource: r.cost_source }, (r.role as 'planner' | null) ?? 'planner', { tokenEstimate });
-    total += charge.charged;
-  }
+  // A record an inquiry's charge pass already charged is not charged twice.
+  const marked = markedUsageIds(ctx);
+  const rows = usageRows(ctx).filter((r) => !marked.has(r.id));
+  const before = ledger.state('cost_usd').used;
+  // A session with tokens but no cost is charged what the tokens would cost, not the planner ceiling.
+  for (const r of rows) chargeUsageRow(ctx, ledger, r);
+  const total = ledger.state('cost_usd').used - before;
   // Recovery attempts spent before the counters existed (a resume after a block in CONTRACTING, a crash in PREFLIGHT)
   // were bounded by counting their events; they are part of the run's recovery budget too, or the report says 0 used.
   const init = ctx.db.get<{ id: number }>("SELECT id FROM events WHERE run_id = ? AND type = 'budget.initialized' ORDER BY id LIMIT 1", ctx.run.id);
   const recoveries = Number(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND type = ? AND id < ?', ctx.run.id, RECOVERY_ATTEMPT_EVENT, init?.id ?? 0)?.n ?? 0);
   if (recoveries > 0) ledger.consume('recovery_attempts', recoveries);
-  note(ctx, 'budget.precharged', { usage_rows: rows.length, charged_usd: Math.round(total * 1e6) / 1e6, ...(recoveries > 0 ? { recovery_attempts: recoveries } : {}) });
+  // through_usage_id: the newest record charged here, so a later charge pass knows what this one covered.
+  const through = ctx.db.get<{ id: number | null }>('SELECT MAX(id) AS id FROM usage WHERE run_id = ?', ctx.run.id)?.id ?? 0;
+  note(ctx, 'budget.precharged', { usage_rows: rows.length, charged_usd: Math.round(total * 1e6) / 1e6, through_usage_id: through, ...(recoveries > 0 ? { recovery_attempts: recoveries } : {}) });
 }

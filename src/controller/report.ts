@@ -31,8 +31,9 @@ import { readSecurityPolicy } from '../review/resolve.ts';
 import { SAME_PROVIDER_APPROVED_KIND, type ReviewerSelection } from '../review/select.ts';
 import { listLedger, listQuestions } from '../inquisition/store.ts';
 import { summarizeUsage } from '../routing/usage.ts';
-import { BudgetLedger } from '../scheduling/budget.ts';
+import { BudgetLedger, spendBreakdown } from '../scheduling/budget.ts';
 import type { BudgetSnapshot } from '../scheduling/budget.ts';
+import type { SpendBreakdown } from '../scheduling/types.ts';
 import { DELIVERY_MODES, outputBudgets } from '../policy/config.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import type { GoalContract } from '../contract/types.ts';
@@ -105,7 +106,16 @@ export interface FinalReport {
     delivered_commit: string | null;
     pull_request: { number: number; url: string | null } | null;
   };
-  budget: { counters: BudgetSnapshot['counters']; sessions?: BudgetSnapshot['sessions']; cost_measurement: string; cost_usd: number; cost_complete: boolean; tokens: { input: number; output: number; cache_read: number; cache_write: number } } | null;
+  budget: {
+    counters: BudgetSnapshot['counters'];
+    sessions?: BudgetSnapshot['sessions'];
+    cost_measurement: string;
+    cost_usd: number;
+    cost_complete: boolean;
+    tokens: { input: number; output: number; cache_read: number; cache_write: number };
+    /** What the cost budget charged and what that adds to the reported spend; absent in reports written before it existed. */
+    spend?: SpendBreakdown;
+  } | null;
   unverified: string[];
   residual_risks: string[];
   /**
@@ -182,17 +192,18 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
 
   let budget: FinalReport['budget'] = null;
   const usage = summarizeUsage(db, run.id);
+  const spend = spendBreakdown(db, run.id);
   if (opts.snapshot && db.get('SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1', run.id)) {
     try {
       const ledger = new BudgetLedger(db, opts.clock).attach(run.id, opts.snapshot);
       for (const w of listWorkers(db, { runId: run.id })) accountWorkerTurns({ ledger }, w, storedResult(w));
       const snap = ledger.snapshot();
-      budget = { counters: snap.counters, sessions: snap.sessions, cost_measurement: snap.cost_measurement.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals) };
+      budget = { counters: snap.counters, sessions: snap.sessions, cost_measurement: snap.cost_measurement.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals), spend };
     } catch {
       budget = null;
     }
   }
-  if (!budget) budget = { counters: [], cost_measurement: usage.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals) };
+  if (!budget) budget = { counters: [], cost_measurement: usage.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals), spend };
 
   const unverified = [...(ev?.report.unverified ?? [])];
   for (const c of criteria) if (c.mandatory && c.status !== 'supported') unverified.push(`${c.id} is ${c.status}`);
@@ -495,10 +506,14 @@ export function renderMarkdown(r: FinalReport): string {
   out.push('## Revision, branch and pull request', '', list([`base: ${rv.base ?? 'none'}`, `candidate: ${rv.candidate ?? 'none'} (tree ${rv.tree ?? 'none'})`, `branch: ${rv.branch ?? 'none'}`, ...(rv.candidate_ref ? [`candidate ref: ${rv.candidate_ref}`] : []), rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? 'none'}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ''}` : 'none'}`]), '');
   if (r.budget) {
     const b = r.budget;
+    // A session's turns are its model requests, which is what the CLI's --max-turns counts and stops at.
     const counters = b.counters.map((c) => c.counter === 'worker_turns_per_session'
-      ? `${c.counter}: ${c.used > 0 || (b.sessions?.length ?? 0) > 0 ? `${round(c.used)} maximum reported turns` : 'usage unavailable'}; Claude CLI cap ${round(c.hard_cap)} per session`
+      ? `${c.counter}: ${c.used > 0 || (b.sessions?.length ?? 0) > 0 ? `${round(c.used)} model requests at most in one session` : 'usage unavailable'}; cap ${round(c.hard_cap)} per session, enforced by the Claude CLI (--max-turns)`
       : `${c.counter}: ${round(c.used)} used of ${round(c.allowance)} allowed (hard cap ${round(c.hard_cap)})`);
-    out.push('## Budget consumption', '', list([...counters, ...(b.sessions ?? []).map((s) => `${s.counter}: ${round(s.used)} reported turns`), `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? 'measured' : 'incomplete: some usage has no cost'}); ${b.cost_measurement}`, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), '');
+    // One spend explanation (the figure the cap is checked against, and what it adds to the reported spend); a report
+    // written before it existed still shows its model cost.
+    const spend = b.spend ? `spend: ${b.spend.explanation}` : `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? 'measured' : 'incomplete: some usage has no cost'}); ${b.cost_measurement}`;
+    out.push('## Budget consumption', '', list([...counters, ...(b.sessions ?? []).map((s) => `${s.counter}: ${round(s.used)} model requests`), spend, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), '');
   }
   out.push('## Not verified', '', list(r.unverified), '');
   out.push('## Residual risks', '', list(r.residual_risks), '');

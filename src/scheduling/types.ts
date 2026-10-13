@@ -125,6 +125,36 @@ export interface CostMeasurement {
   note: string;
 }
 
+/**
+ * What the cost budget charged and what that charge is made of, so the report, the timeline and status explain one
+ * figure instead of showing several. `charged_usd` is the figure the cost cap is checked against.
+ */
+export interface SpendBreakdown {
+  /** cost_usd as the budget charged it; null before PLANNING creates the budget. */
+  charged_usd: number | null;
+  /** Spend the providers reported. */
+  reported_usd: number;
+  reported_sessions: number;
+  /** Priced from tokens and list pricing, for sessions that reported no cost. */
+  estimated_usd: number;
+  estimated_sessions: number;
+  /** Conservative stand-ins charged for sessions that reported no cost and could not be priced. */
+  ceiling_usd: number;
+  ceiling_sessions: number;
+  /** Sessions with no reported cost that nothing priced or charged. */
+  unpriced_sessions: number;
+  /** The part of the charge spent before PLANNING and charged when the budget was created. */
+  precharged_usd: number;
+  /** Charged beyond every recorded session: a session charged again after a controller restart. */
+  unmatched_usd: number;
+  /** Recorded spend the budget has not charged; all of it before PLANNING creates the budget. */
+  uncharged_usd: number;
+  /** Why nothing is charged while the run has no budget (blocked or ended before PLANNING created it, or not there yet); null once it has one. */
+  uncharged_reason: string | null;
+  /** Which figure is the charge and what it adds to the reported spend, in one sentence. */
+  explanation: string;
+}
+
 /** Work admitted earlier whose cost has not been charged yet. */
 export interface CommittedWork {
   estimatedCostUsd?: number | null;

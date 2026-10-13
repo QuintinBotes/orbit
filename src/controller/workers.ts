@@ -419,7 +419,7 @@ export function accountWorker(ctx: RunContext, w: WorkerRecord, result: TaskResu
     // under a cap of its own, and charging both at the full session cap would count one piece of work twice.
     const ceilingUsd = cap === null ? null : result.status === 'lost' ? Math.min(cap.ceilingUsd, ctx.ledger.roleCostCeiling(w.role)) : cap.ceilingUsd;
     try {
-      ctx.ledger.consumeCost({ costUsd: usage.costUsd, costSource: usage.costSource }, w.role, { phase, ceilingUsd, tokenEstimate: tokenEstimateFor(ctx, w, usage) });
+      ctx.ledger.consumeCost({ costUsd: usage.costUsd, costSource: usage.costSource }, w.role, { phase, ceilingUsd, tokenEstimate: tokenEstimateFor(ctx, w, usage), workerId: w.id });
     } catch (err) {
       // The charge is recorded (and so is the exhaustion); an authentication failure still blocks on credentials,
       // which is the truthful cause, rather than ending the run EXHAUSTED on spend nobody can show happened.
@@ -439,13 +439,107 @@ export function accountWorker(ctx: RunContext, w: WorkerRecord, result: TaskResu
   }
 }
 
-/** Claude's result count is cumulative and may exceed --max-turns by one. Missing counts stay unmeasured. */
+/**
+ * A Claude session's turns are its model requests, the count --max-turns limits; the result's num_turns counts the
+ * prompt and every tool result, so a session with parallel tool calls reported 61 under a cap of 30 it kept. A stored
+ * result without a request count (before 0.3.1) falls back to num_turns. Missing counts stay unmeasured.
+ */
 export function accountWorkerTurns(ctx: Pick<RunContext, 'ledger'>, w: WorkerRecord, result: TaskResult): void {
-  const { numTurns: turns, sessionId } = result as Partial<ClaudeTaskResult>;
-  if (ctx.ledger && /^claude(?:$|[-_])/.test(w.provider) && typeof turns === 'number' && Number.isSafeInteger(turns) && turns >= 0) {
+  const { numTurns, modelRequests, sessionId } = result as Partial<ClaudeTaskResult>;
+  const turns = isCount(modelRequests) ? modelRequests : numTurns;
+  if (ctx.ledger && /^claude(?:$|[-_])/.test(w.provider) && isCount(turns)) {
     const session = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : `restart-${w.restartCount}`;
-    ctx.ledger.recordSessionTurns(`${w.id}:${session}`, turns);
+    ctx.ledger.recordSessionTurns(`${w.id}:${session}`, turns, { endedByCap: result.status === 'max_turns' });
   }
+}
+
+function isCount(n: number | null | undefined): n is number {
+  return typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
+}
+
+/** Marks usage that another component recorded as charged to cost_usd, with the usage ids it covers. */
+export const USAGE_CHARGED_EVENT = 'budget.usage-charged';
+
+interface UsageRow {
+  id: number;
+  worker_id: string | null;
+  provider: string;
+  model: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
+  cost_usd: number | null;
+  cost_source: string;
+  role: string | null;
+}
+
+/** The run's usage records with their worker's role, oldest first; `where` narrows them further. */
+export function usageRows(ctx: RunContext, where = '', ...params: (string | number)[]): UsageRow[] {
+  return ctx.db.all<UsageRow>(
+    `SELECT u.id, u.worker_id, u.provider, u.model, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens, u.cost_usd, u.cost_source, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ?${where} ORDER BY u.id`,
+    ctx.run.id,
+    ...params,
+  );
+}
+
+/** Charge one usage record as a session is charged: its cost, else what its tokens would cost, else a ceiling. */
+export function chargeUsageRow(ctx: RunContext, ledger: NonNullable<RunContext['ledger']>, r: UsageRow, phase: BudgetPhase = 'work'): void {
+  const tokenEstimate = r.cost_usd === null ? tokenEstimateFor(ctx, r, { provider: r.provider, model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cacheReadTokens: r.cache_read_tokens, cacheWriteTokens: r.cache_write_tokens, costUsd: null, costSource: 'unavailable' }) : null;
+  ledger.consumeCost({ costUsd: r.cost_usd, costSource: r.cost_source }, (r.role as WorkerRole | null) ?? 'planner', { phase, tokenEstimate, workerId: r.worker_id });
+}
+
+/** Usage ids already charged to cost_usd through a USAGE_CHARGED_EVENT mark. */
+export function markedUsageIds(ctx: RunContext): Set<number> {
+  const ids = new Set<number>();
+  for (const e of ctx.db.all<{ data_json: string | null }>('SELECT data_json FROM events WHERE run_id = ? AND type = ?', ctx.run.id, USAGE_CHARGED_EVENT)) {
+    const d = e.data_json ? (JSON.parse(e.data_json) as { usage_ids?: unknown }) : {};
+    for (const id of Array.isArray(d.usage_ids) ? d.usage_ids : []) if (typeof id === 'number') ids.add(id);
+  }
+  return ids;
+}
+
+/** The newest usage id PLANNING charged when it created the budget; 0 before it has. */
+function prechargedThrough(ctx: RunContext): number {
+  const e = ctx.db.get<{ ts: number; data_json: string | null }>("SELECT ts, data_json FROM events WHERE run_id = ? AND type = 'budget.precharged' ORDER BY id LIMIT 1", ctx.run.id);
+  if (!e) return 0;
+  const through = (e.data_json ? (JSON.parse(e.data_json) as { through_usage_id?: unknown }) : {}).through_usage_id;
+  if (typeof through === 'number') return through;
+  // A precharge recorded before 0.3.1 named no usage id: it charged every record written by then.
+  return ctx.db.get<{ id: number | null }>('SELECT MAX(id) AS id FROM usage WHERE run_id = ? AND ts <= ?', ctx.run.id, e.ts)?.id ?? 0;
+}
+
+/**
+ * Charge to cost_usd the usage another component recorded for `w` without charging it. The Inquisition engine records
+ * an inquisitor's usage with its result, so accountWorker, which charges a session before recording its usage, never
+ * charged an inquisitor (0.3.0: every python run's charge fell short of its measured spend by exactly its inquisitors).
+ * Charged once: the charge and its mark commit together, and a charge that crosses the cap is recorded and marked
+ * before the exhaustion is thrown. Before PLANNING creates the budget nothing is charged here; PLANNING charges it, and
+ * what it charged is not charged again.
+ */
+export function chargeRecordedUsage(ctx: RunContext, w: WorkerRecord, phase: BudgetPhase = 'work'): void {
+  const ledger = ctx.ledger;
+  if (!ledger) return;
+  const refusal = ctx.db.tx((): OrbitError | null => {
+    const marked = markedUsageIds(ctx);
+    const rows = usageRows(ctx, ' AND u.worker_id = ? AND u.id > ?', w.id, prechargedThrough(ctx)).filter((r) => !marked.has(r.id));
+    if (rows.length === 0) return null;
+    const before = ledger.state('cost_usd').used;
+    let refused: OrbitError | null = null;
+    for (const r of rows) {
+      try {
+        chargeUsageRow(ctx, ledger, r, phase);
+      } catch (err) {
+        // Returned, not thrown: the charge the ledger recorded and its mark must commit.
+        if (!isOrbitError(err, 'BUDGET_EXHAUSTED')) throw err;
+        refused = err;
+      }
+    }
+    const charged = Math.round((ledger.state('cost_usd').used - before) * 1e6) / 1e6;
+    appendEvent(ctx.db, ctx.run.id, USAGE_CHARGED_EVENT, ctx.ownerId, { worker_id: w.id, role: w.role, usage_ids: rows.map((r) => r.id), charged_usd: charged }, ctx.clock.now());
+    return refused;
+  });
+  if (refusal) throw refusal;
 }
 
 /**
@@ -718,6 +812,9 @@ export async function collectIfFinished(ctx: RunContext, w: WorkerRecord): Promi
   const result = await adapter.collectResult(handle, { outputSchema: schemaFor(w.role) });
   if (!result) return true;
   const row = finishWorker(ctx.db, w.id, outcomeOf(result), ctx.clock, ctx.ownerId);
-  accountWorker(ctx, row, result);
+  // Its usage is recorded as the engine records it, and charged the way the engine's own workers are, so the charge
+  // and its mark commit together and the inquiry's charge pass never charges it a second time.
+  accountWorker({ ...ctx, ledger: null }, row, result);
+  chargeRecordedUsage(ctx, row);
   return false;
 }

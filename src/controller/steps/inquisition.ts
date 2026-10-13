@@ -19,8 +19,9 @@ import { currentEvidenceReport } from '../../evidence/store.ts';
 import { homeOf, type RunContext } from '../context.ts';
 import { assertLeaseHeld } from '../run-store.ts';
 import type { RunState } from '../states.ts';
-import { accountWorkerTurns, adapterFor, collectIfFinished, routeFor, storedResult, systemPromptFor } from '../workers.ts';
+import { accountWorkerTurns, adapterFor, chargeRecordedUsage, collectIfFinished, routeFor, storedResult, systemPromptFor } from '../workers.ts';
 import { listActiveWorkers, listWorkers } from '../../storage/workers.ts';
+import { listReviews } from '../../review/store.ts';
 import { assertContract, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
 import { briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
 import { handledTriggerKeys, pendingTrigger } from './verifying.ts';
@@ -37,6 +38,26 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
   // An inquisitor a crashed controller left behind is collected first; the engine refuses to start a second one.
   for (const w of listActiveWorkers(ctx.db, ctx.run.id).filter((x) => x.role === 'inquisitor')) {
     if (await collectIfFinished(ctx, w)) return WAIT(`inquisitor ${w.id} is still running`);
+  }
+  // The engine records its inquisitors' usage itself; the controller charges it, like every other worker's: what an
+  // earlier pass left uncharged now, and this inquiry's afterwards, even when the inquiry ends in an error.
+  const account = (): void => {
+    for (const w of listWorkers(ctx.db, { runId: ctx.run.id, role: 'inquisitor' })) {
+      accountWorkerTurns(ctx, w, storedResult(w));
+      chargeRecordedUsage(ctx, w);
+    }
+  };
+  account();
+  // An inquiry that returns to REVIEWING needs another review round for whatever it decides; with none left no
+  // inquisitor starts and the run ends here (0.3.0: the last Inquisition ran after review_rounds 4 of 4, then EXHAUSTED).
+  // REVIEWING sends an inquiry on at the cap only where an approving review is on the tree, so refuting the claims it
+  // asks about clears it with no further round.
+  const rounds = resume === 'REVIEWING' ? ctx.ledger?.state('review_rounds') : undefined;
+  const approved = ctx.candidate !== null && listReviews(ctx.db, ctx.run.id, { treeHash: ctx.candidate.treeHash }).some((r) => r.verdict === 'APPROVE');
+  if (rounds && rounds.used >= rounds.allowance && !approved) {
+    return finishRun(ctx, 'EXHAUSTED', `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}): the inquiry into ${trigger.key} would need another review round, so no inquisitor starts`.slice(0, 2000), {
+      data: { counter: 'review_rounds', used: rounds.used, hard_cap: rounds.hard_cap },
+    });
   }
 
   const route = routeFor(ctx, `inquire:${hashObject(trigger.key).slice(7, 19)}`, 'routine-code', { difficulty: (ctx.run.difficulty ?? 'medium') as 'simple' | 'medium' | 'complex', attempt: 1, repeatedFingerprints: 0 });
@@ -70,9 +91,8 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
       },
     },
     signal: ctx.signal,
-  });
+  }).finally(account);
   const patch = hashObject(result.contract) !== hashObject(contract) ? { contractJson: JSON.stringify(result.contract), contractHash: hashObject(result.contract) } : undefined;
-  for (const w of listWorkers(ctx.db, { runId: ctx.run.id, role: 'inquisitor' })) accountWorkerTurns(ctx, w, storedResult(w));
   if (patch) atomicWriteJson(join(ctx.runDir, 'contract.json'), result.contract);
   const after = await safePoint(ctx);
   if (after) return after;

@@ -54,7 +54,10 @@ export interface ClaudeTaskResult extends TaskResult {
   /** Every model that served the session, from modelUsage keys. */
   models: string[];
   permissionDenials: { tool_name: string; tool_use_id: string }[];
+  /** The result's num_turns: the prompt plus every tool result, so parallel tool calls each add one. */
   numTurns: number | null;
+  /** The session's model requests (claudeModelRequests), which is what --max-turns limits; absent in results before 0.3.1. */
+  modelRequests?: number | null;
   terminalReason: string | null;
   /**
    * Every plugin the session loaded that is not a Claude Code built-in, with the policy key that admitted it
@@ -91,6 +94,7 @@ export function classifyClaudeTranscript(input: ClassifyInput): ClaudeTaskResult
     models: modelUsageKeys(result),
     permissionDenials: denials(result),
     numTurns: num(result?.num_turns),
+    modelRequests: claudeModelRequests(events),
     terminalReason: str(result?.terminal_reason),
     ...(plugins.length > 0 ? { plugins } : {}),
   };
@@ -293,6 +297,27 @@ export function claudeUsage(events: Record<string, unknown>[]): UsageReport {
     cacheWrite += num(u.cache_creation_input_tokens) ?? 0;
   }
   return { provider: 'claude', model: assistantModel(events), inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, costUsd: null, costSource: 'unavailable' };
+}
+
+/**
+ * The model requests a session made: its assistant messages, once per message id (stream-json repeats a message
+ * once per content block), leaving out the CLI's own API error messages and a subagent's messages. This is what
+ * --max-turns limits (gaps-and-contradictions.md V1: the mock saw 2 requests under --max-turns 2), whereas the
+ * result's num_turns counts the prompt and every tool result: a session that stayed within --max-turns 30 made 30
+ * requests with 60 tool calls and reported num_turns 61 (0.3.0 retest). Null when the transcript has no assistant
+ * message at all.
+ */
+export function claudeModelRequests(events: Record<string, unknown>[]): number | null {
+  const ids = new Set<string>();
+  let messages = 0;
+  for (const e of events) {
+    if (e.type !== 'assistant') continue;
+    messages++;
+    if (e.error !== undefined || e.is_api_error_message === true || (typeof e.parent_tool_use_id === 'string' && e.parent_tool_use_id.length > 0)) continue;
+    const m = isObject(e.message) ? (e.message as Record<string, unknown>) : {};
+    ids.add(str(m.id) ?? `#${messages}`);
+  }
+  return messages === 0 ? null : ids.size;
 }
 
 /** Per-session delta of two cumulative reports (a resumed session repeats the earlier figures). */

@@ -90,7 +90,7 @@ describe('orbit status', () => {
     expect(text).toContain(`run ${run.id}  CONTRACTING`);
     expect(text).toContain('owner:     ctl-1');
     expect(text).toMatch(/heartbeat: service controller ctl-1 .* \(live\)/);
-    expect(text).toContain('not initialized yet');
+    expect(text).toContain('budgets:   not created yet: PLANNING creates them when it completes');
     expect(text).toContain(`orbit decide ${run.id} <question-id> <answer>`);
     releaseLease(db, run.id, 'ctl-1');
   });

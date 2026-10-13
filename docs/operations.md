@@ -372,7 +372,7 @@ significant step, in the order it happened, with the local time:
 12:02:05  verdict   candidate 1 FAIL: failing checks: unit-tests
 12:02:09  route     implementation: escalated claude/claude-sonnet-4-6 -> claude/claude-opus-4-8 (high): repeated failure ...; evidence: chk:unit-tests, cand:1
 12:03:46  review    round 1 APPROVE by codex/gpt-6.1-sol on candidate 2 (1 finding: 1 low)
-cost so far: measured $0.17 (2 reported); charged $1.17 to the cost budget; $1.00 of that stands in for 1 session with no reported cost
+cost so far: $1.17 charged to the cost budget (the figure the cost cap is checked against): $0.17 reported by providers (2 sessions) + $1.00 at conservative ceilings for 1 session that reported no cost and could not be priced
 ```
 
 It reads only durable state (the events, the decisions and the worker and usage
@@ -386,11 +386,18 @@ asked, when answered and by whom), `delivery` (each action's intent, execution
 and outcome), `policy`, `cost`, `budget`, `recovery` and `error`. An event the
 timeline has no wording for is still shown, as its type and data.
 
-The last line is the cost so far. "Measured" is what the providers reported
-(plus, separately, what Orbit estimated from tokens); "charged" is what the
-budget ledger has counted against the cost cap, which includes a conservative
-ceiling for every session that reported no cost, so it can be higher than what
-was measured. Before the run has a ledger, nothing is charged yet.
+The last line is the cost so far, the same spend line the report and
+`orbit status` give. The first figure is what the budget ledger has charged,
+which is the figure the cost cap is checked against. After the colon is what it
+is made of: what the providers reported, what Orbit estimated from tokens for
+sessions that reported no cost, and the conservative ceiling charged for each
+session that could not be priced, so the charge can be higher than what was
+reported. It also says how much was spent before PLANNING (charged when the
+budget was created) and any spend the budget did not charge. Before PLANNING
+creates the budget nothing is charged, and the line gives the spend so far and
+why it is not charged: PLANNING has not completed yet, the run blocked before
+it did (the spend is charged if the run is resumed), or the run ended before it
+did (the spend is never charged).
 
 - `--follow` (`-f`) keeps printing new steps until the run reaches a final or
   BLOCKED state (a blocked run waits for a decision, not for more output) or
