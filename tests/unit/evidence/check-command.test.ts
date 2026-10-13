@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { directInvocation } from '../../../src/evidence/check-command.ts';
+import { directInvocation, startedPrograms } from '../../../src/evidence/check-command.ts';
 
 // ADR 0010: a usage error is the check's only when the check's own command invokes the tool directly. These are the
 // shapes a check's command takes, and which of them is a direct invocation of one program.
@@ -64,5 +64,46 @@ describe('directInvocation: the program a check command runs itself', () => {
     expect(directInvocation(['npx', '-c', 'jest && tsc'], false)).toBeNull();
     expect(directInvocation(['env', '-S', 'npm test'], false)).toBeNull();
     expect(directInvocation(['python3', '-c', 'import sys'], false)).toEqual({ tool: 'python3', program: 'python3', args: ['-c', 'import sys'] });
+  });
+});
+
+// 0.3.0 retest, verifier of the fix: the program a check's command starts is the one the sandbox refuses to start (exit
+// 126) or hides (exit 127), and doctor and PREFLIGHT must agree on it. A chain, a pipeline or `exec` starts programs too,
+// and a quoted path with a space is one program.
+describe('startedPrograms: every program a check command starts', () => {
+  const PY = '/home/acme/projects/shop-venv/bin/python';
+  const SPACED = '/home/acme/my venvs/shop/bin/python';
+
+  it('reads an argv command, after assignments, env and exec, and the script a shell it starts runs', () => {
+    expect(startedPrograms([PY, '-m', 'pytest'], false)).toEqual([PY]);
+    expect(startedPrograms([SPACED, '-m', 'pytest'], false)).toEqual([SPACED]);
+    expect(startedPrograms(['env', '-u', 'HOME', 'CI=1', PY, '-m', 'pytest'], false)).toEqual([PY]);
+    expect(startedPrograms(['pytest', '-q'], false)).toEqual(['pytest']);
+    expect(startedPrograms(['/bin/sh', '-c', `exec ${PY} -m pytest`], false)).toEqual(['/bin/sh', PY]);
+    expect(startedPrograms(['bash', '-lc', `cd tests && ${PY} -m pytest`], false)).toEqual(['bash', 'cd', PY]);
+    expect(startedPrograms(['env', 'CI=1', 'sh', '-c', `"${SPACED}" -m pytest`], false)).toEqual(['sh', SPACED]);
+  });
+
+  it('reads each command of a shell script: a chain, a pipeline, a subshell, a substitution, exec and keywords', () => {
+    expect(startedPrograms([`cd tests && ${PY} -m pytest`], true)).toEqual(['cd', PY]);
+    expect(startedPrograms([`${PY} -m ruff check . && ${PY} -m pytest`], true)).toEqual([PY]);
+    expect(startedPrograms([`exec ${PY} -m pytest`], true)).toEqual([PY]);
+    expect(startedPrograms([`exec -a pytest ${PY} -m pytest`], true)).toEqual([PY]);
+    expect(startedPrograms([`CI=1 "${SPACED}" -m pytest -q 2>&1 | tee log.txt`], true)).toEqual([SPACED, 'tee']);
+    expect(startedPrograms([`'${SPACED}' -m pytest || true; echo done`], true)).toEqual([SPACED, 'true', 'echo']);
+    expect(startedPrograms([`(cd app && npm test) & wait`], true)).toEqual(['cd', 'npm', 'wait']);
+    expect(startedPrograms([`if [ -d tests ]; then ${PY} -m pytest; fi`], true)).toEqual(['[', PY]);
+    expect(startedPrograms([`echo "$(${PY} -V)" && ${PY} -m pytest`], true)).toEqual(['echo', PY]);
+    expect(startedPrograms([`npm run lint\n${PY} -m pytest`], true)).toEqual(['npm', PY]);
+    expect(startedPrograms([`${PY} -m pytest -k 'a && b'`], true)).toEqual([PY]);
+  });
+
+  it('stops at a here-document and reads nothing of a script that does not parse, or of no command', () => {
+    expect(startedPrograms([`cat <<EOF | sh\n${PY} -m pytest\nEOF`], true)).toEqual(['cat']);
+    expect(startedPrograms([`${PY} -m pytest "unterminated`], true)).toEqual([]);
+    expect(startedPrograms([], false)).toEqual([]);
+    expect(startedPrograms([''], true)).toEqual([]);
+    expect(startedPrograms(['CI=1'], true)).toEqual([]);
+    expect(startedPrograms(['env', '-S', `${PY} -m pytest`], false)).toEqual([]);
   });
 });

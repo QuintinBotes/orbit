@@ -215,6 +215,30 @@ describe('checkSandboxCheck: a check program in a folder the check sandbox denie
     expect(fine.details.join('\n')).not.toMatch(/denies/);
   });
 
+  // Verifier of the fix: doctor and PREFLIGHT read the programs a command starts with one helper
+  // (evidence/check-command.ts startedPrograms), so a quoted path with a space is one program, and `exec` and a chain count.
+  it('names a program a shell command starts after exec, in a chain, or by a quoted path with a space', async () => {
+    const p = projects();
+    const spaced = join(p.parent, 'my venvs', 'bin', 'python');
+    mkdirSync(dirname(spaced), { recursive: true });
+    writeFileSync(spaced, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const sibling = join(p.parent, 'shop-venv', 'bin', 'python');
+    const launch: ProbeLaunch = async () => ({ exitCode: 0, output: '' });
+    const cfg = config([
+      { id: 'unit-tests', command: [`cd tests && "${spaced}" -m pytest`], shell: true, mandatory: true },
+      { id: 'lint', command: ['/bin/sh', '-c', `exec ${sibling} -m ruff check .`], mandatory: true },
+      { id: 'types', command: [`exec '${spaced}' -m mypy .`], shell: true, mandatory: true },
+    ]);
+    const c = await checkSandboxCheck({ config: cfg, repo: p.repo, provider: srtLike().provider, available: true, env: p.env, homeDir: p.home, launch });
+    expect(c.status).toBe('fail');
+    const denies = `the check sandbox denies the repository (${p.repo}) and the folder that holds it and its sibling projects (${p.parent})`;
+    expect(c.details).toEqual([
+      `unit-tests: ${denies}, and the program "${spaced}" the check runs lies in a folder beside the repository, so it cannot start in a check`,
+      `lint: ${denies}, and the program "${sibling}" the check runs lies in a folder beside the repository, so it cannot start in a check`,
+      `types: ${denies}, and the program "${spaced}" the check runs lies in a folder beside the repository, so it cannot start in a check`,
+    ]);
+  });
+
   it('reads a probe the sandbox refused to start (exit 126, "Operation not permitted") as a refusal, not as an exit with no denial', async () => {
     const p = projects();
     const outside = temp('orbit-doctor-tools-');

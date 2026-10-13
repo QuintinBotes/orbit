@@ -84,6 +84,12 @@ export interface EnvironmentFailure {
   cause: string;
   /** At most MAX_EVIDENCE_LINES distinct output lines that show it, each cut to MAX_LINE_CHARS. */
   lines: string[];
+  /**
+   * The program that could not start, as the shell, env or Orbit's limits wrapper named it (program-denied,
+   * program-not-found; evidence/check-misconfigured.ts classifyProgramNotFound): a path as the command writes it, the path
+   * the shell found a bare name at on PATH, or a bare name it did not find. Absent for every other cause.
+   */
+  program?: string;
 }
 
 export const MAX_EVIDENCE_LINES = 3;

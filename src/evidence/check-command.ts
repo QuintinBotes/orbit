@@ -176,23 +176,177 @@ function afterEnv(words: readonly string[], i: number): number | null {
   return j;
 }
 
+/** The word after the shell builtin `exec` at `i` and its options (`-a <name>`, `-c`, `-l`). */
+function afterExec(words: readonly string[], i: number): number {
+  let j = i + 1;
+  while (j < words.length && /^-[acl]+$/.test(words[j]!)) j += words[j]!.includes('a') ? 2 : 1;
+  return words[j] === '--' ? j + 1 : j;
+}
+
 /**
- * The program the command starts, as the command writes it: its first word after leading assignments and `env` with its
- * options and assignments, before any runner or `python -m` (`python3` in `python3 -m pytest`, `npx` in `npx jest`, an
- * interpreter's absolute path in `/opt/acme/venv/bin/python -m pytest`). It is the file a shell or env names when it
- * cannot start the command. Null when the command is no direct invocation of one program.
+ * The index of the program the words of one simple command start: the first word after leading assignments, the
+ * builtin `exec` with its options, and `env` with its options and assignments. Null when there is none, or when an env
+ * option makes env run something other than one named program.
+ */
+function programIndex(words: readonly string[]): number | null {
+  let i = 0;
+  for (;;) {
+    while (i < words.length && ASSIGNMENT.test(words[i]!)) i++;
+    const w = words[i];
+    if (w === undefined || w === '') return null;
+    if (w === 'exec') i = afterExec(words, i);
+    else if (toolName(w) === 'env') {
+      const next = afterEnv(words, i);
+      if (next === null) return null;
+      i = next;
+    } else return i;
+  }
+}
+
+/**
+ * The program the command starts, as the command writes it: its first word after leading assignments, `exec` and `env`
+ * with its options and assignments, before any runner or `python -m` (`python3` in `python3 -m pytest`, `npx` in `npx
+ * jest`, an interpreter's absolute path in `/opt/acme/venv/bin/python -m pytest`). It is the file a shell or env names
+ * when it cannot start the command. Null when the command is no direct invocation of one program.
  */
 export function startedProgram(command: readonly string[], shell: boolean): string | null {
   const words = invocationWords(command, shell);
   if (words === null) return null;
+  const i = programIndex(words);
+  return i === null ? null : words[i]!;
+}
+
+/** Reserved words that come before the command they introduce (`then pytest`, `! grep`), not a program. */
+const BEFORE_COMMAND: ReadonlySet<string> = new Set(['if', 'then', 'else', 'elif', 'while', 'until', 'do', '!', '{', 'time']);
+/** Reserved words that start a compound command whose words up to the next separator are no command (`for x in a b`). */
+const NO_COMMAND: ReadonlySet<string> = new Set(['for', 'case', 'select', 'function', 'fi', 'done', 'esac', '}']);
+
+/**
+ * The words of each simple command a shell script runs, quotes and escapes resolved and redirections dropped: the
+ * commands of a chain, a pipeline, a list, a background job, a subshell, a command substitution outside quotes and each
+ * line, in order. A here-document ends the reading, since its body is no command. Null when the script does not parse
+ * (an unterminated quote).
+ */
+export function scriptCommands(script: string): string[][] | null {
+  const commands: string[][] = [];
+  let words: string[] = [];
+  let cur = '';
+  let inWord = false;
+  let dropNext = false;
+  const flush = (): void => {
+    if (inWord) {
+      if (dropNext) dropNext = false;
+      else words.push(cur);
+    }
+    cur = '';
+    inWord = false;
+  };
+  const end = (): void => {
+    flush();
+    dropNext = false;
+    if (words.length > 0) commands.push(words);
+    words = [];
+  };
+  const s = script;
   let i = 0;
-  while (i < words.length && ASSIGNMENT.test(words[i]!)) i++;
-  while (i < words.length && toolName(words[i]!) === 'env') {
-    const next = afterEnv(words, i);
-    if (next === null) return null;
-    i = next;
+  while (i < s.length) {
+    const c = s[i]!;
+    if (c === "'") {
+      const close = s.indexOf("'", i + 1);
+      if (close < 0) return null;
+      cur += s.slice(i + 1, close);
+      inWord = true;
+      i = close + 1;
+    } else if (c === '"') {
+      // A substitution inside double quotes stays part of the word: it is an argument's value, read no further.
+      let j = i + 1;
+      for (; j < s.length && s[j] !== '"'; j++) {
+        if (s[j] === '\\' && j + 1 < s.length && '"\\$`'.includes(s[j + 1]!)) j++;
+        cur += s[j];
+      }
+      if (j >= s.length) return null;
+      inWord = true;
+      i = j + 1;
+    } else if (c === '\\') {
+      if (i + 1 < s.length && s[i + 1] !== '\n') {
+        cur += s[i + 1];
+        inWord = true;
+      }
+      i += 2;
+    } else if (c === '#' && !inWord) {
+      const nl = s.indexOf('\n', i);
+      i = nl < 0 ? s.length : nl;
+    } else if (c === '\n' || c === ';' || c === '|' || c === '(' || c === ')' || c === '`') {
+      end();
+      i++;
+    } else if (c === '$' && s[i + 1] === '(') {
+      end();
+      i += 2;
+    } else if (c === '&') {
+      if (s[i + 1] === '>') {
+        // `&>file` and `&>>file` redirect both streams.
+        flush();
+        i += s[i + 2] === '>' ? 3 : 2;
+        dropNext = true;
+      } else {
+        end();
+        i++;
+      }
+    } else if (c === '>' || c === '<') {
+      if (c === '<' && s[i + 1] === '<') {
+        end();
+        return commands;
+      }
+      if (inWord && /^\d+$/.test(cur)) {
+        cur = '';
+        inWord = false;
+      } else flush();
+      i++;
+      if (s[i] === '>' || s[i] === '|') i++;
+      if (s[i] === '&') {
+        i++;
+        while (i < s.length && /[\d-]/.test(s[i]!)) i++;
+      } else dropNext = true;
+    } else if (/\s/.test(c)) {
+      flush();
+      i++;
+    } else {
+      cur += c;
+      inWord = true;
+      i++;
+    }
   }
-  return i < words.length && words[i] !== '' ? words[i]! : null;
+  end();
+  return commands;
+}
+
+/** The program each command of a shell script starts (scriptCommands), reserved words skipped. */
+function scriptPrograms(script: string): string[] {
+  const out: string[] = [];
+  for (const command of scriptCommands(script) ?? []) {
+    let words = command;
+    while (words.length > 0 && BEFORE_COMMAND.has(words[0]!)) words = words.slice(1);
+    if (words.length === 0 || NO_COMMAND.has(words[0]!)) continue;
+    const i = programIndex(words);
+    if (i !== null) out.push(words[i]!);
+  }
+  return out;
+}
+
+/**
+ * Every program a check's command starts, as the command writes it, each once in order (0.3.0 retest): an argv's
+ * program, after leading assignments, `exec` and `env`; and when that is a shell given a script with -c, or the check
+ * is a `shell` check, the program each command of the script starts (a chain's, a pipeline's, a subshell's, one `exec`
+ * starts). Not the programs a runner, `python -m` or a script of the repository starts in turn. A shell or env that
+ * cannot start one of them names it as written here (a quoted path with a space is one program), or, for a bare name,
+ * by the path it found it at on PATH. `orbit doctor` and PREFLIGHT read a check's programs with this one function.
+ */
+export function startedPrograms(command: readonly string[], shell: boolean): string[] {
+  if (shell) return [...new Set(scriptPrograms(command[0] ?? ''))];
+  const i = programIndex(command);
+  if (i === null) return [];
+  const script = shellScript(command.slice(i));
+  return [...new Set([command[i]!, ...(script !== undefined ? scriptPrograms(script) : [])])];
 }
 
 /**

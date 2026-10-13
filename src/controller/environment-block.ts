@@ -23,10 +23,10 @@
  * share a cause and its evidence lines are listed together before them.
  */
 import { readFileSync, realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { readJsonIfExists } from '../core/fsx.ts';
 import { BASELINE_FILE, type BaselineReport } from '../evidence/baseline.ts';
-import { directInvocation, startedProgram } from '../evidence/check-command.ts';
+import { directInvocation, startedProgram, startedPrograms } from '../evidence/check-command.ts';
 import { classifyMisconfigured, classifyProgramNotFound, type MisconfiguredCheck } from '../evidence/check-misconfigured.ts';
 import { dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatLoadsProject, formatOutsideFix, nodeDenialFix, sdkFormatsInProcess } from '../evidence/dotnet-format.ts';
 import { classifyCouldNotRun, classifyEnvironmentFailure, classifyNotExecuted, type EnvironmentFailure, type EnvironmentSignal } from '../evidence/environment-failure.ts';
@@ -35,7 +35,8 @@ import { listCheckRuns, type CandidateRecord, type CheckRunRecord } from '../evi
 import type { EvidenceReport } from '../evidence/types.ts';
 import { baselineQuestionId } from '../inquisition/baseline-exception.ts';
 import { repositoryDenials } from '../isolation/profiles.ts';
-import { canonicalPath, isWithin } from '../isolation/util.ts';
+import { canonicalPath, isExecutableFile, isWithin } from '../isolation/util.ts';
+import type { CheckDefinition } from '../policy/types.ts';
 import { UI_RESULT_FILE } from '../ui/runner.ts';
 import type { UiNotExecuted } from '../ui/types.ts';
 import { folderFormRunsAt, homeOf, runWorktreeRoot, type RunContext } from './context.ts';
@@ -85,6 +86,11 @@ export interface ProgramDenial {
   parent: string | null;
   /** Where the program lies: in the repository, or in a folder beside it. */
   under: 'repository' | 'parent';
+  /**
+   * For a program the command names by a bare name, which the check looks up on its PATH: that name, and the setting
+   * that gives the check that PATH (`checks.<id>.env`), or null for the PATH Orbit runs its checks with, its own.
+   */
+  onPath?: { name: string; setBy: string | null };
 }
 
 /**
@@ -106,7 +112,14 @@ export function programDenial(program: string, repoRoot: string, homeDir: string
 /** Why a program in a folder the check sandbox denies cannot start: the folders it denies, and which one holds the program. */
 export function programDenialCause(d: ProgramDenial): string {
   const folders = d.parent !== null ? `the repository (${d.repository}) and the folder that holds it and its sibling projects (${d.parent})` : `the repository (${d.repository})`;
-  return `the check sandbox denies ${folders}, and the program "${d.program}" the check runs lies in ${d.under === 'repository' ? 'the repository' : 'a folder beside the repository'}, so it cannot start in a check`;
+  const where = d.under === 'repository' ? 'the repository' : 'a folder beside the repository';
+  if (d.onPath) return `the check sandbox denies ${folders}, and the program "${d.onPath.name}" the check runs is "${d.program}" on ${pathOf(d.onPath.setBy)}, which leads into ${where}, so it cannot start in a check`;
+  return `the check sandbox denies ${folders}, and the program "${d.program}" the check runs lies in ${where}, so it cannot start in a check`;
+}
+
+/** The PATH a check looks a bare name up on: the one its env sets, or the one Orbit runs its checks with (evidence/runner.ts checkEnv). */
+function pathOf(setBy: string | null): string {
+  return setBy !== null ? `the PATH ${setBy} sets` : 'the PATH Orbit runs its checks with';
 }
 
 export type BlockedCheck = FailureWithCommand & {
@@ -386,18 +399,38 @@ function environmentFixes(failures: readonly FailureWithCommand[], platform: Nod
     fixes.push(`NuGet's restore could not download its packages in the sandbox: ${NUGET_FILL}`);
   }
   // A program in the repository or a folder beside it: refused on macOS (program-denied), hidden by srt on Linux
-  // (program-not-found). Moving it changes the check's command, whatever the tool (0.3.0 retest).
+  // (program-not-found). Moving it changes the check's command, whatever the tool (0.3.0 retest), and for a bare name
+  // the PATH it was looked up on.
   const located = failures.filter((f) => f.programDenial !== undefined && (f.signals.includes('program-denied') || f.signals.includes('program-not-found')));
-  if (located.length > 0) {
-    const d = located[0]!.programDenial!;
+  const byPath = located.filter((f) => f.programDenial!.onPath !== undefined);
+  const byCommand = located.filter((f) => f.programDenial!.onPath === undefined);
+  if (byCommand.length > 0) {
+    const d = byCommand[0]!.programDenial!;
     const reads = d.parent !== null ? 'may read neither the repository nor the folder that holds it and its sibling projects' : 'may not read the repository';
-    fixes.push(`a check runs in a checkout of its own, outside the repository, and its sandbox ${reads}: build the tool environment inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, or place it outside ${d.parent ?? d.repository}, then correct ${located.map((f) => command(f.checkId)).join(', ')} in .orbit/config.yaml (docs/configuration.md, "Tool environments")`);
-    change(located, command);
+    fixes.push(`a check runs in a checkout of its own, outside the repository, and its sandbox ${reads}: build the tool environment inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, or place it outside ${d.parent ?? d.repository}, then correct ${byCommand.map((f) => command(f.checkId)).join(', ')} in .orbit/config.yaml (docs/configuration.md, "Tool environments")`);
+    change(byCommand, command);
   }
+  // A bare name the check looked up on a PATH that leads into a denied folder (an activated tool environment there): the
+  // PATH is the fix. Orbit's own is the environment's, so a resume from a shell without it runs the check again; a PATH
+  // the check's env sets is the frozen policy's.
+  const ownPath = byPath.filter((f) => f.programDenial!.onPath!.setBy === null);
+  if (ownPath.length > 0) {
+    fixes.push(`the check looks its program up on the PATH Orbit runs its checks with, the PATH of the shell that started orbit run or orbit resume --foreground (a service keeps the one orbit service install recorded), and that PATH leads into a folder the check sandbox denies: run Orbit from a shell whose PATH does not (deactivate the tool environment there, and install the service again from such a shell), then resume the run; or build the tool environment inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, a change to ${ownPath.map((f) => command(f.checkId)).join(', ')} that needs a new run (docs/configuration.md, "Tool environments")`);
+  }
+  const checkPath = byPath.filter((f) => f.programDenial!.onPath!.setBy !== null);
+  if (checkPath.length > 0) {
+    const keys = checkPath.map((f) => f.programDenial!.onPath!.setBy!);
+    fixes.push(`the PATH the check's env sets leads into a folder the check sandbox denies: take that folder out of it, or build the tool environment inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, then correct ${[...new Set(keys)].join(', ')} in .orbit/config.yaml (docs/configuration.md, "Tool environments")`);
+    for (const key of keys) settings.add(key);
+  }
+  // A refused program the shell found on PATH may be cured by the PATH, Orbit's own included, so its fix is not only the
+  // check's command (0.3.0 retest).
   const refusedProgram = has('program-denied').filter((f) => !located.includes(f));
   if (refusedProgram.length > 0) {
-    fixes.push(`put the program where the check sandbox lets a check start it, or build it inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, then correct ${refusedProgram.map((f) => command(f.checkId)).join(', ')} in .orbit/config.yaml (orbit doctor names a check whose program lies in a folder the check sandbox denies; docs/configuration.md, "Tool environments")`);
-    change(refusedProgram, command);
+    const named = refusedProgram.filter((f) => !foundOnPath(f));
+    const path = refusedProgram.length > named.length ? ', or give the check a PATH that finds it where a check may start it (the PATH Orbit runs its checks with, or the check\'s env)' : '';
+    fixes.push(`put the program where the check sandbox lets a check start it, or build it inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, then correct ${refusedProgram.map((f) => command(f.checkId)).join(', ')} in .orbit/config.yaml${path} (orbit doctor names a check whose program lies in a folder the check sandbox denies; docs/configuration.md, "Tool environments")`);
+    change(named, command);
   }
   const missing = has('program-not-found').filter((f) => !located.includes(f));
   if (missing.length > 0) {
@@ -466,7 +499,7 @@ export function baselineEnvironmentFailures(ctx: RunContext, report: BaselineRep
       (def && def.kind === 'command' ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) : null);
     if (!found) continue;
     const folderForm = folderFormRunsAt(ctx, checkoutDir);
-    const located = def && def.kind === 'command' ? deniedProgramOf(ctx, found, def.command, def.shell === true) : null;
+    const located = def && def.kind === 'command' ? deniedProgramOf(ctx, found, def) : null;
     out.push({ ...found, ...(located ? { cause: programDenialCause(located), programDenial: located } : {}), ...commandOf(ctx, failure.checkId), folderForm, ...stoppedNodeFix(ctx, found, checkoutDir, folderForm), questionId: null, ...(logPath ? { logPath } : {}) });
   }
   return out;
@@ -474,18 +507,43 @@ export function baselineEnvironmentFailures(ctx: RunContext, report: BaselineRep
 
 /**
  * Where the program a check could not start lies, when that is a folder the check profile denies because of where the
- * repository is (programDenial): the program its command starts, refused (program-denied) or hidden by srt on Linux
- * (program-not-found). Null for any other failure, and for a layout that cannot be judged.
+ * repository is (programDenial): refused (program-denied) or hidden (program-not-found: srt on Linux lays an empty folder
+ * over it, and on macOS a bare name whose PATH folder the sandbox denies is not found either). The program is the one the
+ * shell named (EnvironmentFailure.program): a path the command writes; the path the shell found a bare name at on PATH;
+ * or a bare name it did not find, which lies where the first folder of the check's PATH that holds it is (onPath). Null
+ * for any other failure, and for a layout that cannot be judged.
  */
-function deniedProgramOf(ctx: RunContext, found: EnvironmentFailure, command: readonly string[], shell: boolean): ProgramDenial | null {
+function deniedProgramOf(ctx: RunContext, found: EnvironmentFailure, def: Pick<CheckDefinition, 'command' | 'shell' | 'env'>): ProgramDenial | null {
   if (!found.signals.includes('program-denied') && !found.signals.includes('program-not-found')) return null;
-  const program = startedProgram(command, shell);
+  const shell = def.shell === true;
+  const program = found.program ?? startedProgram(def.command, shell);
   if (program === null) return null;
+  // The PATH the check ran with (evidence/runner.ts checkEnv): its env's, or the controller's own.
+  const setBy = def.env.PATH !== undefined ? `checks.${found.checkId}.env` : null;
   try {
-    return programDenial(program, ctx.snapshot.repo_root, homeOf(ctx.deps));
+    const repo = ctx.snapshot.repo_root;
+    const home = homeOf(ctx.deps);
+    if (isAbsolute(program)) {
+      const d = programDenial(program, repo, home);
+      if (d === null) return null;
+      return startedPrograms(def.command, shell).includes(program) ? d : { ...d, onPath: { name: basename(program), setBy } };
+    }
+    if (program.includes('/') || !found.signals.includes('program-not-found')) return null;
+    // The first folder of the PATH that holds the name is where the shell would have started it.
+    for (const dir of (def.env.PATH ?? process.env.PATH ?? '').split(delimiter)) {
+      if (!isAbsolute(dir) || !isExecutableFile(join(dir, program))) continue;
+      const d = programDenial(join(dir, program), repo, home);
+      return d === null ? null : { ...d, onPath: { name: program, setBy } };
+    }
+    return null;
   } catch {
     return null;
   }
+}
+
+/** Whether a refused program is one the shell found on the check's PATH: its path is none the command writes. */
+function foundOnPath(f: FailureWithCommand): boolean {
+  return f.program !== undefined && f.command !== undefined && !startedPrograms(f.command.argv, f.command.shell).includes(f.program);
 }
 
 /**

@@ -221,6 +221,19 @@ installed, without `--force`. The fix names `checks.<id>.command` too, for a
 misspelled name, which needs a new run. A relative path is a script of the
 repository: a missing target.
 
+The words of Orbit's limits wrapper (`orbit-limits`, the bash every check runs
+under by default) count as a shell's: bash 5's `orbit-limits: line 1: <path>:
+No such file or directory`, and macOS bash 3.2's exit 126 `cannot execute: No
+such file or directory` for a path. An absolute path any command of the check
+starts (a chain's, one `exec` starts) counts as well; a bare name only for a
+direct invocation, since in a chain it may be one a script of the repository
+runs. A program the sandbox refuses to start (exit 126, `Operation not
+permitted`, signal `program-denied`; 0.3.0 retest) is an environment failure
+too, for any program the command starts, by its path as the command writes it
+or the path the shell found a bare name at on PATH. When it lies in the
+repository or in the folder beside it, which the check sandbox denies, the
+reason names those folders, and the PATH the check found it on for a bare name.
+
 ### Evidence for an environment failure
 
 `src/evidence/environment-failure.ts` (`classifyNotExecuted`,

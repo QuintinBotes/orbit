@@ -240,8 +240,8 @@ describe('classifyProgramNotFound: a program the check runs is not installed whe
   // names that interpreter as its program, not the module. On Linux srt lays an empty folder over the repository and the
   // folder that holds it, so the interpreter there is not found.
   it('reads the program the command starts itself, before python -m or a runner, as the program that was not found', () => {
-    const f = classifyProgramNotFound(input(['/home/acme/projects/shop/.venv/bin/python', '-m', 'pytest'], 127, 'bash: line 1: /home/acme/projects/shop/.venv/bin/python: No such file or directory\n'));
-    expect(f).toMatchObject({ signals: ['program-not-found'], cause: expect.stringMatching(/^the program "\/home\/acme\/projects\/shop\/\.venv\/bin\/python" was not found where the check runs/) });
+    const f = classifyProgramNotFound(input(['/home/acme/projects/shop/.venv/bin/python', '-m', 'pytest'], 127, 'orbit-limits: line 1: /home/acme/projects/shop/.venv/bin/python: No such file or directory\n'));
+    expect(f).toMatchObject({ signals: ['program-not-found'], program: '/home/acme/projects/shop/.venv/bin/python', cause: expect.stringMatching(/^the program "\/home\/acme\/projects\/shop\/\.venv\/bin\/python" was not found where the check runs/) });
     expect(classifyProgramNotFound(input(['npx', 'jest'], 127, 'bash: line 1: npx: command not found\n'))?.signals).toEqual(['program-not-found']);
   });
 
@@ -305,5 +305,65 @@ describe('classifyProgramNotFound: a program the sandbox does not let the check 
     // EACCES on exec is a file without its execute bit, which a change to the repository may fix.
     expect(classifyProgramNotFound(input([SIBLING, '-m', 'pytest'], 126, `/bin/sh: ${SIBLING}: Permission denied\n`))).toBeNull();
     expect(classifyProgramNotFound(input([SIBLING, '-m', 'pytest'], 126, `${denied}FAILED tests/test_x.py::test_y\n`))).toBeNull();
+  });
+});
+
+// Verifier of the 0.3.0 retest fix. Every check runs under Orbit's limits wrapper (`orbit-limits`, a bash that execs the
+// command), so a program it cannot find is reported in the wrapper's words: bash 5 (Linux's /bin/bash, where srt hides a
+// denied folder) says "orbit-limits: line 1: /x: No such file or directory" with exit 127, and macOS's bash 3.2 says
+// "orbit-limits: line 0: exec: x: not found" (exit 127) for a bare name and "cannot execute: No such file or directory"
+// (exit 126) for a path. And a program the sandbox refuses is the check's own whichever program of its command it is: a
+// chain's, one `exec` starts, or one whose path has a space. Captured with bash 3.2 and 5.3 (macOS) and under srt
+// 0.0.78, the paths renamed.
+describe('classifyProgramNotFound: the limits wrapper, chains, exec and paths with a space', () => {
+  const VENV = '/home/acme/projects/shop/.venv/bin/python';
+  const SIBLING = '/home/acme/projects/shop-venv/bin/python';
+  const SPACED = '/home/acme/projects/my venvs/shop/bin/python';
+  const deniedBy = (shell: string, path: string): string => `${shell}: ${path}: Operation not permitted\n`;
+
+  it('reads the limits wrapper\'s "not found" for the program, as bash 5 and bash 3.2 print it', () => {
+    const cases: [string[], number, string, string][] = [
+      [[VENV, '-m', 'pytest'], 127, `orbit-limits: line 1: ${VENV}: No such file or directory\n`, VENV],
+      [['pytest', '-q'], 127, 'orbit-limits: line 1: exec: pytest: not found\n', 'pytest'],
+      [['pytest', '-q'], 127, 'orbit-limits: line 0: exec: pytest: not found\n', 'pytest'],
+      [[SPACED, '-m', 'pytest'], 127, `orbit-limits: line 1: ${SPACED}: No such file or directory\n`, SPACED],
+      [[VENV, '-m', 'pytest'], 126, `orbit-limits: ${VENV}: No such file or directory\norbit-limits: line 0: exec: ${VENV}: cannot execute: No such file or directory\n`, VENV],
+      [[`cd tests && ${VENV} -m pytest`], 127, `/bin/sh: 1: ${VENV}: not found\n`, VENV],
+    ];
+    for (const [command, exit, output, program] of cases) {
+      const f = classifyProgramNotFound(input(command, exit, output, { shell: command.length === 1 }));
+      expect(f, output).toMatchObject({ signals: ['program-not-found'], program, lines: [output.split('\n')[0]] });
+      expect(f!.cause).toBe(`the program "${program}" was not found where the check runs (exit ${exit}): it is not installed there, not on the check's PATH, or misspelled`);
+    }
+    // A script of the repository stays the code's, and a bare name a chain runs may be one a script of it runs.
+    expect(classifyProgramNotFound(input(['./run-tests.sh'], 127, 'orbit-limits: line 1: ./run-tests.sh: No such file or directory\n'))).toBeNull();
+    expect(classifyProgramNotFound(input(['./run-tests.sh'], 126, 'orbit-limits: ./run-tests.sh: No such file or directory\norbit-limits: line 0: exec: ./run-tests.sh: cannot execute: No such file or directory\n'))).toBeNull();
+    expect(classifyProgramNotFound(input(['cd tests && pytest -q'], 127, '/bin/sh: pytest: command not found\n', { shell: true }))).toBeNull();
+  });
+
+  it('reads a refused program of a chain, one exec starts, and one whose path has a space as the check\'s own (exit 126)', () => {
+    const cases: [string[], boolean, string, string][] = [
+      [[`cd tests && ${VENV} -m pytest`], true, deniedBy('/bin/sh', VENV), VENV],
+      [[`${SIBLING} -m ruff check . && ${SIBLING} -m pytest`], true, deniedBy('/bin/sh', SIBLING), SIBLING],
+      [[`exec ${SIBLING} -m pytest`], true, `${deniedBy('/bin/sh', SIBLING)}/bin/sh: line 0: exec: ${SIBLING}: cannot execute: Operation not permitted\n`, SIBLING],
+      [['/bin/sh', '-c', `exec ${SIBLING} -m pytest`], false, `${deniedBy('/bin/sh', SIBLING)}/bin/sh: line 0: exec: ${SIBLING}: cannot execute: Operation not permitted\n`, SIBLING],
+      [['bash', '-c', `cd tests && ${SIBLING} -m pytest`], false, `bash: line 1: ${SIBLING}: Operation not permitted\n`, SIBLING],
+      [[SPACED, '-m', 'pytest'], false, `orbit-limits: ${SPACED}: Operation not permitted\norbit-limits: line 0: exec: ${SPACED}: cannot execute: Operation not permitted\n`, SPACED],
+      [[`cd tests && "${SPACED}" -m pytest`], true, `/opt/homebrew/bin/bash: line 1: ${SPACED}: Operation not permitted\n`, SPACED],
+      [['env', SPACED, '-m', 'pytest'], false, deniedBy('env', SPACED), SPACED],
+    ];
+    for (const [command, shell, output, program] of cases) {
+      const f = classifyProgramNotFound(input(command, 126, output, { shell }));
+      expect(f, output).toMatchObject({ signals: ['program-denied'], program, lines: [output.split('\n')[0]] });
+      expect(f!.cause).toBe(`the sandbox or the operating system refused to start the program "${program}" the check runs (exit 126, "operation not permitted")`);
+    }
+  });
+
+  it('is null for a refused program the command does not start itself, in a chain too', () => {
+    expect(classifyProgramNotFound(input(['make test && echo ok'], 126, deniedBy('/bin/sh', SIBLING), { shell: true }))).toBeNull();
+    expect(classifyProgramNotFound(input([`echo ${SIBLING} && make test`], 126, deniedBy('/bin/sh', SIBLING), { shell: true }))).toBeNull();
+    // The words of a path with a space are not the path.
+    expect(classifyProgramNotFound(input(['/home/acme/projects/my', 'venvs/shop/bin/python'], 126, deniedBy('orbit-limits', SPACED)))).toBeNull();
+    expect(classifyProgramNotFound(input([`cd tests && ${SIBLING} -m pytest`], 126, `${deniedBy('/bin/sh', SIBLING)}FAILED tests/test_x.py::test_y\n`, { shell: true }))).toBeNull();
   });
 });

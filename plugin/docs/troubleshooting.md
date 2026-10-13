@@ -189,14 +189,16 @@ of these settings is the fix, `orbit doctor` prints the same note.
   Orbit adds the rule .NET needs for it only with the `srt` it ships, and the
   check's record says when it was not added; see ".NET HTTP clients and NuGet
   restore on macOS"); the program its
-  command runs is not installed where it runs (the shell's "command not found",
-  exit 127: install it or give the check a PATH that holds it, or correct a
-  misspelled name, which needs a new run); the sandbox did not let it start the
+  command runs is not installed where it runs (the shell's or Orbit's limits
+  wrapper's "command not found" or "not found", exit 127, or exit 126 for a path
+  under macOS's bash 3.2: install it or give the check a PATH that holds it, or
+  correct a misspelled name, which needs a new run); the sandbox did not let it start the
   program its command runs (the shell's, `env`'s or Orbit's limits wrapper's
-  "Operation not permitted" for that program, exit 126: a program in the
-  repository or in a folder beside it, such as a virtualenv's interpreter, which
-  the check sandbox denies; the reason names the repository and the folder that
-  holds it and its sibling projects, and the fix is in [Tool
+  "Operation not permitted" for that program, exit 126, whichever command of a
+  chain starts it: a program in the repository or in a folder beside it, such as
+  a virtualenv's interpreter, which the check sandbox denies; the reason names
+  the repository and the folder that holds it and its sibling projects, and the
+  PATH a bare name was found on, and the fix is in [Tool
   environments](configuration.md#tool-environments)); or it was killed by a
   crash signal before printing anything. Such a failure is not recorded as pre-existing and no
   baseline exception is offered, since accepting one would let a run pass with a

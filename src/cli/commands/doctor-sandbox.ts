@@ -49,6 +49,7 @@ import { OrbitError } from '../../core/errors.ts';
 import { redact } from '../../core/redact.ts';
 import { environmentFix, programDenial, programDenialCause, type FailureWithCommand, type ProgramDenial } from '../../controller/environment-block.ts';
 import { DOTNET_FORMAT_REASON, dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatAndNodeFix, formatLoadsProject, formatOutsideFix, formatReadsFolder, formatRestoreFix, formatRestoresUnpinned, sdkFormatsInProcess } from '../../evidence/dotnet-format.ts';
+import { startedPrograms } from '../../evidence/check-command.ts';
 import { classifyProgramNotFound } from '../../evidence/check-misconfigured.ts';
 import { classifyCouldNotRun, classifyNotExecuted, type EnvironmentFailure } from '../../evidence/environment-failure.ts';
 import { findMsbuildNodeDenial, msbuildFix, msbuildFixReason, msbuildNodeDenialText, msbuildNodes, probeNodeSwitches, type MsbuildFix, type MsbuildFixWhere, type MsbuildNodeDenial } from '../../evidence/msbuild.ts';
@@ -102,44 +103,15 @@ function checkWord(check: CheckDefinition): string | null {
   return (check.command[0] ?? '').trim().split(/\s+/).find((w) => w !== '' && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) ?? null;
 }
 
-const SHELLS = new Set(['sh', 'bash', 'dash', 'zsh', 'ksh', 'ash']);
-const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-
-/** The program the words of one command start: its first word after leading assignments, `exec`, and `env` with its options and assignments. */
-function programOf(words: readonly string[]): string | null {
-  let i = 0;
-  for (;;) {
-    while (i < words.length && ASSIGNMENT.test(words[i]!)) i++;
-    const w = words[i];
-    if (w === 'exec') i++;
-    else if (w !== undefined && basename(w) === 'env') {
-      i++;
-      while (i < words.length && (words[i]!.startsWith('-') || ASSIGNMENT.test(words[i]!))) i += words[i] === '-u' ? 2 : 1;
-    } else return w ?? null;
-  }
-}
-
-/** The programs a shell script starts: the first word of each command its lines, `&&`, `||`, `;`, `|` and `&` separate, quotes dropped. */
-function scriptPrograms(script: string): string[] {
-  return script
-    .split(/&&|\|\||[;&|\n()]/)
-    .map((part) => programOf(part.trim().split(/\s+/).filter((w) => w !== '').map((w) => w.replace(/^(['"])(.*)\1$/, '$2'))))
-    .filter((p): p is string => p !== null);
-}
-
 /**
- * The absolute paths of the programs a check's command starts (0.3.0 retest): an argv's program, or each program of a
- * shell command (a `shell: true` check, or an argv that hands a script to sh -c), the interpreter of a tool environment
- * named by its path included. A relative path is a file of the check's checkout, and a bare name is looked up on PATH.
+ * The absolute paths of the programs a check's command starts (0.3.0 retest; evidence/check-command.ts startedPrograms,
+ * which PREFLIGHT reads a refused program's denial against too): an argv's program, or each program of a shell command (a
+ * `shell: true` check, or an argv that hands a script to sh -c: a chain's, a pipeline's, one `exec` starts), the
+ * interpreter of a tool environment named by its path included. A relative path is a file of the check's checkout, and
+ * a bare name is looked up on PATH.
  */
 export function absolutePrograms(check: Pick<CheckDefinition, 'command' | 'shell'>): string[] {
-  if (check.shell) return scriptPrograms(check.command[0] ?? '').filter((p) => isAbsolute(p));
-  const program = programOf(check.command);
-  const at = program === null ? -1 : check.command.indexOf(program);
-  const rest = at < 0 ? [] : check.command.slice(at + 1);
-  const c = rest.findIndex((a) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a));
-  const script = program !== null && SHELLS.has(basename(program)) && c >= 0 ? rest[c + 1] : undefined;
-  return [...(program !== null ? [program] : []), ...(script !== undefined ? scriptPrograms(script) : [])].filter((p) => isAbsolute(p));
+  return startedPrograms(check.command, check.shell === true).filter((p) => isAbsolute(p));
 }
 
 /**

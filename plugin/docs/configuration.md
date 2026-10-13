@@ -684,13 +684,27 @@ elsewhere; on Linux the denied folder is empty in the sandbox, so exit 127,
   such as `~/.ssh`, or Orbit's home, `~/.orbit`). The checks then share one
   environment that no run rebuilds.
 
+A tool environment activated in the shell Orbit runs from puts its folder on
+the PATH Orbit runs its checks with, so a check that runs a bare name (`pytest`
+rather than a path) finds it there. In the repository or beside it, that
+program cannot start in a check either: the sandbox hides it (exit 127, "not
+found") or refuses it (exit 126). Run Orbit from a shell where it is not
+activated (a service keeps the PATH `orbit service install` recorded, so
+install it again from such a shell), or build the environment in each checkout
+as above.
+
 `orbit doctor` (`checks.sandbox`) refuses a check whose program, its argv's or
-one its shell command starts, is an absolute path in the repository or in the
-folder beside it, whatever the tool, and starts nothing of it. A run whose
-check could not start for that reason blocks at PREFLIGHT with no
+one its shell command starts (any command of a chain or pipeline, one `exec`
+starts, a quoted path with a space), is an absolute path in the repository or
+in the folder beside it, whatever the tool, and starts nothing of it. A run
+whose check could not start for that reason blocks at PREFLIGHT with no
 baseline-exception question, and its reason names the repository and the folder
-the sandbox denies. The fix changes the check's command, which the run's
-frozen policy keeps, so it needs a new run.
+the sandbox denies; PREFLIGHT reads the programs of a command the way doctor
+does. When the fix changes the check's command, which the run's frozen policy
+keeps, it needs a new run. When the program was found on the PATH Orbit runs
+its checks with, the reason names that PATH and keeps `orbit resume`, since a
+shell without the tool environment may be the fix; when the check's `env` sets
+that PATH, the fix changes `checks.<id>.env` and needs a new run.
 
 ### Toolchain caches and build state
 
