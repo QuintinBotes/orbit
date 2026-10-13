@@ -6,8 +6,10 @@ import { redactForProvider } from '../core/redact.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { ENGINEERING_PRACTICES } from '../contract/practices.ts';
 import type { Candidate, EvidenceReport } from '../evidence/types.ts';
+import { failureExcerpt, PROBE_EXCERPT_CHARS } from '../evidence/fail-before.ts';
 import { BUILTIN_CREDENTIAL_PATHS } from '../policy/builtin.ts';
-import type { PolicySnapshot } from '../policy/types.ts';
+import { failBeforePolicy } from '../policy/config.ts';
+import type { FailBeforeMode, PolicySnapshot } from '../policy/types.ts';
 import { gitTreeReader, isTestPath, loadTestLayout } from '../policy/test-files.ts';
 import { readSecurityPolicy } from './resolve.ts';
 
@@ -65,8 +67,9 @@ export interface ReviewPacketInput {
   /** Exact secret values to redact in addition to the recognized shapes. */
   extraSecrets?: Iterable<string>;
   /**
-   * The end of each fail-before probe log the report names (ADR 0014), by the path the report gives: the reviewer judges
-   * whether a failure on the base revision is an assertion about the criterion or only a load failure.
+   * Each fail-before probe log the report names (ADR 0014), or its excerpt, by the path the report gives. Shown only under
+   * `verification.fail_before: required`, as the lines that report a failure: the reviewer reviews the new tests, and the
+   * probe's outcome is not a finding.
    */
   failBeforeLogs?: ReadonlyMap<string, string>;
 }
@@ -460,6 +463,10 @@ ${bullet(contract.non_goals.map(red), 20, 300)}`);
 ${security.exceptions.length > 0 ? `- security exceptions listed in policy (still report matching findings): ${security.exceptions.map((e) => `${e.category}${e.location ? ` at ${e.location}` : ''} (${e.severities.join('/')})`).join('; ')}\n` : ''}`);
 
   const scope = ev.scope;
+  // Under advisory and off the probe is reported to the person only: no status, verdict, repair or question may change
+  // because of it (ADR 0014 section 1), so a reviewer is not shown it, not even as a line of what is not verified.
+  const failBefore = failBeforePolicy(cfg).mode;
+  const unverified = failBefore === 'required' ? ev.unverified : ev.unverified.filter((u) => !/^fail-before\b/.test(u));
   sec.push(`## Verification results
 
 - verdict: ${ev.verdict}
@@ -478,7 +485,7 @@ ${bullet(ev.acceptance_evidence.map((a) => `${a.criterion_id}: ${a.status}${a.no
 ### UI
 ${bullet(ev.ui.map((u) => `${u.journey}: ${u.status}`), 20, 200)}
 ### Not verified
-${bullet(ev.unverified.map(red), 30, 300)}${failBeforeSection(ev, input.failBeforeLogs, red)}`);
+${bullet(unverified.map(red), 30, 300)}${failBeforeSection(ev, input.failBeforeLogs, red, failBefore)}`);
 
   sec.push(`## Assumptions
 
@@ -501,16 +508,18 @@ ${bullet([...practiceReviewQuestions(contract), ...failBeforeReviewQuestions(ev)
   return sec.join('\n');
 }
 
-/** Probe logs shown per packet, and the characters kept from the end of each. */
+/** Probe logs shown per packet, and the characters of each one's excerpt. */
 const MAX_PROBE_LOGS = 6;
-const PROBE_LOG_CHARS = 2_000;
+const PROBE_LOG_CHARS = PROBE_EXCERPT_CHARS;
 
 /**
- * What the fail-before probe found for each criterion that rests on new tests (ADR 0014): its outcome, and the end of
- * the log of each probed check's last attempt on the base revision, as untrusted data. Empty when no criterion has one.
+ * What the fail-before probe found for each criterion that rests on new tests, under `verification.fail_before: required`
+ * only (ADR 0014): its outcome, what that outcome means, and the lines of each probed check's last attempt on the base
+ * revision that report a failure, as untrusted data. Empty in any other mode and when no criterion has an outcome.
  */
-function failBeforeSection(ev: EvidenceReport, logs: ReadonlyMap<string, string> | undefined, red: (s: string) => string): string {
-  const entries = ev.acceptance_evidence.filter((a) => a.fail_before !== undefined && a.fail_before.outcome !== 'not-applicable');
+function failBeforeSection(ev: EvidenceReport, logs: ReadonlyMap<string, string> | undefined, red: (s: string) => string, mode: FailBeforeMode): string {
+  if (mode !== 'required') return '';
+  const entries = ev.acceptance_evidence.filter((a) => a.fail_before?.mode === 'required' && a.fail_before.outcome !== 'not-applicable');
   if (entries.length === 0) return '';
   const lines = entries.map((a) => {
     const fb = a.fail_before!;
@@ -522,27 +531,28 @@ function failBeforeSection(ev: EvidenceReport, logs: ReadonlyMap<string, string>
       const log = c.attempts.at(-1)?.log;
       const text = log ? logs?.get(log) : undefined;
       if (!log || text === undefined || shown.length >= MAX_PROBE_LOGS || shown.some((x) => x.includes(`(${log})`))) continue;
-      const tail = text.length > PROBE_LOG_CHARS ? `...${text.slice(text.length - PROBE_LOG_CHARS)}` : text;
-      shown.push(`${c.id} on the base revision with the new tests, last attempt (${log}):\n${fenced('text', red(tail))}`);
+      shown.push(
+        `${c.id} on the base revision with the new tests, last attempt (${log}). The log is check-wide: it covers every test ${c.id} runs, not one criterion's. The lines that report a failure, with a little context:\n${fenced('text', red(failureExcerpt(text, PROBE_LOG_CHARS)))}`,
+      );
     }
   }
   return `
 ### Fail-before
-The probe ran each check on the base tree with the candidate's test files: a failure there shows the tests depend on the change, not that they assert it.
+verification.fail_before is required: the probe ran each check on the base tree with the candidate's test files, and a criterion that rests on new tests is supported only when they fail there. A failure there shows that the tests depend on the change, not that they assert it. A compile, collection or import failure of a new symbol counts as fail-before by policy: it is not a finding. The outcome is Orbit's to record and no repair can change the base revision, so do not dispute it, and do not ask for mutant runs, stub implementations or a rerun of the probe: no check produces them.
 ${bullet(lines, MAX_LIST_ITEMS, 600)}${shown.join('\n')}`;
 }
 
 /**
- * The question the reviewer answers for each criterion whose new tests failed on the base revision under `required`
- * (ADR 0014): an exit status cannot tell an assertion from a test that only fails to load.
+ * What the reviewer is asked about the new tests of criteria that failed-before under `required` (ADR 0014, 0.3.1
+ * addendum): their quality, as for any test. How they failed on the base revision is not asked: a compile, collection or
+ * import failure of a new symbol counts by policy, and a test of a new function can fail there no other way.
  */
 export function failBeforeReviewQuestions(ev: EvidenceReport): string[] {
-  return ev.acceptance_evidence
-    .filter((a) => a.fail_before?.mode === 'required' && a.fail_before.outcome === 'failed-before' && a.status === 'supported')
-    .map((a) => {
-      const log = a.fail_before!.checks.find((c) => c.outcome === 'failed-before')?.attempts.at(-1)?.log;
-      return `${a.criterion_id}'s new tests failed on the base revision${log ? ` (${log})` : ''}: is that failure an assertion about ${a.criterion_id}, or only a load failure (a missing symbol, an import error, a helper the tests need outside them)? A load-only failure shows the tests depend on the change, not that they check it: report it as a finding of high severity, which blocks like any other.`;
-    });
+  const ids = ev.acceptance_evidence.filter((a) => a.fail_before?.mode === 'required' && a.fail_before.outcome === 'failed-before' && a.status === 'supported').map((a) => a.criterion_id);
+  if (ids.length === 0) return [];
+  return [
+    `The new tests of ${ids.join(', ')} failed on the base revision, which supports ${ids.length === 1 ? 'it' : 'them'} whatever the failure was. Review those tests as you would any: report each test that is a tautology, or whose assertions cannot fail with any implementation.`,
+  ];
 }
 
 /**

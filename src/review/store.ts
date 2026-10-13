@@ -401,8 +401,9 @@ function decisionId(kind: string, findingId: string, status: string, reason: str
 
 /**
  * Persist a resolution: every member finding's status and reason in one
- * transaction, then one decision per accepted, rejected or excepted claim so
- * the decision log says why (spec section 12: "record why findings were
+ * transaction, then one decision per accepted, rejected, excepted or resolved
+ * claim, and per note on a classification Orbit recorded, so the decision
+ * log says why (spec section 12: "record why findings were
  * accepted or rejected"). Decision ids derive from content, so replaying the
  * same resolution after a crash repairs the mirror without duplicating rows.
  * Must run outside a transaction.
@@ -442,8 +443,10 @@ export function persistResolution(db: OrbitDb, runDir: string, runId: string, re
     }
   });
   for (const d of resolution.dispositions) {
-    if (d.status !== 'accepted' && d.status !== 'rejected' && d.status !== 'excepted' && d.status !== 'resolved') continue;
-    const kind = `review.finding.${d.status}`;
+    // A finding that disputes a classification Orbit recorded is a note: on the record, so the report and timeline show it.
+    const noted = d.recordedClassification !== undefined && d.status === 'advisory';
+    if (d.status !== 'accepted' && d.status !== 'rejected' && d.status !== 'excepted' && d.status !== 'resolved' && !noted) continue;
+    const kind = noted ? 'review.finding.noted' : `review.finding.${d.status}`;
     recordDecision(
       db,
       runDir,
@@ -451,7 +454,7 @@ export function persistResolution(db: OrbitDb, runDir: string, runId: string, re
         id: decisionId(kind, d.findingId, d.status, d.reason),
         runId,
         kind,
-        summary: `${d.externalId ?? d.findingId} (${d.severity}) ${d.status}: ${d.reason}`.slice(0, 500),
+        summary: `${d.externalId ?? d.findingId} (${d.severity}) ${noted ? 'noted' : d.status}: ${d.reason}`.slice(0, 500),
         data: {
           finding_ids: d.memberIds,
           fingerprint: d.fingerprint,

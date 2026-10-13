@@ -34,7 +34,7 @@ export interface DraftContractInput {
   environment?: string | null;
 }
 
-export type DraftAdjustmentKind = 'check-dropped' | 'check-added' | 'path-dropped' | 'path-narrowed' | 'path-added' | 'topic-added' | 'decision-recorded' | 'authority-mismatch' | 'practice-selected';
+export type DraftAdjustmentKind = 'check-dropped' | 'check-added' | 'path-dropped' | 'path-narrowed' | 'path-added' | 'topic-added' | 'decision-recorded' | 'authority-mismatch' | 'practice-selected' | 'criterion-dropped';
 
 /** A change the controller made to the planner's proposal, with its reason. */
 export interface DraftAdjustment {
@@ -72,7 +72,7 @@ export function draftContract(input: DraftContractInput): DraftResult {
     }
   };
 
-  const criteria: AcceptanceCriterion[] = plan.criteria.map((c, i) => {
+  const drafted: AcceptanceCriterion[] = plan.criteria.map((c, i) => {
     const checkIds: string[] = [];
     for (const id of c.check_ids) {
       if (!isCheck(id)) dropCheck(id, `criterion ${c.key}`);
@@ -87,6 +87,20 @@ export function draftContract(input: DraftContractInput): DraftResult {
       check_ids: checkIds,
     };
   });
+  // Whether the new tests fail on the base revision is verification.fail_before's to establish (ADR 0014), not a
+  // criterion's: the candidate's passing check log was once cited to support such a criterion. One that says only that,
+  // and that tests pass, is dropped with its reason. Ids keep the planner's order, so a planner key still names the same
+  // criterion; the last mandatory criterion is never dropped.
+  const failBefore = new Set(drafted.filter((c) => onlyFailBefore(c.statement)).map((c) => c.id));
+  if (!drafted.some((c) => c.mandatory && !failBefore.has(c.id))) failBefore.clear();
+  for (const c of drafted.filter((x) => failBefore.has(x.id))) {
+    adjustments.push({
+      kind: 'criterion-dropped',
+      subject: c.id,
+      reason: `"${c.statement}" says only that new tests fail on the base revision and pass: verification.fail_before establishes the first, and no candidate is accepted unless its required checks pass`,
+    });
+  }
+  const criteria = drafted.filter((c) => !failBefore.has(c.id));
 
   const required: string[] = [];
   for (const id of plan.required_check_ids) {
@@ -218,6 +232,28 @@ export function draftContract(input: DraftContractInput): DraftResult {
 
   const validated = validateContract(contract, snapshot, input.policyHash === undefined ? {} : { policyHash: input.policyHash });
   return { contract: validated, adjustments };
+}
+
+/** Tests failing on the base revision: a test word, a failing word and the base revision named in one clause. */
+const TEST_WORD = /\b(?:tests?|specs?|suites?|they)\b/i;
+const FAIL_WORD = /\bfail(?:s|ed|ing)?\b/i;
+const BASE_REVISION = /\b(?:on|against|at) (?:the )?(?:base|baseline)(?: (?:revision|commit|tree|branch|version))?\b|\b(?:before|without|prior to) (?:the|this) (?:change|fix|implementation)\b/i;
+/** A clause that says only that tests pass. */
+const PASS_WORD = /\bpass(?:es|ed|ing)?\b/i;
+
+/**
+ * Whether a criterion statement says only that new tests fail on the base revision (and that tests pass), in any of the
+ * usual wordings: every clause is about tests passing, or failing on the base revision, and at least one is the latter.
+ * A statement that also says what the change does keeps its criterion.
+ */
+function onlyFailBefore(statement: string): boolean {
+  const clauses = statement
+    .replace(/\([^)]*\)/g, ' ')
+    .split(/;|\.(?:\s|$)|,?\s+and\s+|,\s*(?:while|but)\s+/i)
+    .map((c) => c.trim())
+    .filter((c) => c !== '');
+  const failsOnBase = (c: string): boolean => TEST_WORD.test(c) && FAIL_WORD.test(c) && BASE_REVISION.test(c);
+  return clauses.some(failsOnBase) && clauses.every((c) => failsOnBase(c) || (PASS_WORD.test(c) && !FAIL_WORD.test(c)));
 }
 
 /** Trimmed, non-blank, de-duplicated by normalized wording, original order kept. */

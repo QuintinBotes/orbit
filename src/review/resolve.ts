@@ -345,6 +345,8 @@ export interface Disposition {
   carried: boolean;
   /** Earlier findings of the same claim that were closed (rejected or resolved) on another tree. */
   recurrenceOf: string[];
+  /** The classification Orbit recorded that the finding disputes (`recordedClassificationDispute`): it is a note. */
+  recordedClassification?: string;
 }
 
 export type ClaimRoute = 'validate' | 'inquisition';
@@ -402,6 +404,39 @@ export interface Resolution {
   ignoredEvidence: { ref: string; why: string }[];
   /** Nothing blocks and no verdict is unexplained. This is necessary for review to clear, not sufficient (see stale.ts reviewGate). */
   clear: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Orbit's own recorded classifications
+
+/**
+ * Classifications Orbit records about its own evidence, which a reviewer may dispute but no repair can change (ADR 0014,
+ * 0.3.1 addendum). A finding whose subject is one of them is reported as a note: it never blocks, is never a claim to
+ * test, and goes to neither a repair nor the Inquisition. Each entry names the classification, the wording that makes it
+ * the finding's subject, and the wording that disputes it; a finding that names a defect of the tests themselves is not
+ * one of these, whatever else it says.
+ */
+const RECORDED_CLASSIFICATIONS: readonly { what: string; subject: RegExp; dispute: RegExp }[] = [
+  {
+    // The fail-before outcome is of the base revision: a compile, collection or import failure of a new symbol counts by
+    // policy, and a repair, which changes only the candidate, cannot make the base revision fail another way.
+    what: 'the fail-before outcome Orbit recorded for the base revision',
+    subject: /\bfail(?:ed)?-before\b|\bfail(?:ed)? before (?:evidence|outcome|probe|result|classification|log)s?\b|\b(?:new )?tests? (?:fail(?:s|ed)?|failing) on the base revision\b/i,
+    dispute:
+      /\b(?:load|loading|compile|compilation|compiler|import|collection|build|link|resolution)(?:-only)? (?:failure|error|fail(?:s|ed)?)s?\b|\bmissing (?:implementation |new )?(?:symbols?|imports?|modules?|functions?|methods?|definitions?|exports?)\b|\b(?:not|rather than|instead of) (?:an? )?(?:failing )?(?:behaviou?ral )?assertions?\b/i,
+  },
+];
+
+/** Wording that names a defect of the tests themselves, which a repair can fix: such a finding is not a note. */
+const TEST_DEFECT = /\btautolog\w*|\b(?:cannot|can never|could never|never) fail\b|\balways pass(?:es)?\b|\bpass(?:es)? (?:for|with) any (?:\w+ )?implementation\b|\bindependent of the (?:product|production) code\b|\basserts? nothing\b|\bvacuous\w*/i;
+
+/**
+ * The classification Orbit recorded that a finding's claim disputes, or null when the claim is about the candidate. The
+ * claim decides, not the evidence or the suggested validation: it is what the reviewer says is wrong.
+ */
+export function recordedClassificationDispute(f: Pick<ResolvableFinding, 'claim'>): string | null {
+  if (TEST_DEFECT.test(f.claim)) return null;
+  return RECORDED_CLASSIFICATIONS.find((c) => c.subject.test(f.claim) && c.dispute.test(f.claim))?.what ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -489,10 +524,15 @@ export function resolveFindings(input: ResolveInput): Resolution {
     // Closed against this very tree in an earlier pass: terminal, and evidence is not re-litigated.
     const currentMembers = group.filter((m) => m.current);
     const closedHere = currentMembers.length > 0 && currentMembers.every((m) => m.f.status === 'rejected' || m.f.status === 'resolved') ? currentMembers[0]!.f : null;
+    const recorded = recordedClassificationDispute(rep.f);
 
     if (closedHere) {
       status = closedHere.status as FindingStatus;
       reason = closedHere.resolution ?? `${closedHere.status} earlier on this tree`;
+    } else if (recorded !== null) {
+      // Not a claim about the candidate: whatever its severity, it is reported and nothing waits on it.
+      status = 'advisory';
+      reason = `a note, not a defect: it disputes ${recorded}, a classification of Orbit's own evidence that no repair can change; it is reported, and neither repaired nor sent to the Inquisition`;
     } else if (refutes.length > 0 && confirms.length > 0) {
       status = 'claim_pending';
       reason = `conflicting evidence on tree ${treeHash.slice(0, 12)}: ${refs(refutes).join('; ')} refutes while ${refs(confirms).join('; ')} confirms; needs Inquisition`;
@@ -569,6 +609,7 @@ export function resolveFindings(input: ResolveInput): Resolution {
       disagreement: status === 'claim_pending' && reasonCode === 'conflicting-evidence' ? { kinds: [...(disagreement?.kinds ?? []), 'conflicting-evidence'], parties: disagreement?.parties ?? [], detail: [...(disagreement?.detail ?? []), 'checks contradict each other'] } : disagreement,
       carried,
       recurrenceOf: closedEarlier.get(fp) ?? [],
+      ...(recorded !== null && status === 'advisory' ? { recordedClassification: recorded } : {}),
     };
     if (d.recurrenceOf.length > 0 && !carried) d.reason += `; re-raised after ${d.recurrenceOf.length} earlier closure(s) on other trees, so it was re-tested against this tree`;
     dispositions.push(d);

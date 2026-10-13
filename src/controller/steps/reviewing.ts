@@ -24,13 +24,14 @@ import { appendEvent } from '../../storage/events.ts';
 import { listCheckRuns } from '../../evidence/store.ts';
 import { git } from '../../evidence/git.ts';
 import type { EvidenceReport, RepairBrief } from '../../evidence/types.ts';
-import { probeLogPath, probeLogTail } from '../../evidence/fail-before.ts';
+import { probeLogExcerpt, probeLogPath } from '../../evidence/fail-before.ts';
 import { validateModelOutput, type ImplementerOutput } from '../../contract/model-outputs.ts';
 import { mentionsIrreversible, riskCategoriesInText } from '../../inquisition/heuristics.ts';
 import { progressSince, type NonProgressDecision } from '../../inquisition/repair.ts';
 import { extensionDecisionRecord } from '../../scheduling/budget.ts';
 import { attemptHistory } from './diagnosing.ts';
 import { selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../review/select.ts';
+import { failBeforePolicy } from '../../policy/config.ts';
 import { preferredReviewProvider } from '../../policy/review.ts';
 import { sameProviderApproval } from './review-approval.ts';
 import type { CredentialStatus } from '../../adapters/types.ts';
@@ -409,7 +410,13 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
     };
     if (!handledTriggerKeys(ctx).has(trigger.key)) return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
   }
-  return finishRun(ctx, 'BLOCKED', `independent review does not clear tree ${cand.treeHash}: ${gate.reasons.join('; ') || 'no approving review'}`, { outcome: { review_gate: gate.reasons, open_findings: openFindings(open) } });
+  // A review that asked for repair only through findings disputing Orbit's own evidence classification approves nothing,
+  // and no repair can answer it: the run stops here and says so, rather than spending an attempt on the same tree.
+  const noted = resolution.dispositions.filter((d) => d.recordedClassification !== undefined);
+  const notes = noted.length === 0 ? '' : `; review finding(s) ${noted.map((d) => `${d.externalId ?? d.findingId} (${d.severity})`).join(', ')} dispute only ${[...new Set(noted.map((d) => d.recordedClassification!))].join(' and ')}, which no repair can change, so they are reported as notes and not repaired`;
+  return finishRun(ctx, 'BLOCKED', `independent review does not clear tree ${cand.treeHash}: ${gate.reasons.join('; ') || 'no approving review'}${notes}`.slice(0, 2000), {
+    outcome: { review_gate: gate.reasons, open_findings: openFindings(open), ...(noted.length > 0 ? { noted_findings: openFindings(noted) } : {}) },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -765,19 +772,20 @@ async function preparePacket(ctx: RunContext, cand: CandidateRecord, reviewDir: 
     ledger: listLedger(ctx.db, ctx.run.id).map((l) => ({ id: l.id, claim: l.claim, source: l.source, confidence: l.confidence, status: l.status, ...(l.consequence ? { consequence_if_wrong: l.consequence } : {}), reversibility: l.reversibility, ...(l.experiment ? { validation_experiment: l.experiment } : {}) })),
     questions: listQuestions(ctx.db, ctx.run.id, { status: 'open' }).map((q) => q.question),
     provider,
-    failBeforeLogs: failBeforeLogs(ctx, ev.report),
+    // A reviewer sees the probe only under required (ADR 0014 section 1): under advisory and off it is the person's.
+    ...(failBeforePolicy(ctx.snapshot.config).mode === 'required' ? { failBeforeLogs: failBeforeLogs(ctx, ev.report) } : {}),
   });
   atomicWrite(join(reviewDir, 'packet.md'), packet.text, 0o600);
   atomicWriteJson(join(reviewDir, 'packet.json'), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
 }
 
-/** The end of each fail-before probe log the report names, for the packet (ADR 0014); the files lie in the run directory. */
+/** The failing lines of each fail-before probe log the report names, for the packet (ADR 0014); the files lie in the run directory. */
 function failBeforeLogs(ctx: RunContext, report: EvidenceReport): Map<string, string> {
   const out = new Map<string, string>();
   for (const a of report.acceptance_evidence) {
     for (const c of a.fail_before?.checks ?? []) {
       const log = c.attempts.at(-1)?.log;
-      if (log && !out.has(log)) out.set(log, probeLogTail(probeLogPath(ctx.runDir, log)));
+      if (log && !out.has(log)) out.set(log, probeLogExcerpt(probeLogPath(ctx.runDir, log)));
     }
   }
   return out;

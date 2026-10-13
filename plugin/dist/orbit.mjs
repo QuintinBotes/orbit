@@ -36515,6 +36515,10 @@ function assessEvidence(e, treeHash) {
 function describeEvidence(e) {
   return `${e.kind}${e.checkId ? ` ${e.checkId}` : ""} ${e.status} on tree ${e.treeHash.slice(0, 12)} (${e.ref})`;
 }
+function recordedClassificationDispute(f) {
+  if (TEST_DEFECT.test(f.claim)) return null;
+  return RECORDED_CLASSIFICATIONS.find((c) => c.subject.test(f.claim) && c.dispute.test(f.claim))?.what ?? null;
+}
 function quoted(s) {
   const one = s.replace(/\s+/g, " ").trim();
   return one.length > MAX_QUOTED ? `${one.slice(0, MAX_QUOTED)}...` : one;
@@ -36577,9 +36581,13 @@ function resolveFindings(input) {
     let reasonCode = "unvalidated";
     const currentMembers = group.filter((m) => m.current);
     const closedHere = currentMembers.length > 0 && currentMembers.every((m) => m.f.status === "rejected" || m.f.status === "resolved") ? currentMembers[0].f : null;
+    const recorded = recordedClassificationDispute(rep.f);
     if (closedHere) {
       status2 = closedHere.status;
       reason = closedHere.resolution ?? `${closedHere.status} earlier on this tree`;
+    } else if (recorded !== null) {
+      status2 = "advisory";
+      reason = `a note, not a defect: it disputes ${recorded}, a classification of Orbit's own evidence that no repair can change; it is reported, and neither repaired nor sent to the Inquisition`;
     } else if (refutes.length > 0 && confirms.length > 0) {
       status2 = "claim_pending";
       reason = `conflicting evidence on tree ${treeHash.slice(0, 12)}: ${refs(refutes).join("; ")} refutes while ${refs(confirms).join("; ")} confirms; needs Inquisition`;
@@ -36646,7 +36654,8 @@ function resolveFindings(input) {
       exception,
       disagreement: status2 === "claim_pending" && reasonCode === "conflicting-evidence" ? { kinds: [...disagreement?.kinds ?? [], "conflicting-evidence"], parties: disagreement?.parties ?? [], detail: [...disagreement?.detail ?? [], "checks contradict each other"] } : disagreement,
       carried,
-      recurrenceOf: closedEarlier.get(fp) ?? []
+      recurrenceOf: closedEarlier.get(fp) ?? [],
+      ...recorded !== null && status2 === "advisory" ? { recordedClassification: recorded } : {}
     };
     if (d.recurrenceOf.length > 0 && !carried) d.reason += `; re-raised after ${d.recurrenceOf.length} earlier closure(s) on other trees, so it was re-tested against this tree`;
     dispositions.push(d);
@@ -36758,7 +36767,7 @@ function toRepairBrief(d, claim, group, snapshot2, confirms) {
     severity: d.severity
   };
 }
-var import_picomatch3, DEFAULT_SECURITY_POLICY, SECURITY_CATEGORY, DATE_ONLY, MACHINE_EVIDENCE_KINDS, PRIOR_OPEN, MAX_QUOTED;
+var import_picomatch3, DEFAULT_SECURITY_POLICY, SECURITY_CATEGORY, DATE_ONLY, MACHINE_EVIDENCE_KINDS, RECORDED_CLASSIFICATIONS, TEST_DEFECT, PRIOR_OPEN, MAX_QUOTED;
 var init_resolve = __esm({
   "src/review/resolve.ts"() {
     "use strict";
@@ -36771,6 +36780,16 @@ var init_resolve = __esm({
     SECURITY_CATEGORY = /secur|auth|inject|sqli|xss|csrf|ssrf|\brce\b|secret|credential|crypto|tenant|privacy|\bpii\b|traversal|deserializ|permission|access.?control|sandbox|vulnerab|escalation/i;
     DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
     MACHINE_EVIDENCE_KINDS = ["new_test", "existing_check", "reproduction", "static_analysis"];
+    RECORDED_CLASSIFICATIONS = [
+      {
+        // The fail-before outcome is of the base revision: a compile, collection or import failure of a new symbol counts by
+        // policy, and a repair, which changes only the candidate, cannot make the base revision fail another way.
+        what: "the fail-before outcome Orbit recorded for the base revision",
+        subject: /\bfail(?:ed)?-before\b|\bfail(?:ed)? before (?:evidence|outcome|probe|result|classification|log)s?\b|\b(?:new )?tests? (?:fail(?:s|ed)?|failing) on the base revision\b/i,
+        dispute: /\b(?:load|loading|compile|compilation|compiler|import|collection|build|link|resolution)(?:-only)? (?:failure|error|fail(?:s|ed)?)s?\b|\bmissing (?:implementation |new )?(?:symbols?|imports?|modules?|functions?|methods?|definitions?|exports?)\b|\b(?:not|rather than|instead of) (?:an? )?(?:failing )?(?:behaviou?ral )?assertions?\b/i
+      }
+    ];
+    TEST_DEFECT = /\btautolog\w*|\b(?:cannot|can never|could never|never) fail\b|\balways pass(?:es)?\b|\bpass(?:es)? (?:for|with) any (?:\w+ )?implementation\b|\bindependent of the (?:product|production) code\b|\basserts? nothing\b|\bvacuous\w*/i;
     PRIOR_OPEN = UNRESOLVED_FINDING_STATUSES;
     MAX_QUOTED = 300;
   }
@@ -38996,15 +39015,57 @@ function otherwiseAcceptable(results, required, allowFlaky, exceptions) {
 function probeLogPath(runDir2, log) {
   return isAbsolute16(log) ? log : join27(runDir2, log);
 }
-function probeLogTail(path, max = 2e3) {
+function reportsFailure(line3) {
+  return FAILURE_WORDS.test(line3.replace(PATH_LIKE, " ").replace(NONE_COUNTED, ""));
+}
+function renderKept(lines, keep) {
+  const out = [];
+  let next = 0;
+  for (const i of keep) {
+    if (i > next) out.push(notShown(i - next));
+    out.push(lines[i]);
+    next = i + 1;
+  }
+  if (next < lines.length) out.push(notShown(lines.length - next));
+  return `${out.join("\n")}
+`;
+}
+function failureExcerpt(text2, max = PROBE_EXCERPT_CHARS) {
+  if (text2.length <= max) return text2;
+  const lines = text2.replace(/\n$/, "").split("\n").map((l) => l.length > EXCERPT_LINE_CHARS ? `${l.slice(0, EXCERPT_LINE_CHARS)}...` : l);
+  const hits = lines.flatMap((l, i) => reportsFailure(l) ? [i] : []);
+  const render2 = (keep2) => renderKept(lines, [...keep2].sort((a, b) => a - b));
+  const room = max - 60;
+  if (hits.length === 0) {
+    const keep2 = /* @__PURE__ */ new Set();
+    for (let i = 0; i < lines.length && render2(/* @__PURE__ */ new Set([...keep2, i])).length <= room / 2; i++) keep2.add(i);
+    for (let i = lines.length - 1; i >= 0 && !keep2.has(i) && render2(/* @__PURE__ */ new Set([...keep2, i])).length <= room; i--) keep2.add(i);
+    return render2(keep2);
+  }
+  const keep = /* @__PURE__ */ new Set();
+  let shown3 = 0;
+  while (shown3 < hits.length && render2(/* @__PURE__ */ new Set([...keep, hits[shown3]])).length <= room / 2) keep.add(hits[shown3++]);
+  for (const h of hits.slice(0, shown3)) {
+    for (const [before, after] of EXCERPT_CONTEXT) {
+      const wider = new Set(keep);
+      for (let i = Math.max(0, h - before); i <= Math.min(lines.length - 1, h + after); i++) wider.add(i);
+      if (render2(wider).length > room) continue;
+      for (const i of wider) keep.add(i);
+      break;
+    }
+  }
+  const left = hits.length - shown3;
+  return left === 0 ? render2(keep) : `${render2(keep)}[orbit: ${left} more failing ${left === 1 ? "line" : "lines"} not shown]
+`;
+}
+function probeLogExcerpt(path, max = PROBE_EXCERPT_CHARS) {
   try {
-    const text2 = readFileSync17(path, "utf8");
-    return text2.length <= max ? text2 : `...${text2.slice(text2.length - max)}`;
+    return failureExcerpt(readFileSync17(path, "utf8"), max);
   } catch {
     return "";
   }
 }
-var NEVER_ACCEPTED, FAIL_BEFORE_DECISION_KIND, CLASSIFIER_LINES, WINDOW_STRIDE, OUTPUT_DROPPED, GITLINK, MAX_LISTED_PATHS;
+var NEVER_ACCEPTED, FAIL_BEFORE_DECISION_KIND, CLASSIFIER_LINES, WINDOW_STRIDE, OUTPUT_DROPPED, GITLINK, MAX_LISTED_PATHS, PROBE_EXCERPT_CHARS, EXCERPT_LINE_CHARS, EXCERPT_CONTEXT, FAILURE_WORDS, NONE_COUNTED, PATH_LIKE, notShown;
 var init_fail_before = __esm({
   "src/evidence/fail-before.ts"() {
     "use strict";
@@ -39029,6 +39090,16 @@ var init_fail_before = __esm({
     OUTPUT_DROPPED = /^\[orbit: output truncated: \d+ bytes dropped/m;
     GITLINK = "160000";
     MAX_LISTED_PATHS = 20;
+    PROBE_EXCERPT_CHARS = 4e3;
+    EXCERPT_LINE_CHARS = 240;
+    EXCERPT_CONTEXT = [
+      [2, 4],
+      [1, 2]
+    ];
+    FAILURE_WORDS = /\bnot ok\b|\bfail(?:s|ed|ure|ures|ing)?\b|\b\w*(?:error|exception)s?\b|\bpanick?(?:ed|s)?\b/i;
+    NONE_COUNTED = /\b(?:fail(?:s|ed|ures?)?|errors?)\b\s*[:=]?\s*0\b(?!\.\d)|\b0\s+(?:fail(?:s|ed|ures?)?|errors?)\b/gi;
+    PATH_LIKE = /\S*[/\\]\S*/g;
+    notShown = (n2) => `[orbit: ${n2} ${n2 === 1 ? "line" : "lines"} not shown]`;
   }
 });
 
@@ -44410,8 +44481,9 @@ function persistResolution(db, runDir2, runId, resolution, clock) {
     }
   });
   for (const d of resolution.dispositions) {
-    if (d.status !== "accepted" && d.status !== "rejected" && d.status !== "excepted" && d.status !== "resolved") continue;
-    const kind = `review.finding.${d.status}`;
+    const noted = d.recordedClassification !== void 0 && d.status === "advisory";
+    if (d.status !== "accepted" && d.status !== "rejected" && d.status !== "excepted" && d.status !== "resolved" && !noted) continue;
+    const kind = noted ? "review.finding.noted" : `review.finding.${d.status}`;
     recordDecision(
       db,
       runDir2,
@@ -44419,7 +44491,7 @@ function persistResolution(db, runDir2, runId, resolution, clock) {
         id: decisionId(kind, d.findingId, d.status, d.reason),
         runId,
         kind,
-        summary: `${d.externalId ?? d.findingId} (${d.severity}) ${d.status}: ${d.reason}`.slice(0, 500),
+        summary: `${d.externalId ?? d.findingId} (${d.severity}) ${noted ? "noted" : d.status}: ${d.reason}`.slice(0, 500),
         data: {
           finding_ids: d.memberIds,
           fingerprint: d.fingerprint,
@@ -57795,6 +57867,8 @@ ${bullet(contract.non_goals.map(red), 20, 300)}`);
 ${security.exceptions.length > 0 ? `- security exceptions listed in policy (still report matching findings): ${security.exceptions.map((e) => `${e.category}${e.location ? ` at ${e.location}` : ""} (${e.severities.join("/")})`).join("; ")}
 ` : ""}`);
   const scope = ev.scope;
+  const failBefore = failBeforePolicy(cfg).mode;
+  const unverified = failBefore === "required" ? ev.unverified : ev.unverified.filter((u) => !/^fail-before\b/.test(u));
   sec.push(`## Verification results
 
 - verdict: ${ev.verdict}
@@ -57813,7 +57887,7 @@ ${bullet(ev.acceptance_evidence.map((a) => `${a.criterion_id}: ${a.status}${a.no
 ### UI
 ${bullet(ev.ui.map((u) => `${u.journey}: ${u.status}`), 20, 200)}
 ### Not verified
-${bullet(ev.unverified.map(red), 30, 300)}${failBeforeSection(ev, input.failBeforeLogs, red)}`);
+${bullet(unverified.map(red), 30, 300)}${failBeforeSection(ev, input.failBeforeLogs, red, failBefore)}`);
   sec.push(`## Assumptions
 
 ### Contract
@@ -57831,8 +57905,9 @@ ${bullet(
 ${bullet([...practiceReviewQuestions(contract), ...failBeforeReviewQuestions(ev), ...input.questions.map(red)], 20, 500)}`);
   return sec.join("\n");
 }
-function failBeforeSection(ev, logs, red) {
-  const entries = ev.acceptance_evidence.filter((a) => a.fail_before !== void 0 && a.fail_before.outcome !== "not-applicable");
+function failBeforeSection(ev, logs, red, mode) {
+  if (mode !== "required") return "";
+  const entries = ev.acceptance_evidence.filter((a) => a.fail_before?.mode === "required" && a.fail_before.outcome !== "not-applicable");
   if (entries.length === 0) return "";
   const lines = entries.map((a) => {
     const fb = a.fail_before;
@@ -57844,21 +57919,23 @@ function failBeforeSection(ev, logs, red) {
       const log = c.attempts.at(-1)?.log;
       const text2 = log ? logs?.get(log) : void 0;
       if (!log || text2 === void 0 || shown3.length >= MAX_PROBE_LOGS || shown3.some((x) => x.includes(`(${log})`))) continue;
-      const tail2 = text2.length > PROBE_LOG_CHARS ? `...${text2.slice(text2.length - PROBE_LOG_CHARS)}` : text2;
-      shown3.push(`${c.id} on the base revision with the new tests, last attempt (${log}):
-${fenced("text", red(tail2))}`);
+      shown3.push(
+        `${c.id} on the base revision with the new tests, last attempt (${log}). The log is check-wide: it covers every test ${c.id} runs, not one criterion's. The lines that report a failure, with a little context:
+${fenced("text", red(failureExcerpt(text2, PROBE_LOG_CHARS)))}`
+      );
     }
   }
   return `
 ### Fail-before
-The probe ran each check on the base tree with the candidate's test files: a failure there shows the tests depend on the change, not that they assert it.
+verification.fail_before is required: the probe ran each check on the base tree with the candidate's test files, and a criterion that rests on new tests is supported only when they fail there. A failure there shows that the tests depend on the change, not that they assert it. A compile, collection or import failure of a new symbol counts as fail-before by policy: it is not a finding. The outcome is Orbit's to record and no repair can change the base revision, so do not dispute it, and do not ask for mutant runs, stub implementations or a rerun of the probe: no check produces them.
 ${bullet(lines, MAX_LIST_ITEMS, 600)}${shown3.join("\n")}`;
 }
 function failBeforeReviewQuestions(ev) {
-  return ev.acceptance_evidence.filter((a) => a.fail_before?.mode === "required" && a.fail_before.outcome === "failed-before" && a.status === "supported").map((a) => {
-    const log = a.fail_before.checks.find((c) => c.outcome === "failed-before")?.attempts.at(-1)?.log;
-    return `${a.criterion_id}'s new tests failed on the base revision${log ? ` (${log})` : ""}: is that failure an assertion about ${a.criterion_id}, or only a load failure (a missing symbol, an import error, a helper the tests need outside them)? A load-only failure shows the tests depend on the change, not that they check it: report it as a finding of high severity, which blocks like any other.`;
-  });
+  const ids = ev.acceptance_evidence.filter((a) => a.fail_before?.mode === "required" && a.fail_before.outcome === "failed-before" && a.status === "supported").map((a) => a.criterion_id);
+  if (ids.length === 0) return [];
+  return [
+    `The new tests of ${ids.join(", ")} failed on the base revision, which supports ${ids.length === 1 ? "it" : "them"} whatever the failure was. Review those tests as you would any: report each test that is a tautology, or whose assertions cannot fail with any implementation.`
+  ];
 }
 function engineeringPracticesSection(contract, red = (s) => s) {
   const selection = contract.practices;
@@ -57892,7 +57969,9 @@ var init_packet = __esm({
     init_hash();
     init_redact();
     init_practices();
+    init_fail_before();
     init_builtin();
+    init_config();
     init_test_files();
     init_resolve();
     enc = new TextEncoder();
@@ -57903,7 +57982,7 @@ var init_packet = __esm({
     MAX_LIST_ITEMS = 40;
     GENERATED = /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|go\.sum|poetry\.lock|Pipfile\.lock|uv\.lock|Gemfile\.lock|composer\.lock)$|\.min\.(js|css)$|\.map$|(^|\/)(dist|build|coverage|node_modules|\.next|vendor)\//;
     MAX_PROBE_LOGS = 6;
-    PROBE_LOG_CHARS = 2e3;
+    PROBE_LOG_CHARS = PROBE_EXCERPT_CHARS;
   }
 });
 
@@ -58560,7 +58639,7 @@ function draftContract(input) {
       adjustments.push({ kind: "check-dropped", subject: id, reason: `${where2} names check "${id}", which the policy does not define` });
     }
   };
-  const criteria = plan.criteria.map((c, i) => {
+  const drafted = plan.criteria.map((c, i) => {
     const checkIds = [];
     for (const id of c.check_ids) {
       if (!isCheck(id)) dropCheck(id, `criterion ${c.key}`);
@@ -58575,6 +58654,16 @@ function draftContract(input) {
       check_ids: checkIds
     };
   });
+  const failBefore = new Set(drafted.filter((c) => onlyFailBefore(c.statement)).map((c) => c.id));
+  if (!drafted.some((c) => c.mandatory && !failBefore.has(c.id))) failBefore.clear();
+  for (const c of drafted.filter((x) => failBefore.has(x.id))) {
+    adjustments.push({
+      kind: "criterion-dropped",
+      subject: c.id,
+      reason: `"${c.statement}" says only that new tests fail on the base revision and pass: verification.fail_before establishes the first, and no candidate is accepted unless its required checks pass`
+    });
+  }
+  const criteria = drafted.filter((c) => !failBefore.has(c.id));
   const required = [];
   for (const id of plan.required_check_ids) {
     if (!isCheck(id)) dropCheck(id, "required_check_ids");
@@ -58688,6 +58777,11 @@ function draftContract(input) {
   const validated = validateContract(contract, snapshot2, input.policyHash === void 0 ? {} : { policyHash: input.policyHash });
   return { contract: validated, adjustments };
 }
+function onlyFailBefore(statement) {
+  const clauses = statement.replace(/\([^)]*\)/g, " ").split(/;|\.(?:\s|$)|,?\s+and\s+|,\s*(?:while|but)\s+/i).map((c) => c.trim()).filter((c) => c !== "");
+  const failsOnBase = (c) => TEST_WORD.test(c) && FAIL_WORD.test(c) && BASE_REVISION.test(c);
+  return clauses.some(failsOnBase) && clauses.every((c) => failsOnBase(c) || PASS_WORD.test(c) && !FAIL_WORD.test(c));
+}
 function uniqueText(values) {
   const out = [];
   const seen = /* @__PURE__ */ new Set();
@@ -58700,7 +58794,7 @@ function uniqueText(values) {
   }
   return out;
 }
-var BASELINE_MATERIAL_TOPICS;
+var BASELINE_MATERIAL_TOPICS, TEST_WORD, FAIL_WORD, BASE_REVISION, PASS_WORD;
 var init_draft = __esm({
   "src/contract/draft.ts"() {
     "use strict";
@@ -58717,6 +58811,10 @@ var init_draft = __esm({
       "financial effects",
       "irreversible data behavior"
     ];
+    TEST_WORD = /\b(?:tests?|specs?|suites?|they)\b/i;
+    FAIL_WORD = /\bfail(?:s|ed|ing)?\b/i;
+    BASE_REVISION = /\b(?:on|against|at) (?:the )?(?:base|baseline)(?: (?:revision|commit|tree|branch|version))?\b|\b(?:before|without|prior to) (?:the|this) (?:change|fix|implementation)\b/i;
+    PASS_WORD = /\bpass(?:es|ed|ing)?\b/i;
   }
 });
 
@@ -60794,7 +60892,11 @@ async function resolveAndDecide(ctx, cand) {
     };
     if (!handledTriggerKeys(ctx).has(trigger.key)) return move2(ctx, "INQUISITION", trigger.summary, { data: { trigger } });
   }
-  return finishRun(ctx, "BLOCKED", `independent review does not clear tree ${cand.treeHash}: ${gate.reasons.join("; ") || "no approving review"}`, { outcome: { review_gate: gate.reasons, open_findings: openFindings(open2) } });
+  const noted = resolution.dispositions.filter((d) => d.recordedClassification !== void 0);
+  const notes = noted.length === 0 ? "" : `; review finding(s) ${noted.map((d) => `${d.externalId ?? d.findingId} (${d.severity})`).join(", ")} dispute only ${[...new Set(noted.map((d) => d.recordedClassification))].join(" and ")}, which no repair can change, so they are reported as notes and not repaired`;
+  return finishRun(ctx, "BLOCKED", `independent review does not clear tree ${cand.treeHash}: ${gate.reasons.join("; ") || "no approving review"}${notes}`.slice(0, 2e3), {
+    outcome: { review_gate: gate.reasons, open_findings: openFindings(open2), ...noted.length > 0 ? { noted_findings: openFindings(noted) } : {} }
+  });
 }
 function reviewRepairs(ctx) {
   return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id", ctx.run.id, REVIEW_REPAIR_EVENT).map((r) => r.data_json ? JSON.parse(r.data_json) : null).filter((r) => r !== null && Array.isArray(r.findings));
@@ -61055,7 +61157,8 @@ async function preparePacket(ctx, cand, reviewDir, provider) {
     ledger: listLedger(ctx.db, ctx.run.id).map((l) => ({ id: l.id, claim: l.claim, source: l.source, confidence: l.confidence, status: l.status, ...l.consequence ? { consequence_if_wrong: l.consequence } : {}, reversibility: l.reversibility, ...l.experiment ? { validation_experiment: l.experiment } : {} })),
     questions: listQuestions(ctx.db, ctx.run.id, { status: "open" }).map((q) => q.question),
     provider,
-    failBeforeLogs: failBeforeLogs(ctx, ev.report)
+    // A reviewer sees the probe only under required (ADR 0014 section 1): under advisory and off it is the person's.
+    ...failBeforePolicy(ctx.snapshot.config).mode === "required" ? { failBeforeLogs: failBeforeLogs(ctx, ev.report) } : {}
   });
   atomicWrite(join62(reviewDir, "packet.md"), packet.text, 384);
   atomicWriteJson(join62(reviewDir, "packet.json"), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
@@ -61065,7 +61168,7 @@ function failBeforeLogs(ctx, report2) {
   for (const a of report2.acceptance_evidence) {
     for (const c of a.fail_before?.checks ?? []) {
       const log = c.attempts.at(-1)?.log;
-      if (log && !out.has(log)) out.set(log, probeLogTail(probeLogPath(ctx.runDir, log)));
+      if (log && !out.has(log)) out.set(log, probeLogExcerpt(probeLogPath(ctx.runDir, log)));
     }
   }
   return out;
@@ -61132,6 +61235,7 @@ var init_reviewing = __esm({
     init_budget2();
     init_diagnosing();
     init_select();
+    init_config();
     init_review();
     init_review_approval();
     init_store3();
