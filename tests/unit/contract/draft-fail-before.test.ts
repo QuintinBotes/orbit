@@ -15,8 +15,8 @@ type PlannerCriterion = PlannerOutput['criteria'][number];
 
 const criterion = (key: string, statement: string, mandatory = true): PlannerCriterion => ({ key, statement, mandatory, ui: false, proof: ['unit tests'], check_ids: ['reports-tests'], changes: [] });
 
-function input(criteria: PlannerCriterion[]): DraftContractInput {
-  return { goal: 'Add round_price to shop.pricing, with unit tests that fail before the change and pass after.', plannerOutput: planner({ criteria }), snapshot: snapshot(), baselineRevision: BASELINE, taskId: 'ORB-001' };
+function input(criteria: PlannerCriterion[], goal = 'Add round_price to shop.pricing, with unit tests that fail before the change and pass after.'): DraftContractInput {
+  return { goal, plannerOutput: planner({ criteria }), snapshot: snapshot(), baselineRevision: BASELINE, taskId: 'ORB-001' };
 }
 
 const BEHAVIOUR = [criterion('ties', 'round_price(2.675) returns 2.68 and round_price(0.125) returns 0.13.'), criterion('finite', 'Non-finite input raises ValueError.'), criterion('boundaries', 'Values below the half round down.')];
@@ -40,9 +40,11 @@ describe('a planner criterion about the new tests failing on the base revision',
   it('recognises the usual wordings', () => {
     for (const statement of [
       'The new unit tests fail on the base revision and pass on the candidate.',
-      'Tests under tests/ fail before the change and pass after it.',
+      'Tests added under tests/ fail before the change and pass after it.',
       'The added tests fail without the change.',
       'On the base revision the new tests fail; with the change they pass.',
+      'The tests the change adds fail on the base revision and pass with it.',
+      'Newly added specs fail against the base commit and pass on the candidate.',
     ]) {
       const { contract } = draftContract(input([...BEHAVIOUR, criterion('fb', statement)]));
       expect(contract.acceptance_criteria, statement).toHaveLength(3);
@@ -58,6 +60,24 @@ describe('a planner criterion about the new tests failing on the base revision',
     ]) {
       const { contract, adjustments } = draftContract(input([...BEHAVIOUR, criterion('x', statement)]));
       expect(contract.acceptance_criteria, statement).toHaveLength(4);
+      expect(adjustments.filter((a) => a.kind === 'criterion-dropped'), statement).toEqual([]);
+    }
+  });
+
+  // A bug fix's criterion may be about tests that exist and fail on the base revision: the fail-before probe runs only
+  // the tests the change adds, so it establishes nothing about them, and the drop's reason ("new tests") would be false.
+  it('keeps a criterion about existing or unnamed tests failing on the base revision, as a bug fix states one', () => {
+    const parse = criterion('empty', 'parse("") returns an empty list.');
+    for (const statement of [
+      'The existing test test_parse_empty, which fails on the base revision, passes after the change.',
+      'The date tests that fail on the base revision pass after the change.',
+      'tests/date.test.ts fails on the base revision and passes with the fix.',
+      'Tests under tests/ fail before the change and pass after it.',
+      'The currently failing tests in tests/date.test.ts fail on the base revision and pass with the fix.',
+      'The new regression test, like the existing failing ones, fails on the base revision and passes after the fix.',
+    ]) {
+      const { contract, adjustments } = draftContract(input([parse, criterion('x', statement)], 'Fix the failing date tests.'));
+      expect(contract.acceptance_criteria.map((c) => c.statement), statement).toContain(statement);
       expect(adjustments.filter((a) => a.kind === 'criterion-dropped'), statement).toEqual([]);
     }
   });

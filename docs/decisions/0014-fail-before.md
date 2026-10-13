@@ -196,10 +196,12 @@ what Orbit did with its outcome did not. Five changes, each with the run that sh
    support it, and an inquiry told the implementer to keep the import error "as the contract states". The
    planner brief now forbids a criterion that the new tests fail on the base revision, and an assumption that
    a check runs the new tests: both are Orbit's to establish. The contract draft drops a criterion whose
-   every clause is about tests failing on the base revision or passing, with a `contract.criterion-dropped`
-   decision. A criterion that also states behaviour is kept, the other criteria keep their ids, and the last
-   mandatory criterion is never dropped. An assumption that a check runs the new tests is not recognised in
-   code, and the Inquisitor brief forbids an amendment that requires evidence no check produces.
+   every clause is about the tests the change adds failing on the base revision or about tests passing, with
+   a `contract.criterion-dropped` decision. A criterion that also states behaviour is kept, and so is one
+   about tests it does not call new or calls existing (a bug fix's failing tests, which the probe does not
+   run). The other criteria keep their ids, and the last mandatory criterion is never dropped. An assumption
+   that a check runs the new tests is not recognised in code, and the Inquisitor brief forbids an amendment
+   that requires evidence no check produces.
 5. **The packet shows the tests that failed.** The packet showed the last 2,000 characters of each probe
    log, which for a test runner are its passing suites and summary, so the reviewer never saw which tests
    failed (the demo UI run's `reviews/1/packet.md`, lines 119 to 131). Under `required`, the one mode whose

@@ -58792,7 +58792,7 @@ function draftContract(input) {
 }
 function onlyFailBefore(statement) {
   const clauses = statement.replace(/\([^)]*\)/g, " ").split(/;|\.(?:\s|$)|,?\s+and\s+|,\s*(?:while|but)\s+/i).map((c) => c.trim()).filter((c) => c !== "");
-  const failsOnBase = (c) => TEST_WORD.test(c) && FAIL_WORD.test(c) && BASE_REVISION.test(c);
+  const failsOnBase = (c) => TEST_WORD.test(c) && FAIL_WORD.test(c) && BASE_REVISION.test(c) && NEW_TESTS.test(c) && !EXISTING_TESTS.test(c);
   return clauses.some(failsOnBase) && clauses.every((c) => failsOnBase(c) || PASS_WORD.test(c) && !FAIL_WORD.test(c));
 }
 function uniqueText(values) {
@@ -58807,7 +58807,7 @@ function uniqueText(values) {
   }
   return out;
 }
-var BASELINE_MATERIAL_TOPICS, TEST_WORD, FAIL_WORD, BASE_REVISION, PASS_WORD;
+var BASELINE_MATERIAL_TOPICS, TEST_WORD, FAIL_WORD, BASE_REVISION, PASS_WORD, NEW_TESTS, EXISTING_TESTS;
 var init_draft = __esm({
   "src/contract/draft.ts"() {
     "use strict";
@@ -58828,6 +58828,8 @@ var init_draft = __esm({
     FAIL_WORD = /\bfail(?:s|ed|ing)?\b/i;
     BASE_REVISION = /\b(?:on|against|at) (?:the )?(?:base|baseline)(?: (?:revision|commit|tree|branch|version))?\b|\b(?:before|without|prior to) (?:the|this) (?:change|fix|implementation)\b/i;
     PASS_WORD = /\bpass(?:es|ed|ing)?\b/i;
+    NEW_TESTS = /\b(?:new(?:ly)?|added)\s+(?:[\w./-]+\s+){0,3}?(?:tests?|specs?|suites?)\b|\b(?:tests?|specs?|suites?)\b(?:\s+(?:that|which))?\s+(?:the|this)\s+(?:change|fix|implementation|candidate)\s+adds\b|\b(?:tests?|specs?|suites?)\s+(?:added|introduced)\b/i;
+    EXISTING_TESTS = /\b(?:existing|pre-existing|current(?:ly)?|already|previously|known)\b/i;
   }
 });
 

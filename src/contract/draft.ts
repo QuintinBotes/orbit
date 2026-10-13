@@ -240,11 +240,17 @@ const FAIL_WORD = /\bfail(?:s|ed|ing)?\b/i;
 const BASE_REVISION = /\b(?:on|against|at) (?:the )?(?:base|baseline)(?: (?:revision|commit|tree|branch|version))?\b|\b(?:before|without|prior to) (?:the|this) (?:change|fix|implementation)\b/i;
 /** A clause that says only that tests pass. */
 const PASS_WORD = /\bpass(?:es|ed|ing)?\b/i;
+/** Tests the change adds: "the new (unit) tests", "the added tests", "newly added specs", "tests added", "the tests the change adds". */
+const NEW_TESTS = /\b(?:new(?:ly)?|added)\s+(?:[\w./-]+\s+){0,3}?(?:tests?|specs?|suites?)\b|\b(?:tests?|specs?|suites?)\b(?:\s+(?:that|which))?\s+(?:the|this)\s+(?:change|fix|implementation|candidate)\s+adds\b|\b(?:tests?|specs?|suites?)\s+(?:added|introduced)\b/i;
+/** Tests that exist on the base revision, such as a bug fix's failing tests: the fail-before probe establishes nothing about them. */
+const EXISTING_TESTS = /\b(?:existing|pre-existing|current(?:ly)?|already|previously|known)\b/i;
 
 /**
  * Whether a criterion statement says only that new tests fail on the base revision (and that tests pass), in any of the
- * usual wordings: every clause is about tests passing, or failing on the base revision, and at least one is the latter.
- * A statement that also says what the change does keeps its criterion.
+ * usual wordings: every clause is about tests passing, or the tests the change adds failing on the base revision, and at
+ * least one is the latter. A statement that also says what the change does keeps its criterion, and so does one about
+ * tests failing on the base revision that it does not call new (a bug fix's existing failing tests): the probe runs only
+ * the tests the change adds, so it establishes nothing about those.
  */
 function onlyFailBefore(statement: string): boolean {
   const clauses = statement
@@ -252,7 +258,7 @@ function onlyFailBefore(statement: string): boolean {
     .split(/;|\.(?:\s|$)|,?\s+and\s+|,\s*(?:while|but)\s+/i)
     .map((c) => c.trim())
     .filter((c) => c !== '');
-  const failsOnBase = (c: string): boolean => TEST_WORD.test(c) && FAIL_WORD.test(c) && BASE_REVISION.test(c);
+  const failsOnBase = (c: string): boolean => TEST_WORD.test(c) && FAIL_WORD.test(c) && BASE_REVISION.test(c) && NEW_TESTS.test(c) && !EXISTING_TESTS.test(c);
   return clauses.some(failsOnBase) && clauses.every((c) => failsOnBase(c) || (PASS_WORD.test(c) && !FAIL_WORD.test(c)));
 }
 
