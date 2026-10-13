@@ -10,6 +10,7 @@
  * The result is a pure function of its inputs, so re-running a crashed
  * CONTRACTING step produces the same contract.
  */
+import { clausesOf } from '../core/clauses.ts';
 import { OrbitError } from '../core/errors.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import type { AcceptanceCriterion, ContractAssumption, GoalContract } from './types.ts';
@@ -97,7 +98,7 @@ export function draftContract(input: DraftContractInput): DraftResult {
     adjustments.push({
       kind: 'criterion-dropped',
       subject: c.id,
-      reason: `"${c.statement}" says only that new tests fail on the base revision and pass: verification.fail_before establishes the first, and no candidate is accepted unless its required checks pass`,
+      reason: `"${c.statement}" says only that the new tests fail on the base revision, or that tests pass: verification.fail_before establishes the first, and no candidate is accepted unless its required checks pass`,
     });
   }
   const criteria = drafted.filter((c) => !failBefore.has(c.id));
@@ -234,32 +235,51 @@ export function draftContract(input: DraftContractInput): DraftResult {
   return { contract: validated, adjustments };
 }
 
-/** Tests failing on the base revision: a test word, a failing word and the base revision named in one clause. */
-const TEST_WORD = /\b(?:tests?|specs?|suites?|they)\b/i;
-const FAIL_WORD = /\bfail(?:s|ed|ing)?\b/i;
-const BASE_REVISION = /\b(?:on|against|at) (?:the )?(?:base|baseline)(?: (?:revision|commit|tree|branch|version))?\b|\b(?:before|without|prior to) (?:the|this) (?:change|fix|implementation)\b/i;
-/** A clause that says only that tests pass. */
-const PASS_WORD = /\bpass(?:es|ed|ing)?\b/i;
-/** Tests the change adds: "the new (unit) tests", "the added tests", "newly added specs", "tests added", "the tests the change adds". */
-const NEW_TESTS = /\b(?:new(?:ly)?|added)\s+(?:[\w./-]+\s+){0,3}?(?:tests?|specs?|suites?)\b|\b(?:tests?|specs?|suites?)\b(?:\s+(?:that|which))?\s+(?:the|this)\s+(?:change|fix|implementation|candidate)\s+adds\b|\b(?:tests?|specs?|suites?)\s+(?:added|introduced)\b/i;
+// A criterion that the new tests fail on the base revision. Each clause is matched whole, never searched for a word, so
+// a clause that says anything more (what the change does, in any wording, an aside in parentheses included) keeps the
+// criterion.
+
+/**
+ * The tests the change adds: "the new (unit) tests", "the added tests", "newly added specs", "tests added under tests/",
+ * "the tests the change adds". At most one word names them ("unit", "regression"): a longer name can say what they
+ * check ("the new cross-tenant rejection tests"), and that is behaviour.
+ */
+const NEW_TESTS = String.raw`(?:(?:the|all(?:\s+the)?|every)\s+)?(?:(?:new(?:ly)?(?:\s+added)?|added)\s+(?:[\w./-]+\s+)?(?:tests?|specs?|suites?|test\s+cases?)|(?:tests?|specs?|suites?)\s+(?:(?:that|which)\s+)?(?:the|this)\s+(?:change|fix|implementation|candidate)\s+adds|(?:tests?|specs?|suites?)\s+(?:added|introduced)(?:\s+(?:under|in|to)\s+[\w./-]+)?)`;
+/** Any tests, or a word for the ones just named: "they", "the existing apply_discount tests". */
+const ANY_TESTS = String.raw`(?:they|these(?:\s+tests)?|both|${NEW_TESTS}|(?:(?:the|all(?:\s+the)?|every)\s+)?(?:(?:existing|other|remaining)\s+)?(?:[\w./-]+\s+)?(?:tests?|specs?|suites?|test\s+cases?))`;
+const MODAL = String.raw`(?:(?:must|should|will|do|does)\s+)?`;
+const FAIL = String.raw`${MODAL}(?:fail(?:s|ed)?|(?:are|is)\s+failing)`;
+const PASS = String.raw`${MODAL}(?:(?:still|then|all|both|now)\s+)?pass(?:es|ed)?`;
+const BASE_REVISION = String.raw`(?:(?:on|against|at)\s+(?:the\s+)?(?:base|baseline)(?:\s+(?:revision|commit|tree|branch|version))?|(?:before|without|prior\s+to)\s+(?:the|this)\s+(?:change|fix|implementation))`;
+const WITH_THE_CHANGE = String.raw`(?:(?:after|with|on|against)\s+(?:(?:the|this)\s+(?:change|fix|implementation|candidate)|it)|afterwards)`;
+/** "The new tests fail on the base revision", "On the base revision the new tests fail". */
+const NEW_TESTS_FAIL_ON_BASE = new RegExp(
+  String.raw`^(?:${NEW_TESTS}\s+${FAIL}\s+${BASE_REVISION}|${BASE_REVISION},?\s+${NEW_TESTS}\s+${FAIL})$`,
+  'i',
+);
+/** "pass with the change", "the existing apply_discount tests still pass", "with the change they pass". */
+const TESTS_PASS = new RegExp(
+  String.raw`^(?:(?:${ANY_TESTS}\s+)?${PASS}(?:\s+${WITH_THE_CHANGE})?|${WITH_THE_CHANGE},?\s+${ANY_TESTS}\s+${PASS})$`,
+  'i',
+);
+/** The failure named, as an aside names it: "ImportError for round_price", "an import error for round_price", "ModuleNotFoundError on the base revision". */
+const NAMES_THE_FAILURE =
+  /^(?:(?:for\s+example|such\s+as|an?|the)\s+)*(?:\w*(?:Import|ModuleNotFound|Name|Reference|NoSuchMethod|NoClassDefFound|ClassNotFound|MissingMethod|TypeLoad|Syntax|Compile|Compilation)(?:Error|Exception)|(?:load|loading|compile|compilation|compiler|import|collection|build|link|resolution)\s+(?:error|failure)s?|missing\s+(?:symbols?|imports?|modules?|functions?|methods?|definitions?|exports?))(?:\s+(?:for|of|on|in|from)\s+(?:(?:the\s+)?base(?:\s+revision)?|[\w.:/'"`-]+(?:\(\))?))?$/i;
 /** Tests that exist on the base revision, such as a bug fix's failing tests: the fail-before probe establishes nothing about them. */
 const EXISTING_TESTS = /\b(?:existing|pre-existing|current(?:ly)?|already|previously|known)\b/i;
 
 /**
- * Whether a criterion statement says only that new tests fail on the base revision (and that tests pass), in any of the
- * usual wordings: every clause is about tests passing, or the tests the change adds failing on the base revision, and at
- * least one is the latter. A statement that also says what the change does keeps its criterion, and so does one about
- * tests failing on the base revision that it does not call new (a bug fix's existing failing tests): the probe runs only
- * the tests the change adds, so it establishes nothing about those.
+ * Whether a criterion statement says only that the new tests fail on the base revision (and that tests pass). Every
+ * clause, each aside in parentheses included, must be exactly one of these: the tests the change adds fail on the base
+ * revision, tests pass (with or after the change), or the failure named ("ImportError for round_price"); and at least
+ * one must be the first. A criterion with any other clause is kept whole. So is one about tests failing on the base
+ * revision that it does not call new or calls existing (a bug fix's failing tests: the probe runs only the tests the
+ * change adds, so it establishes nothing about those), and so is any wording not recognised: when in doubt, keep.
  */
 function onlyFailBefore(statement: string): boolean {
-  const clauses = statement
-    .replace(/\([^)]*\)/g, ' ')
-    .split(/;|\.(?:\s|$)|,?\s+and\s+|,\s*(?:while|but)\s+/i)
-    .map((c) => c.trim())
-    .filter((c) => c !== '');
-  const failsOnBase = (c: string): boolean => TEST_WORD.test(c) && FAIL_WORD.test(c) && BASE_REVISION.test(c) && NEW_TESTS.test(c) && !EXISTING_TESTS.test(c);
-  return clauses.some(failsOnBase) && clauses.every((c) => failsOnBase(c) || (PASS_WORD.test(c) && !FAIL_WORD.test(c)));
+  const clauses = clausesOf(statement);
+  const failsOnBase = (c: string): boolean => NEW_TESTS_FAIL_ON_BASE.test(c) && !EXISTING_TESTS.test(c);
+  return clauses.some(failsOnBase) && clauses.every((c) => failsOnBase(c) || TESTS_PASS.test(c) || NAMES_THE_FAILURE.test(c));
 }
 
 /** Trimmed, non-blank, de-duplicated by normalized wording, original order kept. */

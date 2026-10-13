@@ -1041,7 +1041,8 @@ Its attempts are recorded apart from the run's checks, and a later candidate
 with the same probe tree (a repair of production code only) reuses them.
 
 In every mode, a review finding that only disputes the outcome Orbit recorded
-(for example "the fail-before evidence shows only a load failure") is reported
+(for example "the fail-before evidence shows only a load failure"), with no
+clause about anything else, such as a case the tests miss, is reported
 as a note, a `review.finding.noted` decision, and never blocks, goes to repair
 or goes to the Inquisition: a repair changes the candidate, not the base
 revision. A review that asked for repair only through such notes approves

@@ -82,6 +82,45 @@ describe('a planner criterion about the new tests failing on the base revision',
     }
   });
 
+  it('drops the retest\'s AC-4 wording on its own: the aside names the failure, it states no behaviour', () => {
+    for (const statement of [
+      'The new tests fail on the base revision (ImportError for round_price).',
+      'The new tests fail on the base revision (an import error for round_price) and pass with the change.',
+      'The new tests fail on the base revision and pass with the change (ModuleNotFoundError on the base revision).',
+    ]) {
+      const { contract, adjustments } = draftContract(input([...BEHAVIOUR, criterion('fb', statement)]));
+      expect(contract.acceptance_criteria.map((c) => c.statement), statement).not.toContain(statement);
+      const dropped = adjustments.filter((a) => a.kind === 'criterion-dropped');
+      expect(dropped.map((a) => a.subject), statement).toEqual(['AC-4']);
+      // The decision carries the whole statement, aside included, so a person sees what was removed.
+      expect(dropped[0]!.reason, statement).toContain(`"${statement}"`);
+    }
+  });
+
+  // Every clause must say only that the new tests fail on the base revision or that tests pass. A clause with behaviour,
+  // wherever it is (after "and" or "while", in parentheses, in another sentence), keeps the criterion whole and unchanged.
+  it('keeps a mixed criterion whole: behaviour after "and" or "while", in parentheses, or in a second sentence', () => {
+    for (const statement of [
+      // Codex's adversarial review of 0.3.1: the second clause passed only because it contains "pass".
+      'The new tests fail on the base revision and authentication rejects cross-tenant requests while valid requests pass.',
+      'The new tests fail on the base revision while valid requests pass.',
+      'The new tests fail on the base revision, while round_price(2.675) returns 2.68.',
+      'The new tests fail on the base revision (round_price(2.675) returns 2.68 after the change).',
+      'The new tests fail on the base revision and pass with the change (half-up rounding of ties).',
+      'The new tests fail on the base revision (ImportError for round_price) and round_price rejects NaN.',
+      'The new tests fail on the base revision. Non-finite input raises ValueError.',
+      'The new tests fail on the base revision; the importer passes malformed rows through unchanged.',
+      'The new tests fail on the base revision and the export passes the tenant filter to the query.',
+      'The new tests fail on the base revision and pass, and the API returns 404 for an unknown id.',
+      'The new tests fail on the base revision and requests pass validation.',
+      'The new tests (which cover ties and negative prices) fail on the base revision.',
+    ]) {
+      const { contract, adjustments } = draftContract(input([...BEHAVIOUR, criterion('x', statement)]));
+      expect(contract.acceptance_criteria.map((c) => c.statement), statement).toContain(statement);
+      expect(adjustments.filter((a) => a.kind === 'criterion-dropped'), statement).toEqual([]);
+    }
+  });
+
   it('never drops the last mandatory criterion', () => {
     const { contract } = draftContract(input([criterion('only', 'The new tests fail on the base revision and pass with the change.'), criterion('opt', 'Docs mention round_price.', false)]));
     expect(contract.acceptance_criteria.map((c) => c.id)).toEqual(['AC-1', 'AC-2']);

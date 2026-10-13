@@ -1,4 +1,5 @@
 import picomatch from 'picomatch';
+import { clausesOf } from '../core/clauses.ts';
 import { OrbitError } from '../core/errors.ts';
 import { redact } from '../core/redact.ts';
 import { validateModelOutput } from '../contract/model-outputs.ts';
@@ -411,12 +412,13 @@ export interface Resolution {
 
 /**
  * Classifications Orbit records about its own evidence, which a reviewer may dispute but no repair can change (ADR 0014,
- * 0.3.1 addendum). A finding whose subject is one of them is reported as a note: it never blocks, is never a claim to
+ * 0.3.1 addendum). A finding that only disputes one of them is reported as a note: it never blocks, is never a claim to
  * test, and goes to neither a repair nor the Inquisition. Each entry names the classification, the wording that makes it
- * the finding's subject, and the wording that disputes it; a finding that names a defect of the tests themselves is not
- * one of these, whatever else it says.
+ * the finding's subject, the wording that disputes it, and the wording that makes one clause of a claim about it. A
+ * finding is a note only when every clause of its claim is about the classification: one clause about anything else
+ * keeps it an ordinary finding.
  */
-const RECORDED_CLASSIFICATIONS: readonly { what: string; subject: RegExp; dispute: RegExp }[] = [
+const RECORDED_CLASSIFICATIONS: readonly { what: string; subject: RegExp; dispute: RegExp; clause: RegExp }[] = [
   {
     // The fail-before outcome is of the base revision: a compile, collection or import failure of a new symbol counts by
     // policy, and a repair, which changes only the candidate, cannot make the base revision fail another way.
@@ -424,6 +426,10 @@ const RECORDED_CLASSIFICATIONS: readonly { what: string; subject: RegExp; disput
     subject: /\bfail(?:ed)?-before\b|\bfail(?:ed)? before (?:evidence|outcome|probe|result|classification|log)s?\b|\b(?:new )?tests? (?:fail(?:s|ed)?|failing) on the base revision\b/i,
     dispute:
       /\b(?:load|loading|compile|compilation|compiler|import|collection|build|link|resolution)(?:-only)? (?:failure|error|fail(?:s|ed)?)s?\b|\bmissing (?:implementation |new )?(?:symbols?|imports?|modules?|functions?|methods?|definitions?|exports?)\b|\b(?:not|rather than|instead of) (?:an? )?(?:failing )?(?:behaviou?ral )?assertions?\b/i,
+    // The probe and its outcome: the base revision's run, a load, import, compile or collection failure there, a missing
+    // symbol the new tests depend on, a stub or mutant run.
+    clause:
+      /\bfail(?:ed)?-before\b|\bfail(?:ed)? before (?:evidence|outcome|probe|result|classification|log)s?\b|\bprob(?:e|es|ed|ing)\b|\bbase (?:revision|run|commit|tree|build|checkout)s?\b|\bon the base\b|\b(?:load|loading|compile|compilation|compiler|import|collection|build|link|resolution)(?:-only)? (?:failure|error|fail(?:s|ed)?)s?\b|\bcollect(?:s|ed|ing|ion)\b|\b\w*(?:Import|ModuleNotFound|Name|Reference|NoSuchMethod|NoClassDefFound|ClassNotFound|MissingMethod|TypeLoad|Syntax|Compile|Compilation)(?:Error|Exception)\b|\bmissing (?:implementation |new )?(?:symbols?|imports?|modules?|functions?|methods?|definitions?|exports?)\b|\bdepends? on \S+ existing\b|\b(?:stub|mutant)s? (?:runs?|implementations?|builds?)\b|\b(?:with|against|on) an? (?:stub|mutant)\b/i,
   },
 ];
 
@@ -431,12 +437,37 @@ const RECORDED_CLASSIFICATIONS: readonly { what: string; subject: RegExp; disput
 const TEST_DEFECT = /\btautolog\w*|\b(?:cannot|can never|could never|never) fail\b|\balways pass(?:es)?\b|\bpass(?:es)? (?:for|with) any (?:\w+ )?implementation\b|\bindependent of the (?:product|production) code\b|\basserts? nothing\b|\bvacuous\w*/i;
 
 /**
- * The classification Orbit recorded that a finding's claim disputes, or null when the claim is about the candidate. The
- * claim decides, not the evidence or the suggested validation: it is what the reviewer says is wrong.
+ * Wording that says what the tests check, cover or leave out, or how the code behaves: something a repair can change, so
+ * a finding that uses it is not a note either, whatever else its claim says.
+ */
+const OTHER_DEFECT =
+  /\bomi(?:t|ts|tted|tting|ssions?)\b|\black(?:s|ing)?\b|\b(?:leaves?|left) out\b|\bmiss(?:es|ed)\b|\bmissing (?:tests?|test cases?|cases?|coverage|assertions?|checks?)\b|\bno (?:tests?|test cases?|cases?|assertions?) (?:of|for|that|covers?|exercises?|checks?|asserts?)\b|\bwithout (?:a |any )?tests?\b|\b(?:do|does|did)(?: not|n't) (?:test|cover|exercise|check|assert|verify|call)\b|\bnever (?:tests?|covers?|exercises?|checks?|asserts?|verif(?:y|ies)|calls?)\b|\b(?:only|merely|just) (?:asserts?|checks?|tests?|verif(?:y|ies)|exercises?|covers?|compares?)\b|\b(?:asserts?|checks?|verif(?:y|ies)|exercises?|covers?|compares?) only\b|\b(?:coverage|uncovered|untested)\b|\bnot (?:tested|covered|exercised|checked|asserted|verified)\b|\bmock(?:s|ed|ing)?\b|\bfixtures?\b|\bflak(?:y|iness)\b|\bskip(?:s|ped|ping)?\b|\b(?:returns?|raises?|throws?|accepts?|rejects?|crash(?:es|ed)?|leaks?|hangs?|corrupts?|overflows?)\b|\bbugs?\b|\bwrong(?:ly)?\b|\bregress(?:es|ed|ions?)?\b|\bvulnerab\w*|\binsecure\b|\binjection\b/i;
+
+/** A clause that says what the one before it does not show: "It does not show that any assertion failed". */
+const GOES_ON = /^(?:it|this|that)\s+(?:alone\s+)?(?:(?:does|did)(?:\s+not|n't)|never|cannot|can't)\s+(?:show|prove|demonstrate|establish|indicate)\b/i;
+/** A clause that contrasts with the one before it: "..., not an assertion", "..., rather than ...". */
+const CONTRAST = /^(?:not|rather than|instead of)\b/i;
+/** A clause about assertions is about the probe only when it says none failed or ran: "not an assertion", "no assertion ran". */
+const ASSERTIONS = /\bassert(?:s|ed|ing|ions?)?\b/i;
+const NEGATED = /\b(?:not|no|never|without|rather than|instead of)\b|n't\b/i;
+
+/**
+ * The classification Orbit recorded that a finding's claim disputes, or null when the claim is about the candidate or
+ * also about the candidate. The claim decides, not the evidence or the suggested validation: it is what the reviewer
+ * says is wrong. A claim disputes a classification only when it names it and disputes it, names no defect a repair can
+ * change, and every one of its clauses (each sentence, each part joined by a conjunction, a semicolon, a colon or a
+ * comma, each aside in parentheses) is about the classification, or says what the clause before does not show, or
+ * contrasts with it; a clause about assertions must say they did not fail or run. When in doubt it is not a note: an
+ * ordinary finding is tested or repaired, and a note never is.
  */
 export function recordedClassificationDispute(f: Pick<ResolvableFinding, 'claim'>): string | null {
-  if (TEST_DEFECT.test(f.claim)) return null;
-  return RECORDED_CLASSIFICATIONS.find((c) => c.subject.test(f.claim) && c.dispute.test(f.claim))?.what ?? null;
+  if (TEST_DEFECT.test(f.claim) || OTHER_DEFECT.test(f.claim)) return null;
+  const c = RECORDED_CLASSIFICATIONS.find((r) => r.subject.test(f.claim) && r.dispute.test(f.claim));
+  if (!c) return null;
+  const clauses = clausesOf(f.claim, { commas: true });
+  const about = (x: string, i: number): boolean => c.clause.test(x) || (i > 0 && (GOES_ON.test(x) || CONTRAST.test(x)));
+  const only = clauses.length > 0 && clauses.every((x, i) => about(x, i) && (!ASSERTIONS.test(x) || NEGATED.test(x)));
+  return only ? c.what : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -524,7 +555,8 @@ export function resolveFindings(input: ResolveInput): Resolution {
     // Closed against this very tree in an earlier pass: terminal, and evidence is not re-litigated.
     const currentMembers = group.filter((m) => m.current);
     const closedHere = currentMembers.length > 0 && currentMembers.every((m) => m.f.status === 'rejected' || m.f.status === 'resolved') ? currentMembers[0]!.f : null;
-    const recorded = recordedClassificationDispute(rep.f);
+    // A note only while no check has confirmed the finding: confirming evidence, here or on an earlier tree, governs.
+    const recorded = confirms.length === 0 && !wasAccepted ? recordedClassificationDispute(rep.f) : null;
 
     if (closedHere) {
       status = closedHere.status as FindingStatus;

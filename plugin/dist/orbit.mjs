@@ -36357,6 +36357,54 @@ if (child) {
   }
 });
 
+// src/core/clauses.ts
+function clausesOf(statement, opts = {}) {
+  const text2 = statement.replace(/\0/g, " ");
+  const asides = [];
+  let main2 = "";
+  for (let i = 0; i < text2.length; i++) {
+    if (text2[i] !== "(") {
+      main2 += text2[i];
+      continue;
+    }
+    let depth = 0;
+    let j = i;
+    for (; j < text2.length; j++) {
+      if (text2[j] === "(") depth++;
+      else if (text2[j] === ")" && --depth === 0) break;
+    }
+    if (i > 0 && /[\w\]]/.test(text2[i - 1])) {
+      main2 += text2.slice(i, j + 1);
+    } else {
+      main2 += ` \0${asides.length}\0 `;
+      asides.push(text2.slice(i + 1, j));
+    }
+    i = j;
+  }
+  const out = [];
+  for (const part of main2.split(opts.commas ? BREAK_OR_COMMA : BREAK3)) {
+    const inner = [];
+    const clause = part.replace(ASIDE, (_, k) => {
+      inner.push(asides[Number(k)]);
+      return " ";
+    }).replace(/\s+/g, " ").replace(/^[\s,]+|[\s,.]+$/g, "");
+    if (clause !== "" && !SAYS_NOTHING.test(clause)) out.push(clause);
+    for (const aside of inner) out.push(...clausesOf(aside, opts));
+  }
+  return out;
+}
+var CONJUNCTION, BREAK3, BREAK_OR_COMMA, SAYS_NOTHING, ASIDE;
+var init_clauses = __esm({
+  "src/core/clauses.ts"() {
+    "use strict";
+    CONJUNCTION = String.raw`(?:^|\s)(?:and(?:\s+also)?|but|however|although|though|while|whereas)(?=[\s,]|$)`;
+    BREAK3 = new RegExp(String.raw`[.!?](?=\s|$)|;|:(?=\s|$)|${CONJUNCTION}`, "i");
+    BREAK_OR_COMMA = new RegExp(String.raw`[.!?](?=\s|$)|[;,]|:(?=\s|$)|${CONJUNCTION}`, "i");
+    SAYS_NOTHING = /^(?:(?:[a-z]{1,5}-\d+|e\.g|i\.e|etc|and|or|to|through)[\s,.]*)+$/i;
+    ASIDE = /\0(\d+)\0/g;
+  }
+});
+
 // src/review/types.ts
 function isFindingSeverity(v) {
   return typeof v === "string" && FINDING_SEVERITIES.includes(v);
@@ -36516,8 +36564,13 @@ function describeEvidence(e) {
   return `${e.kind}${e.checkId ? ` ${e.checkId}` : ""} ${e.status} on tree ${e.treeHash.slice(0, 12)} (${e.ref})`;
 }
 function recordedClassificationDispute(f) {
-  if (TEST_DEFECT.test(f.claim)) return null;
-  return RECORDED_CLASSIFICATIONS.find((c) => c.subject.test(f.claim) && c.dispute.test(f.claim))?.what ?? null;
+  if (TEST_DEFECT.test(f.claim) || OTHER_DEFECT.test(f.claim)) return null;
+  const c = RECORDED_CLASSIFICATIONS.find((r) => r.subject.test(f.claim) && r.dispute.test(f.claim));
+  if (!c) return null;
+  const clauses = clausesOf(f.claim, { commas: true });
+  const about = (x, i) => c.clause.test(x) || i > 0 && (GOES_ON.test(x) || CONTRAST.test(x));
+  const only = clauses.length > 0 && clauses.every((x, i) => about(x, i) && (!ASSERTIONS.test(x) || NEGATED.test(x)));
+  return only ? c.what : null;
 }
 function quoted(s) {
   const one = s.replace(/\s+/g, " ").trim();
@@ -36581,7 +36634,7 @@ function resolveFindings(input) {
     let reasonCode = "unvalidated";
     const currentMembers = group.filter((m) => m.current);
     const closedHere = currentMembers.length > 0 && currentMembers.every((m) => m.f.status === "rejected" || m.f.status === "resolved") ? currentMembers[0].f : null;
-    const recorded = recordedClassificationDispute(rep.f);
+    const recorded = confirms.length === 0 && !wasAccepted ? recordedClassificationDispute(rep.f) : null;
     if (closedHere) {
       status2 = closedHere.status;
       reason = closedHere.resolution ?? `${closedHere.status} earlier on this tree`;
@@ -36767,11 +36820,12 @@ function toRepairBrief(d, claim, group, snapshot2, confirms) {
     severity: d.severity
   };
 }
-var import_picomatch3, DEFAULT_SECURITY_POLICY, SECURITY_CATEGORY, DATE_ONLY, MACHINE_EVIDENCE_KINDS, RECORDED_CLASSIFICATIONS, TEST_DEFECT, PRIOR_OPEN, MAX_QUOTED;
+var import_picomatch3, DEFAULT_SECURITY_POLICY, SECURITY_CATEGORY, DATE_ONLY, MACHINE_EVIDENCE_KINDS, RECORDED_CLASSIFICATIONS, TEST_DEFECT, OTHER_DEFECT, GOES_ON, CONTRAST, ASSERTIONS, NEGATED, PRIOR_OPEN, MAX_QUOTED;
 var init_resolve = __esm({
   "src/review/resolve.ts"() {
     "use strict";
     import_picomatch3 = __toESM(require_picomatch2(), 1);
+    init_clauses();
     init_errors();
     init_redact();
     init_model_outputs();
@@ -36786,10 +36840,18 @@ var init_resolve = __esm({
         // policy, and a repair, which changes only the candidate, cannot make the base revision fail another way.
         what: "the fail-before outcome Orbit recorded for the base revision",
         subject: /\bfail(?:ed)?-before\b|\bfail(?:ed)? before (?:evidence|outcome|probe|result|classification|log)s?\b|\b(?:new )?tests? (?:fail(?:s|ed)?|failing) on the base revision\b/i,
-        dispute: /\b(?:load|loading|compile|compilation|compiler|import|collection|build|link|resolution)(?:-only)? (?:failure|error|fail(?:s|ed)?)s?\b|\bmissing (?:implementation |new )?(?:symbols?|imports?|modules?|functions?|methods?|definitions?|exports?)\b|\b(?:not|rather than|instead of) (?:an? )?(?:failing )?(?:behaviou?ral )?assertions?\b/i
+        dispute: /\b(?:load|loading|compile|compilation|compiler|import|collection|build|link|resolution)(?:-only)? (?:failure|error|fail(?:s|ed)?)s?\b|\bmissing (?:implementation |new )?(?:symbols?|imports?|modules?|functions?|methods?|definitions?|exports?)\b|\b(?:not|rather than|instead of) (?:an? )?(?:failing )?(?:behaviou?ral )?assertions?\b/i,
+        // The probe and its outcome: the base revision's run, a load, import, compile or collection failure there, a missing
+        // symbol the new tests depend on, a stub or mutant run.
+        clause: /\bfail(?:ed)?-before\b|\bfail(?:ed)? before (?:evidence|outcome|probe|result|classification|log)s?\b|\bprob(?:e|es|ed|ing)\b|\bbase (?:revision|run|commit|tree|build|checkout)s?\b|\bon the base\b|\b(?:load|loading|compile|compilation|compiler|import|collection|build|link|resolution)(?:-only)? (?:failure|error|fail(?:s|ed)?)s?\b|\bcollect(?:s|ed|ing|ion)\b|\b\w*(?:Import|ModuleNotFound|Name|Reference|NoSuchMethod|NoClassDefFound|ClassNotFound|MissingMethod|TypeLoad|Syntax|Compile|Compilation)(?:Error|Exception)\b|\bmissing (?:implementation |new )?(?:symbols?|imports?|modules?|functions?|methods?|definitions?|exports?)\b|\bdepends? on \S+ existing\b|\b(?:stub|mutant)s? (?:runs?|implementations?|builds?)\b|\b(?:with|against|on) an? (?:stub|mutant)\b/i
       }
     ];
     TEST_DEFECT = /\btautolog\w*|\b(?:cannot|can never|could never|never) fail\b|\balways pass(?:es)?\b|\bpass(?:es)? (?:for|with) any (?:\w+ )?implementation\b|\bindependent of the (?:product|production) code\b|\basserts? nothing\b|\bvacuous\w*/i;
+    OTHER_DEFECT = /\bomi(?:t|ts|tted|tting|ssions?)\b|\black(?:s|ing)?\b|\b(?:leaves?|left) out\b|\bmiss(?:es|ed)\b|\bmissing (?:tests?|test cases?|cases?|coverage|assertions?|checks?)\b|\bno (?:tests?|test cases?|cases?|assertions?) (?:of|for|that|covers?|exercises?|checks?|asserts?)\b|\bwithout (?:a |any )?tests?\b|\b(?:do|does|did)(?: not|n't) (?:test|cover|exercise|check|assert|verify|call)\b|\bnever (?:tests?|covers?|exercises?|checks?|asserts?|verif(?:y|ies)|calls?)\b|\b(?:only|merely|just) (?:asserts?|checks?|tests?|verif(?:y|ies)|exercises?|covers?|compares?)\b|\b(?:asserts?|checks?|verif(?:y|ies)|exercises?|covers?|compares?) only\b|\b(?:coverage|uncovered|untested)\b|\bnot (?:tested|covered|exercised|checked|asserted|verified)\b|\bmock(?:s|ed|ing)?\b|\bfixtures?\b|\bflak(?:y|iness)\b|\bskip(?:s|ped|ping)?\b|\b(?:returns?|raises?|throws?|accepts?|rejects?|crash(?:es|ed)?|leaks?|hangs?|corrupts?|overflows?)\b|\bbugs?\b|\bwrong(?:ly)?\b|\bregress(?:es|ed|ions?)?\b|\bvulnerab\w*|\binsecure\b|\binjection\b/i;
+    GOES_ON = /^(?:it|this|that)\s+(?:alone\s+)?(?:(?:does|did)(?:\s+not|n't)|never|cannot|can't)\s+(?:show|prove|demonstrate|establish|indicate)\b/i;
+    CONTRAST = /^(?:not|rather than|instead of)\b/i;
+    ASSERTIONS = /\bassert(?:s|ed|ing|ions?)?\b/i;
+    NEGATED = /\b(?:not|no|never|without|rather than|instead of)\b|n't\b/i;
     PRIOR_OPEN = UNRESOLVED_FINDING_STATUSES;
     MAX_QUOTED = 300;
   }
@@ -58673,7 +58735,7 @@ function draftContract(input) {
     adjustments.push({
       kind: "criterion-dropped",
       subject: c.id,
-      reason: `"${c.statement}" says only that new tests fail on the base revision and pass: verification.fail_before establishes the first, and no candidate is accepted unless its required checks pass`
+      reason: `"${c.statement}" says only that the new tests fail on the base revision, or that tests pass: verification.fail_before establishes the first, and no candidate is accepted unless its required checks pass`
     });
   }
   const criteria = drafted.filter((c) => !failBefore.has(c.id));
@@ -58791,9 +58853,9 @@ function draftContract(input) {
   return { contract: validated, adjustments };
 }
 function onlyFailBefore(statement) {
-  const clauses = statement.replace(/\([^)]*\)/g, " ").split(/;|\.(?:\s|$)|,?\s+and\s+|,\s*(?:while|but)\s+/i).map((c) => c.trim()).filter((c) => c !== "");
-  const failsOnBase = (c) => TEST_WORD.test(c) && FAIL_WORD.test(c) && BASE_REVISION.test(c) && NEW_TESTS.test(c) && !EXISTING_TESTS.test(c);
-  return clauses.some(failsOnBase) && clauses.every((c) => failsOnBase(c) || PASS_WORD.test(c) && !FAIL_WORD.test(c));
+  const clauses = clausesOf(statement);
+  const failsOnBase = (c) => NEW_TESTS_FAIL_ON_BASE.test(c) && !EXISTING_TESTS.test(c);
+  return clauses.some(failsOnBase) && clauses.every((c) => failsOnBase(c) || TESTS_PASS.test(c) || NAMES_THE_FAILURE.test(c));
 }
 function uniqueText(values) {
   const out = [];
@@ -58807,10 +58869,11 @@ function uniqueText(values) {
   }
   return out;
 }
-var BASELINE_MATERIAL_TOPICS, TEST_WORD, FAIL_WORD, BASE_REVISION, PASS_WORD, NEW_TESTS, EXISTING_TESTS;
+var BASELINE_MATERIAL_TOPICS, NEW_TESTS, ANY_TESTS, MODAL, FAIL, PASS, BASE_REVISION, WITH_THE_CHANGE, NEW_TESTS_FAIL_ON_BASE, TESTS_PASS, NAMES_THE_FAILURE, EXISTING_TESTS;
 var init_draft = __esm({
   "src/contract/draft.ts"() {
     "use strict";
+    init_clauses();
     init_errors();
     init_authority2();
     init_globs2();
@@ -58824,11 +58887,22 @@ var init_draft = __esm({
       "financial effects",
       "irreversible data behavior"
     ];
-    TEST_WORD = /\b(?:tests?|specs?|suites?|they)\b/i;
-    FAIL_WORD = /\bfail(?:s|ed|ing)?\b/i;
-    BASE_REVISION = /\b(?:on|against|at) (?:the )?(?:base|baseline)(?: (?:revision|commit|tree|branch|version))?\b|\b(?:before|without|prior to) (?:the|this) (?:change|fix|implementation)\b/i;
-    PASS_WORD = /\bpass(?:es|ed|ing)?\b/i;
-    NEW_TESTS = /\b(?:new(?:ly)?|added)\s+(?:[\w./-]+\s+){0,3}?(?:tests?|specs?|suites?)\b|\b(?:tests?|specs?|suites?)\b(?:\s+(?:that|which))?\s+(?:the|this)\s+(?:change|fix|implementation|candidate)\s+adds\b|\b(?:tests?|specs?|suites?)\s+(?:added|introduced)\b/i;
+    NEW_TESTS = String.raw`(?:(?:the|all(?:\s+the)?|every)\s+)?(?:(?:new(?:ly)?(?:\s+added)?|added)\s+(?:[\w./-]+\s+)?(?:tests?|specs?|suites?|test\s+cases?)|(?:tests?|specs?|suites?)\s+(?:(?:that|which)\s+)?(?:the|this)\s+(?:change|fix|implementation|candidate)\s+adds|(?:tests?|specs?|suites?)\s+(?:added|introduced)(?:\s+(?:under|in|to)\s+[\w./-]+)?)`;
+    ANY_TESTS = String.raw`(?:they|these(?:\s+tests)?|both|${NEW_TESTS}|(?:(?:the|all(?:\s+the)?|every)\s+)?(?:(?:existing|other|remaining)\s+)?(?:[\w./-]+\s+)?(?:tests?|specs?|suites?|test\s+cases?))`;
+    MODAL = String.raw`(?:(?:must|should|will|do|does)\s+)?`;
+    FAIL = String.raw`${MODAL}(?:fail(?:s|ed)?|(?:are|is)\s+failing)`;
+    PASS = String.raw`${MODAL}(?:(?:still|then|all|both|now)\s+)?pass(?:es|ed)?`;
+    BASE_REVISION = String.raw`(?:(?:on|against|at)\s+(?:the\s+)?(?:base|baseline)(?:\s+(?:revision|commit|tree|branch|version))?|(?:before|without|prior\s+to)\s+(?:the|this)\s+(?:change|fix|implementation))`;
+    WITH_THE_CHANGE = String.raw`(?:(?:after|with|on|against)\s+(?:(?:the|this)\s+(?:change|fix|implementation|candidate)|it)|afterwards)`;
+    NEW_TESTS_FAIL_ON_BASE = new RegExp(
+      String.raw`^(?:${NEW_TESTS}\s+${FAIL}\s+${BASE_REVISION}|${BASE_REVISION},?\s+${NEW_TESTS}\s+${FAIL})$`,
+      "i"
+    );
+    TESTS_PASS = new RegExp(
+      String.raw`^(?:(?:${ANY_TESTS}\s+)?${PASS}(?:\s+${WITH_THE_CHANGE})?|${WITH_THE_CHANGE},?\s+${ANY_TESTS}\s+${PASS})$`,
+      "i"
+    );
+    NAMES_THE_FAILURE = /^(?:(?:for\s+example|such\s+as|an?|the)\s+)*(?:\w*(?:Import|ModuleNotFound|Name|Reference|NoSuchMethod|NoClassDefFound|ClassNotFound|MissingMethod|TypeLoad|Syntax|Compile|Compilation)(?:Error|Exception)|(?:load|loading|compile|compilation|compiler|import|collection|build|link|resolution)\s+(?:error|failure)s?|missing\s+(?:symbols?|imports?|modules?|functions?|methods?|definitions?|exports?))(?:\s+(?:for|of|on|in|from)\s+(?:(?:the\s+)?base(?:\s+revision)?|[\w.:/'"`-]+(?:\(\))?))?$/i;
     EXISTING_TESTS = /\b(?:existing|pre-existing|current(?:ly)?|already|previously|known)\b/i;
   }
 });

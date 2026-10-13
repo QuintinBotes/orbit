@@ -6,7 +6,7 @@
 // finding is reported as a note: it never blocks, never becomes a claim to test, and never goes to repair.
 import { describe, expect, it } from 'vitest';
 import { recordedClassificationDispute, resolveFindings, type ResolveInput } from '../../../src/review/resolve.ts';
-import { TREE_A, rfinding, rreview, snapshotOf } from './fixtures.ts';
+import { TREE_A, evidence, rfinding, rreview, snapshotOf } from './fixtures.ts';
 
 /** The dotnet run's TEST-1, verbatim. */
 const DOTNET_TEST_1 = {
@@ -28,6 +28,34 @@ const DISPUTES = [
   'The fail-before for AC-1, AC-2, AC-3 and AC-4 is a load failure only. The local round_price wrapper turns the missing symbol into an AssertionError.',
   'The reported fail-before evidence for AC-1 through AC-7 and AC-9 demonstrates missing implementation imports rather than failing behavioral assertions.',
   'The fail-before evidence attributed to AC-7 is a load failure, not an assertion demonstrating incorrect local-date naming on the base revision.',
+  // The fresh-review lab's TEST-1 (tests/integration/controller/fresh-review.test.ts) and the python advisory run's
+  // (tests/unit/controller/review-recorded-classification.test.ts).
+  'The fail-before evidence for AC-1 shows only a load failure. It does not show that any assertion about the criterion failed. The new test depends on mul existing, but the probe does not prove that it checks its behavior.',
+  'The fail-before evidence for AC-1 to AC-4 only shows a load failure. It does not show any assertion about the bulk_price discount criteria failing on the base.',
+];
+
+/**
+ * Claims that dispute the recorded outcome and also say something else: a gap in the tests, what their assertions check,
+ * or how the code behaves. Each is a defect a repair can fix, so it is not a note. The first is the one Codex's
+ * adversarial review of 0.3.1 found silenced.
+ */
+const MIXED = [
+  'The fail-before log shows an import error, but the new price tests assert only the result type and omit the required half-up rounding cases.',
+  // A dispute and a coverage gap, in two sentences.
+  'The fail-before evidence for AC-1 and AC-2 is only a load failure. The new tests do not cover the invalid range at all.',
+  'The fail-before evidence for AC-1 is only a load failure. AC-2 has no test with min greater than max.',
+  // A behavioural clause joined by "while".
+  'The fail-before outcome is only an import error for round_price while round_price(2.675) returns 2.67 on the candidate.',
+  // Behaviour in parentheses.
+  'The fail-before evidence shows only a load failure (round_price still rounds 0.125 down to 0.12).',
+  // Joined by "however", "although" and "and also".
+  'The fail-before evidence is a compile failure; however, the clamp tests never check the upper bound.',
+  'Although the fail-before evidence is only a missing symbol error, the tests replace round_price with a local copy.',
+  'The fail-before evidence only shows an import error and also the new tests leave out the negative quantities.',
+  // A clause that refers back to the evidence and names a gap.
+  'The fail-before log is a load failure only. It also shows that no test exercises a quantity of zero.',
+  // One sentence, joined by a bare "and".
+  'The fail-before evidence is only an import error and the new tests use the wrong rounding mode.',
 ];
 
 function input(over: Partial<ResolveInput> = {}): ResolveInput {
@@ -50,6 +78,33 @@ describe('a finding that disputes a classification Orbit recorded', () => {
     ]) {
       expect(recordedClassificationDispute({ claim }), claim).toBeNull();
     }
+  });
+
+  it('is a note only when every clause is about the probe or its outcome: a claim that also names a defect is not one', () => {
+    for (const claim of MIXED) expect(recordedClassificationDispute({ claim }), claim).toBeNull();
+  });
+
+  it('a mixed finding blocks and goes to repair when a check confirms it, so a later approval cannot clear it unseen', () => {
+    const f = rfinding({ externalId: 'TEST-3', category: 'test-adequacy', location: 'tests/test_pricing.py:9', claim: MIXED[0]! });
+    const r = resolveFindings(input({ findings: [f], evidence: [evidence({ findingId: f.id, verdict: 'confirms', status: 'FAILED', checkId: 'half-up', ref: 'evidence/1/half-up.log' })] }));
+    expect(r.dispositions[0]).toMatchObject({ status: 'accepted', blocking: true });
+    expect(r.dispositions[0]!.recordedClassification).toBeUndefined();
+    expect(r.repairBriefs).toHaveLength(1);
+    expect(r.clear).toBe(false);
+  });
+
+  it('a mixed finding without evidence is a claim to test, never a note', () => {
+    const f = rfinding({ externalId: 'TEST-3', category: 'test-adequacy', claim: MIXED[0]! });
+    const r = resolveFindings(input({ findings: [f] }));
+    expect(r.dispositions[0]).toMatchObject({ status: 'claim_pending', blocking: true });
+    expect(r.claimsToTest.map((c) => c.findingId)).toEqual([f.id]);
+  });
+
+  it('even an exclusive dispute is not a note once a check confirms it: the evidence governs', () => {
+    const f = rfinding(DOTNET_TEST_1);
+    const r = resolveFindings(input({ findings: [f], evidence: [evidence({ findingId: f.id, verdict: 'confirms', status: 'FAILED', checkId: 'stub-clamp', ref: 'evidence/1/stub-clamp.log' })] }));
+    expect(r.dispositions[0]).toMatchObject({ status: 'accepted', blocking: true });
+    expect(r.repairBriefs).toHaveLength(1);
   });
 
   it('is a note, not a blocking claim: advisory, never claim_pending, never a claim to test or a repair brief (the dotnet stall shape)', () => {

@@ -184,8 +184,13 @@ what Orbit did with its outcome did not. Five changes, each with the run that sh
    finding whose subject is a classification Orbit made of its own evidence as an `advisory` note, recorded as
    a `review.finding.noted` decision, in every mode: it never blocks, is never a claim to test, and goes to
    neither repair nor the Inquisition. Today the one such classification is the fail-before outcome, which
-   the finding's claim names and disputes (a load, compile or import failure, not an assertion); a finding
-   about the tests themselves (a tautology, a test that passes for any implementation) is still a claim.
+   the finding's claim names and disputes (a load, compile or import failure, not an assertion). A finding is
+   a note only when it disputes the outcome exclusively: every clause of its claim (each sentence, each part
+   joined by "and", "but", "however", "although", "while", a semicolon, a colon or a comma, and each aside in
+   parentheses) is about the probe or its recorded outcome, such as a load, import or compile failure on the
+   base revision or a stub or mutant run. One clause about the tests' content, coverage or assertions (a
+   tautology, a missing case), the code's behaviour, or anything else keeps the whole finding a claim, and so
+   does a check that confirmed it; when in doubt, it is a claim.
    Delivery still needs an approving review, so a review that asked for repair only through such notes
    approves nothing: the run stops BLOCKED and names them, instead of spending an attempt on the same tree.
    Follow-up: first the tree gets one fresh review (a `review.fresh` decision, charged to `review_rounds`), told
@@ -196,11 +201,13 @@ what Orbit did with its outcome did not. Five changes, each with the run that sh
    fail on the base revision (ImportError for round_price)". The candidate's passing log was then cited to
    support it, and an inquiry told the implementer to keep the import error "as the contract states". The
    planner brief now forbids a criterion that the new tests fail on the base revision, and an assumption that
-   a check runs the new tests: both are Orbit's to establish. The contract draft drops a criterion whose
-   every clause is about the tests the change adds failing on the base revision or about tests passing, with
-   a `contract.criterion-dropped` decision. A criterion that also states behaviour is kept, and so is one
-   about tests it does not call new or calls existing (a bug fix's failing tests, which the probe does not
-   run). The other criteria keep their ids, and the last mandatory criterion is never dropped. An assumption
+   a check runs the new tests: both are Orbit's to establish. The contract draft drops a criterion only when
+   every clause, each aside in parentheses included, says exactly that the tests the change adds fail on the
+   base revision, that tests pass, or names the failure ("ImportError for round_price" names it and states no
+   behaviour), with a `contract.criterion-dropped` decision that quotes the whole criterion. A criterion with
+   any other clause (behaviour after "and" or "while", in parentheses, or in another sentence) is kept whole
+   and unchanged, and so is wording the draft does not recognise, and one about tests it does not call new or
+   calls existing (a bug fix's failing tests, which the probe does not run). The other criteria keep their ids, and the last mandatory criterion is never dropped. An assumption
    that a check runs the new tests is not recognised in code, and the Inquisitor brief forbids an amendment
    that requires evidence no check produces.
 5. **The packet shows the tests that failed.** The packet showed the last 2,000 characters of each probe
