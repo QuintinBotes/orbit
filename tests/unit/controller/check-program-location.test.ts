@@ -4,7 +4,7 @@
 // pre-existing failure" and offered a baseline exception for it, which ADR 0010 never offers for an environment cause.
 // Now PREFLIGHT blocks there, the reason names the repository and the folder the sandbox denies, and the fix, a change to
 // the check's command in the frozen policy, needs a new run, not a resume.
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -339,5 +339,147 @@ describe('PREFLIGHT: a program a chain, a nested shell or eval starts, in a fold
     expect(found.environment).toEqual([]);
     expect(found.report.failures[0]!.classification).toBeUndefined();
     expect(askAboutBaseFailures(ctx, found, { baseRevision: BASE_REV, key: '' }).preExisting.map((f) => f.checkId)).toEqual(['unit-tests']);
+  });
+});
+
+// Third review of the fix. A check that starts its program through a wrapper (`timeout 600 pytest`, srt hiding a PATH
+// folder in the repository on Linux), a make whose recipe's program the sandbox hid (make exits 2), and a program that
+// links into a denied folder (a link outside the projects folder to a tool environment in the repository, or a link the
+// repository commits to a sibling one) were filed as pre-existing failures with a baseline-exception question.
+describe('PREFLIGHT: a wrapper\'s program, a make recipe\'s, and a link into a folder the check sandbox denies', () => {
+  const installPytest = (dir: string): void => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'pytest'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  };
+  /** A folder of the user's own outside the projects folder (~/bin), so the check profile does not deny it. */
+  const userBin = (): string => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'orbit-userbin-')));
+    homes.push(dir);
+    return dir;
+  };
+  const blocksWithoutQuestion = (denied: { report: BaselineReport; checkout: string }) => {
+    const ctx = lab.ctx();
+    const found = classifyBaseline(ctx, denied.report, denied.checkout);
+    expect(found.report.complete).toBe(false);
+    expect(askAboutBaseFailures(ctx, found, { baseRevision: BASE_REV, key: '' }).preExisting).toEqual([]);
+    expect(listQuestions(lab.db, lab.runId)).toEqual([]);
+    return found;
+  };
+
+  it('timeout 600 pytest, not found on a PATH into the repository (exit 127, GNU coreutils\' words)', () => {
+    let bin = '';
+    const denied = deniedBaseline(
+      ({ repo }) => {
+        bin = join(repo, '.venv', 'bin');
+        installPytest(bin);
+        return join(bin, 'pytest');
+      },
+      { command: () => ['timeout', '600', 'pytest', '-q'], exitCode: 127, log: () => "timeout: failed to run command 'pytest': No such file or directory\n" },
+    );
+    vi.stubEnv('PATH', `${bin}:/usr/bin:/bin`);
+    const found = blocksWithoutQuestion(denied);
+    expect(found.environment).toEqual([expect.objectContaining({ signals: ['program-not-found'], programDenial: expect.objectContaining({ program: denied.program, under: 'repository', onPath: { name: 'pytest', setBy: null } }) })]);
+  });
+
+  it('timeout of an interpreter in the repository by its path (exit 127)', () => {
+    const denied = deniedBaseline(({ repo }) => join(repo, '.venv', 'bin', 'python'), {
+      command: (p) => ['timeout', '600', p, '-m', 'pytest'],
+      exitCode: 127,
+      log: (p) => `timeout: failed to run command '${p}': No such file or directory\n`,
+    });
+    const found = blocksWithoutQuestion(denied);
+    expect(found.environment).toEqual([expect.objectContaining({ signals: ['program-not-found'], programDenial: expect.objectContaining({ program: denied.program, under: 'repository' }) })]);
+  });
+
+  it('make test whose recipe\'s program a PATH into the repository finds (make exits 2)', () => {
+    for (const log of ['cd . && pytest -q\n/bin/sh: pytest: command not found\nmake: *** [test] Error 127\n', 'pytest -q\nmake: pytest: No such file or directory\nmake: *** [test] Error 1\n']) {
+      let bin = '';
+      const denied = deniedBaseline(
+        ({ repo }) => {
+          bin = join(repo, '.venv', 'bin');
+          installPytest(bin);
+          return join(bin, 'pytest');
+        },
+        { command: () => ['make', 'test'], exitCode: 2, log: () => log },
+      );
+      vi.stubEnv('PATH', `${bin}:/usr/bin:/bin`);
+      const found = blocksWithoutQuestion(denied);
+      expect(found.environment, log).toEqual([expect.objectContaining({ signals: ['program-not-found'], programDenial: expect.objectContaining({ program: denied.program, under: 'repository', onPath: { name: 'pytest', setBy: null } }) })]);
+      lab.cleanup();
+    }
+  });
+
+  it('a link outside the projects folder to a program in the repository: refused by its path, through eval, a script, or not found by its name', () => {
+    const cases: [string, Parameters<typeof deniedBaseline>[1], (link: string) => void, 'program-denied' | 'program-not-found'][] = [
+      ['its path', { command: (l) => [l, '-q'], log: (l) => `/bin/sh: ${l}: Operation not permitted\n` }, () => {}, 'program-denied'],
+      ['eval', { command: () => ['eval "$CMD"'], shell: true, env: () => ({ CMD: '"$LINK" -q' }), log: (l) => `/bin/sh: ${l}: Operation not permitted\n` }, () => {}, 'program-denied'],
+      ['a script of the repository', { command: () => ['./scripts/test.sh'], log: (l) => `./scripts/test.sh: line 2: ${l}: Operation not permitted\n` }, () => {}, 'program-denied'],
+      ['its name', { command: () => ['eval "$CMD"'], shell: true, env: () => ({ CMD: 'shop-pytest -q' }), exitCode: 127, log: () => '/bin/sh: shop-pytest: command not found\n' }, (l) => vi.stubEnv('PATH', `${dirname(l)}:/usr/bin:/bin`), 'program-not-found'],
+    ];
+    for (const [name, shape, setup, signal] of cases) {
+      const ub = userBin();
+      let target = '';
+      const denied = deniedBaseline(({ repo }) => {
+        const bin = join(repo, '.venv', 'bin');
+        installPytest(bin);
+        target = join(bin, 'pytest');
+        symlinkSync(target, join(ub, 'shop-pytest'));
+        return join(ub, 'shop-pytest');
+      }, shape);
+      setup(denied.program);
+      const found = blocksWithoutQuestion(denied);
+      expect(found.environment, name).toEqual([expect.objectContaining({ signals: [signal], programDenial: expect.objectContaining({ program: denied.program, under: 'repository', target }) })]);
+      expect(found.environment[0]!.cause, name).toContain(`"${denied.program}"`);
+      expect(found.environment[0]!.cause, name).toContain(`links to "${target}"`);
+      lab.cleanup();
+    }
+  });
+
+  it('a link the repository commits, run by a path relative to the check\'s cwd, to a tool environment beside it (exit 126)', () => {
+    let target = '';
+    const denied = deniedBaseline(
+      ({ base, repo }) => {
+        target = join(base, 'shop-venv', 'bin', 'python');
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        mkdirSync(join(repo, 'tools'), { recursive: true });
+        symlinkSync(target, join(repo, 'tools', 'python'));
+        return './tools/python';
+      },
+      { log: (p) => `orbit-limits: ${p}: Operation not permitted\norbit-limits: line 0: exec: ${p}: cannot execute: Operation not permitted\n` },
+    );
+    const found = blocksWithoutQuestion(denied);
+    expect(found.environment).toEqual([expect.objectContaining({ signals: ['program-denied'], programDenial: expect.objectContaining({ program: './tools/python', under: 'parent', target }) })]);
+    expect(found.environment[0]!.cause).toBe(`the check sandbox denies the repository (${lab.repo}) and the folder that holds it and its sibling projects (${lab.base}), and the program "./tools/python" the check runs links to "${target}", which lies in a folder beside the repository, so it cannot start in a check`);
+    expect(environmentFixSettings(found.environment)).toEqual(['checks.unit-tests.command']);
+  });
+
+  it('a relative path that climbs out of the check\'s checkout is not read in the repository\'s tree', () => {
+    const denied = deniedBaseline(
+      ({ base }) => {
+        const target = join(base, 'shop-venv', 'bin', 'python');
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        return '../shop-venv/bin/python';
+      },
+      { log: (p) => `orbit-limits: ${p}: Operation not permitted\n` },
+    );
+    const found = classifyBaseline(lab.ctx(), denied.report, denied.checkout);
+    expect(found.environment.filter((f) => f.programDenial !== undefined)).toEqual([]);
+  });
+
+  it('a relative link that stays in the repository is the checkout\'s own, and stays the code\'s', () => {
+    const denied = deniedBaseline(
+      ({ repo }) => {
+        const bin = join(repo, '.venv', 'bin');
+        installPytest(bin);
+        mkdirSync(join(repo, 'tools'), { recursive: true });
+        symlinkSync('../.venv/bin/pytest', join(repo, 'tools', 'pytest'));
+        return './tools/pytest';
+      },
+      { command: (p) => [p, '-q'], log: (p) => `orbit-limits: ${p}: Operation not permitted\n` },
+    );
+    const found = classifyBaseline(lab.ctx(), denied.report, denied.checkout);
+    expect(found.environment).toEqual([]);
   });
 });

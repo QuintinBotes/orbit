@@ -695,18 +695,23 @@ as above.
 
 `orbit doctor` (`checks.sandbox`) refuses a check whose program, its argv's or
 one its shell command starts (any command of a chain or pipeline, one `exec`
-starts, one of the script a shell it starts with `-c` runs, a quoted path with
-a space), is an absolute path in the repository or in the folder beside it,
-whatever the tool, and starts nothing of it. Doctor judges this from the
-command's text, so where it cannot read the command for certain (a command
-substitution, a here-document, `eval`, shells nested more than three scripts
-deep) it only warns about such a program, and never fails the check for it. A
-run whose check could not start for that reason blocks at PREFLIGHT with no
-baseline-exception question, and its reason names the repository and the folder
-the sandbox denies; PREFLIGHT reads the programs of a command the way doctor
-does, and reads a refusal or a "not found" in those folders from the check's
-output whatever the command looks like (`eval "$CMD"`). When the fix changes the check's command, which the run's frozen policy
-keeps, it needs a new run. When the program was found on the PATH Orbit runs
+starts, one a wrapper such as `timeout 600`, `nice`, `nohup`, `stdbuf` or
+`xargs` starts, one of the script a shell it starts with `-c` runs, a quoted
+path with a space), is an absolute path in the repository or in the folder
+beside it, or a link from elsewhere to a program there, whatever the tool, and
+starts nothing of it. Doctor judges this from the command's text, so where it
+cannot read the command for certain (a command substitution, a here-document,
+`eval`, a case statement, a function, a `[[` test, a parameter expansion, an
+array, shells nested more than three scripts deep), or the path holds no
+executable file, it only warns about such a program, and never fails the check
+for it. A run whose check could not start for that reason blocks at PREFLIGHT
+with no baseline-exception question, and its reason names the repository and
+the folder the sandbox denies; PREFLIGHT reads the programs of a command the way
+doctor does, and reads a refusal or a "not found" in those folders from the
+check's output whatever the command looks like (`eval "$CMD"`, `make test`, a
+script of the repository), a link that leads there included (one the repository
+commits and the check runs by a relative path, too). When the fix changes the
+check's command, which the run's frozen policy keeps, it needs a new run. When the program was found on the PATH Orbit runs
 its checks with, the reason names that PATH and keeps `orbit resume`, since a
 shell without the tool environment may be the fix; when the check's `env` sets
 that PATH, the fix changes `checks.<id>.env` and needs a new run.

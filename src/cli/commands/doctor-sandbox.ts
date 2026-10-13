@@ -40,9 +40,11 @@
  * pointed a check at a virtualenv there and doctor passed it: it started the interpreter the virtualenv links to, and read
  * the probe of a sibling one, refused with exit 126 "Operation not permitted", as an exit with no denial, which a probe
  * now reads as the refusal it is (classifyProgramNotFound). Doctor judges this from the command's text alone, so a
- * command it cannot read for certain (a command substitution, a here-document, eval, shells nested deeper than it reads;
- * evidence/check-command.ts checkPrograms) only warns about such a program, and never fails the check for it: what the
- * text shows there may not be a program the check starts (second review of the 0.3.0 retest fix).
+ * command it cannot read for certain (a command substitution, a here-document, eval, a case statement, a function, a [[
+ * test, a parameter expansion, an array, shells nested deeper than it reads; evidence/check-command.ts checkPrograms)
+ * only warns about such a program, and never fails the check for it: what the text shows there may not be a program the
+ * check starts (second review of the 0.3.0 retest fix). Nor does a path that is no executable file there now (third
+ * review). A link from elsewhere to a program in such a folder is refused for where it leads, and named so.
  */
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -60,7 +62,7 @@ import { checkEnv, INSTALL_CHECK_ID, prepareCheckHome } from '../../evidence/run
 import { checkoutBelowDenied, prepareWorkerTmpDir, profileForCheck } from '../../isolation/profiles.ts';
 import { detectToolchains, removeScratch, TOOLCHAIN_PROFILES, toolchainCacheRoot, toolchainLayout, type ToolchainId } from '../../isolation/toolchains.ts';
 import type { IsolationProvider } from '../../isolation/types.ts';
-import { isWithin, which } from '../../isolation/util.ts';
+import { isExecutableFile, isWithin, which } from '../../isolation/util.ts';
 import { defaultCheck } from '../../policy/config.ts';
 import type { CheckDefinition, OrbitConfig, PolicySnapshot } from '../../policy/types.ts';
 import { repoKeyFor } from '../../storage/retention.ts';
@@ -112,22 +114,30 @@ function checkWord(check: CheckDefinition): string | null {
  * The programs are the absolute paths a check's command starts (0.3.0 retest; evidence/check-command.ts checkPrograms,
  * which PREFLIGHT reads a refused program's denial against too): an argv's program, or each program of a shell command (a
  * `shell: true` check, or an argv that hands a script to sh -c: a chain's, a pipeline's, a substitution's, a nested
- * shell's, one `exec` starts), the interpreter of a tool environment named by its path included. A relative path is a
- * file of the check's checkout, and a bare name is looked up on PATH. `uncertain` when doctor cannot read the command for
- * certain, so that it warns at most.
+ * shell's, one `exec` or a wrapper starts), the interpreter of a tool environment named by its path included, and a link
+ * from elsewhere to a program there. A relative path is a file of the check's checkout, and a bare name is looked up on
+ * PATH. An executable file at that path is preferred to a path that holds none. `uncertain` when doctor cannot read the
+ * command for certain, and `file` when the path is an executable file now: doctor fails a check only for both (third
+ * review of the 0.3.0 retest fix), and warns otherwise, since what it read may be no program the check starts.
  */
-function deniedProgram(check: CheckDefinition, repo: string, homeDir: string): { denial: ProgramDenial; uncertain: boolean } | null {
+function deniedProgram(check: CheckDefinition, repo: string, homeDir: string): { denial: ProgramDenial; uncertain: boolean; file: boolean } | null {
   const read = checkPrograms(check.command, check.shell === true);
+  let first: { denial: ProgramDenial; uncertain: boolean; file: boolean } | null = null;
   for (const program of read.programs) {
     if (!isAbsolute(program)) continue;
     const found = programDenial(program, repo, homeDir);
-    if (found) return { denial: found, uncertain: read.uncertain };
+    if (!found) continue;
+    if (isExecutableFile(program)) return { denial: found, uncertain: read.uncertain, file: true };
+    first ??= { denial: found, uncertain: read.uncertain, file: false };
   }
-  return null;
+  return first;
 }
 
 /** Why doctor only warns about a program in a denied folder that it read from a command it cannot read for certain. */
-const UNCERTAIN_READING = 'if the check starts it: doctor cannot read its command for certain (a command substitution, a here-document, eval, or shells nested deeper than it reads)';
+const UNCERTAIN_READING =
+  'if the check starts it: doctor cannot read its command for certain (a command substitution, a here-document, eval, a case statement, a function, a [[ test, a parameter expansion, an array, or shells nested deeper than it reads)';
+/** Why doctor only warns about a path in a denied folder that holds no executable file now. */
+const NOT_A_FILE = 'if the check starts it: there is no executable file at that path now, so doctor cannot tell that it is a program';
 
 export interface CheckSandboxInput {
   config: OrbitConfig;
@@ -345,8 +355,9 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
     if (located) {
       const cause = programDenialCause(located.denial);
       const failure: FailureWithCommand = { checkId: check.id, fingerprint: null, signals: ['program-denied'], cause, lines: [], programDenial: located.denial };
-      details.push(located.uncertain ? `${check.id}: ${cause}, ${UNCERTAIN_READING}` : `${check.id}: ${cause}`);
-      if (located.uncertain) uncertain.push({ check, failure });
+      const unsure = located.uncertain ? UNCERTAIN_READING : located.file ? null : NOT_A_FILE;
+      details.push(unsure !== null ? `${check.id}: ${cause}, ${unsure}` : `${check.id}: ${cause}`);
+      if (unsure !== null) uncertain.push({ check, failure });
       else refused.push({ check, failure });
       continue;
     }

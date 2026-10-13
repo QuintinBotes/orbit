@@ -12,7 +12,8 @@ import { basename } from 'node:path';
  * background job, a subshell, a command substitution or more than one line is no direct invocation at all.
  *
  * The programs a command starts (checkPrograms) are read wherever it starts them: each command of a chain, a pipeline,
- * a subshell or a substitution, and of the script a shell it starts with -c runs, with how certain that reading is.
+ * a subshell or a substitution, the program a wrapper starts (`timeout 600 pytest`), and the programs of the script a
+ * shell it starts with -c runs, with how certain that reading is.
  */
 
 export interface DirectInvocation {
@@ -142,14 +143,26 @@ export function shellWords(script: string): string[] | null {
   return dropNext ? null : words;
 }
 
-/** The script an argv command hands to a shell with -c, or undefined when it is not one. */
+/** bash's long options that take a value as the next word. */
+const SHELL_LONG_VALUE_OPTIONS: ReadonlySet<string> = new Set(['--rcfile', '--init-file']);
+
+/**
+ * The script an argv command hands to a shell with -c, or undefined when it is not one. The script is the first word
+ * after -c and the options around it (`sh -c -e '...'`, `bash -lc '...'`), after `--` (`sh -c -- '...'`) and bash's long
+ * options (`bash --norc --noprofile -c '...'`).
+ */
 function shellScript(command: readonly string[]): string | undefined {
   if (command.length < 3 || !SHELLS.has(toolName(command[0]!))) return undefined;
-  for (let i = 1; i < command.length - 1; i++) {
+  let script = false;
+  for (let i = 1; i < command.length; i++) {
     const a = command[i]!;
-    if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(a)) return command[i + 1];
-    if (a === '-o' || a === '+o') i++;
-    else if (!/^[-+][a-zA-Z]+$/.test(a)) return undefined;
+    if (a === '--') return script ? command[i + 1] : undefined;
+    if (a.startsWith('--')) {
+      if (SHELL_LONG_VALUE_OPTIONS.has(a)) i++;
+    } else if (a === '-o' || a === '+o' || a === '-O' || a === '+O') i++;
+    else if (/^[-+][a-zA-Z]+$/.test(a)) {
+      if (a.startsWith('-') && a.includes('c')) script = true;
+    } else return script ? a : undefined;
   }
   return undefined;
 }
@@ -202,23 +215,63 @@ function afterExec(words: readonly string[], i: number): number {
 }
 
 /**
- * The index of the program the words of one simple command start: the first word after leading assignments, the
- * builtin `exec` with its options, and `env` with its options and assignments. Null when there is none, or when an env
- * option makes env run something other than one named program.
+ * Programs that start the command after their options and operands (`timeout 600 pytest`, `nice -n 5 make`, `xargs
+ * pytest`), by their file name (GNU coreutils' and findutils' installed with a g in front too, as Homebrew does): the
+ * options that take the next word as their value, and the operands before the command (timeout's duration).
  */
-function programIndex(words: readonly string[]): number | null {
+const WRAPPERS: ReadonlyMap<string, { valueOptions: readonly string[]; operands?: number }> = new Map([
+  ['timeout', { valueOptions: ['-s', '--signal', '-k', '--kill-after'], operands: 1 }],
+  ['nice', { valueOptions: ['-n', '--adjustment'] }],
+  ['nohup', { valueOptions: [] }],
+  ['stdbuf', { valueOptions: ['-i', '-o', '-e', '--input', '--output', '--error'] }],
+  // GNU's and BSD's options with a value; `-i`, `-l` and `-e` take theirs in the same word.
+  ['xargs', { valueOptions: ['-a', '--arg-file', '-d', '--delimiter', '-E', '-I', '-J', '-L', '-n', '--max-args', '-P', '--max-procs', '-R', '-S', '-s', '--max-chars'] }],
+  // GNU time's and BSD time's (the shell's own `time` is a reserved word, read before the command it times).
+  ['time', { valueOptions: ['-f', '--format', '-o', '--output'] }],
+]);
+
+function wrapperOf(program: string): { valueOptions: readonly string[]; operands?: number } | undefined {
+  const tool = toolName(program);
+  return WRAPPERS.get(tool) ?? (tool.startsWith('g') ? WRAPPERS.get(tool.slice(1)) : undefined);
+}
+
+/**
+ * The indices of the programs the words of one simple command start: the first word after leading assignments, the
+ * builtins `exec`, `builtin` and `command` with their options, and `env` with its options and assignments; and when that
+ * is a wrapper (WRAPPERS), the program it starts after its options and operands, and so on. Empty when there is none,
+ * when an env option makes env run something other than one named program, or when `command -v` only prints a path.
+ */
+function programIndices(words: readonly string[]): number[] {
+  const out: number[] = [];
   let i = 0;
   for (;;) {
     while (i < words.length && ASSIGNMENT.test(words[i]!)) i++;
     const w = words[i];
-    if (w === undefined || w === '') return null;
+    if (w === undefined || w === '') return out;
     if (w === 'exec') i = afterExec(words, i);
-    else if (toolName(w) === 'env') {
+    else if (w === 'builtin') i++;
+    else if (w === 'command') {
+      let j = i + 1;
+      for (; j < words.length && /^-[pvV]+$/.test(words[j]!); j++) if (/[vV]/.test(words[j]!)) return out;
+      i = words[j] === '--' ? j + 1 : j;
+    } else if (toolName(w) === 'env') {
       const next = afterEnv(words, i);
-      if (next === null) return null;
+      if (next === null) return out;
       i = next;
-    } else return i;
+    } else {
+      out.push(i);
+      const wrapper = wrapperOf(w);
+      if (wrapper === undefined) return out;
+      const next = afterOptions(words, i + 1, wrapper.valueOptions);
+      if (next === null) return out;
+      i = next + (wrapper.operands ?? 0);
+    }
   }
+}
+
+/** The index of the program the words of one simple command start first (programIndices), or null when there is none. */
+function programIndex(words: readonly string[]): number | null {
+  return programIndices(words)[0] ?? null;
 }
 
 /**
@@ -237,7 +290,13 @@ export function startedProgram(command: readonly string[], shell: boolean): stri
 /** Reserved words that come before the command they introduce (`then pytest`, `! grep`), not a program. */
 const BEFORE_COMMAND: ReadonlySet<string> = new Set(['if', 'then', 'else', 'elif', 'while', 'until', 'do', '!', '{', 'time']);
 /** Reserved words that start a compound command whose words up to the next separator are no command (`for x in a b`). */
-const NO_COMMAND: ReadonlySet<string> = new Set(['for', 'case', 'select', 'function', 'fi', 'done', 'esac', '}']);
+const NO_COMMAND: ReadonlySet<string> = new Set(['for', 'case', 'select', 'fi', 'done', 'esac', '}', '[[']);
+/**
+ * Reserved words whose compound command a reading does not follow (third review of the 0.3.0 retest fix): a case
+ * statement's patterns and a [[ test's operands (`[[ a || /x -ef . ]]`, split at its ||) read as commands, and a function
+ * may never be called. A reading that meets one is uncertain.
+ */
+const NOT_FOLLOWED: ReadonlySet<string> = new Set(['case', '[[', 'function']);
 
 /** How a shell script reads (readScript). */
 export interface ScriptReading {
@@ -248,7 +307,9 @@ export interface ScriptReading {
   commands: string[][];
   /**
    * Whether the script holds what a reading of its text cannot follow for certain: a command substitution (whose output
-   * becomes words of the command around it) or a process substitution, or a here-document (whose body is not read).
+   * becomes words of the command around it) or a process substitution, a here-document (whose body is not read), a
+   * parameter expansion (`${x:-a|b}`, whose value may be any words), or a parenthesis that opens no subshell (a function's
+   * `name()`, an array `x=(a b)`, a pattern's `@(a|b)` or `(a|b)`, a regex group).
    */
   uncertain: boolean;
 }
@@ -258,8 +319,10 @@ export interface ScriptReading {
  * a subshell, each line, and those of a command substitution (`$(...)`, backquotes, in double quotes too) or a process
  * substitution (`<(...)`), which is read as a part of the word it stands in, so the command around it keeps its words
  * (`echo $(git rev-parse HEAD) /x` runs echo with /x as its argument, and git). An arithmetic expansion (`$((1 + 1))`)
- * is a part of a word too, and runs nothing. A here-document ends the reading, since its body is no command. Null when
- * the script does not parse (an unterminated quote or substitution).
+ * is a part of a word too, and runs nothing, while `$((cd x && ./y) )` is a substitution of a subshell. A parameter
+ * expansion (`${x:-a|b}`) and a parenthesis in a word (`x=(a b)`, `@(a|b)`, `name()`) are part of their word too. A
+ * here-document ends the reading, since its body is no command. Null when the script does not parse (an unterminated
+ * quote, substitution or expansion).
  */
 export function readScript(script: string): ScriptReading | null {
   const s = script;
@@ -275,6 +338,23 @@ export function readScript(script: string): ScriptReading | null {
       else if (s[k] === ')' && --depth === 0) return k + 1;
     }
     return -1;
+  };
+  /** The index after the `}` that closes the `{` at `open`, counting the braces between; -1 when none does. */
+  const braceClosing = (open: number): number => {
+    let depth = 0;
+    for (let k = open; k < s.length; k++) {
+      if (s[k] === '{') depth++;
+      else if (s[k] === '}' && --depth === 0) return k + 1;
+    }
+    return -1;
+  };
+  /**
+   * Whether the `$((` at `dollar` is an arithmetic expansion: its inner `(` closes right before its outer one (`$((1 +
+   * 1))`, `$(( (1 + 1) * 2 ))`), which in `$((cd x && ./y) )`, a substitution of a subshell, it does not.
+   */
+  const arithmetic = (dollar: number): boolean => {
+    const outer = closing(dollar + 1);
+    return outer >= 0 && closing(dollar + 2) === outer - 1;
   };
   /**
    * Reads the commands from `start` to the `close` that ends a substitution (the `)` of `$(`, or a backquote), or to the
@@ -337,13 +417,10 @@ export function readScript(script: string): ScriptReading | null {
           if (s[j] === '\\' && j + 1 < s.length && '"\\$`'.includes(s[j + 1]!)) {
             cur += s[j + 1];
             j += 2;
-          } else if (s[j] === '$' && s[j + 1] === '(' && s[j + 2] === '(') {
+          } else if (s[j] === '$' && s[j + 1] === '(' && s[j + 2] === '(' && arithmetic(j)) {
             const after = closing(j + 1);
-            if (after < 0) broken = true;
-            else {
-              cur += s.slice(j, after);
-              j = after;
-            }
+            cur += s.slice(j, after);
+            j = after;
           } else if (s[j] === '$' && s[j + 1] === '(') j = substitution(j, j + 2, ')');
           else if (s[j] === '`') j = substitution(j, j + 1, '`');
           else cur += s[j++];
@@ -363,12 +440,19 @@ export function readScript(script: string): ScriptReading | null {
       } else if (c === '#' && !inWord) {
         const nl = s.indexOf('\n', i);
         i = nl < 0 ? s.length : nl;
-      } else if (c === '$' && s[i + 1] === '(' && s[i + 2] === '(') {
+      } else if (c === '$' && s[i + 1] === '(' && s[i + 2] === '(' && arithmetic(i)) {
         const after = closing(i + 1);
+        cur += s.slice(i, after);
+        inWord = true;
+        i = after;
+      } else if (c === '$' && s[i + 1] === '{') {
+        // A parameter expansion is part of its word, whatever it holds (`${LOG:-a|/x}`), and its value is not read.
+        const after = braceClosing(i + 1);
         if (after < 0) {
           broken = true;
           break;
         }
+        uncertain = true;
         cur += s.slice(i, after);
         inWord = true;
         i = after;
@@ -385,7 +469,23 @@ export function readScript(script: string): ScriptReading | null {
         if (open === 0 && close === ')') return i + 1;
         if (open > 0) open--;
         i++;
+      } else if (c === '(' && inWord) {
+        // A parenthesis in a word opens no subshell: an array (`x=(a b)`), a pattern (`@(a|b)`), a regex group, or a
+        // function's `name()`, whose body is the next command.
+        const after = closing(i);
+        if (after < 0) {
+          broken = true;
+          break;
+        }
+        uncertain = true;
+        const definition = after === i + 2;
+        cur += s.slice(i, after);
+        i = after;
+        if (definition) end();
       } else if (c === '(') {
+        // A subshell starts a command, after the reserved words that come before one at most; any other `(` is a
+        // function's (`name ()`) or a case pattern's (`(a|b)`).
+        if (words.some((w) => !BEFORE_COMMAND.has(w))) uncertain = true;
         end();
         open++;
         i++;
@@ -443,17 +543,18 @@ export function readScript(script: string): ScriptReading | null {
 export interface CheckPrograms {
   programs: string[];
   /**
-   * Whether the command holds what a reading of its text cannot follow for certain (ScriptReading.uncertain), runs eval,
-   * nests shells deeper than MAX_SCRIPT_DEPTH, or does not parse: a program read from it may not be one it starts, and
-   * one it starts may not be read. `orbit doctor`, which judges a check from its command alone, warns at most then.
+   * Whether the command holds what a reading of its text cannot follow for certain (ScriptReading.uncertain), a case
+   * statement, a function or a [[ test (NOT_FOLLOWED), runs eval, nests shells deeper than MAX_SCRIPT_DEPTH, or does not
+   * parse: a program read from it may not be one it starts, and one it starts may not be read. `orbit doctor`, which
+   * judges a check from its command alone, warns at most then.
    */
   uncertain: boolean;
 }
 
 /**
- * The program each command of a shell script starts (readScript), reserved words skipped, into `out`, and the programs
- * of the script a shell it starts with -c, or eval, runs (nestedPrograms). `depth` is the script's own (1 for a check's
- * shell script). Whether the reading is uncertain.
+ * The programs each command of a shell script starts (readScript, programIndices), reserved words skipped, into `out`,
+ * and the programs of the script a shell it starts with -c, or eval, runs (nestedPrograms). `depth` is the script's own
+ * (1 for a check's shell script). Whether the reading is uncertain.
  */
 function scriptPrograms(script: string, depth: number, out: string[]): boolean {
   const reading = readScript(script);
@@ -461,12 +562,20 @@ function scriptPrograms(script: string, depth: number, out: string[]): boolean {
   let uncertain = reading.uncertain;
   for (const command of reading.commands) {
     let words = command;
-    while (words.length > 0 && BEFORE_COMMAND.has(words[0]!)) words = words.slice(1);
-    if (words.length === 0 || NO_COMMAND.has(words[0]!)) continue;
-    const i = programIndex(words);
-    if (i === null) continue;
-    out.push(words[i]!);
-    if (nestedPrograms(words.slice(i), depth, out)) uncertain = true;
+    for (;;) {
+      // The shell's `time` takes -p (bash), and `function name` comes before the body of a function (`function f {`).
+      while (words.length > 0 && BEFORE_COMMAND.has(words[0]!)) words = words[0] === 'time' && words[1] === '-p' ? words.slice(2) : words.slice(1);
+      if (words[0] !== 'function') break;
+      uncertain = true;
+      words = words.slice(2);
+    }
+    if (words.length === 0) continue;
+    if (NOT_FOLLOWED.has(words[0]!)) uncertain = true;
+    if (NO_COMMAND.has(words[0]!)) continue;
+    const started = programIndices(words);
+    for (const i of started) out.push(words[i]!);
+    const last = started.at(-1);
+    if (last !== undefined && nestedPrograms(words.slice(last), depth, out)) uncertain = true;
   }
   return uncertain;
 }
@@ -487,7 +596,8 @@ function nestedPrograms(words: readonly string[], depth: number, out: string[]):
 
 /**
  * Every program a check's command starts, as the command writes it, each once (0.3.0 retest), and whether the reading is
- * uncertain (CheckPrograms): an argv's program, after leading assignments, `exec` and `env`; and when that is a shell
+ * uncertain (CheckPrograms): an argv's program, after leading assignments, `exec`, `builtin`, `command` and `env`, and
+ * the program a wrapper it is starts (`timeout 600 pytest`, WRAPPERS) with the wrapper; and when that is a shell
  * given a script with -c, or the check is a `shell` check, the program each command of the script starts (a chain's, a
  * pipeline's, a subshell's, a substitution's, one `exec` starts), and so on for a shell such a script starts with -c
  * (`sh -c "/x/python -m pytest"`), up to MAX_SCRIPT_DEPTH scripts deep. Not the programs a runner, `python -m` or a
@@ -500,10 +610,10 @@ export function checkPrograms(command: readonly string[], shell: boolean): Check
   let uncertain: boolean;
   if (shell) uncertain = scriptPrograms(command[0] ?? '', 1, out);
   else {
-    const i = programIndex(command);
-    if (i === null) return { programs: [], uncertain: false };
-    out.push(command[i]!);
-    uncertain = nestedPrograms(command.slice(i), 0, out);
+    const started = programIndices(command);
+    if (started.length === 0) return { programs: [], uncertain: false };
+    for (const i of started) out.push(command[i]!);
+    uncertain = nestedPrograms(command.slice(started.at(-1)), 0, out);
   }
   return { programs: [...new Set(out)], uncertain };
 }

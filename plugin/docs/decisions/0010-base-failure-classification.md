@@ -226,8 +226,11 @@ under by default) count as a shell's: bash 5's `orbit-limits: line 1: <path>:
 No such file or directory`, and macOS bash 3.2's exit 126 `cannot execute: No
 such file or directory` for a path. A program any command of the check starts
 counts as well, by an absolute path or a bare name: a chain's, a pipeline's,
-one `exec` starts, and one of the script a shell the check starts with `-c`
-runs (`sh -c "..."`, read up to three scripts deep). A name only a script of
+one `exec` starts, one a wrapper starts (`timeout 600 pytest`, `nice`, `nohup`,
+`stdbuf`, `xargs`, `time`, `command`, whose GNU coreutils words, `timeout:
+failed to run command 'pytest': No such file or directory`, count as a
+shell's), and one of the script a shell the check starts with `-c` runs (`sh -c
+"..."`, after `--` or bash's long options too, read up to three scripts deep). A name only a script of
 the repository runs (`cd client && npm test` whose script runs a missing
 `jest`) is none of them, and a failing test next to the line keeps it the
 code's. A program the sandbox refuses to start (exit 126, `Operation not
@@ -241,16 +244,27 @@ commands are read too (`echo $(git rev-parse HEAD) /x` runs `echo` and `git`,
 not `/x`).
 
 A backstop reads the output alone, whatever the command looks like (`eval
-"$CMD"`, a script of the repository; second review of the 0.3.0 retest fix): a
-base-revision failure whose output shows a launcher (a shell, `eval`, `exec`,
-`env`, Orbit's limits wrapper, node's spawn) refusing to start a program in the
-repository or in the folder beside it, by its path or a bare name the check's
-PATH finds there (`program-denied`), any other "Operation not permitted" for a
-path there (`filesystem-denied`), or, with exit 127, a "not found" for a path
-there or a bare name the check's PATH finds there (`program-not-found`), is an
-environment failure. The check's own checkout is never such a folder, and a
+"$CMD"`, `make test`, a script of the repository; second and third reviews of
+the 0.3.0 retest fix): a base-revision failure whose output shows a launcher (a
+shell, `eval`, `exec`, `env`, Orbit's limits wrapper, a wrapper such as
+`timeout`, `make`, a script's own `./x.sh: line 2:`, node's spawn, Python's
+`Operation not permitted: 'x'`, uv's `Failed to spawn` with its `Caused by:`
+line) refusing to start a program in the repository or in the folder beside it,
+by its path, a bare name the check's PATH finds there, or a link that leads
+there (`program-denied`), any other "Operation not permitted" for a path there
+(`filesystem-denied`), or a launcher's "not found" for such a program, whatever
+exit code the launcher passes on (make exits 2 for its recipe's, turbo 1), or
+with exit 127 (or make's `Error 127`) any "not found" for a path there
+(`program-not-found`), is an environment failure. A path is there when it is
+written there, its folder resolves there, or the file it links to lies there: a
+link from elsewhere into a denied folder is refused for where it leads, and a
+link the repository commits, run by a path relative to the check's `cwd`, is
+followed in the repository's own tree, since the checkout is gone when the base
+revision is judged. The check's own checkout is never such a folder, and a
 check whose tests ran and failed stays the code's, whatever its output quotes:
-a test whose assertion message names such a refusal is a failing test.
+a test whose assertion message names such a refusal is a failing test, and so
+is ctest's failure report or a formatter's verdict ("1 file would be
+reformatted", "Code style issues found").
 
 ### Evidence for an environment failure
 

@@ -368,6 +368,15 @@ const CODE_FAILURE: readonly RegExp[] = [
   /^[ \t]*[1-9]\d* fail[ \t]*\r?$/m,
   // dart test's last line when a test failed: "00:01 +3 -1: Some tests failed.".
   /\bSome tests failed\.[ \t]*\r?$/m,
+  // ctest's line for each failing test ("1/1 Test #1: perm ....***Failed    0.00 sec"), its summary ("0% tests passed,
+  // 1 tests failed out of 1") and its list ("The following tests FAILED:").
+  /\*\*\*Failed\b/,
+  /\b[1-9]\d* tests? failed out of\b/,
+  /^The following tests FAILED:/m,
+  // A formatter's verdict on the code: black's and ruff format's "1 file would be reformatted", prettier's "Code style
+  // issues found".
+  /\b[1-9]\d* files? would be reformatted\b/,
+  /\bCode style issues found\b/,
 ];
 
 /** Compilers' and MSBuild's error counts ("2 errors", "1 Error(s)"). */

@@ -152,3 +152,76 @@ describe('checkPrograms: nested shells, substitutions and how certain the readin
     expect(checkPrograms([PY, '-m', 'pytest'], false)).toEqual({ programs: [PY], uncertain: false });
   });
 });
+
+// Third review of the 0.3.0 retest fix: a wrapper a check starts its program through (`timeout 600 pytest`, nice, nohup,
+// stdbuf, xargs, time, and the builtins command and builtin) starts that program too, so `timeout 600 pytest` hidden by
+// srt was offered as a pre-existing failure. A shell given its script after `--`, another option or a long option runs
+// that script, and `$((` that a subshell follows (`$((cd x && ./y) )`) is a command substitution, not arithmetic. A
+// reading that meets what it does not follow (a case statement, a function, a [[ test, a parameter expansion, an array
+// or another parenthesis that is no subshell) is uncertain, so that doctor never fails a valid command for it.
+describe('checkPrograms: wrappers, shell options, and what a reading does not follow', () => {
+  const PY = '/home/acme/projects/shop/.venv/bin/python';
+  const REPO = '/home/acme/projects/shop';
+  const PARENT = '/home/acme/projects';
+
+  it('reads the program a wrapper starts, after the wrapper\'s options and operands, with the wrapper', () => {
+    expect(startedPrograms(['timeout', '600', 'pytest', '-q'], false)).toEqual(['timeout', 'pytest']);
+    expect(startedPrograms(['timeout', '-s', 'KILL', '--kill-after=5', '10m', PY, '-m', 'pytest'], false)).toEqual(['timeout', PY]);
+    expect(startedPrograms(['gtimeout', '--preserve-status', '600', 'pytest'], false)).toEqual(['gtimeout', 'pytest']);
+    expect(startedPrograms(['nice', '-n', '5', 'nohup', PY, '-m', 'pytest'], false)).toEqual(['nice', 'nohup', PY]);
+    expect(startedPrograms(['stdbuf', '-o', 'L', '-eL', 'pytest'], false)).toEqual(['stdbuf', 'pytest']);
+    expect(startedPrograms(['timeout 60 pytest'], true)).toEqual(['timeout', 'pytest']);
+    expect(startedPrograms(['echo tests | xargs -n 1 -P 4 pytest -q'], true)).toEqual(['echo', 'xargs', 'pytest']);
+    expect(startedPrograms(['command pytest -q'], true)).toEqual(['pytest']);
+    expect(startedPrograms(['command -p pytest -q'], true)).toEqual(['pytest']);
+    expect(startedPrograms(['builtin exec pytest'], true)).toEqual(['pytest']);
+    expect(startedPrograms(['/usr/bin/time -v pytest'], true)).toEqual(['/usr/bin/time', 'pytest']);
+    expect(startedPrograms(['time -p pytest'], true)).toEqual(['pytest']);
+    expect(startedPrograms(['timeout', '60', 'sh', '-c', `${PY} -m pytest`], false)).toEqual(['timeout', 'sh', PY]);
+    // What only prints a program's path, and an xargs with no command, start nothing after the wrapper.
+    expect(startedPrograms(['command -v pytest || pip install pytest'], true)).toEqual(['pip']);
+    expect(startedPrograms(['find . -name "*.py" | xargs'], true)).toEqual(['find', 'xargs']);
+  });
+
+  it('reads the script a shell runs after -c and its options, `--` or a long option', () => {
+    expect(checkPrograms(['sh', '-c', '--', `${PY} -m pytest`], false)).toEqual({ programs: ['sh', PY], uncertain: false });
+    expect(checkPrograms(['bash', '--norc', '--noprofile', '-c', `${PY} -m pytest`], false)).toEqual({ programs: ['bash', PY], uncertain: false });
+    expect(checkPrograms(['bash', '--login', '-ec', `${PY} -m pytest`], false).programs).toEqual(['bash', PY]);
+    expect(checkPrograms(['sh', '-c', '-e', `${PY} -m pytest`], false).programs).toEqual(['sh', PY]);
+    expect(checkPrograms(['bash', '--rcfile', 'ci.rc', '-c', `${PY} -m pytest`], false).programs).toEqual(['bash', PY]);
+    // A shell given a script file, not -c, runs a file of the repository.
+    expect(checkPrograms(['bash', '--norc', 'scripts/test.sh'], false).programs).toEqual(['bash']);
+    expect(checkPrograms(['sh', '--', 'scripts/test.sh'], false).programs).toEqual(['sh']);
+  });
+
+  it('reads `$((` that a subshell follows as a command substitution, and arithmetic as before', () => {
+    expect(checkPrograms([`echo $((cd tests && ${PY} -m pytest) )`], true)).toEqual({ programs: ['echo', 'cd', PY], uncertain: true });
+    expect(checkPrograms([`echo "$((cd tests && ${PY} -m pytest) )"`], true)).toEqual({ programs: ['echo', 'cd', PY], uncertain: true });
+    expect(checkPrograms(['npm test -- --shard=$(( (1 + 1) * 2 ))/4'], true)).toEqual({ programs: ['npm'], uncertain: false });
+  });
+
+  it('says a reading is uncertain for a case statement, a function, a [[ test, a parameter expansion, an array or a parenthesis that is no subshell', () => {
+    const unsure = [
+      `case "$PWD" in */.orbit/*) ;; ${PARENT}/*) echo "run me from a checkout" >&2; exit 1;; esac; npm test`,
+      `case "$PWD" in (${REPO}|${REPO}/*) exit 1;; esac; npm test`,
+      `case "$PWD" in /tmp/*|${PARENT}/*) exit 1;; esac; npm test`,
+      `legacy() { ${PY} -m pytest; }; npm test`,
+      `legacy () { ${PY} -m pytest; }; npm test`,
+      `function legacy { ${PY} -m pytest; }; npm test`,
+      `[[ -z "$CI" || ${REPO} -ef . ]] && exit 1; npm test`,
+      `[[ "$PWD" =~ ^(${REPO})(/|$) ]] && exit 1; npm test`,
+      `[[ $PWD == @(/tmp/*|${REPO}*) ]] && exit 1; npm test`,
+      `IGNORE=(${REPO}/vendor ${REPO}/build); npm test`,
+      `echo \${LOG:-a|${REPO}/x} && npm test`,
+    ];
+    for (const script of unsure) expect(checkPrograms([script], true).uncertain, script).toBe(true);
+    // A parameter expansion and an array are each one word, whatever they hold; a function's body is read.
+    expect(startedPrograms([`echo \${LOG:-a|${REPO}/x} && npm test`], true)).toEqual(['echo', 'npm']);
+    expect(startedPrograms([`IGNORE=(${REPO}/vendor ${REPO}/build); npm test`], true)).toEqual(['npm']);
+    expect(startedPrograms([`legacy() { ${PY} -m pytest; }; npm test`], true)).toEqual(['legacy()', PY, 'npm']);
+    expect(startedPrograms([`function legacy { ${PY} -m pytest; }; npm test`], true)).toEqual([PY, 'npm']);
+    // A subshell, after a keyword too, is read for certain.
+    expect(checkPrograms([`if (cd tests && ${PY} -m pytest); then echo ok; fi`], true)).toEqual({ programs: ['cd', PY, 'echo'], uncertain: false });
+    expect(checkPrograms([`! (${PY} -m pytest)`], true)).toEqual({ programs: [PY], uncertain: false });
+  });
+});

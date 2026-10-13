@@ -22,7 +22,7 @@
  * Every reason here is a run of sentences, each starting with a capital letter, and names each check once: checks that
  * share a cause and its evidence lines are listed together before them.
  */
-import { readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { readJsonIfExists } from '../core/fsx.ts';
 import { BASELINE_FILE, type BaselineReport } from '../evidence/baseline.ts';
@@ -87,6 +87,11 @@ export interface ProgramDenial {
   /** Where the program lies: in the repository, or in a folder beside it. */
   under: 'repository' | 'parent';
   /**
+   * For a program that lies there only through a link (a link from elsewhere to a program in the repository, or one the
+   * repository commits to a tool environment beside it): the file it links to, which the sandbox refuses it for.
+   */
+  target?: string;
+  /**
    * For a program the command names by a bare name, which the check looks up on its PATH: that name, and the setting
    * that gives the check that PATH (`checks.<id>.env`), or null for the PATH Orbit runs its checks with, its own.
    */
@@ -95,17 +100,22 @@ export interface ProgramDenial {
 
 /**
  * Where `program` lies when a check profile denies it because of where the repository is, or null: a relative path (a
- * file of the checkout) or one outside both folders. The program's folder is resolved and the program itself is not: an
- * interpreter in a tool environment links to one outside it, and the sandbox refuses it for the folder it lies in.
+ * file of the checkout) or one outside both folders. The program counts where it is written, with its folder resolved:
+ * an interpreter in a tool environment links to one outside it, and the sandbox refuses it for the folder it lies in.
+ * It counts where it links to as well (`target`; third review of the 0.3.0 retest fix): a link from elsewhere into such
+ * a folder is refused for the file it leads to. `own` says which paths are the check's own (its checkout), which never
+ * count.
  */
-export function programDenial(program: string, repoRoot: string, homeDir: string): ProgramDenial | null {
+export function programDenial(program: string, repoRoot: string, homeDir: string, own: (path: string) => boolean = () => false): ProgramDenial | null {
   if (!isAbsolute(program)) return null;
   const { repository, parent } = repositoryDenials(repoRoot, homeDir);
   const spelled = resolve(program);
-  const paths = [spelled, join(canonicalPath(dirname(spelled)), basename(spelled))];
-  const inside = (dir: string): boolean => paths.some((p) => isWithin(p, dir));
-  if (inside(repository)) return { program, repository, parent, under: 'repository' };
-  if (parent !== null && inside(parent)) return { program, repository, parent, under: 'parent' };
+  const paths = [spelled, join(canonicalPath(dirname(spelled)), basename(spelled))].filter((p) => !own(p));
+  const real = canonicalPath(spelled);
+  const target = !paths.includes(real) && !own(real) ? real : null;
+  const folders = [['repository', repository] as const, ...(parent !== null ? [['parent', parent] as const] : [])];
+  for (const [under, dir] of folders) if (paths.some((p) => isWithin(p, dir))) return { program, repository, parent, under };
+  for (const [under, dir] of folders) if (target !== null && isWithin(target, dir)) return { program, repository, parent, under, target };
   return null;
 }
 
@@ -113,8 +123,12 @@ export function programDenial(program: string, repoRoot: string, homeDir: string
 export function programDenialCause(d: ProgramDenial): string {
   const folders = d.parent !== null ? `the repository (${d.repository}) and the folder that holds it and its sibling projects (${d.parent})` : `the repository (${d.repository})`;
   const where = d.under === 'repository' ? 'the repository' : 'a folder beside the repository';
-  if (d.onPath) return `the check sandbox denies ${folders}, and the program "${d.onPath.name}" the check runs is "${d.program}" on ${pathOf(d.onPath.setBy)}, which leads into ${where}, so it cannot start in a check`;
-  return `the check sandbox denies ${folders}, and the program "${d.program}" the check runs lies in ${where}, so it cannot start in a check`;
+  if (d.onPath) {
+    const leads = d.target !== undefined ? `links to "${d.target}" in` : 'leads into';
+    return `the check sandbox denies ${folders}, and the program "${d.onPath.name}" the check runs is "${d.program}" on ${pathOf(d.onPath.setBy)}, which ${leads} ${where}, so it cannot start in a check`;
+  }
+  const lies = d.target !== undefined ? `links to "${d.target}", which lies in` : 'lies in';
+  return `the check sandbox denies ${folders}, and the program "${d.program}" the check runs ${lies} ${where}, so it cannot start in a check`;
 }
 
 /** The PATH a check looks a bare name up on: the one its env sets, or the one Orbit runs its checks with (evidence/runner.ts checkEnv). */
@@ -511,11 +525,12 @@ export function baselineEnvironmentFailures(ctx: RunContext, report: BaselineRep
  * repository is (programDenial): refused (program-denied) or hidden (program-not-found: srt on Linux lays an empty folder
  * over it, and on macOS a bare name whose PATH folder the sandbox denies is not found either). The program is the one the
  * shell named (EnvironmentFailure.program): a path the command writes; the path the shell found a bare name at on PATH
- * (a name the command starts, or a path in a folder of the check's PATH, when the command does not write it); or a bare
+ * (a name the command starts, or a path in a folder of the check's PATH, when the command does not write it); a bare
  * name it did not find, or refused by that name, which lies where the first folder of the check's PATH that holds it is
- * (onPath). Null for any other failure, and for a layout that cannot be judged.
+ * (onPath); or a path relative to the check's cwd, a link the repository commits that leads out of it (relativeTarget).
+ * Null for any other failure, and for a layout that cannot be judged.
  */
-function deniedProgramOf(ctx: RunContext, found: EnvironmentFailure, def: Pick<CheckDefinition, 'command' | 'shell' | 'env'>): ProgramDenial | null {
+function deniedProgramOf(ctx: RunContext, found: EnvironmentFailure, def: Pick<CheckDefinition, 'command' | 'shell' | 'env' | 'cwd'>): ProgramDenial | null {
   if (!found.signals.includes('program-denied') && !found.signals.includes('program-not-found')) return null;
   const shell = def.shell === true;
   const program = found.program ?? startedProgram(def.command, shell);
@@ -535,8 +550,14 @@ function deniedProgramOf(ctx: RunContext, found: EnvironmentFailure, def: Pick<C
       const onPath = programs.includes(basename(program)) || pathFolders(def).some((dir) => resolve(dir) === dirname(resolve(program)));
       return onPath ? { ...d, onPath: { name: basename(program), setBy } } : d;
     }
+    // A path relative to the check's cwd: where a link the repository commits there leads, when it leads out of it.
+    if (program.includes('/')) {
+      const target = relativeTarget(repo, def, program);
+      if (target === null) return null;
+      const d = programDenial(target, repo, home);
+      return d === null ? null : { ...d, program, target };
+    }
     // A bare name: one the shell did not find, or one a launcher refused by the name (dash's `eval: x: ...`).
-    if (program.includes('/')) return null;
     const at = onCheckPath(def, program);
     if (at === null) return null;
     const d = programDenial(at, repo, home);
@@ -558,30 +579,43 @@ function onCheckPath(def: Pick<CheckDefinition, 'env'>, name: string): string | 
 }
 
 /**
+ * Where a program the check names by a path relative to its cwd leads, when a link there leads out of the repository (a
+ * link the repository commits to a tool environment beside it; third review of the 0.3.0 retest fix): the file the link
+ * resolves to, read in the repository's own tree at the check's cwd, which the check's checkout holds too and which is
+ * gone by the time the base revision is judged. Null when there is no such file, when the path climbs out of the tree
+ * (`../x` leads out of the checkout, not to the repository's sibling), or when it stays in the repository, where the
+ * checkout's own copy of it is what the check ran.
+ */
+function relativeTarget(repoRoot: string, def: Pick<CheckDefinition, 'cwd'>, path: string): string | null {
+  const spelled = resolve(repoRoot, def.cwd, path);
+  if (!isWithin(spelled, resolve(repoRoot)) || !existsSync(spelled)) return null;
+  const real = canonicalPath(spelled);
+  return isWithin(real, canonicalPath(repoRoot)) ? null : real;
+}
+
+/**
  * The backstop (evidence/check-misconfigured.ts classifyDeniedFolderProgram): a base-revision failure whose output shows
  * a refused path, or a program not found, in a folder the check profile denies because of where the repository is,
  * whatever the check's command looks like. The check's own directories (`insideRoots`, its checkout among them) are never
  * such a folder. Null for a layout that cannot be judged.
  */
-function deniedFolderFailure(ctx: RunContext, def: Pick<CheckDefinition, 'command' | 'shell' | 'env'>, run: { checkId: string; exitCode: number | null; output: string }, insideRoots: readonly string[]): EnvironmentFailure | null {
+function deniedFolderFailure(ctx: RunContext, def: Pick<CheckDefinition, 'command' | 'shell' | 'env' | 'cwd'>, run: { checkId: string; exitCode: number | null; output: string }, insideRoots: readonly string[]): EnvironmentFailure | null {
   try {
     const repo = ctx.snapshot.repo_root;
     const home = homeOf(ctx.deps);
     const roots = insideRoots.filter((root) => isAbsolute(root)).flatMap((root) => [resolve(root), canonicalPath(root)]);
-    const own = (path: string): boolean => {
-      const spelled = resolve(path);
-      return [spelled, join(canonicalPath(dirname(spelled)), basename(spelled))].some((p) => roots.some((root) => isWithin(p, root)));
-    };
+    // A path in the check's own directories, however it is spelled, never counts; a link there into a denied folder does.
+    const own = (path: string): boolean => roots.some((root) => isWithin(path, root));
     // A log may name the same path on many lines: each is resolved once.
     const seen = new Map<string, string | null>();
     const holding = (path: string): string | null => {
       if (seen.has(path)) return seen.get(path)!;
-      const d = isAbsolute(path) && !own(path) ? programDenial(path, repo, home) : null;
+      const d = isAbsolute(path) ? programDenial(path, repo, home, own) : null;
       const where = d === null ? null : d.under === 'repository' ? `the repository (${d.repository})` : `the folder that holds the repository and its sibling projects (${d.parent!})`;
       seen.set(path, where);
       return where;
     };
-    return classifyDeniedFolderProgram({ ...run, command: def.command, shell: def.shell }, { holding, onPath: (name) => onCheckPath(def, name) });
+    return classifyDeniedFolderProgram({ ...run, command: def.command, shell: def.shell }, { holding, onPath: (name) => onCheckPath(def, name), relative: (path) => relativeTarget(repo, def, path) });
   } catch {
     return null;
   }

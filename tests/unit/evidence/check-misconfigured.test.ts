@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { classifyDeniedFolderProgram, classifyMisconfigured, classifyProgramNotFound, USAGE_ERRORS, type MisconfiguredInput } from '../../../src/evidence/check-misconfigured.ts';
+import { showsCodeFailure } from '../../../src/evidence/environment-failure.ts';
 
 // Issue #23: a check whose command is wrong fails on the base revision in under a second, and was offered as a
 // baseline exception. A tool's own usage error, from the check's own direct invocation of that tool, is not a
@@ -460,12 +461,13 @@ describe('classifyDeniedFolderProgram: a refusal in a folder the check sandbox d
     const f = classifyDeniedFolderProgram(input(['eval "$CMD"'], 127, '/bin/sh: 1: pytest: not found\n', { shell: true }), folders);
     expect(f).toMatchObject({ signals: ['program-not-found'], program: 'pytest', lines: ['/bin/sh: 1: pytest: not found'] });
     expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 127, `bash: line 1: ${VENV}: No such file or directory\n`, { shell: true }), folders)?.program).toBe(VENV);
-    // A name the PATH finds elsewhere, or does not find, a path elsewhere, a relative path, or another exit code: not this.
+    // A launcher's "not found" counts whatever the exit code it passes on (third review: make exits 2, turbo 1).
+    expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 1, '/bin/sh: 1: pytest: not found\n', { shell: true }), folders)?.program).toBe('pytest');
+    // A name the PATH finds elsewhere, or does not find, a path elsewhere, or a relative path: not this.
     expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 127, '/bin/sh: 1: node: not found\n', { shell: true }), folders)).toBeNull();
     expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 127, '/bin/sh: 1: ruff: not found\n', { shell: true }), folders)).toBeNull();
     expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 127, '/bin/sh: 1: /opt/acme/bin/tool: not found\n', { shell: true }), folders)).toBeNull();
     expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 127, '/bin/sh: 1: .venv/bin/pytest: not found\n', { shell: true }), folders)).toBeNull();
-    expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 1, '/bin/sh: 1: pytest: not found\n', { shell: true }), folders)).toBeNull();
   });
 
   it('stays a code failure for a test that ran and failed, whose assertion message says "Operation not permitted" for such a path', () => {
@@ -483,5 +485,128 @@ describe('classifyDeniedFolderProgram: a refusal in a folder the check sandbox d
     expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 1, 'mkdir: Operation not permitted\n', { shell: true }), folders)).toBeNull();
     expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 0, `/bin/sh: ${VENV}: Operation not permitted\n`, { shell: true }), folders)).toBeNull();
     expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], null, `/bin/sh: ${VENV}: Operation not permitted\n`, { shell: true }), folders)).toBeNull();
+  });
+});
+
+// Third review of the 0.3.0 retest fix: a check that starts its program through a wrapper (`timeout 600 pytest`, nohup,
+// stdbuf, nice, xargs, time) has that program read as its own, and the wrappers' words for one they could not start are
+// read as a shell's are: GNU coreutils 9 (C and UTF-8 locales, exit 127 for a program not found and 126 for a refusal),
+// GNU time's "cannot run", and the "<wrapper>: <program>: ..." of macOS's nice, nohup and xargs.
+describe('classifyProgramNotFound: a program a wrapper starts', () => {
+  const VENV = '/home/acme/projects/shop/.venv/bin/python';
+
+  it('reads a wrapper\'s "not found" for the program it starts (exit 127)', () => {
+    const cases: [string[], boolean, string, string][] = [
+      [['timeout', '600', 'pytest', '-q'], false, "timeout: failed to run command 'pytest': No such file or directory\n", 'pytest'],
+      [['timeout', '600', 'pytest', '-q'], false, 'timeout: failed to run command ‘pytest’: No such file or directory\n', 'pytest'],
+      [['timeout', '600', VENV, '-m', 'pytest'], false, `timeout: failed to run command '${VENV}': No such file or directory\n`, VENV],
+      [['nohup', VENV, '-m', 'pytest'], false, `nohup: failed to run command '${VENV}': No such file or directory\n`, VENV],
+      [['stdbuf -oL pytest -q'], true, "stdbuf: failed to run command 'pytest': No such file or directory\n", 'pytest'],
+      [['nice -n 5 pytest -q'], true, "nice: 'pytest': No such file or directory\n", 'pytest'],
+      [['echo tests | xargs pytest'], true, 'xargs: pytest: No such file or directory\n', 'pytest'],
+      [['/usr/bin/time', '-v', 'pytest'], false, '/usr/bin/time: cannot run pytest: No such file or directory\n', 'pytest'],
+      [['timeout', '600', 'pytest', '-q'], false, 'orbit-limits: line 0: exec: timeout: not found\n', 'timeout'],
+    ];
+    for (const [command, shell, output, program] of cases) {
+      const f = classifyProgramNotFound(input(command, 127, output, { shell }));
+      expect(f, output).toMatchObject({ signals: ['program-not-found'], program, lines: [output.trim()] });
+    }
+    // A program the command does not start is not its own.
+    expect(classifyProgramNotFound(input(['timeout', '600', 'pytest', '-q'], 127, "timeout: failed to run command 'ruff': No such file or directory\n"))).toBeNull();
+  });
+
+  it('reads a wrapper\'s refusal of the program it starts (exit 126), by its path or the bare name the command starts', () => {
+    const cases: [string[], string, string][] = [
+      [['timeout', '600', VENV, '-m', 'pytest'], `timeout: failed to run command '${VENV}': Operation not permitted\n`, VENV],
+      [['gtimeout', '600', 'pytest', '-q'], "gtimeout: failed to run command 'pytest': Operation not permitted\n", 'pytest'],
+      [['nohup', VENV, '-m', 'pytest'], `nohup: ${VENV}: Operation not permitted\n`, VENV],
+    ];
+    for (const [command, output, program] of cases) {
+      const f = classifyProgramNotFound(input(command, 126, output));
+      expect(f, output).toMatchObject({ signals: ['program-denied'], program, lines: [output.trim()] });
+    }
+    expect(classifyProgramNotFound(input(['gtimeout', '600', 'pytest', '-q'], 126, "gtimeout: failed to run command 'ruff': Operation not permitted\n"))).toBeNull();
+  });
+});
+
+// Third review of the 0.3.0 retest fix: the backstop missed GNU coreutils' words ("failed to run command 'pytest'"), a
+// launcher that does not pass the shell's 127 on (make exits 2, uv 2, turbo 1), a refusal of a bare name by node, Python
+// or a wrapper, uv's two-line "Failed to spawn" with its "Caused by:", a script's own bash prefix ("./x.sh: line 2: ..."),
+// and a program the command names by a relative path that links into a denied folder. Each was filed as a pre-existing
+// failure with a baseline-exception question. Captured under Seatbelt on macOS and with GNU coreutils 9, the paths renamed.
+describe('classifyDeniedFolderProgram: wrappers, launchers that relay another exit, bare names and links', () => {
+  const REPO = '/home/acme/projects/shop';
+  const PARENT = '/home/acme/projects';
+  const PYTEST = `${REPO}/.venv/bin/pytest`;
+  const VENV = `${REPO}/.venv/bin/python`;
+  const SIBLING = `${PARENT}/shop-venv/bin/python`;
+  const folders = {
+    holding: (p: string) => (p === REPO || p.startsWith(`${REPO}/`) ? `the repository (${REPO})` : p === PARENT || p.startsWith(`${PARENT}/`) ? `the folder that holds it (${PARENT})` : null),
+    onPath: (name: string) => (name === 'pytest' ? PYTEST : name === 'node' ? '/usr/local/bin/node' : null),
+    // A committed link the check's cwd holds, ./tools/python -> <parent>/shop-venv/bin/python.
+    relative: (path: string) => (path === './tools/python' || path === 'tools/python' ? SIBLING : null),
+  };
+  const judge = (exitCode: number, output: string, command: string[] = ['eval "$CMD"']) => classifyDeniedFolderProgram(input(command, exitCode, output, { shell: command.length === 1 }), folders);
+
+  it('reads a wrapper\'s or another launcher\'s "not found" for a program in a denied folder, whatever the exit code it passes on', () => {
+    const cases: [number, string, string, string][] = [
+      [127, "timeout: failed to run command 'pytest': No such file or directory\n", 'pytest', "timeout: failed to run command 'pytest': No such file or directory"],
+      [127, 'timeout: failed to run command ‘pytest’: No such file or directory\n', 'pytest', 'timeout: failed to run command ‘pytest’: No such file or directory'],
+      [127, `timeout: failed to run command '${VENV}': No such file or directory\n`, VENV, `timeout: failed to run command '${VENV}': No such file or directory`],
+      [127, `error: cannot spawn ${VENV}: No such file or directory\n`, VENV, `error: cannot spawn ${VENV}: No such file or directory`],
+      [2, 'cd . && pytest -q\n/bin/sh: pytest: command not found\nmake: *** [test] Error 127\n', 'pytest', '/bin/sh: pytest: command not found'],
+      [2, 'pytest -q\nmake: pytest: No such file or directory\nmake: *** [test] Error 1\n', 'pytest', 'make: pytest: No such file or directory'],
+      [1, 'api:test: sh: pytest: command not found\napi:test: ERROR: command finished with error: command (/x/api) npm run test exited (127)\n', 'pytest', 'api:test: sh: pytest: command not found'],
+      [2, 'error: Failed to spawn: `pytest`\n  Caused by: No such file or directory (os error 2)\n', 'pytest', 'error: Failed to spawn: `pytest` Caused by: No such file or directory (os error 2)'],
+      [1, 'Error: spawnSync pytest ENOENT\n    at Object.spawnSync (node:internal/child_process:1120:20)\n', 'pytest', 'Error: spawnSync pytest ENOENT'],
+      [1, "FileNotFoundError: [Errno 2] No such file or directory: 'pytest'\n", 'pytest', "FileNotFoundError: [Errno 2] No such file or directory: 'pytest'"],
+      [1, './scripts/test.sh: line 2: pytest: command not found\n', 'pytest', './scripts/test.sh: line 2: pytest: command not found'],
+    ];
+    for (const [exit, output, program, line] of cases) {
+      const f = judge(exit, output);
+      expect(f, output).toMatchObject({ signals: ['program-not-found'], program, lines: [line] });
+      expect(f!.cause).toContain(`(exit ${exit})`);
+    }
+    // A launcher's "not found" of a name the PATH finds elsewhere, and a tool's own of a file in the repository at another
+    // exit code than the shell's 127, are not this.
+    expect(judge(2, 'make: node: No such file or directory\nmake: *** [test] Error 1\n')).toBeNull();
+    expect(judge(1, `cat: ${REPO}/data.json: No such file or directory\n`)).toBeNull();
+  });
+
+  it('reads a refusal of a bare name by node, Python or a wrapper, uv\'s two lines, and a script\'s own bash prefix', () => {
+    const cases: [number, string, string, string][] = [
+      [1, 'Error: spawnSync pytest EPERM\n    at Object.spawnSync (node:internal/child_process:1120:20)\n', 'pytest', 'Error: spawnSync pytest EPERM'],
+      [1, "Traceback (most recent call last):\nPermissionError: [Errno 1] Operation not permitted: 'pytest'\n", 'pytest', "PermissionError: [Errno 1] Operation not permitted: 'pytest'"],
+      [126, "gtimeout: failed to run command 'pytest': Operation not permitted\n", 'pytest', "gtimeout: failed to run command 'pytest': Operation not permitted"],
+      [126, `timeout: failed to run command '${VENV}': Operation not permitted\n`, VENV, `timeout: failed to run command '${VENV}': Operation not permitted`],
+      [2, `error: Failed to spawn: \`${PYTEST}\`\n  Caused by: Operation not permitted (os error 1)\n`, PYTEST, `error: Failed to spawn: \`${PYTEST}\` Caused by: Operation not permitted (os error 1)`],
+      [126, `./scripts/test.sh: line 2: ${PYTEST}: Operation not permitted\n`, PYTEST, `./scripts/test.sh: line 2: ${PYTEST}: Operation not permitted`],
+    ];
+    for (const [exit, output, program, line] of cases) {
+      const f = judge(exit, output);
+      expect(f, output).toMatchObject({ signals: ['program-denied'], program, lines: [line] });
+    }
+    // A bare name the PATH finds elsewhere is not this.
+    expect(judge(1, 'Error: spawnSync node EPERM\n')).toBeNull();
+  });
+
+  it('reads a refusal of a relative path that links into a denied folder from the check\'s cwd', () => {
+    const output = 'orbit-limits: ./tools/python: Operation not permitted\norbit-limits: line 0: exec: ./tools/python: cannot execute: Operation not permitted\n';
+    const f = judge(126, output, ['./tools/python', '-m', 'pytest']);
+    expect(f).toMatchObject({ signals: ['program-denied'], program: './tools/python', lines: ['orbit-limits: ./tools/python: Operation not permitted'] });
+    expect(f!.cause).toBe(`the sandbox or the operating system refused to start the program "./tools/python" the check runs ("operation not permitted"), which links to "${SIBLING}" in the folder that holds it (${PARENT}), a folder the check sandbox denies`);
+    expect(judge(126, '/bin/sh: ./tools/python: Operation not permitted\n', ['cd . && ./tools/python -m pytest'])?.program).toBe('./tools/python');
+    // One that leads nowhere denied stays the code's.
+    expect(judge(126, '/bin/sh: ./tools/other: Operation not permitted\n', ['./tools/other'])).toBeNull();
+  });
+
+  // A ctest failure is a test that ran and failed, whatever its output quotes; so are a formatter's verdicts.
+  it('stays a code failure for a ctest failure, or a formatter\'s verdict, next to such a refusal', () => {
+    const ctest = `1/1 Test #1: perm .............................***Failed    0.00 sec\nwant: "${REPO}/locked: Operation not permitted"\n got: ""\n\n0% tests passed, 1 tests failed out of 1\n\nThe following tests FAILED:\n\t  1 - perm (Failed)\nErrors while running CTest\n`;
+    expect(judge(8, ctest, ['ctest', '--output-on-failure'])).toBeNull();
+    for (const text of ['1/1 Test #1: perm ....***Failed    0.00 sec', '0% tests passed, 1 tests failed out of 1', 'The following tests FAILED:', 'Oh no! 1 file would be reformatted.', '2 files would be reformatted, 3 files already formatted', '[warn] Code style issues found in the above file. Run Prettier with --write to fix.']) {
+      expect(showsCodeFailure(text), text).toBe(true);
+    }
+    expect(showsCodeFailure('100% tests passed, 0 tests failed out of 3')).toBe(false);
   });
 });
