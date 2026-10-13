@@ -276,7 +276,8 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
 
 /**
  * Every edit a release pinned (`worktree.preserved`, newest per ref) and the checkouts the last release kept, or null
- * when the run's checkouts were never released.
+ * when the run's checkouts were never released and nothing was pinned. A release that failed (or was cut short by a
+ * crash) after it pinned an edit has no `worktrees.released` event, but its pins are on record and are named.
  */
 function worktreesOf(db: OrbitDb, runId: string): NonNullable<FinalReport['worktrees']> | null {
   const data = <T>(type: string): T[] => db.all<{ data_json: string | null }>('SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id', runId, type).flatMap((r) => {
@@ -284,10 +285,10 @@ function worktreesOf(db: OrbitDb, runId: string): NonNullable<FinalReport['workt
     return v === null ? [] : [v];
   });
   const releases = data<Partial<WorktreesReleased>>(WORKTREES_RELEASED_EVENT);
-  if (releases.length === 0) return null;
   const preserved = new Map<string, { worktree: string; ref: string }>();
   for (const p of data<PreservedEdits>(WORKTREE_PRESERVED_EVENT)) preserved.set(p.ref, { worktree: p.worktree, ref: p.ref });
-  const retained = (releases.at(-1)!.retained ?? []).map((r) => ({ worktree: r.worktree, path: r.path, why: r.why }));
+  if (releases.length === 0 && preserved.size === 0) return null;
+  const retained = (releases.at(-1)?.retained ?? []).map((r) => ({ worktree: r.worktree, path: r.path, why: r.why }));
   return { preserved: [...preserved.values()], retained };
 }
 
@@ -295,7 +296,7 @@ function worktreesOf(db: OrbitDb, runId: string): NonNullable<FinalReport['workt
 function worktreeAdvice(w: FinalReport['worktrees'] | null): string {
   if (!w) return '';
   const out: string[] = [];
-  if (w.preserved.length > 0) out.push(`Unfinished edits were pinned in git before their checkouts were removed: ${w.preserved.map((p) => `${p.worktree} at ${p.ref}`).join('; ')} (git checkout <ref> to continue from one).`);
+  if (w.preserved.length > 0) out.push(`Unfinished edits were pinned in git: ${w.preserved.map((p) => `${p.worktree} at ${p.ref}`).join('; ')} (git checkout <ref> to continue from one).`);
   if (w.retained.length > 0) out.push(`${w.retained.length === 1 ? 'A checkout was' : 'Checkouts were'} kept: ${w.retained.map((r) => `${r.path} (${r.why})`).join('; ')}.`);
   return out.length === 0 ? '' : ` ${out.join(' ')}`;
 }

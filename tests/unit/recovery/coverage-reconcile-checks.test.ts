@@ -112,7 +112,8 @@ describe('reconcile: a check of an ended run whose shim identity is in doubt', (
     });
     requestCancel(db, 'r1', 'user', clock);
     const rep = await reconcile(db, clock);
-    expect(rep.runs[0]!.checks[0]).toMatchObject({ observation: 'running', terminated: false, closed: true });
+    // Its row stays open: closing it would let the run's release remove the checkout beneath a check that may still run.
+    expect(rep.runs[0]!.checks[0]).toMatchObject({ observation: 'running', terminated: false, closed: false });
     expect(rep.runs[0]!.checks[0]!.detail).toContain(`process ${s.pid} may be this check's shim, but its identity cannot be established, so it was not signalled`);
     expect(() => process.kill(s.pid, 0)).not.toThrow();
   });

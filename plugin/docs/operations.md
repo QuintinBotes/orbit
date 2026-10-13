@@ -248,7 +248,9 @@ change, say) are listed once under that reason.
 time to green for this repository, read-only. `orbit gc` deletes the run
 directories and worktrees of finished runs that ended more than
 `retention.keep_runs_days` ago (`--keep-days 0`: every finished run now).
-Database rows stay and `BLOCKED` runs are never touched. Use `--dry-run` first.
+Database rows stay and `BLOCKED` runs are never touched. A run whose worktrees
+are still there is released first, its unfinished work pinned in refs, and a run
+whose release keeps a checkout is skipped with why. Use `--dry-run` first.
 A pruned run keeps its record for `orbit status` and `orbit stats`, but `orbit
 verify` and `orbit repair` refuse it with "its files were removed by orbit gc":
 its policy, evidence and candidate are gone.
@@ -424,15 +426,18 @@ Files on disk:
   the repository on purpose. A run that ends `SUCCEEDED`, `CANCELLED`,
   `EXHAUSTED` or `IMPOSSIBLE` removes its worktrees (a `worktrees.released`
   event records what was removed, where each unfinished edit was pinned, and
-  each checkout kept with why). The unfinished edits of every implementer
-  checkout are pinned first: the run's worktree as a candidate, a parallel
-  unit's under `refs/orbit/<run>/unsaved/<worker>` (`git checkout <ref>` to
-  continue from it). A checkout whose edits could not be pinned is kept, and so
-  is one a worker may still be writing in (its stop was not confirmed), until a
-  later controller start confirms it stopped; `orbit gc` skips such a run
-  meanwhile. The report's next action names both. A run that is `BLOCKED` or
-  paused keeps its worktrees until it is resumed to an end or cancelled
-  (`orbit cancel <run-id>`); `orbit gc` does not remove them.
+  each checkout kept with why). The unfinished work of every implementer
+  checkout (edits, and commits made in it that no ref holds) is pinned first:
+  the run's worktree as a candidate, a parallel unit's under
+  `refs/orbit/<run>/unsaved/<worker>` (`git checkout <ref>` to continue from
+  it). A checkout whose work could not be pinned is kept, and so is one a worker
+  may still be writing in (its stop was not confirmed) or a check may still run
+  in, until a later controller start confirms the worker stopped or closes the
+  check. The report's next action names both. A release a crash cut short is
+  finished by the next controller start, and `orbit gc` pins and releases a run
+  before it removes anything, and skips a run whose release keeps a checkout. A
+  run that is `BLOCKED` or paused keeps its worktrees until it is resumed to an
+  end or cancelled (`orbit cancel <run-id>`); `orbit gc` does not remove them.
 
 `<repo>` is the working tree Orbit was started in. Inside a linked worktree
 (`git worktree add`) that is the worktree, not the main working tree: its

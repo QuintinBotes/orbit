@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { processStartTime } from '../../../src/core/proc.ts';
 import type { ProviderAdapter, TaskHandle, TaskResult, TaskSpec, UsageReport, WorkerRole } from '../../../src/adapters/types.ts';
 import { OrbitError } from '../../../src/core/errors.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../../../src/contract/model-outputs.ts';
@@ -234,6 +236,32 @@ describe('ensureWorker: starting can fail', () => {
     const dir = out.worker.workerDir;
     expect(existsSync(join(dir, 'attempts', '1', 'launch.json'))).toBe(true);
     expect(readdirSync(dir)).not.toContain('launch.json');
+  });
+
+  it('a start that fails after its shim was launched stops that shim before the worker is recorded FAILED', async () => {
+    const shim = spawn('sleep', ['60'], { detached: true, stdio: 'ignore' });
+    shim.unref();
+    const procStart = processStartTime(shim.pid!);
+    const adapter = stub({
+      startTask: async (spec) => {
+        // As launchShim leaves it when pid.json never appears: the launch record names a shim that still runs.
+        mkdirSync(spec.workerDir, { recursive: true });
+        writeFileSync(join(spec.workerDir, 'launch.json'), JSON.stringify({ version: 1, provider: 'claude', workerId: spec.workerId, argvHash: 'h', sessionId: null, requestedAt: 1, pid: shim.pid, procStart }));
+        throw new OrbitError('PROVIDER_UNAVAILABLE', 'worker shim did not start');
+      },
+    });
+    lab = makeUnitLab({ adapters: { claude: adapter }, path: ['PREFLIGHT'] });
+    try {
+      await expect(ensureWorker(lab.ctx(), request())).rejects.toMatchObject({ code: 'PROVIDER_UNAVAILABLE' });
+      expect(() => process.kill(shim.pid!, 0)).toThrow();
+      expect(workersFor(lab.ctx(), 'plan:1')[0]?.state).toBe('FAILED');
+    } finally {
+      try {
+        process.kill(-shim.pid!, 'SIGKILL');
+      } catch {
+        /* gone */
+      }
+    }
   });
 
   it('a TRANSITION_INVALID without a launch record is an ordinary failure', async () => {

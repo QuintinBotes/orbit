@@ -27,7 +27,7 @@ import { renderSystemPrompt, ROLE_OUTPUT_KIND } from '../adapters/prompt.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
 import { PROVIDER_HOSTS, profileForWorker, workerAllowedHosts, workerTmpDir } from '../isolation/profiles.ts';
 import { detectToolchains, prepareToolchainLayout, toolchainLayout } from '../isolation/toolchains.ts';
-import { stopWorker } from '../recovery/reconcile.ts';
+import { stopLaunch, stopWorker } from '../recovery/reconcile.ts';
 import { route, toDecisionRecord } from '../routing/router.ts';
 import { allowMatch, fundedSessionCap, tierOf, worstCaseRequestUsd } from '../routing/registry.ts';
 import { recordUsage, routeStats } from '../routing/usage.ts';
@@ -178,10 +178,18 @@ async function spawn(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): Prom
         markWorkerRunning(ctx.db, w.id, { pid: h.pid, pgid: h.pgid, procStart: h.procStart }, ctx.clock, ctx.ownerId);
         return observe(ctx, getWorker(ctx.db, w.id), req);
       }
+      // A shim that never wrote pid.json may still run: it is stopped before a second one starts beside it.
+      if ((await stopLaunch(ctx.timing.killGraceMs, w.workerDir)) === 'unknown') {
+        throw new OrbitError('TRANSITION_INVALID', `worker ${w.id}: the shim of its earlier launch never wrote pid.json and could not be verified or stopped; nothing is started beside it`, { workerId: w.id });
+      }
       archiveAttempt(w.provider, w.workerDir);
       assertMayStart(ctx);
       handle = await adapter.startTask(spec);
     } else {
+      // A launch whose shim never wrote pid.json (launchShim stops one it can identify) must not leave it running: a row
+      // recorded FAILED while it runs on would let its checkout be released beneath it. One that cannot be confirmed
+      // stopped keeps the row PLANNED, for the next observation or recovery to settle.
+      if ((await stopLaunch(ctx.timing.killGraceMs, w.workerDir)) === 'unknown') throw err;
       finishWorker(ctx.db, w.id, { state: 'FAILED', resultStatus: isOrbitError(err, 'AUTH_EXPIRED') || isOrbitError(err, 'AUTH_MISSING') ? 'auth_failed' : 'failed', error: messageOf(err) }, ctx.clock, ctx.ownerId);
       throw err;
     }

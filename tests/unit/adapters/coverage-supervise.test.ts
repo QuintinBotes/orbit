@@ -130,6 +130,33 @@ describe('launchShim', () => {
     expect(clock.now()).toBeGreaterThanOrEqual(1_700_000_000_000 + 15_000);
   });
 
+  it('stops a silent shim by its group, and confirms it ended, before it reports the start failed', async () => {
+    const dir = tmp();
+    let stopped = false;
+    procMock.isAlive.mockImplementation(() => !stopped);
+    procMock.isGroupAlive.mockImplementation(() => !stopped);
+    procMock.terminateGroup.mockImplementation(async () => {
+      stopped = true;
+      return {};
+    });
+    const err = await launchShim(input(dir)).catch((e: unknown) => e);
+    expect(isOrbitError(err, 'PROVIDER_UNAVAILABLE')).toBe(true);
+    expect((err as Error).message).toMatch(/did not start/);
+    expect((err as Error).message).not.toMatch(/could not be confirmed stopped/);
+    expect(procMock.terminateGroup).toHaveBeenCalledWith(4242, expect.any(Number));
+  });
+
+  it('says so when a silent shim could not be confirmed stopped, and never signals one it cannot identify', async () => {
+    const dir = tmp();
+    // Alive, but its start time could not be read when it was spawned: nothing proves the pid is still the shim.
+    procMock.processStartTime.mockReturnValue(null);
+    procMock.isAlive.mockReturnValue(true);
+    const err = await launchShim(input(dir)).catch((e: unknown) => e);
+    expect(isOrbitError(err, 'PROVIDER_UNAVAILABLE')).toBe(true);
+    expect((err as Error).message).toMatch(/did not start.*process 4242 could not be confirmed stopped/);
+    expect(procMock.terminateGroup).not.toHaveBeenCalled();
+  });
+
   it('reattaches instead of spawning a second shim when a launch is already recorded', async () => {
     const dir = tmp();
     mkdirSync(join(dir, 'w'), { recursive: true });

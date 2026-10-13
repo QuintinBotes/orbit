@@ -72,14 +72,20 @@ ends `SUCCEEDED`, `CANCELLED`, `EXHAUSTED` or `IMPOSSIBLE` removes its worktrees
 released by `recovery/release.ts`). Its result is the branch and the candidate
 refs, not the checkout. Every implementer checkout, the run's worktree and each
 `unit-*` worktree of a parallel attempt (found from the worker records), first
-has its unfinished edits pinned in a ref: the run's worktree as a candidate, a
-unit's under `refs/orbit/<run>/unsaved/<worker>` (a `worktree.preserved` event
-each). A checkout whose edits could not be pinned is kept, and so is one a
-worker may still be writing in (its stop was not confirmed) until a later
-controller start confirms it stopped; `orbit gc` does not prune such a run
-meanwhile. `BLOCKED` and paused runs keep their worktrees, since they may resume,
-until the run is resumed to an end or cancelled (`orbit cancel <run-id>`);
-`orbit gc` never touches them.
+has its unfinished work pinned in a ref, edits and any commit made in the
+checkout that no ref holds: the run's worktree as a candidate, a unit's under
+`refs/orbit/<run>/unsaved/<worker>` (a `worktree.preserved` event each). A
+checkout whose work could not be pinned is kept, and so is one a worker may
+still be writing in (its stop was not confirmed, including a shim that was
+launched but never wrote `pid.json`) or a check may still run in (its row is
+open), until a later controller start confirms the worker stopped or closes the
+check. A release that a crash or a failure cut short, or that kept a checkout,
+is tried again at the next controller start (`recovery/release.ts`
+`releaseDue`, under the run's lease), and `orbit gc` releases a run the same
+way before it removes anything, skipping a run whose release keeps a checkout.
+`BLOCKED` and paused runs keep their worktrees, since they may resume, until
+the run is resumed to an end or cancelled (`orbit cancel <run-id>`); `orbit gc`
+never touches them.
 
 The plugin is the `plugin/` directory of the repository, not the repository root
 (`docs/decisions/0006-plugin-packaging.md`): the bundle `plugin/dist/orbit.mjs`,

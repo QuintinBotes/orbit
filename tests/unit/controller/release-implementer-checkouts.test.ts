@@ -9,11 +9,14 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { worktreeRootFor } from '../../../src/controller/context.ts';
-import { acquireLease, getRun } from '../../../src/controller/run-store.ts';
+import { writeFinalReport } from '../../../src/controller/report.ts';
+import { acquireLease, getRun, transition } from '../../../src/controller/run-store.ts';
 import { finishRun } from '../../../src/controller/steps/common.ts';
+import { WORKTREE_PRESERVED_EVENT } from '../../../src/controller/worktree-cleanup.ts';
 import { processStartTime } from '../../../src/core/proc.ts';
-import { materializeCandidate } from '../../../src/evidence/candidate.ts';
+import { materializeCandidate, snapshotCandidate } from '../../../src/evidence/candidate.ts';
 import { reconcileOnStart } from '../../../src/recovery/reconcile.ts';
+import { appendEvent } from '../../../src/storage/events.ts';
 import { pruneExpiredRuns } from '../../../src/storage/retention.ts';
 import { finishWorker, getWorker, markWorkerRunning, planWorker } from '../../../src/storage/workers.ts';
 import { counters } from '../recovery/helpers.ts';
@@ -294,5 +297,257 @@ describe('a checkout whose writer may still run is never released', () => {
     expect(out.pruned).toEqual([]);
     expect(out.skipped).toEqual([expect.objectContaining({ runId: lab.runId, reason: expect.stringMatching(/wrk-live/) })]);
     expect(existsSync(main)).toBe(true);
+  });
+});
+
+const isAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** The run ends with nothing released, as when its controller died between the terminal transition and the release. */
+function endedWithoutRelease(l: UnitLab): void {
+  transition(l.db, { runId: l.runId, to: 'EXHAUSTED', ownerId: OWNER, reason: WALL }, l.clock);
+}
+
+describe('a release a crash or a failure interrupted is resumed, and orbit gc never deletes unpinned work', () => {
+  it('a controller start after a crash between the terminal transition and the release releases the run, its unit edits pinned first', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const { base, root } = await repoWithImplementer(lab);
+    const u1 = await unitCheckout(lab, root, base, 'u1');
+    implementer(lab, 'wrk-u1', u1, 'implement:1/u1#1', 'finished');
+    writeFileSync(join(u1, 'apps', 'mul.mjs'), 'export const mul = (a, b) => a * b;\n');
+    endedWithoutRelease(lab);
+    // The dead controller's lease has expired by the time the next one starts.
+    lab.clock.advance(2 * 3_600_000);
+
+    await reconcileOnStart({ db: lab.db, ownerId: 'ctl-2', clock: lab.clock, adapters: {}, graceMs: 50, orbitHome: lab.home });
+
+    const ref = `refs/orbit/${lab.runId}/unsaved/wrk-u1`;
+    expect(git(lab.repo, 'show', `${ref}:apps/mul.mjs`)).toContain('mul');
+    expect(existsSync(u1)).toBe(false);
+    expect(existsSync(root)).toBe(false);
+    expect(released()).toEqual([expect.objectContaining({ removed: expect.arrayContaining(['unit-1-u1', 'implementer']), kept: [] })]);
+    // The report written after that start names the pinned ref.
+    writeFinalReport(lab.db, lab.runId, { runDir: lab.ctx().runDir, clock: lab.clock, snapshot: null });
+    expect(final().next_action).toContain(ref);
+  });
+
+  it('a controller start leaves the release to the controller that still holds the run lease', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const { base, root } = await repoWithImplementer(lab);
+    const u1 = await unitCheckout(lab, root, base, 'u1');
+    implementer(lab, 'wrk-u1', u1, 'implement:1/u1#1', 'finished');
+    writeFileSync(join(u1, 'apps', 'mul.mjs'), 'export const mul = (a, b) => a * b;\n');
+    // The owner is between the transition and its own release, and its lease is live.
+    endedWithoutRelease(lab);
+
+    await reconcileOnStart({ db: lab.db, ownerId: 'ctl-2', clock: lab.clock, adapters: {}, graceMs: 50, orbitHome: lab.home });
+
+    expect(existsSync(u1)).toBe(true);
+    expect(released()).toEqual([]);
+  });
+
+  it('the report names an edit a release pinned before it failed, though no release completed', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    endedWithoutRelease(lab);
+    const ref = `refs/orbit/${lab.runId}/unsaved/wrk-u1`;
+    lab.db.tx(() => appendEvent(lab!.db, lab!.runId, WORKTREE_PRESERVED_EVENT, OWNER, { worktree: 'unit-1-u1', ref, commit: 'c'.repeat(40), worker_id: 'wrk-u1' }, lab!.clock.now()));
+
+    writeFinalReport(lab.db, lab.runId, { runDir: lab.ctx().runDir, clock: lab.clock, snapshot: null });
+
+    const report = JSON.parse(readFileSync(join(lab.ctx().runDir, 'final.json'), 'utf8')) as { next_action: string; worktrees?: { preserved: { ref: string }[] } };
+    expect(report.worktrees?.preserved).toEqual([{ worktree: 'unit-1-u1', ref }]);
+    expect(report.next_action).toContain(`unit-1-u1 at ${ref}`);
+  });
+
+  it('orbit gc pins the unfinished edits of a run whose release never ran before it removes anything', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const { base, root, main } = await repoWithImplementer(lab);
+    const u1 = await unitCheckout(lab, root, base, 'u1');
+    implementer(lab, 'wrk-u1', u1, 'implement:1/u1#1', 'finished');
+    implementer(lab, 'wrk-main', main, 'implement:1#1', 'finished');
+    writeFileSync(join(u1, 'apps', 'mul.mjs'), 'export const mul = (a, b) => a * b;\n');
+    writeFileSync(join(main, 'apps', 'wip.mjs'), 'export const wip = true;\n');
+    endedWithoutRelease(lab);
+    lab.db.run('DELETE FROM leases WHERE run_id = ?', lab.runId);
+    lab.clock.advance(60_000);
+
+    const out = await pruneExpiredRuns(lab.db, { repoRoot: lab.repo, keepDays: 0, clock: lab.clock, orbitHome: lab.home });
+
+    expect(out.pruned.map((p) => p.runId)).toEqual([lab.runId]);
+    expect(git(lab.repo, 'show', `refs/orbit/${lab.runId}/unsaved/wrk-u1:apps/mul.mjs`)).toContain('mul');
+    expect(git(lab.repo, 'show', `refs/orbit/${lab.runId}/candidates/1:apps/wip.mjs`)).toContain('wip');
+    expect(existsSync(root)).toBe(false);
+    expect(released()).toEqual([expect.objectContaining({ kept: [] })]);
+  });
+
+  it('orbit gc keeps a run whose checkout could not be pinned, and says why', async () => {
+    if (process.getuid?.() === 0) return; // root reads a mode-000 file, so the snapshot would not fail
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const { base, root } = await repoWithImplementer(lab);
+    const u1 = await unitCheckout(lab, root, base, 'u1');
+    implementer(lab, 'wrk-u1', u1, 'implement:1/u1#1', 'finished');
+    writeFileSync(join(u1, 'apps', 'mul.mjs'), 'export const mul = (a, b) => a * b;\n');
+    const unreadable = join(u1, 'apps', 'secret.mjs');
+    writeFileSync(unreadable, 'export const secret = 1;\n');
+    chmodSync(unreadable, 0o000);
+    await finishRun(lab.ctx(), 'EXHAUSTED', WALL);
+    expect(released().at(-1)!.retained).toEqual([expect.objectContaining({ worktree: 'unit-1-u1', cause: 'preservation-failed' })]);
+    lab.db.run('DELETE FROM leases WHERE run_id = ?', lab.runId);
+    lab.clock.advance(60_000);
+
+    const out = await pruneExpiredRuns(lab.db, { repoRoot: lab.repo, keepDays: 0, clock: lab.clock, orbitHome: lab.home });
+
+    expect(out.pruned).toEqual([]);
+    expect(out.skipped).toEqual([expect.objectContaining({ runId: lab.runId, reason: expect.stringMatching(/unit-1-u1.*could not be preserved/) })]);
+    expect(existsSync(join(u1, 'apps', 'mul.mjs'))).toBe(true);
+    expect(existsSync(lab.ctx().runDir)).toBe(true);
+    chmodSync(unreadable, 0o644);
+  });
+});
+
+describe('an implementer that committed in its checkout', () => {
+  const commitAll = (dir: string, message: string): string => {
+    git(dir, 'add', '-A');
+    git(dir, '-c', 'user.name=w', '-c', 'user.email=w@example.invalid', 'commit', '-q', '-m', message);
+    return git(dir, 'rev-parse', 'HEAD');
+  };
+
+  it('a unit checkout: the commit only its HEAD held is pinned before the checkout is removed', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const { base, root } = await repoWithImplementer(lab);
+    const u1 = await unitCheckout(lab, root, base, 'u1');
+    implementer(lab, 'wrk-u1', u1, 'implement:1/u1#1', 'finished');
+    writeFileSync(join(u1, 'apps', 'mul.mjs'), 'export const mul = (a, b) => a * b;\n');
+    const sha = commitAll(u1, 'unit work');
+
+    await finishRun(lab.ctx(), 'EXHAUSTED', WALL);
+
+    const ref = `refs/orbit/${lab.runId}/unsaved/wrk-u1`;
+    expect(git(lab.repo, 'show', `${ref}:apps/mul.mjs`)).toContain('mul');
+    expect(git(lab.repo, 'for-each-ref', '--contains', sha, '--format=%(refname)')).toContain(ref);
+    expect(existsSync(u1)).toBe(false);
+  });
+
+  it('the main checkout: committed work is saved as a candidate before the checkout is removed', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const { main } = await repoWithImplementer(lab);
+    implementer(lab, 'wrk-main', main, 'implement:1#1', 'finished');
+    writeFileSync(join(main, 'apps', 'mul.mjs'), 'export const mul = (a, b) => a * b;\n');
+    commitAll(main, 'main work');
+    const tree = git(main, 'rev-parse', 'HEAD^{tree}');
+
+    await finishRun(lab.ctx(), 'CANCELLED', 'cancelled by request');
+
+    const ref = `refs/orbit/${lab.runId}/candidates/1`;
+    expect(git(lab.repo, 'rev-parse', `${ref}^{tree}`)).toBe(tree);
+    expect(existsSync(main)).toBe(false);
+  });
+
+  it('a clean checkout whose HEAD a candidate ref already holds gains no new ref', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const { base, main } = await repoWithImplementer(lab);
+    implementer(lab, 'wrk-main', main, 'implement:1#1', 'finished');
+    writeFileSync(join(main, 'apps', 'mul.mjs'), 'export const mul = (a, b) => a * b;\n');
+    const cand = await snapshotCandidate({ db: lab.db, clock: lab.clock, repoRoot: lab.repo, worktree: main, runId: lab.runId, baseRev: base, attempt: 1, workerId: null });
+    // As after a CI rebase: the run's worktree moved onto the candidate.
+    git(main, 'reset', '-q', '--hard', cand.commitSha);
+
+    await finishRun(lab.ctx(), 'CANCELLED', 'cancelled by request');
+
+    expect(git(lab.repo, 'for-each-ref', '--format=%(refname)', `refs/orbit/${lab.runId}/`)).toBe(`refs/orbit/${lab.runId}/candidates/1`);
+    expect(released().at(-1)!.preserved).toEqual([]);
+    expect(existsSync(main)).toBe(false);
+  });
+});
+
+describe('a worker whose shim was launched but has not written pid.json yet', () => {
+  /** A PLANNED worker whose launch.json names `proc` (its shim, starting), with no pid.json. */
+  function starting(l: UnitLab, id: string, cwd: string, proc: { pid: number; start: string }, requestedAt: number): void {
+    const workerDir = join(l.base, 'workers', id);
+    mkdirSync(workerDir, { recursive: true });
+    planWorker(l.db, { id, runId: l.runId, role: 'implementer', purpose: 'implement:1/u1#1', provider: 'claude', workerDir, cwd, attempt: 1 }, l.clock);
+    writeFileSync(join(workerDir, 'launch.json'), JSON.stringify({ version: 1, provider: 'claude', workerId: id, argvHash: 'h', sessionId: null, requestedAt, pid: proc.pid, procStart: proc.start }));
+  }
+
+  it('finishRun stops that shim and confirms it ended before the checkout is released', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const { base, root } = await repoWithImplementer(lab);
+    const u1 = await unitCheckout(lab, root, base, 'u1');
+    const shim = sleeper();
+    starting(lab, 'wrk-starting', u1, shim, lab.clock.now());
+
+    await finishRun(lab.ctx(), 'EXHAUSTED', WALL);
+
+    expect(isAlive(shim.pid)).toBe(false);
+    expect(getWorker(lab.db, 'wrk-starting').state).toBe('CANCELLED');
+    expect(existsSync(u1)).toBe(false);
+  });
+
+  it('reconciliation that ends a crashed run stops a starting shim before its checkout is released', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const { base, root } = await repoWithImplementer(lab);
+    const u1 = await unitCheckout(lab, root, base, 'u1');
+    const shim = sleeper();
+    await crashedRunOutOfRecovery(lab);
+    starting(lab, 'wrk-starting', u1, shim, lab.clock.now());
+
+    await reconcileOnStart({ db: lab.db, ownerId: 'ctl-2', clock: lab.clock, adapters: {}, graceMs: 50, orbitHome: lab.home });
+
+    expect(getRun(lab.db, lab.runId).state).toBe('EXHAUSTED');
+    expect(isAlive(shim.pid)).toBe(false);
+    expect(getWorker(lab.db, 'wrk-starting').state).toBe('CANCELLED');
+    expect(existsSync(u1)).toBe(false);
+  });
+
+  it('reconciliation stops a shim that never wrote pid.json before it plans a restart beside it', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    counters(lab.db, lab.runId, { recovery_attempts: 3 });
+    const { base, root } = await repoWithImplementer(lab);
+    const u1 = await unitCheckout(lab, root, base, 'u1');
+    const shim = sleeper();
+    // Launched a minute ago, long past the start grace: the launch is lost, but its shim still runs.
+    starting(lab, 'wrk-stuck', u1, shim, lab.clock.now() - 60_000);
+
+    const rep = await reconcileOnStart({ db: lab.db, ownerId: OWNER, clock: lab.clock, adapters: {}, graceMs: 50, orbitHome: lab.home });
+
+    expect(isAlive(shim.pid)).toBe(false);
+    expect(rep.runs[0]!.workers[0]).toMatchObject({ workerId: 'wrk-stuck', observation: 'lost', restartPlanned: true });
+  });
+});
+
+describe('a check still running in its checkout', () => {
+  it('the release keeps the checkout of an open check run, and a later controller start releases it once the check is closed', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const { base, root } = await repoWithImplementer(lab);
+    const chk = join(root, 'check-1');
+    await materializeCandidate(lab.repo, base, chk, { readOnly: false });
+    const check = sleeper();
+    lab.db.run(
+      "INSERT INTO check_runs (id, run_id, check_id, kind, tree_hash, check_config_hash, policy_hash, command_json, cwd, isolation, status, pid, started_at) VALUES ('cr-1', ?, 'unit', 'test', 't', 'h', 'p', '[]', ?, 'none', 'RUNNING', ?, ?)",
+      lab.runId,
+      chk,
+      check.pid,
+      lab.clock.now(),
+    );
+
+    await finishRun(lab.ctx(), 'EXHAUSTED', WALL);
+
+    expect(existsSync(chk)).toBe(true);
+    expect(released().at(-1)!.retained).toEqual([expect.objectContaining({ worktree: 'check-1', cause: 'active-check', why: expect.stringMatching(/cr-1/) })]);
+    expect(final().next_action).toContain(chk);
+
+    // The next controller start closes the check (it left no shim records, so recovery finds nothing of it to stop) and releases the checkout.
+    lab.clock.advance(2 * 3_600_000);
+    await reconcileOnStart({ db: lab.db, ownerId: 'ctl-2', clock: lab.clock, adapters: {}, graceMs: 50, orbitHome: lab.home });
+
+    expect(lab.db.get<{ status: string }>("SELECT status FROM check_runs WHERE id = 'cr-1'")!.status).toBe('CANCELLED');
+    expect(existsSync(chk)).toBe(false);
+    expect(released().at(-1)!).toMatchObject({ removed: ['check-1'], kept: [] });
   });
 });

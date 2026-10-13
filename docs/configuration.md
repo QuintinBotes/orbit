@@ -1057,19 +1057,24 @@ runs that ended (`SUCCEEDED`, `EXHAUSTED`, `IMPOSSIBLE` or `CANCELLED`) more tha
 that many days ago. `orbit gc --keep-days 0` prunes every finished run now. The
 database rows stay and are marked with a `run.artifacts_pruned` event. A
 `BLOCKED` run is never pruned, and neither is a run whose controller still holds
-its lease.
+its lease. A run whose worktrees are still there is released first, the way its
+end releases it (below), so its unfinished work is pinned in refs before
+anything is deleted; a run whose release keeps a checkout is skipped with why.
 
 Worktrees are separate from retention. A run that ends `SUCCEEDED`,
 `CANCELLED`, `EXHAUSTED` or `IMPOSSIBLE` removes its own worktrees when it ends,
 since its result is the branch and the candidate refs
 (`refs/orbit/<run>/candidates/<n>`), not the checkout, and none of these states
 has a way back. Nothing is lost: every implementer checkout first has its
-unfinished edits (tracked changes and untracked files the repository does not
-ignore) pinned in a ref, the run's worktree as a candidate and each parallel
-unit's worktree under `refs/orbit/<run>/unsaved/<worker>`; a checkout whose
-edits could not be pinned is kept. A checkout a worker may still be writing in
-(stopping it was not confirmed) is kept too, until a later controller start
-confirms the worker stopped, and `orbit gc` skips the run until then. The final
+unfinished work (tracked changes, untracked files the repository does not
+ignore, and commits made in the checkout that no ref holds) pinned in a ref, the
+run's worktree as a candidate and each parallel unit's worktree under
+`refs/orbit/<run>/unsaved/<worker>`; a checkout whose work could not be pinned
+is kept. A checkout a worker may still be writing in (stopping it was not
+confirmed) or a check may still run in is kept too, until a later controller
+start confirms the worker stopped or closes the check, and `orbit gc` skips the
+run until then. A release that a crash cut short is finished by the next
+controller start, or by `orbit gc` before it removes anything. The final
 report of an `EXHAUSTED` run therefore sends a person to the latest candidate
 ref and the evidence under `.orbit/runs/<id>`, not to a worktree, and its next
 action names every pinned ref and every kept checkout with why. A run that

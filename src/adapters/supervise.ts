@@ -121,16 +121,19 @@ export async function launchShim(input: LaunchInput): Promise<TaskHandle> {
   });
   const shimLog = join(input.workerDir, SHIM_LOG_FILE);
   const { pid } = spawnDetached([...input.shimCommand, ...args], { cwd: input.cwd, env: input.env, stdoutPath: shimLog, stderrPath: shimLog });
-  recordShimIdentity(input.workerDir, launch, pid);
+  const procStart = recordShimIdentity(input.workerDir, launch, pid);
   const handle = await waitForHandle(input.provider, input.workerDir, pid, clock);
   if (handle) return handle;
   // The shim never wrote pid.json: it failed on its arguments or could not
-  // start at all. Its log says why.
-  throw new OrbitError('PROVIDER_UNAVAILABLE', `worker shim for ${input.workerId} did not start (see ${shimLog})`, { workerId: input.workerId, shimLog });
+  // start at all (its log says why), or it hangs. One that still runs is
+  // stopped first: the caller records a worker that never started, and
+  // nothing of it may go on running in the checkout.
+  const stopped = (await stopLaunchedShim(pid, procStart, input.graceMs ?? DEFAULT_STOP_GRACE_MS)) !== 'unknown';
+  throw new OrbitError('PROVIDER_UNAVAILABLE', `worker shim for ${input.workerId} did not start (see ${shimLog})${stopped ? '' : `; its process ${pid} could not be confirmed stopped`}`, { workerId: input.workerId, shimLog, ...(stopped ? {} : { shimPid: pid }) });
 }
 
-/** Add the shim's pid and start time to launch.json (atomic rewrite of the record written before the spawn). */
-function recordShimIdentity(workerDir: string, launch: LaunchRecord, pid: number): void {
+/** Add the shim's pid and start time to launch.json (atomic rewrite of the record written before the spawn); returns the start time. */
+function recordShimIdentity(workerDir: string, launch: LaunchRecord, pid: number): string | null {
   let procStart: string | null = null;
   try {
     procStart = processStartTime(pid);
@@ -138,6 +141,53 @@ function recordShimIdentity(workerDir: string, launch: LaunchRecord, pid: number
     procStart = null;
   }
   atomicWriteJson(join(workerDir, LAUNCH_FILE), { ...launch, pid, procStart }, 0o600);
+  return procStart;
+}
+
+const DEFAULT_STOP_GRACE_MS = 2_000;
+
+/**
+ * What runs of a shim that was spawned (launch.json names its pid) but never wrote pid.json: 'ours' while that very
+ * process runs (its recorded start time matches) or its process group outlived it (a pid is not reused while a group
+ * of that id exists, so the members are what it started), 'gone' when neither does (a live process with that pid but
+ * another start time is a recycled pid, and the shim's group ended before it could be reused). 'unknown' when a process
+ * holds the pid and nothing proves it is the shim (no start time was recorded, and `unrecordedStart` cannot tell), or
+ * the process table cannot be read: such a process is never signalled, and never taken for gone either.
+ */
+export function launchedShimState(pid: number, procStart: string | null, unrecordedStart?: (pid: number) => 'ours' | 'foreign' | 'gone' | 'unknown'): 'ours' | 'gone' | 'unknown' {
+  let running: boolean;
+  try {
+    running = isAlive(pid);
+    if (running && procStart !== null) return isAlive(pid, procStart) ? 'ours' : 'gone';
+  } catch {
+    return 'unknown';
+  }
+  if (running) {
+    const own = unrecordedStart?.(pid) ?? 'unknown';
+    if (own === 'ours' || own === 'unknown') return own;
+    if (own === 'foreign') return 'gone';
+  }
+  try {
+    return isGroupAlive(pid) ? 'ours' : 'gone';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * Stop a launched shim that never wrote pid.json, by its process group (it leads its own, and its provider runs in it),
+ * and confirm nothing of it runs any more: 'gone' when nothing did, 'stopped' when it ended, 'unknown' when it could not
+ * be identified (it is not signalled) or did not end.
+ */
+export async function stopLaunchedShim(pid: number, procStart: string | null, graceMs: number, unrecordedStart?: (pid: number) => 'ours' | 'foreign' | 'gone' | 'unknown'): Promise<'gone' | 'stopped' | 'unknown'> {
+  const first = launchedShimState(pid, procStart, unrecordedStart);
+  if (first !== 'ours') return first;
+  try {
+    await terminateGroup(pid, graceMs);
+  } catch {
+    return 'unknown';
+  }
+  return launchedShimState(pid, procStart, unrecordedStart) === 'gone' ? 'stopped' : 'unknown';
 }
 
 /**

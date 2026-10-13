@@ -14,7 +14,7 @@ import { acquireLease, getRun, listRuns, type RunRecord } from '../controller/ru
 import { ROLE_OUTPUT_KIND } from '../adapters/prompt.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
 import { EXIT_FILE, readExitRecord, readPidRecord } from '../adapters/shim.ts';
-import { LAUNCH_FILE, archiveAttempt, cancelShim, handleFromWorkerDir, taskState, type LaunchRecord, type TaskState } from '../adapters/supervise.ts';
+import { LAUNCH_FILE, archiveAttempt, cancelShim, handleFromWorkerDir, stopLaunchedShim, taskState, type LaunchRecord, type TaskState } from '../adapters/supervise.ts';
 import type { ProviderAdapter, TaskHandle, TaskResult, TaskStatus } from '../adapters/types.ts';
 import { ActionLedger } from '../delivery/actions.ts';
 import { finishCheckRun, isFinalCheckStatus } from '../evidence/store.ts';
@@ -22,7 +22,7 @@ import { closeInterruptedProbes } from '../evidence/fail-before.ts';
 import { readJsonFile, shimPath, type ShimExit, type ShimIntent, type ShimLaunch, type ShimPid } from '../evidence/check-shim.ts';
 import { APP_STATE_FILE, reconcileApp, type ReconcileOutcome } from '../ui/app-fixture.ts';
 import type { Logger } from '../core/log.ts';
-import { releaseAwaitsTermination, releaseEndedRunWorktrees } from './release.ts';
+import { releaseEndedRunWorktrees, releaseIfDue } from './release.ts';
 import { enterRecovery, exhaustRecovery, recoveryAttemptsRemaining, spendRecoveryAttempt, type EnterRecoveryOutcome, type LedgerFor } from './budget.ts';
 import { classifyFailure, decideRetry } from './backoff.ts';
 import { groupOwnership, processOwnership } from './identity.ts';
@@ -131,6 +131,8 @@ export interface RunReconcileReport {
   probes: string[];
   apps: AppReport[];
   actions: ActionReport[];
+  /** This pass released the run's checkouts (a `worktrees.released` event was recorded), so a report written before is stale. */
+  worktreesReleased: boolean;
 }
 
 export interface ReconcileReport {
@@ -291,7 +293,7 @@ function note(ctx: Ctx, runId: string, type: string, data: unknown): void {
 async function reconcileRun(ctx: Ctx, initial: RunRecord): Promise<RunReconcileReport> {
   const { db } = ctx;
   let run = initial;
-  const rep: RunReconcileReport = { runId: run.id, state: run.state, skipped: null, recovery: null, workers: [], checks: [], probes: [], apps: [], actions: [] };
+  const rep: RunReconcileReport = { runId: run.id, state: run.state, skipped: null, recovery: null, workers: [], checks: [], probes: [], apps: [], actions: [], worktreesReleased: false };
   const ended = isRunTerminal(run.state);
 
   if (!ended) {
@@ -363,9 +365,13 @@ async function reconcileRun(ctx: Ctx, initial: RunRecord): Promise<RunReconcileR
     });
   }
   // Workers and checks are stopped by now; the run's result lives in its candidate refs, so its checkouts go (finishRun does the same).
-  // A checkout an earlier release kept for a worker that might still be writing goes too, once that worker is confirmed stopped.
-  if (ctx.exhausted.has(run.id) || (isRunTerminal(run.state) && releaseAwaitsTermination(db, run.id))) {
-    await releaseEndedRunWorktrees({ db, clock: ctx.clock, ownerId: ctx.ownerId, runId: run.id, orbitHome: ctx.opts.orbitHome, log: ctx.opts.log });
+  if (ctx.exhausted.has(run.id)) {
+    rep.worktreesReleased = (await releaseEndedRunWorktrees({ db, clock: ctx.clock, ownerId: ctx.ownerId, runId: run.id, orbitHome: ctx.opts.orbitHome, log: ctx.opts.log })) !== null;
+  } else if (isRunTerminal(run.state)) {
+    // A release that never completed (the controller died between the terminal transition and the release, or the release
+    // failed) is resumed, and one that kept a checkout is tried again (its worker or check has ended, or its edits may pin
+    // now), under the run's lease.
+    rep.worktreesReleased = await releaseIfDue({ db, clock: ctx.clock, ownerId: ctx.ownerId, runId: run.id, orbitHome: ctx.opts.orbitHome, leaseTtlMs: ctx.leaseTtlMs, log: ctx.opts.log });
   }
   return rep;
 }
@@ -450,7 +456,16 @@ async function reconcileWorker(ctx: Ctx, run: RunRecord, w: WorkerRecord, stop: 
     case 'unlaunched':
     case 'starting': {
       if (stop) {
-        finish(ctx, w.id, { state: 'CANCELLED', resultStatus: 'cancelled', error: `never started: ${why}` });
+        // A starting shim (spawned, pid.json not written yet) is stopped first: a row finished while it runs on would let
+        // its checkout be released beneath it, and nothing would ever stop it.
+        const shim = await stopLaunch(ctx.graceMs, w.workerDir);
+        if (shim === 'unknown') {
+          rep.observation = obs.kind;
+          rep.detail = `the shim its launch record names has not written pid.json and could not be verified or stopped (${why}); left ${w.state} for a later pass`;
+          note(ctx, w.runId, 'recovery.stop-unconfirmed', { worker_id: w.id, reason: why });
+          break;
+        }
+        finish(ctx, w.id, { state: 'CANCELLED', resultStatus: 'cancelled', error: shim === 'stopped' ? `its starting shim was stopped: ${why}` : `never started: ${why}` });
         rep.observation = 'orphan-terminated';
         rep.state = 'CANCELLED';
         break;
@@ -569,6 +584,20 @@ async function restartOrGiveUp(ctx: Ctx, run: RunRecord, w: WorkerRecord, obs: O
       return;
     }
     if (proc === 'stopped') rep.detail = `the worker's files were gone but its recorded process ${w.pid} was still running; its group was stopped`;
+  }
+
+  if (!handle) {
+    // No pid.json, but the launch record may name the shim that was spawned (one that hung or died before writing it):
+    // one still running must end before a restart beside it, or a finished row that lets its checkout be released.
+    const shim = await stopLaunch(ctx.graceMs, w.workerDir);
+    if (shim === 'unknown') {
+      rep.state = w.state;
+      rep.restartRefused = 'archive-failed';
+      rep.detail = `the shim its launch record names never wrote pid.json and may still run, but could not be verified or stopped; left ${w.state} for a later pass`;
+      note(ctx, w.runId, 'recovery.restart-refused', { worker_id: w.id, reason: 'unverified-process' });
+      return;
+    }
+    if (shim === 'stopped') rep.detail = 'the shim never wrote pid.json but was still running; its group was stopped';
   }
 
   if (handle && obs.task?.state === 'lost' && obs.task.orphans) {
@@ -717,10 +746,34 @@ export async function stopWorker(
     } catch {
       result = null;
     }
-  } else if ((await stopRowProcess(graceMs, worker)) === 'unknown') {
-    throw new OrbitError('TRANSITION_INVALID', `worker ${worker.id} has no pid.json and its recorded process ${worker.pid} could not be verified or stopped; it stays ${worker.state} with a cancellation request`, { workerId: worker.id });
+  } else {
+    // No pid.json: a shim its launch record names may still be starting (a PLANNED row has no pid of its own yet).
+    if ((await stopLaunch(graceMs, worker.workerDir)) === 'unknown') {
+      throw new OrbitError('TRANSITION_INVALID', `worker ${worker.id} has no pid.json and the shim its launch record names could not be verified or stopped; it stays ${worker.state} with a cancellation request`, { workerId: worker.id });
+    }
+    if ((await stopRowProcess(graceMs, worker)) === 'unknown') {
+      throw new OrbitError('TRANSITION_INVALID', `worker ${worker.id} has no pid.json and its recorded process ${worker.pid} could not be verified or stopped; it stays ${worker.state} with a cancellation request`, { workerId: worker.id });
+    }
   }
   return finishWorker(ctx.db, worker.id, { state: 'CANCELLED', resultStatus: 'cancelled', exitCode: result?.exitCode ?? null, result, error: reason }, ctx.clock, ctx.ownerId);
+}
+
+/**
+ * Stop the shim a worker's launch record names while its pid.json is missing (a shim still starting, or one that hung
+ * or died before writing it), and confirm it ended: 'none' when the record names no spawned shim, otherwise
+ * stopLaunchedShim's answer ('unknown': it may still run). A record without a start time judges the process by when the
+ * launch was requested (recovery/identity), as a check shim is.
+ */
+export async function stopLaunch(graceMs: number, workerDir: string): Promise<'none' | 'gone' | 'stopped' | 'unknown'> {
+  let launch: LaunchRecord | null;
+  try {
+    launch = readJsonIfExists<LaunchRecord>(join(workerDir, LAUNCH_FILE));
+  } catch {
+    launch = null;
+  }
+  if (!launch || typeof launch.pid !== 'number' || typeof launch.requestedAt !== 'number') return 'none';
+  const requestedAt = launch.requestedAt;
+  return stopLaunchedShim(launch.pid, launch.procStart ?? null, graceMs, (pid) => processOwnership(pid, requestedAt));
 }
 
 // ---------------------------------------------------------------------------
@@ -763,6 +816,8 @@ async function reconcileChecks(ctx: Ctx, run: RunRecord): Promise<CheckReport[]>
   const out: CheckReport[] = [];
   for (const row of open) {
     const rep: CheckReport = { checkRunId: row.id, runId: run.id, checkId: row.check_id, observation: 'running', closed: false, terminated: false, detail: null };
+    // A check that may still run is not closed: its open row is what keeps the run's release from removing its checkout.
+    let mayRun = false;
     const found = dirs.get(row.id);
     if (!found) {
       rep.observation = 'not-started';
@@ -786,7 +841,8 @@ async function reconcileChecks(ctx: Ctx, run: RunRecord): Promise<CheckReport[]>
           rep.terminated = await stopCheck(ctx, dir, shimPid, () => shimIdentity(shimPid, shimStart, startedAt ?? intent.writtenAt) === 'ours', childPgid);
           rep.observation = 'orphan-terminated';
         } else if (ended) {
-          rep.detail = `process ${shimPid} may be this check's shim, but its identity cannot be established, so it was not signalled`;
+          mayRun = true;
+          rep.detail = `process ${shimPid} may be this check's shim, but its identity cannot be established, so it was not signalled; its row stays open for a later pass`;
         }
       } else if (shimPid === null) {
         rep.observation = 'not-started';
@@ -796,7 +852,7 @@ async function reconcileChecks(ctx: Ctx, run: RunRecord): Promise<CheckReport[]>
         if (childPgid !== null && startedAt !== null) rep.terminated = await stopOrphanGroup(ctx, childPgid, startedAt);
       }
     }
-    if (ended && !isFinalCheckStatus(row.status)) {
+    if (ended && !mayRun && !isFinalCheckStatus(row.status)) {
       finishCheckRun(db, row.id, {
         status: 'CANCELLED',
         exitCode: null,
