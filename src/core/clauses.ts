@@ -11,19 +11,30 @@ const CONJUNCTION = String.raw`(?:^|\s)(?:and(?:\s+also)?|but|however|although|t
 const BREAK = new RegExp(String.raw`[.!?](?=\s|$)|;|:(?=\s|$)|${CONJUNCTION}`, 'i');
 /** As BREAK, and a comma. */
 const BREAK_OR_COMMA = new RegExp(String.raw`[.!?](?=\s|$)|[;,]|:(?=\s|$)|${CONJUNCTION}`, 'i');
+/** A criterion id, as the contract names one: "AC-2". */
+const CRITERION_ID = String.raw`\bAC-\d+\b`;
+/** A list of criterion ids: "AC-1, AC-2 and AC-3", "AC-1 to AC-4", "AC-1 through AC-7 and AC-9". It is one phrase. */
+const CRITERION_IDS = new RegExp(String.raw`${CRITERION_ID}(?:(?:\s*,\s*(?:(?:and|or)\s+)?|\s+(?:and|or|to|through)\s+)${CRITERION_ID})+`, 'gi');
 /** A part that names only criterion ids or an abbreviation ("AC-2", "AC-3 to AC-5", "e.g"): it says nothing. */
-const SAYS_NOTHING = /^(?:(?:[a-z]{1,5}-\d+|e\.g|i\.e|etc|and|or|to|through)[\s,.]*)+$/i;
+const SAYS_NOTHING = new RegExp(String.raw`^(?:(?:${CRITERION_ID}|e\.g|i\.e|etc|and|or|to|through)[\s,.]*)+$`, 'i');
 /** Marks where an aside was taken out of the text (any NUL in the text itself is a space first). */
 const ASIDE = /\0(\d+)\0/g;
+/** Marks where a list of criterion ids was taken out of the text, so it is not split (as is any SOH in the text). */
+const IDS = /\x01(\d+)\x01/g;
 
 /**
  * A statement's clauses, in order: its sentences, and the parts joined by a semicolon, a colon or a conjunction, and with
  * `commas`, by a comma. An aside in parentheses is never dropped: its own clauses follow the clause it sits in.
- * Parentheses right after a name, as in `round_price(2.675)`, are not an aside but part of their clause. A part that
- * names only criterion ids says nothing and is left out.
+ * Parentheses right after a name, as in `round_price(2.675)`, are not an aside but part of their clause, and a list of
+ * criterion ids ("AC-1, AC-2 and AC-3") is not split. A part that names only criterion ids says nothing and is left out.
  */
 export function clausesOf(statement: string, opts: { commas?: boolean } = {}): string[] {
-  const text = statement.replace(/\0/g, ' ');
+  const lists: string[] = [];
+  const text = statement.replace(/[\0\x01]/g, ' ').replace(CRITERION_IDS, (ids) => `\x01${lists.push(ids) - 1}\x01`);
+  return split(text, lists, opts);
+}
+
+function split(text: string, lists: readonly string[], opts: { commas?: boolean }): string[] {
   const asides: string[] = [];
   let main = '';
   for (let i = 0; i < text.length; i++) {
@@ -54,10 +65,11 @@ export function clausesOf(statement: string, opts: { commas?: boolean } = {}): s
         inner.push(asides[Number(k)]!);
         return ' ';
       })
+      .replace(IDS, (_, k: string) => lists[Number(k)]!)
       .replace(/\s+/g, ' ')
       .replace(/^[\s,]+|[\s,.]+$/g, '');
     if (clause !== '' && !SAYS_NOTHING.test(clause)) out.push(clause);
-    for (const aside of inner) out.push(...clausesOf(aside, opts));
+    for (const aside of inner) out.push(...split(aside, lists, opts));
   }
   return out;
 }

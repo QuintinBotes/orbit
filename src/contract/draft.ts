@@ -240,13 +240,17 @@ export function draftContract(input: DraftContractInput): DraftResult {
 // criterion.
 
 /**
- * The tests the change adds: "the new (unit) tests", "the added tests", "newly added specs", "tests added under tests/",
- * "the tests the change adds". At most one word names them ("unit", "regression"): a longer name can say what they
- * check ("the new cross-tenant rejection tests"), and that is behaviour.
+ * The one plain word that may name tests: "unit", "regression", "apply_discount", "e2e". Never a hyphenated phrase, a
+ * path or more words: a longer name can say what the tests check ("the new cross-tenant-requests-get-403 tests"), and
+ * that is behaviour.
  */
-const NEW_TESTS = String.raw`(?:(?:the|all(?:\s+the)?|every)\s+)?(?:(?:new(?:ly)?(?:\s+added)?|added)\s+(?:[\w./-]+\s+)?(?:tests?|specs?|suites?|test\s+cases?)|(?:tests?|specs?|suites?)\s+(?:(?:that|which)\s+)?(?:the|this)\s+(?:change|fix|implementation|candidate)\s+adds|(?:tests?|specs?|suites?)\s+(?:added|introduced)(?:\s+(?:under|in|to)\s+[\w./-]+)?)`;
-/** Any tests, or a word for the ones just named: "they", "the existing apply_discount tests". */
-const ANY_TESTS = String.raw`(?:they|these(?:\s+tests)?|both|${NEW_TESTS}|(?:(?:the|all(?:\s+the)?|every)\s+)?(?:(?:existing|other|remaining)\s+)?(?:[\w./-]+\s+)?(?:tests?|specs?|suites?|test\s+cases?))`;
+const TEST_NAME = String.raw`(?:[A-Za-z_]+|e2e)`;
+/** A plain directory the tests are added under: "tests/", "tests/unit", "src/__tests__/". Not a file, not a phrase. */
+const TEST_DIRECTORY = String.raw`[A-Za-z_]+(?:/[A-Za-z_]+)*/?`;
+/** The tests the change adds: "the new (unit) tests", "the added tests", "newly added specs", "tests added under tests/", "the tests the change adds". */
+const NEW_TESTS = String.raw`(?:(?:the|all(?:\s+the)?|every)\s+)?(?:(?:new(?:ly)?(?:\s+added)?|added)\s+(?:${TEST_NAME}\s+)?(?:tests?|specs?|suites?|test\s+cases?)|(?:tests?|specs?|suites?)\s+(?:(?:that|which)\s+)?(?:the|this)\s+(?:change|fix|implementation|candidate)\s+adds|(?:tests?|specs?|suites?)\s+(?:added|introduced)(?:\s+(?:under|in|to)\s+${TEST_DIRECTORY})?)`;
+/** Any tests, or a word for the ones just named: "they", "the existing apply_discount tests". "Specs" alone may be documents, so only the new ones count. */
+const ANY_TESTS = String.raw`(?:they|these(?:\s+tests)?|both|${NEW_TESTS}|(?:(?:the|all(?:\s+the)?|every)\s+)?(?:(?:existing|other|remaining)\s+)?(?:${TEST_NAME}\s+)?(?:tests?|test\s+(?:cases?|suites?)))`;
 const MODAL = String.raw`(?:(?:must|should|will|do|does)\s+)?`;
 const FAIL = String.raw`${MODAL}(?:fail(?:s|ed)?|(?:are|is)\s+failing)`;
 const PASS = String.raw`${MODAL}(?:(?:still|then|all|both|now)\s+)?pass(?:es|ed)?`;

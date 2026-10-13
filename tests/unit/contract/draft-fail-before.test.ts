@@ -45,6 +45,8 @@ describe('a planner criterion about the new tests failing on the base revision',
       'On the base revision the new tests fail; with the change they pass.',
       'The tests the change adds fail on the base revision and pass with it.',
       'Newly added specs fail against the base commit and pass on the candidate.',
+      'The new e2e tests fail on the base revision and the existing apply_discount tests still pass.',
+      'Tests added under src/__tests__/ fail on the base revision.',
     ]) {
       const { contract } = draftContract(input([...BEHAVIOUR, criterion('fb', statement)]));
       expect(contract.acceptance_criteria, statement).toHaveLength(3);
@@ -114,6 +116,13 @@ describe('a planner criterion about the new tests failing on the base revision',
       'The new tests fail on the base revision and pass, and the API returns 404 for an unknown id.',
       'The new tests fail on the base revision and requests pass validation.',
       'The new tests (which cover ties and negative prices) fail on the base revision.',
+      // Behaviour in a test's name: one plain word names the tests, never a hyphenated phrase or a path.
+      'The new cross-tenant-requests-are-rejected-with-403 tests fail on the base revision and pass with the change.',
+      'Tests added under tests/auth/cross-tenant-requests-get-403 fail on the base revision.',
+      'The new tests fail on the base revision and the cross-tenant-requests-get-403 tests pass.',
+      // Specs that are not tests, and an aside that is not a criterion id.
+      'The new tests fail on the base revision and uploaded specs pass.',
+      'The new tests fail on the base revision (HTTP-403).',
     ]) {
       const { contract, adjustments } = draftContract(input([...BEHAVIOUR, criterion('x', statement)]));
       expect(contract.acceptance_criteria.map((c) => c.statement), statement).toContain(statement);

@@ -56,6 +56,35 @@ const MIXED = [
   'The fail-before log is a load failure only. It also shows that no test exercises a quantity of zero.',
   // One sentence, joined by a bare "and".
   'The fail-before evidence is only an import error and the new tests use the wrong rounding mode.',
+  // The adversarial verifier's bypasses of a keyword search: each defect clause carries a word about the probe ("base
+  // revision", "on the base", "probe", "collects", "build error", "stub implementation", "mutant run", "NameError"), or
+  // hides behind "It does not show", "not" or "rather than", and names no denylisted word.
+  "The fail-before probe failed with an import error, not an assertion. The candidate's round_price still rounds 2.675 to 2.67 exactly as the base revision did so AC-2's half-up rule is unmet.",
+  'The fail-before evidence is only an import error. On the candidate round_price(2.675) still gives 2.67 as on the base revision.',
+  'The fail-before probe shows only an import error. apply_discount computes the tax on the base price instead of the discounted total.',
+  'The fail-before log is only a load failure. checkout collects the delivery fee twice for orders over 100.',
+  'The fail-before evidence is only an import error. round_price gives a NameError for negative prices on the candidate.',
+  'The fail-before evidence is only an import error. The candidate ships a stub implementation of round_price that ignores the rounding mode.',
+  'The fail-before log shows only an import error. It does not show that round_price rounds half-up which the candidate does not do since round_price(2.675) gives 2.67.',
+  'The fail-before log shows only an import error. It does not show any tie case because the new tests have none for 2.675 or 0.125.',
+  'The fail-before evidence is only an import error, rather than any half-up tie case since the new tests include none.',
+  "The fail-before evidence is only a load failure. The new tests expect round_price(2.675) to equal 2.67 which is the base revision's half-down value instead of the required 2.68.",
+  'The fail-before evidence shows only a load failure (and on the candidate round_price(2.675) still gives 2.67 as on the base revision).',
+  'The fail-before evidence is only a load failure; the probe never ran the tie case; the base revision rounding of 2.675 to 2.67 survives in the candidate.',
+  "The fail-before probe only hit an import error. The candidate applies the tenant filter on the base query only so other tenants' rows are visible to every caller.",
+  'The fail-before probe only hit an import error since round_price is a stub implementation that gives 2.67 for 2.675.',
+  'The fail-before evidence is only an import error while the candidate drops the last item of the collection when the cart has more than ten lines.',
+  "The fail-before evidence is only a load failure. The candidate's build error page prints the database password to anonymous users.",
+  'The fail-before outcome is a compile error, not an assertion. The new tests compare the output with a snapshot taken from the base build so they pin the old half-down result.',
+  // The same, in a reviewer's natural wording. A surviving mutant is a test-adequacy defect, the very evidence the probe
+  // exists to raise.
+  'The fail-before evidence is only an import error, and the candidate still behaves like the base revision for ties.',
+  'The fail-before probe only shows an import error; with a stub round_price that truncates, the new tests would still pass.',
+  'The fail-before evidence is only a load failure. A mutant run of round_price that rounds half-down survives the new tests.',
+  'The fail-before evidence is only an import error. Against a mutant that rounds half-down the new tests still pass.',
+  'The fail-before log shows only a collection error. The candidate keeps the base revision behaviour for negative prices.',
+  'Although the fail-before evidence is only an import error, the candidate leaves the base revision formula in place.',
+  'The fail-before evidence is only an import error (the candidate is still a stub implementation).',
 ];
 
 function input(over: Partial<ResolveInput> = {}): ResolveInput {
@@ -91,6 +120,64 @@ describe('a finding that disputes a classification Orbit recorded', () => {
     expect(r.dispositions[0]!.recordedClassification).toBeUndefined();
     expect(r.repairBriefs).toHaveLength(1);
     expect(r.clear).toBe(false);
+  });
+
+  it('a mixed high finding, also one in the security category, blocks and is tested: never advisory, never clear', () => {
+    for (const f of [
+      rfinding({ externalId: 'COR-7', severity: 'high', category: 'correctness', location: 'shop/pricing.py:12', claim: MIXED[10]! }),
+      rfinding({ externalId: 'SEC-1', severity: 'critical', category: 'security', location: 'app/db.py:40', claim: MIXED.find((c) => c.includes('tenant filter'))! }),
+    ]) {
+      const r = resolveFindings(input({ findings: [f] }));
+      expect(r.dispositions[0], f.claim).toMatchObject({ status: 'claim_pending', blocking: true });
+      expect(r.dispositions[0]!.recordedClassification, f.claim).toBeUndefined();
+      expect(r.claimsToTest.map((c) => c.findingId), f.claim).toEqual([f.id]);
+      expect(r.clear, f.claim).toBe(false);
+    }
+  });
+
+  // The claim may dispute only the outcome while the finding's evidence states a defect: that is not exclusive either.
+  it('is not a note when the evidence names a defect, though the claim only disputes the outcome', () => {
+    const f = rfinding({
+      externalId: 'TEST-9',
+      category: 'test-adequacy',
+      location: 'tests/test_pricing.py:9',
+      claim: 'The fail-before evidence for AC-1 shows only a load failure. It does not show that any assertion about the criterion failed.',
+      evidence: 'Also, round_price(2.675) returns 2.67 on the candidate, and the new tests omit every tie case; AC-2 is not met.',
+      suggestedValidation: 'Run round_price(2.675) on the candidate and assert 2.68.',
+    });
+    expect(recordedClassificationDispute({ claim: f.claim })).toMatch(/fail-before/);
+    expect(recordedClassificationDispute(f)).toBeNull();
+    for (const evidence of [
+      'round_price(2.675) gives 2.67 on the candidate.',
+      'A mutant that rounds half-down survives the new tests.',
+      'The candidate keeps the half-down formula.',
+    ]) {
+      expect(recordedClassificationDispute({ claim: f.claim, evidence }), evidence).toBeNull();
+    }
+    const r = resolveFindings(input({ findings: [f] }));
+    expect(r.dispositions[0]).toMatchObject({ status: 'claim_pending', blocking: true });
+    expect(r.clear).toBe(false);
+  });
+
+  it('is not a note when another report of the same claim names a defect in its evidence', () => {
+    const first = rfinding(DOTNET_TEST_1);
+    const second = rfinding({ ...DOTNET_TEST_1, reviewId: 'rev-2', provider: 'claude', evidence: 'A mutant Clamp that never throws survives the new tests.' });
+    const r = resolveFindings(input({ findings: [first, second], reviews: [rreview(), rreview({ id: 'rev-2', provider: 'claude' })] }));
+    expect(r.dispositions).toHaveLength(1);
+    expect(r.dispositions[0]!.status).not.toBe('advisory');
+    expect(r.dispositions[0]!.blocking).toBe(true);
+    expect(r.clear).toBe(false);
+  });
+
+  it('the retest reviewers\' evidence for a pure dispute keeps it a note', () => {
+    for (const evidence of [
+      DOTNET_TEST_1.evidence,
+      'Because of the module-level import of bulk_price, collection fails on the base, so none of the nine new price tests ran there.',
+      "In the fail-before log the only error is SyntaxError: The requested module '../apps/calc.mjs' does not provide an export named 'mul'. No assertion ran on the base revision.",
+      null,
+    ]) {
+      expect(recordedClassificationDispute({ claim: DOTNET_TEST_1.claim, evidence }), String(evidence)).toMatch(/fail-before/);
+    }
   });
 
   it('a mixed finding without evidence is a claim to test, never a note', () => {

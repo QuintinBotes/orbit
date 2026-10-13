@@ -187,10 +187,14 @@ what Orbit did with its outcome did not. Five changes, each with the run that sh
    the finding's claim names and disputes (a load, compile or import failure, not an assertion). A finding is
    a note only when it disputes the outcome exclusively: every clause of its claim (each sentence, each part
    joined by "and", "but", "however", "although", "while", a semicolon, a colon or a comma, and each aside in
-   parentheses) is about the probe or its recorded outcome, such as a load, import or compile failure on the
-   base revision or a stub or mutant run. One clause about the tests' content, coverage or assertions (a
-   tautology, a missing case), the code's behaviour, or anything else keeps the whole finding a claim, and so
-   does a check that confirmed it; when in doubt, it is a claim.
+   parentheses) matches whole one of a few fixed statements about the recorded outcome, such as "the
+   fail-before evidence for AC-1 shows only a load failure", "it does not show that any assertion about the
+   criteria failed" or "the new tests depend on Clamp existing"; a clause is never searched for a word. A
+   clause that says anything more keeps the whole finding a claim, even when it also names the base revision
+   or the probe: the tests' content, coverage or assertions (a tautology, a missing case), the code's
+   behaviour, the candidate, or a stub or mutant run (a surviving mutant is a defect of the tests). So does
+   such a defect stated in the finding's evidence, or in the evidence of another report of the same claim,
+   and a check that confirmed it; when in doubt, it is a claim.
    Delivery still needs an approving review, so a review that asked for repair only through such notes
    approves nothing: the run stops BLOCKED and names them, instead of spending an attempt on the same tree.
    Follow-up: first the tree gets one fresh review (a `review.fresh` decision, charged to `review_rounds`), told
@@ -207,7 +211,10 @@ what Orbit did with its outcome did not. Five changes, each with the run that sh
    behaviour), with a `contract.criterion-dropped` decision that quotes the whole criterion. A criterion with
    any other clause (behaviour after "and" or "while", in parentheses, or in another sentence) is kept whole
    and unchanged, and so is wording the draft does not recognise, and one about tests it does not call new or
-   calls existing (a bug fix's failing tests, which the probe does not run). The other criteria keep their ids, and the last mandatory criterion is never dropped. An assumption
+   calls existing (a bug fix's failing tests, which the probe does not run). One plain word may name the
+   tests ("unit", "apply_discount"), never a hyphenated phrase or a path, which can say what they check, and
+   only a criterion id ("AC-2") in parentheses says nothing. The other criteria keep their ids, and the last
+   mandatory criterion is never dropped. An assumption
    that a check runs the new tests is not recognised in code, and the Inquisitor brief forbids an amendment
    that requires evidence no check produces.
 5. **The packet shows the tests that failed.** The packet showed the last 2,000 characters of each probe
