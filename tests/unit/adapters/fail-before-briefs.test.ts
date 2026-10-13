@@ -39,12 +39,28 @@ describe('the reviewer brief', () => {
     expect(text).toMatch(/Do not ask for mutant runs, stub implementations or a rerun of the probe/);
   });
 
+  // The retest's AC-4, "The new tests fail on the base revision (ImportError for round_price) and pass with the change",
+  // stays in the contract now that the draft never removes a criterion. Under advisory the packet showed it as a
+  // mandatory criterion backed only by the candidate's passing log, and the natural finding ("no evidence the new tests
+  // fail before the change") blocked as a claim the candidate cannot answer. The brief now says, in every mode and by
+  // structure (no criterion's wording is read), that this promise is Orbit's to keep, not the candidate's.
+  it('in every mode: a criterion\'s promise that the new tests fail on the base revision is Orbit\'s to establish, not a finding, and does not withhold APPROVE', () => {
+    const one = text.replace(/\s+/g, ' ');
+    expect(one).toMatch(/In every mode, whether the new tests fail on the base revision is Orbit's to establish through verification\.fail_before/);
+    expect(one).toMatch(/under advisory and off it is reported to the person/);
+    expect(one).toMatch(/A criterion's promise of it is therefore not a finding against the candidate and does not withhold APPROVE: judge the criterion's other clauses as usual\./);
+    expect(one).toMatch(/A finding that disputes only that promise uses the category "evidence-classification"\./);
+    // The APPROVE rule says the same, so "every mandatory criterion has evidence" cannot be read to require it.
+    expect(one).toMatch(/APPROVE only when every mandatory criterion has evidence for its clauses other than such a promise/);
+  });
+
   it('files a finding that only disputes a recorded evidence classification under the category evidence-classification, and nothing else there', () => {
     const one = text.replace(/\s+/g, ' ');
-    expect(one).toMatch(/category "evidence-classification" only for a finding that disputes a classification Orbit recorded of its own evidence \(today the fail-before outcome\) and asks for nothing a change to the candidate can give/);
+    expect(one).toMatch(/category "evidence-classification" only for a finding that disputes a classification Orbit recorded of its own evidence, or a criterion's promise of one \(today the fail-before outcome\), and asks for nothing a change to the candidate can give/);
     expect(one).toMatch(/A finding about the tests' content, coverage or assertions, or about the code's behaviour, uses its normal category/);
     expect(one).toMatch(/A finding that disputes the recorded classification and also names such a defect uses the normal category/);
     expect(one).toMatch(/reported as a note: it never blocks and is never repaired/);
+    expect(one).toMatch(/A finding with a SEC- id is never a note\./);
   });
 });
 
@@ -74,5 +90,20 @@ describe('the inquisitor brief', () => {
     const one = text.replace(/\s+/g, ' ');
     expect(one).toMatch(/Never require fail-before mechanics: no mutant run, no stub implementation, and no keeping of an import error "as the contract states"/);
     expect(one).toMatch(/Orbit's fail-before probe establishes whether the new tests fail on the base revision/);
+  });
+});
+
+describe('the review output schema', () => {
+  const schema = JSON.parse(readFileSync(fileURLToPath(new URL('../../../schemas/review-output.schema.json', import.meta.url)), 'utf8')) as {
+    properties: { findings: { items: { properties: { category: { description: string } } } } };
+  };
+  const category = schema.properties.findings.items.properties.category.description;
+
+  it('defines evidence-classification as the reviewer brief does: a recorded classification, or a criterion\'s promise of one', () => {
+    expect(category).toMatch(/evidence-classification is reserved for a finding that disputes a classification Orbit recorded of its own evidence, or a criterion's promise of one \(today the fail-before outcome\), and asks for nothing a change to the candidate can give/);
+  });
+
+  it('says a finding whose id says security is never a note', () => {
+    expect(category).toMatch(/whose id is not a SEC- one/);
   });
 });

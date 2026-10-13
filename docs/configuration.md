@@ -1041,11 +1041,12 @@ Its attempts are recorded apart from the run's checks, and a later candidate
 with the same probe tree (a repair of production code only) reuses them.
 
 In every mode, a review finding is a note if and only if the reviewer files it
-under the category `evidence-classification` and no check confirms it. The
-reviewer brief reserves that category for a finding that disputes a
-classification Orbit recorded of its own evidence (today the fail-before
-outcome, for example "the fail-before evidence shows only a load failure") and
-asks for nothing a change to the candidate can give; a finding about the tests'
+under the category `evidence-classification`, no check confirms it and no
+report of it has a security id (`SEC-`), since a security finding fails closed.
+The reviewer brief reserves that category for a finding that disputes a
+classification Orbit recorded of its own evidence, or a criterion's promise of
+one (today the fail-before outcome, for example "the fail-before evidence shows
+only a load failure"), and asks for nothing a change to the candidate can give; a finding about the tests'
 content, coverage or assertions or the code's behaviour, or one that mixes
 both, uses its normal category. A note is a `review.finding.noted` decision and
 never blocks, goes to repair or goes to the Inquisition: a repair changes the
@@ -1063,7 +1064,11 @@ fresh review, so the way forward is a new run. The planner does not write a
 criterion that the new tests fail on the base revision, since that is this
 setting's to establish, and the Inquisition never requires fail-before
 mechanics such as a mutant run or a stub implementation. Orbit never removes a
-criterion: one the planner writes all the same stays as written ([ADR 0014,
+criterion: one the planner writes all the same stays as written. So the
+reviewer brief, the packet under `advisory` and `off` and the fresh review's
+prompt say, whatever the criteria say, that a criterion's promise that the new
+tests fail on the base revision is not a finding against the candidate and does
+not withhold `APPROVE`; its other clauses are judged as usual ([ADR 0014,
 addendum](decisions/0014-fail-before.md)).
 
 ## notifications

@@ -22,6 +22,12 @@ const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOS
 
 const LOG = 'evidence/1/fail-before/unit~1.log';
 
+/** The retest's AC-4, verbatim, as in tests/unit/contract/draft-fail-before.test.ts. */
+const RETEST_AC_4 = 'The new tests fail on the base revision (ImportError for round_price) and pass with the change; existing apply_discount tests still pass.';
+
+/** The paragraph an advisory or off packet carries after the criteria, whatever they say. */
+const PROMISE_PARAGRAPH = /Whether the new tests fail on the base revision is Orbit's to establish[^\n]*\n/;
+
 /** A TAP log shaped like the demo ui probe: the failures come first, then a long run of passing suites and a summary. */
 function tapLog(): string {
   const lines = [
@@ -125,12 +131,49 @@ describe.skipIf(!gitAvailable)('the review packet and fail-before', () => {
       expect(p.text).not.toContain('### Fail-before');
       expect(p.text).not.toContain('ERR_MODULE_NOT_FOUND');
       expect(p.text).not.toContain(LOG);
-      expect(p.text).not.toMatch(/fail-before/i);
-      expect(p.text).not.toMatch(/base revision/);
+      // Apart from the one paragraph on a criterion's promise of fail-before (next test), nothing names the probe.
+      const rest = p.text.replace(PROMISE_PARAGRAPH, '');
+      expect(rest).not.toBe(p.text);
+      expect(rest).not.toMatch(/fail-before/i);
+      expect(rest).not.toMatch(/fail_before/);
+      expect(rest).not.toMatch(/base revision/);
       // The rest of what is not verified is still shown.
       expect(p.text).toContain('No load test was run.');
     });
+
+    // The retest's AC-4, which stays in the contract now that the draft never removes a criterion. Under advisory the
+    // packet showed it as "AC-4 (mandatory)" and "AC-4: supported", backed only by the candidate's passing log, with no
+    // word that its promise is Orbit's to keep; the natural finding blocked as a claim the candidate cannot answer.
+    it(`${mode}: a criterion that promises fail-before is not a finding against the candidate and does not withhold APPROVE`, async () => {
+      const promising = contract({
+        acceptance_criteria: [
+          { id: 'AC-1', statement: 'round_price rounds half up to two decimals.', proof: ['test_round_price_half_up passes.'], mandatory: true },
+          { id: 'AC-4', statement: RETEST_AC_4, proof: [], mandatory: true },
+        ],
+      });
+      const ev = report(mode, {
+        acceptance_evidence: [
+          { criterion_id: 'AC-1', status: 'supported', artifacts: ['unit.log'] },
+          { criterion_id: 'AC-4', status: 'supported', artifacts: ['unit.log'] },
+        ],
+      });
+      const p = await buildReviewPacket(input(mode, { contract: promising, evidenceReport: ev }));
+      expect(p.text).toContain('AC-4 (mandatory): The new tests fail on the base revision (ImportError for round_price)');
+      expect(p.text).not.toContain('### Fail-before');
+      const one = p.text.replace(/\s+/g, ' ');
+      expect(one).toMatch(new RegExp(`Whether the new tests fail on the base revision is Orbit's to establish through verification\\.fail_before, which is ${mode} here: Orbit reports it to the person, not to you\\.`));
+      expect(one).toMatch(/A criterion's promise of it is therefore not a finding against the candidate and does not withhold APPROVE: judge the criterion's other clauses as usual\./);
+      expect(one).toMatch(/A finding that disputes only that promise uses the category evidence-classification\./);
+      // It sits with the criteria, before the non-goals, where the reviewer reads them.
+      expect(p.text.indexOf('A criterion\'s promise of it')).toBeLessThan(p.text.indexOf('### Non-goals'));
+      expect(p.text.indexOf('A criterion\'s promise of it')).toBeGreaterThan(p.text.indexOf('### Acceptance criteria'));
+    });
   }
+
+  it('required: the criteria carry no such paragraph; the Fail-before section holds the probe\'s outcome', async () => {
+    const p = await buildReviewPacket(input('required'));
+    expect(p.text).not.toMatch(PROMISE_PARAGRAPH);
+  });
 
   it('required: a compile, collection or import failure counts by policy and is not a finding; the reviewer reviews test quality only', async () => {
     const p = await buildReviewPacket(input('required'));

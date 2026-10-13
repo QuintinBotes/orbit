@@ -37,3 +37,17 @@ describe('the docs on what makes a finding a note, and on criteria about fail-be
     expect(adr).toMatch(/Orbit never removes a criterion/);
   });
 });
+
+// The adversarial verifier's follow-ups: a criterion that promises fail-before stays in the contract, so the docs say
+// the reviewer is told its promise is Orbit's to establish; and a finding with a security id is never a note.
+describe('the docs on a criterion that promises fail-before, and on a security finding filed as a note', () => {
+  it.each(['docs/configuration.md', 'docs/operations.md', 'docs/decisions/0014-fail-before.md'])('%s says a criterion\'s promise of fail-before is not a finding against the candidate', (p) => {
+    const doc = read(p);
+    expect(doc).toMatch(/is not a finding against the candidate and does not withhold `?APPROVE`?/);
+    expect(doc).toMatch(/or a criterion's promise of one/);
+  });
+
+  it.each(['docs/configuration.md', 'docs/operations.md', 'docs/decisions/0014-fail-before.md'])('%s says a finding with a security id is never a note', (p) => {
+    expect(read(p)).toMatch(/`SEC-`/);
+  });
+});

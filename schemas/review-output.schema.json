@@ -21,7 +21,7 @@
         "properties": {
           "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*-[0-9]+$", "description": "Category prefix and number, for example SEC-1." },
           "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] },
-          "category": { "type": "string", "description": "For example authorization, correctness, test-adequacy, scope, performance. evidence-classification is reserved for a finding that disputes a classification Orbit recorded of its own evidence (today the fail-before outcome) and asks for nothing a change to the candidate can give: unless a check confirms it, Orbit reports it as a note that never blocks. A finding about the tests' content, coverage or assertions or about the code's behaviour, or one that mixes both, uses its normal category." },
+          "category": { "type": "string", "description": "For example authorization, correctness, test-adequacy, scope, performance. evidence-classification is reserved for a finding that disputes a classification Orbit recorded of its own evidence, or a criterion's promise of one (today the fail-before outcome), and asks for nothing a change to the candidate can give: unless a check confirms it, such a finding whose id is not a SEC- one is reported as a note that never blocks. A finding about the tests' content, coverage or assertions or about the code's behaviour, or one that mixes both, uses its normal category." },
           "location": { "type": ["string", "null"], "description": "path:line, or null for a finding about the change as a whole." },
           "claim": { "type": "string" },
           "evidence": { "type": "string" },

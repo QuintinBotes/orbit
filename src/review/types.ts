@@ -54,10 +54,11 @@ export function severityRank(s: FindingSeverity): number {
 
 /**
  * The one finding category Orbit gives a meaning of its own (ADR 0014, 0.3.1 addendum, item 3). The reviewer uses it only
- * for a finding that disputes a classification Orbit recorded of its own evidence (today the fail-before outcome) and asks
- * for nothing a change to the candidate can give; a finding about the tests or the code, or one that mixes both, uses its
- * normal category. Unconfirmed by any check, such a finding is a note (review/resolve.ts). Every other category, one an
- * older reviewer does not know included, is an ordinary finding.
+ * for a finding that disputes a classification Orbit recorded of its own evidence, or a criterion's promise of one (today
+ * the fail-before outcome, such as a criterion that the new tests fail on the base revision), and asks for nothing a
+ * change to the candidate can give; a finding about the tests or the code, or one that mixes both, uses its normal
+ * category. Unconfirmed by any check and without a SEC- id, such a finding is a note (review/resolve.ts). Every other
+ * category, one an older reviewer does not know included, is an ordinary finding.
  */
 export const EVIDENCE_CLASSIFICATION_CATEGORY = 'evidence-classification';
 

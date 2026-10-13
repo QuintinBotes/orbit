@@ -33572,7 +33572,7 @@ var init_review_output_schema = __esm({
             properties: {
               id: { type: "string", pattern: "^[A-Z][A-Z0-9]*-[0-9]+$", description: "Category prefix and number, for example SEC-1." },
               severity: { type: "string", enum: ["critical", "high", "medium", "low", "info"] },
-              category: { type: "string", description: "For example authorization, correctness, test-adequacy, scope, performance. evidence-classification is reserved for a finding that disputes a classification Orbit recorded of its own evidence (today the fail-before outcome) and asks for nothing a change to the candidate can give: unless a check confirms it, Orbit reports it as a note that never blocks. A finding about the tests' content, coverage or assertions or about the code's behaviour, or one that mixes both, uses its normal category." },
+              category: { type: "string", description: "For example authorization, correctness, test-adequacy, scope, performance. evidence-classification is reserved for a finding that disputes a classification Orbit recorded of its own evidence, or a criterion's promise of one (today the fail-before outcome), and asks for nothing a change to the candidate can give: unless a check confirms it, such a finding whose id is not a SEC- one is reported as a note that never blocks. A finding about the tests' content, coverage or assertions or about the code's behaviour, or one that mixes both, uses its normal category." },
               location: { type: ["string", "null"], description: "path:line, or null for a finding about the change as a whole." },
               claim: { type: "string" },
               evidence: { type: "string" },
@@ -36581,7 +36581,7 @@ function resolveFindings(input) {
     let reasonCode = "unvalidated";
     const currentMembers = group.filter((m) => m.current);
     const closedHere = currentMembers.length > 0 && currentMembers.every((m) => m.f.status === "rejected" || m.f.status === "resolved") ? currentMembers[0].f : null;
-    const recorded = confirms.length === 0 && !wasAccepted && group.every((m) => isEvidenceClassification(m.f.category)) ? RECORDED_EVIDENCE_CLASSIFICATION : null;
+    const recorded = confirms.length === 0 && !wasAccepted && !sec && group.every((m) => isEvidenceClassification(m.f.category)) ? RECORDED_EVIDENCE_CLASSIFICATION : null;
     if (closedHere) {
       status2 = closedHere.status;
       reason = closedHere.resolution ?? `${closedHere.status} earlier on this tree`;
@@ -36780,7 +36780,7 @@ var init_resolve = __esm({
     SECURITY_CATEGORY = /secur|auth|inject|sqli|xss|csrf|ssrf|\brce\b|secret|credential|crypto|tenant|privacy|\bpii\b|traversal|deserializ|permission|access.?control|sandbox|vulnerab|escalation/i;
     DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
     MACHINE_EVIDENCE_KINDS = ["new_test", "existing_check", "reproduction", "static_analysis"];
-    RECORDED_EVIDENCE_CLASSIFICATION = "a classification Orbit recorded of its own evidence, such as the fail-before outcome of the base revision";
+    RECORDED_EVIDENCE_CLASSIFICATION = "a classification Orbit recorded of its own evidence, such as the fail-before outcome of the base revision, or a criterion's promise of one";
     PRIOR_OPEN = UNRESOLVED_FINDING_STATUSES;
     MAX_QUOTED = 300;
   }
@@ -57822,6 +57822,7 @@ ${lines.length === 0 ? "- nothing was excluded\n" : `${lines.join("\n")}
 function fixedSections(input, red, id) {
   const { contract, snapshot: snapshot2, evidenceReport: ev } = input;
   const cfg = snapshot2.config;
+  const failBefore = failBeforePolicy(cfg).mode;
   const sec = [];
   sec.push(`# Orbit independent review packet
 
@@ -57851,7 +57852,7 @@ ${bullet(
     contract.acceptance_criteria.map((c) => `${c.id}${c.mandatory ? " (mandatory)" : ""}${c.ui ? " (ui)" : ""}: ${red(c.statement)}${c.proof.length ? ` Proof: ${red(c.proof.join("; "))}` : ""}`),
     MAX_LIST_ITEMS,
     700
-  )}
+  )}${failBeforePromise(failBefore)}
 ### Non-goals
 ${bullet(contract.non_goals.map(red), 20, 300)}`);
   const security = readSecurityPolicy(snapshot2);
@@ -57871,7 +57872,6 @@ ${bullet(contract.non_goals.map(red), 20, 300)}`);
 ${security.exceptions.length > 0 ? `- security exceptions listed in policy (still report matching findings): ${security.exceptions.map((e) => `${e.category}${e.location ? ` at ${e.location}` : ""} (${e.severities.join("/")})`).join("; ")}
 ` : ""}`);
   const scope = ev.scope;
-  const failBefore = failBeforePolicy(cfg).mode;
   const unverified = failBefore === "required" ? ev.unverified : ev.unverified.filter((u) => !/^fail-before\b/.test(u));
   sec.push(`## Verification results
 
@@ -57908,6 +57908,12 @@ ${bullet(
 
 ${bullet([...practiceReviewQuestions(contract), ...failBeforeReviewQuestions(ev), ...input.questions.map(red)], 20, 500)}`);
   return sec.join("\n");
+}
+function failBeforePromise(mode) {
+  if (mode === "required") return "";
+  return `
+Whether the new tests fail on the base revision is Orbit's to establish through verification.fail_before, which is ${mode} here: Orbit reports it to the person, not to you. A criterion's promise of it is therefore not a finding against the candidate and does not withhold APPROVE: judge the criterion's other clauses as usual. A finding that disputes only that promise uses the category evidence-classification.
+`;
 }
 function failBeforeSection(ev, logs, red, mode) {
   if (mode !== "required") return "";
@@ -61286,7 +61292,10 @@ function freshReviewText(rec2) {
   return [
     `This is a fresh review of a tree that an earlier review asked to have repaired only through finding(s) ${names}, quoted below, filed under the category ${EVIDENCE_CLASSIFICATION_CATEGORY}. Each disputes ${what.join(" or ")}.`,
     "Such a classification is not a finding and cannot be repaired by changing the candidate: a repair changes only the candidate, never the base revision.",
-    `Judge the candidate as in any review: a finding is a defect of the candidate or of its tests that a change to the candidate can repair, and it uses its normal category. Use the category ${EVIDENCE_CLASSIFICATION_CATEGORY} only for a finding that disputes Orbit's recorded classification and asks for nothing else.`
+    `Judge the candidate as in any review: a finding is a defect of the candidate or of its tests that a change to the candidate can repair, and it uses its normal category. Use the category ${EVIDENCE_CLASSIFICATION_CATEGORY} only for a finding that disputes Orbit's recorded classification and asks for nothing else.`,
+    // Said whatever the criteria say, since no criterion's wording is read: the draft keeps a criterion such as the
+    // retest's AC-4 ("The new tests fail on the base revision") that the planner writes against its brief.
+    `Whether the new tests fail on the base revision is Orbit's to establish through verification.fail_before (under advisory and off it is reported to the person). A criterion's promise of it is therefore not a finding against the candidate and does not withhold APPROVE: judge the criterion's other clauses as usual. A finding that disputes only that promise uses the category ${EVIDENCE_CLASSIFICATION_CATEGORY}.`
   ];
 }
 async function prepareReview(ctx, cand, provider) {

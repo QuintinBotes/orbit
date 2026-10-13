@@ -976,6 +976,9 @@ function freshReviewText(rec: FreshReviewRecord): string[] {
     `This is a fresh review of a tree that an earlier review asked to have repaired only through finding(s) ${names}, quoted below, filed under the category ${EVIDENCE_CLASSIFICATION_CATEGORY}. Each disputes ${what.join(' or ')}.`,
     'Such a classification is not a finding and cannot be repaired by changing the candidate: a repair changes only the candidate, never the base revision.',
     `Judge the candidate as in any review: a finding is a defect of the candidate or of its tests that a change to the candidate can repair, and it uses its normal category. Use the category ${EVIDENCE_CLASSIFICATION_CATEGORY} only for a finding that disputes Orbit's recorded classification and asks for nothing else.`,
+    // Said whatever the criteria say, since no criterion's wording is read: the draft keeps a criterion such as the
+    // retest's AC-4 ("The new tests fail on the base revision") that the planner writes against its brief.
+    `Whether the new tests fail on the base revision is Orbit's to establish through verification.fail_before (under advisory and off it is reported to the person). A criterion's promise of it is therefore not a finding against the candidate and does not withhold APPROVE: judge the criterion's other clauses as usual. A finding that disputes only that promise uses the category ${EVIDENCE_CLASSIFICATION_CATEGORY}.`,
   ];
 }
 

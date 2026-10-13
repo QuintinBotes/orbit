@@ -348,8 +348,8 @@ export interface Disposition {
   /** Earlier findings of the same claim that were closed (rejected or resolved) on another tree. */
   recurrenceOf: string[];
   /**
-   * Set when the finding is a note: its category is `evidence-classification` and no check confirmed it, so it disputes
-   * RECORDED_EVIDENCE_CLASSIFICATION, which no repair can change.
+   * Set when the finding is a note: its category is `evidence-classification`, no check confirmed it and it is no security
+   * finding, so it disputes RECORDED_EVIDENCE_CLASSIFICATION, which no repair can change.
    */
   recordedClassification?: string;
 }
@@ -416,12 +416,13 @@ export interface Resolution {
 
 /**
  * What a note disputes, as its reason, the run's outcome and the fresh review's prompt name it (ADR 0014, 0.3.1
- * addendum, item 3). A finding is a note if and only if its category is EVIDENCE_CLASSIFICATION_CATEGORY and no check
- * confirms it. That is structure the reviewer states, never the wording of its claim: the resolver reads no claim to
- * decide it, because matching English, however tightened, can silence a real defect. The reviewer brief says when the
- * category applies, and a finding that also names a defect of the tests or the code uses its normal category.
+ * addendum, item 3). A finding is a note if and only if its category is EVIDENCE_CLASSIFICATION_CATEGORY, no check
+ * confirms it and it is no security finding (isSecurityFinding: a SEC- id). That is structure the reviewer states, never
+ * the wording of its claim: the resolver reads no claim to decide it, because matching English, however tightened, can
+ * silence a real defect. The reviewer brief says when the category applies, and a finding that also names a defect of
+ * the tests or the code uses its normal category.
  */
-export const RECORDED_EVIDENCE_CLASSIFICATION = 'a classification Orbit recorded of its own evidence, such as the fail-before outcome of the base revision';
+export const RECORDED_EVIDENCE_CLASSIFICATION = "a classification Orbit recorded of its own evidence, such as the fail-before outcome of the base revision, or a criterion's promise of one";
 
 // ---------------------------------------------------------------------------
 // Resolution
@@ -508,10 +509,11 @@ export function resolveFindings(input: ResolveInput): Resolution {
     // Closed against this very tree in an earlier pass: terminal, and evidence is not re-litigated.
     const currentMembers = group.filter((m) => m.current);
     const closedHere = currentMembers.length > 0 && currentMembers.every((m) => m.f.status === 'rejected' || m.f.status === 'resolved') ? currentMembers[0]!.f : null;
-    // A note if and only if the reviewer filed it under evidence-classification and no check has confirmed it (confirming
-    // evidence, here or on an earlier tree, governs). The claim's wording is not read. Every report of it shares the
-    // category, which is part of the fingerprint.
-    const recorded = confirms.length === 0 && !wasAccepted && group.every((m) => isEvidenceClassification(m.f.category)) ? RECORDED_EVIDENCE_CLASSIFICATION : null;
+    // A note if and only if the reviewer filed it under evidence-classification, no check has confirmed it (confirming
+    // evidence, here or on an earlier tree, governs) and no report of it is a security finding. The claim's wording is not
+    // read. Every report of it shares the category, which is part of the fingerprint. A SEC- id and this category
+    // contradict each other, and the structure resolves that toward the stricter rule: the finding follows the security rule.
+    const recorded = confirms.length === 0 && !wasAccepted && !sec && group.every((m) => isEvidenceClassification(m.f.category)) ? RECORDED_EVIDENCE_CLASSIFICATION : null;
 
     if (closedHere) {
       status = closedHere.status as FindingStatus;

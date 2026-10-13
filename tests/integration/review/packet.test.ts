@@ -232,7 +232,9 @@ describe.skipIf(!gitAvailable)('buildReviewPacket on a real repository (skipped 
     });
 
     it('never exceeds maxBytes across a range of limits', async () => {
-      for (const maxBytes of [12_000, 20_000, 45_000, 90_000]) {
+      // The smallest limit must leave room for the diff after this fixture's fixed sections. 12,000 bytes stopped doing so
+      // when an advisory or off packet began saying that a criterion's promise of fail-before is Orbit's to establish.
+      for (const maxBytes of [13_000, 20_000, 45_000, 90_000]) {
         const p = await buildReviewPacket(input({ limits: { maxBytes } }));
         expect(p.bytes).toBeLessThanOrEqual(maxBytes);
       }

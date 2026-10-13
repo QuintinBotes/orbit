@@ -167,7 +167,8 @@ what Orbit did with its outcome did not. Five changes, each with the run that sh
    fail-before section and no fail-before line among what is not verified, and the reviewer brief's
    fail-before paragraph applies only under `required`. So no review finding, and through it no Inquisition
    trigger, amendment or repair brief, rests on the probe's outcome or log. The report keeps the outcome for
-   the person, as before.
+   the person, as before. The packet says only, after the criteria, that whether the new tests fail on the
+   base revision is Orbit's to establish, so a criterion's promise of it is not a finding (item 4).
 2. **Under `required`, a compile, collection or import failure of a new symbol is fail-before, not a
    finding.** Section 3 already counts it. Section 4 then asked the reviewer whether a failure was "only a
    load failure" and made that a blocking finding. A test of a new function can fail on the base revision no
@@ -182,12 +183,15 @@ what Orbit did with its outcome did not. Five changes, each with the run that sh
    candidate, never the base revision, so a repair sent to answer a finding about the probe's outcome
    reproduced the same tree, and the .NET runs ended on non-progress. The review output now has a finding
    category of its own, `evidence-classification`. The reviewer brief says to use it only for a finding that
-   disputes a classification Orbit recorded of its own evidence (today the fail-before outcome) and asks for
-   nothing a change to the candidate can give; a finding about the tests' content, coverage or assertions, or
+   disputes a classification Orbit recorded of its own evidence, or a criterion's promise of one (today the
+   fail-before outcome), and asks for nothing a change to the candidate can give; a finding about the tests' content, coverage or assertions, or
    about the code's behaviour, uses its normal category, and so does one that mixes both. The review resolver
    reports a finding as an `advisory` note, recorded as a `review.finding.noted` decision, in every mode, if
-   and only if its category is `evidence-classification` and no check confirms it (no `FAILED` evidence that
-   exercises it on the tree, and no earlier acceptance). A note never blocks, is never a claim to test, and
+   and only if its category is `evidence-classification`, no check confirms it (no `FAILED` evidence that
+   exercises it on the tree, and no earlier acceptance) and no report of it is a security finding (a `SEC-`
+   id). An id that says security and a category that says the candidate need not change contradict each
+   other; like every other security rule in the resolver, this one fails closed, so such a finding follows the
+   security rule. A note never blocks, is never a claim to test, and
    goes to neither repair nor the Inquisition. Any other category, one an older reviewer writes included, is
    an ordinary finding, whatever its claim says.
    The rule is structure, not wording. The first version recognised a note from the words of its claim:
@@ -216,6 +220,14 @@ what Orbit did with its outcome did not. Five changes, each with the run that sh
    review found criteria with a real requirement that the wording rule deleted, such as "the new tests fail on
    the base revision and authentication rejects cross-tenant requests while valid requests pass", for the same
    reason as in item 3. A criterion the planner writes against the brief stays in the contract as written.
+   It then reaches the reviewer: under `advisory` a criterion like the retest's AC-4 is shown as "AC-4
+   (mandatory)" and "AC-4: supported", backed only by the candidate's passing log, and a finding that it has
+   no evidence of failing before blocks as a claim the candidate cannot answer, the stall of item 3. So
+   the reviewer brief (every mode), the packet under `advisory` and `off`, and the fresh review's prompt say
+   that whether the new tests fail on the base revision is Orbit's to establish through
+   `verification.fail_before`: a criterion's promise of it is not a finding against the candidate and does
+   not withhold APPROVE, its other clauses are judged as usual, and a finding that disputes only that promise
+   uses `evidence-classification`. They say it whatever the criteria say: no criterion's wording is read.
 5. **The packet shows the tests that failed.** The packet showed the last 2,000 characters of each probe
    log, which for a test runner are its passing suites and summary, so the reviewer never saw which tests
    failed (the demo UI run's `reviews/1/packet.md`, lines 119 to 131). Under `required`, the one mode whose

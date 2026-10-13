@@ -410,6 +410,7 @@ function excludedText(excluded: readonly ExcludedItem[], red: (s: string) => str
 function fixedSections(input: ReviewPacketInput, red: (s: string) => string, id: { commitSha: string; tree: string; baseSha: string }): string {
   const { contract, snapshot, evidenceReport: ev } = input;
   const cfg = snapshot.config;
+  const failBefore = failBeforePolicy(cfg).mode;
   const sec: string[] = [];
 
   sec.push(`# Orbit independent review packet
@@ -442,7 +443,7 @@ ${bullet(
     contract.acceptance_criteria.map((c) => `${c.id}${c.mandatory ? ' (mandatory)' : ''}${c.ui ? ' (ui)' : ''}: ${red(c.statement)}${c.proof.length ? ` Proof: ${red(c.proof.join('; '))}` : ''}`),
     MAX_LIST_ITEMS,
     700,
-  )}
+  )}${failBeforePromise(failBefore)}
 ### Non-goals
 ${bullet(contract.non_goals.map(red), 20, 300)}`);
 
@@ -465,7 +466,6 @@ ${security.exceptions.length > 0 ? `- security exceptions listed in policy (stil
   const scope = ev.scope;
   // Under advisory and off the probe is reported to the person only: no status, verdict, repair or question may change
   // because of it (ADR 0014 section 1), so a reviewer is not shown it, not even as a line of what is not verified.
-  const failBefore = failBeforePolicy(cfg).mode;
   const unverified = failBefore === 'required' ? ev.unverified : ev.unverified.filter((u) => !/^fail-before\b/.test(u));
   sec.push(`## Verification results
 
@@ -506,6 +506,21 @@ ${bullet(
 
 ${bullet([...practiceReviewQuestions(contract), ...failBeforeReviewQuestions(ev), ...input.questions.map(red)], 20, 500)}`);
   return sec.join('\n');
+}
+
+/**
+ * What a reviewer reads after the criteria under `verification.fail_before: advisory` and `off` (ADR 0014, 0.3.1
+ * addendum, item 4): whether the new tests fail on the base revision is Orbit's to establish, so a criterion's promise
+ * of it is not a finding against the candidate. The draft never removes a criterion, so one the planner writes against
+ * its brief, such as the retest's AC-4 "The new tests fail on the base revision (ImportError for round_price)", reaches
+ * the reviewer as a mandatory criterion backed only by the candidate's passing log. It is said whatever the criteria
+ * say: no criterion's wording is read to decide it. Under required the Fail-before section carries the probe instead.
+ */
+function failBeforePromise(mode: FailBeforeMode): string {
+  if (mode === 'required') return '';
+  return `
+Whether the new tests fail on the base revision is Orbit's to establish through verification.fail_before, which is ${mode} here: Orbit reports it to the person, not to you. A criterion's promise of it is therefore not a finding against the candidate and does not withhold APPROVE: judge the criterion's other clauses as usual. A finding that disputes only that promise uses the category evidence-classification.
+`;
 }
 
 /** Probe logs shown per packet, and the characters of each one's excerpt. */

@@ -101,6 +101,28 @@ describe('a finding in the category evidence-classification', () => {
     expect(r.clear).toBe(false);
   });
 
+  it('is never a note when its id says security: a SEC- finding follows the security rule and blocks, whatever its category says', () => {
+    // An id that says security and a category that says "asks for nothing the candidate can change" contradict each other;
+    // the structure resolves it toward blocking, as every other security rule here fails closed.
+    const f = rfinding({ externalId: 'SEC-1', severity: 'critical', category: 'evidence-classification', location: 'apps/reports/export.ts:42', claim: 'Export omits the tenant scope; cross-tenant reads succeed.' });
+    const r = resolveFindings(input({ findings: [f] }));
+    expect(r.dispositions[0]).toMatchObject({ status: 'claim_pending', blocking: true, security: true });
+    expect(r.dispositions[0]!.recordedClassification).toBeUndefined();
+    expect(r.claimsToTest.map((c) => c.findingId)).toEqual([f.id]);
+    expect(r.clear).toBe(false);
+  });
+
+  it('is never a note when another report of the same claim has a security id', () => {
+    const noted = rfinding(DOTNET_TEST_1);
+    const sec = rfinding({ ...DOTNET_TEST_1, externalId: 'SEC-2', reviewId: 'rev-2', provider: 'claude' });
+    const r = resolveFindings(input({ findings: [noted, sec], reviews: [rreview(), rreview({ id: 'rev-2', provider: 'claude' })] }));
+    for (const d of r.dispositions) {
+      expect(d.status).toBe('claim_pending');
+      expect(d.recordedClassification).toBeUndefined();
+    }
+    expect(r.clear).toBe(false);
+  });
+
   it('a FAILED check that does not count (another tree, not exercising the claim) does not end the note', () => {
     const f = rfinding(DOTNET_TEST_1);
     const r = resolveFindings(input({ findings: [f], evidence: [evidence({ findingId: f.id, verdict: 'confirms', status: 'FAILED', treeHash: 'b'.repeat(40) }), evidence({ findingId: f.id, verdict: 'confirms', status: 'FAILED', exercisesClaim: false, ref: 'evidence/1/other.log' })] }));
