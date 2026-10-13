@@ -1027,8 +1027,8 @@ change", not "an assertion failed".
 | `fail_before` | What it does |
 |---|---|
 | `off` | No probe; `unverified` says it was not run. |
-| `advisory` (default) | The probe runs and each criterion's `fail_before` entry in the report carries its outcome; `unverified` gains one line when a criterion's new tests passed on the base revision or could not be probed. Nothing else changes. |
-| `required` | failed-before supports the criterion (the reviewer is asked whether the failure is an assertion or only a load failure). passed-before leaves it unverified and goes to repair; when the repair attempts run out, the run asks a person whether to accept the criterion without fail-before for that tree. Not established blocks the run with a question per criterion; an environment, `ERROR` or install cause is never offered for acceptance: fix it and `orbit resume` runs the probe again. |
+| `advisory` (default) | The probe runs and each criterion's `fail_before` entry in the report carries its outcome; `unverified` gains one line when a criterion's new tests passed on the base revision or could not be probed. Nothing else changes: the reviewer and the Inquisition are shown nothing of the probe. |
+| `required` | failed-before supports the criterion, whatever the failure: a compile, collection or import failure of a new symbol counts and is not a review finding. The review packet shows the lines of each probe log that report a failure (the log is check-wide), and the reviewer reviews the new tests' quality only (a tautology, an assertion that cannot fail with any implementation). passed-before leaves it unverified and goes to repair; when the repair attempts run out, the run asks a person whether to accept the criterion without fail-before for that tree. Not established blocks the run with a question per criterion; an environment, `ERROR` or install cause is never offered for acceptance: fix it and `orbit resume` runs the probe again. |
 
 Only a person sets it, in this file or for one run with `orbit run
 --fail-before <mode>`, which can raise the policy's mode (`off` < `advisory` <
@@ -1039,6 +1039,17 @@ candidate, and its time counts against `wall_minutes`: it is skipped (not
 established) when less wall time is left than `fail_before_timeout_seconds`.
 Its attempts are recorded apart from the run's checks, and a later candidate
 with the same probe tree (a repair of production code only) reuses them.
+
+In every mode, a review finding that only disputes the outcome Orbit recorded
+(for example "the fail-before evidence shows only a load failure") is reported
+as a note, a `review.finding.noted` decision, and never blocks, goes to repair
+or goes to the Inquisition: a repair changes the candidate, not the base
+revision. A review that asked for repair only through such notes approves
+nothing, so the run stops `BLOCKED` and names them. The planner does not write
+a criterion that the new tests fail on the base revision, since that is this
+setting's to establish; the contract draft drops one that says nothing else,
+with a `contract.criterion-dropped` decision
+([ADR 0014, addendum](decisions/0014-fail-before.md)).
 
 ## notifications
 

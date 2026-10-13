@@ -1,6 +1,6 @@
 # 0014. Fail-before evidence: reported always, required on request (issue #65)
 
-Status: accepted (2026-10-12)
+Status: accepted (2026-10-12); amended 2026-10-13 (0.3.1, see the addendum)
 
 ## Context
 
@@ -100,9 +100,11 @@ criterion's check no longer counts.
 
 Under `required`, for a criterion whose support comes from new tests:
 
-- **failed-before** on a cited check: supported. The review packet carries the probe log, and the
+- **failed-before** on a cited check: supported. ~~The review packet carries the probe log, and the
   reviewer brief asks whether the failure is an assertion about the criterion or only a load failure; a
-  reviewer finding of a load-only failure is a blocking finding like any other.
+  reviewer finding of a load-only failure is a blocking finding like any other.~~ Superseded on
+  2026-10-13 (addendum, items 2, 3 and 5): the outcome is not a finding, and the packet shows the log's
+  failing lines.
 - **passed-before** on all cited test checks: unverified, with the note "the new tests pass on the base
   revision: unit passed on <base> with N test files overlaid (log), so they do not show the change, or unit
   does not run them". This goes to repair through `green_without_proof` with the probe log in the brief,
@@ -114,7 +116,8 @@ Under `required`, for a criterion whose support comes from new tests:
   acceptance (ADR 0010); it is fixed, and `orbit resume` reruns only the probe.
 
 Under `advisory`, each criterion's report entry carries the outcome, and `unverified` gains one line when
-any criterion's new tests passed on base or could not be probed. Nothing else changes.
+any criterion's new tests passed on base or could not be probed. Nothing else changes (and since 2026-10-13
+no reviewer or inquiry is shown it: addendum, item 1).
 
 ### 5. Report and timeline
 
@@ -149,3 +152,54 @@ a model, accepts the cases it cannot judge.
 - Telling a load failure from an assertion failure. A runner-neutral report format a check may declare
   (JUnit XML distinguishes `<failure>` from `<error>`) could add phase evidence later without Orbit reading
   any one runner's output.
+
+## Addendum (2026-10-13, 0.3.1): what the reviewer and the Inquisition see
+
+The 0.3.0 retest ran the probe in Python, .NET and Node repositories. The probe did what this decision says;
+what Orbit did with its outcome did not. Five changes, each with the run that showed why.
+
+1. **Advisory and off stay out of review and out of the Inquisition.** Section 1 says that under `advisory`
+   no status, verdict, repair or question changes because of the probe. Yet the advisory packet carried a
+   Fail-before section, and the reviewer brief told every reviewer, in every mode, to judge the probe log. A
+   reviewer raised "the fail-before evidence only shows a load failure" as a high finding: in the Python run
+   (orb-20261013-080355-6ac27f) it drove two repairs and two amendments of AC-4's proof, and in the demo UI run
+   (orb-20261013-080027-02f61e) two REPAIR_REQUIRED rounds. Now, under `advisory` or `off`, the packet has no
+   fail-before section and no fail-before line among what is not verified, and the reviewer brief's
+   fail-before paragraph applies only under `required`. So no review finding, and through it no Inquisition
+   trigger, amendment or repair brief, rests on the probe's outcome or log. The report keeps the outcome for
+   the person, as before.
+2. **Under `required`, a compile, collection or import failure of a new symbol is fail-before, not a
+   finding.** Section 3 already counts it. Section 4 then asked the reviewer whether a failure was "only a
+   load failure" and made that a blocking finding. A test of a new function can fail on the base revision no
+   other way, so the canonical test-first goal could not succeed: the Python required run
+   (orb-20261013-081148-e86c15) and both .NET runs (orb-20261013-083016-84a30d and
+   orb-20261013-083337-df06a4) ended EXHAUSTED on such a finding. The packet and the brief now say that the
+   outcome is Orbit's to record and is not a finding, and ask only about the quality of the new tests, as for
+   any test: a tautology, or an assertion that cannot fail with any implementation. They ask for no mutant
+   run, stub implementation or probe rerun, which no check produces. That sentence of section 4 is
+   superseded.
+3. **A finding that only disputes a classification Orbit recorded is a note.** A repair changes the
+   candidate, never the base revision, so a repair sent to answer a finding about the probe's outcome
+   reproduced the same tree, and the .NET runs ended on non-progress. The review resolver now reports a
+   finding whose subject is a classification Orbit made of its own evidence as an `advisory` note, recorded as
+   a `review.finding.noted` decision, in every mode: it never blocks, is never a claim to test, and goes to
+   neither repair nor the Inquisition. Today the one such classification is the fail-before outcome, which
+   the finding's claim names and disputes (a load, compile or import failure, not an assertion); a finding
+   about the tests themselves (a tautology, a test that passes for any implementation) is still a claim.
+   Delivery still needs an approving review, so a review that asked for repair only through such notes
+   approves nothing: the run stops BLOCKED and names them, instead of spending an attempt on the same tree.
+4. **The planner does not promise fail-before.** In the required run the planner wrote AC-4, "The new tests
+   fail on the base revision (ImportError for round_price)". The candidate's passing log was then cited to
+   support it, and an inquiry told the implementer to keep the import error "as the contract states". The
+   planner brief now forbids a criterion that the new tests fail on the base revision, and an assumption that
+   a check runs the new tests: both are Orbit's to establish. The contract draft drops a criterion whose
+   every clause is about tests failing on the base revision or passing, with a `contract.criterion-dropped`
+   decision. A criterion that also states behaviour is kept, the other criteria keep their ids, and the last
+   mandatory criterion is never dropped. An assumption that a check runs the new tests is not recognised in
+   code, and the Inquisitor brief forbids an amendment that requires evidence no check produces.
+5. **The packet shows the tests that failed.** The packet showed the last 2,000 characters of each probe
+   log, which for a test runner are its passing suites and summary, so the reviewer never saw which tests
+   failed (the demo UI run's `reviews/1/packet.md`, lines 119 to 131). Under `required`, the one mode whose
+   packet still shows the probe, it now shows the lines of each log that report a failure, in any runner's
+   words, with a little context, within 4,000 characters, and the head and tail of a log without one; and it
+   says the log is check-wide, every test the check runs and not one criterion's.

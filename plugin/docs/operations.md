@@ -164,7 +164,16 @@ test files, and each criterion in `report.json` carries a `fail_before` entry
 revision with the new tests (exit 1, 2 attempts): AC-1". Under `required`, a
 question about accepting a criterion without fail-before is answered with
 `orbit decide <run-id> <question-id> accept` (or `decline`), bound to the tree
-it names, and `orbit resume` judges the candidate again.
+it names, and `orbit resume` judges the candidate again. Only under `required`
+does the reviewer see the probe: the review packet shows the lines of each
+probe log that report a failure (the log is check-wide), says that a compile,
+collection or import failure of a new symbol counts and is not a finding, and
+asks only about the new tests' quality. Under `advisory` and `off` the
+reviewer and the Inquisition see nothing of it. A review finding that only
+disputes the recorded outcome is a `review.finding.noted` decision in the
+timeline and a residual risk in the report, never a repair; when a review asked
+for repair only through such notes, the run ends `BLOCKED` naming them, since
+delivery needs an approving review.
 
 `orbit repair <run-id>` hands the failure of a `BLOCKED` or paused run with FAIL
 evidence to a repair. A run id that does not qualify is refused with the
