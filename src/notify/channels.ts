@@ -95,20 +95,12 @@ function messageOf(err: unknown): string {
 // ---------------------------------------------------------------------------
 // desktop
 
-/**
- * The text reaches osascript as arguments of an `on run argv` script, never inside the script, so nothing in a
- * reason can become AppleScript.
- */
-const OSASCRIPT = ['-e', 'on run argv', '-e', 'display notification (item 2 of argv) with title (item 1 of argv)', '-e', 'end run'];
-
+/** Linux only: macOS has no first-party notifier without a signed app, and an AppleScript one shows up as Script Editor's (ADR 0008 addendum). */
 export async function sendDesktop(p: NotificationPayload, deps: Pick<NotifyDeps, 'platform' | 'exec'>): Promise<ChannelOutcome> {
-  const title = payloadTitle(p);
-  const body = payloadText(p);
-  let argv: string[];
-  if (deps.platform === 'darwin') argv = ['osascript', ...OSASCRIPT, '--', title, body];
-  else if (deps.platform === 'linux') argv = ['notify-send', '--app-name=Orbit', '--', title, body];
-  else return { channel: 'desktop', status: 'skipped', detail: `no desktop notifier on ${deps.platform}` };
-  const program = argv[0]!;
+  if (deps.platform === 'darwin') return { channel: 'desktop', status: 'skipped', detail: 'no desktop notifier on darwin: Orbit does not use AppleScript notifications; use the webhook channel' };
+  if (deps.platform !== 'linux') return { channel: 'desktop', status: 'skipped', detail: `no desktop notifier on ${deps.platform}` };
+  const program = 'notify-send';
+  const argv = [program, '--app-name=Orbit', '--', payloadTitle(p), payloadText(p)];
   try {
     const r = await deps.exec(argv, DESKTOP_TIMEOUT_MS);
     if (r.notFound) return { channel: 'desktop', status: 'skipped', detail: `${program} is not available` };

@@ -62,6 +62,16 @@ describe('orbit notify test', () => {
     expect(f.threads.comments(4)).toHaveLength(1);
   });
 
+  it('on macOS runs no AppleScript: the desktop channel is skipped and says why, and the command still succeeds', async () => {
+    const l = lab();
+    writeConfig(l, '  desktop: true\n');
+    const f = fakes(l);
+    const r = await l.cli(['notify', 'test'], { seams: { notify: { ...f.notify, platform: 'darwin' } } });
+    expect(r.code, r.err).toBe(0);
+    expect(f.desktop).toEqual([]);
+    expect(r.out).toContain('desktop: skipped (no desktop notifier on darwin: Orbit does not use AppleScript notifications; use the webhook channel)');
+  });
+
   it('exits 1 when a channel fails, and --json prints the outcomes', async () => {
     const l = lab();
     writeConfig(l, '  desktop: true\n');

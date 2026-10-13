@@ -192,7 +192,7 @@ export interface ProviderConfig {
 
 /** Where Orbit tells a person that a run ended or needs an answer, and whether comments may answer (ADR 0008). */
 export interface NotificationsConfig {
-  /** macOS Notification Centre (osascript) or Linux notify-send; skipped silently where neither exists. */
+  /** Linux notify-send only; skipped silently on macOS and where notify-send is missing. */
   desktop: boolean;
   /** POST a small JSON payload; the URL is read from the environment variable `url_env` names, never from this file. */
   webhook: { url_env: string } | null;

@@ -96,7 +96,7 @@ export function fakeSystem(opts: { env?: Record<string, string>; platform?: Node
   };
   const deps: NotifyDeps = {
     env: opts.env ?? {},
-    platform: opts.platform ?? 'darwin',
+    platform: opts.platform ?? 'linux',
     exec: async (argv) => {
       execCalls.push(argv);
       return opts.exec ? opts.exec(argv) : { exitCode: 0, notFound: false, stderr: '' };

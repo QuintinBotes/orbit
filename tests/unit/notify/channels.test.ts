@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { notificationsOff, sendDesktop, sendGithubComment, sendWebhook } from '../../../src/notify/channels.ts';
-import { buildPayload, COMMENT_MARKER, testPayload } from '../../../src/notify/payload.ts';
+import { buildPayload, COMMENT_MARKER, payloadText, testPayload } from '../../../src/notify/payload.ts';
 import { OrbitError } from '../../../src/core/errors.ts';
 import { fakeSystem, notifyConfig } from './helpers.ts';
 
@@ -14,16 +14,11 @@ const webhookConfig = (hosts: string[] = ['hooks.acme.test']) =>
   });
 
 describe('desktop channel', () => {
-  it('macOS: osascript gets the text as arguments of an "on run argv" script, never inside the script', async () => {
+  it('macOS: nothing is run and the channel is skipped, Orbit does not use AppleScript notifications', async () => {
     const sys = fakeSystem({ platform: 'darwin' });
-    const out = await sendDesktop({ ...payload, reason: 'say "hi" & do shell script "rm -rf ~"' }, sys.deps);
-    expect(out).toEqual({ channel: 'desktop', status: 'sent', detail: 'osascript' });
-    const argv = sys.execCalls[0]!;
-    expect(argv[0]).toBe('osascript');
-    const script = argv.slice(0, argv.indexOf('--')).join(' ');
-    expect(script).toContain('on run argv');
-    expect(script).not.toContain('rm -rf');
-    expect(argv.slice(argv.indexOf('--') + 1).join(' ')).toContain('rm -rf');
+    const out = await sendDesktop(payload, sys.deps);
+    expect(out).toEqual({ channel: 'desktop', status: 'skipped', detail: 'no desktop notifier on darwin: Orbit does not use AppleScript notifications; use the webhook channel' });
+    expect(sys.execCalls).toEqual([]);
   });
 
   it('Linux: notify-send with the title and body as separate arguments after --', async () => {
@@ -31,6 +26,7 @@ describe('desktop channel', () => {
     const out = await sendDesktop(payload, sys.deps);
     expect(out.status).toBe('sent');
     expect(sys.execCalls[0]!.slice(0, 4)).toEqual(['notify-send', '--app-name=Orbit', '--', 'Orbit: run orb-1 SUCCEEDED']);
+    expect(sys.execCalls[0]![4]).toBe(payloadText(payload));
   });
 
   it('is skipped silently when the program is missing or the platform has none', async () => {
@@ -42,9 +38,9 @@ describe('desktop channel', () => {
   });
 
   it('a notifier that fails is reported, not thrown', async () => {
-    const sys = fakeSystem({ platform: 'darwin', exec: () => ({ exitCode: 1, notFound: false, stderr: 'execution error' }) });
-    expect(await sendDesktop(payload, sys.deps)).toEqual({ channel: 'desktop', status: 'failed', detail: 'osascript exited 1: execution error' });
-    const thrower = fakeSystem({ platform: 'darwin', exec: () => { throw new Error('spawn EACCES'); } });
+    const sys = fakeSystem({ platform: 'linux', exec: () => ({ exitCode: 1, notFound: false, stderr: 'execution error' }) });
+    expect(await sendDesktop(payload, sys.deps)).toEqual({ channel: 'desktop', status: 'failed', detail: 'notify-send exited 1: execution error' });
+    const thrower = fakeSystem({ platform: 'linux', exec: () => { throw new Error('spawn EACCES'); } });
     expect(await sendDesktop(payload, thrower.deps)).toMatchObject({ status: 'failed', detail: 'spawn EACCES' });
   });
 });

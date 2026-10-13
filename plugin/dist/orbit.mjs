@@ -48711,13 +48711,10 @@ function messageOf2(err) {
   return redact(text2).replace(/\s+/g, " ").slice(0, 300);
 }
 async function sendDesktop(p, deps) {
-  const title = payloadTitle(p);
-  const body = payloadText(p);
-  let argv2;
-  if (deps.platform === "darwin") argv2 = ["osascript", ...OSASCRIPT, "--", title, body];
-  else if (deps.platform === "linux") argv2 = ["notify-send", "--app-name=Orbit", "--", title, body];
-  else return { channel: "desktop", status: "skipped", detail: `no desktop notifier on ${deps.platform}` };
-  const program = argv2[0];
+  if (deps.platform === "darwin") return { channel: "desktop", status: "skipped", detail: "no desktop notifier on darwin: Orbit does not use AppleScript notifications; use the webhook channel" };
+  if (deps.platform !== "linux") return { channel: "desktop", status: "skipped", detail: `no desktop notifier on ${deps.platform}` };
+  const program = "notify-send";
+  const argv2 = [program, "--app-name=Orbit", "--", payloadTitle(p), payloadText(p)];
   try {
     const r = await deps.exec(argv2, DESKTOP_TIMEOUT_MS);
     if (r.notFound) return { channel: "desktop", status: "skipped", detail: `${program} is not available` };
@@ -48767,7 +48764,7 @@ async function sendGithubComment(p, target, client) {
     return { channel: "github_comment", status: "failed", detail: messageOf2(err) };
   }
 }
-var DESKTOP_TIMEOUT_MS, WEBHOOK_TIMEOUT_MS, FAKE_THREADS_FILE, defaultExec, defaultFetch, OSASCRIPT, LOOPBACK;
+var DESKTOP_TIMEOUT_MS, WEBHOOK_TIMEOUT_MS, FAKE_THREADS_FILE, defaultExec, defaultFetch, LOOPBACK;
 var init_channels = __esm({
   "src/notify/channels.ts"() {
     "use strict";
@@ -48797,7 +48794,6 @@ var init_channels = __esm({
       });
       return { status: r.status, ok: r.ok };
     };
-    OSASCRIPT = ["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run"];
     LOOPBACK = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
   }
 });
@@ -66660,7 +66656,7 @@ guard:
 # Notifications when a run ends or asks a question (docs/decisions/0008).
 # Payloads carry the run id, state, reason, next action and question ids only.
 notifications:
-  # macOS Notification Centre or Linux notify-send; skipped where neither exists.
+  # Linux notify-send only; skipped on macOS (use the webhook there) and where notify-send is missing.
   desktop: true
   # POST to a webhook (Slack-compatible "text"). Name the environment variable
   # that holds the URL, never the URL itself; its host must be in
@@ -69590,7 +69586,7 @@ var init_cli = __esm({
       { name: "stats", summary: "the spec section 16 metrics for this repository's runs (success, cost, repair loops, time to green), optionally in a time window", usage: STATS_USAGE, options: STATS_OPTIONS, run: statsCommand },
       { name: "release resolve", summary: "settle a deploy whose outcome is unknown: run the environment's verify_command, or record --deployed / --not-deployed", usage: RELEASE_RESOLVE_USAGE, options: RELEASE_RESOLVE_OPTIONS, run: releaseResolveCommand },
       { name: "gc", summary: "apply artifact retention: delete the run directories and worktrees of finished runs older than retention.keep_runs_days", usage: GC_USAGE, options: GC_OPTIONS, run: gcCommand },
-      { name: "notify test", summary: "send a test notification through the configured channels (desktop, webhook, GitHub comment) and print each outcome", usage: NOTIFY_TEST_USAGE, options: NOTIFY_TEST_OPTIONS, run: notifyTestCommand },
+      { name: "notify test", summary: "send a test notification through the configured channels (desktop on Linux only, webhook, GitHub comment) and print each outcome", usage: NOTIFY_TEST_USAGE, options: NOTIFY_TEST_OPTIONS, run: notifyTestCommand },
       { name: "policy show", summary: "the frozen policy a run acts under, verified against its hash", usage: "orbit policy show <run-id> [--json]", run: policyShowCommand }
     ];
     HIDDEN = ["shim", "hook", "check-runner"];

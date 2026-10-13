@@ -40,9 +40,9 @@ Two things make this a security boundary rather than a convenience:
    outcome reason, cut before anything that looks like a diff or code fence,
    passed through the policy redactor and capped at 160 characters. The next
    action is built from a fixed template per state, never from model prose.
-4. Desktop: `osascript` on macOS (the text is passed as arguments to an
-   `on run argv` script, never spliced into AppleScript), `notify-send` on
-   Linux. A missing program or another platform skips silently.
+4. Desktop: `notify-send` on Linux. A missing program or another platform
+   skips silently. (Superseded by the 2026-10-13 addendum: the original
+   decision also used `osascript` on macOS, which Orbit no longer does.)
 5. Webhook: the URL is read from the environment variable that
    `notifications.webhook.url_env` names; a URL is never written in the
    config file (the setting must be a variable name). The URL must be
@@ -116,3 +116,19 @@ Two things make this a security boundary rather than a convenience:
   and the run directory, which never leave the machine through this feature.
 - Rollback: set `notifications.desktop: false` and leave the other channels
   off; existing runs keep the policy they were started with.
+
+## Addendum 2026-10-13: no AppleScript notifications on macOS
+
+The desktop channel no longer runs `osascript` on macOS: it is skipped there,
+with a detail that says so. Linux (`notify-send`) is unchanged, and
+`notifications.desktop` keeps its name and its default.
+
+- A `display notification` call is attributed to Script Editor, so every
+  notification appears to come from an application the person never opened.
+  That reads as foreign, not as Orbit.
+- There is no first-party macOS notifier without a signed application bundle,
+  which Orbit does not ship.
+- The webhook channel covers macOS users who want alerts.
+
+The `osascript` entry in the worker command deny lists is a security rule for
+workers and is unchanged.

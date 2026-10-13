@@ -562,8 +562,9 @@ Orbit tells you when a run ends (`SUCCEEDED`, `BLOCKED`, `EXHAUSTED`,
 `IMPOSSIBLE`, `CANCELLED`) and when it raises a question a person must answer,
 through the channels in the `notifications` section of the policy
 ([configuration](configuration.md#notifications)): a desktop notification
-(on by default), a webhook, and a comment on the run's pull request (or on the
-linked issue). Each notification is sent once; a run that is resumed and blocks
+(Linux `notify-send` only, on by default; skipped on macOS, where the webhook
+is the way to get an alert), a webhook, and a comment on the run's pull request
+(or on the linked issue). Each notification is sent once; a run that is resumed and blocks
 again is announced again. A notification says only the run id, its state, a
 short reason, the next action and the open question ids; never code, diffs,
 secrets or log excerpts. For a block that comes from the frozen policy the next
@@ -573,7 +574,7 @@ only block again. Delivery failures are recorded as events
 `ORBIT_NOTIFICATIONS=off` turns every channel off, for CI and test suites.
 
 ```bash
-orbit notify test     # desktop: sent (osascript) / webhook: skipped (...) / ...
+orbit notify test     # desktop: sent (notify-send) / webhook: skipped (...) / ...
 ```
 
 **Remote answers.** With `notifications.remote_answers.enabled`, an open

@@ -25,7 +25,7 @@ const QUESTION = { question: 'Should mul round fractional results or keep full p
 function notifyDeps(l: Lab, threads: FakeThreadClient, desktop: string[][]): Partial<NotifyDeps> {
   return {
     env: {},
-    platform: 'darwin',
+    platform: 'linux',
     exec: async (argv) => {
       desktop.push(argv);
       return { exitCode: 0, notFound: false, stderr: '' };

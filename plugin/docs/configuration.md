@@ -1044,7 +1044,7 @@ with the same probe tree (a repair of production code only) reuses them.
 
 ```yaml
 notifications:
-  desktop: true               # macOS osascript or Linux notify-send; skipped where neither exists
+  desktop: true               # Linux notify-send only; skipped on macOS (use the webhook)
   webhook: null               # or { url_env: ORBIT_WEBHOOK_URL }
   github_comment: false       # comment on the run's pull request, else on remote_answers.issue
   remote_answers:
@@ -1065,7 +1065,7 @@ a Slack-compatible `text` field and the payload under `orbit`. Comments and
 remote answers go through `GH_TOKEN`; with `delivery.provider: fake` they use
 `.orbit/fake-github-threads.json` instead. A run keeps the settings it started
 with, like the rest of its policy; a run whose frozen policy no longer verifies
-notifies on the desktop only.
+notifies on the desktop only (Linux; nothing on macOS).
 
 ## Environment variables
 

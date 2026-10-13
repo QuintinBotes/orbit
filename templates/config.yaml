@@ -420,7 +420,7 @@ guard:
 # Notifications when a run ends or asks a question (docs/decisions/0008).
 # Payloads carry the run id, state, reason, next action and question ids only.
 notifications:
-  # macOS Notification Centre or Linux notify-send; skipped where neither exists.
+  # Linux notify-send only; skipped on macOS (use the webhook there) and where notify-send is missing.
   desktop: true
   # POST to a webhook (Slack-compatible "text"). Name the environment variable
   # that holds the URL, never the URL itself; its host must be in
