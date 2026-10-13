@@ -32,7 +32,7 @@ import { checkRunCredentials, credentialCheckDue, providersForRun } from '../rec
 import { reattachCheck, type RunnerContext } from '../evidence/runner.ts';
 import { getCheckRun, isFinalCheckStatus } from '../evidence/store.ts';
 import { loadRunContext } from './context.ts';
-import { stopActiveWorkers } from './workers.ts';
+import { settleRunUsage, stopActiveWorkers } from './workers.ts';
 import { verifySnapshot } from '../policy/snapshot.ts';
 import { BudgetLedger } from '../scheduling/budget.ts';
 import type { ControllerDeps } from './context.ts';
@@ -630,6 +630,15 @@ export class Controller {
           snapshot = verifySnapshot(run.policyPath, run.policyHash);
         } catch {
           snapshot = null;
+        }
+        // A run the watchdog or reconciliation ended: the sessions they stopped and stored are recorded and charged
+        // before the report says what was spent.
+        if (snapshot) {
+          try {
+            settleRunUsage(loadRunContext(this.deps, run.id, new AbortController().signal));
+          } catch (err) {
+            this.log.warn('could not settle the usage of an ended run', { run_id: run.id, error: messageOf(err) });
+          }
         }
         writeFinalReport(db, run.id, { runDir, clock, snapshot });
       } catch (err) {

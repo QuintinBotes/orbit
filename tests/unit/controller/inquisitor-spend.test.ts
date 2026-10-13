@@ -18,6 +18,7 @@ const { finishWorker, getWorker, markWorkerRunning, planWorker } = await import(
 const { recordUsage } = await import('../../../src/routing/usage.ts');
 const { appendEvent } = await import('../../../src/storage/events.ts');
 const { spendBreakdown } = await import('../../../src/scheduling/budget.ts');
+const { reconcileOnStart } = await import('../../../src/recovery/reconcile.ts');
 const { initLedger, makeUnitLab, setContract, validContract, OWNER } = await import('./coverage-helpers.ts');
 type UnitLab = import('./coverage-helpers.ts').UnitLab;
 type TaskResult = import('../../../src/adapters/types.ts').TaskResult;
@@ -339,6 +340,35 @@ describe('inquisitor spend', () => {
       await inquisitionStep(lab.ctx());
       expect(admitOf()('inquisition:risk-review:k:1')).toBeNull();
     });
+  });
+
+  // Adversarial review of fix/031-budget: reconciliation collected an exited inquisitor and stored its result with no
+  // usage record, the charge pass found no record to charge, and the engine reused the result: a $0.75 session ended
+  // SUCCEEDED with no usage row and cost_usd 0.
+  it('an inquisitor that reconciliation collected on restart is recorded and charged once, and its reused result is not charged again', async () => {
+    setup();
+    const workerDir = join(lab.base, 'w', 'wrk-inq-rec');
+    mkdirSync(workerDir, { recursive: true });
+    writeFileSync(join(workerDir, 'pid.json'), JSON.stringify({ version: 1, shimPid: 2_000_000_000, shimStart: 'x', pgid: 2_000_000_000, childPid: null, childStart: null, sessionId: null, argvHash: 'h', startedAt: 1 }));
+    writeFileSync(join(workerDir, 'exit.json'), JSON.stringify({ version: 1, code: 0, signal: null, timedOut: false, cancelled: false, aborted: null, endedAt: 2, startedAt: 1 }));
+    planWorker(lab.db, { id: 'wrk-inq-rec', runId: lab.runId, role: 'inquisitor', purpose: 'inquisition:risk-review:k:1', provider: 'claude', model: null, workerDir, cwd: lab.repo }, lab.clock, OWNER);
+    markWorkerRunning(lab.db, 'wrk-inq-rec', { pid: 2_000_000_000, pgid: 2_000_000_000, procStart: 'x' }, lab.clock, OWNER);
+    lab.deps.adapters = { claude: { id: 'claude', collectResult: async () => sessionResult(0.75) } as never };
+    const rep = await reconcileOnStart({ db: lab.db, ownerId: OWNER, clock: lab.clock, adapters: lab.deps.adapters, graceMs: 50, runIds: [lab.runId] });
+    expect(rep.runs[0]!.workers).toEqual([expect.objectContaining({ workerId: 'wrk-inq-rec', observation: 'finished', state: 'SUCCEEDED' })]);
+    // The engine finds the stored result and reuses it: no second session, no usage of its own.
+    hooks.runInquisition.mockResolvedValue(settled(['wrk-inq-rec']));
+    await inquisitionStep(lab.ctx());
+    expect(getRun(lab.db, lab.runId).state).toBe('IMPLEMENTING');
+    expect(lab.db.all('SELECT cost_usd FROM usage WHERE worker_id = ?', 'wrk-inq-rec')).toEqual([{ cost_usd: 0.75 }]);
+    expect(charged()).toBeCloseTo(0.75, 6);
+    expect(spendBreakdown(lab.db, lab.runId)).toMatchObject({ charged_usd: 0.75, reported_usd: 0.75, reported_sessions: 1, uncharged_usd: 0, unmatched_usd: 0 });
+    // A later inquiry's charge pass, and a direct one, find it charged.
+    enterInquisition('k:2');
+    await inquisitionStep(lab.ctx());
+    chargeRecordedUsage(lab.ctx(), getWorker(lab.db, 'wrk-inq-rec'));
+    expect(charged()).toBeCloseTo(0.75, 6);
+    expect(lab.db.all('SELECT 1 FROM usage WHERE worker_id = ?', 'wrk-inq-rec')).toHaveLength(1);
   });
 
   it('a worker without a usage record has nothing to charge', () => {

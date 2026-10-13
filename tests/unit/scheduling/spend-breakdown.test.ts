@@ -8,6 +8,7 @@ import { createRun } from '../../../src/controller/run-store.ts';
 import { BudgetLedger, spendBreakdown, type BudgetPolicy } from '../../../src/scheduling/budget.ts';
 import { recordUsage } from '../../../src/routing/usage.ts';
 import { appendEvent } from '../../../src/storage/events.ts';
+import { planWorker } from '../../../src/storage/workers.ts';
 import type { UsageReport } from '../../../src/adapters/types.ts';
 
 const POLICY: BudgetPolicy = {
@@ -121,6 +122,40 @@ describe('spendBreakdown: which figure the cap is checked against, and what it a
     const s = spendBreakdown(db, 'run-1');
     expect(s).toMatchObject({ charged_usd: 1.12, ceiling_usd: 1, ceiling_sessions: 1, unpriced_sessions: 1 });
     expect(s.explanation).toBe('$1.12 charged to the cost budget (the figure the cost cap is checked against): $0.12 reported by providers (1 session) + $1.00 at conservative ceilings for 1 session that reported no cost and could not be priced; 1 session with no reported cost was never charged');
+  });
+
+  // Adversarial review of fix/031-budget: before 0.3.1 a session charged from its tokens left a charge event naming no
+  // session, and recordUsage priced the same session's usage record from the registry. Only records without a cost were
+  // matched to such a charge, so one $0.51 session read as $1.02 across two sessions, $0.51 of it "never charged".
+  it('a charge recorded before charges named their session is matched to its session\'s priced usage record, once', () => {
+    const { db, clock } = setup();
+    const ledger = new BudgetLedger(db, clock).init('run-1', { config: POLICY }, 'medium');
+    const worker = (id: string, role: 'implementer' | 'reviewer' | 'inquisitor'): void => {
+      planWorker(db, { id, runId: 'run-1', role, provider: 'codex', workerDir: `/w/${id}`, cwd: '/repo' }, clock);
+    };
+    // 0.3.0 accountWorker: the charge first (no worker_id), then the usage record, which recordUsage priced itself.
+    worker('w-rev', 'reviewer');
+    ledger.consumeCost({ costUsd: null }, 'reviewer', { phase: 'final', tokenEstimate: { costUsd: 0.51, basis: 'model pricing', model: 'gpt-x' } });
+    recordUsage(db, { runId: 'run-1', workerId: 'w-rev', provider: 'codex', model: 'gpt-x', usage: usage({ provider: 'codex', costUsd: 0.51, costSource: 'estimated' }), durationMs: 1 }, clock);
+    const one = spendBreakdown(db, 'run-1');
+    expect(one).toMatchObject({ charged_usd: 0.51, estimated_usd: 0.51, estimated_sessions: 1, reported_sessions: 0, unpriced_sessions: 0, unmatched_usd: 0, uncharged_usd: 0 });
+    expect(one.explanation).toBe('$0.51 charged to the cost budget (the figure the cost cap is checked against): $0.51 estimated from tokens for 1 session that reported no cost');
+    // More of the same run: a session priced only at the dearest rate (its record has no cost), one charged at a
+    // ceiling, one reported, and an inquisitor 0.3.0 recorded and never charged, which is still said to be uncharged.
+    worker('w-impl', 'implementer');
+    ledger.consumeCost({ costUsd: null }, 'implementer', { tokenEstimate: { costUsd: 0.8, basis: 'dearest listed pricing', model: null } });
+    recordUsage(db, { runId: 'run-1', workerId: 'w-impl', provider: 'codex', model: null, usage: usage({ provider: 'codex' }), durationMs: 1, pricing: null }, clock);
+    worker('w-impl-2', 'implementer');
+    ledger.consumeCost({ costUsd: null }, 'implementer', { ceilingUsd: 2 });
+    recordUsage(db, { runId: 'run-1', workerId: 'w-impl-2', provider: 'codex', model: null, usage: usage({ provider: 'codex', inputTokens: null, outputTokens: null }), durationMs: 1, pricing: null }, clock);
+    worker('w-rev-2', 'reviewer');
+    ledger.consumeCost({ costUsd: 0.2, costSource: 'reported' }, 'reviewer', { phase: 'final' });
+    recordUsage(db, { runId: 'run-1', workerId: 'w-rev-2', provider: 'codex', model: null, usage: usage({ provider: 'codex', costUsd: 0.2, costSource: 'reported' }), durationMs: 1 }, clock);
+    worker('w-inq', 'inquisitor');
+    recordUsage(db, { runId: 'run-1', workerId: 'w-inq', provider: 'codex', model: 'gpt-x', usage: usage({ provider: 'codex', costUsd: 0.05, costSource: 'estimated' }), durationMs: 1 }, clock);
+    const all = spendBreakdown(db, 'run-1');
+    expect(all).toMatchObject({ charged_usd: 3.51, reported_usd: 0.2, reported_sessions: 1, estimated_usd: 1.36, estimated_sessions: 3, ceiling_usd: 2, ceiling_sessions: 1, unpriced_sessions: 0, unmatched_usd: 0, uncharged_usd: 0.05 });
+    expect(all.explanation).toMatch(/; \$0\.05 of the recorded spend was never charged to the budget$/);
   });
 
   it('a budget with nothing charged and no usage says so plainly', () => {

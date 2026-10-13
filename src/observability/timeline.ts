@@ -353,6 +353,10 @@ function renderEvent(e: EventRow, data: Rec, l: Lookups): Rendered | null {
       return { text: `session ${str(data.session) ?? '?'} made ${num(data.model_requests) ?? '?'} model requests, counted from its transcript${before === null ? '' : `; it was recorded before 0.3.1 as num_turns ${before}`}` };
     }
     case 'budget.usage-charged': {
+      // Every charge marks its usage record. One charged as its session was collected says nothing the session's own
+      // cost line does not, and PLANNING's precharge has its own record; only usage charged after another component
+      // recorded it (the Inquisition, for its inquisitors) gets a line.
+      if (data.source === 'collected' || data.source === 'precharge') return null;
       const c = num(data.charged_usd);
       const who = [str(data.role) ?? 'a session', str(data.worker_id)].filter((x): x is string => x !== null).join(' ');
       return { category: 'cost', text: `charged ${c === null ? '?' : usd(c)} for ${who}, whose usage the Inquisition recorded` };

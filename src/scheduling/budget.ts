@@ -752,26 +752,28 @@ export function extensionDecisionRecord(d: ExtensionDecision): { kind: string; s
  * What the run's cost budget charged and what that charge is made of, from the usage records and the budget's own
  * charge events; the report, the timeline footer and status all say it this way. Read-only, and it works before
  * PLANNING creates the budget (charged_usd null). A session the budget charged from its tokens or at a ceiling counts
- * as that charge, whatever its usage record says; such a charge recorded before charges named their session stands
- * for one usage record without a cost, as the older cost note counted it.
+ * as that charge, whatever its usage record says. Such a charge recorded before charges named their session (0.3.0)
+ * stands for the usage record its session left (unnamedCharges), so no session is counted twice and no charged spend
+ * reads as never charged.
  */
 export function spendBreakdown(db: OrbitDb, runId: string): SpendBreakdown {
   const stoodFor = new Set<string>();
-  let unnamed = 0;
+  const unnamed: UnnamedCharge[] = [];
   let estimatedUsd = 0;
   let estimatedSessions = 0;
   let ceilingUsd = 0;
   let ceilingSessions = 0;
   let precharged = 0;
-  for (const e of db.all<{ type: string; data_json: string | null }>("SELECT type, data_json FROM events WHERE run_id = ? AND type IN ('budget.cost-token-estimated', 'budget.cost-ceiling-charged', 'budget.precharged') ORDER BY id", runId)) {
-    const d = e.data_json ? (JSON.parse(e.data_json) as { worker_id?: unknown; charged_usd?: unknown; ceiling_usd?: unknown }) : {};
+  for (const e of db.all<{ ts: number; type: string; data_json: string | null }>("SELECT ts, type, data_json FROM events WHERE run_id = ? AND type IN ('budget.cost-token-estimated', 'budget.cost-ceiling-charged', 'budget.precharged') ORDER BY id", runId)) {
+    const d = e.data_json ? (JSON.parse(e.data_json) as { worker_id?: unknown; role?: unknown; charged_usd?: unknown; ceiling_usd?: unknown }) : {};
     if (e.type === 'budget.precharged') {
       precharged += amountOf(d.charged_usd);
       continue;
     }
+    const estimate = e.type === 'budget.cost-token-estimated';
     if (typeof d.worker_id === 'string') stoodFor.add(d.worker_id);
-    else unnamed++;
-    if (e.type === 'budget.cost-token-estimated') {
+    else unnamed.push({ ts: e.ts, role: typeof d.role === 'string' ? d.role : null, estimate, usd: amountOf(estimate ? d.charged_usd : d.ceiling_usd) });
+    if (estimate) {
       estimatedUsd += amountOf(d.charged_usd);
       estimatedSessions++;
     } else {
@@ -782,12 +784,12 @@ export function spendBreakdown(db: OrbitDb, runId: string): SpendBreakdown {
   let reportedUsd = 0;
   let reportedSessions = 0;
   let unpriced = 0;
-  for (const u of db.all<{ worker_id: string | null; cost_usd: number | null; cost_source: string }>('SELECT worker_id, cost_usd, cost_source FROM usage WHERE run_id = ? ORDER BY id', runId)) {
-    if (u.worker_id !== null && stoodFor.has(u.worker_id)) continue;
-    if (u.cost_usd === null) {
-      if (unnamed > 0) unnamed--;
-      else unpriced++;
-    } else if (u.cost_source === 'estimated') {
+  const rows = db.all<UsageForCharge>('SELECT u.id, u.ts, u.worker_id, u.cost_usd, u.cost_source, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ? ORDER BY u.id', runId).filter((u) => u.worker_id === null || !stoodFor.has(u.worker_id));
+  const matched = unnamedCharges(unnamed, rows);
+  for (const u of rows) {
+    if (matched.has(u.id)) continue;
+    if (u.cost_usd === null) unpriced++;
+    else if (u.cost_source === 'estimated') {
       estimatedUsd += u.cost_usd;
       estimatedSessions++;
     } else {
@@ -814,6 +816,57 @@ export function spendBreakdown(db: OrbitDb, runId: string): SpendBreakdown {
     uncharged_reason: charged === null ? withoutBudget(state) : null,
   };
   return { ...s, explanation: explainSpend(s, state) };
+}
+
+/** A charge from tokens or at a ceiling whose event named no session (recorded before 0.3.1). */
+interface UnnamedCharge {
+  ts: number;
+  role: string | null;
+  estimate: boolean;
+  usd: number;
+}
+
+interface UsageForCharge {
+  id: number;
+  ts: number;
+  worker_id: string | null;
+  cost_usd: number | null;
+  cost_source: string;
+  role: string | null;
+}
+
+/**
+ * The usage records that charges naming no session stand for, one record each. Before 0.3.1 the controller charged a
+ * session it collected and then recorded its usage, so its record is the next one of its role after the charge; and
+ * recordUsage priced a session that reported tokens and no cost from the registry, so a charge from tokens can stand
+ * for a record with an estimated cost, the same amount when the model had its own price (0.3.0: one $0.51 session
+ * read as $1.02 across two sessions, $0.51 of it never charged). PLANNING charged records already written, so failing a
+ * later one the latest earlier record stands. A ceiling stands for a record with no cost, and a reported cost was
+ * charged as measured, with no event: neither is ever matched otherwise. A charge with no record left to stand for
+ * stays a charge with no matching usage record.
+ */
+function unnamedCharges(charges: readonly UnnamedCharge[], rows: readonly UsageForCharge[]): Set<number> {
+  const matched = new Set<number>();
+  const open = new Set(charges.map((_, i) => i));
+  const near = (c: UnnamedCharge, fits: (u: UsageForCharge) => boolean): UsageForCharge | undefined => {
+    const candidates = rows.filter((u) => !matched.has(u.id) && (u.role === null || c.role === null || u.role === c.role) && fits(u));
+    return candidates.find((u) => u.ts >= c.ts) ?? candidates.filter((u) => u.ts < c.ts).at(-1);
+  };
+  const pass = (fits: (c: UnnamedCharge, u: UsageForCharge) => boolean): void => {
+    for (const i of [...open]) {
+      const c = charges[i]!;
+      const u = near(c, (row) => fits(c, row));
+      if (!u) continue;
+      matched.add(u.id);
+      open.delete(i);
+    }
+  };
+  // Most certain first: an estimate priced at the same amount, then any record without a cost, then (an estimate whose
+  // amount the registry priced differently) any estimated record of its role.
+  pass((c, u) => c.estimate && u.cost_source === 'estimated' && u.cost_usd !== null && Math.abs(u.cost_usd - c.usd) < 1e-6);
+  pass((_, u) => u.cost_usd === null);
+  pass((c, u) => c.estimate && u.cost_source === 'estimated' && u.cost_usd !== null);
+  return matched;
 }
 
 /**

@@ -55,7 +55,7 @@ import { createdBranch } from './run-refs.ts';
 import { candidateRef } from '../evidence/candidate.ts';
 import { currentCandidate, type ControllerDeps, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
-import { accountWorker, accountWorkerTurns, OUTPUT_CAP_CEILING, outcomeOf, outputCapExceeded, raiseOutputCap, recordSpendCap, storedResult } from './workers.ts';
+import { accountWorker, accountWorkerTurns, OUTPUT_CAP_CEILING, outcomeOf, outputCapExceeded, raiseOutputCap, recordSpendCap, settleRunUsage, storedResult } from './workers.ts';
 import { autoEvaluateOverlays } from './eval-runner.ts';
 import { notifyRunEnded, resolveNotifyDeps } from '../notify/notify.ts';
 import { checkLiveOverlays, globalKnowledgePath, repoKnowledgePath } from './knowledge-hooks.ts';
@@ -566,6 +566,8 @@ function parseJson<T>(json: string | null): T | null {
 
 /** Report, notification, then learning. None of them may change the outcome or throw past this point. */
 export async function finalizeRun(ctx: RunContext): Promise<void> {
+  // A session no step looked at again (one the run's end stopped, one reconciliation collected) is in the report.
+  settleRunUsage(ctx);
   try {
     writeFinalReport(ctx.db, ctx.run.id, { runDir: ctx.runDir, clock: ctx.clock, snapshot: ctx.policyVerified ? ctx.snapshot : null });
   } catch (err) {

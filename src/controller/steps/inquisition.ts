@@ -21,7 +21,7 @@ import { homeOf, type RunContext } from '../context.ts';
 import { assertLeaseHeld } from '../run-store.ts';
 import type { RunState } from '../states.ts';
 import type { BudgetPhase } from '../../scheduling/types.ts';
-import { accountWorkerTurns, adapterFor, chargeRecordedUsage, collectIfFinished, recordSpendCap, routeFor, sessionSpendCap, storedResult, systemPromptFor, unfundedSessionReason } from '../workers.ts';
+import { adapterFor, chargeRecordedUsage, collectIfFinished, recordSpendCap, routeFor, sessionSpendCap, systemPromptFor, unfundedSessionReason } from '../workers.ts';
 import { listActiveWorkers, listWorkers } from '../../storage/workers.ts';
 import { listReviews } from '../../review/store.ts';
 import { assertContract, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
@@ -45,12 +45,11 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
     if (await collectIfFinished(ctx, w, phase)) return WAIT(`inquisitor ${w.id} is still running`);
   }
   // The engine records its inquisitors' usage itself; the controller charges it, like every other worker's: what an
-  // earlier pass left uncharged now, and this inquiry's afterwards, even when the inquiry ends in an error.
+  // earlier pass left uncharged now, and this inquiry's afterwards, even when the inquiry ends in an error. An
+  // inquisitor reconciliation collected on restart has a stored result and no usage record: its usage is recorded from
+  // that result here, before the engine reuses it.
   const account = (): void => {
-    for (const w of listWorkers(ctx.db, { runId: ctx.run.id, role: 'inquisitor' })) {
-      accountWorkerTurns(ctx, w, storedResult(w));
-      chargeRecordedUsage(ctx, w, phase);
-    }
+    for (const w of listWorkers(ctx.db, { runId: ctx.run.id, role: 'inquisitor' })) chargeRecordedUsage(ctx, w, phase);
   };
   account();
   // An inquiry that returns to REVIEWING needs another review round for whatever it decides; with none left no

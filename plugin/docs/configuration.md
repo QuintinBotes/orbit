@@ -363,11 +363,19 @@ in the registry (the dearest listed price when the model has none), recorded as
 `budget.cost-token-estimated`; otherwise, with no usable token counts, the
 ceiling. Inquisitor sessions are charged the same way, by the same rules: the
 Inquisition records their usage itself, and the controller charges it when the
-inquiry settles or fails, recorded as `budget.usage-charged`. The session whose
+inquiry settles or fails. Every charge marks the usage record it covers
+(`budget.usage-charged`) in the transaction that charges it, whichever path
+charged it, and a marked record is never charged again. A session whose result
+was stored with no usage record (one reconciliation collected after a controller
+restart, or one the watchdog stopped) has its usage recorded from that result
+and charged once, before the Inquisition reuses it and at the latest when the
+run's report is written. The session whose
 charge crosses the reserve or the cap is recorded with its usage before the run
 ends `EXHAUSTED`, so the spend line names it. An authentication failure still
 blocks on credentials when its charge reaches the cap. Spend from before PLANNING creates the
-budget (the contracting planner, say) is charged when PLANNING completes. A
+budget (the contracting planner, say) is charged when PLANNING completes, in one
+transaction with its marks, so a controller that dies part way charges nothing
+twice when PLANNING resumes. A
 run that stops before then has measured spend and nothing charged, and the
 spend line says why (`uncharged_reason` in the report's `budget.spend` and the
 status JSON's `spend`): a run blocked before PLANNING created the budget has
