@@ -22,7 +22,7 @@ import type { ProviderCapabilities, CredentialStatus } from '../../adapters/type
 import { homeOf, runWorktreeRoot, toolchainCacheRootFor, type RunContext } from '../context.ts';
 import { baselineGate, environmentGate, intakeGate, type GateResult } from '../gates.ts';
 import { deliveryEnvironmentProblem } from '../delivery-env.ts';
-import { baselineBlockReason, baselineEnvironmentFailures, baselineIncompleteChecks, baselineMisconfiguredChecks, environmentFixSettings, misconfiguredRecord, type AmendedCheck, type BlockedCheck, type IncompleteBaselineCheck, type MisconfiguredBlock } from '../environment-block.ts';
+import { baselineBlockReason, baselineEnvironmentFailures, baselineIncompleteChecks, baselineMisconfiguredChecks, deniedLaunches, environmentFixSettings, misconfiguredRecord, type AmendedCheck, type BlockedCheck, type IncompleteBaselineCheck, type MisconfiguredBlock } from '../environment-block.ts';
 import { MISSING_TARGET_KIND } from './baseline-questions.ts';
 import { blockOnAuth, decide, finishRun, move, safePoint, type StepResult } from './common.ts';
 import { workerPluginsStep } from './worker-plugins.ts';
@@ -141,14 +141,17 @@ export interface BaselineClassification {
  * Classify the failures of `report` (only those of the checks in `only`, when given: a baseline amendment judges the
  * checks it ran, and the rest were judged when they ran), in the order of ADR 0010: a misconfigured check, a missing
  * target, an environment failure, an ERROR without a completed result, and what is left a pre-existing failure of the
- * code.
+ * code. A program the sandbox could not start in a folder it denies (exit 126 or 127, deniedLaunches) comes before a
+ * missing target: the shell's "not found" for it reads as a script that does not exist yet too.
  */
 export function classifyBaseline(ctx: RunContext, report: BaselineReport, checkoutDir: string, only: ReadonlySet<string> | null = null): BaselineClassification {
   const judged = only === null ? report : { ...report, failures: report.failures.filter((f) => only.has(f.checkId)) };
-  const commandErrors = baselineMisconfiguredChecks(ctx, judged);
+  const notRun = baselineEnvironmentFailures(ctx, judged, checkoutDir);
+  const launches = deniedLaunches(ctx, judged, notRun);
+  const commandErrors = baselineMisconfiguredChecks(ctx, judged).filter((m) => !(m.kind === 'missing-target' && launches.has(m.checkId)));
   const misconfigured = commandErrors.filter((m) => m.kind === 'argument');
   const missingTargets = commandErrors.filter((m) => m.kind === 'missing-target');
-  const environment = baselineEnvironmentFailures(ctx, judged, checkoutDir).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId));
+  const environment = notRun.filter((f) => !commandErrors.some((m) => m.checkId === f.checkId));
   const incomplete = baselineIncompleteChecks(ctx, judged).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId) && !environment.some((e) => e.checkId === f.checkId));
   const marked = classifiedBaseline(report, environment, incomplete, misconfigured, missingTargets);
   // A check the environment stopped, whose command the tool rejected, or that ended ERROR produced no result of its

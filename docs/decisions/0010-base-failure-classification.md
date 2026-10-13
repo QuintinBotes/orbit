@@ -69,6 +69,13 @@ categories at PREFLIGHT, in this order:
 5. **Pre-existing failure.** Everything else: a failure of the repository's
    code. Only this category is recorded as pre-existing.
 
+One exception to the order: a program the sandbox could not start because it
+lies in a folder the check sandbox denies (exit 126 or 127, with the folder
+established, below) is an environment failure even where the shell's words
+also read as a missing target (`script-not-found`): a virtualenv the
+repository links to beside it by a relative link is gone from the checkout's
+view, so the shell says "not found" for the path the command runs.
+
 A check in category 1, 3 or 4 ends the run `BLOCKED` at PREFLIGHT, before any
 model is asked anything, with no baseline-exception question. A check in
 category 2 goes on to CONTRACTING and is settled there (below). The reason
@@ -260,11 +267,25 @@ written there, its folder resolves there, or the file it links to lies there: a
 link from elsewhere into a denied folder is refused for where it leads, and a
 link the repository commits, run by a path relative to the check's `cwd`, is
 followed in the repository's own tree, since the checkout is gone when the base
-revision is judged. The check's own checkout is never such a folder, and a
-check whose tests ran and failed stays the code's, whatever its output quotes:
-a test whose assertion message names such a refusal is a failing test, and so
-is ctest's failure report or a formatter's verdict ("1 file would be
-reformatted", "Code style issues found").
+revision is judged. There each link is read for its literal target before
+anything is canonicalised: one whose target is an absolute path into the
+repository or the folder beside it leads there from the checkout too, and
+counts for that path even where the file there links on elsewhere (a
+virtualenv's interpreter does); one whose target is relative moves with the
+checkout, and counts only once it leads out of the repository's tree. The
+check's own checkout is never such a folder, and a check whose tests ran and
+failed stays the code's, whatever its output quotes: a test whose assertion
+message names such a refusal is a failing test, and so is ctest's failure
+report or a formatter's verdict ("1 file would be reformatted", "Code style
+issues found"). A line of a unified diff's content (after an `@@` line, one
+that starts with `+`, `-` or a space) is never such evidence: a comparison
+(`git diff --no-index`, `diff -u`) that shows one ran and failed.
+
+Recognising a base-revision check that could not start its program is
+best-effort over the shapes of shell commands and the words launchers print. A
+case it misses is classified a pre-existing failure, which only a person can
+accept: its baseline-exception question shows the failing log, and nothing
+accepts it silently.
 
 ### Evidence for an environment failure
 

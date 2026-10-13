@@ -483,3 +483,138 @@ describe('PREFLIGHT: a wrapper\'s program, a make recipe\'s, and a link into a f
     expect(found.environment).toEqual([]);
   });
 });
+
+// Codex's review of the third fix. A link the repository commits with an absolute target into the repository still
+// leads there from the check's checkout, so the sandbox refuses it (exit 126), even where the file it reaches links on
+// to an interpreter elsewhere; the reading followed the link to its last file and called it the checkout's own. A
+// virtualenv folder the repository links to beside it by a relative link (`.venv -> ../shop-venv`) is gone from the
+// checkout's view (exit 127): the shell's "not found" for a relative path read as a script that does not exist yet (a
+// missing target) before the link was read. And `git diff --no-index` whose output shows such a refusal as a line of
+// the compared files is a comparison that ran and failed.
+describe('PREFLIGHT: links the repository commits, and a comparison that names a refusal (Codex review)', () => {
+  /** An interpreter outside the projects folder, as a virtualenv's python links to the one it was made from. */
+  const interpreter = (): string => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'orbit-python-')));
+    homes.push(dir);
+    writeFileSync(join(dir, 'python3'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    return join(dir, 'python3');
+  };
+  /** A virtualenv at `dir` whose bin/python links to an interpreter elsewhere. */
+  const venv = (dir: string): string => {
+    mkdirSync(join(dir, 'bin'), { recursive: true });
+    symlinkSync(interpreter(), join(dir, 'bin', 'python'));
+    return join(dir, 'bin', 'python');
+  };
+  const blocksWithoutQuestion = (denied: { report: BaselineReport; checkout: string }) => {
+    const ctx = lab.ctx();
+    const found = classifyBaseline(ctx, denied.report, denied.checkout);
+    expect(found.misconfigured).toEqual([]);
+    expect(found.missingTargets).toEqual([]);
+    expect(found.report.complete).toBe(false);
+    expect(askAboutBaseFailures(ctx, found, { baseRevision: BASE_REV, key: '' }).preExisting).toEqual([]);
+    expect(listQuestions(lab.db, lab.runId)).toEqual([]);
+    return found;
+  };
+
+  it('an absolute link into the repository, run by a path relative to the check\'s cwd, is refused for the path it names (exit 126)', () => {
+    let target = '';
+    const denied = deniedBaseline(
+      ({ repo }) => {
+        target = venv(join(repo, '.venv'));
+        mkdirSync(join(repo, 'tools'), { recursive: true });
+        symlinkSync(target, join(repo, 'tools', 'python'));
+        return './tools/python';
+      },
+      { log: (p) => `orbit-limits: ${p}: Operation not permitted\norbit-limits: line 0: exec: ${p}: cannot execute: Operation not permitted\n` },
+    );
+    const found = blocksWithoutQuestion(denied);
+    expect(found.environment).toEqual([expect.objectContaining({ signals: ['program-denied'], programDenial: expect.objectContaining({ program: './tools/python', under: 'repository', target }) })]);
+    expect(found.environment[0]!.cause).toBe(`the check sandbox denies the repository (${lab.repo}) and the folder that holds it and its sibling projects (${lab.base}), and the program "./tools/python" the check runs links to "${target}", which lies in the repository, so it cannot start in a check`);
+  });
+
+  it('an absolute link to a folder of the repository on the way counts too, and a relative link that stays in the repository does not', () => {
+    const denied = deniedBaseline(
+      ({ repo }) => {
+        venv(join(repo, 'envs', 'py312'));
+        symlinkSync(join(repo, 'envs', 'py312'), join(repo, '.venv'));
+        return '.venv/bin/python';
+      },
+      { log: (p) => `orbit-limits: line 0: exec: ${p}: cannot execute: Operation not permitted\n` },
+    );
+    const found = blocksWithoutQuestion(denied);
+    expect(found.environment).toEqual([expect.objectContaining({ signals: ['program-denied'], programDenial: expect.objectContaining({ program: '.venv/bin/python', under: 'repository', target: join(lab.repo, 'envs', 'py312', 'bin', 'python') }) })]);
+    lab.cleanup();
+    const relocated = deniedBaseline(
+      ({ repo }) => {
+        venv(join(repo, 'envs', 'py312'));
+        symlinkSync(join('envs', 'py312'), join(repo, '.venv'));
+        return '.venv/bin/python';
+      },
+      { log: (p) => `orbit-limits: line 0: exec: ${p}: cannot execute: Operation not permitted\n` },
+    );
+    expect(classifyBaseline(lab.ctx(), relocated.report, relocated.checkout).environment).toEqual([]);
+  });
+
+  it('a relative link to a sibling virtualenv is not found in the checkout (exit 127): an environment failure, not a missing target', () => {
+    // Its interpreter, which links on to one elsewhere, and its pytest script, which the shell's words also fit as a
+    // script of the repository that does not exist yet.
+    const shapes: [string, (p: string) => string[], (venvDir: string) => string][] = [
+      ['.venv/bin/python', (p) => [p, '-m', 'pytest'], (dir) => venv(dir)],
+      [
+        '.venv/bin/pytest',
+        (p) => [p, '-q'],
+        (dir) => {
+          venv(dir);
+          writeFileSync(join(dir, 'bin', 'pytest'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+          return join(dir, 'bin', 'pytest');
+        },
+      ],
+    ];
+    for (const [program, command, make] of shapes) {
+      let target = '';
+      const denied = deniedBaseline(
+        ({ base, repo }) => {
+          target = make(join(base, 'shop-venv'));
+          symlinkSync('../shop-venv', join(repo, '.venv'));
+          return program;
+        },
+        { command, exitCode: 127, log: (p) => `orbit-limits: line 0: exec: ${p}: not found\n` },
+      );
+      const found = blocksWithoutQuestion(denied);
+      expect(found.environment, program).toEqual([expect.objectContaining({ signals: ['program-not-found'], programDenial: expect.objectContaining({ program, under: 'parent', target }) })]);
+      expect(found.report.failures, program).toEqual([expect.objectContaining({ checkId: 'unit-tests', classification: 'environment' })]);
+      lab.cleanup();
+    }
+  });
+
+  it('a relative path to a script that does not exist (exit 127) stays a missing target', () => {
+    const denied = deniedBaseline(() => './scripts/test.sh', { command: (p) => [p, '-q'], exitCode: 127, log: (p) => `orbit-limits: line 0: exec: ${p}: not found\n` });
+    const found = classifyBaseline(lab.ctx(), denied.report, denied.checkout);
+    expect(found.environment).toEqual([]);
+    expect(found.missingTargets).toEqual([expect.objectContaining({ checkId: 'unit-tests', signature: 'script-not-found' })]);
+  });
+
+  it('git diff --no-index whose compared lines show a refusal in the repository stays a pre-existing failure', () => {
+    const denied = deniedBaseline(({ repo }) => join(repo, '.venv', 'bin', 'python'), {
+      command: () => ['git', 'diff', '--no-index', '--exit-code', 'tests/expected.txt', 'out/actual.txt'],
+      exitCode: 1,
+      log: (p) =>
+        [
+          'diff --git a/tests/expected.txt b/out/actual.txt',
+          'index 3b18e51..8c7e5a6 100644',
+          '--- a/tests/expected.txt',
+          '+++ b/out/actual.txt',
+          '@@ -1,2 +1,2 @@',
+          ' running the interpreter',
+          '-ok',
+          `+/bin/sh: ${p}: Operation not permitted`,
+          '',
+        ].join('\n'),
+    });
+    const ctx = lab.ctx();
+    const found = classifyBaseline(ctx, denied.report, denied.checkout);
+    expect(found.environment).toEqual([]);
+    expect(found.report.failures[0]!.classification).toBeUndefined();
+    expect(askAboutBaseFailures(ctx, found, { baseRevision: BASE_REV, key: '' }).preExisting.map((f) => f.checkId)).toEqual(['unit-tests']);
+  });
+});

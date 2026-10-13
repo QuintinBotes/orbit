@@ -178,7 +178,9 @@ describe('checkSandboxCheck: a check program in a folder the check sandbox denie
     return { parent, repo, home, env: { PATH: '/usr/bin:/bin', HOME: home } };
   }
 
-  it('fails a mandatory check whose program lies in the repository or in a folder beside it, starts neither, and names where a tool environment may live', async () => {
+  // Doctor reads the command's text alone, so it warns about such a program, and fails no check for it (Codex's review of
+  // the third fix); PREFLIGHT blocks a run whose check could not start it.
+  it('warns about a mandatory check whose program lies in the repository or in a folder beside it, starts neither, and names where a tool environment may live', async () => {
     const p = projects();
     const seen: string[][] = [];
     const launch: ProbeLaunch = async (argv) => (seen.push(argv), { exitCode: 0, output: '' });
@@ -188,12 +190,14 @@ describe('checkSandboxCheck: a check program in a folder the check sandbox denie
     ]);
     const c = await checkSandboxCheck({ config: cfg, repo: p.repo, provider: srtLike().provider, available: true, env: p.env, homeDir: p.home, launch });
     expect(seen).toEqual([]);
-    expect(c.status).toBe('fail');
-    expect(c.summary).toBe('the sandbox refuses the executables of checks unit-tests, lint; a run would block at its baseline');
+    expect(c.status).toBe('warn');
+    expect(c.summary).toBe('doctor cannot tell for certain whether checks unit-tests, lint start a program in a folder the check sandbox denies; one that does cannot start in a check');
+    expect(c.missing).toBe('a check executable that can start in the check sandbox');
     const denies = `the check sandbox denies the repository (${p.repo}) and the folder that holds it and its sibling projects (${p.parent})`;
+    const textOnly = "if the check starts it: doctor reads only the command's text, which cannot show for certain that a run reaches it";
     expect(c.details).toEqual([
-      `unit-tests: ${denies}, and the program "${join(p.repo, '.venv', 'bin', 'python')}" the check runs lies in the repository, so it cannot start in a check`,
-      `lint: ${denies}, and the program "${join(p.parent, 'shop-venv', 'bin', 'python')}" the check runs lies in a folder beside the repository, so it cannot start in a check`,
+      `unit-tests: ${denies}, and the program "${join(p.repo, '.venv', 'bin', 'python')}" the check runs lies in the repository, so it cannot start in a check, ${textOnly}`,
+      `lint: ${denies}, and the program "${join(p.parent, 'shop-venv', 'bin', 'python')}" the check runs lies in a folder beside the repository, so it cannot start in a check, ${textOnly}`,
     ]);
     expect(c.fix).toContain('dependencies.install_command');
     expect(c.fix).toContain(`outside ${p.parent}`);
@@ -209,7 +213,7 @@ describe('checkSandboxCheck: a check program in a folder the check sandbox denie
     const launch: ProbeLaunch = async () => ({ exitCode: 0, output: '' });
     const optional = await checkSandboxCheck({ config: config([{ id: 'docs', command: [join(p.parent, 'shop-venv', 'bin', 'python'), '-m', 'mkdocs', 'build'], mandatory: false }]), repo: p.repo, provider: srtLike().provider, available: true, env: p.env, homeDir: p.home, launch });
     expect(optional.status).toBe('warn');
-    expect(optional.summary).toBe("the sandbox refuses the executable of check docs; a run whose contract requires it would block at its baseline");
+    expect(optional.summary).toBe('doctor cannot tell for certain whether check docs starts a program in a folder the check sandbox denies; one that does cannot start in a check');
     const fine = await checkSandboxCheck({ config: config([{ id: 'unit-tests', command: ['.venv/bin/python', '-m', 'pytest'] }, { id: 'lint', command: [join(outside, 'tool')] }]), repo: p.repo, provider: srtLike().provider, available: true, env: p.env, homeDir: p.home, launch });
     expect(fine.status).toBe('pass');
     expect(fine.details.join('\n')).not.toMatch(/denies/);
@@ -230,12 +234,13 @@ describe('checkSandboxCheck: a check program in a folder the check sandbox denie
       { id: 'types', command: [`exec '${spaced}' -m mypy .`], shell: true, mandatory: true },
     ]);
     const c = await checkSandboxCheck({ config: cfg, repo: p.repo, provider: srtLike().provider, available: true, env: p.env, homeDir: p.home, launch });
-    expect(c.status).toBe('fail');
+    expect(c.status).toBe('warn');
     const denies = `the check sandbox denies the repository (${p.repo}) and the folder that holds it and its sibling projects (${p.parent})`;
+    const textOnly = "if the check starts it: doctor reads only the command's text, which cannot show for certain that a run reaches it";
     expect(c.details).toEqual([
-      `unit-tests: ${denies}, and the program "${spaced}" the check runs lies in a folder beside the repository, so it cannot start in a check`,
-      `lint: ${denies}, and the program "${sibling}" the check runs lies in a folder beside the repository, so it cannot start in a check`,
-      `types: ${denies}, and the program "${spaced}" the check runs lies in a folder beside the repository, so it cannot start in a check`,
+      `unit-tests: ${denies}, and the program "${spaced}" the check runs lies in a folder beside the repository, so it cannot start in a check, ${textOnly}`,
+      `lint: ${denies}, and the program "${sibling}" the check runs lies in a folder beside the repository, so it cannot start in a check, ${textOnly}`,
+      `types: ${denies}, and the program "${spaced}" the check runs lies in a folder beside the repository, so it cannot start in a check, ${textOnly}`,
     ]);
   });
 
@@ -272,10 +277,18 @@ describe('checkSandboxCheck: a check program in a folder the check sandbox denie
     ]);
     expect(c.missing).toBe('a check executable that can start in the check sandbox');
     expect(c.fix).toContain('dependencies.install_command');
-    // A certain one in the same configuration still fails it.
+    // One it reads for certain in the same configuration warns too (Codex's review of the third fix).
     const both = await checkSandboxCheck({ config: config([...Object.values(cfg.checks), { id: 'types', command: [venv, '-m', 'mypy', '.'], mandatory: true }]), repo: p.repo, provider: srtLike().provider, available: true, env: p.env, homeDir: p.home, launch });
-    expect(both.status).toBe('fail');
-    expect(both.summary).toBe('the sandbox refuses the executable of check types; a run would block at its baseline');
+    expect(both.status).toBe('warn');
+    expect(both.summary).toBe('doctor cannot tell for certain whether checks unit-tests, lint, types start a program in a folder the check sandbox denies; one that does cannot start in a check');
+    // A refusal a probe shows still fails doctor, and the summary carries the warning too.
+    const outside = temp('orbit-doctor-tools-');
+    writeFileSync(join(outside, 'tool'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const refusing: ProbeLaunch = async (argv) => (argv[0] === join(outside, 'tool') ? { exitCode: 126, output: `/bin/sh: ${join(outside, 'tool')}: Operation not permitted` } : { exitCode: 0, output: '' });
+    const mixed = await checkSandboxCheck({ config: config([...Object.values(cfg.checks), { id: 'build', command: [join(outside, 'tool')], mandatory: true }]), repo: p.repo, provider: srtLike().provider, available: true, env: p.env, homeDir: p.home, launch: refusing });
+    expect(mixed.status).toBe('fail');
+    expect(mixed.summary).toBe('the sandbox refuses the executable of check build; a run would block at its baseline; doctor cannot tell for certain whether checks unit-tests, lint start a program in a folder the check sandbox denies; one that does cannot start in a check');
+    expect(mixed.fix).toContain('dependencies.install_command');
   });
 
   it('reads a probe the sandbox refused to start (exit 126, "Operation not permitted") as a refusal, not as an exit with no denial', async () => {
@@ -316,6 +329,22 @@ describe('checkSandboxCheck: a check program in a folder the check sandbox denie
     }
   });
 
+  // Codex's review of the third fix: a reading doctor called certain, of an executable file there, failed a valid check
+  // whose command never reaches that program (`/usr/bin/true || <repository>/tool`). Doctor reads only the command's
+  // text, so it warns about every such program and fails no check for it.
+  it('warns, never fails, for an executable file in a denied folder that a command it reads for certain may never start', async () => {
+    const p = projects();
+    const tool = join(p.repo, 'tool');
+    writeFileSync(tool, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const launch: ProbeLaunch = async () => ({ exitCode: 0, output: '' });
+    const c = await checkSandboxCheck({ config: config([{ id: 'unit-tests', command: [`/usr/bin/true || ${tool}`], shell: true, mandatory: true }]), repo: p.repo, provider: srtLike().provider, available: true, env: p.env, homeDir: p.home, launch });
+    expect(c.status).toBe('warn');
+    expect(c.summary).toBe('doctor cannot tell for certain whether check unit-tests starts a program in a folder the check sandbox denies; one that does cannot start in a check');
+    expect(c.missing).toBe('a check executable that can start in the check sandbox');
+    expect(c.fix).toContain('dependencies.install_command');
+    expect(c.fix).toContain(`outside ${p.parent}`);
+  });
+
   it('warns, never fails, for a path in a denied folder that is no executable file there now', async () => {
     const p = projects();
     const launch: ProbeLaunch = async () => ({ exitCode: 0, output: '' });
@@ -327,16 +356,16 @@ describe('checkSandboxCheck: a check program in a folder the check sandbox denie
     ]);
   });
 
-  it('fails a check whose program links from outside the projects folder to one in the repository', async () => {
+  it('warns about a check whose program links from outside the projects folder to one in the repository', async () => {
     const p = projects();
     const launch: ProbeLaunch = async () => ({ exitCode: 0, output: '' });
     const ub = temp('orbit-doctor-userbin-');
     const venv = join(p.repo, '.venv', 'bin', 'python');
     symlinkSync(venv, join(ub, 'shop-python'));
     const c = await checkSandboxCheck({ config: config([{ id: 'unit-tests', command: [join(ub, 'shop-python'), '-m', 'pytest'], mandatory: true }]), repo: p.repo, provider: srtLike().provider, available: true, env: p.env, homeDir: p.home, launch });
-    expect(c.status).toBe('fail');
+    expect(c.status).toBe('warn');
     expect(c.details).toEqual([
-      `unit-tests: the check sandbox denies the repository (${p.repo}) and the folder that holds it and its sibling projects (${p.parent}), and the program "${join(ub, 'shop-python')}" the check runs links to "${venv}", which lies in the repository, so it cannot start in a check`,
+      `unit-tests: the check sandbox denies the repository (${p.repo}) and the folder that holds it and its sibling projects (${p.parent}), and the program "${join(ub, 'shop-python')}" the check runs links to "${venv}", which lies in the repository, so it cannot start in a check, if the check starts it: doctor reads only the command's text, which cannot show for certain that a run reaches it`,
     ]);
   });
 });

@@ -504,10 +504,22 @@ const NOT_FOUND_WORDS = /\b(?:command not found|not found|No such file or direct
 /** make's line for a recipe whose shell exited 127 (a program not found), whatever make itself then exits with. */
 const MAKE_RELAYED_127 = /^g?make(?:\[\d+\])?: \*\*\* \[[^\]]*\] Error 127$/m;
 
-/** The output's lines, trimmed, with a Rust-style `Caused by:` line (uv's) joined to the line before it, which it explains. */
+/**
+ * The output's lines, trimmed, with a Rust-style `Caused by:` line (uv's) joined to the line before it, which it explains,
+ * and without a unified diff's content: after an `@@` line, each line that starts with "+", "-" or " " (or "\", its "No
+ * newline at end of file") until one that does not. Those are the lines of the files a comparison compared (`git diff
+ * --no-index`, `diff -u`), never a launcher's words (Codex's review of the third fix).
+ */
 function logicalLines(text: string): string[] {
   const out: string[] = [];
+  let hunk = false;
   for (const raw of outputLines(text)) {
+    if (raw.startsWith('@@')) {
+      hunk = true;
+      continue;
+    }
+    if (hunk && /^[-+ \\]/.test(raw)) continue;
+    hunk = false;
     const line = raw.trim();
     if (out.length > 0 && line.startsWith('Caused by:')) out[out.length - 1] = `${out[out.length - 1]!} ${line}`;
     else out.push(line);
@@ -536,7 +548,9 @@ function linePaths(line: string): string[] {
  *   Linux srt lays an empty folder over a denied one).
  *
  * A check whose own tests or build ran and failed (showsCodeFailure) is the code's, whatever its output quotes: a test
- * whose assertion message names such a refusal is a failing test. Null too for a check that passed or did not exit.
+ * whose assertion message names such a refusal is a failing test. That guard reads the whole output, a diff's lines
+ * included, while the evidence of a refusal is never a line of a unified diff's content (logicalLines): a comparison that
+ * shows such a line ran and failed. Null too for a check that passed or did not exit.
  */
 export function classifyDeniedFolderProgram(input: MisconfiguredInput, folders: DeniedFolders): EnvironmentFailure | null {
   const exit = input.exitCode;

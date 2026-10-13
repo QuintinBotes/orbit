@@ -22,7 +22,7 @@
  * Every reason here is a run of sentences, each starting with a capital letter, and names each check once: checks that
  * share a cause and its evidence lines are listed together before them.
  */
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { readJsonIfExists } from '../core/fsx.ts';
 import { BASELINE_FILE, type BaselineReport } from '../evidence/baseline.ts';
@@ -521,6 +521,24 @@ export function baselineEnvironmentFailures(ctx: RunContext, report: BaselineRep
 }
 
 /**
+ * The checks of `environment` the sandbox could not start the program of because it lies in a folder the check profile
+ * denies (program-denied or program-not-found, located: `programDenial`) and that exited 126 or 127. Such a launch
+ * failure is the environment's even where the shell's words also read as a script or a target that does not exist yet
+ * (Codex's review of the third fix): a virtualenv the repository links to beside it by a relative link is gone from the
+ * checkout's view, so the shell says "not found" for the path the command runs.
+ */
+export function deniedLaunches(ctx: RunContext, report: BaselineReport, environment: readonly BlockedCheck[]): Set<string> {
+  const out = new Set<string>();
+  for (const f of environment) {
+    if (f.programDenial === undefined || !f.signals.some((s) => s === 'program-denied' || s === 'program-not-found')) continue;
+    const row = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: null, checkId: f.checkId, rootsOnly: true }).at(-1);
+    const exitCode = row ? row.exitCode : (report.checks.find((c) => c.checkId === f.checkId)?.exitCode ?? null);
+    if (exitCode === 126 || exitCode === 127) out.add(f.checkId);
+  }
+  return out;
+}
+
+/**
  * Where the program a check could not start lies, when that is a folder the check profile denies because of where the
  * repository is (programDenial): refused (program-denied) or hidden (program-not-found: srt on Linux lays an empty folder
  * over it, and on macOS a bare name whose PATH folder the sandbox denies is not found either). The program is the one the
@@ -552,7 +570,7 @@ function deniedProgramOf(ctx: RunContext, found: EnvironmentFailure, def: Pick<C
     }
     // A path relative to the check's cwd: where a link the repository commits there leads, when it leads out of it.
     if (program.includes('/')) {
-      const target = relativeTarget(repo, def, program);
+      const target = relativeTarget(repo, def, program, (path) => programDenial(path, repo, home) !== null);
       if (target === null) return null;
       const d = programDenial(target, repo, home);
       return d === null ? null : { ...d, program, target };
@@ -578,19 +596,57 @@ function onCheckPath(def: Pick<CheckDefinition, 'env'>, name: string): string | 
   return null;
 }
 
+/** Links followed at most on the way to a program, as the operating system gives up on a loop. */
+const MAX_LINKS = 40;
+
 /**
- * Where a program the check names by a path relative to its cwd leads, when a link there leads out of the repository (a
- * link the repository commits to a tool environment beside it; third review of the 0.3.0 retest fix): the file the link
- * resolves to, read in the repository's own tree at the check's cwd, which the check's checkout holds too and which is
- * gone by the time the base revision is judged. Null when there is no such file, when the path climbs out of the tree
- * (`../x` leads out of the checkout, not to the repository's sibling), or when it stays in the repository, where the
- * checkout's own copy of it is what the check ran.
+ * Where a program the check names by a path relative to its cwd leads, when a link on the way leads into a folder the
+ * check sandbox denies (`denied`; third review of the 0.3.0 retest fix and Codex's review of it), read in the
+ * repository's own tree at the check's cwd, which the check's checkout holds too and which is gone by the time the base
+ * revision is judged. Each link is read for its literal target before anything is canonicalised, one name at a time: a
+ * link whose target is an absolute path leads there from the checkout too, so one into the repository or the folder
+ * beside it counts for that path (with the rest of the program's path after it), even where the file there links on
+ * elsewhere, as a virtualenv's interpreter does; a link whose target is relative moves with the checkout, and counts only
+ * once it leads out of the repository's tree (a link the repository commits to a tool environment beside it). Null when
+ * there is no such file, when the path climbs out of the tree (`../x` leads out of the checkout, not to the repository's
+ * sibling), or when no link on the way leads into a denied folder: one that stays in the repository leads to the
+ * checkout's own copy, which is what the check ran.
  */
-function relativeTarget(repoRoot: string, def: Pick<CheckDefinition, 'cwd'>, path: string): string | null {
-  const spelled = resolve(repoRoot, def.cwd, path);
-  if (!isWithin(spelled, resolve(repoRoot)) || !existsSync(spelled)) return null;
-  const real = canonicalPath(spelled);
-  return isWithin(real, canonicalPath(repoRoot)) ? null : real;
+function relativeTarget(repoRoot: string, def: Pick<CheckDefinition, 'cwd'>, path: string, denied: (path: string) => boolean): string | null {
+  const root = resolve(repoRoot);
+  const spelled = resolve(root, def.cwd, path);
+  if (!isWithin(spelled, root) || !existsSync(spelled)) return null;
+  const realRoot = canonicalPath(root);
+  let at = realRoot;
+  let rest = relative(root, spelled).split('/');
+  // Whether the walk is still where the checkout's own copy of the tree would be: no absolute link followed yet.
+  let inCheckout = true;
+  for (let links = 0; rest.length > 0; ) {
+    const name = rest.shift()!;
+    if (name === '' || name === '.') continue;
+    if (name === '..') {
+      at = dirname(at);
+      continue;
+    }
+    const next = join(at, name);
+    let literal: string;
+    try {
+      if (!lstatSync(next).isSymbolicLink()) {
+        at = next;
+        continue;
+      }
+      literal = readlinkSync(next);
+    } catch {
+      return null;
+    }
+    if (++links > MAX_LINKS) return null;
+    if (isAbsolute(literal)) inCheckout = false;
+    const leads = resolve(at, literal, ...rest);
+    if ((!inCheckout || !isWithin(leads, realRoot)) && denied(leads)) return leads;
+    if (isAbsolute(literal)) at = '/';
+    rest = [...literal.split('/'), ...rest];
+  }
+  return null;
 }
 
 /**
@@ -615,7 +671,7 @@ function deniedFolderFailure(ctx: RunContext, def: Pick<CheckDefinition, 'comman
       seen.set(path, where);
       return where;
     };
-    return classifyDeniedFolderProgram({ ...run, command: def.command, shell: def.shell }, { holding, onPath: (name) => onCheckPath(def, name), relative: (path) => relativeTarget(repo, def, path) });
+    return classifyDeniedFolderProgram({ ...run, command: def.command, shell: def.shell }, { holding, onPath: (name) => onCheckPath(def, name), relative: (path) => relativeTarget(repo, def, path, (target) => holding(target) !== null) });
   } catch {
     return null;
   }

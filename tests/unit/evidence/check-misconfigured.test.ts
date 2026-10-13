@@ -480,6 +480,29 @@ describe('classifyDeniedFolderProgram: a refusal in a folder the check sandbox d
     expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 1, output, { shell: true }), folders)).toBeNull();
   });
 
+  // Codex's review of the third fix: a comparison's output (git diff --no-index, diff -u) whose compared lines show such
+  // a refusal was read as one, while the comparison ran and failed.
+  it('stays a code failure for a comparison whose diff shows "Operation not permitted" for such a path, or a "not found"', () => {
+    const diff = (lines: string[]): string =>
+      ['diff --git a/tests/expected.txt b/out/actual.txt', 'index 3b18e51..8c7e5a6 100644', '--- a/tests/expected.txt', '+++ b/out/actual.txt', '@@ -1,3 +1,3 @@', ' running the interpreter', ...lines, ''].join('\n');
+    const outputs: [string, number][] = [
+      [diff(['-ok', `+/bin/sh: ${VENV}: Operation not permitted`]), 1],
+      [diff([`-/bin/sh: ${VENV}: Operation not permitted`, '+ok']), 1],
+      [diff([`+mkdir: ${REPO}/build: Operation not permitted`, ' done']), 1],
+      [diff(['-ok', '+/bin/sh: 1: pytest: not found']), 127],
+      [diff(['-ok', `+bash: line 1: ${VENV}: No such file or directory`]), 1],
+    ];
+    for (const [output, exit] of outputs) {
+      expect(classifyDeniedFolderProgram(input(['git', 'diff', '--no-index', '--exit-code', 'tests/expected.txt', 'out/actual.txt'], exit, output), folders), output).toBeNull();
+    }
+    // A refusal outside the diff is still read: a script that compares, then runs a program it may not start.
+    const after = `${diff(['-ok', '+ok2'])}./scripts/check.sh: line 4: ${VENV}: Operation not permitted\n`;
+    expect(classifyDeniedFolderProgram(input(['./scripts/check.sh'], 126, after), folders)).toMatchObject({ signals: ['program-denied'], program: VENV });
+    // The code-failure guard still reads the whole output, the diff's lines included.
+    const failed = `${diff(['-1 passed', '+1 failed'])}./scripts/check.sh: line 4: ${VENV}: Operation not permitted\n`;
+    expect(classifyDeniedFolderProgram(input(['./scripts/check.sh'], 126, failed), folders)).toBeNull();
+  });
+
   it('is null for a refusal of a path outside the denied folders, or of none, and for a check that passed or timed out', () => {
     expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 126, '/bin/sh: /opt/acme/bin/tool: Operation not permitted\n', { shell: true }), folders)).toBeNull();
     expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 1, 'mkdir: Operation not permitted\n', { shell: true }), folders)).toBeNull();
