@@ -1,10 +1,9 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Clock } from '../core/clock.ts';
-import { systemClock } from '../core/clock.ts';
 import { OrbitError, isOrbitError } from '../core/errors.ts';
 import { readJsonIfExists } from '../core/fsx.ts';
-import { findProcesses, isAlive, isGroupAlive, terminateGroup } from '../core/proc.ts';
+import { findProcesses, isAlive, terminateGroup } from '../core/proc.ts';
 import { redact } from '../core/redact.ts';
 import { TERMINAL_STATES, type RunState } from '../core/run-states.ts';
 import type { OrbitDb } from '../storage/db.ts';
@@ -14,18 +13,21 @@ import { acquireLease, getRun, listRuns, type RunRecord } from '../controller/ru
 import { ROLE_OUTPUT_KIND } from '../adapters/prompt.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
 import { EXIT_FILE, REGISTRATION_FILE, readExitRecord, readPidRecord, readRegistration, type RegistrationRecord } from '../adapters/shim.ts';
-import { LAUNCH_FILE, archiveAttempt, cancelShim, handleFromWorkerDir, isShimCommandLine, stopLaunchedShim, taskState, type LaunchRecord, type TaskState } from '../adapters/supervise.ts';
+import { LAUNCH_FILE, archiveAttempt, cancelShim, handleFromWorkerDir, isShimCommandLine, launchedShimState, stopLaunchedShim, taskState, type LaunchRecord, type TaskState } from '../adapters/supervise.ts';
 import type { ProviderAdapter, TaskHandle, TaskResult, TaskStatus } from '../adapters/types.ts';
 import { ActionLedger } from '../delivery/actions.ts';
 import { finishCheckRun, isFinalCheckStatus } from '../evidence/store.ts';
 import { closeInterruptedProbes } from '../evidence/fail-before.ts';
-import { isCheckShimCommandLine, readJsonFile, shimPath, type ShimExit, type ShimIntent, type ShimLaunch, type ShimPid } from '../evidence/check-shim.ts';
+import { readJsonFile, shimPath, type ShimIntent } from '../evidence/check-shim.ts';
 import { APP_STATE_FILE, reconcileApp, type ReconcileOutcome } from '../ui/app-fixture.ts';
 import type { Logger } from '../core/log.ts';
 import { releaseEndedRunWorktrees, releaseIfDue } from './release.ts';
 import { enterRecovery, exhaustRecovery, recoveryAttemptsRemaining, spendRecoveryAttempt, type EnterRecoveryOutcome, type LedgerFor } from './budget.ts';
 import { classifyFailure, decideRetry } from './backoff.ts';
-import { groupOwnership, processOwnership, type GroupOwnership } from './identity.ts';
+import { processOwnership } from './identity.ts';
+import { settleCheckAttempt, type CheckObservation } from './check-attempt.ts';
+
+export type { CheckObservation } from './check-attempt.ts';
 
 /**
  * Reconciliation on controller start and on lease takeover (spec section 4
@@ -88,8 +90,6 @@ export interface WorkerReport {
   adoptedFromPidFile: boolean;
   detail: string | null;
 }
-
-export type CheckObservation = 'running' | 'finished' | 'lost' | 'not-started' | 'orphan-terminated';
 
 export interface CheckReport {
   checkRunId: string;
@@ -262,8 +262,8 @@ function selectRuns(ctx: Ctx): RunRecord[] {
   const nonTerminal = listRuns(db, { states: nonTerminalStates(), limit: 1_000_000 });
   const ids = new Set(nonTerminal.map((r) => r.id));
   const extra: string[] = [];
-  // Terminal runs that still own something: a live process or an open check row.
-  for (const row of db.all<{ run_id: string }>("SELECT DISTINCT run_id FROM workers WHERE state IN ('PLANNED', 'RUNNING') UNION SELECT DISTINCT run_id FROM check_runs WHERE status IN ('PLANNED', 'RUNNING')")) {
+  // Terminal runs that still own something: a live process or an open check or probe attempt row.
+  for (const row of db.all<{ run_id: string }>("SELECT DISTINCT run_id FROM workers WHERE state IN ('PLANNED', 'RUNNING') UNION SELECT DISTINCT run_id FROM check_runs WHERE status IN ('PLANNED', 'RUNNING') UNION SELECT DISTINCT run_id FROM fail_before_probes WHERE status IN ('PLANNED', 'RUNNING')")) {
     if (!ids.has(row.run_id)) extra.push(row.run_id);
   }
   // And recently ended ones, whose UI app fixture may have outlived them.
@@ -348,8 +348,11 @@ async function reconcileRun(ctx: Ctx, initial: RunRecord): Promise<RunReconcileR
   run = getRun(db, run.id);
 
   rep.checks = await reconcileChecks(ctx, run);
-  // A fail-before probe is never reattached: its open attempts are stopped and closed, and it runs again (ADR 0014).
-  rep.probes = closeInterruptedProbes(db, runDir(ctx, run), run.id, ctx.clock);
+  // A fail-before probe is never reattached: its open attempts are stopped and closed, and it runs again (ADR 0014). One
+  // that may still run stays open, so the release keeps its checkout.
+  const probes = await closeInterruptedProbes(db, runDir(ctx, run), run.id, ctx.clock, { graceMs: ctx.graceMs });
+  rep.probes = probes.closed;
+  for (const k of probes.kept) note(ctx, run.id, 'recovery.stop-unconfirmed', { fail_before_probe_id: k.id, check_id: k.checkId, reason: 'a fail-before probe attempt is never reattached', detail: k.why });
   rep.apps = await reconcileApps(ctx, run);
   rep.actions = flagActions(ctx, run);
   rep.state = run.state;
@@ -773,11 +776,13 @@ export async function stopLaunch(graceMs: number, workerDir: string): Promise<La
  * release would remove its checkout beneath it). `why` says what kept an 'unknown' from being confirmed.
  *
  * The shim is identified by the pid and start time launch.json records after the spawn, else by the identity it
- * registered itself (registration.json, written before it starts anything in the checkout). Without either, the
- * process table is searched for its launch token on a shim command line (for a record without one, or unreadable, its
- * worker directory): a process found is a shim that was spawned but has not registered, so it is kept and never
- * signalled, and none found means the spawn never happened or the shim ended before it could start anything.
- * A record without a start time judges the process by when it was recorded (recovery/identity), as a check shim is.
+ * registered itself (registration.json, written before it starts anything in the checkout). Without either (no
+ * registration, a damaged one, or one another launch wrote), the process table is searched for its launch token on a
+ * shim command line (for a record without one, or unreadable, its worker directory): a process found is a shim that was
+ * spawned but has not registered, so it is kept and never signalled, and none found means the spawn never happened or
+ * the shim ended before it could start anything, once the process another launch's registration names (and its
+ * group) is gone too. A record without a start time judges the process by when it was recorded (recovery/identity),
+ * as a check shim is.
  */
 export async function settleLaunch(graceMs: number, workerDir: string): Promise<{ outcome: LaunchStop; why: string | null }> {
   const path = join(workerDir, LAUNCH_FILE);
@@ -797,19 +802,15 @@ export async function settleLaunch(graceMs: number, workerDir: string): Promise<
   if (launch && typeof launch.pid === 'number') return byIdentity(launch.pid, launch.procStart ?? null, typeof launch.requestedAt === 'number' ? launch.requestedAt : null, 'launch.json');
 
   const token = launch && typeof launch.token === 'string' && launch.token !== '' ? launch.token : null;
-  const registration = (): RegistrationRecord | 'none' | 'unusable' => {
+  const registration = (): { state: 'none' | 'damaged' } | { state: 'ours' | 'foreign'; reg: RegistrationRecord } => {
     const reg = readRegistration(workerDir);
-    if (reg) return token === null || reg.token === token ? reg : 'unusable';
-    return existsSync(join(workerDir, REGISTRATION_FILE)) ? 'unusable' : 'none';
+    if (reg) return { state: token === null || reg.token === token ? 'ours' : 'foreign', reg };
+    return { state: existsSync(join(workerDir, REGISTRATION_FILE)) ? 'damaged' : 'none' };
   };
-  const settleRegistered = async (reg: RegistrationRecord | 'none' | 'unusable'): Promise<{ outcome: LaunchStop; why: string | null } | null> => {
-    if (reg === 'none') return null;
-    if (reg === 'unusable') return { outcome: 'unknown', why: `${REGISTRATION_FILE} cannot be read or names another launch` };
-    return byIdentity(reg.shimPid, reg.shimStart, reg.registeredAt, REGISTRATION_FILE);
-  };
-  const first = await settleRegistered(registration());
-  if (first) return first;
+  const first = registration();
+  if (first.state === 'ours') return byIdentity(first.reg.shimPid, first.reg.shimStart, first.reg.registeredAt, REGISTRATION_FILE);
 
+  // No registration of this launch to go by (none yet, a damaged one, or another launch's): the process table decides.
   let found: number[];
   try {
     found = findProcesses((line) => isShimCommandLine(line, workerDir, token));
@@ -821,7 +822,16 @@ export async function settleLaunch(graceMs: number, workerDir: string): Promise<
     return { outcome: 'unknown', why: `process ${found.join(', ')} ${marker} but has not registered, so it was not signalled` };
   }
   // A shim that registered and ended between the first read and the search left its record, and its group is judged by it.
-  return (await settleRegistered(registration())) ?? { outcome: 'gone', why: null };
+  const late = registration();
+  if (late.state === 'ours') return byIdentity(late.reg.shimPid, late.reg.shimStart, late.reg.registeredAt, REGISTRATION_FILE);
+  if (late.state === 'foreign') {
+    // Another launch's shim registered in this directory: it is not signalled, and the launch is closed only once that
+    // process and its group are gone too.
+    const { shimPid, shimStart, registeredAt } = late.reg;
+    const other = launchedShimState(shimPid, shimStart, (p) => processOwnership(p, registeredAt));
+    if (other !== 'gone') return { outcome: 'unknown', why: `${REGISTRATION_FILE} names another launch, whose process ${shimPid} ${other === 'ours' ? 'or its group still runs' : 'cannot be identified'}, so it was not signalled` };
+  }
+  return { outcome: 'gone', why: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -870,53 +880,14 @@ async function reconcileChecks(ctx: Ctx, run: RunRecord): Promise<CheckReport[]>
     let mayRun = false;
     const found = dirs.get(row.id);
     if (!found) {
+      // No intent.json: the runner writes it before the spawn, so no shim was started for this row.
       rep.observation = 'not-started';
     } else {
-      const { dir, intent } = found;
-      const files = checkFiles(dir, intent);
-      const { shimPid, shimStart, childPgid, startedAt } = files;
-      // Without launch.json's start time, the shim is identified by when it recorded itself (pid.json) or was asked for (intent.json).
-      const identityNow = (): ShimIdentity => (shimPid === null ? 'dead' : shimIdentity(shimPid, shimStart, startedAt ?? intent.writtenAt));
-      const identity = identityNow();
-
-      if (files.exited) {
-        rep.observation = 'finished';
-      } else if (shimPid !== null && identity !== 'dead') {
-        rep.observation = 'running';
-        if (ended && identity === 'ours') {
-          if ((await stopCheck(ctx, dir, intent.token, shimPid, identityNow, childPgid)) === 'stopped') {
-            rep.terminated = true;
-            rep.observation = 'orphan-terminated';
-          } else {
-            mayRun = true;
-            rep.detail = `its shim (process ${shimPid}) or its check's process group could not be confirmed stopped; its row stays open for a later pass`;
-          }
-        } else if (ended) {
-          mayRun = true;
-          rep.detail = `process ${shimPid} may be this check's shim, but its identity cannot be established, so it was not signalled; its row stays open for a later pass`;
-        }
-      } else if (shimPid === null) {
-        // Only the intent is on disk: the shim never spawned, or the controller died between the spawn and launch.json.
-        const spawned = checkShimSearch(dir, intent);
-        if (spawned === null) {
-          rep.observation = 'not-started';
-        } else {
-          rep.observation = 'running';
-          rep.detail = spawned;
-          if (ended) mayRun = true;
-        }
-      } else {
-        // The shim is gone without exit.json. Its check may still be running; a rerun in the same checkout must not race it.
-        rep.observation = 'lost';
-        if (childPgid !== null && startedAt !== null) {
-          const stop = await stopOrphanGroup(ctx, childPgid, startedAt);
-          rep.terminated = stop === 'stopped';
-          if (stop === 'unknown') {
-            rep.detail = `its shim is gone and its check's process group ${childPgid} could not be confirmed stopped (its identity could not be established, or the stop failed or did not end it); its row stays open for a later pass`;
-            if (ended) mayRun = true;
-          }
-        }
-      }
+      const settled = await settleCheckAttempt(found.dir, found.intent, { stop: ended, graceMs: ctx.graceMs });
+      rep.observation = settled.observation;
+      rep.terminated = settled.terminated;
+      rep.detail = settled.detail;
+      mayRun = settled.mayRun;
     }
     if (ended && mayRun) note(ctx, run.id, 'recovery.stop-unconfirmed', { check_run_id: row.id, check_id: row.check_id, reason, detail: rep.detail });
     if (ended && !mayRun && !isFinalCheckStatus(row.status)) {
@@ -937,125 +908,6 @@ async function reconcileChecks(ctx: Ctx, run: RunRecord): Promise<CheckReport[]>
     out.push(rep);
   }
   return out;
-}
-
-/** What a check directory's shim records say, each counted only when it carries the intent's token. */
-function checkFiles(dir: string, intent: ShimIntent): { exited: boolean; shimPid: number | null; shimStart: string | null; childPgid: number | null; startedAt: number | null } {
-  const exit = readJsonFile<ShimExit>(shimPath(dir, 'exit'));
-  const launch = readJsonFile<ShimLaunch>(shimPath(dir, 'launch'));
-  const pidFile = readJsonFile<ShimPid>(shimPath(dir, 'pid'));
-  const ownLaunch = launch !== null && launch.token === intent.token ? launch : null;
-  const ownPid = pidFile !== null && pidFile.token === intent.token ? pidFile : null;
-  return {
-    exited: exit !== null && exit.token === intent.token,
-    shimPid: ownLaunch ? ownLaunch.pid : ownPid ? ownPid.shimPid : null,
-    shimStart: ownLaunch ? ownLaunch.procStart : null,
-    childPgid: ownPid ? ownPid.childPgid : null,
-    startedAt: ownPid ? ownPid.startedAt : null,
-  };
-}
-
-/**
- * Whether the shim of a check whose directory holds only its intent was spawned after all: null when no process carries
- * the directory and the intent's token on a check shim command line (isCheckShimCommandLine), and nothing of the shim
- * appeared on disk meanwhile; otherwise why the check may still run.
- */
-function checkShimSearch(dir: string, intent: ShimIntent): string | null {
-  let found: number[];
-  try {
-    found = findProcesses((line) => isCheckShimCommandLine(line, dir, intent.token));
-  } catch (err) {
-    return `the process table could not be searched for its shim (${err instanceof Error ? err.message : String(err)}), so it may have been spawned; its row stays open for a later pass`;
-  }
-  if (found.length > 0) return `process ${found.join(', ')} carries its launch token but launch.json does not name it yet, so it was not signalled; its row stays open for a later pass`;
-  // A shim that recorded itself and ended between the first read and the search: the next pass judges it by its records.
-  const late = checkFiles(dir, intent);
-  if (late.exited || late.shimPid !== null) return 'its shim recorded itself while recovery looked for it; its row stays open for a later pass';
-  return null;
-}
-
-type ShimIdentity = 'ours' | 'unknown' | 'dead';
-
-/**
- * Whether `pid` is still the check shim that was started. With launch.json's
- * start time, core/proc compares it exactly. Without it (the controller died
- * before writing launch.json), a bare pid proves nothing: a recycled pid would
- * read as a live shim and be signalled, so the process start is compared with
- * the time the record was written instead. 'unknown' (no ps) is treated as
- * running but never signalled.
- */
-function shimIdentity(pid: number, start: string | null, recordedAtMs: number): ShimIdentity {
-  if (start !== null) {
-    try {
-      return isAlive(pid, start) ? 'ours' : 'dead';
-    } catch {
-      return 'unknown';
-    }
-  }
-  const own = processOwnership(pid, recordedAtMs);
-  return own === 'ours' ? 'ours' : own === 'unknown' ? 'unknown' : 'dead';
-}
-
-/**
- * SIGTERM the shim (it stops its check's group and writes exit.json), SIGKILL it when it outlives the wait, then stop
- * the check's group: 'stopped' only when the shim is confirmed gone and the group ended, 'unknown' otherwise.
- */
-async function stopCheck(ctx: Ctx, dir: string, token: string, shimPid: number, identity: () => ShimIdentity, childPgid: number | null): Promise<'stopped' | 'unknown'> {
-  try {
-    process.kill(shimPid, 'SIGTERM');
-  } catch {
-    /* exited in between */
-  }
-  // Real time: the wait is for a real process, whatever clock the caller injected.
-  const waitWhileOurs = async (ms: number, untilExit: boolean): Promise<void> => {
-    const deadline = Date.now() + ms;
-    while (Date.now() < deadline && !(untilExit && existsSync(shimPath(dir, 'exit'))) && identity() === 'ours') await systemClock.sleep(25);
-  };
-  await waitWhileOurs(ctx.graceMs * 2 + 1_000, true);
-  // Identity again, not bare liveness: the shim may have exited and its pid been reused during the wait.
-  if (identity() === 'ours') {
-    try {
-      process.kill(shimPid, 'SIGKILL');
-    } catch {
-      /* gone */
-    }
-    await waitWhileOurs(ctx.graceMs + 1_000, false);
-  }
-  if (identity() !== 'dead') return 'unknown';
-  // The shim was verified alive moments ago, so its check's group is ours; it may have recorded the group during the wait.
-  const pidFile = childPgid === null ? readJsonFile<ShimPid>(shimPath(dir, 'pid')) : null;
-  const pgid = childPgid ?? (pidFile !== null && pidFile.token === token ? pidFile.childPgid : null);
-  if (pgid === null) return 'stopped';
-  try {
-    if (!isGroupAlive(pgid)) return 'stopped';
-    return (await terminateGroup(pgid, ctx.graceMs)).exited ? 'stopped' : 'unknown';
-  } catch (err) {
-    if (isOrbitError(err, 'INTERNAL')) return 'unknown';
-    throw err;
-  }
-}
-
-/**
- * Stop the process group of a check whose shim is gone: 'gone' when nothing of it runs (no member, or a leader with
- * another start time, a recycled pid: a pid is not reused while a group of that id exists), 'stopped' when it was
- * stopped and confirmed ended, 'unknown' when its identity cannot be established or the stop failed or did not end it.
- */
-async function stopOrphanGroup(ctx: Ctx, pgid: number, startedAt: number): Promise<'gone' | 'stopped' | 'unknown'> {
-  let own: GroupOwnership;
-  try {
-    own = groupOwnership(pgid, startedAt);
-  } catch (err) {
-    if (isOrbitError(err, 'INTERNAL')) return 'unknown';
-    throw err;
-  }
-  if (own === 'gone' || own === 'foreign') return 'gone';
-  if (own === 'unknown') return 'unknown';
-  try {
-    return (await terminateGroup(pgid, ctx.graceMs)).exited ? 'stopped' : 'unknown';
-  } catch (err) {
-    if (isOrbitError(err, 'INTERNAL')) return 'unknown';
-    throw err;
-  }
 }
 
 // ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -21,10 +22,11 @@ const hooks = vi.hoisted(() => ({
   terminateGroup: vi.fn<Proc['terminateGroup']>(),
   processInfo: vi.fn<Proc['processInfo']>(),
   findProcesses: vi.fn<Proc['findProcesses']>(),
+  findProcessesWithEnv: vi.fn<Proc['findProcessesWithEnv']>(),
 }));
 vi.mock('../../../src/core/proc.ts', async (orig) => {
   const actual = await orig<Proc>();
-  return { ...actual, terminateGroup: hooks.terminateGroup, processInfo: hooks.processInfo, findProcesses: hooks.findProcesses };
+  return { ...actual, terminateGroup: hooks.terminateGroup, processInfo: hooks.processInfo, findProcesses: hooks.findProcesses, findProcessesWithEnv: hooks.findProcessesWithEnv };
 });
 
 const real = await vi.importActual<Proc>('../../../src/core/proc.ts');
@@ -44,10 +46,12 @@ const NEXT_OWNER = 'ctl-2';
 
 let lab: UnitLab | undefined;
 const kids: ChildProcess[] = [];
+const scratch: string[] = [];
 beforeEach(() => {
   hooks.terminateGroup.mockReset().mockImplementation(real.terminateGroup);
   hooks.processInfo.mockReset().mockImplementation(real.processInfo);
   hooks.findProcesses.mockReset().mockImplementation((match) => real.findProcesses(match));
+  hooks.findProcessesWithEnv.mockReset().mockImplementation((name, value) => real.findProcessesWithEnv(name, value));
 });
 afterEach(() => {
   for (const k of kids.splice(0)) {
@@ -59,6 +63,7 @@ afterEach(() => {
   }
   lab?.cleanup();
   lab = undefined;
+  for (const d of scratch.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
 /** A live process in a group of its own whose command line carries `marker` (a launch token, a worker or check directory). */
@@ -70,6 +75,29 @@ function carrying(marker: string[]): { pid: number; start: string } {
 }
 
 const sleeper = (): { pid: number; start: string } => carrying([]);
+
+/** A live process in a group of its own whose environment carries a check's token, as every process of that check does. */
+function inEnvironment(token: string): { pid: number; start: string } {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore', env: { PATH: process.env.PATH, ORBIT_CHECK_TOKEN: token } });
+  child.unref();
+  kids.push(child);
+  return { pid: child.pid!, start: real.processStartTime(child.pid!)! };
+}
+
+/** A lab whose temporary directory, and so every run, check and worker directory in it, is under a non-ASCII path. */
+function nonAsciiLab(): UnitLab {
+  const base = join(tmpdir(), `orbit-Código-${process.pid}`);
+  mkdirSync(base, { recursive: true });
+  scratch.push(base);
+  const prev = process.env.TMPDIR;
+  process.env.TMPDIR = base;
+  try {
+    return makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+  } finally {
+    if (prev === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = prev;
+  }
+}
 
 const isAlive = (pid: number): boolean => {
   try {
@@ -285,6 +313,226 @@ describe('a check whose shim was spawned before launch.json named it', () => {
   });
 });
 
+/**
+ * An open check run in `cwd` whose shim registered itself (registration.json: the spawning marker) and was then killed
+ * before it wrote pid.json, so nothing on disk names the check's process group; launch.json is written or not.
+ */
+function unrecordedCheck(l: UnitLab, cwd: string, opts: { launch: boolean; shim?: { pid: number; start: string } }): { id: string; dir: string; token: string } {
+  const { id, dir } = lostCheck(l, cwd, { pid: DEAD });
+  const token = randomBytes(8).toString('hex');
+  const shimPid = opts.shim?.pid ?? DEAD;
+  writeFileSync(shimPath(dir, 'intent'), JSON.stringify({ token, checkRunId: id, argv: ['sleep', '60'], cwd, timeoutMs: 60_000, killGraceMs: 50, maxOutputBytes: 1000, writtenAt: Date.now() }));
+  rmSync(shimPath(dir, 'pid'));
+  if (opts.launch) writeFileSync(shimPath(dir, 'launch'), JSON.stringify({ token, pid: shimPid, procStart: opts.shim?.start ?? 'x' }));
+  else rmSync(shimPath(dir, 'launch'));
+  writeFileSync(shimPath(dir, 'registration'), JSON.stringify({ token, shimPid, registeredAt: Date.now() }));
+  return { id, dir, token };
+}
+
+describe('a check whose shim died between spawning its check and recording it', () => {
+  for (const launch of [true, false]) {
+    it(`stays open while a process carries its token in the environment, and closes once none does (launch.json ${launch ? 'written' : 'absent'})`, async () => {
+      lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+      const chk = await checkout(lab, 'check-1');
+      const { id, token } = unrecordedCheck(lab, chk, { launch });
+      const check = inEnvironment(token);
+      crashedRunOutOfRecovery(lab);
+
+      const rep = await reconcile(lab);
+
+      expect(getRun(lab.db, lab.runId).state).toBe('EXHAUSTED');
+      expect(rep.runs[0]!.checks[0]).toMatchObject({ checkRunId: id, closed: false });
+      expect(rep.runs[0]!.checks[0]!.detail).toMatch(new RegExp(`process ${check.pid} carries its token in its environment`));
+      expect(checkStatus(lab, id)).toBe('RUNNING');
+      expect(existsSync(chk)).toBe(true);
+      expect(isAlive(check.pid)).toBe(true);
+      expect(events(lab, 'recovery.stop-unconfirmed')).toEqual([expect.objectContaining({ check_run_id: id })]);
+
+      kill(check);
+      expect(await untilGone(check.pid)).toBe(true);
+      await reconcile(lab);
+
+      expect(checkStatus(lab, id)).toBe('CANCELLED');
+      expect(existsSync(chk)).toBe(false);
+    });
+  }
+
+  it('closes it when no process carries its token', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const chk = await checkout(lab, 'check-1');
+    const { id } = unrecordedCheck(lab, chk, { launch: true });
+    crashedRunOutOfRecovery(lab);
+
+    const rep = await reconcile(lab);
+
+    expect(hooks.findProcessesWithEnv).toHaveBeenCalled();
+    expect(rep.runs[0]!.checks[0]).toMatchObject({ checkRunId: id, closed: true });
+    expect(checkStatus(lab, id)).toBe('CANCELLED');
+    expect(existsSync(chk)).toBe(false);
+  });
+
+  it('keeps it open when the environments cannot be searched', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const chk = await checkout(lab, 'check-1');
+    const { id } = unrecordedCheck(lab, chk, { launch: false });
+    crashedRunOutOfRecovery(lab);
+    hooks.findProcessesWithEnv.mockImplementation(() => {
+      throw new OrbitError('INTERNAL', 'cannot run ps', {});
+    });
+
+    const rep = await reconcile(lab);
+
+    expect(rep.runs[0]!.checks[0]).toMatchObject({ closed: false });
+    expect(rep.runs[0]!.checks[0]!.detail).toMatch(/could not be searched/);
+    expect(checkStatus(lab, id)).toBe('RUNNING');
+    expect(existsSync(chk)).toBe(true);
+  });
+
+  it('a live shim that registered but never named its check group is stopped, and the check closes only once no process carries its token', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const chk = await checkout(lab, 'check-1');
+    const shim = sleeper();
+    const { id, token } = unrecordedCheck(lab, chk, { launch: true, shim });
+    const check = inEnvironment(token);
+    crashedRunOutOfRecovery(lab);
+
+    const rep = await reconcile(lab);
+
+    expect(await untilGone(shim.pid)).toBe(true);
+    expect(rep.runs[0]!.checks[0]).toMatchObject({ closed: false, terminated: false });
+    expect(checkStatus(lab, id)).toBe('RUNNING');
+    expect(existsSync(chk)).toBe(true);
+    expect(isAlive(check.pid)).toBe(true);
+
+    kill(check);
+    expect(await untilGone(check.pid)).toBe(true);
+    await reconcile(lab);
+
+    expect(checkStatus(lab, id)).toBe('CANCELLED');
+    expect(existsSync(chk)).toBe(false);
+  });
+
+  it('a live shim that never registered is stopped and the check closed: it never reached the spawn', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const chk = await checkout(lab, 'check-1');
+    const shim = sleeper();
+    const { id, dir } = unrecordedCheck(lab, chk, { launch: true, shim });
+    rmSync(shimPath(dir, 'registration'));
+    crashedRunOutOfRecovery(lab);
+
+    const rep = await reconcile(lab);
+
+    expect(await untilGone(shim.pid)).toBe(true);
+    expect(rep.runs[0]!.checks[0]).toMatchObject({ closed: true, terminated: true });
+    expect(hooks.findProcessesWithEnv).not.toHaveBeenCalled();
+    expect(checkStatus(lab, id)).toBe('CANCELLED');
+  });
+});
+
+describe('the process-table search under a non-ASCII path', () => {
+  it('finds the shim of a check whose directory is under it, by its token, before launch.json names it', async () => {
+    lab = nonAsciiLab();
+    const chk = await checkout(lab, 'check-1');
+    const { id, dir } = lostCheck(lab, chk, { pid: DEAD });
+    const token = randomBytes(8).toString('hex');
+    writeFileSync(shimPath(dir, 'intent'), JSON.stringify({ token, checkRunId: id, argv: ['sleep', '60'], cwd: chk, timeoutMs: 60_000, killGraceMs: 50, maxOutputBytes: 1000, writtenAt: Date.now() }));
+    for (const f of ['launch', 'pid'] as const) rmSync(shimPath(dir, f));
+    expect(dir).toContain('Código');
+    const shim = carrying([join(dirname(dirname(dirname(dir))), 'check-shim.mjs'), dir, token]);
+    crashedRunOutOfRecovery(lab);
+
+    await reconcile(lab);
+
+    expect(isAlive(shim.pid)).toBe(true);
+    expect(checkStatus(lab, id)).toBe('RUNNING');
+    expect(existsSync(chk)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fail-before probe attempts
+
+/** An open fail-before probe attempt in the probe checkout `cwd`, its attempt directory with its intent. */
+function openProbe(l: UnitLab, cwd: string): { id: string; dir: string; token: string } {
+  const id = 'fbp-1';
+  l.db.run(
+    "INSERT INTO fail_before_probes (id, run_id, candidate_id, probe_id, probe_tree, check_id, check_config_hash, policy_hash, attempt, command_json, cwd, isolation, status, started_at) VALUES (?, ?, 'cand-1', 'probe-1', 't', 'unit', 'h', 'p', 1, '[]', ?, 'none', 'RUNNING', ?)",
+    id,
+    l.runId,
+    cwd,
+    l.clock.now(),
+  );
+  const dir = join(dirname(getRun(l.db, l.runId).policyPath), 'evidence', '1', 'fail-before', 'unit');
+  mkdirSync(dir, { recursive: true });
+  const token = randomBytes(8).toString('hex');
+  writeFileSync(shimPath(dir, 'intent'), JSON.stringify({ token, checkRunId: id, argv: ['sleep', '60'], cwd, timeoutMs: 60_000, killGraceMs: 50, maxOutputBytes: 1000, writtenAt: Date.now() }));
+  return { id, dir, token };
+}
+
+const probeStatus = (l: UnitLab, id: string): string => l.db.get<{ status: string }>('SELECT status FROM fail_before_probes WHERE id = ?', id)!.status;
+
+describe('a fail-before probe attempt that may still run', () => {
+  it('stays open, and its checkout is kept, while a process carries its token on a check shim command line before launch.json names it', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const probe = await checkout(lab, 'fail-before-1');
+    const { id, dir, token } = openProbe(lab, probe);
+    const shim = carrying([dir, token]);
+    crashedRunOutOfRecovery(lab);
+
+    const rep = await reconcile(lab);
+
+    expect(rep.runs[0]!.probes).toEqual([]);
+    expect(probeStatus(lab, id)).toBe('RUNNING');
+    expect(existsSync(probe)).toBe(true);
+    expect(isAlive(shim.pid)).toBe(true);
+    expect(released(lab).at(-1)!.retained).toEqual([expect.objectContaining({ worktree: 'fail-before-1', cause: 'active-check' })]);
+    expect(events(lab, 'recovery.stop-unconfirmed')).toEqual([expect.objectContaining({ fail_before_probe_id: id })]);
+
+    kill(shim);
+    expect(await untilGone(shim.pid)).toBe(true);
+    const again = await reconcile(lab);
+
+    expect(again.runs[0]!.probes).toEqual([id]);
+    expect(probeStatus(lab, id)).toBe('CANCELLED');
+    expect(existsSync(probe)).toBe(false);
+  });
+
+  it('stays open while its check runs on after its shim died between the spawn and pid.json', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const probe = await checkout(lab, 'fail-before-1');
+    const { id, dir, token } = openProbe(lab, probe);
+    writeFileSync(shimPath(dir, 'launch'), JSON.stringify({ token, pid: DEAD, procStart: 'x' }));
+    writeFileSync(shimPath(dir, 'registration'), JSON.stringify({ token, shimPid: DEAD, registeredAt: Date.now() }));
+    const check = inEnvironment(token);
+    crashedRunOutOfRecovery(lab);
+
+    await reconcile(lab);
+
+    expect(probeStatus(lab, id)).toBe('RUNNING');
+    expect(existsSync(probe)).toBe(true);
+    expect(isAlive(check.pid)).toBe(true);
+  });
+
+  it('is stopped and closed when its shim is the process launch.json names, and its checkout released', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const probe = await checkout(lab, 'fail-before-1');
+    const { id, dir, token } = openProbe(lab, probe);
+    const shim = sleeper();
+    const group = sleeper();
+    writeFileSync(shimPath(dir, 'launch'), JSON.stringify({ token, pid: shim.pid, procStart: shim.start }));
+    writeFileSync(shimPath(dir, 'pid'), JSON.stringify({ token, shimPid: shim.pid, childPid: group.pid, childPgid: group.pid, startedAt: Date.now() }));
+    crashedRunOutOfRecovery(lab);
+
+    const rep = await reconcile(lab);
+
+    expect(rep.runs[0]!.probes).toEqual([id]);
+    expect(await untilGone(shim.pid)).toBe(true);
+    expect(await untilGone(group.pid)).toBe(true);
+    expect(probeStatus(lab, id)).toBe('CANCELLED');
+    expect(existsSync(probe)).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // workers
 
@@ -375,6 +623,80 @@ describe('a worker shim spawned before launch.json named it', () => {
     const wt = await checkout(lab, 'implementer');
     crashedRunOutOfRecovery(lab);
     const dir = launched(lab, 'wrk-1', wt, '{not json');
+    const shim = carrying(['--worker-dir', dir, '--timeout-ms', '0', '--']);
+
+    await reconcile(lab);
+
+    expect(getWorker(lab.db, 'wrk-1').state).toBe('PLANNED');
+    expect(existsSync(wt)).toBe(true);
+    expect(isAlive(shim.pid)).toBe(true);
+  });
+});
+
+describe('a worker launch whose registration.json cannot be used', () => {
+  const foreign = (token: string, shim: { pid: number; start: string | null }): string => JSON.stringify({ version: 1, token: `other-${token}`, shimPid: shim.pid, shimStart: shim.start, pgid: shim.pid, registeredAt: Date.now() });
+  for (const [name, content] of [
+    ['names another launch whose process is long gone', (t: string) => foreign(t, { pid: DEAD, start: 'x' })],
+    ['is damaged', () => ''],
+  ] as const) {
+    it(`${name}: the worker is closed once no process carries the launch token`, async () => {
+      lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+      const wt = await checkout(lab, 'implementer');
+      crashedRunOutOfRecovery(lab);
+      const token = randomBytes(16).toString('hex');
+      const dir = launched(lab, 'wrk-1', wt, { token });
+      writeFileSync(join(dir, 'registration.json'), content(token));
+
+      await reconcile(lab);
+
+      expect(hooks.findProcesses).toHaveBeenCalled();
+      expect(getWorker(lab.db, 'wrk-1')).toMatchObject({ state: 'CANCELLED', error: 'never started: run is EXHAUSTED' });
+      expect(existsSync(wt)).toBe(false);
+      expect(events(lab, 'recovery.stop-unconfirmed')).toEqual([]);
+    });
+  }
+
+  it('keeps the worker while a process carries the launch token, whatever the registration says', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const wt = await checkout(lab, 'implementer');
+    crashedRunOutOfRecovery(lab);
+    const token = randomBytes(16).toString('hex');
+    const shim = carrying(['--launch-token', token, '--']);
+    const dir = launched(lab, 'wrk-1', wt, { token });
+    writeFileSync(join(dir, 'registration.json'), '');
+
+    await reconcile(lab);
+
+    expect(getWorker(lab.db, 'wrk-1').state).toBe('PLANNED');
+    expect(existsSync(wt)).toBe(true);
+    expect(isAlive(shim.pid)).toBe(true);
+  });
+
+  it('keeps the worker while the shim that registration.json names still runs, though it names another launch', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const wt = await checkout(lab, 'implementer');
+    crashedRunOutOfRecovery(lab);
+    const token = randomBytes(16).toString('hex');
+    const other = sleeper();
+    const dir = launched(lab, 'wrk-1', wt, { token });
+    writeFileSync(join(dir, 'registration.json'), foreign(token, other));
+
+    await reconcile(lab);
+
+    expect(getWorker(lab.db, 'wrk-1').state).toBe('PLANNED');
+    expect(existsSync(wt)).toBe(true);
+    expect(isAlive(other.pid)).toBe(true);
+    expect(events(lab, 'recovery.stop-unconfirmed')).toEqual([expect.objectContaining({ worker_id: 'wrk-1', detail: expect.stringMatching(/names another launch/) })]);
+  });
+});
+
+describe('a worker launch record without a token under a non-ASCII path', () => {
+  it('finds the shim by its worker directory on the shim command line', async () => {
+    lab = nonAsciiLab();
+    const wt = await checkout(lab, 'implementer');
+    crashedRunOutOfRecovery(lab);
+    const dir = launched(lab, 'wrk-1', wt, '{not json');
+    expect(dir).toContain('Código');
     const shim = carrying(['--worker-dir', dir, '--timeout-ms', '0', '--']);
 
     await reconcile(lab);

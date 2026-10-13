@@ -54,10 +54,20 @@ hold delivery credentials, and cannot modify policy or trusted code.
 - **Checks** run through the isolation provider, also detached with
   pid/exit files, so a controller restart during checks reconciles rather than
   reruns blindly. The check shim's command line carries its directory and the
-  intent's token, for the same search before `launch.json` names it. A check
-  of an ended run stays open while its shim or its process group may still
-  run (an identity that cannot be established, a stop that failed or did not
-  end it).
+  intent's token, for the same search before `launch.json` names it (the token
+  as a whole argument; the search reads `/proc` on Linux and runs `ps` under a
+  UTF-8 locale elsewhere, so a non-ASCII path hides nothing). The check shim
+  writes `registration.json` before it spawns the check and gives the check
+  the token in its environment (`ORBIT_CHECK_TOKEN`); when `pid.json` cannot be
+  written after the spawn, it stops the check before it reports the error. A
+  check run or a fail-before probe attempt of an ended run stays open while its
+  shim or its check may still run (an identity that cannot be established, a
+  stop that failed or did not end it, a shim that registered and died before
+  `pid.json` named its check's group while a process still carries the token
+  in its environment). The live runner likewise records a cancelled, timed-out
+  or lost attempt, or one whose start it could not record, only once the shim
+  and its check are confirmed gone; otherwise the row stays open and the step
+  fails with why.
 
 ## Storage
 
@@ -90,9 +100,9 @@ checkout that no ref holds: the run's worktree as a candidate, a unit's under
 checkout whose work could not be pinned is kept, and so is one a worker may
 still be writing in (its stop was not confirmed, including a shim that was
 launched but never wrote `pid.json`, or one spawned before `launch.json` named
-it that recovery cannot yet confirm gone) or a check may still run in (its row
-is open), until a later controller start confirms the worker stopped or closes
-the check. A release that a crash or a failure cut short, or that kept a checkout,
+it that recovery cannot yet confirm gone) or a check or a fail-before probe
+attempt may still run in (its row is open), until a later controller start
+confirms the worker stopped or closes the check. A release that a crash or a failure cut short, or that kept a checkout,
 is tried again at the next controller start (`recovery/release.ts`
 `releaseDue`, under the run's lease), and `orbit gc` releases a run the same
 way before it removes anything, skipping a run whose release keeps a checkout.

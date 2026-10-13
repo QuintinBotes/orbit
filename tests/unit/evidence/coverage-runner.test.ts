@@ -6,11 +6,12 @@ import { createRun, requestCancel } from '../../../src/controller/run-store.ts';
 import { atomicWriteJson } from '../../../src/core/fsx.ts';
 import { NoIsolation } from '../../../src/isolation/none.ts';
 import type { IsolationProvider, WrappedCommand } from '../../../src/isolation/types.ts';
-import { checkEnv, configHashFor, assertRunPolicy, reattachCheck, resumeChecks, runChecks, INSTALL_CHECK_ID } from '../../../src/evidence/runner.ts';
+import { checkEnv, configHashFor, assertRunPolicy, reattachCheck, resumeChecks, runChecks, CHECK_RUN_RECORDS, INSTALL_CHECK_ID } from '../../../src/evidence/runner.ts';
 import { getCheckRun, listCheckRuns, planCheckRun } from '../../../src/evidence/store.ts';
 import { checkConfigHash } from '../../../src/policy/snapshot.ts';
-import { findProcesses } from '../../../src/core/proc.ts';
-import { isCheckShimCommandLine } from '../../../src/evidence/check-shim.ts';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { findProcesses, findProcessesWithEnv } from '../../../src/core/proc.ts';
+import { CHECK_TOKEN_ENV, isCheckShimCommandLine, shimPath } from '../../../src/evidence/check-shim.ts';
 import { openDb } from '../../../src/storage/db.ts';
 import { checkDef, nodeCheck, write } from './fixtures.ts';
 import { checkDirOf, pidGone, readText, runnerEnv, waitFor, type RunnerEnv } from '../../integration/evidence/harness.ts';
@@ -279,6 +280,126 @@ describe('launch failures', () => {
   });
 });
 
+describe('bookkeeping that fails once the shim is spawned', () => {
+  function counting(): { provider: IsolationProvider; cleaned: () => number } {
+    let cleaned = 0;
+    const inner = new NoIsolation();
+    const provider: IsolationProvider = {
+      kind: inner.kind,
+      wrap: (argv, profile, opts) => {
+        const w: WrappedCommand = inner.wrap(argv, profile, opts);
+        return { ...w, cleanup: () => { cleaned++; w.cleanup(); } };
+      },
+    } as IsolationProvider;
+    return { provider, cleaned: () => cleaned };
+  }
+
+  it('keeps supervising, and records the outcome, when launch.json cannot be written after the spawn', async () => {
+    const e = await setup([nodeCheck('quick', 'console.log("hi")')]);
+    // A directory where launch.json goes: its rename fails (an ENOSPC or EIO stand-in).
+    mkdirSync(join(checkDirOf(e, 'quick'), 'launch.json', 'blocker'), { recursive: true });
+    const [r] = await run(e, ['quick']);
+    expect(r).toMatchObject({ status: 'PASSED' });
+    expect(listCheckRuns(e.run.db, { runId: e.run.runId }).map((x) => x.status)).toEqual(['PASSED']);
+  });
+
+  it('stops the spawned shim and its check, and confirms both gone, before it records ERROR and cleans up the wrapper', async () => {
+    const marker = `RUNNER-${process.pid}-${Date.now()}`;
+    const c = counting();
+    const e = await setup([nodeCheck('long', `setInterval(()=>{},1000) /* ${marker} */`, { timeout_seconds: 120 })], { isolation: c.provider });
+    // It fails once the shim has started the check (pid.json), as a database error after the spawn would.
+    const started = join(checkDirOf(e, 'long'), 'pid.json');
+    const records = {
+      ...CHECK_RUN_RECORDS,
+      running: (): never => {
+        const end = Date.now() + 10_000;
+        while (!existsSync(started) && Date.now() < end) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+        throw new Error('database is locked');
+      },
+    };
+    await expect(run(e, ['long'], { records })).rejects.toThrow('database is locked');
+    const [row] = listCheckRuns(e.run.db, { runId: e.run.runId, checkId: 'long' });
+    expect(row).toMatchObject({ status: 'ERROR' });
+    expect(row!.excerpt).toContain('could not start the check: database is locked');
+    const { token } = JSON.parse(readFileSync(join(checkDirOf(e, 'long'), 'intent.json'), 'utf8')) as { token: string };
+    expect(findProcesses((line) => line.includes(marker))).toEqual([]);
+    expect(findProcesses((line) => isCheckShimCommandLine(line, checkDirOf(e, 'long'), token))).toEqual([]);
+    expect(c.cleaned()).toBe(1);
+  });
+});
+
+describe('a reattached check whose shim is gone and whose check group no record names', () => {
+  const live: ChildProcess[] = [];
+  afterEach(() => {
+    for (const k of live.splice(0)) {
+      try {
+        process.kill(-k.pid!, 'SIGKILL');
+      } catch {
+        /* gone */
+      }
+    }
+  });
+  /** A live process in a group of its own whose environment carries `token`, as every process of the check does. */
+  function inEnvironment(token: string): number {
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore', env: { PATH: process.env.PATH, [CHECK_TOKEN_ENV]: token } });
+    child.unref();
+    live.push(child);
+    return child.pid!;
+  }
+  /** A running row of `id` whose shim registered and died (launch.json names a dead pid), with no pid.json. */
+  function orphaned(e: RunnerEnv, id: string, opts: { registered: boolean }): { rowId: string; token: string } {
+    const row = planCheckRun(e.run.db, { runId: e.run.runId, candidateId: e.candidate.id, checkId: id, kind: 'command', treeHash: e.candidate.treeHash, checkConfigHash: e.run.snapshot.check_config_hashes[id]!, policyHash: e.run.policyHash, command: ['node'], cwd: e.checkoutDir, isolation: 'none', limitations: [] }, e.ctx.clock);
+    const dir = checkDirOf(e, id);
+    mkdirSync(dir, { recursive: true });
+    const token = `${process.pid.toString(16)}${Date.now().toString(16)}`;
+    atomicWriteJson(shimPath(dir, 'intent'), { token, checkRunId: row.id, argv: ['node'], cwd: e.checkoutDir, timeoutMs: 120_000, killGraceMs: 100, maxOutputBytes: 1000, writtenAt: Date.now() });
+    atomicWriteJson(shimPath(dir, 'launch'), { token, pid: 2_000_000_000, procStart: 'x' });
+    if (opts.registered) atomicWriteJson(shimPath(dir, 'registration'), { token, shimPid: 2_000_000_000, registeredAt: Date.now() });
+    return { rowId: row.id, token };
+  }
+
+  it('leaves the row open, and says why, while a process carries its token in the environment; records it lost once none does', async () => {
+    const e = await setup([nodeCheck('long', 'setInterval(()=>{},1000)', { timeout_seconds: 120 })]);
+    const { rowId, token } = orphaned(e, 'long', { registered: true });
+    const check = inEnvironment(token);
+    await expect(reattachCheck(e.ctx, rowId)).rejects.toMatchObject({ message: expect.stringMatching(new RegExp(`could not be confirmed stopped.*process ${check} carries its token in its environment`)) });
+    expect(getCheckRun(e.run.db, rowId).status).toBe('PLANNED');
+
+    process.kill(-check, 'SIGKILL');
+    await waitFor(() => findProcessesWithEnv(CHECK_TOKEN_ENV, token).length === 0, 5_000);
+    const result = await reattachCheck(e.ctx, rowId);
+    expect(result).toMatchObject({ id: rowId, status: 'ERROR' });
+    expect(readText(result.logPath)).toContain('disappeared');
+  });
+
+  it('records it lost at once when the shim never registered: it never reached the spawn', async () => {
+    const e = await setup([nodeCheck('long', 'setInterval(()=>{},1000)', { timeout_seconds: 120 })]);
+    const { rowId } = orphaned(e, 'long', { registered: false });
+    const result = await reattachCheck(e.ctx, rowId);
+    expect(result).toMatchObject({ id: rowId, status: 'ERROR' });
+  });
+
+  it('does not take a launch for lost while a process carries its token on a check shim command line before any record names it', async () => {
+    const clock = new ManualClock();
+    const e = await setup([nodeCheck('long', 'setInterval(()=>{},1000)', { timeout_seconds: 1 })], { clock });
+    const row = planCheckRun(e.run.db, { runId: e.run.runId, candidateId: e.candidate.id, checkId: 'long', kind: 'command', treeHash: e.candidate.treeHash, checkConfigHash: e.run.snapshot.check_config_hashes.long!, policyHash: e.run.policyHash, command: ['node'], cwd: e.checkoutDir, isolation: 'none', limitations: [] }, clock);
+    const dir = checkDirOf(e, 'long');
+    mkdirSync(dir, { recursive: true });
+    const token = `${process.pid.toString(16)}${Date.now().toString(16)}`;
+    atomicWriteJson(shimPath(dir, 'intent'), { token, checkRunId: row.id, argv: ['node'], cwd: e.checkoutDir, timeoutMs: 1000, killGraceMs: 100, maxOutputBytes: 1000, writtenAt: clock.now() });
+    const shim = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '--', dir, token], { detached: true, stdio: 'ignore' });
+    shim.unref();
+    live.push(shim);
+    clock.advance(11_000);
+    await expect(reattachCheck({ ...e.ctx, clock }, row.id)).rejects.toMatchObject({ message: expect.stringMatching(new RegExp(`could not be confirmed stopped.*process ${shim.pid} carries its launch token`)) });
+    expect(getCheckRun(e.run.db, row.id).status).toBe('PLANNED');
+
+    process.kill(-shim.pid!, 'SIGKILL');
+    await waitFor(() => pidGone(shim.pid!), 5_000);
+    expect(await reattachCheck({ ...e.ctx, clock }, row.id)).toMatchObject({ id: row.id, status: 'ERROR' });
+  });
+});
+
 describe('checks that change the checkout', () => {
   it('names the first ten changed files and counts the rest', async () => {
     const files = Object.fromEntries(Array.from({ length: 13 }, (_, i) => [`src/f${String(i).padStart(2, '0')}.txt`, `v${i}\n`]));
@@ -349,7 +470,9 @@ describe('the check shim command line', () => {
     try {
       expect(findProcesses((line) => isCheckShimCommandLine(line, dir, token))).toEqual([shimPid]);
       expect(findProcesses((line) => isCheckShimCommandLine(line, dir, 'another-token'))).toEqual([]);
-      expect(findProcesses((line) => isCheckShimCommandLine(line, `${dir}~1`, token))).toEqual([]);
+      // The token is matched as a whole argument, with no path in the match: a prefix of it names nothing.
+      expect(findProcesses((line) => isCheckShimCommandLine(line, `${dir}~1`, token.slice(0, -1)))).toEqual([]);
+      expect(findProcesses((line) => isCheckShimCommandLine(line, '/elsewhere/Código', token))).toEqual([shimPid]);
     } finally {
       process.kill(shimPid, 'SIGTERM');
       await waitFor(() => pidGone(shimPid));

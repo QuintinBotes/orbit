@@ -1,9 +1,11 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ManualClock } from '../../../src/core/clock.ts';
-import { findProcesses, isAlive, isGroupAlive, killGroup, normalizeStart, processInfo, processStartTime, terminateGroup } from '../../../src/core/proc.ts';
+import { findProcesses, findProcessesWithEnv, isAlive, isGroupAlive, killGroup, normalizeStart, processInfo, processStartTime, terminateGroup } from '../../../src/core/proc.ts';
 
 const NODE = process.execPath;
 
@@ -216,5 +218,76 @@ describe('findProcesses', () => {
     expect(findProcesses(has)).toEqual([child.pid]);
     child.kill('SIGKILL');
     expect(await waitFor(() => findProcesses(has).length === 0)).toBe(true);
+  });
+});
+
+describe('findProcesses and findProcessesWithEnv on Linux (a /proc of the test\'s making)', () => {
+  let procDir: string;
+  /** A /proc entry: its NUL-separated command line and environment, as the kernel gives them (null: no such file). */
+  function entry(pid: number | string, cmdline: string[] | null, environ: string[] | null = []): void {
+    const d = join(procDir, String(pid));
+    mkdirSync(d, { recursive: true });
+    if (cmdline !== null) writeFileSync(join(d, 'cmdline'), cmdline.length === 0 ? '' : cmdline.join('\0') + '\0');
+    if (environ !== null) writeFileSync(join(d, 'environ'), environ.length === 0 ? '' : environ.join('\0') + '\0');
+  }
+  afterEach(() => rmSync(procDir, { recursive: true, force: true }));
+
+  it('reads each command line from /proc/<pid>/cmdline as raw bytes, so a non-ASCII argument matches, and needs no ps', () => {
+    procDir = mkdtempSync(join(tmpdir(), 'orbit-fakeproc-'));
+    const dir = '/home/dev/Código/.orbit/runs/orb-1/evidence/1/unit';
+    entry(101, ['node', '/home/dev/Código/.orbit/runs/orb-1/check-shim.mjs', dir, 'a1b2c3']);
+    // A zombie or a kernel thread has an empty command line; an entry that went away has none at all.
+    entry(102, []);
+    entry(103, null);
+    entry(process.pid, ['node', dir, 'a1b2c3']);
+    entry('self', ['node', dir, 'a1b2c3']);
+    const opts = { platform: 'linux' as const, procDir };
+    expect(findProcesses((line) => line.endsWith(` ${dir} a1b2c3`), opts)).toEqual([101]);
+    expect(findProcesses((line) => ` ${line} `.includes(' a1b2c3 '), opts)).toEqual([101]);
+    expect(findProcesses((line) => line === '', opts)).toEqual([]);
+  });
+
+  it('finds a process by one entry of its environment, the whole entry and nothing longer, and skips one it may not read', () => {
+    procDir = mkdtempSync(join(tmpdir(), 'orbit-fakeproc-'));
+    entry(201, ['sh', '-c', 'make test'], ['PATH=/usr/bin', 'ORBIT_CHECK_TOKEN=f00d']);
+    entry(202, ['sh'], ['ORBIT_CHECK_TOKEN=f00dd']);
+    entry(203, ['sh'], ['XORBIT_CHECK_TOKEN=f00d']);
+    entry(204, ['sh'], null);
+    entry(205, ['sh'], ['ORBIT_CHECK_TOKEN=f00d']);
+    // Another user's process, or one that made itself undumpable: its environment cannot be read.
+    chmodSync(join(procDir, '205', 'environ'), 0o000);
+    const opts = { platform: 'linux' as const, procDir };
+    const found = findProcessesWithEnv('ORBIT_CHECK_TOKEN', 'f00d', opts);
+    expect(found).toContain(201);
+    expect(found.filter((p) => p !== 205)).toEqual([201]);
+  });
+
+  it('throws when /proc itself cannot be read, so an empty answer always means no such process', () => {
+    procDir = join(tmpdir(), `orbit-noproc-${process.pid}-${Date.now()}`);
+    const opts = { platform: 'linux' as const, procDir };
+    expect(() => findProcesses(() => true, opts)).toThrow(expect.objectContaining({ code: 'INTERNAL', message: expect.stringContaining('cannot read') }));
+    expect(() => findProcessesWithEnv('A', 'b', opts)).toThrow(expect.objectContaining({ code: 'INTERNAL' }));
+  });
+});
+
+describe('findProcesses and findProcessesWithEnv on this host', () => {
+  it('finds a live process by a non-ASCII argument, whatever the locale would make ps print', async () => {
+    const marker = `/tmp/Código-${process.pid}-${Date.now()}/evidence/1/unit`;
+    const child = spawn(NODE, ['-e', 'setInterval(() => {}, 1000)', '--', marker, 'c0ffee'], { detached: true, stdio: 'ignore', env: { PATH: process.env.PATH, LC_ALL: 'C' } });
+    started.push(child);
+    const has = (line: string): boolean => line.endsWith(` ${marker} c0ffee`);
+    expect(await waitFor(() => findProcesses(has).length > 0)).toBe(true);
+    expect(findProcesses(has)).toEqual([child.pid]);
+  });
+
+  it('finds a live process by an entry of its environment, and not a process without it', async () => {
+    const token = `t${process.pid}x${Date.now()}`;
+    const carrier = spawn(NODE, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore', env: { PATH: process.env.PATH, ORBIT_CHECK_TOKEN: token } });
+    const other = spawn(NODE, ['-e', 'setInterval(() => {}, 1000)', '--', `ORBIT_CHECK_TOKEN=${token}x`], { detached: true, stdio: 'ignore', env: { PATH: process.env.PATH, ORBIT_CHECK_TOKEN: `${token}x` } });
+    started.push(carrier, other);
+    expect(await waitFor(() => findProcessesWithEnv('ORBIT_CHECK_TOKEN', token).length > 0)).toBe(true);
+    expect(findProcessesWithEnv('ORBIT_CHECK_TOKEN', token)).toEqual([carrier.pid]);
+    carrier.kill('SIGKILL');
+    expect(await waitFor(() => findProcessesWithEnv('ORBIT_CHECK_TOKEN', token).length === 0)).toBe(true);
   });
 });

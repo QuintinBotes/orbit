@@ -88,9 +88,14 @@ export function releaseDue(db: OrbitDb, run: Pick<RunRecord, 'id' | 'state' | 'r
   return !(waiting && stillActive(db, run.id));
 }
 
-/** Whether a worker of the run is PLANNED or RUNNING, or a check run of it is still open. */
+/** Whether a worker of the run is PLANNED or RUNNING, or a check run or fail-before probe attempt of it is still open. */
 function stillActive(db: OrbitDb, runId: string): boolean {
   return (
-    db.get("SELECT 1 AS x FROM workers WHERE run_id = ? AND state IN ('PLANNED', 'RUNNING') UNION ALL SELECT 1 AS x FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING') LIMIT 1", runId, runId) !== undefined
+    db.get(
+      "SELECT 1 AS x FROM workers WHERE run_id = ? AND state IN ('PLANNED', 'RUNNING') UNION ALL SELECT 1 AS x FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING') UNION ALL SELECT 1 AS x FROM fail_before_probes WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING') LIMIT 1",
+      runId,
+      runId,
+      runId,
+    ) !== undefined
   );
 }

@@ -8,9 +8,9 @@
  * none of these states has a way back. Removal never loses work and never deletes beneath a process:
  *
  * - A checkout in which a worker of the run is still active (PLANNED or RUNNING: stopping it failed, so its
- *   termination is not confirmed and it may still be writing), or a check run of it is still open (PLANNED or
- *   RUNNING: its detached shim may still run there), is kept, with why. Recovery releases it once a later controller
- *   start confirms the worker stopped or closes the check (recovery/release).
+ *   termination is not confirmed and it may still be writing), or a check run or fail-before probe attempt of it is
+ *   still open (PLANNED or RUNNING: its detached shim, or its check, may still run there), is kept, with why. Recovery
+ *   releases it once a later controller start confirms the worker stopped or closes the check (recovery/release).
  * - Every implementer checkout (the run's worktree and each `unit-*` worktree of a parallel attempt, found from the
  *   worker records) first has its unfinished work pinned in a ref: edits (tracked changes and untracked files the
  *   repository does not ignore), and commits made in the checkout that no ref holds (each checkout is a detached HEAD,
@@ -116,7 +116,12 @@ export async function releaseWorktrees(input: ReleaseWorktreesInput): Promise<Wo
   if (!existsSync(root)) return null;
   const out: WorktreesReleased = { removed: [], kept: [], preserved: [], retained: [] };
   const workers = listWorkers(input.db, { runId: run.id });
-  const checks = input.db.all<{ id: string; check_id: string; status: string; cwd: string }>("SELECT id, check_id, status, cwd FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING') ORDER BY started_at, rowid", run.id);
+  // Open check runs and fail-before probe attempts: the shim of each, and its check, may still run in their checkout.
+  const checks = input.db.all<{ id: string; check_id: string; status: string; cwd: string; what: string }>(
+    "SELECT id, check_id, status, cwd, 'check run' AS what, started_at FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING') UNION ALL SELECT id, check_id, status, cwd, 'fail-before probe attempt' AS what, started_at FROM fail_before_probes WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING') ORDER BY started_at, id",
+    run.id,
+    run.id,
+  );
   const keep = (name: string, dir: string, cause: RetainCause, why: string): void => {
     out.retained.push({ worktree: name, path: dir, cause, why });
     log.warn('a finished run\'s worktree is kept', { run_id: run.id, worktree: name, cause, why });
@@ -133,7 +138,7 @@ export async function releaseWorktrees(input: ReleaseWorktreesInput): Promise<Wo
     // A check's shim is detached and outlives a controller, and finishing a run does not stop checks.
     const open = checks.filter((c) => within(c.cwd, dir));
     if (open.length > 0) {
-      keep(name, dir, 'active-check', `${open.map((c) => `check run ${c.id} (${c.check_id}, ${c.status})`).join(', ')} may still be running in it; the checkout is released once a later controller start closes ${open.length === 1 ? 'it' : 'them'}`);
+      keep(name, dir, 'active-check', `${open.map((c) => `${c.what} ${c.id} (${c.check_id}, ${c.status})`).join(', ')} may still be running in it; the checkout is released once a later controller start closes ${open.length === 1 ? 'it' : 'them'}`);
       continue;
     }
     const main = run.worktreePath !== null && samePath(run.worktreePath, dir);
