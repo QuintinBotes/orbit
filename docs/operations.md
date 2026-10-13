@@ -174,10 +174,11 @@ disputes the recorded outcome is a `review.finding.noted` decision in the
 timeline and a residual risk in the report, never a repair. Delivery needs an
 approving review, so when a review asked for repair only through such notes,
 the tree first gets one fresh review (a `review.fresh` decision, charged to
-`review_rounds` like any review). Its `APPROVE` lets the run go on. Otherwise,
-or at the `review_rounds` cap, the run ends `BLOCKED` naming the findings; a
-resume would only block again, so `orbit status` and the report say to start a
-new run.
+`review_rounds` like any review). It is an ordinary review: its `APPROVE` lets
+the run go on, and a defect of the candidate it reports goes to repair. If it
+again asks for repair only through such notes, or at the `review_rounds` cap,
+the run ends `BLOCKED` naming the findings; a resume would only block again, so
+`orbit status` and the report say to start a new run.
 
 `orbit repair <run-id>` hands the failure of a `BLOCKED` or paused run with FAIL
 evidence to a repair. A run id that does not qualify is refused with the

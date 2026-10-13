@@ -189,8 +189,9 @@ what Orbit did with its outcome did not. Five changes, each with the run that sh
    Delivery still needs an approving review, so a review that asked for repair only through such notes
    approves nothing: the run stops BLOCKED and names them, instead of spending an attempt on the same tree.
    Follow-up: first the tree gets one fresh review (a `review.fresh` decision, charged to `review_rounds`), told
-   the outcome is not a finding; only its APPROVE clears. If it does not clear the tree, for any reason, or no
-   review round is left to start it, the run ends BLOCKED naming the findings, and a resume starts no second one.
+   the outcome is not a finding. It is an ordinary review: its APPROVE clears, and a defect of the candidate it
+   reports goes to repair as any review's would. If it again asks for repair only through such notes, or no review
+   round is left to start it, the run ends BLOCKED naming the findings, and a resume starts no second one.
 4. **The planner does not promise fail-before.** In the required run the planner wrote AC-4, "The new tests
    fail on the base revision (ImportError for round_price)". The candidate's passing log was then cited to
    support it, and an inquiry told the implementer to keep the import error "as the contract states". The

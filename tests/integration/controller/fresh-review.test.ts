@@ -18,7 +18,7 @@ import type { OrbitConfig } from '../../../src/policy/types.ts';
 import { listReviews } from '../../../src/review/store.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
 import { appendEvent } from '../../../src/storage/events.ts';
-import { APPROVE, baseScenario, implementMul, labDeps, makeLab, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
+import { APPROVE, baseScenario, IMPLEMENTER_OUTPUT, implementMul, labDeps, makeLab, MUL_TEST, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
 
 const canStripTypes = Boolean((process as unknown as { features?: { typescript?: unknown } }).features?.typescript);
 
@@ -127,6 +127,36 @@ describe.skipIf(!canStripTypes)('one fresh review of a tree a review asked to re
     done = runState(l, run.id);
     expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
     expect(reviewerPurposes(l, run.id)).toEqual(['review:cand#1', 'review-fresh:cand#1']);
+  });
+
+  it('a fresh review that reports a real defect of the candidate sends it to repair like any review, not to BLOCKED', async () => {
+    // A defect of the candidate (not a dispute of the recorded outcome): the fresh review is an ordinary review, so the
+    // defect is repaired, verified and reviewed again (the same shape as review-repair.test.ts).
+    const DEFECT = { id: 'COR-2', severity: 'high', category: 'correctness', location: 'apps/calc.mjs:2', claim: 'mul accepts non-numeric arguments and returns NaN instead of throwing a TypeError.', evidence: 'mul("a", 2) evaluates "a" * 2, which is NaN.', suggested_validation: 'Add a test asserting that mul("a", 2) throws a TypeError.' };
+    const INPUT_TEST = "import { mul } from '../apps/calc.mjs';\nlet threw = false;\ntry { mul('a', 2); } catch (e) { threw = e instanceof TypeError; }\nif (!threw) process.exit(1);\n";
+    const REPAIR = {
+      edits: [
+        { op: 'write', path: 'apps/calc.mjs', content: "export const add = (a, b) => a + b;\nexport const mul = (a, b) => {\n  if (typeof a !== 'number' || typeof b !== 'number') throw new TypeError('mul takes numbers');\n  return a * b;\n};\n" },
+        { op: 'write', path: 'tests/mul.test.mjs', content: MUL_TEST },
+        { op: 'write', path: 'tests/mul-input.test.mjs', content: INPUT_TEST },
+      ],
+      structured: {
+        ...IMPLEMENTER_OUTPUT,
+        summary: 'mul rejects non-numeric arguments; validation test added',
+        changed_paths: [...IMPLEMENTER_OUTPUT.changed_paths, { path: 'tests/mul-input.test.mjs', change: 'add', purpose: 'validation for COR-2' }],
+        evidence_refs: [{ criterion_id: null, ref: 'tests/mul-input.test.mjs', note: 'validation for finding COR-2' }],
+      },
+    };
+    const l = lab();
+    writeScenario(l, baseScenario({ implementer: [implementMul(), REPAIR], reviewer: [STALL, review('REPAIR_REQUIRED', [DEFECT]), APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(listDecisions(l.db(), run.id, { kind: 'review.fresh' })).toHaveLength(1);
+    expect(transitions(l, run.id)).toContain('REPAIRING');
+    expect(reviewerPurposes(l, run.id).filter((p) => p.startsWith('review-fresh'))).toEqual(['review-fresh:cand#1']);
   });
 
   it('with no review round left, no fresh review starts and the run ends BLOCKED naming the note', async () => {

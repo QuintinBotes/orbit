@@ -1047,9 +1047,11 @@ or goes to the Inquisition: a repair changes the candidate, not the base
 revision. A review that asked for repair only through such notes approves
 nothing, so the tree first gets one fresh review (a `review.fresh` decision,
 charged to `review_rounds` like any review), told that the recorded outcome is
-not a finding. Its `APPROVE` lets the run go on. Otherwise, or at the
-`review_rounds` cap, the run ends `BLOCKED` naming the findings, and a resume
-starts no second fresh review, so the way forward is a new run. The planner
+not a finding. It is an ordinary review: its `APPROVE` lets the run go on,
+and a defect of the candidate it reports goes to repair as any review's would.
+If it again asks for repair only through such notes, or at the `review_rounds`
+cap, the run ends `BLOCKED` naming the findings, and a resume starts no second
+fresh review, so the way forward is a new run. The planner
 does not write a criterion that the new tests fail on the base revision, since
 that is this setting's to establish; the contract draft drops one that says
 nothing else, with a `contract.criterion-dropped` decision
