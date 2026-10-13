@@ -17,6 +17,7 @@ import { LAUNCH_FILE, archiveAttempt, cancelShim, handleFromWorkerDir, isShimCom
 import type { ProviderAdapter, TaskHandle, TaskResult, TaskStatus } from '../adapters/types.ts';
 import { ActionLedger } from '../delivery/actions.ts';
 import { recordUsage } from '../routing/usage.ts';
+import { marksCharges } from '../scheduling/accounting.ts';
 import { finishCheckRun, isFinalCheckStatus } from '../evidence/store.ts';
 import { closeInterruptedProbes } from '../evidence/fail-before.ts';
 import { readJsonFile, shimPath, type ShimIntent } from '../evidence/check-shim.ts';
@@ -632,10 +633,11 @@ async function restartOrGiveUp(ctx: Ctx, run: RunRecord, w: WorkerRecord, obs: O
     // The Inquisition engine owns its worker: the INQUISITION step starts a fresh one (counting what this one
     // spent) when it resumes, so recovery neither restarts it nor spends recovery budget on it. With nothing collected,
     // what it spent is unknown: an unmeasured usage record, in the same transaction, has it charged its cap or ceiling
-    // as any other lost session is (the engine records one for an inquisitor it gives up on, too).
+    // as any other lost session is (the engine records one for an inquisitor it gives up on, too). A run started before
+    // 0.3.1 keeps 0.3.0's accounting, which recorded nothing here.
     const row = db.tx(() => {
       const done = finish(ctx, w.id, { state: 'LOST', resultStatus: 'lost', exitCode: partial?.exitCode ?? null, result: partial, error: lostDetail });
-      if (!partial) recordLostUsage(ctx, run, w, null);
+      if (!partial && marksCharges(db, run.id)) recordLostUsage(ctx, run, w, null);
       return done;
     });
     rep.state = row.state;
@@ -673,11 +675,12 @@ async function restartOrGiveUp(ctx: Ctx, run: RunRecord, w: WorkerRecord, obs: O
       finish(ctx, w.id, { state: 'LOST', resultStatus: 'lost', exitCode: partial?.exitCode ?? null, result: partial, error: lostDetail });
       // The restart reuses the row and clears its result, so what the lost attempt spent is recorded now, with the
       // restart that would otherwise lose it; the event names the record as the earlier attempt's, and the controller
-      // charges it before the next step funds anything.
-      const usageId = recordLostUsage(ctx, run, w, partial);
+      // charges it before the next step funds anything. A run started before 0.3.1 keeps 0.3.0's accounting, which
+      // recorded nothing for the lost attempt.
+      const usageId = marksCharges(db, run.id) ? recordLostUsage(ctx, run, w, partial) : null;
       spendRecoveryAttempt(db, run.id, clock, { ledgerFor: ctx.opts.ledgerFor, fallbackMax: ctx.opts.fallbackRecoveries, actor: ctx.ownerId, why: `restart of lost worker ${w.id}` });
       const row = planWorkerRestart(db, w.id, clock, ctx.ownerId);
-      appendEvent(db, run.id, WORKER_RESTART_EVENT, ctx.ownerId, { worker_id: w.id, restart_count: row.restartCount, cwd_preserved: w.cwd, usage_id: usageId }, clock.now());
+      appendEvent(db, run.id, WORKER_RESTART_EVENT, ctx.ownerId, { worker_id: w.id, restart_count: row.restartCount, cwd_preserved: w.cwd, ...(usageId === null ? {} : { usage_id: usageId }) }, clock.now());
     });
     rep.restartPlanned = true;
     rep.state = 'PLANNED';

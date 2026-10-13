@@ -364,21 +364,28 @@ in the registry (the dearest listed price when the model has none), recorded as
 ceiling. Inquisitor sessions are charged the same way, by the same rules: the
 Inquisition records their usage itself, and the controller charges it when the
 inquiry settles or fails. Every charge marks the usage record it covers
-(`budget.usage-charged`) in the transaction that charges it, whichever path
-charged it, and a marked record is never charged again. A budget created
-before 0.3.1 has the records it charged marked once, the first time 0.3.1
-charges anything for the run; from then on only marks count, so a session after
-the upgrade is charged like any other. A session whose result was stored with no
-usage record (one reconciliation collected after a controller restart, or one the
-watchdog stopped) has its usage recorded from that result and charged once, at
-the start of the next step at the latest, and for a run that has ended when the
-controller next starts, with the report written again. A worker the controller
-stops mid-run (obsolete review or verification, a cancelled unit, an exploration
-out of time) is charged as it stops, before the next session is funded. A lost
+(`budget.usage-charged`, with the amount and whether it was the reported cost,
+an estimate or a ceiling) in the transaction that charges it, whichever path
+charged it, and a marked record is never charged again. A session whose result
+was stored with no usage record (one reconciliation collected after a controller
+restart, or one the watchdog stopped) has its usage recorded from that result
+and charged once, at the start of the next step at the latest, and for a run
+that has ended when the controller next starts, with the report written again; a
+launched session stopped with nothing to collect is recorded unmeasured the same
+way. A worker the controller stops is charged as it stops: mid-run (obsolete
+review or verification, a cancelled unit, an exploration out of time), before
+the next session is funded, and as the run ends, so the run's end leaves no
+session out. One with nothing to collect is charged as unmeasured, its spend
+cap, and one that never started is no session and costs nothing. A lost
 worker that reconciliation restarts has what the lost attempt spent recorded
 with the restart and charged before the next step, and a lost session with
 nothing to collect is charged as unmeasured: its spend cap, at most the role's
-ceiling. The session whose
+ceiling. This accounting applies to runs started on 0.3.1 or later, which record
+it when they are created (`accounting` in the `run.created` event). A run
+started before 0.3.1 keeps the accounting of the version that started it when a
+later version resumes it: a session is charged and then recorded, nothing is
+marked, recorded from a stored result or settled at the run's end, and its
+precharge stands as it was. The session whose
 charge crosses the reserve or the cap is recorded with its usage before the run
 ends `EXHAUSTED`, so the spend line names it. An authentication failure still
 blocks on credentials when its charge reaches the cap. Spend from before PLANNING creates the
@@ -395,8 +402,15 @@ The report, `orbit status` and the timeline give one spend line: the amount
 charged to the cost budget, which is the figure the cap is checked against,
 and what it is made of: what providers reported, what was estimated from tokens
 for sessions that reported no cost, and the ceilings charged for sessions that
-could not be priced. So the cap bounds spend but is not an exact spend
-guarantee, and the line says how far the charge is from the reported spend.
+could not be priced. Each session counts as the charge its usage record's mark
+names, so a lost attempt and its restart, two sessions of one worker, are
+counted apart, and every session no provider measured (charged at a ceiling, or
+with no reported cost) is named. So the cap bounds spend but is not an exact
+spend guarantee, and the line says how far the charge is from the reported
+spend. A run started before 0.3.1 recorded no marks: its line gives the figures
+as recorded, what its usage records say and the stand-in charges its budget
+recorded, matched to nothing, and says the run is accounted under the rules of
+the version that started it.
 
 An inquisitor is admitted like any other session before it starts, and runs
 under a spend cap of its own (`worker.spend-cap`). An inquiry that returns to

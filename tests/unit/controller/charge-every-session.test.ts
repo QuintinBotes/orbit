@@ -1,7 +1,7 @@
 // Every session that spent is charged once, on every path that ends it (second adversarial review of fix/031-budget):
-// a run whose PLANNING ran under 0.3.0 and continues on 0.3.1, a 0.3.0 precharge cut short, the curator after the
-// report, a worker stopped as obsolete mid-run, a lost attempt reconciliation restarts, and a lost inquisitor with
-// nothing to collect.
+// the curator after the report, a worker stopped as obsolete mid-run, a lost attempt reconciliation restarts, and a
+// lost inquisitor with nothing to collect. A run started before 0.3.1 keeps 0.3.0's accounting instead
+// (accounting-version.test.ts).
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -10,12 +10,10 @@ import { Controller } from '../../../src/controller/loop.ts';
 import { runCurator, writeFinalReport, type CuratorHost } from '../../../src/controller/report.ts';
 import { getRun } from '../../../src/controller/run-store.ts';
 import { step } from '../../../src/controller/steps/index.ts';
-import { planningStep } from '../../../src/controller/steps/planning.ts';
 import { cancelObsoleteWork } from '../../../src/controller/steps/reviewing.ts';
-import { accountWorker, chargeRecordedUsage, collectIfFinished, committedSpendUsd, ensureWorker, recordSpendCap, settleRunUsage, USAGE_CHARGED_EVENT } from '../../../src/controller/workers.ts';
+import { chargeRecordedUsage, collectIfFinished, committedSpendUsd, ensureWorker, recordSpendCap, settleRunUsage, USAGE_CHARGED_EVENT } from '../../../src/controller/workers.ts';
 import { reconcileOnStart } from '../../../src/recovery/reconcile.ts';
-import { recordUsage } from '../../../src/routing/usage.ts';
-import { BudgetLedger, spendBreakdown } from '../../../src/scheduling/budget.ts';
+import { BudgetLedger } from '../../../src/scheduling/budget.ts';
 import { appendEvent } from '../../../src/storage/events.ts';
 import { finishWorker, getWorker, listWorkers, markWorkerRunning, planWorker, type WorkerRecord } from '../../../src/storage/workers.ts';
 import { addCandidate, initLedger, makeUnitLab, OWNER, setContract, type UnitLab } from './coverage-helpers.ts';
@@ -48,91 +46,6 @@ function running(id: string, role: string, opts: { purpose?: string; pid?: boole
 function succeeded(w: WorkerRecord, r: TaskResult): WorkerRecord {
   return finishWorker(lab.db, w.id, { state: 'SUCCEEDED', exitCode: 0, resultStatus: 'succeeded', result: r, error: null }, lab.clock, OWNER);
 }
-
-/** A run whose PLANNING ran under 0.3.0: a $0.20 planner precharged with no marks, then a 0.3.0 session charged as collected. */
-function legacyRun(): void {
-  lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING'] });
-  const ledger = initLedger(lab);
-  const p = succeeded(running('wrk-plan', 'planner'), resultOf(0.2));
-  recordUsage(lab.db, { runId: lab.runId, workerId: p.id, usage: usageOf(0.2), durationMs: 10 }, lab.clock);
-  ledger.consumeCost({ costUsd: 0.2, costSource: 'reported' }, 'planner');
-  lab.clock.advance(1000);
-  lab.db.tx(() => appendEvent(lab.db, lab.runId, 'budget.precharged', OWNER, { usage_rows: 1, charged_usd: 0.2 }, lab.clock.now()));
-  lab.clock.advance(1000);
-  lab.walk(['IMPLEMENTING']);
-  // 0.3.0's accountWorker charged a session, then recorded its usage; 0.3.0's engine recorded an inquisitor's and charged nothing.
-  const i = succeeded(running('wrk-impl-030', 'implementer'), resultOf(0.5));
-  ledger.consumeCost({ costUsd: 0.5, costSource: 'reported' }, 'implementer');
-  recordUsage(lab.db, { runId: lab.runId, workerId: i.id, usage: usageOf(0.5), durationMs: 10 }, lab.clock);
-  const q = succeeded(running('wrk-inq-030', 'inquisitor'), resultOf(0.07));
-  recordUsage(lab.db, { runId: lab.runId, workerId: q.id, usage: usageOf(0.07), durationMs: 10 }, lab.clock);
-  lab.clock.advance(1000);
-}
-
-describe('a run whose PLANNING ran under 0.3.0 continues on 0.3.1', () => {
-  it('a session collected after the upgrade is charged; what 0.3.0 charged is not charged again', () => {
-    legacyRun();
-    expect(used()).toBeCloseTo(0.7, 6);
-    const r = resultOf(1.5);
-    accountWorker(lab.ctx(), succeeded(running('wrk-impl', 'implementer'), r), r);
-    expect(used()).toBeCloseTo(0.7 + 1.5, 6);
-    // The inquisitor 0.3.0 recorded and never charged is charged once; the planner and the 0.3.0 implementer are not.
-    for (const w of listWorkers(lab.db, { runId: lab.runId })) chargeRecordedUsage(lab.ctx(), getWorker(lab.db, w.id));
-    settleRunUsage(lab.ctx());
-    expect(used()).toBeCloseTo(2.27, 6);
-    // The records 0.3.0 charged carry one mark, written once when 0.3.1 first touched the budget; every record has one.
-    expect(marks().filter((m) => m.source === 'legacy')).toHaveLength(1);
-    markedOnce();
-  });
-
-  it('a session 0.3.0 stored without usage (reconciliation, the watchdog) is recorded and charged after the upgrade', () => {
-    legacyRun();
-    succeeded(running('wrk-rev', 'reviewer'), resultOf(0.9));
-    chargeRecordedUsage(lab.ctx(), getWorker(lab.db, 'wrk-rev'));
-    settleRunUsage(lab.ctx());
-    expect(used()).toBeCloseTo(0.7 + 0.9 + 0.07, 6);
-    expect(spendBreakdown(lab.db, lab.runId).uncharged_usd).toBe(0);
-    markedOnce();
-  });
-
-  it('sessions after the upgrade reach the cost cap', () => {
-    legacyRun();
-    const cap = lab.ctx().ledger!.state('cost_usd').hard_cap;
-    let exhausted = false;
-    for (let i = 0; exhausted === false && i < 100; i++) {
-      const r = resultOf(2);
-      try {
-        accountWorker(lab.ctx(), succeeded(running(`wrk-i${i}`, 'implementer'), r), r);
-      } catch (err) {
-        expect(err).toMatchObject({ code: 'BUDGET_EXHAUSTED' });
-        exhausted = true;
-      }
-    }
-    expect(exhausted).toBe(true);
-    expect(used()).toBeLessThanOrEqual(cap + 2);
-  });
-});
-
-describe('a 0.3.0 precharge cut short', () => {
-  it('PLANNING resumed on 0.3.1 charges only the records 0.3.0 had not charged', async () => {
-    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING'] });
-    mkdirSync(lab.ctx().runDir, { recursive: true });
-    setContract(lab);
-    lab.deps.registry.seed();
-    for (const e of lab.deps.registry.list()) if (e.provider === 'claude') lab.deps.registry.markAvailability(e.modelId, 'claude-cli', true, 'test');
-    for (const [id, cost] of [['wrk-a', 0.4], ['wrk-b', 0.3]] as const) {
-      succeeded(running(id, 'planner'), resultOf(cost));
-      recordUsage(lab.db, { runId: lab.runId, workerId: id, usage: usageOf(cost), durationMs: 1 }, lab.clock);
-    }
-    // 0.3.0 committed each charge on its own and wrote budget.precharged last: killed after the first.
-    initLedger(lab).consumeCost({ costUsd: 0.4, costSource: 'reported' }, 'planner');
-    await planningStep(lab.ctx());
-    expect(used()).toBeCloseTo(0.7, 6);
-    markedOnce();
-    settleRunUsage(lab.ctx());
-    expect(used()).toBeCloseTo(0.7, 6);
-  });
-});
 
 describe('the curator, which runs after the report is written', () => {
   it('a curator a crash left running is recorded and charged after the restart, and the report says so', async () => {

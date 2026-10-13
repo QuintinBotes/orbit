@@ -162,7 +162,7 @@ describe('orbit timeline: the readable history of a run', () => {
     expect(line(out, 171, 'cost', 'w-impl-2')).toContain('no cost reported');
     expect(line(out, 171, 'cost', 'ceiling')).toContain('$1.00');
     const last = out.trimEnd().split('\n').at(-1)!;
-    expect(last).toBe('cost so far: $1.17 charged to the cost budget (the figure the cost cap is checked against): $0.17 reported by providers (2 sessions) + $1.00 at conservative ceilings for 1 session that reported no cost and could not be priced');
+    expect(last).toBe('cost so far: $1.17 charged to the cost budget (the figure the cost cap is checked against): $0.17 reported by providers (2 sessions) + $1.00 at conservative ceilings for 1 session that reported no cost and could not be priced (implementer w-impl-2)');
   });
 
   it('names a session\'s turn cap and an inquisitor charged from the usage the Inquisition recorded', async () => {

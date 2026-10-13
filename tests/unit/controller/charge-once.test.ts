@@ -14,7 +14,6 @@ import { stopWorker } from '../../../src/recovery/reconcile.ts';
 import { recordUsage } from '../../../src/routing/usage.ts';
 import { BudgetLedger } from '../../../src/scheduling/budget.ts';
 import { finishWorker, getWorker, listWorkers, markWorkerRunning, planWorker, type WorkerRecord } from '../../../src/storage/workers.ts';
-import { appendEvent } from '../../../src/storage/events.ts';
 import { initLedger, makeUnitLab, OWNER, setContract, type UnitLab } from './coverage-helpers.ts';
 
 /** How a session's end is recorded: by the Inquisition engine (result and usage together, uncharged), by reconciliation or the watchdog (result only), by a step (result, then usage and charge), or by the controller collecting a worker another component started. */
@@ -69,15 +68,6 @@ describe('a session is charged exactly once, whatever collected it and wherever 
     expect([...seen.crashedIn].sort()).toEqual(['charge', 'collected', 'plan', 'supervised']);
   });
 
-  // Second adversarial review of fix/031-budget: a run whose PLANNING ran under 0.3.0 read every later record but an
-  // inquisitor's as charged, records written after the upgrade too, so 0.3.1 never charged them (47 of 60 seeds short).
-  it('for runs whose PLANNING ran under 0.3.0 and that continue on 0.3.1, the same holds', async () => {
-    seen.crashedIn.clear();
-    for (let seed = 1; seed <= 60; seed++) await interleaving(seed, true);
-    // Among them a 0.3.0 precharge cut short, which 0.3.1's PLANNING then completes.
-    expect(seen.crashedIn.has('plan-0.3.0')).toBe(true);
-  });
-
   it('a session the watchdog stopped as the run ended is recorded and charged when the report is written, once', async () => {
     lab?.cleanup();
     lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'], adapters: { claude: { id: 'claude', collectResult: async () => resultOf(0.33) } as never } });
@@ -101,7 +91,7 @@ describe('a session is charged exactly once, whatever collected it and wherever 
   });
 });
 
-async function interleaving(seed: number, legacy = false): Promise<void> {
+async function interleaving(seed: number): Promise<void> {
   const next = rng(seed);
   const pick = <T>(xs: readonly T[]): T => xs[Math.floor(next() * xs.length)]!;
   const sessions = new Map<string, Session>();
@@ -158,25 +148,6 @@ async function interleaving(seed: number, legacy = false): Promise<void> {
     }
   };
   const running = (): WorkerRecord[] => listWorkers(lab.db, { runId: lab.runId }).filter((w) => w.state === 'RUNNING');
-  const budgetExists = (): boolean => lab.db.get('SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1', lab.runId) !== undefined;
-  // PLANNING under 0.3.0: each record charged on its own, in order, and budget.precharged written last with no marks.
-  // 0.3.0 then went on until the upgrade: it charged each session it collected and then recorded its usage, and the
-  // engine recorded an inquisitor's usage that nothing charged. Every later step is 0.3.1's.
-  const planUnder030 = (): void => {
-    const ledger = new BudgetLedger(lab.db, lab.clock).init(lab.runId, lab.ctx().snapshot, 'medium');
-    const rows = lab.db.all<{ cost_usd: number }>('SELECT cost_usd FROM usage WHERE run_id = ? ORDER BY id', lab.runId);
-    let total = 0;
-    for (const r of rows) total += ledger.consumeCost({ costUsd: r.cost_usd, costSource: 'reported' }, 'planner').charged;
-    lab.db.tx(() => appendEvent(lab.db, lab.runId, 'budget.precharged', OWNER, { usage_rows: rows.length, charged_usd: total }, lab.clock.now()));
-    lab.walk(['IMPLEMENTING']);
-    for (const w of running()) {
-      const r = resultOf(sessions.get(w.id)!.cost);
-      finishWorker(lab.db, w.id, { state: 'SUCCEEDED', exitCode: 0, resultStatus: 'succeeded', result: r, error: null }, lab.clock, OWNER);
-      if (w.role !== 'inquisitor') ledger.consumeCost({ costUsd: r.usage.costUsd, costSource: 'reported' }, w.role);
-      recordUsage(lab.db, { runId: lab.runId, workerId: w.id, usage: r.usage, durationMs: r.durationMs }, lab.clock);
-    }
-  };
-
   for (let step = 0; step < 16; step++) {
     const op = pick(['start', 'start', 'finish', 'finish', 'charge', 'plan', 'crash'] as const);
     if (op === 'start') {
@@ -196,8 +167,7 @@ async function interleaving(seed: number, legacy = false): Promise<void> {
       const all = listWorkers(lab.db, { runId: lab.runId });
       if (all.length > 0) await survive('charge', () => chargeRecordedUsage(lab.ctx(), getWorker(lab.db, pick(all).id)));
     } else if (op === 'plan') {
-      if (legacy && !budgetExists()) await survive('plan-0.3.0', planUnder030);
-      else if (getRun(lab.db, lab.runId).state === 'PLANNING') await survive('plan', () => planningStep(lab.ctx()));
+      if (getRun(lab.db, lab.runId).state === 'PLANNING') await survive('plan', () => planningStep(lab.ctx()));
     } else {
       armed = Math.floor(next() * 3);
     }
@@ -205,7 +175,6 @@ async function interleaving(seed: number, legacy = false): Promise<void> {
 
   // The run resumes: nothing kills it now, every session ends, PLANNING completes and every charge pass runs.
   armed = null;
-  if (legacy && !budgetExists()) planUnder030();
   for (const w of running()) await finish(w);
   if (getRun(lab.db, lab.runId).state === 'PLANNING') await planningStep(lab.ctx());
   for (const w of listWorkers(lab.db, { runId: lab.runId })) chargeRecordedUsage(lab.ctx(), getWorker(lab.db, w.id));

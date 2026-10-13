@@ -20,8 +20,8 @@ describe('the release environment a run names', () => {
     const named = createRun(db, { id: 'r2', repoRoot: '/repo', goal: 'g', mode: 'release', policyHash: 'sha256:x', policyPath: '/p', environment: 'staging' }, clock);
     expect(named.environment).toBe('staging');
     expect(getRun(db, 'r2').environment).toBe('staging');
-    expect(JSON.parse(db.get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = 'r2' AND type = 'run.created'")!.data_json)).toEqual({ mode: 'release', policy_hash: 'sha256:x', environment: 'staging' });
-    expect(JSON.parse(db.get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = 'r1' AND type = 'run.created'")!.data_json)).toEqual({ mode: 'autonomous', policy_hash: 'sha256:x' });
+    expect(JSON.parse(db.get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = 'r2' AND type = 'run.created'")!.data_json)).toEqual({ mode: 'release', policy_hash: 'sha256:x', environment: 'staging', accounting: 1 });
+    expect(JSON.parse(db.get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = 'r1' AND type = 'run.created'")!.data_json)).toEqual({ mode: 'autonomous', policy_hash: 'sha256:x', accounting: 1 });
   });
 });
 

@@ -9,7 +9,8 @@ import { buildTimeline } from '../../../src/observability/timeline.ts';
 import { recordUsage } from '../../../src/routing/usage.ts';
 import { getRun } from '../../../src/controller/run-store.ts';
 import type { TaskResult, UsageReport } from '../../../src/adapters/types.ts';
-import { accountWorker } from '../../../src/controller/workers.ts';
+import { accountWorker, USAGE_CHARGED_EVENT } from '../../../src/controller/workers.ts';
+import { appendEvent } from '../../../src/storage/events.ts';
 import { spendBreakdown } from '../../../src/scheduling/budget.ts';
 import { finishWorker, markWorkerRunning, planWorker, type WorkerRecord } from '../../../src/storage/workers.ts';
 import { initLedger, makeUnitLab, OWNER, type UnitLab } from './coverage-helpers.ts';
@@ -19,16 +20,20 @@ afterEach(() => lab?.cleanup());
 
 const usage = (cost: number | null, provider = 'claude'): UsageReport => ({ provider, model: null, inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: cost, costSource: cost === null ? 'unavailable' : 'reported' });
 const record = (workerId: string, cost: number | null, provider = 'claude') => recordUsage(lab.db, { runId: lab.runId, workerId, provider, model: null, usage: usage(cost, provider), durationMs: 1, pricing: null }, lab.clock);
+/** The mark a 0.3.1 controller writes with each charge: the usage record it covers, the amount and its basis. */
+const mark = (usageId: number, chargedUsd: number, basis: 'reported' | 'estimated' | 'ceiling'): void => {
+  lab.db.tx(() => appendEvent(lab.db, lab.runId, USAGE_CHARGED_EVENT, OWNER, { usage_ids: [usageId], charged_usd: chargedUsd, basis, source: 'collected' }, lab.clock.now()));
+};
 
 function demoRun(): void {
   lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING'] });
   const ledger = initLedger(lab);
   for (const [id, cost] of [['wrk-impl', 1.33], ['wrk-plan', 0.22]] as const) {
     ledger.consumeCost({ costUsd: cost, costSource: 'reported' }, 'implementer', { workerId: id });
-    record(id, cost);
+    mark(record(id, cost).id, cost, 'reported');
   }
   ledger.consumeCost({ costUsd: null }, 'reviewer', { phase: 'final', workerId: 'wrk-rev', tokenEstimate: { costUsd: 0.53, basis: 'dearest listed pricing', model: 'gpt-6.1-sol' } });
-  record('wrk-rev', null, 'codex');
+  mark(record('wrk-rev', null, 'codex').id, 0.53, 'estimated');
 }
 
 const EXPLAINED = '$2.08 charged to the cost budget (the figure the cost cap is checked against): $1.55 reported by providers (2 sessions) + $0.53 estimated from tokens for 1 session that reported no cost';

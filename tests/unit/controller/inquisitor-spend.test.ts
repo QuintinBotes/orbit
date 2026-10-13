@@ -177,13 +177,16 @@ describe('inquisitor spend', () => {
     expect(lab.db.all("SELECT 1 FROM events WHERE run_id = ? AND type = 'budget.usage-charged'", lab.runId)).toEqual([]);
   });
 
-  it('a precharge recorded before it named its usage records covers every record written by then', () => {
+  // A precharge that names no usage record is 0.3.0's, in a run 0.3.0 started: that run keeps 0.3.0's accounting.
+  it('in a run started before 0.3.1, what its precharge charged is left as 0.3.0 left it', () => {
     lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING'] });
+    lab.db.run("UPDATE events SET data_json = json_remove(data_json, '$.accounting') WHERE run_id = ? AND type = 'run.created'", lab.runId);
     engineRanInquisitor('wrk-inq-early', 0.04);
     initLedger(lab).consumeCost({ costUsd: 0.04, costSource: 'reported' }, 'inquisitor');
     appendEvent(lab.db, lab.runId, 'budget.precharged', OWNER, { usage_rows: 1, charged_usd: 0.04 }, lab.clock.now());
     chargeRecordedUsage(lab.ctx(), getWorker(lab.db, 'wrk-inq-early'));
     expect(charged()).toBeCloseTo(0.04, 6);
+    expect(lab.db.all("SELECT 1 FROM events WHERE run_id = ? AND type = 'budget.usage-charged'", lab.runId)).toEqual([]);
   });
 
   // The rules accountWorker applies to every other session apply to an inquisitor's too (verifier, fix/031-budget):

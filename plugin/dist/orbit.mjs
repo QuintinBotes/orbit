@@ -24443,6 +24443,19 @@ var init_events = __esm({
   }
 });
 
+// src/scheduling/accounting.ts
+function marksCharges(db, runId) {
+  const v = db.get("SELECT json_extract(data_json, '$.accounting') AS v FROM events WHERE run_id = ? AND type = 'run.created' ORDER BY id LIMIT 1", runId)?.v;
+  return typeof v === "number" && v >= RUN_ACCOUNTING_VERSION;
+}
+var RUN_ACCOUNTING_VERSION;
+var init_accounting = __esm({
+  "src/scheduling/accounting.ts"() {
+    "use strict";
+    RUN_ACCOUNTING_VERSION = 1;
+  }
+});
+
 // src/controller/run-store.ts
 function toRecord2(r) {
   if (!isRunState(r.state)) throw new OrbitError("INTERNAL", `run ${r.id} has unknown state ${r.state}`);
@@ -24492,7 +24505,7 @@ function createRun(db, input, clock, actor = "cli") {
       now,
       now
     );
-    appendEvent(db, input.id, "run.created", actor, { mode: input.mode, policy_hash: input.policyHash, ...input.environment ? { environment: input.environment } : {} }, now, null, "CREATED");
+    appendEvent(db, input.id, "run.created", actor, { mode: input.mode, policy_hash: input.policyHash, ...input.environment ? { environment: input.environment } : {}, accounting: RUN_ACCOUNTING_VERSION }, now, null, "CREATED");
     return getRun(db, input.id);
   });
 }
@@ -24630,6 +24643,7 @@ var init_run_store = __esm({
     init_faults();
     init_states();
     init_events();
+    init_accounting();
     PATCH_COLUMNS = {
       outcomeReason: "outcome_reason",
       outcomeJson: "outcome_json",
@@ -40235,7 +40249,7 @@ async function restartOrGiveUp(ctx, run, w, obs, rep, stop, why) {
   if (w.role === "inquisitor") {
     const row = db.tx(() => {
       const done = finish(ctx, w.id, { state: "LOST", resultStatus: "lost", exitCode: partial?.exitCode ?? null, result: partial, error: lostDetail });
-      if (!partial) recordLostUsage(ctx, run, w, null);
+      if (!partial && marksCharges(db, run.id)) recordLostUsage(ctx, run, w, null);
       return done;
     });
     rep.state = row.state;
@@ -40267,10 +40281,10 @@ async function restartOrGiveUp(ctx, run, w, obs, rep, stop, why) {
   try {
     db.tx(() => {
       finish(ctx, w.id, { state: "LOST", resultStatus: "lost", exitCode: partial?.exitCode ?? null, result: partial, error: lostDetail });
-      const usageId = recordLostUsage(ctx, run, w, partial);
+      const usageId = marksCharges(db, run.id) ? recordLostUsage(ctx, run, w, partial) : null;
       spendRecoveryAttempt(db, run.id, clock, { ledgerFor: ctx.opts.ledgerFor, fallbackMax: ctx.opts.fallbackRecoveries, actor: ctx.ownerId, why: `restart of lost worker ${w.id}` });
       const row = planWorkerRestart(db, w.id, clock, ctx.ownerId);
-      appendEvent(db, run.id, WORKER_RESTART_EVENT, ctx.ownerId, { worker_id: w.id, restart_count: row.restartCount, cwd_preserved: w.cwd, usage_id: usageId }, clock.now());
+      appendEvent(db, run.id, WORKER_RESTART_EVENT, ctx.ownerId, { worker_id: w.id, restart_count: row.restartCount, cwd_preserved: w.cwd, ...usageId === null ? {} : { usage_id: usageId } }, clock.now());
     });
     rep.restartPlanned = true;
     rep.state = "PLANNED";
@@ -40512,6 +40526,7 @@ var init_reconcile = __esm({
     init_supervise();
     init_actions();
     init_usage();
+    init_accounting();
     init_store();
     init_fail_before();
     init_check_shim();
@@ -41169,6 +41184,10 @@ function dearestPricing(all) {
   const top = (k) => Math.max(...priced.map((p) => p[k]));
   return { input: top("input"), output: top("output"), cache_write_5m: top("cache_write_5m"), cache_write_1h: top("cache_write_1h"), cache_read: top("cache_read") };
 }
+function chargeBasis(cost, tokenEstimate) {
+  if (typeof cost.costUsd === "number" && Number.isFinite(cost.costUsd) && cost.costUsd >= 0) return cost.costSource === "estimated" ? "estimated" : "reported";
+  return tokenEstimate && isAmount(tokenEstimate.costUsd) ? "estimated" : "ceiling";
+}
 function extensionDecisionRecord(d) {
   const granted = d.decision !== "deny_extension";
   return {
@@ -41178,86 +41197,88 @@ function extensionDecisionRecord(d) {
   };
 }
 function spendBreakdown(db, runId) {
-  const stoodFor = /* @__PURE__ */ new Set();
-  const unnamed = [];
-  let estimatedUsd = 0;
-  let estimatedSessions = 0;
-  let ceilingUsd = 0;
-  let ceilingSessions = 0;
-  let precharged = 0;
-  for (const e of db.all("SELECT ts, type, data_json FROM events WHERE run_id = ? AND type IN ('budget.cost-token-estimated', 'budget.cost-ceiling-charged', 'budget.precharged') ORDER BY id", runId)) {
-    const d = e.data_json ? JSON.parse(e.data_json) : {};
-    if (e.type === "budget.precharged") {
-      precharged += amountOf(d.charged_usd);
-      continue;
-    }
-    const estimate = e.type === "budget.cost-token-estimated";
-    if (typeof d.worker_id === "string") stoodFor.add(d.worker_id);
-    else unnamed.push({ ts: e.ts, role: typeof d.role === "string" ? d.role : null, estimate, usd: amountOf(estimate ? d.charged_usd : d.ceiling_usd) });
-    if (estimate) {
-      estimatedUsd += amountOf(d.charged_usd);
-      estimatedSessions++;
-    } else {
-      ceilingUsd += amountOf(d.ceiling_usd);
-      ceilingSessions++;
-    }
-  }
-  let reportedUsd = 0;
-  let reportedSessions = 0;
-  let unpriced = 0;
-  const rows = db.all("SELECT u.id, u.ts, u.worker_id, u.cost_usd, u.cost_source, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ? ORDER BY u.id", runId).filter((u) => u.worker_id === null || !stoodFor.has(u.worker_id));
-  const matched = unnamedCharges(unnamed, rows);
-  for (const u of rows) {
-    if (matched.has(u.id)) continue;
-    if (u.cost_usd === null) unpriced++;
-    else if (u.cost_source === "estimated") {
-      estimatedUsd += u.cost_usd;
-      estimatedSessions++;
-    } else {
-      reportedUsd += u.cost_usd;
-      reportedSessions++;
-    }
-  }
   const counter = db.get("SELECT used FROM budget_counters WHERE run_id = ? AND counter = 'cost_usd'", runId);
   const charged = counter ? roundUsd2(counter.used) : null;
-  const parts = roundUsd2(reportedUsd + estimatedUsd + ceilingUsd);
   const state = db.get("SELECT state FROM runs WHERE id = ?", runId)?.state ?? null;
+  const legacy = !marksCharges(db, runId);
+  const marks = legacy ? /* @__PURE__ */ new Map() : chargeMarks(db, runId);
+  let precharged = 0;
+  for (const e of db.all("SELECT data_json FROM events WHERE run_id = ? AND type = 'budget.precharged'", runId)) precharged += amountOf(parseData(e.data_json).charged_usd);
+  const sum = { reported: 0, reportedN: 0, estimated: 0, estimatedN: 0, ceiling: 0, ceilingN: 0, unpriced: 0 };
+  const unmeasured = [];
+  for (const u of db.all("SELECT u.id, u.worker_id, u.cost_usd, u.cost_source, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ? ORDER BY u.id", runId)) {
+    const mark = marks.get(u.id);
+    const own = u.cost_usd === null ? null : chargeBasis({ costUsd: u.cost_usd, costSource: u.cost_source });
+    const basis = mark ? mark.basis ?? own ?? "ceiling" : own;
+    const usd4 = mark?.usd ?? u.cost_usd ?? 0;
+    if (basis === null) {
+      sum.unpriced++;
+      unmeasured.push({ usage_id: u.id, worker_id: u.worker_id, role: u.role, charged_usd: null });
+    } else if (basis === "ceiling") {
+      sum.ceiling += usd4;
+      sum.ceilingN++;
+      unmeasured.push({ usage_id: u.id, worker_id: u.worker_id, role: u.role, charged_usd: roundUsd2(usd4) });
+    } else if (basis === "estimated") {
+      sum.estimated += usd4;
+      sum.estimatedN++;
+    } else {
+      sum.reported += usd4;
+      sum.reportedN++;
+    }
+  }
+  const parts = roundUsd2(sum.reported + sum.estimated + sum.ceiling);
+  const reconciled = !legacy || charged === null;
   const s = {
+    accounting: legacy ? "legacy" : "current",
     charged_usd: charged,
-    reported_usd: roundUsd2(reportedUsd),
-    reported_sessions: reportedSessions,
-    estimated_usd: roundUsd2(estimatedUsd),
-    estimated_sessions: estimatedSessions,
-    ceiling_usd: roundUsd2(ceilingUsd),
-    ceiling_sessions: ceilingSessions,
-    unpriced_sessions: unpriced,
+    reported_usd: roundUsd2(sum.reported),
+    reported_sessions: sum.reportedN,
+    estimated_usd: roundUsd2(sum.estimated),
+    estimated_sessions: sum.estimatedN,
+    ceiling_usd: roundUsd2(sum.ceiling),
+    ceiling_sessions: sum.ceilingN,
+    unpriced_sessions: sum.unpriced,
+    unmeasured_sessions: unmeasured,
     precharged_usd: roundUsd2(precharged),
-    unmatched_usd: charged === null ? 0 : roundUsd2(Math.max(0, charged - parts)),
-    uncharged_usd: roundUsd2(Math.max(0, parts - (charged ?? 0))),
-    uncharged_reason: charged === null ? withoutBudget(state) : null
+    unmatched_usd: reconciled ? charged === null ? 0 : roundUsd2(Math.max(0, charged - parts)) : null,
+    uncharged_usd: reconciled ? roundUsd2(Math.max(0, parts - (charged ?? 0))) : null,
+    uncharged_reason: charged === null ? withoutBudget(state) : null,
+    ...legacy ? { legacy_charges: legacyCharges(db, runId) } : {}
   };
   return { ...s, explanation: explainSpend(s, state) };
 }
-function unnamedCharges(charges, rows) {
-  const matched = /* @__PURE__ */ new Set();
-  const open2 = new Set(charges.map((_, i) => i));
-  const near = (c, fits) => {
-    const candidates = rows.filter((u) => !matched.has(u.id) && (u.role === null || c.role === null || u.role === c.role) && fits(u));
-    return candidates.find((u) => u.ts >= c.ts) ?? candidates.filter((u) => u.ts < c.ts).at(-1);
-  };
-  const pass2 = (fits) => {
-    for (const i of [...open2]) {
-      const c = charges[i];
-      const u = near(c, (row) => fits(c, row));
-      if (!u) continue;
-      matched.add(u.id);
-      open2.delete(i);
+function chargeMarks(db, runId) {
+  const marks = /* @__PURE__ */ new Map();
+  for (const e of db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id", runId, USAGE_CHARGED_EVENT)) {
+    const d = parseData(e.data_json);
+    const ids = Array.isArray(d.usage_ids) ? d.usage_ids.filter((id) => typeof id === "number") : [];
+    const basis = d.basis === "reported" || d.basis === "estimated" || d.basis === "ceiling" ? d.basis : null;
+    for (const id of ids) marks.set(id, { usd: ids.length === 1 && typeof d.charged_usd === "number" && Number.isFinite(d.charged_usd) ? d.charged_usd : null, basis });
+  }
+  return marks;
+}
+function legacyCharges(db, runId) {
+  const out = { ceiling_usd: 0, ceiling_charges: 0, token_estimated_usd: 0, token_estimated_charges: 0 };
+  for (const e of db.all("SELECT type, data_json FROM events WHERE run_id = ? AND type IN ('budget.cost-token-estimated', 'budget.cost-ceiling-charged') ORDER BY id", runId)) {
+    const d = parseData(e.data_json);
+    if (e.type === "budget.cost-ceiling-charged") {
+      out.ceiling_usd += amountOf(d.ceiling_usd);
+      out.ceiling_charges++;
+    } else {
+      out.token_estimated_usd += amountOf(d.charged_usd);
+      out.token_estimated_charges++;
     }
-  };
-  pass2((c, u) => c.estimate && u.cost_source === "estimated" && u.cost_usd !== null && Math.abs(u.cost_usd - c.usd) < 1e-6);
-  pass2((_, u) => u.cost_usd === null);
-  pass2((c, u) => c.estimate && u.cost_source === "estimated" && u.cost_usd !== null);
-  return matched;
+  }
+  return { ...out, ceiling_usd: roundUsd2(out.ceiling_usd), token_estimated_usd: roundUsd2(out.token_estimated_usd) };
+}
+function parseData(json3) {
+  if (!json3) return {};
+  try {
+    const d = JSON.parse(json3);
+    return d !== null && typeof d === "object" ? d : {};
+  } catch {
+    return {};
+  }
 }
 function withoutBudget(state) {
   if (state === "BLOCKED") return "the run blocked before PLANNING created the budget";
@@ -41266,26 +41287,43 @@ function withoutBudget(state) {
 }
 function explainSpend(s, state) {
   const sessions = (n2) => `${n2} ${n2 === 1 ? "session" : "sessions"}`;
-  const parts = [
-    ...s.reported_sessions > 0 ? [`$${usd(s.reported_usd)} reported by providers (${sessions(s.reported_sessions)})`] : [],
-    ...s.estimated_sessions > 0 ? [`$${usd(s.estimated_usd)} estimated from tokens for ${sessions(s.estimated_sessions)} that reported no cost`] : [],
-    ...s.ceiling_sessions > 0 ? [`$${usd(s.ceiling_usd)} at conservative ceilings for ${sessions(s.ceiling_sessions)} that reported no cost and could not be priced`] : []
-  ];
-  const unpriced = s.unpriced_sessions > 0 ? `${sessions(s.unpriced_sessions)} with no reported cost` : null;
+  const named2 = (list3) => {
+    const labels2 = list3.slice(0, NAMED_SESSIONS).map((u) => `${u.role ?? "session"} ${u.worker_id ?? `of usage record ${u.usage_id}`}`);
+    return list3.length === 0 ? "" : ` (${labels2.join(", ")}${list3.length > NAMED_SESSIONS ? ` and ${list3.length - NAMED_SESSIONS} more` : ""})`;
+  };
+  const atCeiling = s.unmeasured_sessions.filter((u) => u.charged_usd !== null);
+  const unpricedList = s.unmeasured_sessions.filter((u) => u.charged_usd === null);
+  const reported = s.reported_sessions > 0 ? [`$${usd(s.reported_usd)} reported by providers (${sessions(s.reported_sessions)})`] : [];
+  const estimated = s.estimated_sessions > 0 ? [`$${usd(s.estimated_usd)} estimated from tokens for ${sessions(s.estimated_sessions)} that reported no cost`] : [];
+  const parts = [...reported, ...estimated, ...s.ceiling_sessions > 0 ? [`$${usd(s.ceiling_usd)} at conservative ceilings for ${sessions(s.ceiling_sessions)} that reported no cost and could not be priced${named2(atCeiling)}`] : []];
+  const unpriced = s.unpriced_sessions > 0 ? `${sessions(s.unpriced_sessions)} with no reported cost${named2(unpricedList)}` : null;
+  const legacy = s.accounting === "legacy" ? `; ${LEGACY_ACCOUNTING}` : "";
   if (s.charged_usd === null) {
     const spent = [...parts, ...unpriced ? [unpriced] : []].join(" and ");
-    if (spent.length === 0) return "no usage recorded yet";
-    if (state === "BLOCKED") return `nothing charged to the cost budget: ${s.uncharged_reason}, so this spend is measured and not charged; PLANNING charges it if the run is resumed: ${spent}`;
-    if (state !== null && isRunState(state) && TERMINAL_STATES.has(state)) return `nothing charged to the cost budget: ${s.uncharged_reason}, so this spend was measured and never charged: ${spent}`;
-    return `nothing charged to the cost budget yet: PLANNING creates it and then charges what was spent before; spent so far: ${spent}`;
+    if (spent.length === 0) return `no usage recorded yet${legacy}`;
+    if (state === "BLOCKED") return `nothing charged to the cost budget: ${s.uncharged_reason}, so this spend is measured and not charged; PLANNING charges it if the run is resumed: ${spent}${legacy}`;
+    if (state !== null && isRunState(state) && TERMINAL_STATES.has(state)) return `nothing charged to the cost budget: ${s.uncharged_reason}, so this spend was measured and never charged: ${spent}${legacy}`;
+    return `nothing charged to the cost budget yet: PLANNING creates it and then charges what was spent before; spent so far: ${spent}${legacy}`;
   }
-  if (s.unmatched_usd >= SPEND_CENT) parts.push(`$${usd(s.unmatched_usd)} charged with no matching usage record`);
+  const precharged = s.precharged_usd >= SPEND_CENT ? [`$${usd(s.precharged_usd)} of it was spent before PLANNING and charged when the budget was created`] : [];
+  const head = `$${usd(s.charged_usd)} charged to the cost budget (the figure the cost cap is checked against)`;
+  if (s.legacy_charges) {
+    const c = s.legacy_charges;
+    const records = [...reported, ...estimated, ...unpriced ? [unpriced] : []];
+    const standIns = [
+      ...c.ceiling_charges > 0 ? [`$${usd(c.ceiling_usd)} at conservative ceilings (${c.ceiling_charges} ${c.ceiling_charges === 1 ? "charge" : "charges"})`] : [],
+      ...c.token_estimated_charges > 0 ? [`$${usd(c.token_estimated_usd)} estimated from tokens (${c.token_estimated_charges} ${c.token_estimated_charges === 1 ? "charge" : "charges"})`] : []
+    ];
+    const notes2 = [`recorded usage: ${records.length > 0 ? records.join(", ") : "none"}`, ...standIns.length > 0 ? [`charged for sessions that reported no cost: ${standIns.join(", ")}`] : [], ...precharged, LEGACY_ACCOUNTING];
+    return `${head}; ${notes2.join("; ")}`;
+  }
+  if ((s.unmatched_usd ?? 0) >= SPEND_CENT) parts.push(`$${usd(s.unmatched_usd ?? 0)} charged with no matching usage record`);
   const notes = [];
   if (parts.length === 0 && unpriced === null) notes.push("no usage recorded yet");
-  if (s.precharged_usd >= SPEND_CENT) notes.push(`$${usd(s.precharged_usd)} of it was spent before PLANNING and charged when the budget was created`);
-  if (s.uncharged_usd >= SPEND_CENT) notes.push(`$${usd(s.uncharged_usd)} of the recorded spend was never charged to the budget`);
+  notes.push(...precharged);
+  if ((s.uncharged_usd ?? 0) >= SPEND_CENT) notes.push(`$${usd(s.uncharged_usd ?? 0)} of the recorded spend was never charged to the budget`);
   if (unpriced) notes.push(`${unpriced} ${s.unpriced_sessions === 1 ? "was" : "were"} never charged`);
-  return `$${usd(s.charged_usd)} charged to the cost budget (the figure the cost cap is checked against)${parts.length > 0 ? `: ${parts.join(" + ")}` : ""}${notes.map((n2) => `; ${n2}`).join("")}`;
+  return `${head}${parts.length > 0 ? `: ${parts.join(" + ")}` : ""}${notes.map((n2) => `; ${n2}`).join("")}`;
 }
 function amountOf(v) {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
@@ -41416,12 +41454,13 @@ function usd(v) {
 function mins(ms) {
   return `${Math.round(ms / 6e4 * 10) / 10} min`;
 }
-var ROLE_COST_CEILING_USD, MAX_CEILING_FRACTION_OF_CAP, MIN_SESSION_CEILING_USD, ROLE_WALL_CEILING_MS, RESERVE_SHARES, EXPERIMENTS_PER_ATTEMPT, PROGRESS_KINDS, EPS2, NUM_TURNS_COUNTER, SESSION_RECOUNT_EVENT, BudgetLedger, SPEND_CENT;
+var ROLE_COST_CEILING_USD, MAX_CEILING_FRACTION_OF_CAP, MIN_SESSION_CEILING_USD, ROLE_WALL_CEILING_MS, RESERVE_SHARES, EXPERIMENTS_PER_ATTEMPT, PROGRESS_KINDS, EPS2, NUM_TURNS_COUNTER, SESSION_RECOUNT_EVENT, BudgetLedger, USAGE_CHARGED_EVENT, SPEND_CENT, NAMED_SESSIONS, LEGACY_ACCOUNTING;
 var init_budget2 = __esm({
   "src/scheduling/budget.ts"() {
     "use strict";
     init_errors();
     init_run_states();
+    init_accounting();
     init_types5();
     ROLE_COST_CEILING_USD = {
       planner: 2,
@@ -41604,7 +41643,7 @@ var init_budget2 = __esm({
         }
         if (typeof cost.costUsd === "number" && Number.isFinite(cost.costUsd) && cost.costUsd >= 0) {
           const r2 = this.consumeMeasured("cost_usd", cost.costUsd, phase);
-          return { charged: cost.costUsd, basis: cost.costSource === "estimated" ? "estimated" : "reported", state: r2.state };
+          return { charged: cost.costUsd, basis: chargeBasis(cost), state: r2.state };
         }
         const worker = opts.workerId ? { worker_id: opts.workerId } : {};
         const est = opts.tokenEstimate;
@@ -41951,7 +41990,10 @@ var init_budget2 = __esm({
         this.db.run("INSERT INTO events (run_id, ts, type, from_state, to_state, actor, data_json) VALUES (?, ?, ?, NULL, NULL, ?, ?)", runId, ts, type, "budget", JSON.stringify(data));
       }
     };
+    USAGE_CHARGED_EVENT = "budget.usage-charged";
     SPEND_CENT = 5e-3;
+    NAMED_SESSIONS = 5;
+    LEGACY_ACCOUNTING = "this run was started before Orbit 0.3.1 and is accounted under the rules of the version that started it, which did not record the session each charge covers, so these figures are as recorded";
   }
 });
 
@@ -45333,13 +45375,18 @@ function settleSession(ctx, w, result2, phase, opts = {}) {
   return out.row;
 }
 function finishAndSettle(ctx, w, result2, outcome, phase = "work") {
-  return settleSession(ctx, w, result2, phase, { finish: () => finishWorker(ctx.db, w.id, outcome, ctx.clock, ctx.ownerId) });
+  const finish4 = () => finishWorker(ctx.db, w.id, outcome, ctx.clock, ctx.ownerId);
+  if (result2 === null && !marksCharges(ctx.db, ctx.run.id)) return finish4();
+  return settleSession(ctx, w, result2 ?? endedWithoutResult(w, outcome), phase, { finish: finish4 });
 }
 async function stopAndSettle(ctx, w, reason, phase = "work") {
   let refused = null;
+  const marked = marksCharges(ctx.db, ctx.run.id);
   const row = await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, reason, {
     finish: (outcome, result2) => {
-      const out = settle(ctx, w, result2 ?? endedWithoutResult(w, outcome), phase, { finish: () => finishWorker(ctx.db, w.id, outcome, ctx.clock, ctx.ownerId) });
+      const finish4 = () => finishWorker(ctx.db, w.id, outcome, ctx.clock, ctx.ownerId);
+      if (result2 === null && marked && !everStarted(w)) return finish4();
+      const out = settle(ctx, w, result2 ?? endedWithoutResult(w, outcome), phase, { finish: finish4 });
       refused = out.refused;
       return out.row;
     }
@@ -45347,10 +45394,17 @@ async function stopAndSettle(ctx, w, reason, phase = "work") {
   if (refused) throw refused;
   return row;
 }
+function everStarted(w) {
+  return w.pid !== null || existsSync28(join35(w.workerDir, LAUNCH_FILE));
+}
+function endedSession(w) {
+  return !isWorkerActive(w.state) && (w.pid !== null || hasCollectedResult(w));
+}
 function endedWithoutResult(w, outcome) {
   return { status: outcome.resultStatus ?? "lost", structured: null, text: null, error: outcome.error ?? null, exitCode: outcome.exitCode ?? null, usage: emptyUsage2(w.provider), durationMs: null };
 }
 function settle(ctx, w, result2, phase, opts = {}) {
+  if (!marksCharges(ctx.db, ctx.run.id)) return settleAsBefore031(ctx, w, result2, phase, opts);
   accountWorkerTurns(ctx, w, result2);
   if (!hasUsage(ctx, w.id)) {
     try {
@@ -45361,7 +45415,6 @@ function settle(ctx, w, result2, phase, opts = {}) {
   }
   const ledger = opts.charge === false ? null : ctx.ledger;
   const out = ctx.db.tx(() => {
-    adoptLegacyCharges(ctx);
     const row = opts.finish ? opts.finish() : w;
     let fresh = null;
     if (!hasUsage(ctx, w.id)) {
@@ -45379,14 +45432,37 @@ function settle(ctx, w, result2, phase, opts = {}) {
     }
     return { row, usage: fresh?.usage ?? null, changed: fresh !== null || charged > 0, refused };
   });
-  const observed = out.usage?.model;
-  if (observed && result2.status === "succeeded") {
+  markObserved(ctx, w, out.usage?.model ?? null, result2.status);
+  return { row: out.row, changed: out.changed, refused: out.refused };
+}
+function markObserved(ctx, w, observed, status2) {
+  if (!observed || status2 !== "succeeded") return;
+  try {
+    if (ctx.deps.registry.get(observed)) ctx.deps.registry.markAvailability(observed, w.provider.startsWith("codex") ? "codex-cli" : "claude-cli", true, `observed in worker ${w.id}`);
+  } catch {
+  }
+}
+function settleAsBefore031(ctx, w, result2, phase, opts) {
+  accountWorkerTurns(ctx, w, result2);
+  const row = opts.finish ? ctx.db.tx(opts.finish) : w;
+  if (opts.charge === false || ctx.db.get("SELECT 1 AS x FROM usage WHERE run_id = ? AND worker_id = ? LIMIT 1", ctx.run.id, w.id)) return { row, changed: false, refused: null };
+  try {
+    ingestWorkerDenials({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir, actor: ctx.ownerId }, w);
+  } catch (err) {
+    ctx.log.warn("could not read the worker transcript for policy denials", { worker_id: w.id, error: messageOf(err) });
+  }
+  const usage = measuredUsage(ctx, row, result2.status, result2.usage ?? emptyUsage2(w.provider));
+  if (ctx.ledger) {
     try {
-      if (ctx.deps.registry.get(observed)) ctx.deps.registry.markAvailability(observed, w.provider.startsWith("codex") ? "codex-cli" : "claude-cli", true, `observed in worker ${w.id}`);
-    } catch {
+      ctx.ledger.consumeCost({ costUsd: usage.costUsd, costSource: usage.costSource }, w.role, { phase, ceilingUsd: sessionCeilingUsd(ctx, w, result2.status), tokenEstimate: tokenEstimateFor(ctx, w, usage) });
+    } catch (err) {
+      if (!isOrbitError(err, "BUDGET_EXHAUSTED")) throw err;
+      if (!blocksOnCredentials(ctx, w, result2.status)) return { row, changed: true, refused: err };
     }
   }
-  return { row: out.row, changed: out.changed, refused: out.refused };
+  recordUsage(ctx.db, { runId: ctx.run.id, workerId: w.id, provider: w.provider, model: usage.model ?? w.model, usage, durationMs: result2.durationMs }, ctx.clock);
+  markObserved(ctx, w, usage.model, result2.status);
+  return { row, changed: true, refused: null };
 }
 function hasUsage(ctx, workerId) {
   const earlier = lostAttemptUsageIds(ctx.db, ctx.run.id, workerId);
@@ -45460,7 +45536,6 @@ function unchargedUsageRows(ctx, where2 = "", ...params) {
   return usageRows(ctx, where2, ...params).filter((r) => !charged.has(r.id));
 }
 function chargedUsageIds(ctx) {
-  adoptLegacyCharges(ctx);
   return markedUsageIds(ctx.db, ctx.run.id);
 }
 function markedUsageIds(db, runId) {
@@ -45470,60 +45545,6 @@ function markedUsageIds(db, runId) {
     for (const id of Array.isArray(d.usage_ids) ? d.usage_ids : []) if (typeof id === "number") ids.add(id);
   }
   return ids;
-}
-function adoptLegacyCharges(ctx) {
-  const { db } = ctx;
-  const runId = ctx.run.id;
-  const pre = db.get("SELECT ts, data_json FROM events WHERE run_id = ? AND type = 'budget.precharged' ORDER BY id LIMIT 1", runId);
-  const data = pre?.data_json ? JSON.parse(pre.data_json) : {};
-  if (pre && data.usage_marked === true) return;
-  const spent = pre ? null : db.get("SELECT used FROM budget_counters WHERE run_id = ? AND counter = 'cost_usd'", runId)?.used ?? 0;
-  if (spent !== null && !(spent > 1e-9)) return;
-  if (legacyAdopted(db, runId)) return;
-  if (!pre && db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'state.transition' AND from_state = 'PLANNING' AND to_state = 'IMPLEMENTING' LIMIT 1", runId)) return;
-  db.tx(() => {
-    if (legacyAdopted(db, runId)) return;
-    const marked = markedUsageIds(db, runId);
-    if (!pre && marked.size > 0) return;
-    const restarted = lostAttemptUsageIds(db, runId);
-    const all = usageRows(ctx).filter((r) => !restarted.has(r.id));
-    const rows = all.filter((r) => !marked.has(r.id));
-    let ids;
-    let basis;
-    if (pre) {
-      const through = prechargeThrough(ctx, all, pre.ts, data);
-      ids = rows.filter((r) => r.id <= through || r.role !== "inquisitor").map((r) => r.id);
-      basis = { basis: "precharge-unmarked", through_usage_id: through };
-    } else {
-      const through = oldestCovering(ctx, rows, spent);
-      ids = rows.filter((r) => r.id <= through).map((r) => r.id);
-      basis = { basis: "precharge-cut-short", used_usd: Math.round(spent * 1e6) / 1e6 };
-    }
-    appendEvent(db, runId, USAGE_CHARGED_EVENT, ctx.ownerId, { worker_id: null, role: null, usage_ids: ids, charged_usd: null, source: "legacy", ...basis }, ctx.clock.now());
-  });
-}
-function legacyAdopted(db, runId) {
-  return db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.source') = 'legacy' LIMIT 1", runId, USAGE_CHARGED_EVENT) !== void 0;
-}
-function prechargeThrough(ctx, rows, ts, d) {
-  if (typeof d.through_usage_id === "number") return d.through_usage_id;
-  const counted = typeof d.usage_rows === "number" && Number.isSafeInteger(d.usage_rows) && d.usage_rows > 0 ? rows[Math.min(d.usage_rows, rows.length) - 1]?.id ?? 0 : 0;
-  if (typeof d.charged_usd === "number" && Number.isFinite(d.charged_usd)) return Math.max(counted, oldestCovering(ctx, rows, d.charged_usd));
-  const written = ctx.db.get("SELECT MAX(id) AS id FROM usage WHERE run_id = ? AND ts <= ?", ctx.run.id, ts)?.id ?? 0;
-  return Math.max(counted, written);
-}
-function oldestCovering(ctx, rows, amount) {
-  let sum = 0;
-  let through = 0;
-  for (const r of rows) {
-    const est = r.cost_usd === null ? tokenEstimateFor(ctx, r, { provider: r.provider, model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cacheReadTokens: r.cache_read_tokens, cacheWriteTokens: r.cache_write_tokens, costUsd: null, costSource: "unavailable" }) : null;
-    const role = r.role ?? "planner";
-    const charge = r.cost_usd ?? est?.costUsd ?? (ctx.ledger ? ctx.ledger.roleCostCeiling(role) : ROLE_COST_CEILING_USD[role]);
-    if (sum + charge > amount + 1e-6) break;
-    sum += charge;
-    through = r.id;
-  }
-  return through;
 }
 function chargeUsageRows(ctx, ledger, rows, phase, source) {
   let refused = null;
@@ -45545,35 +45566,41 @@ function chargeUsageRow(ctx, ledger, r, phase, opts) {
     }
     let charged = null;
     let refused = null;
+    const tokenEstimate = tokenEstimateFor(ctx, r, usage);
+    let basis = chargeBasis({ costUsd: usage.costUsd, costSource: usage.costSource }, tokenEstimate);
     try {
-      charged = ledger.consumeCost({ costUsd: usage.costUsd, costSource: usage.costSource }, r.role ?? "planner", {
+      const c = ledger.consumeCost({ costUsd: usage.costUsd, costSource: usage.costSource }, r.role ?? "planner", {
         phase,
         ceilingUsd: w && status2 !== null ? sessionCeilingUsd(ctx, w, status2) : null,
-        tokenEstimate: tokenEstimateFor(ctx, r, usage),
+        tokenEstimate,
         workerId: r.worker_id
-      }).charged;
+      });
+      charged = c.charged;
+      basis = c.basis;
     } catch (err) {
       if (!isOrbitError(err, "BUDGET_EXHAUSTED")) throw err;
       const requested = err.details?.requested;
       charged = typeof requested === "number" ? requested : null;
       refused = w && status2 !== null && blocksOnCredentials(ctx, w, status2) ? null : err;
     }
-    appendEvent(ctx.db, ctx.run.id, USAGE_CHARGED_EVENT, ctx.ownerId, { worker_id: r.worker_id, role: r.role, usage_ids: [r.id], charged_usd: charged === null ? null : Math.round(charged * 1e6) / 1e6, source: opts.source }, ctx.clock.now());
+    appendEvent(ctx.db, ctx.run.id, USAGE_CHARGED_EVENT, ctx.ownerId, { worker_id: r.worker_id, role: r.role, usage_ids: [r.id], charged_usd: charged === null ? null : Math.round(charged * 1e6) / 1e6, basis, source: opts.source }, ctx.clock.now());
     return refused;
   });
 }
 function chargeRecordedUsage(ctx, w, phase = "work") {
+  if (!marksCharges(ctx.db, ctx.run.id)) return accountWorkerTurns(ctx, w, storedResult(w));
   if (!hasUsage(ctx, w.id) && !hasCollectedResult(w)) return;
   settleSession(ctx, w, storedResult(w), phase);
 }
 function recordStoredUsage(ctx, w) {
-  if (hasUsage(ctx, w.id) || !hasCollectedResult(w)) return;
+  if (!marksCharges(ctx.db, ctx.run.id) || hasUsage(ctx, w.id) || !hasCollectedResult(w)) return;
   settleSession(ctx, w, storedResult(w), "work", { charge: false });
 }
 function settleRunUsage(ctx, phase = "final") {
+  if (!marksCharges(ctx.db, ctx.run.id)) return false;
   let changed2 = false;
   for (const w of listWorkers(ctx.db, { runId: ctx.run.id })) {
-    if (!hasUsage(ctx, w.id) && !hasCollectedResult(w)) continue;
+    if (!hasUsage(ctx, w.id) && !endedSession(w)) continue;
     try {
       changed2 = settle(ctx, w, storedResult(w), phase).changed || changed2;
     } catch (err) {
@@ -45591,7 +45618,7 @@ function settleUnsettledSessions(ctx, phase = "work") {
   if (!ctx.ledger || !hasUnsettledSessions(ctx.db, ctx.run.id)) return;
   let refused = null;
   for (const w of listWorkers(ctx.db, { runId: ctx.run.id })) {
-    if (!hasCollectedResult(w) || hasUsage(ctx, w.id)) continue;
+    if (!endedSession(w) || hasUsage(ctx, w.id)) continue;
     refused ??= settle(ctx, w, storedResult(w), phase).refused;
   }
   refused ??= chargeOutstanding(ctx, phase).refused;
@@ -45606,10 +45633,11 @@ function chargeOutstanding(ctx, phase) {
   });
 }
 function hasUnsettledSessions(db, runId) {
+  if (!marksCharges(db, runId)) return false;
   const unrecorded = db.get(
     `SELECT 1 AS x FROM workers w
-     WHERE w.run_id = ? AND w.state NOT IN ('PLANNED', 'RUNNING') AND w.result_json IS NOT NULL
-       AND (CASE WHEN json_valid(w.result_json) THEN json_type(w.result_json, '$.status') END) = 'text'
+     WHERE w.run_id = ? AND w.state NOT IN ('PLANNED', 'RUNNING')
+       AND (w.pid IS NOT NULL OR (w.result_json IS NOT NULL AND (CASE WHEN json_valid(w.result_json) THEN json_type(w.result_json, '$.status') END) = 'text'))
        AND NOT EXISTS (
          SELECT 1 FROM usage u WHERE u.run_id = w.run_id AND u.worker_id = w.id
            AND u.id NOT IN (SELECT json_extract(e.data_json, '$.usage_id') FROM events e WHERE e.run_id = w.run_id AND e.type = ? AND json_extract(e.data_json, '$.usage_id') IS NOT NULL))
@@ -45734,9 +45762,15 @@ function dollars(v) {
 }
 async function stopActiveWorkers(ctx, reason) {
   const failed = [];
+  const settles2 = marksCharges(ctx.db, ctx.run.id);
   for (const w of listActiveWorkers(ctx.db, ctx.run.id)) {
     try {
-      await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, reason);
+      if (!settles2) await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, reason);
+      else {
+        await stopAndSettle(ctx, w, reason, "final").catch((err) => {
+          if (!isOrbitError(err, "BUDGET_EXHAUSTED")) throw err;
+        });
+      }
     } catch (err) {
       failed.push(`${w.id}: ${messageOf(err)}`);
     }
@@ -45811,7 +45845,7 @@ async function collectIfFinished(ctx, w, phase = "work") {
   const handle = handleOf(adapter, w);
   if (!handle) {
     const outcome = { state: "LOST", resultStatus: "lost", error: "the worker directory has no pid.json" };
-    settleSession(ctx, w, endedWithoutResult(w, outcome), phase, { finish: () => finishWorker(ctx.db, w.id, outcome, ctx.clock, ctx.ownerId) });
+    finishAndSettle(ctx, w, null, outcome, phase);
     return false;
   }
   const result2 = await adapter.collectResult(handle, { outputSchema: schemaFor2(w.role) });
@@ -45819,7 +45853,7 @@ async function collectIfFinished(ctx, w, phase = "work") {
   settleSession(ctx, w, result2, phase, { finish: () => finishWorker(ctx.db, w.id, outcomeOf2(result2), ctx.clock, ctx.ownerId) });
   return false;
 }
-var OUTPUT_CAP_DECISION_KIND, OUTPUT_CAP_CEILING, OUTPUT_CAP_ERROR, USAGE_CHARGED_EVENT, ZERO_COST_STATUSES;
+var OUTPUT_CAP_DECISION_KIND, OUTPUT_CAP_CEILING, OUTPUT_CAP_ERROR, ZERO_COST_STATUSES;
 var init_workers2 = __esm({
   "src/controller/workers.ts"() {
     "use strict";
@@ -45841,6 +45875,7 @@ var init_workers2 = __esm({
     init_registry();
     init_usage();
     init_budget2();
+    init_accounting();
     init_pricing();
     init_config();
     init_context2();
@@ -45850,7 +45885,6 @@ var init_workers2 = __esm({
     OUTPUT_CAP_DECISION_KIND = "worker.output-cap-raised";
     OUTPUT_CAP_CEILING = 32e3;
     OUTPUT_CAP_ERROR = /exceeded the (?:([\d,]+) )?output token maximum/i;
-    USAGE_CHARGED_EVENT = "budget.usage-charged";
     ZERO_COST_STATUSES = /* @__PURE__ */ new Set(["auth_failed", "failed", "transient_error"]);
   }
 });
@@ -52710,9 +52744,8 @@ async function runCurator(host, task, model = curatorModelFor(host.deps.registry
   }
   if (ctx && row) {
     const lost = { state: "LOST", resultStatus: "lost", error: "the curator did not stop after it timed out" };
-    const ended = result2 ?? { status: "lost", structured: null, text: null, error: lost.error, exitCode: null, usage: { provider: adapter.id, model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: "unavailable" }, durationMs: null };
     try {
-      finishAndSettle(ctx, row, ended, result2 ? outcomeOf2(result2) : lost, "final");
+      finishAndSettle(ctx, row, result2, result2 ? outcomeOf2(result2) : lost, "final");
     } catch (err) {
       ctx.log.warn("curator cost could not be charged", { error: err instanceof Error ? err.message : String(err) });
     }
@@ -61218,8 +61251,14 @@ async function cancelObsoleteWork(ctx, currentTree) {
   const units = active.map((w) => ({ id: w.id, role: w.role, writer: false, ownedPaths: [], dependsOn: [], revision: trees.get(w.candidateId) ?? null, cancelWhen: ["revision-changed"], budget: {}, provider: w.provider, status: "running" }));
   const stopped = [];
   let refused = null;
+  const settles2 = marksCharges(ctx.db, ctx.run.id);
   for (const o of scheduler.obsolete(units, currentTree)) {
     const w = active.find((x) => x.id === o.unit.id);
+    if (!settles2) {
+      await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, `obsolete: ${o.reason}`);
+      stopped.push(w.id);
+      continue;
+    }
     try {
       await stopAndSettle(ctx, w, `obsolete: ${o.reason}`, w.role === "reviewer" ? "final" : "work");
     } catch (err) {
@@ -61657,6 +61696,7 @@ var init_reviewing = __esm({
     init_heuristics();
     init_repair();
     init_budget2();
+    init_accounting();
     init_diagnosing();
     init_select();
     init_review();
@@ -61669,6 +61709,7 @@ var init_reviewing = __esm({
     init_globs();
     init_scheduler();
     init_workers();
+    init_reconcile();
     init_workers2();
     init_implementing();
     init_obtain();
@@ -62400,6 +62441,7 @@ function prechargeUsage(ctx) {
   if (!ledger) return;
   for (const w of listWorkers(ctx.db, { runId: ctx.run.id })) accountWorkerTurns(ctx, w, storedResult(w));
   if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'budget.precharged'", ctx.run.id)) return;
+  if (!marksCharges(ctx.db, ctx.run.id)) return prechargeAsBefore031(ctx, ledger);
   for (const w of listWorkers(ctx.db, { runId: ctx.run.id })) recordStoredUsage(ctx, w);
   const refusal = ctx.db.tx(() => {
     const rows = unchargedUsageRows(ctx);
@@ -62421,6 +62463,21 @@ function prechargeUsage(ctx) {
   });
   if (refusal) throw refusal;
 }
+function prechargeAsBefore031(ctx, ledger) {
+  const rows = ctx.db.all(
+    "SELECT u.worker_id, u.provider, u.model, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens, u.cost_usd, u.cost_source, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ? ORDER BY u.id",
+    ctx.run.id
+  );
+  let total = 0;
+  for (const r of rows) {
+    const tokenEstimate = r.cost_usd === null ? tokenEstimateFor(ctx, r, { provider: r.provider, model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cacheReadTokens: r.cache_read_tokens, cacheWriteTokens: r.cache_write_tokens, costUsd: null, costSource: "unavailable" }) : null;
+    total += ledger.consumeCost({ costUsd: r.cost_usd, costSource: r.cost_source }, r.role ?? "planner", { tokenEstimate }).charged;
+  }
+  const init = ctx.db.get("SELECT id FROM events WHERE run_id = ? AND type = 'budget.initialized' ORDER BY id LIMIT 1", ctx.run.id);
+  const recoveries = Number(ctx.db.get("SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND type = ? AND id < ?", ctx.run.id, RECOVERY_ATTEMPT_EVENT, init?.id ?? 0)?.n ?? 0);
+  if (recoveries > 0) ledger.consume("recovery_attempts", recoveries);
+  note2(ctx, "budget.precharged", { usage_rows: rows.length, charged_usd: Math.round(total * 1e6) / 1e6, ...recoveries > 0 ? { recovery_attempts: recoveries } : {} });
+}
 var SECURITY_WORDS;
 var init_planning = __esm({
   "src/controller/steps/planning.ts"() {
@@ -62432,6 +62489,7 @@ var init_planning = __esm({
     init_store4();
     init_difficulty();
     init_budget2();
+    init_accounting();
     init_budget();
     init_workers2();
     init_workers();
@@ -69451,10 +69509,6 @@ function renderEvent(e, data, l) {
     }
     case "budget.usage-charged": {
       if (data.source === "collected" || data.source === "precharge") return null;
-      if (data.source === "legacy") {
-        const n2 = Array.isArray(data.usage_ids) ? data.usage_ids.length : 0;
-        return { category: "cost", text: `${n2} usage ${n2 === 1 ? "record" : "records"} charged before 0.3.1 marked as charged` };
-      }
       const c = num5(data.charged_usd);
       const role = str6(data.role);
       const who = [role ?? "a session", str6(data.worker_id)].filter((x) => x !== null).join(" ");
@@ -69575,7 +69629,8 @@ function costOf(db, runId) {
     reported_records: spend.reported_sessions,
     estimated_records: spend.estimated_sessions,
     unavailable_records: spend.ceiling_sessions + spend.unpriced_sessions,
-    ceiling_charged_usd: spend.ceiling_usd,
+    // A run started before 0.3.1 has its ceiling charges as its budget recorded them, matched to no session.
+    ceiling_charged_usd: spend.legacy_charges?.ceiling_usd ?? spend.ceiling_usd,
     note: spend.explanation
   };
   return { cost, usage };

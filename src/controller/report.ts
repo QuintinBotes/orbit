@@ -845,9 +845,8 @@ export async function runCurator(
     // controller that dies between them would leave a stored result that nothing settles. One that never answered is
     // recorded unmeasured and charged its cap, as any lost session is.
     const lost = { state: 'LOST' as const, resultStatus: 'lost' as const, error: 'the curator did not stop after it timed out' };
-    const ended: TaskResult = result ?? { status: 'lost', structured: null, text: null, error: lost.error, exitCode: null, usage: { provider: adapter.id, model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: 'unavailable' }, durationMs: null };
     try {
-      finishAndSettle(ctx, row, ended, result ? outcomeOf(result) : lost, 'final');
+      finishAndSettle(ctx, row, result, result ? outcomeOf(result) : lost, 'final');
     } catch (err) {
       ctx.log.warn('curator cost could not be charged', { error: err instanceof Error ? err.message : String(err) });
     }

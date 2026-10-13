@@ -4,6 +4,7 @@ import { OrbitError } from '../core/errors.ts';
 import { TERMINAL_STATES, isRunState } from '../core/run-states.ts';
 import type { OrbitConfig } from '../policy/types.ts';
 import type { ModelPricing } from '../routing/types.ts';
+import { marksCharges } from './accounting.ts';
 import {
   BUDGET_COUNTERS,
   DISCRETE_COUNTERS,
@@ -158,8 +159,17 @@ export interface TokenEstimate {
 
 export interface CostCharge {
   charged: number;
-  basis: 'reported' | 'estimated' | 'ceiling';
+  basis: ChargeBasis;
   state: CounterState;
+}
+
+/** What a session's charge was taken from: its reported cost, an estimate (from its tokens), or a conservative ceiling. */
+export type ChargeBasis = 'reported' | 'estimated' | 'ceiling';
+
+/** The basis consumeCost charges a session on: its cost when it has one, else what its tokens would cost, else a ceiling. */
+export function chargeBasis(cost: { costUsd: number | null; costSource?: string }, tokenEstimate?: TokenEstimate | null): ChargeBasis {
+  if (typeof cost.costUsd === 'number' && Number.isFinite(cost.costUsd) && cost.costUsd >= 0) return cost.costSource === 'estimated' ? 'estimated' : 'reported';
+  return tokenEstimate && isAmount(tokenEstimate.costUsd) ? 'estimated' : 'ceiling';
 }
 
 export interface BudgetSnapshot {
@@ -354,9 +364,10 @@ export class BudgetLedger {
     }
     if (typeof cost.costUsd === 'number' && Number.isFinite(cost.costUsd) && cost.costUsd >= 0) {
       const r = this.consumeMeasured('cost_usd', cost.costUsd, phase);
-      return { charged: cost.costUsd, basis: cost.costSource === 'estimated' ? 'estimated' : 'reported', state: r.state };
+      return { charged: cost.costUsd, basis: chargeBasis(cost), state: r.state };
     }
-    // The session a stand-in charge is for, so spendBreakdown counts it once, as the charge, whatever its usage row says.
+    // The session a stand-in charge is for, for a reader of the events. spendBreakdown attributes a charge to the usage
+    // record its charge mark names, never by worker id: a lost attempt and its restart are two sessions of one worker.
     const worker = opts.workerId ? { worker_id: opts.workerId } : {};
     // Tokens were reported but no cost (Codex under a ChatGPT login): what the tokens would cost is a far closer
     // charge than a ceiling several times larger, and it is still priced at or above any known model's rate.
@@ -749,124 +760,130 @@ export function extensionDecisionRecord(d: ExtensionDecision): { kind: string; s
 }
 
 /**
- * What the run's cost budget charged and what that charge is made of, from the usage records and the budget's own
- * charge events; the report, the timeline footer and status all say it this way. Read-only, and it works before
- * PLANNING creates the budget (charged_usd null). A session the budget charged from its tokens or at a ceiling counts
- * as that charge, whatever its usage record says. Such a charge recorded before charges named their session (0.3.0)
- * stands for the usage record its session left (unnamedCharges), so no session is counted twice and no charged spend
- * reads as never charged.
+ * Marks a usage record as charged to cost_usd, in a run created with RUN_ACCOUNTING_VERSION: every charge of a usage
+ * record appends one in the transaction that charges it, whichever path charged it, naming the record (`usage_ids`), the
+ * amount (`charged_usd`) and its basis. It is the one answer to "already charged?", and to "charged how much, and on what
+ * basis?" for the spend line.
+ */
+export const USAGE_CHARGED_EVENT = 'budget.usage-charged';
+
+/**
+ * What the run's cost budget charged and what that charge is made of; the report, the timeline footer and status all say
+ * it this way. Read-only, and it works before PLANNING creates the budget (charged_usd null). In a run created with
+ * RUN_ACCOUNTING_VERSION each usage record counts as the charge its mark names (a stand-in charge, a ceiling or a
+ * token estimate, included), so a session is counted once whatever its worker id: a lost attempt and its restart are two
+ * sessions of one worker. A run started before 0.3.1 recorded no such marks: its figures are given as recorded, the
+ * usage records by their own cost and the stand-in charges as the budget recorded them, with nothing matched between
+ * them, and the explanation says the run is accounted under the rules of the version that started it.
  */
 export function spendBreakdown(db: OrbitDb, runId: string): SpendBreakdown {
-  const stoodFor = new Set<string>();
-  const unnamed: UnnamedCharge[] = [];
-  let estimatedUsd = 0;
-  let estimatedSessions = 0;
-  let ceilingUsd = 0;
-  let ceilingSessions = 0;
-  let precharged = 0;
-  for (const e of db.all<{ ts: number; type: string; data_json: string | null }>("SELECT ts, type, data_json FROM events WHERE run_id = ? AND type IN ('budget.cost-token-estimated', 'budget.cost-ceiling-charged', 'budget.precharged') ORDER BY id", runId)) {
-    const d = e.data_json ? (JSON.parse(e.data_json) as { worker_id?: unknown; role?: unknown; charged_usd?: unknown; ceiling_usd?: unknown }) : {};
-    if (e.type === 'budget.precharged') {
-      precharged += amountOf(d.charged_usd);
-      continue;
-    }
-    const estimate = e.type === 'budget.cost-token-estimated';
-    if (typeof d.worker_id === 'string') stoodFor.add(d.worker_id);
-    else unnamed.push({ ts: e.ts, role: typeof d.role === 'string' ? d.role : null, estimate, usd: amountOf(estimate ? d.charged_usd : d.ceiling_usd) });
-    if (estimate) {
-      estimatedUsd += amountOf(d.charged_usd);
-      estimatedSessions++;
-    } else {
-      ceilingUsd += amountOf(d.ceiling_usd);
-      ceilingSessions++;
-    }
-  }
-  let reportedUsd = 0;
-  let reportedSessions = 0;
-  let unpriced = 0;
-  const rows = db.all<UsageForCharge>('SELECT u.id, u.ts, u.worker_id, u.cost_usd, u.cost_source, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ? ORDER BY u.id', runId).filter((u) => u.worker_id === null || !stoodFor.has(u.worker_id));
-  const matched = unnamedCharges(unnamed, rows);
-  for (const u of rows) {
-    if (matched.has(u.id)) continue;
-    if (u.cost_usd === null) unpriced++;
-    else if (u.cost_source === 'estimated') {
-      estimatedUsd += u.cost_usd;
-      estimatedSessions++;
-    } else {
-      reportedUsd += u.cost_usd;
-      reportedSessions++;
-    }
-  }
   const counter = db.get<{ used: number }>("SELECT used FROM budget_counters WHERE run_id = ? AND counter = 'cost_usd'", runId);
   const charged = counter ? roundUsd(counter.used) : null;
-  const parts = roundUsd(reportedUsd + estimatedUsd + ceilingUsd);
   const state = db.get<{ state: string }>('SELECT state FROM runs WHERE id = ?', runId)?.state ?? null;
+  const legacy = !marksCharges(db, runId);
+  const marks = legacy ? new Map<number, ChargeMark>() : chargeMarks(db, runId);
+  let precharged = 0;
+  for (const e of db.all<{ data_json: string | null }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'budget.precharged'", runId)) precharged += amountOf(parseData(e.data_json).charged_usd);
+  const sum = { reported: 0, reportedN: 0, estimated: 0, estimatedN: 0, ceiling: 0, ceilingN: 0, unpriced: 0 };
+  const unmeasured: UnmeasuredSession[] = [];
+  for (const u of db.all<UsageForCharge>('SELECT u.id, u.worker_id, u.cost_usd, u.cost_source, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ? ORDER BY u.id', runId)) {
+    const mark = marks.get(u.id);
+    const own: ChargeBasis | null = u.cost_usd === null ? null : chargeBasis({ costUsd: u.cost_usd, costSource: u.cost_source });
+    // A marked record counts as what its mark charged; one no mark names, as its own cost says.
+    const basis = mark ? (mark.basis ?? own ?? 'ceiling') : own;
+    const usd = mark?.usd ?? u.cost_usd ?? 0;
+    if (basis === null) {
+      sum.unpriced++;
+      unmeasured.push({ usage_id: u.id, worker_id: u.worker_id, role: u.role, charged_usd: null });
+    } else if (basis === 'ceiling') {
+      sum.ceiling += usd;
+      sum.ceilingN++;
+      unmeasured.push({ usage_id: u.id, worker_id: u.worker_id, role: u.role, charged_usd: roundUsd(usd) });
+    } else if (basis === 'estimated') {
+      sum.estimated += usd;
+      sum.estimatedN++;
+    } else {
+      sum.reported += usd;
+      sum.reportedN++;
+    }
+  }
+  const parts = roundUsd(sum.reported + sum.estimated + sum.ceiling);
+  // Before 0.3.1 a charge did not name the record it covered, so once such a run has a budget nothing tells a charge with
+  // no record from spend never charged.
+  const reconciled = !legacy || charged === null;
   const s: Omit<SpendBreakdown, 'explanation'> = {
+    accounting: legacy ? 'legacy' : 'current',
     charged_usd: charged,
-    reported_usd: roundUsd(reportedUsd),
-    reported_sessions: reportedSessions,
-    estimated_usd: roundUsd(estimatedUsd),
-    estimated_sessions: estimatedSessions,
-    ceiling_usd: roundUsd(ceilingUsd),
-    ceiling_sessions: ceilingSessions,
-    unpriced_sessions: unpriced,
+    reported_usd: roundUsd(sum.reported),
+    reported_sessions: sum.reportedN,
+    estimated_usd: roundUsd(sum.estimated),
+    estimated_sessions: sum.estimatedN,
+    ceiling_usd: roundUsd(sum.ceiling),
+    ceiling_sessions: sum.ceilingN,
+    unpriced_sessions: sum.unpriced,
+    unmeasured_sessions: unmeasured,
     precharged_usd: roundUsd(precharged),
-    unmatched_usd: charged === null ? 0 : roundUsd(Math.max(0, charged - parts)),
-    uncharged_usd: roundUsd(Math.max(0, parts - (charged ?? 0))),
+    unmatched_usd: reconciled ? (charged === null ? 0 : roundUsd(Math.max(0, charged - parts))) : null,
+    uncharged_usd: reconciled ? roundUsd(Math.max(0, parts - (charged ?? 0))) : null,
     uncharged_reason: charged === null ? withoutBudget(state) : null,
+    ...(legacy ? { legacy_charges: legacyCharges(db, runId) } : {}),
   };
   return { ...s, explanation: explainSpend(s, state) };
 }
 
-/** A charge from tokens or at a ceiling whose event named no session (recorded before 0.3.1). */
-interface UnnamedCharge {
-  ts: number;
-  role: string | null;
-  estimate: boolean;
-  usd: number;
+/** What one charge mark says about the usage record it names. */
+interface ChargeMark {
+  usd: number | null;
+  basis: ChargeBasis | null;
+}
+
+/** The charge mark of each usage record the run's budget charged, by usage id. */
+function chargeMarks(db: OrbitDb, runId: string): Map<number, ChargeMark> {
+  const marks = new Map<number, ChargeMark>();
+  for (const e of db.all<{ data_json: string | null }>('SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id', runId, USAGE_CHARGED_EVENT)) {
+    const d = parseData(e.data_json);
+    const ids = Array.isArray(d.usage_ids) ? d.usage_ids.filter((id): id is number => typeof id === 'number') : [];
+    const basis = d.basis === 'reported' || d.basis === 'estimated' || d.basis === 'ceiling' ? d.basis : null;
+    // A mark names one record; its amount is that record's charge.
+    for (const id of ids) marks.set(id, { usd: ids.length === 1 && typeof d.charged_usd === 'number' && Number.isFinite(d.charged_usd) ? d.charged_usd : null, basis });
+  }
+  return marks;
+}
+
+/** The stand-in charges of a run started before 0.3.1, as its budget recorded them (each event charged one session). */
+function legacyCharges(db: OrbitDb, runId: string): NonNullable<SpendBreakdown['legacy_charges']> {
+  const out = { ceiling_usd: 0, ceiling_charges: 0, token_estimated_usd: 0, token_estimated_charges: 0 };
+  for (const e of db.all<{ type: string; data_json: string | null }>("SELECT type, data_json FROM events WHERE run_id = ? AND type IN ('budget.cost-token-estimated', 'budget.cost-ceiling-charged') ORDER BY id", runId)) {
+    const d = parseData(e.data_json);
+    if (e.type === 'budget.cost-ceiling-charged') {
+      out.ceiling_usd += amountOf(d.ceiling_usd);
+      out.ceiling_charges++;
+    } else {
+      out.token_estimated_usd += amountOf(d.charged_usd);
+      out.token_estimated_charges++;
+    }
+  }
+  return { ...out, ceiling_usd: roundUsd(out.ceiling_usd), token_estimated_usd: roundUsd(out.token_estimated_usd) };
 }
 
 interface UsageForCharge {
   id: number;
-  ts: number;
   worker_id: string | null;
   cost_usd: number | null;
   cost_source: string;
   role: string | null;
 }
 
-/**
- * The usage records that charges naming no session stand for, one record each. Before 0.3.1 the controller charged a
- * session it collected and then recorded its usage, so its record is the next one of its role after the charge; and
- * recordUsage priced a session that reported tokens and no cost from the registry, so a charge from tokens can stand
- * for a record with an estimated cost, the same amount when the model had its own price (0.3.0: one $0.51 session
- * read as $1.02 across two sessions, $0.51 of it never charged). PLANNING charged records already written, so failing a
- * later one the latest earlier record stands. A ceiling stands for a record with no cost, and a reported cost was
- * charged as measured, with no event: neither is ever matched otherwise. A charge with no record left to stand for
- * stays a charge with no matching usage record.
- */
-function unnamedCharges(charges: readonly UnnamedCharge[], rows: readonly UsageForCharge[]): Set<number> {
-  const matched = new Set<number>();
-  const open = new Set(charges.map((_, i) => i));
-  const near = (c: UnnamedCharge, fits: (u: UsageForCharge) => boolean): UsageForCharge | undefined => {
-    const candidates = rows.filter((u) => !matched.has(u.id) && (u.role === null || c.role === null || u.role === c.role) && fits(u));
-    return candidates.find((u) => u.ts >= c.ts) ?? candidates.filter((u) => u.ts < c.ts).at(-1);
-  };
-  const pass = (fits: (c: UnnamedCharge, u: UsageForCharge) => boolean): void => {
-    for (const i of [...open]) {
-      const c = charges[i]!;
-      const u = near(c, (row) => fits(c, row));
-      if (!u) continue;
-      matched.add(u.id);
-      open.delete(i);
-    }
-  };
-  // Most certain first: an estimate priced at the same amount, then any record without a cost, then (an estimate whose
-  // amount the registry priced differently) any estimated record of its role.
-  pass((c, u) => c.estimate && u.cost_source === 'estimated' && u.cost_usd !== null && Math.abs(u.cost_usd - c.usd) < 1e-6);
-  pass((_, u) => u.cost_usd === null);
-  pass((c, u) => c.estimate && u.cost_source === 'estimated' && u.cost_usd !== null);
-  return matched;
+type UnmeasuredSession = SpendBreakdown['unmeasured_sessions'][number];
+
+function parseData(json: string | null): Record<string, unknown> {
+  if (!json) return {};
+  try {
+    const d = JSON.parse(json) as unknown;
+    return d !== null && typeof d === 'object' ? (d as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
 }
 
 /**
@@ -882,31 +899,54 @@ function withoutBudget(state: string | null): string {
 
 /** Amounts below a cent are rounding, not something to explain. */
 const SPEND_CENT = 0.005;
+/** The most unmeasured sessions the explanation names one by one. */
+const NAMED_SESSIONS = 5;
+/** What a run started before 0.3.1 says about its figures. */
+const LEGACY_ACCOUNTING = 'this run was started before Orbit 0.3.1 and is accounted under the rules of the version that started it, which did not record the session each charge covers, so these figures are as recorded';
 
 function explainSpend(s: Omit<SpendBreakdown, 'explanation'>, state: string | null): string {
   const sessions = (n: number): string => `${n} ${n === 1 ? 'session' : 'sessions'}`;
-  const parts = [
-    ...(s.reported_sessions > 0 ? [`$${usd(s.reported_usd)} reported by providers (${sessions(s.reported_sessions)})`] : []),
-    ...(s.estimated_sessions > 0 ? [`$${usd(s.estimated_usd)} estimated from tokens for ${sessions(s.estimated_sessions)} that reported no cost`] : []),
-    ...(s.ceiling_sessions > 0 ? [`$${usd(s.ceiling_usd)} at conservative ceilings for ${sessions(s.ceiling_sessions)} that reported no cost and could not be priced`] : []),
-  ];
-  const unpriced = s.unpriced_sessions > 0 ? `${sessions(s.unpriced_sessions)} with no reported cost` : null;
+  // Every session whose spend nobody measured is named, by role and worker.
+  const named = (list: readonly UnmeasuredSession[]): string => {
+    const labels = list.slice(0, NAMED_SESSIONS).map((u) => `${u.role ?? 'session'} ${u.worker_id ?? `of usage record ${u.usage_id}`}`);
+    return list.length === 0 ? '' : ` (${labels.join(', ')}${list.length > NAMED_SESSIONS ? ` and ${list.length - NAMED_SESSIONS} more` : ''})`;
+  };
+  const atCeiling = s.unmeasured_sessions.filter((u) => u.charged_usd !== null);
+  const unpricedList = s.unmeasured_sessions.filter((u) => u.charged_usd === null);
+  const reported = s.reported_sessions > 0 ? [`$${usd(s.reported_usd)} reported by providers (${sessions(s.reported_sessions)})`] : [];
+  const estimated = s.estimated_sessions > 0 ? [`$${usd(s.estimated_usd)} estimated from tokens for ${sessions(s.estimated_sessions)} that reported no cost`] : [];
+  const parts = [...reported, ...estimated, ...(s.ceiling_sessions > 0 ? [`$${usd(s.ceiling_usd)} at conservative ceilings for ${sessions(s.ceiling_sessions)} that reported no cost and could not be priced${named(atCeiling)}`] : [])];
+  const unpriced = s.unpriced_sessions > 0 ? `${sessions(s.unpriced_sessions)} with no reported cost${named(unpricedList)}` : null;
+  const legacy = s.accounting === 'legacy' ? `; ${LEGACY_ACCOUNTING}` : '';
   if (s.charged_usd === null) {
     const spent = [...parts, ...(unpriced ? [unpriced] : [])].join(' and ');
-    if (spent.length === 0) return 'no usage recorded yet';
+    if (spent.length === 0) return `no usage recorded yet${legacy}`;
     // Measured and not charged, and why: blocked (charged if resumed), ended (never charged) or not there yet.
-    if (state === 'BLOCKED') return `nothing charged to the cost budget: ${s.uncharged_reason}, so this spend is measured and not charged; PLANNING charges it if the run is resumed: ${spent}`;
-    if (state !== null && isRunState(state) && TERMINAL_STATES.has(state)) return `nothing charged to the cost budget: ${s.uncharged_reason}, so this spend was measured and never charged: ${spent}`;
-    return `nothing charged to the cost budget yet: PLANNING creates it and then charges what was spent before; spent so far: ${spent}`;
+    if (state === 'BLOCKED') return `nothing charged to the cost budget: ${s.uncharged_reason}, so this spend is measured and not charged; PLANNING charges it if the run is resumed: ${spent}${legacy}`;
+    if (state !== null && isRunState(state) && TERMINAL_STATES.has(state)) return `nothing charged to the cost budget: ${s.uncharged_reason}, so this spend was measured and never charged: ${spent}${legacy}`;
+    return `nothing charged to the cost budget yet: PLANNING creates it and then charges what was spent before; spent so far: ${spent}${legacy}`;
+  }
+  const precharged = s.precharged_usd >= SPEND_CENT ? [`$${usd(s.precharged_usd)} of it was spent before PLANNING and charged when the budget was created`] : [];
+  const head = `$${usd(s.charged_usd)} charged to the cost budget (the figure the cost cap is checked against)`;
+  if (s.legacy_charges) {
+    // As recorded: what the sessions' usage records say, and the stand-in charges the budget recorded, side by side.
+    const c = s.legacy_charges;
+    const records = [...reported, ...estimated, ...(unpriced ? [unpriced] : [])];
+    const standIns = [
+      ...(c.ceiling_charges > 0 ? [`$${usd(c.ceiling_usd)} at conservative ceilings (${c.ceiling_charges} ${c.ceiling_charges === 1 ? 'charge' : 'charges'})`] : []),
+      ...(c.token_estimated_charges > 0 ? [`$${usd(c.token_estimated_usd)} estimated from tokens (${c.token_estimated_charges} ${c.token_estimated_charges === 1 ? 'charge' : 'charges'})`] : []),
+    ];
+    const notes = [`recorded usage: ${records.length > 0 ? records.join(', ') : 'none'}`, ...(standIns.length > 0 ? [`charged for sessions that reported no cost: ${standIns.join(', ')}`] : []), ...precharged, LEGACY_ACCOUNTING];
+    return `${head}; ${notes.join('; ')}`;
   }
   // The ledger keeps no record of why a charge has no usage record (a crash between the two, say), so none is given.
-  if (s.unmatched_usd >= SPEND_CENT) parts.push(`$${usd(s.unmatched_usd)} charged with no matching usage record`);
+  if ((s.unmatched_usd ?? 0) >= SPEND_CENT) parts.push(`$${usd(s.unmatched_usd ?? 0)} charged with no matching usage record`);
   const notes: string[] = [];
   if (parts.length === 0 && unpriced === null) notes.push('no usage recorded yet');
-  if (s.precharged_usd >= SPEND_CENT) notes.push(`$${usd(s.precharged_usd)} of it was spent before PLANNING and charged when the budget was created`);
-  if (s.uncharged_usd >= SPEND_CENT) notes.push(`$${usd(s.uncharged_usd)} of the recorded spend was never charged to the budget`);
+  notes.push(...precharged);
+  if ((s.uncharged_usd ?? 0) >= SPEND_CENT) notes.push(`$${usd(s.uncharged_usd ?? 0)} of the recorded spend was never charged to the budget`);
   if (unpriced) notes.push(`${unpriced} ${s.unpriced_sessions === 1 ? 'was' : 'were'} never charged`);
-  return `$${usd(s.charged_usd)} charged to the cost budget (the figure the cost cap is checked against)${parts.length > 0 ? `: ${parts.join(' + ')}` : ''}${notes.map((n) => `; ${n}`).join('')}`;
+  return `${head}${parts.length > 0 ? `: ${parts.join(' + ')}` : ''}${notes.map((n) => `; ${n}`).join('')}`;
 }
 
 function amountOf(v: unknown): number {
